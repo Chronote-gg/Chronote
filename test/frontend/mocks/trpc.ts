@@ -165,6 +165,7 @@ type ConfigGlobalData = {
 type AdminFeedbackData = {
   items: FeedbackRecord[];
   nextCursor?: string | null;
+  guildsById?: Record<string, string>;
 };
 
 const buildQueryState = <T>(data: T | null): QueryState<T> => ({
@@ -265,6 +266,7 @@ export const configGlobalQuery = buildQueryState<ConfigGlobalData>({
 export const adminFeedbackQuery = buildQueryState<AdminFeedbackData>({
   items: [],
   nextCursor: null,
+  guildsById: {},
 });
 
 export const billingCheckoutMutation = buildMutationState<
@@ -436,7 +438,11 @@ export const resetTrpcMocks = () => {
     overrides: [],
     appconfigEnabled: false,
   });
-  resetQueryState(adminFeedbackQuery, { items: [], nextCursor: null });
+  resetQueryState(adminFeedbackQuery, {
+    items: [],
+    nextCursor: null,
+    guildsById: {},
+  });
 
   resetMutationState(billingCheckoutMutation, {
     url: "https://example.com/checkout",

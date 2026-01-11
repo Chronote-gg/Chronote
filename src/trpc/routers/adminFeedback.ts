@@ -1,10 +1,26 @@
 import { z } from "zod";
 import { superAdminProcedure, router } from "../trpc";
 import { listFeedbackEntries } from "../../services/adminFeedbackService";
+import { listBotGuildsCached } from "../../services/discordCacheService";
 
 const targetTypeSchema = z.enum(["meeting_summary", "ask_answer"]);
 const ratingSchema = z.enum(["up", "down"]);
 const sourceSchema = z.enum(["discord", "web"]);
+
+const resolveGuildsById = async (guildIds: Set<string>) => {
+  if (guildIds.size === 0) return {};
+  try {
+    const guilds = await listBotGuildsCached();
+    return Object.fromEntries(
+      guilds
+        .filter((guild) => guildIds.has(guild.id))
+        .map((guild) => [guild.id, guild.name]),
+    );
+  } catch (error) {
+    console.error("Unable to resolve guild names for admin feedback.", error);
+    return {};
+  }
+};
 
 const list = superAdminProcedure
   .input(
@@ -25,7 +41,12 @@ const list = superAdminProcedure
       cursor: input.cursor,
     });
 
-    return { items: result.items, nextCursor: result.nextCursor };
+    const guildIds = new Set(
+      result.items.map((item) => item.guildId).filter(Boolean),
+    );
+    const guildsById = await resolveGuildsById(guildIds);
+
+    return { items: result.items, nextCursor: result.nextCursor, guildsById };
   });
 
 export const adminFeedbackRouter = router({

@@ -10,6 +10,9 @@ import { z } from "zod";
 import MarketingLayout from "./layouts/MarketingLayout";
 
 const PortalLayout = lazyRouteComponent(() => import("./layouts/PortalLayout"));
+const SuperAdminLayout = lazyRouteComponent(
+  () => import("./layouts/SuperAdminLayout"),
+);
 const PortalServerLayout = lazyRouteComponent(
   () => import("./layouts/PortalServerLayout"),
 );
@@ -29,6 +32,7 @@ const PublicAsk = lazyRouteComponent(() => import("./pages/PublicAsk"));
 const Billing = lazyRouteComponent(() => import("./pages/Billing"));
 const Settings = lazyRouteComponent(() => import("./pages/Settings"));
 const LiveMeeting = lazyRouteComponent(() => import("./pages/LiveMeeting"));
+const AdminHome = lazyRouteComponent(() => import("./pages/AdminHome"));
 const AdminConfig = lazyRouteComponent(() => import("./pages/AdminConfig"));
 const AdminFeedback = lazyRouteComponent(() => import("./pages/AdminFeedback"));
 import { useGuildContext } from "./contexts/GuildContext";
@@ -144,6 +148,12 @@ const liveMeetingRoute = new Route({
   component: LiveMeeting,
 });
 
+const adminRoute = new Route({
+  getParentRoute: () => rootRoute,
+  path: "admin",
+  component: SuperAdminLayout,
+});
+
 const portalRoute = new Route({
   getParentRoute: () => rootRoute,
   path: "portal",
@@ -242,15 +252,41 @@ const portalSettingsRoute = new Route({
   component: Settings,
 });
 
+function PortalAdminConfigRedirect() {
+  return <Navigate to="/admin/config" />;
+}
+
+function PortalAdminFeedbackRedirect() {
+  return <Navigate to="/admin/feedback" />;
+}
+
 const portalAdminConfigRoute = new Route({
   getParentRoute: () => portalRoute,
   path: "admin/config",
-  component: AdminConfig,
+  component: PortalAdminConfigRedirect,
 });
 
 const portalAdminFeedbackRoute = new Route({
   getParentRoute: () => portalRoute,
   path: "admin/feedback",
+  component: PortalAdminFeedbackRedirect,
+});
+
+const adminIndexRoute = new Route({
+  getParentRoute: () => adminRoute,
+  path: "/",
+  component: AdminHome,
+});
+
+const adminConfigRoute = new Route({
+  getParentRoute: () => adminRoute,
+  path: "config",
+  component: AdminConfig,
+});
+
+const adminFeedbackRoute = new Route({
+  getParentRoute: () => adminRoute,
+  path: "feedback",
   component: AdminFeedback,
 });
 
@@ -263,6 +299,11 @@ const routeTree = rootRoute.addChildren([
     upgradeSuccessRoute,
   ]),
   liveMeetingRoute,
+  adminRoute.addChildren([
+    adminIndexRoute,
+    adminConfigRoute,
+    adminFeedbackRoute,
+  ]),
   publicAskRoute,
   portalRoute.addChildren([
     portalIndexRoute,

@@ -41,7 +41,7 @@ export function SiteHeader({
   });
   const computedScheme = useComputedColorScheme("dark");
   const isDark = computedScheme === "dark";
-  const { state: authState, loginUrl, loading } = useAuth();
+  const { state: authState, loginUrl, loading, user } = useAuth();
 
   const showPortalCta = context !== "portal-select";
   const showGithubLink = true;
@@ -50,6 +50,7 @@ export function SiteHeader({
     authState === "authenticated" && context === "portal"
       ? "Switch server"
       : "Open portal";
+  const isSuperAdmin = authState === "authenticated" && user?.isSuperAdmin;
 
   const logo = (
     <Link to="/" style={uiLinks.plain} data-testid="site-logo">
@@ -73,6 +74,18 @@ export function SiteHeader({
 
   const rightControls = (
     <Group gap="sm" align="center" wrap="nowrap">
+      {isSuperAdmin ? (
+        <Button
+          component={Link}
+          to="/admin"
+          variant="outline"
+          color="gray"
+          size={isMobile ? "xs" : "sm"}
+          data-testid="admin-cta"
+        >
+          Admin
+        </Button>
+      ) : null}
       {showPortalCta ? (
         authState === "authenticated" ? (
           <Button

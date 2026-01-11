@@ -54,7 +54,7 @@ const mockRepository: FeedbackRepository = {
       filtered = filtered.filter((item) => item.createdAt >= startAt);
     }
     if (endAt) {
-      filtered = filtered.filter((item) => item.createdAt <= endAt);
+      filtered = filtered.filter((item) => item.createdAt < endAt);
     }
     const sorted = filtered.sort((a, b) =>
       b.createdAt.localeCompare(a.createdAt),

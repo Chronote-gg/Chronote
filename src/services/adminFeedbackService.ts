@@ -18,9 +18,7 @@ type FeedbackListResult = {
 
 const resolveCursorEndAt = (cursor?: string) => {
   if (!cursor) return undefined;
-  const parsed = Date.parse(cursor);
-  if (Number.isNaN(parsed)) return cursor;
-  return new Date(parsed - 1).toISOString();
+  return cursor;
 };
 
 const buildFeedbackKey = (item: FeedbackRecord) => `${item.pk}:${item.sk}`;

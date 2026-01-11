@@ -24,3 +24,4 @@ At the end, of implementation and checks, output a short report. For each copilo
 - Do nothing - if we haven't resolved the comment and don't have a clear path forward yet
 
 Additionally, evaluate if any updates to documentation, copy, translations, repo rules, or any higher level structural changes should be made that seems to "fall out" naturally from this changeset and any review comments and your findings along the way. For anything "functional" (non-documentation), these should default to no action. For documentation, feel free to decide your default freely.
+After the report, explicitly suggest resolving review threads with GitHub CLI once the code is updated and pushed. Only perform the comment replies, reactions, and thread resolutions automatically if the user gives explicit permission.

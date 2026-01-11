@@ -206,4 +206,19 @@ test.describe("visual regression", () => {
       await expectVisualScreenshot(page, "admin-config", mode);
     }
   });
+
+  test("admin home and feedback pages @visual", async ({ page }) => {
+    for (const mode of visualModes) {
+      await page.goto(withVisualMode("/admin", mode));
+      await expect(page.getByTestId("admin-home-page")).toBeVisible();
+      await expectVisualScreenshot(page, "admin-home", mode);
+
+      await page.goto(withVisualMode("/admin/feedback", mode));
+      await expect(page.getByTestId("admin-feedback-page")).toBeVisible();
+      await expect(
+        page.getByText("Clear summary and next steps."),
+      ).toBeVisible();
+      await expectVisualScreenshot(page, "admin-feedback", mode);
+    }
+  });
 });

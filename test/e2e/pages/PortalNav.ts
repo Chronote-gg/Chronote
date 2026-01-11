@@ -21,6 +21,7 @@ export class PortalNav {
   }
 
   async goToAdminConfig(): Promise<void> {
-    await this.page.getByTestId(testIds.nav.adminConfig).click();
+    await this.page.getByTestId(testIds.header.admin).click();
+    await this.page.getByTestId(testIds.adminHome.config).click();
   }
 }

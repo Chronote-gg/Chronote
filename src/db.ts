@@ -1268,7 +1268,7 @@ export async function listFeedbackByTargetType(params: {
     expressionNames["#createdAt"] = "createdAt";
     expressionValues[":startAt"] = params.startAt;
     expressionValues[":endAt"] = params.endAt;
-    keyCondition += " AND #createdAt BETWEEN :startAt AND :endAt";
+    keyCondition += " AND #createdAt >= :startAt AND #createdAt < :endAt";
   } else if (params.startAt) {
     expressionNames["#createdAt"] = "createdAt";
     expressionValues[":startAt"] = params.startAt;
@@ -1276,7 +1276,7 @@ export async function listFeedbackByTargetType(params: {
   } else if (params.endAt) {
     expressionNames["#createdAt"] = "createdAt";
     expressionValues[":endAt"] = params.endAt;
-    keyCondition += " AND #createdAt <= :endAt";
+    keyCondition += " AND #createdAt < :endAt";
   }
 
   const query = new QueryCommand({

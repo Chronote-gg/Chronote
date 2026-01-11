@@ -1,6 +1,8 @@
 const {
   DynamoDBClient,
   CreateTableCommand,
+  DescribeTableCommand,
+  UpdateTableCommand,
 } = require("@aws-sdk/client-dynamodb");
 
 require("dotenv").config();
@@ -16,6 +18,15 @@ const client = new DynamoDBClient({
 
 const tablePrefix = process.env.DDB_TABLE_PREFIX || "";
 const tableName = (name) => `${tablePrefix}${name}`;
+const feedbackIndexName = "TargetTypeCreatedAtIndex";
+const feedbackIndexDefinition = {
+  IndexName: feedbackIndexName,
+  KeySchema: [
+    { AttributeName: "targetType", KeyType: "HASH" },
+    { AttributeName: "createdAt", KeyType: "RANGE" },
+  ],
+  Projection: { ProjectionType: "ALL" },
+};
 
 const tables = [
   {
@@ -248,6 +259,8 @@ async function createTables() {
     process.exit(1);
   }
 
+  let ensureFeedbackIndex = false;
+
   for (const table of tables) {
     const tableWithPrefix = {
       ...table,
@@ -259,6 +272,9 @@ async function createTables() {
     } catch (error) {
       if (error.name === "ResourceInUseException") {
         console.log(`⚠️  Table ${tableWithPrefix.TableName} already exists`);
+        if (table.TableName === "FeedbackTable") {
+          ensureFeedbackIndex = true;
+        }
       } else {
         console.error(
           `❌ Error creating table ${tableWithPrefix.TableName}:`,
@@ -268,8 +284,67 @@ async function createTables() {
     }
   }
 
+  if (ensureFeedbackIndex) {
+    await ensureFeedbackIndexExists();
+  }
+
   console.log("\nDynamoDB initialization complete!");
   console.log("You can view your tables at http://localhost:8001");
+}
+
+async function ensureFeedbackIndexExists() {
+  const feedbackTableName = tableName("FeedbackTable");
+
+  try {
+    const result = await client.send(
+      new DescribeTableCommand({ TableName: feedbackTableName }),
+    );
+    const existingIndexes = result.Table?.GlobalSecondaryIndexes ?? [];
+    const hasIndex = existingIndexes.some(
+      (index) => index.IndexName === feedbackIndexName,
+    );
+    if (hasIndex) {
+      console.log(
+        `FeedbackTable already has ${feedbackIndexName} on ${feedbackTableName}`,
+      );
+      return;
+    }
+  } catch (error) {
+    if (error.name === "ResourceNotFoundException") {
+      return;
+    }
+    console.error(
+      `Error describing table ${feedbackTableName}:`,
+      error.message,
+    );
+    return;
+  }
+
+  try {
+    await client.send(
+      new UpdateTableCommand({
+        TableName: feedbackTableName,
+        AttributeDefinitions: [
+          { AttributeName: "targetType", AttributeType: "S" },
+          { AttributeName: "createdAt", AttributeType: "S" },
+        ],
+        GlobalSecondaryIndexUpdates: [
+          {
+            Create: feedbackIndexDefinition,
+          },
+        ],
+      }),
+    );
+    console.log(`Added ${feedbackIndexName} to ${feedbackTableName}`);
+  } catch (error) {
+    console.error(
+      `Error adding ${feedbackIndexName} to ${feedbackTableName}:`,
+      error.message,
+    );
+    console.error(
+      "If you are using DynamoDB Local, delete the FeedbackTable and rerun init.",
+    );
+  }
 }
 
 createTables().catch((error) => {

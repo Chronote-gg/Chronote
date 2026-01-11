@@ -101,6 +101,49 @@ describe("listFeedbackEntries", () => {
     expect(secondPage.items[0]?.messageId).toBe("msg-1");
   });
 
+  it("excludes the cursor timestamp when paginating", async () => {
+    const repo = getFeedbackRepository();
+    await repo.write({
+      pk: "TARGET#ask_answer#conv-1#msg-2",
+      sk: "USER#u1",
+      type: "feedback",
+      targetType: "ask_answer",
+      targetId: "conv-1#msg-2",
+      guildId: "g1",
+      conversationId: "conv-1",
+      messageId: "msg-2",
+      rating: "up",
+      source: "web",
+      createdAt: "2025-01-04T00:00:00.000Z",
+      updatedAt: "2025-01-04T00:00:00.000Z",
+      userId: "u1",
+    });
+    await repo.write({
+      pk: "TARGET#ask_answer#conv-1#msg-1",
+      sk: "USER#u2",
+      type: "feedback",
+      targetType: "ask_answer",
+      targetId: "conv-1#msg-1",
+      guildId: "g1",
+      conversationId: "conv-1",
+      messageId: "msg-1",
+      rating: "down",
+      source: "web",
+      createdAt: "2025-01-03T00:00:00.000Z",
+      updatedAt: "2025-01-03T00:00:00.000Z",
+      userId: "u2",
+    });
+
+    const page = await listFeedbackEntries({
+      targetType: "ask_answer",
+      limit: 2,
+      cursor: "2025-01-04T00:00:00.000Z",
+    });
+
+    expect(page.items).toHaveLength(1);
+    expect(page.items[0]?.messageId).toBe("msg-1");
+  });
+
   it("fills a page when filters exclude early items", async () => {
     const repo = getFeedbackRepository();
     const records: Array<{

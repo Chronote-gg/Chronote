@@ -13,7 +13,13 @@ export const testIds = {
     ask: "nav-ask",
     billing: "nav-billing",
     settings: "nav-settings",
-    adminConfig: "nav-admin-config",
+  },
+  header: {
+    admin: "admin-cta",
+  },
+  adminHome: {
+    config: "admin-home-config",
+    feedback: "admin-home-feedback",
   },
   library: {
     page: "library-page",
@@ -74,5 +80,9 @@ export const testIds = {
     page: "admin-config-page",
     publish: "admin-config-publish",
     refresh: "admin-config-refresh",
+  },
+  adminFeedback: {
+    page: "admin-feedback-page",
+    refresh: "admin-feedback-refresh",
   },
 } as const;

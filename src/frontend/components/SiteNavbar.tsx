@@ -65,7 +65,7 @@ export function SiteNavbar({ onClose, pathname }: SiteNavbarProps) {
   const theme = useMantineTheme();
   const scheme = useComputedColorScheme("dark");
   const isDark = scheme === "dark";
-  const { state: authState, user } = useAuth();
+  const { state: authState } = useAuth();
   const { selectedGuildId, guilds } = useGuildContext();
   const navigate = useNavigate();
 
@@ -80,7 +80,6 @@ export function SiteNavbar({ onClose, pathname }: SiteNavbarProps) {
   const activeServerId = resolvedGuild?.id ?? selectedGuildId ?? null;
   const selectedServerName = resolvedGuild?.name ?? null;
   const canManage = resolvedGuild?.canManage ?? false;
-  const isSuperAdmin = Boolean(user?.isSuperAdmin);
 
   const resolveServerPath = (page: string) =>
     activeServerId
@@ -163,44 +162,6 @@ export function SiteNavbar({ onClose, pathname }: SiteNavbarProps) {
             );
           })}
         </Stack>
-
-        {isSuperAdmin ? (
-          <>
-            <Divider />
-            <Stack gap={4}>
-              <NavLink
-                label="Admin config"
-                description="Global overrides"
-                data-testid="nav-admin-config"
-                leftSection={
-                  <ThemeIcon variant="transparent" color="gray" size={34}>
-                    <IconSettings size={18} />
-                  </ThemeIcon>
-                }
-                onClick={() => {
-                  navigate({ to: "/portal/admin/config" });
-                  onClose?.();
-                }}
-                style={{ borderRadius: theme.radius[uiRadii.control] }}
-              />
-              <NavLink
-                label="Admin feedback"
-                description="Summary and Ask ratings"
-                data-testid="nav-admin-feedback"
-                leftSection={
-                  <ThemeIcon variant="transparent" color="gray" size={34}>
-                    <IconMessageCircle size={18} />
-                  </ThemeIcon>
-                }
-                onClick={() => {
-                  navigate({ to: "/portal/admin/feedback" });
-                  onClose?.();
-                }}
-                style={{ borderRadius: theme.radius[uiRadii.control] }}
-              />
-            </Stack>
-          </>
-        ) : null}
 
         <Divider />
 

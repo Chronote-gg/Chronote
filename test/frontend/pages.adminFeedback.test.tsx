@@ -38,10 +38,15 @@ describe("AdminFeedback page", () => {
             createdAt: "2025-01-01T00:00:00.000Z",
             updatedAt: "2025-01-01T00:00:00.000Z",
             userId: "user-1",
+            userTag: "base-user",
+            displayName: "Display Name",
             comment: "Needs more detail.",
           },
         ],
         nextCursor: null,
+        guildsById: {
+          "guild-1": "Guild One",
+        },
       },
       isLoading: false,
     });
@@ -54,5 +59,14 @@ describe("AdminFeedback page", () => {
       );
     });
     expect(document.body.textContent?.includes("Meeting summary")).toBe(true);
+    expect(
+      document.body.textContent?.includes("Display name: Display Name"),
+    ).toBe(true);
+    expect(
+      document.body.textContent?.includes("Discord username: base-user"),
+    ).toBe(true);
+    expect(
+      document.body.textContent?.includes("Guild: Guild One (guild-1)"),
+    ).toBe(true);
   });
 });

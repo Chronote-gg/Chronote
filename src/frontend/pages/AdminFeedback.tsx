@@ -55,6 +55,7 @@ export default function AdminFeedback() {
   const [rating, setRating] = useState<RatingValue>("all");
   const [source, setSource] = useState<SourceValue>("all");
   const [items, setItems] = useState<FeedbackRecord[]>([]);
+  const [guildsById, setGuildsById] = useState<Record<string, string>>({});
   const [pageCursor, setPageCursor] = useState<string | null>(null);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
@@ -74,6 +75,7 @@ export default function AdminFeedback() {
 
   useEffect(() => {
     setItems([]);
+    setGuildsById({});
     setPageCursor(null);
     setNextCursor(null);
     setIsLoadingMore(false);
@@ -81,10 +83,14 @@ export default function AdminFeedback() {
 
   useEffect(() => {
     if (!query.data) return;
+    const incomingGuilds = query.data.guildsById ?? {};
     setItems((prev) =>
       pageCursor
         ? mergeFeedbackItems(prev, query.data.items)
         : query.data.items,
+    );
+    setGuildsById((prev) =>
+      pageCursor ? { ...prev, ...incomingGuilds } : incomingGuilds,
     );
     setNextCursor(query.data.nextCursor ?? null);
     setIsLoadingMore(false);
@@ -98,6 +104,7 @@ export default function AdminFeedback() {
 
   const handleRefresh = () => {
     setItems([]);
+    setGuildsById({});
     setNextCursor(null);
     setPageCursor(null);
     void query.refetch();
@@ -199,11 +206,13 @@ export default function AdminFeedback() {
           ) : (
             items.map((item) => {
               const ratingColor = item.rating === "up" ? "teal" : "red";
-              const userLabel =
-                item.displayName ??
-                item.userTag ??
-                item.userId ??
-                "Unknown user";
+              const displayName = item.displayName?.trim() || "Unknown";
+              const userTag = item.userTag?.trim() || item.userId || "Unknown";
+              const guildLabel = item.guildId
+                ? `${guildsById[item.guildId] ?? "Unknown guild"} (${
+                    item.guildId
+                  })`
+                : "Unknown guild";
               return (
                 <Surface key={`${item.pk}:${item.sk}`} tone="soft" p="md">
                   <Group justify="space-between" align="center" wrap="wrap">
@@ -227,10 +236,13 @@ export default function AdminFeedback() {
                       {item.comment ? item.comment : "No comment provided."}
                     </Text>
                     <Text size="xs" c="dimmed">
-                      From: {userLabel}
+                      Display name: {displayName}
                     </Text>
                     <Text size="xs" c="dimmed">
-                      Guild: {item.guildId}
+                      Discord username: {userTag}
+                    </Text>
+                    <Text size="xs" c="dimmed">
+                      Guild: {guildLabel}
                     </Text>
                     <Text size="xs" c="dimmed">
                       Target: {item.targetId}

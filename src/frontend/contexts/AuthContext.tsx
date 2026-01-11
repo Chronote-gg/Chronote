@@ -29,7 +29,8 @@ const resolvePortalRedirect = (location?: Location) => {
   const useCurrentLocation =
     pathname.startsWith("/portal") ||
     pathname.startsWith("/live") ||
-    pathname.startsWith("/share");
+    pathname.startsWith("/share") ||
+    pathname.startsWith("/admin");
   if (useCurrentLocation) {
     return location.href;
   }
