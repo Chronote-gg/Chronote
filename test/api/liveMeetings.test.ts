@@ -9,7 +9,10 @@ import {
   ensureUserInGuild,
 } from "../../src/services/guildAccessService";
 import { ensureUserCanConnectChannel } from "../../src/services/discordPermissionsService";
-import { buildLiveMeetingMeta } from "../../src/services/liveMeetingService";
+import {
+  buildLiveMeetingMeta,
+  resolveLiveMeetingAttendees,
+} from "../../src/services/liveMeetingService";
 import { buildLiveMeetingTimelineEvents } from "../../src/services/meetingTimelineService";
 import type { LiveMeetingMeta } from "../../src/types/liveMeeting";
 import type { MeetingEvent } from "../../src/types/meetingTimeline";
@@ -31,6 +34,7 @@ jest.mock("../../src/services/discordPermissionsService", () => ({
 }));
 jest.mock("../../src/services/liveMeetingService", () => ({
   buildLiveMeetingMeta: jest.fn(),
+  resolveLiveMeetingAttendees: jest.fn(),
 }));
 jest.mock("../../src/services/meetingTimelineService", () => ({
   buildLiveMeetingTimelineEvents: jest.fn(),
@@ -51,6 +55,10 @@ const mockedEnsureUserCanConnectChannel =
 const mockedBuildLiveMeetingMeta = buildLiveMeetingMeta as jest.MockedFunction<
   typeof buildLiveMeetingMeta
 >;
+const mockedResolveLiveMeetingAttendees =
+  resolveLiveMeetingAttendees as jest.MockedFunction<
+    typeof resolveLiveMeetingAttendees
+  >;
 const mockedBuildLiveMeetingTimelineEvents =
   buildLiveMeetingTimelineEvents as jest.MockedFunction<
     typeof buildLiveMeetingTimelineEvents
@@ -191,6 +199,7 @@ test("streams init payload for live meeting", async () => {
   mockedEnsureUserCanConnectChannel.mockResolvedValue(true);
   mockedBuildLiveMeetingMeta.mockReturnValue(makeMeta());
   mockedBuildLiveMeetingTimelineEvents.mockReturnValue([makeEvent()]);
+  mockedResolveLiveMeetingAttendees.mockReturnValue([]);
 
   const { server, baseUrl } = createServer(true);
   try {

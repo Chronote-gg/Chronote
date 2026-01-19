@@ -27,7 +27,7 @@ import { v4 as uuidv4 } from "uuid";
 import { ChatEntry } from "./types/chat";
 import {
   buildParticipantSnapshot,
-  formatParticipantLabel,
+  formatUserMention,
   fromMember,
   fromUser,
 } from "./utils/participants";
@@ -256,12 +256,7 @@ export async function initializeMeeting(
       );
       if (participant) {
         meeting.participants.set(member.user.id, participant);
-        attendance.add(
-          formatParticipantLabel(participant, {
-            includeUsername: false,
-            fallbackName: member.user.username,
-          }),
-        );
+        attendance.add(formatUserMention(member.user.id));
       }
     }),
   );
@@ -304,12 +299,7 @@ export async function initializeMeeting(
     };
 
     meeting.chatLog.push(entry);
-    meeting.attendance.add(
-      formatParticipantLabel(participant, {
-        includeUsername: false,
-        fallbackName: message.author.username,
-      }),
-    );
+    meeting.attendance.add(formatUserMention(message.author.id));
 
     void maybeSpeakChatMessage(meeting, message, entry);
   });

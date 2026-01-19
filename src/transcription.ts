@@ -43,7 +43,10 @@ import {
   isMemoryEnabled,
 } from "./services/contextService";
 import { config } from "./services/configService";
-import { formatParticipantLabel } from "./utils/participants";
+import {
+  formatParticipantLabel,
+  resolveAttendeeDisplayName,
+} from "./utils/participants";
 import { getBotNameVariants } from "./utils/botNames";
 import { createOpenAIClient } from "./services/openaiClient";
 import { buildModelOverrides, getModelChoice } from "./services/modelFactory";
@@ -471,7 +474,7 @@ export async function getTranscriptionCoalescePrompt(
       formattedContext,
       serverName: meeting.guild.name,
       voiceChannelName: meeting.voiceChannel.name,
-      attendees: Array.from(meeting.attendance).join(", "),
+      attendees: resolveMeetingAttendees(meeting).join(", "),
       slowTranscript: input.slowTranscript,
       fastTranscriptBlock,
     },
@@ -581,12 +584,19 @@ async function chat(
   return output;
 }
 
+const resolveMeetingAttendees = (meeting: MeetingData): string[] => {
+  const participants = meeting.participants ?? new Map();
+  return Array.from(meeting.attendance).map((attendee) =>
+    resolveAttendeeDisplayName(attendee, participants),
+  );
+};
+
 // Generate the inner content of the glossary (without wrapper tags)
 function getTranscriptionGlossaryContent(meeting: MeetingData): string {
   const serverName = meeting.voiceChannel.guild.name;
   const channelName = meeting.voiceChannel.name;
   const serverDescription = meeting.guild.description || "";
-  const attendees = Array.from(meeting.attendance).join(", ");
+  const attendees = resolveMeetingAttendees(meeting).join(", ");
 
   let content = `Server Name: ${serverName}
 Channel: ${channelName}`;
@@ -661,7 +671,7 @@ export async function getTranscriptionCleanupPrompt(
     name: config.langfuse.transcriptionCleanupPromptName,
     variables: {
       formattedContext,
-      attendees: Array.from(meeting.attendance).join(", "),
+      attendees: resolveMeetingAttendees(meeting).join(", "),
       serverName,
       serverDescription,
       voiceChannelName: meeting.voiceChannel.name,
@@ -779,7 +789,8 @@ function formatParticipantRoster(meeting: MeetingData): string | undefined {
       const displayName = participant.displayName ?? "-";
       const serverNickname = participant.serverNickname ?? "-";
       const profile = `https://discord.com/users/${participant.id}`;
-      return `- ${preferred} | username: ${username} | display name: ${displayName} | server nickname: ${serverNickname} | id: ${participant.id} | profile: ${profile}`;
+      const mention = `<@${participant.id}>`;
+      return `- ${preferred} | username: ${username} | display name: ${displayName} | server nickname: ${serverNickname} | id: ${participant.id} | mention: ${mention} | profile: ${profile}`;
     })
     .join("\n");
 }
@@ -836,7 +847,7 @@ export async function getNotesPrompt(meeting: MeetingData) {
       serverName,
       serverDescription,
       voiceChannelName: meeting.voiceChannel.name,
-      attendees: Array.from(meeting.attendance).join(", "),
+      attendees: resolveMeetingAttendees(meeting).join(", "),
       roles,
       events,
       channelNames,
