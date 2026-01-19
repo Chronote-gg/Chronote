@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, test } from "@jest/globals";
 import { fireEvent, screen, waitFor } from "@testing-library/react";
 import { renderWithMantine, resetFrontendMocks } from "./testUtils";
 import { guildState } from "./testUtils";
+import { resolveNowMs } from "../../src/frontend/utils/now";
 import {
   feedbackSubmitSummaryMutation,
   setMeetingsDetailQuery,
@@ -11,6 +12,11 @@ import {
 } from "./mocks/trpc";
 import PortalServerLayout from "../../src/frontend/layouts/PortalServerLayout";
 import Library from "../../src/frontend/pages/Library";
+
+const MS_PER_DAY = 24 * 60 * 60 * 1000;
+
+const buildRecentTimestamp = () =>
+  new Date(resolveNowMs() - MS_PER_DAY).toISOString();
 
 describe("Library page", () => {
   beforeEach(() => {
@@ -44,7 +50,7 @@ describe("Library page", () => {
   });
 
   test("renders meeting details for a selected row", async () => {
-    const meetingTimestamp = "2025-12-20T12:00:00.000Z";
+    const meetingTimestamp = buildRecentTimestamp();
     setMeetingsListQuery({
       data: {
         meetings: [
@@ -104,7 +110,7 @@ describe("Library page", () => {
   });
 
   test("submits summary feedback from the meeting drawer", async () => {
-    const meetingTimestamp = "2025-12-20T12:00:00.000Z";
+    const meetingTimestamp = buildRecentTimestamp();
     setMeetingsListQuery({
       data: {
         meetings: [

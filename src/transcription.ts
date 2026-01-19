@@ -779,7 +779,8 @@ function formatParticipantRoster(meeting: MeetingData): string | undefined {
       const displayName = participant.displayName ?? "-";
       const serverNickname = participant.serverNickname ?? "-";
       const profile = `https://discord.com/users/${participant.id}`;
-      return `- ${preferred} | username: ${username} | display name: ${displayName} | server nickname: ${serverNickname} | id: ${participant.id} | profile: ${profile}`;
+      const mention = `<@${participant.id}>`;
+      return `- ${preferred} | username: ${username} | display name: ${displayName} | server nickname: ${serverNickname} | id: ${participant.id} | mention: ${mention} | profile: ${profile}`;
     })
     .join("\n");
 }

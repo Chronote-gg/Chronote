@@ -20,7 +20,9 @@ messages:
       transcript, and a user suggestion, make the smallest edits needed to
       satisfy the suggestion while preserving the existing structure and
       sections. Do NOT append or copy the transcript into the notes. Keep all
-      other content unchanged. Return the full revised notes as markdown.
+      other content unchanged. Preserve any `<@id>` mentions in Action Items,
+      Next Steps, and To-Do Items, and keep mention formatting when editing
+      those sections. Return the full revised notes as markdown.
   - role: user
     content: |
       Current notes:

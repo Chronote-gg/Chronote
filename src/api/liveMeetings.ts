@@ -5,7 +5,10 @@ import {
   ensureUserInGuild,
 } from "../services/guildAccessService";
 import { ensureUserCanConnectChannel } from "../services/discordPermissionsService";
-import { buildLiveMeetingMeta } from "../services/liveMeetingService";
+import {
+  buildLiveMeetingMeta,
+  resolveLiveMeetingAttendees,
+} from "../services/liveMeetingService";
 import { buildLiveMeetingTimelineEvents } from "../services/meetingTimelineService";
 import type { AuthedProfile } from "../trpc/context";
 import type {
@@ -199,7 +202,9 @@ export function registerLiveMeetingRoutes(app: express.Express) {
         const key = attendees.join("|");
         if (key === lastAttendeesKey) return;
         lastAttendeesKey = key;
-        const payload: LiveMeetingAttendeesPayload = { attendees };
+        const payload: LiveMeetingAttendeesPayload = {
+          attendees: resolveLiveMeetingAttendees(meeting),
+        };
         sendEvent("attendees", payload);
       };
 

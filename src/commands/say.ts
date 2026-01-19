@@ -7,7 +7,7 @@ import { fetchUserSpeechSettings } from "../services/userSpeechSettingsService";
 import { chatTtsDropped, chatTtsEnqueued } from "../metrics";
 import { buildUpgradePrompt } from "../utils/upgradePrompt";
 import { getGuildLimits } from "../services/subscriptionService";
-import { formatParticipantLabel, fromMember } from "../utils/participants";
+import { formatUserMention, fromMember } from "../utils/participants";
 import { resolveTtsVoice } from "../utils/ttsVoices";
 import type { MeetingData } from "../types/meeting-data";
 import type { ChatEntry } from "../types/chat";
@@ -223,12 +223,7 @@ export async function handleSayCommand(
   const participant =
     meeting.participants.get(interaction.user.id) ?? fromMember(member);
   meeting.participants.set(participant.id, participant);
-  meeting.attendance.add(
-    formatParticipantLabel(participant, {
-      includeUsername: false,
-      fallbackName: member.user.username,
-    }),
-  );
+  meeting.attendance.add(formatUserMention(participant.id));
 
   const entry: ChatEntry = {
     type: "message",

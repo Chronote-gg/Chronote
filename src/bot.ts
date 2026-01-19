@@ -29,7 +29,11 @@ import {
   resolveConfigSnapshot,
 } from "./services/unifiedConfigService";
 import { getGuildLimits } from "./services/subscriptionService";
-import { formatParticipantLabel, fromMember } from "./utils/participants";
+import {
+  formatParticipantLabel,
+  formatUserMention,
+  fromMember,
+} from "./utils/participants";
 import { parseTags } from "./utils/tags";
 import {
   handleEndMeetingButton,
@@ -532,7 +536,7 @@ async function handleUserJoin(newState: VoiceState) {
       fallbackName: newState.member.user.username,
     });
     console.log(`${userLabel} joined the voice channel.`);
-    meeting.attendance.add(userLabel);
+    meeting.attendance.add(formatUserMention(participant.id));
     meeting.participants.set(participant.id, participant);
     meeting.chatLog.push({
       type: "join",
