@@ -1,6 +1,8 @@
 import { Guild, GuildMember, User } from "discord.js";
 import { Participant } from "../types/participants";
 
+// Accept both legacy (<@!123>) and current (<@123>) mention formats.
+// Outgoing mentions normalize to <@id>, but we still parse stored legacy values.
 const DISCORD_MENTION_REGEX = /^<@!?(\d+)>$/;
 const DISCORD_PROFILE_REGEX =
   /https?:\/\/(?:ptb\.|canary\.)?discord\.com\/users\/(\d+)/i;
@@ -22,13 +24,11 @@ export function extractDiscordUserId(reference: string): string | undefined {
 
 export function resolveAttendeeDisplayName(
   attendee: string,
-  participants: Map<string, Participant> | Participant[],
+  participants: Map<string, Participant>,
 ): string {
   const id = extractDiscordUserId(attendee);
   if (!id) return attendee;
-  const participant = Array.isArray(participants)
-    ? participants.find((entry) => entry.id === id)
-    : participants.get(id);
+  const participant = participants.get(id);
   if (!participant) return attendee;
   return formatParticipantLabel(participant, {
     includeUsername: false,
