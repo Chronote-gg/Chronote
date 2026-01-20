@@ -1,5 +1,5 @@
 import { createTwoFilesPatch } from "diff";
-import { createPrompt, getPrompt } from "./langfuseApi";
+import { createPrompt, tryGetPrompt } from "./langfuseApi";
 import {
   compareChatMessages,
   compareLabelArrays,
@@ -207,21 +207,30 @@ async function main() {
     const commitMessage = resolveCommitMessage(prompt, commitOverride);
 
     try {
-      const remote = await getPrompt({ name: prompt.name, label: labels[0] });
-      const comparable: PromptComparable = {
-        type: prompt.type,
-        labels,
-        tags,
-        config,
-        prompt: prompt.prompt,
-      };
-      const matches = isPromptEqual(comparable, remote);
-      if (!matches && debugDiff) {
-        logPromptDiff(prompt.name, comparable, remote);
-      }
-      if (matches) {
-        console.log(`Skip ${prompt.name}, no changes.`);
-        continue;
+      const remote = await tryGetPrompt({
+        name: prompt.name,
+        label: labels[0],
+      });
+      if (!remote) {
+        console.log(
+          `Prompt ${prompt.name} not found in Langfuse (${labels[0]}), creating.`,
+        );
+      } else {
+        const comparable: PromptComparable = {
+          type: prompt.type,
+          labels,
+          tags,
+          config,
+          prompt: prompt.prompt,
+        };
+        const matches = isPromptEqual(comparable, remote);
+        if (!matches && debugDiff) {
+          logPromptDiff(prompt.name, comparable, remote);
+        }
+        if (matches) {
+          console.log(`Skip ${prompt.name}, no changes.`);
+          continue;
+        }
       }
     } catch (error) {
       console.warn(`Could not compare ${prompt.name}, pushing anyway.`);

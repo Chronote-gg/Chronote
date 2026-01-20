@@ -503,6 +503,7 @@ function runFastTranscription(meeting: MeetingData, snippet: AudioSnippet) {
   }
   void transcribeSnippet(meeting, snapshot, {
     tempSuffix: `fast-${revision}`,
+    noiseGateMode: "fast",
   })
     .then((transcription) => {
       if (snippet.fastRevision !== revision) return;
@@ -615,7 +616,10 @@ export function startProcessingSnippet(
       !shouldSkipByNoiseGate(meeting, snippet, "slow")
     ) {
       promises.push(
-        transcribeSnippet(meeting, snippet)
+        transcribeSnippet(meeting, snippet, {
+          noiseGateMode: "slow",
+          noiseGateEnabledOverride: options.forceTranscribe ? false : undefined,
+        })
           .then(async (transcription) => {
             audioFileData.slowTranscript = transcription;
             audioFileData.transcript = transcription;

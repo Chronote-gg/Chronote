@@ -1,4 +1,5 @@
 import type OpenAI from "openai";
+import type { TranscriptionCreateParamsNonStreaming } from "openai/resources/audio";
 import type { SpanContext } from "@opentelemetry/api";
 import { ChatEntry } from "./types/chat";
 import { renderChatEntryLine } from "./utils/chatLog";
@@ -12,10 +13,16 @@ import path from "node:path";
 import {
   BYTES_PER_SAMPLE,
   CHANNELS,
+  NOISE_GATE_APPLY_TO_FAST,
+  NOISE_GATE_APPLY_TO_SLOW,
+  NOISE_GATE_ENABLED,
+  NOISE_GATE_MIN_ACTIVE_WINDOWS,
+  NOISE_GATE_MIN_PEAK_ABOVE_NOISE_DB,
+  NOISE_GATE_PEAK_DBFS,
+  NOISE_GATE_WINDOW_MS,
   RECORD_SAMPLE_RATE,
   TRANSCRIPTION_BREAK_AFTER_CONSECUTIVE_FAILURES,
   TRANSCRIPTION_BREAK_DURATION,
-  TRANSCRIPTION_GLOSSARY_TERM_ONLY_MAX_SECONDS,
   LANGFUSE_AUDIO_ATTACHMENT_MAX_CONCURRENT,
   LANGFUSE_AUDIO_ATTACHMENT_MIN_TIME,
   TRANSCRIPTION_MAX_CONCURRENT,
@@ -55,14 +62,11 @@ import {
   buildDictionaryPromptLines,
   DEFAULT_DICTIONARY_BUDGETS,
 } from "./utils/dictionary";
-import {
-  buildGlossaryTermSet,
-  getPromptSimilarityMetrics,
-  isGlossaryTermOnlyTranscript,
-} from "./utils/transcriptionGuards";
+import { applyTranscriptionGuards } from "./utils/transcriptionGuards";
 import type { ModelParamRole } from "./config/types";
 import {
   getLangfuseChatPrompt,
+  getLangfuseTextPrompt,
   type LangfusePromptMeta,
 } from "./services/langfusePromptService";
 import { isLangfuseTracingEnabled } from "./services/langfuseClient";
@@ -74,89 +78,85 @@ import {
 import { buildLangfuseTranscriptionAudioAttachment } from "./observability/langfuseAudioAttachment";
 import { buildLangfuseTranscriptionUsageDetails } from "./observability/langfuseUsageDetails";
 import { ensureMeetingTempDirSync } from "./services/tempFileService";
+import { evaluateNoiseGate } from "./utils/audioNoiseGate";
 // import { Transcription, TranscriptionVerbose } from "openai/resources/audio/transcriptions";
-
-type TranscriptionGuardResult = {
-  text: string;
-  flags: string[];
-  promptSimilarity: ReturnType<typeof getPromptSimilarityMetrics>;
-  glossaryTermOnly: boolean;
-};
-
-export function applyTranscriptionGuards(
-  meeting: MeetingData,
-  transcription: string,
-  prompt: string,
-  glossaryContent: string,
-  context?: TranscriptionTraceContext,
-): TranscriptionGuardResult {
-  const trimmed = transcription.trim();
-  const suppressionEnabled =
-    meeting.runtimeConfig?.transcription.suppressionEnabled ?? true;
-  const promptSimilarity = getPromptSimilarityMetrics({
-    transcription: trimmed,
-    fullPrompt: prompt,
-    glossaryContent,
-  });
-  if (!suppressionEnabled) {
-    return {
-      text: trimmed,
-      flags: [],
-      promptSimilarity,
-      glossaryTermOnly: false,
-    };
-  }
-  const termSet = buildGlossaryTermSet({
-    serverName: meeting.guild.name,
-    channelName: meeting.voiceChannel.name,
-    dictionaryTerms: meeting.dictionaryEntries?.map((entry) => entry.term),
-  });
-  const glossaryTermOnly = isGlossaryTermOnlyTranscript(trimmed, termSet);
-  const flags: string[] = [];
-
-  if (promptSimilarity.isPromptLike) {
-    flags.push("prompt_like");
-  }
-
-  const maxGlossarySeconds = TRANSCRIPTION_GLOSSARY_TERM_ONLY_MAX_SECONDS;
-  const audioSeconds = context?.audioSeconds ?? 0;
-  const shouldSuppressGlossaryTerm =
-    glossaryTermOnly && audioSeconds > 0 && audioSeconds < maxGlossarySeconds;
-
-  if (glossaryTermOnly) {
-    flags.push("glossary_term_only");
-  }
-
-  const shouldSuppressPromptLike = promptSimilarity.isPromptLike;
-  const text =
-    shouldSuppressGlossaryTerm || shouldSuppressPromptLike ? "" : trimmed;
-  if (shouldSuppressGlossaryTerm) {
-    flags.push("glossary_term_suppressed");
-  }
-  if (shouldSuppressPromptLike) {
-    flags.push("prompt_suppressed");
-  }
-
-  return { text, flags, promptSimilarity, glossaryTermOnly };
-}
 
 type TranscriptionTraceContext = {
   userId: string;
   timestamp: number;
   audioSeconds: number;
   audioBytes: number;
+  noiseGateEnabled?: boolean;
+  noiseGateMetrics?: ReturnType<typeof evaluateNoiseGate>["metrics"];
 };
 
 const getMeetingModelOverrides = (meeting: MeetingData) =>
   buildModelOverrides(meeting.runtimeConfig?.modelChoices);
+
+const DEFAULT_NOISE_GATE_CONFIG = {
+  enabled: NOISE_GATE_ENABLED,
+  windowMs: NOISE_GATE_WINDOW_MS,
+  peakDbfs: NOISE_GATE_PEAK_DBFS,
+  minActiveWindows: NOISE_GATE_MIN_ACTIVE_WINDOWS,
+  minPeakAboveNoiseDb: NOISE_GATE_MIN_PEAK_ABOVE_NOISE_DB,
+  applyToFast: NOISE_GATE_APPLY_TO_FAST,
+  applyToSlow: NOISE_GATE_APPLY_TO_SLOW,
+};
+
+async function getTranscriptionPrompt(meeting: MeetingData) {
+  const serverName = meeting.voiceChannel.guild.name;
+  const channelName = meeting.voiceChannel.name;
+  const serverDescription = meeting.guild.description || "";
+  const attendees = resolveMeetingAttendees(meeting).join(", ");
+
+  const botNames = getBotNameVariants(
+    meeting.guild.members.me,
+    meeting.guild.client.user,
+  );
+
+  const budgets =
+    meeting.runtimeConfig?.dictionary ?? DEFAULT_DICTIONARY_BUDGETS;
+  const { transcriptionLines } = buildDictionaryPromptLines(
+    meeting.dictionaryEntries ?? [],
+    budgets,
+  );
+
+  const serverDescriptionLine = serverDescription
+    ? `Server Description: ${serverDescription}`
+    : "";
+  const attendeesLine = `Attendees: ${attendees}`;
+  const botNamesLine =
+    botNames.length > 0 ? `Bot Names: ${botNames.join(", ")}` : "";
+  const dictionaryBlock =
+    transcriptionLines.length > 0
+      ? `Dictionary terms:\n${transcriptionLines.join("\n")}`
+      : "";
+  const meetingContextLine = meeting.meetingContext
+    ? `Meeting Context: ${meeting.meetingContext}`
+    : "";
+
+  return await getLangfuseTextPrompt({
+    name: config.langfuse.transcriptionPromptName,
+    variables: {
+      serverName,
+      channelName,
+      serverDescriptionLine,
+      attendeesLine,
+      botNamesLine,
+      dictionaryBlock,
+      meetingContextLine,
+    },
+  });
+}
 
 async function transcribeInternal(
   meeting: MeetingData,
   file: string,
   context?: TranscriptionTraceContext,
 ): Promise<string> {
-  const glossaryContent = getTranscriptionGlossaryContent(meeting);
-  const prompt = getTranscriptionKeywords(meeting);
+  const { prompt, langfusePrompt } = await getTranscriptionPrompt(meeting);
+  const promptValue = prompt.trim();
+  const resolvedPrompt = promptValue.length > 0 ? promptValue : undefined;
 
   const modelChoice = getModelChoice(
     "transcription",
@@ -170,37 +170,50 @@ async function transcribeInternal(
     snippetTimestamp: context?.timestamp,
     audioSeconds: context?.audioSeconds,
     audioBytes: context?.audioBytes,
-    promptLength: prompt.length,
+    promptLength: resolvedPrompt?.length ?? 0,
+    promptName: langfusePrompt?.name,
+    promptVersion: langfusePrompt?.version,
+    promptFallback: langfusePrompt?.isFallback ?? false,
   };
 
   const runTranscription = async (openAIClient: OpenAI) => {
-    const transcription = await openAIClient.audio.transcriptions.create({
+    const request: TranscriptionCreateParamsNonStreaming<"json"> = {
       file: createReadStream(file),
       model: modelChoice.model,
       language: "en",
-      prompt: prompt,
       temperature: 0,
       response_format: "json",
-      // include: ["logprobs"],
-    });
-    return transcription.text;
+      include: ["logprobs"],
+      ...(resolvedPrompt ? { prompt: resolvedPrompt } : {}),
+    };
+    const transcription =
+      await openAIClient.audio.transcriptions.create(request);
+    return {
+      text: transcription.text ?? "",
+      logprobs: transcription.logprobs ?? [],
+    };
   };
 
-  const applyGuardsAndLog = (rawText: string) => {
-    const guardResult = applyTranscriptionGuards(
-      meeting,
-      rawText,
-      prompt,
-      glossaryContent,
-      context,
-    );
+  const applyGuardsAndLog = (raw: {
+    text: string;
+    logprobs?: { logprob?: number }[];
+  }) => {
+    const guardResult = applyTranscriptionGuards({
+      transcription: raw.text,
+      suppressionEnabled:
+        meeting.runtimeConfig?.transcription.suppressionEnabled ?? true,
+      noiseGateEnabled: context?.noiseGateEnabled ?? false,
+      noiseGateMetrics: context?.noiseGateMetrics,
+      logprobs: raw.logprobs,
+    });
 
     if (guardResult.flags.length > 0) {
       console.warn("Transcription flagged by guard checks.", {
         ...traceMetadata,
         flags: guardResult.flags,
-        promptSimilarity: guardResult.promptSimilarity,
-        glossaryTermOnly: guardResult.glossaryTermOnly,
+        quietAudio: guardResult.quietAudio,
+        logprobMetrics: guardResult.logprobMetrics,
+        noiseGateMetrics: context?.noiseGateMetrics,
         transcriptionLength: guardResult.text.length,
       });
     }
@@ -216,6 +229,7 @@ async function transcribeInternal(
       sessionId: meeting.meetingId,
       tags: ["feature:transcription"],
       metadata: traceMetadata,
+      langfusePrompt,
     });
     const output = await runTranscription(openAIClient);
     return applyGuardsAndLog(output).text;
@@ -232,7 +246,7 @@ async function transcribeInternal(
       });
       const observationInput = {
         language: "en",
-        prompt,
+        ...(resolvedPrompt ? { prompt: resolvedPrompt } : {}),
       };
       updateActiveObservation(
         {
@@ -241,6 +255,7 @@ async function transcribeInternal(
           modelParameters: {
             temperature: 0,
             response_format: "json",
+            include: ["logprobs"],
           },
           metadata: traceMetadata,
         },
@@ -272,7 +287,10 @@ async function transcribeInternal(
           );
         });
 
-      const openAIClient = createOpenAIClient({ disableTracing: true });
+      const openAIClient = createOpenAIClient({
+        disableTracing: true,
+        langfusePrompt,
+      });
       const output = await runTranscription(openAIClient);
       const guardResult = applyGuardsAndLog(output);
 
@@ -285,8 +303,10 @@ async function transcribeInternal(
           usageDetails,
           metadata: {
             transcriptionFlags: guardResult.flags,
-            promptSimilarity: guardResult.promptSimilarity,
-            glossaryTermOnly: guardResult.glossaryTermOnly,
+            quietAudio: guardResult.quietAudio,
+            logprobMetrics: guardResult.logprobMetrics,
+            noiseGateMetrics: context?.noiseGateMetrics,
+            suppressed: guardResult.suppressed,
           },
         },
         { asType: "generation" },
@@ -337,7 +357,11 @@ async function transcribe(
 export async function transcribeSnippet(
   meeting: MeetingData,
   snippet: AudioSnippet,
-  options: { tempSuffix?: string } = {},
+  options: {
+    tempSuffix?: string;
+    noiseGateMode?: "fast" | "slow";
+    noiseGateEnabledOverride?: boolean;
+  } = {},
 ): Promise<string> {
   const suffix = options.tempSuffix ? `_${options.tempSuffix}` : "";
   const tempDir = ensureMeetingTempDirSync(meeting);
@@ -355,6 +379,23 @@ export async function transcribeSnippet(
   const audioBytes = buffer.length;
   const audioSeconds =
     audioBytes / (RECORD_SAMPLE_RATE * CHANNELS * BYTES_PER_SAMPLE);
+  const noiseGateConfig =
+    meeting.runtimeConfig?.transcription.noiseGate ?? DEFAULT_NOISE_GATE_CONFIG;
+  const noiseGateMode = options.noiseGateMode ?? "slow";
+  const noiseGateEnabled =
+    options.noiseGateEnabledOverride ??
+    (noiseGateConfig.enabled &&
+      (noiseGateMode === "fast"
+        ? noiseGateConfig.applyToFast
+        : noiseGateConfig.applyToSlow));
+  const noiseGateMetrics =
+    noiseGateEnabled && buffer.length > 0
+      ? evaluateNoiseGate(buffer, noiseGateConfig, {
+          sampleRate: RECORD_SAMPLE_RATE,
+          channels: CHANNELS,
+          bytesPerSample: BYTES_PER_SAMPLE,
+        }).metrics
+      : undefined;
   writeFileSync(tempPcmFileName, buffer);
 
   // Convert PCM to WAV using ffmpeg
@@ -387,6 +428,8 @@ export async function transcribeSnippet(
       timestamp: snippet.timestamp,
       audioSeconds,
       audioBytes,
+      noiseGateEnabled,
+      noiseGateMetrics,
     });
 
     // Cleanup temporary files
@@ -590,60 +633,6 @@ const resolveMeetingAttendees = (meeting: MeetingData): string[] => {
     resolveAttendeeDisplayName(attendee, participants),
   );
 };
-
-// Generate the inner content of the glossary (without wrapper tags)
-function getTranscriptionGlossaryContent(meeting: MeetingData): string {
-  const serverName = meeting.voiceChannel.guild.name;
-  const channelName = meeting.voiceChannel.name;
-  const serverDescription = meeting.guild.description || "";
-  const attendees = resolveMeetingAttendees(meeting).join(", ");
-
-  let content = `Server Name: ${serverName}
-Channel: ${channelName}`;
-
-  if (serverDescription) {
-    content += `\nServer Description: ${serverDescription}`;
-  }
-
-  content += `\nAttendees: ${attendees}`;
-
-  const botNames = getBotNameVariants(
-    meeting.guild.members.me,
-    meeting.guild.client.user,
-  );
-  if (botNames.length > 0) {
-    content += `\nBot Names: ${botNames.join(", ")}`;
-  }
-
-  return content;
-}
-
-// Get keywords from the server that are likely to help the translation, such as server name, channel names, role names, and attendee names
-export function getTranscriptionKeywords(meeting: MeetingData): string {
-  let content = getTranscriptionGlossaryContent(meeting);
-
-  const budgets =
-    meeting.runtimeConfig?.dictionary ?? DEFAULT_DICTIONARY_BUDGETS;
-  const { transcriptionLines } = buildDictionaryPromptLines(
-    meeting.dictionaryEntries ?? [],
-    budgets,
-  );
-  if (transcriptionLines.length > 0) {
-    content += `\nDictionary terms:\n${transcriptionLines.join("\n")}`;
-  }
-
-  // Add meeting context if provided
-  if (meeting.meetingContext) {
-    content += `\nMeeting Context: ${meeting.meetingContext}`;
-  }
-
-  content +=
-    "\nTranscript instruction: Do not include any glossary text in the transcript.";
-
-  return `<glossary>(do not include in transcript):
-${content}
-</glossary>`;
-}
 
 export async function getTranscriptionCleanupPrompt(
   meeting: MeetingData,

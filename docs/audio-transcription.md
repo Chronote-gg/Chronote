@@ -19,6 +19,8 @@ Chronote records voice audio, builds per speaker snippets, and runs transcriptio
 - Fast only finalization can skip the slow pass if the latest fast transcript covers the full snippet byte length.
 - Interjection splitting checks for a validated interjection snippet before finalizing other paused snippets.
 - Noise gate checks peak levels in short windows and skips snippets that are very quiet and lack speech-like peaks.
+- Transcription prompt is Langfuse-managed (`chronote-transcription-prompt`) and can be adjusted for experiments, including removing the prompt entirely.
+- Post-transcription suppression uses noise gate metrics plus token logprobs to drop low-confidence text from quiet audio.
 
 ## Langfuse audio attachments
 
@@ -79,7 +81,8 @@ The noise gate is a lightweight, peak-based check to skip clips that are very qu
 - The gate splits audio into short windows and measures peak dBFS per window.
 - A noise floor is estimated from low percentile windows, then windows above the noise floor plus the configured offset count as active.
 - A snippet is skipped only when the overall peak stays below the configured threshold and there are too few active windows.
-- Forced transcriptions, such as live voice commands, bypass the gate.
+- Forced transcriptions, such as live voice commands, bypass the gate and quiet-audio suppression.
+- Low-confidence transcripts from quiet audio are suppressed using token logprobs, even when a snippet makes it past the gate.
 
 ## Cleanup behavior
 

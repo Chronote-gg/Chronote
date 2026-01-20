@@ -183,7 +183,7 @@ export const CONFIG_REGISTRY: ConfigEntry[] = [
     key: "transcription.suppression.enabled",
     label: "Transcription suppression",
     description:
-      "Enable guardrails that suppress prompt-like or glossary-only transcription output.",
+      "Enable guardrails that suppress low-confidence text from quiet audio.",
     category: "Transcription",
     group: "Advanced",
     valueType: "boolean",

@@ -1,110 +1,102 @@
-import { distance as levenshteinDistance } from "fastest-levenshtein";
-import { TRANSCRIPTION_PROMPT_SIMILARITY_THRESHOLD } from "../constants";
+import type { NoiseGateMetrics } from "./audioNoiseGate";
+import {
+  TRANSCRIPTION_LOGPROB_AVG_THRESHOLD,
+  TRANSCRIPTION_LOGPROB_MIN_THRESHOLD,
+} from "../constants";
 
-type PromptSimilarityInput = {
+type LogprobEntry = {
+  logprob?: number;
+};
+
+export type LogprobMetrics = {
+  avgLogprob: number;
+  minLogprob: number;
+  tokenCount: number;
+};
+
+export type TranscriptionGuardResult = {
+  text: string;
+  flags: string[];
+  logprobMetrics?: LogprobMetrics;
+  quietAudio: boolean;
+  suppressed: boolean;
+};
+
+const normalizeValue = (value: string) => value.trim();
+
+const buildLogprobMetrics = (
+  logprobs?: LogprobEntry[],
+): LogprobMetrics | undefined => {
+  if (!logprobs || logprobs.length === 0) return undefined;
+  const values = logprobs
+    .map((entry) => entry.logprob)
+    .filter((value): value is number => Number.isFinite(value));
+  if (values.length === 0) return undefined;
+  const sum = values.reduce((acc, value) => acc + value, 0);
+  return {
+    avgLogprob: sum / values.length,
+    minLogprob: Math.min(...values),
+    tokenCount: values.length,
+  };
+};
+
+const isQuietAudio = (
+  enabled: boolean,
+  metrics?: NoiseGateMetrics,
+): boolean => {
+  if (!enabled || !metrics) return false;
+  return (
+    metrics.peakDbfs <= metrics.thresholdDbfs ||
+    metrics.activeWindowCount < metrics.minActiveWindows
+  );
+};
+
+export function applyTranscriptionGuards(input: {
   transcription: string;
-  fullPrompt: string;
-  glossaryContent: string;
-  threshold?: number;
-};
-
-export type PromptSimilarityMetrics = {
-  similarityFull: number;
-  similarityContent: number;
-  similarityFirstLine: number;
-  isPromptLike: boolean;
-};
-
-const normalizeValue = (value: string) => value.trim().toLowerCase();
-
-export function getPromptSimilarityMetrics(
-  input: PromptSimilarityInput,
-): PromptSimilarityMetrics {
-  const normalizedTranscription = normalizeValue(input.transcription);
-  const normalizedPrompt = normalizeValue(input.fullPrompt);
-  const normalizedGlossary = normalizeValue(input.glossaryContent);
-  const firstLineOfGlossary = normalizeValue(
-    input.glossaryContent.split("\n")[0] ?? "",
+  suppressionEnabled: boolean;
+  noiseGateEnabled: boolean;
+  noiseGateMetrics?: NoiseGateMetrics;
+  logprobs?: LogprobEntry[];
+}): TranscriptionGuardResult {
+  const trimmed = normalizeValue(input.transcription);
+  const flags: string[] = [];
+  const quietAudio = isQuietAudio(
+    input.noiseGateEnabled,
+    input.noiseGateMetrics,
   );
+  const logprobMetrics = buildLogprobMetrics(input.logprobs);
 
-  const distanceFull = levenshteinDistance(
-    normalizedTranscription,
-    normalizedPrompt,
-  );
-  const distanceContent = levenshteinDistance(
-    normalizedTranscription,
-    normalizedGlossary,
-  );
-  const distanceFirstLine = levenshteinDistance(
-    normalizedTranscription,
-    firstLineOfGlossary,
-  );
+  if (quietAudio) {
+    flags.push("quiet_audio");
+    if (!logprobMetrics) {
+      flags.push("logprobs_missing");
+    }
+  }
 
-  const maxLengthFull = Math.max(
-    normalizedTranscription.length,
-    normalizedPrompt.length,
-  );
-  const maxLengthContent = Math.max(
-    normalizedTranscription.length,
-    normalizedGlossary.length,
-  );
-  const maxLengthFirstLine = Math.max(
-    normalizedTranscription.length,
-    firstLineOfGlossary.length,
-  );
+  const lowConfidence =
+    logprobMetrics &&
+    logprobMetrics.avgLogprob <= TRANSCRIPTION_LOGPROB_AVG_THRESHOLD &&
+    logprobMetrics.minLogprob <= TRANSCRIPTION_LOGPROB_MIN_THRESHOLD;
 
-  // These are normalized edit distance ratios, lower means more similar.
-  const similarityFull = maxLengthFull > 0 ? distanceFull / maxLengthFull : 0;
-  const similarityContent =
-    maxLengthContent > 0 ? distanceContent / maxLengthContent : 0;
-  const similarityFirstLine =
-    maxLengthFirstLine > 0 ? distanceFirstLine / maxLengthFirstLine : 0;
+  if (quietAudio && lowConfidence) {
+    flags.push("low_confidence");
+  }
 
-  const threshold =
-    input.threshold ?? TRANSCRIPTION_PROMPT_SIMILARITY_THRESHOLD;
+  const suppressed =
+    input.suppressionEnabled &&
+    quietAudio &&
+    Boolean(trimmed) &&
+    !!lowConfidence;
+
+  if (suppressed) {
+    flags.push("suppressed_low_confidence");
+  }
 
   return {
-    similarityFull,
-    similarityContent,
-    similarityFirstLine,
-    isPromptLike:
-      similarityFull < threshold ||
-      similarityContent < threshold ||
-      similarityFirstLine < threshold,
+    text: suppressed ? "" : trimmed,
+    flags: input.suppressionEnabled ? flags : [],
+    logprobMetrics,
+    quietAudio,
+    suppressed,
   };
-}
-
-export type GlossaryTermsInput = {
-  serverName?: string;
-  channelName?: string;
-  dictionaryTerms?: string[];
-};
-
-export function buildGlossaryTermSet(input: GlossaryTermsInput): Set<string> {
-  const terms = new Set<string>();
-  const add = (value?: string) => {
-    if (!value) return;
-    const normalized = normalizeValue(value);
-    if (normalized) {
-      terms.add(normalized);
-    }
-  };
-
-  add(input.serverName);
-  add(input.channelName);
-
-  (input.dictionaryTerms ?? []).forEach((term) => add(term));
-
-  return terms;
-}
-
-export function isGlossaryTermOnlyTranscript(
-  transcript: string,
-  termSet: Set<string>,
-): boolean {
-  const trimmed = transcript.trim();
-  if (!trimmed) return false;
-  if (trimmed.includes("\n")) return false;
-
-  return termSet.has(normalizeValue(trimmed));
 }
