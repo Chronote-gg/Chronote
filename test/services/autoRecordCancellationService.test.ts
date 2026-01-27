@@ -74,6 +74,7 @@ const buildRuntimeConfig = (
   const base: MeetingRuntimeConfig = {
     transcription: {
       suppressionEnabled: true,
+      promptEchoEnabled: true,
       fastSilenceMs: 500,
       slowSilenceMs: 1000,
       minSnippetSeconds: 1,

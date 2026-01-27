@@ -181,9 +181,24 @@ export const CONFIG_REGISTRY: ConfigEntry[] = [
   },
   {
     key: "transcription.suppression.enabled",
-    label: "Transcription suppression",
+    label: "Loudness gate",
     description:
-      "Enable guardrails that suppress low-confidence text from quiet audio.",
+      "Suppress low-confidence text from quiet audio using logprob checks.",
+    category: "Transcription",
+    group: "Advanced",
+    valueType: "boolean",
+    defaultValue: true,
+    scopes: {
+      global: scope(true, true, "superadmin", "toggle"),
+      server: scope(true, false, "admin", "tri-state"),
+    },
+    ui: { type: "toggle" },
+  },
+  {
+    key: "transcription.promptEcho.enabled",
+    label: "Prompt echo gate",
+    description:
+      "Suppress text that appears to repeat the transcription prompt.",
     category: "Transcription",
     group: "Advanced",
     valueType: "boolean",

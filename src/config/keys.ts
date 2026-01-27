@@ -6,6 +6,7 @@ export const CONFIG_KEYS = {
     premiumEnabled: "transcription.premium.enabled",
     premiumCleanupEnabled: "transcription.premium.cleanup.enabled",
     suppressionEnabled: "transcription.suppression.enabled",
+    promptEchoEnabled: "transcription.promptEcho.enabled",
     fastSilenceMs: "transcription.fastSilenceMs",
     slowSilenceMs: "transcription.slowSilenceMs",
     minSnippetSeconds: "transcription.minSnippetSeconds",

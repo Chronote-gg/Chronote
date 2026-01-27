@@ -30,7 +30,7 @@ import {
   cleanupTranscription,
   coalesceTranscription,
   transcribeSnippet,
-} from "./transcription";
+} from "./services/transcriptionService";
 import { buildModelOverrides, getModelChoice } from "./services/modelFactory";
 import { formatParticipantLabel } from "./utils/participants";
 import ffmpeg from "fluent-ffmpeg";

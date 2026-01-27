@@ -17,6 +17,7 @@ describe("applyTranscriptionGuards", () => {
     const result = applyTranscriptionGuards({
       transcription: "I think we should start with the Vket event.",
       suppressionEnabled: true,
+      promptEchoEnabled: false,
       noiseGateEnabled: true,
       noiseGateMetrics: quietMetrics,
       logprobs: [{ logprob: -1.4 }, { logprob: -2.6 }],
@@ -36,6 +37,7 @@ describe("applyTranscriptionGuards", () => {
     const result = applyTranscriptionGuards({
       transcription: "hello there",
       suppressionEnabled: true,
+      promptEchoEnabled: false,
       noiseGateEnabled: false,
       logprobs: [{ logprob: -3 }],
     });
@@ -48,12 +50,46 @@ describe("applyTranscriptionGuards", () => {
     const result = applyTranscriptionGuards({
       transcription: "quiet but suppression is off",
       suppressionEnabled: false,
+      promptEchoEnabled: false,
       noiseGateEnabled: true,
       noiseGateMetrics: quietMetrics,
       logprobs: [{ logprob: -2.5 }],
     });
 
     expect(result.text).toBe("quiet but suppression is off");
+    expect(result.flags).toEqual([]);
+  });
+
+  test("suppresses prompt echo when enabled", () => {
+    const result = applyTranscriptionGuards({
+      transcription: "Server Name: BASIC's Creations",
+      suppressionEnabled: false,
+      promptEchoEnabled: true,
+      promptText:
+        "Server Name: BASIC's Creations Channel: staff-chat Attendees: BASIC",
+      noiseGateEnabled: false,
+    });
+
+    expect(result.text).toBe("");
+    expect(result.flags).toEqual(
+      expect.arrayContaining([
+        "prompt_echo_substring",
+        "suppressed_prompt_echo",
+      ]),
+    );
+  });
+
+  test("keeps text when prompt echo gate is disabled", () => {
+    const result = applyTranscriptionGuards({
+      transcription: "Server Name: BASIC's Creations",
+      suppressionEnabled: false,
+      promptEchoEnabled: false,
+      promptText:
+        "Server Name: BASIC's Creations Channel: staff-chat Attendees: BASIC",
+      noiseGateEnabled: false,
+    });
+
+    expect(result.text).toBe("Server Name: BASIC's Creations");
     expect(result.flags).toEqual([]);
   });
 });
