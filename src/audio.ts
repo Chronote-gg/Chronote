@@ -619,6 +619,9 @@ export function startProcessingSnippet(
         transcribeSnippet(meeting, snippet, {
           noiseGateMode: "slow",
           noiseGateEnabledOverride: options.forceTranscribe ? false : undefined,
+          suppressionEnabledOverride: options.forceTranscribe
+            ? false
+            : undefined,
         })
           .then(async (transcription) => {
             audioFileData.slowTranscript = transcription;

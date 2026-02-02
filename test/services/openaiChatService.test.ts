@@ -13,7 +13,9 @@ const buildMeeting = (): MeetingData =>
     },
   }) as MeetingData;
 
-const loadModule = async (responses: { content: string; finish: string }[]) => {
+const loadModule = async (
+  responses: { content: string | null; finish: string }[],
+) => {
   jest.resetModules();
   let callIndex = 0;
   const completionCreate = jest.fn().mockImplementation(() => {
@@ -74,5 +76,17 @@ describe("openaiChatService", () => {
 
     expect(output).toBe("hello world");
     expect(completionCreate).toHaveBeenCalledTimes(2);
+  });
+
+  test("chat stops when content is empty", async () => {
+    const { module, completionCreate } = await loadModule([
+      { content: null, finish: "stop" },
+    ]);
+    const meeting = buildMeeting();
+
+    const output = await module.chat(meeting, { messages: [] });
+
+    expect(output).toBe("");
+    expect(completionCreate).toHaveBeenCalledTimes(1);
   });
 });

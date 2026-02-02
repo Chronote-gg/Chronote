@@ -42,8 +42,6 @@ export async function getImage(meeting: MeetingData): Promise<string> {
     },
   );
 
-  console.log(imagePrompt);
-
   const imageModel = getModelChoice("image", getMeetingModelOverrides(meeting));
   const imageClient = createOpenAIClient({
     traceName: "image",

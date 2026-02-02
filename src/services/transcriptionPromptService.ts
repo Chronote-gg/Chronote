@@ -5,6 +5,7 @@ import { config } from "./configService";
 import {
   getLangfuseChatPrompt,
   getLangfuseTextPrompt,
+  type TextPromptResult,
 } from "./langfusePromptService";
 import { getBotNameVariants } from "../utils/botNames";
 import {
@@ -13,7 +14,19 @@ import {
 } from "../utils/dictionary";
 import { resolveMeetingAttendees } from "../utils/meetingAttendees";
 
-export async function getTranscriptionPrompt(meeting: MeetingData) {
+type TranscriptionPromptVariables = {
+  serverName: string;
+  channelName: string;
+  serverDescriptionLine: string;
+  attendeesLine: string;
+  botNamesLine: string;
+  dictionaryBlock: string;
+  meetingContextLine: string;
+};
+
+const buildTranscriptionPromptVariables = (
+  meeting: MeetingData,
+): TranscriptionPromptVariables => {
   const serverName = meeting.voiceChannel.guild.name;
   const channelName = meeting.voiceChannel.name;
   const serverDescription = meeting.guild.description || "";
@@ -45,18 +58,59 @@ export async function getTranscriptionPrompt(meeting: MeetingData) {
     ? `Meeting Context: ${meeting.meetingContext}`
     : "";
 
-  return await getLangfuseTextPrompt({
-    name: config.langfuse.transcriptionPromptName,
-    variables: {
-      serverName,
-      channelName,
-      serverDescriptionLine,
-      attendeesLine,
-      botNamesLine,
-      dictionaryBlock,
-      meetingContextLine,
+  return {
+    serverName,
+    channelName,
+    serverDescriptionLine,
+    attendeesLine,
+    botNamesLine,
+    dictionaryBlock,
+    meetingContextLine,
+  };
+};
+
+const buildFallbackTranscriptionPrompt = (
+  variables: TranscriptionPromptVariables,
+): TextPromptResult => {
+  const lines = [
+    "<glossary>(do not include in transcript):",
+    `Server Name: ${variables.serverName}`,
+    `Channel: ${variables.channelName}`,
+    variables.serverDescriptionLine,
+    variables.attendeesLine,
+    variables.botNamesLine,
+    variables.dictionaryBlock,
+    variables.meetingContextLine,
+    "Transcript instruction: Do not include any glossary text in the transcript.",
+    "</glossary>",
+  ].filter((line) => line !== "");
+
+  return {
+    prompt: lines.join("\n"),
+    langfusePrompt: {
+      name: config.langfuse.transcriptionPromptName,
+      version: 0,
+      isFallback: true,
     },
-  });
+    source: "fallback",
+  };
+};
+
+export async function getTranscriptionPrompt(meeting: MeetingData) {
+  const variables = buildTranscriptionPromptVariables(meeting);
+
+  try {
+    return await getLangfuseTextPrompt({
+      name: config.langfuse.transcriptionPromptName,
+      variables,
+    });
+  } catch (error) {
+    console.warn(
+      "Langfuse transcription prompt unavailable, using fallback.",
+      error,
+    );
+    return buildFallbackTranscriptionPrompt(variables);
+  }
 }
 
 export async function getTranscriptionCleanupPrompt(

@@ -79,6 +79,7 @@ type TranscriptionTraceContext = {
   audioBytes: number;
   noiseGateEnabled?: boolean;
   noiseGateMetrics?: ReturnType<typeof evaluateNoiseGate>["metrics"];
+  suppressionEnabledOverride?: boolean;
 };
 
 async function transcribeInternal(
@@ -130,14 +131,16 @@ async function transcribeInternal(
     text: string;
     logprobs?: { logprob?: number }[];
   }) => {
+    const suppressionEnabled =
+      context?.suppressionEnabledOverride ??
+      meeting.runtimeConfig?.transcription.suppressionEnabled ??
+      true;
     const guardResult = applyTranscriptionGuards({
       transcription: raw.text,
-      suppressionEnabled:
-        meeting.runtimeConfig?.transcription.suppressionEnabled ?? true,
+      suppressionEnabled,
       promptEchoEnabled:
         meeting.runtimeConfig?.transcription.promptEchoEnabled ?? true,
       promptText: resolvedPrompt,
-      noiseGateEnabled: context?.noiseGateEnabled ?? false,
       noiseGateMetrics: context?.noiseGateMetrics,
       logprobs: raw.logprobs,
     });
@@ -293,53 +296,75 @@ async function transcribe(
   );
 }
 
-export async function transcribeSnippet(
+type TempSnippetFiles = {
+  pcmFile: string;
+  wavFile: string;
+};
+
+const buildSnippetTempFiles = (
   meeting: MeetingData,
   snippet: AudioSnippet,
-  options: {
-    tempSuffix?: string;
-    noiseGateMode?: "fast" | "slow";
-    noiseGateEnabledOverride?: boolean;
-  } = {},
-): Promise<string> {
-  const suffix = options.tempSuffix ? `_${options.tempSuffix}` : "";
+  suffix: string,
+): TempSnippetFiles => {
   const tempDir = ensureMeetingTempDirSync(meeting);
-  const tempPcmFileName = path.join(
-    tempDir,
-    `temp_snippet_${snippet.userId}_${snippet.timestamp}${suffix}_transcript.pcm`,
-  );
-  const tempWavFileName = path.join(
-    tempDir,
-    `temp_snippet_${snippet.userId}_${snippet.timestamp}${suffix}.wav`,
-  );
+  return {
+    pcmFile: path.join(
+      tempDir,
+      `temp_snippet_${snippet.userId}_${snippet.timestamp}${suffix}_transcript.pcm`,
+    ),
+    wavFile: path.join(
+      tempDir,
+      `temp_snippet_${snippet.userId}_${snippet.timestamp}${suffix}.wav`,
+    ),
+  };
+};
 
-  // Write the PCM buffer to a file
-  const buffer = Buffer.concat(snippet.chunks);
+const buildAudioStats = (buffer: Buffer) => {
   const audioBytes = buffer.length;
   const audioSeconds =
     audioBytes / (RECORD_SAMPLE_RATE * CHANNELS * BYTES_PER_SAMPLE);
+  return { audioBytes, audioSeconds };
+};
+
+const resolveSuppressionEnabled = (
+  meeting: MeetingData,
+  override?: boolean,
+): boolean =>
+  override ?? meeting.runtimeConfig?.transcription.suppressionEnabled ?? true;
+
+const resolveNoiseGateContext = (input: {
+  meeting: MeetingData;
+  buffer: Buffer;
+  suppressionEnabled: boolean;
+  noiseGateMode?: "fast" | "slow";
+  noiseGateEnabledOverride?: boolean;
+}) => {
   const noiseGateConfig =
-    meeting.runtimeConfig?.transcription.noiseGate ?? DEFAULT_NOISE_GATE_CONFIG;
-  const noiseGateMode = options.noiseGateMode ?? "slow";
+    input.meeting.runtimeConfig?.transcription.noiseGate ??
+    DEFAULT_NOISE_GATE_CONFIG;
+  const noiseGateMode = input.noiseGateMode ?? "slow";
   const noiseGateEnabled =
-    options.noiseGateEnabledOverride ??
+    input.noiseGateEnabledOverride ??
     (noiseGateConfig.enabled &&
       (noiseGateMode === "fast"
         ? noiseGateConfig.applyToFast
         : noiseGateConfig.applyToSlow));
-  const noiseGateMetrics =
-    noiseGateEnabled && buffer.length > 0
-      ? evaluateNoiseGate(buffer, noiseGateConfig, {
-          sampleRate: RECORD_SAMPLE_RATE,
-          channels: CHANNELS,
-          bytesPerSample: BYTES_PER_SAMPLE,
-        }).metrics
-      : undefined;
-  writeFileSync(tempPcmFileName, buffer);
+  const shouldComputeMetrics =
+    input.buffer.length > 0 && (noiseGateEnabled || input.suppressionEnabled);
+  const noiseGateMetrics = shouldComputeMetrics
+    ? evaluateNoiseGate(input.buffer, noiseGateConfig, {
+        sampleRate: RECORD_SAMPLE_RATE,
+        channels: CHANNELS,
+        bytesPerSample: BYTES_PER_SAMPLE,
+      }).metrics
+    : undefined;
 
-  // Convert PCM to WAV using ffmpeg
-  await new Promise<void>((resolve, reject) => {
-    ffmpeg(tempPcmFileName)
+  return { noiseGateEnabled, noiseGateMetrics };
+};
+
+const convertPcmToWav = (inputFile: string, outputFile: string) =>
+  new Promise<void>((resolve, reject) => {
+    ffmpeg(inputFile)
       .inputOptions([
         `-f s16le`,
         `-ar ${RECORD_SAMPLE_RATE}`,
@@ -357,49 +382,69 @@ export async function transcribeSnippet(
         console.error(`Error converting PCM to WAV: ${err.message}`);
         reject(err);
       })
-      .save(tempWavFileName);
+      .save(outputFile);
   });
 
+const cleanupTempFile = (filePath: string, label: string) => {
+  if (existsSync(filePath)) {
+    unlinkSync(filePath);
+    return;
+  }
+  console.log(`failed cleaning up temp ${label} file, continuing`);
+};
+
+const cleanupTempFiles = (files: TempSnippetFiles) => {
+  cleanupTempFile(files.pcmFile, "pcm");
+  cleanupTempFile(files.wavFile, "wav");
+};
+
+export async function transcribeSnippet(
+  meeting: MeetingData,
+  snippet: AudioSnippet,
+  options: {
+    tempSuffix?: string;
+    noiseGateMode?: "fast" | "slow";
+    noiseGateEnabledOverride?: boolean;
+    suppressionEnabledOverride?: boolean;
+  } = {},
+): Promise<string> {
+  const suffix = options.tempSuffix ? `_${options.tempSuffix}` : "";
+  const tempFiles = buildSnippetTempFiles(meeting, snippet, suffix);
+  const buffer = Buffer.concat(snippet.chunks);
+  const { audioBytes, audioSeconds } = buildAudioStats(buffer);
+  const suppressionEnabled = resolveSuppressionEnabled(
+    meeting,
+    options.suppressionEnabledOverride,
+  );
+  const { noiseGateEnabled, noiseGateMetrics } = resolveNoiseGateContext({
+    meeting,
+    buffer,
+    suppressionEnabled,
+    noiseGateMode: options.noiseGateMode,
+    noiseGateEnabledOverride: options.noiseGateEnabledOverride,
+  });
+
+  writeFileSync(tempFiles.pcmFile, buffer);
+  await convertPcmToWav(tempFiles.pcmFile, tempFiles.wavFile);
+
   try {
-    const transcription = await transcribe(meeting, tempWavFileName, {
+    return await transcribe(meeting, tempFiles.wavFile, {
       userId: snippet.userId,
       timestamp: snippet.timestamp,
       audioSeconds,
       audioBytes,
       noiseGateEnabled,
       noiseGateMetrics,
+      suppressionEnabledOverride: options.suppressionEnabledOverride,
     });
-
-    if (existsSync(tempPcmFileName)) {
-      unlinkSync(tempPcmFileName);
-    } else {
-      console.log("failed cleaning up temp pcm file, continuing");
-    }
-    if (existsSync(tempWavFileName)) {
-      unlinkSync(tempWavFileName);
-    } else {
-      console.log("failed cleaning up temp wav file, continuing");
-    }
-
-    return transcription;
   } catch (error) {
     console.error(
       `Failed to transcribe snippet for user ${snippet.userId}:`,
       error,
     );
-
-    if (existsSync(tempPcmFileName)) {
-      unlinkSync(tempPcmFileName);
-    } else {
-      console.log("failed cleaning up temp pcm file, continuing");
-    }
-    if (existsSync(tempWavFileName)) {
-      unlinkSync(tempWavFileName);
-    } else {
-      console.log("failed cleaning up temp wav file, continuing");
-    }
-
     return "[Transcription failed]";
+  } finally {
+    cleanupTempFiles(tempFiles);
   }
 }
 

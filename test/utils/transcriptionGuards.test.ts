@@ -18,7 +18,6 @@ describe("applyTranscriptionGuards", () => {
       transcription: "I think we should start with the Vket event.",
       suppressionEnabled: true,
       promptEchoEnabled: false,
-      noiseGateEnabled: true,
       noiseGateMetrics: quietMetrics,
       logprobs: [{ logprob: -1.4 }, { logprob: -2.6 }],
     });
@@ -33,12 +32,11 @@ describe("applyTranscriptionGuards", () => {
     );
   });
 
-  test("keeps text when noise gate is disabled", () => {
+  test("keeps text when loudness metrics are missing", () => {
     const result = applyTranscriptionGuards({
       transcription: "hello there",
       suppressionEnabled: true,
       promptEchoEnabled: false,
-      noiseGateEnabled: false,
       logprobs: [{ logprob: -3 }],
     });
 
@@ -51,7 +49,6 @@ describe("applyTranscriptionGuards", () => {
       transcription: "quiet but suppression is off",
       suppressionEnabled: false,
       promptEchoEnabled: false,
-      noiseGateEnabled: true,
       noiseGateMetrics: quietMetrics,
       logprobs: [{ logprob: -2.5 }],
     });
@@ -67,7 +64,6 @@ describe("applyTranscriptionGuards", () => {
       promptEchoEnabled: true,
       promptText:
         "Server Name: BASIC's Creations Channel: staff-chat Attendees: BASIC",
-      noiseGateEnabled: false,
     });
 
     expect(result.text).toBe("");
@@ -86,7 +82,6 @@ describe("applyTranscriptionGuards", () => {
       promptEchoEnabled: false,
       promptText:
         "Server Name: BASIC's Creations Channel: staff-chat Attendees: BASIC",
-      noiseGateEnabled: false,
     });
 
     expect(result.text).toBe("Server Name: BASIC's Creations");
