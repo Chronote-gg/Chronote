@@ -19,18 +19,19 @@ This document tracks feature toggles and knobs that are candidates for rollout o
 
 ## Experimental and evaluation toggles
 
-| Key                                            | Default | Scope           | Status        | Evaluation notes                                                                                                         |
-| ---------------------------------------------- | ------- | --------------- | ------------- | ------------------------------------------------------------------------------------------------------------------------ |
-| `features.experimental`                        | false   | global, server  | shipping gate | Controls access to experimental settings. Verify gating in settings UI and server snapshots.                             |
-| `transcription.premium.enabled`                | false   | global, server  | experimental  | Enable premium transcription. Validate output quality and latency across tiers.                                          |
-| `transcription.premium.cleanup.enabled`        | false   | global, server  | experimental  | Cleanup pass on compiled transcripts. Watch for missing lines or formatting drift.                                       |
-| `transcription.suppression.enabled`            | true    | global, server  | evaluation    | Enable guardrails that suppress prompt-like or glossary-only output. Validate false positives before changing defaults.  |
-| `transcription.fastFinalization.enabled`       | false   | global, server  | evaluation    | Skip the slow pass when fast transcript covers the full snippet. Validate cost reduction without quality loss.           |
-| `transcription.interjection.enabled`           | false   | global, server  | evaluation    | Finalize paused snippets on interjection to improve ordering. Validate that chatter or noise does not fragment snippets. |
-| `transcription.interjection.minSpeakerSeconds` | 0.3     | global, server  | evaluation    | Minimum interjection duration before splitting. Tune to avoid noise triggers.                                            |
-| `liveVoice.enabled`                            | false   | server, channel | evaluation    | Live voice responder. Validate response timing and user acceptance.                                                      |
-| `liveVoice.commands.enabled`                   | false   | server, channel | evaluation    | Voice command handling. Validate intent recognition and safety.                                                          |
-| `chatTts.enabled`                              | false   | server, channel | evaluation    | Chat to speech. Validate that it does not drown out voice capture.                                                       |
+| Key                                            | Default | Scope           | Status        | Evaluation notes                                                                                                           |
+| ---------------------------------------------- | ------- | --------------- | ------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| `features.experimental`                        | false   | global, server  | shipping gate | Controls access to experimental settings. Verify gating in settings UI and server snapshots.                               |
+| `transcription.premium.enabled`                | false   | global, server  | experimental  | Enable premium transcription. Validate output quality and latency across tiers.                                            |
+| `transcription.premium.cleanup.enabled`        | false   | global, server  | experimental  | Cleanup pass on compiled transcripts. Watch for missing lines or formatting drift.                                         |
+| `transcription.suppression.enabled`            | true    | global, server  | evaluation    | Loudness gate that suppresses low-confidence text from quiet audio. Validate false positives before changing defaults.     |
+| `transcription.promptEcho.enabled`             | true    | global, server  | evaluation    | Prompt echo gate that suppresses transcripts repeating the prompt. Validate echo false positives before changing defaults. |
+| `transcription.fastFinalization.enabled`       | false   | global, server  | evaluation    | Skip the slow pass when fast transcript covers the full snippet. Validate cost reduction without quality loss.             |
+| `transcription.interjection.enabled`           | false   | global, server  | evaluation    | Finalize paused snippets on interjection to improve ordering. Validate that chatter or noise does not fragment snippets.   |
+| `transcription.interjection.minSpeakerSeconds` | 0.3     | global, server  | evaluation    | Minimum interjection duration before splitting. Tune to avoid noise triggers.                                              |
+| `liveVoice.enabled`                            | false   | server, channel | evaluation    | Live voice responder. Validate response timing and user acceptance.                                                        |
+| `liveVoice.commands.enabled`                   | false   | server, channel | evaluation    | Voice command handling. Validate intent recognition and safety.                                                            |
+| `chatTts.enabled`                              | false   | server, channel | evaluation    | Chat to speech. Validate that it does not drown out voice capture.                                                         |
 
 ## Shipping configuration settings
 

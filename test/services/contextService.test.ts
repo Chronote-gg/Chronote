@@ -56,6 +56,7 @@ const DEFAULT_NOISE_GATE_CONFIG = {
 
 const DEFAULT_TRANSCRIPTION_CONFIG: MeetingRuntimeConfig["transcription"] = {
   suppressionEnabled: false,
+  promptEchoEnabled: true,
   fastSilenceMs: FAST_SILENCE_THRESHOLD,
   slowSilenceMs: SILENCE_THRESHOLD,
   minSnippetSeconds: MINIMUM_TRANSCRIPTION_LENGTH,
