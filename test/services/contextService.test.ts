@@ -15,6 +15,7 @@ import {
   NOISE_GATE_PEAK_DBFS,
   NOISE_GATE_WINDOW_MS,
   SILENCE_THRESHOLD,
+  TRANSCRIPTION_HARD_SILENCE_DBFS,
 } from "../../src/constants";
 import {
   buildMeetingContext,
@@ -56,6 +57,7 @@ const DEFAULT_NOISE_GATE_CONFIG = {
 
 const DEFAULT_TRANSCRIPTION_CONFIG: MeetingRuntimeConfig["transcription"] = {
   suppressionEnabled: false,
+  suppressionHardSilenceDbfs: TRANSCRIPTION_HARD_SILENCE_DBFS,
   promptEchoEnabled: true,
   fastSilenceMs: FAST_SILENCE_THRESHOLD,
   slowSilenceMs: SILENCE_THRESHOLD,
@@ -70,7 +72,8 @@ const DEFAULT_TRANSCRIPTION_CONFIG: MeetingRuntimeConfig["transcription"] = {
 const buildRuntimeConfig = (
   overrides: Partial<MeetingRuntimeConfig> = {},
 ): MeetingRuntimeConfig => {
-  const transcriptionOverrides = overrides.transcription ?? {};
+  const transcriptionOverrides: Partial<MeetingRuntimeConfig["transcription"]> =
+    overrides.transcription ?? {};
   const noiseGateOverrides = transcriptionOverrides.noiseGate ?? {};
   const noiseGate = { ...DEFAULT_NOISE_GATE_CONFIG, ...noiseGateOverrides };
   return {
@@ -144,10 +147,13 @@ describe("contextService", () => {
     mockedResolveConfigSnapshot.mockResolvedValue({
       values: {
         [CONFIG_KEYS.context.instructions]: {
+          key: CONFIG_KEYS.context.instructions,
           value: "Server context",
           source: "server",
         },
       },
+      experimentalEnabled: false,
+      missingRequired: [],
     } as Awaited<ReturnType<typeof resolveConfigSnapshot>>);
     mockedFetchChannelContext.mockResolvedValue({
       guildId: "guild-1",

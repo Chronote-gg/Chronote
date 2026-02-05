@@ -35,6 +35,7 @@ import {
   RECORD_SAMPLE_RATE,
   TRANSCRIPTION_BREAK_AFTER_CONSECUTIVE_FAILURES,
   TRANSCRIPTION_BREAK_DURATION,
+  TRANSCRIPTION_HARD_SILENCE_DBFS,
   TRANSCRIPTION_MAX_CONCURRENT,
   TRANSCRIPTION_MAX_QUEUE,
   TRANSCRIPTION_MAX_RETRIES,
@@ -78,6 +79,7 @@ type TranscriptionTraceContext = {
   audioSeconds: number;
   audioBytes: number;
   noiseGateEnabled?: boolean;
+  noiseGateMode?: "fast" | "slow";
   noiseGateMetrics?: ReturnType<typeof evaluateNoiseGate>["metrics"];
   suppressionEnabledOverride?: boolean;
 };
@@ -103,6 +105,8 @@ async function transcribeInternal(
     snippetTimestamp: context?.timestamp,
     audioSeconds: context?.audioSeconds,
     audioBytes: context?.audioBytes,
+    noiseGateEnabled: context?.noiseGateEnabled,
+    noiseGateMode: context?.noiseGateMode,
     promptLength: resolvedPrompt?.length ?? 0,
     promptName: langfusePrompt?.name,
     promptVersion: langfusePrompt?.version,
@@ -135,11 +139,25 @@ async function transcribeInternal(
       context?.suppressionEnabledOverride ??
       meeting.runtimeConfig?.transcription.suppressionEnabled ??
       true;
+    const promptEchoEnabled =
+      meeting.runtimeConfig?.transcription.promptEchoEnabled ?? true;
+    const hardSilenceDbfs =
+      meeting.runtimeConfig?.transcription.suppressionHardSilenceDbfs ??
+      TRANSCRIPTION_HARD_SILENCE_DBFS;
+    const rawTrimmed = raw.text.trim();
+    const transcriptCharCount = rawTrimmed.length;
+    const transcriptWordCount = rawTrimmed
+      ? rawTrimmed.split(/\s+/).filter(Boolean).length
+      : 0;
+    const wordsPerSecond =
+      context?.audioSeconds && context.audioSeconds > 0
+        ? transcriptWordCount / context.audioSeconds
+        : undefined;
     const guardResult = applyTranscriptionGuards({
       transcription: raw.text,
       suppressionEnabled,
-      promptEchoEnabled:
-        meeting.runtimeConfig?.transcription.promptEchoEnabled ?? true,
+      hardSilenceDbfs,
+      promptEchoEnabled,
       promptText: resolvedPrompt,
       noiseGateMetrics: context?.noiseGateMetrics,
       logprobs: raw.logprobs,
@@ -150,15 +168,36 @@ async function transcribeInternal(
         ...traceMetadata,
         flags: guardResult.flags,
         quietAudio: guardResult.quietAudio,
+        quietByPeak: guardResult.quietByPeak,
+        quietByActivity: guardResult.quietByActivity,
+        hardSilenceDetected: guardResult.hardSilenceDetected,
+        suppressionEnabled,
+        promptEchoEnabled,
+        hardSilenceDbfs,
         logprobMetrics: guardResult.logprobMetrics,
         promptEchoDetected: guardResult.promptEchoDetected,
         promptEchoMetrics: guardResult.promptEchoMetrics,
         noiseGateMetrics: context?.noiseGateMetrics,
+        rawTranscriptionLength: transcriptCharCount,
+        transcriptWordCount,
+        wordsPerSecond,
         transcriptionLength: guardResult.text.length,
       });
     }
 
-    return guardResult;
+    const transcriptStats = {
+      transcriptCharCount,
+      transcriptWordCount,
+      wordsPerSecond,
+    };
+
+    return {
+      guardResult,
+      transcriptStats,
+      suppressionEnabled,
+      promptEchoEnabled,
+      hardSilenceDbfs,
+    };
   };
 
   if (!isLangfuseTracingEnabled()) {
@@ -172,7 +211,8 @@ async function transcribeInternal(
       langfusePrompt,
     });
     const output = await runTranscription(openAIClient);
-    return applyGuardsAndLog(output).text;
+    const { guardResult } = applyGuardsAndLog(output);
+    return guardResult.text;
   }
 
   return await startActiveObservation(
@@ -232,7 +272,13 @@ async function transcribeInternal(
         langfusePrompt,
       });
       const output = await runTranscription(openAIClient);
-      const guardResult = applyGuardsAndLog(output);
+      const {
+        guardResult,
+        transcriptStats,
+        suppressionEnabled,
+        promptEchoEnabled,
+        hardSilenceDbfs,
+      } = applyGuardsAndLog(output);
 
       const usageDetails = buildLangfuseTranscriptionUsageDetails(
         context?.audioSeconds,
@@ -244,9 +290,18 @@ async function transcribeInternal(
           metadata: {
             transcriptionFlags: guardResult.flags,
             quietAudio: guardResult.quietAudio,
+            quietByPeak: guardResult.quietByPeak,
+            quietByActivity: guardResult.quietByActivity,
+            hardSilenceDetected: guardResult.hardSilenceDetected,
+            suppressionEnabled,
+            promptEchoEnabled,
+            hardSilenceDbfs,
+            ...transcriptStats,
             logprobMetrics: guardResult.logprobMetrics,
             promptEchoDetected: guardResult.promptEchoDetected,
             promptEchoMetrics: guardResult.promptEchoMetrics,
+            noiseGateEnabled: context?.noiseGateEnabled,
+            noiseGateMode: context?.noiseGateMode,
             noiseGateMetrics: context?.noiseGateMetrics,
             suppressed: guardResult.suppressed,
           },
@@ -416,11 +471,12 @@ export async function transcribeSnippet(
     meeting,
     options.suppressionEnabledOverride,
   );
+  const resolvedNoiseGateMode = options.noiseGateMode ?? "slow";
   const { noiseGateEnabled, noiseGateMetrics } = resolveNoiseGateContext({
     meeting,
     buffer,
     suppressionEnabled,
-    noiseGateMode: options.noiseGateMode,
+    noiseGateMode: resolvedNoiseGateMode,
     noiseGateEnabledOverride: options.noiseGateEnabledOverride,
   });
 
@@ -434,6 +490,7 @@ export async function transcribeSnippet(
       audioSeconds,
       audioBytes,
       noiseGateEnabled,
+      noiseGateMode: resolvedNoiseGateMode,
       noiseGateMetrics,
       suppressionEnabledOverride: options.suppressionEnabledOverride,
     });

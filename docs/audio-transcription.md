@@ -58,6 +58,7 @@ All values are set via the config system. For the noise gate, only `enabled`, `a
 - `transcription.interjection.enabled`
 - `transcription.interjection.minSpeakerSeconds`
 - `transcription.suppression.enabled`
+- `transcription.suppression.hardSilenceDbfs`
 - `transcription.promptEcho.enabled`
 - `transcription.noiseGate.enabled`
 - `transcription.noiseGate.windowMs`
@@ -84,7 +85,8 @@ The noise gate is a lightweight, peak-based check to skip clips that are very qu
 - A noise floor is estimated from low percentile windows, then windows above the noise floor plus the configured offset count as active.
 - A snippet is skipped only when the overall peak stays below the configured threshold and there are too few active windows.
 - Forced transcriptions, such as live voice commands, bypass the gate and quiet-audio suppression.
-- Low-confidence transcripts from quiet audio are suppressed using token logprobs, even when a snippet makes it past the gate.
+- Low-confidence transcripts from quiet audio are suppressed using token logprobs, even when a snippet makes it past the gate. Quiet audio uses avg or min logprob checks.
+- Hard silence suppression drops snippets whose peak stays below `transcription.suppression.hardSilenceDbfs`, regardless of logprobs.
 - Prompt echo suppression runs after transcription and is independent of the loudness gate.
 
 ## Cleanup behavior

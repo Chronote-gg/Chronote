@@ -29,10 +29,14 @@ const loadModule = async (options: LoadOptions = {}) => {
       ttsModel: "gpt-4o-mini-tts",
     },
   };
-  const waitForFinishProcessing = jest.fn().mockResolvedValue(undefined);
-  const completionCreate = jest.fn().mockResolvedValue({
-    choices: [{ message: { content: options.responseContent ?? "" } }],
-  });
+  const waitForFinishProcessing = jest
+    .fn<() => Promise<void>>()
+    .mockResolvedValue(undefined);
+  const completionCreate = jest
+    .fn<() => Promise<{ choices: { message: { content: string } }[] }>>()
+    .mockResolvedValue({
+      choices: [{ message: { content: options.responseContent ?? "" } }],
+    });
   const createOpenAIClient = jest.fn(() => ({
     chat: { completions: { create: completionCreate } },
   }));
@@ -74,6 +78,7 @@ const buildRuntimeConfig = (
   const base: MeetingRuntimeConfig = {
     transcription: {
       suppressionEnabled: true,
+      suppressionHardSilenceDbfs: -60,
       promptEchoEnabled: true,
       fastSilenceMs: 500,
       slowSilenceMs: 1000,

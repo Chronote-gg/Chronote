@@ -11,6 +11,7 @@ import {
   NOISE_GATE_PEAK_DBFS,
   NOISE_GATE_WINDOW_MS,
   SILENCE_THRESHOLD,
+  TRANSCRIPTION_HARD_SILENCE_DBFS,
 } from "../constants";
 import { DEFAULT_TTS_VOICE, TTS_VOICES } from "../utils/ttsVoices";
 import {
@@ -193,6 +194,21 @@ export const CONFIG_REGISTRY: ConfigEntry[] = [
       server: scope(true, false, "admin", "tri-state"),
     },
     ui: { type: "toggle" },
+  },
+  {
+    key: "transcription.suppression.hardSilenceDbfs",
+    label: "Hard silence threshold (dBFS)",
+    description:
+      "Suppress transcription when peak audio stays below this dBFS threshold.",
+    category: "Transcription",
+    group: "Advanced",
+    valueType: "number",
+    defaultValue: TRANSCRIPTION_HARD_SILENCE_DBFS,
+    scopes: {
+      global: scope(true, true, "superadmin", "number"),
+      server: scope(false, false, "admin", "number"),
+    },
+    ui: { type: "number", min: -90, max: -5, step: 1 },
   },
   {
     key: "transcription.promptEcho.enabled",

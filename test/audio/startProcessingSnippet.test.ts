@@ -35,6 +35,7 @@ describe("startProcessingSnippet", () => {
           minSnippetSeconds: 0.3,
           maxSnippetMs: 60000,
           suppressionEnabled: true,
+          suppressionHardSilenceDbfs: -60,
           promptEchoEnabled: true,
           fastFinalizationEnabled: true,
           interjectionEnabled: false,

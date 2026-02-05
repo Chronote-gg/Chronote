@@ -25,6 +25,9 @@ export type TranscriptionGuardResult = {
   promptEchoDetected: boolean;
   promptEchoMetrics?: PromptEchoMetrics;
   quietAudio: boolean;
+  quietByPeak: boolean;
+  quietByActivity: boolean;
+  hardSilenceDetected: boolean;
   suppressed: boolean;
 };
 
@@ -46,6 +49,8 @@ export type PromptEchoMetrics = {
 
 type LoudnessEvaluation = {
   quietAudio: boolean;
+  quietByPeak: boolean;
+  quietByActivity: boolean;
   logprobMetrics?: LogprobMetrics;
   lowConfidence: boolean;
   flags: string[];
@@ -100,12 +105,31 @@ const buildLogprobMetrics = (
   };
 };
 
-const isLowConfidence = (metrics?: LogprobMetrics) => {
+const isLowConfidence = (
+  metrics?: LogprobMetrics,
+  mode: "and" | "or" = "and",
+) => {
   if (!metrics) return false;
+  if (mode === "or") {
+    return (
+      metrics.avgLogprob <= TRANSCRIPTION_LOGPROB_AVG_THRESHOLD ||
+      metrics.minLogprob <= TRANSCRIPTION_LOGPROB_MIN_THRESHOLD
+    );
+  }
   return (
     metrics.avgLogprob <= TRANSCRIPTION_LOGPROB_AVG_THRESHOLD &&
     metrics.minLogprob <= TRANSCRIPTION_LOGPROB_MIN_THRESHOLD
   );
+};
+
+const isQuietByPeak = (metrics?: NoiseGateMetrics): boolean => {
+  if (!metrics) return false;
+  return metrics.peakDbfs <= metrics.thresholdDbfs;
+};
+
+const isQuietByActivity = (metrics?: NoiseGateMetrics): boolean => {
+  if (!metrics) return false;
+  return metrics.activeWindowCount < metrics.minActiveWindows;
 };
 
 const isQuietAudio = (
@@ -113,10 +137,7 @@ const isQuietAudio = (
   metrics?: NoiseGateMetrics,
 ): boolean => {
   if (!enabled || !metrics) return false;
-  return (
-    metrics.peakDbfs <= metrics.thresholdDbfs ||
-    metrics.activeWindowCount < metrics.minActiveWindows
-  );
+  return isQuietByPeak(metrics) || isQuietByActivity(metrics);
 };
 
 const evaluateLoudnessGuard = (options: {
@@ -125,8 +146,13 @@ const evaluateLoudnessGuard = (options: {
   logprobs?: LogprobEntry[];
 }): LoudnessEvaluation => {
   const logprobMetrics = buildLogprobMetrics(options.logprobs);
+  const quietByPeak = isQuietByPeak(options.metrics);
+  const quietByActivity = isQuietByActivity(options.metrics);
   const quietAudio = isQuietAudio(options.enabled, options.metrics);
-  const lowConfidence = isLowConfidence(logprobMetrics);
+  const lowConfidence = isLowConfidence(
+    logprobMetrics,
+    quietAudio ? "or" : "and",
+  );
   const flags: string[] = [];
 
   if (quietAudio) {
@@ -142,10 +168,20 @@ const evaluateLoudnessGuard = (options: {
 
   return {
     quietAudio,
+    quietByPeak,
+    quietByActivity,
     logprobMetrics,
     lowConfidence,
     flags,
   };
+};
+
+const isHardSilence = (
+  metrics?: NoiseGateMetrics,
+  hardSilenceDbfs?: number,
+): boolean => {
+  if (!metrics || hardSilenceDbfs === undefined) return false;
+  return metrics.peakDbfs <= hardSilenceDbfs;
 };
 
 const buildPromptEchoInputs = (
@@ -272,9 +308,84 @@ const evaluatePromptEchoGuard = (options: {
   };
 };
 
+type SuppressionDecisions = {
+  suppressedByLoudness: boolean;
+  suppressedByHardSilence: boolean;
+  suppressedByPromptEcho: boolean;
+  suppressed: boolean;
+};
+
+const resolveSuppressionDecisions = (input: {
+  suppressionEnabled: boolean;
+  promptEchoEnabled: boolean;
+  hasText: boolean;
+  loudness: LoudnessEvaluation;
+  hardSilenceDetected: boolean;
+  promptEchoDetected: boolean;
+}): SuppressionDecisions => {
+  const suppressionAllowed = input.suppressionEnabled && input.hasText;
+  const suppressedByLoudness =
+    suppressionAllowed &&
+    input.loudness.quietAudio &&
+    input.loudness.lowConfidence;
+  const suppressedByHardSilence =
+    suppressionAllowed && input.hardSilenceDetected;
+  const suppressedByPromptEcho =
+    input.promptEchoEnabled && input.hasText && input.promptEchoDetected;
+  return {
+    suppressedByLoudness,
+    suppressedByHardSilence,
+    suppressedByPromptEcho,
+    suppressed:
+      suppressedByLoudness || suppressedByHardSilence || suppressedByPromptEcho,
+  };
+};
+
+const buildLoudnessFlags = (input: {
+  baseFlags: string[];
+  suppressedByLoudness: boolean;
+  hardSilenceDetected: boolean;
+  suppressedByHardSilence: boolean;
+}): string[] => {
+  const flags = [...input.baseFlags];
+  if (input.suppressedByLoudness) {
+    flags.push("suppressed_low_confidence");
+  }
+  if (input.hardSilenceDetected) {
+    flags.push("hard_silence");
+  }
+  if (input.suppressedByHardSilence) {
+    flags.push("suppressed_hard_silence");
+  }
+  return flags;
+};
+
+const buildPromptEchoFlagsForResult = (input: {
+  baseFlags: string[];
+  suppressedByPromptEcho: boolean;
+}): string[] => {
+  if (!input.suppressedByPromptEcho) {
+    return [...input.baseFlags];
+  }
+  return [...input.baseFlags, "suppressed_prompt_echo"];
+};
+
+const mergeGuardFlags = (input: {
+  suppressionEnabled: boolean;
+  promptEchoEnabled: boolean;
+  loudnessFlags: string[];
+  promptEchoFlags: string[];
+}): string[] => {
+  return [
+    ...(input.suppressionEnabled ? input.loudnessFlags : []),
+    ...(input.promptEchoEnabled ? input.promptEchoFlags : []),
+  ];
+};
+
 export function applyTranscriptionGuards(input: {
   transcription: string;
   suppressionEnabled: boolean;
+  hardSilenceDbfs?: number;
   promptEchoEnabled: boolean;
   promptText?: string;
   noiseGateMetrics?: NoiseGateMetrics;
@@ -287,41 +398,51 @@ export function applyTranscriptionGuards(input: {
     metrics: input.noiseGateMetrics,
     logprobs: input.logprobs,
   });
+  const hardSilenceDetected = isHardSilence(
+    input.noiseGateMetrics,
+    input.hardSilenceDbfs,
+  );
   const promptEcho = evaluatePromptEchoGuard({
     enabled: input.promptEchoEnabled,
     promptText: input.promptText ?? "",
     transcript: trimmed,
   });
 
-  const suppressedByLoudness =
-    input.suppressionEnabled &&
-    loudness.quietAudio &&
-    loudness.lowConfidence &&
-    hasText;
-  const suppressedByPromptEcho =
-    input.promptEchoEnabled && promptEcho.detected && hasText;
-  const suppressed = suppressedByLoudness || suppressedByPromptEcho;
+  const suppression = resolveSuppressionDecisions({
+    suppressionEnabled: input.suppressionEnabled,
+    promptEchoEnabled: input.promptEchoEnabled,
+    hasText,
+    loudness,
+    hardSilenceDetected,
+    promptEchoDetected: promptEcho.detected,
+  });
 
-  const loudnessFlags = [...loudness.flags];
-  const promptEchoFlags = [...promptEcho.flags];
-
-  if (suppressedByLoudness) {
-    loudnessFlags.push("suppressed_low_confidence");
-  }
-  if (suppressedByPromptEcho) {
-    promptEchoFlags.push("suppressed_prompt_echo");
-  }
+  const loudnessFlags = buildLoudnessFlags({
+    baseFlags: loudness.flags,
+    suppressedByLoudness: suppression.suppressedByLoudness,
+    hardSilenceDetected,
+    suppressedByHardSilence: suppression.suppressedByHardSilence,
+  });
+  const promptEchoFlags = buildPromptEchoFlagsForResult({
+    baseFlags: promptEcho.flags,
+    suppressedByPromptEcho: suppression.suppressedByPromptEcho,
+  });
 
   return {
-    text: suppressed ? "" : trimmed,
-    flags: [
-      ...(input.suppressionEnabled ? loudnessFlags : []),
-      ...(input.promptEchoEnabled ? promptEchoFlags : []),
-    ],
+    text: suppression.suppressed ? "" : trimmed,
+    flags: mergeGuardFlags({
+      suppressionEnabled: input.suppressionEnabled,
+      promptEchoEnabled: input.promptEchoEnabled,
+      loudnessFlags,
+      promptEchoFlags,
+    }),
     logprobMetrics: loudness.logprobMetrics,
     promptEchoDetected: promptEcho.detected,
     promptEchoMetrics: promptEcho.metrics,
     quietAudio: loudness.quietAudio,
-    suppressed,
+    quietByPeak: loudness.quietByPeak,
+    quietByActivity: loudness.quietByActivity,
+    hardSilenceDetected,
+    suppressed: suppression.suppressed,
   };
 }
