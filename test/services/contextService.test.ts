@@ -16,6 +16,10 @@ import {
   NOISE_GATE_WINDOW_MS,
   SILENCE_THRESHOLD,
   TRANSCRIPTION_HARD_SILENCE_DBFS,
+  TRANSCRIPTION_RATE_MAX_SECONDS,
+  TRANSCRIPTION_RATE_MAX_SYLLABLES_PER_SECOND,
+  TRANSCRIPTION_RATE_MIN_SYLLABLES,
+  TRANSCRIPTION_RATE_MIN_WORDS,
 } from "../../src/constants";
 import {
   buildMeetingContext,
@@ -58,6 +62,11 @@ const DEFAULT_NOISE_GATE_CONFIG = {
 const DEFAULT_TRANSCRIPTION_CONFIG: MeetingRuntimeConfig["transcription"] = {
   suppressionEnabled: false,
   suppressionHardSilenceDbfs: TRANSCRIPTION_HARD_SILENCE_DBFS,
+  suppressionRateMaxSeconds: TRANSCRIPTION_RATE_MAX_SECONDS,
+  suppressionRateMinWords: TRANSCRIPTION_RATE_MIN_WORDS,
+  suppressionRateMinSyllables: TRANSCRIPTION_RATE_MIN_SYLLABLES,
+  suppressionRateMaxSyllablesPerSecond:
+    TRANSCRIPTION_RATE_MAX_SYLLABLES_PER_SECOND,
   promptEchoEnabled: true,
   fastSilenceMs: FAST_SILENCE_THRESHOLD,
   slowSilenceMs: SILENCE_THRESHOLD,

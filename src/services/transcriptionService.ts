@@ -36,6 +36,10 @@ import {
   TRANSCRIPTION_BREAK_AFTER_CONSECUTIVE_FAILURES,
   TRANSCRIPTION_BREAK_DURATION,
   TRANSCRIPTION_HARD_SILENCE_DBFS,
+  TRANSCRIPTION_RATE_MAX_SECONDS,
+  TRANSCRIPTION_RATE_MAX_SYLLABLES_PER_SECOND,
+  TRANSCRIPTION_RATE_MIN_SYLLABLES,
+  TRANSCRIPTION_RATE_MIN_WORDS,
   TRANSCRIPTION_MAX_CONCURRENT,
   TRANSCRIPTION_MAX_QUEUE,
   TRANSCRIPTION_MAX_RETRIES,
@@ -71,6 +75,27 @@ const DEFAULT_NOISE_GATE_CONFIG = {
   minPeakAboveNoiseDb: NOISE_GATE_MIN_PEAK_ABOVE_NOISE_DB,
   applyToFast: NOISE_GATE_APPLY_TO_FAST,
   applyToSlow: NOISE_GATE_APPLY_TO_SLOW,
+};
+
+let syllableCounterPromise: Promise<(value: string) => number> | null = null;
+
+const getSyllableCounter = async () => {
+  if (!syllableCounterPromise) {
+    syllableCounterPromise = import("syllable").then((module) => {
+      const counter = module.syllable ?? module.default ?? module;
+      if (typeof counter !== "function") {
+        throw new Error("Failed to load syllable counter.");
+      }
+      return counter;
+    });
+  }
+  return syllableCounterPromise;
+};
+
+const countSyllables = async (text: string) => {
+  if (!text) return 0;
+  const counter = await getSyllableCounter();
+  return counter(text);
 };
 
 type TranscriptionTraceContext = {
@@ -131,7 +156,7 @@ async function transcribeInternal(
     };
   };
 
-  const applyGuardsAndLog = (raw: {
+  const applyGuardsAndLog = async (raw: {
     text: string;
     logprobs?: { logprob?: number }[];
   }) => {
@@ -144,22 +169,47 @@ async function transcribeInternal(
     const hardSilenceDbfs =
       meeting.runtimeConfig?.transcription.suppressionHardSilenceDbfs ??
       TRANSCRIPTION_HARD_SILENCE_DBFS;
+    const rateMaxSeconds =
+      meeting.runtimeConfig?.transcription.suppressionRateMaxSeconds ??
+      TRANSCRIPTION_RATE_MAX_SECONDS;
+    const rateMinWords =
+      meeting.runtimeConfig?.transcription.suppressionRateMinWords ??
+      TRANSCRIPTION_RATE_MIN_WORDS;
+    const rateMinSyllables =
+      meeting.runtimeConfig?.transcription.suppressionRateMinSyllables ??
+      TRANSCRIPTION_RATE_MIN_SYLLABLES;
+    const maxSyllablesPerSecond =
+      meeting.runtimeConfig?.transcription
+        .suppressionRateMaxSyllablesPerSecond ??
+      TRANSCRIPTION_RATE_MAX_SYLLABLES_PER_SECOND;
     const rawTrimmed = raw.text.trim();
     const transcriptCharCount = rawTrimmed.length;
     const transcriptWordCount = rawTrimmed
       ? rawTrimmed.split(/\s+/).filter(Boolean).length
       : 0;
+    const transcriptSyllableCount = await countSyllables(rawTrimmed);
     const wordsPerSecond =
       context?.audioSeconds && context.audioSeconds > 0
         ? transcriptWordCount / context.audioSeconds
+        : undefined;
+    const syllablesPerSecond =
+      context?.audioSeconds && context.audioSeconds > 0
+        ? transcriptSyllableCount / context.audioSeconds
         : undefined;
     const guardResult = applyTranscriptionGuards({
       transcription: raw.text,
       suppressionEnabled,
       hardSilenceDbfs,
+      rateMaxSeconds,
+      rateMinWords,
+      rateMinSyllables,
+      maxSyllablesPerSecond,
       promptEchoEnabled,
       promptText: resolvedPrompt,
       noiseGateMetrics: context?.noiseGateMetrics,
+      audioSeconds: context?.audioSeconds,
+      transcriptWordCount,
+      transcriptSyllableCount,
       logprobs: raw.logprobs,
     });
 
@@ -171,16 +221,23 @@ async function transcribeInternal(
         quietByPeak: guardResult.quietByPeak,
         quietByActivity: guardResult.quietByActivity,
         hardSilenceDetected: guardResult.hardSilenceDetected,
+        rateMismatchDetected: guardResult.rateMismatchDetected,
         suppressionEnabled,
         promptEchoEnabled,
         hardSilenceDbfs,
+        rateMaxSeconds,
+        rateMinWords,
+        rateMinSyllables,
+        maxSyllablesPerSecond,
         logprobMetrics: guardResult.logprobMetrics,
         promptEchoDetected: guardResult.promptEchoDetected,
         promptEchoMetrics: guardResult.promptEchoMetrics,
         noiseGateMetrics: context?.noiseGateMetrics,
         rawTranscriptionLength: transcriptCharCount,
         transcriptWordCount,
+        transcriptSyllableCount,
         wordsPerSecond,
+        syllablesPerSecond,
         transcriptionLength: guardResult.text.length,
       });
     }
@@ -188,7 +245,9 @@ async function transcribeInternal(
     const transcriptStats = {
       transcriptCharCount,
       transcriptWordCount,
+      transcriptSyllableCount,
       wordsPerSecond,
+      syllablesPerSecond,
     };
 
     return {
@@ -197,6 +256,10 @@ async function transcribeInternal(
       suppressionEnabled,
       promptEchoEnabled,
       hardSilenceDbfs,
+      rateMaxSeconds,
+      rateMinWords,
+      rateMinSyllables,
+      maxSyllablesPerSecond,
     };
   };
 
@@ -211,7 +274,7 @@ async function transcribeInternal(
       langfusePrompt,
     });
     const output = await runTranscription(openAIClient);
-    const { guardResult } = applyGuardsAndLog(output);
+    const { guardResult } = await applyGuardsAndLog(output);
     return guardResult.text;
   }
 
@@ -278,7 +341,11 @@ async function transcribeInternal(
         suppressionEnabled,
         promptEchoEnabled,
         hardSilenceDbfs,
-      } = applyGuardsAndLog(output);
+        rateMaxSeconds,
+        rateMinWords,
+        rateMinSyllables,
+        maxSyllablesPerSecond,
+      } = await applyGuardsAndLog(output);
 
       const usageDetails = buildLangfuseTranscriptionUsageDetails(
         context?.audioSeconds,
@@ -296,10 +363,15 @@ async function transcribeInternal(
             suppressionEnabled,
             promptEchoEnabled,
             hardSilenceDbfs,
+            rateMaxSeconds,
+            rateMinWords,
+            rateMinSyllables,
+            maxSyllablesPerSecond,
             ...transcriptStats,
             logprobMetrics: guardResult.logprobMetrics,
             promptEchoDetected: guardResult.promptEchoDetected,
             promptEchoMetrics: guardResult.promptEchoMetrics,
+            rateMismatchDetected: guardResult.rateMismatchDetected,
             noiseGateEnabled: context?.noiseGateEnabled,
             noiseGateMode: context?.noiseGateMode,
             noiseGateMetrics: context?.noiseGateMetrics,

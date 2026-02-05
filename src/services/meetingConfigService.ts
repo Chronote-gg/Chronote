@@ -48,6 +48,30 @@ export async function resolveMeetingRuntimeConfig(input: {
           CONFIG_KEYS.transcription.suppressionHardSilenceDbfs,
         ),
       ),
+      suppressionRateMaxSeconds: Number(
+        requireValue(
+          snapshot,
+          CONFIG_KEYS.transcription.suppressionRateMaxSeconds,
+        ),
+      ),
+      suppressionRateMinWords: Number(
+        requireValue(
+          snapshot,
+          CONFIG_KEYS.transcription.suppressionRateMinWords,
+        ),
+      ),
+      suppressionRateMinSyllables: Number(
+        requireValue(
+          snapshot,
+          CONFIG_KEYS.transcription.suppressionRateMinSyllables,
+        ),
+      ),
+      suppressionRateMaxSyllablesPerSecond: Number(
+        requireValue(
+          snapshot,
+          CONFIG_KEYS.transcription.suppressionRateMaxSyllablesPerSecond,
+        ),
+      ),
       promptEchoEnabled: Boolean(
         requireValue(snapshot, CONFIG_KEYS.transcription.promptEchoEnabled),
       ),

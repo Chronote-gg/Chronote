@@ -12,6 +12,10 @@ import {
   NOISE_GATE_WINDOW_MS,
   SILENCE_THRESHOLD,
   TRANSCRIPTION_HARD_SILENCE_DBFS,
+  TRANSCRIPTION_RATE_MAX_SECONDS,
+  TRANSCRIPTION_RATE_MIN_WORDS,
+  TRANSCRIPTION_RATE_MIN_SYLLABLES,
+  TRANSCRIPTION_RATE_MAX_SYLLABLES_PER_SECOND,
 } from "../constants";
 import { DEFAULT_TTS_VOICE, TTS_VOICES } from "../utils/ttsVoices";
 import {
@@ -209,6 +213,66 @@ export const CONFIG_REGISTRY: ConfigEntry[] = [
       server: scope(false, false, "admin", "number"),
     },
     ui: { type: "number", min: -90, max: -5, step: 1 },
+  },
+  {
+    key: "transcription.suppression.rateMaxSeconds",
+    label: "Rate check max seconds",
+    description:
+      "Only apply syllable rate suppression to snippets up to this length.",
+    category: "Transcription",
+    group: "Advanced",
+    valueType: "number",
+    defaultValue: TRANSCRIPTION_RATE_MAX_SECONDS,
+    scopes: {
+      global: scope(true, true, "superadmin", "number"),
+      server: scope(false, false, "admin", "number"),
+    },
+    ui: { type: "number", min: 0.5, max: 10, step: 0.1 },
+  },
+  {
+    key: "transcription.suppression.minWords",
+    label: "Rate check minimum words",
+    description:
+      "Minimum word count required before applying syllable rate suppression.",
+    category: "Transcription",
+    group: "Advanced",
+    valueType: "number",
+    defaultValue: TRANSCRIPTION_RATE_MIN_WORDS,
+    scopes: {
+      global: scope(true, true, "superadmin", "number"),
+      server: scope(false, false, "admin", "number"),
+    },
+    ui: { type: "number", min: 1, max: 20, step: 1 },
+  },
+  {
+    key: "transcription.suppression.minSyllables",
+    label: "Rate check minimum syllables",
+    description:
+      "Minimum syllable count required before applying syllable rate suppression.",
+    category: "Transcription",
+    group: "Advanced",
+    valueType: "number",
+    defaultValue: TRANSCRIPTION_RATE_MIN_SYLLABLES,
+    scopes: {
+      global: scope(true, true, "superadmin", "number"),
+      server: scope(false, false, "admin", "number"),
+    },
+    ui: { type: "number", min: 1, max: 60, step: 1 },
+  },
+  {
+    key: "transcription.suppression.maxSyllablesPerSecond",
+    label: "Rate check max syllables per second",
+    description:
+      "Suppress when syllable rate exceeds this threshold for short snippets.",
+    category: "Transcription",
+    group: "Advanced",
+    valueType: "number",
+    defaultValue: TRANSCRIPTION_RATE_MAX_SYLLABLES_PER_SECOND,
+    scopes: {
+      global: scope(true, true, "superadmin", "number"),
+      server: scope(false, false, "admin", "number"),
+    },
+    ui: { type: "number", min: 1, max: 20, step: 0.1 },
   },
   {
     key: "transcription.promptEcho.enabled",

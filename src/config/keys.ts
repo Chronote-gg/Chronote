@@ -7,6 +7,11 @@ export const CONFIG_KEYS = {
     premiumCleanupEnabled: "transcription.premium.cleanup.enabled",
     suppressionEnabled: "transcription.suppression.enabled",
     suppressionHardSilenceDbfs: "transcription.suppression.hardSilenceDbfs",
+    suppressionRateMaxSeconds: "transcription.suppression.rateMaxSeconds",
+    suppressionRateMinWords: "transcription.suppression.minWords",
+    suppressionRateMinSyllables: "transcription.suppression.minSyllables",
+    suppressionRateMaxSyllablesPerSecond:
+      "transcription.suppression.maxSyllablesPerSecond",
     promptEchoEnabled: "transcription.promptEcho.enabled",
     fastSilenceMs: "transcription.fastSilenceMs",
     slowSilenceMs: "transcription.slowSilenceMs",

@@ -103,6 +103,45 @@ describe("applyTranscriptionGuards", () => {
     );
   });
 
+  test("suppresses rate mismatch for short high-rate snippets", () => {
+    const result = applyTranscriptionGuards({
+      transcription:
+        "I think we should have a meeting to discuss the Vket event.",
+      suppressionEnabled: true,
+      promptEchoEnabled: false,
+      audioSeconds: 0.5,
+      transcriptWordCount: 13,
+      transcriptSyllableCount: 18,
+      rateMaxSeconds: 3,
+      rateMinWords: 4,
+      rateMinSyllables: 8,
+      maxSyllablesPerSecond: 7,
+    });
+
+    expect(result.text).toBe("");
+    expect(result.flags).toEqual(
+      expect.arrayContaining(["rate_mismatch", "suppressed_rate_mismatch"]),
+    );
+  });
+
+  test("keeps short acknowledgements below rate minimums", () => {
+    const result = applyTranscriptionGuards({
+      transcription: "Yeah, ok.",
+      suppressionEnabled: true,
+      promptEchoEnabled: false,
+      audioSeconds: 0.8,
+      transcriptWordCount: 2,
+      transcriptSyllableCount: 2,
+      rateMaxSeconds: 3,
+      rateMinWords: 4,
+      rateMinSyllables: 8,
+      maxSyllablesPerSecond: 7,
+    });
+
+    expect(result.text).toBe("Yeah, ok.");
+    expect(result.flags).toEqual([]);
+  });
+
   test("suppresses prompt echo when enabled", () => {
     const result = applyTranscriptionGuards({
       transcription: "Server Name: BASIC's Creations",

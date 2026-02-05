@@ -79,6 +79,10 @@ const buildRuntimeConfig = (
     transcription: {
       suppressionEnabled: true,
       suppressionHardSilenceDbfs: -60,
+      suppressionRateMaxSeconds: 3,
+      suppressionRateMinWords: 4,
+      suppressionRateMinSyllables: 8,
+      suppressionRateMaxSyllablesPerSecond: 7,
       promptEchoEnabled: true,
       fastSilenceMs: 500,
       slowSilenceMs: 1000,
