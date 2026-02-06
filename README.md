@@ -23,6 +23,7 @@ A Discord bot that records voice meetings, transcribes them with OpenAI, generat
 4. Start everything (local Dynamo + table init + bot): `yarn dev`
 5. Frontend (Vite + Mantine) hot reload: `yarn frontend:dev`
 6. Cloud workspace prep and mock-friendly env snippets: see `AGENTS.md` and `scripts/mock.env.example`
+7. Optional MCP tooling (OpenCode, Codex, Claude Code): set `LANGFUSE_PUBLIC_KEY` and `LANGFUSE_SECRET_KEY` in `.env.local`, then run `node scripts/setup-langfuse-mcp-auth.js` to generate `.opencode/langfuse.mcp.auth`, `.opencode/langfuse.public`, and `.opencode/langfuse.secret` for OpenCode. Codex and Claude Code still read `LANGFUSE_MCP_AUTH` from the environment.
 
 ### DynamoDB local helpers
 

@@ -20,7 +20,7 @@ Chronote records voice audio, builds per speaker snippets, and runs transcriptio
 - Interjection splitting checks for a validated interjection snippet before finalizing other paused snippets.
 - Noise gate checks peak levels in short windows and skips snippets that are very quiet and lack speech-like peaks.
 - Transcription prompt is Langfuse-managed (`chronote-transcription-prompt`) and can be adjusted for experiments, including removing the prompt entirely.
-- Guardrails include a loudness gate (noise gate metrics plus token logprobs) and a prompt echo gate to suppress prompt repetition.
+- Guardrails include a loudness gate (noise gate metrics plus token logprobs), a syllable rate gate for short snippets, and a prompt echo gate to suppress prompt repetition.
 
 ## Langfuse audio attachments
 
@@ -58,6 +58,11 @@ All values are set via the config system. For the noise gate, only `enabled`, `a
 - `transcription.interjection.enabled`
 - `transcription.interjection.minSpeakerSeconds`
 - `transcription.suppression.enabled`
+- `transcription.suppression.hardSilenceDbfs`
+- `transcription.suppression.rateMaxSeconds`
+- `transcription.suppression.minWords`
+- `transcription.suppression.minSyllables`
+- `transcription.suppression.maxSyllablesPerSecond`
 - `transcription.promptEcho.enabled`
 - `transcription.noiseGate.enabled`
 - `transcription.noiseGate.windowMs`
@@ -84,7 +89,9 @@ The noise gate is a lightweight, peak-based check to skip clips that are very qu
 - A noise floor is estimated from low percentile windows, then windows above the noise floor plus the configured offset count as active.
 - A snippet is skipped only when the overall peak stays below the configured threshold and there are too few active windows.
 - Forced transcriptions, such as live voice commands, bypass the gate and quiet-audio suppression.
-- Low-confidence transcripts from quiet audio are suppressed using token logprobs, even when a snippet makes it past the gate.
+- Low-confidence transcripts from quiet audio are suppressed using token logprobs, even when a snippet makes it past the gate. Quiet audio uses avg or min logprob checks.
+- Hard silence suppression drops snippets whose peak stays below `transcription.suppression.hardSilenceDbfs`, regardless of logprobs.
+- Syllable rate suppression drops short snippets that exceed the configured syllables-per-second threshold once word and syllable minimums are met.
 - Prompt echo suppression runs after transcription and is independent of the loudness gate.
 
 ## Cleanup behavior

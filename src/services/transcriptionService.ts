@@ -35,6 +35,11 @@ import {
   RECORD_SAMPLE_RATE,
   TRANSCRIPTION_BREAK_AFTER_CONSECUTIVE_FAILURES,
   TRANSCRIPTION_BREAK_DURATION,
+  TRANSCRIPTION_HARD_SILENCE_DBFS,
+  TRANSCRIPTION_RATE_MAX_SECONDS,
+  TRANSCRIPTION_RATE_MAX_SYLLABLES_PER_SECOND,
+  TRANSCRIPTION_RATE_MIN_SYLLABLES,
+  TRANSCRIPTION_RATE_MIN_WORDS,
   TRANSCRIPTION_MAX_CONCURRENT,
   TRANSCRIPTION_MAX_QUEUE,
   TRANSCRIPTION_MAX_RETRIES,
@@ -54,6 +59,7 @@ import { buildLangfuseTranscriptionAudioAttachment } from "../observability/lang
 import { buildLangfuseTranscriptionUsageDetails } from "../observability/langfuseUsageDetails";
 import { ensureMeetingTempDirSync } from "./tempFileService";
 import { evaluateNoiseGate } from "../utils/audioNoiseGate";
+import { countWords } from "../utils/text";
 import {
   getTranscriptionPrompt,
   getTranscriptionCleanupPrompt,
@@ -72,12 +78,143 @@ const DEFAULT_NOISE_GATE_CONFIG = {
   applyToSlow: NOISE_GATE_APPLY_TO_SLOW,
 };
 
+let syllableCounterPromise: Promise<(value: string) => number> | null = null;
+
+const getSyllableCounter = async () => {
+  if (!syllableCounterPromise) {
+    syllableCounterPromise = import("syllable")
+      .then((module) => {
+        const counter = module.syllable ?? module.default ?? module;
+        if (typeof counter !== "function") {
+          throw new Error("Failed to load syllable counter.");
+        }
+        return counter;
+      })
+      .catch((error) => {
+        syllableCounterPromise = null;
+        throw error;
+      });
+  }
+  return syllableCounterPromise;
+};
+
+const countSyllables = async (text: string) => {
+  if (!text) return 0;
+  const counter = await getSyllableCounter();
+  return counter(text);
+};
+
+type TranscriptionGuardConfig = {
+  suppressionEnabled: boolean;
+  promptEchoEnabled: boolean;
+  hardSilenceDbfs: number;
+  rateMaxSeconds: number;
+  rateMinWords: number;
+  rateMinSyllables: number;
+  maxSyllablesPerSecond: number;
+};
+
+type TranscriptStats = {
+  transcriptCharCount: number;
+  transcriptWordCount: number;
+  transcriptSyllableCount?: number;
+  wordsPerSecond?: number;
+  syllablesPerSecond?: number;
+};
+
+const resolvePromptEchoEnabled = (meeting: MeetingData) =>
+  meeting.runtimeConfig?.transcription.promptEchoEnabled ?? true;
+
+const resolveHardSilenceDbfs = (meeting: MeetingData) =>
+  meeting.runtimeConfig?.transcription.suppressionHardSilenceDbfs ??
+  TRANSCRIPTION_HARD_SILENCE_DBFS;
+
+const resolveRateConfig = (meeting: MeetingData) => {
+  const transcriptionConfig = meeting.runtimeConfig?.transcription;
+  return {
+    rateMaxSeconds:
+      transcriptionConfig?.suppressionRateMaxSeconds ??
+      TRANSCRIPTION_RATE_MAX_SECONDS,
+    rateMinWords:
+      transcriptionConfig?.suppressionRateMinWords ??
+      TRANSCRIPTION_RATE_MIN_WORDS,
+    rateMinSyllables:
+      transcriptionConfig?.suppressionRateMinSyllables ??
+      TRANSCRIPTION_RATE_MIN_SYLLABLES,
+    maxSyllablesPerSecond:
+      transcriptionConfig?.suppressionRateMaxSyllablesPerSecond ??
+      TRANSCRIPTION_RATE_MAX_SYLLABLES_PER_SECOND,
+  };
+};
+
+const resolveGuardConfig = (
+  meeting: MeetingData,
+  context?: TranscriptionTraceContext,
+): TranscriptionGuardConfig => {
+  const rateConfig = resolveRateConfig(meeting);
+  return {
+    suppressionEnabled: resolveSuppressionEnabled(
+      meeting,
+      context?.suppressionEnabledOverride,
+    ),
+    promptEchoEnabled: resolvePromptEchoEnabled(meeting),
+    hardSilenceDbfs: resolveHardSilenceDbfs(meeting),
+    rateMaxSeconds: rateConfig.rateMaxSeconds,
+    rateMinWords: rateConfig.rateMinWords,
+    rateMinSyllables: rateConfig.rateMinSyllables,
+    maxSyllablesPerSecond: rateConfig.maxSyllablesPerSecond,
+  };
+};
+
+const buildTranscriptStats = async (options: {
+  transcript: string;
+  audioSeconds?: number;
+  traceMetadata: Record<string, unknown>;
+}): Promise<TranscriptStats> => {
+  const trimmed = options.transcript.trim();
+  const transcriptCharCount = trimmed.length;
+  const transcriptWordCount = countWords(trimmed);
+  let transcriptSyllableCount: number | undefined = 0;
+
+  if (trimmed) {
+    try {
+      transcriptSyllableCount = await countSyllables(trimmed);
+    } catch (error) {
+      transcriptSyllableCount = undefined;
+      console.warn("Failed to count syllables for transcription.", {
+        ...options.traceMetadata,
+        error,
+      });
+    }
+  }
+
+  const wordsPerSecond =
+    options.audioSeconds && options.audioSeconds > 0
+      ? transcriptWordCount / options.audioSeconds
+      : undefined;
+  const syllablesPerSecond =
+    options.audioSeconds &&
+    options.audioSeconds > 0 &&
+    transcriptSyllableCount !== undefined
+      ? transcriptSyllableCount / options.audioSeconds
+      : undefined;
+
+  return {
+    transcriptCharCount,
+    transcriptWordCount,
+    transcriptSyllableCount,
+    wordsPerSecond,
+    syllablesPerSecond,
+  };
+};
+
 type TranscriptionTraceContext = {
   userId: string;
   timestamp: number;
   audioSeconds: number;
   audioBytes: number;
   noiseGateEnabled?: boolean;
+  noiseGateMode?: "fast" | "slow";
   noiseGateMetrics?: ReturnType<typeof evaluateNoiseGate>["metrics"];
   suppressionEnabledOverride?: boolean;
 };
@@ -103,6 +240,8 @@ async function transcribeInternal(
     snippetTimestamp: context?.timestamp,
     audioSeconds: context?.audioSeconds,
     audioBytes: context?.audioBytes,
+    noiseGateEnabled: context?.noiseGateEnabled,
+    noiseGateMode: context?.noiseGateMode,
     promptLength: resolvedPrompt?.length ?? 0,
     promptName: langfusePrompt?.name,
     promptVersion: langfusePrompt?.version,
@@ -127,21 +266,30 @@ async function transcribeInternal(
     };
   };
 
-  const applyGuardsAndLog = (raw: {
+  const applyGuardsAndLog = async (raw: {
     text: string;
     logprobs?: { logprob?: number }[];
   }) => {
-    const suppressionEnabled =
-      context?.suppressionEnabledOverride ??
-      meeting.runtimeConfig?.transcription.suppressionEnabled ??
-      true;
+    const guardConfig = resolveGuardConfig(meeting, context);
+    const transcriptStats = await buildTranscriptStats({
+      transcript: raw.text,
+      audioSeconds: context?.audioSeconds,
+      traceMetadata,
+    });
     const guardResult = applyTranscriptionGuards({
       transcription: raw.text,
-      suppressionEnabled,
-      promptEchoEnabled:
-        meeting.runtimeConfig?.transcription.promptEchoEnabled ?? true,
+      suppressionEnabled: guardConfig.suppressionEnabled,
+      hardSilenceDbfs: guardConfig.hardSilenceDbfs,
+      rateMaxSeconds: guardConfig.rateMaxSeconds,
+      rateMinWords: guardConfig.rateMinWords,
+      rateMinSyllables: guardConfig.rateMinSyllables,
+      maxSyllablesPerSecond: guardConfig.maxSyllablesPerSecond,
+      promptEchoEnabled: guardConfig.promptEchoEnabled,
       promptText: resolvedPrompt,
       noiseGateMetrics: context?.noiseGateMetrics,
+      audioSeconds: context?.audioSeconds,
+      transcriptWordCount: transcriptStats.transcriptWordCount,
+      transcriptSyllableCount: transcriptStats.transcriptSyllableCount,
       logprobs: raw.logprobs,
     });
 
@@ -150,15 +298,41 @@ async function transcribeInternal(
         ...traceMetadata,
         flags: guardResult.flags,
         quietAudio: guardResult.quietAudio,
+        quietByPeak: guardResult.quietByPeak,
+        quietByActivity: guardResult.quietByActivity,
+        hardSilenceDetected: guardResult.hardSilenceDetected,
+        rateMismatchDetected: guardResult.rateMismatchDetected,
+        suppressionEnabled: guardConfig.suppressionEnabled,
+        promptEchoEnabled: guardConfig.promptEchoEnabled,
+        hardSilenceDbfs: guardConfig.hardSilenceDbfs,
+        rateMaxSeconds: guardConfig.rateMaxSeconds,
+        rateMinWords: guardConfig.rateMinWords,
+        rateMinSyllables: guardConfig.rateMinSyllables,
+        maxSyllablesPerSecond: guardConfig.maxSyllablesPerSecond,
         logprobMetrics: guardResult.logprobMetrics,
         promptEchoDetected: guardResult.promptEchoDetected,
         promptEchoMetrics: guardResult.promptEchoMetrics,
         noiseGateMetrics: context?.noiseGateMetrics,
+        rawTranscriptionLength: transcriptStats.transcriptCharCount,
+        transcriptWordCount: transcriptStats.transcriptWordCount,
+        transcriptSyllableCount: transcriptStats.transcriptSyllableCount,
+        wordsPerSecond: transcriptStats.wordsPerSecond,
+        syllablesPerSecond: transcriptStats.syllablesPerSecond,
         transcriptionLength: guardResult.text.length,
       });
     }
 
-    return guardResult;
+    return {
+      guardResult,
+      transcriptStats,
+      suppressionEnabled: guardConfig.suppressionEnabled,
+      promptEchoEnabled: guardConfig.promptEchoEnabled,
+      hardSilenceDbfs: guardConfig.hardSilenceDbfs,
+      rateMaxSeconds: guardConfig.rateMaxSeconds,
+      rateMinWords: guardConfig.rateMinWords,
+      rateMinSyllables: guardConfig.rateMinSyllables,
+      maxSyllablesPerSecond: guardConfig.maxSyllablesPerSecond,
+    };
   };
 
   if (!isLangfuseTracingEnabled()) {
@@ -172,7 +346,8 @@ async function transcribeInternal(
       langfusePrompt,
     });
     const output = await runTranscription(openAIClient);
-    return applyGuardsAndLog(output).text;
+    const { guardResult } = await applyGuardsAndLog(output);
+    return guardResult.text;
   }
 
   return await startActiveObservation(
@@ -232,7 +407,17 @@ async function transcribeInternal(
         langfusePrompt,
       });
       const output = await runTranscription(openAIClient);
-      const guardResult = applyGuardsAndLog(output);
+      const {
+        guardResult,
+        transcriptStats,
+        suppressionEnabled,
+        promptEchoEnabled,
+        hardSilenceDbfs,
+        rateMaxSeconds,
+        rateMinWords,
+        rateMinSyllables,
+        maxSyllablesPerSecond,
+      } = await applyGuardsAndLog(output);
 
       const usageDetails = buildLangfuseTranscriptionUsageDetails(
         context?.audioSeconds,
@@ -244,9 +429,23 @@ async function transcribeInternal(
           metadata: {
             transcriptionFlags: guardResult.flags,
             quietAudio: guardResult.quietAudio,
+            quietByPeak: guardResult.quietByPeak,
+            quietByActivity: guardResult.quietByActivity,
+            hardSilenceDetected: guardResult.hardSilenceDetected,
+            suppressionEnabled,
+            promptEchoEnabled,
+            hardSilenceDbfs,
+            rateMaxSeconds,
+            rateMinWords,
+            rateMinSyllables,
+            maxSyllablesPerSecond,
+            ...transcriptStats,
             logprobMetrics: guardResult.logprobMetrics,
             promptEchoDetected: guardResult.promptEchoDetected,
             promptEchoMetrics: guardResult.promptEchoMetrics,
+            rateMismatchDetected: guardResult.rateMismatchDetected,
+            noiseGateEnabled: context?.noiseGateEnabled,
+            noiseGateMode: context?.noiseGateMode,
             noiseGateMetrics: context?.noiseGateMetrics,
             suppressed: guardResult.suppressed,
           },
@@ -416,11 +615,12 @@ export async function transcribeSnippet(
     meeting,
     options.suppressionEnabledOverride,
   );
+  const resolvedNoiseGateMode = options.noiseGateMode ?? "slow";
   const { noiseGateEnabled, noiseGateMetrics } = resolveNoiseGateContext({
     meeting,
     buffer,
     suppressionEnabled,
-    noiseGateMode: options.noiseGateMode,
+    noiseGateMode: resolvedNoiseGateMode,
     noiseGateEnabledOverride: options.noiseGateEnabledOverride,
   });
 
@@ -434,6 +634,7 @@ export async function transcribeSnippet(
       audioSeconds,
       audioBytes,
       noiseGateEnabled,
+      noiseGateMode: resolvedNoiseGateMode,
       noiseGateMetrics,
       suppressionEnabledOverride: options.suppressionEnabledOverride,
     });

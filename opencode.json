@@ -1,0 +1,37 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "langfuse": {
+      "type": "remote",
+      "url": "https://us.cloud.langfuse.com/api/public/mcp",
+      "enabled": true,
+      "oauth": false,
+      "headers": {
+        "Authorization": "{file:.opencode/langfuse.mcp.auth}"
+      }
+    },
+    "langfuse_obs": {
+      "type": "local",
+      "command": [
+        "uvx",
+        "--python",
+        "3.11",
+        "langfuse-mcp",
+        "--read-only",
+        "--tools",
+        "traces,observations"
+      ],
+      "enabled": true,
+      "environment": {
+        "LANGFUSE_PUBLIC_KEY": "{file:.opencode/langfuse.public}",
+        "LANGFUSE_SECRET_KEY": "{file:.opencode/langfuse.secret}",
+        "LANGFUSE_HOST": "https://us.cloud.langfuse.com"
+      }
+    },
+    "langfuse_docs": {
+      "type": "remote",
+      "url": "https://langfuse.com/api/mcp",
+      "enabled": true
+    }
+  }
+}

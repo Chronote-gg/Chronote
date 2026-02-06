@@ -36,7 +36,7 @@
 - Transcription, notes, and image generation: `src/services/transcriptionService.ts`, `src/services/notesService.ts`, `src/services/imageService.ts`.
   - Prompt builders live in `src/services/*PromptService.ts`.
   - Builds context from server/channel/meeting and recent history (`services/contextService.ts`).
-  - Transcription prompt is Langfuse-managed (`chronote-transcription-prompt`). Guardrails include a loudness gate (noise gate plus logprobs) and a prompt echo gate.
+- Transcription prompt is Langfuse-managed (`chronote-transcription-prompt`). Guardrails include a loudness gate (noise gate metrics, hard silence threshold, syllable rate, and logprobs) and a prompt echo gate.
   - GPT prompts tuned for cleanup, notes, and optional image generation.
 - Dictionary management: `commands/dictionary.ts`, `services/dictionaryService.ts`
   - Terms are injected into transcription and context prompts, definitions are used outside transcription to reduce prompt bloat.
@@ -55,6 +55,7 @@
 - Production OAuth should use the API domain callback (e.g., `https://api.chronote.gg/auth/discord/callback`). When `API_DOMAIN` is set in Terraform, the backend is behind an ALB and the frontend build uses `VITE_API_BASE_URL` from GitHub Actions env vars.
 - OpenAI org/project IDs are optional (defaults empty).
 - Langfuse prompt sync uses `LANGFUSE_PUBLIC_KEY` and `LANGFUSE_SECRET_KEY`. Optional: `LANGFUSE_BASE_URL`, `LANGFUSE_PROMPT_LABEL`, `LANGFUSE_PROMPT_TRANSCRIPTION`.
+- Langfuse MCP tooling: run `node scripts/setup-langfuse-mcp-auth.js` to write `.opencode/langfuse.mcp.auth` plus `.opencode/langfuse.public` and `.opencode/langfuse.secret` for OpenCode. The `langfuse_obs` OpenCode MCP uses uvx and reads those files; Codex and Claude Code still expect `LANGFUSE_MCP_AUTH` in the environment.
 - Other env defaults: `PORT` (3001), `NODE_ENV`, Dynamo local toggles via `USE_LOCAL_DYNAMODB`.
 - Cloud dev bootstrap: run `./scripts/setup-cloud-dev.sh` to sync uv, install scc into `.bin/`, install lizard into `.venv/bin/`, and install Playwright browsers (no flags needed). Add `.bin` and `.venv/bin` to `PATH` for `yarn code:stats`.
 - Mock-friendly env file: copy `scripts/mock.env.example` to `.env` or source it directly (`set -a; source scripts/mock.env.example; set +a`) instead of exporting many vars manually. The file keeps mock mode enabled, disables OAuth, points at local DynamoDB, and supplies dummy tokens.
@@ -93,7 +94,7 @@
 - Noise gate can suppress very quiet snippets; forced transcriptions bypass it.
 - Attendance entries are stored as Discord mentions (`<@snowflakeId>`), and the web UI resolves them to display names server-side.
 - Prompt fragments live in `prompts/_fragments` and are composed via `extends` in front matter. `prompts:pull` skips prompts that use `extends` unless `--force` is passed.
-- Transcription guardrails include a loudness gate (noise gate metrics plus logprobs) and a prompt echo gate using similarity checks.
+- Transcription guardrails include a loudness gate (noise gate metrics, hard silence threshold, syllable rate, and logprobs) and a prompt echo gate using similarity checks.
 - **Current outbound network rules (ECS service SG)**: temporarily allowing all egress (UDP/TCP any port) for Discord voice debugging. Previously it was limited to TCP 443 and DNS (53) only. Remember to tighten this once voice is stable and update this note.
 - Avoid `in`/`instanceof`/`typeof` hedging for core platform APIs; we target a known Node/SDK set. Prefer simple, direct calls with minimal branching.
 - Config UX: treat overrides as implicit (setting a value creates an override), show a clear inherited vs overridden indicator, keep a reset-to-default action, and avoid disabling inputs just to signal default values.
