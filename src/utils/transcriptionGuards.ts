@@ -7,6 +7,7 @@ import {
   TRANSCRIPTION_PROMPT_ECHO_MIN_WORDS,
   TRANSCRIPTION_PROMPT_ECHO_SIMILARITY_THRESHOLD,
 } from "../constants";
+import { countWords } from "./text";
 
 type LogprobEntry = {
   logprob?: number;
@@ -114,9 +115,6 @@ const normalizeForEcho = (value: string) =>
     .replace(/[^a-z0-9\s]/g, " ")
     .replace(/\s+/g, " ")
     .trim();
-
-const countWords = (value: string) =>
-  value ? value.split(" ").filter(Boolean).length : 0;
 
 const buildLogprobMetrics = (
   logprobs?: LogprobEntry[],

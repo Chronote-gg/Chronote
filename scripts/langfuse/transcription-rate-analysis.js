@@ -4,6 +4,14 @@
 const fs = require("fs/promises");
 const path = require("path");
 
+const RATE_SUPPRESSION_THRESHOLDS = {
+  rateMaxSeconds: 3,
+  minWords: 4,
+  minSyllables: 8,
+  maxSyllablesPerSecond: 7,
+};
+// Keep in sync with TRANSCRIPTION_RATE_* defaults in src/constants.ts.
+
 const parseArgs = (argv) => {
   const args = [...argv];
   const outputIndex = args.indexOf("--output");
@@ -37,11 +45,16 @@ const formatNumber = (value, digits = 2) => {
 
 const loadSyllable = async () => {
   const mod = await import("syllable");
-  return mod.syllable ?? mod.default ?? mod;
+  const counter = mod.syllable ?? mod.default ?? mod;
+  if (typeof counter !== "function") {
+    throw new Error("Failed to load syllable counter.");
+  }
+  return counter;
 };
 
 const countWords = (text) => {
   if (!text) return 0;
+  // Keep in sync with src/utils/text.ts countWords.
   return text.trim().split(/\s+/).filter(Boolean).length;
 };
 
@@ -80,7 +93,7 @@ const buildReport = (summary) => {
   lines.push("## Outlier samples");
   lines.push("");
   lines.push(
-    "Threshold: audioSeconds <= 3, syllables >= 8, words >= 4, sps >= 7",
+    `Threshold: audioSeconds <= ${RATE_SUPPRESSION_THRESHOLDS.rateMaxSeconds}, syllables >= ${RATE_SUPPRESSION_THRESHOLDS.minSyllables}, words >= ${RATE_SUPPRESSION_THRESHOLDS.minWords}, sps >= ${RATE_SUPPRESSION_THRESHOLDS.maxSyllablesPerSecond}`,
   );
   lines.push("");
   if (summary.outliers.length === 0) {
@@ -178,10 +191,10 @@ const main = async () => {
   const outliers = entries
     .filter(
       (entry) =>
-        entry.audioSeconds <= 3 &&
-        entry.syllableCount >= 8 &&
-        entry.wordCount >= 4 &&
-        entry.sps >= 7,
+        entry.audioSeconds <= RATE_SUPPRESSION_THRESHOLDS.rateMaxSeconds &&
+        entry.syllableCount >= RATE_SUPPRESSION_THRESHOLDS.minSyllables &&
+        entry.wordCount >= RATE_SUPPRESSION_THRESHOLDS.minWords &&
+        entry.sps >= RATE_SUPPRESSION_THRESHOLDS.maxSyllablesPerSecond,
     )
     .sort((a, b) => b.sps - a.sps)
     .slice(0, 20);
