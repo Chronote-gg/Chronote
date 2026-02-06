@@ -81,13 +81,18 @@ let syllableCounterPromise: Promise<(value: string) => number> | null = null;
 
 const getSyllableCounter = async () => {
   if (!syllableCounterPromise) {
-    syllableCounterPromise = import("syllable").then((module) => {
-      const counter = module.syllable ?? module.default ?? module;
-      if (typeof counter !== "function") {
-        throw new Error("Failed to load syllable counter.");
-      }
-      return counter;
-    });
+    syllableCounterPromise = import("syllable")
+      .then((module) => {
+        const counter = module.syllable ?? module.default ?? module;
+        if (typeof counter !== "function") {
+          throw new Error("Failed to load syllable counter.");
+        }
+        return counter;
+      })
+      .catch((error) => {
+        syllableCounterPromise = null;
+        throw error;
+      });
   }
   return syllableCounterPromise;
 };
