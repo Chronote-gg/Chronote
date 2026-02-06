@@ -251,12 +251,12 @@ const resolveRateInputs = (options: {
   };
 };
 
-const meetsRateThresholds = (inputs: RateInputs) =>
+const shouldSuppressForRate = (inputs: RateInputs) =>
   [
     inputs.audioSeconds <= inputs.rateMaxSeconds,
     inputs.wordCount >= inputs.minWords,
     inputs.syllableCount >= inputs.minSyllables,
-    inputs.syllablesPerSecond >= inputs.maxSyllablesPerSecond,
+    inputs.syllablesPerSecond > inputs.maxSyllablesPerSecond,
   ].every(Boolean);
 
 const evaluateRateGuard = (options: {
@@ -299,7 +299,7 @@ const evaluateRateGuard = (options: {
     };
   }
 
-  const rateMismatchDetected = meetsRateThresholds(inputs);
+  const rateMismatchDetected = shouldSuppressForRate(inputs);
 
   if (rateMismatchDetected) {
     flags.push("rate_mismatch");
