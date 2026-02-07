@@ -106,6 +106,7 @@ import {
   onboardCommand,
 } from "./commands/onboard";
 import { fetchGuildInstaller } from "./services/guildInstallerService";
+import { autoRecordJoinSuppressionService } from "./services/autoRecordJoinSuppressionService";
 import {
   MEETING_END_REASONS,
   MEETING_START_REASONS,
@@ -469,6 +470,16 @@ async function handleVoiceStateUpdate(
   oldState: VoiceState,
   newState: VoiceState,
 ) {
+  const member = newState.member ?? oldState.member;
+  if (member) {
+    autoRecordJoinSuppressionService.handleVoiceStateChange({
+      guildId: newState.guild.id,
+      userId: member.id,
+      isBot: Boolean(member.user.bot),
+      oldChannelId: oldState.channelId,
+      newChannelId: newState.channelId,
+    });
+  }
   const botId = client.user?.id;
   if (
     botId &&
@@ -506,6 +517,17 @@ async function handleBotVoiceUpdate(
   const wasInMeetingChannel = oldState.channelId === meeting.voiceChannel.id;
   const stillInMeetingChannel = newState.channelId === meeting.voiceChannel.id;
   if (wasInMeetingChannel && !stillInMeetingChannel) {
+    if (meeting.isAutoRecording) {
+      const nonBotMemberIds = meeting.voiceChannel.members
+        .filter((member) => !member.user.bot)
+        .map((member) => member.id);
+      autoRecordJoinSuppressionService.suppressUntilEmpty({
+        guildId: meeting.guildId,
+        channelId: meeting.voiceChannel.id,
+        nonBotMemberIds,
+        reason: "forced_disconnect",
+      });
+    }
     meeting.endReason = MEETING_END_REASONS.BOT_DISCONNECT;
     const notice = await meeting.textChannel.send(
       "Meeting ending because the bot was disconnected from the voice channel.",
@@ -556,6 +578,17 @@ async function handleUserJoin(newState: VoiceState) {
     newState.member &&
     newState.member.user.id !== client.user!.id // Don't trigger for bot joining
   ) {
+    if (
+      autoRecordJoinSuppressionService.shouldSuppressAutoJoin(
+        newState.guild.id,
+        newState.channelId!,
+      )
+    ) {
+      console.log(
+        `Auto-record suppressed for channel ${newState.channelId} until it becomes empty again.`,
+      );
+      return;
+    }
     try {
       // Check for specific channel setting
       let autoRecordSetting = await getAutoRecordSettingByChannel(

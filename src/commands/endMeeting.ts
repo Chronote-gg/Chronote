@@ -35,6 +35,7 @@ import {
   type MeetingEndStepOptions,
 } from "../observability/meetingTrace";
 import { evaluateAutoRecordCancellation } from "../services/autoRecordCancellationService";
+import { autoRecordJoinSuppressionService } from "../services/autoRecordJoinSuppressionService";
 import { meetingsCancelled } from "../metrics";
 import { describeAutoRecordRule } from "../utils/meetingLifecycle";
 import { deleteMeeting, getMeeting, hasMeeting } from "../meetings";
@@ -154,6 +155,7 @@ async function runEndMeetingFlow(options: EndMeetingFlowOptions) {
   if (!meeting.endReason) {
     meeting.endReason = MEETING_END_REASONS.UNKNOWN;
   }
+  const initialEndReason = meeting.endReason;
   await markMeetingProcessing(meeting);
   stopThinkingCueLoop(meeting);
   meeting.ttsQueue?.stopAndClear();
@@ -174,6 +176,8 @@ async function runEndMeetingFlow(options: EndMeetingFlowOptions) {
     meeting.audioData.currentSnippets.forEach((snippet) => {
       startProcessingSnippet(meeting, snippet.userId);
     });
+
+    maybeSuppressAutoRecordRejoin(meeting, initialEndReason);
 
     if (meeting.connection) {
       meeting.connection.disconnect();
@@ -312,6 +316,33 @@ async function runEndMeetingFlow(options: EndMeetingFlowOptions) {
   } finally {
     await cleanupMeetingTempDir(meeting);
   }
+}
+
+function maybeSuppressAutoRecordRejoin(
+  meeting: MeetingData,
+  endReason: MeetingData["endReason"],
+) {
+  if (!meeting.isAutoRecording) return;
+  if (
+    endReason !== MEETING_END_REASONS.BUTTON &&
+    endReason !== MEETING_END_REASONS.WEB_UI &&
+    endReason !== MEETING_END_REASONS.LIVE_VOICE
+  ) {
+    return;
+  }
+  const members = meeting.voiceChannel?.members;
+  if (!members || typeof members.filter !== "function") {
+    return;
+  }
+  const nonBotMemberIds = members
+    .filter((member) => !member.user.bot)
+    .map((member) => member.id);
+  autoRecordJoinSuppressionService.suppressUntilEmpty({
+    guildId: meeting.guildId,
+    channelId: meeting.voiceChannel.id,
+    nonBotMemberIds,
+    reason: "explicit_end",
+  });
 }
 
 async function handleAutoRecordCancellation(
