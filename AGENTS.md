@@ -124,9 +124,9 @@
 
 - `yarn install`
 - Copy `.env.example` to `.env`; set required tokens.
-- `yarn dev` to start local Dynamo + init tables + bot.
+- `yarn dev` to start local Dynamo + init tables + bot. (`yarn dev` loads `.env`/`.env.local` into the child process so per-repo creds win over global environment variables.)
 
-If you work on multiple Discord bots and have global `DISCORD_*` environment variables set, prefer `scripts/dev.ps1` so `.env`/`.env.local` values win for this repo:
+Optional Windows helper (prints loaded env, supports `-Mock` / `-SkipDocker`):
 
 - `powershell -ExecutionPolicy Bypass -File scripts/dev.ps1`
 - `powershell -ExecutionPolicy Bypass -File scripts/dev.ps1 -Mock`
