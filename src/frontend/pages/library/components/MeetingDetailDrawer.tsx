@@ -138,6 +138,19 @@ export default function MeetingDetailDrawer({
   const [feedbackModalOpen, setFeedbackModalOpen] = useState(false);
   const [feedbackDraft, setFeedbackDraft] = useState("");
 
+  const [notesCorrectionModalOpen, setNotesCorrectionModalOpen] =
+    useState(false);
+  const [notesCorrectionDraft, setNotesCorrectionDraft] = useState("");
+  const [notesCorrectionDiff, setNotesCorrectionDiff] = useState<string | null>(
+    null,
+  );
+  const [notesCorrectionToken, setNotesCorrectionToken] = useState<
+    string | null
+  >(null);
+  const [notesCorrectionChanged, setNotesCorrectionChanged] = useState<
+    boolean | null
+  >(null);
+
   const {
     detail,
     meeting,
@@ -159,6 +172,10 @@ export default function MeetingDetailDrawer({
   const archiveMutation = trpc.meetings.setArchived.useMutation();
   const renameMutation = trpc.meetings.rename.useMutation();
   const feedbackMutation = trpc.feedback.submitSummary.useMutation();
+  const suggestNotesCorrectionMutation =
+    trpc.meetings.suggestNotesCorrection.useMutation();
+  const applyNotesCorrectionMutation =
+    trpc.meetings.applyNotesCorrection.useMutation();
 
   const summaryCopyText = detail?.notes ?? "";
   const canCopySummary = summaryCopyText.trim().length > 0;
@@ -195,7 +212,92 @@ export default function MeetingDetailDrawer({
     setSummaryFeedback(meeting.summaryFeedback ?? null);
     setFeedbackDraft("");
     setFeedbackModalOpen(false);
+
+    setNotesCorrectionDraft("");
+    setNotesCorrectionDiff(null);
+    setNotesCorrectionToken(null);
+    setNotesCorrectionChanged(null);
+    setNotesCorrectionModalOpen(false);
   }, [meeting]);
+
+  const openNotesCorrectionModal = () => {
+    setNotesCorrectionModalOpen(true);
+    setNotesCorrectionDraft("");
+    setNotesCorrectionDiff(null);
+    setNotesCorrectionToken(null);
+    setNotesCorrectionChanged(null);
+  };
+
+  const closeNotesCorrectionModal = () => {
+    setNotesCorrectionModalOpen(false);
+    setNotesCorrectionDraft("");
+    setNotesCorrectionDiff(null);
+    setNotesCorrectionToken(null);
+    setNotesCorrectionChanged(null);
+  };
+
+  const handleNotesCorrectionDraftChange = (value: string) => {
+    setNotesCorrectionDraft(value);
+    setNotesCorrectionDiff(null);
+    setNotesCorrectionToken(null);
+    setNotesCorrectionChanged(null);
+  };
+
+  const handleNotesCorrectionGenerate = async () => {
+    if (!selectedGuildId || !selectedMeetingId) return;
+    const trimmed = notesCorrectionDraft.trim();
+    if (!trimmed) {
+      notifications.show({
+        color: "red",
+        message: "Add a suggestion before generating a proposal.",
+      });
+      return;
+    }
+
+    try {
+      const result = await suggestNotesCorrectionMutation.mutateAsync({
+        serverId: selectedGuildId,
+        meetingId: selectedMeetingId,
+        suggestion: trimmed,
+      });
+      setNotesCorrectionDiff(result.diff);
+      setNotesCorrectionToken(result.token);
+      setNotesCorrectionChanged(result.changed);
+      if (!result.changed) {
+        notifications.show({
+          message:
+            "No changes suggested. Try adding more detail to your correction.",
+        });
+      }
+    } catch (error) {
+      console.error("Failed to suggest notes correction", error);
+      notifications.show({
+        color: "red",
+        message: "Unable to generate a proposal right now.",
+      });
+    }
+  };
+
+  const handleNotesCorrectionApply = async () => {
+    if (!selectedGuildId || !selectedMeetingId || !notesCorrectionToken) return;
+    try {
+      await applyNotesCorrectionMutation.mutateAsync({
+        serverId: selectedGuildId,
+        meetingId: selectedMeetingId,
+        token: notesCorrectionToken,
+      });
+      notifications.show({ message: "Notes updated." });
+      closeNotesCorrectionModal();
+      void trpcUtils.meetings.detail.invalidate();
+      void invalidateMeetingLists();
+    } catch (error) {
+      console.error("Failed applying notes correction", error);
+      notifications.show({
+        color: "red",
+        message: "Unable to apply this correction right now.",
+      });
+    }
+  };
 
   useEffect(() => {
     if (!selectedMeetingId) {
@@ -427,6 +529,7 @@ export default function MeetingDetailDrawer({
       onFeedbackUp={handleSummaryFeedbackUp}
       onFeedbackDown={handleSummaryFeedbackDown}
       onCopySummary={handleCopySummary}
+      onSuggestCorrection={openNotesCorrectionModal}
     />
   ) : null;
 
@@ -515,6 +618,18 @@ export default function MeetingDetailDrawer({
           ) : meeting ? (
             <>
               <MeetingDetailModals
+                notesCorrectionModalOpen={notesCorrectionModalOpen}
+                notesCorrectionDraft={notesCorrectionDraft}
+                notesCorrectionDiff={notesCorrectionDiff}
+                notesCorrectionChanged={notesCorrectionChanged}
+                onNotesCorrectionDraftChange={handleNotesCorrectionDraftChange}
+                onNotesCorrectionModalClose={closeNotesCorrectionModal}
+                onNotesCorrectionGenerate={handleNotesCorrectionGenerate}
+                onNotesCorrectionApply={handleNotesCorrectionApply}
+                notesCorrectionGenerating={
+                  suggestNotesCorrectionMutation.isPending
+                }
+                notesCorrectionApplying={applyNotesCorrectionMutation.isPending}
                 feedbackModalOpen={feedbackModalOpen}
                 feedbackDraft={feedbackDraft}
                 onFeedbackDraftChange={setFeedbackDraft}

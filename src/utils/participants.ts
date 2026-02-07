@@ -36,6 +36,19 @@ export function resolveAttendeeDisplayName(
   });
 }
 
+export function replaceDiscordMentionsWithDisplayNames(
+  text: string,
+  participants: Map<string, Participant>,
+): string {
+  if (!text) return text;
+  return text.replace(/<@!?(\d+)>/g, (match, id: string) => {
+    const participant = participants.get(id);
+    if (!participant) return match;
+    const preferred = getParticipantPreferredName(participant, id) ?? id;
+    return `@${preferred}`;
+  });
+}
+
 export async function buildParticipantSnapshot(
   guild: Guild,
   userId: string,

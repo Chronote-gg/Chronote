@@ -1,8 +1,11 @@
 import { TRPCError } from "@trpc/server";
+import { diffLines } from "diff";
 import { z } from "zod";
+import { v4 as uuidv4 } from "uuid";
 import {
   getMeetingHistoryService,
   listRecentMeetingsForGuildService,
+  updateMeetingNotesService,
   updateMeetingArchiveService,
   updateMeetingNameService,
 } from "../../services/meetingHistoryService";
@@ -22,11 +25,33 @@ import {
   resolveUniqueMeetingName,
 } from "../../services/meetingNameService";
 import { updateMeetingNotesEmbedTitles } from "../../services/meetingNotesEmbedService";
+import {
+  createDiscordMessage,
+  deleteDiscordMessage,
+} from "../../services/discordMessageService";
+import { createOpenAIClient } from "../../services/openaiClient";
+import { getLangfuseChatPrompt } from "../../services/langfusePromptService";
+import {
+  buildModelOverrides,
+  getModelChoice,
+} from "../../services/modelFactory";
+import {
+  resolveChatParamsForRole,
+  resolveModelParamsForContext,
+} from "../../services/openaiModelParams";
+import { resolveModelChoicesForContext } from "../../services/modelChoiceService";
 import type { ChatEntry } from "../../types/chat";
+import type { SuggestionHistoryEntry } from "../../types/db";
 import type { MeetingEvent } from "../../types/meetingTimeline";
 import type { Participant } from "../../types/participants";
 import type { TranscriptPayload } from "../../types/transcript";
 import { MEETING_STATUS } from "../../types/meetingLifecycle";
+import { buildMeetingNotesEmbeds } from "../../utils/meetingNotes";
+import { stripCodeFences } from "../../utils/text";
+import {
+  replaceDiscordMentionsWithDisplayNames,
+  resolveAttendeeDisplayName,
+} from "../../utils/participants";
 import { manageGuildProcedure, router } from "../trpc";
 
 const resolveParticipantLabel = (participant: Participant) =>
@@ -35,6 +60,213 @@ const resolveParticipantLabel = (participant: Participant) =>
   participant.username ||
   participant.tag ||
   "Unknown";
+
+const buildParticipantMap = (participants?: Participant[]) =>
+  new Map(
+    (participants ?? []).map((participant) => [participant.id, participant]),
+  );
+
+const resolveMeetingAttendees = (history: {
+  participants?: Participant[];
+  attendees?: string[];
+}) => {
+  const participants = buildParticipantMap(history.participants);
+  if (history.attendees?.length) {
+    return history.attendees.map((attendee) =>
+      resolveAttendeeDisplayName(attendee, participants),
+    );
+  }
+  if (history.participants?.length) {
+    return history.participants.map((participant) =>
+      resolveParticipantLabel(participant),
+    );
+  }
+  return [];
+};
+
+const NOTES_CORRECTION_DIFF_LINE_LIMIT = 600;
+const NOTES_CORRECTION_DIFF_CHAR_LIMIT = 12_000;
+const NOTES_CORRECTION_MAX_EMBEDS_PER_MESSAGE = 10;
+
+type PendingNotesCorrection = {
+  guildId: string;
+  channelIdTimestamp: string;
+  notesChannelId?: string;
+  notesMessageIds?: string[];
+  summaryMessageId?: string;
+  meetingName?: string;
+  originalNotes: string;
+  newNotes: string;
+  notesVersion: number;
+  requesterId: string;
+  suggestion: SuggestionHistoryEntry;
+};
+
+const pendingNotesCorrections = new Map<string, PendingNotesCorrection>();
+
+const trimForUi = (
+  content: string,
+  limit = NOTES_CORRECTION_DIFF_CHAR_LIMIT,
+) => {
+  if (content.length <= limit) return content;
+  return content.substring(0, Math.max(0, limit - 20)) + "\n... (truncated)";
+};
+
+const buildUnifiedDiffForUi = (current: string, proposed: string): string => {
+  const changes = diffLines(current, proposed);
+  const lines: string[] = [];
+
+  for (const change of changes) {
+    const prefix = change.added ? "+" : change.removed ? "-" : " ";
+    const content = change.value.split("\n");
+    for (const line of content) {
+      if (line === "") continue;
+      lines.push(`${prefix} ${line}`);
+      if (lines.length > NOTES_CORRECTION_DIFF_LINE_LIMIT) break;
+    }
+    if (lines.length > NOTES_CORRECTION_DIFF_LINE_LIMIT) break;
+  }
+
+  return trimForUi(lines.join("\n"));
+};
+
+const formatSuggestionsForPrompt = (suggestions?: SuggestionHistoryEntry[]) => {
+  if (!suggestions || suggestions.length === 0) {
+    return "None recorded yet.";
+  }
+  return suggestions
+    .map((entry) => {
+      const label = entry.displayName || entry.userTag || entry.userId;
+      return `- [${new Date(entry.createdAt).toLocaleString()}] ${label}: ${entry.text}`;
+    })
+    .join("\n");
+};
+
+const buildRequesterTag = (user: {
+  id?: string | null;
+  username?: string | null;
+  discriminator?: string | null;
+}) => {
+  const username = user.username ?? user.id ?? "unknown";
+  const discriminator = user.discriminator;
+  if (discriminator && discriminator !== "0") {
+    return `${username}#${discriminator}`;
+  }
+  return username;
+};
+
+async function generateCorrectedNotes(options: {
+  currentNotes: string;
+  transcript: string;
+  suggestion: string;
+  requesterTag: string;
+  previousSuggestions?: SuggestionHistoryEntry[];
+  modelParams?: Parameters<typeof resolveChatParamsForRole>[0]["config"];
+  modelOverride?: string;
+}): Promise<string> {
+  const priorSuggestions = formatSuggestionsForPrompt(
+    options.previousSuggestions,
+  );
+  const { messages, langfusePrompt } = await getLangfuseChatPrompt({
+    name: config.langfuse.notesCorrectionPromptName,
+    variables: {
+      currentNotes: options.currentNotes,
+      priorSuggestions,
+      transcript: options.transcript,
+      requesterTag: options.requesterTag,
+      suggestion: options.suggestion,
+    },
+  });
+
+  try {
+    const modelChoice = getModelChoice(
+      "notesCorrection",
+      buildModelOverrides(
+        options.modelOverride
+          ? { notesCorrection: options.modelOverride }
+          : undefined,
+      ),
+    );
+    const chatParams = resolveChatParamsForRole({
+      role: "notesCorrection",
+      model: modelChoice.model,
+      config: options.modelParams,
+    });
+    const openAIClient = createOpenAIClient({
+      traceName: "notes-correction-web",
+      generationName: "notes-correction-web",
+      tags: ["feature:notes_correction", "surface:web"],
+      metadata: {
+        requesterTag: options.requesterTag,
+      },
+      langfusePrompt,
+    });
+    const completion = await openAIClient.chat.completions.create({
+      model: modelChoice.model,
+      messages,
+      ...chatParams,
+    });
+
+    const content = completion.choices[0]?.message?.content;
+    if (content && content.trim().length > 0) {
+      return stripCodeFences(content.trim());
+    }
+  } catch (error) {
+    console.error("Failed to generate corrected notes (web):", error);
+  }
+
+  return options.currentNotes;
+}
+
+async function sendNotesEmbedsToDiscord(params: {
+  channelId: string;
+  notesBody: string;
+  meetingName?: string;
+  footerText?: string;
+  color?: number;
+}): Promise<string[]> {
+  const embeds = buildMeetingNotesEmbeds({
+    notesBody: params.notesBody,
+    meetingName: params.meetingName,
+    footerText: params.footerText,
+    color: params.color,
+  }).map((embed) => embed.toJSON() as unknown as Record<string, unknown>);
+
+  const messageIds: string[] = [];
+  for (
+    let i = 0;
+    i < embeds.length;
+    i += NOTES_CORRECTION_MAX_EMBEDS_PER_MESSAGE
+  ) {
+    const msg = await createDiscordMessage(params.channelId, {
+      embeds: embeds.slice(i, i + NOTES_CORRECTION_MAX_EMBEDS_PER_MESSAGE),
+      components: [],
+    });
+    messageIds.push(msg.id);
+  }
+  return messageIds;
+}
+
+async function deleteDiscordMessagesSafely(params: {
+  channelId: string;
+  messageIds: string[];
+  skipMessageId?: string;
+}) {
+  for (const messageId of params.messageIds) {
+    if (params.skipMessageId && messageId === params.skipMessageId) {
+      continue;
+    }
+    try {
+      await deleteDiscordMessage(params.channelId, messageId);
+    } catch (error) {
+      console.warn("Failed deleting Discord message", {
+        channelId: params.channelId,
+        messageId,
+        error,
+      });
+    }
+  }
+}
 
 const list = manageGuildProcedure
   .input(
@@ -141,7 +373,21 @@ const detail = manageGuildProcedure
     const transcriptPayload = history.transcriptS3Key
       ? await fetchJsonFromS3<TranscriptPayload>(history.transcriptS3Key)
       : undefined;
-    const transcript = transcriptPayload?.text ?? "";
+    const participants = buildParticipantMap(history.participants);
+    const transcript = replaceDiscordMentionsWithDisplayNames(
+      transcriptPayload?.text ?? "",
+      participants,
+    );
+    const notes = replaceDiscordMentionsWithDisplayNames(
+      history.notes ?? "",
+      participants,
+    );
+    const summarySentence = history.summarySentence
+      ? replaceDiscordMentionsWithDisplayNames(
+          history.summarySentence,
+          participants,
+        )
+      : history.summarySentence;
 
     let chatEntries: ChatEntry[] | undefined;
     if (history.chatS3Key) {
@@ -182,9 +428,9 @@ const detail = manageGuildProcedure
               )
             : history.duration,
         tags: history.tags ?? [],
-        notes: history.notes ?? "",
+        notes,
         meetingName: history.meetingName,
-        summarySentence: history.summarySentence,
+        summarySentence,
         summaryLabel: history.summaryLabel,
         notesChannelId: history.notesChannelId,
         notesMessageId: history.notesMessageIds?.[0],
@@ -193,12 +439,7 @@ const detail = manageGuildProcedure
         archivedAt: history.archivedAt,
         archivedByUserId: history.archivedByUserId,
         summaryFeedback: summaryFeedback?.rating,
-        attendees:
-          history.participants?.map((participant) =>
-            resolveParticipantLabel(participant),
-          ) ??
-          history.attendees ??
-          [],
+        attendees: resolveMeetingAttendees(history),
         events,
       },
     };
@@ -269,9 +510,181 @@ const rename = manageGuildProcedure
     return { meetingName };
   });
 
+const suggestNotesCorrection = manageGuildProcedure
+  .input(
+    z.object({
+      serverId: z.string(),
+      meetingId: z.string(),
+      suggestion: z.string().min(1).max(1500),
+    }),
+  )
+  .mutation(async ({ ctx, input }) => {
+    const history = await getMeetingHistoryService(
+      input.serverId,
+      input.meetingId,
+    );
+    if (!history || !history.notes) {
+      throw new TRPCError({
+        code: "NOT_FOUND",
+        message: "Meeting notes not found",
+      });
+    }
+
+    const transcriptPayload = history.transcriptS3Key
+      ? await fetchJsonFromS3<TranscriptPayload>(history.transcriptS3Key)
+      : undefined;
+    const transcript = transcriptPayload?.text ?? "";
+
+    const requesterTag = buildRequesterTag(ctx.user);
+    const suggestionEntry: SuggestionHistoryEntry = {
+      userId: ctx.user.id,
+      userTag: requesterTag,
+      displayName: ctx.user.username ?? requesterTag,
+      text: input.suggestion,
+      createdAt: new Date().toISOString(),
+    };
+
+    const channelId = history.channelId ?? input.meetingId.split("#")[0];
+    const modelParams = await resolveModelParamsForContext({
+      guildId: input.serverId,
+      channelId,
+      userId: ctx.user.id,
+    });
+    const modelChoices = await resolveModelChoicesForContext({
+      guildId: input.serverId,
+      channelId,
+      userId: ctx.user.id,
+    });
+
+    const newNotes = await generateCorrectedNotes({
+      currentNotes: history.notes,
+      transcript,
+      suggestion: input.suggestion,
+      requesterTag,
+      previousSuggestions: history.suggestionsHistory,
+      modelParams: modelParams.notesCorrection,
+      modelOverride: modelChoices.notesCorrection,
+    });
+
+    const diff = buildUnifiedDiffForUi(history.notes, newNotes);
+    const token = uuidv4();
+    pendingNotesCorrections.set(token, {
+      guildId: input.serverId,
+      channelIdTimestamp: input.meetingId,
+      notesChannelId: history.notesChannelId,
+      notesMessageIds: history.notesMessageIds,
+      summaryMessageId: history.summaryMessageId,
+      meetingName: history.meetingName,
+      originalNotes: history.notes,
+      newNotes,
+      notesVersion: history.notesVersion ?? 1,
+      requesterId: ctx.user.id,
+      suggestion: suggestionEntry,
+    });
+
+    return {
+      token,
+      diff,
+      changed: newNotes.trim() !== history.notes.trim(),
+    };
+  });
+
+const applyNotesCorrection = manageGuildProcedure
+  .input(
+    z.object({
+      serverId: z.string(),
+      meetingId: z.string(),
+      token: z.string().min(1),
+    }),
+  )
+  .mutation(async ({ ctx, input }) => {
+    const pending = pendingNotesCorrections.get(input.token);
+    if (!pending) {
+      throw new TRPCError({
+        code: "NOT_FOUND",
+        message: "This correction request has expired.",
+      });
+    }
+    if (
+      pending.guildId !== input.serverId ||
+      pending.channelIdTimestamp !== input.meetingId
+    ) {
+      throw new TRPCError({
+        code: "BAD_REQUEST",
+        message: "Correction request does not match meeting.",
+      });
+    }
+
+    const newVersion = (pending.notesVersion ?? 1) + 1;
+    const editorLabel = buildRequesterTag(ctx.user);
+    const footerText = `v${newVersion} • Edited by ${editorLabel}`;
+
+    let newMessageIds: string[] | undefined;
+    if (!config.mock.enabled && pending.notesChannelId) {
+      newMessageIds = await sendNotesEmbedsToDiscord({
+        channelId: pending.notesChannelId,
+        notesBody: pending.newNotes,
+        meetingName: pending.meetingName,
+        footerText,
+      });
+    }
+
+    const ok = await updateMeetingNotesService({
+      guildId: pending.guildId,
+      channelId_timestamp: pending.channelIdTimestamp,
+      notes: pending.newNotes,
+      notesVersion: newVersion,
+      editedBy: ctx.user.id,
+      suggestion: pending.suggestion,
+      expectedPreviousVersion: pending.notesVersion,
+      metadata:
+        pending.notesChannelId && newMessageIds
+          ? {
+              notesMessageIds: newMessageIds,
+              notesChannelId: pending.notesChannelId,
+            }
+          : undefined,
+    });
+
+    if (!ok) {
+      if (
+        !config.mock.enabled &&
+        pending.notesChannelId &&
+        newMessageIds?.length
+      ) {
+        await deleteDiscordMessagesSafely({
+          channelId: pending.notesChannelId,
+          messageIds: newMessageIds,
+        });
+      }
+      throw new TRPCError({
+        code: "CONFLICT",
+        message:
+          "Could not apply this correction because the notes were updated elsewhere. Please regenerate the correction and try again.",
+      });
+    }
+
+    if (
+      !config.mock.enabled &&
+      pending.notesChannelId &&
+      pending.notesMessageIds?.length
+    ) {
+      await deleteDiscordMessagesSafely({
+        channelId: pending.notesChannelId,
+        messageIds: pending.notesMessageIds,
+        skipMessageId: pending.summaryMessageId,
+      });
+    }
+
+    pendingNotesCorrections.delete(input.token);
+    return { ok: true };
+  });
+
 export const meetingsRouter = router({
   list,
   detail,
   setArchived,
   rename,
+  suggestNotesCorrection,
+  applyNotesCorrection,
 });
