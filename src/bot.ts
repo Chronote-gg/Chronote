@@ -472,13 +472,18 @@ async function handleVoiceStateUpdate(
 ) {
   const member = newState.member ?? oldState.member;
   if (member) {
-    autoRecordJoinSuppressionService.handleVoiceStateChange({
+    const result = autoRecordJoinSuppressionService.handleVoiceStateChange({
       guildId: newState.guild.id,
       userId: member.id,
       isBot: Boolean(member.user.bot),
       oldChannelId: oldState.channelId,
       newChannelId: newState.channelId,
     });
+    if (result.clearedSuppression) {
+      console.log(
+        `Auto-record suppression cleared after channel became empty: guildId=${newState.guild.id} channelId=${oldState.channelId}`,
+      );
+    }
   }
   const botId = client.user?.id;
   if (
