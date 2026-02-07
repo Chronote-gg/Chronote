@@ -142,6 +142,12 @@
 - When running checks locally, avoid docker builds unless explicitly requested.
 - Visual regression baselines: update with `yarn test:visual:update`.
 
+## Agent Skills
+
+OpenCode skills are stored as `.opencode/skills/<name>/SKILL.md`. Skills are discovered at OpenCode startup and cached, adding or modifying skills may require restarting OpenCode.
+
+- `pr-review-recycle`: agentic loop for processing Copilot/Greptile/Codex PR review threads until checks are green.
+
 Why each check exists:
 
 - Lint (ESLint) catches common errors and keeps code quality consistent. Docs: https://eslint.org/docs/latest/use/command-line-interface
