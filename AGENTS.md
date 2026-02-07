@@ -126,6 +126,11 @@
 - Copy `.env.example` to `.env`; set required tokens.
 - `yarn dev` to start local Dynamo + init tables + bot.
 
+If you work on multiple Discord bots and have global `DISCORD_*` environment variables set, prefer `scripts/dev.ps1` so `.env`/`.env.local` values win for this repo:
+
+- `powershell -ExecutionPolicy Bypass -File scripts/dev.ps1`
+- `powershell -ExecutionPolicy Bypass -File scripts/dev.ps1 -Mock`
+
 ## Worktrees (standard flow)
 
 - Use `scripts/new-worktree.ps1` from the main repo to create a worktree and branch, and copy the main `.env`.
