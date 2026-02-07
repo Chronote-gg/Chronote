@@ -1,5 +1,6 @@
 import type { ButtonInteraction, Client } from "discord.js";
 import type { MeetingData } from "../../src/types/meeting-data";
+import { Collection } from "discord.js";
 import {
   handleEndMeetingButton,
   handleEndMeetingOther,
@@ -305,6 +306,14 @@ describe("handleEndMeetingButton", () => {
       "Auto-record rule: test-channel",
     );
 
+    const members = new Collection<
+      string,
+      { id: string; user: { bot: boolean } }
+    >([
+      ["user-1", { id: "user-1", user: { bot: false } }],
+      ["bot-1", { id: "bot-1", user: { bot: true } }],
+    ]);
+
     const meeting = {
       guildId: "guild-1",
       channelId: "text-1",
@@ -312,10 +321,7 @@ describe("handleEndMeetingButton", () => {
       voiceChannel: {
         id: "voice-1",
         name: "Voice",
-        members: [
-          { id: "user-1", user: { bot: false } },
-          { id: "bot-1", user: { bot: true } },
-        ],
+        members,
       },
       textChannel: {
         send: jest.fn().mockResolvedValue(undefined),

@@ -331,9 +331,7 @@ function maybeSuppressAutoRecordRejoin(
     return;
   }
   const members = meeting.voiceChannel?.members;
-  if (!members || typeof members.filter !== "function") {
-    return;
-  }
+  if (!members) return;
   const nonBotMemberIds = members
     .filter((member) => !member.user.bot)
     .map((member) => member.id);

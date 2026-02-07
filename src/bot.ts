@@ -470,12 +470,13 @@ async function handleVoiceStateUpdate(
   oldState: VoiceState,
   newState: VoiceState,
 ) {
+  const userId = newState.id || oldState.id;
   const member = newState.member ?? oldState.member;
-  if (member) {
+  if (userId) {
     const result = autoRecordJoinSuppressionService.handleVoiceStateChange({
       guildId: newState.guild.id,
-      userId: member.id,
-      isBot: Boolean(member.user.bot),
+      userId,
+      isBot: member ? member.user.bot : false,
       oldChannelId: oldState.channelId,
       newChannelId: newState.channelId,
     });

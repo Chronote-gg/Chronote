@@ -110,4 +110,40 @@ describe("AutoRecordJoinSuppressionService", () => {
     });
     expect(svc.shouldSuppressAutoJoin("g1", "c2")).toBe(false);
   });
+
+  test("tracks members who join after suppression begins", () => {
+    const svc = new AutoRecordJoinSuppressionService();
+    svc.suppressUntilEmpty({
+      guildId: "g1",
+      channelId: "c1",
+      nonBotMemberIds: ["u1"],
+      reason: "explicit_end",
+    });
+
+    svc.handleVoiceStateChange({
+      guildId: "g1",
+      userId: "u2",
+      isBot: false,
+      oldChannelId: null,
+      newChannelId: "c1",
+    });
+
+    svc.handleVoiceStateChange({
+      guildId: "g1",
+      userId: "u1",
+      isBot: false,
+      oldChannelId: "c1",
+      newChannelId: null,
+    });
+    expect(svc.shouldSuppressAutoJoin("g1", "c1")).toBe(true);
+
+    svc.handleVoiceStateChange({
+      guildId: "g1",
+      userId: "u2",
+      isBot: false,
+      oldChannelId: "c1",
+      newChannelId: null,
+    });
+    expect(svc.shouldSuppressAutoJoin("g1", "c1")).toBe(false);
+  });
 });
