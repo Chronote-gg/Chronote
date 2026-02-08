@@ -7,6 +7,8 @@ test.describe("meeting detail scroll", () => {
     libraryPage,
     page,
   }) => {
+    await page.setViewportSize({ width: 1280, height: 720 });
+
     await page.goto("/portal/select-server");
     await serverSelectPage.openServerByName(mockGuilds.ddm.name);
     await libraryPage.waitForLoaded();
@@ -15,12 +17,11 @@ test.describe("meeting detail scroll", () => {
     const drawerDialog = page.getByRole("dialog");
     await expect(drawerDialog).toBeVisible();
 
-    await page.getByTestId("meeting-fullscreen-toggle").click();
+    await libraryPage.drawerFullscreenToggle().click();
 
-    const timelineViewport = page.getByTestId(
-      "meeting-timeline-scroll-viewport",
-    );
+    const timelineViewport = libraryPage.drawerTimelineViewport();
     await expect(timelineViewport).toBeVisible();
+    await expect(libraryPage.drawerTimelineEvents().first()).toBeVisible();
 
     const drawerBox = await drawerDialog.boundingBox();
     expect(drawerBox).not.toBeNull();
@@ -32,15 +33,14 @@ test.describe("meeting detail scroll", () => {
     }));
 
     expect(metrics.clientHeight).toBeLessThanOrEqual(drawerBox!.height);
-    if (metrics.scrollHeight > metrics.clientHeight) {
-      await timelineViewport.evaluate((el) => {
-        el.scrollTo({ top: 500 });
-      });
+    expect(metrics.scrollHeight).toBeGreaterThan(metrics.clientHeight);
 
-      await expect
-        .poll(async () => timelineViewport.evaluate((el) => el.scrollTop))
-        .toBeGreaterThan(metrics.scrollTop);
-    }
+    await timelineViewport.hover();
+    await page.mouse.wheel(0, 600);
+
+    await expect
+      .poll(async () => timelineViewport.evaluate((el) => el.scrollTop))
+      .toBeGreaterThan(metrics.scrollTop);
   });
 
   test("fullscreen transcript timeline scrolls (mobile)", async ({
@@ -58,12 +58,11 @@ test.describe("meeting detail scroll", () => {
     const drawerDialog = page.getByRole("dialog");
     await expect(drawerDialog).toBeVisible();
 
-    await page.getByTestId("meeting-fullscreen-toggle").click();
+    await libraryPage.drawerFullscreenToggle().click();
 
-    const timelineViewport = page.getByTestId(
-      "meeting-timeline-scroll-viewport",
-    );
+    const timelineViewport = libraryPage.drawerTimelineViewport();
     await expect(timelineViewport).toBeVisible();
+    await expect(libraryPage.drawerTimelineEvents().first()).toBeVisible();
 
     const drawerBox = await drawerDialog.boundingBox();
     expect(drawerBox).not.toBeNull();
@@ -75,14 +74,13 @@ test.describe("meeting detail scroll", () => {
     }));
 
     expect(metrics.clientHeight).toBeLessThanOrEqual(drawerBox!.height);
-    if (metrics.scrollHeight > metrics.clientHeight) {
-      await timelineViewport.evaluate((el) => {
-        el.scrollTo({ top: 500 });
-      });
+    expect(metrics.scrollHeight).toBeGreaterThan(metrics.clientHeight);
 
-      await expect
-        .poll(async () => timelineViewport.evaluate((el) => el.scrollTop))
-        .toBeGreaterThan(metrics.scrollTop);
-    }
+    await timelineViewport.hover();
+    await page.mouse.wheel(0, 600);
+
+    await expect
+      .poll(async () => timelineViewport.evaluate((el) => el.scrollTop))
+      .toBeGreaterThan(metrics.scrollTop);
   });
 });
