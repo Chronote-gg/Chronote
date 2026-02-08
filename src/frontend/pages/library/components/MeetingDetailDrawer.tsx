@@ -315,8 +315,15 @@ export default function MeetingDetailDrawer({
 
   const handleNotesEditorSave = async (delta: unknown) => {
     if (!selectedGuildId || !selectedMeetingId) return;
+    const expectedPreviousVersion = detail?.notesVersion;
+    if (expectedPreviousVersion == null) {
+      notifications.show({
+        color: "red",
+        message: "Unable to save notes right now. Refresh and try again.",
+      });
+      return;
+    }
     try {
-      const expectedPreviousVersion = detail?.notesVersion ?? 1;
       await updateNotesMutation.mutateAsync({
         serverId: selectedGuildId,
         meetingId: selectedMeetingId,

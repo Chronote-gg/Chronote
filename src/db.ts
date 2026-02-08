@@ -920,6 +920,7 @@ export async function updateMeetingNotes(
 
   if (expectedPreviousVersion !== undefined) {
     values[":expectedVersion"] = expectedPreviousVersion;
+    values[":legacyBaselineVersion"] = 1;
   }
 
   const params: UpdateItemCommand["input"] = {
@@ -933,8 +934,11 @@ export async function updateMeetingNotes(
   };
 
   if (expectedPreviousVersion !== undefined) {
+    // If the caller supplies an expected version, do not allow the conditional check
+    // to be bypassed by legacy items missing notesVersion. We treat missing notesVersion
+    // as baseline version=1 for the first edit.
     params.ConditionExpression =
-      "attribute_not_exists(#notesVersion) OR #notesVersion = :expectedVersion";
+      "(attribute_not_exists(#notesVersion) AND :expectedVersion = :legacyBaselineVersion) OR #notesVersion = :expectedVersion";
   }
 
   const command = new UpdateItemCommand(params);
