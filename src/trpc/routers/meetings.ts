@@ -11,6 +11,10 @@ import {
 } from "../../services/meetingHistoryService";
 import { ensureBotInGuild } from "../../services/guildAccessService";
 import { config } from "../../services/configService";
+import {
+  createNotesCorrectionTokenStore,
+  type NotesCorrectionTokenRecord,
+} from "../../services/notesCorrectionTokenStore";
 import { buildMeetingTimelineEventsFromHistory } from "../../services/meetingTimelineService";
 import {
   fetchJsonFromS3,
@@ -98,32 +102,13 @@ const NOTES_CORRECTION_DIFF_LINE_LIMIT = 600;
 const NOTES_CORRECTION_DIFF_CHAR_LIMIT = 12_000;
 const NOTES_CORRECTION_MAX_EMBEDS_PER_MESSAGE = 10;
 
-type PendingNotesCorrection = {
-  guildId: string;
-  channelIdTimestamp: string;
-  expiresAt: number;
-  notesChannelId?: string;
-  notesMessageIds?: string[];
-  summaryMessageId?: string;
-  meetingName?: string;
-  meetingCreatorId?: string;
-  isAutoRecording?: boolean;
-  channelId?: string;
-  tags?: string[];
-  timestamp?: string;
-  summarySentence?: string;
-  summaryLabel?: string;
-  originalNotes: string;
-  newNotes: string;
-  notesVersion: number;
-  requesterId: string;
-  suggestion: SuggestionHistoryEntry;
-};
-
-const pendingNotesCorrections = new Map<string, PendingNotesCorrection>();
-
 const NOTES_CORRECTION_TOKEN_TTL_MS = 15 * 60 * 1000;
 const NOTES_CORRECTION_MAX_PENDING = 200;
+
+const notesCorrectionTokenStore = createNotesCorrectionTokenStore({
+  ttlMs: NOTES_CORRECTION_TOKEN_TTL_MS,
+  maxPending: NOTES_CORRECTION_MAX_PENDING,
+});
 
 const SUMMARY_DEFAULT_TITLE = "Meeting Summary";
 const SUMMARY_EMPTY_DESCRIPTION = "Summary unavailable.";
@@ -207,23 +192,7 @@ const ensurePortalUserCanManageMeetingChannel = async (options: {
 };
 
 const cleanupExpiredPendingNotesCorrections = () => {
-  const now = Date.now();
-  for (const [token, pending] of pendingNotesCorrections.entries()) {
-    if (pending.expiresAt <= now) {
-      pendingNotesCorrections.delete(token);
-    }
-  }
-
-  if (pendingNotesCorrections.size > NOTES_CORRECTION_MAX_PENDING) {
-    const sorted = Array.from(pendingNotesCorrections.entries()).sort(
-      (a, b) => a[1].expiresAt - b[1].expiresAt,
-    );
-    const overflow =
-      pendingNotesCorrections.size - NOTES_CORRECTION_MAX_PENDING;
-    for (let i = 0; i < overflow; i += 1) {
-      pendingNotesCorrections.delete(sorted[i][0]);
-    }
-  }
+  notesCorrectionTokenStore.cleanup();
 };
 
 const trimForUi = (
@@ -731,28 +700,17 @@ const suggestNotesCorrection = guildMemberProcedure
     cleanupExpiredPendingNotesCorrections();
     const diff = buildUnifiedDiffForUi(history.notes, newNotes);
     const token = uuidv4();
-    const expiresAt = Date.now() + NOTES_CORRECTION_TOKEN_TTL_MS;
-    pendingNotesCorrections.set(token, {
+    const expiresAtMs = Date.now() + NOTES_CORRECTION_TOKEN_TTL_MS;
+    const record: NotesCorrectionTokenRecord = {
       guildId: input.serverId,
-      channelIdTimestamp: input.meetingId,
-      expiresAt,
-      notesChannelId: history.notesChannelId,
-      notesMessageIds: history.notesMessageIds,
-      summaryMessageId: history.summaryMessageId,
-      meetingName: history.meetingName,
-      meetingCreatorId: history.meetingCreatorId,
-      isAutoRecording: history.isAutoRecording,
-      channelId: history.channelId,
-      tags: history.tags,
-      timestamp: history.timestamp,
-      summarySentence: history.summarySentence,
-      summaryLabel: history.summaryLabel,
-      originalNotes: history.notes,
-      newNotes,
+      meetingId: input.meetingId,
+      expiresAtMs,
       notesVersion: history.notesVersion ?? 1,
       requesterId: ctx.user.id,
+      newNotes,
       suggestion: suggestionEntry,
-    });
+    };
+    await notesCorrectionTokenStore.set(token, record);
 
     return {
       token,
@@ -771,7 +729,7 @@ const applyNotesCorrection = guildMemberProcedure
   )
   .mutation(async ({ ctx, input }) => {
     cleanupExpiredPendingNotesCorrections();
-    const pending = pendingNotesCorrections.get(input.token);
+    const pending = await notesCorrectionTokenStore.get(input.token);
     if (!pending) {
       throw new TRPCError({
         code: "NOT_FOUND",
@@ -780,7 +738,7 @@ const applyNotesCorrection = guildMemberProcedure
     }
     if (
       pending.guildId !== input.serverId ||
-      pending.channelIdTimestamp !== input.meetingId
+      pending.meetingId !== input.meetingId
     ) {
       throw new TRPCError({
         code: "BAD_REQUEST",
@@ -793,12 +751,11 @@ const applyNotesCorrection = guildMemberProcedure
       input.meetingId,
     );
     if (!history) {
-      pendingNotesCorrections.delete(input.token);
+      await notesCorrectionTokenStore.delete(input.token);
       throw new TRPCError({ code: "NOT_FOUND", message: "Meeting not found" });
     }
 
-    const channelId =
-      history.channelId ?? pending.channelId ?? input.meetingId.split("#")[0];
+    const channelId = history.channelId ?? input.meetingId.split("#")[0];
     await ensurePortalUserCanViewMeetingChannel({
       guildId: input.serverId,
       channelId,
@@ -834,11 +791,11 @@ const applyNotesCorrection = guildMemberProcedure
     let didPersistNewNotes = false;
 
     try {
-      if (!config.mock.enabled && pending.notesChannelId) {
+      if (!config.mock.enabled && history.notesChannelId) {
         newMessageIds = await sendNotesEmbedsToDiscord({
-          channelId: pending.notesChannelId,
+          channelId: history.notesChannelId,
           notesBody: pending.newNotes,
-          meetingName: pending.meetingName,
+          meetingName: history.meetingName,
           footerText,
         });
       }
@@ -879,8 +836,8 @@ const applyNotesCorrection = guildMemberProcedure
       const summaryLabel = summaries.summaryLabel ?? history.summaryLabel;
 
       const ok = await updateMeetingNotesService({
-        guildId: pending.guildId,
-        channelId_timestamp: pending.channelIdTimestamp,
+        guildId: input.serverId,
+        channelId_timestamp: input.meetingId,
         notes: pending.newNotes,
         notesVersion: newVersion,
         editedBy: ctx.user.id,
@@ -889,23 +846,23 @@ const applyNotesCorrection = guildMemberProcedure
         suggestion: pending.suggestion,
         expectedPreviousVersion: pending.notesVersion,
         metadata:
-          pending.notesChannelId && newMessageIds
+          history.notesChannelId && newMessageIds
             ? {
                 notesMessageIds: newMessageIds,
-                notesChannelId: pending.notesChannelId,
+                notesChannelId: history.notesChannelId,
               }
             : undefined,
       });
 
       if (!ok) {
-        pendingNotesCorrections.delete(input.token);
+        await notesCorrectionTokenStore.delete(input.token);
         if (
           !config.mock.enabled &&
-          pending.notesChannelId &&
+          history.notesChannelId &&
           newMessageIds?.length
         ) {
           await deleteDiscordMessagesSafely({
-            channelId: pending.notesChannelId,
+            channelId: history.notesChannelId,
             messageIds: newMessageIds,
           });
         }
@@ -920,25 +877,25 @@ const applyNotesCorrection = guildMemberProcedure
 
       if (
         !config.mock.enabled &&
-        pending.notesChannelId &&
-        pending.notesMessageIds?.length
+        history.notesChannelId &&
+        history.notesMessageIds?.length
       ) {
         await deleteDiscordMessagesSafely({
-          channelId: pending.notesChannelId,
-          messageIds: pending.notesMessageIds,
-          skipMessageId: pending.summaryMessageId,
+          channelId: history.notesChannelId,
+          messageIds: history.notesMessageIds,
+          skipMessageId: history.summaryMessageId,
         });
       }
 
       if (
         !config.mock.enabled &&
-        pending.notesChannelId &&
-        pending.summaryMessageId
+        history.notesChannelId &&
+        history.summaryMessageId
       ) {
         try {
           const message = await fetchDiscordMessage(
-            pending.notesChannelId,
-            pending.summaryMessageId,
+            history.notesChannelId,
+            history.summaryMessageId,
           );
           const embed = message?.embeds?.[0];
           if (embed) {
@@ -954,8 +911,8 @@ const applyNotesCorrection = guildMemberProcedure
               }),
             };
             await updateDiscordMessageEmbeds(
-              pending.notesChannelId,
-              pending.summaryMessageId,
+              history.notesChannelId,
+              history.summaryMessageId,
               [updated],
             );
           }
@@ -967,17 +924,17 @@ const applyNotesCorrection = guildMemberProcedure
         }
       }
 
-      pendingNotesCorrections.delete(input.token);
+      await notesCorrectionTokenStore.delete(input.token);
       return { ok: true };
     } catch (error) {
       if (
         !didPersistNewNotes &&
         !config.mock.enabled &&
-        pending.notesChannelId &&
+        history.notesChannelId &&
         newMessageIds?.length
       ) {
         await deleteDiscordMessagesSafely({
-          channelId: pending.notesChannelId,
+          channelId: history.notesChannelId,
           messageIds: newMessageIds,
         });
       }
