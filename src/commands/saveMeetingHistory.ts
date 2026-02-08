@@ -7,6 +7,13 @@ import {
   ensureMeetingSummaries,
 } from "../services/meetingNotesService";
 
+const NOTES_HISTORY_ENTRY_CHAR_LIMIT = 8_000;
+
+function trimNotesForHistory(notes: string): string {
+  if (notes.length <= NOTES_HISTORY_ENTRY_CHAR_LIMIT) return notes;
+  return `${notes.slice(0, NOTES_HISTORY_ENTRY_CHAR_LIMIT)}\n\n[truncated]`;
+}
+
 function buildNotesMetadata(
   meeting: MeetingData,
   notes: string | undefined,
@@ -77,7 +84,7 @@ function buildNotesHistory(options: {
   return [
     {
       version: notesVersion,
-      notes,
+      notes: trimNotesForHistory(notes),
       editedBy: notesLastEditedBy ?? meeting.creator.id,
       editedAt: notesLastEditedAt ?? timestamp,
     },

@@ -99,8 +99,10 @@ const NOTES_CORRECTION_DIFF_LINE_LIMIT = 600;
 const NOTES_CORRECTION_DIFF_CHAR_LIMIT = 12_000;
 const NOTES_CORRECTION_MAX_EMBEDS_PER_MESSAGE = 10;
 
-const NOTES_EDITOR_MARKDOWN_CHAR_LIMIT = 120_000;
-const NOTES_EDITOR_DELTA_CHAR_LIMIT = 220_000;
+// DynamoDB item size is capped at 400KB. Notes are also versioned in MeetingHistory,
+// so we keep portal-edited notes bounded to avoid update failures.
+const NOTES_EDITOR_MARKDOWN_CHAR_LIMIT = 30_000;
+const NOTES_EDITOR_DELTA_CHAR_LIMIT = 80_000;
 
 const safeJsonStringifyLength = (value: unknown): number | null => {
   try {

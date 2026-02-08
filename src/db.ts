@@ -808,10 +808,16 @@ export async function updateMeetingNotes(
   },
   notesDelta?: unknown,
 ): Promise<boolean> {
+  const NOTES_HISTORY_ENTRY_CHAR_LIMIT = 8_000;
+  const notesHistoryNotes =
+    notes.length <= NOTES_HISTORY_ENTRY_CHAR_LIMIT
+      ? notes
+      : `${notes.slice(0, NOTES_HISTORY_ENTRY_CHAR_LIMIT)}\n\n[truncated]`;
+
   const now = new Date().toISOString();
   const notesHistoryEntry: NotesHistoryEntry = {
     version: notesVersion,
-    notes,
+    notes: notesHistoryNotes,
     editedBy,
     editedAt: now,
   };
