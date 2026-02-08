@@ -111,13 +111,11 @@ const safeJsonStringifyLength = (value: unknown): number | null => {
 };
 
 const quillDeltaToMarkdown = (delta: unknown): string => {
-  try {
-    const markdown = deltaToMarkdown(delta);
-    return typeof markdown === "string" ? markdown.trim() : "";
-  } catch (error) {
-    console.warn("Failed to convert quill delta to markdown", error);
-    return "";
+  const markdown = deltaToMarkdown(delta);
+  if (typeof markdown !== "string") {
+    throw new Error("deltaToMarkdown returned non-string");
   }
+  return markdown.trim();
 };
 
 type PendingNotesCorrection = {
@@ -631,7 +629,7 @@ const updateNotes = guildMemberProcedure
       serverId: z.string(),
       meetingId: z.string(),
       delta: z.unknown(),
-      expectedPreviousVersion: z.number().min(1).optional(),
+      expectedPreviousVersion: z.number().min(1),
     }),
   )
   .mutation(async function updateNotesMutation({ ctx, input }) {
@@ -669,7 +667,7 @@ const updateNotes = guildMemberProcedure
     }
 
     const currentVersion = history.notesVersion ?? 1;
-    const expectedVersion = input.expectedPreviousVersion ?? currentVersion;
+    const expectedVersion = input.expectedPreviousVersion;
     if (expectedVersion !== currentVersion) {
       throw new TRPCError({
         code: "CONFLICT",
@@ -693,7 +691,25 @@ const updateNotes = guildMemberProcedure
       });
     }
 
-    const markdownNotes = quillDeltaToMarkdown(input.delta);
+    let markdownNotes = "";
+    try {
+      markdownNotes = quillDeltaToMarkdown(input.delta);
+    } catch (error) {
+      console.warn("Failed to convert quill delta to markdown", error);
+      throw new TRPCError({
+        code: "BAD_REQUEST",
+        message:
+          "Unable to convert notes to Markdown. Try removing unsupported formatting and retry.",
+      });
+    }
+
+    if (markdownNotes.length === 0) {
+      throw new TRPCError({
+        code: "BAD_REQUEST",
+        message: "Notes cannot be empty.",
+      });
+    }
+
     if (markdownNotes.length > NOTES_EDITOR_MARKDOWN_CHAR_LIMIT) {
       throw new TRPCError({
         code: "BAD_REQUEST",
