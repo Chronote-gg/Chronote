@@ -634,7 +634,7 @@ const updateNotes = guildMemberProcedure
       expectedPreviousVersion: z.number().min(1).optional(),
     }),
   )
-  .mutation(async ({ ctx, input }) => {
+  .mutation(async function updateNotesMutation({ ctx, input }) {
     const history = await getMeetingHistoryService(
       input.serverId,
       input.meetingId,
