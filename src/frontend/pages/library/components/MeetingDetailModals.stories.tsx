@@ -67,6 +67,6 @@ export const NotesCorrectionWithDiff: Story = {
 
 export const NotesCorrectionNoChanges: Story = {
   render: () => (
-    <DemoModal notesCorrectionChanged={false} notesCorrectionDiff="" />
+    <DemoModal notesCorrectionChanged={false} notesCorrectionDiff=" " />
   ),
 };

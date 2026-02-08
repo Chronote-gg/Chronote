@@ -22,8 +22,10 @@ test.describe("visual regression", () => {
   test.use({
     viewport: { width: 1280, height: 720 },
     deviceScaleFactor: 1,
-    reducedMotion: "reduce",
-    timezoneId: "UTC",
+    contextOptions: {
+      reducedMotion: "reduce",
+      timezoneId: "UTC",
+    },
   });
 
   test.beforeEach(async ({ page }) => {
@@ -176,9 +178,7 @@ test.describe("visual regression", () => {
       const experimentalGroup = settingsPage.groupByName("Experimental");
       await expect(experimentalGroup).toBeVisible();
       await page.waitForTimeout(150); // allow experimental toggles to render
-      if (mode === "full") {
-        // TODO: Re-enable settings-experimental-full once visual diffs are fixed.
-      } else {
+      if (mode === "viewport") {
         await expectVisualScreenshot(page, "settings-experimental", mode);
       }
 
@@ -207,9 +207,7 @@ test.describe("visual regression", () => {
         .entryByKey("transcription.premium.enabled")
         .waitFor({ state: "visible" });
       await page.waitForTimeout(150); // stabilize async field rendering
-      if (mode === "viewport") {
-        // TODO: Re-enable admin-config-viewport once visual diffs are fixed.
-      } else {
+      if (mode === "full") {
         await expectVisualScreenshot(page, "admin-config", mode);
       }
     }
