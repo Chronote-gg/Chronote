@@ -470,22 +470,7 @@ async function handleVoiceStateUpdate(
   oldState: VoiceState,
   newState: VoiceState,
 ) {
-  const userId = newState.id || oldState.id;
-  const member = newState.member ?? oldState.member;
-  if (userId) {
-    const result = autoRecordJoinSuppressionService.handleVoiceStateChange({
-      guildId: newState.guild.id,
-      userId,
-      isBot: member ? member.user.bot : false,
-      oldChannelId: oldState.channelId,
-      newChannelId: newState.channelId,
-    });
-    if (result.clearedSuppression) {
-      console.log(
-        `Auto-record suppression cleared after channel became empty: guildId=${newState.guild.id} channelId=${oldState.channelId}`,
-      );
-    }
-  }
+  recordSuppressionVoiceState(oldState, newState);
   const botId = client.user?.id;
   if (
     botId &&
@@ -511,6 +496,27 @@ async function handleVoiceStateUpdate(
   // Check if the user left a voice channel
   else if (oldState.channel && !newState.channel && oldState.member) {
     await handleUserLeave(oldState);
+  }
+}
+
+function recordSuppressionVoiceState(
+  oldState: VoiceState,
+  newState: VoiceState,
+) {
+  const userId = newState.id || oldState.id;
+  if (!userId) return;
+  const member = newState.member ?? oldState.member;
+  const result = autoRecordJoinSuppressionService.handleVoiceStateChange({
+    guildId: newState.guild.id,
+    userId,
+    isBot: member ? member.user.bot : false,
+    oldChannelId: oldState.channelId,
+    newChannelId: newState.channelId,
+  });
+  if (result.clearedSuppression) {
+    console.log(
+      `Auto-record suppression cleared after channel became empty: guildId=${newState.guild.id} channelId=${oldState.channelId}`,
+    );
   }
 }
 
