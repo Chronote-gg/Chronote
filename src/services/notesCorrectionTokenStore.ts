@@ -136,7 +136,12 @@ class DynamoNotesCorrectionTokenStore implements NotesCorrectionTokenStore {
       typeof record.meetingId !== "string" ||
       typeof record.requesterId !== "string" ||
       typeof record.notesVersion !== "number" ||
-      typeof record.newNotes !== "string"
+      typeof record.newNotes !== "string" ||
+      record.suggestion === null ||
+      typeof record.suggestion !== "object" ||
+      typeof record.suggestion.userId !== "string" ||
+      typeof record.suggestion.text !== "string" ||
+      typeof record.suggestion.createdAt !== "string"
     ) {
       console.warn("Invalid notes correction token record, deleting", {
         guildId: record.guildId,

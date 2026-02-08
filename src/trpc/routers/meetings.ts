@@ -723,7 +723,7 @@ const applyNotesCorrection = guildMemberProcedure
     z.object({
       serverId: z.string(),
       meetingId: z.string(),
-      token: z.string().uuid(),
+      token: z.string().min(1).max(128),
     }),
   )
   .mutation(async ({ ctx, input }) => {
