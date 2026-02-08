@@ -28,7 +28,16 @@ export const GPT_MODEL_MAX_TOKENS = 128000;
 export const TRANSCRIPTION_CLEANUP_LINES_DIFFERENCE_ISSUE = 0.75; // If over 25% of lines were lost in cleanup, assume something went wrong and return original transcription
 
 export const TRANSCRIPTION_PROMPT_SIMILARITY_THRESHOLD = 0.15; // If transcription is less than 15% different from prompt, it's likely verbatim output
-export const TRANSCRIPTION_GLOSSARY_TERM_ONLY_MAX_SECONDS = 1;
+export const TRANSCRIPTION_LOGPROB_AVG_THRESHOLD = -1.2;
+export const TRANSCRIPTION_LOGPROB_MIN_THRESHOLD = -2.5;
+export const TRANSCRIPTION_HARD_SILENCE_DBFS = -60;
+export const TRANSCRIPTION_RATE_MAX_SECONDS = 3;
+export const TRANSCRIPTION_RATE_MIN_WORDS = 4;
+export const TRANSCRIPTION_RATE_MIN_SYLLABLES = 8;
+export const TRANSCRIPTION_RATE_MAX_SYLLABLES_PER_SECOND = 7;
+export const TRANSCRIPTION_PROMPT_ECHO_SIMILARITY_THRESHOLD = 0.2;
+export const TRANSCRIPTION_PROMPT_ECHO_MIN_CHARS = 12;
+export const TRANSCRIPTION_PROMPT_ECHO_MIN_WORDS = 2;
 export const NOISE_GATE_ENABLED = true;
 export const NOISE_GATE_WINDOW_MS = 20;
 export const NOISE_GATE_PEAK_DBFS = -45;

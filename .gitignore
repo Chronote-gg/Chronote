@@ -37,6 +37,9 @@ _infra_state_mgmt/.terraform
 .env.development.local
 .env.test.local
 .env.production.local
+/.opencode/langfuse.mcp.auth
+/.opencode/langfuse.public
+/.opencode/langfuse.secret
 
 npm-debug.log*
 yarn-debug.log*
