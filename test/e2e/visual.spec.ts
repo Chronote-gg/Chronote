@@ -197,20 +197,17 @@ test.describe("visual regression", () => {
     adminConfigPage,
     page,
   }) => {
-    for (const mode of visualModes) {
-      await page.goto(withVisualMode("/portal/select-server", mode));
-      await serverSelectPage.openServerByName(mockGuilds.ddm.name);
-      await nav.goToAdminConfig();
-      await adminConfigPage.waitForLoaded();
-      await adminConfigPage.expandGroup("Experimental");
-      await adminConfigPage
-        .entryByKey("transcription.premium.enabled")
-        .waitFor({ state: "visible" });
-      await page.waitForTimeout(150); // stabilize async field rendering
-      if (mode === "full") {
-        await expectVisualScreenshot(page, "admin-config", mode);
-      }
-    }
+    const mode: VisualMode = "full";
+    await page.goto(withVisualMode("/portal/select-server", mode));
+    await serverSelectPage.openServerByName(mockGuilds.ddm.name);
+    await nav.goToAdminConfig();
+    await adminConfigPage.waitForLoaded();
+    await adminConfigPage.expandGroup("Experimental");
+    await adminConfigPage
+      .entryByKey("transcription.premium.enabled")
+      .waitFor({ state: "visible" });
+    await page.waitForTimeout(150); // stabilize async field rendering
+    await expectVisualScreenshot(page, "admin-config", mode);
   });
 
   test("settings experimental full @visual (skipped)", async () => {
