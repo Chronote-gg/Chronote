@@ -1,13 +1,13 @@
 import type { MeetingData } from "../../src/types/meeting-data";
 import type { AudioFileData, AudioSnippet } from "../../src/types/audio";
 import { startProcessingSnippet } from "../../src/audio";
-import { transcribeSnippet } from "../../src/transcription";
+import { transcribeSnippet } from "../../src/services/transcriptionService";
 
 jest.mock("../../src/liveVoice", () => ({
   maybeRespondLive: jest.fn(),
 }));
 
-jest.mock("../../src/transcription", () => ({
+jest.mock("../../src/services/transcriptionService", () => ({
   transcribeSnippet: jest.fn(),
   coalesceTranscription: jest.fn(),
   cleanupTranscription: jest.fn(),
@@ -34,6 +34,13 @@ describe("startProcessingSnippet", () => {
           slowSilenceMs: 2000,
           minSnippetSeconds: 0.3,
           maxSnippetMs: 60000,
+          suppressionEnabled: true,
+          suppressionHardSilenceDbfs: -60,
+          suppressionRateMaxSeconds: 3,
+          suppressionRateMinWords: 4,
+          suppressionRateMinSyllables: 8,
+          suppressionRateMaxSyllablesPerSecond: 7,
+          promptEchoEnabled: true,
           fastFinalizationEnabled: true,
           interjectionEnabled: false,
           interjectionMinSpeakerSeconds: 0.3,

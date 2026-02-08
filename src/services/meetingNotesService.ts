@@ -1,5 +1,5 @@
 import { MeetingData } from "../types/meeting-data";
-import { getNotes } from "../transcription";
+import { getNotes } from "./notesService";
 import {
   generateMeetingSummaries,
   type MeetingSummaries,

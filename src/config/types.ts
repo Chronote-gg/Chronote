@@ -109,6 +109,12 @@ export type ResolvedConfigSnapshot = {
 export type MeetingRuntimeConfig = {
   transcription: {
     suppressionEnabled: boolean;
+    suppressionHardSilenceDbfs: number;
+    suppressionRateMaxSeconds: number;
+    suppressionRateMinWords: number;
+    suppressionRateMinSyllables: number;
+    suppressionRateMaxSyllablesPerSecond: number;
+    promptEchoEnabled: boolean;
     fastSilenceMs: number;
     slowSilenceMs: number;
     minSnippetSeconds: number;

@@ -1,5 +1,6 @@
 import type { ButtonInteraction, Client } from "discord.js";
 import type { MeetingData } from "../../src/types/meeting-data";
+import { Collection } from "discord.js";
 import {
   handleEndMeetingButton,
   handleEndMeetingOther,
@@ -67,6 +68,12 @@ jest.mock("../../src/observability/meetingTrace", () => ({
 }));
 jest.mock("../../src/services/autoRecordCancellationService", () => ({
   evaluateAutoRecordCancellation: jest.fn(),
+}));
+jest.mock("../../src/services/autoRecordJoinSuppressionService", () => ({
+  __esModule: true,
+  autoRecordJoinSuppressionService: {
+    suppressUntilEmpty: jest.fn(),
+  },
 }));
 jest.mock("../../src/metrics", () => ({
   meetingsCancelled: { inc: jest.fn() },
@@ -278,5 +285,93 @@ describe("handleEndMeetingButton", () => {
     await handleEndMeetingButton({} as Client, interaction);
 
     expect(interaction.deferUpdate).toHaveBeenCalled();
+  });
+
+  it("suppresses auto-record rejoin until the channel is empty", async () => {
+    const { autoRecordJoinSuppressionService } = jest.requireMock(
+      "../../src/services/autoRecordJoinSuppressionService",
+    ) as {
+      autoRecordJoinSuppressionService: {
+        suppressUntilEmpty: jest.Mock;
+      };
+    };
+
+    mockedWithMeetingEndTrace.mockImplementation(async (_meeting, fn) => fn());
+    mockedEvaluateAutoRecordCancellation.mockResolvedValue({
+      cancel: false,
+    });
+    mockedWaitForAudioOnlyFinishProcessing.mockResolvedValue(undefined);
+    mockedCloseOutputFile.mockResolvedValue(undefined);
+    mockedDescribeAutoRecordRule.mockReturnValue(
+      "Auto-record rule: test-channel",
+    );
+
+    const members = new Collection<
+      string,
+      { id: string; user: { bot: boolean } }
+    >([
+      ["user-1", { id: "user-1", user: { bot: false } }],
+      ["bot-1", { id: "bot-1", user: { bot: true } }],
+    ]);
+
+    const meeting = {
+      guildId: "guild-1",
+      channelId: "text-1",
+      meetingId: "meeting-1",
+      voiceChannel: {
+        id: "voice-1",
+        name: "Voice",
+        members,
+      },
+      textChannel: {
+        send: jest.fn().mockResolvedValue(undefined),
+        messages: { fetch: jest.fn() },
+      },
+      connection: {
+        disconnect: jest.fn(),
+        destroy: jest.fn(),
+      },
+      chatLog: [],
+      audioData: {
+        audioFiles: [],
+        currentSnippets: new Map(),
+        outputFileName: "recording.mp3",
+      },
+      startTime: new Date("2025-01-01T00:00:00.000Z"),
+      endTime: undefined,
+      finishing: false,
+      finished: false,
+      transcribeMeeting: false,
+      generateNotes: false,
+      isAutoRecording: true,
+      creator: { id: "user-1" },
+      guild: { id: "guild-1", members: { cache: new Map() } },
+      ttsQueue: { stopAndClear: jest.fn() },
+      setFinished: jest.fn(),
+    } as unknown as MeetingData;
+
+    mockedGetMeeting.mockReturnValue(meeting);
+
+    const interaction = {
+      guildId: "guild-1",
+      user: { id: "user-1" },
+      deferred: false,
+      replied: false,
+      deferUpdate: jest.fn().mockResolvedValue(undefined),
+      reply: jest.fn().mockResolvedValue(undefined),
+    } as unknown as ButtonInteraction;
+
+    await handleEndMeetingButton({} as Client, interaction);
+
+    expect(
+      autoRecordJoinSuppressionService.suppressUntilEmpty,
+    ).toHaveBeenCalledWith(
+      expect.objectContaining({
+        guildId: "guild-1",
+        channelId: "voice-1",
+        nonBotMemberIds: ["user-1"],
+        reason: "explicit_end",
+      }),
+    );
   });
 });

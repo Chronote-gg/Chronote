@@ -98,6 +98,33 @@ export async function getPrompt(options: {
   return toLangfusePrompt(prompt);
 }
 
+function isLangfuseNotFoundError(error: unknown): boolean {
+  if (!error || typeof error !== "object") return false;
+  const candidate = error as {
+    name?: string;
+    statusCode?: number;
+    body?: { error?: string };
+  };
+  if (candidate.statusCode === 404) return true;
+  if (candidate.name === "NotFoundError") return true;
+  return candidate.body?.error === "LangfuseNotFoundError";
+}
+
+export async function tryGetPrompt(options: {
+  name: string;
+  label?: string;
+  version?: number;
+}): Promise<LangfusePrompt | null> {
+  try {
+    return await getPrompt(options);
+  } catch (error) {
+    if (isLangfuseNotFoundError(error)) {
+      return null;
+    }
+    throw error;
+  }
+}
+
 export async function createPrompt(
   payload: Omit<LangfusePrompt, "version">,
 ): Promise<LangfusePrompt> {

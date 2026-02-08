@@ -18,11 +18,11 @@ The Meeting Notes Discord Bot is a Node.js application built with TypeScript. It
   - Collects audio into snippets per user, managing silence and maximum snippet length.
   - Uses `fluent-ffmpeg` to process raw PCM audio data from snippets and combine them into a single MP3 file per meeting.
   - Splits the final MP3 into smaller chunks if it exceeds Discord's upload limit.
-- **Transcription & AI Processing (`src/transcription.ts`):**
+- **Transcription & AI Processing (`src/services/transcriptionService.ts`, `src/services/notesService.ts`, `src/services/imageService.ts`):**
   - Interfaces with OpenAI API (`openai` library) for:
-    - Audio transcription (Whisper-1 model).
-    - Generating summaries, to-do lists, meeting notes, and image prompts (GPT-4o, DALL-E 3 models).
-  - Manages temporary files for audio snippets (PCM to WAV conversion for Whisper).
+    - Audio transcription (gpt-4o-transcribe model).
+    - Generating summaries, to-do lists, meeting notes, and image prompts (GPT-5.1, gpt-5-mini, DALL-E 3 models).
+  - Manages temporary files for audio snippets (PCM to WAV conversion for transcription).
   - Includes policies for retries, circuit breaking, and rate limiting (using `cockatiel` and `bottleneck`) for OpenAI API calls.
   - Constructs dynamic prompts for AI models based on meeting context (server name, attendees, etc.).
 - **Command Handling (various files in `src/commands/`):**
@@ -79,7 +79,7 @@ The Meeting Notes Discord Bot is a Node.js application built with TypeScript. It
     - Initial attendance is recorded.
 2.  **During Meeting:**
     - `audio.ts` collects audio chunks from users, creating/updating `AudioSnippet` objects. Silence detection and max snippet length trigger processing.
-    - `transcription.ts` (if enabled) converts snippets to WAV and sends to OpenAI for transcription.
+    - `transcriptionService.ts` (if enabled) converts snippets to WAV and sends to OpenAI for transcription.
     - Raw audio chunks are written to a `PassThrough` stream, which `fluent-ffmpeg` consumes to create a single MP3 file.
     - Chat messages are collected into `MeetingData.chatLog`.
     - Voice state updates (join/leave) update `MeetingData.attendance` and `chatLog`.
@@ -96,7 +96,7 @@ The Meeting Notes Discord Bot is a Node.js application built with TypeScript. It
       - `waitForFinishProcessing` ensures all snippet transcriptions are done.
       - `compileTranscriptions` assembles the full transcript.
       - Transcript is sent as a file.
-      - If notes are enabled, `generateAndSendNotes` calls OpenAI via `transcription.ts`.
+      - If notes are enabled, `generateAndSendNotes` calls OpenAI via `notesService.ts`.
     - Temporary files and directories are cleaned up.
     - Meeting data is removed from the in-memory store in `meetings.ts`.
 

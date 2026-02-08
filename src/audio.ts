@@ -30,7 +30,7 @@ import {
   cleanupTranscription,
   coalesceTranscription,
   transcribeSnippet,
-} from "./transcription";
+} from "./services/transcriptionService";
 import { buildModelOverrides, getModelChoice } from "./services/modelFactory";
 import { formatParticipantLabel } from "./utils/participants";
 import ffmpeg from "fluent-ffmpeg";
@@ -503,6 +503,7 @@ function runFastTranscription(meeting: MeetingData, snippet: AudioSnippet) {
   }
   void transcribeSnippet(meeting, snapshot, {
     tempSuffix: `fast-${revision}`,
+    noiseGateMode: "fast",
   })
     .then((transcription) => {
       if (snippet.fastRevision !== revision) return;
@@ -615,7 +616,13 @@ export function startProcessingSnippet(
       !shouldSkipByNoiseGate(meeting, snippet, "slow")
     ) {
       promises.push(
-        transcribeSnippet(meeting, snippet)
+        transcribeSnippet(meeting, snippet, {
+          noiseGateMode: "slow",
+          noiseGateEnabledOverride: options.forceTranscribe ? false : undefined,
+          suppressionEnabledOverride: options.forceTranscribe
+            ? false
+            : undefined,
+        })
           .then(async (transcription) => {
             audioFileData.slowTranscript = transcription;
             audioFileData.transcript = transcription;

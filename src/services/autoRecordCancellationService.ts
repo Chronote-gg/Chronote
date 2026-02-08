@@ -4,6 +4,7 @@ import { createOpenAIClient } from "./openaiClient";
 import { buildModelOverrides, getModelChoice } from "./modelFactory";
 import { config } from "./configService";
 import { resolveChatParamsForRole } from "./openaiModelParams";
+import { countWords } from "../utils/text";
 
 type CancellationDecision = {
   cancel: boolean;
@@ -29,12 +30,6 @@ const collectTranscriptText = (meeting: MeetingData) =>
     .map((file) => file.transcript)
     .filter((text): text is string => Boolean(text && text.trim()))
     .join(" ");
-
-const countWords = (text: string) =>
-  text
-    .trim()
-    .split(/\s+/)
-    .filter((word) => word.length > 0).length;
 
 const collectChatLines = (meeting: MeetingData) =>
   meeting.chatLog
