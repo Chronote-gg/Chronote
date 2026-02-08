@@ -1,4 +1,5 @@
 import type { Page } from "@playwright/test";
+import type { Locator } from "@playwright/test";
 import { expect, test } from "./fixtures";
 import { mockGuilds, mockLibrary, mockSettings } from "./mockData";
 import { applyVisualDefaults, waitForVisualReady } from "./visualUtils";
@@ -34,9 +35,21 @@ test.describe("visual regression", () => {
     page: Page,
     name: string,
     mode: VisualMode,
+    options?: {
+      target?: Locator;
+    },
   ): Promise<void> => {
     await waitForVisualReady(page);
-    await expect(page).toHaveScreenshot(buildScreenshotName(name, mode), {
+
+    const screenshotName = buildScreenshotName(name, mode);
+    if (options?.target) {
+      await expect(options.target).toHaveScreenshot(screenshotName, {
+        maxDiffPixels: 200,
+      });
+      return;
+    }
+
+    await expect(page).toHaveScreenshot(screenshotName, {
       fullPage: mode === "full",
       maxDiffPixels: 200,
     });
@@ -183,7 +196,9 @@ test.describe("visual regression", () => {
         name: /channel settings/i,
       });
       await expect(settingsDialog).toBeVisible();
-      await expectVisualScreenshot(page, "settings-modal", mode);
+      await expectVisualScreenshot(page, "settings-modal", mode, {
+        target: settingsDialog,
+      });
     }
   });
 
