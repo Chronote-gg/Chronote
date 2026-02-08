@@ -247,9 +247,15 @@ const buildUnifiedDiffForUi = (current: string, proposed: string): string => {
     }
     const prefix = change.added ? "+" : "-";
     const content = change.value.split("\n");
-    for (const line of content) {
-      if (line === "") continue;
-      lines.push(`${prefix} ${line}`);
+    for (let i = 0; i < content.length; i += 1) {
+      const line = content[i];
+      const isLast = i === content.length - 1;
+      // `split("\n")` produces a synthetic trailing empty element when the
+      // string ends with a newline. Skip that, but preserve true blank-line
+      // changes so the UI can render a non-empty diff.
+      if (isLast && line === "") continue;
+
+      lines.push(line === "" ? `${prefix} ` : `${prefix} ${line}`);
       if (lines.length >= NOTES_CORRECTION_DIFF_LINE_LIMIT) break;
     }
     if (lines.length >= NOTES_CORRECTION_DIFF_LINE_LIMIT) break;

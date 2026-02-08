@@ -342,6 +342,50 @@ describe("meetings notes correction mutations", () => {
     expect(result.diff.split("\n").length).toBe(600);
   });
 
+  test("suggestNotesCorrection preserves blank-line changes in diff", async () => {
+    const meetingId = "channel-1#2025-01-01T00:00:00.000Z";
+    mockedGetMeetingHistory.mockResolvedValue({
+      guildId: "guild-1",
+      channelId_timestamp: meetingId,
+      meetingId: "meeting-1",
+      channelId: "channel-1",
+      timestamp: "2025-01-01T00:00:00.000Z",
+      duration: 1800,
+      transcribeMeeting: true,
+      generateNotes: true,
+      notes: "Line 1\nLine 2",
+      transcriptS3Key: "transcripts/meeting-1.json",
+      notesVersion: 1,
+    } as unknown as MeetingHistory);
+
+    mockedFetchJsonFromS3.mockResolvedValueOnce({ text: "Transcript" });
+
+    const createCompletion = jest.fn(async () => ({
+      choices: [
+        {
+          message: { content: "Line 1\n\nLine 2" },
+        },
+      ],
+    }));
+    mockedCreateOpenAIClient.mockReturnValue({
+      chat: {
+        completions: {
+          create: createCompletion,
+        },
+      },
+    } as unknown as ReturnType<typeof createOpenAIClient>);
+
+    const result = await buildCaller().meetings.suggestNotesCorrection({
+      serverId: "guild-1",
+      meetingId,
+      suggestion: "Insert a blank line",
+    });
+
+    expect(result.changed).toBe(true);
+    expect(result.diff.length).toBeGreaterThan(0);
+    expect(result.diff.split("\n").some((line) => line === "+ ")).toBe(true);
+  });
+
   test("applyNotesCorrection recomputes summary and clears pending on conflict", async () => {
     const meetingId = "channel-1#2025-01-01T00:00:00.000Z";
     mockedGetMeetingHistory.mockResolvedValue({

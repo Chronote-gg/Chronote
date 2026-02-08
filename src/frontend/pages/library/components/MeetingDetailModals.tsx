@@ -111,7 +111,7 @@ export default function MeetingDetailModals({
             maxLength={1500}
             disabled={notesCorrectionGenerating || notesCorrectionApplying}
           />
-          {notesCorrectionDiff ? (
+          {notesCorrectionDiff !== null ? (
             <Box>
               <Text size="sm" fw={600} mb={6}>
                 Proposed diff
@@ -154,7 +154,7 @@ export default function MeetingDetailModals({
             >
               Cancel
             </Button>
-            {notesCorrectionDiff ? (
+            {notesCorrectionDiff !== null ? (
               <Button
                 color="brand"
                 onClick={onNotesCorrectionApply}

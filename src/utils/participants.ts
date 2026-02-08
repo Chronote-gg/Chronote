@@ -45,7 +45,8 @@ export function replaceDiscordMentionsWithDisplayNames(
     const participant = participants.get(id);
     if (!participant) return match;
     const preferred = getParticipantPreferredName(participant, id) ?? id;
-    return `@${preferred}`;
+    const normalizedPreferred = preferred.replace(/^@+/, "");
+    return `@${normalizedPreferred}`;
   });
 }
 
