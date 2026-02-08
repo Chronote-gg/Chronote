@@ -806,7 +806,7 @@ export async function updateMeetingNotes(
     notesMessageIds?: string[];
     notesChannelId?: string;
   },
-  notesDelta?: unknown,
+  notesDelta?: unknown | null,
 ): Promise<boolean> {
   const NOTES_HISTORY_ENTRY_CHAR_LIMIT = 8_000;
   const notesHistoryNotes =
@@ -831,6 +831,8 @@ export async function updateMeetingNotes(
     "#notesHistory = list_append(if_not_exists(#notesHistory, :emptyList), :notesHistoryEntry)",
   ];
 
+  const removeParts: string[] = [];
+
   if (suggestion) {
     updateParts.push(
       "#suggestionsHistory = list_append(if_not_exists(#suggestionsHistory, :emptyList), :suggestionEntry)",
@@ -845,7 +847,9 @@ export async function updateMeetingNotes(
     updateParts.push("#notesChannelId = :notesChannelId");
   }
 
-  if (notesDelta !== undefined) {
+  if (notesDelta === null) {
+    removeParts.push("#notesDelta");
+  } else if (notesDelta !== undefined) {
     updateParts.push("#notesDelta = :notesDelta");
   }
 
@@ -914,7 +918,7 @@ export async function updateMeetingNotes(
     values[":notesChannelId"] = metadata.notesChannelId;
   }
 
-  if (notesDelta !== undefined) {
+  if (notesDelta !== undefined && notesDelta !== null) {
     values[":notesDelta"] = notesDelta;
   }
 
@@ -926,7 +930,7 @@ export async function updateMeetingNotes(
   const params: UpdateItemCommand["input"] = {
     TableName: tableName("MeetingHistoryTable"),
     Key: marshall({ guildId, channelId_timestamp }),
-    UpdateExpression: `SET ${updateParts.join(", ")}`,
+    UpdateExpression: `SET ${updateParts.join(", ")}${removeParts.length > 0 ? ` REMOVE ${removeParts.join(", ")}` : ""}`,
     ExpressionAttributeNames: expressionAttributeNames,
     ExpressionAttributeValues: marshall(values, {
       removeUndefinedValues: true,
@@ -953,6 +957,54 @@ export async function updateMeetingNotes(
     }
 
     console.error("Failed to update meeting notes:", error);
+    return false;
+  }
+}
+
+export async function updateMeetingNotesMessageMetadata(
+  guildId: string,
+  channelId_timestamp: string,
+  notesMessageIds: string[],
+  notesChannelId: string,
+  expectedNotesVersion: number,
+): Promise<boolean> {
+  const now = new Date().toISOString();
+  const params: UpdateItemCommand["input"] = {
+    TableName: tableName("MeetingHistoryTable"),
+    Key: marshall({ guildId, channelId_timestamp }),
+    UpdateExpression:
+      "SET #notesMessageIds = :notesMessageIds, #notesChannelId = :notesChannelId, #updatedAt = :updatedAt",
+    ExpressionAttributeNames: {
+      "#notesMessageIds": "notesMessageIds",
+      "#notesChannelId": "notesChannelId",
+      "#updatedAt": "updatedAt",
+      "#notesVersion": "notesVersion",
+      "#channelIdTimestamp": "channelId_timestamp",
+    },
+    ExpressionAttributeValues: marshall(
+      {
+        ":notesMessageIds": notesMessageIds,
+        ":notesChannelId": notesChannelId,
+        ":updatedAt": now,
+        ":expectedNotesVersion": expectedNotesVersion,
+      },
+      { removeUndefinedValues: true },
+    ),
+    ConditionExpression:
+      "attribute_exists(#channelIdTimestamp) AND #notesVersion = :expectedNotesVersion",
+  };
+
+  const command = new UpdateItemCommand(params);
+  try {
+    await dynamoDbClient.send(command);
+    return true;
+  } catch (error) {
+    if (
+      (error as { name?: string }).name === "ConditionalCheckFailedException"
+    ) {
+      return false;
+    }
+    console.error("Failed to update meeting notes message metadata:", error);
     return false;
   }
 }

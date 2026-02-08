@@ -76,6 +76,9 @@ export default function MeetingNotesEditorModal({
       title="Edit notes"
       centered
       size="xl"
+      closeOnEscape={!saving}
+      closeOnClickOutside={!saving}
+      withCloseButton={!saving}
     >
       <Stack gap="md">
         <Text size="sm" c="dimmed">
@@ -111,7 +114,7 @@ export default function MeetingNotesEditorModal({
           <Button
             color="brand"
             onClick={() => onSave({ ops: value.ops })}
-            disabled={!dirty}
+            disabled={!dirty || saving}
             loading={saving}
           >
             Save notes

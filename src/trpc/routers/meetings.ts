@@ -7,6 +7,7 @@ import {
   getMeetingHistoryService,
   listRecentMeetingsForGuildService,
   updateMeetingNotesService,
+  updateMeetingNotesMessageMetadataService,
   updateMeetingArchiveService,
   updateMeetingNameService,
 } from "../../services/meetingHistoryService";
@@ -744,83 +745,64 @@ const updateNotes = guildMemberProcedure
     const editorLabel = buildRequesterTag(ctx.user);
     const footerText = `v${newVersion} • Edited by ${editorLabel}`;
 
-    let newMessageIds: string[] | undefined;
-    let didPersistNewNotes = false;
+    const ok = await updateMeetingNotesService({
+      guildId: input.serverId,
+      channelId_timestamp: input.meetingId,
+      notes: markdownNotes,
+      notesDelta: input.delta,
+      notesVersion: newVersion,
+      editedBy: ctx.user.id,
+      expectedPreviousVersion: expectedVersion,
+    });
 
-    try {
-      if (!config.mock.enabled && history.notesChannelId) {
+    if (!ok) {
+      throw new TRPCError({
+        code: "CONFLICT",
+        message:
+          "Could not save because the notes were updated elsewhere. Refresh and try again.",
+      });
+    }
+
+    if (!config.mock.enabled && history.notesChannelId) {
+      let newMessageIds: string[];
+      try {
         newMessageIds = await sendNotesEmbedsToDiscord({
           channelId: history.notesChannelId,
           notesBody: markdownNotes,
           meetingName: history.meetingName,
           footerText,
         });
+      } catch (error) {
+        console.warn("Failed posting updated notes embeds", error);
+        return { ok: true };
       }
 
-      const ok = await updateMeetingNotesService({
+      const metadataOk = await updateMeetingNotesMessageMetadataService({
         guildId: input.serverId,
         channelId_timestamp: input.meetingId,
-        notes: markdownNotes,
-        notesDelta: input.delta,
-        notesVersion: newVersion,
-        editedBy: ctx.user.id,
-        expectedPreviousVersion: expectedVersion,
-        metadata:
-          history.notesChannelId && newMessageIds
-            ? {
-                notesMessageIds: newMessageIds,
-                notesChannelId: history.notesChannelId,
-              }
-            : undefined,
+        notesMessageIds: newMessageIds,
+        notesChannelId: history.notesChannelId,
+        expectedNotesVersion: newVersion,
       });
 
-      if (!ok) {
-        if (
-          !config.mock.enabled &&
-          history.notesChannelId &&
-          newMessageIds?.length
-        ) {
-          await deleteDiscordMessagesSafely({
-            channelId: history.notesChannelId,
-            messageIds: newMessageIds,
-          });
-        }
-        throw new TRPCError({
-          code: "CONFLICT",
-          message:
-            "Could not save because the notes were updated elsewhere. Refresh and try again.",
+      if (!metadataOk) {
+        await deleteDiscordMessagesSafely({
+          channelId: history.notesChannelId,
+          messageIds: newMessageIds,
         });
+        return { ok: true };
       }
 
-      didPersistNewNotes = true;
-
-      if (
-        !config.mock.enabled &&
-        history.notesChannelId &&
-        history.notesMessageIds?.length
-      ) {
+      if (history.notesMessageIds?.length) {
         await deleteDiscordMessagesSafely({
           channelId: history.notesChannelId,
           messageIds: history.notesMessageIds,
           skipMessageId: history.summaryMessageId,
         });
       }
-
-      return { ok: true };
-    } catch (error) {
-      if (
-        !didPersistNewNotes &&
-        !config.mock.enabled &&
-        history.notesChannelId &&
-        newMessageIds?.length
-      ) {
-        await deleteDiscordMessagesSafely({
-          channelId: history.notesChannelId,
-          messageIds: newMessageIds,
-        });
-      }
-      throw error;
     }
+
+    return { ok: true };
   });
 
 const setArchived = manageGuildProcedure
