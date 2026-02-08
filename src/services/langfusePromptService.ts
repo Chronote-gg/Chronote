@@ -171,6 +171,7 @@ const buildPromptVerificationList = () => {
     config.langfuse.askPromptName,
     config.langfuse.meetingSummaryPromptName,
     config.langfuse.notesPromptName,
+    config.langfuse.transcriptionPromptName,
     config.langfuse.transcriptionCleanupPromptName,
     config.langfuse.transcriptionCoalescePromptName,
     config.langfuse.imagePromptName,

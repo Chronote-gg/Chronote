@@ -1,0 +1,6 @@
+[mcp_servers.langfuse]
+url = "https://us.cloud.langfuse.com/api/public/mcp"
+env_http_headers = { Authorization = "LANGFUSE_MCP_AUTH" }
+
+[mcp_servers.langfuse_docs]
+url = "https://langfuse.com/api/mcp"

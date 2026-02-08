@@ -17,12 +17,13 @@ A Discord bot that records voice meetings, transcribes them with OpenAI, generat
 
 1. `yarn install`
 2. Install FFMPEG (e.g., `choco install ffmpeg` on Windows).
-3. Copy `.env.example` to `.env`; set required keys: `DISCORD_BOT_TOKEN`, `DISCORD_CLIENT_ID`, `OPENAI_API_KEY`. Optional: Stripe keys to enable checkout/portal endpoints; `USE_LOCAL_DYNAMODB=true` for local tables. For Langfuse prompt sync or tracing, set `LANGFUSE_PUBLIC_KEY` and `LANGFUSE_SECRET_KEY`. Optional: `LANGFUSE_BASE_URL`, `LANGFUSE_PROMPT_LABEL`.
+3. Copy `.env.example` to `.env`; set required keys: `DISCORD_BOT_TOKEN`, `DISCORD_CLIENT_ID`, `OPENAI_API_KEY`. Optional: Stripe keys to enable checkout/portal endpoints; `USE_LOCAL_DYNAMODB=true` for local tables. For Langfuse prompt sync or tracing, set `LANGFUSE_PUBLIC_KEY` and `LANGFUSE_SECRET_KEY`. Optional: `LANGFUSE_BASE_URL`, `LANGFUSE_PROMPT_LABEL`, `LANGFUSE_PROMPT_TRANSCRIPTION`.
    - For mock portal data + OAuth bypass, set `MOCK_MODE=true` (no Discord/Dynamo required), or run `yarn start:mock` / `yarn dev:mock` to toggle mock mode without editing `.env`.
    - Deployed ECS uses **AWS Secrets Manager** for secrets (see `_infra/README.md`).
 4. Start everything (local Dynamo + table init + bot): `yarn dev`
 5. Frontend (Vite + Mantine) hot reload: `yarn frontend:dev`
 6. Cloud workspace prep and mock-friendly env snippets: see `AGENTS.md` and `scripts/mock.env.example`
+7. Optional MCP tooling (OpenCode, Codex, Claude Code): set `LANGFUSE_PUBLIC_KEY` and `LANGFUSE_SECRET_KEY` in `.env.local`, then run `node scripts/setup-langfuse-mcp-auth.js` to generate `.opencode/langfuse.mcp.auth`, `.opencode/langfuse.public`, and `.opencode/langfuse.secret` for OpenCode. Codex and Claude Code still read `LANGFUSE_MCP_AUTH` from the environment.
 
 ### DynamoDB local helpers
 

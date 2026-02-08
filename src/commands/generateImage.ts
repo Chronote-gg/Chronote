@@ -1,4 +1,4 @@
-import { getImage } from "../transcription";
+import { getImage } from "../services/imageService";
 import { ButtonInteraction, EmbedBuilder } from "discord.js";
 import { getMeeting } from "../meetings";
 import { getGuildLimits } from "../services/subscriptionService";
