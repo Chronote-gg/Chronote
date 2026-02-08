@@ -2,6 +2,7 @@ import { TRPCError } from "@trpc/server";
 import { diffLines } from "diff";
 import { z } from "zod";
 import { v4 as uuidv4 } from "uuid";
+import { deltaToMarkdown } from "quill-delta-to-markdown";
 import {
   getMeetingHistoryService,
   listRecentMeetingsForGuildService,
@@ -97,6 +98,27 @@ const resolveMeetingAttendees = (history: {
 const NOTES_CORRECTION_DIFF_LINE_LIMIT = 600;
 const NOTES_CORRECTION_DIFF_CHAR_LIMIT = 12_000;
 const NOTES_CORRECTION_MAX_EMBEDS_PER_MESSAGE = 10;
+
+const NOTES_EDITOR_MARKDOWN_CHAR_LIMIT = 120_000;
+const NOTES_EDITOR_DELTA_CHAR_LIMIT = 220_000;
+
+const safeJsonStringifyLength = (value: unknown): number | null => {
+  try {
+    return JSON.stringify(value).length;
+  } catch {
+    return null;
+  }
+};
+
+const quillDeltaToMarkdown = (delta: unknown): string => {
+  try {
+    const markdown = deltaToMarkdown(delta);
+    return typeof markdown === "string" ? markdown.trim() : "";
+  } catch (error) {
+    console.warn("Failed to convert quill delta to markdown", error);
+    return "";
+  }
+};
 
 type PendingNotesCorrection = {
   guildId: string;
@@ -585,6 +607,8 @@ const detail = manageGuildProcedure
             : history.duration,
         tags: history.tags ?? [],
         notes,
+        notesDelta: history.notesDelta,
+        notesVersion: history.notesVersion ?? 1,
         meetingName: history.meetingName,
         summarySentence,
         summaryLabel: history.summaryLabel,
@@ -599,6 +623,165 @@ const detail = manageGuildProcedure
         events,
       },
     };
+  });
+
+const updateNotes = guildMemberProcedure
+  .input(
+    z.object({
+      serverId: z.string(),
+      meetingId: z.string(),
+      delta: z.unknown(),
+      expectedPreviousVersion: z.number().min(1).optional(),
+    }),
+  )
+  .mutation(async ({ ctx, input }) => {
+    const history = await getMeetingHistoryService(
+      input.serverId,
+      input.meetingId,
+    );
+    if (!history) {
+      throw new TRPCError({ code: "NOT_FOUND", message: "Meeting not found" });
+    }
+
+    const channelId = history.channelId ?? input.meetingId.split("#")[0];
+    await ensurePortalUserCanViewMeetingChannel({
+      guildId: input.serverId,
+      channelId,
+      userId: ctx.user.id,
+    });
+
+    const isMeetingOwner =
+      Boolean(history.meetingCreatorId) &&
+      history.meetingCreatorId === ctx.user.id;
+    if (!isMeetingOwner) {
+      if (history.isAutoRecording) {
+        await ensurePortalUserCanManageMeetingChannel({
+          guildId: input.serverId,
+          channelId,
+          userId: ctx.user.id,
+        });
+      } else {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "Only the meeting starter can edit notes for this meeting.",
+        });
+      }
+    }
+
+    const currentVersion = history.notesVersion ?? 1;
+    const expectedVersion = input.expectedPreviousVersion ?? currentVersion;
+    if (expectedVersion !== currentVersion) {
+      throw new TRPCError({
+        code: "CONFLICT",
+        message:
+          "Could not save because the notes were updated elsewhere. Refresh and try again.",
+      });
+    }
+
+    const deltaSize = safeJsonStringifyLength(input.delta);
+    if (deltaSize === null) {
+      throw new TRPCError({
+        code: "BAD_REQUEST",
+        message: "Notes content could not be parsed.",
+      });
+    }
+
+    if (deltaSize > NOTES_EDITOR_DELTA_CHAR_LIMIT) {
+      throw new TRPCError({
+        code: "BAD_REQUEST",
+        message: "Notes content is too large to save.",
+      });
+    }
+
+    const markdownNotes = quillDeltaToMarkdown(input.delta);
+    if (markdownNotes.length > NOTES_EDITOR_MARKDOWN_CHAR_LIMIT) {
+      throw new TRPCError({
+        code: "BAD_REQUEST",
+        message: "Notes are too large to save.",
+      });
+    }
+
+    const newVersion = currentVersion + 1;
+    const editorLabel = buildRequesterTag(ctx.user);
+    const footerText = `v${newVersion} • Edited by ${editorLabel}`;
+
+    let newMessageIds: string[] | undefined;
+    let didPersistNewNotes = false;
+
+    try {
+      if (!config.mock.enabled && history.notesChannelId) {
+        newMessageIds = await sendNotesEmbedsToDiscord({
+          channelId: history.notesChannelId,
+          notesBody: markdownNotes,
+          meetingName: history.meetingName,
+          footerText,
+        });
+      }
+
+      const ok = await updateMeetingNotesService({
+        guildId: input.serverId,
+        channelId_timestamp: input.meetingId,
+        notes: markdownNotes,
+        notesDelta: input.delta,
+        notesVersion: newVersion,
+        editedBy: ctx.user.id,
+        expectedPreviousVersion: expectedVersion,
+        metadata:
+          history.notesChannelId && newMessageIds
+            ? {
+                notesMessageIds: newMessageIds,
+                notesChannelId: history.notesChannelId,
+              }
+            : undefined,
+      });
+
+      if (!ok) {
+        if (
+          !config.mock.enabled &&
+          history.notesChannelId &&
+          newMessageIds?.length
+        ) {
+          await deleteDiscordMessagesSafely({
+            channelId: history.notesChannelId,
+            messageIds: newMessageIds,
+          });
+        }
+        throw new TRPCError({
+          code: "CONFLICT",
+          message:
+            "Could not save because the notes were updated elsewhere. Refresh and try again.",
+        });
+      }
+
+      didPersistNewNotes = true;
+
+      if (
+        !config.mock.enabled &&
+        history.notesChannelId &&
+        history.notesMessageIds?.length
+      ) {
+        await deleteDiscordMessagesSafely({
+          channelId: history.notesChannelId,
+          messageIds: history.notesMessageIds,
+          skipMessageId: history.summaryMessageId,
+        });
+      }
+
+      return { ok: true };
+    } catch (error) {
+      if (
+        !didPersistNewNotes &&
+        !config.mock.enabled &&
+        history.notesChannelId &&
+        newMessageIds?.length
+      ) {
+        await deleteDiscordMessagesSafely({
+          channelId: history.notesChannelId,
+          messageIds: newMessageIds,
+        });
+      }
+      throw error;
+    }
   });
 
 const setArchived = manageGuildProcedure
@@ -992,4 +1175,5 @@ export const meetingsRouter = router({
   rename,
   suggestNotesCorrection,
   applyNotesCorrection,
+  updateNotes,
 });

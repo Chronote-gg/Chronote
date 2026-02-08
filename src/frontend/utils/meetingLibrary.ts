@@ -38,6 +38,8 @@ export type MeetingDetailInput = {
   duration: number;
   tags?: string[];
   notes?: string | null;
+  notesDelta?: unknown | null;
+  notesVersion?: number | null;
   notesChannelId?: string | null;
   notesMessageId?: string | null;
   transcript?: string | null;

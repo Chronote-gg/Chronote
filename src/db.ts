@@ -806,6 +806,7 @@ export async function updateMeetingNotes(
     notesMessageIds?: string[];
     notesChannelId?: string;
   },
+  notesDelta?: unknown,
 ): Promise<boolean> {
   const now = new Date().toISOString();
   const notesHistoryEntry: NotesHistoryEntry = {
@@ -838,6 +839,10 @@ export async function updateMeetingNotes(
     updateParts.push("#notesChannelId = :notesChannelId");
   }
 
+  if (notesDelta !== undefined) {
+    updateParts.push("#notesDelta = :notesDelta");
+  }
+
   const expressionAttributeNames: Record<string, string> = {
     "#notes": "notes",
     "#notesVersion": "notesVersion",
@@ -857,6 +862,10 @@ export async function updateMeetingNotes(
 
   if (metadata?.notesChannelId) {
     expressionAttributeNames["#notesChannelId"] = "notesChannelId";
+  }
+
+  if (notesDelta !== undefined) {
+    expressionAttributeNames["#notesDelta"] = "notesDelta";
   }
 
   const values: Record<string, unknown> = {
@@ -897,6 +906,10 @@ export async function updateMeetingNotes(
 
   if (metadata?.notesChannelId) {
     values[":notesChannelId"] = metadata.notesChannelId;
+  }
+
+  if (notesDelta !== undefined) {
+    values[":notesDelta"] = notesDelta;
   }
 
   if (expectedPreviousVersion !== undefined) {

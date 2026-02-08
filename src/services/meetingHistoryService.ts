@@ -64,6 +64,7 @@ export async function updateMeetingNotesService(params: {
   guildId: string;
   channelId_timestamp: string;
   notes: string;
+  notesDelta?: unknown;
   notesVersion: number;
   editedBy: string;
   summarySentence?: string;
