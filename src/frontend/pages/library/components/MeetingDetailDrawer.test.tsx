@@ -9,6 +9,8 @@ import {
 } from "../../../utils/meetingLibrary";
 import { MEETING_STATUS } from "../../../../types/meetingLifecycle";
 
+const updateNotesMutateAsync = jest.fn().mockResolvedValue({ ok: true });
+
 jest.mock("@tanstack/react-router", () => ({
   ...jest.requireActual("@tanstack/react-router"),
   useNavigate: () => jest.fn(),
@@ -49,7 +51,7 @@ jest.mock("../../../services/trpc", () => ({
       },
       updateNotes: {
         useMutation: () => ({
-          mutateAsync: jest.fn().mockResolvedValue({ ok: true }),
+          mutateAsync: updateNotesMutateAsync,
           isPending: false,
           error: undefined,
         }),
@@ -188,6 +190,7 @@ describe("MeetingDetailDrawer summary copy", () => {
   beforeEach(() => {
     useMeetingDetailMock.mockReturnValue(buildUseMeetingDetailResult());
     writeTextMock.mockClear();
+    updateNotesMutateAsync.mockClear();
     Object.defineProperty(navigator, "clipboard", {
       value: {
         writeText: writeTextMock,
@@ -227,5 +230,46 @@ describe("MeetingDetailDrawer summary copy", () => {
     renderDrawer();
     const copyButton = screen.getByLabelText("Copy summary as Markdown");
     expect(copyButton).toBeDisabled();
+  });
+
+  it("opens the notes editor and saves via updateNotes", async () => {
+    useMeetingDetailMock.mockReturnValue(
+      buildUseMeetingDetailResult({
+        detail: buildDetail({ notesVersion: 4, notesDelta: null }),
+      }),
+    );
+
+    renderDrawer();
+
+    fireEvent.click(screen.getByLabelText("Notes actions"));
+    await waitFor(() =>
+      expect(screen.getByText("Edit notes")).toBeInTheDocument(),
+    );
+    fireEvent.click(screen.getByText("Edit notes"));
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "Save notes" }),
+      ).toBeInTheDocument(),
+    );
+
+    fireEvent.click(screen.getByTestId("react-quill-mock-change"));
+    fireEvent.click(screen.getByRole("button", { name: "Save notes" }));
+
+    await waitFor(() =>
+      expect(updateNotesMutateAsync).toHaveBeenCalledWith(
+        expect.objectContaining({
+          serverId: "g1",
+          meetingId: "m1",
+          expectedPreviousVersion: 4,
+          delta: expect.objectContaining({
+            ops: expect.any(Array),
+          }),
+        }),
+      ),
+    );
+
+    expect(notifications.show).toHaveBeenCalledWith({
+      message: "Notes saved.",
+    });
   });
 });

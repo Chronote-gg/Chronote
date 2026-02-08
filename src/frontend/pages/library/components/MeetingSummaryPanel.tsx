@@ -148,15 +148,14 @@ export function MeetingSummaryPanel({
           </ActionIcon>
           <Menu withinPortal={false} position="bottom-end">
             <Menu.Target>
-              <Tooltip label="Notes actions">
-                <ActionIcon
-                  variant="subtle"
-                  color="gray"
-                  aria-label="Notes actions"
-                >
-                  <IconPencil size={14} />
-                </ActionIcon>
-              </Tooltip>
+              <ActionIcon
+                variant="subtle"
+                color="gray"
+                aria-label="Notes actions"
+                title="Notes actions"
+              >
+                <IconPencil size={14} />
+              </ActionIcon>
             </Menu.Target>
             <Menu.Dropdown>
               <Menu.Item

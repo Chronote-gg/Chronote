@@ -2,6 +2,7 @@ import { Button, Group, Modal, Stack, Text } from "@mantine/core";
 import { useEffect, useMemo, useState } from "react";
 import ReactQuill from "react-quill-new";
 import "react-quill-new/dist/quill.snow.css";
+import Delta from "quill-delta";
 
 type QuillDeltaLike = {
   ops: unknown[];
@@ -16,17 +17,12 @@ const isQuillDeltaLike = (value: unknown): value is QuillDeltaLike => {
 const ensureTrailingNewline = (value: string) =>
   value.endsWith("\n") ? value : `${value}\n`;
 
-const buildPlainDeltaFromMarkdown = (markdown: string): QuillDeltaLike => ({
-  ops: [{ insert: ensureTrailingNewline(markdown.replace(/\r/g, "")) }],
-});
-
-const safeJsonStringify = (value: unknown): string => {
-  try {
-    return JSON.stringify(value);
-  } catch {
-    return "";
-  }
-};
+const buildPlainDeltaFromMarkdown = (markdown: string): Delta =>
+  new Delta([
+    {
+      insert: ensureTrailingNewline(markdown.replace(/\r/g, "")),
+    },
+  ]);
 
 type MeetingNotesEditorModalProps = {
   opened: boolean;
@@ -59,24 +55,19 @@ export default function MeetingNotesEditorModal({
 }: MeetingNotesEditorModalProps) {
   const resolvedInitialDelta = useMemo(() => {
     if (isQuillDeltaLike(initialDelta)) {
-      return initialDelta;
+      return new Delta(initialDelta as unknown as { ops: never[] });
     }
     return buildPlainDeltaFromMarkdown(initialMarkdown);
   }, [initialDelta, initialMarkdown]);
 
-  const baselineJson = useMemo(
-    () => safeJsonStringify(resolvedInitialDelta),
-    [resolvedInitialDelta],
-  );
-
-  const [value, setValue] = useState<unknown>(resolvedInitialDelta);
+  const [value, setValue] = useState<Delta>(resolvedInitialDelta);
+  const [dirty, setDirty] = useState(false);
 
   useEffect(() => {
     if (!opened) return;
     setValue(resolvedInitialDelta);
+    setDirty(false);
   }, [opened, resolvedInitialDelta]);
-
-  const dirty = safeJsonStringify(value) !== baselineJson;
 
   return (
     <Modal
@@ -94,14 +85,20 @@ export default function MeetingNotesEditorModal({
 
         <ReactQuill
           theme="snow"
-          value={value as never}
+          value={value}
           onChange={(
             _content: string,
             _delta: unknown,
             _source: string,
             editor: { getContents: () => unknown },
           ) => {
-            setValue(editor.getContents());
+            const contents = editor.getContents();
+            setValue(
+              isQuillDeltaLike(contents)
+                ? new Delta(contents as unknown as { ops: never[] })
+                : buildPlainDeltaFromMarkdown(initialMarkdown),
+            );
+            setDirty(true);
           }}
           modules={DEFAULT_MODULES}
           style={{ minHeight: 260 }}
@@ -113,7 +110,7 @@ export default function MeetingNotesEditorModal({
           </Button>
           <Button
             color="brand"
-            onClick={() => onSave(value)}
+            onClick={() => onSave({ ops: value.ops })}
             disabled={!dirty}
             loading={saving}
           >
