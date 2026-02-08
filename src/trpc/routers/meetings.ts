@@ -231,7 +231,9 @@ const trimForUi = (
   limit = NOTES_CORRECTION_DIFF_CHAR_LIMIT,
 ) => {
   if (content.length <= limit) return content;
-  return content.substring(0, Math.max(0, limit - 20)) + "\n... (truncated)";
+  const suffix = `\n... (truncated, ${content.length}/${limit} chars)`;
+  const prefixLength = Math.max(0, limit - suffix.length);
+  return content.substring(0, prefixLength) + suffix;
 };
 
 const buildUnifiedDiffForUi = (current: string, proposed: string): string => {
@@ -345,11 +347,20 @@ async function generateCorrectedNotes(options: {
     if (content && content.trim().length > 0) {
       return stripCodeFences(content.trim());
     }
+
+    throw new TRPCError({
+      code: "INTERNAL_SERVER_ERROR",
+      message:
+        "Failed to generate a correction proposal. Please try again in a moment.",
+    });
   } catch (error) {
     console.error("Failed to generate corrected notes (web):", error);
+    throw new TRPCError({
+      code: "INTERNAL_SERVER_ERROR",
+      message:
+        "Failed to generate a correction proposal. Please try again in a moment.",
+    });
   }
-
-  return options.currentNotes;
 }
 
 async function sendNotesEmbedsToDiscord(params: {

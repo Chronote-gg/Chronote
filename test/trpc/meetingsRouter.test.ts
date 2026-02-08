@@ -386,6 +386,43 @@ describe("meetings notes correction mutations", () => {
     expect(result.diff.split("\n").some((line) => line === "+ ")).toBe(true);
   });
 
+  test("suggestNotesCorrection throws when generation fails", async () => {
+    const meetingId = "channel-1#2025-01-01T00:00:00.000Z";
+    mockedGetMeetingHistory.mockResolvedValue({
+      guildId: "guild-1",
+      channelId_timestamp: meetingId,
+      meetingId: "meeting-1",
+      channelId: "channel-1",
+      timestamp: "2025-01-01T00:00:00.000Z",
+      duration: 1800,
+      transcribeMeeting: true,
+      generateNotes: true,
+      notes: "Old notes",
+      transcriptS3Key: "transcripts/meeting-1.json",
+      notesVersion: 1,
+    } as unknown as MeetingHistory);
+
+    mockedFetchJsonFromS3.mockResolvedValueOnce({ text: "Transcript" });
+
+    mockedCreateOpenAIClient.mockReturnValue({
+      chat: {
+        completions: {
+          create: async () => {
+            throw new Error("boom");
+          },
+        },
+      },
+    } as unknown as ReturnType<typeof createOpenAIClient>);
+
+    await expect(
+      buildCaller().meetings.suggestNotesCorrection({
+        serverId: "guild-1",
+        meetingId,
+        suggestion: "Fix it",
+      }),
+    ).rejects.toMatchObject({ code: "INTERNAL_SERVER_ERROR" });
+  });
+
   test("applyNotesCorrection recomputes summary and clears pending on conflict", async () => {
     const meetingId = "channel-1#2025-01-01T00:00:00.000Z";
     mockedGetMeetingHistory.mockResolvedValue({
