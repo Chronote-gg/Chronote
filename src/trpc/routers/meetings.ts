@@ -77,6 +77,21 @@ const buildParticipantMap = (participants?: Participant[]) =>
     (participants ?? []).map((participant) => [participant.id, participant]),
   );
 
+const parseChannelIdTimestamp = (channelIdTimestamp: string) => {
+  const hashIndex = channelIdTimestamp.indexOf("#");
+  if (hashIndex <= 0 || hashIndex >= channelIdTimestamp.length - 1) {
+    throw new TRPCError({
+      code: "BAD_REQUEST",
+      message: "Invalid meeting id.",
+    });
+  }
+
+  return {
+    channelId: channelIdTimestamp.slice(0, hashIndex),
+    timestamp: channelIdTimestamp.slice(hashIndex + 1),
+  };
+};
+
 const resolveMeetingAttendees = (history: {
   participants?: Participant[];
   attendees?: string[];
@@ -643,7 +658,8 @@ const updateNotes = guildMemberProcedure
       throw new TRPCError({ code: "NOT_FOUND", message: "Meeting not found" });
     }
 
-    const channelId = history.channelId ?? input.meetingId.split("#")[0];
+    const channelId =
+      history.channelId ?? parseChannelIdTimestamp(input.meetingId).channelId;
     await ensurePortalUserCanViewMeetingChannel({
       guildId: input.serverId,
       channelId,
@@ -704,6 +720,11 @@ const updateNotes = guildMemberProcedure
           "Unable to convert notes to Markdown. Try removing unsupported formatting and retry.",
       });
     }
+
+    markdownNotes = replaceDiscordMentionsWithDisplayNames(
+      markdownNotes,
+      buildParticipantMap(history.participants),
+    );
 
     if (markdownNotes.length === 0) {
       throw new TRPCError({
@@ -887,7 +908,8 @@ const suggestNotesCorrection = guildMemberProcedure
       });
     }
 
-    const channelId = history.channelId ?? input.meetingId.split("#")[0];
+    const channelId =
+      history.channelId ?? parseChannelIdTimestamp(input.meetingId).channelId;
     await ensurePortalUserCanViewMeetingChannel({
       guildId: input.serverId,
       channelId,
@@ -999,7 +1021,9 @@ const applyNotesCorrection = guildMemberProcedure
     }
 
     const channelId =
-      history.channelId ?? pending.channelId ?? input.meetingId.split("#")[0];
+      history.channelId ??
+      pending.channelId ??
+      parseChannelIdTimestamp(input.meetingId).channelId;
     await ensurePortalUserCanViewMeetingChannel({
       guildId: input.serverId,
       channelId,
