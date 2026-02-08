@@ -1,7 +1,9 @@
 import {
+  Box,
   Button,
   Group,
   Modal,
+  ScrollArea,
   Stack,
   Text,
   Textarea,
@@ -9,6 +11,16 @@ import {
 } from "@mantine/core";
 
 type MeetingDetailModalsProps = {
+  notesCorrectionModalOpen: boolean;
+  notesCorrectionDraft: string;
+  notesCorrectionDiff: string | null;
+  notesCorrectionChanged: boolean | null;
+  onNotesCorrectionDraftChange: (value: string) => void;
+  onNotesCorrectionModalClose: () => void;
+  onNotesCorrectionGenerate: () => void;
+  onNotesCorrectionApply: () => void;
+  notesCorrectionGenerating: boolean;
+  notesCorrectionApplying: boolean;
   feedbackModalOpen: boolean;
   feedbackDraft: string;
   onFeedbackDraftChange: (value: string) => void;
@@ -34,6 +46,16 @@ type MeetingDetailModalsProps = {
 };
 
 export default function MeetingDetailModals({
+  notesCorrectionModalOpen,
+  notesCorrectionDraft,
+  notesCorrectionDiff,
+  notesCorrectionChanged,
+  onNotesCorrectionDraftChange,
+  onNotesCorrectionModalClose,
+  onNotesCorrectionGenerate,
+  onNotesCorrectionApply,
+  notesCorrectionGenerating,
+  notesCorrectionApplying,
   feedbackModalOpen,
   feedbackDraft,
   onFeedbackDraftChange,
@@ -66,6 +88,93 @@ export default function MeetingDetailModals({
 
   return (
     <>
+      <Modal
+        opened={notesCorrectionModalOpen}
+        onClose={onNotesCorrectionModalClose}
+        title="Suggest a correction"
+        centered
+        size="lg"
+      >
+        <Stack gap="md">
+          <Text size="sm" c="dimmed">
+            Describe what should change in the notes. We'll propose a minimal
+            edit diff, then you can apply it.
+          </Text>
+          <Textarea
+            label="Suggestion"
+            placeholder="e.g., Add that Alice owns the rollout, and remove the incorrect deadline"
+            value={notesCorrectionDraft}
+            onChange={(event) =>
+              onNotesCorrectionDraftChange(event.currentTarget.value)
+            }
+            minRows={4}
+            maxLength={1500}
+            disabled={notesCorrectionGenerating || notesCorrectionApplying}
+          />
+          {notesCorrectionDiff !== null ? (
+            <Box>
+              <Text size="sm" fw={600} mb={6}>
+                Proposed diff
+              </Text>
+              <ScrollArea
+                h={260}
+                offsetScrollbars
+                type="always"
+                scrollbarSize={10}
+              >
+                <pre
+                  style={{
+                    margin: 0,
+                    padding: 12,
+                    borderRadius: 8,
+                    background: "var(--mantine-color-dark-6)",
+                    color: "var(--mantine-color-gray-0)",
+                    fontSize: 12,
+                    lineHeight: 1.35,
+                    whiteSpace: "pre-wrap",
+                    wordBreak: "break-word",
+                  }}
+                >
+                  {notesCorrectionDiff}
+                </pre>
+              </ScrollArea>
+              {notesCorrectionChanged === false ? (
+                <Text size="xs" c="dimmed" mt={6}>
+                  No changes were suggested for this request. Try adding more
+                  detail.
+                </Text>
+              ) : null}
+            </Box>
+          ) : null}
+          <Group justify="flex-end">
+            <Button
+              variant="default"
+              onClick={onNotesCorrectionModalClose}
+              disabled={notesCorrectionGenerating || notesCorrectionApplying}
+            >
+              Cancel
+            </Button>
+            {notesCorrectionDiff !== null ? (
+              <Button
+                color="brand"
+                onClick={onNotesCorrectionApply}
+                loading={notesCorrectionApplying}
+                disabled={notesCorrectionChanged === false}
+              >
+                Apply update
+              </Button>
+            ) : (
+              <Button
+                color="brand"
+                onClick={onNotesCorrectionGenerate}
+                loading={notesCorrectionGenerating}
+              >
+                Generate proposal
+              </Button>
+            )}
+          </Group>
+        </Stack>
+      </Modal>
       <Modal
         opened={feedbackModalOpen}
         onClose={onFeedbackModalClose}

@@ -15,6 +15,7 @@ const meta: Meta<typeof MeetingSummaryPanel> = {
     onFeedbackUp: () => undefined,
     onFeedbackDown: () => undefined,
     onCopySummary: () => undefined,
+    onSuggestCorrection: () => undefined,
   },
 };
 

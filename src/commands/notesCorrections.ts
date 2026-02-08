@@ -313,110 +313,119 @@ export async function handleNotesCorrectionModal(
   const channelIdTimestamp = decodeKey(encodedKey);
   const guildId = interaction.guildId!;
 
-  const history = await getMeetingHistoryService(guildId, channelIdTimestamp);
+  await interaction.deferReply({ ephemeral: true });
 
-  if (!history || !history.notes) {
-    await interaction.reply({
-      content:
-        "I couldn't find notes to compare against yet. Please try again once the meeting has finished processing.",
-      ephemeral: true,
+  try {
+    const history = await getMeetingHistoryService(guildId, channelIdTimestamp);
+
+    if (!history || !history.notes) {
+      await interaction.editReply({
+        content:
+          "I couldn't find notes to compare against yet. Please try again once the meeting has finished processing.",
+      });
+      return;
+    }
+
+    const suggestion = interaction.fields.getTextInputValue(
+      "correction_suggestion",
+    );
+
+    const memberDisplayName =
+      ("member" in interaction &&
+        interaction.member &&
+        (interaction.member as GuildMember).displayName) ||
+      interaction.user.globalName ||
+      interaction.user.username;
+
+    const suggestionEntry: SuggestionHistoryEntry = {
+      userId: interaction.user.id,
+      userTag: interaction.user.tag,
+      displayName: memberDisplayName,
+      text: suggestion,
+      createdAt: new Date().toISOString(),
+    };
+
+    const transcript = await resolveTranscript(history);
+    const modelParams = await resolveModelParamsForContext({
+      guildId,
+      channelId: history.channelId ?? channelIdTimestamp.split("#")[0],
+      userId: interaction.user.id,
     });
-    return;
+    const modelChoices = await resolveModelChoicesForContext({
+      guildId,
+      channelId: history.channelId ?? channelIdTimestamp.split("#")[0],
+      userId: interaction.user.id,
+    });
+
+    const newNotes = await generateCorrectedNotes({
+      currentNotes: history.notes,
+      transcript,
+      suggestion,
+      requesterTag: interaction.user.tag,
+      previousSuggestions: history.suggestionsHistory,
+      modelParams: modelParams.notesCorrection,
+      modelOverride: modelChoices.notesCorrection,
+    });
+
+    const diff = buildUnifiedDiff(history.notes, newNotes);
+    const token = uuidv4();
+
+    pendingCorrections.set(token, {
+      guildId,
+      channelIdTimestamp,
+      meetingId: history.meetingId,
+      channelId: history.channelId,
+      notesMessageIds: history.notesMessageIds,
+      notesChannelId: history.notesChannelId,
+      summaryMessageId: history.summaryMessageId,
+      meetingCreatorId: history.meetingCreatorId,
+      isAutoRecording: history.isAutoRecording,
+      tags: history.tags,
+      meetingName: history.meetingName,
+      summarySentence: history.summarySentence,
+      summaryLabel: history.summaryLabel,
+      originalNotes: history.notes,
+      newNotes,
+      notesVersion: history.notesVersion ?? 1,
+      requesterId: interaction.user.id,
+      suggestion: suggestionEntry,
+    });
+
+    const accept = new ButtonBuilder()
+      .setCustomId(`${CORRECTION_ACCEPT_PREFIX}:${token}`)
+      .setLabel("Accept & update")
+      .setStyle(ButtonStyle.Success);
+
+    const reject = new ButtonBuilder()
+      .setCustomId(`${CORRECTION_REJECT_PREFIX}:${token}`)
+      .setLabel("Reject")
+      .setStyle(ButtonStyle.Secondary);
+
+    const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
+      accept,
+      reject,
+    );
+
+    await interaction.editReply({
+      content: `Here's the unified diff between current notes and your proposal:\n\`\`\`\n${diff}\n\`\`\`\nOnly the meeting starter${
+        history.isAutoRecording ? " or a server context manager" : ""
+      } can accept.`,
+      components: [row],
+    });
+  } catch (error) {
+    console.error("Failed to handle notes correction modal:", error);
+    await interaction.editReply({
+      content:
+        "Something went wrong while generating the proposed correction. Please try again.",
+      components: [],
+    });
   }
-
-  const suggestion = interaction.fields.getTextInputValue(
-    "correction_suggestion",
-  );
-
-  const memberDisplayName =
-    ("member" in interaction &&
-      interaction.member &&
-      (interaction.member as GuildMember).displayName) ||
-    interaction.user.globalName ||
-    interaction.user.username;
-
-  const suggestionEntry: SuggestionHistoryEntry = {
-    userId: interaction.user.id,
-    userTag: interaction.user.tag,
-    displayName: memberDisplayName,
-    text: suggestion,
-    createdAt: new Date().toISOString(),
-  };
-
-  const transcript = await resolveTranscript(history);
-  const modelParams = await resolveModelParamsForContext({
-    guildId,
-    channelId: history.channelId ?? channelIdTimestamp.split("#")[0],
-    userId: interaction.user.id,
-  });
-  const modelChoices = await resolveModelChoicesForContext({
-    guildId,
-    channelId: history.channelId ?? channelIdTimestamp.split("#")[0],
-    userId: interaction.user.id,
-  });
-
-  const newNotes = await generateCorrectedNotes({
-    currentNotes: history.notes,
-    transcript,
-    suggestion,
-    requesterTag: interaction.user.tag,
-    previousSuggestions: history.suggestionsHistory,
-    modelParams: modelParams.notesCorrection,
-    modelOverride: modelChoices.notesCorrection,
-  });
-
-  const diff = buildUnifiedDiff(history.notes, newNotes);
-  const token = uuidv4();
-
-  pendingCorrections.set(token, {
-    guildId,
-    channelIdTimestamp,
-    meetingId: history.meetingId,
-    channelId: history.channelId,
-    notesMessageIds: history.notesMessageIds,
-    notesChannelId: history.notesChannelId,
-    summaryMessageId: history.summaryMessageId,
-    meetingCreatorId: history.meetingCreatorId,
-    isAutoRecording: history.isAutoRecording,
-    tags: history.tags,
-    meetingName: history.meetingName,
-    summarySentence: history.summarySentence,
-    summaryLabel: history.summaryLabel,
-    originalNotes: history.notes,
-    newNotes,
-    notesVersion: history.notesVersion ?? 1,
-    requesterId: interaction.user.id,
-    suggestion: suggestionEntry,
-  });
-
-  const accept = new ButtonBuilder()
-    .setCustomId(`${CORRECTION_ACCEPT_PREFIX}:${token}`)
-    .setLabel("Accept & update")
-    .setStyle(ButtonStyle.Success);
-
-  const reject = new ButtonBuilder()
-    .setCustomId(`${CORRECTION_REJECT_PREFIX}:${token}`)
-    .setLabel("Reject")
-    .setStyle(ButtonStyle.Secondary);
-
-  const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
-    accept,
-    reject,
-  );
-
-  await interaction.reply({
-    content: `Here's the unified diff between current notes and your proposal:\n\`\`\`\n${diff}\n\`\`\`\nOnly the meeting starter${
-      history.isAutoRecording ? " or a server context manager" : ""
-    } can accept.`,
-    ephemeral: true,
-    components: [row],
-  });
 }
 
 async function applyCorrection(
   interaction: ButtonInteraction,
   pending: PendingCorrection,
-): Promise<boolean> {
+): Promise<{ ok: boolean; errorMessage?: string }> {
   const newVersion = (pending.notesVersion ?? 1) + 1;
   const row = buildCorrectionRow(pending.guildId, pending.channelIdTimestamp);
   const { notesBody, summaries } = await buildCorrectionSummaries(
@@ -440,12 +449,11 @@ async function applyCorrection(
   });
 
   if (!updateSucceeded) {
-    await interaction.update({
-      content:
+    return {
+      ok: false,
+      errorMessage:
         "Could not apply this correction because the notes were updated elsewhere. Please reopen the correction request and try again.",
-      components: [],
-    });
-    return false;
+    };
   }
 
   await updateSummaryMessageForCorrection(interaction, pending, summaries);
@@ -458,7 +466,7 @@ async function applyCorrection(
     pending.summaryMessageId,
   );
 
-  return true;
+  return { ok: true };
 }
 
 function resolveChannelName(
@@ -875,12 +883,33 @@ export async function handleNotesCorrectionAccept(
     return;
   }
 
-  const applied = await applyCorrection(interaction, pending);
-  if (applied) {
-    pendingCorrections.delete(token);
+  await interaction.deferUpdate();
+  await interaction.editReply({
+    content: "Applying correction...",
+    components: [],
+  });
 
-    await interaction.update({
+  try {
+    const result = await applyCorrection(interaction, pending);
+    if (!result.ok) {
+      await interaction.editReply({
+        content:
+          result.errorMessage ??
+          "Unable to apply this correction right now. Please try again.",
+        components: [],
+      });
+      return;
+    }
+
+    pendingCorrections.delete(token);
+    await interaction.editReply({
       content: "Correction applied and notes updated.",
+      components: [],
+    });
+  } catch (error) {
+    console.error("Failed applying notes correction:", error);
+    await interaction.editReply({
+      content: "Failed to apply correction. Please try again.",
       components: [],
     });
   }

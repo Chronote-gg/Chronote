@@ -10,6 +10,7 @@ import type {
 } from "../repositories/types";
 
 const PERMISSION_ADMIN = 1n << 3n;
+const PERMISSION_MANAGE_CHANNELS = 1n << 4n;
 const PERMISSION_VIEW_CHANNEL = 1n << 10n;
 const PERMISSION_CONNECT = 1n << 20n;
 
@@ -141,5 +142,17 @@ export async function ensureUserCanConnectChannel(options: {
     ...options,
     required: PERMISSION_VIEW_CHANNEL | PERMISSION_CONNECT,
     logLabel: "ensureUserCanConnectChannel",
+  });
+}
+
+export async function ensureUserCanManageChannel(options: {
+  guildId: string;
+  channelId: string;
+  userId: string;
+}): Promise<boolean | null> {
+  return ensureUserHasChannelPermissions({
+    ...options,
+    required: PERMISSION_VIEW_CHANNEL | PERMISSION_MANAGE_CHANNELS,
+    logLabel: "ensureUserCanManageChannel",
   });
 }

@@ -13,6 +13,7 @@ import {
 import {
   IconCopy,
   IconNote,
+  IconPencil,
   IconThumbDown,
   IconThumbUp,
 } from "@tabler/icons-react";
@@ -40,6 +41,7 @@ type MeetingSummaryPanelProps = {
   onFeedbackUp: () => void;
   onFeedbackDown: () => void;
   onCopySummary: () => void;
+  onSuggestCorrection?: () => void;
   style?: CSSProperties;
 };
 
@@ -53,6 +55,7 @@ export function MeetingSummaryPanel({
   onFeedbackUp,
   onFeedbackDown,
   onCopySummary,
+  onSuggestCorrection,
   style,
 }: MeetingSummaryPanelProps) {
   const panelStyle: CSSProperties = scrollable
@@ -139,6 +142,17 @@ export function MeetingSummaryPanel({
           >
             <IconThumbDown size={14} />
           </ActionIcon>
+          <Tooltip label="Suggest a correction">
+            <ActionIcon
+              variant="subtle"
+              color="gray"
+              onClick={onSuggestCorrection}
+              disabled={!onSuggestCorrection}
+              aria-label="Suggest a correction"
+            >
+              <IconPencil size={14} />
+            </ActionIcon>
+          </Tooltip>
         </Group>
       </Group>
       {scrollable ? (

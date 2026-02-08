@@ -2,6 +2,7 @@ import { describe, expect, test } from "@jest/globals";
 import type { Participant } from "../../src/types/participants";
 import {
   extractDiscordUserId,
+  replaceDiscordMentionsWithDisplayNames,
   resolveAttendeeDisplayName,
 } from "../../src/utils/participants";
 
@@ -54,5 +55,43 @@ describe("resolveAttendeeDisplayName", () => {
   test("falls back to the original value when unresolved", () => {
     expect(resolveAttendeeDisplayName("<@999>", participants)).toBe("<@999>");
     expect(resolveAttendeeDisplayName("Guest", participants)).toBe("Guest");
+  });
+});
+
+describe("replaceDiscordMentionsWithDisplayNames", () => {
+  const participants = new Map<string, Participant>([
+    [
+      "123",
+      {
+        id: "123",
+        username: "alpha",
+        displayName: "Alpha",
+        serverNickname: "A",
+        tag: "alpha#0001",
+      },
+    ],
+    [
+      "456",
+      {
+        id: "456",
+        username: "beta",
+        tag: "beta#0002",
+      },
+    ],
+  ]);
+
+  test("replaces mentions with display names", () => {
+    expect(
+      replaceDiscordMentionsWithDisplayNames("Thanks <@123>!", participants),
+    ).toBe("Thanks @A!");
+    expect(
+      replaceDiscordMentionsWithDisplayNames("Hi <@!456>", participants),
+    ).toBe("Hi @beta");
+  });
+
+  test("keeps unmatched mentions", () => {
+    expect(
+      replaceDiscordMentionsWithDisplayNames("Ping <@999>", participants),
+    ).toBe("Ping <@999>");
   });
 });
