@@ -518,8 +518,11 @@ function recordSuppressionVoiceState(
     newChannelId: newState.channelId,
   });
   if (result.clearedSuppression) {
+    const extra = result.clearedSuppressionInfo
+      ? ` reason=${result.clearedSuppressionInfo.reason} suppressedAt=${result.clearedSuppressionInfo.createdAt}`
+      : "";
     console.log(
-      `Auto-record suppression cleared after channel became empty: guildId=${newState.guild.id} channelId=${oldState.channelId}`,
+      `Auto-record suppression cleared after channel became empty: guildId=${newState.guild.id} channelId=${oldState.channelId}${extra}`,
     );
   }
 }

@@ -49,6 +49,10 @@ export class AutoRecordJoinSuppressionService {
     newChannelId?: string | null;
   }): {
     clearedSuppression: boolean;
+    clearedSuppressionInfo?: {
+      reason: AutoRecordJoinSuppressionReason;
+      createdAt: string;
+    };
   } {
     if (options.isBot) {
       return { clearedSuppression: false };
@@ -58,16 +62,24 @@ export class AutoRecordJoinSuppressionService {
     }
 
     let clearedSuppression = false;
+    let clearedSuppressionInfo:
+      | {
+          reason: AutoRecordJoinSuppressionReason;
+          createdAt: string;
+        }
+      | undefined;
 
     if (options.oldChannelId) {
       const oldKey = buildChannelKey(options.guildId, options.oldChannelId);
       const members = this.nonBotMemberIdsByChannel.get(oldKey);
       if (members) {
         members.delete(options.userId);
-        if (members.size === 0 && this.suppressedChannels.has(oldKey)) {
+        const suppressionInfo = this.suppressedChannels.get(oldKey);
+        if (members.size === 0 && suppressionInfo) {
           this.suppressedChannels.delete(oldKey);
           this.nonBotMemberIdsByChannel.delete(oldKey);
           clearedSuppression = true;
+          clearedSuppressionInfo = suppressionInfo;
         }
       }
     }
@@ -80,7 +92,7 @@ export class AutoRecordJoinSuppressionService {
       }
     }
 
-    return { clearedSuppression };
+    return { clearedSuppression, clearedSuppressionInfo };
   }
 }
 
