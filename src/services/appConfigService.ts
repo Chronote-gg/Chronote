@@ -62,6 +62,16 @@ function parsePayload(raw: string): { values: Record<string, unknown> } | null {
 export async function getGlobalConfigValues(): Promise<
   Record<string, unknown>
 > {
+  if (config.mock.enabled && process.env.PW_VISUAL === "true") {
+    // Visual regression snapshots are meant to reflect the production-like
+    // global defaults we typically keep enabled, without requiring AppConfig
+    // credentials in CI.
+    return {
+      "transcription.premium.enabled": true,
+      "transcription.premium.cleanup.enabled": true,
+    };
+  }
+
   if (!isAppConfigEnabled()) return {};
 
   const now = Date.now();
