@@ -1,3 +1,7 @@
 declare module "quill-delta-to-markdown" {
-  export function deltaToMarkdown(delta: unknown): string;
+  const mod: {
+    deltaToMarkdown: (delta: unknown) => string;
+  };
+
+  export default mod;
 }

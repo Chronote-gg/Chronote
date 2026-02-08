@@ -2,7 +2,7 @@ import { TRPCError } from "@trpc/server";
 import { diffLines } from "diff";
 import { z } from "zod";
 import { v4 as uuidv4 } from "uuid";
-import { deltaToMarkdown } from "quill-delta-to-markdown";
+import quillDeltaToMarkdownModule from "quill-delta-to-markdown";
 import {
   getMeetingHistoryService,
   listRecentMeetingsForGuildService,
@@ -128,7 +128,7 @@ const safeJsonStringifyLength = (value: unknown): number | null => {
 };
 
 const quillDeltaToMarkdown = (delta: unknown): string => {
-  const markdown = deltaToMarkdown(delta);
+  const markdown = quillDeltaToMarkdownModule.deltaToMarkdown(delta);
   if (typeof markdown !== "string") {
     throw new Error("deltaToMarkdown returned non-string");
   }
