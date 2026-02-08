@@ -106,7 +106,6 @@ const NOTES_CORRECTION_TOKEN_TTL_MS = 15 * 60 * 1000;
 const NOTES_CORRECTION_MAX_PENDING = 200;
 
 const notesCorrectionTokenStore = createNotesCorrectionTokenStore({
-  ttlMs: NOTES_CORRECTION_TOKEN_TTL_MS,
   maxPending: NOTES_CORRECTION_MAX_PENDING,
 });
 
@@ -724,7 +723,7 @@ const applyNotesCorrection = guildMemberProcedure
     z.object({
       serverId: z.string(),
       meetingId: z.string(),
-      token: z.string().min(1),
+      token: z.string().uuid(),
     }),
   )
   .mutation(async ({ ctx, input }) => {

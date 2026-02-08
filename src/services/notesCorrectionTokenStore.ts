@@ -118,7 +118,33 @@ class DynamoNotesCorrectionTokenStore implements NotesCorrectionTokenStore {
     const item = unmarshall(res.Item) as DynamoNotesCorrectionItem;
     if (item.kind !== "notesCorrectionToken") return null;
 
-    const record = JSON.parse(item.data) as NotesCorrectionTokenRecord;
+    let record: NotesCorrectionTokenRecord;
+    try {
+      record = JSON.parse(item.data) as NotesCorrectionTokenRecord;
+    } catch (error) {
+      console.warn(
+        "Failed to parse notes correction token record, deleting",
+        error,
+      );
+      await this.delete(token);
+      return null;
+    }
+
+    if (
+      typeof record.expiresAtMs !== "number" ||
+      typeof record.guildId !== "string" ||
+      typeof record.meetingId !== "string" ||
+      typeof record.requesterId !== "string" ||
+      typeof record.notesVersion !== "number" ||
+      typeof record.newNotes !== "string"
+    ) {
+      console.warn("Invalid notes correction token record, deleting", {
+        guildId: record.guildId,
+        meetingId: record.meetingId,
+      });
+      await this.delete(token);
+      return null;
+    }
     if (record.expiresAtMs <= Date.now()) {
       await this.delete(token);
       return null;
@@ -156,7 +182,6 @@ class DynamoNotesCorrectionTokenStore implements NotesCorrectionTokenStore {
 }
 
 export function createNotesCorrectionTokenStore(options: {
-  ttlMs: number;
   maxPending: number;
 }): NotesCorrectionTokenStore {
   if (config.mock.enabled) {
