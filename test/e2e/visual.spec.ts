@@ -23,9 +23,9 @@ test.describe("visual regression", () => {
   test.use({
     viewport: { width: 1280, height: 720 },
     deviceScaleFactor: 1,
+    timezoneId: "UTC",
     contextOptions: {
       reducedMotion: "reduce",
-      timezoneId: "UTC",
     },
   });
 
