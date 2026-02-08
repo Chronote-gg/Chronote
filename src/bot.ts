@@ -506,10 +506,14 @@ function recordSuppressionVoiceState(
   const userId = newState.id || oldState.id;
   if (!userId) return;
   const member = newState.member ?? oldState.member;
+  const botUserId = client.user?.id;
+  const isBot =
+    member?.user.bot === true ||
+    (botUserId !== undefined && botUserId === userId);
   const result = autoRecordJoinSuppressionService.handleVoiceStateChange({
     guildId: newState.guild.id,
     userId,
-    isBot: member ? member.user.bot : false,
+    isBot,
     oldChannelId: oldState.channelId,
     newChannelId: newState.channelId,
   });
@@ -533,12 +537,17 @@ async function handleBotVoiceUpdate(
       const nonBotMemberIds = meeting.voiceChannel.members
         .filter((member) => !member.user.bot)
         .map((member) => member.id);
-      autoRecordJoinSuppressionService.suppressUntilEmpty({
+      const didSuppress = autoRecordJoinSuppressionService.suppressUntilEmpty({
         guildId: meeting.guildId,
         channelId: meeting.voiceChannel.id,
         nonBotMemberIds,
         reason: "forced_disconnect",
       });
+      if (!didSuppress) {
+        console.log(
+          `Auto-record suppression not set after forced disconnect (already suppressed or channel empty): guildId=${meeting.guildId} channelId=${meeting.voiceChannel.id} nonBotMembers=${nonBotMemberIds.length}`,
+        );
+      }
     }
     meeting.endReason = MEETING_END_REASONS.BOT_DISCONNECT;
     const notice = await meeting.textChannel.send(
