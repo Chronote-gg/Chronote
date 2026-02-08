@@ -78,6 +78,7 @@
 - Always run Storybook screenshot capture and do a VLM review for any UI change before responding with final UI edits.
 - When making UI changes, use the VLM to review the Storybook screenshots so you can verify the component changes without scanning the full page.
 - When making UI changes, review Playwright visual snapshots in `test/e2e/visual.spec.ts-snapshots` with the VLM to understand existing UI flows. It is OK to update snapshots with `yarn test:visual:update` or use the Playwright MCP during UI work.
+- Scroll regressions: add a Playwright assertion test that proves the intended scroll container actually scrolls (for example, checking `scrollHeight > clientHeight` and that `scrollTop` changes) and run it locally alongside visual snapshots.
 
 ## Infra (Terraform)
 
