@@ -142,13 +142,7 @@
 - When running checks locally, avoid docker builds unless explicitly requested.
 - Visual regression baselines: update with `yarn test:visual:update`.
 
-## Agent Skills
-
-OpenCode skills are stored as `.opencode/skills/<name>/SKILL.md`. Skills are discovered at OpenCode startup and cached, adding or modifying skills may require restarting OpenCode.
-
-- `pr-review-recycle`: agentic loop for processing Copilot/Greptile/Codex PR review threads until checks are green.
-
-Why each check exists:
+### Why each check exists
 
 - Lint (ESLint) catches common errors and keeps code quality consistent. Docs: https://eslint.org/docs/latest/use/command-line-interface
 - Format (Prettier) enforces a consistent style and removes formatting churn. Docs: https://prettier.io/docs/cli
@@ -159,11 +153,17 @@ Why each check exists:
 - IaC scan (Checkov via uvx) catches Terraform misconfigurations. Docs: https://www.checkov.io/2.Basics/CLI%20Command%20Reference.html and https://docs.astral.sh/uv/concepts/tools/
 - Prompt sync (Langfuse) keeps repo prompt files aligned with Langfuse. Command: `yarn prompts:check`.
 
-Coverage guidance:
+### Coverage guidance
 
 - Prefer adding tests over coverage ignores.
 - If a coverage ignore is unavoidable, use c8 ignore directives with a short justification comment.
 - After coverage improvements or coverage scope changes, round each threshold down to the nearest 10 and keep it in sync with `jest.config.ts`. Do not lower a threshold below its pre-PR value unless the coverage scope meaningfully expands, in which case reset to the new rounded baseline and call it out in the PR.
+
+## Agent Skills
+
+OpenCode skills are stored as `.opencode/skills/<name>/SKILL.md`. Skills are discovered at OpenCode startup and cached. Adding or modifying skills may require restarting OpenCode.
+
+- `pr-review-recycle`: agentic loop for processing Copilot/Greptile/Codex PR review threads until checks are green.
 
 ## Non-idiomatic typing
 

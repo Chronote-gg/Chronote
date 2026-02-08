@@ -8,12 +8,15 @@ Use this skill when you need to process automated PR review feedback (Copilot, G
 
 This is designed for a human+agent pairing.
 
+Canonical workflow: `.codex/prompts/automated-review-cycle.md`. Keep this skill as a thin OpenCode wrapper, and update the codex prompt first if the recycle loop behavior changes.
+
 ## Standing Rules
 
 - Prefix all GitHub prose (PR comments, issue comments, PR descriptions) with `[AGENT]`.
 - Do not create commits unless explicitly asked by the user.
 - Do not force push.
 - Do not amend commits unless explicitly asked.
+- Do not bypass git hooks (for example, do not use `--no-verify`).
 - Do not commit secrets or `.env` files.
 
 ## Inputs You Need
@@ -117,6 +120,11 @@ Resolve threads via GraphQL after replying:
 ```bash
 gh api graphql -f query='mutation($threadId:ID!){resolveReviewThread(input:{threadId:$threadId}){thread{id isResolved}}}' -F threadId=<THREAD_ID>
 ```
+
+Note: resolving threads and adding inline replies can fail due to token permissions. If so:
+
+- Still reply in the thread when possible.
+- Also add a PR-level `[AGENT]` comment listing what you addressed and ask a maintainer to resolve the remaining threads manually.
 
 ### 6) Wait for Checks + New Bot Feedback
 
