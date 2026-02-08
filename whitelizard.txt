@@ -32,3 +32,5 @@ src/commands/notesCorrections.ts:resolveChannelName
 src\commands\notesCorrections.ts:resolveChannelName
 src/embed.ts:resolveMeetingTitle
 src\embed.ts:resolveMeetingTitle
+src/trpc/routers/meetings.ts:updateNotesMutation
+src\trpc\routers\meetings.ts:updateNotesMutation

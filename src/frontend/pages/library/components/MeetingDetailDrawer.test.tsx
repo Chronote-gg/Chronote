@@ -47,6 +47,13 @@ jest.mock("../../../services/trpc", () => ({
           error: undefined,
         }),
       },
+      updateNotes: {
+        useMutation: () => ({
+          mutateAsync: jest.fn().mockResolvedValue({ ok: true }),
+          isPending: false,
+          error: undefined,
+        }),
+      },
       suggestNotesCorrection: {
         useMutation: () => ({
           mutateAsync: jest.fn().mockResolvedValue({

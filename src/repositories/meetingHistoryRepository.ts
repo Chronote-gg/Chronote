@@ -41,6 +41,7 @@ export type MeetingHistoryRepository = {
     guildId: string;
     channelId_timestamp: string;
     notes: string;
+    notesDelta?: unknown;
     notesVersion: number;
     editedBy: string;
     summarySentence?: string;
@@ -130,6 +131,7 @@ const realRepository: MeetingHistoryRepository = {
       params.suggestion,
       params.expectedPreviousVersion,
       params.metadata,
+      params.notesDelta,
     ),
   updateMeetingName: updateMeetingName,
   updateStatus: updateMeetingStatus,
@@ -195,6 +197,10 @@ const mockRepository: MeetingHistoryRepository = {
     items[idx] = {
       ...existing,
       notes: params.notes,
+      notesDelta:
+        params.notesDelta !== undefined
+          ? params.notesDelta
+          : existing.notesDelta,
       summarySentence: params.summarySentence ?? existing.summarySentence,
       summaryLabel: params.summaryLabel ?? existing.summaryLabel,
       meetingName: params.meetingName ?? existing.meetingName,
