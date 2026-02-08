@@ -296,6 +296,52 @@ describe("meetings notes correction mutations", () => {
     expect(result.diff).toContain("+ Updated notes");
   });
 
+  test("suggestNotesCorrection caps the diff line count", async () => {
+    const meetingId = "channel-1#2025-01-01T00:00:00.000Z";
+    mockedGetMeetingHistory.mockResolvedValue({
+      guildId: "guild-1",
+      channelId_timestamp: meetingId,
+      meetingId: "meeting-1",
+      channelId: "channel-1",
+      timestamp: "2025-01-01T00:00:00.000Z",
+      duration: 1800,
+      transcribeMeeting: true,
+      generateNotes: true,
+      notes: "Old notes",
+      transcriptS3Key: "transcripts/meeting-1.json",
+      notesVersion: 1,
+    } as unknown as MeetingHistory);
+
+    mockedFetchJsonFromS3.mockResolvedValueOnce({ text: "Transcript" });
+
+    const updated = Array.from(
+      { length: 1000 },
+      (_, idx) => `Line ${idx + 1}`,
+    ).join("\n");
+    mockedCreateOpenAIClient.mockReturnValue({
+      chat: {
+        completions: {
+          create: async () => ({
+            choices: [
+              {
+                message: { content: updated },
+              },
+            ],
+          }),
+        },
+      },
+    } as unknown as ReturnType<typeof createOpenAIClient>);
+
+    const result = await buildCaller().meetings.suggestNotesCorrection({
+      serverId: "guild-1",
+      meetingId,
+      suggestion: "Make it long",
+    });
+
+    expect(result.changed).toBe(true);
+    expect(result.diff.split("\n").length).toBe(600);
+  });
+
   test("applyNotesCorrection recomputes summary and clears pending on conflict", async () => {
     const meetingId = "channel-1#2025-01-01T00:00:00.000Z";
     mockedGetMeetingHistory.mockResolvedValue({
