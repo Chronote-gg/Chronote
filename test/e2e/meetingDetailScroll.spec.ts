@@ -23,8 +23,20 @@ test.describe("meeting detail scroll", () => {
     await expect(timelineViewport).toBeVisible();
     await expect(libraryPage.drawerTimelineEvents().first()).toBeVisible();
 
+    const leftScrollArea = page.getByTestId("meeting-detail-left-scroll");
+    await expect(leftScrollArea).toBeVisible();
+
     const drawerBox = await drawerDialog.boundingBox();
     expect(drawerBox).not.toBeNull();
+
+    const leftBox = await leftScrollArea.boundingBox();
+    const rightBox = await timelineViewport.boundingBox();
+    expect(leftBox).not.toBeNull();
+    expect(rightBox).not.toBeNull();
+    // At desktop sizes we expect the fullscreen layout to stay side-by-side
+    // (not stacked), so the transcript viewport should overlap the left panel
+    // vertically.
+    expect(rightBox!.y).toBeLessThan(leftBox!.y + leftBox!.height);
 
     const metrics = await timelineViewport.evaluate((el) => ({
       scrollTop: el.scrollTop,

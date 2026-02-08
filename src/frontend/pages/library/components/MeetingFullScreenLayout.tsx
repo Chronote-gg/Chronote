@@ -12,14 +12,8 @@ export function MeetingFullScreenLayout({
   right,
 }: MeetingFullScreenLayoutProps) {
   const theme = useMantineTheme();
-  const lgBreakpoint = theme.breakpoints.lg;
-  // Mantine breakpoints are CSS length strings (typically `em`). If a theme ever
-  // provides a unitless numeric string, treat it as px to keep the media query
-  // valid.
-  const lgMinWidth = /\d$/.test(lgBreakpoint)
-    ? `${lgBreakpoint}px`
-    : lgBreakpoint;
-  const isLgUp = useMediaQuery(`(min-width: ${lgMinWidth})`);
+  // Mantine breakpoints are CSS length strings (typically `em`).
+  const isLgUp = useMediaQuery(`(min-width: ${theme.breakpoints.lg})`);
 
   return (
     <Box
