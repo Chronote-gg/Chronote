@@ -98,7 +98,7 @@ export default function MeetingTimeline({
     <Stack
       gap="sm"
       style={
-        isFillHeight ? { height: "100%", minHeight: 0, flex: 1 } : undefined
+        isFillHeight ? { minHeight: 0, flex: 1, height: "100%" } : undefined
       }
     >
       <Group justify="space-between" align="center" wrap="wrap">

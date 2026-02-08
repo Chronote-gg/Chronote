@@ -8,7 +8,6 @@ import {
   Button,
   Center,
   Drawer,
-  Grid,
   Group,
   Loader,
   ScrollArea,
@@ -40,6 +39,7 @@ import MeetingDetailHeader from "./MeetingDetailHeader";
 import MeetingDetailModals from "./MeetingDetailModals";
 import MeetingAudioPanel from "./MeetingAudioPanel";
 import { MeetingSummaryPanel } from "./MeetingSummaryPanel";
+import MeetingFullScreenLayout from "./MeetingFullScreenLayout";
 import { downloadMeetingExport } from "./meetingExport";
 
 const resolveRenameDraft = (meeting: {
@@ -674,19 +674,8 @@ export default function MeetingDetailDrawer({
                 />
 
                 {fullScreen ? (
-                  <Grid
-                    gutter="lg"
-                    style={{ flex: 1, minHeight: 0 }}
-                    align="stretch"
-                  >
-                    <Grid.Col
-                      span={{ base: 12, lg: 5 }}
-                      style={{
-                        display: "flex",
-                        flexDirection: "column",
-                        minHeight: 0,
-                      }}
-                    >
+                  <MeetingFullScreenLayout
+                    left={
                       <ScrollArea
                         style={{ flex: 1, minHeight: 0 }}
                         offsetScrollbars
@@ -706,15 +695,8 @@ export default function MeetingDetailDrawer({
                           {attendeesSection}
                         </Stack>
                       </ScrollArea>
-                    </Grid.Col>
-                    <Grid.Col
-                      span={{ base: 12, lg: 7 }}
-                      style={{
-                        display: "flex",
-                        flexDirection: "column",
-                        minHeight: 0,
-                      }}
-                    >
+                    }
+                    right={
                       <Stack gap="sm" style={{ flex: 1, minHeight: 0 }}>
                         {liveStreamEnabled && liveStream.status === "error" ? (
                           <Text size="sm" c="dimmed">
@@ -749,8 +731,8 @@ export default function MeetingDetailDrawer({
                           />
                         </Surface>
                       </Stack>
-                    </Grid.Col>
-                  </Grid>
+                    }
+                  />
                 ) : (
                   <Stack
                     gap="md"
