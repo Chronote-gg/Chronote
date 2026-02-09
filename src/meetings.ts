@@ -288,12 +288,30 @@ export async function initializeMeeting(
 
     meeting.participants.set(message.author.id, participant);
 
+    const attachments =
+      message.attachments.size > 0
+        ? Array.from(message.attachments.values()).map((attachment) => ({
+            id: attachment.id,
+            name: attachment.name ?? "attachment",
+            size: attachment.size,
+            url: attachment.url,
+            proxyUrl: attachment.proxyURL,
+            contentType: attachment.contentType ?? undefined,
+            width: attachment.width ?? undefined,
+            height: attachment.height ?? undefined,
+            durationSeconds: attachment.duration ?? undefined,
+            description: attachment.description ?? undefined,
+            ephemeral: attachment.ephemeral ?? undefined,
+          }))
+        : undefined;
+
     const entry: ChatEntry = {
       type: "message",
       source: "chat",
       user: participant,
       channelId: message.channelId,
       content: message.content,
+      attachments,
       messageId: message.id,
       timestamp: new Date(message.createdTimestamp).toISOString(),
     };
