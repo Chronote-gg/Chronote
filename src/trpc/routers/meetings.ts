@@ -2,10 +2,12 @@ import { TRPCError } from "@trpc/server";
 import { diffLines } from "diff";
 import { z } from "zod";
 import { v4 as uuidv4 } from "uuid";
+import quillDeltaToMarkdownModule from "quill-delta-to-markdown";
 import {
   getMeetingHistoryService,
   listRecentMeetingsForGuildService,
   updateMeetingNotesService,
+  updateMeetingNotesMessageMetadataService,
   updateMeetingArchiveService,
   updateMeetingNameService,
 } from "../../services/meetingHistoryService";
@@ -80,6 +82,21 @@ const buildParticipantMap = (participants?: Participant[]) =>
     (participants ?? []).map((participant) => [participant.id, participant]),
   );
 
+const parseChannelIdTimestamp = (channelIdTimestamp: string) => {
+  const hashIndex = channelIdTimestamp.indexOf("#");
+  if (hashIndex <= 0 || hashIndex >= channelIdTimestamp.length - 1) {
+    throw new TRPCError({
+      code: "BAD_REQUEST",
+      message: "Invalid meeting id.",
+    });
+  }
+
+  return {
+    channelId: channelIdTimestamp.slice(0, hashIndex),
+    timestamp: channelIdTimestamp.slice(hashIndex + 1),
+  };
+};
+
 const resolveMeetingAttendees = (history: {
   participants?: Participant[];
   attendees?: string[];
@@ -101,6 +118,43 @@ const resolveMeetingAttendees = (history: {
 const NOTES_CORRECTION_DIFF_LINE_LIMIT = 600;
 const NOTES_CORRECTION_DIFF_CHAR_LIMIT = 12_000;
 const NOTES_CORRECTION_MAX_EMBEDS_PER_MESSAGE = 10;
+
+// DynamoDB item size is capped at 400KB. Notes are also versioned in MeetingHistory,
+// so we keep portal-edited notes bounded to avoid update failures.
+const NOTES_EDITOR_MARKDOWN_BYTE_LIMIT = 30_000;
+const NOTES_EDITOR_DELTA_JSON_BYTE_LIMIT = 80_000;
+
+const safeJsonStringifyByteLength = (value: unknown): number | null => {
+  try {
+    return Buffer.byteLength(JSON.stringify(value), "utf8");
+  } catch {
+    return null;
+  }
+};
+
+const utf8ByteLength = (value: string): number =>
+  Buffer.byteLength(value, "utf8");
+
+const extractQuillDeltaOps = (delta: unknown): unknown[] | null => {
+  if (Array.isArray(delta)) return delta;
+  if (delta && typeof delta === "object") {
+    const maybeOps = (delta as { ops?: unknown }).ops;
+    if (Array.isArray(maybeOps)) return maybeOps;
+  }
+  return null;
+};
+
+const quillDeltaToMarkdown = (delta: unknown): string => {
+  const ops = extractQuillDeltaOps(delta);
+  if (!ops) {
+    throw new Error("Invalid quill delta format");
+  }
+  const markdown = quillDeltaToMarkdownModule.deltaToMarkdown(ops);
+  if (typeof markdown !== "string") {
+    throw new Error("deltaToMarkdown returned non-string");
+  }
+  return markdown.trim();
+};
 
 const NOTES_CORRECTION_TOKEN_TTL_MS = 15 * 60 * 1000;
 const NOTES_CORRECTION_MAX_PENDING = 200;
@@ -553,6 +607,8 @@ const detail = manageGuildProcedure
             : history.duration,
         tags: history.tags ?? [],
         notes,
+        notesDelta: history.notesDelta,
+        notesVersion: history.notesVersion ?? 1,
         meetingName: history.meetingName,
         summarySentence,
         summaryLabel: history.summaryLabel,
@@ -567,6 +623,174 @@ const detail = manageGuildProcedure
         events,
       },
     };
+  });
+
+const updateNotes = guildMemberProcedure
+  .input(
+    z.object({
+      serverId: z.string(),
+      meetingId: z.string(),
+      delta: z
+        .object({
+          ops: z.array(z.unknown()),
+        })
+        .passthrough(),
+      expectedPreviousVersion: z.number().min(1),
+    }),
+  )
+  .mutation(async function updateNotesMutation({ ctx, input }) {
+    const history = await getMeetingHistoryService(
+      input.serverId,
+      input.meetingId,
+    );
+    if (!history) {
+      throw new TRPCError({ code: "NOT_FOUND", message: "Meeting not found" });
+    }
+
+    const channelId =
+      history.channelId ?? parseChannelIdTimestamp(input.meetingId).channelId;
+    await ensurePortalUserCanViewMeetingChannel({
+      guildId: input.serverId,
+      channelId,
+      userId: ctx.user.id,
+    });
+
+    const isMeetingOwner =
+      Boolean(history.meetingCreatorId) &&
+      history.meetingCreatorId === ctx.user.id;
+    if (!isMeetingOwner) {
+      if (history.isAutoRecording) {
+        await ensurePortalUserCanManageMeetingChannel({
+          guildId: input.serverId,
+          channelId,
+          userId: ctx.user.id,
+        });
+      } else {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "Only the meeting starter can edit notes for this meeting.",
+        });
+      }
+    }
+
+    const currentVersion = history.notesVersion ?? 1;
+    const expectedVersion = input.expectedPreviousVersion;
+    if (expectedVersion !== currentVersion) {
+      throw new TRPCError({
+        code: "CONFLICT",
+        message:
+          "Could not save because the notes were updated elsewhere. Refresh and try again.",
+      });
+    }
+
+    const deltaSize = safeJsonStringifyByteLength(input.delta);
+    if (deltaSize === null) {
+      throw new TRPCError({
+        code: "BAD_REQUEST",
+        message: "Notes content could not be parsed.",
+      });
+    }
+
+    if (deltaSize > NOTES_EDITOR_DELTA_JSON_BYTE_LIMIT) {
+      throw new TRPCError({
+        code: "BAD_REQUEST",
+        message: "Notes content is too large to save.",
+      });
+    }
+
+    let markdownNotes = "";
+    try {
+      markdownNotes = quillDeltaToMarkdown(input.delta);
+    } catch (error) {
+      console.warn("Failed to convert quill delta to markdown", error);
+      throw new TRPCError({
+        code: "BAD_REQUEST",
+        message:
+          "Unable to convert notes to Markdown. Try removing unsupported formatting and retry.",
+      });
+    }
+
+    markdownNotes = replaceDiscordMentionsWithDisplayNames(
+      markdownNotes,
+      buildParticipantMap(history.participants),
+    );
+
+    if (markdownNotes.length === 0) {
+      throw new TRPCError({
+        code: "BAD_REQUEST",
+        message: "Notes cannot be empty.",
+      });
+    }
+
+    if (utf8ByteLength(markdownNotes) > NOTES_EDITOR_MARKDOWN_BYTE_LIMIT) {
+      throw new TRPCError({
+        code: "BAD_REQUEST",
+        message: "Notes are too large to save.",
+      });
+    }
+
+    const newVersion = currentVersion + 1;
+    const editorLabel = buildRequesterTag(ctx.user);
+    const footerText = `v${newVersion} • Edited by ${editorLabel}`;
+
+    const ok = await updateMeetingNotesService({
+      guildId: input.serverId,
+      channelId_timestamp: input.meetingId,
+      notes: markdownNotes,
+      notesDelta: input.delta,
+      notesVersion: newVersion,
+      editedBy: ctx.user.id,
+      expectedPreviousVersion: expectedVersion,
+    });
+
+    if (!ok) {
+      throw new TRPCError({
+        code: "CONFLICT",
+        message:
+          "Could not save because the notes were updated elsewhere. Refresh and try again.",
+      });
+    }
+
+    if (!config.mock.enabled && history.notesChannelId) {
+      let newMessageIds: string[];
+      try {
+        newMessageIds = await sendNotesEmbedsToDiscord({
+          channelId: history.notesChannelId,
+          notesBody: markdownNotes,
+          meetingName: history.meetingName,
+          footerText,
+        });
+      } catch (error) {
+        console.warn("Failed posting updated notes embeds", error);
+        return { ok: true };
+      }
+
+      const metadataOk = await updateMeetingNotesMessageMetadataService({
+        guildId: input.serverId,
+        channelId_timestamp: input.meetingId,
+        notesMessageIds: newMessageIds,
+        notesChannelId: history.notesChannelId,
+        expectedNotesVersion: newVersion,
+      });
+
+      if (!metadataOk) {
+        await deleteDiscordMessagesSafely({
+          channelId: history.notesChannelId,
+          messageIds: newMessageIds,
+        });
+        return { ok: true };
+      }
+
+      if (history.notesMessageIds?.length) {
+        await deleteDiscordMessagesSafely({
+          channelId: history.notesChannelId,
+          messageIds: history.notesMessageIds,
+          skipMessageId: history.summaryMessageId,
+        });
+      }
+    }
+
+    return { ok: true };
   });
 
 const setArchived = manageGuildProcedure
@@ -654,7 +878,8 @@ const suggestNotesCorrection = guildMemberProcedure
       });
     }
 
-    const channelId = history.channelId ?? input.meetingId.split("#")[0];
+    const channelId =
+      history.channelId ?? parseChannelIdTimestamp(input.meetingId).channelId;
     await ensurePortalUserCanViewMeetingChannel({
       guildId: input.serverId,
       channelId,
@@ -754,7 +979,8 @@ const applyNotesCorrection = guildMemberProcedure
       throw new TRPCError({ code: "NOT_FOUND", message: "Meeting not found" });
     }
 
-    const channelId = history.channelId ?? input.meetingId.split("#")[0];
+    const channelId =
+      history.channelId ?? parseChannelIdTimestamp(input.meetingId).channelId;
     await ensurePortalUserCanViewMeetingChannel({
       guildId: input.serverId,
       channelId,
@@ -838,6 +1064,7 @@ const applyNotesCorrection = guildMemberProcedure
         guildId: input.serverId,
         channelId_timestamp: input.meetingId,
         notes: pending.newNotes,
+        notesDelta: null,
         notesVersion: newVersion,
         editedBy: ctx.user.id,
         summarySentence,
@@ -948,4 +1175,5 @@ export const meetingsRouter = router({
   rename,
   suggestNotesCorrection,
   applyNotesCorrection,
+  updateNotes,
 });

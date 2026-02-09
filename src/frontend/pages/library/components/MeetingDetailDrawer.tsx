@@ -40,6 +40,9 @@ import MeetingDetailModals from "./MeetingDetailModals";
 import MeetingAudioPanel from "./MeetingAudioPanel";
 import { MeetingSummaryPanel } from "./MeetingSummaryPanel";
 import MeetingFullScreenLayout from "./MeetingFullScreenLayout";
+import MeetingNotesEditorModal, {
+  type QuillDeltaPayload,
+} from "./MeetingNotesEditorModal";
 import { downloadMeetingExport } from "./meetingExport";
 
 const resolveRenameDraft = (meeting: {
@@ -138,6 +141,8 @@ export default function MeetingDetailDrawer({
   const [feedbackModalOpen, setFeedbackModalOpen] = useState(false);
   const [feedbackDraft, setFeedbackDraft] = useState("");
 
+  const [notesEditorModalOpen, setNotesEditorModalOpen] = useState(false);
+
   const [notesCorrectionModalOpen, setNotesCorrectionModalOpen] =
     useState(false);
   const [notesCorrectionDraft, setNotesCorrectionDraft] = useState("");
@@ -176,6 +181,7 @@ export default function MeetingDetailDrawer({
     trpc.meetings.suggestNotesCorrection.useMutation();
   const applyNotesCorrectionMutation =
     trpc.meetings.applyNotesCorrection.useMutation();
+  const updateNotesMutation = trpc.meetings.updateNotes.useMutation();
 
   const summaryCopyText = detail?.notes ?? "";
   const canCopySummary = summaryCopyText.trim().length > 0;
@@ -212,6 +218,8 @@ export default function MeetingDetailDrawer({
     setSummaryFeedback(meeting.summaryFeedback ?? null);
     setFeedbackDraft("");
     setFeedbackModalOpen(false);
+
+    setNotesEditorModalOpen(false);
 
     setNotesCorrectionDraft("");
     setNotesCorrectionDiff(null);
@@ -299,6 +307,50 @@ export default function MeetingDetailDrawer({
     }
   };
 
+  const openNotesEditorModal = () => {
+    setNotesEditorModalOpen(true);
+  };
+
+  const closeNotesEditorModal = () => {
+    setNotesEditorModalOpen(false);
+  };
+
+  const handleNotesEditorSave = async (delta: QuillDeltaPayload) => {
+    if (!selectedGuildId || !selectedMeetingId) return;
+    const expectedPreviousVersion = detail?.notesVersion;
+    if (expectedPreviousVersion == null) {
+      notifications.show({
+        color: "red",
+        message: "Unable to save notes right now. Refresh and try again.",
+      });
+      return;
+    }
+    try {
+      await updateNotesMutation.mutateAsync({
+        serverId: selectedGuildId,
+        meetingId: selectedMeetingId,
+        delta,
+        expectedPreviousVersion,
+      });
+      notifications.show({ message: "Notes saved." });
+      closeNotesEditorModal();
+      await Promise.all([
+        trpcUtils.meetings.detail.invalidate(),
+        invalidateMeetingLists(),
+      ]);
+    } catch (error) {
+      console.error("Failed saving notes", error);
+      const message =
+        error instanceof Error && error.message
+          ? error.message
+          : "Unable to save notes right now.";
+      notifications.show({
+        color: "red",
+        message,
+      });
+    }
+  };
+
   useEffect(() => {
     if (!selectedMeetingId) {
       setFullScreen(false);
@@ -315,6 +367,8 @@ export default function MeetingDetailDrawer({
     setRenameModalOpen(false);
     setFeedbackModalOpen(false);
     setFeedbackDraft("");
+    setNotesEditorModalOpen(false);
+    closeNotesCorrectionModal();
   };
 
   const handleCloseDrawer = () => {
@@ -529,6 +583,7 @@ export default function MeetingDetailDrawer({
       onFeedbackUp={handleSummaryFeedbackUp}
       onFeedbackDown={handleSummaryFeedbackDown}
       onCopySummary={handleCopySummary}
+      onEditNotes={openNotesEditorModal}
       onSuggestCorrection={openNotesCorrectionModal}
     />
   ) : null;
@@ -655,6 +710,14 @@ export default function MeetingDetailDrawer({
                 onRenameModalClose={() => setRenameModalOpen(false)}
                 onRenameSave={handleRenameSave}
                 renamePending={renameMutation.isPending}
+              />
+              <MeetingNotesEditorModal
+                opened={notesEditorModalOpen}
+                initialMarkdown={detail?.notes ?? ""}
+                initialDelta={detail?.notesDelta}
+                saving={updateNotesMutation.isPending}
+                onClose={closeNotesEditorModal}
+                onSave={handleNotesEditorSave}
               />
               <Stack gap="md" style={{ flex: 1, minHeight: 0 }}>
                 <MeetingDetailHeader
