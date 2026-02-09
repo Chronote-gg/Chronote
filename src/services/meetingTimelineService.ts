@@ -218,7 +218,29 @@ const buildChatEvents = (
     const elapsedSeconds = (startedAtMs - meetingStartMs) / 1000;
     const seconds = Number.isFinite(elapsedSeconds) ? elapsedSeconds : 0;
     if (entry.type === "message") {
-      if (!entry.content) continue;
+      const content = entry.content?.trim() ?? "";
+      const attachments = entry.attachments?.length
+        ? entry.attachments
+        : undefined;
+      const hasAttachments = Boolean(attachments && attachments.length > 0);
+
+      if (!content && !hasAttachments) continue;
+
+      const fallbackText = hasAttachments
+        ? (() => {
+            const count = attachments!.length;
+            const names = attachments!
+              .map((attachment) => attachment.name)
+              .filter((name) => Boolean(name && name.trim()));
+            const shown = names.slice(0, 3);
+            const extra = names.length - shown.length;
+            const suffix = extra > 0 ? ` +${extra} more` : "";
+            const nameList =
+              shown.length > 0 ? `: ${shown.join(", ")}${suffix}` : "";
+            return `Shared ${count} attachment${count === 1 ? "" : "s"}${nameList}`;
+          })()
+        : "";
+
       addEvent(events, seconds, {
         id: buildEventId("chat", [
           entry.user.id,
@@ -227,8 +249,9 @@ const buildChatEvents = (
         type: "chat",
         time: formatElapsed(seconds),
         speaker: resolveParticipantLabel(entry.user),
-        text: entry.content,
+        text: content || fallbackText,
         messageId: entry.messageId,
+        attachments,
       });
       continue;
     }

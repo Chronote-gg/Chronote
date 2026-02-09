@@ -5,6 +5,7 @@ import type {
   RefObject,
 } from "react";
 import {
+  Anchor,
   Box,
   Button,
   Center,
@@ -67,6 +68,19 @@ type MeetingTimelineProps = {
   showFilters?: boolean;
   viewportRef?: RefObject<HTMLDivElement | null>;
   viewportProps?: HTMLAttributes<HTMLDivElement>;
+};
+
+const formatBytes = (bytes: number) => {
+  if (!Number.isFinite(bytes) || bytes <= 0) return "0 B";
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  let value = bytes;
+  let unitIndex = 0;
+  while (value >= 1024 && unitIndex < units.length - 1) {
+    value /= 1024;
+    unitIndex += 1;
+  }
+  const digits = unitIndex === 0 ? 0 : value < 10 ? 1 : 0;
+  return `${value.toFixed(digits)} ${units[unitIndex]}`;
 };
 
 export default function MeetingTimeline({
@@ -188,9 +202,36 @@ export default function MeetingTimeline({
                           </Text>
                         ) : null}
                       </Group>
-                      <Text size="sm" c="dimmed">
-                        {event.text}
-                      </Text>
+                      <Stack gap={4}>
+                        <Text size="sm" c="dimmed">
+                          {event.text}
+                        </Text>
+                        {event.attachments && event.attachments.length > 0 ? (
+                          <Stack gap={2}>
+                            {event.attachments.map((attachment) => (
+                              <Group
+                                key={attachment.id}
+                                gap="xs"
+                                align="baseline"
+                                wrap="wrap"
+                              >
+                                <Anchor
+                                  href={attachment.url}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  size="sm"
+                                  style={{ wordBreak: "break-word" }}
+                                >
+                                  {attachment.name}
+                                </Anchor>
+                                <Text size="xs" c="dimmed">
+                                  {formatBytes(attachment.size)}
+                                </Text>
+                              </Group>
+                            ))}
+                          </Stack>
+                        ) : null}
+                      </Stack>
                     </Stack>
                   </Group>
                 </Box>

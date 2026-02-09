@@ -169,7 +169,9 @@ async function runEndMeetingFlow(options: EndMeetingFlowOptions) {
     const chatLogFilePath = path.join(meetingTempDir, "chat.txt");
     writeFileSync(
       chatLogFilePath,
-      meeting.chatLog.map((e) => renderChatEntryLine(e)).join("\n"),
+      meeting.chatLog
+        .map((e) => renderChatEntryLine(e, { includeAttachmentUrls: true }))
+        .join("\n"),
     );
 
     // checking if the current snippet exists should only matter when there was no audio recorded at all
