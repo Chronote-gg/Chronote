@@ -206,7 +206,7 @@ export default function MeetingTimeline({
                                 <Anchor
                                   href={attachment.url}
                                   target="_blank"
-                                  rel="noreferrer"
+                                  rel="noopener noreferrer"
                                   size="sm"
                                   style={{ wordBreak: "break-word" }}
                                 >
