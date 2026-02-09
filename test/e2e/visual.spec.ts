@@ -91,6 +91,31 @@ test.describe("visual regression", () => {
       const drawerDialog = page.getByRole("dialog");
       await expect(drawerDialog).toBeVisible();
       await expectVisualScreenshot(page, "library-drawer", mode);
+
+      await drawerDialog.getByRole("button", { name: "Notes actions" }).click();
+      await page.getByRole("menuitem", { name: "Edit notes" }).click();
+      const notesEditorDialog = page.getByRole("dialog", {
+        name: /edit notes/i,
+      });
+      await expect(notesEditorDialog).toBeVisible();
+      await expectVisualScreenshot(page, "library-notes-editor", mode, {
+        target: notesEditorDialog,
+      });
+      await notesEditorDialog.getByRole("button", { name: "Cancel" }).click();
+      await expect(notesEditorDialog).toBeHidden();
+
+      await libraryPage.drawerFullscreenToggle().click();
+      await expect(
+        drawerDialog.getByRole("button", { name: /exit fullscreen/i }),
+      ).toBeVisible();
+      await expect(
+        drawerDialog.getByRole("link", { name: "diagram.png" }),
+      ).toBeVisible();
+      await expectVisualScreenshot(page, "library-transcript", mode);
+      await libraryPage.drawerFullscreenToggle().click();
+      await expect(libraryPage.drawerFullscreenToggle()).toContainText(
+        /open fullscreen/i,
+      );
       await libraryPage.closeDrawer();
       await expect(libraryPage.drawer()).toBeHidden();
 
