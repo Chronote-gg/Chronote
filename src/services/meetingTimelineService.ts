@@ -218,13 +218,14 @@ const buildChatEvents = (
     const elapsedSeconds = (startedAtMs - meetingStartMs) / 1000;
     const seconds = Number.isFinite(elapsedSeconds) ? elapsedSeconds : 0;
     if (entry.type === "message") {
-      const content = entry.content?.trim() ?? "";
+      const rawContent = entry.content ?? "";
+      const trimmedContent = rawContent.trim();
       const attachments = entry.attachments?.length
         ? entry.attachments
         : undefined;
       const hasAttachments = Boolean(attachments && attachments.length > 0);
 
-      if (!content && !hasAttachments) continue;
+      if (!trimmedContent && !hasAttachments) continue;
 
       const fallbackText = hasAttachments
         ? (() => {
@@ -249,7 +250,7 @@ const buildChatEvents = (
         type: "chat",
         time: formatElapsed(seconds),
         speaker: resolveParticipantLabel(entry.user),
-        text: content || fallbackText,
+        text: trimmedContent ? rawContent : fallbackText,
         messageId: entry.messageId,
         attachments,
       });
