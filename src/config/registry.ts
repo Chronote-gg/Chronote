@@ -729,6 +729,23 @@ export const CONFIG_REGISTRY: ConfigEntry[] = [
     ui: { type: "toggle" },
   },
   {
+    key: "autorecord.dismiss.policy",
+    label: "Auto-record dismiss policy",
+    description:
+      "Controls who can dismiss an auto-recorded meeting from the voice channel context menu.",
+    category: "Auto-record",
+    group: "Advanced",
+    valueType: "select",
+    defaultValue: "solo_or_admin",
+    scopes: {
+      server: scope(true, true, "admin", "select"),
+    },
+    ui: {
+      type: "select",
+      options: ["solo_or_admin", "trigger_or_admin", "anyone_in_channel"],
+    },
+  },
+  {
     key: "liveVoice.enabled",
     label: "Live voice responder",
     description: "Enable the live voice responder.",

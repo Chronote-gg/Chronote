@@ -21,6 +21,7 @@ export const MEETING_END_REASON_LABELS: Record<MeetingEndReason, string> = {
   [MEETING_END_REASONS.LIVE_VOICE]: "Ended via live voice command",
   [MEETING_END_REASONS.BOT_DISCONNECT]: "Ended because the bot disconnected",
   [MEETING_END_REASONS.WEB_UI]: "Ended via web UI",
+  [MEETING_END_REASONS.DISMISSED]: "Stopped by a channel member",
   [MEETING_END_REASONS.AUTO_CANCELLED]:
     "Auto-recording cancelled due to lack of content",
   [MEETING_END_REASONS.UNKNOWN]: "Reason unknown",

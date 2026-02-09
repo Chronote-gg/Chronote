@@ -192,6 +192,16 @@ async function runEndMeetingFlow(options: EndMeetingFlowOptions) {
       closeOutputFile(meeting),
     );
 
+    if (meeting.cancelled) {
+      await runMeetingEndStep(meeting, "auto-record-cancel-flow", () =>
+        handleAutoRecordCancellation(meeting, chatLogFilePath),
+      );
+      await runMeetingEndStep(meeting, "cleanup-speaker-tracks", () =>
+        cleanupSpeakerTracks(meeting),
+      );
+      return;
+    }
+
     const cancellationDecision = await runMeetingEndStep(
       meeting,
       "auto-record-cancellation",
@@ -326,7 +336,8 @@ function maybeSuppressAutoRecordRejoin(
   if (
     endReason !== MEETING_END_REASONS.BUTTON &&
     endReason !== MEETING_END_REASONS.WEB_UI &&
-    endReason !== MEETING_END_REASONS.LIVE_VOICE
+    endReason !== MEETING_END_REASONS.LIVE_VOICE &&
+    endReason !== MEETING_END_REASONS.DISMISSED
   ) {
     return;
   }
@@ -391,9 +402,7 @@ async function updateAutoRecordCancelledMessage(meeting: MeetingData) {
 
   const embed = new EmbedBuilder()
     .setTitle("Auto-Recording Cancelled")
-    .setDescription(
-      "Auto-recording started and was cancelled due to lack of content.",
-    )
+    .setDescription("Auto-recording started and was cancelled.")
     .addFields(
       { name: "Triggered by", value: triggerLabel },
       { name: "Rule", value: ruleLabel },

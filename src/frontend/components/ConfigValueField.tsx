@@ -11,6 +11,7 @@ import type { ConfigEntryInput } from "../types/configEntry";
 import FormSelect from "./FormSelect";
 import type { ChannelOption } from "../utils/settingsChannels";
 import { clampNumberValue, resolveNumberRange } from "../../config/validation";
+import { CONFIG_KEYS } from "../../config/keys";
 
 type ConfigValueFieldProps = {
   entry: ConfigEntryInput;
@@ -49,6 +50,16 @@ const formatOptionLabel = (option: string) =>
     .filter((part) => part.length > 0)
     .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
     .join(" ");
+
+const formatSelectOptionLabelForKey = (key: string, option: string) => {
+  if (key === CONFIG_KEYS.autorecord.dismissPolicy) {
+    if (option === "solo_or_admin") return "Solo or admin";
+    if (option === "trigger_or_admin") return "Trigger or admin";
+    if (option === "anyone_in_channel") return "Anyone in channel";
+  }
+
+  return option;
+};
 
 const AskSharingPolicySegment: CustomRenderer = ({
   entry,
@@ -268,7 +279,14 @@ export function ConfigValueField({
     return (
       <Select
         aria-label={entry.key}
-        data={entry.ui.options ?? []}
+        data={(entry.ui.options ?? []).map((option) =>
+          entry.key === CONFIG_KEYS.autorecord.dismissPolicy
+            ? {
+                value: option,
+                label: formatSelectOptionLabelForKey(entry.key, option),
+              }
+            : option,
+        )}
         value={typeof value === "string" ? value : null}
         onChange={(next) => {
           if (next !== null) onChange(next);

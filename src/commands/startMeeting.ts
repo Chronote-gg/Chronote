@@ -420,7 +420,7 @@ export async function handleAutoStartMeeting(
     .addFields({
       name: "Tip",
       value:
-        'Right click the bot in voice and choose "Disconnect" to end the meeting.',
+        'Right click Chronote in voice and choose "Stop recording" to stop recording.',
     })
     .setColor(0xff0000)
     .setTimestamp();
