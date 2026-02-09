@@ -3,7 +3,8 @@ import { config } from "./configService";
 import { listDictionaryEntriesService } from "./dictionaryService";
 import { normalizeTags, parseTags } from "../utils/tags";
 import { buildUpgradeTextOnly } from "../utils/upgradePrompt";
-import { ensureUserCanViewChannel } from "./discordPermissionsService";
+import { ensureUserCanAccessMeeting } from "./meetingAccessService";
+import { CONFIG_KEYS } from "../config/keys";
 import { createOpenAIClient } from "./openaiClient";
 import { buildModelOverrides, getModelChoice } from "./modelFactory";
 import { getLangfuseChatPrompt } from "./langfusePromptService";
@@ -12,7 +13,10 @@ import {
   resolveChatParamsForRole,
   resolveModelParamsForContext,
 } from "./openaiModelParams";
-import { resolveConfigSnapshot } from "./unifiedConfigService";
+import {
+  getSnapshotBoolean,
+  resolveConfigSnapshot,
+} from "./unifiedConfigService";
 import { resolveGuildSubscription } from "./subscriptionService";
 import {
   buildDictionaryPromptLines,
@@ -87,6 +91,22 @@ const buildDictionaryBlock = async (guildId: string): Promise<string> => {
   }
 };
 
+const resolveAttendeeAccessEnabled = async (guildId: string) => {
+  try {
+    const snapshot = await resolveConfigSnapshot({ guildId });
+    return getSnapshotBoolean(
+      snapshot,
+      CONFIG_KEYS.meetings.attendeeAccessEnabled,
+    );
+  } catch (error) {
+    console.warn("Failed to resolve attendee access setting", {
+      guildId,
+      error,
+    });
+    return true;
+  }
+};
+
 export const buildAskContextBlocks = (meetings: MeetingSummary[]) =>
   meetings.map((m, index) => {
     const meetingIndex = index + 1;
@@ -130,13 +150,15 @@ const filterMeetingsByChannelAccess = async (
   meetings: MeetingSummary[],
   guildId: string,
   userId: string,
+  attendeeOverrideEnabled: boolean,
 ) => {
   const visible: MeetingSummary[] = [];
   for (const meeting of meetings) {
-    const allowed = await ensureUserCanViewChannel({
+    const allowed = await ensureUserCanAccessMeeting({
       guildId,
-      channelId: meeting.channelId,
+      meeting,
       userId,
+      attendeeOverrideEnabled,
     });
     if (allowed) {
       visible.push(meeting);
@@ -198,6 +220,10 @@ export async function answerQuestionService(
     : undefined;
 
   const maxMeetings = req.maxMeetings ?? config.ask.maxMeetings;
+  let attendeeOverrideEnabled = true;
+  if (!config.mock.enabled && req.viewerUserId) {
+    attendeeOverrideEnabled = await resolveAttendeeAccessEnabled(guildId);
+  }
   const allMeetings = await listRecentMeetingsForGuildService(
     guildId,
     maxMeetings,
@@ -209,6 +235,7 @@ export async function answerQuestionService(
         scopedMeetings,
         guildId,
         req.viewerUserId,
+        attendeeOverrideEnabled,
       )
     : scopedMeetings;
 

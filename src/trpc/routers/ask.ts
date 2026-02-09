@@ -107,7 +107,7 @@ const ask = guildMemberProcedure
     }),
   )
   .mutation(async ({ ctx, input }) => {
-    const { isManager } = await resolveAskAccess({
+    await resolveAskAccess({
       accessToken: ctx.user.accessToken ?? "",
       guildId: input.serverId,
       userId: ctx.user.id,
@@ -121,7 +121,7 @@ const ask = guildMemberProcedure
       channelId: input.channelId,
       tags: input.tags,
       scope: input.scope,
-      viewerUserId: isManager ? undefined : ctx.user.id,
+      viewerUserId: ctx.user.id,
     });
     return result;
   });

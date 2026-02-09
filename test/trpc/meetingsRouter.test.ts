@@ -32,6 +32,12 @@ import {
   ensureUserCanManageChannel,
   ensureUserCanViewChannel,
 } from "../../src/services/discordPermissionsService";
+import { ensureUserCanAccessMeeting } from "../../src/services/meetingAccessService";
+import { checkUserMeetingAccess } from "../../src/services/meetingAccessService";
+import {
+  listBotGuildsCached,
+  listGuildChannelsCached,
+} from "../../src/services/discordCacheService";
 
 jest.mock("../../src/services/guildAccessService", () => ({
   ensureManageGuildWithUserToken: jest.fn(),
@@ -92,6 +98,16 @@ jest.mock("../../src/services/discordPermissionsService", () => ({
   ensureUserCanManageChannel: jest.fn(),
 }));
 
+jest.mock("../../src/services/meetingAccessService", () => ({
+  ensureUserCanAccessMeeting: jest.fn(),
+  checkUserMeetingAccess: jest.fn(),
+}));
+
+jest.mock("../../src/services/discordCacheService", () => ({
+  listBotGuildsCached: jest.fn(),
+  listGuildChannelsCached: jest.fn(),
+}));
+
 const buildCaller = (user = getMockUser()) =>
   appRouter.createCaller({
     req: { session: {} } as Request,
@@ -101,6 +117,13 @@ const buildCaller = (user = getMockUser()) =>
 
 describe("meetings router detail", () => {
   const mockedEnsureManageGuild = jest.mocked(ensureManageGuildWithUserToken);
+  const mockedEnsureUserInGuild = jest.mocked(
+    (
+      jest.requireMock("../../src/services/guildAccessService") as {
+        ensureUserInGuild: typeof import("../../src/services/guildAccessService").ensureUserInGuild;
+      }
+    ).ensureUserInGuild,
+  );
   const mockedGetMeetingHistory = jest.mocked(getMeetingHistoryService);
   const mockedFetchJsonFromS3 = jest.mocked(fetchJsonFromS3);
   const mockedGetSignedObjectUrl = jest.mocked(getSignedObjectUrl);
@@ -108,10 +131,22 @@ describe("meetings router detail", () => {
     buildMeetingTimelineEventsFromHistory,
   );
   const mockedGetSummaryFeedback = jest.mocked(getMeetingSummaryFeedback);
+  const mockedEnsureMeetingAccess = jest.mocked(ensureUserCanAccessMeeting);
+  const mockedCheckMeetingAccess = jest.mocked(checkUserMeetingAccess);
+  const mockedListGuildChannels = jest.mocked(listGuildChannelsCached);
 
   beforeEach(() => {
     jest.resetAllMocks();
     mockedEnsureManageGuild.mockResolvedValue(true);
+    mockedEnsureUserInGuild.mockResolvedValue(true);
+    mockedEnsureMeetingAccess.mockResolvedValue(true);
+    mockedCheckMeetingAccess.mockResolvedValue({
+      allowed: true,
+      via: "channel_permissions",
+    });
+    mockedListGuildChannels.mockResolvedValue([
+      { id: "channel-1", name: "voice", type: 2 },
+    ]);
   });
 
   test("returns transcript, audio url, and summary feedback", async () => {
@@ -214,6 +249,10 @@ describe("meetings notes correction mutations", () => {
   const mockedEnsureUserCanManageChannel = jest.mocked(
     ensureUserCanManageChannel,
   );
+  const mockedEnsureMeetingAccess = jest.mocked(ensureUserCanAccessMeeting);
+  const mockedCheckMeetingAccess = jest.mocked(checkUserMeetingAccess);
+  const mockedListBotGuilds = jest.mocked(listBotGuildsCached);
+  const mockedListGuildChannels = jest.mocked(listGuildChannelsCached);
 
   const mockedUpdateMeetingNotesService = jest.mocked(
     updateMeetingNotesService,
@@ -225,6 +264,18 @@ describe("meetings notes correction mutations", () => {
     mockedEnsureUserInGuild.mockResolvedValue(true);
     mockedEnsureUserCanViewChannel.mockResolvedValue(true);
     mockedEnsureUserCanManageChannel.mockResolvedValue(true);
+    mockedEnsureMeetingAccess.mockResolvedValue(true);
+    mockedCheckMeetingAccess.mockResolvedValue({
+      allowed: true,
+      via: "channel_permissions",
+    });
+    mockedListBotGuilds.mockResolvedValue([
+      { id: "guild-1", name: "Mock guild" },
+    ]);
+    mockedListGuildChannels.mockResolvedValue([
+      { id: "channel-1", name: "voice", type: 2 },
+      { id: "text-1", name: "notes", type: 0 },
+    ]);
     mockedGetLangfuseChatPrompt.mockResolvedValue({
       messages: [{ role: "user", content: "prompt" }],
       langfusePrompt: undefined,
@@ -520,6 +571,7 @@ describe("meetings updateNotes mutation", () => {
   const mockedEnsureUserCanManageChannel = jest.mocked(
     ensureUserCanManageChannel,
   );
+  const mockedCheckMeetingAccess = jest.mocked(checkUserMeetingAccess);
   const mockedUpdateMeetingNotesService = jest.mocked(
     updateMeetingNotesService,
   );
@@ -529,6 +581,10 @@ describe("meetings updateNotes mutation", () => {
     mockedEnsureUserInGuild.mockResolvedValue(true);
     mockedEnsureUserCanViewChannel.mockResolvedValue(true);
     mockedEnsureUserCanManageChannel.mockResolvedValue(true);
+    mockedCheckMeetingAccess.mockResolvedValue({
+      allowed: true,
+      via: "channel_permissions",
+    });
     mockedUpdateMeetingNotesService.mockResolvedValue(true);
   });
 

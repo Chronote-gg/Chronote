@@ -27,15 +27,22 @@ const loadModule = async (options: LoadOptions = {}) => {
   jest.resetModules();
 
   const listRecentMeetingsForGuildService = jest
-    .fn()
+    .fn<(...args: unknown[]) => Promise<MeetingHistory[]>>()
     .mockResolvedValue(options.meetings ?? []);
-  const ensureUserCanViewChannel = jest.fn();
+  const ensureUserCanAccessMeeting =
+    jest.fn<
+      (options: {
+        guildId: string;
+        meeting: MeetingHistory;
+        userId: string;
+      }) => Promise<boolean | null>
+    >();
   if (options.access?.length) {
     options.access.forEach((value) =>
-      ensureUserCanViewChannel.mockResolvedValueOnce(value),
+      ensureUserCanAccessMeeting.mockResolvedValueOnce(value),
     );
   } else {
-    ensureUserCanViewChannel.mockResolvedValue(true);
+    ensureUserCanAccessMeeting.mockResolvedValue(true);
   }
 
   const config = {
@@ -56,8 +63,8 @@ const loadModule = async (options: LoadOptions = {}) => {
   jest.doMock("../../src/services/meetingHistoryService", () => ({
     listRecentMeetingsForGuildService,
   }));
-  jest.doMock("../../src/services/discordPermissionsService", () => ({
-    ensureUserCanViewChannel,
+  jest.doMock("../../src/services/meetingAccessService", () => ({
+    ensureUserCanAccessMeeting,
   }));
   jest.doMock("../../src/services/configService", () => ({ config }));
 
@@ -65,7 +72,7 @@ const loadModule = async (options: LoadOptions = {}) => {
   return {
     ...module,
     listRecentMeetingsForGuildService,
-    ensureUserCanViewChannel,
+    ensureUserCanAccessMeeting,
   };
 };
 
@@ -123,7 +130,7 @@ describe("askService (mock mode)", () => {
       channelId: "voice-1",
       tags: ["other"],
     });
-    const { answerQuestionService, ensureUserCanViewChannel } =
+    const { answerQuestionService, ensureUserCanAccessMeeting } =
       await loadModule({
         mockEnabled: true,
         meetings: [meetingA, meetingB, meetingC],
@@ -139,7 +146,7 @@ describe("askService (mock mode)", () => {
       viewerUserId: "viewer-1",
     });
 
-    expect(ensureUserCanViewChannel).toHaveBeenCalledTimes(1);
+    expect(ensureUserCanAccessMeeting).toHaveBeenCalledTimes(1);
     expect(result.sourceMeetingIds).toEqual([meetingA.channelId_timestamp]);
   });
 });

@@ -410,6 +410,7 @@ export function registerGuildRoutes(app: express.Express) {
         question,
         tags,
         scope,
+        viewerUserId: user.id,
       });
       const portalBaseUrl = config.frontend.siteUrl.trim().replace(/\/$/, "");
       const rendered = renderAskAnswer({

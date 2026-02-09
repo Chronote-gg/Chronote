@@ -36,6 +36,7 @@ export async function handleAskCommand(
       tags: normalizeTags(parseTags(tagsInput)),
       scope,
       maxMeetings,
+      viewerUserId: interaction.user.id,
     });
     const portalBaseUrl = config.frontend.siteUrl.trim().replace(/\/$/, "");
     const rendered = renderAskAnswer({
