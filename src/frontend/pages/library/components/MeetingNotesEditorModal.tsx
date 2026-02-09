@@ -8,6 +8,11 @@ type QuillDeltaLike = {
   ops: unknown[];
 };
 
+export type QuillDeltaPayload = {
+  ops: unknown[];
+  [key: string]: unknown;
+};
+
 const isQuillDeltaLike = (value: unknown): value is QuillDeltaLike => {
   if (!value || typeof value !== "object") return false;
   const maybe = value as { ops?: unknown };
@@ -30,7 +35,7 @@ type MeetingNotesEditorModalProps = {
   initialDelta?: unknown | null;
   saving: boolean;
   onClose: () => void;
-  onSave: (delta: unknown) => void;
+  onSave: (delta: QuillDeltaPayload) => void;
 };
 
 const DEFAULT_MODULES = {

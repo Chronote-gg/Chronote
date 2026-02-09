@@ -40,7 +40,9 @@ import MeetingDetailModals from "./MeetingDetailModals";
 import MeetingAudioPanel from "./MeetingAudioPanel";
 import { MeetingSummaryPanel } from "./MeetingSummaryPanel";
 import MeetingFullScreenLayout from "./MeetingFullScreenLayout";
-import MeetingNotesEditorModal from "./MeetingNotesEditorModal";
+import MeetingNotesEditorModal, {
+  type QuillDeltaPayload,
+} from "./MeetingNotesEditorModal";
 import { downloadMeetingExport } from "./meetingExport";
 
 const resolveRenameDraft = (meeting: {
@@ -313,7 +315,7 @@ export default function MeetingDetailDrawer({
     setNotesEditorModalOpen(false);
   };
 
-  const handleNotesEditorSave = async (delta: unknown) => {
+  const handleNotesEditorSave = async (delta: QuillDeltaPayload) => {
     if (!selectedGuildId || !selectedMeetingId) return;
     const expectedPreviousVersion = detail?.notesVersion;
     if (expectedPreviousVersion == null) {
