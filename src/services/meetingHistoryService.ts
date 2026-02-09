@@ -64,6 +64,7 @@ export async function updateMeetingNotesService(params: {
   guildId: string;
   channelId_timestamp: string;
   notes: string;
+  notesDelta?: unknown | null;
   notesVersion: number;
   editedBy: string;
   summarySentence?: string;
@@ -74,6 +75,16 @@ export async function updateMeetingNotesService(params: {
   metadata?: { notesMessageIds?: string[]; notesChannelId?: string };
 }) {
   return getMeetingHistoryRepository().updateNotes(params);
+}
+
+export async function updateMeetingNotesMessageMetadataService(params: {
+  guildId: string;
+  channelId_timestamp: string;
+  notesMessageIds: string[];
+  notesChannelId: string;
+  expectedNotesVersion: number;
+}) {
+  return getMeetingHistoryRepository().updateNotesMessageMetadata(params);
 }
 
 export async function updateMeetingNameService(params: {

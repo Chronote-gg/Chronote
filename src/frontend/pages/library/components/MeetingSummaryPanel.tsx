@@ -4,6 +4,7 @@ import {
   Box,
   Divider,
   Group,
+  Menu,
   ScrollArea,
   Stack,
   Text,
@@ -14,6 +15,7 @@ import {
   IconCopy,
   IconNote,
   IconPencil,
+  IconSparkles,
   IconThumbDown,
   IconThumbUp,
 } from "@tabler/icons-react";
@@ -41,6 +43,7 @@ type MeetingSummaryPanelProps = {
   onFeedbackUp: () => void;
   onFeedbackDown: () => void;
   onCopySummary: () => void;
+  onEditNotes?: () => void;
   onSuggestCorrection?: () => void;
   style?: CSSProperties;
 };
@@ -55,6 +58,7 @@ export function MeetingSummaryPanel({
   onFeedbackUp,
   onFeedbackDown,
   onCopySummary,
+  onEditNotes,
   onSuggestCorrection,
   style,
 }: MeetingSummaryPanelProps) {
@@ -142,17 +146,34 @@ export function MeetingSummaryPanel({
           >
             <IconThumbDown size={14} />
           </ActionIcon>
-          <Tooltip label="Suggest a correction">
-            <ActionIcon
-              variant="subtle"
-              color="gray"
-              onClick={onSuggestCorrection}
-              disabled={!onSuggestCorrection}
-              aria-label="Suggest a correction"
-            >
-              <IconPencil size={14} />
-            </ActionIcon>
-          </Tooltip>
+          <Menu withinPortal={false} position="bottom-end">
+            <Menu.Target>
+              <ActionIcon
+                variant="subtle"
+                color="gray"
+                aria-label="Notes actions"
+                title="Notes actions"
+              >
+                <IconPencil size={14} />
+              </ActionIcon>
+            </Menu.Target>
+            <Menu.Dropdown>
+              <Menu.Item
+                leftSection={<IconPencil size={14} />}
+                onClick={onEditNotes}
+                disabled={!onEditNotes}
+              >
+                Edit notes
+              </Menu.Item>
+              <Menu.Item
+                leftSection={<IconSparkles size={14} />}
+                onClick={onSuggestCorrection}
+                disabled={!onSuggestCorrection}
+              >
+                Suggest correction (AI)
+              </Menu.Item>
+            </Menu.Dropdown>
+          </Menu>
         </Group>
       </Group>
       {scrollable ? (

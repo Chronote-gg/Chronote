@@ -6,6 +6,7 @@ import {
   ensureMeetingNotes,
   ensureMeetingSummaries,
 } from "../services/meetingNotesService";
+import { trimNotesForHistory } from "../utils/notesHistory";
 
 function buildNotesMetadata(
   meeting: MeetingData,
@@ -77,7 +78,7 @@ function buildNotesHistory(options: {
   return [
     {
       version: notesVersion,
-      notes,
+      notes: trimNotesForHistory(notes),
       editedBy: notesLastEditedBy ?? meeting.creator.id,
       editedAt: notesLastEditedAt ?? timestamp,
     },

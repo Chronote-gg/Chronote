@@ -5,6 +5,7 @@ import {
   getRecentMeetingsForChannel,
   getRecentMeetingsForGuild,
   updateMeetingNotes,
+  updateMeetingNotesMessageMetadata,
   updateMeetingName,
   updateMeetingArchive,
   updateMeetingStatus,
@@ -41,6 +42,7 @@ export type MeetingHistoryRepository = {
     guildId: string;
     channelId_timestamp: string;
     notes: string;
+    notesDelta?: unknown | null;
     notesVersion: number;
     editedBy: string;
     summarySentence?: string;
@@ -49,6 +51,13 @@ export type MeetingHistoryRepository = {
     suggestion?: SuggestionHistoryEntry;
     expectedPreviousVersion?: number;
     metadata?: { notesMessageIds?: string[]; notesChannelId?: string };
+  }) => Promise<boolean>;
+  updateNotesMessageMetadata: (params: {
+    guildId: string;
+    channelId_timestamp: string;
+    notesMessageIds: string[];
+    notesChannelId: string;
+    expectedNotesVersion: number;
   }) => Promise<boolean>;
   updateMeetingName: (
     guildId: string,
@@ -130,6 +139,15 @@ const realRepository: MeetingHistoryRepository = {
       params.suggestion,
       params.expectedPreviousVersion,
       params.metadata,
+      params.notesDelta,
+    ),
+  updateNotesMessageMetadata: (params) =>
+    updateMeetingNotesMessageMetadata(
+      params.guildId,
+      params.channelId_timestamp,
+      params.notesMessageIds,
+      params.notesChannelId,
+      params.expectedNotesVersion,
     ),
   updateMeetingName: updateMeetingName,
   updateStatus: updateMeetingStatus,
@@ -195,6 +213,12 @@ const mockRepository: MeetingHistoryRepository = {
     items[idx] = {
       ...existing,
       notes: params.notes,
+      notesDelta:
+        params.notesDelta === null
+          ? undefined
+          : params.notesDelta !== undefined
+            ? params.notesDelta
+            : existing.notesDelta,
       summarySentence: params.summarySentence ?? existing.summarySentence,
       summaryLabel: params.summaryLabel ?? existing.summaryLabel,
       meetingName: params.meetingName ?? existing.meetingName,
@@ -206,6 +230,26 @@ const mockRepository: MeetingHistoryRepository = {
         params.metadata?.notesMessageIds ?? existing.notesMessageIds,
       notesChannelId:
         params.metadata?.notesChannelId ?? existing.notesChannelId,
+    };
+    getMockStore().meetingHistoryByGuild.set(params.guildId, items);
+    return true;
+  },
+  async updateNotesMessageMetadata(params) {
+    const items =
+      getMockStore().meetingHistoryByGuild.get(params.guildId) ?? [];
+    const idx = items.findIndex(
+      (item) => item.channelId_timestamp === params.channelId_timestamp,
+    );
+    if (idx === -1) return false;
+    if ((items[idx].notesVersion ?? 1) !== params.expectedNotesVersion) {
+      return false;
+    }
+    const now = new Date().toISOString();
+    items[idx] = {
+      ...items[idx],
+      notesMessageIds: params.notesMessageIds,
+      notesChannelId: params.notesChannelId,
+      updatedAt: now,
     };
     getMockStore().meetingHistoryByGuild.set(params.guildId, items);
     return true;
