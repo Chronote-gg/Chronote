@@ -43,6 +43,7 @@ jest.mock("../../src/services/meetingHistoryService", () => ({
   getMeetingHistoryService: jest.fn(),
   listRecentMeetingsForGuildService: jest.fn(),
   updateMeetingNotesService: jest.fn(),
+  updateMeetingNotesMessageMetadataService: jest.fn(),
   updateMeetingArchiveService: jest.fn(),
   updateMeetingNameService: jest.fn(),
 }));

@@ -128,8 +128,21 @@ const safeJsonStringifyLength = (value: unknown): number | null => {
   }
 };
 
+const extractQuillDeltaOps = (delta: unknown): unknown[] | null => {
+  if (Array.isArray(delta)) return delta;
+  if (delta && typeof delta === "object") {
+    const maybeOps = (delta as { ops?: unknown }).ops;
+    if (Array.isArray(maybeOps)) return maybeOps;
+  }
+  return null;
+};
+
 const quillDeltaToMarkdown = (delta: unknown): string => {
-  const markdown = quillDeltaToMarkdownModule.deltaToMarkdown(delta);
+  const ops = extractQuillDeltaOps(delta);
+  if (!ops) {
+    throw new Error("Invalid quill delta format");
+  }
+  const markdown = quillDeltaToMarkdownModule.deltaToMarkdown(ops);
   if (typeof markdown !== "string") {
     throw new Error("deltaToMarkdown returned non-string");
   }
@@ -646,7 +659,11 @@ const updateNotes = guildMemberProcedure
     z.object({
       serverId: z.string(),
       meetingId: z.string(),
-      delta: z.unknown(),
+      delta: z
+        .object({
+          ops: z.array(z.unknown()),
+        })
+        .passthrough(),
       expectedPreviousVersion: z.number().min(1),
     }),
   )
