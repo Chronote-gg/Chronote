@@ -121,16 +121,19 @@ const NOTES_CORRECTION_MAX_EMBEDS_PER_MESSAGE = 10;
 
 // DynamoDB item size is capped at 400KB. Notes are also versioned in MeetingHistory,
 // so we keep portal-edited notes bounded to avoid update failures.
-const NOTES_EDITOR_MARKDOWN_CHAR_LIMIT = 30_000;
-const NOTES_EDITOR_DELTA_CHAR_LIMIT = 80_000;
+const NOTES_EDITOR_MARKDOWN_BYTE_LIMIT = 30_000;
+const NOTES_EDITOR_DELTA_JSON_BYTE_LIMIT = 80_000;
 
-const safeJsonStringifyLength = (value: unknown): number | null => {
+const safeJsonStringifyByteLength = (value: unknown): number | null => {
   try {
-    return JSON.stringify(value).length;
+    return Buffer.byteLength(JSON.stringify(value), "utf8");
   } catch {
     return null;
   }
 };
+
+const utf8ByteLength = (value: string): number =>
+  Buffer.byteLength(value, "utf8");
 
 const extractQuillDeltaOps = (delta: unknown): unknown[] | null => {
   if (Array.isArray(delta)) return delta;
@@ -680,7 +683,7 @@ const updateNotes = guildMemberProcedure
       });
     }
 
-    const deltaSize = safeJsonStringifyLength(input.delta);
+    const deltaSize = safeJsonStringifyByteLength(input.delta);
     if (deltaSize === null) {
       throw new TRPCError({
         code: "BAD_REQUEST",
@@ -688,7 +691,7 @@ const updateNotes = guildMemberProcedure
       });
     }
 
-    if (deltaSize > NOTES_EDITOR_DELTA_CHAR_LIMIT) {
+    if (deltaSize > NOTES_EDITOR_DELTA_JSON_BYTE_LIMIT) {
       throw new TRPCError({
         code: "BAD_REQUEST",
         message: "Notes content is too large to save.",
@@ -719,7 +722,7 @@ const updateNotes = guildMemberProcedure
       });
     }
 
-    if (markdownNotes.length > NOTES_EDITOR_MARKDOWN_CHAR_LIMIT) {
+    if (utf8ByteLength(markdownNotes) > NOTES_EDITOR_MARKDOWN_BYTE_LIMIT) {
       throw new TRPCError({
         code: "BAD_REQUEST",
         message: "Notes are too large to save.",

@@ -368,6 +368,7 @@ export default function MeetingDetailDrawer({
     setFeedbackModalOpen(false);
     setFeedbackDraft("");
     setNotesEditorModalOpen(false);
+    closeNotesCorrectionModal();
   };
 
   const handleCloseDrawer = () => {

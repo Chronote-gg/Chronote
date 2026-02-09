@@ -34,6 +34,7 @@ import {
   FeedbackTargetType,
 } from "./types/db";
 import type { MeetingStatus } from "./types/meetingLifecycle";
+import { trimNotesForHistory } from "./utils/notesHistory";
 
 const dynamoDbClient = new DynamoDBClient(
   config.database.useLocalDynamoDB
@@ -808,16 +809,10 @@ export async function updateMeetingNotes(
   },
   notesDelta?: unknown | null,
 ): Promise<boolean> {
-  const NOTES_HISTORY_ENTRY_CHAR_LIMIT = 8_000;
-  const notesHistoryNotes =
-    notes.length <= NOTES_HISTORY_ENTRY_CHAR_LIMIT
-      ? notes
-      : `${notes.slice(0, NOTES_HISTORY_ENTRY_CHAR_LIMIT)}\n\n[truncated]`;
-
   const now = new Date().toISOString();
   const notesHistoryEntry: NotesHistoryEntry = {
     version: notesVersion,
-    notes: notesHistoryNotes,
+    notes: trimNotesForHistory(notes),
     editedBy,
     editedAt: now,
   };
@@ -957,7 +952,7 @@ export async function updateMeetingNotes(
     }
 
     console.error("Failed to update meeting notes:", error);
-    return false;
+    throw error;
   }
 }
 
