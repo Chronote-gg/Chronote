@@ -19,7 +19,7 @@ jobs:
       - name: Set up Node
         uses: actions/setup-node@v6
         with:
-          node-version: "22.12.0"
+          node-version: "22.13.0"
           cache: "yarn"
 
       - name: Install dependencies
@@ -38,7 +38,7 @@ jobs:
       - name: Set up Node
         uses: actions/setup-node@v6
         with:
-          node-version: "22.12.0"
+          node-version: "22.13.0"
           cache: "yarn"
 
       - name: Install dependencies
@@ -57,7 +57,7 @@ jobs:
       - name: Set up Node
         uses: actions/setup-node@v6
         with:
-          node-version: "22.12.0"
+          node-version: "22.13.0"
           cache: "yarn"
 
       - name: Install dependencies
@@ -69,7 +69,12 @@ jobs:
           LANGFUSE_SECRET_KEY: ${{ secrets.LANGFUSE_SECRET_KEY }}
           LANGFUSE_BASE_URL: ${{ vars.LANGFUSE_BASE_URL }}
           LANGFUSE_PROMPT_LABEL: ${{ vars.LANGFUSE_PROMPT_LABEL }}
-        run: yarn prompts:check
+        run: |
+          if [ "${GITHUB_EVENT_NAME}" = "pull_request" ] && [ -z "${LANGFUSE_PUBLIC_KEY:-}" ]; then
+            echo "Skipping Langfuse prompt check (Langfuse secrets not available in this PR context)."
+            exit 0
+          fi
+          yarn prompts:check
 
   llm-connections-check:
     name: LLM Connections Check
@@ -81,7 +86,7 @@ jobs:
       - name: Set up Node
         uses: actions/setup-node@v6
         with:
-          node-version: "22.12.0"
+          node-version: "22.13.0"
           cache: "yarn"
 
       - name: Install dependencies
@@ -93,7 +98,12 @@ jobs:
           LANGFUSE_SECRET_KEY: ${{ secrets.LANGFUSE_SECRET_KEY }}
           LANGFUSE_BASE_URL: ${{ vars.LANGFUSE_BASE_URL }}
           LLM_CONNECTIONS_ENV: ${{ vars.LLM_CONNECTIONS_ENV }}
-        run: yarn llm-connections:check
+        run: |
+          if [ "${GITHUB_EVENT_NAME}" = "pull_request" ] && [ -z "${LANGFUSE_PUBLIC_KEY:-}" ]; then
+            echo "Skipping Langfuse LLM connection check (Langfuse secrets not available in this PR context)."
+            exit 0
+          fi
+          yarn llm-connections:check
 
   test:
     name: Unit Tests
@@ -105,7 +115,7 @@ jobs:
       - name: Set up Node
         uses: actions/setup-node@v6
         with:
-          node-version: "22.12.0"
+          node-version: "22.13.0"
           cache: "yarn"
 
       - name: Install dependencies
@@ -124,7 +134,7 @@ jobs:
       - name: Set up Node
         uses: actions/setup-node@v6
         with:
-          node-version: "22.12.0"
+          node-version: "22.13.0"
           cache: "yarn"
 
       - name: Install dependencies
@@ -157,7 +167,7 @@ jobs:
       - name: Set up Node
         uses: actions/setup-node@v6
         with:
-          node-version: "22.12.0"
+          node-version: "22.13.0"
           cache: "yarn"
 
       - name: Install dependencies
@@ -201,7 +211,7 @@ jobs:
       - name: Set up Node
         uses: actions/setup-node@v6
         with:
-          node-version: "22.12.0"
+          node-version: "22.13.0"
           cache: "yarn"
 
       - name: Install dependencies
@@ -326,7 +336,7 @@ jobs:
       - name: Set up Node
         uses: actions/setup-node@v6
         with:
-          node-version: "22.12.0"
+          node-version: "22.13.0"
           cache: "yarn"
 
       - name: Set up uv

@@ -833,6 +833,20 @@ export const CONFIG_REGISTRY: ConfigEntry[] = [
     },
     ui: { type: "segmented", options: ["off", "server", "public"] },
   },
+  {
+    key: "meetings.attendeeAccess.enabled",
+    label: "Attendee access",
+    description:
+      "Allow meeting participants to access a meeting in the portal even if they later lose channel permissions.",
+    category: "Library",
+    group: "Standard",
+    valueType: "boolean",
+    defaultValue: true,
+    scopes: {
+      server: scope(true, true, "admin", "toggle"),
+    },
+    ui: { type: "toggle" },
+  },
   ...buildModelSelectionEntries(),
   ...buildModelParamEntries(),
 ];

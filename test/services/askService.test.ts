@@ -4,7 +4,7 @@ import type { MeetingHistory } from "../../src/types/db";
 type LoadOptions = {
   mockEnabled?: boolean;
   meetings?: MeetingHistory[];
-  access?: boolean[];
+  access?: Array<boolean | null>;
   maxMeetings?: number;
 };
 
@@ -27,15 +27,22 @@ const loadModule = async (options: LoadOptions = {}) => {
   jest.resetModules();
 
   const listRecentMeetingsForGuildService = jest
-    .fn()
+    .fn<(...args: unknown[]) => Promise<MeetingHistory[]>>()
     .mockResolvedValue(options.meetings ?? []);
-  const ensureUserCanViewChannel = jest.fn();
+  const ensureUserCanAccessMeeting =
+    jest.fn<
+      (options: {
+        guildId: string;
+        meeting: MeetingHistory;
+        userId: string;
+      }) => Promise<boolean | null>
+    >();
   if (options.access?.length) {
     options.access.forEach((value) =>
-      ensureUserCanViewChannel.mockResolvedValueOnce(value),
+      ensureUserCanAccessMeeting.mockResolvedValueOnce(value),
     );
   } else {
-    ensureUserCanViewChannel.mockResolvedValue(true);
+    ensureUserCanAccessMeeting.mockResolvedValue(true);
   }
 
   const config = {
@@ -56,8 +63,8 @@ const loadModule = async (options: LoadOptions = {}) => {
   jest.doMock("../../src/services/meetingHistoryService", () => ({
     listRecentMeetingsForGuildService,
   }));
-  jest.doMock("../../src/services/discordPermissionsService", () => ({
-    ensureUserCanViewChannel,
+  jest.doMock("../../src/services/meetingAccessService", () => ({
+    ensureUserCanAccessMeeting,
   }));
   jest.doMock("../../src/services/configService", () => ({ config }));
 
@@ -65,7 +72,7 @@ const loadModule = async (options: LoadOptions = {}) => {
   return {
     ...module,
     listRecentMeetingsForGuildService,
-    ensureUserCanViewChannel,
+    ensureUserCanAccessMeeting,
   };
 };
 
@@ -123,7 +130,7 @@ describe("askService (mock mode)", () => {
       channelId: "voice-1",
       tags: ["other"],
     });
-    const { answerQuestionService, ensureUserCanViewChannel } =
+    const { answerQuestionService, ensureUserCanAccessMeeting } =
       await loadModule({
         mockEnabled: true,
         meetings: [meetingA, meetingB, meetingC],
@@ -139,8 +146,60 @@ describe("askService (mock mode)", () => {
       viewerUserId: "viewer-1",
     });
 
-    expect(ensureUserCanViewChannel).toHaveBeenCalledTimes(1);
+    expect(ensureUserCanAccessMeeting).toHaveBeenCalledTimes(1);
     expect(result.sourceMeetingIds).toEqual([meetingA.channelId_timestamp]);
+  });
+
+  test("filters channel scope using channelId_timestamp fallback", async () => {
+    const meetingA = buildMeeting({
+      channelId_timestamp: "voice-1#2025-01-01T00:00:00.000Z",
+      channelId: "",
+      tags: ["priority"],
+    });
+    const meetingB = buildMeeting({
+      channelId_timestamp: "voice-2#2025-01-02T00:00:00.000Z",
+      channelId: "voice-2",
+      tags: ["priority"],
+    });
+    const { answerQuestionService, ensureUserCanAccessMeeting } =
+      await loadModule({
+        mockEnabled: true,
+        meetings: [meetingA, meetingB],
+        access: [true],
+      });
+
+    const result = await answerQuestionService({
+      guildId: "guild-1",
+      channelId: "voice-1",
+      question: "Show priority notes",
+      tags: ["priority"],
+      scope: "channel",
+      viewerUserId: "viewer-1",
+    });
+
+    expect(ensureUserCanAccessMeeting).toHaveBeenCalledTimes(1);
+    expect(result.sourceMeetingIds).toEqual([meetingA.channelId_timestamp]);
+  });
+
+  test("throws on Discord rate limits when filtering by viewer access", async () => {
+    const meeting = buildMeeting({
+      channelId_timestamp: "voice-1#2025-01-01T00:00:00.000Z",
+      channelId: "voice-1",
+    });
+    const { answerQuestionService } = await loadModule({
+      mockEnabled: true,
+      meetings: [meeting],
+      access: [null],
+    });
+
+    await expect(
+      answerQuestionService({
+        guildId: "guild-1",
+        channelId: "voice-1",
+        question: "What happened?",
+        viewerUserId: "viewer-1",
+      }),
+    ).rejects.toMatchObject({ name: "DiscordRateLimitedError" });
   });
 });
 
