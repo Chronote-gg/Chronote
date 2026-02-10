@@ -150,6 +150,37 @@ describe("askService (mock mode)", () => {
     expect(result.sourceMeetingIds).toEqual([meetingA.channelId_timestamp]);
   });
 
+  test("filters channel scope using channelId_timestamp fallback", async () => {
+    const meetingA = buildMeeting({
+      channelId_timestamp: "voice-1#2025-01-01T00:00:00.000Z",
+      channelId: "",
+      tags: ["priority"],
+    });
+    const meetingB = buildMeeting({
+      channelId_timestamp: "voice-2#2025-01-02T00:00:00.000Z",
+      channelId: "voice-2",
+      tags: ["priority"],
+    });
+    const { answerQuestionService, ensureUserCanAccessMeeting } =
+      await loadModule({
+        mockEnabled: true,
+        meetings: [meetingA, meetingB],
+        access: [true],
+      });
+
+    const result = await answerQuestionService({
+      guildId: "guild-1",
+      channelId: "voice-1",
+      question: "Show priority notes",
+      tags: ["priority"],
+      scope: "channel",
+      viewerUserId: "viewer-1",
+    });
+
+    expect(ensureUserCanAccessMeeting).toHaveBeenCalledTimes(1);
+    expect(result.sourceMeetingIds).toEqual([meetingA.channelId_timestamp]);
+  });
+
   test("throws on Discord rate limits when filtering by viewer access", async () => {
     const meeting = buildMeeting({
       channelId_timestamp: "voice-1#2025-01-01T00:00:00.000Z",

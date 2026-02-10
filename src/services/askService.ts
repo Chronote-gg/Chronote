@@ -129,6 +129,18 @@ export const buildAskContextBlocks = (meetings: MeetingSummary[]) =>
     ].join("\n");
   });
 
+const resolveMeetingVoiceChannelId = (meeting: {
+  channelId?: string | null;
+  channelId_timestamp?: string | null;
+}): string | null => {
+  const direct = meeting.channelId?.trim();
+  if (direct) return direct;
+  const key = meeting.channelId_timestamp?.trim();
+  if (!key) return null;
+  const [channelId] = key.split("#");
+  return channelId?.trim() ? channelId.trim() : null;
+};
+
 const filterMeetings = (
   meetings: MeetingSummary[],
   channelId: string,
@@ -142,7 +154,9 @@ const filterMeetings = (
     );
   }
   if (scope === "channel") {
-    filtered = filtered.filter((m) => m.channelId === channelId);
+    filtered = filtered.filter(
+      (m) => resolveMeetingVoiceChannelId(m) === channelId,
+    );
   }
   return filtered;
 };
