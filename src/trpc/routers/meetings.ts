@@ -677,7 +677,7 @@ const detail = guildMemberProcedure
     const channelId =
       history.channelId ?? parseChannelIdTimestamp(input.meetingId).channelId;
 
-    let channelName = channelId;
+    let channelName: string;
     try {
       const channels = await listGuildChannelsCached(input.serverId);
       channelName =
