@@ -5,7 +5,10 @@ import type { FeedbackRecord } from "../../src/types/db";
 import type { MeetingEvent } from "../../src/types/meetingTimeline";
 import { getMockUser } from "../../src/repositories/mockStore";
 import { appRouter } from "../../src/trpc/router";
-import { ensureManageGuildWithUserToken } from "../../src/services/guildAccessService";
+import {
+  ensureManageGuildWithUserToken,
+  ensureUserInGuild,
+} from "../../src/services/guildAccessService";
 import {
   getMeetingHistoryService,
   updateMeetingNotesService,
@@ -117,13 +120,7 @@ const buildCaller = (user = getMockUser()) =>
 
 describe("meetings router detail", () => {
   const mockedEnsureManageGuild = jest.mocked(ensureManageGuildWithUserToken);
-  const mockedEnsureUserInGuild = jest.mocked(
-    (
-      jest.requireMock("../../src/services/guildAccessService") as {
-        ensureUserInGuild: typeof import("../../src/services/guildAccessService").ensureUserInGuild;
-      }
-    ).ensureUserInGuild,
-  );
+  const mockedEnsureUserInGuild = jest.mocked(ensureUserInGuild);
   const mockedGetMeetingHistory = jest.mocked(getMeetingHistoryService);
   const mockedFetchJsonFromS3 = jest.mocked(fetchJsonFromS3);
   const mockedGetSignedObjectUrl = jest.mocked(getSignedObjectUrl);
