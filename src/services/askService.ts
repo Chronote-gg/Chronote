@@ -24,6 +24,7 @@ import {
 } from "../utils/dictionary";
 import type { AskCitation } from "../types/ask";
 import { buildAskCitations, stripCitationTags } from "./askCitations";
+import { DiscordRateLimitedError } from "./discordRateLimitError";
 
 export type AskScope = "guild" | "channel";
 
@@ -160,6 +161,9 @@ const filterMeetingsByChannelAccess = async (
       userId,
       attendeeOverrideEnabled,
     });
+    if (allowed === null) {
+      throw new DiscordRateLimitedError();
+    }
     if (allowed) {
       visible.push(meeting);
     }

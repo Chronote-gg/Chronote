@@ -22,6 +22,7 @@ import {
 } from "../services/discordCacheService";
 import type { DiscordGuild } from "../repositories/types";
 import { answerQuestionService } from "../services/askService";
+import { isDiscordRateLimitedError } from "../services/discordRateLimitError";
 import { renderAskAnswer } from "../services/askCitations";
 import {
   getSnapshotString,
@@ -404,22 +405,33 @@ export function registerGuildRoutes(app: express.Express) {
         res.status(400).json({ error: "question is required" });
         return;
       }
-      const { answer, citations } = await answerQuestionService({
-        guildId,
-        channelId: channelId || "",
-        question,
-        tags,
-        scope,
-        viewerUserId: user.id,
-      });
-      const portalBaseUrl = config.frontend.siteUrl.trim().replace(/\/$/, "");
-      const rendered = renderAskAnswer({
-        text: answer,
-        citations: citations ?? [],
-        guildId,
-        portalBaseUrl,
-      });
-      res.json({ answer: rendered });
+      try {
+        const { answer, citations } = await answerQuestionService({
+          guildId,
+          channelId: channelId || "",
+          question,
+          tags,
+          scope,
+          viewerUserId: user.id,
+        });
+        const portalBaseUrl = config.frontend.siteUrl.trim().replace(/\/$/, "");
+        const rendered = renderAskAnswer({
+          text: answer,
+          citations: citations ?? [],
+          guildId,
+          portalBaseUrl,
+        });
+        res.json({ answer: rendered });
+      } catch (error) {
+        if (isDiscordRateLimitedError(error)) {
+          res
+            .status(429)
+            .json({ error: "Discord rate limited. Please retry." });
+          return;
+        }
+        console.error("Ask route error", error);
+        res.status(500).json({ error: "Error answering that question." });
+      }
     },
   );
 

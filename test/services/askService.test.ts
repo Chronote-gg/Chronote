@@ -4,7 +4,7 @@ import type { MeetingHistory } from "../../src/types/db";
 type LoadOptions = {
   mockEnabled?: boolean;
   meetings?: MeetingHistory[];
-  access?: boolean[];
+  access?: Array<boolean | null>;
   maxMeetings?: number;
 };
 
@@ -148,6 +148,27 @@ describe("askService (mock mode)", () => {
 
     expect(ensureUserCanAccessMeeting).toHaveBeenCalledTimes(1);
     expect(result.sourceMeetingIds).toEqual([meetingA.channelId_timestamp]);
+  });
+
+  test("throws on Discord rate limits when filtering by viewer access", async () => {
+    const meeting = buildMeeting({
+      channelId_timestamp: "voice-1#2025-01-01T00:00:00.000Z",
+      channelId: "voice-1",
+    });
+    const { answerQuestionService } = await loadModule({
+      mockEnabled: true,
+      meetings: [meeting],
+      access: [null],
+    });
+
+    await expect(
+      answerQuestionService({
+        guildId: "guild-1",
+        channelId: "voice-1",
+        question: "What happened?",
+        viewerUserId: "viewer-1",
+      }),
+    ).rejects.toMatchObject({ name: "DiscordRateLimitedError" });
   });
 });
 

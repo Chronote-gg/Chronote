@@ -576,35 +576,42 @@ const list = guildMemberProcedure
     );
 
     return {
-      meetings: allowedMeetings.map((meeting) => ({
-        status: meeting.status ?? MEETING_STATUS.COMPLETE,
-        id: meeting.channelId_timestamp,
-        meetingId: meeting.meetingId,
-        channelId: meeting.channelId,
-        channelName: channelMap.get(meeting.channelId) ?? meeting.channelId,
-        timestamp: meeting.timestamp,
-        duration:
-          meeting.status === MEETING_STATUS.IN_PROGRESS ||
-          meeting.status === MEETING_STATUS.PROCESSING ||
-          ((meeting.status === null || meeting.status === undefined) &&
-            meeting.duration === 0)
-            ? Math.max(
-                0,
-                Math.floor((Date.now() - Date.parse(meeting.timestamp)) / 1000),
-              )
-            : meeting.duration,
-        tags: meeting.tags ?? [],
-        notes: meeting.notes ?? "",
-        meetingName: meeting.meetingName,
-        summarySentence: meeting.summarySentence,
-        summaryLabel: meeting.summaryLabel,
-        notesChannelId: meeting.notesChannelId,
-        notesMessageId: meeting.notesMessageIds?.[0],
-        audioAvailable: Boolean(meeting.audioS3Key),
-        transcriptAvailable: Boolean(meeting.transcriptS3Key),
-        archivedAt: meeting.archivedAt,
-        archivedByUserId: meeting.archivedByUserId,
-      })),
+      meetings: allowedMeetings.map((meeting) => {
+        const channelId =
+          meeting.channelId ??
+          parseChannelIdTimestamp(meeting.channelId_timestamp).channelId;
+        return {
+          status: meeting.status ?? MEETING_STATUS.COMPLETE,
+          id: meeting.channelId_timestamp,
+          meetingId: meeting.meetingId,
+          channelId,
+          channelName: channelMap.get(channelId) ?? channelId,
+          timestamp: meeting.timestamp,
+          duration:
+            meeting.status === MEETING_STATUS.IN_PROGRESS ||
+            meeting.status === MEETING_STATUS.PROCESSING ||
+            ((meeting.status === null || meeting.status === undefined) &&
+              meeting.duration === 0)
+              ? Math.max(
+                  0,
+                  Math.floor(
+                    (Date.now() - Date.parse(meeting.timestamp)) / 1000,
+                  ),
+                )
+              : meeting.duration,
+          tags: meeting.tags ?? [],
+          notes: meeting.notes ?? "",
+          meetingName: meeting.meetingName,
+          summarySentence: meeting.summarySentence,
+          summaryLabel: meeting.summaryLabel,
+          notesChannelId: meeting.notesChannelId,
+          notesMessageId: meeting.notesMessageIds?.[0],
+          audioAvailable: Boolean(meeting.audioS3Key),
+          transcriptAvailable: Boolean(meeting.transcriptS3Key),
+          archivedAt: meeting.archivedAt,
+          archivedByUserId: meeting.archivedByUserId,
+        };
+      }),
     };
   });
 
@@ -635,12 +642,14 @@ const detail = guildMemberProcedure
       attendeeOverrideEnabled,
     });
 
-    let channelName = history.channelId;
+    const channelId =
+      history.channelId ?? parseChannelIdTimestamp(input.meetingId).channelId;
+
+    let channelName = channelId;
     try {
       const channels = await listGuildChannelsCached(input.serverId);
       channelName =
-        channels.find((channel) => channel.id === history.channelId)?.name ??
-        history.channelId;
+        channels.find((channel) => channel.id === channelId)?.name ?? channelId;
     } catch (err) {
       if (isDiscordApiError(err) && err.status === 429) {
         throw new TRPCError({
@@ -649,7 +658,7 @@ const detail = guildMemberProcedure
         });
       }
       // If we cannot resolve names, continue with the id.
-      channelName = history.channelId;
+      channelName = channelId;
     }
 
     const transcriptPayload = history.transcriptS3Key
@@ -697,7 +706,7 @@ const detail = guildMemberProcedure
         status: history.status ?? MEETING_STATUS.COMPLETE,
         id: history.channelId_timestamp,
         meetingId: history.meetingId,
-        channelId: history.channelId,
+        channelId,
         channelName,
         timestamp: history.timestamp,
         duration:
