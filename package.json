@@ -75,7 +75,7 @@
     "code:stats": "scc --ci && scc --ci --by-file --sort lines && python -m lizard -l ts -l tsx -l js -l jsx src test"
   },
   "engines": {
-    "node": ">=22.12.0 <23"
+    "node": ">=22.13.0 <23"
   },
   "author": "BASIC-BIT",
   "license": "AGPL-3.0-or-later",

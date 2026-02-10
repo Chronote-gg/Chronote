@@ -49,30 +49,27 @@ export const useLibraryMeetings = (
     },
     { enabled: Boolean(params.selectedGuildId) },
   );
-  const channelsQuery = trpc.servers.channels.useQuery(
-    { serverId: params.selectedGuildId ?? "" },
-    { enabled: Boolean(params.selectedGuildId) },
-  );
-
-  const channelNameMap = useMemo(() => {
-    const map = new Map<string, string>();
-    const voiceChannels = channelsQuery.data?.voiceChannels ?? [];
-    const textChannels = channelsQuery.data?.textChannels ?? [];
-    [...voiceChannels, ...textChannels].forEach((channel) => {
-      map.set(channel.id, channel.name);
-    });
-    return map;
-  }, [channelsQuery.data]);
 
   const meetingRows = useMemo<MeetingSummaryRow[]>(
     () => meetingsQuery.data?.meetings ?? [],
     [meetingsQuery.data],
   );
 
+  const channelNameMap = useMemo(() => {
+    const map = new Map<string, string>();
+    meetingRows.forEach((meeting) => {
+      if (!meeting.channelId) return;
+      if (meeting.channelName) {
+        map.set(meeting.channelId, meeting.channelName);
+      }
+    });
+    return map;
+  }, [meetingRows]);
+
   const meetingItems = useMemo<MeetingListItem[]>(() => {
     return meetingRows.map((meetingRow) => {
       const channelLabel = formatChannelLabel(
-        channelNameMap.get(meetingRow.channelId) ?? meetingRow.channelName,
+        meetingRow.channelName,
         meetingRow.channelId,
       );
       const dateLabel = formatDateLabel(meetingRow.timestamp);
@@ -137,8 +134,8 @@ export const useLibraryMeetings = (
     }));
   }, [meetingRows, channelNameMap]);
 
-  const listLoading = meetingsQuery.isLoading || channelsQuery.isLoading;
-  const listError = Boolean(meetingsQuery.error ?? channelsQuery.error);
+  const listLoading = meetingsQuery.isLoading;
+  const listError = Boolean(meetingsQuery.error);
 
   const invalidateMeetingLists = useInvalidateMeetingLists(
     params.selectedGuildId,
@@ -149,9 +146,6 @@ export const useLibraryMeetings = (
     await Promise.all([
       invalidateMeetingLists(),
       trpcUtils.meetings.detail.invalidate(),
-      trpcUtils.servers.channels.invalidate({
-        serverId: params.selectedGuildId,
-      }),
     ]);
   }, [params.selectedGuildId, invalidateMeetingLists, trpcUtils]);
 

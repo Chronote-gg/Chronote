@@ -58,6 +58,15 @@ const resolveRenameDraft = (meeting: {
   return "";
 };
 
+const resolveDetailErrorMessage = (error: unknown): string => {
+  if (!error || typeof error !== "object") {
+    return "Unable to load meeting details.";
+  }
+  const maybe = error as { message?: unknown };
+  const message = typeof maybe.message === "string" ? maybe.message.trim() : "";
+  return message.length > 0 ? message : "Unable to load meeting details.";
+};
+
 const renderDetailStatusBadge = (status?: MeetingStatus) => {
   switch (status) {
     case MEETING_STATUS.IN_PROGRESS:
@@ -191,13 +200,15 @@ export default function MeetingDetailDrawer({
       <Text fw={600} size="lg">
         {meeting.title}
       </Text>
-      <ActionIcon
-        variant="subtle"
-        aria-label="Rename meeting"
-        onClick={() => setRenameModalOpen(true)}
-      >
-        <IconPencil size={16} />
-      </ActionIcon>
+      {canManageSelectedGuild ? (
+        <ActionIcon
+          variant="subtle"
+          aria-label="Rename meeting"
+          onClick={() => setRenameModalOpen(true)}
+        >
+          <IconPencil size={16} />
+        </ActionIcon>
+      ) : null}
       {meeting.archivedAt ? (
         <Badge size="sm" variant="light" color="gray">
           Archived
@@ -664,7 +675,7 @@ export default function MeetingDetailDrawer({
         >
           {detailError ? (
             <Center py="xl">
-              <Text c="dimmed">Unable to load meeting details.</Text>
+              <Text c="dimmed">{resolveDetailErrorMessage(detailError)}</Text>
             </Center>
           ) : detailLoading ? (
             <Center py="xl">

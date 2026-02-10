@@ -5,6 +5,7 @@ import { answerQuestionService } from "../services/askService";
 import { config } from "../services/configService";
 import { renderAskAnswer } from "../services/askCitations";
 import { buildAskFeedbackRow } from "./askFeedback";
+import { isDiscordRateLimitedError } from "../services/discordRateLimitError";
 
 export async function handleAskCommand(
   interaction: ChatInputCommandInteraction,
@@ -36,6 +37,7 @@ export async function handleAskCommand(
       tags: normalizeTags(parseTags(tagsInput)),
       scope,
       maxMeetings,
+      viewerUserId: interaction.user.id,
     });
     const portalBaseUrl = config.frontend.siteUrl.trim().replace(/\/$/, "");
     const rendered = renderAskAnswer({
@@ -51,6 +53,10 @@ export async function handleAskCommand(
     });
   } catch (error) {
     console.error("Error handling /ask:", error);
+    if (isDiscordRateLimitedError(error)) {
+      await interaction.editReply("Discord rate limited. Please retry.");
+      return;
+    }
     await interaction.editReply("Error answering that question.");
   }
 }

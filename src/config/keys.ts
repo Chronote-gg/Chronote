@@ -51,6 +51,9 @@ export const CONFIG_KEYS = {
     channelId: "notes.channelId",
     tags: "notes.tags",
   },
+  meetings: {
+    attendeeAccessEnabled: "meetings.attendeeAccess.enabled",
+  },
   autorecord: {
     enabled: "autorecord.enabled",
     cancelEnabled: "autorecord.cancel.enabled",
