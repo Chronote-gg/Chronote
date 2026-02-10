@@ -162,6 +162,7 @@ export async function initializeMeeting(
     console.error("Failed to join voice channel:", error);
     throw new Error(
       `Failed to join voice channel: ${error instanceof Error ? error.message : String(error)}`,
+      { cause: error },
     );
   }
 
