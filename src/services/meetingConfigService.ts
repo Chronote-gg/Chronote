@@ -152,6 +152,17 @@ export async function resolveMeetingRuntimeConfig(input: {
         requireValue(snapshot, CONFIG_KEYS.autorecord.cancelEnabled),
       ),
     },
+    visionCaptions: {
+      enabled: Boolean(
+        requireValue(snapshot, CONFIG_KEYS.visionCaptions.enabled),
+      ),
+      maxImages: Number(
+        requireValue(snapshot, CONFIG_KEYS.visionCaptions.maxImages),
+      ),
+      maxTotalChars: Number(
+        requireValue(snapshot, CONFIG_KEYS.visionCaptions.maxTotalChars),
+      ),
+    },
     modelParams,
     modelChoices,
   };

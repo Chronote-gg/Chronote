@@ -121,4 +121,32 @@ describe("notesPromptService", () => {
     );
     expect(call.variables.chatContextBlock).toBe("");
   });
+
+  test("getNotesPrompt includes shared image captions when available", async () => {
+    const { module, getLangfuseChatPrompt } = await loadModule();
+    const meeting = buildMeeting();
+    meeting.chatLog[0].attachments = [
+      {
+        id: "att-1",
+        name: "diagram.png",
+        size: 1234,
+        url: "https://cdn.discordapp.com/attachments/mock/diagram.png",
+        contentType: "image/png",
+        aiCaption: "A sketch of the architecture.",
+        aiVisibleText: "API -> Worker -> DB",
+        aiCaptionModel: "gpt-4o-mini",
+        aiCaptionedAt: "2025-01-01T00:00:01.000Z",
+      },
+    ];
+
+    await module.getNotesPrompt(meeting);
+
+    const call = getLangfuseChatPrompt.mock.calls[0][0];
+    expect(call.variables.chatContextBlock).toContain(
+      "Shared images (AI captions, OCR-lite)",
+    );
+    expect(call.variables.chatContextBlock).toContain("diagram.png");
+    expect(call.variables.chatContextBlock).toContain("architecture");
+    expect(call.variables.chatContextBlock).toContain("API");
+  });
 });
