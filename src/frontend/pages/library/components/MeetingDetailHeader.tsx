@@ -59,23 +59,25 @@ export default function MeetingDetailHeader({
         >
           Download
         </Button>
-        <Button
-          variant="subtle"
-          leftSection={
-            meeting.archivedAt ? (
-              <IconArchiveOff size={16} />
-            ) : (
-              <IconArchive size={16} />
-            )
-          }
-          onClick={onArchiveToggle}
-          loading={archivePending}
-          data-testid={
-            meeting.archivedAt ? "meeting-unarchive" : "meeting-archive"
-          }
-        >
-          {meeting.archivedAt ? "Unarchive" : "Archive"}
-        </Button>
+        {canManageSelectedGuild ? (
+          <Button
+            variant="subtle"
+            leftSection={
+              meeting.archivedAt ? (
+                <IconArchiveOff size={16} />
+              ) : (
+                <IconArchive size={16} />
+              )
+            }
+            onClick={onArchiveToggle}
+            loading={archivePending}
+            data-testid={
+              meeting.archivedAt ? "meeting-unarchive" : "meeting-archive"
+            }
+          >
+            {meeting.archivedAt ? "Unarchive" : "Archive"}
+          </Button>
+        ) : null}
         <Button
           variant={fullScreen ? "outline" : "light"}
           leftSection={<IconFilter size={16} />}

@@ -12,6 +12,7 @@ import type {
 const PERMISSION_ADMIN = 1n << 3n;
 const PERMISSION_MANAGE_CHANNELS = 1n << 4n;
 const PERMISSION_VIEW_CHANNEL = 1n << 10n;
+const PERMISSION_READ_MESSAGE_HISTORY = 1n << 16n;
 const PERMISSION_CONNECT = 1n << 20n;
 
 const parsePermissions = (value?: string | null): bigint => {
@@ -154,5 +155,17 @@ export async function ensureUserCanManageChannel(options: {
     ...options,
     required: PERMISSION_VIEW_CHANNEL | PERMISSION_MANAGE_CHANNELS,
     logLabel: "ensureUserCanManageChannel",
+  });
+}
+
+export async function ensureUserCanReadChannelHistory(options: {
+  guildId: string;
+  channelId: string;
+  userId: string;
+}): Promise<boolean | null> {
+  return ensureUserHasChannelPermissions({
+    ...options,
+    required: PERMISSION_VIEW_CHANNEL | PERMISSION_READ_MESSAGE_HISTORY,
+    logLabel: "ensureUserCanReadChannelHistory",
   });
 }
