@@ -20,7 +20,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v6
         with:
-          node-version: "22.12.0"
+          node-version: "22.13.0"
           cache: "yarn"
           cache-dependency-path: "yarn.lock"
 
@@ -40,7 +40,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v6
         with:
-          node-version: "22.12.0"
+          node-version: "22.13.0"
           cache: "yarn"
           cache-dependency-path: "yarn.lock"
 
@@ -96,7 +96,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v6
         with:
-          node-version: "22.12.0"
+          node-version: "22.13.0"
           cache: "yarn"
           cache-dependency-path: "yarn.lock"
 
@@ -121,7 +121,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v6
         with:
-          node-version: "22.12.0"
+          node-version: "22.13.0"
           cache: "yarn"
           cache-dependency-path: "yarn.lock"
 
@@ -146,7 +146,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v6
         with:
-          node-version: "22.12.0"
+          node-version: "22.13.0"
           cache: "yarn"
           cache-dependency-path: "yarn.lock"
 
@@ -180,7 +180,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v6
         with:
-          node-version: "22.12.0"
+          node-version: "22.13.0"
           cache: "yarn"
           cache-dependency-path: "yarn.lock"
 
@@ -231,7 +231,7 @@ jobs:
         uses: actions/checkout@v6
 
       - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v5
+        uses: aws-actions/configure-aws-credentials@v6
         with:
           aws-access-key-id: ${{ vars.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
@@ -428,7 +428,7 @@ jobs:
         uses: actions/checkout@v6
 
       - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v5
+        uses: aws-actions/configure-aws-credentials@v6
         with:
           aws-access-key-id: ${{ vars.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
@@ -437,7 +437,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v6
         with:
-          node-version: "22.12.0"
+          node-version: "22.13.0"
           cache: "yarn"
           cache-dependency-path: "yarn.lock"
 

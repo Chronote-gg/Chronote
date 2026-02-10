@@ -3,7 +3,8 @@ import { config } from "./configService";
 import { listDictionaryEntriesService } from "./dictionaryService";
 import { normalizeTags, parseTags } from "../utils/tags";
 import { buildUpgradeTextOnly } from "../utils/upgradePrompt";
-import { ensureUserCanViewChannel } from "./discordPermissionsService";
+import { ensureUserCanAccessMeeting } from "./meetingAccessService";
+import { CONFIG_KEYS } from "../config/keys";
 import { createOpenAIClient } from "./openaiClient";
 import { buildModelOverrides, getModelChoice } from "./modelFactory";
 import { getLangfuseChatPrompt } from "./langfusePromptService";
@@ -12,7 +13,10 @@ import {
   resolveChatParamsForRole,
   resolveModelParamsForContext,
 } from "./openaiModelParams";
-import { resolveConfigSnapshot } from "./unifiedConfigService";
+import {
+  getSnapshotBoolean,
+  resolveConfigSnapshot,
+} from "./unifiedConfigService";
 import { resolveGuildSubscription } from "./subscriptionService";
 import {
   buildDictionaryPromptLines,
@@ -20,6 +24,7 @@ import {
 } from "../utils/dictionary";
 import type { AskCitation } from "../types/ask";
 import { buildAskCitations, stripCitationTags } from "./askCitations";
+import { DiscordRateLimitedError } from "./discordRateLimitError";
 
 export type AskScope = "guild" | "channel";
 
@@ -87,6 +92,22 @@ const buildDictionaryBlock = async (guildId: string): Promise<string> => {
   }
 };
 
+const resolveAttendeeAccessEnabled = async (guildId: string) => {
+  try {
+    const snapshot = await resolveConfigSnapshot({ guildId });
+    return getSnapshotBoolean(
+      snapshot,
+      CONFIG_KEYS.meetings.attendeeAccessEnabled,
+    );
+  } catch (error) {
+    console.warn("Failed to resolve attendee access setting", {
+      guildId,
+      error,
+    });
+    return true;
+  }
+};
+
 export const buildAskContextBlocks = (meetings: MeetingSummary[]) =>
   meetings.map((m, index) => {
     const meetingIndex = index + 1;
@@ -108,6 +129,18 @@ export const buildAskContextBlocks = (meetings: MeetingSummary[]) =>
     ].join("\n");
   });
 
+const resolveMeetingVoiceChannelId = (meeting: {
+  channelId?: string | null;
+  channelId_timestamp?: string | null;
+}): string | null => {
+  const direct = meeting.channelId?.trim();
+  if (direct) return direct;
+  const key = meeting.channelId_timestamp?.trim();
+  if (!key) return null;
+  const [channelId] = key.split("#");
+  return channelId?.trim() ? channelId.trim() : null;
+};
+
 const filterMeetings = (
   meetings: MeetingSummary[],
   channelId: string,
@@ -121,7 +154,9 @@ const filterMeetings = (
     );
   }
   if (scope === "channel") {
-    filtered = filtered.filter((m) => m.channelId === channelId);
+    filtered = filtered.filter(
+      (m) => resolveMeetingVoiceChannelId(m) === channelId,
+    );
   }
   return filtered;
 };
@@ -130,14 +165,19 @@ const filterMeetingsByChannelAccess = async (
   meetings: MeetingSummary[],
   guildId: string,
   userId: string,
+  attendeeOverrideEnabled: boolean,
 ) => {
   const visible: MeetingSummary[] = [];
   for (const meeting of meetings) {
-    const allowed = await ensureUserCanViewChannel({
+    const allowed = await ensureUserCanAccessMeeting({
       guildId,
-      channelId: meeting.channelId,
+      meeting,
       userId,
+      attendeeOverrideEnabled,
     });
+    if (allowed === null) {
+      throw new DiscordRateLimitedError();
+    }
     if (allowed) {
       visible.push(meeting);
     }
@@ -198,6 +238,10 @@ export async function answerQuestionService(
     : undefined;
 
   const maxMeetings = req.maxMeetings ?? config.ask.maxMeetings;
+  let attendeeOverrideEnabled = true;
+  if (!config.mock.enabled && req.viewerUserId) {
+    attendeeOverrideEnabled = await resolveAttendeeAccessEnabled(guildId);
+  }
   const allMeetings = await listRecentMeetingsForGuildService(
     guildId,
     maxMeetings,
@@ -209,6 +253,7 @@ export async function answerQuestionService(
         scopedMeetings,
         guildId,
         req.viewerUserId,
+        attendeeOverrideEnabled,
       )
     : scopedMeetings;
 

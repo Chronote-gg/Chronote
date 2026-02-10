@@ -36,7 +36,7 @@ export default function PortalServerLayout() {
 
   const channelsQuery = trpc.servers.channels.useQuery(
     { serverId: activeServerId ?? "" },
-    { enabled: Boolean(activeServerId) },
+    { enabled: Boolean(activeServerId && canManageSelectedGuild) },
   );
   const channelNameMap = useMemo(() => {
     const map = new Map<string, string>();

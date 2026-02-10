@@ -28,6 +28,7 @@ import {
   listBotGuildsCached,
   listGuildChannelsCached,
 } from "../../services/discordCacheService";
+import { CONFIG_KEYS } from "../../config/keys";
 import {
   MEETING_NAME_REQUIREMENTS,
   normalizeMeetingName,
@@ -64,10 +65,16 @@ import {
   replaceDiscordMentionsWithDisplayNames,
   resolveAttendeeDisplayName,
 } from "../../utils/participants";
+import { ensureUserCanManageChannel } from "../../services/discordPermissionsService";
 import {
-  ensureUserCanManageChannel,
-  ensureUserCanViewChannel,
-} from "../../services/discordPermissionsService";
+  checkUserMeetingAccess,
+  ensureUserCanAccessMeeting,
+  type MeetingAccessMissingPermission,
+} from "../../services/meetingAccessService";
+import {
+  getSnapshotBoolean,
+  resolveConfigSnapshot,
+} from "../../services/unifiedConfigService";
 import { guildMemberProcedure, manageGuildProcedure, router } from "../trpc";
 
 const resolveParticipantLabel = (participant: Participant) =>
@@ -204,22 +211,70 @@ const resolveGuildAndChannelNamesForPrompt = async (options: {
   return { serverName, channelName };
 };
 
-const ensurePortalUserCanViewMeetingChannel = async (options: {
-  guildId: string;
-  channelId: string;
-  userId: string;
+const resolveAttendeeAccessEnabled = async (guildId: string) => {
+  try {
+    const snapshot = await resolveConfigSnapshot({ guildId });
+    return getSnapshotBoolean(
+      snapshot,
+      CONFIG_KEYS.meetings.attendeeAccessEnabled,
+    );
+  } catch (error) {
+    console.warn("Failed to resolve attendee access setting", {
+      guildId,
+      error,
+    });
+    return true;
+  }
+};
+
+const formatMeetingAccessErrorMessage = (options: {
+  missing: MeetingAccessMissingPermission[];
+  attendeeOverrideEnabled: boolean;
 }) => {
-  const allowed = await ensureUserCanViewChannel(options);
-  if (allowed === null) {
+  const reasons: string[] = [];
+  if (options.missing.includes("voice_connect")) {
+    reasons.push(
+      "You need permission to join the meeting voice channel (View Channel + Connect).",
+    );
+  }
+  if (options.missing.includes("notes_read_history")) {
+    reasons.push(
+      "You need permission to read message history in the notes channel (View Channel + Read Message History).",
+    );
+  }
+
+  const detail = reasons.length ? ` ${reasons.join(" ")}` : "";
+  const attendeeHint = options.attendeeOverrideEnabled
+    ? ""
+    : " If you attended this meeting, a server admin can enable Attendee access in Settings.";
+  return `Meeting access required.${detail}${attendeeHint}`.trim();
+};
+
+const ensurePortalUserCanAccessMeeting = async (options: {
+  guildId: string;
+  meeting: Parameters<typeof ensureUserCanAccessMeeting>[0]["meeting"];
+  userId: string;
+  attendeeOverrideEnabled: boolean;
+}) => {
+  const decision = await checkUserMeetingAccess({
+    guildId: options.guildId,
+    meeting: options.meeting,
+    userId: options.userId,
+    attendeeOverrideEnabled: options.attendeeOverrideEnabled,
+  });
+  if (decision.allowed === null) {
     throw new TRPCError({
       code: "TOO_MANY_REQUESTS",
       message: "Discord rate limited. Please retry.",
     });
   }
-  if (!allowed) {
+  if (!decision.allowed) {
     throw new TRPCError({
       code: "FORBIDDEN",
-      message: "Channel access required",
+      message: formatMeetingAccessErrorMessage({
+        missing: decision.missing,
+        attendeeOverrideEnabled: options.attendeeOverrideEnabled,
+      }),
     });
   }
 };
@@ -446,7 +501,50 @@ async function deleteDiscordMessagesSafely(params: {
   }
 }
 
-const list = manageGuildProcedure
+type MeetingSummary = Awaited<
+  ReturnType<typeof listRecentMeetingsForGuildService>
+>[number];
+
+const resolveMeetingListChannelId = (meeting: MeetingSummary): string =>
+  meeting.channelId ??
+  parseChannelIdTimestamp(meeting.channelId_timestamp).channelId;
+
+const resolveMeetingListChannelName = (
+  channelMap: Map<string, string>,
+  channelId: string,
+): string => channelMap.get(channelId) ?? channelId;
+
+const resolveMeetingListStatus = (status: MeetingSummary["status"]) =>
+  status ?? MEETING_STATUS.COMPLETE;
+
+const resolveMeetingListDuration = (meeting: MeetingSummary): number => {
+  const status = meeting.status;
+  if (
+    status === MEETING_STATUS.IN_PROGRESS ||
+    status === MEETING_STATUS.PROCESSING
+  ) {
+    return Math.max(
+      0,
+      Math.floor((Date.now() - Date.parse(meeting.timestamp)) / 1000),
+    );
+  }
+  if (status == null && meeting.duration === 0) {
+    return Math.max(
+      0,
+      Math.floor((Date.now() - Date.parse(meeting.timestamp)) / 1000),
+    );
+  }
+  return meeting.duration;
+};
+
+const resolveMeetingListTags = (tags: MeetingSummary["tags"]) => tags ?? [];
+
+const resolveMeetingListNotes = (notes: MeetingSummary["notes"]) => notes ?? "";
+
+const resolveMeetingListNotesMessageId = (messageIds: string[] | undefined) =>
+  messageIds?.[0];
+
+const list = guildMemberProcedure
   .input(
     z.object({
       serverId: z.string(),
@@ -455,7 +553,7 @@ const list = manageGuildProcedure
       includeArchived: z.boolean().optional(),
     }),
   )
-  .query(async ({ input }) => {
+  .query(async ({ ctx, input }) => {
     const botCheck = await ensureBotInGuild(input.serverId);
     if (botCheck === null) {
       throw new TRPCError({
@@ -480,6 +578,29 @@ const list = manageGuildProcedure
       },
     );
 
+    const attendeeOverrideEnabled = await resolveAttendeeAccessEnabled(
+      input.serverId,
+    );
+
+    const allowedMeetings = [] as typeof meetings;
+    for (const meeting of meetings) {
+      const allowed = await ensureUserCanAccessMeeting({
+        guildId: input.serverId,
+        meeting,
+        userId: ctx.user.id,
+        attendeeOverrideEnabled,
+      });
+      if (allowed === null) {
+        throw new TRPCError({
+          code: "TOO_MANY_REQUESTS",
+          message: "Discord rate limited. Please retry.",
+        });
+      }
+      if (allowed) {
+        allowedMeetings.push(meeting);
+      }
+    }
+
     let channels: Array<{ id: string; name: string; type: number }> = [];
     try {
       channels = await listGuildChannelsCached(input.serverId);
@@ -490,49 +611,43 @@ const list = manageGuildProcedure
           message: "Discord rate limited. Please retry.",
         });
       }
-      throw new TRPCError({
-        code: "BAD_GATEWAY",
-        message: "Unable to fetch guild channels",
-      });
+      console.warn("Unable to resolve guild channels for meeting list", err);
+      channels = [];
     }
     const channelMap = new Map(
       channels.map((channel) => [channel.id, channel.name]),
     );
 
     return {
-      meetings: meetings.map((meeting) => ({
-        status: meeting.status ?? MEETING_STATUS.COMPLETE,
-        id: meeting.channelId_timestamp,
-        meetingId: meeting.meetingId,
-        channelId: meeting.channelId,
-        channelName: channelMap.get(meeting.channelId) ?? meeting.channelId,
-        timestamp: meeting.timestamp,
-        duration:
-          meeting.status === MEETING_STATUS.IN_PROGRESS ||
-          meeting.status === MEETING_STATUS.PROCESSING ||
-          ((meeting.status === null || meeting.status === undefined) &&
-            meeting.duration === 0)
-            ? Math.max(
-                0,
-                Math.floor((Date.now() - Date.parse(meeting.timestamp)) / 1000),
-              )
-            : meeting.duration,
-        tags: meeting.tags ?? [],
-        notes: meeting.notes ?? "",
-        meetingName: meeting.meetingName,
-        summarySentence: meeting.summarySentence,
-        summaryLabel: meeting.summaryLabel,
-        notesChannelId: meeting.notesChannelId,
-        notesMessageId: meeting.notesMessageIds?.[0],
-        audioAvailable: Boolean(meeting.audioS3Key),
-        transcriptAvailable: Boolean(meeting.transcriptS3Key),
-        archivedAt: meeting.archivedAt,
-        archivedByUserId: meeting.archivedByUserId,
-      })),
+      meetings: allowedMeetings.map((meeting) => {
+        const channelId = resolveMeetingListChannelId(meeting);
+        return {
+          status: resolveMeetingListStatus(meeting.status),
+          id: meeting.channelId_timestamp,
+          meetingId: meeting.meetingId,
+          channelId,
+          channelName: resolveMeetingListChannelName(channelMap, channelId),
+          timestamp: meeting.timestamp,
+          duration: resolveMeetingListDuration(meeting),
+          tags: resolveMeetingListTags(meeting.tags),
+          notes: resolveMeetingListNotes(meeting.notes),
+          meetingName: meeting.meetingName,
+          summarySentence: meeting.summarySentence,
+          summaryLabel: meeting.summaryLabel,
+          notesChannelId: meeting.notesChannelId,
+          notesMessageId: resolveMeetingListNotesMessageId(
+            meeting.notesMessageIds,
+          ),
+          audioAvailable: Boolean(meeting.audioS3Key),
+          transcriptAvailable: Boolean(meeting.transcriptS3Key),
+          archivedAt: meeting.archivedAt,
+          archivedByUserId: meeting.archivedByUserId,
+        };
+      }),
     };
   });
 
-const detail = manageGuildProcedure
+const detail = guildMemberProcedure
   .input(
     z.object({
       serverId: z.string(),
@@ -546,6 +661,36 @@ const detail = manageGuildProcedure
     );
     if (!history) {
       throw new TRPCError({ code: "NOT_FOUND", message: "Meeting not found" });
+    }
+
+    const attendeeOverrideEnabled = await resolveAttendeeAccessEnabled(
+      input.serverId,
+    );
+
+    await ensurePortalUserCanAccessMeeting({
+      guildId: input.serverId,
+      meeting: history,
+      userId: ctx.user.id,
+      attendeeOverrideEnabled,
+    });
+
+    const channelId =
+      history.channelId ?? parseChannelIdTimestamp(input.meetingId).channelId;
+
+    let channelName: string;
+    try {
+      const channels = await listGuildChannelsCached(input.serverId);
+      channelName =
+        channels.find((channel) => channel.id === channelId)?.name ?? channelId;
+    } catch (err) {
+      if (isDiscordApiError(err) && err.status === 429) {
+        throw new TRPCError({
+          code: "TOO_MANY_REQUESTS",
+          message: "Discord rate limited. Please retry.",
+        });
+      }
+      // If we cannot resolve names, continue with the id.
+      channelName = channelId;
     }
 
     const transcriptPayload = history.transcriptS3Key
@@ -593,7 +738,8 @@ const detail = manageGuildProcedure
         status: history.status ?? MEETING_STATUS.COMPLETE,
         id: history.channelId_timestamp,
         meetingId: history.meetingId,
-        channelId: history.channelId,
+        channelId,
+        channelName,
         timestamp: history.timestamp,
         duration:
           history.status === MEETING_STATUS.IN_PROGRESS ||
@@ -649,10 +795,14 @@ const updateNotes = guildMemberProcedure
 
     const channelId =
       history.channelId ?? parseChannelIdTimestamp(input.meetingId).channelId;
-    await ensurePortalUserCanViewMeetingChannel({
+    const attendeeOverrideEnabled = await resolveAttendeeAccessEnabled(
+      input.serverId,
+    );
+    await ensurePortalUserCanAccessMeeting({
       guildId: input.serverId,
-      channelId,
+      meeting: history,
       userId: ctx.user.id,
+      attendeeOverrideEnabled,
     });
 
     const isMeetingOwner =
@@ -880,10 +1030,14 @@ const suggestNotesCorrection = guildMemberProcedure
 
     const channelId =
       history.channelId ?? parseChannelIdTimestamp(input.meetingId).channelId;
-    await ensurePortalUserCanViewMeetingChannel({
+    const attendeeOverrideEnabled = await resolveAttendeeAccessEnabled(
+      input.serverId,
+    );
+    await ensurePortalUserCanAccessMeeting({
       guildId: input.serverId,
-      channelId,
+      meeting: history,
       userId: ctx.user.id,
+      attendeeOverrideEnabled,
     });
 
     const transcriptPayload = history.transcriptS3Key
@@ -981,10 +1135,14 @@ const applyNotesCorrection = guildMemberProcedure
 
     const channelId =
       history.channelId ?? parseChannelIdTimestamp(input.meetingId).channelId;
-    await ensurePortalUserCanViewMeetingChannel({
+    const attendeeOverrideEnabled = await resolveAttendeeAccessEnabled(
+      input.serverId,
+    );
+    await ensurePortalUserCanAccessMeeting({
       guildId: input.serverId,
-      channelId,
+      meeting: history,
       userId: ctx.user.id,
+      attendeeOverrideEnabled,
     });
 
     const isMeetingOwner =
