@@ -501,6 +501,49 @@ async function deleteDiscordMessagesSafely(params: {
   }
 }
 
+type MeetingSummary = Awaited<
+  ReturnType<typeof listRecentMeetingsForGuildService>
+>[number];
+
+const resolveMeetingListChannelId = (meeting: MeetingSummary): string =>
+  meeting.channelId ??
+  parseChannelIdTimestamp(meeting.channelId_timestamp).channelId;
+
+const resolveMeetingListChannelName = (
+  channelMap: Map<string, string>,
+  channelId: string,
+): string => channelMap.get(channelId) ?? channelId;
+
+const resolveMeetingListStatus = (status: MeetingSummary["status"]) =>
+  status ?? MEETING_STATUS.COMPLETE;
+
+const resolveMeetingListDuration = (meeting: MeetingSummary): number => {
+  const status = meeting.status;
+  if (
+    status === MEETING_STATUS.IN_PROGRESS ||
+    status === MEETING_STATUS.PROCESSING
+  ) {
+    return Math.max(
+      0,
+      Math.floor((Date.now() - Date.parse(meeting.timestamp)) / 1000),
+    );
+  }
+  if (status == null && meeting.duration === 0) {
+    return Math.max(
+      0,
+      Math.floor((Date.now() - Date.parse(meeting.timestamp)) / 1000),
+    );
+  }
+  return meeting.duration;
+};
+
+const resolveMeetingListTags = (tags: MeetingSummary["tags"]) => tags ?? [];
+
+const resolveMeetingListNotes = (notes: MeetingSummary["notes"]) => notes ?? "";
+
+const resolveMeetingListNotesMessageId = (messageIds: string[] | undefined) =>
+  messageIds?.[0];
+
 const list = guildMemberProcedure
   .input(
     z.object({
@@ -577,35 +620,24 @@ const list = guildMemberProcedure
 
     return {
       meetings: allowedMeetings.map((meeting) => {
-        const channelId =
-          meeting.channelId ??
-          parseChannelIdTimestamp(meeting.channelId_timestamp).channelId;
+        const channelId = resolveMeetingListChannelId(meeting);
         return {
-          status: meeting.status ?? MEETING_STATUS.COMPLETE,
+          status: resolveMeetingListStatus(meeting.status),
           id: meeting.channelId_timestamp,
           meetingId: meeting.meetingId,
           channelId,
-          channelName: channelMap.get(channelId) ?? channelId,
+          channelName: resolveMeetingListChannelName(channelMap, channelId),
           timestamp: meeting.timestamp,
-          duration:
-            meeting.status === MEETING_STATUS.IN_PROGRESS ||
-            meeting.status === MEETING_STATUS.PROCESSING ||
-            ((meeting.status === null || meeting.status === undefined) &&
-              meeting.duration === 0)
-              ? Math.max(
-                  0,
-                  Math.floor(
-                    (Date.now() - Date.parse(meeting.timestamp)) / 1000,
-                  ),
-                )
-              : meeting.duration,
-          tags: meeting.tags ?? [],
-          notes: meeting.notes ?? "",
+          duration: resolveMeetingListDuration(meeting),
+          tags: resolveMeetingListTags(meeting.tags),
+          notes: resolveMeetingListNotes(meeting.notes),
           meetingName: meeting.meetingName,
           summarySentence: meeting.summarySentence,
           summaryLabel: meeting.summaryLabel,
           notesChannelId: meeting.notesChannelId,
-          notesMessageId: meeting.notesMessageIds?.[0],
+          notesMessageId: resolveMeetingListNotesMessageId(
+            meeting.notesMessageIds,
+          ),
           audioAvailable: Boolean(meeting.audioS3Key),
           transcriptAvailable: Boolean(meeting.transcriptS3Key),
           archivedAt: meeting.archivedAt,
