@@ -601,7 +601,7 @@ const list = guildMemberProcedure
       }
     }
 
-    let channels: Array<{ id: string; name: string; type: number }> = [];
+    let channels: Array<{ id: string; name: string; type: number }>;
     try {
       channels = await listGuildChannelsCached(input.serverId);
     } catch (err) {
@@ -848,7 +848,7 @@ const updateNotes = guildMemberProcedure
       });
     }
 
-    let markdownNotes = "";
+    let markdownNotes: string;
     try {
       markdownNotes = quillDeltaToMarkdown(input.delta);
     } catch (error) {

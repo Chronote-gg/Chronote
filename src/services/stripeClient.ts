@@ -8,7 +8,7 @@ export function getStripeClient(): Stripe | null {
     return stripeClient;
   }
   stripeClient = config.stripe.secretKey
-    ? new Stripe(config.stripe.secretKey, { apiVersion: "2025-12-15.clover" })
+    ? new Stripe(config.stripe.secretKey, { apiVersion: "2026-01-28.clover" })
     : null;
   return stripeClient;
 }
