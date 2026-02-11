@@ -1,0 +1,7 @@
+{
+  "bucket": "meeting-notes-transcripts",
+  "audioS3Key": "480695542155051010/1162985500995493959_3837e4e0-64e9-44ba-b5de-c3a6849832d6_2026-02-09T23-47-40.876Z/audio_combined.mp3",
+  "local_path": "analysis\\hallucination-audit\\3837e4e0-64e9-44ba-b5de-c3a6849832d6\\audio_combined.mp3",
+  "file_size_bytes": 55060268,
+  "duration_seconds": 3441.24
+}

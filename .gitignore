@@ -41,6 +41,11 @@ _infra_state_mgmt/.terraform
 /.opencode/langfuse.public
 /.opencode/langfuse.secret
 
+# python
+__pycache__/
+*.pyc
+/.husky/_/
+
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*

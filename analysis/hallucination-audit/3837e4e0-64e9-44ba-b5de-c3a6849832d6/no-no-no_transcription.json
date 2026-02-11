@@ -1,0 +1,18 @@
+{
+  "audio_file": "analysis\\hallucination-audit\\audio_cache\\V0Oe01QetGpVv1wji4jORD.mp3",
+  "model": "gpt-4o-transcribe",
+  "text": "Today, today, today.",
+  "raw": {
+    "text": "Today, today, today.",
+    "usage": {
+      "type": "tokens",
+      "total_tokens": 106,
+      "input_tokens": 98,
+      "input_token_details": {
+        "text_tokens": 0,
+        "audio_tokens": 98
+      },
+      "output_tokens": 8
+    }
+  }
+}

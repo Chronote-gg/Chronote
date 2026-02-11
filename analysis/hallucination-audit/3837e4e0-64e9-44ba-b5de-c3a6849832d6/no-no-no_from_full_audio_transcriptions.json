@@ -1,0 +1,40 @@
+{
+  "audio_file": "analysis\\hallucination-audit\\3837e4e0-64e9-44ba-b5de-c3a6849832d6\\no-no-no_from_full_audio.mp3",
+  "model": "gpt-4o-transcribe",
+  "results": [
+    {
+      "label": "no_prompt",
+      "text": "Today!",
+      "raw": {
+        "text": "Today!",
+        "usage": {
+          "type": "tokens",
+          "total_tokens": 122,
+          "input_tokens": 118,
+          "input_token_details": {
+            "text_tokens": 0,
+            "audio_tokens": 118
+          },
+          "output_tokens": 4
+        }
+      }
+    },
+    {
+      "label": "with_prompt",
+      "text": "Today, today.",
+      "raw": {
+        "text": "Today, today.",
+        "usage": {
+          "type": "tokens",
+          "total_tokens": 291,
+          "input_tokens": 285,
+          "input_token_details": {
+            "text_tokens": 167,
+            "audio_tokens": 118
+          },
+          "output_tokens": 6
+        }
+      }
+    }
+  ]
+}

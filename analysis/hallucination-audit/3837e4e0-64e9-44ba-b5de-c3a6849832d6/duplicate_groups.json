@@ -1,0 +1,4786 @@
+{
+  "1": [
+    {
+      "trace_id": "1e8da7f2b4760ba7667649994c219f3c",
+      "output_text": "Are you playing PowerWash Sim 2 also? Want to play with me?",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "9da778bee22f01aae608153360a372c9",
+      "output_text": "Are you playing PowerWash Sim 2 also? Want to play with me?",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    }
+  ],
+  "2": [
+    {
+      "trace_id": "44d0005b76b33100c52c6bee8c25c27f",
+      "output_text": "Yes, yes. I'm playing PowerWash Simulator and you're playing PowerWash Simulator too. I noticed that on the Smash. Yeah, I'm playing the first one, but yeah. I saw on two they're gonna get that Adventure Time DLC in like April. That looks pretty fun.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "cbe16a4aa4631400553428756d911d39",
+      "output_text": "Yes, yes. I'm playing PowerWash Simulator and you're playing PowerWash Simulator too. I noticed that on the Smash. Yeah, I'm playing the first one, but yeah. I saw on two they're gonna get that Adventure Time DLC in like April. That looks pretty fun.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    }
+  ],
+  "3": [
+    {
+      "trace_id": "493c0e45d911b5d31786330f6299eb58",
+      "output_text": "Hey BASIC",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "24d26b941a9c0a85c8680dec1d87df9e",
+      "output_text": "Hey BASIC.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    }
+  ],
+  "4": [
+    {
+      "trace_id": "52290ab5e3b420c86b9b39b4c3d7c697",
+      "output_text": "Hello",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "d7baced21b465d6d70574779fa1ff522",
+      "output_text": "Hello",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "76f9b8b15c72e099a575251f9d9aaac9",
+      "output_text": "Hello",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "07aaab58857fca0fe03d46c574213622",
+      "output_text": "Hello",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "8e5768dc73519a0e49e89b699a996740",
+      "output_text": "Hello",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "8889646d42fe55605c4f432ce4fe8df4",
+      "output_text": "Hello",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "dd18db76afe991dccb62237332d728ac",
+      "output_text": "Hello",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "bfa1e3fcbfb0c9a4813d4102cca29be4",
+      "output_text": "Hello",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "2f4335b33d67c2f2b0ae65455cd3e7a2",
+      "output_text": "Hello",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "5c346c9e932b966c81e4489d2af1fa70",
+      "output_text": "Hello",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "1d7e49fcc1afc82ef965a24b23194437",
+      "output_text": "Hello",
+      "classification": "unknown",
+      "classification_reasons": [
+        "mixed_signals"
+      ]
+    }
+  ],
+  "5": [
+    {
+      "trace_id": "e7da5e0908d6a86ad3b3ee7911f8e795",
+      "output_text": "Nope",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "2838c04ac97a9ff89f24c0fc7a62f258",
+      "output_text": "Nope",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "ad1826f94506206e23e83f97d923317f",
+      "output_text": "Nope.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "1e70413abaa48ad07b7959bf3479efeb",
+      "output_text": "Nope.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "c7d5fd8cc4385c2f9031572767a0a067",
+      "output_text": "Nope.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    }
+  ],
+  "6": [
+    {
+      "trace_id": "be35a69e8595caf49837c54753990a9c",
+      "output_text": "How's it going?",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "bf48adacd5f12a5d48c662446a9305ef",
+      "output_text": "How's it going?",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    }
+  ],
+  "7": [
+    {
+      "trace_id": "8d11f02beddfca9e260eb08de2792c53",
+      "output_text": "Blackbelt33: Alright, let's get started.",
+      "classification": "unknown",
+      "classification_reasons": [
+        "mixed_signals"
+      ]
+    },
+    {
+      "trace_id": "0521e6594a2163677106567c70ef2c97",
+      "output_text": "Blackbelt33: Alright, let's get started.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "01d44332ff9ffe2b236e0dbaea4f1c6d",
+      "output_text": "Blackbelt33: Alright, let's get started.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    }
+  ],
+  "8": [
+    {
+      "trace_id": "2cf0821ca1312b194ea407865a48436b",
+      "output_text": "Hi Celeste",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "d198a8a561ac1ecd70eec181e3f9cbe5",
+      "output_text": "Hi Celeste",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "938817c1c918309614667c9da120aaf8",
+      "output_text": "Hi Celeste",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    }
+  ],
+  "9": [
+    {
+      "trace_id": "693b4bd64c258db955bc7ce133eed454",
+      "output_text": "Um",
+      "classification": "unknown",
+      "classification_reasons": [
+        "mixed_signals"
+      ]
+    },
+    {
+      "trace_id": "0b5fccf33989c39648e4d4f4065e14ee",
+      "output_text": "Um",
+      "classification": "unknown",
+      "classification_reasons": [
+        "mixed_signals"
+      ]
+    },
+    {
+      "trace_id": "f7129707a37108d97e83e655374a61d5",
+      "output_text": "Um",
+      "classification": "unknown",
+      "classification_reasons": [
+        "mixed_signals"
+      ]
+    },
+    {
+      "trace_id": "4d61569c4e90df79d9e595b45030ab8e",
+      "output_text": "Um",
+      "classification": "unknown",
+      "classification_reasons": [
+        "mixed_signals"
+      ]
+    },
+    {
+      "trace_id": "a0ed10fcd2ce272024e19aade1e7022f",
+      "output_text": "Um...",
+      "classification": "unknown",
+      "classification_reasons": [
+        "mixed_signals"
+      ]
+    },
+    {
+      "trace_id": "54306b83bcd0c0878305ecd7db9cd3c8",
+      "output_text": "Um",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "ff127cbd30e082508f60fe8109b7ff6c",
+      "output_text": "Um...",
+      "classification": "unknown",
+      "classification_reasons": [
+        "mixed_signals"
+      ]
+    }
+  ],
+  "10": [
+    {
+      "trace_id": "4b2fa5046022393fd05c4df69e0d6c5c",
+      "output_text": "Hello hello",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "707f023ecece1bf83fce0102e01a9022",
+      "output_text": "Hello hello",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "a42686722f4bbedbbf9640698b95c036",
+      "output_text": "Hello, hello",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "898fd08f37826695db09d2ca9335c2ff",
+      "output_text": "Hello, hello",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "f4fd10ab5017d31d428cffcc446f18ad",
+      "output_text": "Hello hello",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "bb29c96b0e5996483cbcb11386909d68",
+      "output_text": "Hello hello",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    }
+  ],
+  "11": [
+    {
+      "trace_id": "d4df4ab6a9d446da2831c0aa26f9a74e",
+      "output_text": "Hello Celeste",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "47a8a38dd4a525134c263fbe391ca543",
+      "output_text": "Hello Celeste",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    }
+  ],
+  "12": [
+    {
+      "trace_id": "df01257856d00e5c8113201139a041dc",
+      "output_text": "Ah",
+      "classification": "unknown",
+      "classification_reasons": [
+        "mixed_signals"
+      ]
+    },
+    {
+      "trace_id": "6bbe3b51b5eb9da042f1a7393a0ac59a",
+      "output_text": "Ah",
+      "classification": "unknown",
+      "classification_reasons": [
+        "mixed_signals"
+      ]
+    },
+    {
+      "trace_id": "a9a45ec7c856ab65ee35011f1c8efc75",
+      "output_text": "Ah",
+      "classification": "unknown",
+      "classification_reasons": [
+        "mixed_signals"
+      ]
+    },
+    {
+      "trace_id": "4a096b50441141237b7b48eafe966983",
+      "output_text": "Ah",
+      "classification": "unknown",
+      "classification_reasons": [
+        "mixed_signals"
+      ]
+    }
+  ],
+  "13": [
+    {
+      "trace_id": "5ae82ee12651a5d465dd72322eeefada",
+      "output_text": "How goes?",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "161a310c7567982e53d756612ad09618",
+      "output_text": "How goes?",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    }
+  ],
+  "14": [
+    {
+      "trace_id": "bfb0d757afccb4f6510dfe82ebf8582a",
+      "output_text": "Alright.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "c066855e6d10f23a3429b332d5006d18",
+      "output_text": "Alright.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "c29d15dbb8128b09248828bc7b72e5cf",
+      "output_text": "Alright.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "1dd9a352b66071ae57cef3f83515c5a9",
+      "output_text": "Alright.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "342a1415cdffbfe637febd9c44ef2b7d",
+      "output_text": "Alright.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "916ffcf463744e1eb0db2685f2574843",
+      "output_text": "Alright,",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "035966cb8c12afaa8202961a5ef6b924",
+      "output_text": "Alright",
+      "classification": "unknown",
+      "classification_reasons": [
+        "mixed_signals"
+      ]
+    }
+  ],
+  "15": [
+    {
+      "trace_id": "b403a0d0f90f6d8ab6ceaff7a68a0fd2",
+      "output_text": "I mean, well, he was",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "45f124c99bdbf1b173825f5bde822a6d",
+      "output_text": "I mean, well, he was",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "45ec0a877d7ea95e286bf4214c6c1c32",
+      "output_text": "I mean, well, he was",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "40e9f43efb7f5283725c6f9322e3a557",
+      "output_text": "I mean, well, he was...",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "fbc558c434a41a33542c3936cadd7954",
+      "output_text": "I mean, well, he was...",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "7a8033e73a003348a237b7c5d629529c",
+      "output_text": "I mean, well, he was",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "455bb89480e92069384381fbb0fe4c10",
+      "output_text": "I mean, well, he was...",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    }
+  ],
+  "16": [
+    {
+      "trace_id": "a62459ed537344375bf2835d92c76534",
+      "output_text": "Hello, hello, everybody.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "b8e382ca7bc901f14ebfbb1b95188340",
+      "output_text": "Hello, hello, everybody.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    }
+  ],
+  "17": [
+    {
+      "trace_id": "b8e6f539f8dbb77d3c1d1ef84941691b",
+      "output_text": "Yeah",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "6a002bdc3356293b76801c5f085ba753",
+      "output_text": "Yeah",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "a1119f69cfb77187ab20638b20cea488",
+      "output_text": "Yeah,",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "0566d6ee72f20ada6c91a03636667a50",
+      "output_text": "Yeah.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "25f7c1fb8d8437830f33814e45d6918e",
+      "output_text": "Yeah,",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "d8cb0cf10f53ebe578b4955ef2d5850a",
+      "output_text": "Yeah.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "801a39975f516c5565db5f75fe908988",
+      "output_text": "Yeah.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "64d0f99b201de09dc097eb08b465cea9",
+      "output_text": "Yeah",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "b9b0a338078e5ce938902f0d6f8f30a1",
+      "output_text": "Yeah.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "73f9cd9b7903f836ca76d9812c342d3e",
+      "output_text": "Yeah.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "4d8ad6901c3869e428b9e3935f393cd7",
+      "output_text": "Yeah",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "963f67deb98811622246c61ba9f68264",
+      "output_text": "Yeah",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "f9879c0ba1567564048ebeb8aa95a61e",
+      "output_text": "Yeah",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "c05e97a38c7ba672894bc98a92e7472f",
+      "output_text": "Yeah",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "44f49f0545664286027c8e07bf6de1f0",
+      "output_text": "Yeah.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "e15c10f9d305bc723a17b61070c3b933",
+      "output_text": "Yeah.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "b24c95a5d9a2036d3d6752adfba14a3e",
+      "output_text": "Yeah",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "90a0cbcfff933cfa633d781841f98fba",
+      "output_text": "Yeah",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "c923c4f53c939ffc1ecf4b048a06193e",
+      "output_text": "Yeah",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "1e2e5107330770c9fafa69afb13910f1",
+      "output_text": "Yeah.",
+      "classification": "unknown",
+      "classification_reasons": [
+        "mixed_signals"
+      ]
+    },
+    {
+      "trace_id": "e62627cc2d2276dcb8084ae67a3d5fde",
+      "output_text": "Yeah.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "597ba4008c06de2f66b0816707e44fda",
+      "output_text": "Yeah.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "5c1b866d55221a0f9ed8812ff98d7a64",
+      "output_text": "Yeah.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "693a06fd4dd2f7a9ba6c093dbeab8492",
+      "output_text": "Yeah",
+      "classification": "unknown",
+      "classification_reasons": [
+        "mixed_signals"
+      ]
+    },
+    {
+      "trace_id": "b0a720a43d269d6a8cbf3c02f1c50e80",
+      "output_text": "Yeah.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    }
+  ],
+  "18": [
+    {
+      "trace_id": "5b57d7575138da38e2eac1d10d3a997d",
+      "output_text": "Hey, what's up?",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "5064850e1499cccf706e98692aa1849c",
+      "output_text": "Hey, what's up?",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    }
+  ],
+  "19": [
+    {
+      "trace_id": "7e2af682c36c930d962a2e569c058592",
+      "output_text": "I have a question.",
+      "classification": "unknown",
+      "classification_reasons": [
+        "mixed_signals"
+      ]
+    },
+    {
+      "trace_id": "0dd6cc725a925b1a1ede869311e292ab",
+      "output_text": "I have a question.",
+      "classification": "unknown",
+      "classification_reasons": [
+        "mixed_signals"
+      ]
+    }
+  ],
+  "20": [
+    {
+      "trace_id": "764b2960044a631a90e5c1c5c553cca3",
+      "output_text": "Meow",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "162f0e51d9e86768cdf39a045ec99695",
+      "output_text": "Meow",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    }
+  ],
+  "21": [
+    {
+      "trace_id": "b087470dc1fcc530497a0c709a6fa025",
+      "output_text": "What's up foxy",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "666faff347056900ad59071833b37bb3",
+      "output_text": "What's up foxy?",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    }
+  ],
+  "22": [
+    {
+      "trace_id": "55e6b8411e1c03999e3f8dabde5ab6bc",
+      "output_text": "I'm gonna go make another cup of coffee.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "20e08ad84b18c60cc9e0cf4451839ba6",
+      "output_text": "I'm gonna go make another cup of coffee.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    }
+  ],
+  "23": [
+    {
+      "trace_id": "0a9b851d4e6a43427f13d6771c13ce5a",
+      "output_text": "Nom nom",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "ffdc31a621367d7d4b3a920e22f5b3a6",
+      "output_text": "Nom nom",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    }
+  ],
+  "24": [
+    {
+      "trace_id": "4616355b6dde26fa6cbefe8e2b264454",
+      "output_text": "Need",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "c5b4eee62ae9e5424c464f46bdaf1db6",
+      "output_text": "Need",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    }
+  ],
+  "25": [
+    {
+      "trace_id": "649367f7cfdde2197e8a99ab23872125",
+      "output_text": "Get yourself a cup of joe.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "beae94ec700ffcc2660a6f51c08ca5ad",
+      "output_text": "Get yourself a cup of joe.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    }
+  ],
+  "26": [
+    {
+      "trace_id": "0a35c392b6ce655842f9f5fc061dbbe4",
+      "output_text": "Yas",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "48ce0186533d901ec67441bb9cbd7813",
+      "output_text": "Yas",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    }
+  ],
+  "27": [
+    {
+      "trace_id": "9920c04ac750ccbc33f342db46209165",
+      "output_text": "More caffeine.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "c35d4907302596986c41c53edcb1af01",
+      "output_text": "More caffeine.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    }
+  ],
+  "28": [
+    {
+      "trace_id": "49613043dfd93beff54006c7d2e2e5f0",
+      "output_text": "*laughs*",
+      "classification": "unknown",
+      "classification_reasons": [
+        "mixed_signals"
+      ]
+    },
+    {
+      "trace_id": "95fc0f6c568a6f82494f5314da75a58b",
+      "output_text": "*laughs*",
+      "classification": "unknown",
+      "classification_reasons": [
+        "mixed_signals"
+      ]
+    },
+    {
+      "trace_id": "72c34a3ca191534a316a0fc457be498e",
+      "output_text": "*laughs*",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "a72d85d72e992986dbfc4ea4a662aaa6",
+      "output_text": "*laughs*",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    }
+  ],
+  "29": [
+    {
+      "trace_id": "64fc779c1bffb76e0bc1a8e9d254d584",
+      "output_text": "and",
+      "classification": "unknown",
+      "classification_reasons": [
+        "mixed_signals"
+      ]
+    },
+    {
+      "trace_id": "698f00332ecdcaca20b636cfb70c0b72",
+      "output_text": "and",
+      "classification": "unknown",
+      "classification_reasons": [
+        "mixed_signals"
+      ]
+    }
+  ],
+  "30": [
+    {
+      "trace_id": "b8d7540cf9ee16a4252abac8450ee933",
+      "output_text": "Yes, some coffee is needed. How's everybody doing?",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "de2ae5a3c3abcdd8174de6157d4f8753",
+      "output_text": "Yes, some coffee is needed. How's everybody doing?",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "f80a7aac57f51ae69e20a263f57b8279",
+      "output_text": "Yes, some coffee is needed. How's everybody doing?",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    }
+  ],
+  "31": [
+    {
+      "trace_id": "cd6f6153a2a9ecad763d9433520be50d",
+      "output_text": "The Den",
+      "classification": "unknown",
+      "classification_reasons": [
+        "mixed_signals"
+      ]
+    },
+    {
+      "trace_id": "dd03427b1964ba3a3d5247f264c98a81",
+      "output_text": "The Den",
+      "classification": "unknown",
+      "classification_reasons": [
+        "mixed_signals"
+      ]
+    },
+    {
+      "trace_id": "99261d56c90e4e797d0bb25a58852dd9",
+      "output_text": "The Den",
+      "classification": "unknown",
+      "classification_reasons": [
+        "mixed_signals"
+      ]
+    },
+    {
+      "trace_id": "39cdf6b3f3aef0db6d8e9d4fff3a50c2",
+      "output_text": "The Den",
+      "classification": "unknown",
+      "classification_reasons": [
+        "mixed_signals"
+      ]
+    },
+    {
+      "trace_id": "530810f06cd753117955a28d634c2aed",
+      "output_text": "The Den",
+      "classification": "unknown",
+      "classification_reasons": [
+        "mixed_signals"
+      ]
+    },
+    {
+      "trace_id": "b44d11cf7357f9b1bd2d3af4c2a12219",
+      "output_text": "The Den",
+      "classification": "unknown",
+      "classification_reasons": [
+        "mixed_signals"
+      ]
+    }
+  ],
+  "32": [
+    {
+      "trace_id": "799cb72e77b7d1f35453e8b45d2f0efd",
+      "output_text": "Trying to get everything done all the time.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "edd5aed77bc09978247e4d649ec6a782",
+      "output_text": "Trying to get everything done all the time.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    }
+  ],
+  "33": [
+    {
+      "trace_id": "e4bc7ae2cef2bbec5e2c3ee88aa1d034",
+      "output_text": "I think Donald's.",
+      "classification": "unknown",
+      "classification_reasons": [
+        "mixed_signals"
+      ]
+    },
+    {
+      "trace_id": "50705958822557217d4aa75ee7d1ce31",
+      "output_text": "I think Donald's",
+      "classification": "unknown",
+      "classification_reasons": [
+        "mixed_signals"
+      ]
+    }
+  ],
+  "34": [
+    {
+      "trace_id": "6d88fae7c59d60e18cea244919935ea1",
+      "output_text": "I see",
+      "classification": "unknown",
+      "classification_reasons": [
+        "mixed_signals"
+      ]
+    },
+    {
+      "trace_id": "18b0d089e128c8cd0c2c91ebbc0b5ea2",
+      "output_text": "I see.",
+      "classification": "unknown",
+      "classification_reasons": [
+        "mixed_signals"
+      ]
+    },
+    {
+      "trace_id": "4a2347e72ec6dffbb8d743b822916769",
+      "output_text": "I see.",
+      "classification": "unknown",
+      "classification_reasons": [
+        "mixed_signals"
+      ]
+    }
+  ],
+  "35": [
+    {
+      "trace_id": "05cb1dc533949bdd1a794a58cc8ef9ca",
+      "output_text": "It still never works.",
+      "classification": "unknown",
+      "classification_reasons": [
+        "quiet_audio"
+      ]
+    },
+    {
+      "trace_id": "c9ce9d97328b8972a14c38b4493c37b5",
+      "output_text": "It still never works.",
+      "classification": "unknown",
+      "classification_reasons": [
+        "quiet_audio"
+      ]
+    },
+    {
+      "trace_id": "8f3a23dc1920ac56eaaa60f9f6fe8e0a",
+      "output_text": "It still never works.",
+      "classification": "unknown",
+      "classification_reasons": [
+        "quiet_audio"
+      ]
+    }
+  ],
+  "36": [
+    {
+      "trace_id": "d715a187e23138cda0543d2af1373166",
+      "output_text": "Yes",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "8f0059b49aa7147e8b09ad3dcf1af9bd",
+      "output_text": "Yes",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "42d2b6325b5b5f5be69739fedeca32c6",
+      "output_text": "Yes.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "4606f5f4ee186099068ec15dd635de7d",
+      "output_text": "Yes.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "2afdf8dbe6a58a9dad3f68adaad90f3a",
+      "output_text": "Yes",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "fceb04c1a2111a90bf5f2bc3df666f84",
+      "output_text": "Yes",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    }
+  ],
+  "37": [
+    {
+      "trace_id": "a0ddfd4c4299e2cdbcf0eabd3a1a5d88",
+      "output_text": "Hmm",
+      "classification": "unknown",
+      "classification_reasons": [
+        "mixed_signals"
+      ]
+    },
+    {
+      "trace_id": "7671756af50a9b275ff077b942b08fd0",
+      "output_text": "Hmm",
+      "classification": "unknown",
+      "classification_reasons": [
+        "mixed_signals"
+      ]
+    },
+    {
+      "trace_id": "952d62d81d7612c153f4fbb791c903be",
+      "output_text": "Hmm",
+      "classification": "unknown",
+      "classification_reasons": [
+        "mixed_signals"
+      ]
+    },
+    {
+      "trace_id": "53b13c7a667a4fe26a05b6bff3e3e9ff",
+      "output_text": "Hmm",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "3829a88fc763740424a3b7b7be6556bb",
+      "output_text": "Hmm",
+      "classification": "unknown",
+      "classification_reasons": [
+        "mixed_signals"
+      ]
+    },
+    {
+      "trace_id": "0dc2f63a873342dc82d91a104ffee494",
+      "output_text": "Hmm",
+      "classification": "unknown",
+      "classification_reasons": [
+        "mixed_signals"
+      ]
+    },
+    {
+      "trace_id": "1ecb375edfba91e21bbf0fb5b12e16ea",
+      "output_text": "Hmm",
+      "classification": "unknown",
+      "classification_reasons": [
+        "mixed_signals"
+      ]
+    },
+    {
+      "trace_id": "d50b9b3e2505b2aed0aa104137f05d84",
+      "output_text": "Hmm",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "bb4fb787dddaeaaf913e07ef22fdaedc",
+      "output_text": "Hmm",
+      "classification": "unknown",
+      "classification_reasons": [
+        "mixed_signals"
+      ]
+    }
+  ],
+  "38": [
+    {
+      "trace_id": "04c8ac298f49e29df9074ee53e624290",
+      "output_text": "Welcome Alpha.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "7d41c3476373941b7c294ac4f4a5c7d7",
+      "output_text": "Welcome Alpha.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "1f996254320c3ddb8dc2b7404ba519e8",
+      "output_text": "Welcome, Alpha.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    }
+  ],
+  "39": [
+    {
+      "trace_id": "731e7cc796938bdfba1724bf0ef1de44",
+      "output_text": "Yeah, it's also the global to do it. Welcome, welcome.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "5b654e4e855c10d48c7800a42e12a44e",
+      "output_text": "Yeah, it's also the global to do it. Welcome, welcome.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    }
+  ],
+  "40": [
+    {
+      "trace_id": "22d67f46937a737b5bc313d4ef56884f",
+      "output_text": "Hola!",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "dd0a7d95223aa772ab0ef2a8b4dfd47b",
+      "output_text": "Hola!",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    }
+  ],
+  "41": [
+    {
+      "trace_id": "fb8d07fa47239a77b20a241d582a3d5a",
+      "output_text": "Hello, everyone.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "35f32618ccf4a69a1c2221ca1b59b997",
+      "output_text": "Hello, everyone.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    }
+  ],
+  "42": [
+    {
+      "trace_id": "e763db2baa350c7390a583bb832b3373",
+      "output_text": "Welcome, welcome.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "f1095d18b37b5c54dc7f553c205bb69e",
+      "output_text": "Welcome, welcome.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "6ebb816965fb44e7c23891922f4b7511",
+      "output_text": "Welcome, welcome.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "e47f7236a8bd1a9ca335a9dfe845e1c7",
+      "output_text": "Welcome, welcome.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    }
+  ],
+  "43": [
+    {
+      "trace_id": "32fd35d3014ae92a439642e0a512c9cf",
+      "output_text": "Once you get something done, you're like, \"Oh, I can take something else on.\" How's the drive home from work?",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "3557fb28a005eff97c7835d2ed07a862",
+      "output_text": "Once you get something done, you're like, \"Oh, I can take something else on.\" How's the drive home from work?",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    }
+  ],
+  "44": [
+    {
+      "trace_id": "1d928f8c15f54890a2489d54d53bc2c5",
+      "output_text": "Oh yeah.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "358a18dc82315808a4251027ca6c5fd8",
+      "output_text": "Oh yeah.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "f57e580c90192e1abeeb49b78cbfdf44",
+      "output_text": "Oh, yeah.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    }
+  ],
+  "45": [
+    {
+      "trace_id": "2605bccc83ea04a8087aa55b37320d79",
+      "output_text": "While I'm at this traffic light before it changes",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "178bc1eb8725d0d7be7de65d0e278e6e",
+      "output_text": "While I'm at this traffic light before it changes",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    }
+  ],
+  "46": [
+    {
+      "trace_id": "239f384e4079419af5586b2d972c3e44",
+      "output_text": "Blackbelt33: I think we should start with the Vket event.",
+      "classification": "unknown",
+      "classification_reasons": [
+        "mixed_signals"
+      ]
+    },
+    {
+      "trace_id": "9a4f4341799fb2a286ff66cac6219072",
+      "output_text": "Blackbelt33: I think we should start with the Vket event.",
+      "classification": "unknown",
+      "classification_reasons": [
+        "mixed_signals"
+      ]
+    },
+    {
+      "trace_id": "f0de45af683b13b33f17c94fd180ff0d",
+      "output_text": "Blackbelt33: I think we should start with the Vket event.",
+      "classification": "unknown",
+      "classification_reasons": [
+        "mixed_signals"
+      ]
+    },
+    {
+      "trace_id": "deca1f2221e7c1947a3bb30a3f5a02c9",
+      "output_text": "Blackbelt33: I think we should start with the Vket event.",
+      "classification": "unknown",
+      "classification_reasons": [
+        "mixed_signals"
+      ]
+    },
+    {
+      "trace_id": "5e4c4db7a1d426a980eaacfebe17df3e",
+      "output_text": "Blackbelt33: I think we should start with the Vket event.",
+      "classification": "unknown",
+      "classification_reasons": [
+        "mixed_signals"
+      ]
+    },
+    {
+      "trace_id": "31e759e7d0025c965311a56541d21585",
+      "output_text": "Blackbelt33: I think we should start with the Vket event.",
+      "classification": "unknown",
+      "classification_reasons": [
+        "mixed_signals"
+      ]
+    },
+    {
+      "trace_id": "38d9d895456be70704b944f2857ed989",
+      "output_text": "Blackbelt33: I think we should start with the Vket event.",
+      "classification": "unknown",
+      "classification_reasons": [
+        "mixed_signals"
+      ]
+    },
+    {
+      "trace_id": "17f8e7e5bbeb55150fd13747da696edc",
+      "output_text": "Blackbelt33: I think we should start with the Vket event.",
+      "classification": "unknown",
+      "classification_reasons": [
+        "mixed_signals"
+      ]
+    },
+    {
+      "trace_id": "8c5be1c76752dad7fb24a820b5ab8a53",
+      "output_text": "Blackbelt33: I think we should start with the Vket event.",
+      "classification": "unknown",
+      "classification_reasons": [
+        "mixed_signals"
+      ]
+    },
+    {
+      "trace_id": "982bf4d7b275ed699e85796945d756d2",
+      "output_text": "Blackbelt33: I think we should start with the Vket event.",
+      "classification": "unknown",
+      "classification_reasons": [
+        "mixed_signals"
+      ]
+    },
+    {
+      "trace_id": "25dd46848b691924926e5679465360be",
+      "output_text": "Blackbelt33: I think we should start with the Vket event.",
+      "classification": "unknown",
+      "classification_reasons": [
+        "mixed_signals"
+      ]
+    },
+    {
+      "trace_id": "2c5102e04b9f73034cad7e56e1a829cd",
+      "output_text": "Blackbelt33: I think we should start with the Vket event.",
+      "classification": "unknown",
+      "classification_reasons": [
+        "mixed_signals"
+      ]
+    },
+    {
+      "trace_id": "29ad34db0964c735d230e3e5cd24b42c",
+      "output_text": "Blackbelt33: I think we should start with the Vket event.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "0f223d51cbc250ba50a4e5284f032ba8",
+      "output_text": "Blackbelt33: I think we should start with the Vket event.",
+      "classification": "unknown",
+      "classification_reasons": [
+        "quiet_audio"
+      ]
+    },
+    {
+      "trace_id": "e6f33bc3e6838ed3c4ce7589fb9f31b3",
+      "output_text": "Blackbelt33: I think we should start with the Vket event.",
+      "classification": "unknown",
+      "classification_reasons": [
+        "mixed_signals"
+      ]
+    },
+    {
+      "trace_id": "d6b6a632f7377b4abee66d3ecf0b430d",
+      "output_text": "Blackbelt33: I think we should start with the Vket event.",
+      "classification": "unknown",
+      "classification_reasons": [
+        "mixed_signals"
+      ]
+    },
+    {
+      "trace_id": "df17229060641b729c34e6461a1361cc",
+      "output_text": "Blackbelt33: I think we should start with the Vket event.",
+      "classification": "unknown",
+      "classification_reasons": [
+        "mixed_signals"
+      ]
+    },
+    {
+      "trace_id": "f3b1e31f5c96deab325aa13afd8ec726",
+      "output_text": "Blackbelt33: I think we should start with the Vket event.",
+      "classification": "unknown",
+      "classification_reasons": [
+        "mixed_signals"
+      ]
+    },
+    {
+      "trace_id": "2b0a74b292a4c91e2d9fc128c8a9acef",
+      "output_text": "Blackbelt33: I think we should start with the Vket event.",
+      "classification": "unknown",
+      "classification_reasons": [
+        "mixed_signals"
+      ]
+    },
+    {
+      "trace_id": "b094eed0e8d217bd6759927ec6087a93",
+      "output_text": "Blackbelt33: I think we should start with the Vket event.",
+      "classification": "unknown",
+      "classification_reasons": [
+        "mixed_signals"
+      ]
+    },
+    {
+      "trace_id": "df6d5dde7b23a1c5dc5412f09117c66c",
+      "output_text": "Blackbelt33: I think we should start with the Vket event.",
+      "classification": "unknown",
+      "classification_reasons": [
+        "mixed_signals"
+      ]
+    },
+    {
+      "trace_id": "0fb144f95ffe997aef5b057e537725b5",
+      "output_text": "Blackbelt33: I think we should start with the Vket event.",
+      "classification": "unknown",
+      "classification_reasons": [
+        "quiet_audio"
+      ]
+    },
+    {
+      "trace_id": "71bb0b9a32351f39fd27997da72680d0",
+      "output_text": "Blackbelt33: I think we should start with the Vket event.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    }
+  ],
+  "47": [
+    {
+      "trace_id": "aeb487d17496882137a0addb5ac9be33",
+      "output_text": "I think we should start with the Vket event.",
+      "classification": "unknown",
+      "classification_reasons": [
+        "mixed_signals"
+      ]
+    },
+    {
+      "trace_id": "1ebf857d984b8b76da9c22b8ae2ad92e",
+      "output_text": "I think we should start with the Vket event.",
+      "classification": "unknown",
+      "classification_reasons": [
+        "mixed_signals"
+      ]
+    },
+    {
+      "trace_id": "bab0203b6ee4b936fbee885f14356502",
+      "output_text": "I think we should start with the Vket event.",
+      "classification": "unknown",
+      "classification_reasons": [
+        "mixed_signals"
+      ]
+    },
+    {
+      "trace_id": "4686104042c4f834e8cf9dd9a6333a18",
+      "output_text": "I think we should start with the Vket event.",
+      "classification": "unknown",
+      "classification_reasons": [
+        "mixed_signals"
+      ]
+    },
+    {
+      "trace_id": "3e30cbd8e65426799d507a8a41ac1e75",
+      "output_text": "I think we should start with the Vket event.",
+      "classification": "unknown",
+      "classification_reasons": [
+        "mixed_signals"
+      ]
+    },
+    {
+      "trace_id": "da5d5b6646be0306cb328eafee028ec7",
+      "output_text": "I think we should start with the Vket event.",
+      "classification": "unknown",
+      "classification_reasons": [
+        "mixed_signals"
+      ]
+    },
+    {
+      "trace_id": "6919779e19a72f759a2e6bd5b8672477",
+      "output_text": "I think we should start with the Vket event.",
+      "classification": "unknown",
+      "classification_reasons": [
+        "mixed_signals"
+      ]
+    },
+    {
+      "trace_id": "1fda24714b97db4b4ea80c35d37d81ac",
+      "output_text": "I think we should start with the Vket event.",
+      "classification": "unknown",
+      "classification_reasons": [
+        "mixed_signals"
+      ]
+    },
+    {
+      "trace_id": "22bbed596e0d6db594cff3b0d3859452",
+      "output_text": "I think we should start with the Vket event.",
+      "classification": "unknown",
+      "classification_reasons": [
+        "mixed_signals"
+      ]
+    },
+    {
+      "trace_id": "41def9753b038e2bfabe53006ffa795c",
+      "output_text": "I think we should start with the Vket event.",
+      "classification": "unknown",
+      "classification_reasons": [
+        "mixed_signals"
+      ]
+    },
+    {
+      "trace_id": "3cc13270e9657b29cad3a63e16780a6b",
+      "output_text": "I think we should start with the Vket event.",
+      "classification": "unknown",
+      "classification_reasons": [
+        "mixed_signals"
+      ]
+    },
+    {
+      "trace_id": "9a09b15765539e56e7b8aa3100456705",
+      "output_text": "I think we should start with the Vket event.",
+      "classification": "unknown",
+      "classification_reasons": [
+        "mixed_signals"
+      ]
+    },
+    {
+      "trace_id": "56d90de97ba42459c5d0f3d18a9bda69",
+      "output_text": "I think we should start with the Vket event.",
+      "classification": "unknown",
+      "classification_reasons": [
+        "mixed_signals"
+      ]
+    },
+    {
+      "trace_id": "09de103a6ac212c962038a02abf27b46",
+      "output_text": "I think we should start with the Vket event.",
+      "classification": "unknown",
+      "classification_reasons": [
+        "mixed_signals"
+      ]
+    },
+    {
+      "trace_id": "333d4f2d2774e7e5eef843f5c2b615a2",
+      "output_text": "I think we should start with the Vket event.",
+      "classification": "unknown",
+      "classification_reasons": [
+        "mixed_signals"
+      ]
+    },
+    {
+      "trace_id": "a0ce53cd1b15a9adc698d0fa78614d4b",
+      "output_text": "I think we should start with the Vket event.",
+      "classification": "unknown",
+      "classification_reasons": [
+        "mixed_signals"
+      ]
+    },
+    {
+      "trace_id": "ffe622bdeb089c2805f25422042a2dd5",
+      "output_text": "I think we should start with the Vket event.",
+      "classification": "unknown",
+      "classification_reasons": [
+        "mixed_signals"
+      ]
+    },
+    {
+      "trace_id": "24e53de18860bcc1192f636b06f7252f",
+      "output_text": "I think we should start with the Vket event.",
+      "classification": "unknown",
+      "classification_reasons": [
+        "mixed_signals"
+      ]
+    },
+    {
+      "trace_id": "eef7f1eeabe80632b638a9e6dee93b86",
+      "output_text": "I think we should start with the Vket event.",
+      "classification": "unknown",
+      "classification_reasons": [
+        "mixed_signals"
+      ]
+    },
+    {
+      "trace_id": "18fef976757865db6af29c0ef67995d3",
+      "output_text": "I think we should start with the Vket event.",
+      "classification": "unknown",
+      "classification_reasons": [
+        "mixed_signals"
+      ]
+    },
+    {
+      "trace_id": "a7d57e01f5218ed04cee783c11906750",
+      "output_text": "I think we should start with the Vket event.",
+      "classification": "unknown",
+      "classification_reasons": [
+        "mixed_signals"
+      ]
+    },
+    {
+      "trace_id": "06f4c654e6d6283f00def9c16891f91d",
+      "output_text": "I think we should start with the Vket event.",
+      "classification": "unknown",
+      "classification_reasons": [
+        "mixed_signals"
+      ]
+    },
+    {
+      "trace_id": "2aa80e6782f45f0c89686a421b610c21",
+      "output_text": "I think we should start with the Vket event.",
+      "classification": "unknown",
+      "classification_reasons": [
+        "mixed_signals"
+      ]
+    },
+    {
+      "trace_id": "b8ac5039a5ebf6aa231d007c77e5ade2",
+      "output_text": "I think we should start with the Vket event.",
+      "classification": "unknown",
+      "classification_reasons": [
+        "mixed_signals"
+      ]
+    }
+  ],
+  "48": [
+    {
+      "trace_id": "964a6b8a87e14702f8ce8dd25655f252",
+      "output_text": "I think we should have a meeting to discuss the upcoming Vket event.",
+      "classification": "unknown",
+      "classification_reasons": [
+        "mixed_signals"
+      ]
+    },
+    {
+      "trace_id": "e83c2bcaa83a233baefbe5dd5f0b34b3",
+      "output_text": "I think we should have a meeting to discuss the upcoming Vket event.",
+      "classification": "unknown",
+      "classification_reasons": [
+        "mixed_signals"
+      ]
+    },
+    {
+      "trace_id": "1904f9b89f8e8efc87ed10023f2e924e",
+      "output_text": "I think we should have a meeting to discuss the upcoming Vket event.",
+      "classification": "unknown",
+      "classification_reasons": [
+        "mixed_signals"
+      ]
+    },
+    {
+      "trace_id": "981c0818038f9271011ec135478d7a8a",
+      "output_text": "I think we should have a meeting to discuss the upcoming Vket event.",
+      "classification": "unknown",
+      "classification_reasons": [
+        "mixed_signals"
+      ]
+    },
+    {
+      "trace_id": "d4d6abe1e0aee3ff6c36ccb02980814a",
+      "output_text": "I think we should have a meeting to discuss the upcoming Vket event.",
+      "classification": "unknown",
+      "classification_reasons": [
+        "mixed_signals"
+      ]
+    }
+  ],
+  "49": [
+    {
+      "trace_id": "add623f110dea85ae354d8bc6267bb23",
+      "output_text": "I like to hang out",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "078348c480f3e7054d30c994e4fe2652",
+      "output_text": "I like to hang out.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    }
+  ],
+  "50": [
+    {
+      "trace_id": "4a957b8b581b7382190a7417e43f474a",
+      "output_text": "Due to their contributions and hard work and setting up the, they did a good job with setting up the Joshosh adventure thing and everything else.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "7f08099cd3946232496eadcbaee75268",
+      "output_text": "Due to their contributions and hard work and setting up the, they did a good job with setting up the Joshosh adventure thing and everything else.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    }
+  ],
+  "51": [
+    {
+      "trace_id": "f0101f89adb18fedd16e6f19f157d51b",
+      "output_text": "Oh",
+      "classification": "unknown",
+      "classification_reasons": [
+        "mixed_signals"
+      ]
+    },
+    {
+      "trace_id": "51c9bcb6513029073562606b099e2edb",
+      "output_text": "Oh",
+      "classification": "unknown",
+      "classification_reasons": [
+        "mixed_signals"
+      ]
+    },
+    {
+      "trace_id": "27efd91ea9b15439e769e4d2bc9913e4",
+      "output_text": "Oh",
+      "classification": "unknown",
+      "classification_reasons": [
+        "mixed_signals"
+      ]
+    }
+  ],
+  "52": [
+    {
+      "trace_id": "14958e9f9e24be3c144c013d19087526",
+      "output_text": "Congratulations",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "21ea6387d97c9c6e060c6bfd23cc91f9",
+      "output_text": "Congratulations.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    }
+  ],
+  "53": [
+    {
+      "trace_id": "65b4a5100ae74d8a3fb356a104a8fc63",
+      "output_text": "Thank you.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "65ec592c1a7c11b0f811fb0f616e7306",
+      "output_text": "Thank you.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "4cfda7774d48eb225d9de4b8c5fcc5aa",
+      "output_text": "Thank you",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "0cddfc36a3dfd7aca44cf616e646cbc3",
+      "output_text": "Thank you.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "219b635c18a6cce094bea95b00e2f719",
+      "output_text": "Thank you.",
+      "classification": "unknown",
+      "classification_reasons": [
+        "quiet_audio"
+      ]
+    },
+    {
+      "trace_id": "23f93966129b3f03b755250c268c5106",
+      "output_text": "Thank you.",
+      "classification": "unknown",
+      "classification_reasons": [
+        "quiet_audio"
+      ]
+    },
+    {
+      "trace_id": "368b6dbe3e1332757eb666ec237d54c7",
+      "output_text": "Thank you.",
+      "classification": "unknown",
+      "classification_reasons": [
+        "quiet_audio"
+      ]
+    },
+    {
+      "trace_id": "d51154138b0a82493c3816c40c917f77",
+      "output_text": "Thank you.",
+      "classification": "unknown",
+      "classification_reasons": [
+        "quiet_audio"
+      ]
+    }
+  ],
+  "54": [
+    {
+      "trace_id": "50ceb997b2abbf67f425f62c063b6881",
+      "output_text": "Yep, the 20th.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "6afaa5c9f1b478629d4db40c3f2b9ea7",
+      "output_text": "Yep, the 20th.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    }
+  ],
+  "55": [
+    {
+      "trace_id": "d2611979a883ff2b40419c75fac8dc24",
+      "output_text": "Also, we have a birthday coming up that we will be celebrating a week from this Friday. So, we will be having a birthday party for Celeste.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "e88f6e323ace8fc1884548b45cc281dc",
+      "output_text": "Also, we have a birthday coming up that we will be celebrating a week from this Friday. So, we will be having a birthday party for Celeste.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    }
+  ],
+  "56": [
+    {
+      "trace_id": "edb93f97fd70ef27543a1689c68cc6df",
+      "output_text": "Happy birthday Celeste!",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "fd247f999526a4edfa6fa5248a1c4dca",
+      "output_text": "Happy birthday Celeste",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    }
+  ],
+  "57": [
+    {
+      "trace_id": "3d5d4671ff49a95b17867bab05f2a1da",
+      "output_text": "My birthday is this Saturday.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "b65dc1f9197e3f235bd489e9e3d65942",
+      "output_text": "My birthday is this Saturday.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "afeef43f6dd1c2840a89f591a38cd589",
+      "output_text": "My birthday is this Saturday.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    }
+  ],
+  "58": [
+    {
+      "trace_id": "b4425765b28bc1621c00c635c3fab2da",
+      "output_text": "Saturday.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "37929a6f8469a3e2923e2843810f0d2e",
+      "output_text": "Saturday.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "9f1ec8ad25d57dc4b8a90a04f7e02cd5",
+      "output_text": "Saturday.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    }
+  ],
+  "59": [
+    {
+      "trace_id": "780c13ddd223049c0246295064848369",
+      "output_text": "Okay",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "60c0a210b42f4d0a344663c19cc32639",
+      "output_text": "Okay.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "6b7c7b79363058ac3438dcd266fcd2c9",
+      "output_text": "Okay.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "761daecccc5dd038fececc8973e8c682",
+      "output_text": "Okay.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "53a701a7e4d0bf4a9fe4fc519036b9d6",
+      "output_text": "Okay.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "9640f83bc93bc637f0013d5ec5b209f9",
+      "output_text": "Okay.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "1331427415f7d8b52f32cb341a992c40",
+      "output_text": "Okay.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "b00c9121aed53b53223072790b9f910e",
+      "output_text": "Okay.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "e89e7fee22cddcde0f11a98a3dc86820",
+      "output_text": "Okay.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "06d99d2fb5b37b1d37167108de0c12b9",
+      "output_text": "Okay.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "951222ceefe9f51bfcfa930ccc04d7be",
+      "output_text": "Okay.",
+      "classification": "unknown",
+      "classification_reasons": [
+        "mixed_signals"
+      ]
+    },
+    {
+      "trace_id": "2a2ecd288637920ae12a089a424dd84a",
+      "output_text": "Okay.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "ed76ba33a83a6b98b293ffefc87029a5",
+      "output_text": "Okay.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "332d11a43fafb5c6672f3ad74bed8c26",
+      "output_text": "Okay.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "a29ebc28d6a90a1342afb46d1cfaa111",
+      "output_text": "Okay.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "cee3fbe5ff665aa903c544649bb600ce",
+      "output_text": "Okay.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "926114d98802d61f007f48345fbd7daf",
+      "output_text": "Okay.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "1b7e490528289c890bbbde719c026f7f",
+      "output_text": "Okay.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "52653bc6f43177a6ac4630144bd85427",
+      "output_text": "Okay",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "5cc044788a2c27f8ea1bb6792f0bb49e",
+      "output_text": "Okay.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "c767462d9a27193edc235502c0ce4b0d",
+      "output_text": "Okay",
+      "classification": "unknown",
+      "classification_reasons": [
+        "mixed_signals"
+      ]
+    }
+  ],
+  "60": [
+    {
+      "trace_id": "44191b1c8fb6e1e88b132f0881046af1",
+      "output_text": "I would have thrown it on the actual birthday, but with us doing the face charity event this Sunday, obviously we're going to be spread pretty thin.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "2fd9ab314678009f2cc5c88a9c6f13ed",
+      "output_text": "I would have thrown it on the actual birthday, but with us doing the face charity event this Sunday, obviously we're going to be spread pretty thin.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    }
+  ],
+  "61": [
+    {
+      "trace_id": "3c628c40db2b74523de6a3b53294bfa8",
+      "output_text": "Yeah, that's okay. That's totally fine.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "191cee83cdf81b8d4317c92fa2b21458",
+      "output_text": "Yeah, that's okay. That's totally fine.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "bdc210cecd813083cfd43d7fe818e9d4",
+      "output_text": "Yeah, that's okay. That's totally fine.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "f258fa7b77502a9b84eb3c036a7dd933",
+      "output_text": "Yeah, that's okay. That's totally fine.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "d166d3594d3603440d4a2322b9cb2df3",
+      "output_text": "Yeah, that's okay. That's totally fine.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "4de20ad6089db4b872a6fa6ff59b4f1f",
+      "output_text": "Yeah, that's okay. That's totally fine.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    }
+  ],
+  "62": [
+    {
+      "trace_id": "23d4770b8740e7814ce52fd04ec1eb0a",
+      "output_text": "Hello Alpha",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "719c3839c9ab0a92704359908a258e67",
+      "output_text": "Hello Alpha",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    }
+  ],
+  "63": [
+    {
+      "trace_id": "e9d622d59b0e49c344c3b66c86ef12b2",
+      "output_text": "Doctor",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "8c43e6b11b770914e71d18e0a0512ab8",
+      "output_text": "Doctor",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    }
+  ],
+  "64": [
+    {
+      "trace_id": "a3d6487c3be19f275bf7bd87999797f3",
+      "output_text": "Hey",
+      "classification": "unknown",
+      "classification_reasons": [
+        "mixed_signals"
+      ]
+    },
+    {
+      "trace_id": "ff78784aef3f6448f11de9c26ab87ae9",
+      "output_text": "Hey",
+      "classification": "unknown",
+      "classification_reasons": [
+        "mixed_signals"
+      ]
+    },
+    {
+      "trace_id": "f507322ccb76054fb0473f1cd3b2fd51",
+      "output_text": "Hey",
+      "classification": "unknown",
+      "classification_reasons": [
+        "mixed_signals"
+      ]
+    },
+    {
+      "trace_id": "b95f481213b484a4d7e54cfa472f8906",
+      "output_text": "Hey",
+      "classification": "unknown",
+      "classification_reasons": [
+        "mixed_signals"
+      ]
+    },
+    {
+      "trace_id": "240e9c84e52d2fa02fa65a215424cd3d",
+      "output_text": "Hey",
+      "classification": "unknown",
+      "classification_reasons": [
+        "mixed_signals"
+      ]
+    },
+    {
+      "trace_id": "2b5f2a70e627781528478fca82832e99",
+      "output_text": "Hey.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    }
+  ],
+  "65": [
+    {
+      "trace_id": "dc0abfff0b541c4be79d6c6149744b4b",
+      "output_text": "Staff that will have like different media that you guys might need in different roles. So different media on how to deal with certain things or whatnot, etc. And it'll be put in forums so it'll be easy for everyone to find what they need to find when they need to find it. I don't know if either of you want to give any sort of speech, any sort of thanks, let people know about yourself that they don't already know. I know most people know Celeste already at this point, I'd hope.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "b3a0aae5729511597852d572301f4275",
+      "output_text": "Staff that will have like different media that you guys might need in different roles. So different media on how to deal with certain things or whatnot, etc. And it'll be put in forums so it'll be easy for everyone to find what they need to find when they need to find it. I don't know if either of you want to give any sort of speech, any sort of thanks, let people know about yourself that they don't already know. I know most people know Celeste already at this point, I'd hope.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "dffb3fd9e0d6c57325e8b8356ab7995f",
+      "output_text": "Staff that will have like different media that you guys might need in different roles. So different media on how to deal with certain things or whatnot, etc. And it'll be put in forums so it'll be easy for everyone to find what they need to find when they need to find it. I don't know if either of you want to give any sort of speech, any sort of thanks, let people know about yourself that they don't already know. I know most people know Celeste already at this point, I'd hope.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    }
+  ],
+  "66": [
+    {
+      "trace_id": "26f6a9823bd33ec03cee8a437dfc4ef5",
+      "output_text": "I think that it would be a good idea to have a meeting.",
+      "classification": "unknown",
+      "classification_reasons": [
+        "mixed_signals"
+      ]
+    },
+    {
+      "trace_id": "b1edd16b21e0d4b42eb0b77d244a5a56",
+      "output_text": "I think that it would be a good idea to have a meeting.",
+      "classification": "unknown",
+      "classification_reasons": [
+        "mixed_signals"
+      ]
+    }
+  ],
+  "67": [
+    {
+      "trace_id": "d3ccbbf8228e4e52626b7f2646e0a20c",
+      "output_text": "You guys, which is sort of what my answer to VR is.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "e637cca277c8b672d99d9b81a2e43219",
+      "output_text": "You guys, which is sort of what my answer to VR is.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    }
+  ],
+  "68": [
+    {
+      "trace_id": "ba0202a9da16d0abf3d91527fae617a6",
+      "output_text": "I felt the talk",
+      "classification": "unknown",
+      "classification_reasons": [
+        "quiet_audio"
+      ]
+    },
+    {
+      "trace_id": "1b97faf7dffe182ebac4dafda6747586",
+      "output_text": "I felt the talk",
+      "classification": "unknown",
+      "classification_reasons": [
+        "quiet_audio"
+      ]
+    }
+  ],
+  "69": [
+    {
+      "trace_id": "5797103fe2c3ac9fc24960eef6e1b7ac",
+      "output_text": "I felt the talk, but rather, if anybody needs anything,",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "aa247a1588a8c2ec106b2e6540853fb0",
+      "output_text": "I felt the talk, but rather, if anybody needs anything,",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    }
+  ],
+  "70": [
+    {
+      "trace_id": "c1a37f4dad42bd9a515cfc7b74875311",
+      "output_text": "I think we should start by discussing the new Vket event.",
+      "classification": "unknown",
+      "classification_reasons": [
+        "mixed_signals"
+      ]
+    },
+    {
+      "trace_id": "dc47f46771bea45316af579e850c2fff",
+      "output_text": "I think we should start by discussing the new Vket event.",
+      "classification": "unknown",
+      "classification_reasons": [
+        "mixed_signals"
+      ]
+    },
+    {
+      "trace_id": "bbffa899ab01296bf16a0fc3faf6a141",
+      "output_text": "I think we should start by discussing the new Vket event.",
+      "classification": "unknown",
+      "classification_reasons": [
+        "mixed_signals"
+      ]
+    },
+    {
+      "trace_id": "5d49a778eac887018a6c327b0f59badf",
+      "output_text": "I think we should start by discussing the new Vket event.",
+      "classification": "unknown",
+      "classification_reasons": [
+        "mixed_signals"
+      ]
+    },
+    {
+      "trace_id": "0b5eadbeb8fb5b91fb2c4e9101b13e84",
+      "output_text": "I think we should start by discussing the new Vket event.",
+      "classification": "unknown",
+      "classification_reasons": [
+        "mixed_signals"
+      ]
+    }
+  ],
+  "71": [
+    {
+      "trace_id": "a5f98def0390405583b4844bc7a15e8f",
+      "output_text": "Well, hello. I never know what to say in these kinds of things, but my name is Alpha. That comes from my Xbox gamer tag, which just got shortened once I entered VR because everyone just called me Alpha anyways. I sell cars, so I'm rather busy most of the day during the day, but I'm always available if anybody needs anything, just shoot me a message. I helped start what New Eden used to run, which was like Evergarden and then Frolic with Key and Dragonflame when they were around, and then was one of the heads for Lux Nova when we separated.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "ec3e642f7ff2c327bc71d05fc11f1405",
+      "output_text": "Well, hello. I never know what to say in these kinds of things, but my name is Alpha. That comes from my Xbox gamer tag, which just got shortened once I entered VR because everyone just called me Alpha anyways. I sell cars, so I'm rather busy most of the day during the day, but I'm always available if anybody needs anything, just shoot me a message. I helped start what New Eden used to run, which was like Evergarden and then Frolic with Key and Dragonflame when they were around, and then was one of the heads for Lux Nova when we separated.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    }
+  ],
+  "72": [
+    {
+      "trace_id": "deac92c24127cc38a2f5c67aff3b5258",
+      "output_text": "Right",
+      "classification": "unknown",
+      "classification_reasons": [
+        "mixed_signals"
+      ]
+    },
+    {
+      "trace_id": "eddf689c3cf2fb18c01f622250708759",
+      "output_text": "Right.",
+      "classification": "unknown",
+      "classification_reasons": [
+        "mixed_signals"
+      ]
+    }
+  ],
+  "73": [
+    {
+      "trace_id": "e5df02fd269160c0b4bce2ef695fe5f6",
+      "output_text": "And then some fun things I have, I have a small Japanese van that I imported, if anybody is into any kind of car. My import is a little Japanese car. I have a flamethrower, which I always bring up. And yeah, that's it.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "6f4fc40fe665ac36f41708fa52582080",
+      "output_text": "And then some fun things I have, I have a small Japanese van that I imported. If anybody is into any kind of car, my import is a little Japanese car. I have a flamethrower, which I always bring up. And yeah, that's it.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    }
+  ],
+  "74": [
+    {
+      "trace_id": "3b82cb2bfd753fe2a62336c150c1e417",
+      "output_text": "And then some fun things I have, I have a small Japanese van that I imported, if anybody's into any kind of car. My import is a little Japanese car. I have a flamethrower, which I always bring up. And yeah, that's it.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "bff7c686d9d293bc764a1020a42d1417",
+      "output_text": "And then some fun things I have, I have a small Japanese van that I imported. If anybody's into any kind of car, my import is a little Japanese car. I have a flamethrower, which I always bring up. And yeah, that's it.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    }
+  ],
+  "75": [
+    {
+      "trace_id": "0ba545b32b788759c833c9d17a390732",
+      "output_text": "Baseline error",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "65db7fdf11fad61bda6e355cc889ec06",
+      "output_text": "Baseline error",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    }
+  ],
+  "76": [
+    {
+      "trace_id": "8ccd7c54c3287ee557f68630900c9609",
+      "output_text": "You know, that'd come in handy with all the snow and ice we got recently, right?",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "9a6265df43c4f5282ce1a1eaab4f1988",
+      "output_text": "You know, that'd come in handy with all the snow and ice we got recently, right?",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "4ad8717a77528f501684ca568da9f9d8",
+      "output_text": "You know, that'd come in handy with all the snow and ice we got recently, right?",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "0fd4909f52b4665cd7ec5d15af678454",
+      "output_text": "You know, that'd come in handy with all the snow and ice we got recently, right?",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    }
+  ],
+  "77": [
+    {
+      "trace_id": "6fbb480010b8ac25a70cfdb0bbf50c18",
+      "output_text": "It would if it was useful for that at all.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "9cde26936c3b9a41943b9cc90aa461e5",
+      "output_text": "It would if it was useful for that at all.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    }
+  ],
+  "78": [
+    {
+      "trace_id": "cae5ce297b9c4d5d88e132732ef75fbb",
+      "output_text": "Mainly just starting fires.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "1687e031c51b8a07bb6594d197b107d3",
+      "output_text": "Mainly just starting fires.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    }
+  ],
+  "79": [
+    {
+      "trace_id": "7a58d6c59cecb0f0238b0f8afe29a882",
+      "output_text": "Well, I'm sure it's particularly good at that.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "4fa2de287f6dbbbe9486cd48a0aac696",
+      "output_text": "Well, I'm sure it's particularly good at that.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    }
+  ],
+  "80": [
+    {
+      "trace_id": "db7254120faa95cb96df268445bd7bb9",
+      "output_text": "I'm typically getting yelled at at parties like, \"No, please put that away.\"",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "d09387c1a322fd0e34b8c68e94a02c06",
+      "output_text": "I'm typically getting yelled at at parties like, \"No, please put that away.\"",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    }
+  ],
+  "81": [
+    {
+      "trace_id": "9ad70107db7d4e85b91ea3f1088384d5",
+      "output_text": "Please put that away, it's great, you'll love it.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "3b84a0c042ecd3e4ab9b4ba55a411f66",
+      "output_text": "Please put that away, it's great, you'll love it.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "0201f24c939369b42223ad67c618f4ef",
+      "output_text": "Please put that away, it's great, you'll love it.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    }
+  ],
+  "82": [
+    {
+      "trace_id": "8f5db73b0e838010cb87ba940f084b94",
+      "output_text": "So, anyone have anything to bring up from over the past week? Anything they want to bring up at all? Positive, negative, how they're doing, etc. before we move forward?",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "3ff5a3510631f32b6efa9cae5ed7726c",
+      "output_text": "So, anyone have anything to bring up from over the past week? Anything they want to bring up at all? Positive, negative, how they're doing, etc. before we move forward?",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "6a86de6ec4152510e4085095cef57bdd",
+      "output_text": "So, anyone have anything to bring up from over the past week? Anything they want to bring up at all? Positive, negative, how they're doing, etc. before we move forward?",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    }
+  ],
+  "83": [
+    {
+      "trace_id": "963af4f132c765c6bc8ba430005e371c",
+      "output_text": "Okay, so",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "d96fe88af711bf83bb81032b4a1fc00d",
+      "output_text": "Okay, so",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    }
+  ],
+  "84": [
+    {
+      "trace_id": "1f944d695081335417885eb15bcee039",
+      "output_text": "Sorry, I'm running from the kitchen.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "bdc6f18c53a34df9cefe4271142a5c83",
+      "output_text": "Sorry, I'm running from the kitchen.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    }
+  ],
+  "85": [
+    {
+      "trace_id": "f40d6d0af66121b75eb3eeb99b81ae66",
+      "output_text": "Oh, did you have something you wanted to bring up?",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "8352c9e05e240feee43a7a7291324256",
+      "output_text": "Oh, did you have something you wanted to bring up?",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "eee1da64fe8b48360e78a23c099d25f2",
+      "output_text": "Oh, did you have something you wanted to bring up?",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    }
+  ],
+  "86": [
+    {
+      "trace_id": "00b97dd54a1b2b815c8efa2c8a2ae139",
+      "output_text": "Three",
+      "classification": "unknown",
+      "classification_reasons": [
+        "mixed_signals"
+      ]
+    },
+    {
+      "trace_id": "5316d582ac799720afa580a1208dc246",
+      "output_text": "Three",
+      "classification": "unknown",
+      "classification_reasons": [
+        "mixed_signals"
+      ]
+    }
+  ],
+  "87": [
+    {
+      "trace_id": "9d6e49cff01aa14b07d49ed55b9b6b58",
+      "output_text": "Yes, so we are going to be having the DJ class coming back with Crossfade as the teacher. They filled out the application, so if anybody feels like poking them to get the actual schedule going, reach back out to Dev. We'll see what days and times they want to do for Screamo.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "8d1c527e89e2e095beb6db749db7e755",
+      "output_text": "Yes, so we are going to be having the DJ class coming back with Crossfade as the teacher. They filled out the application, so if anybody feels like poking them to get the actual schedule going, reach back out to Dev. We'll see what days and times they want to do for Screamo.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    }
+  ],
+  "88": [
+    {
+      "trace_id": "3bc411cf9bcad8de2d09a51a30ad7d0c",
+      "output_text": "Obviously not tonight, but soon we're gonna do what The Den calls movie-oke for movie night. It is karaoke to a movie. So that should be fun.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "e6e51ee084b6405ef44e832c33ca5486",
+      "output_text": "Obviously not tonight, but soon we're gonna do what The Den calls movie-oke for movie night. It is karaoke to a movie. So that should be fun.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    }
+  ],
+  "89": [
+    {
+      "trace_id": "6500315a8980586060cef7186bd24b05",
+      "output_text": "Oh, and I'll let you mention the other class that's incoming.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "dc009499bf37479ecefbd75be8c6bf32",
+      "output_text": "Oh, and I'll let you mention the other class that's incoming.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    }
+  ],
+  "90": [
+    {
+      "trace_id": "9be9e618bb84fb0a4bf3bad7f4a19e09",
+      "output_text": "Which other class?",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "fdd2c3ca6228881b0c0ed527bda0f7a7",
+      "output_text": "Which other class?",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    }
+  ],
+  "91": [
+    {
+      "trace_id": "2eca7b1e486f2225e083850c68045f81",
+      "output_text": "The workshop",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "870da10b245c91d28657b64a4d288dde",
+      "output_text": "The workshop",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    }
+  ],
+  "92": [
+    {
+      "trace_id": "3f0e9077279e47b23fe2c24300446830",
+      "output_text": "The meeting was held in the Hall of Faces channel on The Faceless server.",
+      "classification": "unknown",
+      "classification_reasons": [
+        "mixed_signals"
+      ]
+    },
+    {
+      "trace_id": "8c9c743df689618775b71a1f5d8b6bbd",
+      "output_text": "The meeting was held in the Hall of Faces channel on The Faceless server.",
+      "classification": "unknown",
+      "classification_reasons": [
+        "mixed_signals"
+      ]
+    },
+    {
+      "trace_id": "146ff81ce39a3406deaa3e52ce0e25e6",
+      "output_text": "The meeting was held in the Hall of Faces channel on The Faceless server.",
+      "classification": "unknown",
+      "classification_reasons": [
+        "mixed_signals"
+      ]
+    }
+  ],
+  "93": [
+    {
+      "trace_id": "06b98949aabdcea7c1cf36db1634fafa",
+      "output_text": "The meeting started with a discussion about the upcoming Vket event.",
+      "classification": "unknown",
+      "classification_reasons": [
+        "mixed_signals"
+      ]
+    },
+    {
+      "trace_id": "2dafec3e72fed55f46c6fa330e7ff874",
+      "output_text": "The meeting started with a discussion about the upcoming Vket event.",
+      "classification": "unknown",
+      "classification_reasons": [
+        "mixed_signals"
+      ]
+    },
+    {
+      "trace_id": "8e61f4e5c20abdb4a3830ddf9d7e17f9",
+      "output_text": "The meeting started with a discussion about the upcoming Vket event.",
+      "classification": "unknown",
+      "classification_reasons": [
+        "mixed_signals"
+      ]
+    },
+    {
+      "trace_id": "46933f17ede0f7350277d35256121373",
+      "output_text": "The meeting started with a discussion about the upcoming Vket event.",
+      "classification": "unknown",
+      "classification_reasons": [
+        "mixed_signals"
+      ]
+    }
+  ],
+  "94": [
+    {
+      "trace_id": "62c586be9f20b9fd6888b72aea9f023a",
+      "output_text": "The Faceless is a VRChat community.",
+      "classification": "unknown",
+      "classification_reasons": [
+        "mixed_signals"
+      ]
+    },
+    {
+      "trace_id": "9f9008e0bff761b3f6fa0dad807be192",
+      "output_text": "The Faceless is a VRChat community.",
+      "classification": "unknown",
+      "classification_reasons": [
+        "mixed_signals"
+      ]
+    }
+  ],
+  "95": [
+    {
+      "trace_id": "da69f98a0a4ce1b292b910852f8e316e",
+      "output_text": "Blackbelt33: I think we should start with the Vket event planning.",
+      "classification": "unknown",
+      "classification_reasons": [
+        "mixed_signals"
+      ]
+    },
+    {
+      "trace_id": "12da5a2be16586b636d2e38ad2739e0b",
+      "output_text": "Blackbelt33: I think we should start with the Vket event planning.",
+      "classification": "unknown",
+      "classification_reasons": [
+        "mixed_signals"
+      ]
+    },
+    {
+      "trace_id": "2a2399fecc28c345d493e665de4c8b8d",
+      "output_text": "Blackbelt33: I think we should start with the Vket event planning.",
+      "classification": "unknown",
+      "classification_reasons": [
+        "mixed_signals"
+      ]
+    },
+    {
+      "trace_id": "8227f06e9c925c6316863e107bbd95e3",
+      "output_text": "Blackbelt33: I think we should start with the Vket event planning.",
+      "classification": "unknown",
+      "classification_reasons": [
+        "mixed_signals"
+      ]
+    },
+    {
+      "trace_id": "63e7cd895791293fdcf85fd1ca77a882",
+      "output_text": "Blackbelt33: I think we should start with the Vket event planning.",
+      "classification": "unknown",
+      "classification_reasons": [
+        "mixed_signals"
+      ]
+    },
+    {
+      "trace_id": "362a54069aada6a59d93ee62b55acf64",
+      "output_text": "Blackbelt33: I think we should start with the Vket event planning.",
+      "classification": "unknown",
+      "classification_reasons": [
+        "mixed_signals"
+      ]
+    },
+    {
+      "trace_id": "9e578dd370ae53ba4c561b458e2ff965",
+      "output_text": "Blackbelt33: I think we should start with the Vket event planning.",
+      "classification": "unknown",
+      "classification_reasons": [
+        "mixed_signals"
+      ]
+    }
+  ],
+  "96": [
+    {
+      "trace_id": "2a4cbcb14444b8a1f500af3649d551f1",
+      "output_text": "I don't know.",
+      "classification": "unknown",
+      "classification_reasons": [
+        "mixed_signals"
+      ]
+    },
+    {
+      "trace_id": "2ef97af77da21fc82db15afd264a80ec",
+      "output_text": "I don't know.",
+      "classification": "unknown",
+      "classification_reasons": [
+        "mixed_signals"
+      ]
+    },
+    {
+      "trace_id": "c575cbdc03ec717e2cb0c3d4ee51f782",
+      "output_text": "I don't know.",
+      "classification": "unknown",
+      "classification_reasons": [
+        "mixed_signals"
+      ]
+    },
+    {
+      "trace_id": "2d75bb552dec61aa9462a929c1680af1",
+      "output_text": "I don't know.",
+      "classification": "unknown",
+      "classification_reasons": [
+        "mixed_signals"
+      ]
+    },
+    {
+      "trace_id": "075f34751e7b682646d182bfd0963310",
+      "output_text": "I don't know.",
+      "classification": "unknown",
+      "classification_reasons": [
+        "mixed_signals"
+      ]
+    },
+    {
+      "trace_id": "74767750c330c1d016470b42cee58437",
+      "output_text": "I don't know.",
+      "classification": "unknown",
+      "classification_reasons": [
+        "mixed_signals"
+      ]
+    },
+    {
+      "trace_id": "c0eabb820f514e18b6fdbaf2857b3c79",
+      "output_text": "I don't know.",
+      "classification": "unknown",
+      "classification_reasons": [
+        "mixed_signals"
+      ]
+    },
+    {
+      "trace_id": "215995202f728df5574c26b251012852",
+      "output_text": "I don't know.",
+      "classification": "unknown",
+      "classification_reasons": [
+        "mixed_signals"
+      ]
+    },
+    {
+      "trace_id": "fd1f630196dee810eefa0b0a1f7588ce",
+      "output_text": "I don't know.",
+      "classification": "unknown",
+      "classification_reasons": [
+        "mixed_signals"
+      ]
+    },
+    {
+      "trace_id": "55d8eb0b9eed72819eba3cab1552702a",
+      "output_text": "I don't know.",
+      "classification": "unknown",
+      "classification_reasons": [
+        "mixed_signals"
+      ]
+    },
+    {
+      "trace_id": "3b8fd806302c0601593baca54dac9649",
+      "output_text": "I don't know.",
+      "classification": "unknown",
+      "classification_reasons": [
+        "mixed_signals"
+      ]
+    }
+  ],
+  "97": [
+    {
+      "trace_id": "02bea4a98958ae5c3578957d58ed47c9",
+      "output_text": "I think",
+      "classification": "unknown",
+      "classification_reasons": [
+        "mixed_signals"
+      ]
+    },
+    {
+      "trace_id": "d6654d852f27b9b23995e581fbf87bda",
+      "output_text": "I think",
+      "classification": "unknown",
+      "classification_reasons": [
+        "mixed_signals"
+      ]
+    }
+  ],
+  "98": [
+    {
+      "trace_id": "c9f442a47cf27a7c0c723172f2851f04",
+      "output_text": "You know, moments where they might be, I don't know, sad or going through something or what have you. You know what I mean? We don't record that stuff. If we record a performance and someone messes up in the performance and the footage could be used or leveraged in such a way that it does not uplift them but instead makes them feel bad for messing up or something like that, that footage will not be put out and will not be kept.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "8a1cfecbba94f4f481f657625ff6d2c9",
+      "output_text": "You know, moments where they might be, I don't know, sad or going through something or what have you. You know what I mean? We don't record that stuff. If we record a performance and someone messes up in the performance and the footage could be used or leveraged in such a way that it does not uplift them but instead makes them feel bad for messing up or something like that, that footage will not be put out and will not be kept.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    }
+  ],
+  "99": [
+    {
+      "trace_id": "5080c7fc71656a52954bd569602bf508",
+      "output_text": "You know, moments where they might be, I don't know, sad or going through something or what have you. You know what I mean? We don't record that stuff. If we record a performance and someone messes up in the performance and the footage could be used or leveraged in such a way that it does not uplift them but instead makes them feel bad for messing up or something like that, that footage will not be put out and will not be kept. If anyone disagrees with any of this stuff, by the way, let me know as we're going through.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "c9d79e73b0d86c1bc1488b703e584a9f",
+      "output_text": "You know, moments where they might be, I don't know, sad or going through something or what have you. You know what I mean? We don't record that stuff. If we record a performance and someone messes up in the performance and the footage could be used or leveraged in such a way that it does not uplift them but instead makes them feel bad for messing up or something like that, that footage will not be put out and will not be kept. If anyone disagrees with any of this stuff, by the way, let me know as we're going through.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    }
+  ],
+  "100": [
+    {
+      "trace_id": "5cc63c6ee0c6edb1c3e710ffa5d2810d",
+      "output_text": "Just stating that you're volunteers, etc., right? This is standard nonprofit stuff. Obviously, we're already all volunteers, right? None of us are getting paid. We're doing this out of, you know, our love for helping people. But it will need to be documented specifically just for 501c3 stuff and everything else. As, you know, we are all volunteers, right? Because if someone's not labeled as a volunteer when we apply for the 501c3 stuff, it's assumed that they're staff, and then that creates all sorts of issues with, you know, governmental requirements on things that have to be provided to people.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "ada1f7d08e777e487daed2bce0767627",
+      "output_text": "Just stating that you're volunteers, etc., right? This is standard nonprofit stuff. Obviously, we're already all volunteers, right? None of us are getting paid. We're doing this out of, you know, our love for helping people. But it will need to be documented specifically just for 501c3 stuff and everything else. As, you know, we are all volunteers, right? Because if someone's not labeled as a volunteer when we apply for the 501c3 stuff, it's assumed that they're staff, and then that creates all sorts of issues with, you know, governmental requirements on things that have to be provided to people.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    }
+  ],
+  "101": [
+    {
+      "trace_id": "a3d1cdd512ee736582eeba6771fa87c3",
+      "output_text": "the nonprofit ends up getting in terms of grants, etc. And we look at that and look at all that stuff. This isn't about distress, it's about being ready for donors, compliance, and stability.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "721afdffe5bdd6f4996efa1da12dfbbb",
+      "output_text": "the nonprofit ends up getting in terms of grants, etc. and we look at that and look at all that stuff. This isn't about distress, it's about being ready for donors, compliance, and stability.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "7d7e0abcc091c8182b72db2dc0d50056",
+      "output_text": "the nonprofit ends up getting in terms of grants, etc. and we look at that and look at all that stuff. This isn't about distress, it's about being ready for donors, compliance, and stability.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    }
+  ],
+  "102": [
+    {
+      "trace_id": "d42bee047354647785a6f4456bd1e13a",
+      "output_text": "[Meeting Notes Bot] Meeting started at 8:00 PM.",
+      "classification": "unknown",
+      "classification_reasons": [
+        "contains_timestamp",
+        "contains_bot_name"
+      ]
+    },
+    {
+      "trace_id": "08f1f5b53387d5a4c2ec35f391cd9cc1",
+      "output_text": "Meeting Notes Bot: Meeting started at 8:00 PM.",
+      "classification": "unknown",
+      "classification_reasons": [
+        "contains_timestamp",
+        "contains_bot_name"
+      ]
+    }
+  ],
+  "103": [
+    {
+      "trace_id": "4e136610e378d8da23ba071dc5a3860a",
+      "output_text": "meeting with Alpha, but I have a listy that I'm going to be putting out of like what each role does, whether it's hands, etc., keepers, shadows, and everything, and where you go, whether you go up or down in terms of like when you have to raise something in a concern or, you know what I mean? So everyone kind of sticks to what their job is and doesn't have to worry about a bunch of extra stuff that's not really, you know, your prerogative, you know what I mean? So that way everything becomes very clear and easy and clean for everybody.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "69f754f65afcc6af58529ad6f31039e3",
+      "output_text": "meeting with Alpha, but I have a listy that I'm going to be putting out of like what each role does, whether it's hands, etc., keepers, shadows, and everything, and where you go, whether you go up or down in terms of like when you have to raise something in a concern or, you know what I mean? So everyone kind of sticks to what their job is and doesn't have to worry about a bunch of extra stuff that's not really, you know, your prerogative, you know what I mean? So that way everything becomes very clear and easy and clean for everybody.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    }
+  ],
+  "104": [
+    {
+      "trace_id": "576a3cad6beb0e7c789bf68869e404f5",
+      "output_text": "I think that would be a good idea.",
+      "classification": "unknown",
+      "classification_reasons": [
+        "mixed_signals"
+      ]
+    },
+    {
+      "trace_id": "b2f6a315eb33d12629bfc8e00f1d2d9b",
+      "output_text": "I think that would be a good idea.",
+      "classification": "unknown",
+      "classification_reasons": [
+        "mixed_signals"
+      ]
+    },
+    {
+      "trace_id": "6866a82a32eb282a68d4aa64746e525c",
+      "output_text": "I think that would be a good idea.",
+      "classification": "unknown",
+      "classification_reasons": [
+        "quiet_audio"
+      ]
+    }
+  ],
+  "105": [
+    {
+      "trace_id": "848f400bdba8e7f9a6b157f30cab5ae3",
+      "output_text": "Kind of based on what it is.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "01194f032b19813f0b660242e44fa388",
+      "output_text": "Kind of based on what it is.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    }
+  ],
+  "106": [
+    {
+      "trace_id": "4e393ed09a23b6e0cbf6023f711d5a41",
+      "output_text": "based on",
+      "classification": "unknown",
+      "classification_reasons": [
+        "quiet_audio"
+      ]
+    },
+    {
+      "trace_id": "9d087b0187c55e1502299031b856be7b",
+      "output_text": "based on",
+      "classification": "unknown",
+      "classification_reasons": [
+        "quiet_audio"
+      ]
+    }
+  ],
+  "107": [
+    {
+      "trace_id": "301a37610d44ab118af3a76f9e71b233",
+      "output_text": "Oh no, for sure.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "3ef08a9d8b253838ebfb98bc58c90270",
+      "output_text": "Oh no, for sure.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "e23a4884e780733b773efce51efd471c",
+      "output_text": "Oh no, for sure.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    }
+  ],
+  "108": [
+    {
+      "trace_id": "f06e65c54ff67356b41aa417ccc5dc6e",
+      "output_text": "(laughter)",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "9e3e483b31bfc35863650599d06e2f05",
+      "output_text": "[LAUGHTER]",
+      "classification": "unknown",
+      "classification_reasons": [
+        "mixed_signals"
+      ]
+    },
+    {
+      "trace_id": "64ebc1fc9fb472a53f6dbd889934ea73",
+      "output_text": "[LAUGHTER]",
+      "classification": "unknown",
+      "classification_reasons": [
+        "mixed_signals"
+      ]
+    }
+  ],
+  "109": [
+    {
+      "trace_id": "cc72e21ca448403e4b44f446a7abd291",
+      "output_text": "That's a good question or idea. That's something we can look into. I do know one of the reasons why we continued to end up growing the Discord to the point where it's kind of somewhat obnoxious now, but this is actually more clean by the way. It was at one point. It was primarily because people weren't allowed at Discord. I don't know about you, Alpha. I know for me and I know for quite a few people. In order to join a new Discord, I have to question, okay, whose group can I leave without making people feel bad or angry and without getting a shit ton of messages? Oh my gosh, why'd you leave my Discord? Does this mean that you're not friends anymore or we're not working together or whatever?",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "c75b6b8674017015191215542ff3da85",
+      "output_text": "That's a good question or idea. That's something we can look into. I do know one of the reasons why we continued to end up growing the Discord to the point where it's kind of somewhat obnoxious now, but this is actually more clean by the way. It was at one point. It was primarily because people weren't allowed at Discord. I don't know about you, Alpha. I know for me and I know for quite a few people. In order to join a new Discord, I have to question, okay, whose group can I leave without making people feel bad or angry and without getting a shit ton of messages? Oh my gosh, why'd you leave my Discord? Does this mean that you're not friends anymore or we're not working together or whatever?",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    }
+  ],
+  "110": [
+    {
+      "trace_id": "6e2ebbad17f401d5046c3efb9834cf17",
+      "output_text": "It worked really well for...",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "405dcc6d1d5e07704e2fb22619a22295",
+      "output_text": "It worked really well for...",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    }
+  ],
+  "111": [
+    {
+      "trace_id": "2802bc7e0a13fb1d6146ee8656e6287b",
+      "output_text": "Yeah, luckily I haven't made it that far. But no, I do understand that. I only bring it up because, I mean, this Discord is organized. As I've perused through it, I'm like, okay, this all makes sense. It just sounded like you were going to add more. And it worked really well for Lux Nova when that's how it's set up. Everything staff-wise and for the venues and everything is tucked away in its own Discord. And it works really well over there because everything stays there. And then you kind of shuffle things into the main Discord, the public one, as you need to. But just a thought.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "3ded407fd69bb22197b852f9701aca62",
+      "output_text": "Yeah, luckily I haven't made it that far, but no, I do understand that. I only bring it up because, I mean, this Discord is organized, as I've perused through it, I'm like, okay, this all makes sense. It just sounded like you were going to add more. And it worked really well for Lux Nova when that's how it's set up. Everything staff-wise and for the venues and everything is tucked away in its own Discord. And it works really well over there because everything stays there. And then you kind of shuffle things into the main Discord, the public one, as you need to. But just a thought.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    }
+  ],
+  "112": [
+    {
+      "trace_id": "fe1f8b53ef0b655d20b46c63171a69b1",
+      "output_text": "Okay. Yeah, I'm definitely open to that. What do people think about that?",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "926680a448cd9bf619d24b86a72cb7ec",
+      "output_text": "Okay. Yeah, I'm definitely open to that. What do people think about that?",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "e5e137fb0e402e8f202f7997552500f6",
+      "output_text": "Okay. Yeah, I'm definitely open to that. What do people think about that?",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    }
+  ],
+  "113": [
+    {
+      "trace_id": "56ec48dc130dcd368d1f0f9165dab1f7",
+      "output_text": "Yeah, me neither.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "cea5e5cd9b91f5a6b15597c8b808a525",
+      "output_text": "Yeah, me neither.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "b33c69f23aa0d8c435666579d39a37b8",
+      "output_text": "Yeah, me neither.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "6d54b7f61ff85ec7b7ce078aacf4d809",
+      "output_text": "Yeah, me neither.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    }
+  ],
+  "114": [
+    {
+      "trace_id": "278d87109338c8e7806e3c69ecdf77ff",
+      "output_text": "Yeah, I'm obviously the new guy here, so I was just throwing something just in case. But yeah, I think the forum thing will work a lot. I think it will help make things very nice.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "970a5dfc8f075d1d37c3ee5ff089f090",
+      "output_text": "Yeah, I'm obviously the new guy here, so I was just throwing something just in case. But yeah, I think the forum thing will work a lot. I think it will help make things very nice.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    }
+  ],
+  "115": [
+    {
+      "trace_id": "dd6c0699fde3f88214f31468eca1620b",
+      "output_text": "The meeting was called to order at 8:00 PM.",
+      "classification": "unknown",
+      "classification_reasons": [
+        "contains_timestamp"
+      ]
+    },
+    {
+      "trace_id": "e46b564b74768935c08d5ea1149a9340",
+      "output_text": "The meeting was called to order at 8:00 PM.",
+      "classification": "unknown",
+      "classification_reasons": [
+        "contains_timestamp"
+      ]
+    }
+  ],
+  "116": [
+    {
+      "trace_id": "a304bcdb1fb0cfe062907dbcbc805b83",
+      "output_text": "So I know Foxy should be reaching out to staff. Foxy, Foxy, Foxy, Foxy.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "636db387a15cdbad11f63da7b17a8203",
+      "output_text": "So I know Foxy should be reaching out to staff. Foxy, Foxy, Foxy, Foxy.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    }
+  ],
+  "117": [
+    {
+      "trace_id": "1e0d884057f68c49b6f7c7fe8109f4c0",
+      "output_text": "About staffing, the staffing for the Sunday, the staffing, staffing stuff for the charity event.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "dfa87990331b8d20d1d6c87af7f0ac2a",
+      "output_text": "About staffing, the staffing for the Sunday, the staffing, staffing stuff for the charity event.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "4b0d9793cb3aa80ac4b4b28935cfd474",
+      "output_text": "About staffing, the staffing for the Sunday, the staffing, staffing stuff for the charity event.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    }
+  ],
+  "118": [
+    {
+      "trace_id": "fc22699cce4abc7178d6ed768a6b3a4a",
+      "output_text": "About staffing for the Sunday, the staffing, staffing stuff for the charity event.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "ee1df94256bb47ab9bb6644636d677f7",
+      "output_text": "About staffing for the Sunday, the staffing, staffing stuff for the charity event.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "8c63d429d5a3c7ec5bee000400fdb71d",
+      "output_text": "About staffing for the Sunday, the staffing, staffing stuff for the charity event.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    }
+  ],
+  "119": [
+    {
+      "trace_id": "072199d853126d8ec4033720d3133a88",
+      "output_text": "I think the best",
+      "classification": "unknown",
+      "classification_reasons": [
+        "mixed_signals"
+      ]
+    },
+    {
+      "trace_id": "180885cd68e18f669f356bdfe67b1a23",
+      "output_text": "I think the best",
+      "classification": "unknown",
+      "classification_reasons": [
+        "mixed_signals"
+      ]
+    },
+    {
+      "trace_id": "39c761dc79de66d5ecaeef59c04056aa",
+      "output_text": "I think the best",
+      "classification": "unknown",
+      "classification_reasons": [
+        "mixed_signals"
+      ]
+    }
+  ],
+  "120": [
+    {
+      "trace_id": "74739a90adb616355ab2cf06f31ecc08",
+      "output_text": "I think we should consider hosting a Vket event in The Den.",
+      "classification": "unknown",
+      "classification_reasons": [
+        "mixed_signals"
+      ]
+    },
+    {
+      "trace_id": "c63ffe7846be3f7503cf43062039f8ca",
+      "output_text": "I think we should consider hosting a Vket event in The Den.",
+      "classification": "unknown",
+      "classification_reasons": [
+        "mixed_signals"
+      ]
+    }
+  ],
+  "121": [
+    {
+      "trace_id": "df47fa47c373e5404152baba79ff27f7",
+      "output_text": "Anyone else have any thoughts towards, by the way, the secondary Discord for staff?",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "13e02b6873ab9676e2a1d1059eeb061f",
+      "output_text": "Anyone else have any thoughts towards, by the way, the secondary Discord for staff?",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "1b1b4ea134e46f06efccfd809f647c88",
+      "output_text": "Anyone else have any thoughts towards, by the way, the secondary Discord for staff?",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "5e8d43bee71482aecb13a4e5bc5e7520",
+      "output_text": "Anyone else have any thoughts towards, by the way, the secondary Discord for staff?",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "aa423f42413bccd8c50e745ce4a89ec1",
+      "output_text": "Anyone else have any thoughts towards, by the way, the secondary Discord for staff?",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "e23221cb01df0d98844344cfcddd0e90",
+      "output_text": "Anyone else have any thoughts towards, by the way, the secondary Discord for staff?",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "788a10d300be0ae3aa6125a42e3dc109",
+      "output_text": "Anyone else have any thoughts towards, by the way, the secondary Discord for staff?",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    }
+  ],
+  "122": [
+    {
+      "trace_id": "f0b04111ade203579e773d86c17ea7e5",
+      "output_text": "I don't know that we need a full-on whole other Discord for it.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "f851da96bced88872749a2c7b0af3656",
+      "output_text": "I don't know that we need a full-on whole other Discord for it.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    }
+  ],
+  "123": [
+    {
+      "trace_id": "95d85f3b65e97eb3c9dd0073f6486eb4",
+      "output_text": "Yeah, same.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "c80c0b766dab439dcdaef8d06878ed90",
+      "output_text": "Yeah, same.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    }
+  ],
+  "124": [
+    {
+      "trace_id": "27dd397d3188fc9ca7763362bf352853",
+      "output_text": "I'm kind of in a situation where I have to leave Discord to join another Discord also.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "29518adfe343f18e787779645956fd84",
+      "output_text": "I'm kind of in a situation where I have to leave Discord to join another Discord also.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    }
+  ],
+  "125": [
+    {
+      "trace_id": "d613feff99b92416bacf05ea60ae8487",
+      "output_text": "Yep",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "108d3b232d8dc35b24cca833f1c2fdf1",
+      "output_text": "Yep",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "02cdf9a7d0827b636d85e97fe64b64b6",
+      "output_text": "Yep",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "bd392fb412c8b121883b5a4f1cc18b0c",
+      "output_text": "Yep",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    }
+  ],
+  "126": [
+    {
+      "trace_id": "178c9b9a614bcc92465af46121047c0c",
+      "output_text": "Yeah, I've been there for so long. Oh my god, I hate it. I'm in there with VRChat groups too. I really wish they would increase the number of VRChat groups you can be in when you're VRChat Plus.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "ad82739758725359f00d440bf51516ba",
+      "output_text": "Yeah, I've been there for so long. Oh my god, I hate it. I'm in there with VRChat groups too. I really wish they would increase the number of VRChat groups you can be in when you're VRChat Plus.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "1df4590ec24f45c4216a0fbc4ca05f57",
+      "output_text": "Yeah, I've been there for so long. Oh my god, I hate it. I'm in there with VRChat groups too. I really wish they would increase the number of VRChat groups you can be in when you're VRChat Plus.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    }
+  ],
+  "127": [
+    {
+      "trace_id": "5fc5991ba2ef6b82d4a18e53abc259bb",
+      "output_text": "Oh, yeah. Actually, that one I wish more than the Discord one.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "347e97af924996d29368266a5fa254bd",
+      "output_text": "Oh, yeah. Actually, that one I wish more than the Discord one.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "f809db9e4018513557fd71df68fecafe",
+      "output_text": "Oh, yeah. Actually, that one I wish more than the Discord one.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    }
+  ],
+  "128": [
+    {
+      "trace_id": "7f55eb7fe1b7b7864679c3b1fc5fd2b7",
+      "output_text": "Okay, let me make a note.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "7d052eee623fa32a2f5ee260f28b437f",
+      "output_text": "Okay, let me make a note.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    }
+  ],
+  "129": [
+    {
+      "trace_id": "da0585f59e735c74a4358bc03d0fb00e",
+      "output_text": "Hello Leaf",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "698a2d796367127236c3bc78e3defb6c",
+      "output_text": "Hello Leaf.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "dc8e94b99d0907b7e830c7535e6d8e56",
+      "output_text": "Hello Leaf.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    }
+  ],
+  "130": [
+    {
+      "trace_id": "da57957e6c35f95d284df53c281a4ad8",
+      "output_text": "Livid",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "dcc0bdbdecb4dc58b2a3e705f19f3d5f",
+      "output_text": "Livid",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    }
+  ],
+  "131": [
+    {
+      "trace_id": "0710eaa1c09a4177bee270f2f5e3f517",
+      "output_text": "Livid has joined the channel.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "0d87bf51374033ac0d5d346f48b9fae5",
+      "output_text": "Livid has joined the channel.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    }
+  ],
+  "132": [
+    {
+      "trace_id": "0206a2b54f337e4ce70e1d54035b2d56",
+      "output_text": "This needs to go away.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "e91ffdaf6af6d6b44ba24790d883d9f3",
+      "output_text": "This needs to go away.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    }
+  ],
+  "133": [
+    {
+      "trace_id": "0db5a906f759ce6a5de01f4e96a92e78",
+      "output_text": "I think we should start by discussing the upcoming Vket event.",
+      "classification": "unknown",
+      "classification_reasons": [
+        "mixed_signals"
+      ]
+    },
+    {
+      "trace_id": "26e108dd37d2c8c3c795afad5f51ed5e",
+      "output_text": "I think we should start by discussing the upcoming Vket event.",
+      "classification": "unknown",
+      "classification_reasons": [
+        "mixed_signals"
+      ]
+    },
+    {
+      "trace_id": "2b178dab36067555dececd87ffeaa62e",
+      "output_text": "I think we should start by discussing the upcoming Vket event.",
+      "classification": "unknown",
+      "classification_reasons": [
+        "mixed_signals"
+      ]
+    }
+  ],
+  "134": [
+    {
+      "trace_id": "6dde3ac8e5172e17fffa54ee2f25666b",
+      "output_text": "Yeah, I can ski with my shoes going out my front door.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "1ef6f9fcb2f6e094eefa1685ef8dcb67",
+      "output_text": "Yeah, I can ski with my shoes going out my front door.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    }
+  ],
+  "135": [
+    {
+      "trace_id": "8a21ea3682eceb0d0712ce1ffcb508f2",
+      "output_text": "Oh, please don't do that.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "c0246a58e8d1713ec0a5d932a8d848a0",
+      "output_text": "Oh, please don't do that.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    }
+  ],
+  "136": [
+    {
+      "trace_id": "74b474fc0ab804cb2c97d6a5cbd561db",
+      "output_text": "How fun.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "1888a1d46b0e59d67a5f4813f65669ce",
+      "output_text": "How fun.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    }
+  ],
+  "137": [
+    {
+      "trace_id": "25cdd2b7c0aa579a2dc74d91a68a8097",
+      "output_text": "Hehe.",
+      "classification": "unknown",
+      "classification_reasons": [
+        "mixed_signals"
+      ]
+    },
+    {
+      "trace_id": "b219ef90b5f14d0509055c1dba35620d",
+      "output_text": "Hehe.",
+      "classification": "unknown",
+      "classification_reasons": [
+        "mixed_signals"
+      ]
+    }
+  ],
+  "138": [
+    {
+      "trace_id": "2a7f7f29b346100c73efb9d5d7dd482e",
+      "output_text": "That is crazy.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "562242349ef40e07fd88706abfcbabb9",
+      "output_text": "That is crazy.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "ffd075ef20eb9a43e18b247d0bfaf995",
+      "output_text": "That is crazy.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "bdc9d42bfce13295f0efbf6324b0b051",
+      "output_text": "That is crazy.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    }
+  ],
+  "139": [
+    {
+      "trace_id": "fca63eb42e02e4d5cbc8b432c466c643",
+      "output_text": "Yeah, today is the",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "3a7c8560b5dcecc583920c1873e7968b",
+      "output_text": "Yeah, today is the",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    }
+  ],
+  "140": [
+    {
+      "trace_id": "2661d07a2bdc93132c493c438cdef316",
+      "output_text": "I'll be right back.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "cabf82174603bb62ffe7b6e61661d35f",
+      "output_text": "I'll be right back.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    }
+  ],
+  "141": [
+    {
+      "trace_id": "fa52886d86bf5c9f02dd78fca99b2e5b",
+      "output_text": "No idea how many cats it's gonna attract, but you know.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "e11096e41dd39e0a9e7f06c50555a10d",
+      "output_text": "No idea how many cats it's gonna attract, but you know.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "3d36f95787fa84f5fe35f489b9383381",
+      "output_text": "No idea how many cats it's gonna attract, but you know.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    }
+  ],
+  "142": [
+    {
+      "trace_id": "c6e090320e3edfcb8cbfbe88d9a102b6",
+      "output_text": "Hahaha",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "89ccd5511974f87738cae150af49d51d",
+      "output_text": "Hahaha",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    }
+  ],
+  "143": [
+    {
+      "trace_id": "7c65682221e166c03d83a2c0c9d73dab",
+      "output_text": "Interesting.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "523a894fa66a0a61ff830017bc0323cb",
+      "output_text": "Interesting.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    }
+  ],
+  "144": [
+    {
+      "trace_id": "14aee1b1debdba2118b34fa5ba740af8",
+      "output_text": "Alpha says he's gonna pop out.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "b783bfe74646017a097fc1f1a84a3bce",
+      "output_text": "Alpha says he's gonna pop out.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    }
+  ],
+  "145": [
+    {
+      "trace_id": "d4ffac8d8254e836f46b51453369de8a",
+      "output_text": "I was recently",
+      "classification": "unknown",
+      "classification_reasons": [
+        "mixed_signals"
+      ]
+    },
+    {
+      "trace_id": "16e838eabaf2ecfdfb06f8ae6ba00854",
+      "output_text": "I was recently",
+      "classification": "unknown",
+      "classification_reasons": [
+        "mixed_signals"
+      ]
+    }
+  ],
+  "146": [
+    {
+      "trace_id": "f477ae883250d70965bd29470f5630b1",
+      "output_text": "atory moments and stage-focused content. What is not to be captured? This is one of our new rules because we want to make sure that all of our media is there for uplift and not for drama-based things or etc. Moderation activities, conflict or arguments, call-outs or receipts, people crying, breaking down, or visibly distressed or anxious, harassment, trolling, or bans, private conversations, and anything that would be humiliating or weaponizable out of context. If it would look bad in a screenshot, it does not get recorded. That sound good to everybody?",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "b6602a6a492820b2c4f6f07799346a29",
+      "output_text": "atory moments and stage-focused content. What is not to be captured. This is one of our new rules because we want to make sure that all of our media is there for uplift and not for drama-based things or etc. Moderation activities, conflict or arguments, call-outs or receipts, people crying, breaking down or visibly distressed or anxious, harassment, trolling or bans, private conversations, and anything that would be humiliating or weaponizable out of context. If it would look bad in a screenshot, it does not get recorded. That sound good to everybody?",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "56ba696b87dbbf1b09bb9bb114fb8d35",
+      "output_text": "atory moments and stage-focused content. What is not to be captured. This is one of our new rules because we want to make sure that all of our media is there for uplift and not for drama-based things or etc. Moderation activities, conflict or arguments, call-outs or receipts, people crying, breaking down, or visibly distressed or anxious, harassment, trolling, or bans, private conversations, and anything that would be humiliating or weaponizable out of context. If it would look bad in a screenshot, it does not get recorded. That sound good to everybody?",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "73b4a6dbe82f4283ab76a8617076de66",
+      "output_text": "atory moments and stage-focused content. What is not to be captured? This is one of our new rules because we want to make sure that all of our media is there for uplift and not for drama-based things or etc. Moderation activities, conflict or arguments, call-outs or receipts, people crying, breaking down, or visibly distressed or anxious, harassment, trolling, or bans, private conversations, and anything that would be humiliating or weaponizable out of context. If it would look bad in a screenshot, it does not get recorded. That sound good to everybody?",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    }
+  ],
+  "147": [
+    {
+      "trace_id": "c59f70e2a453e7e05614da6fd0d95e45",
+      "output_text": "The basic idea is that media is for uplift, not evidence.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "2661dcaf2bdfe50fa1104b59e748f8db",
+      "output_text": "The basic idea is that media is for uplift, not evidence.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    }
+  ],
+  "148": [
+    {
+      "trace_id": "f26fd46a10d1b3dcdfd12a7a14e201b7",
+      "output_text": "I know Leaf wasn't here. I can briefly go over a couple things real quick. It's going to be reiteration though. We are preparing to formalize the Faceless as a non-profit. That means clearer structure, not colder culture. Today is about what changes operationally for staff and what doesn't. And that's kind of what we went over today, Leaf. The standardizing of process. All staff concerns are going to be handled through documented witness process.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "d1f70779d4d1b498f9030bf887806354",
+      "output_text": "I know Leaf wasn't here. I can briefly go over a couple things real quick. It's going to be reiteration though. We are preparing to formalize the Faceless as a non-profit. That means clearer structure, not colder culture. Today is about what changes operationally for staff and what doesn't. And that's kind of what we went over today, Leaf. The standardizing of process. All staff concerns are going to be handled through documented witness process.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    }
+  ],
+  "149": [
+    {
+      "trace_id": "621e1ece68264a6a29700246bfc97dfd",
+      "output_text": "Expectations are going to become very explicit, so you're going to see updated agreements, re-onboarding acknowledgments, etc. with standard nonprofit disclaimers and things. It's not about distress, it's about being ready for donors, compliance, and stability. And then I went over the script for why now. We've learned that communities don't break under normal days, they break under stress. These changes are to make us boring under stress so we can stay warm the rest of the time. Are we becoming corporate? The answer was we're becoming governed. The vibe stays human, the structure gets stronger. And we no longer debate policy or any of that stuff in public channels. If you have concerns, you're going to use the keeper of process intake when it's live.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "e45613cfadf36a0aefae254c19863ab7",
+      "output_text": "Expectations are going to become very explicit, so you're going to see updated agreements, re-onboarding acknowledgments, etc. with standard nonprofit disclaimers and things. It's not about distress, it's about being ready for donors, compliance, and stability. And then I went over the script for why now. We've learned that communities don't break under normal days, they break under stress. These changes are to make us boring under stress so we can stay warm the rest of the time. Are we becoming corporate? The answer was we're becoming governed. The vibe stays human, the structure gets stronger, and we no longer debate policy or any of that stuff in public channels. If you have concerns, you're going to use the keeper of process intake when it's live.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    }
+  ],
+  "150": [
+    {
+      "trace_id": "a11ada58b8d9ceb03edbb24ed1bfb0af",
+      "output_text": "Expectations are going to become very explicit, so you're going to see updated agreements, re-onboarding acknowledgments, etc. with standard non-profit disclaimers and things. It's not about distress, it's about being ready for donors, compliance, and stability. And then I went over the script for why now. We've learned that communities don't break under normal days, they break under stress. These changes are to make us boring under stress so we can stay warm the rest of the time. Are we becoming corporate? The answer was we're becoming governed. The vibe stays human, the structure gets stronger. And we no longer debate policy or any of that stuff in public channels. If you have concerns, you're going to use the keeper of process intake when it's live.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "151847188c015ba8acf0aa6b5faacefe",
+      "output_text": "Expectations are going to become very explicit, so you're going to see updated agreements, re-onboarding acknowledgments, etc. with standard non-profit disclaimers and things. It's not about distress, it's about being ready for donors, compliance, and stability. And then I went over the script for why now. We've learned that communities don't break under normal days, they break under stress. These changes are to make us boring under stress so we can stay warm the rest of the time. Are we becoming corporate? The answer was we're becoming governed. The vibe stays human, the structure gets stronger, and we no longer debate policy or any of that stuff in public channels. If you have concerns, you're going to use the keeper of process intake when it's live.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    }
+  ],
+  "151": [
+    {
+      "trace_id": "0dadd244f5a32fa7e5b6c23ba929cb72",
+      "output_text": "Sounds good.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "7009acc7ada559a7257325f130678771",
+      "output_text": "Sounds good.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "195a85f9181b0469904b9122eb1e9ec6",
+      "output_text": "Sounds good.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "4d85db290e0eb2a6c4afc30ebfc8c8ea",
+      "output_text": "Sounds good.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "8847d4daa9f443a1cdcde92477641d82",
+      "output_text": "Sounds good.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    }
+  ],
+  "152": [
+    {
+      "trace_id": "794e1734bc19e723275d71c45cbc838f",
+      "output_text": "Yep, we're moving along. I'll be applying very soon for things, so that stuff's going to be happening. As I said earlier, we're going to have our EIN and everything done before the end of the month. So all that stuff will be getting applied for.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "01e6bf54b8d42d78a04424325b6b8087",
+      "output_text": "Yep, we're moving along. I'll be applying very soon for things, so that stuff's going to be happening. As I said earlier, we're going to have our EIN and everything done before the end of the month. So all that stuff will be getting applied for.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    }
+  ],
+  "153": [
+    {
+      "trace_id": "0f6d173b1c9c9cced5aa358cf89d8263",
+      "output_text": "So yes, don't be alarmed when you see a lot more packets and packages and everything being put out there. We're going to have a staff forums channel that'll have the ways that we deal with things and all that stuff. Everything is going to become very formalized because it needs to be formalized. So basically the structure behind the scenes stuff will be a lot more structured and formalized and process oriented. No one else outside of staff generally will have any idea any change has happened besides, you know, the being able to say that we're, you know what I mean, and being complete on that. Everything else should continue as is.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "dc1dd799bb57c7697c6528363365cfe8",
+      "output_text": "So yes, don't be alarmed when you see a lot more packets and packages and everything being put out there. We're going to have a staff forums channel that'll have the ways that we deal with things and all that stuff. Everything is going to become very formalized because it needs to be formalized. So basically the structure behind the scenes stuff will be a lot more structured and formalized and process oriented. No one else outside of staff generally will have any idea any change has happened besides, you know, the being able to say that we're, you know what I mean, and being complete on that. Everything else should continue as is.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    }
+  ],
+  "154": [
+    {
+      "trace_id": "8031a318a7641e2310ee706f6b1e39b9",
+      "output_text": "Yeah, y'all just let me know what I can do to help with the charity stuff.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "a3b12976111389d933ffa702b3970522",
+      "output_text": "Yeah, y'all just let me know what I can do to help with the charity stuff.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "4d431bb4714d0f34c393afffb58f7e0e",
+      "output_text": "Yeah, y'all just let me know what I can do to help with the charity stuff.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "89ac9fafe947b6f929a0f8925bdc1f36",
+      "output_text": "Yeah, y'all just let me know what I can do to help with the charity stuff.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    }
+  ],
+  "155": [
+    {
+      "trace_id": "b29c0190c38b95caca27917653bd9cb4",
+      "output_text": "Uh huh, that sounds great, thank you.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "d9ed8226084035d6450f3d29b2f181ff",
+      "output_text": "Uh huh, that sounds great, thank you.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    }
+  ],
+  "156": [
+    {
+      "trace_id": "8842438a9adc3d751471180dddb444a6",
+      "output_text": "Yes V, I made a note.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "80e6f8d2acc41cb382af735d14183c74",
+      "output_text": "Yes V, I made a note.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    }
+  ],
+  "157": [
+    {
+      "trace_id": "574fd2c9677ca960b334b1064c7d3330",
+      "output_text": "I'll talk to y'all soon. Gonna hop out of here, still working on various things. Busy week.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "ed9ac5c51e2b41f15477db4fb7bcbbfb",
+      "output_text": "I'll talk to y'all soon. Gonna hop out of here, still working on various things. Busy week.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    }
+  ],
+  "158": [
+    {
+      "trace_id": "9156248e8383a912b9bbcd56496522e6",
+      "output_text": "Welcome",
+      "classification": "unknown",
+      "classification_reasons": [
+        "mixed_signals"
+      ]
+    },
+    {
+      "trace_id": "fe2522ec2f305541a36938e40d966d03",
+      "output_text": "Welcome",
+      "classification": "unknown",
+      "classification_reasons": [
+        "mixed_signals"
+      ]
+    }
+  ],
+  "159": [
+    {
+      "trace_id": "ab0d7e5abffb5a65b950575bfa3d17f9",
+      "output_text": "Later",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "d7ee2ea30656fc9d55cfe10808e514b6",
+      "output_text": "Later",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "52a303a9aa39d2717741bd1f6283db7f",
+      "output_text": "Later",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    }
+  ],
+  "160": [
+    {
+      "trace_id": "580360b48ca80cecc3341a2ff830ed6f",
+      "output_text": "Hey, guys.",
+      "classification": "unknown",
+      "classification_reasons": [
+        "mixed_signals"
+      ]
+    },
+    {
+      "trace_id": "2c305feebfc9c6d972777fc3353851f1",
+      "output_text": "Hey, guys.",
+      "classification": "unknown",
+      "classification_reasons": [
+        "mixed_signals"
+      ]
+    }
+  ],
+  "161": [
+    {
+      "trace_id": "e9a0950b253b45c866c94154b74ef9e9",
+      "output_text": "I too shall. Bye bye.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "d6da7563268ba4daa7b24aaf0439b30c",
+      "output_text": "I too shall. Bye bye.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    }
+  ],
+  "162": [
+    {
+      "trace_id": "206d3604d637c89830c4658dc36b2a4b",
+      "output_text": "What is Wednesday's date?",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "1b4c130d835bac1b64b867f904d473c6",
+      "output_text": "What is Wednesday's date?",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    }
+  ],
+  "163": [
+    {
+      "trace_id": "8f81bad47e60f29b9cc7a6da9d3a72ff",
+      "output_text": "I think we can tell the Keeper to hit the road, Jack, and please don't come no more, no more, no more today.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "27f8b419d3c7f0b48c2c90f0193f648d",
+      "output_text": "I think we can tell the Keeper to hit the road, Jack, and please don't come no more, no more, no more today.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    }
+  ],
+  "164": [
+    {
+      "trace_id": "3b908e1f7fd3567afe457174db934ab4",
+      "output_text": "I said today, I said today",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "8f24492f96d61c0a82c763360f6cf236",
+      "output_text": "I said today, I said today",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    }
+  ],
+  "165": [
+    {
+      "trace_id": "c222caa5d9bc3329a991876412c424c5",
+      "output_text": "Hit the road, Jack.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "0449b13c209222e05b139eff2a8454a2",
+      "output_text": "Hit the road, Jack.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    }
+  ],
+  "166": [
+    {
+      "trace_id": "c2994308e2bfd720bc7d9738b3f84bda",
+      "output_text": "Only today.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "36084bf27bae599b92e949be25129998",
+      "output_text": "Only today.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    }
+  ],
+  "167": [
+    {
+      "trace_id": "47b5e2929e2bc4c4f534d4591ec82ceb",
+      "output_text": "Don't come back anymore today, Keeper of Voices, we love you.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    },
+    {
+      "trace_id": "bda5d717b2de67d2cd127d8445e22e74",
+      "output_text": "Don't come back anymore today, Keeper of Voices, we love you.",
+      "classification": "legit",
+      "classification_reasons": [
+        "clean_metrics"
+      ]
+    }
+  ]
+}

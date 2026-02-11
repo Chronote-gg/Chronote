@@ -1,0 +1,5 @@
+analysis/hallucination-audit/raw_traces_*.json filter=lfs diff=lfs merge=lfs -text
+analysis/hallucination-audit/**/audio_combined.mp3 filter=lfs diff=lfs merge=lfs -text
+analysis/hallucination-audit/**/full_audio_segments/*.mp3 filter=lfs diff=lfs merge=lfs -text
+analysis/hallucination-audit/**/no-no-no*.mp3 filter=lfs diff=lfs merge=lfs -text
+analysis/hallucination-audit/audio_cache/*.mp3 filter=lfs diff=lfs merge=lfs -text

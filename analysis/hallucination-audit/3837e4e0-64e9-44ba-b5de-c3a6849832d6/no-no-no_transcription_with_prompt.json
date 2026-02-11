@@ -1,0 +1,19 @@
+{
+  "audio_file": "analysis\\hallucination-audit\\audio_cache\\V0Oe01QetGpVv1wji4jORD.mp3",
+  "model": "gpt-4o-transcribe",
+  "prompt_file": "analysis\\hallucination-audit\\no-no-no_prompt.txt",
+  "text": "No, no, no, no, no, no, no, today, today, today.",
+  "raw": {
+    "text": "No, no, no, no, no, no, no, today, today, today.",
+    "usage": {
+      "type": "tokens",
+      "total_tokens": 287,
+      "input_tokens": 265,
+      "input_token_details": {
+        "text_tokens": 167,
+        "audio_tokens": 98
+      },
+      "output_tokens": 22
+    }
+  }
+}

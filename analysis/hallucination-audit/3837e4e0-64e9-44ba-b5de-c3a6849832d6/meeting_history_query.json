@@ -1,0 +1,140 @@
+{
+  "guildId": "480695542155051010",
+  "meetingId": "3837e4e0-64e9-44ba-b5de-c3a6849832d6",
+  "startTimestamp": "2026-02-09T23:00:00Z",
+  "endTimestamp": "2026-02-10T02:00:00Z",
+  "items": [
+    {
+      "startReason": "auto_record_channel",
+      "participants": [
+        {
+          "id": "283102779772502016",
+          "tag": "blackbelt33",
+          "displayName": "Blackbelt33",
+          "username": "blackbelt33"
+        },
+        {
+          "id": "410270160406970369",
+          "tag": "nekoyori",
+          "displayName": "Nekoyori",
+          "username": "nekoyori"
+        },
+        {
+          "id": "211750261922725888",
+          "tag": "basic_bit",
+          "displayName": "BASIC",
+          "username": "basic_bit"
+        },
+        {
+          "id": "384491311085912074",
+          "tag": "xxx.nova.xxx",
+          "serverNickname": "Celeste - Faceless Lap Cat",
+          "displayName": "Celeste",
+          "username": "xxx.nova.xxx"
+        },
+        {
+          "id": "261014673678270464",
+          "tag": "kitpup",
+          "displayName": "kitpup",
+          "username": "kitpup"
+        },
+        {
+          "id": "428436921761398784",
+          "username": "theblindprophet",
+          "tag": "theblindprophet"
+        },
+        {
+          "id": "638134454061105184",
+          "tag": "alphaqup_",
+          "displayName": "Alpha",
+          "username": "alphaqup_"
+        },
+        {
+          "id": "233815839806193664",
+          "tag": "foxyfoo",
+          "displayName": "FOXY",
+          "username": "foxyfoo"
+        },
+        {
+          "id": "609098906441220096",
+          "tag": "vrbabe14",
+          "displayName": "VRBabe22",
+          "username": "vrbabe14"
+        },
+        {
+          "id": "764697065351544863",
+          "tag": "wickedproxy",
+          "displayName": "wickedproxy",
+          "username": "wickedproxy"
+        },
+        {
+          "id": "459153700322148372",
+          "tag": "lividleaf",
+          "displayName": "Livid Leaf",
+          "username": "lividleaf"
+        }
+      ],
+      "startTriggeredByUserId": "283102779772502016",
+      "status": "complete",
+      "meetingCreatorId": "1278729036528619633",
+      "guildId": "480695542155051010",
+      "generateNotes": true,
+      "autoRecordRule": {
+        "mode": "channel",
+        "channelId": "1162985500995493959"
+      },
+      "meetingId": "3837e4e0-64e9-44ba-b5de-c3a6849832d6",
+      "channelId": "1162985500995493959",
+      "transcribeMeeting": true,
+      "isAutoRecording": true,
+      "duration": 3441,
+      "tags": [
+        "weekly",
+        "meeting"
+      ],
+      "channelId_timestamp": "1162985500995493959#2026-02-09T23:47:40.876Z",
+      "summaryLabel": "Nonprofit Process and Media Consent",
+      "meetingName": "Nonprofit Process and Media Consent",
+      "notesVersion": 2,
+      "notesLastEditedBy": "211750261922725888",
+      "chatS3Key": "480695542155051010/1162985500995493959_3837e4e0-64e9-44ba-b5de-c3a6849832d6_2026-02-09T23-47-40.876Z/chat.json",
+      "summaryMessageId": "1470566860067176458",
+      "notes": "## Summary\n- **Staff promotions / role updates**\n  - **Celeste** announced as promoted to a **Hand** (recognized for contributions incl. Joshosh Adventures).\n  - **Alpha** welcomed as a **new Hand**; shared background in community/venue leadership.\n  - **wickedproxy** moved into **Keeper of Process** to formalize intake/triage of concerns (work they were largely already doing).\n\n- **Nonprofit transition readiness (\u201cgood boring\u201d process)**\n  - Continuing from last meeting\u2019s theme of **codifying process**: focus is **clearer structure, not colder culture** as The Faceless moves toward nonprofit status.\n  - Target shared: **initial stages + EIN by end of month**.\n  - Key operational shift: **staff concerns/conflicts will use a documented, witnessed process**; **leadership will not adjudicate conflicts in DMs** (move communication into formal Discord channels for consistency + protection from screenshot/leverage dynamics).\n  - **Role-based access** will tighten permissions to what\u2019s needed for each role; some role/access changes may occur during transition.\n\n- **Programs are community-owned**\n  - Classes/clubs/events under The Faceless are **Faceless programs** (no individual \u201cownership\u201d); individuals can still be credited as leads.\n  - If a program lead steps away, the community can **continue the program** with new leadership (example referenced: DJ class teacher transitions).\n\n- **Media, promo, and consent standards**\n  - **Promo materials** to be **created/approved by the media team** (no outside watermarking; no partner language without approval).\n  - **Media purpose**: capture **joy/talent/community**, not leverage/evidence.\n  - **Do not record**: moderation activity, conflicts/arguments, bans/harassment/trolling, private conversations, or visibly distressed moments; \u201cif it would look bad in a screenshot, don\u2019t record it.\u201d\n  - Consent process preview:\n    - Consent designator at entrance + **host consent reminder**\n    - **Wide shots only** unless stage-focused or explicit permission\n    - **Non-filmed areas** available\n    - Up to **7 days after** for someone to request removal if they appear in footage\n\n- **Tooling / structure**\n  - Continuing from prior discussion about reducing clutter: plan to roll out **staff forums** to centralize procedures/resources.\n  - **Secondary staff Discord** idea raised; sentiment leaned toward **staying in one Discord** and solving via forums/channels instead.\n\n- **Event ops (upcoming charity event on Sunday)**\n  - Security staffing is being organized with a **buddy system** and support from **Olympus** (Atlas/Ropai mentioned).\n  - Signups are filling quickly; intention to reserve space for partner communities involved.\n  - **wickedproxy** posted a timestamped run-of-show style schedule in chat (for reference/coordination).\n\n- **Classes / community programming**\n  - **DJ class** returning with **Crossfade** as teacher (needs scheduling).\n  - Discussion of reaching out to **Dev** regarding scheduling for **Screamo**.\n  - **Trippy** to offer a **monthly Intro to Breakin\u2019 workshop**; Ellie remains busy with doctorate commitments, so open breaking sessions continue in the interim.\n  - \u201c**Movie-oke**\u201d (movie night + karaoke) mentioned as a fun upcoming format.\n\n## Decisions / Announcements\n- Conflicts/staff concerns: **no DM adjudication** \u2192 move to **documented, witnessed Discord process**.\n- **Role-based access**/permissions to be adjusted as needed during nonprofit transition.\n- **Promo + media controls**: media team approval required; new \u201cuplift-only\u201d capture rules and consent standards to be enforced.\n- **Staff forums** will be instituted soon to house process/docs/resources.\n- Role changes: **Celeste \u2192 Hand**, **Alpha \u2192 Hand**, **wickedproxy \u2192 Keeper of Process**.\n\n## Action Items / Next Steps\n- <@428436921761398784> Finalize nonprofit transition milestones (aim: **EIN/initial filings by end of month**) and publish upcoming **staff packets/agreements** (volunteer acknowledgements, process updates).\n- <@428436921761398784> Publish a clear **role/responsibility + escalation map** (Hands/Keepers/Shadows/etc.) and where to route concerns.\n- <@764697065351544863> Stand up/coordinate the **Keeper of Process intake** flow once live; help funnel concerns into the documented process.\n- <@233815839806193664> Continue **Sunday charity event staffing** coordination (buddy system, section coverage, floaters, gate) and DM staff the schedule/process.\n- <@233815839806193664> Incorporate <@609098906441220096> offer to help with **security** and provide **local (UK) time** info for the event.\n- <@233815839806193664> Coordinate with **Crossfade** to lock **DJ class** schedule; reach out to **Dev** about **Screamo** class days/times.\n\n## Open Questions\n- **Staff structure**: Do we remain **single-Discord + forums**, or pilot a **separate staff Discord** later if forums don\u2019t solve organization needs?",
+      "audioS3Key": "480695542155051010/1162985500995493959_3837e4e0-64e9-44ba-b5de-c3a6849832d6_2026-02-09T23-47-40.876Z/audio_combined.mp3",
+      "transcriptS3Key": "480695542155051010/1162985500995493959_3837e4e0-64e9-44ba-b5de-c3a6849832d6_2026-02-09T23-47-40.876Z/transcript.json",
+      "notesLastEditedAt": "2026-02-10T01:08:05.889Z",
+      "notesMessageIds": [
+        "1470587094266019995",
+        "1470587095562063984"
+      ],
+      "summarySentence": "Mods announced staff promotions and role changes, aligned on nonprofit transition timelines with documented witnessed conflict handling and tighter role based access, set media and promo consent standards, and coordinated Sunday charity event security plus upcoming classes and programming.",
+      "endReason": "bot_disconnect",
+      "notesHistory": [
+        {
+          "editedAt": "2026-02-10T00:45:02.780Z",
+          "notes": "## Summary\n- **Staff promotions / role updates**\n  - **Celeste** announced as promoted to a **Hand** (recognized for contributions incl. Joshosh Adventures).\n  - **Alpha** welcomed as a **new Hand**; shared background in community/venue leadership.\n  - **wickedproxy** moved into **Keeper of Process** to formalize intake/triage of concerns (work they were largely already doing).\n\n- **Nonprofit transition readiness (\u201cgood boring\u201d process)**\n  - Continuing from last meeting\u2019s theme of **codifying process**: focus is **clearer structure, not colder culture** as The Faceless moves toward nonprofit status.\n  - Target shared: **initial stages + EIN by end of month**.\n  - Key operational shift: **staff concerns/conflicts will use a documented, witnessed process**; **leadership will not adjudicate conflicts in DMs** (move communication into formal Discord channels for consistency + protection from screenshot/leverage dynamics).\n  - **Role-based access** will tighten permissions to what\u2019s needed for each role; some role/access changes may occur during transition.\n\n- **Programs are community-owned**\n  - Classes/clubs/events under The Faceless are **Faceless programs** (no individual \u201cownership\u201d); individuals can still be credited as leads.\n  - If a program lead steps away, the community can **continue the program** with new leadership (example referenced: DJ class teacher transitions).\n\n- **Media, promo, and consent standards**\n  - **Promo materials** to be **created/approved by the media team** (no outside watermarking; no partner language without approval).\n  - **Media purpose**: capture **joy/talent/community**, not leverage/evidence.\n  - **Do not record**: moderation activity, conflicts/arguments, bans/harassment/trolling, private conversations, or visibly distressed moments; \u201cif it would look bad in a screenshot, don\u2019t record it.\u201d\n  - Consent process preview:\n    - Consent designator at entrance + **host consent reminder**\n    - **Wide shots only** unless stage-focused or explicit permission\n    - **Non-filmed areas** available\n    - Up to **7 days after** for someone to request removal if they appear in footage\n\n- **Tooling / structure**\n  - Continuing from prior discussion about reducing clutter: plan to roll out **staff forums** to centralize procedures/resources.\n  - **Secondary staff Discord** idea raised; sentiment leaned toward **staying in one Discord** and solving via forums/channels instead.\n\n- **Event ops (upcoming charity event on Sunday)**\n  - Security staffing is being organized with a **buddy system** and support from **Olympus** (Atlas/Ropai mentioned).\n  - Signups are filling quickly; intention to reserve space for partner communities involved.\n  - **wickedproxy** posted a timestamped run-of-show style schedule in chat (for reference/coordination).\n\n- **Classes / community programming**\n  - **DJ class** returning with **Crossfade** as teacher (needs scheduling).\n  - Discussion of reaching out to **Dev** regarding scheduling for **Screamo**.\n  - **Trippy** to offer a **monthly Intro to Breakin\u2019 workshop**; Ellie remains busy with doctorate commitments, so open breaking sessions continue in the interim.\n  - \u201c**Movie-oke**\u201d (movie night + karaoke) mentioned as a fun upcoming format.\n\n## Decisions / Announcements\n- Conflicts/staff concerns: **no DM adjudication** \u2192 move to **documented, witnessed Discord process**.\n- **Role-based access**/permissions to be adjusted as needed during nonprofit transition.\n- **Promo + media controls**: media team approval required; new \u201cuplift-only\u201d capture rules and consent standards to be enforced.\n- **Staff forums** will be instituted soon to house process/docs/resources.\n- Role changes: **Celeste \u2192 Hand**, **Alpha \u2192 Hand**, **wickedproxy \u2192 Keeper of Process**.\n\n## Action Items / Next Steps\n- <@428436921761398784> Finalize nonprofit transition milestones (aim: **EIN/initial filings by end of month**) and publish upcoming **staff packets/agreements** (volunteer acknowledgements, process updates).\n- <@428436921761398784> Publish a clear **role/responsibility + escalation map** (Hands/Keepers/Shadows/etc.) and where to route concerns.\n- <@764697065351544863> Stand up/coordinate the **Keeper of Process intake** flow once live; help funnel concerns into the documented process.\n- <@233815839806193664> Continue **Sunday charity event staffing** coordination (buddy system, section coverage, floaters, gate) and DM staff the schedule/process.\n- <@233815839806193664> Incorporate <@609098906441220096> offer to help with **security** and provide **local (UK) time** info for the event.\n- <@233815839806193664> Coordinate with **Crossfade** to lock **DJ class** schedule; reach out to **Dev** about **Screamo** class days/times.\n\n## Open Questions\n- **Vket**: Several prompts to \u201cstart with Vket,\u201d but planning didn\u2019t land\u2014do we schedule a **dedicated Vket planning segment/meeting** with owners, goals, and timeline?\n- **Staff structure**: Do we remain **single-Discord + forums**, or pilot a **separate staff Discord** later if forums don\u2019t solve organization needs?",
+          "editedBy": "1278729036528619633",
+          "version": 1
+        },
+        {
+          "editedAt": "2026-02-10T01:08:05.889Z",
+          "notes": "## Summary\n- **Staff promotions / role updates**\n  - **Celeste** announced as promoted to a **Hand** (recognized for contributions incl. Joshosh Adventures).\n  - **Alpha** welcomed as a **new Hand**; shared background in community/venue leadership.\n  - **wickedproxy** moved into **Keeper of Process** to formalize intake/triage of concerns (work they were largely already doing).\n\n- **Nonprofit transition readiness (\u201cgood boring\u201d process)**\n  - Continuing from last meeting\u2019s theme of **codifying process**: focus is **clearer structure, not colder culture** as The Faceless moves toward nonprofit status.\n  - Target shared: **initial stages + EIN by end of month**.\n  - Key operational shift: **staff concerns/conflicts will use a documented, witnessed process**; **leadership will not adjudicate conflicts in DMs** (move communication into formal Discord channels for consistency + protection from screenshot/leverage dynamics).\n  - **Role-based access** will tighten permissions to what\u2019s needed for each role; some role/access changes may occur during transition.\n\n- **Programs are community-owned**\n  - Classes/clubs/events under The Faceless are **Faceless programs** (no individual \u201cownership\u201d); individuals can still be credited as leads.\n  - If a program lead steps away, the community can **continue the program** with new leadership (example referenced: DJ class teacher transitions).\n\n- **Media, promo, and consent standards**\n  - **Promo materials** to be **created/approved by the media team** (no outside watermarking; no partner language without approval).\n  - **Media purpose**: capture **joy/talent/community**, not leverage/evidence.\n  - **Do not record**: moderation activity, conflicts/arguments, bans/harassment/trolling, private conversations, or visibly distressed moments; \u201cif it would look bad in a screenshot, don\u2019t record it.\u201d\n  - Consent process preview:\n    - Consent designator at entrance + **host consent reminder**\n    - **Wide shots only** unless stage-focused or explicit permission\n    - **Non-filmed areas** available\n    - Up to **7 days after** for someone to request removal if they appear in footage\n\n- **Tooling / structure**\n  - Continuing from prior discussion about reducing clutter: plan to roll out **staff forums** to centralize procedures/resources.\n  - **Secondary staff Discord** idea raised; sentiment leaned toward **staying in one Discord** and solving via forums/channels instead.\n\n- **Event ops (upcoming charity event on Sunday)**\n  - Security staffing is being organized with a **buddy system** and support from **Olympus** (Atlas/Ropai mentioned).\n  - Signups are filling quickly; intention to reserve space for partner communities involved.\n  - **wickedproxy** posted a timestamped run-of-show style schedule in chat (for reference/coordination).\n\n- **Classes / community programming**\n  - **DJ class** returning with **Crossfade** as teacher (needs scheduling).\n  - Discussion of reaching out to **Dev** regarding scheduling for **Screamo**.\n  - **Trippy** to offer a **monthly Intro to Breakin\u2019 workshop**; Ellie remains busy with doctorate commitments, so open breaking sessions continue in the interim.\n  - \u201c**Movie-oke**\u201d (movie night + karaoke) mentioned as a fun upcoming format.\n\n## Decisions / Announcements\n- Conflicts/staff concerns: **no DM adjudication** \u2192 move to **documented, witnessed Discord process**.\n- **Role-based access**/permissions to be adjusted as needed during nonprofit transition.\n- **Promo + media controls**: media team approval required; new \u201cuplift-only\u201d capture rules and consent standards to be enforced.\n- **Staff forums** will be instituted soon to house process/docs/resources.\n- Role changes: **Celeste \u2192 Hand**, **Alpha \u2192 Hand**, **wickedproxy \u2192 Keeper of Process**.\n\n## Action Items / Next Steps\n- <@428436921761398784> Finalize nonprofit transition milestones (aim: **EIN/initial filings by end of month**) and publish upcoming **staff packets/agreements** (volunteer acknowledgements, process updates).\n- <@428436921761398784> Publish a clear **role/responsibility + escalation map** (Hands/Keepers/Shadows/etc.) and where to route concerns.\n- <@764697065351544863> Stand up/coordinate the **Keeper of Process intake** flow once live; help funnel concerns into the documented process.\n- <@233815839806193664> Continue **Sunday charity event staffing** coordination (buddy system, section coverage, floaters, gate) and DM staff the schedule/process.\n- <@233815839806193664> Incorporate <@609098906441220096> offer to help with **security** and provide **local (UK) time** info for the event.\n- <@233815839806193664> Coordinate with **Crossfade** to lock **DJ class** schedule; reach out to **Dev** about **Screamo** class days/times.\n\n## Open Questions\n- **Staff structure**: Do we remain **single-Discord + forums**, or pilot a **separate staff Discord** later if forums don\u2019t solve organization needs?",
+          "editedBy": "211750261922725888",
+          "version": 2
+        }
+      ],
+      "notesChannelId": "1278413850189762610",
+      "suggestionsHistory": [
+        {
+          "createdAt": "2026-02-10T01:07:33.984Z",
+          "text": "The mentions of Vket were a bug in the transcription and can be ignored",
+          "userId": "211750261922725888",
+          "userTag": "basic_bit",
+          "displayName": "BASIC"
+        }
+      ],
+      "updatedAt": "2026-02-10T01:08:05.889Z",
+      "timestamp": "2026-02-09T23:47:40.876Z"
+    }
+  ]
+}

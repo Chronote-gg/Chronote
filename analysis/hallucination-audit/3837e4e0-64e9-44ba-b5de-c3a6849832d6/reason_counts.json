@@ -1,0 +1,17 @@
+{
+  "hallucinated": {
+    "prompt_echo_detected": 300,
+    "contains_vket": 79
+  },
+  "legit": {
+    "clean_metrics": 495
+  },
+  "unknown": {
+    "no_output": 1031,
+    "mixed_signals": 124,
+    "quiet_audio": 17,
+    "contains_timestamp": 5,
+    "contains_bracket_timestamp": 1,
+    "contains_bot_name": 4
+  }
+}
