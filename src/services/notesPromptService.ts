@@ -193,12 +193,15 @@ const formatChatLogForPrompt = (
     return undefined;
   }
 
-  const imageCaptionBudget = clampInt(
-    meeting.runtimeConfig?.visionCaptions?.maxTotalChars,
-    DEFAULT_IMAGE_CAPTION_MAX_CHARS,
-    0,
-    maxLength,
-  );
+  const visionConfig = meeting.runtimeConfig?.visionCaptions;
+  const imageCaptionBudget = visionConfig?.enabled
+    ? clampInt(
+        visionConfig.maxTotalChars,
+        DEFAULT_IMAGE_CAPTION_MAX_CHARS,
+        0,
+        maxLength,
+      )
+    : 0;
   const captionsSuffix = formatImageCaptionsSuffixForPrompt(
     chatLog,
     imageCaptionBudget,
@@ -284,10 +287,10 @@ export async function getNotesPrompt(meeting: MeetingData) {
       formattedContext,
       botDisplayName,
       chatContextInstruction: chatContext
-        ? "Use the raw chat provided below to honor any explicit include or omit requests."
+        ? "Use the chat context below, participant messages plus AI image caption notes, to honor explicit include or omit requests."
         : "No additional participant chat was captured; rely on transcript and provided context.",
       chatContextBlock: chatContext
-        ? `Participant chat (recent, raw, chronological):\n${chatContext}`
+        ? `Chat context (recent, chronological participant chat with AI image caption notes):\n${chatContext}`
         : "",
       participantRoster: participantRoster ?? "No participant roster captured.",
       serverName,
