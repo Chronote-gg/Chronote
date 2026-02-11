@@ -41,6 +41,11 @@ import MeetingAudioPanel from "./MeetingAudioPanel";
 import { MeetingSummaryPanel } from "./MeetingSummaryPanel";
 import MeetingFullScreenLayout from "./MeetingFullScreenLayout";
 import { downloadMeetingExport } from "./meetingExport";
+import {
+  MeetingShareModal,
+  type MeetingShareVisibility,
+} from "../../../features/meetingShares/MeetingShareModal";
+import { buildMeetingShareUrl } from "../../../utils/meetingShareLinks";
 
 const resolveRenameDraft = (meeting: {
   meetingName?: string;
@@ -151,6 +156,9 @@ export default function MeetingDetailDrawer({
     boolean | null
   >(null);
 
+  const [shareModalOpen, setShareModalOpen] = useState(false);
+  const [shareError, setShareError] = useState<string | null>(null);
+
   const {
     detail,
     meeting,
@@ -177,8 +185,35 @@ export default function MeetingDetailDrawer({
   const applyNotesCorrectionMutation =
     trpc.meetings.applyNotesCorrection.useMutation();
 
+  const shareStateQuery = trpc.meetingShares.getShareState.useQuery(
+    {
+      serverId: selectedGuildId ?? "",
+      meetingId: selectedMeetingId ?? "",
+    },
+    { enabled: Boolean(selectedGuildId && selectedMeetingId) },
+  );
+  const shareMutation = trpc.meetingShares.setVisibility.useMutation();
+  const rotateShareMutation = trpc.meetingShares.rotate.useMutation();
+
   const summaryCopyText = detail?.notes ?? "";
   const canCopySummary = summaryCopyText.trim().length > 0;
+
+  const meetingSharingPolicy =
+    shareStateQuery.data?.meetingSharingPolicy ?? "server";
+  const sharingEnabled = meetingSharingPolicy !== "off";
+  const publicSharingEnabled = meetingSharingPolicy === "public";
+  const shareVisibility = (shareStateQuery.data?.state.visibility ??
+    "private") as MeetingShareVisibility;
+  const shareId = shareStateQuery.data?.state.shareId ?? null;
+  const shareDisplayVisibility: MeetingShareVisibility =
+    shareVisibility === "public" && !publicSharingEnabled
+      ? "server"
+      : shareVisibility;
+  const origin = typeof window !== "undefined" ? window.location.origin : null;
+  const shareUrl =
+    origin && selectedGuildId && shareId
+      ? buildMeetingShareUrl({ origin, serverId: selectedGuildId, shareId })
+      : "";
 
   const drawerTitle = meeting ? (
     <Group gap="xs" align="center" wrap="wrap">
@@ -212,6 +247,9 @@ export default function MeetingDetailDrawer({
     setSummaryFeedback(meeting.summaryFeedback ?? null);
     setFeedbackDraft("");
     setFeedbackModalOpen(false);
+
+    setShareModalOpen(false);
+    setShareError(null);
 
     setNotesCorrectionDraft("");
     setNotesCorrectionDiff(null);
@@ -315,6 +353,8 @@ export default function MeetingDetailDrawer({
     setRenameModalOpen(false);
     setFeedbackModalOpen(false);
     setFeedbackDraft("");
+    setShareModalOpen(false);
+    setShareError(null);
   };
 
   const handleCloseDrawer = () => {
@@ -514,6 +554,63 @@ export default function MeetingDetailDrawer({
     downloadMeetingExport(detail, meeting);
   };
 
+  const handleOpenShare = () => {
+    setShareModalOpen(true);
+  };
+
+  const handleCopyShareLink = async () => {
+    if (!shareUrl) return;
+    try {
+      await navigator.clipboard.writeText(shareUrl);
+      notifications.show({ color: "green", message: "Share link copied." });
+    } catch (err) {
+      console.error("Failed to copy share link", err);
+      notifications.show({
+        color: "red",
+        message: "Unable to copy the share link right now.",
+      });
+    }
+  };
+
+  const handleSetShareVisibility = async (
+    next: MeetingShareVisibility,
+    options?: { acknowledgePublic?: boolean },
+  ) => {
+    if (!selectedGuildId || !selectedMeetingId) return;
+    setShareError(null);
+    try {
+      const result = await shareMutation.mutateAsync({
+        serverId: selectedGuildId,
+        meetingId: selectedMeetingId,
+        visibility: next,
+        acknowledgePublic: options?.acknowledgePublic,
+      });
+      if (result.state.rotated) {
+        notifications.show({ message: "Share link rotated." });
+      }
+      await shareStateQuery.refetch();
+    } catch (err) {
+      console.error("Failed to update meeting share visibility", err);
+      setShareError("Unable to update sharing right now.");
+    }
+  };
+
+  const handleRotateShare = async () => {
+    if (!selectedGuildId || !selectedMeetingId) return;
+    setShareError(null);
+    try {
+      await rotateShareMutation.mutateAsync({
+        serverId: selectedGuildId,
+        meetingId: selectedMeetingId,
+      });
+      notifications.show({ message: "Share link rotated." });
+      await shareStateQuery.refetch();
+    } catch (err) {
+      console.error("Failed to rotate meeting share", err);
+      setShareError("Unable to rotate the link right now.");
+    }
+  };
+
   const audioSection = meeting ? (
     <MeetingAudioPanel audioUrl={meeting.audioUrl} />
   ) : null;
@@ -663,14 +760,34 @@ export default function MeetingDetailDrawer({
                   canManageSelectedGuild={canManageSelectedGuild}
                   endMeetingPreflightLoading={endMeetingPreflightLoading}
                   archivePending={archiveMutation.isPending}
+                  sharePending={
+                    shareMutation.isPending || rotateShareMutation.isPending
+                  }
                   fullScreen={fullScreen}
                   onEndMeeting={preflightEndMeeting}
                   onDownload={handleDownload}
+                  onShare={handleOpenShare}
                   onArchiveToggle={() => {
                     setArchiveNextState(!meeting.archivedAt);
                     setArchiveModalOpen(true);
                   }}
                   onToggleFullScreen={handleToggleFullScreen}
+                />
+
+                <MeetingShareModal
+                  opened={shareModalOpen}
+                  onClose={() => setShareModalOpen(false)}
+                  meetingTitle={meeting.title}
+                  sharingEnabled={sharingEnabled}
+                  publicSharingEnabled={publicSharingEnabled}
+                  visibility={shareDisplayVisibility}
+                  shareUrl={shareUrl}
+                  shareError={shareError}
+                  sharePending={shareMutation.isPending}
+                  rotatePending={rotateShareMutation.isPending}
+                  onCopyLink={handleCopyShareLink}
+                  onSetVisibility={handleSetShareVisibility}
+                  onRotate={handleRotateShare}
                 />
 
                 {fullScreen ? (

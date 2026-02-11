@@ -53,6 +53,7 @@ export const CONFIG_KEYS = {
   },
   meetings: {
     attendeeAccessEnabled: "meetings.attendeeAccess.enabled",
+    sharingPolicy: "meetings.sharing.policy",
   },
   autorecord: {
     enabled: "autorecord.enabled",

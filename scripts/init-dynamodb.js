@@ -160,6 +160,18 @@ const tables = [
     BillingMode: "PAY_PER_REQUEST",
   },
   {
+    TableName: "MeetingShareTable",
+    KeySchema: [
+      { AttributeName: "pk", KeyType: "HASH" },
+      { AttributeName: "sk", KeyType: "RANGE" },
+    ],
+    AttributeDefinitions: [
+      { AttributeName: "pk", AttributeType: "S" },
+      { AttributeName: "sk", AttributeType: "S" },
+    ],
+    BillingMode: "PAY_PER_REQUEST",
+  },
+  {
     TableName: "GuildSubscriptionTable",
     KeySchema: [{ AttributeName: "guildId", KeyType: "HASH" }],
     AttributeDefinitions: [{ AttributeName: "guildId", AttributeType: "S" }],

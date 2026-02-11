@@ -32,6 +32,48 @@ jest.mock("../../../services/trpc", () => ({
         },
       },
     }),
+    meetingShares: {
+      getShareState: {
+        useQuery: () => ({
+          data: {
+            meetingSharingPolicy: "server",
+            state: { visibility: "private" },
+          },
+          isLoading: false,
+          isFetching: false,
+          error: null,
+          refetch: jest.fn().mockResolvedValue(undefined),
+        }),
+      },
+      setVisibility: {
+        useMutation: () => ({
+          mutateAsync: jest.fn().mockResolvedValue({
+            meetingSharingPolicy: "server",
+            state: {
+              visibility: "server",
+              shareId: "sh_mock",
+              rotated: false,
+            },
+          }),
+          isPending: false,
+          error: undefined,
+        }),
+      },
+      rotate: {
+        useMutation: () => ({
+          mutateAsync: jest.fn().mockResolvedValue({
+            meetingSharingPolicy: "server",
+            state: {
+              visibility: "server",
+              shareId: "sh_rotated",
+              rotated: true,
+            },
+          }),
+          isPending: false,
+          error: undefined,
+        }),
+      },
+    },
     meetings: {
       setArchived: {
         useMutation: () => ({

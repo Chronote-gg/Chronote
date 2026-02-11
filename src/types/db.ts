@@ -301,3 +301,30 @@ export interface AskConversationShareRecord {
   archivedAt?: string;
   archivedByUserId?: string;
 }
+
+export type MeetingShareVisibility = "server" | "public";
+
+export interface MeetingShareRecord {
+  pk: string;
+  sk: string;
+  type: "meetingShare";
+  guildId: string;
+  meetingId: string;
+  shareId: string;
+  visibility: MeetingShareVisibility;
+  sharedAt: string;
+  sharedByUserId: string;
+  sharedByTag?: string;
+  rotatedAt?: string;
+}
+
+export interface MeetingShareByMeetingRecord {
+  pk: string;
+  sk: string;
+  type: "meetingShareByMeeting";
+  guildId: string;
+  meetingId: string;
+  shareId: string;
+  visibility: MeetingShareVisibility;
+  updatedAt: string;
+}

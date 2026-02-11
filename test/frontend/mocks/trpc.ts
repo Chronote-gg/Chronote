@@ -116,6 +116,17 @@ type AskSharedConversationData = {
   shared: AskSharedConversation | null;
 };
 type AskPublicConversationData = AskSharedConversationData;
+type MeetingShareStateData = {
+  meetingSharingPolicy: "off" | "server" | "public";
+  state: {
+    visibility: "private" | "server" | "public";
+    shareId: string | null;
+    rotated: boolean;
+    sharedAt?: string;
+    sharedByUserId?: string;
+    sharedByTag?: string;
+  };
+};
 type RulesData = { rules: AutoRecordSettings[] };
 type ContextData = {
   context?: string | null;
@@ -243,6 +254,14 @@ export const askPublicConversationQuery =
     messages: [],
     shared: null,
   });
+export const meetingShareStateQuery = buildQueryState<MeetingShareStateData>({
+  meetingSharingPolicy: "server",
+  state: {
+    visibility: "private",
+    shareId: null,
+    rotated: false,
+  },
+});
 export const autorecordListQuery = buildQueryState<RulesData>({ rules: [] });
 export const contextQuery = buildQueryState<ContextData | null>(null);
 export const channelContextsQuery = buildQueryState<ChannelContextsData>({
@@ -315,6 +334,28 @@ export const meetingsApplyNotesCorrectionMutation = buildMutationState<
   [unknown],
   { ok: true }
 >({ ok: true });
+export const meetingsShareSetVisibilityMutation = buildMutationState<
+  [unknown],
+  MeetingShareStateData
+>({
+  meetingSharingPolicy: "server",
+  state: {
+    visibility: "server",
+    shareId: "share-1",
+    rotated: false,
+  },
+});
+export const meetingsShareRotateMutation = buildMutationState<
+  [unknown],
+  MeetingShareStateData
+>({
+  meetingSharingPolicy: "server",
+  state: {
+    visibility: "server",
+    shareId: "share-2",
+    rotated: true,
+  },
+});
 export const autorecordAddMutation = buildMutationState<[unknown], void>(
   undefined,
 );
@@ -434,6 +475,14 @@ export const resetTrpcMocks = () => {
     messages: [],
     shared: null,
   });
+  resetQueryState(meetingShareStateQuery, {
+    meetingSharingPolicy: "server",
+    state: {
+      visibility: "private",
+      shareId: null,
+      rotated: false,
+    },
+  });
   resetQueryState(autorecordListQuery, { rules: [] });
   resetQueryState(contextQuery, null);
   resetQueryState(channelContextsQuery, { contexts: [] });
@@ -478,6 +527,22 @@ export const resetTrpcMocks = () => {
     changed: true,
   });
   resetMutationState(meetingsApplyNotesCorrectionMutation, { ok: true });
+  resetMutationState(meetingsShareSetVisibilityMutation, {
+    meetingSharingPolicy: "server",
+    state: {
+      visibility: "server",
+      shareId: "share-1",
+      rotated: false,
+    },
+  });
+  resetMutationState(meetingsShareRotateMutation, {
+    meetingSharingPolicy: "server",
+    state: {
+      visibility: "server",
+      shareId: "share-2",
+      rotated: true,
+    },
+  });
   resetMutationState(autorecordAddMutation, undefined);
   resetMutationState(autorecordRemoveMutation, undefined);
   resetMutationState(contextSetMutation, undefined);
@@ -589,6 +654,12 @@ export const setAskPublicConversationQuery = (
   Object.assign(askPublicConversationQuery, next);
 };
 
+export const setMeetingShareStateQuery = (
+  next: Partial<QueryState<MeetingShareStateData>>,
+) => {
+  Object.assign(meetingShareStateQuery, next);
+};
+
 export const setAutorecordListQuery = (
   next: Partial<QueryState<RulesData>>,
 ) => {
@@ -684,6 +755,11 @@ jest.mock("../../../src/frontend/services/trpc", () => ({
       applyNotesCorrection: {
         useMutation: () => meetingsApplyNotesCorrectionMutation,
       },
+    },
+    meetingShares: {
+      getShareState: { useQuery: () => meetingShareStateQuery },
+      setVisibility: { useMutation: () => meetingsShareSetVisibilityMutation },
+      rotate: { useMutation: () => meetingsShareRotateMutation },
     },
     autorecord: {
       list: { useQuery: () => autorecordListQuery },

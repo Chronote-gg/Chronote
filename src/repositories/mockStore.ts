@@ -13,6 +13,8 @@ import type {
   ConfigOverrideRecord,
   DictionaryEntry,
   FeedbackRecord,
+  MeetingShareByMeetingRecord,
+  MeetingShareRecord,
 } from "../types/db";
 import type {
   AskConversation,
@@ -45,6 +47,8 @@ type MockStore = {
   stripeWebhookEvents: Map<string, StripeWebhookEvent>;
   onboardingStates: Map<string, OnboardingState>;
   meetingHistoryByGuild: Map<string, MeetingHistory[]>;
+  meetingSharesByShareKey: Map<string, MeetingShareRecord>;
+  meetingSharesByMeetingKey: Map<string, MeetingShareByMeetingRecord>;
   askConversationsByKey: Map<string, AskConversation[]>;
   askMessagesByConversation: Map<string, AskMessage[]>;
   askSharesByGuild: Map<string, AskSharedConversation[]>;
@@ -470,6 +474,7 @@ function buildDefaultStore(): MockStore {
     ensureServerDefault(guild.id, CONFIG_KEYS.chatTts.enabled, false);
     ensureServerDefault(guild.id, CONFIG_KEYS.ask.membersEnabled, true);
     ensureServerDefault(guild.id, CONFIG_KEYS.ask.sharingPolicy, "server");
+    ensureServerDefault(guild.id, CONFIG_KEYS.meetings.sharingPolicy, "server");
   });
 
   dictionaryEntriesByGuild.set("1249723747896918109", [
@@ -496,6 +501,11 @@ function buildDefaultStore(): MockStore {
   ]);
 
   const meetingHistoryByGuild = new Map<string, MeetingHistory[]>();
+  const meetingSharesByShareKey = new Map<string, MeetingShareRecord>();
+  const meetingSharesByMeetingKey = new Map<
+    string,
+    MeetingShareByMeetingRecord
+  >();
   const buildMeeting = (params: {
     guildId: string;
     channelId: string;
@@ -832,6 +842,8 @@ function buildDefaultStore(): MockStore {
     stripeWebhookEvents,
     onboardingStates,
     meetingHistoryByGuild,
+    meetingSharesByShareKey,
+    meetingSharesByMeetingKey,
     askConversationsByKey,
     askMessagesByConversation,
     askSharesByGuild,

@@ -702,6 +702,21 @@ export const CONFIG_REGISTRY: ConfigEntry[] = [
     ui: { type: "text", placeholder: "project x, roadmap, weekly" },
   },
   {
+    key: "meetings.sharing.policy",
+    label: "Meeting sharing policy",
+    description:
+      "Controls whether meeting share links can be created, and whether links can be public.",
+    category: "Meetings",
+    group: "Standard",
+    valueType: "select",
+    defaultValue: "server",
+    scopes: {
+      global: scope(true, true, "superadmin", "select"),
+      server: scope(true, false, "admin", "select"),
+    },
+    ui: { type: "segmented", options: ["off", "server", "public"] },
+  },
+  {
     key: "autorecord.enabled",
     label: "Auto-record",
     description: "Automatically record meetings by default.",
@@ -730,9 +745,9 @@ export const CONFIG_REGISTRY: ConfigEntry[] = [
   },
   {
     key: "autorecord.dismiss.policy",
-    label: "Auto-record dismiss policy",
+    label: "Auto-record stop policy",
     description:
-      "Controls who can dismiss an auto-recorded meeting from the voice channel context menu.",
+      "Controls who can stop an auto-recorded meeting from the voice channel context menu.",
     category: "Auto-record",
     group: "Advanced",
     valueType: "select",

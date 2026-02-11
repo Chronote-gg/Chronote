@@ -4,6 +4,7 @@ import {
   IconArchiveOff,
   IconDownload,
   IconFilter,
+  IconLink,
 } from "@tabler/icons-react";
 import {
   MEETING_STATUS,
@@ -18,9 +19,11 @@ type MeetingDetailHeaderProps = {
   canManageSelectedGuild: boolean;
   endMeetingPreflightLoading: boolean;
   archivePending: boolean;
+  sharePending: boolean;
   fullScreen: boolean;
   onEndMeeting: () => void;
   onDownload: () => void;
+  onShare: () => void;
   onArchiveToggle: () => void;
   onToggleFullScreen: () => void;
 };
@@ -31,9 +34,11 @@ export default function MeetingDetailHeader({
   canManageSelectedGuild,
   endMeetingPreflightLoading,
   archivePending,
+  sharePending,
   fullScreen,
   onEndMeeting,
   onDownload,
+  onShare,
   onArchiveToggle,
   onToggleFullScreen,
 }: MeetingDetailHeaderProps) {
@@ -58,6 +63,15 @@ export default function MeetingDetailHeader({
           data-testid="meeting-download"
         >
           Download
+        </Button>
+        <Button
+          variant="light"
+          leftSection={<IconLink size={16} />}
+          onClick={onShare}
+          disabled={sharePending}
+          data-testid="meeting-share"
+        >
+          Share
         </Button>
         <Button
           variant="subtle"
