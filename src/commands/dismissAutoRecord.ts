@@ -38,75 +38,109 @@ function hasAdminPermissions(interaction: UserContextMenuCommandInteraction) {
   );
 }
 
+async function replyEphemeral(
+  interaction: UserContextMenuCommandInteraction,
+  content: string,
+) {
+  await interaction.reply({ content, ephemeral: true });
+}
+
+function getAutoRecordPolicyHint(policy: DismissPolicy) {
+  if (policy === "trigger_or_admin") {
+    return "Ask an admin, or the user who triggered auto-record.";
+  }
+  return "Ask an admin.";
+}
+
+function isAllowedByDismissPolicy(
+  policy: DismissPolicy,
+  meeting: NonNullable<ReturnType<typeof getMeeting>>,
+  invokerId: string,
+) {
+  if (policy === "anyone_in_channel") {
+    return true;
+  }
+
+  if (policy === "trigger_or_admin") {
+    return meeting.startTriggeredByUserId === invokerId;
+  }
+
+  return false;
+}
+
+function canDismissAutoRecord(
+  interaction: UserContextMenuCommandInteraction,
+  meeting: NonNullable<ReturnType<typeof getMeeting>>,
+  invokerId: string,
+  policy: DismissPolicy,
+) {
+  const isAdmin = hasAdminPermissions(interaction);
+  if (isAdmin) {
+    return true;
+  }
+
+  const nonBotMembers = meeting.voiceChannel.members.filter(
+    (member) => !member.user.bot,
+  );
+  const isSoloNonBot = nonBotMembers.size === 1 && nonBotMembers.has(invokerId);
+  if (isSoloNonBot) {
+    return true;
+  }
+
+  return isAllowedByDismissPolicy(policy, meeting, invokerId);
+}
+
 export async function handleDismissAutoRecord(
   client: Client,
   interaction: UserContextMenuCommandInteraction,
 ) {
   if (!interaction.inGuild()) {
-    await interaction.reply({
-      content: "This command can only be used in a server.",
-      ephemeral: true,
-    });
+    await replyEphemeral(
+      interaction,
+      "This command can only be used in a server.",
+    );
     return;
   }
 
   const botUserId = client.user?.id;
   if (!botUserId) {
-    await interaction.reply({
-      content: "Bot is not ready yet.",
-      ephemeral: true,
-    });
+    await replyEphemeral(interaction, "Bot is not ready yet.");
     return;
   }
 
   if (interaction.targetUser.id !== botUserId) {
-    await interaction.reply({
-      content: `Use this command on <@${botUserId}>.`,
-      ephemeral: true,
-    });
+    await replyEphemeral(interaction, `Use this command on <@${botUserId}>.`);
     return;
   }
 
   const meeting = getMeeting(interaction.guildId);
   if (!meeting) {
-    await interaction.reply({
-      content: "No active recording to stop right now.",
-      ephemeral: true,
-    });
+    await replyEphemeral(interaction, "No active recording to stop right now.");
     return;
   }
 
   if (!meeting.isAutoRecording) {
-    await interaction.reply({
-      content: "This command only applies to auto-recorded meetings.",
-      ephemeral: true,
-    });
+    await replyEphemeral(
+      interaction,
+      "This command only applies to auto-recorded meetings.",
+    );
     return;
   }
 
   if (meeting.finishing) {
-    await interaction.reply({
-      content: "This meeting is already ending.",
-      ephemeral: true,
-    });
+    await replyEphemeral(interaction, "This meeting is already ending.");
     return;
   }
 
   const invokerId = interaction.user.id;
   const invokerMember = meeting.voiceChannel.members.get(invokerId);
   if (!invokerMember) {
-    await interaction.reply({
-      content: "Join the meeting voice channel to stop recording.",
-      ephemeral: true,
-    });
+    await replyEphemeral(
+      interaction,
+      "Join the meeting voice channel to stop recording.",
+    );
     return;
   }
-
-  const admin = hasAdminPermissions(interaction);
-  const nonBotMembers = meeting.voiceChannel.members.filter(
-    (member) => !member.user.bot,
-  );
-  const soloNonBot = nonBotMembers.size === 1 && nonBotMembers.has(invokerId);
 
   const policy =
     (await resolveConfigEnum(
@@ -117,20 +151,12 @@ export async function handleDismissAutoRecord(
       { logLabel: "Failed to resolve auto-record dismiss policy" },
     )) ?? DEFAULT_DISMISS_POLICY;
 
-  const allowedByPolicy =
-    policy === "anyone_in_channel" ||
-    (policy === "trigger_or_admin" &&
-      meeting.startTriggeredByUserId === invokerId);
-
-  if (!(admin || soloNonBot || allowedByPolicy)) {
-    const policyHint =
-      policy === "trigger_or_admin"
-        ? "Ask an admin, or the user who triggered auto-record."
-        : "Ask an admin.";
-    await interaction.reply({
-      content: `You do not have permission to stop this auto-record. ${policyHint}`,
-      ephemeral: true,
-    });
+  if (!canDismissAutoRecord(interaction, meeting, invokerId, policy)) {
+    const policyHint = getAutoRecordPolicyHint(policy);
+    await replyEphemeral(
+      interaction,
+      `You do not have permission to stop this auto-record. ${policyHint}`,
+    );
     return;
   }
 
