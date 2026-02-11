@@ -219,6 +219,48 @@ describe("meetingShares router", () => {
     });
   });
 
+  test("allows auto-record meeting creator to share without manage channel", async () => {
+    const user = getMockUser();
+    mockedEnsureManageGuild.mockResolvedValue(false);
+    mockedEnsureUserCanManageChannel.mockResolvedValue(false);
+    mockedGetMeetingHistory.mockResolvedValue(
+      buildMeeting({
+        isAutoRecording: true,
+        meetingCreatorId: user.id,
+      }),
+    );
+
+    await expect(
+      buildCaller(user).meetingShares.setVisibility({
+        serverId: "guild-1",
+        meetingId: "meeting-1",
+        visibility: "server",
+      }),
+    ).resolves.toBeDefined();
+    expect(mockedSetVisibility).toHaveBeenCalled();
+  });
+
+  test("requires share permission before returning share state", async () => {
+    mockedEnsureManageGuild.mockResolvedValue(false);
+    mockedGetMeetingHistory.mockResolvedValue(
+      buildMeeting({
+        meetingCreatorId: "someone-else",
+        isAutoRecording: false,
+      }),
+    );
+
+    await expect(
+      buildCaller().meetingShares.getShareState({
+        serverId: "guild-1",
+        meetingId: "meeting-1",
+      }),
+    ).rejects.toMatchObject({
+      code: "FORBIDDEN",
+      message: "Only the meeting starter can share this meeting",
+    });
+    expect(mockedGetShareState).not.toHaveBeenCalled();
+  });
+
   test("public endpoint returns not found for non-public share records", async () => {
     mockedGetShareById.mockResolvedValue({
       pk: "GUILD#guild-1",

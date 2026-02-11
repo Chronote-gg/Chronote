@@ -108,6 +108,10 @@ const ensureUserCanShareMeeting = async (options: {
     });
   }
 
+  if (options.meeting.meetingCreatorId === options.userId) {
+    return;
+  }
+
   if (options.meeting.isAutoRecording) {
     const channelId = resolveMeetingChannelId(options.meeting);
     const allowed = await ensureUserCanManageChannel({
@@ -130,12 +134,10 @@ const ensureUserCanShareMeeting = async (options: {
     return;
   }
 
-  if (options.meeting.meetingCreatorId !== options.userId) {
-    throw new TRPCError({
-      code: "FORBIDDEN",
-      message: "Only the meeting starter can share this meeting",
-    });
-  }
+  throw new TRPCError({
+    code: "FORBIDDEN",
+    message: "Only the meeting starter can share this meeting",
+  });
 };
 
 const settings = guildMemberProcedure
@@ -152,6 +154,20 @@ const getShareState = guildMemberProcedure
     const { meetingSharingPolicy } = await resolveMeetingSharePolicy(
       input.serverId,
     );
+    const history = await getMeetingHistoryService(
+      input.serverId,
+      input.meetingId,
+    );
+    if (!history) {
+      throw new TRPCError({ code: "NOT_FOUND", message: "Meeting not found" });
+    }
+    await ensureUserCanShareMeeting({
+      accessToken: ctx.user.accessToken ?? "",
+      guildId: input.serverId,
+      meeting: history,
+      userId: ctx.user.id,
+      session: ctx.req.session,
+    });
     const state = await getMeetingShareStateForMeetingService({
       guildId: input.serverId,
       meetingId: input.meetingId,
