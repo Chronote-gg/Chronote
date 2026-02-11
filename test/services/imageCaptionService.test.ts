@@ -125,6 +125,10 @@ describe("imageCaptionService", () => {
     expect(completionCreate).toHaveBeenCalledWith(
       expect.objectContaining({
         model: "gpt-4o-mini",
+        response_format: { type: "json_object" },
+      }),
+      expect.objectContaining({
+        signal: expect.any(Object),
       }),
     );
     expect(meeting.chatLog[0].attachments?.[0].aiCaption).toContain("diagram");

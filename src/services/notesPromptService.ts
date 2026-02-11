@@ -1,4 +1,4 @@
-import type { ChatEntry } from "../types/chat";
+import type { ChatAttachment, ChatEntry } from "../types/chat";
 import type { MeetingData } from "../types/meeting-data";
 import { renderChatEntryLine } from "../utils/chatLog";
 import { formatParticipantLabel } from "../utils/participants";
@@ -13,6 +13,10 @@ import { resolveMeetingAttendees } from "../utils/meetingAttendees";
 
 const MAX_CHAT_LOG_PROMPT_LENGTH = 20000;
 const DEFAULT_IMAGE_CAPTION_MAX_CHARS = 3000;
+const IMAGE_CAPTIONS_SUFFIX_HEADER =
+  "\n\nShared images (AI captions, OCR-lite):\n";
+const MAX_IMAGE_CAPTION_CHARS_IN_PROMPT_LINE = 300;
+const MAX_IMAGE_VISIBLE_TEXT_CHARS_IN_PROMPT_LINE = 400;
 
 const clampInt = (
   value: unknown,
@@ -31,7 +35,83 @@ const truncateText = (value: string, maxChars: number) => {
   return value.slice(0, maxChars).trimEnd();
 };
 
-function formatImageCaptionsForPrompt(
+function formatTimestampForPrompt(timestampIso: string): string {
+  const date = new Date(timestampIso);
+  if (Number.isNaN(date.getTime())) return timestampIso;
+  return date.toISOString();
+}
+
+function resolveAttachmentCaptionText(
+  attachment: ChatAttachment,
+): { caption: string; visibleText: string } | null {
+  const caption = attachment.aiCaption?.trim() ?? "";
+  const visibleText = attachment.aiVisibleText?.trim() ?? "";
+  if (!caption && !visibleText) return null;
+
+  return {
+    caption: caption
+      ? truncateText(caption, MAX_IMAGE_CAPTION_CHARS_IN_PROMPT_LINE)
+      : "",
+    visibleText: visibleText
+      ? truncateText(visibleText, MAX_IMAGE_VISIBLE_TEXT_CHARS_IN_PROMPT_LINE)
+      : "",
+  };
+}
+
+function formatImageCaptionPromptLine(options: {
+  speaker: string;
+  timestampIso: string;
+  attachmentName: string;
+  caption: string;
+  visibleText: string;
+}): string {
+  const prefix = `- [${options.speaker} @ ${options.timestampIso}] ${options.attachmentName}: `;
+  const withCaption = prefix + (options.caption || "(no caption)");
+  if (!options.visibleText) return withCaption;
+  return `${withCaption} | visible text: ${options.visibleText}`;
+}
+
+function formatEntryImageCaptionsForPrompt(options: {
+  entry: ChatEntry;
+  maxChars: number;
+}): string[] {
+  const { entry } = options;
+  if (options.maxChars <= 0) return [];
+  if (entry.type !== "message") return [];
+  if (!entry.attachments || entry.attachments.length === 0) return [];
+
+  const speaker = formatParticipantLabel(entry.user, {
+    includeUsername: true,
+  });
+  const timestampIso = formatTimestampForPrompt(entry.timestamp);
+
+  const lines: string[] = [];
+  let remaining = options.maxChars;
+
+  for (const attachment of entry.attachments) {
+    if (remaining <= 0) break;
+    const captionText = resolveAttachmentCaptionText(attachment);
+    if (!captionText) continue;
+
+    const attachmentName = attachment.name?.trim() || "image";
+    const fullLine = formatImageCaptionPromptLine({
+      speaker,
+      timestampIso,
+      attachmentName,
+      caption: captionText.caption,
+      visibleText: captionText.visibleText,
+    });
+
+    const line = truncateText(fullLine, Math.max(0, remaining - 1));
+    if (!line.trim()) break;
+    lines.push(line);
+    remaining -= line.length + 1;
+  }
+
+  return lines;
+}
+
+function formatImageCaptionLinesForPrompt(
   chatLog: ChatEntry[],
   maxChars: number,
 ): string | undefined {
@@ -41,45 +121,59 @@ function formatImageCaptionsForPrompt(
   const lines: string[] = [];
   let remaining = maxChars;
 
-  for (let i = chatLog.length - 1; i >= 0; i -= 1) {
-    if (remaining <= 0) break;
+  for (let i = chatLog.length - 1; i >= 0 && remaining > 0; i -= 1) {
     const entry = chatLog[i];
-    if (entry.type !== "message") continue;
-    if (!entry.attachments || entry.attachments.length === 0) continue;
-
-    const speaker = formatParticipantLabel(entry.user, {
-      includeUsername: true,
+    const entryLines = formatEntryImageCaptionsForPrompt({
+      entry,
+      maxChars: remaining,
     });
-    const time = new Date(entry.timestamp).toLocaleString();
+    if (entryLines.length === 0) continue;
+    const joined = entryLines.join("\n");
+    if (!joined.trim()) continue;
 
-    for (const attachment of entry.attachments) {
-      if (remaining <= 0) break;
-      const caption = attachment.aiCaption?.trim() ?? "";
-      const visibleText = attachment.aiVisibleText?.trim() ?? "";
-      if (!caption && !visibleText) continue;
-
-      const name = attachment.name?.trim() || "image";
-      const basePrefix = `- [${speaker} @ ${time}] ${name}: `;
-      const textPrefix = visibleText ? " | visible text: " : "";
-
-      const combinedVisible = visibleText ? truncateText(visibleText, 400) : "";
-      const combinedCaption = caption ? truncateText(caption, 300) : "";
-      const fullLine =
-        basePrefix +
-        (combinedCaption || "(no caption)") +
-        (combinedVisible ? `${textPrefix}${combinedVisible}` : "");
-
-      const line = truncateText(fullLine, Math.max(0, remaining - 1));
-      if (!line.trim()) {
-        remaining = 0;
-        break;
-      }
-      lines.push(line);
-      remaining -= line.length + 1;
+    if (lines.length === 0) {
+      lines.push(joined);
+      remaining -= joined.length;
+      continue;
     }
+
+    const withLeadingNewline = `\n${joined}`;
+    if (withLeadingNewline.length > remaining) break;
+    lines.push(joined);
+    remaining -= withLeadingNewline.length;
   }
 
   return lines.length > 0 ? lines.join("\n") : undefined;
+}
+
+function formatImageCaptionsSuffixForPrompt(
+  chatLog: ChatEntry[],
+  maxChars: number,
+): string {
+  if (maxChars <= 0) return "";
+  if (!chatLog || chatLog.length === 0) return "";
+
+  const lineBudget = maxChars - IMAGE_CAPTIONS_SUFFIX_HEADER.length;
+  if (lineBudget <= 0) return "";
+  const lines = formatImageCaptionLinesForPrompt(chatLog, lineBudget);
+  if (!lines) return "";
+
+  const suffix = IMAGE_CAPTIONS_SUFFIX_HEADER + lines;
+  return truncateText(suffix, maxChars);
+}
+
+function truncateChatToFit(chat: string, maxChars: number): string {
+  if (maxChars <= 0) return "";
+  if (chat.length <= maxChars) return chat;
+
+  const header = "...(recent chat truncated)...\n";
+  if (maxChars <= header.length) {
+    return truncateText(header, maxChars);
+  }
+
+  const sliceLength = maxChars - header.length;
+  const tail = chat.slice(chat.length - sliceLength);
+  return header + tail;
 }
 
 function formatChatLogForPrompt(
@@ -97,13 +191,10 @@ function formatChatLogForPrompt(
     0,
     maxLength,
   );
-  const imageCaptions = formatImageCaptionsForPrompt(
+  const captionsSuffix = formatImageCaptionsSuffixForPrompt(
     chatLog,
     imageCaptionBudget,
   );
-  const captionsSuffix = imageCaptions
-    ? `\n\nShared images (AI captions, OCR-lite):\n${imageCaptions}`
-    : "";
   if (captionsSuffix.length >= maxLength) {
     return truncateText(captionsSuffix, maxLength);
   }
@@ -118,14 +209,8 @@ function formatChatLogForPrompt(
     return undefined;
   }
 
-  if (combinedLines.length > remainingLength) {
-    const header = "...(recent chat truncated)...\n";
-    const sliceLength = Math.max(0, remainingLength - header.length);
-    const trimmed = combinedLines.slice(combinedLines.length - sliceLength);
-    return header + trimmed + captionsSuffix;
-  }
-
-  return combinedLines + captionsSuffix;
+  const chatBlock = truncateChatToFit(combinedLines, remainingLength);
+  return chatBlock + captionsSuffix;
 }
 
 function formatParticipantRoster(meeting: MeetingData): string | undefined {

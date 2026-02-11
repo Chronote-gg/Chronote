@@ -10,6 +10,7 @@ const DEFAULT_MAX_TOTAL_CHARS = 3000;
 const MAX_CAPTION_CHARS_PER_IMAGE = 300;
 const MAX_VISIBLE_TEXT_CHARS_PER_IMAGE = 800;
 const MAX_CAPTION_DURATION_MS = 45_000;
+const MAX_CAPTION_REQUEST_MS = 12_000;
 const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
 
 const IMAGE_EXTENSIONS = new Set(["png", "jpg", "jpeg", "webp", "gif"]);
@@ -80,19 +81,39 @@ function parseCaptionOutput(raw: string): CaptionOutput | null {
   }
 }
 
-function isImageAttachment(attachment: ChatAttachment): boolean {
-  const contentType = attachment.contentType?.toLowerCase();
-  if (contentType) {
-    if (contentType === "image/svg+xml") return false;
-    if (contentType.startsWith("image/")) return true;
-  }
+function isSupportedImageContentType(contentType: string | undefined): boolean {
+  const lowered = contentType?.toLowerCase();
+  if (!lowered) return false;
+  if (lowered === "image/svg+xml") return false;
+  return lowered.startsWith("image/");
+}
 
-  const name = attachment.name?.toLowerCase();
+function resolveFileExtension(name: string): string | undefined {
+  const lowered = name.toLowerCase();
+  const lastDot = lowered.lastIndexOf(".");
+  if (lastDot < 0 || lastDot === lowered.length - 1) return undefined;
+  return lowered.slice(lastDot + 1);
+}
+
+function isSupportedImageName(name: string | undefined): boolean {
   if (!name) return false;
-  const lastDot = name.lastIndexOf(".");
-  if (lastDot < 0 || lastDot === name.length - 1) return false;
-  const ext = name.slice(lastDot + 1);
+  const ext = resolveFileExtension(name);
+  if (!ext) return false;
   return IMAGE_EXTENSIONS.has(ext);
+}
+
+function isImageAttachment(attachment: ChatAttachment): boolean {
+  return (
+    isSupportedImageContentType(attachment.contentType) ||
+    isSupportedImageName(attachment.name)
+  );
+}
+
+function isAttachmentSizeAllowed(size: unknown): boolean {
+  const parsed = typeof size === "number" ? size : Number(size);
+  if (!Number.isFinite(parsed)) return false;
+  if (parsed <= 0) return false;
+  return parsed <= MAX_IMAGE_BYTES;
 }
 
 function collectCaptionCandidates(options: {
@@ -117,7 +138,7 @@ function collectCaptionCandidates(options: {
 
       if (!attachment.url) continue;
       if (attachment.ephemeral) continue;
-      if (attachment.size > MAX_IMAGE_BYTES) continue;
+      if (!isAttachmentSizeAllowed(attachment.size)) continue;
       if (!isImageAttachment(attachment)) continue;
       if (attachment.aiCaption || attachment.aiVisibleText) continue;
 
@@ -133,38 +154,49 @@ async function createCaption(options: {
   model: string;
   url: string;
   name: string;
+  timeoutMs: number;
 }): Promise<CaptionOutput | null> {
-  const response = await options.openAIClient.chat.completions.create({
-    model: options.model,
-    temperature: 0,
-    max_tokens: 300,
-    messages: [
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), options.timeoutMs);
+  try {
+    const response = await options.openAIClient.chat.completions.create(
       {
-        role: "system",
-        content:
-          'You caption images shared in a meeting. Return strict JSON only, no markdown. Schema: {"caption": string, "visibleText": string}. caption is 1-2 sentences. visibleText contains clearly visible text in the image, or empty string.',
-      },
-      {
-        role: "user",
-        content: [
+        model: options.model,
+        temperature: 0,
+        max_tokens: 300,
+        response_format: { type: "json_object" },
+        messages: [
           {
-            type: "text",
-            text: `Caption this image and extract visible text. Filename: ${options.name}`,
+            role: "system",
+            content:
+              'You caption images shared in a meeting. Return strict JSON only, no markdown. Schema: {"caption": string, "visibleText": string}. caption is 1-2 sentences. visibleText contains clearly visible text in the image, or empty string.',
           },
           {
-            type: "image_url",
-            image_url: {
-              url: options.url,
-              detail: "low",
-            },
+            role: "user",
+            content: [
+              {
+                type: "text",
+                text: `Caption this image and extract visible text. Filename: ${options.name}`,
+              },
+              {
+                type: "image_url",
+                image_url: {
+                  url: options.url,
+                  detail: "low",
+                },
+              },
+            ],
           },
         ],
       },
-    ],
-  });
+      { signal: controller.signal },
+    );
 
-  const raw = response.choices?.[0]?.message?.content ?? "";
-  return parseCaptionOutput(raw);
+    const raw = response.choices?.[0]?.message?.content ?? "";
+    return parseCaptionOutput(raw);
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 export async function captionMeetingImages(meeting: MeetingData): Promise<{
@@ -221,7 +253,9 @@ export async function captionMeetingImages(meeting: MeetingData): Promise<{
   let truncatedChars = 0;
 
   for (const candidate of candidates) {
-    if (Date.now() - startedAt > MAX_CAPTION_DURATION_MS) {
+    const elapsedMs = Date.now() - startedAt;
+    const remainingBudgetMs = MAX_CAPTION_DURATION_MS - elapsedMs;
+    if (remainingBudgetMs <= 0) {
       break;
     }
     if (remainingChars <= 0) {
@@ -230,11 +264,16 @@ export async function captionMeetingImages(meeting: MeetingData): Promise<{
 
     const { entry, attachment } = candidate;
     try {
+      const timeoutMs = Math.min(
+        MAX_CAPTION_REQUEST_MS,
+        Math.max(1_000, remainingBudgetMs),
+      );
       const output = await createCaption({
         openAIClient,
         model,
         url: attachment.url,
-        name: attachment.name,
+        name: attachment.name?.trim() || "image",
+        timeoutMs,
       });
       if (!output) {
         skipped += 1;
