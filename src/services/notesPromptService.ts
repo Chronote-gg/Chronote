@@ -18,6 +18,19 @@ const IMAGE_CAPTIONS_SUFFIX_HEADER =
 const MAX_IMAGE_CAPTION_CHARS_IN_PROMPT_LINE = 300;
 const MAX_IMAGE_VISIBLE_TEXT_CHARS_IN_PROMPT_LINE = 400;
 
+type ImageCaptionPromptLineOptions = {
+  speaker: string;
+  timestampIso: string;
+  attachmentName: string;
+  caption: string;
+  visibleText: string;
+};
+
+type EntryImageCaptionsForPromptOptions = {
+  entry: ChatEntry;
+  maxChars: number;
+};
+
 const clampInt = (
   value: unknown,
   fallback: number,
@@ -35,15 +48,15 @@ const truncateText = (value: string, maxChars: number) => {
   return value.slice(0, maxChars).trimEnd();
 };
 
-function formatTimestampForPrompt(timestampIso: string): string {
+const formatTimestampForPrompt = (timestampIso: string): string => {
   const date = new Date(timestampIso);
   if (Number.isNaN(date.getTime())) return timestampIso;
   return date.toISOString();
-}
+};
 
-function resolveAttachmentCaptionText(
+const resolveAttachmentCaptionText = (
   attachment: ChatAttachment,
-): { caption: string; visibleText: string } | null {
+): { caption: string; visibleText: string } | null => {
   const caption = attachment.aiCaption?.trim() ?? "";
   const visibleText = attachment.aiVisibleText?.trim() ?? "";
   if (!caption && !visibleText) return null;
@@ -56,25 +69,20 @@ function resolveAttachmentCaptionText(
       ? truncateText(visibleText, MAX_IMAGE_VISIBLE_TEXT_CHARS_IN_PROMPT_LINE)
       : "",
   };
-}
+};
 
-function formatImageCaptionPromptLine(options: {
-  speaker: string;
-  timestampIso: string;
-  attachmentName: string;
-  caption: string;
-  visibleText: string;
-}): string {
+const formatImageCaptionPromptLine = (
+  options: ImageCaptionPromptLineOptions,
+): string => {
   const prefix = `- [${options.speaker} @ ${options.timestampIso}] ${options.attachmentName}: `;
   const withCaption = prefix + (options.caption || "(no caption)");
   if (!options.visibleText) return withCaption;
   return `${withCaption} | visible text: ${options.visibleText}`;
-}
+};
 
-function formatEntryImageCaptionsForPrompt(options: {
-  entry: ChatEntry;
-  maxChars: number;
-}): string[] {
+const formatEntryImageCaptionsForPrompt = (
+  options: EntryImageCaptionsForPromptOptions,
+): string[] => {
   const { entry } = options;
   if (options.maxChars <= 0) return [];
   if (entry.type !== "message") return [];
@@ -109,12 +117,12 @@ function formatEntryImageCaptionsForPrompt(options: {
   }
 
   return lines;
-}
+};
 
-function formatImageCaptionLinesForPrompt(
+const formatImageCaptionLinesForPrompt = (
   chatLog: ChatEntry[],
   maxChars: number,
-): string | undefined {
+): string | undefined => {
   if (!chatLog || chatLog.length === 0) return undefined;
   if (maxChars <= 0) return undefined;
 
@@ -144,12 +152,12 @@ function formatImageCaptionLinesForPrompt(
   }
 
   return lines.length > 0 ? lines.join("\n") : undefined;
-}
+};
 
-function formatImageCaptionsSuffixForPrompt(
+const formatImageCaptionsSuffixForPrompt = (
   chatLog: ChatEntry[],
   maxChars: number,
-): string {
+): string => {
   if (maxChars <= 0) return "";
   if (!chatLog || chatLog.length === 0) return "";
 
@@ -160,9 +168,9 @@ function formatImageCaptionsSuffixForPrompt(
 
   const suffix = IMAGE_CAPTIONS_SUFFIX_HEADER + lines;
   return truncateText(suffix, maxChars);
-}
+};
 
-function truncateChatToFit(chat: string, maxChars: number): string {
+const truncateChatToFit = (chat: string, maxChars: number): string => {
   if (maxChars <= 0) return "";
   if (chat.length <= maxChars) return chat;
 
@@ -174,12 +182,12 @@ function truncateChatToFit(chat: string, maxChars: number): string {
   const sliceLength = maxChars - header.length;
   const tail = chat.slice(chat.length - sliceLength);
   return header + tail;
-}
+};
 
-function formatChatLogForPrompt(
+const formatChatLogForPrompt = (
   meeting: MeetingData,
   maxLength: number = MAX_CHAT_LOG_PROMPT_LENGTH,
-): string | undefined {
+): string | undefined => {
   const chatLog = meeting.chatLog;
   if (!chatLog || chatLog.length === 0) {
     return undefined;
@@ -211,9 +219,9 @@ function formatChatLogForPrompt(
 
   const chatBlock = truncateChatToFit(combinedLines, remainingLength);
   return chatBlock + captionsSuffix;
-}
+};
 
-function formatParticipantRoster(meeting: MeetingData): string | undefined {
+const formatParticipantRoster = (meeting: MeetingData): string | undefined => {
   const participants = Array.from(meeting.participants.values());
   if (participants.length === 0) {
     return undefined;
@@ -232,7 +240,7 @@ function formatParticipantRoster(meeting: MeetingData): string | undefined {
       return `- ${preferred} | username: ${username} | display name: ${displayName} | server nickname: ${serverNickname} | id: ${participant.id} | mention: ${mention} | profile: ${profile}`;
     })
     .join("\n");
-}
+};
 
 export async function getNotesPrompt(meeting: MeetingData) {
   const contextData = await buildMeetingContext(meeting, isMemoryEnabled());

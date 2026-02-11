@@ -25,6 +25,19 @@ type CaptionOutput = {
   visibleText: string;
 };
 
+type CollectCaptionCandidatesOptions = {
+  chatLog: ChatEntry[];
+  maxImages: number;
+};
+
+type CreateCaptionOptions = {
+  openAIClient: OpenAI;
+  model: string;
+  url: string;
+  name: string;
+  timeoutMs: number;
+};
+
 const clampFiniteNumber = (value: unknown, fallback: number) => {
   const parsed = typeof value === "number" ? value : Number(value);
   return Number.isFinite(parsed) ? parsed : fallback;
@@ -40,7 +53,7 @@ const clampInt = (
   return Math.min(max, Math.max(min, parsed));
 };
 
-function stripCodeFences(text: string): string {
+const stripCodeFences = (text: string): string => {
   const trimmed = text.trim();
   if (!trimmed.startsWith("```")) {
     return trimmed;
@@ -49,16 +62,16 @@ function stripCodeFences(text: string): string {
     .replace(/^```[a-zA-Z0-9_-]*\s*/u, "")
     .replace(/\s*```$/u, "")
     .trim();
-}
+};
 
-function truncateText(value: string, maxChars: number): string {
+const truncateText = (value: string, maxChars: number): string => {
   if (maxChars <= 0) return "";
   if (value.length <= maxChars) return value;
   const trimmed = value.slice(0, maxChars);
   return trimmed.trimEnd();
-}
+};
 
-function parseCaptionOutput(raw: string): CaptionOutput | null {
+const parseCaptionOutput = (raw: string): CaptionOutput | null => {
   const normalized = stripCodeFences(raw);
   if (!normalized) return null;
 
@@ -79,47 +92,57 @@ function parseCaptionOutput(raw: string): CaptionOutput | null {
   } catch {
     return null;
   }
-}
+};
 
-function isSupportedImageContentType(contentType: string | undefined): boolean {
-  const lowered = contentType?.toLowerCase();
-  if (!lowered) return false;
+const isSupportedImageContentType = (
+  contentType: string | undefined,
+): boolean => {
+  if (!contentType) return false;
+  const lowered = contentType.toLowerCase();
   if (lowered === "image/svg+xml") return false;
   return lowered.startsWith("image/");
-}
+};
 
-function resolveFileExtension(name: string): string | undefined {
+const resolveFileExtension = (name: string): string | undefined => {
   const lowered = name.toLowerCase();
   const lastDot = lowered.lastIndexOf(".");
   if (lastDot < 0 || lastDot === lowered.length - 1) return undefined;
   return lowered.slice(lastDot + 1);
-}
+};
 
-function isSupportedImageName(name: string | undefined): boolean {
+const isSupportedImageName = (name: string | undefined): boolean => {
   if (!name) return false;
   const ext = resolveFileExtension(name);
   if (!ext) return false;
   return IMAGE_EXTENSIONS.has(ext);
-}
+};
 
-function isImageAttachment(attachment: ChatAttachment): boolean {
+const isImageAttachment = (attachment: ChatAttachment): boolean => {
   return (
     isSupportedImageContentType(attachment.contentType) ||
     isSupportedImageName(attachment.name)
   );
-}
+};
 
-function isAttachmentSizeAllowed(size: unknown): boolean {
+const isAttachmentSizeAllowed = (size: unknown): boolean => {
   const parsed = typeof size === "number" ? size : Number(size);
   if (!Number.isFinite(parsed)) return false;
   if (parsed <= 0) return false;
   return parsed <= MAX_IMAGE_BYTES;
-}
+};
 
-function collectCaptionCandidates(options: {
-  chatLog: ChatEntry[];
-  maxImages: number;
-}): CaptionCandidate[] {
+const canCaptionAttachment = (attachment: ChatAttachment): boolean => {
+  if (!attachment.url) return false;
+  if (attachment.ephemeral) return false;
+  if (!isAttachmentSizeAllowed(attachment.size)) return false;
+  if (!isImageAttachment(attachment)) return false;
+  if (attachment.aiCaption || attachment.aiVisibleText) return false;
+  return true;
+};
+
+const collectCaptionCandidates = (
+  options: CollectCaptionCandidatesOptions,
+): CaptionCandidate[] => {
   const candidates: CaptionCandidate[] = [];
   const seen = new Set<string>();
 
@@ -133,29 +156,20 @@ function collectCaptionCandidates(options: {
     for (const attachment of attachments) {
       if (candidates.length >= options.maxImages) break;
       if (!attachment || !attachment.id) continue;
+      if (!canCaptionAttachment(attachment)) continue;
       if (seen.has(attachment.id)) continue;
       seen.add(attachment.id);
-
-      if (!attachment.url) continue;
-      if (attachment.ephemeral) continue;
-      if (!isAttachmentSizeAllowed(attachment.size)) continue;
-      if (!isImageAttachment(attachment)) continue;
-      if (attachment.aiCaption || attachment.aiVisibleText) continue;
 
       candidates.push({ entry, attachment });
     }
   }
 
   return candidates;
-}
+};
 
-async function createCaption(options: {
-  openAIClient: OpenAI;
-  model: string;
-  url: string;
-  name: string;
-  timeoutMs: number;
-}): Promise<CaptionOutput | null> {
+const createCaption = async (
+  options: CreateCaptionOptions,
+): Promise<CaptionOutput | null> => {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), options.timeoutMs);
   try {
@@ -197,7 +211,7 @@ async function createCaption(options: {
   } finally {
     clearTimeout(timeout);
   }
-}
+};
 
 export async function captionMeetingImages(meeting: MeetingData): Promise<{
   candidates: number;
