@@ -85,9 +85,14 @@ const parseCaptionOutput = (raw: string): CaptionOutput | null => {
     const caption = typeof record.caption === "string" ? record.caption : "";
     const visibleText =
       typeof record.visibleText === "string" ? record.visibleText : "";
+    const trimmedCaption = caption.trim();
+    const trimmedVisibleText = visibleText.trim();
+    if (!trimmedCaption && !trimmedVisibleText) {
+      return null;
+    }
     return {
-      caption: caption.trim(),
-      visibleText: visibleText.trim(),
+      caption: trimmedCaption,
+      visibleText: trimmedVisibleText,
     };
   } catch {
     return null;

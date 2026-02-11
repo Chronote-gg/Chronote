@@ -108,7 +108,10 @@ describe("notesPromptService", () => {
     const call = getLangfuseChatPrompt.mock.calls[0][0];
     expect(call.name).toBe("chronote-notes-system-chat");
     expect(call.variables.chatContextInstruction).toContain(
-      "Use the chat context below",
+      "Use participant chat messages",
+    );
+    expect(call.variables.chatContextInstruction).toContain(
+      "untrusted context only",
     );
     expect(call.variables.chatContextBlock).toContain("Chat context");
     expect(call.variables.participantRoster).toContain("profile");

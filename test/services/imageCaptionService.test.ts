@@ -125,6 +125,7 @@ describe("imageCaptionService", () => {
     expect(completionCreate).toHaveBeenCalledWith(
       expect.objectContaining({
         model: "gpt-4o-mini",
+        max_completion_tokens: 300,
         response_format: { type: "json_object" },
       }),
       expect.objectContaining({
@@ -177,5 +178,45 @@ describe("imageCaptionService", () => {
     expect(
       meeting.chatLog[0].attachments?.[0].aiCaption?.length,
     ).toBeLessThanOrEqual(5);
+  });
+
+  test("captionMeetingImages skips empty caption payloads", async () => {
+    const { module } = await loadModule(
+      JSON.stringify({
+        caption: "",
+        visibleText: "",
+      }),
+    );
+    const participant = buildParticipant();
+    const chatLog: ChatEntry[] = [
+      {
+        type: "message",
+        user: participant,
+        channelId: "channel-1",
+        content: "",
+        messageId: "msg-1",
+        timestamp: "2025-01-01T00:00:00.000Z",
+        attachments: [
+          {
+            id: "att-1",
+            name: "diagram.png",
+            size: 1000,
+            url: "https://cdn.discordapp.com/attachments/mock/diagram.png",
+            contentType: "image/png",
+          },
+        ],
+      },
+    ];
+    const meeting = buildMeeting(chatLog);
+
+    const result = await module.captionMeetingImages(meeting);
+
+    expect(result.candidates).toBe(1);
+    expect(result.captioned).toBe(0);
+    expect(result.skipped).toBe(1);
+    expect(meeting.chatLog[0].attachments?.[0].aiCaption).toBeUndefined();
+    expect(meeting.chatLog[0].attachments?.[0].aiVisibleText).toBeUndefined();
+    expect(meeting.chatLog[0].attachments?.[0].aiCaptionModel).toBeUndefined();
+    expect(meeting.chatLog[0].attachments?.[0].aiCaptionedAt).toBeUndefined();
   });
 });
