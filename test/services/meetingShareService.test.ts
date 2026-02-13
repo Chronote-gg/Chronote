@@ -121,6 +121,41 @@ describe("meetingShareService", () => {
     expect(publicShare.rotated).toBe(true);
   });
 
+  it("rotates shareId when switching from public to server", async () => {
+    const store = getMockStore();
+    const guildId = store.userGuilds[0].id;
+    const meeting = store.meetingHistoryByGuild.get(guildId)?.[0];
+    expect(meeting).toBeDefined();
+    if (!meeting) return;
+
+    const publicShare = await setMeetingShareVisibilityService({
+      guildId,
+      meetingId: meeting.channelId_timestamp,
+      visibility: "public",
+      sharedByUserId: store.user.id,
+      sharedByTag: "MockUser#0001",
+    });
+
+    const serverShare = await setMeetingShareVisibilityService({
+      guildId,
+      meetingId: meeting.channelId_timestamp,
+      visibility: "server",
+      sharedByUserId: store.user.id,
+      sharedByTag: "MockUser#0001",
+    });
+
+    expect(serverShare.visibility).toBe("server");
+    expect(serverShare.rotated).toBe(true);
+    expect(serverShare.shareId).toBeTruthy();
+    expect(serverShare.shareId).not.toBe(publicShare.shareId);
+
+    const previous = await getMeetingShareRecordByShareIdService({
+      guildId,
+      shareId: publicShare.shareId ?? "",
+    });
+    expect(previous).toBeUndefined();
+  });
+
   it("turns off sharing and deletes share records", async () => {
     const store = getMockStore();
     const guildId = store.userGuilds[0].id;

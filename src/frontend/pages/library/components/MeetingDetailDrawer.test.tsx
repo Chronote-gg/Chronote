@@ -23,6 +23,17 @@ jest.mock("@tanstack/react-router", () => ({
   },
 }));
 
+const mockShareStateQuery = {
+  data: {
+    meetingSharingPolicy: "server",
+    state: { visibility: "private" },
+  },
+  isLoading: false,
+  isFetching: false,
+  error: null as unknown,
+  refetch: jest.fn().mockResolvedValue(undefined),
+};
+
 jest.mock("../../../services/trpc", () => ({
   trpc: {
     useUtils: () => ({
@@ -34,16 +45,7 @@ jest.mock("../../../services/trpc", () => ({
     }),
     meetingShares: {
       getShareState: {
-        useQuery: () => ({
-          data: {
-            meetingSharingPolicy: "server",
-            state: { visibility: "private" },
-          },
-          isLoading: false,
-          isFetching: false,
-          error: null,
-          refetch: jest.fn().mockResolvedValue(undefined),
-        }),
+        useQuery: () => mockShareStateQuery,
       },
       setVisibility: {
         useMutation: () => ({
@@ -223,6 +225,11 @@ describe("MeetingDetailDrawer summary copy", () => {
   beforeEach(() => {
     useMeetingDetailMock.mockReturnValue(buildUseMeetingDetailResult());
     writeTextMock.mockClear();
+    mockShareStateQuery.data = {
+      meetingSharingPolicy: "server",
+      state: { visibility: "private" },
+    };
+    mockShareStateQuery.error = null;
     Object.defineProperty(navigator, "clipboard", {
       value: {
         writeText: writeTextMock,
@@ -262,5 +269,12 @@ describe("MeetingDetailDrawer summary copy", () => {
     renderDrawer();
     const copyButton = screen.getByLabelText("Copy summary as Markdown");
     expect(copyButton).toBeDisabled();
+  });
+  it("disables share button when sharing permission is denied", () => {
+    mockShareStateQuery.error = { data: { code: "FORBIDDEN" } };
+
+    renderDrawer();
+
+    expect(screen.getByTestId("meeting-share")).toBeDisabled();
   });
 });

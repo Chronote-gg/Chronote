@@ -55,6 +55,21 @@ const ensureSharingAllowed = (
   }
 };
 
+const ensureShareRecordAllowedByPolicy = (
+  policy: MeetingSharePolicy,
+  shareVisibility: MeetingShareVisibilityInput,
+) => {
+  if (policy === "off") {
+    throw new TRPCError({ code: "NOT_FOUND", message: "Meeting not found" });
+  }
+  if (policy === "server" && shareVisibility !== "server") {
+    throw new TRPCError({ code: "NOT_FOUND", message: "Meeting not found" });
+  }
+  if (policy === "public" && shareVisibility === "private") {
+    throw new TRPCError({ code: "NOT_FOUND", message: "Meeting not found" });
+  }
+};
+
 const resolveMeetingChannelId = (history: {
   channelId?: string;
   channelId_timestamp: string;
@@ -284,9 +299,6 @@ const getSharedMeeting = guildMemberProcedure
     const { meetingSharingPolicy } = await resolveMeetingSharePolicy(
       input.serverId,
     );
-    if (meetingSharingPolicy === "off") {
-      throw new TRPCError({ code: "NOT_FOUND", message: "Meeting not found" });
-    }
     const share = await getMeetingShareRecordByShareIdService({
       guildId: input.serverId,
       shareId: input.shareId,
@@ -294,6 +306,7 @@ const getSharedMeeting = guildMemberProcedure
     if (!share) {
       throw new TRPCError({ code: "NOT_FOUND", message: "Meeting not found" });
     }
+    ensureShareRecordAllowedByPolicy(meetingSharingPolicy, share.visibility);
 
     const history = await getMeetingHistoryService(
       input.serverId,

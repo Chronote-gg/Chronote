@@ -282,6 +282,27 @@ describe("meetingShares router", () => {
     ).rejects.toMatchObject({ code: "NOT_FOUND" });
   });
 
+  test("shared endpoint returns not found for public share when policy is server", async () => {
+    mockedGetSnapshotEnum.mockReturnValue("server");
+    mockedGetShareById.mockResolvedValue({
+      pk: "GUILD#guild-1",
+      sk: "SHARE#share-1",
+      type: "meetingShare",
+      guildId: "guild-1",
+      meetingId: "meeting-1",
+      shareId: "share-1",
+      visibility: "public",
+      sharedAt: "2025-01-01T00:00:00.000Z",
+      sharedByUserId: "user-1",
+    });
+
+    await expect(
+      buildCaller().meetingShares.getSharedMeeting({
+        serverId: "guild-1",
+        shareId: "share-1",
+      }),
+    ).rejects.toMatchObject({ code: "NOT_FOUND" });
+  });
   test("shared endpoint requires channel view access", async () => {
     mockedEnsureUserCanViewChannel.mockResolvedValue(false);
 

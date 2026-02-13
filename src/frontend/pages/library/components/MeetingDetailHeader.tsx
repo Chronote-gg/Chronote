@@ -20,6 +20,7 @@ type MeetingDetailHeaderProps = {
   endMeetingPreflightLoading: boolean;
   archivePending: boolean;
   sharePending: boolean;
+  shareDisabled: boolean;
   fullScreen: boolean;
   onEndMeeting: () => void;
   onDownload: () => void;
@@ -35,6 +36,7 @@ export default function MeetingDetailHeader({
   endMeetingPreflightLoading,
   archivePending,
   sharePending,
+  shareDisabled,
   fullScreen,
   onEndMeeting,
   onDownload,
@@ -68,7 +70,7 @@ export default function MeetingDetailHeader({
           variant="light"
           leftSection={<IconLink size={16} />}
           onClick={onShare}
-          disabled={sharePending}
+          disabled={sharePending || shareDisabled}
           data-testid="meeting-share"
         >
           Share

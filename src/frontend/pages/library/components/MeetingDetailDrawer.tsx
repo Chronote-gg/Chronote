@@ -93,6 +93,14 @@ type ViewportTestIdProps = HTMLAttributes<HTMLDivElement> & {
   "data-testid": string;
 };
 
+const isTrpcErrorWithCode = (
+  error: unknown,
+): error is { data?: { code?: string } } =>
+  Boolean(error && typeof error === "object" && "data" in error);
+
+const isSharePermissionError = (error: unknown) =>
+  isTrpcErrorWithCode(error) && error.data?.code === "FORBIDDEN";
+
 const timelineViewportProps: ViewportTestIdProps = {
   "data-testid": "meeting-timeline-scroll-viewport",
 };
@@ -194,6 +202,7 @@ export default function MeetingDetailDrawer({
   );
   const shareMutation = trpc.meetingShares.setVisibility.useMutation();
   const rotateShareMutation = trpc.meetingShares.rotate.useMutation();
+  const shareDisabled = isSharePermissionError(shareStateQuery.error);
 
   const summaryCopyText = detail?.notes ?? "";
   const canCopySummary = summaryCopyText.trim().length > 0;
@@ -555,6 +564,9 @@ export default function MeetingDetailDrawer({
   };
 
   const handleOpenShare = () => {
+    if (shareDisabled) {
+      return;
+    }
     setShareModalOpen(true);
   };
 
@@ -763,6 +775,7 @@ export default function MeetingDetailDrawer({
                   sharePending={
                     shareMutation.isPending || rotateShareMutation.isPending
                   }
+                  shareDisabled={shareDisabled}
                   fullScreen={fullScreen}
                   onEndMeeting={preflightEndMeeting}
                   onDownload={handleDownload}
