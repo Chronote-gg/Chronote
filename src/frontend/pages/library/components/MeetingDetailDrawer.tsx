@@ -33,7 +33,6 @@ import {
   MEETING_STATUS,
   type MeetingStatus,
 } from "../../../../types/meetingLifecycle";
-import type { QuillDeltaPayload } from "../../../../types/chat";
 import type { MeetingEventType } from "../../../../types/meetingTimeline";
 import { useMeetingDetail } from "../hooks/useMeetingDetail";
 import { resolveDetailErrorMessage } from "../../../utils/meetingLibrary";
@@ -41,7 +40,9 @@ import MeetingDetailHeader from "./MeetingDetailHeader";
 import MeetingDetailModals from "./MeetingDetailModals";
 import MeetingAudioPanel from "./MeetingAudioPanel";
 import { MeetingSummaryPanel } from "./MeetingSummaryPanel";
-import MeetingNotesEditorModal from "./MeetingNotesEditorModal";
+import MeetingNotesEditorModal, {
+  type QuillDeltaPayload,
+} from "./MeetingNotesEditorModal";
 import MeetingFullScreenLayout from "./MeetingFullScreenLayout";
 import { downloadMeetingExport } from "./meetingExport";
 import {

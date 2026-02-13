@@ -208,6 +208,13 @@ export const filterMeetingItems = <T extends MeetingFilterItem>(
   );
 };
 
+export const resolveDetailErrorMessage = (error: unknown) => {
+  if (error instanceof Error && error.message.trim().length > 0) {
+    return error.message;
+  }
+  return "Unable to load meeting details right now.";
+};
+
 const resolveSummaryLabel = (value?: string | null) => value ?? undefined;
 
 const resolveNotes = (notes?: string | null) =>
