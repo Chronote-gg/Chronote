@@ -18,7 +18,7 @@ import { uploadMeetingArtifacts } from "../../src/services/uploadService";
 import { saveMeetingHistoryToDatabase } from "../../src/commands/saveMeetingHistory";
 import { getGuildLimits } from "../../src/services/subscriptionService";
 import { updateMeetingStatusService } from "../../src/services/meetingHistoryService";
-import { getMeeting } from "../../src/meetings";
+import { deleteMeeting, getMeeting } from "../../src/meetings";
 import { describeAutoRecordRule } from "../../src/utils/meetingLifecycle";
 import { MEETING_END_REASONS } from "../../src/types/meetingLifecycle";
 
@@ -140,6 +140,9 @@ const mockedUpdateMeetingStatusService =
     typeof updateMeetingStatusService
   >;
 const mockedGetMeeting = getMeeting as jest.MockedFunction<typeof getMeeting>;
+const mockedDeleteMeeting = deleteMeeting as jest.MockedFunction<
+  typeof deleteMeeting
+>;
 const mockedDescribeAutoRecordRule =
   describeAutoRecordRule as jest.MockedFunction<typeof describeAutoRecordRule>;
 
@@ -292,6 +295,9 @@ describe("handleEndMeetingOther", () => {
     expect(mockedEvaluateAutoRecordCancellation).not.toHaveBeenCalled();
     expect(mockedBuildMixedAudio).not.toHaveBeenCalled();
     expect(mockedUploadMeetingArtifacts).not.toHaveBeenCalled();
+    expect(meeting.setFinished).toHaveBeenCalled();
+    expect(meeting.finished).toBe(true);
+    expect(mockedDeleteMeeting).toHaveBeenCalledWith("guild-1");
     expect(
       autoRecordJoinSuppressionService.suppressUntilEmpty,
     ).toHaveBeenCalledWith(
