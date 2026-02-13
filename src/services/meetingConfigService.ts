@@ -1,5 +1,5 @@
 import { CONFIG_KEYS } from "../config/keys";
-import { CONFIG_REGISTRY } from "../config/registry";
+import { CONFIG_REGISTRY, getConfigEntry } from "../config/registry";
 import type { ConfigTier, MeetingRuntimeConfig } from "../config/types";
 import { resolveConfigSnapshot } from "./unifiedConfigService";
 import { resolveDictionaryBudgets } from "../utils/dictionary";
@@ -11,10 +11,16 @@ const requireValue = (
   key: string,
 ) => {
   const entry = snapshot.values[key];
-  if (!entry || entry.value === undefined || entry.value === null) {
-    throw new Error(`Missing required config value for ${key}.`);
+  if (entry && entry.value !== undefined && entry.value !== null) {
+    return entry.value;
   }
-  return entry.value;
+
+  const configEntry = getConfigEntry(key);
+  if (configEntry && configEntry.defaultValue !== undefined) {
+    return configEntry.defaultValue;
+  }
+
+  throw new Error(`Missing required config value for ${key}.`);
 };
 
 export async function resolveMeetingRuntimeConfig(input: {
@@ -150,6 +156,17 @@ export async function resolveMeetingRuntimeConfig(input: {
     autoRecordCancellation: {
       enabled: Boolean(
         requireValue(snapshot, CONFIG_KEYS.autorecord.cancelEnabled),
+      ),
+    },
+    visionCaptions: {
+      enabled: Boolean(
+        requireValue(snapshot, CONFIG_KEYS.visionCaptions.enabled),
+      ),
+      maxImages: Number(
+        requireValue(snapshot, CONFIG_KEYS.visionCaptions.maxImages),
+      ),
+      maxTotalChars: Number(
+        requireValue(snapshot, CONFIG_KEYS.visionCaptions.maxTotalChars),
       ),
     },
     modelParams,

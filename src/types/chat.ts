@@ -14,6 +14,10 @@ export type ChatAttachment = {
   height?: number;
   durationSeconds?: number;
   description?: string;
+  aiCaption?: string;
+  aiVisibleText?: string;
+  aiCaptionModel?: string;
+  aiCaptionedAt?: string;
   ephemeral?: boolean;
 };
 

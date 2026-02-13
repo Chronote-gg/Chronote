@@ -44,6 +44,7 @@ import {
   ensureMeetingNotes,
   ensureMeetingSummaries,
 } from "../services/meetingNotesService";
+import { captionMeetingImages } from "../services/imageCaptionService";
 import {
   cleanupMeetingTempDir,
   ensureMeetingTempDir,
@@ -263,6 +264,16 @@ async function runEndMeetingFlow(options: EndMeetingFlowOptions) {
       meeting.finalTranscript = transcriptions;
 
       if (meeting.generateNotes) {
+        await runMeetingEndStep(
+          meeting,
+          "caption-images",
+          () => captionMeetingImages(meeting),
+          {
+            metadata: {
+              chatEntries: meeting.chatLog.length,
+            },
+          },
+        );
         const notes = await runMeetingEndStep(meeting, "generate-notes", () =>
           ensureMeetingNotes(meeting),
         );
