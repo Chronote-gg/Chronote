@@ -9,6 +9,7 @@ import { CONFIG_KEYS } from "../config/keys";
 import { getMeeting } from "../meetings";
 import { resolveConfigEnum } from "../services/unifiedConfigService";
 import { MEETING_END_REASONS } from "../types/meetingLifecycle";
+import type { MeetingData } from "../types/meeting-data";
 import { handleEndMeetingOther } from "./endMeeting";
 
 export const DISMISS_AUTORECORD_COMMAND_NAME = "Stop recording";
@@ -38,68 +39,89 @@ function hasAdminPermissions(interaction: UserContextMenuCommandInteraction) {
   );
 }
 
-export async function handleDismissAutoRecord(
+type StopRecordingPermissionDecision =
+  | { allowed: true }
+  | { allowed: false; hint: string };
+
+function resolveStopRecordingPermission(options: {
+  policy: DismissPolicy;
+  invokerId: string;
+  admin: boolean;
+  soloNonBot: boolean;
+  startTriggeredByUserId?: MeetingData["startTriggeredByUserId"];
+}): StopRecordingPermissionDecision {
+  if (options.admin) return { allowed: true };
+
+  const allowedByPolicy =
+    options.policy === "anyone_in_channel" ||
+    (options.policy === "trigger_or_admin" &&
+      options.startTriggeredByUserId === options.invokerId) ||
+    (options.policy === "solo_or_admin" && options.soloNonBot);
+
+  if (allowedByPolicy) return { allowed: true };
+
+  const hint =
+    options.policy === "trigger_or_admin"
+      ? "Ask an admin, or the user who triggered auto-record."
+      : options.policy === "solo_or_admin"
+        ? "Ask an admin, or be the only non-bot member in the voice channel."
+        : "Ask an admin.";
+
+  return { allowed: false, hint };
+}
+
+type DismissAutoRecordContext = {
+  meeting: MeetingData;
+  invokerId: string;
+  policy: DismissPolicy;
+  admin: boolean;
+  soloNonBot: boolean;
+};
+
+type DismissAutoRecordCheckResult =
+  | { ok: true; context: DismissAutoRecordContext }
+  | { ok: false; message: string };
+
+async function resolveDismissAutoRecordContext(
   client: Client,
   interaction: UserContextMenuCommandInteraction,
-) {
+): Promise<DismissAutoRecordCheckResult> {
   if (!interaction.inGuild()) {
-    await interaction.reply({
-      content: "This command can only be used in a server.",
-      ephemeral: true,
-    });
-    return;
+    return { ok: false, message: "This command can only be used in a server." };
   }
 
   const botUserId = client.user?.id;
   if (!botUserId) {
-    await interaction.reply({
-      content: "Bot is not ready yet.",
-      ephemeral: true,
-    });
-    return;
+    return { ok: false, message: "Bot is not ready yet." };
   }
 
   if (interaction.targetUser.id !== botUserId) {
-    await interaction.reply({
-      content: `Use this command on <@${botUserId}>.`,
-      ephemeral: true,
-    });
-    return;
+    return { ok: false, message: `Use this command on <@${botUserId}>.` };
   }
 
   const meeting = getMeeting(interaction.guildId);
   if (!meeting) {
-    await interaction.reply({
-      content: "No active recording to stop right now.",
-      ephemeral: true,
-    });
-    return;
+    return { ok: false, message: "No active recording to stop right now." };
   }
 
   if (!meeting.isAutoRecording) {
-    await interaction.reply({
-      content: "This command only applies to auto-recorded meetings.",
-      ephemeral: true,
-    });
-    return;
+    return {
+      ok: false,
+      message: "This command only applies to auto-recorded meetings.",
+    };
   }
 
   if (meeting.finishing) {
-    await interaction.reply({
-      content: "This meeting is already ending.",
-      ephemeral: true,
-    });
-    return;
+    return { ok: false, message: "This meeting is already ending." };
   }
 
   const invokerId = interaction.user.id;
   const invokerMember = meeting.voiceChannel.members.get(invokerId);
   if (!invokerMember) {
-    await interaction.reply({
-      content: "Join the meeting voice channel to stop recording.",
-      ephemeral: true,
-    });
-    return;
+    return {
+      ok: false,
+      message: "Join the meeting voice channel to stop recording.",
+    };
   }
 
   const admin = hasAdminPermissions(interaction);
@@ -117,18 +139,48 @@ export async function handleDismissAutoRecord(
       { logLabel: "Failed to resolve auto-record dismiss policy" },
     )) ?? DEFAULT_DISMISS_POLICY;
 
-  const allowedByPolicy =
-    policy === "anyone_in_channel" ||
-    (policy === "trigger_or_admin" &&
-      meeting.startTriggeredByUserId === invokerId);
+  return {
+    ok: true,
+    context: {
+      meeting,
+      invokerId,
+      policy,
+      admin,
+      soloNonBot,
+    },
+  };
+}
 
-  if (!(admin || soloNonBot || allowedByPolicy)) {
-    const policyHint =
-      policy === "trigger_or_admin"
-        ? "Ask an admin, or the user who triggered auto-record."
-        : "Ask an admin.";
+export async function handleDismissAutoRecord(
+  client: Client,
+  interaction: UserContextMenuCommandInteraction,
+) {
+  const contextResult = await resolveDismissAutoRecordContext(
+    client,
+    interaction,
+  );
+  if (!contextResult.ok) {
     await interaction.reply({
-      content: `You do not have permission to stop this auto-record. ${policyHint}`,
+      content: contextResult.message,
+      ephemeral: true,
+    });
+    return;
+  }
+
+  const { meeting, invokerId, policy, admin, soloNonBot } =
+    contextResult.context;
+
+  const permissionDecision = resolveStopRecordingPermission({
+    policy,
+    invokerId,
+    admin,
+    soloNonBot,
+    startTriggeredByUserId: meeting.startTriggeredByUserId,
+  });
+
+  if (!permissionDecision.allowed) {
+    await interaction.reply({
+      content: `You do not have permission to stop this auto-record. ${permissionDecision.hint}`,
       ephemeral: true,
     });
     return;

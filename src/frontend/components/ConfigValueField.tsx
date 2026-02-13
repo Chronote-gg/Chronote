@@ -58,7 +58,7 @@ const formatSelectOptionLabelForKey = (key: string, option: string) => {
     if (option === "anyone_in_channel") return "Anyone in channel";
   }
 
-  return option;
+  return formatOptionLabel(option);
 };
 
 const AskSharingPolicySegment: CustomRenderer = ({
@@ -279,14 +279,10 @@ export function ConfigValueField({
     return (
       <Select
         aria-label={entry.key}
-        data={(entry.ui.options ?? []).map((option) =>
-          entry.key === CONFIG_KEYS.autorecord.dismissPolicy
-            ? {
-                value: option,
-                label: formatSelectOptionLabelForKey(entry.key, option),
-              }
-            : option,
-        )}
+        data={(entry.ui.options ?? []).map((option) => ({
+          value: option,
+          label: formatSelectOptionLabelForKey(entry.key, option),
+        }))}
         value={typeof value === "string" ? value : null}
         onChange={(next) => {
           if (next !== null) onChange(next);
