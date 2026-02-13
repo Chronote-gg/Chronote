@@ -33,12 +33,15 @@ import {
   MEETING_STATUS,
   type MeetingStatus,
 } from "../../../../types/meetingLifecycle";
+import type { QuillDeltaPayload } from "../../../../types/chat";
 import type { MeetingEventType } from "../../../../types/meetingTimeline";
 import { useMeetingDetail } from "../hooks/useMeetingDetail";
+import { resolveDetailErrorMessage } from "../../../utils/meetingLibrary";
 import MeetingDetailHeader from "./MeetingDetailHeader";
 import MeetingDetailModals from "./MeetingDetailModals";
 import MeetingAudioPanel from "./MeetingAudioPanel";
 import { MeetingSummaryPanel } from "./MeetingSummaryPanel";
+import MeetingNotesEditorModal from "./MeetingNotesEditorModal";
 import MeetingFullScreenLayout from "./MeetingFullScreenLayout";
 import { downloadMeetingExport } from "./meetingExport";
 import {
@@ -151,6 +154,8 @@ export default function MeetingDetailDrawer({
   const [feedbackModalOpen, setFeedbackModalOpen] = useState(false);
   const [feedbackDraft, setFeedbackDraft] = useState("");
 
+  const [notesEditorModalOpen, setNotesEditorModalOpen] = useState(false);
+
   const [notesCorrectionModalOpen, setNotesCorrectionModalOpen] =
     useState(false);
   const [notesCorrectionDraft, setNotesCorrectionDraft] = useState("");
@@ -192,6 +197,7 @@ export default function MeetingDetailDrawer({
     trpc.meetings.suggestNotesCorrection.useMutation();
   const applyNotesCorrectionMutation =
     trpc.meetings.applyNotesCorrection.useMutation();
+  const updateNotesMutation = trpc.meetings.updateNotes.useMutation();
 
   const shareStateQuery = trpc.meetingShares.getShareState.useQuery(
     {
@@ -229,13 +235,15 @@ export default function MeetingDetailDrawer({
       <Text fw={600} size="lg">
         {meeting.title}
       </Text>
-      <ActionIcon
-        variant="subtle"
-        aria-label="Rename meeting"
-        onClick={() => setRenameModalOpen(true)}
-      >
-        <IconPencil size={16} />
-      </ActionIcon>
+      {canManageSelectedGuild ? (
+        <ActionIcon
+          variant="subtle"
+          aria-label="Rename meeting"
+          onClick={() => setRenameModalOpen(true)}
+        >
+          <IconPencil size={16} />
+        </ActionIcon>
+      ) : null}
       {meeting.archivedAt ? (
         <Badge size="sm" variant="light" color="gray">
           Archived
@@ -259,6 +267,8 @@ export default function MeetingDetailDrawer({
 
     setShareModalOpen(false);
     setShareError(null);
+
+    setNotesEditorModalOpen(false);
 
     setNotesCorrectionDraft("");
     setNotesCorrectionDiff(null);
@@ -346,6 +356,50 @@ export default function MeetingDetailDrawer({
     }
   };
 
+  const openNotesEditorModal = () => {
+    setNotesEditorModalOpen(true);
+  };
+
+  const closeNotesEditorModal = () => {
+    setNotesEditorModalOpen(false);
+  };
+
+  const handleNotesEditorSave = async (delta: QuillDeltaPayload) => {
+    if (!selectedGuildId || !selectedMeetingId) return;
+    const expectedPreviousVersion = detail?.notesVersion;
+    if (expectedPreviousVersion == null) {
+      notifications.show({
+        color: "red",
+        message: "Unable to save notes right now. Refresh and try again.",
+      });
+      return;
+    }
+    try {
+      await updateNotesMutation.mutateAsync({
+        serverId: selectedGuildId,
+        meetingId: selectedMeetingId,
+        delta,
+        expectedPreviousVersion,
+      });
+      notifications.show({ message: "Notes saved." });
+      closeNotesEditorModal();
+      await Promise.all([
+        trpcUtils.meetings.detail.invalidate(),
+        invalidateMeetingLists(),
+      ]);
+    } catch (error) {
+      console.error("Failed saving notes", error);
+      const message =
+        error instanceof Error && error.message
+          ? error.message
+          : "Unable to save notes right now.";
+      notifications.show({
+        color: "red",
+        message,
+      });
+    }
+  };
+
   useEffect(() => {
     if (!selectedMeetingId) {
       setFullScreen(false);
@@ -362,6 +416,8 @@ export default function MeetingDetailDrawer({
     setRenameModalOpen(false);
     setFeedbackModalOpen(false);
     setFeedbackDraft("");
+    setNotesEditorModalOpen(false);
+    closeNotesCorrectionModal();
     setShareModalOpen(false);
     setShareError(null);
   };
@@ -638,6 +694,7 @@ export default function MeetingDetailDrawer({
       onFeedbackUp={handleSummaryFeedbackUp}
       onFeedbackDown={handleSummaryFeedbackDown}
       onCopySummary={handleCopySummary}
+      onEditNotes={openNotesEditorModal}
       onSuggestCorrection={openNotesCorrectionModal}
     />
   ) : null;
@@ -718,7 +775,7 @@ export default function MeetingDetailDrawer({
         >
           {detailError ? (
             <Center py="xl">
-              <Text c="dimmed">Unable to load meeting details.</Text>
+              <Text c="dimmed">{resolveDetailErrorMessage(detailError)}</Text>
             </Center>
           ) : detailLoading ? (
             <Center py="xl">
@@ -764,6 +821,14 @@ export default function MeetingDetailDrawer({
                 onRenameModalClose={() => setRenameModalOpen(false)}
                 onRenameSave={handleRenameSave}
                 renamePending={renameMutation.isPending}
+              />
+              <MeetingNotesEditorModal
+                opened={notesEditorModalOpen}
+                initialMarkdown={detail?.notes ?? ""}
+                initialDelta={detail?.notesDelta}
+                saving={updateNotesMutation.isPending}
+                onClose={closeNotesEditorModal}
+                onSave={handleNotesEditorSave}
               />
               <Stack gap="md" style={{ flex: 1, minHeight: 0 }}>
                 <MeetingDetailHeader

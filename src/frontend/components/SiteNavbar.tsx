@@ -42,7 +42,6 @@ const NAV_ITEMS: Array<{
     value: "library",
     icon: IconBook2,
     requiresAuth: true,
-    requiresManage: true,
   },
   { label: "Ask", value: "ask", icon: IconSparkles, requiresAuth: true },
   {

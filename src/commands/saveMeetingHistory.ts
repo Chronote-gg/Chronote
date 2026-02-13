@@ -6,6 +6,7 @@ import {
   ensureMeetingNotes,
   ensureMeetingSummaries,
 } from "../services/meetingNotesService";
+import { trimNotesForHistory } from "../utils/notesHistory";
 
 function buildNotesMetadata(
   meeting: MeetingData,
@@ -77,7 +78,7 @@ function buildNotesHistory(options: {
   return [
     {
       version: notesVersion,
-      notes,
+      notes: trimNotesForHistory(notes),
       editedBy: notesLastEditedBy ?? meeting.creator.id,
       editedAt: notesLastEditedAt ?? timestamp,
     },
@@ -103,6 +104,7 @@ export async function saveMeetingHistoryToDatabase(meeting: MeetingData) {
         channelId_timestamp: `${meeting.voiceChannel.id}#${timestamp}`,
         meetingId: meeting.meetingId,
         channelId: meeting.voiceChannel.id,
+        textChannelId: meeting.textChannel.id,
         timestamp,
         tags: meeting.tags,
         context: meeting.meetingContext,
@@ -145,6 +147,7 @@ export async function saveMeetingHistoryToDatabase(meeting: MeetingData) {
       channelId_timestamp: `${meeting.voiceChannel.id}#${timestamp}`,
       meetingId: meeting.meetingId,
       channelId: meeting.voiceChannel.id,
+      textChannelId: meeting.textChannel.id,
       timestamp,
       tags: meeting.tags,
       notes,
@@ -199,6 +202,7 @@ export async function saveMeetingStartToDatabase(
       channelId_timestamp: `${meeting.voiceChannel.id}#${timestamp}`,
       meetingId: meeting.meetingId,
       channelId: meeting.voiceChannel.id,
+      textChannelId: meeting.textChannel.id,
       timestamp,
       tags: meeting.tags,
       context: meeting.meetingContext,

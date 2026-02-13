@@ -207,9 +207,11 @@ export interface MeetingHistory {
   channelId_timestamp: string; // Sort key (channelId#ISO-timestamp)
   meetingId: string; // Unique meeting identifier
   channelId: string; // Denormalized for easier queries
+  textChannelId?: string; // Channel id where the summary was posted
   timestamp: string; // ISO timestamp (denormalized)
   tags?: string[]; // Freeform tags for filtering / search
   notes?: string; // AI-generated notes (comprehensive, includes everything)
+  notesDelta?: unknown; // Optional rich-text source for notes (Quill Delta)
   meetingName?: string; // User-facing meeting name (editable)
   summarySentence?: string; // One-sentence summary for UI
   summaryLabel?: string; // Short label (5 words or fewer)

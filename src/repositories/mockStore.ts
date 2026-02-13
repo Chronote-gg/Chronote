@@ -21,6 +21,7 @@ import type {
   AskMessage,
   AskSharedConversation,
 } from "../types/ask";
+import type { ChatEntry } from "../types/chat";
 import { CONFIG_KEYS } from "../config/keys";
 import { config } from "../services/configService";
 import type {
@@ -521,6 +522,59 @@ function buildDefaultStore(): MockStore {
     ).toISOString();
     const channelId_timestamp = `${params.channelId}#${timestamp}`;
     const transcriptKey = `mock/transcripts/${params.guildId}/${params.channelId}-${params.meetingIdSuffix}.json`;
+
+    const chatJsonKey =
+      params.meetingIdSuffix === "ddm-1"
+        ? `mock/chats/${params.guildId}/${params.channelId}-${params.meetingIdSuffix}.json`
+        : undefined;
+    if (chatJsonKey) {
+      const meetingTimestampMs = Date.parse(timestamp);
+      const chatAuthor = {
+        id: mockUser.id,
+        username: "mockuser",
+        displayName: "MockUser",
+        serverNickname: "MockUser",
+        tag: "MockUser#0001",
+      };
+      const chatEntries: ChatEntry[] = [
+        {
+          type: "message",
+          source: "chat",
+          user: chatAuthor,
+          channelId: params.textChannelId,
+          timestamp: new Date(meetingTimestampMs + 15_000).toISOString(),
+          messageId: "mock-chat-1",
+          attachments: [
+            {
+              id: "mock-attachment-1",
+              name: "diagram.png",
+              size: 34_818,
+              url: "https://cdn.discordapp.com/attachments/mock/diagram.png",
+              contentType: "image/png",
+              width: 1024,
+              height: 768,
+            },
+            {
+              id: "mock-attachment-2",
+              name: "notes.pdf",
+              size: 158_240,
+              url: "https://cdn.discordapp.com/attachments/mock/notes.pdf",
+              contentType: "application/pdf",
+            },
+          ],
+        },
+        {
+          type: "message",
+          source: "chat",
+          user: chatAuthor,
+          channelId: params.textChannelId,
+          timestamp: new Date(meetingTimestampMs + 30_000).toISOString(),
+          messageId: "mock-chat-2",
+          content: "Uploaded the updated map + notes.",
+        },
+      ];
+      objectsByKey.set(chatJsonKey, JSON.stringify(chatEntries, null, 2));
+    }
     const transcriptSpeakers = ["GM", "Rin", "Ada", "Chronote"];
     const transcriptLines = [
       { speaker: "GM", text: "The party returns to the vault entrance." },
@@ -565,6 +619,7 @@ function buildDefaultStore(): MockStore {
       timestamp,
       tags: params.tags ?? [],
       notes: params.notes,
+      chatS3Key: chatJsonKey,
       participants: [
         {
           id: mockUser.id,

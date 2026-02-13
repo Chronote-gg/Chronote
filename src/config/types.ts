@@ -144,6 +144,11 @@ export type MeetingRuntimeConfig = {
   autoRecordCancellation: {
     enabled: boolean;
   };
+  visionCaptions: {
+    enabled: boolean;
+    maxImages: number;
+    maxTotalChars: number;
+  };
   modelParams?: ModelParamsByRole;
   modelChoices?: Partial<Record<ModelRole, string>>;
 };

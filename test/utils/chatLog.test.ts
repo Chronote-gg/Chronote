@@ -21,6 +21,42 @@ describe("renderChatEntryLine", () => {
     expect(line).toBe("[alpha @ Jan 1, 2024]: Hello!");
   });
 
+  test("formats chat attachments", () => {
+    const baseEntry = {
+      type: "message" as const,
+      user: { id: "1", username: "alpha", tag: "alpha#0001" },
+      channelId: "chan",
+      timestamp: new Date("2024-01-01T00:00:00Z").toISOString(),
+      attachments: [
+        {
+          id: "a1",
+          name: "diagram.png",
+          size: 1024,
+          url: "https://example.com/diagram.png",
+        },
+      ],
+    };
+
+    expect(renderChatEntryLine({ ...baseEntry, content: "" })).toBe(
+      "[alpha @ Jan 1, 2024]: (attachments: diagram.png (1.0 KB))",
+    );
+
+    expect(renderChatEntryLine({ ...baseEntry, content: "See this" })).toBe(
+      "[alpha @ Jan 1, 2024]: See this (attachments: diagram.png (1.0 KB))",
+    );
+
+    expect(
+      renderChatEntryLine(
+        { ...baseEntry, content: "" },
+        {
+          includeAttachmentUrls: true,
+        },
+      ),
+    ).toBe(
+      "[alpha @ Jan 1, 2024]: (attachments: diagram.png (1.0 KB) https://example.com/diagram.png)",
+    );
+  });
+
   test("formats join/leave events", () => {
     const joinLine = renderChatEntryLine({
       type: "join",

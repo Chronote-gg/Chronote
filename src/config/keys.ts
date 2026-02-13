@@ -55,6 +55,11 @@ export const CONFIG_KEYS = {
     attendeeAccessEnabled: "meetings.attendeeAccess.enabled",
     sharingPolicy: "meetings.sharing.policy",
   },
+  visionCaptions: {
+    enabled: "visionCaptions.enabled",
+    maxImages: "visionCaptions.maxImages",
+    maxTotalChars: "visionCaptions.maxTotalChars",
+  },
   autorecord: {
     enabled: "autorecord.enabled",
     cancelEnabled: "autorecord.cancel.enabled",

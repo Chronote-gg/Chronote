@@ -717,6 +717,53 @@ export const CONFIG_REGISTRY: ConfigEntry[] = [
     ui: { type: "segmented", options: ["off", "server", "public"] },
   },
   {
+    key: "visionCaptions.enabled",
+    label: "Vision captions",
+    description:
+      "Generate AI captions and OCR-lite text for images shared during a meeting, and inject them into notes.",
+    category: "Notes",
+    group: "Advanced",
+    valueType: "boolean",
+    defaultValue: false,
+    scopes: {
+      server: scope(true, true, "admin", "toggle"),
+      channel: scope(true, false, "admin", "tri-state"),
+    },
+    minTier: "basic",
+    ui: { type: "toggle" },
+  },
+  {
+    key: "visionCaptions.maxImages",
+    label: "Vision caption max images",
+    description: "Maximum number of shared images to caption per meeting.",
+    category: "Notes",
+    group: "Advanced",
+    valueType: "number",
+    defaultValue: 10,
+    scopes: {
+      server: scope(true, true, "admin", "number"),
+      channel: scope(true, false, "admin", "number"),
+    },
+    minTier: "basic",
+    ui: { type: "number", min: 0, max: 20, step: 1 },
+  },
+  {
+    key: "visionCaptions.maxTotalChars",
+    label: "Vision caption max chars",
+    description:
+      "Character budget for all image captions and visible text injected into notes.",
+    category: "Notes",
+    group: "Advanced",
+    valueType: "number",
+    defaultValue: 3000,
+    scopes: {
+      server: scope(true, true, "admin", "number"),
+      channel: scope(true, false, "admin", "number"),
+    },
+    minTier: "basic",
+    ui: { type: "number", min: 0, max: 20000, step: 100 },
+  },
+  {
     key: "autorecord.enabled",
     label: "Auto-record",
     description: "Automatically record meetings by default.",

@@ -35,8 +35,22 @@ const collectChatLines = (meeting: MeetingData) =>
   meeting.chatLog
     .filter((entry) => entry.type === "message")
     .slice(0, MAX_CHAT_LINES)
-    .map((entry) => entry.content)
-    .filter((content): content is string => Boolean(content && content.trim()));
+    .map((entry) => {
+      const content = entry.content?.trim();
+      const attachments = entry.attachments ?? [];
+      if (attachments.length === 0) {
+        return content;
+      }
+      const shown = attachments.map((a) => a.name).slice(0, 3);
+      const extra = attachments.length - shown.length;
+      const suffix = extra > 0 ? ` +${extra} more` : "";
+      const attachmentLabel = `attachments: ${shown.join(", ")}${suffix}`;
+      if (content) {
+        return `${content} (${attachmentLabel})`;
+      }
+      return `[${attachmentLabel}]`;
+    })
+    .filter((line): line is string => Boolean(line && line.trim()));
 
 export async function evaluateAutoRecordCancellation(
   meeting: MeetingData,
