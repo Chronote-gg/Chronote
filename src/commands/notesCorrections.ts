@@ -631,6 +631,7 @@ async function persistCorrectionUpdate(params: {
     guildId: pending.guildId,
     channelId_timestamp: pending.channelIdTimestamp,
     notes: pending.newNotes,
+    notesDelta: null,
     notesVersion: newVersion,
     editedBy,
     summarySentence: summaries.summarySentence,

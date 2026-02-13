@@ -20,6 +20,7 @@ import {
   ensureManageGuildWithUserToken,
   type GuildSessionCache,
 } from "../../services/guildAccessService";
+import { isDiscordRateLimitedError } from "../../services/discordRateLimitError";
 import { guildMemberProcedure, publicProcedure, router } from "../trpc";
 import { PERMISSION_REASONS } from "../permissions";
 
@@ -107,23 +108,34 @@ const ask = guildMemberProcedure
     }),
   )
   .mutation(async ({ ctx, input }) => {
-    const { isManager } = await resolveAskAccess({
+    await resolveAskAccess({
       accessToken: ctx.user.accessToken ?? "",
       guildId: input.serverId,
       userId: ctx.user.id,
       session: ctx.req.session,
     });
-    const result = await askWithConversation({
-      userId: ctx.user.id,
-      guildId: input.serverId,
-      question: input.question,
-      conversationId: input.conversationId,
-      channelId: input.channelId,
-      tags: input.tags,
-      scope: input.scope,
-      viewerUserId: isManager ? undefined : ctx.user.id,
-    });
-    return result;
+    try {
+      const result = await askWithConversation({
+        userId: ctx.user.id,
+        guildId: input.serverId,
+        question: input.question,
+        conversationId: input.conversationId,
+        channelId: input.channelId,
+        tags: input.tags,
+        scope: input.scope,
+        viewerUserId: ctx.user.id,
+      });
+      return result;
+    } catch (error) {
+      if (isDiscordRateLimitedError(error)) {
+        throw new TRPCError({
+          code: "TOO_MANY_REQUESTS",
+          message: "Discord rate limited. Please retry.",
+          cause: { reason: PERMISSION_REASONS.discordRateLimited },
+        });
+      }
+      throw error;
+    }
   });
 
 const listConversations = guildMemberProcedure

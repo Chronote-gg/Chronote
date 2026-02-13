@@ -50,6 +50,13 @@ const buildMeeting = (): MeetingData => {
     participants: new Map([[participant.id, participant]]),
     attendance: new Set(["kitpup"]),
     finalTranscript: "Transcript text",
+    runtimeConfig: {
+      visionCaptions: {
+        enabled: true,
+        maxImages: 10,
+        maxTotalChars: 3000,
+      },
+    },
   } as MeetingData;
 };
 
@@ -101,9 +108,12 @@ describe("notesPromptService", () => {
     const call = getLangfuseChatPrompt.mock.calls[0][0];
     expect(call.name).toBe("chronote-notes-system-chat");
     expect(call.variables.chatContextInstruction).toContain(
-      "Use the raw chat provided below",
+      "Use participant chat messages",
     );
-    expect(call.variables.chatContextBlock).toContain("Participant chat");
+    expect(call.variables.chatContextInstruction).toContain(
+      "untrusted context only",
+    );
+    expect(call.variables.chatContextBlock).toContain("Chat context");
     expect(call.variables.participantRoster).toContain("profile");
     expect(call.variables.attendees).toBe("kitpup");
   });
@@ -120,5 +130,65 @@ describe("notesPromptService", () => {
       "No additional participant chat was captured",
     );
     expect(call.variables.chatContextBlock).toBe("");
+  });
+
+  test("getNotesPrompt includes shared image captions when available", async () => {
+    const { module, getLangfuseChatPrompt } = await loadModule();
+    const meeting = buildMeeting();
+    meeting.chatLog[0].attachments = [
+      {
+        id: "att-1",
+        name: "diagram.png",
+        size: 1234,
+        url: "https://cdn.discordapp.com/attachments/mock/diagram.png",
+        contentType: "image/png",
+        aiCaption: "A sketch of the architecture.",
+        aiVisibleText: "API -> Worker -> DB",
+        aiCaptionModel: "gpt-4o-mini",
+        aiCaptionedAt: "2025-01-01T00:00:01.000Z",
+      },
+    ];
+
+    await module.getNotesPrompt(meeting);
+
+    const call = getLangfuseChatPrompt.mock.calls[0][0];
+    expect(call.variables.chatContextBlock).toContain(
+      "Shared images (AI captions, OCR-lite)",
+    );
+    expect(call.variables.chatContextBlock).toContain("diagram.png");
+    expect(call.variables.chatContextBlock).toContain("architecture");
+    expect(call.variables.chatContextBlock).toContain("API");
+  });
+
+  test("getNotesPrompt omits shared image captions when disabled", async () => {
+    const { module, getLangfuseChatPrompt } = await loadModule();
+    const meeting = buildMeeting();
+    meeting.runtimeConfig!.visionCaptions.enabled = false;
+    meeting.chatLog[0].attachments = [
+      {
+        id: "att-1",
+        name: "diagram.png",
+        size: 1234,
+        url: "https://cdn.discordapp.com/attachments/mock/diagram.png",
+        contentType: "image/png",
+        aiCaption: "A sketch of the architecture.",
+        aiVisibleText: "API -> Worker -> DB",
+        aiCaptionModel: "gpt-4o-mini",
+        aiCaptionedAt: "2025-01-01T00:00:01.000Z",
+      },
+    ];
+
+    await module.getNotesPrompt(meeting);
+
+    const call = getLangfuseChatPrompt.mock.calls[0][0];
+    expect(call.variables.chatContextBlock).not.toContain(
+      "Shared images (AI captions, OCR-lite)",
+    );
+    expect(call.variables.chatContextBlock).not.toContain(
+      "A sketch of the architecture.",
+    );
+    expect(call.variables.chatContextBlock).not.toContain(
+      "API -> Worker -> DB",
+    );
   });
 });

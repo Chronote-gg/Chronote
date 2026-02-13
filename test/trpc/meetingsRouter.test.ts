@@ -5,7 +5,10 @@ import type { FeedbackRecord } from "../../src/types/db";
 import type { MeetingEvent } from "../../src/types/meetingTimeline";
 import { getMockUser } from "../../src/repositories/mockStore";
 import { appRouter } from "../../src/trpc/router";
-import { ensureManageGuildWithUserToken } from "../../src/services/guildAccessService";
+import {
+  ensureManageGuildWithUserToken,
+  ensureUserInGuild,
+} from "../../src/services/guildAccessService";
 import {
   getMeetingHistoryService,
   updateMeetingNotesService,
@@ -32,6 +35,12 @@ import {
   ensureUserCanManageChannel,
   ensureUserCanViewChannel,
 } from "../../src/services/discordPermissionsService";
+import { ensureUserCanAccessMeeting } from "../../src/services/meetingAccessService";
+import { checkUserMeetingAccess } from "../../src/services/meetingAccessService";
+import {
+  listBotGuildsCached,
+  listGuildChannelsCached,
+} from "../../src/services/discordCacheService";
 
 jest.mock("../../src/services/guildAccessService", () => ({
   ensureManageGuildWithUserToken: jest.fn(),
@@ -43,6 +52,7 @@ jest.mock("../../src/services/meetingHistoryService", () => ({
   getMeetingHistoryService: jest.fn(),
   listRecentMeetingsForGuildService: jest.fn(),
   updateMeetingNotesService: jest.fn(),
+  updateMeetingNotesMessageMetadataService: jest.fn(),
   updateMeetingArchiveService: jest.fn(),
   updateMeetingNameService: jest.fn(),
 }));
@@ -91,6 +101,16 @@ jest.mock("../../src/services/discordPermissionsService", () => ({
   ensureUserCanManageChannel: jest.fn(),
 }));
 
+jest.mock("../../src/services/meetingAccessService", () => ({
+  ensureUserCanAccessMeeting: jest.fn(),
+  checkUserMeetingAccess: jest.fn(),
+}));
+
+jest.mock("../../src/services/discordCacheService", () => ({
+  listBotGuildsCached: jest.fn(),
+  listGuildChannelsCached: jest.fn(),
+}));
+
 const buildCaller = (user = getMockUser()) =>
   appRouter.createCaller({
     req: { session: {} } as Request,
@@ -100,6 +120,7 @@ const buildCaller = (user = getMockUser()) =>
 
 describe("meetings router detail", () => {
   const mockedEnsureManageGuild = jest.mocked(ensureManageGuildWithUserToken);
+  const mockedEnsureUserInGuild = jest.mocked(ensureUserInGuild);
   const mockedGetMeetingHistory = jest.mocked(getMeetingHistoryService);
   const mockedFetchJsonFromS3 = jest.mocked(fetchJsonFromS3);
   const mockedGetSignedObjectUrl = jest.mocked(getSignedObjectUrl);
@@ -107,10 +128,22 @@ describe("meetings router detail", () => {
     buildMeetingTimelineEventsFromHistory,
   );
   const mockedGetSummaryFeedback = jest.mocked(getMeetingSummaryFeedback);
+  const mockedEnsureMeetingAccess = jest.mocked(ensureUserCanAccessMeeting);
+  const mockedCheckMeetingAccess = jest.mocked(checkUserMeetingAccess);
+  const mockedListGuildChannels = jest.mocked(listGuildChannelsCached);
 
   beforeEach(() => {
     jest.resetAllMocks();
     mockedEnsureManageGuild.mockResolvedValue(true);
+    mockedEnsureUserInGuild.mockResolvedValue(true);
+    mockedEnsureMeetingAccess.mockResolvedValue(true);
+    mockedCheckMeetingAccess.mockResolvedValue({
+      allowed: true,
+      via: "channel_permissions",
+    });
+    mockedListGuildChannels.mockResolvedValue([
+      { id: "channel-1", name: "voice", type: 2 },
+    ]);
   });
 
   test("returns transcript, audio url, and summary feedback", async () => {
@@ -213,6 +246,10 @@ describe("meetings notes correction mutations", () => {
   const mockedEnsureUserCanManageChannel = jest.mocked(
     ensureUserCanManageChannel,
   );
+  const mockedEnsureMeetingAccess = jest.mocked(ensureUserCanAccessMeeting);
+  const mockedCheckMeetingAccess = jest.mocked(checkUserMeetingAccess);
+  const mockedListBotGuilds = jest.mocked(listBotGuildsCached);
+  const mockedListGuildChannels = jest.mocked(listGuildChannelsCached);
 
   const mockedUpdateMeetingNotesService = jest.mocked(
     updateMeetingNotesService,
@@ -224,6 +261,18 @@ describe("meetings notes correction mutations", () => {
     mockedEnsureUserInGuild.mockResolvedValue(true);
     mockedEnsureUserCanViewChannel.mockResolvedValue(true);
     mockedEnsureUserCanManageChannel.mockResolvedValue(true);
+    mockedEnsureMeetingAccess.mockResolvedValue(true);
+    mockedCheckMeetingAccess.mockResolvedValue({
+      allowed: true,
+      via: "channel_permissions",
+    });
+    mockedListBotGuilds.mockResolvedValue([
+      { id: "guild-1", name: "Mock guild" },
+    ]);
+    mockedListGuildChannels.mockResolvedValue([
+      { id: "channel-1", name: "voice", type: 2 },
+      { id: "text-1", name: "notes", type: 0 },
+    ]);
     mockedGetLangfuseChatPrompt.mockResolvedValue({
       messages: [{ role: "user", content: "prompt" }],
       langfusePrompt: undefined,
@@ -503,5 +552,220 @@ describe("meetings notes correction mutations", () => {
         token: suggestion.token,
       }),
     ).rejects.toMatchObject({ code: "FORBIDDEN" });
+  });
+});
+
+describe("meetings updateNotes mutation", () => {
+  const mockedEnsureUserInGuild = jest.mocked(
+    (
+      jest.requireMock("../../src/services/guildAccessService") as {
+        ensureUserInGuild: typeof import("../../src/services/guildAccessService").ensureUserInGuild;
+      }
+    ).ensureUserInGuild,
+  );
+  const mockedGetMeetingHistory = jest.mocked(getMeetingHistoryService);
+  const mockedEnsureUserCanViewChannel = jest.mocked(ensureUserCanViewChannel);
+  const mockedEnsureUserCanManageChannel = jest.mocked(
+    ensureUserCanManageChannel,
+  );
+  const mockedCheckMeetingAccess = jest.mocked(checkUserMeetingAccess);
+  const mockedUpdateMeetingNotesService = jest.mocked(
+    updateMeetingNotesService,
+  );
+
+  beforeEach(() => {
+    jest.resetAllMocks();
+    mockedEnsureUserInGuild.mockResolvedValue(true);
+    mockedEnsureUserCanViewChannel.mockResolvedValue(true);
+    mockedEnsureUserCanManageChannel.mockResolvedValue(true);
+    mockedCheckMeetingAccess.mockResolvedValue({
+      allowed: true,
+      via: "channel_permissions",
+    });
+    mockedUpdateMeetingNotesService.mockResolvedValue(true);
+  });
+
+  test("saves notes for the meeting starter", async () => {
+    const meetingId = "channel-1#2025-01-01T00:00:00.000Z";
+    const user = getMockUser();
+    mockedGetMeetingHistory.mockResolvedValue({
+      guildId: "guild-1",
+      channelId_timestamp: meetingId,
+      meetingId: "meeting-1",
+      channelId: "channel-1",
+      timestamp: "2025-01-01T00:00:00.000Z",
+      duration: 1800,
+      transcribeMeeting: true,
+      generateNotes: true,
+      notes: "Old notes",
+      transcriptS3Key: "transcripts/meeting-1.json",
+      meetingCreatorId: user.id,
+      notesVersion: 3,
+    } as unknown as MeetingHistory);
+
+    const delta = { ops: [{ insert: "Hello\n" }] };
+    const result = await buildCaller(user).meetings.updateNotes({
+      serverId: "guild-1",
+      meetingId,
+      delta,
+      expectedPreviousVersion: 3,
+    });
+
+    expect(result).toEqual({ ok: true });
+    expect(mockedUpdateMeetingNotesService).toHaveBeenCalledWith(
+      expect.objectContaining({
+        guildId: "guild-1",
+        channelId_timestamp: meetingId,
+        notes: "Hello",
+        notesDelta: delta,
+        notesVersion: 4,
+        editedBy: user.id,
+        expectedPreviousVersion: 3,
+      }),
+    );
+  });
+
+  test("rejects version mismatch with CONFLICT", async () => {
+    const meetingId = "channel-1#2025-01-01T00:00:00.000Z";
+    const user = getMockUser();
+    mockedGetMeetingHistory.mockResolvedValue({
+      guildId: "guild-1",
+      channelId_timestamp: meetingId,
+      meetingId: "meeting-1",
+      channelId: "channel-1",
+      timestamp: "2025-01-01T00:00:00.000Z",
+      duration: 1800,
+      transcribeMeeting: true,
+      generateNotes: true,
+      notes: "Old notes",
+      transcriptS3Key: "transcripts/meeting-1.json",
+      meetingCreatorId: user.id,
+      notesVersion: 3,
+    } as unknown as MeetingHistory);
+
+    await expect(
+      buildCaller(user).meetings.updateNotes({
+        serverId: "guild-1",
+        meetingId,
+        delta: { ops: [{ insert: "Hello\n" }] },
+        expectedPreviousVersion: 2,
+      }),
+    ).rejects.toMatchObject({ code: "CONFLICT" });
+
+    expect(mockedUpdateMeetingNotesService).not.toHaveBeenCalled();
+  });
+
+  test("forbids non-owner edits when not auto-recorded", async () => {
+    const meetingId = "channel-1#2025-01-01T00:00:00.000Z";
+    mockedGetMeetingHistory.mockResolvedValue({
+      guildId: "guild-1",
+      channelId_timestamp: meetingId,
+      meetingId: "meeting-1",
+      channelId: "channel-1",
+      timestamp: "2025-01-01T00:00:00.000Z",
+      duration: 1800,
+      transcribeMeeting: true,
+      generateNotes: true,
+      notes: "Old notes",
+      transcriptS3Key: "transcripts/meeting-1.json",
+      meetingCreatorId: "someone-else",
+      isAutoRecording: false,
+      notesVersion: 3,
+    } as unknown as MeetingHistory);
+
+    await expect(
+      buildCaller().meetings.updateNotes({
+        serverId: "guild-1",
+        meetingId,
+        delta: { ops: [{ insert: "Hello\n" }] },
+        expectedPreviousVersion: 3,
+      }),
+    ).rejects.toMatchObject({ code: "FORBIDDEN" });
+  });
+
+  test("allows ManageChannel edits when auto-recorded", async () => {
+    const meetingId = "channel-1#2025-01-01T00:00:00.000Z";
+    const user = getMockUser();
+    mockedGetMeetingHistory.mockResolvedValue({
+      guildId: "guild-1",
+      channelId_timestamp: meetingId,
+      meetingId: "meeting-1",
+      channelId: "channel-1",
+      timestamp: "2025-01-01T00:00:00.000Z",
+      duration: 1800,
+      transcribeMeeting: true,
+      generateNotes: true,
+      notes: "Old notes",
+      transcriptS3Key: "transcripts/meeting-1.json",
+      meetingCreatorId: "someone-else",
+      isAutoRecording: true,
+      notesVersion: 1,
+    } as unknown as MeetingHistory);
+
+    const result = await buildCaller(user).meetings.updateNotes({
+      serverId: "guild-1",
+      meetingId,
+      delta: { ops: [{ insert: "Hello\n" }] },
+      expectedPreviousVersion: 1,
+    });
+
+    expect(result).toEqual({ ok: true });
+    expect(mockedEnsureUserCanManageChannel).toHaveBeenCalled();
+  });
+
+  test("rejects oversized delta payload", async () => {
+    const meetingId = "channel-1#2025-01-01T00:00:00.000Z";
+    const user = getMockUser();
+    mockedGetMeetingHistory.mockResolvedValue({
+      guildId: "guild-1",
+      channelId_timestamp: meetingId,
+      meetingId: "meeting-1",
+      channelId: "channel-1",
+      timestamp: "2025-01-01T00:00:00.000Z",
+      duration: 1800,
+      transcribeMeeting: true,
+      generateNotes: true,
+      notes: "Old notes",
+      transcriptS3Key: "transcripts/meeting-1.json",
+      meetingCreatorId: user.id,
+      notesVersion: 1,
+    } as unknown as MeetingHistory);
+
+    await expect(
+      buildCaller(user).meetings.updateNotes({
+        serverId: "guild-1",
+        meetingId,
+        delta: { ops: [{ insert: "a".repeat(100_000) }] },
+        expectedPreviousVersion: 1,
+      }),
+    ).rejects.toMatchObject({ code: "BAD_REQUEST" });
+  });
+
+  test("rejects empty markdown output", async () => {
+    const meetingId = "channel-1#2025-01-01T00:00:00.000Z";
+    const user = getMockUser();
+    mockedGetMeetingHistory.mockResolvedValue({
+      guildId: "guild-1",
+      channelId_timestamp: meetingId,
+      meetingId: "meeting-1",
+      channelId: "channel-1",
+      timestamp: "2025-01-01T00:00:00.000Z",
+      duration: 1800,
+      transcribeMeeting: true,
+      generateNotes: true,
+      notes: "Old notes",
+      transcriptS3Key: "transcripts/meeting-1.json",
+      meetingCreatorId: user.id,
+      notesVersion: 1,
+    } as unknown as MeetingHistory);
+
+    await expect(
+      buildCaller(user).meetings.updateNotes({
+        serverId: "guild-1",
+        meetingId,
+        delta: { ops: [{ insert: "\n" }] },
+        expectedPreviousVersion: 1,
+      }),
+    ).rejects.toMatchObject({ code: "BAD_REQUEST" });
   });
 });

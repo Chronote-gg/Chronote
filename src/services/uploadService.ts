@@ -102,6 +102,7 @@ function chatEntriesToJson(chatLog: ChatEntry[]) {
     user: entry.user,
     channelId: entry.channelId,
     content: entry.content,
+    attachments: entry.attachments,
     messageId: entry.messageId,
     timestamp: entry.timestamp,
   }));

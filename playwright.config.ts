@@ -5,6 +5,7 @@ const baseUrl = "http://127.0.0.1:5173";
 const mockEnv = {
   MOCK_MODE: "true",
   ENABLE_OAUTH: "false",
+  FRONTEND_SITE_URL: baseUrl,
   OPENAI_API_KEY: "test-openai-api-key",
   DISCORD_BOT_TOKEN: "test-bot-token",
   DISCORD_CLIENT_ID: "test-client-id",

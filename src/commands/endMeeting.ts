@@ -44,6 +44,7 @@ import {
   ensureMeetingNotes,
   ensureMeetingSummaries,
 } from "../services/meetingNotesService";
+import { captionMeetingImages } from "../services/imageCaptionService";
 import {
   cleanupMeetingTempDir,
   ensureMeetingTempDir,
@@ -169,7 +170,9 @@ async function runEndMeetingFlow(options: EndMeetingFlowOptions) {
     const chatLogFilePath = path.join(meetingTempDir, "chat.txt");
     writeFileSync(
       chatLogFilePath,
-      meeting.chatLog.map((e) => renderChatEntryLine(e)).join("\n"),
+      meeting.chatLog
+        .map((e) => renderChatEntryLine(e, { includeAttachmentUrls: true }))
+        .join("\n"),
     );
 
     // checking if the current snippet exists should only matter when there was no audio recorded at all
@@ -271,6 +274,16 @@ async function runEndMeetingFlow(options: EndMeetingFlowOptions) {
       meeting.finalTranscript = transcriptions;
 
       if (meeting.generateNotes) {
+        await runMeetingEndStep(
+          meeting,
+          "caption-images",
+          () => captionMeetingImages(meeting),
+          {
+            metadata: {
+              chatEntries: meeting.chatLog.length,
+            },
+          },
+        );
         const notes = await runMeetingEndStep(meeting, "generate-notes", () =>
           ensureMeetingNotes(meeting),
         );

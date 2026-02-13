@@ -23,6 +23,24 @@ const events: MeetingEvent[] = [
     time: "9:32",
     speaker: "Participant C",
     text: "Hello, hello.",
+    attachments: [
+      {
+        id: "att-1",
+        name: "diagram.png",
+        size: 48231,
+        url: "https://cdn.discordapp.com/attachments/mock/diagram.png",
+        contentType: "image/png",
+        width: 1024,
+        height: 768,
+      },
+      {
+        id: "att-2",
+        name: "notes.pdf",
+        size: 173920,
+        url: "https://cdn.discordapp.com/attachments/mock/notes.pdf",
+        contentType: "application/pdf",
+      },
+    ],
   },
   {
     id: "event-4",

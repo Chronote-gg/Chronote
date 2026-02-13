@@ -34,10 +34,13 @@ export type MeetingDetailInput = {
   id: string;
   meetingId: string;
   channelId: string;
+  channelName?: string | null;
   timestamp: string;
   duration: number;
   tags?: string[];
   notes?: string | null;
+  notesDelta?: unknown | null;
+  notesVersion?: number | null;
   notesChannelId?: string | null;
   notesMessageId?: string | null;
   transcript?: string | null;
@@ -225,7 +228,7 @@ export const buildMeetingDetails = (
   channelNameMap: Map<string, string>,
 ): MeetingDetails => {
   const channelLabel = formatChannelLabel(
-    channelNameMap.get(detail.channelId),
+    channelNameMap.get(detail.channelId) ?? detail.channelName ?? undefined,
     detail.channelId,
   );
   const rawNotes = detail.notes ?? "";

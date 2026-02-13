@@ -222,3 +222,40 @@ test("buildLiveMeetingTimelineEvents dedupes chat TTS and includes end events", 
     events.some((event) => event.text.includes("Meeting ended by Alex")),
   ).toBe(true);
 });
+
+test("buildMeetingTimelineEventsFromHistory includes attachments-only chat messages", () => {
+  const participant = buildParticipant("u1", "Alex");
+  const history = buildHistory({
+    participants: [participant],
+  });
+  const chatEntries: ChatEntry[] = [
+    {
+      type: "message",
+      user: participant,
+      channelId: "voice-1",
+      content: "",
+      attachments: [
+        {
+          id: "a1",
+          name: "diagram.png",
+          size: 1024,
+          url: "https://example.com/diagram.png",
+        },
+      ],
+      messageId: "m3",
+      timestamp: "2025-01-01T00:00:10.000Z",
+    },
+  ];
+
+  const events = buildMeetingTimelineEventsFromHistory({
+    history,
+    chatEntries,
+  });
+
+  const chatEvent = events.find(
+    (event) => event.type === "chat" && event.messageId === "m3",
+  );
+  expect(chatEvent).toBeDefined();
+  expect(chatEvent?.attachments?.[0]?.name).toBe("diagram.png");
+  expect(chatEvent?.text).toContain("Shared 1 attachment");
+});
