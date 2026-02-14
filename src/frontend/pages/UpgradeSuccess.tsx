@@ -131,6 +131,10 @@ type UpgradeSuccessSecondaryActionProps = {
   billingPath: string;
 };
 
+type PromoAppliedRowProps = {
+  promoCode: string;
+};
+
 const resolveUpgradeSuccessCopy = (serverId: string, serverName: string) =>
   serverId
     ? `Your subscription is active for ${serverName}.`
@@ -150,8 +154,11 @@ export const resolveOpenPortalPath = (serverId: string, guilds: Guild[]) => {
 export const resolveBillingPath = (serverId: string) =>
   serverId ? `/portal/server/${serverId}/billing` : "/portal/select-server";
 
-const PromoAppliedRow = ({ promoCode }: { promoCode: string }) => {
-  if (!promoCode) return null;
+function PromoAppliedRow({ promoCode }: PromoAppliedRowProps) {
+  if (!promoCode) {
+    return null;
+  }
+
   return (
     <Group gap="xs">
       <ThemeIcon color="brand" variant="light" size="sm">
@@ -165,7 +172,7 @@ const PromoAppliedRow = ({ promoCode }: { promoCode: string }) => {
       </Text>
     </Group>
   );
-};
+}
 
 type UpgradeSuccessHeroProps = {
   isDark: boolean;
@@ -299,14 +306,14 @@ export function UpgradeSuccessHero({
   );
 }
 
-const UpgradeSuccessPrimaryAction = ({
+function UpgradeSuccessPrimaryAction({
   isAuthenticated,
   authLoading,
   loginUrl,
   serverId,
   serverName,
   openPortalPath,
-}: UpgradeSuccessPrimaryActionProps) => {
+}: UpgradeSuccessPrimaryActionProps) {
   if (isAuthenticated) {
     return (
       <Button
@@ -328,12 +335,12 @@ const UpgradeSuccessPrimaryAction = ({
       Connect Discord
     </Button>
   );
-};
+}
 
-const UpgradeSuccessSecondaryAction = ({
+function UpgradeSuccessSecondaryAction({
   isAuthenticated,
   billingPath,
-}: UpgradeSuccessSecondaryActionProps) => {
+}: UpgradeSuccessSecondaryActionProps) {
   if (isAuthenticated) {
     return (
       <Button
@@ -356,7 +363,7 @@ const UpgradeSuccessSecondaryAction = ({
       Back to homepage
     </Button>
   );
-};
+}
 
 export default function UpgradeSuccess() {
   const scheme = useComputedColorScheme("dark");
