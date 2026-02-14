@@ -30,6 +30,8 @@ import {
   DictionaryEntry,
   ConfigOverrideRecord,
   AskConversationShareRecord,
+  MeetingShareRecord,
+  MeetingShareByMeetingRecord,
   FeedbackRecord,
   FeedbackTargetType,
 } from "./types/db";
@@ -1289,6 +1291,97 @@ export async function deleteAskConversationShare(
   const sk = `SHARE#${conversationId}`;
   const params = {
     TableName: tableName("AskConversationTable"),
+    Key: marshall({ pk, sk }),
+  };
+  const command = new DeleteItemCommand(params);
+  await dynamoDbClient.send(command);
+}
+
+const buildMeetingSharePartitionKey = (guildId: string) => `GUILD#${guildId}`;
+const buildMeetingShareMeetingKey = (meetingId: string) =>
+  `MEETING#${meetingId}`;
+const buildMeetingShareShareKey = (shareId: string) => `SHARE#${shareId}`;
+
+export async function getMeetingShareByShareId(
+  guildId: string,
+  shareId: string,
+): Promise<MeetingShareRecord | undefined> {
+  const pk = buildMeetingSharePartitionKey(guildId);
+  const sk = buildMeetingShareShareKey(shareId);
+  const params = {
+    TableName: tableName("MeetingShareTable"),
+    Key: marshall({ pk, sk }),
+  };
+  const command = new GetItemCommand(params);
+  const result = await dynamoDbClient.send(command);
+  if (result.Item) {
+    return unmarshall(result.Item) as MeetingShareRecord;
+  }
+  return undefined;
+}
+
+export async function getMeetingShareByMeetingId(
+  guildId: string,
+  meetingId: string,
+): Promise<MeetingShareByMeetingRecord | undefined> {
+  const pk = buildMeetingSharePartitionKey(guildId);
+  const sk = buildMeetingShareMeetingKey(meetingId);
+  const params = {
+    TableName: tableName("MeetingShareTable"),
+    Key: marshall({ pk, sk }),
+  };
+  const command = new GetItemCommand(params);
+  const result = await dynamoDbClient.send(command);
+  if (result.Item) {
+    return unmarshall(result.Item) as MeetingShareByMeetingRecord;
+  }
+  return undefined;
+}
+
+export async function writeMeetingShare(
+  record: MeetingShareRecord,
+): Promise<void> {
+  const params = {
+    TableName: tableName("MeetingShareTable"),
+    Item: marshall(record, { removeUndefinedValues: true }),
+  };
+  const command = new PutItemCommand(params);
+  await dynamoDbClient.send(command);
+}
+
+export async function writeMeetingShareByMeeting(
+  record: MeetingShareByMeetingRecord,
+): Promise<void> {
+  const params = {
+    TableName: tableName("MeetingShareTable"),
+    Item: marshall(record, { removeUndefinedValues: true }),
+  };
+  const command = new PutItemCommand(params);
+  await dynamoDbClient.send(command);
+}
+
+export async function deleteMeetingShareByShareId(
+  guildId: string,
+  shareId: string,
+): Promise<void> {
+  const pk = buildMeetingSharePartitionKey(guildId);
+  const sk = buildMeetingShareShareKey(shareId);
+  const params = {
+    TableName: tableName("MeetingShareTable"),
+    Key: marshall({ pk, sk }),
+  };
+  const command = new DeleteItemCommand(params);
+  await dynamoDbClient.send(command);
+}
+
+export async function deleteMeetingShareByMeetingId(
+  guildId: string,
+  meetingId: string,
+): Promise<void> {
+  const pk = buildMeetingSharePartitionKey(guildId);
+  const sk = buildMeetingShareMeetingKey(meetingId);
+  const params = {
+    TableName: tableName("MeetingShareTable"),
     Key: marshall({ pk, sk }),
   };
   const command = new DeleteItemCommand(params);

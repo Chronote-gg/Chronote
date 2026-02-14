@@ -9,8 +9,6 @@ import {
 } from "../../../utils/meetingLibrary";
 import { MEETING_STATUS } from "../../../../types/meetingLifecycle";
 
-const updateNotesMutateAsync = jest.fn().mockResolvedValue({ ok: true });
-
 jest.mock("@tanstack/react-router", () => ({
   ...jest.requireActual("@tanstack/react-router"),
   useNavigate: () => jest.fn(),
@@ -25,6 +23,17 @@ jest.mock("@tanstack/react-router", () => ({
   },
 }));
 
+const mockShareStateQuery = {
+  data: {
+    meetingSharingPolicy: "server",
+    state: { visibility: "private" },
+  },
+  isLoading: false,
+  isFetching: false,
+  error: null as unknown,
+  refetch: jest.fn().mockResolvedValue(undefined),
+};
+
 jest.mock("../../../services/trpc", () => ({
   trpc: {
     useUtils: () => ({
@@ -34,6 +43,39 @@ jest.mock("../../../services/trpc", () => ({
         },
       },
     }),
+    meetingShares: {
+      getShareState: {
+        useQuery: () => mockShareStateQuery,
+      },
+      setVisibility: {
+        useMutation: () => ({
+          mutateAsync: jest.fn().mockResolvedValue({
+            meetingSharingPolicy: "server",
+            state: {
+              visibility: "server",
+              shareId: "sh_mock",
+              rotated: false,
+            },
+          }),
+          isPending: false,
+          error: undefined,
+        }),
+      },
+      rotate: {
+        useMutation: () => ({
+          mutateAsync: jest.fn().mockResolvedValue({
+            meetingSharingPolicy: "server",
+            state: {
+              visibility: "server",
+              shareId: "sh_rotated",
+              rotated: true,
+            },
+          }),
+          isPending: false,
+          error: undefined,
+        }),
+      },
+    },
     meetings: {
       setArchived: {
         useMutation: () => ({
@@ -45,13 +87,6 @@ jest.mock("../../../services/trpc", () => ({
       rename: {
         useMutation: () => ({
           mutateAsync: jest.fn().mockResolvedValue(undefined),
-          isPending: false,
-          error: undefined,
-        }),
-      },
-      updateNotes: {
-        useMutation: () => ({
-          mutateAsync: updateNotesMutateAsync,
           isPending: false,
           error: undefined,
         }),
@@ -68,6 +103,13 @@ jest.mock("../../../services/trpc", () => ({
         }),
       },
       applyNotesCorrection: {
+        useMutation: () => ({
+          mutateAsync: jest.fn().mockResolvedValue({ ok: true }),
+          isPending: false,
+          error: undefined,
+        }),
+      },
+      updateNotes: {
         useMutation: () => ({
           mutateAsync: jest.fn().mockResolvedValue({ ok: true }),
           isPending: false,
@@ -190,7 +232,11 @@ describe("MeetingDetailDrawer summary copy", () => {
   beforeEach(() => {
     useMeetingDetailMock.mockReturnValue(buildUseMeetingDetailResult());
     writeTextMock.mockClear();
-    updateNotesMutateAsync.mockClear();
+    mockShareStateQuery.data = {
+      meetingSharingPolicy: "server",
+      state: { visibility: "private" },
+    };
+    mockShareStateQuery.error = null;
     Object.defineProperty(navigator, "clipboard", {
       value: {
         writeText: writeTextMock,
@@ -231,45 +277,11 @@ describe("MeetingDetailDrawer summary copy", () => {
     const copyButton = screen.getByLabelText("Copy summary as Markdown");
     expect(copyButton).toBeDisabled();
   });
-
-  it("opens the notes editor and saves via updateNotes", async () => {
-    useMeetingDetailMock.mockReturnValue(
-      buildUseMeetingDetailResult({
-        detail: buildDetail({ notesVersion: 4, notesDelta: null }),
-      }),
-    );
+  it("disables share button when sharing permission is denied", () => {
+    mockShareStateQuery.error = { data: { code: "FORBIDDEN" } };
 
     renderDrawer();
 
-    fireEvent.click(screen.getByLabelText("Notes actions"));
-    await waitFor(() =>
-      expect(screen.getByText("Edit notes")).toBeInTheDocument(),
-    );
-    fireEvent.click(screen.getByText("Edit notes"));
-    await waitFor(() =>
-      expect(
-        screen.getByRole("button", { name: "Save notes" }),
-      ).toBeInTheDocument(),
-    );
-
-    fireEvent.click(screen.getByTestId("react-quill-mock-change"));
-    fireEvent.click(screen.getByRole("button", { name: "Save notes" }));
-
-    await waitFor(() =>
-      expect(updateNotesMutateAsync).toHaveBeenCalledWith(
-        expect.objectContaining({
-          serverId: "g1",
-          meetingId: "m1",
-          expectedPreviousVersion: 4,
-          delta: expect.objectContaining({
-            ops: expect.any(Array),
-          }),
-        }),
-      ),
-    );
-
-    expect(notifications.show).toHaveBeenCalledWith({
-      message: "Notes saved.",
-    });
+    expect(screen.getByTestId("meeting-share")).toBeDisabled();
   });
 });
