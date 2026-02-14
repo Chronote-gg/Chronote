@@ -78,6 +78,10 @@ describe("resolveOpenPortalPath", () => {
     ).toBe("/portal/server/s1/ask");
   });
 
+  it("returns ask path when server id is present but guild is missing", () => {
+    expect(resolveOpenPortalPath("s1", [])).toBe("/portal/server/s1/ask");
+  });
+
   it("falls back to select-server when no server is present", () => {
     expect(resolveOpenPortalPath("", [])).toBe("/portal/select-server");
   });

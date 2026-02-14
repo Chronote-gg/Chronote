@@ -148,14 +148,29 @@ const resolveUpgradeSuccessTitle = (serverId: string, serverName: string) => {
   return serverName ? `${serverName} is upgraded` : "Your server is upgraded";
 };
 
+const resolvePrimaryActionLabel = (serverId: string, serverName: string) => {
+  if (!serverId) {
+    return "Open portal";
+  }
+
+  return serverName ? `Open ${serverName}` : "Open server";
+};
+
 export const resolveOpenPortalPath = (serverId: string, guilds: Guild[]) => {
   if (!serverId) {
     return "/portal/select-server";
   }
+
   const matchedGuild = guilds.find((guild) => guild.id === serverId);
-  if (matchedGuild?.canManage === false) {
+
+  if (!matchedGuild) {
     return `/portal/server/${serverId}/ask`;
   }
+
+  if (matchedGuild.canManage === false) {
+    return `/portal/server/${serverId}/ask`;
+  }
+
   return `/portal/server/${serverId}/library`;
 };
 
@@ -233,7 +248,8 @@ export function UpgradeSuccessHero({
               backgroundColor: piece.color,
               animationDelay: `${piece.delayMs}ms`,
               animationDuration: `${piece.durationMs}ms`,
-              transform: `translateY(-18px) rotate(${piece.rotateDeg}deg)`,
+              "--confetti-rotate-start": `${piece.rotateDeg}deg`,
+              "--confetti-rotate-end": `${piece.rotateDeg + 240}deg`,
             }}
           />
         ))}
@@ -329,11 +345,7 @@ function UpgradeSuccessPrimaryAction({
         href={openPortalPath}
         rightSection={<IconArrowRight size={16} />}
       >
-        {serverId
-          ? serverName
-            ? `Open ${serverName}`
-            : "Open server"
-          : "Open portal"}
+        {resolvePrimaryActionLabel(serverId, serverName)}
       </Button>
     );
   }

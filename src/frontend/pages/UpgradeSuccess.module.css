@@ -36,7 +36,8 @@
 @keyframes confettiFall {
   0% {
     opacity: 0;
-    transform: translateY(-18px) rotate(0deg) scale(0.85);
+    transform: translateY(-18px) rotate(var(--confetti-rotate-start, 0deg))
+      scale(0.85);
   }
 
   12% {
@@ -45,7 +46,8 @@
 
   100% {
     opacity: 0;
-    transform: translateY(205px) rotate(240deg) scale(1.05);
+    transform: translateY(205px) rotate(var(--confetti-rotate-end, 240deg))
+      scale(1.05);
   }
 }
 
