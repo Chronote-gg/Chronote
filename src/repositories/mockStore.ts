@@ -137,6 +137,11 @@ function buildDefaultStore(): MockStore {
       roles: [`role-${guild.id}-bot`],
       permissions: adminPermissions,
     });
+    membersByGuild.set(`${guild.id}#${mockUser.id}`, {
+      user: { id: mockUser.id },
+      roles: [`role-${guild.id}-bot`],
+      permissions: adminPermissions,
+    });
   });
 
   const autoRecordByGuild = new Map<string, AutoRecordSettings[]>();
