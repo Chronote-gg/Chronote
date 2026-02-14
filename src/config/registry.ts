@@ -792,9 +792,9 @@ export const CONFIG_REGISTRY: ConfigEntry[] = [
   },
   {
     key: "autorecord.dismiss.policy",
-    label: "Auto-record stop policy",
+    label: "Auto-record dismiss policy",
     description:
-      "Controls who can stop an auto-recorded meeting from the voice channel context menu.",
+      "Controls who can dismiss an auto-recorded meeting from the voice channel context menu.",
     category: "Auto-record",
     group: "Advanced",
     valueType: "select",
