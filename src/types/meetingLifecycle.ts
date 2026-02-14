@@ -14,6 +14,7 @@ export const MEETING_END_REASONS = {
   LIVE_VOICE: "live_voice",
   BOT_DISCONNECT: "bot_disconnect",
   WEB_UI: "web_ui",
+  DISMISSED: "dismissed",
   AUTO_CANCELLED: "auto_cancelled",
   UNKNOWN: "unknown",
 } as const;

@@ -62,6 +62,7 @@ export const CONFIG_KEYS = {
   autorecord: {
     enabled: "autorecord.enabled",
     cancelEnabled: "autorecord.cancel.enabled",
+    dismissPolicy: "autorecord.dismiss.policy",
   },
   liveVoice: {
     enabled: "liveVoice.enabled",

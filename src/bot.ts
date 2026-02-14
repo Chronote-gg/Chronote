@@ -112,6 +112,11 @@ import {
   MEETING_START_REASONS,
   type AutoRecordRule,
 } from "./types/meetingLifecycle";
+import {
+  DISMISS_AUTORECORD_COMMAND_NAME,
+  dismissAutoRecordCommand,
+  handleDismissAutoRecord,
+} from "./commands/dismissAutoRecord";
 
 const TOKEN = config.discord.botToken;
 const CLIENT_ID = config.discord.clientId;
@@ -334,6 +339,17 @@ const handleChannelSelectInteraction = async (
 const handleInteractionCreate = async (interaction: RepliableInteraction) => {
   if (interaction.isChatInputCommand()) {
     await handleCommandInteraction(interaction);
+    return;
+  }
+  if (interaction.isUserContextMenuCommand()) {
+    if (interaction.commandName === DISMISS_AUTORECORD_COMMAND_NAME) {
+      await handleDismissAutoRecord(client, interaction);
+      return;
+    }
+    await interaction.reply({
+      content: "Unknown context menu command.",
+      ephemeral: true,
+    });
     return;
   }
   if (interaction.isModalSubmit()) {
@@ -1038,6 +1054,7 @@ async function setupApplicationCommands() {
           .setName("clear")
           .setDescription("Remove all dictionary entries for this server"),
       ),
+    dismissAutoRecordCommand,
   ];
 
   if (config.server.onboardingEnabled) {
