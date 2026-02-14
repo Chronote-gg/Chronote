@@ -140,6 +140,14 @@ const resolveUpgradeSuccessCopy = (serverId: string, serverName: string) =>
     ? `Your subscription is active for ${serverName}.`
     : "Your subscription is active and ready to power your next meeting.";
 
+const resolveUpgradeSuccessTitle = (serverId: string, serverName: string) => {
+  if (!serverId) {
+    return "Upgrade complete";
+  }
+
+  return serverName ? `${serverName} is upgraded` : "Your server is upgraded";
+};
+
 export const resolveOpenPortalPath = (serverId: string, guilds: Guild[]) => {
   if (!serverId) {
     return "/portal/select-server";
@@ -241,7 +249,7 @@ export function UpgradeSuccessHero({
               <IconConfetti size={18} />
             </ThemeIcon>
             <Title order={2}>
-              {serverId ? `${serverName} is upgraded.` : "Upgrade complete."}
+              {resolveUpgradeSuccessTitle(serverId, serverName)}
             </Title>
           </Group>
           <Text c="dimmed" size="sm">
@@ -321,7 +329,11 @@ function UpgradeSuccessPrimaryAction({
         href={openPortalPath}
         rightSection={<IconArrowRight size={16} />}
       >
-        {serverId ? `Open ${serverName}` : "Open portal"}
+        {serverId
+          ? serverName
+            ? `Open ${serverName}`
+            : "Open server"
+          : "Open portal"}
       </Button>
     );
   }
@@ -374,9 +386,14 @@ export default function UpgradeSuccess() {
   const promoCode = search.promo?.trim() ?? "";
   const serverId = search.serverId?.trim() ?? "";
   const isAuthenticated = authState === "authenticated";
-  const serverName =
-    guilds.find((guild) => guild.id === serverId)?.name ?? "your server";
-  const headerCopy = resolveUpgradeSuccessCopy(serverId, serverName);
+  const resolvedServerName = guilds.find(
+    (guild) => guild.id === serverId,
+  )?.name;
+  const serverName = resolvedServerName ?? "";
+  const headerCopy = resolveUpgradeSuccessCopy(
+    serverId,
+    resolvedServerName ?? "your server",
+  );
   const openPortalPath = resolveOpenPortalPath(serverId, guilds);
   const billingPath = resolveBillingPath(serverId);
 
