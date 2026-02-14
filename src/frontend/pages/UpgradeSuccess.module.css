@@ -1,0 +1,57 @@
+.heroSurface {
+  position: relative;
+  overflow: hidden;
+}
+
+.heroContent {
+  position: relative;
+  z-index: 1;
+}
+
+.detailsPanel {
+  position: relative;
+  z-index: 1;
+  backdrop-filter: blur(12px);
+}
+
+.confettiLayer {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.confettiPiece {
+  position: absolute;
+  top: -14%;
+  width: 0.45rem;
+  height: 1rem;
+  border-radius: 2px;
+  opacity: 0;
+  filter: drop-shadow(0 0 8px rgba(255, 255, 255, 0.24));
+  animation-name: confettiFall;
+  animation-timing-function: ease-out;
+  animation-fill-mode: forwards;
+}
+
+@keyframes confettiFall {
+  0% {
+    opacity: 0;
+    transform: translateY(-18px) rotate(0deg) scale(0.85);
+  }
+
+  12% {
+    opacity: 1;
+  }
+
+  100% {
+    opacity: 0;
+    transform: translateY(205px) rotate(240deg) scale(1.05);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .confettiPiece {
+    animation: none;
+    opacity: 0;
+  }
+}
