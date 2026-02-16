@@ -19,7 +19,7 @@ import {
   IconSparkles,
   IconTicket,
 } from "@tabler/icons-react";
-import { useSearch } from "@tanstack/react-router";
+import { useNavigate, useSearch } from "@tanstack/react-router";
 import Surface from "../components/Surface";
 import { useAuth } from "../contexts/AuthContext";
 import { type Guild, useGuildContext } from "../contexts/GuildContext";
@@ -123,12 +123,13 @@ type UpgradeSuccessPrimaryActionProps = {
   loginUrl: string;
   serverId: string;
   serverName: string;
-  openPortalPath: string;
+  onOpenPortal: () => void;
 };
 
 type UpgradeSuccessSecondaryActionProps = {
   isAuthenticated: boolean;
-  billingPath: string;
+  onOpenBilling: () => void;
+  onBackToHomepage: () => void;
 };
 
 type PromoAppliedRowProps = {
@@ -206,8 +207,9 @@ type UpgradeSuccessHeroProps = {
   serverName: string;
   headerCopy: string;
   promoCode: string;
-  openPortalPath: string;
-  billingPath: string;
+  onOpenPortal: () => void;
+  onOpenBilling: () => void;
+  onBackToHomepage: () => void;
   plan?: "basic" | "pro";
   interval?: "month" | "year";
 };
@@ -221,8 +223,9 @@ export function UpgradeSuccessHero({
   serverName,
   headerCopy,
   promoCode,
-  openPortalPath,
-  billingPath,
+  onOpenPortal,
+  onOpenBilling,
+  onBackToHomepage,
   plan,
   interval,
 }: UpgradeSuccessHeroProps) {
@@ -294,11 +297,12 @@ export function UpgradeSuccessHero({
               loginUrl={loginUrl}
               serverId={serverId}
               serverName={serverName}
-              openPortalPath={openPortalPath}
+              onOpenPortal={onOpenPortal}
             />
             <UpgradeSuccessSecondaryAction
               isAuthenticated={isAuthenticated}
-              billingPath={billingPath}
+              onOpenBilling={onOpenBilling}
+              onBackToHomepage={onBackToHomepage}
             />
           </Group>
         </Stack>
@@ -336,13 +340,12 @@ function UpgradeSuccessPrimaryAction({
   loginUrl,
   serverId,
   serverName,
-  openPortalPath,
+  onOpenPortal,
 }: UpgradeSuccessPrimaryActionProps) {
   if (isAuthenticated) {
     return (
       <Button
-        component="a"
-        href={openPortalPath}
+        onClick={onOpenPortal}
         rightSection={<IconArrowRight size={16} />}
       >
         {resolvePrimaryActionLabel(serverId, serverName)}
@@ -363,14 +366,14 @@ function UpgradeSuccessPrimaryAction({
 
 function UpgradeSuccessSecondaryAction({
   isAuthenticated,
-  billingPath,
+  onOpenBilling,
+  onBackToHomepage,
 }: UpgradeSuccessSecondaryActionProps) {
   if (isAuthenticated) {
     return (
       <Button
         variant="light"
-        component="a"
-        href={billingPath}
+        onClick={onOpenBilling}
         rightSection={<IconSparkles size={16} />}
       >
         Manage billing
@@ -380,8 +383,7 @@ function UpgradeSuccessSecondaryAction({
   return (
     <Button
       variant="light"
-      component="a"
-      href="/"
+      onClick={onBackToHomepage}
       rightSection={<IconSparkles size={16} />}
     >
       Back to homepage
@@ -393,6 +395,7 @@ export default function UpgradeSuccess() {
   const scheme = useComputedColorScheme("dark");
   const isDark = scheme === "dark";
   const { state: authState, loading: authLoading } = useAuth();
+  const navigate = useNavigate();
   const { guilds } = useGuildContext();
   const search = useSearch({ from: "/marketing/upgrade/success" });
   const promoCode = search.promo?.trim() ?? "";
@@ -408,6 +411,15 @@ export default function UpgradeSuccess() {
   );
   const openPortalPath = resolveOpenPortalPath(serverId, guilds);
   const billingPath = resolveBillingPath(serverId);
+  const handleOpenPortal = () => {
+    navigate({ to: openPortalPath });
+  };
+  const handleOpenBilling = () => {
+    navigate({ to: billingPath });
+  };
+  const handleBackToHomepage = () => {
+    navigate({ to: "/" });
+  };
 
   const redirectTarget = `${window.location.origin}${openPortalPath}`;
   const loginUrl = `${buildApiUrl("/auth/discord")}?redirect=${encodeURIComponent(
@@ -425,8 +437,9 @@ export default function UpgradeSuccess() {
         serverName={serverName}
         headerCopy={headerCopy}
         promoCode={promoCode}
-        openPortalPath={openPortalPath}
-        billingPath={billingPath}
+        onOpenPortal={handleOpenPortal}
+        onOpenBilling={handleOpenBilling}
+        onBackToHomepage={handleBackToHomepage}
         plan={search.plan}
         interval={search.interval}
       />

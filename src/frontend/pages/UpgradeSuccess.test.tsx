@@ -1,4 +1,5 @@
 import { render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { MantineProvider } from "@mantine/core";
 import UpgradeSuccess, {
   resolveBillingPath,
@@ -8,10 +9,12 @@ import UpgradeSuccess, {
 const mockUseSearch = jest.fn();
 const mockUseAuth = jest.fn();
 const mockUseGuildContext = jest.fn();
+const mockNavigate = jest.fn();
 
 jest.mock("@tanstack/react-router", () => ({
   ...jest.requireActual("@tanstack/react-router"),
   useSearch: () => mockUseSearch(),
+  useNavigate: () => mockNavigate,
 }));
 
 jest.mock("../contexts/AuthContext", () => ({
@@ -47,17 +50,24 @@ describe("UpgradeSuccess", () => {
     mockUseSearch.mockReset();
     mockUseAuth.mockReset();
     mockUseGuildContext.mockReset();
+    mockNavigate.mockReset();
   });
 
-  it("links open server and billing actions to the upgraded server", () => {
+  it("navigates open server and billing actions to the upgraded server", async () => {
+    const user = userEvent.setup();
     renderUpgradeSuccess();
 
-    expect(
-      screen.getByRole("link", { name: "Open Engineering HQ" }),
-    ).toHaveAttribute("href", "/portal/server/s1/library");
-    expect(
-      screen.getByRole("link", { name: "Manage billing" }),
-    ).toHaveAttribute("href", "/portal/server/s1/billing");
+    await user.click(
+      screen.getByRole("button", { name: "Open Engineering HQ" }),
+    );
+    expect(mockNavigate).toHaveBeenCalledWith({
+      to: "/portal/server/s1/library",
+    });
+
+    await user.click(screen.getByRole("button", { name: "Manage billing" }));
+    expect(mockNavigate).toHaveBeenCalledWith({
+      to: "/portal/server/s1/billing",
+    });
   });
 });
 
