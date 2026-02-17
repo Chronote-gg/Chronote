@@ -18,9 +18,10 @@ import { uploadMeetingArtifacts } from "../../src/services/uploadService";
 import { saveMeetingHistoryToDatabase } from "../../src/commands/saveMeetingHistory";
 import { getGuildLimits } from "../../src/services/subscriptionService";
 import { updateMeetingStatusService } from "../../src/services/meetingHistoryService";
-import { deleteMeeting, getMeeting } from "../../src/meetings";
+import { deleteMeeting, getMeeting, hasMeeting } from "../../src/meetings";
 import { describeAutoRecordRule } from "../../src/utils/meetingLifecycle";
 import { MEETING_END_REASONS } from "../../src/types/meetingLifecycle";
+import { releaseMeetingLeaseForMeeting } from "../../src/services/activeMeetingLeaseService";
 
 jest.mock("../../src/audio", () => ({
   buildMixedAudio: jest.fn(),
@@ -69,6 +70,9 @@ jest.mock("../../src/observability/meetingTrace", () => ({
 }));
 jest.mock("../../src/services/autoRecordCancellationService", () => ({
   evaluateAutoRecordCancellation: jest.fn(),
+}));
+jest.mock("../../src/services/activeMeetingLeaseService", () => ({
+  releaseMeetingLeaseForMeeting: jest.fn(),
 }));
 jest.mock("../../src/services/autoRecordJoinSuppressionService", () => ({
   __esModule: true,
@@ -143,8 +147,13 @@ const mockedGetMeeting = getMeeting as jest.MockedFunction<typeof getMeeting>;
 const mockedDeleteMeeting = deleteMeeting as jest.MockedFunction<
   typeof deleteMeeting
 >;
+const mockedHasMeeting = hasMeeting as jest.MockedFunction<typeof hasMeeting>;
 const mockedDescribeAutoRecordRule =
   describeAutoRecordRule as jest.MockedFunction<typeof describeAutoRecordRule>;
+const mockedReleaseMeetingLeaseForMeeting =
+  releaseMeetingLeaseForMeeting as jest.MockedFunction<
+    typeof releaseMeetingLeaseForMeeting
+  >;
 
 describe("handleEndMeetingOther", () => {
   beforeEach(() => {
@@ -308,6 +317,30 @@ describe("handleEndMeetingOther", () => {
         reason: "explicit_end",
       }),
     );
+  });
+
+  it("continues error cleanup when lease release fails", async () => {
+    mockedWithMeetingEndTrace.mockRejectedValue(new Error("end flow failed"));
+    mockedHasMeeting.mockReturnValue(true);
+    mockedReleaseMeetingLeaseForMeeting.mockRejectedValue(
+      new Error("lease release failed"),
+    );
+
+    const meeting = {
+      guildId: "guild-1",
+      meetingId: "meeting-1",
+      setFinished: jest.fn(),
+      finished: false,
+    } as unknown as MeetingData;
+
+    await expect(handleEndMeetingOther({} as Client, meeting)).resolves.toBe(
+      undefined,
+    );
+
+    expect(mockedReleaseMeetingLeaseForMeeting).toHaveBeenCalledWith(meeting);
+    expect(meeting.setFinished).toHaveBeenCalled();
+    expect(meeting.finished).toBe(true);
+    expect(mockedDeleteMeeting).toHaveBeenCalledWith("guild-1");
   });
 });
 

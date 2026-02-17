@@ -113,7 +113,15 @@ export async function handleEndMeetingButton(
   } catch (error) {
     console.error("Error during meeting end:", error);
     if (meeting && hasMeeting(meeting.guildId)) {
-      await releaseMeetingLeaseForMeeting(meeting);
+      try {
+        await releaseMeetingLeaseForMeeting(meeting);
+      } catch (releaseError) {
+        console.error("Failed to release meeting lease during error cleanup", {
+          guildId: meeting.guildId,
+          meetingId: meeting.meetingId,
+          error: releaseError,
+        });
+      }
       meeting.setFinished();
       meeting.finished = true;
       deleteMeeting(meeting.guildId);
@@ -135,7 +143,15 @@ export async function handleEndMeetingOther(
   } catch (error) {
     console.error("Error during meeting end:", error);
     if (meeting && hasMeeting(meeting.guildId)) {
-      await releaseMeetingLeaseForMeeting(meeting);
+      try {
+        await releaseMeetingLeaseForMeeting(meeting);
+      } catch (releaseError) {
+        console.error("Failed to release meeting lease during error cleanup", {
+          guildId: meeting.guildId,
+          meetingId: meeting.meetingId,
+          error: releaseError,
+        });
+      }
       meeting.setFinished();
       meeting.finished = true;
       deleteMeeting(meeting.guildId);

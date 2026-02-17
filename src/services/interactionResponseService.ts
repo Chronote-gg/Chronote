@@ -1,4 +1,4 @@
-import { InteractionReplyOptions } from "discord.js";
+import type { InteractionReplyOptions } from "discord.js";
 
 type InteractionReplyPayload = string | InteractionReplyOptions;
 

@@ -34,6 +34,7 @@ type SessionGuildCache = {
 };
 
 const GUILD_CACHE_TTL_MS = 60_000;
+const REMOTE_LEASE_REFRESH_MS = 10_000;
 
 export function registerLiveMeetingRoutes(app: express.Express) {
   app.get(
@@ -226,6 +227,8 @@ export function registerLiveMeetingRoutes(app: express.Express) {
       const seen = new Set<string>();
       let lastAttendeesKey = "";
       let lastStatus: LiveMeetingStatusPayload["status"] | null = null;
+      let cachedRemoteLease = fallbackLease;
+      let nextRemoteLeaseReadAtMs = Date.now();
 
       const sendEvent = (event: string, data: unknown) => {
         res.write(`event: ${event}\n`);
@@ -290,43 +293,67 @@ export function registerLiveMeetingRoutes(app: express.Express) {
       emitAttendees();
       lastStatus = initPayload.meeting.status;
 
+      const resolveRemoteMeetingStatus = async () => {
+        if (Date.now() >= nextRemoteLeaseReadAtMs) {
+          cachedRemoteLease = await getActiveMeetingLeaseForGuild(guildId);
+          nextRemoteLeaseReadAtMs = Date.now() + REMOTE_LEASE_REFRESH_MS;
+        }
+        const active =
+          cachedRemoteLease &&
+          cachedRemoteLease.meetingId === meetingId &&
+          isLeaseActive(cachedRemoteLease);
+
+        if (active && cachedRemoteLease) {
+          const leaseRemainingMs =
+            cachedRemoteLease.leaseExpiresAt * 1000 - Date.now();
+          if (leaseRemainingMs <= REMOTE_LEASE_REFRESH_MS) {
+            nextRemoteLeaseReadAtMs = Date.now();
+          }
+        }
+
+        return active ? MEETING_STATUS.IN_PROGRESS : MEETING_STATUS.COMPLETE;
+      };
+
       const tick = async () => {
-        if (meeting) {
-          emitEvents(buildLiveMeetingTimelineEvents(meeting));
-          emitAttendees();
-        }
+        try {
+          if (meeting) {
+            emitEvents(buildLiveMeetingTimelineEvents(meeting));
+            emitAttendees();
+          }
 
-        let nextStatus: LiveMeetingStatusPayload["status"];
-        let endedAt: string | undefined;
-        if (meeting) {
-          nextStatus = resolveMeetingStatus({
-            cancelled: meeting.cancelled,
-            finished: meeting.finished,
-            finishing: meeting.finishing,
+          let nextStatus: LiveMeetingStatusPayload["status"];
+          let endedAt: string | undefined;
+          if (meeting) {
+            nextStatus = resolveMeetingStatus({
+              cancelled: meeting.cancelled,
+              finished: meeting.finished,
+              finishing: meeting.finishing,
+            });
+            endedAt = meeting.endTime?.toISOString();
+          } else {
+            nextStatus = await resolveRemoteMeetingStatus();
+          }
+
+          if (nextStatus !== lastStatus) {
+            lastStatus = nextStatus;
+            const payload: LiveMeetingStatusPayload = {
+              status: nextStatus,
+              endedAt,
+            };
+            sendEvent("status", payload);
+          }
+          if (
+            nextStatus === MEETING_STATUS.COMPLETE ||
+            nextStatus === MEETING_STATUS.CANCELLED
+          ) {
+            cleanup();
+          }
+        } catch (error) {
+          console.error("Live meeting stream tick failed", {
+            guildId,
+            meetingId,
+            error,
           });
-          endedAt = meeting.endTime?.toISOString();
-        } else {
-          const lease = await getActiveMeetingLeaseForGuild(guildId);
-          const active =
-            lease && lease.meetingId === meetingId && isLeaseActive(lease);
-          nextStatus = active
-            ? MEETING_STATUS.IN_PROGRESS
-            : MEETING_STATUS.COMPLETE;
-        }
-
-        if (nextStatus !== lastStatus) {
-          lastStatus = nextStatus;
-          const payload: LiveMeetingStatusPayload = {
-            status: nextStatus,
-            endedAt,
-          };
-          sendEvent("status", payload);
-        }
-        if (
-          nextStatus === MEETING_STATUS.COMPLETE ||
-          nextStatus === MEETING_STATUS.CANCELLED
-        ) {
-          cleanup();
         }
       };
 

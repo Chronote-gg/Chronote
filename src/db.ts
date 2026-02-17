@@ -281,7 +281,7 @@ export async function requestActiveMeetingEnd(
     TableName: tableName("ActiveMeetingTable"),
     Key: marshall({ guildId }),
     UpdateExpression:
-      "SET #endRequestedAt = :endRequestedAt, #endRequestedByUserId = :endRequestedByUserId, #updatedAt = :updatedAt",
+      "SET #endRequestedAt = if_not_exists(#endRequestedAt, :endRequestedAt), #endRequestedByUserId = if_not_exists(#endRequestedByUserId, :endRequestedByUserId), #updatedAt = :updatedAt",
     ConditionExpression:
       "#meetingId = :meetingId AND (attribute_not_exists(#endRequestedAt) OR #endRequestedByUserId = :endRequestedByUserId)",
     ExpressionAttributeNames: {

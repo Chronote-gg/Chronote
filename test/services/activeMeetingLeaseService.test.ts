@@ -48,6 +48,7 @@ describe("activeMeetingLeaseService", () => {
   );
 
   beforeEach(() => {
+    jest.clearAllMocks();
     jest.useFakeTimers();
     jest
       .spyOn(Date, "now")
@@ -215,5 +216,77 @@ describe("activeMeetingLeaseService", () => {
     const calledWithTimestamp =
       mockedRequestActiveMeetingEnd.mock.calls[0]?.[3];
     expect(Number.isNaN(Date.parse(calledWithTimestamp ?? ""))).toBe(false);
+  });
+
+  test("continues heartbeat renewal while meeting is finishing", async () => {
+    mockedGetActiveMeetingLease.mockResolvedValue({
+      guildId: "guild-1",
+      meetingId: "meeting-1",
+      ownerInstanceId: "instance-1",
+      voiceChannelId: "voice-1",
+      textChannelId: "text-1",
+      isAutoRecording: false,
+      leaseExpiresAt: 1771099230,
+      createdAt: "2026-02-14T20:00:00.000Z",
+      updatedAt: "2026-02-14T20:00:00.000Z",
+      expiresAt: 1771099350,
+    });
+    mockedRenewActiveMeetingLease.mockResolvedValue(true);
+
+    const meeting = {
+      guildId: "guild-1",
+      meetingId: "meeting-1",
+      leaseOwnerInstanceId: "instance-1",
+      finishing: true,
+      finished: false,
+    } as unknown as MeetingData;
+
+    startMeetingLeaseHeartbeat(meeting);
+    await jest.advanceTimersByTimeAsync(10_000);
+
+    expect(mockedRenewActiveMeetingLease).toHaveBeenCalledTimes(1);
+  });
+
+  test("prevents overlapping heartbeat renew attempts", async () => {
+    mockedGetActiveMeetingLease.mockResolvedValue({
+      guildId: "guild-1",
+      meetingId: "meeting-1",
+      ownerInstanceId: "instance-1",
+      voiceChannelId: "voice-1",
+      textChannelId: "text-1",
+      isAutoRecording: false,
+      leaseExpiresAt: 1771099230,
+      createdAt: "2026-02-14T20:00:00.000Z",
+      updatedAt: "2026-02-14T20:00:00.000Z",
+      expiresAt: 1771099350,
+    });
+
+    let resolveFirstRenew: ((value: boolean) => void) | undefined;
+    const firstRenew = new Promise<boolean>((resolve) => {
+      resolveFirstRenew = resolve;
+    });
+
+    mockedRenewActiveMeetingLease
+      .mockReturnValueOnce(firstRenew)
+      .mockResolvedValue(true);
+
+    const meeting = {
+      guildId: "guild-1",
+      meetingId: "meeting-1",
+      leaseOwnerInstanceId: "instance-1",
+      finishing: false,
+      finished: false,
+    } as unknown as MeetingData;
+
+    startMeetingLeaseHeartbeat(meeting);
+
+    await jest.advanceTimersByTimeAsync(20_000);
+    expect(mockedRenewActiveMeetingLease).toHaveBeenCalledTimes(1);
+
+    resolveFirstRenew?.(true);
+    await Promise.resolve();
+
+    await jest.advanceTimersByTimeAsync(10_000);
+    expect(mockedRenewActiveMeetingLease).toHaveBeenCalledTimes(2);
   });
 });

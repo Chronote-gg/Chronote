@@ -154,7 +154,7 @@ export function startMeetingLeaseHeartbeat(meeting: MeetingData) {
   }
 
   const tick = async () => {
-    if (meeting.finishing || meeting.finished) {
+    if (meeting.finished) {
       stopMeetingLeaseHeartbeat(meeting);
       return;
     }
@@ -218,8 +218,22 @@ export function startMeetingLeaseHeartbeat(meeting: MeetingData) {
     }
   };
 
+  let tickInProgress = false;
+
+  const runTick = async () => {
+    if (tickInProgress) {
+      return;
+    }
+    tickInProgress = true;
+    try {
+      await tick();
+    } finally {
+      tickInProgress = false;
+    }
+  };
+
   meeting.leaseHeartbeatTimer = setInterval(() => {
-    void tick();
+    void runTick();
   }, ACTIVE_MEETING_HEARTBEAT_MS);
   meeting.leaseHeartbeatTimer.unref?.();
 }
