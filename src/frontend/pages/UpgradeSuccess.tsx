@@ -1,5 +1,4 @@
 import {
-  Badge,
   Box,
   Button,
   Group,
@@ -108,16 +107,6 @@ const UPGRADE_CHECKLIST = [
   "Your saved meetings and notes stay exactly where they are.",
 ] as const;
 
-const PLAN_LABELS = {
-  basic: "Basic",
-  pro: "Pro",
-} as const;
-
-const INTERVAL_LABELS = {
-  month: "Monthly",
-  year: "Annual",
-} as const;
-
 type UpgradeSuccessPrimaryActionProps = {
   isAuthenticated: boolean;
   authLoading: boolean;
@@ -135,11 +124,6 @@ type UpgradeSuccessSecondaryActionProps = {
 
 type PromoAppliedRowProps = {
   promoCode: string;
-};
-
-type UpgradeStatusBadgesProps = {
-  planChipLabel?: string;
-  hasServerId: boolean;
 };
 
 type ConfettiPieceStyle = CSSProperties & {
@@ -220,29 +204,6 @@ function PromoAppliedRow({ promoCode }: PromoAppliedRowProps) {
   );
 }
 
-function UpgradeStatusBadges({
-  planChipLabel,
-  hasServerId,
-}: UpgradeStatusBadgesProps) {
-  return (
-    <Group gap="xs" wrap="wrap">
-      <Badge variant="light" color="brand">
-        Plan active now
-      </Badge>
-      {planChipLabel ? (
-        <Badge variant="light" color="cyan">
-          {planChipLabel}
-        </Badge>
-      ) : null}
-      {hasServerId ? (
-        <Badge variant="light" color="teal">
-          Server linked
-        </Badge>
-      ) : null}
-    </Group>
-  );
-}
-
 type UpgradeSuccessHeroProps = {
   isDark: boolean;
   isAuthenticated: boolean;
@@ -255,8 +216,6 @@ type UpgradeSuccessHeroProps = {
   onOpenPortal: () => void;
   onOpenBilling: () => void;
   onBackToHomepage: () => void;
-  plan?: "basic" | "pro";
-  interval?: "month" | "year";
 };
 
 export function UpgradeSuccessHero({
@@ -271,14 +230,7 @@ export function UpgradeSuccessHero({
   onOpenPortal,
   onOpenBilling,
   onBackToHomepage,
-  plan,
-  interval,
 }: UpgradeSuccessHeroProps) {
-  const planChipLabel =
-    plan && interval
-      ? `${PLAN_LABELS[plan]} · ${INTERVAL_LABELS[interval]}`
-      : undefined;
-
   return (
     <Surface
       p={{ base: "lg", md: "xl" }}
@@ -312,10 +264,6 @@ export function UpgradeSuccessHero({
           <Text c="dimmed" size="sm">
             {headerCopy}
           </Text>
-          <UpgradeStatusBadges
-            planChipLabel={planChipLabel}
-            hasServerId={Boolean(serverId)}
-          />
           <PromoAppliedRow promoCode={promoCode} />
           <Group gap="sm" wrap="wrap">
             <UpgradeSuccessPrimaryAction
@@ -467,8 +415,6 @@ export default function UpgradeSuccess() {
         onOpenPortal={handleOpenPortal}
         onOpenBilling={handleOpenBilling}
         onBackToHomepage={handleBackToHomepage}
-        plan={search.plan}
-        interval={search.interval}
       />
 
       <SimpleGrid cols={{ base: 1, md: 3 }} spacing="lg">

@@ -16,8 +16,6 @@ const meta: Meta<typeof UpgradeSuccessHero> = {
     onOpenPortal: () => {},
     onOpenBilling: () => {},
     onBackToHomepage: () => {},
-    plan: "pro",
-    interval: "year",
   },
 };
 
@@ -35,7 +33,5 @@ export const ConnectDiscordState: Story = {
     headerCopy:
       "Your subscription is active and ready to power your next meeting.",
     promoCode: "",
-    plan: undefined,
-    interval: undefined,
   },
 };
