@@ -20,6 +20,7 @@ import {
   IconTicket,
 } from "@tabler/icons-react";
 import { useNavigate, useSearch } from "@tanstack/react-router";
+import { type CSSProperties } from "react";
 import Surface from "../components/Surface";
 import { useAuth } from "../contexts/AuthContext";
 import { type Guild, useGuildContext } from "../contexts/GuildContext";
@@ -141,6 +142,11 @@ type UpgradeStatusBadgesProps = {
   hasServerId: boolean;
 };
 
+type ConfettiPieceStyle = CSSProperties & {
+  "--confetti-rotate-start": string;
+  "--confetti-rotate-end": string;
+};
+
 const resolveUpgradeSuccessCopy = (serverId: string, serverName: string) =>
   serverId
     ? `Your subscription is active for ${serverName}.`
@@ -182,6 +188,17 @@ export const resolveOpenPortalPath = (serverId: string, guilds: Guild[]) => {
 
 export const resolveBillingPath = (serverId: string) =>
   serverId ? `/portal/server/${serverId}/billing` : "/portal/select-server";
+
+const buildConfettiPieceStyle = (
+  piece: (typeof CONFETTI_PIECES)[number],
+): ConfettiPieceStyle => ({
+  left: `${piece.left}%`,
+  backgroundColor: piece.color,
+  animationDelay: `${piece.delayMs}ms`,
+  animationDuration: `${piece.durationMs}ms`,
+  "--confetti-rotate-start": `${piece.rotateDeg}deg`,
+  "--confetti-rotate-end": `${piece.rotateDeg + 240}deg`,
+});
 
 function PromoAppliedRow({ promoCode }: PromoAppliedRowProps) {
   if (!promoCode) {
@@ -269,19 +286,12 @@ export function UpgradeSuccessHero({
       className={styles.heroSurface}
       style={{ backgroundImage: heroBackground(isDark) }}
     >
-      <Box className={styles.confettiLayer} aria-hidden>
+      <Box className={styles.confettiLayer} aria-hidden="true">
         {CONFETTI_PIECES.map((piece) => (
           <Box
             key={`${piece.left}-${piece.delayMs}`}
             className={styles.confettiPiece}
-            style={{
-              left: `${piece.left}%`,
-              backgroundColor: piece.color,
-              animationDelay: `${piece.delayMs}ms`,
-              animationDuration: `${piece.durationMs}ms`,
-              "--confetti-rotate-start": `${piece.rotateDeg}deg`,
-              "--confetti-rotate-end": `${piece.rotateDeg + 240}deg`,
-            }}
+            style={buildConfettiPieceStyle(piece)}
           />
         ))}
       </Box>
