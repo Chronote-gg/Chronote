@@ -274,7 +274,7 @@ export function registerLiveMeetingRoutes(app: express.Express) {
               guildId,
               meetingId,
               channelId: fallbackLease!.voiceChannelId,
-              channelName: "Voice Channel",
+              channelName: fallbackLease!.voiceChannelName ?? "Voice Channel",
               startedAt: fallbackLease!.createdAt,
               isAutoRecording: fallbackLease!.isAutoRecording,
               status: MEETING_STATUS.IN_PROGRESS,

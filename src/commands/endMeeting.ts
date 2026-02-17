@@ -69,6 +69,10 @@ async function runMeetingEndStep<T>(
   return result;
 }
 
+function shouldReleaseLeaseDuringErrorCleanup(meeting: MeetingData): boolean {
+  return !meeting.finishing && !meeting.finished;
+}
+
 export async function handleEndMeetingButton(
   client: Client,
   interaction: ButtonInteraction,
@@ -113,14 +117,19 @@ export async function handleEndMeetingButton(
   } catch (error) {
     console.error("Error during meeting end:", error);
     if (meeting && hasMeeting(meeting.guildId)) {
-      try {
-        await releaseMeetingLeaseForMeeting(meeting);
-      } catch (releaseError) {
-        console.error("Failed to release meeting lease during error cleanup", {
-          guildId: meeting.guildId,
-          meetingId: meeting.meetingId,
-          error: releaseError,
-        });
+      if (shouldReleaseLeaseDuringErrorCleanup(meeting)) {
+        try {
+          await releaseMeetingLeaseForMeeting(meeting);
+        } catch (releaseError) {
+          console.error(
+            "Failed to release meeting lease during error cleanup",
+            {
+              guildId: meeting.guildId,
+              meetingId: meeting.meetingId,
+              error: releaseError,
+            },
+          );
+        }
       }
       meeting.setFinished();
       meeting.finished = true;
@@ -143,14 +152,19 @@ export async function handleEndMeetingOther(
   } catch (error) {
     console.error("Error during meeting end:", error);
     if (meeting && hasMeeting(meeting.guildId)) {
-      try {
-        await releaseMeetingLeaseForMeeting(meeting);
-      } catch (releaseError) {
-        console.error("Failed to release meeting lease during error cleanup", {
-          guildId: meeting.guildId,
-          meetingId: meeting.meetingId,
-          error: releaseError,
-        });
+      if (shouldReleaseLeaseDuringErrorCleanup(meeting)) {
+        try {
+          await releaseMeetingLeaseForMeeting(meeting);
+        } catch (releaseError) {
+          console.error(
+            "Failed to release meeting lease during error cleanup",
+            {
+              guildId: meeting.guildId,
+              meetingId: meeting.meetingId,
+              error: releaseError,
+            },
+          );
+        }
       }
       meeting.setFinished();
       meeting.finished = true;

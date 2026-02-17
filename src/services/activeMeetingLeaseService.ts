@@ -18,6 +18,7 @@ type AcquireMeetingLeaseInput = {
   guildId: string;
   meetingId: string;
   voiceChannelId: string;
+  voiceChannelName?: string;
   textChannelId: string;
   isAutoRecording: boolean;
 };
@@ -63,6 +64,7 @@ export async function tryAcquireMeetingLease({
   guildId,
   meetingId,
   voiceChannelId,
+  voiceChannelName,
   textChannelId,
   isAutoRecording,
 }: AcquireMeetingLeaseInput): Promise<boolean> {
@@ -75,6 +77,7 @@ export async function tryAcquireMeetingLease({
       meetingId,
       ownerInstanceId: getRuntimeInstanceId(),
       voiceChannelId,
+      voiceChannelName,
       textChannelId,
       isAutoRecording,
       leaseExpiresAt,

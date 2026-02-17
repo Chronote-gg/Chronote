@@ -251,6 +251,7 @@ export async function handleRequestStartMeeting(
     guildId,
     meetingId,
     voiceChannelId: voiceChannel.id,
+    voiceChannelName: voiceChannel.name,
     textChannelId: textChannel.id,
     isAutoRecording: false,
   });
@@ -440,6 +441,7 @@ export async function handleAutoStartMeeting(
     guildId,
     meetingId,
     voiceChannelId: voiceChannel.id,
+    voiceChannelName: voiceChannel.name,
     textChannelId: textChannel.id,
     isAutoRecording: true,
   });

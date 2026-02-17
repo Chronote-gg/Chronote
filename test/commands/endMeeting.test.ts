@@ -342,6 +342,27 @@ describe("handleEndMeetingOther", () => {
     expect(meeting.finished).toBe(true);
     expect(mockedDeleteMeeting).toHaveBeenCalledWith("guild-1");
   });
+
+  it("skips duplicate lease release when meeting is already finishing", async () => {
+    mockedWithMeetingEndTrace.mockRejectedValue(new Error("end flow failed"));
+    mockedHasMeeting.mockReturnValue(true);
+
+    const meeting = {
+      guildId: "guild-1",
+      meetingId: "meeting-1",
+      finishing: true,
+      finished: false,
+      setFinished: jest.fn(),
+    } as unknown as MeetingData;
+
+    await expect(handleEndMeetingOther({} as Client, meeting)).resolves.toBe(
+      undefined,
+    );
+
+    expect(mockedReleaseMeetingLeaseForMeeting).not.toHaveBeenCalled();
+    expect(meeting.setFinished).toHaveBeenCalled();
+    expect(mockedDeleteMeeting).toHaveBeenCalledWith("guild-1");
+  });
 });
 
 describe("handleEndMeetingButton", () => {

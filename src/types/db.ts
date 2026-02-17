@@ -56,6 +56,7 @@ export interface ActiveMeetingLease {
   meetingId: string;
   ownerInstanceId: string;
   voiceChannelId: string;
+  voiceChannelName?: string;
   textChannelId: string;
   isAutoRecording: boolean;
   leaseExpiresAt: number;

@@ -67,6 +67,7 @@ describe("activeMeetingLeaseService", () => {
       guildId: "guild-1",
       meetingId: "meeting-1",
       voiceChannelId: "voice-1",
+      voiceChannelName: "General",
       textChannelId: "text-1",
       isAutoRecording: false,
     });
@@ -78,6 +79,7 @@ describe("activeMeetingLeaseService", () => {
         meetingId: "meeting-1",
         ownerInstanceId: "instance-1",
         voiceChannelId: "voice-1",
+        voiceChannelName: "General",
         textChannelId: "text-1",
         isAutoRecording: false,
         leaseExpiresAt: 1771099230,
