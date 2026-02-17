@@ -31,7 +31,7 @@ export const ConnectDiscordState: Story = {
   args: {
     isAuthenticated: false,
     serverId: "",
-    serverName: "your server",
+    serverName: "",
     headerCopy:
       "Your subscription is active and ready to power your next meeting.",
     promoCode: "",
