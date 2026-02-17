@@ -1,6 +1,11 @@
 import express from "express";
 import { getMeeting } from "../meetings";
 import {
+  getActiveMeetingLeaseForGuild,
+  isLeaseActive,
+  requestMeetingEndViaLease,
+} from "../services/activeMeetingLeaseService";
+import {
   ensureManageGuildWithUserToken,
   ensureUserInGuild,
 } from "../services/guildAccessService";
@@ -52,7 +57,21 @@ export function registerLiveMeetingRoutes(app: express.Express) {
       }
       const meeting = getMeeting(guildId);
       if (!meeting || meeting.meetingId !== meetingId) {
-        res.status(404).json({ error: "Meeting not found" });
+        const lease = await getActiveMeetingLeaseForGuild(guildId);
+        if (!lease || lease.meetingId !== meetingId || !isLeaseActive(lease)) {
+          res.status(404).json({ error: "Meeting not found" });
+          return;
+        }
+        res.json({
+          status: MEETING_STATUS.IN_PROGRESS,
+          endedAt: undefined,
+          startReason: undefined,
+          startTriggeredByUserId: undefined,
+          autoRecordRule: undefined,
+          endReason: undefined,
+          endTriggeredByUserId: lease.endRequestedByUserId,
+          cancellationReason: undefined,
+        });
         return;
       }
       const status = resolveMeetingStatus({
@@ -94,7 +113,21 @@ export function registerLiveMeetingRoutes(app: express.Express) {
       }
       const meeting = getMeeting(guildId);
       if (!meeting || meeting.meetingId !== meetingId) {
-        res.status(404).json({ error: "Meeting not found" });
+        const lease = await getActiveMeetingLeaseForGuild(guildId);
+        if (!lease || lease.meetingId !== meetingId || !isLeaseActive(lease)) {
+          res.status(404).json({ error: "Meeting not found" });
+          return;
+        }
+        const queued = await requestMeetingEndViaLease(
+          guildId,
+          meetingId,
+          user.id,
+        );
+        if (!queued) {
+          res.status(409).json({ error: "Meeting end request was rejected." });
+          return;
+        }
+        res.json({ status: "accepted" });
         return;
       }
       if (meeting.finishing || meeting.finished || meeting.cancelled) {
@@ -119,11 +152,26 @@ export function registerLiveMeetingRoutes(app: express.Express) {
     async (req, res): Promise<void> => {
       const user = req.user as AuthedProfile;
       const { guildId, meetingId } = req.params;
-      const meeting = getMeeting(guildId);
-      if (!meeting || meeting.meetingId !== meetingId) {
+      const localMeeting = getMeeting(guildId);
+      const meeting =
+        localMeeting && localMeeting.meetingId === meetingId
+          ? localMeeting
+          : undefined;
+      const fallbackLease = meeting
+        ? undefined
+        : await getActiveMeetingLeaseForGuild(guildId);
+      if (
+        !meeting &&
+        (!fallbackLease ||
+          fallbackLease.meetingId !== meetingId ||
+          !isLeaseActive(fallbackLease))
+      ) {
         res.status(404).json({ error: "Meeting not found" });
         return;
       }
+      const targetVoiceChannelId = meeting
+        ? meeting.voiceChannel.id
+        : fallbackLease!.voiceChannelId;
       const sessionData = req.session as typeof req.session & SessionGuildCache;
       const cacheAgeMs =
         sessionData.guildIdsFetchedAt != null
@@ -154,7 +202,7 @@ export function registerLiveMeetingRoutes(app: express.Express) {
       }
       const canConnect = await ensureUserCanConnectChannel({
         guildId,
-        channelId: meeting.voiceChannel.id,
+        channelId: targetVoiceChannelId,
         userId: user.id,
       });
       if (canConnect === null) {
@@ -198,6 +246,11 @@ export function registerLiveMeetingRoutes(app: express.Express) {
       };
 
       const emitAttendees = () => {
+        if (!meeting) {
+          const payload: LiveMeetingAttendeesPayload = { attendees: [] };
+          sendEvent("attendees", payload);
+          return;
+        }
         const attendees = Array.from(meeting.attendance);
         const key = attendees.join("|");
         if (key === lastAttendeesKey) return;
@@ -208,32 +261,64 @@ export function registerLiveMeetingRoutes(app: express.Express) {
         sendEvent("attendees", payload);
       };
 
-      const initPayload: LiveMeetingInitPayload = {
-        meeting: buildLiveMeetingMeta(meeting),
-        events: [],
-      };
-      const initialEvents = buildLiveMeetingTimelineEvents(meeting);
-      for (const event of initialEvents) {
-        seen.add(event.id);
+      const initPayload: LiveMeetingInitPayload = meeting
+        ? {
+            meeting: buildLiveMeetingMeta(meeting),
+            events: [],
+          }
+        : {
+            meeting: {
+              guildId,
+              meetingId,
+              channelId: fallbackLease!.voiceChannelId,
+              channelName: "Voice Channel",
+              startedAt: fallbackLease!.createdAt,
+              isAutoRecording: fallbackLease!.isAutoRecording,
+              status: MEETING_STATUS.IN_PROGRESS,
+              attendees: [],
+            },
+            events: [],
+          };
+      if (meeting) {
+        const initialEvents = buildLiveMeetingTimelineEvents(meeting);
+        for (const event of initialEvents) {
+          seen.add(event.id);
+        }
+        initPayload.events = initialEvents;
       }
-      initPayload.events = initialEvents;
       sendEvent("init", initPayload);
       emitAttendees();
       lastStatus = initPayload.meeting.status;
 
-      const tick = () => {
-        emitEvents(buildLiveMeetingTimelineEvents(meeting));
-        emitAttendees();
-        const nextStatus = resolveMeetingStatus({
-          cancelled: meeting.cancelled,
-          finished: meeting.finished,
-          finishing: meeting.finishing,
-        });
+      const tick = async () => {
+        if (meeting) {
+          emitEvents(buildLiveMeetingTimelineEvents(meeting));
+          emitAttendees();
+        }
+
+        let nextStatus: LiveMeetingStatusPayload["status"];
+        let endedAt: string | undefined;
+        if (meeting) {
+          nextStatus = resolveMeetingStatus({
+            cancelled: meeting.cancelled,
+            finished: meeting.finished,
+            finishing: meeting.finishing,
+          });
+          endedAt = meeting.endTime?.toISOString();
+        } else {
+          const lease = await getActiveMeetingLeaseForGuild(guildId);
+          const active =
+            lease && lease.meetingId === meetingId && isLeaseActive(lease);
+          nextStatus = active
+            ? MEETING_STATUS.IN_PROGRESS
+            : MEETING_STATUS.COMPLETE;
+        }
+
         if (nextStatus !== lastStatus) {
           lastStatus = nextStatus;
           const payload: LiveMeetingStatusPayload = {
             status: nextStatus,
-            endedAt: meeting.endTime?.toISOString(),
+            endedAt,
           };
           sendEvent("status", payload);
         }
@@ -245,7 +330,9 @@ export function registerLiveMeetingRoutes(app: express.Express) {
         }
       };
 
-      const interval = setInterval(tick, 2000);
+      const interval = setInterval(() => {
+        void tick();
+      }, 2000);
       const ping = setInterval(() => {
         res.write(": ping\n\n");
       }, 15000);

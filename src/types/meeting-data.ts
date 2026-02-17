@@ -103,6 +103,8 @@ export interface MeetingData {
   startMessageId?: string;
   summaryMessageId?: string;
   messagesToDelete?: string[];
+  leaseOwnerInstanceId?: string;
+  leaseHeartbeatTimer?: ReturnType<typeof setInterval>;
 }
 
 export interface MeetingSetup {

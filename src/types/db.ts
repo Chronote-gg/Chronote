@@ -43,6 +43,29 @@ export interface StripeWebhookEvent {
   expiresAt: number;
 }
 
+export interface InteractionReceipt {
+  interactionId: string;
+  createdAt: string;
+  expiresAt: number;
+  guildId?: string;
+  interactionKind: string;
+}
+
+export interface ActiveMeetingLease {
+  guildId: string;
+  meetingId: string;
+  ownerInstanceId: string;
+  voiceChannelId: string;
+  textChannelId: string;
+  isAutoRecording: boolean;
+  leaseExpiresAt: number;
+  createdAt: string;
+  updatedAt: string;
+  expiresAt: number;
+  endRequestedAt?: string;
+  endRequestedByUserId?: string;
+}
+
 // Access Logs Type
 export interface AccessLog {
   accessLogID: string;

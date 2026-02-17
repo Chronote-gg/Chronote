@@ -16,6 +16,7 @@ import {
   hasMeeting,
   initializeMeeting,
 } from "../meetings";
+import { randomUUID } from "node:crypto";
 import { GuildChannel } from "discord.js/typings";
 import { checkBotPermissions } from "../utils/permissions";
 import { handleEndMeetingOther } from "./endMeeting";
@@ -35,6 +36,14 @@ import {
   type AutoRecordRule,
   type MeetingStartReason,
 } from "../types/meetingLifecycle";
+import {
+  getActiveMeetingLeaseForGuild,
+  getCurrentMeetingLeaseOwnerInstanceId,
+  isLeaseActive,
+  releaseMeetingLeaseByIdentifiers,
+  startMeetingLeaseHeartbeat,
+  tryAcquireMeetingLease,
+} from "../services/activeMeetingLeaseService";
 
 type GuildLimits = Awaited<ReturnType<typeof getGuildLimits>>["limits"];
 
@@ -139,15 +148,21 @@ const ensureBotCanSend = (
   return null;
 };
 
-const ensureNoActiveMeeting = (guildId: string) => {
-  if (!hasMeeting(guildId)) return null;
-  const meeting = getMeeting(guildId);
-  if (!meeting) return null;
-  if (meeting.finished) {
+const ensureNoActiveMeeting = async (guildId: string) => {
+  if (hasMeeting(guildId)) {
+    const meeting = getMeeting(guildId);
+    if (meeting && !meeting.finished) {
+      return "A meeting is already active in this server.";
+    }
     deleteMeeting(guildId);
-    return null;
   }
-  return "A meeting is already active in this server.";
+
+  const lease = await getActiveMeetingLeaseForGuild(guildId);
+  if (lease && isLeaseActive(lease)) {
+    return "A meeting is already active in this server.";
+  }
+
+  return null;
 };
 
 type VoiceChannelResult =
@@ -186,7 +201,7 @@ export async function handleRequestStartMeeting(
     return;
   }
 
-  const meetingConflict = ensureNoActiveMeeting(guildId);
+  const meetingConflict = await ensureNoActiveMeeting(guildId);
   if (meetingConflict) {
     await interaction.reply(meetingConflict);
     return;
@@ -230,32 +245,60 @@ export async function handleRequestStartMeeting(
     liveVoiceTtsVoice,
   } = await resolveMeetingVoiceSettings(guildId, voiceChannel.id, limits);
 
-  // Initialize the meeting using the core function
-  const meeting = await initializeMeeting({
-    voiceChannel,
-    textChannel,
-    guild,
-    creator: interaction.user,
-    transcribeMeeting: true,
-    generateNotes: true,
-    meetingContext,
-    initialInteraction: undefined,
+  const meetingId = randomUUID();
+  const leaseOwnerInstanceId = getCurrentMeetingLeaseOwnerInstanceId();
+  const leaseAcquired = await tryAcquireMeetingLease({
+    guildId,
+    meetingId,
+    voiceChannelId: voiceChannel.id,
+    textChannelId: textChannel.id,
     isAutoRecording: false,
-    startReason: MEETING_START_REASONS.MANUAL_COMMAND,
-    startTriggeredByUserId: interaction.user.id,
-    tags,
-    onTimeout: (meeting) => handleEndMeetingOther(interaction.client, meeting),
-    onEndMeeting: (meeting) =>
-      handleEndMeetingOther(interaction.client, meeting),
-    liveVoiceEnabled,
-    liveVoiceCommandsEnabled,
-    liveVoiceTtsVoice,
-    chatTtsEnabled,
-    chatTtsVoice,
-    maxMeetingDurationMs: limits.maxMeetingDurationMs,
-    maxMeetingDurationPretty: limits.maxMeetingDurationPretty,
-    subscriptionTier: subscription.tier,
   });
+  if (!leaseAcquired) {
+    await interaction.reply("A meeting is already active in this server.");
+    return;
+  }
+
+  // Initialize the meeting using the core function
+  let meeting;
+  try {
+    meeting = await initializeMeeting({
+      meetingId,
+      leaseOwnerInstanceId,
+      voiceChannel,
+      textChannel,
+      guild,
+      creator: interaction.user,
+      transcribeMeeting: true,
+      generateNotes: true,
+      meetingContext,
+      initialInteraction: undefined,
+      isAutoRecording: false,
+      startReason: MEETING_START_REASONS.MANUAL_COMMAND,
+      startTriggeredByUserId: interaction.user.id,
+      tags,
+      onTimeout: (meeting) =>
+        handleEndMeetingOther(interaction.client, meeting),
+      onEndMeeting: (meeting) =>
+        handleEndMeetingOther(interaction.client, meeting),
+      liveVoiceEnabled,
+      liveVoiceCommandsEnabled,
+      liveVoiceTtsVoice,
+      chatTtsEnabled,
+      chatTtsVoice,
+      maxMeetingDurationMs: limits.maxMeetingDurationMs,
+      maxMeetingDurationPretty: limits.maxMeetingDurationPretty,
+      subscriptionTier: subscription.tier,
+    });
+  } catch (error) {
+    await releaseMeetingLeaseByIdentifiers(
+      guildId,
+      meetingId,
+      leaseOwnerInstanceId,
+    );
+    throw error;
+  }
+  startMeetingLeaseHeartbeat(meeting);
   void saveMeetingStartToDatabase(meeting);
 
   const embed = new EmbedBuilder()
@@ -333,6 +376,13 @@ export async function handleAutoStartMeeting(
   },
 ) {
   const guildId = voiceChannel.guild.id;
+  const staleLease = await getActiveMeetingLeaseForGuild(guildId);
+  if (staleLease && isLeaseActive(staleLease)) {
+    await textChannel.send(
+      `Cannot start auto-recording in **${voiceChannel.name}** - a meeting is already active in this server.`,
+    );
+    return false;
+  }
   const { limits, subscription } = await getGuildLimits(guildId);
   const limitNotice = await getLimitNotice(guildId, limits);
   if (limitNotice) {
@@ -384,29 +434,58 @@ export async function handleAutoStartMeeting(
     return false;
   }
 
-  // Initialize the meeting using the core function
-  const meeting = await initializeMeeting({
-    voiceChannel,
-    textChannel,
-    guild: voiceChannel.guild,
-    creator: client.user!,
-    transcribeMeeting: true, // Always transcribe for auto-recordings
-    generateNotes: true, // Always generate notes for auto-recordings
-    initialInteraction: undefined, // No interaction for auto-recordings
+  const meetingId = randomUUID();
+  const leaseOwnerInstanceId = getCurrentMeetingLeaseOwnerInstanceId();
+  const leaseAcquired = await tryAcquireMeetingLease({
+    guildId,
+    meetingId,
+    voiceChannelId: voiceChannel.id,
+    textChannelId: textChannel.id,
     isAutoRecording: true,
-    startReason: options?.startReason,
-    startTriggeredByUserId: options?.startTriggeredByUserId,
-    autoRecordRule: options?.autoRecordRule,
-    tags: options?.tags,
-    onTimeout: (meeting) => handleEndMeetingOther(client, meeting),
-    onEndMeeting: (meeting) => handleEndMeetingOther(client, meeting),
-    liveVoiceEnabled: options?.liveVoiceEnabled,
-    liveVoiceCommandsEnabled: options?.liveVoiceCommandsEnabled,
-    liveVoiceTtsVoice: options?.liveVoiceTtsVoice,
-    chatTtsEnabled: options?.chatTtsEnabled,
-    chatTtsVoice: options?.chatTtsVoice,
-    subscriptionTier: subscription.tier,
   });
+  if (!leaseAcquired) {
+    await textChannel.send(
+      `Cannot start auto-recording in **${voiceChannel.name}** - a meeting is already active in this server.`,
+    );
+    return false;
+  }
+
+  // Initialize the meeting using the core function
+  let meeting;
+  try {
+    meeting = await initializeMeeting({
+      meetingId,
+      leaseOwnerInstanceId,
+      voiceChannel,
+      textChannel,
+      guild: voiceChannel.guild,
+      creator: client.user!,
+      transcribeMeeting: true, // Always transcribe for auto-recordings
+      generateNotes: true, // Always generate notes for auto-recordings
+      initialInteraction: undefined, // No interaction for auto-recordings
+      isAutoRecording: true,
+      startReason: options?.startReason,
+      startTriggeredByUserId: options?.startTriggeredByUserId,
+      autoRecordRule: options?.autoRecordRule,
+      tags: options?.tags,
+      onTimeout: (meeting) => handleEndMeetingOther(client, meeting),
+      onEndMeeting: (meeting) => handleEndMeetingOther(client, meeting),
+      liveVoiceEnabled: options?.liveVoiceEnabled,
+      liveVoiceCommandsEnabled: options?.liveVoiceCommandsEnabled,
+      liveVoiceTtsVoice: options?.liveVoiceTtsVoice,
+      chatTtsEnabled: options?.chatTtsEnabled,
+      chatTtsVoice: options?.chatTtsVoice,
+      subscriptionTier: subscription.tier,
+    });
+  } catch (error) {
+    await releaseMeetingLeaseByIdentifiers(
+      guildId,
+      meetingId,
+      leaseOwnerInstanceId,
+    );
+    throw error;
+  }
+  startMeetingLeaseHeartbeat(meeting);
   void saveMeetingStartToDatabase(meeting);
 
   // Send notification that auto-recording has started
