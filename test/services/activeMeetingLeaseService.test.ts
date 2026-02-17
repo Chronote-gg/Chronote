@@ -291,4 +291,22 @@ describe("activeMeetingLeaseService", () => {
     await jest.advanceTimersByTimeAsync(10_000);
     expect(mockedRenewActiveMeetingLease).toHaveBeenCalledTimes(2);
   });
+
+  test("stops heartbeat immediately when meeting is already finished", async () => {
+    const meeting = {
+      guildId: "guild-1",
+      meetingId: "meeting-1",
+      leaseOwnerInstanceId: "instance-1",
+      finishing: false,
+      finished: true,
+    } as unknown as MeetingData;
+
+    startMeetingLeaseHeartbeat(meeting);
+
+    await jest.advanceTimersByTimeAsync(10_000);
+
+    expect(mockedGetActiveMeetingLease).not.toHaveBeenCalled();
+    expect(mockedRenewActiveMeetingLease).not.toHaveBeenCalled();
+    expect(meeting.leaseHeartbeatTimer).toBeUndefined();
+  });
 });

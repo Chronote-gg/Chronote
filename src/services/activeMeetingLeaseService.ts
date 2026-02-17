@@ -224,6 +224,10 @@ export function startMeetingLeaseHeartbeat(meeting: MeetingData) {
   let tickInProgress = false;
 
   const runTick = async () => {
+    if (meeting.finished) {
+      stopMeetingLeaseHeartbeat(meeting);
+      return;
+    }
     if (tickInProgress) {
       return;
     }

@@ -357,8 +357,22 @@ export function registerLiveMeetingRoutes(app: express.Express) {
         }
       };
 
+      let tickInProgress = false;
+
+      const runTick = async () => {
+        if (tickInProgress) {
+          return;
+        }
+        tickInProgress = true;
+        try {
+          await tick();
+        } finally {
+          tickInProgress = false;
+        }
+      };
+
       const interval = setInterval(() => {
-        void tick();
+        void runTick();
       }, 2000);
       const ping = setInterval(() => {
         res.write(": ping\n\n");

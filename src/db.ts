@@ -148,11 +148,12 @@ export async function tryAcquireActiveMeetingLease(
   lease: ActiveMeetingLease,
   nowEpochSeconds: number,
 ): Promise<boolean> {
+  const sameOwnerSameMeetingCondition =
+    "#ownerInstanceId = :ownerInstanceId AND #meetingId = :meetingId";
   const params = {
     TableName: tableName("ActiveMeetingTable"),
     Item: marshall(lease, { removeUndefinedValues: true }),
-    ConditionExpression:
-      "attribute_not_exists(#guildId) OR #leaseExpiresAt < :now OR (#ownerInstanceId = :ownerInstanceId AND #meetingId = :meetingId)",
+    ConditionExpression: `attribute_not_exists(#guildId) OR #leaseExpiresAt < :now OR (${sameOwnerSameMeetingCondition})`,
     ExpressionAttributeNames: {
       "#guildId": "guildId",
       "#leaseExpiresAt": "leaseExpiresAt",
@@ -259,9 +260,10 @@ export async function releaseActiveMeetingLease(
 export async function getActiveMeetingLease(
   guildId: string,
 ): Promise<ActiveMeetingLease | undefined> {
-  const params = {
+  const params: GetItemCommand["input"] = {
     TableName: tableName("ActiveMeetingTable"),
     Key: marshall({ guildId }),
+    ConsistentRead: true,
   };
   const command = new GetItemCommand(params);
   const result = await dynamoDbClient.send(command);
