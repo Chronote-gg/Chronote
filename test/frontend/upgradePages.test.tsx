@@ -65,7 +65,7 @@ describe("upgrade pages", () => {
     renderWithMantine(<UpgradeSuccess />);
 
     expect(
-      screen.getByRole("link", { name: /back to homepage/i }),
+      screen.getByRole("button", { name: /back to homepage/i }),
     ).toBeInTheDocument();
     expect(
       screen.queryByRole("button", { name: /manage billing/i }),

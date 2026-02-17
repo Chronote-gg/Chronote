@@ -136,6 +136,11 @@ type PromoAppliedRowProps = {
   promoCode: string;
 };
 
+type UpgradeStatusBadgesProps = {
+  planChipLabel?: string;
+  hasServerId: boolean;
+};
+
 const resolveUpgradeSuccessCopy = (serverId: string, serverName: string) =>
   serverId
     ? `Your subscription is active for ${serverName}.`
@@ -194,6 +199,29 @@ function PromoAppliedRow({ promoCode }: PromoAppliedRowProps) {
       <Text size="sm" c="dimmed">
         {promoCode}
       </Text>
+    </Group>
+  );
+}
+
+function UpgradeStatusBadges({
+  planChipLabel,
+  hasServerId,
+}: UpgradeStatusBadgesProps) {
+  return (
+    <Group gap="xs" wrap="wrap">
+      <Badge variant="light" color="brand">
+        Plan active now
+      </Badge>
+      {planChipLabel ? (
+        <Badge variant="light" color="cyan">
+          {planChipLabel}
+        </Badge>
+      ) : null}
+      {hasServerId ? (
+        <Badge variant="light" color="teal">
+          Server linked
+        </Badge>
+      ) : null}
     </Group>
   );
 }
@@ -274,21 +302,10 @@ export function UpgradeSuccessHero({
           <Text c="dimmed" size="sm">
             {headerCopy}
           </Text>
-          <Group gap="xs" wrap="wrap">
-            <Badge variant="light" color="brand">
-              Plan active now
-            </Badge>
-            {planChipLabel ? (
-              <Badge variant="light" color="cyan">
-                {planChipLabel}
-              </Badge>
-            ) : null}
-            {serverId ? (
-              <Badge variant="light" color="teal">
-                Server linked
-              </Badge>
-            ) : null}
-          </Group>
+          <UpgradeStatusBadges
+            planChipLabel={planChipLabel}
+            hasServerId={Boolean(serverId)}
+          />
           <PromoAppliedRow promoCode={promoCode} />
           <Group gap="sm" wrap="wrap">
             <UpgradeSuccessPrimaryAction
