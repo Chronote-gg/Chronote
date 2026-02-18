@@ -119,7 +119,6 @@ export async function fetchJsonFromS3<T>(key: string): Promise<T | undefined> {
 export async function getSignedUploadUrl(
   key: string,
   contentType: string,
-  maxContentLength: number,
   expiresInSeconds: number = 300,
 ): Promise<string | undefined> {
   if (!config.storage.transcriptBucket) {
@@ -132,7 +131,6 @@ export async function getSignedUploadUrl(
         Bucket: config.storage.transcriptBucket,
         Key: key,
         ContentType: contentType,
-        ContentLength: maxContentLength,
       }),
       { expiresIn: expiresInSeconds },
     );

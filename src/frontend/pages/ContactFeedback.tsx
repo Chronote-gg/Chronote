@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActionIcon,
   Alert,
@@ -66,6 +66,16 @@ export function ContactFeedbackForm({
   const [images, setImages] = useState<PendingImage[]>([]);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Revoke Object URLs on unmount to prevent memory leaks.
+  // Only runs cleanup on unmount; image list changes are handled by removeImage.
+  const imagesRef = useRef(images);
+  imagesRef.current = images;
+  useEffect(() => {
+    return () => {
+      imagesRef.current.forEach((img) => URL.revokeObjectURL(img.previewUrl));
+    };
+  }, []);
 
   const canSubmit =
     message.trim().length > 0 &&
@@ -330,6 +340,10 @@ function ContactFeedbackSuccess() {
 export default function ContactFeedback() {
   const { user } = useAuth();
   const [submitted, setSubmitted] = useState(false);
+  const [isUploading, setIsUploading] = useState(false);
+  const [uploadError, setUploadError] = useState<{ message: string } | null>(
+    null,
+  );
 
   const recaptchaReady = useRecaptchaScript();
   const submitMutation = trpc.contactFeedback.submit.useMutation();
@@ -342,6 +356,8 @@ export default function ContactFeedback() {
     honeypot?: string;
     images: { file: File; previewUrl: string }[];
   }) => {
+    setUploadError(null);
+    setIsUploading(true);
     try {
       let recaptchaToken: string | undefined;
       if (!user && recaptchaReady) {
@@ -361,6 +377,9 @@ export default function ContactFeedback() {
           headers: { "Content-Type": img.file.type },
         });
         if (!uploadResponse.ok) {
+          setUploadError({
+            message: `Failed to upload "${img.file.name}". Please try again.`,
+          });
           return;
         }
         imageS3Keys.push(key);
@@ -380,7 +399,9 @@ export default function ContactFeedback() {
       }
       setSubmitted(true);
     } catch {
-      // Error state handled by submitMutation.error in the UI
+      // tRPC error state handled by submitMutation.error in the UI
+    } finally {
+      setIsUploading(false);
     }
   };
 
@@ -388,11 +409,14 @@ export default function ContactFeedback() {
     return <ContactFeedbackSuccess />;
   }
 
+  const isBusy =
+    isUploading || submitMutation.isPending || getUploadUrlMutation.isPending;
+
   return (
     <ContactFeedbackForm
       isAnonymous={!user}
-      isPending={submitMutation.isPending || getUploadUrlMutation.isPending}
-      submitError={submitMutation.error}
+      isPending={isBusy}
+      submitError={uploadError ?? submitMutation.error}
       onSubmit={(data) => void handleFormSubmit(data)}
     />
   );

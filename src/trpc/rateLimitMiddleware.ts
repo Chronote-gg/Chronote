@@ -1,7 +1,10 @@
-import { TRPCError } from "@trpc/server";
-import { initTRPC } from "@trpc/server";
+import { TRPCError, initTRPC } from "@trpc/server";
 import type { TrpcContext } from "./context";
 
+// Separate initTRPC instance to avoid pulling the full dependency chain from
+// trpc.ts (permissions -> guildAccess -> discordService). The middleware is a
+// plain function wrapper so it inherits the error formatter from the main
+// instance at runtime.
 const t = initTRPC.context<TrpcContext>().create();
 
 type RateLimitEntry = {
@@ -9,6 +12,8 @@ type RateLimitEntry = {
   resetAt: number;
 };
 
+// Best-effort in-memory rate limiter. Resets on deploy/restart and is
+// per-process, so it does not provide guarantees in multi-instance ECS.
 const ipBuckets = new Map<string, RateLimitEntry>();
 
 const CLEANUP_INTERVAL_MS = 60_000;

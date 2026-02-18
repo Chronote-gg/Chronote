@@ -4,7 +4,8 @@ import { ReadableStream } from "stream/web";
 
 // jest-dom adds custom jest matchers for asserting on DOM nodes (jsdom only).
 // In node environment, the import would fail because there's no DOM.
-// Dynamic require is intentional to avoid loading DOM matchers in node env.
+// Side-effect-only require is intentional: the types file is not a proper
+// ES module so dynamic import() fails at the type level.
 if (typeof window !== "undefined") {
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   require("@testing-library/jest-dom");

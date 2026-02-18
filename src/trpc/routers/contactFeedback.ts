@@ -13,6 +13,7 @@ import {
   CONTACT_FEEDBACK_S3_PREFIX,
   CONTACT_FEEDBACK_RATE_LIMIT_WINDOW_MS,
   CONTACT_FEEDBACK_RATE_LIMIT_MAX,
+  CONTACT_FEEDBACK_UPLOAD_URL_RATE_LIMIT_MAX,
   CONTACT_FEEDBACK_UPLOAD_URL_EXPIRY_SECONDS,
 } from "../../constants";
 import {
@@ -23,9 +24,14 @@ import { randomUUID } from "node:crypto";
 import { createRateLimitMiddleware } from "../rateLimitMiddleware";
 import { notifyContactFeedbackFromWeb } from "../../services/contactFeedbackNotificationService";
 
-const rateLimited = createRateLimitMiddleware(
+const submitRateLimited = createRateLimitMiddleware(
   CONTACT_FEEDBACK_RATE_LIMIT_WINDOW_MS,
   CONTACT_FEEDBACK_RATE_LIMIT_MAX,
+);
+
+const uploadUrlRateLimited = createRateLimitMiddleware(
+  CONTACT_FEEDBACK_RATE_LIMIT_WINDOW_MS,
+  CONTACT_FEEDBACK_UPLOAD_URL_RATE_LIMIT_MAX,
 );
 
 const submitInput = z.object({
@@ -55,7 +61,7 @@ const submitInput = z.object({
 });
 
 const getUploadUrl = publicProcedure
-  .use(rateLimited)
+  .use(uploadUrlRateLimited)
   .input(
     z.object({
       fileName: z.string().max(255),
@@ -70,7 +76,6 @@ const getUploadUrl = publicProcedure
     const url = await getSignedUploadUrl(
       key,
       input.contentType,
-      CONTACT_FEEDBACK_MAX_IMAGE_BYTES,
       CONTACT_FEEDBACK_UPLOAD_URL_EXPIRY_SECONDS,
     );
     if (!url) {
@@ -83,7 +88,7 @@ const getUploadUrl = publicProcedure
   });
 
 const submit = publicProcedure
-  .use(rateLimited)
+  .use(submitRateLimited)
   .input(submitInput)
   .mutation(async ({ ctx, input }) => {
     // Honeypot check: if filled, silently succeed but don't persist
