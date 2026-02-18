@@ -23,6 +23,7 @@ import {
   renewActiveMeetingLease,
   tryAcquireActiveMeetingLease,
 } from "../../src/db";
+import { MEETING_STATUS } from "../../src/types/meetingLifecycle";
 
 jest.mock("../../src/db", () => ({
   getActiveMeetingLease: jest.fn(),
@@ -82,6 +83,7 @@ describe("activeMeetingLeaseService", () => {
         voiceChannelName: "General",
         textChannelId: "text-1",
         isAutoRecording: false,
+        status: MEETING_STATUS.IN_PROGRESS,
         leaseExpiresAt: 1771099230,
         createdAt: "2026-02-14T20:00:00.000Z",
         updatedAt: "2026-02-14T20:00:00.000Z",

@@ -187,27 +187,72 @@ export async function renewActiveMeetingLease(
   leaseExpiresAt: number,
   updatedAt: string,
   expiresAt: number,
+  snapshot: {
+    status: ActiveMeetingLease["status"];
+    endReason?: ActiveMeetingLease["endReason"];
+    endTriggeredByUserId?: ActiveMeetingLease["endTriggeredByUserId"];
+    cancellationReason?: ActiveMeetingLease["cancellationReason"];
+    endedAt?: ActiveMeetingLease["endedAt"];
+  },
 ): Promise<boolean> {
+  const updateParts = [
+    "#leaseExpiresAt = :leaseExpiresAt",
+    "#updatedAt = :updatedAt",
+    "#expiresAt = :expiresAt",
+    "#status = :status",
+  ];
+  const expressionAttributeNames: Record<string, string> = {
+    "#leaseExpiresAt": "leaseExpiresAt",
+    "#updatedAt": "updatedAt",
+    "#expiresAt": "expiresAt",
+    "#status": "status",
+    "#meetingId": "meetingId",
+    "#ownerInstanceId": "ownerInstanceId",
+  };
+  const expressionAttributeValues: Record<string, unknown> = {
+    ":leaseExpiresAt": leaseExpiresAt,
+    ":updatedAt": updatedAt,
+    ":expiresAt": expiresAt,
+    ":status": snapshot.status,
+    ":meetingId": meetingId,
+    ":ownerInstanceId": ownerInstanceId,
+  };
+
+  if (snapshot.endReason) {
+    updateParts.push("#endReason = :endReason");
+    expressionAttributeNames["#endReason"] = "endReason";
+    expressionAttributeValues[":endReason"] = snapshot.endReason;
+  }
+
+  if (snapshot.endTriggeredByUserId) {
+    updateParts.push("#endTriggeredByUserId = :endTriggeredByUserId");
+    expressionAttributeNames["#endTriggeredByUserId"] = "endTriggeredByUserId";
+    expressionAttributeValues[":endTriggeredByUserId"] =
+      snapshot.endTriggeredByUserId;
+  }
+
+  if (snapshot.cancellationReason) {
+    updateParts.push("#cancellationReason = :cancellationReason");
+    expressionAttributeNames["#cancellationReason"] = "cancellationReason";
+    expressionAttributeValues[":cancellationReason"] =
+      snapshot.cancellationReason;
+  }
+
+  if (snapshot.endedAt) {
+    updateParts.push("#endedAt = :endedAt");
+    expressionAttributeNames["#endedAt"] = "endedAt";
+    expressionAttributeValues[":endedAt"] = snapshot.endedAt;
+  }
+
   const params: UpdateItemCommand["input"] = {
     TableName: tableName("ActiveMeetingTable"),
     Key: marshall({ guildId }),
-    UpdateExpression:
-      "SET #leaseExpiresAt = :leaseExpiresAt, #updatedAt = :updatedAt, #expiresAt = :expiresAt",
+    UpdateExpression: `SET ${updateParts.join(", ")}`,
     ConditionExpression:
       "#meetingId = :meetingId AND #ownerInstanceId = :ownerInstanceId",
-    ExpressionAttributeNames: {
-      "#leaseExpiresAt": "leaseExpiresAt",
-      "#updatedAt": "updatedAt",
-      "#expiresAt": "expiresAt",
-      "#meetingId": "meetingId",
-      "#ownerInstanceId": "ownerInstanceId",
-    },
-    ExpressionAttributeValues: marshall({
-      ":leaseExpiresAt": leaseExpiresAt,
-      ":updatedAt": updatedAt,
-      ":expiresAt": expiresAt,
-      ":meetingId": meetingId,
-      ":ownerInstanceId": ownerInstanceId,
+    ExpressionAttributeNames: expressionAttributeNames,
+    ExpressionAttributeValues: marshall(expressionAttributeValues, {
+      removeUndefinedValues: true,
     }),
   };
   const command = new UpdateItemCommand(params);

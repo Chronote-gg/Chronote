@@ -5,7 +5,11 @@ import {
   renewActiveMeetingLease,
   tryAcquireActiveMeetingLease,
 } from "../db";
-import { MEETING_END_REASONS } from "../types/meetingLifecycle";
+import {
+  MEETING_END_REASONS,
+  MEETING_STATUS,
+  resolveMeetingStatus,
+} from "../types/meetingLifecycle";
 import type { ActiveMeetingLease } from "../types/db";
 import type { MeetingData } from "../types/meeting-data";
 import { getRuntimeInstanceId } from "./runtimeInstanceService";
@@ -21,7 +25,45 @@ type AcquireMeetingLeaseInput = {
   voiceChannelName?: string;
   textChannelId: string;
   isAutoRecording: boolean;
+  startReason?: ActiveMeetingLease["startReason"];
+  startTriggeredByUserId?: string;
+  autoRecordRule?: ActiveMeetingLease["autoRecordRule"];
 };
+
+type MeetingLeaseSnapshotUpdate = {
+  status: ActiveMeetingLease["status"];
+  endReason?: ActiveMeetingLease["endReason"];
+  endTriggeredByUserId?: ActiveMeetingLease["endTriggeredByUserId"];
+  cancellationReason?: ActiveMeetingLease["cancellationReason"];
+  endedAt?: ActiveMeetingLease["endedAt"];
+};
+
+function buildMeetingLeaseSnapshot(
+  meeting: MeetingData,
+): MeetingLeaseSnapshotUpdate {
+  const status = resolveMeetingStatus({
+    cancelled: meeting.cancelled,
+    finished: meeting.finished,
+    finishing: meeting.finishing,
+  });
+
+  const snapshot: MeetingLeaseSnapshotUpdate = {
+    status,
+    endReason: meeting.endReason,
+    endTriggeredByUserId: meeting.endTriggeredByUserId,
+    cancellationReason: meeting.cancellationReason,
+  };
+
+  if (
+    status === MEETING_STATUS.CANCELLED ||
+    status === MEETING_STATUS.COMPLETE
+  ) {
+    snapshot.endedAt =
+      meeting.endTime?.toISOString() ?? new Date().toISOString();
+  }
+
+  return snapshot;
+}
 
 function buildLeaseTimestamps(nowMs: number): {
   createdAt: string;
@@ -67,26 +109,38 @@ export async function tryAcquireMeetingLease({
   voiceChannelName,
   textChannelId,
   isAutoRecording,
+  startReason,
+  startTriggeredByUserId,
+  autoRecordRule,
 }: AcquireMeetingLeaseInput): Promise<boolean> {
   const nowMs = Date.now();
   const { createdAt, updatedAt, leaseExpiresAt, expiresAt, nowEpochSeconds } =
     buildLeaseTimestamps(nowMs);
-  return tryAcquireActiveMeetingLease(
-    {
-      guildId,
-      meetingId,
-      ownerInstanceId: getRuntimeInstanceId(),
-      voiceChannelId,
-      voiceChannelName,
-      textChannelId,
-      isAutoRecording,
-      leaseExpiresAt,
-      createdAt,
-      updatedAt,
-      expiresAt,
-    },
-    nowEpochSeconds,
-  );
+  const leaseRecord: ActiveMeetingLease = {
+    guildId,
+    meetingId,
+    ownerInstanceId: getRuntimeInstanceId(),
+    voiceChannelId,
+    voiceChannelName,
+    textChannelId,
+    isAutoRecording,
+    status: MEETING_STATUS.IN_PROGRESS,
+    leaseExpiresAt,
+    createdAt,
+    updatedAt,
+    expiresAt,
+  };
+  if (startReason) {
+    leaseRecord.startReason = startReason;
+  }
+  if (startTriggeredByUserId) {
+    leaseRecord.startTriggeredByUserId = startTriggeredByUserId;
+  }
+  if (autoRecordRule) {
+    leaseRecord.autoRecordRule = autoRecordRule;
+  }
+
+  return tryAcquireActiveMeetingLease(leaseRecord, nowEpochSeconds);
 }
 
 export async function releaseMeetingLeaseForMeeting(
@@ -139,6 +193,7 @@ async function renewMeetingLeaseForMeeting(
     leaseExpiresAt,
     updatedAt,
     expiresAt,
+    buildMeetingLeaseSnapshot(meeting),
   );
 }
 

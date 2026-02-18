@@ -16,6 +16,7 @@ import {
 } from "../services/liveMeetingService";
 import { buildLiveMeetingTimelineEvents } from "../services/meetingTimelineService";
 import type { AuthedProfile } from "../trpc/context";
+import type { ActiveMeetingLease } from "../types/db";
 import type {
   LiveMeetingInitPayload,
   LiveMeetingEventsPayload,
@@ -35,6 +36,22 @@ type SessionGuildCache = {
 
 const GUILD_CACHE_TTL_MS = 60_000;
 const REMOTE_LEASE_REFRESH_MS = 10_000;
+
+function resolveRemoteLeaseStatus(
+  lease: ActiveMeetingLease,
+): LiveMeetingStatusPayload["status"] {
+  if (!isLeaseActive(lease)) {
+    if (lease.status === MEETING_STATUS.CANCELLED) {
+      return MEETING_STATUS.CANCELLED;
+    }
+    if (lease.status === MEETING_STATUS.COMPLETE) {
+      return MEETING_STATUS.COMPLETE;
+    }
+    return MEETING_STATUS.COMPLETE;
+  }
+
+  return lease.status ?? MEETING_STATUS.IN_PROGRESS;
+}
 
 export function registerLiveMeetingRoutes(app: express.Express) {
   app.get(
@@ -59,19 +76,20 @@ export function registerLiveMeetingRoutes(app: express.Express) {
       const meeting = getMeeting(guildId);
       if (!meeting || meeting.meetingId !== meetingId) {
         const lease = await getActiveMeetingLeaseForGuild(guildId);
-        if (!lease || lease.meetingId !== meetingId || !isLeaseActive(lease)) {
+        if (!lease || lease.meetingId !== meetingId) {
           res.status(404).json({ error: "Meeting not found" });
           return;
         }
         res.json({
-          status: MEETING_STATUS.IN_PROGRESS,
-          endedAt: undefined,
-          startReason: undefined,
-          startTriggeredByUserId: undefined,
-          autoRecordRule: undefined,
-          endReason: undefined,
-          endTriggeredByUserId: lease.endRequestedByUserId,
-          cancellationReason: undefined,
+          status: resolveRemoteLeaseStatus(lease),
+          endedAt: lease.endedAt,
+          startReason: lease.startReason,
+          startTriggeredByUserId: lease.startTriggeredByUserId,
+          autoRecordRule: lease.autoRecordRule,
+          endReason: lease.endReason,
+          endTriggeredByUserId:
+            lease.endTriggeredByUserId ?? lease.endRequestedByUserId,
+          cancellationReason: lease.cancellationReason,
         });
         return;
       }
@@ -163,9 +181,7 @@ export function registerLiveMeetingRoutes(app: express.Express) {
         : await getActiveMeetingLeaseForGuild(guildId);
       if (
         !meeting &&
-        (!fallbackLease ||
-          fallbackLease.meetingId !== meetingId ||
-          !isLeaseActive(fallbackLease))
+        (!fallbackLease || fallbackLease.meetingId !== meetingId)
       ) {
         res.status(404).json({ error: "Meeting not found" });
         return;
@@ -277,7 +293,7 @@ export function registerLiveMeetingRoutes(app: express.Express) {
               channelName: fallbackLease!.voiceChannelName ?? "Voice Channel",
               startedAt: fallbackLease!.createdAt,
               isAutoRecording: fallbackLease!.isAutoRecording,
-              status: MEETING_STATUS.IN_PROGRESS,
+              status: resolveRemoteLeaseStatus(fallbackLease!),
               attendees: [],
             },
             events: [],
@@ -311,7 +327,10 @@ export function registerLiveMeetingRoutes(app: express.Express) {
           }
         }
 
-        return active ? MEETING_STATUS.IN_PROGRESS : MEETING_STATUS.COMPLETE;
+        if (!cachedRemoteLease || cachedRemoteLease.meetingId !== meetingId) {
+          return MEETING_STATUS.COMPLETE;
+        }
+        return resolveRemoteLeaseStatus(cachedRemoteLease);
       };
 
       const tick = async () => {

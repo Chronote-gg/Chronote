@@ -19,6 +19,7 @@ import type { MeetingEvent } from "../../src/types/meetingTimeline";
 import type { MeetingData } from "../../src/types/meeting-data";
 import {
   MEETING_END_REASONS,
+  MEETING_START_REASONS,
   MEETING_STATUS,
 } from "../../src/types/meetingLifecycle";
 import {
@@ -311,6 +312,50 @@ test("returns status payload for live meeting when allowed", async () => {
     expect(response.statusCode).toBe(200);
     const payload = JSON.parse(response.body) as { status?: string };
     expect(payload.status).toBe(MEETING_STATUS.IN_PROGRESS);
+  } finally {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
+});
+
+test("returns remote lease snapshot status when meeting is not local", async () => {
+  const leaseExpiresAt = Math.floor(Date.now() / 1000) + 600;
+  mockedGetMeeting.mockReturnValue(undefined);
+  mockedEnsureManageGuildWithUserToken.mockResolvedValue(true);
+  mockedIsLeaseActive.mockReturnValue(true);
+  mockedGetActiveMeetingLeaseForGuild.mockResolvedValue({
+    guildId: "guild-1",
+    meetingId: "meeting-1",
+    ownerInstanceId: "instance-1",
+    voiceChannelId: "voice-1",
+    voiceChannelName: "General",
+    textChannelId: "text-1",
+    isAutoRecording: false,
+    status: MEETING_STATUS.PROCESSING,
+    startReason: MEETING_START_REASONS.MANUAL_COMMAND,
+    startTriggeredByUserId: "user-2",
+    endReason: MEETING_END_REASONS.WEB_UI,
+    endTriggeredByUserId: "user-3",
+    endedAt: "2025-01-01T00:10:00.000Z",
+    leaseExpiresAt,
+    createdAt: "2025-01-01T00:00:00.000Z",
+    updatedAt: "2025-01-01T00:05:00.000Z",
+    expiresAt: 1771102920,
+  });
+
+  const { server, baseUrl } = createServer(true);
+  try {
+    const response = await requestJson(
+      `${baseUrl}/api/live/guild-1/meeting-1/status`,
+    );
+    expect(response.statusCode).toBe(200);
+    const payload = JSON.parse(response.body) as {
+      status?: string;
+      endTriggeredByUserId?: string;
+      endedAt?: string;
+    };
+    expect(payload.status).toBe(MEETING_STATUS.PROCESSING);
+    expect(payload.endTriggeredByUserId).toBe("user-3");
+    expect(payload.endedAt).toBe("2025-01-01T00:10:00.000Z");
   } finally {
     await new Promise<void>((resolve) => server.close(() => resolve()));
   }
