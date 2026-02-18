@@ -25,11 +25,13 @@ import { createRateLimitMiddleware } from "../rateLimitMiddleware";
 import { notifyContactFeedbackFromWeb } from "../../services/contactFeedbackNotificationService";
 
 const submitRateLimited = createRateLimitMiddleware(
+  "feedback-submit",
   CONTACT_FEEDBACK_RATE_LIMIT_WINDOW_MS,
   CONTACT_FEEDBACK_RATE_LIMIT_MAX,
 );
 
 const uploadUrlRateLimited = createRateLimitMiddleware(
+  "feedback-upload",
   CONTACT_FEEDBACK_RATE_LIMIT_WINDOW_MS,
   CONTACT_FEEDBACK_UPLOAD_URL_RATE_LIMIT_MAX,
 );

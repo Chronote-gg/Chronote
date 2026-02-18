@@ -38,32 +38,40 @@ function ensureCleanupTimer() {
 }
 
 /**
- * Check rate limit for an IP. Returns true if allowed, false if exceeded.
+ * Check rate limit for a namespaced key. Returns true if allowed, false if exceeded.
  * Exported for testing.
  */
 export function checkRateLimit(
-  ip: string,
+  key: string,
   windowMs: number,
   maxHits: number,
 ): boolean {
   const now = Date.now();
 
-  let entry = ipBuckets.get(ip);
+  let entry = ipBuckets.get(key);
   if (!entry || entry.resetAt <= now) {
     entry = { count: 0, resetAt: now + windowMs };
-    ipBuckets.set(ip, entry);
+    ipBuckets.set(key, entry);
     ensureCleanupTimer();
   }
 
+  if (entry.count >= maxHits) {
+    return false;
+  }
   entry.count++;
-  return entry.count <= maxHits;
+  return true;
 }
 
-export function createRateLimitMiddleware(windowMs: number, maxHits: number) {
+export function createRateLimitMiddleware(
+  namespace: string,
+  windowMs: number,
+  maxHits: number,
+) {
   return t.middleware(({ ctx, next }) => {
     const ip = ctx.req.ip ?? ctx.req.socket.remoteAddress ?? "unknown";
+    const key = `${namespace}:${ip}`;
 
-    if (!checkRateLimit(ip, windowMs, maxHits)) {
+    if (!checkRateLimit(key, windowMs, maxHits)) {
       throw new TRPCError({
         code: "TOO_MANY_REQUESTS",
         message: "Too many submissions. Please try again later.",
