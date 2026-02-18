@@ -2,10 +2,6 @@
  * @jest-environment node
  */
 
-jest.mock("../../src/services/configService", () => ({
-  config: { mock: { enabled: true } },
-}));
-
 import {
   describe,
   it,
@@ -14,6 +10,10 @@ import {
   afterEach,
   jest,
 } from "@jest/globals";
+
+jest.mock("../../src/services/configService", () => ({
+  config: { mock: { enabled: true } },
+}));
 import {
   checkRateLimit,
   _resetRateLimitState,
