@@ -222,9 +222,11 @@ Notes:
 Terraform uses a GitHub provider to manage the Actions environment and variables for this repo. Rotate the PAT when it expires or after moving the repo to a new org.
 
 1. Generate a fine-grained token using the GitHub URL template (pre-fills the form):
-   ```
+
+   ```text
    https://github.com/settings/personal-access-tokens/new?name=Chronote+Terraform&description=Terraform+GitHub+provider&target_name=BASIC-BIT&expires_in=90
    ```
+
 2. In the token UI, set **Repository access** to **Only select repositories** and choose `meeting-notes-discord-bot` (manual step), then grant these **Repository permissions**:
    - **Actions**: Read (Terraform reads environments).
    - **Administration**: Read and write (Terraform creates/updates environments).

@@ -61,8 +61,8 @@
     "docker:minio-init": "docker-compose run --rm minio-init",
     "checkov": "uvx --from checkov checkov -d _infra --quiet --compact",
     "check": "run-s lint prettier check:parallel",
-    "check:parallel": "run-p test build:all docs:check code:stats prompts:check llm-connections:check docker:build",
-    "check:ci": "run-p lint:check prettier:check test build:all docs:check test:e2e checkov code:stats prompts:check llm-connections:check docker:build",
+    "check:parallel": "run-p test build:all docs:check code:stats prompts:check llm-connections:check markdownlint:check docker:build",
+    "check:ci": "run-p lint:check prettier:check markdownlint:check test build:all docs:check test:e2e checkov code:stats prompts:check llm-connections:check docker:build",
     "stripe:listen": "stripe listen --forward-to http://localhost:3001/api/billing/webhook",
     "stripe:trigger": "stripe trigger",
     "stripe:trigger:checkout": "stripe trigger checkout.session.completed",
@@ -78,7 +78,9 @@
     "llm-connections:push": "ts-node scripts/llm-connections/push.ts",
     "llm-connections:pull": "ts-node scripts/llm-connections/pull.ts",
     "llm-connections:check": "ts-node scripts/llm-connections/check.ts",
-    "code:stats": "scc --ci && scc --ci --by-file --sort lines && python -m lizard -l ts -l tsx -l js -l jsx src test"
+    "code:stats": "scc --ci && scc --ci --by-file --sort lines && python -m lizard -l ts -l tsx -l js -l jsx src test",
+    "markdownlint:check": "markdownlint-cli2 \"**/*.md\"",
+    "markdownlint:fix": "markdownlint-cli2 --fix \"**/*.md\""
   },
   "engines": {
     "node": ">=22.13.0 <23"
@@ -156,14 +158,14 @@
     "zustand": "^5.0.11"
   },
   "devDependencies": {
+    "@babel/core": "^7.29.0",
+    "@babel/preset-env": "^7.29.0",
+    "@babel/preset-typescript": "^7.28.5",
     "@docusaurus/core": "^3.9.2",
     "@docusaurus/preset-classic": "^3.9.2",
     "@docusaurus/tsconfig": "^3.9.2",
     "@docusaurus/types": "^3.9.2",
     "@easyops-cn/docusaurus-search-local": "^0.55.0",
-    "@babel/core": "^7.29.0",
-    "@babel/preset-env": "^7.29.0",
-    "@babel/preset-typescript": "^7.28.5",
     "@eslint/js": "^10.0.1",
     "@jest/globals": "^30.2.0",
     "@playwright/test": "^1.58.2",
@@ -199,6 +201,7 @@
     "jest": "^30.2.0",
     "jest-environment-jsdom": "^30.2.0",
     "lint-staged": "^16.2.7",
+    "markdownlint-cli2": "^0.21.0",
     "npm-run-all": "^4.1.5",
     "prettier": "^3.8.1",
     "storybook": "^10.2.8",

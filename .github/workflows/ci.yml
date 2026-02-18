@@ -47,6 +47,25 @@ jobs:
       - name: Run Prettier
         run: yarn prettier:check
 
+  markdownlint:
+    name: Markdown Lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: "22.13.0"
+          cache: "yarn"
+
+      - name: Install dependencies
+        run: yarn install --frozen-lockfile
+
+      - name: Run markdownlint
+        run: yarn markdownlint:check
+
   prompts-check:
     name: Prompts Check
     runs-on: ubuntu-latest

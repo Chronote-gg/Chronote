@@ -64,7 +64,7 @@ Format Discord commands as inline code: `/startmeeting`, `/context set-server`.
 
 For command examples with parameters, use code blocks:
 
-```
+```text
 /dictionary add term: Kubernetes definition: Container orchestration platform
 ```
 

@@ -53,7 +53,7 @@ definition. You must set the secret values after the first apply.
 - `${project_name}-${environment}/stripe-secret-key`
 - `${project_name}-${environment}/stripe-webhook-secret`
 
-3. Redeploy the ECS service (or force a new deployment) so tasks pick up the new secrets.
+1. Redeploy the ECS service (or force a new deployment) so tasks pick up the new secrets.
 
 Notes:
 

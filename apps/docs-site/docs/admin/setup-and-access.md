@@ -13,7 +13,7 @@ After adding Chronote to your server ([Getting Started](/getting-started/)), con
 
 Server context is a description of your team, project, or organization that is included in every transcription and notes prompt. It helps the AI understand domain-specific conversations.
 
-```
+```text
 /context set-server context: Backend engineering team at Acme Corp.
 We build the Rocket API, a REST service for satellite telemetry.
 Key projects: Rocket v3 migration, observability rollout.
@@ -25,7 +25,7 @@ Keep context concise and factual. Update it when your team's focus changes.
 
 If different voice channels serve different purposes, add channel-specific context:
 
-```
+```text
 /context set-channel channel: #design-reviews context: Weekly design review
 meetings for the product team. Participants discuss UI mockups, user research
 findings, and design system updates.
@@ -37,7 +37,7 @@ Channel context is combined with server context, so avoid repeating information.
 
 Add terms that the AI might misspell or misunderstand:
 
-```
+```text
 /dictionary add term: Kubernetes
 /dictionary add term: LGTM definition: Looks Good To Me, a code review approval
 /dictionary add term: Jira definition: Project management tool used for sprint tracking
@@ -50,7 +50,7 @@ Terms are injected into the transcription prompt to improve spelling accuracy. D
 
 Set up auto-recording so meetings are captured without anyone running `/startmeeting`:
 
-```
+```text
 /autorecord enable voice-channel: #standup-voice text-channel: #standup-notes
   tags: standup, daily
 /autorecord enable voice-channel: #all-hands text-channel: #meeting-notes
@@ -59,7 +59,7 @@ Set up auto-recording so meetings are captured without anyone running `/startmee
 
 Or enable it for every voice channel:
 
-```
+```text
 /autorecord enable-all text-channel: #meeting-notes
 ```
 
