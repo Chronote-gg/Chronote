@@ -141,4 +141,16 @@ describe("contactFeedbackService", () => {
     const score = await verifyRecaptcha("some-token");
     expect(score).toBe(1);
   });
+
+  test("verifyRecaptcha returns 0 when fetch throws a network error", async () => {
+    jest.spyOn(global, "fetch").mockRejectedValue(new Error("network error"));
+    const { config } = await import("../../src/services/configService");
+    Object.defineProperty(config.contactFeedback, "recaptchaSecretKey", {
+      get: () => "test-secret-key",
+      configurable: true,
+    });
+
+    const score = await verifyRecaptcha("some-token");
+    expect(score).toBe(0);
+  });
 });

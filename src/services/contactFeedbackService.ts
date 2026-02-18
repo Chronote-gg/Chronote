@@ -24,18 +24,26 @@ export async function verifyRecaptcha(token: string): Promise<number> {
   const secretKey = config.contactFeedback.recaptchaSecretKey;
   if (!secretKey) return 1;
 
-  const response = await fetch(
-    "https://www.google.com/recaptcha/api/siteverify",
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body: `secret=${encodeURIComponent(secretKey)}&response=${encodeURIComponent(token)}`,
-    },
-  );
+  try {
+    const response = await fetch(
+      "https://www.google.com/recaptcha/api/siteverify",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: `secret=${encodeURIComponent(secretKey)}&response=${encodeURIComponent(token)}`,
+      },
+    );
 
-  const data = (await response.json()) as { success: boolean; score?: number };
-  if (!data.success) return 0;
-  return data.score ?? 0;
+    const data = (await response.json()) as {
+      success: boolean;
+      score?: number;
+    };
+    if (!data.success) return 0;
+    return data.score ?? 0;
+  } catch (error) {
+    console.error("reCAPTCHA verification failed:", error);
+    return 0;
+  }
 }
 
 export async function submitContactFeedback(

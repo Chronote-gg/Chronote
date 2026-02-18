@@ -1028,6 +1028,8 @@ resource "aws_iam_policy" "dynamodb_access_policy" {
           aws_dynamodb_table.meeting_history_table.arn,
           "${aws_dynamodb_table.meeting_history_table.arn}/index/*",
           aws_dynamodb_table.meeting_share_table.arn,
+          aws_dynamodb_table.contact_feedback_table.arn,
+          "${aws_dynamodb_table.contact_feedback_table.arn}/index/*",
           aws_dynamodb_table.installer_table.arn,
           aws_dynamodb_table.onboarding_state_table.arn,
           aws_dynamodb_table.guild_subscription_table.arn

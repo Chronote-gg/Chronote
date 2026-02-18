@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { TRPCError } from "@trpc/server";
 import { publicProcedure, router, superAdminProcedure } from "../trpc";
 import {
   submitContactFeedback,
@@ -48,7 +49,10 @@ const submit = publicProcedure
       for (const image of input.images) {
         const buffer = Buffer.from(image.data, "base64");
         if (buffer.byteLength > CONTACT_FEEDBACK_MAX_IMAGE_BYTES) {
-          continue; // Skip oversized images
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: `Image "${image.fileName}" exceeds the ${CONTACT_FEEDBACK_MAX_IMAGE_BYTES / (1024 * 1024)}MB size limit`,
+          });
         }
         const extension = image.contentType.split("/")[1] ?? "bin";
         const key = `${CONTACT_FEEDBACK_S3_PREFIX}${randomUUID()}.${extension}`;
