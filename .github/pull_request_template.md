@@ -2,13 +2,6 @@
 
 -
 
-## Validation
-
-- [ ] `yarn lint:check`
-- [ ] `yarn prettier:check`
-- [ ] `yarn test`
-- [ ] `yarn build:all`
-
 ## Docs impact
 
 - [ ] User-facing behavior changed and docs were updated in `apps/docs-site`
