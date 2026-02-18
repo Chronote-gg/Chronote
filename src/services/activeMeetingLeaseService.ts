@@ -205,6 +205,79 @@ export function stopMeetingLeaseHeartbeat(meeting: MeetingData) {
   meeting.leaseHeartbeatTimer = undefined;
 }
 
+function hasLeaseOwnership(
+  lease: ActiveMeetingLease | undefined,
+  meeting: MeetingData,
+): lease is ActiveMeetingLease {
+  return Boolean(
+    lease &&
+    lease.meetingId === meeting.meetingId &&
+    lease.ownerInstanceId === meeting.leaseOwnerInstanceId,
+  );
+}
+
+function shouldIgnoreLeaseOwnershipLoss(meeting: MeetingData): boolean {
+  return meeting.finishing || meeting.finished || !meeting.onEndMeeting;
+}
+
+async function endMeetingFromLeaseOwnershipLoss(
+  meeting: MeetingData,
+): Promise<void> {
+  const onEndMeeting = meeting.onEndMeeting;
+  if (shouldIgnoreLeaseOwnershipLoss(meeting) || !onEndMeeting) {
+    return;
+  }
+  console.warn("Meeting lease ownership record changed, ending meeting", {
+    guildId: meeting.guildId,
+    meetingId: meeting.meetingId,
+  });
+  stopMeetingLeaseHeartbeat(meeting);
+  meeting.endReason = MEETING_END_REASONS.UNKNOWN;
+  await onEndMeeting(meeting);
+}
+
+async function processRemoteEndRequest(
+  lease: ActiveMeetingLease,
+  meeting: MeetingData,
+): Promise<boolean> {
+  const onEndMeeting = meeting.onEndMeeting;
+  if (
+    !lease.endRequestedAt ||
+    !lease.endRequestedByUserId ||
+    meeting.finishing ||
+    meeting.finished ||
+    !onEndMeeting
+  ) {
+    return false;
+  }
+  console.log("Processing remote end request for active meeting", {
+    guildId: meeting.guildId,
+    meetingId: meeting.meetingId,
+    requestedBy: lease.endRequestedByUserId,
+  });
+  stopMeetingLeaseHeartbeat(meeting);
+  meeting.endReason = MEETING_END_REASONS.WEB_UI;
+  meeting.endTriggeredByUserId = lease.endRequestedByUserId;
+  await onEndMeeting(meeting);
+  return true;
+}
+
+async function processLeaseRenewalOwnershipLoss(
+  meeting: MeetingData,
+): Promise<void> {
+  const onEndMeeting = meeting.onEndMeeting;
+  console.warn("Meeting lease renewal lost ownership, ending meeting", {
+    guildId: meeting.guildId,
+    meetingId: meeting.meetingId,
+  });
+  stopMeetingLeaseHeartbeat(meeting);
+  if (shouldIgnoreLeaseOwnershipLoss(meeting) || !onEndMeeting) {
+    return;
+  }
+  meeting.endReason = MEETING_END_REASONS.UNKNOWN;
+  await onEndMeeting(meeting);
+}
+
 export function startMeetingLeaseHeartbeat(meeting: MeetingData) {
   stopMeetingLeaseHeartbeat(meeting);
   if (!meeting.leaseOwnerInstanceId) {
@@ -219,40 +292,16 @@ export function startMeetingLeaseHeartbeat(meeting: MeetingData) {
 
     try {
       const lease = await getActiveMeetingLeaseForGuild(meeting.guildId);
-      if (
-        !lease ||
-        lease.meetingId !== meeting.meetingId ||
-        lease.ownerInstanceId !== meeting.leaseOwnerInstanceId
-      ) {
-        if (meeting.finishing || meeting.finished || !meeting.onEndMeeting) {
-          return;
-        }
-        console.warn("Meeting lease ownership record changed, ending meeting", {
-          guildId: meeting.guildId,
-          meetingId: meeting.meetingId,
-        });
-        stopMeetingLeaseHeartbeat(meeting);
-        meeting.endReason = MEETING_END_REASONS.UNKNOWN;
-        await meeting.onEndMeeting(meeting);
+      if (!hasLeaseOwnership(lease, meeting)) {
+        await endMeetingFromLeaseOwnershipLoss(meeting);
         return;
       }
 
-      if (
-        lease.endRequestedAt &&
-        lease.endRequestedByUserId &&
-        !meeting.finishing &&
-        !meeting.finished &&
-        meeting.onEndMeeting
-      ) {
-        console.log("Processing remote end request for active meeting", {
-          guildId: meeting.guildId,
-          meetingId: meeting.meetingId,
-          requestedBy: lease.endRequestedByUserId,
-        });
-        stopMeetingLeaseHeartbeat(meeting);
-        meeting.endReason = MEETING_END_REASONS.WEB_UI;
-        meeting.endTriggeredByUserId = lease.endRequestedByUserId;
-        await meeting.onEndMeeting(meeting);
+      const handledRemoteEndRequest = await processRemoteEndRequest(
+        lease,
+        meeting,
+      );
+      if (handledRemoteEndRequest) {
         return;
       }
 
@@ -260,16 +309,7 @@ export function startMeetingLeaseHeartbeat(meeting: MeetingData) {
       if (renewed) {
         return;
       }
-      console.warn("Meeting lease renewal lost ownership, ending meeting", {
-        guildId: meeting.guildId,
-        meetingId: meeting.meetingId,
-      });
-      stopMeetingLeaseHeartbeat(meeting);
-      if (meeting.finishing || meeting.finished || !meeting.onEndMeeting) {
-        return;
-      }
-      meeting.endReason = MEETING_END_REASONS.UNKNOWN;
-      await meeting.onEndMeeting(meeting);
+      await processLeaseRenewalOwnershipLoss(meeting);
     } catch (error) {
       console.error("Meeting lease renewal failed", {
         guildId: meeting.guildId,
