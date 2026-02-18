@@ -156,6 +156,7 @@
   "devDependencies": {
     "@docusaurus/core": "^3.9.2",
     "@docusaurus/preset-classic": "^3.9.2",
+    "@docusaurus/tsconfig": "^3.9.2",
     "@docusaurus/types": "^3.9.2",
     "@easyops-cn/docusaurus-search-local": "^0.55.0",
     "@babel/core": "^7.29.0",

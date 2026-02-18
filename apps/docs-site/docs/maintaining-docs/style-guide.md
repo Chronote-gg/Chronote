@@ -19,7 +19,7 @@ Use this guide when writing or editing public docs.
 - For user-facing product changes, include a docs delta in the same PR.
 - Use `docs-exempt` only for purely technical changes with clear rationale.
 
-## Whats New guidance
+## What's New guidance
 
 - Keep release notes curated and periodic.
 - Bundle related changes into one concise update.

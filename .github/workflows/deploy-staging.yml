@@ -5,6 +5,9 @@ run-name: Staging Deploy ${{ github.actor }}
 on:
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 concurrency:
   group: ${{ github.workflow }}
   cancel-in-progress: true
