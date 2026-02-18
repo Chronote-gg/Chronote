@@ -1,4 +1,4 @@
-import { Client, EmbedBuilder, TextChannel } from "discord.js";
+import { Client, EmbedBuilder } from "discord.js";
 import { config } from "./configService";
 import type { ContactFeedbackRecord } from "../types/db";
 
@@ -11,7 +11,7 @@ export async function notifyContactFeedback(
 
   try {
     const channel = await client.channels.fetch(channelId);
-    if (!channel?.isTextBased()) return;
+    if (!channel?.isSendable()) return;
 
     const embed = new EmbedBuilder()
       .setTitle("New Contact Feedback")
@@ -59,7 +59,7 @@ export async function notifyContactFeedback(
 
     embed.setFooter({ text: `ID: ${record.feedbackId}` });
 
-    await (channel as TextChannel).send({ embeds: [embed] });
+    await channel.send({ embeds: [embed] });
   } catch (error) {
     console.error("Failed to send contact feedback notification", error);
   }

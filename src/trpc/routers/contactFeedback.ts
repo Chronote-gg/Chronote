@@ -32,7 +32,7 @@ const submitInput = z.object({
     )
     .max(CONTACT_FEEDBACK_MAX_IMAGES)
     .optional(),
-  honeypot: z.string().max(0).optional(), // Must be empty to pass
+  honeypot: z.string().optional(),
 });
 
 const submit = publicProcedure
@@ -43,8 +43,12 @@ const submit = publicProcedure
       return { ok: true };
     }
 
-    // Upload images to S3 if present
-    const imageS3Keys: string[] = [];
+    // Validate images before uploading to avoid orphaned S3 objects
+    const imagesToUpload: {
+      buffer: Buffer;
+      contentType: string;
+      fileName: string;
+    }[] = [];
     if (input.images && input.images.length > 0) {
       for (const image of input.images) {
         const buffer = Buffer.from(image.data, "base64");
@@ -54,12 +58,26 @@ const submit = publicProcedure
             message: `Image "${image.fileName}" exceeds the ${CONTACT_FEEDBACK_MAX_IMAGE_BYTES / (1024 * 1024)}MB size limit`,
           });
         }
-        const extension = image.contentType.split("/")[1] ?? "bin";
-        const key = `${CONTACT_FEEDBACK_S3_PREFIX}${randomUUID()}.${extension}`;
-        const uploaded = await uploadObjectToS3(key, buffer, image.contentType);
-        if (uploaded) {
-          imageS3Keys.push(uploaded);
-        }
+        imagesToUpload.push({
+          buffer,
+          contentType: image.contentType,
+          fileName: image.fileName,
+        });
+      }
+    }
+
+    // Upload validated images to S3
+    const imageS3Keys: string[] = [];
+    for (const image of imagesToUpload) {
+      const extension = image.contentType.split("/")[1] ?? "bin";
+      const key = `${CONTACT_FEEDBACK_S3_PREFIX}${randomUUID()}.${extension}`;
+      const uploaded = await uploadObjectToS3(
+        key,
+        image.buffer,
+        image.contentType,
+      );
+      if (uploaded) {
+        imageS3Keys.push(uploaded);
       }
     }
 

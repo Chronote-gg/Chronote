@@ -35,13 +35,17 @@ export default function ContactFeedback() {
   const handleSubmit = async () => {
     if (!canSubmit) return;
 
-    await submitMutation.mutateAsync({
-      message: message.trim(),
-      contactEmail: contactEmail.trim() || undefined,
-      contactDiscord: contactDiscord.trim() || undefined,
-      honeypot: honeypot || undefined,
-    });
-    setSubmitted(true);
+    try {
+      await submitMutation.mutateAsync({
+        message: message.trim(),
+        contactEmail: contactEmail.trim() || undefined,
+        contactDiscord: contactDiscord.trim() || undefined,
+        honeypot: honeypot || undefined,
+      });
+      setSubmitted(true);
+    } catch {
+      // Error state handled by submitMutation.error in the UI
+    }
   };
 
   if (submitted) {
