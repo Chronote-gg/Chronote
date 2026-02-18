@@ -44,9 +44,6 @@ function resolveRemoteLeaseStatus(
     if (lease.status === MEETING_STATUS.CANCELLED) {
       return MEETING_STATUS.CANCELLED;
     }
-    if (lease.status === MEETING_STATUS.COMPLETE) {
-      return MEETING_STATUS.COMPLETE;
-    }
     return MEETING_STATUS.COMPLETE;
   }
 
@@ -351,6 +348,7 @@ export function registerLiveMeetingRoutes(app: express.Express) {
             endedAt = meeting.endTime?.toISOString();
           } else {
             nextStatus = await resolveRemoteMeetingStatus();
+            endedAt = cachedRemoteLease?.endedAt;
           }
 
           if (nextStatus !== lastStatus) {

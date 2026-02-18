@@ -224,29 +224,32 @@ export function startMeetingLeaseHeartbeat(meeting: MeetingData) {
         lease.meetingId !== meeting.meetingId ||
         lease.ownerInstanceId !== meeting.leaseOwnerInstanceId
       ) {
+        if (meeting.finishing || meeting.finished || !meeting.onEndMeeting) {
+          return;
+        }
         console.warn("Meeting lease ownership record changed, ending meeting", {
           guildId: meeting.guildId,
           meetingId: meeting.meetingId,
         });
         stopMeetingLeaseHeartbeat(meeting);
-        if (!meeting.onEndMeeting) {
-          return;
-        }
         meeting.endReason = MEETING_END_REASONS.UNKNOWN;
         await meeting.onEndMeeting(meeting);
         return;
       }
 
-      if (lease.endRequestedAt && lease.endRequestedByUserId) {
+      if (
+        lease.endRequestedAt &&
+        lease.endRequestedByUserId &&
+        !meeting.finishing &&
+        !meeting.finished &&
+        meeting.onEndMeeting
+      ) {
         console.log("Processing remote end request for active meeting", {
           guildId: meeting.guildId,
           meetingId: meeting.meetingId,
           requestedBy: lease.endRequestedByUserId,
         });
         stopMeetingLeaseHeartbeat(meeting);
-        if (!meeting.onEndMeeting) {
-          return;
-        }
         meeting.endReason = MEETING_END_REASONS.WEB_UI;
         meeting.endTriggeredByUserId = lease.endRequestedByUserId;
         await meeting.onEndMeeting(meeting);

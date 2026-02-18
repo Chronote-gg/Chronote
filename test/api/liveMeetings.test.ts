@@ -211,6 +211,46 @@ const requestSseInit = async (url: string) =>
     req.end();
   });
 
+const requestSseUntil = async (url: string, contains: string) =>
+  new Promise<{ statusCode: number; buffer: string }>((resolve, reject) => {
+    let resolved = false;
+    const req = http.request(
+      url,
+      { method: "GET", headers: { Accept: "text/event-stream" } },
+      (res) => {
+        let buffer = "";
+        res.setEncoding("utf8");
+        const finish = () => {
+          if (resolved) return;
+          resolved = true;
+          clearTimeout(timeout);
+          resolve({ statusCode: res.statusCode ?? 0, buffer });
+        };
+        res.on("data", (chunk) => {
+          buffer += chunk;
+          if (buffer.includes(contains)) {
+            finish();
+            res.destroy();
+            req.destroy();
+          }
+        });
+        res.on("end", finish);
+      },
+    );
+    const timeout = setTimeout(() => {
+      if (resolved) return;
+      resolved = true;
+      req.destroy();
+      reject(new Error("Timed out waiting for stream content"));
+    }, 6000);
+    req.on("error", (err) => {
+      if (resolved) return;
+      clearTimeout(timeout);
+      reject(err);
+    });
+    req.end();
+  });
+
 afterEach(() => {
   jest.resetAllMocks();
 });
@@ -241,6 +281,58 @@ test("streams fallback init payload with leased channel name", async () => {
     );
     expect(response.statusCode).toBe(200);
     expect(response.buffer).toContain('"channelName":"Engineering"');
+  } finally {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
+});
+
+test("streams remote status event with endedAt", async () => {
+  const nowEpochSeconds = Math.floor(Date.now() / 1000);
+  mockedGetMeeting.mockReturnValue(undefined);
+  mockedGetActiveMeetingLeaseForGuild
+    .mockResolvedValueOnce({
+      guildId: "guild-1",
+      meetingId: "meeting-1",
+      ownerInstanceId: "instance-1",
+      voiceChannelId: "voice-1",
+      voiceChannelName: "Engineering",
+      textChannelId: "text-1",
+      isAutoRecording: false,
+      status: MEETING_STATUS.IN_PROGRESS,
+      leaseExpiresAt: nowEpochSeconds + 30,
+      createdAt: "2025-01-01T00:00:00.000Z",
+      updatedAt: "2025-01-01T00:00:00.000Z",
+      expiresAt: nowEpochSeconds + 150,
+    })
+    .mockResolvedValue({
+      guildId: "guild-1",
+      meetingId: "meeting-1",
+      ownerInstanceId: "instance-1",
+      voiceChannelId: "voice-1",
+      voiceChannelName: "Engineering",
+      textChannelId: "text-1",
+      isAutoRecording: false,
+      status: MEETING_STATUS.COMPLETE,
+      endedAt: "2025-01-01T00:10:00.000Z",
+      leaseExpiresAt: nowEpochSeconds - 5,
+      createdAt: "2025-01-01T00:00:00.000Z",
+      updatedAt: "2025-01-01T00:10:00.000Z",
+      expiresAt: nowEpochSeconds + 120,
+    });
+  mockedIsLeaseActive.mockImplementation(
+    (lease) => lease.leaseExpiresAt >= Math.floor(Date.now() / 1000),
+  );
+  mockedEnsureUserInGuild.mockResolvedValue(true);
+  mockedEnsureUserCanConnectChannel.mockResolvedValue(true);
+
+  const { server, baseUrl } = createServer(true);
+  try {
+    const response = await requestSseUntil(
+      `${baseUrl}/api/live/guild-1/meeting-1/stream`,
+      '"endedAt":"2025-01-01T00:10:00.000Z"',
+    );
+    expect(response.statusCode).toBe(200);
+    expect(response.buffer).toContain("event: status");
   } finally {
     await new Promise<void>((resolve) => server.close(() => resolve()));
   }
