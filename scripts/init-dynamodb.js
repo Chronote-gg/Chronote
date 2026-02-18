@@ -245,6 +245,26 @@ const tables = [
     ],
     BillingMode: "PAY_PER_REQUEST",
   },
+  {
+    TableName: "ContactFeedbackTable",
+    KeySchema: [{ AttributeName: "feedbackId", KeyType: "HASH" }],
+    AttributeDefinitions: [
+      { AttributeName: "feedbackId", AttributeType: "S" },
+      { AttributeName: "type", AttributeType: "S" },
+      { AttributeName: "createdAt", AttributeType: "S" },
+    ],
+    GlobalSecondaryIndexes: [
+      {
+        IndexName: "TypeCreatedAtIndex",
+        KeySchema: [
+          { AttributeName: "type", KeyType: "HASH" },
+          { AttributeName: "createdAt", KeyType: "RANGE" },
+        ],
+        Projection: { ProjectionType: "ALL" },
+      },
+    ],
+    BillingMode: "PAY_PER_REQUEST",
+  },
 ];
 
 async function waitForDynamoDB(maxRetries = 10, delay = 1000) {

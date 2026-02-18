@@ -163,6 +163,13 @@ class ConfigService {
       .filter((value) => value.length > 0),
   };
 
+  // Contact feedback configuration
+  readonly contactFeedback = {
+    notificationChannelId: process.env.FEEDBACK_NOTIFICATION_CHANNEL_ID || "",
+    recaptchaSiteKey: process.env.RECAPTCHA_SITE_KEY || "",
+    recaptchaSecretKey: process.env.RECAPTCHA_SECRET_KEY || "",
+  };
+
   // Database Configuration
   readonly database = {
     useLocalDynamoDB:

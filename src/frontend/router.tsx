@@ -36,6 +36,9 @@ const LiveMeeting = lazyRouteComponent(() => import("./pages/LiveMeeting"));
 const AdminHome = lazyRouteComponent(() => import("./pages/AdminHome"));
 const AdminConfig = lazyRouteComponent(() => import("./pages/AdminConfig"));
 const AdminFeedback = lazyRouteComponent(() => import("./pages/AdminFeedback"));
+const ContactFeedback = lazyRouteComponent(
+  () => import("./pages/ContactFeedback"),
+);
 import { useGuildContext } from "./contexts/GuildContext";
 import { usePortalStore } from "./stores/portalStore";
 
@@ -297,6 +300,12 @@ const adminFeedbackRoute = new Route({
   component: AdminFeedback,
 });
 
+const contactFeedbackRoute = new Route({
+  getParentRoute: () => marketingRoute,
+  path: "feedback",
+  component: ContactFeedback,
+});
+
 const routeTree = rootRoute.addChildren([
   marketingRoute.addChildren([
     homeRoute,
@@ -304,6 +313,7 @@ const routeTree = rootRoute.addChildren([
     upgradeRoute,
     upgradeSelectRoute,
     upgradeSuccessRoute,
+    contactFeedbackRoute,
   ]),
   liveMeetingRoute,
   adminRoute.addChildren([

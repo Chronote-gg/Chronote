@@ -7,6 +7,7 @@ import { channelContextsRouter } from "./routers/channelContexts";
 import { configRouter } from "./routers/config";
 import { contextRouter } from "./routers/context";
 import { dictionaryRouter } from "./routers/dictionary";
+import { contactFeedbackRouter } from "./routers/contactFeedback";
 import { feedbackRouter } from "./routers/feedback";
 import { adminFeedbackRouter } from "./routers/adminFeedback";
 import { meetingsRouter } from "./routers/meetings";
@@ -21,6 +22,7 @@ export const appRouter = router({
   billing: billingRouter,
   channelContexts: channelContextsRouter,
   config: configRouter,
+  contactFeedback: contactFeedbackRouter,
   context: contextRouter,
   dictionary: dictionaryRouter,
   feedback: feedbackRouter,

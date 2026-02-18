@@ -85,4 +85,13 @@ export const testIds = {
     page: "admin-feedback-page",
     refresh: "admin-feedback-refresh",
   },
+  contactFeedback: {
+    page: "contact-feedback-page",
+    form: "contact-feedback-form",
+    messageInput: "contact-feedback-message",
+    emailInput: "contact-feedback-email",
+    discordInput: "contact-feedback-discord",
+    submitButton: "contact-feedback-submit",
+    success: "contact-feedback-success",
+  },
 } as const;

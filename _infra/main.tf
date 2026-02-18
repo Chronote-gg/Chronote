@@ -1028,6 +1028,8 @@ resource "aws_iam_policy" "dynamodb_access_policy" {
           aws_dynamodb_table.meeting_history_table.arn,
           "${aws_dynamodb_table.meeting_history_table.arn}/index/*",
           aws_dynamodb_table.meeting_share_table.arn,
+          aws_dynamodb_table.contact_feedback_table.arn,
+          "${aws_dynamodb_table.contact_feedback_table.arn}/index/*",
           aws_dynamodb_table.installer_table.arn,
           aws_dynamodb_table.onboarding_state_table.arn,
           aws_dynamodb_table.guild_subscription_table.arn
@@ -1847,6 +1849,48 @@ resource "aws_dynamodb_table" "feedback_table" {
 
   tags = {
     Name = "FeedbackTable"
+  }
+}
+
+# Contact Feedback Table
+resource "aws_dynamodb_table" "contact_feedback_table" {
+  name         = "${local.name_prefix}-ContactFeedbackTable"
+  billing_mode = "PAY_PER_REQUEST"
+  hash_key     = "feedbackId"
+
+  attribute {
+    name = "feedbackId"
+    type = "S"
+  }
+
+  attribute {
+    name = "type"
+    type = "S"
+  }
+
+  attribute {
+    name = "createdAt"
+    type = "S"
+  }
+
+  global_secondary_index {
+    name            = "TypeCreatedAtIndex"
+    hash_key        = "type"
+    range_key       = "createdAt"
+    projection_type = "ALL"
+  }
+
+  point_in_time_recovery {
+    enabled = true
+  }
+
+  server_side_encryption {
+    enabled     = true
+    kms_key_arn = aws_kms_key.app_general.arn
+  }
+
+  tags = {
+    Name = "ContactFeedbackTable"
   }
 }
 
