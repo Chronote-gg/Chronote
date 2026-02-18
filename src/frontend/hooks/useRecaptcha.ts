@@ -34,9 +34,15 @@ export function useRecaptchaScript(): boolean {
     const siteKey = getSiteKey();
     if (!siteKey) return;
 
-    if (document.getElementById(RECAPTCHA_SCRIPT_ID)) {
+    const existing = document.getElementById(RECAPTCHA_SCRIPT_ID);
+    if (existing) {
       if (window.grecaptcha) {
         window.grecaptcha.ready(() => setReady(true));
+      } else {
+        // Script tag exists but hasn't finished loading yet (e.g. slow network)
+        existing.addEventListener("load", () => {
+          window.grecaptcha?.ready(() => setReady(true));
+        });
       }
       return;
     }
