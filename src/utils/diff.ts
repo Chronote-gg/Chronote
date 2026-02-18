@@ -118,7 +118,11 @@ export function formatHunkDiff(
 
   if (charLimit && result.length > charLimit) {
     const suffix = "\n... (truncated)";
-    result = result.substring(0, charLimit - suffix.length) + suffix;
+    const prefixLength = Math.max(0, charLimit - suffix.length);
+    result =
+      prefixLength > 0
+        ? result.substring(0, prefixLength) + suffix
+        : result.substring(0, charLimit);
   }
 
   return result;

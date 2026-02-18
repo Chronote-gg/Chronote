@@ -297,6 +297,15 @@ describe("formatHunkDiff", () => {
       expect(result).toContain("... (truncated)");
     });
 
+    it("respects very small charLimit values", () => {
+      const result = formatHunkDiff("alpha\nbeta\n", "ALPHA\nbeta\n", {
+        charLimit: 8,
+      });
+
+      expect(result.length).toBeLessThanOrEqual(8);
+      expect(result).not.toContain("truncated");
+    });
+
     it("does not add truncation suffix when under charLimit", () => {
       const result = formatHunkDiff("a\n", "b\n", { charLimit: 5000 });
 
