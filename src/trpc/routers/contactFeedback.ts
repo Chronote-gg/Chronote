@@ -66,7 +66,6 @@ const getUploadUrl = publicProcedure
   .use(uploadUrlRateLimited)
   .input(
     z.object({
-      fileName: z.string().max(255),
       contentType: z.enum(
         CONTACT_FEEDBACK_ALLOWED_IMAGE_TYPES as [string, ...string[]],
       ),

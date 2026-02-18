@@ -39,14 +39,12 @@ const IMAGE_SIZE_LABEL = `${CONTACT_FEEDBACK_MAX_IMAGE_BYTES / (1024 * 1024)}MB`
 async function uploadImagesToS3(
   images: { file: File; previewUrl: string }[],
   getUploadUrl: (input: {
-    fileName: string;
     contentType: (typeof CONTACT_FEEDBACK_ALLOWED_IMAGE_TYPES)[number];
   }) => Promise<{ url: string; key: string }>,
 ): Promise<{ keys: string[] } | { error: string }> {
   const keys: string[] = [];
   for (const img of images) {
     const { url, key } = await getUploadUrl({
-      fileName: img.file.name,
       contentType: img.file
         .type as (typeof CONTACT_FEEDBACK_ALLOWED_IMAGE_TYPES)[number],
     });
