@@ -125,21 +125,23 @@ export function ContactFeedbackForm({
       const newFiles = Array.from(fileList).slice(0, remaining);
 
       const validFiles: File[] = [];
+      const errors: string[] = [];
       for (const file of newFiles) {
         if (!CONTACT_FEEDBACK_ALLOWED_IMAGE_TYPES.includes(file.type)) {
-          setUploadError(
+          errors.push(
             `"${file.name}" is not a supported image type. Use PNG, JPEG, GIF, or WebP.`,
           );
           continue;
         }
         if (file.size > CONTACT_FEEDBACK_MAX_IMAGE_BYTES) {
-          setUploadError(
+          errors.push(
             `"${file.name}" exceeds the ${IMAGE_SIZE_LABEL} size limit.`,
           );
           continue;
         }
         validFiles.push(file);
       }
+      if (errors.length > 0) setUploadError(errors.join(" "));
 
       const pending: PendingImage[] = validFiles.map((file) => ({
         file,
