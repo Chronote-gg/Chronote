@@ -246,12 +246,24 @@ describe("activeMeetingLeaseService", () => {
       leaseOwnerInstanceId: "instance-1",
       finishing: true,
       finished: false,
+      endTime: new Date("2026-02-14T20:00:05.000Z"),
     } as unknown as MeetingData;
 
     startMeetingLeaseHeartbeat(meeting);
     await jest.advanceTimersByTimeAsync(10_000);
 
     expect(mockedRenewActiveMeetingLease).toHaveBeenCalledTimes(1);
+    expect(mockedRenewActiveMeetingLease).toHaveBeenCalledWith(
+      "guild-1",
+      "meeting-1",
+      "instance-1",
+      expect.any(Number),
+      expect.any(String),
+      expect.any(Number),
+      expect.objectContaining({
+        endedAt: "2026-02-14T20:00:05.000Z",
+      }),
+    );
   });
 
   test("prevents overlapping heartbeat renew attempts", async () => {
@@ -362,6 +374,7 @@ describe("activeMeetingLeaseService", () => {
     expect(onEndMeeting).not.toHaveBeenCalled();
     expect(meeting.endReason).toBe(MEETING_END_REASONS.BUTTON);
     expect(mockedRenewActiveMeetingLease).not.toHaveBeenCalled();
+    expect(meeting.leaseHeartbeatTimer).toBeUndefined();
   });
 
   test("stops heartbeat immediately when meeting is already finished", async () => {

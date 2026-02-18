@@ -54,12 +54,13 @@ function buildMeetingLeaseSnapshot(
     cancellationReason: meeting.cancellationReason,
   };
 
-  if (
+  if (meeting.endTime) {
+    snapshot.endedAt = meeting.endTime.toISOString();
+  } else if (
     status === MEETING_STATUS.CANCELLED ||
     status === MEETING_STATUS.COMPLETE
   ) {
-    snapshot.endedAt =
-      meeting.endTime?.toISOString() ?? new Date().toISOString();
+    snapshot.endedAt = new Date().toISOString();
   }
 
   return snapshot;
@@ -225,6 +226,7 @@ async function endMeetingFromLeaseOwnershipLoss(
 ): Promise<void> {
   const onEndMeeting = meeting.onEndMeeting;
   if (shouldIgnoreLeaseOwnershipLoss(meeting) || !onEndMeeting) {
+    stopMeetingLeaseHeartbeat(meeting);
     return;
   }
   console.warn("Meeting lease ownership record changed, ending meeting", {
