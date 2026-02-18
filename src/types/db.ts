@@ -59,6 +59,14 @@ export interface ActiveMeetingLease {
   voiceChannelName?: string;
   textChannelId: string;
   isAutoRecording: boolean;
+  status?: MeetingStatus;
+  startReason?: MeetingStartReason;
+  startTriggeredByUserId?: string;
+  autoRecordRule?: AutoRecordRule;
+  endReason?: MeetingEndReason;
+  endTriggeredByUserId?: string;
+  cancellationReason?: string;
+  endedAt?: string;
   leaseExpiresAt: number;
   createdAt: string;
   updatedAt: string;

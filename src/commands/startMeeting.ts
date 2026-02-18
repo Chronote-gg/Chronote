@@ -254,6 +254,8 @@ export async function handleRequestStartMeeting(
     voiceChannelName: voiceChannel.name,
     textChannelId: textChannel.id,
     isAutoRecording: false,
+    startReason: MEETING_START_REASONS.MANUAL_COMMAND,
+    startTriggeredByUserId: interaction.user.id,
   });
   if (!leaseAcquired) {
     await interaction.reply("A meeting is already active in this server.");
@@ -444,6 +446,9 @@ export async function handleAutoStartMeeting(
     voiceChannelName: voiceChannel.name,
     textChannelId: textChannel.id,
     isAutoRecording: true,
+    startReason: options?.startReason,
+    startTriggeredByUserId: options?.startTriggeredByUserId,
+    autoRecordRule: options?.autoRecordRule,
   });
   if (!leaseAcquired) {
     await textChannel.send(

@@ -23,6 +23,10 @@ import {
   renewActiveMeetingLease,
   tryAcquireActiveMeetingLease,
 } from "../../src/db";
+import {
+  MEETING_END_REASONS,
+  MEETING_STATUS,
+} from "../../src/types/meetingLifecycle";
 
 jest.mock("../../src/db", () => ({
   getActiveMeetingLease: jest.fn(),
@@ -82,6 +86,7 @@ describe("activeMeetingLeaseService", () => {
         voiceChannelName: "General",
         textChannelId: "text-1",
         isAutoRecording: false,
+        status: MEETING_STATUS.IN_PROGRESS,
         leaseExpiresAt: 1771099230,
         createdAt: "2026-02-14T20:00:00.000Z",
         updatedAt: "2026-02-14T20:00:00.000Z",
@@ -241,12 +246,24 @@ describe("activeMeetingLeaseService", () => {
       leaseOwnerInstanceId: "instance-1",
       finishing: true,
       finished: false,
+      endTime: new Date("2026-02-14T20:00:05.000Z"),
     } as unknown as MeetingData;
 
     startMeetingLeaseHeartbeat(meeting);
     await jest.advanceTimersByTimeAsync(10_000);
 
     expect(mockedRenewActiveMeetingLease).toHaveBeenCalledTimes(1);
+    expect(mockedRenewActiveMeetingLease).toHaveBeenCalledWith(
+      "guild-1",
+      "meeting-1",
+      "instance-1",
+      expect.any(Number),
+      expect.any(String),
+      expect.any(Number),
+      expect.objectContaining({
+        endedAt: "2026-02-14T20:00:05.000Z",
+      }),
+    );
   });
 
   test("prevents overlapping heartbeat renew attempts", async () => {
@@ -290,6 +307,74 @@ describe("activeMeetingLeaseService", () => {
 
     await jest.advanceTimersByTimeAsync(10_000);
     expect(mockedRenewActiveMeetingLease).toHaveBeenCalledTimes(2);
+  });
+
+  test("ignores remote end request while meeting is finishing", async () => {
+    mockedGetActiveMeetingLease.mockResolvedValue({
+      guildId: "guild-1",
+      meetingId: "meeting-1",
+      ownerInstanceId: "instance-1",
+      voiceChannelId: "voice-1",
+      textChannelId: "text-1",
+      isAutoRecording: false,
+      leaseExpiresAt: 1771099230,
+      createdAt: "2026-02-14T20:00:00.000Z",
+      updatedAt: "2026-02-14T20:00:00.000Z",
+      expiresAt: 1771099350,
+      endRequestedAt: "2026-02-14T20:00:05.000Z",
+      endRequestedByUserId: "user-1",
+    });
+    mockedRenewActiveMeetingLease.mockResolvedValue(true);
+    const onEndMeeting = jest.fn<() => Promise<void>>().mockResolvedValue();
+
+    const meeting = {
+      guildId: "guild-1",
+      meetingId: "meeting-1",
+      leaseOwnerInstanceId: "instance-1",
+      finishing: true,
+      finished: false,
+      onEndMeeting,
+    } as unknown as MeetingData;
+
+    startMeetingLeaseHeartbeat(meeting);
+    await jest.advanceTimersByTimeAsync(10_000);
+
+    expect(onEndMeeting).not.toHaveBeenCalled();
+    expect(mockedRenewActiveMeetingLease).toHaveBeenCalledTimes(1);
+  });
+
+  test("does not overwrite end reason when lease changes during finishing", async () => {
+    mockedGetActiveMeetingLease.mockResolvedValue({
+      guildId: "guild-1",
+      meetingId: "meeting-1",
+      ownerInstanceId: "instance-2",
+      voiceChannelId: "voice-1",
+      textChannelId: "text-1",
+      isAutoRecording: false,
+      leaseExpiresAt: 1771099230,
+      createdAt: "2026-02-14T20:00:00.000Z",
+      updatedAt: "2026-02-14T20:00:00.000Z",
+      expiresAt: 1771099350,
+    });
+    const onEndMeeting = jest.fn<() => Promise<void>>().mockResolvedValue();
+
+    const meeting = {
+      guildId: "guild-1",
+      meetingId: "meeting-1",
+      leaseOwnerInstanceId: "instance-1",
+      finishing: true,
+      finished: false,
+      endReason: MEETING_END_REASONS.BUTTON,
+      onEndMeeting,
+    } as unknown as MeetingData;
+
+    startMeetingLeaseHeartbeat(meeting);
+    await jest.advanceTimersByTimeAsync(10_000);
+
+    expect(onEndMeeting).not.toHaveBeenCalled();
+    expect(meeting.endReason).toBe(MEETING_END_REASONS.BUTTON);
+    expect(mockedRenewActiveMeetingLease).not.toHaveBeenCalled();
+    expect(meeting.leaseHeartbeatTimer).toBeUndefined();
   });
 
   test("stops heartbeat immediately when meeting is already finished", async () => {
