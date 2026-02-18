@@ -12,7 +12,7 @@ import {
   TextInputBuilder,
   TextInputStyle,
 } from "discord.js";
-import { diffLines } from "diff";
+import { formatHunkDiff } from "../utils/diff";
 import { v4 as uuidv4 } from "uuid";
 import {
   getMeetingHistoryService,
@@ -125,27 +125,15 @@ function buildCorrectionRow(
   );
 }
 
-function trimForDiscord(content: string, limit = 1800): string {
-  if (content.length <= limit) return content;
-  return content.substring(0, limit - 20) + "\n... (truncated)";
-}
+/** Discord message content is capped at 2000 chars; reserve room for wrapper text. */
+const DISCORD_DIFF_CHAR_LIMIT = 1800;
+const DISCORD_DIFF_LINE_LIMIT = 400;
 
-function buildUnifiedDiff(current: string, proposed: string): string {
-  const changes = diffLines(current, proposed);
-  const lines: string[] = [];
-
-  for (const change of changes) {
-    const prefix = change.added ? "+" : change.removed ? "-" : " ";
-    const content = change.value.split("\n");
-    for (const line of content) {
-      if (line === "") continue;
-      lines.push(`${prefix} ${line}`);
-      if (lines.length > 400) break;
-    }
-    if (lines.length > 400) break;
-  }
-
-  return trimForDiscord(lines.join("\n"), 1800);
+function buildCompactDiff(current: string, proposed: string): string {
+  return formatHunkDiff(current, proposed, {
+    charLimit: DISCORD_DIFF_CHAR_LIMIT,
+    lineLimit: DISCORD_DIFF_LINE_LIMIT,
+  });
 }
 
 interface CorrectionInput {
@@ -367,7 +355,7 @@ export async function handleNotesCorrectionModal(
       modelOverride: modelChoices.notesCorrection,
     });
 
-    const diff = buildUnifiedDiff(history.notes, newNotes);
+    const diff = buildCompactDiff(history.notes, newNotes);
     const token = uuidv4();
 
     pendingCorrections.set(token, {
@@ -407,7 +395,7 @@ export async function handleNotesCorrectionModal(
     );
 
     await interaction.editReply({
-      content: `Here's the unified diff between current notes and your proposal:\n\`\`\`\n${diff}\n\`\`\`\nOnly the meeting starter${
+      content: `Proposed changes:\n\`\`\`diff\n${diff}\n\`\`\`\nOnly the meeting starter${
         history.isAutoRecording ? " or a server context manager" : ""
       } can accept.`,
       components: [row],
