@@ -134,9 +134,10 @@ const submit = publicProcedure
       }
     }
 
-    // Merge presigned-upload keys (validated by prefix)
+    // Merge presigned-upload keys (validated by prefix, capped at max total)
     if (input.imageS3Keys) {
       for (const key of input.imageS3Keys) {
+        if (allImageS3Keys.length >= CONTACT_FEEDBACK_MAX_IMAGES) break;
         if (key.startsWith(CONTACT_FEEDBACK_S3_PREFIX)) {
           allImageS3Keys.push(key);
         }
