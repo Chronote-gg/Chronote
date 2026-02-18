@@ -420,7 +420,7 @@ export default function ContactFeedback() {
       data.images.forEach((img) => URL.revokeObjectURL(img.previewUrl));
       setSubmitted(true);
     } catch (err) {
-      if (!uploadError && !submitMutation.error) {
+      if (!submitMutation.error) {
         setUploadError({ message: extractErrorMessage(err) });
       }
     } finally {

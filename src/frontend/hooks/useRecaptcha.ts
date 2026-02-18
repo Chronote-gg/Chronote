@@ -34,27 +34,26 @@ export function useRecaptchaScript(): boolean {
     const siteKey = getSiteKey();
     if (!siteKey) return;
 
+    const handleReady = () => setReady(true);
+    const handleLoad = () => window.grecaptcha?.ready(handleReady);
+
     const existing = document.getElementById(RECAPTCHA_SCRIPT_ID);
     if (existing) {
       if (window.grecaptcha) {
-        window.grecaptcha.ready(() => setReady(true));
-      } else {
-        // Script tag exists but hasn't finished loading yet (e.g. slow network)
-        existing.addEventListener("load", () => {
-          window.grecaptcha?.ready(() => setReady(true));
-        });
+        window.grecaptcha.ready(handleReady);
+        return;
       }
-      return;
+      existing.addEventListener("load", handleLoad);
+      return () => existing.removeEventListener("load", handleLoad);
     }
 
     const script = document.createElement("script");
     script.id = RECAPTCHA_SCRIPT_ID;
     script.src = `${RECAPTCHA_API_URL}?render=${encodeURIComponent(siteKey)}`;
     script.async = true;
-    script.onload = () => {
-      window.grecaptcha?.ready(() => setReady(true));
-    };
+    script.addEventListener("load", handleLoad);
     document.head.appendChild(script);
+    return () => script.removeEventListener("load", handleLoad);
   }, []);
 
   return ready;
