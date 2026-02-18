@@ -1,5 +1,5 @@
 import { TRPCError } from "@trpc/server";
-import { diffLines } from "diff";
+import { formatHunkDiff } from "../../utils/diff";
 import { z } from "zod";
 import { v4 as uuidv4 } from "uuid";
 import quillDeltaToMarkdownModule from "quill-delta-to-markdown";
@@ -303,45 +303,11 @@ const cleanupExpiredPendingNotesCorrections = () => {
   notesCorrectionTokenStore.cleanup();
 };
 
-const trimForUi = (
-  content: string,
-  limit = NOTES_CORRECTION_DIFF_CHAR_LIMIT,
-) => {
-  if (content.length <= limit) return content;
-  const suffix = `\n... (truncated, ${content.length}/${limit} chars)`;
-  const prefixLength = Math.max(0, limit - suffix.length);
-  return content.substring(0, prefixLength) + suffix;
-};
-
-const buildUnifiedDiffForUi = (current: string, proposed: string): string => {
-  if (current.trim() === proposed.trim()) {
-    return "";
-  }
-  const changes = diffLines(current, proposed);
-  const lines: string[] = [];
-
-  for (const change of changes) {
-    if (!change.added && !change.removed) {
-      continue;
-    }
-    const prefix = change.added ? "+" : "-";
-    const content = change.value.split("\n");
-    for (let i = 0; i < content.length; i += 1) {
-      const line = content[i];
-      const isLast = i === content.length - 1;
-      // `split("\n")` produces a synthetic trailing empty element when the
-      // string ends with a newline. Skip that, but preserve true blank-line
-      // changes so the UI can render a non-empty diff.
-      if (isLast && line === "") continue;
-
-      lines.push(line === "" ? `${prefix} ` : `${prefix} ${line}`);
-      if (lines.length >= NOTES_CORRECTION_DIFF_LINE_LIMIT) break;
-    }
-    if (lines.length >= NOTES_CORRECTION_DIFF_LINE_LIMIT) break;
-  }
-
-  return trimForUi(lines.join("\n"));
-};
+const buildUnifiedDiffForUi = (current: string, proposed: string): string =>
+  formatHunkDiff(current, proposed, {
+    charLimit: NOTES_CORRECTION_DIFF_CHAR_LIMIT,
+    lineLimit: NOTES_CORRECTION_DIFF_LINE_LIMIT,
+  });
 
 const formatSuggestionsForPrompt = (suggestions?: SuggestionHistoryEntry[]) => {
   if (!suggestions || suggestions.length === 0) {
