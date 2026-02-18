@@ -247,6 +247,24 @@ export interface MeetingHistory {
   chatS3Key?: string; // S3 key for chat log/json
 }
 
+export type ContactFeedbackSource = "discord" | "web";
+
+export interface ContactFeedbackRecord {
+  feedbackId: string; // UUID, partition key
+  type: "contact_feedback"; // Constant for GSI partition key
+  source: ContactFeedbackSource;
+  message: string;
+  contactEmail?: string;
+  contactDiscord?: string;
+  userId?: string;
+  userTag?: string;
+  displayName?: string;
+  guildId?: string;
+  imageS3Keys?: string[];
+  recaptchaScore?: number;
+  createdAt: string; // ISO timestamp
+}
+
 export interface AskConversationRecord {
   pk: string;
   sk: string;

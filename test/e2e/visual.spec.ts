@@ -249,6 +249,14 @@ test.describe("visual regression", () => {
     }
   });
 
+  test("contact feedback page @visual", async ({ page }) => {
+    for (const mode of visualModes) {
+      await page.goto(withVisualMode("/feedback", mode));
+      await expect(page.getByTestId("contact-feedback-page")).toBeVisible();
+      await expectVisualScreenshot(page, "contact-feedback", mode);
+    }
+  });
+
   test("admin home and feedback pages @visual", async ({ page }) => {
     for (const mode of visualModes) {
       await page.goto(withVisualMode("/admin", mode));

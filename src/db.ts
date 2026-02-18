@@ -32,6 +32,7 @@ import {
   AskConversationShareRecord,
   FeedbackRecord,
   FeedbackTargetType,
+  ContactFeedbackRecord,
 } from "./types/db";
 import type { MeetingStatus } from "./types/meetingLifecycle";
 import { trimNotesForHistory } from "./utils/notesHistory";
@@ -1070,6 +1071,66 @@ export async function updateMeetingStatus(
 
   const command = new UpdateItemCommand(params);
   await dynamoDbClient.send(command);
+}
+
+// Contact Feedback Table
+export async function writeContactFeedback(
+  record: ContactFeedbackRecord,
+): Promise<void> {
+  const params = {
+    TableName: tableName("ContactFeedbackTable"),
+    Item: marshall(record, { removeUndefinedValues: true }),
+  };
+  const cmd = new PutItemCommand(params);
+  await dynamoDbClient.send(cmd);
+}
+
+export async function listContactFeedback(params: {
+  limit?: number;
+  startAt?: string;
+  endAt?: string;
+}): Promise<ContactFeedbackRecord[]> {
+  const expressionNames: Record<string, string> = {
+    "#type": "type",
+  };
+  const expressionValues: Record<string, string> = {
+    ":type": "contact_feedback",
+  };
+  let keyCondition = "#type = :type";
+
+  if (params.startAt && params.endAt) {
+    expressionNames["#createdAt"] = "createdAt";
+    expressionValues[":startAt"] = params.startAt;
+    expressionValues[":endAt"] = params.endAt;
+    keyCondition += " AND #createdAt BETWEEN :startAt AND :endAt";
+  } else if (params.startAt) {
+    expressionNames["#createdAt"] = "createdAt";
+    expressionValues[":startAt"] = params.startAt;
+    keyCondition += " AND #createdAt >= :startAt";
+  } else if (params.endAt) {
+    expressionNames["#createdAt"] = "createdAt";
+    expressionValues[":endAt"] = params.endAt;
+    keyCondition += " AND #createdAt < :endAt";
+  }
+
+  const query = new QueryCommand({
+    TableName: tableName("ContactFeedbackTable"),
+    IndexName: "TypeCreatedAtIndex",
+    KeyConditionExpression: keyCondition,
+    ExpressionAttributeNames: expressionNames,
+    ExpressionAttributeValues: marshall(expressionValues, {
+      removeUndefinedValues: true,
+    }),
+    ScanIndexForward: false,
+    Limit: params.limit ?? 50,
+  });
+  const result = await dynamoDbClient.send(query);
+  if (result.Items) {
+    return result.Items.map(
+      (item) => unmarshall(item) as ContactFeedbackRecord,
+    );
+  }
+  return [];
 }
 
 export async function updateMeetingArchive(params: {

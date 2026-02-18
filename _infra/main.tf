@@ -18,12 +18,12 @@ terraform {
     }
   }
   backend "s3" {
-    region         = "us-east-1"
-    bucket         = "meeting-notes-terraform-state-bucket"
-    key            = "meeting-notes-terraform/state"
-    dynamodb_table = "meeting-notes-terraform-state-locks"
+    region               = "us-east-1"
+    bucket               = "meeting-notes-terraform-state-bucket"
+    key                  = "meeting-notes-terraform/state"
+    dynamodb_table       = "meeting-notes-terraform-state-locks"
     workspace_key_prefix = "meeting-notes-terraform"
-    encrypt        = true
+    encrypt              = true
   }
 }
 
@@ -360,21 +360,21 @@ provider "github" {
   token = var.GITHUB_TOKEN
 }
 
-  locals {
-    name_prefix             = "${var.project_name}-${var.environment}"
-    transcripts_bucket_name = var.TRANSCRIPTS_BUCKET != "" ? var.TRANSCRIPTS_BUCKET : "${local.name_prefix}-transcripts-${data.aws_caller_identity.current.account_id}"
-    frontend_bucket_name    = var.FRONTEND_BUCKET != "" ? var.FRONTEND_BUCKET : "${local.name_prefix}-frontend-${data.aws_caller_identity.current.account_id}"
+locals {
+  name_prefix             = "${var.project_name}-${var.environment}"
+  transcripts_bucket_name = var.TRANSCRIPTS_BUCKET != "" ? var.TRANSCRIPTS_BUCKET : "${local.name_prefix}-transcripts-${data.aws_caller_identity.current.account_id}"
+  frontend_bucket_name    = var.FRONTEND_BUCKET != "" ? var.FRONTEND_BUCKET : "${local.name_prefix}-frontend-${data.aws_caller_identity.current.account_id}"
   frontend_cert_arn = var.FRONTEND_CERT_ARN != "" ? var.FRONTEND_CERT_ARN : (
     length(aws_acm_certificate_validation.frontend_cert) > 0 ? aws_acm_certificate_validation.frontend_cert[0].certificate_arn : ""
   )
   api_cert_arn = var.API_CERT_ARN != "" ? var.API_CERT_ARN : (
     length(aws_acm_certificate_validation.api_cert) > 0 ? aws_acm_certificate_validation.api_cert[0].certificate_arn : ""
   )
-    api_base_url = var.API_DOMAIN != "" ? "https://${var.API_DOMAIN}" : "http://${aws_lb.api_alb.dns_name}"
-    discord_callback_url = var.DISCORD_CALLBACK_URL != "" ? var.DISCORD_CALLBACK_URL : (
-      var.API_DOMAIN != "" ? "https://${var.API_DOMAIN}/auth/discord/callback" : ""
-    )
-  }
+  api_base_url = var.API_DOMAIN != "" ? "https://${var.API_DOMAIN}" : "http://${aws_lb.api_alb.dns_name}"
+  discord_callback_url = var.DISCORD_CALLBACK_URL != "" ? var.DISCORD_CALLBACK_URL : (
+    var.API_DOMAIN != "" ? "https://${var.API_DOMAIN}/auth/discord/callback" : ""
+  )
+}
 
 resource "aws_ecr_repository" "app_ecr_repo" {
   name                 = "${local.name_prefix}-bot-repo"
@@ -577,9 +577,9 @@ resource "aws_security_group" "ecs_service_sg" {
 
   ingress {
     description     = "Allow app traffic from the ALB to port 3001"
-    from_port   = 3001
-    to_port     = 3001
-    protocol    = "tcp"
+    from_port       = 3001
+    to_port         = 3001
+    protocol        = "tcp"
     security_groups = [aws_security_group.api_alb_sg.id]
   }
 
@@ -738,7 +738,7 @@ resource "aws_s3_bucket" "frontend" {
   #checkov:skip=CKV_AWS_144 reason: Cross-region replication not required for current stage.
   #checkov:skip=CKV2_AWS_61 reason: Lifecycle configuration not required for static site bucket.
   #checkov:skip=CKV2_AWS_62 reason: Event notifications not needed for static site bucket.
-  bucket = local.frontend_bucket_name
+  bucket        = local.frontend_bucket_name
   force_destroy = true
 
   tags = {
@@ -759,7 +759,7 @@ resource "aws_s3_bucket_server_side_encryption_configuration" "frontend" {
 
   rule {
     apply_server_side_encryption_by_default {
-      sse_algorithm = "aws:kms"
+      sse_algorithm     = "aws:kms"
       kms_master_key_id = aws_kms_key.app_general.arn
     }
   }
@@ -838,10 +838,10 @@ resource "aws_cloudfront_distribution" "frontend" {
       }
     }
 
-    compress     = true
-    min_ttl      = 0
-    default_ttl  = 600
-    max_ttl      = 3600
+    compress    = true
+    min_ttl     = 0
+    default_ttl = 600
+    max_ttl     = 3600
   }
 
   ordered_cache_behavior {
@@ -858,10 +858,10 @@ resource "aws_cloudfront_distribution" "frontend" {
       }
     }
 
-    compress     = true
-    min_ttl      = 3600
-    default_ttl  = 86400
-    max_ttl      = 31536000
+    compress    = true
+    min_ttl     = 3600
+    default_ttl = 86400
+    max_ttl     = 31536000
   }
 
   price_class = "PriceClass_100"
@@ -1014,7 +1014,7 @@ resource "aws_iam_policy" "dynamodb_access_policy" {
           aws_dynamodb_table.access_logs_table.arn,
           aws_dynamodb_table.recording_transcript_table.arn,
           aws_dynamodb_table.auto_record_settings_table.arn,
-          "${aws_dynamodb_table.auto_record_settings_table.arn}/index/*",       
+          "${aws_dynamodb_table.auto_record_settings_table.arn}/index/*",
           aws_dynamodb_table.session_table.arn,
           aws_dynamodb_table.server_context_table.arn,
           aws_dynamodb_table.channel_context_table.arn,
@@ -1163,14 +1163,14 @@ resource "aws_ecs_task_definition" "app_task" {
           name  = "OPENAI_ORGANIZATION_ID"
           value = var.OPENAI_ORGANIZATION_ID
         },
-          {
-            name  = "OPENAI_PROJECT_ID"
-            value = var.OPENAI_PROJECT_ID
-          },
-          {
-            name  = "REDIS_URL"
-            value = local.redis_url
-          },
+        {
+          name  = "OPENAI_PROJECT_ID"
+          value = var.OPENAI_PROJECT_ID
+        },
+        {
+          name  = "REDIS_URL"
+          value = local.redis_url
+        },
         {
           name  = "LANGFUSE_BASE_URL"
           value = var.LANGFUSE_BASE_URL
@@ -1786,6 +1786,48 @@ resource "aws_dynamodb_table" "feedback_table" {
 
   tags = {
     Name = "FeedbackTable"
+  }
+}
+
+# Contact Feedback Table
+resource "aws_dynamodb_table" "contact_feedback_table" {
+  name         = "${local.name_prefix}-ContactFeedbackTable"
+  billing_mode = "PAY_PER_REQUEST"
+  hash_key     = "feedbackId"
+
+  attribute {
+    name = "feedbackId"
+    type = "S"
+  }
+
+  attribute {
+    name = "type"
+    type = "S"
+  }
+
+  attribute {
+    name = "createdAt"
+    type = "S"
+  }
+
+  global_secondary_index {
+    name            = "TypeCreatedAtIndex"
+    hash_key        = "type"
+    range_key       = "createdAt"
+    projection_type = "ALL"
+  }
+
+  point_in_time_recovery {
+    enabled = true
+  }
+
+  server_side_encryption {
+    enabled     = true
+    kms_key_arn = aws_kms_key.app_general.arn
+  }
+
+  tags = {
+    Name = "ContactFeedbackTable"
   }
 }
 

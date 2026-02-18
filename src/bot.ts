@@ -67,6 +67,11 @@ import {
   isAskFeedbackModal,
   isAskFeedbackUp,
 } from "./commands/askFeedback";
+import {
+  handleFeedbackCommand,
+  handleContactFeedbackModal,
+  isContactFeedbackModal,
+} from "./commands/contactFeedback";
 import { config } from "./services/configService";
 import {
   handleEditTagsButton,
@@ -181,6 +186,7 @@ const commandHandlers: Record<
   billing: handleBillingCommand,
   say: handleSayCommand,
   tts: handleTtsCommand,
+  feedback: handleFeedbackCommand,
 };
 
 const handleCommandInteraction = async (
@@ -217,6 +223,10 @@ const modalHandlers: Array<{
   {
     matches: isSummaryFeedbackModal,
     handle: handleSummaryFeedbackModal,
+  },
+  {
+    matches: isContactFeedbackModal,
+    handle: handleContactFeedbackModal,
   },
   {
     matches: isNotesCorrectionModal,
@@ -1055,6 +1065,9 @@ async function setupApplicationCommands() {
           .setDescription("Remove all dictionary entries for this server"),
       ),
     dismissAutoRecordCommand,
+    new SlashCommandBuilder()
+      .setName("feedback")
+      .setDescription("Send feedback, report a bug, or suggest a feature"),
   ];
 
   if (config.server.onboardingEnabled) {

@@ -13,6 +13,7 @@ import type {
   ConfigOverrideRecord,
   DictionaryEntry,
   FeedbackRecord,
+  ContactFeedbackRecord,
 } from "../types/db";
 import type {
   AskConversation,
@@ -50,6 +51,7 @@ type MockStore = {
   askMessagesByConversation: Map<string, AskMessage[]>;
   askSharesByGuild: Map<string, AskSharedConversation[]>;
   feedbackByTarget: Map<string, FeedbackRecord[]>;
+  contactFeedback: ContactFeedbackRecord[];
   userSpeechSettings: Map<string, UserSpeechSettings>;
   configOverrides: Map<string, ConfigOverrideRecord>;
   dictionaryEntriesByGuild: Map<string, DictionaryEntry[]>;
@@ -891,6 +893,28 @@ function buildDefaultStore(): MockStore {
     askMessagesByConversation,
     askSharesByGuild,
     feedbackByTarget,
+    contactFeedback: [
+      {
+        feedbackId: "mock-contact-fb-1",
+        type: "contact_feedback",
+        source: "web",
+        message: "This is a great tool! Would love to see more integrations.",
+        contactEmail: "user@example.com",
+        userId: mockUser.id,
+        userTag: mockUser.username,
+        displayName: mockUser.username,
+        createdAt: mockNowIso(),
+      },
+      {
+        feedbackId: "mock-contact-fb-2",
+        type: "contact_feedback",
+        source: "discord",
+        message:
+          "Found a bug: meeting notes sometimes cut off mid-sentence when the meeting is very long.",
+        contactDiscord: "BugReporter#1234",
+        createdAt: new Date(baseNowMs - 86_400_000).toISOString(),
+      },
+    ] satisfies ContactFeedbackRecord[],
     userSpeechSettings,
     configOverrides,
     dictionaryEntriesByGuild,

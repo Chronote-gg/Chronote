@@ -47,3 +47,16 @@ export const NOISE_GATE_MIN_PEAK_ABOVE_NOISE_DB = 15;
 export const NOISE_GATE_NOISE_FLOOR_PERCENTILE = 0.2;
 export const NOISE_GATE_APPLY_TO_FAST = true;
 export const NOISE_GATE_APPLY_TO_SLOW = true;
+
+// Contact feedback form limits
+export const CONTACT_FEEDBACK_MAX_MESSAGE_LENGTH = 4000; // Characters
+export const CONTACT_FEEDBACK_MAX_IMAGES = 5;
+export const CONTACT_FEEDBACK_MAX_IMAGE_BYTES = 20 * 1024 * 1024; // 20 MB
+export const CONTACT_FEEDBACK_ALLOWED_IMAGE_TYPES = [
+  "image/png",
+  "image/jpeg",
+  "image/gif",
+  "image/webp",
+];
+export const CONTACT_FEEDBACK_S3_PREFIX = "contact-feedback/";
+export const CONTACT_FEEDBACK_RECAPTCHA_THRESHOLD = 0.5; // Minimum reCAPTCHA v3 score

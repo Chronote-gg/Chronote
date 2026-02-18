@@ -365,6 +365,10 @@ export const feedbackSubmitSummaryMutation = buildMutationState<
 export const feedbackSubmitAskMutation = buildMutationState<[unknown], void>(
   undefined,
 );
+export const contactFeedbackSubmitMutation = buildMutationState<
+  [unknown],
+  { ok: boolean }
+>({ ok: true });
 
 export const trpcUtils = {
   ask: {
@@ -497,6 +501,7 @@ export const resetTrpcMocks = () => {
   resetMutationState(configClearGlobalMutation, undefined);
   resetMutationState(feedbackSubmitSummaryMutation, undefined);
   resetMutationState(feedbackSubmitAskMutation, undefined);
+  resetMutationState(contactFeedbackSubmitMutation, { ok: true });
 
   trpcUtils.ask.listConversations.invalidate.mockReset();
   trpcUtils.ask.listConversations.invalidate.mockResolvedValue(undefined);
@@ -725,6 +730,9 @@ jest.mock("../../../src/frontend/services/trpc", () => ({
     feedback: {
       submitSummary: { useMutation: () => feedbackSubmitSummaryMutation },
       submitAsk: { useMutation: () => feedbackSubmitAskMutation },
+    },
+    contactFeedback: {
+      submit: { useMutation: () => contactFeedbackSubmitMutation },
     },
   },
 }));
