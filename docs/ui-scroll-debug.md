@@ -14,13 +14,13 @@ This repo has a handful of nested scroll containers (Drawers, ScrollArea viewpor
    yarn test:e2e test/e2e/meetingDetailScroll.spec.ts
    ```
 
-1. Inspect interactively if needed
+2. Inspect interactively if needed
 
    ```bash
    yarn test:e2e test/e2e/meetingDetailScroll.spec.ts --ui
    ```
 
-1. If the failure is viewport sizing related, run the test with a mobile viewport (the spec already sets one for the mobile case).
+3. If the failure is viewport sizing related, run the test with a mobile viewport (the spec already sets one for the mobile case).
 
 ## What to look for
 

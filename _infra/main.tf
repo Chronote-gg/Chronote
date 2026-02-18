@@ -68,14 +68,12 @@ variable "LANGFUSE_PUBLIC_KEY" {
   description = "Langfuse public key (for prompt sync and tracing)"
   type        = string
   default     = ""
-  sensitive   = true
 }
 
 variable "LANGFUSE_SECRET_KEY" {
   description = "Langfuse secret key (for prompt sync and tracing)"
   type        = string
   default     = ""
-  sensitive   = true
 }
 
 variable "LANGFUSE_BASE_URL" {
@@ -187,10 +185,9 @@ variable "DOCS_ALGOLIA_APP_ID" {
 }
 
 variable "DOCS_ALGOLIA_API_KEY" {
-  description = "Algolia search API key for docs search (optional)"
+  description = "Algolia public search API key for docs search (optional)"
   type        = string
   default     = ""
-  sensitive   = true
 }
 
 variable "DOCS_ALGOLIA_INDEX_NAME" {

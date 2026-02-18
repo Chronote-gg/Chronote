@@ -89,7 +89,7 @@ Chronote needs these Discord permissions:
 | `/ask`          | None                |                                 |
 | `/tts`          | None                | Per-user preference             |
 | `/say`          | None                | Must be in an active meeting    |
-| `/billing`      | Manage Server       |                                 |
+| `/billing`      | None                | Shows subscription status       |
 | `/onboard`      | Manage Server       | Can be disabled server-wide     |
 
 ### Notes correction permissions
