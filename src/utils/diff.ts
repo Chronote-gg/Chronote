@@ -4,12 +4,12 @@ import { diffLines, type Change } from "diff";
 const DEFAULT_CONTEXT_LINES = 3;
 
 /** Separator between non-adjacent hunks. */
-const HUNK_SEPARATOR = "---";
+const HUNK_SEPARATOR = "@@ ... @@";
 
 interface FormatHunkDiffOptions {
   /** Max total characters in the output (truncated with suffix if exceeded). */
   charLimit?: number;
-  /** Max total output lines (truncated if exceeded). */
+  /** Max number of diff content lines (+/-/context, excludes separators). */
   lineLimit?: number;
   /** Lines of unchanged context around each change. */
   contextLines?: number;
@@ -67,7 +67,8 @@ function buildVisibleSet(
 
 /**
  * Produce a compact, GitHub-style hunk diff showing only changed lines with a
- * few lines of surrounding context. Non-adjacent hunks are separated by `---`.
+ * few lines of surrounding context. Non-adjacent hunks are separated by
+ * `@@ ... @@`.
  *
  * Output format per line:
  * - `+ added line`
@@ -94,10 +95,13 @@ export function formatHunkDiff(
   const visible = buildVisibleSet(tagged, contextLines);
 
   const output: string[] = [];
+  let contentLines = 0;
   let lastVisibleIndex = -1;
 
   for (let i = 0; i < tagged.length; i++) {
     if (!visible.has(i)) continue;
+
+    if (lineLimit && contentLines >= lineLimit) break;
 
     if (lastVisibleIndex !== -1 && i - lastVisibleIndex > 1) {
       output.push(HUNK_SEPARATOR);
@@ -107,8 +111,7 @@ export function formatHunkDiff(
     const { kind, text } = tagged[i];
     const prefix = kind === "add" ? "+" : kind === "remove" ? "-" : " ";
     output.push(`${prefix} ${text}`);
-
-    if (lineLimit && output.length >= lineLimit) break;
+    contentLines += 1;
   }
 
   let result = output.join("\n");

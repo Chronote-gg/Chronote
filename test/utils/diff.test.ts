@@ -14,6 +14,8 @@ function numberedLines(count: number): string[] {
   return Array.from({ length: count }, (_, i) => `line ${i}`);
 }
 
+const HUNK_SEPARATOR = "@@ ... @@";
+
 describe("formatHunkDiff", () => {
   // ── identity / no-op ───────────────────────────────────────────────
 
@@ -101,7 +103,7 @@ describe("formatHunkDiff", () => {
 
       const result = formatHunkDiff(lines(...src), lines(...mod));
 
-      expect(result).not.toContain("---");
+      expect(result).not.toContain(HUNK_SEPARATOR);
       expect(result).toContain("+ FIRST");
       expect(result).toContain("+ SECOND");
       // the in-between lines should all appear as context
@@ -123,7 +125,7 @@ describe("formatHunkDiff", () => {
 
       const result = formatHunkDiff(lines(...src), lines(...mod));
 
-      expect(result).not.toContain("---");
+      expect(result).not.toContain(HUNK_SEPARATOR);
       expect(result).toContain("+ AAA");
       expect(result).toContain("+ BBB");
     });
@@ -137,7 +139,7 @@ describe("formatHunkDiff", () => {
 
       const result = formatHunkDiff(lines(...src), lines(...mod));
 
-      expect(result).not.toContain("---");
+      expect(result).not.toContain(HUNK_SEPARATOR);
       // the single gap line between changes should be context
       expect(result).toContain("  line 6");
     });
@@ -152,7 +154,7 @@ describe("formatHunkDiff", () => {
 
       const result = formatHunkDiff(lines(...src), lines(...mod));
 
-      expect(result).toContain("---");
+      expect(result).toContain(HUNK_SEPARATOR);
       expect(result).toContain("+ FIRST");
       expect(result).toContain("+ SECOND");
 
@@ -171,7 +173,7 @@ describe("formatHunkDiff", () => {
 
       const result = formatHunkDiff(lines(...src), lines(...mod));
 
-      expect(result).toContain("---");
+      expect(result).toContain(HUNK_SEPARATOR);
     });
 
     it("merges three nearby changes into one hunk", () => {
@@ -183,7 +185,7 @@ describe("formatHunkDiff", () => {
 
       const result = formatHunkDiff(lines(...src), lines(...mod));
 
-      expect(result).not.toContain("---");
+      expect(result).not.toContain(HUNK_SEPARATOR);
       expect(result).toContain("+ A");
       expect(result).toContain("+ B");
       expect(result).toContain("+ C");
@@ -198,8 +200,33 @@ describe("formatHunkDiff", () => {
 
       const result = formatHunkDiff(lines(...src), lines(...mod));
 
-      const separators = result.split("\n").filter((l) => l === "---");
+      const separators = result.split("\n").filter((l) => l === HUNK_SEPARATOR);
       expect(separators).toHaveLength(1);
+    });
+
+    it("keeps separator distinct from markdown horizontal rules in notes", () => {
+      const src = [
+        "heading",
+        "---",
+        "alpha",
+        "beta",
+        "gamma",
+        "delta",
+        "epsilon",
+        "zeta",
+        "eta",
+        "theta",
+        "iota",
+        "kappa",
+      ];
+      const mod = [...src];
+      mod[0] = "HEADING";
+      mod[10] = "IOTA";
+
+      const result = formatHunkDiff(lines(...src), lines(...mod));
+
+      expect(result).toContain(HUNK_SEPARATOR);
+      expect(result).toContain("  ---");
     });
   });
 
@@ -233,7 +260,7 @@ describe("formatHunkDiff", () => {
       });
 
       // A and B merge, C is separate
-      const parts = result.split("---");
+      const parts = result.split(HUNK_SEPARATOR);
       expect(parts).toHaveLength(2);
       expect(parts[0]).toContain("+ A");
       expect(parts[0]).toContain("+ B");
@@ -286,6 +313,33 @@ describe("formatHunkDiff", () => {
       const outputLines = result.split("\n");
 
       expect(outputLines.length).toBeLessThanOrEqual(10);
+    });
+
+    it("counts only content lines toward lineLimit, not separators", () => {
+      const src = numberedLines(40);
+      const mod = [...src];
+      mod[1] = "ONE";
+      mod[12] = "TWO";
+      mod[24] = "THREE";
+      mod[35] = "FOUR";
+
+      const result = formatHunkDiff(lines(...src), lines(...mod), {
+        contextLines: 0,
+        lineLimit: 3,
+      });
+      const outputLines = result.split("\n");
+      const contentLines = outputLines.filter(
+        (line) => line !== HUNK_SEPARATOR,
+      );
+      const separatorLines = outputLines.filter(
+        (line) => line === HUNK_SEPARATOR,
+      );
+
+      expect(contentLines).toHaveLength(3);
+      expect(separatorLines.length).toBeGreaterThanOrEqual(1);
+      expect(result).toContain("+ ONE");
+      expect(result).not.toContain("+ FOUR");
+      expect(result).not.toContain("line 24");
     });
 
     it("does not exceed Discord 1800 char budget for typical notes", () => {
