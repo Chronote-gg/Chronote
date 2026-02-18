@@ -1,4 +1,5 @@
 export { HomePage } from "./HomePage";
+export { JoinPage } from "./JoinPage";
 export { ServerSelectPage } from "./ServerSelectPage";
 export { PortalNav } from "./PortalNav";
 export { LibraryPage } from "./LibraryPage";

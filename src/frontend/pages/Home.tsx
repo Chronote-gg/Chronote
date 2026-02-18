@@ -45,6 +45,7 @@ import {
   formatPlanPrice,
   resolvePaidPlan,
 } from "../utils/pricing";
+import { DISCORD_BOT_INVITE_URL } from "../utils/discordInvite";
 
 const features = [
   {
@@ -155,7 +156,7 @@ export default function Home() {
                 gradient={{ from: "brand", to: "violet" }}
                 component="a"
                 data-testid="home-cta-discord"
-                href="https://discord.com/oauth2/authorize?client_id=1278729036528619633&scope=bot%20applications.commands"
+                href={DISCORD_BOT_INVITE_URL}
               >
                 Add to Discord
               </Button>
@@ -483,7 +484,7 @@ export default function Home() {
             variant="gradient"
             gradient={{ from: "brand", to: "violet" }}
             component="a"
-            href="https://discord.com/oauth2/authorize?client_id=1278729036528619633&scope=bot%20applications.commands"
+            href={DISCORD_BOT_INVITE_URL}
           >
             Add to Discord
           </Button>

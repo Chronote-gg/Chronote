@@ -18,6 +18,7 @@ const PortalServerLayout = lazyRouteComponent(
 );
 const ServerSelect = lazyRouteComponent(() => import("./pages/ServerSelect"));
 const Home = lazyRouteComponent(() => import("./pages/Home"));
+const Join = lazyRouteComponent(() => import("./pages/Join"));
 const PromoLanding = lazyRouteComponent(() => import("./pages/PromoLanding"));
 const Upgrade = lazyRouteComponent(() => import("./pages/Upgrade"));
 const UpgradeServerSelect = lazyRouteComponent(
@@ -87,6 +88,12 @@ const homeRoute = new Route({
   getParentRoute: () => marketingRoute,
   path: "/",
   component: Home,
+});
+
+const joinRoute = new Route({
+  getParentRoute: () => marketingRoute,
+  path: "join",
+  component: Join,
 });
 
 const promoRoute = new Route({
@@ -309,6 +316,7 @@ const contactFeedbackRoute = new Route({
 const routeTree = rootRoute.addChildren([
   marketingRoute.addChildren([
     homeRoute,
+    joinRoute,
     promoRoute,
     upgradeRoute,
     upgradeSelectRoute,

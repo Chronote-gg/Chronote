@@ -4,6 +4,7 @@ import {
   BillingPage,
   AdminConfigPage,
   HomePage,
+  JoinPage,
   LibraryPage,
   PortalNav,
   ServerSelectPage,
@@ -12,6 +13,7 @@ import {
 
 type Fixtures = {
   homePage: HomePage;
+  joinPage: JoinPage;
   serverSelectPage: ServerSelectPage;
   nav: PortalNav;
   libraryPage: LibraryPage;
@@ -24,6 +26,9 @@ type Fixtures = {
 export const test = base.extend<Fixtures>({
   homePage: async ({ page }, use) => {
     await use(new HomePage(page));
+  },
+  joinPage: async ({ page }, use) => {
+    await use(new JoinPage(page));
   },
   serverSelectPage: async ({ page }, use) => {
     await use(new ServerSelectPage(page));
