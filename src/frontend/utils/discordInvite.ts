@@ -1,3 +1,4 @@
+// Must match DISCORD_CLIENT_ID used in OAuth and bot registration.
 const BOT_CLIENT_ID = "1278729036528619633";
 
 export const DISCORD_BOT_INVITE_URL = `https://discord.com/oauth2/authorize?client_id=${BOT_CLIENT_ID}&scope=bot%20applications.commands`;

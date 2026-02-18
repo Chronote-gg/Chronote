@@ -61,8 +61,8 @@ describe("discordInvite", () => {
     });
 
     it("starts with the base invite URL", () => {
-      expect(JOIN_PAGE_INVITE_URL).toMatch(
-        new RegExp(`^${DISCORD_BOT_INVITE_URL.replace(/[?]/g, "\\?")}`),
+      expect(JOIN_PAGE_INVITE_URL.startsWith(DISCORD_BOT_INVITE_URL)).toBe(
+        true,
       );
     });
   });

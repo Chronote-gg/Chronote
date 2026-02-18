@@ -65,6 +65,14 @@ test.describe("visual regression", () => {
     }
   });
 
+  test("join page @visual", async ({ joinPage, page }) => {
+    for (const mode of visualModes) {
+      await page.goto(withVisualMode("/join", mode));
+      await expect(joinPage.hero()).toBeVisible();
+      await expectVisualScreenshot(page, "join", mode);
+    }
+  });
+
   test("server select @visual", async ({ serverSelectPage, page }) => {
     for (const mode of visualModes) {
       await page.goto(withVisualMode("/portal/select-server", mode));

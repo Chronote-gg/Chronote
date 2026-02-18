@@ -58,6 +58,7 @@ export default function Join() {
       <Stack gap="xl" align="center">
         {/* Hero */}
         <Stack
+          data-testid="join-hero"
           align="center"
           gap="md"
           p={{ base: "lg", md: "xl" }}
