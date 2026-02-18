@@ -1,0 +1,10 @@
+<svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="chronoteGradient" x1="8" y1="8" x2="120" y2="120" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#125D69" />
+      <stop offset="1" stop-color="#E2962E" />
+    </linearGradient>
+  </defs>
+  <rect x="8" y="8" width="112" height="112" rx="24" fill="url(#chronoteGradient)" />
+  <path d="M35 36H93V48H48V57H86V69H48V80H93V92H35V36Z" fill="white" />
+</svg>

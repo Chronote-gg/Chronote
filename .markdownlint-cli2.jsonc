@@ -1,0 +1,72 @@
+{
+  // markdownlint-cli2 configuration
+  // Docs: https://github.com/DavidAnson/markdownlint-cli2
+  // Rules: https://github.com/DavidAnson/markdownlint/blob/main/doc/Rules.md
+
+  "config": {
+    "default": true,
+
+    // Heading style: ATX (`## Heading`) everywhere.
+    "MD003": { "style": "atx" },
+
+    // Line length: disabled. Prettier handles formatting.
+    "MD013": false,
+
+    // Blanks around headings: disabled. YAML front matter `title:` lines
+    // cause false positives despite the frontMatter regex.
+    "MD022": false,
+
+    // Multiple top-level headings: disabled. Agent instruction files and
+    // repo docs intentionally use multiple H1s.
+    "MD025": false,
+
+    // Bare URLs: disabled. AGENTS.md and ADRs use bare URLs intentionally.
+    "MD034": false,
+
+    // First line heading: disabled. Many files use YAML front matter or
+    // are agent prompts without traditional heading structure.
+    "MD041": false,
+
+    // Inline HTML: allow common elements used in docs and README.
+    // Includes angle-bracket tokens that appear in template references
+    // (e.g. <rule>, <port>, <voice>) in agent instructions and ADRs.
+    "MD033": {
+      "allowed_elements": [
+        "br",
+        "sub",
+        "sup",
+        "details",
+        "summary",
+        "img",
+        "a",
+        "picture",
+        "source",
+        "rule",
+        "port",
+        "voice",
+      ],
+    },
+  },
+
+  // Front matter: use the built-in default regex (supports YAML and TOML).
+  // Do NOT override frontMatter here — markdownlint-cli2 constructs
+  // RegExp(configString, "u") which drops the "m" flag needed by the
+  // default regex to match --- delimiters at line boundaries.
+
+  // Respect .gitignore for vendor/generated exclusions
+  "gitignore": true,
+
+  // Additional ignore patterns beyond .gitignore
+  "ignores": [
+    ".codex/**",
+    ".opencode/**",
+    ".claude/**",
+    "_infra/.terraform/**",
+    "build/**",
+    ".docusaurus/**",
+    "tmp/**",
+    "memory-bank/**",
+    // Langfuse prompt sync files have intentional YAML-like formatting
+    "prompts/**",
+  ],
+}
