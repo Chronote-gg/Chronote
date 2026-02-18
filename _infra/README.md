@@ -83,6 +83,18 @@ Recommended OAuth callback for production:
 The frontend build uses `VITE_API_BASE_URL` (set as a GitHub Actions env var) to
 target the API domain.
 
+## Docs domain (CloudFront)
+
+If you set `DOCS_DOMAIN` in `terraform.tfvars`, Terraform will:
+
+- Create or validate an ACM certificate if `DOCS_CERT_ARN` is not provided and `HOSTED_ZONE_NAME` is set.
+- Create a Route53 alias for `DOCS_DOMAIN`.
+- Provision a dedicated docs S3 bucket + CloudFront distribution and publish GitHub Actions env vars:
+  - `DOCS_BUCKET`
+  - `DOCS_DISTRIBUTION_ID`
+
+Deploy workflows use those variables to publish `apps/docs-site` to `docs.chronote.gg`.
+
 ## Environments (prod vs staging)
 
 Terraform now supports environment-specific resource naming via `environment`

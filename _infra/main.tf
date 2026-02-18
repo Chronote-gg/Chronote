@@ -156,6 +156,24 @@ variable "FRONTEND_CERT_ARN" {
   default     = ""
 }
 
+variable "DOCS_BUCKET" {
+  description = "Optional bucket name for static docs site (leave blank to auto-generate)"
+  type        = string
+  default     = ""
+}
+
+variable "DOCS_DOMAIN" {
+  description = "Optional custom domain for docs CloudFront; leave blank to use default distribution domain"
+  type        = string
+  default     = ""
+}
+
+variable "DOCS_CERT_ARN" {
+  description = "ACM cert ARN in us-east-1 for docs CloudFront (required if DOCS_DOMAIN set)"
+  type        = string
+  default     = ""
+}
+
 variable "API_DOMAIN" {
   description = "Optional custom domain for the API (ALB); leave blank to use ALB DNS directly"
   type        = string
@@ -364,8 +382,12 @@ locals {
   name_prefix             = "${var.project_name}-${var.environment}"
   transcripts_bucket_name = var.TRANSCRIPTS_BUCKET != "" ? var.TRANSCRIPTS_BUCKET : "${local.name_prefix}-transcripts-${data.aws_caller_identity.current.account_id}"
   frontend_bucket_name    = var.FRONTEND_BUCKET != "" ? var.FRONTEND_BUCKET : "${local.name_prefix}-frontend-${data.aws_caller_identity.current.account_id}"
+  docs_bucket_name        = var.DOCS_BUCKET != "" ? var.DOCS_BUCKET : "${local.name_prefix}-docs-${data.aws_caller_identity.current.account_id}"
   frontend_cert_arn = var.FRONTEND_CERT_ARN != "" ? var.FRONTEND_CERT_ARN : (
     length(aws_acm_certificate_validation.frontend_cert) > 0 ? aws_acm_certificate_validation.frontend_cert[0].certificate_arn : ""
+  )
+  docs_cert_arn = var.DOCS_CERT_ARN != "" ? var.DOCS_CERT_ARN : (
+    length(aws_acm_certificate_validation.docs_cert) > 0 ? aws_acm_certificate_validation.docs_cert[0].certificate_arn : ""
   )
   api_cert_arn = var.API_CERT_ARN != "" ? var.API_CERT_ARN : (
     length(aws_acm_certificate_validation.api_cert) > 0 ? aws_acm_certificate_validation.api_cert[0].certificate_arn : ""
@@ -456,6 +478,20 @@ resource "github_actions_environment_variable" "envvar_frontend_distribution_id"
   environment   = github_repository_environment.repo_env.environment
   variable_name = "FRONTEND_DISTRIBUTION_ID"
   value         = aws_cloudfront_distribution.frontend.id
+}
+
+resource "github_actions_environment_variable" "envvar_docs_bucket" {
+  repository    = data.github_repository.repo.name
+  environment   = github_repository_environment.repo_env.environment
+  variable_name = "DOCS_BUCKET"
+  value         = aws_s3_bucket.docs.bucket
+}
+
+resource "github_actions_environment_variable" "envvar_docs_distribution_id" {
+  repository    = data.github_repository.repo.name
+  environment   = github_repository_environment.repo_env.environment
+  variable_name = "DOCS_DISTRIBUTION_ID"
+  value         = aws_cloudfront_distribution.docs.id
 }
 
 resource "github_actions_environment_variable" "envvar_vite_api_base_url" {
@@ -717,6 +753,25 @@ resource "aws_kms_key" "app_general" {
             "AWS:SourceArn" = "arn:aws:cloudfront::${data.aws_caller_identity.current.account_id}:distribution/${aws_cloudfront_distribution.frontend.id}"
           }
         }
+      },
+      {
+        Sid    = "AllowCloudFrontDocsOAC",
+        Effect = "Allow",
+        Principal = {
+          Service = "cloudfront.amazonaws.com"
+        },
+        Action = [
+          "kms:Encrypt",
+          "kms:Decrypt",
+          "kms:GenerateDataKey*",
+          "kms:DescribeKey"
+        ],
+        Resource = "*",
+        Condition = {
+          StringEquals = {
+            "AWS:SourceArn" = "arn:aws:cloudfront::${data.aws_caller_identity.current.account_id}:distribution/${aws_cloudfront_distribution.docs.id}"
+          }
+        }
       }
     ]
   })
@@ -746,8 +801,29 @@ resource "aws_s3_bucket" "frontend" {
   }
 }
 
+resource "aws_s3_bucket" "docs" {
+  #checkov:skip=CKV_AWS_18 reason: Access logging not enabled yet; will add if/when audit requirements demand it.
+  #checkov:skip=CKV_AWS_144 reason: Cross-region replication not required for current stage.
+  #checkov:skip=CKV2_AWS_61 reason: Lifecycle configuration not required for static docs bucket.
+  #checkov:skip=CKV2_AWS_62 reason: Event notifications not needed for static docs bucket.
+  bucket        = local.docs_bucket_name
+  force_destroy = true
+
+  tags = {
+    Name = "${local.name_prefix}-docs"
+  }
+}
+
 resource "aws_s3_bucket_public_access_block" "frontend" {
   bucket                  = aws_s3_bucket.frontend.id
+  block_public_acls       = true
+  block_public_policy     = true
+  ignore_public_acls      = true
+  restrict_public_buckets = true
+}
+
+resource "aws_s3_bucket_public_access_block" "docs" {
+  bucket                  = aws_s3_bucket.docs.id
   block_public_acls       = true
   block_public_policy     = true
   ignore_public_acls      = true
@@ -765,8 +841,27 @@ resource "aws_s3_bucket_server_side_encryption_configuration" "frontend" {
   }
 }
 
+resource "aws_s3_bucket_server_side_encryption_configuration" "docs" {
+  bucket = aws_s3_bucket.docs.id
+
+  rule {
+    apply_server_side_encryption_by_default {
+      sse_algorithm     = "aws:kms"
+      kms_master_key_id = aws_kms_key.app_general.arn
+    }
+  }
+}
+
 resource "aws_s3_bucket_versioning" "frontend" {
   bucket = aws_s3_bucket.frontend.id
+
+  versioning_configuration {
+    status = "Enabled"
+  }
+}
+
+resource "aws_s3_bucket_versioning" "docs" {
+  bucket = aws_s3_bucket.docs.id
 
   versioning_configuration {
     status = "Enabled"
@@ -803,6 +898,14 @@ resource "aws_s3_bucket_versioning" "transcripts" {
 resource "aws_cloudfront_origin_access_control" "frontend_oac" {
   name                              = "${local.name_prefix}-frontend-oac"
   description                       = "OAC for frontend bucket"
+  origin_access_control_origin_type = "s3"
+  signing_behavior                  = "always"
+  signing_protocol                  = "sigv4"
+}
+
+resource "aws_cloudfront_origin_access_control" "docs_oac" {
+  name                              = "${local.name_prefix}-docs-oac"
+  description                       = "OAC for docs bucket"
   origin_access_control_origin_type = "s3"
   signing_behavior                  = "always"
   signing_protocol                  = "sigv4"
@@ -896,6 +999,94 @@ resource "aws_cloudfront_distribution" "frontend" {
   aliases = var.FRONTEND_DOMAIN != "" ? [var.FRONTEND_DOMAIN] : []
 }
 
+resource "aws_cloudfront_distribution" "docs" {
+  #checkov:skip=CKV_AWS_86 reason: Access logging not enabled yet; will add if/when audit requirements demand it.
+  #checkov:skip=CKV_AWS_310 reason: Origin failover not configured; single-origin setup is acceptable for now.
+  #checkov:skip=CKV_AWS_374 reason: Geo restriction not required for current stage.
+  #checkov:skip=CKV_AWS_68 reason: WAF not enabled yet; to be evaluated closer to launch.
+  #checkov:skip=CKV2_AWS_42 reason: Custom SSL cert is conditional on DOCS_DOMAIN; default cert is acceptable if unset.
+  #checkov:skip=CKV2_AWS_32 reason: Response headers policy not attached yet; will be added with security hardening pass.
+  #checkov:skip=CKV2_AWS_47 reason: WAF AMR (Log4j) not configured without WAF.
+  enabled             = true
+  default_root_object = "index.html"
+
+  origin {
+    domain_name              = aws_s3_bucket.docs.bucket_regional_domain_name
+    origin_id                = "docs-s3"
+    origin_access_control_id = aws_cloudfront_origin_access_control.docs_oac.id
+  }
+
+  default_cache_behavior {
+    target_origin_id       = "docs-s3"
+    viewer_protocol_policy = "redirect-to-https"
+    allowed_methods        = ["GET", "HEAD"]
+    cached_methods         = ["GET", "HEAD"]
+
+    forwarded_values {
+      query_string = false
+      cookies {
+        forward = "none"
+      }
+    }
+
+    compress    = true
+    min_ttl     = 0
+    default_ttl = 600
+    max_ttl     = 3600
+  }
+
+  ordered_cache_behavior {
+    path_pattern           = "/assets/*"
+    target_origin_id       = "docs-s3"
+    viewer_protocol_policy = "redirect-to-https"
+    allowed_methods        = ["GET", "HEAD"]
+    cached_methods         = ["GET", "HEAD"]
+
+    forwarded_values {
+      query_string = false
+      cookies {
+        forward = "none"
+      }
+    }
+
+    compress    = true
+    min_ttl     = 3600
+    default_ttl = 86400
+    max_ttl     = 31536000
+  }
+
+  price_class = "PriceClass_100"
+
+  restrictions {
+    geo_restriction {
+      restriction_type = "none"
+    }
+  }
+
+  custom_error_response {
+    error_caching_min_ttl = 0
+    error_code            = 403
+    response_code         = 404
+    response_page_path    = "/404.html"
+  }
+
+  custom_error_response {
+    error_caching_min_ttl = 0
+    error_code            = 404
+    response_code         = 404
+    response_page_path    = "/404.html"
+  }
+
+  viewer_certificate {
+    acm_certificate_arn            = var.DOCS_DOMAIN != "" ? local.docs_cert_arn : null
+    cloudfront_default_certificate = var.DOCS_DOMAIN == ""
+    minimum_protocol_version       = "TLSv1.2_2021"
+    ssl_support_method             = var.DOCS_DOMAIN != "" ? "sni-only" : null
+  }
+
+  aliases = var.DOCS_DOMAIN != "" ? [var.DOCS_DOMAIN] : []
+}
+
 resource "aws_s3_bucket_policy" "frontend_oac_policy" {
   bucket = aws_s3_bucket.frontend.id
 
@@ -921,6 +1112,33 @@ resource "aws_s3_bucket_policy" "frontend_oac_policy" {
   })
 
   depends_on = [aws_cloudfront_distribution.frontend]
+}
+
+resource "aws_s3_bucket_policy" "docs_oac_policy" {
+  bucket = aws_s3_bucket.docs.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Principal = {
+          Service = "cloudfront.amazonaws.com"
+        }
+        Action = ["s3:GetObject"]
+        Resource = [
+          "${aws_s3_bucket.docs.arn}/*"
+        ]
+        Condition = {
+          StringEquals = {
+            "AWS:SourceArn" = "arn:aws:cloudfront::${data.aws_caller_identity.current.account_id}:distribution/${aws_cloudfront_distribution.docs.id}"
+          }
+        }
+      }
+    ]
+  })
+
+  depends_on = [aws_cloudfront_distribution.docs]
 }
 
 resource "aws_s3_bucket_lifecycle_configuration" "transcripts" {
@@ -1011,8 +1229,6 @@ resource "aws_iam_policy" "dynamodb_access_policy" {
         Resource = [
           aws_dynamodb_table.payment_transaction_table.arn,
           aws_dynamodb_table.stripe_webhook_event_table.arn,
-          aws_dynamodb_table.interaction_receipt_table.arn,
-          aws_dynamodb_table.active_meeting_table.arn,
           aws_dynamodb_table.access_logs_table.arn,
           aws_dynamodb_table.recording_transcript_table.arn,
           aws_dynamodb_table.auto_record_settings_table.arn,
@@ -1027,7 +1243,6 @@ resource "aws_iam_policy" "dynamodb_access_policy" {
           aws_dynamodb_table.feedback_table.arn,
           aws_dynamodb_table.meeting_history_table.arn,
           "${aws_dynamodb_table.meeting_history_table.arn}/index/*",
-          aws_dynamodb_table.meeting_share_table.arn,
           aws_dynamodb_table.installer_table.arn,
           aws_dynamodb_table.onboarding_state_table.arn,
           aws_dynamodb_table.guild_subscription_table.arn
@@ -1541,64 +1756,6 @@ resource "aws_dynamodb_table" "stripe_webhook_event_table" {
   }
 }
 
-resource "aws_dynamodb_table" "interaction_receipt_table" {
-  name         = "${local.name_prefix}-InteractionReceiptTable"
-  billing_mode = "PAY_PER_REQUEST"
-  hash_key     = "interactionId"
-
-  attribute {
-    name = "interactionId"
-    type = "S"
-  }
-
-  ttl {
-    attribute_name = "expiresAt"
-    enabled        = true
-  }
-
-  point_in_time_recovery {
-    enabled = true
-  }
-
-  server_side_encryption {
-    enabled     = true
-    kms_key_arn = aws_kms_key.app_general.arn
-  }
-
-  tags = {
-    Name = "InteractionReceiptTable"
-  }
-}
-
-resource "aws_dynamodb_table" "active_meeting_table" {
-  name         = "${local.name_prefix}-ActiveMeetingTable"
-  billing_mode = "PAY_PER_REQUEST"
-  hash_key     = "guildId"
-
-  attribute {
-    name = "guildId"
-    type = "S"
-  }
-
-  ttl {
-    attribute_name = "expiresAt"
-    enabled        = true
-  }
-
-  point_in_time_recovery {
-    enabled = true
-  }
-
-  server_side_encryption {
-    enabled     = true
-    kms_key_arn = aws_kms_key.app_general.arn
-  }
-
-  tags = {
-    Name = "ActiveMeetingTable"
-  }
-}
-
 resource "aws_dynamodb_table" "access_logs_table" {
   name         = "${local.name_prefix}-AccessLogsTable"
   billing_mode = "PAY_PER_REQUEST"
@@ -2012,37 +2169,6 @@ resource "aws_dynamodb_table" "meeting_history_table" {
   }
 }
 
-# Meeting Share Table
-resource "aws_dynamodb_table" "meeting_share_table" {
-  name         = "${local.name_prefix}-MeetingShareTable"
-  billing_mode = "PAY_PER_REQUEST"
-  hash_key     = "pk"
-  range_key    = "sk"
-
-  attribute {
-    name = "pk"
-    type = "S"
-  }
-
-  attribute {
-    name = "sk"
-    type = "S"
-  }
-
-  point_in_time_recovery {
-    enabled = true
-  }
-
-  server_side_encryption {
-    enabled     = true
-    kms_key_arn = aws_kms_key.app_general.arn
-  }
-
-  tags = {
-    Name = "MeetingShareTable"
-  }
-}
-
 # Output the VPC ID
 output "vpc_id" {
   value = aws_vpc.app_vpc.id
@@ -2072,6 +2198,18 @@ output "frontend_distribution_domain_name" {
 
 output "frontend_distribution_id" {
   value = aws_cloudfront_distribution.frontend.id
+}
+
+output "docs_bucket_name" {
+  value = aws_s3_bucket.docs.bucket
+}
+
+output "docs_distribution_domain_name" {
+  value = aws_cloudfront_distribution.docs.domain_name
+}
+
+output "docs_distribution_id" {
+  value = aws_cloudfront_distribution.docs.id
 }
 
 # Flow logs IAM role

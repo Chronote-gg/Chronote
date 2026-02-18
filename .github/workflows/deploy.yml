@@ -104,6 +104,26 @@ jobs:
           fi
           echo "Build artifacts verified successfully"
 
+  docs-check:
+    name: Docs Check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: "22.13.0"
+          cache: "yarn"
+          cache-dependency-path: "yarn.lock"
+
+      - name: Install dependencies
+        run: yarn install --frozen-lockfile
+
+      - name: Build and validate docs
+        run: yarn docs:check
+
   code-stats:
     name: Code Stats
     runs-on: ubuntu-latest
@@ -251,6 +271,7 @@ jobs:
         prettier,
         test,
         build,
+        docs-check,
         code-stats,
         checkov,
         prompts-check,
@@ -480,6 +501,7 @@ jobs:
         prettier,
         test,
         build,
+        docs-check,
         code-stats,
         checkov,
         prompts-check,
@@ -538,3 +560,70 @@ jobs:
             exit 1
           fi
           aws cloudfront create-invalidation --distribution-id "$FRONTEND_DISTRIBUTION_ID" --paths "/*"
+
+  deploy-docs:
+    name: Deploy Docs
+    needs:
+      [
+        lint,
+        prettier,
+        test,
+        build,
+        docs-check,
+        code-stats,
+        checkov,
+        prompts-check,
+        llm-connections-check,
+        e2e-tests,
+      ]
+    runs-on: ubuntu-latest
+    environment: sandbox
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          aws-access-key-id: ${{ vars.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: "22.13.0"
+          cache: "yarn"
+          cache-dependency-path: "yarn.lock"
+
+      - name: Install dependencies
+        run: yarn install --frozen-lockfile
+
+      - name: Build docs site
+        run: yarn docs:build
+
+      - name: Sync docs to S3
+        env:
+          DOCS_BUCKET: ${{ vars.DOCS_BUCKET }}
+        run: |
+          if [ -z "$DOCS_BUCKET" ]; then
+            echo "DOCS_BUCKET not set in environment variables"
+            exit 1
+          fi
+
+          aws s3 sync build/docs-site s3://$DOCS_BUCKET --delete --cache-control "public,max-age=600"
+
+          if [ -d build/docs-site/assets ]; then
+            aws s3 sync build/docs-site/assets s3://$DOCS_BUCKET/assets --cache-control "public,max-age=31536000,immutable"
+          fi
+
+      - name: Invalidate docs CloudFront
+        env:
+          DOCS_DISTRIBUTION_ID: ${{ vars.DOCS_DISTRIBUTION_ID }}
+        run: |
+          if [ -z "$DOCS_DISTRIBUTION_ID" ]; then
+            echo "DOCS_DISTRIBUTION_ID not set in environment variables"
+            exit 1
+          fi
+
+          aws cloudfront create-invalidation --distribution-id "$DOCS_DISTRIBUTION_ID" --paths "/*"

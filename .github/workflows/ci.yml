@@ -143,6 +143,25 @@ jobs:
       - name: Build backend and frontend
         run: yarn build:all
 
+  docs-check:
+    name: Docs Check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: "22.13.0"
+          cache: "yarn"
+
+      - name: Install dependencies
+        run: yarn install --frozen-lockfile
+
+      - name: Build and validate docs
+        run: yarn docs:check
+
   docker-build:
     name: Docker Build
     runs-on: ubuntu-latest

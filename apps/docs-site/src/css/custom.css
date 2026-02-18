@@ -1,0 +1,33 @@
+:root {
+  --ifm-color-primary: #125d69;
+  --ifm-color-primary-dark: #0f4f59;
+  --ifm-color-primary-darker: #0d454d;
+  --ifm-color-primary-darkest: #0a353b;
+  --ifm-color-primary-light: #167083;
+  --ifm-color-primary-lighter: #1b7f94;
+  --ifm-color-primary-lightest: #2897ae;
+  --ifm-background-color: #f7fbfd;
+  --ifm-font-family-base: "Manrope", "Segoe UI", sans-serif;
+  --ifm-heading-font-family: "Outfit", "Segoe UI", sans-serif;
+  --ifm-code-font-size: 95%;
+}
+
+@import url("https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700&family=Outfit:wght@600;700&display=swap");
+
+.hero {
+  background: linear-gradient(140deg, #d9f0f3 0%, #f7fbfd 45%, #fff4dd 100%);
+}
+
+.navbar {
+  backdrop-filter: saturate(130%) blur(6px);
+}
+
+[data-theme="dark"] {
+  --ifm-color-primary: #52c7d2;
+  --ifm-color-primary-dark: #36bac7;
+  --ifm-color-primary-darker: #2fb0bc;
+  --ifm-color-primary-darkest: #278f9a;
+  --ifm-color-primary-light: #6ad0da;
+  --ifm-color-primary-lighter: #77d5de;
+  --ifm-color-primary-lightest: #9ce1e7;
+}
