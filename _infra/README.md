@@ -43,17 +43,16 @@ definition. You must set the secret values after the first apply.
 
 1. Apply Terraform as usual: `terraform apply`
 2. In AWS Secrets Manager, set **SecretString** values for:
+   - `${project_name}-${environment}/discord-bot-token`
+   - `${project_name}-${environment}/discord-client-secret`
+   - `${project_name}-${environment}/oauth-secret`
+   - `${project_name}-${environment}/openai-api-key`
+   - `${project_name}-${environment}/langfuse-public-key`
+   - `${project_name}-${environment}/langfuse-secret-key`
+   - `${project_name}-${environment}/stripe-secret-key`
+   - `${project_name}-${environment}/stripe-webhook-secret`
 
-- `${project_name}-${environment}/discord-bot-token`
-- `${project_name}-${environment}/discord-client-secret`
-- `${project_name}-${environment}/oauth-secret`
-- `${project_name}-${environment}/openai-api-key`
-- `${project_name}-${environment}/langfuse-public-key`
-- `${project_name}-${environment}/langfuse-secret-key`
-- `${project_name}-${environment}/stripe-secret-key`
-- `${project_name}-${environment}/stripe-webhook-secret`
-
-1. Redeploy the ECS service (or force a new deployment) so tasks pick up the new secrets.
+3. Redeploy the ECS service (or force a new deployment) so tasks pick up the new secrets.
 
 Notes:
 
