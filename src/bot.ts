@@ -117,6 +117,8 @@ import {
   dismissAutoRecordCommand,
   handleDismissAutoRecord,
 } from "./commands/dismissAutoRecord";
+import { claimInteractionReceipt } from "./services/interactionIdempotencyService";
+import { tryReplyToUnacknowledgedInteraction } from "./services/interactionResponseService";
 
 const TOKEN = config.discord.botToken;
 const CLIENT_ID = config.discord.clientId;
@@ -365,6 +367,46 @@ const handleInteractionCreate = async (interaction: RepliableInteraction) => {
   }
 };
 
+const resolveInteractionKind = (interaction: RepliableInteraction): string => {
+  if (interaction.isChatInputCommand()) {
+    return `chat-input:${interaction.commandName}`;
+  }
+  if (interaction.isUserContextMenuCommand()) {
+    return `user-context:${interaction.commandName}`;
+  }
+  if (interaction.isButton()) {
+    return `button:${interaction.customId}`;
+  }
+  if (interaction.isModalSubmit()) {
+    return `modal:${interaction.customId}`;
+  }
+  if (interaction.isChannelSelectMenu()) {
+    return `channel-select:${interaction.customId}`;
+  }
+  return "other";
+};
+
+const tryClaimInteraction = async (
+  interaction: RepliableInteraction,
+): Promise<boolean> => {
+  try {
+    return await claimInteractionReceipt({
+      interactionId: interaction.id,
+      interactionKind: resolveInteractionKind(interaction),
+      guildId: interaction.guildId ?? undefined,
+    });
+  } catch (error) {
+    console.error(
+      "Failed to claim interaction receipt, continuing without idempotency",
+      {
+        interactionId: interaction.id,
+        error,
+      },
+    );
+    return true;
+  }
+};
+
 export async function setupBot() {
   if (!TOKEN || !CLIENT_ID) {
     throw new Error(
@@ -463,13 +505,33 @@ export async function setupBot() {
     }
     try {
       if (interaction.isRepliable()) {
+        const claimed = await tryClaimInteraction(interaction);
+        if (!claimed) {
+          console.log("Skipping duplicate interaction", {
+            interactionId: interaction.id,
+            interactionKind: resolveInteractionKind(interaction),
+          });
+          return;
+        }
         await handleInteractionCreate(interaction);
       }
     } catch (e) {
       console.error("Unknown error processing command: ", e);
       try {
         if (interaction.isRepliable()) {
-          await interaction.reply("Unknown Error handling request.");
+          const sent = await tryReplyToUnacknowledgedInteraction(
+            interaction,
+            "Unknown Error handling request.",
+          );
+          if (!sent) {
+            console.log(
+              "Skipped unknown error reply because interaction is acknowledged",
+              {
+                interactionId: interaction.id,
+                interactionKind: resolveInteractionKind(interaction),
+              },
+            );
+          }
         }
       } catch (e2) {
         console.error("Error replying to interaction about initial error", e2);

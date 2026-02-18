@@ -44,6 +44,20 @@ const tables = [
     BillingMode: "PAY_PER_REQUEST",
   },
   {
+    TableName: "InteractionReceiptTable",
+    KeySchema: [{ AttributeName: "interactionId", KeyType: "HASH" }],
+    AttributeDefinitions: [
+      { AttributeName: "interactionId", AttributeType: "S" },
+    ],
+    BillingMode: "PAY_PER_REQUEST",
+  },
+  {
+    TableName: "ActiveMeetingTable",
+    KeySchema: [{ AttributeName: "guildId", KeyType: "HASH" }],
+    AttributeDefinitions: [{ AttributeName: "guildId", AttributeType: "S" }],
+    BillingMode: "PAY_PER_REQUEST",
+  },
+  {
     TableName: "AccessLogsTable",
     KeySchema: [{ AttributeName: "AccessLogID", KeyType: "HASH" }],
     AttributeDefinitions: [
