@@ -398,8 +398,16 @@ export default function ContactFeedback() {
         URL.revokeObjectURL(img.previewUrl);
       }
       setSubmitted(true);
-    } catch {
-      // tRPC error state handled by submitMutation.error in the UI
+    } catch (err) {
+      // Surface upload URL or submit errors that aren't captured by mutation state
+      if (!uploadError && !submitMutation.error) {
+        setUploadError({
+          message:
+            err instanceof Error
+              ? err.message
+              : "An unexpected error occurred.",
+        });
+      }
     } finally {
       setIsUploading(false);
     }
