@@ -9,6 +9,7 @@ const hasAlgoliaConfig =
   algoliaAppId !== "" && algoliaApiKey !== "" && algoliaIndexName !== "";
 const forceLocalSearch = process.env.DOCS_SEARCH_PROVIDER === "local";
 const useLocalSearch = forceLocalSearch || !hasAlgoliaConfig;
+const useAlgolia = hasAlgoliaConfig && !forceLocalSearch;
 
 const config: Config = {
   title: "Chronote Docs",
@@ -133,7 +134,7 @@ const config: Config = {
       ],
       copyright: `Copyright ${new Date().getFullYear()} Chronote`,
     },
-    ...(hasAlgoliaConfig
+    ...(useAlgolia
       ? {
           algolia: {
             appId: algoliaAppId,

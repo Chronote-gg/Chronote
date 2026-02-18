@@ -552,7 +552,7 @@ jobs:
             exit 1
           fi
 
-          aws s3 sync build/docs-site s3://$DOCS_BUCKET --delete --cache-control "public,max-age=600"
+          aws s3 sync build/docs-site s3://$DOCS_BUCKET --delete --exclude "assets/*" --cache-control "public,max-age=600"
 
           if [ -d build/docs-site/assets ]; then
             aws s3 sync build/docs-site/assets s3://$DOCS_BUCKET/assets --cache-control "public,max-age=31536000,immutable"

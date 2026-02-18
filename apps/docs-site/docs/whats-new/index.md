@@ -15,7 +15,7 @@ Notable product changes for Chronote users. For the full changelog, see the [Git
 
 ### Meeting sharing
 
-- Share meeting notes via a public link from the web portal or Discord.
+- Share meeting notes via a public link from the web portal.
 - Recipients can view the meeting summary, notes, and transcript without joining your server.
 
 ### Notes correction flow
