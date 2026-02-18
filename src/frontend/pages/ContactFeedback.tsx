@@ -35,6 +35,40 @@ import { executeRecaptcha, useRecaptchaScript } from "../hooks/useRecaptcha";
 const HONEYPOT_FIELD_NAME = "website_url";
 const IMAGE_SIZE_LABEL = `${CONTACT_FEEDBACK_MAX_IMAGE_BYTES / (1024 * 1024)}MB`;
 
+/** Upload images to S3 via presigned URLs. Returns keys on success, or an error message. */
+async function uploadImagesToS3(
+  images: { file: File; previewUrl: string }[],
+  getUploadUrl: (input: {
+    fileName: string;
+    contentType: (typeof CONTACT_FEEDBACK_ALLOWED_IMAGE_TYPES)[number];
+  }) => Promise<{ url: string; key: string }>,
+): Promise<{ keys: string[] } | { error: string }> {
+  const keys: string[] = [];
+  for (const img of images) {
+    const { url, key } = await getUploadUrl({
+      fileName: img.file.name,
+      contentType: img.file
+        .type as (typeof CONTACT_FEEDBACK_ALLOWED_IMAGE_TYPES)[number],
+    });
+    const response = await fetch(url, {
+      method: "PUT",
+      body: img.file,
+      headers: { "Content-Type": img.file.type },
+    });
+    if (!response.ok) {
+      return {
+        error: `Failed to upload "${img.file.name}". Please try again.`,
+      };
+    }
+    keys.push(key);
+  }
+  return { keys };
+}
+
+function extractErrorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : "An unexpected error occurred.";
+}
+
 type PendingImage = {
   file: File;
   previewUrl: string;
@@ -359,30 +393,18 @@ export default function ContactFeedback() {
     setUploadError(null);
     setIsUploading(true);
     try {
-      let recaptchaToken: string | undefined;
-      if (!user && recaptchaReady) {
-        recaptchaToken = await executeRecaptcha("submit_feedback");
-      }
+      const recaptchaToken =
+        !user && recaptchaReady
+          ? await executeRecaptcha("submit_feedback")
+          : undefined;
 
-      const imageS3Keys: string[] = [];
-      for (const img of data.images) {
-        const { url, key } = await getUploadUrlMutation.mutateAsync({
-          fileName: img.file.name,
-          contentType: img.file
-            .type as (typeof CONTACT_FEEDBACK_ALLOWED_IMAGE_TYPES)[number],
-        });
-        const uploadResponse = await fetch(url, {
-          method: "PUT",
-          body: img.file,
-          headers: { "Content-Type": img.file.type },
-        });
-        if (!uploadResponse.ok) {
-          setUploadError({
-            message: `Failed to upload "${img.file.name}". Please try again.`,
-          });
-          return;
-        }
-        imageS3Keys.push(key);
+      const uploadResult = await uploadImagesToS3(
+        data.images,
+        getUploadUrlMutation.mutateAsync,
+      );
+      if ("error" in uploadResult) {
+        setUploadError({ message: uploadResult.error });
+        return;
       }
 
       await submitMutation.mutateAsync({
@@ -391,22 +413,15 @@ export default function ContactFeedback() {
         contactDiscord: data.contactDiscord,
         honeypot: data.honeypot,
         recaptchaToken,
-        imageS3Keys: imageS3Keys.length > 0 ? imageS3Keys : undefined,
+        imageS3Keys:
+          uploadResult.keys.length > 0 ? uploadResult.keys : undefined,
       });
 
-      for (const img of data.images) {
-        URL.revokeObjectURL(img.previewUrl);
-      }
+      data.images.forEach((img) => URL.revokeObjectURL(img.previewUrl));
       setSubmitted(true);
     } catch (err) {
-      // Surface upload URL or submit errors that aren't captured by mutation state
       if (!uploadError && !submitMutation.error) {
-        setUploadError({
-          message:
-            err instanceof Error
-              ? err.message
-              : "An unexpected error occurred.",
-        });
+        setUploadError({ message: extractErrorMessage(err) });
       }
     } finally {
       setIsUploading(false);
