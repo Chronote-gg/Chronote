@@ -15,6 +15,7 @@ import SiteFooter from "../../components/SiteFooter";
 import SiteHeader from "../../components/SiteHeader";
 import Surface from "../../components/Surface";
 import { useVisualMode } from "../../hooks/useVisualMode";
+import { useSharePageMeta } from "../../hooks/useSharePageMeta";
 import type {
   AskConversation,
   AskMessage,
@@ -93,6 +94,8 @@ export function PublicAskView({
   const colorScheme = useComputedColorScheme("dark");
   const isDark = colorScheme === "dark";
   const visualMode = useVisualMode();
+
+  useSharePageMeta();
 
   useEffect(() => {
     if (!highlightedMessageId) return;

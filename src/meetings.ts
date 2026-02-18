@@ -63,6 +63,11 @@ export function addMeeting(meeting: MeetingData) {
 }
 
 export function deleteMeeting(guildId: string) {
+  const meeting = meetings.get(guildId);
+  if (meeting?.leaseHeartbeatTimer) {
+    clearInterval(meeting.leaseHeartbeatTimer);
+    meeting.leaseHeartbeatTimer = undefined;
+  }
   meetings.delete(guildId);
 }
 
@@ -80,6 +85,8 @@ export function deleteMeetingSetup(key: string) {
 }
 
 export interface MeetingInitOptions {
+  meetingId?: string;
+  leaseOwnerInstanceId?: string;
   voiceChannel: VoiceBasedChannel;
   textChannel: TextChannel;
   guild: Guild;
@@ -117,6 +124,8 @@ export async function initializeMeeting(
   options: MeetingInitOptions,
 ): Promise<MeetingData> {
   const {
+    meetingId,
+    leaseOwnerInstanceId,
     voiceChannel,
     textChannel,
     guild,
@@ -193,7 +202,7 @@ export async function initializeMeeting(
   });
 
   const meeting: MeetingData = {
-    meetingId: uuidv4(),
+    meetingId: meetingId ?? uuidv4(),
     chatLog: [],
     attendance,
     connection,
@@ -231,6 +240,7 @@ export async function initializeMeeting(
     participants: new Map(),
     tags,
     subscriptionTier,
+    leaseOwnerInstanceId,
   };
 
   if (liveAudioPlayer) {

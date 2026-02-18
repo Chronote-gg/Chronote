@@ -11,6 +11,7 @@ import { contactFeedbackRouter } from "./routers/contactFeedback";
 import { feedbackRouter } from "./routers/feedback";
 import { adminFeedbackRouter } from "./routers/adminFeedback";
 import { meetingsRouter } from "./routers/meetings";
+import { meetingSharesRouter } from "./routers/meetingShares";
 import { pricingRouter } from "./routers/pricing";
 import { serversRouter } from "./routers/servers";
 
@@ -27,6 +28,7 @@ export const appRouter = router({
   feedback: feedbackRouter,
   adminFeedback: adminFeedbackRouter,
   meetings: meetingsRouter,
+  meetingShares: meetingSharesRouter,
   pricing: pricingRouter,
   servers: serversRouter,
 });

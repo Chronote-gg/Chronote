@@ -29,6 +29,7 @@ const UpgradeSuccess = lazyRouteComponent(
 const Library = lazyRouteComponent(() => import("./pages/Library"));
 const Ask = lazyRouteComponent(() => import("./pages/Ask"));
 const PublicAsk = lazyRouteComponent(() => import("./pages/PublicAsk"));
+const PublicMeeting = lazyRouteComponent(() => import("./pages/PublicMeeting"));
 const Billing = lazyRouteComponent(() => import("./pages/Billing"));
 const Settings = lazyRouteComponent(() => import("./pages/Settings"));
 const LiveMeeting = lazyRouteComponent(() => import("./pages/LiveMeeting"));
@@ -242,6 +243,12 @@ const publicAskRoute = new Route({
   validateSearch: publicAskSearchSchema,
 });
 
+const publicMeetingRoute = new Route({
+  getParentRoute: () => rootRoute,
+  path: "share/meeting/$serverId/$shareId",
+  component: PublicMeeting,
+});
+
 const portalBillingRoute = new Route({
   getParentRoute: () => portalServerRoute,
   path: "billing",
@@ -315,6 +322,7 @@ const routeTree = rootRoute.addChildren([
     adminFeedbackRoute,
   ]),
   publicAskRoute,
+  publicMeetingRoute,
   portalRoute.addChildren([
     portalIndexRoute,
     portalSelectRoute,

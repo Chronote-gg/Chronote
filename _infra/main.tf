@@ -1011,6 +1011,8 @@ resource "aws_iam_policy" "dynamodb_access_policy" {
         Resource = [
           aws_dynamodb_table.payment_transaction_table.arn,
           aws_dynamodb_table.stripe_webhook_event_table.arn,
+          aws_dynamodb_table.interaction_receipt_table.arn,
+          aws_dynamodb_table.active_meeting_table.arn,
           aws_dynamodb_table.access_logs_table.arn,
           aws_dynamodb_table.recording_transcript_table.arn,
           aws_dynamodb_table.auto_record_settings_table.arn,
@@ -1025,6 +1027,7 @@ resource "aws_iam_policy" "dynamodb_access_policy" {
           aws_dynamodb_table.feedback_table.arn,
           aws_dynamodb_table.meeting_history_table.arn,
           "${aws_dynamodb_table.meeting_history_table.arn}/index/*",
+          aws_dynamodb_table.meeting_share_table.arn,
           aws_dynamodb_table.installer_table.arn,
           aws_dynamodb_table.onboarding_state_table.arn,
           aws_dynamodb_table.guild_subscription_table.arn
@@ -1538,6 +1541,64 @@ resource "aws_dynamodb_table" "stripe_webhook_event_table" {
   }
 }
 
+resource "aws_dynamodb_table" "interaction_receipt_table" {
+  name         = "${local.name_prefix}-InteractionReceiptTable"
+  billing_mode = "PAY_PER_REQUEST"
+  hash_key     = "interactionId"
+
+  attribute {
+    name = "interactionId"
+    type = "S"
+  }
+
+  ttl {
+    attribute_name = "expiresAt"
+    enabled        = true
+  }
+
+  point_in_time_recovery {
+    enabled = true
+  }
+
+  server_side_encryption {
+    enabled     = true
+    kms_key_arn = aws_kms_key.app_general.arn
+  }
+
+  tags = {
+    Name = "InteractionReceiptTable"
+  }
+}
+
+resource "aws_dynamodb_table" "active_meeting_table" {
+  name         = "${local.name_prefix}-ActiveMeetingTable"
+  billing_mode = "PAY_PER_REQUEST"
+  hash_key     = "guildId"
+
+  attribute {
+    name = "guildId"
+    type = "S"
+  }
+
+  ttl {
+    attribute_name = "expiresAt"
+    enabled        = true
+  }
+
+  point_in_time_recovery {
+    enabled = true
+  }
+
+  server_side_encryption {
+    enabled     = true
+    kms_key_arn = aws_kms_key.app_general.arn
+  }
+
+  tags = {
+    Name = "ActiveMeetingTable"
+  }
+}
+
 resource "aws_dynamodb_table" "access_logs_table" {
   name         = "${local.name_prefix}-AccessLogsTable"
   billing_mode = "PAY_PER_REQUEST"
@@ -1990,6 +2051,37 @@ resource "aws_dynamodb_table" "meeting_history_table" {
 
   tags = {
     Name = "MeetingHistoryTable"
+  }
+}
+
+# Meeting Share Table
+resource "aws_dynamodb_table" "meeting_share_table" {
+  name         = "${local.name_prefix}-MeetingShareTable"
+  billing_mode = "PAY_PER_REQUEST"
+  hash_key     = "pk"
+  range_key    = "sk"
+
+  attribute {
+    name = "pk"
+    type = "S"
+  }
+
+  attribute {
+    name = "sk"
+    type = "S"
+  }
+
+  point_in_time_recovery {
+    enabled = true
+  }
+
+  server_side_encryption {
+    enabled     = true
+    kms_key_arn = aws_kms_key.app_general.arn
+  }
+
+  tags = {
+    Name = "MeetingShareTable"
   }
 }
 

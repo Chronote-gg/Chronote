@@ -702,6 +702,21 @@ export const CONFIG_REGISTRY: ConfigEntry[] = [
     ui: { type: "text", placeholder: "project x, roadmap, weekly" },
   },
   {
+    key: "meetings.sharing.policy",
+    label: "Meeting sharing policy",
+    description:
+      "Controls whether meeting share links can be created, and whether links can be public.",
+    category: "Meetings",
+    group: "Standard",
+    valueType: "select",
+    defaultValue: "server",
+    scopes: {
+      global: scope(true, true, "superadmin", "select"),
+      server: scope(true, false, "admin", "select"),
+    },
+    ui: { type: "segmented", options: ["off", "server", "public"] },
+  },
+  {
     key: "visionCaptions.enabled",
     label: "Vision captions",
     description:
@@ -896,20 +911,6 @@ export const CONFIG_REGISTRY: ConfigEntry[] = [
       server: scope(true, false, "admin", "select"),
     },
     ui: { type: "segmented", options: ["off", "server", "public"] },
-  },
-  {
-    key: "meetings.attendeeAccess.enabled",
-    label: "Attendee access",
-    description:
-      "Allow meeting participants to access a meeting in the portal even if they later lose channel permissions.",
-    category: "Library",
-    group: "Standard",
-    valueType: "boolean",
-    defaultValue: true,
-    scopes: {
-      server: scope(true, true, "admin", "toggle"),
-    },
-    ui: { type: "toggle" },
   },
   ...buildModelSelectionEntries(),
   ...buildModelParamEntries(),

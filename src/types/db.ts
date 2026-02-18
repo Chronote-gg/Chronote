@@ -43,6 +43,30 @@ export interface StripeWebhookEvent {
   expiresAt: number;
 }
 
+export interface InteractionReceipt {
+  interactionId: string;
+  createdAt: string;
+  expiresAt: number;
+  guildId?: string;
+  interactionKind: string;
+}
+
+export interface ActiveMeetingLease {
+  guildId: string;
+  meetingId: string;
+  ownerInstanceId: string;
+  voiceChannelId: string;
+  voiceChannelName?: string;
+  textChannelId: string;
+  isAutoRecording: boolean;
+  leaseExpiresAt: number;
+  createdAt: string;
+  updatedAt: string;
+  expiresAt: number;
+  endRequestedAt?: string;
+  endRequestedByUserId?: string;
+}
+
 // Access Logs Type
 export interface AccessLog {
   accessLogID: string;
@@ -320,4 +344,31 @@ export interface AskConversationShareRecord {
   sharedByTag?: string;
   archivedAt?: string;
   archivedByUserId?: string;
+}
+
+export type MeetingShareVisibility = "server" | "public";
+
+export interface MeetingShareRecord {
+  pk: string;
+  sk: string;
+  type: "meetingShare";
+  guildId: string;
+  meetingId: string;
+  shareId: string;
+  visibility: MeetingShareVisibility;
+  sharedAt: string;
+  sharedByUserId: string;
+  sharedByTag?: string;
+  rotatedAt?: string;
+}
+
+export interface MeetingShareByMeetingRecord {
+  pk: string;
+  sk: string;
+  type: "meetingShareByMeeting";
+  guildId: string;
+  meetingId: string;
+  shareId: string;
+  visibility: MeetingShareVisibility;
+  updatedAt: string;
 }

@@ -49,6 +49,7 @@ import {
   cleanupMeetingTempDir,
   ensureMeetingTempDir,
 } from "../services/tempFileService";
+import { releaseMeetingLeaseForMeeting } from "../services/activeMeetingLeaseService";
 
 type EndMeetingFlowOptions = {
   client: Client;
@@ -66,6 +67,10 @@ async function runMeetingEndStep<T>(
   const durationMs = Date.now() - startedAt;
   console.log(`Meeting end step completed: ${name} durationMs=${durationMs}`);
   return result;
+}
+
+function shouldReleaseLeaseDuringErrorCleanup(meeting: MeetingData): boolean {
+  return !meeting.finishing && !meeting.finished;
 }
 
 export async function handleEndMeetingButton(
@@ -112,6 +117,20 @@ export async function handleEndMeetingButton(
   } catch (error) {
     console.error("Error during meeting end:", error);
     if (meeting && hasMeeting(meeting.guildId)) {
+      if (shouldReleaseLeaseDuringErrorCleanup(meeting)) {
+        try {
+          await releaseMeetingLeaseForMeeting(meeting);
+        } catch (releaseError) {
+          console.error(
+            "Failed to release meeting lease during error cleanup",
+            {
+              guildId: meeting.guildId,
+              meetingId: meeting.meetingId,
+              error: releaseError,
+            },
+          );
+        }
+      }
       meeting.setFinished();
       meeting.finished = true;
       deleteMeeting(meeting.guildId);
@@ -133,6 +152,20 @@ export async function handleEndMeetingOther(
   } catch (error) {
     console.error("Error during meeting end:", error);
     if (meeting && hasMeeting(meeting.guildId)) {
+      if (shouldReleaseLeaseDuringErrorCleanup(meeting)) {
+        try {
+          await releaseMeetingLeaseForMeeting(meeting);
+        } catch (releaseError) {
+          console.error(
+            "Failed to release meeting lease during error cleanup",
+            {
+              guildId: meeting.guildId,
+              meetingId: meeting.meetingId,
+              error: releaseError,
+            },
+          );
+        }
+      }
       meeting.setFinished();
       meeting.finished = true;
       deleteMeeting(meeting.guildId);
@@ -337,6 +370,21 @@ async function runEndMeetingFlow(options: EndMeetingFlowOptions) {
     meeting.finished = true;
     deleteMeeting(meeting.guildId);
   } finally {
+    try {
+      const released = await releaseMeetingLeaseForMeeting(meeting);
+      if (!released) {
+        console.warn("Failed to release active meeting lease ownership", {
+          guildId: meeting.guildId,
+          meetingId: meeting.meetingId,
+        });
+      }
+    } catch (error) {
+      console.error("Error releasing active meeting lease", {
+        guildId: meeting.guildId,
+        meetingId: meeting.meetingId,
+        error,
+      });
+    }
     await cleanupMeetingTempDir(meeting);
   }
 }

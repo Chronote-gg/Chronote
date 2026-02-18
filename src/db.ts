@@ -24,12 +24,16 @@ import {
   PaymentTransaction,
   RecordingTranscript,
   ServerContext,
+  ActiveMeetingLease,
   StripeWebhookEvent,
+  InteractionReceipt,
   SuggestionHistoryEntry,
   UserSpeechSettings,
   DictionaryEntry,
   ConfigOverrideRecord,
   AskConversationShareRecord,
+  MeetingShareRecord,
+  MeetingShareByMeetingRecord,
   FeedbackRecord,
   FeedbackTargetType,
   ContactFeedbackRecord,
@@ -117,6 +121,197 @@ export async function getStripeWebhookEvent(
     return unmarshall(result.Item) as StripeWebhookEvent;
   }
   return undefined;
+}
+
+export async function tryCreateInteractionReceipt(
+  receipt: InteractionReceipt,
+): Promise<boolean> {
+  const params = {
+    TableName: tableName("InteractionReceiptTable"),
+    Item: marshall(receipt, { removeUndefinedValues: true }),
+    ConditionExpression: "attribute_not_exists(interactionId)",
+  };
+  const command = new PutItemCommand(params);
+  try {
+    await dynamoDbClient.send(command);
+    return true;
+  } catch (error) {
+    if (
+      (error as { name?: string }).name === "ConditionalCheckFailedException"
+    ) {
+      return false;
+    }
+    throw error;
+  }
+}
+
+export async function tryAcquireActiveMeetingLease(
+  lease: ActiveMeetingLease,
+  nowEpochSeconds: number,
+): Promise<boolean> {
+  const sameOwnerSameMeetingCondition =
+    "#ownerInstanceId = :ownerInstanceId AND #meetingId = :meetingId";
+  const params = {
+    TableName: tableName("ActiveMeetingTable"),
+    Item: marshall(lease, { removeUndefinedValues: true }),
+    ConditionExpression: `attribute_not_exists(#guildId) OR #leaseExpiresAt < :now OR (${sameOwnerSameMeetingCondition})`,
+    ExpressionAttributeNames: {
+      "#guildId": "guildId",
+      "#leaseExpiresAt": "leaseExpiresAt",
+      "#ownerInstanceId": "ownerInstanceId",
+      "#meetingId": "meetingId",
+    },
+    ExpressionAttributeValues: marshall({
+      ":now": nowEpochSeconds,
+      ":ownerInstanceId": lease.ownerInstanceId,
+      ":meetingId": lease.meetingId,
+    }),
+  };
+  const command = new PutItemCommand(params);
+  try {
+    await dynamoDbClient.send(command);
+    return true;
+  } catch (error) {
+    if (
+      (error as { name?: string }).name === "ConditionalCheckFailedException"
+    ) {
+      return false;
+    }
+    throw error;
+  }
+}
+
+export async function renewActiveMeetingLease(
+  guildId: string,
+  meetingId: string,
+  ownerInstanceId: string,
+  leaseExpiresAt: number,
+  updatedAt: string,
+  expiresAt: number,
+): Promise<boolean> {
+  const params: UpdateItemCommand["input"] = {
+    TableName: tableName("ActiveMeetingTable"),
+    Key: marshall({ guildId }),
+    UpdateExpression:
+      "SET #leaseExpiresAt = :leaseExpiresAt, #updatedAt = :updatedAt, #expiresAt = :expiresAt",
+    ConditionExpression:
+      "#meetingId = :meetingId AND #ownerInstanceId = :ownerInstanceId",
+    ExpressionAttributeNames: {
+      "#leaseExpiresAt": "leaseExpiresAt",
+      "#updatedAt": "updatedAt",
+      "#expiresAt": "expiresAt",
+      "#meetingId": "meetingId",
+      "#ownerInstanceId": "ownerInstanceId",
+    },
+    ExpressionAttributeValues: marshall({
+      ":leaseExpiresAt": leaseExpiresAt,
+      ":updatedAt": updatedAt,
+      ":expiresAt": expiresAt,
+      ":meetingId": meetingId,
+      ":ownerInstanceId": ownerInstanceId,
+    }),
+  };
+  const command = new UpdateItemCommand(params);
+  try {
+    await dynamoDbClient.send(command);
+    return true;
+  } catch (error) {
+    if (
+      (error as { name?: string }).name === "ConditionalCheckFailedException"
+    ) {
+      return false;
+    }
+    throw error;
+  }
+}
+
+export async function releaseActiveMeetingLease(
+  guildId: string,
+  meetingId: string,
+  ownerInstanceId: string,
+): Promise<boolean> {
+  const params: DeleteItemCommand["input"] = {
+    TableName: tableName("ActiveMeetingTable"),
+    Key: marshall({ guildId }),
+    ConditionExpression:
+      "#meetingId = :meetingId AND #ownerInstanceId = :ownerInstanceId",
+    ExpressionAttributeNames: {
+      "#meetingId": "meetingId",
+      "#ownerInstanceId": "ownerInstanceId",
+    },
+    ExpressionAttributeValues: marshall({
+      ":meetingId": meetingId,
+      ":ownerInstanceId": ownerInstanceId,
+    }),
+  };
+  const command = new DeleteItemCommand(params);
+  try {
+    await dynamoDbClient.send(command);
+    return true;
+  } catch (error) {
+    if (
+      (error as { name?: string }).name === "ConditionalCheckFailedException"
+    ) {
+      return false;
+    }
+    throw error;
+  }
+}
+
+export async function getActiveMeetingLease(
+  guildId: string,
+): Promise<ActiveMeetingLease | undefined> {
+  const params: GetItemCommand["input"] = {
+    TableName: tableName("ActiveMeetingTable"),
+    Key: marshall({ guildId }),
+    ConsistentRead: true,
+  };
+  const command = new GetItemCommand(params);
+  const result = await dynamoDbClient.send(command);
+  if (result.Item) {
+    return unmarshall(result.Item) as ActiveMeetingLease;
+  }
+  return undefined;
+}
+
+export async function requestActiveMeetingEnd(
+  guildId: string,
+  meetingId: string,
+  requestedByUserId: string,
+  requestedAt: string,
+): Promise<boolean> {
+  const params: UpdateItemCommand["input"] = {
+    TableName: tableName("ActiveMeetingTable"),
+    Key: marshall({ guildId }),
+    UpdateExpression:
+      "SET #endRequestedAt = if_not_exists(#endRequestedAt, :endRequestedAt), #endRequestedByUserId = if_not_exists(#endRequestedByUserId, :endRequestedByUserId), #updatedAt = :updatedAt",
+    ConditionExpression:
+      "#meetingId = :meetingId AND (attribute_not_exists(#endRequestedAt) OR #endRequestedByUserId = :endRequestedByUserId)",
+    ExpressionAttributeNames: {
+      "#endRequestedAt": "endRequestedAt",
+      "#endRequestedByUserId": "endRequestedByUserId",
+      "#updatedAt": "updatedAt",
+      "#meetingId": "meetingId",
+    },
+    ExpressionAttributeValues: marshall({
+      ":endRequestedAt": requestedAt,
+      ":endRequestedByUserId": requestedByUserId,
+      ":updatedAt": requestedAt,
+      ":meetingId": meetingId,
+    }),
+  };
+  const command = new UpdateItemCommand(params);
+  try {
+    await dynamoDbClient.send(command);
+    return true;
+  } catch (error) {
+    if (
+      (error as { name?: string }).name === "ConditionalCheckFailedException"
+    ) {
+      return false;
+    }
+    throw error;
+  }
 }
 
 // Read from PaymentTransaction Table
@@ -1350,6 +1545,97 @@ export async function deleteAskConversationShare(
   const sk = `SHARE#${conversationId}`;
   const params = {
     TableName: tableName("AskConversationTable"),
+    Key: marshall({ pk, sk }),
+  };
+  const command = new DeleteItemCommand(params);
+  await dynamoDbClient.send(command);
+}
+
+const buildMeetingSharePartitionKey = (guildId: string) => `GUILD#${guildId}`;
+const buildMeetingShareMeetingKey = (meetingId: string) =>
+  `MEETING#${meetingId}`;
+const buildMeetingShareShareKey = (shareId: string) => `SHARE#${shareId}`;
+
+export async function getMeetingShareByShareId(
+  guildId: string,
+  shareId: string,
+): Promise<MeetingShareRecord | undefined> {
+  const pk = buildMeetingSharePartitionKey(guildId);
+  const sk = buildMeetingShareShareKey(shareId);
+  const params = {
+    TableName: tableName("MeetingShareTable"),
+    Key: marshall({ pk, sk }),
+  };
+  const command = new GetItemCommand(params);
+  const result = await dynamoDbClient.send(command);
+  if (result.Item) {
+    return unmarshall(result.Item) as MeetingShareRecord;
+  }
+  return undefined;
+}
+
+export async function getMeetingShareByMeetingId(
+  guildId: string,
+  meetingId: string,
+): Promise<MeetingShareByMeetingRecord | undefined> {
+  const pk = buildMeetingSharePartitionKey(guildId);
+  const sk = buildMeetingShareMeetingKey(meetingId);
+  const params = {
+    TableName: tableName("MeetingShareTable"),
+    Key: marshall({ pk, sk }),
+  };
+  const command = new GetItemCommand(params);
+  const result = await dynamoDbClient.send(command);
+  if (result.Item) {
+    return unmarshall(result.Item) as MeetingShareByMeetingRecord;
+  }
+  return undefined;
+}
+
+export async function writeMeetingShare(
+  record: MeetingShareRecord,
+): Promise<void> {
+  const params = {
+    TableName: tableName("MeetingShareTable"),
+    Item: marshall(record, { removeUndefinedValues: true }),
+  };
+  const command = new PutItemCommand(params);
+  await dynamoDbClient.send(command);
+}
+
+export async function writeMeetingShareByMeeting(
+  record: MeetingShareByMeetingRecord,
+): Promise<void> {
+  const params = {
+    TableName: tableName("MeetingShareTable"),
+    Item: marshall(record, { removeUndefinedValues: true }),
+  };
+  const command = new PutItemCommand(params);
+  await dynamoDbClient.send(command);
+}
+
+export async function deleteMeetingShareByShareId(
+  guildId: string,
+  shareId: string,
+): Promise<void> {
+  const pk = buildMeetingSharePartitionKey(guildId);
+  const sk = buildMeetingShareShareKey(shareId);
+  const params = {
+    TableName: tableName("MeetingShareTable"),
+    Key: marshall({ pk, sk }),
+  };
+  const command = new DeleteItemCommand(params);
+  await dynamoDbClient.send(command);
+}
+
+export async function deleteMeetingShareByMeetingId(
+  guildId: string,
+  meetingId: string,
+): Promise<void> {
+  const pk = buildMeetingSharePartitionKey(guildId);
+  const sk = buildMeetingShareMeetingKey(meetingId);
+  const params = {
+    TableName: tableName("MeetingShareTable"),
     Key: marshall({ pk, sk }),
   };
   const command = new DeleteItemCommand(params);
