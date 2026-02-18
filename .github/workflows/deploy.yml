@@ -603,7 +603,15 @@ jobs:
         run: yarn install --frozen-lockfile
 
       - name: Build docs site
+        env:
+          DOCS_ALGOLIA_APP_ID: ${{ vars.DOCS_ALGOLIA_APP_ID }}
+          DOCS_ALGOLIA_API_KEY: ${{ vars.DOCS_ALGOLIA_API_KEY }}
+          DOCS_ALGOLIA_INDEX_NAME: ${{ vars.DOCS_ALGOLIA_INDEX_NAME }}
+          DOCS_SITE_URL: ${{ vars.DOCS_SITE_URL }}
         run: yarn docs:build
+
+      - name: Verify docs build output
+        run: test -d build/docs-site
 
       - name: Sync docs to S3
         env:

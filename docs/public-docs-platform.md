@@ -32,6 +32,10 @@ Terraform publishes these GitHub Actions environment variables:
 
 - `DOCS_BUCKET`
 - `DOCS_DISTRIBUTION_ID`
+- `DOCS_SITE_URL` (optional)
+- `DOCS_ALGOLIA_APP_ID` (optional)
+- `DOCS_ALGOLIA_API_KEY` (optional)
+- `DOCS_ALGOLIA_INDEX_NAME` (optional)
 
 Deploy workflows use those variables to sync docs assets and invalidate CloudFront.
 

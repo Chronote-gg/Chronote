@@ -174,6 +174,31 @@ variable "DOCS_CERT_ARN" {
   default     = ""
 }
 
+variable "DOCS_SITE_URL" {
+  description = "Canonical docs site URL for Docusaurus builds (optional)"
+  type        = string
+  default     = ""
+}
+
+variable "DOCS_ALGOLIA_APP_ID" {
+  description = "Algolia application ID for docs search (optional)"
+  type        = string
+  default     = ""
+}
+
+variable "DOCS_ALGOLIA_API_KEY" {
+  description = "Algolia search API key for docs search (optional)"
+  type        = string
+  default     = ""
+  sensitive   = true
+}
+
+variable "DOCS_ALGOLIA_INDEX_NAME" {
+  description = "Algolia index name for docs search (optional)"
+  type        = string
+  default     = ""
+}
+
 variable "API_DOMAIN" {
   description = "Optional custom domain for the API (ALB); leave blank to use ALB DNS directly"
   type        = string
@@ -492,6 +517,38 @@ resource "github_actions_environment_variable" "envvar_docs_distribution_id" {
   environment   = github_repository_environment.repo_env.environment
   variable_name = "DOCS_DISTRIBUTION_ID"
   value         = aws_cloudfront_distribution.docs.id
+}
+
+resource "github_actions_environment_variable" "envvar_docs_site_url" {
+  count         = var.DOCS_SITE_URL != "" ? 1 : 0
+  repository    = data.github_repository.repo.name
+  environment   = github_repository_environment.repo_env.environment
+  variable_name = "DOCS_SITE_URL"
+  value         = var.DOCS_SITE_URL
+}
+
+resource "github_actions_environment_variable" "envvar_docs_algolia_app_id" {
+  count         = var.DOCS_ALGOLIA_APP_ID != "" ? 1 : 0
+  repository    = data.github_repository.repo.name
+  environment   = github_repository_environment.repo_env.environment
+  variable_name = "DOCS_ALGOLIA_APP_ID"
+  value         = var.DOCS_ALGOLIA_APP_ID
+}
+
+resource "github_actions_environment_variable" "envvar_docs_algolia_api_key" {
+  count         = var.DOCS_ALGOLIA_API_KEY != "" ? 1 : 0
+  repository    = data.github_repository.repo.name
+  environment   = github_repository_environment.repo_env.environment
+  variable_name = "DOCS_ALGOLIA_API_KEY"
+  value         = var.DOCS_ALGOLIA_API_KEY
+}
+
+resource "github_actions_environment_variable" "envvar_docs_algolia_index_name" {
+  count         = var.DOCS_ALGOLIA_INDEX_NAME != "" ? 1 : 0
+  repository    = data.github_repository.repo.name
+  environment   = github_repository_environment.repo_env.environment
+  variable_name = "DOCS_ALGOLIA_INDEX_NAME"
+  value         = var.DOCS_ALGOLIA_INDEX_NAME
 }
 
 resource "github_actions_environment_variable" "envvar_vite_api_base_url" {

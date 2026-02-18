@@ -141,10 +141,11 @@ flowchart LR
   E --> Z
   F --> Z
   G --> Z
+  H --> Z
   I --> Z
   P --> Z
   Q --> Z
-  Z --> I["deploy backend"]
+  Z --> L["deploy backend"]
   Z --> J["deploy frontend"]
   Z --> K["deploy docs"]
 ```
@@ -189,7 +190,7 @@ Coverage update rule:
 - Langfuse transcription traces attach compressed MP3 snippets (mono 16 kHz VBR, 8 MB cap) for observability.
 - Billing: Stripe Checkout + Billing Portal; webhook handler persists GuildSubscription and PaymentTransaction in DynamoDB and handles payment_failed / subscription_deleted to downgrade appropriately (guild-scoped billing only).
 - Sessions: Express sessions stored in DynamoDB `SessionTable` (TTL on `expiresAt`).
-- Storage: DynamoDB tables include GuildSubscription, PaymentTransaction, StripeWebhookEventTable (idempotency with TTL), AccessLogs, RecordingTranscript, AutoRecordSettings, ServerContext, ChannelContext, DictionaryTable, MeetingHistory, AskConversationTable, SessionTable, InstallerTable, OnboardingStateTable. Transcripts and audio artifacts go to S3 (`TRANSCRIPTS_BUCKET`).
+- Storage: DynamoDB tables include GuildSubscription, PaymentTransaction, StripeWebhookEventTable (idempotency with TTL), InteractionReceiptTable (interaction idempotency with TTL), ActiveMeetingTable (active meeting lease ownership with TTL), AccessLogs, RecordingTranscript, AutoRecordSettings, ServerContext, ChannelContext, DictionaryTable, UserSpeechSettingsTable, MeetingHistory, MeetingShareTable, AskConversationTable, SessionTable, InstallerTable, OnboardingStateTable, and FeedbackTable. Transcripts and audio artifacts go to S3 (`TRANSCRIPTS_BUCKET`).
 
 ### Stripe webhook testing (local)
 

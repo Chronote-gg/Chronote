@@ -92,6 +92,10 @@ If you set `DOCS_DOMAIN` in `terraform.tfvars`, Terraform will:
 - Provision a dedicated docs S3 bucket + CloudFront distribution and publish GitHub Actions env vars:
   - `DOCS_BUCKET`
   - `DOCS_DISTRIBUTION_ID`
+  - `DOCS_SITE_URL` (when set)
+  - `DOCS_ALGOLIA_APP_ID` (when set)
+  - `DOCS_ALGOLIA_API_KEY` (when set)
+  - `DOCS_ALGOLIA_INDEX_NAME` (when set)
 
 Deploy workflows use those variables to publish `apps/docs-site` to `docs.chronote.gg`.
 
