@@ -111,6 +111,7 @@ import {
   onboardCommand,
 } from "./commands/onboard";
 import { fetchGuildInstaller } from "./services/guildInstallerService";
+import { setDiscordClient } from "./services/discordClientAccessor";
 import { autoRecordJoinSuppressionService } from "./services/autoRecordJoinSuppressionService";
 import {
   MEETING_END_REASONS,
@@ -426,6 +427,7 @@ export async function setupBot() {
 
   client.once(Events.ClientReady, () => {
     console.log(`Logged in as ${client.user?.tag}!`);
+    setDiscordClient(client);
 
     client.on("voiceStateUpdate", handleVoiceStateUpdate);
   });

@@ -410,6 +410,13 @@ export const contactFeedbackSubmitMutation = buildMutationState<
   [unknown],
   { ok: boolean }
 >({ ok: true });
+export const contactFeedbackGetUploadUrlMutation = buildMutationState<
+  [unknown],
+  { url: string; key: string }
+>({
+  url: "https://s3.example.com/presigned",
+  key: "contact-feedback/test.png",
+});
 
 export const trpcUtils = {
   ask: {
@@ -567,6 +574,10 @@ export const resetTrpcMocks = () => {
   resetMutationState(feedbackSubmitSummaryMutation, undefined);
   resetMutationState(feedbackSubmitAskMutation, undefined);
   resetMutationState(contactFeedbackSubmitMutation, { ok: true });
+  resetMutationState(contactFeedbackGetUploadUrlMutation, {
+    url: "https://s3.example.com/presigned",
+    key: "contact-feedback/test.png",
+  });
 
   trpcUtils.ask.listConversations.invalidate.mockReset();
   trpcUtils.ask.listConversations.invalidate.mockResolvedValue(undefined);
@@ -809,6 +820,9 @@ jest.mock("../../../src/frontend/services/trpc", () => ({
     },
     contactFeedback: {
       submit: { useMutation: () => contactFeedbackSubmitMutation },
+      getUploadUrl: {
+        useMutation: () => contactFeedbackGetUploadUrlMutation,
+      },
     },
   },
 }));

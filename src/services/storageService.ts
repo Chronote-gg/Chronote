@@ -116,6 +116,32 @@ export async function fetchJsonFromS3<T>(key: string): Promise<T | undefined> {
   }
 }
 
+export async function getSignedUploadUrl(
+  key: string,
+  contentType: string,
+  maxContentLength: number,
+  expiresInSeconds: number = 300,
+): Promise<string | undefined> {
+  if (!config.storage.transcriptBucket) {
+    return undefined;
+  }
+  try {
+    return await getSignedUrl(
+      s3Client,
+      new PutObjectCommand({
+        Bucket: config.storage.transcriptBucket,
+        Key: key,
+        ContentType: contentType,
+        ContentLength: maxContentLength,
+      }),
+      { expiresIn: expiresInSeconds },
+    );
+  } catch (error) {
+    console.error("Failed to generate signed upload URL", error);
+    return undefined;
+  }
+}
+
 export async function getSignedObjectUrl(
   key: string,
   expiresInSeconds: number = 900,
