@@ -131,6 +131,8 @@ type ConfettiPieceStyle = CSSProperties & {
   "--confetti-rotate-end": string;
 };
 
+const encodeServerId = (serverId: string) => encodeURIComponent(serverId);
+
 const resolveUpgradeSuccessCopy = (serverId: string, serverName: string) =>
   serverId
     ? `Your subscription is active for ${serverName}.`
@@ -157,21 +159,42 @@ export const resolveOpenPortalPath = (serverId: string, guilds: Guild[]) => {
     return "/portal/select-server";
   }
 
+  const encodedServerId = encodeServerId(serverId);
   const matchedGuild = guilds.find((guild) => guild.id === serverId);
 
   if (!matchedGuild) {
-    return `/portal/server/${serverId}/ask`;
+    return `/portal/server/${encodedServerId}/ask`;
   }
 
   if (matchedGuild.canManage === false) {
-    return `/portal/server/${serverId}/ask`;
+    return `/portal/server/${encodedServerId}/ask`;
   }
 
-  return `/portal/server/${serverId}/library`;
+  return `/portal/server/${encodedServerId}/library`;
+};
+
+export const resolvePostAuthPortalPath = (
+  serverId: string,
+  guilds: Guild[],
+) => {
+  if (!serverId) {
+    return "/portal/select-server";
+  }
+
+  const encodedServerId = encodeServerId(serverId);
+  const matchedGuild = guilds.find((guild) => guild.id === serverId);
+
+  if (matchedGuild?.canManage === false) {
+    return `/portal/server/${encodedServerId}/ask`;
+  }
+
+  return `/portal/server/${encodedServerId}/library`;
 };
 
 export const resolveBillingPath = (serverId: string) =>
-  serverId ? `/portal/server/${serverId}/billing` : "/portal/select-server";
+  serverId
+    ? `/portal/server/${encodeServerId(serverId)}/billing`
+    : "/portal/select-server";
 
 const buildConfettiPieceStyle = (
   piece: (typeof CONFETTI_PIECES)[number],
@@ -385,6 +408,7 @@ export default function UpgradeSuccess() {
     resolvedServerName ?? "your server",
   );
   const openPortalPath = resolveOpenPortalPath(serverId, guilds);
+  const postAuthPortalPath = resolvePostAuthPortalPath(serverId, guilds);
   const billingPath = resolveBillingPath(serverId);
   const handleOpenPortal = () => {
     navigate({ to: openPortalPath });
@@ -396,7 +420,7 @@ export default function UpgradeSuccess() {
     navigate({ to: "/" });
   };
 
-  const redirectTarget = `${window.location.origin}${openPortalPath}`;
+  const redirectTarget = `${window.location.origin}${postAuthPortalPath}`;
   const loginUrl = `${buildApiUrl("/auth/discord")}?redirect=${encodeURIComponent(
     redirectTarget,
   )}`;
