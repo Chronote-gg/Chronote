@@ -1,5 +1,4 @@
 import {
-  Badge,
   Box,
   Button,
   Group,
@@ -108,16 +107,6 @@ const UPGRADE_CHECKLIST = [
   "Your saved meetings and notes stay exactly where they are.",
 ] as const;
 
-const PLAN_LABELS = {
-  basic: "Basic",
-  pro: "Pro",
-} as const;
-
-const INTERVAL_LABELS = {
-  month: "Monthly",
-  year: "Annual",
-} as const;
-
 type UpgradeSuccessPrimaryActionProps = {
   isAuthenticated: boolean;
   authLoading: boolean;
@@ -137,15 +126,12 @@ type PromoAppliedRowProps = {
   promoCode: string;
 };
 
-type UpgradeStatusBadgesProps = {
-  planChipLabel?: string;
-  hasServerId: boolean;
-};
-
 type ConfettiPieceStyle = CSSProperties & {
   "--confetti-rotate-start": string;
   "--confetti-rotate-end": string;
 };
+
+const encodeServerId = (serverId: string) => encodeURIComponent(serverId);
 
 const resolveUpgradeSuccessCopy = (serverId: string, serverName: string) =>
   serverId
@@ -173,21 +159,42 @@ export const resolveOpenPortalPath = (serverId: string, guilds: Guild[]) => {
     return "/portal/select-server";
   }
 
+  const encodedServerId = encodeServerId(serverId);
   const matchedGuild = guilds.find((guild) => guild.id === serverId);
 
   if (!matchedGuild) {
-    return `/portal/server/${serverId}/ask`;
+    return `/portal/server/${encodedServerId}/ask`;
   }
 
   if (matchedGuild.canManage === false) {
-    return `/portal/server/${serverId}/ask`;
+    return `/portal/server/${encodedServerId}/ask`;
   }
 
-  return `/portal/server/${serverId}/library`;
+  return `/portal/server/${encodedServerId}/library`;
+};
+
+export const resolvePostAuthPortalPath = (
+  serverId: string,
+  guilds: Guild[],
+) => {
+  if (!serverId) {
+    return "/portal/select-server";
+  }
+
+  const encodedServerId = encodeServerId(serverId);
+  const matchedGuild = guilds.find((guild) => guild.id === serverId);
+
+  if (matchedGuild?.canManage === false) {
+    return `/portal/server/${encodedServerId}/ask`;
+  }
+
+  return `/portal/server/${encodedServerId}/library`;
 };
 
 export const resolveBillingPath = (serverId: string) =>
-  serverId ? `/portal/server/${serverId}/billing` : "/portal/select-server";
+  serverId
+    ? `/portal/server/${encodeServerId(serverId)}/billing`
+    : "/portal/select-server";
 
 const buildConfettiPieceStyle = (
   piece: (typeof CONFETTI_PIECES)[number],
@@ -220,29 +227,6 @@ function PromoAppliedRow({ promoCode }: PromoAppliedRowProps) {
   );
 }
 
-function UpgradeStatusBadges({
-  planChipLabel,
-  hasServerId,
-}: UpgradeStatusBadgesProps) {
-  return (
-    <Group gap="xs" wrap="wrap">
-      <Badge variant="light" color="brand">
-        Plan active now
-      </Badge>
-      {planChipLabel ? (
-        <Badge variant="light" color="cyan">
-          {planChipLabel}
-        </Badge>
-      ) : null}
-      {hasServerId ? (
-        <Badge variant="light" color="teal">
-          Server linked
-        </Badge>
-      ) : null}
-    </Group>
-  );
-}
-
 type UpgradeSuccessHeroProps = {
   isDark: boolean;
   isAuthenticated: boolean;
@@ -255,8 +239,6 @@ type UpgradeSuccessHeroProps = {
   onOpenPortal: () => void;
   onOpenBilling: () => void;
   onBackToHomepage: () => void;
-  plan?: "basic" | "pro";
-  interval?: "month" | "year";
 };
 
 export function UpgradeSuccessHero({
@@ -271,14 +253,7 @@ export function UpgradeSuccessHero({
   onOpenPortal,
   onOpenBilling,
   onBackToHomepage,
-  plan,
-  interval,
 }: UpgradeSuccessHeroProps) {
-  const planChipLabel =
-    plan && interval
-      ? `${PLAN_LABELS[plan]} · ${INTERVAL_LABELS[interval]}`
-      : undefined;
-
   return (
     <Surface
       p={{ base: "lg", md: "xl" }}
@@ -312,10 +287,6 @@ export function UpgradeSuccessHero({
           <Text c="dimmed" size="sm">
             {headerCopy}
           </Text>
-          <UpgradeStatusBadges
-            planChipLabel={planChipLabel}
-            hasServerId={Boolean(serverId)}
-          />
           <PromoAppliedRow promoCode={promoCode} />
           <Group gap="sm" wrap="wrap">
             <UpgradeSuccessPrimaryAction
@@ -437,6 +408,7 @@ export default function UpgradeSuccess() {
     resolvedServerName ?? "your server",
   );
   const openPortalPath = resolveOpenPortalPath(serverId, guilds);
+  const postAuthPortalPath = resolvePostAuthPortalPath(serverId, guilds);
   const billingPath = resolveBillingPath(serverId);
   const handleOpenPortal = () => {
     navigate({ to: openPortalPath });
@@ -448,7 +420,7 @@ export default function UpgradeSuccess() {
     navigate({ to: "/" });
   };
 
-  const redirectTarget = `${window.location.origin}${openPortalPath}`;
+  const redirectTarget = `${window.location.origin}${postAuthPortalPath}`;
   const loginUrl = `${buildApiUrl("/auth/discord")}?redirect=${encodeURIComponent(
     redirectTarget,
   )}`;
@@ -467,8 +439,6 @@ export default function UpgradeSuccess() {
         onOpenPortal={handleOpenPortal}
         onOpenBilling={handleOpenBilling}
         onBackToHomepage={handleBackToHomepage}
-        plan={search.plan}
-        interval={search.interval}
       />
 
       <SimpleGrid cols={{ base: 1, md: 3 }} spacing="lg">

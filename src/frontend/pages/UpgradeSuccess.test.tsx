@@ -4,6 +4,7 @@ import { MantineProvider } from "@mantine/core";
 import UpgradeSuccess, {
   resolveBillingPath,
   resolveOpenPortalPath,
+  resolvePostAuthPortalPath,
 } from "./UpgradeSuccess";
 
 const mockUseSearch = jest.fn();
@@ -37,8 +38,6 @@ describe("UpgradeSuccess", () => {
     mockUseSearch.mockReturnValue({
       promo: "SAVE20",
       serverId: "s1",
-      plan: "pro",
-      interval: "year",
     });
     mockUseAuth.mockReturnValue({ state: "authenticated", loading: false });
     mockUseGuildContext.mockReturnValue({
@@ -68,6 +67,23 @@ describe("UpgradeSuccess", () => {
     expect(mockNavigate).toHaveBeenCalledWith({
       to: "/portal/server/s1/billing",
     });
+  });
+
+  it("uses a library redirect for login when guild access is not loaded", () => {
+    mockUseAuth.mockReturnValue({ state: "unauthenticated", loading: false });
+    mockUseGuildContext.mockReturnValue({ guilds: [] });
+
+    renderUpgradeSuccess();
+
+    const loginLink = screen.getByRole("link", { name: "Connect Discord" });
+    expect(loginLink).toHaveAttribute(
+      "href",
+      expect.stringContaining(
+        encodeURIComponent(
+          `${window.location.origin}/portal/server/s1/library`,
+        ),
+      ),
+    );
   });
 });
 
@@ -102,7 +118,33 @@ describe("resolveBillingPath", () => {
     expect(resolveBillingPath("s1")).toBe("/portal/server/s1/billing");
   });
 
+  it("encodes server ids for safe path segments", () => {
+    expect(resolveBillingPath("g1/sub id")).toBe(
+      "/portal/server/g1%2Fsub%20id/billing",
+    );
+  });
+
   it("falls back to select-server when server id is missing", () => {
     expect(resolveBillingPath("")).toBe("/portal/select-server");
+  });
+});
+
+describe("resolvePostAuthPortalPath", () => {
+  it("prefers library when server exists but guild data is not loaded", () => {
+    expect(resolvePostAuthPortalPath("s1", [])).toBe(
+      "/portal/server/s1/library",
+    );
+  });
+
+  it("returns ask when server is known but not manageable", () => {
+    expect(
+      resolvePostAuthPortalPath("s1", [
+        { id: "s1", name: "Engineering HQ", canManage: false },
+      ]),
+    ).toBe("/portal/server/s1/ask");
+  });
+
+  it("falls back to select-server when server id is missing", () => {
+    expect(resolvePostAuthPortalPath("", [])).toBe("/portal/select-server");
   });
 });
