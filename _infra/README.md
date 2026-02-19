@@ -37,9 +37,12 @@ This stack provisions:
 4. **Seed the rotation** (one-time):
    - Invoke the Lambda to create the first auto-managed token:
      ```bash
-     aws lambda invoke --function-name meeting-notes-prod-grafana-token-rotation \
+     aws lambda invoke --function-name <project_name>-<environment>-grafana-token-rotation \
        --region us-east-1 /dev/stdout
      ```
+   - The function name is derived from your Terraform variables (for example, with
+     `project_name = "meeting-notes"` and `environment = "prod"`, the name is
+     `meeting-notes-prod-grafana-token-rotation`).
    - Clear `grafana_api_key` from `terraform.tfvars` (the Lambda now manages the token).
    - Run `terraform apply` once more to confirm it reads from Secrets Manager.
 
@@ -64,7 +67,7 @@ or create a new token with the bootstrap steps above.
 
 - If AMG workspace creation conflicts, bump `grafana_suffix_seed` in `terraform.tfvars` to force a new workspace name suffix.
 - If you change the workspace name, you may want to update `grafana_url` before the second apply.
-- To force an immediate rotation: `aws lambda invoke --function-name meeting-notes-prod-grafana-token-rotation --region us-east-1 /dev/stdout`
+- To force an immediate rotation: `aws lambda invoke --function-name <project_name>-<environment>-grafana-token-rotation --region us-east-1 /dev/stdout`
 
 ## Secrets Manager (ECS runtime secrets)
 

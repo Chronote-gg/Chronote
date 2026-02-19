@@ -24,13 +24,13 @@ variable "grafana_service_account_id" {
 }
 
 variable "grafana_token_rotation_days" {
-  description = "How often (in days) to rotate the Grafana token. Must be less than 30 (AMG max TTL)."
+  description = "How often (in days) to rotate the Grafana token. Must be between 1 and 25 so TTL (including 5-day buffer) stays within the 30-day AMG max."
   type        = number
   default     = 25
 
   validation {
-    condition     = var.grafana_token_rotation_days > 0 && var.grafana_token_rotation_days < 30
-    error_message = "Rotation interval must be between 1 and 29 days (AMG tokens max out at 30 days)."
+    condition     = var.grafana_token_rotation_days > 0 && var.grafana_token_rotation_days < 26
+    error_message = "Rotation interval must be between 1 and 25 days so that rotation_days + 5 <= 30 (AMG token TTL limit)."
   }
 }
 
@@ -40,7 +40,10 @@ variable "grafana_token_rotation_days" {
 # -----------------------------------------------------------------------
 
 data "aws_secretsmanager_secret_version" "grafana_token" {
-  count     = local.grafana_rotation_enabled ? 1 : 0
+  # Only read the secret version post-bootstrap (when grafana_api_key is empty).
+  # During bootstrap step 3, the secret exists but has no version yet, so this
+  # data source would fail. The tfvar bridges that gap.
+  count     = local.grafana_rotation_enabled && var.grafana_api_key == "" ? 1 : 0
   secret_id = aws_secretsmanager_secret.grafana_api_token[0].id
 }
 
@@ -48,7 +51,7 @@ locals {
   grafana_rotation_enabled = var.grafana_service_account_id != "" && var.grafana_url != "http://localhost"
 
   # Prefer the rotated secret; fall back to the manual tfvar for bootstrapping
-  grafana_token_from_secret = local.grafana_rotation_enabled ? try(
+  grafana_token_from_secret = length(data.aws_secretsmanager_secret_version.grafana_token) > 0 ? try(
     jsondecode(data.aws_secretsmanager_secret_version.grafana_token[0].secret_string)["token"], ""
   ) : ""
   grafana_resolved_token = local.grafana_token_from_secret != "" ? local.grafana_token_from_secret : var.grafana_api_key
@@ -116,7 +119,7 @@ data "archive_file" "grafana_token_rotation" {
   count       = local.grafana_rotation_enabled ? 1 : 0
   type        = "zip"
   source_dir  = "${path.module}/lambda/grafana_token_rotation"
-  output_path = "${path.module}/.build/grafana_token_rotation.zip"
+  output_path = "${path.module}/grafana_token_rotation.zip"
 }
 
 # IAM role for the rotation Lambda
@@ -180,6 +183,15 @@ resource "aws_iam_role_policy" "grafana_token_rotation" {
         ]
         Resource = "arn:aws:logs:${var.aws_region}:${data.aws_caller_identity.current.account_id}:*"
       },
+      {
+        Sid    = "XRayTracing"
+        Effect = "Allow"
+        Action = [
+          "xray:PutTraceSegments",
+          "xray:PutTelemetryRecords",
+        ]
+        Resource = "*"
+      },
     ]
   })
 }
@@ -197,12 +209,16 @@ resource "aws_lambda_function" "grafana_token_rotation" {
   filename         = data.archive_file.grafana_token_rotation[0].output_path
   source_code_hash = data.archive_file.grafana_token_rotation[0].output_base64sha256
 
+  tracing_config {
+    mode = "Active"
+  }
+
   environment {
     variables = {
       GRAFANA_WORKSPACE_ID       = aws_grafana_workspace.amg.id
       GRAFANA_SERVICE_ACCOUNT_ID = var.grafana_service_account_id
       GRAFANA_TOKEN_SECRET_ARN   = aws_secretsmanager_secret.grafana_api_token[0].arn
-      GRAFANA_TOKEN_TTL_SECONDS  = tostring(var.grafana_token_rotation_days * 86400 + 432000) # rotation interval + 5-day buffer
+      GRAFANA_TOKEN_TTL_SECONDS  = tostring(min(var.grafana_token_rotation_days + 5, 30) * 86400) # rotation interval + 5-day buffer, capped at 30 days
     }
   }
 
@@ -222,7 +238,7 @@ resource "aws_lambda_function" "grafana_token_rotation" {
 resource "aws_cloudwatch_log_group" "grafana_token_rotation" {
   count             = local.grafana_rotation_enabled ? 1 : 0
   name              = "/aws/lambda/${aws_lambda_function.grafana_token_rotation[0].function_name}"
-  retention_in_days = 90
+  retention_in_days = 365
   kms_key_id        = aws_kms_key.app_general.arn
 
   tags = {

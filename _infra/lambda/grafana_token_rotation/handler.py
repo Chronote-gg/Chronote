@@ -10,6 +10,7 @@ import logging
 import os
 
 import boto3
+from botocore.exceptions import ClientError
 
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
@@ -19,7 +20,7 @@ SERVICE_ACCOUNT_ID = os.environ["GRAFANA_SERVICE_ACCOUNT_ID"]
 SECRET_ARN = os.environ["GRAFANA_TOKEN_SECRET_ARN"]
 TOKEN_TTL_SECONDS = int(
     os.environ.get("GRAFANA_TOKEN_TTL_SECONDS", "2592000")
-)  # 30 days
+)  # default 30 days
 REGION = os.environ.get("AWS_REGION", "us-east-1")
 
 
@@ -40,17 +41,23 @@ def handler(event, context):
         logger.warning("Could not parse existing secret; will create fresh token")
 
     # 2. Create a new token
-    response = grafana.create_workspace_service_account_token(
-        workspaceId=WORKSPACE_ID,
-        serviceAccountId=SERVICE_ACCOUNT_ID,
-        name=f"auto-rotated-{context.aws_request_id[:8]}",
-        secondsToLive=TOKEN_TTL_SECONDS,
-    )
+    try:
+        response = grafana.create_workspace_service_account_token(
+            workspaceId=WORKSPACE_ID,
+            serviceAccountId=SERVICE_ACCOUNT_ID,
+            name=f"auto-rotated-{context.aws_request_id[:8]}",
+            secondsToLive=TOKEN_TTL_SECONDS,
+        )
+    except ClientError as exc:
+        logger.error("Failed to create Grafana token: %s", exc)
+        raise
+
     new_token_key = response["serviceAccountToken"]["key"]
     new_token_id = str(response["serviceAccountToken"]["id"])
     logger.info("Created new token ID: %s", new_token_id)
 
-    # 3. Store the new token in Secrets Manager
+    # 3. Store the new token in Secrets Manager.
+    #    If storage fails, delete the new token to avoid a leak.
     secret_value = json.dumps(
         {
             "token": new_token_key,
@@ -59,10 +66,26 @@ def handler(event, context):
             "serviceAccountId": SERVICE_ACCOUNT_ID,
         }
     )
-    secretsmanager.put_secret_value(
-        SecretId=SECRET_ARN,
-        SecretString=secret_value,
-    )
+    try:
+        secretsmanager.put_secret_value(
+            SecretId=SECRET_ARN,
+            SecretString=secret_value,
+        )
+    except ClientError as exc:
+        logger.error("Failed to store token in Secrets Manager: %s", exc)
+        logger.info("Rolling back: deleting newly created token %s", new_token_id)
+        try:
+            grafana.delete_workspace_service_account_token(
+                workspaceId=WORKSPACE_ID,
+                serviceAccountId=SERVICE_ACCOUNT_ID,
+                tokenId=new_token_id,
+            )
+            logger.info("Rollback successful: deleted token %s", new_token_id)
+        except ClientError as rollback_exc:
+            logger.error(
+                "Rollback failed, orphaned token %s: %s", new_token_id, rollback_exc
+            )
+        raise
     logger.info("Stored new token in Secrets Manager")
 
     # 4. Delete the old token (if it existed and differs from the new one)
@@ -74,8 +97,8 @@ def handler(event, context):
                 tokenId=old_token_id,
             )
             logger.info("Deleted old token ID: %s", old_token_id)
-        except grafana.exceptions.ResourceNotFoundException:
-            logger.info("Old token %s already deleted", old_token_id)
+        except ClientError:
+            logger.info("Old token %s already deleted or not found", old_token_id)
 
     return {
         "statusCode": 200,
