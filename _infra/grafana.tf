@@ -180,7 +180,7 @@ resource "aws_iam_role_policy" "grafana_token_rotation" {
           "logs:CreateLogStream",
           "logs:PutLogEvents",
         ]
-        Resource = "arn:aws:logs:${var.aws_region}:${data.aws_caller_identity.current.account_id}:*"
+        Resource = "arn:aws:logs:${var.aws_region}:${data.aws_caller_identity.current.account_id}:log-group:/aws/lambda/${local.name_prefix}-grafana-token-rotation:*"
       },
       {
         Sid    = "XRayTracing"
