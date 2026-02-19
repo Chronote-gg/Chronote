@@ -181,7 +181,7 @@ data "archive_file" "discord_alert" {
   count       = local.discord_alerts_enabled ? 1 : 0
   type        = "zip"
   source_file = "${path.module}/lambda/discord_alert/handler.mjs"
-  output_path = "${path.module}/.build/discord_alert.zip"
+  output_path = "${path.module}/discord_alert.zip"
 }
 
 resource "aws_iam_role" "discord_alert" {
