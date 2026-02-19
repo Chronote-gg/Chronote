@@ -187,6 +187,17 @@ describe("parseAlarmMessage", () => {
     expect(alarm.region).toBe("eu-west-2");
   });
 
+  it("passes through multi-digit region codes unchanged", () => {
+    const msg = JSON.stringify({
+      AlarmName: "test",
+      NewStateValue: "ALARM",
+      OldStateValue: "OK",
+      Region: "ap-southeast-10",
+    });
+    const alarm = parseAlarmMessage(msg);
+    expect(alarm.region).toBe("ap-southeast-10");
+  });
+
   it("falls back to AWS_REGION for unknown region labels", () => {
     const origRegion = process.env.AWS_REGION;
     process.env.AWS_REGION = "ap-southeast-1";

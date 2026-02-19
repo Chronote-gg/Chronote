@@ -63,7 +63,7 @@ const REGION_NAME_TO_CODE = {
 function resolveRegionCode(region) {
   if (!region) return process.env.AWS_REGION ?? "us-east-1";
   // Already a region code (e.g. "us-east-1")
-  if (/^[a-z]{2}-[a-z]+-\d$/.test(region)) return region;
+  if (/^[a-z]{2}-[a-z]+-\d+$/.test(region)) return region;
   return REGION_NAME_TO_CODE[region] ?? process.env.AWS_REGION ?? "us-east-1";
 }
 
