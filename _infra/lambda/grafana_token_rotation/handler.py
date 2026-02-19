@@ -101,8 +101,11 @@ def handler(event, context):
                 tokenId=old_token_id,
             )
             logger.info("Deleted old token ID: %s", old_token_id)
-        except grafana.exceptions.ResourceNotFoundException:
-            logger.info("Old token %s already deleted or not found", old_token_id)
+        except ClientError as exc:
+            if exc.response["Error"]["Code"] == "ResourceNotFoundException":
+                logger.info("Old token %s already deleted or not found", old_token_id)
+            else:
+                raise
 
     return {
         "statusCode": 200,
