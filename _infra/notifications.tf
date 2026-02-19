@@ -113,10 +113,10 @@ resource "aws_cloudwatch_metric_alarm" "ecs_no_running_tasks" {
 
 resource "aws_cloudwatch_metric_alarm" "alb_5xx_errors" {
   count               = local.alerts_enabled ? 1 : 0
-  alarm_name          = "${local.name_prefix}-alb-5xx-errors"
-  alarm_description   = "ALB returning elevated 5xx errors"
+  alarm_name          = "${local.name_prefix}-alb-target-5xx-errors"
+  alarm_description   = "ALB targets returning elevated 5xx errors"
   namespace           = "AWS/ApplicationELB"
-  metric_name         = "HTTPCode_ELB_5XX_Count"
+  metric_name         = "HTTPCode_Target_5XX_Count"
   statistic           = "Sum"
   period              = 300
   evaluation_periods  = 2

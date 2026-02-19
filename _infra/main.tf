@@ -723,17 +723,26 @@ resource "aws_kms_key" "app_general" {
         }
       },
       {
-        Sid    = "AllowSNS",
+        Sid    = "AllowSNSPublishers",
         Effect = "Allow",
         Principal = {
-          Service = "sns.amazonaws.com"
+          Service = [
+            "cloudwatch.amazonaws.com",
+            "events.amazonaws.com",
+            "sns.amazonaws.com"
+          ]
         },
         Action = [
           "kms:Decrypt",
           "kms:GenerateDataKey*",
           "kms:DescribeKey"
         ],
-        Resource = "*"
+        Resource = "*",
+        Condition = {
+          StringEquals = {
+            "kms:CallerAccount" = data.aws_caller_identity.current.account_id
+          }
+        }
       }
     ]
   })
