@@ -39,6 +39,7 @@ import {
   createDiscordMessage,
   deleteDiscordMessage,
   fetchDiscordMessage,
+  updateDiscordMessage,
   updateDiscordMessageEmbeds,
 } from "../../services/discordMessageService";
 import { generateMeetingSummaries } from "../../services/meetingSummaryService";
@@ -444,6 +445,99 @@ async function sendNotesEmbedsToDiscord(params: {
     }
     throw error;
   }
+}
+
+type NotesEmbedStrategy = "edited" | "replaced";
+
+type NotesEmbedUpdateResult = {
+  messageIds: string[];
+  strategy: NotesEmbedStrategy;
+};
+
+async function tryEditNotesEmbedsInPlace(params: {
+  channelId: string;
+  existingMessageIds: string[];
+  embeds: Array<Record<string, unknown>>;
+  summaryMessageId?: string;
+}): Promise<string[] | null> {
+  const editedIds: string[] = [];
+
+  for (let i = 0; i < params.embeds.length; i++) {
+    const messageId = params.existingMessageIds[i];
+    if (params.summaryMessageId && messageId === params.summaryMessageId) {
+      return null;
+    }
+    const ok = await updateDiscordMessage(params.channelId, messageId, {
+      embeds: [params.embeds[i]],
+      components: [],
+    });
+    if (!ok) {
+      return null;
+    }
+    editedIds.push(messageId);
+  }
+
+  for (
+    let i = params.embeds.length;
+    i < params.existingMessageIds.length;
+    i++
+  ) {
+    const messageId = params.existingMessageIds[i];
+    if (params.summaryMessageId && messageId === params.summaryMessageId) {
+      continue;
+    }
+    try {
+      await deleteDiscordMessage(params.channelId, messageId);
+    } catch (error) {
+      console.warn(
+        "Failed to delete excess notes message after in-place edit",
+        { channelId: params.channelId, messageId, error },
+      );
+    }
+  }
+
+  return editedIds;
+}
+
+async function editOrReplaceNotesEmbeds(params: {
+  channelId: string;
+  existingMessageIds: string[];
+  notesBody: string;
+  meetingName?: string;
+  footerText?: string;
+  color?: number;
+  summaryMessageId?: string;
+}): Promise<NotesEmbedUpdateResult> {
+  const embeds = buildMeetingNotesEmbeds({
+    notesBody: params.notesBody,
+    meetingName: params.meetingName,
+    footerText: params.footerText,
+    color: params.color,
+  }).map((embed) => embed.toJSON() as unknown as Record<string, unknown>);
+
+  if (
+    params.existingMessageIds.length > 0 &&
+    embeds.length <= params.existingMessageIds.length
+  ) {
+    const editedIds = await tryEditNotesEmbedsInPlace({
+      channelId: params.channelId,
+      existingMessageIds: params.existingMessageIds,
+      embeds,
+      summaryMessageId: params.summaryMessageId,
+    });
+    if (editedIds) {
+      return { messageIds: editedIds, strategy: "edited" };
+    }
+  }
+
+  const messageIds = await sendNotesEmbedsToDiscord({
+    channelId: params.channelId,
+    notesBody: params.notesBody,
+    meetingName: params.meetingName,
+    footerText: params.footerText,
+    color: params.color,
+  });
+  return { messageIds, strategy: "replaced" };
 }
 
 async function deleteDiscordMessagesSafely(params: {
@@ -868,39 +962,42 @@ const updateNotes = guildMemberProcedure
     }
 
     if (!config.mock.enabled && history.notesChannelId) {
-      let newMessageIds: string[];
+      const existingIds = history.notesMessageIds ?? [];
+      let result: NotesEmbedUpdateResult;
       try {
-        newMessageIds = await sendNotesEmbedsToDiscord({
+        result = await editOrReplaceNotesEmbeds({
           channelId: history.notesChannelId,
+          existingMessageIds: existingIds,
           notesBody: markdownNotes,
           meetingName: history.meetingName,
           footerText,
+          summaryMessageId: history.summaryMessageId,
         });
       } catch (error) {
-        console.warn("Failed posting updated notes embeds", error);
+        console.warn("Failed updating notes embeds", error);
         return { ok: true };
       }
 
       const metadataOk = await updateMeetingNotesMessageMetadataService({
         guildId: input.serverId,
         channelId_timestamp: input.meetingId,
-        notesMessageIds: newMessageIds,
+        notesMessageIds: result.messageIds,
         notesChannelId: history.notesChannelId,
         expectedNotesVersion: newVersion,
       });
 
-      if (!metadataOk) {
+      if (!metadataOk && result.strategy === "replaced") {
         await deleteDiscordMessagesSafely({
           channelId: history.notesChannelId,
-          messageIds: newMessageIds,
+          messageIds: result.messageIds,
         });
         return { ok: true };
       }
 
-      if (history.notesMessageIds?.length) {
+      if (result.strategy === "replaced" && existingIds.length > 0) {
         await deleteDiscordMessagesSafely({
           channelId: history.notesChannelId,
-          messageIds: history.notesMessageIds,
+          messageIds: existingIds,
           skipMessageId: history.summaryMessageId,
         });
       }
@@ -1136,160 +1233,156 @@ const applyNotesCorrection = guildMemberProcedure
     const editorLabel = buildRequesterTag(ctx.user);
     const footerText = `v${newVersion} • Edited by ${editorLabel}`;
 
-    let newMessageIds: string[] | undefined;
-    let didPersistNewNotes = false;
+    // Generate summaries before any mutations
+    const { serverName, channelName } =
+      await resolveGuildAndChannelNamesForPrompt({
+        guildId: input.serverId,
+        channelId,
+      });
+    const summaryModelParams = await resolveModelParamsForContext({
+      guildId: input.serverId,
+      channelId,
+      userId: ctx.user.id,
+    });
+    const summaryModelChoices = await resolveModelChoicesForContext({
+      guildId: input.serverId,
+      channelId,
+      userId: ctx.user.id,
+    });
+    const meetingDate = history.timestamp
+      ? new Date(history.timestamp)
+      : new Date();
+    const summaries = await generateMeetingSummaries({
+      guildId: input.serverId,
+      notes: pending.newNotes,
+      serverName,
+      channelName,
+      tags: history.tags,
+      now: meetingDate,
+      meetingId: history.meetingId,
+      previousSummarySentence: history.summarySentence,
+      previousSummaryLabel: history.summaryLabel,
+      modelParams: summaryModelParams.meetingSummary,
+      modelOverride: summaryModelChoices.meetingSummary,
+    });
+    const summarySentence =
+      summaries.summarySentence ?? history.summarySentence;
+    const summaryLabel = summaries.summaryLabel ?? history.summaryLabel;
 
-    try {
-      if (!config.mock.enabled && history.notesChannelId) {
-        newMessageIds = await sendNotesEmbedsToDiscord({
+    // Persist notes FIRST (without message metadata) so Discord is untouched on conflict
+    const ok = await updateMeetingNotesService({
+      guildId: input.serverId,
+      channelId_timestamp: input.meetingId,
+      notes: pending.newNotes,
+      notesDelta: null,
+      notesVersion: newVersion,
+      editedBy: ctx.user.id,
+      summarySentence,
+      summaryLabel,
+      suggestion: pending.suggestion,
+      expectedPreviousVersion: pending.notesVersion,
+    });
+
+    if (!ok) {
+      await notesCorrectionTokenStore.delete(input.token);
+      throw new TRPCError({
+        code: "CONFLICT",
+        message:
+          "Could not apply this correction because the notes were updated elsewhere. Please regenerate the correction and try again.",
+      });
+    }
+
+    // Notes persisted; now update Discord embeds
+    let embedResult: NotesEmbedUpdateResult | undefined;
+    if (!config.mock.enabled && history.notesChannelId) {
+      try {
+        embedResult = await editOrReplaceNotesEmbeds({
           channelId: history.notesChannelId,
+          existingMessageIds: history.notesMessageIds ?? [],
           notesBody: pending.newNotes,
           meetingName: history.meetingName,
           footerText,
+          summaryMessageId: history.summaryMessageId,
         });
+      } catch (error) {
+        console.warn("Failed updating notes embeds after correction", error);
       }
+    }
 
-      const { serverName, channelName } =
-        await resolveGuildAndChannelNamesForPrompt({
-          guildId: input.serverId,
-          channelId,
-        });
-      const summaryModelParams = await resolveModelParamsForContext({
-        guildId: input.serverId,
-        channelId,
-        userId: ctx.user.id,
-      });
-      const summaryModelChoices = await resolveModelChoicesForContext({
-        guildId: input.serverId,
-        channelId,
-        userId: ctx.user.id,
-      });
-      const meetingDate = history.timestamp
-        ? new Date(history.timestamp)
-        : new Date();
-      const summaries = await generateMeetingSummaries({
-        guildId: input.serverId,
-        notes: pending.newNotes,
-        serverName,
-        channelName,
-        tags: history.tags,
-        now: meetingDate,
-        meetingId: history.meetingId,
-        previousSummarySentence: history.summarySentence,
-        previousSummaryLabel: history.summaryLabel,
-        modelParams: summaryModelParams.meetingSummary,
-        modelOverride: summaryModelChoices.meetingSummary,
-      });
-      const summarySentence =
-        summaries.summarySentence ?? history.summarySentence;
-      const summaryLabel = summaries.summaryLabel ?? history.summaryLabel;
-
-      const ok = await updateMeetingNotesService({
+    // Persist message metadata separately
+    if (embedResult && history.notesChannelId) {
+      const metadataOk = await updateMeetingNotesMessageMetadataService({
         guildId: input.serverId,
         channelId_timestamp: input.meetingId,
-        notes: pending.newNotes,
-        notesDelta: null,
-        notesVersion: newVersion,
-        editedBy: ctx.user.id,
-        summarySentence,
-        summaryLabel,
-        suggestion: pending.suggestion,
-        expectedPreviousVersion: pending.notesVersion,
-        metadata:
-          history.notesChannelId && newMessageIds
-            ? {
-                notesMessageIds: newMessageIds,
-                notesChannelId: history.notesChannelId,
-              }
-            : undefined,
+        notesMessageIds: embedResult.messageIds,
+        notesChannelId: history.notesChannelId,
+        expectedNotesVersion: newVersion,
       });
 
-      if (!ok) {
-        await notesCorrectionTokenStore.delete(input.token);
-        if (
-          !config.mock.enabled &&
-          history.notesChannelId &&
-          newMessageIds?.length
-        ) {
-          await deleteDiscordMessagesSafely({
-            channelId: history.notesChannelId,
-            messageIds: newMessageIds,
-          });
-        }
-        throw new TRPCError({
-          code: "CONFLICT",
-          message:
-            "Could not apply this correction because the notes were updated elsewhere. Please regenerate the correction and try again.",
-        });
-      }
-
-      didPersistNewNotes = true;
-
-      if (
-        !config.mock.enabled &&
-        history.notesChannelId &&
-        history.notesMessageIds?.length
-      ) {
+      if (!metadataOk && embedResult.strategy === "replaced") {
         await deleteDiscordMessagesSafely({
           channelId: history.notesChannelId,
-          messageIds: history.notesMessageIds,
-          skipMessageId: history.summaryMessageId,
+          messageIds: embedResult.messageIds,
         });
+        await notesCorrectionTokenStore.delete(input.token);
+        return { ok: true };
       }
+    }
 
-      if (
-        !config.mock.enabled &&
-        history.notesChannelId &&
-        history.summaryMessageId
-      ) {
-        try {
-          const message = await fetchDiscordMessage(
+    // Clean up old messages when strategy was replace
+    if (
+      !config.mock.enabled &&
+      history.notesChannelId &&
+      embedResult?.strategy === "replaced" &&
+      history.notesMessageIds?.length
+    ) {
+      await deleteDiscordMessagesSafely({
+        channelId: history.notesChannelId,
+        messageIds: history.notesMessageIds,
+        skipMessageId: history.summaryMessageId,
+      });
+    }
+
+    // Update summary message
+    if (
+      !config.mock.enabled &&
+      history.notesChannelId &&
+      history.summaryMessageId
+    ) {
+      try {
+        const message = await fetchDiscordMessage(
+          history.notesChannelId,
+          history.summaryMessageId,
+        );
+        const embed = message?.embeds?.[0];
+        if (embed) {
+          const updated = {
+            ...embed,
+            title: resolveSummaryTitle({
+              meetingName: history.meetingName,
+              summaryLabel,
+            }),
+            description: resolveSummaryDescription({
+              summarySentence,
+              summaryLabel,
+            }),
+          };
+          await updateDiscordMessageEmbeds(
             history.notesChannelId,
             history.summaryMessageId,
-          );
-          const embed = message?.embeds?.[0];
-          if (embed) {
-            const updated = {
-              ...embed,
-              title: resolveSummaryTitle({
-                meetingName: history.meetingName,
-                summaryLabel,
-              }),
-              description: resolveSummaryDescription({
-                summarySentence,
-                summaryLabel,
-              }),
-            };
-            await updateDiscordMessageEmbeds(
-              history.notesChannelId,
-              history.summaryMessageId,
-              [updated],
-            );
-          }
-        } catch (error) {
-          console.warn(
-            "Failed to update summary message after web correction",
-            error,
+            [updated],
           );
         }
+      } catch (error) {
+        console.warn(
+          "Failed to update summary message after web correction",
+          error,
+        );
       }
-
-      await notesCorrectionTokenStore.delete(input.token);
-      return { ok: true };
-    } catch (error) {
-      if (
-        !didPersistNewNotes &&
-        !config.mock.enabled &&
-        history.notesChannelId &&
-        newMessageIds?.length
-      ) {
-        await deleteDiscordMessagesSafely({
-          channelId: history.notesChannelId,
-          messageIds: newMessageIds,
-        });
-      }
-      throw error;
     }
+
+    await notesCorrectionTokenStore.delete(input.token);
+    return { ok: true };
   });
 
 export const meetingsRouter = router({

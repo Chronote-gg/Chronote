@@ -17,6 +17,7 @@ import { v4 as uuidv4 } from "uuid";
 import {
   getMeetingHistoryService,
   updateMeetingNotesService,
+  updateMeetingNotesMessageMetadataService,
 } from "../services/meetingHistoryService";
 import { stripCodeFences } from "../utils/text";
 import { MeetingHistory, SuggestionHistoryEntry } from "../types/db";
@@ -420,20 +421,13 @@ async function applyCorrection(
     interaction,
     pending,
   );
-  const { newMessageIds, channel } = await updateNotesEmbedsForCorrection(
-    interaction,
-    pending,
-    row,
-    notesBody,
-    newVersion,
-    summaries.meetingName,
-  );
+
+  // Persist notes FIRST (without message metadata) so Discord is untouched on conflict
   const updateSucceeded = await persistCorrectionUpdate({
     pending,
     newVersion,
     editedBy: interaction.user.id,
     summaries,
-    newMessageIds,
   });
 
   if (!updateSucceeded) {
@@ -444,15 +438,44 @@ async function applyCorrection(
     };
   }
 
+  // Notes persisted; now update Discord embeds
+  const { messageIds, channel, strategy } =
+    await updateNotesEmbedsForCorrection(
+      interaction,
+      pending,
+      row,
+      notesBody,
+      newVersion,
+      summaries.meetingName,
+    );
+
+  // Persist message metadata separately
+  if (messageIds) {
+    const metadataOk = await updateMeetingNotesMessageMetadataService({
+      guildId: pending.guildId,
+      channelId_timestamp: pending.channelIdTimestamp,
+      notesMessageIds: messageIds,
+      notesChannelId: pending.notesChannelId ?? "",
+      expectedNotesVersion: newVersion,
+    });
+
+    if (!metadataOk && strategy === "replaced") {
+      // Metadata failed with new messages; clean up orphaned new messages
+      await cleanupOldNotesMessages(channel, messageIds, [], undefined);
+      return { ok: true };
+    }
+  }
+
   await updateSummaryMessageForCorrection(interaction, pending, summaries);
 
-  // Update succeeded - remove old messages if we posted replacements
-  await cleanupOldNotesMessages(
-    channel,
-    pending.notesMessageIds,
-    newMessageIds,
-    pending.summaryMessageId,
-  );
+  if (strategy === "replaced") {
+    await cleanupOldNotesMessages(
+      channel,
+      pending.notesMessageIds,
+      messageIds,
+      pending.summaryMessageId,
+    );
+  }
 
   return { ok: true };
 }
@@ -572,6 +595,14 @@ function isSummaryMessage(message: Message<boolean>): boolean {
   return matches >= 2;
 }
 
+type NotesEmbedUpdateStrategy = "edited" | "replaced" | "none";
+
+type NotesEmbedUpdateResult = {
+  messageIds?: string[];
+  channel: Awaited<ReturnType<typeof interactionChannelFetch>> | null;
+  strategy: NotesEmbedUpdateStrategy;
+};
+
 async function updateNotesEmbedsForCorrection(
   interaction: ButtonInteraction,
   pending: PendingCorrection,
@@ -579,12 +610,9 @@ async function updateNotesEmbedsForCorrection(
   notesBody: string,
   newVersion: number,
   meetingName?: string,
-): Promise<{
-  newMessageIds?: string[];
-  channel: Awaited<ReturnType<typeof interactionChannelFetch>> | null;
-}> {
+): Promise<NotesEmbedUpdateResult> {
   if (!pending.notesChannelId) {
-    return { channel: null };
+    return { channel: null, strategy: "none" };
   }
   const channel = await interactionChannelFetch(
     pending.notesChannelId,
@@ -599,8 +627,22 @@ async function updateNotesEmbedsForCorrection(
     color,
     meetingName,
   );
-  const newMessageIds = await sendUpdatedEmbeds(channel, embeds, row);
-  return { newMessageIds, channel };
+
+  if (existingIds.length > 0 && embeds.length <= existingIds.length) {
+    const editedIds = await editExistingNotesEmbeds(
+      channel,
+      existingIds,
+      embeds,
+      row,
+      pending.summaryMessageId,
+    );
+    if (editedIds) {
+      return { messageIds: editedIds, channel, strategy: "edited" };
+    }
+  }
+
+  const messageIds = await sendNewNotesEmbeds(channel, embeds, row);
+  return { messageIds, channel, strategy: "replaced" };
 }
 
 async function persistCorrectionUpdate(params: {
@@ -612,9 +654,8 @@ async function persistCorrectionUpdate(params: {
     summaryLabel?: string;
     meetingName?: string;
   };
-  newMessageIds?: string[];
 }): Promise<boolean> {
-  const { pending, newVersion, editedBy, summaries, newMessageIds } = params;
+  const { pending, newVersion, editedBy, summaries } = params;
   return updateMeetingNotesService({
     guildId: pending.guildId,
     channelId_timestamp: pending.channelIdTimestamp,
@@ -627,10 +668,6 @@ async function persistCorrectionUpdate(params: {
     meetingName: summaries.meetingName,
     suggestion: pending.suggestion,
     expectedPreviousVersion: pending.notesVersion,
-    metadata: {
-      notesMessageIds: newMessageIds,
-      notesChannelId: pending.notesChannelId,
-    },
   });
 }
 
@@ -707,7 +744,51 @@ async function interactionChannelFetch(
   return interaction.client.channels.fetch(channelId);
 }
 
-async function sendUpdatedEmbeds(
+async function editExistingNotesEmbeds(
+  channel: Awaited<ReturnType<typeof interactionChannelFetch>>,
+  existingIds: string[],
+  embeds: ReturnType<typeof buildUpdatedEmbeds>,
+  row: ActionRowBuilder<ButtonBuilder>,
+  summaryMessageId?: string,
+): Promise<string[] | null> {
+  if (!channel?.isSendable()) return null;
+
+  const editedIds: string[] = [];
+  for (let i = 0; i < embeds.length; i++) {
+    const messageId = existingIds[i];
+    if (summaryMessageId && messageId === summaryMessageId) {
+      return null;
+    }
+    try {
+      const msg = await channel.messages.fetch(messageId);
+      await msg.edit({
+        embeds: [embeds[i]],
+        components: i === 0 ? [row] : [],
+      });
+      editedIds.push(messageId);
+    } catch {
+      console.warn(
+        "Failed to edit notes message in-place, falling back to replace",
+      );
+      return null;
+    }
+  }
+
+  for (let i = embeds.length; i < existingIds.length; i++) {
+    const messageId = existingIds[i];
+    if (summaryMessageId && messageId === summaryMessageId) continue;
+    try {
+      const msg = await channel.messages.fetch(messageId);
+      await msg.delete();
+    } catch {
+      console.warn("Failed to delete excess notes message after in-place edit");
+    }
+  }
+
+  return editedIds;
+}
+
+async function sendNewNotesEmbeds(
   channel: Awaited<ReturnType<typeof interactionChannelFetch>>,
   embeds: ReturnType<typeof buildUpdatedEmbeds>,
   row: ActionRowBuilder<ButtonBuilder>,
