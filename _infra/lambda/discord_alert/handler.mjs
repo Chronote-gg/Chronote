@@ -74,11 +74,16 @@ const sm = new SecretsManagerClient({});
 
 async function getDiscordToken() {
   if (cachedToken) return cachedToken;
+  const secretArn = process.env.DISCORD_BOT_TOKEN_SECRET_ARN;
+  if (!secretArn) {
+    throw new Error("DISCORD_BOT_TOKEN_SECRET_ARN is not configured");
+  }
   const result = await sm.send(
-    new GetSecretValueCommand({
-      SecretId: process.env.DISCORD_BOT_TOKEN_SECRET_ARN,
-    }),
+    new GetSecretValueCommand({ SecretId: secretArn }),
   );
+  if (!result.SecretString) {
+    throw new Error("Secret does not contain a string value");
+  }
   cachedToken = result.SecretString;
   return cachedToken;
 }

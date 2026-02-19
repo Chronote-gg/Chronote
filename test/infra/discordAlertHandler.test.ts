@@ -8,13 +8,27 @@
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
-jest.mock("@aws-sdk/client-secrets-manager", () => {
-  const send = jest.fn().mockResolvedValue({ SecretString: "mock-bot-token" });
-  return {
-    SecretsManagerClient: jest.fn().mockImplementation(() => ({ send })),
-    GetSecretValueCommand: jest.fn(),
-  };
-});
+/**
+ * Shared mock send function. Declared at module scope so the jest.mock factory
+ * always references the same function even after jest.resetModules().
+ */
+const mockSmSend = jest
+  .fn()
+  .mockResolvedValue({ SecretString: "mock-bot-token" });
+
+jest.mock("@aws-sdk/client-secrets-manager", () => ({
+  SecretsManagerClient: jest
+    .fn()
+    .mockImplementation(() => ({ send: mockSmSend })),
+  GetSecretValueCommand: jest.fn(),
+}));
+
+/** Override to control mock HTTP response behavior per test. */
+let mockHttpResponse: {
+  statusCode: number;
+  body: string;
+  error?: Error;
+} = { statusCode: 200, body: JSON.stringify({ id: "msg-1" }) };
 
 jest.mock("node:https", () => {
   // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -25,18 +39,27 @@ jest.mock("node:https", () => {
     _options: any,
     callback: (res: any) => void,
   ) {
-    const res = new EventEmitter();
-    Object.assign(res, { statusCode: 200 });
-    process.nextTick(() => {
-      callback(res);
-      res.emit("data", Buffer.from(JSON.stringify({ id: "msg-1" })));
-      res.emit("end");
-    });
-    return {
-      on: jest.fn(),
+    const req = {
+      on: jest.fn((event: string, handler: (err: Error) => void) => {
+        if (event === "error" && mockHttpResponse.error) {
+          process.nextTick(() => handler(mockHttpResponse.error!));
+        }
+      }),
       write: jest.fn(),
       end: jest.fn(),
     };
+
+    if (!mockHttpResponse.error) {
+      const res = new EventEmitter();
+      Object.assign(res, { statusCode: mockHttpResponse.statusCode });
+      process.nextTick(() => {
+        callback(res);
+        res.emit("data", Buffer.from(mockHttpResponse.body));
+        res.emit("end");
+      });
+    }
+
+    return req;
   }
   return { __esModule: true, default: { request: mockRequest } };
 });
@@ -313,6 +336,12 @@ describe("handler", () => {
       DISCORD_BOT_TOKEN_SECRET_ARN:
         "arn:aws:secretsmanager:us-east-1:123456789012:secret:token",
     };
+    // Reset mocks to defaults
+    mockSmSend.mockResolvedValue({ SecretString: "mock-bot-token" });
+    mockHttpResponse = {
+      statusCode: 200,
+      body: JSON.stringify({ id: "msg-1" }),
+    };
   });
 
   afterEach(() => {
@@ -349,5 +378,57 @@ describe("handler", () => {
     await expect(handler(event)).rejects.toThrow(
       "DISCORD_CHANNEL_ID is not configured",
     );
+  });
+
+  it("throws when DISCORD_BOT_TOKEN_SECRET_ARN is missing", async () => {
+    delete process.env.DISCORD_BOT_TOKEN_SECRET_ARN;
+    const event = {
+      Records: [{ Sns: { Message: ALARM_SNS_MESSAGE } }],
+    };
+
+    // Re-import the module to clear the cached token
+    jest.resetModules();
+    const freshModule =
+      await import("../../_infra/lambda/discord_alert/handler.mjs");
+    await expect(freshModule.handler(event)).rejects.toThrow(
+      "DISCORD_BOT_TOKEN_SECRET_ARN is not configured",
+    );
+  });
+
+  it("throws when Secrets Manager returns no SecretString", async () => {
+    mockSmSend.mockResolvedValueOnce({ SecretString: undefined });
+    const event = {
+      Records: [{ Sns: { Message: ALARM_SNS_MESSAGE } }],
+    };
+
+    // Re-import the module to clear the cached token
+    jest.resetModules();
+    const freshModule =
+      await import("../../_infra/lambda/discord_alert/handler.mjs");
+    await expect(freshModule.handler(event)).rejects.toThrow(
+      "Secret does not contain a string value",
+    );
+  });
+
+  it("throws on Discord API non-2xx response", async () => {
+    mockHttpResponse = {
+      statusCode: 403,
+      body: JSON.stringify({ message: "Missing Permissions" }),
+    };
+    const event = {
+      Records: [{ Sns: { Message: ALARM_SNS_MESSAGE } }],
+    };
+
+    await expect(handler(event)).rejects.toThrow("Discord API 403");
+  });
+
+  it("handles non-JSON Discord API response on success", async () => {
+    mockHttpResponse = { statusCode: 200, body: "OK" };
+    const event = {
+      Records: [{ Sns: { Message: ALARM_SNS_MESSAGE } }],
+    };
+
+    const result = await handler(event);
+    expect(result).toEqual({ statusCode: 200 });
   });
 });

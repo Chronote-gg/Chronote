@@ -81,7 +81,7 @@ data "aws_iam_policy_document" "sns_critical_alerts_policy" {
 }
 
 resource "aws_sns_topic_subscription" "critical_alerts_email" {
-  count     = local.alerts_enabled ? 1 : 0
+  count     = var.alert_email != "" ? 1 : 0
   topic_arn = aws_sns_topic.critical_alerts[0].arn
   protocol  = "email"
   endpoint  = var.alert_email
@@ -236,6 +236,15 @@ resource "aws_iam_role_policy" "discord_alert" {
           "logs:PutLogEvents"
         ]
         Resource = ["arn:aws:logs:*:${data.aws_caller_identity.current.account_id}:*"]
+      },
+      {
+        Sid    = "XRayTracing"
+        Effect = "Allow"
+        Action = [
+          "xray:PutTraceSegments",
+          "xray:PutTelemetryRecords"
+        ]
+        Resource = ["*"]
       }
     ]
   })
