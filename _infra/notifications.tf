@@ -8,8 +8,15 @@ variable "alert_email" {
   default     = ""
 }
 
+variable "alert_discord_channel_id" {
+  description = "Discord channel ID for critical alert notifications (bot must have SendMessages permission)"
+  type        = string
+  default     = ""
+}
+
 locals {
-  alerts_enabled = var.alert_email != ""
+  alerts_enabled         = var.alert_email != "" || var.alert_discord_channel_id != ""
+  discord_alerts_enabled = local.alerts_enabled && var.alert_discord_channel_id != ""
 }
 
 # --- SNS topic ---
@@ -74,7 +81,7 @@ data "aws_iam_policy_document" "sns_critical_alerts_policy" {
 }
 
 resource "aws_sns_topic_subscription" "critical_alerts_email" {
-  count     = local.alerts_enabled ? 1 : 0
+  count     = var.alert_email != "" ? 1 : 0
   topic_arn = aws_sns_topic.critical_alerts[0].arn
   protocol  = "email"
   endpoint  = var.alert_email
@@ -165,3 +172,145 @@ resource "aws_cloudwatch_metric_alarm" "alb_unhealthy_hosts" {
     Environment = var.environment
   }
 }
+
+# -----------------------------------------------------------------------
+# Discord alert Lambda: forwards SNS alarm notifications to a Discord channel
+# -----------------------------------------------------------------------
+
+data "archive_file" "discord_alert" {
+  count       = local.discord_alerts_enabled ? 1 : 0
+  type        = "zip"
+  source_file = "${path.module}/lambda/discord_alert/handler.mjs"
+  output_path = "${path.module}/discord_alert.zip"
+}
+
+resource "aws_iam_role" "discord_alert" {
+  count = local.discord_alerts_enabled ? 1 : 0
+  name  = "${local.name_prefix}-discord-alert"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Action    = "sts:AssumeRole"
+      Effect    = "Allow"
+      Principal = { Service = "lambda.amazonaws.com" }
+    }]
+  })
+
+  tags = {
+    Project     = "${var.project_name}-discord-bot"
+    Environment = var.environment
+  }
+}
+
+resource "aws_iam_role_policy" "discord_alert" {
+  count = local.discord_alerts_enabled ? 1 : 0
+  name  = "discord-alert"
+  role  = aws_iam_role.discord_alert[0].id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid    = "ReadBotToken"
+        Effect = "Allow"
+        Action = [
+          "secretsmanager:GetSecretValue"
+        ]
+        Resource = [aws_secretsmanager_secret.discord_bot_token.arn]
+      },
+      {
+        Sid    = "DecryptSecrets"
+        Effect = "Allow"
+        Action = [
+          "kms:Decrypt"
+        ]
+        Resource = [aws_kms_key.app_general.arn]
+      },
+      {
+        Sid    = "WriteLogs"
+        Effect = "Allow"
+        Action = [
+          "logs:CreateLogGroup",
+          "logs:CreateLogStream",
+          "logs:PutLogEvents"
+        ]
+        Resource = ["arn:aws:logs:*:${data.aws_caller_identity.current.account_id}:*"]
+      },
+      {
+        Sid    = "XRayTracing"
+        Effect = "Allow"
+        Action = [
+          "xray:PutTraceSegments",
+          "xray:PutTelemetryRecords"
+        ]
+        Resource = ["*"]
+      }
+    ]
+  })
+}
+
+resource "aws_lambda_function" "discord_alert" {
+  count         = local.discord_alerts_enabled ? 1 : 0
+  function_name = "${local.name_prefix}-discord-alert"
+  description   = "Forwards CloudWatch Alarm SNS notifications to a Discord channel"
+  role          = aws_iam_role.discord_alert[0].arn
+  handler       = "handler.handler"
+  runtime       = "nodejs22.x"
+  timeout       = 15
+  memory_size   = 128
+
+  filename         = data.archive_file.discord_alert[0].output_path
+  source_code_hash = data.archive_file.discord_alert[0].output_base64sha256
+
+  tracing_config {
+    mode = "Active"
+  }
+
+  environment {
+    variables = {
+      DISCORD_BOT_TOKEN_SECRET_ARN = aws_secretsmanager_secret.discord_bot_token.arn
+      DISCORD_CHANNEL_ID           = var.alert_discord_channel_id
+    }
+  }
+
+  #checkov:skip=CKV_AWS_115 reason: Reserved concurrency not needed for infrequent alert forwarding.
+  #checkov:skip=CKV_AWS_116 reason: No DLQ needed; SNS retries on failure and email provides backup alerting.
+  #checkov:skip=CKV_AWS_117 reason: Lambda does not need VPC access; calls only Discord API and Secrets Manager.
+  #checkov:skip=CKV_AWS_272 reason: Code signing not required for internal infra Lambda.
+  #checkov:skip=CKV_AWS_173 reason: Environment variables contain no secrets; ARN and channel ID only.
+
+  tags = {
+    Project     = "${var.project_name}-discord-bot"
+    Environment = var.environment
+  }
+}
+
+resource "aws_cloudwatch_log_group" "discord_alert" {
+  count             = local.discord_alerts_enabled ? 1 : 0
+  name              = "/aws/lambda/${aws_lambda_function.discord_alert[0].function_name}"
+  retention_in_days = 365
+  kms_key_id        = aws_kms_key.app_general.arn
+
+  tags = {
+    Project     = "${var.project_name}-discord-bot"
+    Environment = var.environment
+  }
+}
+
+resource "aws_sns_topic_subscription" "critical_alerts_discord" {
+  count     = local.discord_alerts_enabled ? 1 : 0
+  topic_arn = aws_sns_topic.critical_alerts[0].arn
+  protocol  = "lambda"
+  endpoint  = aws_lambda_function.discord_alert[0].arn
+}
+
+resource "aws_lambda_permission" "discord_alert_sns" {
+  count         = local.discord_alerts_enabled ? 1 : 0
+  statement_id  = "AllowSNSInvoke"
+  action        = "lambda:InvokeFunction"
+  function_name = aws_lambda_function.discord_alert[0].function_name
+  principal     = "sns.amazonaws.com"
+  source_arn    = aws_sns_topic.critical_alerts[0].arn
+}
+

@@ -59,7 +59,7 @@ const config: Config.InitialOptions = {
   // A map from regular expressions to paths to transformers
   transform: {
     "^.+\\.(ts|tsx)$": "ts-jest",
-    "^.+\\.(js|jsx)$": "babel-jest",
+    "^.+\\.(js|jsx|mjs)$": "babel-jest",
   },
 
   // An array of regexp pattern strings that are matched against all source file paths, matched files will skip transformation
@@ -70,7 +70,7 @@ const config: Config.InitialOptions = {
   testPathIgnorePatterns: ["/node_modules/", "/dist/", "/build/", "/test/e2e/"],
 
   // An array of file extensions your modules use
-  moduleFileExtensions: ["js", "jsx", "ts", "tsx", "json", "node"],
+  moduleFileExtensions: ["js", "jsx", "ts", "tsx", "json", "node", "mjs"],
 
   // A list of paths to modules that run some code to configure or set up the testing framework before each test
   setupFilesAfterEnv: ["<rootDir>/src/setupTests.ts"],
