@@ -34,3 +34,7 @@ src/embed.ts:resolveMeetingTitle
 src\embed.ts:resolveMeetingTitle
 src/trpc/routers/meetings.ts:updateNotesMutation
 src\trpc\routers\meetings.ts:updateNotesMutation
+src/frontend/pages/ContactFeedback.tsx:handleSubmit
+src\frontend\pages\ContactFeedback.tsx:handleSubmit
+src/frontend/pages/ContactFeedback.tsx:ContactFeedbackSuccess
+src\frontend\pages\ContactFeedback.tsx:ContactFeedbackSuccess

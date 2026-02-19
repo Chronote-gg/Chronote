@@ -1,11 +1,15 @@
-// jest-dom adds custom jest matchers for asserting on DOM nodes.
-// allows you to do things like:
-// expect(element).toHaveTextContent(/react/i)
-// learn more: https://github.com/testing-library/jest-dom
-import "@testing-library/jest-dom";
 import { jest } from "@jest/globals";
 import { TextDecoder, TextEncoder } from "util";
 import { ReadableStream } from "stream/web";
+
+// jest-dom adds custom jest matchers for asserting on DOM nodes (jsdom only).
+// In node environment, the import would fail because there's no DOM.
+// Side-effect-only require is intentional: the types file is not a proper
+// ES module so dynamic import() fails at the type level.
+if (typeof window !== "undefined") {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  require("@testing-library/jest-dom");
+}
 
 const requiredTestEnv = {
   MOCK_MODE: "true",
@@ -30,20 +34,40 @@ Object.entries(requiredTestEnv).forEach(([key, value]) => {
   }
 });
 
-// Minimal matchMedia polyfill for Mantine components in tests
-if (!window.matchMedia) {
-  window.matchMedia = () => ({
-    matches: false,
-    media: "",
-    onchange: null,
-    addListener: () => {},
-    removeListener: () => {},
-    addEventListener: () => {},
-    removeEventListener: () => {},
-    dispatchEvent: () => false,
+// Browser-specific polyfills (only apply in jsdom environment)
+const hasBrowserGlobals = typeof window !== "undefined";
+
+if (hasBrowserGlobals) {
+  // Minimal matchMedia polyfill for Mantine components in tests
+  if (!window.matchMedia) {
+    window.matchMedia = () => ({
+      matches: false,
+      media: "",
+      onchange: null,
+      addListener: () => {},
+      removeListener: () => {},
+      addEventListener: () => {},
+      removeEventListener: () => {},
+      dispatchEvent: () => false,
+    });
+  }
+
+  if (typeof window.ResizeObserver === "undefined") {
+    class ResizeObserver {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    }
+    window.ResizeObserver = ResizeObserver;
+  }
+
+  Object.defineProperty(HTMLElement.prototype, "scrollTo", {
+    value: () => {},
+    writable: true,
   });
 }
 
+// Universal polyfills (apply in both jsdom and node environments)
 if (typeof globalThis.fetch === "undefined") {
   globalThis.fetch = jest.fn() as unknown as typeof fetch;
 }
@@ -62,17 +86,3 @@ if (typeof globalThis.ReadableStream === "undefined") {
   globalThis.ReadableStream =
     ReadableStream as unknown as typeof globalThis.ReadableStream;
 }
-
-if (typeof window.ResizeObserver === "undefined") {
-  class ResizeObserver {
-    observe() {}
-    unobserve() {}
-    disconnect() {}
-  }
-  window.ResizeObserver = ResizeObserver;
-}
-
-Object.defineProperty(HTMLElement.prototype, "scrollTo", {
-  value: () => {},
-  writable: true,
-});
