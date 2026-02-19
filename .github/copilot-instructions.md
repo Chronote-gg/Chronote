@@ -29,7 +29,7 @@ This file provides Copilot review context. It mirrors AGENTS.md and adds only hi
 
 ## Key flows (server code in `src/`)
 
-- Entry: `index.ts` -> `setupBot()` and `setupWebServer()`.
+- Entry: `index.ts` -> `setupBot()` and `setupWebServer()`. Independent runtimes: `src/apps/bot/main.ts` and `src/apps/api/main.ts` boot the bot and API separately.
 - Bot interactions: `src/bot.ts`
   - Slash commands: `/startmeeting`, `/autorecord`, `/context`, `/dictionary`.
   - Buttons: end meeting, generate image, suggest correction.
