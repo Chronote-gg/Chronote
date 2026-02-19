@@ -296,6 +296,9 @@ resource "aws_cloudwatch_metric_alarm" "grafana_token_rotation_errors" {
     FunctionName = aws_lambda_function.grafana_token_rotation[0].function_name
   }
 
+  alarm_actions = local.alerts_enabled ? [aws_sns_topic.critical_alerts[0].arn] : []
+  ok_actions    = local.alerts_enabled ? [aws_sns_topic.critical_alerts[0].arn] : []
+
   tags = {
     Project     = "${var.project_name}-discord-bot"
     Environment = var.environment

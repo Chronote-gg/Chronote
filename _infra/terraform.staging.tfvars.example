@@ -45,6 +45,9 @@ LANGFUSE_PROMPT_CACHE_TTL_MS="60000"
 REDIS_URL=""
 REDIS_AUTH_TOKEN="change-me-redis-auth-token"
 
+# Alerting
+alert_email=""                                # critical alerts email; requires manual confirmation after first apply
+
 # Observability
 grafana_api_key=""                           # bootstrap only; clear after first rotation
 grafana_url=""

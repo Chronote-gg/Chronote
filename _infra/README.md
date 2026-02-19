@@ -69,6 +69,28 @@ or create a new token with the bootstrap steps above.
 - If you change the workspace name, you may want to update `grafana_url` before the second apply.
 - To force an immediate rotation: `aws lambda invoke --function-name <project_name>-<environment>-grafana-token-rotation --region us-east-1 /dev/stdout`
 
+## Critical alerts (SNS)
+
+Set `alert_email` in `terraform.tfvars` to enable critical CloudWatch alarm
+notifications via SNS. Leave it empty to disable all alerting resources.
+
+After the first `terraform apply`, you must **confirm the subscription** by
+clicking the link in the confirmation email AWS sends to that address.
+
+### What triggers an alert
+
+| Alarm                         | Condition                                     | Period    |
+| ----------------------------- | --------------------------------------------- | --------- |
+| ECS no running tasks          | Bot service running task count < 1 for 10 min | 5 min x 2 |
+| ALB 5xx errors                | 10+ HTTP 5xx responses in 10 min              | 5 min x 2 |
+| ALB unhealthy hosts           | Any unhealthy target for 10 min               | 5 min x 2 |
+| Grafana token rotation errors | Rotation Lambda error in 24 h                 | 1 day x 1 |
+
+All alarms also send an OK notification when the condition clears.
+
+The SNS topic is encrypted with the `app_general` KMS key and restricted to
+publishing from CloudWatch Alarms and EventBridge within the same account.
+
 ## Secrets Manager (ECS runtime secrets)
 
 Terraform now creates the Secrets Manager entries and wires them into the ECS task

@@ -73,6 +73,9 @@ STRIPE_CANCEL_URL=""                       # e.g., https://app.example.com/upgra
 STRIPE_PORTAL_RETURN_URL=""                # e.g., https://app.example.com/portal/select-server
 BILLING_LANDING_URL=""                     # e.g., https://app.example.com/upgrade
 
+# Alerting
+alert_email=""                                # critical alerts email; requires manual confirmation after first apply
+
 # Observability (hosted AMG/AMP)
 # On first apply, create a manual token and set grafana_api_key. Once the
 # rotation Lambda is active, clear grafana_api_key (the Lambda manages it).
