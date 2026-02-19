@@ -71,11 +71,13 @@ or create a new token with the bootstrap steps above.
 
 ## Critical alerts (SNS)
 
-Set `alert_email` in `terraform.tfvars` to enable critical CloudWatch alarm
-notifications via SNS. Leave it empty to disable all alerting resources.
+Set `alert_email` and/or `alert_discord_channel_id` in `terraform.tfvars` to
+enable critical CloudWatch alarm notifications via SNS. Leave both empty to
+disable all alerting resources.
 
-After the first `terraform apply`, you must **confirm the subscription** by
-clicking the link in the confirmation email AWS sends to that address.
+After the first `terraform apply` with `alert_email` set, you must **confirm
+the subscription** by clicking the link in the confirmation email AWS sends to
+that address.
 
 ### What triggers an alert
 
@@ -90,6 +92,29 @@ All alarms also send an OK notification when the condition clears.
 
 The SNS topic is encrypted with the `app_general` KMS key and restricted to
 publishing from CloudWatch Alarms and EventBridge within the same account.
+
+### Discord channel alerts
+
+When `alert_discord_channel_id` is set, a Node.js 22 Lambda subscribes to the
+SNS topic and posts rich embeds to the specified Discord channel. The Lambda
+reads the bot token from Secrets Manager (cached across invocations) and calls
+the Discord REST API directly (no discord.js dependency), so it works even when
+the main application is down.
+
+**Setup:**
+
+1. Create a dedicated `#alerts` text channel in your Discord server.
+2. Copy the channel ID (right-click the channel with Developer Mode enabled).
+3. Ensure the bot has `SendMessages` and `EmbedLinks` permissions in that channel.
+4. Set `alert_discord_channel_id` in `terraform.tfvars` and run `terraform apply`.
+
+**Embed format:**
+
+- Color-coded: red for ALARM, green for OK, grey for unknown states.
+- Fields: status transition, region, metric/namespace, threshold, evaluation
+  period, reason (truncated to 1024 chars), and a deeplink to the CloudWatch
+  console alarm page.
+- Footer: "CloudWatch Alarm" with the state change timestamp.
 
 ## Secrets Manager (ECS runtime secrets)
 

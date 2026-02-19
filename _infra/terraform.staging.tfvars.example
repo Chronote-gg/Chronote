@@ -47,6 +47,7 @@ REDIS_AUTH_TOKEN="change-me-redis-auth-token"
 
 # Alerting
 alert_email=""                                # critical alerts email; requires manual confirmation after first apply
+alert_discord_channel_id=""                   # Discord channel ID for alert embeds (bot must have SendMessages)
 
 # Observability
 grafana_api_key=""                           # bootstrap only; clear after first rotation
