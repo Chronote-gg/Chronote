@@ -151,7 +151,6 @@ resource "aws_iam_role_policy" "grafana_token_rotation" {
         Action = [
           "grafana:CreateWorkspaceServiceAccountToken",
           "grafana:DeleteWorkspaceServiceAccountToken",
-          "grafana:ListWorkspaceServiceAccountTokens",
         ]
         Resource = aws_grafana_workspace.amg.arn
       },
@@ -252,7 +251,7 @@ resource "aws_cloudwatch_event_rule" "grafana_token_rotation" {
   count               = local.grafana_rotation_enabled ? 1 : 0
   name                = "${local.name_prefix}-grafana-token-rotation"
   description         = "Rotate Grafana service account token every ${var.grafana_token_rotation_days} days"
-  schedule_expression = "rate(${var.grafana_token_rotation_days} days)"
+  schedule_expression = "rate(${var.grafana_token_rotation_days} ${var.grafana_token_rotation_days == 1 ? "day" : "days"})"
 
   tags = {
     Project     = "${var.project_name}-discord-bot"

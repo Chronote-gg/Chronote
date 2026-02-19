@@ -79,7 +79,7 @@ BILLING_LANDING_URL=""                     # e.g., https://app.example.com/upgra
 grafana_api_key=""                           # bootstrap only; clear after first rotation
 grafana_url=""                               # e.g., https://g-xxxx.grafana-workspace.us-east-1.amazonaws.com/
 grafana_service_account_id=""                # numeric SA ID from: aws grafana list-workspace-service-accounts
-grafana_token_rotation_days=25               # must be < 30 (AMG max TTL)
+grafana_token_rotation_days=25               # 1-25; rotation_days + 5 must stay within 30-day AMG max
 aws_region="us-east-1"
 grafana_suffix_seed=""                       # optional; change to force a new workspace name suffix
 # Secrets (managed in AWS Secrets Manager)
