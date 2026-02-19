@@ -58,7 +58,7 @@ const ALARM_SNS_MESSAGE = JSON.stringify({
   OldStateValue: "OK",
   NewStateReason:
     "Threshold Crossed: 1 out of the last 2 datapoints [0.0 (19/02/26 12:00:00)] was less than the threshold (1.0).",
-  Region: "us-east-1",
+  Region: "US East (N. Virginia)",
   StateChangeTime: "2026-02-19T12:05:00.000+0000",
   Trigger: {
     MetricName: "RunningTaskCount",
@@ -146,6 +146,40 @@ describe("parseAlarmMessage", () => {
     expect(alarm.period).toBeUndefined();
     expect(alarm.evaluationPeriods).toBeUndefined();
     expect(alarm.threshold).toBeUndefined();
+  });
+
+  it("resolves human-readable region name to region code", () => {
+    const alarm = parseAlarmMessage(ALARM_SNS_MESSAGE);
+    expect(alarm.region).toBe("us-east-1");
+  });
+
+  it("passes through region codes unchanged", () => {
+    const msg = JSON.stringify({
+      AlarmName: "test",
+      NewStateValue: "ALARM",
+      OldStateValue: "OK",
+      Region: "eu-west-2",
+    });
+    const alarm = parseAlarmMessage(msg);
+    expect(alarm.region).toBe("eu-west-2");
+  });
+
+  it("falls back to AWS_REGION for unknown region labels", () => {
+    const origRegion = process.env.AWS_REGION;
+    process.env.AWS_REGION = "ap-southeast-1";
+    try {
+      const msg = JSON.stringify({
+        AlarmName: "test",
+        NewStateValue: "ALARM",
+        OldStateValue: "OK",
+        Region: "Some Unknown Region",
+      });
+      const alarm = parseAlarmMessage(msg);
+      expect(alarm.region).toBe("ap-southeast-1");
+    } finally {
+      if (origRegion === undefined) delete process.env.AWS_REGION;
+      else process.env.AWS_REGION = origRegion;
+    }
   });
 
   it("throws on invalid JSON", () => {

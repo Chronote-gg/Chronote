@@ -23,6 +23,50 @@ const ALARM_COLOR = 0xe74c3c; // red
 const OK_COLOR = 0x2ecc71; // green
 const UNKNOWN_COLOR = 0x95a5a6; // grey
 
+/**
+ * CloudWatch SNS messages use human-readable region names (e.g. "US East (N. Virginia)").
+ * Map them to AWS region codes for console deeplinks.
+ */
+const REGION_NAME_TO_CODE = {
+  "US East (N. Virginia)": "us-east-1",
+  "US East (Ohio)": "us-east-2",
+  "US West (N. California)": "us-west-1",
+  "US West (Oregon)": "us-west-2",
+  "Africa (Cape Town)": "af-south-1",
+  "Asia Pacific (Hong Kong)": "ap-east-1",
+  "Asia Pacific (Hyderabad)": "ap-south-2",
+  "Asia Pacific (Jakarta)": "ap-southeast-3",
+  "Asia Pacific (Melbourne)": "ap-southeast-4",
+  "Asia Pacific (Mumbai)": "ap-south-1",
+  "Asia Pacific (Osaka)": "ap-northeast-3",
+  "Asia Pacific (Seoul)": "ap-northeast-2",
+  "Asia Pacific (Singapore)": "ap-southeast-1",
+  "Asia Pacific (Sydney)": "ap-southeast-2",
+  "Asia Pacific (Tokyo)": "ap-northeast-1",
+  "Canada (Central)": "ca-central-1",
+  "Canada West (Calgary)": "ca-west-1",
+  "Europe (Frankfurt)": "eu-central-1",
+  "Europe (Ireland)": "eu-west-1",
+  "Europe (London)": "eu-west-2",
+  "Europe (Milan)": "eu-south-1",
+  "Europe (Paris)": "eu-west-3",
+  "Europe (Spain)": "eu-south-2",
+  "Europe (Stockholm)": "eu-north-1",
+  "Europe (Zurich)": "eu-central-2",
+  "Israel (Tel Aviv)": "il-central-1",
+  "Middle East (Bahrain)": "me-south-1",
+  "Middle East (UAE)": "me-central-1",
+  "South America (Sao Paulo)": "sa-east-1",
+};
+
+/** Convert a CloudWatch region label to an AWS region code. */
+function resolveRegionCode(region) {
+  if (!region) return process.env.AWS_REGION ?? "us-east-1";
+  // Already a region code (e.g. "us-east-1")
+  if (/^[a-z]{2}-[a-z]+-\d$/.test(region)) return region;
+  return REGION_NAME_TO_CODE[region] ?? process.env.AWS_REGION ?? "us-east-1";
+}
+
 /** @type {string | undefined} */
 let cachedToken;
 
@@ -62,7 +106,11 @@ function discordPost(path, body, token) {
         res.on("end", () => {
           const responseBody = Buffer.concat(chunks).toString();
           if (res.statusCode >= 200 && res.statusCode < 300) {
-            resolve(JSON.parse(responseBody));
+            try {
+              resolve(JSON.parse(responseBody));
+            } catch {
+              resolve({ raw: responseBody });
+            }
           } else {
             reject(new Error(`Discord API ${res.statusCode}: ${responseBody}`));
           }
@@ -101,7 +149,7 @@ export function parseAlarmMessage(raw) {
     newState: msg.NewStateValue ?? "UNKNOWN",
     oldState: msg.OldStateValue ?? "UNKNOWN",
     reason: msg.NewStateReason ?? "",
-    region: msg.Region ?? process.env.AWS_REGION ?? "us-east-1",
+    region: resolveRegionCode(msg.Region),
     metric: msg.Trigger?.MetricName ?? "",
     namespace: msg.Trigger?.Namespace ?? "",
     statistic: msg.Trigger?.Statistic ?? "",
