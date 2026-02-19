@@ -422,9 +422,7 @@ export default function ContactFeedback() {
       data.images.forEach((img) => URL.revokeObjectURL(img.previewUrl));
       setSubmitted(true);
     } catch (err) {
-      if (!submitMutation.error) {
-        setUploadError({ message: extractErrorMessage(err) });
-      }
+      setUploadError({ message: extractErrorMessage(err) });
     } finally {
       setIsUploading(false);
     }
