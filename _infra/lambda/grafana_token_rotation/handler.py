@@ -23,10 +23,14 @@ TOKEN_TTL_SECONDS = int(
 )  # default 30 days
 REGION = os.environ.get("AWS_REGION", "us-east-1")
 
+# Module-level clients are reused across warm Lambda invocations
+grafana_client = boto3.client("grafana", region_name=REGION)
+secretsmanager_client = boto3.client("secretsmanager", region_name=REGION)
+
 
 def handler(event, context):
-    grafana = boto3.client("grafana", region_name=REGION)
-    secretsmanager = boto3.client("secretsmanager", region_name=REGION)
+    grafana = grafana_client
+    secretsmanager = secretsmanager_client
 
     # 1. Read current secret to find the old token ID (if any)
     old_token_id = None

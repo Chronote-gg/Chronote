@@ -218,7 +218,7 @@ resource "aws_lambda_function" "grafana_token_rotation" {
       GRAFANA_WORKSPACE_ID       = aws_grafana_workspace.amg.id
       GRAFANA_SERVICE_ACCOUNT_ID = var.grafana_service_account_id
       GRAFANA_TOKEN_SECRET_ARN   = aws_secretsmanager_secret.grafana_api_token[0].arn
-      GRAFANA_TOKEN_TTL_SECONDS  = tostring(min(var.grafana_token_rotation_days + 5, 30) * 86400) # rotation interval + 5-day buffer, capped at 30 days
+      GRAFANA_TOKEN_TTL_SECONDS  = tostring((var.grafana_token_rotation_days + 5) * 86400) # rotation interval + 5-day buffer
     }
   }
 
