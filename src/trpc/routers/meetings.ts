@@ -39,6 +39,7 @@ import {
   createDiscordMessage,
   deleteDiscordMessage,
   fetchDiscordMessage,
+  updateDiscordMessage,
   updateDiscordMessageEmbeds,
 } from "../../services/discordMessageService";
 import { generateMeetingSummaries } from "../../services/meetingSummaryService";
@@ -444,6 +445,96 @@ async function sendNotesEmbedsToDiscord(params: {
     }
     throw error;
   }
+}
+
+type NotesEmbedStrategy = "edited" | "replaced";
+
+type NotesEmbedUpdateResult = {
+  messageIds: string[];
+  strategy: NotesEmbedStrategy;
+};
+
+async function tryEditNotesEmbedsInPlace(params: {
+  channelId: string;
+  existingMessageIds: string[];
+  embeds: Array<Record<string, unknown>>;
+  summaryMessageId?: string;
+}): Promise<string[] | null> {
+  const editedIds: string[] = [];
+
+  for (let i = 0; i < params.embeds.length; i++) {
+    const messageId = params.existingMessageIds[i];
+    if (params.summaryMessageId && messageId === params.summaryMessageId) {
+      return null;
+    }
+    const ok = await updateDiscordMessage(params.channelId, messageId, {
+      embeds: [params.embeds[i]],
+      components: [],
+    });
+    if (!ok) {
+      return null;
+    }
+    editedIds.push(messageId);
+  }
+
+  for (
+    let i = params.embeds.length;
+    i < params.existingMessageIds.length;
+    i++
+  ) {
+    const messageId = params.existingMessageIds[i];
+    if (params.summaryMessageId && messageId === params.summaryMessageId) {
+      continue;
+    }
+    try {
+      await deleteDiscordMessage(params.channelId, messageId);
+    } catch {
+      console.warn("Failed to delete excess notes message after in-place edit");
+    }
+  }
+
+  return editedIds;
+}
+
+async function editOrReplaceNotesEmbeds(params: {
+  channelId: string;
+  existingMessageIds: string[];
+  notesBody: string;
+  meetingName?: string;
+  footerText?: string;
+  color?: number;
+  summaryMessageId?: string;
+}): Promise<NotesEmbedUpdateResult> {
+  const embeds = buildMeetingNotesEmbeds({
+    notesBody: params.notesBody,
+    meetingName: params.meetingName,
+    footerText: params.footerText,
+    color: params.color,
+  }).map((embed) => embed.toJSON() as unknown as Record<string, unknown>);
+
+  if (
+    params.existingMessageIds.length > 0 &&
+    embeds.length <= params.existingMessageIds.length
+  ) {
+    const editedIds = await tryEditNotesEmbedsInPlace({
+      channelId: params.channelId,
+      existingMessageIds: params.existingMessageIds,
+      embeds,
+      summaryMessageId: params.summaryMessageId,
+    });
+    if (editedIds) {
+      return { messageIds: editedIds, strategy: "edited" };
+    }
+  }
+
+  const messageIds = await sendNotesEmbedsToDiscord({
+    channelId: params.channelId,
+    notesBody: params.notesBody,
+    meetingName: params.meetingName,
+    footerText: params.footerText,
+    color: params.color,
+  });
+  return { messageIds, strategy: "replaced" };
 }
 
 async function deleteDiscordMessagesSafely(params: {
@@ -868,39 +959,42 @@ const updateNotes = guildMemberProcedure
     }
 
     if (!config.mock.enabled && history.notesChannelId) {
-      let newMessageIds: string[];
+      const existingIds = history.notesMessageIds ?? [];
+      let result: NotesEmbedUpdateResult;
       try {
-        newMessageIds = await sendNotesEmbedsToDiscord({
+        result = await editOrReplaceNotesEmbeds({
           channelId: history.notesChannelId,
+          existingMessageIds: existingIds,
           notesBody: markdownNotes,
           meetingName: history.meetingName,
           footerText,
+          summaryMessageId: history.summaryMessageId,
         });
       } catch (error) {
-        console.warn("Failed posting updated notes embeds", error);
+        console.warn("Failed updating notes embeds", error);
         return { ok: true };
       }
 
       const metadataOk = await updateMeetingNotesMessageMetadataService({
         guildId: input.serverId,
         channelId_timestamp: input.meetingId,
-        notesMessageIds: newMessageIds,
+        notesMessageIds: result.messageIds,
         notesChannelId: history.notesChannelId,
         expectedNotesVersion: newVersion,
       });
 
-      if (!metadataOk) {
+      if (!metadataOk && result.strategy === "replaced") {
         await deleteDiscordMessagesSafely({
           channelId: history.notesChannelId,
-          messageIds: newMessageIds,
+          messageIds: result.messageIds,
         });
         return { ok: true };
       }
 
-      if (history.notesMessageIds?.length) {
+      if (result.strategy === "replaced" && existingIds.length > 0) {
         await deleteDiscordMessagesSafely({
           channelId: history.notesChannelId,
-          messageIds: history.notesMessageIds,
+          messageIds: existingIds,
           skipMessageId: history.summaryMessageId,
         });
       }
@@ -1136,16 +1230,18 @@ const applyNotesCorrection = guildMemberProcedure
     const editorLabel = buildRequesterTag(ctx.user);
     const footerText = `v${newVersion} • Edited by ${editorLabel}`;
 
-    let newMessageIds: string[] | undefined;
+    let embedResult: NotesEmbedUpdateResult | undefined;
     let didPersistNewNotes = false;
 
     try {
       if (!config.mock.enabled && history.notesChannelId) {
-        newMessageIds = await sendNotesEmbedsToDiscord({
+        embedResult = await editOrReplaceNotesEmbeds({
           channelId: history.notesChannelId,
+          existingMessageIds: history.notesMessageIds ?? [],
           notesBody: pending.newNotes,
           meetingName: history.meetingName,
           footerText,
+          summaryMessageId: history.summaryMessageId,
         });
       }
 
@@ -1196,9 +1292,9 @@ const applyNotesCorrection = guildMemberProcedure
         suggestion: pending.suggestion,
         expectedPreviousVersion: pending.notesVersion,
         metadata:
-          history.notesChannelId && newMessageIds
+          history.notesChannelId && embedResult
             ? {
-                notesMessageIds: newMessageIds,
+                notesMessageIds: embedResult.messageIds,
                 notesChannelId: history.notesChannelId,
               }
             : undefined,
@@ -1209,11 +1305,12 @@ const applyNotesCorrection = guildMemberProcedure
         if (
           !config.mock.enabled &&
           history.notesChannelId &&
-          newMessageIds?.length
+          embedResult?.strategy === "replaced" &&
+          embedResult.messageIds.length > 0
         ) {
           await deleteDiscordMessagesSafely({
             channelId: history.notesChannelId,
-            messageIds: newMessageIds,
+            messageIds: embedResult.messageIds,
           });
         }
         throw new TRPCError({
@@ -1228,6 +1325,7 @@ const applyNotesCorrection = guildMemberProcedure
       if (
         !config.mock.enabled &&
         history.notesChannelId &&
+        embedResult?.strategy === "replaced" &&
         history.notesMessageIds?.length
       ) {
         await deleteDiscordMessagesSafely({
@@ -1281,11 +1379,12 @@ const applyNotesCorrection = guildMemberProcedure
         !didPersistNewNotes &&
         !config.mock.enabled &&
         history.notesChannelId &&
-        newMessageIds?.length
+        embedResult?.strategy === "replaced" &&
+        embedResult.messageIds.length > 0
       ) {
         await deleteDiscordMessagesSafely({
           channelId: history.notesChannelId,
-          messageIds: newMessageIds,
+          messageIds: embedResult.messageIds,
         });
       }
       throw error;
