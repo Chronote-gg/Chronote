@@ -19,22 +19,55 @@ This stack provisions:
    - Leave `grafana_api_key` and `grafana_url` empty in `terraform.tfvars`.
    - Run: `terraform apply`
 
-2. **Create a Grafana service account + token** (preferred):
+2. **Create a Grafana service account + token**:
    - Open the Grafana workspace URL.
-   - In Grafana: _Administration → Service accounts_ → **New service account** (role: Admin).
+   - In Grafana: _Administration > Service accounts_ > **New service account** (role: Admin).
    - Create a **token** and copy it.
+   - Note the service account numeric ID (or run
+     `aws grafana list-workspace-service-accounts --workspace-id <id> --region us-east-1`).
    - Copy the workspace **endpoint URL** (e.g., `https://g-xxxx.grafana-workspace.us-east-1.amazonaws.com/`).
 
-3. **Second apply** (provisions datasource + dashboard):
-   - Set either in `terraform.tfvars` or env vars:
-     - `grafana_api_key` (service account token)
+3. **Second apply** (provisions datasource + dashboard + rotation infra):
+   - Set in `terraform.tfvars`:
+     - `grafana_api_key` (the manual token for bootstrapping)
      - `grafana_url`
-   - Then run: `terraform apply`
+     - `grafana_service_account_id` (numeric ID from step 2)
+   - Run: `terraform apply`
+
+4. **Seed the rotation** (one-time):
+   - Invoke the Lambda to create the first auto-managed token:
+     ```bash
+     aws lambda invoke --function-name <project_name>-<environment>-grafana-token-rotation \
+       --region us-east-1 /dev/stdout
+     ```
+   - The function name is derived from your Terraform variables (for example, with
+     `project_name = "meeting-notes"` and `environment = "prod"`, the name is
+     `meeting-notes-prod-grafana-token-rotation`).
+   - Clear `grafana_api_key` from `terraform.tfvars` (the Lambda now manages the token).
+   - Run `terraform apply` once more to confirm it reads from Secrets Manager.
+
+### Token rotation
+
+The Grafana service account token is auto-rotated by a Lambda on an EventBridge
+schedule (default: every 25 days). AMG tokens have a max TTL of 30 days, so the
+Lambda creates tokens with a TTL of rotation interval + 5-day buffer.
+
+The rotation flow:
+
+1. Lambda reads the current token ID from Secrets Manager.
+2. Creates a new token via the `CreateWorkspaceServiceAccountToken` API.
+3. Stores the new token in Secrets Manager.
+4. Deletes the old token.
+
+A CloudWatch alarm fires if the rotation Lambda errors. If the token expires
+before the next rotation (e.g., Lambda was disabled), manually invoke the Lambda
+or create a new token with the bootstrap steps above.
 
 ### Useful tips
 
 - If AMG workspace creation conflicts, bump `grafana_suffix_seed` in `terraform.tfvars` to force a new workspace name suffix.
 - If you change the workspace name, you may want to update `grafana_url` before the second apply.
+- To force an immediate rotation: `aws lambda invoke --function-name <project_name>-<environment>-grafana-token-rotation --region us-east-1 /dev/stdout`
 
 ## Secrets Manager (ECS runtime secrets)
 

@@ -74,9 +74,12 @@ STRIPE_PORTAL_RETURN_URL=""                # e.g., https://app.example.com/porta
 BILLING_LANDING_URL=""                     # e.g., https://app.example.com/upgrade
 
 # Observability (hosted AMG/AMP)
-# Create a Grafana service account token (preferred) or AMG API key, then set these:
-grafana_api_key=""
-grafana_url=""
+# On first apply, create a manual token and set grafana_api_key. Once the
+# rotation Lambda is active, clear grafana_api_key (the Lambda manages it).
+grafana_api_key=""                           # bootstrap only; clear after first rotation
+grafana_url=""                               # e.g., https://g-xxxx.grafana-workspace.us-east-1.amazonaws.com/
+grafana_service_account_id=""                # numeric SA ID from: aws grafana list-workspace-service-accounts
+grafana_token_rotation_days=25               # 1-25; rotation_days + 5 must stay within 30-day AMG max
 aws_region="us-east-1"
 grafana_suffix_seed=""                       # optional; change to force a new workspace name suffix
 # Secrets (managed in AWS Secrets Manager)

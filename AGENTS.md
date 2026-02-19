@@ -10,7 +10,7 @@
 - Runtime: Node.js 22, TypeScript.
 - Discord: discord.js v14, discord-api-types, @discordjs/voice for audio capture, @discordjs/opus, prism-media.
 - AI: openai SDK; gpt-4o-transcribe for transcription; gpt-5.1 for cleanup/notes/corrections; gpt-5-mini for live gate; DALL-E 3 for images.
-- Observability and prompt management: Langfuse for tracing, prompt versioning, and prompt sync scripts.
+- Observability and prompt management: Langfuse for tracing, prompt versioning, and prompt sync scripts. AMG (Grafana) service account token is auto-rotated via EventBridge + Lambda (see `_infra/grafana.tf` and `_infra/README.md`).
 - Storage: AWS DynamoDB (tables: GuildSubscription, PaymentTransaction, StripeWebhookEvent, InteractionReceipt, ActiveMeeting, AccessLogs, RecordingTranscript, AutoRecordSettings, ServerContext, ChannelContext, DictionaryTable, MeetingHistory, SessionTable), S3 for transcripts/audio.
 - Infra: Terraform -> AWS ECS Fargate, ECR, CloudWatch logs; static frontend on S3 + CloudFront with OAC; local Dynamo via docker-compose.
 - IaC scanning: Checkov runs in `.github/workflows/ci.yml` on PRs and main pushes. Local: `npm run checkov` (uses `uvx --from checkov checkov`; install uv first: https://docs.astral.sh/uv/).
@@ -110,7 +110,7 @@
 - Comment hygiene: don’t leave transient or change-log style comments (e.g., “SDK v3 exposes transformToString”). Use comments only to clarify non-obvious logic, constraints, or intent.
 - Writing style: do not use em dashes in copy/docs/comments; prefer commas, parentheses, or hyphens.
 - GitHub prose: prefix any PR comments, PR descriptions, issue text, or other GitHub prose with `[AGENT]`.
-- PR review hygiene: before asking the user to merge a PR, reply to and resolve all AI bot review threads (Copilot, Greptile, etc). If we disagree with the suggestion, say so and resolve the thread anyway. Use reactions when helpful.
+- PR review hygiene: before asking the user to merge a PR, reply to and resolve all AI bot review threads (Copilot, Greptile, etc). If we disagree with the suggestion, say so and resolve the thread anyway. Use reactions when helpful. When replying to review comments, reply directly to each thread using the review comment replies API (`POST /repos/OWNER/REPO/pulls/PR/comments/COMMENT_ID/replies`), not by creating a new pending review. Direct replies keep each response in its original thread context.
 - PR bot thread audit: when checking for unresolved AI comments, fetch _all_ review threads via the GitHub GraphQL API and paginate until `hasNextPage=false` (don't assume `first: 100` is enough). Also scan PR issue comments for bot follow-ups (Greptile sometimes posts as regular PR comments, which cannot be "resolved" but should still be replied to or reacted to).
 - Documentation accuracy: after changes that affect behavior, config, prompts, infra, or user flows, review and update `AGENTS.md`, `.github/copilot-instructions.md`, `README.md`, and any related `docs/` or prompt files to keep them accurate and high signal. Keep the copilot instructions high level to reduce drift.
 - README should stay high signal for users, avoid listing research outcomes like query parameter details. Put rationale or research notes in planning documentation files instead.
