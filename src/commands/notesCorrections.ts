@@ -17,6 +17,7 @@ import { v4 as uuidv4 } from "uuid";
 import {
   getMeetingHistoryService,
   updateMeetingNotesService,
+  updateMeetingNotesMessageMetadataService,
 } from "../services/meetingHistoryService";
 import { stripCodeFences } from "../utils/text";
 import { MeetingHistory, SuggestionHistoryEntry } from "../types/db";
@@ -420,6 +421,24 @@ async function applyCorrection(
     interaction,
     pending,
   );
+
+  // Persist notes FIRST (without message metadata) so Discord is untouched on conflict
+  const updateSucceeded = await persistCorrectionUpdate({
+    pending,
+    newVersion,
+    editedBy: interaction.user.id,
+    summaries,
+  });
+
+  if (!updateSucceeded) {
+    return {
+      ok: false,
+      errorMessage:
+        "Could not apply this correction because the notes were updated elsewhere. Please reopen the correction request and try again.",
+    };
+  }
+
+  // Notes persisted; now update Discord embeds
   const { messageIds, channel, strategy } =
     await updateNotesEmbedsForCorrection(
       interaction,
@@ -429,20 +448,22 @@ async function applyCorrection(
       newVersion,
       summaries.meetingName,
     );
-  const updateSucceeded = await persistCorrectionUpdate({
-    pending,
-    newVersion,
-    editedBy: interaction.user.id,
-    summaries,
-    newMessageIds: messageIds,
-  });
 
-  if (!updateSucceeded) {
-    return {
-      ok: false,
-      errorMessage:
-        "Could not apply this correction because the notes were updated elsewhere. Please reopen the correction request and try again.",
-    };
+  // Persist message metadata separately
+  if (messageIds) {
+    const metadataOk = await updateMeetingNotesMessageMetadataService({
+      guildId: pending.guildId,
+      channelId_timestamp: pending.channelIdTimestamp,
+      notesMessageIds: messageIds,
+      notesChannelId: pending.notesChannelId ?? "",
+      expectedNotesVersion: newVersion,
+    });
+
+    if (!metadataOk && strategy === "replaced") {
+      // Metadata failed with new messages; clean up orphaned new messages
+      await cleanupOldNotesMessages(channel, messageIds, [], undefined);
+      return { ok: true };
+    }
   }
 
   await updateSummaryMessageForCorrection(interaction, pending, summaries);
@@ -633,9 +654,8 @@ async function persistCorrectionUpdate(params: {
     summaryLabel?: string;
     meetingName?: string;
   };
-  newMessageIds?: string[];
 }): Promise<boolean> {
-  const { pending, newVersion, editedBy, summaries, newMessageIds } = params;
+  const { pending, newVersion, editedBy, summaries } = params;
   return updateMeetingNotesService({
     guildId: pending.guildId,
     channelId_timestamp: pending.channelIdTimestamp,
@@ -648,10 +668,6 @@ async function persistCorrectionUpdate(params: {
     meetingName: summaries.meetingName,
     suggestion: pending.suggestion,
     expectedPreviousVersion: pending.notesVersion,
-    metadata: {
-      notesMessageIds: newMessageIds,
-      notesChannelId: pending.notesChannelId,
-    },
   });
 }
 
