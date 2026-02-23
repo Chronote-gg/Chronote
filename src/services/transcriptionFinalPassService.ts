@@ -159,21 +159,27 @@ const buildBaselineSegments = (meeting: MeetingData): BaselineSegment[] => {
     (a, b) => a.timestamp - b.timestamp,
   );
 
-  const segments = orderedFiles
-    .map((fileData, index) => {
-      const text = resolveAudioFileText(fileData).trim();
-      if (!text) return undefined;
-      return {
-        segmentId: `seg-${index + 1}`,
-        fileData,
-        speaker: resolveSpeakerLabel(meeting, fileData.userId),
-        startedAt: new Date(fileData.timestamp).toISOString(),
-        offsetSeconds: Math.max(0, (fileData.timestamp - startedAtMs) / 1000),
-        estimatedEndSeconds: 0,
-        text,
-      };
-    })
-    .filter((segment): segment is BaselineSegment => Boolean(segment));
+  const segments: BaselineSegment[] = [];
+  let segmentCounter = 1;
+
+  for (const fileData of orderedFiles) {
+    const text = resolveAudioFileText(fileData).trim();
+    if (!text) {
+      continue;
+    }
+
+    segments.push({
+      segmentId: `seg-${segmentCounter}`,
+      fileData,
+      speaker: resolveSpeakerLabel(meeting, fileData.userId),
+      startedAt: new Date(fileData.timestamp).toISOString(),
+      offsetSeconds: Math.max(0, (fileData.timestamp - startedAtMs) / 1000),
+      estimatedEndSeconds: 0,
+      text,
+    });
+
+    segmentCounter += 1;
+  }
 
   for (let index = 0; index < segments.length; index += 1) {
     const current = segments[index];
