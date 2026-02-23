@@ -356,7 +356,10 @@ export function ContactFeedbackForm({
 
             {submitError && (
               <Alert color="red" variant="light">
-                Something went wrong. Please try again.
+                {typeof submitError.message === "string" &&
+                submitError.message.trim().length > 0
+                  ? submitError.message
+                  : "Something went wrong. Please try again."}
               </Alert>
             )}
 
@@ -428,9 +431,11 @@ export default function ContactFeedback() {
         data.images,
         getUploadUrlMutation.mutateAsync,
       );
-      if (uploadResult.error && uploadResult.keys.length === 0) {
+      if (uploadResult.error) {
         setUploadError({ message: uploadResult.error });
-        return;
+        if (uploadResult.keys.length === 0) {
+          return;
+        }
       }
 
       await submitMutation.mutateAsync({

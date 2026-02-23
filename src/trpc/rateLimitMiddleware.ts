@@ -67,23 +67,8 @@ export function createRateLimitMiddleware(
   windowMs: number,
   maxHits: number,
 ) {
-  const resolveClientIp = (req: TrpcContext["req"]): string => {
-    const forwardedFor = req.header("x-forwarded-for");
-    if (forwardedFor) {
-      const [firstForwardedIp] = forwardedFor.split(",");
-      return firstForwardedIp?.trim() || "unknown";
-    }
-
-    const realIp = req.header("x-real-ip");
-    if (realIp) {
-      return realIp.trim();
-    }
-
-    return req.ip ?? req.socket.remoteAddress ?? "unknown";
-  };
-
   return t.middleware(({ ctx, next }) => {
-    const ip = resolveClientIp(ctx.req);
+    const ip = ctx.req.ip ?? ctx.req.socket.remoteAddress ?? "unknown";
     const key = `${namespace}:${ip}`;
 
     if (!checkRateLimit(key, windowMs, maxHits)) {
