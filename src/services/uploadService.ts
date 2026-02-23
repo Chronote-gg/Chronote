@@ -45,6 +45,7 @@ function buildTranscriptJson(
   const resolveSegmentText = (
     file: MeetingData["audioData"]["audioFiles"][0],
   ) =>
+    file.finalPassTranscript ??
     file.coalescedTranscript ??
     file.slowTranscript ??
     file.transcript ??

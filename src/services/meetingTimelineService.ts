@@ -354,7 +354,12 @@ const buildTranscriptSegmentsFromMeeting = (meeting: MeetingData) => {
   };
 
   for (const file of meeting.audioData.audioFiles) {
-    addSegment(file, file.transcript, file.source ?? "voice", file.messageId);
+    addSegment(
+      file,
+      file.finalPassTranscript ?? file.transcript,
+      file.source ?? "voice",
+      file.messageId,
+    );
   }
   for (const cue of meeting.audioData.cueEvents ?? []) {
     addSegment(cue, cue.text, cue.source ?? "bot");

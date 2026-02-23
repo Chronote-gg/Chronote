@@ -77,7 +77,7 @@ yarn test:visual
 
 - Refresh review threads and issue comments again before declaring done.
 - Reply + resolve all AI bot review threads (even if rejecting the suggestion).
-- Wait for checks to go green, then do one last refresh to catch late bot updates.
+- Wait for checks to go green, then wait at least 5 minutes after the latest push and do one last refresh to catch late bot updates.
 
 ## Repo Notes (Chronote)
 

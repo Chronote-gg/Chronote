@@ -185,6 +185,20 @@ export const CONFIG_REGISTRY: ConfigEntry[] = [
     ui: { type: "toggle" },
   },
   {
+    key: "transcription.finalPass.enabled",
+    label: "Finalized audio verification pass",
+    description:
+      "Run a final transcription verification pass over the finalized meeting audio and auto-apply high-confidence hallucination fixes.",
+    category: "Transcription",
+    group: "Experimental",
+    valueType: "boolean",
+    defaultValue: true,
+    scopes: {
+      global: scope(true, true, "superadmin", "toggle"),
+    },
+    ui: { type: "toggle" },
+  },
+  {
     key: "transcription.suppression.enabled",
     label: "Loudness gate",
     description:

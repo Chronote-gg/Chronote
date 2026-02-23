@@ -22,6 +22,7 @@ import { deleteMeeting, getMeeting, hasMeeting } from "../../src/meetings";
 import { describeAutoRecordRule } from "../../src/utils/meetingLifecycle";
 import { MEETING_END_REASONS } from "../../src/types/meetingLifecycle";
 import { releaseMeetingLeaseForMeeting } from "../../src/services/activeMeetingLeaseService";
+import { runTranscriptionFinalPass } from "../../src/services/transcriptionFinalPassService";
 
 jest.mock("../../src/audio", () => ({
   buildMixedAudio: jest.fn(),
@@ -55,6 +56,9 @@ jest.mock("../../src/utils/chatLog", () => ({
 }));
 jest.mock("../../src/services/uploadService", () => ({
   uploadMeetingArtifacts: jest.fn(),
+}));
+jest.mock("../../src/services/transcriptionFinalPassService", () => ({
+  runTranscriptionFinalPass: jest.fn(),
 }));
 jest.mock("../../src/services/subscriptionService", () => ({
   getGuildLimits: jest.fn(),
@@ -154,11 +158,27 @@ const mockedReleaseMeetingLeaseForMeeting =
   releaseMeetingLeaseForMeeting as jest.MockedFunction<
     typeof releaseMeetingLeaseForMeeting
   >;
+const mockedRunTranscriptionFinalPass =
+  runTranscriptionFinalPass as jest.MockedFunction<
+    typeof runTranscriptionFinalPass
+  >;
 
 describe("handleEndMeetingOther", () => {
   beforeEach(() => {
     jest.clearAllMocks();
     mockedCleanupSpeakerTracks.mockResolvedValue(undefined);
+    mockedRunTranscriptionFinalPass.mockResolvedValue({
+      enabled: true,
+      applied: false,
+      processedChunks: 0,
+      totalChunks: 0,
+      totalSegments: 0,
+      candidateEdits: 0,
+      acceptedEdits: 0,
+      replacedSegments: 0,
+      droppedSegments: 0,
+      fallbackApplied: false,
+    });
   });
 
   it("flushes active snippets before disconnecting the voice connection", async () => {
@@ -317,6 +337,67 @@ describe("handleEndMeetingOther", () => {
         reason: "explicit_end",
       }),
     );
+  });
+
+  it("runs final transcription pass when transcription is enabled", async () => {
+    const { compileTranscriptions } = jest.requireMock("../../src/audio") as {
+      compileTranscriptions: jest.Mock;
+    };
+
+    mockedWithMeetingEndTrace.mockImplementation(async (_meeting, fn) => fn());
+    mockedEvaluateAutoRecordCancellation.mockResolvedValue({ cancel: false });
+    mockedBuildMixedAudio.mockResolvedValue(undefined);
+    mockedCloseOutputFile.mockResolvedValue(undefined);
+    mockedWaitForAudioOnlyFinishProcessing.mockResolvedValue(undefined);
+    mockedUploadMeetingArtifacts.mockResolvedValue(undefined);
+    mockedSaveMeetingHistoryToDatabase.mockResolvedValue(undefined);
+    mockedGetGuildLimits.mockResolvedValue({ limits: {} } as never);
+    mockedUpdateMeetingStatusService.mockResolvedValue(undefined);
+    compileTranscriptions.mockResolvedValue("transcript text");
+
+    const meeting = {
+      guildId: "guild-1",
+      channelId: "text-1",
+      meetingId: "meeting-1",
+      voiceChannel: { id: "voice-1", name: "Voice", members: new Collection() },
+      textChannel: {
+        id: "text-1",
+        send: jest.fn().mockResolvedValue(undefined),
+        messages: { fetch: jest.fn() },
+      },
+      connection: {
+        disconnect: jest.fn(),
+        destroy: jest.fn(),
+      },
+      chatLog: [],
+      audioData: {
+        audioFiles: [],
+        currentSnippets: new Map(),
+        outputFileName: "recording.mp3",
+      },
+      startTime: new Date("2025-01-01T00:00:00.000Z"),
+      endTime: undefined,
+      finishing: false,
+      finished: false,
+      transcribeMeeting: true,
+      generateNotes: false,
+      isAutoRecording: false,
+      creator: { id: "user-1" },
+      guild: { id: "guild-1", name: "Guild", members: { cache: new Map() } },
+      ttsQueue: { stopAndClear: jest.fn() },
+      runtimeConfig: {
+        transcription: {
+          finalPassEnabled: true,
+        },
+      },
+      setFinished: jest.fn(),
+    } as unknown as MeetingData;
+
+    await handleEndMeetingOther({} as Client, meeting);
+
+    expect(mockedRunTranscriptionFinalPass).toHaveBeenCalledWith(meeting, {
+      audioFilePath: "recording.mp3",
+    });
   });
 
   it("continues error cleanup when lease release fails", async () => {

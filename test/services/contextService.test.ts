@@ -77,6 +77,7 @@ const DEFAULT_TRANSCRIPTION_CONFIG: MeetingRuntimeConfig["transcription"] = {
   interjectionEnabled: false,
   interjectionMinSpeakerSeconds: MINIMUM_TRANSCRIPTION_LENGTH,
   noiseGate: DEFAULT_NOISE_GATE_CONFIG,
+  finalPassEnabled: false,
 };
 
 const buildRuntimeConfig = (
