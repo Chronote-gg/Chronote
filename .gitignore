@@ -31,6 +31,8 @@ _infra_state_mgmt/.terraform
 
 # production
 /build
+apps/docs-site/.docusaurus/
+apps/docs-site/build/
 
 # misc
 .DS_Store

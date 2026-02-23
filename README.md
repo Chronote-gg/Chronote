@@ -28,8 +28,9 @@ A Discord bot that records voice meetings, transcribes them with OpenAI, generat
    - Deployed ECS uses **AWS Secrets Manager** for secrets (see `_infra/README.md`).
 4. Start everything (local Dynamo + table init + bot): `yarn dev`
 5. Frontend (Vite + Mantine) hot reload: `yarn frontend:dev`
-6. Cloud workspace prep and mock-friendly env snippets: see `AGENTS.md` and `scripts/mock.env.example`
-7. Optional MCP tooling (OpenCode, Codex, Claude Code): set `LANGFUSE_PUBLIC_KEY` and `LANGFUSE_SECRET_KEY` in `.env.local`, then run `node scripts/setup-langfuse-mcp-auth.js` to generate `.opencode/langfuse.mcp.auth`, `.opencode/langfuse.public`, and `.opencode/langfuse.secret` for OpenCode. Codex and Claude Code still read `LANGFUSE_MCP_AUTH` from the environment.
+6. Public docs site (Docusaurus) hot reload: `yarn docs:dev`
+7. Cloud workspace prep and mock-friendly env snippets: see `AGENTS.md` and `scripts/mock.env.example`
+8. Optional MCP tooling (OpenCode, Codex, Claude Code): set `LANGFUSE_PUBLIC_KEY` and `LANGFUSE_SECRET_KEY` in `.env.local`, then run `node scripts/setup-langfuse-mcp-auth.js` to generate `.opencode/langfuse.mcp.auth`, `.opencode/langfuse.public`, and `.opencode/langfuse.secret` for OpenCode. Codex and Claude Code still read `LANGFUSE_MCP_AUTH` from the environment.
 
 ### DynamoDB local helpers
 
@@ -62,6 +63,7 @@ These checks run before PR merge and deployment. Use `yarn run check` for the fu
 - Format (Prettier) enforces consistent formatting. Commands: `yarn prettier` (write) or `yarn prettier:check` (CI). Docs: https://prettier.io/docs/cli
 - Unit and integration tests (Jest) protect behavior and enforce coverage thresholds in `jest.config.ts`. Command: `yarn test`. Coverage requirements (global): statements 30%, branches 60%, functions 40%, lines 30%. Docs: https://jestjs.io/docs/29.7/configuration
 - Build (TypeScript + Vite) validates type safety and production bundles. Commands: `yarn build` (tsc), `yarn build:web` (vite build), and `yarn build:all` (both). Docs: https://www.typescriptlang.org/docs/handbook/compiler-options.html and https://vite.dev/guide/
+- Docs build (Docusaurus) validates docs compilation and links. Command: `yarn docs:check`.
 - E2E tests (Playwright) validate critical user flows. Command: `yarn test:e2e`. Docs: https://playwright.dev/docs/running-tests
 - Visual regression (Playwright screenshots) flags UI changes. Commands: `yarn test:visual` and `yarn test:visual:update`. Details: `docs/visual-regression.md`.
 - Code stats and complexity (scc + lizard) keep size and complexity visible. Command: `yarn code:stats`. Use `.sccignore` to exclude paths from scc output. `whitelizard.txt` can suppress known complexity offenders. Docs: https://github.com/boyter/scc and https://github.com/terryyin/lizard
@@ -81,9 +83,10 @@ flowchart LR
   B --> C["prettier (write)"]
   C --> D["test"]
   C --> E["build:all"]
-  C --> F["code:stats"]
-  C --> G["prompts:check"]
-  C --> H["llm-connections:check"]
+  C --> F["docs:check"]
+  C --> G["code:stats"]
+  C --> H["prompts:check"]
+  C --> I["llm-connections:check"]
 ```
 
 `yarn run check:ci`
@@ -94,11 +97,12 @@ flowchart LR
   A --> C["prettier:check"]
   A --> D["test"]
   A --> E["build:all"]
-  A --> F["test:e2e"]
-  A --> G["checkov"]
-  A --> H["code:stats"]
-  A --> I["prompts:check"]
-  A --> J["llm-connections:check"]
+  A --> F["docs:check"]
+  A --> G["test:e2e"]
+  A --> H["checkov"]
+  A --> I["code:stats"]
+  A --> J["prompts:check"]
+  A --> K["llm-connections:check"]
 ```
 
 PR CI workflow
@@ -109,9 +113,10 @@ flowchart LR
   A --> C["prettier job"]
   A --> D["test job"]
   A --> E["build job"]
-  A --> F["e2e job"]
-  A --> G["checkov job"]
-  A --> H["code-stats job"]
+  A --> F["docs-check job"]
+  A --> G["e2e job"]
+  A --> H["checkov job"]
+  A --> I["code-stats job"]
   A --> P["prompts-check job"]
   A --> Q["llm-connections-check job"]
 ```
@@ -124,9 +129,10 @@ flowchart LR
   A --> C["prettier job"]
   A --> D["test job"]
   A --> E["build job"]
-  A --> F["e2e job"]
-  A --> G["checkov job"]
-  A --> H["code-stats job"]
+  A --> F["docs-check job"]
+  A --> G["e2e job"]
+  A --> H["checkov job"]
+  A --> I["code-stats job"]
   A --> P["prompts-check job"]
   A --> Q["llm-connections-check job"]
   B --> Z["checks complete"]
@@ -136,10 +142,12 @@ flowchart LR
   F --> Z
   G --> Z
   H --> Z
+  I --> Z
   P --> Z
   Q --> Z
-  Z --> I["deploy backend"]
+  Z --> L["deploy backend"]
   Z --> J["deploy frontend"]
+  Z --> K["deploy docs"]
 ```
 
 Staging deploy is similar but skips Checkov and allows unit test failures to continue. Prompt and LLM connection checks still run.
@@ -151,13 +159,16 @@ Coverage update rule:
 ## Frontend
 
 - Vite + React 19 + Mantine 8 UI under `src/frontend/`, builds to `build/frontend/`.
+- Public product docs use Docusaurus under `apps/docs-site`, builds to `build/docs-site/`.
 - Routing/data/state: TanStack Router + TanStack Query + tRPC + Zustand.
 - Marketing site is public at `/`; the authenticated portal lives under `/portal/*`:
   - `/portal/select-server`
   - `/portal/server/:serverId/{library|ask|billing|settings}`
 - Upgrade flow entry points live under `/upgrade`, `/promo/:code`, and `/upgrade/select-server` with a success page at `/upgrade/success`. See `docs/upgrade-flow.md` for details and planned short-link support.
 - Deployed via GitHub Actions to S3 + CloudFront (see `_infra/` and `.github/workflows/deploy.yml`).
-- Static hosting variables: `FRONTEND_BUCKET`, `FRONTEND_DOMAIN` (optional), `FRONTEND_CERT_ARN` (when custom domain is set). Allow the SPA to call the API by setting `FRONTEND_ALLOWED_ORIGINS` (comma-separated, e.g., CloudFront domain). CloudFront distribution outputs are emitted by Terraform.
+- Static hosting variables (frontend): `FRONTEND_BUCKET`, `FRONTEND_DOMAIN` (optional), `FRONTEND_CERT_ARN` (when custom domain is set).
+- Static hosting variables (docs): `DOCS_BUCKET`, `DOCS_DOMAIN` (optional), `DOCS_CERT_ARN` (when custom domain is set).
+- Allow the SPA to call the API by setting `FRONTEND_ALLOWED_ORIGINS` (comma-separated, e.g., CloudFront domain). CloudFront distribution outputs are emitted by Terraform.
 - API hosting: backend runs behind an ALB when `API_DOMAIN` is set (e.g., `api.chronote.gg`). Terraform sets a GitHub Actions env var `VITE_API_BASE_URL` so the frontend uses the API domain at build time. OAuth callback should be `https://api.<domain>/auth/discord/callback`.
 - Local dev uses Vite proxying for `/auth`, `/user`, `/api`, and `/trpc` (tRPC).
 
@@ -180,7 +191,7 @@ Coverage update rule:
 - Langfuse transcription traces attach compressed MP3 snippets (mono 16 kHz VBR, 8 MB cap) for observability.
 - Billing: Stripe Checkout + Billing Portal; webhook handler persists GuildSubscription and PaymentTransaction in DynamoDB and handles payment_failed / subscription_deleted to downgrade appropriately (guild-scoped billing only).
 - Sessions: Express sessions stored in DynamoDB `SessionTable` (TTL on `expiresAt`).
-- Storage: DynamoDB tables include GuildSubscription, PaymentTransaction, StripeWebhookEventTable (idempotency with TTL), InteractionReceiptTable (interaction idempotency with TTL), ActiveMeetingTable (active meeting lease ownership with TTL), AccessLogs, RecordingTranscript, AutoRecordSettings, ServerContext, ChannelContext, DictionaryTable, MeetingHistory, AskConversationTable, SessionTable, InstallerTable, OnboardingStateTable. Transcripts and audio artifacts go to S3 (`TRANSCRIPTS_BUCKET`).
+- Storage: DynamoDB tables include GuildSubscription, PaymentTransaction, StripeWebhookEventTable (idempotency with TTL), InteractionReceiptTable (interaction idempotency with TTL), ActiveMeetingTable (active meeting lease ownership with TTL), AccessLogs, RecordingTranscript, AutoRecordSettings, ServerContext, ChannelContext, DictionaryTable, UserSpeechSettingsTable, MeetingHistory, MeetingShareTable, AskConversationTable, SessionTable, InstallerTable, OnboardingStateTable, and FeedbackTable. Transcripts and audio artifacts go to S3 (`TRANSCRIPTS_BUCKET`).
 
 ### Stripe webhook testing (local)
 
@@ -202,7 +213,7 @@ Notes:
 
 ## Infrastructure
 
-- Terraform in `_infra/` provisions ECS/Fargate bot, Dynamo tables, transcripts bucket, SessionTable, and the static frontend (S3 + CloudFront with OAC, SPA fallback).
+- Terraform in `_infra/` provisions ECS/Fargate bot, Dynamo tables, transcripts bucket, SessionTable, the static frontend (S3 + CloudFront with OAC, SPA fallback), and the docs site (S3 + CloudFront with OAC).
 - When `API_DOMAIN` is set, Terraform also provisions an internet-facing ALB for the API (listener on 80/443) plus Route53 alias + ACM cert.
 - Runtime secrets for ECS are stored in **AWS Secrets Manager** and referenced by the task definition (see `_infra/README.md`).
 - Helpers: `yarn terraform:init | plan | apply`.
@@ -213,9 +224,11 @@ Notes:
 Terraform uses a GitHub provider to manage the Actions environment and variables for this repo. Rotate the PAT when it expires or after moving the repo to a new org.
 
 1. Generate a fine-grained token using the GitHub URL template (pre-fills the form):
-   ```
+
+   ```text
    https://github.com/settings/personal-access-tokens/new?name=Chronote+Terraform&description=Terraform+GitHub+provider&target_name=BASIC-BIT&expires_in=90
    ```
+
 2. In the token UI, set **Repository access** to **Only select repositories** and choose `meeting-notes-discord-bot` (manual step), then grant these **Repository permissions**:
    - **Actions**: Read (Terraform reads environments).
    - **Administration**: Read and write (Terraform creates/updates environments).

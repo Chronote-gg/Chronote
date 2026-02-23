@@ -36,10 +36,12 @@ This stack provisions:
 
 4. **Seed the rotation** (one-time):
    - Invoke the Lambda to create the first auto-managed token:
+
      ```bash
      aws lambda invoke --function-name <project_name>-<environment>-grafana-token-rotation \
        --region us-east-1 /dev/stdout
      ```
+
    - The function name is derived from your Terraform variables (for example, with
      `project_name = "meeting-notes"` and `environment = "prod"`, the name is
      `meeting-notes-prod-grafana-token-rotation`).
@@ -123,15 +125,14 @@ definition. You must set the secret values after the first apply.
 
 1. Apply Terraform as usual: `terraform apply`
 2. In AWS Secrets Manager, set **SecretString** values for:
-
-- `${project_name}-${environment}/discord-bot-token`
-- `${project_name}-${environment}/discord-client-secret`
-- `${project_name}-${environment}/oauth-secret`
-- `${project_name}-${environment}/openai-api-key`
-- `${project_name}-${environment}/langfuse-public-key`
-- `${project_name}-${environment}/langfuse-secret-key`
-- `${project_name}-${environment}/stripe-secret-key`
-- `${project_name}-${environment}/stripe-webhook-secret`
+   - `${project_name}-${environment}/discord-bot-token`
+   - `${project_name}-${environment}/discord-client-secret`
+   - `${project_name}-${environment}/oauth-secret`
+   - `${project_name}-${environment}/openai-api-key`
+   - `${project_name}-${environment}/langfuse-public-key`
+   - `${project_name}-${environment}/langfuse-secret-key`
+   - `${project_name}-${environment}/stripe-secret-key`
+   - `${project_name}-${environment}/stripe-webhook-secret`
 
 3. Redeploy the ECS service (or force a new deployment) so tasks pick up the new secrets.
 
@@ -162,6 +163,22 @@ Recommended OAuth callback for production:
 
 The frontend build uses `VITE_API_BASE_URL` (set as a GitHub Actions env var) to
 target the API domain.
+
+## Docs domain (CloudFront)
+
+If you set `DOCS_DOMAIN` in `terraform.tfvars`, Terraform will:
+
+- Create or validate an ACM certificate if `DOCS_CERT_ARN` is not provided and `HOSTED_ZONE_NAME` is set.
+- Create a Route53 alias for `DOCS_DOMAIN`.
+- Provision a dedicated docs S3 bucket + CloudFront distribution and publish GitHub Actions env vars:
+  - `DOCS_BUCKET`
+  - `DOCS_DISTRIBUTION_ID`
+  - `DOCS_SITE_URL` (when set)
+  - `DOCS_ALGOLIA_APP_ID` (when set)
+  - `DOCS_ALGOLIA_API_KEY` (when set)
+  - `DOCS_ALGOLIA_INDEX_NAME` (when set)
+
+Deploy workflows use those variables to publish `apps/docs-site` to `docs.chronote.gg`.
 
 ## Environments (prod vs staging)
 

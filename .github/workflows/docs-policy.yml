@@ -1,0 +1,54 @@
+name: Docs Policy
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled, unlabeled]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  docs-policy:
+    name: Docs policy check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Detect changed paths
+        id: filter
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            user_facing:
+              - 'src/frontend/**'
+              - 'src/commands/**'
+              - 'src/trpc/**'
+              - 'src/api/**'
+              - 'src/services/**'
+              - 'src/bot.ts'
+              - 'src/meetings.ts'
+              - 'src/webserver.ts'
+            docs_delta:
+              - 'apps/docs-site/**'
+
+      - name: Check docs-exempt label
+        id: label
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const labels = context.payload.pull_request.labels.map((label) => label.name);
+            const isExempt = labels.includes("docs-exempt");
+            core.setOutput("docs_exempt", isExempt ? "true" : "false");
+
+      - name: Enforce docs policy
+        env:
+          USER_FACING: ${{ steps.filter.outputs.user_facing }}
+          DOCS_DELTA: ${{ steps.filter.outputs.docs_delta }}
+          DOCS_EXEMPT: ${{ steps.label.outputs.docs_exempt }}
+        run: |
+          if [ "$USER_FACING" = "true" ] && [ "$DOCS_DELTA" != "true" ] && [ "$DOCS_EXEMPT" != "true" ]; then
+            echo "User-facing code changes were detected without docs updates in apps/docs-site/."
+            echo "Add docs updates, or add the docs-exempt label with rationale."
+            exit 1
+          fi
+
+          echo "Docs policy check passed."

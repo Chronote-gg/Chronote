@@ -1,4 +1,4 @@
-﻿# Copilot Review Instructions
+# Copilot Review Instructions
 
 This file provides Copilot review context. It mirrors AGENTS.md and adds only high level prompt guidance to avoid drift.
 
@@ -17,7 +17,7 @@ This file provides Copilot review context. It mirrors AGENTS.md and adds only hi
 - Discord: discord.js v14, discord-api-types, @discordjs/voice for audio capture, @discordjs/opus, prism-media.
 - AI: openai SDK; gpt-4o-transcribe for transcription; gpt-5.1 for cleanup/notes/corrections; gpt-5-mini for live gate; DALL-E 3 for images.
 - Observability and prompt management: Langfuse for tracing, prompt versioning, and prompt sync scripts.
-- Storage: AWS DynamoDB (tables: GuildSubscription, PaymentTransaction, StripeWebhookEvent, InteractionReceipt, ActiveMeeting, AccessLogs, RecordingTranscript, AutoRecordSettings, ServerContext, ChannelContext, DictionaryTable, MeetingHistory, SessionTable), S3 for transcripts/audio.
+- Storage: AWS DynamoDB (tables: GuildSubscription, PaymentTransaction, StripeWebhookEvent, InteractionReceipt, ActiveMeeting, AccessLogs, RecordingTranscript, AutoRecordSettings, SessionTable, Installer, OnboardingState, AskConversation, Feedback, ServerContext, ChannelContext, DictionaryTable, UserSpeechSettings, MeetingHistory, MeetingShare), S3 for transcripts/audio.
 - Infra: Terraform -> AWS ECS Fargate, ECR, CloudWatch logs; static frontend on S3 + CloudFront with OAC; local Dynamo via docker-compose.
 - IaC scanning: Checkov runs in `.github/workflows/ci.yml` on PRs and main pushes. Local: `npm run checkov` (uses `uvx --from checkov checkov`; install uv first: https://docs.astral.sh/uv/).
 - Known/suppressed infra choices:
@@ -29,14 +29,15 @@ This file provides Copilot review context. It mirrors AGENTS.md and adds only hi
 
 ## Key flows (server code in `src/`)
 
-- Entry points: `src/index.ts` boots both bot and web server; `src/apps/bot/main.ts` and `src/apps/api/main.ts` boot each runtime independently.
+- Entry: `index.ts` -> `setupBot()` and `setupWebServer()`. Independent runtimes: `src/apps/bot/main.ts` and `src/apps/api/main.ts` boot the bot and API separately.
 - Bot interactions: `src/bot.ts`
   - Slash commands: `/startmeeting`, `/autorecord`, `/context`, `/dictionary`.
   - Buttons: end meeting, generate image, suggest correction.
   - Auto-record on voice join if configured.
 - Web server: `webserver.ts` (health check; optional Discord OAuth scaffolding). API routes are modularized under `src/api/` (billing, guilds) and share services with bot commands (ask/context/autorecord/billing).
 - Frontend: `src/frontend/` (Vite + React 19), builds to `build/frontend/`, deployed to S3/CloudFront. Express only handles API/health; static assets served via CDN.
-- Dev/QA commands: `yarn start` (bot via nodemon+ts-node), `yarn dev` (starts local Dynamo + init + bot), `yarn frontend:dev`, `yarn build`, `yarn build:web`, `yarn build:all`, `yarn test`, `yarn lint`, `yarn prettier`, `yarn terraform:init|plan|apply`, `yarn prompts:push`, `yarn prompts:pull`, `yarn prompts:check`.
+- Public docs site: `apps/docs-site/` (Docusaurus), builds to `build/docs-site/`, deployed to S3/CloudFront at `docs.chronote.gg`.
+- Dev/QA commands: `yarn start` (bot via nodemon+ts-node), `yarn dev` (starts local Dynamo + init + bot), `yarn frontend:dev`, `yarn docs:dev`, `yarn build`, `yarn build:web`, `yarn build:all`, `yarn docs:build`, `yarn docs:check`, `yarn test`, `yarn lint`, `yarn prettier`, `yarn terraform:init|plan|apply`, `yarn prompts:push`, `yarn prompts:pull`, `yarn prompts:check`.
 - Meeting lifecycle: `meetings.ts`, `commands/startMeeting.ts`, `commands/endMeeting.ts`.
   - Records audio, chat log, attendance; splits audio; transcribes; generates notes; saves MeetingHistory (with transcript, notes versioning).
 - Transcription, notes, and image generation: `src/services/transcriptionService.ts`, `src/services/notesService.ts`, `src/services/imageService.ts`.
@@ -77,6 +78,7 @@ This file provides Copilot review context. It mirrors AGENTS.md and adds only hi
 ## Frontend
 
 - Vite + React 19 lives in `src/frontend/`; production build is static assets in `build/frontend/` served via S3/CloudFront (see deploy workflow). Use `yarn frontend:dev` for local HMR.
+- Public product docs live in `apps/docs-site/`; run `yarn docs:dev` for local authoring and `yarn docs:check` before merging docs changes.
 - Storybook lives in `.storybook/` for component development. Start it with `yarn storybook` (port 6006 by default).
 - To capture component screenshots, run `yarn test-storybook` while Storybook is running. Screenshots are written to `test/storybook/screenshots`.
 - When making UI changes, use the VLM to review the Storybook screenshots so you can verify the component changes without scanning the full page.
@@ -110,6 +112,7 @@ This file provides Copilot review context. It mirrors AGENTS.md and adds only hi
 - Comment hygiene: donâ€™t leave transient or change-log style comments (e.g., â€œSDK v3 exposes transformToStringâ€). Use comments only to clarify non-obvious logic, constraints, or intent.
 - Writing style: do not use em dashes in copy/docs/comments; prefer commas, parentheses, or hyphens.
 - Documentation accuracy: after changes that affect behavior, config, prompts, infra, or user flows, review and update `AGENTS.md`, `.github/copilot-instructions.md`, `README.md`, and any related `docs/` or prompt files to keep them accurate and high signal. Keep the copilot instructions high level to reduce drift.
+- Docs policy: user-facing PRs should include a docs delta in `apps/docs-site/`. Purely technical PRs can use `docs-exempt` with rationale.
 - README should stay high signal for users, avoid listing research outcomes like query parameter details. Put rationale or research notes in planning documentation files instead.
 - Backwards compatibility: ask the user whether changes need to preserve compatibility for URLs, API contracts, stored data, or behavior. If unsure, ask before implementing and favor simplicity for early-stage tradeoffs.
 - Backwards compatibility update (January 6, 2026): prioritize DynamoDB data compatibility; URLs and UI flows can change without preserving prior behavior.
@@ -137,8 +140,8 @@ This file provides Copilot review context. It mirrors AGENTS.md and adds only hi
 
 ## Checks
 
-- Local full gate: `yarn run check` (lint --fix, prettier --write, then in parallel test, build:all, code:stats, prompts:check).
-- CI-parity local gate: `yarn run check:ci` (lint:check, prettier:check, test, build:all, test:e2e, checkov, code:stats, prompts:check, docker:build). Avoid `yarn check` (built-in Yarn integrity command).
+- Local full gate: `yarn run check` (lint --fix, prettier --write, then in parallel test, build:all, docs:check, code:stats, prompts:check).
+- CI-parity local gate: `yarn run check:ci` (lint:check, prettier:check, markdownlint:check, test, build:all, docs:check, test:e2e, checkov, code:stats, prompts:check, docker:build). Avoid `yarn check` (built-in Yarn integrity command).
 - CI runs the same set as `check:ci` (see `.github/workflows/ci.yml`).
 - When running checks locally, avoid docker builds unless explicitly requested.
 - Visual regression baselines: update with `yarn test:visual:update`.
@@ -149,8 +152,10 @@ Why each check exists:
 - Format (Prettier) enforces a consistent style and removes formatting churn. Docs: https://prettier.io/docs/cli
 - Tests and coverage (Jest) protect behavior and enforce coverage thresholds defined in `jest.config.ts`. Current global thresholds: statements 30%, branches 60%, functions 40%, lines 30%. Docs: https://jestjs.io/docs/29.7/configuration
 - Build (TypeScript + Vite) validates type safety and ensures the frontend bundles. Docs: https://www.typescriptlang.org/docs/handbook/compiler-options.html and https://vite.dev/guide/
+- Docs build (Docusaurus) validates docs compile and link integrity. Command: `yarn docs:check`. Docs: https://docusaurus.io/docs
 - E2E (Playwright) validates core user flows against the UI. Docs: https://playwright.dev/docs/running-tests
 - Code stats and complexity (scc + lizard) keep size and complexity visible in CI. Lizard uses its default warning thresholds (CCN > 15, length > 1000, nloc > 1000000, parameter_count > 100). Use `.sccignore` for scc exclusions and `whitelizard.txt` to suppress known complexity offenders. Docs: https://github.com/boyter/scc and https://github.com/terryyin/lizard
+- Markdown lint (markdownlint-cli2) enforces consistent Markdown style across all repo `.md` files. Config in `.markdownlint-cli2.jsonc`. Command: `yarn markdownlint:check` (or `yarn markdownlint:fix` to auto-fix). Docs: https://github.com/DavidAnson/markdownlint-cli2 and https://github.com/DavidAnson/markdownlint/blob/main/doc/Rules.md
 - IaC scan (Checkov via uvx) catches Terraform misconfigurations. Docs: https://www.checkov.io/2.Basics/CLI%20Command%20Reference.html and https://docs.astral.sh/uv/concepts/tools/
 - Prompt sync (Langfuse) keeps repo prompt files aligned with Langfuse. Command: `yarn prompts:check`.
 

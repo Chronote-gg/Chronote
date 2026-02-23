@@ -1,4 +1,7 @@
 # Ignore artifacts:
 build
 coverage
+apps/docs-site/.docusaurus
+aws-log-latest.json
+.opencode
 prompts/*.md
