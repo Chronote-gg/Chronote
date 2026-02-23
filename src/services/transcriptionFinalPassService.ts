@@ -4,6 +4,7 @@ import ffmpeg from "fluent-ffmpeg";
 import type { TranscriptionCreateParamsNonStreaming } from "openai/resources/audio";
 import { z } from "zod";
 import {
+  MAX_SNIPPET_LENGTH,
   TRANSCRIPTION_FINAL_PASS_CHUNK_SECONDS,
   TRANSCRIPTION_FINAL_PASS_MAX_CHANGE_RATIO,
   TRANSCRIPTION_FINAL_PASS_MAX_DROP_RATIO,
@@ -42,6 +43,7 @@ type BaselineSegment = {
   speaker: string;
   startedAt: string;
   offsetSeconds: number;
+  estimatedEndSeconds: number;
   text: string;
 };
 
@@ -141,11 +143,12 @@ const resolveSpeakerLabel = (meeting: MeetingData, userId: string): string => {
 
 const buildBaselineSegments = (meeting: MeetingData): BaselineSegment[] => {
   const startedAtMs = meeting.startTime.getTime();
+  const maxSnippetSeconds = MAX_SNIPPET_LENGTH / 1000;
   const orderedFiles = [...meeting.audioData.audioFiles].sort(
     (a, b) => a.timestamp - b.timestamp,
   );
 
-  return orderedFiles
+  const segments = orderedFiles
     .map((fileData, index) => {
       const text = resolveAudioFileText(fileData).trim();
       if (!text) return undefined;
@@ -155,10 +158,22 @@ const buildBaselineSegments = (meeting: MeetingData): BaselineSegment[] => {
         speaker: resolveSpeakerLabel(meeting, fileData.userId),
         startedAt: new Date(fileData.timestamp).toISOString(),
         offsetSeconds: Math.max(0, (fileData.timestamp - startedAtMs) / 1000),
+        estimatedEndSeconds: 0,
         text,
       };
     })
     .filter((segment): segment is BaselineSegment => Boolean(segment));
+
+  for (let index = 0; index < segments.length; index += 1) {
+    const current = segments[index];
+    const next = segments[index + 1];
+    const cappedEnd = current.offsetSeconds + maxSnippetSeconds;
+    current.estimatedEndSeconds = next
+      ? Math.min(cappedEnd, next.offsetSeconds)
+      : cappedEnd;
+  }
+
+  return segments;
 };
 
 const estimateChunkSeconds = () => {
@@ -533,8 +548,8 @@ export async function runTranscriptionFinalPass(
     for (const chunk of chunkWindows) {
       const chunkSegments = baselineSegments.filter(
         (segment) =>
-          segment.offsetSeconds >= chunk.startSeconds &&
-          segment.offsetSeconds < chunk.endSeconds,
+          segment.offsetSeconds < chunk.endSeconds &&
+          segment.estimatedEndSeconds > chunk.startSeconds,
       );
       if (chunkSegments.length === 0) {
         continue;

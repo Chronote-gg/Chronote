@@ -91,6 +91,44 @@ const buildLongMeeting = (): MeetingData => {
   } as unknown as MeetingData;
 };
 
+const buildBoundaryMeeting = (): MeetingData => {
+  const startTime = new Date("2025-01-01T00:00:00.000Z");
+  const nearBoundaryTimestamp = startTime.getTime() + 899_000;
+  const secondChunkTimestamp = startTime.getTime() + 920_000;
+
+  return {
+    meetingId: "meeting-boundary",
+    guildId: "guild-1",
+    channelId: "voice-1",
+    startTime,
+    endTime: new Date(startTime.getTime() + 1_800_000),
+    creator: { id: "creator-1" },
+    guild: { id: "guild-1", name: "Guild" },
+    voiceChannel: { id: "voice-1", name: "Voice" },
+    participants: new Map(),
+    runtimeConfig: {
+      transcription: {
+        finalPassEnabled: true,
+      },
+    },
+    audioData: {
+      currentSnippets: new Map(),
+      audioFiles: [
+        buildAudioFile({
+          userId: "user-1",
+          timestamp: nearBoundaryTimestamp,
+          transcript: "boundary line",
+        }),
+        buildAudioFile({
+          userId: "user-2",
+          timestamp: secondChunkTimestamp,
+          transcript: "second chunk line",
+        }),
+      ],
+    },
+  } as unknown as MeetingData;
+};
+
 const buildDependencies = () => ({
   ensureTempDir: jest.fn(async () => "C:\\temp"),
   getAudioDurationSeconds: jest.fn(async () => 120),
@@ -99,15 +137,21 @@ const buildDependencies = () => ({
     text: "first line second line",
     logprobs: [{ logprob: -0.2 }, { logprob: -0.4 }],
   })),
-  reconcileBatch: jest.fn(async (input: { previousChunkTail: string }) => {
-    void input;
-    return [] as Array<{
-      segmentId: string;
-      action: "replace" | "drop";
-      text?: string;
-      confidence: number;
-    }>;
-  }),
+  reconcileBatch: jest.fn(
+    async (input: {
+      previousChunkTail: string;
+      chunkIndex: number;
+      baselineSegments: Array<{ segmentId: string }>;
+    }) => {
+      void input;
+      return [] as Array<{
+        segmentId: string;
+        action: "replace" | "drop";
+        text?: string;
+        confidence: number;
+      }>;
+    },
+  ),
   deleteTempFile: jest.fn(async () => undefined),
 });
 
@@ -204,5 +248,40 @@ describe("transcriptionFinalPassService", () => {
     }
     expect(firstCall[0].previousChunkTail).toBe("");
     expect(secondCall[0].previousChunkTail).toBe("chunk one transcript");
+  });
+
+  test("reconciles boundary segments in the following chunk", async () => {
+    const meeting = buildBoundaryMeeting();
+    const dependencies = buildDependencies();
+    dependencies.getAudioDurationSeconds.mockResolvedValue(1_800);
+    dependencies.transcribeChunk
+      .mockResolvedValueOnce({
+        text: "boundary",
+        logprobs: [{ logprob: -0.1 }],
+      })
+      .mockResolvedValueOnce({
+        text: "boundary line second chunk line",
+        logprobs: [{ logprob: -0.1 }],
+      });
+    dependencies.reconcileBatch.mockResolvedValue([]);
+
+    await runTranscriptionFinalPass(
+      meeting,
+      { audioFilePath: "recording.mp3" },
+      dependencies,
+    );
+
+    const hasBoundarySegmentInSecondChunk =
+      dependencies.reconcileBatch.mock.calls.some((call) => {
+        const input = call[0];
+        return (
+          input.chunkIndex === 2 &&
+          input.baselineSegments.some(
+            (segment) => segment.segmentId === "seg-1",
+          )
+        );
+      });
+
+    expect(hasBoundarySegmentInSecondChunk).toBe(true);
   });
 });

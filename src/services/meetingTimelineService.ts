@@ -356,7 +356,9 @@ const buildTranscriptSegmentsFromMeeting = (meeting: MeetingData) => {
   for (const file of meeting.audioData.audioFiles) {
     addSegment(
       file,
-      file.finalPassTranscript ?? file.transcript,
+      file.finalPassTranscript !== undefined
+        ? file.finalPassTranscript
+        : file.transcript,
       file.source ?? "voice",
       file.messageId,
     );
