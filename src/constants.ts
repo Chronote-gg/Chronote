@@ -60,3 +60,7 @@ export const CONTACT_FEEDBACK_ALLOWED_IMAGE_TYPES = [
 ];
 export const CONTACT_FEEDBACK_S3_PREFIX = "contact-feedback/";
 export const CONTACT_FEEDBACK_RECAPTCHA_THRESHOLD = 0.5; // Minimum reCAPTCHA v3 score
+export const CONTACT_FEEDBACK_RATE_LIMIT_WINDOW_MS = 60_000; // 1 minute
+export const CONTACT_FEEDBACK_RATE_LIMIT_MAX = 5; // Max submit calls per window
+export const CONTACT_FEEDBACK_UPLOAD_URL_RATE_LIMIT_MAX = 15; // Max getUploadUrl calls per window (3x images)
+export const CONTACT_FEEDBACK_UPLOAD_URL_EXPIRY_SECONDS = 300; // 5 minutes
