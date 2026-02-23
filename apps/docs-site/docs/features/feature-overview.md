@@ -18,7 +18,7 @@ Starts a recorded meeting in the voice channel you are currently in.
 
 **Requirements**: You must be in a voice channel. The bot needs Connect and Speak permissions in that voice channel, and View Channel and Send Messages in the text channel. No other meeting can be active in the server.
 
-**Output**: A "Meeting Started" embed with End Meeting, Edit Tags, and Live Transcript buttons.
+**Output**: A "Meeting Started" embed with End Meeting and Edit Tags buttons, plus a Live transcript button when the Chronote portal is configured.
 
 ### `/autorecord`
 
@@ -174,4 +174,4 @@ Access the portal from the **Open in Chronote** button on any meeting summary, o
 
 Right-click a user in the voice channel to access:
 
-- **Dismiss Auto-Record**: Prevents the auto-record from restarting when this user is the trigger.
+- **Stop recording**: Cancels the current auto-recorded meeting in this channel.
