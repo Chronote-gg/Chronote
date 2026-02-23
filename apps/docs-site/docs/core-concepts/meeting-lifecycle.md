@@ -31,9 +31,10 @@ During capture, the meeting embed stays pinned with buttons for **End Meeting**,
 Processing begins when the meeting ends. The embed updates to show "processing" status. This stage involves several steps:
 
 1. **Transcription**: Each audio snippet is sent to OpenAI's transcription model with a prompt that includes your dictionary terms and context. Quality checks filter out noise, prompt echoes, and low-confidence segments.
-2. **Transcript cleanup**: A language model pass cleans up the raw transcription for readability.
-3. **Notes generation**: The full transcript, chat log, participant roster, server/channel/meeting context, dictionary entries (with definitions), and recent meeting history are sent to a language model that produces structured meeting notes.
-4. **Artifact upload**: The audio recording, transcript, and chat log are uploaded to cloud storage.
+2. **Finalized audio verification**: After mixed audio is built, Chronote can run a final verification pass against the full recording and apply only high-confidence hallucination fixes before notes generation.
+3. **Transcript cleanup**: A language model pass cleans up the raw transcription for readability.
+4. **Notes generation**: The full transcript, chat log, participant roster, server/channel/meeting context, dictionary entries (with definitions), and recent meeting history are sent to a language model that produces structured meeting notes.
+5. **Artifact upload**: The audio recording, transcript, and chat log are uploaded to cloud storage.
 
 The processing step typically takes 1-3 minutes depending on meeting length.
 

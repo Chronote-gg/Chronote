@@ -35,6 +35,7 @@ const buildMeeting = (chatLog: ChatEntry[]): MeetingData =>
           applyToFast: false,
           applyToSlow: false,
         },
+        finalPassEnabled: false,
       },
       premiumTranscription: {
         enabled: false,

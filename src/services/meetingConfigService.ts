@@ -146,6 +146,9 @@ export async function resolveMeetingRuntimeConfig(input: {
           ),
         ),
       },
+      finalPassEnabled: Boolean(
+        requireValue(snapshot, CONFIG_KEYS.transcription.finalPassEnabled),
+      ),
     },
     premiumTranscription: {
       enabled: Boolean(

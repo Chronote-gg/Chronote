@@ -132,6 +132,7 @@ export type MeetingRuntimeConfig = {
       applyToFast: boolean;
       applyToSlow: boolean;
     };
+    finalPassEnabled: boolean;
   };
   premiumTranscription: {
     enabled: boolean;

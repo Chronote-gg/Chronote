@@ -156,6 +156,30 @@ type CoalesceInput = {
   fastTranscripts: TranscriptVariant[];
 };
 
+export type FinalPassSegmentInput = {
+  segmentId: string;
+  speaker: string;
+  startedAt: string;
+  text: string;
+};
+
+type TranscriptionFinalPassPromptInput = {
+  chunkIndex: number;
+  chunkCount: number;
+  chunkTranscript: string;
+  previousChunkTail: string;
+  chunkLogprobSummary: string;
+  baselineSegments: FinalPassSegmentInput[];
+};
+
+const formatFinalPassSegments = (segments: FinalPassSegmentInput[]) =>
+  segments
+    .map(
+      (segment) =>
+        `[${segment.segmentId}] [${segment.speaker} @ ${segment.startedAt}] ${segment.text}`,
+    )
+    .join("\n");
+
 export async function getTranscriptionCoalescePrompt(
   meeting: MeetingData,
   input: CoalesceInput,
@@ -175,6 +199,32 @@ export async function getTranscriptionCoalescePrompt(
       attendees: resolveMeetingAttendees(meeting).join(", "),
       slowTranscript: input.slowTranscript,
       fastTranscriptBlock,
+    },
+  });
+}
+
+export async function getTranscriptionFinalPassPrompt(
+  meeting: MeetingData,
+  input: TranscriptionFinalPassPromptInput,
+) {
+  const contextData = await buildMeetingContext(meeting, false);
+  const formattedContext = formatContextForPrompt(contextData, "transcription");
+  return await getLangfuseChatPrompt({
+    name: config.langfuse.transcriptionFinalPassPromptName,
+    variables: {
+      formattedContext,
+      attendees: resolveMeetingAttendees(meeting).join(", "),
+      serverName: meeting.guild.name,
+      voiceChannelName: meeting.voiceChannel.name,
+      chunkIndex: String(input.chunkIndex),
+      chunkCount: String(input.chunkCount),
+      chunkTranscript: input.chunkTranscript,
+      previousChunkTail:
+        input.previousChunkTail.trim().length > 0
+          ? input.previousChunkTail
+          : "None.",
+      chunkLogprobSummary: input.chunkLogprobSummary,
+      baselineSegmentsBlock: formatFinalPassSegments(input.baselineSegments),
     },
   });
 }

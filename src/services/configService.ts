@@ -60,6 +60,9 @@ class ConfigService {
     transcriptionCoalescePromptName:
       process.env.LANGFUSE_PROMPT_TRANSCRIPTION_COALESCE ||
       "chronote-transcription-coalesce-chat",
+    transcriptionFinalPassPromptName:
+      process.env.LANGFUSE_PROMPT_TRANSCRIPTION_FINAL_PASS ||
+      "chronote-transcription-final-pass-chat",
     transcriptionPromptName:
       process.env.LANGFUSE_PROMPT_TRANSCRIPTION ||
       "chronote-transcription-prompt",

@@ -50,6 +50,7 @@ import {
   ensureMeetingTempDir,
 } from "../services/tempFileService";
 import { releaseMeetingLeaseForMeeting } from "../services/activeMeetingLeaseService";
+import { runTranscriptionFinalPass } from "../services/transcriptionFinalPassService";
 
 type EndMeetingFlowOptions = {
   client: Client;
@@ -298,6 +299,19 @@ async function runEndMeetingFlow(options: EndMeetingFlowOptions) {
           },
         );
       }
+
+      const finalPassResult = await runMeetingEndStep(
+        meeting,
+        "transcription-final-pass",
+        () =>
+          runTranscriptionFinalPass(meeting, {
+            audioFilePath: outputAudioFile,
+          }),
+      );
+      console.log("Transcription final pass completed.", {
+        meetingId: meeting.meetingId,
+        ...finalPassResult,
+      });
 
       const transcriptions = await runMeetingEndStep(
         meeting,

@@ -76,6 +76,8 @@ const loadModule = async () => {
       transcriptionPromptName: "chronote-transcription-prompt",
       transcriptionCleanupPromptName: "chronote-transcription-cleanup-chat",
       transcriptionCoalescePromptName: "chronote-transcription-coalesce-chat",
+      transcriptionFinalPassPromptName:
+        "chronote-transcription-final-pass-chat",
     },
   };
 
@@ -148,5 +150,33 @@ describe("transcriptionPromptService", () => {
     expect(call.name).toBe("chronote-transcription-coalesce-chat");
     expect(call.variables.fastTranscriptBlock).toContain("(rev 1) fast text");
     expect(call.variables.slowTranscript).toBe("slow text");
+  });
+
+  test("getTranscriptionFinalPassPrompt formats baseline segments", async () => {
+    const { module, getLangfuseChatPrompt } = await loadModule();
+    const meeting = buildMeeting();
+
+    await module.getTranscriptionFinalPassPrompt(meeting, {
+      chunkIndex: 1,
+      chunkCount: 3,
+      chunkTranscript: "hello from finalized audio",
+      previousChunkTail: "previous tail",
+      chunkLogprobSummary: "avgLogprob=-0.2",
+      baselineSegments: [
+        {
+          segmentId: "seg-1",
+          speaker: "Kit",
+          startedAt: "2025-01-01T00:00:00.000Z",
+          text: "hello world",
+        },
+      ],
+    });
+
+    const call = getLangfuseChatPrompt.mock.calls[0][0];
+    expect(call.name).toBe("chronote-transcription-final-pass-chat");
+    expect(call.variables.chunkIndex).toBe("1");
+    expect(call.variables.chunkCount).toBe("3");
+    expect(call.variables.chunkTranscript).toBe("hello from finalized audio");
+    expect(call.variables.baselineSegmentsBlock).toContain("[seg-1]");
   });
 });

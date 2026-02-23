@@ -29,6 +29,7 @@ export const CONFIG_KEYS = {
     noiseGateMinPeakAboveNoiseDb: "transcription.noiseGate.minPeakAboveNoiseDb",
     noiseGateApplyToFast: "transcription.noiseGate.applyToFast",
     noiseGateApplyToSlow: "transcription.noiseGate.applyToSlow",
+    finalPassEnabled: "transcription.finalPass.enabled",
   },
   models: {
     notes: "models.notes",

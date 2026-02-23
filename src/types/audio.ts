@@ -44,6 +44,7 @@ export interface AudioFileData {
   userId: string;
   timestamp: number;
   transcript?: string;
+  finalPassTranscript?: string;
   fastTranscripts?: TranscriptVariant[];
   slowTranscript?: string;
   coalescedTranscript?: string;

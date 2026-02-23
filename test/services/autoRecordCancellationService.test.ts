@@ -101,6 +101,7 @@ const buildRuntimeConfig = (
         applyToFast: true,
         applyToSlow: true,
       },
+      finalPassEnabled: false,
     },
     premiumTranscription: {
       enabled: false,
