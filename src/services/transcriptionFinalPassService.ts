@@ -105,6 +105,17 @@ type FinalPassDependencies = {
   deleteTempFile: (filePath: string) => Promise<void>;
 };
 
+type FinalPassCounters = {
+  processedChunks: number;
+  candidateEdits: number;
+};
+
+type ChunkProcessingResult = {
+  processed: boolean;
+  candidateEdits: number;
+  nextTail: string;
+};
+
 export type TranscriptionFinalPassResult = {
   enabled: boolean;
   applied: boolean;
@@ -349,6 +360,274 @@ const batchSegments = (segments: BaselineSegment[]) => {
   return batches;
 };
 
+const EMPTY_FINAL_PASS_RESULT: Omit<TranscriptionFinalPassResult, "enabled"> = {
+  applied: false,
+  processedChunks: 0,
+  totalChunks: 0,
+  totalSegments: 0,
+  candidateEdits: 0,
+  acceptedEdits: 0,
+  replacedSegments: 0,
+  droppedSegments: 0,
+  fallbackApplied: false,
+};
+
+const createResult = (
+  input: Partial<TranscriptionFinalPassResult> & { enabled: boolean },
+): TranscriptionFinalPassResult => ({
+  ...EMPTY_FINAL_PASS_RESULT,
+  ...input,
+  enabled: input.enabled,
+});
+
+const resetFinalPassTranscripts = (meeting: MeetingData) => {
+  for (const fileData of meeting.audioData.audioFiles) {
+    delete fileData.finalPassTranscript;
+  }
+};
+
+const getChunkSegments = (
+  segments: BaselineSegment[],
+  chunk: ChunkWindow,
+): BaselineSegment[] =>
+  segments.filter(
+    (segment) =>
+      segment.offsetSeconds < chunk.endSeconds &&
+      segment.estimatedEndSeconds > chunk.startSeconds,
+  );
+
+const getSegmentById = (
+  segments: BaselineSegment[],
+  segmentId: string,
+): BaselineSegment | undefined =>
+  segments.find((segment) => segment.segmentId === segmentId);
+
+const isEditUsable = (
+  edit: FinalPassEdit,
+  segment: BaselineSegment,
+): boolean => {
+  if (edit.confidence < TRANSCRIPTION_FINAL_PASS_MIN_CONFIDENCE) {
+    return false;
+  }
+  if (edit.action !== "replace") {
+    return true;
+  }
+  const replacement = (edit.text ?? "").trim();
+  if (!replacement) {
+    return false;
+  }
+  return replacement !== segment.text;
+};
+
+const updateAcceptedEdit = (
+  acceptedEdits: Map<string, FinalPassEdit>,
+  edit: FinalPassEdit,
+) => {
+  const current = acceptedEdits.get(edit.segmentId);
+  if (!current || edit.confidence > current.confidence) {
+    acceptedEdits.set(edit.segmentId, edit);
+  }
+};
+
+const applyBatchEdits = (
+  batch: BaselineSegment[],
+  edits: FinalPassEdit[],
+  acceptedEdits: Map<string, FinalPassEdit>,
+): number => {
+  let candidateEdits = 0;
+  for (const edit of edits) {
+    candidateEdits += 1;
+    const segment = getSegmentById(batch, edit.segmentId);
+    if (!segment || !isEditUsable(edit, segment)) {
+      continue;
+    }
+    updateAcceptedEdit(acceptedEdits, edit);
+  }
+  return candidateEdits;
+};
+
+const reconcileChunkBatches = async (input: {
+  meeting: MeetingData;
+  chunkTranscript: string;
+  previousChunkTail: string;
+  logprobSummary: string;
+  chunk: ChunkWindow;
+  chunkCount: number;
+  chunkSegments: BaselineSegment[];
+  acceptedEdits: Map<string, FinalPassEdit>;
+  dependencies: FinalPassDependencies;
+}): Promise<number> => {
+  let candidateEdits = 0;
+  const batches = batchSegments(input.chunkSegments);
+  for (const batch of batches) {
+    const edits = await input.dependencies.reconcileBatch({
+      meeting: input.meeting,
+      chunkTranscript: input.chunkTranscript,
+      previousChunkTail: input.previousChunkTail,
+      chunkLogprobSummary: input.logprobSummary,
+      chunkIndex: input.chunk.index + 1,
+      chunkCount: input.chunkCount,
+      baselineSegments: batch,
+    });
+    candidateEdits += applyBatchEdits(batch, edits, input.acceptedEdits);
+  }
+  return candidateEdits;
+};
+
+const processChunk = async (input: {
+  meeting: MeetingData;
+  options: { audioFilePath: string };
+  dependencies: FinalPassDependencies;
+  tempDir: string;
+  chunk: ChunkWindow;
+  chunkCount: number;
+  chunkSegments: BaselineSegment[];
+  acceptedEdits: Map<string, FinalPassEdit>;
+  previousChunkTail: string;
+}): Promise<ChunkProcessingResult> => {
+  const chunkFilePath = path.join(
+    input.tempDir,
+    `transcription_final_pass_chunk_${input.chunk.index + 1}.mp3`,
+  );
+
+  try {
+    await input.dependencies.renderAudioChunk({
+      inputPath: input.options.audioFilePath,
+      outputPath: chunkFilePath,
+      startSeconds: input.chunk.startSeconds,
+      durationSeconds: input.chunk.endSeconds - input.chunk.startSeconds,
+    });
+
+    const chunkTranscription = await input.dependencies.transcribeChunk({
+      meeting: input.meeting,
+      chunkFilePath,
+      previousChunkTail: input.previousChunkTail,
+      chunkIndex: input.chunk.index + 1,
+      chunkCount: input.chunkCount,
+    });
+
+    const chunkTranscript = chunkTranscription.text.trim();
+    const nextTail = takeTail(
+      chunkTranscript,
+      TRANSCRIPTION_FINAL_PASS_PREVIOUS_TAIL_CHARS,
+    );
+    if (!chunkTranscript) {
+      return { processed: true, candidateEdits: 0, nextTail };
+    }
+
+    const logprobSummary = summarizeLogprobMetrics(
+      buildLogprobMetrics(chunkTranscription.logprobs),
+    );
+    const candidateEdits = await reconcileChunkBatches({
+      meeting: input.meeting,
+      chunkTranscript,
+      previousChunkTail: input.previousChunkTail,
+      logprobSummary,
+      chunk: input.chunk,
+      chunkCount: input.chunkCount,
+      chunkSegments: input.chunkSegments,
+      acceptedEdits: input.acceptedEdits,
+      dependencies: input.dependencies,
+    });
+
+    return { processed: true, candidateEdits, nextTail };
+  } catch (error) {
+    console.error("Final transcription pass chunk failed.", {
+      meetingId: input.meeting.meetingId,
+      chunkIndex: input.chunk.index + 1,
+      error,
+    });
+    return {
+      processed: true,
+      candidateEdits: 0,
+      nextTail: input.previousChunkTail,
+    };
+  } finally {
+    await input.dependencies.deleteTempFile(chunkFilePath);
+  }
+};
+
+const processAllChunks = async (input: {
+  meeting: MeetingData;
+  options: { audioFilePath: string };
+  dependencies: FinalPassDependencies;
+  tempDir: string;
+  chunkWindows: ChunkWindow[];
+  baselineSegments: BaselineSegment[];
+  acceptedEdits: Map<string, FinalPassEdit>;
+}): Promise<FinalPassCounters> => {
+  let processedChunks = 0;
+  let candidateEdits = 0;
+  let previousChunkTail = "";
+
+  for (const chunk of input.chunkWindows) {
+    const chunkSegments = getChunkSegments(input.baselineSegments, chunk);
+    if (chunkSegments.length === 0) {
+      continue;
+    }
+
+    const result = await processChunk({
+      meeting: input.meeting,
+      options: input.options,
+      dependencies: input.dependencies,
+      tempDir: input.tempDir,
+      chunk,
+      chunkCount: input.chunkWindows.length,
+      chunkSegments,
+      acceptedEdits: input.acceptedEdits,
+      previousChunkTail,
+    });
+
+    if (result.processed) {
+      processedChunks += 1;
+    }
+    candidateEdits += result.candidateEdits;
+    previousChunkTail = result.nextTail;
+  }
+
+  return { processedChunks, candidateEdits };
+};
+
+const summarizeAcceptedEdits = (
+  acceptedEdits: Map<string, FinalPassEdit>,
+  totalSegments: number,
+) => {
+  const droppedSegments = Array.from(acceptedEdits.values()).filter(
+    (edit) => edit.action === "drop",
+  ).length;
+  const replacedSegments = acceptedEdits.size - droppedSegments;
+  return {
+    droppedSegments,
+    replacedSegments,
+    dropRatio: droppedSegments / totalSegments,
+    changeRatio: acceptedEdits.size / totalSegments,
+  };
+};
+
+const applyAcceptedEdits = (
+  baselineSegments: BaselineSegment[],
+  acceptedEdits: Map<string, FinalPassEdit>,
+) => {
+  const baselineById = new Map(
+    baselineSegments.map((segment) => [segment.segmentId, segment]),
+  );
+  for (const [segmentId, edit] of acceptedEdits) {
+    const segment = baselineById.get(segmentId);
+    if (!segment) {
+      continue;
+    }
+    if (edit.action === "drop") {
+      segment.fileData.finalPassTranscript = "";
+      continue;
+    }
+    const replacement = (edit.text ?? "").trim();
+    if (!replacement) {
+      continue;
+    }
+    segment.fileData.finalPassTranscript = replacement;
+  }
+};
+
 const defaultDependencies: FinalPassDependencies = {
   ensureTempDir: async (meeting) => await ensureMeetingTempDir(meeting),
   getAudioDurationSeconds,
@@ -469,18 +748,7 @@ export async function runTranscriptionFinalPass(
 ): Promise<TranscriptionFinalPassResult> {
   const enabled = meeting.runtimeConfig?.transcription.finalPassEnabled ?? true;
   if (!enabled) {
-    return {
-      enabled: false,
-      applied: false,
-      processedChunks: 0,
-      totalChunks: 0,
-      totalSegments: 0,
-      candidateEdits: 0,
-      acceptedEdits: 0,
-      replacedSegments: 0,
-      droppedSegments: 0,
-      fallbackApplied: false,
-    };
+    return createResult({ enabled: false });
   }
 
   const dependencies: FinalPassDependencies = {
@@ -488,24 +756,11 @@ export async function runTranscriptionFinalPass(
     ...dependencyOverrides,
   };
 
-  for (const fileData of meeting.audioData.audioFiles) {
-    delete fileData.finalPassTranscript;
-  }
+  resetFinalPassTranscripts(meeting);
 
   const baselineSegments = buildBaselineSegments(meeting);
   if (baselineSegments.length === 0) {
-    return {
-      enabled: true,
-      applied: false,
-      processedChunks: 0,
-      totalChunks: 0,
-      totalSegments: 0,
-      candidateEdits: 0,
-      acceptedEdits: 0,
-      replacedSegments: 0,
-      droppedSegments: 0,
-      fallbackApplied: false,
-    };
+    return createResult({ enabled: true });
   }
 
   try {
@@ -525,210 +780,80 @@ export async function runTranscriptionFinalPass(
     );
 
     if (chunkWindows.length === 0) {
-      return {
+      return createResult({
         enabled: true,
-        applied: false,
-        processedChunks: 0,
-        totalChunks: 0,
         totalSegments: baselineSegments.length,
-        candidateEdits: 0,
-        acceptedEdits: 0,
-        replacedSegments: 0,
-        droppedSegments: 0,
-        fallbackApplied: false,
-      };
+      });
     }
 
     const tempDir = await dependencies.ensureTempDir(meeting);
     const acceptedEdits = new Map<string, FinalPassEdit>();
-    let processedChunks = 0;
-    let candidateEdits = 0;
-    let previousChunkTail = "";
-
-    for (const chunk of chunkWindows) {
-      const chunkSegments = baselineSegments.filter(
-        (segment) =>
-          segment.offsetSeconds < chunk.endSeconds &&
-          segment.estimatedEndSeconds > chunk.startSeconds,
-      );
-      if (chunkSegments.length === 0) {
-        continue;
-      }
-
-      processedChunks += 1;
-      const chunkFilePath = path.join(
-        tempDir,
-        `transcription_final_pass_chunk_${chunk.index + 1}.mp3`,
-      );
-
-      try {
-        await dependencies.renderAudioChunk({
-          inputPath: options.audioFilePath,
-          outputPath: chunkFilePath,
-          startSeconds: chunk.startSeconds,
-          durationSeconds: chunk.endSeconds - chunk.startSeconds,
-        });
-
-        const chunkTranscription = await dependencies.transcribeChunk({
-          meeting,
-          chunkFilePath,
-          previousChunkTail,
-          chunkIndex: chunk.index + 1,
-          chunkCount: chunkWindows.length,
-        });
-        const chunkTranscript = chunkTranscription.text.trim();
-        const chunkContinuationTail = previousChunkTail;
-        previousChunkTail = takeTail(
-          chunkTranscript,
-          TRANSCRIPTION_FINAL_PASS_PREVIOUS_TAIL_CHARS,
-        );
-
-        if (!chunkTranscript) {
-          continue;
-        }
-
-        const logprobSummary = summarizeLogprobMetrics(
-          buildLogprobMetrics(chunkTranscription.logprobs),
-        );
-
-        const batches = batchSegments(chunkSegments);
-        for (const batch of batches) {
-          const edits = await dependencies.reconcileBatch({
-            meeting,
-            chunkTranscript,
-            previousChunkTail: chunkContinuationTail,
-            chunkLogprobSummary: logprobSummary,
-            chunkIndex: chunk.index + 1,
-            chunkCount: chunkWindows.length,
-            baselineSegments: batch,
-          });
-
-          candidateEdits += edits.length;
-
-          for (const edit of edits) {
-            const segment = batch.find(
-              (candidate) => candidate.segmentId === edit.segmentId,
-            );
-            if (!segment) {
-              continue;
-            }
-            if (edit.confidence < TRANSCRIPTION_FINAL_PASS_MIN_CONFIDENCE) {
-              continue;
-            }
-
-            if (edit.action === "replace") {
-              const replacement = (edit.text ?? "").trim();
-              if (!replacement || replacement === segment.text) {
-                continue;
-              }
-            }
-
-            const current = acceptedEdits.get(edit.segmentId);
-            if (!current || edit.confidence > current.confidence) {
-              acceptedEdits.set(edit.segmentId, edit);
-            }
-          }
-        }
-      } catch (error) {
-        console.error("Final transcription pass chunk failed.", {
-          meetingId: meeting.meetingId,
-          chunkIndex: chunk.index + 1,
-          error,
-        });
-      } finally {
-        await dependencies.deleteTempFile(chunkFilePath);
-      }
-    }
+    const counters = await processAllChunks({
+      meeting,
+      options,
+      dependencies,
+      tempDir,
+      chunkWindows,
+      baselineSegments,
+      acceptedEdits,
+    });
 
     if (acceptedEdits.size === 0) {
-      return {
+      return createResult({
         enabled: true,
-        applied: false,
-        processedChunks,
+        processedChunks: counters.processedChunks,
         totalChunks: chunkWindows.length,
         totalSegments: baselineSegments.length,
-        candidateEdits,
-        acceptedEdits: 0,
-        replacedSegments: 0,
-        droppedSegments: 0,
-        fallbackApplied: false,
-      };
+        candidateEdits: counters.candidateEdits,
+      });
     }
 
-    const droppedSegments = Array.from(acceptedEdits.values()).filter(
-      (edit) => edit.action === "drop",
-    ).length;
-    const replacedSegments = acceptedEdits.size - droppedSegments;
-    const dropRatio = droppedSegments / baselineSegments.length;
-    const changeRatio = acceptedEdits.size / baselineSegments.length;
+    const editSummary = summarizeAcceptedEdits(
+      acceptedEdits,
+      baselineSegments.length,
+    );
 
     if (
-      dropRatio > TRANSCRIPTION_FINAL_PASS_MAX_DROP_RATIO ||
-      changeRatio > TRANSCRIPTION_FINAL_PASS_MAX_CHANGE_RATIO
+      editSummary.dropRatio > TRANSCRIPTION_FINAL_PASS_MAX_DROP_RATIO ||
+      editSummary.changeRatio > TRANSCRIPTION_FINAL_PASS_MAX_CHANGE_RATIO
     ) {
-      return {
+      return createResult({
         enabled: true,
-        applied: false,
-        processedChunks,
+        processedChunks: counters.processedChunks,
         totalChunks: chunkWindows.length,
         totalSegments: baselineSegments.length,
-        candidateEdits,
+        candidateEdits: counters.candidateEdits,
         acceptedEdits: acceptedEdits.size,
-        replacedSegments,
-        droppedSegments,
+        replacedSegments: editSummary.replacedSegments,
+        droppedSegments: editSummary.droppedSegments,
         fallbackApplied: true,
         fallbackReason: "guardrail_threshold",
-      };
+      });
     }
 
-    const baselineById = new Map(
-      baselineSegments.map((segment) => [segment.segmentId, segment]),
-    );
-    for (const [segmentId, edit] of acceptedEdits) {
-      const segment = baselineById.get(segmentId);
-      if (!segment) {
-        continue;
-      }
-      if (edit.action === "drop") {
-        segment.fileData.finalPassTranscript = "";
-        continue;
-      }
-      const replacement = (edit.text ?? "").trim();
-      if (!replacement) {
-        continue;
-      }
-      segment.fileData.finalPassTranscript = replacement;
-    }
+    applyAcceptedEdits(baselineSegments, acceptedEdits);
 
-    return {
+    return createResult({
       enabled: true,
       applied: true,
-      processedChunks,
+      processedChunks: counters.processedChunks,
       totalChunks: chunkWindows.length,
       totalSegments: baselineSegments.length,
-      candidateEdits,
+      candidateEdits: counters.candidateEdits,
       acceptedEdits: acceptedEdits.size,
-      replacedSegments,
-      droppedSegments,
-      fallbackApplied: false,
-    };
+      replacedSegments: editSummary.replacedSegments,
+      droppedSegments: editSummary.droppedSegments,
+    });
   } catch (error) {
     console.error("Final transcription pass failed.", {
       meetingId: meeting.meetingId,
       error,
     });
-    return {
+    return createResult({
       enabled: true,
-      applied: false,
-      processedChunks: 0,
-      totalChunks: 0,
       totalSegments: baselineSegments.length,
-      candidateEdits: 0,
-      acceptedEdits: 0,
-      replacedSegments: 0,
-      droppedSegments: 0,
       fallbackApplied: true,
       fallbackReason: "runtime_error",
-    };
+    });
   }
 }
