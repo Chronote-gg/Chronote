@@ -48,6 +48,10 @@ describe("transcriptionVote", () => {
     ).toBe(false);
   });
 
+  test("hasLowConfidenceLogprobs returns false when metrics are undefined", () => {
+    expect(hasLowConfidenceLogprobs(undefined)).toBe(false);
+  });
+
   test("shouldRunTranscriptionVote gates on slow pass with prompt", () => {
     const primaryCandidate = buildCandidate({ promptEchoDetected: true });
     expect(
@@ -106,6 +110,22 @@ describe("transcriptionVote", () => {
     ).toEqual({
       shouldRun: true,
       reasons: ["low_confidence_logprobs"],
+    });
+  });
+
+  test("shouldRunTranscriptionVote does not run when disabled", () => {
+    const primaryCandidate = buildCandidate({ promptEchoDetected: true });
+
+    expect(
+      shouldRunTranscriptionVote({
+        enabled: false,
+        hasPrompt: true,
+        passMode: "slow",
+        primaryCandidate,
+      }),
+    ).toEqual({
+      shouldRun: false,
+      reasons: [],
     });
   });
 
