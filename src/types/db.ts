@@ -59,6 +59,14 @@ export interface ActiveMeetingLease {
   voiceChannelName?: string;
   textChannelId: string;
   isAutoRecording: boolean;
+  status?: MeetingStatus;
+  startReason?: MeetingStartReason;
+  startTriggeredByUserId?: string;
+  autoRecordRule?: AutoRecordRule;
+  endReason?: MeetingEndReason;
+  endTriggeredByUserId?: string;
+  cancellationReason?: string;
+  endedAt?: string;
   leaseExpiresAt: number;
   createdAt: string;
   updatedAt: string;
@@ -269,6 +277,24 @@ export interface MeetingHistory {
   notesHistory?: NotesHistoryEntry[]; // Versions of notes as they change
   audioS3Key?: string; // S3 key for combined audio
   chatS3Key?: string; // S3 key for chat log/json
+}
+
+export type ContactFeedbackSource = "discord" | "web";
+
+export interface ContactFeedbackRecord {
+  feedbackId: string; // UUID, partition key
+  type: "contact_feedback"; // Constant for GSI partition key
+  source: ContactFeedbackSource;
+  message: string;
+  contactEmail?: string;
+  contactDiscord?: string;
+  userId?: string;
+  userTag?: string;
+  displayName?: string;
+  guildId?: string;
+  imageS3Keys?: string[];
+  recaptchaScore?: number;
+  createdAt: string; // ISO timestamp
 }
 
 export interface AskConversationRecord {

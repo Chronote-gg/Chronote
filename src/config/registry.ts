@@ -290,6 +290,21 @@ export const CONFIG_REGISTRY: ConfigEntry[] = [
     ui: { type: "toggle" },
   },
   {
+    key: "transcription.vote.enabled",
+    label: "Prompt vote fallback",
+    description:
+      "For low-confidence slow snippets, run a no-prompt fallback transcription and pick the better result.",
+    category: "Transcription",
+    group: "Advanced",
+    valueType: "boolean",
+    defaultValue: true,
+    scopes: {
+      global: scope(true, true, "superadmin", "toggle"),
+      server: scope(true, false, "admin", "tri-state"),
+    },
+    ui: { type: "toggle" },
+  },
+  {
     key: "transcription.fastSilenceMs",
     label: "Fast silence threshold (ms)",
     description: "Silence duration before running the fast transcription pass.",

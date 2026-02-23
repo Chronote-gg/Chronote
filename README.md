@@ -184,6 +184,7 @@ Coverage update rule:
 - Bot + API: Node 22, Express 5. API routes are modularized under `src/api/` (billing, guilds). New typed API surface is tRPC at `/trpc` (routers in `src/trpc/`).
 - Voice capture: discord.js v14, @discordjs/voice/opus, prism-media.
 - Transcription flow and tuning: `docs/audio-transcription.md`.
+- Slow transcription now includes a default low-confidence prompt/no-prompt vote fallback to reduce hallucinated prompt echoes.
 - Feature toggle evaluation checklist: `docs/feature-toggles.md`.
 - OpenAI: gpt-4o-transcribe for ASR, gpt-5.1 for notes/corrections, gpt-5-mini for live gate, DALL-E 3 for images.
 - Prompt management and tracing: Langfuse for prompt versioning, tracing, and prompt sync scripts.

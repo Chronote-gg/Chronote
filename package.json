@@ -158,6 +158,7 @@
     "zustand": "^5.0.11"
   },
   "devDependencies": {
+    "@aws-sdk/client-secrets-manager": "^3.993.0",
     "@babel/core": "^7.29.0",
     "@babel/preset-env": "^7.29.0",
     "@babel/preset-typescript": "^7.28.5",

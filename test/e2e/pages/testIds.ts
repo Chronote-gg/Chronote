@@ -3,6 +3,10 @@ export const testIds = {
     hero: "home-hero",
     ctaDiscord: "home-cta-discord",
   },
+  join: {
+    hero: "join-hero",
+    ctaDiscord: "join-cta-discord",
+  },
   serverSelect: {
     root: "server-select",
     card: "server-card",
@@ -84,5 +88,14 @@ export const testIds = {
   adminFeedback: {
     page: "admin-feedback-page",
     refresh: "admin-feedback-refresh",
+  },
+  contactFeedback: {
+    page: "contact-feedback-page",
+    form: "contact-feedback-form",
+    messageInput: "contact-feedback-message",
+    emailInput: "contact-feedback-email",
+    discordInput: "contact-feedback-discord",
+    submitButton: "contact-feedback-submit",
+    success: "contact-feedback-success",
   },
 } as const;

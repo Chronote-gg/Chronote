@@ -16,6 +16,10 @@ terraform {
       source  = "hashicorp/random"
       version = "~> 3.6"
     }
+    archive = {
+      source  = "hashicorp/archive"
+      version = "~> 2.7"
+    }
   }
   backend "s3" {
     region               = "us-east-1"
@@ -828,6 +832,28 @@ resource "aws_kms_key" "app_general" {
             "AWS:SourceArn" = "arn:aws:cloudfront::${data.aws_caller_identity.current.account_id}:distribution/${aws_cloudfront_distribution.docs.id}"
           }
         }
+      },
+      {
+        Sid    = "AllowSNSPublishers",
+        Effect = "Allow",
+        Principal = {
+          Service = [
+            "cloudwatch.amazonaws.com",
+            "events.amazonaws.com",
+            "sns.amazonaws.com"
+          ]
+        },
+        Action = [
+          "kms:Decrypt",
+          "kms:GenerateDataKey*",
+          "kms:DescribeKey"
+        ],
+        Resource = "*",
+        Condition = {
+          StringEquals = {
+            "kms:CallerAccount" = data.aws_caller_identity.current.account_id
+          }
+        }
       }
     ]
   })
@@ -1302,6 +1328,8 @@ resource "aws_iam_policy" "dynamodb_access_policy" {
           aws_dynamodb_table.meeting_history_table.arn,
           "${aws_dynamodb_table.meeting_history_table.arn}/index/*",
           aws_dynamodb_table.meeting_share_table.arn,
+          aws_dynamodb_table.contact_feedback_table.arn,
+          "${aws_dynamodb_table.contact_feedback_table.arn}/index/*",
           aws_dynamodb_table.installer_table.arn,
           aws_dynamodb_table.onboarding_state_table.arn,
           aws_dynamodb_table.guild_subscription_table.arn
@@ -2121,6 +2149,48 @@ resource "aws_dynamodb_table" "feedback_table" {
 
   tags = {
     Name = "FeedbackTable"
+  }
+}
+
+# Contact Feedback Table
+resource "aws_dynamodb_table" "contact_feedback_table" {
+  name         = "${local.name_prefix}-ContactFeedbackTable"
+  billing_mode = "PAY_PER_REQUEST"
+  hash_key     = "feedbackId"
+
+  attribute {
+    name = "feedbackId"
+    type = "S"
+  }
+
+  attribute {
+    name = "type"
+    type = "S"
+  }
+
+  attribute {
+    name = "createdAt"
+    type = "S"
+  }
+
+  global_secondary_index {
+    name            = "TypeCreatedAtIndex"
+    hash_key        = "type"
+    range_key       = "createdAt"
+    projection_type = "ALL"
+  }
+
+  point_in_time_recovery {
+    enabled = true
+  }
+
+  server_side_encryption {
+    enabled     = true
+    kms_key_arn = aws_kms_key.app_general.arn
+  }
+
+  tags = {
+    Name = "ContactFeedbackTable"
   }
 }
 

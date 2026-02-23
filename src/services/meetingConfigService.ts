@@ -81,6 +81,9 @@ export async function resolveMeetingRuntimeConfig(input: {
       promptEchoEnabled: Boolean(
         requireValue(snapshot, CONFIG_KEYS.transcription.promptEchoEnabled),
       ),
+      voteEnabled: Boolean(
+        requireValue(snapshot, CONFIG_KEYS.transcription.voteEnabled),
+      ),
       fastSilenceMs: Number(
         requireValue(snapshot, CONFIG_KEYS.transcription.fastSilenceMs),
       ),

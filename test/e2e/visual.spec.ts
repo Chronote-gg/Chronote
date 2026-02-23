@@ -65,6 +65,14 @@ test.describe("visual regression", () => {
     }
   });
 
+  test("join page @visual", async ({ joinPage, page }) => {
+    for (const mode of visualModes) {
+      await page.goto(withVisualMode("/join", mode));
+      await expect(joinPage.hero()).toBeVisible();
+      await expectVisualScreenshot(page, "join", mode);
+    }
+  });
+
   test("server select @visual", async ({ serverSelectPage, page }) => {
     for (const mode of visualModes) {
       await page.goto(withVisualMode("/portal/select-server", mode));
@@ -246,6 +254,14 @@ test.describe("visual regression", () => {
         .waitFor({ state: "visible" });
       await page.waitForTimeout(150); // stabilize async field rendering
       await expectVisualScreenshot(page, "admin-config", mode);
+    }
+  });
+
+  test("contact feedback page @visual", async ({ page }) => {
+    for (const mode of visualModes) {
+      await page.goto(withVisualMode("/feedback", mode));
+      await expect(page.getByTestId("contact-feedback-page")).toBeVisible();
+      await expectVisualScreenshot(page, "contact-feedback", mode);
     }
   });
 

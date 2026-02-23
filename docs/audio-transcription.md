@@ -2,7 +2,7 @@
 
 ## Overview
 
-Chronote records voice audio, builds per speaker snippets, and runs transcription in two passes. A fast pass gives early results during short pauses, while the slow pass finalizes a snippet after longer silence or a max snippet wall. The system keeps longer contiguous snippets to preserve accuracy, then uses optional coalescing to merge fast and slow outputs when premium is enabled.
+Chronote records voice audio, builds per speaker snippets, and runs transcription in two passes. A fast pass gives early results during short pauses, while the slow pass finalizes a snippet after longer silence or a max snippet wall. The system keeps longer contiguous snippets to preserve accuracy, then uses optional coalescing to merge fast and slow outputs when premium is enabled. On low-confidence slow snippets, it can run a second no-prompt transcription and select the better candidate.
 
 ## Product decisions
 
@@ -21,6 +21,7 @@ Chronote records voice audio, builds per speaker snippets, and runs transcriptio
 - Noise gate checks peak levels in short windows and skips snippets that are very quiet and lack speech-like peaks.
 - Transcription prompt is Langfuse-managed (`chronote-transcription-prompt`) and can be adjusted for experiments, including removing the prompt entirely.
 - Guardrails include a loudness gate (noise gate metrics plus token logprobs), a syllable rate gate for short snippets, and a prompt echo gate to suppress prompt repetition.
+- Vote fallback runs a no-prompt retry for low-confidence slow snippets and picks the better result with a deterministic arbiter (suppression flags, prompt echo, logprobs, and repetition checks).
 
 ## Langfuse audio attachments
 
@@ -64,6 +65,7 @@ All values are set via the config system. For the noise gate, only `enabled`, `a
 - `transcription.suppression.minSyllables`
 - `transcription.suppression.maxSyllablesPerSecond`
 - `transcription.promptEcho.enabled`
+- `transcription.vote.enabled`
 - `transcription.noiseGate.enabled`
 - `transcription.noiseGate.windowMs`
 - `transcription.noiseGate.peakDbfs`

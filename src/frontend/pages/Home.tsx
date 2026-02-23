@@ -1,10 +1,8 @@
 import { useMemo, useState } from "react";
 import {
-  Badge,
   Button,
-  Divider,
+  Container,
   Group,
-  List,
   SegmentedControl,
   SimpleGrid,
   Stack,
@@ -12,30 +10,21 @@ import {
   ThemeIcon,
   Title,
   useComputedColorScheme,
+  useMantineTheme,
 } from "@mantine/core";
 import {
-  IconBolt,
+  IconArrowRight,
   IconDownload,
   IconFileText,
   IconMicrophone,
-  IconQuote,
   IconSearch,
   IconSparkles,
-  IconTags,
-  IconTimeline,
 } from "@tabler/icons-react";
 import FeatureCard from "../components/FeatureCard";
 import PricingCard from "../components/PricingCard";
 import Section from "../components/Section";
 import Surface from "../components/Surface";
-import EvidenceCard from "../components/EvidenceCard";
-import {
-  heroBackground,
-  uiBorders,
-  uiColors,
-  uiEffects,
-  uiTypography,
-} from "../uiTokens";
+import { heroBackground, uiBorders, uiColors, uiTypography } from "../uiTokens";
 import { trpc } from "../services/trpc";
 import type { BillingInterval } from "../../types/pricing";
 import {
@@ -45,6 +34,34 @@ import {
   formatPlanPrice,
   resolvePaidPlan,
 } from "../utils/pricing";
+import { DISCORD_BOT_INVITE_URL } from "../utils/discordInvite";
+
+const STEP_ICON_SIZE = 44;
+const STEP_INNER_ICON_SIZE = 22;
+
+const steps = [
+  {
+    icon: IconMicrophone,
+    title: "Add the bot",
+    description:
+      "Invite Chronote to your Discord server with one click. No config required.",
+    color: "cyan",
+  },
+  {
+    icon: IconFileText,
+    title: "Record a meeting",
+    description:
+      "Start a voice call and use /startmeeting, or turn on auto-record for hands-free capture.",
+    color: "violet",
+  },
+  {
+    icon: IconSparkles,
+    title: "Get your notes",
+    description:
+      "Chronote posts a transcript and structured summary right back in your Discord channel.",
+    color: "brand",
+  },
+] as const;
 
 const features = [
   {
@@ -66,50 +83,14 @@ const features = [
     icon: <IconSearch size={22} />,
   },
   {
-    title: "Tags and filters",
-    description:
-      "Add tags so sessions stay grouped by project, team, or campaign.",
-    icon: <IconTags size={22} />,
-  },
-  // {
-  //   title: "Live voice mode",
-  //   description: "Optional live voice mode for quick confirmations in-channel.",
-  //   icon: <IconWaveSine size={22} />,
-  // },
-  {
     title: "Exports + retention",
     description: "Download audio, transcript, and notes from the web library.",
     icon: <IconDownload size={22} />,
   },
-  {
-    title: "Built for speed",
-    description: "Fast onboarding, minimal setup.",
-    icon: <IconBolt size={22} />,
-  },
-];
-
-const useCases = [
-  {
-    title: "Communities",
-    description:
-      "Keep volunteer staff aligned across syncs, meetings, and event planning.",
-    bullets: ["Catch-up summaries", "Attendance + decisions", "Action items"],
-  },
-  {
-    title: "Tabletop campaigns",
-    description:
-      "Recall lore, NPCs, and plot threads without digging through audio.",
-    bullets: ["Session recaps", "Character tracking", "Campaign memory"],
-  },
-  {
-    title: "Product teams",
-    description:
-      "Capture decisions and tasks across standups, planning, and retros.",
-    bullets: ["Action items", "Decision logs", "Cross-team context"],
-  },
 ];
 
 export default function Home() {
+  const theme = useMantineTheme();
   const scheme = useComputedColorScheme("dark");
   const isDark = scheme === "dark";
   const [interval, setInterval] = useState<BillingInterval>("month");
@@ -122,194 +103,85 @@ export default function Home() {
   const basicPlan = resolvePaidPlan(planLookup, "basic", interval);
   const proPlan = resolvePaidPlan(planLookup, "pro", interval);
 
-  const heroBackgroundImage = heroBackground(isDark);
-
   return (
     <Stack gap="xl">
-      <Surface
-        tone="raised"
-        p={{ base: "lg", md: "xl" }}
-        style={{ backgroundImage: heroBackgroundImage }}
-        data-testid="home-hero"
-      >
-        <SimpleGrid cols={{ base: 1, md: 2 }} spacing="xl">
-          <Stack gap="md">
-            <Text
-              size="xs"
-              c={isDark ? "cyan.3" : "cyan.7"}
-              style={uiTypography.heroKicker}
-            >
-              Discord voice logbook
-            </Text>
-            <Title order={1} fw={750}>
-              Transcripts and summaries for Discord voice.
-            </Title>
-            <Text size="lg" c="dimmed">
-              Record voice channels, get notes back in Discord, and keep a
-              searchable logbook on the web.
-            </Text>
-            <Group gap="sm">
-              <Button
-                size="md"
-                variant="gradient"
-                gradient={{ from: "brand", to: "violet" }}
-                component="a"
-                data-testid="home-cta-discord"
-                href="https://discord.com/oauth2/authorize?client_id=1278729036528619633&scope=bot%20applications.commands"
-              >
-                Add to Discord
-              </Button>
-              {/* <Button
-                size="md"
-                variant="outline"
-                component="a"
-                data-testid="home-cta-docs"
-                href="https://chronote.gg"
-              >
-                View Docs
-              </Button> */}
-            </Group>
-            <Group gap="lg" wrap="wrap">
-              <Group gap={8} wrap="nowrap">
-                <ThemeIcon variant="light" color="cyan" size={26}>
-                  <IconMicrophone size={14} />
-                </ThemeIcon>
-                <Stack gap={0}>
-                  <Text size="sm" fw={600}>
-                    Auto-recording
-                  </Text>
-                  <Text size="xs" c="dimmed">
-                    Set it once, keep it running
-                  </Text>
-                </Stack>
-              </Group>
-              <Group gap={8} wrap="nowrap">
-                <ThemeIcon variant="light" color="cyan" size={26}>
-                  <IconQuote size={14} />
-                </ThemeIcon>
-                <Stack gap={0}>
-                  <Text size="sm" fw={600}>
-                    Quotes
-                  </Text>
-                  <Text size="xs" c="dimmed">
-                    See who said what
-                  </Text>
-                </Stack>
-              </Group>
-              <Group gap={8} wrap="nowrap">
-                <ThemeIcon variant="light" color="cyan" size={26}>
-                  <IconTimeline size={14} />
-                </ThemeIcon>
-                <Stack gap={0}>
-                  <Text size="sm" fw={600}>
-                    Server library
-                  </Text>
-                  <Text size="xs" c="dimmed">
-                    Browse sessions on the web
-                  </Text>
-                </Stack>
-              </Group>
-            </Group>
-          </Stack>
-          <Stack gap="md">
-            <Surface p="md">
-              <Stack gap="sm">
-                <Group gap="sm">
-                  <ThemeIcon color="cyan" variant="light">
-                    <IconTimeline size={18} />
-                  </ThemeIcon>
-                  <Text fw={600}>Notes in Discord</Text>
-                </Group>
-                <Surface
-                  p="md"
-                  tone="soft"
-                  style={{
-                    boxShadow: uiEffects.accentInset,
-                  }}
-                >
-                  <Stack gap={6}>
-                    <Text size="xs" c="dimmed">
-                      #session-notes
-                    </Text>
-                    <Text fw={600}>D&D session recap</Text>
-                    <List spacing="xs" size="sm">
-                      <List.Item>
-                        Decision: Revisit the tavern tomorrow night to
-                        investigate the mysterious patron
-                      </List.Item>
-                      <List.Item>
-                        Action: BASIC posts the map + loot sheet in
-                        #campaign-info
-                      </List.Item>
-                      <List.Item>Next time: Sunday 7pm (voice)</List.Item>
-                      {/* <List.Item>Highlights + attendance included</List.Item> */}
-                    </List>
-                  </Stack>
-                </Surface>
-              </Stack>
-            </Surface>
-            <Surface p="md">
-              <Stack gap="xs">
-                <Group gap="sm">
-                  <ThemeIcon color="brand" variant="light">
-                    <IconSparkles size={18} />
-                  </ThemeIcon>
-                  <Text fw={600}>Quote + context</Text>
-                </Group>
-                <Text size="sm" c="dimmed">
-                  Quotes tie back to the exact moment in the conversation.
-                </Text>
-                <Group gap="xs" wrap="wrap">
-                  <Text size="xs" c="dimmed" fw={600}>
-                    Tags:
-                  </Text>
-                  {["campaign", "shadowrun"].map((tag) => (
-                    <Badge key={tag} variant="light" color="gray">
-                      {tag}
-                    </Badge>
-                  ))}
-                </Group>
-                <EvidenceCard
-                  quote="We should approach the warehouse from the east side, there's a blind spot near the loading dock."
-                  speaker="BASIC"
-                  time="01:12:44"
-                  channel="#tabletop-voice"
-                />
-              </Stack>
-            </Surface>
-          </Stack>
-        </SimpleGrid>
-      </Surface>
+      {/* Hero */}
+      <Container size="md" py={{ base: "xl", md: 80 }}>
+        <Stack
+          align="center"
+          gap="md"
+          p={{ base: "lg", md: "xl" }}
+          data-testid="home-hero"
+          style={{
+            backgroundImage: heroBackground(isDark),
+            borderRadius: theme.radius.lg,
+            textAlign: "center",
+          }}
+        >
+          <Text
+            size="xs"
+            c={isDark ? theme.colors.cyan[3] : theme.colors.cyan[7]}
+            style={uiTypography.heroKicker}
+          >
+            Discord voice logbook
+          </Text>
+          <Title order={1} fw={750}>
+            Transcripts and summaries for Discord voice.
+          </Title>
+          <Text size="lg" c="dimmed" maw={520}>
+            Record voice channels, get notes back in Discord, and keep a
+            searchable logbook on the web.
+          </Text>
+          <Button
+            size="lg"
+            variant="gradient"
+            gradient={{ from: "brand", to: "violet" }}
+            component="a"
+            href={DISCORD_BOT_INVITE_URL}
+            data-testid="home-cta-discord"
+            rightSection={<IconArrowRight size={18} />}
+          >
+            Add to Discord
+          </Button>
+        </Stack>
+      </Container>
 
+      {/* How it works */}
       <Section
-        eyebrow="Built for"
-        title="Work and play alike"
-        description="For teams, communities, and campaigns that want a reliable record."
+        eyebrow="How it works"
+        title="Three steps to meeting notes"
+        align="center"
       >
         <SimpleGrid cols={{ base: 1, md: 3 }} spacing="lg">
-          {useCases.map((useCase) => (
-            <Surface key={useCase.title} p="lg">
-              <Stack gap="xs">
-                <Title order={4}>{useCase.title}</Title>
-                <Text c="dimmed">{useCase.description}</Text>
-                <Divider />
-                <List spacing="xs" size="sm">
-                  {useCase.bullets.map((bullet) => (
-                    <List.Item key={bullet}>{bullet}</List.Item>
-                  ))}
-                </List>
+          {steps.map((step) => (
+            <Surface key={step.title} p="lg">
+              <Stack gap="sm" align="center" ta="center">
+                <ThemeIcon
+                  variant="light"
+                  color={step.color}
+                  size={STEP_ICON_SIZE}
+                  radius="md"
+                >
+                  <step.icon size={STEP_INNER_ICON_SIZE} />
+                </ThemeIcon>
+                <Text fw={600}>{step.title}</Text>
+                <Text size="sm" c="dimmed">
+                  {step.description}
+                </Text>
               </Stack>
             </Surface>
           ))}
         </SimpleGrid>
       </Section>
 
+      {/* Features */}
       <Section
         eyebrow="Features"
         title="Everything you need to remember the meeting"
         description="Capture now, find it later, all without leaving Discord."
+        align="center"
       >
-        <SimpleGrid cols={{ base: 1, sm: 2, md: 3 }} spacing="lg">
+        <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="lg">
           {features.map((feature) => (
             <FeatureCard
               key={feature.title}
@@ -321,77 +193,7 @@ export default function Home() {
         </SimpleGrid>
       </Section>
 
-      {/*
-      <Section
-        eyebrow="Workflow"
-        title="From voice channel to logbook in minutes"
-        description="A simple pipeline from voice chat to a usable record."
-      >
-        <SimpleGrid cols={{ base: 1, md: 3 }} spacing="lg">
-          {howItWorks.map((step) => (
-            <Surface key={step.step} p="lg" tone="soft">
-              <Stack gap="xs">
-                <Text size="xs" c="cyan.3" style={uiTypography.stepKicker}>
-                  {step.step}
-                </Text>
-                <Title order={4}>{step.title}</Title>
-                <Text c="dimmed">{step.description}</Text>
-              </Stack>
-            </Surface>
-          ))}
-        </SimpleGrid>
-      </Section>
-      */}
-
-      {/*
-      <Section
-        eyebrow="Evidence-first"
-        title="Answers come with context"
-        description="Every answer points to quotes, speakers, and timestamps."
-      >
-        <SimpleGrid cols={{ base: 1, md: 2 }} spacing="lg">
-          <Surface p="lg" tone="soft">
-            <Stack gap="sm">
-              <Group gap="sm">
-                <ThemeIcon variant="light" color="cyan">
-                  <IconSearch size={18} />
-                </ThemeIcon>
-                <Text fw={600}>Search across sessions</Text>
-              </Group>
-              <Text c="dimmed">
-                Ask about decisions, blockers, or campaign lore. Results point
-                back to the moment it was said.
-              </Text>
-              <EvidenceCard
-                quote="Ada wants a favor in exchange for the map; she doesn't trust the captain."
-                speaker="Rin"
-                meeting="Campaign recap"
-              />
-            </Stack>
-          </Surface>
-          <Surface p="lg" tone="soft">
-            <Stack gap="sm">
-              <Group gap="sm">
-                <ThemeIcon variant="light" color="brand">
-                  <IconSparkles size={18} />
-                </ThemeIcon>
-                <Text fw={600}>Structured summaries</Text>
-              </Group>
-              <Text c="dimmed">
-                Notes are organized as decisions, action items, and highlights
-                for fast scanning.
-              </Text>
-              <List spacing="xs" size="sm">
-                <List.Item>Decision log with owners</List.Item>
-                <List.Item>Action items ready to copy</List.Item>
-                <List.Item>Speaker timeline with timestamps</List.Item>
-              </List>
-            </Stack>
-          </Surface>
-        </SimpleGrid>
-      </Section>
-      */}
-
+      {/* Pricing */}
       <Section
         eyebrow="Pricing"
         title="Memory power, server-based pricing"
@@ -470,25 +272,27 @@ export default function Home() {
         </SimpleGrid>
       </Section>
 
-      <Surface p={{ base: "lg", md: "xl" }}>
-        <Group justify="space-between" align="center" wrap="wrap">
-          <Stack gap={6}>
+      {/* Bottom CTA */}
+      <Container size="sm">
+        <Surface p={{ base: "lg", md: "xl" }}>
+          <Stack align="center" gap="md" ta="center">
             <Title order={3}>Ready to keep the record?</Title>
-            <Text c="dimmed">
+            <Text c="dimmed" maw={420}>
               Add Chronote, record your first session, and get notes in minutes.
             </Text>
+            <Button
+              size="md"
+              variant="gradient"
+              gradient={{ from: "brand", to: "violet" }}
+              component="a"
+              href={DISCORD_BOT_INVITE_URL}
+              rightSection={<IconArrowRight size={16} />}
+            >
+              Add to Discord
+            </Button>
           </Stack>
-          <Button
-            size="md"
-            variant="gradient"
-            gradient={{ from: "brand", to: "violet" }}
-            component="a"
-            href="https://discord.com/oauth2/authorize?client_id=1278729036528619633&scope=bot%20applications.commands"
-          >
-            Add to Discord
-          </Button>
-        </Group>
-      </Surface>
+        </Surface>
+      </Container>
     </Stack>
   );
 }

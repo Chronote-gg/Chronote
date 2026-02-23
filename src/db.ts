@@ -36,6 +36,7 @@ import {
   MeetingShareByMeetingRecord,
   FeedbackRecord,
   FeedbackTargetType,
+  ContactFeedbackRecord,
 } from "./types/db";
 import type { MeetingStatus } from "./types/meetingLifecycle";
 import { trimNotesForHistory } from "./utils/notesHistory";
@@ -187,27 +188,72 @@ export async function renewActiveMeetingLease(
   leaseExpiresAt: number,
   updatedAt: string,
   expiresAt: number,
+  snapshot: {
+    status: ActiveMeetingLease["status"];
+    endReason?: ActiveMeetingLease["endReason"];
+    endTriggeredByUserId?: ActiveMeetingLease["endTriggeredByUserId"];
+    cancellationReason?: ActiveMeetingLease["cancellationReason"];
+    endedAt?: ActiveMeetingLease["endedAt"];
+  },
 ): Promise<boolean> {
+  const updateParts = [
+    "#leaseExpiresAt = :leaseExpiresAt",
+    "#updatedAt = :updatedAt",
+    "#expiresAt = :expiresAt",
+    "#status = :status",
+  ];
+  const expressionAttributeNames: Record<string, string> = {
+    "#leaseExpiresAt": "leaseExpiresAt",
+    "#updatedAt": "updatedAt",
+    "#expiresAt": "expiresAt",
+    "#status": "status",
+    "#meetingId": "meetingId",
+    "#ownerInstanceId": "ownerInstanceId",
+  };
+  const expressionAttributeValues: Record<string, unknown> = {
+    ":leaseExpiresAt": leaseExpiresAt,
+    ":updatedAt": updatedAt,
+    ":expiresAt": expiresAt,
+    ":status": snapshot.status,
+    ":meetingId": meetingId,
+    ":ownerInstanceId": ownerInstanceId,
+  };
+
+  if (snapshot.endReason) {
+    updateParts.push("#endReason = :endReason");
+    expressionAttributeNames["#endReason"] = "endReason";
+    expressionAttributeValues[":endReason"] = snapshot.endReason;
+  }
+
+  if (snapshot.endTriggeredByUserId) {
+    updateParts.push("#endTriggeredByUserId = :endTriggeredByUserId");
+    expressionAttributeNames["#endTriggeredByUserId"] = "endTriggeredByUserId";
+    expressionAttributeValues[":endTriggeredByUserId"] =
+      snapshot.endTriggeredByUserId;
+  }
+
+  if (snapshot.cancellationReason) {
+    updateParts.push("#cancellationReason = :cancellationReason");
+    expressionAttributeNames["#cancellationReason"] = "cancellationReason";
+    expressionAttributeValues[":cancellationReason"] =
+      snapshot.cancellationReason;
+  }
+
+  if (snapshot.endedAt) {
+    updateParts.push("#endedAt = :endedAt");
+    expressionAttributeNames["#endedAt"] = "endedAt";
+    expressionAttributeValues[":endedAt"] = snapshot.endedAt;
+  }
+
   const params: UpdateItemCommand["input"] = {
     TableName: tableName("ActiveMeetingTable"),
     Key: marshall({ guildId }),
-    UpdateExpression:
-      "SET #leaseExpiresAt = :leaseExpiresAt, #updatedAt = :updatedAt, #expiresAt = :expiresAt",
+    UpdateExpression: `SET ${updateParts.join(", ")}`,
     ConditionExpression:
       "#meetingId = :meetingId AND #ownerInstanceId = :ownerInstanceId",
-    ExpressionAttributeNames: {
-      "#leaseExpiresAt": "leaseExpiresAt",
-      "#updatedAt": "updatedAt",
-      "#expiresAt": "expiresAt",
-      "#meetingId": "meetingId",
-      "#ownerInstanceId": "ownerInstanceId",
-    },
-    ExpressionAttributeValues: marshall({
-      ":leaseExpiresAt": leaseExpiresAt,
-      ":updatedAt": updatedAt,
-      ":expiresAt": expiresAt,
-      ":meetingId": meetingId,
-      ":ownerInstanceId": ownerInstanceId,
+    ExpressionAttributeNames: expressionAttributeNames,
+    ExpressionAttributeValues: marshall(expressionAttributeValues, {
+      removeUndefinedValues: true,
     }),
   };
   const command = new UpdateItemCommand(params);
@@ -1265,6 +1311,66 @@ export async function updateMeetingStatus(
 
   const command = new UpdateItemCommand(params);
   await dynamoDbClient.send(command);
+}
+
+// Contact Feedback Table
+export async function writeContactFeedback(
+  record: ContactFeedbackRecord,
+): Promise<void> {
+  const params = {
+    TableName: tableName("ContactFeedbackTable"),
+    Item: marshall(record, { removeUndefinedValues: true }),
+  };
+  const cmd = new PutItemCommand(params);
+  await dynamoDbClient.send(cmd);
+}
+
+export async function listContactFeedback(params: {
+  limit?: number;
+  startAt?: string;
+  endAt?: string;
+}): Promise<ContactFeedbackRecord[]> {
+  const expressionNames: Record<string, string> = {
+    "#type": "type",
+  };
+  const expressionValues: Record<string, string> = {
+    ":type": "contact_feedback",
+  };
+  let keyCondition = "#type = :type";
+
+  if (params.startAt && params.endAt) {
+    expressionNames["#createdAt"] = "createdAt";
+    expressionValues[":startAt"] = params.startAt;
+    expressionValues[":endAt"] = params.endAt;
+    keyCondition += " AND #createdAt BETWEEN :startAt AND :endAt";
+  } else if (params.startAt) {
+    expressionNames["#createdAt"] = "createdAt";
+    expressionValues[":startAt"] = params.startAt;
+    keyCondition += " AND #createdAt >= :startAt";
+  } else if (params.endAt) {
+    expressionNames["#createdAt"] = "createdAt";
+    expressionValues[":endAt"] = params.endAt;
+    keyCondition += " AND #createdAt < :endAt";
+  }
+
+  const query = new QueryCommand({
+    TableName: tableName("ContactFeedbackTable"),
+    IndexName: "TypeCreatedAtIndex",
+    KeyConditionExpression: keyCondition,
+    ExpressionAttributeNames: expressionNames,
+    ExpressionAttributeValues: marshall(expressionValues, {
+      removeUndefinedValues: true,
+    }),
+    ScanIndexForward: false,
+    Limit: params.limit ?? 50,
+  });
+  const result = await dynamoDbClient.send(query);
+  if (result.Items) {
+    return result.Items.map(
+      (item) => unmarshall(item) as ContactFeedbackRecord,
+    );
+  }
+  return [];
 }
 
 export async function updateMeetingArchive(params: {
