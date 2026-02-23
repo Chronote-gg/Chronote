@@ -33,6 +33,26 @@ jobs:
       - name: Run linter
         run: yarn lint
 
+  markdownlint:
+    name: Markdown Lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: "22.13.0"
+          cache: "yarn"
+          cache-dependency-path: "yarn.lock"
+
+      - name: Install dependencies
+        run: yarn install --frozen-lockfile
+
+      - name: Run markdownlint
+        run: yarn markdownlint:check
+
   test:
     name: Unit Tests (Non-blocking)
     runs-on: ubuntu-latest
@@ -234,6 +254,7 @@ jobs:
     needs:
       [
         lint,
+        markdownlint,
         test,
         code-stats,
         prompts-check,
@@ -436,6 +457,7 @@ jobs:
     needs:
       [
         lint,
+        markdownlint,
         test,
         code-stats,
         prompts-check,
@@ -501,6 +523,7 @@ jobs:
     needs:
       [
         lint,
+        markdownlint,
         test,
         code-stats,
         prompts-check,
