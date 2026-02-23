@@ -35,31 +35,55 @@ import { executeRecaptcha, useRecaptchaScript } from "../hooks/useRecaptcha";
 const HONEYPOT_FIELD_NAME = "website_url";
 const IMAGE_SIZE_LABEL = `${CONTACT_FEEDBACK_MAX_IMAGE_BYTES / (1024 * 1024)}MB`;
 
-/** Upload images to S3 via presigned URLs. Returns keys on success, or an error message. */
+/** Upload images to S3 via presigned URLs. Returns uploaded keys and any failures. */
+type UploadImagesResult = {
+  keys: string[];
+  error?: string;
+};
+
+const buildUploadFailureMessage = (failedNames: string[]) => {
+  const quotedNames = failedNames.map((name) => `"${name}"`).join(", ");
+  const label = failedNames.length === 1 ? "image" : "images";
+  return `Failed to upload ${quotedNames}. Please retry those ${label} or submit without them.`;
+};
+
 async function uploadImagesToS3(
   images: { file: File; previewUrl: string }[],
   getUploadUrl: (input: {
     contentType: (typeof CONTACT_FEEDBACK_ALLOWED_IMAGE_TYPES)[number];
   }) => Promise<{ url: string; key: string }>,
-): Promise<{ keys: string[] } | { error: string }> {
+): Promise<UploadImagesResult> {
   const keys: string[] = [];
+  const failedNames: string[] = [];
+
   for (const img of images) {
-    const { url, key } = await getUploadUrl({
-      contentType: img.file
-        .type as (typeof CONTACT_FEEDBACK_ALLOWED_IMAGE_TYPES)[number],
-    });
-    const response = await fetch(url, {
-      method: "PUT",
-      body: img.file,
-      headers: { "Content-Type": img.file.type },
-    });
-    if (!response.ok) {
-      return {
-        error: `Failed to upload "${img.file.name}". Please try again.`,
-      };
+    try {
+      const { url, key } = await getUploadUrl({
+        contentType: img.file
+          .type as (typeof CONTACT_FEEDBACK_ALLOWED_IMAGE_TYPES)[number],
+      });
+      const response = await fetch(url, {
+        method: "PUT",
+        body: img.file,
+        headers: { "Content-Type": img.file.type },
+      });
+      if (!response.ok) {
+        failedNames.push(img.file.name);
+        continue;
+      }
+      keys.push(key);
+    } catch {
+      failedNames.push(img.file.name);
     }
-    keys.push(key);
   }
+
+  if (failedNames.length > 0) {
+    return {
+      keys,
+      error: buildUploadFailureMessage(failedNames),
+    };
+  }
+
   return { keys };
 }
 
@@ -404,7 +428,7 @@ export default function ContactFeedback() {
         data.images,
         getUploadUrlMutation.mutateAsync,
       );
-      if ("error" in uploadResult) {
+      if (uploadResult.error && uploadResult.keys.length === 0) {
         setUploadError({ message: uploadResult.error });
         return;
       }
