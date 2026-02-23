@@ -13,6 +13,7 @@ export const CONFIG_KEYS = {
     suppressionRateMaxSyllablesPerSecond:
       "transcription.suppression.maxSyllablesPerSecond",
     promptEchoEnabled: "transcription.promptEcho.enabled",
+    voteEnabled: "transcription.vote.enabled",
     fastSilenceMs: "transcription.fastSilenceMs",
     slowSilenceMs: "transcription.slowSilenceMs",
     minSnippetSeconds: "transcription.minSnippetSeconds",

@@ -16,6 +16,10 @@ terraform {
       source  = "hashicorp/random"
       version = "~> 3.6"
     }
+    archive = {
+      source  = "hashicorp/archive"
+      version = "~> 2.7"
+    }
   }
   backend "s3" {
     region               = "us-east-1"
@@ -715,6 +719,28 @@ resource "aws_kms_key" "app_general" {
         Condition = {
           StringEquals = {
             "AWS:SourceArn" = "arn:aws:cloudfront::${data.aws_caller_identity.current.account_id}:distribution/${aws_cloudfront_distribution.frontend.id}"
+          }
+        }
+      },
+      {
+        Sid    = "AllowSNSPublishers",
+        Effect = "Allow",
+        Principal = {
+          Service = [
+            "cloudwatch.amazonaws.com",
+            "events.amazonaws.com",
+            "sns.amazonaws.com"
+          ]
+        },
+        Action = [
+          "kms:Decrypt",
+          "kms:GenerateDataKey*",
+          "kms:DescribeKey"
+        ],
+        Resource = "*",
+        Condition = {
+          StringEquals = {
+            "kms:CallerAccount" = data.aws_caller_identity.current.account_id
           }
         }
       }

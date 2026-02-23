@@ -18,6 +18,7 @@ const buildMeeting = (chatLog: ChatEntry[]): MeetingData =>
         suppressionRateMinSyllables: 1,
         suppressionRateMaxSyllablesPerSecond: 12,
         promptEchoEnabled: true,
+        voteEnabled: true,
         fastSilenceMs: 0,
         slowSilenceMs: 0,
         minSnippetSeconds: 0,

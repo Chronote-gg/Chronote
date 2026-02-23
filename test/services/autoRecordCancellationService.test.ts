@@ -84,6 +84,7 @@ const buildRuntimeConfig = (
       suppressionRateMinSyllables: 8,
       suppressionRateMaxSyllablesPerSecond: 7,
       promptEchoEnabled: true,
+      voteEnabled: true,
       fastSilenceMs: 500,
       slowSilenceMs: 1000,
       minSnippetSeconds: 1,
@@ -113,6 +114,11 @@ const buildRuntimeConfig = (
     autoRecordCancellation: {
       enabled: true,
     },
+    visionCaptions: {
+      enabled: false,
+      maxImages: 0,
+      maxTotalChars: 0,
+    },
     modelParams: {},
   };
 
@@ -128,6 +134,10 @@ const buildRuntimeConfig = (
     autoRecordCancellation: {
       ...base.autoRecordCancellation,
       ...overrides.autoRecordCancellation,
+    },
+    visionCaptions: {
+      ...base.visionCaptions,
+      ...overrides.visionCaptions,
     },
   };
 };

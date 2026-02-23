@@ -44,3 +44,13 @@ LANGFUSE_PROMPT_MEETING_SUMMARY="chronote-meeting-summary-chat"
 LANGFUSE_PROMPT_CACHE_TTL_MS="60000"
 REDIS_URL=""
 REDIS_AUTH_TOKEN="change-me-redis-auth-token"
+
+# Alerting
+alert_email=""                                # critical alerts email; requires manual confirmation after first apply
+alert_discord_channel_id=""                   # Discord channel ID for alert embeds (bot must have SendMessages)
+
+# Observability
+grafana_api_key=""                           # bootstrap only; clear after first rotation
+grafana_url=""
+grafana_service_account_id=""
+grafana_token_rotation_days=25

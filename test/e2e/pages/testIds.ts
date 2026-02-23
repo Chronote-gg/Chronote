@@ -3,6 +3,10 @@ export const testIds = {
     hero: "home-hero",
     ctaDiscord: "home-cta-discord",
   },
+  join: {
+    hero: "join-hero",
+    ctaDiscord: "join-cta-discord",
+  },
   serverSelect: {
     root: "server-select",
     card: "server-card",

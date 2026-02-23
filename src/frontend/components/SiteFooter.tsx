@@ -7,6 +7,7 @@ import {
   Stack,
   Text,
 } from "@mantine/core";
+import { DISCORD_BOT_INVITE_URL } from "../utils/discordInvite";
 
 type SiteFooterProps = {
   variant?: "default" | "compact";
@@ -29,10 +30,7 @@ export function SiteFooter({ variant = "default" }: SiteFooterProps) {
               BASICBIT
             </Anchor>
           </Text>
-          <Anchor
-            href="https://discord.com/oauth2/authorize?client_id=1278729036528619633&scope=bot%20applications.commands"
-            size="sm"
-          >
+          <Anchor href={DISCORD_BOT_INVITE_URL} size="sm">
             Add to Discord
           </Anchor>
           <Anchor
@@ -61,10 +59,7 @@ export function SiteFooter({ variant = "default" }: SiteFooterProps) {
             </Anchor>
           </Text>
           <Group gap="lg">
-            <Anchor
-              href="https://discord.com/oauth2/authorize?client_id=1278729036528619633&scope=bot%20applications.commands"
-              size="sm"
-            >
+            <Anchor href={DISCORD_BOT_INVITE_URL} size="sm">
               Add to Discord
             </Anchor>
             <Anchor
