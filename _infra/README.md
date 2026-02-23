@@ -36,10 +36,12 @@ This stack provisions:
 
 4. **Seed the rotation** (one-time):
    - Invoke the Lambda to create the first auto-managed token:
+
      ```bash
      aws lambda invoke --function-name <project_name>-<environment>-grafana-token-rotation \
        --region us-east-1 /dev/stdout
      ```
+
    - The function name is derived from your Terraform variables (for example, with
      `project_name = "meeting-notes"` and `environment = "prod"`, the name is
      `meeting-notes-prod-grafana-token-rotation`).
