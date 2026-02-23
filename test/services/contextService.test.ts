@@ -68,6 +68,7 @@ const DEFAULT_TRANSCRIPTION_CONFIG: MeetingRuntimeConfig["transcription"] = {
   suppressionRateMaxSyllablesPerSecond:
     TRANSCRIPTION_RATE_MAX_SYLLABLES_PER_SECOND,
   promptEchoEnabled: true,
+  voteEnabled: true,
   fastSilenceMs: FAST_SILENCE_THRESHOLD,
   slowSilenceMs: SILENCE_THRESHOLD,
   minSnippetSeconds: MINIMUM_TRANSCRIPTION_LENGTH,
@@ -105,6 +106,12 @@ const buildRuntimeConfig = (
     autoRecordCancellation: {
       enabled: false,
       ...overrides.autoRecordCancellation,
+    },
+    visionCaptions: {
+      enabled: false,
+      maxImages: 0,
+      maxTotalChars: 0,
+      ...overrides.visionCaptions,
     },
     modelParams: overrides.modelParams,
     modelChoices: overrides.modelChoices,

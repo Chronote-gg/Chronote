@@ -47,6 +47,13 @@ import {
   TRANSCRIBE_SAMPLE_RATE,
 } from "../constants";
 import { applyTranscriptionGuards } from "../utils/transcriptionGuards";
+import {
+  decideTranscriptionVote,
+  shouldRunTranscriptionVote,
+  type TranscriptionVoteCandidate,
+  type TranscriptionVoteDecision,
+  type TranscriptionVoteGateResult,
+} from "../utils/transcriptionVote";
 import { createOpenAIClient } from "./openaiClient";
 import { getModelChoice } from "./modelFactory";
 import { isLangfuseTracingEnabled } from "./langfuseClient";
@@ -124,6 +131,9 @@ type TranscriptStats = {
 
 const resolvePromptEchoEnabled = (meeting: MeetingData) =>
   meeting.runtimeConfig?.transcription.promptEchoEnabled ?? true;
+
+const resolveTranscriptionVoteEnabled = (meeting: MeetingData) =>
+  meeting.runtimeConfig?.transcription.voteEnabled ?? true;
 
 const resolveHardSilenceDbfs = (meeting: MeetingData) =>
   meeting.runtimeConfig?.transcription.suppressionHardSilenceDbfs ??
@@ -227,6 +237,8 @@ async function transcribeInternal(
   const { prompt, langfusePrompt } = await getTranscriptionPrompt(meeting);
   const promptValue = prompt.trim();
   const resolvedPrompt = promptValue.length > 0 ? promptValue : undefined;
+  const passMode = context?.noiseGateMode ?? "slow";
+  const voteEnabled = resolveTranscriptionVoteEnabled(meeting);
 
   const modelChoice = getModelChoice(
     "transcription",
@@ -241,14 +253,18 @@ async function transcribeInternal(
     audioSeconds: context?.audioSeconds,
     audioBytes: context?.audioBytes,
     noiseGateEnabled: context?.noiseGateEnabled,
-    noiseGateMode: context?.noiseGateMode,
+    noiseGateMode: passMode,
     promptLength: resolvedPrompt?.length ?? 0,
     promptName: langfusePrompt?.name,
     promptVersion: langfusePrompt?.version,
     promptFallback: langfusePrompt?.isFallback ?? false,
+    transcriptionVoteEnabled: voteEnabled,
   };
 
-  const runTranscription = async (openAIClient: OpenAI) => {
+  const runTranscription = async (
+    openAIClient: OpenAI,
+    promptText?: string,
+  ) => {
     const request: TranscriptionCreateParamsNonStreaming<"json"> = {
       file: createReadStream(file),
       model: modelChoice.model,
@@ -256,7 +272,7 @@ async function transcribeInternal(
       temperature: 0,
       response_format: "json",
       include: ["logprobs"],
-      ...(resolvedPrompt ? { prompt: resolvedPrompt } : {}),
+      ...(promptText ? { prompt: promptText } : {}),
     };
     const transcription =
       await openAIClient.audio.transcriptions.create(request);
@@ -266,11 +282,34 @@ async function transcribeInternal(
     };
   };
 
-  const applyGuardsAndLog = async (raw: {
-    text: string;
-    logprobs?: { logprob?: number }[];
-  }) => {
-    const guardConfig = resolveGuardConfig(meeting, context);
+  const guardConfig = resolveGuardConfig(meeting, context);
+
+  type GuardedTranscriptionResult = {
+    candidateId: "prompt" | "no_prompt";
+    guardResult: ReturnType<typeof applyTranscriptionGuards>;
+    transcriptStats: TranscriptStats;
+    suppressionEnabled: boolean;
+    promptEchoEnabled: boolean;
+    hardSilenceDbfs: number;
+    rateMaxSeconds: number;
+    rateMinWords: number;
+    rateMinSyllables: number;
+    maxSyllablesPerSecond: number;
+  };
+
+  const applyGuardsAndLog = async (
+    raw: {
+      text: string;
+      logprobs?: { logprob?: number }[];
+    },
+    candidate: {
+      id: "prompt" | "no_prompt";
+      promptText?: string;
+    },
+  ): Promise<GuardedTranscriptionResult> => {
+    const promptEchoEnabledForCandidate =
+      guardConfig.promptEchoEnabled && Boolean(candidate.promptText);
+
     const transcriptStats = await buildTranscriptStats({
       transcript: raw.text,
       audioSeconds: context?.audioSeconds,
@@ -284,8 +323,8 @@ async function transcribeInternal(
       rateMinWords: guardConfig.rateMinWords,
       rateMinSyllables: guardConfig.rateMinSyllables,
       maxSyllablesPerSecond: guardConfig.maxSyllablesPerSecond,
-      promptEchoEnabled: guardConfig.promptEchoEnabled,
-      promptText: resolvedPrompt,
+      promptEchoEnabled: promptEchoEnabledForCandidate,
+      promptText: candidate.promptText,
       noiseGateMetrics: context?.noiseGateMetrics,
       audioSeconds: context?.audioSeconds,
       transcriptWordCount: transcriptStats.transcriptWordCount,
@@ -296,6 +335,8 @@ async function transcribeInternal(
     if (guardResult.flags.length > 0) {
       console.warn("Transcription flagged by guard checks.", {
         ...traceMetadata,
+        transcriptionCandidate: candidate.id,
+        candidatePromptLength: candidate.promptText?.length ?? 0,
         flags: guardResult.flags,
         quietAudio: guardResult.quietAudio,
         quietByPeak: guardResult.quietByPeak,
@@ -303,7 +344,7 @@ async function transcribeInternal(
         hardSilenceDetected: guardResult.hardSilenceDetected,
         rateMismatchDetected: guardResult.rateMismatchDetected,
         suppressionEnabled: guardConfig.suppressionEnabled,
-        promptEchoEnabled: guardConfig.promptEchoEnabled,
+        promptEchoEnabled: promptEchoEnabledForCandidate,
         hardSilenceDbfs: guardConfig.hardSilenceDbfs,
         rateMaxSeconds: guardConfig.rateMaxSeconds,
         rateMinWords: guardConfig.rateMinWords,
@@ -323,15 +364,98 @@ async function transcribeInternal(
     }
 
     return {
+      candidateId: candidate.id,
       guardResult,
       transcriptStats,
       suppressionEnabled: guardConfig.suppressionEnabled,
-      promptEchoEnabled: guardConfig.promptEchoEnabled,
+      promptEchoEnabled: promptEchoEnabledForCandidate,
       hardSilenceDbfs: guardConfig.hardSilenceDbfs,
       rateMaxSeconds: guardConfig.rateMaxSeconds,
       rateMinWords: guardConfig.rateMinWords,
       rateMinSyllables: guardConfig.rateMinSyllables,
       maxSyllablesPerSecond: guardConfig.maxSyllablesPerSecond,
+    };
+  };
+
+  const buildVoteCandidate = (
+    candidate: GuardedTranscriptionResult,
+  ): TranscriptionVoteCandidate => {
+    return {
+      id: candidate.candidateId,
+      text: candidate.guardResult.text,
+      suppressed: candidate.guardResult.suppressed,
+      promptEchoDetected: candidate.guardResult.promptEchoDetected,
+      rateMismatchDetected: candidate.guardResult.rateMismatchDetected,
+      quietAudio: candidate.guardResult.quietAudio,
+      logprobMetrics: candidate.guardResult.logprobMetrics,
+    };
+  };
+
+  type TranscriptionSelection = {
+    selected: GuardedTranscriptionResult;
+    promptCandidate: GuardedTranscriptionResult;
+    noPromptCandidate?: GuardedTranscriptionResult;
+    voteGate: TranscriptionVoteGateResult;
+    voteDecision?: TranscriptionVoteDecision;
+  };
+
+  const runAndSelectTranscription = async (
+    openAIClient: OpenAI,
+  ): Promise<TranscriptionSelection> => {
+    const promptOutput = await runTranscription(openAIClient, resolvedPrompt);
+    const promptCandidate = await applyGuardsAndLog(promptOutput, {
+      id: "prompt",
+      promptText: resolvedPrompt,
+    });
+
+    const voteGate = shouldRunTranscriptionVote({
+      enabled: voteEnabled,
+      hasPrompt: Boolean(resolvedPrompt),
+      passMode,
+      primaryCandidate: buildVoteCandidate(promptCandidate),
+    });
+
+    if (!voteGate.shouldRun) {
+      return {
+        selected: promptCandidate,
+        promptCandidate,
+        voteGate,
+      };
+    }
+
+    const noPromptOutput = await runTranscription(openAIClient);
+    const noPromptCandidate = await applyGuardsAndLog(noPromptOutput, {
+      id: "no_prompt",
+    });
+
+    const voteDecision = decideTranscriptionVote({
+      promptCandidate: buildVoteCandidate(promptCandidate),
+      noPromptCandidate: buildVoteCandidate(noPromptCandidate),
+    });
+    const selected =
+      voteDecision.selectedId === "no_prompt"
+        ? noPromptCandidate
+        : promptCandidate;
+
+    console.log("Transcription vote selected candidate.", {
+      ...traceMetadata,
+      voteGateReasons: voteGate.reasons,
+      voteDecisionReasons: voteDecision.reasons,
+      voteSelectedCandidate: voteDecision.selectedId,
+      votePromptScore: voteDecision.promptScore,
+      voteNoPromptScore: voteDecision.noPromptScore,
+      votePromptFlags: promptCandidate.guardResult.flags,
+      voteNoPromptFlags: noPromptCandidate.guardResult.flags,
+      votePromptSuppressed: promptCandidate.guardResult.suppressed,
+      voteNoPromptSuppressed: noPromptCandidate.guardResult.suppressed,
+    });
+
+    return {
+      selected,
+      promptCandidate,
+      noPromptCandidate,
+      voteGate,
+      voteDecision,
     };
   };
 
@@ -345,9 +469,8 @@ async function transcribeInternal(
       metadata: traceMetadata,
       langfusePrompt,
     });
-    const output = await runTranscription(openAIClient);
-    const { guardResult } = await applyGuardsAndLog(output);
-    return guardResult.text;
+    const selection = await runAndSelectTranscription(openAIClient);
+    return selection.selected.guardResult.text;
   }
 
   return await startActiveObservation(
@@ -406,7 +529,7 @@ async function transcribeInternal(
         disableTracing: true,
         langfusePrompt,
       });
-      const output = await runTranscription(openAIClient);
+      const selection = await runAndSelectTranscription(openAIClient);
       const {
         guardResult,
         transcriptStats,
@@ -417,7 +540,7 @@ async function transcribeInternal(
         rateMinWords,
         rateMinSyllables,
         maxSyllablesPerSecond,
-      } = await applyGuardsAndLog(output);
+      } = selection.selected;
 
       const usageDetails = buildLangfuseTranscriptionUsageDetails(
         context?.audioSeconds,
@@ -428,6 +551,7 @@ async function transcribeInternal(
           usageDetails,
           metadata: {
             transcriptionFlags: guardResult.flags,
+            transcriptionCandidate: selection.selected.candidateId,
             quietAudio: guardResult.quietAudio,
             quietByPeak: guardResult.quietByPeak,
             quietByActivity: guardResult.quietByActivity,
@@ -445,9 +569,21 @@ async function transcribeInternal(
             promptEchoMetrics: guardResult.promptEchoMetrics,
             rateMismatchDetected: guardResult.rateMismatchDetected,
             noiseGateEnabled: context?.noiseGateEnabled,
-            noiseGateMode: context?.noiseGateMode,
+            noiseGateMode: passMode,
             noiseGateMetrics: context?.noiseGateMetrics,
             suppressed: guardResult.suppressed,
+            transcriptionVoteEnabled: voteEnabled,
+            transcriptionVoteGateReasons: selection.voteGate.reasons,
+            transcriptionVoteAttempted: Boolean(selection.noPromptCandidate),
+            transcriptionVoteSelected: selection.selected.candidateId,
+            transcriptionVoteDecisionReasons: selection.voteDecision?.reasons,
+            transcriptionVotePromptScore: selection.voteDecision?.promptScore,
+            transcriptionVoteNoPromptScore:
+              selection.voteDecision?.noPromptScore,
+            transcriptionVotePromptFlags:
+              selection.promptCandidate.guardResult.flags,
+            transcriptionVoteNoPromptFlags:
+              selection.noPromptCandidate?.guardResult.flags,
           },
         },
         { asType: "generation" },

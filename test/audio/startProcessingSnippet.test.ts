@@ -41,6 +41,7 @@ describe("startProcessingSnippet", () => {
           suppressionRateMinSyllables: 8,
           suppressionRateMaxSyllablesPerSecond: 7,
           promptEchoEnabled: true,
+          voteEnabled: true,
           fastFinalizationEnabled: true,
           interjectionEnabled: false,
           interjectionMinSpeakerSeconds: 0.3,
