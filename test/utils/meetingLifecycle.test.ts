@@ -31,4 +31,12 @@ describe("isMeetingCollectingEvents", () => {
       isMeetingCollectingEvents(buildMeetingState({ finished: true })),
     ).toBe(false);
   });
+
+  test("returns false when finishing and finished are both true", () => {
+    expect(
+      isMeetingCollectingEvents(
+        buildMeetingState({ finishing: true, finished: true }),
+      ),
+    ).toBe(false);
+  });
 });

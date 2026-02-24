@@ -828,11 +828,7 @@ async function handleUserLeave(oldState: VoiceState) {
 
     unsubscribeToVoiceUponLeaving(meeting, oldState.member!.user.id);
 
-    if (
-      meeting.voiceChannel.members.size <= 1 &&
-      !meeting.finishing &&
-      !meeting.finished
-    ) {
+    if (meeting.voiceChannel.members.size <= 1) {
       if (!meeting.endReason) {
         meeting.endReason = MEETING_END_REASONS.CHANNEL_EMPTY;
       }
