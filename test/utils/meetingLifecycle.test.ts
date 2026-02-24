@@ -12,6 +12,10 @@ const buildMeetingState = (
   }) as MeetingData;
 
 describe("isMeetingCollectingEvents", () => {
+  test("returns false when meeting is undefined", () => {
+    expect(isMeetingCollectingEvents(undefined)).toBe(false);
+  });
+
   test("returns true while a meeting is in progress", () => {
     expect(isMeetingCollectingEvents(buildMeetingState())).toBe(true);
   });
