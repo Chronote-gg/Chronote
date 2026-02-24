@@ -117,6 +117,7 @@ import {
   MEETING_START_REASONS,
   type AutoRecordRule,
 } from "./types/meetingLifecycle";
+import { isMeetingCollectingEvents } from "./utils/meetingLifecycle";
 import {
   DISMISS_AUTORECORD_COMMAND_NAME,
   dismissAutoRecordCommand,
@@ -620,7 +621,7 @@ async function handleBotVoiceUpdate(
   newState: VoiceState,
 ) {
   const meeting = getMeeting(oldState.guild.id);
-  if (!meeting || meeting.finishing || meeting.finished) return;
+  if (!isMeetingCollectingEvents(meeting)) return;
   const wasInMeetingChannel = oldState.channelId === meeting.voiceChannel.id;
   const stillInMeetingChannel = newState.channelId === meeting.voiceChannel.id;
   if (wasInMeetingChannel && !stillInMeetingChannel) {
@@ -659,7 +660,7 @@ async function handleUserJoin(newState: VoiceState) {
 
   // Handle existing meeting attendance
   if (
-    meeting &&
+    isMeetingCollectingEvents(meeting) &&
     newState.member &&
     newState.member.user.id !== client.user!.id &&
     meeting.voiceChannel.id === newState.channelId
@@ -806,7 +807,7 @@ async function handleUserJoin(newState: VoiceState) {
 async function handleUserLeave(oldState: VoiceState) {
   const meeting = getMeeting(oldState.guild.id);
   if (
-    meeting &&
+    isMeetingCollectingEvents(meeting) &&
     oldState.member &&
     oldState.member.user.id !== client.user!.id &&
     meeting.voiceChannel.id === oldState.channelId

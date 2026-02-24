@@ -5,6 +5,7 @@ import {
   type MeetingEndReason,
   type MeetingStartReason,
 } from "../types/meetingLifecycle";
+import type { MeetingData } from "../types/meeting-data";
 
 export const MEETING_START_REASON_LABELS: Record<MeetingStartReason, string> = {
   [MEETING_START_REASONS.MANUAL_COMMAND]: "Started via /startmeeting",
@@ -40,4 +41,10 @@ export function describeAutoRecordRule(
   }
   const channelLabel = voiceChannelName ? ` (#${voiceChannelName})` : "";
   return `Auto-record rule: this channel${channelLabel}`;
+}
+
+export function isMeetingCollectingEvents(
+  meeting: MeetingData | undefined,
+): meeting is MeetingData {
+  return meeting !== undefined && !meeting.finishing && !meeting.finished;
 }
