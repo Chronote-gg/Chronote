@@ -231,7 +231,7 @@ async function runEndMeetingFlow(options: EndMeetingFlowOptions) {
 
     if (meeting.cancelled) {
       await runMeetingEndStep(meeting, "auto-record-cancel-flow", () =>
-        handleAutoRecordCancellation(meeting, chatLogFilePath),
+        handleAutoRecordCancellation(client, meeting, chatLogFilePath),
       );
       await runMeetingEndStep(meeting, "cleanup-speaker-tracks", () =>
         cleanupSpeakerTracks(meeting),
@@ -254,7 +254,7 @@ async function runEndMeetingFlow(options: EndMeetingFlowOptions) {
       meeting.cancellationReason = cancellationDecision.reason;
       meeting.endReason = MEETING_END_REASONS.AUTO_CANCELLED;
       await runMeetingEndStep(meeting, "auto-record-cancel-flow", () =>
-        handleAutoRecordCancellation(meeting, chatLogFilePath),
+        handleAutoRecordCancellation(client, meeting, chatLogFilePath),
       );
       await runMeetingEndStep(meeting, "cleanup-speaker-tracks", () =>
         cleanupSpeakerTracks(meeting),
@@ -430,10 +430,12 @@ function maybeSuppressAutoRecordRejoin(
 }
 
 async function handleAutoRecordCancellation(
+  client: Client,
   meeting: MeetingData,
   chatLogFilePath: string,
 ) {
   meetingsCancelled.inc();
+  await uploadCancelledMeetingArtifacts(client, meeting, chatLogFilePath);
   await updateAutoRecordCancelledMessage(meeting);
   await deleteTrackedMessages(meeting);
   deleteIfExists(chatLogFilePath);
@@ -444,6 +446,41 @@ async function handleAutoRecordCancellation(
   meeting.setFinished();
   meeting.finished = true;
   deleteMeeting(meeting.guildId);
+}
+
+async function uploadCancelledMeetingArtifacts(
+  client: Client,
+  meeting: MeetingData,
+  chatLogFilePath: string,
+) {
+  let transcriptForUpload: string | undefined;
+
+  if (meeting.transcribeMeeting) {
+    const transcriptionsReady = meeting.audioData.audioFiles.every(
+      (file) => !file.processing,
+    );
+    if (!transcriptionsReady) {
+      const pending = meeting.audioData.audioFiles.filter(
+        (file) => file.processing,
+      ).length;
+      console.log(
+        `Waiting for cancelled meeting transcriptions to finish: pending=${pending} meetingId=${meeting.meetingId}`,
+      );
+      await waitForFinishProcessing(meeting);
+    }
+
+    const transcriptions = await compileTranscriptions(client, meeting);
+    meeting.finalTranscript = transcriptions;
+    transcriptForUpload = await compileTranscriptions(client, meeting, {
+      includeCues: true,
+    });
+  }
+
+  await uploadMeetingArtifacts(meeting, {
+    audioFilePath: meeting.audioData.outputFileName,
+    chatFilePath: chatLogFilePath,
+    transcriptText: transcriptForUpload,
+  });
 }
 
 async function deleteTrackedMessages(meeting: MeetingData) {
@@ -474,10 +511,17 @@ async function updateAutoRecordCancelledMessage(meeting: MeetingData) {
     "Not enough content detected to keep this meeting.";
   const trimmedReason =
     reason.length > 700 ? `${reason.slice(0, 697)}...` : reason;
+  const wasDismissed = meeting.endReason === MEETING_END_REASONS.DISMISSED;
+  const title = wasDismissed
+    ? "Auto-Recording Stopped"
+    : "Auto-Recording Cancelled";
+  const description = wasDismissed
+    ? "Auto-recording was stopped before the meeting finished."
+    : "Auto-recording started and was cancelled.";
 
   const embed = new EmbedBuilder()
-    .setTitle("Auto-Recording Cancelled")
-    .setDescription("Auto-recording started and was cancelled.")
+    .setTitle(title)
+    .setDescription(description)
     .addFields(
       { name: "Triggered by", value: triggerLabel },
       { name: "Rule", value: ruleLabel },
