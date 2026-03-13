@@ -49,8 +49,10 @@ const makeVoiceChannel = (
 const makeMeeting = (overrides: Partial<MeetingData> = {}): MeetingData =>
   ({
     guildId: "guild-1",
+    meetingId: "meeting-1",
     isAutoRecording: true,
     finishing: false,
+    startTime: new Date("2025-01-01T00:00:00.000Z"),
     voiceChannel: makeVoiceChannel(
       makeMembers([
         ["user-1", false],

@@ -57,6 +57,9 @@ type EndMeetingFlowOptions = {
   meeting: MeetingData;
 };
 
+const DISMISSED_AUTO_RECORD_COMPLETE_MIN_DURATION_MS = 10 * 60 * 1000;
+const DISMISSED_AUTO_RECORD_COMPLETE_MIN_CHAT_MESSAGES = 2;
+
 async function runMeetingEndStep<T>(
   meeting: MeetingData,
   name: string,
@@ -72,6 +75,24 @@ async function runMeetingEndStep<T>(
 
 function shouldReleaseLeaseDuringErrorCleanup(meeting: MeetingData): boolean {
   return !meeting.finishing && !meeting.finished;
+}
+
+function shouldFinalizeDismissedAutoRecording(meeting: MeetingData): boolean {
+  if (!meeting.cancelled) return false;
+  if (!meeting.isAutoRecording) return false;
+  if (meeting.endReason !== MEETING_END_REASONS.DISMISSED) return false;
+
+  const durationMs = meeting.endTime
+    ? meeting.endTime.getTime() - meeting.startTime.getTime()
+    : 0;
+  if (durationMs >= DISMISSED_AUTO_RECORD_COMPLETE_MIN_DURATION_MS) {
+    return true;
+  }
+
+  const chatMessageCount = meeting.chatLog.filter(
+    (entry) => entry.type === "message",
+  ).length;
+  return chatMessageCount >= DISMISSED_AUTO_RECORD_COMPLETE_MIN_CHAT_MESSAGES;
 }
 
 export async function handleEndMeetingButton(
@@ -229,6 +250,12 @@ async function runEndMeetingFlow(options: EndMeetingFlowOptions) {
       closeOutputFile(meeting),
     );
 
+    const finalizeDismissedAutoRecording =
+      shouldFinalizeDismissedAutoRecording(meeting);
+    if (finalizeDismissedAutoRecording) {
+      meeting.cancelled = false;
+    }
+
     if (meeting.cancelled) {
       await runMeetingEndStep(meeting, "auto-record-cancel-flow", () =>
         handleAutoRecordCancellation(client, meeting, chatLogFilePath),
@@ -239,27 +266,29 @@ async function runEndMeetingFlow(options: EndMeetingFlowOptions) {
       return;
     }
 
-    const cancellationDecision = await runMeetingEndStep(
-      meeting,
-      "auto-record-cancellation",
-      () => evaluateAutoRecordCancellation(meeting),
-      {
-        metadata: {
-          audioFiles: meeting.audioData.audioFiles.length,
+    if (!finalizeDismissedAutoRecording) {
+      const cancellationDecision = await runMeetingEndStep(
+        meeting,
+        "auto-record-cancellation",
+        () => evaluateAutoRecordCancellation(meeting),
+        {
+          metadata: {
+            audioFiles: meeting.audioData.audioFiles.length,
+          },
         },
-      },
-    );
-    if (cancellationDecision.cancel) {
-      meeting.cancelled = true;
-      meeting.cancellationReason = cancellationDecision.reason;
-      meeting.endReason = MEETING_END_REASONS.AUTO_CANCELLED;
-      await runMeetingEndStep(meeting, "auto-record-cancel-flow", () =>
-        handleAutoRecordCancellation(client, meeting, chatLogFilePath),
       );
-      await runMeetingEndStep(meeting, "cleanup-speaker-tracks", () =>
-        cleanupSpeakerTracks(meeting),
-      );
-      return;
+      if (cancellationDecision.cancel) {
+        meeting.cancelled = true;
+        meeting.cancellationReason = cancellationDecision.reason;
+        meeting.endReason = MEETING_END_REASONS.AUTO_CANCELLED;
+        await runMeetingEndStep(meeting, "auto-record-cancel-flow", () =>
+          handleAutoRecordCancellation(client, meeting, chatLogFilePath),
+        );
+        await runMeetingEndStep(meeting, "cleanup-speaker-tracks", () =>
+          cleanupSpeakerTracks(meeting),
+        );
+        return;
+      }
     }
 
     const combinedAudioFile = meeting.audioData.outputFileName!;
