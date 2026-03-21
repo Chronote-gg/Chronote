@@ -26,6 +26,11 @@ import {
   getTranscriptionPrompt,
 } from "./transcriptionPromptService";
 import { ensureMeetingTempDir } from "./tempFileService";
+import {
+  areLowInformationTranscriptionTextsNearDuplicates,
+  isLowInformationTranscriptionText,
+  isTrivialTranscriptionText,
+} from "../utils/transcriptionText";
 
 type ChunkLogprobEntry = {
   logprob?: number;
@@ -108,11 +113,13 @@ type FinalPassDependencies = {
 type FinalPassCounters = {
   processedChunks: number;
   candidateEdits: number;
+  rejectedTrivialEdits: number;
 };
 
 type ChunkProcessingResult = {
   processed: boolean;
   candidateEdits: number;
+  rejectedTrivialEdits: number;
   nextTail: string;
 };
 
@@ -126,6 +133,8 @@ export type TranscriptionFinalPassResult = {
   acceptedEdits: number;
   replacedSegments: number;
   droppedSegments: number;
+  rejectedTrivialEdits: number;
+  repetitionFilteredSegments: number;
   fallbackApplied: boolean;
   fallbackReason?: string;
 };
@@ -375,6 +384,8 @@ const EMPTY_FINAL_PASS_RESULT: Omit<TranscriptionFinalPassResult, "enabled"> = {
   acceptedEdits: 0,
   replacedSegments: 0,
   droppedSegments: 0,
+  rejectedTrivialEdits: 0,
+  repetitionFilteredSegments: 0,
   fallbackApplied: false,
 };
 
@@ -439,17 +450,25 @@ const applyBatchEdits = (
   batch: BaselineSegment[],
   edits: FinalPassEdit[],
   acceptedEdits: Map<string, FinalPassEdit>,
-): number => {
+): { candidateEdits: number; rejectedTrivialEdits: number } => {
   let candidateEdits = 0;
+  let rejectedTrivialEdits = 0;
   for (const edit of edits) {
     candidateEdits += 1;
     const segment = getSegmentById(batch, edit.segmentId);
+    if (edit.action === "replace") {
+      const replacement = (edit.text ?? "").trim();
+      if (replacement && isTrivialTranscriptionText(replacement)) {
+        rejectedTrivialEdits += 1;
+        continue;
+      }
+    }
     if (!segment || !isEditUsable(edit, segment)) {
       continue;
     }
     updateAcceptedEdit(acceptedEdits, edit);
   }
-  return candidateEdits;
+  return { candidateEdits, rejectedTrivialEdits };
 };
 
 const reconcileChunkBatches = async (input: {
@@ -462,8 +481,9 @@ const reconcileChunkBatches = async (input: {
   chunkSegments: BaselineSegment[];
   acceptedEdits: Map<string, FinalPassEdit>;
   dependencies: FinalPassDependencies;
-}): Promise<number> => {
+}): Promise<{ candidateEdits: number; rejectedTrivialEdits: number }> => {
   let candidateEdits = 0;
+  let rejectedTrivialEdits = 0;
   const batches = batchSegments(input.chunkSegments);
   for (const batch of batches) {
     const edits = await input.dependencies.reconcileBatch({
@@ -475,9 +495,11 @@ const reconcileChunkBatches = async (input: {
       chunkCount: input.chunkCount,
       baselineSegments: batch,
     });
-    candidateEdits += applyBatchEdits(batch, edits, input.acceptedEdits);
+    const batchResult = applyBatchEdits(batch, edits, input.acceptedEdits);
+    candidateEdits += batchResult.candidateEdits;
+    rejectedTrivialEdits += batchResult.rejectedTrivialEdits;
   }
-  return candidateEdits;
+  return { candidateEdits, rejectedTrivialEdits };
 };
 
 const processChunk = async (input: {
@@ -518,13 +540,18 @@ const processChunk = async (input: {
       TRANSCRIPTION_FINAL_PASS_PREVIOUS_TAIL_CHARS,
     );
     if (!chunkTranscript) {
-      return { processed: true, candidateEdits: 0, nextTail };
+      return {
+        processed: true,
+        candidateEdits: 0,
+        rejectedTrivialEdits: 0,
+        nextTail,
+      };
     }
 
     const logprobSummary = summarizeLogprobMetrics(
       buildLogprobMetrics(chunkTranscription.logprobs),
     );
-    const candidateEdits = await reconcileChunkBatches({
+    const batchTotals = await reconcileChunkBatches({
       meeting: input.meeting,
       chunkTranscript,
       previousChunkTail: input.previousChunkTail,
@@ -536,7 +563,12 @@ const processChunk = async (input: {
       dependencies: input.dependencies,
     });
 
-    return { processed: true, candidateEdits, nextTail };
+    return {
+      processed: true,
+      candidateEdits: batchTotals.candidateEdits,
+      rejectedTrivialEdits: batchTotals.rejectedTrivialEdits,
+      nextTail,
+    };
   } catch (error) {
     console.error("Final transcription pass chunk failed.", {
       meetingId: input.meeting.meetingId,
@@ -546,6 +578,7 @@ const processChunk = async (input: {
     return {
       processed: true,
       candidateEdits: 0,
+      rejectedTrivialEdits: 0,
       nextTail: input.previousChunkTail,
     };
   } finally {
@@ -564,6 +597,7 @@ const processAllChunks = async (input: {
 }): Promise<FinalPassCounters> => {
   let processedChunks = 0;
   let candidateEdits = 0;
+  let rejectedTrivialEdits = 0;
   let previousChunkTail = "";
 
   for (const chunk of input.chunkWindows) {
@@ -588,10 +622,11 @@ const processAllChunks = async (input: {
       processedChunks += 1;
     }
     candidateEdits += result.candidateEdits;
+    rejectedTrivialEdits += result.rejectedTrivialEdits;
     previousChunkTail = result.nextTail;
   }
 
-  return { processedChunks, candidateEdits };
+  return { processedChunks, candidateEdits, rejectedTrivialEdits };
 };
 
 const summarizeAcceptedEdits = (
@@ -632,6 +667,55 @@ const applyAcceptedEdits = (
     }
     segment.fileData.finalPassTranscript = replacement;
   }
+};
+
+const LOW_INFORMATION_REPEAT_WINDOW_SECONDS = 180;
+
+const resolveEffectiveSegmentText = (segment: BaselineSegment) =>
+  segment.fileData.finalPassTranscript !== undefined
+    ? segment.fileData.finalPassTranscript
+    : segment.text;
+
+const applyRepeatedLowInformationFilter = (
+  baselineSegments: BaselineSegment[],
+): number => {
+  const lastKeptBySpeaker = new Map<
+    string,
+    { text: string; offsetSeconds: number }[]
+  >();
+  let repetitionFilteredSegments = 0;
+
+  for (const segment of baselineSegments) {
+    const text = resolveEffectiveSegmentText(segment).trim();
+    if (!isLowInformationTranscriptionText(text)) {
+      continue;
+    }
+
+    const speakerEntries = lastKeptBySpeaker.get(segment.speaker) ?? [];
+    const duplicate = speakerEntries.some((entry) => {
+      if (
+        Math.abs(segment.offsetSeconds - entry.offsetSeconds) >
+        LOW_INFORMATION_REPEAT_WINDOW_SECONDS
+      ) {
+        return false;
+      }
+      return areLowInformationTranscriptionTextsNearDuplicates(
+        text,
+        entry.text,
+      );
+    });
+
+    if (duplicate) {
+      segment.fileData.finalPassTranscript = "";
+      repetitionFilteredSegments += 1;
+      continue;
+    }
+
+    speakerEntries.push({ text, offsetSeconds: segment.offsetSeconds });
+    lastKeptBySpeaker.set(segment.speaker, speakerEntries);
+  }
+
+  return repetitionFilteredSegments;
 };
 
 const defaultDependencies: FinalPassDependencies = {
@@ -805,12 +889,18 @@ export async function runTranscriptionFinalPass(
     });
 
     if (acceptedEdits.size === 0) {
+      const repetitionFilteredSegments =
+        applyRepeatedLowInformationFilter(baselineSegments);
       return createResult({
         enabled: true,
+        applied: repetitionFilteredSegments > 0,
         processedChunks: counters.processedChunks,
         totalChunks: chunkWindows.length,
         totalSegments: baselineSegments.length,
         candidateEdits: counters.candidateEdits,
+        rejectedTrivialEdits: counters.rejectedTrivialEdits,
+        droppedSegments: repetitionFilteredSegments,
+        repetitionFilteredSegments,
       });
     }
 
@@ -829,6 +919,7 @@ export async function runTranscriptionFinalPass(
         totalChunks: chunkWindows.length,
         totalSegments: baselineSegments.length,
         candidateEdits: counters.candidateEdits,
+        rejectedTrivialEdits: counters.rejectedTrivialEdits,
         acceptedEdits: acceptedEdits.size,
         replacedSegments: editSummary.replacedSegments,
         droppedSegments: editSummary.droppedSegments,
@@ -838,6 +929,8 @@ export async function runTranscriptionFinalPass(
     }
 
     applyAcceptedEdits(baselineSegments, acceptedEdits);
+    const repetitionFilteredSegments =
+      applyRepeatedLowInformationFilter(baselineSegments);
 
     return createResult({
       enabled: true,
@@ -846,9 +939,11 @@ export async function runTranscriptionFinalPass(
       totalChunks: chunkWindows.length,
       totalSegments: baselineSegments.length,
       candidateEdits: counters.candidateEdits,
+      rejectedTrivialEdits: counters.rejectedTrivialEdits,
       acceptedEdits: acceptedEdits.size,
       replacedSegments: editSummary.replacedSegments,
-      droppedSegments: editSummary.droppedSegments,
+      droppedSegments: editSummary.droppedSegments + repetitionFilteredSegments,
+      repetitionFilteredSegments,
     });
   } catch (error) {
     console.error("Final transcription pass failed.", {

@@ -1,0 +1,25 @@
+import {
+  getTranscriptionTextQuality,
+  isTrivialTranscriptionText,
+} from "../transcriptionText";
+
+describe("transcriptionText", () => {
+  it("treats punctuation-only output as trivial", () => {
+    const quality = getTranscriptionTextQuality(" . ");
+
+    expect(quality.trivial).toBe(true);
+    expect(quality.punctuationOnly).toBe(true);
+    expect(quality.reasons).toContain("punctuation_only");
+    expect(isTrivialTranscriptionText(".")).toBe(true);
+  });
+
+  it("treats ordinary speech as non-trivial", () => {
+    const quality = getTranscriptionTextQuality(
+      "We should review the transcript tomorrow.",
+    );
+
+    expect(quality.trivial).toBe(false);
+    expect(quality.alnumCharCount).toBeGreaterThan(0);
+    expect(quality.wordCount).toBeGreaterThan(0);
+  });
+});
