@@ -515,6 +515,9 @@ describe("handleEndMeetingOther", () => {
     mockedWaitForAudioOnlyFinishProcessing.mockResolvedValue(undefined);
     mockedCloseOutputFile.mockResolvedValue(undefined);
     mockedSaveMeetingHistoryToDatabase.mockResolvedValue(undefined);
+    mockedDescribeAutoRecordRule.mockReturnValue(
+      "Auto-record rule: test-channel",
+    );
 
     const send = jest.fn().mockResolvedValue(undefined);
     const meeting = {

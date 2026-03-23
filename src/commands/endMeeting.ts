@@ -81,10 +81,13 @@ function shouldFinalizeDismissedAutoRecording(meeting: MeetingData): boolean {
   if (!meeting.cancelled) return false;
   if (!meeting.isAutoRecording) return false;
   if (meeting.endReason !== MEETING_END_REASONS.DISMISSED) return false;
+  if (!meeting.endTime) {
+    throw new Error(
+      "Dismissed auto-record finalization requires meeting.endTime",
+    );
+  }
 
-  const durationMs = meeting.endTime
-    ? meeting.endTime.getTime() - meeting.startTime.getTime()
-    : 0;
+  const durationMs = meeting.endTime.getTime() - meeting.startTime.getTime();
   if (durationMs >= DISMISSED_AUTO_RECORD_COMPLETE_MIN_DURATION_MS) {
     return true;
   }
@@ -485,6 +488,8 @@ async function uploadCancelledMeetingArtifacts(
   let transcriptForUpload: string | undefined;
 
   if (meeting.transcribeMeeting) {
+    // Cancelled-meeting uploads are best-effort recovery artifacts, so we skip
+    // the slower final transcription pass that only runs for fully finalized meetings.
     const transcriptionsReady = meeting.audioData.audioFiles.every(
       (file) => !file.processing,
     );
