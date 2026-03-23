@@ -356,6 +356,64 @@ describe("handleEndMeetingOther", () => {
     );
   });
 
+  it("finalizes a short dismissed auto-record meeting when chat activity crosses the threshold", async () => {
+    mockedWithMeetingEndTrace.mockImplementation(async (_meeting, fn) => fn());
+    mockedWaitForAudioOnlyFinishProcessing.mockResolvedValue(undefined);
+    mockedCloseOutputFile.mockResolvedValue(undefined);
+    mockedCompileTranscriptions.mockResolvedValue("Recovered transcript");
+    mockedGetGuildLimits.mockResolvedValue({ limits: {} } as never);
+    mockedSaveMeetingHistoryToDatabase.mockResolvedValue(undefined);
+
+    const meeting = {
+      guildId: "guild-1",
+      channelId: "text-1",
+      meetingId: "meeting-1",
+      voiceChannel: {
+        id: "voice-1",
+        name: "Voice",
+        members: new Collection(),
+      },
+      textChannel: {
+        send: jest.fn().mockResolvedValue(undefined),
+        messages: { fetch: jest.fn() },
+      },
+      connection: {
+        disconnect: jest.fn(),
+        destroy: jest.fn(),
+      },
+      chatLog: [
+        { type: "message", content: "one" },
+        { type: "message", content: "two" },
+      ],
+      audioData: {
+        audioFiles: [{ processing: false }],
+        currentSnippets: new Map(),
+        outputFileName: "recording.mp3",
+      },
+      startTime: new Date(Date.now() - 2 * 60 * 1000),
+      endTime: undefined,
+      finishing: false,
+      finished: false,
+      transcribeMeeting: true,
+      generateNotes: false,
+      isAutoRecording: true,
+      cancelled: true,
+      cancellationReason: "Stopped by user",
+      endReason: MEETING_END_REASONS.DISMISSED,
+      creator: { id: "bot-1" },
+      guild: { id: "guild-1", members: { cache: new Map() } },
+      ttsQueue: { stopAndClear: jest.fn() },
+      setFinished: jest.fn(),
+      participants: new Map(),
+    } as unknown as MeetingData;
+
+    await handleEndMeetingOther({} as Client, meeting);
+
+    expect(mockedEvaluateAutoRecordCancellation).not.toHaveBeenCalled();
+    expect(mockedBuildMixedAudio).toHaveBeenCalled();
+    expect(meeting.cancelled).toBe(false);
+  });
+
   it("runs final transcription pass when transcription is enabled", async () => {
     const { compileTranscriptions } = jest.requireMock("../../src/audio") as {
       compileTranscriptions: jest.Mock;
