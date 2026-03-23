@@ -66,7 +66,7 @@ export function isLowInformationTranscriptionText(text: string): boolean {
   );
 }
 
-const isTokenSubsequence = (needle: string[], haystack: string[]) => {
+const isContiguousTokenSubarray = (needle: string[], haystack: string[]) => {
   if (needle.length === 0 || needle.length > haystack.length) {
     return false;
   }
@@ -109,8 +109,11 @@ export function areLowInformationTranscriptionTextsNearDuplicates(
     return true;
   }
 
+  // We intentionally treat short phrase containment as a duplicate, so a later
+  // expansion like "hello how are you" is dropped when an earlier "hello"
+  // from the same speaker already exists in the recent window.
   return (
-    isTokenSubsequence(leftWords, rightWords) ||
-    isTokenSubsequence(rightWords, leftWords)
+    isContiguousTokenSubarray(leftWords, rightWords) ||
+    isContiguousTokenSubarray(rightWords, leftWords)
   );
 }

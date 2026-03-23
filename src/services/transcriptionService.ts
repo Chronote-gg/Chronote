@@ -300,6 +300,17 @@ async function transcribeInternal(
     maxSyllablesPerSecond: number;
   };
 
+  const toLogSafeTextQuality = (
+    quality: ReturnType<typeof getTranscriptionTextQuality>,
+  ) => ({
+    charCount: quality.charCount,
+    wordCount: quality.wordCount,
+    alnumCharCount: quality.alnumCharCount,
+    punctuationOnly: quality.punctuationOnly,
+    trivial: quality.trivial,
+    reasons: quality.reasons,
+  });
+
   const applyGuardsAndLog = async (
     raw: {
       text: string;
@@ -336,6 +347,9 @@ async function transcribeInternal(
       logprobs: raw.logprobs,
     });
     const selectedTextQuality = getTranscriptionTextQuality(guardResult.text);
+    const rawTextQualityForLogs = toLogSafeTextQuality(rawTextQuality);
+    const selectedTextQualityForLogs =
+      toLogSafeTextQuality(selectedTextQuality);
 
     if (
       guardResult.flags.length > 0 ||
@@ -368,8 +382,8 @@ async function transcribeInternal(
         transcriptSyllableCount: transcriptStats.transcriptSyllableCount,
         wordsPerSecond: transcriptStats.wordsPerSecond,
         syllablesPerSecond: transcriptStats.syllablesPerSecond,
-        rawTextQuality,
-        selectedTextQuality,
+        rawTextQuality: rawTextQualityForLogs,
+        selectedTextQuality: selectedTextQualityForLogs,
         transcriptionLength: guardResult.text.length,
       });
     }

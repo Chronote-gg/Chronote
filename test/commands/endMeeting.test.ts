@@ -177,6 +177,8 @@ describe("handleEndMeetingOther", () => {
       acceptedEdits: 0,
       replacedSegments: 0,
       droppedSegments: 0,
+      rejectedTrivialEdits: 0,
+      repetitionFilteredSegments: 0,
       fallbackApplied: false,
     });
   });

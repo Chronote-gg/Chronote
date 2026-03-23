@@ -45,6 +45,7 @@ type ChunkLogprobMetrics = {
 type BaselineSegment = {
   segmentId: string;
   fileData: AudioFileData;
+  speakerKey: string;
   speaker: string;
   startedAt: string;
   offsetSeconds: number;
@@ -180,6 +181,7 @@ const buildBaselineSegments = (meeting: MeetingData): BaselineSegment[] => {
     segments.push({
       segmentId: `seg-${segmentCounter}`,
       fileData,
+      speakerKey: fileData.userId,
       speaker: resolveSpeakerLabel(meeting, fileData.userId),
       startedAt: new Date(fileData.timestamp).toISOString(),
       offsetSeconds: Math.max(0, (fileData.timestamp - startedAtMs) / 1000),
@@ -691,7 +693,7 @@ const applyRepeatedLowInformationFilter = (
       continue;
     }
 
-    const speakerEntries = lastKeptBySpeaker.get(segment.speaker) ?? [];
+    const speakerEntries = lastKeptBySpeaker.get(segment.speakerKey) ?? [];
     const duplicate = speakerEntries.some((entry) => {
       if (
         Math.abs(segment.offsetSeconds - entry.offsetSeconds) >
@@ -712,12 +714,11 @@ const applyRepeatedLowInformationFilter = (
     }
 
     speakerEntries.push({ text, offsetSeconds: segment.offsetSeconds });
-    lastKeptBySpeaker.set(segment.speaker, speakerEntries);
+    lastKeptBySpeaker.set(segment.speakerKey, speakerEntries);
   }
 
   return repetitionFilteredSegments;
 };
-
 const defaultDependencies: FinalPassDependencies = {
   ensureTempDir: async (meeting) => await ensureMeetingTempDir(meeting),
   getAudioDurationSeconds,

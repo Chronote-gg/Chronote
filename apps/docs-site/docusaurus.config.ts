@@ -1,6 +1,6 @@
 import type { Config } from "@docusaurus/types";
 
-const siteUrl = process.env.DOCS_SITE_URL ?? "https://docs.chronote.gg";
+const siteUrl = process.env.DOCS_SITE_URL?.trim() || "https://docs.chronote.gg";
 const algoliaAppId = process.env.DOCS_ALGOLIA_APP_ID ?? "";
 const algoliaApiKey = process.env.DOCS_ALGOLIA_API_KEY ?? "";
 const algoliaIndexName = process.env.DOCS_ALGOLIA_INDEX_NAME ?? "";

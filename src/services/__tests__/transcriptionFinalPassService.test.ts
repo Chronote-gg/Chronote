@@ -161,4 +161,50 @@ describe("runTranscriptionFinalPass", () => {
     expect(meeting.audioData.audioFiles[1].finalPassTranscript).toBe("");
     expect(meeting.audioData.audioFiles[3].finalPassTranscript).toBe("");
   });
+
+  it("does not drop low-information segments from different users with the same label", async () => {
+    const meeting = createMeeting("Original transcript");
+    meeting.participants = new Map([
+      [
+        "user-1",
+        {
+          serverNickname: "Alex",
+        } as never,
+      ],
+      [
+        "user-2",
+        {
+          serverNickname: "Alex",
+        } as never,
+      ],
+    ]);
+    meeting.audioData.audioFiles = [
+      {
+        userId: "user-1",
+        timestamp: meeting.startTime.getTime() + 1_000,
+        transcript: "Hello",
+        processing: false,
+        audioOnlyProcessing: false,
+        source: "voice",
+      },
+      {
+        userId: "user-2",
+        timestamp: meeting.startTime.getTime() + 20_000,
+        transcript: "Hello",
+        processing: false,
+        audioOnlyProcessing: false,
+        source: "voice",
+      },
+    ];
+
+    const result = await runTranscriptionFinalPass(
+      meeting,
+      { audioFilePath: "meeting.mp3" },
+      buildNoEditDependencyOverrides(),
+    );
+
+    expect(result.repetitionFilteredSegments).toBe(0);
+    expect(meeting.audioData.audioFiles[0].finalPassTranscript).toBeUndefined();
+    expect(meeting.audioData.audioFiles[1].finalPassTranscript).toBeUndefined();
+  });
 });

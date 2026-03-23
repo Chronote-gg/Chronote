@@ -451,6 +451,12 @@ function parseOptions(): EvalOptions {
     throw new Error("Only --provider openai or bedrock is supported for now.");
   }
   const provider = providerRaw as ProviderName;
+  const compareNoPrompt = hasFlag("--compare-no-prompt");
+  if (compareNoPrompt && provider !== "openai") {
+    throw new Error(
+      "--compare-no-prompt currently supports only --provider openai.",
+    );
+  }
 
   const datasetFlag =
     readFlagValue("--langfuse-dataset") ?? readFlagValue("--dataset");
@@ -486,7 +492,7 @@ function parseOptions(): EvalOptions {
     langfuseDataset,
     langfuseExperiment,
     useDataset,
-    compareNoPrompt: hasFlag("--compare-no-prompt"),
+    compareNoPrompt,
   };
 }
 
