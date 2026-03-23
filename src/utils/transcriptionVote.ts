@@ -242,6 +242,12 @@ export function decideTranscriptionVote(input: {
   if (selectedId === "prompt" && noPromptQuality.trivialText) {
     reasons.push("no_prompt_trivial_text");
   }
+  if (selectedId === "no_prompt" && promptQuality.trivialText) {
+    reasons.push("prompt_trivial_text");
+  }
+  if (promptQuality.trivialText && noPromptQuality.trivialText) {
+    reasons.push("both_trivial_text");
+  }
   if (
     selectedId === "prompt" &&
     !noPromptQuality.trivialText &&

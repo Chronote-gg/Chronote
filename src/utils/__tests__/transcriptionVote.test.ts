@@ -68,5 +68,23 @@ describe("decideTranscriptionVote", () => {
     expect(decision.selectedId).toBe("no_prompt");
     expect(decision.promptQuality.trivialText).toBe(true);
     expect(decision.noPromptQuality.trivialText).toBe(false);
+    expect(decision.reasons).toContain("prompt_trivial_text");
+  });
+
+  it("records both trivial candidates in the decision reasons", () => {
+    const decision = decideTranscriptionVote({
+      promptCandidate: buildCandidate({
+        id: "prompt",
+        text: ".",
+      }),
+      noPromptCandidate: buildCandidate({
+        id: "no_prompt",
+        text: "...",
+      }),
+    });
+
+    expect(decision.selectedId).toBe("prompt");
+    expect(decision.reasons).toContain("no_prompt_trivial_text");
+    expect(decision.reasons).toContain("both_trivial_text");
   });
 });
