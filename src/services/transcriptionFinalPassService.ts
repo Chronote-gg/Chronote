@@ -694,27 +694,24 @@ const applyRepeatedLowInformationFilter = (
     }
 
     const speakerEntries = lastKeptBySpeaker.get(segment.speakerKey) ?? [];
-    const duplicate = speakerEntries.some((entry) => {
-      if (
-        Math.abs(segment.offsetSeconds - entry.offsetSeconds) >
-        LOW_INFORMATION_REPEAT_WINDOW_SECONDS
-      ) {
-        return false;
-      }
-      return areLowInformationTranscriptionTextsNearDuplicates(
-        text,
-        entry.text,
-      );
-    });
+    const windowStart =
+      segment.offsetSeconds - LOW_INFORMATION_REPEAT_WINDOW_SECONDS;
+    const recentEntries = speakerEntries.filter(
+      (entry) => entry.offsetSeconds >= windowStart,
+    );
+    const duplicate = recentEntries.some((entry) =>
+      areLowInformationTranscriptionTextsNearDuplicates(text, entry.text),
+    );
 
     if (duplicate) {
       segment.fileData.finalPassTranscript = "";
       repetitionFilteredSegments += 1;
+      lastKeptBySpeaker.set(segment.speakerKey, recentEntries);
       continue;
     }
 
-    speakerEntries.push({ text, offsetSeconds: segment.offsetSeconds });
-    lastKeptBySpeaker.set(segment.speakerKey, speakerEntries);
+    recentEntries.push({ text, offsetSeconds: segment.offsetSeconds });
+    lastKeptBySpeaker.set(segment.speakerKey, recentEntries);
   }
 
   return repetitionFilteredSegments;

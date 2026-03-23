@@ -22,4 +22,12 @@ describe("transcriptionText", () => {
     expect(quality.alnumCharCount).toBeGreaterThan(0);
     expect(quality.wordCount).toBeGreaterThan(0);
   });
+
+  it("treats non-Latin text as non-trivial", () => {
+    const quality = getTranscriptionTextQuality("こんにちは 世界");
+
+    expect(quality.trivial).toBe(false);
+    expect(quality.punctuationOnly).toBe(false);
+    expect(quality.alnumCharCount).toBeGreaterThan(0);
+  });
 });

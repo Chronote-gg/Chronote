@@ -16,12 +16,12 @@ export type TranscriptionTextQuality = {
 const normalizeTranscriptWords = (text: string) =>
   text
     .toLowerCase()
-    .replace(/[^a-z0-9'\s]/g, " ")
+    .replace(/[^\p{L}\p{N}'\s]/gu, " ")
     .split(/\s+/)
     .filter(Boolean);
 
 const countAlnumChars = (text: string) =>
-  Array.from(text).filter((char) => /[A-Za-z0-9]/.test(char)).length;
+  Array.from(text).filter((char) => /[\p{L}\p{N}]/u.test(char)).length;
 
 export function getTranscriptionTextQuality(
   text: string,
