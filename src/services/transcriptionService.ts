@@ -43,6 +43,7 @@ import {
   TRANSCRIPTION_MAX_CONCURRENT,
   TRANSCRIPTION_MAX_QUEUE,
   TRANSCRIPTION_MAX_RETRIES,
+  TRANSCRIPTION_FAILURE_PLACEHOLDER,
   TRANSCRIPTION_RATE_MIN_TIME,
   TRANSCRIBE_SAMPLE_RATE,
 } from "../constants";
@@ -74,6 +75,7 @@ import {
 } from "./transcriptionPromptService";
 import { chat } from "./openaiChatService";
 import { getMeetingModelOverrides } from "./meetingModelOverrides";
+import { getTranscriptionTextQuality } from "../utils/transcriptionText";
 
 const DEFAULT_NOISE_GATE_CONFIG = {
   enabled: NOISE_GATE_ENABLED,
@@ -286,6 +288,8 @@ async function transcribeInternal(
 
   type GuardedTranscriptionResult = {
     candidateId: "prompt" | "no_prompt";
+    rawTextQuality: ReturnType<typeof getTranscriptionTextQuality>;
+    selectedTextQuality: ReturnType<typeof getTranscriptionTextQuality>;
     guardResult: ReturnType<typeof applyTranscriptionGuards>;
     transcriptStats: TranscriptStats;
     suppressionEnabled: boolean;
@@ -297,6 +301,17 @@ async function transcribeInternal(
     maxSyllablesPerSecond: number;
   };
 
+  const toLogSafeTextQuality = (
+    quality: ReturnType<typeof getTranscriptionTextQuality>,
+  ) => ({
+    charCount: quality.charCount,
+    wordCount: quality.wordCount,
+    alnumCharCount: quality.alnumCharCount,
+    punctuationOnly: quality.punctuationOnly,
+    trivial: quality.trivial,
+    reasons: quality.reasons,
+  });
+
   const applyGuardsAndLog = async (
     raw: {
       text: string;
@@ -307,6 +322,7 @@ async function transcribeInternal(
       promptText?: string;
     },
   ): Promise<GuardedTranscriptionResult> => {
+    const rawTextQuality = getTranscriptionTextQuality(raw.text);
     const promptEchoEnabledForCandidate =
       guardConfig.promptEchoEnabled && Boolean(candidate.promptText);
 
@@ -331,9 +347,17 @@ async function transcribeInternal(
       transcriptSyllableCount: transcriptStats.transcriptSyllableCount,
       logprobs: raw.logprobs,
     });
+    const selectedTextQuality = getTranscriptionTextQuality(guardResult.text);
+    const rawTextQualityForLogs = toLogSafeTextQuality(rawTextQuality);
+    const selectedTextQualityForLogs =
+      toLogSafeTextQuality(selectedTextQuality);
 
-    if (guardResult.flags.length > 0) {
-      console.warn("Transcription flagged by guard checks.", {
+    if (
+      guardResult.flags.length > 0 ||
+      rawTextQuality.trivial ||
+      selectedTextQuality.trivial
+    ) {
+      console.warn("Transcription candidate needs review.", {
         ...traceMetadata,
         transcriptionCandidate: candidate.id,
         candidatePromptLength: candidate.promptText?.length ?? 0,
@@ -359,12 +383,16 @@ async function transcribeInternal(
         transcriptSyllableCount: transcriptStats.transcriptSyllableCount,
         wordsPerSecond: transcriptStats.wordsPerSecond,
         syllablesPerSecond: transcriptStats.syllablesPerSecond,
+        rawTextQuality: rawTextQualityForLogs,
+        selectedTextQuality: selectedTextQualityForLogs,
         transcriptionLength: guardResult.text.length,
       });
     }
 
     return {
       candidateId: candidate.id,
+      rawTextQuality,
+      selectedTextQuality,
       guardResult,
       transcriptStats,
       suppressionEnabled: guardConfig.suppressionEnabled,
@@ -448,6 +476,10 @@ async function transcribeInternal(
       voteNoPromptFlags: noPromptCandidate.guardResult.flags,
       votePromptSuppressed: promptCandidate.guardResult.suppressed,
       voteNoPromptSuppressed: noPromptCandidate.guardResult.suppressed,
+      votePromptTrivialText: promptCandidate.selectedTextQuality.trivial,
+      votePromptTrivialReasons: promptCandidate.selectedTextQuality.reasons,
+      voteNoPromptTrivialText: noPromptCandidate.selectedTextQuality.trivial,
+      voteNoPromptTrivialReasons: noPromptCandidate.selectedTextQuality.reasons,
     });
 
     return {
@@ -564,6 +596,16 @@ async function transcribeInternal(
             rateMinSyllables,
             maxSyllablesPerSecond,
             ...transcriptStats,
+            transcriptionRawTextTrivial:
+              selection.selected.rawTextQuality.trivial,
+            transcriptionRawTextReasons:
+              selection.selected.rawTextQuality.reasons,
+            transcriptionTextTrivial:
+              selection.selected.selectedTextQuality.trivial,
+            transcriptionTextReasons:
+              selection.selected.selectedTextQuality.reasons,
+            transcriptionAlnumCharCount:
+              selection.selected.selectedTextQuality.alnumCharCount,
             logprobMetrics: guardResult.logprobMetrics,
             promptEchoDetected: guardResult.promptEchoDetected,
             promptEchoMetrics: guardResult.promptEchoMetrics,
@@ -584,6 +626,14 @@ async function transcribeInternal(
               selection.promptCandidate.guardResult.flags,
             transcriptionVoteNoPromptFlags:
               selection.noPromptCandidate?.guardResult.flags,
+            transcriptionVotePromptTrivialText:
+              selection.promptCandidate.selectedTextQuality.trivial,
+            transcriptionVotePromptTrivialReasons:
+              selection.promptCandidate.selectedTextQuality.reasons,
+            transcriptionVoteNoPromptTrivialText:
+              selection.noPromptCandidate?.selectedTextQuality.trivial,
+            transcriptionVoteNoPromptTrivialReasons:
+              selection.noPromptCandidate?.selectedTextQuality.reasons,
           },
         },
         { asType: "generation" },
@@ -779,7 +829,7 @@ export async function transcribeSnippet(
       `Failed to transcribe snippet for user ${snippet.userId}:`,
       error,
     );
-    return "[Transcription failed]";
+    return TRANSCRIPTION_FAILURE_PLACEHOLDER;
   } finally {
     cleanupTempFiles(tempFiles);
   }

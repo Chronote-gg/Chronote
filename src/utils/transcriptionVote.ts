@@ -3,7 +3,7 @@ import {
   TRANSCRIPTION_LOGPROB_MIN_THRESHOLD,
 } from "../constants";
 import type { LogprobMetrics } from "./transcriptionGuards";
-import { countWords } from "./text";
+import { getTranscriptionTextQuality } from "./transcriptionText";
 
 export type TranscriptionVoteCandidateId = "prompt" | "no_prompt";
 
@@ -20,8 +20,11 @@ export type TranscriptionVoteCandidate = {
 type CandidateQuality = {
   score: number;
   wordCount: number;
+  alnumCharCount: number;
   uniqueWordRatio: number;
   maxConsecutiveRepeats: number;
+  trivialText: boolean;
+  trivialTextReasons: string[];
 };
 
 export type TranscriptionVoteGateResult = {
@@ -57,12 +60,14 @@ const SCORE_UNIQUE_RATIO_THRESHOLD = 0.45;
 const SCORE_UNIQUE_RATIO_PENALTY = -20;
 const SCORE_CONSECUTIVE_REPEAT_MIN = 3;
 const SCORE_CONSECUTIVE_REPEAT_PENALTY = -20;
+const SCORE_TRIVIAL_TEXT_PENALTY = -400;
 const SCORE_SELECTION_BUFFER = 2;
+const NO_PROMPT_MIN_SELECTION_SCORE = 120;
 
 function normalizeWords(text: string): string[] {
   return text
     .toLowerCase()
-    .replace(/[^a-z0-9'\s]/g, " ")
+    .replace(/[^\p{L}\p{N}'\s]/gu, " ")
     .split(/\s+/)
     .filter(Boolean);
 }
@@ -95,8 +100,9 @@ export function hasLowConfidenceLogprobs(metrics?: LogprobMetrics): boolean {
 function calculateCandidateQuality(
   candidate: TranscriptionVoteCandidate,
 ): CandidateQuality {
-  const trimmed = candidate.text.trim();
-  const wordCount = countWords(trimmed);
+  const textQuality = getTranscriptionTextQuality(candidate.text);
+  const trimmed = textQuality.trimmed;
+  const wordCount = textQuality.wordCount;
   const normalizedWords = normalizeWords(trimmed);
   const uniqueWordRatio =
     normalizedWords.length === 0
@@ -108,8 +114,11 @@ function calculateCandidateQuality(
     return {
       score: SCORE_EMPTY_TEXT,
       wordCount,
+      alnumCharCount: textQuality.alnumCharCount,
       uniqueWordRatio,
       maxConsecutiveRepeats,
+      trivialText: textQuality.trivial,
+      trivialTextReasons: textQuality.reasons,
     };
   }
 
@@ -143,12 +152,20 @@ function calculateCandidateQuality(
   if (maxConsecutiveRepeats >= SCORE_CONSECUTIVE_REPEAT_MIN) {
     score += SCORE_CONSECUTIVE_REPEAT_PENALTY;
   }
+  if (textQuality.trivial) {
+    // This penalty is only for score telemetry, selection short-circuits on
+    // trivialText before comparing prompt and no-prompt scores.
+    score += SCORE_TRIVIAL_TEXT_PENALTY;
+  }
 
   return {
     score,
     wordCount,
+    alnumCharCount: textQuality.alnumCharCount,
     uniqueWordRatio,
     maxConsecutiveRepeats,
+    trivialText: textQuality.trivial,
+    trivialTextReasons: textQuality.reasons,
   };
 }
 
@@ -189,6 +206,15 @@ function chooseSelectedCandidateId(input: {
   promptQuality: CandidateQuality;
   noPromptQuality: CandidateQuality;
 }): TranscriptionVoteCandidateId {
+  if (input.noPromptQuality.trivialText) {
+    return "prompt";
+  }
+  if (input.promptQuality.trivialText) {
+    return "no_prompt";
+  }
+  if (input.noPromptQuality.score < NO_PROMPT_MIN_SELECTION_SCORE) {
+    return "prompt";
+  }
   if (
     input.noPromptQuality.score >
     input.promptQuality.score + SCORE_SELECTION_BUFFER
@@ -210,6 +236,25 @@ export function decideTranscriptionVote(input: {
   });
 
   const reasons = [`selected_${selectedId}`];
+  if (promptQuality.trivialText !== noPromptQuality.trivialText) {
+    reasons.push("trivial_text_difference");
+  }
+  if (selectedId === "prompt" && noPromptQuality.trivialText) {
+    reasons.push("no_prompt_trivial_text");
+  }
+  if (selectedId === "no_prompt" && promptQuality.trivialText) {
+    reasons.push("prompt_trivial_text");
+  }
+  if (promptQuality.trivialText && noPromptQuality.trivialText) {
+    reasons.push("both_trivial_text");
+  }
+  if (
+    selectedId === "prompt" &&
+    !noPromptQuality.trivialText &&
+    noPromptQuality.score < NO_PROMPT_MIN_SELECTION_SCORE
+  ) {
+    reasons.push("no_prompt_below_quality_floor");
+  }
   if (input.promptCandidate.suppressed !== input.noPromptCandidate.suppressed) {
     reasons.push("suppression_difference");
   }

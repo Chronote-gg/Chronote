@@ -7,6 +7,11 @@ Notable product changes for Chronote users. For the full changelog, see the [Git
 
 ## 2026
 
+### Transcription reliability guardrails
+
+- Low-confidence transcription retries now reject punctuation-only outputs before they can replace a real transcript.
+- Finalized meeting audio gets an extra verification pass to clean up repeated short hallucinations before notes are generated.
+
 ### Public documentation launch
 
 - Product documentation is now available at [docs.chronote.gg](https://docs.chronote.gg).

@@ -21,7 +21,9 @@ Chronote records voice audio, builds per speaker snippets, and runs transcriptio
 - Noise gate checks peak levels in short windows and skips snippets that are very quiet and lack speech-like peaks.
 - Transcription prompt is Langfuse-managed (`chronote-transcription-prompt`) and can be adjusted for experiments, including removing the prompt entirely.
 - Guardrails include a loudness gate (noise gate metrics plus token logprobs), a syllable rate gate for short snippets, and a prompt echo gate to suppress prompt repetition.
-- Vote fallback runs a no-prompt retry for low-confidence slow snippets and picks the better result with a deterministic arbiter (suppression flags, prompt echo, logprobs, and repetition checks).
+- Vote fallback runs a no-prompt retry for low-confidence slow snippets and picks the better result with a deterministic arbiter (suppression flags, prompt echo, logprobs, repetition checks, and a hard reject for punctuation-only outputs like `.`).
+- The finalized audio pass rejects trivial replacement text, so punctuation-only edits do not overwrite an existing snippet transcript.
+- The finalized audio pass also drops repeated low-information snippets from the same speaker when they recur in a short window, which helps clean up bursts of greeting-style hallucinations.
 
 ## Langfuse audio attachments
 
@@ -66,6 +68,7 @@ All values are set via the config system. For the noise gate, only `enabled`, `a
 - `transcription.suppression.maxSyllablesPerSecond`
 - `transcription.promptEcho.enabled`
 - `transcription.vote.enabled`
+- `transcription.finalPass.enabled`
 - `transcription.noiseGate.enabled`
 - `transcription.noiseGate.windowMs`
 - `transcription.noiseGate.peakDbfs`
@@ -95,6 +98,8 @@ The noise gate is a lightweight, peak-based check to skip clips that are very qu
 - Hard silence suppression drops snippets whose peak stays below `transcription.suppression.hardSilenceDbfs`, regardless of logprobs.
 - Syllable rate suppression drops short snippets that exceed the configured syllables-per-second threshold once word and syllable minimums are met.
 - Prompt echo suppression runs after transcription and is independent of the loudness gate.
+- Punctuation-only outputs are treated as trivial text. The vote arbiter will not let a punctuation-only no-prompt retry beat a real prompt transcript, and the final pass will not apply punctuation-only replacements.
+- After final-pass edits are applied, repeated low-information snippets from the same speaker are filtered when they recur within a short window and closely match an earlier kept phrase.
 
 ## Cleanup behavior
 
