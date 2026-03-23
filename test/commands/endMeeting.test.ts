@@ -361,6 +361,7 @@ describe("handleEndMeetingOther", () => {
     mockedWithMeetingEndTrace.mockImplementation(async (_meeting, fn) => fn());
     mockedWaitForAudioOnlyFinishProcessing.mockResolvedValue(undefined);
     mockedCloseOutputFile.mockResolvedValue(undefined);
+    mockedBuildMixedAudio.mockResolvedValue(undefined);
     mockedCompileTranscriptions.mockResolvedValue("Recovered transcript");
     mockedGetGuildLimits.mockResolvedValue({ limits: {} } as never);
     mockedSaveMeetingHistoryToDatabase.mockResolvedValue(undefined);
