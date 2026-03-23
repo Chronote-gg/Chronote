@@ -153,6 +153,8 @@ function calculateCandidateQuality(
     score += SCORE_CONSECUTIVE_REPEAT_PENALTY;
   }
   if (textQuality.trivial) {
+    // This penalty is only for score telemetry, selection short-circuits on
+    // trivialText before comparing prompt and no-prompt scores.
     score += SCORE_TRIVIAL_TEXT_PENALTY;
   }
 
@@ -207,7 +209,7 @@ function chooseSelectedCandidateId(input: {
   if (input.noPromptQuality.trivialText) {
     return "prompt";
   }
-  if (input.promptQuality.trivialText && !input.noPromptQuality.trivialText) {
+  if (input.promptQuality.trivialText) {
     return "no_prompt";
   }
   if (input.noPromptQuality.score < NO_PROMPT_MIN_SELECTION_SCORE) {

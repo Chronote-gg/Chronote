@@ -841,8 +841,8 @@ async function runFileEval(options: EvalOptions) {
             );
         })();
 
-  const runBatchForPrompt = async (promptOverride: string) =>
-    await runTranscriptionBatch({
+  const runBatchForPrompt = (promptOverride: string) =>
+    runTranscriptionBatch({
       transcribeOnce: buildTranscribeOnce(promptOverride),
       runs: options.runs,
       prompt: promptOverride,

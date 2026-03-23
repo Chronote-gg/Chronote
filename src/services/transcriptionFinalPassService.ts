@@ -458,15 +458,15 @@ const applyBatchEdits = (
   for (const edit of edits) {
     candidateEdits += 1;
     const segment = getSegmentById(batch, edit.segmentId);
+    if (!segment || !isEditUsable(edit, segment)) {
+      continue;
+    }
     if (edit.action === "replace") {
       const replacement = (edit.text ?? "").trim();
       if (replacement && isTrivialTranscriptionText(replacement)) {
         rejectedTrivialEdits += 1;
         continue;
       }
-    }
-    if (!segment || !isEditUsable(edit, segment)) {
-      continue;
     }
     updateAcceptedEdit(acceptedEdits, edit);
   }
