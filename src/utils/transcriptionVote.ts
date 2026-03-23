@@ -67,7 +67,7 @@ const NO_PROMPT_MIN_SELECTION_SCORE = 120;
 function normalizeWords(text: string): string[] {
   return text
     .toLowerCase()
-    .replace(/[^a-z0-9'\s]/g, " ")
+    .replace(/[^\p{L}\p{N}'\s]/gu, " ")
     .split(/\s+/)
     .filter(Boolean);
 }
