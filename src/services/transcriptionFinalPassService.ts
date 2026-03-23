@@ -716,6 +716,7 @@ const applyRepeatedLowInformationFilter = (
 
   return repetitionFilteredSegments;
 };
+
 const defaultDependencies: FinalPassDependencies = {
   ensureTempDir: async (meeting) => await ensureMeetingTempDir(meeting),
   getAudioDurationSeconds,
