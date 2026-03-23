@@ -31,17 +31,17 @@ export async function fetchDiscordMessage(
   return (await resp.json()) as DiscordMessage;
 }
 
-export async function updateDiscordMessage(
+export async function updateDiscordMessageEmbeds(
   channelId: string,
   messageId: string,
-  payload: Partial<DiscordMessagePayload>,
+  embeds: Array<Record<string, unknown>>,
 ): Promise<boolean> {
   const resp = await fetch(
     `https://discord.com/api/channels/${channelId}/messages/${messageId}`,
     {
       method: "PATCH",
       headers: buildHeaders(),
-      body: JSON.stringify(payload),
+      body: JSON.stringify({ embeds }),
     },
   );
   if (resp.status === 404) return false;
@@ -49,14 +49,6 @@ export async function updateDiscordMessage(
     throw new Error(`Discord message update failed (${resp.status})`);
   }
   return true;
-}
-
-export async function updateDiscordMessageEmbeds(
-  channelId: string,
-  messageId: string,
-  embeds: Array<Record<string, unknown>>,
-): Promise<boolean> {
-  return updateDiscordMessage(channelId, messageId, { embeds });
 }
 
 export async function createDiscordMessage(

@@ -974,9 +974,6 @@ export async function compileTranscriptions(
   options: { includeCues?: boolean } = {},
 ): Promise<string> {
   const resolveTranscriptText = (fileData: AudioFileData) => {
-    if (fileData.finalPassTranscript !== undefined) {
-      return fileData.finalPassTranscript;
-    }
     if (fileData.coalescedTranscript) return fileData.coalescedTranscript;
     if (fileData.slowTranscript) return fileData.slowTranscript;
     if (fileData.transcript) return fileData.transcript;

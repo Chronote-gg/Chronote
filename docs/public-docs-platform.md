@@ -19,7 +19,7 @@ This file documents the public docs platform that serves `docs.chronote.gg`.
 Algolia DocSearch (preferred):
 
 - `DOCS_ALGOLIA_APP_ID`
-- `DOCS_ALGOLIA_API_KEY`
+- `DOCS_ALGOLIA_API_KEY` (public search key, not admin key)
 - `DOCS_ALGOLIA_INDEX_NAME`
 
 Fallback behavior:

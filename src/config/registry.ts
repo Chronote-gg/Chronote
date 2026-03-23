@@ -185,20 +185,6 @@ export const CONFIG_REGISTRY: ConfigEntry[] = [
     ui: { type: "toggle" },
   },
   {
-    key: "transcription.finalPass.enabled",
-    label: "Finalized audio verification pass",
-    description:
-      "Run a final transcription verification pass over the finalized meeting audio and auto-apply high-confidence hallucination fixes.",
-    category: "Transcription",
-    group: "Experimental",
-    valueType: "boolean",
-    defaultValue: true,
-    scopes: {
-      global: scope(true, true, "superadmin", "toggle"),
-    },
-    ui: { type: "toggle" },
-  },
-  {
     key: "transcription.suppression.enabled",
     label: "Loudness gate",
     description:
@@ -293,21 +279,6 @@ export const CONFIG_REGISTRY: ConfigEntry[] = [
     label: "Prompt echo gate",
     description:
       "Suppress text that appears to repeat the transcription prompt.",
-    category: "Transcription",
-    group: "Advanced",
-    valueType: "boolean",
-    defaultValue: true,
-    scopes: {
-      global: scope(true, true, "superadmin", "toggle"),
-      server: scope(true, false, "admin", "tri-state"),
-    },
-    ui: { type: "toggle" },
-  },
-  {
-    key: "transcription.vote.enabled",
-    label: "Prompt vote fallback",
-    description:
-      "For low-confidence slow snippets, run a no-prompt fallback transcription and pick the better result.",
     category: "Transcription",
     group: "Advanced",
     valueType: "boolean",

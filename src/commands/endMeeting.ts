@@ -50,7 +50,6 @@ import {
   ensureMeetingTempDir,
 } from "../services/tempFileService";
 import { releaseMeetingLeaseForMeeting } from "../services/activeMeetingLeaseService";
-import { runTranscriptionFinalPass } from "../services/transcriptionFinalPassService";
 
 type EndMeetingFlowOptions = {
   client: Client;
@@ -329,19 +328,6 @@ async function runEndMeetingFlow(options: EndMeetingFlowOptions) {
         );
       }
 
-      const finalPassResult = await runMeetingEndStep(
-        meeting,
-        "transcription-final-pass",
-        () =>
-          runTranscriptionFinalPass(meeting, {
-            audioFilePath: outputAudioFile,
-          }),
-      );
-      console.log("Transcription final pass completed.", {
-        meetingId: meeting.meetingId,
-        ...finalPassResult,
-      });
-
       const transcriptions = await runMeetingEndStep(
         meeting,
         "compile-transcriptions",
@@ -495,21 +481,27 @@ async function uploadCancelledMeetingArtifacts(
       console.log(
         `Waiting for cancelled meeting transcriptions to finish: pending=${pending} meetingId=${meeting.meetingId}`,
       );
-      await waitForFinishProcessing(meeting);
+      await runMeetingEndStep(meeting, "wait-cancelled-transcriptions", () =>
+        waitForFinishProcessing(meeting),
+      );
     }
 
-    const transcriptions = await compileTranscriptions(client, meeting);
+    const transcriptions = await runMeetingEndStep(
+      meeting,
+      "compile-cancelled-transcriptions",
+      () => compileTranscriptions(client, meeting),
+    );
     meeting.finalTranscript = transcriptions;
-    transcriptForUpload = await compileTranscriptions(client, meeting, {
-      includeCues: true,
-    });
+    transcriptForUpload = transcriptions;
   }
 
-  await uploadMeetingArtifacts(meeting, {
-    audioFilePath: meeting.audioData.outputFileName,
-    chatFilePath: chatLogFilePath,
-    transcriptText: transcriptForUpload,
-  });
+  await runMeetingEndStep(meeting, "upload-cancelled-artifacts", () =>
+    uploadMeetingArtifacts(meeting, {
+      audioFilePath: meeting.audioData.outputFileName,
+      chatFilePath: chatLogFilePath,
+      transcriptText: transcriptForUpload,
+    }),
+  );
 }
 
 async function deleteTrackedMessages(meeting: MeetingData) {

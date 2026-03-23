@@ -115,7 +115,6 @@ export type MeetingRuntimeConfig = {
     suppressionRateMinSyllables: number;
     suppressionRateMaxSyllablesPerSecond: number;
     promptEchoEnabled: boolean;
-    voteEnabled: boolean;
     fastSilenceMs: number;
     slowSilenceMs: number;
     minSnippetSeconds: number;
@@ -132,7 +131,6 @@ export type MeetingRuntimeConfig = {
       applyToFast: boolean;
       applyToSlow: boolean;
     };
-    finalPassEnabled: boolean;
   };
   premiumTranscription: {
     enabled: boolean;

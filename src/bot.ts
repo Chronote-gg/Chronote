@@ -111,14 +111,12 @@ import {
   onboardCommand,
 } from "./commands/onboard";
 import { fetchGuildInstaller } from "./services/guildInstallerService";
-import { setDiscordClient } from "./services/discordClientAccessor";
 import { autoRecordJoinSuppressionService } from "./services/autoRecordJoinSuppressionService";
 import {
   MEETING_END_REASONS,
   MEETING_START_REASONS,
   type AutoRecordRule,
 } from "./types/meetingLifecycle";
-import { isMeetingCollectingEvents } from "./utils/meetingLifecycle";
 import {
   DISMISS_AUTORECORD_COMMAND_NAME,
   dismissAutoRecordCommand,
@@ -428,7 +426,6 @@ export async function setupBot() {
 
   client.once(Events.ClientReady, () => {
     console.log(`Logged in as ${client.user?.tag}!`);
-    setDiscordClient(client);
 
     client.on("voiceStateUpdate", handleVoiceStateUpdate);
   });
@@ -623,7 +620,7 @@ async function handleBotVoiceUpdate(
   newState: VoiceState,
 ) {
   const meeting = getMeeting(oldState.guild.id);
-  if (!isMeetingCollectingEvents(meeting)) return;
+  if (!meeting || meeting.finishing || meeting.finished) return;
   const wasInMeetingChannel = oldState.channelId === meeting.voiceChannel.id;
   const stillInMeetingChannel = newState.channelId === meeting.voiceChannel.id;
   if (wasInMeetingChannel && !stillInMeetingChannel) {
@@ -662,7 +659,7 @@ async function handleUserJoin(newState: VoiceState) {
 
   // Handle existing meeting attendance
   if (
-    isMeetingCollectingEvents(meeting) &&
+    meeting &&
     newState.member &&
     newState.member.user.id !== client.user!.id &&
     meeting.voiceChannel.id === newState.channelId
@@ -809,7 +806,7 @@ async function handleUserJoin(newState: VoiceState) {
 async function handleUserLeave(oldState: VoiceState) {
   const meeting = getMeeting(oldState.guild.id);
   if (
-    isMeetingCollectingEvents(meeting) &&
+    meeting &&
     oldState.member &&
     oldState.member.user.id !== client.user!.id &&
     meeting.voiceChannel.id === oldState.channelId
@@ -830,7 +827,7 @@ async function handleUserLeave(oldState: VoiceState) {
 
     unsubscribeToVoiceUponLeaving(meeting, oldState.member!.user.id);
 
-    if (meeting.voiceChannel.members.size <= 1) {
+    if (meeting.voiceChannel.members.size <= 1 && !meeting.finishing) {
       if (!meeting.endReason) {
         meeting.endReason = MEETING_END_REASONS.CHANNEL_EMPTY;
       }

@@ -13,7 +13,6 @@ export const CONFIG_KEYS = {
     suppressionRateMaxSyllablesPerSecond:
       "transcription.suppression.maxSyllablesPerSecond",
     promptEchoEnabled: "transcription.promptEcho.enabled",
-    voteEnabled: "transcription.vote.enabled",
     fastSilenceMs: "transcription.fastSilenceMs",
     slowSilenceMs: "transcription.slowSilenceMs",
     minSnippetSeconds: "transcription.minSnippetSeconds",
@@ -29,7 +28,6 @@ export const CONFIG_KEYS = {
     noiseGateMinPeakAboveNoiseDb: "transcription.noiseGate.minPeakAboveNoiseDb",
     noiseGateApplyToFast: "transcription.noiseGate.applyToFast",
     noiseGateApplyToSlow: "transcription.noiseGate.applyToSlow",
-    finalPassEnabled: "transcription.finalPass.enabled",
   },
   models: {
     notes: "models.notes",

@@ -201,4 +201,79 @@ describe("handleDismissAutoRecord", () => {
 
     expect(mockedHandleEndMeetingOther).toHaveBeenCalledWith(client, meeting);
   });
+
+  it("allows users with ManageChannels", async () => {
+    const client = makeClient();
+    const interaction = makeInteraction({
+      memberPermissions: new PermissionsBitField(
+        PermissionFlagsBits.ManageChannels,
+      ),
+    });
+    const meeting = makeMeeting({
+      voiceChannel: makeVoiceChannel(
+        makeMembers([
+          ["user-1", false],
+          ["user-2", false],
+        ]),
+      ),
+    });
+    mockedGetMeeting.mockReturnValue(meeting);
+    mockedResolveConfigEnum.mockResolvedValue("trigger_or_admin");
+
+    await handleDismissAutoRecord(client, interaction);
+
+    expect(mockedHandleEndMeetingOther).toHaveBeenCalledWith(client, meeting);
+  });
+
+  it("allows users with ManageGuild", async () => {
+    const client = makeClient();
+    const interaction = makeInteraction({
+      memberPermissions: new PermissionsBitField(
+        PermissionFlagsBits.ManageGuild,
+      ),
+    });
+    const meeting = makeMeeting({
+      voiceChannel: makeVoiceChannel(
+        makeMembers([
+          ["user-1", false],
+          ["user-2", false],
+        ]),
+      ),
+    });
+    mockedGetMeeting.mockReturnValue(meeting);
+    mockedResolveConfigEnum.mockResolvedValue("trigger_or_admin");
+
+    await handleDismissAutoRecord(client, interaction);
+
+    expect(mockedHandleEndMeetingOther).toHaveBeenCalledWith(client, meeting);
+  });
+
+  it("does not treat ManageMessages alone as admin", async () => {
+    const client = makeClient();
+    const interaction = makeInteraction({
+      memberPermissions: new PermissionsBitField(
+        PermissionFlagsBits.ManageMessages,
+      ),
+    });
+    const meeting = makeMeeting({
+      voiceChannel: makeVoiceChannel(
+        makeMembers([
+          ["user-1", false],
+          ["user-2", false],
+        ]),
+      ),
+      startTriggeredByUserId: "user-2",
+    });
+    mockedGetMeeting.mockReturnValue(meeting);
+    mockedResolveConfigEnum.mockResolvedValue("trigger_or_admin");
+
+    await handleDismissAutoRecord(client, interaction);
+
+    expect(mockedHandleEndMeetingOther).not.toHaveBeenCalled();
+    expect(interaction.reply).toHaveBeenCalledWith(
+      expect.objectContaining({
+        content: expect.stringContaining("do not have permission"),
+      }),
+    );
+  });
 });

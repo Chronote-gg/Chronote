@@ -10,8 +10,8 @@
 - Runtime: Node.js 22, TypeScript.
 - Discord: discord.js v14, discord-api-types, @discordjs/voice for audio capture, @discordjs/opus, prism-media.
 - AI: openai SDK; gpt-4o-transcribe for transcription; gpt-5.1 for cleanup/notes/corrections; gpt-5-mini for live gate; DALL-E 3 for images.
-- Observability and prompt management: Langfuse for tracing, prompt versioning, and prompt sync scripts. AMG (Grafana) service account token is auto-rotated via EventBridge + Lambda (see `_infra/grafana.tf` and `_infra/README.md`). Critical alerts (ECS down, ALB 5xx, unhealthy hosts, rotation failures) are sent via SNS email and optionally to a Discord channel via a separate Node.js Lambda (see `_infra/notifications.tf` and `_infra/README.md`).
-- Storage: AWS DynamoDB (tables: GuildSubscription, PaymentTransaction, StripeWebhookEvent, InteractionReceipt, ActiveMeeting, AccessLogs, RecordingTranscript, AutoRecordSettings, ServerContext, ChannelContext, DictionaryTable, MeetingHistory, SessionTable), S3 for transcripts/audio.
+- Observability and prompt management: Langfuse for tracing, prompt versioning, and prompt sync scripts.
+- Storage: AWS DynamoDB (tables: GuildSubscription, PaymentTransaction, StripeWebhookEvent, InteractionReceipt, ActiveMeeting, AccessLogs, RecordingTranscript, AutoRecordSettings, SessionTable, Installer, OnboardingState, AskConversation, Feedback, ServerContext, ChannelContext, DictionaryTable, UserSpeechSettings, MeetingHistory, MeetingShare), S3 for transcripts/audio.
 - Infra: Terraform -> AWS ECS Fargate, ECR, CloudWatch logs; static frontend on S3 + CloudFront with OAC; local Dynamo via docker-compose.
 - IaC scanning: Checkov runs in `.github/workflows/ci.yml` on PRs and main pushes. Local: `npm run checkov` (uses `uvx --from checkov checkov`; install uv first: https://docs.astral.sh/uv/).
 - Known/suppressed infra choices:
@@ -23,7 +23,7 @@
 
 ## Key flows (server code in `src/`)
 
-- Entry: `index.ts` -> `setupBot()` and `setupWebServer()`. Independent runtimes: `src/apps/bot/main.ts` and `src/apps/api/main.ts` boot the bot and API separately.
+- Entry: `index.ts` -> `setupBot()` and `setupWebServer()`.
 - Bot interactions: `src/bot.ts`
   - Slash commands: `/startmeeting`, `/autorecord`, `/context`, `/dictionary`.
   - Buttons: end meeting, generate image, suggest correction.
@@ -37,8 +37,7 @@
 - Transcription, notes, and image generation: `src/services/transcriptionService.ts`, `src/services/notesService.ts`, `src/services/imageService.ts`.
   - Prompt builders live in `src/services/*PromptService.ts`.
   - Builds context from server/channel/meeting and recent history (`services/contextService.ts`).
-- Transcription prompt is Langfuse-managed (`chronote-transcription-prompt`). Guardrails include a loudness gate (noise gate metrics, hard silence threshold, syllable rate, and logprobs), a prompt echo gate, and a low-confidence prompt/no-prompt vote fallback on slow snippets.
-  - A finalized audio verification pass can run at meeting end (`transcription.finalPass.enabled`) to auto-apply high-confidence hallucination fixes before notes generation.
+- Transcription prompt is Langfuse-managed (`chronote-transcription-prompt`). Guardrails include a loudness gate (noise gate metrics, hard silence threshold, syllable rate, and logprobs) and a prompt echo gate.
   - GPT prompts tuned for cleanup, notes, and optional image generation.
 - Dictionary management: `commands/dictionary.ts`, `services/dictionaryService.ts`
   - Terms are injected into transcription and context prompts, definitions are used outside transcription to reduce prompt bloat.
@@ -58,7 +57,6 @@
 - Production OAuth should use the API domain callback (e.g., `https://api.chronote.gg/auth/discord/callback`). When `API_DOMAIN` is set in Terraform, the backend is behind an ALB and the frontend build uses `VITE_API_BASE_URL` from GitHub Actions env vars.
 - OpenAI org/project IDs are optional (defaults empty).
 - Langfuse prompt sync uses `LANGFUSE_PUBLIC_KEY` and `LANGFUSE_SECRET_KEY`. Optional: `LANGFUSE_BASE_URL`, `LANGFUSE_PROMPT_LABEL`, `LANGFUSE_PROMPT_TRANSCRIPTION`.
-- Optional Langfuse prompt override for the finalized audio pass: `LANGFUSE_PROMPT_TRANSCRIPTION_FINAL_PASS`.
 - Langfuse MCP tooling: run `node scripts/setup-langfuse-mcp-auth.js` to write `.opencode/langfuse.mcp.auth` plus `.opencode/langfuse.public` and `.opencode/langfuse.secret` for OpenCode. The `langfuse_obs` OpenCode MCP uses uvx and reads those files; Codex and Claude Code still expect `LANGFUSE_MCP_AUTH` in the environment.
 - Other env defaults: `PORT` (3001), `NODE_ENV`, Dynamo local toggles via `USE_LOCAL_DYNAMODB`.
 - Cloud dev bootstrap: run `./scripts/setup-cloud-dev.sh` to sync uv, install scc into `.bin/`, install lizard into `.venv/bin/`, and install Playwright browsers (no flags needed). Add `.bin` and `.venv/bin` to `PATH` for `yarn code:stats`.
@@ -100,7 +98,7 @@
 - Noise gate can suppress very quiet snippets; forced transcriptions bypass it.
 - Attendance entries are stored as Discord mentions (`<@snowflakeId>`), and the web UI resolves them to display names server-side.
 - Prompt fragments live in `prompts/_fragments` and are composed via `extends` in front matter. `prompts:pull` skips prompts that use `extends` unless `--force` is passed.
-- Transcription guardrails include a loudness gate (noise gate metrics, hard silence threshold, syllable rate, and logprobs), a prompt echo gate using similarity checks, and a low-confidence prompt/no-prompt vote fallback on slow snippets.
+- Transcription guardrails include a loudness gate (noise gate metrics, hard silence threshold, syllable rate, and logprobs) and a prompt echo gate using similarity checks.
 - **Current outbound network rules (ECS service SG)**: temporarily allowing all egress (UDP/TCP any port) for Discord voice debugging. Previously it was limited to TCP 443 and DNS (53) only. Remember to tighten this once voice is stable and update this note.
 - Avoid `in`/`instanceof`/`typeof` hedging for core platform APIs; we target a known Node/SDK set. Prefer simple, direct calls with minimal branching.
 - Config UX: treat overrides as implicit (setting a value creates an override), show a clear inherited vs overridden indicator, keep a reset-to-default action, and avoid disabling inputs just to signal default values.
@@ -113,11 +111,10 @@
 - Playwright mock mode: ensure only the mock API (port 3001) and frontend dev server (port 5173) are running. If ports are occupied, stop them first (`Get-NetTCPConnection -LocalPort 3001,5173 | Select-Object -ExpandProperty OwningProcess -Unique | ForEach-Object { Stop-Process -Id $_ }`). Clear `VITE_API_BASE_URL` (for example via `.env.local`) so the frontend uses the mock server.
 - Comment hygiene: don’t leave transient or change-log style comments (e.g., “SDK v3 exposes transformToString”). Use comments only to clarify non-obvious logic, constraints, or intent.
 - Writing style: do not use em dashes in copy/docs/comments; prefer commas, parentheses, or hyphens.
-- **User data in public outputs (CRITICAL):** This is a public repository. NEVER include real user data in PR descriptions, commit messages, issue comments, code comments, docs, or any other content that is or may become publicly visible. This includes Discord usernames, display names, user/server/channel IDs, meeting content, transcription excerpts, notes content, server names, and any other user-generated or user-identifying information. When referencing real scenarios for context, replace all identifying details with generic placeholders (e.g., "User A", "User B", "Server X", "Channel Y", "#general"). The technical meaning must be preserved while all PII and user content is stripped.
 - GitHub prose: prefix any PR comments, PR descriptions, issue text, or other GitHub prose with `[AGENT]`.
-- PR review hygiene: before asking the user to merge a PR, reply to and resolve all AI bot review threads (Copilot, Greptile, etc). If we disagree with the suggestion, say so and resolve the thread anyway. Use reactions when helpful. When replying to review comments, reply directly to each thread using the review comment replies API (`POST /repos/OWNER/REPO/pulls/PR/comments/COMMENT_ID/replies`), not by creating a new pending review. Direct replies keep each response in its original thread context.
+- PR review hygiene: before asking the user to merge a PR, reply to and resolve all AI bot review threads (Copilot, Greptile, etc). If we disagree with the suggestion, say so and resolve the thread anyway. Use reactions when helpful.
+- PR review reply mechanics: do not use pending reviews for routine thread replies. Reply directly to the thread comment via GitHub CLI/REST (`gh api repos/<owner>/<repo>/pulls/<pr>/comments -f body='[AGENT] ...' -F in_reply_to=<comment_id>`), then resolve the thread. Before final merge-readiness signoff, verify there are no pending reviews from our account.
 - PR bot thread audit: when checking for unresolved AI comments, fetch _all_ review threads via the GitHub GraphQL API and paginate until `hasNextPage=false` (don't assume `first: 100` is enough). Also scan PR issue comments for bot follow-ups (Greptile sometimes posts as regular PR comments, which cannot be "resolved" but should still be replied to or reacted to).
-- Post-push PR SOP: after every commit push to an active PR, run a full checks and review audit (status checks, unresolved AI threads, bot issue comments, mergeability), then wait at least 5 minutes and re-check for late AI reviewer comments before declaring merge-ready.
 - Documentation accuracy: after changes that affect behavior, config, prompts, infra, or user flows, review and update `AGENTS.md`, `.github/copilot-instructions.md`, `README.md`, and any related `docs/` or prompt files to keep them accurate and high signal. Keep the copilot instructions high level to reduce drift.
 - Docs policy: user-facing PRs should include a docs delta in `apps/docs-site/`. Purely technical PRs can use `docs-exempt` with rationale.
 - README should stay high signal for users, avoid listing research outcomes like query parameter details. Put rationale or research notes in planning documentation files instead.
@@ -183,7 +180,6 @@ OpenCode skills are stored as `.opencode/skills/<name>/SKILL.md`. Skills are dis
 
 - `pr-review-recycle`: agentic loop for processing Copilot/Greptile/Codex PR review threads until checks are green.
 - `docs-authoring`: workflow for creating and maintaining public product docs in `apps/docs-site/`.
-- `pr-post-push-sop`: post-push checklist for checks, AI review audit, and a 5 minute late-comment wait before merge-ready updates.
 
 ## Non-idiomatic typing
 

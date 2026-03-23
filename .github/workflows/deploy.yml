@@ -55,26 +55,6 @@ jobs:
       - name: Run Prettier
         run: yarn prettier:check
 
-  markdownlint:
-    name: Markdown Lint
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v6
-        with:
-          node-version: "22.13.0"
-          cache: "yarn"
-          cache-dependency-path: "yarn.lock"
-
-      - name: Install dependencies
-        run: yarn install --frozen-lockfile
-
-      - name: Run markdownlint
-        run: yarn markdownlint:check
-
   test:
     name: Unit Tests
     runs-on: ubuntu-latest
@@ -292,7 +272,6 @@ jobs:
       [
         lint,
         prettier,
-        markdownlint,
         test,
         build,
         docs-check,
@@ -523,7 +502,6 @@ jobs:
       [
         lint,
         prettier,
-        markdownlint,
         test,
         build,
         docs-check,
@@ -592,7 +570,6 @@ jobs:
       [
         lint,
         prettier,
-        markdownlint,
         test,
         build,
         docs-check,
@@ -645,7 +622,7 @@ jobs:
             exit 1
           fi
 
-          aws s3 sync build/docs-site s3://$DOCS_BUCKET --delete --exclude "assets/*" --cache-control "public,max-age=600"
+          aws s3 sync build/docs-site s3://$DOCS_BUCKET --delete --cache-control "public,max-age=600"
 
           if [ -d build/docs-site/assets ]; then
             aws s3 sync build/docs-site/assets s3://$DOCS_BUCKET/assets --cache-control "public,max-age=31536000,immutable"
