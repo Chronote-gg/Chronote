@@ -507,6 +507,7 @@ describe("handleEndMeetingOther", () => {
     mockedWaitForAudioOnlyFinishProcessing.mockResolvedValue(undefined);
     mockedCloseOutputFile.mockResolvedValue(undefined);
     mockedWaitForFinishProcessing.mockResolvedValue(undefined);
+    mockedUploadMeetingArtifacts.mockResolvedValue(undefined);
     mockedCompileTranscriptions.mockResolvedValueOnce(
       "Transcript without cues",
     );
