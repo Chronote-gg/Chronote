@@ -911,6 +911,8 @@ export async function runTranscriptionFinalPass(
       editSummary.dropRatio > TRANSCRIPTION_FINAL_PASS_MAX_DROP_RATIO ||
       editSummary.changeRatio > TRANSCRIPTION_FINAL_PASS_MAX_CHANGE_RATIO
     ) {
+      // When the reconcile model looks suspicious, keep the baseline transcript
+      // untouched and skip the deterministic repetition filter as well.
       return createResult({
         enabled: true,
         processedChunks: counters.processedChunks,

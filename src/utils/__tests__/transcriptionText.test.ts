@@ -32,7 +32,7 @@ describe("transcriptionText", () => {
     expect(quality.alnumCharCount).toBeGreaterThan(0);
   });
 
-  it("does not treat longer no-space text as low information", () => {
+  it("treats short no-space text as low information but not longer text", () => {
     expect(isLowInformationTranscriptionText("こんにちは世界")).toBe(true);
     expect(
       isLowInformationTranscriptionText("これはかなり長めの日本語テキストです"),
