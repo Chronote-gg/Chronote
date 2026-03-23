@@ -43,6 +43,7 @@ import {
   TRANSCRIPTION_MAX_CONCURRENT,
   TRANSCRIPTION_MAX_QUEUE,
   TRANSCRIPTION_MAX_RETRIES,
+  TRANSCRIPTION_FAILURE_PLACEHOLDER,
   TRANSCRIPTION_RATE_MIN_TIME,
   TRANSCRIBE_SAMPLE_RATE,
 } from "../constants";
@@ -828,7 +829,7 @@ export async function transcribeSnippet(
       `Failed to transcribe snippet for user ${snippet.userId}:`,
       error,
     );
-    return "[Transcription failed]";
+    return TRANSCRIPTION_FAILURE_PLACEHOLDER;
   } finally {
     cleanupTempFiles(tempFiles);
   }

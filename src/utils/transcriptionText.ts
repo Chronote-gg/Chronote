@@ -1,7 +1,8 @@
 import { countWords } from "./text";
+import { TRANSCRIPTION_FAILURE_PLACEHOLDER } from "../constants";
 
-const FAILURE_PLACEHOLDER = "[Transcription failed]";
 const LOW_INFORMATION_MAX_WORDS = 8;
+const LOW_INFORMATION_MAX_ALNUM_CHARS = 12;
 
 export type TranscriptionTextQuality = {
   trimmed: string;
@@ -35,7 +36,7 @@ export function getTranscriptionTextQuality(
   if (!trimmed) {
     reasons.push("empty_text");
   }
-  if (trimmed === FAILURE_PLACEHOLDER) {
+  if (trimmed === TRANSCRIPTION_FAILURE_PLACEHOLDER) {
     reasons.push("failure_placeholder");
   }
   if (punctuationOnly) {
@@ -62,7 +63,9 @@ export function isLowInformationTranscriptionText(text: string): boolean {
   return (
     !quality.trivial &&
     quality.wordCount > 0 &&
-    quality.wordCount <= LOW_INFORMATION_MAX_WORDS
+    quality.wordCount <= LOW_INFORMATION_MAX_WORDS &&
+    (quality.wordCount > 1 ||
+      quality.alnumCharCount <= LOW_INFORMATION_MAX_ALNUM_CHARS)
   );
 }
 

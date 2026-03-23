@@ -1,5 +1,6 @@
 import {
   getTranscriptionTextQuality,
+  isLowInformationTranscriptionText,
   isTrivialTranscriptionText,
 } from "../transcriptionText";
 
@@ -29,5 +30,12 @@ describe("transcriptionText", () => {
     expect(quality.trivial).toBe(false);
     expect(quality.punctuationOnly).toBe(false);
     expect(quality.alnumCharCount).toBeGreaterThan(0);
+  });
+
+  it("does not treat longer no-space text as low information", () => {
+    expect(isLowInformationTranscriptionText("こんにちは世界")).toBe(true);
+    expect(
+      isLowInformationTranscriptionText("これはかなり長めの日本語テキストです"),
+    ).toBe(false);
   });
 });
