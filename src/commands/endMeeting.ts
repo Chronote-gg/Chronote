@@ -257,6 +257,7 @@ async function runEndMeetingFlow(options: EndMeetingFlowOptions) {
       shouldFinalizeDismissedAutoRecording(meeting);
     if (finalizeDismissedAutoRecording) {
       meeting.cancelled = false;
+      meeting.cancellationReason = undefined;
     }
 
     if (meeting.cancelled) {

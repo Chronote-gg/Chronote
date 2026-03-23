@@ -341,6 +341,7 @@ describe("handleEndMeetingOther", () => {
       transcriptText: "Recovered transcript",
     });
     expect(meeting.cancelled).toBe(false);
+    expect(meeting.cancellationReason).toBeUndefined();
     expect(meeting.setFinished).toHaveBeenCalled();
     expect(meeting.finished).toBe(true);
     expect(mockedDeleteMeeting).toHaveBeenCalledWith("guild-1");
@@ -412,6 +413,7 @@ describe("handleEndMeetingOther", () => {
     expect(mockedEvaluateAutoRecordCancellation).not.toHaveBeenCalled();
     expect(mockedBuildMixedAudio).toHaveBeenCalled();
     expect(meeting.cancelled).toBe(false);
+    expect(meeting.cancellationReason).toBeUndefined();
   });
 
   it("runs final transcription pass when transcription is enabled", async () => {
