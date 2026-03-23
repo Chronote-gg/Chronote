@@ -279,6 +279,7 @@ describe("handleEndMeetingOther", () => {
     );
     mockedWaitForFinishProcessing.mockResolvedValue(undefined);
     mockedCompileTranscriptions.mockResolvedValue("Recovered transcript");
+    mockedGetGuildLimits.mockResolvedValue({ limits: {} } as never);
     mockedSaveMeetingHistoryToDatabase.mockResolvedValue(undefined);
 
     const members = new Collection<
@@ -445,9 +446,9 @@ describe("handleEndMeetingOther", () => {
     mockedWaitForAudioOnlyFinishProcessing.mockResolvedValue(undefined);
     mockedCloseOutputFile.mockResolvedValue(undefined);
     mockedWaitForFinishProcessing.mockResolvedValue(undefined);
-    mockedCompileTranscriptions
-      .mockResolvedValueOnce("Transcript without cues")
-      .mockResolvedValueOnce("Transcript with cues");
+    mockedCompileTranscriptions.mockResolvedValueOnce(
+      "Transcript without cues",
+    );
     mockedDescribeAutoRecordRule.mockReturnValue(
       "Auto-record rule: test-channel",
     );
@@ -499,7 +500,7 @@ describe("handleEndMeetingOther", () => {
     expect(mockedUploadMeetingArtifacts).toHaveBeenCalledWith(meeting, {
       audioFilePath: "recording.mp3",
       chatFilePath: expect.stringContaining("chat.txt"),
-      transcriptText: "Transcript with cues",
+      transcriptText: "Transcript without cues",
     });
     expect(mockedSaveMeetingHistoryToDatabase).toHaveBeenCalledWith(meeting);
     expect(
