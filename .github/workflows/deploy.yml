@@ -526,6 +526,33 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ vars.AWS_REGION }}
 
+      - name: Preflight docs publish targets
+        env:
+          DOCS_BUCKET: ${{ vars.DOCS_BUCKET }}
+          DOCS_DISTRIBUTION_ID: ${{ vars.DOCS_DISTRIBUTION_ID }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "$DOCS_BUCKET" ]; then
+            echo "ERROR: DOCS_BUCKET is not set in the GitHub Actions environment."
+            exit 1
+          fi
+
+          if [ -z "$DOCS_DISTRIBUTION_ID" ]; then
+            echo "ERROR: DOCS_DISTRIBUTION_ID is not set in the GitHub Actions environment."
+            exit 1
+          fi
+
+          if ! aws s3api head-bucket --bucket "$DOCS_BUCKET" >/dev/null 2>&1; then
+            echo "ERROR: DOCS_BUCKET '$DOCS_BUCKET' is not accessible with the configured AWS credentials."
+            exit 1
+          fi
+
+          if ! aws cloudfront get-distribution --id "$DOCS_DISTRIBUTION_ID" >/dev/null 2>&1; then
+            echo "ERROR: DOCS_DISTRIBUTION_ID '$DOCS_DISTRIBUTION_ID' is not accessible with the configured AWS credentials."
+            exit 1
+          fi
+
       - name: Setup Node.js
         uses: actions/setup-node@v6
         with:

@@ -225,10 +225,10 @@ Terraform uses a GitHub provider to manage the Actions environment and variables
 1. Generate a fine-grained token using the GitHub URL template (pre-fills the form):
 
    ```text
-   https://github.com/settings/personal-access-tokens/new?name=Chronote+Terraform&description=Terraform+GitHub+provider&target_name=BASIC-BIT&expires_in=90
+   https://github.com/settings/personal-access-tokens/new?name=Chronote+Terraform&description=Terraform+GitHub+provider&target_name=Chronote-gg&expires_in=90
    ```
 
-2. In the token UI, set **Repository access** to **Only select repositories** and choose `meeting-notes-discord-bot` (manual step), then grant these **Repository permissions**:
+2. In the token UI, set **Repository access** to **Only select repositories** and choose `Chronote` (manual step), then grant these **Repository permissions**:
    - **Actions**: Read (Terraform reads environments).
    - **Administration**: Read and write (Terraform creates/updates environments).
    - **Environments**: Read and write (Terraform manages environment variables).
@@ -236,7 +236,7 @@ Terraform uses a GitHub provider to manage the Actions environment and variables
 3. Set the new token in the active Terraform vars file:
    - `_infra/terraform.tfvars` for prod.
    - `_infra/terraform.staging.tfvars` if you use a separate staging var file.
-4. Re-run `yarn terraform:plan` and `yarn terraform:apply` (or `terraform -chdir=_infra plan` and `terraform -chdir=_infra apply`) to confirm the GitHub provider can read the repo and update Actions env variables.
+4. Re-run `yarn terraform:plan` and `yarn terraform:apply` (or `terraform -chdir=_infra plan` and `terraform -chdir=_infra apply`) to confirm the GitHub provider can read `Chronote-gg/Chronote` and update Actions env variables.
 
 ### Observability (hosted)
 
