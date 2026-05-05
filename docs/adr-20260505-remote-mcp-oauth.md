@@ -1,7 +1,7 @@
 # ADR-20260505: Remote MCP OAuth Server
 
-Status: Accepted  
-Date: 2026-05-05  
+Status: Accepted
+Date: 2026-05-05
 Owners: API and integrations
 
 ## Context
