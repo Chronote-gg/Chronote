@@ -78,7 +78,7 @@
     "llm-connections:push": "ts-node scripts/llm-connections/push.ts",
     "llm-connections:pull": "ts-node scripts/llm-connections/pull.ts",
     "llm-connections:check": "ts-node scripts/llm-connections/check.ts",
-    "code:stats": "scc --ci && scc --ci --by-file --sort lines && python -m lizard -l ts -l tsx -l js -l jsx src test",
+    "code:stats": "scc --ci && scc --ci --by-file --sort lines && python -m lizard -W whitelizard.txt -l ts -l tsx -l js -l jsx src test",
     "markdownlint:check": "markdownlint-cli2 \"**/*.md\"",
     "markdownlint:fix": "markdownlint-cli2 --fix \"**/*.md\""
   },

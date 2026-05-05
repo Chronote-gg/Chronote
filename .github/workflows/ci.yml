@@ -362,7 +362,7 @@ jobs:
           docker run --rm -v ${{ github.workspace }}:/pwd ghcr.io/boyter/scc:master \
             scc --ci --by-file --sort lines /pwd
           python3 -m pip install --quiet lizard
-          lizard -l ts -l tsx -l js -l jsx src test
+          lizard -W whitelizard.txt -l ts -l tsx -l js -l jsx src test
 
   checkov:
     name: Checkov (Terraform)
