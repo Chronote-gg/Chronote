@@ -34,6 +34,11 @@ type SessionGuildCache = {
   guildIdsFetchedAt?: number;
 };
 
+type LiveMeetingRequest = express.Request<{
+  guildId: string;
+  meetingId: string;
+}>;
+
 const GUILD_CACHE_TTL_MS = 60_000;
 const REMOTE_LEASE_REFRESH_MS = 10_000;
 
@@ -54,7 +59,7 @@ export function registerLiveMeetingRoutes(app: express.Express) {
   app.get(
     "/api/live/:guildId/:meetingId/status",
     requireAuth,
-    async (req, res): Promise<void> => {
+    async (req: LiveMeetingRequest, res): Promise<void> => {
       const user = req.user as AuthedProfile;
       const { guildId, meetingId } = req.params;
       const allowed = await ensureManageGuildWithUserToken(
@@ -111,7 +116,7 @@ export function registerLiveMeetingRoutes(app: express.Express) {
   app.post(
     "/api/live/:guildId/:meetingId/end",
     requireAuth,
-    async (req, res): Promise<void> => {
+    async (req: LiveMeetingRequest, res): Promise<void> => {
       const user = req.user as AuthedProfile;
       const { guildId, meetingId } = req.params;
       const allowed = await ensureManageGuildWithUserToken(
@@ -165,7 +170,7 @@ export function registerLiveMeetingRoutes(app: express.Express) {
   app.get(
     "/api/live/:guildId/:meetingId/stream",
     requireAuth,
-    async (req, res): Promise<void> => {
+    async (req: LiveMeetingRequest, res): Promise<void> => {
       const user = req.user as AuthedProfile;
       const { guildId, meetingId } = req.params;
       const localMeeting = getMeeting(guildId);
@@ -406,14 +411,10 @@ export function registerLiveMeetingRoutes(app: express.Express) {
   );
 }
 
-function requireAuth(
-  req: express.Request & { isAuthenticated?: () => boolean },
-  res: express.Response,
-  next: express.NextFunction,
-): void {
+const requireAuth: express.RequestHandler = (req, res, next): void => {
   if (req.isAuthenticated?.()) {
     next();
     return;
   }
   res.status(401).json({ error: "Not authenticated" });
-}
+};

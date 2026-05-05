@@ -30,7 +30,7 @@ jobs:
           cache-dependency-path: "yarn.lock"
 
       - name: Install dependencies
-        run: yarn install --frozen-lockfile
+        run: yarn install --frozen-lockfile --ignore-optional
 
       - name: Run ESLint
         run: yarn lint:check
@@ -50,7 +50,7 @@ jobs:
           cache-dependency-path: "yarn.lock"
 
       - name: Install dependencies
-        run: yarn install --frozen-lockfile
+        run: yarn install --frozen-lockfile --ignore-optional
 
       - name: Run Prettier
         run: yarn prettier:check
@@ -70,7 +70,7 @@ jobs:
           cache-dependency-path: "yarn.lock"
 
       - name: Install dependencies
-        run: yarn install --frozen-lockfile
+        run: yarn install --frozen-lockfile --ignore-optional
 
       - name: Run markdownlint
         run: yarn markdownlint:check
@@ -90,7 +90,7 @@ jobs:
           cache-dependency-path: "yarn.lock"
 
       - name: Install dependencies
-        run: yarn install --frozen-lockfile
+        run: yarn install --frozen-lockfile --ignore-optional
 
       - name: Run Jest
         run: yarn test
@@ -110,7 +110,7 @@ jobs:
           cache-dependency-path: "yarn.lock"
 
       - name: Install dependencies
-        run: yarn install --frozen-lockfile
+        run: yarn install --frozen-lockfile --ignore-optional
 
       - name: Build backend and frontend
         run: yarn build:all
@@ -142,7 +142,7 @@ jobs:
           cache-dependency-path: "yarn.lock"
 
       - name: Install dependencies
-        run: yarn install --frozen-lockfile
+        run: yarn install --frozen-lockfile --ignore-optional
 
       - name: Build and validate docs
         run: yarn docs:check
@@ -168,10 +168,12 @@ jobs:
           key: ${{ runner.os }}-pip-${{ steps.py-version.outputs.version }}-lizard
 
       - name: Code stats (scc + lizard)
+        env:
+          WORKSPACE: ${{ github.workspace }}
         run: |
-          docker run --rm -v ${{ github.workspace }}:/pwd ghcr.io/boyter/scc:master \
+          docker run --rm -v "$WORKSPACE:/pwd" ghcr.io/boyter/scc:master \
             scc --ci /pwd
-          docker run --rm -v ${{ github.workspace }}:/pwd ghcr.io/boyter/scc:master \
+          docker run --rm -v "$WORKSPACE:/pwd" ghcr.io/boyter/scc:master \
             scc --ci --by-file --sort lines /pwd
           python3 -m pip install --quiet lizard
           lizard -W whitelizard.txt -l ts -l tsx -l js -l jsx src test
@@ -213,7 +215,7 @@ jobs:
           cache-dependency-path: "yarn.lock"
 
       - name: Install dependencies
-        run: yarn install --frozen-lockfile
+        run: yarn install --frozen-lockfile --ignore-optional
 
       - name: Run Langfuse prompt check
         env:
@@ -238,7 +240,7 @@ jobs:
           cache-dependency-path: "yarn.lock"
 
       - name: Install dependencies
-        run: yarn install --frozen-lockfile
+        run: yarn install --frozen-lockfile --ignore-optional
 
       - name: Run Langfuse LLM connection check
         env:
@@ -265,7 +267,7 @@ jobs:
           cache-dependency-path: "yarn.lock"
 
       - name: Install dependencies
-        run: yarn install --frozen-lockfile
+        run: yarn install --frozen-lockfile --ignore-optional
 
       - name: Get Playwright version
         id: pw-version
@@ -500,20 +502,25 @@ jobs:
 
       - name: Create deployment summary
         if: always()
+        env:
+          JOB_STATUS: ${{ job.status }}
+          COMMIT_SHA: ${{ github.sha }}
+          REF_NAME: ${{ github.ref_name }}
+          ACTOR: ${{ github.actor }}
         run: |
-          if [ "${{ job.status }}" == "success" ]; then
+          if [ "$JOB_STATUS" == "success" ]; then
             echo "## ✅ Deployment Successful!" >> $GITHUB_STEP_SUMMARY
             echo "" >> $GITHUB_STEP_SUMMARY
-            echo "- **Commit:** ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
-            echo "- **Branch:** ${{ github.ref_name }}" >> $GITHUB_STEP_SUMMARY
-            echo "- **Deployed by:** ${{ github.actor }}" >> $GITHUB_STEP_SUMMARY
+            echo "- **Commit:** $COMMIT_SHA" >> $GITHUB_STEP_SUMMARY
+            echo "- **Branch:** $REF_NAME" >> $GITHUB_STEP_SUMMARY
+            echo "- **Deployed by:** $ACTOR" >> $GITHUB_STEP_SUMMARY
             echo "- **Deployment time:** $(date -u +"%Y-%m-%d %H:%M:%S UTC")" >> $GITHUB_STEP_SUMMARY
           else
             echo "## ❌ Deployment Failed!" >> $GITHUB_STEP_SUMMARY
             echo "" >> $GITHUB_STEP_SUMMARY
-            echo "- **Commit:** ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
-            echo "- **Branch:** ${{ github.ref_name }}" >> $GITHUB_STEP_SUMMARY
-            echo "- **Failed by:** ${{ github.actor }}" >> $GITHUB_STEP_SUMMARY
+            echo "- **Commit:** $COMMIT_SHA" >> $GITHUB_STEP_SUMMARY
+            echo "- **Branch:** $REF_NAME" >> $GITHUB_STEP_SUMMARY
+            echo "- **Failed by:** $ACTOR" >> $GITHUB_STEP_SUMMARY
             echo "- **Failure time:** $(date -u +"%Y-%m-%d %H:%M:%S UTC")" >> $GITHUB_STEP_SUMMARY
           fi
 
@@ -556,7 +563,7 @@ jobs:
           cache-dependency-path: "yarn.lock"
 
       - name: Install dependencies
-        run: yarn install --frozen-lockfile
+        run: yarn install --frozen-lockfile --ignore-optional
 
       - name: Build frontend (Vite)
         run: yarn build:web
@@ -623,7 +630,7 @@ jobs:
           cache-dependency-path: "yarn.lock"
 
       - name: Install dependencies
-        run: yarn install --frozen-lockfile
+        run: yarn install --frozen-lockfile --ignore-optional
 
       - name: Build docs site
         env:

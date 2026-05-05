@@ -44,6 +44,8 @@ type SessionGuildCache = {
   botGuildIdsFetchedAt?: number;
 };
 
+type GuildRequest = express.Request<{ guildId: string }>;
+
 export function registerGuildRoutes(app: express.Express) {
   const ensureBotPresence = async (
     req: express.Request,
@@ -108,7 +110,7 @@ export function registerGuildRoutes(app: express.Express) {
   app.get(
     "/api/guilds/:guildId/context",
     requireAuth,
-    async (req, res): Promise<void> => {
+    async (req: GuildRequest, res): Promise<void> => {
       const guildId = req.params.guildId;
       const user = req.user as AuthedUser;
       if (!(await requireManageGuild(req, res, user, guildId))) {
@@ -150,7 +152,7 @@ export function registerGuildRoutes(app: express.Express) {
   app.post(
     "/api/guilds/:guildId/context",
     requireAuth,
-    async (req, res): Promise<void> => {
+    async (req: GuildRequest, res): Promise<void> => {
       const guildId = req.params.guildId;
       const user = req.user as AuthedUser & { id: string };
       if (!(await requireManageGuild(req, res, user, guildId))) {
@@ -235,7 +237,7 @@ export function registerGuildRoutes(app: express.Express) {
   app.delete(
     "/api/guilds/:guildId/context",
     requireAuth,
-    async (req, res): Promise<void> => {
+    async (req: GuildRequest, res): Promise<void> => {
       const guildId = req.params.guildId;
       const user = req.user as AuthedUser;
       if (!(await requireManageGuild(req, res, user, guildId))) {
@@ -258,7 +260,7 @@ export function registerGuildRoutes(app: express.Express) {
   app.get(
     "/api/guilds/:guildId/autorecord",
     requireAuth,
-    async (req, res): Promise<void> => {
+    async (req: GuildRequest, res): Promise<void> => {
       const guildId = req.params.guildId;
       const user = req.user as AuthedUser & { id: string };
       if (!(await requireManageGuild(req, res, user, guildId))) {
@@ -272,7 +274,7 @@ export function registerGuildRoutes(app: express.Express) {
   app.post(
     "/api/guilds/:guildId/autorecord",
     requireAuth,
-    async (req, res): Promise<void> => {
+    async (req: GuildRequest, res): Promise<void> => {
       const guildId = req.params.guildId;
       const user = req.user as AuthedUser & { id: string };
       if (!(await requireManageGuild(req, res, user, guildId))) {
@@ -304,7 +306,7 @@ export function registerGuildRoutes(app: express.Express) {
   app.delete(
     "/api/guilds/:guildId/autorecord",
     requireAuth,
-    async (req, res): Promise<void> => {
+    async (req: GuildRequest, res): Promise<void> => {
       const guildId = req.params.guildId;
       const user = req.user as AuthedUser;
       if (!(await requireManageGuild(req, res, user, guildId))) {
@@ -324,7 +326,7 @@ export function registerGuildRoutes(app: express.Express) {
   app.get(
     "/api/guilds/:guildId/channels",
     requireAuth,
-    async (req, res): Promise<void> => {
+    async (req: GuildRequest, res): Promise<void> => {
       const guildId = req.params.guildId;
       const user = req.user as AuthedUser;
       if (!user?.accessToken) {
@@ -385,7 +387,7 @@ export function registerGuildRoutes(app: express.Express) {
   app.post(
     "/api/guilds/:guildId/ask",
     requireAuth,
-    async (req, res): Promise<void> => {
+    async (req: GuildRequest, res): Promise<void> => {
       const guildId = req.params.guildId;
       const user = req.user as AuthedUser;
       if (!user?.accessToken) {
@@ -486,14 +488,10 @@ export function registerGuildRoutes(app: express.Express) {
   });
 }
 
-function requireAuth(
-  req: express.Request & { isAuthenticated?: () => boolean },
-  res: express.Response,
-  next: express.NextFunction,
-): void {
-  if (req.isAuthenticated && req.isAuthenticated()) {
+const requireAuth: express.RequestHandler = (req, res, next): void => {
+  if (req.isAuthenticated?.()) {
     next();
     return;
   }
   res.status(401).json({ error: "Not authenticated" });
-}
+};
