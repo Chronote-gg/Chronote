@@ -2,8 +2,8 @@ import cors from "cors";
 import cookieParser from "cookie-parser";
 import express from "express";
 import session from "express-session";
+import lusca from "lusca";
 import passport from "passport";
-import { doubleCsrf } from "csrf-csrf";
 import { Profile, Strategy as DiscordStrategy } from "passport-discord";
 import { User } from "discord.js";
 import * as trpcExpress from "@trpc/server/adapters/express";
@@ -35,6 +35,7 @@ const CSRF_TOKEN_PATH = "/api/csrf-token";
 const CSRF_HEADER_NAME = "x-csrf-token";
 
 type SessionWithRedirect = session.Session & { oauthRedirect?: string };
+type RequestWithCsrf = express.Request & { csrfToken: () => string };
 
 const isLocalFrontendUrl = () =>
   config.frontend.siteUrl.startsWith("http://localhost") ||
@@ -51,10 +52,6 @@ const getFrontendFallback = () =>
   config.frontend.siteUrl && config.frontend.siteUrl.length > 0
     ? config.frontend.siteUrl
     : "/";
-
-const isBillingWebhookRequest = (req: express.Request) =>
-  req.path === "/api/billing/webhook" ||
-  req.path.startsWith("/api/billing/webhook/");
 
 export function setupWebServer() {
   const app = express();
@@ -155,24 +152,23 @@ export function setupWebServer() {
   );
 
   app.use(cookieParser());
-
-  const { generateCsrfToken, doubleCsrfProtection } = doubleCsrf({
-    getSecret: () => config.server.sessionSecret,
-    getSessionIdentifier: () => "chronote-web",
-    cookieName: isLocalhost
-      ? "chronote.csrf-token"
-      : "__Host-chronote.csrf-token",
-    cookieOptions: csrfCookieOptions,
-    getCsrfTokenFromRequest: (req) => req.headers[CSRF_HEADER_NAME],
-    skipCsrfProtection: isBillingWebhookRequest,
-  });
+  app.use(
+    lusca.csrf({
+      header: CSRF_HEADER_NAME,
+      cookie: {
+        name: isLocalhost
+          ? "chronote.csrf-token"
+          : "__Host-chronote.csrf-token",
+        options: csrfCookieOptions,
+      },
+      blocklist: ["/api/billing/webhook"],
+    }),
+  );
 
   app.get(CSRF_TOKEN_PATH, (req, res) => {
-    const csrfToken = generateCsrfToken(req, res);
+    const csrfToken = (req as RequestWithCsrf).csrfToken();
     res.json({ csrfToken });
   });
-
-  app.use(doubleCsrfProtection);
 
   const authRateLimiter = createAuthRateLimiter({
     enabled: !config.mock.enabled,
