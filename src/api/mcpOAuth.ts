@@ -1,5 +1,5 @@
 import crypto from "node:crypto";
-import type { Express, Request, Response } from "express";
+import type { Express, Request, RequestHandler, Response } from "express";
 import type { Profile } from "passport-discord";
 import { config } from "../services/configService";
 import {
@@ -7,6 +7,7 @@ import {
   formatMcpScope,
   getMcpIssuer,
   getMcpOAuthClient,
+  getMcpOAuthSecret,
   getMcpResourceUrl,
   grantMcpOAuthConsent,
   hasMcpOAuthConsent,
@@ -17,14 +18,25 @@ import {
   registerMcpOAuthClient,
   revokeMcpToken,
 } from "../services/mcpOAuthService";
-import {
-  readMcpConsentRequest,
-  stashMcpAuthorizeRedirect,
-  stashMcpConsentRequest,
-} from "../services/mcpOAuthSession";
+import { stashMcpAuthorizeRedirect } from "../services/mcpOAuthSession";
+import { createAuthRateLimiter } from "../services/authRateLimitService";
 import { MCP_SCOPES } from "../types/mcpOAuth";
 
 const JSON_CONTENT_TYPE = "application/json";
+const MCP_OAUTH_RATE_LIMIT_WINDOW_MS = 60_000;
+const MCP_OAUTH_RATE_LIMIT_MAX = 20;
+
+type McpConsentRequest = {
+  nonce: string;
+  clientId: string;
+  redirectUri: string;
+  scope: string;
+  state?: string;
+  resource: string;
+  codeChallenge: string;
+  userId: string;
+  expiresAt: number;
+};
 
 const sendOAuthError = (res: Response, error: unknown) => {
   if (error instanceof McpOAuthError) {
@@ -81,11 +93,67 @@ const htmlEscape = (value: string) =>
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&#39;");
 
+const createConsentSignature = (payload: string) =>
+  crypto
+    .createHmac("sha256", getMcpOAuthSecret())
+    .update(payload)
+    .digest("base64url");
+
+const encodeConsentRequest = (request: McpConsentRequest) => {
+  const payload = Buffer.from(JSON.stringify(request), "utf8").toString(
+    "base64url",
+  );
+  return `${payload}.${createConsentSignature(payload)}`;
+};
+
+const signaturesMatch = (actual: string, expected: string) => {
+  const actualBuffer = Buffer.from(actual);
+  const expectedBuffer = Buffer.from(expected);
+  return (
+    actualBuffer.length === expectedBuffer.length &&
+    crypto.timingSafeEqual(actualBuffer, expectedBuffer)
+  );
+};
+
+const isConsentRequest = (value: unknown): value is McpConsentRequest => {
+  if (!value || typeof value !== "object") return false;
+  const request = value as Partial<McpConsentRequest>;
+  return (
+    typeof request.nonce === "string" &&
+    typeof request.clientId === "string" &&
+    typeof request.redirectUri === "string" &&
+    typeof request.scope === "string" &&
+    typeof request.resource === "string" &&
+    typeof request.codeChallenge === "string" &&
+    typeof request.userId === "string" &&
+    typeof request.expiresAt === "number" &&
+    (request.state === undefined || typeof request.state === "string")
+  );
+};
+
+const decodeConsentRequest = (token: string) => {
+  const [payload, signature] = token.split(".");
+  if (!payload || !signature) return undefined;
+  if (!signaturesMatch(signature, createConsentSignature(payload))) {
+    return undefined;
+  }
+  try {
+    const parsed = JSON.parse(
+      Buffer.from(payload, "base64url").toString("utf8"),
+    ) as unknown;
+    if (!isConsentRequest(parsed)) return undefined;
+    if (parsed.expiresAt <= Date.now()) return undefined;
+    return parsed;
+  } catch {
+    return undefined;
+  }
+};
+
 const renderConsentPage = (params: {
   clientName: string;
   redirectUri: string;
   scope: string;
-  nonce: string;
+  consentToken: string;
 }) => `<!doctype html>
 <html lang="en">
   <head>
@@ -110,7 +178,7 @@ const renderConsentPage = (params: {
       <p>Requested scopes: <code>${htmlEscape(params.scope)}</code></p>
       <p>Redirect URI: <code>${htmlEscape(params.redirectUri)}</code></p>
       <form method="post" action="/oauth/authorize/consent">
-        <input type="hidden" name="nonce" value="${htmlEscape(params.nonce)}" />
+        <input type="hidden" name="consent_token" value="${htmlEscape(params.consentToken)}" />
         <div class="actions">
           <button class="approve" type="submit" name="decision" value="approve">Authorize</button>
           <button class="deny" type="submit" name="decision" value="deny">Deny</button>
@@ -133,12 +201,13 @@ async function finishAuthorize(
     state?: string;
     resource: string;
     codeChallenge: string;
+    userId?: string;
   },
 ) {
   const user = req.user as Profile;
   const code = await issueMcpAuthorizationCode({
     clientId: options.clientId,
-    userId: user.id,
+    userId: options.userId ?? user.id,
     redirectUri: options.redirectUri,
     scope: options.scope,
     resource: options.resource,
@@ -152,7 +221,17 @@ async function finishAuthorize(
   });
 }
 
-export function registerMcpOAuthRoutes(app: Express) {
+const createMcpOAuthRateLimiter = () =>
+  createAuthRateLimiter({
+    enabled: !config.mock.enabled,
+    windowMs: MCP_OAUTH_RATE_LIMIT_WINDOW_MS,
+    limit: MCP_OAUTH_RATE_LIMIT_MAX,
+  });
+
+export function registerMcpOAuthStatelessRoutes(
+  app: Express,
+  rateLimiter: RequestHandler = createMcpOAuthRateLimiter(),
+) {
   app.get("/.well-known/oauth-protected-resource", (_req, res) => {
     res.type(JSON_CONTENT_TYPE).json({
       resource: getMcpResourceUrl(),
@@ -162,14 +241,17 @@ export function registerMcpOAuthRoutes(app: Express) {
     });
   });
 
-  app.get("/.well-known/oauth-protected-resource/mcp", (_req, res) => {
-    res.type(JSON_CONTENT_TYPE).json({
-      resource: getMcpResourceUrl(),
-      authorization_servers: [getMcpIssuer()],
-      scopes_supported: MCP_SCOPES,
-      bearer_methods_supported: ["header"],
-    });
-  });
+  app.get(
+    `/.well-known/oauth-protected-resource${config.mcp.endpointPath}`,
+    (_req, res) => {
+      res.type(JSON_CONTENT_TYPE).json({
+        resource: getMcpResourceUrl(),
+        authorization_servers: [getMcpIssuer()],
+        scopes_supported: MCP_SCOPES,
+        bearer_methods_supported: ["header"],
+      });
+    },
+  );
 
   app.get("/.well-known/oauth-authorization-server", (_req, res) => {
     const issuer = getMcpIssuer();
@@ -187,7 +269,7 @@ export function registerMcpOAuthRoutes(app: Express) {
     });
   });
 
-  app.post("/oauth/register", async (req, res) => {
+  app.post("/oauth/register", rateLimiter, async (req, res) => {
     try {
       const client = await registerMcpOAuthClient(req.body ?? {});
       res.status(201).json({
@@ -204,7 +286,79 @@ export function registerMcpOAuthRoutes(app: Express) {
     }
   });
 
-  app.get("/oauth/authorize", async (req, res) => {
+  app.post("/oauth/authorize/consent", rateLimiter, async (req, res) => {
+    try {
+      const token = getString(req.body?.consent_token);
+      const consentRequest = token ? decodeConsentRequest(token) : undefined;
+      if (!consentRequest) {
+        res.status(400).json({ error: "invalid_request" });
+        return;
+      }
+      if (req.body?.decision !== "approve") {
+        redirectWithOAuthError(res, {
+          redirectUri: consentRequest.redirectUri,
+          error: "access_denied",
+          state: consentRequest.state,
+        });
+        return;
+      }
+      await grantMcpOAuthConsent({
+        userId: consentRequest.userId,
+        clientId: consentRequest.clientId,
+        scopes: parseMcpScopes(consentRequest.scope),
+      });
+      await finishAuthorize(req, res, consentRequest);
+    } catch (error) {
+      sendOAuthError(res, error);
+    }
+  });
+
+  app.post("/oauth/token", rateLimiter, async (req, res) => {
+    try {
+      const grantType = req.body?.grant_type;
+      if (grantType === "authorization_code") {
+        res.json(
+          await exchangeMcpAuthorizationCode({
+            clientId: req.body.client_id,
+            code: req.body.code,
+            redirectUri: req.body.redirect_uri,
+            codeVerifier: req.body.code_verifier,
+            resource: req.body.resource,
+          }),
+        );
+        return;
+      }
+      if (grantType === "refresh_token") {
+        res.json(
+          await refreshMcpAccessToken({
+            clientId: req.body.client_id,
+            refreshToken: req.body.refresh_token,
+            resource: req.body.resource,
+          }),
+        );
+        return;
+      }
+      throw new McpOAuthError(
+        "unsupported_grant_type",
+        "Unsupported grant type.",
+      );
+    } catch (error) {
+      sendOAuthError(res, error);
+    }
+  });
+
+  app.post("/oauth/revoke", rateLimiter, async (req, res) => {
+    const token = getString(req.body?.token);
+    if (token) await revokeMcpToken(token);
+    res.status(200).json({});
+  });
+}
+
+export function registerMcpOAuthSessionRoutes(
+  app: Express,
+  rateLimiter: RequestHandler = createMcpOAuthRateLimiter(),
+) {
+  app.get("/oauth/authorize", rateLimiter, async (req, res) => {
     const redirectUri = getString(req.query.redirect_uri);
     const state = getString(req.query.state);
     let verifiedRedirectUri: string | undefined;
@@ -273,23 +427,17 @@ export function registerMcpOAuthRoutes(app: Express) {
       }
 
       const nonce = crypto.randomBytes(16).toString("base64url");
-      if (
-        !stashMcpConsentRequest(req, {
-          nonce,
-          clientId,
-          redirectUri,
-          scope,
-          state,
-          resource,
-          codeChallenge,
-        })
-      ) {
-        throw new McpOAuthError(
-          "server_error",
-          "Unable to store consent request.",
-          500,
-        );
-      }
+      const consentToken = encodeConsentRequest({
+        nonce,
+        clientId,
+        redirectUri,
+        scope,
+        state,
+        resource,
+        codeChallenge,
+        userId: user.id,
+        expiresAt: Date.now() + config.mcp.authorizationCodeTtlSeconds * 1000,
+      });
       req.session.save((error) => {
         if (error) {
           sendOAuthError(res, error);
@@ -300,7 +448,7 @@ export function registerMcpOAuthRoutes(app: Express) {
             clientName: client.clientName,
             redirectUri,
             scope,
-            nonce,
+            consentToken,
           }),
         );
       });
@@ -318,72 +466,10 @@ export function registerMcpOAuthRoutes(app: Express) {
       sendOAuthError(res, error);
     }
   });
+}
 
-  app.post("/oauth/authorize/consent", async (req, res) => {
-    const nonce = getString(req.body?.nonce);
-    if (!nonce || !req.isAuthenticated?.()) {
-      res.status(400).json({ error: "invalid_request" });
-      return;
-    }
-    const consentRequest = readMcpConsentRequest(req, nonce);
-    if (!consentRequest) {
-      res.status(400).json({ error: "invalid_request" });
-      return;
-    }
-    if (req.body?.decision !== "approve") {
-      redirectWithOAuthError(res, {
-        redirectUri: consentRequest.redirectUri,
-        error: "access_denied",
-        state: consentRequest.state,
-      });
-      return;
-    }
-    const user = req.user as Profile;
-    await grantMcpOAuthConsent({
-      userId: user.id,
-      clientId: consentRequest.clientId,
-      scopes: parseMcpScopes(consentRequest.scope),
-    });
-    await finishAuthorize(req, res, consentRequest);
-  });
-
-  app.post("/oauth/token", async (req, res) => {
-    try {
-      const grantType = req.body?.grant_type;
-      if (grantType === "authorization_code") {
-        res.json(
-          await exchangeMcpAuthorizationCode({
-            clientId: req.body.client_id,
-            code: req.body.code,
-            redirectUri: req.body.redirect_uri,
-            codeVerifier: req.body.code_verifier,
-            resource: req.body.resource,
-          }),
-        );
-        return;
-      }
-      if (grantType === "refresh_token") {
-        res.json(
-          await refreshMcpAccessToken({
-            clientId: req.body.client_id,
-            refreshToken: req.body.refresh_token,
-            resource: req.body.resource,
-          }),
-        );
-        return;
-      }
-      throw new McpOAuthError(
-        "unsupported_grant_type",
-        "Unsupported grant type.",
-      );
-    } catch (error) {
-      sendOAuthError(res, error);
-    }
-  });
-
-  app.post("/oauth/revoke", async (req, res) => {
-    const token = getString(req.body?.token);
-    if (token) await revokeMcpToken(token);
-    res.status(200).json({});
-  });
+export function registerMcpOAuthRoutes(app: Express) {
+  const rateLimiter = createMcpOAuthRateLimiter();
+  registerMcpOAuthStatelessRoutes(app, rateLimiter);
+  registerMcpOAuthSessionRoutes(app, rateLimiter);
 }

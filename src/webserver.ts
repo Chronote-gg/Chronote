@@ -11,7 +11,10 @@ import { registerBillingRoutes } from "./api/billing";
 import { registerGuildRoutes } from "./api/guilds";
 import { registerLiveMeetingRoutes } from "./api/liveMeetings";
 import { registerMcpRoutes } from "./api/mcp";
-import { registerMcpOAuthRoutes } from "./api/mcpOAuth";
+import {
+  registerMcpOAuthSessionRoutes,
+  registerMcpOAuthStatelessRoutes,
+} from "./api/mcpOAuth";
 import { config } from "./services/configService";
 import { DynamoSessionStore } from "./services/sessionStore";
 import { getStripeClient } from "./services/stripeClient";
@@ -122,6 +125,11 @@ export function setupWebServer() {
     res.set("Content-Type", metricsRegistry.contentType);
     res.end(await metricsRegistry.metrics());
   });
+
+  if (config.mcp.enabled) {
+    registerMcpOAuthStatelessRoutes(app);
+    registerMcpRoutes(app);
+  }
 
   // Configure session management (Dynamo-backed, swappable later)
   const isLocalhost = isLocalFrontendUrl();
@@ -387,10 +395,7 @@ export function setupWebServer() {
     }
   });
 
-  if (config.mcp.enabled) {
-    registerMcpOAuthRoutes(app);
-    registerMcpRoutes(app);
-  }
+  if (config.mcp.enabled) registerMcpOAuthSessionRoutes(app);
 
   // tRPC API
   app.use(

@@ -106,6 +106,18 @@ const ensureMcpMeetingAccess = async (options: {
   meeting: MeetingHistory;
   userId: string;
 }) => {
+  try {
+    await getGuildMemberCached(options.guildId, options.userId);
+  } catch (error) {
+    if (isDiscordApiError(error) && error.status === 429) {
+      throw new McpMeetingAccessError(
+        "Discord rate limited. Please retry.",
+        "rate_limited",
+      );
+    }
+    throw new McpMeetingAccessError("Meeting access required.", "forbidden");
+  }
+
   const attendeeOverrideEnabled = await resolveAttendeeAccessEnabled(
     options.guildId,
   );
@@ -246,12 +258,22 @@ export async function listMcpMeetings(input: {
 
   const allowedMeetings = [] as MeetingHistory[];
   for (const meeting of filtered) {
-    await ensureMcpMeetingAccess({
-      guildId: input.guildId,
-      meeting,
-      userId: input.userId,
-    });
-    allowedMeetings.push(meeting);
+    try {
+      await ensureMcpMeetingAccess({
+        guildId: input.guildId,
+        meeting,
+        userId: input.userId,
+      });
+      allowedMeetings.push(meeting);
+    } catch (error) {
+      if (
+        error instanceof McpMeetingAccessError &&
+        error.code === "forbidden"
+      ) {
+        continue;
+      }
+      throw error;
+    }
   }
   const channelMap = await resolveChannelMap(input.guildId);
   return {

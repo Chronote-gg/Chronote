@@ -135,4 +135,29 @@ describe("mcpOAuthService", () => {
   it("rejects unsupported scopes", () => {
     expect(() => parseMcpScopes("meetings:write")).toThrow(McpOAuthError);
   });
+
+  it("rejects PKCE verifiers outside the RFC 7636 character set", async () => {
+    const client = await registerMcpOAuthClient({
+      redirect_uris: [redirectUri],
+    });
+    const invalidVerifier = `${"a".repeat(63)} `;
+    const code = await issueMcpAuthorizationCode({
+      clientId: client.clientId,
+      userId: "user-1",
+      redirectUri,
+      resource: getMcpResourceUrl(),
+      codeChallenge,
+      codeChallengeMethod: "S256",
+    });
+
+    await expect(
+      exchangeMcpAuthorizationCode({
+        clientId: client.clientId,
+        code,
+        redirectUri,
+        codeVerifier: invalidVerifier,
+        resource: getMcpResourceUrl(),
+      }),
+    ).rejects.toMatchObject({ code: "invalid_grant" });
+  });
 });

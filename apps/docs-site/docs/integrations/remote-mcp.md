@@ -17,6 +17,8 @@ https://api.chronote.gg/mcp
 
 Self-hosted deployments should use their own API base URL plus `/mcp`.
 
+Remote MCP requires Discord OAuth to be enabled. Set `MCP_PUBLIC_BASE_URL` to the externally reachable API origin if it differs from the server's internal URL.
+
 ## Available Tools
 
 - `list_servers`: Lists Discord servers where the authenticated user can access Chronote data.
@@ -49,7 +51,7 @@ When your MCP client connects, it opens a Chronote authorization flow in the bro
 
 Chronote only returns meeting data if the authenticated Discord user can access the meeting. Access follows the same model as the Library:
 
-- Meeting participants can access their meetings when attendee access is enabled.
+- Current server members who participated can access their meetings when attendee access is enabled.
 - Other users need access to the voice channel and notes channel history.
 - Transcript access requires explicit transcript scope consent.
 

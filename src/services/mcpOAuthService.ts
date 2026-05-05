@@ -14,6 +14,7 @@ const AUTH_CODE_BYTES = 32;
 const REFRESH_TOKEN_BYTES = 32;
 const CODE_VERIFIER_MIN_LENGTH = 43;
 const CODE_VERIFIER_MAX_LENGTH = 128;
+const PKCE_VERIFIER_PATTERN = /^[A-Za-z0-9\-._~]+$/;
 const BEARER_TOKEN_TYPE = "Bearer";
 const DEFAULT_SCOPE = "meetings:read";
 
@@ -59,12 +60,20 @@ export const hasMcpScopes = (granted: McpScope[], required: McpScope[]) =>
 const randomToken = (bytes: number) =>
   crypto.randomBytes(bytes).toString("base64url");
 
+export const getMcpOAuthSecret = () => {
+  if (!config.server.oauthSecret) {
+    throw new McpOAuthError(
+      "server_error",
+      "MCP OAuth secret is not configured.",
+      500,
+    );
+  }
+  return config.server.oauthSecret;
+};
+
 export const hashMcpToken = (token: string) =>
   crypto
-    .createHmac(
-      "sha256",
-      config.server.oauthSecret || "chronote-mcp-development",
-    )
+    .createHmac("sha256", getMcpOAuthSecret())
     .update(token)
     .digest("base64url");
 
@@ -112,7 +121,8 @@ function assertMcpResource(resource?: string): asserts resource is string {
 const assertPkceVerifier = (codeVerifier: string) => {
   if (
     codeVerifier.length < CODE_VERIFIER_MIN_LENGTH ||
-    codeVerifier.length > CODE_VERIFIER_MAX_LENGTH
+    codeVerifier.length > CODE_VERIFIER_MAX_LENGTH ||
+    !PKCE_VERIFIER_PATTERN.test(codeVerifier)
   ) {
     throw new McpOAuthError("invalid_grant", "Invalid PKCE code verifier.");
   }

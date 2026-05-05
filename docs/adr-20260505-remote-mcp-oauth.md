@@ -28,7 +28,8 @@ Chronote acts as both the OAuth authorization server and MCP resource server:
    tokens stored hashed in DynamoDB.
 5. Bind tokens to `MCP_PUBLIC_BASE_URL + MCP_ENDPOINT_PATH`.
 6. Enforce scopes per MCP tool.
-7. Reuse existing meeting access checks before returning meeting data.
+7. Require Discord OAuth to be enabled before exposing the remote MCP routes.
+8. Reuse existing meeting access checks before returning meeting data.
 
 The first tool set is read-only: server listing, meeting listing, meeting
 summary retrieval, and transcript retrieval. Transcript retrieval requires the
@@ -51,6 +52,7 @@ Costs and risks:
 - Dynamic client registration increases the number of stored OAuth clients.
 - Remote clients must implement OAuth and PKCE correctly.
 - The MCP endpoint can increase meeting-data read volume.
+- OAuth endpoints need abuse controls because dynamic registration is public.
 
 ## Alternatives Considered
 

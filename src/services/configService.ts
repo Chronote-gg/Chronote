@@ -247,7 +247,7 @@ class ConfigService {
   };
 
   readonly mcp = {
-    enabled: process.env.ENABLE_MCP !== "false",
+    enabled: process.env.ENABLE_MCP !== "false" && this.server.oauthEnabled,
     publicBaseUrl: (
       process.env.MCP_PUBLIC_BASE_URL ||
       process.env.API_BASE_URL ||
