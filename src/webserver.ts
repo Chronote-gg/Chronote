@@ -10,6 +10,8 @@ import * as trpcExpress from "@trpc/server/adapters/express";
 import { registerBillingRoutes } from "./api/billing";
 import { registerGuildRoutes } from "./api/guilds";
 import { registerLiveMeetingRoutes } from "./api/liveMeetings";
+import { registerMcpRoutes } from "./api/mcp";
+import { registerMcpOAuthRoutes } from "./api/mcpOAuth";
 import { config } from "./services/configService";
 import { DynamoSessionStore } from "./services/sessionStore";
 import { getStripeClient } from "./services/stripeClient";
@@ -19,6 +21,7 @@ import { appRouter } from "./trpc/router";
 import { AuthedProfile, createContext } from "./trpc/context";
 import { getMockUser } from "./repositories/mockStore";
 import { resolveRedirectTarget } from "./services/oauthRedirectService";
+import { readMcpAuthorizeRedirect } from "./services/mcpOAuthSession";
 import {
   readOauthRedirectFromRequest,
   stashOauthRedirectFromSession,
@@ -97,6 +100,7 @@ export function setupWebServer() {
   // Body parsers
   app.use("/api/billing/webhook", express.raw({ type: "application/json" }));
   app.use(express.json());
+  app.use(express.urlencoded({ extended: false }));
 
   // Metrics middleware (must come before routes)
   app.use(metricsMiddleware);
@@ -319,6 +323,7 @@ export function setupWebServer() {
       (req, res) => {
         const guildId = req.query.guild_id as string | undefined;
         const profile = req.user as Profile;
+        const mcpRedirect = readMcpAuthorizeRedirect(req);
         const sessionRedirect = readOauthRedirectFromRequest(req);
         if (guildId) {
           saveGuildInstaller({
@@ -330,7 +335,7 @@ export function setupWebServer() {
           );
         }
         const fallback = getFrontendFallback();
-        res.redirect(sessionRedirect || fallback);
+        res.redirect(mcpRedirect || sessionRedirect || fallback);
       },
     );
   } else {
@@ -381,6 +386,11 @@ export function setupWebServer() {
       res.status(401).json({ error: "User not authenticated" });
     }
   });
+
+  if (config.mcp.enabled) {
+    registerMcpOAuthRoutes(app);
+    registerMcpRoutes(app);
+  }
 
   // tRPC API
   app.use(

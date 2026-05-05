@@ -1,0 +1,138 @@
+import crypto from "node:crypto";
+import { resetMcpOAuthMemoryRepository } from "../../repositories/mcpOAuthRepository";
+import {
+  exchangeMcpAuthorizationCode,
+  getMcpResourceUrl,
+  issueMcpAuthorizationCode,
+  McpOAuthError,
+  parseMcpScopes,
+  refreshMcpAccessToken,
+  registerMcpOAuthClient,
+  revokeMcpToken,
+  validateMcpAccessToken,
+} from "../mcpOAuthService";
+
+const codeVerifier = "a".repeat(64);
+const codeChallenge = crypto
+  .createHash("sha256")
+  .update(codeVerifier)
+  .digest("base64url");
+const redirectUri = "http://localhost:8787/oauth/callback";
+
+describe("mcpOAuthService", () => {
+  beforeEach(() => {
+    resetMcpOAuthMemoryRepository();
+  });
+
+  it("exchanges a PKCE authorization code for a resource-bound access token", async () => {
+    const client = await registerMcpOAuthClient({
+      client_name: "Test MCP Client",
+      redirect_uris: [redirectUri],
+    });
+    const code = await issueMcpAuthorizationCode({
+      clientId: client.clientId,
+      userId: "user-1",
+      redirectUri,
+      scope: "meetings:read transcripts:read",
+      resource: getMcpResourceUrl(),
+      codeChallenge,
+      codeChallengeMethod: "S256",
+    });
+
+    const tokenResponse = await exchangeMcpAuthorizationCode({
+      clientId: client.clientId,
+      code,
+      redirectUri,
+      codeVerifier,
+      resource: getMcpResourceUrl(),
+    });
+
+    expect(tokenResponse.token_type).toBe("Bearer");
+    expect(tokenResponse.scope).toBe("meetings:read transcripts:read");
+
+    const tokenInfo = await validateMcpAccessToken(tokenResponse.access_token);
+    expect(tokenInfo).toMatchObject({
+      clientId: client.clientId,
+      userId: "user-1",
+      scopes: ["meetings:read", "transcripts:read"],
+      resource: getMcpResourceUrl(),
+    });
+  });
+
+  it("rejects reused authorization codes", async () => {
+    const client = await registerMcpOAuthClient({
+      redirect_uris: [redirectUri],
+    });
+    const code = await issueMcpAuthorizationCode({
+      clientId: client.clientId,
+      userId: "user-1",
+      redirectUri,
+      resource: getMcpResourceUrl(),
+      codeChallenge,
+      codeChallengeMethod: "S256",
+    });
+
+    await exchangeMcpAuthorizationCode({
+      clientId: client.clientId,
+      code,
+      redirectUri,
+      codeVerifier,
+      resource: getMcpResourceUrl(),
+    });
+
+    await expect(
+      exchangeMcpAuthorizationCode({
+        clientId: client.clientId,
+        code,
+        redirectUri,
+        codeVerifier,
+        resource: getMcpResourceUrl(),
+      }),
+    ).rejects.toMatchObject({ code: "invalid_grant" });
+  });
+
+  it("rotates refresh tokens and revokes access tokens", async () => {
+    const client = await registerMcpOAuthClient({
+      redirect_uris: [redirectUri],
+    });
+    const code = await issueMcpAuthorizationCode({
+      clientId: client.clientId,
+      userId: "user-1",
+      redirectUri,
+      resource: getMcpResourceUrl(),
+      codeChallenge,
+      codeChallengeMethod: "S256",
+    });
+    const firstTokens = await exchangeMcpAuthorizationCode({
+      clientId: client.clientId,
+      code,
+      redirectUri,
+      codeVerifier,
+      resource: getMcpResourceUrl(),
+    });
+
+    const secondTokens = await refreshMcpAccessToken({
+      clientId: client.clientId,
+      refreshToken: firstTokens.refresh_token,
+      resource: getMcpResourceUrl(),
+    });
+
+    expect(secondTokens.access_token).not.toBe(firstTokens.access_token);
+    await expect(
+      refreshMcpAccessToken({
+        clientId: client.clientId,
+        refreshToken: firstTokens.refresh_token,
+        resource: getMcpResourceUrl(),
+      }),
+    ).rejects.toMatchObject({ code: "invalid_grant" });
+
+    await revokeMcpToken(secondTokens.access_token);
+    await expect(
+      validateMcpAccessToken(secondTokens.access_token),
+    ).resolves.toBeUndefined();
+  });
+
+  it("rejects unsupported scopes", () => {
+    expect(() => parseMcpScopes("meetings:write")).toThrow(McpOAuthError);
+  });
+});
