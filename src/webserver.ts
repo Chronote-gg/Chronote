@@ -1,6 +1,8 @@
 import cors from "cors";
+import cookieParser from "cookie-parser";
 import express from "express";
 import session from "express-session";
+import lusca from "lusca";
 import passport from "passport";
 import { Profile, Strategy as DiscordStrategy } from "passport-discord";
 import { User } from "discord.js";
@@ -29,11 +31,31 @@ import {
 
 const AUTH_RATE_LIMIT_WINDOW_MS = 60_000;
 const AUTH_RATE_LIMIT_MAX = 20;
+const CSRF_TOKEN_PATH = "/api/csrf-token";
+const CSRF_HEADER_NAME = "x-csrf-token";
+
+type SessionWithRedirect = session.Session & { oauthRedirect?: string };
+type RequestWithCsrf = express.Request & { csrfToken: () => string };
+
+const isLocalFrontendUrl = () =>
+  config.frontend.siteUrl.startsWith("http://localhost") ||
+  config.frontend.siteUrl.startsWith("http://127.0.0.1");
+
+const shouldUseSecureCookie = (isLocalhost: boolean) => !isLocalhost;
+
+const getCrossSiteCookieMode = (isLocalhost: boolean) =>
+  !isLocalhost && config.frontend.allowedOrigins.length > 0
+    ? ("none" as const)
+    : ("lax" as const);
+
+const getFrontendFallback = () =>
+  config.frontend.siteUrl && config.frontend.siteUrl.length > 0
+    ? config.frontend.siteUrl
+    : "/";
 
 export function setupWebServer() {
   const app = express();
   const PORT = config.server.port;
-  type SessionWithRedirect = session.Session & { oauthRedirect?: string };
 
   const resolveRedirectParam = (req: express.Request) =>
     resolveRedirectTarget(req.query.redirect, config.frontend.siteUrl);
@@ -98,34 +120,55 @@ export function setupWebServer() {
   });
 
   // Configure session management (Dynamo-backed, swappable later)
-  const isLocalhost =
-    config.server.nodeEnv === "development" &&
-    config.frontend.siteUrl.startsWith("http://localhost");
+  const isLocalhost = isLocalFrontendUrl();
 
   const sessionStore = config.mock.enabled
     ? new session.MemoryStore()
     : new DynamoSessionStore();
 
+  const csrfCookieOptions = {
+    httpOnly: true,
+    secure: shouldUseSecureCookie(isLocalhost),
+    sameSite: getCrossSiteCookieMode(isLocalhost),
+    path: "/",
+  };
+
   app.use(
     session({
       store: sessionStore,
-      secret: config.server.oauthSecret,
+      secret: config.server.sessionSecret,
       resave: false,
       saveUninitialized: false,
       cookie: {
         httpOnly: true,
         // In dev on localhost we can't set Secure; in prod we should.
-        secure: !isLocalhost && config.server.nodeEnv === "production",
+        secure: shouldUseSecureCookie(isLocalhost),
         // SameSite=None is required for cross-origin cookies, but Chrome requires Secure.
         // When developing on localhost over http, fall back to lax so cookies are accepted.
-        sameSite:
-          !isLocalhost && config.frontend.allowedOrigins.length > 0
-            ? ("none" as const)
-            : ("lax" as const),
+        sameSite: getCrossSiteCookieMode(isLocalhost),
         maxAge: 1000 * 60 * 60 * 24 * 7,
       },
     }),
   );
+
+  app.use(cookieParser());
+  app.use(
+    lusca.csrf({
+      header: CSRF_HEADER_NAME,
+      cookie: {
+        name: isLocalhost
+          ? "chronote.csrf-token"
+          : "__Host-chronote.csrf-token",
+        options: csrfCookieOptions,
+      },
+      blocklist: ["/api/billing/webhook"],
+    }),
+  );
+
+  app.get(CSRF_TOKEN_PATH, (req, res) => {
+    const csrfToken = (req as RequestWithCsrf).csrfToken();
+    res.json({ csrfToken });
+  });
 
   const authRateLimiter = createAuthRateLimiter({
     enabled: !config.mock.enabled,
@@ -286,38 +329,26 @@ export function setupWebServer() {
             console.error("Failed to persist installer mapping", err),
           );
         }
-        const fallback =
-          config.frontend.siteUrl && config.frontend.siteUrl.length > 0
-            ? config.frontend.siteUrl
-            : "/";
+        const fallback = getFrontendFallback();
         res.redirect(sessionRedirect || fallback);
       },
     );
   } else {
     app.get("/auth/discord", authRateLimiter, (req, res) => {
       const redirectParam = resolveRedirectParam(req);
-      const fallback =
-        config.frontend.siteUrl && config.frontend.siteUrl.length > 0
-          ? config.frontend.siteUrl
-          : "/";
+      const fallback = getFrontendFallback();
       res.redirect(redirectParam || fallback);
     });
     app.get("/auth/discord/callback", authRateLimiter, (req, res) => {
       const redirectParam = resolveRedirectParam(req);
-      const fallback =
-        config.frontend.siteUrl && config.frontend.siteUrl.length > 0
-          ? config.frontend.siteUrl
-          : "/";
+      const fallback = getFrontendFallback();
       res.redirect(redirectParam || fallback);
     });
   }
 
   app.get("/logout", (req, res) => {
     const redirectParam = resolveRedirectParam(req);
-    const fallback =
-      config.frontend.siteUrl && config.frontend.siteUrl.length > 0
-        ? config.frontend.siteUrl
-        : "/";
+    const fallback = getFrontendFallback();
     const redirectTarget = redirectParam || fallback;
     const finishLogout = () => {
       res.redirect(redirectTarget);
@@ -359,6 +390,7 @@ export function setupWebServer() {
       createContext,
     }),
   );
+
   // Stripe integration (shared routes live in src/api)
   const stripe = getStripeClient();
 
