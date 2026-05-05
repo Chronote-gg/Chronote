@@ -234,6 +234,7 @@ class ConfigService {
   readonly server = {
     port: parseInt(process.env.PORT || "3001", 10),
     nodeEnv: process.env.NODE_ENV || "development",
+    sessionSecret: process.env.SESSION_SECRET || process.env.OAUTH_SECRET || "",
     oauthSecret: process.env.OAUTH_SECRET || "",
     oauthEnabled: process.env.ENABLE_OAUTH !== "false" && !this.mock.enabled,
     onboardingEnabled: process.env.ENABLE_ONBOARDING === "true",
@@ -335,6 +336,12 @@ class ConfigService {
       name: "FRONTEND_SITE_URL",
       value: this.frontend.siteUrl,
     });
+    if (!this.mock.enabled) {
+      required.push({
+        name: "SESSION_SECRET or OAUTH_SECRET",
+        value: this.server.sessionSecret,
+      });
+    }
 
     const hasLangfuseConfig =
       this.langfuse.publicKey.length > 0 || this.langfuse.secretKey.length > 0;
@@ -350,7 +357,6 @@ class ConfigService {
       required.push(
         { name: "DISCORD_CLIENT_SECRET", value: this.discord.clientSecret },
         { name: "DISCORD_CALLBACK_URL", value: this.discord.callbackUrl },
-        { name: "OAUTH_SECRET", value: this.server.oauthSecret },
       );
     }
 

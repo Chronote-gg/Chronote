@@ -45,6 +45,45 @@ describe("apiClient", () => {
     });
   });
 
+  test("apiFetch sets POST for body requests that need CSRF", async () => {
+    const { apiFetch } = await loadClient("");
+    const fetchMock = jest
+      .fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        text: async () => JSON.stringify({ csrfToken: "csrf-token" }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        text: async () => JSON.stringify({ ok: true }),
+      }) as unknown as typeof fetch & jest.Mock;
+    global.fetch = fetchMock;
+
+    await expect(
+      apiFetch<{ ok: boolean }>("/submit", {
+        body: JSON.stringify({ ok: true }),
+      }),
+    ).resolves.toEqual({ ok: true });
+
+    expect(fetchMock).toHaveBeenNthCalledWith(1, "/api/csrf-token", {
+      credentials: "include",
+    });
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      2,
+      "/submit",
+      expect.objectContaining({
+        credentials: "include",
+        method: "POST",
+      }),
+    );
+    const requestInit = fetchMock.mock.calls[1]?.[1] as RequestInit;
+    expect(new Headers(requestInit.headers).get("x-csrf-token")).toBe(
+      "csrf-token",
+    );
+  });
+
   test("apiFetch throws AuthNeededError on auth failures", async () => {
     const { apiFetch, AuthNeededError } = await loadClient("");
     setMockFetchResolved({

@@ -40,8 +40,7 @@ const isLocalFrontendUrl = () =>
   config.frontend.siteUrl.startsWith("http://localhost") ||
   config.frontend.siteUrl.startsWith("http://127.0.0.1");
 
-const shouldUseSecureCookie = (isLocalhost: boolean) =>
-  !isLocalhost && config.server.nodeEnv === "production";
+const shouldUseSecureCookie = (isLocalhost: boolean) => !isLocalhost;
 
 const getCrossSiteCookieMode = (isLocalhost: boolean) =>
   !isLocalhost && config.frontend.allowedOrigins.length > 0
@@ -52,6 +51,10 @@ const getFrontendFallback = () =>
   config.frontend.siteUrl && config.frontend.siteUrl.length > 0
     ? config.frontend.siteUrl
     : "/";
+
+const isBillingWebhookRequest = (req: express.Request) =>
+  req.path === "/api/billing/webhook" ||
+  req.path.startsWith("/api/billing/webhook/");
 
 export function setupWebServer() {
   const app = express();
@@ -136,7 +139,7 @@ export function setupWebServer() {
   app.use(
     session({
       store: sessionStore,
-      secret: config.server.oauthSecret,
+      secret: config.server.sessionSecret,
       resave: false,
       saveUninitialized: false,
       cookie: {
@@ -154,14 +157,14 @@ export function setupWebServer() {
   app.use(cookieParser());
 
   const { generateCsrfToken, doubleCsrfProtection } = doubleCsrf({
-    getSecret: () => config.server.oauthSecret,
+    getSecret: () => config.server.sessionSecret,
     getSessionIdentifier: () => "chronote-web",
     cookieName: isLocalhost
       ? "chronote.csrf-token"
       : "__Host-chronote.csrf-token",
     cookieOptions: csrfCookieOptions,
     getCsrfTokenFromRequest: (req) => req.headers[CSRF_HEADER_NAME],
-    skipCsrfProtection: (req) => req.path === "/api/billing/webhook",
+    skipCsrfProtection: isBillingWebhookRequest,
   });
 
   app.get(CSRF_TOKEN_PATH, (req, res) => {

@@ -106,14 +106,15 @@ async function getCsrfToken(): Promise<string> {
 }
 
 export async function withCsrfToken(init?: RequestInit): Promise<RequestInit> {
-  if (SAFE_METHODS.has(getRequestMethod(init))) {
+  const method = getRequestMethod(init);
+  if (SAFE_METHODS.has(method)) {
     return init ?? {};
   }
 
   const csrfToken = await getCsrfToken();
   const headers = new Headers(init?.headers);
   headers.set(CSRF_HEADER_NAME, csrfToken);
-  return { ...init, headers };
+  return { ...init, headers, method };
 }
 
 export async function apiFetch<T = unknown>(
