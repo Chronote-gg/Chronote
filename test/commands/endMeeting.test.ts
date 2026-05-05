@@ -278,7 +278,9 @@ describe("handleEndMeetingOther", () => {
       "Auto-record rule: test-channel",
     );
     mockedWaitForFinishProcessing.mockResolvedValue(undefined);
+    mockedBuildMixedAudio.mockResolvedValue(undefined);
     mockedCompileTranscriptions.mockResolvedValue("Recovered transcript");
+    mockedUploadMeetingArtifacts.mockResolvedValue(undefined);
     mockedGetGuildLimits.mockResolvedValue({ limits: {} } as never);
     mockedSaveMeetingHistoryToDatabase.mockResolvedValue(undefined);
 
