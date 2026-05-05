@@ -1,4 +1,5 @@
 import express from "express";
+import { rateLimit } from "express-rate-limit";
 import { SERVER_CONTEXT_KEY_LIST, SERVER_CONTEXT_KEYS } from "../config/keys";
 import {
   clearConfigOverrideForScope,
@@ -46,7 +47,24 @@ type SessionGuildCache = {
 
 type GuildRequest = express.Request<{ guildId: string }>;
 
+const GUILD_API_RATE_LIMIT_WINDOW_MS = 60_000;
+const GUILD_API_RATE_LIMIT_MAX = 120;
+
+const passThrough: express.RequestHandler = (_req, _res, next) => {
+  next();
+};
+
 export function registerGuildRoutes(app: express.Express) {
+  const guildApiRateLimiter = config.mock.enabled
+    ? passThrough
+    : rateLimit({
+        windowMs: GUILD_API_RATE_LIMIT_WINDOW_MS,
+        limit: GUILD_API_RATE_LIMIT_MAX,
+        standardHeaders: "draft-7",
+        legacyHeaders: false,
+        message: "Too many guild API requests, please try again later.",
+      });
+
   const ensureBotPresence = async (
     req: express.Request,
     res: express.Response,
@@ -109,6 +127,7 @@ export function registerGuildRoutes(app: express.Express) {
   // Context routes
   app.get(
     "/api/guilds/:guildId/context",
+    guildApiRateLimiter,
     requireAuth,
     async (req: GuildRequest, res): Promise<void> => {
       const guildId = req.params.guildId;
@@ -151,6 +170,7 @@ export function registerGuildRoutes(app: express.Express) {
 
   app.post(
     "/api/guilds/:guildId/context",
+    guildApiRateLimiter,
     requireAuth,
     async (req: GuildRequest, res): Promise<void> => {
       const guildId = req.params.guildId;
@@ -236,6 +256,7 @@ export function registerGuildRoutes(app: express.Express) {
 
   app.delete(
     "/api/guilds/:guildId/context",
+    guildApiRateLimiter,
     requireAuth,
     async (req: GuildRequest, res): Promise<void> => {
       const guildId = req.params.guildId;
@@ -259,6 +280,7 @@ export function registerGuildRoutes(app: express.Express) {
   // Autorecord routes
   app.get(
     "/api/guilds/:guildId/autorecord",
+    guildApiRateLimiter,
     requireAuth,
     async (req: GuildRequest, res): Promise<void> => {
       const guildId = req.params.guildId;
@@ -273,6 +295,7 @@ export function registerGuildRoutes(app: express.Express) {
 
   app.post(
     "/api/guilds/:guildId/autorecord",
+    guildApiRateLimiter,
     requireAuth,
     async (req: GuildRequest, res): Promise<void> => {
       const guildId = req.params.guildId;
@@ -305,6 +328,7 @@ export function registerGuildRoutes(app: express.Express) {
 
   app.delete(
     "/api/guilds/:guildId/autorecord",
+    guildApiRateLimiter,
     requireAuth,
     async (req: GuildRequest, res): Promise<void> => {
       const guildId = req.params.guildId;
@@ -325,6 +349,7 @@ export function registerGuildRoutes(app: express.Express) {
   // Channel list (text + voice)
   app.get(
     "/api/guilds/:guildId/channels",
+    guildApiRateLimiter,
     requireAuth,
     async (req: GuildRequest, res): Promise<void> => {
       const guildId = req.params.guildId;
@@ -386,6 +411,7 @@ export function registerGuildRoutes(app: express.Express) {
   // Ask route
   app.post(
     "/api/guilds/:guildId/ask",
+    guildApiRateLimiter,
     requireAuth,
     async (req: GuildRequest, res): Promise<void> => {
       const guildId = req.params.guildId;
@@ -438,54 +464,60 @@ export function registerGuildRoutes(app: express.Express) {
   );
 
   // Guild list (manage-guild intersection)
-  app.get("/api/guilds", requireAuth, async (req, res): Promise<void> => {
-    const user = req.user as AuthedUser;
-    if (!user.accessToken) {
-      res.status(401).json({ error: "No access token. Please re-login." });
-      return;
-    }
-    try {
-      const userGuilds = await listUserGuildsCached({
-        accessToken: user.accessToken,
-        userId: user.id,
-      });
+  app.get(
+    "/api/guilds",
+    guildApiRateLimiter,
+    requireAuth,
+    async (req, res): Promise<void> => {
+      const user = req.user as AuthedUser;
+      if (!user.accessToken) {
+        res.status(401).json({ error: "No access token. Please re-login." });
+        return;
+      }
+      try {
+        const userGuilds = await listUserGuildsCached({
+          accessToken: user.accessToken,
+          userId: user.id,
+        });
 
-      const sessionData = req.session as typeof req.session & SessionGuildCache;
-      sessionData.guildIds = userGuilds.map((guild) => guild.id);
-      sessionData.guildIdsFetchedAt = Date.now();
-      sessionData.userGuilds = userGuilds;
-      sessionData.userGuildsFetchedAt = sessionData.guildIdsFetchedAt;
+        const sessionData = req.session as typeof req.session &
+          SessionGuildCache;
+        sessionData.guildIds = userGuilds.map((guild) => guild.id);
+        sessionData.guildIdsFetchedAt = Date.now();
+        sessionData.userGuilds = userGuilds;
+        sessionData.userGuildsFetchedAt = sessionData.guildIdsFetchedAt;
 
-      const botGuilds = await listBotGuildsCached();
-      const botGuildIds = new Set(botGuilds.map((g) => g.id));
-      sessionData.botGuildIds = botGuilds.map((guild) => guild.id);
-      sessionData.botGuildIdsFetchedAt = Date.now();
+        const botGuilds = await listBotGuildsCached();
+        const botGuildIds = new Set(botGuilds.map((g) => g.id));
+        sessionData.botGuildIds = botGuilds.map((guild) => guild.id);
+        sessionData.botGuildIdsFetchedAt = Date.now();
 
-      const MANAGE_GUILD = 1 << 5;
-      const ADMIN = 1 << 3;
+        const MANAGE_GUILD = 1 << 5;
+        const ADMIN = 1 << 3;
 
-      const eligible = userGuilds
-        .filter((g) => botGuildIds.has(g.id))
-        .filter((g) => {
-          const perms = BigInt(g.permissions ?? "0");
-          return (
-            g.owner ||
-            (perms & BigInt(MANAGE_GUILD)) !== BigInt(0) ||
-            (perms & BigInt(ADMIN)) !== BigInt(0)
-          );
-        })
-        .map((g) => ({
-          id: g.id,
-          name: g.name,
-          icon: g.icon,
-        }));
+        const eligible = userGuilds
+          .filter((g) => botGuildIds.has(g.id))
+          .filter((g) => {
+            const perms = BigInt(g.permissions ?? "0");
+            return (
+              g.owner ||
+              (perms & BigInt(MANAGE_GUILD)) !== BigInt(0) ||
+              (perms & BigInt(ADMIN)) !== BigInt(0)
+            );
+          })
+          .map((g) => ({
+            id: g.id,
+            name: g.name,
+            icon: g.icon,
+          }));
 
-      res.json({ guilds: eligible });
-    } catch (err) {
-      console.error("Guild list error", err);
-      res.status(500).json({ error: "Failed to load guilds" });
-    }
-  });
+        res.json({ guilds: eligible });
+      } catch (err) {
+        console.error("Guild list error", err);
+        res.status(500).json({ error: "Failed to load guilds" });
+      }
+    },
+  );
 }
 
 const requireAuth: express.RequestHandler = (req, res, next): void => {

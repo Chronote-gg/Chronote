@@ -1,7 +1,9 @@
 import cors from "cors";
+import cookieParser from "cookie-parser";
 import express from "express";
 import session from "express-session";
 import passport from "passport";
+import { doubleCsrf } from "csrf-csrf";
 import { Profile, Strategy as DiscordStrategy } from "passport-discord";
 import { User } from "discord.js";
 import * as trpcExpress from "@trpc/server/adapters/express";
@@ -29,6 +31,8 @@ import {
 
 const AUTH_RATE_LIMIT_WINDOW_MS = 60_000;
 const AUTH_RATE_LIMIT_MAX = 20;
+const CSRF_TOKEN_PATH = "/api/csrf-token";
+const CSRF_HEADER_NAME = "x-csrf-token";
 
 export function setupWebServer() {
   const app = express();
@@ -99,12 +103,22 @@ export function setupWebServer() {
 
   // Configure session management (Dynamo-backed, swappable later)
   const isLocalhost =
-    config.server.nodeEnv === "development" &&
-    config.frontend.siteUrl.startsWith("http://localhost");
+    config.frontend.siteUrl.startsWith("http://localhost") ||
+    config.frontend.siteUrl.startsWith("http://127.0.0.1");
 
   const sessionStore = config.mock.enabled
     ? new session.MemoryStore()
     : new DynamoSessionStore();
+
+  const csrfCookieOptions = {
+    httpOnly: true,
+    secure: !isLocalhost && config.server.nodeEnv === "production",
+    sameSite:
+      !isLocalhost && config.frontend.allowedOrigins.length > 0
+        ? ("none" as const)
+        : ("lax" as const),
+    path: "/",
+  };
 
   app.use(
     session({
@@ -126,6 +140,26 @@ export function setupWebServer() {
       },
     }),
   );
+
+  app.use(cookieParser());
+
+  const { generateCsrfToken, doubleCsrfProtection } = doubleCsrf({
+    getSecret: () => config.server.oauthSecret,
+    getSessionIdentifier: () => "chronote-web",
+    cookieName: isLocalhost
+      ? "chronote.csrf-token"
+      : "__Host-chronote.csrf-token",
+    cookieOptions: csrfCookieOptions,
+    getCsrfTokenFromRequest: (req) => req.headers[CSRF_HEADER_NAME],
+    skipCsrfProtection: (req) => req.path === "/api/billing/webhook",
+  });
+
+  app.get(CSRF_TOKEN_PATH, (req, res) => {
+    const csrfToken = generateCsrfToken(req, res);
+    res.json({ csrfToken });
+  });
+
+  app.use(doubleCsrfProtection);
 
   const authRateLimiter = createAuthRateLimiter({
     enabled: !config.mock.enabled,
@@ -359,6 +393,7 @@ export function setupWebServer() {
       createContext,
     }),
   );
+
   // Stripe integration (shared routes live in src/api)
   const stripe = getStripeClient();
 

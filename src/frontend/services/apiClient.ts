@@ -14,6 +14,11 @@ export class ApiError extends Error {
   }
 }
 
+const CSRF_TOKEN_PATH = "/api/csrf-token";
+const CSRF_HEADER_NAME = "x-csrf-token";
+const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
+let csrfTokenPromise: Promise<string> | undefined;
+
 async function parseJsonSafely(res: Response): Promise<unknown> {
   const text = await res.text();
   try {
@@ -70,13 +75,55 @@ function withBase(input: RequestInfo): RequestInfo {
   return `${API_BASE.replace(/\/$/, "")}${input.startsWith("/") ? "" : "/"}${input}`;
 }
 
+function getRequestMethod(init?: RequestInit): string {
+  if (init?.method) {
+    return init.method.toUpperCase();
+  }
+  return init?.body ? "POST" : "GET";
+}
+
+async function getCsrfToken(): Promise<string> {
+  csrfTokenPromise ??= fetch(withBase(CSRF_TOKEN_PATH), {
+    credentials: "include",
+  })
+    .then(async (res) => {
+      if (!res.ok) {
+        throw new ApiError(res.status, `HTTP ${res.status}`);
+      }
+      const data = await parseJsonSafely(res);
+      const token = (data as { csrfToken?: unknown }).csrfToken;
+      if (typeof token !== "string" || token.length === 0) {
+        throw new ApiError(res.status, "Missing CSRF token");
+      }
+      return token;
+    })
+    .catch((error) => {
+      csrfTokenPromise = undefined;
+      throw error;
+    });
+
+  return csrfTokenPromise;
+}
+
+export async function withCsrfToken(init?: RequestInit): Promise<RequestInit> {
+  if (SAFE_METHODS.has(getRequestMethod(init))) {
+    return init ?? {};
+  }
+
+  const csrfToken = await getCsrfToken();
+  const headers = new Headers(init?.headers);
+  headers.set(CSRF_HEADER_NAME, csrfToken);
+  return { ...init, headers };
+}
+
 export async function apiFetch<T = unknown>(
   input: RequestInfo,
   init?: RequestInit,
 ): Promise<T> {
+  const requestInit = await withCsrfToken(init);
   const res = await fetch(withBase(input), {
+    ...requestInit,
     credentials: "include",
-    ...init,
   });
 
   if (res.status === 401 || res.status === 403) {
