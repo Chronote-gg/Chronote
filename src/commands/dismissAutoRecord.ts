@@ -32,9 +32,9 @@ export const dismissAutoRecordCommand = new ContextMenuCommandBuilder()
 function hasAdminPermissions(interaction: UserContextMenuCommandInteraction) {
   return (
     interaction.memberPermissions?.any([
-      PermissionFlagsBits.ModerateMembers,
       PermissionFlagsBits.Administrator,
-      PermissionFlagsBits.ManageMessages,
+      PermissionFlagsBits.ManageChannels,
+      PermissionFlagsBits.ManageGuild,
     ]) ?? false
   );
 }
