@@ -331,21 +331,23 @@ export function registerMcpRoutes(app: Express) {
         .json(jsonRpcError(null, -32600, "Invalid JSON-RPC request."));
       return;
     }
-    const callRequest = requestBodies.find(
-      (body) =>
-        body.method === "tools/call" &&
-        typeof (body.params as { name?: unknown } | undefined)?.name ===
-          "string",
-    );
-    const requestedToolName = (
-      callRequest?.params as { name?: string } | undefined
-    )?.name;
-    const requiredScopes = requestedToolName
-      ? toolScopes.get(requestedToolName)
-      : undefined;
-    if (requiredScopes && !hasMcpScopes(auth.scopes, requiredScopes)) {
-      sendInsufficientScope(res, requiredScopes);
-      return;
+    if (!Array.isArray(req.body)) {
+      const callRequest = requestBodies.find(
+        (body) =>
+          body.method === "tools/call" &&
+          typeof (body.params as { name?: unknown } | undefined)?.name ===
+            "string",
+      );
+      const requestedToolName = (
+        callRequest?.params as { name?: string } | undefined
+      )?.name;
+      const requiredScopes = requestedToolName
+        ? toolScopes.get(requestedToolName)
+        : undefined;
+      if (requiredScopes && !hasMcpScopes(auth.scopes, requiredScopes)) {
+        sendInsufficientScope(res, requiredScopes);
+        return;
+      }
     }
     const responses = await Promise.all(
       requestBodies.map((request) => handleMcpJsonRpcRequest(auth, request)),

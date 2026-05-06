@@ -18,7 +18,11 @@ import {
   registerMcpOAuthClient,
   revokeMcpToken,
 } from "../services/mcpOAuthService";
-import { stashMcpAuthorizeRedirect } from "../services/mcpOAuthSession";
+import {
+  consumeMcpConsentNonce,
+  stashMcpAuthorizeRedirect,
+  stashMcpConsentNonce,
+} from "../services/mcpOAuthSession";
 import { createAuthRateLimiter } from "../services/authRateLimitService";
 import { MCP_SCOPES } from "../types/mcpOAuth";
 
@@ -286,33 +290,6 @@ export function registerMcpOAuthStatelessRoutes(
     }
   });
 
-  app.post("/oauth/authorize/consent", rateLimiter, async (req, res) => {
-    try {
-      const token = getString(req.body?.consent_token);
-      const consentRequest = token ? decodeConsentRequest(token) : undefined;
-      if (!consentRequest) {
-        res.status(400).json({ error: "invalid_request" });
-        return;
-      }
-      if (req.body?.decision !== "approve") {
-        redirectWithOAuthError(res, {
-          redirectUri: consentRequest.redirectUri,
-          error: "access_denied",
-          state: consentRequest.state,
-        });
-        return;
-      }
-      await grantMcpOAuthConsent({
-        userId: consentRequest.userId,
-        clientId: consentRequest.clientId,
-        scopes: parseMcpScopes(consentRequest.scope),
-      });
-      await finishAuthorize(req, res, consentRequest);
-    } catch (error) {
-      sendOAuthError(res, error);
-    }
-  });
-
   app.post("/oauth/token", rateLimiter, async (req, res) => {
     try {
       const grantType = req.body?.grant_type;
@@ -358,6 +335,42 @@ export function registerMcpOAuthSessionRoutes(
   app: Express,
   rateLimiter: RequestHandler = createMcpOAuthRateLimiter(),
 ) {
+  app.post("/oauth/authorize/consent", rateLimiter, async (req, res) => {
+    try {
+      const token = getString(req.body?.consent_token);
+      const consentRequest = token ? decodeConsentRequest(token) : undefined;
+      const sessionNonce = consumeMcpConsentNonce(req);
+      const user = req.user as Profile | undefined;
+      if (
+        !req.isAuthenticated?.() ||
+        !user ||
+        !consentRequest ||
+        !sessionNonce ||
+        sessionNonce !== consentRequest.nonce ||
+        user.id !== consentRequest.userId
+      ) {
+        res.status(400).json({ error: "invalid_request" });
+        return;
+      }
+      if (req.body?.decision !== "approve") {
+        redirectWithOAuthError(res, {
+          redirectUri: consentRequest.redirectUri,
+          error: "access_denied",
+          state: consentRequest.state,
+        });
+        return;
+      }
+      await grantMcpOAuthConsent({
+        userId: user.id,
+        clientId: consentRequest.clientId,
+        scopes: parseMcpScopes(consentRequest.scope),
+      });
+      await finishAuthorize(req, res, consentRequest);
+    } catch (error) {
+      sendOAuthError(res, error);
+    }
+  });
+
   app.get("/oauth/authorize", rateLimiter, async (req, res) => {
     const redirectUri = getString(req.query.redirect_uri);
     const state = getString(req.query.state);
@@ -427,6 +440,13 @@ export function registerMcpOAuthSessionRoutes(
       }
 
       const nonce = crypto.randomBytes(16).toString("base64url");
+      if (!stashMcpConsentNonce(req, nonce)) {
+        throw new McpOAuthError(
+          "server_error",
+          "Unable to start consent.",
+          500,
+        );
+      }
       const consentToken = encodeConsentRequest({
         nonce,
         clientId,

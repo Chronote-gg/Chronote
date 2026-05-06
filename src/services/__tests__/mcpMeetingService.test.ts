@@ -74,6 +74,39 @@ describe("mcpMeetingService", () => {
     });
   });
 
+  it("applies the meeting limit after access filtering", async () => {
+    jest
+      .mocked(listRecentMeetingsForGuildService)
+      .mockResolvedValue([
+        createMeeting("blocked"),
+        createMeeting("allowed-1"),
+        createMeeting("allowed-2"),
+      ]);
+    jest.mocked(checkUserMeetingAccess).mockResolvedValueOnce({
+      allowed: false,
+      missing: ["voice_connect"],
+    });
+    jest.mocked(checkUserMeetingAccess).mockResolvedValueOnce({
+      allowed: true,
+      via: "attendee",
+    });
+    jest.mocked(checkUserMeetingAccess).mockResolvedValueOnce({
+      allowed: true,
+      via: "attendee",
+    });
+
+    await expect(
+      listMcpMeetings({ userId: "user-1", guildId: "guild-1", limit: 2 }),
+    ).resolves.toMatchObject({
+      meetings: [{ meetingId: "allowed-1" }, { meetingId: "allowed-2" }],
+    });
+    expect(listRecentMeetingsForGuildService).toHaveBeenCalledWith(
+      "guild-1",
+      100,
+      { includeArchived: undefined },
+    );
+  });
+
   it("returns an empty meeting list when the caller is no longer in the guild", async () => {
     jest
       .mocked(listRecentMeetingsForGuildService)

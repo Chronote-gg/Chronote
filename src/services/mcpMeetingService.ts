@@ -234,9 +234,13 @@ export async function listMcpMeetings(input: {
         input.startDate ?? MIN_TIMESTAMP_ISO,
         input.endDate ?? MAX_TIMESTAMP_ISO,
       )
-    : await listRecentMeetingsForGuildService(input.guildId, limit, {
-        includeArchived: input.includeArchived,
-      });
+    : await listRecentMeetingsForGuildService(
+        input.guildId,
+        MAX_MEETING_LIMIT,
+        {
+          includeArchived: input.includeArchived,
+        },
+      );
   const requestedTags = new Set(
     (input.tags ?? []).map((tag) => tag.toLowerCase()),
   );
@@ -253,8 +257,7 @@ export async function listMcpMeetings(input: {
         (meeting.tags ?? []).map((tag) => tag.toLowerCase()),
       );
       return Array.from(requestedTags).every((tag) => meetingTags.has(tag));
-    })
-    .slice(0, limit);
+    });
 
   const allowedMeetings = [] as MeetingHistory[];
   for (const meeting of filtered) {
@@ -265,6 +268,7 @@ export async function listMcpMeetings(input: {
         userId: input.userId,
       });
       allowedMeetings.push(meeting);
+      if (allowedMeetings.length >= limit) break;
     } catch (error) {
       if (
         error instanceof McpMeetingAccessError &&

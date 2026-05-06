@@ -173,7 +173,7 @@ export function setupWebServer() {
           : "__Host-chronote.csrf-token",
         options: csrfCookieOptions,
       },
-      blocklist: ["/api/billing/webhook"],
+      blocklist: ["/api/billing/webhook", "/oauth/authorize/consent"],
     }),
   );
 
