@@ -30,6 +30,7 @@ export type McpOAuthAuthorizationCode = {
 export type McpOAuthToken = {
   tokenHash: string;
   tokenType: "access" | "refresh";
+  pairedTokenHash?: string;
   clientId: string;
   userId: string;
   scope: string;

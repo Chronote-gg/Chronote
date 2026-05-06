@@ -177,14 +177,17 @@ const issueTokenPair = async (params: {
   const createdAt = nowIso();
   const accessToken = `mcp_at_${randomToken(ACCESS_TOKEN_BYTES)}`;
   const refreshToken = `mcp_rt_${randomToken(REFRESH_TOKEN_BYTES)}`;
+  const accessTokenHash = hashMcpToken(accessToken);
+  const refreshTokenHash = hashMcpToken(refreshToken);
   const accessExpiresAt = epochSeconds() + config.mcp.accessTokenTtlSeconds;
   const refreshExpiresAt = epochSeconds() + config.mcp.refreshTokenTtlSeconds;
   const scope = formatMcpScope(params.scopes);
 
   await Promise.all([
     repository.writeToken({
-      tokenHash: hashMcpToken(accessToken),
+      tokenHash: accessTokenHash,
       tokenType: "access",
+      pairedTokenHash: refreshTokenHash,
       clientId: params.clientId,
       userId: params.userId,
       scope,
@@ -193,8 +196,9 @@ const issueTokenPair = async (params: {
       expiresAt: accessExpiresAt,
     }),
     repository.writeToken({
-      tokenHash: hashMcpToken(refreshToken),
+      tokenHash: refreshTokenHash,
       tokenType: "refresh",
+      pairedTokenHash: accessTokenHash,
       clientId: params.clientId,
       userId: params.userId,
       scope,
@@ -239,6 +243,15 @@ export async function registerMcpOAuthClient(input: {
   const tokenEndpointAuthMethod = resolveTokenEndpointAuthMethod(
     input.token_endpoint_auth_method,
   );
+  if (
+    input.client_uri !== undefined &&
+    !isHttpsOrLocalhostUrl(input.client_uri)
+  ) {
+    throw new McpOAuthError(
+      "invalid_client_metadata",
+      "client_uri must use HTTPS or localhost HTTP.",
+    );
+  }
   const now = nowIso();
   const client: McpOAuthClient = {
     clientId: `mcp_client_${randomToken(CLIENT_ID_BYTES)}`,
@@ -369,6 +382,9 @@ export async function refreshMcpAccessToken(params: {
   const token = await repository.consumeToken("refresh", tokenHash);
   if (!token)
     throw new McpOAuthError("invalid_grant", "Invalid refresh token.");
+  if (token.pairedTokenHash) {
+    await repository.deleteToken("access", token.pairedTokenHash);
+  }
   if (token.expiresAt <= epochSeconds() || token.clientId !== params.clientId) {
     throw new McpOAuthError("invalid_grant", "Invalid refresh token.");
   }
@@ -382,10 +398,16 @@ export async function refreshMcpAccessToken(params: {
 
 export async function revokeMcpToken(token: string) {
   const tokenHash = hashMcpToken(token);
-  await Promise.all([
-    getMcpOAuthRepository().deleteToken("access", tokenHash),
-    getMcpOAuthRepository().deleteToken("refresh", tokenHash),
-  ]);
+  const repository = getMcpOAuthRepository();
+  const accessToken = await repository.consumeToken("access", tokenHash);
+  if (accessToken?.pairedTokenHash) {
+    await repository.deleteToken("refresh", accessToken.pairedTokenHash);
+    return;
+  }
+  const refreshToken = await repository.consumeToken("refresh", tokenHash);
+  if (refreshToken?.pairedTokenHash) {
+    await repository.deleteToken("access", refreshToken.pairedTokenHash);
+  }
 }
 
 export async function validateMcpAccessToken(
@@ -398,11 +420,15 @@ export async function validateMcpAccessToken(
   if (!record) return undefined;
   if (record.expiresAt <= epochSeconds()) return undefined;
   if (record.resource !== getMcpResourceUrl()) return undefined;
-  return {
-    clientId: record.clientId,
-    userId: record.userId,
-    scopes: parseMcpScopes(record.scope),
-    resource: record.resource,
-    expiresAt: record.expiresAt,
-  };
+  try {
+    return {
+      clientId: record.clientId,
+      userId: record.userId,
+      scopes: parseMcpScopes(record.scope),
+      resource: record.resource,
+      expiresAt: record.expiresAt,
+    };
+  } catch {
+    return undefined;
+  }
 }

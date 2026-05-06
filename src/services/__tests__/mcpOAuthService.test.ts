@@ -1,8 +1,12 @@
 import crypto from "node:crypto";
-import { resetMcpOAuthMemoryRepository } from "../../repositories/mcpOAuthRepository";
+import {
+  getMcpOAuthRepository,
+  resetMcpOAuthMemoryRepository,
+} from "../../repositories/mcpOAuthRepository";
 import {
   exchangeMcpAuthorizationCode,
   getMcpResourceUrl,
+  hashMcpToken,
   issueMcpAuthorizationCode,
   McpOAuthError,
   parseMcpScopes,
@@ -168,6 +172,40 @@ describe("mcpOAuthService", () => {
     await expect(
       validateMcpAccessToken(secondTokens.access_token),
     ).resolves.toBeUndefined();
+    await expect(
+      refreshMcpAccessToken({
+        clientId: client.clientId,
+        refreshToken: secondTokens.refresh_token,
+        resource: getMcpResourceUrl(),
+      }),
+    ).rejects.toMatchObject({ code: "invalid_grant" });
+  });
+
+  it("revokes access tokens paired with submitted refresh tokens", async () => {
+    const client = await registerMcpOAuthClient({
+      redirect_uris: [redirectUri],
+    });
+    const code = await issueMcpAuthorizationCode({
+      clientId: client.clientId,
+      userId: "user-1",
+      redirectUri,
+      resource: getMcpResourceUrl(),
+      codeChallenge,
+      codeChallengeMethod: "S256",
+    });
+    const tokens = await exchangeMcpAuthorizationCode({
+      clientId: client.clientId,
+      code,
+      redirectUri,
+      codeVerifier,
+      resource: getMcpResourceUrl(),
+    });
+
+    await revokeMcpToken(tokens.refresh_token);
+
+    await expect(
+      validateMcpAccessToken(tokens.access_token),
+    ).resolves.toBeUndefined();
   });
 
   it("allows only one concurrent refresh token rotation", async () => {
@@ -240,6 +278,31 @@ describe("mcpOAuthService", () => {
         token_endpoint_auth_method: "client_secret_post",
       }),
     ).rejects.toMatchObject({ code: "invalid_client_metadata" });
+  });
+
+  it("rejects invalid dynamic client registration client URIs", async () => {
+    await expect(
+      registerMcpOAuthClient({
+        redirect_uris: [redirectUri],
+        client_uri: "not a url",
+      }),
+    ).rejects.toMatchObject({ code: "invalid_client_metadata" });
+  });
+
+  it("treats corrupted stored access token scopes as invalid tokens", async () => {
+    const accessToken = "mcp_at_corrupt_scope";
+    await getMcpOAuthRepository().writeToken({
+      tokenHash: hashMcpToken(accessToken),
+      tokenType: "access",
+      clientId: "client-1",
+      userId: "user-1",
+      scope: "meetings:write",
+      resource: getMcpResourceUrl(),
+      createdAt: new Date().toISOString(),
+      expiresAt: Math.floor(Date.now() / 1000) + 60,
+    });
+
+    await expect(validateMcpAccessToken(accessToken)).resolves.toBeUndefined();
   });
 
   it("rejects PKCE verifiers outside the RFC 7636 character set", async () => {
