@@ -12,7 +12,9 @@ import {
   buildMixedAudio,
   cleanupSpeakerTracks,
   closeOutputFile,
+  compileTranscriptions,
   waitForAudioOnlyFinishProcessing,
+  waitForFinishProcessing,
 } from "../../src/audio";
 import { uploadMeetingArtifacts } from "../../src/services/uploadService";
 import { saveMeetingHistoryToDatabase } from "../../src/commands/saveMeetingHistory";
@@ -130,9 +132,15 @@ const mockedCleanupSpeakerTracks = cleanupSpeakerTracks as jest.MockedFunction<
 const mockedCloseOutputFile = closeOutputFile as jest.MockedFunction<
   typeof closeOutputFile
 >;
+const mockedCompileTranscriptions =
+  compileTranscriptions as jest.MockedFunction<typeof compileTranscriptions>;
 const mockedWaitForAudioOnlyFinishProcessing =
   waitForAudioOnlyFinishProcessing as jest.MockedFunction<
     typeof waitForAudioOnlyFinishProcessing
+  >;
+const mockedWaitForFinishProcessing =
+  waitForFinishProcessing as jest.MockedFunction<
+    typeof waitForFinishProcessing
   >;
 const mockedUploadMeetingArtifacts =
   uploadMeetingArtifacts as jest.MockedFunction<typeof uploadMeetingArtifacts>;
@@ -254,7 +262,7 @@ describe("handleEndMeetingOther", () => {
     );
   });
 
-  it("skips auto-record cancellation evaluation when meeting.cancelled is set", async () => {
+  it("skips auto-record cancellation evaluation when a dismissed auto-record meeting already crossed completion thresholds", async () => {
     const { autoRecordJoinSuppressionService } = jest.requireMock(
       "../../src/services/autoRecordJoinSuppressionService",
     ) as {
@@ -269,6 +277,11 @@ describe("handleEndMeetingOther", () => {
     mockedDescribeAutoRecordRule.mockReturnValue(
       "Auto-record rule: test-channel",
     );
+    mockedWaitForFinishProcessing.mockResolvedValue(undefined);
+    mockedBuildMixedAudio.mockResolvedValue(undefined);
+    mockedCompileTranscriptions.mockResolvedValue("Recovered transcript");
+    mockedUploadMeetingArtifacts.mockResolvedValue(undefined);
+    mockedGetGuildLimits.mockResolvedValue({ limits: {} } as never);
     mockedSaveMeetingHistoryToDatabase.mockResolvedValue(undefined);
 
     const members = new Collection<
@@ -298,7 +311,7 @@ describe("handleEndMeetingOther", () => {
       },
       chatLog: [],
       audioData: {
-        audioFiles: [],
+        audioFiles: [{ processing: false }],
         currentSnippets: new Map(),
         outputFileName: "recording.mp3",
       },
@@ -306,7 +319,7 @@ describe("handleEndMeetingOther", () => {
       endTime: undefined,
       finishing: false,
       finished: false,
-      transcribeMeeting: false,
+      transcribeMeeting: true,
       generateNotes: false,
       isAutoRecording: true,
       cancelled: true,
@@ -322,8 +335,15 @@ describe("handleEndMeetingOther", () => {
     await handleEndMeetingOther({} as Client, meeting);
 
     expect(mockedEvaluateAutoRecordCancellation).not.toHaveBeenCalled();
-    expect(mockedBuildMixedAudio).not.toHaveBeenCalled();
-    expect(mockedUploadMeetingArtifacts).not.toHaveBeenCalled();
+    expect(mockedBuildMixedAudio).toHaveBeenCalled();
+    expect(mockedCompileTranscriptions).toHaveBeenCalledTimes(2);
+    expect(mockedUploadMeetingArtifacts).toHaveBeenCalledWith(meeting, {
+      audioFilePath: "recording.mp3",
+      chatFilePath: expect.stringContaining("chat.txt"),
+      transcriptText: "Recovered transcript",
+    });
+    expect(meeting.cancelled).toBe(false);
+    expect(meeting.cancellationReason).toBeUndefined();
     expect(meeting.setFinished).toHaveBeenCalled();
     expect(meeting.finished).toBe(true);
     expect(mockedDeleteMeeting).toHaveBeenCalledWith("guild-1");
@@ -337,6 +357,66 @@ describe("handleEndMeetingOther", () => {
         reason: "explicit_end",
       }),
     );
+  });
+
+  it("finalizes a short dismissed auto-record meeting when chat activity crosses the threshold", async () => {
+    mockedWithMeetingEndTrace.mockImplementation(async (_meeting, fn) => fn());
+    mockedWaitForAudioOnlyFinishProcessing.mockResolvedValue(undefined);
+    mockedCloseOutputFile.mockResolvedValue(undefined);
+    mockedBuildMixedAudio.mockResolvedValue(undefined);
+    mockedCompileTranscriptions.mockResolvedValue("Recovered transcript");
+    mockedGetGuildLimits.mockResolvedValue({ limits: {} } as never);
+    mockedSaveMeetingHistoryToDatabase.mockResolvedValue(undefined);
+
+    const meeting = {
+      guildId: "guild-1",
+      channelId: "text-1",
+      meetingId: "meeting-1",
+      voiceChannel: {
+        id: "voice-1",
+        name: "Voice",
+        members: new Collection(),
+      },
+      textChannel: {
+        send: jest.fn().mockResolvedValue(undefined),
+        messages: { fetch: jest.fn() },
+      },
+      connection: {
+        disconnect: jest.fn(),
+        destroy: jest.fn(),
+      },
+      chatLog: [
+        { type: "message", content: "one" },
+        { type: "message", content: "two" },
+      ],
+      audioData: {
+        audioFiles: [{ processing: false }],
+        currentSnippets: new Map(),
+        outputFileName: "recording.mp3",
+      },
+      startTime: new Date(Date.now() - 2 * 60 * 1000),
+      endTime: undefined,
+      finishing: false,
+      finished: false,
+      transcribeMeeting: true,
+      generateNotes: false,
+      isAutoRecording: true,
+      cancelled: true,
+      cancellationReason: "Stopped by user",
+      endReason: MEETING_END_REASONS.DISMISSED,
+      creator: { id: "bot-1" },
+      guild: { id: "guild-1", members: { cache: new Map() } },
+      ttsQueue: { stopAndClear: jest.fn() },
+      setFinished: jest.fn(),
+      participants: new Map(),
+    } as unknown as MeetingData;
+
+    await handleEndMeetingOther({} as Client, meeting);
+
+    expect(mockedEvaluateAutoRecordCancellation).not.toHaveBeenCalled();
+    expect(mockedBuildMixedAudio).toHaveBeenCalled();
+    expect(meeting.cancelled).toBe(false);
+    expect(meeting.cancellationReason).toBeUndefined();
   });
 
   it("runs final transcription pass when transcription is enabled", async () => {
@@ -422,6 +502,134 @@ describe("handleEndMeetingOther", () => {
     expect(meeting.setFinished).toHaveBeenCalled();
     expect(meeting.finished).toBe(true);
     expect(mockedDeleteMeeting).toHaveBeenCalledWith("guild-1");
+  });
+
+  it("uploads partial artifacts before saving cancelled auto-record history", async () => {
+    mockedWithMeetingEndTrace.mockImplementation(async (_meeting, fn) => fn());
+    mockedWaitForAudioOnlyFinishProcessing.mockResolvedValue(undefined);
+    mockedCloseOutputFile.mockResolvedValue(undefined);
+    mockedWaitForFinishProcessing.mockResolvedValue(undefined);
+    mockedUploadMeetingArtifacts.mockResolvedValue(undefined);
+    mockedCompileTranscriptions.mockResolvedValueOnce(
+      "Transcript without cues",
+    );
+    mockedDescribeAutoRecordRule.mockReturnValue(
+      "Auto-record rule: test-channel",
+    );
+    mockedSaveMeetingHistoryToDatabase.mockResolvedValue(undefined);
+
+    const meeting = {
+      guildId: "guild-1",
+      channelId: "text-1",
+      meetingId: "meeting-1",
+      voiceChannel: {
+        id: "voice-1",
+        name: "Voice",
+        members: new Collection(),
+      },
+      textChannel: {
+        send: jest.fn().mockResolvedValue(undefined),
+        messages: { fetch: jest.fn() },
+      },
+      connection: {
+        disconnect: jest.fn(),
+        destroy: jest.fn(),
+      },
+      chatLog: [],
+      audioData: {
+        audioFiles: [{ processing: true }],
+        currentSnippets: new Map(),
+        outputFileName: "recording.mp3",
+      },
+      startTime: new Date("2025-01-01T00:00:00.000Z"),
+      endTime: undefined,
+      finishing: false,
+      finished: false,
+      transcribeMeeting: true,
+      generateNotes: false,
+      isAutoRecording: true,
+      cancelled: true,
+      cancellationReason: "Stopped by user",
+      endReason: MEETING_END_REASONS.AUTO_CANCELLED,
+      creator: { id: "bot-1" },
+      guild: { id: "guild-1", members: { cache: new Map() } },
+      ttsQueue: { stopAndClear: jest.fn() },
+      setFinished: jest.fn(),
+      participants: new Map(),
+    } as unknown as MeetingData;
+
+    await handleEndMeetingOther({} as Client, meeting);
+
+    expect(mockedWaitForFinishProcessing).toHaveBeenCalledWith(meeting);
+    expect(mockedUploadMeetingArtifacts).toHaveBeenCalledWith(meeting, {
+      audioFilePath: "recording.mp3",
+      chatFilePath: expect.stringContaining("chat.txt"),
+      transcriptText: "Transcript without cues",
+    });
+    expect(mockedSaveMeetingHistoryToDatabase).toHaveBeenCalledWith(meeting);
+    expect(
+      mockedUploadMeetingArtifacts.mock.invocationCallOrder[0],
+    ).toBeLessThan(
+      mockedSaveMeetingHistoryToDatabase.mock.invocationCallOrder[0],
+    );
+  });
+
+  it("uses stopped messaging for short dismissed auto-record meetings", async () => {
+    mockedWithMeetingEndTrace.mockImplementation(async (_meeting, fn) => fn());
+    mockedWaitForAudioOnlyFinishProcessing.mockResolvedValue(undefined);
+    mockedCloseOutputFile.mockResolvedValue(undefined);
+    mockedSaveMeetingHistoryToDatabase.mockResolvedValue(undefined);
+    mockedDescribeAutoRecordRule.mockReturnValue(
+      "Auto-record rule: test-channel",
+    );
+
+    const send = jest.fn().mockResolvedValue(undefined);
+    const meeting = {
+      guildId: "guild-1",
+      channelId: "text-1",
+      meetingId: "meeting-1",
+      voiceChannel: {
+        id: "voice-1",
+        name: "Voice",
+        members: new Collection(),
+      },
+      textChannel: {
+        send,
+        messages: { fetch: jest.fn() },
+      },
+      connection: {
+        disconnect: jest.fn(),
+        destroy: jest.fn(),
+      },
+      chatLog: [],
+      audioData: {
+        audioFiles: [],
+        currentSnippets: new Map(),
+        outputFileName: "recording.mp3",
+      },
+      startTime: new Date(Date.now() - 2 * 60 * 1000),
+      endTime: undefined,
+      finishing: false,
+      finished: false,
+      transcribeMeeting: false,
+      generateNotes: false,
+      isAutoRecording: true,
+      cancelled: true,
+      cancellationReason: "Stopped by user",
+      endReason: MEETING_END_REASONS.DISMISSED,
+      creator: { id: "bot-1" },
+      guild: { id: "guild-1", members: { cache: new Map() } },
+      ttsQueue: { stopAndClear: jest.fn() },
+      setFinished: jest.fn(),
+      participants: new Map(),
+    } as unknown as MeetingData;
+
+    await handleEndMeetingOther({} as Client, meeting);
+
+    const payload = send.mock.calls[0][0] as {
+      embeds: [{ data: { title: string } }];
+    };
+    expect(payload.embeds[0].data.title).toBe("Auto-Recording Stopped");
   });
 
   it("skips duplicate lease release when meeting is already finishing", async () => {
