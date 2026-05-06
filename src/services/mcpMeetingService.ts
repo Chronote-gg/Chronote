@@ -30,6 +30,17 @@ const DEFAULT_MEETING_LIMIT = 25;
 const MAX_MEETING_LIMIT = 100;
 const MCP_SERVER_MEMBERSHIP_BATCH_SIZE = 5;
 
+type ListMcpMeetingsInput = {
+  userId: string;
+  guildId: string;
+  limit?: number;
+  channelId?: string;
+  startDate?: string;
+  endDate?: string;
+  tags?: string[];
+  includeArchived?: boolean;
+};
+
 export class McpMeetingAccessError extends Error {
   constructor(
     message: string,
@@ -256,16 +267,51 @@ export async function listMcpServersForUser(userId: string) {
   );
 }
 
-export async function listMcpMeetings(input: {
-  userId: string;
-  guildId: string;
-  limit?: number;
-  channelId?: string;
-  startDate?: string;
-  endDate?: string;
-  tags?: string[];
-  includeArchived?: boolean;
-}) {
+const meetingMatchesListFilters = (
+  meeting: MeetingHistory,
+  input: ListMcpMeetingsInput,
+  requestedTags: Set<string>,
+) => {
+  if (!input.includeArchived && meeting.archivedAt) return false;
+  if (input.channelId && resolveMeetingChannelId(meeting) !== input.channelId) {
+    return false;
+  }
+  if (requestedTags.size === 0) return true;
+  const meetingTags = new Set(
+    (meeting.tags ?? []).map((tag) => tag.toLowerCase()),
+  );
+  return Array.from(requestedTags).every((tag) => meetingTags.has(tag));
+};
+
+const collectAccessibleMeetings = async (
+  meetings: MeetingHistory[],
+  input: ListMcpMeetingsInput,
+  limit: number,
+) => {
+  const allowedMeetings: MeetingHistory[] = [];
+  for (const meeting of meetings) {
+    try {
+      await ensureMcpMeetingAccess({
+        guildId: input.guildId,
+        meeting,
+        userId: input.userId,
+      });
+      allowedMeetings.push(meeting);
+      if (allowedMeetings.length >= limit) break;
+    } catch (error) {
+      if (
+        error instanceof McpMeetingAccessError &&
+        error.code === "forbidden"
+      ) {
+        continue;
+      }
+      throw error;
+    }
+  }
+  return allowedMeetings;
+};
+
+export async function listMcpMeetings(input: ListMcpMeetingsInput) {
   const limit = Math.min(
     input.limit ?? DEFAULT_MEETING_LIMIT,
     MAX_MEETING_LIMIT,
@@ -287,41 +333,14 @@ export async function listMcpMeetings(input: {
   const requestedTags = new Set(
     (input.tags ?? []).map((tag) => tag.toLowerCase()),
   );
-  const filtered = meetings
-    .filter((meeting) => input.includeArchived || !meeting.archivedAt)
-    .filter(
-      (meeting) =>
-        !input.channelId ||
-        resolveMeetingChannelId(meeting) === input.channelId,
-    )
-    .filter((meeting) => {
-      if (requestedTags.size === 0) return true;
-      const meetingTags = new Set(
-        (meeting.tags ?? []).map((tag) => tag.toLowerCase()),
-      );
-      return Array.from(requestedTags).every((tag) => meetingTags.has(tag));
-    });
-
-  const allowedMeetings = [] as MeetingHistory[];
-  for (const meeting of filtered) {
-    try {
-      await ensureMcpMeetingAccess({
-        guildId: input.guildId,
-        meeting,
-        userId: input.userId,
-      });
-      allowedMeetings.push(meeting);
-      if (allowedMeetings.length >= limit) break;
-    } catch (error) {
-      if (
-        error instanceof McpMeetingAccessError &&
-        error.code === "forbidden"
-      ) {
-        continue;
-      }
-      throw error;
-    }
-  }
+  const filtered = meetings.filter((meeting) =>
+    meetingMatchesListFilters(meeting, input, requestedTags),
+  );
+  const allowedMeetings = await collectAccessibleMeetings(
+    filtered,
+    input,
+    limit,
+  );
   const channelMap = await resolveChannelMap(input.guildId);
   return {
     meetings: allowedMeetings.map((meeting) =>
