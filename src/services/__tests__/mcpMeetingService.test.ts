@@ -1,11 +1,12 @@
 import { jest } from "@jest/globals";
 import {
   getGuildMemberCached,
+  listBotGuildsCached,
   listGuildChannelsCached,
 } from "../discordCacheService";
 import { checkUserMeetingAccess } from "../meetingAccessService";
 import { listRecentMeetingsForGuildService } from "../meetingHistoryService";
-import { listMcpMeetings } from "../mcpMeetingService";
+import { listMcpMeetings, listMcpServersForUser } from "../mcpMeetingService";
 import type { MeetingHistory } from "../../types/db";
 
 jest.mock("../discordService", () => ({
@@ -117,5 +118,24 @@ describe("mcpMeetingService", () => {
       listMcpMeetings({ userId: "user-1", guildId: "guild-1" }),
     ).resolves.toEqual({ meetings: [] });
     expect(checkUserMeetingAccess).not.toHaveBeenCalled();
+  });
+
+  it("caches accessible server lists for repeated polling", async () => {
+    jest.mocked(listBotGuildsCached).mockResolvedValue([
+      { id: "guild-1", name: "Guild 1", icon: null },
+      { id: "guild-2", name: "Guild 2", icon: null },
+    ]);
+
+    await expect(listMcpServersForUser("polling-user")).resolves.toEqual([
+      { id: "guild-1", name: "Guild 1", icon: null },
+      { id: "guild-2", name: "Guild 2", icon: null },
+    ]);
+    await expect(listMcpServersForUser("polling-user")).resolves.toEqual([
+      { id: "guild-1", name: "Guild 1", icon: null },
+      { id: "guild-2", name: "Guild 2", icon: null },
+    ]);
+
+    expect(listBotGuildsCached).toHaveBeenCalledTimes(1);
+    expect(getGuildMemberCached).toHaveBeenCalledTimes(2);
   });
 });

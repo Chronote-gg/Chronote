@@ -1,4 +1,5 @@
 import { config } from "./configService";
+import { buildCacheKey, cache, withCache } from "./cacheService";
 import { isDiscordApiError } from "./discordService";
 import {
   getGuildMemberCached,
@@ -27,6 +28,7 @@ const MIN_TIMESTAMP_ISO = "1970-01-01T00:00:00.000Z";
 const MAX_TIMESTAMP_ISO = "9999-12-31T23:59:59.999Z";
 const DEFAULT_MEETING_LIMIT = 25;
 const MAX_MEETING_LIMIT = 100;
+const MCP_SERVER_MEMBERSHIP_BATCH_SIZE = 5;
 
 export class McpMeetingAccessError extends Error {
   constructor(
@@ -190,27 +192,68 @@ const summarizeMeeting = (
   };
 };
 
-export async function listMcpServersForUser(userId: string) {
+const resolveMcpServerMembership = async (
+  guild: { id: string; name: string; icon?: string | null },
+  userId: string,
+) => {
+  try {
+    await getGuildMemberCached(guild.id, userId);
+    return { guild, allowed: true };
+  } catch (error) {
+    if (isDiscordApiError(error) && error.status === 429) {
+      throw new McpMeetingAccessError(
+        "Discord rate limited. Please retry.",
+        "rate_limited",
+      );
+    }
+    return { guild, allowed: false };
+  }
+};
+
+async function listMcpServersForUserUncached(userId: string) {
   const guilds = await listBotGuildsCached();
-  const memberships = await Promise.all(
-    guilds.map(async (guild) => {
-      try {
-        await getGuildMemberCached(guild.id, userId);
-        return { guild, allowed: true };
-      } catch (error) {
-        if (isDiscordApiError(error) && error.status === 429) {
-          throw new McpMeetingAccessError(
-            "Discord rate limited. Please retry.",
-            "rate_limited",
-          );
-        }
-        return { guild, allowed: false };
-      }
-    }),
-  );
+  const memberships: Array<
+    Awaited<ReturnType<typeof resolveMcpServerMembership>>
+  > = [];
+  for (
+    let index = 0;
+    index < guilds.length;
+    index += MCP_SERVER_MEMBERSHIP_BATCH_SIZE
+  ) {
+    memberships.push(
+      ...(await Promise.all(
+        guilds
+          .slice(index, index + MCP_SERVER_MEMBERSHIP_BATCH_SIZE)
+          .map((guild) => resolveMcpServerMembership(guild, userId)),
+      )),
+    );
+  }
   return memberships
     .filter((entry) => entry.allowed)
     .map(({ guild }) => ({ id: guild.id, name: guild.name, icon: guild.icon }));
+}
+
+const cachedMcpServersForUser = cache.define(
+  "mcpServersForUser",
+  {
+    ttl: config.cache.discord.membersTtlSeconds,
+    serialize: ({ userId }: { userId: string }) =>
+      buildCacheKey(`mcp:serversForUser:${userId}`),
+  },
+  async ({ userId }: { userId: string }) =>
+    listMcpServersForUserUncached(userId),
+).mcpServersForUser;
+
+const shouldFallbackMcpServerCache = (error: unknown) =>
+  !(error instanceof McpMeetingAccessError);
+
+export async function listMcpServersForUser(userId: string) {
+  return withCache(
+    "listMcpServersForUser",
+    () => cachedMcpServersForUser({ userId }),
+    () => listMcpServersForUserUncached(userId),
+    shouldFallbackMcpServerCache,
+  );
 }
 
 export async function listMcpMeetings(input: {
