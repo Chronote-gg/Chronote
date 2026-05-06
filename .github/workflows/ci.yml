@@ -272,12 +272,14 @@ jobs:
         run: npx playwright install
 
       - name: Restore baseline snapshots
+        env:
+          BASE_REF: ${{ github.base_ref }}
         run: |
-          git fetch origin ${{ github.base_ref }} --depth=1
-          if git diff --name-only origin/${{ github.base_ref }}...HEAD -- test/e2e/visual.spec.ts-snapshots | grep -q .; then
+          git fetch origin "$BASE_REF" --depth=1
+          if git diff --name-only "origin/${BASE_REF}...HEAD" -- test/e2e/visual.spec.ts-snapshots | grep -q .; then
             echo "Snapshots updated in this PR, skipping baseline restore."
           else
-            git checkout origin/${{ github.base_ref }} -- test/e2e/visual.spec.ts-snapshots || echo "No baseline snapshots found"
+            git checkout "origin/${BASE_REF}" -- test/e2e/visual.spec.ts-snapshots || echo "No baseline snapshots found"
           fi
 
       - name: Run visual tests
@@ -300,9 +302,10 @@ jobs:
 
       - name: Build visual summary
         if: always()
+        env:
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
-          run_url="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-          node scripts/visual/summarize.js --results test-results --output visual-summary.md --run-url "$run_url"
+          node scripts/visual/summarize.js --results test-results --output visual-summary.md --run-url "$RUN_URL"
 
       - name: Append visual failure note
         if: always() && steps.visual-tests.outcome != 'success' && steps.visual-diff.outputs.has_diffs != 'true'
@@ -315,7 +318,7 @@ jobs:
 
       - name: Upload visual artifacts
         if: always()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: visual-regression
           path: |
@@ -328,8 +331,9 @@ jobs:
         continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
-          gh pr comment ${{ github.event.pull_request.number }} --body-file visual-summary.md
+          gh pr comment "$PR_NUMBER" --body-file visual-summary.md
 
       - name: Fail on visual diffs
         if: steps.visual-diff.outputs.has_diffs == 'true'
@@ -356,13 +360,15 @@ jobs:
           key: ${{ runner.os }}-pip-${{ steps.py-version.outputs.version }}-lizard
 
       - name: Code stats (scc + lizard)
+        env:
+          WORKSPACE: ${{ github.workspace }}
         run: |
-          docker run --rm -v ${{ github.workspace }}:/pwd ghcr.io/boyter/scc:master \
+          docker run --rm -v "$WORKSPACE:/pwd" ghcr.io/boyter/scc:master \
             scc --ci /pwd
-          docker run --rm -v ${{ github.workspace }}:/pwd ghcr.io/boyter/scc:master \
+          docker run --rm -v "$WORKSPACE:/pwd" ghcr.io/boyter/scc:master \
             scc --ci --by-file --sort lines /pwd
           python3 -m pip install --quiet lizard
-          lizard -l ts -l tsx -l js -l jsx src test
+          lizard -W whitelizard.txt -l ts -l tsx -l js -l jsx src test
 
   checkov:
     name: Checkov (Terraform)

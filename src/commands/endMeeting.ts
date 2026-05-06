@@ -57,6 +57,9 @@ type EndMeetingFlowOptions = {
   meeting: MeetingData;
 };
 
+const DISMISSED_AUTO_RECORD_COMPLETE_MIN_DURATION_MS = 10 * 60 * 1000;
+const DISMISSED_AUTO_RECORD_COMPLETE_MIN_CHAT_MESSAGES = 2;
+
 async function runMeetingEndStep<T>(
   meeting: MeetingData,
   name: string,
@@ -72,6 +75,27 @@ async function runMeetingEndStep<T>(
 
 function shouldReleaseLeaseDuringErrorCleanup(meeting: MeetingData): boolean {
   return !meeting.finishing && !meeting.finished;
+}
+
+function shouldFinalizeDismissedAutoRecording(meeting: MeetingData): boolean {
+  if (!meeting.cancelled) return false;
+  if (!meeting.isAutoRecording) return false;
+  if (meeting.endReason !== MEETING_END_REASONS.DISMISSED) return false;
+  if (!meeting.endTime) {
+    throw new Error(
+      "Dismissed auto-record finalization requires meeting.endTime",
+    );
+  }
+
+  const durationMs = meeting.endTime.getTime() - meeting.startTime.getTime();
+  if (durationMs >= DISMISSED_AUTO_RECORD_COMPLETE_MIN_DURATION_MS) {
+    return true;
+  }
+
+  const chatMessageCount = meeting.chatLog.filter(
+    (entry) => entry.type === "message",
+  ).length;
+  return chatMessageCount >= DISMISSED_AUTO_RECORD_COMPLETE_MIN_CHAT_MESSAGES;
 }
 
 export async function handleEndMeetingButton(
@@ -229,9 +253,16 @@ async function runEndMeetingFlow(options: EndMeetingFlowOptions) {
       closeOutputFile(meeting),
     );
 
+    const finalizeDismissedAutoRecording =
+      shouldFinalizeDismissedAutoRecording(meeting);
+    if (finalizeDismissedAutoRecording) {
+      meeting.cancelled = false;
+      meeting.cancellationReason = undefined;
+    }
+
     if (meeting.cancelled) {
       await runMeetingEndStep(meeting, "auto-record-cancel-flow", () =>
-        handleAutoRecordCancellation(meeting, chatLogFilePath),
+        handleAutoRecordCancellation(client, meeting, chatLogFilePath),
       );
       await runMeetingEndStep(meeting, "cleanup-speaker-tracks", () =>
         cleanupSpeakerTracks(meeting),
@@ -239,27 +270,29 @@ async function runEndMeetingFlow(options: EndMeetingFlowOptions) {
       return;
     }
 
-    const cancellationDecision = await runMeetingEndStep(
-      meeting,
-      "auto-record-cancellation",
-      () => evaluateAutoRecordCancellation(meeting),
-      {
-        metadata: {
-          audioFiles: meeting.audioData.audioFiles.length,
+    if (!finalizeDismissedAutoRecording) {
+      const cancellationDecision = await runMeetingEndStep(
+        meeting,
+        "auto-record-cancellation",
+        () => evaluateAutoRecordCancellation(meeting),
+        {
+          metadata: {
+            audioFiles: meeting.audioData.audioFiles.length,
+          },
         },
-      },
-    );
-    if (cancellationDecision.cancel) {
-      meeting.cancelled = true;
-      meeting.cancellationReason = cancellationDecision.reason;
-      meeting.endReason = MEETING_END_REASONS.AUTO_CANCELLED;
-      await runMeetingEndStep(meeting, "auto-record-cancel-flow", () =>
-        handleAutoRecordCancellation(meeting, chatLogFilePath),
       );
-      await runMeetingEndStep(meeting, "cleanup-speaker-tracks", () =>
-        cleanupSpeakerTracks(meeting),
-      );
-      return;
+      if (cancellationDecision.cancel) {
+        meeting.cancelled = true;
+        meeting.cancellationReason = cancellationDecision.reason;
+        meeting.endReason = MEETING_END_REASONS.AUTO_CANCELLED;
+        await runMeetingEndStep(meeting, "auto-record-cancel-flow", () =>
+          handleAutoRecordCancellation(client, meeting, chatLogFilePath),
+        );
+        await runMeetingEndStep(meeting, "cleanup-speaker-tracks", () =>
+          cleanupSpeakerTracks(meeting),
+        );
+        return;
+      }
     }
 
     const combinedAudioFile = meeting.audioData.outputFileName!;
@@ -430,10 +463,12 @@ function maybeSuppressAutoRecordRejoin(
 }
 
 async function handleAutoRecordCancellation(
+  client: Client,
   meeting: MeetingData,
   chatLogFilePath: string,
 ) {
   meetingsCancelled.inc();
+  await uploadCancelledMeetingArtifacts(client, meeting, chatLogFilePath);
   await updateAutoRecordCancelledMessage(meeting);
   await deleteTrackedMessages(meeting);
   deleteIfExists(chatLogFilePath);
@@ -444,6 +479,49 @@ async function handleAutoRecordCancellation(
   meeting.setFinished();
   meeting.finished = true;
   deleteMeeting(meeting.guildId);
+}
+
+async function uploadCancelledMeetingArtifacts(
+  client: Client,
+  meeting: MeetingData,
+  chatLogFilePath: string,
+) {
+  let transcriptForUpload: string | undefined;
+
+  if (meeting.transcribeMeeting) {
+    // Cancelled-meeting uploads are best-effort recovery artifacts, so we skip
+    // the slower final transcription pass that only runs for fully finalized meetings.
+    const transcriptionsReady = meeting.audioData.audioFiles.every(
+      (file) => !file.processing,
+    );
+    if (!transcriptionsReady) {
+      const pending = meeting.audioData.audioFiles.filter(
+        (file) => file.processing,
+      ).length;
+      console.log(
+        `Waiting for cancelled meeting transcriptions to finish: pending=${pending} meetingId=${meeting.meetingId}`,
+      );
+      await runMeetingEndStep(meeting, "wait-cancelled-transcriptions", () =>
+        waitForFinishProcessing(meeting),
+      );
+    }
+
+    const transcriptions = await runMeetingEndStep(
+      meeting,
+      "compile-cancelled-transcriptions",
+      () => compileTranscriptions(client, meeting),
+    );
+    meeting.finalTranscript = transcriptions;
+    transcriptForUpload = transcriptions;
+  }
+
+  await runMeetingEndStep(meeting, "upload-cancelled-artifacts", () =>
+    uploadMeetingArtifacts(meeting, {
+      audioFilePath: meeting.audioData.outputFileName,
+      chatFilePath: chatLogFilePath,
+      transcriptText: transcriptForUpload,
+    }),
+  );
 }
 
 async function deleteTrackedMessages(meeting: MeetingData) {
@@ -474,10 +552,17 @@ async function updateAutoRecordCancelledMessage(meeting: MeetingData) {
     "Not enough content detected to keep this meeting.";
   const trimmedReason =
     reason.length > 700 ? `${reason.slice(0, 697)}...` : reason;
+  const wasDismissed = meeting.endReason === MEETING_END_REASONS.DISMISSED;
+  const title = wasDismissed
+    ? "Auto-Recording Stopped"
+    : "Auto-Recording Cancelled";
+  const description = wasDismissed
+    ? "Auto-recording was stopped before the meeting finished."
+    : "Auto-recording started and was cancelled.";
 
   const embed = new EmbedBuilder()
-    .setTitle("Auto-Recording Cancelled")
-    .setDescription("Auto-recording started and was cancelled.")
+    .setTitle(title)
+    .setDescription(description)
     .addFields(
       { name: "Triggered by", value: triggerLabel },
       { name: "Rule", value: ruleLabel },
