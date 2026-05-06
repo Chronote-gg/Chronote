@@ -5,7 +5,10 @@ import {
   listGuildChannelsCached,
 } from "../discordCacheService";
 import { checkUserMeetingAccess } from "../meetingAccessService";
-import { listRecentMeetingsForGuildService } from "../meetingHistoryService";
+import {
+  listMeetingsForGuildInRangeService,
+  listRecentMeetingsForGuildService,
+} from "../meetingHistoryService";
 import { listMcpMeetings, listMcpServersForUser } from "../mcpMeetingService";
 import type { MeetingHistory } from "../../types/db";
 
@@ -105,6 +108,26 @@ describe("mcpMeetingService", () => {
       "guild-1",
       100,
       { includeArchived: undefined },
+    );
+  });
+
+  it("caps date-range scans before access filtering", async () => {
+    jest.mocked(listMeetingsForGuildInRangeService).mockResolvedValue([]);
+
+    await expect(
+      listMcpMeetings({
+        userId: "user-1",
+        guildId: "guild-1",
+        startDate: "2026-01-01T00:00:00.000Z",
+        endDate: "2026-02-01T00:00:00.000Z",
+        limit: 10,
+      }),
+    ).resolves.toEqual({ meetings: [] });
+    expect(listMeetingsForGuildInRangeService).toHaveBeenCalledWith(
+      "guild-1",
+      "2026-01-01T00:00:00.000Z",
+      "2026-02-01T00:00:00.000Z",
+      50,
     );
   });
 

@@ -1,6 +1,8 @@
 import { jest } from "@jest/globals";
-import { handleMcpJsonRpcRequest } from "../mcp";
+import type { Express, RequestHandler } from "express";
+import { handleMcpJsonRpcRequest, registerMcpRoutes } from "../mcp";
 import { listMcpServersForUser } from "../../services/mcpMeetingService";
+import { validateMcpAccessToken } from "../../services/mcpOAuthService";
 import type { McpAccessTokenInfo } from "../../types/mcpOAuth";
 
 jest.mock("../../services/mcpMeetingService", () => ({
@@ -18,12 +20,56 @@ jest.mock("../../services/mcpMeetingService", () => ({
   listMcpServersForUser: jest.fn(),
 }));
 
+jest.mock("../../services/mcpOAuthService", () => ({
+  buildMcpBearerChallenge: jest.fn(() => "Bearer"),
+  formatMcpScope: jest.fn((scopes: string[]) => scopes.join(" ")),
+  hasMcpScopes: jest.fn((granted: string[], required: string[]) =>
+    required.every((scope) => granted.includes(scope)),
+  ),
+  validateMcpAccessToken: jest.fn(),
+}));
+
 const auth: McpAccessTokenInfo = {
   clientId: "client-1",
   userId: "user-1",
   scopes: ["meetings:read"],
   resource: "http://localhost:3001/mcp",
   expiresAt: 4_102_444_800,
+};
+
+const createResponse = () => {
+  const response = {
+    statusCode: 200,
+    body: undefined as unknown,
+    headers: new Map<string, string>(),
+    set: jest.fn((name: string, value: string) => {
+      response.headers.set(name, value);
+      return response;
+    }),
+    status: jest.fn((code: number) => {
+      response.statusCode = code;
+      return response;
+    }),
+    json: jest.fn((body: unknown) => {
+      response.body = body;
+      return response;
+    }),
+    end: jest.fn(() => response),
+  };
+  return response;
+};
+
+const captureMcpPostHandler = () => {
+  let postHandler: RequestHandler | undefined;
+  const app = {
+    get: jest.fn(),
+    post: jest.fn((_path: string, handler: RequestHandler) => {
+      postHandler = handler;
+    }),
+  };
+  registerMcpRoutes(app as unknown as Express);
+  if (!postHandler) throw new Error("MCP POST route was not registered.");
+  return postHandler;
 };
 
 describe("MCP JSON-RPC handler", () => {
@@ -101,6 +147,25 @@ describe("MCP JSON-RPC handler", () => {
       jsonrpc: "2.0",
       id: 3,
       error: { code: -32602, message: "Invalid params." },
+    });
+  });
+
+  it("rejects empty JSON-RPC batches", async () => {
+    jest.mocked(validateMcpAccessToken).mockResolvedValue(auth);
+    const postHandler = captureMcpPostHandler();
+    const response = createResponse();
+
+    await postHandler(
+      { headers: { authorization: "Bearer token" }, body: [] } as never,
+      response as never,
+      jest.fn(),
+    );
+
+    expect(response.statusCode).toBe(400);
+    expect(response.body).toMatchObject({
+      jsonrpc: "2.0",
+      id: null,
+      error: { code: -32600, message: "Invalid JSON-RPC request." },
     });
   });
 });

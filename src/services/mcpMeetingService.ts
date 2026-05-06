@@ -28,6 +28,7 @@ const MIN_TIMESTAMP_ISO = "1970-01-01T00:00:00.000Z";
 const MAX_TIMESTAMP_ISO = "9999-12-31T23:59:59.999Z";
 const DEFAULT_MEETING_LIMIT = 25;
 const MAX_MEETING_LIMIT = 100;
+const MCP_MEETING_SCAN_LIMIT_MULTIPLIER = 5;
 const MCP_SERVER_MEMBERSHIP_BATCH_SIZE = 5;
 
 type ListMcpMeetingsInput = {
@@ -316,12 +317,14 @@ export async function listMcpMeetings(input: ListMcpMeetingsInput) {
     input.limit ?? DEFAULT_MEETING_LIMIT,
     MAX_MEETING_LIMIT,
   );
+  const scanLimit = limit * MCP_MEETING_SCAN_LIMIT_MULTIPLIER;
   const hasRange = input.startDate || input.endDate;
   const meetings = hasRange
     ? await listMeetingsForGuildInRangeService(
         input.guildId,
         input.startDate ?? MIN_TIMESTAMP_ISO,
         input.endDate ?? MAX_TIMESTAMP_ISO,
+        scanLimit,
       )
     : await listRecentMeetingsForGuildService(
         input.guildId,

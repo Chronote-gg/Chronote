@@ -215,6 +215,24 @@ describe("mcpOAuthService", () => {
     expect(() => parseMcpScopes("meetings:write")).toThrow(McpOAuthError);
   });
 
+  it("rejects unsupported dynamic client registration grant types", async () => {
+    await expect(
+      registerMcpOAuthClient({
+        redirect_uris: [redirectUri],
+        grant_types: ["implicit"],
+      }),
+    ).rejects.toMatchObject({ code: "invalid_client_metadata" });
+  });
+
+  it("rejects unsupported dynamic client registration response types", async () => {
+    await expect(
+      registerMcpOAuthClient({
+        redirect_uris: [redirectUri],
+        response_types: ["token"],
+      }),
+    ).rejects.toMatchObject({ code: "invalid_client_metadata" });
+  });
+
   it("rejects PKCE verifiers outside the RFC 7636 character set", async () => {
     const client = await registerMcpOAuthClient({
       redirect_uris: [redirectUri],

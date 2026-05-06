@@ -17,6 +17,8 @@ const CODE_VERIFIER_MAX_LENGTH = 128;
 const PKCE_VERIFIER_PATTERN = /^[A-Za-z0-9\-._~]+$/;
 const BEARER_TOKEN_TYPE = "Bearer";
 const DEFAULT_SCOPE = "meetings:read";
+const SUPPORTED_GRANT_TYPES = ["authorization_code", "refresh_token"];
+const SUPPORTED_RESPONSE_TYPES = ["code"];
 
 export class McpOAuthError extends Error {
   constructor(
@@ -95,6 +97,27 @@ const assertValidRedirectUri = (redirectUri: string) => {
       "Redirect URIs must use HTTPS or localhost HTTP.",
     );
   }
+};
+
+const resolveSupportedClientValues = (
+  values: string[] | undefined,
+  supportedValues: string[],
+) => {
+  if (values === undefined || values.length === 0) return supportedValues;
+  if (!Array.isArray(values)) {
+    throw new McpOAuthError(
+      "invalid_client_metadata",
+      "Unsupported MCP client metadata.",
+    );
+  }
+  const requestedValues = Array.from(new Set(values));
+  if (requestedValues.some((value) => !supportedValues.includes(value))) {
+    throw new McpOAuthError(
+      "invalid_client_metadata",
+      "Unsupported MCP client metadata.",
+    );
+  }
+  return requestedValues;
 };
 
 const assertClientRedirectUri = (
@@ -194,18 +217,22 @@ export async function registerMcpOAuthClient(input: {
     );
   }
   input.redirect_uris.forEach(assertValidRedirectUri);
+  const grantTypes = resolveSupportedClientValues(
+    input.grant_types,
+    SUPPORTED_GRANT_TYPES,
+  );
+  const responseTypes = resolveSupportedClientValues(
+    input.response_types,
+    SUPPORTED_RESPONSE_TYPES,
+  );
   const now = nowIso();
   const client: McpOAuthClient = {
     clientId: `mcp_client_${randomToken(CLIENT_ID_BYTES)}`,
     clientName: input.client_name?.trim() || "MCP Client",
     redirectUris: Array.from(new Set(input.redirect_uris)),
     clientUri: input.client_uri,
-    grantTypes: input.grant_types?.length
-      ? input.grant_types
-      : ["authorization_code", "refresh_token"],
-    responseTypes: input.response_types?.length
-      ? input.response_types
-      : ["code"],
+    grantTypes,
+    responseTypes,
     tokenEndpointAuthMethod: "none",
     createdAt: now,
     updatedAt: now,

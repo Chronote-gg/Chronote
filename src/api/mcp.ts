@@ -187,6 +187,13 @@ const jsonRpcError = (
   error: { code, message },
 });
 
+const invalidJsonRpcRequest = () =>
+  jsonRpcError(null, -32600, "Invalid JSON-RPC request.");
+
+const sendInvalidJsonRpcRequest = (res: Response) => {
+  res.status(400).json(invalidJsonRpcRequest());
+};
+
 const toolResult = (value: unknown) => ({
   content: [{ type: "text", text: JSON.stringify(value, null, 2) }],
   structuredContent: value,
@@ -205,6 +212,30 @@ const mapMeetingError = (error: unknown) => {
   if (error.code === "rate_limited")
     return toolError("Discord rate limited. Please retry.");
   return toolError(error.message);
+};
+
+const parseJsonRpcRequestBodies = (body: unknown) => {
+  const requestBodies = Array.isArray(body) ? body : [body];
+  if (Array.isArray(body) && body.length === 0) return undefined;
+  if (!requestBodies.every(isJsonRpcRequest)) return undefined;
+  return requestBodies;
+};
+
+const resolveSingleRequestRequiredScopes = (
+  body: unknown,
+  requestBodies: JsonRpcRequest[],
+) => {
+  if (Array.isArray(body)) return undefined;
+  const callRequest = requestBodies.find(
+    (request) =>
+      request.method === "tools/call" &&
+      typeof (request.params as { name?: unknown } | undefined)?.name ===
+        "string",
+  );
+  const requestedToolName = (
+    callRequest?.params as { name?: string } | undefined
+  )?.name;
+  return requestedToolName ? toolScopes.get(requestedToolName) : undefined;
 };
 
 async function callTool(auth: McpAccessTokenInfo, name: string, args: unknown) {
@@ -324,33 +355,23 @@ export function registerMcpRoutes(app: Express) {
       sendUnauthorized(res);
       return;
     }
-    const requestBodies = Array.isArray(req.body) ? req.body : [req.body];
-    if (!requestBodies.every(isJsonRpcRequest)) {
-      res
-        .status(400)
-        .json(jsonRpcError(null, -32600, "Invalid JSON-RPC request."));
+    const parsedRequestBodies = parseJsonRpcRequestBodies(req.body);
+    if (!parsedRequestBodies) {
+      sendInvalidJsonRpcRequest(res);
       return;
     }
-    if (!Array.isArray(req.body)) {
-      const callRequest = requestBodies.find(
-        (body) =>
-          body.method === "tools/call" &&
-          typeof (body.params as { name?: unknown } | undefined)?.name ===
-            "string",
-      );
-      const requestedToolName = (
-        callRequest?.params as { name?: string } | undefined
-      )?.name;
-      const requiredScopes = requestedToolName
-        ? toolScopes.get(requestedToolName)
-        : undefined;
-      if (requiredScopes && !hasMcpScopes(auth.scopes, requiredScopes)) {
-        sendInsufficientScope(res, requiredScopes);
-        return;
-      }
+    const requiredScopes = resolveSingleRequestRequiredScopes(
+      req.body,
+      parsedRequestBodies,
+    );
+    if (requiredScopes && !hasMcpScopes(auth.scopes, requiredScopes)) {
+      sendInsufficientScope(res, requiredScopes);
+      return;
     }
     const responses = await Promise.all(
-      requestBodies.map((request) => handleMcpJsonRpcRequest(auth, request)),
+      parsedRequestBodies.map((request) =>
+        handleMcpJsonRpcRequest(auth, request),
+      ),
     );
     const responseBodies = responses.filter(
       (response) => response !== undefined,

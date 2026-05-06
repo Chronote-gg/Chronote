@@ -31,6 +31,7 @@ export type MeetingHistoryRepository = {
     guildId: string,
     startTimestamp: string,
     endTimestamp: string,
+    limit?: number,
   ) => Promise<MeetingHistory[]>;
   listRecentByChannel: (
     guildId: string,
@@ -105,11 +106,17 @@ const realRepository: MeetingHistoryRepository = {
     );
     return filterArchivedMeetings(active, options);
   },
-  listByGuildTimestampRange: async (guildId, startTimestamp, endTimestamp) => {
+  listByGuildTimestampRange: async (
+    guildId,
+    startTimestamp,
+    endTimestamp,
+    limit,
+  ) => {
     const meetings = await getMeetingsForGuildInRange(
       guildId,
       startTimestamp,
       endTimestamp,
+      limit,
     );
     return meetings.filter(
       (meeting) => meeting.status !== MEETING_STATUS.CANCELLED,
@@ -193,13 +200,22 @@ const mockRepository: MeetingHistoryRepository = {
       .sort((a, b) => b.timestamp.localeCompare(a.timestamp))
       .slice(0, limit);
   },
-  async listByGuildTimestampRange(guildId, startTimestamp, endTimestamp) {
+  async listByGuildTimestampRange(
+    guildId,
+    startTimestamp,
+    endTimestamp,
+    limit,
+  ) {
     const items = getMockStore().meetingHistoryByGuild.get(guildId) ?? [];
-    return items.filter((item) => {
-      if (!item.timestamp) return false;
-      if (item.status === MEETING_STATUS.CANCELLED) return false;
-      return item.timestamp >= startTimestamp && item.timestamp <= endTimestamp;
-    });
+    return items
+      .filter((item) => {
+        if (!item.timestamp) return false;
+        if (item.status === MEETING_STATUS.CANCELLED) return false;
+        return (
+          item.timestamp >= startTimestamp && item.timestamp <= endTimestamp
+        );
+      })
+      .slice(0, limit);
   },
   async updateNotes(params) {
     const items =
