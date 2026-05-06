@@ -402,7 +402,7 @@ provider "aws" {
 data "aws_caller_identity" "current" {}
 
 provider "github" {
-  owner = "BASIC-BIT"
+  owner = "Chronote-gg"
   token = var.GITHUB_TOKEN
 }
 
@@ -465,7 +465,7 @@ EOF
 }
 
 data "github_repository" "repo" {
-  full_name = "BASIC-BIT/meeting-notes-discord-bot"
+  full_name = "Chronote-gg/Chronote"
 }
 
 resource "github_repository_environment" "repo_env" {
