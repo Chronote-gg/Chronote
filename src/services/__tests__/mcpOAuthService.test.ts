@@ -91,6 +91,44 @@ describe("mcpOAuthService", () => {
     ).rejects.toMatchObject({ code: "invalid_grant" });
   });
 
+  it("allows only one concurrent authorization code exchange", async () => {
+    const client = await registerMcpOAuthClient({
+      redirect_uris: [redirectUri],
+    });
+    const code = await issueMcpAuthorizationCode({
+      clientId: client.clientId,
+      userId: "user-1",
+      redirectUri,
+      resource: getMcpResourceUrl(),
+      codeChallenge,
+      codeChallengeMethod: "S256",
+    });
+
+    const results = await Promise.allSettled([
+      exchangeMcpAuthorizationCode({
+        clientId: client.clientId,
+        code,
+        redirectUri,
+        codeVerifier,
+        resource: getMcpResourceUrl(),
+      }),
+      exchangeMcpAuthorizationCode({
+        clientId: client.clientId,
+        code,
+        redirectUri,
+        codeVerifier,
+        resource: getMcpResourceUrl(),
+      }),
+    ]);
+
+    expect(
+      results.filter((result) => result.status === "fulfilled"),
+    ).toHaveLength(1);
+    expect(
+      results.filter((result) => result.status === "rejected"),
+    ).toHaveLength(1);
+  });
+
   it("rotates refresh tokens and revokes access tokens", async () => {
     const client = await registerMcpOAuthClient({
       redirect_uris: [redirectUri],
@@ -130,6 +168,47 @@ describe("mcpOAuthService", () => {
     await expect(
       validateMcpAccessToken(secondTokens.access_token),
     ).resolves.toBeUndefined();
+  });
+
+  it("allows only one concurrent refresh token rotation", async () => {
+    const client = await registerMcpOAuthClient({
+      redirect_uris: [redirectUri],
+    });
+    const code = await issueMcpAuthorizationCode({
+      clientId: client.clientId,
+      userId: "user-1",
+      redirectUri,
+      resource: getMcpResourceUrl(),
+      codeChallenge,
+      codeChallengeMethod: "S256",
+    });
+    const firstTokens = await exchangeMcpAuthorizationCode({
+      clientId: client.clientId,
+      code,
+      redirectUri,
+      codeVerifier,
+      resource: getMcpResourceUrl(),
+    });
+
+    const results = await Promise.allSettled([
+      refreshMcpAccessToken({
+        clientId: client.clientId,
+        refreshToken: firstTokens.refresh_token,
+        resource: getMcpResourceUrl(),
+      }),
+      refreshMcpAccessToken({
+        clientId: client.clientId,
+        refreshToken: firstTokens.refresh_token,
+        resource: getMcpResourceUrl(),
+      }),
+    ]);
+
+    expect(
+      results.filter((result) => result.status === "fulfilled"),
+    ).toHaveLength(1);
+    expect(
+      results.filter((result) => result.status === "rejected"),
+    ).toHaveLength(1);
   });
 
   it("rejects unsupported scopes", () => {

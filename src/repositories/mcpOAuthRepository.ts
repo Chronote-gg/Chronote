@@ -30,9 +30,16 @@ export type McpOAuthRepository = {
   getAuthorizationCode: (
     codeHash: string,
   ) => Promise<McpOAuthAuthorizationCode | undefined>;
+  consumeAuthorizationCode: (
+    codeHash: string,
+  ) => Promise<McpOAuthAuthorizationCode | undefined>;
   deleteAuthorizationCode: (codeHash: string) => Promise<void>;
   writeToken: (token: McpOAuthToken) => Promise<void>;
   getToken: (
+    tokenType: McpOAuthToken["tokenType"],
+    tokenHash: string,
+  ) => Promise<McpOAuthToken | undefined>;
+  consumeToken: (
     tokenType: McpOAuthToken["tokenType"],
     tokenHash: string,
   ) => Promise<McpOAuthToken | undefined>;
@@ -104,6 +111,17 @@ const deleteItem = async (key: { pk: string; sk: string }) => {
   );
 };
 
+const consumeItem = async <T>(key: { pk: string; sk: string }) => {
+  const result = await dynamoDbClient.send(
+    new DeleteItemCommand({
+      TableName: tableName,
+      Key: marshall(key),
+      ReturnValues: "ALL_OLD",
+    }),
+  );
+  return result.Attributes ? (unmarshall(result.Attributes) as T) : undefined;
+};
+
 const realRepository: McpOAuthRepository = {
   writeClient: (client) =>
     writeItem({
@@ -125,6 +143,12 @@ const realRepository: McpOAuthRepository = {
     const item = await getItem<McpOAuthItem>(authorizationCodeKey(codeHash));
     return item?.recordType === "authorization_code" ? item : undefined;
   },
+  async consumeAuthorizationCode(codeHash) {
+    const item = await consumeItem<McpOAuthItem>(
+      authorizationCodeKey(codeHash),
+    );
+    return item?.recordType === "authorization_code" ? item : undefined;
+  },
   deleteAuthorizationCode: (codeHash) =>
     deleteItem(authorizationCodeKey(codeHash)),
   writeToken: (token) =>
@@ -135,6 +159,12 @@ const realRepository: McpOAuthRepository = {
     }),
   async getToken(tokenType, tokenHash) {
     const item = await getItem<McpOAuthItem>(tokenKey(tokenType, tokenHash));
+    return item?.recordType === "token" ? item : undefined;
+  },
+  async consumeToken(tokenType, tokenHash) {
+    const item = await consumeItem<McpOAuthItem>(
+      tokenKey(tokenType, tokenHash),
+    );
     return item?.recordType === "token" ? item : undefined;
   },
   deleteToken: (tokenType, tokenHash) =>
@@ -176,6 +206,11 @@ const memoryRepository: McpOAuthRepository = {
   async getAuthorizationCode(codeHash) {
     return memoryCodes.get(codeHash);
   },
+  async consumeAuthorizationCode(codeHash) {
+    const code = memoryCodes.get(codeHash);
+    memoryCodes.delete(codeHash);
+    return code;
+  },
   async deleteAuthorizationCode(codeHash) {
     memoryCodes.delete(codeHash);
   },
@@ -184,6 +219,12 @@ const memoryRepository: McpOAuthRepository = {
   },
   async getToken(tokenType, tokenHash) {
     return memoryTokens.get(memoryTokenKey(tokenType, tokenHash));
+  },
+  async consumeToken(tokenType, tokenHash) {
+    const key = memoryTokenKey(tokenType, tokenHash);
+    const token = memoryTokens.get(key);
+    memoryTokens.delete(key);
+    return token;
   },
   async deleteToken(tokenType, tokenHash) {
     memoryTokens.delete(memoryTokenKey(tokenType, tokenHash));

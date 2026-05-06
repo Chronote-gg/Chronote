@@ -294,10 +294,9 @@ export async function exchangeMcpAuthorizationCode(params: {
   assertPkceVerifier(params.codeVerifier);
   const repository = getMcpOAuthRepository();
   const codeHash = hashMcpToken(params.code);
-  const code = await repository.getAuthorizationCode(codeHash);
+  const code = await repository.consumeAuthorizationCode(codeHash);
   if (!code)
     throw new McpOAuthError("invalid_grant", "Invalid authorization code.");
-  await repository.deleteAuthorizationCode(codeHash);
   if (code.expiresAt <= epochSeconds()) {
     throw new McpOAuthError("invalid_grant", "Authorization code expired.");
   }
@@ -326,10 +325,9 @@ export async function refreshMcpAccessToken(params: {
   assertMcpResource(params.resource);
   const repository = getMcpOAuthRepository();
   const tokenHash = hashMcpToken(params.refreshToken);
-  const token = await repository.getToken("refresh", tokenHash);
+  const token = await repository.consumeToken("refresh", tokenHash);
   if (!token)
     throw new McpOAuthError("invalid_grant", "Invalid refresh token.");
-  await repository.deleteToken("refresh", tokenHash);
   if (token.expiresAt <= epochSeconds() || token.clientId !== params.clientId) {
     throw new McpOAuthError("invalid_grant", "Invalid refresh token.");
   }
