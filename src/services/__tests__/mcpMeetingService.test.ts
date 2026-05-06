@@ -10,6 +10,7 @@ import {
   listRecentMeetingsForGuildService,
 } from "../meetingHistoryService";
 import { listMcpMeetings, listMcpServersForUser } from "../mcpMeetingService";
+import { resolveConfigSnapshot } from "../unifiedConfigService";
 import type { MeetingHistory } from "../../types/db";
 
 jest.mock("../discordService", () => ({
@@ -141,6 +142,38 @@ describe("mcpMeetingService", () => {
       listMcpMeetings({ userId: "user-1", guildId: "guild-1" }),
     ).resolves.toEqual({ meetings: [] });
     expect(checkUserMeetingAccess).not.toHaveBeenCalled();
+  });
+
+  it("returns an empty meeting list for non-positive direct service limits", async () => {
+    await expect(
+      listMcpMeetings({ userId: "user-1", guildId: "guild-1", limit: 0 }),
+    ).resolves.toEqual({ meetings: [] });
+
+    expect(listRecentMeetingsForGuildService).not.toHaveBeenCalled();
+    expect(getGuildMemberCached).not.toHaveBeenCalled();
+  });
+
+  it("reuses guild membership and config checks while listing meetings", async () => {
+    jest
+      .mocked(listRecentMeetingsForGuildService)
+      .mockResolvedValue([
+        createMeeting("meeting-1"),
+        createMeeting("meeting-2"),
+      ]);
+    jest.mocked(checkUserMeetingAccess).mockResolvedValue({
+      allowed: true,
+      via: "attendee",
+    });
+
+    await expect(
+      listMcpMeetings({ userId: "user-1", guildId: "guild-1", limit: 2 }),
+    ).resolves.toMatchObject({
+      meetings: [{ meetingId: "meeting-1" }, { meetingId: "meeting-2" }],
+    });
+
+    expect(getGuildMemberCached).toHaveBeenCalledTimes(1);
+    expect(resolveConfigSnapshot).toHaveBeenCalledTimes(1);
+    expect(checkUserMeetingAccess).toHaveBeenCalledTimes(2);
   });
 
   it("caches accessible server lists for repeated polling", async () => {

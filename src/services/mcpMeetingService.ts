@@ -42,6 +42,10 @@ type ListMcpMeetingsInput = {
   includeArchived?: boolean;
 };
 
+type McpMeetingAccessContext = {
+  attendeeOverrideEnabled: boolean;
+};
+
 export class McpMeetingAccessError extends Error {
   constructor(
     message: string,
@@ -115,13 +119,9 @@ const resolveAttendeeAccessEnabled = async (guildId: string) => {
   }
 };
 
-const ensureMcpMeetingAccess = async (options: {
-  guildId: string;
-  meeting: MeetingHistory;
-  userId: string;
-}) => {
+const assertMcpGuildMembership = async (guildId: string, userId: string) => {
   try {
-    await getGuildMemberCached(options.guildId, options.userId);
+    await getGuildMemberCached(guildId, userId);
   } catch (error) {
     if (isDiscordApiError(error) && error.status === 429) {
       throw new McpMeetingAccessError(
@@ -131,15 +131,32 @@ const ensureMcpMeetingAccess = async (options: {
     }
     throw new McpMeetingAccessError("Meeting access required.", "forbidden");
   }
+};
 
-  const attendeeOverrideEnabled = await resolveAttendeeAccessEnabled(
-    options.guildId,
-  );
+const resolveMcpMeetingAccessContext = async (
+  guildId: string,
+  userId: string,
+): Promise<McpMeetingAccessContext> => {
+  await assertMcpGuildMembership(guildId, userId);
+  return {
+    attendeeOverrideEnabled: await resolveAttendeeAccessEnabled(guildId),
+  };
+};
+
+const ensureMcpMeetingAccess = async (options: {
+  guildId: string;
+  meeting: MeetingHistory;
+  userId: string;
+  accessContext?: McpMeetingAccessContext;
+}) => {
+  const accessContext =
+    options.accessContext ??
+    (await resolveMcpMeetingAccessContext(options.guildId, options.userId));
   const decision = await checkUserMeetingAccess({
     guildId: options.guildId,
     meeting: options.meeting,
     userId: options.userId,
-    attendeeOverrideEnabled,
+    attendeeOverrideEnabled: accessContext.attendeeOverrideEnabled,
   });
   if (decision.allowed === null) {
     throw new McpMeetingAccessError(
@@ -288,6 +305,7 @@ const collectAccessibleMeetings = async (
   meetings: MeetingHistory[],
   input: ListMcpMeetingsInput,
   limit: number,
+  accessContext: McpMeetingAccessContext,
 ) => {
   const allowedMeetings: MeetingHistory[] = [];
   for (const meeting of meetings) {
@@ -296,6 +314,7 @@ const collectAccessibleMeetings = async (
         guildId: input.guildId,
         meeting,
         userId: input.userId,
+        accessContext,
       });
       allowedMeetings.push(meeting);
       if (allowedMeetings.length >= limit) break;
@@ -313,10 +332,24 @@ const collectAccessibleMeetings = async (
 };
 
 export async function listMcpMeetings(input: ListMcpMeetingsInput) {
-  const limit = Math.min(
-    input.limit ?? DEFAULT_MEETING_LIMIT,
-    MAX_MEETING_LIMIT,
+  const limit = Math.max(
+    0,
+    Math.min(input.limit ?? DEFAULT_MEETING_LIMIT, MAX_MEETING_LIMIT),
   );
+  if (limit === 0) return { meetings: [] };
+
+  let accessContext: McpMeetingAccessContext;
+  try {
+    accessContext = await resolveMcpMeetingAccessContext(
+      input.guildId,
+      input.userId,
+    );
+  } catch (error) {
+    if (error instanceof McpMeetingAccessError && error.code === "forbidden") {
+      return { meetings: [] };
+    }
+    throw error;
+  }
   const scanLimit = limit * MCP_MEETING_SCAN_LIMIT_MULTIPLIER;
   const hasRange = input.startDate || input.endDate;
   const meetings = hasRange
@@ -339,6 +372,7 @@ export async function listMcpMeetings(input: ListMcpMeetingsInput) {
     filtered,
     input,
     limit,
+    accessContext,
   );
   const channelMap = await resolveChannelMap(input.guildId);
   return {

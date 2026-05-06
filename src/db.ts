@@ -988,11 +988,13 @@ export async function getMeetingsForGuildInRange(
   endTimestamp: string,
   limit?: number,
 ): Promise<MeetingHistory[]> {
+  if (limit !== undefined && limit <= 0) return [];
+
   const items: MeetingHistory[] = [];
   let lastKey: Record<string, AttributeValue> | undefined;
 
   do {
-    const remaining = limit ? limit - items.length : undefined;
+    const remaining = limit === undefined ? undefined : limit - items.length;
     const params = {
       TableName: tableName("MeetingHistoryTable"),
       IndexName: "GuildTimestampIndex",
@@ -1006,7 +1008,7 @@ export async function getMeetingsForGuildInRange(
       }),
       ExclusiveStartKey: lastKey,
       ScanIndexForward: false,
-      ...(remaining ? { Limit: remaining } : {}),
+      ...(remaining !== undefined && remaining > 0 ? { Limit: remaining } : {}),
     };
     const command = new QueryCommand(params);
     const result = await dynamoDbClient.send(command);
@@ -1016,9 +1018,9 @@ export async function getMeetingsForGuildInRange(
       );
     }
     lastKey = result.LastEvaluatedKey;
-  } while (lastKey && (!limit || items.length < limit));
+  } while (lastKey && (limit === undefined || items.length < limit));
 
-  return limit ? items.slice(0, limit) : items;
+  return limit === undefined ? items : items.slice(0, limit);
 }
 
 export async function getMeetingHistory(
