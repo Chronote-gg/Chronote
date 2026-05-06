@@ -19,6 +19,7 @@ const BEARER_TOKEN_TYPE = "Bearer";
 const DEFAULT_SCOPE = "meetings:read";
 const SUPPORTED_GRANT_TYPES = ["authorization_code", "refresh_token"];
 const SUPPORTED_RESPONSE_TYPES = ["code"];
+const SUPPORTED_TOKEN_ENDPOINT_AUTH_METHOD = "none";
 
 export class McpOAuthError extends Error {
   constructor(
@@ -118,6 +119,16 @@ const resolveSupportedClientValues = (
     );
   }
   return requestedValues;
+};
+
+const resolveTokenEndpointAuthMethod = (method?: string): "none" => {
+  if (method === undefined || method === SUPPORTED_TOKEN_ENDPOINT_AUTH_METHOD) {
+    return SUPPORTED_TOKEN_ENDPOINT_AUTH_METHOD;
+  }
+  throw new McpOAuthError(
+    "invalid_client_metadata",
+    "Unsupported MCP client metadata.",
+  );
 };
 
 const assertClientRedirectUri = (
@@ -225,6 +236,9 @@ export async function registerMcpOAuthClient(input: {
     input.response_types,
     SUPPORTED_RESPONSE_TYPES,
   );
+  const tokenEndpointAuthMethod = resolveTokenEndpointAuthMethod(
+    input.token_endpoint_auth_method,
+  );
   const now = nowIso();
   const client: McpOAuthClient = {
     clientId: `mcp_client_${randomToken(CLIENT_ID_BYTES)}`,
@@ -233,7 +247,7 @@ export async function registerMcpOAuthClient(input: {
     clientUri: input.client_uri,
     grantTypes,
     responseTypes,
-    tokenEndpointAuthMethod: "none",
+    tokenEndpointAuthMethod,
     createdAt: now,
     updatedAt: now,
   };

@@ -106,7 +106,7 @@ describe("mcpMeetingService", () => {
     });
     expect(listRecentMeetingsForGuildService).toHaveBeenCalledWith(
       "guild-1",
-      100,
+      10,
       { includeArchived: undefined },
     );
   });

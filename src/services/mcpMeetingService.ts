@@ -326,13 +326,9 @@ export async function listMcpMeetings(input: ListMcpMeetingsInput) {
         input.endDate ?? MAX_TIMESTAMP_ISO,
         scanLimit,
       )
-    : await listRecentMeetingsForGuildService(
-        input.guildId,
-        MAX_MEETING_LIMIT,
-        {
-          includeArchived: input.includeArchived,
-        },
-      );
+    : await listRecentMeetingsForGuildService(input.guildId, scanLimit, {
+        includeArchived: input.includeArchived,
+      });
   const requestedTags = new Set(
     (input.tags ?? []).map((tag) => tag.toLowerCase()),
   );

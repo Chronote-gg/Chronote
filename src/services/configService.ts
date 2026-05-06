@@ -379,6 +379,10 @@ class ConfigService {
       );
     }
 
+    if (this.mcp.enabled) {
+      required.push({ name: "OAUTH_SECRET", value: this.server.oauthSecret });
+    }
+
     // Stripe validation (optional unless key provided)
     if (this.stripe.secretKey) {
       required.push(

@@ -1005,6 +1005,7 @@ export async function getMeetingsForGuildInRange(
         ":end": endTimestamp,
       }),
       ExclusiveStartKey: lastKey,
+      ScanIndexForward: false,
       ...(remaining ? { Limit: remaining } : {}),
     };
     const command = new QueryCommand(params);

@@ -215,6 +215,7 @@ const mockRepository: MeetingHistoryRepository = {
           item.timestamp >= startTimestamp && item.timestamp <= endTimestamp
         );
       })
+      .sort((a, b) => b.timestamp.localeCompare(a.timestamp))
       .slice(0, limit);
   },
   async updateNotes(params) {

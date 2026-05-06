@@ -17,7 +17,7 @@ https://api.chronote.gg/mcp
 
 Self-hosted deployments should use their own API base URL plus `/mcp`.
 
-Remote MCP requires Discord OAuth to be enabled. Set `MCP_PUBLIC_BASE_URL` to the externally reachable API origin if it differs from the server's internal URL.
+Remote MCP requires Discord OAuth and `OAUTH_SECRET` to be configured. Set `MCP_PUBLIC_BASE_URL` to the externally reachable API origin if it differs from the server's internal URL.
 
 ## Available Tools
 

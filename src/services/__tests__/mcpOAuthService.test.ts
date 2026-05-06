@@ -233,6 +233,15 @@ describe("mcpOAuthService", () => {
     ).rejects.toMatchObject({ code: "invalid_client_metadata" });
   });
 
+  it("rejects unsupported dynamic client registration token auth methods", async () => {
+    await expect(
+      registerMcpOAuthClient({
+        redirect_uris: [redirectUri],
+        token_endpoint_auth_method: "client_secret_post",
+      }),
+    ).rejects.toMatchObject({ code: "invalid_client_metadata" });
+  });
+
   it("rejects PKCE verifiers outside the RFC 7636 character set", async () => {
     const client = await registerMcpOAuthClient({
       redirect_uris: [redirectUri],
