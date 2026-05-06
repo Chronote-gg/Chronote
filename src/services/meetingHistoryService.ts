@@ -29,11 +29,13 @@ export async function listMeetingsForGuildInRangeService(
   guildId: string,
   startTimestamp: string,
   endTimestamp: string,
+  limit?: number,
 ) {
   return getMeetingHistoryRepository().listByGuildTimestampRange(
     guildId,
     startTimestamp,
     endTimestamp,
+    limit,
   );
 }
 

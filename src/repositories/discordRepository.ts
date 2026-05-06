@@ -8,6 +8,8 @@ import type {
   DiscordRole,
 } from "./types";
 
+const DISCORD_SNOWFLAKE_PATTERN = /^\d{17,20}$/;
+
 export class DiscordApiError extends Error {
   readonly status: number;
 
@@ -31,6 +33,13 @@ const discordRetryPolicy = retry(handleWhen(shouldRetryDiscordError), {
 
 const withDiscordRetry = async <T>(operation: () => Promise<T>) =>
   discordRetryPolicy.execute(operation);
+
+export const assertDiscordSnowflake = (value: string, label: string) => {
+  if (!DISCORD_SNOWFLAKE_PATTERN.test(value)) {
+    throw new DiscordApiError(400, `Invalid Discord ${label}`);
+  }
+  return value;
+};
 
 export type DiscordRepository = {
   listUserGuilds: (accessToken: string) => Promise<DiscordGuild[]>;
@@ -67,9 +76,10 @@ const realRepository: DiscordRepository = {
     });
   },
   async listGuildChannels(guildId: string) {
+    const validGuildId = assertDiscordSnowflake(guildId, "guild id");
     return withDiscordRetry(async () => {
       const resp = await fetch(
-        `https://discord.com/api/guilds/${guildId}/channels`,
+        `https://discord.com/api/guilds/${validGuildId}/channels`,
         {
           headers: { Authorization: `Bot ${config.discord.botToken}` },
         },
@@ -84,9 +94,10 @@ const realRepository: DiscordRepository = {
     });
   },
   async listGuildRoles(guildId: string) {
+    const validGuildId = assertDiscordSnowflake(guildId, "guild id");
     return withDiscordRetry(async () => {
       const resp = await fetch(
-        `https://discord.com/api/guilds/${guildId}/roles`,
+        `https://discord.com/api/guilds/${validGuildId}/roles`,
         {
           headers: { Authorization: `Bot ${config.discord.botToken}` },
         },
@@ -98,9 +109,11 @@ const realRepository: DiscordRepository = {
     });
   },
   async getGuildMember(guildId: string, userId: string) {
+    const validGuildId = assertDiscordSnowflake(guildId, "guild id");
+    const validUserId = assertDiscordSnowflake(userId, "user id");
     return withDiscordRetry(async () => {
       const resp = await fetch(
-        `https://discord.com/api/guilds/${guildId}/members/${userId}`,
+        `https://discord.com/api/guilds/${validGuildId}/members/${validUserId}`,
         {
           headers: { Authorization: `Bot ${config.discord.botToken}` },
         },
