@@ -14,24 +14,19 @@ resource "aws_acm_certificate" "api_cert" {
 }
 
 resource "aws_route53_record" "api_cert_validation" {
-  for_each = length(aws_acm_certificate.api_cert) > 0 ? {
-    for dvo in aws_acm_certificate.api_cert[0].domain_validation_options :
-    dvo.domain_name => {
-      name  = dvo.resource_record_name
-      type  = dvo.resource_record_type
-      value = dvo.resource_record_value
-    }
+  for_each = var.API_DOMAIN != "" && var.HOSTED_ZONE_NAME != "" && var.API_CERT_ARN == "" ? {
+    (var.API_DOMAIN) = one(aws_acm_certificate.api_cert[0].domain_validation_options)
   } : {}
 
-  name    = each.value.name
-  type    = each.value.type
+  name    = each.value.resource_record_name
+  type    = each.value.resource_record_type
   zone_id = data.aws_route53_zone.api_hosted_zone[0].zone_id
-  records = [each.value.value]
+  records = [each.value.resource_record_value]
   ttl     = 300
 }
 
 resource "aws_acm_certificate_validation" "api_cert" {
-  count                   = length(aws_acm_certificate.api_cert)
+  count                   = var.API_DOMAIN != "" && var.HOSTED_ZONE_NAME != "" && var.API_CERT_ARN == "" ? 1 : 0
   certificate_arn         = aws_acm_certificate.api_cert[0].arn
   validation_record_fqdns = [for r in aws_route53_record.api_cert_validation : r.fqdn]
 }
@@ -70,11 +65,11 @@ resource "aws_security_group" "api_alb_sg" {
 resource "aws_lb" "api_alb" {
   #checkov:skip=CKV_AWS_91: Access logs not yet enabled for the API ALB.
   #checkov:skip=CKV2_AWS_28: WAF not enabled yet; revisit before public launch.
-  name               = "${local.name_prefix}-api"
-  internal           = false
-  load_balancer_type = "application"
-  security_groups    = [aws_security_group.api_alb_sg.id]
-  subnets            = [aws_subnet.app_public_subnet_1.id, aws_subnet.app_public_subnet_2.id]
+  name                       = "${local.name_prefix}-api"
+  internal                   = false
+  load_balancer_type         = "application"
+  security_groups            = [aws_security_group.api_alb_sg.id]
+  subnets                    = [aws_subnet.app_public_subnet_1.id, aws_subnet.app_public_subnet_2.id]
   drop_invalid_header_fields = true
   enable_deletion_protection = true
 }

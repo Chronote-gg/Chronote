@@ -225,6 +225,12 @@ variable "ENABLE_OAUTH" {
   default   = "false"
 }
 
+variable "ENABLE_MCP" {
+  description = "Enable the remote MCP endpoint when OAuth is also enabled"
+  type        = string
+  default     = "true"
+}
+
 variable "DISCORD_CALLBACK_URL" {
   sensitive = true
   default   = ""
@@ -1464,6 +1470,10 @@ resource "aws_ecs_task_definition" "app_task" {
         {
           name  = "ENABLE_OAUTH"
           value = var.ENABLE_OAUTH
+        },
+        {
+          name  = "ENABLE_MCP"
+          value = var.ENABLE_MCP
         },
         {
           name  = "OPENAI_ORGANIZATION_ID"

@@ -8,6 +8,7 @@ github_environment="sandbox"                 # GitHub Actions environment name
 
 # Optional (leave blank to use defaults)
 ENABLE_OAUTH="false"                          # defaults false
+ENABLE_MCP="true"                             # requires ENABLE_OAUTH=true at runtime
 DISCORD_CALLBACK_URL=""                       # required if ENABLE_OAUTH=true
 NODE_ENV="production"                         # recommended for ECS task
 ENABLE_ONBOARDING="false"
