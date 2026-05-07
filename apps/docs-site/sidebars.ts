@@ -17,7 +17,7 @@ const sidebars: SidebarsConfig = {
     {
       type: "category",
       label: "Integrations",
-      items: ["integrations/overview"],
+      items: ["integrations/overview", "integrations/remote-mcp"],
     },
     {
       type: "category",

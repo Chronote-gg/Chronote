@@ -17,6 +17,7 @@ A Discord bot that records voice meetings, transcribes them with OpenAI, generat
 
 - Discord summary/notes messages follow Discord channel permissions.
 - Portal Library and Ask also follow Discord channel permissions (voice connect + notes channel history), with an attendee exception.
+- Remote MCP uses Discord OAuth and the same meeting access checks before returning meeting data to agents.
 - Details: `docs/meeting-access.md`
 
 ## Run locally

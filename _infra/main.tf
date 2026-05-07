@@ -1325,6 +1325,7 @@ resource "aws_iam_policy" "dynamodb_access_policy" {
           aws_dynamodb_table.config_overrides_table.arn,
           aws_dynamodb_table.ask_conversation_table.arn,
           aws_dynamodb_table.feedback_table.arn,
+          aws_dynamodb_table.mcp_oauth_table.arn,
           aws_dynamodb_table.meeting_history_table.arn,
           "${aws_dynamodb_table.meeting_history_table.arn}/index/*",
           aws_dynamodb_table.meeting_share_table.arn,
@@ -1571,6 +1572,10 @@ resource "aws_ecs_task_definition" "app_task" {
         {
           name  = "DDB_TABLE_PREFIX"
           value = "${local.name_prefix}-"
+        },
+        {
+          name  = "MCP_PUBLIC_BASE_URL"
+          value = local.api_base_url
         },
         {
           name  = "NODE_ENV"
@@ -2011,6 +2016,41 @@ resource "aws_dynamodb_table" "session_table" {
 
   tags = {
     Name = "SessionTable"
+  }
+}
+
+resource "aws_dynamodb_table" "mcp_oauth_table" {
+  name         = "${local.name_prefix}-McpOAuthTable"
+  billing_mode = "PAY_PER_REQUEST"
+  hash_key     = "pk"
+  range_key    = "sk"
+
+  attribute {
+    name = "pk"
+    type = "S"
+  }
+
+  attribute {
+    name = "sk"
+    type = "S"
+  }
+
+  ttl {
+    attribute_name = "expiresAt"
+    enabled        = true
+  }
+
+  point_in_time_recovery {
+    enabled = true
+  }
+
+  server_side_encryption {
+    enabled     = true
+    kms_key_arn = aws_kms_key.app_general.arn
+  }
+
+  tags = {
+    Name = "McpOAuthTable"
   }
 }
 

@@ -246,6 +246,25 @@ class ConfigService {
     // future: rate limit/budget configs per API route can live here
   };
 
+  readonly mcp = {
+    enabled: process.env.ENABLE_MCP !== "false" && this.server.oauthEnabled,
+    publicBaseUrl: (
+      process.env.MCP_PUBLIC_BASE_URL ||
+      process.env.API_BASE_URL ||
+      `http://localhost:${process.env.PORT || "3001"}`
+    ).replace(/\/$/, ""),
+    endpointPath: process.env.MCP_ENDPOINT_PATH || "/mcp",
+    accessTokenTtlSeconds:
+      parseInt(process.env.MCP_ACCESS_TOKEN_TTL_SECONDS || "3600", 10) || 3600,
+    refreshTokenTtlSeconds:
+      parseInt(
+        process.env.MCP_REFRESH_TOKEN_TTL_SECONDS || `${60 * 60 * 24 * 30}`,
+        10,
+      ) || 60 * 60 * 24 * 30,
+    authorizationCodeTtlSeconds:
+      parseInt(process.env.MCP_AUTH_CODE_TTL_SECONDS || "600", 10) || 600,
+  };
+
   // Cache configuration
   readonly cache = {
     enabled: process.env.CACHE_ENABLED !== "false",
@@ -358,6 +377,10 @@ class ConfigService {
         { name: "DISCORD_CLIENT_SECRET", value: this.discord.clientSecret },
         { name: "DISCORD_CALLBACK_URL", value: this.discord.callbackUrl },
       );
+    }
+
+    if (this.mcp.enabled) {
+      required.push({ name: "OAUTH_SECRET", value: this.server.oauthSecret });
     }
 
     // Stripe validation (optional unless key provided)
