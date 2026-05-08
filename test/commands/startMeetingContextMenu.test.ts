@@ -16,8 +16,8 @@ const mockedHandleRequestStartMeeting =
     typeof handleRequestStartMeeting
   >;
 
-const makeClient = (botId = "bot-1"): Client =>
-  ({ user: { id: botId } }) as Client;
+const makeClient = (botId: string | null = "bot-1"): Client =>
+  ({ user: botId ? { id: botId } : null }) as Client;
 
 const makeInteraction = (targetUserId = "bot-1") =>
   ({
@@ -46,7 +46,9 @@ describe("start meeting context menu", () => {
 
     await handleStartMeetingContextCommand(makeClient("bot-1"), interaction);
 
-    expect(mockedHandleRequestStartMeeting).toHaveBeenCalledWith(interaction);
+    expect(mockedHandleRequestStartMeeting).toHaveBeenCalledWith(interaction, {
+      ephemeralErrors: true,
+    });
     expect(interaction.reply).not.toHaveBeenCalled();
   });
 
@@ -57,7 +59,19 @@ describe("start meeting context menu", () => {
 
     expect(mockedHandleRequestStartMeeting).not.toHaveBeenCalled();
     expect(interaction.reply).toHaveBeenCalledWith({
-      content: "Right-click Chronote to start a meeting.",
+      content: "Right-click <@bot-1> to start a meeting.",
+      ephemeral: true,
+    });
+  });
+
+  it("blocks while the bot user is unavailable", async () => {
+    const interaction = makeInteraction("bot-1");
+
+    await handleStartMeetingContextCommand(makeClient(null), interaction);
+
+    expect(mockedHandleRequestStartMeeting).not.toHaveBeenCalled();
+    expect(interaction.reply).toHaveBeenCalledWith({
+      content: "The bot is still starting up. Try again in a moment.",
       ephemeral: true,
     });
   });

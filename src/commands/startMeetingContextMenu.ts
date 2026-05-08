@@ -17,13 +17,22 @@ export async function handleStartMeetingContextCommand(
   client: Client,
   interaction: UserContextMenuCommandInteraction,
 ) {
-  if (interaction.targetUser.id !== client.user?.id) {
+  const botUserId = client.user?.id;
+  if (!botUserId) {
     await interaction.reply({
-      content: "Right-click Chronote to start a meeting.",
+      content: "The bot is still starting up. Try again in a moment.",
       ephemeral: true,
     });
     return;
   }
 
-  await handleRequestStartMeeting(interaction);
+  if (interaction.targetUser.id !== botUserId) {
+    await interaction.reply({
+      content: `Right-click <@${botUserId}> to start a meeting.`,
+      ephemeral: true,
+    });
+    return;
+  }
+
+  await handleRequestStartMeeting(interaction, { ephemeralErrors: true });
 }

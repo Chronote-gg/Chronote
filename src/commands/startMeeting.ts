@@ -52,6 +52,10 @@ type StartMeetingInteraction =
   | ChatInputCommandInteraction
   | UserContextMenuCommandInteraction;
 
+type StartMeetingOptions = {
+  ephemeralErrors?: boolean;
+};
+
 const buildLiveMeetingUrl = (guildId: string, meetingId: string) => {
   const base = config.frontend.siteUrl?.replace(/\/$/, "");
   if (!base) {
@@ -100,6 +104,19 @@ const getMeetingRequestOptions = (interaction: StartMeetingInteraction) => {
     meetingContext,
     tags: rawTags ? parseTags(rawTags) : undefined,
   };
+};
+
+const replyStartMeetingError = async (
+  interaction: StartMeetingInteraction,
+  content: string,
+  options?: StartMeetingOptions,
+) => {
+  if (!options?.ephemeralErrors) {
+    await interaction.reply(content);
+    return;
+  }
+
+  await interaction.reply({ content, ephemeral: true });
 };
 
 type GuildChannelResult =
@@ -186,31 +203,36 @@ const resolveMemberVoiceChannel = (member: GuildMember): VoiceChannelResult => {
 
 export async function handleRequestStartMeeting(
   interaction: StartMeetingInteraction,
+  options?: StartMeetingOptions,
 ) {
   const guildId = interaction.guildId!;
   const { meetingContext, tags } = getMeetingRequestOptions(interaction);
   const channelResult = resolveGuildChannels(interaction);
   if (!channelResult.ok) {
-    await interaction.reply(channelResult.error);
+    await replyStartMeetingError(interaction, channelResult.error, options);
     return;
   }
 
   const { guild, guildChannel, textChannel } = channelResult;
   const botMember = resolveBotMember(guild);
   if (!botMember) {
-    await interaction.reply("Bot not found in guild.");
+    await replyStartMeetingError(
+      interaction,
+      "Bot not found in guild.",
+      options,
+    );
     return;
   }
 
   const permissionError = ensureBotCanSend(guildChannel, botMember);
   if (permissionError) {
-    await interaction.reply(permissionError);
+    await replyStartMeetingError(interaction, permissionError, options);
     return;
   }
 
   const meetingConflict = await ensureNoActiveMeeting(guildId);
   if (meetingConflict) {
-    await interaction.reply(meetingConflict);
+    await replyStartMeetingError(interaction, meetingConflict, options);
     return;
   }
 
@@ -219,7 +241,7 @@ export async function handleRequestStartMeeting(
   const member = untypedMember as GuildMember;
   const voiceResult = resolveMemberVoiceChannel(member);
   if (!voiceResult.ok) {
-    await interaction.reply(voiceResult.error);
+    await replyStartMeetingError(interaction, voiceResult.error, options);
     return;
   }
   const { voiceChannel } = voiceResult;
@@ -240,7 +262,11 @@ export async function handleRequestStartMeeting(
   );
 
   if (!permissionCheck.success) {
-    await interaction.reply(permissionCheck.errorMessage!);
+    await replyStartMeetingError(
+      interaction,
+      permissionCheck.errorMessage!,
+      options,
+    );
     return;
   }
 
@@ -265,7 +291,11 @@ export async function handleRequestStartMeeting(
     startTriggeredByUserId: interaction.user.id,
   });
   if (!leaseAcquired) {
-    await interaction.reply("A meeting is already active in this server.");
+    await replyStartMeetingError(
+      interaction,
+      "A meeting is already active in this server.",
+      options,
+    );
     return;
   }
 
