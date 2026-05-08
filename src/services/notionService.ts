@@ -338,12 +338,13 @@ export const exportMeetingToNotion = async (params: {
   repository?: NotionIntegrationRepository;
 }) => {
   const repository = getRepository(params.repository);
-  const existing = await repository.getMeetingExport({
+  const meetingExportKey = {
     userId: params.userId,
     guildId: params.meeting.guildId,
     meetingId: params.meeting.channelId_timestamp,
-  });
-  if (existing) {
+  };
+  const reserved = await repository.reserveMeetingExport(meetingExportKey);
+  if (!reserved) {
     throw new NotionApiError(
       400,
       "already_exported",
@@ -351,36 +352,41 @@ export const exportMeetingToNotion = async (params: {
     );
   }
 
-  return withNotionToken({
-    userId: params.userId,
-    repository,
-    async action(accessToken, connection) {
-      const markdown = buildMeetingNotionMarkdown(params.meeting);
-      const page = await requestNotionApi({
-        accessToken,
-        method: "POST",
-        path: "/v1/pages",
-        body: {
-          parent: { type: "workspace", workspace: true },
-          markdown,
-        },
-        schema: notionPageResponseSchema,
-      });
-      const now = new Date().toISOString();
-      const meetingExport: NotionMeetingExport = {
-        userId: params.userId,
-        guildId: params.meeting.guildId,
-        channelId_timestamp: params.meeting.channelId_timestamp,
-        notionPageId: page.id,
-        notionPageUrl: page.url,
-        notionWorkspaceId: connection.workspaceId,
-        exportedNotesVersion: params.meeting.notesVersion ?? 1,
-        lastExportedAt: now,
-      };
-      await repository.writeMeetingExport(meetingExport);
-      return meetingExport;
-    },
-  });
+  try {
+    return await withNotionToken({
+      userId: params.userId,
+      repository,
+      async action(accessToken, connection) {
+        const markdown = buildMeetingNotionMarkdown(params.meeting);
+        const page = await requestNotionApi({
+          accessToken,
+          method: "POST",
+          path: "/v1/pages",
+          body: {
+            parent: { type: "workspace", workspace: true },
+            markdown,
+          },
+          schema: notionPageResponseSchema,
+        });
+        const now = new Date().toISOString();
+        const meetingExport: NotionMeetingExport = {
+          userId: params.userId,
+          guildId: params.meeting.guildId,
+          channelId_timestamp: params.meeting.channelId_timestamp,
+          notionPageId: page.id,
+          notionPageUrl: page.url,
+          notionWorkspaceId: connection.workspaceId,
+          exportedNotesVersion: params.meeting.notesVersion ?? 1,
+          lastExportedAt: now,
+        };
+        await repository.writeMeetingExport(meetingExport);
+        return meetingExport;
+      },
+    });
+  } catch (err) {
+    await repository.deleteMeetingExport(meetingExportKey);
+    throw err;
+  }
 };
 
 export const syncMeetingToNotion = async (params: {

@@ -153,6 +153,30 @@ describe("notionService", () => {
     expect(notionFetch).toHaveBeenCalledTimes(2);
   });
 
+  it("rejects concurrent duplicate exports before creating a second Notion page", async () => {
+    const notionFetch = jest.fn();
+    notionFetch
+      .mockResolvedValueOnce(jsonResponse(tokenResponse))
+      .mockResolvedValueOnce(
+        jsonResponse({ id: "page-1", url: "https://notion.so/page-1" }),
+      );
+    setNotionFetchForTests(notionFetch);
+
+    await saveNotionConnectionFromCode({ userId, code: "oauth-code" });
+    const results = await Promise.allSettled([
+      exportMeetingToNotion({ userId, meeting }),
+      exportMeetingToNotion({ userId, meeting }),
+    ]);
+
+    expect(
+      results.filter((result) => result.status === "fulfilled"),
+    ).toHaveLength(1);
+    expect(
+      results.filter((result) => result.status === "rejected"),
+    ).toHaveLength(1);
+    expect(notionFetch).toHaveBeenCalledTimes(2);
+  });
+
   it("replaces the existing Notion page when manually syncing", async () => {
     const notionFetch = jest.fn();
     notionFetch
