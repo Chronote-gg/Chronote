@@ -45,11 +45,12 @@ def handler(event, context):
         logger.warning("Could not parse existing secret; will create fresh token")
 
     # 2. Create a new token
+    token_name = f"auto-rotated-{context.aws_request_id[:8]}"
     try:
         response = grafana.create_workspace_service_account_token(
             workspaceId=WORKSPACE_ID,
             serviceAccountId=SERVICE_ACCOUNT_ID,
-            name=f"auto-rotated-{context.aws_request_id[:8]}",
+            name=token_name,
             secondsToLive=TOKEN_TTL_SECONDS,
         )
     except ClientError as exc:
@@ -87,7 +88,9 @@ def handler(event, context):
             logger.info("Rollback successful: deleted newly created Grafana token")
         except ClientError as rollback_exc:
             logger.error(
-                "Rollback failed, orphaned newly created Grafana token: %s", rollback_exc
+                "Rollback failed, orphaned newly created Grafana token named %s: %s",
+                token_name,
+                rollback_exc,
             )
         raise
     logger.info("Stored new token in Secrets Manager")

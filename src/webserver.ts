@@ -20,6 +20,7 @@ import { config } from "./services/configService";
 import { DynamoSessionStore } from "./services/sessionStore";
 import { getStripeClient } from "./services/stripeClient";
 import { saveGuildInstaller } from "./services/guildInstallerService";
+import { passThrough } from "./middleware/passThrough";
 import { metricsMiddleware, metricsRegistry } from "./metrics";
 import { appRouter } from "./trpc/router";
 import { AuthedProfile, createContext } from "./trpc/context";
@@ -45,10 +46,6 @@ const CSRF_HEADER_NAME = "x-csrf-token";
 
 type SessionWithRedirect = session.Session & { oauthRedirect?: string };
 type RequestWithCsrf = express.Request & { csrfToken: () => string };
-
-const passThrough: express.RequestHandler = (_req, _res, next) => {
-  next();
-};
 
 const isLocalFrontendUrl = () =>
   config.frontend.siteUrl.startsWith("http://localhost") ||
