@@ -12,6 +12,7 @@ jest.mock("../../services/configService", () => ({
       redirectUri: "http://localhost:3001/api/notion/callback",
     },
     mock: { enabled: true },
+    server: { oauthEnabled: true },
   },
 }));
 

@@ -47,6 +47,9 @@ const appendQueryParam = (url: string, key: string, value: string) => {
 const isAuthenticated = (req: Request) =>
   typeof req.isAuthenticated === "function" && req.isAuthenticated();
 
+const isDiscordOAuthAvailable = () =>
+  config.server.oauthEnabled || config.mock.enabled;
+
 const redirectAfterSessionSave = (
   session: NotionOAuthSession | undefined,
   res: Response,
@@ -88,6 +91,16 @@ export function registerNotionOAuthRoutes(
       );
       return;
     }
+    if (!isDiscordOAuthAvailable()) {
+      res.redirect(
+        appendQueryParam(
+          resolveReturnTo(req),
+          "notion_error",
+          "oauth_disabled",
+        ),
+      );
+      return;
+    }
     if (!isAuthenticated(req)) {
       res.redirect(
         `/auth/discord?redirect=${encodeURIComponent(req.originalUrl)}`,
@@ -120,6 +133,13 @@ export function registerNotionOAuthRoutes(
     const session = getSession(req);
     const stored = session?.notionOAuth;
     const returnTo = stored?.returnTo ?? getFallbackRedirect();
+
+    if (!isDiscordOAuthAvailable()) {
+      res.redirect(
+        appendQueryParam(returnTo, "notion_error", "oauth_disabled"),
+      );
+      return;
+    }
 
     try {
       delete session?.notionOAuth;
