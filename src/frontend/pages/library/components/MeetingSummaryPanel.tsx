@@ -14,9 +14,11 @@ import {
 import {
   IconCopy,
   IconFileImport,
+  IconExternalLink,
   IconNote,
   IconPencil,
   IconSparkles,
+  IconUpload,
   IconThumbDown,
   IconThumbUp,
 } from "@tabler/icons-react";
@@ -46,6 +48,11 @@ type MeetingSummaryPanelProps = {
   onCopySummary: () => void;
   onEditNotes?: () => void;
   onImportNotes?: () => void;
+  notionActionLabel?: string;
+  notionActionPending?: boolean;
+  notionPageUrl?: string;
+  onNotionAction?: () => void;
+  onOpenNotionPage?: () => void;
   onSuggestCorrection?: () => void;
   style?: CSSProperties;
 };
@@ -62,6 +69,11 @@ export function MeetingSummaryPanel({
   onCopySummary,
   onEditNotes,
   onImportNotes,
+  notionActionLabel,
+  notionActionPending = false,
+  notionPageUrl,
+  onNotionAction,
+  onOpenNotionPage,
   onSuggestCorrection,
   style,
 }: MeetingSummaryPanelProps) {
@@ -175,6 +187,24 @@ export function MeetingSummaryPanel({
               >
                 Import notes
               </Menu.Item>
+              {notionActionLabel ? (
+                <Menu.Item
+                  leftSection={<IconUpload size={14} />}
+                  onClick={onNotionAction}
+                  disabled={!onNotionAction || notionActionPending}
+                >
+                  {notionActionLabel}
+                </Menu.Item>
+              ) : null}
+              {notionPageUrl ? (
+                <Menu.Item
+                  leftSection={<IconExternalLink size={14} />}
+                  onClick={onOpenNotionPage}
+                  disabled={!onOpenNotionPage}
+                >
+                  Open Notion page
+                </Menu.Item>
+              ) : null}
               <Menu.Item
                 leftSection={<IconSparkles size={14} />}
                 onClick={onSuggestCorrection}

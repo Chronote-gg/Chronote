@@ -30,6 +30,14 @@ resource "aws_secretsmanager_secret" "oauth_secret" {
   tags        = local.secrets_tags
 }
 
+resource "aws_secretsmanager_secret" "notion_client_secret" {
+  #checkov:skip=CKV2_AWS_57 reason: Rotation requires a Lambda; handled manually for now.
+  name        = "${local.secrets_prefix}/notion-client-secret"
+  description = "Notion OAuth client secret"
+  kms_key_id  = aws_kms_key.app_general.arn
+  tags        = local.secrets_tags
+}
+
 resource "aws_secretsmanager_secret" "openai_api_key" {
   #checkov:skip=CKV2_AWS_57 reason: Rotation requires a Lambda; handled manually for now.
   name        = "${local.secrets_prefix}/openai-api-key"
@@ -92,6 +100,7 @@ data "aws_iam_policy_document" "ecs_secrets_policy" {
       aws_secretsmanager_secret.discord_bot_token.arn,
       aws_secretsmanager_secret.discord_client_secret.arn,
       aws_secretsmanager_secret.oauth_secret.arn,
+      aws_secretsmanager_secret.notion_client_secret.arn,
       aws_secretsmanager_secret.openai_api_key.arn,
       aws_secretsmanager_secret.langfuse_public_key.arn,
       aws_secretsmanager_secret.langfuse_secret_key.arn,
@@ -117,6 +126,7 @@ output "secrets_manager_arns" {
     discord_bot_token      = aws_secretsmanager_secret.discord_bot_token.arn
     discord_client_secret  = aws_secretsmanager_secret.discord_client_secret.arn
     oauth_secret           = aws_secretsmanager_secret.oauth_secret.arn
+    notion_client_secret   = aws_secretsmanager_secret.notion_client_secret.arn
     openai_api_key         = aws_secretsmanager_secret.openai_api_key.arn
     langfuse_public_key    = aws_secretsmanager_secret.langfuse_public_key.arn
     langfuse_secret_key    = aws_secretsmanager_secret.langfuse_secret_key.arn

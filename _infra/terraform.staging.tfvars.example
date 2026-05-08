@@ -18,6 +18,8 @@ DOCS_SITE_URL="https://docs-staging.chronote.gg"
 HOSTED_ZONE_NAME="chronote.gg."
 FRONTEND_ALLOWED_ORIGINS="https://staging.chronote.gg"
 FRONTEND_SITE_URL="https://staging.chronote.gg"
+NOTION_CLIENT_ID=""
+NOTION_REDIRECT_URI="https://api.staging.chronote.gg/api/notion/callback"
 
 # Stripe (staging uses test mode)
 STRIPE_MODE="test"

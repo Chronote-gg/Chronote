@@ -260,6 +260,18 @@ variable "FRONTEND_SITE_URL" {
   default     = ""
 }
 
+variable "NOTION_CLIENT_ID" {
+  description = "Notion public integration OAuth client ID"
+  type        = string
+  default     = ""
+}
+
+variable "NOTION_REDIRECT_URI" {
+  description = "Notion OAuth redirect URI"
+  type        = string
+  default     = ""
+}
+
 variable "LIVE_VOICE_MODE" {
   description = "Live voice mode (off or tts_gate)"
   type        = string
@@ -1332,6 +1344,7 @@ resource "aws_iam_policy" "dynamodb_access_policy" {
           aws_dynamodb_table.ask_conversation_table.arn,
           aws_dynamodb_table.feedback_table.arn,
           aws_dynamodb_table.mcp_oauth_table.arn,
+          aws_dynamodb_table.notion_integration_table.arn,
           aws_dynamodb_table.meeting_history_table.arn,
           "${aws_dynamodb_table.meeting_history_table.arn}/index/*",
           aws_dynamodb_table.meeting_share_table.arn,
@@ -1604,6 +1617,14 @@ resource "aws_ecs_task_definition" "app_task" {
           value = var.FRONTEND_SITE_URL
         },
         {
+          name  = "NOTION_CLIENT_ID"
+          value = var.NOTION_CLIENT_ID
+        },
+        {
+          name  = "NOTION_REDIRECT_URI"
+          value = var.NOTION_REDIRECT_URI != "" ? var.NOTION_REDIRECT_URI : "${local.api_base_url}/api/notion/callback"
+        },
+        {
           name  = "LIVE_VOICE_MODE"
           value = var.LIVE_VOICE_MODE
         },
@@ -1708,6 +1729,10 @@ resource "aws_ecs_task_definition" "app_task" {
         {
           name      = "OAUTH_SECRET"
           valueFrom = aws_secretsmanager_secret.oauth_secret.arn
+        },
+        {
+          name      = "NOTION_CLIENT_SECRET"
+          valueFrom = aws_secretsmanager_secret.notion_client_secret.arn
         },
         {
           name      = "OPENAI_API_KEY"
@@ -2061,6 +2086,36 @@ resource "aws_dynamodb_table" "mcp_oauth_table" {
 
   tags = {
     Name = "McpOAuthTable"
+  }
+}
+
+resource "aws_dynamodb_table" "notion_integration_table" {
+  name         = "${local.name_prefix}-NotionIntegrationTable"
+  billing_mode = "PAY_PER_REQUEST"
+  hash_key     = "pk"
+  range_key    = "sk"
+
+  attribute {
+    name = "pk"
+    type = "S"
+  }
+
+  attribute {
+    name = "sk"
+    type = "S"
+  }
+
+  point_in_time_recovery {
+    enabled = true
+  }
+
+  server_side_encryption {
+    enabled     = true
+    kms_key_arn = aws_kms_key.app_general.arn
+  }
+
+  tags = {
+    Name = "NotionIntegrationTable"
   }
 }
 

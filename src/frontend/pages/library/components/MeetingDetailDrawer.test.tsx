@@ -42,7 +42,52 @@ jest.mock("../../../services/trpc", () => ({
           invalidate: jest.fn(),
         },
       },
+      notion: {
+        exportStatus: {
+          invalidate: jest.fn(),
+        },
+      },
     }),
+    notion: {
+      status: {
+        useQuery: () => ({
+          data: { configured: true, connected: false },
+          isLoading: false,
+          isFetching: false,
+          error: null,
+        }),
+      },
+      exportStatus: {
+        useQuery: () => ({
+          data: { exported: false, currentNotesVersion: 1, outdated: false },
+          isLoading: false,
+          isFetching: false,
+          error: null,
+        }),
+      },
+      exportMeeting: {
+        useMutation: () => ({
+          mutateAsync: jest.fn().mockResolvedValue({
+            ok: true,
+            pageUrl: "https://notion.so/page-1",
+            exportedNotesVersion: 1,
+          }),
+          isPending: false,
+          error: undefined,
+        }),
+      },
+      syncMeeting: {
+        useMutation: () => ({
+          mutateAsync: jest.fn().mockResolvedValue({
+            ok: true,
+            pageUrl: "https://notion.so/page-1",
+            exportedNotesVersion: 1,
+          }),
+          isPending: false,
+          error: undefined,
+        }),
+      },
+    },
     meetingShares: {
       getShareState: {
         useQuery: () => mockShareStateQuery,

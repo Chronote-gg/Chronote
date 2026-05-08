@@ -11,6 +11,7 @@ import { registerBillingRoutes } from "./api/billing";
 import { registerGuildRoutes } from "./api/guilds";
 import { registerLiveMeetingRoutes } from "./api/liveMeetings";
 import { registerMcpRoutes } from "./api/mcp";
+import { registerNotionOAuthRoutes } from "./api/notionOAuth";
 import {
   registerMcpOAuthSessionRoutes,
   registerMcpOAuthStatelessRoutes,
@@ -396,6 +397,8 @@ export function setupWebServer() {
   });
 
   if (config.mcp.enabled) registerMcpOAuthSessionRoutes(app);
+
+  registerNotionOAuthRoutes(app);
 
   // tRPC API
   app.use(

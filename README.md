@@ -1,6 +1,6 @@
 # Chronote
 
-A Discord bot that records voice meetings, transcribes them with OpenAI, generates notes, and posts results back to Discord. It also supports billing, tagging, dictionary terms for domain jargon, and a static frontend.
+A Discord bot that records voice meetings, transcribes them with OpenAI, generates notes, and posts results back to Discord. It also supports billing, tagging, dictionary terms for domain jargon, Notion export, and a static frontend.
 
 [Add the bot to your server](https://discord.com/oauth2/authorize?client_id=1278729036528619633)
 
@@ -24,7 +24,7 @@ A Discord bot that records voice meetings, transcribes them with OpenAI, generat
 
 1. `yarn install`
 2. Install FFMPEG (e.g., `choco install ffmpeg` on Windows).
-3. Copy `.env.example` to `.env`; set required keys: `DISCORD_BOT_TOKEN`, `DISCORD_CLIENT_ID`, `OPENAI_API_KEY`. Optional: Stripe keys to enable checkout/portal endpoints; `USE_LOCAL_DYNAMODB=true` for local tables. For Langfuse prompt sync or tracing, set `LANGFUSE_PUBLIC_KEY` and `LANGFUSE_SECRET_KEY`. Optional: `LANGFUSE_BASE_URL`, `LANGFUSE_PROMPT_LABEL`, `LANGFUSE_PROMPT_TRANSCRIPTION`.
+3. Copy `.env.example` to `.env`; set required keys: `DISCORD_BOT_TOKEN`, `DISCORD_CLIENT_ID`, `OPENAI_API_KEY`. Optional: Stripe keys to enable checkout/portal endpoints; `USE_LOCAL_DYNAMODB=true` for local tables. For Langfuse prompt sync or tracing, set `LANGFUSE_PUBLIC_KEY` and `LANGFUSE_SECRET_KEY`. Optional: `LANGFUSE_BASE_URL`, `LANGFUSE_PROMPT_LABEL`, `LANGFUSE_PROMPT_TRANSCRIPTION`. For Notion export, set `NOTION_CLIENT_ID`, `NOTION_CLIENT_SECRET`, and `NOTION_REDIRECT_URI`.
    - For mock portal data + OAuth bypass, set `MOCK_MODE=true` (no Discord/Dynamo required), or run `yarn start:mock` / `yarn dev:mock` to toggle mock mode without editing `.env`.
    - Deployed ECS uses **AWS Secrets Manager** for secrets (see `_infra/README.md`).
 4. Start everything (local Dynamo + table init + bot): `yarn dev`

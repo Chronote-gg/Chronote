@@ -24,6 +24,7 @@ import MeetingTimeline, {
 } from "../../../components/MeetingTimeline";
 import Surface from "../../../components/Surface";
 import { trpc } from "../../../services/trpc";
+import { buildApiUrl } from "../../../services/apiClient";
 import { uiOverlays, uiSpacing } from "../../../uiTokens";
 import {
   endLiveMeeting,
@@ -215,6 +216,16 @@ export default function MeetingDetailDrawer({
   const shareMutation = trpc.meetingShares.setVisibility.useMutation();
   const rotateShareMutation = trpc.meetingShares.rotate.useMutation();
   const shareDisabled = isSharePermissionError(shareStateQuery.error);
+  const notionStatusQuery = trpc.notion.status.useQuery();
+  const notionExportStatusQuery = trpc.notion.exportStatus.useQuery(
+    {
+      serverId: selectedGuildId ?? "",
+      meetingId: selectedMeetingId ?? "",
+    },
+    { enabled: Boolean(selectedGuildId && selectedMeetingId) },
+  );
+  const notionExportMutation = trpc.notion.exportMeeting.useMutation();
+  const notionSyncMutation = trpc.notion.syncMeeting.useMutation();
 
   const summaryCopyText = detail?.notes ?? "";
   const canCopySummary = summaryCopyText.trim().length > 0;
@@ -399,6 +410,7 @@ export default function MeetingDetailDrawer({
       closeNotesEditorModal();
       await Promise.all([
         trpcUtils.meetings.detail.invalidate(),
+        trpcUtils.notion.exportStatus.invalidate(),
         invalidateMeetingLists(),
       ]);
     } catch (error) {
@@ -438,6 +450,7 @@ export default function MeetingDetailDrawer({
       closeNotesImportModal();
       await Promise.all([
         trpcUtils.meetings.detail.invalidate(),
+        trpcUtils.notion.exportStatus.invalidate(),
         invalidateMeetingLists(),
       ]);
     } catch (error) {
@@ -673,6 +686,60 @@ export default function MeetingDetailDrawer({
     downloadMeetingExport(detail, meeting);
   };
 
+  const handleConnectNotion = () => {
+    if (typeof window === "undefined") return;
+    const redirect = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+    const url = `${buildApiUrl("/api/notion/connect")}?redirect=${encodeURIComponent(
+      redirect,
+    )}`;
+    window.location.assign(url);
+  };
+
+  const handleExportToNotion = async () => {
+    if (!selectedGuildId || !selectedMeetingId) return;
+    try {
+      const result = await notionExportMutation.mutateAsync({
+        serverId: selectedGuildId,
+        meetingId: selectedMeetingId,
+      });
+      notifications.show({ message: "Meeting notes exported to Notion." });
+      await trpcUtils.notion.exportStatus.invalidate();
+      if (result.pageUrl) {
+        window.open(result.pageUrl, "_blank", "noopener,noreferrer");
+      }
+    } catch (error) {
+      const message =
+        error instanceof Error && error.message
+          ? error.message
+          : "Unable to export to Notion right now.";
+      notifications.show({ color: "red", message });
+    }
+  };
+
+  const handleSyncToNotion = async () => {
+    if (!selectedGuildId || !selectedMeetingId) return;
+    try {
+      await notionSyncMutation.mutateAsync({
+        serverId: selectedGuildId,
+        meetingId: selectedMeetingId,
+      });
+      notifications.show({ message: "Notion page synced." });
+      await trpcUtils.notion.exportStatus.invalidate();
+    } catch (error) {
+      const message =
+        error instanceof Error && error.message
+          ? error.message
+          : "Unable to sync Notion right now.";
+      notifications.show({ color: "red", message });
+    }
+  };
+
+  const handleOpenNotionPage = () => {
+    const pageUrl = notionExportStatusQuery.data?.pageUrl;
+    if (!pageUrl) return;
+    window.open(pageUrl, "_blank", "noopener,noreferrer");
+  };
+
   const handleOpenShare = () => {
     if (shareDisabled) {
       return;
@@ -737,6 +804,28 @@ export default function MeetingDetailDrawer({
     <MeetingAudioPanel audioUrl={meeting.audioUrl} />
   ) : null;
 
+  const notionConfigured = notionStatusQuery.data?.configured ?? false;
+  const notionConnected = notionStatusQuery.data?.connected ?? false;
+  const notionExportStatus = notionExportStatusQuery.data;
+  const notionActionPending =
+    notionExportMutation.isPending || notionSyncMutation.isPending;
+  const notionActionLabel = !notionConfigured
+    ? "Notion unavailable"
+    : !notionConnected
+      ? "Connect Notion"
+      : !notionExportStatus?.exported
+        ? "Export to Notion"
+        : notionExportStatus.outdated
+          ? "Sync latest to Notion"
+          : "Sync to Notion";
+  const handleNotionAction = !notionConfigured
+    ? undefined
+    : !notionConnected
+      ? handleConnectNotion
+      : !notionExportStatus?.exported
+        ? handleExportToNotion
+        : handleSyncToNotion;
+
   const summarySection = meeting ? (
     <MeetingSummaryPanel
       summary={meeting.summary}
@@ -750,6 +839,11 @@ export default function MeetingDetailDrawer({
       onCopySummary={handleCopySummary}
       onEditNotes={openNotesEditorModal}
       onImportNotes={openNotesImportModal}
+      notionActionLabel={notionActionLabel}
+      notionActionPending={notionActionPending}
+      notionPageUrl={notionExportStatus?.pageUrl}
+      onNotionAction={handleNotionAction}
+      onOpenNotionPage={handleOpenNotionPage}
       onSuggestCorrection={openNotesCorrectionModal}
     />
   ) : null;
