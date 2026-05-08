@@ -414,7 +414,12 @@ export const contactFeedbackSubmitMutation = buildMutationState<
   [unknown],
   { ok: boolean }
 >({ ok: true });
-type ContactFeedbackUploadUrlResult = { url: string; key: string };
+type ContactFeedbackUploadUrlResult = {
+  url: string;
+  key: string;
+  uploadToken: string;
+  fields: Record<string, string>;
+};
 
 let contactFeedbackUploadCounter = 0;
 
@@ -424,6 +429,13 @@ const nextContactFeedbackUploadUrlResult =
     return {
       url: `https://s3.example.com/presigned-${contactFeedbackUploadCounter}`,
       key: `contact-feedback/test-${contactFeedbackUploadCounter}.png`,
+      uploadToken: `upload-token-${contactFeedbackUploadCounter}`,
+      fields: {
+        key: `contact-feedback/test-${contactFeedbackUploadCounter}.png`,
+        "Content-Type": "image/png",
+        policy: "test-policy",
+        "x-amz-signature": "test-signature",
+      },
     };
   };
 

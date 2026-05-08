@@ -14,7 +14,6 @@ import {
 import {
   ensureBotInGuild,
   ensureManageGuildWithUserToken,
-  ensureUserInGuild,
 } from "../services/guildAccessService";
 import {
   listBotGuildsCached,
@@ -358,28 +357,12 @@ export function registerGuildRoutes(app: express.Express) {
         res.status(401).json({ error: "No access token. Please re-login." });
         return;
       }
-      const sessionData = req.session as typeof req.session & SessionGuildCache;
-      const cachedGuilds = sessionData.guildIds ?? [];
-      const cachedHasGuild = cachedGuilds.includes(guildId);
-      if (!cachedHasGuild) {
-        const accessCheck = await ensureUserInGuild(user.accessToken, guildId, {
-          session: req.session,
-          userId: user.id,
+      if (!(await requireManageGuild(req, res, user, guildId))) {
+        console.warn("Channels 403: missing Manage Guild", {
+          guildId,
+          userId: user?.id,
         });
-        if (accessCheck === null) {
-          res
-            .status(429)
-            .json({ error: "Discord rate limited. Please retry." });
-          return;
-        }
-        if (!accessCheck) {
-          console.warn("Channels 403: user not in guild", {
-            guildId,
-            userId: user?.id,
-          });
-          res.status(403).json({ error: "Guild access required" });
-          return;
-        }
+        return;
       }
       if (!(await ensureBotPresence(req, res, guildId))) {
         return;
