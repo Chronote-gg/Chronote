@@ -31,11 +31,15 @@ const meeting: MeetingHistory = {
   generateNotes: true,
 };
 
-const jsonResponse = (payload: unknown, status = 200) => ({
-  ok: status >= 200 && status < 300,
-  status,
-  json: async () => payload,
-});
+function jsonResponse(payload: unknown, status = 200) {
+  return {
+    ok: status >= 200 && status < 300,
+    status,
+    json() {
+      return Promise.resolve(payload);
+    },
+  };
+}
 
 const tokenResponse = {
   access_token: "notion-access-token",
