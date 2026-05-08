@@ -1,16 +1,19 @@
 import { jest } from "@jest/globals";
 import type { Express, RequestHandler } from "express";
 import { registerNotionOAuthRoutes } from "../notionOAuth";
-import { config } from "../../services/configService";
 import { saveNotionConnectionFromCode } from "../../services/notionService";
+
+let mockNotionEnabled = true;
 
 jest.mock("../../services/configService", () => ({
   config: {
     frontend: { siteUrl: "http://localhost:5173" },
-    notion: {
-      enabled: true,
-      clientId: "notion-client-id",
-      redirectUri: "http://localhost:3001/api/notion/callback",
+    get notion() {
+      return {
+        enabled: mockNotionEnabled,
+        clientId: "notion-client-id",
+        redirectUri: "http://localhost:3001/api/notion/callback",
+      };
     },
     mock: { enabled: true },
     server: { oauthEnabled: true },
@@ -90,7 +93,7 @@ const createSession = (): MockSession => ({
 
 describe("Notion OAuth routes", () => {
   beforeEach(() => {
-    config.notion.enabled = true;
+    mockNotionEnabled = true;
     jest.mocked(saveNotionConnectionFromCode).mockClear();
     jest.mocked(saveNotionConnectionFromCode).mockResolvedValue({} as never);
   });
@@ -182,7 +185,7 @@ describe("Notion OAuth routes", () => {
   });
 
   it("rejects callbacks when Notion is not configured", async () => {
-    config.notion.enabled = false;
+    mockNotionEnabled = false;
     const { callback } = captureRoutes();
     const session = createSession();
     session.notionOAuth = {
