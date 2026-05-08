@@ -41,6 +41,12 @@ type UploadImagesResult = {
   error?: string;
 };
 
+type UploadPost = {
+  url: string;
+  key: string;
+  fields: Record<string, string>;
+};
+
 const buildUploadFailureMessage = (failedNames: string[]) => {
   const quotedNames = failedNames.map((name) => `"${name}"`).join(", ");
   const label = failedNames.length === 1 ? "image" : "images";
@@ -51,27 +57,33 @@ async function uploadImagesToS3(
   images: { file: File; previewUrl: string }[],
   getUploadUrl: (input: {
     contentType: (typeof CONTACT_FEEDBACK_ALLOWED_IMAGE_TYPES)[number];
-  }) => Promise<{ url: string; key: string }>,
+    fileSize: number;
+  }) => Promise<UploadPost>,
 ): Promise<UploadImagesResult> {
   const keys: string[] = [];
   const failedNames: string[] = [];
 
   for (const img of images) {
     try {
-      const { url, key } = await getUploadUrl({
+      const post = await getUploadUrl({
         contentType: img.file
           .type as (typeof CONTACT_FEEDBACK_ALLOWED_IMAGE_TYPES)[number],
+        fileSize: img.file.size,
       });
-      const response = await fetch(url, {
-        method: "PUT",
-        body: img.file,
-        headers: { "Content-Type": img.file.type },
+      const formData = new FormData();
+      Object.entries(post.fields).forEach(([name, value]) => {
+        formData.append(name, value);
+      });
+      formData.append("file", img.file);
+      const response = await fetch(post.url, {
+        method: "POST",
+        body: formData,
       });
       if (!response.ok) {
         failedNames.push(img.file.name);
         continue;
       }
-      keys.push(key);
+      keys.push(post.key);
     } catch {
       failedNames.push(img.file.name);
     }

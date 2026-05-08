@@ -3,9 +3,15 @@ import {
   PutObjectCommand,
   S3Client,
 } from "@aws-sdk/client-s3";
+import { createPresignedPost } from "@aws-sdk/s3-presigned-post";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { config } from "./configService";
 import { getMockStore } from "../repositories/mockStore";
+
+export type SignedUploadPost = {
+  url: string;
+  fields: Record<string, string>;
+};
 
 const storageCredentials =
   config.storage.accessKeyId.length > 0 &&
@@ -136,6 +142,34 @@ export async function getSignedUploadUrl(
     );
   } catch (error) {
     console.error("Failed to generate signed upload URL", error);
+    return undefined;
+  }
+}
+
+export async function getSignedUploadPost(
+  key: string,
+  contentType: string,
+  maxBytes: number,
+  expiresInSeconds: number = 300,
+): Promise<SignedUploadPost | undefined> {
+  if (!config.storage.transcriptBucket) {
+    return undefined;
+  }
+  try {
+    return await createPresignedPost(s3Client, {
+      Bucket: config.storage.transcriptBucket,
+      Key: key,
+      Conditions: [
+        ["content-length-range", 1, maxBytes],
+        ["eq", "$Content-Type", contentType],
+      ],
+      Fields: {
+        "Content-Type": contentType,
+      },
+      Expires: expiresInSeconds,
+    });
+  } catch (error) {
+    console.error("Failed to generate signed upload POST", error);
     return undefined;
   }
 }

@@ -18,7 +18,7 @@ import {
 } from "../../constants";
 import {
   uploadObjectToS3,
-  getSignedUploadUrl,
+  getSignedUploadPost,
 } from "../../services/storageService";
 import { randomUUID } from "node:crypto";
 import { createRateLimitMiddleware } from "../rateLimitMiddleware";
@@ -69,23 +69,25 @@ const getUploadUrl = publicProcedure
       contentType: z.enum(
         CONTACT_FEEDBACK_ALLOWED_IMAGE_TYPES as [string, ...string[]],
       ),
+      fileSize: z.number().int().min(1).max(CONTACT_FEEDBACK_MAX_IMAGE_BYTES),
     }),
   )
   .mutation(async ({ input }) => {
     const extension = input.contentType.split("/")[1] ?? "bin";
     const key = `${CONTACT_FEEDBACK_S3_PREFIX}${randomUUID()}.${extension}`;
-    const url = await getSignedUploadUrl(
+    const upload = await getSignedUploadPost(
       key,
       input.contentType,
+      CONTACT_FEEDBACK_MAX_IMAGE_BYTES,
       CONTACT_FEEDBACK_UPLOAD_URL_EXPIRY_SECONDS,
     );
-    if (!url) {
+    if (!upload) {
       throw new TRPCError({
         code: "INTERNAL_SERVER_ERROR",
-        message: "Failed to generate upload URL",
+        message: "Failed to generate upload form",
       });
     }
-    return { url, key };
+    return { ...upload, key };
   });
 
 const submit = publicProcedure

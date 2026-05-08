@@ -1,5 +1,13 @@
 # Infrastructure Notes
 
+## Terraform state bootstrap
+
+The standalone `_infra_state_mgmt` stack provisions the remote state bucket and
+lock table used by `_infra/main.tf`. The state bucket is private, versioned,
+encrypted with a dedicated KMS key, and has S3 public access blocking enabled.
+
+Apply this bootstrap stack before initializing the main infrastructure backend.
+
 ## Observability (AMP + AMG)
 
 This stack provisions:
