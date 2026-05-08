@@ -138,6 +138,23 @@ const NOTES_EDITOR_DELTA_JSON_BYTE_LIMIT = 80_000;
 const IMPORT_NOTES_SOURCE_NAME_LIMIT = 100;
 const IMPORT_NOTES_SOURCE_URL_LIMIT = 2048;
 
+const isHttpSourceUrl = (value: string): boolean => {
+  try {
+    const protocol = new URL(value).protocol;
+    return protocol === "http:" || protocol === "https:";
+  } catch {
+    return false;
+  }
+};
+
+const importNotesSourceUrlSchema = z
+  .string()
+  .max(IMPORT_NOTES_SOURCE_URL_LIMIT)
+  .url()
+  .refine(isHttpSourceUrl, {
+    message: "Source URL must start with http:// or https://",
+  });
+
 const safeJsonStringifyByteLength = (value: unknown): number | null => {
   try {
     return Buffer.byteLength(JSON.stringify(value), "utf8");
@@ -1067,7 +1084,7 @@ const importNotes = guildMemberProcedure
       notes: z.string().min(1).max(NOTES_EDITOR_MARKDOWN_BYTE_LIMIT),
       mode: z.enum(["replace", "append"]),
       sourceName: z.string().max(IMPORT_NOTES_SOURCE_NAME_LIMIT).optional(),
-      sourceUrl: z.string().url().max(IMPORT_NOTES_SOURCE_URL_LIMIT).optional(),
+      sourceUrl: importNotesSourceUrlSchema.optional(),
       expectedPreviousVersion: z.number().min(1),
     }),
   )

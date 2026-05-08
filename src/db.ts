@@ -1250,7 +1250,7 @@ export async function updateMeetingNotesMessageMetadata(
       return false;
     }
     console.error("Failed to update meeting notes message metadata:", error);
-    return false;
+    throw error;
   }
 }
 
