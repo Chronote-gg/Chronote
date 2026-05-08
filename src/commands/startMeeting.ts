@@ -2,12 +2,13 @@ import {
   ActionRowBuilder,
   ButtonBuilder,
   ButtonStyle,
+  ChatInputCommandInteraction,
   Client,
-  CommandInteraction,
   EmbedBuilder,
   GuildMember,
   PermissionsBitField,
   TextChannel,
+  UserContextMenuCommandInteraction,
   VoiceBasedChannel,
 } from "discord.js";
 import {
@@ -47,6 +48,14 @@ import {
 
 type GuildLimits = Awaited<ReturnType<typeof getGuildLimits>>["limits"];
 
+type StartMeetingInteraction =
+  | ChatInputCommandInteraction
+  | UserContextMenuCommandInteraction;
+
+type StartMeetingOptions = {
+  ephemeralErrors?: boolean;
+};
+
 const buildLiveMeetingUrl = (guildId: string, meetingId: string) => {
   const base = config.frontend.siteUrl?.replace(/\/$/, "");
   if (!base) {
@@ -85,7 +94,7 @@ async function getLimitNotice(
   return buildLimitReachedMessage(nextAvailableAtIso);
 }
 
-const getMeetingRequestOptions = (interaction: CommandInteraction) => {
+const getMeetingRequestOptions = (interaction: StartMeetingInteraction) => {
   if (!interaction.isChatInputCommand()) {
     return { meetingContext: undefined, tags: undefined };
   }
@@ -97,17 +106,30 @@ const getMeetingRequestOptions = (interaction: CommandInteraction) => {
   };
 };
 
+const replyStartMeetingError = async (
+  interaction: StartMeetingInteraction,
+  content: string,
+  options?: StartMeetingOptions,
+) => {
+  if (!options?.ephemeralErrors) {
+    await interaction.reply(content);
+    return;
+  }
+
+  await interaction.reply({ content, ephemeral: true });
+};
+
 type GuildChannelResult =
   | {
       ok: true;
-      guild: NonNullable<CommandInteraction["guild"]>;
+      guild: NonNullable<StartMeetingInteraction["guild"]>;
       guildChannel: GuildChannel;
       textChannel: TextChannel;
     }
   | { ok: false; error: string };
 
 const resolveGuildChannels = (
-  interaction: CommandInteraction,
+  interaction: StartMeetingInteraction,
 ): GuildChannelResult => {
   const channel = interaction.channel;
   const guild = interaction.guild;
@@ -125,7 +147,9 @@ const resolveGuildChannels = (
   };
 };
 
-const resolveBotMember = (guild: NonNullable<CommandInteraction["guild"]>) => {
+const resolveBotMember = (
+  guild: NonNullable<StartMeetingInteraction["guild"]>,
+) => {
   const botId = guild.client.user?.id;
   if (!botId) return null;
   return guild.members.cache.get(botId) ?? null;
@@ -178,32 +202,37 @@ const resolveMemberVoiceChannel = (member: GuildMember): VoiceChannelResult => {
 };
 
 export async function handleRequestStartMeeting(
-  interaction: CommandInteraction,
+  interaction: StartMeetingInteraction,
+  options?: StartMeetingOptions,
 ) {
   const guildId = interaction.guildId!;
   const { meetingContext, tags } = getMeetingRequestOptions(interaction);
   const channelResult = resolveGuildChannels(interaction);
   if (!channelResult.ok) {
-    await interaction.reply(channelResult.error);
+    await replyStartMeetingError(interaction, channelResult.error, options);
     return;
   }
 
   const { guild, guildChannel, textChannel } = channelResult;
   const botMember = resolveBotMember(guild);
   if (!botMember) {
-    await interaction.reply("Bot not found in guild.");
+    await replyStartMeetingError(
+      interaction,
+      "Bot not found in guild.",
+      options,
+    );
     return;
   }
 
   const permissionError = ensureBotCanSend(guildChannel, botMember);
   if (permissionError) {
-    await interaction.reply(permissionError);
+    await replyStartMeetingError(interaction, permissionError, options);
     return;
   }
 
   const meetingConflict = await ensureNoActiveMeeting(guildId);
   if (meetingConflict) {
-    await interaction.reply(meetingConflict);
+    await replyStartMeetingError(interaction, meetingConflict, options);
     return;
   }
 
@@ -212,7 +241,7 @@ export async function handleRequestStartMeeting(
   const member = untypedMember as GuildMember;
   const voiceResult = resolveMemberVoiceChannel(member);
   if (!voiceResult.ok) {
-    await interaction.reply(voiceResult.error);
+    await replyStartMeetingError(interaction, voiceResult.error, options);
     return;
   }
   const { voiceChannel } = voiceResult;
@@ -233,7 +262,11 @@ export async function handleRequestStartMeeting(
   );
 
   if (!permissionCheck.success) {
-    await interaction.reply(permissionCheck.errorMessage!);
+    await replyStartMeetingError(
+      interaction,
+      permissionCheck.errorMessage!,
+      options,
+    );
     return;
   }
 
@@ -258,7 +291,11 @@ export async function handleRequestStartMeeting(
     startTriggeredByUserId: interaction.user.id,
   });
   if (!leaseAcquired) {
-    await interaction.reply("A meeting is already active in this server.");
+    await replyStartMeetingError(
+      interaction,
+      "A meeting is already active in this server.",
+      options,
+    );
     return;
   }
 

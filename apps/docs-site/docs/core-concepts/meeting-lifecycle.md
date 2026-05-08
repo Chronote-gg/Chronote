@@ -9,7 +9,7 @@ Every Chronote recording follows a predictable lifecycle. Understanding these st
 
 A meeting starts in one of two ways:
 
-- **Manual**: A user runs `/startmeeting` while in a voice channel. They can optionally provide a `context` description and `tags`.
+- **Manual**: A user runs `/startmeeting` while in a voice channel, or right-clicks Chronote and selects **Apps** -> **Start meeting**. The slash command can optionally include a `context` description and `tags`.
 - **Auto-record**: A user joins a voice channel that has auto-recording enabled. Chronote starts recording automatically and posts an "Auto-Recording Started" embed.
 
 At this point, Chronote joins the voice channel and begins capturing audio from each participant separately. A meeting embed appears in the text channel with controls.

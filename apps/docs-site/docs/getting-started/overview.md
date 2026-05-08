@@ -33,8 +33,8 @@ The onboarding wizard requires **Manage Server** permission. You can skip it and
 ## Step 3: Start your first meeting
 
 1. Join a voice channel.
-2. Run `/startmeeting` in a text channel.
-3. Optionally add a `context` parameter (e.g., "Weekly standup for backend team") and `tags` (e.g., "standup, backend").
+2. Run `/startmeeting` in a text channel, or right-click Chronote and select **Apps** -> **Start meeting**.
+3. If you use `/startmeeting`, optionally add a `context` parameter (e.g., "Weekly standup for backend team") and `tags` (e.g., "standup, backend").
 
 Chronote joins the voice channel and begins recording. You will see a "Meeting Started" embed with an **End Meeting** button.
 
