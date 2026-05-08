@@ -2,12 +2,13 @@ import {
   ActionRowBuilder,
   ButtonBuilder,
   ButtonStyle,
+  ChatInputCommandInteraction,
   Client,
-  CommandInteraction,
   EmbedBuilder,
   GuildMember,
   PermissionsBitField,
   TextChannel,
+  UserContextMenuCommandInteraction,
   VoiceBasedChannel,
 } from "discord.js";
 import {
@@ -47,6 +48,10 @@ import {
 
 type GuildLimits = Awaited<ReturnType<typeof getGuildLimits>>["limits"];
 
+type StartMeetingInteraction =
+  | ChatInputCommandInteraction
+  | UserContextMenuCommandInteraction;
+
 const buildLiveMeetingUrl = (guildId: string, meetingId: string) => {
   const base = config.frontend.siteUrl?.replace(/\/$/, "");
   if (!base) {
@@ -85,7 +90,7 @@ async function getLimitNotice(
   return buildLimitReachedMessage(nextAvailableAtIso);
 }
 
-const getMeetingRequestOptions = (interaction: CommandInteraction) => {
+const getMeetingRequestOptions = (interaction: StartMeetingInteraction) => {
   if (!interaction.isChatInputCommand()) {
     return { meetingContext: undefined, tags: undefined };
   }
@@ -100,14 +105,14 @@ const getMeetingRequestOptions = (interaction: CommandInteraction) => {
 type GuildChannelResult =
   | {
       ok: true;
-      guild: NonNullable<CommandInteraction["guild"]>;
+      guild: NonNullable<StartMeetingInteraction["guild"]>;
       guildChannel: GuildChannel;
       textChannel: TextChannel;
     }
   | { ok: false; error: string };
 
 const resolveGuildChannels = (
-  interaction: CommandInteraction,
+  interaction: StartMeetingInteraction,
 ): GuildChannelResult => {
   const channel = interaction.channel;
   const guild = interaction.guild;
@@ -125,7 +130,9 @@ const resolveGuildChannels = (
   };
 };
 
-const resolveBotMember = (guild: NonNullable<CommandInteraction["guild"]>) => {
+const resolveBotMember = (
+  guild: NonNullable<StartMeetingInteraction["guild"]>,
+) => {
   const botId = guild.client.user?.id;
   if (!botId) return null;
   return guild.members.cache.get(botId) ?? null;
@@ -178,7 +185,7 @@ const resolveMemberVoiceChannel = (member: GuildMember): VoiceChannelResult => {
 };
 
 export async function handleRequestStartMeeting(
-  interaction: CommandInteraction,
+  interaction: StartMeetingInteraction,
 ) {
   const guildId = interaction.guildId!;
   const { meetingContext, tags } = getMeetingRequestOptions(interaction);

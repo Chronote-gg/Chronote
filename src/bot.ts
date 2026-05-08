@@ -124,6 +124,11 @@ import {
   dismissAutoRecordCommand,
   handleDismissAutoRecord,
 } from "./commands/dismissAutoRecord";
+import {
+  START_MEETING_CONTEXT_COMMAND_NAME,
+  handleStartMeetingContextCommand,
+  startMeetingContextCommand,
+} from "./commands/startMeetingContextMenu";
 import { claimInteractionReceipt } from "./services/interactionIdempotencyService";
 import { tryReplyToUnacknowledgedInteraction } from "./services/interactionResponseService";
 
@@ -356,6 +361,10 @@ const handleInteractionCreate = async (interaction: RepliableInteraction) => {
     return;
   }
   if (interaction.isUserContextMenuCommand()) {
+    if (interaction.commandName === START_MEETING_CONTEXT_COMMAND_NAME) {
+      await handleStartMeetingContextCommand(client, interaction);
+      return;
+    }
     if (interaction.commandName === DISMISS_AUTORECORD_COMMAND_NAME) {
       await handleDismissAutoRecord(client, interaction);
       return;
@@ -1130,6 +1139,7 @@ async function setupApplicationCommands() {
           .setDescription("Remove all dictionary entries for this server"),
       ),
     dismissAutoRecordCommand,
+    startMeetingContextCommand,
     new SlashCommandBuilder()
       .setName("feedback")
       .setDescription("Send feedback, report a bug, or suggest a feature"),

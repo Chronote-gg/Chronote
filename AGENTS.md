@@ -26,6 +26,7 @@
 - Entry: `index.ts` -> `setupBot()` and `setupWebServer()`. Independent runtimes: `src/apps/bot/main.ts` and `src/apps/api/main.ts` boot the bot and API separately.
 - Bot interactions: `src/bot.ts`
   - Slash commands: `/startmeeting`, `/autorecord`, `/context`, `/dictionary`.
+  - User context menu app actions: `Start meeting`, `Stop recording`.
   - Buttons: end meeting, generate image, suggest correction.
   - Auto-record on voice join if configured.
 - Web server: `webserver.ts` (health check; optional Discord OAuth scaffolding). API routes are modularized under `src/api/` (billing, guilds, MCP) and share services with bot commands (ask/context/autorecord/billing).
