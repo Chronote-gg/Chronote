@@ -18,6 +18,7 @@ import {
 } from "../mcpMeetingService";
 import { resolveConfigSnapshot } from "../unifiedConfigService";
 import type { MeetingHistory } from "../../types/db";
+import { MEETING_STATUS } from "../../types/meetingLifecycle";
 
 jest.mock("../discordService", () => ({
   isDiscordApiError: jest.fn(() => false),
@@ -253,6 +254,71 @@ describe("mcpMeetingService", () => {
         { meetingId: "fallback", serverName: "Guild 1" },
       ],
     });
+  });
+
+  it("excludes cancelled meetings returned by the user index", async () => {
+    const cancelledMeeting = createMeeting("cancelled", {
+      guildId: "guild-1",
+      timestamp: "2026-01-04T00:00:00.000Z",
+      channelId_timestamp: "channel-1#2026-01-04T00:00:00.000Z",
+      participants: [{ id: "user-1", username: "user1" }],
+      status: MEETING_STATUS.CANCELLED,
+    });
+    const activeMeeting = createMeeting("active", {
+      guildId: "guild-1",
+      timestamp: "2026-01-03T00:00:00.000Z",
+      channelId_timestamp: "channel-1#2026-01-03T00:00:00.000Z",
+      participants: [{ id: "user-1", username: "user1" }],
+    });
+    jest
+      .mocked(listBotGuildsCached)
+      .mockResolvedValue([{ id: "guild-1", name: "Guild 1", icon: null }]);
+    jest.mocked(listMeetingUserIndexForUserInRangeService).mockResolvedValue([
+      {
+        userId: "user-1",
+        userTimestamp:
+          "2026-01-04T00:00:00.000Z#guild-1#channel-1#2026-01-04T00:00:00.000Z",
+        guildId: "guild-1",
+        channelId_timestamp: "channel-1#2026-01-04T00:00:00.000Z",
+        meetingId: "cancelled",
+        timestamp: "2026-01-04T00:00:00.000Z",
+      },
+      {
+        userId: "user-1",
+        userTimestamp:
+          "2026-01-03T00:00:00.000Z#guild-1#channel-1#2026-01-03T00:00:00.000Z",
+        guildId: "guild-1",
+        channelId_timestamp: "channel-1#2026-01-03T00:00:00.000Z",
+        meetingId: "active",
+        timestamp: "2026-01-03T00:00:00.000Z",
+      },
+    ]);
+    jest
+      .mocked(getMeetingHistoryService)
+      .mockImplementation((_guildId, channelIdTimestamp) =>
+        Promise.resolve(
+          channelIdTimestamp === cancelledMeeting.channelId_timestamp
+            ? cancelledMeeting
+            : activeMeeting,
+        ),
+      );
+    jest.mocked(listMeetingsForGuildInRangeService).mockResolvedValue([]);
+    jest.mocked(checkUserMeetingAccess).mockResolvedValue({
+      allowed: true,
+      via: "attendee",
+    });
+
+    await expect(
+      listMcpMyMeetings({
+        userId: "user-1",
+        mode: "attended",
+        startDate: "2026-01-01T00:00:00.000Z",
+        endDate: "2026-01-05T00:00:00.000Z",
+      }),
+    ).resolves.toMatchObject({
+      meetings: [{ meetingId: "active", serverName: "Guild 1" }],
+    });
+    expect(checkUserMeetingAccess).toHaveBeenCalledTimes(1);
   });
 
   it("uses permission access mode without requiring participant membership", async () => {

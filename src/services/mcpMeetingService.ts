@@ -316,6 +316,7 @@ const meetingMatchesListFilters = (
   input: MeetingListFilters,
   requestedTags: Set<string>,
 ) => {
+  if (meeting.status === MEETING_STATUS.CANCELLED) return false;
   if (!input.includeArchived && meeting.archivedAt) return false;
   if (input.channelId && resolveMeetingChannelId(meeting) !== input.channelId) {
     return false;
