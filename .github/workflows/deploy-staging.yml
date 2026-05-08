@@ -545,7 +545,22 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
 
+      - name: Check docs deploy configuration
+        id: docs-config
+        env:
+          DOCS_BUCKET: ${{ vars.DOCS_BUCKET }}
+          DOCS_DISTRIBUTION_ID: ${{ vars.DOCS_DISTRIBUTION_ID }}
+        run: |
+          if [ -z "$DOCS_BUCKET" ] || [ -z "$DOCS_DISTRIBUTION_ID" ]; then
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "Docs deployment skipped because DOCS_BUCKET or DOCS_DISTRIBUTION_ID is not configured." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          echo "enabled=true" >> "$GITHUB_OUTPUT"
+
       - name: Configure AWS credentials
+        if: steps.docs-config.outputs.enabled == 'true'
         uses: aws-actions/configure-aws-credentials@v6
         with:
           aws-access-key-id: ${{ vars.AWS_ACCESS_KEY_ID }}
@@ -553,6 +568,7 @@ jobs:
           aws-region: ${{ vars.AWS_REGION }}
 
       - name: Setup Node.js
+        if: steps.docs-config.outputs.enabled == 'true'
         uses: actions/setup-node@v6
         with:
           node-version: "22.13.0"
@@ -560,9 +576,11 @@ jobs:
           cache-dependency-path: "yarn.lock"
 
       - name: Install dependencies
+        if: steps.docs-config.outputs.enabled == 'true'
         run: yarn install --frozen-lockfile
 
       - name: Build docs site
+        if: steps.docs-config.outputs.enabled == 'true'
         env:
           DOCS_ALGOLIA_APP_ID: ${{ vars.DOCS_ALGOLIA_APP_ID }}
           DOCS_ALGOLIA_API_KEY: ${{ vars.DOCS_ALGOLIA_API_KEY }}
@@ -571,9 +589,11 @@ jobs:
         run: yarn docs:build
 
       - name: Verify docs build output
+        if: steps.docs-config.outputs.enabled == 'true'
         run: test -d build/docs-site
 
       - name: Sync docs to S3
+        if: steps.docs-config.outputs.enabled == 'true'
         env:
           DOCS_BUCKET: ${{ vars.DOCS_BUCKET }}
         run: |
@@ -589,6 +609,7 @@ jobs:
           fi
 
       - name: Invalidate docs CloudFront
+        if: steps.docs-config.outputs.enabled == 'true'
         env:
           DOCS_DISTRIBUTION_ID: ${{ vars.DOCS_DISTRIBUTION_ID }}
         run: |
