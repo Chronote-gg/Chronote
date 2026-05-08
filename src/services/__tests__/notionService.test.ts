@@ -85,6 +85,27 @@ describe("notionService", () => {
     expect(createRequest.markdown).toContain("Ship the MVP first");
   });
 
+  it("rejects duplicate exports so existing Notion pages are not orphaned", async () => {
+    const notionFetch = jest.fn() as jest.MockedFunction<typeof fetch>;
+    notionFetch
+      .mockResolvedValueOnce(jsonResponse(tokenResponse))
+      .mockResolvedValueOnce(
+        jsonResponse({ id: "page-1", url: "https://notion.so/page-1" }),
+      );
+    setNotionFetchForTests(notionFetch);
+
+    await saveNotionConnectionFromCode({ userId, code: "oauth-code" });
+    await exportMeetingToNotion({ userId, meeting });
+
+    await expect(
+      exportMeetingToNotion({ userId, meeting }),
+    ).rejects.toMatchObject({
+      status: 400,
+      code: "already_exported",
+    });
+    expect(notionFetch).toHaveBeenCalledTimes(2);
+  });
+
   it("replaces the existing Notion page when manually syncing", async () => {
     const notionFetch = jest.fn() as jest.MockedFunction<typeof fetch>;
     notionFetch

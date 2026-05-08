@@ -320,10 +320,24 @@ export const exportMeetingToNotion = async (params: {
   userId: string;
   meeting: MeetingHistory;
   repository?: NotionIntegrationRepository;
-}) =>
-  withNotionToken({
+}) => {
+  const repository = getRepository(params.repository);
+  const existing = await repository.getMeetingExport({
     userId: params.userId,
-    repository: params.repository,
+    guildId: params.meeting.guildId,
+    meetingId: params.meeting.channelId_timestamp,
+  });
+  if (existing) {
+    throw new NotionApiError(
+      400,
+      "already_exported",
+      "Meeting already exported to Notion. Sync it instead.",
+    );
+  }
+
+  return withNotionToken({
+    userId: params.userId,
+    repository,
     async action(accessToken, connection) {
       const markdown = buildMeetingNotionMarkdown(params.meeting);
       const page = await requestNotionApi({
@@ -347,10 +361,11 @@ export const exportMeetingToNotion = async (params: {
         exportedNotesVersion: params.meeting.notesVersion ?? 1,
         lastExportedAt: now,
       };
-      await getRepository(params.repository).writeMeetingExport(meetingExport);
+      await repository.writeMeetingExport(meetingExport);
       return meetingExport;
     },
   });
+};
 
 export const syncMeetingToNotion = async (params: {
   userId: string;

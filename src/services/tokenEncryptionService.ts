@@ -7,12 +7,20 @@ const IV_BYTES = 12;
 const KEY_BYTES = 32;
 const KEY_DERIVATION_SALT = "chronote:notion-token-encryption:v1";
 
+let cachedEncryptionKey: Buffer | undefined;
+
 const getEncryptionKey = () => {
+  if (cachedEncryptionKey) return cachedEncryptionKey;
   const secret = config.notion.tokenEncryptionSecret;
   if (!secret) {
     throw new Error("Notion token encryption secret is not configured.");
   }
-  return crypto.scryptSync(secret, KEY_DERIVATION_SALT, KEY_BYTES);
+  cachedEncryptionKey = crypto.scryptSync(
+    secret,
+    KEY_DERIVATION_SALT,
+    KEY_BYTES,
+  );
+  return cachedEncryptionKey;
 };
 
 export const encryptToken = (value: string): string => {
