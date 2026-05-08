@@ -4,6 +4,8 @@ import { registerNotionOAuthRoutes } from "../notionOAuth";
 import { saveNotionConnectionFromCode } from "../../services/notionService";
 
 let mockNotionEnabled = true;
+let mockModeEnabled = true;
+let mockDiscordOAuthEnabled = true;
 
 jest.mock("../../services/configService", () => ({
   config: {
@@ -15,8 +17,12 @@ jest.mock("../../services/configService", () => ({
         redirectUri: "http://localhost:3001/api/notion/callback",
       };
     },
-    mock: { enabled: true },
-    server: { oauthEnabled: true },
+    get mock() {
+      return { enabled: mockModeEnabled };
+    },
+    get server() {
+      return { oauthEnabled: mockDiscordOAuthEnabled };
+    },
   },
 }));
 
@@ -94,6 +100,8 @@ const createSession = (): MockSession => ({
 describe("Notion OAuth routes", () => {
   beforeEach(() => {
     mockNotionEnabled = true;
+    mockModeEnabled = true;
+    mockDiscordOAuthEnabled = true;
     jest.mocked(saveNotionConnectionFromCode).mockClear();
     jest.mocked(saveNotionConnectionFromCode).mockResolvedValue({} as never);
   });
@@ -211,6 +219,37 @@ describe("Notion OAuth routes", () => {
     expect(session.save).toHaveBeenCalledTimes(1);
     expect(response.redirectUrl).toBe(
       "http://localhost:5173/library?notion_error=not_configured",
+    );
+  });
+
+  it("clears callback state when Discord OAuth is not available", async () => {
+    mockModeEnabled = false;
+    mockDiscordOAuthEnabled = false;
+    const { callback } = captureRoutes();
+    const session = createSession();
+    session.notionOAuth = {
+      state: "expected-state",
+      returnTo: "http://localhost:5173/library",
+      createdAt: Date.now(),
+    };
+    const response = createResponse();
+
+    await callback(
+      {
+        query: { state: "expected-state", code: "oauth-code" },
+        session,
+        user: { id: "user-1" },
+        isAuthenticated: () => true,
+      } as never,
+      response as never,
+      jest.fn(),
+    );
+
+    expect(saveNotionConnectionFromCode).not.toHaveBeenCalled();
+    expect(session.notionOAuth).toBeUndefined();
+    expect(session.save).toHaveBeenCalledTimes(1);
+    expect(response.redirectUrl).toBe(
+      "http://localhost:5173/library?notion_error=oauth_disabled",
     );
   });
 });

@@ -85,6 +85,40 @@ describe("notionService", () => {
     expect(createRequest.markdown).toContain("Ship the MVP first");
   });
 
+  it("escapes Markdown brackets in Notion page text", async () => {
+    const notionFetch = jest.fn() as jest.MockedFunction<typeof fetch>;
+    notionFetch
+      .mockResolvedValueOnce(jsonResponse(tokenResponse))
+      .mockResolvedValueOnce(
+        jsonResponse({ id: "page-1", url: "https://notion.so/page-1" }),
+      );
+    setNotionFetchForTests(notionFetch);
+
+    await saveNotionConnectionFromCode({ userId, code: "oauth-code" });
+    await exportMeetingToNotion({
+      userId,
+      meeting: {
+        ...meeting,
+        meetingName: "Planning [sync] ]",
+        participants: [
+          {
+            id: "participant-1",
+            username: "ParticipantOne",
+            displayName: "Participant ]One",
+          },
+        ],
+      },
+    });
+
+    const createRequest = JSON.parse(
+      notionFetch.mock.calls[1]?.[1]?.body?.toString() ?? "{}",
+    ) as { markdown?: string };
+    expect(createRequest.markdown).toContain("# Planning \\[sync\\] \\]");
+    expect(createRequest.markdown).toContain(
+      "- Participants: Participant \\]One",
+    );
+  });
+
   it("rejects duplicate exports so existing Notion pages are not orphaned", async () => {
     const notionFetch = jest.fn() as jest.MockedFunction<typeof fetch>;
     notionFetch

@@ -146,7 +146,11 @@ export function registerNotionOAuthRoutes(
     }
 
     if (!isDiscordOAuthAvailable()) {
-      res.redirect(
+      delete session?.notionOAuth;
+      redirectAfterSessionSave(
+        session,
+        res,
+        next,
         appendQueryParam(returnTo, "notion_error", "oauth_disabled"),
       );
       return;
