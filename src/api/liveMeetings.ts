@@ -1,5 +1,8 @@
 import express from "express";
+import { rateLimit } from "express-rate-limit";
+import { passThrough } from "../middleware/passThrough";
 import { getMeeting } from "../meetings";
+import { config } from "../services/configService";
 import {
   getActiveMeetingLeaseForGuild,
   isLeaseActive,
@@ -41,6 +44,8 @@ type LiveMeetingRequest = express.Request<{
 
 const GUILD_CACHE_TTL_MS = 60_000;
 const REMOTE_LEASE_REFRESH_MS = 10_000;
+const LIVE_MEETING_RATE_LIMIT_WINDOW_MS = 60_000;
+const LIVE_MEETING_RATE_LIMIT_MAX = 120;
 
 function resolveRemoteLeaseStatus(
   lease: ActiveMeetingLease,
@@ -56,8 +61,19 @@ function resolveRemoteLeaseStatus(
 }
 
 export function registerLiveMeetingRoutes(app: express.Express) {
+  const liveMeetingRateLimiter = config.mock.enabled
+    ? passThrough
+    : rateLimit({
+        windowMs: LIVE_MEETING_RATE_LIMIT_WINDOW_MS,
+        limit: LIVE_MEETING_RATE_LIMIT_MAX,
+        standardHeaders: "draft-7",
+        legacyHeaders: false,
+        message: "Too many live meeting requests, please try again later.",
+      });
+
   app.get(
     "/api/live/:guildId/:meetingId/status",
+    liveMeetingRateLimiter,
     requireAuth,
     async (req: LiveMeetingRequest, res): Promise<void> => {
       const user = req.user as AuthedProfile;
@@ -115,6 +131,7 @@ export function registerLiveMeetingRoutes(app: express.Express) {
 
   app.post(
     "/api/live/:guildId/:meetingId/end",
+    liveMeetingRateLimiter,
     requireAuth,
     async (req: LiveMeetingRequest, res): Promise<void> => {
       const user = req.user as AuthedProfile;
@@ -169,6 +186,7 @@ export function registerLiveMeetingRoutes(app: express.Express) {
 
   app.get(
     "/api/live/:guildId/:meetingId/stream",
+    liveMeetingRateLimiter,
     requireAuth,
     async (req: LiveMeetingRequest, res): Promise<void> => {
       const user = req.user as AuthedProfile;

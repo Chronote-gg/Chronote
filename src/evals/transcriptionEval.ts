@@ -25,6 +25,7 @@ import {
   getLangfuseClient,
   isLangfuseEnabled,
 } from "../services/langfuseClient";
+import { getTranscriptionTextQuality } from "../utils/transcriptionText";
 
 type ProviderName = "openai" | "bedrock";
 
@@ -48,12 +49,14 @@ type EvalOptions = {
   langfuseDataset?: string;
   langfuseExperiment?: string;
   useDataset: boolean;
+  compareNoPrompt: boolean;
 };
 
 type EvalResult = {
   run: number;
   text: string;
   promptLike: boolean;
+  trivialText: boolean;
   durationMs: number;
 };
 
@@ -66,11 +69,17 @@ type EvalOutput = {
   text: string;
   runs: number;
   promptLikeCount: number;
+  trivialTextCount: number;
   uniqueOutputs: number;
   distribution: DistributionEntry[];
   results: EvalResult[];
   topStability: number;
   avgDurationMs: number;
+};
+
+type EvalComparisonOutput = {
+  withPrompt: EvalOutput;
+  withoutPrompt: EvalOutput;
 };
 
 type PromptChatMessage = {
@@ -148,9 +157,11 @@ const EvalOutputSchema = z.object({
       run: z.number(),
       text: z.string(),
       promptLike: z.boolean(),
+      trivialText: z.boolean(),
       durationMs: z.number(),
     }),
   ),
+  trivialTextCount: z.number(),
   topStability: z.number(),
   avgDurationMs: z.number(),
 });
@@ -182,6 +193,7 @@ Options:
   --reference-file          Path to reference transcript file
   --delay-ms                Delay between runs in milliseconds
   --drop-prompt-like        Drop outputs that look like prompt leakage
+  --compare-no-prompt       Run the same eval twice, once with prompt and once without prompt
   --output                  Write JSON results to a file
   --quiet                   Suppress per-run logs
   --trace                   Enable Langfuse OpenAI tracing
@@ -439,6 +451,12 @@ function parseOptions(): EvalOptions {
     throw new Error("Only --provider openai or bedrock is supported for now.");
   }
   const provider = providerRaw as ProviderName;
+  const compareNoPrompt = hasFlag("--compare-no-prompt");
+  if (compareNoPrompt && provider !== "openai") {
+    throw new Error(
+      "--compare-no-prompt currently supports only --provider openai.",
+    );
+  }
 
   const datasetFlag =
     readFlagValue("--langfuse-dataset") ?? readFlagValue("--dataset");
@@ -474,6 +492,7 @@ function parseOptions(): EvalOptions {
     langfuseDataset,
     langfuseExperiment,
     useDataset,
+    compareNoPrompt,
   };
 }
 
@@ -650,6 +669,7 @@ async function runTranscriptionBatch(inputs: BatchInputs): Promise<EvalOutput> {
   const results: EvalResult[] = [];
   const counts = new Map<string, number>();
   let promptLikeCount = 0;
+  let trivialTextCount = 0;
   let totalDurationMs = 0;
 
   for (let i = 0; i < inputs.runs; i += 1) {
@@ -670,6 +690,11 @@ async function runTranscriptionBatch(inputs: BatchInputs): Promise<EvalOutput> {
       promptLikeCount += 1;
     }
 
+    const trivialText = getTranscriptionTextQuality(finalText).trivial;
+    if (trivialText) {
+      trivialTextCount += 1;
+    }
+
     const distributionKey = finalText.length > 0 ? finalText : "[empty]";
     counts.set(distributionKey, (counts.get(distributionKey) ?? 0) + 1);
 
@@ -677,6 +702,7 @@ async function runTranscriptionBatch(inputs: BatchInputs): Promise<EvalOutput> {
       run: i + 1,
       text: finalText,
       promptLike: Boolean(promptLike),
+      trivialText,
       durationMs,
     });
 
@@ -701,6 +727,7 @@ async function runTranscriptionBatch(inputs: BatchInputs): Promise<EvalOutput> {
     text: topEntry[0] ?? "",
     runs: inputs.runs,
     promptLikeCount,
+    trivialTextCount,
     uniqueOutputs: counts.size,
     distribution,
     results,
@@ -715,6 +742,7 @@ function printSummary(output: EvalOutput, reference?: string) {
   console.log(`Runs: ${output.runs}`);
   console.log(`Unique outputs: ${output.uniqueOutputs}`);
   console.log(`Prompt-like outputs: ${output.promptLikeCount}`);
+  console.log(`Trivial outputs: ${output.trivialTextCount}`);
   console.log(`Top stability: ${output.topStability.toFixed(2)}`);
   console.log(`Average latency: ${Math.round(output.avgDurationMs)}ms`);
   if (reference) {
@@ -727,6 +755,33 @@ function printSummary(output: EvalOutput, reference?: string) {
   output.distribution.slice(0, 5).forEach(({ text, count }) => {
     console.log(`- ${count}x ${text}`);
   });
+}
+
+function printComparisonSummary(
+  output: EvalComparisonOutput,
+  reference?: string,
+) {
+  console.log("");
+  console.log("Prompt mode comparison");
+  console.log(
+    `- with prompt: ${output.withPrompt.text || "[empty]"} (prompt-like ${output.withPrompt.promptLikeCount}/${output.withPrompt.runs}, trivial ${output.withPrompt.trivialTextCount}/${output.withPrompt.runs})`,
+  );
+  console.log(
+    `- no prompt: ${output.withoutPrompt.text || "[empty]"} (prompt-like ${output.withoutPrompt.promptLikeCount}/${output.withoutPrompt.runs}, trivial ${output.withoutPrompt.trivialTextCount}/${output.withoutPrompt.runs})`,
+  );
+  if (reference) {
+    const withPromptWer = wordErrorRate(reference, output.withPrompt.text);
+    const withoutPromptWer = wordErrorRate(
+      reference,
+      output.withoutPrompt.text,
+    );
+    if (withPromptWer !== null) {
+      console.log(`- with prompt WER: ${withPromptWer.toFixed(3)}`);
+    }
+    if (withoutPromptWer !== null) {
+      console.log(`- no prompt WER: ${withoutPromptWer.toFixed(3)}`);
+    }
+  }
 }
 
 async function writeOutputFile(outputPath: string, payload: unknown) {
@@ -753,48 +808,63 @@ async function runFileEval(options: EvalOptions) {
   const filePath = path.resolve(process.cwd(), options.file);
   await fs.access(filePath);
 
-  const output = await runTranscriptionBatch({
-    transcribeOnce:
-      options.provider === "openai"
-        ? (() => {
-            const client = createOpenAIClient({
-              traceName: options.trace ? "transcription-eval" : undefined,
-              generationName: options.trace ? "transcription-eval" : undefined,
-              tags: options.trace ? ["eval:transcription"] : undefined,
-              disableTracing: !options.trace,
+  const buildTranscribeOnce = (promptOverride: string) =>
+    options.provider === "openai"
+      ? (() => {
+          const client = createOpenAIClient({
+            traceName: options.trace ? "transcription-eval" : undefined,
+            generationName: options.trace ? "transcription-eval" : undefined,
+            tags: options.trace ? ["eval:transcription"] : undefined,
+            disableTracing: !options.trace,
+          });
+          return () =>
+            transcribeWithOpenAI(client, filePath, {
+              model: options.model,
+              language: options.language,
+              prompt: promptOverride,
+              temperature: options.temperature,
             });
-            return () =>
-              transcribeWithOpenAI(client, filePath, {
-                model: options.model,
-                language: options.language,
-                prompt,
-                temperature: options.temperature,
-              });
-          })()
-        : (() => {
-            const bedrockConfig = resolveBedrockConfig();
-            const region = config.storage.awsRegion;
-            const bedrockClient = new BedrockDataAutomationRuntimeClient({
-              region,
-            });
-            const s3Client = new S3Client({ region });
-            return () =>
-              transcribeWithBedrock(
-                bedrockClient,
-                s3Client,
-                filePath,
-                bedrockConfig,
-              );
-          })(),
-    runs: options.runs,
-    prompt,
-    glossary,
-    delayMs: options.delayMs,
-    dropPromptLike: options.dropPromptLike,
-    quiet: options.quiet,
-  });
+        })()
+      : (() => {
+          const bedrockConfig = resolveBedrockConfig();
+          const region = config.storage.awsRegion;
+          const bedrockClient = new BedrockDataAutomationRuntimeClient({
+            region,
+          });
+          const s3Client = new S3Client({ region });
+          return () =>
+            transcribeWithBedrock(
+              bedrockClient,
+              s3Client,
+              filePath,
+              bedrockConfig,
+            );
+        })();
+
+  const runBatchForPrompt = (promptOverride: string) =>
+    runTranscriptionBatch({
+      transcribeOnce: buildTranscribeOnce(promptOverride),
+      runs: options.runs,
+      prompt: promptOverride,
+      glossary,
+      delayMs: options.delayMs,
+      dropPromptLike: options.dropPromptLike,
+      quiet: options.quiet,
+    });
+
+  const output = await runBatchForPrompt(prompt);
 
   printSummary(output, reference);
+
+  let comparisonOutput: EvalComparisonOutput | undefined;
+  if (options.compareNoPrompt) {
+    const withoutPrompt = await runBatchForPrompt("");
+    comparisonOutput = {
+      withPrompt: output,
+      withoutPrompt,
+    };
+    printComparisonSummary(comparisonOutput, reference);
+  }
 
   if (options.output) {
     const payload = {
@@ -807,6 +877,7 @@ async function runFileEval(options: EvalOptions) {
       promptLength: prompt.length,
       glossaryLength: glossary.length,
       output,
+      comparison: comparisonOutput,
       referenceLength: reference?.length ?? 0,
     };
     await writeOutputFile(options.output, payload);

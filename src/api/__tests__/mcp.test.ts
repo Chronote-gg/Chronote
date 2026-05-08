@@ -1,7 +1,10 @@
 import { jest } from "@jest/globals";
 import type { Express, RequestHandler } from "express";
 import { handleMcpJsonRpcRequest, registerMcpRoutes } from "../mcp";
-import { listMcpServersForUser } from "../../services/mcpMeetingService";
+import {
+  listMcpMyMeetings,
+  listMcpServersForUser,
+} from "../../services/mcpMeetingService";
 import { validateMcpAccessToken } from "../../services/mcpOAuthService";
 import type { McpAccessTokenInfo } from "../../types/mcpOAuth";
 
@@ -16,6 +19,7 @@ jest.mock("../../services/mcpMeetingService", () => ({
   },
   getMcpMeetingSummary: jest.fn(),
   getMcpMeetingTranscript: jest.fn(),
+  listMcpMyMeetings: jest.fn(),
   listMcpMeetings: jest.fn(),
   listMcpServersForUser: jest.fn(),
 }));
@@ -86,6 +90,7 @@ describe("MCP JSON-RPC handler", () => {
       result: {
         tools: expect.arrayContaining([
           expect.objectContaining({ name: "list_servers" }),
+          expect.objectContaining({ name: "list_my_meetings" }),
           expect.objectContaining({ name: "get_meeting_summary" }),
         ]),
       },
@@ -133,6 +138,74 @@ describe("MCP JSON-RPC handler", () => {
       id: 2,
       error: { code: -32001, message: "Insufficient OAuth scope." },
     });
+  });
+
+  it("calls list_my_meetings with the authenticated user id", async () => {
+    jest.mocked(listMcpMyMeetings).mockResolvedValue({
+      mode: "attended",
+      range: {
+        startDate: "2026-01-01T00:00:00.000Z",
+        endDate: "2026-01-08T00:00:00.000Z",
+      },
+      meetings: [
+        {
+          id: "meeting-key",
+          meetingId: "meeting-1",
+          status: "complete",
+          channelId: "channel-1",
+          channelName: "Meeting Room",
+          timestamp: "2026-01-02T00:00:00.000Z",
+          duration: 60,
+          tags: [],
+          meetingName: "Meeting 1",
+          summarySentence: "Summary.",
+          summaryLabel: "Summary",
+          notesAvailable: true,
+          transcriptAvailable: false,
+          audioAvailable: false,
+          archivedAt: undefined,
+          portalUrl: "https://chronote.gg/portal/server/guild-1/library",
+          serverId: "guild-1",
+          serverName: "Server 1",
+          serverIcon: null,
+        },
+      ],
+    });
+
+    await expect(
+      handleMcpJsonRpcRequest(auth, {
+        jsonrpc: "2.0",
+        id: "call-my-meetings",
+        method: "tools/call",
+        params: {
+          name: "list_my_meetings",
+          arguments: {
+            range: "past_7_days",
+            mode: "attended",
+            tags: ["planning"],
+            archivedOnly: true,
+          },
+        },
+      }),
+    ).resolves.toMatchObject({
+      jsonrpc: "2.0",
+      id: "call-my-meetings",
+      result: {
+        structuredContent: {
+          meetings: [{ id: "meeting-key", serverId: "guild-1" }],
+        },
+        isError: false,
+      },
+    });
+    expect(listMcpMyMeetings).toHaveBeenCalledWith(
+      expect.objectContaining({
+        userId: "user-1",
+        range: "past_7_days",
+        mode: "attended",
+        tags: ["planning"],
+        archivedOnly: true,
+      }),
+    );
   });
 
   it("returns an invalid params error for malformed tool calls", async () => {

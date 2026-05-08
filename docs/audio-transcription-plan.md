@@ -104,6 +104,8 @@ Objective:
 Changes:
 
 - Add a new eval runner that accepts an audio clip, runs N transcription passes, and logs distribution.
+- Add prompt-vs-no-prompt comparison mode and write JSON output so Monday-style vote investigations can be replayed without digging through production traces.
+- Add deterministic repeated-phrase cleanup after the finalized audio pass so bursts of low-information hallucinations can be dropped even when the LLM reconcile step proposes no edits.
 - Integrate with Langfuse datasets for regression tracking.
 - Provide hooks for multiple STT providers and a coalescing LLM pass.
 

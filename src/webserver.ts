@@ -1,6 +1,7 @@
 import cors from "cors";
 import cookieParser from "cookie-parser";
 import express from "express";
+import { rateLimit } from "express-rate-limit";
 import session from "express-session";
 import lusca from "lusca";
 import passport from "passport";
@@ -20,6 +21,7 @@ import { config } from "./services/configService";
 import { DynamoSessionStore } from "./services/sessionStore";
 import { getStripeClient } from "./services/stripeClient";
 import { saveGuildInstaller } from "./services/guildInstallerService";
+import { passThrough } from "./middleware/passThrough";
 import { metricsMiddleware, metricsRegistry } from "./metrics";
 import { appRouter } from "./trpc/router";
 import { AuthedProfile, createContext } from "./trpc/context";
@@ -38,6 +40,8 @@ import {
 
 const AUTH_RATE_LIMIT_WINDOW_MS = 60_000;
 const AUTH_RATE_LIMIT_MAX = 20;
+const SESSION_REFRESH_RATE_LIMIT_MAX = 240;
+const USER_PROFILE_RATE_LIMIT_MAX = 120;
 const CSRF_TOKEN_PATH = "/api/csrf-token";
 const CSRF_HEADER_NAME = "x-csrf-token";
 
@@ -190,6 +194,25 @@ export function setupWebServer() {
     windowMs: AUTH_RATE_LIMIT_WINDOW_MS,
     limit: AUTH_RATE_LIMIT_MAX,
   });
+  const sessionRefreshRateLimiter = config.mock.enabled
+    ? passThrough
+    : rateLimit({
+        windowMs: AUTH_RATE_LIMIT_WINDOW_MS,
+        limit: SESSION_REFRESH_RATE_LIMIT_MAX,
+        standardHeaders: "draft-7",
+        legacyHeaders: false,
+        message: "Too many authenticated requests, please try again later.",
+        skip: (req) => !req.isAuthenticated?.(),
+      });
+  const userProfileRateLimiter = config.mock.enabled
+    ? passThrough
+    : rateLimit({
+        windowMs: AUTH_RATE_LIMIT_WINDOW_MS,
+        limit: USER_PROFILE_RATE_LIMIT_MAX,
+        standardHeaders: "draft-7",
+        legacyHeaders: false,
+        message: "Too many user profile requests, please try again later.",
+      });
 
   if (config.server.oauthEnabled) {
     // Initialize Passport
@@ -260,7 +283,7 @@ export function setupWebServer() {
       (req as typeof req & { user?: unknown }).user = undefined;
     };
 
-    app.use(async (req, _res, next) => {
+    app.use(sessionRefreshRateLimiter, async (req, _res, next) => {
       if (config.mock.enabled) {
         next();
         return;
@@ -390,7 +413,7 @@ export function setupWebServer() {
     finishLogout();
   });
 
-  app.get("/user", (req, res) => {
+  app.get("/user", userProfileRateLimiter, (req, res) => {
     if (req.isAuthenticated()) {
       res.json(req.user as Profile);
     } else {

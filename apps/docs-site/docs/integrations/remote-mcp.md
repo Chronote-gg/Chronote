@@ -23,6 +23,7 @@ Remote MCP requires Discord OAuth and `OAUTH_SECRET` to be configured. Set `MCP_
 
 - `list_servers`: Lists Discord servers where the authenticated user can access Chronote data.
 - `list_meetings`: Lists recent meetings in a server, with optional channel, date, tag, and archived filters.
+- `list_my_meetings`: Lists meetings across servers for the authenticated user. It defaults to meetings the user attended in the past 7 days and can also list meetings the user can access.
 - `get_meeting_summary`: Returns notes and metadata for one accessible meeting.
 - `get_meeting_transcript`: Returns transcript text for one accessible meeting.
 

@@ -198,6 +198,18 @@ const tables = [
     BillingMode: "PAY_PER_REQUEST",
   },
   {
+    TableName: "MeetingUserIndexTable",
+    KeySchema: [
+      { AttributeName: "userId", KeyType: "HASH" },
+      { AttributeName: "userTimestamp", KeyType: "RANGE" },
+    ],
+    AttributeDefinitions: [
+      { AttributeName: "userId", AttributeType: "S" },
+      { AttributeName: "userTimestamp", AttributeType: "S" },
+    ],
+    BillingMode: "PAY_PER_REQUEST",
+  },
+  {
     TableName: "MeetingShareTable",
     KeySchema: [
       { AttributeName: "pk", KeyType: "HASH" },

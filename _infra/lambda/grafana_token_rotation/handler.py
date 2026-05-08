@@ -38,18 +38,19 @@ def handler(event, context):
         current = secretsmanager.get_secret_value(SecretId=SECRET_ARN)
         secret_data = json.loads(current["SecretString"])
         old_token_id = secret_data.get("tokenId")
-        logger.info("Found existing token ID: %s", old_token_id)
+        logger.info("Found existing Grafana token")
     except secretsmanager.exceptions.ResourceNotFoundException:
         logger.info("No existing secret value; first rotation")
     except (json.JSONDecodeError, KeyError):
         logger.warning("Could not parse existing secret; will create fresh token")
 
     # 2. Create a new token
+    token_name = f"auto-rotated-{context.aws_request_id[:8]}"
     try:
         response = grafana.create_workspace_service_account_token(
             workspaceId=WORKSPACE_ID,
             serviceAccountId=SERVICE_ACCOUNT_ID,
-            name=f"auto-rotated-{context.aws_request_id[:8]}",
+            name=token_name,
             secondsToLive=TOKEN_TTL_SECONDS,
         )
     except ClientError as exc:
@@ -58,7 +59,7 @@ def handler(event, context):
 
     new_token_key = response["serviceAccountToken"]["key"]
     new_token_id = str(response["serviceAccountToken"]["id"])
-    logger.info("Created new token ID: %s", new_token_id)
+    logger.info("Created new Grafana token")
 
     # 3. Store the new token in Secrets Manager.
     #    If storage fails, delete the new token to avoid a leak.
@@ -77,17 +78,19 @@ def handler(event, context):
         )
     except ClientError as exc:
         logger.error("Failed to store token in Secrets Manager: %s", exc)
-        logger.info("Rolling back: deleting newly created token %s", new_token_id)
+        logger.info("Rolling back newly created Grafana token")
         try:
             grafana.delete_workspace_service_account_token(
                 workspaceId=WORKSPACE_ID,
                 serviceAccountId=SERVICE_ACCOUNT_ID,
                 tokenId=new_token_id,
             )
-            logger.info("Rollback successful: deleted token %s", new_token_id)
+            logger.info("Rollback successful: deleted newly created Grafana token")
         except ClientError as rollback_exc:
             logger.error(
-                "Rollback failed, orphaned token %s: %s", new_token_id, rollback_exc
+                "Rollback failed, orphaned newly created Grafana token named %s: %s",
+                token_name,
+                rollback_exc,
             )
         raise
     logger.info("Stored new token in Secrets Manager")
@@ -100,14 +103,14 @@ def handler(event, context):
                 serviceAccountId=SERVICE_ACCOUNT_ID,
                 tokenId=old_token_id,
             )
-            logger.info("Deleted old token ID: %s", old_token_id)
+            logger.info("Deleted old Grafana token")
         except ClientError as exc:
             if exc.response["Error"]["Code"] == "ResourceNotFoundException":
-                logger.info("Old token %s already deleted or not found", old_token_id)
+                logger.info("Old Grafana token already deleted or not found")
             else:
                 raise
 
     return {
         "statusCode": 200,
-        "body": json.dumps({"message": "Token rotated", "newTokenId": new_token_id}),
+        "body": json.dumps({"message": "Token rotated"}),
     }

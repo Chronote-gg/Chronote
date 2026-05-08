@@ -15,6 +15,7 @@ import {
   RECORD_SAMPLE_RATE,
   SILENCE_THRESHOLD,
   TRANSCRIPTION_CLEANUP_LINES_DIFFERENCE_ISSUE,
+  TRANSCRIPTION_FAILURE_PLACEHOLDER,
 } from "./constants";
 import {
   AudioFileData,
@@ -507,7 +508,10 @@ function runFastTranscription(meeting: MeetingData, snippet: AudioSnippet) {
   })
     .then((transcription) => {
       if (snippet.fastRevision !== revision) return;
-      if (!transcription.trim() || transcription === "[Transcription failed]") {
+      if (
+        !transcription.trim() ||
+        transcription === TRANSCRIPTION_FAILURE_PLACEHOLDER
+      ) {
         return;
       }
       const entry = {
