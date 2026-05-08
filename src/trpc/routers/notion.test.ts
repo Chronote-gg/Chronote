@@ -65,6 +65,8 @@ const meeting: MeetingHistory = {
   generateNotes: true,
 };
 
+const meetingHistoryKey = meeting.channelId_timestamp;
+
 const createCaller = () =>
   notionRouter.createCaller({
     req: { session: {} },
@@ -108,13 +110,17 @@ describe("notionRouter", () => {
     await expect(
       createCaller().exportStatus({
         serverId: "guild-1",
-        meetingId: meeting.meetingId,
+        meetingId: meetingHistoryKey,
       }),
     ).resolves.toMatchObject({ outdated: true });
+    expect(getMeetingHistoryService).toHaveBeenCalledWith(
+      "guild-1",
+      meetingHistoryKey,
+    );
     expect(getMeetingNotionExportStatus).toHaveBeenCalledWith({
       userId: "user-1",
       guildId: "guild-1",
-      meetingId: meeting.meetingId,
+      meetingId: meetingHistoryKey,
       currentNotesVersion: 4,
     });
     expect(ensureUserCanAccessMeeting).toHaveBeenCalledWith({
@@ -131,7 +137,7 @@ describe("notionRouter", () => {
     await expect(
       createCaller().exportMeeting({
         serverId: "guild-1",
-        meetingId: meeting.meetingId,
+        meetingId: meetingHistoryKey,
       }),
     ).rejects.toMatchObject<Partial<TRPCError>>({
       code: "FORBIDDEN",
@@ -150,7 +156,7 @@ describe("notionRouter", () => {
     await expect(
       createCaller().exportMeeting({
         serverId: "guild-1",
-        meetingId: meeting.meetingId,
+        meetingId: meetingHistoryKey,
       }),
     ).rejects.toMatchObject<Partial<TRPCError>>({
       code: "BAD_REQUEST",
