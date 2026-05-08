@@ -56,6 +56,17 @@ const requestJson = async (url: string) =>
     req.end();
   });
 
+const closeServer = async (server: http.Server) =>
+  new Promise<void>((resolve, reject) => {
+    server.close((error) => {
+      if (error) {
+        reject(error);
+        return;
+      }
+      resolve();
+    });
+  });
+
 describe("guild REST routes", () => {
   beforeEach(() => {
     jest.resetAllMocks();
@@ -80,7 +91,7 @@ describe("guild REST routes", () => {
       });
       expect(mockedListGuildChannels).not.toHaveBeenCalled();
     } finally {
-      server.close();
+      await closeServer(server);
     }
   });
 
@@ -98,7 +109,7 @@ describe("guild REST routes", () => {
         textChannels: [{ id: "text-1", name: "Text" }],
       });
     } finally {
-      server.close();
+      await closeServer(server);
     }
   });
 });

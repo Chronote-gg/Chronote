@@ -413,6 +413,7 @@ export const contactFeedbackSubmitMutation = buildMutationState<
 type ContactFeedbackUploadUrlResult = {
   url: string;
   key: string;
+  uploadToken: string;
   fields: Record<string, string>;
 };
 
@@ -424,6 +425,7 @@ const nextContactFeedbackUploadUrlResult =
     return {
       url: `https://s3.example.com/presigned-${contactFeedbackUploadCounter}`,
       key: `contact-feedback/test-${contactFeedbackUploadCounter}.png`,
+      uploadToken: `upload-token-${contactFeedbackUploadCounter}`,
       fields: {
         key: `contact-feedback/test-${contactFeedbackUploadCounter}.png`,
         "Content-Type": "image/png",

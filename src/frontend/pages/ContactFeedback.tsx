@@ -35,15 +35,21 @@ import { executeRecaptcha, useRecaptchaScript } from "../hooks/useRecaptcha";
 const HONEYPOT_FIELD_NAME = "website_url";
 const IMAGE_SIZE_LABEL = `${CONTACT_FEEDBACK_MAX_IMAGE_BYTES / (1024 * 1024)}MB`;
 
-/** Upload images to S3 via presigned URLs. Returns uploaded keys and any failures. */
+/** Upload images to S3 via presigned POSTs. Returns uploaded keys and any failures. */
 type UploadImagesResult = {
-  keys: string[];
+  uploads: UploadedImage[];
   error?: string;
+};
+
+type UploadedImage = {
+  key: string;
+  uploadToken: string;
 };
 
 type UploadPost = {
   url: string;
   key: string;
+  uploadToken: string;
   fields: Record<string, string>;
 };
 
@@ -60,7 +66,7 @@ async function uploadImagesToS3(
     fileSize: number;
   }) => Promise<UploadPost>,
 ): Promise<UploadImagesResult> {
-  const keys: string[] = [];
+  const uploads: UploadedImage[] = [];
   const failedNames: string[] = [];
 
   for (const img of images) {
@@ -83,7 +89,7 @@ async function uploadImagesToS3(
         failedNames.push(img.file.name);
         continue;
       }
-      keys.push(post.key);
+      uploads.push({ key: post.key, uploadToken: post.uploadToken });
     } catch {
       failedNames.push(img.file.name);
     }
@@ -91,12 +97,12 @@ async function uploadImagesToS3(
 
   if (failedNames.length > 0) {
     return {
-      keys,
+      uploads,
       error: buildUploadFailureMessage(failedNames),
     };
   }
 
-  return { keys };
+  return { uploads };
 }
 
 function extractErrorMessage(err: unknown): string {
@@ -445,7 +451,7 @@ export default function ContactFeedback() {
       );
       if (uploadResult.error) {
         setUploadError({ message: uploadResult.error });
-        if (uploadResult.keys.length === 0) {
+        if (uploadResult.uploads.length === 0) {
           return;
         }
       }
@@ -456,8 +462,8 @@ export default function ContactFeedback() {
         contactDiscord: data.contactDiscord,
         honeypot: data.honeypot,
         recaptchaToken,
-        imageS3Keys:
-          uploadResult.keys.length > 0 ? uploadResult.keys : undefined,
+        imageS3Uploads:
+          uploadResult.uploads.length > 0 ? uploadResult.uploads : undefined,
       });
 
       data.images.forEach((img) => URL.revokeObjectURL(img.previewUrl));

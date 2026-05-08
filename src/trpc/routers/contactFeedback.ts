@@ -20,9 +20,15 @@ import {
   uploadObjectToS3,
   getSignedUploadPost,
 } from "../../services/storageService";
-import { randomUUID } from "node:crypto";
+import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
 import { createRateLimitMiddleware } from "../rateLimitMiddleware";
 import { notifyContactFeedbackFromWeb } from "../../services/contactFeedbackNotificationService";
+import { config } from "../../services/configService";
+
+type ContactFeedbackUploadedImage = {
+  key: string;
+  uploadToken: string;
+};
 
 const submitRateLimited = createRateLimitMiddleware(
   "feedback-submit",
@@ -54,13 +60,52 @@ const submitInput = z.object({
     )
     .max(CONTACT_FEEDBACK_MAX_IMAGES)
     .optional(),
-  // Presigned URL flow: S3 keys from getUploadUrl
-  imageS3Keys: z
-    .array(z.string().max(512))
+  // Presigned POST flow: S3 keys and tokens from getUploadUrl
+  imageS3Uploads: z
+    .array(
+      z.object({
+        key: z.string().max(512),
+        uploadToken: z.string().max(512),
+      }),
+    )
     .max(CONTACT_FEEDBACK_MAX_IMAGES)
     .optional(),
   honeypot: z.string().optional(),
 });
+
+const buildUploadTokenPayload = (key: string, expiresAt: number) =>
+  `${key}.${expiresAt}`;
+
+const signUploadToken = (key: string, expiresAt: number) =>
+  createHmac("sha256", config.server.sessionSecret)
+    .update(buildUploadTokenPayload(key, expiresAt))
+    .digest("base64url");
+
+const createUploadToken = (key: string) => {
+  const expiresAt =
+    Date.now() + CONTACT_FEEDBACK_UPLOAD_URL_EXPIRY_SECONDS * 1000;
+  return `${expiresAt}.${signUploadToken(key, expiresAt)}`;
+};
+
+const verifyUploadToken = (upload: ContactFeedbackUploadedImage) => {
+  if (!upload.key.startsWith(CONTACT_FEEDBACK_S3_PREFIX)) {
+    return false;
+  }
+
+  const [expiresAtText, signature] = upload.uploadToken.split(".");
+  const expiresAt = Number.parseInt(expiresAtText ?? "", 10);
+  if (!Number.isFinite(expiresAt) || expiresAt <= Date.now() || !signature) {
+    return false;
+  }
+
+  const expected = signUploadToken(upload.key, expiresAt);
+  const actualBuffer = Buffer.from(signature);
+  const expectedBuffer = Buffer.from(expected);
+  return (
+    actualBuffer.byteLength === expectedBuffer.byteLength &&
+    timingSafeEqual(actualBuffer, expectedBuffer)
+  );
+};
 
 const getUploadUrl = publicProcedure
   .use(uploadUrlRateLimited)
@@ -78,7 +123,7 @@ const getUploadUrl = publicProcedure
     const upload = await getSignedUploadPost(
       key,
       input.contentType,
-      CONTACT_FEEDBACK_MAX_IMAGE_BYTES,
+      input.fileSize,
       CONTACT_FEEDBACK_UPLOAD_URL_EXPIRY_SECONDS,
     );
     if (!upload) {
@@ -87,7 +132,7 @@ const getUploadUrl = publicProcedure
         message: "Failed to generate upload form",
       });
     }
-    return { ...upload, key };
+    return { ...upload, key, uploadToken: createUploadToken(key) };
   });
 
 const submit = publicProcedure
@@ -137,12 +182,12 @@ const submit = publicProcedure
       }
     }
 
-    // Merge presigned-upload keys (validated by prefix, capped at max total)
-    if (input.imageS3Keys) {
-      for (const key of input.imageS3Keys) {
+    // Merge presigned-upload keys (validated by signed token, capped at max total)
+    if (input.imageS3Uploads) {
+      for (const upload of input.imageS3Uploads) {
         if (allImageS3Keys.length >= CONTACT_FEEDBACK_MAX_IMAGES) break;
-        if (key.startsWith(CONTACT_FEEDBACK_S3_PREFIX)) {
-          allImageS3Keys.push(key);
+        if (verifyUploadToken(upload)) {
+          allImageS3Keys.push(upload.key);
         }
       }
     }
