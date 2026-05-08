@@ -215,7 +215,7 @@ when checking drift after deploys.
 
 Each GitHub environment used by the workflow must provide:
 
-- Variable `AWS_ACCESS_KEY_ID`
+- Secret `AWS_ACCESS_KEY_ID`
 - Secret `AWS_SECRET_ACCESS_KEY`
 - Secret `TERRAFORM_TFVARS_JSON`
 

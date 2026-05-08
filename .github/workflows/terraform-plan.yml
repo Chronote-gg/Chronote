@@ -42,7 +42,7 @@ jobs:
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v6
         with:
-          aws-access-key-id: ${{ vars.AWS_ACCESS_KEY_ID }}
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
@@ -94,7 +94,9 @@ jobs:
         run: terraform -chdir=_infra init -input=false
 
       - name: Select Terraform workspace
-        run: terraform -chdir=_infra workspace select "${{ inputs.terraform_workspace }}"
+        env:
+          TERRAFORM_WORKSPACE: ${{ inputs.terraform_workspace }}
+        run: terraform -chdir=_infra workspace select "$TERRAFORM_WORKSPACE"
 
       - name: Terraform validate
         run: terraform -chdir=_infra validate -no-color
@@ -122,13 +124,17 @@ jobs:
 
       - name: Write summary
         if: always()
+        env:
+          GITHUB_ENVIRONMENT: ${{ inputs.github_environment }}
+          TERRAFORM_WORKSPACE: ${{ inputs.terraform_workspace }}
+          PLAN_CHANGES: ${{ steps.plan.outputs.changes || 'unknown' }}
         run: |
           {
             echo "## Terraform Plan"
             echo
-            echo "- GitHub environment: \`${{ inputs.github_environment }}\`"
-            echo "- Terraform workspace: \`${{ inputs.terraform_workspace }}\`"
-            echo "- Pending changes: \`${{ steps.plan.outputs.changes || 'unknown' }}\`"
+            echo "- GitHub environment: \`$GITHUB_ENVIRONMENT\`"
+            echo "- Terraform workspace: \`$TERRAFORM_WORKSPACE\`"
+            echo "- Pending changes: \`$PLAN_CHANGES\`"
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Remove generated tfvars
