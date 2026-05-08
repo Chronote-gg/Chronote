@@ -475,6 +475,45 @@ describe("mcpMeetingService", () => {
     expect(listBotGuildsCached).not.toHaveBeenCalled();
   });
 
+  it("normalizes custom My Meetings date bounds before querying", async () => {
+    jest
+      .mocked(listBotGuildsCached)
+      .mockResolvedValue([{ id: "guild-1", name: "Guild 1", icon: null }]);
+    jest
+      .mocked(listMeetingUserIndexForUserInRangeService)
+      .mockResolvedValue([]);
+    jest.mocked(listMeetingsForGuildInRangeService).mockResolvedValue([]);
+
+    await expect(
+      listMcpMyMeetings({
+        userId: "offset-user",
+        mode: "attended",
+        range: "custom",
+        startDate: "2026-01-01T00:00:00-05:00",
+        endDate: "2026-01-02T00:00:00+02:00",
+      }),
+    ).resolves.toEqual({
+      range: {
+        startDate: "2026-01-01T05:00:00.000Z",
+        endDate: "2026-01-01T22:00:00.000Z",
+      },
+      mode: "attended",
+      meetings: [],
+    });
+    expect(listMeetingUserIndexForUserInRangeService).toHaveBeenCalledWith(
+      "offset-user",
+      "2026-01-01T05:00:00.000Z",
+      "2026-01-01T22:00:00.000Z",
+      125,
+    );
+    expect(listMeetingsForGuildInRangeService).toHaveBeenCalledWith(
+      "guild-1",
+      "2026-01-01T05:00:00.000Z",
+      "2026-01-01T22:00:00.000Z",
+      125,
+    );
+  });
+
   it("caches accessible server lists for repeated polling", async () => {
     jest.mocked(listBotGuildsCached).mockResolvedValue([
       { id: "guild-1", name: "Guild 1", icon: null },

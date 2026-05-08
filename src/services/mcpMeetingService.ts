@@ -33,6 +33,7 @@ const MAX_MEETING_LIMIT = 100;
 const MCP_MEETING_SCAN_LIMIT_MULTIPLIER = 5;
 const MCP_INDEX_HISTORY_BATCH_SIZE = 10;
 const MCP_SERVER_MEETING_BATCH_SIZE = 5;
+const MCP_CHANNEL_MAP_BATCH_SIZE = 5;
 const MCP_SERVER_MEMBERSHIP_BATCH_SIZE = 5;
 const MS_PER_DAY = 1000 * 60 * 60 * 24;
 
@@ -338,6 +339,17 @@ const meetingMatchesListFilters = (
 const normalizeMcpMeetingLimit = (limit?: number) =>
   Math.max(0, Math.min(limit ?? DEFAULT_MEETING_LIMIT, MAX_MEETING_LIMIT));
 
+const normalizeInputDateIso = (value: string) => {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    throw new McpMeetingAccessError(
+      "Invalid meeting date range.",
+      "bad_request",
+    );
+  }
+  return date.toISOString();
+};
+
 const resolveTodayStartIso = (nowMs: number, timeZoneOffsetMinutes = 0) => {
   const localMs = nowMs - timeZoneOffsetMinutes * 60 * 1000;
   const localDate = new Date(localMs);
@@ -353,7 +365,9 @@ const resolveTodayStartIso = (nowMs: number, timeZoneOffsetMinutes = 0) => {
 
 const resolveMyMeetingsDateRange = (input: ListMcpMyMeetingsInput) => {
   const nowMs = Date.now();
-  const endDate = input.endDate ?? new Date(nowMs).toISOString();
+  const endDate = input.endDate
+    ? normalizeInputDateIso(input.endDate)
+    : new Date(nowMs).toISOString();
   const range = input.range ?? (input.startDate ? "custom" : "past_7_days");
   if (range === "custom" && !input.startDate) {
     throw new McpMeetingAccessError(
@@ -362,7 +376,7 @@ const resolveMyMeetingsDateRange = (input: ListMcpMyMeetingsInput) => {
     );
   }
   const startDate =
-    input.startDate ??
+    (input.startDate && normalizeInputDateIso(input.startDate)) ||
     (range === "today"
       ? resolveTodayStartIso(nowMs, input.timeZoneOffsetMinutes)
       : range === "past_7_days"
@@ -613,11 +627,13 @@ const summarizeUserMeetings = async (
   const guildIds = Array.from(
     new Set(meetings.map((meeting) => meeting.guildId)),
   );
-  const channelEntries = await Promise.all(
-    guildIds.map(async (guildId) => ({
+  const channelEntries = await runInBatches(
+    guildIds,
+    MCP_CHANNEL_MAP_BATCH_SIZE,
+    async (guildId) => ({
       guildId,
       channelMap: await resolveChannelMap(guildId),
-    })),
+    }),
   );
   const channelMaps = new Map<string, Map<string, string>>();
   channelEntries.forEach((entry) => {

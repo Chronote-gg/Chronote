@@ -851,8 +851,8 @@ const myList = authedProcedure
         .min(-14 * 60)
         .max(14 * 60)
         .optional(),
-      serverIds: z.array(z.string()).optional(),
-      tags: z.array(z.string()).optional(),
+      serverIds: z.array(z.string().min(1)).optional(),
+      tags: z.array(z.string().min(1)).optional(),
       archivedOnly: z.boolean().optional(),
       includeArchived: z.boolean().optional(),
     }),
