@@ -1,8 +1,9 @@
 import crypto from "node:crypto";
-import type { Express, Request } from "express";
+import type { Express, Request, RequestHandler } from "express";
 import type { Profile } from "passport-discord";
 import type { Session } from "express-session";
 import { config } from "../services/configService";
+import { createAuthRateLimiter } from "../services/authRateLimitService";
 import { resolveRedirectTarget } from "../services/oauthRedirectService";
 import {
   buildNotionAuthorizationUrl,
@@ -19,6 +20,8 @@ type NotionOAuthSession = Session & {
 
 const STATE_BYTES = 32;
 const STATE_TTL_MS = 10 * 60 * 1000;
+const NOTION_OAUTH_RATE_LIMIT_WINDOW_MS = 60_000;
+const NOTION_OAUTH_RATE_LIMIT_MAX = 20;
 
 const getSession = (req: Request) =>
   req.session as NotionOAuthSession | undefined;
@@ -38,8 +41,18 @@ const appendQueryParam = (url: string, key: string, value: string) => {
 const isAuthenticated = (req: Request) =>
   typeof req.isAuthenticated === "function" && req.isAuthenticated();
 
-export function registerNotionOAuthRoutes(app: Express) {
-  app.get("/api/notion/connect", (req, res, next) => {
+const createNotionOAuthRateLimiter = () =>
+  createAuthRateLimiter({
+    enabled: !config.mock.enabled,
+    windowMs: NOTION_OAUTH_RATE_LIMIT_WINDOW_MS,
+    limit: NOTION_OAUTH_RATE_LIMIT_MAX,
+  });
+
+export function registerNotionOAuthRoutes(
+  app: Express,
+  rateLimiter: RequestHandler = createNotionOAuthRateLimiter(),
+) {
+  app.get("/api/notion/connect", rateLimiter, (req, res, next) => {
     if (!config.notion.enabled) {
       res.redirect(
         appendQueryParam(
@@ -78,7 +91,7 @@ export function registerNotionOAuthRoutes(app: Express) {
     });
   });
 
-  app.get("/api/notion/callback", async (req, res, next) => {
+  app.get("/api/notion/callback", rateLimiter, async (req, res, next) => {
     const session = getSession(req);
     const stored = session?.notionOAuth;
     const returnTo = stored?.returnTo ?? getFallbackRedirect();

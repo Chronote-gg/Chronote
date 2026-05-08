@@ -4,13 +4,15 @@ import { config } from "./configService";
 const CIPHER = "aes-256-gcm";
 const ENCRYPTION_VERSION = "v1";
 const IV_BYTES = 12;
+const KEY_BYTES = 32;
+const KEY_DERIVATION_SALT = "chronote:notion-token-encryption:v1";
 
 const getEncryptionKey = () => {
   const secret = config.notion.tokenEncryptionSecret;
   if (!secret) {
     throw new Error("Notion token encryption secret is not configured.");
   }
-  return crypto.createHash("sha256").update(secret).digest();
+  return crypto.scryptSync(secret, KEY_DERIVATION_SALT, KEY_BYTES);
 };
 
 export const encryptToken = (value: string): string => {

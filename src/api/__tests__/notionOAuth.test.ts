@@ -11,6 +11,7 @@ jest.mock("../../services/configService", () => ({
       clientId: "notion-client-id",
       redirectUri: "http://localhost:3001/api/notion/callback",
     },
+    mock: { enabled: true },
   },
 }));
 
@@ -47,7 +48,9 @@ type MockSession = {
 const captureRoutes = () => {
   const handlers = new Map<string, RequestHandler>();
   const app = {
-    get: jest.fn((path: string, handler: RequestHandler) => {
+    get: jest.fn((path: string, ...routeHandlers: RequestHandler[]) => {
+      const handler = routeHandlers[routeHandlers.length - 1];
+      if (!handler) throw new Error(`Route ${path} is missing a handler.`);
       handlers.set(path, handler);
     }),
   };
