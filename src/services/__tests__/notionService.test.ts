@@ -31,13 +31,11 @@ const meeting: MeetingHistory = {
   generateNotes: true,
 };
 
-function jsonResponse(payload: unknown, status = 200): Response {
-  return {
-    ok: status >= 200 && status < 300,
-    status,
-    json: async () => payload,
-  } as Response;
-}
+const jsonResponse = (payload: unknown, status = 200) => ({
+  ok: status >= 200 && status < 300,
+  status,
+  json: async () => payload,
+});
 
 const tokenResponse = {
   access_token: "notion-access-token",
@@ -58,7 +56,7 @@ describe("notionService", () => {
   });
 
   it("exports Chronote notes to a new Notion markdown page", async () => {
-    const notionFetch = jest.fn() as jest.MockedFunction<typeof fetch>;
+    const notionFetch = jest.fn();
     notionFetch
       .mockResolvedValueOnce(jsonResponse(tokenResponse))
       .mockResolvedValueOnce(
@@ -87,7 +85,7 @@ describe("notionService", () => {
   });
 
   it("escapes Markdown brackets in Notion page text", async () => {
-    const notionFetch = jest.fn() as jest.MockedFunction<typeof fetch>;
+    const notionFetch = jest.fn();
     notionFetch
       .mockResolvedValueOnce(jsonResponse(tokenResponse))
       .mockResolvedValueOnce(
@@ -121,7 +119,7 @@ describe("notionService", () => {
   });
 
   it("rejects duplicate exports so existing Notion pages are not orphaned", async () => {
-    const notionFetch = jest.fn() as jest.MockedFunction<typeof fetch>;
+    const notionFetch = jest.fn();
     notionFetch
       .mockResolvedValueOnce(jsonResponse(tokenResponse))
       .mockResolvedValueOnce(
@@ -142,7 +140,7 @@ describe("notionService", () => {
   });
 
   it("replaces the existing Notion page when manually syncing", async () => {
-    const notionFetch = jest.fn() as jest.MockedFunction<typeof fetch>;
+    const notionFetch = jest.fn();
     notionFetch
       .mockResolvedValueOnce(jsonResponse(tokenResponse))
       .mockResolvedValueOnce(
