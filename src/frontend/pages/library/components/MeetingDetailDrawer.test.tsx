@@ -34,6 +34,24 @@ const mockShareStateQuery = {
   refetch: jest.fn().mockResolvedValue(undefined),
 };
 
+const mockNotionStatusQuery = {
+  data: { configured: true, connected: false },
+  isLoading: false,
+  isFetching: false,
+  error: null,
+};
+
+const mockNotionExportStatusQuery = {
+  data: { exported: false, currentNotesVersion: 1, outdated: false },
+  isLoading: false,
+  isFetching: false,
+  error: null,
+};
+
+const mockNotionExportStatusUseQuery = jest.fn(
+  () => mockNotionExportStatusQuery,
+);
+
 jest.mock("../../../services/trpc", () => ({
   trpc: {
     useUtils: () => ({
@@ -50,20 +68,12 @@ jest.mock("../../../services/trpc", () => ({
     }),
     notion: {
       status: {
-        useQuery: () => ({
-          data: { configured: true, connected: false },
-          isLoading: false,
-          isFetching: false,
-          error: null,
-        }),
+        useQuery: () => mockNotionStatusQuery,
       },
       exportStatus: {
-        useQuery: () => ({
-          data: { exported: false, currentNotesVersion: 1, outdated: false },
-          isLoading: false,
-          isFetching: false,
-          error: null,
-        }),
+        useQuery: (
+          ...args: Parameters<typeof mockNotionExportStatusUseQuery>
+        ) => mockNotionExportStatusUseQuery(...args),
       },
       exportMeeting: {
         useMutation: () => ({
@@ -290,6 +300,8 @@ describe("MeetingDetailDrawer summary copy", () => {
       state: { visibility: "private" },
     };
     mockShareStateQuery.error = null;
+    mockNotionStatusQuery.data = { configured: true, connected: false };
+    mockNotionExportStatusUseQuery.mockClear();
     Object.defineProperty(navigator, "clipboard", {
       value: {
         writeText: writeTextMock,
@@ -336,5 +348,16 @@ describe("MeetingDetailDrawer summary copy", () => {
     renderDrawer();
 
     expect(screen.getByTestId("meeting-share")).toBeDisabled();
+  });
+
+  it("does not query Notion export status when Notion is not configured", () => {
+    mockNotionStatusQuery.data = { configured: false, connected: false };
+
+    renderDrawer();
+
+    expect(mockNotionExportStatusUseQuery).toHaveBeenCalledWith(
+      { serverId: "g1", meetingId: "m1" },
+      { enabled: false },
+    );
   });
 });

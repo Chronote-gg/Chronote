@@ -1,6 +1,7 @@
 import { jest } from "@jest/globals";
 import type { Express, RequestHandler } from "express";
 import { registerNotionOAuthRoutes } from "../notionOAuth";
+import { config } from "../../services/configService";
 import { saveNotionConnectionFromCode } from "../../services/notionService";
 
 jest.mock("../../services/configService", () => ({
@@ -89,6 +90,8 @@ const createSession = (): MockSession => ({
 
 describe("Notion OAuth routes", () => {
   beforeEach(() => {
+    config.notion.enabled = true;
+    jest.mocked(saveNotionConnectionFromCode).mockClear();
     jest.mocked(saveNotionConnectionFromCode).mockResolvedValue({} as never);
   });
 
@@ -175,6 +178,36 @@ describe("Notion OAuth routes", () => {
     expect(session.notionOAuth).toBeUndefined();
     expect(response.redirectUrl).toBe(
       "http://localhost:5173/library?notion_connected=1",
+    );
+  });
+
+  it("rejects callbacks when Notion is not configured", async () => {
+    config.notion.enabled = false;
+    const { callback } = captureRoutes();
+    const session = createSession();
+    session.notionOAuth = {
+      state: "expected-state",
+      returnTo: "http://localhost:5173/library",
+      createdAt: Date.now(),
+    };
+    const response = createResponse();
+
+    await callback(
+      {
+        query: { state: "expected-state", code: "oauth-code" },
+        session,
+        user: { id: "user-1" },
+        isAuthenticated: () => true,
+      } as never,
+      response as never,
+      jest.fn(),
+    );
+
+    expect(saveNotionConnectionFromCode).not.toHaveBeenCalled();
+    expect(session.notionOAuth).toBeUndefined();
+    expect(session.save).toHaveBeenCalledTimes(1);
+    expect(response.redirectUrl).toBe(
+      "http://localhost:5173/library?notion_error=not_configured",
     );
   });
 });

@@ -134,6 +134,17 @@ export function registerNotionOAuthRoutes(
     const stored = session?.notionOAuth;
     const returnTo = stored?.returnTo ?? getFallbackRedirect();
 
+    if (!config.notion.enabled) {
+      delete session?.notionOAuth;
+      redirectAfterSessionSave(
+        session,
+        res,
+        next,
+        appendQueryParam(returnTo, "notion_error", "not_configured"),
+      );
+      return;
+    }
+
     if (!isDiscordOAuthAvailable()) {
       res.redirect(
         appendQueryParam(returnTo, "notion_error", "oauth_disabled"),

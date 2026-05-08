@@ -222,7 +222,13 @@ export default function MeetingDetailDrawer({
       serverId: selectedGuildId ?? "",
       meetingId: selectedMeetingId ?? "",
     },
-    { enabled: Boolean(selectedGuildId && selectedMeetingId) },
+    {
+      enabled: Boolean(
+        selectedGuildId &&
+        selectedMeetingId &&
+        notionStatusQuery.data?.configured,
+      ),
+    },
   );
   const notionExportMutation = trpc.notion.exportMeeting.useMutation();
   const notionSyncMutation = trpc.notion.syncMeeting.useMutation();
