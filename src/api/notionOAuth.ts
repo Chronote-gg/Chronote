@@ -179,12 +179,21 @@ export function registerNotionOAuthRoutes(
         );
         return;
       }
-      if (!code || !isAuthenticated(req)) {
+      if (!code) {
         redirectAfterSessionSave(
           session,
           res,
           next,
           appendQueryParam(returnTo, "notion_error", "missing_code"),
+        );
+        return;
+      }
+      if (!isAuthenticated(req)) {
+        redirectAfterSessionSave(
+          session,
+          res,
+          next,
+          appendQueryParam(returnTo, "notion_error", "auth_required"),
         );
         return;
       }

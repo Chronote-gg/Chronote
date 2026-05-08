@@ -252,4 +252,31 @@ describe("Notion OAuth routes", () => {
       "http://localhost:5173/library?notion_error=oauth_disabled",
     );
   });
+
+  it("reports expired authentication separately from missing code", async () => {
+    const { callback } = captureRoutes();
+    const session = createSession();
+    session.notionOAuth = {
+      state: "expected-state",
+      returnTo: "http://localhost:5173/library",
+      createdAt: Date.now(),
+    };
+    const response = createResponse();
+
+    await callback(
+      {
+        query: { state: "expected-state", code: "oauth-code" },
+        session,
+        isAuthenticated: () => false,
+      } as never,
+      response as never,
+      jest.fn(),
+    );
+
+    expect(saveNotionConnectionFromCode).not.toHaveBeenCalled();
+    expect(session.save).toHaveBeenCalledTimes(1);
+    expect(response.redirectUrl).toBe(
+      "http://localhost:5173/library?notion_error=auth_required",
+    );
+  });
 });
