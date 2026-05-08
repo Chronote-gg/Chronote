@@ -55,13 +55,17 @@ import {
 } from "../../services/openaiModelParams";
 import { resolveModelChoicesForContext } from "../../services/modelChoiceService";
 import type { ChatEntry } from "../../types/chat";
-import type { SuggestionHistoryEntry } from "../../types/db";
+import type { MeetingHistory, SuggestionHistoryEntry } from "../../types/db";
 import type { MeetingEvent } from "../../types/meetingTimeline";
 import type { Participant } from "../../types/participants";
 import type { TranscriptPayload } from "../../types/transcript";
 import { MEETING_STATUS } from "../../types/meetingLifecycle";
 import { buildMeetingNotesEmbeds } from "../../utils/meetingNotes";
 import { stripCodeFences } from "../../utils/text";
+import {
+  buildImportedMeetingNotes,
+  normalizeImportedNotes,
+} from "../../utils/importedNotes";
 import {
   replaceDiscordMentionsWithDisplayNames,
   resolveAttendeeDisplayName,
@@ -131,6 +135,8 @@ const NOTES_CORRECTION_MAX_EMBEDS_PER_MESSAGE = 10;
 // so we keep portal-edited notes bounded to avoid update failures.
 const NOTES_EDITOR_MARKDOWN_BYTE_LIMIT = 30_000;
 const NOTES_EDITOR_DELTA_JSON_BYTE_LIMIT = 80_000;
+const IMPORT_NOTES_SOURCE_NAME_LIMIT = 100;
+const IMPORT_NOTES_SOURCE_URL_LIMIT = 2048;
 
 const safeJsonStringifyByteLength = (value: unknown): number | null => {
   try {
@@ -298,6 +304,45 @@ const ensurePortalUserCanManageMeetingChannel = async (options: {
       message: "Manage channel permission required",
     });
   }
+};
+
+const ensurePortalUserCanEditMeetingNotes = async (params: {
+  guildId: string;
+  meeting: MeetingHistory;
+  channelId: string;
+  userId: string;
+  forbiddenMessage: string;
+}) => {
+  const attendeeOverrideEnabled = await resolveAttendeeAccessEnabled(
+    params.guildId,
+  );
+  await ensurePortalUserCanAccessMeeting({
+    guildId: params.guildId,
+    meeting: params.meeting,
+    userId: params.userId,
+    attendeeOverrideEnabled,
+  });
+
+  const isMeetingOwner =
+    Boolean(params.meeting.meetingCreatorId) &&
+    params.meeting.meetingCreatorId === params.userId;
+  if (isMeetingOwner) {
+    return;
+  }
+
+  if (params.meeting.isAutoRecording) {
+    await ensurePortalUserCanManageMeetingChannel({
+      guildId: params.guildId,
+      channelId: params.channelId,
+      userId: params.userId,
+    });
+    return;
+  }
+
+  throw new TRPCError({
+    code: "FORBIDDEN",
+    message: params.forbiddenMessage,
+  });
 };
 
 const cleanupExpiredPendingNotesCorrections = () => {
@@ -538,6 +583,59 @@ async function editOrReplaceNotesEmbeds(params: {
     color: params.color,
   });
   return { messageIds, strategy: "replaced" };
+}
+
+async function syncNotesEmbedsAfterWebEdit(params: {
+  guildId: string;
+  meetingId: string;
+  history: MeetingHistory;
+  notesBody: string;
+  footerText: string;
+  newVersion: number;
+}) {
+  if (config.mock.enabled || !params.history.notesChannelId) {
+    return;
+  }
+
+  const existingIds = params.history.notesMessageIds ?? [];
+  let result: NotesEmbedUpdateResult;
+  try {
+    result = await editOrReplaceNotesEmbeds({
+      channelId: params.history.notesChannelId,
+      existingMessageIds: existingIds,
+      notesBody: params.notesBody,
+      meetingName: params.history.meetingName,
+      footerText: params.footerText,
+      summaryMessageId: params.history.summaryMessageId,
+    });
+  } catch (error) {
+    console.warn("Failed updating notes embeds", error);
+    return;
+  }
+
+  const metadataOk = await updateMeetingNotesMessageMetadataService({
+    guildId: params.guildId,
+    channelId_timestamp: params.meetingId,
+    notesMessageIds: result.messageIds,
+    notesChannelId: params.history.notesChannelId,
+    expectedNotesVersion: params.newVersion,
+  });
+
+  if (!metadataOk && result.strategy === "replaced") {
+    await deleteDiscordMessagesSafely({
+      channelId: params.history.notesChannelId,
+      messageIds: result.messageIds,
+    });
+    return;
+  }
+
+  if (result.strategy === "replaced" && existingIds.length > 0) {
+    await deleteDiscordMessagesSafely({
+      channelId: params.history.notesChannelId,
+      messageIds: existingIds,
+      skipMessageId: params.history.summaryMessageId,
+    });
+  }
 }
 
 async function deleteDiscordMessagesSafely(params: {
@@ -855,33 +953,14 @@ const updateNotes = guildMemberProcedure
 
     const channelId =
       history.channelId ?? parseChannelIdTimestamp(input.meetingId).channelId;
-    const attendeeOverrideEnabled = await resolveAttendeeAccessEnabled(
-      input.serverId,
-    );
-    await ensurePortalUserCanAccessMeeting({
+    await ensurePortalUserCanEditMeetingNotes({
       guildId: input.serverId,
       meeting: history,
+      channelId,
       userId: ctx.user.id,
-      attendeeOverrideEnabled,
+      forbiddenMessage:
+        "Only the meeting starter can edit notes for this meeting.",
     });
-
-    const isMeetingOwner =
-      Boolean(history.meetingCreatorId) &&
-      history.meetingCreatorId === ctx.user.id;
-    if (!isMeetingOwner) {
-      if (history.isAutoRecording) {
-        await ensurePortalUserCanManageMeetingChannel({
-          guildId: input.serverId,
-          channelId,
-          userId: ctx.user.id,
-        });
-      } else {
-        throw new TRPCError({
-          code: "FORBIDDEN",
-          message: "Only the meeting starter can edit notes for this meeting.",
-        });
-      }
-    }
 
     const currentVersion = history.notesVersion ?? 1;
     const expectedVersion = input.expectedPreviousVersion;
@@ -950,6 +1029,7 @@ const updateNotes = guildMemberProcedure
       notesDelta: input.delta,
       notesVersion: newVersion,
       editedBy: ctx.user.id,
+      source: { type: "web_editor" },
       expectedPreviousVersion: expectedVersion,
     });
 
@@ -961,47 +1041,122 @@ const updateNotes = guildMemberProcedure
       });
     }
 
-    if (!config.mock.enabled && history.notesChannelId) {
-      const existingIds = history.notesMessageIds ?? [];
-      let result: NotesEmbedUpdateResult;
-      try {
-        result = await editOrReplaceNotesEmbeds({
-          channelId: history.notesChannelId,
-          existingMessageIds: existingIds,
-          notesBody: markdownNotes,
-          meetingName: history.meetingName,
-          footerText,
-          summaryMessageId: history.summaryMessageId,
-        });
-      } catch (error) {
-        console.warn("Failed updating notes embeds", error);
-        return { ok: true };
-      }
+    await syncNotesEmbedsAfterWebEdit({
+      guildId: input.serverId,
+      meetingId: input.meetingId,
+      history,
+      notesBody: markdownNotes,
+      footerText,
+      newVersion,
+    });
 
-      const metadataOk = await updateMeetingNotesMessageMetadataService({
-        guildId: input.serverId,
-        channelId_timestamp: input.meetingId,
-        notesMessageIds: result.messageIds,
-        notesChannelId: history.notesChannelId,
-        expectedNotesVersion: newVersion,
-      });
+    return { ok: true };
+  });
 
-      if (!metadataOk && result.strategy === "replaced") {
-        await deleteDiscordMessagesSafely({
-          channelId: history.notesChannelId,
-          messageIds: result.messageIds,
-        });
-        return { ok: true };
-      }
-
-      if (result.strategy === "replaced" && existingIds.length > 0) {
-        await deleteDiscordMessagesSafely({
-          channelId: history.notesChannelId,
-          messageIds: existingIds,
-          skipMessageId: history.summaryMessageId,
-        });
-      }
+const importNotes = guildMemberProcedure
+  .input(
+    z.object({
+      serverId: z.string(),
+      meetingId: z.string(),
+      notes: z.string().min(1),
+      mode: z.enum(["replace", "append"]),
+      sourceName: z.string().max(IMPORT_NOTES_SOURCE_NAME_LIMIT).optional(),
+      sourceUrl: z.string().url().max(IMPORT_NOTES_SOURCE_URL_LIMIT).optional(),
+      expectedPreviousVersion: z.number().min(1),
+    }),
+  )
+  .mutation(async function importNotesMutation({ ctx, input }) {
+    const history = await getMeetingHistoryService(
+      input.serverId,
+      input.meetingId,
+    );
+    if (!history) {
+      throw new TRPCError({ code: "NOT_FOUND", message: "Meeting not found" });
     }
+
+    const channelId =
+      history.channelId ?? parseChannelIdTimestamp(input.meetingId).channelId;
+    await ensurePortalUserCanEditMeetingNotes({
+      guildId: input.serverId,
+      meeting: history,
+      channelId,
+      userId: ctx.user.id,
+      forbiddenMessage:
+        "Only the meeting starter can import notes for this meeting.",
+    });
+
+    const currentVersion = history.notesVersion ?? 1;
+    const expectedVersion = input.expectedPreviousVersion;
+    if (expectedVersion !== currentVersion) {
+      throw new TRPCError({
+        code: "CONFLICT",
+        message:
+          "Could not import because the notes were updated elsewhere. Refresh and try again.",
+      });
+    }
+
+    const importedNotes = normalizeImportedNotes(input.notes);
+    if (importedNotes.length === 0) {
+      throw new TRPCError({
+        code: "BAD_REQUEST",
+        message: "Imported notes cannot be empty.",
+      });
+    }
+
+    const source = {
+      sourceName: input.sourceName?.trim() || undefined,
+      sourceUrl: input.sourceUrl?.trim() || undefined,
+    };
+    const markdownNotes = buildImportedMeetingNotes({
+      currentNotes: history.notes,
+      importedNotes,
+      mode: input.mode,
+      source,
+    });
+
+    if (utf8ByteLength(markdownNotes) > NOTES_EDITOR_MARKDOWN_BYTE_LIMIT) {
+      throw new TRPCError({
+        code: "BAD_REQUEST",
+        message: "Imported notes are too large to save.",
+      });
+    }
+
+    const newVersion = currentVersion + 1;
+    const editorLabel = buildRequesterTag(ctx.user);
+    const footerText = `v${newVersion} - Imported by ${editorLabel}`;
+
+    const ok = await updateMeetingNotesService({
+      guildId: input.serverId,
+      channelId_timestamp: input.meetingId,
+      notes: markdownNotes,
+      notesDelta: null,
+      notesVersion: newVersion,
+      editedBy: ctx.user.id,
+      source: {
+        type: "manual_import",
+        importMode: input.mode,
+        sourceName: source.sourceName,
+        sourceUrl: source.sourceUrl,
+      },
+      expectedPreviousVersion: expectedVersion,
+    });
+
+    if (!ok) {
+      throw new TRPCError({
+        code: "CONFLICT",
+        message:
+          "Could not import because the notes were updated elsewhere. Refresh and try again.",
+      });
+    }
+
+    await syncNotesEmbedsAfterWebEdit({
+      guildId: input.serverId,
+      meetingId: input.meetingId,
+      history,
+      notesBody: markdownNotes,
+      footerText,
+      newVersion,
+    });
 
     return { ok: true };
   });
@@ -1280,6 +1435,7 @@ const applyNotesCorrection = guildMemberProcedure
       summarySentence,
       summaryLabel,
       suggestion: pending.suggestion,
+      source: { type: "notes_correction" },
       expectedPreviousVersion: pending.notesVersion,
     });
 
@@ -1393,4 +1549,5 @@ export const meetingsRouter = router({
   suggestNotesCorrection,
   applyNotesCorrection,
   updateNotes,
+  importNotes,
 });

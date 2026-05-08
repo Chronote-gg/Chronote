@@ -107,7 +107,15 @@ export interface NotesHistoryEntry {
   notes: string;
   editedBy: string;
   editedAt: string; // ISO timestamp
+  source?: NotesEditSource;
 }
+
+export type NotesEditSource = {
+  type: "web_editor" | "notes_correction" | "manual_import";
+  importMode?: "replace" | "append";
+  sourceName?: string;
+  sourceUrl?: string;
+};
 
 export type FeedbackRating = "up" | "down";
 export type FeedbackTargetType = "meeting_summary" | "ask_answer";

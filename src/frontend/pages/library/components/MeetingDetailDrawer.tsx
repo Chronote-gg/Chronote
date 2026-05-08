@@ -43,6 +43,9 @@ import { MeetingSummaryPanel } from "./MeetingSummaryPanel";
 import MeetingNotesEditorModal, {
   type QuillDeltaPayload,
 } from "./MeetingNotesEditorModal";
+import MeetingNotesImportModal, {
+  type ImportNotesPayload,
+} from "./MeetingNotesImportModal";
 import MeetingFullScreenLayout from "./MeetingFullScreenLayout";
 import { downloadMeetingExport } from "./meetingExport";
 import {
@@ -156,6 +159,7 @@ export default function MeetingDetailDrawer({
   const [feedbackDraft, setFeedbackDraft] = useState("");
 
   const [notesEditorModalOpen, setNotesEditorModalOpen] = useState(false);
+  const [notesImportModalOpen, setNotesImportModalOpen] = useState(false);
 
   const [notesCorrectionModalOpen, setNotesCorrectionModalOpen] =
     useState(false);
@@ -199,6 +203,7 @@ export default function MeetingDetailDrawer({
   const applyNotesCorrectionMutation =
     trpc.meetings.applyNotesCorrection.useMutation();
   const updateNotesMutation = trpc.meetings.updateNotes.useMutation();
+  const importNotesMutation = trpc.meetings.importNotes.useMutation();
 
   const shareStateQuery = trpc.meetingShares.getShareState.useQuery(
     {
@@ -365,6 +370,14 @@ export default function MeetingDetailDrawer({
     setNotesEditorModalOpen(false);
   };
 
+  const openNotesImportModal = () => {
+    setNotesImportModalOpen(true);
+  };
+
+  const closeNotesImportModal = () => {
+    setNotesImportModalOpen(false);
+  };
+
   const handleNotesEditorSave = async (delta: QuillDeltaPayload) => {
     if (!selectedGuildId || !selectedMeetingId) return;
     const expectedPreviousVersion = detail?.notesVersion;
@@ -401,6 +414,45 @@ export default function MeetingDetailDrawer({
     }
   };
 
+  const handleNotesImport = async (payload: ImportNotesPayload) => {
+    if (!selectedGuildId || !selectedMeetingId) return;
+    const expectedPreviousVersion = detail?.notesVersion;
+    if (expectedPreviousVersion == null) {
+      notifications.show({
+        color: "red",
+        message: "Unable to import notes right now. Refresh and try again.",
+      });
+      return;
+    }
+    try {
+      await importNotesMutation.mutateAsync({
+        serverId: selectedGuildId,
+        meetingId: selectedMeetingId,
+        notes: payload.notes,
+        mode: payload.mode,
+        sourceName: payload.sourceName,
+        sourceUrl: payload.sourceUrl,
+        expectedPreviousVersion,
+      });
+      notifications.show({ message: "Notes imported." });
+      closeNotesImportModal();
+      await Promise.all([
+        trpcUtils.meetings.detail.invalidate(),
+        invalidateMeetingLists(),
+      ]);
+    } catch (error) {
+      console.error("Failed importing notes", error);
+      const message =
+        error instanceof Error && error.message
+          ? error.message
+          : "Unable to import notes right now.";
+      notifications.show({
+        color: "red",
+        message,
+      });
+    }
+  };
+
   useEffect(() => {
     if (!selectedMeetingId) {
       setFullScreen(false);
@@ -418,6 +470,7 @@ export default function MeetingDetailDrawer({
     setFeedbackModalOpen(false);
     setFeedbackDraft("");
     setNotesEditorModalOpen(false);
+    setNotesImportModalOpen(false);
     closeNotesCorrectionModal();
     setShareModalOpen(false);
     setShareError(null);
@@ -696,6 +749,7 @@ export default function MeetingDetailDrawer({
       onFeedbackDown={handleSummaryFeedbackDown}
       onCopySummary={handleCopySummary}
       onEditNotes={openNotesEditorModal}
+      onImportNotes={openNotesImportModal}
       onSuggestCorrection={openNotesCorrectionModal}
     />
   ) : null;
@@ -830,6 +884,12 @@ export default function MeetingDetailDrawer({
                 saving={updateNotesMutation.isPending}
                 onClose={closeNotesEditorModal}
                 onSave={handleNotesEditorSave}
+              />
+              <MeetingNotesImportModal
+                opened={notesImportModalOpen}
+                saving={importNotesMutation.isPending}
+                onClose={closeNotesImportModal}
+                onImport={handleNotesImport}
               />
               <Stack gap="md" style={{ flex: 1, minHeight: 0 }}>
                 <MeetingDetailHeader

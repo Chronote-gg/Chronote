@@ -13,6 +13,8 @@ Chronote includes a built-in web portal for browsing meetings, reading transcrip
 
 The portal authenticates through Discord OAuth so channel permissions are respected.
 
+The portal can also import Markdown or plain-text notes from external tools into an existing meeting. This supports copy/paste workflows from tools like Notion or Obsidian before dedicated sync integrations are available.
+
 ### Discord
 
 Chronote's primary interface. All meeting controls, notes, and interactions happen through Discord slash commands, embeds, and buttons. See [Features](/features/) for the full command reference.

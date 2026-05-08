@@ -326,6 +326,10 @@ export const meetingsUpdateNotesMutation = buildMutationState<
   [unknown],
   { ok: true }
 >({ ok: true });
+export const meetingsImportNotesMutation = buildMutationState<
+  [unknown],
+  { ok: true }
+>({ ok: true });
 export const meetingsSuggestNotesCorrectionMutation = buildMutationState<
   [unknown],
   { token: string; diff: string; changed: boolean }
@@ -561,6 +565,7 @@ export const resetTrpcMocks = () => {
     meetingName: "Renamed meeting",
   });
   resetMutationState(meetingsUpdateNotesMutation, { ok: true });
+  resetMutationState(meetingsImportNotesMutation, { ok: true });
   resetMutationState(meetingsSuggestNotesCorrectionMutation, {
     token: "mock-notes-correction-token",
     diff: "+ mock diff",
@@ -792,6 +797,7 @@ jest.mock("../../../src/frontend/services/trpc", () => ({
       setArchived: { useMutation: () => meetingsArchiveMutation },
       rename: { useMutation: () => meetingsRenameMutation },
       updateNotes: { useMutation: () => meetingsUpdateNotesMutation },
+      importNotes: { useMutation: () => meetingsImportNotesMutation },
       suggestNotesCorrection: {
         useMutation: () => meetingsSuggestNotesCorrectionMutation,
       },

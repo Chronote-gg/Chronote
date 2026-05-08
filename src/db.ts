@@ -16,6 +16,7 @@ import {
   ChannelContext,
   GuildSubscription,
   MeetingHistory,
+  NotesEditSource,
   NotesHistoryEntry,
   AskConversationRecord,
   AskMessageRecord,
@@ -1049,6 +1050,7 @@ export async function updateMeetingNotes(
   summaryLabel?: string,
   meetingName?: string,
   suggestion?: SuggestionHistoryEntry,
+  source?: NotesEditSource,
   expectedPreviousVersion?: number,
   metadata?: {
     notesMessageIds?: string[];
@@ -1062,6 +1064,7 @@ export async function updateMeetingNotes(
     notes: trimNotesForHistory(notes),
     editedBy,
     editedAt: now,
+    source,
   };
 
   const updateParts = [

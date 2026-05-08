@@ -152,6 +152,18 @@ Accepted corrections:
 
 Each correction uses the transcript as ground truth, so the AI cannot fabricate content that was not actually discussed.
 
+## Importing external notes
+
+If you took notes in another app, open the meeting in the web portal and choose **Import notes** from the notes actions menu.
+
+Imported notes can:
+
+- Replace the current Chronote notes.
+- Append under an **Imported notes** section.
+- Include an optional source name and URL for traceability.
+
+Imports are saved as a new notes version and update the posted Discord notes when possible.
+
 ## Meeting image generation
 
 After a meeting ends, click **Generate Image** to create a DALL-E-generated visual summary. The image is based on the meeting transcript and context.
@@ -166,6 +178,7 @@ The Chronote web portal provides a browser-based interface for:
 - Reading full transcripts and notes.
 - Sharing meeting links with teammates.
 - Suggesting and applying notes corrections.
+- Importing Markdown or plain-text notes from another app.
 - Managing server settings (context, dictionary, auto-record).
 
 Access the portal from the **Open in Chronote** button on any meeting summary, or visit your server's portal URL directly.
