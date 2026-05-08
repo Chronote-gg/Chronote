@@ -815,24 +815,40 @@ export default function MeetingDetailDrawer({
   const notionConfigured = notionStatusQuery.data?.configured ?? false;
   const notionConnected = notionStatusQuery.data?.connected ?? false;
   const notionExportStatus = notionExportStatusQuery.data;
+  const notionExportStatusLoading =
+    notionConfigured &&
+    notionConnected &&
+    (notionExportStatusQuery.isLoading || notionExportStatusQuery.isFetching);
+  const notionExportStatusUnavailable =
+    notionConfigured &&
+    notionConnected &&
+    Boolean(notionExportStatusQuery.error);
   const notionActionPending =
     notionExportMutation.isPending || notionSyncMutation.isPending;
   const notionActionLabel = !notionConfigured
     ? "Notion unavailable"
     : !notionConnected
       ? "Connect Notion"
-      : !notionExportStatus?.exported
-        ? "Export to Notion"
-        : notionExportStatus.outdated
-          ? "Sync latest to Notion"
-          : "Sync to Notion";
+      : notionExportStatusLoading
+        ? "Loading Notion status..."
+        : notionExportStatusUnavailable || !notionExportStatus
+          ? "Notion status unavailable"
+          : !notionExportStatus.exported
+            ? "Export to Notion"
+            : notionExportStatus.outdated
+              ? "Sync latest to Notion"
+              : "Sync to Notion";
   const handleNotionAction = !notionConfigured
     ? undefined
     : !notionConnected
       ? handleConnectNotion
-      : !notionExportStatus?.exported
-        ? handleExportToNotion
-        : handleSyncToNotion;
+      : notionExportStatusLoading ||
+          notionExportStatusUnavailable ||
+          !notionExportStatus
+        ? undefined
+        : !notionExportStatus.exported
+          ? handleExportToNotion
+          : handleSyncToNotion;
 
   const summarySection = meeting ? (
     <MeetingSummaryPanel

@@ -41,7 +41,14 @@ const mockNotionStatusQuery = {
   error: null,
 };
 
-const mockNotionExportStatusQuery = {
+const mockNotionExportStatusQuery: {
+  data:
+    | { exported: boolean; currentNotesVersion: number; outdated: boolean }
+    | undefined;
+  isLoading: boolean;
+  isFetching: boolean;
+  error: unknown;
+} = {
   data: { exported: false, currentNotesVersion: 1, outdated: false },
   isLoading: false,
   isFetching: false,
@@ -301,6 +308,14 @@ describe("MeetingDetailDrawer summary copy", () => {
     };
     mockShareStateQuery.error = null;
     mockNotionStatusQuery.data = { configured: true, connected: false };
+    mockNotionExportStatusQuery.data = {
+      exported: false,
+      currentNotesVersion: 1,
+      outdated: false,
+    };
+    mockNotionExportStatusQuery.isLoading = false;
+    mockNotionExportStatusQuery.isFetching = false;
+    mockNotionExportStatusQuery.error = null;
     mockNotionExportStatusUseQuery.mockClear();
     Object.defineProperty(navigator, "clipboard", {
       value: {
@@ -359,5 +374,31 @@ describe("MeetingDetailDrawer summary copy", () => {
       { serverId: "g1", meetingId: "m1" },
       { enabled: false },
     );
+  });
+
+  it("disables Notion export actions while export status is loading", async () => {
+    mockNotionStatusQuery.data = { configured: true, connected: true };
+    mockNotionExportStatusQuery.data = undefined;
+    mockNotionExportStatusQuery.isLoading = true;
+
+    renderDrawer();
+    fireEvent.click(screen.getByLabelText("Notes actions"));
+
+    expect(
+      (await screen.findByText("Loading Notion status...")).closest("button"),
+    ).toBeDisabled();
+  });
+
+  it("disables Notion export actions when export status fails", async () => {
+    mockNotionStatusQuery.data = { configured: true, connected: true };
+    mockNotionExportStatusQuery.data = undefined;
+    mockNotionExportStatusQuery.error = new Error("boom");
+
+    renderDrawer();
+    fireEvent.click(screen.getByLabelText("Notes actions"));
+
+    expect(
+      (await screen.findByText("Notion status unavailable")).closest("button"),
+    ).toBeDisabled();
   });
 });

@@ -15,7 +15,21 @@ import type {
 const NOTION_API_ORIGIN = "https://api.notion.com";
 const NOTION_AUTHORIZE_URL = `${NOTION_API_ORIGIN}/v1/oauth/authorize`;
 const NOTION_TOKEN_URL = `${NOTION_API_ORIGIN}/v1/oauth/token`;
-const NOTION_TEXT_ESCAPE = /([\\*~`$[\]<>{}|^])/g;
+const NOTION_TEXT_ESCAPE_CHARS = new Set([
+  "\\",
+  "*",
+  "~",
+  "`",
+  "$",
+  "[",
+  "]",
+  "<",
+  ">",
+  "{",
+  "}",
+  "|",
+  "^",
+]);
 
 type NotionFetch = typeof fetch;
 
@@ -178,7 +192,9 @@ const withNotionToken = async <T>(params: {
 };
 
 const escapeNotionText = (value: string) =>
-  value.replace(NOTION_TEXT_ESCAPE, "\\$1");
+  Array.from(value, (character) =>
+    NOTION_TEXT_ESCAPE_CHARS.has(character) ? `\\${character}` : character,
+  ).join("");
 
 const trimHeading = (value: string | undefined) => {
   const trimmed = value?.replace(/\s+/g, " ").trim();
