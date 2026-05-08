@@ -69,7 +69,12 @@ describe("MyMeetings", () => {
     expect(screen.getByText("Weekly planning")).toBeInTheDocument();
     expect(screen.getAllByText("Server One")).not.toHaveLength(0);
     expect(mockMyListUseQuery).toHaveBeenCalledWith(
-      expect.objectContaining({ mode: "attended", range: "past_7_days" }),
+      expect.objectContaining({
+        mode: "attended",
+        range: "past_7_days",
+        archivedOnly: undefined,
+        tags: undefined,
+      }),
     );
   });
 

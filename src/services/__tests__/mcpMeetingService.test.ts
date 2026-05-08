@@ -321,6 +321,47 @@ describe("mcpMeetingService", () => {
     expect(checkUserMeetingAccess).toHaveBeenCalledTimes(1);
   });
 
+  it("skips the guild-range fallback when indexed attended results fill the page", async () => {
+    const indexedMeeting = createMeeting("indexed", {
+      guildId: "guild-1",
+      timestamp: "2026-01-03T00:00:00.000Z",
+      channelId_timestamp: "channel-1#2026-01-03T00:00:00.000Z",
+      participants: [{ id: "user-1", username: "user1" }],
+    });
+    jest
+      .mocked(listBotGuildsCached)
+      .mockResolvedValue([{ id: "guild-1", name: "Guild 1", icon: null }]);
+    jest.mocked(listMeetingUserIndexForUserInRangeService).mockResolvedValue([
+      {
+        userId: "user-1",
+        userTimestamp:
+          "2026-01-03T00:00:00.000Z#guild-1#channel-1#2026-01-03T00:00:00.000Z",
+        guildId: "guild-1",
+        channelId_timestamp: "channel-1#2026-01-03T00:00:00.000Z",
+        meetingId: "indexed",
+        timestamp: "2026-01-03T00:00:00.000Z",
+      },
+    ]);
+    jest.mocked(getMeetingHistoryService).mockResolvedValue(indexedMeeting);
+    jest.mocked(checkUserMeetingAccess).mockResolvedValue({
+      allowed: true,
+      via: "attendee",
+    });
+
+    await expect(
+      listMcpMyMeetings({
+        userId: "user-1",
+        mode: "attended",
+        startDate: "2026-01-01T00:00:00.000Z",
+        endDate: "2026-01-05T00:00:00.000Z",
+        limit: 1,
+      }),
+    ).resolves.toMatchObject({
+      meetings: [{ meetingId: "indexed", serverName: "Guild 1" }],
+    });
+    expect(listMeetingsForGuildInRangeService).not.toHaveBeenCalled();
+  });
+
   it("uses permission access mode without requiring participant membership", async () => {
     const accessibleMeeting = createMeeting("accessible", {
       guildId: "guild-1",
@@ -350,6 +391,43 @@ describe("mcpMeetingService", () => {
       meetings: [{ meetingId: "accessible", serverName: "Guild 1" }],
     });
     expect(listMeetingUserIndexForUserInRangeService).not.toHaveBeenCalled();
+  });
+
+  it("filters archived-only My Meetings results before access checks", async () => {
+    const activeMeeting = createMeeting("active", {
+      guildId: "guild-1",
+      timestamp: "2026-01-03T00:00:00.000Z",
+      channelId_timestamp: "channel-1#2026-01-03T00:00:00.000Z",
+    });
+    const archivedMeeting = createMeeting("archived", {
+      guildId: "guild-1",
+      timestamp: "2026-01-02T00:00:00.000Z",
+      channelId_timestamp: "channel-1#2026-01-02T00:00:00.000Z",
+      archivedAt: "2026-01-04T00:00:00.000Z",
+    });
+    jest
+      .mocked(listBotGuildsCached)
+      .mockResolvedValue([{ id: "guild-1", name: "Guild 1", icon: null }]);
+    jest
+      .mocked(listMeetingsForGuildInRangeService)
+      .mockResolvedValue([activeMeeting, archivedMeeting]);
+    jest.mocked(checkUserMeetingAccess).mockResolvedValue({
+      allowed: true,
+      via: "channel_permissions",
+    });
+
+    await expect(
+      listMcpMyMeetings({
+        userId: "user-1",
+        mode: "accessible",
+        startDate: "2026-01-01T00:00:00.000Z",
+        endDate: "2026-01-05T00:00:00.000Z",
+        archivedOnly: true,
+      }),
+    ).resolves.toMatchObject({
+      meetings: [{ meetingId: "archived", serverName: "Guild 1" }],
+    });
+    expect(checkUserMeetingAccess).toHaveBeenCalledTimes(1);
   });
 
   it("matches attended fallback meetings from legacy attendee mentions", async () => {

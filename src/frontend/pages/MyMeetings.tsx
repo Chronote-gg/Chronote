@@ -122,8 +122,10 @@ export default function MyMeetings() {
   const meetingsQuery = trpc.meetings.myList.useQuery({
     mode,
     limit: 100,
+    archivedOnly: archiveFilter === "archived" ? true : undefined,
     includeArchived: archiveFilter !== "active",
     serverIds: selectedServers.length ? selectedServers : undefined,
+    tags: selectedTags.length ? selectedTags : undefined,
     ...rangeInput,
   });
 

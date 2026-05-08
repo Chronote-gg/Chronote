@@ -73,6 +73,7 @@ const listMyMeetingsSchema = z.object({
     .optional(),
   serverIds: z.array(z.string().min(1)).optional(),
   tags: z.array(z.string().min(1)).optional(),
+  archivedOnly: z.boolean().optional(),
   includeArchived: z.boolean().optional(),
 });
 const meetingLookupSchema = z.object({
@@ -109,7 +110,7 @@ const toolDefinitions: McpToolDefinition[] = [
         startDate: {
           type: "string",
           format: "date-time",
-          description: "Required when range is custom.",
+          description: "Optional inclusive lower timestamp bound.",
         },
         endDate: { type: "string", format: "date-time" },
         tags: { type: "array", items: { type: "string" } },
@@ -139,7 +140,11 @@ const toolDefinitions: McpToolDefinition[] = [
           enum: ["today", "past_7_days", "custom"],
         },
         limit: { type: "number", minimum: 1, maximum: 100 },
-        startDate: { type: "string", format: "date-time" },
+        startDate: {
+          type: "string",
+          format: "date-time",
+          description: "Required when range is custom.",
+        },
         endDate: { type: "string", format: "date-time" },
         timeZoneOffsetMinutes: {
           type: "number",
@@ -154,6 +159,7 @@ const toolDefinitions: McpToolDefinition[] = [
           description: "Optional Discord server IDs to include.",
         },
         tags: { type: "array", items: { type: "string" } },
+        archivedOnly: { type: "boolean" },
         includeArchived: { type: "boolean" },
       },
       additionalProperties: false,
@@ -334,6 +340,7 @@ async function callTool(auth: McpAccessTokenInfo, name: string, args: unknown) {
           timeZoneOffsetMinutes: input.timeZoneOffsetMinutes,
           serverIds: input.serverIds,
           tags: input.tags,
+          archivedOnly: input.archivedOnly,
           includeArchived: input.includeArchived,
         }),
       );

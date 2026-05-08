@@ -853,6 +853,7 @@ const myList = authedProcedure
         .optional(),
       serverIds: z.array(z.string()).optional(),
       tags: z.array(z.string()).optional(),
+      archivedOnly: z.boolean().optional(),
       includeArchived: z.boolean().optional(),
     }),
   )
@@ -868,6 +869,7 @@ const myList = authedProcedure
         timeZoneOffsetMinutes: input.timeZoneOffsetMinutes,
         serverIds: input.serverIds,
         tags: input.tags,
+        archivedOnly: input.archivedOnly,
         includeArchived: input.includeArchived,
       });
     } catch (error) {

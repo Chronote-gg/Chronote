@@ -31,6 +31,8 @@ const MAX_TIMESTAMP_ISO = "9999-12-31T23:59:59.999Z";
 const DEFAULT_MEETING_LIMIT = 25;
 const MAX_MEETING_LIMIT = 100;
 const MCP_MEETING_SCAN_LIMIT_MULTIPLIER = 5;
+const MCP_INDEX_HISTORY_BATCH_SIZE = 10;
+const MCP_SERVER_MEETING_BATCH_SIZE = 5;
 const MCP_SERVER_MEMBERSHIP_BATCH_SIZE = 5;
 const MS_PER_DAY = 1000 * 60 * 60 * 24;
 
@@ -51,6 +53,7 @@ type ListMcpMeetingsInput = {
 type MeetingListFilters = {
   channelId?: string;
   tags?: string[];
+  archivedOnly?: boolean;
   includeArchived?: boolean;
 };
 
@@ -64,6 +67,7 @@ type ListMcpMyMeetingsInput = {
   timeZoneOffsetMinutes?: number;
   serverIds?: string[];
   tags?: string[];
+  archivedOnly?: boolean;
   includeArchived?: boolean;
 };
 
@@ -317,7 +321,10 @@ const meetingMatchesListFilters = (
   requestedTags: Set<string>,
 ) => {
   if (meeting.status === MEETING_STATUS.CANCELLED) return false;
-  if (!input.includeArchived && meeting.archivedAt) return false;
+  if (input.archivedOnly && !meeting.archivedAt) return false;
+  if (!input.archivedOnly && !input.includeArchived && meeting.archivedAt) {
+    return false;
+  }
   if (input.channelId && resolveMeetingChannelId(meeting) !== input.channelId) {
     return false;
   }
@@ -398,6 +405,32 @@ const isMeetingHistory = (
   meeting: MeetingHistory | undefined,
 ): meeting is MeetingHistory => Boolean(meeting);
 
+const runInBatches = async <Item, Result>(
+  items: Item[],
+  batchSize: number,
+  task: (item: Item) => Promise<Result>,
+) => {
+  const results: Result[] = [];
+  for (let index = 0; index < items.length; index += batchSize) {
+    results.push(
+      ...(await Promise.all(items.slice(index, index + batchSize).map(task))),
+    );
+  }
+  return results;
+};
+
+const countMeetingsMatchingListFilters = (
+  meetings: MeetingHistory[],
+  input: MeetingListFilters,
+) => {
+  const requestedTags = new Set(
+    (input.tags ?? []).map((tag) => tag.toLowerCase()),
+  );
+  return meetings.filter((meeting) =>
+    meetingMatchesListFilters(meeting, input, requestedTags),
+  ).length;
+};
+
 const listIndexedMeetingsForUser = async (input: {
   userId: string;
   startDate: string;
@@ -410,10 +443,11 @@ const listIndexedMeetingsForUser = async (input: {
     input.endDate,
     input.limit,
   );
-  const meetings = await Promise.all(
-    records.map((record) =>
+  const meetings = await runInBatches(
+    records,
+    MCP_INDEX_HISTORY_BATCH_SIZE,
+    (record) =>
       getMeetingHistoryService(record.guildId, record.channelId_timestamp),
-    ),
   );
   return meetings.filter(isMeetingHistory);
 };
@@ -424,15 +458,16 @@ const listRangeMeetingsForServers = async (input: {
   endDate: string;
   limit: number;
 }) => {
-  const meetingGroups = await Promise.all(
-    input.servers.map((server) =>
+  const meetingGroups = await runInBatches(
+    input.servers,
+    MCP_SERVER_MEETING_BATCH_SIZE,
+    (server) =>
       listMeetingsForGuildInRangeService(
         server.id,
         input.startDate,
         input.endDate,
         input.limit,
       ),
-    ),
   );
   return meetingGroups.flat();
 };
@@ -522,6 +557,7 @@ const collectAccessibleUserMeetings = async (input: {
   limit: number;
   tags?: string[];
   includeArchived?: boolean;
+  archivedOnly?: boolean;
 }) => {
   const requestedTags = new Set(
     (input.tags ?? []).map((tag) => tag.toLowerCase()),
@@ -625,14 +661,22 @@ export async function listMcpMyMeetings(input: ListMcpMyMeetingsInput) {
           limit: scanLimit,
         })
       : [];
-  const rangeMeetings = await listRangeMeetingsForServers({
-    servers,
-    startDate: range.startDate,
-    endDate: range.endDate,
-    limit: scanLimit,
-  });
+  const indexedCandidates = compactUniqueMeetings(
+    indexedMeetings.filter((meeting) => serverMap.has(meeting.guildId)),
+  );
+  const needsRangeFallback =
+    mode === "accessible" ||
+    countMeetingsMatchingListFilters(indexedCandidates, input) < limit;
+  const rangeMeetings = needsRangeFallback
+    ? await listRangeMeetingsForServers({
+        servers,
+        startDate: range.startDate,
+        endDate: range.endDate,
+        limit: scanLimit,
+      })
+    : [];
   const candidateMeetings = compactUniqueMeetings(
-    [...indexedMeetings, ...rangeMeetings].filter((meeting) =>
+    [...indexedCandidates, ...rangeMeetings].filter((meeting) =>
       serverMap.has(meeting.guildId),
     ),
   );
@@ -643,6 +687,7 @@ export async function listMcpMyMeetings(input: ListMcpMyMeetingsInput) {
     limit,
     tags: input.tags,
     includeArchived: input.includeArchived,
+    archivedOnly: input.archivedOnly,
   });
 
   return {

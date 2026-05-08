@@ -179,7 +179,12 @@ describe("MCP JSON-RPC handler", () => {
         method: "tools/call",
         params: {
           name: "list_my_meetings",
-          arguments: { range: "past_7_days", mode: "attended" },
+          arguments: {
+            range: "past_7_days",
+            mode: "attended",
+            tags: ["planning"],
+            archivedOnly: true,
+          },
         },
       }),
     ).resolves.toMatchObject({
@@ -197,6 +202,8 @@ describe("MCP JSON-RPC handler", () => {
         userId: "user-1",
         range: "past_7_days",
         mode: "attended",
+        tags: ["planning"],
+        archivedOnly: true,
       }),
     );
   });

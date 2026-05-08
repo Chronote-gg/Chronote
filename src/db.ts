@@ -43,6 +43,8 @@ import {
 import type { MeetingStatus } from "./types/meetingLifecycle";
 import { trimNotesForHistory } from "./utils/notesHistory";
 
+const MEETING_USER_INDEX_WRITE_BATCH_SIZE = 25;
+
 const dynamoDbClient = new DynamoDBClient(
   config.database.useLocalDynamoDB
     ? {
@@ -1044,16 +1046,24 @@ export async function getMeetingHistory(
 export async function writeMeetingUserIndexRecords(
   records: MeetingUserIndexRecord[],
 ): Promise<void> {
-  await Promise.all(
-    records.map((record) =>
-      dynamoDbClient.send(
-        new PutItemCommand({
-          TableName: tableName("MeetingUserIndexTable"),
-          Item: marshall(record, { removeUndefinedValues: true }),
-        }),
-      ),
-    ),
-  );
+  for (
+    let index = 0;
+    index < records.length;
+    index += MEETING_USER_INDEX_WRITE_BATCH_SIZE
+  ) {
+    await Promise.all(
+      records
+        .slice(index, index + MEETING_USER_INDEX_WRITE_BATCH_SIZE)
+        .map((record) =>
+          dynamoDbClient.send(
+            new PutItemCommand({
+              TableName: tableName("MeetingUserIndexTable"),
+              Item: marshall(record, { removeUndefinedValues: true }),
+            }),
+          ),
+        ),
+    );
+  }
 }
 
 export async function getMeetingUserIndexRecordsForUserInRange(
