@@ -206,3 +206,26 @@ If you prefer separate variable files, use:
 - Prod: `terraform -chdir=_infra plan -var-file=terraform.tfvars`
 - Staging: copy `terraform.staging.tfvars.example` to `terraform.staging.tfvars`, then run
   `terraform -chdir=_infra plan -var-file=terraform.staging.tfvars`
+
+## Terraform plan workflow
+
+`.github/workflows/terraform-plan.yml` is a manual plan-only workflow. It does
+not run on merge and does not apply changes. Use it before planned infra work or
+when checking drift after deploys.
+
+Each GitHub environment used by the workflow must provide:
+
+- Secret `AWS_ACCESS_KEY_ID`
+- Secret `AWS_SECRET_ACCESS_KEY`
+- Secret `TERRAFORM_TFVARS_JSON`
+
+`TERRAFORM_TFVARS_JSON` is the environment-specific Terraform variable file as
+JSON. Keep it aligned with the private `terraform.tfvars` values used for manual
+plans. The workflow validates that required variables are present and rejects a
+non-empty `grafana_api_key` after Grafana token rotation is active. Use
+`grafana_service_account_id` and the rotated Secrets Manager token instead.
+
+Merges do not reconcile Terraform drift. The deploy workflows update ECS task
+definitions, S3 objects, and CloudFront invalidations directly, while Terraform
+owns the baseline infrastructure. Review plan output before applying, especially
+ECS task definition replacement and provider normalization diffs.
