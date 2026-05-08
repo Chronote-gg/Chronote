@@ -320,6 +320,17 @@ describe("mcpMeetingService", () => {
     });
   });
 
+  it("rejects custom My Meetings ranges without a start date", async () => {
+    await expect(
+      listMcpMyMeetings({ userId: "user-1", range: "custom" }),
+    ).rejects.toMatchObject({
+      code: "bad_request",
+      message: "startDate is required when range is custom.",
+    });
+
+    expect(listBotGuildsCached).not.toHaveBeenCalled();
+  });
+
   it("caches accessible server lists for repeated polling", async () => {
     jest.mocked(listBotGuildsCached).mockResolvedValue([
       { id: "guild-1", name: "Guild 1", icon: null },

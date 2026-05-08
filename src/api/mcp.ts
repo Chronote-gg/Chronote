@@ -106,7 +106,11 @@ const toolDefinitions: McpToolDefinition[] = [
           type: "string",
           description: "Optional voice channel ID filter.",
         },
-        startDate: { type: "string", format: "date-time" },
+        startDate: {
+          type: "string",
+          format: "date-time",
+          description: "Required when range is custom.",
+        },
         endDate: { type: "string", format: "date-time" },
         tags: { type: "array", items: { type: "string" } },
         includeArchived: { type: "boolean" },

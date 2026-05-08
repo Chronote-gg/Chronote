@@ -347,6 +347,12 @@ const resolveMyMeetingsDateRange = (input: ListMcpMyMeetingsInput) => {
   const nowMs = Date.now();
   const endDate = input.endDate ?? new Date(nowMs).toISOString();
   const range = input.range ?? (input.startDate ? "custom" : "past_7_days");
+  if (range === "custom" && !input.startDate) {
+    throw new McpMeetingAccessError(
+      "startDate is required when range is custom.",
+      "bad_request",
+    );
+  }
   const startDate =
     input.startDate ??
     (range === "today"
