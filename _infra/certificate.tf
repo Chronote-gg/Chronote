@@ -33,47 +33,37 @@ resource "aws_acm_certificate" "docs_cert" {
 }
 
 resource "aws_route53_record" "frontend_cert_validation" {
-  for_each = length(aws_acm_certificate.frontend_cert) > 0 ? {
-    for dvo in aws_acm_certificate.frontend_cert[0].domain_validation_options :
-    dvo.domain_name => {
-      name  = dvo.resource_record_name
-      type  = dvo.resource_record_type
-      value = dvo.resource_record_value
-    }
+  for_each = var.FRONTEND_DOMAIN != "" && var.HOSTED_ZONE_NAME != "" && var.FRONTEND_CERT_ARN == "" ? {
+    (var.FRONTEND_DOMAIN) = one(aws_acm_certificate.frontend_cert[0].domain_validation_options)
   } : {}
 
-  name    = each.value.name
-  type    = each.value.type
+  name    = each.value.resource_record_name
+  type    = each.value.resource_record_type
   zone_id = data.aws_route53_zone.frontend_hosted_zone[0].zone_id
-  records = [each.value.value]
+  records = [each.value.resource_record_value]
   ttl     = 300
 }
 
 resource "aws_route53_record" "docs_cert_validation" {
-  for_each = length(aws_acm_certificate.docs_cert) > 0 ? {
-    for dvo in aws_acm_certificate.docs_cert[0].domain_validation_options :
-    dvo.domain_name => {
-      name  = dvo.resource_record_name
-      type  = dvo.resource_record_type
-      value = dvo.resource_record_value
-    }
+  for_each = var.DOCS_DOMAIN != "" && var.HOSTED_ZONE_NAME != "" && var.DOCS_CERT_ARN == "" ? {
+    (var.DOCS_DOMAIN) = one(aws_acm_certificate.docs_cert[0].domain_validation_options)
   } : {}
 
-  name    = each.value.name
-  type    = each.value.type
+  name    = each.value.resource_record_name
+  type    = each.value.resource_record_type
   zone_id = data.aws_route53_zone.docs_hosted_zone[0].zone_id
-  records = [each.value.value]
+  records = [each.value.resource_record_value]
   ttl     = 300
 }
 
 resource "aws_acm_certificate_validation" "frontend_cert" {
-  count                   = length(aws_acm_certificate.frontend_cert)
+  count                   = var.FRONTEND_DOMAIN != "" && var.HOSTED_ZONE_NAME != "" && var.FRONTEND_CERT_ARN == "" ? 1 : 0
   certificate_arn         = aws_acm_certificate.frontend_cert[0].arn
   validation_record_fqdns = [for r in aws_route53_record.frontend_cert_validation : r.fqdn]
 }
 
 resource "aws_acm_certificate_validation" "docs_cert" {
-  count                   = length(aws_acm_certificate.docs_cert)
+  count                   = var.DOCS_DOMAIN != "" && var.HOSTED_ZONE_NAME != "" && var.DOCS_CERT_ARN == "" ? 1 : 0
   certificate_arn         = aws_acm_certificate.docs_cert[0].arn
   validation_record_fqdns = [for r in aws_route53_record.docs_cert_validation : r.fqdn]
 }

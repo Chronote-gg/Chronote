@@ -51,7 +51,8 @@ locals {
   grafana_rotation_enabled = var.grafana_service_account_id != "" && var.grafana_url != "http://localhost"
 
   # Prefer the rotated secret; fall back to the manual tfvar for bootstrapping
-  grafana_token_from_secret = length(data.aws_secretsmanager_secret_version.grafana_token) > 0 ? try(
+  grafana_reads_rotated_token = local.grafana_rotation_enabled && var.grafana_api_key == ""
+  grafana_token_from_secret = local.grafana_reads_rotated_token ? try(
     jsondecode(data.aws_secretsmanager_secret_version.grafana_token[0].secret_string)["token"], ""
   ) : ""
   grafana_resolved_token = local.grafana_token_from_secret != "" ? local.grafana_token_from_secret : var.grafana_api_key
