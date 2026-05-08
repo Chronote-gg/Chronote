@@ -27,6 +27,7 @@ const UpgradeServerSelect = lazyRouteComponent(
 const UpgradeSuccess = lazyRouteComponent(
   () => import("./pages/UpgradeSuccess"),
 );
+const MyMeetings = lazyRouteComponent(() => import("./pages/MyMeetings"));
 const Library = lazyRouteComponent(() => import("./pages/Library"));
 const Ask = lazyRouteComponent(() => import("./pages/Ask"));
 const PublicAsk = lazyRouteComponent(() => import("./pages/PublicAsk"));
@@ -205,6 +206,12 @@ const portalSelectRoute = new Route({
   validateSearch: z.object({ promo: z.string().optional() }).parse,
 });
 
+const portalMyMeetingsRoute = new Route({
+  getParentRoute: () => portalRoute,
+  path: "meetings",
+  component: MyMeetings,
+});
+
 const portalServerRoute = new Route({
   getParentRoute: () => portalRoute,
   path: "server/$serverId",
@@ -334,6 +341,7 @@ const routeTree = rootRoute.addChildren([
   portalRoute.addChildren([
     portalIndexRoute,
     portalSelectRoute,
+    portalMyMeetingsRoute,
     portalServerRoute.addChildren([
       portalLibraryRoute,
       portalAskRoute,

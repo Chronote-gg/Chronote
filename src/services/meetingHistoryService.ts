@@ -5,9 +5,19 @@ import type {
 } from "../types/db";
 import type { MeetingStatus } from "../types/meetingLifecycle";
 import { getMeetingHistoryRepository } from "../repositories/meetingHistoryRepository";
+import { writeMeetingUserIndexForMeetingService } from "./meetingUserIndexService";
 
 export async function writeMeetingHistoryService(history: MeetingHistory) {
   await getMeetingHistoryRepository().write(history);
+  try {
+    await writeMeetingUserIndexForMeetingService(history);
+  } catch (error) {
+    console.error("Failed to update meeting user index", {
+      guildId: history.guildId,
+      meetingId: history.meetingId,
+      error,
+    });
+  }
 }
 
 export async function getMeetingHistoryService(

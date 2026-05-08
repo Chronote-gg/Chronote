@@ -9,7 +9,12 @@
   Text,
   ThemeIcon,
 } from "@mantine/core";
-import { IconChevronRight, IconFilter, IconUsers } from "@tabler/icons-react";
+import {
+  IconChevronRight,
+  IconFilter,
+  IconServer,
+  IconUsers,
+} from "@tabler/icons-react";
 import Surface from "../../components/Surface";
 import type { MeetingStatus } from "../../../types/meetingLifecycle";
 import { MEETING_STATUS } from "../../../types/meetingLifecycle";
@@ -119,6 +124,14 @@ export function MeetingList({
                         {meetingItem.channelLabel}
                       </Text>
                     </Group>
+                    {meetingItem.serverName ? (
+                      <Group gap={4} align="center">
+                        <IconServer size={14} />
+                        <Text size="xs" c="dimmed">
+                          {meetingItem.serverName}
+                        </Text>
+                      </Group>
+                    ) : null}
                     {meetingItem.tags.length ? (
                       <Text size="xs" c="dimmed">
                         Tags: {meetingItem.tags.join(", ")}
