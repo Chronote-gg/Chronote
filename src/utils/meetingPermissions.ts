@@ -17,6 +17,8 @@ export function canUserEndMeeting(
   return member.permissions.any([
     PermissionFlagsBits.ModerateMembers,
     PermissionFlagsBits.Administrator,
+    PermissionFlagsBits.ManageChannels,
+    PermissionFlagsBits.ManageGuild,
     PermissionFlagsBits.ManageMessages,
   ]);
 }

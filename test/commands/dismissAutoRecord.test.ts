@@ -140,6 +140,56 @@ describe("handleDismissAutoRecord", () => {
     expect(interaction.editReply).toHaveBeenCalledWith("Stopped recording.");
   });
 
+  it("allows a manual meeting creator to end the meeting", async () => {
+    const client = makeClient();
+    const interaction = makeInteraction();
+    const meeting = makeMeeting({
+      isAutoRecording: false,
+      creator: { id: "user-1" } as MeetingData["creator"],
+      guild: {
+        id: "guild-1",
+        members: { cache: new Collection() },
+      } as unknown as MeetingData["guild"],
+      voiceChannel: makeVoiceChannel(makeMembers([["bot-1", true]])),
+    });
+    mockedGetMeeting.mockReturnValue(meeting);
+
+    await handleDismissAutoRecord(client, interaction);
+
+    expect(mockedResolveConfigEnum).not.toHaveBeenCalled();
+    expect(mockedHandleEndMeetingOther).toHaveBeenCalledWith(client, meeting);
+    expect(meeting.endReason).toBe(MEETING_END_REASONS.BUTTON);
+    expect(meeting.endTriggeredByUserId).toBe("user-1");
+    expect(meeting.cancelled).toBeUndefined();
+    expect(meeting.cancellationReason).toBeUndefined();
+    expect(interaction.deferReply).toHaveBeenCalled();
+    expect(interaction.editReply).toHaveBeenCalledWith("Ended meeting.");
+  });
+
+  it("blocks unauthorized users from ending manual meetings", async () => {
+    const client = makeClient();
+    const interaction = makeInteraction();
+    const meeting = makeMeeting({
+      isAutoRecording: false,
+      creator: { id: "user-2" } as MeetingData["creator"],
+      guild: {
+        id: "guild-1",
+        members: { cache: new Collection() },
+      } as unknown as MeetingData["guild"],
+    });
+    mockedGetMeeting.mockReturnValue(meeting);
+
+    await handleDismissAutoRecord(client, interaction);
+
+    expect(mockedResolveConfigEnum).not.toHaveBeenCalled();
+    expect(mockedHandleEndMeetingOther).not.toHaveBeenCalled();
+    expect(interaction.reply).toHaveBeenCalledWith(
+      expect.objectContaining({
+        content: "You do not have permission to end this meeting.",
+      }),
+    );
+  });
+
   it("allows the trigger user for trigger_or_admin", async () => {
     const client = makeClient();
     const interaction = makeInteraction();
