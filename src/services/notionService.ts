@@ -224,7 +224,7 @@ export const buildMeetingNotionMarkdown = (meeting: MeetingHistory) => {
   );
   const participants = formatParticipantNames(meeting);
   const details = [
-    `- Date: ${escapeNotionText(new Date(meeting.timestamp).toLocaleString())}`,
+    `- Date: ${escapeNotionText(new Date(meeting.timestamp).toISOString())}`,
     `- Duration: ${escapeNotionText(formatDuration(meeting.duration))}`,
     `- Discord channel: ${escapeNotionText(meeting.channelId)}`,
     participants ? `- Participants: ${participants}` : undefined,
@@ -340,7 +340,7 @@ export const exportMeetingToNotion = async (params: {
       const meetingExport: NotionMeetingExport = {
         userId: params.userId,
         guildId: params.meeting.guildId,
-        meetingId: params.meeting.channelId_timestamp,
+        channelId_timestamp: params.meeting.channelId_timestamp,
         notionPageId: page.id,
         notionPageUrl: page.url,
         notionWorkspaceId: connection.workspaceId,

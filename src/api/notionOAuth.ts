@@ -1,5 +1,11 @@
 import crypto from "node:crypto";
-import type { Express, Request, RequestHandler } from "express";
+import type {
+  Express,
+  NextFunction,
+  Request,
+  RequestHandler,
+  Response,
+} from "express";
 import type { Profile } from "passport-discord";
 import type { Session } from "express-session";
 import { config } from "../services/configService";
@@ -40,6 +46,25 @@ const appendQueryParam = (url: string, key: string, value: string) => {
 
 const isAuthenticated = (req: Request) =>
   typeof req.isAuthenticated === "function" && req.isAuthenticated();
+
+const redirectAfterSessionSave = (
+  session: NotionOAuthSession | undefined,
+  res: Response,
+  next: NextFunction,
+  url: string,
+) => {
+  if (!session) {
+    res.redirect(url);
+    return;
+  }
+  session.save((err) => {
+    if (err) {
+      next(err);
+      return;
+    }
+    res.redirect(url);
+  });
+};
 
 const createNotionOAuthRateLimiter = () =>
   createAuthRateLimiter({
@@ -102,19 +127,28 @@ export function registerNotionOAuthRoutes(
       const code = typeof req.query.code === "string" ? req.query.code : "";
       const expired = !stored || Date.now() - stored.createdAt > STATE_TTL_MS;
       if (expired || !state || state !== stored?.state) {
-        res.redirect(
+        redirectAfterSessionSave(
+          session,
+          res,
+          next,
           appendQueryParam(returnTo, "notion_error", "invalid_state"),
         );
         return;
       }
       if (typeof req.query.error === "string") {
-        res.redirect(
+        redirectAfterSessionSave(
+          session,
+          res,
+          next,
           appendQueryParam(returnTo, "notion_error", req.query.error),
         );
         return;
       }
       if (!code || !isAuthenticated(req)) {
-        res.redirect(
+        redirectAfterSessionSave(
+          session,
+          res,
+          next,
           appendQueryParam(returnTo, "notion_error", "missing_code"),
         );
         return;
@@ -122,13 +156,12 @@ export function registerNotionOAuthRoutes(
 
       const profile = req.user as Profile;
       await saveNotionConnectionFromCode({ userId: profile.id, code });
-      session?.save((err) => {
-        if (err) {
-          next(err);
-          return;
-        }
-        res.redirect(appendQueryParam(returnTo, "notion_connected", "1"));
-      });
+      redirectAfterSessionSave(
+        session,
+        res,
+        next,
+        appendQueryParam(returnTo, "notion_connected", "1"),
+      );
     } catch (err) {
       next(err);
     }

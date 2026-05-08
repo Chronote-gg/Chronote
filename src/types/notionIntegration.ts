@@ -13,7 +13,7 @@ export type NotionConnection = {
 export type NotionMeetingExport = {
   userId: string;
   guildId: string;
-  meetingId: string;
+  channelId_timestamp: string;
   notionPageId: string;
   notionPageUrl: string;
   notionWorkspaceId: string;

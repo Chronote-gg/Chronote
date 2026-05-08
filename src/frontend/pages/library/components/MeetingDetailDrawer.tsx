@@ -687,7 +687,6 @@ export default function MeetingDetailDrawer({
   };
 
   const handleConnectNotion = () => {
-    if (typeof window === "undefined") return;
     const redirect = `${window.location.pathname}${window.location.search}${window.location.hash}`;
     const url = `${buildApiUrl("/api/notion/connect")}?redirect=${encodeURIComponent(
       redirect,

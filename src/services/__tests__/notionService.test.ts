@@ -69,6 +69,7 @@ describe("notionService", () => {
     const exported = await exportMeetingToNotion({ userId, meeting });
 
     expect(exported).toMatchObject({
+      channelId_timestamp: meeting.channelId_timestamp,
       notionPageId: "page-1",
       notionPageUrl: "https://notion.so/page-1",
       exportedNotesVersion: 2,
@@ -77,6 +78,9 @@ describe("notionService", () => {
       notionFetch.mock.calls[1]?.[1]?.body?.toString() ?? "{}",
     ) as { markdown?: string };
     expect(createRequest.markdown).toContain("# Planning sync");
+    expect(createRequest.markdown).toContain(
+      "- Date: 2026-05-08T12:00:00.000Z",
+    );
     expect(createRequest.markdown).toContain("## Notes");
     expect(createRequest.markdown).toContain("Ship the MVP first");
   });

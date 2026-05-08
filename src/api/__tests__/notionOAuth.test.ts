@@ -83,7 +83,7 @@ const createResponse = () => ({
 });
 
 const createSession = (): MockSession => ({
-  save: (callback) => callback(),
+  save: jest.fn((callback: (err?: Error) => void) => callback()),
 });
 
 describe("Notion OAuth routes", () => {
@@ -140,6 +140,7 @@ describe("Notion OAuth routes", () => {
     );
 
     expect(saveNotionConnectionFromCode).not.toHaveBeenCalled();
+    expect(session.save).toHaveBeenCalledTimes(1);
     expect(response.redirectUrl).toBe(
       "http://localhost:5173/library?notion_error=invalid_state",
     );

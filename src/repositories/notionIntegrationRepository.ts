@@ -96,7 +96,11 @@ const realRepository: NotionIntegrationRepository = {
   deleteConnection: (userId) => deleteItem(connectionKey(userId)),
   writeMeetingExport: (meetingExport) =>
     writeItem({
-      ...meetingExportKey(meetingExport),
+      ...meetingExportKey({
+        userId: meetingExport.userId,
+        guildId: meetingExport.guildId,
+        meetingId: meetingExport.channelId_timestamp,
+      }),
       recordType: "meeting_export",
       ...meetingExport,
     }),
@@ -126,7 +130,14 @@ const memoryRepository: NotionIntegrationRepository = {
     memoryConnections.delete(userId);
   },
   async writeMeetingExport(meetingExport) {
-    memoryExports.set(memoryExportKey(meetingExport), meetingExport);
+    memoryExports.set(
+      memoryExportKey({
+        userId: meetingExport.userId,
+        guildId: meetingExport.guildId,
+        meetingId: meetingExport.channelId_timestamp,
+      }),
+      meetingExport,
+    );
   },
   async getMeetingExport(params) {
     return memoryExports.get(memoryExportKey(params));
