@@ -4,6 +4,7 @@ import type { MeetingHistory } from "../../types/db";
 import type { TrpcContext } from "../context";
 import { notionRouter } from "./notion";
 import { ensureUserInGuild } from "../../services/guildAccessService";
+import { ensureUserCanAccessMeeting } from "../../services/meetingAccessService";
 import { getMeetingHistoryService } from "../../services/meetingHistoryService";
 import {
   exportMeetingToNotion,
@@ -16,8 +17,21 @@ jest.mock("../../services/guildAccessService", () => ({
   ensureUserInGuild: jest.fn(),
 }));
 
+jest.mock("../../services/configService", () => ({
+  config: { notion: { enabled: true } },
+}));
+
+jest.mock("../../services/meetingAccessService", () => ({
+  ensureUserCanAccessMeeting: jest.fn(),
+}));
+
 jest.mock("../../services/meetingHistoryService", () => ({
   getMeetingHistoryService: jest.fn(),
+}));
+
+jest.mock("../../services/unifiedConfigService", () => ({
+  getSnapshotBoolean: jest.fn(() => true),
+  resolveConfigSnapshot: jest.fn(async () => ({})),
 }));
 
 jest.mock("../../services/notionService", () => ({
@@ -61,6 +75,7 @@ const createCaller = () =>
 describe("notionRouter", () => {
   beforeEach(() => {
     jest.mocked(ensureUserInGuild).mockResolvedValue(true);
+    jest.mocked(ensureUserCanAccessMeeting).mockResolvedValue(true);
     jest.mocked(getMeetingHistoryService).mockResolvedValue(meeting);
   });
 
@@ -102,6 +117,27 @@ describe("notionRouter", () => {
       meetingId: meeting.meetingId,
       currentNotesVersion: 4,
     });
+    expect(ensureUserCanAccessMeeting).toHaveBeenCalledWith({
+      guildId: "guild-1",
+      meeting,
+      userId: "user-1",
+      attendeeOverrideEnabled: true,
+    });
+  });
+
+  it("rejects Notion actions when the user cannot access the meeting", async () => {
+    jest.mocked(ensureUserCanAccessMeeting).mockResolvedValue(false);
+
+    await expect(
+      createCaller().exportMeeting({
+        serverId: "guild-1",
+        meetingId: meeting.meetingId,
+      }),
+    ).rejects.toMatchObject<Partial<TRPCError>>({
+      code: "FORBIDDEN",
+      message: "Meeting access required.",
+    });
+    expect(exportMeetingToNotion).not.toHaveBeenCalled();
   });
 
   it("maps missing Notion connections to a user-actionable bad request", async () => {

@@ -65,7 +65,9 @@ export function setupWebServer() {
   const PORT = config.server.port;
 
   const resolveRedirectParam = (req: express.Request) =>
-    resolveRedirectTarget(req.query.redirect, config.frontend.siteUrl);
+    resolveRedirectTarget(req.query.redirect, config.frontend.siteUrl, {
+      allowedInternalPaths: ["/api/notion/connect"],
+    });
 
   const storeRedirectInSession = (
     req: express.Request,

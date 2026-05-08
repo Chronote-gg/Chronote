@@ -362,8 +362,11 @@ export default function MeetingDetailDrawer({
       });
       notifications.show({ message: "Notes updated." });
       closeNotesCorrectionModal();
-      void trpcUtils.meetings.detail.invalidate();
-      void invalidateMeetingLists();
+      await Promise.all([
+        trpcUtils.meetings.detail.invalidate(),
+        trpcUtils.notion.exportStatus.invalidate(),
+        invalidateMeetingLists(),
+      ]);
     } catch (error) {
       console.error("Failed applying notes correction", error);
       notifications.show({

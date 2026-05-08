@@ -11,6 +11,26 @@ describe("oauthRedirectService", () => {
     ).toBe("https://app.example.com/portal/select-server?promo=SAVE20");
   });
 
+  test("allows explicitly approved internal redirects", () => {
+    expect(
+      resolveRedirectTarget(
+        "/api/notion/connect?redirect=https%3A%2F%2Fapp.example.com%2Fportal",
+        "https://app.example.com",
+        { allowedInternalPaths: ["/api/notion/connect"] },
+      ),
+    ).toBe(
+      "/api/notion/connect?redirect=https%3A%2F%2Fapp.example.com%2Fportal",
+    );
+  });
+
+  test("keeps unapproved internal redirects on the frontend origin", () => {
+    expect(
+      resolveRedirectTarget("/api/other", "https://app.example.com", {
+        allowedInternalPaths: ["/api/notion/connect"],
+      }),
+    ).toBe("https://app.example.com/api/other");
+  });
+
   test("blocks protocol-relative redirects", () => {
     expect(
       resolveRedirectTarget("//evil.com/portal", "https://app.example.com"),

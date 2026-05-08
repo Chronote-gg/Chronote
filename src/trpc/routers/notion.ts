@@ -1,7 +1,14 @@
 import { TRPCError } from "@trpc/server";
 import { z } from "zod";
+import { CONFIG_KEYS } from "../../config/keys";
+import { config } from "../../services/configService";
+import { ensureUserCanAccessMeeting } from "../../services/meetingAccessService";
 import { authedProcedure, guildMemberProcedure, router } from "../trpc";
 import { getMeetingHistoryService } from "../../services/meetingHistoryService";
+import {
+  getSnapshotBoolean,
+  resolveConfigSnapshot,
+} from "../../services/unifiedConfigService";
 import {
   exportMeetingToNotion,
   getMeetingNotionExportStatus,
@@ -14,6 +21,31 @@ const meetingInput = z.object({
   serverId: z.string(),
   meetingId: z.string(),
 });
+
+const ensureNotionConfigured = () => {
+  if (!config.notion.enabled) {
+    throw new TRPCError({
+      code: "BAD_REQUEST",
+      message: "Notion export is not configured.",
+    });
+  }
+};
+
+const resolveAttendeeAccessEnabled = async (guildId: string) => {
+  try {
+    const snapshot = await resolveConfigSnapshot({ guildId });
+    return getSnapshotBoolean(
+      snapshot,
+      CONFIG_KEYS.meetings.attendeeAccessEnabled,
+    );
+  } catch (error) {
+    console.warn("Failed to resolve attendee access setting", {
+      guildId,
+      error,
+    });
+    return true;
+  }
+};
 
 const toTrpcNotionError = (err: unknown): TRPCError => {
   if (err instanceof TRPCError) return err;
@@ -58,13 +90,48 @@ const requireMeeting = async (serverId: string, meetingId: string) => {
   return meeting;
 };
 
+const requireAccessibleMeeting = async (params: {
+  serverId: string;
+  meetingId: string;
+  userId: string;
+}) => {
+  const meeting = await requireMeeting(params.serverId, params.meetingId);
+  const attendeeOverrideEnabled = await resolveAttendeeAccessEnabled(
+    params.serverId,
+  );
+  const allowed = await ensureUserCanAccessMeeting({
+    guildId: params.serverId,
+    meeting,
+    userId: params.userId,
+    attendeeOverrideEnabled,
+  });
+  if (allowed === null) {
+    throw new TRPCError({
+      code: "TOO_MANY_REQUESTS",
+      message: "Discord rate limited. Please retry.",
+    });
+  }
+  if (!allowed) {
+    throw new TRPCError({
+      code: "FORBIDDEN",
+      message: "Meeting access required.",
+    });
+  }
+  return meeting;
+};
+
 export const notionRouter = router({
   status: authedProcedure.query(({ ctx }) => getNotionStatus(ctx.user.id)),
 
   exportStatus: guildMemberProcedure
     .input(meetingInput)
     .query(async ({ ctx, input }) => {
-      const meeting = await requireMeeting(input.serverId, input.meetingId);
+      ensureNotionConfigured();
+      const meeting = await requireAccessibleMeeting({
+        serverId: input.serverId,
+        meetingId: input.meetingId,
+        userId: ctx.user.id,
+      });
       return getMeetingNotionExportStatus({
         userId: ctx.user.id,
         guildId: input.serverId,
@@ -76,7 +143,12 @@ export const notionRouter = router({
   exportMeeting: guildMemberProcedure
     .input(meetingInput)
     .mutation(async ({ ctx, input }) => {
-      const meeting = await requireMeeting(input.serverId, input.meetingId);
+      ensureNotionConfigured();
+      const meeting = await requireAccessibleMeeting({
+        serverId: input.serverId,
+        meetingId: input.meetingId,
+        userId: ctx.user.id,
+      });
       try {
         const exported = await exportMeetingToNotion({
           userId: ctx.user.id,
@@ -95,7 +167,12 @@ export const notionRouter = router({
   syncMeeting: guildMemberProcedure
     .input(meetingInput)
     .mutation(async ({ ctx, input }) => {
-      const meeting = await requireMeeting(input.serverId, input.meetingId);
+      ensureNotionConfigured();
+      const meeting = await requireAccessibleMeeting({
+        serverId: input.serverId,
+        meetingId: input.meetingId,
+        userId: ctx.user.id,
+      });
       try {
         const exported = await syncMeetingToNotion({
           userId: ctx.user.id,

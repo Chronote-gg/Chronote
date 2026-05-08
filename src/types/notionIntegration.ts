@@ -27,7 +27,7 @@ export type NotionExportStatus = {
   pageUrl?: string;
   pageId?: string;
   exportedNotesVersion?: number;
-  currentNotesVersion?: number;
+  currentNotesVersion: number;
   outdated: boolean;
   lastExportedAt?: string;
   lastError?: string;
