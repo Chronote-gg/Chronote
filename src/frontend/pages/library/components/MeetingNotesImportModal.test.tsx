@@ -45,4 +45,20 @@ describe("MeetingNotesImportModal", () => {
 
     expect(screen.getByRole("button", { name: "Import notes" })).toBeDisabled();
   });
+
+  it("shows inline validation for invalid source URLs", () => {
+    renderModal();
+
+    fireEvent.change(screen.getByRole("textbox", { name: "Notes" }), {
+      target: { value: "# External notes" },
+    });
+    fireEvent.change(screen.getByRole("textbox", { name: "Source URL" }), {
+      target: { value: "not-a-url" },
+    });
+
+    expect(
+      screen.getByText("Enter a valid URL starting with http:// or https://"),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Import notes" })).toBeDisabled();
+  });
 });

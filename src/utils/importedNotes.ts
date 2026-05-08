@@ -10,6 +10,9 @@ const IMPORTED_NOTES_HEADING = "## Imported notes";
 export const normalizeImportedNotes = (notes: string) =>
   notes.replace(/\r\n/g, "\n").replace(/\r/g, "\n").trim();
 
+const normalizeExistingNotesLineEndings = (notes: string) =>
+  notes.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+
 const resolveSourceLine = (source?: ImportedNotesSource) => {
   const sourceName = source?.sourceName?.trim();
   const sourceUrl = source?.sourceUrl?.trim();
@@ -47,10 +50,13 @@ export const buildImportedMeetingNotes = (params: {
     return importedNotes;
   }
 
-  const currentNotes = normalizeImportedNotes(params.currentNotes ?? "");
+  const currentNotes = normalizeExistingNotesLineEndings(
+    params.currentNotes ?? "",
+  );
   const importedSection = buildImportedSection(importedNotes, params.source);
-  if (!currentNotes) {
+  if (currentNotes.trim().length === 0) {
     return importedSection;
   }
-  return `${currentNotes}\n\n${importedSection}`;
+  const separator = currentNotes.endsWith("\n") ? "\n" : "\n\n";
+  return `${currentNotes}${separator}${importedSection}`;
 };

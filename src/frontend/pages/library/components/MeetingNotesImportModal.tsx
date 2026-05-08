@@ -28,6 +28,15 @@ type MeetingNotesImportModalProps = {
 
 const normalizeOptionalValue = (value: string) => value.trim() || undefined;
 
+const isValidSourceUrl = (value: string) => {
+  try {
+    const url = new URL(value);
+    return url.protocol === "http:" || url.protocol === "https:";
+  } catch {
+    return false;
+  }
+};
+
 const isImportNotesMode = (value: string): value is ImportNotesMode =>
   value === "replace" || value === "append";
 
@@ -51,6 +60,11 @@ export default function MeetingNotesImportModal({
   }, [opened]);
 
   const trimmedNotes = notes.trim();
+  const trimmedSourceUrl = sourceUrl.trim();
+  const sourceUrlError =
+    trimmedSourceUrl.length > 0 && !isValidSourceUrl(trimmedSourceUrl)
+      ? "Enter a valid URL starting with http:// or https://"
+      : undefined;
 
   return (
     <Modal
@@ -116,6 +130,7 @@ export default function MeetingNotesImportModal({
           placeholder="https://..."
           value={sourceUrl}
           onChange={(event) => setSourceUrl(event.currentTarget.value)}
+          error={sourceUrlError}
           disabled={saving}
         />
 
@@ -133,7 +148,7 @@ export default function MeetingNotesImportModal({
                 sourceUrl: normalizeOptionalValue(sourceUrl),
               })
             }
-            disabled={!trimmedNotes || saving}
+            disabled={!trimmedNotes || Boolean(sourceUrlError) || saving}
             loading={saving}
           >
             Import notes

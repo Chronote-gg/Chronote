@@ -621,12 +621,18 @@ async function syncNotesEmbedsAfterWebEdit(params: {
     expectedNotesVersion: params.newVersion,
   });
 
-  if (!metadataOk && result.strategy === "replaced") {
-    await deleteDiscordMessagesSafely({
-      channelId: params.history.notesChannelId,
-      messageIds: result.messageIds,
+  if (!metadataOk) {
+    if (result.strategy === "replaced") {
+      await deleteDiscordMessagesSafely({
+        channelId: params.history.notesChannelId,
+        messageIds: result.messageIds,
+      });
+    }
+    throw new TRPCError({
+      code: "CONFLICT",
+      message:
+        "Notes were updated elsewhere after saving. Refresh to see the latest notes.",
     });
-    return;
   }
 
   if (result.strategy === "replaced" && existingIds.length > 0) {
@@ -1058,7 +1064,7 @@ const importNotes = guildMemberProcedure
     z.object({
       serverId: z.string(),
       meetingId: z.string(),
-      notes: z.string().min(1),
+      notes: z.string().min(1).max(NOTES_EDITOR_MARKDOWN_BYTE_LIMIT),
       mode: z.enum(["replace", "append"]),
       sourceName: z.string().max(IMPORT_NOTES_SOURCE_NAME_LIMIT).optional(),
       sourceUrl: z.string().url().max(IMPORT_NOTES_SOURCE_URL_LIMIT).optional(),
@@ -1107,12 +1113,17 @@ const importNotes = guildMemberProcedure
       sourceName: input.sourceName?.trim() || undefined,
       sourceUrl: input.sourceUrl?.trim() || undefined,
     };
-    const markdownNotes = buildImportedMeetingNotes({
+    let markdownNotes = buildImportedMeetingNotes({
       currentNotes: history.notes,
       importedNotes,
       mode: input.mode,
       source,
     });
+
+    markdownNotes = replaceDiscordMentionsWithDisplayNames(
+      markdownNotes,
+      buildParticipantMap(history.participants),
+    );
 
     if (utf8ByteLength(markdownNotes) > NOTES_EDITOR_MARKDOWN_BYTE_LIMIT) {
       throw new TRPCError({

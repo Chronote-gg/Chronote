@@ -18,6 +18,7 @@ import type {
   SuggestionHistoryEntry,
 } from "../types/db";
 import { MEETING_STATUS, type MeetingStatus } from "../types/meetingLifecycle";
+import { trimNotesForHistory } from "../utils/notesHistory";
 import { getMockStore } from "./mockStore";
 
 export type MeetingHistoryRepository = {
@@ -242,7 +243,7 @@ const mockRepository: MeetingHistoryRepository = {
     }
     const notesHistoryEntry = {
       version: params.notesVersion,
-      notes: params.notes,
+      notes: trimNotesForHistory(params.notes),
       editedBy: params.editedBy,
       editedAt: now,
       source: params.source,

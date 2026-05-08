@@ -36,6 +36,16 @@ describe("importedNotes", () => {
     );
   });
 
+  it("preserves existing notes whitespace when appending", () => {
+    expect(
+      buildImportedMeetingNotes({
+        currentNotes: "  Existing notes\r\n",
+        importedNotes: "External notes",
+        mode: "append",
+      }),
+    ).toBe("  Existing notes\n\n## Imported notes\n\nExternal notes");
+  });
+
   it("uses the imported section when append has no current notes", () => {
     expect(
       buildImportedMeetingNotes({
