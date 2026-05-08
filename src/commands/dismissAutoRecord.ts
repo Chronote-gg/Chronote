@@ -10,6 +10,7 @@ import { getMeeting } from "../meetings";
 import { resolveConfigEnum } from "../services/unifiedConfigService";
 import { MEETING_END_REASONS } from "../types/meetingLifecycle";
 import type { MeetingData } from "../types/meeting-data";
+import { canUserEndMeeting } from "../utils/meetingPermissions";
 import { handleEndMeetingOther } from "./endMeeting";
 
 export const DISMISS_AUTORECORD_COMMAND_NAME = "Stop recording";
@@ -73,10 +74,17 @@ function resolveStopRecordingPermission(options: {
 type DismissAutoRecordContext = {
   meeting: MeetingData;
   invokerId: string;
-  policy: DismissPolicy;
-  admin: boolean;
-  soloNonBot: boolean;
-};
+} & (
+  | {
+      isAutoRecording: true;
+      policy: DismissPolicy;
+      admin: boolean;
+      soloNonBot: boolean;
+    }
+  | {
+      isAutoRecording: false;
+    }
+);
 
 type DismissAutoRecordCheckResult =
   | { ok: true; context: DismissAutoRecordContext }
@@ -104,18 +112,22 @@ async function resolveDismissAutoRecordContext(
     return { ok: false, message: "No active recording to stop right now." };
   }
 
-  if (!meeting.isAutoRecording) {
-    return {
-      ok: false,
-      message: "This command only applies to auto-recorded meetings.",
-    };
-  }
-
   if (meeting.finishing) {
     return { ok: false, message: "This meeting is already ending." };
   }
 
   const invokerId = interaction.user.id;
+  if (!meeting.isAutoRecording) {
+    return {
+      ok: true,
+      context: {
+        meeting,
+        invokerId,
+        isAutoRecording: false,
+      },
+    };
+  }
+
   const invokerMember = meeting.voiceChannel.members.get(invokerId);
   if (!invokerMember) {
     return {
@@ -144,6 +156,7 @@ async function resolveDismissAutoRecordContext(
     context: {
       meeting,
       invokerId,
+      isAutoRecording: true,
       policy,
       admin,
       soloNonBot,
@@ -167,20 +180,28 @@ export async function handleDismissAutoRecord(
     return;
   }
 
-  const { meeting, invokerId, policy, admin, soloNonBot } =
-    contextResult.context;
+  const { meeting, invokerId } = contextResult.context;
 
-  const permissionDecision = resolveStopRecordingPermission({
-    policy,
-    invokerId,
-    admin,
-    soloNonBot,
-    startTriggeredByUserId: meeting.startTriggeredByUserId,
-  });
+  if (contextResult.context.isAutoRecording) {
+    const { policy, admin, soloNonBot } = contextResult.context;
+    const permissionDecision = resolveStopRecordingPermission({
+      policy,
+      invokerId,
+      admin,
+      soloNonBot,
+      startTriggeredByUserId: meeting.startTriggeredByUserId,
+    });
 
-  if (!permissionDecision.allowed) {
+    if (!permissionDecision.allowed) {
+      await interaction.reply({
+        content: `You do not have permission to stop this auto-record. ${permissionDecision.hint}`,
+        ephemeral: true,
+      });
+      return;
+    }
+  } else if (!canUserEndMeeting(meeting, invokerId)) {
     await interaction.reply({
-      content: `You do not have permission to stop this auto-record. ${permissionDecision.hint}`,
+      content: "You do not have permission to end this meeting.",
       ephemeral: true,
     });
     return;
@@ -188,11 +209,20 @@ export async function handleDismissAutoRecord(
 
   await interaction.deferReply({ ephemeral: true });
 
-  meeting.endReason = MEETING_END_REASONS.DISMISSED;
+  meeting.endReason = contextResult.context.isAutoRecording
+    ? MEETING_END_REASONS.DISMISSED
+    : MEETING_END_REASONS.BUTTON;
   meeting.endTriggeredByUserId = invokerId;
-  meeting.cancelled = true;
-  meeting.cancellationReason = `Stopped by <@${invokerId}>`;
+
+  if (contextResult.context.isAutoRecording) {
+    meeting.cancelled = true;
+    meeting.cancellationReason = `Stopped by <@${invokerId}>`;
+  }
 
   await handleEndMeetingOther(client, meeting);
-  await interaction.editReply("Stopped recording.");
+  await interaction.editReply(
+    contextResult.context.isAutoRecording
+      ? "Stopped recording."
+      : "Ended meeting.",
+  );
 }

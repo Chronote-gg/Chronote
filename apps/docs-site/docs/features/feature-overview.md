@@ -174,4 +174,4 @@ Access the portal from the **Open in Chronote** button on any meeting summary, o
 
 Right-click a user in the voice channel to access:
 
-- **Stop recording**: Cancels the current auto-recorded meeting in this channel.
+- **Stop recording**: Ends the current meeting. For short auto-recorded meetings, this can cancel the recording instead of generating notes.
