@@ -5,6 +5,8 @@ export type ArchiveFilter = "active" | "archived" | "all";
 export type MeetingSummaryRow = {
   id: string;
   meetingId: string;
+  serverId?: string;
+  serverName?: string;
   channelId: string;
   channelName: string;
   timestamp: string;
@@ -18,6 +20,8 @@ export type MeetingSummaryRow = {
   notesMessageId?: string;
   audioAvailable: boolean;
   transcriptAvailable: boolean;
+  notesAvailable?: boolean;
+  portalUrl?: string;
   status?: MeetingStatus;
   archivedAt?: string;
   archivedByUserId?: string;

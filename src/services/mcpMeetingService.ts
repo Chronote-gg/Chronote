@@ -11,6 +11,7 @@ import {
   listMeetingsForGuildInRangeService,
   listRecentMeetingsForGuildService,
 } from "./meetingHistoryService";
+import { listMeetingUserIndexForUserInRangeService } from "./meetingUserIndexService";
 import { fetchJsonFromS3 } from "./storageService";
 import { checkUserMeetingAccess } from "./meetingAccessService";
 import {
@@ -23,6 +24,7 @@ import { MEETING_STATUS } from "../types/meetingLifecycle";
 import type { Participant } from "../types/participants";
 import type { TranscriptPayload } from "../types/transcript";
 import { replaceDiscordMentionsWithDisplayNames } from "../utils/participants";
+import { isMeetingIndexedForUser } from "../utils/meetingUserIndex";
 
 const MIN_TIMESTAMP_ISO = "1970-01-01T00:00:00.000Z";
 const MAX_TIMESTAMP_ISO = "9999-12-31T23:59:59.999Z";
@@ -30,6 +32,10 @@ const DEFAULT_MEETING_LIMIT = 25;
 const MAX_MEETING_LIMIT = 100;
 const MCP_MEETING_SCAN_LIMIT_MULTIPLIER = 5;
 const MCP_SERVER_MEMBERSHIP_BATCH_SIZE = 5;
+const MS_PER_DAY = 1000 * 60 * 60 * 24;
+
+export type McpMyMeetingsMode = "attended" | "accessible";
+export type McpMyMeetingsRange = "today" | "past_7_days" | "custom";
 
 type ListMcpMeetingsInput = {
   userId: string;
@@ -38,6 +44,25 @@ type ListMcpMeetingsInput = {
   channelId?: string;
   startDate?: string;
   endDate?: string;
+  tags?: string[];
+  includeArchived?: boolean;
+};
+
+type MeetingListFilters = {
+  channelId?: string;
+  tags?: string[];
+  includeArchived?: boolean;
+};
+
+type ListMcpMyMeetingsInput = {
+  userId: string;
+  mode?: McpMyMeetingsMode;
+  range?: McpMyMeetingsRange;
+  limit?: number;
+  startDate?: string;
+  endDate?: string;
+  timeZoneOffsetMinutes?: number;
+  serverIds?: string[];
   tags?: string[];
   includeArchived?: boolean;
 };
@@ -213,6 +238,7 @@ const summarizeMeeting = (
     summaryLabel: meeting.summaryLabel,
     notesAvailable: Boolean(meeting.notes),
     transcriptAvailable: Boolean(meeting.transcriptS3Key),
+    audioAvailable: Boolean(meeting.audioS3Key),
     archivedAt: meeting.archivedAt,
     portalUrl: buildPortalMeetingUrl(
       meeting.guildId,
@@ -287,7 +313,7 @@ export async function listMcpServersForUser(userId: string) {
 
 const meetingMatchesListFilters = (
   meeting: MeetingHistory,
-  input: ListMcpMeetingsInput,
+  input: MeetingListFilters,
   requestedTags: Set<string>,
 ) => {
   if (!input.includeArchived && meeting.archivedAt) return false;
@@ -299,6 +325,109 @@ const meetingMatchesListFilters = (
     (meeting.tags ?? []).map((tag) => tag.toLowerCase()),
   );
   return Array.from(requestedTags).every((tag) => meetingTags.has(tag));
+};
+
+const normalizeMcpMeetingLimit = (limit?: number) =>
+  Math.max(0, Math.min(limit ?? DEFAULT_MEETING_LIMIT, MAX_MEETING_LIMIT));
+
+const resolveTodayStartIso = (nowMs: number, timeZoneOffsetMinutes = 0) => {
+  const localMs = nowMs - timeZoneOffsetMinutes * 60 * 1000;
+  const localDate = new Date(localMs);
+  const localStartMs = Date.UTC(
+    localDate.getUTCFullYear(),
+    localDate.getUTCMonth(),
+    localDate.getUTCDate(),
+  );
+  return new Date(
+    localStartMs + timeZoneOffsetMinutes * 60 * 1000,
+  ).toISOString();
+};
+
+const resolveMyMeetingsDateRange = (input: ListMcpMyMeetingsInput) => {
+  const nowMs = Date.now();
+  const endDate = input.endDate ?? new Date(nowMs).toISOString();
+  const range = input.range ?? (input.startDate ? "custom" : "past_7_days");
+  const startDate =
+    input.startDate ??
+    (range === "today"
+      ? resolveTodayStartIso(nowMs, input.timeZoneOffsetMinutes)
+      : range === "past_7_days"
+        ? new Date(nowMs - 7 * MS_PER_DAY).toISOString()
+        : MIN_TIMESTAMP_ISO);
+
+  if (Date.parse(startDate) > Date.parse(endDate)) {
+    throw new McpMeetingAccessError(
+      "Invalid meeting date range.",
+      "bad_request",
+    );
+  }
+
+  return { startDate, endDate };
+};
+
+const meetingIdentity = (meeting: MeetingHistory) =>
+  `${meeting.guildId}#${meeting.channelId_timestamp}`;
+
+const compactUniqueMeetings = (meetings: MeetingHistory[]) => {
+  const byId = new Map<string, MeetingHistory>();
+  meetings.forEach((meeting) => {
+    byId.set(meetingIdentity(meeting), meeting);
+  });
+  return Array.from(byId.values()).sort((a, b) =>
+    b.timestamp.localeCompare(a.timestamp),
+  );
+};
+
+const filterMcpServers = (
+  servers: Array<{ id: string; name: string; icon?: string | null }>,
+  serverIds?: string[],
+) => {
+  if (!serverIds?.length) return servers;
+  const requested = new Set(serverIds);
+  return servers.filter((server) => requested.has(server.id));
+};
+
+const isMeetingHistory = (
+  meeting: MeetingHistory | undefined,
+): meeting is MeetingHistory => Boolean(meeting);
+
+const listIndexedMeetingsForUser = async (input: {
+  userId: string;
+  startDate: string;
+  endDate: string;
+  limit: number;
+}) => {
+  const records = await listMeetingUserIndexForUserInRangeService(
+    input.userId,
+    input.startDate,
+    input.endDate,
+    input.limit,
+  );
+  const meetings = await Promise.all(
+    records.map((record) =>
+      getMeetingHistoryService(record.guildId, record.channelId_timestamp),
+    ),
+  );
+  return meetings.filter(isMeetingHistory);
+};
+
+const listRangeMeetingsForServers = async (input: {
+  servers: Array<{ id: string }>;
+  startDate: string;
+  endDate: string;
+  limit: number;
+}) => {
+  const meetingGroups = await Promise.all(
+    input.servers.map((server) =>
+      listMeetingsForGuildInRangeService(
+        server.id,
+        input.startDate,
+        input.endDate,
+        input.limit,
+      ),
+    ),
+  );
+  return meetingGroups.flat();
 };
 
 const collectAccessibleMeetings = async (
@@ -332,10 +461,7 @@ const collectAccessibleMeetings = async (
 };
 
 export async function listMcpMeetings(input: ListMcpMeetingsInput) {
-  const limit = Math.max(
-    0,
-    Math.min(input.limit ?? DEFAULT_MEETING_LIMIT, MAX_MEETING_LIMIT),
-  );
+  const limit = normalizeMcpMeetingLimit(input.limit);
   if (limit === 0) return { meetings: [] };
 
   let accessContext: McpMeetingAccessContext;
@@ -379,6 +505,143 @@ export async function listMcpMeetings(input: ListMcpMeetingsInput) {
     meetings: allowedMeetings.map((meeting) =>
       summarizeMeeting(meeting, channelMap),
     ),
+  };
+}
+
+const collectAccessibleUserMeetings = async (input: {
+  meetings: MeetingHistory[];
+  userId: string;
+  mode: McpMyMeetingsMode;
+  limit: number;
+  tags?: string[];
+  includeArchived?: boolean;
+}) => {
+  const requestedTags = new Set(
+    (input.tags ?? []).map((tag) => tag.toLowerCase()),
+  );
+  const accessContexts = new Map<string, McpMeetingAccessContext>();
+  const allowedMeetings: MeetingHistory[] = [];
+
+  for (const meeting of input.meetings) {
+    if (
+      input.mode === "attended" &&
+      !isMeetingIndexedForUser(meeting, input.userId)
+    ) {
+      continue;
+    }
+    if (!meetingMatchesListFilters(meeting, input, requestedTags)) {
+      continue;
+    }
+    try {
+      let accessContext = accessContexts.get(meeting.guildId);
+      if (!accessContext) {
+        accessContext = await resolveMcpMeetingAccessContext(
+          meeting.guildId,
+          input.userId,
+        );
+        accessContexts.set(meeting.guildId, accessContext);
+      }
+      await ensureMcpMeetingAccess({
+        guildId: meeting.guildId,
+        meeting,
+        userId: input.userId,
+        accessContext,
+      });
+      allowedMeetings.push(meeting);
+      if (allowedMeetings.length >= input.limit) break;
+    } catch (error) {
+      if (
+        error instanceof McpMeetingAccessError &&
+        error.code === "forbidden"
+      ) {
+        continue;
+      }
+      throw error;
+    }
+  }
+
+  return allowedMeetings;
+};
+
+const summarizeUserMeetings = async (
+  meetings: MeetingHistory[],
+  serverMap: Map<string, { id: string; name: string; icon?: string | null }>,
+) => {
+  const guildIds = Array.from(
+    new Set(meetings.map((meeting) => meeting.guildId)),
+  );
+  const channelEntries = await Promise.all(
+    guildIds.map(async (guildId) => ({
+      guildId,
+      channelMap: await resolveChannelMap(guildId),
+    })),
+  );
+  const channelMaps = new Map<string, Map<string, string>>();
+  channelEntries.forEach((entry) => {
+    channelMaps.set(entry.guildId, entry.channelMap);
+  });
+
+  return meetings.map((meeting) => {
+    const server = serverMap.get(meeting.guildId);
+    return {
+      ...summarizeMeeting(
+        meeting,
+        channelMaps.get(meeting.guildId) ?? new Map<string, string>(),
+      ),
+      serverId: meeting.guildId,
+      serverName: server?.name ?? meeting.guildId,
+      serverIcon: server?.icon ?? null,
+    };
+  });
+};
+
+export async function listMcpMyMeetings(input: ListMcpMyMeetingsInput) {
+  const limit = normalizeMcpMeetingLimit(input.limit);
+  if (limit === 0) return { meetings: [] };
+
+  const mode = input.mode ?? "attended";
+  const range = resolveMyMeetingsDateRange(input);
+  const servers = filterMcpServers(
+    await listMcpServersForUser(input.userId),
+    input.serverIds,
+  );
+  if (servers.length === 0) return { meetings: [] };
+
+  const serverMap = new Map(servers.map((server) => [server.id, server]));
+  const scanLimit = limit * MCP_MEETING_SCAN_LIMIT_MULTIPLIER;
+  const indexedMeetings =
+    mode === "attended"
+      ? await listIndexedMeetingsForUser({
+          userId: input.userId,
+          startDate: range.startDate,
+          endDate: range.endDate,
+          limit: scanLimit,
+        })
+      : [];
+  const rangeMeetings = await listRangeMeetingsForServers({
+    servers,
+    startDate: range.startDate,
+    endDate: range.endDate,
+    limit: scanLimit,
+  });
+  const candidateMeetings = compactUniqueMeetings(
+    [...indexedMeetings, ...rangeMeetings].filter((meeting) =>
+      serverMap.has(meeting.guildId),
+    ),
+  );
+  const allowedMeetings = await collectAccessibleUserMeetings({
+    meetings: candidateMeetings,
+    userId: input.userId,
+    mode,
+    limit,
+    tags: input.tags,
+    includeArchived: input.includeArchived,
+  });
+
+  return {
+    range,
+    mode,
+    meetings: await summarizeUserMeetings(allowedMeetings, serverMap),
   };
 }
 

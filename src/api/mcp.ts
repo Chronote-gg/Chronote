@@ -10,6 +10,7 @@ import {
 import {
   getMcpMeetingSummary,
   getMcpMeetingTranscript,
+  listMcpMyMeetings,
   listMcpMeetings,
   listMcpServersForUser,
   McpMeetingAccessError,
@@ -58,6 +59,22 @@ const listMeetingsSchema = z.object({
   tags: z.array(z.string().min(1)).optional(),
   includeArchived: z.boolean().optional(),
 });
+const listMyMeetingsSchema = z.object({
+  mode: z.enum(["attended", "accessible"]).optional(),
+  range: z.enum(["today", "past_7_days", "custom"]).optional(),
+  limit: z.number().int().min(1).max(100).optional(),
+  startDate: z.string().datetime().optional(),
+  endDate: z.string().datetime().optional(),
+  timeZoneOffsetMinutes: z
+    .number()
+    .int()
+    .min(-14 * 60)
+    .max(14 * 60)
+    .optional(),
+  serverIds: z.array(z.string().min(1)).optional(),
+  tags: z.array(z.string().min(1)).optional(),
+  includeArchived: z.boolean().optional(),
+});
 const meetingLookupSchema = z.object({
   serverId: z.string().min(1),
   meetingId: z.string().min(1),
@@ -95,6 +112,46 @@ const toolDefinitions: McpToolDefinition[] = [
         includeArchived: { type: "boolean" },
       },
       required: ["serverId"],
+      additionalProperties: false,
+    },
+    annotations: toolAnnotations,
+  },
+  {
+    name: "list_my_meetings",
+    title: "List My Chronote Meetings",
+    description:
+      "List the authenticated user's Chronote meetings across servers, defaulting to meetings they attended in the past 7 days.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        mode: {
+          type: "string",
+          enum: ["attended", "accessible"],
+          description:
+            "attended lists meetings the user participated in; accessible lists meetings the user can access through current permissions.",
+        },
+        range: {
+          type: "string",
+          enum: ["today", "past_7_days", "custom"],
+        },
+        limit: { type: "number", minimum: 1, maximum: 100 },
+        startDate: { type: "string", format: "date-time" },
+        endDate: { type: "string", format: "date-time" },
+        timeZoneOffsetMinutes: {
+          type: "number",
+          minimum: -840,
+          maximum: 840,
+          description:
+            "Offset compatible with JavaScript Date.getTimezoneOffset; used by range=today. Defaults to UTC.",
+        },
+        serverIds: {
+          type: "array",
+          items: { type: "string" },
+          description: "Optional Discord server IDs to include.",
+        },
+        tags: { type: "array", items: { type: "string" } },
+        includeArchived: { type: "boolean" },
+      },
       additionalProperties: false,
     },
     annotations: toolAnnotations,
@@ -142,6 +199,7 @@ const toolDefinitions: McpToolDefinition[] = [
 const toolScopes = new Map<string, McpScope[]>([
   ["list_servers", ["meetings:read"]],
   ["list_meetings", ["meetings:read"]],
+  ["list_my_meetings", ["meetings:read"]],
   ["get_meeting_summary", ["meetings:read"]],
   ["get_meeting_transcript", ["meetings:read", "transcripts:read"]],
 ]);
@@ -254,6 +312,23 @@ async function callTool(auth: McpAccessTokenInfo, name: string, args: unknown) {
           channelId: input.channelId,
           startDate: input.startDate,
           endDate: input.endDate,
+          tags: input.tags,
+          includeArchived: input.includeArchived,
+        }),
+      );
+    }
+    if (name === "list_my_meetings") {
+      const input = listMyMeetingsSchema.parse(args);
+      return toolResult(
+        await listMcpMyMeetings({
+          userId: auth.userId,
+          mode: input.mode,
+          range: input.range,
+          limit: input.limit,
+          startDate: input.startDate,
+          endDate: input.endDate,
+          timeZoneOffsetMinutes: input.timeZoneOffsetMinutes,
+          serverIds: input.serverIds,
           tags: input.tags,
           includeArchived: input.includeArchived,
         }),

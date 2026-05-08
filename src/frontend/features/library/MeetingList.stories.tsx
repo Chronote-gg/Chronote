@@ -7,6 +7,8 @@ const items: MeetingListItem[] = [
   {
     id: "m1",
     meetingId: "meeting-1",
+    serverId: "server-1",
+    serverName: "Chronote Crew",
     channelId: "c1",
     channelName: "staff-chat",
     timestamp: "2025-12-30T18:30:00.000Z",
@@ -28,6 +30,8 @@ const items: MeetingListItem[] = [
   {
     id: "m2",
     meetingId: "meeting-2",
+    serverId: "server-2",
+    serverName: "Community Ops",
     channelId: "c2",
     channelName: "planning",
     timestamp: "2025-12-29T17:10:00.000Z",

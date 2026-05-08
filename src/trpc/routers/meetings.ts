@@ -12,6 +12,10 @@ import {
   updateMeetingNameService,
 } from "../../services/meetingHistoryService";
 import { ensureBotInGuild } from "../../services/guildAccessService";
+import {
+  listMcpMyMeetings,
+  McpMeetingAccessError,
+} from "../../services/mcpMeetingService";
 import { config } from "../../services/configService";
 import {
   createNotesCorrectionTokenStore,
@@ -80,7 +84,12 @@ import {
   getSnapshotBoolean,
   resolveConfigSnapshot,
 } from "../../services/unifiedConfigService";
-import { guildMemberProcedure, manageGuildProcedure, router } from "../trpc";
+import {
+  authedProcedure,
+  guildMemberProcedure,
+  manageGuildProcedure,
+  router,
+} from "../trpc";
 
 const resolveParticipantLabel = (participant: Participant) =>
   participant.serverNickname ||
@@ -828,6 +837,55 @@ const list = guildMemberProcedure
     };
   });
 
+const myList = authedProcedure
+  .input(
+    z.object({
+      mode: z.enum(["attended", "accessible"]).optional(),
+      range: z.enum(["today", "past_7_days", "custom"]).optional(),
+      limit: z.number().min(1).max(100).optional(),
+      startDate: z.string().datetime().optional(),
+      endDate: z.string().datetime().optional(),
+      timeZoneOffsetMinutes: z
+        .number()
+        .int()
+        .min(-14 * 60)
+        .max(14 * 60)
+        .optional(),
+      serverIds: z.array(z.string()).optional(),
+      tags: z.array(z.string()).optional(),
+      includeArchived: z.boolean().optional(),
+    }),
+  )
+  .query(async ({ ctx, input }) => {
+    try {
+      return await listMcpMyMeetings({
+        userId: ctx.user.id,
+        mode: input.mode,
+        range: input.range,
+        limit: input.limit,
+        startDate: input.startDate,
+        endDate: input.endDate,
+        timeZoneOffsetMinutes: input.timeZoneOffsetMinutes,
+        serverIds: input.serverIds,
+        tags: input.tags,
+        includeArchived: input.includeArchived,
+      });
+    } catch (error) {
+      if (error instanceof McpMeetingAccessError) {
+        if (error.code === "rate_limited") {
+          throw new TRPCError({
+            code: "TOO_MANY_REQUESTS",
+            message: "Discord rate limited. Please retry.",
+          });
+        }
+        if (error.code === "bad_request") {
+          throw new TRPCError({ code: "BAD_REQUEST", message: error.message });
+        }
+      }
+      throw error;
+    }
+  });
+
 const detail = guildMemberProcedure
   .input(
     z.object({
@@ -1571,6 +1629,7 @@ const applyNotesCorrection = guildMemberProcedure
 
 export const meetingsRouter = router({
   list,
+  myList,
   detail,
   setArchived,
   rename,

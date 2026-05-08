@@ -12,6 +12,7 @@ import {
 } from "@mantine/core";
 import {
   IconBook2,
+  IconCalendarEvent,
   IconChevronRight,
   IconCreditCard,
   IconMessageCircle,
@@ -32,11 +33,19 @@ type SiteNavbarProps = {
 
 const NAV_ITEMS: Array<{
   label: string;
-  value: "library" | "ask" | "billing" | "settings";
+  value: "meetings" | "library" | "ask" | "billing" | "settings";
   icon: ComponentType<{ size?: number }>;
   requiresAuth: boolean;
   requiresManage?: boolean;
+  to?: string;
 }> = [
+  {
+    label: "My Meetings",
+    value: "meetings",
+    icon: IconCalendarEvent,
+    requiresAuth: true,
+    to: "/portal/meetings",
+  },
   {
     label: "Library",
     value: "library",
@@ -129,7 +138,9 @@ export function SiteNavbar({ onClose, pathname }: SiteNavbarProps) {
         <Stack gap={4}>
           {NAV_ITEMS.map((item) => {
             const Icon = item.icon;
-            const isActive = pathname.includes(`/${item.value}`);
+            const isActive = item.to
+              ? pathname === item.to
+              : pathname.includes(`/${item.value}`);
             const disabled =
               (item.requiresAuth && authState !== "authenticated") ||
               (item.requiresManage && !canManage);
@@ -151,7 +162,7 @@ export function SiteNavbar({ onClose, pathname }: SiteNavbarProps) {
                 active={isActive}
                 disabled={disabled}
                 onClick={() => {
-                  navigate({ to: resolveServerPath(item.value) });
+                  navigate({ to: item.to ?? resolveServerPath(item.value) });
                   onClose?.();
                 }}
                 style={{

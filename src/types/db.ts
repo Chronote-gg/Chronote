@@ -290,6 +290,15 @@ export interface MeetingHistory {
   chatS3Key?: string; // S3 key for chat log/json
 }
 
+export interface MeetingUserIndexRecord {
+  userId: string; // Partition key
+  userTimestamp: string; // Sort key (ISO-timestamp#guildId#channelId_timestamp)
+  guildId: string;
+  channelId_timestamp: string;
+  meetingId: string;
+  timestamp: string;
+}
+
 export type ContactFeedbackSource = "discord" | "web";
 
 export interface ContactFeedbackRecord {
