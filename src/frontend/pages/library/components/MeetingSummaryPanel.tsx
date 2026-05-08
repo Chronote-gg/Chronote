@@ -13,6 +13,7 @@ import {
 } from "@mantine/core";
 import {
   IconCopy,
+  IconFileImport,
   IconNote,
   IconPencil,
   IconSparkles,
@@ -44,6 +45,7 @@ type MeetingSummaryPanelProps = {
   onFeedbackDown: () => void;
   onCopySummary: () => void;
   onEditNotes?: () => void;
+  onImportNotes?: () => void;
   onSuggestCorrection?: () => void;
   style?: CSSProperties;
 };
@@ -59,6 +61,7 @@ export function MeetingSummaryPanel({
   onFeedbackDown,
   onCopySummary,
   onEditNotes,
+  onImportNotes,
   onSuggestCorrection,
   style,
 }: MeetingSummaryPanelProps) {
@@ -164,6 +167,13 @@ export function MeetingSummaryPanel({
                 disabled={!onEditNotes}
               >
                 Edit notes
+              </Menu.Item>
+              <Menu.Item
+                leftSection={<IconFileImport size={14} />}
+                onClick={onImportNotes}
+                disabled={!onImportNotes}
+              >
+                Import notes
               </Menu.Item>
               <Menu.Item
                 leftSection={<IconSparkles size={14} />}

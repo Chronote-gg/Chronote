@@ -12,8 +12,13 @@ import {
   updateMeetingTags,
   writeMeetingHistory,
 } from "../db";
-import type { MeetingHistory, SuggestionHistoryEntry } from "../types/db";
+import type {
+  MeetingHistory,
+  NotesEditSource,
+  SuggestionHistoryEntry,
+} from "../types/db";
 import { MEETING_STATUS, type MeetingStatus } from "../types/meetingLifecycle";
+import { trimNotesForHistory } from "../utils/notesHistory";
 import { getMockStore } from "./mockStore";
 
 export type MeetingHistoryRepository = {
@@ -50,6 +55,7 @@ export type MeetingHistoryRepository = {
     summaryLabel?: string;
     meetingName?: string;
     suggestion?: SuggestionHistoryEntry;
+    source?: NotesEditSource;
     expectedPreviousVersion?: number;
     metadata?: { notesMessageIds?: string[]; notesChannelId?: string };
   }) => Promise<boolean>;
@@ -144,6 +150,7 @@ const realRepository: MeetingHistoryRepository = {
       params.summaryLabel,
       params.meetingName,
       params.suggestion,
+      params.source,
       params.expectedPreviousVersion,
       params.metadata,
       params.notesDelta,
@@ -227,6 +234,20 @@ const mockRepository: MeetingHistoryRepository = {
     if (idx === -1) return false;
     const now = new Date().toISOString();
     const existing = items[idx];
+    const existingVersion = existing.notesVersion ?? 1;
+    if (
+      params.expectedPreviousVersion !== undefined &&
+      params.expectedPreviousVersion !== existingVersion
+    ) {
+      return false;
+    }
+    const notesHistoryEntry = {
+      version: params.notesVersion,
+      notes: trimNotesForHistory(params.notes),
+      editedBy: params.editedBy,
+      editedAt: now,
+      source: params.source,
+    };
     items[idx] = {
       ...existing,
       notes: params.notes,
@@ -247,6 +268,10 @@ const mockRepository: MeetingHistoryRepository = {
         params.metadata?.notesMessageIds ?? existing.notesMessageIds,
       notesChannelId:
         params.metadata?.notesChannelId ?? existing.notesChannelId,
+      notesHistory: [...(existing.notesHistory ?? []), notesHistoryEntry],
+      suggestionsHistory: params.suggestion
+        ? [...(existing.suggestionsHistory ?? []), params.suggestion]
+        : existing.suggestionsHistory,
     };
     getMockStore().meetingHistoryByGuild.set(params.guildId, items);
     return true;

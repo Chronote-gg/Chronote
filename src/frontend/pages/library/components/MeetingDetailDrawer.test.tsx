@@ -116,6 +116,13 @@ jest.mock("../../../services/trpc", () => ({
           error: undefined,
         }),
       },
+      importNotes: {
+        useMutation: () => ({
+          mutateAsync: jest.fn().mockResolvedValue({ ok: true }),
+          isPending: false,
+          error: undefined,
+        }),
+      },
     },
     feedback: {
       submitSummary: {
@@ -174,6 +181,7 @@ const buildDetail = (
   duration: 2700,
   tags: [],
   notes: "- Decision: Ship it",
+  notesVersion: 1,
   meetingName: null,
   summarySentence: null,
   summaryLabel: null,

@@ -1,4 +1,8 @@
-import type { MeetingHistory, SuggestionHistoryEntry } from "../types/db";
+import type {
+  MeetingHistory,
+  NotesEditSource,
+  SuggestionHistoryEntry,
+} from "../types/db";
 import type { MeetingStatus } from "../types/meetingLifecycle";
 import { getMeetingHistoryRepository } from "../repositories/meetingHistoryRepository";
 
@@ -73,6 +77,7 @@ export async function updateMeetingNotesService(params: {
   summaryLabel?: string;
   meetingName?: string;
   suggestion?: SuggestionHistoryEntry;
+  source?: NotesEditSource;
   expectedPreviousVersion?: number;
   metadata?: { notesMessageIds?: string[]; notesChannelId?: string };
 }) {

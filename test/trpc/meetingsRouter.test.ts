@@ -769,3 +769,92 @@ describe("meetings updateNotes mutation", () => {
     ).rejects.toMatchObject({ code: "BAD_REQUEST" });
   });
 });
+
+describe("meetings importNotes mutation", () => {
+  const mockedEnsureUserInGuild = jest.mocked(
+    (
+      jest.requireMock("../../src/services/guildAccessService") as {
+        ensureUserInGuild: typeof import("../../src/services/guildAccessService").ensureUserInGuild;
+      }
+    ).ensureUserInGuild,
+  );
+  const mockedGetMeetingHistory = jest.mocked(getMeetingHistoryService);
+  const mockedCheckMeetingAccess = jest.mocked(checkUserMeetingAccess);
+  const mockedUpdateMeetingNotesService = jest.mocked(
+    updateMeetingNotesService,
+  );
+
+  beforeEach(() => {
+    jest.resetAllMocks();
+    mockedEnsureUserInGuild.mockResolvedValue(true);
+    mockedCheckMeetingAccess.mockResolvedValue({
+      allowed: true,
+      via: "channel_permissions",
+    });
+    mockedUpdateMeetingNotesService.mockResolvedValue(true);
+  });
+
+  test("saves imported notes with HTTP source metadata", async () => {
+    const meetingId = "channel-1#2025-01-01T00:00:00.000Z";
+    const user = getMockUser();
+    mockedGetMeetingHistory.mockResolvedValue({
+      guildId: "guild-1",
+      channelId_timestamp: meetingId,
+      meetingId: "meeting-1",
+      channelId: "channel-1",
+      timestamp: "2025-01-01T00:00:00.000Z",
+      duration: 1800,
+      transcribeMeeting: true,
+      generateNotes: true,
+      notes: "Old notes",
+      transcriptS3Key: "transcripts/meeting-1.json",
+      meetingCreatorId: user.id,
+      notesVersion: 3,
+    } as unknown as MeetingHistory);
+
+    const result = await buildCaller(user).meetings.importNotes({
+      serverId: "guild-1",
+      meetingId,
+      notes: "Imported notes",
+      mode: "replace",
+      sourceName: "External notes",
+      sourceUrl: "https://example.com/notes",
+      expectedPreviousVersion: 3,
+    });
+
+    expect(result).toEqual({ ok: true });
+    expect(mockedUpdateMeetingNotesService).toHaveBeenCalledWith(
+      expect.objectContaining({
+        guildId: "guild-1",
+        channelId_timestamp: meetingId,
+        notes: "Imported notes",
+        notesDelta: null,
+        notesVersion: 4,
+        editedBy: user.id,
+        expectedPreviousVersion: 3,
+        source: {
+          type: "manual_import",
+          importMode: "replace",
+          sourceName: "External notes",
+          sourceUrl: "https://example.com/notes",
+        },
+      }),
+    );
+  });
+
+  test("rejects non-http source URLs", async () => {
+    await expect(
+      buildCaller().meetings.importNotes({
+        serverId: "guild-1",
+        meetingId: "channel-1#2025-01-01T00:00:00.000Z",
+        notes: "Imported notes",
+        mode: "replace",
+        sourceUrl: "javascript:alert(1)",
+        expectedPreviousVersion: 1,
+      }),
+    ).rejects.toMatchObject({ code: "BAD_REQUEST" });
+
+    expect(mockedGetMeetingHistory).not.toHaveBeenCalled();
+    expect(mockedUpdateMeetingNotesService).not.toHaveBeenCalled();
+  });
+});

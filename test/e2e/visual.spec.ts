@@ -112,6 +112,18 @@ test.describe("visual regression", () => {
       await notesEditorDialog.getByRole("button", { name: "Cancel" }).click();
       await expect(notesEditorDialog).toBeHidden();
 
+      await drawerDialog.getByRole("button", { name: "Notes actions" }).click();
+      await page.getByRole("menuitem", { name: "Import notes" }).click();
+      const notesImportDialog = page.getByRole("dialog", {
+        name: /import notes/i,
+      });
+      await expect(notesImportDialog).toBeVisible();
+      await expectVisualScreenshot(page, "library-notes-import", mode, {
+        target: notesImportDialog,
+      });
+      await notesImportDialog.getByRole("button", { name: "Cancel" }).click();
+      await expect(notesImportDialog).toBeHidden();
+
       await libraryPage.drawerFullscreenToggle().click();
       await expect(
         drawerDialog.getByRole("button", { name: /exit fullscreen/i }),
