@@ -595,6 +595,7 @@ jobs:
 
   deploy-docs:
     name: Deploy Docs
+    if: ${{ vars.DOCS_BUCKET != '' && vars.DOCS_DISTRIBUTION_ID != '' }}
     needs:
       [
         lint,
