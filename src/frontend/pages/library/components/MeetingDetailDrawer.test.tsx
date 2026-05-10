@@ -34,6 +34,31 @@ const mockShareStateQuery = {
   refetch: jest.fn().mockResolvedValue(undefined),
 };
 
+const mockNotionStatusQuery = {
+  data: { configured: true, connected: false },
+  isLoading: false,
+  isFetching: false,
+  error: null,
+};
+
+const mockNotionExportStatusQuery: {
+  data:
+    | { exported: boolean; currentNotesVersion: number; outdated: boolean }
+    | undefined;
+  isLoading: boolean;
+  isFetching: boolean;
+  error: unknown;
+} = {
+  data: { exported: false, currentNotesVersion: 1, outdated: false },
+  isLoading: false,
+  isFetching: false,
+  error: null,
+};
+
+const mockNotionExportStatusUseQuery = jest.fn(
+  () => mockNotionExportStatusQuery,
+);
+
 jest.mock("../../../services/trpc", () => ({
   trpc: {
     useUtils: () => ({
@@ -42,7 +67,44 @@ jest.mock("../../../services/trpc", () => ({
           invalidate: jest.fn(),
         },
       },
+      notion: {
+        exportStatus: {
+          invalidate: jest.fn(),
+        },
+      },
     }),
+    notion: {
+      status: {
+        useQuery: () => mockNotionStatusQuery,
+      },
+      exportStatus: {
+        useQuery: (
+          ...args: Parameters<typeof mockNotionExportStatusUseQuery>
+        ) => mockNotionExportStatusUseQuery(...args),
+      },
+      exportMeeting: {
+        useMutation: () => ({
+          mutateAsync: jest.fn().mockResolvedValue({
+            ok: true,
+            pageUrl: "https://notion.so/page-1",
+            exportedNotesVersion: 1,
+          }),
+          isPending: false,
+          error: undefined,
+        }),
+      },
+      syncMeeting: {
+        useMutation: () => ({
+          mutateAsync: jest.fn().mockResolvedValue({
+            ok: true,
+            pageUrl: "https://notion.so/page-1",
+            exportedNotesVersion: 1,
+          }),
+          isPending: false,
+          error: undefined,
+        }),
+      },
+    },
     meetingShares: {
       getShareState: {
         useQuery: () => mockShareStateQuery,
@@ -245,6 +307,16 @@ describe("MeetingDetailDrawer summary copy", () => {
       state: { visibility: "private" },
     };
     mockShareStateQuery.error = null;
+    mockNotionStatusQuery.data = { configured: true, connected: false };
+    mockNotionExportStatusQuery.data = {
+      exported: false,
+      currentNotesVersion: 1,
+      outdated: false,
+    };
+    mockNotionExportStatusQuery.isLoading = false;
+    mockNotionExportStatusQuery.isFetching = false;
+    mockNotionExportStatusQuery.error = null;
+    mockNotionExportStatusUseQuery.mockClear();
     Object.defineProperty(navigator, "clipboard", {
       value: {
         writeText: writeTextMock,
@@ -291,5 +363,42 @@ describe("MeetingDetailDrawer summary copy", () => {
     renderDrawer();
 
     expect(screen.getByTestId("meeting-share")).toBeDisabled();
+  });
+
+  it("does not query Notion export status when Notion is not configured", () => {
+    mockNotionStatusQuery.data = { configured: false, connected: false };
+
+    renderDrawer();
+
+    expect(mockNotionExportStatusUseQuery).toHaveBeenCalledWith(
+      { serverId: "g1", meetingId: "m1" },
+      { enabled: false },
+    );
+  });
+
+  it("disables Notion export actions while export status is loading", async () => {
+    mockNotionStatusQuery.data = { configured: true, connected: true };
+    mockNotionExportStatusQuery.data = undefined;
+    mockNotionExportStatusQuery.isLoading = true;
+
+    renderDrawer();
+    fireEvent.click(screen.getByLabelText("Notes actions"));
+
+    expect(
+      (await screen.findByText("Loading Notion status...")).closest("button"),
+    ).toBeDisabled();
+  });
+
+  it("disables Notion export actions when export status fails", async () => {
+    mockNotionStatusQuery.data = { configured: true, connected: true };
+    mockNotionExportStatusQuery.data = undefined;
+    mockNotionExportStatusQuery.error = new Error("boom");
+
+    renderDrawer();
+    fireEvent.click(screen.getByLabelText("Notes actions"));
+
+    expect(
+      (await screen.findByText("Notion status unavailable")).closest("button"),
+    ).toBeDisabled();
   });
 });

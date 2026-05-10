@@ -127,6 +127,27 @@ type MeetingShareStateData = {
     sharedByTag?: string;
   };
 };
+type NotionStatusData = {
+  configured: boolean;
+  connected: boolean;
+  workspaceName?: string;
+  workspaceId?: string;
+};
+type NotionExportStatusData = {
+  exported: boolean;
+  pageUrl?: string;
+  pageId?: string;
+  exportedNotesVersion?: number;
+  currentNotesVersion: number;
+  outdated: boolean;
+  lastExportedAt?: string;
+  lastError?: string;
+};
+type NotionMutationResult = {
+  ok: boolean;
+  pageUrl?: string;
+  exportedNotesVersion: number;
+};
 type RulesData = { rules: AutoRecordSettings[] };
 type ContextData = {
   context?: string | null;
@@ -262,6 +283,15 @@ export const meetingShareStateQuery = buildQueryState<MeetingShareStateData>({
     rotated: false,
   },
 });
+export const notionStatusQuery = buildQueryState<NotionStatusData>({
+  configured: true,
+  connected: false,
+});
+export const notionExportStatusQuery = buildQueryState<NotionExportStatusData>({
+  exported: false,
+  currentNotesVersion: 1,
+  outdated: false,
+});
 export const autorecordListQuery = buildQueryState<RulesData>({ rules: [] });
 export const contextQuery = buildQueryState<ContextData | null>(null);
 export const channelContextsQuery = buildQueryState<ChannelContextsData>({
@@ -364,6 +394,14 @@ export const meetingsShareRotateMutation = buildMutationState<
     rotated: true,
   },
 });
+export const notionExportMeetingMutation = buildMutationState<
+  [unknown],
+  NotionMutationResult
+>({ ok: true, pageUrl: "https://notion.so/page-1", exportedNotesVersion: 1 });
+export const notionSyncMeetingMutation = buildMutationState<
+  [unknown],
+  NotionMutationResult
+>({ ok: true, pageUrl: "https://notion.so/page-1", exportedNotesVersion: 1 });
 export const autorecordAddMutation = buildMutationState<[unknown], void>(
   undefined,
 );
@@ -481,6 +519,9 @@ export const trpcUtils = {
     list: { invalidate: jest.fn<Promise<void>, [unknown]>() },
     detail: { invalidate: jest.fn<Promise<void>, [unknown]>() },
   },
+  notion: {
+    exportStatus: { invalidate: jest.fn<Promise<void>, [unknown]>() },
+  },
   servers: {
     channels: { invalidate: jest.fn<Promise<void>, [unknown]>() },
   },
@@ -537,6 +578,15 @@ export const resetTrpcMocks = () => {
       shareId: null,
       rotated: false,
     },
+  });
+  resetQueryState(notionStatusQuery, {
+    configured: true,
+    connected: false,
+  });
+  resetQueryState(notionExportStatusQuery, {
+    exported: false,
+    currentNotesVersion: 1,
+    outdated: false,
   });
   resetQueryState(autorecordListQuery, { rules: [] });
   resetQueryState(contextQuery, null);
@@ -600,6 +650,16 @@ export const resetTrpcMocks = () => {
       rotated: true,
     },
   });
+  resetMutationState(notionExportMeetingMutation, {
+    ok: true,
+    pageUrl: "https://notion.so/page-1",
+    exportedNotesVersion: 1,
+  });
+  resetMutationState(notionSyncMeetingMutation, {
+    ok: true,
+    pageUrl: "https://notion.so/page-1",
+    exportedNotesVersion: 1,
+  });
   resetMutationState(autorecordAddMutation, undefined);
   resetMutationState(autorecordRemoveMutation, undefined);
   resetMutationState(contextSetMutation, undefined);
@@ -633,6 +693,8 @@ export const resetTrpcMocks = () => {
   trpcUtils.meetings.list.invalidate.mockResolvedValue(undefined);
   trpcUtils.meetings.detail.invalidate.mockReset();
   trpcUtils.meetings.detail.invalidate.mockResolvedValue(undefined);
+  trpcUtils.notion.exportStatus.invalidate.mockReset();
+  trpcUtils.notion.exportStatus.invalidate.mockResolvedValue(undefined);
   trpcUtils.servers.channels.invalidate.mockReset();
   trpcUtils.servers.channels.invalidate.mockResolvedValue(undefined);
   trpcUtils.context.get.invalidate.mockReset();
@@ -717,6 +779,18 @@ export const setMeetingShareStateQuery = (
   next: Partial<QueryState<MeetingShareStateData>>,
 ) => {
   Object.assign(meetingShareStateQuery, next);
+};
+
+export const setNotionStatusQuery = (
+  next: Partial<QueryState<NotionStatusData>>,
+) => {
+  Object.assign(notionStatusQuery, next);
+};
+
+export const setNotionExportStatusQuery = (
+  next: Partial<QueryState<NotionExportStatusData>>,
+) => {
+  Object.assign(notionExportStatusQuery, next);
 };
 
 export const setAutorecordListQuery = (
@@ -821,6 +895,12 @@ jest.mock("../../../src/frontend/services/trpc", () => ({
       getShareState: { useQuery: () => meetingShareStateQuery },
       setVisibility: { useMutation: () => meetingsShareSetVisibilityMutation },
       rotate: { useMutation: () => meetingsShareRotateMutation },
+    },
+    notion: {
+      status: { useQuery: () => notionStatusQuery },
+      exportStatus: { useQuery: () => notionExportStatusQuery },
+      exportMeeting: { useMutation: () => notionExportMeetingMutation },
+      syncMeeting: { useMutation: () => notionSyncMeetingMutation },
     },
     autorecord: {
       list: { useQuery: () => autorecordListQuery },

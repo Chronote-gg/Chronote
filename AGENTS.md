@@ -11,7 +11,7 @@
 - Discord: discord.js v14, discord-api-types, @discordjs/voice for audio capture, @discordjs/opus, prism-media.
 - AI: openai SDK; gpt-4o-transcribe for transcription; gpt-5.1 for cleanup/notes/corrections; gpt-5-mini for live gate; DALL-E 3 for images.
 - Observability and prompt management: Langfuse for tracing, prompt versioning, and prompt sync scripts. AMG (Grafana) service account token is auto-rotated via EventBridge + Lambda (see `_infra/grafana.tf` and `_infra/README.md`). Critical alerts (ECS down, ALB 5xx, unhealthy hosts, rotation failures) are sent via SNS email and optionally to a Discord channel via a separate Node.js Lambda (see `_infra/notifications.tf` and `_infra/README.md`).
-- Storage: AWS DynamoDB (tables: GuildSubscription, PaymentTransaction, StripeWebhookEvent, InteractionReceipt, ActiveMeeting, AccessLogs, RecordingTranscript, AutoRecordSettings, ServerContext, ChannelContext, DictionaryTable, MeetingHistory, MeetingUserIndex, SessionTable, McpOAuthTable), S3 for transcripts/audio.
+- Storage: AWS DynamoDB (tables: GuildSubscription, PaymentTransaction, StripeWebhookEvent, InteractionReceipt, ActiveMeeting, AccessLogs, RecordingTranscript, AutoRecordSettings, ServerContext, ChannelContext, DictionaryTable, MeetingHistory, MeetingUserIndex, SessionTable, McpOAuthTable, NotionIntegrationTable), S3 for transcripts/audio.
 - Infra: Terraform -> AWS ECS Fargate, ECR, CloudWatch logs; static frontend on S3 + CloudFront with OAC; local Dynamo via docker-compose.
 - IaC scanning: Checkov runs in `.github/workflows/ci.yml` on PRs and main pushes. Local: `npm run checkov` (uses `uvx --from checkov checkov`; install uv first: https://docs.astral.sh/uv/).
 - Known/suppressed infra choices:
@@ -58,6 +58,7 @@
 - OAuth (optional): `ENABLE_OAUTH` (default true). `SESSION_SECRET` or `OAUTH_SECRET` is always required outside mock mode for session and CSRF signing. If OAuth is true, also require `DISCORD_CLIENT_SECRET` and `DISCORD_CALLBACK_URL`. If not using OAuth, set `ENABLE_OAUTH=false` (wired into Terraform env).
 - Production OAuth should use the API domain callback (e.g., `https://api.chronote.gg/auth/discord/callback`). When `API_DOMAIN` is set in Terraform, the backend is behind an ALB and the frontend build uses `VITE_API_BASE_URL` from GitHub Actions env vars.
 - Remote MCP (optional): `ENABLE_MCP` defaults true only when Discord OAuth is enabled, requires `OAUTH_SECRET`, and exposes `/mcp` on the API server. Set `MCP_PUBLIC_BASE_URL` to the externally reachable API origin for production so OAuth resource-bound tokens match the public endpoint. Optional overrides: `MCP_ENDPOINT_PATH`, `MCP_ACCESS_TOKEN_TTL_SECONDS`, `MCP_REFRESH_TOKEN_TTL_SECONDS`, `MCP_AUTH_CODE_TTL_SECONDS`.
+- Notion export (optional): set `NOTION_CLIENT_ID`, `NOTION_CLIENT_SECRET`, and `NOTION_REDIRECT_URI` to enable user OAuth, one-way export, and manual sync from Chronote notes to Notion pages. Notion tokens are encrypted with `NOTION_TOKEN_ENCRYPTION_SECRET` when set, otherwise `OAUTH_SECRET`/`SESSION_SECRET`.
 - OpenAI org/project IDs are optional (defaults empty).
 - Langfuse prompt sync uses `LANGFUSE_PUBLIC_KEY` and `LANGFUSE_SECRET_KEY`. Optional: `LANGFUSE_BASE_URL`, `LANGFUSE_PROMPT_LABEL`, `LANGFUSE_PROMPT_TRANSCRIPTION`.
 - Optional Langfuse prompt override for the finalized audio pass: `LANGFUSE_PROMPT_TRANSCRIPTION_FINAL_PASS`.
@@ -75,6 +76,7 @@
 - ServerContext / ChannelContext store prompt context.
 - AutoRecordSettings enable record-all or per-channel auto-start.
 - McpOAuthTable stores hashed MCP OAuth clients, authorization codes, tokens, and user consents. Access tokens are resource-bound to the configured MCP endpoint and scopes are enforced per tool.
+- NotionIntegrationTable stores per-user Notion connection metadata and per-user meeting export mappings. Notion access and refresh tokens are encrypted before persistence.
 
 ## Frontend
 

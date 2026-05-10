@@ -164,6 +164,14 @@ Imported notes can:
 
 Imports are saved as a new notes version and update the posted Discord notes when possible.
 
+## Exporting notes to Notion
+
+Open a meeting in the web portal and choose **Export to Notion** from the notes actions menu. If Notion is not connected yet, Chronote starts the Notion authorization flow first.
+
+After export, Chronote stores the Notion page link on that meeting for your user account. If Chronote notes are edited later, choose **Sync latest to Notion** to replace the Notion page content with the newest Chronote notes version.
+
+Chronote remains the source of truth. The first Notion integration is one-way from Chronote to Notion.
+
 ## Meeting image generation
 
 After a meeting ends, click **Generate Image** to create a DALL-E-generated visual summary. The image is based on the meeting transcript and context.

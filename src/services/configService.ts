@@ -265,6 +265,20 @@ class ConfigService {
       parseInt(process.env.MCP_AUTH_CODE_TTL_SECONDS || "600", 10) || 600,
   };
 
+  readonly notion = {
+    clientId: process.env.NOTION_CLIENT_ID || "",
+    clientSecret: process.env.NOTION_CLIENT_SECRET || "",
+    redirectUri: process.env.NOTION_REDIRECT_URI || "",
+    apiVersion: process.env.NOTION_API_VERSION || "2026-03-11",
+    tokenEncryptionSecret:
+      process.env.NOTION_TOKEN_ENCRYPTION_SECRET ||
+      this.server.oauthSecret ||
+      this.server.sessionSecret,
+    get enabled() {
+      return Boolean(this.clientId && this.clientSecret && this.redirectUri);
+    },
+  };
+
   // Cache configuration
   readonly cache = {
     enabled: process.env.CACHE_ENABLED !== "false",

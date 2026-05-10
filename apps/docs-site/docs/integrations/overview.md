@@ -15,6 +15,14 @@ The portal authenticates through Discord OAuth so channel permissions are respec
 
 The portal can also import Markdown or plain-text notes from external tools into an existing meeting. This supports copy/paste workflows from tools like Notion or Obsidian before dedicated sync integrations are available.
 
+### Notion
+
+Chronote can export meeting notes to Notion from the web portal. Connect Notion from the notes actions menu, then choose **Export to Notion** for a meeting. Chronote creates a Notion page from the current meeting notes and stores the page link for quick access.
+
+If Chronote notes are edited later, use **Sync latest to Notion** to replace the exported Notion page with the newest Chronote notes version.
+
+Chronote is the source of truth for this integration. The initial integration is one-way from Chronote to Notion.
+
 ### Discord
 
 Chronote's primary interface. All meeting controls, notes, and interactions happen through Discord slash commands, embeds, and buttons. See [Features](/features/) for the full command reference.
@@ -27,9 +35,9 @@ See [Remote MCP](/integrations/remote-mcp) for setup and available tools.
 
 ## Planned integrations
 
-### Notion
+### Notion automation
 
-Push meeting notes to a Notion database, with one row per meeting. This integration will sync meeting metadata (date, attendees, tags, duration) alongside the notes content.
+Automatic background sync to a configured Notion folder or page is planned. Notion database support is also planned so teams can map meeting metadata (date, attendees, tags, duration, status, and Chronote links) into database properties.
 
 ## Integration principles
 

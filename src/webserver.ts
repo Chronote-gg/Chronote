@@ -12,6 +12,7 @@ import { registerBillingRoutes } from "./api/billing";
 import { registerGuildRoutes } from "./api/guilds";
 import { registerLiveMeetingRoutes } from "./api/liveMeetings";
 import { registerMcpRoutes } from "./api/mcp";
+import { registerNotionOAuthRoutes } from "./api/notionOAuth";
 import {
   registerMcpOAuthSessionRoutes,
   registerMcpOAuthStatelessRoutes,
@@ -68,7 +69,9 @@ export function setupWebServer() {
   const PORT = config.server.port;
 
   const resolveRedirectParam = (req: express.Request) =>
-    resolveRedirectTarget(req.query.redirect, config.frontend.siteUrl);
+    resolveRedirectTarget(req.query.redirect, config.frontend.siteUrl, {
+      allowedInternalPaths: ["/api/notion/connect"],
+    });
 
   const storeRedirectInSession = (
     req: express.Request,
@@ -419,6 +422,8 @@ export function setupWebServer() {
   });
 
   if (config.mcp.enabled) registerMcpOAuthSessionRoutes(app);
+
+  registerNotionOAuthRoutes(app);
 
   // tRPC API
   app.use(

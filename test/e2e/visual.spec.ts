@@ -17,6 +17,105 @@ const withVisualMode = (path: string, mode: VisualMode): string => {
 const buildScreenshotName = (base: string, mode: VisualMode): string =>
   `${base}-${mode}.png`;
 
+type NotionVisualState = {
+  connected: boolean;
+  exported: boolean;
+  outdated: boolean;
+};
+
+const replaceTrpcData = (entry: unknown, data: unknown): unknown => {
+  if (!entry || typeof entry !== "object" || !("result" in entry)) {
+    return { result: { data } };
+  }
+  const result = entry.result;
+  if (!result || typeof result !== "object") return entry;
+  const currentData = "data" in result ? result.data : undefined;
+  const nextData =
+    currentData &&
+    typeof currentData === "object" &&
+    !Array.isArray(currentData) &&
+    "json" in currentData
+      ? { ...currentData, json: data }
+      : data;
+  return { ...entry, result: { ...result, data: nextData } };
+};
+
+const buildNotionVisualData = (path: string, state: NotionVisualState) => {
+  if (path === "notion.status") {
+    return {
+      configured: true,
+      connected: state.connected,
+      workspaceName: state.connected ? "Product Ops" : undefined,
+      workspaceId: state.connected ? "workspace-visual" : undefined,
+    };
+  }
+  if (path === "notion.exportStatus") {
+    if (!state.exported) {
+      return { exported: false, currentNotesVersion: 4, outdated: false };
+    }
+    return {
+      exported: true,
+      pageUrl: "https://notion.so/visual-meeting-notes",
+      pageId: "page-visual",
+      exportedNotesVersion: state.outdated ? 3 : 4,
+      currentNotesVersion: 4,
+      outdated: state.outdated,
+      lastExportedAt: "2025-01-01T00:00:00.000Z",
+    };
+  }
+  return undefined;
+};
+
+const installNotionVisualState = async (
+  page: Page,
+  getState: () => NotionVisualState,
+): Promise<void> => {
+  await page.route("**/trpc/**", async (route) => {
+    const url = new URL(route.request().url());
+    const marker = "/trpc/";
+    const markerIndex = url.pathname.indexOf(marker);
+    if (markerIndex === -1) {
+      await route.continue();
+      return;
+    }
+
+    const paths = decodeURIComponent(
+      url.pathname.slice(markerIndex + marker.length),
+    ).split(",");
+    if (!paths.some((path) => path.startsWith("notion."))) {
+      await route.continue();
+      return;
+    }
+
+    const response = await route.fetch();
+    const contentType = response.headers()["content-type"] ?? "";
+    if (!contentType.includes("application/json")) {
+      await route.fulfill({ response });
+      return;
+    }
+
+    const body: unknown = await response.json();
+    const entries = Array.isArray(body) ? body : [body];
+    const nextEntries = entries.map((entry, index) => {
+      const visualData = buildNotionVisualData(paths[index] ?? "", getState());
+      return visualData === undefined
+        ? entry
+        : replaceTrpcData(entry, visualData);
+    });
+    const headers = {
+      ...response.headers(),
+      "content-type": "application/json",
+    };
+    delete headers["content-length"];
+
+    await route.fulfill({
+      status: 200,
+      headers,
+      body: JSON.stringify(Array.isArray(body) ? nextEntries : nextEntries[0]),
+    });
+  });
+};
+
 test.describe("visual regression", () => {
   test.skip(!runVisual, "Visual regression disabled");
 
@@ -57,6 +156,19 @@ test.describe("visual regression", () => {
     });
   };
 
+  const resetDrawerScroll = async (
+    page: Page,
+    drawerDialog: Locator,
+  ): Promise<void> => {
+    await page.evaluate(() => window.scrollTo(0, 0));
+    await drawerDialog.evaluate((element) => {
+      element.scrollTop = 0;
+      for (const child of element.querySelectorAll<HTMLElement>("*")) {
+        child.scrollTop = 0;
+      }
+    });
+  };
+
   test("home page @visual", async ({ homePage, page }) => {
     for (const mode of visualModes) {
       await page.goto(withVisualMode("/", mode));
@@ -86,7 +198,15 @@ test.describe("visual regression", () => {
     libraryPage,
     page,
   }) => {
+    let notionState: NotionVisualState = {
+      connected: true,
+      exported: true,
+      outdated: true,
+    };
+    await installNotionVisualState(page, () => notionState);
+
     for (const mode of visualModes) {
+      notionState = { connected: true, exported: true, outdated: true };
       await page.goto(withVisualMode("/portal/select-server", mode));
       await serverSelectPage.openServerByName(mockGuilds.ddm.name);
       await libraryPage.waitForLoaded();
@@ -99,6 +219,19 @@ test.describe("visual regression", () => {
       const drawerDialog = page.getByRole("dialog");
       await expect(drawerDialog).toBeVisible();
       await expectVisualScreenshot(page, "library-drawer", mode);
+
+      await drawerDialog.getByRole("button", { name: "Notes actions" }).click();
+      await expect(
+        page.getByRole("menuitem", { name: "Sync latest to Notion" }),
+      ).toBeVisible();
+      await expect(
+        page.getByRole("menuitem", { name: "Open Notion page" }),
+      ).toBeVisible();
+      await resetDrawerScroll(page, drawerDialog);
+      await expectVisualScreenshot(page, "library-notion-sync-menu", mode, {
+        target: drawerDialog,
+      });
+      await page.keyboard.press("Escape");
 
       await drawerDialog.getByRole("button", { name: "Notes actions" }).click();
       await page.getByRole("menuitem", { name: "Edit notes" }).click();
@@ -143,6 +276,27 @@ test.describe("visual regression", () => {
       await page.getByRole("option", { name: "Archived" }).click();
       await libraryPage.waitForLoaded();
       await expectVisualScreenshot(page, "library-archived", mode);
+
+      notionState = { connected: false, exported: false, outdated: false };
+      await page.goto(withVisualMode("/portal/select-server", mode));
+      await serverSelectPage.openServerByName(mockGuilds.ddm.name);
+      await libraryPage.waitForLoaded();
+      await page.getByTestId("library-range").click();
+      await page.getByRole("option", { name: "All time" }).click();
+      await libraryPage.waitForLoaded(mockLibrary.meetingCount);
+      await libraryPage.openFirstMeeting();
+      const connectDrawerDialog = page.getByRole("dialog");
+      await expect(connectDrawerDialog).toBeVisible();
+      await connectDrawerDialog
+        .getByRole("button", { name: "Notes actions" })
+        .click();
+      await expect(
+        page.getByRole("menuitem", { name: "Connect Notion" }),
+      ).toBeVisible();
+      await resetDrawerScroll(page, connectDrawerDialog);
+      await expectVisualScreenshot(page, "library-notion-connect-menu", mode, {
+        target: connectDrawerDialog,
+      });
     }
   });
 

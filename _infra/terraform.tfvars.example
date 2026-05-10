@@ -54,6 +54,8 @@ HOSTED_ZONE_NAME=""                           # e.g., chronote.gg. (required if 
 # Frontend/CORS
 FRONTEND_ALLOWED_ORIGINS=""                   # comma-separated origins, no trailing slash
 FRONTEND_SITE_URL=""                          # primary frontend URL
+NOTION_CLIENT_ID=""                           # optional Notion public integration client ID
+NOTION_REDIRECT_URI=""                        # optional; defaults to API /api/notion/callback
 
 # Live voice (optional)
 LIVE_VOICE_MODE="off"                         # off | tts_gate
