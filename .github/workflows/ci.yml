@@ -300,12 +300,25 @@ jobs:
             echo "has_diffs=false" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: Detect committed snapshot changes
+        id: snapshot-changes
+        if: always()
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          git diff --name-status "origin/${BASE_REF}...HEAD" -- test/e2e/visual.spec.ts-snapshots > snapshot-changes.txt || true
+          if [ -s snapshot-changes.txt ]; then
+            echo "has_snapshot_changes=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_snapshot_changes=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Build visual summary
         if: always()
         env:
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
-          node scripts/visual/summarize.js --results test-results --output visual-summary.md --run-url "$RUN_URL"
+          node scripts/visual/summarize.js --results test-results --output visual-summary.md --run-url "$RUN_URL" --snapshot-changes snapshot-changes.txt
 
       - name: Append visual failure note
         if: always() && steps.visual-tests.outcome != 'success' && steps.visual-diff.outputs.has_diffs != 'true'
@@ -327,7 +340,7 @@ jobs:
             visual-summary.md
 
       - name: Comment on PR
-        if: always() && github.event.pull_request.head.repo.fork == false && (steps.visual-tests.outcome == 'success' || steps.visual-diff.outputs.has_diffs == 'true')
+        if: always() && github.event.pull_request.head.repo.fork == false && (steps.visual-tests.outcome == 'success' || steps.visual-diff.outputs.has_diffs == 'true' || steps.snapshot-changes.outputs.has_snapshot_changes == 'true')
         continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}

@@ -5,6 +5,7 @@ const args = process.argv.slice(2);
 const resultsIndex = args.indexOf("--results");
 const outputIndex = args.indexOf("--output");
 const runUrlIndex = args.indexOf("--run-url");
+const snapshotChangesPathIndex = args.indexOf("--snapshot-changes");
 
 const resultsDir =
   resultsIndex >= 0 && args[resultsIndex + 1]
@@ -14,6 +15,10 @@ const outputPath =
   outputIndex >= 0 && args[outputIndex + 1] ? args[outputIndex + 1] : null;
 const runUrl =
   runUrlIndex >= 0 && args[runUrlIndex + 1] ? args[runUrlIndex + 1] : "";
+const snapshotChangesPath =
+  snapshotChangesPathIndex >= 0 && args[snapshotChangesPathIndex + 1]
+    ? args[snapshotChangesPathIndex + 1]
+    : "";
 
 const diffFiles = [];
 
@@ -34,12 +39,38 @@ function walk(dir) {
 
 walk(resultsDir);
 
+const snapshotChanges = snapshotChangesPath && fs.existsSync(snapshotChangesPath)
+  ? fs
+      .readFileSync(snapshotChangesPath, "utf8")
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .map((line) => {
+        const [status, ...fileParts] = line.split(/\s+/);
+        return {
+          status: status || "changed",
+          file: fileParts.join(" "),
+        };
+      })
+  : [];
+
 const names = diffFiles
   .map((filePath) => path.basename(filePath).replace(/-diff\.png$/, ""))
   .sort((a, b) => a.localeCompare(b));
 
 const lines = [];
 lines.push("## Visual regression report");
+if (snapshotChanges.length > 0) {
+  lines.push(
+    `Committed baseline snapshot updates in this PR: ${snapshotChanges.length}.`,
+  );
+  lines.push("");
+  lines.push("Committed snapshot files:");
+  snapshotChanges.forEach(({ status, file }) =>
+    lines.push(`- ${status}: ${file}`),
+  );
+  lines.push("");
+}
 if (names.length === 0) {
   lines.push("No visual diffs detected.");
 } else {
