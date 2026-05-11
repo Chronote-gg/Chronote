@@ -29,14 +29,14 @@ endpoints, auth headers, scopes, and validate with each client command.
 
 - **Claude Code**: add entries in `.mcp.json` at repo root, or use `claude mcp add --transport http`.
   - HTTP servers reference env vars with the `${VAR:-default}` syntax.
-  - Validate with `node scripts/mcp-env.js claude mcp list` and `/mcp` inside Claude Code.
+  - Validate with `claude mcp list` and the `/mcp` slash command inside Claude Code.
 - **OpenCode**: add a remote MCP server in `opencode.json` under `mcp`.
   - Include `headers` and set `oauth` to `false` for API key based servers.
   - For local MCP servers that run via uvx, use `type: "local"` and `command: ["uvx", "--python", "3.11", "langfuse-mcp", "--read-only", "--tools", "traces,observations"]`.
   - Validate with `opencode mcp list`.
 - **Codex CLI**: add entries in `.codex/config.toml` or `~/.codex/config.toml`.
   - For HTTP servers, use `env_http_headers` to pull `LANGFUSE_MCP_AUTH` from the environment.
-  - Validate with `node scripts/mcp-env.js codex mcp list` and `/mcp` in the TUI.
+  - Validate with `codex mcp list` and the `/mcp` slash command in the TUI.
 
 ### 4) Debug checklist
 

@@ -30,9 +30,9 @@ Add or fix MCP server configs across OpenCode, Codex, and Claude Code. Confirm e
   - Validate with `opencode mcp list`.
 - **Codex CLI**: add entries in `.codex/config.toml` or `~/.codex/config.toml`.
   - For HTTP servers, use `env_http_headers` to pull `LANGFUSE_MCP_AUTH` from the environment.
-  - Validate with `node scripts/mcp-env.js codex mcp list` and `/mcp` in the TUI.
+  - Validate with `codex mcp list` and the `/mcp` slash command in the TUI.
 - **Claude Code**: add entries in `.mcp.json` or use `claude mcp add --transport http`.
-  - Validate with `node scripts/mcp-env.js claude mcp list` and `/mcp` inside Claude Code.
+  - Validate with `claude mcp list` and the `/mcp` slash command inside Claude Code.
 
 ### 4) Debug checklist
 
