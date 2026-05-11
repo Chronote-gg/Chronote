@@ -370,6 +370,85 @@ test.describe("visual regression", () => {
     }
   });
 
+  test("upgrade plan selection (free tier) @visual", async ({ page }) => {
+    // The Playwright mock backend sets FORCE_TIER=pro, which routes the
+    // upgrade page to the "already on Pro" surface and hides the plan
+    // picker. Intercept billing.me here so billing data reports the free
+    // tier, exercising the Basic/Pro plan cards and the Continue-to-Stripe
+    // CTA. This is the state most users actually see on /upgrade/select-server.
+    await page.route("**/trpc/**", async (route) => {
+      const url = new URL(route.request().url());
+      const marker = "/trpc/";
+      const markerIndex = url.pathname.indexOf(marker);
+      if (markerIndex === -1) {
+        await route.continue();
+        return;
+      }
+
+      const paths = decodeURIComponent(
+        url.pathname.slice(markerIndex + marker.length),
+      ).split(",");
+      if (!paths.some((path) => path.startsWith("billing.me"))) {
+        await route.continue();
+        return;
+      }
+
+      const response = await route.fetch();
+      const contentType = response.headers()["content-type"] ?? "";
+      if (!contentType.includes("application/json")) {
+        await route.fulfill({ response });
+        return;
+      }
+
+      const body: unknown = await response.json();
+      const entries = Array.isArray(body) ? body : [body];
+      const nextEntries = entries.map((entry, index) => {
+        if (!paths[index]?.startsWith("billing.me")) return entry;
+        return replaceTrpcData(entry, {
+          billingEnabled: true,
+          tier: "free",
+          status: "free",
+          nextBillingDate: null,
+          usage: null,
+        });
+      });
+      const headers = {
+        ...response.headers(),
+        "content-type": "application/json",
+      };
+      delete headers["content-length"];
+
+      await route.fulfill({
+        status: 200,
+        headers,
+        body: JSON.stringify(
+          Array.isArray(body) ? nextEntries : nextEntries[0],
+        ),
+      });
+    });
+
+    for (const mode of visualModes) {
+      await page.goto(
+        withVisualMode("/upgrade/select-server?promo=SAVE20", mode),
+      );
+      const main = page.locator("main");
+      await expect(main).toBeVisible();
+      // Pick the DDM server through the UI so URL state and GuildContext
+      // converge naturally (passing serverId in the URL while another guild
+      // is selected in context causes a sync loop on this page).
+      await page
+        .getByTestId("upgrade-server-card")
+        .filter({ hasText: mockGuilds.ddm.name })
+        .getByTestId("upgrade-server-open")
+        .click();
+      // Wait for the plan cards to render so the snapshot is deterministic.
+      // Recommended is always shown on the Pro card when the plan picker is
+      // visible, regardless of which tier is selected.
+      await expect(page.getByText("Recommended")).toBeVisible();
+      await expectVisualScreenshot(page, "upgrade-select-free", mode);
+    }
+  });
+
   test("settings page @visual", async ({
     serverSelectPage,
     nav,

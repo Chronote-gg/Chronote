@@ -1,13 +1,16 @@
 ---
 name: mcp-setup-and-debug
-description: Configure and debug MCP servers for OpenCode, Codex CLI, and Claude Code, including auth headers, scope, and validation checks. Use when MCP tools fail to connect or when adding a new MCP server.
+description: Configure and debug MCP servers for Claude Code, OpenCode, and Codex CLI, including auth headers, scope, and validation checks. Use when MCP tools fail to connect, when an MCP server returns 401/404/HTML, or when adding a new MCP server to this repo.
 ---
 
 # MCP Setup And Debug
 
+Claude Code mirror of `.codex/skills/mcp-setup-and-debug/SKILL.md`.
+
 ## Overview
 
-Add or fix MCP server configs across OpenCode, Codex, and Claude Code. Confirm endpoints, auth headers, scopes, and validate with each client command.
+Add or fix MCP server configs across Claude Code, OpenCode, and Codex. Confirm
+endpoints, auth headers, scopes, and validate with each client command.
 
 ## Workflow
 
@@ -24,6 +27,9 @@ Add or fix MCP server configs across OpenCode, Codex, and Claude Code. Confirm e
 
 ### 3) Configure each client
 
+- **Claude Code**: add entries in `.mcp.json` at repo root, or use `claude mcp add --transport http`.
+  - HTTP servers reference env vars with the `${VAR:-default}` syntax.
+  - Validate with `claude mcp list` and the `/mcp` slash command inside Claude Code.
 - **OpenCode**: add a remote MCP server in `opencode.json` under `mcp`.
   - Include `headers` and set `oauth` to `false` for API key based servers.
   - For local MCP servers that run via uvx, use `type: "local"` and `command: ["uvx", "--python", "3.11", "langfuse-mcp", "--read-only", "--tools", "traces,observations"]`.
@@ -31,8 +37,6 @@ Add or fix MCP server configs across OpenCode, Codex, and Claude Code. Confirm e
 - **Codex CLI**: add entries in `.codex/config.toml` or `~/.codex/config.toml`.
   - For HTTP servers, use `env_http_headers` to pull `LANGFUSE_MCP_AUTH` from the environment.
   - Validate with `codex mcp list` and the `/mcp` slash command in the TUI.
-- **Claude Code**: add entries in `.mcp.json` or use `claude mcp add --transport http`.
-  - Validate with `claude mcp list` and the `/mcp` slash command inside Claude Code.
 
 ### 4) Debug checklist
 
