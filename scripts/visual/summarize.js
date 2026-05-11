@@ -31,31 +31,39 @@ function walk(dir) {
       walk(fullPath);
       return;
     }
-    if (entry.isFile() && entry.name.endsWith("-diff.png")) {
+    if (
+      entry.isFile() &&
+      (entry.name.endsWith("-diff.png") || entry.name.endsWith("-diff.jpg"))
+    ) {
       diffFiles.push(fullPath);
     }
   });
 }
 
+const parseNameStatusLine = (line) => {
+  const tabParts = line.split("\t");
+  const [status, ...fileParts] =
+    tabParts.length > 1 ? tabParts : line.split(/\s+/);
+  if (/^[RC]\d+/.test(status) && fileParts.length >= 2) {
+    return `${status}: ${fileParts[0]} -> ${fileParts.slice(1).join(" ")}`;
+  }
+  return `${status}: ${fileParts.join(" ")}`;
+};
+
 walk(resultsDir);
 
-const snapshotChanges = snapshotChangesPath && fs.existsSync(snapshotChangesPath)
-  ? fs
-      .readFileSync(snapshotChangesPath, "utf8")
-      .split(/\r?\n/)
-      .map((line) => line.trim())
-      .filter(Boolean)
-      .map((line) => {
-        const [status, ...fileParts] = line.split(/\s+/);
-        return {
-          status: status || "changed",
-          file: fileParts.join(" "),
-        };
-      })
-  : [];
+const snapshotChanges =
+  snapshotChangesPath && fs.existsSync(snapshotChangesPath)
+    ? fs
+        .readFileSync(snapshotChangesPath, "utf8")
+        .split(/\r?\n/)
+        .map((line) => line.trim())
+        .filter(Boolean)
+        .map(parseNameStatusLine)
+    : [];
 
 const names = diffFiles
-  .map((filePath) => path.basename(filePath).replace(/-diff\.png$/, ""))
+  .map((filePath) => path.basename(filePath).replace(/-diff\.(png|jpg)$/, ""))
   .sort((a, b) => a.localeCompare(b));
 
 const lines = [];
@@ -66,9 +74,7 @@ if (snapshotChanges.length > 0) {
   );
   lines.push("");
   lines.push("Committed snapshot files:");
-  snapshotChanges.forEach(({ status, file }) =>
-    lines.push(`- ${status}: ${file}`),
-  );
+  snapshotChanges.forEach((change) => lines.push(`- ${change}`));
   lines.push("");
 }
 if (names.length === 0) {
