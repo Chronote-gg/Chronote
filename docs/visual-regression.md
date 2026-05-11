@@ -42,7 +42,8 @@ filenames and diffs.
   - `playwright-report` HTML report
   - `test-results` with expected, actual, and diff images
   - `visual-summary.md` with the change list
-- A PR comment is posted with the summary and a link to the Actions run.
+- A PR comment is posted with the summary, committed snapshot file changes, and
+  a link to the Actions run.
 
 ## Adding new views
 
