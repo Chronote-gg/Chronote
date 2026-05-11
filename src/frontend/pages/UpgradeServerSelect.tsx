@@ -1,5 +1,6 @@
 import {
   Alert,
+  Badge,
   Button,
   Divider,
   Group,
@@ -454,6 +455,7 @@ export default function UpgradeServerSelect() {
                   <Surface
                     p="lg"
                     tone="soft"
+                    h="100%"
                     style={{
                       borderWidth:
                         selectedPlan === "basic"
@@ -465,12 +467,19 @@ export default function UpgradeServerSelect() {
                           : undefined,
                     }}
                   >
-                    <Stack gap="sm">
-                      <Group gap="sm" align="center">
-                        <ThemeIcon color="brand" variant="light">
-                          <IconCheck size={18} />
-                        </ThemeIcon>
-                        <Title order={4}>Basic</Title>
+                    <Stack gap="sm" h="100%">
+                      <Group gap="sm" align="center" justify="space-between">
+                        <Group gap="sm" align="center">
+                          <ThemeIcon color="brand" variant="light">
+                            <IconCheck size={18} />
+                          </ThemeIcon>
+                          <Title order={4}>Basic</Title>
+                        </Group>
+                        {selectedPlan === "basic" ? (
+                          <Badge color="brand" variant="light" size="sm">
+                            Selected
+                          </Badge>
+                        ) : null}
                       </Group>
                       <Text size="sm" c="dimmed">
                         Unlock longer sessions and deeper recall.
@@ -496,11 +505,16 @@ export default function UpgradeServerSelect() {
                         ))}
                       </List>
                       <Button
+                        mt="auto"
                         variant={selectedPlan === "basic" ? "light" : "outline"}
                         onClick={() => handlePlanChange("basic")}
                         disabled={isAlreadyBasic || !basicPlan}
                       >
-                        {isAlreadyBasic ? "Current plan" : "Select Basic"}
+                        {isAlreadyBasic
+                          ? "Current plan"
+                          : selectedPlan === "basic"
+                            ? "Selected"
+                            : "Select Basic"}
                       </Button>
                     </Stack>
                   </Surface>
@@ -508,6 +522,7 @@ export default function UpgradeServerSelect() {
                   <Surface
                     p="lg"
                     tone="raised"
+                    h="100%"
                     style={{
                       borderWidth:
                         selectedPlan === "pro"
@@ -519,12 +534,29 @@ export default function UpgradeServerSelect() {
                           : uiColors.accentBorder,
                     }}
                   >
-                    <Stack gap="sm">
-                      <Group gap="sm" align="center">
-                        <ThemeIcon color="brand" variant="light">
-                          <IconRocket size={18} />
-                        </ThemeIcon>
-                        <Title order={4}>Pro</Title>
+                    <Stack gap="sm" h="100%">
+                      <Group gap="sm" align="center" justify="space-between">
+                        <Group gap="sm" align="center">
+                          <ThemeIcon color="brand" variant="light">
+                            <IconRocket size={18} />
+                          </ThemeIcon>
+                          <Title order={4}>Pro</Title>
+                        </Group>
+                        <Group gap="xs">
+                          <Badge
+                            color="violet"
+                            variant="gradient"
+                            gradient={{ from: "brand", to: "violet" }}
+                            size="sm"
+                          >
+                            Recommended
+                          </Badge>
+                          {selectedPlan === "pro" ? (
+                            <Badge color="brand" variant="light" size="sm">
+                              Selected
+                            </Badge>
+                          ) : null}
+                        </Group>
                       </Group>
                       <Text size="sm" c="dimmed">
                         Unlimited retention with priority features.
@@ -550,6 +582,7 @@ export default function UpgradeServerSelect() {
                         ))}
                       </List>
                       <Button
+                        mt="auto"
                         variant={
                           selectedPlan === "pro" ? "gradient" : "outline"
                         }
@@ -566,7 +599,7 @@ export default function UpgradeServerSelect() {
 
                 <Divider />
 
-                <Surface p="lg" tone="soft">
+                <Surface p="lg" tone="raised">
                   <Stack gap="sm">
                     <Group gap="sm" align="center">
                       <ThemeIcon color="brand" variant="light">
@@ -579,16 +612,20 @@ export default function UpgradeServerSelect() {
                       before you pay.
                     </Text>
                     <Button
+                      size="lg"
+                      fullWidth
                       variant="gradient"
                       gradient={{ from: "brand", to: "violet" }}
-                      rightSection={<IconArrowRight size={16} />}
+                      rightSection={<IconArrowRight size={18} />}
                       onClick={handleCheckout}
                       disabled={isAlreadyPro}
                       loading={checkoutMutation.isPending}
                     >
-                      Continue to Stripe
+                      {`Continue to Stripe — ${
+                        selectedPlan === "pro" ? "Pro" : "Basic"
+                      }`}
                     </Button>
-                    <Text size="xs" c="dimmed">
+                    <Text size="xs" c="dimmed" ta="center">
                       You can change or cancel anytime in the billing portal.
                     </Text>
                   </Stack>
