@@ -544,7 +544,6 @@ export default function UpgradeServerSelect() {
                         </Group>
                         <Group gap="xs">
                           <Badge
-                            color="violet"
                             variant="gradient"
                             gradient={{ from: "brand", to: "violet" }}
                             size="sm"
@@ -621,9 +620,9 @@ export default function UpgradeServerSelect() {
                       disabled={isAlreadyPro}
                       loading={checkoutMutation.isPending}
                     >
-                      {`Continue to Stripe — ${
+                      {`Continue to Stripe (${
                         selectedPlan === "pro" ? "Pro" : "Basic"
-                      }`}
+                      })`}
                     </Button>
                     <Text size="xs" c="dimmed" ta="center">
                       You can change or cancel anytime in the billing portal.
