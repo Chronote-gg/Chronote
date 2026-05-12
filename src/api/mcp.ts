@@ -8,11 +8,13 @@ import {
   validateMcpAccessToken,
 } from "../services/mcpOAuthService";
 import {
+  DEFAULT_MCP_TRANSCRIPT_MAX_CHARS,
   getMcpMeetingSummary,
   getMcpMeetingTranscript,
   listMcpMyMeetings,
   listMcpMeetings,
   listMcpServersForUser,
+  MAX_MCP_TRANSCRIPT_MAX_CHARS,
   McpMeetingAccessError,
 } from "../services/mcpMeetingService";
 import type { McpAccessTokenInfo, McpScope } from "../types/mcpOAuth";
@@ -85,7 +87,12 @@ const meetingTranscriptLookupSchema = z.object({
   serverId: z.string().min(1),
   id: z.string().min(1),
   offset: z.number().int().min(0).optional(),
-  maxChars: z.number().int().min(1).max(100000).optional(),
+  maxChars: z
+    .number()
+    .int()
+    .min(1)
+    .max(MAX_MCP_TRANSCRIPT_MAX_CHARS)
+    .optional(),
 });
 
 const toolDefinitions: McpToolDefinition[] = [
@@ -215,9 +222,8 @@ const toolDefinitions: McpToolDefinition[] = [
         maxChars: {
           type: "integer",
           minimum: 1,
-          maximum: 100000,
-          description:
-            "Optional maximum transcript characters to return. Defaults to 20000.",
+          maximum: MAX_MCP_TRANSCRIPT_MAX_CHARS,
+          description: `Optional maximum transcript characters to return. Defaults to ${DEFAULT_MCP_TRANSCRIPT_MAX_CHARS}.`,
         },
       },
       required: ["serverId", "id"],

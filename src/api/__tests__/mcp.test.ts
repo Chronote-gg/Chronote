@@ -11,6 +11,8 @@ import { validateMcpAccessToken } from "../../services/mcpOAuthService";
 import type { McpAccessTokenInfo } from "../../types/mcpOAuth";
 
 jest.mock("../../services/mcpMeetingService", () => ({
+  DEFAULT_MCP_TRANSCRIPT_MAX_CHARS: 20_000,
+  MAX_MCP_TRANSCRIPT_MAX_CHARS: 100_000,
   McpMeetingAccessError: class McpMeetingAccessError extends Error {
     constructor(
       message: string,
