@@ -38,6 +38,8 @@ const MCP_SERVER_MEMBERSHIP_BATCH_SIZE = 5;
 const DEFAULT_MCP_TRANSCRIPT_MAX_CHARS = 20_000;
 const MAX_MCP_TRANSCRIPT_MAX_CHARS = 100_000;
 const MS_PER_DAY = 1000 * 60 * 60 * 24;
+const MCP_MEETING_ID_FORMAT_ERROR =
+  "Use the meeting `id` returned by list tools in `channelId#ISO-timestamp` form.";
 
 export type McpMyMeetingsMode = "attended" | "accessible";
 export type McpMyMeetingsRange = "today" | "past_7_days" | "custom";
@@ -90,7 +92,10 @@ export class McpMeetingAccessError extends Error {
 const parseChannelIdTimestamp = (channelIdTimestamp: string) => {
   const hashIndex = channelIdTimestamp.indexOf("#");
   if (hashIndex <= 0 || hashIndex >= channelIdTimestamp.length - 1) {
-    throw new McpMeetingAccessError("Invalid meeting id.", "bad_request");
+    throw new McpMeetingAccessError(
+      MCP_MEETING_ID_FORMAT_ERROR,
+      "bad_request",
+    );
   }
   return {
     channelId: channelIdTimestamp.slice(0, hashIndex),
@@ -99,13 +104,13 @@ const parseChannelIdTimestamp = (channelIdTimestamp: string) => {
 };
 
 const resolveMeetingLookupId = (id: string) => {
-  if (!id.includes("#")) {
+  const { timestamp } = parseChannelIdTimestamp(id);
+  if (Number.isNaN(Date.parse(timestamp))) {
     throw new McpMeetingAccessError(
-      "Use the meeting `id` returned by list tools, not the UUID `meetingId`.",
+      MCP_MEETING_ID_FORMAT_ERROR,
       "bad_request",
     );
   }
-  parseChannelIdTimestamp(id);
   return id;
 };
 

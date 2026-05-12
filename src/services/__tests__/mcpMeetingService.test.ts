@@ -619,7 +619,7 @@ describe("mcpMeetingService", () => {
     });
   });
 
-  it("rejects summary lookup when the caller passes the UUID meetingId", async () => {
+  it("rejects summary lookup when the caller passes a malformed id", async () => {
     await expect(
       getMcpMeetingSummary({
         userId: "user-1",
@@ -629,7 +629,23 @@ describe("mcpMeetingService", () => {
     ).rejects.toMatchObject({
       code: "bad_request",
       message:
-        "Use the meeting `id` returned by list tools, not the UUID `meetingId`.",
+        "Use the meeting `id` returned by list tools in `channelId#ISO-timestamp` form.",
+    });
+
+    expect(getMeetingHistoryService).not.toHaveBeenCalled();
+  });
+
+  it("rejects summary lookup when the id timestamp is malformed", async () => {
+    await expect(
+      getMcpMeetingSummary({
+        userId: "user-1",
+        guildId: "guild-1",
+        id: "channel-1#not-a-date",
+      }),
+    ).rejects.toMatchObject({
+      code: "bad_request",
+      message:
+        "Use the meeting `id` returned by list tools in `channelId#ISO-timestamp` form.",
     });
 
     expect(getMeetingHistoryService).not.toHaveBeenCalled();
