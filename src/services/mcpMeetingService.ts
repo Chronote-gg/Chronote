@@ -92,10 +92,7 @@ export class McpMeetingAccessError extends Error {
 const parseChannelIdTimestamp = (channelIdTimestamp: string) => {
   const hashIndex = channelIdTimestamp.indexOf("#");
   if (hashIndex <= 0 || hashIndex >= channelIdTimestamp.length - 1) {
-    throw new McpMeetingAccessError(
-      MCP_MEETING_ID_FORMAT_ERROR,
-      "bad_request",
-    );
+    throw new McpMeetingAccessError(MCP_MEETING_ID_FORMAT_ERROR, "bad_request");
   }
   return {
     channelId: channelIdTimestamp.slice(0, hashIndex),
@@ -106,10 +103,7 @@ const parseChannelIdTimestamp = (channelIdTimestamp: string) => {
 const resolveMeetingLookupId = (id: string) => {
   const { timestamp } = parseChannelIdTimestamp(id);
   if (Number.isNaN(Date.parse(timestamp))) {
-    throw new McpMeetingAccessError(
-      MCP_MEETING_ID_FORMAT_ERROR,
-      "bad_request",
-    );
+    throw new McpMeetingAccessError(MCP_MEETING_ID_FORMAT_ERROR, "bad_request");
   }
   return id;
 };
