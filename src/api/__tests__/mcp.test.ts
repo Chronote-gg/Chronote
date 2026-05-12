@@ -2,6 +2,8 @@ import { jest } from "@jest/globals";
 import type { Express, RequestHandler } from "express";
 import { handleMcpJsonRpcRequest, registerMcpRoutes } from "../mcp";
 import {
+  getMcpMeetingSummary,
+  getMcpMeetingTranscript,
   listMcpMyMeetings,
   listMcpServersForUser,
 } from "../../services/mcpMeetingService";
@@ -9,6 +11,8 @@ import { validateMcpAccessToken } from "../../services/mcpOAuthService";
 import type { McpAccessTokenInfo } from "../../types/mcpOAuth";
 
 jest.mock("../../services/mcpMeetingService", () => ({
+  DEFAULT_MCP_TRANSCRIPT_MAX_CHARS: 20_000,
+  MAX_MCP_TRANSCRIPT_MAX_CHARS: 100_000,
   McpMeetingAccessError: class McpMeetingAccessError extends Error {
     constructor(
       message: string,
@@ -130,7 +134,10 @@ describe("MCP JSON-RPC handler", () => {
         method: "tools/call",
         params: {
           name: "get_meeting_transcript",
-          arguments: { serverId: "guild-1", meetingId: "meeting-1" },
+          arguments: {
+            serverId: "guild-1",
+            id: "channel-1#2026-01-01T00:00:00.000Z",
+          },
         },
       }),
     ).resolves.toMatchObject({
@@ -220,6 +227,104 @@ describe("MCP JSON-RPC handler", () => {
       jsonrpc: "2.0",
       id: 3,
       error: { code: -32602, message: "Invalid params." },
+    });
+  });
+
+  it("passes the list item id to get_meeting_summary", async () => {
+    jest.mocked(getMcpMeetingSummary).mockResolvedValue({
+      meeting: {
+        id: "channel-1#2026-01-01T00:00:00.000Z",
+        meetingId: "meeting-1",
+        status: "complete",
+        channelId: "channel-1",
+        channelName: "channel-1",
+        timestamp: "2026-01-01T00:00:00.000Z",
+        duration: 60,
+        tags: [],
+        meetingName: undefined,
+        summarySentence: undefined,
+        summaryLabel: undefined,
+        notesAvailable: true,
+        transcriptAvailable: false,
+        audioAvailable: false,
+        archivedAt: undefined,
+        portalUrl: "https://chronote.example/meeting",
+        notes: "notes",
+        notesVersion: 1,
+        attendees: [],
+        notesChannelId: undefined,
+        notesMessageId: undefined,
+      },
+    });
+
+    await expect(
+      handleMcpJsonRpcRequest(auth, {
+        jsonrpc: "2.0",
+        id: "summary-1",
+        method: "tools/call",
+        params: {
+          name: "get_meeting_summary",
+          arguments: {
+            serverId: "guild-1",
+            id: "channel-1#2026-01-01T00:00:00.000Z",
+          },
+        },
+      }),
+    ).resolves.toMatchObject({
+      jsonrpc: "2.0",
+      id: "summary-1",
+      result: { isError: false },
+    });
+
+    expect(getMcpMeetingSummary).toHaveBeenCalledWith({
+      userId: "user-1",
+      guildId: "guild-1",
+      id: "channel-1#2026-01-01T00:00:00.000Z",
+    });
+  });
+
+  it("passes transcript paging arguments to get_meeting_transcript", async () => {
+    jest.mocked(getMcpMeetingTranscript).mockResolvedValue({
+      meetingId: "meeting-1",
+      id: "channel-1#2026-01-01T00:00:00.000Z",
+      transcript: "abcd",
+      transcriptAvailable: true,
+      offset: 10,
+      totalChars: 20,
+      truncated: true,
+      nextOffset: 14,
+    });
+
+    await expect(
+      handleMcpJsonRpcRequest(
+        { ...auth, scopes: ["meetings:read", "transcripts:read"] },
+        {
+          jsonrpc: "2.0",
+          id: "transcript-1",
+          method: "tools/call",
+          params: {
+            name: "get_meeting_transcript",
+            arguments: {
+              serverId: "guild-1",
+              id: "channel-1#2026-01-01T00:00:00.000Z",
+              offset: 10,
+              maxChars: 4,
+            },
+          },
+        },
+      ),
+    ).resolves.toMatchObject({
+      jsonrpc: "2.0",
+      id: "transcript-1",
+      result: { isError: false },
+    });
+
+    expect(getMcpMeetingTranscript).toHaveBeenCalledWith({
+      userId: "user-1",
+      guildId: "guild-1",
+      id: "channel-1#2026-01-01T00:00:00.000Z",
+      offset: 10,
+      maxChars: 4,
     });
   });
 
