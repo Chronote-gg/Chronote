@@ -208,12 +208,12 @@ const toolDefinitions: McpToolDefinition[] = [
             "Meeting lookup id from list_meetings or list_my_meetings (`id`, format channelId#timestamp).",
         },
         offset: {
-          type: "number",
+          type: "integer",
           minimum: 0,
           description: "Optional transcript character offset for paged reads.",
         },
         maxChars: {
-          type: "number",
+          type: "integer",
           minimum: 1,
           maximum: 100000,
           description:

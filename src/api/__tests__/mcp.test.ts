@@ -132,7 +132,10 @@ describe("MCP JSON-RPC handler", () => {
         method: "tools/call",
         params: {
           name: "get_meeting_transcript",
-          arguments: { serverId: "guild-1", id: "channel-1#meeting-1" },
+          arguments: {
+            serverId: "guild-1",
+            id: "channel-1#2026-01-01T00:00:00.000Z",
+          },
         },
       }),
     ).resolves.toMatchObject({
@@ -228,7 +231,7 @@ describe("MCP JSON-RPC handler", () => {
   it("passes the list item id to get_meeting_summary", async () => {
     jest.mocked(getMcpMeetingSummary).mockResolvedValue({
       meeting: {
-        id: "channel-1#meeting-1",
+        id: "channel-1#2026-01-01T00:00:00.000Z",
         meetingId: "meeting-1",
         status: "complete",
         channelId: "channel-1",
@@ -259,7 +262,10 @@ describe("MCP JSON-RPC handler", () => {
         method: "tools/call",
         params: {
           name: "get_meeting_summary",
-          arguments: { serverId: "guild-1", id: "channel-1#meeting-1" },
+          arguments: {
+            serverId: "guild-1",
+            id: "channel-1#2026-01-01T00:00:00.000Z",
+          },
         },
       }),
     ).resolves.toMatchObject({
@@ -271,14 +277,14 @@ describe("MCP JSON-RPC handler", () => {
     expect(getMcpMeetingSummary).toHaveBeenCalledWith({
       userId: "user-1",
       guildId: "guild-1",
-      id: "channel-1#meeting-1",
+      id: "channel-1#2026-01-01T00:00:00.000Z",
     });
   });
 
   it("passes transcript paging arguments to get_meeting_transcript", async () => {
     jest.mocked(getMcpMeetingTranscript).mockResolvedValue({
       meetingId: "meeting-1",
-      id: "channel-1#meeting-1",
+      id: "channel-1#2026-01-01T00:00:00.000Z",
       transcript: "abcd",
       transcriptAvailable: true,
       offset: 10,
@@ -298,7 +304,7 @@ describe("MCP JSON-RPC handler", () => {
             name: "get_meeting_transcript",
             arguments: {
               serverId: "guild-1",
-              id: "channel-1#meeting-1",
+              id: "channel-1#2026-01-01T00:00:00.000Z",
               offset: 10,
               maxChars: 4,
             },
@@ -314,7 +320,7 @@ describe("MCP JSON-RPC handler", () => {
     expect(getMcpMeetingTranscript).toHaveBeenCalledWith({
       userId: "user-1",
       guildId: "guild-1",
-      id: "channel-1#meeting-1",
+      id: "channel-1#2026-01-01T00:00:00.000Z",
       offset: 10,
       maxChars: 4,
     });
