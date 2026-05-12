@@ -12,7 +12,6 @@ import {
 } from "../meetingHistoryService";
 import { listMeetingUserIndexForUserInRangeService } from "../meetingUserIndexService";
 import {
-  McpMeetingAccessError,
   getMcpMeetingSummary,
   getMcpMeetingTranscript,
   listMcpMeetings,
@@ -627,7 +626,7 @@ describe("mcpMeetingService", () => {
         guildId: "guild-1",
         id: "88951d91-4f0f-4897-950d-e9cd5454f944",
       }),
-    ).rejects.toMatchObject<McpMeetingAccessError>({
+    ).rejects.toMatchObject({
       code: "bad_request",
       message:
         "Use the meeting `id` returned by list tools, not the UUID `meetingId`.",

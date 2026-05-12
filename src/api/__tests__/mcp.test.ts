@@ -227,7 +227,29 @@ describe("MCP JSON-RPC handler", () => {
 
   it("passes the list item id to get_meeting_summary", async () => {
     jest.mocked(getMcpMeetingSummary).mockResolvedValue({
-      meeting: { id: "channel-1#meeting-1" },
+      meeting: {
+        id: "channel-1#meeting-1",
+        meetingId: "meeting-1",
+        status: "complete",
+        channelId: "channel-1",
+        channelName: "channel-1",
+        timestamp: "2026-01-01T00:00:00.000Z",
+        duration: 60,
+        tags: [],
+        meetingName: undefined,
+        summarySentence: undefined,
+        summaryLabel: undefined,
+        notesAvailable: true,
+        transcriptAvailable: false,
+        audioAvailable: false,
+        archivedAt: undefined,
+        portalUrl: "https://chronote.example/meeting",
+        notes: "notes",
+        notesVersion: 1,
+        attendees: [],
+        notesChannelId: undefined,
+        notesMessageId: undefined,
+      },
     });
 
     await expect(
@@ -255,6 +277,7 @@ describe("MCP JSON-RPC handler", () => {
 
   it("passes transcript paging arguments to get_meeting_transcript", async () => {
     jest.mocked(getMcpMeetingTranscript).mockResolvedValue({
+      meetingId: "meeting-1",
       id: "channel-1#meeting-1",
       transcript: "abcd",
       transcriptAvailable: true,
