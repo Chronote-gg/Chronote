@@ -651,6 +651,22 @@ describe("mcpMeetingService", () => {
     expect(getMeetingHistoryService).not.toHaveBeenCalled();
   });
 
+  it("rejects summary lookup when the id timestamp is parseable but not canonical ISO", async () => {
+    await expect(
+      getMcpMeetingSummary({
+        userId: "user-1",
+        guildId: "guild-1",
+        id: "channel-1#2026-01-02",
+      }),
+    ).rejects.toMatchObject({
+      code: "bad_request",
+      message:
+        "Use the meeting `id` returned by list tools in `channelId#ISO-timestamp` form.",
+    });
+
+    expect(getMeetingHistoryService).not.toHaveBeenCalled();
+  });
+
   it("loads a meeting summary by the list item id", async () => {
     const meeting = createMeeting("meeting-1", {
       guildId: "guild-1",

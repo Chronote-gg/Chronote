@@ -102,7 +102,11 @@ const parseChannelIdTimestamp = (channelIdTimestamp: string) => {
 
 const resolveMeetingLookupId = (id: string) => {
   const { timestamp } = parseChannelIdTimestamp(id);
-  if (Number.isNaN(Date.parse(timestamp))) {
+  const parsedTimestamp = new Date(timestamp);
+  if (
+    Number.isNaN(parsedTimestamp.getTime()) ||
+    parsedTimestamp.toISOString() !== timestamp
+  ) {
     throw new McpMeetingAccessError(MCP_MEETING_ID_FORMAT_ERROR, "bad_request");
   }
   return id;
