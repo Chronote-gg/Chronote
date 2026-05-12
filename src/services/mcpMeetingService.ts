@@ -35,6 +35,8 @@ const MCP_INDEX_HISTORY_BATCH_SIZE = 10;
 const MCP_SERVER_MEETING_BATCH_SIZE = 5;
 const MCP_CHANNEL_MAP_BATCH_SIZE = 5;
 const MCP_SERVER_MEMBERSHIP_BATCH_SIZE = 5;
+const DEFAULT_MCP_TRANSCRIPT_MAX_CHARS = 20_000;
+const MAX_MCP_TRANSCRIPT_MAX_CHARS = 100_000;
 const MS_PER_DAY = 1000 * 60 * 60 * 24;
 
 export type McpMyMeetingsMode = "attended" | "accessible";
@@ -93,6 +95,50 @@ const parseChannelIdTimestamp = (channelIdTimestamp: string) => {
   return {
     channelId: channelIdTimestamp.slice(0, hashIndex),
     timestamp: channelIdTimestamp.slice(hashIndex + 1),
+  };
+};
+
+const resolveMeetingLookupId = (id: string) => {
+  if (!id.includes("#")) {
+    throw new McpMeetingAccessError(
+      "Use the meeting `id` returned by list tools, not the UUID `meetingId`.",
+      "bad_request",
+    );
+  }
+  parseChannelIdTimestamp(id);
+  return id;
+};
+
+const normalizeTranscriptWindow = (input?: {
+  offset?: number;
+  maxChars?: number;
+}) => ({
+  offset: Math.max(0, Math.trunc(input?.offset ?? 0)),
+  maxChars: Math.min(
+    MAX_MCP_TRANSCRIPT_MAX_CHARS,
+    Math.max(
+      1,
+      Math.trunc(input?.maxChars ?? DEFAULT_MCP_TRANSCRIPT_MAX_CHARS),
+    ),
+  ),
+});
+
+const sliceTranscript = (
+  transcript: string,
+  window: ReturnType<typeof normalizeTranscriptWindow>,
+) => {
+  const totalChars = transcript.length;
+  const transcriptSlice = transcript.slice(
+    window.offset,
+    window.offset + window.maxChars,
+  );
+  const nextOffset = window.offset + transcriptSlice.length;
+  return {
+    transcript: transcriptSlice,
+    offset: window.offset,
+    totalChars,
+    truncated: nextOffset < totalChars,
+    nextOffset: nextOffset < totalChars ? nextOffset : undefined,
   };
 };
 
@@ -460,8 +506,22 @@ const listIndexedMeetingsForUser = async (input: {
   const meetings = await runInBatches(
     records,
     MCP_INDEX_HISTORY_BATCH_SIZE,
-    (record) =>
-      getMeetingHistoryService(record.guildId, record.channelId_timestamp),
+    async (record) => {
+      try {
+        return await getMeetingHistoryService(
+          record.guildId,
+          record.channelId_timestamp,
+        );
+      } catch (error) {
+        console.warn("Failed to resolve MCP indexed meeting", {
+          userId: input.userId,
+          guildId: record.guildId,
+          channelIdTimestamp: record.channelId_timestamp,
+          error,
+        });
+        return undefined;
+      }
+    },
   );
   return meetings.filter(isMeetingHistory);
 };
@@ -471,17 +531,28 @@ const listRangeMeetingsForServers = async (input: {
   startDate: string;
   endDate: string;
   limit: number;
+  userId?: string;
 }) => {
   const meetingGroups = await runInBatches(
     input.servers,
     MCP_SERVER_MEETING_BATCH_SIZE,
-    (server) =>
-      listMeetingsForGuildInRangeService(
-        server.id,
-        input.startDate,
-        input.endDate,
-        input.limit,
-      ),
+    async (server) => {
+      try {
+        return await listMeetingsForGuildInRangeService(
+          server.id,
+          input.startDate,
+          input.endDate,
+          input.limit,
+        );
+      } catch (error) {
+        console.warn("Failed to list MCP server meetings", {
+          userId: input.userId,
+          guildId: server.id,
+          error,
+        });
+        return [];
+      }
+    },
   );
   return meetingGroups.flat();
 };
@@ -689,6 +760,7 @@ export async function listMcpMyMeetings(input: ListMcpMyMeetingsInput) {
         startDate: range.startDate,
         endDate: range.endDate,
         limit: scanLimit,
+        userId: input.userId,
       })
     : [];
   const candidateMeetings = compactUniqueMeetings(
@@ -716,11 +788,11 @@ export async function listMcpMyMeetings(input: ListMcpMyMeetingsInput) {
 export async function getMcpMeetingSummary(input: {
   userId: string;
   guildId: string;
-  meetingId: string;
+  id: string;
 }) {
   const meeting = await getMeetingHistoryService(
     input.guildId,
-    input.meetingId,
+    resolveMeetingLookupId(input.id),
   );
   if (!meeting) {
     throw new McpMeetingAccessError("Meeting not found.", "not_found");
@@ -758,11 +830,13 @@ export async function getMcpMeetingSummary(input: {
 export async function getMcpMeetingTranscript(input: {
   userId: string;
   guildId: string;
-  meetingId: string;
+  id: string;
+  offset?: number;
+  maxChars?: number;
 }) {
   const meeting = await getMeetingHistoryService(
     input.guildId,
-    input.meetingId,
+    resolveMeetingLookupId(input.id),
   );
   if (!meeting) {
     throw new McpMeetingAccessError("Meeting not found.", "not_found");
@@ -780,10 +854,18 @@ export async function getMcpMeetingTranscript(input: {
     transcriptPayload?.text ?? meeting.transcript ?? "",
     participants,
   );
+  const transcriptWindow = sliceTranscript(
+    transcript,
+    normalizeTranscriptWindow(input),
+  );
   return {
     meetingId: meeting.meetingId,
     id: meeting.channelId_timestamp,
-    transcript,
+    transcript: transcriptWindow.transcript,
     transcriptAvailable: Boolean(transcript),
+    offset: transcriptWindow.offset,
+    totalChars: transcriptWindow.totalChars,
+    truncated: transcriptWindow.truncated,
+    nextOffset: transcriptWindow.nextOffset,
   };
 }

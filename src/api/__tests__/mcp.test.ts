@@ -2,6 +2,8 @@ import { jest } from "@jest/globals";
 import type { Express, RequestHandler } from "express";
 import { handleMcpJsonRpcRequest, registerMcpRoutes } from "../mcp";
 import {
+  getMcpMeetingSummary,
+  getMcpMeetingTranscript,
   listMcpMyMeetings,
   listMcpServersForUser,
 } from "../../services/mcpMeetingService";
@@ -130,7 +132,7 @@ describe("MCP JSON-RPC handler", () => {
         method: "tools/call",
         params: {
           name: "get_meeting_transcript",
-          arguments: { serverId: "guild-1", meetingId: "meeting-1" },
+          arguments: { serverId: "guild-1", id: "channel-1#meeting-1" },
         },
       }),
     ).resolves.toMatchObject({
@@ -220,6 +222,78 @@ describe("MCP JSON-RPC handler", () => {
       jsonrpc: "2.0",
       id: 3,
       error: { code: -32602, message: "Invalid params." },
+    });
+  });
+
+  it("passes the list item id to get_meeting_summary", async () => {
+    jest.mocked(getMcpMeetingSummary).mockResolvedValue({
+      meeting: { id: "channel-1#meeting-1" },
+    });
+
+    await expect(
+      handleMcpJsonRpcRequest(auth, {
+        jsonrpc: "2.0",
+        id: "summary-1",
+        method: "tools/call",
+        params: {
+          name: "get_meeting_summary",
+          arguments: { serverId: "guild-1", id: "channel-1#meeting-1" },
+        },
+      }),
+    ).resolves.toMatchObject({
+      jsonrpc: "2.0",
+      id: "summary-1",
+      result: { isError: false },
+    });
+
+    expect(getMcpMeetingSummary).toHaveBeenCalledWith({
+      userId: "user-1",
+      guildId: "guild-1",
+      id: "channel-1#meeting-1",
+    });
+  });
+
+  it("passes transcript paging arguments to get_meeting_transcript", async () => {
+    jest.mocked(getMcpMeetingTranscript).mockResolvedValue({
+      id: "channel-1#meeting-1",
+      transcript: "abcd",
+      transcriptAvailable: true,
+      offset: 10,
+      totalChars: 20,
+      truncated: true,
+      nextOffset: 14,
+    });
+
+    await expect(
+      handleMcpJsonRpcRequest(
+        { ...auth, scopes: ["meetings:read", "transcripts:read"] },
+        {
+          jsonrpc: "2.0",
+          id: "transcript-1",
+          method: "tools/call",
+          params: {
+            name: "get_meeting_transcript",
+            arguments: {
+              serverId: "guild-1",
+              id: "channel-1#meeting-1",
+              offset: 10,
+              maxChars: 4,
+            },
+          },
+        },
+      ),
+    ).resolves.toMatchObject({
+      jsonrpc: "2.0",
+      id: "transcript-1",
+      result: { isError: false },
+    });
+
+    expect(getMcpMeetingTranscript).toHaveBeenCalledWith({
+      userId: "user-1",
+      guildId: "guild-1",
+      id: "channel-1#meeting-1",
+      offset: 10,
+      maxChars: 4,
     });
   });
 

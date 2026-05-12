@@ -76,9 +76,16 @@ const listMyMeetingsSchema = z.object({
   archivedOnly: z.boolean().optional(),
   includeArchived: z.boolean().optional(),
 });
-const meetingLookupSchema = z.object({
+const meetingSummaryLookupSchema = z.object({
   serverId: z.string().min(1),
-  meetingId: z.string().min(1),
+  id: z.string().min(1),
+});
+
+const meetingTranscriptLookupSchema = z.object({
+  serverId: z.string().min(1),
+  id: z.string().min(1),
+  offset: z.number().int().min(0).optional(),
+  maxChars: z.number().int().min(1).max(100000).optional(),
 });
 
 const toolDefinitions: McpToolDefinition[] = [
@@ -170,17 +177,18 @@ const toolDefinitions: McpToolDefinition[] = [
     name: "get_meeting_summary",
     title: "Get Chronote Meeting Summary",
     description:
-      "Fetch notes and summary metadata for one accessible Chronote meeting.",
+      "Fetch notes and summary metadata for one accessible Chronote meeting. Pass the list item `id`, not the UUID `meetingId`.",
     inputSchema: {
       type: "object",
       properties: {
         serverId: { type: "string", description: "Discord server ID." },
-        meetingId: {
+        id: {
           type: "string",
-          description: "Chronote meeting id from list_meetings.",
+          description:
+            "Meeting lookup id from list_meetings or list_my_meetings (`id`, format channelId#timestamp).",
         },
       },
-      required: ["serverId", "meetingId"],
+      required: ["serverId", "id"],
       additionalProperties: false,
     },
     annotations: toolAnnotations,
@@ -189,17 +197,30 @@ const toolDefinitions: McpToolDefinition[] = [
     name: "get_meeting_transcript",
     title: "Get Chronote Meeting Transcript",
     description:
-      "Fetch transcript text for one accessible Chronote meeting. Requires transcripts:read.",
+      "Fetch transcript text for one accessible Chronote meeting. Pass the list item `id`, not the UUID `meetingId`. Requires transcripts:read.",
     inputSchema: {
       type: "object",
       properties: {
         serverId: { type: "string", description: "Discord server ID." },
-        meetingId: {
+        id: {
           type: "string",
-          description: "Chronote meeting id from list_meetings.",
+          description:
+            "Meeting lookup id from list_meetings or list_my_meetings (`id`, format channelId#timestamp).",
+        },
+        offset: {
+          type: "number",
+          minimum: 0,
+          description: "Optional transcript character offset for paged reads.",
+        },
+        maxChars: {
+          type: "number",
+          minimum: 1,
+          maximum: 100000,
+          description:
+            "Optional maximum transcript characters to return. Defaults to 20000.",
         },
       },
-      required: ["serverId", "meetingId"],
+      required: ["serverId", "id"],
       additionalProperties: false,
     },
     annotations: toolAnnotations,
@@ -346,22 +367,24 @@ async function callTool(auth: McpAccessTokenInfo, name: string, args: unknown) {
       );
     }
     if (name === "get_meeting_summary") {
-      const input = meetingLookupSchema.parse(args);
+      const input = meetingSummaryLookupSchema.parse(args);
       return toolResult(
         await getMcpMeetingSummary({
           userId: auth.userId,
           guildId: input.serverId,
-          meetingId: input.meetingId,
+          id: input.id,
         }),
       );
     }
     if (name === "get_meeting_transcript") {
-      const input = meetingLookupSchema.parse(args);
+      const input = meetingTranscriptLookupSchema.parse(args);
       return toolResult(
         await getMcpMeetingTranscript({
           userId: auth.userId,
           guildId: input.serverId,
-          meetingId: input.meetingId,
+          id: input.id,
+          offset: input.offset,
+          maxChars: input.maxChars,
         }),
       );
     }

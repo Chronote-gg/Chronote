@@ -25,7 +25,20 @@ Remote MCP requires Discord OAuth and `OAUTH_SECRET` to be configured. Set `MCP_
 - `list_meetings`: Lists recent meetings in a server, with optional channel, date, tag, and archived filters.
 - `list_my_meetings`: Lists meetings across servers for the authenticated user. It defaults to meetings the user attended in the past 7 days and can also list meetings the user can access.
 - `get_meeting_summary`: Returns notes and metadata for one accessible meeting.
-- `get_meeting_transcript`: Returns transcript text for one accessible meeting.
+- `get_meeting_transcript`: Returns transcript text for one accessible meeting. Use `offset` and `maxChars` to page through long transcripts.
+
+For follow-up fetch tools, use the list item's `id` field. Do not pass the UUID-style `meetingId` field.
+
+Example flow:
+
+1. Call `list_meetings` or `list_my_meetings`.
+2. Take the returned `id` value, for example `1460042927328854099#2026-05-08T01:06:47.307Z`.
+3. Pass that `id` into `get_meeting_summary` or `get_meeting_transcript`.
+
+For long transcripts, request a window at a time:
+
+1. Call `get_meeting_transcript` with `id`, optionally adding `maxChars`.
+2. If the response includes `truncated: true`, call it again with `offset` set to `nextOffset`.
 
 ## OAuth Scopes
 
