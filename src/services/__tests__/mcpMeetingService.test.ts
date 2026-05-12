@@ -737,4 +737,34 @@ describe("mcpMeetingService", () => {
       nextOffset: 9,
     });
   });
+
+  it("clamps transcript offsets beyond the transcript length", async () => {
+    const meeting = createMeeting("meeting-1", {
+      guildId: "guild-1",
+      channelId_timestamp: "channel-1#2026-01-02T00:00:00.000Z",
+      transcript: "short transcript",
+    });
+    jest.mocked(getMeetingHistoryService).mockResolvedValue(meeting);
+    jest.mocked(checkUserMeetingAccess).mockResolvedValue({
+      allowed: true,
+      via: "attendee",
+    });
+
+    await expect(
+      getMcpMeetingTranscript({
+        userId: "user-1",
+        guildId: "guild-1",
+        id: "channel-1#2026-01-02T00:00:00.000Z",
+        offset: 999,
+        maxChars: 10,
+      }),
+    ).resolves.toMatchObject({
+      transcript: "",
+      transcriptAvailable: true,
+      offset: 16,
+      totalChars: 16,
+      truncated: false,
+      nextOffset: undefined,
+    });
+  });
 });

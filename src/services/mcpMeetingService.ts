@@ -125,17 +125,18 @@ const normalizeTranscriptWindow = (input?: {
 
 const sliceTranscript = (
   transcript: string,
-  window: ReturnType<typeof normalizeTranscriptWindow>,
+  transcriptWindow: ReturnType<typeof normalizeTranscriptWindow>,
 ) => {
   const totalChars = transcript.length;
+  const offset = Math.min(transcriptWindow.offset, totalChars);
   const transcriptSlice = transcript.slice(
-    window.offset,
-    window.offset + window.maxChars,
+    offset,
+    offset + transcriptWindow.maxChars,
   );
-  const nextOffset = window.offset + transcriptSlice.length;
+  const nextOffset = offset + transcriptSlice.length;
   return {
     transcript: transcriptSlice,
-    offset: window.offset,
+    offset,
     totalChars,
     truncated: nextOffset < totalChars,
     nextOffset: nextOffset < totalChars ? nextOffset : undefined,

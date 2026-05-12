@@ -32,7 +32,7 @@ For follow-up fetch tools, use the list item's `id` field. Do not pass the UUID-
 Example flow:
 
 1. Call `list_meetings` or `list_my_meetings`.
-2. Take the returned `id` value, for example `1460042927328854099#2026-05-08T01:06:47.307Z`.
+2. Take the returned `id` value, for example `123456789012345678#2026-05-08T01:06:47.307Z`.
 3. Pass that `id` into `get_meeting_summary` or `get_meeting_transcript`.
 
 For long transcripts, request a window at a time:
