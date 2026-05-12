@@ -109,10 +109,15 @@ const resolveMeetingLookupId = (id: string) => {
   return id;
 };
 
+type TranscriptWindow = {
+  offset: number;
+  maxChars: number;
+};
+
 const normalizeTranscriptWindow = (input?: {
   offset?: number;
   maxChars?: number;
-}) => ({
+}): TranscriptWindow => ({
   offset: Math.max(0, Math.trunc(input?.offset ?? 0)),
   maxChars: Math.min(
     MAX_MCP_TRANSCRIPT_MAX_CHARS,
@@ -125,7 +130,7 @@ const normalizeTranscriptWindow = (input?: {
 
 const sliceTranscript = (
   transcript: string,
-  transcriptWindow: ReturnType<typeof normalizeTranscriptWindow>,
+  transcriptWindow: TranscriptWindow,
 ) => {
   const totalChars = transcript.length;
   const offset = Math.min(transcriptWindow.offset, totalChars);
