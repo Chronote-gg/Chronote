@@ -133,26 +133,6 @@ const normalizeTranscriptWindow = (input?: {
   ),
 });
 
-function sliceTranscript(
-  transcript: string,
-  transcriptWindow: TranscriptWindow,
-) {
-  const totalChars = transcript.length;
-  const offset = Math.min(transcriptWindow.offset, totalChars);
-  const transcriptSlice = transcript.slice(
-    offset,
-    offset + transcriptWindow.maxChars,
-  );
-  const nextOffset = offset + transcriptSlice.length;
-  return {
-    transcript: transcriptSlice,
-    offset,
-    totalChars,
-    truncated: nextOffset < totalChars,
-    nextOffset: nextOffset < totalChars ? nextOffset : undefined,
-  };
-}
-
 const buildParticipantMap = (participants?: Participant[]) =>
   new Map(
     (participants ?? []).map((participant) => [participant.id, participant]),
@@ -835,6 +815,26 @@ export async function getMcpMeetingSummary(input: {
       notesChannelId: meeting.notesChannelId,
       notesMessageId: meeting.notesMessageIds?.[0],
     },
+  };
+}
+
+function sliceTranscript(
+  transcript: string,
+  transcriptWindow: TranscriptWindow,
+) {
+  const totalChars = transcript.length;
+  const offset = Math.min(transcriptWindow.offset, totalChars);
+  const transcriptSlice = transcript.slice(
+    offset,
+    offset + transcriptWindow.maxChars,
+  );
+  const nextOffset = offset + transcriptSlice.length;
+  return {
+    transcript: transcriptSlice,
+    offset,
+    totalChars,
+    truncated: nextOffset < totalChars,
+    nextOffset: nextOffset < totalChars ? nextOffset : undefined,
   };
 }
 
