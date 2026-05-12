@@ -128,10 +128,10 @@ const normalizeTranscriptWindow = (input?: {
   ),
 });
 
-const sliceTranscript = (
+function sliceTranscript(
   transcript: string,
   transcriptWindow: TranscriptWindow,
-) => {
+) {
   const totalChars = transcript.length;
   const offset = Math.min(transcriptWindow.offset, totalChars);
   const transcriptSlice = transcript.slice(
@@ -146,7 +146,7 @@ const sliceTranscript = (
     truncated: nextOffset < totalChars,
     nextOffset: nextOffset < totalChars ? nextOffset : undefined,
   };
-};
+}
 
 const buildParticipantMap = (participants?: Participant[]) =>
   new Map(
