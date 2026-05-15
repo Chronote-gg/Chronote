@@ -486,12 +486,23 @@ const listIndexedMeetingsForUser = async (input: {
   endDate: string;
   limit: number;
 }) => {
-  const records = await listMeetingUserIndexForUserInRangeService(
-    input.userId,
-    input.startDate,
-    input.endDate,
-    input.limit,
-  );
+  let records;
+  try {
+    records = await listMeetingUserIndexForUserInRangeService(
+      input.userId,
+      input.startDate,
+      input.endDate,
+      input.limit,
+    );
+  } catch (error) {
+    console.warn("Failed to list MCP indexed meetings", {
+      userId: input.userId,
+      startDate: input.startDate,
+      endDate: input.endDate,
+      error,
+    });
+    return [];
+  }
   const meetings = await runInBatches(
     records,
     MCP_INDEX_HISTORY_BATCH_SIZE,
