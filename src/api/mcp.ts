@@ -397,7 +397,10 @@ async function callTool(auth: McpAccessTokenInfo, name: string, args: unknown) {
     return toolError(`Unknown tool: ${name}`);
   } catch (error) {
     if (error instanceof z.ZodError) return toolError("Invalid tool input.");
-    return mapMeetingError(error) ?? toolError("Unexpected tool error.");
+    const meetingError = mapMeetingError(error);
+    if (meetingError) return meetingError;
+    console.error("Unexpected MCP tool error", { toolName: name, error });
+    return toolError("Unexpected tool error.");
   }
 }
 

@@ -582,6 +582,41 @@ describe("mcpMeetingService", () => {
     });
   });
 
+  it("falls back to server ranges when attended mode index lookup fails", async () => {
+    const fallbackMeeting = createMeeting("fallback", {
+      guildId: "guild-1",
+      timestamp: "2026-01-02T00:00:00.000Z",
+      channelId_timestamp: "channel-1#2026-01-02T00:00:00.000Z",
+      participants: [{ id: "user-1", username: "user1" }],
+    });
+    jest
+      .mocked(listBotGuildsCached)
+      .mockResolvedValue([{ id: "guild-1", name: "Guild 1", icon: null }]);
+    jest
+      .mocked(listMeetingUserIndexForUserInRangeService)
+      .mockRejectedValue(new Error("index unavailable"));
+    jest
+      .mocked(listMeetingsForGuildInRangeService)
+      .mockResolvedValue([fallbackMeeting]);
+    jest.mocked(checkUserMeetingAccess).mockResolvedValue({
+      allowed: true,
+      via: "attendee",
+    });
+
+    await expect(
+      listMcpMyMeetings({
+        userId: "user-1",
+        mode: "attended",
+        startDate: "2026-01-01T00:00:00.000Z",
+        endDate: "2026-01-05T00:00:00.000Z",
+      }),
+    ).resolves.toMatchObject({
+      meetings: [{ meetingId: "fallback", serverName: "Guild 1" }],
+    });
+
+    expect(getMeetingHistoryService).not.toHaveBeenCalled();
+  });
+
   it("skips servers whose My Meetings range fallback fails", async () => {
     const visibleMeeting = createMeeting("visible", {
       guildId: "guild-1",

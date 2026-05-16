@@ -81,6 +81,10 @@ const captureMcpPostHandler = () => {
 };
 
 describe("MCP JSON-RPC handler", () => {
+  afterEach(() => {
+    jest.restoreAllMocks();
+  });
+
   it("returns the Chronote MCP tool list", async () => {
     await expect(
       handleMcpJsonRpcRequest(auth, {
@@ -227,6 +231,38 @@ describe("MCP JSON-RPC handler", () => {
       jsonrpc: "2.0",
       id: 3,
       error: { code: -32602, message: "Invalid params." },
+    });
+  });
+
+  it("logs the tool name for unexpected tool errors", async () => {
+    const error = new Error("DynamoDB query failed");
+    const consoleError = jest
+      .spyOn(console, "error")
+      .mockImplementation(() => undefined);
+    jest.mocked(listMcpMyMeetings).mockRejectedValueOnce(error);
+
+    await expect(
+      handleMcpJsonRpcRequest(auth, {
+        jsonrpc: "2.0",
+        id: "unexpected-tool-error",
+        method: "tools/call",
+        params: {
+          name: "list_my_meetings",
+          arguments: { range: "past_7_days" },
+        },
+      }),
+    ).resolves.toMatchObject({
+      jsonrpc: "2.0",
+      id: "unexpected-tool-error",
+      result: {
+        content: [{ type: "text", text: "Unexpected tool error." }],
+        isError: true,
+      },
+    });
+
+    expect(consoleError).toHaveBeenCalledWith("Unexpected MCP tool error", {
+      toolName: "list_my_meetings",
+      error,
     });
   });
 
