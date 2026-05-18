@@ -398,32 +398,56 @@ const resolveTodayStartIso = (nowMs: number, timeZoneOffsetMinutes = 0) => {
   ).toISOString();
 };
 
-const resolveMyMeetingsDateRange = (input: ListMcpMyMeetingsInput) => {
-  const nowMs = Date.now();
-  const endDate = input.endDate
-    ? normalizeInputDateIso(input.endDate)
-    : new Date(nowMs).toISOString();
-  const range = input.range ?? (input.startDate ? "custom" : "past_7_days");
+const resolveMyMeetingsRange = (input: ListMcpMyMeetingsInput) =>
+  input.range ?? (input.startDate ? "custom" : "past_7_days");
+
+const assertMyMeetingsDateRangeInput = (
+  input: ListMcpMyMeetingsInput,
+  range: McpMyMeetingsRange,
+) => {
+  if (input.range && range !== "custom" && (input.startDate || input.endDate)) {
+    throw new McpMeetingAccessError(
+      "startDate and endDate are only allowed when range is custom.",
+      "bad_request",
+    );
+  }
   if (range === "custom" && !input.startDate) {
     throw new McpMeetingAccessError(
       "startDate is required when range is custom.",
       "bad_request",
     );
   }
-  const startDate =
-    (input.startDate && normalizeInputDateIso(input.startDate)) ||
-    (range === "today"
-      ? resolveTodayStartIso(nowMs, input.timeZoneOffsetMinutes)
-      : range === "past_7_days"
-        ? new Date(nowMs - 7 * MS_PER_DAY).toISOString()
-        : MIN_TIMESTAMP_ISO);
+};
 
-  if (Date.parse(startDate) > Date.parse(endDate)) {
-    throw new McpMeetingAccessError(
-      "Invalid meeting date range.",
-      "bad_request",
-    );
+const resolveMyMeetingsStartDate = (
+  input: ListMcpMyMeetingsInput,
+  range: McpMyMeetingsRange,
+  nowMs: number,
+) => {
+  if (input.startDate) return normalizeInputDateIso(input.startDate);
+  if (range === "today") {
+    return resolveTodayStartIso(nowMs, input.timeZoneOffsetMinutes);
   }
+  if (range === "past_7_days") {
+    return new Date(nowMs - 7 * MS_PER_DAY).toISOString();
+  }
+  return MIN_TIMESTAMP_ISO;
+};
+
+const assertMyMeetingsDateRangeOrder = (startDate: string, endDate: string) => {
+  if (Date.parse(startDate) <= Date.parse(endDate)) return;
+  throw new McpMeetingAccessError("Invalid meeting date range.", "bad_request");
+};
+
+const resolveMyMeetingsDateRange = (input: ListMcpMyMeetingsInput) => {
+  const nowMs = Date.now();
+  const endDate = input.endDate
+    ? normalizeInputDateIso(input.endDate)
+    : new Date(nowMs).toISOString();
+  const range = resolveMyMeetingsRange(input);
+  assertMyMeetingsDateRangeInput(input, range);
+  const startDate = resolveMyMeetingsStartDate(input, range, nowMs);
+  assertMyMeetingsDateRangeOrder(startDate, endDate);
 
   return { startDate, endDate };
 };

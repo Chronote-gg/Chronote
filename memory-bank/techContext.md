@@ -2,7 +2,7 @@
 
 ## Core stack
 
-- **Language/Runtime**: TypeScript on Node.js 22.12; yarn 1.22.
+- **Language/Runtime**: TypeScript on Node.js 24.15.0; yarn 1.22.
 - **Discord**: discord.js 14.16; discord-api-types; @discordjs/voice 0.18; @discordjs/opus; prism-media.
 - **Audio**: fluent-ffmpeg with system ffmpeg; libsodium-wrappers; PCM/Opus handling; silence detection; MP3 splitting for Discord limits.
 - **AI**: openai 5.x; gpt-4o-transcribe for ASR; gpt-5.1 for notes/corrections; gpt-5-mini for live gate; responder model configurable; DALL-E 3 for images; TTS via `gpt-4o-mini-tts`.

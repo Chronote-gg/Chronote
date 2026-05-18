@@ -81,6 +81,10 @@ const captureMcpPostHandler = () => {
 };
 
 describe("MCP JSON-RPC handler", () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
   afterEach(() => {
     jest.restoreAllMocks();
   });
@@ -217,6 +221,38 @@ describe("MCP JSON-RPC handler", () => {
         archivedOnly: true,
       }),
     );
+  });
+
+  it("rejects preset My Meetings ranges with explicit date bounds", async () => {
+    await expect(
+      handleMcpJsonRpcRequest(auth, {
+        jsonrpc: "2.0",
+        id: "bad-my-meetings-range",
+        method: "tools/call",
+        params: {
+          name: "list_my_meetings",
+          arguments: {
+            range: "past_7_days",
+            startDate: "2000-01-01T00:00:00.000Z",
+            endDate: "2000-01-02T00:00:00.000Z",
+          },
+        },
+      }),
+    ).resolves.toMatchObject({
+      jsonrpc: "2.0",
+      id: "bad-my-meetings-range",
+      result: {
+        content: [
+          {
+            type: "text",
+            text: "Invalid tool input: startDate and endDate are only allowed when range is custom.",
+          },
+        ],
+        isError: true,
+      },
+    });
+
+    expect(listMcpMyMeetings).not.toHaveBeenCalled();
   });
 
   it("returns an invalid params error for malformed tool calls", async () => {

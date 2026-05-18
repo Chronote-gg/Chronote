@@ -61,23 +61,36 @@ const listMeetingsSchema = z.object({
   tags: z.array(z.string().min(1)).optional(),
   includeArchived: z.boolean().optional(),
 });
-const listMyMeetingsSchema = z.object({
-  mode: z.enum(["attended", "accessible"]).optional(),
-  range: z.enum(["today", "past_7_days", "custom"]).optional(),
-  limit: z.number().int().min(1).max(100).optional(),
-  startDate: z.string().datetime().optional(),
-  endDate: z.string().datetime().optional(),
-  timeZoneOffsetMinutes: z
-    .number()
-    .int()
-    .min(-14 * 60)
-    .max(14 * 60)
-    .optional(),
-  serverIds: z.array(z.string().min(1)).optional(),
-  tags: z.array(z.string().min(1)).optional(),
-  archivedOnly: z.boolean().optional(),
-  includeArchived: z.boolean().optional(),
-});
+const customMyMeetingsDateRangeMessage =
+  "startDate and endDate are only allowed when range is custom.";
+
+const listMyMeetingsSchema = z
+  .object({
+    mode: z.enum(["attended", "accessible"]).optional(),
+    range: z.enum(["today", "past_7_days", "custom"]).optional(),
+    limit: z.number().int().min(1).max(100).optional(),
+    startDate: z.string().datetime().optional(),
+    endDate: z.string().datetime().optional(),
+    timeZoneOffsetMinutes: z
+      .number()
+      .int()
+      .min(-14 * 60)
+      .max(14 * 60)
+      .optional(),
+    serverIds: z.array(z.string().min(1)).optional(),
+    tags: z.array(z.string().min(1)).optional(),
+    archivedOnly: z.boolean().optional(),
+    includeArchived: z.boolean().optional(),
+  })
+  .superRefine((input, ctx) => {
+    if ((input.startDate || input.endDate) && input.range !== "custom") {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: customMyMeetingsDateRangeMessage,
+        path: input.startDate ? ["startDate"] : ["endDate"],
+      });
+    }
+  });
 const meetingSummaryLookupSchema = z.object({
   serverId: z.string().min(1),
   id: z.string().min(1),
@@ -139,7 +152,7 @@ const toolDefinitions: McpToolDefinition[] = [
     name: "list_my_meetings",
     title: "List My Chronote Meetings",
     description:
-      "List the authenticated user's Chronote meetings across servers, defaulting to meetings they attended in the past 7 days.",
+      "List the authenticated user's Chronote meetings across servers, defaulting to meetings they attended in the past 7 days. Use today or past_7_days without startDate/endDate. Use custom with startDate and optional endDate for explicit date bounds.",
     inputSchema: {
       type: "object",
       properties: {
@@ -152,14 +165,21 @@ const toolDefinitions: McpToolDefinition[] = [
         range: {
           type: "string",
           enum: ["today", "past_7_days", "custom"],
+          description:
+            "Use today or past_7_days for preset ranges. Use custom only when sending startDate or endDate.",
         },
         limit: { type: "number", minimum: 1, maximum: 100 },
         startDate: {
           type: "string",
           format: "date-time",
-          description: "Required when range is custom.",
+          description:
+            "Only valid when range is custom. Required when range is custom.",
         },
-        endDate: { type: "string", format: "date-time" },
+        endDate: {
+          type: "string",
+          format: "date-time",
+          description: "Only valid when range is custom.",
+        },
         timeZoneOffsetMinutes: {
           type: "number",
           minimum: -840,
@@ -309,6 +329,11 @@ const mapMeetingError = (error: unknown) => {
   return toolError(error.message);
 };
 
+const formatZodToolError = (error: z.ZodError) => {
+  const message = error.issues[0]?.message;
+  return message ? `Invalid tool input: ${message}` : "Invalid tool input.";
+};
+
 const parseJsonRpcRequestBodies = (body: unknown) => {
   const requestBodies = Array.isArray(body) ? body : [body];
   if (Array.isArray(body) && body.length === 0) return undefined;
@@ -396,7 +421,8 @@ async function callTool(auth: McpAccessTokenInfo, name: string, args: unknown) {
     }
     return toolError(`Unknown tool: ${name}`);
   } catch (error) {
-    if (error instanceof z.ZodError) return toolError("Invalid tool input.");
+    if (error instanceof z.ZodError)
+      return toolError(formatZodToolError(error));
     const meetingError = mapMeetingError(error);
     if (meetingError) return meetingError;
     console.error("Unexpected MCP tool error", { toolName: name, error });

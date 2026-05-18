@@ -25,7 +25,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v6
         with:
-          node-version: "22.13.0"
+          node-version: "24.15.0"
           cache: "yarn"
           cache-dependency-path: "yarn.lock"
 
@@ -45,7 +45,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v6
         with:
-          node-version: "22.13.0"
+          node-version: "24.15.0"
           cache: "yarn"
           cache-dependency-path: "yarn.lock"
 
@@ -65,7 +65,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v6
         with:
-          node-version: "22.13.0"
+          node-version: "24.15.0"
           cache: "yarn"
           cache-dependency-path: "yarn.lock"
 
@@ -85,7 +85,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v6
         with:
-          node-version: "22.13.0"
+          node-version: "24.15.0"
           cache: "yarn"
           cache-dependency-path: "yarn.lock"
 
@@ -105,7 +105,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v6
         with:
-          node-version: "22.13.0"
+          node-version: "24.15.0"
           cache: "yarn"
           cache-dependency-path: "yarn.lock"
 
@@ -137,7 +137,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v6
         with:
-          node-version: "22.13.0"
+          node-version: "24.15.0"
           cache: "yarn"
           cache-dependency-path: "yarn.lock"
 
@@ -188,7 +188,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v6
         with:
-          node-version: "22.13.0"
+          node-version: "24.15.0"
           cache: "yarn"
           cache-dependency-path: "yarn.lock"
 
@@ -210,7 +210,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v6
         with:
-          node-version: "22.13.0"
+          node-version: "24.15.0"
           cache: "yarn"
           cache-dependency-path: "yarn.lock"
 
@@ -235,7 +235,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v6
         with:
-          node-version: "22.13.0"
+          node-version: "24.15.0"
           cache: "yarn"
           cache-dependency-path: "yarn.lock"
 
@@ -262,7 +262,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v6
         with:
-          node-version: "22.13.0"
+          node-version: "24.15.0"
           cache: "yarn"
           cache-dependency-path: "yarn.lock"
 
@@ -558,7 +558,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v6
         with:
-          node-version: "22.13.0"
+          node-version: "24.15.0"
           cache: "yarn"
           cache-dependency-path: "yarn.lock"
 
@@ -641,7 +641,7 @@ jobs:
         if: steps.docs-config.outputs.enabled == 'true'
         uses: actions/setup-node@v6
         with:
-          node-version: "22.13.0"
+          node-version: "24.15.0"
           cache: "yarn"
           cache-dependency-path: "yarn.lock"
 

@@ -256,7 +256,7 @@ resource "aws_lambda_function" "discord_alert" {
   description   = "Forwards CloudWatch Alarm SNS notifications to a Discord channel"
   role          = aws_iam_role.discord_alert[0].arn
   handler       = "handler.handler"
-  runtime       = "nodejs22.x"
+  runtime       = "nodejs24.x"
   timeout       = 15
   memory_size   = 128
 

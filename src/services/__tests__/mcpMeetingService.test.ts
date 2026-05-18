@@ -482,6 +482,22 @@ describe("mcpMeetingService", () => {
     expect(listBotGuildsCached).not.toHaveBeenCalled();
   });
 
+  it("rejects preset My Meetings ranges with explicit date bounds", async () => {
+    await expect(
+      listMcpMyMeetings({
+        userId: "user-1",
+        range: "past_7_days",
+        startDate: "2026-01-01T00:00:00.000Z",
+        endDate: "2026-01-02T00:00:00.000Z",
+      }),
+    ).rejects.toMatchObject({
+      code: "bad_request",
+      message: "startDate and endDate are only allowed when range is custom.",
+    });
+
+    expect(listBotGuildsCached).not.toHaveBeenCalled();
+  });
+
   it("normalizes custom My Meetings date bounds before querying", async () => {
     jest
       .mocked(listBotGuildsCached)
