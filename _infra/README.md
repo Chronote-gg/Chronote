@@ -105,7 +105,7 @@ publishing from CloudWatch Alarms and EventBridge within the same account.
 
 ### Discord channel alerts
 
-When `alert_discord_channel_id` is set, a Node.js 22 Lambda subscribes to the
+When `alert_discord_channel_id` is set, a Node.js 24 Lambda subscribes to the
 SNS topic and posts rich embeds to the specified Discord channel. The Lambda
 reads the bot token from Secrets Manager (cached across invocations) and calls
 the Discord REST API directly (no discord.js dependency), so it works even when

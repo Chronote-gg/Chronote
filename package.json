@@ -83,7 +83,7 @@
     "markdownlint:fix": "markdownlint-cli2 --fix \"**/*.md\""
   },
   "engines": {
-    "node": ">=22.13.0 <23"
+    "node": ">=24.15.0 <25"
   },
   "author": "BASIC-BIT",
   "license": "AGPL-3.0-or-later",

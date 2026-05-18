@@ -19,7 +19,7 @@ jobs:
       - name: Set up Node
         uses: actions/setup-node@v6
         with:
-          node-version: "22.13.0"
+          node-version: "24.15.0"
           cache: "yarn"
 
       - name: Install dependencies
@@ -38,7 +38,7 @@ jobs:
       - name: Set up Node
         uses: actions/setup-node@v6
         with:
-          node-version: "22.13.0"
+          node-version: "24.15.0"
           cache: "yarn"
 
       - name: Install dependencies
@@ -57,7 +57,7 @@ jobs:
       - name: Set up Node
         uses: actions/setup-node@v6
         with:
-          node-version: "22.13.0"
+          node-version: "24.15.0"
           cache: "yarn"
 
       - name: Install dependencies
@@ -76,7 +76,7 @@ jobs:
       - name: Set up Node
         uses: actions/setup-node@v6
         with:
-          node-version: "22.13.0"
+          node-version: "24.15.0"
           cache: "yarn"
 
       - name: Install dependencies
@@ -105,7 +105,7 @@ jobs:
       - name: Set up Node
         uses: actions/setup-node@v6
         with:
-          node-version: "22.13.0"
+          node-version: "24.15.0"
           cache: "yarn"
 
       - name: Install dependencies
@@ -134,7 +134,7 @@ jobs:
       - name: Set up Node
         uses: actions/setup-node@v6
         with:
-          node-version: "22.13.0"
+          node-version: "24.15.0"
           cache: "yarn"
 
       - name: Install dependencies
@@ -153,7 +153,7 @@ jobs:
       - name: Set up Node
         uses: actions/setup-node@v6
         with:
-          node-version: "22.13.0"
+          node-version: "24.15.0"
           cache: "yarn"
 
       - name: Install dependencies
@@ -172,7 +172,7 @@ jobs:
       - name: Set up Node
         uses: actions/setup-node@v6
         with:
-          node-version: "22.13.0"
+          node-version: "24.15.0"
           cache: "yarn"
 
       - name: Install dependencies
@@ -205,7 +205,7 @@ jobs:
       - name: Set up Node
         uses: actions/setup-node@v6
         with:
-          node-version: "22.13.0"
+          node-version: "24.15.0"
           cache: "yarn"
 
       - name: Install dependencies
@@ -249,11 +249,11 @@ jobs:
       - name: Set up Node
         uses: actions/setup-node@v6
         with:
-          node-version: "22.13.0"
+          node-version: "24.15.0"
           cache: "yarn"
 
       - name: Install dependencies
-        run: yarn install --frozen-lockfile
+        run: yarn install --frozen-lockfile --ignore-scripts
 
       - name: Get Playwright version
         id: pw-version-visual
@@ -392,7 +392,7 @@ jobs:
       - name: Set up Node
         uses: actions/setup-node@v6
         with:
-          node-version: "22.13.0"
+          node-version: "24.15.0"
           cache: "yarn"
 
       - name: Set up uv

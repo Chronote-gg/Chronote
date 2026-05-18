@@ -81,6 +81,10 @@ const captureMcpPostHandler = () => {
 };
 
 describe("MCP JSON-RPC handler", () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
   afterEach(() => {
     jest.restoreAllMocks();
   });
@@ -215,6 +219,77 @@ describe("MCP JSON-RPC handler", () => {
         mode: "attended",
         tags: ["planning"],
         archivedOnly: true,
+      }),
+    );
+  });
+
+  it("rejects preset My Meetings ranges with explicit date bounds", async () => {
+    await expect(
+      handleMcpJsonRpcRequest(auth, {
+        jsonrpc: "2.0",
+        id: "bad-my-meetings-range",
+        method: "tools/call",
+        params: {
+          name: "list_my_meetings",
+          arguments: {
+            range: "past_7_days",
+            startDate: "2000-01-01T00:00:00.000Z",
+            endDate: "2000-01-02T00:00:00.000Z",
+          },
+        },
+      }),
+    ).resolves.toMatchObject({
+      jsonrpc: "2.0",
+      id: "bad-my-meetings-range",
+      result: {
+        content: [
+          {
+            type: "text",
+            text: "Invalid tool input: startDate and endDate are only allowed when range is custom.",
+          },
+        ],
+        isError: true,
+      },
+    });
+
+    expect(listMcpMyMeetings).not.toHaveBeenCalled();
+  });
+
+  it("allows explicit My Meetings date bounds without an explicit range", async () => {
+    jest.mocked(listMcpMyMeetings).mockResolvedValue({
+      mode: "attended",
+      range: {
+        startDate: "2026-01-01T00:00:00.000Z",
+        endDate: "2026-01-02T00:00:00.000Z",
+      },
+      meetings: [],
+    });
+
+    await expect(
+      handleMcpJsonRpcRequest(auth, {
+        jsonrpc: "2.0",
+        id: "custom-my-meetings-range",
+        method: "tools/call",
+        params: {
+          name: "list_my_meetings",
+          arguments: {
+            startDate: "2026-01-01T00:00:00.000Z",
+            endDate: "2026-01-02T00:00:00.000Z",
+          },
+        },
+      }),
+    ).resolves.toMatchObject({
+      jsonrpc: "2.0",
+      id: "custom-my-meetings-range",
+      result: { isError: false },
+    });
+
+    expect(listMcpMyMeetings).toHaveBeenCalledWith(
+      expect.objectContaining({
+        userId: "user-1",
+        range: undefined,
+        startDate: "2026-01-01T00:00:00.000Z",
+        endDate: "2026-01-02T00:00:00.000Z",
       }),
     );
   });
