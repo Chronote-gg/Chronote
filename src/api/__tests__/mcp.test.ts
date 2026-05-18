@@ -255,6 +255,45 @@ describe("MCP JSON-RPC handler", () => {
     expect(listMcpMyMeetings).not.toHaveBeenCalled();
   });
 
+  it("allows explicit My Meetings date bounds without an explicit range", async () => {
+    jest.mocked(listMcpMyMeetings).mockResolvedValue({
+      mode: "attended",
+      range: {
+        startDate: "2026-01-01T00:00:00.000Z",
+        endDate: "2026-01-02T00:00:00.000Z",
+      },
+      meetings: [],
+    });
+
+    await expect(
+      handleMcpJsonRpcRequest(auth, {
+        jsonrpc: "2.0",
+        id: "custom-my-meetings-range",
+        method: "tools/call",
+        params: {
+          name: "list_my_meetings",
+          arguments: {
+            startDate: "2026-01-01T00:00:00.000Z",
+            endDate: "2026-01-02T00:00:00.000Z",
+          },
+        },
+      }),
+    ).resolves.toMatchObject({
+      jsonrpc: "2.0",
+      id: "custom-my-meetings-range",
+      result: { isError: false },
+    });
+
+    expect(listMcpMyMeetings).toHaveBeenCalledWith(
+      expect.objectContaining({
+        userId: "user-1",
+        range: undefined,
+        startDate: "2026-01-01T00:00:00.000Z",
+        endDate: "2026-01-02T00:00:00.000Z",
+      }),
+    );
+  });
+
   it("returns an invalid params error for malformed tool calls", async () => {
     await expect(
       handleMcpJsonRpcRequest(auth, {

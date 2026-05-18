@@ -83,7 +83,11 @@ const listMyMeetingsSchema = z
     includeArchived: z.boolean().optional(),
   })
   .superRefine((input, ctx) => {
-    if ((input.startDate || input.endDate) && input.range !== "custom") {
+    if (
+      (input.startDate || input.endDate) &&
+      input.range &&
+      input.range !== "custom"
+    ) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         message: customMyMeetingsDateRangeMessage,
