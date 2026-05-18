@@ -934,6 +934,9 @@ resource "aws_s3_bucket_server_side_encryption_configuration" "frontend" {
   bucket = aws_s3_bucket.frontend.id
 
   rule {
+    blocked_encryption_types = ["SSE-C"]
+    bucket_key_enabled       = false
+
     apply_server_side_encryption_by_default {
       sse_algorithm     = "aws:kms"
       kms_master_key_id = aws_kms_key.app_general.arn
@@ -945,6 +948,9 @@ resource "aws_s3_bucket_server_side_encryption_configuration" "docs" {
   bucket = aws_s3_bucket.docs.id
 
   rule {
+    blocked_encryption_types = ["SSE-C"]
+    bucket_key_enabled       = false
+
     apply_server_side_encryption_by_default {
       sse_algorithm     = "aws:kms"
       kms_master_key_id = aws_kms_key.app_general.arn
@@ -980,6 +986,9 @@ resource "aws_s3_bucket_server_side_encryption_configuration" "transcripts" {
   bucket = aws_s3_bucket.transcripts.id
 
   rule {
+    blocked_encryption_types = ["SSE-C"]
+    bucket_key_enabled       = false
+
     apply_server_side_encryption_by_default {
       kms_master_key_id = aws_kms_key.app_general.arn
       sse_algorithm     = "aws:kms"
