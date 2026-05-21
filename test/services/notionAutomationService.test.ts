@@ -131,6 +131,19 @@ describe("notionAutomationService", () => {
     expect(exportMeetingToNotionAutomation).not.toHaveBeenCalled();
   });
 
+  it("fails forced retries when another retry already reserved the export", async () => {
+    mockRepository.reserveAutomationMeetingExport.mockResolvedValue(false);
+
+    await expect(retryNotionAutomationExport(meeting)).rejects.toMatchObject({
+      status: 409,
+      code: "automation_retry_conflict",
+      message:
+        "Notion automation retry is already in progress. Try again shortly.",
+    });
+    expect(exportMeetingToNotionAutomation).not.toHaveBeenCalled();
+    expect(syncMeetingToNotionAutomation).not.toHaveBeenCalled();
+  });
+
   it("skips background exports and syncs when Notion is disabled", async () => {
     config.notion.enabled = false;
 

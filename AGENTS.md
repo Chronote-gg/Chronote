@@ -76,7 +76,7 @@
 - ServerContext / ChannelContext store prompt context.
 - AutoRecordSettings enable record-all or per-channel auto-start.
 - McpOAuthTable stores hashed MCP OAuth clients, authorization codes, tokens, and user consents. Access tokens are resource-bound to the configured MCP endpoint and scopes are enforced per tool.
-- NotionIntegrationTable stores per-user Notion connection metadata and per-user meeting export mappings. Notion access and refresh tokens are encrypted before persistence.
+- NotionIntegrationTable stores per-user Notion connection metadata and per-user meeting export mappings, plus server-scoped automation config/export/reservation records keyed under `GUILD#guildId`. Notion access and refresh tokens are encrypted before persistence.
 
 ## Frontend
 

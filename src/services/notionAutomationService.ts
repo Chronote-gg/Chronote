@@ -237,8 +237,17 @@ export const maybeAutoExportCompletedMeeting = async (
   }
 };
 
-export const retryNotionAutomationExport = (meeting: MeetingHistory) =>
-  runAutoExport({ meeting, force: true });
+export const retryNotionAutomationExport = async (meeting: MeetingHistory) => {
+  const exported = await runAutoExport({ meeting, force: true });
+  if (!exported) {
+    throw new NotionApiError(
+      409,
+      "automation_retry_conflict",
+      "Notion automation retry is already in progress. Try again shortly.",
+    );
+  }
+  return exported;
+};
 
 export const maybeAutoSyncMeetingNotes = async (meeting: MeetingHistory) => {
   if (!appConfig.notion.enabled) return;

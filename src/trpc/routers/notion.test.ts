@@ -311,4 +311,27 @@ describe("notionRouter", () => {
     });
     expect(retryNotionAutomationExport).toHaveBeenCalledWith(meeting);
   });
+
+  it("maps concurrent Notion automation retries to conflict", async () => {
+    jest
+      .mocked(retryNotionAutomationExport)
+      .mockRejectedValue(
+        new NotionApiError(
+          409,
+          "automation_retry_conflict",
+          "Notion automation retry is already in progress. Try again shortly.",
+        ),
+      );
+
+    await expect(
+      createCaller().retryAutomationExport({
+        serverId: "guild-1",
+        meetingId: meetingHistoryKey,
+      }),
+    ).rejects.toMatchObject<Partial<TRPCError>>({
+      code: "CONFLICT",
+      message:
+        "Notion automation retry is already in progress. Try again shortly.",
+    });
+  });
 });

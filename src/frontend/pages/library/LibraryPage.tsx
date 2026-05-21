@@ -9,29 +9,21 @@ import { useGuildContext } from "../../contexts/GuildContext";
 import { FiltersBar } from "../../features/library/FiltersBar";
 import { MeetingList } from "../../features/library/MeetingList";
 import { trpc } from "../../services/trpc";
+import type { NotionAutomationStatus } from "../../../types/notionIntegration";
 import { useLibraryMeetings } from "./hooks/useLibraryMeetings";
 import type { ArchiveFilter } from "./types";
 
-type NotionAutomation = {
-  enabled: boolean;
-  ownerConnected: boolean;
-  destinationTitle?: string;
-  destinationUrl?: string;
-  lastError?: string;
-};
+type LibraryNotionAutomation = NonNullable<
+  NotionAutomationStatus["automation"]
+>;
 
-type NotionAutomationStatus = {
-  configured: boolean;
-  automation?: NotionAutomation;
-};
-
-const getNotionStatusTone = (automation?: NotionAutomation) => {
+const getNotionStatusTone = (automation?: LibraryNotionAutomation) => {
   if (!automation) return "blue";
   if (!automation.enabled) return "gray";
   return automation.lastError || !automation.ownerConnected ? "red" : "teal";
 };
 
-const getNotionStatusCopy = (automation?: NotionAutomation) => {
+const getNotionStatusCopy = (automation?: LibraryNotionAutomation) => {
   if (!automation) {
     return "Notion automation is available. Choose a shared destination in Settings to auto-export completed meetings.";
   }

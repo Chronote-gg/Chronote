@@ -101,6 +101,9 @@ const toTrpcNotionError = (err: unknown): TRPCError => {
       message: "Notion is rate limiting requests. Try again shortly.",
     });
   }
+  if (err.status === 409) {
+    return new TRPCError({ code: "CONFLICT", message: err.message });
+  }
   if (err.status === 400) {
     return new TRPCError({ code: "BAD_REQUEST", message: err.message });
   }
