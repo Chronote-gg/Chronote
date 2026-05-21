@@ -7,6 +7,20 @@ import {
 describe("portalLinks", () => {
   test("parses portal meeting links", () => {
     const result = parsePortalMeetingLink(
+      "https://chronote.test/portal/meetings/guild-1/voice-1%232026-01-02T00%3A00%3A00.000Z?eventId=line-9&fullScreen=true",
+      "https://chronote.test",
+    );
+
+    expect(result).toEqual({
+      serverId: "guild-1",
+      meetingId: "voice-1#2026-01-02T00:00:00.000Z",
+      eventId: "line-9",
+      fullScreen: true,
+    });
+  });
+
+  test("parses legacy server library meeting links", () => {
+    const result = parsePortalMeetingLink(
       "https://chronote.test/portal/server/guild-1/library?meetingId=meet-1&eventId=line-9&fullScreen=true",
       "https://chronote.test",
     );

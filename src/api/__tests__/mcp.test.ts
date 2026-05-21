@@ -179,7 +179,7 @@ describe("MCP JSON-RPC handler", () => {
           transcriptAvailable: false,
           audioAvailable: false,
           archivedAt: undefined,
-          portalUrl: "https://chronote.gg/portal/server/guild-1/library",
+          portalUrl: "https://chronote.gg/portal/meetings/guild-1/meeting-key",
           serverId: "guild-1",
           serverName: "Server 1",
           serverIcon: null,
