@@ -23,7 +23,7 @@ jobs:
           cache: "yarn"
 
       - name: Install dependencies
-        run: yarn install --frozen-lockfile --ignore-scripts
+        run: yarn install --frozen-lockfile
 
       - name: Run ESLint
         run: yarn lint:check
@@ -42,7 +42,7 @@ jobs:
           cache: "yarn"
 
       - name: Install dependencies
-        run: yarn install --frozen-lockfile
+        run: yarn install --frozen-lockfile --ignore-scripts
 
       - name: Run Prettier
         run: yarn prettier:check
@@ -321,11 +321,10 @@ jobs:
           node scripts/visual/summarize.js --results test-results --output visual-summary.md --run-url "$RUN_URL" --snapshot-changes snapshot-changes.txt
 
       - name: Append visual failure note
-        if: always() && steps.visual-tests.outcome != 'success' && steps.visual-diff.outputs.has_diffs != 'true'
+        if: always() && steps.visual-tests.outcome != 'success' && steps.visual-diff.outputs.has_diffs != 'true' && steps.snapshot-changes.outputs.has_snapshot_changes != 'true'
         run: |
           cat >> visual-summary.md <<'EOF'
 
-          ## Visual regression report
           Visual run failed before completion. No diff results were produced; see workflow logs.
           EOF
 
