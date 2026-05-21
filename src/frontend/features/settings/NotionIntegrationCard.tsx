@@ -66,6 +66,66 @@ type NotionIntegrationCardProps = {
 
 type AutomationConfig = NonNullable<AutomationStatus["automation"]>;
 
+type AutomationFormState = {
+  destinationPageId: string | null;
+  autoExportEnabled: boolean;
+  channelIds: string[];
+  tagDraft: string;
+};
+
+type NotionIntegrationHeaderProps = {
+  status?: AutomationStatus;
+  loading: boolean;
+  busy: boolean;
+  automation?: AutomationConfig;
+  onConnect: () => void;
+};
+
+type AutomationBadgeProps = {
+  automation?: AutomationConfig;
+};
+
+type NotionStatusAlertsProps = {
+  status?: AutomationStatus;
+  automation?: AutomationConfig;
+};
+
+type AutomationErrorAlertProps = {
+  lastError?: string;
+};
+
+type DestinationLinkProps = {
+  automation?: AutomationConfig;
+};
+
+type DestinationSearchProps = {
+  search: string;
+  setSearch: (value: string) => void;
+  controlsDisabled: boolean;
+  destinationLoading: boolean;
+  onSearchDestinations: (query: string) => void;
+};
+
+type AutomationActionsProps = {
+  automation?: AutomationConfig;
+  busy: boolean;
+  loading: boolean;
+  saveDisabled: boolean;
+  onDisable: () => Promise<void>;
+  onSave: () => Promise<void>;
+};
+
+type AutomationBadgeState = {
+  color: "teal" | "gray";
+  label: string;
+};
+
+type StatusAlertState = {
+  color: "gray" | "yellow" | "blue" | "teal" | "red";
+  message: string;
+  warningIcon?: boolean;
+};
+
 const buildDestinationOptions = (
   pages: DestinationPage[],
   current?: AutomationStatus["automation"],
@@ -86,58 +146,160 @@ const buildDestinationOptions = (
 const workspaceLabel = (status?: AutomationStatus) =>
   status?.workspaceName ?? status?.automation?.workspaceName ?? "Notion";
 
-function AutomationBadge({ automation }: { automation?: AutomationConfig }) {
+const getAutomationFormState = (
+  automation?: AutomationConfig,
+): AutomationFormState => ({
+  destinationPageId: automation?.destinationPageId ?? null,
+  autoExportEnabled: automation?.enabled ?? true,
+  channelIds: automation?.channelIds ?? [],
+  tagDraft: automation?.tags.join(", ") ?? "",
+});
+
+const buildChannelOptions = (voiceChannels: ChannelOption[]) =>
+  voiceChannels.map((channel) => ({
+    value: channel.value,
+    label: channel.label,
+  }));
+
+const shouldDisableControls = (
+  status: AutomationStatus | undefined,
+  busy: boolean,
+) => busy || !status?.configured || !status.userConnected;
+
+const shouldDisableSave = ({
+  loading,
+  controlsDisabled,
+  destinationPageId,
+}: {
+  loading: boolean;
+  controlsDisabled: boolean;
+  destinationPageId: string | null;
+}) => loading || controlsDisabled || !destinationPageId;
+
+const isConnectDisabled = (
+  status: AutomationStatus | undefined,
+  loading: boolean,
+  busy: boolean,
+) => loading || busy || !status?.configured;
+
+const getConnectLabel = (status?: AutomationStatus) =>
+  status?.userConnected ? "Reconnect Notion" : "Connect Notion";
+
+const getAutomationBadgeState = (
+  automation?: AutomationConfig,
+): AutomationBadgeState | null => {
   if (!automation) return null;
+  return {
+    color: automation.enabled ? "teal" : "gray",
+    label: automation.enabled ? "Auto-export on" : "Configured",
+  };
+};
+
+const getStatusAlertState = ({
+  status,
+  automation,
+}: NotionStatusAlertsProps): StatusAlertState => {
+  if (!status?.configured) {
+    return {
+      color: "gray",
+      message: "Notion export is not configured for this Chronote environment.",
+    };
+  }
+  if (!status.userConnected) {
+    return {
+      color: "yellow",
+      message:
+        "Connect Notion before choosing an automatic export destination.",
+      warningIcon: true,
+    };
+  }
+  if (!automation) {
+    return {
+      color: "blue",
+      message: `Connected to ${workspaceLabel(status)}. Choose a destination page to enable automation.`,
+    };
+  }
+  if (!automation.ownerConnected) {
+    return {
+      color: "red",
+      message: "Reconnect Notion to restore automatic exports for this server.",
+    };
+  }
+  return {
+    color: "teal",
+    message: `Automation uses ${workspaceLabel(status)} and exports to ${automation.destinationTitle ?? "the selected page"}.`,
+  };
+};
+
+const buildSaveInput = ({
+  destinationPageId,
+  autoExportEnabled,
+  channelIds,
+  tagDraft,
+}: AutomationFormState): SaveAutomationInput | null => {
+  if (!destinationPageId) return null;
+  return {
+    destinationPageId,
+    autoExportEnabled,
+    channelIds,
+    tags: parseTags(tagDraft) ?? [],
+  };
+};
+
+function NotionIntegrationHeader({
+  status,
+  loading,
+  busy,
+  automation,
+  onConnect,
+}: NotionIntegrationHeaderProps) {
   return (
-    <Badge color={automation.enabled ? "teal" : "gray"} variant="light">
-      {automation.enabled ? "Auto-export on" : "Configured"}
+    <Group justify="space-between" align="flex-start" wrap="wrap">
+      <Stack gap={4}>
+        <Group gap="xs">
+          <IconPlugConnected size={18} />
+          <Text fw={600}>Notion integration</Text>
+          <AutomationBadge automation={automation} />
+        </Group>
+        <Text size="sm" c="dimmed">
+          Export completed meeting notes to a shared Notion page destination.
+        </Text>
+      </Stack>
+      <Button
+        variant="light"
+        onClick={onConnect}
+        disabled={isConnectDisabled(status, loading, busy)}
+      >
+        {getConnectLabel(status)}
+      </Button>
+    </Group>
+  );
+}
+
+function AutomationBadge({ automation }: AutomationBadgeProps) {
+  const badge = getAutomationBadgeState(automation);
+  if (!badge) return null;
+  return (
+    <Badge color={badge.color} variant="light">
+      {badge.label}
     </Badge>
   );
 }
 
-function NotionStatusAlerts({
-  status,
-  automation,
-}: {
-  status?: AutomationStatus;
-  automation?: AutomationConfig;
-}) {
-  if (!status?.configured) {
-    return (
-      <Alert color="gray" variant="light">
-        Notion export is not configured for this Chronote environment.
-      </Alert>
-    );
-  }
-  if (!status.userConnected) {
-    return (
-      <Alert
-        icon={<IconAlertTriangle size={16} />}
-        color="yellow"
-        variant="light"
-      >
-        Connect Notion before choosing an automatic export destination.
-      </Alert>
-    );
-  }
-  if (!automation) {
-    return (
-      <Alert color="blue" variant="light">
-        Connected to {workspaceLabel(status)}. Choose a destination page to
-        enable automation.
-      </Alert>
-    );
-  }
+function NotionStatusAlerts({ status, automation }: NotionStatusAlertsProps) {
+  const alert = getStatusAlertState({ status, automation });
   return (
-    <Alert color={automation.ownerConnected ? "teal" : "red"} variant="light">
-      {automation.ownerConnected
-        ? `Automation uses ${workspaceLabel(status)} and exports to ${automation.destinationTitle ?? "the selected page"}.`
-        : "Reconnect Notion to restore automatic exports for this server."}
+    <Alert
+      icon={alert.warningIcon ? <IconAlertTriangle size={16} /> : undefined}
+      color={alert.color}
+      variant="light"
+    >
+      {alert.message}
     </Alert>
   );
 }
 
-function AutomationErrorAlert({ lastError }: { lastError?: string }) {
+function AutomationErrorAlert({ lastError }: AutomationErrorAlertProps) {
   if (!lastError) return null;
   return (
     <Alert icon={<IconAlertTriangle size={16} />} color="red" variant="light">
@@ -146,7 +308,7 @@ function AutomationErrorAlert({ lastError }: { lastError?: string }) {
   );
 }
 
-function DestinationLink({ automation }: { automation?: AutomationConfig }) {
+function DestinationLink({ automation }: DestinationLinkProps) {
   if (!automation?.destinationUrl) return null;
   return (
     <Button
@@ -160,6 +322,62 @@ function DestinationLink({ automation }: { automation?: AutomationConfig }) {
     >
       Open destination in Notion
     </Button>
+  );
+}
+
+function DestinationSearch({
+  search,
+  setSearch,
+  controlsDisabled,
+  destinationLoading,
+  onSearchDestinations,
+}: DestinationSearchProps) {
+  return (
+    <Group align="end">
+      <TextInput
+        label="Find destination page"
+        placeholder="Search shared Notion pages"
+        value={search}
+        onChange={(event) => setSearch(event.currentTarget.value)}
+        disabled={controlsDisabled}
+        style={{ flex: 1 }}
+      />
+      <Button
+        leftSection={<IconSearch size={16} />}
+        variant="default"
+        onClick={() => onSearchDestinations(search)}
+        loading={destinationLoading}
+        disabled={controlsDisabled}
+      >
+        Search
+      </Button>
+    </Group>
+  );
+}
+
+function AutomationActions({
+  automation,
+  busy,
+  loading,
+  saveDisabled,
+  onDisable,
+  onSave,
+}: AutomationActionsProps) {
+  return (
+    <Group justify="flex-end">
+      {automation ? (
+        <Button
+          variant="default"
+          onClick={onDisable}
+          disabled={busy || loading}
+        >
+          Disable automation
+        </Button>
+      ) : null}
+      <Button onClick={onSave} disabled={saveDisabled} loading={busy}>
+        Save Notion automation
+      </Button>
+    </Group>
   );
 }
 
@@ -185,82 +403,59 @@ export function NotionIntegrationCard({
   const [tagDraft, setTagDraft] = useState("");
 
   useEffect(() => {
-    setDestinationPageId(automation?.destinationPageId ?? null);
-    setAutoExportEnabled(automation?.enabled ?? true);
-    setChannelIds(automation?.channelIds ?? []);
-    setTagDraft(automation?.tags.join(", ") ?? "");
+    const nextState = getAutomationFormState(automation);
+    setDestinationPageId(nextState.destinationPageId);
+    setAutoExportEnabled(nextState.autoExportEnabled);
+    setChannelIds(nextState.channelIds);
+    setTagDraft(nextState.tagDraft);
   }, [automation]);
 
   const destinationOptions = buildDestinationOptions(
     destinationPages,
     automation,
   );
-  const channelOptions = voiceChannels.map((channel) => ({
-    value: channel.value,
-    label: channel.label,
-  }));
+  const channelOptions = buildChannelOptions(voiceChannels);
 
-  const controlsDisabled =
-    busy || !status?.configured || !status?.userConnected;
-  const saveDisabled = loading || controlsDisabled || !destinationPageId;
+  const controlsDisabled = shouldDisableControls(status, busy);
+  const saveDisabled = shouldDisableSave({
+    loading,
+    controlsDisabled,
+    destinationPageId,
+  });
 
   const handleSave = async () => {
-    if (!destinationPageId) return;
-    await onSave({
+    const input = buildSaveInput({
       destinationPageId,
       autoExportEnabled,
       channelIds,
-      tags: parseTags(tagDraft) ?? [],
+      tagDraft,
     });
+    if (!input) return;
+    await onSave(input);
   };
 
   return (
     <Surface p="lg" data-testid="settings-notion-integration">
       <Stack gap="md">
-        <Group justify="space-between" align="flex-start" wrap="wrap">
-          <Stack gap={4}>
-            <Group gap="xs">
-              <IconPlugConnected size={18} />
-              <Text fw={600}>Notion integration</Text>
-              <AutomationBadge automation={automation} />
-            </Group>
-            <Text size="sm" c="dimmed">
-              Export completed meeting notes to a shared Notion page
-              destination.
-            </Text>
-          </Stack>
-          <Button
-            variant="light"
-            onClick={onConnect}
-            disabled={loading || busy || !status?.configured}
-          >
-            {status?.userConnected ? "Reconnect Notion" : "Connect Notion"}
-          </Button>
-        </Group>
+        <NotionIntegrationHeader
+          status={status}
+          loading={loading}
+          busy={busy}
+          automation={automation}
+          onConnect={onConnect}
+        />
 
         <NotionStatusAlerts status={status} automation={automation} />
 
         <AutomationErrorAlert lastError={automation?.lastError} />
 
-        <Group align="end">
-          <TextInput
-            label="Find destination page"
-            placeholder="Search shared Notion pages"
-            value={search}
-            onChange={(event) => setSearch(event.currentTarget.value)}
-            disabled={controlsDisabled}
-            style={{ flex: 1 }}
-          />
-          <Button
-            leftSection={<IconSearch size={16} />}
-            variant="default"
-            onClick={() => onSearchDestinations(search)}
-            loading={destinationLoading}
-            disabled={controlsDisabled}
-          >
-            Search
-          </Button>
-        </Group>
+        <DestinationSearch
+          search={search}
+          setSearch={setSearch}
+          controlsDisabled={controlsDisabled}
+          destinationLoading={destinationLoading}
+          onSearchDestinations={onSearchDestinations}
+        />
 
         <Select
           label="Destination page"
@@ -307,20 +502,14 @@ export function NotionIntegrationCard({
           disabled={controlsDisabled}
         />
 
-        <Group justify="flex-end">
-          {automation ? (
-            <Button
-              variant="default"
-              onClick={onDisable}
-              disabled={busy || loading}
-            >
-              Disable automation
-            </Button>
-          ) : null}
-          <Button onClick={handleSave} disabled={saveDisabled} loading={busy}>
-            Save Notion automation
-          </Button>
-        </Group>
+        <AutomationActions
+          automation={automation}
+          busy={busy}
+          loading={loading}
+          saveDisabled={saveDisabled}
+          onDisable={onDisable}
+          onSave={handleSave}
+        />
       </Stack>
     </Surface>
   );
