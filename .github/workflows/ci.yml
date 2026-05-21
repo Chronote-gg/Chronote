@@ -42,7 +42,7 @@ jobs:
           cache: "yarn"
 
       - name: Install dependencies
-        run: yarn install --frozen-lockfile --ignore-scripts
+        run: yarn install --frozen-lockfile
 
       - name: Run Prettier
         run: yarn prettier:check
@@ -253,7 +253,7 @@ jobs:
           cache: "yarn"
 
       - name: Install dependencies
-        run: yarn install --frozen-lockfile
+        run: yarn install --frozen-lockfile --ignore-scripts
 
       - name: Get Playwright version
         id: pw-version-visual
