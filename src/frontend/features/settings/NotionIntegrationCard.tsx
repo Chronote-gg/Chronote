@@ -64,6 +64,8 @@ type NotionIntegrationCardProps = {
   onDisable: () => Promise<void>;
 };
 
+type AutomationConfig = NonNullable<AutomationStatus["automation"]>;
+
 const buildDestinationOptions = (
   pages: DestinationPage[],
   current?: AutomationStatus["automation"],
@@ -83,6 +85,83 @@ const buildDestinationOptions = (
 
 const workspaceLabel = (status?: AutomationStatus) =>
   status?.workspaceName ?? status?.automation?.workspaceName ?? "Notion";
+
+function AutomationBadge({ automation }: { automation?: AutomationConfig }) {
+  if (!automation) return null;
+  return (
+    <Badge color={automation.enabled ? "teal" : "gray"} variant="light">
+      {automation.enabled ? "Auto-export on" : "Configured"}
+    </Badge>
+  );
+}
+
+function NotionStatusAlerts({
+  status,
+  automation,
+}: {
+  status?: AutomationStatus;
+  automation?: AutomationConfig;
+}) {
+  if (!status?.configured) {
+    return (
+      <Alert color="gray" variant="light">
+        Notion export is not configured for this Chronote environment.
+      </Alert>
+    );
+  }
+  if (!status.userConnected) {
+    return (
+      <Alert
+        icon={<IconAlertTriangle size={16} />}
+        color="yellow"
+        variant="light"
+      >
+        Connect Notion before choosing an automatic export destination.
+      </Alert>
+    );
+  }
+  if (!automation) {
+    return (
+      <Alert color="blue" variant="light">
+        Connected to {workspaceLabel(status)}. Choose a destination page to
+        enable automation.
+      </Alert>
+    );
+  }
+  return (
+    <Alert color={automation.ownerConnected ? "teal" : "red"} variant="light">
+      {automation.ownerConnected
+        ? `Automation uses ${workspaceLabel(status)} and exports to ${automation.destinationTitle ?? "the selected page"}.`
+        : "Reconnect Notion to restore automatic exports for this server."}
+    </Alert>
+  );
+}
+
+function AutomationErrorAlert({ lastError }: { lastError?: string }) {
+  if (!lastError) return null;
+  return (
+    <Alert icon={<IconAlertTriangle size={16} />} color="red" variant="light">
+      Latest Notion automation error: {lastError}
+    </Alert>
+  );
+}
+
+function DestinationLink({ automation }: { automation?: AutomationConfig }) {
+  if (!automation?.destinationUrl) return null;
+  return (
+    <Button
+      component="a"
+      href={automation.destinationUrl}
+      target="_blank"
+      rel="noopener noreferrer"
+      variant="subtle"
+      leftSection={<IconExternalLink size={16} />}
+      style={{ alignSelf: "flex-start" }}
+    >
+      Open destination in Notion
+    </Button>
+  );
+}
 
 export function NotionIntegrationCard({
   status,
@@ -143,15 +222,7 @@ export function NotionIntegrationCard({
             <Group gap="xs">
               <IconPlugConnected size={18} />
               <Text fw={600}>Notion integration</Text>
-              {automation?.enabled ? (
-                <Badge color="teal" variant="light">
-                  Auto-export on
-                </Badge>
-              ) : automation ? (
-                <Badge color="gray" variant="light">
-                  Configured
-                </Badge>
-              ) : null}
+              <AutomationBadge automation={automation} />
             </Group>
             <Text size="sm" c="dimmed">
               Export completed meeting notes to a shared Notion page
@@ -167,43 +238,9 @@ export function NotionIntegrationCard({
           </Button>
         </Group>
 
-        {!status?.configured ? (
-          <Alert color="gray" variant="light">
-            Notion export is not configured for this Chronote environment.
-          </Alert>
-        ) : !status.userConnected ? (
-          <Alert
-            icon={<IconAlertTriangle size={16} />}
-            color="yellow"
-            variant="light"
-          >
-            Connect Notion before choosing an automatic export destination.
-          </Alert>
-        ) : automation ? (
-          <Alert
-            color={automation.ownerConnected ? "teal" : "red"}
-            variant="light"
-          >
-            {automation.ownerConnected
-              ? `Automation uses ${workspaceLabel(status)} and exports to ${automation.destinationTitle ?? "the selected page"}.`
-              : "Reconnect Notion to restore automatic exports for this server."}
-          </Alert>
-        ) : (
-          <Alert color="blue" variant="light">
-            Connected to {workspaceLabel(status)}. Choose a destination page to
-            enable automation.
-          </Alert>
-        )}
+        <NotionStatusAlerts status={status} automation={automation} />
 
-        {automation?.lastError ? (
-          <Alert
-            icon={<IconAlertTriangle size={16} />}
-            color="red"
-            variant="light"
-          >
-            Latest Notion automation error: {automation.lastError}
-          </Alert>
-        ) : null}
+        <AutomationErrorAlert lastError={automation?.lastError} />
 
         <Group align="end">
           <TextInput
@@ -235,19 +272,7 @@ export function NotionIntegrationCard({
           disabled={controlsDisabled}
         />
 
-        {automation?.destinationUrl ? (
-          <Button
-            component="a"
-            href={automation.destinationUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-            variant="subtle"
-            leftSection={<IconExternalLink size={16} />}
-            style={{ alignSelf: "flex-start" }}
-          >
-            Open destination in Notion
-          </Button>
-        ) : null}
+        <DestinationLink automation={automation} />
 
         <Switch
           label="Automatically export completed meetings"
