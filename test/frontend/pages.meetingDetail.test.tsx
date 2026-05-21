@@ -1,8 +1,13 @@
 import React from "react";
 import { beforeEach, describe, expect, test } from "@jest/globals";
 import { screen, waitFor } from "@testing-library/react";
-import { renderWithMantine, resetFrontendMocks } from "./testUtils";
-import { guildState, setRouteParams, setRouterPathname } from "./testUtils";
+import {
+  guildState,
+  renderWithMantine,
+  resetFrontendMocks,
+  setRouteParams,
+  setRouterPathname,
+} from "./testUtils";
 import { setMeetingsDetailQuery } from "./mocks/trpc";
 import MeetingDetail from "../../src/frontend/pages/MeetingDetail";
 

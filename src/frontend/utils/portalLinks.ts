@@ -11,12 +11,23 @@ const legacyPortalServerPath = /^\/portal\/server\/([^/]+)\//;
 const resolveFullScreenParam = (value: string | null) =>
   value === "true" || value === "1" ? true : undefined;
 
+const decodePathSegment = (value: string) => {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return null;
+  }
+};
+
 const resolveDirectMeetingLink = (url: URL): PortalMeetingLink | null => {
   const match = url.pathname.match(directMeetingPath);
   if (!match) return null;
+  const serverId = decodePathSegment(match[1]);
+  const meetingId = decodePathSegment(match[2]);
+  if (!serverId || !meetingId) return null;
   return {
-    serverId: decodeURIComponent(match[1]),
-    meetingId: decodeURIComponent(match[2]),
+    serverId,
+    meetingId,
     eventId: url.searchParams.get("eventId") ?? undefined,
     fullScreen: resolveFullScreenParam(url.searchParams.get("fullScreen")),
   };

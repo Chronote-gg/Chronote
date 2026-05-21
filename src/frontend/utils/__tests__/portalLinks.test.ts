@@ -33,6 +33,15 @@ describe("portalLinks", () => {
     });
   });
 
+  test("ignores malformed direct meeting path encoding", () => {
+    const result = parsePortalMeetingLink(
+      "https://chronote.test/portal/meetings/guild-1/%E0%A4%A",
+      "https://chronote.test",
+    );
+
+    expect(result).toBeNull();
+  });
+
   test("ignores links without meetingId", () => {
     const result = parsePortalMeetingLink(
       "https://chronote.test/portal/server/guild-1/library",

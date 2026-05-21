@@ -128,7 +128,7 @@ export default function MeetingDetailDrawer({
   const scheme = useComputedColorScheme("dark");
   const isDark = scheme === "dark";
   const drawerOffset = theme.spacing.sm;
-  const search = useSearch({ strict: false }) as { fullScreen?: boolean };
+  const search = useSearch({ strict: false });
   const fullScreenFromSearch = search.fullScreen === true;
   const trpcUtils = trpc.useUtils();
 
