@@ -49,12 +49,21 @@ const buildNotionVisualData = (path: string, state: NotionVisualState) => {
       workspaceId: state.connected ? "workspace-visual" : undefined,
     };
   }
+  if (path === "notion.automationStatus") {
+    return {
+      configured: true,
+      userConnected: state.connected,
+      workspaceName: state.connected ? "Product Ops" : undefined,
+      workspaceId: state.connected ? "workspace-visual" : undefined,
+    };
+  }
   if (path === "notion.exportStatus") {
     if (!state.exported) {
       return { exported: false, currentNotesVersion: 4, outdated: false };
     }
     return {
       exported: true,
+      source: "manual",
       pageUrl: "https://notion.so/visual-meeting-notes",
       pageId: "page-visual",
       exportedNotesVersion: state.outdated ? 3 : 4,

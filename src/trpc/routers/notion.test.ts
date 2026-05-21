@@ -3,17 +3,26 @@ import { TRPCError } from "@trpc/server";
 import type { MeetingHistory } from "../../types/db";
 import type { TrpcContext } from "../context";
 import { notionRouter } from "./notion";
-import { ensureUserInGuild } from "../../services/guildAccessService";
+import {
+  ensureManageGuildWithUserToken,
+  ensureUserInGuild,
+} from "../../services/guildAccessService";
 import { ensureUserCanAccessMeeting } from "../../services/meetingAccessService";
 import { getMeetingHistoryService } from "../../services/meetingHistoryService";
 import {
   exportMeetingToNotion,
-  getMeetingNotionExportStatus,
+  getEffectiveMeetingNotionExportStatus,
+  getNotionAutomationStatus,
   getNotionStatus,
+  listNotionDestinationPages,
   NotionApiError,
+  saveNotionAutomationConfig,
+  setNotionAutomationEnabled,
 } from "../../services/notionService";
+import { retryNotionAutomationExport } from "../../services/notionAutomationService";
 
 jest.mock("../../services/guildAccessService", () => ({
+  ensureManageGuildWithUserToken: jest.fn(),
   ensureUserInGuild: jest.fn(),
 }));
 
@@ -46,9 +55,17 @@ jest.mock("../../services/notionService", () => ({
     }
   },
   exportMeetingToNotion: jest.fn(),
-  getMeetingNotionExportStatus: jest.fn(),
+  getEffectiveMeetingNotionExportStatus: jest.fn(),
+  getNotionAutomationStatus: jest.fn(),
   getNotionStatus: jest.fn(),
+  listNotionDestinationPages: jest.fn(),
+  saveNotionAutomationConfig: jest.fn(),
+  setNotionAutomationEnabled: jest.fn(),
   syncMeetingToNotion: jest.fn(),
+}));
+
+jest.mock("../../services/notionAutomationService", () => ({
+  retryNotionAutomationExport: jest.fn(),
 }));
 
 const meeting: MeetingHistory = {
@@ -77,6 +94,7 @@ const createCaller = () =>
 describe("notionRouter", () => {
   beforeEach(() => {
     jest.mocked(ensureUserInGuild).mockResolvedValue(true);
+    jest.mocked(ensureManageGuildWithUserToken).mockResolvedValue(true);
     jest.mocked(ensureUserCanAccessMeeting).mockResolvedValue(true);
     jest.mocked(getMeetingHistoryService).mockResolvedValue(meeting);
   });
@@ -97,8 +115,9 @@ describe("notionRouter", () => {
   });
 
   it("uses the meeting notes version when returning export status", async () => {
-    jest.mocked(getMeetingNotionExportStatus).mockResolvedValue({
+    jest.mocked(getEffectiveMeetingNotionExportStatus).mockResolvedValue({
       exported: true,
+      source: "manual",
       pageUrl: "https://notion.so/page-1",
       pageId: "page-1",
       exportedNotesVersion: 3,
@@ -117,7 +136,7 @@ describe("notionRouter", () => {
       "guild-1",
       meetingHistoryKey,
     );
-    expect(getMeetingNotionExportStatus).toHaveBeenCalledWith({
+    expect(getEffectiveMeetingNotionExportStatus).toHaveBeenCalledWith({
       userId: "user-1",
       guildId: "guild-1",
       meetingId: meetingHistoryKey,
@@ -162,5 +181,134 @@ describe("notionRouter", () => {
       code: "BAD_REQUEST",
       message: "Connect Notion first.",
     });
+  });
+
+  it("lists Notion destination pages for server managers", async () => {
+    jest.mocked(listNotionDestinationPages).mockResolvedValue([
+      {
+        id: "page-1",
+        title: "Meeting archive",
+        url: "https://notion.so/page-1",
+      },
+    ]);
+
+    await expect(
+      createCaller().destinationPages({
+        serverId: "guild-1",
+        query: "meeting",
+      }),
+    ).resolves.toEqual({
+      pages: [
+        {
+          id: "page-1",
+          title: "Meeting archive",
+          url: "https://notion.so/page-1",
+        },
+      ],
+    });
+    expect(listNotionDestinationPages).toHaveBeenCalledWith({
+      userId: "user-1",
+      query: "meeting",
+    });
+  });
+
+  it("saves and disables Notion automation config for server managers", async () => {
+    jest.mocked(saveNotionAutomationConfig).mockResolvedValue({
+      guildId: "guild-1",
+      ownerUserId: "user-1",
+      workspaceId: "workspace-1",
+      destinationType: "page",
+      destinationPageId: "page-1",
+      autoExportEnabled: true,
+      channelIds: ["channel-1"],
+      tags: ["recap"],
+      createdAt: "2026-05-08T12:00:00.000Z",
+      updatedAt: "2026-05-08T12:00:00.000Z",
+    });
+    jest.mocked(setNotionAutomationEnabled).mockResolvedValue(undefined);
+
+    await expect(
+      createCaller().saveAutomationConfig({
+        serverId: "guild-1",
+        destinationPageId: "page-1",
+        autoExportEnabled: true,
+        channelIds: ["channel-1"],
+        tags: ["recap"],
+      }),
+    ).resolves.toMatchObject({ ok: true });
+    expect(saveNotionAutomationConfig).toHaveBeenCalledWith({
+      guildId: "guild-1",
+      userId: "user-1",
+      destinationPageId: "page-1",
+      autoExportEnabled: true,
+      channelIds: ["channel-1"],
+      tags: ["recap"],
+    });
+
+    await expect(
+      createCaller().disableAutomation({ serverId: "guild-1" }),
+    ).resolves.toEqual({ ok: true });
+    expect(setNotionAutomationEnabled).toHaveBeenCalledWith({
+      guildId: "guild-1",
+      enabled: false,
+    });
+  });
+
+  it("returns Notion automation status for guild members", async () => {
+    jest.mocked(getNotionAutomationStatus).mockResolvedValue({
+      configured: true,
+      userConnected: true,
+      workspaceName: "Workspace One",
+      workspaceId: "workspace-1",
+      automation: {
+        enabled: true,
+        ownerUserId: "user-1",
+        ownerConnected: true,
+        workspaceName: "Workspace One",
+        workspaceId: "workspace-1",
+        destinationType: "page",
+        destinationPageId: "page-1",
+        destinationTitle: "Meeting archive",
+        channelIds: [],
+        tags: [],
+        updatedAt: "2026-05-08T12:00:00.000Z",
+      },
+    });
+
+    await expect(
+      createCaller().automationStatus({ serverId: "guild-1" }),
+    ).resolves.toMatchObject({ automation: { enabled: true } });
+    expect(getNotionAutomationStatus).toHaveBeenCalledWith({
+      guildId: "guild-1",
+      userId: "user-1",
+    });
+  });
+
+  it("retries Notion automation export for server managers", async () => {
+    jest.mocked(retryNotionAutomationExport).mockResolvedValue({
+      guildId: "guild-1",
+      channelId_timestamp: meetingHistoryKey,
+      ownerUserId: "user-1",
+      notionPageId: "page-1",
+      notionPageUrl: "https://notion.so/page-1",
+      notionWorkspaceId: "workspace-1",
+      exportedNotesVersion: 4,
+      status: "exported",
+      attemptCount: 2,
+      lastAttemptAt: "2026-05-08T12:10:00.000Z",
+      lastExportedAt: "2026-05-08T12:10:00.000Z",
+    });
+
+    await expect(
+      createCaller().retryAutomationExport({
+        serverId: "guild-1",
+        meetingId: meetingHistoryKey,
+      }),
+    ).resolves.toMatchObject({
+      ok: true,
+      pageUrl: "https://notion.so/page-1",
+      exportedNotesVersion: 4,
+    });
+    expect(retryNotionAutomationExport).toHaveBeenCalledWith(meeting);
   });
 });

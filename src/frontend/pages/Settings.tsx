@@ -14,12 +14,14 @@ import {
   TextInput,
 } from "@mantine/core";
 import { useDisclosure } from "@mantine/hooks";
+import { notifications } from "@mantine/notifications";
 import { IconAlertTriangle, IconRefresh } from "@tabler/icons-react";
 import { useGuildContext } from "../contexts/GuildContext";
 import PageHeader from "../components/PageHeader";
 import FormSelect from "../components/FormSelect";
 import Surface from "../components/Surface";
 import { trpc } from "../services/trpc";
+import { buildApiUrl } from "../services/apiClient";
 import { uiOverlays } from "../uiTokens";
 import { parseTags } from "../../utils/tags";
 import { TTS_VOICE_OPTIONS } from "../../utils/ttsVoices";
@@ -38,6 +40,7 @@ import {
 import { ChannelOverridesCard } from "../features/settings/ChannelOverridesCard";
 import { ServerConfigCard } from "../features/settings/ServerConfigCard";
 import { DictionaryCard } from "../features/settings/DictionaryCard";
+import { NotionIntegrationCard } from "../features/settings/NotionIntegrationCard";
 
 const SettingsLoadingState = () => (
   <Stack gap="xl" data-testid="settings-page-loading">
@@ -79,6 +82,22 @@ export default function Settings() {
     { serverId: selectedGuildId ?? "" },
     { enabled: Boolean(selectedGuildId) && !guildLoading },
   );
+  const notionStatusQuery = trpc.notion.automationStatus.useQuery(
+    { serverId: selectedGuildId ?? "" },
+    { enabled: Boolean(selectedGuildId) && !guildLoading },
+  );
+  const [notionDestinationSearch, setNotionDestinationSearch] = useState<
+    string | null
+  >(null);
+  const notionDestinationQuery = trpc.notion.destinationPages.useQuery(
+    { serverId: selectedGuildId ?? "", query: notionDestinationSearch ?? "" },
+    {
+      enabled:
+        Boolean(selectedGuildId) &&
+        !guildLoading &&
+        notionDestinationSearch !== null,
+    },
+  );
 
   const addRuleMutation = trpc.autorecord.add.useMutation();
   const removeRuleMutation = trpc.autorecord.remove.useMutation();
@@ -90,6 +109,10 @@ export default function Settings() {
   const dictionaryUpsertMutation = trpc.dictionary.upsert.useMutation();
   const dictionaryRemoveMutation = trpc.dictionary.remove.useMutation();
   const dictionaryClearMutation = trpc.dictionary.clear.useMutation();
+  const saveNotionAutomationMutation =
+    trpc.notion.saveAutomationConfig.useMutation();
+  const disableNotionAutomationMutation =
+    trpc.notion.disableAutomation.useMutation();
 
   const [channelModalOpen, channelModal] = useDisclosure(false);
   const [editingChannelId, setEditingChannelId] = useState<string | null>(null);
@@ -252,6 +275,9 @@ export default function Settings() {
     dictionaryUpsertMutation.isPending ||
     dictionaryRemoveMutation.isPending ||
     dictionaryClearMutation.isPending;
+  const notionBusy =
+    saveNotionAutomationMutation.isPending ||
+    disableNotionAutomationMutation.isPending;
 
   const settingsInitialLoading =
     guildLoading ||
@@ -443,6 +469,58 @@ export default function Settings() {
     }
   };
 
+  const handleConnectNotion = () => {
+    const redirect = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+    const url = `${buildApiUrl("/api/notion/connect")}?redirect=${encodeURIComponent(
+      redirect,
+    )}`;
+    window.location.assign(url);
+  };
+
+  const handleSaveNotionAutomation = async (input: {
+    destinationPageId: string;
+    autoExportEnabled: boolean;
+    channelIds: string[];
+    tags: string[];
+  }) => {
+    if (!selectedGuildId) return;
+    try {
+      await saveNotionAutomationMutation.mutateAsync({
+        serverId: selectedGuildId,
+        ...input,
+      });
+      notifications.show({ message: "Notion automation saved." });
+      await trpcUtils.notion.automationStatus.invalidate({
+        serverId: selectedGuildId,
+      });
+    } catch (error) {
+      const message =
+        error instanceof Error && error.message
+          ? error.message
+          : "Unable to save Notion automation right now.";
+      notifications.show({ color: "red", message });
+    }
+  };
+
+  const handleDisableNotionAutomation = async () => {
+    if (!selectedGuildId) return;
+    try {
+      await disableNotionAutomationMutation.mutateAsync({
+        serverId: selectedGuildId,
+      });
+      notifications.show({ message: "Notion automation disabled." });
+      await trpcUtils.notion.automationStatus.invalidate({
+        serverId: selectedGuildId,
+      });
+    } catch (error) {
+      const message =
+        error instanceof Error && error.message
+          ? error.message
+          : "Unable to disable Notion automation right now.";
+      notifications.show({ color: "red", message });
+    }
+  };
+
   if (settingsInitialLoading) {
     return <SettingsLoadingState />;
   }
@@ -526,6 +604,27 @@ export default function Settings() {
             serverId: selectedGuildId,
           });
         }}
+      />
+
+      <NotionIntegrationCard
+        status={notionStatusQuery.data}
+        loading={notionStatusQuery.isLoading || notionStatusQuery.isFetching}
+        busy={notionBusy}
+        destinationPages={notionDestinationQuery.data?.pages ?? []}
+        destinationLoading={
+          notionDestinationQuery.isLoading || notionDestinationQuery.isFetching
+        }
+        voiceChannels={voiceChannels}
+        onConnect={handleConnectNotion}
+        onSearchDestinations={(query) => {
+          const next = query.trim();
+          setNotionDestinationSearch(next);
+          if (notionDestinationSearch === next) {
+            void notionDestinationQuery.refetch();
+          }
+        }}
+        onSave={handleSaveNotionAutomation}
+        onDisable={handleDisableNotionAutomation}
       />
 
       <ChannelOverridesCard

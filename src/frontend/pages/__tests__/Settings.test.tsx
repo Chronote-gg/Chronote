@@ -44,6 +44,12 @@ jest.mock("../../services/trpc", () => {
         remove: { useMutation: jest.fn(() => buildMutation()) },
         clear: { useMutation: jest.fn(() => buildMutation()) },
       },
+      notion: {
+        automationStatus: { useQuery: jest.fn(() => buildQuery()) },
+        destinationPages: { useQuery: jest.fn(() => buildQuery()) },
+        saveAutomationConfig: { useMutation: jest.fn(() => buildMutation()) },
+        disableAutomation: { useMutation: jest.fn(() => buildMutation()) },
+      },
     },
   };
 });
@@ -100,6 +106,12 @@ const trpcMock = trpc as unknown as {
     remove: { useMutation: jest.Mock };
     clear: { useMutation: jest.Mock };
   };
+  notion: {
+    automationStatus: { useQuery: jest.Mock };
+    destinationPages: { useQuery: jest.Mock };
+    saveAutomationConfig: { useMutation: jest.Mock };
+    disableAutomation: { useMutation: jest.Mock };
+  };
 };
 
 describe("Settings page", () => {
@@ -122,6 +134,12 @@ describe("Settings page", () => {
     );
     trpcMock.channelContexts.list.useQuery.mockReturnValue(buildQueryResult());
     trpcMock.dictionary.list.useQuery.mockReturnValue(buildQueryResult());
+    trpcMock.notion.automationStatus.useQuery.mockReturnValue(
+      buildQueryResult(),
+    );
+    trpcMock.notion.destinationPages.useQuery.mockReturnValue(
+      buildQueryResult(),
+    );
 
     trpcMock.autorecord.add.useMutation.mockReturnValue(buildMutationResult());
     trpcMock.autorecord.remove.useMutation.mockReturnValue(
@@ -146,6 +164,12 @@ describe("Settings page", () => {
       buildMutationResult(),
     );
     trpcMock.dictionary.clear.useMutation.mockReturnValue(
+      buildMutationResult(),
+    );
+    trpcMock.notion.saveAutomationConfig.useMutation.mockReturnValue(
+      buildMutationResult(),
+    );
+    trpcMock.notion.disableAutomation.useMutation.mockReturnValue(
       buildMutationResult(),
     );
   });

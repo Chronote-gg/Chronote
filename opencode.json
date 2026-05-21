@@ -4,7 +4,7 @@
     "langfuse": {
       "type": "remote",
       "url": "https://us.cloud.langfuse.com/api/public/mcp",
-      "enabled": true,
+      "enabled": false,
       "oauth": false,
       "headers": {
         "Authorization": "{file:.opencode/langfuse.mcp.auth}"
@@ -21,7 +21,7 @@
         "--tools",
         "traces,observations"
       ],
-      "enabled": true,
+      "enabled": false,
       "environment": {
         "LANGFUSE_PUBLIC_KEY": "{file:.opencode/langfuse.public}",
         "LANGFUSE_SECRET_KEY": "{file:.opencode/langfuse.secret}",

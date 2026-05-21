@@ -1,7 +1,11 @@
 import type { MeetingHistory } from "../../types/db";
 import {
+  exportMeetingToNotionAutomation,
   exportMeetingToNotion,
+  getEffectiveMeetingNotionExportStatus,
+  listNotionDestinationPages,
   resetNotionFetchForTests,
+  saveNotionAutomationConfig,
   saveNotionConnectionFromCode,
   setNotionFetchForTests,
   syncMeetingToNotion,
@@ -203,5 +207,102 @@ describe("notionService", () => {
     ) as { type?: string; replace_content?: { new_str?: string } };
     expect(syncRequest.type).toBe("replace_content");
     expect(syncRequest.replace_content?.new_str).toContain("# Planning sync");
+  });
+
+  it("saves automation config and exposes automated export status", async () => {
+    const notionFetch = jest.fn();
+    notionFetch
+      .mockResolvedValueOnce(jsonResponse(tokenResponse))
+      .mockResolvedValueOnce(
+        jsonResponse({
+          results: [
+            {
+              object: "page",
+              id: "parent-page",
+              url: "https://notion.so/parent-page",
+              properties: {
+                title: {
+                  type: "title",
+                  title: [{ plain_text: "Meeting archive" }],
+                },
+              },
+            },
+          ],
+        }),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse({
+          object: "page",
+          id: "parent-page",
+          url: "https://notion.so/parent-page",
+          properties: {
+            title: {
+              type: "title",
+              title: [{ plain_text: "Meeting archive" }],
+            },
+          },
+        }),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse({ id: "page-1", url: "https://notion.so/page-1" }),
+      );
+    setNotionFetchForTests(notionFetch);
+
+    await saveNotionConnectionFromCode({ userId, code: "oauth-code" });
+    await expect(
+      listNotionDestinationPages({ userId, query: "archive" }),
+    ).resolves.toEqual([
+      {
+        id: "parent-page",
+        title: "Meeting archive",
+        url: "https://notion.so/parent-page",
+      },
+    ]);
+    const automationConfig = await saveNotionAutomationConfig({
+      guildId: meeting.guildId,
+      userId,
+      destinationPageId: "parent-page",
+      autoExportEnabled: true,
+      channelIds: [meeting.channelId],
+      tags: ["recap"],
+    });
+    const exported = await exportMeetingToNotionAutomation({
+      userId,
+      meeting,
+      destinationPageId: automationConfig.destinationPageId,
+      attemptCount: 1,
+    });
+
+    expect(automationConfig).toMatchObject({
+      destinationPageId: "parent-page",
+      destinationTitle: "Meeting archive",
+      channelIds: [meeting.channelId],
+      tags: ["recap"],
+    });
+    expect(exported).toMatchObject({
+      status: "exported",
+      notionPageUrl: "https://notion.so/page-1",
+      exportedNotesVersion: 2,
+    });
+    const createRequest = JSON.parse(
+      notionFetch.mock.calls[3]?.[1]?.body?.toString() ?? "{}",
+    ) as { parent?: { type?: string; page_id?: string } };
+    expect(createRequest.parent).toEqual({
+      type: "page_id",
+      page_id: "parent-page",
+    });
+
+    await expect(
+      getEffectiveMeetingNotionExportStatus({
+        userId: "other-user",
+        guildId: meeting.guildId,
+        meetingId: meeting.channelId_timestamp,
+        currentNotesVersion: 2,
+      }),
+    ).resolves.toMatchObject({
+      exported: true,
+      source: "automation",
+      pageUrl: "https://notion.so/page-1",
+    });
   });
 });
