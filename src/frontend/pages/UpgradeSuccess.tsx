@@ -156,7 +156,7 @@ const resolvePrimaryActionLabel = (serverId: string, serverName: string) => {
 
 export const resolveOpenPortalPath = (serverId: string, guilds: Guild[]) => {
   if (!serverId) {
-    return "/portal/select-server";
+    return "/portal";
   }
 
   const encodedServerId = encodeServerId(serverId);
@@ -178,7 +178,7 @@ export const resolvePostAuthPortalPath = (
   guilds: Guild[],
 ) => {
   if (!serverId) {
-    return "/portal/select-server";
+    return "/portal";
   }
 
   const encodedServerId = encodeServerId(serverId);

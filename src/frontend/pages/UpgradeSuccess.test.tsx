@@ -108,8 +108,8 @@ describe("resolveOpenPortalPath", () => {
     expect(resolveOpenPortalPath("s1", [])).toBe("/portal/server/s1/ask");
   });
 
-  it("falls back to select-server when no server is present", () => {
-    expect(resolveOpenPortalPath("", [])).toBe("/portal/select-server");
+  it("falls back to the portal home when no server is present", () => {
+    expect(resolveOpenPortalPath("", [])).toBe("/portal");
   });
 });
 
@@ -144,7 +144,7 @@ describe("resolvePostAuthPortalPath", () => {
     ).toBe("/portal/server/s1/ask");
   });
 
-  it("falls back to select-server when server id is missing", () => {
-    expect(resolvePostAuthPortalPath("", [])).toBe("/portal/select-server");
+  it("falls back to the portal home when server id is missing", () => {
+    expect(resolvePostAuthPortalPath("", [])).toBe("/portal");
   });
 });

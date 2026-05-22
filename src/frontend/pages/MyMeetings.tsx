@@ -172,6 +172,9 @@ export default function MyMeetings() {
       params: { serverId: meeting.serverId, meetingId: meeting.id },
     });
   };
+  const openServerSelect = () => {
+    navigate({ to: "/portal/select-server" });
+  };
 
   return (
     <Stack gap="lg" data-testid="my-meetings-page">
@@ -269,6 +272,11 @@ export default function MyMeetings() {
         listError={Boolean(meetingsQuery.error)}
         onSelect={openMeeting}
         selectedMeetingId={null}
+        emptyTitle="No meetings found here yet."
+        emptyDescription="Choose a server to browse its Library, Ask threads, billing, and settings."
+        emptyActionLabel="View servers"
+        onEmptyAction={openServerSelect}
+        emptyActionTestId="my-meetings-view-servers"
       />
     </Stack>
   );

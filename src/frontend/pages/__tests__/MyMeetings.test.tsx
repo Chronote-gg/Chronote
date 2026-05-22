@@ -91,4 +91,22 @@ describe("MyMeetings", () => {
       },
     });
   });
+
+  it("offers server selection from the empty state", () => {
+    mockMyListUseQuery.mockReturnValue({
+      data: { meetings: [] },
+      isLoading: false,
+      error: null,
+      refetch: jest.fn(),
+    });
+
+    renderPage();
+
+    expect(screen.getByText("No meetings found here yet.")).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId("my-meetings-view-servers"));
+
+    expect(mockNavigate).toHaveBeenCalledWith({
+      to: "/portal/select-server",
+    });
+  });
 });
