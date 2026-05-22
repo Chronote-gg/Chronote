@@ -124,7 +124,7 @@ describe("resolveBillingPath", () => {
     );
   });
 
-  it("falls back to select-server when server id is missing", () => {
+  it("falls back to server selection when server id is missing", () => {
     expect(resolveBillingPath("")).toBe("/portal/select-server");
   });
 });

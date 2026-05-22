@@ -191,10 +191,14 @@ export const resolvePostAuthPortalPath = (
   return `/portal/server/${encodedServerId}/library`;
 };
 
-export const resolveBillingPath = (serverId: string) =>
-  serverId
-    ? `/portal/server/${encodeServerId(serverId)}/billing`
-    : "/portal/select-server";
+export const resolveBillingPath = (serverId: string) => {
+  if (serverId) {
+    return `/portal/server/${encodeServerId(serverId)}/billing`;
+  }
+
+  // Billing is server-scoped, so missing server context needs explicit selection.
+  return "/portal/select-server";
+};
 
 const buildConfettiPieceStyle = (
   piece: (typeof CONFETTI_PIECES)[number],
