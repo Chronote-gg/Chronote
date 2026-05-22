@@ -100,7 +100,7 @@ Chronote needs these Discord permissions:
 
 ### Web portal access
 
-The web portal uses Discord OAuth. Users land on **My Meetings** first, then can open direct meeting links or browse Server Library for one server at a time. Users see meetings from channels they have access to in Discord. Attendees of a meeting can always view it regardless of current channel permissions.
+The web portal uses Discord OAuth. Users land on **My Meetings** first, then can open direct meeting links or use **View servers** to browse Server Library for one server at a time. Users see meetings from channels they have access to in Discord. Attendees of a meeting can always view it regardless of current channel permissions.
 
 ## Operational recommendations
 

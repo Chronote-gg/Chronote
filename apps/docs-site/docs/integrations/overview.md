@@ -9,7 +9,7 @@ Chronote integrations extend meeting data into external tools and workflows.
 
 ### Web portal
 
-Chronote includes a built-in web portal for browsing meetings, reading transcripts, sharing links, and managing settings. The portal opens to **My Meetings** by default, and the **Open in Chronote** button on a meeting summary opens that meeting directly.
+Chronote includes a built-in web portal for browsing meetings, reading transcripts, sharing links, and managing settings. **Open portal** opens **My Meetings** by default, and the **Open in Chronote** button on a meeting summary opens that meeting directly. Choose **View servers** when you need a server-scoped Library, Ask, Billing, or Settings view.
 
 The portal authenticates through Discord OAuth so channel permissions are respected.
 

@@ -190,10 +190,11 @@ describe("frontend components", () => {
   });
 
   test("renders SiteHeader CTA and theme toggle", () => {
+    authState.state = "authenticated";
     renderWithMantine(
       <SiteHeader navbarOpened={false} onNavbarToggle={() => {}} />,
     );
-    expect(screen.getByTestId("portal-cta")).toBeInTheDocument();
+    expect(screen.getByTestId("portal-cta")).toHaveAttribute("to", "/portal");
     expect(screen.getByTestId("theme-toggle")).toBeInTheDocument();
   });
 
@@ -212,6 +213,10 @@ describe("frontend components", () => {
       />,
     );
     expect(screen.getByText("Switch server")).toBeInTheDocument();
+    expect(screen.getByTestId("portal-cta")).toHaveAttribute(
+      "to",
+      "/portal/select-server",
+    );
     expect(screen.getByLabelText("Close navigation")).toBeInTheDocument();
     const logoutButton = screen.getByTestId("logout-cta");
     expect(logoutButton).toHaveAttribute("href", authState.logoutUrl);

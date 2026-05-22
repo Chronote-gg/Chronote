@@ -164,6 +164,9 @@ Coverage update rule:
 - Public product docs use Docusaurus under `apps/docs-site`, builds to `build/docs-site/`.
 - Routing/data/state: TanStack Router + TanStack Query + tRPC + Zustand.
 - Marketing site is public at `/`; the authenticated portal lives under `/portal/*`:
+  - `/portal` -> `/portal/meetings`
+  - `/portal/meetings`
+  - `/portal/meetings/:serverId/:meetingId`
   - `/portal/select-server`
   - `/portal/server/:serverId/{library|ask|billing|settings}`
 - Upgrade flow entry points live under `/upgrade`, `/promo/:code`, and `/upgrade/select-server` with a success page at `/upgrade/success`. See `docs/upgrade-flow.md` for details and planned short-link support.

@@ -194,7 +194,7 @@ The Chronote web portal provides a browser-based interface for:
 - Importing Markdown or plain-text notes from another app.
 - Managing server settings (context, dictionary, auto-record, Notion automation).
 
-Access the portal from the **Open in Chronote** button on any meeting summary, or open the portal directly to start from **My Meetings**. Server Library remains available when you want to browse one server at a time.
+Access the portal from the **Open in Chronote** button on any meeting summary, or open the portal directly to start from **My Meetings**. Use **View servers** or the server switcher when you want to choose a server for Library, Ask, Billing, or Settings.
 
 ## Context menu commands
 

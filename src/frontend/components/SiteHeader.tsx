@@ -57,6 +57,7 @@ type PortalCtaProps = {
   showPortalCta: boolean;
   authState: AuthState;
   portalLabel: string;
+  portalPath: string;
   loginUrl: string;
   loading: boolean;
   isMobile: boolean;
@@ -66,6 +67,7 @@ function PortalCtaButton({
   showPortalCta,
   authState,
   portalLabel,
+  portalPath,
   loginUrl,
   loading,
   isMobile,
@@ -79,7 +81,7 @@ function PortalCtaButton({
   };
   if (authState === "authenticated") {
     return (
-      <Button component={Link} to="/portal/select-server" {...sharedProps}>
+      <Button component={Link} to={portalPath} {...sharedProps}>
         {portalLabel}
       </Button>
     );
@@ -168,6 +170,7 @@ type HeaderActionsProps = {
   showPortalCta: boolean;
   authState: AuthState;
   portalLabel: string;
+  portalPath: string;
   loginUrl: string;
   loading: boolean;
   user: AuthUser;
@@ -183,6 +186,7 @@ function HeaderActions({
   showPortalCta,
   authState,
   portalLabel,
+  portalPath,
   loginUrl,
   loading,
   user,
@@ -199,6 +203,7 @@ function HeaderActions({
         showPortalCta={showPortalCta}
         authState={authState}
         portalLabel={portalLabel}
+        portalPath={portalPath}
         loginUrl={loginUrl}
         loading={loading}
         isMobile={isMobile}
@@ -280,6 +285,7 @@ export function SiteHeader({
     authState === "authenticated" && context === "portal"
       ? "Switch server"
       : "Open portal";
+  const portalPath = context === "portal" ? "/portal/select-server" : "/portal";
   const isSuperAdmin =
     authState === "authenticated" && Boolean(user?.isSuperAdmin);
   const headerPaddingRight = isMobile ? theme.spacing.xs : theme.spacing.sm;
@@ -291,6 +297,7 @@ export function SiteHeader({
       showPortalCta={showPortalCta}
       authState={authState}
       portalLabel={portalLabel}
+      portalPath={portalPath}
       loginUrl={loginUrl}
       loading={loading}
       user={user}
