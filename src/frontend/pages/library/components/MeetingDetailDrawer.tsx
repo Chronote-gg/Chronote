@@ -226,6 +226,8 @@ export default function MeetingDetailDrawer({
   );
   const notionExportMutation = trpc.notion.exportMeeting.useMutation();
   const notionSyncMutation = trpc.notion.syncMeeting.useMutation();
+  const notionRetryAutomationMutation =
+    trpc.notion.retryAutomationExport.useMutation();
 
   const summaryCopyText = detail?.notes ?? "";
   const canCopySummary = summaryCopyText.trim().length > 0;
@@ -731,6 +733,24 @@ export default function MeetingDetailDrawer({
     }
   };
 
+  const handleRetryNotionAutomation = async () => {
+    if (!selectedGuildId || !selectedMeetingId) return;
+    try {
+      await notionRetryAutomationMutation.mutateAsync({
+        serverId: selectedGuildId,
+        meetingId: selectedMeetingId,
+      });
+      notifications.show({ message: "Notion automation retried." });
+      await trpcUtils.notion.exportStatus.invalidate();
+    } catch (error) {
+      const message =
+        error instanceof Error && error.message
+          ? error.message
+          : "Unable to retry Notion automation right now.";
+      notifications.show({ color: "red", message });
+    }
+  };
+
   const handleOpenNotionPage = () => {
     const pageUrl = notionExportStatusQuery.data?.pageUrl;
     if (!pageUrl) return;
@@ -813,31 +833,49 @@ export default function MeetingDetailDrawer({
     notionConnected &&
     Boolean(notionExportStatusQuery.error);
   const notionActionPending =
-    notionExportMutation.isPending || notionSyncMutation.isPending;
+    notionExportMutation.isPending ||
+    notionSyncMutation.isPending ||
+    notionRetryAutomationMutation.isPending;
+  const notionAutomationStatus = notionExportStatus?.source === "automation";
+  const notionAutomationNeedsRetry =
+    notionAutomationStatus &&
+    (!notionExportStatus.exported ||
+      notionExportStatus.outdated ||
+      Boolean(notionExportStatus.lastError));
   const notionActionLabel = !notionConfigured
     ? "Notion unavailable"
-    : !notionConnected
-      ? "Connect Notion"
-      : notionExportStatusLoading
-        ? "Loading Notion status..."
-        : notionExportStatusUnavailable || !notionExportStatus
-          ? "Notion status unavailable"
-          : !notionExportStatus.exported
-            ? "Export to Notion"
-            : notionExportStatus.outdated
-              ? "Sync latest to Notion"
-              : "Sync to Notion";
+    : notionExportStatusLoading
+      ? "Loading Notion status..."
+      : notionExportStatusUnavailable || !notionExportStatus
+        ? "Notion status unavailable"
+        : notionAutomationStatus
+          ? notionAutomationNeedsRetry
+            ? canManageSelectedGuild
+              ? "Retry Notion automation"
+              : "Notion automation needs attention"
+            : undefined
+          : !notionConnected
+            ? "Connect Notion"
+            : !notionExportStatus.exported
+              ? "Export to Notion"
+              : notionExportStatus.outdated
+                ? "Sync latest to Notion"
+                : "Sync to Notion";
   const handleNotionAction = !notionConfigured
     ? undefined
-    : !notionConnected
-      ? handleConnectNotion
-      : notionExportStatusLoading ||
-          notionExportStatusUnavailable ||
-          !notionExportStatus
-        ? undefined
-        : !notionExportStatus.exported
-          ? handleExportToNotion
-          : handleSyncToNotion;
+    : notionExportStatusLoading ||
+        notionExportStatusUnavailable ||
+        !notionExportStatus
+      ? undefined
+      : notionAutomationStatus
+        ? notionAutomationNeedsRetry && canManageSelectedGuild
+          ? handleRetryNotionAutomation
+          : undefined
+        : !notionConnected
+          ? handleConnectNotion
+          : !notionExportStatus.exported
+            ? handleExportToNotion
+            : handleSyncToNotion;
 
   const summarySection = meeting ? (
     <MeetingSummaryPanel

@@ -7,7 +7,11 @@ import {
 } from "../repositories/notionIntegrationRepository";
 import type { MeetingHistory } from "../types/db";
 import type {
+  NotionAutomationConfig,
+  NotionAutomationMeetingExport,
+  NotionAutomationStatus,
   NotionConnection,
+  NotionDestinationPage,
   NotionExportStatus,
   NotionMeetingExport,
 } from "../types/notionIntegration";
@@ -32,6 +36,10 @@ const NOTION_TEXT_ESCAPE_CHARS = new Set([
 ]);
 
 type NotionFetch = typeof fetch;
+
+type NotionPageParent =
+  | { type: "workspace"; workspace: true }
+  | { type: "page_id"; page_id: string };
 
 let notionFetch: NotionFetch = (...args) => fetch(...args);
 
@@ -67,6 +75,32 @@ const notionPageResponseSchema = z.object({
 
 const notionMarkdownResponseSchema = z.object({
   markdown: z.string(),
+});
+
+const notionRichTextSchema = z
+  .object({
+    plain_text: z.string().optional(),
+  })
+  .passthrough();
+
+const notionTitlePropertySchema = z
+  .object({
+    type: z.literal("title"),
+    title: z.array(notionRichTextSchema).optional(),
+  })
+  .passthrough();
+
+const notionDestinationPageSchema = z
+  .object({
+    object: z.literal("page"),
+    id: z.string(),
+    url: z.string().url().optional(),
+    properties: z.record(z.string(), z.unknown()).optional(),
+  })
+  .passthrough();
+
+const notionSearchResponseSchema = z.object({
+  results: z.array(notionDestinationPageSchema),
 });
 
 const notionErrorResponseSchema = z.object({
@@ -222,6 +256,78 @@ const formatParticipantNames = (meeting: MeetingHistory) =>
     .map(escapeNotionText)
     .join(", ");
 
+const extractDestinationTitle = (
+  page: z.infer<typeof notionDestinationPageSchema>,
+) => {
+  for (const value of Object.values(page.properties ?? {})) {
+    const parsed = notionTitlePropertySchema.safeParse(value);
+    if (!parsed.success) continue;
+    const title = parsed.data.title
+      ?.map((part) => part.plain_text ?? "")
+      .join("")
+      .trim();
+    if (title) return title;
+  }
+  return "Untitled page";
+};
+
+const toDestinationPage = (
+  page: z.infer<typeof notionDestinationPageSchema>,
+): NotionDestinationPage => ({
+  id: page.id,
+  title: extractDestinationTitle(page),
+  url: page.url,
+});
+
+const createMeetingPageInNotion = async (params: {
+  userId: string;
+  meeting: MeetingHistory;
+  parent: NotionPageParent;
+  repository: NotionIntegrationRepository;
+}) =>
+  withNotionToken({
+    userId: params.userId,
+    repository: params.repository,
+    async action(accessToken, connection) {
+      const markdown = buildMeetingNotionMarkdown(params.meeting);
+      const page = await requestNotionApi({
+        accessToken,
+        method: "POST",
+        path: "/v1/pages",
+        body: {
+          parent: params.parent,
+          markdown,
+        },
+        schema: notionPageResponseSchema,
+      });
+      return { page, connection };
+    },
+  });
+
+const replaceMeetingPageInNotion = async (params: {
+  userId: string;
+  meeting: MeetingHistory;
+  pageId: string;
+  repository: NotionIntegrationRepository;
+}) =>
+  withNotionToken({
+    userId: params.userId,
+    repository: params.repository,
+    async action(accessToken) {
+      const markdown = buildMeetingNotionMarkdown(params.meeting);
+      return requestNotionApi({
+        accessToken,
+        method: "PATCH",
+        path: `/v1/pages/${encodeURIComponent(params.pageId)}/markdown`,
+        body: {
+          type: "replace_content",
+          replace_content: { new_str: markdown },
+        },
+        schema: notionMarkdownResponseSchema,
+      });
+    },
+  });
+
 export const buildNotionAuthorizationUrl = (state: string) => {
   const params = new URLSearchParams({
     owner: "user",
@@ -273,6 +379,135 @@ export const getNotionStatus = async (userId: string) => {
     workspaceName: connection?.workspaceName,
     workspaceId: connection?.workspaceId,
   };
+};
+
+export const getNotionAutomationStatus = async (params: {
+  guildId: string;
+  userId: string;
+  repository?: NotionIntegrationRepository;
+}): Promise<NotionAutomationStatus> => {
+  const repository = getRepository(params.repository);
+  const [connection, automationConfig] = await Promise.all([
+    repository.getConnection(params.userId),
+    repository.getAutomationConfig(params.guildId),
+  ]);
+  const ownerConnection = automationConfig
+    ? await repository.getConnection(automationConfig.ownerUserId)
+    : undefined;
+
+  return {
+    configured: config.notion.enabled,
+    userConnected: Boolean(connection),
+    workspaceName: connection?.workspaceName,
+    workspaceId: connection?.workspaceId,
+    automation: automationConfig
+      ? {
+          enabled: automationConfig.autoExportEnabled,
+          ownerUserId: automationConfig.ownerUserId,
+          ownerConnected: Boolean(ownerConnection),
+          workspaceName: automationConfig.workspaceName,
+          workspaceId: automationConfig.workspaceId,
+          destinationType: automationConfig.destinationType,
+          destinationPageId: automationConfig.destinationPageId,
+          destinationTitle: automationConfig.destinationTitle,
+          destinationUrl: automationConfig.destinationUrl,
+          channelIds: automationConfig.channelIds ?? [],
+          tags: automationConfig.tags ?? [],
+          lastError: automationConfig.lastError,
+          updatedAt: automationConfig.updatedAt,
+        }
+      : undefined,
+  };
+};
+
+export const listNotionDestinationPages = async (params: {
+  userId: string;
+  query?: string;
+  pageSize?: number;
+  repository?: NotionIntegrationRepository;
+}): Promise<NotionDestinationPage[]> => {
+  const repository = getRepository(params.repository);
+  return withNotionToken({
+    userId: params.userId,
+    repository,
+    async action(accessToken) {
+      const response = await requestNotionApi({
+        accessToken,
+        method: "POST",
+        path: "/v1/search",
+        body: {
+          query: params.query?.trim() || undefined,
+          page_size: Math.min(Math.max(params.pageSize ?? 25, 1), 50),
+          filter: { property: "object", value: "page" },
+          sort: { direction: "descending", timestamp: "last_edited_time" },
+        },
+        schema: notionSearchResponseSchema,
+      });
+      return response.results.map(toDestinationPage);
+    },
+  });
+};
+
+export const saveNotionAutomationConfig = async (params: {
+  guildId: string;
+  userId: string;
+  destinationPageId: string;
+  autoExportEnabled: boolean;
+  channelIds?: string[];
+  tags?: string[];
+  repository?: NotionIntegrationRepository;
+}): Promise<NotionAutomationConfig> => {
+  const repository = getRepository(params.repository);
+  const resolved = await withNotionToken({
+    userId: params.userId,
+    repository,
+    async action(accessToken, connection) {
+      const page = await requestNotionApi({
+        accessToken,
+        method: "GET",
+        path: `/v1/pages/${encodeURIComponent(params.destinationPageId)}`,
+        schema: notionDestinationPageSchema,
+      });
+      return { connection, destination: toDestinationPage(page) };
+    },
+  });
+  const existing = await repository.getAutomationConfig(params.guildId);
+  const now = new Date().toISOString();
+  const automationConfig: NotionAutomationConfig = {
+    guildId: params.guildId,
+    ownerUserId: params.userId,
+    workspaceId: resolved.connection.workspaceId,
+    workspaceName: resolved.connection.workspaceName,
+    destinationType: "page",
+    destinationPageId: resolved.destination.id,
+    destinationTitle: resolved.destination.title,
+    destinationUrl: resolved.destination.url,
+    autoExportEnabled: params.autoExportEnabled,
+    channelIds: params.channelIds?.filter((value) => value.trim().length > 0),
+    tags: params.tags?.filter((value) => value.trim().length > 0),
+    createdAt: existing?.createdAt ?? now,
+    updatedAt: now,
+  };
+  await repository.writeAutomationConfig(automationConfig);
+  return automationConfig;
+};
+
+export const setNotionAutomationEnabled = async (params: {
+  guildId: string;
+  enabled: boolean;
+  repository?: NotionIntegrationRepository;
+}) => {
+  const repository = getRepository(params.repository);
+  const existing = await repository.getAutomationConfig(params.guildId);
+  if (!existing) return undefined;
+  const updated: NotionAutomationConfig = {
+    ...existing,
+    autoExportEnabled: params.enabled,
+    lastError: undefined,
+    updatedAt: new Date().toISOString(),
+  };
+  await repository.writeAutomationConfig(updated);
+  return updated;
 };
 
 export const saveNotionConnectionFromCode = async (params: {
@@ -332,9 +567,129 @@ export const getMeetingNotionExportStatus = async (params: {
   };
 };
 
+const toAutomationExportStatus = (params: {
+  existing: NotionAutomationMeetingExport;
+  currentNotesVersion: number;
+}): NotionExportStatus => ({
+  exported: params.existing.status === "exported",
+  source: "automation",
+  pageUrl: params.existing.notionPageUrl,
+  pageId: params.existing.notionPageId,
+  exportedNotesVersion: params.existing.exportedNotesVersion,
+  currentNotesVersion: params.currentNotesVersion,
+  outdated: params.existing.exportedNotesVersion < params.currentNotesVersion,
+  lastExportedAt: params.existing.lastExportedAt,
+  lastError: params.existing.lastError,
+});
+
+export const getEffectiveMeetingNotionExportStatus = async (params: {
+  userId: string;
+  guildId: string;
+  meetingId: string;
+  currentNotesVersion: number;
+  repository?: NotionIntegrationRepository;
+}): Promise<NotionExportStatus> => {
+  const repository = getRepository(params.repository);
+  const manual = await repository.getMeetingExport(params);
+  if (manual) {
+    return {
+      exported: true,
+      source: "manual",
+      pageUrl: manual.notionPageUrl,
+      pageId: manual.notionPageId,
+      exportedNotesVersion: manual.exportedNotesVersion,
+      currentNotesVersion: params.currentNotesVersion,
+      outdated: manual.exportedNotesVersion < params.currentNotesVersion,
+      lastExportedAt: manual.lastExportedAt,
+      lastError: manual.lastError,
+    };
+  }
+
+  const automation = await repository.getAutomationMeetingExport({
+    guildId: params.guildId,
+    meetingId: params.meetingId,
+  });
+  if (automation) {
+    return toAutomationExportStatus({
+      existing: automation,
+      currentNotesVersion: params.currentNotesVersion,
+    });
+  }
+
+  return {
+    exported: false,
+    currentNotesVersion: params.currentNotesVersion,
+    outdated: false,
+  };
+};
+
+export const exportMeetingToNotionAutomation = async (params: {
+  userId: string;
+  meeting: MeetingHistory;
+  destinationPageId: string;
+  attemptCount: number;
+  repository?: NotionIntegrationRepository;
+}) => {
+  const repository = getRepository(params.repository);
+  const { page, connection } = await createMeetingPageInNotion({
+    userId: params.userId,
+    repository,
+    meeting: params.meeting,
+    parent: { type: "page_id", page_id: params.destinationPageId },
+  });
+  const now = new Date().toISOString();
+  const meetingExport: NotionAutomationMeetingExport = {
+    guildId: params.meeting.guildId,
+    channelId_timestamp: params.meeting.channelId_timestamp,
+    ownerUserId: params.userId,
+    notionPageId: page.id,
+    notionPageUrl: page.url,
+    notionWorkspaceId: connection.workspaceId,
+    exportedNotesVersion: params.meeting.notesVersion ?? 1,
+    status: "exported",
+    attemptCount: params.attemptCount,
+    lastAttemptAt: now,
+    lastExportedAt: now,
+  };
+  await repository.writeAutomationMeetingExport(meetingExport);
+  return meetingExport;
+};
+
+export const syncMeetingToNotionAutomation = async (params: {
+  userId: string;
+  meeting: MeetingHistory;
+  existing: NotionAutomationMeetingExport;
+  repository?: NotionIntegrationRepository;
+}) => {
+  const repository = getRepository(params.repository);
+  if (!params.existing.notionPageId) {
+    throw new NotionApiError(404, "not_exported", "Export to Notion first.");
+  }
+  await replaceMeetingPageInNotion({
+    userId: params.userId,
+    repository,
+    meeting: params.meeting,
+    pageId: params.existing.notionPageId,
+  });
+  const now = new Date().toISOString();
+  const updated: NotionAutomationMeetingExport = {
+    ...params.existing,
+    ownerUserId: params.userId,
+    exportedNotesVersion: params.meeting.notesVersion ?? 1,
+    status: "exported",
+    attemptCount: params.existing.attemptCount + 1,
+    lastAttemptAt: now,
+    lastExportedAt: now,
+    lastError: undefined,
+  };
+  await repository.writeAutomationMeetingExport(updated);
+  return updated;
+};
+
 export const exportMeetingToNotion = async (params: {
   userId: string;
   meeting: MeetingHistory;
+  parent?: NotionPageParent;
   repository?: NotionIntegrationRepository;
 }) => {
   const repository = getRepository(params.repository);
@@ -353,36 +708,25 @@ export const exportMeetingToNotion = async (params: {
   }
 
   try {
-    return await withNotionToken({
+    const { page, connection } = await createMeetingPageInNotion({
       userId: params.userId,
       repository,
-      async action(accessToken, connection) {
-        const markdown = buildMeetingNotionMarkdown(params.meeting);
-        const page = await requestNotionApi({
-          accessToken,
-          method: "POST",
-          path: "/v1/pages",
-          body: {
-            parent: { type: "workspace", workspace: true },
-            markdown,
-          },
-          schema: notionPageResponseSchema,
-        });
-        const now = new Date().toISOString();
-        const meetingExport: NotionMeetingExport = {
-          userId: params.userId,
-          guildId: params.meeting.guildId,
-          channelId_timestamp: params.meeting.channelId_timestamp,
-          notionPageId: page.id,
-          notionPageUrl: page.url,
-          notionWorkspaceId: connection.workspaceId,
-          exportedNotesVersion: params.meeting.notesVersion ?? 1,
-          lastExportedAt: now,
-        };
-        await repository.writeMeetingExport(meetingExport);
-        return meetingExport;
-      },
+      meeting: params.meeting,
+      parent: params.parent ?? { type: "workspace", workspace: true },
     });
+    const now = new Date().toISOString();
+    const meetingExport: NotionMeetingExport = {
+      userId: params.userId,
+      guildId: params.meeting.guildId,
+      channelId_timestamp: params.meeting.channelId_timestamp,
+      notionPageId: page.id,
+      notionPageUrl: page.url,
+      notionWorkspaceId: connection.workspaceId,
+      exportedNotesVersion: params.meeting.notesVersion ?? 1,
+      lastExportedAt: now,
+    };
+    await repository.writeMeetingExport(meetingExport);
+    return meetingExport;
   } catch (err) {
     await repository.deleteMeetingExport(meetingExportKey);
     throw err;
@@ -404,31 +748,20 @@ export const syncMeetingToNotion = async (params: {
     throw new NotionApiError(404, "not_exported", "Export to Notion first.");
   }
 
-  return withNotionToken({
+  await replaceMeetingPageInNotion({
     userId: params.userId,
     repository,
-    async action(accessToken) {
-      const markdown = buildMeetingNotionMarkdown(params.meeting);
-      await requestNotionApi({
-        accessToken,
-        method: "PATCH",
-        path: `/v1/pages/${existing.notionPageId}/markdown`,
-        body: {
-          type: "replace_content",
-          replace_content: { new_str: markdown },
-        },
-        schema: notionMarkdownResponseSchema,
-      });
-      const updated: NotionMeetingExport = {
-        ...existing,
-        exportedNotesVersion: params.meeting.notesVersion ?? 1,
-        lastExportedAt: new Date().toISOString(),
-        lastError: undefined,
-      };
-      await repository.writeMeetingExport(updated);
-      return updated;
-    },
+    meeting: params.meeting,
+    pageId: existing.notionPageId,
   });
+  const updated: NotionMeetingExport = {
+    ...existing,
+    exportedNotesVersion: params.meeting.notesVersion ?? 1,
+    lastExportedAt: new Date().toISOString(),
+    lastError: undefined,
+  };
+  await repository.writeMeetingExport(updated);
+  return updated;
 };
 
 export const setNotionFetchForTests = (nextFetch: NotionFetch) => {

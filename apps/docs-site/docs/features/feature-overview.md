@@ -170,7 +170,11 @@ Open a meeting in the web portal and choose **Export to Notion** from the notes 
 
 After export, Chronote stores the Notion page link on that meeting for your user account. If Chronote notes are edited later, choose **Sync latest to Notion** to replace the Notion page content with the newest Chronote notes version.
 
-Chronote remains the source of truth. The first Notion integration is one-way from Chronote to Notion.
+Server managers can configure automatic Notion export from **Server settings** -> **Notion integration**. Choose a shared destination page, turn on automatic export, and optionally limit exports to selected voice channels or tags. Meeting viewers can open the automated Notion page from the meeting detail when they have access to the Chronote meeting.
+
+If automated export fails because Notion access was revoked or the destination is unavailable, Chronote keeps the automation setting and shows the latest error in Settings and the Library. A server manager can reconnect Notion, choose a new destination, or retry the export from the meeting actions.
+
+Chronote remains the source of truth. Notion export and sync are one-way from Chronote to Notion.
 
 ## Meeting image generation
 
@@ -188,7 +192,7 @@ The Chronote web portal provides a browser-based interface for:
 - Sharing meeting links with teammates.
 - Suggesting and applying notes corrections.
 - Importing Markdown or plain-text notes from another app.
-- Managing server settings (context, dictionary, auto-record).
+- Managing server settings (context, dictionary, auto-record, Notion automation).
 
 Access the portal from the **Open in Chronote** button on any meeting summary, or open the portal directly to start from **My Meetings**. Server Library remains available when you want to browse one server at a time.
 
