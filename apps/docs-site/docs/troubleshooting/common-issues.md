@@ -84,9 +84,10 @@ Use this page to diagnose and fix common Chronote issues. Each section describes
 
 **Causes and fixes**:
 
-1. **Wrong server selected.** The portal scopes to a specific server. Check the server selector.
-2. **Channel permissions.** The portal respects Discord channel permissions. You only see meetings from channels you have access to.
-3. **No meetings recorded yet.** Meetings appear after at least one meeting has been completed successfully.
+1. **Filters hide the meeting.** **My Meetings** opens by default and includes range, server, tag, and archive filters. Clear filters or switch the range to Last 30 days.
+2. **Wrong server selected.** Server Library scopes to one server. Use **My Meetings** for a cross-server view, or choose the expected server from the server selector.
+3. **Channel permissions.** The portal respects Discord channel permissions. You only see meetings from channels you can access, plus meetings you attended when attendee access is enabled.
+4. **No meetings recorded yet.** Meetings appear after at least one meeting has been completed successfully.
 
 ## Billing or plan issues
 

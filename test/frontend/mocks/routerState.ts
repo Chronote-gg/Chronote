@@ -9,11 +9,14 @@ export const routerState = {
 };
 export const routeParams: {
   serverId?: string;
+  meetingId?: string;
   conversationId?: string;
   code?: string;
 } = {};
 let routeSearch: {
   meetingId?: string;
+  eventId?: string;
+  fullScreen?: boolean | string;
   list?: string;
   conversationId?: string;
   messageId?: string;
@@ -45,6 +48,7 @@ export const resetNavigateSpy = () => {
 export const resetRouterState = () => {
   routerState.pathname = "/";
   routeParams.serverId = undefined;
+  routeParams.meetingId = undefined;
   routeParams.conversationId = undefined;
   routeParams.code = undefined;
   routeSearch = {};
@@ -57,16 +61,20 @@ export const setRouterPathname = (pathname: string) => {
 
 export const setRouteParams = (params: {
   serverId?: string;
+  meetingId?: string;
   conversationId?: string;
   code?: string;
 }) => {
   routeParams.serverId = params.serverId;
+  routeParams.meetingId = params.meetingId;
   routeParams.conversationId = params.conversationId;
   routeParams.code = params.code;
 };
 
 export const setRouteSearch = (search: {
   meetingId?: string;
+  eventId?: string;
+  fullScreen?: boolean | string;
   list?: string;
   conversationId?: string;
   messageId?: string;

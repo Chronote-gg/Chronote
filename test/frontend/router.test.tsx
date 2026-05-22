@@ -77,7 +77,7 @@ jest.mock("../../src/frontend/stores/portalStore", () => ({
 import { router } from "../../src/frontend/router";
 
 describe("router", () => {
-  test("portal index redirects to selected guild", () => {
+  test("portal index redirects to My Meetings", () => {
     const portalRoute = router.routeTree.children.find(
       (child) => child.path === "portal",
     );
@@ -96,30 +96,20 @@ describe("router", () => {
     portalState.lastServerId = "g2";
     render(<PortalIndexComponent />);
     const node = screen.getByTestId("navigate");
-    expect(node).toHaveAttribute("data-to", "/portal/server/$serverId/library");
-    expect(node).toHaveAttribute("data-server", "g1");
+    expect(node).toHaveAttribute("data-to", "/portal/meetings");
+    expect(node).toHaveAttribute("data-server", "");
   });
 
-  test("portal index redirects to server select when none chosen", () => {
+  test("portal includes direct meeting detail route", () => {
     const portalRoute = router.routeTree.children.find(
       (child) => child.path === "portal",
     );
     if (!portalRoute) {
       throw new Error("Missing portal route");
     }
-    const portalIndex = portalRoute.children.find(
-      (child) => child.path === "/",
+    const detailRoute = portalRoute.children.find(
+      (child) => child.path === "meetings/$serverId/$meetingId",
     );
-    if (!portalIndex || !portalIndex.component) {
-      throw new Error("Missing portal index route");
-    }
-    const PortalIndexComponent = portalIndex.component;
-    guildState.selectedGuildId = null;
-    guildState.guilds = [];
-    portalState.lastServerId = null;
-    render(<PortalIndexComponent />);
-    const node = screen.getByTestId("navigate");
-    expect(node).toHaveAttribute("data-to", "/portal/select-server");
-    expect(node).toHaveAttribute("data-server", "");
+    expect(detailRoute).toBeDefined();
   });
 });

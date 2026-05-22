@@ -66,7 +66,7 @@ describe("askCitations", () => {
 
     expect(rendered).toContain("Decision [1](");
     expect(rendered).toContain(
-      "https://app.example.com/portal/server/guild-1/library?meetingId=voice-1%232025-01-01T00%3A00%3A00.000Z",
+      "https://app.example.com/portal/meetings/guild-1/voice-1%232025-01-01T00%3A00%3A00.000Z",
     );
   });
 

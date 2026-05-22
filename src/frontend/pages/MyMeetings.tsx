@@ -168,9 +168,8 @@ export default function MyMeetings() {
     const meeting = filteredMeetings.find((item) => item.id === meetingId);
     if (!meeting?.serverId) return;
     navigate({
-      to: "/portal/server/$serverId/library",
-      params: { serverId: meeting.serverId },
-      search: { meetingId: meeting.id },
+      to: "/portal/meetings/$serverId/$meetingId",
+      params: { serverId: meeting.serverId, meetingId: meeting.id },
     });
   };
 

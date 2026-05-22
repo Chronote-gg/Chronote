@@ -183,14 +183,14 @@ This feature requires a Basic plan or higher.
 The Chronote web portal provides a browser-based interface for:
 
 - Browsing meeting history with search and filters.
-- Viewing **My Meetings** across every server you can access, with filters for today, the past week, and accessible meetings.
+- Viewing **My Meetings** as your portal home, with direct links to meetings across servers you can access.
 - Reading full transcripts and notes.
 - Sharing meeting links with teammates.
 - Suggesting and applying notes corrections.
 - Importing Markdown or plain-text notes from another app.
 - Managing server settings (context, dictionary, auto-record).
 
-Access the portal from the **Open in Chronote** button on any meeting summary, or visit your server's portal URL directly.
+Access the portal from the **Open in Chronote** button on any meeting summary, or open the portal directly to start from **My Meetings**. Server Library remains available when you want to browse one server at a time.
 
 ## Context menu commands
 

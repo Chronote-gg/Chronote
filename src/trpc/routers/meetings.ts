@@ -888,7 +888,7 @@ const myList = authedProcedure
     }
   });
 
-const detail = guildMemberProcedure
+const detail = authedProcedure
   .input(
     z.object({
       serverId: z.string(),

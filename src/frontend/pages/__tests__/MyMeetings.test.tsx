@@ -78,15 +78,17 @@ describe("MyMeetings", () => {
     );
   });
 
-  it("opens the existing server library detail route", () => {
+  it("opens the direct meeting detail route", () => {
     renderPage();
 
     fireEvent.click(screen.getByTestId("library-meeting-row"));
 
     expect(mockNavigate).toHaveBeenCalledWith({
-      to: "/portal/server/$serverId/library",
-      params: { serverId: "guild-1" },
-      search: { meetingId: "channel-1#2026-01-02T00:00:00.000Z" },
+      to: "/portal/meetings/$serverId/$meetingId",
+      params: {
+        serverId: "guild-1",
+        meetingId: "channel-1#2026-01-02T00:00:00.000Z",
+      },
     });
   });
 });
