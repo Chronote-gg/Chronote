@@ -238,7 +238,7 @@ function parseIsoOrMs(value: { timestampUtc?: string; timestampMs?: number }) {
   if (value.timestampMs !== undefined && Number.isFinite(value.timestampMs)) {
     return value.timestampMs;
   }
-  throw new Error("Recovered segment is missing a parseable timestamp");
+  return undefined;
 }
 
 function toIsoString(ms: number) {
@@ -299,19 +299,6 @@ function participantById(participants: Participant[]) {
   );
 }
 
-function participantLabel(
-  participant: Participant | undefined,
-  fallbackId: string,
-) {
-  return (
-    participant?.serverNickname ??
-    participant?.displayName ??
-    participant?.username ??
-    participant?.tag ??
-    fallbackId
-  );
-}
-
 function segmentLabel(segment: TranscriptSegment) {
   return (
     segment.serverNickname ??
@@ -331,6 +318,8 @@ function buildTranscriptSegments(
   for (const segment of recovered.segments) {
     const text = segment.text?.trim();
     if (!text) continue;
+    const startedAtMs = parseIsoOrMs(segment);
+    if (startedAtMs === undefined) continue;
     const participant = participantsById.get(segment.speakerId);
     segments.push({
       userId: segment.speakerId,
@@ -338,7 +327,7 @@ function buildTranscriptSegments(
       displayName: participant?.displayName,
       serverNickname: participant?.serverNickname,
       tag: participant?.tag,
-      startedAt: toIsoString(parseIsoOrMs(segment)),
+      startedAt: toIsoString(startedAtMs),
       text,
       source: "voice",
     });
@@ -495,13 +484,23 @@ function deriveDurationSeconds(options: {
       Math.ceil((endedAtMs - startMs) * SECONDS_PER_MILLISECOND),
     );
   }
-  const latestSegmentEndMs = Math.max(
-    ...options.recoveredSegments.map((segment) => {
+  const segmentEndTimes = options.recoveredSegments
+    .map((segment) => {
       const segmentStart = parseIsoOrMs(segment);
+      if (segmentStart === undefined) return undefined;
       const audioMs = (segment.audioSeconds ?? 0) * 1000;
       return segmentStart + audioMs;
-    }),
-  );
+    })
+    .filter((value): value is number => value !== undefined);
+  if (segmentEndTimes.length === 0) {
+    const existing =
+      typeof options.existingDuration === "number" &&
+      Number.isFinite(options.existingDuration)
+        ? options.existingDuration
+        : 0;
+    return existing;
+  }
+  const latestSegmentEndMs = Math.max(...segmentEndTimes);
   const derived = Math.max(
     0,
     Math.ceil((latestSegmentEndMs - startMs) * SECONDS_PER_MILLISECOND),
