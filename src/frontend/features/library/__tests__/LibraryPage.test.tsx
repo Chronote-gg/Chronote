@@ -22,6 +22,7 @@ const baseItem: MeetingListItem = {
   title: "Weekly sync",
   summary: "Summary",
   dateLabel: "Jan 2",
+  recencyLabel: "2h ago",
   durationLabel: "1h",
   channelLabel: "#general",
 };
@@ -84,5 +85,21 @@ describe("MeetingList", () => {
     );
 
     expect(screen.getByText("Archived")).toBeInTheDocument();
+  });
+
+  it("shows the relative recency label when provided", () => {
+    render(
+      <MantineProvider>
+        <MeetingList
+          items={[baseItem]}
+          listLoading={false}
+          listError={false}
+          onSelect={jest.fn()}
+          selectedMeetingId={null}
+        />
+      </MantineProvider>,
+    );
+
+    expect(screen.getByText("2h ago")).toBeInTheDocument();
   });
 });

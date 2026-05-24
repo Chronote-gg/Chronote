@@ -6,7 +6,10 @@ import {
 } from "../../types/meetingLifecycle";
 
 const MS_PER_DAY = 1000 * 60 * 60 * 24;
+const MS_PER_HOUR = 1000 * 60 * 60;
+const MS_PER_MINUTE = 1000 * 60;
 const SUMMARY_CUTOFF = 180;
+const RECENT_LABEL_MAX_DAYS = 7;
 
 export type MeetingDetails = {
   id: string;
@@ -18,6 +21,7 @@ export type MeetingDetails = {
   summaryFeedback?: "up" | "down" | null;
   notes: string;
   dateLabel: string;
+  recencyLabel?: string;
   durationLabel: string;
   tags: string[];
   channel: string;
@@ -93,6 +97,25 @@ export const formatDateLabel = (timestamp: string) => {
     return "Unknown date";
   }
   return format(date, "MMM d, yyyy");
+};
+
+export const formatRelativeRecencyLabel = (
+  timestamp: string,
+  nowMs = Date.now(),
+) => {
+  const meetingMs = Date.parse(timestamp);
+  if (!Number.isFinite(meetingMs)) return undefined;
+  const diffMs = Math.max(0, nowMs - meetingMs);
+  if (diffMs >= RECENT_LABEL_MAX_DAYS * MS_PER_DAY) return undefined;
+  if (diffMs < MS_PER_MINUTE) return "Just now";
+  if (diffMs < MS_PER_HOUR) {
+    return `${Math.floor(diffMs / MS_PER_MINUTE)}m ago`;
+  }
+  if (diffMs < MS_PER_DAY) {
+    return `${Math.floor(diffMs / MS_PER_HOUR)}h ago`;
+  }
+  if (diffMs < 2 * MS_PER_DAY) return "Yesterday";
+  return `${Math.floor(diffMs / MS_PER_DAY)}d ago`;
 };
 
 export const formatDateTimeLabel = (timestamp: string | Date) => {
@@ -257,6 +280,7 @@ export const buildMeetingDetails = (
     summaryFeedback: detail.summaryFeedback ?? null,
     notes: resolveNotes(detail.notes),
     dateLabel: formatDateLabel(detail.timestamp),
+    recencyLabel: formatRelativeRecencyLabel(detail.timestamp),
     durationLabel: formatDurationLabel(detail.duration),
     tags: resolveTags(detail.tags),
     channel: channelLabel,

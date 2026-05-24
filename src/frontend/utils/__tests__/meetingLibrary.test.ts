@@ -1,4 +1,7 @@
-import { buildMeetingDetails } from "../meetingLibrary";
+import {
+  buildMeetingDetails,
+  formatRelativeRecencyLabel,
+} from "../meetingLibrary";
 
 describe("buildMeetingDetails", () => {
   const channelMap = new Map([["voice-1", "General"]]);
@@ -57,5 +60,28 @@ describe("buildMeetingDetails", () => {
     const result = buildMeetingDetails(detail, channelMap);
 
     expect(result.summaryFeedback).toBeNull();
+  });
+});
+
+describe("formatRelativeRecencyLabel", () => {
+  const nowMs = Date.parse("2026-01-08T12:00:00.000Z");
+
+  it("formats recent meetings for quick scanning", () => {
+    expect(formatRelativeRecencyLabel("2026-01-08T10:00:00.000Z", nowMs)).toBe(
+      "2h ago",
+    );
+    expect(formatRelativeRecencyLabel("2026-01-07T12:00:00.000Z", nowMs)).toBe(
+      "Yesterday",
+    );
+    expect(formatRelativeRecencyLabel("2026-01-05T12:00:00.000Z", nowMs)).toBe(
+      "3d ago",
+    );
+  });
+
+  it("omits labels for older or invalid timestamps", () => {
+    expect(
+      formatRelativeRecencyLabel("2026-01-01T12:00:00.000Z", nowMs),
+    ).toBeUndefined();
+    expect(formatRelativeRecencyLabel("not-a-date", nowMs)).toBeUndefined();
   });
 });

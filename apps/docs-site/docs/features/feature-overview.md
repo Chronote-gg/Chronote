@@ -187,7 +187,7 @@ This feature requires a Basic plan or higher.
 The Chronote web portal provides a browser-based interface for:
 
 - Browsing meeting history with search and filters.
-- Viewing **My Meetings** as your portal home, with direct links to meetings across servers you can access.
+- Viewing **My Meetings** as your portal home, with All time results, a **Load more** control for older meetings, and direct links to meetings across servers you can access.
 - Reading full transcripts and notes.
 - Sharing meeting links with teammates.
 - Suggesting and applying notes corrections.

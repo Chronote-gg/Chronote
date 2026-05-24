@@ -328,11 +328,17 @@ describe("mcpMeetingService", () => {
     expect(checkUserMeetingAccess).toHaveBeenCalledTimes(1);
   });
 
-  it("skips the guild-range fallback when indexed attended results fill the page", async () => {
+  it("skips the guild-range fallback when indexed attended results fill the pagination probe", async () => {
     const indexedMeeting = createMeeting("indexed", {
       guildId: "guild-1",
       timestamp: "2026-01-03T00:00:00.000Z",
       channelId_timestamp: "channel-1#2026-01-03T00:00:00.000Z",
+      participants: [{ id: "user-1", username: "user1" }],
+    });
+    const olderIndexedMeeting = createMeeting("older-indexed", {
+      guildId: "guild-1",
+      timestamp: "2026-01-02T00:00:00.000Z",
+      channelId_timestamp: "channel-1#2026-01-02T00:00:00.000Z",
       participants: [{ id: "user-1", username: "user1" }],
     });
     jest
@@ -348,8 +354,25 @@ describe("mcpMeetingService", () => {
         meetingId: "indexed",
         timestamp: "2026-01-03T00:00:00.000Z",
       },
+      {
+        userId: "user-1",
+        userTimestamp:
+          "2026-01-02T00:00:00.000Z#guild-1#channel-1#2026-01-02T00:00:00.000Z",
+        guildId: "guild-1",
+        channelId_timestamp: "channel-1#2026-01-02T00:00:00.000Z",
+        meetingId: "older-indexed",
+        timestamp: "2026-01-02T00:00:00.000Z",
+      },
     ]);
-    jest.mocked(getMeetingHistoryService).mockResolvedValue(indexedMeeting);
+    jest
+      .mocked(getMeetingHistoryService)
+      .mockImplementation((_guildId, channelIdTimestamp) =>
+        Promise.resolve(
+          channelIdTimestamp === indexedMeeting.channelId_timestamp
+            ? indexedMeeting
+            : olderIndexedMeeting,
+        ),
+      );
     jest.mocked(checkUserMeetingAccess).mockResolvedValue({
       allowed: true,
       via: "attendee",
@@ -365,8 +388,111 @@ describe("mcpMeetingService", () => {
       }),
     ).resolves.toMatchObject({
       meetings: [{ meetingId: "indexed", serverName: "Guild 1" }],
+      hasMore: true,
+      nextCursor: expect.any(String),
     });
     expect(listMeetingsForGuildInRangeService).not.toHaveBeenCalled();
+  });
+
+  it("returns an all-time My Meetings page with a cursor when more visible meetings exist", async () => {
+    const newestMeeting = createMeeting("newest", {
+      guildId: "guild-page",
+      timestamp: "2026-01-03T00:00:00.000Z",
+      channelId_timestamp: "channel-1#2026-01-03T00:00:00.000Z",
+    });
+    const middleMeeting = createMeeting("middle", {
+      guildId: "guild-page",
+      timestamp: "2026-01-02T00:00:00.000Z",
+      channelId_timestamp: "channel-1#2026-01-02T00:00:00.000Z",
+    });
+    const oldestMeeting = createMeeting("oldest", {
+      guildId: "guild-page",
+      timestamp: "2026-01-01T00:00:00.000Z",
+      channelId_timestamp: "channel-1#2026-01-01T00:00:00.000Z",
+    });
+    jest
+      .mocked(listBotGuildsCached)
+      .mockResolvedValue([
+        { id: "guild-page", name: "Guild Page", icon: null },
+      ]);
+    jest
+      .mocked(listMeetingsForGuildInRangeService)
+      .mockResolvedValue([newestMeeting, middleMeeting, oldestMeeting]);
+    jest.mocked(checkUserMeetingAccess).mockResolvedValue({
+      allowed: true,
+      via: "channel_permissions",
+    });
+
+    const firstPage = await listMcpMyMeetings({
+      userId: "user-page",
+      mode: "accessible",
+      range: "all",
+      limit: 2,
+    });
+
+    expect(firstPage).toMatchObject({
+      range: { startDate: "1970-01-01T00:00:00.000Z" },
+      meetings: [
+        { meetingId: "newest", serverName: "Guild Page" },
+        { meetingId: "middle", serverName: "Guild Page" },
+      ],
+      hasMore: true,
+      nextCursor: expect.any(String),
+    });
+    expect(listMeetingsForGuildInRangeService).toHaveBeenCalledWith(
+      "guild-page",
+      "1970-01-01T00:00:00.000Z",
+      expect.any(String),
+      15,
+    );
+  });
+
+  it("uses a My Meetings cursor to fetch only older visible meetings", async () => {
+    const newestMeeting = createMeeting("newest", {
+      guildId: "guild-cursor",
+      timestamp: "2026-01-03T00:00:00.000Z",
+      channelId_timestamp: "channel-1#2026-01-03T00:00:00.000Z",
+    });
+    const middleMeeting = createMeeting("middle", {
+      guildId: "guild-cursor",
+      timestamp: "2026-01-02T00:00:00.000Z",
+      channelId_timestamp: "channel-1#2026-01-02T00:00:00.000Z",
+    });
+    const oldestMeeting = createMeeting("oldest", {
+      guildId: "guild-cursor",
+      timestamp: "2026-01-01T00:00:00.000Z",
+      channelId_timestamp: "channel-1#2026-01-01T00:00:00.000Z",
+    });
+    jest
+      .mocked(listBotGuildsCached)
+      .mockResolvedValue([
+        { id: "guild-cursor", name: "Guild Cursor", icon: null },
+      ]);
+    jest
+      .mocked(listMeetingsForGuildInRangeService)
+      .mockResolvedValue([newestMeeting, middleMeeting, oldestMeeting]);
+    jest.mocked(checkUserMeetingAccess).mockResolvedValue({
+      allowed: true,
+      via: "channel_permissions",
+    });
+
+    const firstPage = await listMcpMyMeetings({
+      userId: "user-cursor",
+      mode: "accessible",
+      range: "all",
+      limit: 2,
+    });
+    const secondPage = await listMcpMyMeetings({
+      userId: "user-cursor",
+      limit: 2,
+      cursor: firstPage.nextCursor ?? undefined,
+    });
+
+    expect(secondPage).toMatchObject({
+      meetings: [{ meetingId: "oldest", serverName: "Guild Cursor" }],
+      hasMore: false,
+      nextCursor: null,
+    });
   });
 
   it("uses permission access mode without requiring participant membership", async () => {
@@ -522,18 +648,20 @@ describe("mcpMeetingService", () => {
       },
       mode: "attended",
       meetings: [],
+      hasMore: false,
+      nextCursor: null,
     });
     expect(listMeetingUserIndexForUserInRangeService).toHaveBeenCalledWith(
       "offset-user",
       "2026-01-01T05:00:00.000Z",
       "2026-01-01T22:00:00.000Z",
-      125,
+      130,
     );
     expect(listMeetingsForGuildInRangeService).toHaveBeenCalledWith(
       "guild-1",
       "2026-01-01T05:00:00.000Z",
       "2026-01-01T22:00:00.000Z",
-      125,
+      130,
     );
   });
 

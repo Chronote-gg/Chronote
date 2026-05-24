@@ -31,6 +31,7 @@ export type MeetingListItem = MeetingSummaryRow & {
   title: string;
   summary: string;
   dateLabel: string;
+  recencyLabel?: string;
   durationLabel: string;
   channelLabel: string;
 };

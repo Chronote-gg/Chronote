@@ -84,7 +84,7 @@ Use this page to diagnose and fix common Chronote issues. Each section describes
 
 **Causes and fixes**:
 
-1. **Filters hide the meeting.** **My Meetings** opens by default and includes range, server, tag, and archive filters. Clear filters or switch the range to Last 30 days.
+1. **Filters hide the meeting.** **My Meetings** opens by default with an All time range and includes server, tag, and archive filters. Clear filters, or use **Load more** to fetch older loaded pages.
 2. **Wrong server selected.** Server Library scopes to one server. Use **My Meetings** for a cross-server view, or choose **View servers** to open the expected server.
 3. **Channel permissions.** The portal respects Discord channel permissions. You only see meetings from channels you can access, plus meetings you attended when attendee access is enabled.
 4. **No meetings recorded yet.** Meetings appear after at least one meeting has been completed successfully.

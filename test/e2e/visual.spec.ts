@@ -318,6 +318,7 @@ test.describe("visual regression", () => {
       await expectVisualScreenshot(page, "ask-list", mode);
 
       await askPage.switchListMode("archived");
+      await askPage.waitForReady();
       await expectVisualScreenshot(page, "ask-archived", mode);
 
       await askPage.startNewChat();
