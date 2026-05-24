@@ -225,4 +225,50 @@ describe("MyMeetings", () => {
 
     expect(retryRefetch).toHaveBeenCalledTimes(1);
   });
+
+  it("shows loading instead of empty state while refreshing", async () => {
+    let isRefreshing = false;
+    const refreshRefetch = jest.fn(() => {
+      isRefreshing = true;
+    });
+    const firstPage = {
+      meetings: [
+        {
+          id: "channel-1#2026-01-02T00:00:00.000Z",
+          meetingId: "meeting-1",
+          serverId: "guild-1",
+          serverName: "Server One",
+          channelId: "channel-1",
+          channelName: "General",
+          timestamp: "2026-01-02T00:00:00.000Z",
+          duration: 3600,
+          tags: ["planning"],
+          meetingName: "Weekly planning",
+          summarySentence: "Planned the week across teams.",
+          audioAvailable: true,
+          transcriptAvailable: true,
+          notesAvailable: true,
+        },
+      ],
+      hasMore: false,
+      nextCursor: null,
+    };
+    mockMyListUseQuery.mockImplementation(() => ({
+      data: isRefreshing ? undefined : firstPage,
+      isLoading: false,
+      isFetching: isRefreshing,
+      error: null,
+      refetch: refreshRefetch,
+    }));
+
+    renderPage();
+
+    expect(await screen.findByText("Weekly planning")).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId("my-meetings-refresh"));
+
+    await waitFor(() =>
+      expect(screen.getByTestId("library-loading")).toBeInTheDocument(),
+    );
+    expect(screen.queryByText("No meetings found here yet.")).toBeNull();
+  });
 });

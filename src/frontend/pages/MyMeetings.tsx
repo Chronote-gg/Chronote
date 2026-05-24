@@ -437,7 +437,9 @@ export default function MyMeetings() {
   const latestPage = resolveLatestLoadedPage(loadedPages);
   const nextCursor = resolveNextCursor(latestPage);
   const hasMore = hasMoreLoadedMeetings(latestPage, nextCursor);
-  const listLoading = meetingsQuery.isLoading && loadedPages.length === 0;
+  const listLoading =
+    (meetingsQuery.isLoading || meetingsQuery.isFetching) &&
+    loadedPages.length === 0;
   const loadingMore = meetingsQuery.isFetching && loadedPages.length > 0;
   const resetPagination = () =>
     resetMyMeetingsPagination(setLoadedPages, setPageCursor);

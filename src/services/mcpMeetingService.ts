@@ -572,10 +572,7 @@ const compareMeetingsByRecency = (a: MeetingHistory, b: MeetingHistory) => {
   return meetingIdentity(b).localeCompare(meetingIdentity(a));
 };
 
-const isMeetingAfterCursor = (
-  meeting: MeetingHistory,
-  cursor?: MyMeetingsCursor,
-) => {
+const isPastCursor = (meeting: MeetingHistory, cursor?: MyMeetingsCursor) => {
   if (!cursor) return true;
   const timestampOrder = meeting.timestamp.localeCompare(cursor.timestamp);
   if (timestampOrder < 0) return true;
@@ -903,7 +900,7 @@ export async function listMcpMyMeetings(input: ListMcpMyMeetingsInput) {
     indexedMeetings.filter(
       (meeting) =>
         (!requestedServerIds || requestedServerIds.has(meeting.guildId)) &&
-        isMeetingAfterCursor(meeting, range.cursor),
+        isPastCursor(meeting, range.cursor),
     ),
   );
   const servers = filterMcpServers(
@@ -930,7 +927,7 @@ export async function listMcpMyMeetings(input: ListMcpMyMeetingsInput) {
     [...indexedCandidates, ...rangeMeetings].filter(
       (meeting) =>
         (!requestedServerIds || requestedServerIds.has(meeting.guildId)) &&
-        isMeetingAfterCursor(meeting, range.cursor),
+        isPastCursor(meeting, range.cursor),
     ),
   );
   const allowedMeetings = await collectAccessibleUserMeetings({
