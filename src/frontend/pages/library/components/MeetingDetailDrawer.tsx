@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { useNavigate, useRouterState, useSearch } from "@tanstack/react-router";
+import { useSearch } from "@tanstack/react-router";
 import type { HTMLAttributes } from "react";
 import {
   ActionIcon,
@@ -94,6 +94,7 @@ type MeetingDetailDrawerProps = {
   canManageSelectedGuild: boolean;
   channelNameMap: Map<string, string>;
   invalidateMeetingLists: () => Promise<void>;
+  onFullScreenChange?: (fullScreen: boolean) => void;
   onClose: () => void;
 };
 
@@ -120,21 +121,14 @@ export default function MeetingDetailDrawer({
   canManageSelectedGuild,
   channelNameMap,
   invalidateMeetingLists,
+  onFullScreenChange,
   onClose,
 }: MeetingDetailDrawerProps) {
   const theme = useMantineTheme();
   const scheme = useComputedColorScheme("dark");
   const isDark = scheme === "dark";
   const drawerOffset = theme.spacing.sm;
-  const navigateAsk = useNavigate({ from: "/portal/server/$serverId/ask" });
-  const navigateLibrary = useNavigate({
-    from: "/portal/server/$serverId/library",
-  });
-  const activeRouteId = useRouterState({
-    select: (state) => state.matches[state.matches.length - 1]?.routeId,
-  });
-  const isAskRoute = activeRouteId === "/portal/server/$serverId/ask";
-  const search = useSearch({ from: "/portal/server/$serverId" });
+  const search = useSearch({ strict: false });
   const fullScreenFromSearch = search.fullScreen === true;
   const trpcUtils = trpc.useUtils();
 
@@ -232,6 +226,8 @@ export default function MeetingDetailDrawer({
   );
   const notionExportMutation = trpc.notion.exportMeeting.useMutation();
   const notionSyncMutation = trpc.notion.syncMeeting.useMutation();
+  const notionRetryAutomationMutation =
+    trpc.notion.retryAutomationExport.useMutation();
 
   const summaryCopyText = detail?.notes ?? "";
   const canCopySummary = summaryCopyText.trim().length > 0;
@@ -506,12 +502,7 @@ export default function MeetingDetailDrawer({
   const handleToggleFullScreen = () => {
     const next = !fullScreen;
     setFullScreen(next);
-    (isAskRoute ? navigateAsk : navigateLibrary)({
-      search: (prev) => ({
-        ...prev,
-        fullScreen: next ? true : undefined,
-      }),
-    });
+    onFullScreenChange?.(next);
   };
 
   const preflightEndMeeting = async () => {
@@ -742,6 +733,24 @@ export default function MeetingDetailDrawer({
     }
   };
 
+  const handleRetryNotionAutomation = async () => {
+    if (!selectedGuildId || !selectedMeetingId) return;
+    try {
+      await notionRetryAutomationMutation.mutateAsync({
+        serverId: selectedGuildId,
+        meetingId: selectedMeetingId,
+      });
+      notifications.show({ message: "Notion automation retried." });
+      await trpcUtils.notion.exportStatus.invalidate();
+    } catch (error) {
+      const message =
+        error instanceof Error && error.message
+          ? error.message
+          : "Unable to retry Notion automation right now.";
+      notifications.show({ color: "red", message });
+    }
+  };
+
   const handleOpenNotionPage = () => {
     const pageUrl = notionExportStatusQuery.data?.pageUrl;
     if (!pageUrl) return;
@@ -824,31 +833,49 @@ export default function MeetingDetailDrawer({
     notionConnected &&
     Boolean(notionExportStatusQuery.error);
   const notionActionPending =
-    notionExportMutation.isPending || notionSyncMutation.isPending;
+    notionExportMutation.isPending ||
+    notionSyncMutation.isPending ||
+    notionRetryAutomationMutation.isPending;
+  const notionAutomationStatus = notionExportStatus?.source === "automation";
+  const notionAutomationNeedsRetry =
+    notionAutomationStatus &&
+    (!notionExportStatus.exported ||
+      notionExportStatus.outdated ||
+      Boolean(notionExportStatus.lastError));
   const notionActionLabel = !notionConfigured
     ? "Notion unavailable"
-    : !notionConnected
-      ? "Connect Notion"
-      : notionExportStatusLoading
-        ? "Loading Notion status..."
-        : notionExportStatusUnavailable || !notionExportStatus
-          ? "Notion status unavailable"
-          : !notionExportStatus.exported
-            ? "Export to Notion"
-            : notionExportStatus.outdated
-              ? "Sync latest to Notion"
-              : "Sync to Notion";
+    : notionExportStatusLoading
+      ? "Loading Notion status..."
+      : notionExportStatusUnavailable || !notionExportStatus
+        ? "Notion status unavailable"
+        : notionAutomationStatus
+          ? notionAutomationNeedsRetry
+            ? canManageSelectedGuild
+              ? "Retry Notion automation"
+              : "Notion automation needs attention"
+            : undefined
+          : !notionConnected
+            ? "Connect Notion"
+            : !notionExportStatus.exported
+              ? "Export to Notion"
+              : notionExportStatus.outdated
+                ? "Sync latest to Notion"
+                : "Sync to Notion";
   const handleNotionAction = !notionConfigured
     ? undefined
-    : !notionConnected
-      ? handleConnectNotion
-      : notionExportStatusLoading ||
-          notionExportStatusUnavailable ||
-          !notionExportStatus
-        ? undefined
-        : !notionExportStatus.exported
-          ? handleExportToNotion
-          : handleSyncToNotion;
+    : notionExportStatusLoading ||
+        notionExportStatusUnavailable ||
+        !notionExportStatus
+      ? undefined
+      : notionAutomationStatus
+        ? notionAutomationNeedsRetry && canManageSelectedGuild
+          ? handleRetryNotionAutomation
+          : undefined
+        : !notionConnected
+          ? handleConnectNotion
+          : !notionExportStatus.exported
+            ? handleExportToNotion
+            : handleSyncToNotion;
 
   const summarySection = meeting ? (
     <MeetingSummaryPanel

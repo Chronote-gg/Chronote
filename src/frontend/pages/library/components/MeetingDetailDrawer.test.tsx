@@ -43,7 +43,13 @@ const mockNotionStatusQuery = {
 
 const mockNotionExportStatusQuery: {
   data:
-    | { exported: boolean; currentNotesVersion: number; outdated: boolean }
+    | {
+        exported: boolean;
+        currentNotesVersion: number;
+        outdated: boolean;
+        source?: "manual" | "automation";
+        lastError?: string;
+      }
     | undefined;
   isLoading: boolean;
   isFetching: boolean;
@@ -94,6 +100,17 @@ jest.mock("../../../services/trpc", () => ({
         }),
       },
       syncMeeting: {
+        useMutation: () => ({
+          mutateAsync: jest.fn().mockResolvedValue({
+            ok: true,
+            pageUrl: "https://notion.so/page-1",
+            exportedNotesVersion: 1,
+          }),
+          isPending: false,
+          error: undefined,
+        }),
+      },
+      retryAutomationExport: {
         useMutation: () => ({
           mutateAsync: jest.fn().mockResolvedValue({
             ok: true,
@@ -400,5 +417,21 @@ describe("MeetingDetailDrawer summary copy", () => {
     expect(
       (await screen.findByText("Notion status unavailable")).closest("button"),
     ).toBeDisabled();
+  });
+
+  it("shows a retry action for failed automated Notion exports", async () => {
+    mockNotionStatusQuery.data = { configured: true, connected: true };
+    mockNotionExportStatusQuery.data = {
+      exported: false,
+      source: "automation",
+      currentNotesVersion: 1,
+      outdated: false,
+      lastError: "Reconnect Notion.",
+    };
+
+    renderDrawer();
+    fireEvent.click(screen.getByLabelText("Notes actions"));
+
+    expect(await screen.findByText("Retry Notion automation")).toBeEnabled();
   });
 });

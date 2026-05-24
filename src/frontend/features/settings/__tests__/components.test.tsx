@@ -2,6 +2,7 @@ import { render, screen, fireEvent } from "@testing-library/react";
 import { MantineProvider } from "@mantine/core";
 import { FiltersBar } from "../../library/FiltersBar";
 import { GlobalDefaultsCard } from "../GlobalDefaultsCard";
+import { NotionIntegrationCard } from "../NotionIntegrationCard";
 
 describe("Settings components", () => {
   it("FiltersBar updates query", () => {
@@ -64,5 +65,44 @@ describe("Settings components", () => {
     );
     fireEvent.click(screen.getByTestId("settings-save-defaults"));
     expect(onSave).toHaveBeenCalled();
+  });
+
+  it("NotionIntegrationCard shows automation destination and disables it", () => {
+    const onDisable = jest.fn(() => Promise.resolve());
+    render(
+      <MantineProvider>
+        <NotionIntegrationCard
+          status={{
+            configured: true,
+            userConnected: true,
+            workspaceName: "Workspace One",
+            automation: {
+              enabled: true,
+              ownerConnected: true,
+              workspaceName: "Workspace One",
+              destinationPageId: "page-1",
+              destinationTitle: "Meeting archive",
+              destinationUrl: "https://notion.so/page-1",
+              channelIds: [],
+              tags: [],
+            },
+          }}
+          loading={false}
+          busy={false}
+          destinationPages={[]}
+          destinationLoading={false}
+          voiceChannels={[]}
+          onConnect={jest.fn()}
+          onSearchDestinations={jest.fn()}
+          onSave={jest.fn(() => Promise.resolve())}
+          onDisable={onDisable}
+        />
+      </MantineProvider>,
+    );
+
+    expect(screen.getByText("Auto-export on")).toBeInTheDocument();
+    expect(screen.getAllByText(/Meeting archive/).length).toBeGreaterThan(0);
+    fireEvent.click(screen.getByText("Disable automation"));
+    expect(onDisable).toHaveBeenCalled();
   });
 });

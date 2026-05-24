@@ -75,6 +75,14 @@ export default function PortalServerLayout() {
         canManageSelectedGuild={canManageSelectedGuild}
         channelNameMap={channelNameMap}
         invalidateMeetingLists={invalidateMeetingLists}
+        onFullScreenChange={(fullScreen) =>
+          (isAskRoute ? navigateAsk : navigateLibrary)({
+            search: (prev) => ({
+              ...prev,
+              fullScreen: fullScreen ? true : undefined,
+            }),
+          })
+        }
         onClose={() =>
           (isAskRoute ? navigateAsk : navigateLibrary)({
             search: (prev) => ({

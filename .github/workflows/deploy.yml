@@ -413,6 +413,74 @@ jobs:
           echo "current_task_def=$CURRENT_TASK_DEF" >> $GITHUB_OUTPUT
           echo "Current task definition: $CURRENT_TASK_DEF"
 
+      - name: Wait for active meetings to finish
+        env:
+          AWS_REGION: ${{ vars.AWS_REGION }}
+          ACTIVE_MEETING_DEPLOY_WAIT_SECONDS: ${{ vars.ACTIVE_MEETING_DEPLOY_WAIT_SECONDS }}
+        run: |
+          set -euo pipefail
+
+          secrets_prefix="${SECRETS_PREFIX:-}"
+          if [ -z "$secrets_prefix" ] && [ -n "${ECS_TASK_FAMILY:-}" ]; then
+            secrets_prefix="${ECS_TASK_FAMILY%-bot-task}"
+          fi
+          if [ -z "$secrets_prefix" ]; then
+            echo "ERROR: SECRETS_PREFIX is not set and could not be derived."
+            exit 1
+          fi
+
+          TABLE_NAME="${secrets_prefix}-ActiveMeetingTable"
+          WAIT_TIMEOUT_SECONDS="${ACTIVE_MEETING_DEPLOY_WAIT_SECONDS:-7500}"
+          POLL_SECONDS=30
+          deadline=$(($(date +%s) + WAIT_TIMEOUT_SECONDS))
+
+          while true; do
+            # activeMeetingLeaseService stores leaseExpiresAt as epoch seconds.
+            now_epoch_seconds=$(date +%s)
+            active_count=0
+            exclusive_start_key=""
+
+            while true; do
+              scan_args=(
+                dynamodb scan
+                --table-name "$TABLE_NAME"
+                --region "$AWS_REGION"
+                --consistent-read
+                --filter-expression '#leaseExpiresAt >= :now AND (attribute_not_exists(#status) OR (#status <> :complete AND #status <> :cancelled))'
+                --expression-attribute-names '{"#leaseExpiresAt":"leaseExpiresAt","#status":"status"}'
+                --expression-attribute-values "{\":now\":{\"N\":\"$now_epoch_seconds\"},\":complete\":{\"S\":\"complete\"},\":cancelled\":{\"S\":\"cancelled\"}}"
+                --select COUNT
+                --output json
+                --no-paginate
+              )
+              if [ -n "$exclusive_start_key" ]; then
+                scan_args+=(--exclusive-start-key "$exclusive_start_key")
+              fi
+
+              response=$(aws "${scan_args[@]}")
+              page_count=$(jq -r '.Count // 0' <<<"$response")
+              active_count=$((active_count + page_count))
+              exclusive_start_key=$(jq -c '.LastEvaluatedKey // empty' <<<"$response")
+
+              if [ "$active_count" -gt 0 ] || [ -z "$exclusive_start_key" ]; then
+                break
+              fi
+            done
+
+            if [ "$active_count" = "0" ]; then
+              echo "No active meeting leases found. Continuing deployment."
+              break
+            fi
+
+            if [ "$now_epoch_seconds" -ge "$deadline" ]; then
+              echo "ERROR: Found $active_count active meeting lease(s) after waiting $WAIT_TIMEOUT_SECONDS seconds. Not replacing the ECS task while recording may be active."
+              exit 1
+            fi
+
+            echo "Found $active_count active meeting lease(s). Waiting $POLL_SECONDS seconds before deployment..."
+            sleep "$POLL_SECONDS"
+          done
+
       - name: Update ECS service with new task definition
         id: update-service
         env:

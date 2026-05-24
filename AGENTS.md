@@ -76,7 +76,7 @@
 - ServerContext / ChannelContext store prompt context.
 - AutoRecordSettings enable record-all or per-channel auto-start.
 - McpOAuthTable stores hashed MCP OAuth clients, authorization codes, tokens, and user consents. Access tokens are resource-bound to the configured MCP endpoint and scopes are enforced per tool.
-- NotionIntegrationTable stores per-user Notion connection metadata and per-user meeting export mappings. Notion access and refresh tokens are encrypted before persistence.
+- NotionIntegrationTable stores per-user Notion connection metadata and per-user meeting export mappings, plus server-scoped automation config/export/reservation records keyed under `GUILD#guildId`. Notion access and refresh tokens are encrypted before persistence.
 
 ## Frontend
 
@@ -95,6 +95,7 @@
 - Variables (tfvars.example): Discord IDs/tokens, OpenAI keys, OAuth secrets, ENABLE_OAUTH (false by default in example), AWS/GitHub tokens.
 - ECS task environment passes all relevant vars from Terraform; OpenAI org/project optional; OAuth vars included but can be blank if disabled.
 - Terraform plan visibility is manual via `.github/workflows/terraform-plan.yml`; merges do not auto-apply Terraform. The workflow expects environment-scoped AWS credentials and a `TERRAFORM_TFVARS_JSON` secret. Keep `grafana_api_key` empty after Grafana token rotation is active, and use `grafana_service_account_id` plus the rotated Secrets Manager token.
+- Backend deploy workflows must wait for unexpired `ActiveMeetingTable` leases to clear before replacing the ECS task, so merges do not kill in-progress recordings. Keep production and staging deploy guards aligned.
 - Future work suggestion: keep cache and Redis Terraform resources in `_infra/cache.tf`, and add new cache infrastructure there.
 
 ## Known nuances / gotchas
@@ -120,6 +121,7 @@
 - Playwright mock mode: ensure only the mock API (port 3001) and frontend dev server (port 5173) are running. If ports are occupied, stop them first (`Get-NetTCPConnection -LocalPort 3001,5173 | Select-Object -ExpandProperty OwningProcess -Unique | ForEach-Object { Stop-Process -Id $_ }`). Clear `VITE_API_BASE_URL` (for example via `.env.local`) so the frontend uses the mock server.
 - Comment hygiene: don’t leave transient or change-log style comments (e.g., “SDK v3 exposes transformToString”). Use comments only to clarify non-obvious logic, constraints, or intent.
 - Writing style: do not use em dashes in copy/docs/comments; prefer commas, parentheses, or hyphens.
+- Planning questions: number clarifying questions when asking the user to choose direction.
 - **User data in public outputs (CRITICAL):** This is a public repository. NEVER include real user data in PR descriptions, commit messages, issue comments, code comments, docs, or any other content that is or may become publicly visible. This includes Discord usernames, display names, user/server/channel IDs, meeting content, transcription excerpts, notes content, server names, and any other user-generated or user-identifying information. When referencing real scenarios for context, replace all identifying details with generic placeholders (e.g., "User A", "User B", "Server X", "Channel Y", "#general"). The technical meaning must be preserved while all PII and user content is stripped.
 - GitHub prose: prefix any PR comments, PR descriptions, issue text, or other GitHub prose with `[AGENT]`.
 - PR review hygiene: before asking the user to merge a PR, reply to and resolve all AI bot review threads (Copilot, Greptile, etc). If we disagree with the suggestion, say so and resolve the thread anyway. Use reactions when helpful. When replying to review comments, reply directly to each thread using the review comment replies API (`POST /repos/OWNER/REPO/pulls/PR/comments/COMMENT_ID/replies`), not by creating a new pending review. Direct replies keep each response in its original thread context.

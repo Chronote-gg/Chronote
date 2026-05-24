@@ -24,7 +24,7 @@ const getBrowserLocation = (): Location | undefined =>
 
 const resolvePortalRedirect = (location?: Location) => {
   if (!location) {
-    return "/portal/select-server";
+    return "/portal";
   }
   const pathname = location.pathname;
   const useCurrentLocation =
@@ -35,7 +35,7 @@ const resolvePortalRedirect = (location?: Location) => {
   if (useCurrentLocation) {
     return location.href;
   }
-  return `${location.origin}/portal/select-server`;
+  return `${location.origin}/portal`;
 };
 
 const resolveLogoutRedirect = (location?: Location) => {

@@ -25,6 +25,7 @@ import type { Participant } from "../types/participants";
 import type { TranscriptPayload } from "../types/transcript";
 import { replaceDiscordMentionsWithDisplayNames } from "../utils/participants";
 import { isMeetingIndexedForUser } from "../utils/meetingUserIndex";
+import { buildPortalMeetingUrl } from "../utils/portalLinks";
 
 const MIN_TIMESTAMP_ISO = "1970-01-01T00:00:00.000Z";
 const MAX_TIMESTAMP_ISO = "9999-12-31T23:59:59.999Z";
@@ -201,8 +202,11 @@ const assertMcpGuildMembership = async (guildId: string, userId: string) => {
 const resolveMcpMeetingAccessContext = async (
   guildId: string,
   userId: string,
+  options: { requireGuildMembership?: boolean } = {},
 ): Promise<McpMeetingAccessContext> => {
-  await assertMcpGuildMembership(guildId, userId);
+  if (options.requireGuildMembership !== false) {
+    await assertMcpGuildMembership(guildId, userId);
+  }
   return {
     attendeeOverrideEnabled: await resolveAttendeeAccessEnabled(guildId),
   };
@@ -214,9 +218,15 @@ const ensureMcpMeetingAccess = async (options: {
   userId: string;
   accessContext?: McpMeetingAccessContext;
 }) => {
+  const indexedForUser = isMeetingIndexedForUser(
+    options.meeting,
+    options.userId,
+  );
   const accessContext =
     options.accessContext ??
-    (await resolveMcpMeetingAccessContext(options.guildId, options.userId));
+    (await resolveMcpMeetingAccessContext(options.guildId, options.userId, {
+      requireGuildMembership: !indexedForUser,
+    }));
   const decision = await checkUserMeetingAccess({
     guildId: options.guildId,
     meeting: options.meeting,
@@ -250,15 +260,6 @@ const resolveChannelMap = async (guildId: string) => {
   }
 };
 
-const buildPortalMeetingUrl = (guildId: string, meetingId: string) => {
-  const url = new URL(
-    `/portal/server/${guildId}/library`,
-    config.frontend.siteUrl,
-  );
-  url.searchParams.set("meetingId", meetingId);
-  return url.toString();
-};
-
 const summarizeMeeting = (
   meeting: MeetingHistory,
   channelMap: Map<string, string>,
@@ -280,10 +281,11 @@ const summarizeMeeting = (
     transcriptAvailable: Boolean(meeting.transcriptS3Key),
     audioAvailable: Boolean(meeting.audioS3Key),
     archivedAt: meeting.archivedAt,
-    portalUrl: buildPortalMeetingUrl(
-      meeting.guildId,
-      meeting.channelId_timestamp,
-    ),
+    portalUrl: buildPortalMeetingUrl({
+      baseUrl: config.frontend.siteUrl,
+      guildId: meeting.guildId,
+      meetingId: meeting.channelId_timestamp,
+    }),
   };
 };
 
@@ -675,23 +677,25 @@ const collectAccessibleUserMeetings = async (input: {
   const allowedMeetings: MeetingHistory[] = [];
 
   for (const meeting of input.meetings) {
-    if (
-      input.mode === "attended" &&
-      !isMeetingIndexedForUser(meeting, input.userId)
-    ) {
+    const indexedForUser = isMeetingIndexedForUser(meeting, input.userId);
+    if (input.mode === "attended" && !indexedForUser) {
       continue;
     }
     if (!meetingMatchesListFilters(meeting, input, requestedTags)) {
       continue;
     }
     try {
-      let accessContext = accessContexts.get(meeting.guildId);
+      const requireGuildMembership =
+        input.mode !== "attended" || !indexedForUser;
+      const accessContextKey = `${meeting.guildId}:${requireGuildMembership}`;
+      let accessContext = accessContexts.get(accessContextKey);
       if (!accessContext) {
         accessContext = await resolveMcpMeetingAccessContext(
           meeting.guildId,
           input.userId,
+          { requireGuildMembership },
         );
-        accessContexts.set(meeting.guildId, accessContext);
+        accessContexts.set(accessContextKey, accessContext);
       }
       await ensureMcpMeetingAccess({
         guildId: meeting.guildId,
@@ -755,14 +759,10 @@ export async function listMcpMyMeetings(input: ListMcpMyMeetingsInput) {
 
   const mode = input.mode ?? "attended";
   const range = resolveMyMeetingsDateRange(input);
-  const servers = filterMcpServers(
-    await listMcpServersForUser(input.userId),
-    input.serverIds,
-  );
-  if (servers.length === 0) return { meetings: [] };
-
-  const serverMap = new Map(servers.map((server) => [server.id, server]));
   const scanLimit = limit * MCP_MEETING_SCAN_LIMIT_MULTIPLIER;
+  const requestedServerIds = input.serverIds?.length
+    ? new Set(input.serverIds)
+    : null;
   const indexedMeetings =
     mode === "attended"
       ? await listIndexedMeetingsForUser({
@@ -773,11 +773,21 @@ export async function listMcpMyMeetings(input: ListMcpMyMeetingsInput) {
         })
       : [];
   const indexedCandidates = compactUniqueMeetings(
-    indexedMeetings.filter((meeting) => serverMap.has(meeting.guildId)),
+    indexedMeetings.filter(
+      (meeting) =>
+        !requestedServerIds || requestedServerIds.has(meeting.guildId),
+    ),
   );
+  const servers = filterMcpServers(
+    await listMcpServersForUser(input.userId),
+    input.serverIds,
+  );
+
+  const serverMap = new Map(servers.map((server) => [server.id, server]));
   const needsRangeFallback =
-    mode === "accessible" ||
-    countMeetingsMatchingListFilters(indexedCandidates, input) < limit;
+    servers.length > 0 &&
+    (mode === "accessible" ||
+      countMeetingsMatchingListFilters(indexedCandidates, input) < limit);
   const rangeMeetings = needsRangeFallback
     ? await listRangeMeetingsForServers({
         servers,
@@ -788,8 +798,9 @@ export async function listMcpMyMeetings(input: ListMcpMyMeetingsInput) {
       })
     : [];
   const candidateMeetings = compactUniqueMeetings(
-    [...indexedCandidates, ...rangeMeetings].filter((meeting) =>
-      serverMap.has(meeting.guildId),
+    [...indexedCandidates, ...rangeMeetings].filter(
+      (meeting) =>
+        !requestedServerIds || requestedServerIds.has(meeting.guildId),
     ),
   );
   const allowedMeetings = await collectAccessibleUserMeetings({

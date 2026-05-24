@@ -168,10 +168,12 @@ export default function MyMeetings() {
     const meeting = filteredMeetings.find((item) => item.id === meetingId);
     if (!meeting?.serverId) return;
     navigate({
-      to: "/portal/server/$serverId/library",
-      params: { serverId: meeting.serverId },
-      search: { meetingId: meeting.id },
+      to: "/portal/meetings/$serverId/$meetingId",
+      params: { serverId: meeting.serverId, meetingId: meeting.id },
     });
+  };
+  const openServerSelect = () => {
+    navigate({ to: "/portal/select-server" });
   };
 
   return (
@@ -270,6 +272,11 @@ export default function MyMeetings() {
         listError={Boolean(meetingsQuery.error)}
         onSelect={openMeeting}
         selectedMeetingId={null}
+        emptyTitle="No meetings found here yet."
+        emptyDescription="Choose a server to browse its Library, Ask threads, billing, and settings."
+        emptyActionLabel="View servers"
+        onEmptyAction={openServerSelect}
+        emptyActionTestId="my-meetings-view-servers"
       />
     </Stack>
   );

@@ -94,6 +94,17 @@ export const Empty: Story = {
   },
 };
 
+export const EmptyWithAction: Story = {
+  args: {
+    items: [],
+    emptyTitle: "No meetings found here yet.",
+    emptyDescription:
+      "Choose a server to browse its Library, Ask threads, billing, and settings.",
+    emptyActionLabel: "View servers",
+    onEmptyAction: () => undefined,
+  },
+};
+
 export const Archived: Story = {
   args: {
     items: archivedItems,

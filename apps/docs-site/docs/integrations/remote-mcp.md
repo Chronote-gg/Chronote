@@ -69,9 +69,9 @@ When your MCP client connects, it opens a Chronote authorization flow in the bro
 
 ## Access Rules
 
-Chronote only returns meeting data if the authenticated Discord user can access the meeting. Access follows the same model as the Library:
+Chronote only returns meeting data if the authenticated Discord user can access the meeting. Access follows the same model as My Meetings and Server Library:
 
-- Current server members who participated can access their meetings when attendee access is enabled.
+- Users who participated can access their indexed meetings when attendee access is enabled.
 - Other users need access to the voice channel and notes channel history.
 - Transcript access requires explicit transcript scope consent.
 

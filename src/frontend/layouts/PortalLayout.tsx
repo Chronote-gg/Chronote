@@ -164,7 +164,7 @@ export default function PortalLayout() {
               <Stack gap="sm" align="center">
                 <Text fw={600}>Connect Discord to open your portal.</Text>
                 <Text size="sm" c="dimmed" ta="center">
-                  Sign in to select a server and view meeting history.
+                  Sign in to open My Meetings and view meeting history.
                 </Text>
                 <Button
                   component="a"

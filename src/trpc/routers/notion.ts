@@ -3,23 +3,48 @@ import { z } from "zod";
 import { CONFIG_KEYS } from "../../config/keys";
 import { config } from "../../services/configService";
 import { ensureUserCanAccessMeeting } from "../../services/meetingAccessService";
-import { authedProcedure, guildMemberProcedure, router } from "../trpc";
+import {
+  authedProcedure,
+  guildMemberProcedure,
+  manageGuildProcedure,
+  router,
+} from "../trpc";
 import { getMeetingHistoryService } from "../../services/meetingHistoryService";
+import { retryNotionAutomationExport } from "../../services/notionAutomationService";
 import {
   getSnapshotBoolean,
   resolveConfigSnapshot,
 } from "../../services/unifiedConfigService";
 import {
   exportMeetingToNotion,
-  getMeetingNotionExportStatus,
+  getEffectiveMeetingNotionExportStatus,
+  getNotionAutomationStatus,
   getNotionStatus,
+  listNotionDestinationPages,
   NotionApiError,
+  saveNotionAutomationConfig,
+  setNotionAutomationEnabled,
   syncMeetingToNotion,
 } from "../../services/notionService";
 
 const meetingInput = z.object({
   serverId: z.string(),
   meetingId: z.string(),
+});
+
+const serverInput = z.object({
+  serverId: z.string(),
+});
+
+const destinationSearchInput = serverInput.extend({
+  query: z.string().max(100).optional(),
+});
+
+const automationConfigInput = serverInput.extend({
+  destinationPageId: z.string().min(1),
+  autoExportEnabled: z.boolean(),
+  channelIds: z.array(z.string().min(1)).max(100).optional(),
+  tags: z.array(z.string().min(1).max(40)).max(20).optional(),
 });
 
 const ensureNotionConfigured = () => {
@@ -76,6 +101,9 @@ const toTrpcNotionError = (err: unknown): TRPCError => {
       message: "Notion is rate limiting requests. Try again shortly.",
     });
   }
+  if (err.status === 409) {
+    return new TRPCError({ code: "CONFLICT", message: err.message });
+  }
   if (err.status === 400) {
     return new TRPCError({ code: "BAD_REQUEST", message: err.message });
   }
@@ -123,6 +151,77 @@ const requireAccessibleMeeting = async (params: {
 export const notionRouter = router({
   status: authedProcedure.query(({ ctx }) => getNotionStatus(ctx.user.id)),
 
+  automationStatus: guildMemberProcedure
+    .input(serverInput)
+    .query(({ ctx, input }) =>
+      getNotionAutomationStatus({
+        guildId: input.serverId,
+        userId: ctx.user.id,
+      }),
+    ),
+
+  destinationPages: manageGuildProcedure
+    .input(destinationSearchInput)
+    .query(async ({ ctx, input }) => {
+      ensureNotionConfigured();
+      try {
+        return {
+          pages: await listNotionDestinationPages({
+            userId: ctx.user.id,
+            query: input.query,
+          }),
+        };
+      } catch (err) {
+        throw toTrpcNotionError(err);
+      }
+    }),
+
+  saveAutomationConfig: manageGuildProcedure
+    .input(automationConfigInput)
+    .mutation(async ({ ctx, input }) => {
+      ensureNotionConfigured();
+      try {
+        const automationConfig = await saveNotionAutomationConfig({
+          guildId: input.serverId,
+          userId: ctx.user.id,
+          destinationPageId: input.destinationPageId,
+          autoExportEnabled: input.autoExportEnabled,
+          channelIds: input.channelIds,
+          tags: input.tags,
+        });
+        return { ok: true, automationConfig };
+      } catch (err) {
+        throw toTrpcNotionError(err);
+      }
+    }),
+
+  disableAutomation: manageGuildProcedure
+    .input(serverInput)
+    .mutation(async ({ input }) => {
+      await setNotionAutomationEnabled({
+        guildId: input.serverId,
+        enabled: false,
+      });
+      return { ok: true };
+    }),
+
+  retryAutomationExport: manageGuildProcedure
+    .input(meetingInput)
+    .mutation(async ({ input }) => {
+      ensureNotionConfigured();
+      const meeting = await requireMeeting(input.serverId, input.meetingId);
+      try {
+        const exported = await retryNotionAutomationExport(meeting);
+        return {
+          ok: true,
+          pageUrl: exported?.notionPageUrl,
+          exportedNotesVersion: exported?.exportedNotesVersion,
+        };
+      } catch (err) {
+        throw toTrpcNotionError(err);
+      }
+    }),
+
   exportStatus: guildMemberProcedure
     .input(meetingInput)
     .query(async ({ ctx, input }) => {
@@ -132,7 +231,7 @@ export const notionRouter = router({
         meetingId: input.meetingId,
         userId: ctx.user.id,
       });
-      return getMeetingNotionExportStatus({
+      return getEffectiveMeetingNotionExportStatus({
         userId: ctx.user.id,
         guildId: input.serverId,
         meetingId: input.meetingId,

@@ -9,7 +9,7 @@ Chronote integrations extend meeting data into external tools and workflows.
 
 ### Web portal
 
-Chronote includes a built-in web portal for browsing meetings, reading transcripts, sharing links, and managing settings. The portal is accessible from any meeting summary embed via the **Open in Chronote** button.
+Chronote includes a built-in web portal for browsing meetings, reading transcripts, sharing links, and managing settings. **Open portal** opens **My Meetings** by default, and the **Open in Chronote** button on a meeting summary opens that meeting directly. Choose **View servers** when you need a server-scoped Library, Ask, Billing, or Settings view.
 
 The portal authenticates through Discord OAuth so channel permissions are respected.
 
@@ -21,7 +21,9 @@ Chronote can export meeting notes to Notion from the web portal. Connect Notion 
 
 If Chronote notes are edited later, use **Sync latest to Notion** to replace the exported Notion page with the newest Chronote notes version.
 
-Chronote is the source of truth for this integration. The initial integration is one-way from Chronote to Notion.
+Server managers can also open **Server settings** -> **Notion integration** to choose a shared destination page and enable automatic exports for completed meetings. Automatic exports can be limited to specific voice channels or tags. Later Chronote note edits sync one-way to the existing Notion page.
+
+Chronote is the source of truth for this integration. Notion export and sync are one-way from Chronote to Notion.
 
 ### Discord
 
@@ -32,12 +34,6 @@ Chronote's primary interface. All meeting controls, notes, and interactions happ
 Chronote exposes a read-only MCP (Model Context Protocol) endpoint for AI assistants and agents. It uses OAuth with Discord sign-in and respects the same meeting access rules as the portal.
 
 See [Remote MCP](/integrations/remote-mcp) for setup and available tools.
-
-## Planned integrations
-
-### Notion automation
-
-Automatic background sync to a configured Notion folder or page is planned. Notion database support is also planned so teams can map meeting metadata (date, attendees, tags, duration, status, and Chronote links) into database properties.
 
 ## Integration principles
 

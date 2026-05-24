@@ -139,7 +139,7 @@ export function SiteNavbar({ onClose, pathname }: SiteNavbarProps) {
           {NAV_ITEMS.map((item) => {
             const Icon = item.icon;
             const isActive = item.to
-              ? pathname === item.to
+              ? pathname === item.to || pathname.startsWith(`${item.to}/`)
               : pathname.includes(`/${item.value}`);
             const disabled =
               (item.requiresAuth && authState !== "authenticated") ||
