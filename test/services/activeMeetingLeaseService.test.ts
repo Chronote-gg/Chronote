@@ -64,8 +64,12 @@ describe("activeMeetingLeaseService", () => {
     jest.restoreAllMocks();
   });
 
-  test("acquires lease with expected ownership payload", async () => {
+  test("acquires lease with epoch-second expiry payload", async () => {
     mockedTryAcquireActiveMeetingLease.mockResolvedValue(true);
+    const nowMs = Date.parse("2026-02-14T20:00:00.000Z");
+    const nowEpochSeconds = Math.floor(nowMs / 1000);
+    const expectedLeaseSeconds = 30;
+    const expectedTtlGraceSeconds = 120;
 
     const acquired = await tryAcquireMeetingLease({
       guildId: "guild-1",
@@ -87,13 +91,22 @@ describe("activeMeetingLeaseService", () => {
         textChannelId: "text-1",
         isAutoRecording: false,
         status: MEETING_STATUS.IN_PROGRESS,
-        leaseExpiresAt: 1771099230,
+        leaseExpiresAt: nowEpochSeconds + expectedLeaseSeconds,
         createdAt: "2026-02-14T20:00:00.000Z",
         updatedAt: "2026-02-14T20:00:00.000Z",
-        expiresAt: 1771099350,
+        expiresAt:
+          nowEpochSeconds + expectedLeaseSeconds + expectedTtlGraceSeconds,
       },
-      1771099200,
+      nowEpochSeconds,
     );
+    const leaseCall = mockedTryAcquireActiveMeetingLease.mock.calls[0];
+    expect(leaseCall?.[0].leaseExpiresAt).toBe(
+      nowEpochSeconds + expectedLeaseSeconds,
+    );
+    expect(leaseCall?.[0].expiresAt).toBe(
+      nowEpochSeconds + expectedLeaseSeconds + expectedTtlGraceSeconds,
+    );
+    expect(leaseCall?.[0].leaseExpiresAt).toBeLessThan(nowMs);
   });
 
   test("reports active lease status by epoch seconds", () => {
