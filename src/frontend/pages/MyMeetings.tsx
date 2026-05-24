@@ -57,9 +57,52 @@ type LoadedMeetingsPage = {
   cursor: string | null;
   data: MyMeetingsPageData;
 };
+type SelectOption = { value: string; label: string };
 
 const MS_PER_DAY = 1000 * 60 * 60 * 24;
 const MY_MEETINGS_PAGE_SIZE = 25;
+const MY_MEETINGS_MODE_OPTIONS: SelectOption[] = [
+  { value: "attended", label: "Meetings I attended" },
+  { value: "accessible", label: "Meetings I can access" },
+];
+const MY_MEETINGS_RANGE_OPTIONS: SelectOption[] = [
+  { value: "all", label: "All time" },
+  { value: "today", label: "Today" },
+  { value: "7", label: "Last 7 days" },
+  { value: "30", label: "Last 30 days" },
+];
+const MY_MEETINGS_ARCHIVE_OPTIONS: SelectOption[] = [
+  { value: "active", label: "Active" },
+  { value: "archived", label: "Archived" },
+  { value: "all", label: "All" },
+];
+
+const resetThenSet = <T,>(
+  resetPagination: () => void,
+  setValue: (value: T) => void,
+  value: T,
+) => {
+  resetPagination();
+  setValue(value);
+};
+
+const resolveModeSelection = (value: string | null): MyMeetingsMode =>
+  value === "accessible" ? "accessible" : "attended";
+
+const resolveRangeSelection = (value: string | null): MyMeetingsRange =>
+  value === "today" || value === "30" || value === "7" ? value : "all";
+
+const resolveArchiveSelection = (value: string | null): ArchiveFilter =>
+  value === "archived" || value === "all" ? value : "active";
+
+const optionalArray = (values: string[]) =>
+  values.length ? values : undefined;
+
+const resolveArchivedOnly = (archiveFilter: ArchiveFilter) =>
+  archiveFilter === "archived" ? true : undefined;
+
+const formatLoadedMeetingsCount = (count: number, hasMore: boolean) =>
+  hasMore ? `Showing ${count} loaded meetings` : `${count} meetings`;
 
 const resolveRangeInput = (range: MyMeetingsRange): MyMeetingsRangeInput => {
   const now = new Date();
@@ -119,6 +162,239 @@ const toMeetingItems = (meetingRows: MeetingSummaryRow[]): MeetingListItem[] =>
     };
   });
 
+const mergeLoadedMeetingPage = (
+  currentPages: LoadedMeetingsPage[],
+  pageCursor: string | null,
+  data: MyMeetingsPageData,
+) => {
+  const page = { cursor: pageCursor, data };
+  if (pageCursor === null) return [page];
+  const existingIndex = currentPages.findIndex(
+    (currentPage) => currentPage.cursor === pageCursor,
+  );
+  if (existingIndex < 0) return [...currentPages, page];
+  return currentPages.map((currentPage, index) =>
+    index === existingIndex ? page : currentPage,
+  );
+};
+
+const useLoadedMeetingPages = (
+  data: MyMeetingsPageData | undefined,
+  pageCursor: string | null,
+) => {
+  const [loadedPages, setLoadedPages] = useState<LoadedMeetingsPage[]>([]);
+
+  useEffect(() => {
+    if (!data) return;
+    setLoadedPages((currentPages) =>
+      mergeLoadedMeetingPage(currentPages, pageCursor, data),
+    );
+  }, [data, pageCursor]);
+
+  return { loadedPages, setLoadedPages };
+};
+
+const resolveLatestLoadedPage = (loadedPages: LoadedMeetingsPage[]) =>
+  loadedPages[loadedPages.length - 1]?.data;
+
+const resolveNextCursor = (latestPage?: MyMeetingsPageData) =>
+  latestPage?.nextCursor ?? null;
+
+const hasMoreLoadedMeetings = (
+  latestPage: MyMeetingsPageData | undefined,
+  nextCursor: string | null,
+) => {
+  if (!latestPage?.hasMore) return false;
+  return Boolean(nextCursor);
+};
+
+const resetMyMeetingsPagination = (
+  setLoadedPages: (pages: LoadedMeetingsPage[]) => void,
+  setPageCursor: (cursor: string | null) => void,
+) => {
+  setLoadedPages([]);
+  setPageCursor(null);
+};
+
+type LoadMyMeetingsPageInput = {
+  isFetching: boolean;
+  nextCursor: string | null;
+  pageCursor: string | null;
+  setPageCursor: (cursor: string | null) => void;
+};
+
+const loadMyMeetingsPage = ({
+  isFetching,
+  nextCursor,
+  pageCursor,
+  setPageCursor,
+}: LoadMyMeetingsPageInput) => {
+  if (!nextCursor || isFetching || nextCursor === pageCursor) return;
+  setPageCursor(nextCursor);
+};
+
+type RefreshMyMeetingsInput = {
+  pageCursor: string | null;
+  refetch: () => unknown;
+  setLoadedPages: (pages: LoadedMeetingsPage[]) => void;
+  setPageCursor: (cursor: string | null) => void;
+};
+
+const refreshMyMeetings = ({
+  pageCursor,
+  refetch,
+  setLoadedPages,
+  setPageCursor,
+}: RefreshMyMeetingsInput) => {
+  setLoadedPages([]);
+  if (pageCursor === null) {
+    void refetch();
+    return;
+  }
+  setPageCursor(null);
+};
+
+type MyMeetingsFiltersProps = {
+  archiveFilter: ArchiveFilter;
+  mode: MyMeetingsMode;
+  onArchiveFilterChange: (value: ArchiveFilter) => void;
+  onModeChange: (value: MyMeetingsMode) => void;
+  onQueryChange: (value: string) => void;
+  onSelectedRangeChange: (value: MyMeetingsRange) => void;
+  onSelectedServersChange: (value: string[]) => void;
+  onSelectedTagsChange: (value: string[]) => void;
+  query: string;
+  selectedRange: MyMeetingsRange;
+  selectedServers: string[];
+  selectedTags: string[];
+  serverOptions: SelectOption[];
+  tagOptions: string[];
+};
+
+function MyMeetingsFilters({
+  archiveFilter,
+  mode,
+  onArchiveFilterChange,
+  onModeChange,
+  onQueryChange,
+  onSelectedRangeChange,
+  onSelectedServersChange,
+  onSelectedTagsChange,
+  query,
+  selectedRange,
+  selectedServers,
+  selectedTags,
+  serverOptions,
+  tagOptions,
+}: MyMeetingsFiltersProps) {
+  return (
+    <Surface p="lg" tone="soft">
+      <SimpleGrid cols={{ base: 1, md: 3 }} spacing="md">
+        <TextInput
+          value={query}
+          onChange={(event) => onQueryChange(event.currentTarget.value)}
+          placeholder="Search my meetings"
+          leftSection={<IconSearch size={16} />}
+          data-testid="my-meetings-search"
+        />
+        <FormSelect
+          value={mode}
+          onChange={(value) => onModeChange(resolveModeSelection(value))}
+          data-testid="my-meetings-mode"
+          data={MY_MEETINGS_MODE_OPTIONS}
+        />
+        <FormSelect
+          value={selectedRange}
+          onChange={(value) =>
+            onSelectedRangeChange(resolveRangeSelection(value))
+          }
+          data-testid="my-meetings-range"
+          data={MY_MEETINGS_RANGE_OPTIONS}
+        />
+        <MultiSelect
+          data={serverOptions}
+          value={selectedServers}
+          onChange={onSelectedServersChange}
+          placeholder="Servers"
+          searchable
+          clearable
+          data-testid="my-meetings-servers"
+        />
+        <MultiSelect
+          data={tagOptions}
+          value={selectedTags}
+          onChange={onSelectedTagsChange}
+          placeholder="Tags"
+          searchable
+          clearable
+          data-testid="my-meetings-tags"
+        />
+        <FormSelect
+          value={archiveFilter}
+          onChange={(value) =>
+            onArchiveFilterChange(resolveArchiveSelection(value))
+          }
+          data-testid="my-meetings-archive-filter"
+          data={MY_MEETINGS_ARCHIVE_OPTIONS}
+        />
+      </SimpleGrid>
+    </Surface>
+  );
+}
+
+type MyMeetingsToolbarProps = {
+  countLabel: string;
+  onRefresh: () => void;
+};
+
+function MyMeetingsToolbar({ countLabel, onRefresh }: MyMeetingsToolbarProps) {
+  return (
+    <Group justify="space-between" align="center" wrap="wrap">
+      <Text c="dimmed" size="sm">
+        {countLabel}
+      </Text>
+      <Group gap="xs" align="center">
+        <Text size="xs" c="dimmed">
+          Sorted by recency
+        </Text>
+        <RefreshButton
+          onClick={onRefresh}
+          size="xs"
+          variant="subtle"
+          data-testid="my-meetings-refresh"
+        />
+      </Group>
+    </Group>
+  );
+}
+
+type MyMeetingsLoadMoreProps = {
+  loadingMore: boolean;
+  nextCursor: string | null;
+  onLoadMore: () => void;
+};
+
+function MyMeetingsLoadMore({
+  loadingMore,
+  nextCursor,
+  onLoadMore,
+}: MyMeetingsLoadMoreProps) {
+  return (
+    <Group justify="center">
+      <Button
+        variant="light"
+        color="brand"
+        onClick={onLoadMore}
+        loading={loadingMore}
+        disabled={!nextCursor}
+        data-testid="my-meetings-load-more"
+      >
+        Load more
+      </Button>
+    </Group>
+  );
+}
+
 export default function MyMeetings() {
   const navigate = useNavigate({ from: "/portal/meetings" });
   const { guilds } = useGuildContext();
@@ -129,7 +405,6 @@ export default function MyMeetings() {
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
   const [query, setQuery] = useState("");
   const [pageCursor, setPageCursor] = useState<string | null>(null);
-  const [loadedPages, setLoadedPages] = useState<LoadedMeetingsPage[]>([]);
   const deferredQuery = useDeferredValue(query);
 
   const rangeInput = useMemo(
@@ -140,52 +415,38 @@ export default function MyMeetings() {
     mode,
     limit: MY_MEETINGS_PAGE_SIZE,
     cursor: pageCursor ?? undefined,
-    archivedOnly: archiveFilter === "archived" ? true : undefined,
+    archivedOnly: resolveArchivedOnly(archiveFilter),
     includeArchived: archiveFilter !== "active",
-    serverIds: selectedServers.length ? selectedServers : undefined,
-    tags: selectedTags.length ? selectedTags : undefined,
+    serverIds: optionalArray(selectedServers),
+    tags: optionalArray(selectedTags),
     ...rangeInput,
   });
 
-  useEffect(() => {
-    if (!meetingsQuery.data) return;
-    setLoadedPages((currentPages) => {
-      const page = { cursor: pageCursor, data: meetingsQuery.data };
-      if (pageCursor === null) return [page];
-      const existingIndex = currentPages.findIndex(
-        (currentPage) => currentPage.cursor === pageCursor,
-      );
-      if (existingIndex < 0) return [...currentPages, page];
-      return currentPages.map((currentPage, index) =>
-        index === existingIndex ? page : currentPage,
-      );
+  const { loadedPages, setLoadedPages } = useLoadedMeetingPages(
+    meetingsQuery.data,
+    pageCursor,
+  );
+  const latestPage = resolveLatestLoadedPage(loadedPages);
+  const nextCursor = resolveNextCursor(latestPage);
+  const hasMore = hasMoreLoadedMeetings(latestPage, nextCursor);
+  const listLoading = meetingsQuery.isLoading && loadedPages.length === 0;
+  const loadingMore = meetingsQuery.isFetching && loadedPages.length > 0;
+  const resetPagination = () =>
+    resetMyMeetingsPagination(setLoadedPages, setPageCursor);
+  const loadMore = () =>
+    loadMyMeetingsPage({
+      isFetching: meetingsQuery.isFetching,
+      nextCursor,
+      pageCursor,
+      setPageCursor,
     });
-  }, [meetingsQuery.data, pageCursor]);
-
-  const resetPagination = () => {
-    setLoadedPages([]);
-    setPageCursor(null);
-  };
-
-  const latestPage = loadedPages[loadedPages.length - 1]?.data;
-  const nextCursor = latestPage?.nextCursor ?? null;
-  const hasMore = Boolean(latestPage?.hasMore && nextCursor);
-  const loadMore = () => {
-    if (!nextCursor || meetingsQuery.isFetching || nextCursor === pageCursor) {
-      return;
-    }
-    setPageCursor(nextCursor);
-  };
-
-  const refreshMeetings = () => {
-    setLoadedPages([]);
-    if (pageCursor === null) {
-      void meetingsQuery.refetch();
-      return;
-    }
-    setPageCursor(null);
-  };
-
+  const refreshMeetings = () =>
+    refreshMyMeetings({
+      pageCursor,
+      refetch: meetingsQuery.refetch,
+      setLoadedPages,
+      setPageCursor,
+    });
   const loadedMeetings = useMemo(
     () => loadedPages.flatMap((page) => page.data.meetings),
     [loadedPages],
@@ -225,24 +486,16 @@ export default function MyMeetings() {
     () => guilds.map((guild) => ({ value: guild.id, label: guild.name })),
     [guilds],
   );
-  const listLoading = meetingsQuery.isLoading && loadedPages.length === 0;
-  const loadingMore = meetingsQuery.isFetching && loadedPages.length > 0;
-  const countLabel = hasMore
-    ? `Showing ${filteredMeetings.length} loaded meetings`
-    : `${filteredMeetings.length} meetings`;
+  const countLabel = formatLoadedMeetingsCount(
+    filteredMeetings.length,
+    hasMore,
+  );
   const listFooter = hasMore ? (
-    <Group justify="center">
-      <Button
-        variant="light"
-        color="brand"
-        onClick={loadMore}
-        loading={loadingMore}
-        disabled={!nextCursor}
-        data-testid="my-meetings-load-more"
-      >
-        Load more
-      </Button>
-    </Group>
+    <MyMeetingsLoadMore
+      loadingMore={loadingMore}
+      nextCursor={nextCursor}
+      onLoadMore={loadMore}
+    />
   ) : null;
 
   const openMeeting = (meetingId: string) => {
@@ -263,102 +516,31 @@ export default function MyMeetings() {
         title="My Meetings"
         description="Meetings across every server you can access, sorted by recency."
       />
-      <Surface p="lg" tone="soft">
-        <SimpleGrid cols={{ base: 1, md: 3 }} spacing="md">
-          <TextInput
-            value={query}
-            onChange={(event) => setQuery(event.currentTarget.value)}
-            placeholder="Search my meetings"
-            leftSection={<IconSearch size={16} />}
-            data-testid="my-meetings-search"
-          />
-          <FormSelect
-            value={mode}
-            onChange={(value) => {
-              resetPagination();
-              setMode(value === "accessible" ? value : "attended");
-            }}
-            data-testid="my-meetings-mode"
-            data={[
-              { value: "attended", label: "Meetings I attended" },
-              { value: "accessible", label: "Meetings I can access" },
-            ]}
-          />
-          <FormSelect
-            value={selectedRange}
-            onChange={(value) => {
-              resetPagination();
-              setSelectedRange(
-                value === "today" || value === "30" || value === "7"
-                  ? value
-                  : "all",
-              );
-            }}
-            data-testid="my-meetings-range"
-            data={[
-              { value: "all", label: "All time" },
-              { value: "today", label: "Today" },
-              { value: "7", label: "Last 7 days" },
-              { value: "30", label: "Last 30 days" },
-            ]}
-          />
-          <MultiSelect
-            data={serverOptions}
-            value={selectedServers}
-            onChange={(value) => {
-              resetPagination();
-              setSelectedServers(value);
-            }}
-            placeholder="Servers"
-            searchable
-            clearable
-            data-testid="my-meetings-servers"
-          />
-          <MultiSelect
-            data={tagOptions}
-            value={selectedTags}
-            onChange={(value) => {
-              resetPagination();
-              setSelectedTags(value);
-            }}
-            placeholder="Tags"
-            searchable
-            clearable
-            data-testid="my-meetings-tags"
-          />
-          <FormSelect
-            value={archiveFilter}
-            onChange={(value) => {
-              resetPagination();
-              setArchiveFilter(
-                value === "archived" || value === "all" ? value : "active",
-              );
-            }}
-            data-testid="my-meetings-archive-filter"
-            data={[
-              { value: "active", label: "Active" },
-              { value: "archived", label: "Archived" },
-              { value: "all", label: "All" },
-            ]}
-          />
-        </SimpleGrid>
-      </Surface>
-      <Group justify="space-between" align="center" wrap="wrap">
-        <Text c="dimmed" size="sm">
-          {countLabel}
-        </Text>
-        <Group gap="xs" align="center">
-          <Text size="xs" c="dimmed">
-            Sorted by recency
-          </Text>
-          <RefreshButton
-            onClick={refreshMeetings}
-            size="xs"
-            variant="subtle"
-            data-testid="my-meetings-refresh"
-          />
-        </Group>
-      </Group>
+      <MyMeetingsFilters
+        archiveFilter={archiveFilter}
+        mode={mode}
+        onArchiveFilterChange={(value) =>
+          resetThenSet(resetPagination, setArchiveFilter, value)
+        }
+        onModeChange={(value) => resetThenSet(resetPagination, setMode, value)}
+        onQueryChange={setQuery}
+        onSelectedRangeChange={(value) =>
+          resetThenSet(resetPagination, setSelectedRange, value)
+        }
+        onSelectedServersChange={(value) =>
+          resetThenSet(resetPagination, setSelectedServers, value)
+        }
+        onSelectedTagsChange={(value) =>
+          resetThenSet(resetPagination, setSelectedTags, value)
+        }
+        query={query}
+        selectedRange={selectedRange}
+        selectedServers={selectedServers}
+        selectedTags={selectedTags}
+        serverOptions={serverOptions}
+        tagOptions={tagOptions}
+      />
+      <MyMeetingsToolbar countLabel={countLabel} onRefresh={refreshMeetings} />
       <MeetingList
         items={filteredMeetings}
         listLoading={listLoading}
