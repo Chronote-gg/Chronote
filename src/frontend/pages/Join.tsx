@@ -147,7 +147,7 @@ export default function Join() {
             {authState === "authenticated" ? (
               <Button
                 component={Link}
-                to="/portal/select-server"
+                to="/portal"
                 variant="light"
                 color="brand"
                 size="sm"

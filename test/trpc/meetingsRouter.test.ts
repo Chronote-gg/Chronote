@@ -218,6 +218,66 @@ describe("meetings router detail", () => {
       }),
     ).rejects.toMatchObject({ code: "NOT_FOUND" });
   });
+
+  test("uses meeting access checks without requiring current guild membership", async () => {
+    const meetingId = "channel-1#2025-01-01T00:00:00.000Z";
+    const history: MeetingHistory = {
+      guildId: "guild-1",
+      channelId_timestamp: meetingId,
+      meetingId: "meeting-1",
+      channelId: "channel-1",
+      timestamp: "2025-01-01T00:00:00.000Z",
+      participants: [{ id: getMockUser().id, username: "Tester" }],
+      duration: 1800,
+      transcribeMeeting: true,
+      generateNotes: true,
+      notes: "Summary: private sync",
+    };
+    mockedEnsureUserInGuild.mockResolvedValue(false);
+    mockedGetMeetingHistory.mockResolvedValue(history);
+
+    const result = await buildCaller().meetings.detail({
+      serverId: "guild-1",
+      meetingId,
+    });
+
+    expect(result.meeting.id).toBe(meetingId);
+    expect(mockedEnsureUserInGuild).not.toHaveBeenCalled();
+    expect(mockedCheckMeetingAccess).toHaveBeenCalledWith(
+      expect.objectContaining({
+        guildId: "guild-1",
+        meeting: history,
+        userId: getMockUser().id,
+      }),
+    );
+  });
+
+  test("throws FORBIDDEN when meeting access denies the direct detail request", async () => {
+    const meetingId = "channel-1#2025-01-01T00:00:00.000Z";
+    mockedGetMeetingHistory.mockResolvedValue({
+      guildId: "guild-1",
+      channelId_timestamp: meetingId,
+      meetingId: "meeting-1",
+      channelId: "channel-1",
+      timestamp: "2025-01-01T00:00:00.000Z",
+      participants: [],
+      duration: 1800,
+      transcribeMeeting: true,
+      generateNotes: true,
+      notes: "Summary: private sync",
+    });
+    mockedCheckMeetingAccess.mockResolvedValueOnce({
+      allowed: false,
+      missing: ["voice_connect"],
+    });
+
+    await expect(
+      buildCaller().meetings.detail({
+        serverId: "guild-1",
+        meetingId,
+      }),
+    ).rejects.toMatchObject({ code: "FORBIDDEN" });
+  });
 });
 
 describe("meetings notes correction mutations", () => {

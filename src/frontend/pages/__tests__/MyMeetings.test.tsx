@@ -78,15 +78,35 @@ describe("MyMeetings", () => {
     );
   });
 
-  it("opens the existing server library detail route", () => {
+  it("opens the direct meeting detail route", () => {
     renderPage();
 
     fireEvent.click(screen.getByTestId("library-meeting-row"));
 
     expect(mockNavigate).toHaveBeenCalledWith({
-      to: "/portal/server/$serverId/library",
-      params: { serverId: "guild-1" },
-      search: { meetingId: "channel-1#2026-01-02T00:00:00.000Z" },
+      to: "/portal/meetings/$serverId/$meetingId",
+      params: {
+        serverId: "guild-1",
+        meetingId: "channel-1#2026-01-02T00:00:00.000Z",
+      },
+    });
+  });
+
+  it("offers server selection from the empty state", () => {
+    mockMyListUseQuery.mockReturnValue({
+      data: { meetings: [] },
+      isLoading: false,
+      error: null,
+      refetch: jest.fn(),
+    });
+
+    renderPage();
+
+    expect(screen.getByText("No meetings found here yet.")).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId("my-meetings-view-servers"));
+
+    expect(mockNavigate).toHaveBeenCalledWith({
+      to: "/portal/select-server",
     });
   });
 });

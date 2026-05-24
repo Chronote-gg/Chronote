@@ -2,6 +2,7 @@ import { MeetingData } from "../types/meeting-data";
 import { MeetingHistory } from "../types/db";
 import { MEETING_STATUS } from "../types/meetingLifecycle";
 import { writeMeetingHistoryService } from "../services/meetingHistoryService";
+import { maybeAutoExportCompletedMeeting } from "../services/notionAutomationService";
 import {
   ensureMeetingNotes,
   ensureMeetingSummaries,
@@ -182,6 +183,7 @@ export async function saveMeetingHistoryToDatabase(meeting: MeetingData) {
     };
 
     await writeMeetingHistoryService(history);
+    await maybeAutoExportCompletedMeeting(history);
     console.log(
       `Meeting history saved for guild ${meeting.guildId}, channel ${meeting.voiceChannel.id}`,
     );

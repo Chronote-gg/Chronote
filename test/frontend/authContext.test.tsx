@@ -87,7 +87,7 @@ describe("AuthContext unauthenticated", () => {
     const resolved = new URL(loginUrl, window.location.origin);
     expect(resolved.pathname).toBe("/auth/discord");
     expect(resolved.searchParams.get("redirect")).toBe(
-      `${window.location.origin}/portal/select-server`,
+      `${window.location.origin}/portal`,
     );
     const logoutUrl = node.getAttribute("data-logout");
     if (!logoutUrl) {

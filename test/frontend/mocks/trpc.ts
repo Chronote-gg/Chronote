@@ -135,6 +135,7 @@ type NotionStatusData = {
 };
 type NotionExportStatusData = {
   exported: boolean;
+  source?: "manual" | "automation";
   pageUrl?: string;
   pageId?: string;
   exportedNotesVersion?: number;
@@ -143,10 +144,34 @@ type NotionExportStatusData = {
   lastExportedAt?: string;
   lastError?: string;
 };
+type NotionAutomationStatusData = {
+  configured: boolean;
+  userConnected: boolean;
+  workspaceName?: string;
+  workspaceId?: string;
+  automation?: {
+    enabled: boolean;
+    ownerUserId?: string;
+    ownerConnected: boolean;
+    workspaceName?: string;
+    workspaceId?: string;
+    destinationType?: "page";
+    destinationPageId: string;
+    destinationTitle?: string;
+    destinationUrl?: string;
+    channelIds: string[];
+    tags: string[];
+    lastError?: string;
+    updatedAt?: string;
+  };
+};
+type NotionDestinationPagesData = {
+  pages: { id: string; title: string; url?: string }[];
+};
 type NotionMutationResult = {
   ok: boolean;
   pageUrl?: string;
-  exportedNotesVersion: number;
+  exportedNotesVersion?: number;
 };
 type RulesData = { rules: AutoRecordSettings[] };
 type ContextData = {
@@ -292,6 +317,13 @@ export const notionExportStatusQuery = buildQueryState<NotionExportStatusData>({
   currentNotesVersion: 1,
   outdated: false,
 });
+export const notionAutomationStatusQuery =
+  buildQueryState<NotionAutomationStatusData>({
+    configured: true,
+    userConnected: false,
+  });
+export const notionDestinationPagesQuery =
+  buildQueryState<NotionDestinationPagesData>({ pages: [] });
 export const autorecordListQuery = buildQueryState<RulesData>({ rules: [] });
 export const contextQuery = buildQueryState<ContextData | null>(null);
 export const channelContextsQuery = buildQueryState<ChannelContextsData>({
@@ -402,6 +434,18 @@ export const notionSyncMeetingMutation = buildMutationState<
   [unknown],
   NotionMutationResult
 >({ ok: true, pageUrl: "https://notion.so/page-1", exportedNotesVersion: 1 });
+export const notionRetryAutomationMutation = buildMutationState<
+  [unknown],
+  NotionMutationResult
+>({ ok: true, pageUrl: "https://notion.so/page-1", exportedNotesVersion: 1 });
+export const notionSaveAutomationMutation = buildMutationState<
+  [unknown],
+  { ok: true }
+>({ ok: true });
+export const notionDisableAutomationMutation = buildMutationState<
+  [unknown],
+  { ok: true }
+>({ ok: true });
 export const autorecordAddMutation = buildMutationState<[unknown], void>(
   undefined,
 );
@@ -521,6 +565,7 @@ export const trpcUtils = {
   },
   notion: {
     exportStatus: { invalidate: jest.fn<Promise<void>, [unknown]>() },
+    automationStatus: { invalidate: jest.fn<Promise<void>, [unknown]>() },
   },
   servers: {
     channels: { invalidate: jest.fn<Promise<void>, [unknown]>() },
@@ -588,6 +633,11 @@ export const resetTrpcMocks = () => {
     currentNotesVersion: 1,
     outdated: false,
   });
+  resetQueryState(notionAutomationStatusQuery, {
+    configured: true,
+    userConnected: false,
+  });
+  resetQueryState(notionDestinationPagesQuery, { pages: [] });
   resetQueryState(autorecordListQuery, { rules: [] });
   resetQueryState(contextQuery, null);
   resetQueryState(channelContextsQuery, { contexts: [] });
@@ -660,6 +710,13 @@ export const resetTrpcMocks = () => {
     pageUrl: "https://notion.so/page-1",
     exportedNotesVersion: 1,
   });
+  resetMutationState(notionRetryAutomationMutation, {
+    ok: true,
+    pageUrl: "https://notion.so/page-1",
+    exportedNotesVersion: 1,
+  });
+  resetMutationState(notionSaveAutomationMutation, { ok: true });
+  resetMutationState(notionDisableAutomationMutation, { ok: true });
   resetMutationState(autorecordAddMutation, undefined);
   resetMutationState(autorecordRemoveMutation, undefined);
   resetMutationState(contextSetMutation, undefined);
@@ -695,6 +752,8 @@ export const resetTrpcMocks = () => {
   trpcUtils.meetings.detail.invalidate.mockResolvedValue(undefined);
   trpcUtils.notion.exportStatus.invalidate.mockReset();
   trpcUtils.notion.exportStatus.invalidate.mockResolvedValue(undefined);
+  trpcUtils.notion.automationStatus.invalidate.mockReset();
+  trpcUtils.notion.automationStatus.invalidate.mockResolvedValue(undefined);
   trpcUtils.servers.channels.invalidate.mockReset();
   trpcUtils.servers.channels.invalidate.mockResolvedValue(undefined);
   trpcUtils.context.get.invalidate.mockReset();
@@ -791,6 +850,18 @@ export const setNotionExportStatusQuery = (
   next: Partial<QueryState<NotionExportStatusData>>,
 ) => {
   Object.assign(notionExportStatusQuery, next);
+};
+
+export const setNotionAutomationStatusQuery = (
+  next: Partial<QueryState<NotionAutomationStatusData>>,
+) => {
+  Object.assign(notionAutomationStatusQuery, next);
+};
+
+export const setNotionDestinationPagesQuery = (
+  next: Partial<QueryState<NotionDestinationPagesData>>,
+) => {
+  Object.assign(notionDestinationPagesQuery, next);
 };
 
 export const setAutorecordListQuery = (
@@ -898,9 +969,16 @@ jest.mock("../../../src/frontend/services/trpc", () => ({
     },
     notion: {
       status: { useQuery: () => notionStatusQuery },
+      automationStatus: { useQuery: () => notionAutomationStatusQuery },
+      destinationPages: { useQuery: () => notionDestinationPagesQuery },
       exportStatus: { useQuery: () => notionExportStatusQuery },
       exportMeeting: { useMutation: () => notionExportMeetingMutation },
       syncMeeting: { useMutation: () => notionSyncMeetingMutation },
+      retryAutomationExport: {
+        useMutation: () => notionRetryAutomationMutation,
+      },
+      saveAutomationConfig: { useMutation: () => notionSaveAutomationMutation },
+      disableAutomation: { useMutation: () => notionDisableAutomationMutation },
     },
     autorecord: {
       list: { useQuery: () => autorecordListQuery },

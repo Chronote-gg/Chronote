@@ -2,6 +2,7 @@
   ActionIcon,
   Badge,
   Box,
+  Button,
   Center,
   Group,
   Loader,
@@ -46,6 +47,11 @@ type MeetingListProps = {
   listError: boolean;
   onSelect: (meetingId: string) => void;
   selectedMeetingId: string | null;
+  emptyTitle?: string;
+  emptyDescription?: string;
+  emptyActionLabel?: string;
+  onEmptyAction?: () => void;
+  emptyActionTestId?: string;
 };
 
 export function MeetingList({
@@ -54,6 +60,11 @@ export function MeetingList({
   listError,
   onSelect,
   selectedMeetingId,
+  emptyTitle = "No meetings match these filters yet.",
+  emptyDescription,
+  emptyActionLabel,
+  onEmptyAction,
+  emptyActionTestId,
 }: MeetingListProps) {
   return (
     <Surface
@@ -80,7 +91,23 @@ export function MeetingList({
             <ThemeIcon variant="light" color="gray">
               <IconFilter size={16} />
             </ThemeIcon>
-            <Text c="dimmed">No meetings match these filters yet.</Text>
+            <Text c="dimmed">{emptyTitle}</Text>
+            {emptyDescription ? (
+              <Text c="dimmed" size="sm" ta="center">
+                {emptyDescription}
+              </Text>
+            ) : null}
+            {emptyActionLabel && onEmptyAction ? (
+              <Button
+                variant="light"
+                color="brand"
+                size="sm"
+                onClick={onEmptyAction}
+                data-testid={emptyActionTestId}
+              >
+                {emptyActionLabel}
+              </Button>
+            ) : null}
           </Stack>
         </Center>
       ) : (

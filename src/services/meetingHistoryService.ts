@@ -6,6 +6,7 @@ import type {
 import type { MeetingStatus } from "../types/meetingLifecycle";
 import { getMeetingHistoryRepository } from "../repositories/meetingHistoryRepository";
 import { writeMeetingUserIndexForMeetingService } from "./meetingUserIndexService";
+import { maybeAutoSyncMeetingNotes } from "./notionAutomationService";
 
 export async function writeMeetingHistoryService(history: MeetingHistory) {
   await getMeetingHistoryRepository().write(history);
@@ -91,7 +92,25 @@ export async function updateMeetingNotesService(params: {
   expectedPreviousVersion?: number;
   metadata?: { notesMessageIds?: string[]; notesChannelId?: string };
 }) {
-  return getMeetingHistoryRepository().updateNotes(params);
+  const repository = getMeetingHistoryRepository();
+  const ok = await repository.updateNotes(params);
+  if (!ok) return false;
+  try {
+    const updated = await repository.get(
+      params.guildId,
+      params.channelId_timestamp,
+    );
+    if (updated) {
+      await maybeAutoSyncMeetingNotes(updated);
+    }
+  } catch (error) {
+    console.warn("Failed to sync Notion after notes update", {
+      guildId: params.guildId,
+      meetingId: params.channelId_timestamp,
+      error,
+    });
+  }
+  return true;
 }
 
 export async function updateMeetingNotesMessageMetadataService(params: {

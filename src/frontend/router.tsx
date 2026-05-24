@@ -28,6 +28,7 @@ const UpgradeSuccess = lazyRouteComponent(
   () => import("./pages/UpgradeSuccess"),
 );
 const MyMeetings = lazyRouteComponent(() => import("./pages/MyMeetings"));
+const MeetingDetail = lazyRouteComponent(() => import("./pages/MeetingDetail"));
 const Library = lazyRouteComponent(() => import("./pages/Library"));
 const Ask = lazyRouteComponent(() => import("./pages/Ask"));
 const PublicAsk = lazyRouteComponent(() => import("./pages/PublicAsk"));
@@ -41,8 +42,6 @@ const AdminFeedback = lazyRouteComponent(() => import("./pages/AdminFeedback"));
 const ContactFeedback = lazyRouteComponent(
   () => import("./pages/ContactFeedback"),
 );
-import { useGuildContext } from "./contexts/GuildContext";
-import { usePortalStore } from "./stores/portalStore";
 
 function RootLayout() {
   return <Outlet />;
@@ -173,24 +172,7 @@ const portalRoute = new Route({
 });
 
 function PortalIndexRedirect() {
-  const { selectedGuildId, guilds } = useGuildContext();
-  const lastServerId = usePortalStore((state) => state.lastServerId);
-  const targetServerId = selectedGuildId || lastServerId;
-  if (targetServerId) {
-    const canManage =
-      guilds.find((guild) => guild.id === targetServerId)?.canManage ?? false;
-    return (
-      <Navigate
-        to={
-          canManage
-            ? "/portal/server/$serverId/library"
-            : "/portal/server/$serverId/ask"
-        }
-        params={{ serverId: targetServerId }}
-      />
-    );
-  }
-  return <Navigate to="/portal/select-server" />;
+  return <Navigate to="/portal/meetings" />;
 }
 
 const portalIndexRoute = new Route({
@@ -210,6 +192,16 @@ const portalMyMeetingsRoute = new Route({
   getParentRoute: () => portalRoute,
   path: "meetings",
   component: MyMeetings,
+});
+
+const portalMeetingDetailRoute = new Route({
+  getParentRoute: () => portalRoute,
+  path: "meetings/$serverId/$meetingId",
+  component: MeetingDetail,
+  validateSearch: z.object({
+    eventId: optionalStringParam,
+    fullScreen: optionalBooleanParam,
+  }).parse,
 });
 
 const portalServerRoute = new Route({
@@ -342,6 +334,7 @@ const routeTree = rootRoute.addChildren([
     portalIndexRoute,
     portalSelectRoute,
     portalMyMeetingsRoute,
+    portalMeetingDetailRoute,
     portalServerRoute.addChildren([
       portalLibraryRoute,
       portalAskRoute,

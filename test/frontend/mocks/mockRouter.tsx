@@ -10,6 +10,8 @@ import {
 
 type RouteSearch = {
   meetingId?: string;
+  eventId?: string;
+  fullScreen?: boolean | string;
   list?: string;
   conversationId?: string;
   messageId?: string;
@@ -37,6 +39,12 @@ const buildSearchString = () => {
 };
 
 const resolveRouteId = (pathname: string) => {
+  if (
+    pathname.startsWith("/portal/meetings/") &&
+    pathname !== "/portal/meetings"
+  ) {
+    return "/portal/meetings/$serverId/$meetingId";
+  }
   if (pathname.startsWith("/portal/server/")) {
     if (pathname.endsWith("/ask")) return "/portal/server/$serverId/ask";
     if (pathname.endsWith("/library"))

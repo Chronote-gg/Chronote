@@ -1,18 +1,98 @@
 import { useState } from "react";
-import { Group, Stack, Text } from "@mantine/core";
+import { Badge, Button, Group, Stack, Text } from "@mantine/core";
 import { useNavigate, useSearch } from "@tanstack/react-router";
+import { IconExternalLink, IconSettings } from "@tabler/icons-react";
 import PageHeader from "../../components/PageHeader";
 import { RefreshButton } from "../../components/RefreshButton";
+import Surface from "../../components/Surface";
 import { useGuildContext } from "../../contexts/GuildContext";
 import { FiltersBar } from "../../features/library/FiltersBar";
 import { MeetingList } from "../../features/library/MeetingList";
+import { trpc } from "../../services/trpc";
+import type { NotionAutomationStatus } from "../../../types/notionIntegration";
 import { useLibraryMeetings } from "./hooks/useLibraryMeetings";
 import type { ArchiveFilter } from "./types";
+
+type LibraryNotionAutomation = NonNullable<
+  NotionAutomationStatus["automation"]
+>;
+
+const getNotionStatusTone = (automation?: LibraryNotionAutomation) => {
+  if (!automation) return "blue";
+  if (!automation.enabled) return "gray";
+  return automation.lastError || !automation.ownerConnected ? "red" : "teal";
+};
+
+const getNotionStatusCopy = (automation?: LibraryNotionAutomation) => {
+  if (!automation) {
+    return "Notion automation is available. Choose a shared destination in Settings to auto-export completed meetings.";
+  }
+  if (!automation.enabled) {
+    return "Notion automation is configured but paused for this server.";
+  }
+  if (automation.lastError || !automation.ownerConnected) {
+    return "Notion automation needs attention before exports can recover.";
+  }
+  return `Notion auto-export is on${automation.destinationTitle ? ` to ${automation.destinationTitle}` : ""}.`;
+};
+
+function LibraryNotionStatus({
+  status,
+  canManage,
+  onOpenSettings,
+}: {
+  status?: NotionAutomationStatus;
+  canManage: boolean;
+  onOpenSettings: () => void;
+}) {
+  const automation = status?.automation;
+  if (!status?.configured || (!automation && !canManage)) return null;
+
+  return (
+    <Surface p="md" data-testid="library-notion-status">
+      <Group justify="space-between" align="center" wrap="wrap">
+        <Group gap="sm" align="center" wrap="wrap">
+          <Badge color={getNotionStatusTone(automation)} variant="light">
+            Notion
+          </Badge>
+          <Text size="sm" c="dimmed">
+            {getNotionStatusCopy(automation)}
+          </Text>
+        </Group>
+        <Group gap="xs">
+          {automation?.destinationUrl ? (
+            <Button
+              component="a"
+              href={automation.destinationUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              variant="subtle"
+              size="xs"
+              leftSection={<IconExternalLink size={14} />}
+            >
+              Open destination
+            </Button>
+          ) : null}
+          {canManage ? (
+            <Button
+              variant="light"
+              size="xs"
+              leftSection={<IconSettings size={14} />}
+              onClick={onOpenSettings}
+            >
+              Notion settings
+            </Button>
+          ) : null}
+        </Group>
+      </Group>
+    </Surface>
+  );
+}
 
 export default function LibraryPage() {
   const navigate = useNavigate({ from: "/portal/server/$serverId/library" });
   const search = useSearch({ from: "/portal/server/$serverId/library" });
-  const { selectedGuildId } = useGuildContext();
+  const { selectedGuildId, guilds } = useGuildContext();
 
   const [query, setQuery] = useState("");
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
@@ -21,6 +101,14 @@ export default function LibraryPage() {
   const [archiveFilter, setArchiveFilter] = useState<ArchiveFilter>("active");
 
   const selectedMeetingId = search.meetingId ?? null;
+  const selectedGuild = selectedGuildId
+    ? (guilds.find((guild) => guild.id === selectedGuildId) ?? null)
+    : null;
+  const canManageSelectedGuild = selectedGuild?.canManage ?? false;
+  const notionStatusQuery = trpc.notion.automationStatus.useQuery(
+    { serverId: selectedGuildId ?? "" },
+    { enabled: Boolean(selectedGuildId) },
+  );
 
   const {
     filteredMeetings,
@@ -43,6 +131,15 @@ export default function LibraryPage() {
       <PageHeader
         title="Library"
         description="Every session, indexed by tags, channel, and timeline."
+      />
+
+      <LibraryNotionStatus
+        status={notionStatusQuery.data}
+        canManage={canManageSelectedGuild}
+        onOpenSettings={() => {
+          if (!selectedGuildId) return;
+          navigate({ to: `/portal/server/${selectedGuildId}/settings` });
+        }}
       />
 
       <FiltersBar
