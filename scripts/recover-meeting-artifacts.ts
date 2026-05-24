@@ -704,9 +704,11 @@ function printPlan(options: {
   if (options.options.releaseActiveLease) {
     const activeMeetingId = options.activeLease?.meetingId;
     const status =
-      activeMeetingId === options.options.meetingId
-        ? "matching"
-        : "not matching";
+      activeMeetingId !== options.options.meetingId
+        ? "not matching"
+        : options.activeLease?.ownerInstanceId
+          ? "matching"
+          : "matching, but missing ownerInstanceId";
     console.log(`  release ActiveMeeting lease: ${status}`);
   }
 }
@@ -847,10 +849,15 @@ async function main() {
   }
   if (
     options.releaseActiveLease &&
-    activeLease?.meetingId === options.meetingId &&
-    activeLease.ownerInstanceId
+    activeLease?.meetingId === options.meetingId
   ) {
-    await releaseActiveLease(dynamo, options.activeMeetingTable, activeLease);
+    if (activeLease.ownerInstanceId) {
+      await releaseActiveLease(dynamo, options.activeMeetingTable, activeLease);
+    } else {
+      console.warn(
+        "WARNING: --release-active-lease skipped: lease has no ownerInstanceId.",
+      );
+    }
   }
   console.log("Recovery writes completed.");
 }

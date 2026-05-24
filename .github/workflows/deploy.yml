@@ -435,6 +435,7 @@ jobs:
           deadline=$(($(date +%s) + WAIT_TIMEOUT_SECONDS))
 
           while true; do
+            # activeMeetingLeaseService stores leaseExpiresAt as epoch seconds.
             now_epoch_seconds=$(date +%s)
             active_count=0
             exclusive_start_key=""
