@@ -1,5 +1,6 @@
-import { useDeferredValue, useMemo, useState } from "react";
+import { useDeferredValue, useEffect, useMemo, useState } from "react";
 import {
+  Button,
   Group,
   MultiSelect,
   SimpleGrid,
@@ -22,6 +23,7 @@ import {
   formatChannelLabel,
   formatDateLabel,
   formatDurationLabel,
+  formatRelativeRecencyLabel,
   resolveMeetingTitle,
 } from "../utils/meetingLibrary";
 import type {
@@ -31,8 +33,9 @@ import type {
 } from "./library/types";
 
 type MyMeetingsMode = "attended" | "accessible";
-type MyMeetingsRange = "today" | "7" | "30";
+type MyMeetingsRange = "all" | "today" | "7" | "30";
 type MyMeetingsRangeInput =
+  | { range: "all" }
   | { range: "today"; timeZoneOffsetMinutes: number }
   | { range: "custom"; startDate: string; endDate: string }
   | { range: "past_7_days" };
@@ -45,11 +48,22 @@ type MyMeetingsApiRow = Omit<
   notesMessageId?: string;
   notesAvailable?: boolean;
 };
+type MyMeetingsPageData = {
+  meetings: MyMeetingsApiRow[];
+  hasMore?: boolean;
+  nextCursor?: string | null;
+};
+type LoadedMeetingsPage = {
+  cursor: string | null;
+  data: MyMeetingsPageData;
+};
 
 const MS_PER_DAY = 1000 * 60 * 60 * 24;
+const MY_MEETINGS_PAGE_SIZE = 25;
 
 const resolveRangeInput = (range: MyMeetingsRange): MyMeetingsRangeInput => {
   const now = new Date();
+  if (range === "all") return { range: "all" };
   if (range === "today") {
     return {
       range: "today",
@@ -99,6 +113,7 @@ const toMeetingItems = (meetingRows: MeetingSummaryRow[]): MeetingListItem[] =>
       }),
       summary: deriveSummary(meetingRow.notes, meetingRow.summarySentence),
       dateLabel: formatDateLabel(meetingRow.timestamp),
+      recencyLabel: formatRelativeRecencyLabel(meetingRow.timestamp),
       durationLabel: formatDurationLabel(meetingRow.duration),
       channelLabel,
     };
@@ -108,11 +123,13 @@ export default function MyMeetings() {
   const navigate = useNavigate({ from: "/portal/meetings" });
   const { guilds } = useGuildContext();
   const [mode, setMode] = useState<MyMeetingsMode>("attended");
-  const [selectedRange, setSelectedRange] = useState<MyMeetingsRange>("7");
+  const [selectedRange, setSelectedRange] = useState<MyMeetingsRange>("all");
   const [archiveFilter, setArchiveFilter] = useState<ArchiveFilter>("active");
   const [selectedServers, setSelectedServers] = useState<string[]>([]);
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
   const [query, setQuery] = useState("");
+  const [pageCursor, setPageCursor] = useState<string | null>(null);
+  const [loadedPages, setLoadedPages] = useState<LoadedMeetingsPage[]>([]);
   const deferredQuery = useDeferredValue(query);
 
   const rangeInput = useMemo(
@@ -121,7 +138,8 @@ export default function MyMeetings() {
   );
   const meetingsQuery = trpc.meetings.myList.useQuery({
     mode,
-    limit: 100,
+    limit: MY_MEETINGS_PAGE_SIZE,
+    cursor: pageCursor ?? undefined,
     archivedOnly: archiveFilter === "archived" ? true : undefined,
     includeArchived: archiveFilter !== "active",
     serverIds: selectedServers.length ? selectedServers : undefined,
@@ -129,9 +147,53 @@ export default function MyMeetings() {
     ...rangeInput,
   });
 
+  useEffect(() => {
+    if (!meetingsQuery.data) return;
+    setLoadedPages((currentPages) => {
+      const page = { cursor: pageCursor, data: meetingsQuery.data };
+      if (pageCursor === null) return [page];
+      const existingIndex = currentPages.findIndex(
+        (currentPage) => currentPage.cursor === pageCursor,
+      );
+      if (existingIndex < 0) return [...currentPages, page];
+      return currentPages.map((currentPage, index) =>
+        index === existingIndex ? page : currentPage,
+      );
+    });
+  }, [meetingsQuery.data, pageCursor]);
+
+  const resetPagination = () => {
+    setLoadedPages([]);
+    setPageCursor(null);
+  };
+
+  const latestPage = loadedPages[loadedPages.length - 1]?.data;
+  const nextCursor = latestPage?.nextCursor ?? null;
+  const hasMore = Boolean(latestPage?.hasMore && nextCursor);
+  const loadMore = () => {
+    if (!nextCursor || meetingsQuery.isFetching || nextCursor === pageCursor) {
+      return;
+    }
+    setPageCursor(nextCursor);
+  };
+
+  const refreshMeetings = () => {
+    setLoadedPages([]);
+    if (pageCursor === null) {
+      void meetingsQuery.refetch();
+      return;
+    }
+    setPageCursor(null);
+  };
+
+  const loadedMeetings = useMemo(
+    () => loadedPages.flatMap((page) => page.data.meetings),
+    [loadedPages],
+  );
+
   const meetingRows = useMemo(
-    () => toMeetingRows(meetingsQuery.data?.meetings ?? []),
-    [meetingsQuery.data],
+    () => toMeetingRows(loadedMeetings),
+    [loadedMeetings],
   );
   const meetingItems = useMemo(
     () => toMeetingItems(meetingRows),
@@ -163,6 +225,25 @@ export default function MyMeetings() {
     () => guilds.map((guild) => ({ value: guild.id, label: guild.name })),
     [guilds],
   );
+  const listLoading = meetingsQuery.isLoading && loadedPages.length === 0;
+  const loadingMore = meetingsQuery.isFetching && loadedPages.length > 0;
+  const countLabel = hasMore
+    ? `Showing ${filteredMeetings.length} loaded meetings`
+    : `${filteredMeetings.length} meetings`;
+  const listFooter = hasMore ? (
+    <Group justify="center">
+      <Button
+        variant="light"
+        color="brand"
+        onClick={loadMore}
+        loading={loadingMore}
+        disabled={!nextCursor}
+        data-testid="my-meetings-load-more"
+      >
+        Load more
+      </Button>
+    </Group>
+  ) : null;
 
   const openMeeting = (meetingId: string) => {
     const meeting = filteredMeetings.find((item) => item.id === meetingId);
@@ -193,9 +274,10 @@ export default function MyMeetings() {
           />
           <FormSelect
             value={mode}
-            onChange={(value) =>
-              setMode(value === "accessible" ? value : "attended")
-            }
+            onChange={(value) => {
+              resetPagination();
+              setMode(value === "accessible" ? value : "attended");
+            }}
             data-testid="my-meetings-mode"
             data={[
               { value: "attended", label: "Meetings I attended" },
@@ -204,13 +286,17 @@ export default function MyMeetings() {
           />
           <FormSelect
             value={selectedRange}
-            onChange={(value) =>
+            onChange={(value) => {
+              resetPagination();
               setSelectedRange(
-                value === "today" || value === "30" ? value : "7",
-              )
-            }
+                value === "today" || value === "30" || value === "7"
+                  ? value
+                  : "all",
+              );
+            }}
             data-testid="my-meetings-range"
             data={[
+              { value: "all", label: "All time" },
               { value: "today", label: "Today" },
               { value: "7", label: "Last 7 days" },
               { value: "30", label: "Last 30 days" },
@@ -219,7 +305,10 @@ export default function MyMeetings() {
           <MultiSelect
             data={serverOptions}
             value={selectedServers}
-            onChange={setSelectedServers}
+            onChange={(value) => {
+              resetPagination();
+              setSelectedServers(value);
+            }}
             placeholder="Servers"
             searchable
             clearable
@@ -228,7 +317,10 @@ export default function MyMeetings() {
           <MultiSelect
             data={tagOptions}
             value={selectedTags}
-            onChange={setSelectedTags}
+            onChange={(value) => {
+              resetPagination();
+              setSelectedTags(value);
+            }}
             placeholder="Tags"
             searchable
             clearable
@@ -236,11 +328,12 @@ export default function MyMeetings() {
           />
           <FormSelect
             value={archiveFilter}
-            onChange={(value) =>
+            onChange={(value) => {
+              resetPagination();
               setArchiveFilter(
                 value === "archived" || value === "all" ? value : "active",
-              )
-            }
+              );
+            }}
             data-testid="my-meetings-archive-filter"
             data={[
               { value: "active", label: "Active" },
@@ -252,14 +345,14 @@ export default function MyMeetings() {
       </Surface>
       <Group justify="space-between" align="center" wrap="wrap">
         <Text c="dimmed" size="sm">
-          {filteredMeetings.length} meetings
+          {countLabel}
         </Text>
         <Group gap="xs" align="center">
           <Text size="xs" c="dimmed">
             Sorted by recency
           </Text>
           <RefreshButton
-            onClick={() => meetingsQuery.refetch()}
+            onClick={refreshMeetings}
             size="xs"
             variant="subtle"
             data-testid="my-meetings-refresh"
@@ -268,8 +361,8 @@ export default function MyMeetings() {
       </Group>
       <MeetingList
         items={filteredMeetings}
-        listLoading={meetingsQuery.isLoading}
-        listError={Boolean(meetingsQuery.error)}
+        listLoading={listLoading}
+        listError={Boolean(meetingsQuery.error) && loadedPages.length === 0}
         onSelect={openMeeting}
         selectedMeetingId={null}
         emptyTitle="No meetings found here yet."
@@ -277,6 +370,7 @@ export default function MyMeetings() {
         emptyActionLabel="View servers"
         onEmptyAction={openServerSelect}
         emptyActionTestId="my-meetings-view-servers"
+        footer={listFooter}
       />
     </Stack>
   );

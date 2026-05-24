@@ -165,7 +165,7 @@ Coverage update rule:
 - Routing/data/state: TanStack Router + TanStack Query + tRPC + Zustand.
 - Marketing site is public at `/`; the authenticated portal lives under `/portal/*`:
   - `/portal` -> `/portal/meetings`
-  - `/portal/meetings`
+  - `/portal/meetings` opens My Meetings with All time results and a Load more control
   - `/portal/meetings/:serverId/:meetingId`
   - `/portal/select-server`
   - `/portal/server/:serverId/{library|ask|billing|settings}`

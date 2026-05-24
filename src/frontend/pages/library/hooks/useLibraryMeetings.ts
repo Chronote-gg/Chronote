@@ -7,6 +7,7 @@ import {
   formatChannelLabel,
   formatDateLabel,
   formatDurationLabel,
+  formatRelativeRecencyLabel,
   resolveMeetingTitle,
 } from "../../../utils/meetingLibrary";
 import { resolveNowMs } from "../../../utils/now";
@@ -66,6 +67,8 @@ export const useLibraryMeetings = (
     return map;
   }, [meetingRows]);
 
+  const nowMs = useMemo(() => resolveNowMs(), []);
+
   const meetingItems = useMemo<MeetingListItem[]>(() => {
     return meetingRows.map((meetingRow) => {
       const channelLabel = formatChannelLabel(
@@ -89,13 +92,12 @@ export const useLibraryMeetings = (
         title,
         summary,
         dateLabel,
+        recencyLabel: formatRelativeRecencyLabel(meetingRow.timestamp, nowMs),
         durationLabel,
         channelLabel,
       };
     });
-  }, [meetingRows, channelNameMap]);
-
-  const nowMs = useMemo(() => resolveNowMs(), []);
+  }, [meetingRows, channelNameMap, nowMs]);
 
   const filteredMeetings = useMemo(
     () =>

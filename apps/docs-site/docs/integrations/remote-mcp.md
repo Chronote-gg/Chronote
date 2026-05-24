@@ -23,7 +23,7 @@ Remote MCP requires Discord OAuth and `OAUTH_SECRET` to be configured. Set `MCP_
 
 - `list_servers`: Lists Discord servers where the authenticated user can access Chronote data.
 - `list_meetings`: Lists recent meetings in a server, with optional channel, date, tag, and archived filters.
-- `list_my_meetings`: Lists meetings across servers for the authenticated user. It defaults to meetings the user attended in the past 7 days and can also list meetings the user can access. Use `today` or `past_7_days` without `startDate` or `endDate`. Use `range: "custom"` when you need explicit date bounds.
+- `list_my_meetings`: Lists meetings across servers for the authenticated user. It defaults to meetings the user attended in the past 7 days and can also list meetings the user can access. Use `all`, `today`, or `past_7_days` without `startDate` or `endDate`. Use `range: "custom"` when you need explicit date bounds. If the response includes `nextCursor`, pass it as `cursor` to fetch the next page.
 - `get_meeting_summary`: Returns notes and metadata for one accessible meeting.
 - `get_meeting_transcript`: Returns transcript text for one accessible meeting. Use `offset` and `maxChars` to page through long transcripts.
 
@@ -42,7 +42,7 @@ For long transcripts, request a window at a time:
 
 ## Date Range Tips
 
-- For preset My Meetings ranges, send `range: "today"` or `range: "past_7_days"` and omit `startDate` and `endDate`.
+- For preset My Meetings ranges, send `range: "all"`, `range: "today"`, or `range: "past_7_days"` and omit `startDate` and `endDate`.
 - For explicit windows, send `range: "custom"` with `startDate`, and optionally `endDate`.
 - Chronote rejects mixed inputs such as `range: "past_7_days"` with a manual `startDate`.
 

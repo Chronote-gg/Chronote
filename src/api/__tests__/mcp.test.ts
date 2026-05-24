@@ -185,6 +185,8 @@ describe("MCP JSON-RPC handler", () => {
           serverIcon: null,
         },
       ],
+      hasMore: false,
+      nextCursor: null,
     });
 
     await expect(
@@ -197,6 +199,7 @@ describe("MCP JSON-RPC handler", () => {
           arguments: {
             range: "past_7_days",
             mode: "attended",
+            cursor: "cursor-page-2",
             tags: ["planning"],
             archivedOnly: true,
           },
@@ -217,6 +220,7 @@ describe("MCP JSON-RPC handler", () => {
         userId: "user-1",
         range: "past_7_days",
         mode: "attended",
+        cursor: "cursor-page-2",
         tags: ["planning"],
         archivedOnly: true,
       }),
@@ -263,6 +267,8 @@ describe("MCP JSON-RPC handler", () => {
         endDate: "2026-01-02T00:00:00.000Z",
       },
       meetings: [],
+      hasMore: false,
+      nextCursor: null,
     });
 
     await expect(

@@ -1,4 +1,5 @@
 import type { Meta, StoryObj } from "@storybook/react";
+import { Button, Group } from "@mantine/core";
 import { MeetingList } from "./MeetingList";
 import type { MeetingListItem } from "../../pages/library/types";
 import { MEETING_STATUS } from "../../../types/meetingLifecycle";
@@ -24,6 +25,7 @@ const items: MeetingListItem[] = [
     title: "Mic check",
     summary: "Quick mic and audio check before the weekly standup.",
     dateLabel: "Dec 30, 2025",
+    recencyLabel: "2h ago",
     durationLabel: "1m",
     channelLabel: "#staff-chat",
   },
@@ -49,6 +51,7 @@ const items: MeetingListItem[] = [
     summary:
       "Reviewed the Q1 roadmap, decisions, and key risks for next quarter.",
     dateLabel: "Dec 29, 2025",
+    recencyLabel: "Yesterday",
     durationLabel: "1h 02m",
     channelLabel: "#planning",
   },
@@ -108,5 +111,17 @@ export const EmptyWithAction: Story = {
 export const Archived: Story = {
   args: {
     items: archivedItems,
+  },
+};
+
+export const Paginated: Story = {
+  args: {
+    footer: (
+      <Group justify="center">
+        <Button variant="light" color="brand">
+          Load more
+        </Button>
+      </Group>
+    ),
   },
 };

@@ -113,6 +113,7 @@ This file provides Copilot review context. It mirrors AGENTS.md and adds only hi
 - Config typing: avoid freeform strings for fixed option sets (for example TTS voice), use enumerated options and shared constants, and avoid hardcoded config key strings in consumers by relying on shared key constants or typed accessors.
 - Config access: prefer shared helpers that resolve and transform config values (trim strings, validate enums, etc.) instead of inline snapshot parsing. When you add a helper to replace boilerplate, update existing consumers proactively, keep it KISS, and avoid hedging.
 - Portal base URLs are always configured. Do not add fallback behavior for missing `FRONTEND_SITE_URL` or relative portal links; treat missing config as an error.
+- My Meetings defaults to All time with a bounded initial page and explicit Load more control for older meetings.
 - Avoid hedging and speculative fallbacks. Follow YAGNI and KISS, do not add code for hypothetical cases unless explicitly required.
 - Config constraints: when numeric settings depend on caps, use minKey/maxKey to reference other config entries, clamp inputs in the UI, and enforce bounds in API validation.
 - Playwright mock mode: ensure only the mock API (port 3001) and frontend dev server (port 5173) are running. If ports are occupied, stop them first (`Get-NetTCPConnection -LocalPort 3001,5173 | Select-Object -ExpandProperty OwningProcess -Unique | ForEach-Object { Stop-Process -Id $_ }`). Clear `VITE_API_BASE_URL` (for example via `.env.local`) so the frontend uses the mock server.

@@ -1,4 +1,5 @@
-﻿import {
+﻿import type { ReactNode } from "react";
+import {
   ActionIcon,
   Badge,
   Box,
@@ -52,6 +53,7 @@ type MeetingListProps = {
   emptyActionLabel?: string;
   onEmptyAction?: () => void;
   emptyActionTestId?: string;
+  footer?: ReactNode;
 };
 
 export function MeetingList({
@@ -65,6 +67,7 @@ export function MeetingList({
   emptyActionLabel,
   onEmptyAction,
   emptyActionTestId,
+  footer,
 }: MeetingListProps) {
   return (
     <Surface
@@ -141,6 +144,11 @@ export function MeetingList({
                   </Text>
                   <Group gap="md" align="center" mt={2}>
                     <Group gap={4} align="center">
+                      {meetingItem.recencyLabel ? (
+                        <Badge size="xs" variant="light" color="brand">
+                          {meetingItem.recencyLabel}
+                        </Badge>
+                      ) : null}
                       <Text size="xs" c="dimmed">
                         {meetingItem.dateLabel} | {meetingItem.durationLabel}
                       </Text>
@@ -176,6 +184,11 @@ export function MeetingList({
               </Group>
             </Box>
           ))}
+          {footer ? (
+            <Box px={{ base: "md", md: "lg" }} py="md">
+              {footer}
+            </Box>
+          ) : null}
         </Stack>
       )}
     </Surface>

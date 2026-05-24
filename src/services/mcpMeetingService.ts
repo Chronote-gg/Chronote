@@ -43,7 +43,7 @@ const MCP_MEETING_ID_FORMAT_ERROR =
   "Use the meeting `id` returned by list tools in `channelId#ISO-timestamp` form.";
 
 export type McpMyMeetingsMode = "attended" | "accessible";
-export type McpMyMeetingsRange = "today" | "past_7_days" | "custom";
+export type McpMyMeetingsRange = "all" | "today" | "past_7_days" | "custom";
 
 type ListMcpMeetingsInput = {
   userId: string;
@@ -68,6 +68,7 @@ type ListMcpMyMeetingsInput = {
   mode?: McpMyMeetingsMode;
   range?: McpMyMeetingsRange;
   limit?: number;
+  cursor?: string;
   startDate?: string;
   endDate?: string;
   timeZoneOffsetMinutes?: number;
@@ -79,6 +80,11 @@ type ListMcpMyMeetingsInput = {
 
 type McpMeetingAccessContext = {
   attendeeOverrideEnabled: boolean;
+};
+
+type MyMeetingsCursor = {
+  timestamp: string;
+  identity: string;
 };
 
 export class McpMeetingAccessError extends Error {
@@ -421,6 +427,41 @@ const assertMyMeetingsDateRangeInput = (
   }
 };
 
+const MY_MEETINGS_CURSOR_ERROR = "Invalid My Meetings cursor.";
+
+const assertIsoTimestamp = (value: string) => {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime()) || date.toISOString() !== value) {
+    throw new McpMeetingAccessError(MY_MEETINGS_CURSOR_ERROR, "bad_request");
+  }
+};
+
+const isMyMeetingsCursor = (value: unknown): value is MyMeetingsCursor =>
+  typeof value === "object" &&
+  value !== null &&
+  "timestamp" in value &&
+  "identity" in value &&
+  typeof value.timestamp === "string" &&
+  typeof value.identity === "string" &&
+  value.identity.trim().length > 0;
+
+const decodeMyMeetingsCursor = (cursor?: string) => {
+  if (!cursor) return undefined;
+  try {
+    const decoded: unknown = JSON.parse(
+      Buffer.from(cursor, "base64url").toString("utf8"),
+    );
+    if (!isMyMeetingsCursor(decoded)) {
+      throw new McpMeetingAccessError(MY_MEETINGS_CURSOR_ERROR, "bad_request");
+    }
+    assertIsoTimestamp(decoded.timestamp);
+    return decoded;
+  } catch (error) {
+    if (error instanceof McpMeetingAccessError) throw error;
+    throw new McpMeetingAccessError(MY_MEETINGS_CURSOR_ERROR, "bad_request");
+  }
+};
+
 const resolveMyMeetingsStartDate = (
   input: ListMcpMyMeetingsInput,
   range: McpMyMeetingsRange,
@@ -443,28 +484,57 @@ const assertMyMeetingsDateRangeOrder = (startDate: string, endDate: string) => {
 
 const resolveMyMeetingsDateRange = (input: ListMcpMyMeetingsInput) => {
   const nowMs = Date.now();
-  const endDate = input.endDate
+  const decodedCursor = decodeMyMeetingsCursor(input.cursor);
+  const requestedEndDate = input.endDate
     ? normalizeInputDateIso(input.endDate)
     : new Date(nowMs).toISOString();
+  const endDate =
+    decodedCursor && decodedCursor.timestamp < requestedEndDate
+      ? decodedCursor.timestamp
+      : requestedEndDate;
   const range = resolveMyMeetingsRange(input);
   assertMyMeetingsDateRangeInput(input, range);
   const startDate = resolveMyMeetingsStartDate(input, range, nowMs);
   assertMyMeetingsDateRangeOrder(startDate, endDate);
 
-  return { startDate, endDate };
+  return { startDate, endDate, cursor: decodedCursor };
 };
 
 const meetingIdentity = (meeting: MeetingHistory) =>
   `${meeting.guildId}#${meeting.channelId_timestamp}`;
+
+const encodeMyMeetingsCursor = (meeting: MeetingHistory) =>
+  Buffer.from(
+    JSON.stringify({
+      timestamp: meeting.timestamp,
+      identity: meetingIdentity(meeting),
+    }),
+    "utf8",
+  ).toString("base64url");
+
+const compareMeetingsByRecency = (a: MeetingHistory, b: MeetingHistory) => {
+  const timestampOrder = b.timestamp.localeCompare(a.timestamp);
+  if (timestampOrder !== 0) return timestampOrder;
+  return meetingIdentity(b).localeCompare(meetingIdentity(a));
+};
+
+const isMeetingAfterCursor = (
+  meeting: MeetingHistory,
+  cursor?: MyMeetingsCursor,
+) => {
+  if (!cursor) return true;
+  const timestampOrder = meeting.timestamp.localeCompare(cursor.timestamp);
+  if (timestampOrder < 0) return true;
+  if (timestampOrder > 0) return false;
+  return meetingIdentity(meeting).localeCompare(cursor.identity) < 0;
+};
 
 const compactUniqueMeetings = (meetings: MeetingHistory[]) => {
   const byId = new Map<string, MeetingHistory>();
   meetings.forEach((meeting) => {
     byId.set(meetingIdentity(meeting), meeting);
   });
-  return Array.from(byId.values()).sort((a, b) =>
-    b.timestamp.localeCompare(a.timestamp),
-  );
+  return Array.from(byId.values()).sort(compareMeetingsByRecency);
 };
 
 const filterMcpServers = (
@@ -755,11 +825,14 @@ const summarizeUserMeetings = async (
 
 export async function listMcpMyMeetings(input: ListMcpMyMeetingsInput) {
   const limit = normalizeMcpMeetingLimit(input.limit);
-  if (limit === 0) return { meetings: [] };
+  if (limit === 0) {
+    return { meetings: [], hasMore: false, nextCursor: null };
+  }
 
   const mode = input.mode ?? "attended";
   const range = resolveMyMeetingsDateRange(input);
-  const scanLimit = limit * MCP_MEETING_SCAN_LIMIT_MULTIPLIER;
+  const collectionLimit = limit + 1;
+  const scanLimit = collectionLimit * MCP_MEETING_SCAN_LIMIT_MULTIPLIER;
   const requestedServerIds = input.serverIds?.length
     ? new Set(input.serverIds)
     : null;
@@ -775,7 +848,8 @@ export async function listMcpMyMeetings(input: ListMcpMyMeetingsInput) {
   const indexedCandidates = compactUniqueMeetings(
     indexedMeetings.filter(
       (meeting) =>
-        !requestedServerIds || requestedServerIds.has(meeting.guildId),
+        (!requestedServerIds || requestedServerIds.has(meeting.guildId)) &&
+        isMeetingAfterCursor(meeting, range.cursor),
     ),
   );
   const servers = filterMcpServers(
@@ -787,7 +861,8 @@ export async function listMcpMyMeetings(input: ListMcpMyMeetingsInput) {
   const needsRangeFallback =
     servers.length > 0 &&
     (mode === "accessible" ||
-      countMeetingsMatchingListFilters(indexedCandidates, input) < limit);
+      countMeetingsMatchingListFilters(indexedCandidates, input) <
+        collectionLimit);
   const rangeMeetings = needsRangeFallback
     ? await listRangeMeetingsForServers({
         servers,
@@ -800,23 +875,31 @@ export async function listMcpMyMeetings(input: ListMcpMyMeetingsInput) {
   const candidateMeetings = compactUniqueMeetings(
     [...indexedCandidates, ...rangeMeetings].filter(
       (meeting) =>
-        !requestedServerIds || requestedServerIds.has(meeting.guildId),
+        (!requestedServerIds || requestedServerIds.has(meeting.guildId)) &&
+        isMeetingAfterCursor(meeting, range.cursor),
     ),
   );
   const allowedMeetings = await collectAccessibleUserMeetings({
     meetings: candidateMeetings,
     userId: input.userId,
     mode,
-    limit,
+    limit: collectionLimit,
     tags: input.tags,
     includeArchived: input.includeArchived,
     archivedOnly: input.archivedOnly,
   });
+  const pageMeetings = allowedMeetings.slice(0, limit);
+  const hasMore = allowedMeetings.length > limit;
 
   return {
-    range,
+    range: { startDate: range.startDate, endDate: range.endDate },
     mode,
-    meetings: await summarizeUserMeetings(allowedMeetings, serverMap),
+    meetings: await summarizeUserMeetings(pageMeetings, serverMap),
+    hasMore,
+    nextCursor:
+      hasMore && pageMeetings.length > 0
+        ? encodeMyMeetingsCursor(pageMeetings[pageMeetings.length - 1])
+        : null,
   };
 }
 

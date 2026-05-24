@@ -841,8 +841,9 @@ const myList = authedProcedure
   .input(
     z.object({
       mode: z.enum(["attended", "accessible"]).optional(),
-      range: z.enum(["today", "past_7_days", "custom"]).optional(),
+      range: z.enum(["all", "today", "past_7_days", "custom"]).optional(),
       limit: z.number().min(1).max(100).optional(),
+      cursor: z.string().min(1).optional(),
       startDate: z.string().datetime().optional(),
       endDate: z.string().datetime().optional(),
       timeZoneOffsetMinutes: z
@@ -864,6 +865,7 @@ const myList = authedProcedure
         mode: input.mode,
         range: input.range,
         limit: input.limit,
+        cursor: input.cursor,
         startDate: input.startDate,
         endDate: input.endDate,
         timeZoneOffsetMinutes: input.timeZoneOffsetMinutes,

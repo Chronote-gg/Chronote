@@ -67,8 +67,9 @@ const customMyMeetingsDateRangeMessage =
 const listMyMeetingsSchema = z
   .object({
     mode: z.enum(["attended", "accessible"]).optional(),
-    range: z.enum(["today", "past_7_days", "custom"]).optional(),
+    range: z.enum(["all", "today", "past_7_days", "custom"]).optional(),
     limit: z.number().int().min(1).max(100).optional(),
+    cursor: z.string().min(1).optional(),
     startDate: z.string().datetime().optional(),
     endDate: z.string().datetime().optional(),
     timeZoneOffsetMinutes: z
@@ -156,7 +157,7 @@ const toolDefinitions: McpToolDefinition[] = [
     name: "list_my_meetings",
     title: "List My Chronote Meetings",
     description:
-      "List the authenticated user's Chronote meetings across servers, defaulting to meetings they attended in the past 7 days. Use today or past_7_days without startDate/endDate. Use custom with startDate and optional endDate for explicit date bounds.",
+      "List the authenticated user's Chronote meetings across servers, defaulting to meetings they attended in the past 7 days. Use all, today, or past_7_days without startDate/endDate. Use custom with startDate and optional endDate for explicit date bounds. Pass nextCursor as cursor to fetch the next page.",
     inputSchema: {
       type: "object",
       properties: {
@@ -168,11 +169,16 @@ const toolDefinitions: McpToolDefinition[] = [
         },
         range: {
           type: "string",
-          enum: ["today", "past_7_days", "custom"],
+          enum: ["all", "today", "past_7_days", "custom"],
           description:
-            "Use today or past_7_days for preset ranges. Use custom only when sending startDate or endDate.",
+            "Use all, today, or past_7_days for preset ranges. Use custom only when sending startDate or endDate.",
         },
         limit: { type: "number", minimum: 1, maximum: 100 },
+        cursor: {
+          type: "string",
+          description:
+            "Optional pagination cursor returned as nextCursor from a previous list_my_meetings call.",
+        },
         startDate: {
           type: "string",
           format: "date-time",
@@ -391,6 +397,7 @@ async function callTool(auth: McpAccessTokenInfo, name: string, args: unknown) {
           mode: input.mode,
           range: input.range,
           limit: input.limit,
+          cursor: input.cursor,
           startDate: input.startDate,
           endDate: input.endDate,
           timeZoneOffsetMinutes: input.timeZoneOffsetMinutes,
