@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MantineProvider } from "@mantine/core";
 import MyMeetings from "../MyMeetings";
 
@@ -177,5 +177,52 @@ describe("MyMeetings", () => {
     expect(mockMyListUseQuery).toHaveBeenLastCalledWith(
       expect.objectContaining({ cursor: "cursor-page-2" }),
     );
+  });
+
+  it("retries a failed Load more request with the same cursor", async () => {
+    const retryRefetch = jest.fn();
+    const firstPage = {
+      meetings: [
+        {
+          id: "channel-1#2026-01-02T00:00:00.000Z",
+          meetingId: "meeting-1",
+          serverId: "guild-1",
+          serverName: "Server One",
+          channelId: "channel-1",
+          channelName: "General",
+          timestamp: "2026-01-02T00:00:00.000Z",
+          duration: 3600,
+          tags: ["planning"],
+          meetingName: "Weekly planning",
+          summarySentence: "Planned the week across teams.",
+          audioAvailable: true,
+          transcriptAvailable: true,
+          notesAvailable: true,
+        },
+      ],
+      hasMore: true,
+      nextCursor: "cursor-page-2",
+    };
+    mockMyListUseQuery.mockImplementation((input) => ({
+      data: input?.cursor ? undefined : firstPage,
+      isLoading: false,
+      isFetching: false,
+      error: input?.cursor ? new Error("Failed to load page") : null,
+      refetch: retryRefetch,
+    }));
+
+    renderPage();
+
+    expect(await screen.findByText("Weekly planning")).toBeInTheDocument();
+    fireEvent.click(await screen.findByTestId("my-meetings-load-more"));
+
+    await waitFor(() =>
+      expect(mockMyListUseQuery).toHaveBeenLastCalledWith(
+        expect.objectContaining({ cursor: "cursor-page-2" }),
+      ),
+    );
+    fireEvent.click(await screen.findByTestId("my-meetings-load-more"));
+
+    expect(retryRefetch).toHaveBeenCalledTimes(1);
   });
 });

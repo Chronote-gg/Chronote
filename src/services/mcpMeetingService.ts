@@ -85,6 +85,21 @@ type McpMeetingAccessContext = {
 type MyMeetingsCursor = {
   timestamp: string;
   identity: string;
+  startDate?: string;
+  endDate?: string;
+  mode?: McpMyMeetingsMode;
+  serverIds?: string[];
+  tags?: string[];
+  archivedOnly?: boolean;
+  includeArchived?: boolean;
+};
+
+type ResolvedMyMeetingsFilters = {
+  mode: McpMyMeetingsMode;
+  serverIds?: string[];
+  tags?: string[];
+  archivedOnly?: boolean;
+  includeArchived?: boolean;
 };
 
 export class McpMeetingAccessError extends Error {
@@ -436,6 +451,9 @@ const assertIsoTimestamp = (value: string) => {
   }
 };
 
+const isStringArray = (value: unknown): value is string[] =>
+  Array.isArray(value) && value.every((item) => typeof item === "string");
+
 const isMyMeetingsCursor = (value: unknown): value is MyMeetingsCursor =>
   typeof value === "object" &&
   value !== null &&
@@ -443,7 +461,16 @@ const isMyMeetingsCursor = (value: unknown): value is MyMeetingsCursor =>
   "identity" in value &&
   typeof value.timestamp === "string" &&
   typeof value.identity === "string" &&
-  value.identity.trim().length > 0;
+  value.identity.trim().length > 0 &&
+  (!("startDate" in value) || typeof value.startDate === "string") &&
+  (!("endDate" in value) || typeof value.endDate === "string") &&
+  (!("mode" in value) ||
+    value.mode === "attended" ||
+    value.mode === "accessible") &&
+  (!("serverIds" in value) || isStringArray(value.serverIds)) &&
+  (!("tags" in value) || isStringArray(value.tags)) &&
+  (!("archivedOnly" in value) || typeof value.archivedOnly === "boolean") &&
+  (!("includeArchived" in value) || typeof value.includeArchived === "boolean");
 
 const decodeMyMeetingsCursor = (cursor?: string) => {
   if (!cursor) return undefined;
@@ -455,6 +482,8 @@ const decodeMyMeetingsCursor = (cursor?: string) => {
       throw new McpMeetingAccessError(MY_MEETINGS_CURSOR_ERROR, "bad_request");
     }
     assertIsoTimestamp(decoded.timestamp);
+    if (decoded.startDate) assertIsoTimestamp(decoded.startDate);
+    if (decoded.endDate) assertIsoTimestamp(decoded.endDate);
     return decoded;
   } catch (error) {
     if (error instanceof McpMeetingAccessError) throw error;
@@ -466,8 +495,10 @@ const resolveMyMeetingsStartDate = (
   input: ListMcpMyMeetingsInput,
   range: McpMyMeetingsRange,
   nowMs: number,
+  cursor?: MyMeetingsCursor,
 ) => {
   if (input.startDate) return normalizeInputDateIso(input.startDate);
+  if (cursor?.startDate) return cursor.startDate;
   if (range === "today") {
     return resolveTodayStartIso(nowMs, input.timeZoneOffsetMinutes);
   }
@@ -487,27 +518,50 @@ const resolveMyMeetingsDateRange = (input: ListMcpMyMeetingsInput) => {
   const decodedCursor = decodeMyMeetingsCursor(input.cursor);
   const requestedEndDate = input.endDate
     ? normalizeInputDateIso(input.endDate)
-    : new Date(nowMs).toISOString();
+    : (decodedCursor?.endDate ?? new Date(nowMs).toISOString());
   const endDate =
     decodedCursor && decodedCursor.timestamp < requestedEndDate
       ? decodedCursor.timestamp
       : requestedEndDate;
   const range = resolveMyMeetingsRange(input);
   assertMyMeetingsDateRangeInput(input, range);
-  const startDate = resolveMyMeetingsStartDate(input, range, nowMs);
+  const startDate = resolveMyMeetingsStartDate(
+    input,
+    range,
+    nowMs,
+    decodedCursor,
+  );
   assertMyMeetingsDateRangeOrder(startDate, endDate);
 
   return { startDate, endDate, cursor: decodedCursor };
 };
 
+const resolveMyMeetingsFilters = (
+  input: ListMcpMyMeetingsInput,
+  cursor?: MyMeetingsCursor,
+): ResolvedMyMeetingsFilters => ({
+  mode: input.mode ?? cursor?.mode ?? "attended",
+  serverIds: input.serverIds ?? cursor?.serverIds,
+  tags: input.tags ?? cursor?.tags,
+  archivedOnly: input.archivedOnly ?? cursor?.archivedOnly,
+  includeArchived: input.includeArchived ?? cursor?.includeArchived,
+});
+
 const meetingIdentity = (meeting: MeetingHistory) =>
   `${meeting.guildId}#${meeting.channelId_timestamp}`;
 
-const encodeMyMeetingsCursor = (meeting: MeetingHistory) =>
+const encodeMyMeetingsCursor = (
+  meeting: MeetingHistory,
+  range: { startDate: string; endDate: string },
+  filters: ResolvedMyMeetingsFilters,
+) =>
   Buffer.from(
     JSON.stringify({
       timestamp: meeting.timestamp,
       identity: meetingIdentity(meeting),
+      startDate: range.startDate,
+      endDate: range.endDate,
+      ...filters,
     }),
     "utf8",
   ).toString("base64url");
@@ -829,15 +883,15 @@ export async function listMcpMyMeetings(input: ListMcpMyMeetingsInput) {
     return { meetings: [], hasMore: false, nextCursor: null };
   }
 
-  const mode = input.mode ?? "attended";
   const range = resolveMyMeetingsDateRange(input);
+  const filters = resolveMyMeetingsFilters(input, range.cursor);
   const collectionLimit = limit + 1;
   const scanLimit = collectionLimit * MCP_MEETING_SCAN_LIMIT_MULTIPLIER;
-  const requestedServerIds = input.serverIds?.length
-    ? new Set(input.serverIds)
+  const requestedServerIds = filters.serverIds?.length
+    ? new Set(filters.serverIds)
     : null;
   const indexedMeetings =
-    mode === "attended"
+    filters.mode === "attended"
       ? await listIndexedMeetingsForUser({
           userId: input.userId,
           startDate: range.startDate,
@@ -854,14 +908,14 @@ export async function listMcpMyMeetings(input: ListMcpMyMeetingsInput) {
   );
   const servers = filterMcpServers(
     await listMcpServersForUser(input.userId),
-    input.serverIds,
+    filters.serverIds,
   );
 
   const serverMap = new Map(servers.map((server) => [server.id, server]));
   const needsRangeFallback =
     servers.length > 0 &&
-    (mode === "accessible" ||
-      countMeetingsMatchingListFilters(indexedCandidates, input) <
+    (filters.mode === "accessible" ||
+      countMeetingsMatchingListFilters(indexedCandidates, filters) <
         collectionLimit);
   const rangeMeetings = needsRangeFallback
     ? await listRangeMeetingsForServers({
@@ -882,23 +936,27 @@ export async function listMcpMyMeetings(input: ListMcpMyMeetingsInput) {
   const allowedMeetings = await collectAccessibleUserMeetings({
     meetings: candidateMeetings,
     userId: input.userId,
-    mode,
+    mode: filters.mode,
     limit: collectionLimit,
-    tags: input.tags,
-    includeArchived: input.includeArchived,
-    archivedOnly: input.archivedOnly,
+    tags: filters.tags,
+    includeArchived: filters.includeArchived,
+    archivedOnly: filters.archivedOnly,
   });
   const pageMeetings = allowedMeetings.slice(0, limit);
   const hasMore = allowedMeetings.length > limit;
 
   return {
     range: { startDate: range.startDate, endDate: range.endDate },
-    mode,
+    mode: filters.mode,
     meetings: await summarizeUserMeetings(pageMeetings, serverMap),
     hasMore,
     nextCursor:
       hasMore && pageMeetings.length > 0
-        ? encodeMyMeetingsCursor(pageMeetings[pageMeetings.length - 1])
+        ? encodeMyMeetingsCursor(
+            pageMeetings[pageMeetings.length - 1],
+            range,
+            filters,
+          )
         : null,
   };
 }

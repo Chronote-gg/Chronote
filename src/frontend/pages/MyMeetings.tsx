@@ -217,19 +217,27 @@ const resetMyMeetingsPagination = (
 };
 
 type LoadMyMeetingsPageInput = {
+  hasError: boolean;
   isFetching: boolean;
   nextCursor: string | null;
   pageCursor: string | null;
+  refetch: () => unknown;
   setPageCursor: (cursor: string | null) => void;
 };
 
 const loadMyMeetingsPage = ({
+  hasError,
   isFetching,
   nextCursor,
   pageCursor,
+  refetch,
   setPageCursor,
 }: LoadMyMeetingsPageInput) => {
-  if (!nextCursor || isFetching || nextCursor === pageCursor) return;
+  if (!nextCursor || isFetching) return;
+  if (nextCursor === pageCursor) {
+    if (hasError) void refetch();
+    return;
+  }
   setPageCursor(nextCursor);
 };
 
@@ -435,9 +443,11 @@ export default function MyMeetings() {
     resetMyMeetingsPagination(setLoadedPages, setPageCursor);
   const loadMore = () =>
     loadMyMeetingsPage({
+      hasError: Boolean(meetingsQuery.error),
       isFetching: meetingsQuery.isFetching,
       nextCursor,
       pageCursor,
+      refetch: meetingsQuery.refetch,
       setPageCursor,
     });
   const refreshMeetings = () =>

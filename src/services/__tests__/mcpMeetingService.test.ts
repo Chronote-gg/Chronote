@@ -484,8 +484,6 @@ describe("mcpMeetingService", () => {
     });
     const secondPage = await listMcpMyMeetings({
       userId: "user-cursor",
-      mode: "accessible",
-      range: "all",
       limit: 2,
       cursor: firstPage.nextCursor ?? undefined,
     });
