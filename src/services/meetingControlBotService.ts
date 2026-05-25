@@ -274,51 +274,47 @@ const canMemberEndLease = (
   startTriggeredByUserId?: string,
 ) => startTriggeredByUserId === userId || canGuildMemberEndMeeting(member);
 
-const executeStopMeeting = async (
-  client: Client,
+const executeStopLocalMeeting = async (
+  guild: Guild,
+  guildId: string,
+  userId: string,
+  input: StopMeetingCommandInput,
+  meeting: MeetingData,
+): Promise<MeetingControlCommandResult> => {
+  if (input.meetingId && meeting.meetingId !== input.meetingId) {
+    throw new MeetingControlExecutionError("Meeting not found.");
+  }
+  const member = await fetchMember(guild, userId);
+  if (
+    meeting.creator.id !== userId &&
+    !canMemberEndLease(member, userId, meeting.startTriggeredByUserId)
+  ) {
+    throw new MeetingControlExecutionError(
+      "You do not have permission to end this meeting.",
+    );
+  }
+  if (meeting.finishing || meeting.finished) {
+    return {
+      status: "stopping",
+      serverId: guildId,
+      meetingId: meeting.meetingId,
+    };
+  }
+  meeting.endReason = MEETING_END_REASONS.MCP;
+  meeting.endTriggeredByUserId = userId;
+  if (!meeting.onEndMeeting) {
+    throw new MeetingControlExecutionError("End meeting handler unavailable.");
+  }
+  await meeting.onEndMeeting(meeting);
+  return { status: "ended", serverId: guildId, meetingId: meeting.meetingId };
+};
+
+const executeStopLeasedMeeting = async (
+  guild: Guild,
+  guildId: string,
   userId: string,
   input: StopMeetingCommandInput,
 ): Promise<MeetingControlCommandResult> => {
-  const state = input.serverId
-    ? undefined
-    : await resolveUserVoiceState(client, userId, input);
-  const guildId = input.serverId ?? state?.guild.id;
-  if (!guildId) {
-    throw new MeetingControlExecutionError("serverId is required.");
-  }
-  const guild = await getGuildOrThrow(client, guildId);
-  const meeting = getMeeting(guildId);
-  if (meeting) {
-    if (input.meetingId && meeting.meetingId !== input.meetingId) {
-      throw new MeetingControlExecutionError("Meeting not found.");
-    }
-    const member = await fetchMember(guild, userId);
-    if (
-      meeting.creator.id !== userId &&
-      !canMemberEndLease(member, userId, meeting.startTriggeredByUserId)
-    ) {
-      throw new MeetingControlExecutionError(
-        "You do not have permission to end this meeting.",
-      );
-    }
-    if (meeting.finishing || meeting.finished) {
-      return {
-        status: "stopping",
-        serverId: guildId,
-        meetingId: meeting.meetingId,
-      };
-    }
-    meeting.endReason = MEETING_END_REASONS.MCP;
-    meeting.endTriggeredByUserId = userId;
-    if (!meeting.onEndMeeting) {
-      throw new MeetingControlExecutionError(
-        "End meeting handler unavailable.",
-      );
-    }
-    await meeting.onEndMeeting(meeting);
-    return { status: "ended", serverId: guildId, meetingId: meeting.meetingId };
-  }
-
   const lease = await getActiveMeetingLeaseForGuild(guildId);
   if (!lease || !isLeaseActive(lease)) {
     throw new MeetingControlExecutionError("Meeting not found.");
@@ -342,6 +338,26 @@ const executeStopMeeting = async (
     throw new MeetingControlExecutionError("Meeting end request was rejected.");
   }
   return { status: "stopping", serverId: guildId, meetingId: lease.meetingId };
+};
+
+const executeStopMeeting = async (
+  client: Client,
+  userId: string,
+  input: StopMeetingCommandInput,
+): Promise<MeetingControlCommandResult> => {
+  const state = input.serverId
+    ? undefined
+    : await resolveUserVoiceState(client, userId, input);
+  const guildId = input.serverId ?? state?.guild.id;
+  if (!guildId) {
+    throw new MeetingControlExecutionError("serverId is required.");
+  }
+  const guild = await getGuildOrThrow(client, guildId);
+  const meeting = getMeeting(guildId);
+  if (meeting) {
+    return executeStopLocalMeeting(guild, guildId, userId, input, meeting);
+  }
+  return executeStopLeasedMeeting(guild, guildId, userId, input);
 };
 
 const resolveLiveMeeting = async (
