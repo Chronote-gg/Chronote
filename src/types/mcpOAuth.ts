@@ -1,4 +1,9 @@
-export const MCP_SCOPES = ["meetings:read", "transcripts:read"] as const;
+export const MCP_SCOPES = [
+  "meetings:read",
+  "transcripts:read",
+  "meetings:start",
+  "meetings:stop",
+] as const;
 
 export type McpScope = (typeof MCP_SCOPES)[number];
 

@@ -7,6 +7,12 @@ Notable product changes for Chronote users. For the full changelog, see the [Git
 
 ## 2026
 
+### Remote MCP live controls
+
+- AI assistants can now start Chronote recordings from your current Discord voice channel through Remote MCP.
+- Remote MCP can stop active meetings, check live meeting status, and fetch available live transcript events using existing meeting/transcript scopes plus separate start/stop OAuth consent scopes.
+- Meeting control requests are queued so Chronote can route work to the bot runtime that owns the live recording.
+
 ### Transcription reliability guardrails
 
 - Low-confidence transcription retries now reject punctuation-only outputs before they can replace a real transcript.

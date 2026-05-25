@@ -11,7 +11,7 @@
 - Discord: discord.js v14, discord-api-types, @discordjs/voice for audio capture, @discordjs/opus, prism-media.
 - AI: openai SDK; gpt-4o-transcribe for transcription; gpt-5.1 for cleanup/notes/corrections; gpt-5-mini for live gate; DALL-E 3 for images.
 - Observability and prompt management: Langfuse for tracing, prompt versioning, and prompt sync scripts. AMG (Grafana) service account token is auto-rotated via EventBridge + Lambda (see `_infra/grafana.tf` and `_infra/README.md`). Critical alerts (ECS down, ALB 5xx, unhealthy hosts, rotation failures) are sent via SNS email and optionally to a Discord channel via a separate Node.js Lambda (see `_infra/notifications.tf` and `_infra/README.md`).
-- Storage: AWS DynamoDB (tables: GuildSubscription, PaymentTransaction, StripeWebhookEvent, InteractionReceipt, ActiveMeeting, AccessLogs, RecordingTranscript, AutoRecordSettings, ServerContext, ChannelContext, DictionaryTable, MeetingHistory, MeetingUserIndex, SessionTable, McpOAuthTable, NotionIntegrationTable), S3 for transcripts/audio.
+- Storage: AWS DynamoDB (tables: GuildSubscription, PaymentTransaction, StripeWebhookEvent, InteractionReceipt, ActiveMeeting, MeetingControlCommand, AccessLogs, RecordingTranscript, AutoRecordSettings, ServerContext, ChannelContext, DictionaryTable, MeetingHistory, MeetingUserIndex, SessionTable, McpOAuthTable, NotionIntegrationTable), S3 for transcripts/audio.
 - Infra: Terraform -> AWS ECS Fargate, ECR, CloudWatch logs; static frontend on S3 + CloudFront with OAC; local Dynamo via docker-compose.
 - IaC scanning: Checkov runs in `.github/workflows/ci.yml` on PRs and main pushes. Local: `npm run checkov` (uses `uvx --from checkov checkov`; install uv first: https://docs.astral.sh/uv/).
 - Known/suppressed infra choices:
@@ -30,6 +30,7 @@
   - Buttons: end meeting, generate image, suggest correction.
   - Auto-record on voice join if configured.
 - Web server: `webserver.ts` (health check; optional Discord OAuth scaffolding). API routes are modularized under `src/api/` (billing, guilds, MCP) and share services with bot commands (ask/context/autorecord/billing).
+- Remote MCP live controls enqueue meeting control commands in DynamoDB so API-only and bot runtimes can be split. Bot workers claim start/stop/live-status/live-transcript commands from `MeetingControlCommandTable`; live meeting owner-specific commands target the active lease owner instance.
 - Frontend: `src/frontend/` (Vite + React 19), builds to `build/frontend/`, deployed to S3/CloudFront. Express only handles API/health; static assets served via CDN.
 - Public docs site: `apps/docs-site/` (Docusaurus), builds to `build/docs-site/`, deployed to S3/CloudFront at `docs.chronote.gg`.
 - Dev/QA commands: `yarn start` (bot via nodemon+ts-node), `yarn dev` (starts local Dynamo + init + bot), `yarn frontend:dev`, `yarn docs:dev`, `yarn build`, `yarn build:web`, `yarn build:all`, `yarn docs:build`, `yarn docs:check`, `yarn test`, `yarn lint`, `yarn prettier`, `yarn terraform:init|plan|apply`, `yarn prompts:push`, `yarn prompts:pull`, `yarn prompts:check`.
@@ -76,6 +77,7 @@
 - ServerContext / ChannelContext store prompt context.
 - AutoRecordSettings enable record-all or per-channel auto-start.
 - McpOAuthTable stores hashed MCP OAuth clients, authorization codes, tokens, and user consents. Access tokens are resource-bound to the configured MCP endpoint and scopes are enforced per tool.
+- MeetingControlCommand stores short-lived queued MCP meeting control requests and results. Pending commands are claimed by bot workers via `StatusCreatedAtIndex`; commands targeting an active meeting owner include `targetOwnerInstanceId`.
 - NotionIntegrationTable stores per-user Notion connection metadata and per-user meeting export mappings, plus server-scoped automation config/export/reservation records keyed under `GUILD#guildId`. Notion access and refresh tokens are encrypted before persistence.
 
 ## Frontend

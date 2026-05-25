@@ -11,7 +11,7 @@ import * as trpcExpress from "@trpc/server/adapters/express";
 import { registerBillingRoutes } from "./api/billing";
 import { registerGuildRoutes } from "./api/guilds";
 import { registerLiveMeetingRoutes } from "./api/liveMeetings";
-import { registerMcpRoutes } from "./api/mcp";
+import { getMcpServerCard, registerMcpRoutes } from "./api/mcp";
 import { registerNotionOAuthRoutes } from "./api/notionOAuth";
 import {
   registerMcpOAuthSessionRoutes,
@@ -135,6 +135,9 @@ export function setupWebServer() {
 
   if (config.mcp.enabled) {
     registerMcpOAuthStatelessRoutes(app);
+    app.get("/.well-known/mcp/server-card.json", (_req, res) => {
+      res.json(getMcpServerCard());
+    });
     registerMcpRoutes(app);
   }
 

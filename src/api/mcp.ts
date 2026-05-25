@@ -17,7 +17,16 @@ import {
   MAX_MCP_TRANSCRIPT_MAX_CHARS,
   McpMeetingAccessError,
 } from "../services/mcpMeetingService";
+import {
+  getMcpLiveMeetingStatus,
+  getMcpLiveMeetingTranscript,
+  getMcpMeetingControlRequest,
+  McpMeetingControlError,
+  startMcpMeetingControl,
+  stopMcpMeetingControl,
+} from "../services/mcpMeetingControlService";
 import type { McpAccessTokenInfo, McpScope } from "../types/mcpOAuth";
+import type { MeetingControlCommandSnapshot } from "../services/meetingControlQueueService";
 
 const MCP_PROTOCOL_VERSION = "2025-11-25";
 const JSON_RPC_VERSION = "2.0";
@@ -48,6 +57,18 @@ const toolAnnotations = {
   readOnlyHint: true,
   destructiveHint: false,
   idempotentHint: true,
+  openWorldHint: true,
+};
+const startMeetingToolAnnotations = {
+  readOnlyHint: false,
+  destructiveHint: false,
+  idempotentHint: false,
+  openWorldHint: true,
+};
+const stopMeetingToolAnnotations = {
+  readOnlyHint: false,
+  destructiveHint: true,
+  idempotentHint: false,
   openWorldHint: true,
 };
 
@@ -111,6 +132,42 @@ const meetingTranscriptLookupSchema = z.object({
     .min(1)
     .max(MAX_MCP_TRANSCRIPT_MAX_CHARS)
     .optional(),
+});
+
+const startMeetingControlSchema = z.object({
+  serverId: z.string().min(1).optional(),
+  voiceChannelId: z.string().min(1).optional(),
+  textChannelId: z.string().min(1).optional(),
+  context: z.string().max(4000).optional(),
+  tags: z.array(z.string().min(1).max(50)).max(20).optional(),
+});
+
+const stopMeetingControlSchema = z.object({
+  serverId: z.string().min(1).optional(),
+  meetingId: z.string().min(1).optional(),
+});
+
+const liveMeetingControlSchema = z.object({
+  serverId: z.string().min(1).optional(),
+  meetingId: z.string().min(1).optional(),
+  afterEventId: z.string().min(1).optional(),
+  limit: z.number().int().min(1).max(200).optional(),
+});
+
+const liveMeetingTranscriptControlSchema = liveMeetingControlSchema.superRefine(
+  (input, ctx) => {
+    if (!input.serverId) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "serverId is required for live transcript requests.",
+        path: ["serverId"],
+      });
+    }
+  },
+);
+
+const meetingControlRequestSchema = z.object({
+  requestId: z.string().min(1),
 });
 
 const toolDefinitions: McpToolDefinition[] = [
@@ -261,6 +318,113 @@ const toolDefinitions: McpToolDefinition[] = [
     },
     annotations: toolAnnotations,
   },
+  {
+    name: "start_meeting",
+    title: "Start Chronote Meeting",
+    description:
+      "Start a Chronote recording in the authenticated user's current Discord voice channel. Optionally pass serverId, voiceChannelId, textChannelId, context, and tags. Requires meetings:start.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        serverId: {
+          type: "string",
+          description:
+            "Optional Discord server ID. Required if the user is in voice in multiple servers.",
+        },
+        voiceChannelId: {
+          type: "string",
+          description:
+            "Optional voice channel ID. The authenticated user must already be connected to it.",
+        },
+        textChannelId: {
+          type: "string",
+          description:
+            "Optional text channel for meeting start and notes messages. Defaults to the server notes channel.",
+        },
+        context: { type: "string", maxLength: 4000 },
+        tags: {
+          type: "array",
+          items: { type: "string", minLength: 1, maxLength: 50 },
+          maxItems: 20,
+        },
+      },
+      additionalProperties: false,
+    },
+    annotations: startMeetingToolAnnotations,
+  },
+  {
+    name: "stop_meeting",
+    title: "Stop Chronote Meeting",
+    description:
+      "Stop the active Chronote meeting in a server, or infer the server from the authenticated user's current voice channel. Requires meetings:stop.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        serverId: {
+          type: "string",
+          description: "Optional Discord server ID.",
+        },
+        meetingId: {
+          type: "string",
+          description:
+            "Optional live meeting UUID to guard against ending the wrong meeting.",
+        },
+      },
+      additionalProperties: false,
+    },
+    annotations: stopMeetingToolAnnotations,
+  },
+  {
+    name: "get_live_meeting_status",
+    title: "Get Live Chronote Meeting Status",
+    description:
+      "Get status for an active Chronote meeting. Pass serverId/meetingId or let Chronote infer the server from the authenticated user's current voice channel.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        serverId: { type: "string" },
+        meetingId: { type: "string" },
+      },
+      additionalProperties: false,
+    },
+    annotations: toolAnnotations,
+  },
+  {
+    name: "get_live_meeting_transcript",
+    title: "Get Live Chronote Meeting Transcript",
+    description:
+      "Fetch transcript events currently available for an active Chronote meeting. Requires serverId and transcripts:read.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        serverId: { type: "string" },
+        meetingId: { type: "string" },
+        afterEventId: {
+          type: "string",
+          description: "Optional event id cursor from a previous response.",
+        },
+        limit: { type: "integer", minimum: 1, maximum: 200 },
+      },
+      required: ["serverId"],
+      additionalProperties: false,
+    },
+    annotations: toolAnnotations,
+  },
+  {
+    name: "get_meeting_control_request",
+    title: "Get Chronote Meeting Control Request",
+    description:
+      "Check a queued meeting control request returned by start_meeting, stop_meeting, or live meeting tools.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        requestId: { type: "string" },
+      },
+      required: ["requestId"],
+      additionalProperties: false,
+    },
+    annotations: toolAnnotations,
+  },
 ];
 
 const toolScopes = new Map<string, McpScope[]>([
@@ -269,6 +433,12 @@ const toolScopes = new Map<string, McpScope[]>([
   ["list_my_meetings", ["meetings:read"]],
   ["get_meeting_summary", ["meetings:read"]],
   ["get_meeting_transcript", ["meetings:read", "transcripts:read"]],
+  ["start_meeting", ["meetings:start"]],
+  ["stop_meeting", ["meetings:stop"]],
+  ["get_live_meeting_status", ["meetings:read"]],
+  ["get_live_meeting_transcript", ["meetings:read", "transcripts:read"]],
+  // The repository owner-checks requestId, so polling only needs a valid token.
+  ["get_meeting_control_request", []],
 ]);
 
 const isJsonRpcRequest = (value: unknown): value is JsonRpcRequest => {
@@ -339,6 +509,32 @@ const mapMeetingError = (error: unknown) => {
   return toolError(error.message);
 };
 
+const mapMeetingControlError = (error: unknown) => {
+  if (!(error instanceof McpMeetingControlError)) return undefined;
+  if (error.code === "not_found") return toolError("Request not found.");
+  return toolError(error.message);
+};
+
+const meetingControlToolResult = (snapshot: MeetingControlCommandSnapshot) => {
+  if (snapshot.queueStatus === "failed") {
+    return toolError(snapshot.error ?? "Meeting control request failed.");
+  }
+  if (snapshot.queueStatus === "completed" && snapshot.result) {
+    return toolResult({
+      requestId: snapshot.requestId,
+      requestStatus: snapshot.queueStatus,
+      ...snapshot.result,
+    });
+  }
+  return toolResult({
+    requestId: snapshot.requestId,
+    requestStatus: snapshot.queueStatus,
+    commandType: snapshot.commandType,
+    createdAt: snapshot.createdAt,
+    updatedAt: snapshot.updatedAt,
+  });
+};
+
 const formatZodToolError = (error: z.ZodError) => {
   const message = error.issues[0]?.message;
   return message ? `Invalid tool input: ${message}` : "Invalid tool input.";
@@ -366,6 +562,30 @@ const resolveSingleRequestRequiredScopes = (
     callRequest?.params as { name?: string } | undefined
   )?.name;
   return requestedToolName ? toolScopes.get(requestedToolName) : undefined;
+};
+
+const urlOrigin = (value: string) => new URL(value).origin;
+
+const resolveAllowedMcpOrigins = () =>
+  new Set(
+    [
+      config.frontend.siteUrl,
+      config.mcp.publicBaseUrl,
+      ...config.frontend.allowedOrigins,
+    ].map(urlOrigin),
+  );
+
+const hasInvalidOrigin = (req: Request) => {
+  const origin = req.headers.origin;
+  if (!origin) return false;
+  return !resolveAllowedMcpOrigins().has(origin);
+};
+
+const rejectInvalidOrigin = (req: Request, res: Response) => {
+  if (!hasInvalidOrigin(req)) return false;
+  if (!getBearerToken(req)) return false;
+  res.status(403).json({ error: "invalid_origin" });
+  return true;
 };
 
 async function callTool(auth: McpAccessTokenInfo, name: string, args: unknown) {
@@ -430,12 +650,50 @@ async function callTool(auth: McpAccessTokenInfo, name: string, args: unknown) {
         }),
       );
     }
+    if (name === "start_meeting") {
+      const input = startMeetingControlSchema.parse(args);
+      return meetingControlToolResult(
+        await startMcpMeetingControl({ userId: auth.userId, request: input }),
+      );
+    }
+    if (name === "stop_meeting") {
+      const input = stopMeetingControlSchema.parse(args);
+      return meetingControlToolResult(
+        await stopMcpMeetingControl({ userId: auth.userId, request: input }),
+      );
+    }
+    if (name === "get_live_meeting_status") {
+      const input = liveMeetingControlSchema.parse(args);
+      return meetingControlToolResult(
+        await getMcpLiveMeetingStatus({ userId: auth.userId, request: input }),
+      );
+    }
+    if (name === "get_live_meeting_transcript") {
+      const input = liveMeetingTranscriptControlSchema.parse(args);
+      return meetingControlToolResult(
+        await getMcpLiveMeetingTranscript({
+          userId: auth.userId,
+          request: input,
+        }),
+      );
+    }
+    if (name === "get_meeting_control_request") {
+      const input = meetingControlRequestSchema.parse(args);
+      return meetingControlToolResult(
+        await getMcpMeetingControlRequest({
+          userId: auth.userId,
+          requestId: input.requestId,
+        }),
+      );
+    }
     return toolError(`Unknown tool: ${name}`);
   } catch (error) {
     if (error instanceof z.ZodError)
       return toolError(formatZodToolError(error));
     const meetingError = mapMeetingError(error);
     if (meetingError) return meetingError;
+    const controlError = mapMeetingControlError(error);
+    if (controlError) return controlError;
     console.error("Unexpected MCP tool error", { toolName: name, error });
     return toolError("Unexpected tool error.");
   }
@@ -489,8 +747,27 @@ export async function handleMcpJsonRpcRequest(
   }
 }
 
+export const getMcpServerCard = () => ({
+  serverInfo: {
+    name: "chronote",
+    version: config.server.npmPackageVersion,
+  },
+  authentication: {
+    required: true,
+    schemes: ["oauth2"],
+  },
+  tools: toolDefinitions.map((tool) => ({
+    name: tool.name,
+    description: tool.description,
+    inputSchema: tool.inputSchema,
+  })),
+  resources: [],
+  prompts: [],
+});
+
 export function registerMcpRoutes(app: Express) {
   app.get(config.mcp.endpointPath, (req, res) => {
+    if (rejectInvalidOrigin(req, res)) return;
     if (!getBearerToken(req)) {
       sendUnauthorized(res);
       return;
@@ -500,6 +777,7 @@ export function registerMcpRoutes(app: Express) {
   });
 
   app.post(config.mcp.endpointPath, async (req, res) => {
+    if (rejectInvalidOrigin(req, res)) return;
     const rawToken = getBearerToken(req);
     if (!rawToken) {
       sendUnauthorized(res);

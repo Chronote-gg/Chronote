@@ -1340,6 +1340,8 @@ resource "aws_iam_policy" "dynamodb_access_policy" {
           aws_dynamodb_table.stripe_webhook_event_table.arn,
           aws_dynamodb_table.interaction_receipt_table.arn,
           aws_dynamodb_table.active_meeting_table.arn,
+          aws_dynamodb_table.meeting_control_command_table.arn,
+          "${aws_dynamodb_table.meeting_control_command_table.arn}/index/*",
           aws_dynamodb_table.access_logs_table.arn,
           aws_dynamodb_table.recording_transcript_table.arn,
           aws_dynamodb_table.auto_record_settings_table.arn,
@@ -1948,6 +1950,52 @@ resource "aws_dynamodb_table" "active_meeting_table" {
 
   tags = {
     Name = "ActiveMeetingTable"
+  }
+}
+
+resource "aws_dynamodb_table" "meeting_control_command_table" {
+  name         = "${local.name_prefix}-MeetingControlCommandTable"
+  billing_mode = "PAY_PER_REQUEST"
+  hash_key     = "requestId"
+
+  attribute {
+    name = "requestId"
+    type = "S"
+  }
+
+  attribute {
+    name = "queueStatus"
+    type = "S"
+  }
+
+  attribute {
+    name = "createdAt"
+    type = "S"
+  }
+
+  global_secondary_index {
+    name            = "StatusCreatedAtIndex"
+    hash_key        = "queueStatus"
+    range_key       = "createdAt"
+    projection_type = "ALL"
+  }
+
+  ttl {
+    attribute_name = "expiresAt"
+    enabled        = true
+  }
+
+  point_in_time_recovery {
+    enabled = true
+  }
+
+  server_side_encryption {
+    enabled     = true
+    kms_key_arn = aws_kms_key.app_general.arn
+  }
+
+  tags = {
+    Name = "MeetingControlCommandTable"
   }
 }
 

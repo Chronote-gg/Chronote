@@ -1,5 +1,6 @@
 export const MEETING_START_REASONS = {
   MANUAL_COMMAND: "manual_command",
+  MCP: "mcp",
   AUTO_RECORD_CHANNEL: "auto_record_channel",
   AUTO_RECORD_ALL: "auto_record_all",
 } as const;
@@ -12,6 +13,7 @@ export const MEETING_END_REASONS = {
   CHANNEL_EMPTY: "channel_empty",
   TIMEOUT: "timeout",
   LIVE_VOICE: "live_voice",
+  MCP: "mcp",
   BOT_DISCONNECT: "bot_disconnect",
   WEB_UI: "web_ui",
   DISMISSED: "dismissed",

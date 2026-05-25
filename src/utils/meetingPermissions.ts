@@ -1,5 +1,18 @@
-import { PermissionFlagsBits } from "discord.js";
+import { GuildMember, PermissionFlagsBits } from "discord.js";
 import type { MeetingData } from "../types/meeting-data";
+
+export function canGuildMemberEndMeeting(
+  member: GuildMember | null | undefined,
+): boolean {
+  if (!member) return false;
+  return member.permissions.any([
+    PermissionFlagsBits.ModerateMembers,
+    PermissionFlagsBits.Administrator,
+    PermissionFlagsBits.ManageChannels,
+    PermissionFlagsBits.ManageGuild,
+    PermissionFlagsBits.ManageMessages,
+  ]);
+}
 
 export function canUserEndMeeting(
   meeting: MeetingData,
@@ -9,16 +22,5 @@ export function canUserEndMeeting(
     return true;
   }
 
-  const member = meeting.guild.members.cache.get(userId);
-  if (!member) {
-    return false;
-  }
-
-  return member.permissions.any([
-    PermissionFlagsBits.ModerateMembers,
-    PermissionFlagsBits.Administrator,
-    PermissionFlagsBits.ManageChannels,
-    PermissionFlagsBits.ManageGuild,
-    PermissionFlagsBits.ManageMessages,
-  ]);
+  return canGuildMemberEndMeeting(meeting.guild.members.cache.get(userId));
 }

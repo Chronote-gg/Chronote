@@ -1,0 +1,17 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "gg.chronote/chronote",
+  "title": "Chronote",
+  "description": "Discord meeting recording, live meeting control, notes, and transcript access for Chronote servers.",
+  "version": "1.0.0",
+  "repository": {
+    "url": "https://github.com/Chronote-gg/Chronote",
+    "source": "github"
+  },
+  "remotes": [
+    {
+      "type": "streamable-http",
+      "url": "https://api.chronote.gg/mcp"
+    }
+  ]
+}

@@ -170,12 +170,14 @@ export async function requestMeetingEndViaLease(
   guildId: string,
   meetingId: string,
   requestedByUserId: string,
+  endReason: ActiveMeetingLease["endReason"] = MEETING_END_REASONS.WEB_UI,
 ): Promise<boolean> {
   return requestActiveMeetingEnd(
     guildId,
     meetingId,
     requestedByUserId,
     new Date().toISOString(),
+    endReason,
   );
 }
 
@@ -258,7 +260,7 @@ async function processRemoteEndRequest(
     requestedBy: lease.endRequestedByUserId,
   });
   stopMeetingLeaseHeartbeat(meeting);
-  meeting.endReason = MEETING_END_REASONS.WEB_UI;
+  meeting.endReason = lease.endReason ?? MEETING_END_REASONS.WEB_UI;
   meeting.endTriggeredByUserId = lease.endRequestedByUserId;
   await onEndMeeting(meeting);
   return true;

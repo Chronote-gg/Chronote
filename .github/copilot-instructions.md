@@ -1,6 +1,6 @@
 # Copilot Review Instructions
 
-This file provides Copilot review context. It mirrors AGENTS.md and adds only high level prompt guidance to avoid drift.
+This file provides Copilot review context. AGENTS.md remains the source of truth; keep this file high level to avoid drift.
 
 ## AGENTS.md (source of truth)
 
@@ -17,7 +17,7 @@ This file provides Copilot review context. It mirrors AGENTS.md and adds only hi
 - Discord: discord.js v14, discord-api-types, @discordjs/voice for audio capture, @discordjs/opus, prism-media.
 - AI: openai SDK; gpt-4o-transcribe for transcription; gpt-5.1 for cleanup/notes/corrections; gpt-5-mini for live gate; DALL-E 3 for images.
 - Observability and prompt management: Langfuse for tracing, prompt versioning, and prompt sync scripts.
-- Storage: AWS DynamoDB (tables: GuildSubscription, PaymentTransaction, StripeWebhookEvent, InteractionReceipt, ActiveMeeting, AccessLogs, RecordingTranscript, AutoRecordSettings, SessionTable, Installer, OnboardingState, AskConversation, Feedback, ServerContext, ChannelContext, DictionaryTable, UserSpeechSettings, MeetingHistory, MeetingUserIndex, MeetingShare, McpOAuthTable), S3 for transcripts/audio.
+- Storage: AWS DynamoDB (tables: GuildSubscription, PaymentTransaction, StripeWebhookEvent, InteractionReceipt, ActiveMeeting, MeetingControlCommand, AccessLogs, RecordingTranscript, AutoRecordSettings, ServerContext, ChannelContext, DictionaryTable, MeetingHistory, MeetingUserIndex, SessionTable, McpOAuthTable, NotionIntegrationTable), S3 for transcripts/audio.
 - Infra: Terraform -> AWS ECS Fargate, ECR, CloudWatch logs; static frontend on S3 + CloudFront with OAC; local Dynamo via docker-compose.
 - IaC scanning: Checkov runs in `.github/workflows/ci.yml` on PRs and main pushes. Local: `npm run checkov` (uses `uvx --from checkov checkov`; install uv first: https://docs.astral.sh/uv/).
 - Known/suppressed infra choices:
@@ -36,6 +36,7 @@ This file provides Copilot review context. It mirrors AGENTS.md and adds only hi
   - Buttons: end meeting, generate image, suggest correction.
   - Auto-record on voice join if configured.
 - Web server: `webserver.ts` (health check; optional Discord OAuth scaffolding). API routes are modularized under `src/api/` (billing, guilds, MCP) and share services with bot commands (ask/context/autorecord/billing).
+- Remote MCP live controls enqueue meeting control commands in DynamoDB so API-only and bot runtimes can be split. Bot workers claim start/stop/live-status/live-transcript commands from `MeetingControlCommandTable`; live meeting owner-specific commands target the active lease owner instance.
 - Frontend: `src/frontend/` (Vite + React 19), builds to `build/frontend/`, deployed to S3/CloudFront. Express only handles API/health; static assets served via CDN.
 - Public docs site: `apps/docs-site/` (Docusaurus), builds to `build/docs-site/`, deployed to S3/CloudFront at `docs.chronote.gg`.
 - Dev/QA commands: `yarn start` (bot via nodemon+ts-node), `yarn dev` (starts local Dynamo + init + bot), `yarn frontend:dev`, `yarn docs:dev`, `yarn build`, `yarn build:web`, `yarn build:all`, `yarn docs:build`, `yarn docs:check`, `yarn test`, `yarn lint`, `yarn prettier`, `yarn terraform:init|plan|apply`, `yarn prompts:push`, `yarn prompts:pull`, `yarn prompts:check`.
@@ -50,8 +51,8 @@ This file provides Copilot review context. It mirrors AGENTS.md and adds only hi
 - Dictionary management: `commands/dictionary.ts`, `services/dictionaryService.ts`
   - Terms are injected into transcription and context prompts, definitions are used outside transcription to reduce prompt bloat.
 - Notes correction flow: `commands/notesCorrections.ts`
-  - â€œSuggest correctionâ€ button â†’ modal (single textarea).
-  - Fetches saved notes + transcript from DB, calls GPT-4o with a â€œminimal edits, do not copy transcriptâ€ prompt, shows a compact line diff, requires approval (meeting creator or ManageChannels if auto-record), updates embed + MeetingHistory and bumps version/last editor.
+  - "Suggest correction" button -> modal (single textarea).
+  - Fetches saved notes + transcript from DB, calls GPT-4o with a "minimal edits, do not copy transcript" prompt, shows a compact line diff, requires approval (meeting creator or ManageChannels if auto-record), updates embed + MeetingHistory and bumps version/last editor.
 - Context management: `commands/context.ts` writes/reads ServerContext and ChannelContext.
 - Meeting history persistence: `commands/saveMeetingHistory.ts`, `db.ts` helpers.
 - Web server: `webserver.ts` (health check, optional Discord OAuth scaffolding).
@@ -80,6 +81,7 @@ This file provides Copilot review context. It mirrors AGENTS.md and adds only hi
 - ServerContext / ChannelContext store prompt context.
 - AutoRecordSettings enable record-all or per-channel auto-start.
 - McpOAuthTable stores hashed remote MCP OAuth clients, authorization codes, tokens, and user consents.
+- MeetingControlCommand stores short-lived queued MCP meeting control requests and results for bot workers.
 
 ## Frontend
 
@@ -100,7 +102,7 @@ This file provides Copilot review context. It mirrors AGENTS.md and adds only hi
 
 ## Known nuances / gotchas
 
-- Token leaks: donâ€™t reintroduce secret re-exports in `constants.ts`; use `configService`.
+- Token leaks: don't reintroduce secret re-exports in `constants.ts`; use `configService`.
 - Discord interaction timing: modal/button handlers must reply within 3s; correction flow already uses direct replies.
 - Diff output is intentionally minimal (line diff, capped length); LLM output is stripped of code fences to avoid code-block embeds.
 - Meeting duration capped at 2h (`MAXIMUM_MEETING_DURATION`).
@@ -118,7 +120,7 @@ This file provides Copilot review context. It mirrors AGENTS.md and adds only hi
 - Avoid hedging and speculative fallbacks. Follow YAGNI and KISS, do not add code for hypothetical cases unless explicitly required.
 - Config constraints: when numeric settings depend on caps, use minKey/maxKey to reference other config entries, clamp inputs in the UI, and enforce bounds in API validation.
 - Playwright mock mode: ensure only the mock API (port 3001) and frontend dev server (port 5173) are running. If ports are occupied, stop them first (`Get-NetTCPConnection -LocalPort 3001,5173 | Select-Object -ExpandProperty OwningProcess -Unique | ForEach-Object { Stop-Process -Id $_ }`). Clear `VITE_API_BASE_URL` (for example via `.env.local`) so the frontend uses the mock server.
-- Comment hygiene: donâ€™t leave transient or change-log style comments (e.g., â€œSDK v3 exposes transformToStringâ€). Use comments only to clarify non-obvious logic, constraints, or intent.
+- Comment hygiene: don't leave transient or change-log style comments (e.g., "SDK v3 exposes transformToString"). Use comments only to clarify non-obvious logic, constraints, or intent.
 - Writing style: do not use em dashes in copy/docs/comments; prefer commas, parentheses, or hyphens.
 - **User data in public outputs (CRITICAL):** This is a public repository. NEVER include real user data (Discord usernames, IDs, meeting content, server names, etc.) in PR descriptions, commit messages, issues, comments, or any publicly visible content. Use generic placeholders (e.g., "User A", "Server X") to preserve meaning while stripping all PII.
 - Documentation accuracy: after changes that affect behavior, config, prompts, infra, or user flows, review and update `AGENTS.md`, `.github/copilot-instructions.md`, `README.md`, and any related `docs/` or prompt files to keep them accurate and high signal. Keep the copilot instructions high level to reduce drift.
@@ -128,7 +130,7 @@ This file provides Copilot review context. It mirrors AGENTS.md and adds only hi
 - Backwards compatibility update (January 6, 2026): prioritize DynamoDB data compatibility; URLs and UI flows can change without preserving prior behavior.
 - Workflow sync: when changing GitHub Actions env or steps, review `.github/workflows/ci.yml`, `.github/workflows/deploy.yml`, and `.github/workflows/deploy-staging.yml` to keep them aligned.
 - ADRs: use the existing ADR format (see `docs/adr-20260106-voice-receiver-resubscribe.md`). New ADRs must live in `docs/` with filename `adr-YYYYMMDD-<slug>.md` and include Status, Date, Owners, Context, Decision, Consequences, Alternatives Considered, and Notes. Keep ADRs short and factual. Update or add ADRs when a design decision changes behavior or data contracts.
-- â€œRemember that â€¦â€ shorthand: when the user says â€œremember that <rule>â€, add it to AGENTS.md under the relevant section as a standing rule.
+- "Remember that ..." shorthand: when the user says "remember that <rule>", add it to AGENTS.md under the relevant section as a standing rule.
 - Do not suppress runtime warnings by monkey-patching globals (e.g., overriding console.error). Fix the underlying issue or accept the warning; never silence it via code hacks.
 - Stripe webhook parsing: keep a single `express.raw({ type: "application/json" })` at app-level in `webserver.ts`; do not add per-route raw parsers elsewhere.
 - React tests: when a test triggers state updates (e.g., data-fetching effects), wrap renders/updates in `act` (from `react`/RTL helpers) to avoid act warnings instead of silencing console errors.
