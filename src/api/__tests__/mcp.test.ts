@@ -7,6 +7,13 @@ import {
   listMcpMyMeetings,
   listMcpServersForUser,
 } from "../../services/mcpMeetingService";
+import {
+  getMcpLiveMeetingStatus,
+  getMcpLiveMeetingTranscript,
+  getMcpMeetingControlRequest,
+  startMcpMeetingControl,
+  stopMcpMeetingControl,
+} from "../../services/mcpMeetingControlService";
 import { validateMcpAccessToken } from "../../services/mcpOAuthService";
 import type { McpAccessTokenInfo } from "../../types/mcpOAuth";
 
@@ -35,6 +42,22 @@ jest.mock("../../services/mcpOAuthService", () => ({
     required.every((scope) => granted.includes(scope)),
   ),
   validateMcpAccessToken: jest.fn(),
+}));
+
+jest.mock("../../services/mcpMeetingControlService", () => ({
+  McpMeetingControlError: class McpMeetingControlError extends Error {
+    constructor(
+      readonly code: string,
+      message: string,
+    ) {
+      super(message);
+    }
+  },
+  getMcpLiveMeetingStatus: jest.fn(),
+  getMcpLiveMeetingTranscript: jest.fn(),
+  getMcpMeetingControlRequest: jest.fn(),
+  startMcpMeetingControl: jest.fn(),
+  stopMcpMeetingControl: jest.fn(),
 }));
 
 const auth: McpAccessTokenInfo = {
@@ -80,6 +103,19 @@ const captureMcpPostHandler = () => {
   return postHandler;
 };
 
+const captureMcpGetHandler = () => {
+  let getHandler: RequestHandler | undefined;
+  const app = {
+    get: jest.fn((_path: string, handler: RequestHandler) => {
+      getHandler = handler;
+    }),
+    post: jest.fn(),
+  };
+  registerMcpRoutes(app as unknown as Express);
+  if (!getHandler) throw new Error("MCP GET route was not registered.");
+  return getHandler;
+};
+
 describe("MCP JSON-RPC handler", () => {
   beforeEach(() => {
     jest.clearAllMocks();
@@ -104,8 +140,252 @@ describe("MCP JSON-RPC handler", () => {
           expect.objectContaining({ name: "list_servers" }),
           expect.objectContaining({ name: "list_my_meetings" }),
           expect.objectContaining({ name: "get_meeting_summary" }),
+          expect.objectContaining({ name: "start_meeting" }),
+          expect.objectContaining({ name: "stop_meeting" }),
+          expect.objectContaining({ name: "get_live_meeting_status" }),
         ]),
       },
+    });
+  });
+
+  it("rejects start meeting without meetings:start", async () => {
+    await expect(
+      handleMcpJsonRpcRequest(auth, {
+        jsonrpc: "2.0",
+        id: "start-scope",
+        method: "tools/call",
+        params: {
+          name: "start_meeting",
+          arguments: {},
+        },
+      }),
+    ).resolves.toMatchObject({
+      jsonrpc: "2.0",
+      id: "start-scope",
+      error: { code: -32001, message: "Insufficient OAuth scope." },
+    });
+  });
+
+  it("calls start_meeting with queued command result", async () => {
+    jest.mocked(startMcpMeetingControl).mockResolvedValue({
+      requestId: "request-1",
+      queueStatus: "completed",
+      commandType: "start_meeting",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:01.000Z",
+      result: {
+        status: "started",
+        serverId: "guild-1",
+        meetingId: "meeting-1",
+        voiceChannelId: "voice-1",
+        textChannelId: "text-1",
+        startedAt: "2026-01-01T00:00:00.000Z",
+      },
+    });
+
+    await expect(
+      handleMcpJsonRpcRequest(
+        { ...auth, scopes: ["meetings:read", "meetings:start"] },
+        {
+          jsonrpc: "2.0",
+          id: "start-call",
+          method: "tools/call",
+          params: {
+            name: "start_meeting",
+            arguments: {
+              serverId: "guild-1",
+              textChannelId: "text-1",
+              tags: ["planning"],
+            },
+          },
+        },
+      ),
+    ).resolves.toMatchObject({
+      jsonrpc: "2.0",
+      id: "start-call",
+      result: {
+        structuredContent: {
+          requestId: "request-1",
+          requestStatus: "completed",
+          status: "started",
+          meetingId: "meeting-1",
+        },
+        isError: false,
+      },
+    });
+
+    expect(startMcpMeetingControl).toHaveBeenCalledWith({
+      userId: "user-1",
+      request: {
+        serverId: "guild-1",
+        textChannelId: "text-1",
+        tags: ["planning"],
+      },
+    });
+  });
+
+  it("returns queued pending meeting control requests", async () => {
+    jest.mocked(stopMcpMeetingControl).mockResolvedValue({
+      requestId: "request-2",
+      queueStatus: "pending",
+      commandType: "stop_meeting",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    });
+
+    await expect(
+      handleMcpJsonRpcRequest(
+        { ...auth, scopes: ["meetings:read", "meetings:stop"] },
+        {
+          jsonrpc: "2.0",
+          id: "stop-call",
+          method: "tools/call",
+          params: {
+            name: "stop_meeting",
+            arguments: { serverId: "guild-1" },
+          },
+        },
+      ),
+    ).resolves.toMatchObject({
+      jsonrpc: "2.0",
+      id: "stop-call",
+      result: {
+        structuredContent: {
+          requestId: "request-2",
+          requestStatus: "pending",
+          commandType: "stop_meeting",
+        },
+        isError: false,
+      },
+    });
+  });
+
+  it("returns failed meeting control requests as tool errors", async () => {
+    jest.mocked(getMcpMeetingControlRequest).mockResolvedValue({
+      requestId: "request-3",
+      queueStatus: "failed",
+      commandType: "start_meeting",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:01.000Z",
+      error: "Join a Discord voice channel first, then retry.",
+    });
+
+    await expect(
+      handleMcpJsonRpcRequest(
+        { ...auth, scopes: ["meetings:start"] },
+        {
+          jsonrpc: "2.0",
+          id: "request-status",
+          method: "tools/call",
+          params: {
+            name: "get_meeting_control_request",
+            arguments: { requestId: "request-3" },
+          },
+        },
+      ),
+    ).resolves.toMatchObject({
+      jsonrpc: "2.0",
+      id: "request-status",
+      result: {
+        content: [
+          {
+            type: "text",
+            text: "Join a Discord voice channel first, then retry.",
+          },
+        ],
+        isError: true,
+      },
+    });
+  });
+
+  it("calls live meeting status with authenticated user id", async () => {
+    jest.mocked(getMcpLiveMeetingStatus).mockResolvedValue({
+      requestId: "request-4",
+      queueStatus: "completed",
+      commandType: "get_live_meeting_status",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:01.000Z",
+      result: {
+        status: "in_progress",
+        serverId: "guild-1",
+        meetingId: "meeting-1",
+        voiceChannelId: "voice-1",
+      },
+    });
+
+    await expect(
+      handleMcpJsonRpcRequest(auth, {
+        jsonrpc: "2.0",
+        id: "live-status",
+        method: "tools/call",
+        params: {
+          name: "get_live_meeting_status",
+          arguments: { serverId: "guild-1", meetingId: "meeting-1" },
+        },
+      }),
+    ).resolves.toMatchObject({
+      jsonrpc: "2.0",
+      id: "live-status",
+      result: {
+        structuredContent: {
+          requestId: "request-4",
+          requestStatus: "completed",
+          status: "in_progress",
+        },
+        isError: false,
+      },
+    });
+
+    expect(getMcpLiveMeetingStatus).toHaveBeenCalledWith({
+      userId: "user-1",
+      request: { serverId: "guild-1", meetingId: "meeting-1" },
+    });
+  });
+
+  it("calls live meeting transcript with transcript scope", async () => {
+    jest.mocked(getMcpLiveMeetingTranscript).mockResolvedValue({
+      requestId: "request-5",
+      queueStatus: "completed",
+      commandType: "get_live_meeting_transcript",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:01.000Z",
+      result: {
+        serverId: "guild-1",
+        meetingId: "meeting-1",
+        events: [{ id: "event-1", type: "voice", time: "0:01", text: "Hi" }],
+        hasMore: false,
+      },
+    });
+
+    await expect(
+      handleMcpJsonRpcRequest(
+        { ...auth, scopes: ["meetings:read", "transcripts:read"] },
+        {
+          jsonrpc: "2.0",
+          id: "live-transcript",
+          method: "tools/call",
+          params: {
+            name: "get_live_meeting_transcript",
+            arguments: { serverId: "guild-1", afterEventId: "event-0" },
+          },
+        },
+      ),
+    ).resolves.toMatchObject({
+      jsonrpc: "2.0",
+      id: "live-transcript",
+      result: {
+        structuredContent: {
+          requestId: "request-5",
+          requestStatus: "completed",
+          events: [{ id: "event-1", text: "Hi" }],
+        },
+        isError: false,
+      },
+    });
+
+    expect(getMcpLiveMeetingTranscript).toHaveBeenCalledWith({
+      userId: "user-1",
+      request: { serverId: "guild-1", afterEventId: "event-0" },
     });
   });
 
@@ -462,5 +742,19 @@ describe("MCP JSON-RPC handler", () => {
       id: null,
       error: { code: -32600, message: "Invalid JSON-RPC request." },
     });
+  });
+
+  it("returns OAuth discovery challenge before origin rejection", async () => {
+    const getHandler = captureMcpGetHandler();
+    const response = createResponse();
+
+    await getHandler(
+      { headers: { origin: "https://mcp-client.example" } } as never,
+      response as never,
+      jest.fn(),
+    );
+
+    expect(response.statusCode).toBe(401);
+    expect(response.headers.get("WWW-Authenticate")).toBe("Bearer");
   });
 });

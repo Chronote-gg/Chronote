@@ -444,6 +444,7 @@ function maybeSuppressAutoRecordRejoin(
   if (
     endReason !== MEETING_END_REASONS.BUTTON &&
     endReason !== MEETING_END_REASONS.WEB_UI &&
+    endReason !== MEETING_END_REASONS.MCP &&
     endReason !== MEETING_END_REASONS.LIVE_VOICE &&
     endReason !== MEETING_END_REASONS.DISMISSED
   ) {

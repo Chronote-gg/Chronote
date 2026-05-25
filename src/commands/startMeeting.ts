@@ -5,9 +5,11 @@ import {
   ChatInputCommandInteraction,
   Client,
   EmbedBuilder,
+  Guild,
   GuildMember,
   PermissionsBitField,
   TextChannel,
+  User,
   UserContextMenuCommandInteraction,
   VoiceBasedChannel,
 } from "discord.js";
@@ -37,6 +39,7 @@ import {
   type AutoRecordRule,
   type MeetingStartReason,
 } from "../types/meetingLifecycle";
+import type { MeetingData } from "../types/meeting-data";
 import {
   getActiveMeetingLeaseForGuild,
   getCurrentMeetingLeaseOwnerInstanceId,
@@ -55,6 +58,22 @@ type StartMeetingInteraction =
 type StartMeetingOptions = {
   ephemeralErrors?: boolean;
 };
+
+type StartManualMeetingFromChannelsOptions = {
+  client: Client;
+  guild: Guild;
+  voiceChannel: VoiceBasedChannel;
+  textChannel: TextChannel;
+  creator: User;
+  meetingContext?: string;
+  tags?: string[];
+  startReason?: MeetingStartReason;
+  startTriggeredByUserId: string;
+};
+
+type StartManualMeetingFromChannelsResult =
+  | { ok: true; meeting: MeetingData; liveMeetingUrl: string | null }
+  | { ok: false; error: string; upgradePrompt?: boolean };
 
 const buildLiveMeetingUrl = (guildId: string, meetingId: string) => {
   const base = config.frontend.siteUrl?.replace(/\/$/, "");
@@ -201,6 +220,171 @@ const resolveMemberVoiceChannel = (member: GuildMember): VoiceChannelResult => {
   return { ok: true, voiceChannel };
 };
 
+export async function startManualMeetingFromChannels({
+  client,
+  guild,
+  voiceChannel,
+  textChannel,
+  creator,
+  meetingContext,
+  tags,
+  startReason = MEETING_START_REASONS.MANUAL_COMMAND,
+  startTriggeredByUserId,
+}: StartManualMeetingFromChannelsOptions): Promise<StartManualMeetingFromChannelsResult> {
+  const guildId = guild.id;
+  const meetingConflict = await ensureNoActiveMeeting(guildId);
+  if (meetingConflict) {
+    return { ok: false, error: meetingConflict };
+  }
+
+  const { limits, subscription } = await getGuildLimits(guildId);
+  const limitNotice = await getLimitNotice(guildId, limits);
+  if (limitNotice) {
+    return { ok: false, error: limitNotice, upgradePrompt: true };
+  }
+
+  const botMember = resolveBotMember(guild);
+  if (!botMember) {
+    return { ok: false, error: "Bot not found in guild." };
+  }
+
+  const permissionCheck = checkBotPermissions(
+    voiceChannel,
+    textChannel,
+    botMember,
+  );
+  if (!permissionCheck.success) {
+    return {
+      ok: false,
+      error: permissionCheck.errorMessage ?? "Missing bot permissions.",
+    };
+  }
+
+  const {
+    liveVoiceEnabled,
+    liveVoiceCommandsEnabled,
+    chatTtsEnabled,
+    chatTtsVoice,
+    liveVoiceTtsVoice,
+  } = await resolveMeetingVoiceSettings(guildId, voiceChannel.id, limits);
+
+  const meetingId = randomUUID();
+  const leaseOwnerInstanceId = getCurrentMeetingLeaseOwnerInstanceId();
+  const leaseAcquired = await tryAcquireMeetingLease({
+    guildId,
+    meetingId,
+    voiceChannelId: voiceChannel.id,
+    voiceChannelName: voiceChannel.name,
+    textChannelId: textChannel.id,
+    isAutoRecording: false,
+    startReason,
+    startTriggeredByUserId,
+  });
+  if (!leaseAcquired) {
+    return { ok: false, error: "A meeting is already active in this server." };
+  }
+
+  let meeting;
+  try {
+    meeting = await initializeMeeting({
+      meetingId,
+      leaseOwnerInstanceId,
+      voiceChannel,
+      textChannel,
+      guild,
+      creator,
+      transcribeMeeting: true,
+      generateNotes: true,
+      meetingContext,
+      initialInteraction: undefined,
+      isAutoRecording: false,
+      startReason,
+      startTriggeredByUserId,
+      tags,
+      onTimeout: (meeting) => handleEndMeetingOther(client, meeting),
+      onEndMeeting: (meeting) => handleEndMeetingOther(client, meeting),
+      liveVoiceEnabled,
+      liveVoiceCommandsEnabled,
+      liveVoiceTtsVoice,
+      chatTtsEnabled,
+      chatTtsVoice,
+      maxMeetingDurationMs: limits.maxMeetingDurationMs,
+      maxMeetingDurationPretty: limits.maxMeetingDurationPretty,
+      subscriptionTier: subscription.tier,
+    });
+  } catch (error) {
+    await releaseMeetingLeaseByIdentifiers(
+      guildId,
+      meetingId,
+      leaseOwnerInstanceId,
+    );
+    throw error;
+  }
+  startMeetingLeaseHeartbeat(meeting);
+  void saveMeetingStartToDatabase(meeting);
+
+  return {
+    ok: true,
+    meeting,
+    liveMeetingUrl: buildLiveMeetingUrl(meeting.guildId, meeting.meetingId),
+  };
+}
+
+export function buildManualMeetingStartedMessage(
+  meeting: MeetingData,
+  liveMeetingUrl: string | null,
+) {
+  const embed = new EmbedBuilder()
+    .setTitle("Meeting Started")
+    .setDescription(
+      `The meeting has started in **${meeting.voiceChannel.name}**.`,
+    )
+    .addFields({
+      name: "Start Time",
+      value: `<t:${Math.floor(meeting.startTime.getTime() / 1000)}:F>`,
+    })
+    .addFields({
+      name: "Tip",
+      value:
+        'Right click the bot in voice and choose "Disconnect" to end the meeting.',
+    })
+    .setColor(0x00ae86)
+    .setTimestamp();
+
+  if (meeting.meetingContext) {
+    embed.addFields({
+      name: "Meeting Context",
+      value: meeting.meetingContext,
+    });
+  }
+
+  const endButton = new ButtonBuilder()
+    .setCustomId("end_meeting")
+    .setLabel("End Meeting")
+    .setStyle(ButtonStyle.Danger);
+
+  const editTagsButton = new ButtonBuilder()
+    .setCustomId("edit_tags")
+    .setLabel("Edit Tags")
+    .setStyle(ButtonStyle.Secondary);
+
+  const liveMeetingButton = liveMeetingUrl
+    ? new ButtonBuilder()
+        .setLabel("Live transcript")
+        .setStyle(ButtonStyle.Link)
+        .setURL(liveMeetingUrl)
+    : null;
+  const components = [endButton, editTagsButton];
+  if (liveMeetingButton) {
+    components.push(liveMeetingButton);
+  }
+  const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
+    ...components,
+  );
+
+  return { embeds: [embed], components: [row] };
+}
+
 export async function handleRequestStartMeeting(
   interaction: StartMeetingInteraction,
   options?: StartMeetingOptions,
@@ -246,154 +430,29 @@ export async function handleRequestStartMeeting(
   }
   const { voiceChannel } = voiceResult;
 
-  // Tier and limits
-  const { limits, subscription } = await getGuildLimits(guildId);
-  const limitNotice = await getLimitNotice(guildId, limits);
-  if (limitNotice) {
-    await interaction.reply(buildUpgradePrompt(limitNotice));
-    return;
-  }
-
-  // Check bot permissions
-  const permissionCheck = checkBotPermissions(
+  const startResult = await startManualMeetingFromChannels({
+    client: interaction.client,
+    guild,
     voiceChannel,
     textChannel,
-    botMember,
-  );
-
-  if (!permissionCheck.success) {
-    await replyStartMeetingError(
-      interaction,
-      permissionCheck.errorMessage!,
-      options,
-    );
-    return;
-  }
-
-  const {
-    liveVoiceEnabled,
-    liveVoiceCommandsEnabled,
-    chatTtsEnabled,
-    chatTtsVoice,
-    liveVoiceTtsVoice,
-  } = await resolveMeetingVoiceSettings(guildId, voiceChannel.id, limits);
-
-  const meetingId = randomUUID();
-  const leaseOwnerInstanceId = getCurrentMeetingLeaseOwnerInstanceId();
-  const leaseAcquired = await tryAcquireMeetingLease({
-    guildId,
-    meetingId,
-    voiceChannelId: voiceChannel.id,
-    voiceChannelName: voiceChannel.name,
-    textChannelId: textChannel.id,
-    isAutoRecording: false,
-    startReason: MEETING_START_REASONS.MANUAL_COMMAND,
+    creator: interaction.user,
+    meetingContext,
+    tags,
     startTriggeredByUserId: interaction.user.id,
   });
-  if (!leaseAcquired) {
-    await replyStartMeetingError(
-      interaction,
-      "A meeting is already active in this server.",
-      options,
-    );
+  if (!startResult.ok) {
+    if (startResult.upgradePrompt) {
+      await interaction.reply(buildUpgradePrompt(startResult.error));
+      return;
+    }
+    await replyStartMeetingError(interaction, startResult.error, options);
     return;
   }
 
-  // Initialize the meeting using the core function
-  let meeting;
-  try {
-    meeting = await initializeMeeting({
-      meetingId,
-      leaseOwnerInstanceId,
-      voiceChannel,
-      textChannel,
-      guild,
-      creator: interaction.user,
-      transcribeMeeting: true,
-      generateNotes: true,
-      meetingContext,
-      initialInteraction: undefined,
-      isAutoRecording: false,
-      startReason: MEETING_START_REASONS.MANUAL_COMMAND,
-      startTriggeredByUserId: interaction.user.id,
-      tags,
-      onTimeout: (meeting) =>
-        handleEndMeetingOther(interaction.client, meeting),
-      onEndMeeting: (meeting) =>
-        handleEndMeetingOther(interaction.client, meeting),
-      liveVoiceEnabled,
-      liveVoiceCommandsEnabled,
-      liveVoiceTtsVoice,
-      chatTtsEnabled,
-      chatTtsVoice,
-      maxMeetingDurationMs: limits.maxMeetingDurationMs,
-      maxMeetingDurationPretty: limits.maxMeetingDurationPretty,
-      subscriptionTier: subscription.tier,
-    });
-  } catch (error) {
-    await releaseMeetingLeaseByIdentifiers(
-      guildId,
-      meetingId,
-      leaseOwnerInstanceId,
-    );
-    throw error;
-  }
-  startMeetingLeaseHeartbeat(meeting);
-  void saveMeetingStartToDatabase(meeting);
-
-  const embed = new EmbedBuilder()
-    .setTitle("Meeting Started")
-    .setDescription(`The meeting has started in **${voiceChannel.name}**.`)
-    .addFields({
-      name: "Start Time",
-      value: `<t:${Math.floor(meeting.startTime.getTime() / 1000)}:F>`,
-    })
-    .addFields({
-      name: "Tip",
-      value:
-        'Right click the bot in voice and choose "Disconnect" to end the meeting.',
-    })
-    .setColor(0x00ae86)
-    .setTimestamp();
-
-  if (meetingContext) {
-    embed.addFields({
-      name: "Meeting Context",
-      value: meetingContext,
-    });
-  }
-
-  const endButton = new ButtonBuilder()
-    .setCustomId("end_meeting")
-    .setLabel("End Meeting")
-    .setStyle(ButtonStyle.Danger);
-
-  const editTagsButton = new ButtonBuilder()
-    .setCustomId("edit_tags")
-    .setLabel("Edit Tags")
-    .setStyle(ButtonStyle.Secondary);
-
-  const liveMeetingUrl = buildLiveMeetingUrl(
-    meeting.guildId,
-    meeting.meetingId,
-  );
-  const liveMeetingButton = liveMeetingUrl
-    ? new ButtonBuilder()
-        .setLabel("Live transcript")
-        .setStyle(ButtonStyle.Link)
-        .setURL(liveMeetingUrl)
-    : null;
-  const components = [endButton, editTagsButton];
-  if (liveMeetingButton) {
-    components.push(liveMeetingButton);
-  }
-  const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
-    ...components,
-  );
+  const { meeting, liveMeetingUrl } = startResult;
 
   const reply = await interaction.reply({
-    embeds: [embed],
-    components: [row],
+    ...buildManualMeetingStartedMessage(meeting, liveMeetingUrl),
     fetchReply: true,
   });
   meeting.startMessageId = reply.id;

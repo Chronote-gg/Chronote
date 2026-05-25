@@ -9,6 +9,7 @@ import type { MeetingData } from "../types/meeting-data";
 
 export const MEETING_START_REASON_LABELS: Record<MeetingStartReason, string> = {
   [MEETING_START_REASONS.MANUAL_COMMAND]: "Started via /startmeeting",
+  [MEETING_START_REASONS.MCP]: "Started via MCP",
   [MEETING_START_REASONS.AUTO_RECORD_CHANNEL]: "Auto-recorded (channel rule)",
   [MEETING_START_REASONS.AUTO_RECORD_ALL]: "Auto-recorded (all channels rule)",
 };
@@ -20,6 +21,7 @@ export const MEETING_END_REASON_LABELS: Record<MeetingEndReason, string> = {
   [MEETING_END_REASONS.TIMEOUT]:
     "Ended after reaching the maximum meeting duration",
   [MEETING_END_REASONS.LIVE_VOICE]: "Ended via live voice command",
+  [MEETING_END_REASONS.MCP]: "Ended via MCP",
   [MEETING_END_REASONS.BOT_DISCONNECT]: "Ended because the bot disconnected",
   [MEETING_END_REASONS.WEB_UI]: "Ended via web UI",
   [MEETING_END_REASONS.DISMISSED]: "Stopped by a channel member",

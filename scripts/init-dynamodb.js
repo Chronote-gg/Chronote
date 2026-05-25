@@ -2,7 +2,9 @@ const {
   DynamoDBClient,
   CreateTableCommand,
   DescribeTableCommand,
+  DescribeTimeToLiveCommand,
   UpdateTableCommand,
+  UpdateTimeToLiveCommand,
 } = require("@aws-sdk/client-dynamodb");
 
 require("dotenv").config();
@@ -55,6 +57,26 @@ const tables = [
     TableName: "ActiveMeetingTable",
     KeySchema: [{ AttributeName: "guildId", KeyType: "HASH" }],
     AttributeDefinitions: [{ AttributeName: "guildId", AttributeType: "S" }],
+    BillingMode: "PAY_PER_REQUEST",
+  },
+  {
+    TableName: "MeetingControlCommandTable",
+    KeySchema: [{ AttributeName: "requestId", KeyType: "HASH" }],
+    AttributeDefinitions: [
+      { AttributeName: "requestId", AttributeType: "S" },
+      { AttributeName: "queueStatus", AttributeType: "S" },
+      { AttributeName: "createdAt", AttributeType: "S" },
+    ],
+    GlobalSecondaryIndexes: [
+      {
+        IndexName: "StatusCreatedAtIndex",
+        KeySchema: [
+          { AttributeName: "queueStatus", KeyType: "HASH" },
+          { AttributeName: "createdAt", KeyType: "RANGE" },
+        ],
+        Projection: { ProjectionType: "ALL" },
+      },
+    ],
     BillingMode: "PAY_PER_REQUEST",
   },
   {
@@ -370,8 +392,52 @@ async function createTables() {
     await ensureFeedbackIndexExists();
   }
 
+  await ensureMeetingControlCommandTtlEnabled();
+
   console.log("\nDynamoDB initialization complete!");
   console.log("You can view your tables at http://localhost:8001");
+}
+
+async function ensureMeetingControlCommandTtlEnabled() {
+  const commandTableName = tableName("MeetingControlCommandTable");
+
+  try {
+    const result = await client.send(
+      new DescribeTimeToLiveCommand({ TableName: commandTableName }),
+    );
+    if (
+      ["ENABLED", "ENABLING"].includes(
+        result.TimeToLiveDescription?.TimeToLiveStatus,
+      )
+    ) {
+      console.log(`TTL already enabled on ${commandTableName}`);
+      return;
+    }
+  } catch (error) {
+    if (error.name === "ResourceNotFoundException") {
+      return;
+    }
+    console.error(
+      `Error describing TTL on ${commandTableName}:`,
+      error.message,
+    );
+    return;
+  }
+
+  try {
+    await client.send(
+      new UpdateTimeToLiveCommand({
+        TableName: commandTableName,
+        TimeToLiveSpecification: {
+          AttributeName: "expiresAt",
+          Enabled: true,
+        },
+      }),
+    );
+    console.log(`Enabled TTL on ${commandTableName}`);
+  } catch (error) {
+    console.error(`Error enabling TTL on ${commandTableName}:`, error.message);
+  }
 }
 
 async function ensureFeedbackIndexExists() {

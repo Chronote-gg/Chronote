@@ -328,25 +328,39 @@ export async function requestActiveMeetingEnd(
   meetingId: string,
   requestedByUserId: string,
   requestedAt: string,
+  endReason?: ActiveMeetingLease["endReason"],
 ): Promise<boolean> {
+  const updateParts = [
+    "#endRequestedAt = if_not_exists(#endRequestedAt, :endRequestedAt)",
+    "#endRequestedByUserId = if_not_exists(#endRequestedByUserId, :endRequestedByUserId)",
+    "#updatedAt = :updatedAt",
+  ];
+  const expressionAttributeNames: Record<string, string> = {
+    "#endRequestedAt": "endRequestedAt",
+    "#endRequestedByUserId": "endRequestedByUserId",
+    "#updatedAt": "updatedAt",
+    "#meetingId": "meetingId",
+  };
+  const expressionAttributeValues: Record<string, unknown> = {
+    ":endRequestedAt": requestedAt,
+    ":endRequestedByUserId": requestedByUserId,
+    ":updatedAt": requestedAt,
+    ":meetingId": meetingId,
+  };
+  if (endReason) {
+    updateParts.push("#endReason = if_not_exists(#endReason, :endReason)");
+    expressionAttributeNames["#endReason"] = "endReason";
+    expressionAttributeValues[":endReason"] = endReason;
+  }
   const params: UpdateItemCommand["input"] = {
     TableName: tableName("ActiveMeetingTable"),
     Key: marshall({ guildId }),
-    UpdateExpression:
-      "SET #endRequestedAt = if_not_exists(#endRequestedAt, :endRequestedAt), #endRequestedByUserId = if_not_exists(#endRequestedByUserId, :endRequestedByUserId), #updatedAt = :updatedAt",
+    UpdateExpression: `SET ${updateParts.join(", ")}`,
     ConditionExpression:
       "#meetingId = :meetingId AND (attribute_not_exists(#endRequestedAt) OR #endRequestedByUserId = :endRequestedByUserId)",
-    ExpressionAttributeNames: {
-      "#endRequestedAt": "endRequestedAt",
-      "#endRequestedByUserId": "endRequestedByUserId",
-      "#updatedAt": "updatedAt",
-      "#meetingId": "meetingId",
-    },
-    ExpressionAttributeValues: marshall({
-      ":endRequestedAt": requestedAt,
-      ":endRequestedByUserId": requestedByUserId,
-      ":updatedAt": requestedAt,
-      ":meetingId": meetingId,
+    ExpressionAttributeNames: expressionAttributeNames,
+    ExpressionAttributeValues: marshall(expressionAttributeValues, {
+      removeUndefinedValues: true,
     }),
   };
   const command = new UpdateItemCommand(params);

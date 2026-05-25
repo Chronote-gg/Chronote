@@ -232,6 +232,7 @@ describe("activeMeetingLeaseService", () => {
       "meeting-1",
       "user-1",
       expect.any(String),
+      MEETING_END_REASONS.WEB_UI,
     );
     const calledWithTimestamp =
       mockedRequestActiveMeetingEnd.mock.calls[0]?.[3];
