@@ -30,6 +30,8 @@ src/audio.ts:getAudioBytes
 src\audio.ts:getAudioBytes
 src/commands/notesCorrections.ts:resolveChannelName
 src\commands\notesCorrections.ts:resolveChannelName
+src/commands/notesCorrections.ts:buildCorrectionSummaries
+src\commands\notesCorrections.ts:buildCorrectionSummaries
 src/embed.ts:resolveMeetingTitle
 src\embed.ts:resolveMeetingTitle
 src/trpc/routers/meetings.ts:updateNotesMutation
@@ -48,6 +50,8 @@ src/evals/transcriptionEval.ts:runTranscriptionBatch
 src\evals\transcriptionEval.ts:runTranscriptionBatch
 src/evals/transcriptionEval.ts:runLangfuseEval
 src\evals\transcriptionEval.ts:runLangfuseEval
+src/evals/transcriptionEval.ts:parseOptions
+src\evals\transcriptionEval.ts:parseOptions
 src/api/liveMeetings.ts:(anonymous)
 src\api\liveMeetings.ts:(anonymous)
 src/services/askConversationService.ts:askWithConversation
