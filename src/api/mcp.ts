@@ -154,6 +154,18 @@ const liveMeetingControlSchema = z.object({
   limit: z.number().int().min(1).max(200).optional(),
 });
 
+const liveMeetingTranscriptControlSchema = liveMeetingControlSchema.superRefine(
+  (input, ctx) => {
+    if (!input.serverId) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "serverId is required for live transcript requests.",
+        path: ["serverId"],
+      });
+    }
+  },
+);
+
 const meetingControlRequestSchema = z.object({
   requestId: z.string().min(1),
 });
@@ -381,7 +393,7 @@ const toolDefinitions: McpToolDefinition[] = [
     name: "get_live_meeting_transcript",
     title: "Get Live Chronote Meeting Transcript",
     description:
-      "Fetch transcript events currently available for an active Chronote meeting. Requires transcripts:read.",
+      "Fetch transcript events currently available for an active Chronote meeting. Requires serverId and transcripts:read.",
     inputSchema: {
       type: "object",
       properties: {
@@ -393,6 +405,7 @@ const toolDefinitions: McpToolDefinition[] = [
         },
         limit: { type: "integer", minimum: 1, maximum: 200 },
       },
+      required: ["serverId"],
       additionalProperties: false,
     },
     annotations: toolAnnotations,
@@ -424,6 +437,7 @@ const toolScopes = new Map<string, McpScope[]>([
   ["stop_meeting", ["meetings:stop"]],
   ["get_live_meeting_status", ["meetings:read"]],
   ["get_live_meeting_transcript", ["meetings:read", "transcripts:read"]],
+  // The repository owner-checks requestId, so polling only needs a valid token.
   ["get_meeting_control_request", []],
 ]);
 
@@ -655,7 +669,7 @@ async function callTool(auth: McpAccessTokenInfo, name: string, args: unknown) {
       );
     }
     if (name === "get_live_meeting_transcript") {
-      const input = liveMeetingControlSchema.parse(args);
+      const input = liveMeetingTranscriptControlSchema.parse(args);
       return meetingControlToolResult(
         await getMcpLiveMeetingTranscript({
           userId: auth.userId,

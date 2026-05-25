@@ -72,6 +72,12 @@ export async function getMcpLiveMeetingTranscript(input: {
   userId: string;
   request: LiveMeetingCommandInput;
 }) {
+  if (!input.request.serverId) {
+    throw new McpMeetingControlError(
+      "failed",
+      "serverId is required for live transcript requests.",
+    );
+  }
   return queueForGuildOwner(
     input.userId,
     MEETING_CONTROL_COMMAND_TYPES.GET_LIVE_TRANSCRIPT,

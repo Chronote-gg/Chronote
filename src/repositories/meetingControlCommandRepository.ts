@@ -109,9 +109,10 @@ const realRepository: MeetingControlCommandRepository = {
           IndexName: STATUS_CREATED_AT_INDEX,
           KeyConditionExpression: "#queueStatus = :pending",
           FilterExpression:
-            "(attribute_not_exists(#targetOwnerInstanceId) OR #targetOwnerInstanceId = :instanceId) AND (attribute_not_exists(#claimExpiresAt) OR #claimExpiresAt < :nowEpochSeconds OR #claimedByInstanceId = :instanceId)",
+            "#expiresAt > :nowEpochSeconds AND (attribute_not_exists(#targetOwnerInstanceId) OR #targetOwnerInstanceId = :instanceId) AND (attribute_not_exists(#claimExpiresAt) OR #claimExpiresAt < :nowEpochSeconds OR #claimedByInstanceId = :instanceId)",
           ExpressionAttributeNames: {
             "#queueStatus": "queueStatus",
+            "#expiresAt": "expiresAt",
             "#targetOwnerInstanceId": "targetOwnerInstanceId",
             "#claimExpiresAt": "claimExpiresAt",
             "#claimedByInstanceId": "claimedByInstanceId",
@@ -146,9 +147,10 @@ const realRepository: MeetingControlCommandRepository = {
           UpdateExpression:
             "SET #claimedByInstanceId = :instanceId, #claimExpiresAt = :claimExpiresAt, #updatedAt = :updatedAt",
           ConditionExpression:
-            "#queueStatus = :pending AND (attribute_not_exists(#targetOwnerInstanceId) OR #targetOwnerInstanceId = :instanceId) AND (attribute_not_exists(#claimExpiresAt) OR #claimExpiresAt < :nowEpochSeconds OR #claimedByInstanceId = :instanceId)",
+            "#queueStatus = :pending AND #expiresAt > :nowEpochSeconds AND (attribute_not_exists(#targetOwnerInstanceId) OR #targetOwnerInstanceId = :instanceId) AND (attribute_not_exists(#claimExpiresAt) OR #claimExpiresAt < :nowEpochSeconds OR #claimedByInstanceId = :instanceId)",
           ExpressionAttributeNames: {
             "#queueStatus": "queueStatus",
+            "#expiresAt": "expiresAt",
             "#targetOwnerInstanceId": "targetOwnerInstanceId",
             "#claimedByInstanceId": "claimedByInstanceId",
             "#claimExpiresAt": "claimExpiresAt",
@@ -257,6 +259,7 @@ const memoryRepository: MeetingControlCommandRepository = {
   async listClaimablePendingCommands({ instanceId, nowEpochSeconds, limit }) {
     return Array.from(memoryCommands.values())
       .filter((command) => command.queueStatus === PENDING_STATUS)
+      .filter((command) => command.expiresAt > nowEpochSeconds)
       .filter(
         (command) =>
           !command.targetOwnerInstanceId ||
@@ -275,6 +278,7 @@ const memoryRepository: MeetingControlCommandRepository = {
   async claimCommand(input) {
     const command = memoryCommands.get(input.requestId);
     if (!command || command.queueStatus !== PENDING_STATUS) return undefined;
+    if (command.expiresAt <= input.nowEpochSeconds) return undefined;
     if (
       command.targetOwnerInstanceId &&
       command.targetOwnerInstanceId !== input.instanceId

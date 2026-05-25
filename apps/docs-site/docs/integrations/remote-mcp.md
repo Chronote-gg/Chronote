@@ -29,7 +29,7 @@ Remote MCP requires Discord OAuth and `OAUTH_SECRET` to be configured. Set `MCP_
 - `start_meeting`: Starts a Chronote recording from the authenticated user's current Discord voice channel. Optionally pass `serverId`, `voiceChannelId`, `textChannelId`, `context`, and `tags`.
 - `stop_meeting`: Stops the active Chronote meeting, either by `serverId` or by inferring the server from the authenticated user's current voice channel. Pass `meetingId` to guard against stopping the wrong meeting.
 - `get_live_meeting_status`: Returns status for an active meeting.
-- `get_live_meeting_transcript`: Returns currently available live transcript events. Use `afterEventId` to page from the last event you saw.
+- `get_live_meeting_transcript`: Returns currently available live transcript events. Pass `serverId` so the request reaches the bot runtime that owns the meeting, and use `afterEventId` to page from the last event you saw.
 - `get_meeting_control_request`: Checks a queued start, stop, or live meeting request by `requestId`.
 
 For follow-up fetch tools, use the list item's `id` field. Do not pass the UUID-style `meetingId` field.

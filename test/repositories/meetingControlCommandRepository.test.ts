@@ -86,6 +86,31 @@ describe("meetingControlCommandRepository", () => {
     ).resolves.toBeUndefined();
   });
 
+  test("does not list or claim expired pending commands", async () => {
+    const repository = getMeetingControlCommandRepository();
+    await repository.writeCommand(
+      makeCommand({ requestId: "request-1", expiresAt: 1_767_225_000 }),
+    );
+
+    await expect(
+      repository.listClaimablePendingCommands({
+        instanceId: "instance-1",
+        nowEpochSeconds: 1_767_225_001,
+        limit: 10,
+      }),
+    ).resolves.toHaveLength(0);
+
+    await expect(
+      repository.claimCommand({
+        requestId: "request-1",
+        instanceId: "instance-1",
+        nowEpochSeconds: 1_767_225_001,
+        claimExpiresAt: 1_767_225_060,
+        updatedAt: "2026-01-01T00:00:01.000Z",
+      }),
+    ).resolves.toBeUndefined();
+  });
+
   test("completes commands claimed by the same worker", async () => {
     const repository = getMeetingControlCommandRepository();
     await repository.writeCommand(makeCommand());

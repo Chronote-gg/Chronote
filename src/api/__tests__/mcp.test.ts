@@ -389,6 +389,37 @@ describe("MCP JSON-RPC handler", () => {
     });
   });
 
+  it("requires serverId for live meeting transcript routing", async () => {
+    await expect(
+      handleMcpJsonRpcRequest(
+        { ...auth, scopes: ["meetings:read", "transcripts:read"] },
+        {
+          jsonrpc: "2.0",
+          id: "live-transcript-missing-server",
+          method: "tools/call",
+          params: {
+            name: "get_live_meeting_transcript",
+            arguments: { afterEventId: "event-0" },
+          },
+        },
+      ),
+    ).resolves.toMatchObject({
+      jsonrpc: "2.0",
+      id: "live-transcript-missing-server",
+      result: {
+        content: [
+          {
+            type: "text",
+            text: expect.stringContaining("serverId"),
+          },
+        ],
+        isError: true,
+      },
+    });
+
+    expect(getMcpLiveMeetingTranscript).not.toHaveBeenCalled();
+  });
+
   it("calls the list_servers tool with the authenticated user id", async () => {
     jest
       .mocked(listMcpServersForUser)
