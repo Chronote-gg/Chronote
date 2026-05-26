@@ -16,7 +16,7 @@ Starts a recorded meeting in the voice channel you are currently in. You can als
 | `context` | No       | Describe the meeting topic (max 500 chars) |
 | `tags`    | No       | Comma-separated tags (max 500 chars)       |
 
-**Requirements**: You must be in a voice channel. The bot needs Connect and Speak permissions in that voice channel, and View Channel, Send Messages, Read Message History, and Embed Links in the text channel. No other meeting can be active in the server.
+**Requirements**: You must be in a voice channel. The bot needs Connect and Speak permissions in that voice channel, and View Channel, Send Messages, and Read Message History in the text channel. No other meeting can be active in the server.
 
 **Output**: A "Meeting Started" embed with End Meeting and Edit Tags buttons, plus a Live transcript button when the Chronote portal is configured.
 

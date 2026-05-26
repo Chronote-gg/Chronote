@@ -15,7 +15,7 @@ This guide walks you through adding Chronote to your Discord server and running 
 
 Use the invite link from [chronote.gg](https://chronote.gg) to add the bot. Discord will prompt you to select a server and confirm permissions. Chronote needs:
 
-- **View Channels**, **Send Messages**, **Read Message History**, and **Embed Links** in text channels where it will post notes.
+- **View Channels**, **Send Messages**, and **Read Message History** in text channels where it will post notes.
 - **Connect** and **Speak** in voice channels it will record.
 
 After the bot joins, it sends a DM to the installer (or server owner) with a link to the onboarding wizard.
@@ -69,7 +69,6 @@ Chronote processes the recording:
 | View Channel         | Text channels  | Access notes channels                                 |
 | Send Messages        | Text channels  | Post meeting embeds and notes                         |
 | Read Message History | Text channels  | Update meeting status and summary messages            |
-| Embed Links          | Text channels  | Post summary and notes embeds                         |
 | Connect              | Voice channels | Join and record audio                                 |
 | Speak                | Voice channels | Required by Discord for voice bots                    |
 | Manage Channels      | Server-wide    | Required for `/autorecord`, `/context`, `/dictionary` |

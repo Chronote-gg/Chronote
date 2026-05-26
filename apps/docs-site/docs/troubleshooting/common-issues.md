@@ -24,7 +24,7 @@ Use this page to diagnose and fix common Chronote issues. Each section describes
 
 1. **Another meeting is active.** Auto-record waits for the current meeting to finish.
 2. **Auto-record is suppressed.** After a meeting is explicitly ended, auto-record is suppressed for that channel until it fully empties. Make sure everyone leaves the channel, then rejoin.
-3. **Missing bot permissions.** The bot needs Connect and Speak in the voice channel, and View Channel, Send Messages, Read Message History, and Embed Links in the configured text channel. If Chronote can send messages but is missing one of the other text permissions, it posts a warning in the configured text channel. If it cannot view or send in that channel, it tries to DM the user who triggered auto-record. Fix the channel overrides, then have everyone leave and rejoin the voice channel.
+3. **Missing bot permissions.** The bot needs Connect and Speak in the voice channel, and View Channel, Send Messages, and Read Message History in the configured text channel. If Chronote can send messages but is missing one of the other text permissions, it posts a warning in the configured text channel. If it cannot view or send in that channel, it tries to DM the user who triggered auto-record. Fix the channel overrides, then have everyone leave and rejoin the voice channel.
 4. **Auto-record is not configured for this channel.** Run `/autorecord list` to check the current rules.
 5. **Weekly minutes exhausted.** Same as above.
 
@@ -75,7 +75,7 @@ Use this page to diagnose and fix common Chronote issues. Each section describes
 **Causes and fixes**:
 
 1. **Still processing.** Long meetings (over 30 minutes) can take several minutes to process. Wait for the processing indicator to clear.
-2. **Missing text channel permissions.** The bot needs View Channel, Send Messages, Read Message History, and Embed Links in the text channel. If permissions were changed during the meeting, the bot may not be able to update the status message or post results.
+2. **Missing text channel permissions.** The bot needs View Channel, Send Messages, and Read Message History in the text channel. If permissions were changed during the meeting, the bot may not be able to update the status message or post results.
 3. **Meeting was cancelled.** For auto-recorded meetings with too little content, the meeting is cancelled instead of generating notes. Look for an "Auto-Recording Cancelled" embed.
 
 ## Web portal shows no meetings

@@ -48,7 +48,6 @@ describe("permissions", () => {
         PermissionsBitField.Flags.ViewChannel,
         PermissionsBitField.Flags.SendMessages,
         PermissionsBitField.Flags.ReadMessageHistory,
-        PermissionsBitField.Flags.EmbedLinks,
       ),
     );
 
@@ -68,10 +67,10 @@ describe("permissions", () => {
       member,
     );
 
-    expect(missing).toEqual(["Read Message History", "Embed Links"]);
+    expect(missing).toEqual(["Read Message History"]);
   });
 
-  it("allows plain channel warnings when only rich message permissions are missing", () => {
+  it("allows plain channel warnings when only history access is missing", () => {
     const textChannel = buildTextChannel(
       buildPermissions(
         PermissionsBitField.Flags.ViewChannel,
@@ -97,7 +96,7 @@ describe("permissions", () => {
     expect(result).toEqual({
       success: false,
       errorMessage:
-        "I am missing **Send Messages**, **Read Message History**, **Embed Links** in **notes**.",
+        "I am missing **Send Messages**, **Read Message History** in **notes**.",
     });
   });
 
@@ -113,10 +112,10 @@ describe("permissions", () => {
         voiceChannelName: "voice",
         textChannelName: "notes",
         missingVoicePermissions: ["Connect"],
-        missingTextPermissions: ["Read Message History", "Embed Links"],
+        missingTextPermissions: ["Read Message History"],
       }),
     ).toBe(
-      "Cannot start auto-recording because Chronote is missing permissions in voice channel **voice**: **Connect**; notes channel **notes**: **Read Message History**, **Embed Links**.",
+      "Cannot start auto-recording because Chronote is missing permissions in voice channel **voice**: **Connect**; notes channel **notes**: **Read Message History**.",
     );
   });
 

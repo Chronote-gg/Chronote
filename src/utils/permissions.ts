@@ -30,7 +30,6 @@ const TEXT_CHANNEL_MEETING_PERMISSIONS = [
     flag: PermissionsBitField.Flags.ReadMessageHistory,
     label: "Read Message History",
   },
-  { flag: PermissionsBitField.Flags.EmbedLinks, label: "Embed Links" },
 ] satisfies RequiredPermission[];
 
 const getMissingPermissions = (
@@ -84,7 +83,7 @@ export const buildAutoRecordPermissionDmMessage = (
     return `${buildAutoRecordPermissionChannelMessage(summary)} Grant those permissions, then have everyone leave and rejoin the voice channel to trigger auto-record again.`;
   }
 
-  return "Chronote tried to auto-record when you joined voice, but it cannot post meeting status or notes in the configured notes channel. A server admin needs to grant Chronote View Channel, Send Messages, Read Message History, and Embed Links in the notes channel, plus View Channel and Connect in the voice channel. If you expected this meeting to record, please ask an admin to check Chronote's channel permissions.";
+  return "Chronote tried to auto-record when you joined voice, but it cannot post meeting status or notes in the configured notes channel. A server admin needs to grant Chronote View Channel, Send Messages, and Read Message History in the notes channel, plus View Channel and Connect in the voice channel. If you expected this meeting to record, please ask an admin to check Chronote's channel permissions.";
 };
 
 /**

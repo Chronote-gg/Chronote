@@ -76,7 +76,6 @@ Chronote needs these Discord permissions:
 | View Channel         | Text channels  | Access the notes channel                   |
 | Send Messages        | Text channels  | Post embeds, notes, and status updates     |
 | Read Message History | Text channels  | Update meeting status and summary messages |
-| Embed Links          | Text channels  | Post summary and notes embeds              |
 | Connect              | Voice channels | Join voice channels to record              |
 | Speak                | Voice channels | Required by Discord for voice bot presence |
 
