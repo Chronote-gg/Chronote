@@ -1,9 +1,88 @@
 import {
   GuildMember,
+  type PermissionResolvable,
   PermissionsBitField,
   TextChannel,
   VoiceBasedChannel,
 } from "discord.js";
+
+type RequiredPermission = {
+  flag: PermissionResolvable;
+  label: string;
+};
+
+type MissingMeetingPermissionSummary = {
+  voiceChannelName: string;
+  textChannelName: string;
+  missingVoicePermissions: string[];
+  missingTextPermissions: string[];
+};
+
+const VOICE_CHANNEL_MEETING_PERMISSIONS = [
+  { flag: PermissionsBitField.Flags.ViewChannel, label: "View Channel" },
+  { flag: PermissionsBitField.Flags.Connect, label: "Connect" },
+] satisfies RequiredPermission[];
+
+const TEXT_CHANNEL_MEETING_PERMISSIONS = [
+  { flag: PermissionsBitField.Flags.ViewChannel, label: "View Channel" },
+  { flag: PermissionsBitField.Flags.SendMessages, label: "Send Messages" },
+  {
+    flag: PermissionsBitField.Flags.ReadMessageHistory,
+    label: "Read Message History",
+  },
+  { flag: PermissionsBitField.Flags.EmbedLinks, label: "Embed Links" },
+] satisfies RequiredPermission[];
+
+const getMissingPermissions = (
+  permissions: Readonly<PermissionsBitField> | null,
+  requiredPermissions: RequiredPermission[],
+) => {
+  if (!permissions) {
+    return requiredPermissions.map((permission) => permission.label);
+  }
+
+  return requiredPermissions
+    .filter((permission) => !permissions.has(permission.flag))
+    .map((permission) => permission.label);
+};
+
+export const formatMissingPermissions = (permissions: string[]) =>
+  permissions.map((permission) => `**${permission}**`).join(", ");
+
+export const formatMissingMeetingPermissions = ({
+  voiceChannelName,
+  textChannelName,
+  missingVoicePermissions,
+  missingTextPermissions,
+}: MissingMeetingPermissionSummary) => {
+  const parts: string[] = [];
+  if (missingVoicePermissions.length > 0) {
+    parts.push(
+      `voice channel **${voiceChannelName}**: ${formatMissingPermissions(missingVoicePermissions)}`,
+    );
+  }
+  if (missingTextPermissions.length > 0) {
+    parts.push(
+      `notes channel **${textChannelName}**: ${formatMissingPermissions(missingTextPermissions)}`,
+    );
+  }
+  return parts.join("; ");
+};
+
+export const buildAutoRecordPermissionChannelMessage = (
+  summary: MissingMeetingPermissionSummary,
+) =>
+  `Cannot start auto-recording because Chronote is missing permissions in ${formatMissingMeetingPermissions(summary)}.`;
+
+export const buildAutoRecordPermissionDmMessage = (
+  summary: MissingMeetingPermissionSummary & { isAdmin: boolean },
+) => {
+  if (summary.isAdmin) {
+    return `${buildAutoRecordPermissionChannelMessage(summary)} Grant those permissions, then have everyone leave and rejoin the voice channel to trigger auto-record again.`;
+  }
+
+  return "Chronote tried to auto-record when you joined voice, but it cannot post meeting status or notes in the configured notes channel. A server admin needs to grant Chronote View Channel, Send Messages, Read Message History, and Embed Links in the notes channel, plus View Channel and Connect in the voice channel. If you expected this meeting to record, please ask an admin to check Chronote's channel permissions.";
+};
 
 /**
  * Checks if the bot has permission to join a voice channel
@@ -15,11 +94,18 @@ export function canBotJoinVoiceChannel(
   voiceChannel: VoiceBasedChannel,
   botMember: GuildMember,
 ): boolean {
-  const permissions = voiceChannel.permissionsFor(botMember);
-  return !!(
-    permissions &&
-    permissions.has(PermissionsBitField.Flags.ViewChannel) &&
-    permissions.has(PermissionsBitField.Flags.Connect)
+  return (
+    getMissingVoiceChannelPermissions(voiceChannel, botMember).length === 0
+  );
+}
+
+export function getMissingVoiceChannelPermissions(
+  voiceChannel: VoiceBasedChannel,
+  botMember: GuildMember,
+): string[] {
+  return getMissingPermissions(
+    voiceChannel.permissionsFor(botMember),
+    VOICE_CHANNEL_MEETING_PERMISSIONS,
   );
 }
 
@@ -41,6 +127,16 @@ export function canBotSendMessages(
   );
 }
 
+export function getMissingMeetingTextChannelPermissions(
+  textChannel: TextChannel,
+  botMember: GuildMember,
+): string[] {
+  return getMissingPermissions(
+    textChannel.permissionsFor(botMember),
+    TEXT_CHANNEL_MEETING_PERMISSIONS,
+  );
+}
+
 export interface PermissionCheckResult {
   success: boolean;
   errorMessage?: string;
@@ -58,17 +154,25 @@ export function checkBotPermissions(
   textChannel: TextChannel,
   botMember: GuildMember,
 ): PermissionCheckResult {
-  if (!canBotJoinVoiceChannel(voiceChannel, botMember)) {
+  const missingVoicePermissions = getMissingVoiceChannelPermissions(
+    voiceChannel,
+    botMember,
+  );
+  if (missingVoicePermissions.length > 0) {
     return {
       success: false,
-      errorMessage: `I do not have permission to join **${voiceChannel.name}**.`,
+      errorMessage: `I am missing ${formatMissingPermissions(missingVoicePermissions)} in **${voiceChannel.name}**.`,
     };
   }
 
-  if (!canBotSendMessages(textChannel, botMember)) {
+  const missingTextPermissions = getMissingMeetingTextChannelPermissions(
+    textChannel,
+    botMember,
+  );
+  if (missingTextPermissions.length > 0) {
     return {
       success: false,
-      errorMessage: `I do not have permission to send messages in **${textChannel.name}**.`,
+      errorMessage: `I am missing ${formatMissingPermissions(missingTextPermissions)} in **${textChannel.name}**.`,
     };
   }
 
