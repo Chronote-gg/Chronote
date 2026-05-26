@@ -120,6 +120,19 @@ describe("permissions", () => {
     );
   });
 
+  it("produces a coherent message when both permission arrays are unexpectedly empty", () => {
+    const message = buildAutoRecordPermissionChannelMessage({
+      voiceChannelName: "voice",
+      textChannelName: "notes",
+      missingVoicePermissions: [],
+      missingTextPermissions: [],
+    });
+
+    expect(message).toBe(
+      "Cannot start auto-recording because Chronote is missing permissions in one or more channels (permissions may have just been updated).",
+    );
+  });
+
   it("asks non-admin trigger users to contact an admin", () => {
     expect(
       buildAutoRecordPermissionDmMessage({

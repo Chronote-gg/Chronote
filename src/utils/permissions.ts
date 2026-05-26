@@ -54,7 +54,7 @@ export const formatMissingMeetingPermissions = ({
   textChannelName,
   missingVoicePermissions,
   missingTextPermissions,
-}: MissingMeetingPermissionSummary) => {
+}: MissingMeetingPermissionSummary): string => {
   const parts: string[] = [];
   if (missingVoicePermissions.length > 0) {
     parts.push(
@@ -65,6 +65,9 @@ export const formatMissingMeetingPermissions = ({
     parts.push(
       `notes channel **${textChannelName}**: ${formatMissingPermissions(missingTextPermissions)}`,
     );
+  }
+  if (parts.length === 0) {
+    return "one or more channels (permissions may have just been updated)";
   }
   return parts.join("; ");
 };
