@@ -15,6 +15,11 @@ import {
 import { CONFIG_KEYS } from "../config/keys";
 import { resolveConfigString } from "../services/unifiedConfigService";
 import { parseTags } from "../utils/tags";
+import {
+  checkBotPermissions,
+  formatMissingPermissions,
+  getMissingMeetingTextChannelPermissions,
+} from "../utils/permissions";
 
 export async function handleAutoRecordCommand(
   interaction: ChatInputCommandInteraction,
@@ -113,28 +118,14 @@ async function handleEnableAutoRecord(
     return;
   }
 
-  const voicePermissions = voiceChannel.permissionsFor(botMember);
-  const textPermissions = textChannel.permissionsFor(botMember);
-
-  if (
-    !voicePermissions ||
-    !voicePermissions.has(PermissionsBitField.Flags.ViewChannel) ||
-    !voicePermissions.has(PermissionsBitField.Flags.Connect)
-  ) {
+  const permissionCheck = checkBotPermissions(
+    voiceChannel,
+    textChannel,
+    botMember,
+  );
+  if (!permissionCheck.success) {
     await interaction.reply({
-      content: `I don't have permission to join ${voiceChannel.name}.`,
-      ephemeral: true,
-    });
-    return;
-  }
-
-  if (
-    !textPermissions ||
-    !textPermissions.has(PermissionsBitField.Flags.ViewChannel) ||
-    !textPermissions.has(PermissionsBitField.Flags.SendMessages)
-  ) {
-    await interaction.reply({
-      content: `I don't have permission to send messages in ${textChannel.name}.`,
+      content: `I can't enable auto-recording yet. ${permissionCheck.errorMessage}`,
       ephemeral: true,
     });
     return;
@@ -303,15 +294,13 @@ async function handleEnableAllAutoRecord(
     return;
   }
 
-  const textPermissions = textChannel.permissionsFor(botMember);
-
-  if (
-    !textPermissions ||
-    !textPermissions.has(PermissionsBitField.Flags.ViewChannel) ||
-    !textPermissions.has(PermissionsBitField.Flags.SendMessages)
-  ) {
+  const missingTextPermissions = getMissingMeetingTextChannelPermissions(
+    textChannel,
+    botMember,
+  );
+  if (missingTextPermissions.length > 0) {
     await interaction.reply({
-      content: `I don't have permission to send messages in ${textChannel.name}.`,
+      content: `I can't enable auto-recording for all channels yet. I am missing ${formatMissingPermissions(missingTextPermissions)} in **${textChannel.name}**.`,
       ephemeral: true,
     });
     return;

@@ -21,7 +21,14 @@ import {
 } from "../meetings";
 import { randomUUID } from "node:crypto";
 import { GuildChannel } from "discord.js/typings";
-import { checkBotPermissions } from "../utils/permissions";
+import {
+  buildAutoRecordPermissionChannelMessage,
+  buildAutoRecordPermissionDmMessage,
+  canBotSendMessages,
+  checkBotPermissions,
+  getMissingMeetingTextChannelPermissions,
+  getMissingVoiceChannelPermissions,
+} from "../utils/permissions";
 import { handleEndMeetingOther } from "./endMeeting";
 import { saveMeetingStartToDatabase } from "./saveMeetingHistory";
 import { parseTags } from "../utils/tags";
@@ -93,6 +100,107 @@ const buildLimitReachedMessage = (nextAvailableAtIso?: string | null) => {
       )}:R>.`
     : "Try again later.";
   return `Weekly meeting minutes limit reached for this plan. ${nextLabel}`;
+};
+
+const sendAutoRecordStartBlockedMessage = async (
+  textChannel: TextChannel,
+  message: string,
+) => {
+  try {
+    await textChannel.send(message);
+  } catch (error) {
+    console.warn("Failed to send auto-record start failure message", {
+      guildId: textChannel.guild.id,
+      textChannelId: textChannel.id,
+      error,
+    });
+  }
+};
+
+const fetchAutoRecordTriggerMember = async (
+  guild: Guild,
+  userId?: string,
+): Promise<GuildMember | null> => {
+  if (!userId) return null;
+  const cached = guild.members.cache.get(userId);
+  if (cached) return cached;
+
+  try {
+    return await guild.members.fetch(userId);
+  } catch (error) {
+    console.warn("Failed to fetch auto-record trigger member", {
+      guildId: guild.id,
+      userId,
+      error,
+    });
+    return null;
+  }
+};
+
+const notifyAutoRecordPermissionFailure = async (options: {
+  voiceChannel: VoiceBasedChannel;
+  textChannel: TextChannel;
+  botMember: GuildMember;
+  startTriggeredByUserId?: string;
+}) => {
+  const { voiceChannel, textChannel, botMember, startTriggeredByUserId } =
+    options;
+  const missingVoicePermissions = getMissingVoiceChannelPermissions(
+    voiceChannel,
+    botMember,
+  );
+  const missingTextPermissions = getMissingMeetingTextChannelPermissions(
+    textChannel,
+    botMember,
+  );
+  const summary = {
+    voiceChannelName: voiceChannel.name,
+    textChannelName: textChannel.name,
+    missingVoicePermissions,
+    missingTextPermissions,
+  };
+
+  if (canBotSendMessages(textChannel, botMember)) {
+    await sendAutoRecordStartBlockedMessage(
+      textChannel,
+      buildAutoRecordPermissionChannelMessage(summary),
+    );
+    return;
+  }
+
+  const triggerMember = await fetchAutoRecordTriggerMember(
+    voiceChannel.guild,
+    startTriggeredByUserId,
+  );
+  if (!triggerMember) {
+    console.warn("Cannot DM auto-record start failure without trigger member", {
+      guildId: voiceChannel.guild.id,
+      voiceChannelId: voiceChannel.id,
+      textChannelId: textChannel.id,
+      missingVoicePermissions,
+      missingTextPermissions,
+    });
+    return;
+  }
+
+  const isAdmin = triggerMember.permissions.has(
+    PermissionsBitField.Flags.ManageChannels,
+  );
+  try {
+    await triggerMember.send(
+      buildAutoRecordPermissionDmMessage({ ...summary, isAdmin }),
+    );
+  } catch (error) {
+    console.warn("Failed to DM auto-record start failure", {
+      guildId: voiceChannel.guild.id,
+      voiceChannelId: voiceChannel.id,
+      textChannelId: textChannel.id,
+      userId: triggerMember.id,
+      missingVoicePermissions,
+      missingTextPermissions,
+      error,
+    });
+  }
 };
 
 async function getLimitNotice(
@@ -475,6 +583,30 @@ export async function handleAutoStartMeeting(
   },
 ) {
   const guildId = voiceChannel.guild.id;
+  const botMember = voiceChannel.guild.members.cache.get(client.user!.id);
+  if (!botMember) {
+    await textChannel.send(
+      `Cannot start auto-recording - bot not found in server.`,
+    );
+    return false;
+  }
+
+  const permissionCheck = checkBotPermissions(
+    voiceChannel,
+    textChannel,
+    botMember,
+  );
+
+  if (!permissionCheck.success) {
+    await notifyAutoRecordPermissionFailure({
+      voiceChannel,
+      textChannel,
+      botMember,
+      startTriggeredByUserId: options?.startTriggeredByUserId,
+    });
+    return false;
+  }
+
   const staleLease = await getActiveMeetingLeaseForGuild(guildId);
   if (staleLease && isLeaseActive(staleLease)) {
     await textChannel.send(
@@ -501,36 +633,6 @@ export async function handleAutoStartMeeting(
     }
     // Clean up finished meeting
     deleteMeeting(guildId);
-  }
-
-  // Check if bot has necessary permissions
-  const botMember = voiceChannel.guild.members.cache.get(client.user!.id);
-  if (!botMember) {
-    await textChannel.send(
-      `Cannot start auto-recording - bot not found in server.`,
-    );
-    return false;
-  }
-
-  // Check bot permissions
-  const permissionCheck = checkBotPermissions(
-    voiceChannel,
-    textChannel,
-    botMember,
-  );
-
-  if (!permissionCheck.success) {
-    // Try to send error message if we have text channel permissions
-    try {
-      await textChannel.send(
-        `Cannot start auto-recording - ${permissionCheck.errorMessage}`,
-      );
-    } catch {
-      console.error(
-        `No permissions to send messages in text channel ${textChannel.id}`,
-      );
-    }
-    return false;
   }
 
   const meetingId = randomUUID();

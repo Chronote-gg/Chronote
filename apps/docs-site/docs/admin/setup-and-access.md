@@ -71,12 +71,13 @@ Auto-record starts when any user joins a configured voice channel. It ends when 
 
 Chronote needs these Discord permissions:
 
-| Permission    | Scope          | Purpose                                    |
-| ------------- | -------------- | ------------------------------------------ |
-| View Channel  | Text channels  | Read messages and post meeting notes       |
-| Send Messages | Text channels  | Post embeds, notes, and status updates     |
-| Connect       | Voice channels | Join voice channels to record              |
-| Speak         | Voice channels | Required by Discord for voice bot presence |
+| Permission           | Scope          | Purpose                                    |
+| -------------------- | -------------- | ------------------------------------------ |
+| View Channel         | Text channels  | Access the notes channel                   |
+| Send Messages        | Text channels  | Post embeds, notes, and status updates     |
+| Read Message History | Text channels  | Update meeting status and summary messages |
+| Connect              | Voice channels | Join voice channels to record              |
+| Speak                | Voice channels | Required by Discord for voice bot presence |
 
 ### Command permissions
 
