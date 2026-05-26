@@ -21,6 +21,12 @@ const SUPPORTED_GRANT_TYPES = ["authorization_code", "refresh_token"];
 const SUPPORTED_RESPONSE_TYPES = ["code"];
 const SUPPORTED_TOKEN_ENDPOINT_AUTH_METHOD = "none";
 
+type McpBearerChallengeOptions = {
+  error?: string;
+  errorDescription?: string;
+  scope?: string;
+};
+
 export class McpOAuthError extends Error {
   constructor(
     readonly code: string,
@@ -41,8 +47,35 @@ export const getMcpProtectedResourceMetadataUrl = () =>
 
 export const getMcpIssuer = () => config.mcp.publicBaseUrl;
 
-export const buildMcpBearerChallenge = (scope = DEFAULT_SCOPE) =>
-  `${BEARER_TOKEN_TYPE} resource_metadata="${getMcpProtectedResourceMetadataUrl()}", scope="${scope}"`;
+const quoteBearerChallengeValue = (value: string) =>
+  `"${value.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
+
+const bearerChallengeParam = (name: string, value: string) =>
+  `${name}=${quoteBearerChallengeValue(value)}`;
+
+export const buildMcpBearerChallenge = (
+  scopeOrOptions: string | McpBearerChallengeOptions = DEFAULT_SCOPE,
+) => {
+  const options =
+    typeof scopeOrOptions === "string"
+      ? { scope: scopeOrOptions }
+      : scopeOrOptions;
+  const scope = options.scope;
+  const params = [
+    bearerChallengeParam(
+      "resource_metadata",
+      getMcpProtectedResourceMetadataUrl(),
+    ),
+  ];
+  if (options.error) params.push(bearerChallengeParam("error", options.error));
+  if (options.errorDescription) {
+    params.push(
+      bearerChallengeParam("error_description", options.errorDescription),
+    );
+  }
+  if (scope) params.push(bearerChallengeParam("scope", scope));
+  return `${BEARER_TOKEN_TYPE} ${params.join(", ")}`;
+};
 
 export const parseMcpScopes = (scope?: string): McpScope[] => {
   const values = (scope?.trim() || DEFAULT_SCOPE).split(/\s+/).filter(Boolean);

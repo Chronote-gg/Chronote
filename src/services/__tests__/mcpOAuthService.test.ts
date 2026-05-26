@@ -4,6 +4,7 @@ import {
   resetMcpOAuthMemoryRepository,
 } from "../../repositories/mcpOAuthRepository";
 import {
+  buildMcpBearerChallenge,
   exchangeMcpAuthorizationCode,
   getMcpResourceUrl,
   hashMcpToken,
@@ -251,6 +252,25 @@ describe("mcpOAuthService", () => {
 
   it("rejects unsupported scopes", () => {
     expect(() => parseMcpScopes("meetings:write")).toThrow(McpOAuthError);
+  });
+
+  it("builds RFC 9728 bearer challenges with step-up scope details", () => {
+    const challenge = buildMcpBearerChallenge({
+      error: "insufficient_scope",
+      errorDescription: 'Need "start" permission.',
+      scope: "meetings:read meetings:start",
+    });
+
+    expect(challenge).toBe(
+      'Bearer resource_metadata="http://localhost:3001/.well-known/oauth-protected-resource/mcp", error="insufficient_scope", error_description="Need \\"start\\" permission.", scope="meetings:read meetings:start"',
+    );
+  });
+
+  it("omits scope from structured bearer challenges when not provided", () => {
+    const challenge = buildMcpBearerChallenge({ error: "invalid_token" });
+
+    expect(challenge).toContain('error="invalid_token"');
+    expect(challenge).not.toContain("scope=");
   });
 
   it("rejects unsupported dynamic client registration grant types", async () => {

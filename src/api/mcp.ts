@@ -462,9 +462,21 @@ const sendUnauthorized = (res: Response) => {
 };
 
 const sendInsufficientScope = (res: Response, scopes: McpScope[]) => {
-  res.set("WWW-Authenticate", buildMcpBearerChallenge(formatMcpScope(scopes)));
+  res.set(
+    "WWW-Authenticate",
+    buildMcpBearerChallenge({
+      error: "insufficient_scope",
+      errorDescription: "Additional OAuth scope required.",
+      scope: formatMcpScope(scopes),
+    }),
+  );
   res.status(403).json({ error: "insufficient_scope" });
 };
+
+const resolveStepUpScopes = (
+  grantedScopes: McpScope[],
+  requiredScopes: McpScope[],
+) => Array.from(new Set([...grantedScopes, ...requiredScopes]));
 
 const jsonRpcResult = (id: JsonRpcId | undefined, result: unknown) => ({
   jsonrpc: JSON_RPC_VERSION,
@@ -798,7 +810,10 @@ export function registerMcpRoutes(app: Express) {
       parsedRequestBodies,
     );
     if (requiredScopes && !hasMcpScopes(auth.scopes, requiredScopes)) {
-      sendInsufficientScope(res, requiredScopes);
+      sendInsufficientScope(
+        res,
+        resolveStepUpScopes(auth.scopes, requiredScopes),
+      );
       return;
     }
     const responses = await Promise.all(

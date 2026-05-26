@@ -36,7 +36,20 @@ jest.mock("../../services/mcpMeetingService", () => ({
 }));
 
 jest.mock("../../services/mcpOAuthService", () => ({
-  buildMcpBearerChallenge: jest.fn(() => "Bearer"),
+  buildMcpBearerChallenge: jest.fn(
+    (options?: string | { error?: string; scope?: string }) => {
+      if (!options) return "Bearer";
+      const scope = typeof options === "string" ? options : options.scope;
+      const error = typeof options === "string" ? undefined : options.error;
+      return [
+        "Bearer",
+        error ? `error="${error}"` : undefined,
+        scope ? `scope="${scope}"` : undefined,
+      ]
+        .filter(Boolean)
+        .join(" ");
+    },
+  ),
   formatMcpScope: jest.fn((scopes: string[]) => scopes.join(" ")),
   hasMcpScopes: jest.fn((granted: string[], required: string[]) =>
     required.every((scope) => granted.includes(scope)),
@@ -773,6 +786,32 @@ describe("MCP JSON-RPC handler", () => {
       id: null,
       error: { code: -32600, message: "Invalid JSON-RPC request." },
     });
+  });
+
+  it("returns a step-up OAuth challenge for single-tool insufficient scope", async () => {
+    jest.mocked(validateMcpAccessToken).mockResolvedValue(auth);
+    const postHandler = captureMcpPostHandler();
+    const response = createResponse();
+
+    await postHandler(
+      {
+        headers: { authorization: "Bearer token" },
+        body: {
+          jsonrpc: "2.0",
+          id: "start-scope",
+          method: "tools/call",
+          params: { name: "start_meeting", arguments: {} },
+        },
+      } as never,
+      response as never,
+      jest.fn(),
+    );
+
+    expect(response.statusCode).toBe(403);
+    expect(response.body).toEqual({ error: "insufficient_scope" });
+    expect(response.headers.get("WWW-Authenticate")).toBe(
+      'Bearer error="insufficient_scope" scope="meetings:read meetings:start"',
+    );
   });
 
   it("returns OAuth discovery challenge before origin rejection", async () => {
