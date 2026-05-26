@@ -60,7 +60,7 @@ export const buildMcpBearerChallenge = (
     typeof scopeOrOptions === "string"
       ? { scope: scopeOrOptions }
       : scopeOrOptions;
-  const scope = options.scope ?? DEFAULT_SCOPE;
+  const scope = options.scope;
   const params = [
     bearerChallengeParam(
       "resource_metadata",
@@ -68,12 +68,12 @@ export const buildMcpBearerChallenge = (
     ),
   ];
   if (options.error) params.push(bearerChallengeParam("error", options.error));
-  if (scope) params.push(bearerChallengeParam("scope", scope));
   if (options.errorDescription) {
     params.push(
       bearerChallengeParam("error_description", options.errorDescription),
     );
   }
+  if (scope) params.push(bearerChallengeParam("scope", scope));
   return `${BEARER_TOKEN_TYPE} ${params.join(", ")}`;
 };
 

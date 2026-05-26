@@ -261,15 +261,16 @@ describe("mcpOAuthService", () => {
       scope: "meetings:read meetings:start",
     });
 
-    expect(challenge).toContain("Bearer ");
-    expect(challenge).toContain(
-      'resource_metadata="http://localhost:3001/.well-known/oauth-protected-resource/mcp"',
+    expect(challenge).toBe(
+      'Bearer resource_metadata="http://localhost:3001/.well-known/oauth-protected-resource/mcp", error="insufficient_scope", error_description="Need \\"start\\" permission.", scope="meetings:read meetings:start"',
     );
-    expect(challenge).toContain('error="insufficient_scope"');
-    expect(challenge).toContain('scope="meetings:read meetings:start"');
-    expect(challenge).toContain(
-      'error_description="Need \\"start\\" permission."',
-    );
+  });
+
+  it("omits scope from structured bearer challenges when not provided", () => {
+    const challenge = buildMcpBearerChallenge({ error: "invalid_token" });
+
+    expect(challenge).toContain('error="invalid_token"');
+    expect(challenge).not.toContain("scope=");
   });
 
   it("rejects unsupported dynamic client registration grant types", async () => {
