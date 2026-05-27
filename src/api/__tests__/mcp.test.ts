@@ -14,7 +14,10 @@ import {
   startMcpMeetingControl,
   stopMcpMeetingControl,
 } from "../../services/mcpMeetingControlService";
-import { validateMcpAccessToken } from "../../services/mcpOAuthService";
+import {
+  markMcpAccessTokenScopeChallenge,
+  validateMcpAccessToken,
+} from "../../services/mcpOAuthService";
 import type { McpAccessTokenInfo } from "../../types/mcpOAuth";
 
 jest.mock("../../services/mcpMeetingService", () => ({
@@ -54,6 +57,7 @@ jest.mock("../../services/mcpOAuthService", () => ({
   hasMcpScopes: jest.fn((granted: string[], required: string[]) =>
     required.every((scope) => granted.includes(scope)),
   ),
+  markMcpAccessTokenScopeChallenge: jest.fn(),
   validateMcpAccessToken: jest.fn(),
 }));
 
@@ -812,6 +816,10 @@ describe("MCP JSON-RPC handler", () => {
     expect(response.headers.get("WWW-Authenticate")).toBe(
       'Bearer error="insufficient_scope" scope="meetings:read meetings:start"',
     );
+    expect(markMcpAccessTokenScopeChallenge).toHaveBeenCalledWith("token", [
+      "meetings:read",
+      "meetings:start",
+    ]);
   });
 
   it("returns OAuth discovery challenge before origin rejection", async () => {

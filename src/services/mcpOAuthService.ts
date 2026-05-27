@@ -5,6 +5,7 @@ import {
   MCP_SCOPES,
   type McpAccessTokenInfo,
   type McpOAuthClient,
+  type McpOAuthToken,
   type McpScope,
 } from "../types/mcpOAuth";
 
@@ -20,6 +21,7 @@ const DEFAULT_SCOPE = "meetings:read";
 const SUPPORTED_GRANT_TYPES = ["authorization_code", "refresh_token"];
 const SUPPORTED_RESPONSE_TYPES = ["code"];
 const SUPPORTED_TOKEN_ENDPOINT_AUTH_METHOD = "none";
+const SCOPE_CHALLENGE_TTL_SECONDS = 5 * 60;
 
 type McpBearerChallengeOptions = {
   error?: string;
@@ -199,6 +201,20 @@ const createPkceChallenge = (codeVerifier: string) =>
   crypto.createHash("sha256").update(codeVerifier).digest("base64url");
 
 const nowIso = () => new Date().toISOString();
+
+const getActiveScopeChallenge = (
+  token: McpOAuthToken | undefined,
+  now: number,
+) => {
+  if (
+    !token?.scopeChallenge ||
+    !token.scopeChallengeExpiresAt ||
+    token.scopeChallengeExpiresAt <= now
+  ) {
+    return undefined;
+  }
+  return parseMcpScopes(token.scopeChallenge);
+};
 
 const issueTokenPair = async (params: {
   clientId: string;
@@ -404,28 +420,134 @@ export async function exchangeMcpAuthorizationCode(params: {
   });
 }
 
+function assertUsableRefreshToken(
+  token: McpOAuthToken | undefined,
+  clientId: string,
+  now: number,
+): asserts token is McpOAuthToken {
+  if (!token || token.expiresAt <= now || token.clientId !== clientId) {
+    throw new McpOAuthError("invalid_grant", "Invalid refresh token.");
+  }
+}
+
+const shouldForceScopeChallengeReauthorization = (params: {
+  requestedScopes?: McpScope[];
+  pairedAccessToken?: McpOAuthToken;
+  tokenScopes: McpScope[];
+  now: number;
+}) => {
+  const challengeScopes = getActiveScopeChallenge(
+    params.pairedAccessToken,
+    params.now,
+  );
+  if (
+    params.requestedScopes ||
+    !params.pairedAccessToken ||
+    params.pairedAccessToken.expiresAt <= params.now ||
+    !challengeScopes ||
+    hasMcpScopes(params.tokenScopes, challengeScopes)
+  ) {
+    return false;
+  }
+  return true;
+};
+
+const assertRefreshScopeConsent = async (params: {
+  token: McpOAuthToken;
+  tokenScopes: McpScope[];
+  requestedScopes?: McpScope[];
+}) => {
+  if (
+    !params.requestedScopes ||
+    hasMcpScopes(params.tokenScopes, params.requestedScopes) ||
+    (await hasMcpOAuthConsent({
+      userId: params.token.userId,
+      clientId: params.token.clientId,
+      scopes: params.requestedScopes,
+    }))
+  ) {
+    return;
+  }
+  throw new McpOAuthError(
+    "invalid_scope",
+    "Requested scope requires user authorization.",
+  );
+};
+
 export async function refreshMcpAccessToken(params: {
   clientId: string;
   refreshToken: string;
   resource?: string;
+  scope?: string;
 }) {
   assertMcpResource(params.resource);
+  const requestedScopes = params.scope
+    ? parseMcpScopes(params.scope)
+    : undefined;
   const repository = getMcpOAuthRepository();
+  const now = epochSeconds();
   const tokenHash = hashMcpToken(params.refreshToken);
-  const token = await repository.consumeToken("refresh", tokenHash);
-  if (!token)
-    throw new McpOAuthError("invalid_grant", "Invalid refresh token.");
-  if (token.pairedTokenHash) {
-    await repository.deleteToken("access", token.pairedTokenHash);
+  const token = await repository.getToken("refresh", tokenHash);
+  assertUsableRefreshToken(token, params.clientId, now);
+  const tokenScopes = parseMcpScopes(token.scope);
+  const pairedAccessToken = token.pairedTokenHash
+    ? await repository.getToken("access", token.pairedTokenHash)
+    : undefined;
+  // MCP clients may try refresh before browser reauth during step-up. Without
+  // an explicit scope, that would just recreate the challenged live token.
+  if (
+    shouldForceScopeChallengeReauthorization({
+      requestedScopes,
+      pairedAccessToken,
+      tokenScopes,
+      now,
+    })
+  ) {
+    const consumedToken = await repository.consumeToken("refresh", tokenHash);
+    assertUsableRefreshToken(consumedToken, params.clientId, now);
+    if (consumedToken.pairedTokenHash) {
+      await repository.deleteToken("access", consumedToken.pairedTokenHash);
+    }
+    throw new McpOAuthError(
+      "invalid_grant",
+      "Refresh token cannot satisfy the pending scope challenge.",
+    );
   }
-  if (token.expiresAt <= epochSeconds() || token.clientId !== params.clientId) {
-    throw new McpOAuthError("invalid_grant", "Invalid refresh token.");
+  await assertRefreshScopeConsent({ token, tokenScopes, requestedScopes });
+  const consumedToken = await repository.consumeToken("refresh", tokenHash);
+  assertUsableRefreshToken(consumedToken, params.clientId, now);
+  if (consumedToken.pairedTokenHash) {
+    await repository.deleteToken("access", consumedToken.pairedTokenHash);
   }
   return issueTokenPair({
-    clientId: token.clientId,
-    userId: token.userId,
-    scopes: parseMcpScopes(token.scope),
-    resource: token.resource,
+    clientId: consumedToken.clientId,
+    userId: consumedToken.userId,
+    scopes: requestedScopes ?? tokenScopes,
+    resource: consumedToken.resource,
+  });
+}
+
+export async function markMcpAccessTokenScopeChallenge(
+  accessToken: string,
+  scopes: McpScope[],
+) {
+  const repository = getMcpOAuthRepository();
+  const now = epochSeconds();
+  const token = await repository.getToken("access", hashMcpToken(accessToken));
+  if (
+    !token ||
+    token.expiresAt <= now ||
+    token.resource !== getMcpResourceUrl()
+  ) {
+    return;
+  }
+  await repository.writeToken({
+    ...token,
+    scopeChallenge: formatMcpScope(scopes),
+    scopeChallengeExpiresAt: Math.min(
+      token.expiresAt,
+      now + SCOPE_CHALLENGE_TTL_SECONDS,
+    ),
   });
 }
 

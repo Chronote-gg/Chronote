@@ -7,8 +7,10 @@ import {
   buildMcpBearerChallenge,
   exchangeMcpAuthorizationCode,
   getMcpResourceUrl,
+  grantMcpOAuthConsent,
   hashMcpToken,
   issueMcpAuthorizationCode,
+  markMcpAccessTokenScopeChallenge,
   McpOAuthError,
   parseMcpScopes,
   refreshMcpAccessToken,
@@ -23,6 +25,13 @@ const codeChallenge = crypto
   .update(codeVerifier)
   .digest("base64url");
 const redirectUri = "http://localhost:8787/oauth/callback";
+
+const expireAccessToken = async (accessToken: string) => {
+  const repository = getMcpOAuthRepository();
+  const record = await repository.getToken("access", hashMcpToken(accessToken));
+  if (!record) throw new Error("Expected access token record.");
+  await repository.writeToken({ ...record, expiresAt: 1 });
+};
 
 describe("mcpOAuthService", () => {
   beforeEach(() => {
@@ -153,6 +162,7 @@ describe("mcpOAuthService", () => {
       codeVerifier,
       resource: getMcpResourceUrl(),
     });
+    await expireAccessToken(firstTokens.access_token);
 
     const secondTokens = await refreshMcpAccessToken({
       clientId: client.clientId,
@@ -228,6 +238,7 @@ describe("mcpOAuthService", () => {
       codeVerifier,
       resource: getMcpResourceUrl(),
     });
+    await expireAccessToken(firstTokens.access_token);
 
     const results = await Promise.allSettled([
       refreshMcpAccessToken({
@@ -248,6 +259,157 @@ describe("mcpOAuthService", () => {
     expect(
       results.filter((result) => result.status === "rejected"),
     ).toHaveLength(1);
+  });
+
+  it("rotates scope-less refresh while the paired access token is still valid", async () => {
+    const client = await registerMcpOAuthClient({
+      redirect_uris: [redirectUri],
+    });
+    const code = await issueMcpAuthorizationCode({
+      clientId: client.clientId,
+      userId: "user-1",
+      redirectUri,
+      resource: getMcpResourceUrl(),
+      codeChallenge,
+      codeChallengeMethod: "S256",
+    });
+    const tokens = await exchangeMcpAuthorizationCode({
+      clientId: client.clientId,
+      code,
+      redirectUri,
+      codeVerifier,
+      resource: getMcpResourceUrl(),
+    });
+
+    const refreshedTokens = await refreshMcpAccessToken({
+      clientId: client.clientId,
+      refreshToken: tokens.refresh_token,
+      resource: getMcpResourceUrl(),
+    });
+
+    await expect(
+      validateMcpAccessToken(tokens.access_token),
+    ).resolves.toBeUndefined();
+    await expect(
+      validateMcpAccessToken(refreshedTokens.access_token),
+    ).resolves.toMatchObject({ scopes: ["meetings:read"] });
+  });
+
+  it("requires reauthorization for scope-less refresh after a live scope challenge", async () => {
+    const client = await registerMcpOAuthClient({
+      redirect_uris: [redirectUri],
+    });
+    const code = await issueMcpAuthorizationCode({
+      clientId: client.clientId,
+      userId: "user-1",
+      redirectUri,
+      resource: getMcpResourceUrl(),
+      codeChallenge,
+      codeChallengeMethod: "S256",
+    });
+    const tokens = await exchangeMcpAuthorizationCode({
+      clientId: client.clientId,
+      code,
+      redirectUri,
+      codeVerifier,
+      resource: getMcpResourceUrl(),
+    });
+
+    await markMcpAccessTokenScopeChallenge(tokens.access_token, [
+      "meetings:read",
+      "meetings:start",
+    ]);
+
+    await expect(
+      refreshMcpAccessToken({
+        clientId: client.clientId,
+        refreshToken: tokens.refresh_token,
+        resource: getMcpResourceUrl(),
+      }),
+    ).rejects.toMatchObject({ code: "invalid_grant" });
+    await expect(
+      validateMcpAccessToken(tokens.access_token),
+    ).resolves.toBeUndefined();
+  });
+
+  it("refreshes with requested scopes after user consent", async () => {
+    const client = await registerMcpOAuthClient({
+      redirect_uris: [redirectUri],
+    });
+    const code = await issueMcpAuthorizationCode({
+      clientId: client.clientId,
+      userId: "user-1",
+      redirectUri,
+      resource: getMcpResourceUrl(),
+      codeChallenge,
+      codeChallengeMethod: "S256",
+    });
+    const tokens = await exchangeMcpAuthorizationCode({
+      clientId: client.clientId,
+      code,
+      redirectUri,
+      codeVerifier,
+      resource: getMcpResourceUrl(),
+    });
+    await grantMcpOAuthConsent({
+      userId: "user-1",
+      clientId: client.clientId,
+      scopes: ["meetings:read", "meetings:start"],
+    });
+
+    const refreshedTokens = await refreshMcpAccessToken({
+      clientId: client.clientId,
+      refreshToken: tokens.refresh_token,
+      resource: getMcpResourceUrl(),
+      scope: "meetings:read meetings:start",
+    });
+
+    expect(refreshedTokens.scope).toBe("meetings:read meetings:start");
+    await expect(
+      validateMcpAccessToken(refreshedTokens.access_token),
+    ).resolves.toMatchObject({
+      scopes: ["meetings:read", "meetings:start"],
+    });
+  });
+
+  it("rejects requested refresh scopes without user consent", async () => {
+    const client = await registerMcpOAuthClient({
+      redirect_uris: [redirectUri],
+    });
+    const code = await issueMcpAuthorizationCode({
+      clientId: client.clientId,
+      userId: "user-1",
+      redirectUri,
+      resource: getMcpResourceUrl(),
+      codeChallenge,
+      codeChallengeMethod: "S256",
+    });
+    const tokens = await exchangeMcpAuthorizationCode({
+      clientId: client.clientId,
+      code,
+      redirectUri,
+      codeVerifier,
+      resource: getMcpResourceUrl(),
+    });
+
+    await expect(
+      refreshMcpAccessToken({
+        clientId: client.clientId,
+        refreshToken: tokens.refresh_token,
+        resource: getMcpResourceUrl(),
+        scope: "meetings:read meetings:start",
+      }),
+    ).rejects.toMatchObject({ code: "invalid_scope" });
+    await expect(
+      validateMcpAccessToken(tokens.access_token),
+    ).resolves.toMatchObject({ scopes: ["meetings:read"] });
+
+    const refreshedTokens = await refreshMcpAccessToken({
+      clientId: client.clientId,
+      refreshToken: tokens.refresh_token,
+      resource: getMcpResourceUrl(),
+    });
+    expect(refreshedTokens.scope).toBe("meetings:read");
   });
 
   it("rejects unsupported scopes", () => {
