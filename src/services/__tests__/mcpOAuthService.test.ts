@@ -400,6 +400,16 @@ describe("mcpOAuthService", () => {
         scope: "meetings:read meetings:start",
       }),
     ).rejects.toMatchObject({ code: "invalid_scope" });
+    await expect(
+      validateMcpAccessToken(tokens.access_token),
+    ).resolves.toMatchObject({ scopes: ["meetings:read"] });
+
+    const refreshedTokens = await refreshMcpAccessToken({
+      clientId: client.clientId,
+      refreshToken: tokens.refresh_token,
+      resource: getMcpResourceUrl(),
+    });
+    expect(refreshedTokens.scope).toBe("meetings:read");
   });
 
   it("rejects unsupported scopes", () => {
