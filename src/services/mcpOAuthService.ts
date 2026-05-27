@@ -420,6 +420,53 @@ export async function exchangeMcpAuthorizationCode(params: {
   });
 }
 
+const assertRefreshScopeChallengeSatisfied = (params: {
+  requestedScopes?: McpScope[];
+  pairedAccessToken?: McpOAuthToken;
+  tokenScopes: McpScope[];
+  now: number;
+}) => {
+  const challengeScopes = getActiveScopeChallenge(
+    params.pairedAccessToken,
+    params.now,
+  );
+  if (
+    params.requestedScopes ||
+    !params.pairedAccessToken ||
+    params.pairedAccessToken.expiresAt <= params.now ||
+    !challengeScopes ||
+    hasMcpScopes(params.tokenScopes, challengeScopes)
+  ) {
+    return;
+  }
+  throw new McpOAuthError(
+    "invalid_grant",
+    "Refresh token cannot satisfy the pending scope challenge.",
+  );
+};
+
+const assertRefreshScopeConsent = async (params: {
+  token: McpOAuthToken;
+  tokenScopes: McpScope[];
+  requestedScopes?: McpScope[];
+}) => {
+  if (
+    !params.requestedScopes ||
+    hasMcpScopes(params.tokenScopes, params.requestedScopes) ||
+    (await hasMcpOAuthConsent({
+      userId: params.token.userId,
+      clientId: params.token.clientId,
+      scopes: params.requestedScopes,
+    }))
+  ) {
+    return;
+  }
+  throw new McpOAuthError(
+    "invalid_scope",
+    "Requested scope requires user authorization.",
+  );
+};
+
 export async function refreshMcpAccessToken(params: {
   clientId: string;
   refreshToken: string;
@@ -448,33 +495,13 @@ export async function refreshMcpAccessToken(params: {
   }
   // MCP clients may try refresh before browser reauth during step-up. Without
   // an explicit scope, that would just recreate the challenged live token.
-  const challengeScopes = getActiveScopeChallenge(pairedAccessToken, now);
-  if (
-    !requestedScopes &&
-    pairedAccessToken &&
-    pairedAccessToken.expiresAt > now &&
-    challengeScopes &&
-    !hasMcpScopes(tokenScopes, challengeScopes)
-  ) {
-    throw new McpOAuthError(
-      "invalid_grant",
-      "Refresh token cannot satisfy the pending scope challenge.",
-    );
-  }
-  if (
-    requestedScopes &&
-    !hasMcpScopes(tokenScopes, requestedScopes) &&
-    !(await hasMcpOAuthConsent({
-      userId: token.userId,
-      clientId: token.clientId,
-      scopes: requestedScopes,
-    }))
-  ) {
-    throw new McpOAuthError(
-      "invalid_scope",
-      "Requested scope requires user authorization.",
-    );
-  }
+  assertRefreshScopeChallengeSatisfied({
+    requestedScopes,
+    pairedAccessToken,
+    tokenScopes,
+    now,
+  });
+  await assertRefreshScopeConsent({ token, tokenScopes, requestedScopes });
   return issueTokenPair({
     clientId: token.clientId,
     userId: token.userId,
