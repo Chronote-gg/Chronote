@@ -311,6 +311,7 @@ export function registerMcpOAuthStatelessRoutes(
             clientId: req.body.client_id,
             refreshToken: req.body.refresh_token,
             resource: req.body.resource,
+            scope: getString(req.body.scope),
           }),
         );
         return;

@@ -408,23 +408,58 @@ export async function refreshMcpAccessToken(params: {
   clientId: string;
   refreshToken: string;
   resource?: string;
+  scope?: string;
 }) {
   assertMcpResource(params.resource);
+  const requestedScopes = params.scope
+    ? parseMcpScopes(params.scope)
+    : undefined;
   const repository = getMcpOAuthRepository();
+  const now = epochSeconds();
   const tokenHash = hashMcpToken(params.refreshToken);
   const token = await repository.consumeToken("refresh", tokenHash);
   if (!token)
     throw new McpOAuthError("invalid_grant", "Invalid refresh token.");
+  if (token.expiresAt <= now || token.clientId !== params.clientId) {
+    throw new McpOAuthError("invalid_grant", "Invalid refresh token.");
+  }
+  const tokenScopes = parseMcpScopes(token.scope);
+  const pairedAccessToken = token.pairedTokenHash
+    ? await repository.getToken("access", token.pairedTokenHash)
+    : undefined;
   if (token.pairedTokenHash) {
     await repository.deleteToken("access", token.pairedTokenHash);
   }
-  if (token.expiresAt <= epochSeconds() || token.clientId !== params.clientId) {
-    throw new McpOAuthError("invalid_grant", "Invalid refresh token.");
+  // MCP clients may try refresh before browser reauth during step-up. Without
+  // an explicit scope, that would just recreate the insufficient live token.
+  if (
+    !requestedScopes &&
+    pairedAccessToken &&
+    pairedAccessToken.expiresAt > now
+  ) {
+    throw new McpOAuthError(
+      "invalid_grant",
+      "Refresh token cannot be used while the paired access token is still valid.",
+    );
+  }
+  if (
+    requestedScopes &&
+    !hasMcpScopes(tokenScopes, requestedScopes) &&
+    !(await hasMcpOAuthConsent({
+      userId: token.userId,
+      clientId: token.clientId,
+      scopes: requestedScopes,
+    }))
+  ) {
+    throw new McpOAuthError(
+      "invalid_scope",
+      "Requested scope requires user authorization.",
+    );
   }
   return issueTokenPair({
     clientId: token.clientId,
     userId: token.userId,
-    scopes: parseMcpScopes(token.scope),
+    scopes: requestedScopes ?? tokenScopes,
     resource: token.resource,
   });
 }

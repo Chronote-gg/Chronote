@@ -67,7 +67,7 @@ For long transcripts, request a window at a time:
 - `meetings:stop`: Required to stop recordings through MCP.
 - `get_meeting_control_request` requires a valid MCP token and only returns requests created by the authenticated user.
 
-If a tool returns `insufficient_scope`, your MCP client should follow the `WWW-Authenticate` challenge, run OAuth step-up authorization for the listed scopes, and retry the request. If your client does not support step-up authorization, reconnect Chronote MCP and approve the read, transcript, start, and stop scopes you need.
+If a tool returns `insufficient_scope`, your MCP client should follow the `WWW-Authenticate` challenge, run OAuth step-up authorization for the listed scopes, and retry the request. During step-up, Chronote may require a fresh browser authorization instead of refreshing the existing token so the new scopes are explicitly approved. If your client does not support step-up authorization, reconnect Chronote MCP and approve the read, transcript, start, and stop scopes you need.
 
 ## OpenCode Example
 
