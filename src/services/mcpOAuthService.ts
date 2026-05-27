@@ -5,6 +5,7 @@ import {
   MCP_SCOPES,
   type McpAccessTokenInfo,
   type McpOAuthClient,
+  type McpOAuthToken,
   type McpScope,
 } from "../types/mcpOAuth";
 
@@ -20,6 +21,7 @@ const DEFAULT_SCOPE = "meetings:read";
 const SUPPORTED_GRANT_TYPES = ["authorization_code", "refresh_token"];
 const SUPPORTED_RESPONSE_TYPES = ["code"];
 const SUPPORTED_TOKEN_ENDPOINT_AUTH_METHOD = "none";
+const SCOPE_CHALLENGE_TTL_SECONDS = 5 * 60;
 
 type McpBearerChallengeOptions = {
   error?: string;
@@ -199,6 +201,20 @@ const createPkceChallenge = (codeVerifier: string) =>
   crypto.createHash("sha256").update(codeVerifier).digest("base64url");
 
 const nowIso = () => new Date().toISOString();
+
+const getActiveScopeChallenge = (
+  token: McpOAuthToken | undefined,
+  now: number,
+) => {
+  if (
+    !token?.scopeChallenge ||
+    !token.scopeChallengeExpiresAt ||
+    token.scopeChallengeExpiresAt <= now
+  ) {
+    return undefined;
+  }
+  return parseMcpScopes(token.scopeChallenge);
+};
 
 const issueTokenPair = async (params: {
   clientId: string;
@@ -431,15 +447,18 @@ export async function refreshMcpAccessToken(params: {
     await repository.deleteToken("access", token.pairedTokenHash);
   }
   // MCP clients may try refresh before browser reauth during step-up. Without
-  // an explicit scope, that would just recreate the insufficient live token.
+  // an explicit scope, that would just recreate the challenged live token.
+  const challengeScopes = getActiveScopeChallenge(pairedAccessToken, now);
   if (
     !requestedScopes &&
     pairedAccessToken &&
-    pairedAccessToken.expiresAt > now
+    pairedAccessToken.expiresAt > now &&
+    challengeScopes &&
+    !hasMcpScopes(tokenScopes, challengeScopes)
   ) {
     throw new McpOAuthError(
       "invalid_grant",
-      "Refresh token cannot be used while the paired access token is still valid.",
+      "Refresh token cannot satisfy the pending scope challenge.",
     );
   }
   if (
@@ -461,6 +480,30 @@ export async function refreshMcpAccessToken(params: {
     userId: token.userId,
     scopes: requestedScopes ?? tokenScopes,
     resource: token.resource,
+  });
+}
+
+export async function markMcpAccessTokenScopeChallenge(
+  accessToken: string,
+  scopes: McpScope[],
+) {
+  const repository = getMcpOAuthRepository();
+  const now = epochSeconds();
+  const token = await repository.getToken("access", hashMcpToken(accessToken));
+  if (
+    !token ||
+    token.expiresAt <= now ||
+    token.resource !== getMcpResourceUrl()
+  ) {
+    return;
+  }
+  await repository.writeToken({
+    ...token,
+    scopeChallenge: formatMcpScope(scopes),
+    scopeChallengeExpiresAt: Math.min(
+      token.expiresAt,
+      now + SCOPE_CHALLENGE_TTL_SECONDS,
+    ),
   });
 }
 

@@ -5,6 +5,7 @@ import {
   buildMcpBearerChallenge,
   formatMcpScope,
   hasMcpScopes,
+  markMcpAccessTokenScopeChallenge,
   validateMcpAccessToken,
 } from "../services/mcpOAuthService";
 import {
@@ -461,7 +462,16 @@ const sendUnauthorized = (res: Response) => {
   res.status(401).json({ error: "unauthorized" });
 };
 
-const sendInsufficientScope = (res: Response, scopes: McpScope[]) => {
+const sendInsufficientScope = async (
+  res: Response,
+  accessToken: string,
+  scopes: McpScope[],
+) => {
+  try {
+    await markMcpAccessTokenScopeChallenge(accessToken, scopes);
+  } catch (error) {
+    console.error("Failed to mark MCP OAuth scope challenge", error);
+  }
   res.set(
     "WWW-Authenticate",
     buildMcpBearerChallenge({
@@ -810,8 +820,9 @@ export function registerMcpRoutes(app: Express) {
       parsedRequestBodies,
     );
     if (requiredScopes && !hasMcpScopes(auth.scopes, requiredScopes)) {
-      sendInsufficientScope(
+      await sendInsufficientScope(
         res,
+        rawToken,
         resolveStepUpScopes(auth.scopes, requiredScopes),
       );
       return;
