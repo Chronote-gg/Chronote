@@ -157,7 +157,7 @@ jobs:
         run: terraform -chdir=_infra validate -no-color
 
       - name: Show reviewed plan
-        run: terraform -chdir=_infra show -no-color tfplan > _infra/plan-artifact/terraform-plan-to-apply.txt
+        run: terraform -chdir=_infra show -no-color tfplan
 
       - name: Terraform apply reviewed plan
         run: terraform -chdir=_infra apply -no-color -input=false tfplan
