@@ -1,12 +1,12 @@
-name: Terraform Plan
+name: Terraform Apply
 
-run-name: Terraform Plan ${{ inputs.github_environment }} by ${{ github.actor }}
+run-name: Terraform Apply ${{ inputs.github_environment }} by ${{ github.actor }}
 
 on:
   workflow_dispatch:
     inputs:
       github_environment:
-        description: GitHub environment containing Terraform plan credentials and tfvars
+        description: GitHub environment containing Terraform apply credentials and tfvars
         required: true
         type: choice
         default: sandbox
@@ -14,31 +14,58 @@ on:
           - sandbox
           - staging
       terraform_workspace:
-        description: Existing Terraform workspace to plan against
+        description: Existing Terraform workspace to apply against
         required: true
         type: string
         default: default
+      plan_run_id:
+        description: GitHub Actions run ID from the reviewed Terraform Plan workflow
+        required: true
+        type: string
+      artifact_name:
+        description: Plan artifact name from the reviewed Terraform Plan summary
+        required: true
+        type: string
+      plan_sha256:
+        description: SHA-256 from the reviewed Terraform Plan summary
+        required: true
+        type: string
+      confirmation:
+        description: Type apply to confirm this should apply the reviewed plan artifact
+        required: true
+        type: string
 
 permissions:
+  actions: read
   contents: read
 
 concurrency:
-  group: terraform-plan-${{ inputs.github_environment }}-${{ inputs.terraform_workspace }}
+  group: terraform-apply-${{ inputs.github_environment }}-${{ inputs.terraform_workspace }}
   cancel-in-progress: false
 
 jobs:
-  plan:
-    name: Terraform Plan
+  apply:
+    name: Terraform Apply
     runs-on: ubuntu-latest
     environment: ${{ inputs.github_environment }}
     env:
       TF_IN_AUTOMATION: "true"
       TF_INPUT: "false"
       AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
-      PLAN_ARTIFACT_NAME: terraform-plan-${{ inputs.github_environment }}-${{ inputs.terraform_workspace }}-${{ github.run_id }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+
+      - name: Check confirmation
+        env:
+          CONFIRMATION: ${{ inputs.confirmation }}
+        run: |
+          set -euo pipefail
+
+          if [ "$CONFIRMATION" != "apply" ]; then
+            echo "ERROR: confirmation must be exactly 'apply'."
+            exit 1
+          fi
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v6
@@ -49,6 +76,33 @@ jobs:
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v4
+
+      - name: Download reviewed plan artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PLAN_RUN_ID: ${{ inputs.plan_run_id }}
+          ARTIFACT_NAME: ${{ inputs.artifact_name }}
+          EXPECTED_SHA256: ${{ inputs.plan_sha256 }}
+        run: |
+          set -euo pipefail
+
+          mkdir -p _infra/plan-artifact
+          gh run download "$PLAN_RUN_ID" --name "$ARTIFACT_NAME" --dir _infra/plan-artifact
+
+          if [ ! -f _infra/plan-artifact/tfplan ]; then
+            echo "ERROR: artifact did not contain tfplan."
+            exit 1
+          fi
+
+          actual_sha256="$(sha256sum _infra/plan-artifact/tfplan | awk '{print $1}')"
+          if [ "$actual_sha256" != "$EXPECTED_SHA256" ]; then
+            echo "ERROR: plan SHA-256 mismatch."
+            echo "Expected: $EXPECTED_SHA256"
+            echo "Actual:   $actual_sha256"
+            exit 1
+          fi
+
+          cp _infra/plan-artifact/tfplan _infra/tfplan
 
       - name: Write Terraform variables
         env:
@@ -102,75 +156,31 @@ jobs:
       - name: Terraform validate
         run: terraform -chdir=_infra validate -no-color
 
-      - name: Terraform plan
-        id: plan
-        run: |
-          set +e
-          terraform -chdir=_infra plan -no-color -input=false -detailed-exitcode -out=tfplan | tee _infra/terraform-plan.txt
-          exit_code=${PIPESTATUS[0]}
-          set -e
+      - name: Show reviewed plan
+        run: terraform -chdir=_infra show -no-color tfplan
 
-          if [ "$exit_code" -eq 1 ]; then
-            echo "Terraform plan failed."
-            exit 1
-          fi
-
-          if [ "$exit_code" -eq 2 ]; then
-            echo "changes=true" >> "$GITHUB_OUTPUT"
-            echo "Terraform plan completed with pending changes."
-          else
-            echo "changes=false" >> "$GITHUB_OUTPUT"
-            echo "Terraform plan completed with no pending changes."
-          fi
-
-      - name: Record plan artifact metadata
-        id: artifact
-        if: steps.plan.outputs.changes == 'true'
-        run: |
-          set -euo pipefail
-
-          sha256sum _infra/tfplan | awk '{print $1}' > _infra/tfplan.sha256
-
-          echo "name=$PLAN_ARTIFACT_NAME" >> "$GITHUB_OUTPUT"
-          echo "sha256=$(cat _infra/tfplan.sha256)" >> "$GITHUB_OUTPUT"
-
-      - name: Upload reviewed plan artifact
-        if: steps.plan.outputs.changes == 'true'
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ steps.artifact.outputs.name }}
-          path: |
-            _infra/tfplan
-            _infra/tfplan.sha256
-            _infra/terraform-plan.txt
-          retention-days: 1
-          if-no-files-found: error
+      - name: Terraform apply reviewed plan
+        run: terraform -chdir=_infra apply -no-color -input=false tfplan
 
       - name: Write summary
         if: always()
         env:
           GITHUB_ENVIRONMENT: ${{ inputs.github_environment }}
           TERRAFORM_WORKSPACE: ${{ inputs.terraform_workspace }}
-          PLAN_CHANGES: ${{ steps.plan.outputs.changes || 'unknown' }}
-          PLAN_ARTIFACT_NAME: ${{ steps.artifact.outputs.name || '' }}
-          PLAN_SHA256: ${{ steps.artifact.outputs.sha256 || '' }}
+          PLAN_RUN_ID: ${{ inputs.plan_run_id }}
+          ARTIFACT_NAME: ${{ inputs.artifact_name }}
+          PLAN_SHA256: ${{ inputs.plan_sha256 }}
         run: |
           {
-            echo "## Terraform Plan"
+            echo "## Terraform Apply"
             echo
             echo "- GitHub environment: \`$GITHUB_ENVIRONMENT\`"
             echo "- Terraform workspace: \`$TERRAFORM_WORKSPACE\`"
-            echo "- Pending changes: \`$PLAN_CHANGES\`"
-
-            if [ -n "$PLAN_ARTIFACT_NAME" ]; then
-              echo "- Plan run ID: \`$GITHUB_RUN_ID\`"
-              echo "- Apply artifact: \`$PLAN_ARTIFACT_NAME\`"
-              echo "- Plan SHA-256: \`$PLAN_SHA256\`"
-              echo
-              echo "Use \`.github/workflows/terraform-apply.yml\` with this run ID, artifact name, and SHA-256 after reviewing the plan output."
-            fi
+            echo "- Reviewed plan run ID: \`$PLAN_RUN_ID\`"
+            echo "- Reviewed plan artifact: \`$ARTIFACT_NAME\`"
+            echo "- Reviewed plan SHA-256: \`$PLAN_SHA256\`"
           } >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Remove generated tfvars
+      - name: Remove generated files
         if: always()
-        run: rm -f _infra/terraform.auto.tfvars.json _infra/tfplan _infra/tfplan.sha256 _infra/terraform-plan.txt
+        run: rm -rf _infra/terraform.auto.tfvars.json _infra/tfplan _infra/plan-artifact
