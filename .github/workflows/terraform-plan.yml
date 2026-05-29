@@ -40,6 +40,11 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
 
+      - name: Mask AWS access key ID
+        env:
+          AWS_ACCESS_KEY_ID: ${{ vars.AWS_ACCESS_KEY_ID }}
+        run: echo "::add-mask::$AWS_ACCESS_KEY_ID"
+
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v6
         with:
@@ -49,6 +54,8 @@ jobs:
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_wrapper: false
 
       - name: Write Terraform variables
         env:
