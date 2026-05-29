@@ -67,6 +67,14 @@ jobs:
             exit 1
           fi
 
+      - name: Mask AWS access key ID
+        env:
+          AWS_ACCESS_KEY_ID: ${{ vars.AWS_ACCESS_KEY_ID }}
+        run: |
+          if [ -n "$AWS_ACCESS_KEY_ID" ]; then
+            echo "::add-mask::$AWS_ACCESS_KEY_ID"
+          fi
+
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v6
         with:
@@ -76,6 +84,8 @@ jobs:
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_wrapper: false
 
       - name: Download reviewed plan artifact
         env:
