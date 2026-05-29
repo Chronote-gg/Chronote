@@ -220,7 +220,7 @@ that saved plan. It does not generate a fresh unreviewed plan during apply.
 
 Each GitHub environment used by the workflow must provide:
 
-- Secret `AWS_ACCESS_KEY_ID`
+- Variable `AWS_ACCESS_KEY_ID`
 - Secret `AWS_SECRET_ACCESS_KEY`
 - Secret `TERRAFORM_TFVARS_JSON`
 
