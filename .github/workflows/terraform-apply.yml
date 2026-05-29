@@ -12,7 +12,6 @@ on:
         default: sandbox
         options:
           - sandbox
-          - staging
       terraform_workspace:
         description: Existing Terraform workspace to apply against
         required: true

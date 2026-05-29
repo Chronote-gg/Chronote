@@ -224,6 +224,11 @@ Each GitHub environment used by the workflow must provide:
 - Secret `AWS_SECRET_ACCESS_KEY`
 - Secret `TERRAFORM_TFVARS_JSON`
 
+The workflow dispatch choices should only list GitHub Actions environments that
+already exist and have these secrets configured. Add `staging` to the workflow
+inputs only after creating the `staging` environment and setting its Terraform
+credentials and tfvars.
+
 `TERRAFORM_TFVARS_JSON` is the environment-specific Terraform variable file as
 JSON. Keep it aligned with the private `terraform.tfvars` values used for manual
 plans. The workflow validates that required variables are present and rejects a
