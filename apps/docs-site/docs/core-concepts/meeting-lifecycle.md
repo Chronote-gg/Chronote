@@ -7,10 +7,11 @@ Every Chronote recording follows a predictable lifecycle. Understanding these st
 
 ## Stage 1: Start
 
-A meeting starts in one of two ways:
+A meeting starts in three ways:
 
 - **Manual**: A user runs `/startmeeting` while in a voice channel, or right-clicks Chronote and selects **Apps** -> **Start meeting**. The slash command can optionally include a `context` description and `tags`.
 - **Auto-record**: A user joins a voice channel that has auto-recording enabled. Chronote starts recording automatically and posts an "Auto-Recording Started" embed.
+- **Personal upload**: A user uploads an existing audio or video file from the web portal. Chronote creates a personal meeting owned by that user.
 
 At this point, Chronote joins the voice channel and begins capturing audio from each participant separately. A meeting embed appears in the text channel with controls.
 
@@ -47,6 +48,8 @@ Once processing completes, Chronote posts results to Discord:
 - Action buttons: **Open in Chronote** (web portal link), **Helpful** / **Needs work** (feedback), **Suggest correction**, **Rename meeting**, **Edit Tags**.
 
 The meeting is also saved to your meeting history in the database, accessible through the web portal and the `/ask` command.
+
+If Notion automation is enabled, Chronote exports completed meeting notes after they are saved. Server automation uses the server manager's configured destination. Personal automation uses the personal meeting owner's Notion destination.
 
 ## Stage 5: Revise
 

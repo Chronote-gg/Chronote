@@ -2,13 +2,13 @@ import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 import { CONFIG_KEYS } from "../../config/keys";
 import { config } from "../../services/configService";
-import { ensureUserCanAccessMeeting } from "../../services/meetingAccessService";
 import {
-  authedProcedure,
-  guildMemberProcedure,
-  manageGuildProcedure,
-  router,
-} from "../trpc";
+  ensureManageGuildWithUserToken,
+  ensureUserInGuild,
+  type GuildSessionCache,
+} from "../../services/guildAccessService";
+import { ensureUserCanAccessMeeting } from "../../services/meetingAccessService";
+import { authedProcedure, router } from "../trpc";
 import { getMeetingHistoryService } from "../../services/meetingHistoryService";
 import { retryNotionAutomationExport } from "../../services/notionAutomationService";
 import {
@@ -26,6 +26,12 @@ import {
   setNotionAutomationEnabled,
   syncMeetingToNotion,
 } from "../../services/notionService";
+import {
+  buildPersonalMeetingGuildId,
+  isPersonalMeeting,
+  PERSONAL_MEETING_GUILD_ID_PREFIX,
+  resolveMeetingOwnerUserId,
+} from "../../utils/meetingOwnership";
 
 const meetingInput = z.object({
   serverId: z.string(),
@@ -54,6 +60,87 @@ const ensureNotionConfigured = () => {
       message: "Notion export is not configured.",
     });
   }
+};
+
+const isPersonalScopeId = (serverId: string) =>
+  serverId.startsWith(PERSONAL_MEETING_GUILD_ID_PREFIX);
+
+const ensureOwnPersonalScope = (params: {
+  serverId: string;
+  userId: string;
+}) => {
+  if (params.serverId === buildPersonalMeetingGuildId(params.userId)) return;
+  throw new TRPCError({
+    code: "FORBIDDEN",
+    message: "Personal Notion automation can only be managed by its owner.",
+  });
+};
+
+const ensureGuildMemberScope = async (params: {
+  accessToken?: string;
+  serverId: string;
+  session?: GuildSessionCache;
+  userId: string;
+}) => {
+  if (isPersonalScopeId(params.serverId)) return;
+  const allowed = await ensureUserInGuild(params.accessToken, params.serverId, {
+    session: params.session,
+    userId: params.userId,
+  });
+  if (allowed === null) {
+    throw new TRPCError({
+      code: "TOO_MANY_REQUESTS",
+      message: "Discord rate limited. Please retry.",
+    });
+  }
+  if (!allowed) {
+    throw new TRPCError({
+      code: "FORBIDDEN",
+      message: "Guild membership required",
+    });
+  }
+};
+
+const ensureManageAutomationScope = async (params: {
+  accessToken?: string;
+  serverId: string;
+  session?: GuildSessionCache;
+  userId: string;
+}) => {
+  if (isPersonalScopeId(params.serverId)) {
+    ensureOwnPersonalScope(params);
+    return;
+  }
+  const allowed = await ensureManageGuildWithUserToken(
+    params.accessToken,
+    params.serverId,
+    { session: params.session, userId: params.userId },
+  );
+  if (allowed === null) {
+    throw new TRPCError({
+      code: "TOO_MANY_REQUESTS",
+      message: "Discord rate limited. Please retry.",
+    });
+  }
+  if (!allowed) {
+    throw new TRPCError({
+      code: "FORBIDDEN",
+      message: "Manage Guild required",
+    });
+  }
+};
+
+const ensureAutomationStatusScope = async (params: {
+  accessToken?: string;
+  serverId: string;
+  session?: GuildSessionCache;
+  userId: string;
+}) => {
+  if (isPersonalScopeId(params.serverId)) {
+    ensureOwnPersonalScope(params);
+    return;
+  }
+  await ensureGuildMemberScope(params);
 };
 
 const resolveAttendeeAccessEnabled = async (guildId: string) => {
@@ -119,20 +206,30 @@ const requireMeeting = async (serverId: string, meetingId: string) => {
 };
 
 const requireAccessibleMeeting = async (params: {
+  accessToken?: string;
   serverId: string;
+  session?: GuildSessionCache;
   meetingId: string;
   userId: string;
 }) => {
   const meeting = await requireMeeting(params.serverId, params.meetingId);
-  const attendeeOverrideEnabled = await resolveAttendeeAccessEnabled(
-    params.serverId,
-  );
-  const allowed = await ensureUserCanAccessMeeting({
+  const attendeeOverrideEnabled = isPersonalMeeting(meeting)
+    ? true
+    : await resolveAttendeeAccessEnabled(params.serverId);
+  const sharedGuildIds = await resolvePersonalSharedGuildIds({
+    accessToken: params.accessToken,
+    meeting,
+    session: params.session,
+    userId: params.userId,
+  });
+  const accessParams = {
     guildId: params.serverId,
     meeting,
     userId: params.userId,
     attendeeOverrideEnabled,
-  });
+    ...(sharedGuildIds ? { sharedGuildIds } : {}),
+  };
+  const allowed = await ensureUserCanAccessMeeting(accessParams);
   if (allowed === null) {
     throw new TRPCError({
       code: "TOO_MANY_REQUESTS",
@@ -148,22 +245,75 @@ const requireAccessibleMeeting = async (params: {
   return meeting;
 };
 
+const resolvePersonalSharedGuildIds = async (params: {
+  accessToken?: string;
+  meeting: Awaited<ReturnType<typeof requireMeeting>>;
+  session?: GuildSessionCache;
+  userId: string;
+}) => {
+  if (!isPersonalMeeting(params.meeting)) return undefined;
+  const sharedGuildIds = (params.meeting.accessGrants ?? [])
+    .filter((grant) => grant.targetType === "guild")
+    .map((grant) => grant.guildId);
+  if (sharedGuildIds.length === 0) return undefined;
+
+  const allowedGuildIds: string[] = [];
+  for (const guildId of sharedGuildIds) {
+    const allowed = await ensureUserInGuild(params.accessToken, guildId, {
+      session: params.session,
+      userId: params.userId,
+    });
+    if (allowed === null) {
+      throw new TRPCError({
+        code: "TOO_MANY_REQUESTS",
+        message: "Discord rate limited. Please retry.",
+      });
+    }
+    if (allowed) allowedGuildIds.push(guildId);
+  }
+  return allowedGuildIds;
+};
+
+const ensurePersonalAutomationOwner = (params: {
+  meeting: Awaited<ReturnType<typeof requireMeeting>>;
+  userId: string;
+}) => {
+  if (!isPersonalMeeting(params.meeting)) return;
+  if (resolveMeetingOwnerUserId(params.meeting) === params.userId) return;
+  throw new TRPCError({
+    code: "FORBIDDEN",
+    message: "Only the personal meeting owner can retry automation.",
+  });
+};
+
 export const notionRouter = router({
   status: authedProcedure.query(({ ctx }) => getNotionStatus(ctx.user.id)),
 
-  automationStatus: guildMemberProcedure
+  automationStatus: authedProcedure
     .input(serverInput)
-    .query(({ ctx, input }) =>
-      getNotionAutomationStatus({
+    .query(async ({ ctx, input }) => {
+      await ensureAutomationStatusScope({
+        accessToken: ctx.user.accessToken,
+        serverId: input.serverId,
+        session: ctx.req.session,
+        userId: ctx.user.id,
+      });
+      return getNotionAutomationStatus({
         guildId: input.serverId,
         userId: ctx.user.id,
-      }),
-    ),
+      });
+    }),
 
-  destinationPages: manageGuildProcedure
+  destinationPages: authedProcedure
     .input(destinationSearchInput)
     .query(async ({ ctx, input }) => {
       ensureNotionConfigured();
+      await ensureManageAutomationScope({
+        accessToken: ctx.user.accessToken,
+        serverId: input.serverId,
+        session: ctx.req.session,
+        userId: ctx.user.id,
+      });
       try {
         return {
           pages: await listNotionDestinationPages({
@@ -176,10 +326,16 @@ export const notionRouter = router({
       }
     }),
 
-  saveAutomationConfig: manageGuildProcedure
+  saveAutomationConfig: authedProcedure
     .input(automationConfigInput)
     .mutation(async ({ ctx, input }) => {
       ensureNotionConfigured();
+      await ensureManageAutomationScope({
+        accessToken: ctx.user.accessToken,
+        serverId: input.serverId,
+        session: ctx.req.session,
+        userId: ctx.user.id,
+      });
       try {
         const automationConfig = await saveNotionAutomationConfig({
           guildId: input.serverId,
@@ -195,9 +351,15 @@ export const notionRouter = router({
       }
     }),
 
-  disableAutomation: manageGuildProcedure
+  disableAutomation: authedProcedure
     .input(serverInput)
-    .mutation(async ({ input }) => {
+    .mutation(async ({ ctx, input }) => {
+      await ensureManageAutomationScope({
+        accessToken: ctx.user.accessToken,
+        serverId: input.serverId,
+        session: ctx.req.session,
+        userId: ctx.user.id,
+      });
       await setNotionAutomationEnabled({
         guildId: input.serverId,
         enabled: false,
@@ -205,11 +367,18 @@ export const notionRouter = router({
       return { ok: true };
     }),
 
-  retryAutomationExport: manageGuildProcedure
+  retryAutomationExport: authedProcedure
     .input(meetingInput)
-    .mutation(async ({ input }) => {
+    .mutation(async ({ ctx, input }) => {
       ensureNotionConfigured();
+      await ensureManageAutomationScope({
+        accessToken: ctx.user.accessToken,
+        serverId: input.serverId,
+        session: ctx.req.session,
+        userId: ctx.user.id,
+      });
       const meeting = await requireMeeting(input.serverId, input.meetingId);
+      ensurePersonalAutomationOwner({ meeting, userId: ctx.user.id });
       try {
         const exported = await retryNotionAutomationExport(meeting);
         return {
@@ -222,12 +391,20 @@ export const notionRouter = router({
       }
     }),
 
-  exportStatus: guildMemberProcedure
+  exportStatus: authedProcedure
     .input(meetingInput)
     .query(async ({ ctx, input }) => {
       ensureNotionConfigured();
-      const meeting = await requireAccessibleMeeting({
+      await ensureGuildMemberScope({
+        accessToken: ctx.user.accessToken,
         serverId: input.serverId,
+        session: ctx.req.session,
+        userId: ctx.user.id,
+      });
+      const meeting = await requireAccessibleMeeting({
+        accessToken: ctx.user.accessToken,
+        serverId: input.serverId,
+        session: ctx.req.session,
         meetingId: input.meetingId,
         userId: ctx.user.id,
       });
@@ -239,12 +416,20 @@ export const notionRouter = router({
       });
     }),
 
-  exportMeeting: guildMemberProcedure
+  exportMeeting: authedProcedure
     .input(meetingInput)
     .mutation(async ({ ctx, input }) => {
       ensureNotionConfigured();
-      const meeting = await requireAccessibleMeeting({
+      await ensureGuildMemberScope({
+        accessToken: ctx.user.accessToken,
         serverId: input.serverId,
+        session: ctx.req.session,
+        userId: ctx.user.id,
+      });
+      const meeting = await requireAccessibleMeeting({
+        accessToken: ctx.user.accessToken,
+        serverId: input.serverId,
+        session: ctx.req.session,
         meetingId: input.meetingId,
         userId: ctx.user.id,
       });
@@ -263,12 +448,20 @@ export const notionRouter = router({
       }
     }),
 
-  syncMeeting: guildMemberProcedure
+  syncMeeting: authedProcedure
     .input(meetingInput)
     .mutation(async ({ ctx, input }) => {
       ensureNotionConfigured();
-      const meeting = await requireAccessibleMeeting({
+      await ensureGuildMemberScope({
+        accessToken: ctx.user.accessToken,
         serverId: input.serverId,
+        session: ctx.req.session,
+        userId: ctx.user.id,
+      });
+      const meeting = await requireAccessibleMeeting({
+        accessToken: ctx.user.accessToken,
+        serverId: input.serverId,
+        session: ctx.req.session,
         meetingId: input.meetingId,
         userId: ctx.user.id,
       });

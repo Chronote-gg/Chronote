@@ -16,6 +16,7 @@ import type {
   ContactFeedbackRecord,
   MeetingShareByMeetingRecord,
   MeetingShareRecord,
+  PersonalMediaUploadJobRecord,
 } from "../types/db";
 import type {
   AskConversation,
@@ -49,6 +50,7 @@ type MockStore = {
   stripeWebhookEvents: Map<string, StripeWebhookEvent>;
   onboardingStates: Map<string, OnboardingState>;
   meetingHistoryByGuild: Map<string, MeetingHistory[]>;
+  personalMediaUploadsById: Map<string, PersonalMediaUploadJobRecord>;
   meetingSharesByShareKey: Map<string, MeetingShareRecord>;
   meetingSharesByMeetingKey: Map<string, MeetingShareByMeetingRecord>;
   askConversationsByKey: Map<string, AskConversation[]>;
@@ -904,6 +906,7 @@ function buildDefaultStore(): MockStore {
     stripeWebhookEvents,
     onboardingStates,
     meetingHistoryByGuild,
+    personalMediaUploadsById: new Map<string, PersonalMediaUploadJobRecord>(),
     meetingSharesByShareKey,
     meetingSharesByMeetingKey,
     askConversationsByKey,

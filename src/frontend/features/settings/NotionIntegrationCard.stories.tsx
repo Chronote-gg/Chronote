@@ -78,3 +78,32 @@ export const NeedsAttention: Story = {
     },
   },
 };
+
+export const PersonalAutomation: Story = {
+  args: {
+    personal: true,
+    destinationPages: [
+      {
+        id: "page-1",
+        title: "Personal meeting archive",
+        url: "https://notion.so/page-1",
+      },
+    ],
+    voiceChannels: [],
+    status: {
+      configured: true,
+      userConnected: true,
+      workspaceName: "Personal Notes",
+      automation: {
+        enabled: true,
+        ownerConnected: true,
+        workspaceName: "Personal Notes",
+        destinationPageId: "page-1",
+        destinationTitle: "Personal meeting archive",
+        destinationUrl: "https://notion.so/page-1",
+        channelIds: [],
+        tags: ["upload"],
+      },
+    },
+  },
+};

@@ -13,6 +13,7 @@ import { adminFeedbackRouter } from "./routers/adminFeedback";
 import { meetingsRouter } from "./routers/meetings";
 import { meetingSharesRouter } from "./routers/meetingShares";
 import { notionRouter } from "./routers/notion";
+import { personalUploadsRouter } from "./routers/personalUploads";
 import { pricingRouter } from "./routers/pricing";
 import { serversRouter } from "./routers/servers";
 
@@ -31,6 +32,7 @@ export const appRouter = router({
   meetings: meetingsRouter,
   meetingShares: meetingSharesRouter,
   notion: notionRouter,
+  personalUploads: personalUploadsRouter,
   pricing: pricingRouter,
   servers: serversRouter,
 });

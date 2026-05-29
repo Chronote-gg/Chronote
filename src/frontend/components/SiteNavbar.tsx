@@ -19,6 +19,7 @@ import {
   IconSettings,
   IconServer,
   IconSparkles,
+  IconUpload,
 } from "@tabler/icons-react";
 import type { ComponentType } from "react";
 import { useNavigate } from "@tanstack/react-router";
@@ -33,7 +34,7 @@ type SiteNavbarProps = {
 
 const NAV_ITEMS: Array<{
   label: string;
-  value: "meetings" | "library" | "ask" | "billing" | "settings";
+  value: "meetings" | "upload" | "library" | "ask" | "billing" | "settings";
   icon: ComponentType<{ size?: number }>;
   requiresAuth: boolean;
   requiresManage?: boolean;
@@ -45,6 +46,13 @@ const NAV_ITEMS: Array<{
     icon: IconCalendarEvent,
     requiresAuth: true,
     to: "/portal/meetings",
+  },
+  {
+    label: "Upload Media",
+    value: "upload",
+    icon: IconUpload,
+    requiresAuth: true,
+    to: "/portal/upload",
   },
   {
     label: "Library",

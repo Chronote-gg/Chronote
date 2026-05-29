@@ -7,6 +7,13 @@ Notable product changes for Chronote users. For the full changelog, see the [Git
 
 ## 2026
 
+### Personal media uploads
+
+- Upload existing audio or video files from the web portal to create personal Chronote meetings.
+- Uploaded media is transcribed, summarized, and saved in My Meetings under your personal workspace.
+- Optional titles and tags can be added before processing starts.
+- Personal Notion automation can export uploaded and personal meetings to your Notion destination after processing completes.
+
 ### Remote MCP live controls
 
 - AI assistants can now start Chronote recordings from your current Discord voice channel through Remote MCP.

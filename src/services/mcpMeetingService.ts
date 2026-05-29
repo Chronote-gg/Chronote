@@ -25,6 +25,11 @@ import type { Participant } from "../types/participants";
 import type { TranscriptPayload } from "../types/transcript";
 import { replaceDiscordMentionsWithDisplayNames } from "../utils/participants";
 import { isMeetingIndexedForUser } from "../utils/meetingUserIndex";
+import {
+  isPersonalMeeting,
+  PERSONAL_MEETING_CHANNEL_NAME,
+  PERSONAL_MEETING_SERVER_NAME,
+} from "../utils/meetingOwnership";
 import { buildPortalMeetingUrl } from "../utils/portalLinks";
 
 const MIN_TIMESTAMP_ISO = "1970-01-01T00:00:00.000Z";
@@ -80,6 +85,7 @@ type ListMcpMyMeetingsInput = {
 
 type McpMeetingAccessContext = {
   attendeeOverrideEnabled: boolean;
+  sharedGuildIds?: string[];
 };
 
 type MyMeetingsCursor = {
@@ -233,6 +239,13 @@ const resolveMcpMeetingAccessContext = async (
   };
 };
 
+const hasPersonalGuildGrants = (meeting: MeetingHistory) =>
+  isPersonalMeeting(meeting) &&
+  meeting.accessGrants?.some((grant) => grant.targetType === "guild") === true;
+
+const resolveMcpSharedGuildIds = async (userId: string) =>
+  (await listMcpServersForUser(userId)).map((server) => server.id);
+
 const ensureMcpMeetingAccess = async (options: {
   guildId: string;
   meeting: MeetingHistory;
@@ -248,12 +261,22 @@ const ensureMcpMeetingAccess = async (options: {
     (await resolveMcpMeetingAccessContext(options.guildId, options.userId, {
       requireGuildMembership: !indexedForUser,
     }));
-  const decision = await checkUserMeetingAccess({
+  let decision = await checkUserMeetingAccess({
     guildId: options.guildId,
     meeting: options.meeting,
     userId: options.userId,
     attendeeOverrideEnabled: accessContext.attendeeOverrideEnabled,
+    sharedGuildIds: accessContext.sharedGuildIds,
   });
+  if (decision.allowed === false && hasPersonalGuildGrants(options.meeting)) {
+    decision = await checkUserMeetingAccess({
+      guildId: options.guildId,
+      meeting: options.meeting,
+      userId: options.userId,
+      attendeeOverrideEnabled: accessContext.attendeeOverrideEnabled,
+      sharedGuildIds: await resolveMcpSharedGuildIds(options.userId),
+    });
+  }
   if (decision.allowed === null) {
     throw new McpMeetingAccessError(
       "Discord rate limited. Please retry.",
@@ -286,12 +309,17 @@ const summarizeMeeting = (
   channelMap: Map<string, string>,
 ) => {
   const channelId = resolveMeetingChannelId(meeting);
+  const personalMeeting = isPersonalMeeting(meeting);
   return {
     id: meeting.channelId_timestamp,
     meetingId: meeting.meetingId,
+    ownershipScope: personalMeeting ? "personal" : "guild",
+    ownerUserId: meeting.ownerUserId,
     status: meeting.status ?? MEETING_STATUS.COMPLETE,
     channelId,
-    channelName: channelMap.get(channelId) ?? channelId,
+    channelName: personalMeeting
+      ? PERSONAL_MEETING_CHANNEL_NAME
+      : (channelMap.get(channelId) ?? channelId),
     timestamp: meeting.timestamp,
     duration: resolveMeetingDuration(meeting),
     tags: meeting.tags ?? [],
@@ -845,7 +873,11 @@ const summarizeUserMeetings = async (
   serverMap: Map<string, { id: string; name: string; icon?: string | null }>,
 ) => {
   const guildIds = Array.from(
-    new Set(meetings.map((meeting) => meeting.guildId)),
+    new Set(
+      meetings
+        .filter((meeting) => !isPersonalMeeting(meeting))
+        .map((meeting) => meeting.guildId),
+    ),
   );
   const channelEntries = await runInBatches(
     guildIds,
@@ -868,7 +900,9 @@ const summarizeUserMeetings = async (
         channelMaps.get(meeting.guildId) ?? new Map<string, string>(),
       ),
       serverId: meeting.guildId,
-      serverName: server?.name ?? meeting.guildId,
+      serverName: isPersonalMeeting(meeting)
+        ? PERSONAL_MEETING_SERVER_NAME
+        : (server?.name ?? meeting.guildId),
       serverIcon: server?.icon ?? null,
     };
   });
@@ -975,7 +1009,9 @@ export async function getMcpMeetingSummary(input: {
     meeting,
     userId: input.userId,
   });
-  const channelMap = await resolveChannelMap(input.guildId);
+  const channelMap = isPersonalMeeting(meeting)
+    ? new Map<string, string>()
+    : await resolveChannelMap(input.guildId);
   const participants = buildParticipantMap(meeting.participants);
   const notes = replaceDiscordMentionsWithDisplayNames(
     meeting.notes ?? "",

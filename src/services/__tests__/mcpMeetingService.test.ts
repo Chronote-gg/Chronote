@@ -78,6 +78,7 @@ describe("mcpMeetingService", () => {
   beforeEach(() => {
     jest.clearAllMocks();
     jest.mocked(getGuildMemberCached).mockResolvedValue({ roles: [] });
+    jest.mocked(listBotGuildsCached).mockResolvedValue([]);
     jest
       .mocked(listGuildChannelsCached)
       .mockResolvedValue([{ id: "channel-1", name: "Meeting Room", type: 2 }]);
@@ -261,6 +262,55 @@ describe("mcpMeetingService", () => {
         { meetingId: "fallback", serverName: "Guild 1" },
       ],
     });
+  });
+
+  it("lists indexed personal meetings without resolving Discord channels", async () => {
+    const personalMeeting = createMeeting("personal-meeting", {
+      guildId: "personal:user-1",
+      channelId: "personal",
+      channelId_timestamp: "personal#2026-01-03T00:00:00.000Z",
+      ownershipScope: "personal",
+      ownerUserId: "user-1",
+      timestamp: "2026-01-03T00:00:00.000Z",
+    });
+    jest.mocked(listMeetingUserIndexForUserInRangeService).mockResolvedValue([
+      {
+        userId: "user-1",
+        userTimestamp:
+          "2026-01-03T00:00:00.000Z#personal:user-1#personal#2026-01-03T00:00:00.000Z",
+        guildId: "personal:user-1",
+        channelId_timestamp: "personal#2026-01-03T00:00:00.000Z",
+        meetingId: "personal-meeting",
+        timestamp: "2026-01-03T00:00:00.000Z",
+        accessReason: "owner",
+      },
+    ]);
+    jest.mocked(getMeetingHistoryService).mockResolvedValue(personalMeeting);
+    jest.mocked(checkUserMeetingAccess).mockResolvedValue({
+      allowed: true,
+      via: "owner",
+    });
+
+    await expect(
+      listMcpMyMeetings({
+        userId: "user-1",
+        mode: "attended",
+        startDate: "2026-01-01T00:00:00.000Z",
+        endDate: "2026-01-05T00:00:00.000Z",
+        limit: 1,
+      }),
+    ).resolves.toMatchObject({
+      meetings: [
+        {
+          meetingId: "personal-meeting",
+          ownershipScope: "personal",
+          serverName: "Personal",
+          channelName: "Personal meeting",
+        },
+      ],
+    });
+
+    expect(listGuildChannelsCached).not.toHaveBeenCalled();
   });
 
   it("excludes cancelled meetings returned by the user index", async () => {

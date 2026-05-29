@@ -124,6 +124,62 @@ export type FeedbackRating = "up" | "down";
 export type FeedbackTargetType = "meeting_summary" | "ask_answer";
 export type FeedbackSource = "discord" | "web";
 
+export type MeetingOwnershipScope = "guild" | "personal";
+export type MeetingAccessGrantRole = "viewer" | "editor";
+
+export type MeetingAccessGrant =
+  | {
+      targetType: "user";
+      userId: string;
+      role?: MeetingAccessGrantRole;
+      sharedAt?: string;
+      sharedByUserId?: string;
+    }
+  | {
+      targetType: "guild";
+      guildId: string;
+      role?: MeetingAccessGrantRole;
+      sharedAt?: string;
+      sharedByUserId?: string;
+    };
+
+export type PersonalMediaUploadStatus =
+  | "pending_upload"
+  | "queued"
+  | "processing"
+  | "complete"
+  | "failed";
+
+export type PersonalMediaUploadKind = "audio" | "video";
+
+export interface PersonalMediaUploadJobRecord {
+  uploadId: string; // Partition key
+  ownerUserId: string;
+  status: PersonalMediaUploadStatus;
+  mediaKind: PersonalMediaUploadKind;
+  sourceS3Key: string;
+  contentType: string;
+  fileSize: number;
+  originalFileName?: string;
+  title?: string;
+  tags?: string[];
+  meetingGuildId?: string;
+  meetingId?: string;
+  channelId_timestamp?: string;
+  errorMessage?: string;
+  retryable?: boolean;
+  attempts?: number;
+  queuedAt?: string;
+  processingStartedAt?: string;
+  processingOwnerInstanceId?: string;
+  claimExpiresAt?: number;
+  durationSeconds?: number;
+  createdAt: string;
+  updatedAt: string;
+  completedAt?: string;
+  expiresAt?: number;
+}
+
 export interface FeedbackRecord {
   pk: string; // TARGET#<targetType>#<targetId>
   sk: string; // USER#<userId>
@@ -264,6 +320,9 @@ export interface MeetingHistory {
   duration: number; // Meeting duration in seconds
   transcribeMeeting: boolean; // Whether transcription was enabled
   generateNotes: boolean; // Whether notes were generated
+  ownershipScope?: MeetingOwnershipScope; // Defaults to guild for legacy records
+  ownerUserId?: string; // Personal meeting owner; separate from Discord starter metadata
+  accessGrants?: MeetingAccessGrant[]; // Explicit personal meeting share grants
   meetingCreatorId?: string; // User ID that started the meeting
   isAutoRecording?: boolean; // Whether this meeting was auto-started
   status?: MeetingStatus; // Live meeting status
@@ -297,6 +356,7 @@ export interface MeetingUserIndexRecord {
   channelId_timestamp: string;
   meetingId: string;
   timestamp: string;
+  accessReason?: "attendee" | "owner" | "user_share";
 }
 
 export type ContactFeedbackSource = "discord" | "web";

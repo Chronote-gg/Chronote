@@ -9,9 +9,15 @@ import {
   updateMeetingNotesService,
   updateMeetingNotesMessageMetadataService,
   updateMeetingArchiveService,
+  updateMeetingAccessGrantsService,
   updateMeetingNameService,
 } from "../../services/meetingHistoryService";
-import { ensureBotInGuild } from "../../services/guildAccessService";
+import {
+  ensureBotInGuild,
+  ensureManageGuildWithUserToken,
+  ensureUserInGuild,
+  type GuildSessionCache,
+} from "../../services/guildAccessService";
 import {
   listMcpMyMeetings,
   McpMeetingAccessError,
@@ -59,7 +65,11 @@ import {
 } from "../../services/openaiModelParams";
 import { resolveModelChoicesForContext } from "../../services/modelChoiceService";
 import type { ChatEntry } from "../../types/chat";
-import type { MeetingHistory, SuggestionHistoryEntry } from "../../types/db";
+import type {
+  MeetingAccessGrant,
+  MeetingHistory,
+  SuggestionHistoryEntry,
+} from "../../types/db";
 import type { MeetingEvent } from "../../types/meetingTimeline";
 import type { Participant } from "../../types/participants";
 import type { TranscriptPayload } from "../../types/transcript";
@@ -74,6 +84,11 @@ import {
   replaceDiscordMentionsWithDisplayNames,
   resolveAttendeeDisplayName,
 } from "../../utils/participants";
+import {
+  isPersonalMeeting,
+  PERSONAL_MEETING_CHANNEL_NAME,
+  resolveMeetingOwnerUserId,
+} from "../../utils/meetingOwnership";
 import { ensureUserCanManageChannel } from "../../services/discordPermissionsService";
 import {
   checkUserMeetingAccess,
@@ -84,12 +99,7 @@ import {
   getSnapshotBoolean,
   resolveConfigSnapshot,
 } from "../../services/unifiedConfigService";
-import {
-  authedProcedure,
-  guildMemberProcedure,
-  manageGuildProcedure,
-  router,
-} from "../trpc";
+import { authedProcedure, guildMemberProcedure, router } from "../trpc";
 
 const resolveParticipantLabel = (participant: Participant) =>
   participant.serverNickname ||
@@ -146,6 +156,8 @@ const NOTES_EDITOR_MARKDOWN_BYTE_LIMIT = 30_000;
 const NOTES_EDITOR_DELTA_JSON_BYTE_LIMIT = 80_000;
 const IMPORT_NOTES_SOURCE_NAME_LIMIT = 100;
 const IMPORT_NOTES_SOURCE_URL_LIMIT = 2048;
+const PERSONAL_SHARE_TARGET_ID_PATTERN = /^\d{5,25}$/;
+const PERSONAL_SHARE_TARGET_LIMIT = 50;
 
 const isHttpSourceUrl = (value: string): boolean => {
   try {
@@ -283,17 +295,57 @@ const formatMeetingAccessErrorMessage = (options: {
   return `Meeting access required.${detail}${attendeeHint}`.trim();
 };
 
+const resolvePortalSharedGuildIds = async (options: {
+  accessToken?: string;
+  meeting: MeetingHistory;
+  session?: GuildSessionCache;
+  userId: string;
+}) => {
+  if (!isPersonalMeeting(options.meeting)) return undefined;
+  const sharedGuildIds = (options.meeting.accessGrants ?? [])
+    .filter((grant) => grant.targetType === "guild")
+    .map((grant) => grant.guildId);
+  if (sharedGuildIds.length === 0) return undefined;
+
+  const allowedGuildIds: string[] = [];
+  for (const guildId of sharedGuildIds) {
+    const allowed = await ensureUserInGuild(options.accessToken, guildId, {
+      session: options.session,
+      userId: options.userId,
+    });
+    if (allowed === null) {
+      throw new TRPCError({
+        code: "TOO_MANY_REQUESTS",
+        message: "Discord rate limited. Please retry.",
+      });
+    }
+    if (allowed) {
+      allowedGuildIds.push(guildId);
+    }
+  }
+  return allowedGuildIds;
+};
+
 const ensurePortalUserCanAccessMeeting = async (options: {
+  accessToken?: string;
   guildId: string;
-  meeting: Parameters<typeof ensureUserCanAccessMeeting>[0]["meeting"];
+  meeting: MeetingHistory;
+  session?: GuildSessionCache;
   userId: string;
   attendeeOverrideEnabled: boolean;
 }) => {
+  const sharedGuildIds = await resolvePortalSharedGuildIds({
+    accessToken: options.accessToken,
+    meeting: options.meeting,
+    session: options.session,
+    userId: options.userId,
+  });
   const decision = await checkUserMeetingAccess({
     guildId: options.guildId,
     meeting: options.meeting,
     userId: options.userId,
     attendeeOverrideEnabled: options.attendeeOverrideEnabled,
+    sharedGuildIds,
   });
   if (decision.allowed === null) {
     throw new TRPCError({
@@ -310,6 +362,48 @@ const ensurePortalUserCanAccessMeeting = async (options: {
       }),
     });
   }
+};
+
+const ensurePersonalMeetingOwner = (options: {
+  meeting: MeetingHistory;
+  userId: string;
+}) => {
+  if (!isPersonalMeeting(options.meeting)) {
+    throw new TRPCError({
+      code: "BAD_REQUEST",
+      message: "Personal meeting required.",
+    });
+  }
+  if (resolveMeetingOwnerUserId(options.meeting) !== options.userId) {
+    throw new TRPCError({
+      code: "FORBIDDEN",
+      message: "Only the meeting owner can manage personal sharing.",
+    });
+  }
+};
+
+const buildPersonalAccessGrants = (input: {
+  userIds: string[];
+  guildIds: string[];
+  sharedByUserId: string;
+}): MeetingAccessGrant[] => {
+  const sharedAt = new Date().toISOString();
+  return [
+    ...Array.from(new Set(input.userIds)).map((userId) => ({
+      targetType: "user" as const,
+      userId,
+      role: "viewer" as const,
+      sharedAt,
+      sharedByUserId: input.sharedByUserId,
+    })),
+    ...Array.from(new Set(input.guildIds)).map((guildId) => ({
+      targetType: "guild" as const,
+      guildId,
+      role: "viewer" as const,
+      sharedAt,
+      sharedByUserId: input.sharedByUserId,
+    })),
+  ];
 };
 
 const ensurePortalUserCanManageMeetingChannel = async (options: {
@@ -332,26 +426,65 @@ const ensurePortalUserCanManageMeetingChannel = async (options: {
   }
 };
 
+const ensurePortalUserCanManageMeetingMetadata = async (params: {
+  accessToken?: string;
+  guildId: string;
+  meeting: MeetingHistory;
+  session?: GuildSessionCache;
+  userId: string;
+}) => {
+  if (isPersonalMeeting(params.meeting)) {
+    if (resolveMeetingOwnerUserId(params.meeting) === params.userId) {
+      return;
+    }
+    throw new TRPCError({
+      code: "FORBIDDEN",
+      message: "Only the meeting owner can manage this meeting.",
+    });
+  }
+
+  const allowed = await ensureManageGuildWithUserToken(
+    params.accessToken,
+    params.guildId,
+    { session: params.session, userId: params.userId },
+  );
+  if (allowed === null) {
+    throw new TRPCError({
+      code: "TOO_MANY_REQUESTS",
+      message: "Discord rate limited. Please retry.",
+    });
+  }
+  if (!allowed) {
+    throw new TRPCError({
+      code: "FORBIDDEN",
+      message: "Manage Server permission required for this meeting.",
+    });
+  }
+};
+
 const ensurePortalUserCanEditMeetingNotes = async (params: {
+  accessToken?: string;
   guildId: string;
   meeting: MeetingHistory;
   channelId: string;
+  session?: GuildSessionCache;
   userId: string;
   forbiddenMessage: string;
 }) => {
-  const attendeeOverrideEnabled = await resolveAttendeeAccessEnabled(
-    params.guildId,
-  );
+  const attendeeOverrideEnabled = isPersonalMeeting(params.meeting)
+    ? true
+    : await resolveAttendeeAccessEnabled(params.guildId);
   await ensurePortalUserCanAccessMeeting({
+    accessToken: params.accessToken,
     guildId: params.guildId,
     meeting: params.meeting,
+    session: params.session,
     userId: params.userId,
     attendeeOverrideEnabled,
   });
 
   const isMeetingOwner =
-    Boolean(params.meeting.meetingCreatorId) &&
-    params.meeting.meetingCreatorId === params.userId;
+    resolveMeetingOwnerUserId(params.meeting) === params.userId;
   if (isMeetingOwner) {
     return;
   }
@@ -700,9 +833,13 @@ const resolveMeetingListChannelId = (meeting: MeetingSummary): string =>
   parseChannelIdTimestamp(meeting.channelId_timestamp).channelId;
 
 const resolveMeetingListChannelName = (
+  meeting: MeetingSummary,
   channelMap: Map<string, string>,
   channelId: string,
-): string => channelMap.get(channelId) ?? channelId;
+): string =>
+  isPersonalMeeting(meeting)
+    ? PERSONAL_MEETING_CHANNEL_NAME
+    : (channelMap.get(channelId) ?? channelId);
 
 const resolveMeetingListStatus = (status: MeetingSummary["status"]) =>
   status ?? MEETING_STATUS.COMPLETE;
@@ -816,7 +953,13 @@ const list = guildMemberProcedure
           id: meeting.channelId_timestamp,
           meetingId: meeting.meetingId,
           channelId,
-          channelName: resolveMeetingListChannelName(channelMap, channelId),
+          channelName: resolveMeetingListChannelName(
+            meeting,
+            channelMap,
+            channelId,
+          ),
+          ownershipScope: isPersonalMeeting(meeting) ? "personal" : "guild",
+          ownerUserId: meeting.ownerUserId,
           timestamp: meeting.timestamp,
           duration: resolveMeetingListDuration(meeting),
           tags: resolveMeetingListTags(meeting.tags),
@@ -906,13 +1049,15 @@ const detail = authedProcedure
       throw new TRPCError({ code: "NOT_FOUND", message: "Meeting not found" });
     }
 
-    const attendeeOverrideEnabled = await resolveAttendeeAccessEnabled(
-      input.serverId,
-    );
+    const attendeeOverrideEnabled = isPersonalMeeting(history)
+      ? true
+      : await resolveAttendeeAccessEnabled(input.serverId);
 
     await ensurePortalUserCanAccessMeeting({
+      accessToken: ctx.user.accessToken,
       guildId: input.serverId,
       meeting: history,
+      session: ctx.req.session,
       userId: ctx.user.id,
       attendeeOverrideEnabled,
     });
@@ -921,19 +1066,24 @@ const detail = authedProcedure
       history.channelId ?? parseChannelIdTimestamp(input.meetingId).channelId;
 
     let channelName: string;
-    try {
-      const channels = await listGuildChannelsCached(input.serverId);
-      channelName =
-        channels.find((channel) => channel.id === channelId)?.name ?? channelId;
-    } catch (err) {
-      if (isDiscordApiError(err) && err.status === 429) {
-        throw new TRPCError({
-          code: "TOO_MANY_REQUESTS",
-          message: "Discord rate limited. Please retry.",
-        });
+    if (isPersonalMeeting(history)) {
+      channelName = PERSONAL_MEETING_CHANNEL_NAME;
+    } else {
+      try {
+        const channels = await listGuildChannelsCached(input.serverId);
+        channelName =
+          channels.find((channel) => channel.id === channelId)?.name ??
+          channelId;
+      } catch (err) {
+        if (isDiscordApiError(err) && err.status === 429) {
+          throw new TRPCError({
+            code: "TOO_MANY_REQUESTS",
+            message: "Discord rate limited. Please retry.",
+          });
+        }
+        // If we cannot resolve names, continue with the id.
+        channelName = channelId;
       }
-      // If we cannot resolve names, continue with the id.
-      channelName = channelId;
     }
 
     const transcriptPayload = history.transcriptS3Key
@@ -983,6 +1133,13 @@ const detail = authedProcedure
         meetingId: history.meetingId,
         channelId,
         channelName,
+        ownershipScope: isPersonalMeeting(history)
+          ? ("personal" as const)
+          : ("guild" as const),
+        ownerUserId: history.ownerUserId,
+        personalShareManageable:
+          isPersonalMeeting(history) &&
+          resolveMeetingOwnerUserId(history) === ctx.user.id,
         timestamp: history.timestamp,
         duration:
           history.status === MEETING_STATUS.IN_PROGRESS ||
@@ -1014,7 +1171,7 @@ const detail = authedProcedure
     };
   });
 
-const updateNotes = guildMemberProcedure
+const updateNotes = authedProcedure
   .input(
     z.object({
       serverId: z.string(),
@@ -1039,9 +1196,11 @@ const updateNotes = guildMemberProcedure
     const channelId =
       history.channelId ?? parseChannelIdTimestamp(input.meetingId).channelId;
     await ensurePortalUserCanEditMeetingNotes({
+      accessToken: ctx.user.accessToken,
       guildId: input.serverId,
       meeting: history,
       channelId,
+      session: ctx.req.session,
       userId: ctx.user.id,
       forbiddenMessage:
         "Only the meeting starter can edit notes for this meeting.",
@@ -1138,7 +1297,7 @@ const updateNotes = guildMemberProcedure
     return { ok: true };
   });
 
-const importNotes = guildMemberProcedure
+const importNotes = authedProcedure
   .input(
     z.object({
       serverId: z.string(),
@@ -1162,9 +1321,11 @@ const importNotes = guildMemberProcedure
     const channelId =
       history.channelId ?? parseChannelIdTimestamp(input.meetingId).channelId;
     await ensurePortalUserCanEditMeetingNotes({
+      accessToken: ctx.user.accessToken,
       guildId: input.serverId,
       meeting: history,
       channelId,
+      session: ctx.req.session,
       userId: ctx.user.id,
       forbiddenMessage:
         "Only the meeting starter can import notes for this meeting.",
@@ -1251,7 +1412,7 @@ const importNotes = guildMemberProcedure
     return { ok: true };
   });
 
-const setArchived = manageGuildProcedure
+const setArchived = authedProcedure
   .input(
     z.object({
       serverId: z.string(),
@@ -1260,6 +1421,21 @@ const setArchived = manageGuildProcedure
     }),
   )
   .mutation(async ({ ctx, input }) => {
+    const history = await getMeetingHistoryService(
+      input.serverId,
+      input.meetingId,
+    );
+    if (!history) {
+      throw new TRPCError({ code: "NOT_FOUND", message: "Meeting not found" });
+    }
+    await ensurePortalUserCanManageMeetingMetadata({
+      accessToken: ctx.user.accessToken,
+      guildId: input.serverId,
+      meeting: history,
+      session: ctx.req.session,
+      userId: ctx.user.id,
+    });
+
     const ok = await updateMeetingArchiveService({
       guildId: input.serverId,
       channelId_timestamp: input.meetingId,
@@ -1272,7 +1448,7 @@ const setArchived = manageGuildProcedure
     return { ok: true };
   });
 
-const rename = manageGuildProcedure
+const rename = authedProcedure
   .input(
     z.object({
       serverId: z.string(),
@@ -1280,7 +1456,7 @@ const rename = manageGuildProcedure
       meetingName: z.string().min(1).max(60),
     }),
   )
-  .mutation(async ({ input }) => {
+  .mutation(async ({ ctx, input }) => {
     const history = await getMeetingHistoryService(
       input.serverId,
       input.meetingId,
@@ -1288,6 +1464,14 @@ const rename = manageGuildProcedure
     if (!history) {
       throw new TRPCError({ code: "NOT_FOUND", message: "Meeting not found" });
     }
+    await ensurePortalUserCanManageMeetingMetadata({
+      accessToken: ctx.user.accessToken,
+      guildId: input.serverId,
+      meeting: history,
+      session: ctx.req.session,
+      userId: ctx.user.id,
+    });
+
     const normalized = normalizeMeetingName(input.meetingName);
     if (!normalized) {
       throw new TRPCError({
@@ -1316,7 +1500,7 @@ const rename = manageGuildProcedure
     return { meetingName };
   });
 
-const suggestNotesCorrection = guildMemberProcedure
+const suggestNotesCorrection = authedProcedure
   .input(
     z.object({
       serverId: z.string(),
@@ -1338,12 +1522,14 @@ const suggestNotesCorrection = guildMemberProcedure
 
     const channelId =
       history.channelId ?? parseChannelIdTimestamp(input.meetingId).channelId;
-    const attendeeOverrideEnabled = await resolveAttendeeAccessEnabled(
-      input.serverId,
-    );
+    const attendeeOverrideEnabled = isPersonalMeeting(history)
+      ? true
+      : await resolveAttendeeAccessEnabled(input.serverId);
     await ensurePortalUserCanAccessMeeting({
+      accessToken: ctx.user.accessToken,
       guildId: input.serverId,
       meeting: history,
+      session: ctx.req.session,
       userId: ctx.user.id,
       attendeeOverrideEnabled,
     });
@@ -1405,7 +1591,7 @@ const suggestNotesCorrection = guildMemberProcedure
     };
   });
 
-const applyNotesCorrection = guildMemberProcedure
+const applyNotesCorrection = authedProcedure
   .input(
     z.object({
       serverId: z.string(),
@@ -1443,19 +1629,19 @@ const applyNotesCorrection = guildMemberProcedure
 
     const channelId =
       history.channelId ?? parseChannelIdTimestamp(input.meetingId).channelId;
-    const attendeeOverrideEnabled = await resolveAttendeeAccessEnabled(
-      input.serverId,
-    );
+    const attendeeOverrideEnabled = isPersonalMeeting(history)
+      ? true
+      : await resolveAttendeeAccessEnabled(input.serverId);
     await ensurePortalUserCanAccessMeeting({
+      accessToken: ctx.user.accessToken,
       guildId: input.serverId,
       meeting: history,
+      session: ctx.req.session,
       userId: ctx.user.id,
       attendeeOverrideEnabled,
     });
 
-    const isMeetingOwner =
-      Boolean(history.meetingCreatorId) &&
-      history.meetingCreatorId === ctx.user.id;
+    const isMeetingOwner = resolveMeetingOwnerUserId(history) === ctx.user.id;
     const isRequester = pending.requesterId === ctx.user.id;
 
     if (!isMeetingOwner && !isRequester) {
@@ -1631,10 +1817,66 @@ const applyNotesCorrection = guildMemberProcedure
     return { ok: true };
   });
 
+const personalShareState = authedProcedure
+  .input(z.object({ serverId: z.string(), meetingId: z.string() }))
+  .query(async ({ ctx, input }) => {
+    const history = await getMeetingHistoryService(
+      input.serverId,
+      input.meetingId,
+    );
+    if (!history) {
+      throw new TRPCError({ code: "NOT_FOUND", message: "Meeting not found" });
+    }
+    ensurePersonalMeetingOwner({ meeting: history, userId: ctx.user.id });
+    return {
+      accessGrants: history.accessGrants ?? [],
+    };
+  });
+
+const setPersonalShareGrants = authedProcedure
+  .input(
+    z.object({
+      serverId: z.string(),
+      meetingId: z.string(),
+      userIds: z
+        .array(z.string().regex(PERSONAL_SHARE_TARGET_ID_PATTERN))
+        .max(PERSONAL_SHARE_TARGET_LIMIT),
+      guildIds: z
+        .array(z.string().regex(PERSONAL_SHARE_TARGET_ID_PATTERN))
+        .max(PERSONAL_SHARE_TARGET_LIMIT),
+    }),
+  )
+  .mutation(async ({ ctx, input }) => {
+    const history = await getMeetingHistoryService(
+      input.serverId,
+      input.meetingId,
+    );
+    if (!history) {
+      throw new TRPCError({ code: "NOT_FOUND", message: "Meeting not found" });
+    }
+    ensurePersonalMeetingOwner({ meeting: history, userId: ctx.user.id });
+    const accessGrants = buildPersonalAccessGrants({
+      userIds: input.userIds,
+      guildIds: input.guildIds,
+      sharedByUserId: ctx.user.id,
+    });
+    const ok = await updateMeetingAccessGrantsService({
+      guildId: input.serverId,
+      channelId_timestamp: input.meetingId,
+      accessGrants,
+    });
+    if (!ok) {
+      throw new TRPCError({ code: "NOT_FOUND", message: "Meeting not found" });
+    }
+    return { accessGrants };
+  });
+
 export const meetingsRouter = router({
   list,
   myList,
   detail,
+  personalShareState,
+  setPersonalShareGrants,
   setArchived,
   rename,
   suggestNotesCorrection,
