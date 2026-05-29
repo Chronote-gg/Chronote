@@ -18,7 +18,10 @@ import { getModelChoice } from "./modelFactory";
 import { resolveChatParamsForRole } from "./openaiModelParams";
 import { getLangfuseChatPrompt } from "./langfusePromptService";
 import { config } from "./configService";
-import { generateMeetingSummaries } from "./meetingSummaryService";
+import {
+  generateMeetingSummaries,
+  type MeetingSummaries,
+} from "./meetingSummaryService";
 import { resolveMeetingNameFromSummary } from "./meetingNameService";
 import { maybeAutoExportCompletedMeeting } from "./notionAutomationService";
 import {
@@ -30,6 +33,17 @@ import { buildPersonalMeetingGuildId } from "../utils/meetingOwnership";
 const PERSONAL_UPLOAD_CHANNEL_ID = "personal";
 const PERSONAL_UPLOAD_CHANNEL_NAME = "Uploaded media";
 const PERSONAL_UPLOAD_SERVER_NAME = "Personal";
+
+type PersonalUploadMeetingIdentity = ReturnType<typeof buildJobMeetingKey>;
+
+type PersonalUploadProcessingResult = {
+  audioS3Key?: string;
+  durationSeconds: number;
+  meetingName?: string;
+  notes: string;
+  summaries: MeetingSummaries;
+  transcriptS3Key?: string;
+};
 
 const buildJobMeetingKey = (job: PersonalMediaUploadJobRecord) => {
   const timestamp = job.createdAt;
@@ -133,6 +147,130 @@ const transcribeAudioFiles = async (filePaths: string[]) => {
   return chunks.join("\n\n");
 };
 
+const generateNotesForTranscript = async (
+  job: PersonalMediaUploadJobRecord,
+  transcript: string,
+) => {
+  if (!transcript.trim()) return "";
+  return generatePersonalUploadNotes({ transcript, title: job.title });
+};
+
+const generateSummariesForNotes = async (
+  job: PersonalMediaUploadJobRecord,
+  notes: string,
+) => {
+  if (!notes) return {};
+  return generateMeetingSummaries({
+    guildId: job.meetingGuildId,
+    notes,
+    serverName: PERSONAL_UPLOAD_SERVER_NAME,
+    channelName: PERSONAL_UPLOAD_CHANNEL_NAME,
+    tags: job.tags,
+    now: new Date(job.createdAt),
+    meetingId: job.meetingId,
+  });
+};
+
+const resolvePersonalUploadMeetingName = async (
+  job: PersonalMediaUploadJobRecord,
+  summaries: MeetingSummaries,
+) =>
+  job.title ||
+  (await resolveMeetingNameFromSummary({
+    guildId: job.meetingGuildId ?? buildPersonalMeetingGuildId(job.ownerUserId),
+    meetingId: job.meetingId ?? job.uploadId,
+    summaryLabel: summaries.summaryLabel,
+  }));
+
+const buildTranscriptArtifact = (
+  job: PersonalMediaUploadJobRecord,
+  transcript: string,
+) =>
+  JSON.stringify(
+    {
+      generatedAt: new Date().toISOString(),
+      uploadId: job.uploadId,
+      mediaKind: job.mediaKind,
+      segments: [
+        {
+          userId: job.ownerUserId,
+          displayName: "Uploader",
+          startedAt: job.createdAt,
+          text: transcript,
+          source: "personal_upload",
+        },
+      ],
+      text: transcript,
+    },
+    null,
+    2,
+  );
+
+const uploadPersonalUploadArtifacts = async (
+  job: PersonalMediaUploadJobRecord,
+  audioPath: string,
+  transcript: string,
+) => {
+  const folder = `personal/${job.ownerUserId}/${job.uploadId}/`;
+  const audioS3Key = await uploadObjectToS3(
+    `${folder}audio.mp3`,
+    await fs.readFile(audioPath),
+    "audio/mpeg",
+  );
+  const transcriptS3Key = await uploadObjectToS3(
+    `${folder}transcript.json`,
+    buildTranscriptArtifact(job, transcript),
+    "application/json",
+  );
+  return { audioS3Key, transcriptS3Key };
+};
+
+const downloadAndNormalizeMedia = async (
+  job: PersonalMediaUploadJobRecord,
+  workDir: string,
+) => {
+  const sourcePath = path.join(workDir, "source");
+  const audioPath = path.join(workDir, "audio.mp3");
+  const downloaded = await downloadObjectToFile(job.sourceS3Key, sourcePath);
+  if (!downloaded) throw new Error("Uploaded media could not be downloaded.");
+  const durationSeconds = Math.round(
+    await probeMediaDurationSeconds(sourcePath),
+  );
+  await runFfmpeg(sourcePath, audioPath);
+  return { audioPath, durationSeconds };
+};
+
+const processPersonalMediaContent = async (
+  job: PersonalMediaUploadJobRecord,
+  workDir: string,
+): Promise<PersonalUploadProcessingResult> => {
+  const { audioPath, durationSeconds } = await downloadAndNormalizeMedia(
+    job,
+    workDir,
+  );
+  const transcriptionInputs = await resolveTranscriptionInputs(
+    audioPath,
+    workDir,
+  );
+  const transcript = await transcribeAudioFiles(transcriptionInputs);
+  const notes = await generateNotesForTranscript(job, transcript);
+  const summaries = await generateSummariesForNotes(job, notes);
+  const meetingName = await resolvePersonalUploadMeetingName(job, summaries);
+  const artifacts = await uploadPersonalUploadArtifacts(
+    job,
+    audioPath,
+    transcript,
+  );
+
+  return {
+    ...artifacts,
+    durationSeconds,
+    meetingName,
+    notes,
+    summaries,
+  };
+};
+
 const generatePersonalUploadNotes = async (input: {
   transcript: string;
   title?: string;
@@ -221,6 +359,104 @@ export async function createPersonalMediaProcessingMeeting(
   return next;
 }
 
+const buildNotesHistory = (
+  notes: string,
+  ownerUserId: string,
+  completedAt: string,
+) => {
+  if (!notes) return undefined;
+
+  return [
+    {
+      version: 1,
+      notes,
+      editedBy: ownerUserId,
+      editedAt: completedAt,
+    },
+  ];
+};
+
+const buildCompletedMeetingHistory = (
+  job: PersonalMediaUploadJobRecord,
+  identity: PersonalUploadMeetingIdentity,
+  result: PersonalUploadProcessingResult,
+  completedAt: string,
+): MeetingHistory => ({
+  guildId: identity.guildId,
+  channelId_timestamp: identity.channelIdTimestamp,
+  meetingId: identity.meetingId,
+  channelId: PERSONAL_UPLOAD_CHANNEL_ID,
+  timestamp: identity.timestamp,
+  tags: job.tags,
+  notes: result.notes,
+  meetingName: result.meetingName,
+  summarySentence: result.summaries.summarySentence,
+  summaryLabel: result.summaries.summaryLabel,
+  participants: [],
+  duration: result.durationSeconds,
+  transcribeMeeting: true,
+  generateNotes: true,
+  ownershipScope: "personal",
+  ownerUserId: job.ownerUserId,
+  meetingCreatorId: job.ownerUserId,
+  status: MEETING_STATUS.COMPLETE,
+  notesVersion: result.notes ? 1 : undefined,
+  notesLastEditedBy: result.notes ? job.ownerUserId : undefined,
+  notesLastEditedAt: result.notes ? completedAt : undefined,
+  notesHistory: buildNotesHistory(result.notes, job.ownerUserId, completedAt),
+  transcriptS3Key: result.transcriptS3Key,
+  audioS3Key: result.audioS3Key,
+});
+
+const markPersonalMediaUploadComplete = async (
+  job: PersonalMediaUploadJobRecord,
+  identity: PersonalUploadMeetingIdentity,
+  result: PersonalUploadProcessingResult,
+  completedAt: string,
+  instanceId: string,
+) =>
+  updateClaimedPersonalMediaUploadJobRecord(
+    {
+      ...job,
+      status: "complete",
+      meetingGuildId: identity.guildId,
+      meetingId: identity.meetingId,
+      channelId_timestamp: identity.channelIdTimestamp,
+      durationSeconds: result.durationSeconds,
+      errorMessage: undefined,
+      retryable: undefined,
+      claimExpiresAt: undefined,
+      processingOwnerInstanceId: undefined,
+      completedAt,
+      updatedAt: completedAt,
+    },
+    instanceId,
+  );
+
+const markPersonalMediaUploadFailed = async (
+  job: PersonalMediaUploadJobRecord,
+  error: unknown,
+  instanceId: string,
+) => {
+  const now = new Date().toISOString();
+  const attempts = job.attempts ?? 1;
+  const retryable = attempts < PERSONAL_MEDIA_UPLOAD_MAX_PROCESSING_ATTEMPTS;
+  await updateClaimedPersonalMediaUploadJobRecord(
+    {
+      ...job,
+      status: retryable ? "queued" : "failed",
+      errorMessage:
+        error instanceof Error ? error.message : "Processing failed.",
+      retryable,
+      claimExpiresAt: undefined,
+      processingOwnerInstanceId: undefined,
+      queuedAt: retryable ? now : job.queuedAt,
+      updatedAt: now,
+    },
+    instanceId,
+  );
+};
+
 export async function processPersonalMediaUpload(
   job: PersonalMediaUploadJobRecord,
   instanceId: string,
@@ -229,146 +465,26 @@ export async function processPersonalMediaUpload(
   const workDir = path.join(tempRoot, "personal-upload", job.uploadId);
   await fs.mkdir(workDir, { recursive: true });
   try {
-    const sourcePath = path.join(workDir, "source");
-    const audioPath = path.join(workDir, "audio.mp3");
-    const downloaded = await downloadObjectToFile(job.sourceS3Key, sourcePath);
-    if (!downloaded) throw new Error("Uploaded media could not be downloaded.");
-    const durationSeconds = Math.round(
-      await probeMediaDurationSeconds(sourcePath),
-    );
-    await runFfmpeg(sourcePath, audioPath);
-    const transcriptionInputs = await resolveTranscriptionInputs(
-      audioPath,
-      workDir,
-    );
-
-    const transcript = await transcribeAudioFiles(transcriptionInputs);
-    const notes = transcript.trim()
-      ? await generatePersonalUploadNotes({ transcript, title: job.title })
-      : "";
-    const summaries = notes
-      ? await generateMeetingSummaries({
-          guildId: job.meetingGuildId,
-          notes,
-          serverName: PERSONAL_UPLOAD_SERVER_NAME,
-          channelName: PERSONAL_UPLOAD_CHANNEL_NAME,
-          tags: job.tags,
-          now: new Date(job.createdAt),
-          meetingId: job.meetingId,
-        })
-      : {};
-    const meetingName =
-      job.title ||
-      (await resolveMeetingNameFromSummary({
-        guildId:
-          job.meetingGuildId ?? buildPersonalMeetingGuildId(job.ownerUserId),
-        meetingId: job.meetingId ?? job.uploadId,
-        summaryLabel: summaries.summaryLabel,
-      }));
-
+    const result = await processPersonalMediaContent(job, workDir);
     const identity = buildJobMeetingKey(job);
-    const folder = `personal/${job.ownerUserId}/${job.uploadId}/`;
-    const audioS3Key = await uploadObjectToS3(
-      `${folder}audio.mp3`,
-      await fs.readFile(audioPath),
-      "audio/mpeg",
-    );
-    const transcriptS3Key = await uploadObjectToS3(
-      `${folder}transcript.json`,
-      JSON.stringify(
-        {
-          generatedAt: new Date().toISOString(),
-          uploadId: job.uploadId,
-          mediaKind: job.mediaKind,
-          segments: [
-            {
-              userId: job.ownerUserId,
-              displayName: "Uploader",
-              startedAt: job.createdAt,
-              text: transcript,
-              source: "personal_upload",
-            },
-          ],
-          text: transcript,
-        },
-        null,
-        2,
-      ),
-      "application/json",
-    );
     const completedAt = new Date().toISOString();
-    const meetingHistory: MeetingHistory = {
-      guildId: identity.guildId,
-      channelId_timestamp: identity.channelIdTimestamp,
-      meetingId: identity.meetingId,
-      channelId: PERSONAL_UPLOAD_CHANNEL_ID,
-      timestamp: identity.timestamp,
-      tags: job.tags,
-      notes,
-      meetingName,
-      summarySentence: summaries.summarySentence,
-      summaryLabel: summaries.summaryLabel,
-      participants: [],
-      duration: durationSeconds,
-      transcribeMeeting: true,
-      generateNotes: true,
-      ownershipScope: "personal",
-      ownerUserId: job.ownerUserId,
-      meetingCreatorId: job.ownerUserId,
-      status: MEETING_STATUS.COMPLETE,
-      notesVersion: notes ? 1 : undefined,
-      notesLastEditedBy: notes ? job.ownerUserId : undefined,
-      notesLastEditedAt: notes ? completedAt : undefined,
-      notesHistory: notes
-        ? [
-            {
-              version: 1,
-              notes,
-              editedBy: job.ownerUserId,
-              editedAt: completedAt,
-            },
-          ]
-        : undefined,
-      transcriptS3Key,
-      audioS3Key,
-    };
+    const meetingHistory = buildCompletedMeetingHistory(
+      job,
+      identity,
+      result,
+      completedAt,
+    );
     await writeMeetingHistoryService(meetingHistory);
     await maybeAutoExportCompletedMeeting(meetingHistory);
-    await updateClaimedPersonalMediaUploadJobRecord(
-      {
-        ...job,
-        status: "complete",
-        meetingGuildId: identity.guildId,
-        meetingId: identity.meetingId,
-        channelId_timestamp: identity.channelIdTimestamp,
-        durationSeconds,
-        errorMessage: undefined,
-        retryable: undefined,
-        claimExpiresAt: undefined,
-        processingOwnerInstanceId: undefined,
-        completedAt,
-        updatedAt: completedAt,
-      },
+    await markPersonalMediaUploadComplete(
+      job,
+      identity,
+      result,
+      completedAt,
       instanceId,
     );
   } catch (error) {
-    const now = new Date().toISOString();
-    const attempts = job.attempts ?? 1;
-    const retryable = attempts < PERSONAL_MEDIA_UPLOAD_MAX_PROCESSING_ATTEMPTS;
-    await updateClaimedPersonalMediaUploadJobRecord(
-      {
-        ...job,
-        status: retryable ? "queued" : "failed",
-        errorMessage:
-          error instanceof Error ? error.message : "Processing failed.",
-        retryable,
-        claimExpiresAt: undefined,
-        processingOwnerInstanceId: undefined,
-        queuedAt: retryable ? now : job.queuedAt,
-        updatedAt: now,
-      },
-      instanceId,
-    );
+    await markPersonalMediaUploadFailed(job, error, instanceId);
     console.error("Failed to process personal media upload", {
       uploadId: job.uploadId,
       error,

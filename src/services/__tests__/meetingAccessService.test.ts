@@ -17,16 +17,15 @@ jest.mock("../discordPermissionsService", () => ({
 const createMeeting = (
   overrides: Partial<MeetingHistory> = {},
 ): MeetingHistory => ({
-  guildId: overrides.guildId ?? "guild-1",
-  channelId: overrides.channelId ?? "voice-1",
-  channelId_timestamp:
-    overrides.channelId_timestamp ?? "voice-1#2026-01-01T00:00:00.000Z",
-  meetingId: overrides.meetingId ?? "meeting-1",
-  timestamp: overrides.timestamp ?? "2026-01-01T00:00:00.000Z",
-  participants: overrides.participants ?? [],
-  duration: overrides.duration ?? 120,
-  transcribeMeeting: overrides.transcribeMeeting ?? true,
-  generateNotes: overrides.generateNotes ?? true,
+  guildId: "guild-1",
+  channelId: "voice-1",
+  channelId_timestamp: "voice-1#2026-01-01T00:00:00.000Z",
+  meetingId: "meeting-1",
+  timestamp: "2026-01-01T00:00:00.000Z",
+  participants: [],
+  duration: 120,
+  transcribeMeeting: true,
+  generateNotes: true,
   ...overrides,
 });
 

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { Stack } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
 import { useNavigate } from "@tanstack/react-router";
@@ -8,7 +8,10 @@ import {
 } from "../../constants";
 import PageHeader from "../components/PageHeader";
 import PersonalUploadPanel from "../features/personalUploads/PersonalUploadPanel";
-import type { PersonalUploadPanelJob } from "../features/personalUploads/PersonalUploadPanel";
+import type {
+  PersonalUploadPanelJob,
+  PersonalUploadStatus,
+} from "../features/personalUploads/PersonalUploadPanel";
 import { trpc } from "../services/trpc";
 
 type SignedUploadPost = {
@@ -18,9 +21,52 @@ type SignedUploadPost = {
 
 type UploadPhase = "idle" | "signing" | "uploading" | "submitting";
 
+type CreateUploadIntentMutation = {
+  isPending: boolean;
+  mutateAsync: (input: { contentType: string; fileSize: number }) => Promise<{
+    uploadId: string;
+    key: string;
+    uploadToken: string;
+    upload: SignedUploadPost;
+  }>;
+};
+
+type CompleteUploadMutation = {
+  data?: { job?: PersonalUploadPanelJob | null } | null;
+  isPending: boolean;
+  mutateAsync: (input: {
+    uploadId: string;
+    key: string;
+    uploadToken: string;
+    originalFileName: string;
+    title?: string;
+    tags?: string[];
+  }) => Promise<unknown>;
+};
+
+type PersonalMeetingNavigate = (options: {
+  to: "/portal/meetings/$serverId/$meetingId";
+  params: { serverId: string; meetingId: string };
+}) => void;
+
 const PERSONAL_UPLOAD_ACCEPT =
   PERSONAL_MEDIA_UPLOAD_ALLOWED_CONTENT_TYPES.join(",");
 const STATUS_POLL_INTERVAL_MS = 5_000;
+const BLOCKING_JOB_STATUSES = new Set<PersonalUploadStatus>([
+  "queued",
+  "processing",
+]);
+const PHASE_STATUS_LABELS: Partial<Record<UploadPhase, string>> = {
+  signing: "Preparing upload...",
+  uploading: "Uploading media...",
+  submitting: "Starting processing...",
+};
+const JOB_STATUS_LABELS: Partial<Record<PersonalUploadStatus, string>> = {
+  queued: "Waiting to process uploaded media...",
+  processing: "Processing uploaded media...",
+  complete: "Processing complete.",
+  failed: "Processing failed.",
+};
 
 const parseTags = (tagsText: string) =>
   tagsText
@@ -33,14 +79,8 @@ const resolveStatusLabel = (
   phase: UploadPhase,
   job?: PersonalUploadPanelJob | null,
 ) => {
-  if (phase === "signing") return "Preparing upload...";
-  if (phase === "uploading") return "Uploading media...";
-  if (phase === "submitting") return "Starting processing...";
-  if (job?.status === "queued") return "Waiting to process uploaded media...";
-  if (job?.status === "processing") return "Processing uploaded media...";
-  if (job?.status === "complete") return "Processing complete.";
-  if (job?.status === "failed") return "Processing failed.";
-  return null;
+  if (phase !== "idle") return PHASE_STATUS_LABELS[phase] ?? null;
+  return job ? (JOB_STATUS_LABELS[job.status] ?? null) : null;
 };
 
 const uploadFileToSignedPost = (
@@ -79,6 +119,109 @@ const getUploadErrorMessage = (error: unknown) =>
     ? error.message
     : "Upload failed. Please retry.";
 
+const validateUploadFile = (file: File | null) => {
+  if (!file) return "Choose an audio or video file first.";
+  if (!PERSONAL_MEDIA_UPLOAD_ALLOWED_CONTENT_TYPES.includes(file.type)) {
+    return "Choose a supported audio or video file.";
+  }
+  if (file.size > PERSONAL_MEDIA_UPLOAD_MAX_BYTES) {
+    return "Media file is too large.";
+  }
+  return null;
+};
+
+const isUploadDisabled = (
+  phase: UploadPhase,
+  createUploadPending: boolean,
+  completeUploadPending: boolean,
+  job?: PersonalUploadPanelJob | null,
+) =>
+  phase !== "idle" ||
+  createUploadPending ||
+  completeUploadPending ||
+  Boolean(job && BLOCKING_JOB_STATUSES.has(job.status));
+
+const shouldPollUploadStatus = (status?: PersonalUploadStatus) =>
+  Boolean(status && status !== "complete" && status !== "failed");
+
+function useUploadStatusPolling(
+  uploadId: string | null,
+  status: PersonalUploadStatus | undefined,
+  refetch: () => unknown,
+) {
+  useEffect(() => {
+    if (!uploadId || !shouldPollUploadStatus(status)) return;
+
+    const timer = window.setInterval(() => {
+      void refetch();
+    }, STATUS_POLL_INTERVAL_MS);
+    return () => window.clearInterval(timer);
+  }, [refetch, status, uploadId]);
+}
+
+async function submitPersonalUpload(input: {
+  completeUpload: CompleteUploadMutation;
+  createUploadIntent: CreateUploadIntentMutation;
+  file: File | null;
+  setErrorMessage: (message: string | null) => void;
+  setPhase: (phase: UploadPhase) => void;
+  setUploadId: (uploadId: string | null) => void;
+  setUploadProgress: (progress: number) => void;
+  tagsText: string;
+  title: string;
+}) {
+  const file = input.file;
+  const validationMessage = validateUploadFile(file);
+  if (validationMessage) {
+    input.setErrorMessage(validationMessage);
+    return;
+  }
+  if (!file) return;
+
+  input.setErrorMessage(null);
+  input.setUploadProgress(0);
+  input.setUploadId(null);
+  try {
+    input.setPhase("signing");
+    const intent = await input.createUploadIntent.mutateAsync({
+      contentType: file.type,
+      fileSize: file.size,
+    });
+    input.setUploadId(intent.uploadId);
+    input.setPhase("uploading");
+    await uploadFileToSignedPost(intent.upload, file, input.setUploadProgress);
+    input.setPhase("submitting");
+    const tags = parseTags(input.tagsText);
+    await input.completeUpload.mutateAsync({
+      uploadId: intent.uploadId,
+      key: intent.key,
+      uploadToken: intent.uploadToken,
+      originalFileName: file.name,
+      title: input.title.trim() || undefined,
+      tags: tags.length ? tags : undefined,
+    });
+    notifications.show({ message: "Upload received. Processing started." });
+  } catch (error) {
+    input.setErrorMessage(getUploadErrorMessage(error));
+  } finally {
+    input.setPhase("idle");
+  }
+}
+
+function openPersonalMeeting(
+  navigate: PersonalMeetingNavigate,
+  job?: PersonalUploadPanelJob | null,
+) {
+  if (!job?.meetingGuildId || !job.channelId_timestamp) return;
+  navigate({
+    to: "/portal/meetings/$serverId/$meetingId",
+    params: {
+      serverId: job.meetingGuildId,
+      meetingId: job.channelId_timestamp,
+    },
+  });
+}
+
 export default function PersonalUpload() {
   const navigate = useNavigate({ from: "/portal/upload" });
   const [file, setFile] = useState<File | null>(null);
@@ -98,78 +241,29 @@ export default function PersonalUpload() {
   );
 
   const job = statusQuery.data?.job ?? completeUpload.data?.job ?? null;
-  const disabled =
-    phase !== "idle" ||
-    createUploadIntent.isPending ||
-    completeUpload.isPending ||
-    job?.status === "queued" ||
-    job?.status === "processing";
+  const disabled = isUploadDisabled(
+    phase,
+    createUploadIntent.isPending,
+    completeUpload.isPending,
+    job,
+  );
   const statusLabel = resolveStatusLabel(phase, job);
-  const tags = useMemo(() => parseTags(tagsText), [tagsText]);
+  useUploadStatusPolling(uploadId, job?.status, statusQuery.refetch);
 
-  useEffect(() => {
-    if (!uploadId || job?.status === "complete" || job?.status === "failed") {
-      return;
-    }
-    const timer = window.setInterval(() => {
-      void statusQuery.refetch();
-    }, STATUS_POLL_INTERVAL_MS);
-    return () => window.clearInterval(timer);
-  }, [job?.status, statusQuery, uploadId]);
-
-  const submitUpload = async () => {
-    if (!file) {
-      setErrorMessage("Choose an audio or video file first.");
-      return;
-    }
-    if (!PERSONAL_MEDIA_UPLOAD_ALLOWED_CONTENT_TYPES.includes(file.type)) {
-      setErrorMessage("Choose a supported audio or video file.");
-      return;
-    }
-    if (file.size > PERSONAL_MEDIA_UPLOAD_MAX_BYTES) {
-      setErrorMessage("Media file is too large.");
-      return;
-    }
-
-    setErrorMessage(null);
-    setUploadProgress(0);
-    setUploadId(null);
-    try {
-      setPhase("signing");
-      const intent = await createUploadIntent.mutateAsync({
-        contentType: file.type,
-        fileSize: file.size,
-      });
-      setUploadId(intent.uploadId);
-      setPhase("uploading");
-      await uploadFileToSignedPost(intent.upload, file, setUploadProgress);
-      setPhase("submitting");
-      await completeUpload.mutateAsync({
-        uploadId: intent.uploadId,
-        key: intent.key,
-        uploadToken: intent.uploadToken,
-        originalFileName: file.name,
-        title: title.trim() || undefined,
-        tags: tags.length ? tags : undefined,
-      });
-      notifications.show({ message: "Upload received. Processing started." });
-    } catch (error) {
-      setErrorMessage(getUploadErrorMessage(error));
-    } finally {
-      setPhase("idle");
-    }
-  };
-
-  const openMeeting = () => {
-    if (!job?.meetingGuildId || !job.channelId_timestamp) return;
-    navigate({
-      to: "/portal/meetings/$serverId/$meetingId",
-      params: {
-        serverId: job.meetingGuildId,
-        meetingId: job.channelId_timestamp,
-      },
+  const submitUpload = () =>
+    void submitPersonalUpload({
+      completeUpload,
+      createUploadIntent,
+      file,
+      setErrorMessage,
+      setPhase,
+      setUploadId,
+      setUploadProgress,
+      tagsText,
+      title,
     });
-  };
+
+  const openMeeting = () => openPersonalMeeting(navigate, job);
 
   return (
     <Stack gap="lg" data-testid="personal-upload-page">

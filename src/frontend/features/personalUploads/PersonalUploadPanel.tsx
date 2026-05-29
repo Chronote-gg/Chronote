@@ -47,6 +47,8 @@ export type PersonalUploadPanelProps = {
   uploadProgress: number;
 };
 
+const BYTES_PER_MIB = 1024 * 1024;
+
 const canOpenMeeting = (job?: PersonalUploadPanelJob | null) =>
   job?.status === "complete" &&
   Boolean(job.meetingGuildId && job.channelId_timestamp);
@@ -58,6 +60,161 @@ const canSubmitUpload = (
   if (!file) return false;
   return job?.status !== "queued" && job?.status !== "processing";
 };
+
+function ChooseFileButton({
+  accept,
+  disabled,
+  onFileChange,
+}: Pick<PersonalUploadPanelProps, "accept" | "disabled" | "onFileChange">) {
+  return (
+    <Button
+      component="label"
+      variant="light"
+      color="brand"
+      leftSection={<IconUpload size={16} />}
+      disabled={disabled}
+      data-testid="personal-upload-choose-file"
+    >
+      Choose file
+      <input
+        hidden
+        type="file"
+        accept={accept}
+        disabled={disabled}
+        onChange={(event) =>
+          onFileChange(event.currentTarget.files?.[0] ?? null)
+        }
+        data-testid="personal-upload-file-input"
+      />
+    </Button>
+  );
+}
+
+function SelectedFileAlert({ file }: Pick<PersonalUploadPanelProps, "file">) {
+  if (!file) return null;
+
+  return (
+    <Alert color="blue" variant="light">
+      <Text size="sm" fw={600}>
+        {file.name}
+      </Text>
+      <Text size="xs" c="dimmed">
+        {(file.size / BYTES_PER_MIB).toFixed(1)} MB
+      </Text>
+    </Alert>
+  );
+}
+
+function UploadProgressStatus({
+  statusLabel,
+  uploadProgress,
+}: Pick<PersonalUploadPanelProps, "statusLabel" | "uploadProgress">) {
+  if (!statusLabel) return null;
+
+  const progressVisible = uploadProgress > 0 && uploadProgress < 100;
+
+  return (
+    <Stack gap={6}>
+      <Group justify="space-between" gap="sm">
+        <Text size="sm" fw={600}>
+          {statusLabel}
+        </Text>
+        {progressVisible ? (
+          <Text size="xs" c="dimmed">
+            {uploadProgress}%
+          </Text>
+        ) : null}
+      </Group>
+      {progressVisible ? (
+        <Progress value={uploadProgress} color="brand" />
+      ) : null}
+    </Stack>
+  );
+}
+
+function UploadErrorAlert({ message }: { message?: string | null }) {
+  if (!message) return null;
+
+  return (
+    <Alert
+      color="red"
+      variant="light"
+      icon={<IconAlertTriangle size={16} />}
+      data-testid="personal-upload-error"
+    >
+      {message}
+    </Alert>
+  );
+}
+
+function UploadCompleteAlert({ job }: Pick<PersonalUploadPanelProps, "job">) {
+  if (job?.status !== "complete") return null;
+
+  return (
+    <Alert
+      color="teal"
+      variant="light"
+      icon={<IconCheck size={16} />}
+      data-testid="personal-upload-complete"
+    >
+      Your personal meeting is ready.
+    </Alert>
+  );
+}
+
+function OpenMeetingButton({
+  available,
+  onOpenMeeting,
+}: {
+  available: boolean;
+  onOpenMeeting?: () => void;
+}) {
+  if (!available) return null;
+
+  return (
+    <Button
+      variant="light"
+      color="brand"
+      rightSection={<IconExternalLink size={16} />}
+      onClick={onOpenMeeting}
+      data-testid="personal-upload-open-meeting"
+    >
+      Open meeting
+    </Button>
+  );
+}
+
+function UploadActions({
+  openMeetingAvailable,
+  onOpenMeeting,
+  onSubmit,
+  disabled,
+  submitAvailable,
+}: {
+  openMeetingAvailable: boolean;
+  onOpenMeeting?: () => void;
+  onSubmit: () => void;
+  disabled: boolean;
+  submitAvailable: boolean;
+}) {
+  return (
+    <Group justify="flex-end">
+      <OpenMeetingButton
+        available={openMeetingAvailable}
+        onOpenMeeting={onOpenMeeting}
+      />
+      <Button
+        onClick={onSubmit}
+        loading={disabled}
+        disabled={!submitAvailable}
+        leftSection={<IconUpload size={16} />}
+        data-testid="personal-upload-submit"
+      >
+        Upload and process
+      </Button>
+    </Group>
+  );
+}
 
 export function PersonalUploadPanel({
   accept,
@@ -77,6 +234,7 @@ export function PersonalUploadPanel({
 }: PersonalUploadPanelProps) {
   const openMeetingAvailable = canOpenMeeting(job);
   const submitAvailable = canSubmitUpload(file, job);
+  const uploadErrorMessage = errorMessage ?? job?.errorMessage ?? null;
 
   return (
     <Surface p="lg" tone="soft" data-testid="personal-upload-panel">
@@ -94,38 +252,14 @@ export function PersonalUploadPanel({
               result in My Meetings under your personal workspace.
             </Text>
           </Stack>
-          <Button
-            component="label"
-            variant="light"
-            color="brand"
-            leftSection={<IconUpload size={16} />}
+          <ChooseFileButton
+            accept={accept}
             disabled={disabled}
-            data-testid="personal-upload-choose-file"
-          >
-            Choose file
-            <input
-              hidden
-              type="file"
-              accept={accept}
-              disabled={disabled}
-              onChange={(event) =>
-                onFileChange(event.currentTarget.files?.[0] ?? null)
-              }
-              data-testid="personal-upload-file-input"
-            />
-          </Button>
+            onFileChange={onFileChange}
+          />
         </Group>
 
-        {file ? (
-          <Alert color="blue" variant="light">
-            <Text size="sm" fw={600}>
-              {file.name}
-            </Text>
-            <Text size="xs" c="dimmed">
-              {(file.size / 1024 / 1024).toFixed(1)} MB
-            </Text>
-          </Alert>
-        ) : null}
+        <SelectedFileAlert file={file} />
 
         <TextInput
           label="Title"
@@ -146,68 +280,19 @@ export function PersonalUploadPanel({
           data-testid="personal-upload-tags"
         />
 
-        {statusLabel ? (
-          <Stack gap={6}>
-            <Group justify="space-between" gap="sm">
-              <Text size="sm" fw={600}>
-                {statusLabel}
-              </Text>
-              {uploadProgress > 0 && uploadProgress < 100 ? (
-                <Text size="xs" c="dimmed">
-                  {uploadProgress}%
-                </Text>
-              ) : null}
-            </Group>
-            {uploadProgress > 0 && uploadProgress < 100 ? (
-              <Progress value={uploadProgress} color="brand" />
-            ) : null}
-          </Stack>
-        ) : null}
-
-        {errorMessage || job?.errorMessage ? (
-          <Alert
-            color="red"
-            variant="light"
-            icon={<IconAlertTriangle size={16} />}
-            data-testid="personal-upload-error"
-          >
-            {errorMessage ?? job?.errorMessage}
-          </Alert>
-        ) : null}
-
-        {job?.status === "complete" ? (
-          <Alert
-            color="teal"
-            variant="light"
-            icon={<IconCheck size={16} />}
-            data-testid="personal-upload-complete"
-          >
-            Your personal meeting is ready.
-          </Alert>
-        ) : null}
-
-        <Group justify="flex-end">
-          {openMeetingAvailable ? (
-            <Button
-              variant="light"
-              color="brand"
-              rightSection={<IconExternalLink size={16} />}
-              onClick={onOpenMeeting}
-              data-testid="personal-upload-open-meeting"
-            >
-              Open meeting
-            </Button>
-          ) : null}
-          <Button
-            onClick={onSubmit}
-            loading={disabled}
-            disabled={!submitAvailable}
-            leftSection={<IconUpload size={16} />}
-            data-testid="personal-upload-submit"
-          >
-            Upload and process
-          </Button>
-        </Group>
+        <UploadProgressStatus
+          statusLabel={statusLabel}
+          uploadProgress={uploadProgress}
+        />
+        <UploadErrorAlert message={uploadErrorMessage} />
+        <UploadCompleteAlert job={job} />
+        <UploadActions
+          openMeetingAvailable={openMeetingAvailable}
+          onOpenMeeting={onOpenMeeting}
+          onSubmit={onSubmit}
+          disabled={disabled}
+          submitAvailable={submitAvailable}
+        />
       </Stack>
     </Surface>
   );
