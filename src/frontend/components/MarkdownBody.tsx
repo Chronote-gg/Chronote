@@ -1,4 +1,4 @@
-import { Text, TypographyStylesProvider } from "@mantine/core";
+import { Text, Typography } from "@mantine/core";
 import type { ComponentProps, MouseEvent } from "react";
 import { useMemo } from "react";
 import ReactMarkdown from "react-markdown";
@@ -111,11 +111,11 @@ export default function MarkdownBody({
 
   return (
     <Text size="sm" c={dimmed ? "dimmed" : undefined} component="div">
-      <TypographyStylesProvider>
+      <Typography>
         <ReactMarkdown remarkPlugins={[remarkGfm]} components={components}>
           {content}
         </ReactMarkdown>
-      </TypographyStylesProvider>
+      </Typography>
     </Text>
   );
 }

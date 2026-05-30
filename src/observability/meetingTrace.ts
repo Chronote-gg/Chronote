@@ -1,10 +1,12 @@
 import {
+  propagateAttributes,
+  setActiveTraceIO,
   startActiveObservation,
   updateActiveObservation,
-  updateActiveTrace,
 } from "@langfuse/tracing";
 import type { MeetingData } from "../types/meeting-data";
 import { isLangfuseTracingEnabled } from "../services/langfuseClient";
+import { toLangfuseAttributeMetadata } from "./langfuseMetadata";
 
 export async function withMeetingEndTrace(
   meeting: MeetingData,
@@ -15,72 +17,73 @@ export async function withMeetingEndTrace(
     return;
   }
 
-  await startActiveObservation(
-    "meeting-end",
-    async (chain) => {
-      const previousContext = meeting.langfuseParentSpanContext;
-      meeting.langfuseParentSpanContext = chain.otelSpan.spanContext();
-      const traceMetadata = {
-        guildId: meeting.guildId,
-        channelId: meeting.channelId,
-        meetingId: meeting.meetingId,
-        isAutoRecording: meeting.isAutoRecording,
-        transcribeMeeting: meeting.transcribeMeeting,
-        generateNotes: meeting.generateNotes,
-      };
+  const traceMetadata = {
+    guildId: meeting.guildId,
+    channelId: meeting.channelId,
+    meetingId: meeting.meetingId,
+    isAutoRecording: meeting.isAutoRecording,
+    transcribeMeeting: meeting.transcribeMeeting,
+    generateNotes: meeting.generateNotes,
+  };
+  const traceInput = {
+    startedAt: meeting.startTime.toISOString(),
+    voiceChannelId: meeting.voiceChannel.id,
+    voiceChannelName: meeting.voiceChannel.name,
+  };
 
-      updateActiveTrace({
-        name: "meeting-end",
-        userId: meeting.creator.id,
-        sessionId: meeting.meetingId,
-        tags: ["feature:meeting_end"],
-        metadata: traceMetadata,
-        input: {
-          startedAt: meeting.startTime.toISOString(),
-          voiceChannelId: meeting.voiceChannel.id,
-          voiceChannelName: meeting.voiceChannel.name,
-        },
-      });
-      updateActiveObservation(
-        {
-          input: {
-            startedAt: meeting.startTime.toISOString(),
-            voiceChannelId: meeting.voiceChannel.id,
-            voiceChannelName: meeting.voiceChannel.name,
-          },
-          metadata: traceMetadata,
+  await propagateAttributes(
+    {
+      traceName: "meeting-end",
+      userId: meeting.creator.id,
+      sessionId: meeting.meetingId,
+      tags: ["feature:meeting_end"],
+      metadata: toLangfuseAttributeMetadata(traceMetadata),
+    },
+    async () =>
+      startActiveObservation(
+        "meeting-end",
+        async (chain) => {
+          const previousContext = meeting.langfuseParentSpanContext;
+          meeting.langfuseParentSpanContext = chain.otelSpan.spanContext();
+
+          setActiveTraceIO({ input: traceInput });
+          updateActiveObservation(
+            {
+              input: traceInput,
+              metadata: traceMetadata,
+            },
+            { asType: "chain" },
+          );
+
+          try {
+            await run();
+          } catch (error) {
+            updateActiveObservation(
+              {
+                level: "ERROR",
+                statusMessage: error ? String(error) : "meeting end failed",
+              },
+              { asType: "chain" },
+            );
+            throw error;
+          } finally {
+            updateActiveObservation(
+              {
+                output: {
+                  finishedAt: meeting.endTime?.toISOString(),
+                  transcriptLength: meeting.finalTranscript?.length ?? 0,
+                  notesLength: meeting.notesText?.length ?? 0,
+                  summarySentence: meeting.summarySentence,
+                  summaryLabel: meeting.summaryLabel,
+                },
+              },
+              { asType: "chain" },
+            );
+            meeting.langfuseParentSpanContext = previousContext;
+          }
         },
         { asType: "chain" },
-      );
-
-      try {
-        await run();
-      } catch (error) {
-        updateActiveObservation(
-          {
-            level: "ERROR",
-            statusMessage: error ? String(error) : "meeting end failed",
-          },
-          { asType: "chain" },
-        );
-        throw error;
-      } finally {
-        updateActiveObservation(
-          {
-            output: {
-              finishedAt: meeting.endTime?.toISOString(),
-              transcriptLength: meeting.finalTranscript?.length ?? 0,
-              notesLength: meeting.notesText?.length ?? 0,
-              summarySentence: meeting.summarySentence,
-              summaryLabel: meeting.summaryLabel,
-            },
-          },
-          { asType: "chain" },
-        );
-        meeting.langfuseParentSpanContext = previousContext;
-      }
-    },
-    { asType: "chain" },
+      ),
   );
 }
 

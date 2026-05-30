@@ -1,4 +1,3 @@
-import Stripe from "stripe";
 import { getSubscriptionRepository } from "../repositories/subscriptionRepository";
 import { getPaymentTransactionRepository } from "../repositories/paymentTransactionRepository";
 import { config } from "./configService";
@@ -7,6 +6,7 @@ import { getRollingUsageForGuild } from "./meetingUsageService";
 import { nowIso } from "../utils/time";
 import type { BillingInterval, PaidTier } from "../types/pricing";
 import type { GuildSubscription, PaymentTransaction } from "../types/db";
+import type { StripeClient } from "../types/stripe";
 
 export type BillingSnapshot = {
   billingEnabled: boolean;
@@ -48,7 +48,7 @@ export function buildBillingDisabledSnapshot(): BillingSnapshot {
 }
 
 export async function getBillingSnapshot(params: {
-  stripe: Stripe | null;
+  stripe: StripeClient | null;
   guildId: string;
 }): Promise<BillingSnapshot> {
   const { stripe, guildId } = params;
@@ -156,7 +156,7 @@ export async function recordPaymentTransaction(
 }
 
 export async function ensureStripeCustomer(
-  stripe: Stripe,
+  stripe: StripeClient,
   user: StripeUser,
 ): Promise<string> {
   const searchEmail = user.email;
@@ -178,7 +178,7 @@ export async function ensureStripeCustomer(
 }
 
 export async function resolvePromotionCodeId(
-  stripe: Pick<Stripe, "promotionCodes">,
+  stripe: Pick<StripeClient, "promotionCodes">,
   code: string,
 ): Promise<string | null> {
   const normalized = code.trim();
@@ -215,7 +215,7 @@ function appendQueryParams(
 }
 
 export async function createCheckoutSession(params: {
-  stripe: Stripe;
+  stripe: StripeClient;
   user: StripeUser;
   guildId: string;
   priceId?: string | null;
@@ -285,7 +285,7 @@ export async function createCheckoutSession(params: {
 }
 
 export async function createPortalSession(params: {
-  stripe: Stripe;
+  stripe: StripeClient;
   user: StripeUser;
   guildId: string;
 }): Promise<string> {
