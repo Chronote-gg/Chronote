@@ -37,6 +37,7 @@ import {
   buildDiscordAuthProfile,
   ensureDiscordAccessToken,
 } from "./services/discordAuthService";
+import { startPersonalMediaUploadWorker } from "./services/personalMediaUploadWorkerService";
 
 const AUTH_RATE_LIMIT_WINDOW_MS = 60_000;
 const AUTH_RATE_LIMIT_MAX = 20;
@@ -447,4 +448,5 @@ export function setupWebServer() {
   app.listen(PORT, () => {
     console.log(`Server is running and listening on port ${PORT}`);
   });
+  startPersonalMediaUploadWorker();
 }

@@ -232,6 +232,26 @@ const tables = [
     BillingMode: "PAY_PER_REQUEST",
   },
   {
+    TableName: "PersonalMediaUploadJobTable",
+    KeySchema: [{ AttributeName: "uploadId", KeyType: "HASH" }],
+    AttributeDefinitions: [
+      { AttributeName: "uploadId", AttributeType: "S" },
+      { AttributeName: "status", AttributeType: "S" },
+      { AttributeName: "updatedAt", AttributeType: "S" },
+    ],
+    GlobalSecondaryIndexes: [
+      {
+        IndexName: "StatusUpdatedAtIndex",
+        KeySchema: [
+          { AttributeName: "status", KeyType: "HASH" },
+          { AttributeName: "updatedAt", KeyType: "RANGE" },
+        ],
+        Projection: { ProjectionType: "ALL" },
+      },
+    ],
+    BillingMode: "PAY_PER_REQUEST",
+  },
+  {
     TableName: "MeetingShareTable",
     KeySchema: [
       { AttributeName: "pk", KeyType: "HASH" },

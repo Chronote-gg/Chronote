@@ -494,6 +494,8 @@ describe("MCP JSON-RPC handler", () => {
         {
           id: "meeting-key",
           meetingId: "meeting-1",
+          ownershipScope: "guild",
+          ownerUserId: undefined,
           status: "complete",
           channelId: "channel-1",
           channelName: "Meeting Room",
@@ -680,6 +682,8 @@ describe("MCP JSON-RPC handler", () => {
       meeting: {
         id: "channel-1#2026-01-01T00:00:00.000Z",
         meetingId: "meeting-1",
+        ownershipScope: "guild",
+        ownerUserId: undefined,
         status: "complete",
         channelId: "channel-1",
         channelName: "channel-1",

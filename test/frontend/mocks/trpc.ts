@@ -9,6 +9,7 @@ import type {
   AutoRecordSettings,
   ChannelContext,
   FeedbackRecord,
+  MeetingAccessGrant,
 } from "../../../src/types/db";
 import type { MeetingStatus } from "../../../src/types/meetingLifecycle";
 import type { PaidPlan } from "../../../src/types/pricing";
@@ -126,6 +127,9 @@ type MeetingShareStateData = {
     sharedByUserId?: string;
     sharedByTag?: string;
   };
+};
+type PersonalShareStateData = {
+  accessGrants: MeetingAccessGrant[];
 };
 type NotionStatusData = {
   configured: boolean;
@@ -308,6 +312,9 @@ export const meetingShareStateQuery = buildQueryState<MeetingShareStateData>({
     rotated: false,
   },
 });
+export const personalShareStateQuery = buildQueryState<PersonalShareStateData>({
+  accessGrants: [],
+});
 export const notionStatusQuery = buildQueryState<NotionStatusData>({
   configured: true,
   connected: false,
@@ -426,6 +433,10 @@ export const meetingsShareRotateMutation = buildMutationState<
     rotated: true,
   },
 });
+export const meetingsSetPersonalShareGrantsMutation = buildMutationState<
+  [unknown],
+  PersonalShareStateData
+>({ accessGrants: [] });
 export const notionExportMeetingMutation = buildMutationState<
   [unknown],
   NotionMutationResult
@@ -624,6 +635,7 @@ export const resetTrpcMocks = () => {
       rotated: false,
     },
   });
+  resetQueryState(personalShareStateQuery, { accessGrants: [] });
   resetQueryState(notionStatusQuery, {
     configured: true,
     connected: false,
@@ -699,6 +711,9 @@ export const resetTrpcMocks = () => {
       shareId: "share-2",
       rotated: true,
     },
+  });
+  resetMutationState(meetingsSetPersonalShareGrantsMutation, {
+    accessGrants: [],
   });
   resetMutationState(notionExportMeetingMutation, {
     ok: true,
@@ -840,6 +855,12 @@ export const setMeetingShareStateQuery = (
   Object.assign(meetingShareStateQuery, next);
 };
 
+export const setPersonalShareStateQuery = (
+  next: Partial<QueryState<PersonalShareStateData>>,
+) => {
+  Object.assign(personalShareStateQuery, next);
+};
+
 export const setNotionStatusQuery = (
   next: Partial<QueryState<NotionStatusData>>,
 ) => {
@@ -960,6 +981,10 @@ jest.mock("../../../src/frontend/services/trpc", () => ({
       },
       applyNotesCorrection: {
         useMutation: () => meetingsApplyNotesCorrectionMutation,
+      },
+      personalShareState: { useQuery: () => personalShareStateQuery },
+      setPersonalShareGrants: {
+        useMutation: () => meetingsSetPersonalShareGrantsMutation,
       },
     },
     meetingShares: {

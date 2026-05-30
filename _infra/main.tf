@@ -1359,6 +1359,8 @@ resource "aws_iam_policy" "dynamodb_access_policy" {
           aws_dynamodb_table.meeting_history_table.arn,
           "${aws_dynamodb_table.meeting_history_table.arn}/index/*",
           aws_dynamodb_table.meeting_user_index_table.arn,
+          aws_dynamodb_table.personal_media_upload_job_table.arn,
+          "${aws_dynamodb_table.personal_media_upload_job_table.arn}/index/*",
           aws_dynamodb_table.meeting_share_table.arn,
           aws_dynamodb_table.contact_feedback_table.arn,
           "${aws_dynamodb_table.contact_feedback_table.arn}/index/*",
@@ -2546,6 +2548,47 @@ resource "aws_dynamodb_table" "meeting_user_index_table" {
 
   tags = {
     Name = "MeetingUserIndexTable"
+  }
+}
+
+resource "aws_dynamodb_table" "personal_media_upload_job_table" {
+  name         = "${local.name_prefix}-PersonalMediaUploadJobTable"
+  billing_mode = "PAY_PER_REQUEST"
+  hash_key     = "uploadId"
+
+  attribute {
+    name = "uploadId"
+    type = "S"
+  }
+
+  attribute {
+    name = "status"
+    type = "S"
+  }
+
+  attribute {
+    name = "updatedAt"
+    type = "S"
+  }
+
+  global_secondary_index {
+    name            = "StatusUpdatedAtIndex"
+    hash_key        = "status"
+    range_key       = "updatedAt"
+    projection_type = "ALL"
+  }
+
+  point_in_time_recovery {
+    enabled = true
+  }
+
+  server_side_encryption {
+    enabled     = true
+    kms_key_arn = aws_kms_key.app_general.arn
+  }
+
+  tags = {
+    Name = "PersonalMediaUploadJobTable"
   }
 }
 

@@ -53,6 +53,7 @@ import {
   MeetingShareModal,
   type MeetingShareVisibility,
 } from "../../../features/meetingShares/MeetingShareModal";
+import PersonalMeetingShareModal from "../../../features/meetingShares/PersonalMeetingShareModal";
 import { buildMeetingShareUrl } from "../../../utils/meetingShareLinks";
 
 const resolveRenameDraft = (meeting: {
@@ -171,6 +172,10 @@ export default function MeetingDetailDrawer({
 
   const [shareModalOpen, setShareModalOpen] = useState(false);
   const [shareError, setShareError] = useState<string | null>(null);
+  const [personalShareModalOpen, setPersonalShareModalOpen] = useState(false);
+  const [personalShareError, setPersonalShareError] = useState<string | null>(
+    null,
+  );
 
   const {
     detail,
@@ -205,11 +210,34 @@ export default function MeetingDetailDrawer({
       serverId: selectedGuildId ?? "",
       meetingId: selectedMeetingId ?? "",
     },
-    { enabled: Boolean(selectedGuildId && selectedMeetingId) },
+    {
+      enabled: Boolean(
+        selectedGuildId &&
+        selectedMeetingId &&
+        detail?.ownershipScope !== "personal",
+      ),
+    },
   );
   const shareMutation = trpc.meetingShares.setVisibility.useMutation();
   const rotateShareMutation = trpc.meetingShares.rotate.useMutation();
-  const shareDisabled = isSharePermissionError(shareStateQuery.error);
+  const personalShareManageable = detail?.personalShareManageable === true;
+  const personalShareStateQuery = trpc.meetings.personalShareState.useQuery(
+    {
+      serverId: selectedGuildId ?? "",
+      meetingId: selectedMeetingId ?? "",
+    },
+    {
+      enabled: Boolean(
+        selectedGuildId && selectedMeetingId && personalShareManageable,
+      ),
+    },
+  );
+  const personalShareMutation =
+    trpc.meetings.setPersonalShareGrants.useMutation();
+  const shareDisabled =
+    detail?.ownershipScope === "personal"
+      ? !personalShareManageable
+      : isSharePermissionError(shareStateQuery.error);
   const notionStatusQuery = trpc.notion.status.useQuery();
   const notionExportStatusQuery = trpc.notion.exportStatus.useQuery(
     {
@@ -286,6 +314,8 @@ export default function MeetingDetailDrawer({
 
     setShareModalOpen(false);
     setShareError(null);
+    setPersonalShareModalOpen(false);
+    setPersonalShareError(null);
 
     setNotesEditorModalOpen(false);
 
@@ -492,6 +522,8 @@ export default function MeetingDetailDrawer({
     closeNotesCorrectionModal();
     setShareModalOpen(false);
     setShareError(null);
+    setPersonalShareModalOpen(false);
+    setPersonalShareError(null);
   };
 
   const handleCloseDrawer = () => {
@@ -761,6 +793,10 @@ export default function MeetingDetailDrawer({
     if (shareDisabled) {
       return;
     }
+    if (detail?.ownershipScope === "personal") {
+      setPersonalShareModalOpen(true);
+      return;
+    }
     setShareModalOpen(true);
   };
 
@@ -817,6 +853,32 @@ export default function MeetingDetailDrawer({
     }
   };
 
+  const handleSetPersonalShareGrants = async (input: {
+    userIds: string[];
+    guildIds: string[];
+  }) => {
+    if (!selectedGuildId || !selectedMeetingId) return;
+    setPersonalShareError(null);
+    try {
+      await personalShareMutation.mutateAsync({
+        serverId: selectedGuildId,
+        meetingId: selectedMeetingId,
+        userIds: input.userIds,
+        guildIds: input.guildIds,
+      });
+      notifications.show({ message: "Personal sharing updated." });
+      await Promise.all([
+        personalShareStateQuery.refetch(),
+        trpcUtils.meetings.detail.invalidate(),
+        invalidateMeetingLists(),
+      ]);
+      setPersonalShareModalOpen(false);
+    } catch (err) {
+      console.error("Failed to update personal meeting sharing", err);
+      setPersonalShareError("Unable to update personal sharing right now.");
+    }
+  };
+
   const audioSection = meeting ? (
     <MeetingAudioPanel audioUrl={meeting.audioUrl} />
   ) : null;
@@ -842,6 +904,8 @@ export default function MeetingDetailDrawer({
     (!notionExportStatus.exported ||
       notionExportStatus.outdated ||
       Boolean(notionExportStatus.lastError));
+  const canRetryNotionAutomation =
+    canManageSelectedGuild || personalShareManageable;
   const notionActionLabel = !notionConfigured
     ? "Notion unavailable"
     : notionExportStatusLoading
@@ -850,7 +914,7 @@ export default function MeetingDetailDrawer({
         ? "Notion status unavailable"
         : notionAutomationStatus
           ? notionAutomationNeedsRetry
-            ? canManageSelectedGuild
+            ? canRetryNotionAutomation
               ? "Retry Notion automation"
               : "Notion automation needs attention"
             : undefined
@@ -868,7 +932,7 @@ export default function MeetingDetailDrawer({
         !notionExportStatus
       ? undefined
       : notionAutomationStatus
-        ? notionAutomationNeedsRetry && canManageSelectedGuild
+        ? notionAutomationNeedsRetry && canRetryNotionAutomation
           ? handleRetryNotionAutomation
           : undefined
         : !notionConnected
@@ -1044,7 +1108,9 @@ export default function MeetingDetailDrawer({
                   endMeetingPreflightLoading={endMeetingPreflightLoading}
                   archivePending={archiveMutation.isPending}
                   sharePending={
-                    shareMutation.isPending || rotateShareMutation.isPending
+                    shareMutation.isPending ||
+                    rotateShareMutation.isPending ||
+                    personalShareMutation.isPending
                   }
                   shareDisabled={shareDisabled}
                   fullScreen={fullScreen}
@@ -1072,6 +1138,18 @@ export default function MeetingDetailDrawer({
                   onCopyLink={handleCopyShareLink}
                   onSetVisibility={handleSetShareVisibility}
                   onRotate={handleRotateShare}
+                />
+
+                <PersonalMeetingShareModal
+                  opened={personalShareModalOpen}
+                  onClose={() => setPersonalShareModalOpen(false)}
+                  meetingTitle={meeting.title}
+                  accessGrants={
+                    personalShareStateQuery.data?.accessGrants ?? []
+                  }
+                  saving={personalShareMutation.isPending}
+                  error={personalShareError}
+                  onSave={handleSetPersonalShareGrants}
                 />
 
                 {fullScreen ? (

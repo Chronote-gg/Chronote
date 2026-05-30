@@ -48,6 +48,9 @@ export type MeetingDetailInput = {
   notesChannelId?: string | null;
   notesMessageId?: string | null;
   transcript?: string | null;
+  ownershipScope?: "guild" | "personal";
+  ownerUserId?: string | null;
+  personalShareManageable?: boolean;
   meetingName?: string | null;
   summarySentence?: string | null;
   summaryLabel?: string | null;

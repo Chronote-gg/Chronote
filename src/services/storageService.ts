@@ -1,8 +1,10 @@
 import {
   GetObjectCommand,
+  HeadObjectCommand,
   PutObjectCommand,
   S3Client,
 } from "@aws-sdk/client-s3";
+import { promises as fs } from "node:fs";
 import { createPresignedPost } from "@aws-sdk/s3-presigned-post";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { config } from "./configService";
@@ -12,6 +14,18 @@ export type SignedUploadPost = {
   url: string;
   fields: Record<string, string>;
 };
+
+export type StoredObjectMetadata = {
+  contentLength?: number;
+  contentType?: string;
+};
+
+export class StoredObjectMetadataError extends Error {
+  constructor(message: string, options?: { cause?: unknown }) {
+    super(message, options);
+    this.name = "StoredObjectMetadataError";
+  }
+}
 
 const storageCredentials =
   config.storage.accessKeyId.length > 0 &&
@@ -174,6 +188,41 @@ export async function getSignedUploadPost(
   }
 }
 
+export async function getStoredObjectMetadata(
+  key: string,
+): Promise<StoredObjectMetadata | undefined> {
+  if (config.mock.enabled && !config.storage.transcriptBucket) {
+    const mockObject = getMockStore().objectsByKey.get(key);
+    return mockObject
+      ? { contentLength: Buffer.byteLength(mockObject) }
+      : undefined;
+  }
+
+  if (!config.storage.transcriptBucket) {
+    console.warn("TRANSCRIPTS_BUCKET not set; cannot inspect object in S3.");
+    return undefined;
+  }
+
+  try {
+    const response = await s3Client.send(
+      new HeadObjectCommand({
+        Bucket: config.storage.transcriptBucket,
+        Key: key,
+      }),
+    );
+    return {
+      contentLength: response.ContentLength,
+      contentType: response.ContentType,
+    };
+  } catch (error) {
+    if (isMissingKeyError(error)) return undefined;
+    console.error("Failed to inspect object in S3", error);
+    throw new StoredObjectMetadataError("Failed to inspect object in S3.", {
+      cause: error,
+    });
+  }
+}
+
 export async function getSignedObjectUrl(
   key: string,
   expiresInSeconds: number = 900,
@@ -193,5 +242,31 @@ export async function getSignedObjectUrl(
   } catch (error) {
     console.error("Failed to sign S3 object URL", error);
     return undefined;
+  }
+}
+
+export async function downloadObjectToFile(
+  key: string,
+  destinationPath: string,
+): Promise<boolean> {
+  if (!config.storage.transcriptBucket) {
+    console.warn("TRANSCRIPTS_BUCKET not set; cannot download object from S3.");
+    return false;
+  }
+  try {
+    const response = await s3Client.send(
+      new GetObjectCommand({
+        Bucket: config.storage.transcriptBucket,
+        Key: key,
+      }),
+    );
+    const body = response.Body;
+    if (!body) return false;
+    const bytes = await body.transformToByteArray();
+    await fs.writeFile(destinationPath, bytes);
+    return true;
+  } catch (error) {
+    console.error("Failed to download object from S3", error);
+    return false;
   }
 }

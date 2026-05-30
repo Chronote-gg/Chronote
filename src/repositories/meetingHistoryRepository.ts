@@ -8,12 +8,14 @@ import {
   updateMeetingNotesMessageMetadata,
   updateMeetingName,
   updateMeetingArchive,
+  updateMeetingAccessGrants,
   updateMeetingStatus,
   updateMeetingTags,
   writeMeetingHistory,
 } from "../db";
 import type {
   MeetingHistory,
+  MeetingAccessGrant,
   NotesEditSource,
   SuggestionHistoryEntry,
 } from "../types/db";
@@ -87,6 +89,11 @@ export type MeetingHistoryRepository = {
     channelIdTimestamp: string,
     tags?: string[],
   ) => Promise<void>;
+  updateAccessGrants: (params: {
+    guildId: string;
+    channelId_timestamp: string;
+    accessGrants: MeetingAccessGrant[];
+  }) => Promise<boolean>;
 };
 
 const filterArchivedMeetings = (
@@ -167,6 +174,7 @@ const realRepository: MeetingHistoryRepository = {
   updateStatus: updateMeetingStatus,
   updateArchive: updateMeetingArchive,
   updateTags: updateMeetingTags,
+  updateAccessGrants: updateMeetingAccessGrants,
 };
 
 const mockRepository: MeetingHistoryRepository = {
@@ -353,6 +361,21 @@ const mockRepository: MeetingHistoryRepository = {
       updatedAt: now,
     };
     getMockStore().meetingHistoryByGuild.set(guildId, items);
+    return true;
+  },
+  async updateAccessGrants(params) {
+    const items =
+      getMockStore().meetingHistoryByGuild.get(params.guildId) ?? [];
+    const idx = items.findIndex(
+      (item) => item.channelId_timestamp === params.channelId_timestamp,
+    );
+    if (idx === -1) return false;
+    items[idx] = {
+      ...items[idx],
+      accessGrants: params.accessGrants,
+      updatedAt: new Date().toISOString(),
+    };
+    getMockStore().meetingHistoryByGuild.set(params.guildId, items);
     return true;
   },
 };

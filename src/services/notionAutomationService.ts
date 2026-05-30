@@ -5,6 +5,11 @@ import type {
   NotionAutomationConfig,
   NotionAutomationMeetingExport,
 } from "../types/notionIntegration";
+import {
+  buildPersonalMeetingGuildId,
+  isPersonalMeeting,
+  resolveMeetingOwnerUserId,
+} from "../utils/meetingOwnership";
 import { config as appConfig } from "./configService";
 import {
   exportMeetingToNotionAutomation,
@@ -46,10 +51,23 @@ const matchesTagFilter = (
   return tags.some((tag) => meetingTags.has(tag));
 };
 
+const matchesPersonalAutomationOwner = (
+  config: NotionAutomationConfig,
+  meeting: MeetingHistory,
+) => {
+  if (!isPersonalMeeting(meeting)) return true;
+  const ownerUserId = resolveMeetingOwnerUserId(meeting);
+  return (
+    ownerUserId === config.ownerUserId &&
+    meeting.guildId === buildPersonalMeetingGuildId(config.ownerUserId)
+  );
+};
+
 const isEligible = (config: NotionAutomationConfig, meeting: MeetingHistory) =>
   config.autoExportEnabled &&
   isCompletedMeeting(meeting) &&
   hasNotes(meeting) &&
+  matchesPersonalAutomationOwner(config, meeting) &&
   matchesChannelFilter(config, meeting) &&
   matchesTagFilter(config, meeting);
 
@@ -254,6 +272,7 @@ export const maybeAutoSyncMeetingNotes = async (meeting: MeetingHistory) => {
 
   const config = await getAutomationConfig(meeting.guildId);
   if (!config || !config.autoExportEnabled || !hasNotes(meeting)) return;
+  if (!matchesPersonalAutomationOwner(config, meeting)) return;
   const repository = getNotionIntegrationRepository();
   const existing = await repository.getAutomationMeetingExport({
     guildId: meeting.guildId,

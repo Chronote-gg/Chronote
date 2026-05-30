@@ -1,17 +1,47 @@
 import type { MeetingHistory } from "../types/db";
 import {
+  isPersonalMeeting,
+  resolvePersonalMeetingAccess,
+} from "../utils/meetingOwnership";
+import {
   ensureUserCanConnectChannel,
   ensureUserCanReadChannelHistory,
 } from "./discordPermissionsService";
+import {
+  ensureUserInGuild,
+  type GuildSessionCache,
+} from "./guildAccessService";
 
 export type MeetingAccessMissingPermission =
   | "voice_connect"
   | "notes_read_history";
 
 export type MeetingAccessDecision =
-  | { allowed: true; via: "attendee" | "channel_permissions" }
+  | {
+      allowed: true;
+      via:
+        | "attendee"
+        | "channel_permissions"
+        | "owner"
+        | "user_share"
+        | "guild_share";
+    }
   | { allowed: false; missing: MeetingAccessMissingPermission[] }
   | { allowed: null; missing: MeetingAccessMissingPermission[] };
+
+type MeetingAccessRecord = Pick<
+  MeetingHistory,
+  | "accessGrants"
+  | "channelId"
+  | "channelId_timestamp"
+  | "guildId"
+  | "meetingCreatorId"
+  | "notesChannelId"
+  | "ownerUserId"
+  | "ownershipScope"
+  | "participants"
+  | "textChannelId"
+>;
 
 const resolveVoiceChannelId = (meeting: {
   channelId?: string | null;
@@ -49,36 +79,65 @@ const isMeetingParticipant = (meeting: {
 
 export async function ensureUserCanAccessMeeting(options: {
   guildId: string;
-  meeting: Pick<
-    MeetingHistory,
-    | "channelId"
-    | "channelId_timestamp"
-    | "notesChannelId"
-    | "textChannelId"
-    | "participants"
-  >;
+  meeting: MeetingAccessRecord;
   userId: string;
   attendeeOverrideEnabled?: boolean;
+  sharedGuildIds?: string[];
 }): Promise<boolean | null> {
   const decision = await checkUserMeetingAccess(options);
   return decision.allowed;
 }
 
+export async function resolvePersonalMeetingSharedGuildIds(options: {
+  accessToken?: string;
+  meeting: Pick<MeetingHistory, "accessGrants" | "guildId" | "ownershipScope">;
+  session?: GuildSessionCache;
+  userId: string;
+}): Promise<string[] | null | undefined> {
+  if (!isPersonalMeeting(options.meeting)) return undefined;
+  const sharedGuildIds = Array.from(
+    new Set(
+      (options.meeting.accessGrants ?? [])
+        .filter((grant) => grant.targetType === "guild")
+        .map((grant) => grant.guildId.trim())
+        .filter((guildId) => guildId.length > 0),
+    ),
+  );
+  if (sharedGuildIds.length === 0) return undefined;
+
+  const allowedGuildIds: string[] = [];
+  for (const guildId of sharedGuildIds) {
+    const allowed = await ensureUserInGuild(options.accessToken, guildId, {
+      session: options.session,
+      userId: options.userId,
+    });
+    if (allowed === null) return null;
+    if (allowed) allowedGuildIds.push(guildId);
+  }
+  return allowedGuildIds;
+}
+
 export async function checkUserMeetingAccess(options: {
   guildId: string;
-  meeting: Pick<
-    MeetingHistory,
-    | "channelId"
-    | "channelId_timestamp"
-    | "notesChannelId"
-    | "textChannelId"
-    | "participants"
-  >;
+  meeting: MeetingAccessRecord;
   userId: string;
   attendeeOverrideEnabled?: boolean;
+  sharedGuildIds?: string[];
 }): Promise<MeetingAccessDecision> {
   const { guildId, userId, meeting } = options;
   const attendeeOverrideEnabled = options.attendeeOverrideEnabled !== false;
+
+  const personalAccess = resolvePersonalMeetingAccess(
+    meeting,
+    userId,
+    options.sharedGuildIds,
+  );
+  if (personalAccess) {
+    return { allowed: true, via: personalAccess };
+  }
+  if (isPersonalMeeting(meeting)) {
+    return { allowed: false, missing: [] };
+  }
 
   if (attendeeOverrideEnabled && isMeetingParticipant(meeting)(userId)) {
     return { allowed: true, via: "attendee" };
