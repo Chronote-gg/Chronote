@@ -39,7 +39,7 @@ const headerValue = (req: Request, name: string) => {
 const getMultipartBoundary = (req: Request) => {
   const contentType = headerValue(req, "content-type");
   const match = contentType?.match(
-    /^multipart\/form-data(?:;|$).*?boundary=(?:"([^"]+)"|([^;]+))/i,
+    /^multipart\/form-data;.*?boundary=(?:"([^"]+)"|([^;]+))/i,
   );
   return match?.[1] ?? match?.[2]?.trim();
 };
