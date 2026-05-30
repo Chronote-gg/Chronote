@@ -1,5 +1,4 @@
 import express from "express";
-import Stripe from "stripe";
 import {
   recordPaymentTransaction,
   saveGuildSubscription,
@@ -8,12 +7,21 @@ import { getSubscriptionRepository } from "../repositories/subscriptionRepositor
 import { config } from "../services/configService";
 import { resolveTierFromPrice } from "../services/pricingService";
 import { getStripeWebhookRepository } from "../repositories/stripeWebhookRepository";
+import type {
+  StripeCheckoutSession,
+  StripeClient,
+  StripeEvent,
+  StripeInvoice,
+  StripeMetadata,
+  StripePrice,
+  StripeSubscription,
+} from "../types/stripe";
 
 type KnownTier = "free" | "basic" | "pro";
 
 type WebhookHandler = (options: {
-  stripe: Stripe;
-  event: Stripe.Event;
+  stripe: StripeClient;
+  event: StripeEvent;
 }) => Promise<void>;
 
 const normalizeTier = (tier?: string | null): KnownTier | null => {
@@ -32,7 +40,7 @@ const readMetadataValue = (
 };
 
 const resolvePriceInfo = (
-  price: string | Stripe.Price | null | undefined,
+  price: string | StripePrice | null | undefined,
 ): { priceId?: string; lookupKey?: string } => {
   if (!price) {
     return {};
@@ -44,7 +52,7 @@ const resolvePriceInfo = (
 };
 
 const resolveSubscriptionPeriodEnd = (
-  subscription: Stripe.Subscription,
+  subscription: StripeSubscription,
 ): number | undefined => {
   const items = subscription.items?.data ?? [];
   if (!items.length) return undefined;
@@ -52,7 +60,7 @@ const resolveSubscriptionPeriodEnd = (
 };
 
 const resolveInvoicePriceInfo = (
-  invoice: Stripe.Invoice,
+  invoice: StripeInvoice,
 ): { priceId?: string; lookupKey?: string } => {
   const lineItem = invoice.lines?.data?.find(
     (item) => item.pricing?.price_details?.price,
@@ -61,17 +69,17 @@ const resolveInvoicePriceInfo = (
 };
 
 const resolveInvoiceSubscription = (
-  invoice: Stripe.Invoice,
-): string | Stripe.Subscription | null =>
+  invoice: StripeInvoice,
+): string | StripeSubscription | null =>
   invoice.parent?.subscription_details?.subscription ?? null;
 
 const resolveInvoiceMetadata = (
-  invoice: Stripe.Invoice,
-): Stripe.Metadata | null | undefined =>
+  invoice: StripeInvoice,
+): StripeMetadata | null | undefined =>
   invoice.parent?.subscription_details?.metadata ?? invoice.metadata;
 
 const resolveInvoiceDiscountCode = (
-  invoice: Stripe.Invoice,
+  invoice: StripeInvoice,
 ): string | undefined => {
   const discount = invoice.discounts?.[0];
   if (!discount || typeof discount === "string") return undefined;
@@ -82,7 +90,7 @@ const resolveInvoiceDiscountCode = (
 };
 
 const resolveTierFromSubscription = (
-  subscription: Stripe.Subscription,
+  subscription: StripeSubscription,
 ): KnownTier => {
   const price = subscription.items?.data?.[0]?.price;
   const { priceId, lookupKey } = resolvePriceInfo(price);
@@ -94,7 +102,7 @@ const resolveTierFromSubscription = (
   return tier ?? "basic";
 };
 
-const resolveTierFromInvoice = (invoice: Stripe.Invoice): KnownTier | null => {
+const resolveTierFromInvoice = (invoice: StripeInvoice): KnownTier | null => {
   const { priceId, lookupKey } = resolveInvoicePriceInfo(invoice);
   const tier =
     resolveTierFromPrice({
@@ -108,8 +116,8 @@ const toIso = (seconds?: number | null): string | undefined =>
   seconds ? new Date(seconds * 1000).toISOString() : undefined;
 
 const resolveGuildIdFromInvoice = async (
-  stripe: Stripe,
-  invoice: Stripe.Invoice,
+  stripe: StripeClient,
+  invoice: StripeInvoice,
 ): Promise<string> => {
   const fromDetails = readMetadataValue(
     resolveInvoiceMetadata(invoice),
@@ -169,7 +177,7 @@ const handleCheckoutSessionCompleted: WebhookHandler = async ({
   stripe,
   event,
 }) => {
-  const session = event.data.object as Stripe.Checkout.Session;
+  const session = event.data.object as StripeCheckoutSession;
   if (!session.subscription) return;
   const sub = await stripe.subscriptions.retrieve(
     session.subscription as string,
@@ -217,7 +225,7 @@ const handleInvoicePaymentFailed: WebhookHandler = async ({
   stripe,
   event,
 }) => {
-  const invoice = event.data.object as Stripe.Invoice;
+  const invoice = event.data.object as StripeInvoice;
   const guildId = await resolveGuildIdFromInvoice(stripe, invoice);
   if (!guildId) {
     console.warn("Stripe invoice missing guild_id metadata", invoice.id);
@@ -254,7 +262,7 @@ const handleInvoicePaymentFailed: WebhookHandler = async ({
 };
 
 const handleSubscriptionUpsert: WebhookHandler = async ({ event }) => {
-  const subscription = event.data.object as Stripe.Subscription;
+  const subscription = event.data.object as StripeSubscription;
   const guildId = readMetadataValue(subscription.metadata, "guild_id");
   if (!guildId) {
     console.warn(
@@ -290,7 +298,7 @@ const handleSubscriptionUpsert: WebhookHandler = async ({ event }) => {
 };
 
 const handleSubscriptionDeleted: WebhookHandler = async ({ event }) => {
-  const subscription = event.data.object as Stripe.Subscription;
+  const subscription = event.data.object as StripeSubscription;
   const guildId = readMetadataValue(subscription.metadata, "guild_id");
   if (!guildId) return;
   await saveGuildSubscription(
@@ -315,7 +323,7 @@ const handleInvoicePaymentSucceeded: WebhookHandler = async ({
   stripe,
   event,
 }) => {
-  const invoice = event.data.object as Stripe.Invoice;
+  const invoice = event.data.object as StripeInvoice;
   const guildId = await resolveGuildIdFromInvoice(stripe, invoice);
   if (!guildId) {
     console.warn("Stripe invoice missing guild_id metadata", invoice.id);
@@ -352,7 +360,7 @@ const handlersByEvent: Record<string, WebhookHandler> = {
 
 export function registerBillingRoutes(
   app: express.Express,
-  stripe: Stripe | null,
+  stripe: StripeClient | null,
 ) {
   app.post("/api/billing/webhook", async (req, res): Promise<void> => {
     if (!stripe || !config.stripe.webhookSecret) {
@@ -360,7 +368,7 @@ export function registerBillingRoutes(
       return;
     }
     const sig = req.headers["stripe-signature"] as string;
-    let event: Stripe.Event;
+    let event: StripeEvent;
     try {
       event = stripe.webhooks.constructEvent(
         req.body,

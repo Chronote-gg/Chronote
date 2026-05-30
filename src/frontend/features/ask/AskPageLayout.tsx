@@ -79,7 +79,7 @@ export function AskPageLayout({
         }}
       >
         <Grid
-          gutter="lg"
+          gap="lg"
           style={{ flex: 1, minHeight: 0, height: "100%" }}
           align="stretch"
           styles={{ inner: { height: "100%" } }}

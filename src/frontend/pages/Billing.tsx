@@ -417,7 +417,7 @@ const BillingPlansSection = ({
             Compare plan details when you are ready to change tiers.
           </Text>
         ) : null}
-        <Collapse in={plansExpanded}>
+        <Collapse expanded={plansExpanded}>
           <Divider my="sm" />
           <SimpleGrid cols={{ base: 1, xl: 3 }} spacing="md">
             <PricingCard

@@ -59,12 +59,13 @@ import { createOpenAIClient } from "./openaiClient";
 import { getModelChoice } from "./modelFactory";
 import { isLangfuseTracingEnabled } from "./langfuseClient";
 import {
+  propagateAttributes,
   startActiveObservation,
   updateActiveObservation,
-  updateActiveTrace,
 } from "@langfuse/tracing";
 import { buildLangfuseTranscriptionAudioAttachment } from "../observability/langfuseAudioAttachment";
 import { buildLangfuseTranscriptionUsageDetails } from "../observability/langfuseUsageDetails";
+import { toLangfuseAttributeMetadata } from "../observability/langfuseMetadata";
 import { ensureMeetingTempDirSync } from "./tempFileService";
 import { evaluateNoiseGate } from "../utils/audioNoiseGate";
 import { countWords } from "../utils/text";
@@ -505,89 +506,68 @@ async function transcribeInternal(
     return selection.selected.guardResult.text;
   }
 
-  return await startActiveObservation(
-    "transcription",
-    async () => {
-      updateActiveTrace({
-        name: "transcription",
-        userId: context?.userId,
-        tags: ["feature:transcription"],
-        metadata: traceMetadata,
-      });
-      const observationInput = {
-        language: "en",
-        ...(resolvedPrompt ? { prompt: resolvedPrompt } : {}),
-      };
-      updateActiveObservation(
-        {
-          input: observationInput,
-          model: modelChoice.model,
-          modelParameters: {
-            temperature: 0,
-            response_format: "json",
-            include: "logprobs",
-          },
-          metadata: traceMetadata,
-        },
-        { asType: "generation" },
-      );
-
-      void langfuseAttachmentLimiter
-        .schedule(() => buildLangfuseTranscriptionAudioAttachment(file))
-        .then((audioAttachment) => {
-          if (!audioAttachment) return;
+  return await propagateAttributes(
+    {
+      traceName: "transcription",
+      userId: context?.userId,
+      tags: ["feature:transcription"],
+      metadata: toLangfuseAttributeMetadata(traceMetadata),
+    },
+    async () =>
+      startActiveObservation(
+        "transcription",
+        async () => {
+          const observationInput = {
+            language: "en",
+            ...(resolvedPrompt ? { prompt: resolvedPrompt } : {}),
+          };
           updateActiveObservation(
             {
-              input: {
-                ...observationInput,
-                audio: audioAttachment.media,
+              input: observationInput,
+              model: modelChoice.model,
+              modelParameters: {
+                temperature: 0,
+                response_format: "json",
+                include: "logprobs",
               },
-              metadata: {
-                audioAttachmentBytes: audioAttachment.byteLength,
-                audioAttachmentContentType: audioAttachment.contentType,
-              },
+              metadata: traceMetadata,
             },
             { asType: "generation" },
           );
-        })
-        .catch((error) => {
-          console.warn(
-            "Failed to attach transcription audio to Langfuse.",
-            error,
-          );
-        });
 
-      const openAIClient = createOpenAIClient({
-        disableTracing: true,
-        langfusePrompt,
-      });
-      const selection = await runAndSelectTranscription(openAIClient);
-      const {
-        guardResult,
-        transcriptStats,
-        suppressionEnabled,
-        promptEchoEnabled,
-        hardSilenceDbfs,
-        rateMaxSeconds,
-        rateMinWords,
-        rateMinSyllables,
-        maxSyllablesPerSecond,
-      } = selection.selected;
+          void langfuseAttachmentLimiter
+            .schedule(() => buildLangfuseTranscriptionAudioAttachment(file))
+            .then((audioAttachment) => {
+              if (!audioAttachment) return;
+              updateActiveObservation(
+                {
+                  input: {
+                    ...observationInput,
+                    audio: audioAttachment.media,
+                  },
+                  metadata: {
+                    audioAttachmentBytes: audioAttachment.byteLength,
+                    audioAttachmentContentType: audioAttachment.contentType,
+                  },
+                },
+                { asType: "generation" },
+              );
+            })
+            .catch((error) => {
+              console.warn(
+                "Failed to attach transcription audio to Langfuse.",
+                error,
+              );
+            });
 
-      const usageDetails = buildLangfuseTranscriptionUsageDetails(
-        context?.audioSeconds,
-      );
-      updateActiveObservation(
-        {
-          output: guardResult.text,
-          usageDetails,
-          metadata: {
-            transcriptionFlags: guardResult.flags,
-            transcriptionCandidate: selection.selected.candidateId,
-            quietAudio: guardResult.quietAudio,
-            quietByPeak: guardResult.quietByPeak,
-            quietByActivity: guardResult.quietByActivity,
-            hardSilenceDetected: guardResult.hardSilenceDetected,
+          const openAIClient = createOpenAIClient({
+            disableTracing: true,
+            langfusePrompt,
+          });
+          const selection = await runAndSelectTranscription(openAIClient);
+          const {
+            guardResult,
+            transcriptStats,
             suppressionEnabled,
             promptEchoEnabled,
             hardSilenceDbfs,
@@ -595,53 +575,81 @@ async function transcribeInternal(
             rateMinWords,
             rateMinSyllables,
             maxSyllablesPerSecond,
-            ...transcriptStats,
-            transcriptionRawTextTrivial:
-              selection.selected.rawTextQuality.trivial,
-            transcriptionRawTextReasons:
-              selection.selected.rawTextQuality.reasons,
-            transcriptionTextTrivial:
-              selection.selected.selectedTextQuality.trivial,
-            transcriptionTextReasons:
-              selection.selected.selectedTextQuality.reasons,
-            transcriptionAlnumCharCount:
-              selection.selected.selectedTextQuality.alnumCharCount,
-            logprobMetrics: guardResult.logprobMetrics,
-            promptEchoDetected: guardResult.promptEchoDetected,
-            promptEchoMetrics: guardResult.promptEchoMetrics,
-            rateMismatchDetected: guardResult.rateMismatchDetected,
-            noiseGateEnabled: context?.noiseGateEnabled,
-            noiseGateMode: passMode,
-            noiseGateMetrics: context?.noiseGateMetrics,
-            suppressed: guardResult.suppressed,
-            transcriptionVoteEnabled: voteEnabled,
-            transcriptionVoteGateReasons: selection.voteGate.reasons,
-            transcriptionVoteAttempted: Boolean(selection.noPromptCandidate),
-            transcriptionVoteSelected: selection.selected.candidateId,
-            transcriptionVoteDecisionReasons: selection.voteDecision?.reasons,
-            transcriptionVotePromptScore: selection.voteDecision?.promptScore,
-            transcriptionVoteNoPromptScore:
-              selection.voteDecision?.noPromptScore,
-            transcriptionVotePromptFlags:
-              selection.promptCandidate.guardResult.flags,
-            transcriptionVoteNoPromptFlags:
-              selection.noPromptCandidate?.guardResult.flags,
-            transcriptionVotePromptTrivialText:
-              selection.promptCandidate.selectedTextQuality.trivial,
-            transcriptionVotePromptTrivialReasons:
-              selection.promptCandidate.selectedTextQuality.reasons,
-            transcriptionVoteNoPromptTrivialText:
-              selection.noPromptCandidate?.selectedTextQuality.trivial,
-            transcriptionVoteNoPromptTrivialReasons:
-              selection.noPromptCandidate?.selectedTextQuality.reasons,
-          },
+          } = selection.selected;
+
+          const usageDetails = buildLangfuseTranscriptionUsageDetails(
+            context?.audioSeconds,
+          );
+          updateActiveObservation(
+            {
+              output: guardResult.text,
+              usageDetails,
+              metadata: {
+                transcriptionFlags: guardResult.flags,
+                transcriptionCandidate: selection.selected.candidateId,
+                quietAudio: guardResult.quietAudio,
+                quietByPeak: guardResult.quietByPeak,
+                quietByActivity: guardResult.quietByActivity,
+                hardSilenceDetected: guardResult.hardSilenceDetected,
+                suppressionEnabled,
+                promptEchoEnabled,
+                hardSilenceDbfs,
+                rateMaxSeconds,
+                rateMinWords,
+                rateMinSyllables,
+                maxSyllablesPerSecond,
+                ...transcriptStats,
+                transcriptionRawTextTrivial:
+                  selection.selected.rawTextQuality.trivial,
+                transcriptionRawTextReasons:
+                  selection.selected.rawTextQuality.reasons,
+                transcriptionTextTrivial:
+                  selection.selected.selectedTextQuality.trivial,
+                transcriptionTextReasons:
+                  selection.selected.selectedTextQuality.reasons,
+                transcriptionAlnumCharCount:
+                  selection.selected.selectedTextQuality.alnumCharCount,
+                logprobMetrics: guardResult.logprobMetrics,
+                promptEchoDetected: guardResult.promptEchoDetected,
+                promptEchoMetrics: guardResult.promptEchoMetrics,
+                rateMismatchDetected: guardResult.rateMismatchDetected,
+                noiseGateEnabled: context?.noiseGateEnabled,
+                noiseGateMode: passMode,
+                noiseGateMetrics: context?.noiseGateMetrics,
+                suppressed: guardResult.suppressed,
+                transcriptionVoteEnabled: voteEnabled,
+                transcriptionVoteGateReasons: selection.voteGate.reasons,
+                transcriptionVoteAttempted: Boolean(
+                  selection.noPromptCandidate,
+                ),
+                transcriptionVoteSelected: selection.selected.candidateId,
+                transcriptionVoteDecisionReasons:
+                  selection.voteDecision?.reasons,
+                transcriptionVotePromptScore:
+                  selection.voteDecision?.promptScore,
+                transcriptionVoteNoPromptScore:
+                  selection.voteDecision?.noPromptScore,
+                transcriptionVotePromptFlags:
+                  selection.promptCandidate.guardResult.flags,
+                transcriptionVoteNoPromptFlags:
+                  selection.noPromptCandidate?.guardResult.flags,
+                transcriptionVotePromptTrivialText:
+                  selection.promptCandidate.selectedTextQuality.trivial,
+                transcriptionVotePromptTrivialReasons:
+                  selection.promptCandidate.selectedTextQuality.reasons,
+                transcriptionVoteNoPromptTrivialText:
+                  selection.noPromptCandidate?.selectedTextQuality.trivial,
+                transcriptionVoteNoPromptTrivialReasons:
+                  selection.noPromptCandidate?.selectedTextQuality.reasons,
+              },
+            },
+            { asType: "generation" },
+          );
+
+          return guardResult.text;
         },
         { asType: "generation" },
-      );
-
-      return guardResult.text;
-    },
-    { asType: "generation" },
+      ),
   );
 }
 

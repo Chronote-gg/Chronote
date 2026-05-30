@@ -1,6 +1,6 @@
-import type Stripe from "stripe";
 import { config } from "./configService";
 import type { BillingInterval, PaidPlan, PaidTier } from "../types/pricing";
+import type { StripeClient, StripePrice } from "../types/stripe";
 
 type LookupConfig = {
   key: string;
@@ -22,7 +22,7 @@ const buildLookupConfigs = (): LookupConfig[] => {
 const lookupByKey = (configs: LookupConfig[]) =>
   new Map(configs.map((entry) => [entry.key, entry]));
 
-const parseUnitAmount = (price: Stripe.Price) => {
+const parseUnitAmount = (price: StripePrice) => {
   if (typeof price.unit_amount === "number") return price.unit_amount;
   if (price.unit_amount_decimal) {
     const parsed = Number(price.unit_amount_decimal);
@@ -44,7 +44,7 @@ const sortPlans = (plans: PaidPlan[]) => {
   });
 };
 
-export async function getPaidPlans(stripe: Stripe): Promise<PaidPlan[]> {
+export async function getPaidPlans(stripe: StripeClient): Promise<PaidPlan[]> {
   const lookupConfigs = buildLookupConfigs();
   const lookupKeys = lookupConfigs.map((entry) => entry.key);
   if (lookupKeys.length === 0) {
@@ -142,7 +142,7 @@ export function getMockPaidPlans(): PaidPlan[] {
 }
 
 export async function resolvePaidPlanPriceId(params: {
-  stripe: Stripe;
+  stripe: StripeClient;
   tier: PaidTier;
   interval: BillingInterval;
 }): Promise<string | null> {

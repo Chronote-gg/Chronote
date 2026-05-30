@@ -1,7 +1,8 @@
 import type { CreateChatPromptBodyWithPlaceholders } from "@langfuse/client";
 import type {
+  ChatMessage as LangfuseChatMessage,
   ChatMessageWithPlaceholders,
-  CreatePromptRequest,
+  CreateTextPromptRequest,
   Prompt,
   PromptMeta,
   PromptMetaListResponse,
@@ -29,7 +30,7 @@ export type { PromptMeta, PromptMetaListResponse };
 
 function isChatMessage(
   message: ChatMessageWithPlaceholders,
-): message is ChatMessageWithPlaceholders.Chatmessage {
+): message is LangfuseChatMessage {
   return (
     typeof (message as ChatMessage).role === "string" &&
     typeof (message as ChatMessage).content === "string"
@@ -147,7 +148,7 @@ export async function createPrompt(
     return toLangfusePrompt(created.promptResponse);
   }
 
-  const request: CreatePromptRequest.Text = {
+  const request: CreateTextPromptRequest = {
     type: "text",
     name: payload.name,
     prompt: typeof payload.prompt === "string" ? payload.prompt : "",
