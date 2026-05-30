@@ -98,6 +98,22 @@ const existingExport: NotionAutomationMeetingExport = {
   lastExportedAt: "2026-05-08T12:02:00.000Z",
 };
 
+const personalMeeting: MeetingHistory = {
+  ...meeting,
+  guildId: "personal:owner-1",
+  channelId_timestamp: "personal#2026-05-08T12:00:00.000Z",
+  channelId: "personal",
+  ownershipScope: "personal",
+  ownerUserId: "owner-1",
+  meetingCreatorId: "owner-1",
+};
+
+const personalAutomationConfig: NotionAutomationConfig = {
+  ...automationConfig,
+  guildId: personalMeeting.guildId,
+  ownerUserId: "owner-1",
+};
+
 describe("notionAutomationService", () => {
   beforeEach(() => {
     jest.clearAllMocks();
@@ -153,5 +169,48 @@ describe("notionAutomationService", () => {
     expect(mockRepository.getAutomationConfig).not.toHaveBeenCalled();
     expect(exportMeetingToNotionAutomation).not.toHaveBeenCalled();
     expect(syncMeetingToNotionAutomation).not.toHaveBeenCalled();
+  });
+
+  it("exports personal meetings with the owner's Notion automation", async () => {
+    const exported: NotionAutomationMeetingExport = {
+      guildId: personalMeeting.guildId,
+      channelId_timestamp: personalMeeting.channelId_timestamp,
+      ownerUserId: personalAutomationConfig.ownerUserId,
+      notionPageId: "notion-page-1",
+      notionPageUrl: "https://notion.so/notion-page-1",
+      notionWorkspaceId: personalAutomationConfig.workspaceId,
+      exportedNotesVersion: personalMeeting.notesVersion ?? 1,
+      status: "exported",
+      attemptCount: 1,
+      lastAttemptAt: "2026-05-08T12:10:00.000Z",
+      lastExportedAt: "2026-05-08T12:10:00.000Z",
+    };
+    mockRepository.getAutomationConfig.mockResolvedValue(
+      personalAutomationConfig,
+    );
+    jest.mocked(exportMeetingToNotionAutomation).mockResolvedValue(exported);
+
+    await maybeAutoExportCompletedMeeting(personalMeeting);
+
+    expect(exportMeetingToNotionAutomation).toHaveBeenCalledWith({
+      userId: "owner-1",
+      meeting: personalMeeting,
+      destinationPageId: personalAutomationConfig.destinationPageId,
+      attemptCount: 1,
+    });
+  });
+
+  it("skips personal automation when the config owner does not own the meeting", async () => {
+    mockRepository.getAutomationConfig.mockResolvedValue({
+      ...personalAutomationConfig,
+      ownerUserId: "other-user",
+    });
+
+    await maybeAutoExportCompletedMeeting(personalMeeting);
+
+    expect(
+      mockRepository.reserveAutomationMeetingExport,
+    ).not.toHaveBeenCalled();
+    expect(exportMeetingToNotionAutomation).not.toHaveBeenCalled();
   });
 });

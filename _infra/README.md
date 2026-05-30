@@ -207,11 +207,16 @@ If you prefer separate variable files, use:
 - Staging: copy `terraform.staging.tfvars.example` to `terraform.staging.tfvars`, then run
   `terraform -chdir=_infra plan -var-file=terraform.staging.tfvars`
 
-## Terraform plan workflow
+## Terraform plan and apply workflows
 
-`.github/workflows/terraform-plan.yml` is a manual plan-only workflow. It does
-not run on merge and does not apply changes. Use it before planned infra work or
-when checking drift after deploys.
+`.github/workflows/terraform-plan.yml` is a manual plan workflow. It does not run
+on merge. Use it before planned infra work or when checking drift after deploys.
+When the plan has changes, it uploads a short-lived `tfplan` artifact and writes
+the artifact name, plan run ID, and SHA-256 to the workflow summary.
+
+`.github/workflows/terraform-apply.yml` is a manual apply workflow. It downloads a
+reviewed plan artifact from a specific plan run, verifies the SHA-256, and applies
+that saved plan. It does not generate a fresh unreviewed plan during apply.
 
 Each GitHub environment used by the workflow must provide:
 
@@ -219,13 +224,50 @@ Each GitHub environment used by the workflow must provide:
 - Secret `AWS_SECRET_ACCESS_KEY`
 - Secret `TERRAFORM_TFVARS_JSON`
 
+The workflow dispatch choices should only list GitHub Actions environments that
+already exist and have these secrets configured. Add `staging` to the workflow
+inputs only after creating the `staging` environment and setting its Terraform
+credentials and tfvars.
+
 `TERRAFORM_TFVARS_JSON` is the environment-specific Terraform variable file as
 JSON. Keep it aligned with the private `terraform.tfvars` values used for manual
 plans. The workflow validates that required variables are present and rejects a
 non-empty `grafana_api_key` after Grafana token rotation is active. Use
 `grafana_service_account_id` and the rotated Secrets Manager token instead.
 
+Recommended apply flow:
+
+1. Run **Terraform Plan** for the target GitHub environment and Terraform
+   workspace.
+2. Review the plan log and workflow summary.
+3. If the plan is acceptable, run **Terraform Apply** with the plan run ID,
+   artifact name, and SHA-256 from the plan summary.
+4. Type `apply` in the confirmation input.
+5. Approve the GitHub environment gate for production-like environments.
+
+Plan artifacts contain a binary Terraform plan and can include sensitive values.
+They are retained for one day. Do not download or share them outside the
+maintainer workflow.
+
 Merges do not reconcile Terraform drift. The deploy workflows update ECS task
 definitions, S3 objects, and CloudFront invalidations directly, while Terraform
 owns the baseline infrastructure. Review plan output before applying, especially
 ECS task definition replacement and provider normalization diffs.
+
+## Emergency drift repair
+
+Prefer the plan/apply workflows for all routine infrastructure changes. If a
+production incident requires a direct AWS repair, make the smallest possible
+change, record exactly what changed in an issue, and reconcile Terraform state as
+soon as the incident is stable.
+
+For directly-created resources already declared in Terraform, import them into
+state before the next apply. Example:
+
+```bash
+terraform -chdir=_infra init -input=false
+terraform -chdir=_infra import aws_dynamodb_table.meeting_control_command_table meeting-notes-prod-MeetingControlCommandTable
+```
+
+After importing, run the Terraform Plan workflow with the real environment
+tfvars and verify the repaired resource is no longer shown as drift.

@@ -28,6 +28,9 @@ const UpgradeSuccess = lazyRouteComponent(
   () => import("./pages/UpgradeSuccess"),
 );
 const MyMeetings = lazyRouteComponent(() => import("./pages/MyMeetings"));
+const PersonalUpload = lazyRouteComponent(
+  () => import("./pages/PersonalUpload"),
+);
 const MeetingDetail = lazyRouteComponent(() => import("./pages/MeetingDetail"));
 const Library = lazyRouteComponent(() => import("./pages/Library"));
 const Ask = lazyRouteComponent(() => import("./pages/Ask"));
@@ -194,6 +197,12 @@ const portalMyMeetingsRoute = new Route({
   component: MyMeetings,
 });
 
+const portalPersonalUploadRoute = new Route({
+  getParentRoute: () => portalRoute,
+  path: "upload",
+  component: PersonalUpload,
+});
+
 const portalMeetingDetailRoute = new Route({
   getParentRoute: () => portalRoute,
   path: "meetings/$serverId/$meetingId",
@@ -334,6 +343,7 @@ const routeTree = rootRoute.addChildren([
     portalIndexRoute,
     portalSelectRoute,
     portalMyMeetingsRoute,
+    portalPersonalUploadRoute,
     portalMeetingDetailRoute,
     portalServerRoute.addChildren([
       portalLibraryRoute,

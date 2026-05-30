@@ -73,3 +73,26 @@ export const CONTACT_FEEDBACK_RATE_LIMIT_WINDOW_MS = 60_000; // 1 minute
 export const CONTACT_FEEDBACK_RATE_LIMIT_MAX = 5; // Max submit calls per window
 export const CONTACT_FEEDBACK_UPLOAD_URL_RATE_LIMIT_MAX = 15; // Max getUploadUrl calls per window (3x images)
 export const CONTACT_FEEDBACK_UPLOAD_URL_EXPIRY_SECONDS = 300; // 5 minutes
+
+export const PERSONAL_MEDIA_UPLOAD_S3_PREFIX = "personal-media-uploads/";
+export const PERSONAL_MEDIA_UPLOAD_MAX_BYTES = 500 * 1024 * 1024; // 500 MB
+export const PERSONAL_MEDIA_UPLOAD_URL_EXPIRY_SECONDS = 900; // 15 minutes
+export const PERSONAL_MEDIA_UPLOAD_RATE_LIMIT_WINDOW_MS = 60_000; // 1 minute
+export const PERSONAL_MEDIA_UPLOAD_RATE_LIMIT_MAX = 20;
+export const PERSONAL_MEDIA_UPLOAD_WORKER_POLL_INTERVAL_MS = 5_000;
+export const PERSONAL_MEDIA_UPLOAD_WORKER_BATCH_SIZE = 2;
+export const PERSONAL_MEDIA_UPLOAD_WORKER_CLAIM_SECONDS = 300;
+export const PERSONAL_MEDIA_UPLOAD_WORKER_CLAIM_RENEWAL_MS = 120_000;
+export const PERSONAL_MEDIA_UPLOAD_MAX_PROCESSING_ATTEMPTS = 3;
+export const PERSONAL_MEDIA_UPLOAD_ALLOWED_CONTENT_TYPES = [
+  "audio/mpeg",
+  "audio/mp3",
+  "audio/mp4",
+  "audio/m4a",
+  "audio/wav",
+  "audio/x-wav",
+  "audio/webm",
+  "video/mp4",
+  "video/quicktime",
+  "video/webm",
+];

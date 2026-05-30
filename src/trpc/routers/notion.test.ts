@@ -32,6 +32,7 @@ jest.mock("../../services/configService", () => ({
 
 jest.mock("../../services/meetingAccessService", () => ({
   ensureUserCanAccessMeeting: jest.fn(),
+  resolvePersonalMeetingSharedGuildIds: jest.fn(async () => undefined),
 }));
 
 jest.mock("../../services/meetingHistoryService", () => ({
@@ -82,6 +83,16 @@ const meeting: MeetingHistory = {
   generateNotes: true,
 };
 
+const personalMeeting: MeetingHistory = {
+  ...meeting,
+  guildId: "personal:user-1",
+  channelId_timestamp: "personal#2026-05-08T12:00:00.000Z",
+  channelId: "personal",
+  ownershipScope: "personal",
+  ownerUserId: "user-1",
+  meetingCreatorId: "user-1",
+};
+
 const meetingHistoryKey = meeting.channelId_timestamp;
 
 const createCaller = () =>
@@ -93,6 +104,7 @@ const createCaller = () =>
 
 describe("notionRouter", () => {
   beforeEach(() => {
+    jest.clearAllMocks();
     jest.mocked(ensureUserInGuild).mockResolvedValue(true);
     jest.mocked(ensureManageGuildWithUserToken).mockResolvedValue(true);
     jest.mocked(ensureUserCanAccessMeeting).mockResolvedValue(true);
@@ -332,6 +344,66 @@ describe("notionRouter", () => {
       code: "CONFLICT",
       message:
         "Notion automation retry is already in progress. Try again shortly.",
+    });
+  });
+
+  it("returns personal Notion automation status for the owner without guild checks", async () => {
+    jest.mocked(getNotionAutomationStatus).mockResolvedValue({
+      configured: true,
+      userConnected: true,
+      workspaceName: "Workspace One",
+      workspaceId: "workspace-1",
+    });
+
+    await expect(
+      createCaller().automationStatus({ serverId: "personal:user-1" }),
+    ).resolves.toMatchObject({ userConnected: true });
+    expect(ensureUserInGuild).not.toHaveBeenCalled();
+    expect(getNotionAutomationStatus).toHaveBeenCalledWith({
+      guildId: "personal:user-1",
+      userId: "user-1",
+    });
+  });
+
+  it("rejects personal Notion automation management for another user scope", async () => {
+    await expect(
+      createCaller().saveAutomationConfig({
+        serverId: "personal:other-user",
+        destinationPageId: "page-1",
+        autoExportEnabled: true,
+      }),
+    ).rejects.toMatchObject<Partial<TRPCError>>({
+      code: "FORBIDDEN",
+      message: "Personal Notion automation can only be managed by its owner.",
+    });
+    expect(saveNotionAutomationConfig).not.toHaveBeenCalled();
+  });
+
+  it("exports accessible personal meetings without Discord guild membership", async () => {
+    jest.mocked(getMeetingHistoryService).mockResolvedValue(personalMeeting);
+    jest.mocked(exportMeetingToNotion).mockResolvedValue({
+      userId: "user-1",
+      guildId: personalMeeting.guildId,
+      channelId_timestamp: personalMeeting.channelId_timestamp,
+      notionPageId: "page-1",
+      notionPageUrl: "https://notion.so/page-1",
+      notionWorkspaceId: "workspace-1",
+      exportedNotesVersion: 4,
+      lastExportedAt: "2026-05-08T12:10:00.000Z",
+    });
+
+    await expect(
+      createCaller().exportMeeting({
+        serverId: personalMeeting.guildId,
+        meetingId: personalMeeting.channelId_timestamp,
+      }),
+    ).resolves.toMatchObject({ ok: true, pageUrl: "https://notion.so/page-1" });
+    expect(ensureUserInGuild).not.toHaveBeenCalled();
+    expect(ensureUserCanAccessMeeting).toHaveBeenCalledWith({
+      guildId: personalMeeting.guildId,
+      meeting: personalMeeting,
+      userId: "user-1",
+      attendeeOverrideEnabled: true,
     });
   });
 });

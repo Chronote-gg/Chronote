@@ -16,6 +16,7 @@ import {
   ChannelContext,
   GuildSubscription,
   MeetingHistory,
+  MeetingAccessGrant,
   MeetingUserIndexRecord,
   NotesEditSource,
   NotesHistoryEntry,
@@ -39,11 +40,13 @@ import {
   FeedbackRecord,
   FeedbackTargetType,
   ContactFeedbackRecord,
+  PersonalMediaUploadJobRecord,
 } from "./types/db";
 import type { MeetingStatus } from "./types/meetingLifecycle";
 import { trimNotesForHistory } from "./utils/notesHistory";
 
 const MEETING_USER_INDEX_WRITE_BATCH_SIZE = 25;
+const PERSONAL_MEDIA_UPLOAD_STATUS_UPDATED_AT_INDEX = "StatusUpdatedAtIndex";
 
 const dynamoDbClient = new DynamoDBClient(
   config.database.useLocalDynamoDB
@@ -60,6 +63,8 @@ const dynamoDbClient = new DynamoDBClient(
 
 const tablePrefix = config.database.tablePrefix ?? "";
 const tableName = (name: string) => `${tablePrefix}${name}`;
+const isConditionalCheckFailed = (error: unknown) =>
+  (error as { name?: string }).name === "ConditionalCheckFailedException";
 
 // Guild Subscription Table
 export async function writeGuildSubscription(
@@ -1080,6 +1085,32 @@ export async function writeMeetingUserIndexRecords(
   }
 }
 
+export async function deleteMeetingUserIndexRecords(
+  records: Pick<MeetingUserIndexRecord, "userId" | "userTimestamp">[],
+): Promise<void> {
+  for (
+    let index = 0;
+    index < records.length;
+    index += MEETING_USER_INDEX_WRITE_BATCH_SIZE
+  ) {
+    await Promise.all(
+      records
+        .slice(index, index + MEETING_USER_INDEX_WRITE_BATCH_SIZE)
+        .map((record) =>
+          dynamoDbClient.send(
+            new DeleteItemCommand({
+              TableName: tableName("MeetingUserIndexTable"),
+              Key: marshall({
+                userId: record.userId,
+                userTimestamp: record.userTimestamp,
+              }),
+            }),
+          ),
+        ),
+    );
+  }
+}
+
 export async function getMeetingUserIndexRecordsForUserInRange(
   userId: string,
   startTimestamp: string,
@@ -1119,6 +1150,203 @@ export async function getMeetingUserIndexRecordsForUserInRange(
   } while (lastKey && (limit === undefined || items.length < limit));
 
   return limit === undefined ? items : items.slice(0, limit);
+}
+
+export async function writePersonalMediaUploadJob(
+  job: PersonalMediaUploadJobRecord,
+): Promise<void> {
+  await dynamoDbClient.send(
+    new PutItemCommand({
+      TableName: tableName("PersonalMediaUploadJobTable"),
+      Item: marshall(job, { removeUndefinedValues: true }),
+    }),
+  );
+}
+
+export async function getPersonalMediaUploadJob(
+  uploadId: string,
+): Promise<PersonalMediaUploadJobRecord | undefined> {
+  const result = await dynamoDbClient.send(
+    new GetItemCommand({
+      TableName: tableName("PersonalMediaUploadJobTable"),
+      Key: marshall({ uploadId }),
+    }),
+  );
+  return result.Item
+    ? (unmarshall(result.Item) as PersonalMediaUploadJobRecord)
+    : undefined;
+}
+
+export async function updatePersonalMediaUploadJob(
+  job: PersonalMediaUploadJobRecord,
+): Promise<void> {
+  await writePersonalMediaUploadJob(job);
+}
+
+export async function listClaimablePersonalMediaUploadJobs(options: {
+  instanceId: string;
+  nowEpochSeconds: number;
+  maxAttempts: number;
+  limit: number;
+}): Promise<PersonalMediaUploadJobRecord[]> {
+  const jobs: PersonalMediaUploadJobRecord[] = [];
+  const statuses: PersonalMediaUploadJobRecord["status"][] = [
+    "queued",
+    "processing",
+  ];
+
+  for (const status of statuses) {
+    if (jobs.length >= options.limit) break;
+    const isProcessing = status === "processing";
+    const filterExpression = isProcessing
+      ? "(attribute_not_exists(#claimExpiresAt) OR #claimExpiresAt < :nowEpochSeconds OR #processingOwnerInstanceId = :instanceId) AND (attribute_not_exists(#attempts) OR #attempts < :maxAttempts)"
+      : "(attribute_not_exists(#claimExpiresAt) OR #claimExpiresAt < :nowEpochSeconds) AND (attribute_not_exists(#attempts) OR #attempts < :maxAttempts)";
+    const expressionAttributeNames = {
+      "#status": "status",
+      "#claimExpiresAt": "claimExpiresAt",
+      "#attempts": "attempts",
+      ...(isProcessing
+        ? { "#processingOwnerInstanceId": "processingOwnerInstanceId" }
+        : {}),
+    };
+    const expressionAttributeValues = {
+      ":status": status,
+      ":nowEpochSeconds": options.nowEpochSeconds,
+      ":maxAttempts": options.maxAttempts,
+      ...(isProcessing ? { ":instanceId": options.instanceId } : {}),
+    };
+    const result = await dynamoDbClient.send(
+      new QueryCommand({
+        TableName: tableName("PersonalMediaUploadJobTable"),
+        IndexName: PERSONAL_MEDIA_UPLOAD_STATUS_UPDATED_AT_INDEX,
+        KeyConditionExpression: "#status = :status",
+        FilterExpression: filterExpression,
+        ExpressionAttributeNames: expressionAttributeNames,
+        ExpressionAttributeValues: marshall(expressionAttributeValues),
+        ScanIndexForward: true,
+        Limit: options.limit,
+      }),
+    );
+    jobs.push(
+      ...(result.Items ?? []).map(
+        (item) => unmarshall(item) as PersonalMediaUploadJobRecord,
+      ),
+    );
+  }
+
+  return jobs.slice(0, options.limit);
+}
+
+export async function claimPersonalMediaUploadJob(options: {
+  uploadId: string;
+  instanceId: string;
+  nowEpochSeconds: number;
+  claimExpiresAt: number;
+  updatedAt: string;
+  maxAttempts: number;
+}): Promise<PersonalMediaUploadJobRecord | undefined> {
+  try {
+    const result = await dynamoDbClient.send(
+      new UpdateItemCommand({
+        TableName: tableName("PersonalMediaUploadJobTable"),
+        Key: marshall({ uploadId: options.uploadId }),
+        UpdateExpression:
+          "SET #status = :processing, #processingOwnerInstanceId = :instanceId, #claimExpiresAt = :claimExpiresAt, #processingStartedAt = if_not_exists(#processingStartedAt, :updatedAt), #updatedAt = :updatedAt, #attempts = if_not_exists(#attempts, :zero) + :one",
+        ConditionExpression:
+          "(#status = :queued OR (#status = :processing AND (attribute_not_exists(#claimExpiresAt) OR #claimExpiresAt < :nowEpochSeconds))) AND (attribute_not_exists(#attempts) OR #attempts < :maxAttempts)",
+        ExpressionAttributeNames: {
+          "#status": "status",
+          "#processingOwnerInstanceId": "processingOwnerInstanceId",
+          "#claimExpiresAt": "claimExpiresAt",
+          "#processingStartedAt": "processingStartedAt",
+          "#updatedAt": "updatedAt",
+          "#attempts": "attempts",
+        },
+        ExpressionAttributeValues: marshall({
+          ":queued": "queued",
+          ":processing": "processing",
+          ":instanceId": options.instanceId,
+          ":claimExpiresAt": options.claimExpiresAt,
+          ":nowEpochSeconds": options.nowEpochSeconds,
+          ":updatedAt": options.updatedAt,
+          ":zero": 0,
+          ":one": 1,
+          ":maxAttempts": options.maxAttempts,
+        }),
+        ReturnValues: "ALL_NEW",
+      }),
+    );
+    return result.Attributes
+      ? (unmarshall(result.Attributes) as PersonalMediaUploadJobRecord)
+      : undefined;
+  } catch (error) {
+    if (isConditionalCheckFailed(error)) return undefined;
+    throw error;
+  }
+}
+
+export async function renewPersonalMediaUploadJobClaim(options: {
+  uploadId: string;
+  instanceId: string;
+  claimExpiresAt: number;
+  updatedAt: string;
+}): Promise<boolean> {
+  try {
+    await dynamoDbClient.send(
+      new UpdateItemCommand({
+        TableName: tableName("PersonalMediaUploadJobTable"),
+        Key: marshall({ uploadId: options.uploadId }),
+        UpdateExpression:
+          "SET #claimExpiresAt = :claimExpiresAt, #updatedAt = :updatedAt",
+        ConditionExpression:
+          "#status = :processing AND #processingOwnerInstanceId = :instanceId",
+        ExpressionAttributeNames: {
+          "#status": "status",
+          "#processingOwnerInstanceId": "processingOwnerInstanceId",
+          "#claimExpiresAt": "claimExpiresAt",
+          "#updatedAt": "updatedAt",
+        },
+        ExpressionAttributeValues: marshall({
+          ":processing": "processing",
+          ":instanceId": options.instanceId,
+          ":claimExpiresAt": options.claimExpiresAt,
+          ":updatedAt": options.updatedAt,
+        }),
+      }),
+    );
+    return true;
+  } catch (error) {
+    if (isConditionalCheckFailed(error)) return false;
+    throw error;
+  }
+}
+
+export async function writeClaimedPersonalMediaUploadJob(
+  job: PersonalMediaUploadJobRecord,
+  instanceId: string,
+): Promise<boolean> {
+  try {
+    await dynamoDbClient.send(
+      new PutItemCommand({
+        TableName: tableName("PersonalMediaUploadJobTable"),
+        Item: marshall(job, { removeUndefinedValues: true }),
+        ConditionExpression:
+          "#status = :processing AND #processingOwnerInstanceId = :instanceId",
+        ExpressionAttributeNames: {
+          "#status": "status",
+          "#processingOwnerInstanceId": "processingOwnerInstanceId",
+        },
+        ExpressionAttributeValues: marshall({
+          ":processing": "processing",
+          ":instanceId": instanceId,
+        }),
+      }),
+    );
+    return true;
+  } catch (error) {
+    if (isConditionalCheckFailed(error)) return false;
+    throw error;
+  }
 }
 
 export async function updateMeetingNotes(
@@ -1871,4 +2099,41 @@ export async function updateMeetingTags(
 
   const command = new UpdateItemCommand(params);
   await dynamoDbClient.send(command);
+}
+
+export async function updateMeetingAccessGrants(params: {
+  guildId: string;
+  channelId_timestamp: string;
+  accessGrants: MeetingAccessGrant[];
+}): Promise<boolean> {
+  const now = new Date().toISOString();
+  const request: UpdateItemCommand["input"] = {
+    TableName: tableName("MeetingHistoryTable"),
+    Key: marshall({
+      guildId: params.guildId,
+      channelId_timestamp: params.channelId_timestamp,
+    }),
+    UpdateExpression:
+      "SET #accessGrants = :accessGrants, #updatedAt = :updatedAt",
+    ConditionExpression: "attribute_exists(#channelIdTimestamp)",
+    ExpressionAttributeNames: {
+      "#accessGrants": "accessGrants",
+      "#updatedAt": "updatedAt",
+      "#channelIdTimestamp": "channelId_timestamp",
+    },
+    ExpressionAttributeValues: marshall(
+      {
+        ":accessGrants": params.accessGrants,
+        ":updatedAt": now,
+      },
+      { removeUndefinedValues: true },
+    ),
+  };
+  try {
+    await dynamoDbClient.send(new UpdateItemCommand(request));
+    return true;
+  } catch (error) {
+    if (isConditionalCheckFailed(error)) return false;
+    throw error;
+  }
 }

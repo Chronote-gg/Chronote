@@ -1,11 +1,15 @@
 import type {
+  MeetingAccessGrant,
   MeetingHistory,
   NotesEditSource,
   SuggestionHistoryEntry,
 } from "../types/db";
 import type { MeetingStatus } from "../types/meetingLifecycle";
 import { getMeetingHistoryRepository } from "../repositories/meetingHistoryRepository";
-import { writeMeetingUserIndexForMeetingService } from "./meetingUserIndexService";
+import {
+  replaceMeetingUserIndexForMeetingService,
+  writeMeetingUserIndexForMeetingService,
+} from "./meetingUserIndexService";
 import { maybeAutoSyncMeetingNotes } from "./notionAutomationService";
 
 export async function writeMeetingHistoryService(history: MeetingHistory) {
@@ -166,4 +170,26 @@ export async function updateMeetingArchiveService(params: {
   archivedByUserId: string;
 }) {
   return getMeetingHistoryRepository().updateArchive(params);
+}
+
+export async function updateMeetingAccessGrantsService(params: {
+  guildId: string;
+  channelId_timestamp: string;
+  accessGrants: MeetingAccessGrant[];
+}) {
+  const repository = getMeetingHistoryRepository();
+  const previous = await repository.get(
+    params.guildId,
+    params.channelId_timestamp,
+  );
+  if (!previous) return false;
+  const ok = await repository.updateAccessGrants(params);
+  if (!ok) return false;
+  const updated = await repository.get(
+    params.guildId,
+    params.channelId_timestamp,
+  );
+  if (updated)
+    await replaceMeetingUserIndexForMeetingService(previous, updated);
+  return true;
 }

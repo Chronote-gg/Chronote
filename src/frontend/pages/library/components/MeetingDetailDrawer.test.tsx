@@ -34,6 +34,22 @@ const mockShareStateQuery = {
   refetch: jest.fn().mockResolvedValue(undefined),
 };
 
+const mockPersonalShareStateQuery = {
+  data: {
+    accessGrants: [
+      { targetType: "user" as const, userId: "111111111111111111" },
+    ],
+  },
+  isLoading: false,
+  isFetching: false,
+  error: null as unknown,
+  refetch: jest.fn().mockResolvedValue(undefined),
+};
+
+const mockSetPersonalShareGrants = jest.fn().mockResolvedValue({
+  accessGrants: [],
+});
+
 const mockNotionStatusQuery = {
   data: { configured: true, connected: false },
   isLoading: false,
@@ -202,6 +218,16 @@ jest.mock("../../../services/trpc", () => ({
           error: undefined,
         }),
       },
+      personalShareState: {
+        useQuery: () => mockPersonalShareStateQuery,
+      },
+      setPersonalShareGrants: {
+        useMutation: () => ({
+          mutateAsync: mockSetPersonalShareGrants,
+          isPending: false,
+          error: undefined,
+        }),
+      },
     },
     feedback: {
       submitSummary: {
@@ -298,14 +324,17 @@ const buildUseMeetingDetailResult = (params?: {
     "Timeline data will appear after the meeting finishes processing.",
 });
 
-const renderDrawer = () =>
+const renderDrawer = (overrides?: {
+  canManageSelectedGuild?: boolean;
+  selectedGuildId?: string;
+}) =>
   render(
     <MantineProvider>
       <MeetingDetailDrawer
         opened
         selectedMeetingId="m1"
-        selectedGuildId="g1"
-        canManageSelectedGuild
+        selectedGuildId={overrides?.selectedGuildId ?? "g1"}
+        canManageSelectedGuild={overrides?.canManageSelectedGuild ?? true}
         channelNameMap={new Map([["c1", "general"]])}
         invalidateMeetingLists={jest.fn(async () => {})}
         onClose={jest.fn()}
@@ -324,6 +353,14 @@ describe("MeetingDetailDrawer summary copy", () => {
       state: { visibility: "private" },
     };
     mockShareStateQuery.error = null;
+    mockPersonalShareStateQuery.data = {
+      accessGrants: [
+        { targetType: "user" as const, userId: "111111111111111111" },
+      ],
+    };
+    mockPersonalShareStateQuery.error = null;
+    mockPersonalShareStateQuery.refetch.mockClear();
+    mockSetPersonalShareGrants.mockClear();
     mockNotionStatusQuery.data = { configured: true, connected: false };
     mockNotionExportStatusQuery.data = {
       exported: false,
@@ -382,6 +419,37 @@ describe("MeetingDetailDrawer summary copy", () => {
     expect(screen.getByTestId("meeting-share")).toBeDisabled();
   });
 
+  it("updates explicit personal meeting share grants", async () => {
+    useMeetingDetailMock.mockReturnValue(
+      buildUseMeetingDetailResult({
+        detail: buildDetail({
+          ownershipScope: "personal",
+          ownerUserId: "user-1",
+          personalShareManageable: true,
+        }),
+      }),
+    );
+
+    renderDrawer();
+    fireEvent.click(screen.getByTestId("meeting-share"));
+    fireEvent.change(await screen.findByTestId("personal-share-user-ids"), {
+      target: { value: "222222222222222222" },
+    });
+    fireEvent.change(screen.getByTestId("personal-share-guild-ids"), {
+      target: { value: "333333333333333333" },
+    });
+    fireEvent.click(screen.getByTestId("personal-share-save"));
+
+    await waitFor(() =>
+      expect(mockSetPersonalShareGrants).toHaveBeenCalledWith({
+        serverId: "g1",
+        meetingId: "m1",
+        userIds: ["222222222222222222"],
+        guildIds: ["333333333333333333"],
+      }),
+    );
+  });
+
   it("does not query Notion export status when Notion is not configured", () => {
     mockNotionStatusQuery.data = { configured: false, connected: false };
 
@@ -430,6 +498,34 @@ describe("MeetingDetailDrawer summary copy", () => {
     };
 
     renderDrawer();
+    fireEvent.click(screen.getByLabelText("Notes actions"));
+
+    expect(await screen.findByText("Retry Notion automation")).toBeEnabled();
+  });
+
+  it("shows personal Notion retry for the personal meeting owner", async () => {
+    mockNotionStatusQuery.data = { configured: true, connected: true };
+    mockNotionExportStatusQuery.data = {
+      exported: false,
+      source: "automation",
+      currentNotesVersion: 1,
+      outdated: false,
+      lastError: "Reconnect Notion.",
+    };
+    useMeetingDetailMock.mockReturnValue(
+      buildUseMeetingDetailResult({
+        detail: buildDetail({
+          ownershipScope: "personal",
+          ownerUserId: "user-1",
+          personalShareManageable: true,
+        }),
+      }),
+    );
+
+    renderDrawer({
+      canManageSelectedGuild: false,
+      selectedGuildId: "personal:user-1",
+    });
     fireEvent.click(screen.getByLabelText("Notes actions"));
 
     expect(await screen.findByText("Retry Notion automation")).toBeEnabled();

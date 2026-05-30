@@ -55,6 +55,7 @@ type NotionIntegrationCardProps = {
   status?: AutomationStatus;
   loading: boolean;
   busy: boolean;
+  personal?: boolean;
   destinationPages: DestinationPage[];
   destinationLoading: boolean;
   voiceChannels: ChannelOption[];
@@ -78,6 +79,7 @@ type NotionIntegrationHeaderProps = {
   loading: boolean;
   busy: boolean;
   automation?: AutomationConfig;
+  personal: boolean;
   onConnect: () => void;
 };
 
@@ -88,6 +90,7 @@ type AutomationBadgeProps = {
 type NotionStatusAlertsProps = {
   status?: AutomationStatus;
   automation?: AutomationConfig;
+  personal: boolean;
 };
 
 type AutomationErrorAlertProps = {
@@ -198,6 +201,7 @@ const getAutomationBadgeState = (
 const getStatusAlertState = ({
   status,
   automation,
+  personal,
 }: NotionStatusAlertsProps): StatusAlertState => {
   if (!status?.configured) {
     return {
@@ -222,7 +226,9 @@ const getStatusAlertState = ({
   if (!automation.ownerConnected) {
     return {
       color: "red",
-      message: "Reconnect Notion to restore automatic exports for this server.",
+      message: personal
+        ? "Reconnect Notion to restore automatic exports for your personal meetings."
+        : "Reconnect Notion to restore automatic exports for this server.",
     };
   }
   return {
@@ -236,12 +242,13 @@ const buildSaveInput = ({
   autoExportEnabled,
   channelIds,
   tagDraft,
-}: AutomationFormState): SaveAutomationInput | null => {
+  personal,
+}: AutomationFormState & { personal: boolean }): SaveAutomationInput | null => {
   if (!destinationPageId) return null;
   return {
     destinationPageId,
     autoExportEnabled,
-    channelIds,
+    channelIds: personal ? [] : channelIds,
     tags: parseTags(tagDraft) ?? [],
   };
 };
@@ -251,6 +258,7 @@ function NotionIntegrationHeader({
   loading,
   busy,
   automation,
+  personal,
   onConnect,
 }: NotionIntegrationHeaderProps) {
   return (
@@ -262,7 +270,9 @@ function NotionIntegrationHeader({
           <AutomationBadge automation={automation} />
         </Group>
         <Text size="sm" c="dimmed">
-          Export completed meeting notes to a shared Notion page destination.
+          {personal
+            ? "Export personal meeting notes to your Notion page destination."
+            : "Export completed meeting notes to a shared Notion page destination."}
         </Text>
       </Stack>
       <Button
@@ -286,8 +296,12 @@ function AutomationBadge({ automation }: AutomationBadgeProps) {
   );
 }
 
-function NotionStatusAlerts({ status, automation }: NotionStatusAlertsProps) {
-  const alert = getStatusAlertState({ status, automation });
+function NotionStatusAlerts({
+  status,
+  automation,
+  personal,
+}: NotionStatusAlertsProps) {
+  const alert = getStatusAlertState({ status, automation, personal });
   return (
     <Alert
       icon={alert.warningIcon ? <IconAlertTriangle size={16} /> : undefined}
@@ -385,6 +399,7 @@ export function NotionIntegrationCard({
   status,
   loading,
   busy,
+  personal = false,
   destinationPages,
   destinationLoading,
   voiceChannels,
@@ -429,6 +444,7 @@ export function NotionIntegrationCard({
       autoExportEnabled,
       channelIds,
       tagDraft,
+      personal,
     });
     if (!input) return;
     await onSave(input);
@@ -442,10 +458,15 @@ export function NotionIntegrationCard({
           loading={loading}
           busy={busy}
           automation={automation}
+          personal={personal}
           onConnect={onConnect}
         />
 
-        <NotionStatusAlerts status={status} automation={automation} />
+        <NotionStatusAlerts
+          status={status}
+          automation={automation}
+          personal={personal}
+        />
 
         <AutomationErrorAlert lastError={automation?.lastError} />
 
@@ -470,7 +491,11 @@ export function NotionIntegrationCard({
         <DestinationLink automation={automation} />
 
         <Switch
-          label="Automatically export completed meetings"
+          label={
+            personal
+              ? "Automatically export personal meetings"
+              : "Automatically export completed meetings"
+          }
           description="Chronote remains the source of truth and syncs later Chronote note edits one-way to Notion."
           checked={autoExportEnabled}
           onChange={(event) =>
@@ -479,19 +504,21 @@ export function NotionIntegrationCard({
           disabled={controlsDisabled}
         />
 
-        <MultiSelect
-          label="Only these voice channels"
-          description="Leave empty to export every completed meeting in this server."
-          placeholder={
-            channelIds.length === 0 ? "All voice channels" : undefined
-          }
-          data={channelOptions}
-          value={channelIds}
-          onChange={setChannelIds}
-          searchable
-          clearable
-          disabled={controlsDisabled}
-        />
+        {personal ? null : (
+          <MultiSelect
+            label="Only these voice channels"
+            description="Leave empty to export every completed meeting in this server."
+            placeholder={
+              channelIds.length === 0 ? "All voice channels" : undefined
+            }
+            data={channelOptions}
+            value={channelIds}
+            onChange={setChannelIds}
+            searchable
+            clearable
+            disabled={controlsDisabled}
+          />
+        )}
 
         <TextInput
           label="Only these tags"

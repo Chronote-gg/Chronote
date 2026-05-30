@@ -5,6 +5,7 @@ import {
   buildMcpBearerChallenge,
   formatMcpScope,
   hasMcpScopes,
+  markMcpAccessTokenScopeChallenge,
   validateMcpAccessToken,
 } from "../services/mcpOAuthService";
 import {
@@ -461,10 +462,31 @@ const sendUnauthorized = (res: Response) => {
   res.status(401).json({ error: "unauthorized" });
 };
 
-const sendInsufficientScope = (res: Response, scopes: McpScope[]) => {
-  res.set("WWW-Authenticate", buildMcpBearerChallenge(formatMcpScope(scopes)));
+const sendInsufficientScope = async (
+  res: Response,
+  accessToken: string,
+  scopes: McpScope[],
+) => {
+  try {
+    await markMcpAccessTokenScopeChallenge(accessToken, scopes);
+  } catch (error) {
+    console.error("Failed to mark MCP OAuth scope challenge", error);
+  }
+  res.set(
+    "WWW-Authenticate",
+    buildMcpBearerChallenge({
+      error: "insufficient_scope",
+      errorDescription: "Additional OAuth scope required.",
+      scope: formatMcpScope(scopes),
+    }),
+  );
   res.status(403).json({ error: "insufficient_scope" });
 };
+
+const resolveStepUpScopes = (
+  grantedScopes: McpScope[],
+  requiredScopes: McpScope[],
+) => Array.from(new Set([...grantedScopes, ...requiredScopes]));
 
 const jsonRpcResult = (id: JsonRpcId | undefined, result: unknown) => ({
   jsonrpc: JSON_RPC_VERSION,
@@ -798,7 +820,11 @@ export function registerMcpRoutes(app: Express) {
       parsedRequestBodies,
     );
     if (requiredScopes && !hasMcpScopes(auth.scopes, requiredScopes)) {
-      sendInsufficientScope(res, requiredScopes);
+      await sendInsufficientScope(
+        res,
+        rawToken,
+        resolveStepUpScopes(auth.scopes, requiredScopes),
+      );
       return;
     }
     const responses = await Promise.all(

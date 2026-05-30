@@ -104,6 +104,7 @@ jest.mock("../../src/services/discordPermissionsService", () => ({
 jest.mock("../../src/services/meetingAccessService", () => ({
   ensureUserCanAccessMeeting: jest.fn(),
   checkUserMeetingAccess: jest.fn(),
+  resolvePersonalMeetingSharedGuildIds: jest.fn(async () => undefined),
 }));
 
 jest.mock("../../src/services/discordCacheService", () => ({

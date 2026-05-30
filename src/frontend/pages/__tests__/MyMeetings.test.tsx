@@ -5,6 +5,12 @@ import MyMeetings from "../MyMeetings";
 const mockNavigate = jest.fn();
 const mockMyListUseQuery = jest.fn();
 const mockUseGuildContext = jest.fn();
+const mockUseAuth = jest.fn();
+const mockNotionAutomationStatusUseQuery = jest.fn();
+const mockNotionDestinationPagesUseQuery = jest.fn();
+const mockSaveNotionAutomationUseMutation = jest.fn();
+const mockDisableNotionAutomationUseMutation = jest.fn();
+const mockNotionAutomationStatusInvalidate = jest.fn();
 
 jest.mock("@tanstack/react-router", () => ({
   useNavigate: () => mockNavigate,
@@ -14,10 +20,37 @@ jest.mock("../../contexts/GuildContext", () => ({
   useGuildContext: () => mockUseGuildContext(),
 }));
 
+jest.mock("../../contexts/AuthContext", () => ({
+  useAuth: () => mockUseAuth(),
+}));
+
 jest.mock("../../services/trpc", () => ({
   trpc: {
+    useUtils: () => ({
+      notion: {
+        automationStatus: { invalidate: mockNotionAutomationStatusInvalidate },
+      },
+    }),
     meetings: {
       myList: { useQuery: (...args: unknown[]) => mockMyListUseQuery(...args) },
+    },
+    notion: {
+      automationStatus: {
+        useQuery: (...args: unknown[]) =>
+          mockNotionAutomationStatusUseQuery(...args),
+      },
+      destinationPages: {
+        useQuery: (...args: unknown[]) =>
+          mockNotionDestinationPagesUseQuery(...args),
+      },
+      saveAutomationConfig: {
+        useMutation: (...args: unknown[]) =>
+          mockSaveNotionAutomationUseMutation(...args),
+      },
+      disableAutomation: {
+        useMutation: (...args: unknown[]) =>
+          mockDisableNotionAutomationUseMutation(...args),
+      },
     },
   },
 }));
@@ -35,6 +68,7 @@ describe("MyMeetings", () => {
     mockUseGuildContext.mockReturnValue({
       guilds: [{ id: "guild-1", name: "Server One", canManage: true }],
     });
+    mockUseAuth.mockReturnValue({ user: { id: "user-1", username: "User" } });
     mockMyListUseQuery.mockReturnValue({
       data: {
         meetings: [
@@ -62,6 +96,25 @@ describe("MyMeetings", () => {
       isFetching: false,
       error: null,
       refetch: jest.fn(),
+    });
+    mockNotionAutomationStatusUseQuery.mockReturnValue({
+      data: { configured: true, userConnected: false },
+      isLoading: false,
+      isFetching: false,
+    });
+    mockNotionDestinationPagesUseQuery.mockReturnValue({
+      data: { pages: [] },
+      isLoading: false,
+      isFetching: false,
+      refetch: jest.fn(),
+    });
+    mockSaveNotionAutomationUseMutation.mockReturnValue({
+      isPending: false,
+      mutateAsync: jest.fn(),
+    });
+    mockDisableNotionAutomationUseMutation.mockReturnValue({
+      isPending: false,
+      mutateAsync: jest.fn(),
     });
   });
 
@@ -113,6 +166,30 @@ describe("MyMeetings", () => {
     expect(mockNavigate).toHaveBeenCalledWith({
       to: "/portal/select-server",
     });
+  });
+
+  it("opens the personal upload route", () => {
+    renderPage();
+
+    fireEvent.click(screen.getByTestId("my-meetings-upload"));
+
+    expect(mockNavigate).toHaveBeenCalledWith({
+      to: "/portal/upload",
+    });
+  });
+
+  it("loads personal Notion automation under the authenticated user's scope", () => {
+    renderPage();
+
+    expect(mockNotionAutomationStatusUseQuery).toHaveBeenCalledWith(
+      { serverId: "personal:user-1" },
+      { enabled: true },
+    );
+    expect(
+      screen.getByText(
+        "Export personal meeting notes to your Notion page destination.",
+      ),
+    ).toBeInTheDocument();
   });
 
   it("loads the next My Meetings page with the returned cursor", async () => {

@@ -39,6 +39,8 @@ export type McpOAuthToken = {
   clientId: string;
   userId: string;
   scope: string;
+  scopeChallenge?: string;
+  scopeChallengeExpiresAt?: number;
   resource: string;
   createdAt: string;
   expiresAt: number;

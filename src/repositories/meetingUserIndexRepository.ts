@@ -1,5 +1,6 @@
 import { config } from "../services/configService";
 import {
+  deleteMeetingUserIndexRecords,
   getMeetingUserIndexRecordsForUserInRange,
   writeMeetingUserIndexRecords,
 } from "../db";
@@ -9,6 +10,9 @@ import { getMockStore } from "./mockStore";
 
 export type MeetingUserIndexRepository = {
   write: (records: MeetingUserIndexRecord[]) => Promise<void>;
+  delete: (
+    records: Pick<MeetingUserIndexRecord, "userId" | "userTimestamp">[],
+  ) => Promise<void>;
   listByUserTimestampRange: (
     userId: string,
     startTimestamp: string,
@@ -19,6 +23,7 @@ export type MeetingUserIndexRepository = {
 
 const realRepository: MeetingUserIndexRepository = {
   write: writeMeetingUserIndexRecords,
+  delete: deleteMeetingUserIndexRecords,
   listByUserTimestampRange: getMeetingUserIndexRecordsForUserInRange,
 };
 
@@ -30,6 +35,7 @@ const listMockRecords = (userId: string) =>
 
 const mockRepository: MeetingUserIndexRepository = {
   async write() {},
+  async delete() {},
   async listByUserTimestampRange(userId, startTimestamp, endTimestamp, limit) {
     return listMockRecords(userId)
       .filter(
