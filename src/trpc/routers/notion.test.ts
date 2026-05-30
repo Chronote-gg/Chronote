@@ -32,6 +32,7 @@ jest.mock("../../services/configService", () => ({
 
 jest.mock("../../services/meetingAccessService", () => ({
   ensureUserCanAccessMeeting: jest.fn(),
+  resolvePersonalMeetingSharedGuildIds: jest.fn(async () => undefined),
 }));
 
 jest.mock("../../services/meetingHistoryService", () => ({

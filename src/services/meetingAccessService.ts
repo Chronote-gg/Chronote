@@ -7,6 +7,10 @@ import {
   ensureUserCanConnectChannel,
   ensureUserCanReadChannelHistory,
 } from "./discordPermissionsService";
+import {
+  ensureUserInGuild,
+  type GuildSessionCache,
+} from "./guildAccessService";
 
 export type MeetingAccessMissingPermission =
   | "voice_connect"
@@ -82,6 +86,35 @@ export async function ensureUserCanAccessMeeting(options: {
 }): Promise<boolean | null> {
   const decision = await checkUserMeetingAccess(options);
   return decision.allowed;
+}
+
+export async function resolvePersonalMeetingSharedGuildIds(options: {
+  accessToken?: string;
+  meeting: Pick<MeetingHistory, "accessGrants" | "guildId" | "ownershipScope">;
+  session?: GuildSessionCache;
+  userId: string;
+}): Promise<string[] | null | undefined> {
+  if (!isPersonalMeeting(options.meeting)) return undefined;
+  const sharedGuildIds = Array.from(
+    new Set(
+      (options.meeting.accessGrants ?? [])
+        .filter((grant) => grant.targetType === "guild")
+        .map((grant) => grant.guildId.trim())
+        .filter((guildId) => guildId.length > 0),
+    ),
+  );
+  if (sharedGuildIds.length === 0) return undefined;
+
+  const allowedGuildIds: string[] = [];
+  for (const guildId of sharedGuildIds) {
+    const allowed = await ensureUserInGuild(options.accessToken, guildId, {
+      session: options.session,
+      userId: options.userId,
+    });
+    if (allowed === null) return null;
+    if (allowed) allowedGuildIds.push(guildId);
+  }
+  return allowedGuildIds;
 }
 
 export async function checkUserMeetingAccess(options: {

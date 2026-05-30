@@ -1,17 +1,23 @@
 import { jest } from "@jest/globals";
 import {
   checkUserMeetingAccess,
+  resolvePersonalMeetingSharedGuildIds,
   type MeetingAccessDecision,
 } from "../meetingAccessService";
 import {
   ensureUserCanConnectChannel,
   ensureUserCanReadChannelHistory,
 } from "../discordPermissionsService";
+import { ensureUserInGuild } from "../guildAccessService";
 import type { MeetingHistory } from "../../types/db";
 
 jest.mock("../discordPermissionsService", () => ({
   ensureUserCanConnectChannel: jest.fn(),
   ensureUserCanReadChannelHistory: jest.fn(),
+}));
+
+jest.mock("../guildAccessService", () => ({
+  ensureUserInGuild: jest.fn(),
 }));
 
 const createMeeting = (
@@ -90,6 +96,45 @@ describe("meetingAccessService", () => {
       }),
       "guild_share",
     );
+  });
+
+  it("resolves personal meeting guild shares from Discord membership", async () => {
+    jest
+      .mocked(ensureUserInGuild)
+      .mockResolvedValueOnce(true)
+      .mockResolvedValueOnce(false);
+
+    await expect(
+      resolvePersonalMeetingSharedGuildIds({
+        accessToken: "token-1",
+        meeting: createMeeting({
+          guildId: "personal:user-1",
+          ownershipScope: "personal",
+          ownerUserId: "user-1",
+          accessGrants: [
+            { targetType: "guild", guildId: "guild-2" },
+            { targetType: "guild", guildId: "guild-3" },
+          ],
+        }),
+        userId: "user-2",
+      }),
+    ).resolves.toEqual(["guild-2"]);
+  });
+
+  it("returns null when personal meeting guild membership checks are rate limited", async () => {
+    jest.mocked(ensureUserInGuild).mockResolvedValue(null);
+
+    await expect(
+      resolvePersonalMeetingSharedGuildIds({
+        meeting: createMeeting({
+          guildId: "personal:user-1",
+          ownershipScope: "personal",
+          ownerUserId: "user-1",
+          accessGrants: [{ targetType: "guild", guildId: "guild-2" }],
+        }),
+        userId: "user-2",
+      }),
+    ).resolves.toBeNull();
   });
 
   it("denies personal meetings with no owner or share match", async () => {

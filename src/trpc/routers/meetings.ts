@@ -15,7 +15,6 @@ import {
 import {
   ensureBotInGuild,
   ensureManageGuildWithUserToken,
-  ensureUserInGuild,
   type GuildSessionCache,
 } from "../../services/guildAccessService";
 import {
@@ -93,6 +92,7 @@ import { ensureUserCanManageChannel } from "../../services/discordPermissionsSer
 import {
   checkUserMeetingAccess,
   ensureUserCanAccessMeeting,
+  resolvePersonalMeetingSharedGuildIds,
   type MeetingAccessMissingPermission,
 } from "../../services/meetingAccessService";
 import {
@@ -295,37 +295,6 @@ const formatMeetingAccessErrorMessage = (options: {
   return `Meeting access required.${detail}${attendeeHint}`.trim();
 };
 
-const resolvePortalSharedGuildIds = async (options: {
-  accessToken?: string;
-  meeting: MeetingHistory;
-  session?: GuildSessionCache;
-  userId: string;
-}) => {
-  if (!isPersonalMeeting(options.meeting)) return undefined;
-  const sharedGuildIds = (options.meeting.accessGrants ?? [])
-    .filter((grant) => grant.targetType === "guild")
-    .map((grant) => grant.guildId);
-  if (sharedGuildIds.length === 0) return undefined;
-
-  const allowedGuildIds: string[] = [];
-  for (const guildId of sharedGuildIds) {
-    const allowed = await ensureUserInGuild(options.accessToken, guildId, {
-      session: options.session,
-      userId: options.userId,
-    });
-    if (allowed === null) {
-      throw new TRPCError({
-        code: "TOO_MANY_REQUESTS",
-        message: "Discord rate limited. Please retry.",
-      });
-    }
-    if (allowed) {
-      allowedGuildIds.push(guildId);
-    }
-  }
-  return allowedGuildIds;
-};
-
 const ensurePortalUserCanAccessMeeting = async (options: {
   accessToken?: string;
   guildId: string;
@@ -334,12 +303,18 @@ const ensurePortalUserCanAccessMeeting = async (options: {
   userId: string;
   attendeeOverrideEnabled: boolean;
 }) => {
-  const sharedGuildIds = await resolvePortalSharedGuildIds({
+  const sharedGuildIds = await resolvePersonalMeetingSharedGuildIds({
     accessToken: options.accessToken,
     meeting: options.meeting,
     session: options.session,
     userId: options.userId,
   });
+  if (sharedGuildIds === null) {
+    throw new TRPCError({
+      code: "TOO_MANY_REQUESTS",
+      message: "Discord rate limited. Please retry.",
+    });
+  }
   const decision = await checkUserMeetingAccess({
     guildId: options.guildId,
     meeting: options.meeting,

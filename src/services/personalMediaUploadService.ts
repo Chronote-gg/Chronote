@@ -39,6 +39,7 @@ export class PersonalMediaUploadError extends Error {
       | "expired"
       | "invalid_token"
       | "missing_object"
+      | "storage_unavailable"
       | "invalid_state",
   ) {
     super(message);
@@ -252,7 +253,15 @@ export async function markPersonalMediaUploadComplete(options: {
       "invalid_token",
     );
   }
-  const objectMetadata = await getStoredObjectMetadata(job.sourceS3Key);
+  let objectMetadata: Awaited<ReturnType<typeof getStoredObjectMetadata>>;
+  try {
+    objectMetadata = await getStoredObjectMetadata(job.sourceS3Key);
+  } catch {
+    throw new PersonalMediaUploadError(
+      "Uploaded media could not be verified. Please retry shortly.",
+      "storage_unavailable",
+    );
+  }
   if (!objectMetadata) {
     throw new PersonalMediaUploadError(
       "Uploaded media was not found. Please upload the file again.",

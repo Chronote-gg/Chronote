@@ -252,4 +252,29 @@ describe("personalMediaUploadService", () => {
     });
     expect(uploadRepository.update).not.toHaveBeenCalled();
   });
+
+  it("rejects upload completion when uploaded object verification fails", async () => {
+    const intent = await createPersonalMediaUploadIntent({
+      userId: "user-1",
+      contentType: "audio/mpeg",
+      fileSize: 1234,
+    });
+    uploadRepository.get.mockResolvedValue(getWrittenJob());
+    jest
+      .mocked(getStoredObjectMetadata)
+      .mockRejectedValue(new Error("S3 unavailable"));
+
+    await expect(
+      markPersonalMediaUploadComplete({
+        uploadId: intent.uploadId,
+        userId: "user-1",
+        key: intent.key,
+        uploadToken: intent.uploadToken,
+      }),
+    ).rejects.toMatchObject<Partial<PersonalMediaUploadError>>({
+      code: "storage_unavailable",
+      message: "Uploaded media could not be verified. Please retry shortly.",
+    });
+    expect(uploadRepository.update).not.toHaveBeenCalled();
+  });
 });

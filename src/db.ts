@@ -1198,26 +1198,31 @@ export async function listClaimablePersonalMediaUploadJobs(options: {
   for (const status of statuses) {
     if (jobs.length >= options.limit) break;
     const isProcessing = status === "processing";
+    const filterExpression = isProcessing
+      ? "(attribute_not_exists(#claimExpiresAt) OR #claimExpiresAt < :nowEpochSeconds OR #processingOwnerInstanceId = :instanceId) AND (attribute_not_exists(#attempts) OR #attempts < :maxAttempts)"
+      : "(attribute_not_exists(#claimExpiresAt) OR #claimExpiresAt < :nowEpochSeconds) AND (attribute_not_exists(#attempts) OR #attempts < :maxAttempts)";
+    const expressionAttributeNames = {
+      "#status": "status",
+      "#claimExpiresAt": "claimExpiresAt",
+      "#attempts": "attempts",
+      ...(isProcessing
+        ? { "#processingOwnerInstanceId": "processingOwnerInstanceId" }
+        : {}),
+    };
+    const expressionAttributeValues = {
+      ":status": status,
+      ":nowEpochSeconds": options.nowEpochSeconds,
+      ":maxAttempts": options.maxAttempts,
+      ...(isProcessing ? { ":instanceId": options.instanceId } : {}),
+    };
     const result = await dynamoDbClient.send(
       new QueryCommand({
         TableName: tableName("PersonalMediaUploadJobTable"),
         IndexName: PERSONAL_MEDIA_UPLOAD_STATUS_UPDATED_AT_INDEX,
         KeyConditionExpression: "#status = :status",
-        FilterExpression: isProcessing
-          ? "(attribute_not_exists(#claimExpiresAt) OR #claimExpiresAt < :nowEpochSeconds OR #processingOwnerInstanceId = :instanceId) AND (attribute_not_exists(#attempts) OR #attempts < :maxAttempts)"
-          : "(attribute_not_exists(#claimExpiresAt) OR #claimExpiresAt < :nowEpochSeconds OR #processingOwnerInstanceId = :instanceId) AND (attribute_not_exists(#attempts) OR #attempts < :maxAttempts)",
-        ExpressionAttributeNames: {
-          "#status": "status",
-          "#claimExpiresAt": "claimExpiresAt",
-          "#attempts": "attempts",
-          "#processingOwnerInstanceId": "processingOwnerInstanceId",
-        },
-        ExpressionAttributeValues: marshall({
-          ":status": status,
-          ":nowEpochSeconds": options.nowEpochSeconds,
-          ":maxAttempts": options.maxAttempts,
-          ":instanceId": options.instanceId,
-        }),
+        FilterExpression: filterExpression,
+        ExpressionAttributeNames: expressionAttributeNames,
+        ExpressionAttributeValues: marshall(expressionAttributeValues),
         ScanIndexForward: true,
         Limit: options.limit,
       }),

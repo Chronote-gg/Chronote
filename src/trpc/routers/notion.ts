@@ -7,7 +7,10 @@ import {
   ensureUserInGuild,
   type GuildSessionCache,
 } from "../../services/guildAccessService";
-import { ensureUserCanAccessMeeting } from "../../services/meetingAccessService";
+import {
+  ensureUserCanAccessMeeting,
+  resolvePersonalMeetingSharedGuildIds,
+} from "../../services/meetingAccessService";
 import { authedProcedure, router } from "../trpc";
 import { getMeetingHistoryService } from "../../services/meetingHistoryService";
 import { retryNotionAutomationExport } from "../../services/notionAutomationService";
@@ -216,12 +219,18 @@ const requireAccessibleMeeting = async (params: {
   const attendeeOverrideEnabled = isPersonalMeeting(meeting)
     ? true
     : await resolveAttendeeAccessEnabled(params.serverId);
-  const sharedGuildIds = await resolvePersonalSharedGuildIds({
+  const sharedGuildIds = await resolvePersonalMeetingSharedGuildIds({
     accessToken: params.accessToken,
     meeting,
     session: params.session,
     userId: params.userId,
   });
+  if (sharedGuildIds === null) {
+    throw new TRPCError({
+      code: "TOO_MANY_REQUESTS",
+      message: "Discord rate limited. Please retry.",
+    });
+  }
   const accessParams = {
     guildId: params.serverId,
     meeting,
@@ -243,35 +252,6 @@ const requireAccessibleMeeting = async (params: {
     });
   }
   return meeting;
-};
-
-const resolvePersonalSharedGuildIds = async (params: {
-  accessToken?: string;
-  meeting: Awaited<ReturnType<typeof requireMeeting>>;
-  session?: GuildSessionCache;
-  userId: string;
-}) => {
-  if (!isPersonalMeeting(params.meeting)) return undefined;
-  const sharedGuildIds = (params.meeting.accessGrants ?? [])
-    .filter((grant) => grant.targetType === "guild")
-    .map((grant) => grant.guildId);
-  if (sharedGuildIds.length === 0) return undefined;
-
-  const allowedGuildIds: string[] = [];
-  for (const guildId of sharedGuildIds) {
-    const allowed = await ensureUserInGuild(params.accessToken, guildId, {
-      session: params.session,
-      userId: params.userId,
-    });
-    if (allowed === null) {
-      throw new TRPCError({
-        code: "TOO_MANY_REQUESTS",
-        message: "Discord rate limited. Please retry.",
-      });
-    }
-    if (allowed) allowedGuildIds.push(guildId);
-  }
-  return allowedGuildIds;
 };
 
 const ensurePersonalAutomationOwner = (params: {

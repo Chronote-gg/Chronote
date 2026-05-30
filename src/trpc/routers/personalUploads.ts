@@ -66,6 +66,12 @@ const mapUploadError = (error: PersonalMediaUploadError): TRPCError => {
   ) {
     return new TRPCError({ code: "BAD_REQUEST", message: error.message });
   }
+  if (error.code === "storage_unavailable") {
+    return new TRPCError({
+      code: "INTERNAL_SERVER_ERROR",
+      message: error.message,
+    });
+  }
   return new TRPCError({
     code: "INTERNAL_SERVER_ERROR",
     message: "Failed to process upload.",

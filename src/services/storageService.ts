@@ -20,6 +20,13 @@ export type StoredObjectMetadata = {
   contentType?: string;
 };
 
+export class StoredObjectMetadataError extends Error {
+  constructor(message: string, options?: { cause?: unknown }) {
+    super(message, options);
+    this.name = "StoredObjectMetadataError";
+  }
+}
+
 const storageCredentials =
   config.storage.accessKeyId.length > 0 &&
   config.storage.secretAccessKey.length > 0
@@ -210,7 +217,9 @@ export async function getStoredObjectMetadata(
   } catch (error) {
     if (isMissingKeyError(error)) return undefined;
     console.error("Failed to inspect object in S3", error);
-    return undefined;
+    throw new StoredObjectMetadataError("Failed to inspect object in S3.", {
+      cause: error,
+    });
   }
 }
 
