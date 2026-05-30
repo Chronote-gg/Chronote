@@ -193,6 +193,28 @@ jobs:
           fi
           echo "Build artifacts verified successfully"
 
+  desktop-check:
+    name: Desktop Check
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: "24.15.0"
+          cache: "yarn"
+          cache-dependency-path: |
+            yarn.lock
+            apps/desktop/yarn.lock
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Validate desktop app
+        run: yarn desktop:ci
+
   docs-check:
     name: Docs Check
     runs-on: ubuntu-latest
@@ -262,6 +284,7 @@ jobs:
         prompts-check,
         llm-connections-check,
         build,
+        desktop-check,
         docs-check,
         e2e-tests,
       ]
@@ -538,6 +561,7 @@ jobs:
         prompts-check,
         llm-connections-check,
         build,
+        desktop-check,
         docs-check,
         e2e-tests,
       ]
@@ -604,6 +628,7 @@ jobs:
         prompts-check,
         llm-connections-check,
         build,
+        desktop-check,
         docs-check,
         e2e-tests,
       ]

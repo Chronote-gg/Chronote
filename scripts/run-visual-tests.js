@@ -18,6 +18,14 @@ if (updateSnapshots) {
   runArgs.push("--update-snapshots");
 }
 
+const installDesktopResult = spawnSync("yarn", ["desktop:install"], {
+  stdio: "inherit",
+  shell: process.platform === "win32",
+});
+if (installDesktopResult.status !== 0) {
+  process.exit(installDesktopResult.status ?? 1);
+}
+
 const result = spawnSync(process.execPath, runArgs, {
   stdio: "inherit",
   env: {

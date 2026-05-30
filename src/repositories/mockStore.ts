@@ -40,7 +40,7 @@ type MockStore = {
   channelsByGuild: Map<string, DiscordChannel[]>;
   rolesByGuild: Map<string, DiscordRole[]>;
   membersByGuild: Map<string, DiscordGuildMember>;
-  objectsByKey: Map<string, string>;
+  objectsByKey: Map<string, string | Buffer>;
   autoRecordByGuild: Map<string, AutoRecordSettings[]>;
   serverContexts: Map<string, ServerContext>;
   channelContexts: Map<string, ChannelContext>;
@@ -149,7 +149,7 @@ function buildDefaultStore(): MockStore {
   });
 
   const autoRecordByGuild = new Map<string, AutoRecordSettings[]>();
-  const objectsByKey = new Map<string, string>();
+  const objectsByKey = new Map<string, string | Buffer>();
   autoRecordByGuild.set("1249723747896918109", [
     {
       guildId: "1249723747896918109",

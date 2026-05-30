@@ -2,6 +2,8 @@ import { defineConfig, devices } from "@playwright/test";
 
 const reuseServer = process.env.PW_REUSE_SERVER === "true";
 const baseUrl = "http://127.0.0.1:5173";
+const desktopBaseUrl = "http://127.0.0.1:1420";
+const runVisual = process.env.PW_VISUAL === "true";
 const mockEnv = {
   MOCK_MODE: "true",
   ENABLE_OAUTH: "false",
@@ -58,6 +60,18 @@ export default defineConfig({
       stderr: "pipe",
       timeout: 180_000,
     },
+    ...(runVisual
+      ? [
+          {
+            command: "yarn desktop:dev:web",
+            url: desktopBaseUrl,
+            reuseExistingServer: reuseServer,
+            stdout: "pipe" as const,
+            stderr: "pipe" as const,
+            timeout: 180_000,
+          },
+        ]
+      : []),
   ],
   projects: [{ name: "chromium", use: { ...devices["Desktop Chrome"] } }],
 });

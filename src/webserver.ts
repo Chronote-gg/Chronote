@@ -9,9 +9,11 @@ import { Profile, Strategy as DiscordStrategy } from "passport-discord";
 import { User } from "discord.js";
 import * as trpcExpress from "@trpc/server/adapters/express";
 import { registerBillingRoutes } from "./api/billing";
+import { registerDesktopRoutes } from "./api/desktop";
 import { registerGuildRoutes } from "./api/guilds";
 import { registerLiveMeetingRoutes } from "./api/liveMeetings";
 import { getMcpServerCard, registerMcpRoutes } from "./api/mcp";
+import { registerMockStorageRoutes } from "./api/mockStorage";
 import { registerNotionOAuthRoutes } from "./api/notionOAuth";
 import {
   registerMcpOAuthSessionRoutes,
@@ -38,6 +40,7 @@ import {
   ensureDiscordAccessToken,
 } from "./services/discordAuthService";
 import { startPersonalMediaUploadWorker } from "./services/personalMediaUploadWorkerService";
+import { MOCK_STORAGE_UPLOAD_PATH } from "./constants";
 
 const AUTH_RATE_LIMIT_WINDOW_MS = 60_000;
 const AUTH_RATE_LIMIT_MAX = 20;
@@ -184,7 +187,15 @@ export function setupWebServer() {
           : "__Host-chronote.csrf-token",
         options: csrfCookieOptions,
       },
-      blocklist: ["/api/billing/webhook", "/oauth/authorize/consent"],
+      blocklist: [
+        "/api/billing/webhook",
+        "/oauth/authorize/consent",
+        "/api/desktop/auth/token",
+        "/api/desktop/auth/revoke",
+        "/api/desktop/recordings/intent",
+        "/api/desktop/recordings/complete",
+        MOCK_STORAGE_UPLOAD_PATH,
+      ],
     }),
   );
 
@@ -428,6 +439,8 @@ export function setupWebServer() {
   if (config.mcp.enabled) registerMcpOAuthSessionRoutes(app);
 
   registerNotionOAuthRoutes(app);
+  registerMockStorageRoutes(app);
+  registerDesktopRoutes(app);
 
   // tRPC API
   app.use(

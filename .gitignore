@@ -1,4 +1,5 @@
 node_modules/
+target/
 .bin/
 .venv/
 venv/
@@ -33,6 +34,9 @@ _infra_state_mgmt/.terraform
 /build
 apps/docs-site/.docusaurus/
 apps/docs-site/build/
+apps/desktop/src-tauri/gen/
+apps/desktop/src-tauri/icons/android/
+apps/desktop/src-tauri/icons/ios/
 
 # misc
 .DS_Store

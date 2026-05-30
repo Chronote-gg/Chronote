@@ -212,6 +212,18 @@ Use **Upload Media** in the web portal to turn an existing audio or video file i
 
 When processing completes, the meeting appears in **My Meetings** under your personal workspace. Uploaded personal meetings are owned by your Chronote account, not by a Discord server.
 
+## Chronote Desktop recordings
+
+Chronote Desktop records a personal meeting directly from a Windows computer. It captures your microphone as **Me**, captures system audio as **System/Other**, uploads both sources to Chronote, and creates a personal meeting in **My Meetings**.
+
+1. Open Chronote Desktop.
+2. Sign in with Chronote. The app opens your browser and returns to the desktop app after authorization.
+3. Choose a microphone and system output device, or keep the defaults.
+4. Click **Start recording**.
+5. Click **Stop and upload** when the meeting ends.
+
+Desktop recordings use your Chronote account and do not require a Discord voice channel. Keep the app open until the upload is received. Processing continues in Chronote after the upload completes.
+
 ## Context menu commands
 
 Right-click a user in the voice channel to access:

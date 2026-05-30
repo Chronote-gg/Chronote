@@ -2,6 +2,9 @@
 build
 coverage
 apps/docs-site/.docusaurus
+apps/desktop/dist
+apps/desktop/src-tauri/gen
+apps/desktop/src-tauri/target
 aws-log-latest.json
 .opencode
 prompts/*.md
