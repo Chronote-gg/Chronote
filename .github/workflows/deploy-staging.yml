@@ -1,9 +1,18 @@
-name: Meeting Notes Bot Deploy (Staging)
+name: Meeting Notes Bot Deploy (Environment)
 
-run-name: Staging Deploy ${{ github.actor }}
+run-name: Deploy ${{ inputs.github_environment }} by ${{ github.actor }}
 
 on:
   workflow_dispatch:
+    inputs:
+      github_environment:
+        description: GitHub environment to deploy
+        required: true
+        type: choice
+        default: sandbox
+        options:
+          - sandbox
+          - staging
 
 permissions:
   contents: read
@@ -273,8 +282,8 @@ jobs:
       - name: Run Playwright tests (mock mode)
         run: yarn test:e2e
 
-  deploybackend:
-    name: Deploy Backend (Staging)
+  deploy-target-preflight:
+    name: Deploy Target Preflight
     needs:
       [
         lint,
@@ -289,7 +298,59 @@ jobs:
         e2e-tests,
       ]
     runs-on: ubuntu-latest
-    environment: staging
+    environment: ${{ inputs.github_environment }}
+    env:
+      DEPLOY_ENVIRONMENT: ${{ inputs.github_environment }}
+      VITE_API_BASE_URL: ${{ vars.VITE_API_BASE_URL }}
+      ECR_REPOSITORY: ${{ vars.ECR_REPOSITORY }}
+      ECS_CLUSTER: ${{ vars.ECS_CLUSTER }}
+      ECS_SERVICE: ${{ vars.ECS_SERVICE }}
+      ECS_TASK_FAMILY: ${{ vars.ECS_TASK_FAMILY }}
+      ECS_LOG_GROUP: ${{ vars.ECS_LOG_GROUP }}
+      SECRETS_PREFIX: ${{ vars.SECRETS_PREFIX }}
+      FRONTEND_BUCKET: ${{ vars.FRONTEND_BUCKET }}
+      DOCS_BUCKET: ${{ vars.DOCS_BUCKET }}
+    steps:
+      - name: Reject production resources for sandbox-style deploys
+        run: |
+          set -euo pipefail
+
+          environment="${DEPLOY_ENVIRONMENT,,}"
+          if [ "$environment" = "prod" ] || [ "$environment" = "production" ]; then
+            echo "ERROR: This workflow is for pre-production deploys only."
+            exit 1
+          fi
+
+          production_hits=()
+          for value in \
+            "$VITE_API_BASE_URL" \
+            "$ECR_REPOSITORY" \
+            "$ECS_CLUSTER" \
+            "$ECS_SERVICE" \
+            "$ECS_TASK_FAMILY" \
+            "$ECS_LOG_GROUP" \
+            "$SECRETS_PREFIX" \
+            "$FRONTEND_BUCKET" \
+            "$DOCS_BUCKET"; do
+            normalized="${value,,}"
+            if [[ "$normalized" == *"prod"* ]] || [[ "$normalized" == "https://api.chronote.gg"* ]]; then
+              production_hits+=("$value")
+            fi
+          done
+
+          if [ ${#production_hits[@]} -gt 0 ]; then
+            echo "ERROR: $DEPLOY_ENVIRONMENT deploy variables still reference production resources."
+            printf ' - %s\n' "${production_hits[@]}"
+            exit 1
+          fi
+
+          echo "Deploy target preflight passed for $DEPLOY_ENVIRONMENT."
+
+  deploybackend:
+    name: Deploy Backend (${{ inputs.github_environment }})
+    needs: [deploy-target-preflight]
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.github_environment }}
     env:
       ECS_CLUSTER: ${{ vars.ECS_CLUSTER }}
       ECS_SERVICE: ${{ vars.ECS_SERVICE }}
@@ -535,38 +596,28 @@ jobs:
           ACTOR: ${{ github.actor }}
         run: |
           if [ "$JOB_STATUS" == "success" ]; then
-            echo "## ✅ Staging Deployment Successful!" >> $GITHUB_STEP_SUMMARY
+            echo "## ✅ Deployment Successful!" >> $GITHUB_STEP_SUMMARY
             echo "" >> $GITHUB_STEP_SUMMARY
             echo "- **Commit:** $COMMIT_SHA" >> $GITHUB_STEP_SUMMARY
             echo "- **Branch:** $REF_NAME" >> $GITHUB_STEP_SUMMARY
+            echo "- **Environment:** ${{ inputs.github_environment }}" >> $GITHUB_STEP_SUMMARY
             echo "- **Deployed by:** $ACTOR" >> $GITHUB_STEP_SUMMARY
             echo "- **Deployment time:** $(date -u +"%Y-%m-%d %H:%M:%S UTC")" >> $GITHUB_STEP_SUMMARY
           else
-            echo "## ❌ Staging Deployment Failed!" >> $GITHUB_STEP_SUMMARY
+            echo "## ❌ Deployment Failed!" >> $GITHUB_STEP_SUMMARY
             echo "" >> $GITHUB_STEP_SUMMARY
             echo "- **Commit:** $COMMIT_SHA" >> $GITHUB_STEP_SUMMARY
             echo "- **Branch:** $REF_NAME" >> $GITHUB_STEP_SUMMARY
+            echo "- **Environment:** ${{ inputs.github_environment }}" >> $GITHUB_STEP_SUMMARY
             echo "- **Failed by:** $ACTOR" >> $GITHUB_STEP_SUMMARY
             echo "- **Failure time:** $(date -u +"%Y-%m-%d %H:%M:%S UTC")" >> $GITHUB_STEP_SUMMARY
           fi
 
   deploy-frontend:
-    name: Deploy Frontend (Staging)
-    needs:
-      [
-        lint,
-        markdownlint,
-        test,
-        code-stats,
-        prompts-check,
-        llm-connections-check,
-        build,
-        desktop-check,
-        docs-check,
-        e2e-tests,
-      ]
+    name: Deploy Frontend (${{ inputs.github_environment }})
+    needs: [deploy-target-preflight]
     runs-on: ubuntu-latest
-    environment: staging
+    environment: ${{ inputs.github_environment }}
     env:
       VITE_API_BASE_URL: ${{ vars.VITE_API_BASE_URL }}
     steps:
@@ -618,22 +669,10 @@ jobs:
           aws cloudfront create-invalidation --distribution-id "$FRONTEND_DISTRIBUTION_ID" --paths "/*"
 
   deploy-docs:
-    name: Deploy Docs (Staging)
-    needs:
-      [
-        lint,
-        markdownlint,
-        test,
-        code-stats,
-        prompts-check,
-        llm-connections-check,
-        build,
-        desktop-check,
-        docs-check,
-        e2e-tests,
-      ]
+    name: Deploy Docs (${{ inputs.github_environment }})
+    needs: [deploy-target-preflight]
     runs-on: ubuntu-latest
-    environment: staging
+    environment: ${{ inputs.github_environment }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6
