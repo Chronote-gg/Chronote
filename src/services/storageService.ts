@@ -62,7 +62,7 @@ export async function uploadObjectToS3(
   body: string | Uint8Array | Buffer,
   contentType: string,
 ): Promise<string | undefined> {
-  if (config.mock.enabled && !config.storage.transcriptBucket) {
+  if (config.mock.enabled) {
     getMockStore().objectsByKey.set(
       key,
       typeof body === "string" ? body : Buffer.from(body),
@@ -190,7 +190,7 @@ export async function getSignedUploadPost(
   maxBytes: number,
   expiresInSeconds: number = 300,
 ): Promise<SignedUploadPost | undefined> {
-  if (config.mock.enabled && !config.storage.transcriptBucket) {
+  if (config.mock.enabled) {
     return buildMockUploadPost(key, contentType, maxBytes);
   }
 
@@ -219,7 +219,7 @@ export async function getSignedUploadPost(
 export async function getStoredObjectMetadata(
   key: string,
 ): Promise<StoredObjectMetadata | undefined> {
-  if (config.mock.enabled && !config.storage.transcriptBucket) {
+  if (config.mock.enabled) {
     const mockObject = getMockStore().objectsByKey.get(key);
     return mockObject
       ? {
@@ -281,7 +281,7 @@ export async function downloadObjectToFile(
   key: string,
   destinationPath: string,
 ): Promise<boolean> {
-  if (config.mock.enabled && !config.storage.transcriptBucket) {
+  if (config.mock.enabled) {
     const mockObject = getMockStore().objectsByKey.get(key);
     if (!mockObject) return false;
     await fs.writeFile(destinationPath, mockObject);

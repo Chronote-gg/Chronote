@@ -52,7 +52,9 @@ mod platform {
     use std::time::Duration;
 
     use hound::{SampleFormat, WavSpec, WavWriter};
-    use wasapi::{Device, DeviceEnumerator, Direction, SampleType, StreamMode, WaveFormat};
+    use wasapi::{
+        Device, DeviceEnumerator, Direction, SampleType, StreamMode, WasapiError, WaveFormat,
+    };
 
     use super::{AudioDevice, AudioDeviceDirection, CaptureDirection, CaptureHandle};
 
@@ -269,10 +271,11 @@ mod platform {
 
     fn capture_loop(capture: &mut ActiveWasapiCapture, stop: &AtomicBool) -> Result<(), String> {
         while !stop.load(Ordering::SeqCst) {
-            capture
-                .event_handle
-                .wait_for_event(EVENT_WAIT_MS)
-                .map_err(to_string)?;
+            match capture.event_handle.wait_for_event(EVENT_WAIT_MS) {
+                Ok(()) => {}
+                Err(WasapiError::EventTimeout) => continue,
+                Err(error) => return Err(to_string(error)),
+            }
             capture
                 .capture_client
                 .read_from_device_to_deque(&mut capture.sample_queue)

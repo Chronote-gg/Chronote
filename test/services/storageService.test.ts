@@ -50,6 +50,10 @@ describe("storageService upload POST signing", () => {
   });
 
   test("adds content type and content length constraints to presigned POST policy", async () => {
+    Object.defineProperty(config.mock, "enabled", {
+      get: () => false,
+      configurable: true,
+    });
     Object.defineProperty(config.storage, "transcriptBucket", {
       get: () => "test-bucket",
       configurable: true,
@@ -87,7 +91,7 @@ describe("storageService upload POST signing", () => {
       configurable: true,
     });
     Object.defineProperty(config.storage, "transcriptBucket", {
-      get: () => undefined,
+      get: () => "local-transcripts",
       configurable: true,
     });
 
@@ -115,7 +119,7 @@ describe("storageService upload POST signing", () => {
       configurable: true,
     });
     Object.defineProperty(config.storage, "transcriptBucket", {
-      get: () => undefined,
+      get: () => "local-transcripts",
       configurable: true,
     });
     const key = "personal-media-uploads/user-1/upload-1/source.wav";
