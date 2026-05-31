@@ -9,9 +9,9 @@ on:
         description: GitHub environment to deploy
         required: true
         type: choice
-        default: sandbox
+        default: desktop-sandbox
         options:
-          - sandbox
+          - desktop-sandbox
           - staging
 
 permissions:
@@ -310,6 +310,10 @@ jobs:
       SECRETS_PREFIX: ${{ vars.SECRETS_PREFIX }}
       FRONTEND_BUCKET: ${{ vars.FRONTEND_BUCKET }}
       DOCS_BUCKET: ${{ vars.DOCS_BUCKET }}
+      AWS_ACCESS_KEY_ID: ${{ vars.AWS_ACCESS_KEY_ID }}
+      AWS_REGION: ${{ vars.AWS_REGION }}
+      FRONTEND_DISTRIBUTION_ID: ${{ vars.FRONTEND_DISTRIBUTION_ID }}
+      HAS_AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY != '' }}
     steps:
       - name: Reject production resources for sandbox-style deploys
         run: |
@@ -318,6 +322,37 @@ jobs:
           environment="${DEPLOY_ENVIRONMENT,,}"
           if [ "$environment" = "prod" ] || [ "$environment" = "production" ]; then
             echo "ERROR: This workflow is for pre-production deploys only."
+            exit 1
+          fi
+
+          required_names=(
+            AWS_ACCESS_KEY_ID
+            AWS_REGION
+            ECR_REPOSITORY
+            ECS_CLUSTER
+            ECS_SERVICE
+            ECS_TASK_FAMILY
+            ECS_LOG_GROUP
+            FRONTEND_BUCKET
+            FRONTEND_DISTRIBUTION_ID
+            SECRETS_PREFIX
+            VITE_API_BASE_URL
+          )
+
+          missing_values=()
+          for name in "${required_names[@]}"; do
+            if [ -z "${!name:-}" ]; then
+              missing_values+=("$name")
+            fi
+          done
+
+          if [ "$HAS_AWS_SECRET_ACCESS_KEY" != "true" ]; then
+            missing_values+=("AWS_SECRET_ACCESS_KEY")
+          fi
+
+          if [ ${#missing_values[@]} -gt 0 ]; then
+            echo "ERROR: $DEPLOY_ENVIRONMENT is missing required deploy configuration."
+            printf ' - %s\n' "${missing_values[@]}"
             exit 1
           fi
 
