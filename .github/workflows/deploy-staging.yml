@@ -12,7 +12,6 @@ on:
         default: desktop-sandbox
         options:
           - desktop-sandbox
-          - staging
 
 permissions:
   contents: read

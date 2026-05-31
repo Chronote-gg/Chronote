@@ -9,8 +9,9 @@ on:
         description: GitHub environment containing Terraform apply credentials and tfvars
         required: true
         type: choice
-        default: sandbox
+        default: desktop-sandbox
         options:
+          - desktop-sandbox
           - sandbox
       terraform_workspace:
         description: Existing Terraform workspace to apply against

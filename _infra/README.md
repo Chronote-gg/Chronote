@@ -200,6 +200,13 @@ Recommended workflow:
    `terraform.tfvars` for staging runs.
 3. For production, keep `environment="prod"` and your existing GitHub Actions
    environment name (currently `sandbox`).
+4. For pre-merge desktop validation, use a separate workspace and GitHub
+   environment such as `desktop-sandbox`; do not repoint the production-backed
+   `sandbox` environment at non-production resources.
+
+Terraform also writes deploy variables back to GitHub. Keep `github_owner` and
+`github_repository` pointed at the repository that owns the deployment workflows
+(currently `Chronote-gg/Chronote`).
 
 If you prefer separate variable files, use:
 
@@ -225,9 +232,10 @@ Each GitHub environment used by the workflow must provide:
 - Secret `TERRAFORM_TFVARS_JSON`
 
 The workflow dispatch choices should only list GitHub Actions environments that
-already exist and have these secrets configured. Add `staging` to the workflow
-inputs only after creating the `staging` environment and setting its Terraform
-credentials and tfvars.
+already exist. Plan/apply dispatches require the secrets above and will fail until
+they are configured. Add a new environment such as `desktop-sandbox` or `staging`
+to the workflow inputs only after creating it; then set its Terraform credentials
+and tfvars before dispatching a plan.
 
 `TERRAFORM_TFVARS_JSON` is the environment-specific Terraform variable file as
 JSON. Keep it aligned with the private `terraform.tfvars` values used for manual

@@ -49,6 +49,17 @@ variable "github_environment" {
   default     = "sandbox"
 }
 
+variable "github_owner" {
+  description = "GitHub organization or user that owns the repository receiving deploy variables"
+  type        = string
+  default     = "Chronote-gg"
+}
+
+variable "github_repository" {
+  description = "GitHub repository receiving deploy variables"
+  type        = string
+  default     = "Chronote"
+}
 
 variable "GITHUB_TOKEN" {
   sensitive = true
@@ -420,7 +431,7 @@ provider "aws" {
 data "aws_caller_identity" "current" {}
 
 provider "github" {
-  owner = "BASIC-BIT"
+  owner = var.github_owner
   token = var.GITHUB_TOKEN
 }
 
@@ -483,7 +494,7 @@ EOF
 }
 
 data "github_repository" "repo" {
-  full_name = "BASIC-BIT/meeting-notes-discord-bot"
+  full_name = "${var.github_owner}/${var.github_repository}"
 }
 
 resource "github_repository_environment" "repo_env" {

@@ -5,6 +5,8 @@ AWS_TOKEN_KEY="your-aws-token-key-here"
 environment="prod"                           # prod | staging
 project_name="meeting-notes"
 github_environment="sandbox"                 # GitHub Actions environment name
+github_owner="Chronote-gg"
+github_repository="Chronote"
 
 # Optional (leave blank to use defaults)
 ENABLE_OAUTH="false"                          # defaults false
