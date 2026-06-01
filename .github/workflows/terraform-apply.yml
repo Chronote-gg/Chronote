@@ -152,11 +152,19 @@ jobs:
           ]
           for name in string_fields:
               value = data.get(name)
-              if isinstance(value, list) and len(value) == 1 and isinstance(value[0], str):
-                  data[name] = value[0]
+              if isinstance(value, list) and all(isinstance(item, str) for item in value):
+                  non_empty_items = [item for item in value if item.strip()]
+                  if len(non_empty_items) == 1:
+                      data[name] = non_empty_items[0]
+
+          def describe_type(value):
+              if isinstance(value, list):
+                  item_types = sorted({type(item).__name__ for item in value})
+                  return f"list length {len(value)} with item types {item_types}"
+              return type(value).__name__
 
           wrong_type = [
-              f"{name} ({type(data[name]).__name__})"
+              f"{name} ({describe_type(data[name])})"
               for name in string_fields
               if name in data and data[name] is not None and not isinstance(data[name], str)
           ]
