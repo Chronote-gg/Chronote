@@ -38,7 +38,7 @@ variable "project_name" {
 }
 
 variable "environment" {
-  description = "Deployment environment (e.g., prod, staging)"
+  description = "Deployment environment (e.g., prod, sandbox, staging)"
   type        = string
   default     = "prod"
 }
@@ -46,7 +46,7 @@ variable "environment" {
 variable "github_environment" {
   description = "GitHub Actions environment name to populate with deploy variables"
   type        = string
-  default     = "sandbox"
+  default     = "production"
 }
 
 variable "github_owner" {
@@ -500,6 +500,10 @@ data "github_repository" "repo" {
 resource "github_repository_environment" "repo_env" {
   repository  = data.github_repository.repo.name
   environment = var.github_environment
+
+  lifecycle {
+    prevent_destroy = true
+  }
 }
 
 resource "github_actions_environment_variable" "envvar_aws_region" {

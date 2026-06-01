@@ -9,15 +9,15 @@ on:
         description: GitHub environment containing Terraform plan credentials and tfvars
         required: true
         type: choice
-        default: desktop-sandbox
+        default: sandbox
         options:
-          - desktop-sandbox
           - sandbox
+          - production
       terraform_workspace:
-        description: Existing Terraform workspace to plan against
+        description: Terraform workspace to plan against; production uses default, sandbox uses sandbox
         required: true
         type: string
-        default: default
+        default: sandbox
 
 permissions:
   contents: read
@@ -51,6 +51,23 @@ jobs:
         uses: hashicorp/setup-terraform@v4
         with:
           terraform_wrapper: false
+
+      - name: Check environment and workspace pairing
+        env:
+          GITHUB_ENVIRONMENT: ${{ inputs.github_environment }}
+          TERRAFORM_WORKSPACE: ${{ inputs.terraform_workspace }}
+        run: |
+          set -euo pipefail
+
+          if [ "$GITHUB_ENVIRONMENT" = "production" ] && [ "$TERRAFORM_WORKSPACE" != "default" ]; then
+            echo "ERROR: production Terraform plans must use the default workspace."
+            exit 1
+          fi
+
+          if [ "$GITHUB_ENVIRONMENT" = "sandbox" ] && [ "$TERRAFORM_WORKSPACE" != "sandbox" ]; then
+            echo "ERROR: sandbox Terraform plans must use the sandbox workspace."
+            exit 1
+          fi
 
       - name: Write Terraform variables
         env:
@@ -96,10 +113,12 @@ jobs:
       - name: Terraform init
         run: terraform -chdir=_infra init -input=false
 
-      - name: Select Terraform workspace
+      - name: Select or create Terraform workspace
         env:
           TERRAFORM_WORKSPACE: ${{ inputs.terraform_workspace }}
-        run: terraform -chdir=_infra workspace select "$TERRAFORM_WORKSPACE"
+        run: |
+          set -euo pipefail
+          terraform -chdir=_infra workspace select "$TERRAFORM_WORKSPACE" || terraform -chdir=_infra workspace new "$TERRAFORM_WORKSPACE"
 
       - name: Terraform validate
         run: terraform -chdir=_infra validate -no-color
