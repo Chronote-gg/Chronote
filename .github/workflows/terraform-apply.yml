@@ -139,10 +139,14 @@ jobs:
 
           python3 - <<'PY'
           import json
+          import os
           from pathlib import Path
 
           path = Path("_infra/terraform.auto.tfvars.json")
           data = json.loads(path.read_text())
+          aws_access_key_id = os.environ.get("AWS_ACCESS_KEY_ID", "").strip()
+          if aws_access_key_id:
+              data["AWS_TOKEN_KEY"] = aws_access_key_id
 
           required = ["GITHUB_TOKEN", "AWS_TOKEN_KEY", "DISCORD_CLIENT_ID"]
           string_fields = required + [
