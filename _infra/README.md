@@ -245,7 +245,9 @@ workspace.
 `TERRAFORM_TFVARS_JSON` is the environment-specific Terraform variable file as
 JSON. Keep it aligned with the private `terraform.tfvars` values used for manual
 plans. The workflow validates that required variables are present and rejects a
-non-empty `grafana_api_key` after Grafana token rotation is active. Use
+non-empty `grafana_api_key` after Grafana token rotation is active. Scalar
+values must be JSON strings; the workflow normalizes single-item string arrays
+only to tolerate existing malformed environment secrets. Use
 `grafana_service_account_id` and the rotated Secrets Manager token instead.
 
 Recommended apply flow:

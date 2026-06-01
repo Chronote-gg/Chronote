@@ -145,6 +145,28 @@ jobs:
           data = json.loads(path.read_text())
 
           required = ["GITHUB_TOKEN", "AWS_TOKEN_KEY", "DISCORD_CLIENT_ID"]
+          string_fields = required + [
+              "grafana_api_key",
+              "grafana_url",
+              "grafana_service_account_id",
+          ]
+          for name in string_fields:
+              value = data.get(name)
+              if isinstance(value, list) and len(value) == 1 and isinstance(value[0], str):
+                  data[name] = value[0]
+
+          wrong_type = [
+              f"{name} ({type(data[name]).__name__})"
+              for name in string_fields
+              if name in data and data[name] is not None and not isinstance(data[name], str)
+          ]
+          if wrong_type:
+              raise SystemExit(
+                  "Terraform variables must be JSON strings: " + ", ".join(wrong_type)
+              )
+
+          path.write_text(json.dumps(data, separators=(",", ":")))
+
           missing = [name for name in required if not data.get(name)]
           if missing:
               raise SystemExit(
