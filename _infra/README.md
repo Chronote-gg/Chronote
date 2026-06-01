@@ -205,6 +205,12 @@ Terraform also writes deploy variables back to GitHub. Keep `github_owner` and
 `github_repository` pointed at the repository that owns the deployment workflows
 (currently `Chronote-gg/Chronote`).
 
+GitHub environments contain environment-scoped secrets. Terraform protects the
+managed GitHub environment from destruction so a production plan cannot replace
+an existing state entry that still points at the old `sandbox` environment. If a
+plan shows `github_repository_environment.repo_env` needs replacement, stop and
+migrate/import the GitHub environment state before applying.
+
 If you prefer separate variable files, use:
 
 - Prod: `terraform -chdir=_infra plan -var-file=terraform.tfvars`

@@ -14,7 +14,7 @@ on:
           - sandbox
           - production
       terraform_workspace:
-        description: Existing Terraform workspace to plan against
+        description: Terraform workspace to plan against; production uses default, sandbox uses sandbox
         required: true
         type: string
         default: sandbox

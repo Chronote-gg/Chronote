@@ -501,6 +501,10 @@ data "github_repository" "repo" {
 resource "github_repository_environment" "repo_env" {
   repository  = data.github_repository.repo.name
   environment = var.github_environment
+
+  lifecycle {
+    prevent_destroy = true
+  }
 }
 
 resource "github_actions_environment_variable" "envvar_aws_region" {
