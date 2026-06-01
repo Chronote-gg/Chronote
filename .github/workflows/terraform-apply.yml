@@ -12,11 +12,12 @@ on:
         default: sandbox
         options:
           - sandbox
+          - production
       terraform_workspace:
         description: Existing Terraform workspace to apply against
         required: true
         type: string
-        default: default
+        default: sandbox
       plan_run_id:
         description: GitHub Actions run ID from the reviewed Terraform Plan workflow
         required: true
@@ -77,6 +78,23 @@ jobs:
         uses: hashicorp/setup-terraform@v4
         with:
           terraform_wrapper: false
+
+      - name: Check environment and workspace pairing
+        env:
+          GITHUB_ENVIRONMENT: ${{ inputs.github_environment }}
+          TERRAFORM_WORKSPACE: ${{ inputs.terraform_workspace }}
+        run: |
+          set -euo pipefail
+
+          if [ "$GITHUB_ENVIRONMENT" = "production" ] && [ "$TERRAFORM_WORKSPACE" != "default" ]; then
+            echo "ERROR: production Terraform applies must use the default workspace."
+            exit 1
+          fi
+
+          if [ "$GITHUB_ENVIRONMENT" = "sandbox" ] && [ "$TERRAFORM_WORKSPACE" != "sandbox" ]; then
+            echo "ERROR: sandbox Terraform applies must use the sandbox workspace."
+            exit 1
+          fi
 
       - name: Download reviewed plan artifact
         env:

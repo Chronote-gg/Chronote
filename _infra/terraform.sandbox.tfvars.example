@@ -1,0 +1,67 @@
+# Required
+DISCORD_CLIENT_ID="your-sandbox-discord-client-id"
+GITHUB_TOKEN="your-github-token"
+AWS_TOKEN_KEY="your-aws-token-key"
+
+# Environment setup
+environment="sandbox"
+project_name="meeting-notes"
+github_environment="sandbox"
+github_owner="Chronote-gg"
+github_repository="Chronote"
+
+# OAuth / URLs
+ENABLE_OAUTH="true"
+ENABLE_MCP="true"
+API_DOMAIN="api.sandbox.chronote.gg"
+DISCORD_CALLBACK_URL="https://api.sandbox.chronote.gg/auth/discord/callback"
+FRONTEND_DOMAIN="sandbox.chronote.gg"
+DOCS_DOMAIN="docs-sandbox.chronote.gg"
+DOCS_SITE_URL="https://docs-sandbox.chronote.gg"
+HOSTED_ZONE_NAME="chronote.gg."
+FRONTEND_ALLOWED_ORIGINS="https://sandbox.chronote.gg"
+FRONTEND_SITE_URL="https://sandbox.chronote.gg"
+NOTION_CLIENT_ID=""
+NOTION_REDIRECT_URI="https://api.sandbox.chronote.gg/api/notion/callback"
+
+# Stripe (sandbox uses test mode)
+STRIPE_MODE="test"
+STRIPE_SUCCESS_URL="https://sandbox.chronote.gg/upgrade/success"
+STRIPE_CANCEL_URL="https://sandbox.chronote.gg/upgrade/select-server?canceled=true"
+STRIPE_PORTAL_RETURN_URL="https://sandbox.chronote.gg/portal/select-server"
+BILLING_LANDING_URL="https://sandbox.chronote.gg/upgrade"
+
+# Optional overrides
+TRANSCRIPTS_PREFIX=""
+BEDROCK_DATA_AUTOMATION_PROFILE_ARN=""
+BEDROCK_DATA_AUTOMATION_PROJECT_ARN=""
+BEDROCK_DATA_AUTOMATION_INPUT_BUCKET=""
+BEDROCK_DATA_AUTOMATION_OUTPUT_BUCKET=""
+BEDROCK_DATA_AUTOMATION_INPUT_PREFIX=""
+BEDROCK_DATA_AUTOMATION_OUTPUT_PREFIX=""
+BEDROCK_DATA_AUTOMATION_POLL_INTERVAL_MS=""
+BEDROCK_DATA_AUTOMATION_TIMEOUT_MS=""
+LANGFUSE_BASE_URL=""
+LANGFUSE_PUBLIC_KEY=""
+LANGFUSE_SECRET_KEY=""
+LANGFUSE_TRACING_ENABLED="true"
+LANGFUSE_TRACING_ENVIRONMENT="sandbox"
+LANGFUSE_RELEASE=""
+LANGFUSE_PROMPT_LABEL="production"
+LANGFUSE_PROMPT_MEETING_SUMMARY="chronote-meeting-summary-chat"
+LANGFUSE_PROMPT_CACHE_TTL_MS="60000"
+DOCS_ALGOLIA_APP_ID=""
+DOCS_ALGOLIA_API_KEY=""
+DOCS_ALGOLIA_INDEX_NAME=""
+REDIS_URL=""
+REDIS_AUTH_TOKEN="change-me-redis-auth-token"
+
+# Alerting
+alert_email=""
+alert_discord_channel_id=""
+
+# Observability
+grafana_api_key=""
+grafana_url=""
+grafana_service_account_id=""
+grafana_token_rotation_days=25

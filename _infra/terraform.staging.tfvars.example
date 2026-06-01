@@ -6,6 +6,8 @@ AWS_TOKEN_KEY="your-aws-token-key"
 environment="staging"
 project_name="meeting-notes"
 github_environment="staging"
+github_owner="Chronote-gg"
+github_repository="Chronote"
 
 # OAuth / URLs
 ENABLE_OAUTH="true"
