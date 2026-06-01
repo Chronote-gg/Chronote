@@ -343,6 +343,8 @@ jobs:
 
           echo "Sandbox deploy target preflight passed."
 
+  # Keep each deploy job scoped to the sandbox environment so AWS credentials and
+  # target variables do not need to be passed through job outputs.
   deploybackend:
     name: Deploy Backend (Sandbox)
     needs: [deploy-target-preflight]
