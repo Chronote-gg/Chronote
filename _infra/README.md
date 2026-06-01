@@ -188,22 +188,34 @@ If you set `DOCS_DOMAIN` in `terraform.tfvars`, Terraform will:
 
 Deploy workflows use those variables to publish `apps/docs-site` to `docs.chronote.gg`.
 
-## Environments (prod vs staging)
+## Environments (production, sandbox, staging)
 
 Terraform now supports environment-specific resource naming via `environment`
 and `project_name` in `terraform.tfvars`.
 
 Recommended workflow:
 
-1. Use a separate workspace for staging: `terraform workspace new staging`
-2. Set `environment="staging"` and `github_environment="staging"` in
-   `terraform.tfvars` for staging runs.
-3. For production, keep `environment="prod"` and your existing GitHub Actions
-   environment name (currently `sandbox`).
+1. Use the default Terraform workspace for production only.
+2. Use a separate `sandbox` Terraform workspace for sandbox resources.
+3. Set `environment="prod"` and `github_environment="production"` for production.
+4. Set `environment="sandbox"` and `github_environment="sandbox"` for sandbox.
+5. Do not point the `sandbox` GitHub Actions environment at production resources.
+
+Terraform also writes deploy variables back to GitHub. Keep `github_owner` and
+`github_repository` pointed at the repository that owns the deployment workflows
+(currently `Chronote-gg/Chronote`).
+
+GitHub environments contain environment-scoped secrets. Terraform protects the
+managed GitHub environment from destruction so a production plan cannot replace
+an existing state entry that still points at the old `sandbox` environment. If a
+plan shows `github_repository_environment.repo_env` needs replacement, stop and
+migrate/import the GitHub environment state before applying.
 
 If you prefer separate variable files, use:
 
 - Prod: `terraform -chdir=_infra plan -var-file=terraform.tfvars`
+- Sandbox: copy `terraform.sandbox.tfvars.example` to `terraform.sandbox.tfvars`, then run
+  `terraform -chdir=_infra plan -var-file=terraform.sandbox.tfvars`
 - Staging: copy `terraform.staging.tfvars.example` to `terraform.staging.tfvars`, then run
   `terraform -chdir=_infra plan -var-file=terraform.staging.tfvars`
 
@@ -225,9 +237,10 @@ Each GitHub environment used by the workflow must provide:
 - Secret `TERRAFORM_TFVARS_JSON`
 
 The workflow dispatch choices should only list GitHub Actions environments that
-already exist and have these secrets configured. Add `staging` to the workflow
-inputs only after creating the `staging` environment and setting its Terraform
-credentials and tfvars.
+already exist and have these secrets configured. Production plans must use the
+`production` GitHub environment with the `default` Terraform workspace. Sandbox
+plans must use the `sandbox` GitHub environment with the `sandbox` Terraform
+workspace.
 
 `TERRAFORM_TFVARS_JSON` is the environment-specific Terraform variable file as
 JSON. Keep it aligned with the private `terraform.tfvars` values used for manual

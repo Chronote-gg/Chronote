@@ -96,8 +96,8 @@ This file provides Copilot review context. AGENTS.md remains the source of truth
 
 - Variables (tfvars.example): Discord IDs/tokens, OpenAI keys, OAuth secrets, ENABLE_OAUTH (false by default in example), AWS/GitHub tokens.
 - ECS task environment passes all relevant vars from Terraform; OpenAI org/project optional; OAuth vars included but can be blank if disabled.
-- Terraform plan/apply is manual via `.github/workflows/terraform-plan.yml` and `.github/workflows/terraform-apply.yml`; merges do not auto-apply Terraform. Apply uses a reviewed saved plan artifact plus GitHub environment approval. The workflows use environment-scoped AWS credentials and a `TERRAFORM_TFVARS_JSON` secret.
-- Backend deploy workflows wait for unexpired `ActiveMeetingTable` leases before replacing the ECS task. Keep production and staging guards aligned when editing deploy steps.
+- Terraform plan/apply is manual via `.github/workflows/terraform-plan.yml` and `.github/workflows/terraform-apply.yml`; merges do not auto-apply Terraform. Apply uses a reviewed saved plan artifact plus GitHub environment approval. Production uses GitHub environment `production` with Terraform workspace `default`; sandbox uses GitHub environment `sandbox` with Terraform workspace `sandbox`.
+- Backend deploy workflows wait for unexpired `ActiveMeetingTable` leases before replacing the ECS task. Keep production and sandbox guards aligned when editing deploy steps.
 - Future work suggestion: keep cache and Redis Terraform resources in `_infra/cache.tf`, and add new cache infrastructure there.
 
 ## Known nuances / gotchas

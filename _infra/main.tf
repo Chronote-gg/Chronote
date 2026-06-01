@@ -38,7 +38,7 @@ variable "project_name" {
 }
 
 variable "environment" {
-  description = "Deployment environment (e.g., prod, staging)"
+  description = "Deployment environment (e.g., prod, sandbox, staging)"
   type        = string
   default     = "prod"
 }
@@ -46,7 +46,19 @@ variable "environment" {
 variable "github_environment" {
   description = "GitHub Actions environment name to populate with deploy variables"
   type        = string
-  default     = "sandbox"
+  default     = "production"
+}
+
+variable "github_owner" {
+  description = "GitHub organization or user that owns the repository receiving deploy variables"
+  type        = string
+  default     = "Chronote-gg"
+}
+
+variable "github_repository" {
+  description = "GitHub repository receiving deploy variables"
+  type        = string
+  default     = "Chronote"
 }
 
 
@@ -420,7 +432,7 @@ provider "aws" {
 data "aws_caller_identity" "current" {}
 
 provider "github" {
-  owner = "BASIC-BIT"
+  owner = var.github_owner
   token = var.GITHUB_TOKEN
 }
 
@@ -483,12 +495,16 @@ EOF
 }
 
 data "github_repository" "repo" {
-  full_name = "BASIC-BIT/meeting-notes-discord-bot"
+  full_name = "${var.github_owner}/${var.github_repository}"
 }
 
 resource "github_repository_environment" "repo_env" {
   repository  = data.github_repository.repo.name
   environment = var.github_environment
+
+  lifecycle {
+    prevent_destroy = true
+  }
 }
 
 resource "github_actions_environment_variable" "envvar_aws_region" {

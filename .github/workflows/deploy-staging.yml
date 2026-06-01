@@ -1,6 +1,6 @@
-name: Meeting Notes Bot Deploy (Staging)
+name: Meeting Notes Bot Deploy (Sandbox)
 
-run-name: Staging Deploy ${{ github.actor }}
+run-name: Sandbox Deploy ${{ github.actor }}
 
 on:
   workflow_dispatch:
@@ -251,8 +251,8 @@ jobs:
       - name: Run Playwright tests (mock mode)
         run: yarn test:e2e
 
-  deploybackend:
-    name: Deploy Backend (Staging)
+  deploy-target-preflight:
+    name: Deploy Target Preflight
     needs:
       [
         lint,
@@ -266,7 +266,90 @@ jobs:
         e2e-tests,
       ]
     runs-on: ubuntu-latest
-    environment: staging
+    environment: sandbox
+    env:
+      DEPLOY_ENVIRONMENT: sandbox
+      VITE_API_BASE_URL: ${{ vars.VITE_API_BASE_URL }}
+      ECR_REPOSITORY: ${{ vars.ECR_REPOSITORY }}
+      ECS_CLUSTER: ${{ vars.ECS_CLUSTER }}
+      ECS_SERVICE: ${{ vars.ECS_SERVICE }}
+      ECS_TASK_FAMILY: ${{ vars.ECS_TASK_FAMILY }}
+      ECS_LOG_GROUP: ${{ vars.ECS_LOG_GROUP }}
+      SECRETS_PREFIX: ${{ vars.SECRETS_PREFIX }}
+      FRONTEND_BUCKET: ${{ vars.FRONTEND_BUCKET }}
+      DOCS_BUCKET: ${{ vars.DOCS_BUCKET }}
+      AWS_ACCESS_KEY_ID: ${{ vars.AWS_ACCESS_KEY_ID }}
+      AWS_REGION: ${{ vars.AWS_REGION }}
+      FRONTEND_DISTRIBUTION_ID: ${{ vars.FRONTEND_DISTRIBUTION_ID }}
+      HAS_AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY != '' }}
+    steps:
+      - name: Reject production resources for sandbox deploys
+        run: |
+          set -euo pipefail
+
+          required_names=(
+            AWS_ACCESS_KEY_ID
+            AWS_REGION
+            ECR_REPOSITORY
+            ECS_CLUSTER
+            ECS_SERVICE
+            ECS_TASK_FAMILY
+            ECS_LOG_GROUP
+            FRONTEND_BUCKET
+            FRONTEND_DISTRIBUTION_ID
+            SECRETS_PREFIX
+            VITE_API_BASE_URL
+          )
+
+          missing_values=()
+          for name in "${required_names[@]}"; do
+            if [ -z "${!name:-}" ]; then
+              missing_values+=("$name")
+            fi
+          done
+
+          if [ "$HAS_AWS_SECRET_ACCESS_KEY" != "true" ]; then
+            missing_values+=("AWS_SECRET_ACCESS_KEY")
+          fi
+
+          if [ ${#missing_values[@]} -gt 0 ]; then
+            echo "ERROR: sandbox deploy is missing required configuration."
+            printf ' - %s\n' "${missing_values[@]}"
+            exit 1
+          fi
+
+          production_hits=()
+          for value in \
+            "$VITE_API_BASE_URL" \
+            "$ECR_REPOSITORY" \
+            "$ECS_CLUSTER" \
+            "$ECS_SERVICE" \
+            "$ECS_TASK_FAMILY" \
+            "$ECS_LOG_GROUP" \
+            "$SECRETS_PREFIX" \
+            "$FRONTEND_BUCKET" \
+            "$DOCS_BUCKET"; do
+            normalized="${value,,}"
+            if [[ "$normalized" == *"prod"* ]] || [[ "$normalized" == "https://api.chronote.gg"* ]]; then
+              production_hits+=("$value")
+            fi
+          done
+
+          if [ ${#production_hits[@]} -gt 0 ]; then
+            echo "ERROR: sandbox deploy variables still reference production resources."
+            printf ' - %s\n' "${production_hits[@]}"
+            exit 1
+          fi
+
+          echo "Sandbox deploy target preflight passed."
+
+  # Keep each deploy job scoped to the sandbox environment so AWS credentials and
+  # target variables do not need to be passed through job outputs.
+  deploybackend:
+    name: Deploy Backend (Sandbox)
+    needs: [deploy-target-preflight]
+    runs-on: ubuntu-latest
+    environment: sandbox
     env:
       ECS_CLUSTER: ${{ vars.ECS_CLUSTER }}
       ECS_SERVICE: ${{ vars.ECS_SERVICE }}
@@ -512,14 +595,14 @@ jobs:
           ACTOR: ${{ github.actor }}
         run: |
           if [ "$JOB_STATUS" == "success" ]; then
-            echo "## ✅ Staging Deployment Successful!" >> $GITHUB_STEP_SUMMARY
+            echo "## ✅ Sandbox Deployment Successful!" >> $GITHUB_STEP_SUMMARY
             echo "" >> $GITHUB_STEP_SUMMARY
             echo "- **Commit:** $COMMIT_SHA" >> $GITHUB_STEP_SUMMARY
             echo "- **Branch:** $REF_NAME" >> $GITHUB_STEP_SUMMARY
             echo "- **Deployed by:** $ACTOR" >> $GITHUB_STEP_SUMMARY
             echo "- **Deployment time:** $(date -u +"%Y-%m-%d %H:%M:%S UTC")" >> $GITHUB_STEP_SUMMARY
           else
-            echo "## ❌ Staging Deployment Failed!" >> $GITHUB_STEP_SUMMARY
+            echo "## ❌ Sandbox Deployment Failed!" >> $GITHUB_STEP_SUMMARY
             echo "" >> $GITHUB_STEP_SUMMARY
             echo "- **Commit:** $COMMIT_SHA" >> $GITHUB_STEP_SUMMARY
             echo "- **Branch:** $REF_NAME" >> $GITHUB_STEP_SUMMARY
@@ -528,21 +611,10 @@ jobs:
           fi
 
   deploy-frontend:
-    name: Deploy Frontend (Staging)
-    needs:
-      [
-        lint,
-        markdownlint,
-        test,
-        code-stats,
-        prompts-check,
-        llm-connections-check,
-        build,
-        docs-check,
-        e2e-tests,
-      ]
+    name: Deploy Frontend (Sandbox)
+    needs: [deploy-target-preflight]
     runs-on: ubuntu-latest
-    environment: staging
+    environment: sandbox
     env:
       VITE_API_BASE_URL: ${{ vars.VITE_API_BASE_URL }}
     steps:
@@ -594,21 +666,10 @@ jobs:
           aws cloudfront create-invalidation --distribution-id "$FRONTEND_DISTRIBUTION_ID" --paths "/*"
 
   deploy-docs:
-    name: Deploy Docs (Staging)
-    needs:
-      [
-        lint,
-        markdownlint,
-        test,
-        code-stats,
-        prompts-check,
-        llm-connections-check,
-        build,
-        docs-check,
-        e2e-tests,
-      ]
+    name: Deploy Docs (Sandbox)
+    needs: [deploy-target-preflight]
     runs-on: ubuntu-latest
-    environment: staging
+    environment: sandbox
     steps:
       - name: Checkout
         uses: actions/checkout@v6
