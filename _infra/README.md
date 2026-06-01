@@ -192,6 +192,9 @@ Deploy workflows use those variables to publish `apps/docs-site` to `docs.chrono
 
 Terraform now supports environment-specific resource naming via `environment`
 and `project_name` in `terraform.tfvars`.
+Shared-account singleton names should include the environment prefix. This
+includes VPC flow log IAM roles and CloudWatch log groups, which otherwise
+collide when provisioning sandbox alongside production.
 
 Recommended workflow:
 

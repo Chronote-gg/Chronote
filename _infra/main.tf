@@ -2682,7 +2682,7 @@ output "docs_distribution_id" {
 
 # Flow logs IAM role
 resource "aws_iam_role" "vpc_flow_logs_role" {
-  name = "vpc_flow_logs_role"
+  name = "${local.name_prefix}-vpc-flow-logs-role"
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17",
@@ -2728,7 +2728,7 @@ resource "aws_iam_role_policy" "vpc_flow_logs_policy" {
 }
 
 resource "aws_cloudwatch_log_group" "vpc_flow_logs" {
-  name              = "/vpc/flow/app-vpc"
+  name              = "/vpc/flow/${local.name_prefix}-app-vpc"
   retention_in_days = 365
   kms_key_id        = aws_kms_key.app_general.arn
 
