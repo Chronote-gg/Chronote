@@ -299,6 +299,20 @@ const ensureBotCanSend = (
   return null;
 };
 
+async function resolveInteractionMember(
+  guild: NonNullable<StartMeetingInteraction["guild"]>,
+  userId: string,
+): Promise<GuildMember | null> {
+  const cached = guild.members.cache.get(userId);
+  if (cached) return cached;
+
+  try {
+    return await guild.members.fetch(userId);
+  } catch {
+    return null;
+  }
+}
+
 const ensureNoActiveMeeting = async (guildId: string) => {
   if (hasMeeting(guildId)) {
     const meeting = getMeeting(guildId);
@@ -528,9 +542,15 @@ export async function handleRequestStartMeeting(
     return;
   }
 
-  const untypedMember = interaction.member;
-  if (!untypedMember || !interaction.guild) return;
-  const member = untypedMember as GuildMember;
+  const member = await resolveInteractionMember(guild, interaction.user.id);
+  if (!member) {
+    await replyStartMeetingError(
+      interaction,
+      "Unable to find your server member profile.",
+      options,
+    );
+    return;
+  }
   const voiceResult = resolveMemberVoiceChannel(member);
   if (!voiceResult.ok) {
     await replyStartMeetingError(interaction, voiceResult.error, options);
