@@ -55,6 +55,7 @@ import {
   startMeetingLeaseHeartbeat,
   tryAcquireMeetingLease,
 } from "../services/activeMeetingLeaseService";
+import { fetchGuildMember } from "../utils/guildMembers";
 
 type GuildLimits = Awaited<ReturnType<typeof getGuildLimits>>["limits"];
 
@@ -63,6 +64,7 @@ type StartMeetingInteraction =
   | UserContextMenuCommandInteraction;
 
 type StartMeetingOptions = {
+  deferredEphemeralReply?: boolean;
   ephemeralErrors?: boolean;
 };
 
@@ -238,6 +240,11 @@ const replyStartMeetingError = async (
   content: string,
   options?: StartMeetingOptions,
 ) => {
+  if (options?.deferredEphemeralReply) {
+    await interaction.editReply(content);
+    return;
+  }
+
   if (!options?.ephemeralErrors) {
     await interaction.reply(content);
     return;
@@ -528,9 +535,15 @@ export async function handleRequestStartMeeting(
     return;
   }
 
-  const untypedMember = interaction.member;
-  if (!untypedMember || !interaction.guild) return;
-  const member = untypedMember as GuildMember;
+  const member = await fetchGuildMember(guild, interaction.user.id);
+  if (!member) {
+    await replyStartMeetingError(
+      interaction,
+      "Unable to find your server member profile.",
+      options,
+    );
+    return;
+  }
   const voiceResult = resolveMemberVoiceChannel(member);
   if (!voiceResult.ok) {
     await replyStartMeetingError(interaction, voiceResult.error, options);
@@ -550,6 +563,14 @@ export async function handleRequestStartMeeting(
   });
   if (!startResult.ok) {
     if (startResult.upgradePrompt) {
+      if (options?.deferredEphemeralReply) {
+        const upgradePrompt = buildUpgradePrompt(startResult.error);
+        await interaction.editReply({
+          components: upgradePrompt.components,
+          content: upgradePrompt.content,
+        });
+        return;
+      }
       await interaction.reply(buildUpgradePrompt(startResult.error));
       return;
     }
@@ -558,6 +579,17 @@ export async function handleRequestStartMeeting(
   }
 
   const { meeting, liveMeetingUrl } = startResult;
+
+  if (options?.deferredEphemeralReply) {
+    const message = await textChannel.send(
+      buildManualMeetingStartedMessage(meeting, liveMeetingUrl),
+    );
+    meeting.startMessageId = message.id;
+    await interaction.editReply(
+      `Meeting started in **${meeting.voiceChannel.name}**.`,
+    );
+    return;
+  }
 
   const reply = await interaction.reply({
     ...buildManualMeetingStartedMessage(meeting, liveMeetingUrl),

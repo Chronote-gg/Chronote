@@ -9,7 +9,7 @@ This page is a reference for every Chronote command and feature. Each section de
 
 ### `/startmeeting`
 
-Starts a recorded meeting in the voice channel you are currently in. You can also right-click Chronote and select **Apps** -> **Start meeting** to start without context or tags.
+Starts a recorded meeting in the voice channel you are currently in. You can also right-click yourself, Chronote, or someone in your voice channel and select **Apps** -> **Start meeting** to start without context or tags.
 
 | Option    | Required | Description                                |
 | --------- | -------- | ------------------------------------------ |
