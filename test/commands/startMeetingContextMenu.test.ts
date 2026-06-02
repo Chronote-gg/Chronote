@@ -21,6 +21,8 @@ type MockGuildMember = {
 };
 
 type MockInteraction = UserContextMenuCommandInteraction & {
+  deferReply: jest.Mock;
+  editReply: jest.Mock;
   reply: jest.Mock;
   user: { id: string; send: jest.Mock };
 };
@@ -60,8 +62,15 @@ const makeInteraction = (
     guild: makeGuild(members),
     user: { id: userId, send: jest.fn().mockResolvedValue(undefined) },
     targetUser: { id: targetUserId },
+    deferReply: jest.fn().mockResolvedValue(undefined),
+    editReply: jest.fn().mockResolvedValue(undefined),
     reply: jest.fn().mockResolvedValue(undefined),
   }) as unknown as MockInteraction;
+
+const expectedStartOptions = {
+  deferredEphemeralReply: true,
+  ephemeralErrors: true,
+};
 
 describe("start meeting context menu", () => {
   let consoleLogSpy: jest.SpiedFunction<typeof console.log>;
@@ -98,9 +107,11 @@ describe("start meeting context menu", () => {
 
     await handleStartMeetingContextCommand(makeClient("bot-1"), interaction);
 
-    expect(mockedHandleRequestStartMeeting).toHaveBeenCalledWith(interaction, {
-      ephemeralErrors: true,
-    });
+    expect(interaction.deferReply).toHaveBeenCalledWith({ ephemeral: true });
+    expect(mockedHandleRequestStartMeeting).toHaveBeenCalledWith(
+      interaction,
+      expectedStartOptions,
+    );
     expect(interaction.reply).not.toHaveBeenCalled();
   });
 
@@ -109,9 +120,11 @@ describe("start meeting context menu", () => {
 
     await handleStartMeetingContextCommand(makeClient("bot-1"), interaction);
 
-    expect(mockedHandleRequestStartMeeting).toHaveBeenCalledWith(interaction, {
-      ephemeralErrors: true,
-    });
+    expect(interaction.deferReply).toHaveBeenCalledWith({ ephemeral: true });
+    expect(mockedHandleRequestStartMeeting).toHaveBeenCalledWith(
+      interaction,
+      expectedStartOptions,
+    );
     expect(interaction.reply).not.toHaveBeenCalled();
   });
 
@@ -124,9 +137,11 @@ describe("start meeting context menu", () => {
 
     await handleStartMeetingContextCommand(makeClient("bot-1"), interaction);
 
-    expect(mockedHandleRequestStartMeeting).toHaveBeenCalledWith(interaction, {
-      ephemeralErrors: true,
-    });
+    expect(interaction.deferReply).toHaveBeenCalledWith({ ephemeral: true });
+    expect(mockedHandleRequestStartMeeting).toHaveBeenCalledWith(
+      interaction,
+      expectedStartOptions,
+    );
     expect(interaction.reply).not.toHaveBeenCalled();
   });
 
@@ -143,10 +158,11 @@ describe("start meeting context menu", () => {
     expect(interaction.user.send).toHaveBeenCalledWith(
       "I did not start a meeting because the selected user is in a different voice channel. Use Start meeting on yourself, Chronote, or someone in your current voice channel.",
     );
-    expect(interaction.reply).toHaveBeenCalledWith({
+    expect(interaction.deferReply).toHaveBeenCalledWith({ ephemeral: true });
+    expect(interaction.editReply).toHaveBeenCalledWith({
       content: "I sent you a DM with why Start meeting did not run.",
-      ephemeral: true,
     });
+    expect(interaction.reply).not.toHaveBeenCalled();
   });
 
   it("DMs when invoked on someone outside voice", async () => {
@@ -162,10 +178,11 @@ describe("start meeting context menu", () => {
     expect(interaction.user.send).toHaveBeenCalledWith(
       "I did not start a meeting because the selected user is not in a voice channel. Use Start meeting on yourself, Chronote, or someone in your current voice channel.",
     );
-    expect(interaction.reply).toHaveBeenCalledWith({
+    expect(interaction.deferReply).toHaveBeenCalledWith({ ephemeral: true });
+    expect(interaction.editReply).toHaveBeenCalledWith({
       content: "I sent you a DM with why Start meeting did not run.",
-      ephemeral: true,
     });
+    expect(interaction.reply).not.toHaveBeenCalled();
   });
 
   it("falls back to an ephemeral reply when the DM fails", async () => {
@@ -179,11 +196,12 @@ describe("start meeting context menu", () => {
     await handleStartMeetingContextCommand(makeClient("bot-1"), interaction);
 
     expect(mockedHandleRequestStartMeeting).not.toHaveBeenCalled();
-    expect(interaction.reply).toHaveBeenCalledWith({
+    expect(interaction.deferReply).toHaveBeenCalledWith({ ephemeral: true });
+    expect(interaction.editReply).toHaveBeenCalledWith({
       content:
         "I did not start a meeting because the selected user is in a different voice channel. Use Start meeting on yourself, Chronote, or someone in your current voice channel.",
-      ephemeral: true,
     });
+    expect(interaction.reply).not.toHaveBeenCalled();
   });
 
   it("DMs when the invoker is not in a voice channel", async () => {
@@ -198,10 +216,11 @@ describe("start meeting context menu", () => {
     expect(interaction.user.send).toHaveBeenCalledWith(
       "Join a voice channel, then use Start meeting on yourself, Chronote, or someone in that voice channel.",
     );
-    expect(interaction.reply).toHaveBeenCalledWith({
+    expect(interaction.deferReply).toHaveBeenCalledWith({ ephemeral: true });
+    expect(interaction.editReply).toHaveBeenCalledWith({
       content: "I sent you a DM with why Start meeting did not run.",
-      ephemeral: true,
     });
+    expect(interaction.reply).not.toHaveBeenCalled();
   });
 
   it("blocks while the bot user is unavailable", async () => {
@@ -210,6 +229,7 @@ describe("start meeting context menu", () => {
     await handleStartMeetingContextCommand(makeClient(null), interaction);
 
     expect(mockedHandleRequestStartMeeting).not.toHaveBeenCalled();
+    expect(interaction.deferReply).not.toHaveBeenCalled();
     expect(interaction.reply).toHaveBeenCalledWith({
       content: "The bot is still starting up. Try again in a moment.",
       ephemeral: true,

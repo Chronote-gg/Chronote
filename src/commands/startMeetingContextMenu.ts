@@ -2,10 +2,9 @@ import {
   ApplicationCommandType,
   ContextMenuCommandBuilder,
   type Client,
-  type Guild,
-  type GuildMember,
   type UserContextMenuCommandInteraction,
 } from "discord.js";
+import { fetchGuildMember } from "../utils/guildMembers";
 import { handleRequestStartMeeting } from "./startMeeting";
 
 export const START_MEETING_CONTEXT_COMMAND_NAME = "Start meeting";
@@ -27,20 +26,6 @@ type TargetVoiceValidation =
 
 const START_MEETING_CONTEXT_DM_ACK =
   "I sent you a DM with why Start meeting did not run.";
-
-async function fetchGuildMember(
-  guild: Guild,
-  userId: string,
-): Promise<GuildMember | null> {
-  const cached = guild.members.cache.get(userId);
-  if (cached) return cached;
-
-  try {
-    return await guild.members.fetch(userId);
-  } catch {
-    return null;
-  }
-}
 
 async function validateTargetVoiceChannel(
   interaction: UserContextMenuCommandInteraction,
@@ -122,9 +107,8 @@ async function replyWithDmError(
     });
   }
 
-  await interaction.reply({
+  await interaction.editReply({
     content: dmSent ? START_MEETING_CONTEXT_DM_ACK : validation.message,
-    ephemeral: true,
   });
 }
 
@@ -141,11 +125,16 @@ export async function handleStartMeetingContextCommand(
     return;
   }
 
+  await interaction.deferReply({ ephemeral: true });
+
   const validation = await validateTargetVoiceChannel(interaction, botUserId);
   if (!validation.ok) {
     await replyWithDmError(interaction, validation);
     return;
   }
 
-  await handleRequestStartMeeting(interaction, { ephemeralErrors: true });
+  await handleRequestStartMeeting(interaction, {
+    deferredEphemeralReply: true,
+    ephemeralErrors: true,
+  });
 }
