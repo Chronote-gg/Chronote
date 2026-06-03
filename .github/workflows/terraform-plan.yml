@@ -203,6 +203,7 @@ jobs:
             _infra/tfplan
             _infra/tfplan.sha256
             _infra/terraform-plan.txt
+            _infra/*.zip
           retention-days: 1
           if-no-files-found: error
 
@@ -233,4 +234,4 @@ jobs:
 
       - name: Remove generated tfvars
         if: always()
-        run: rm -f _infra/terraform.auto.tfvars.json _infra/tfplan _infra/tfplan.sha256 _infra/terraform-plan.txt
+        run: rm -f _infra/terraform.auto.tfvars.json _infra/tfplan _infra/tfplan.sha256 _infra/terraform-plan.txt _infra/*.zip

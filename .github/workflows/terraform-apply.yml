@@ -122,6 +122,7 @@ jobs:
           fi
 
           cp _infra/plan-artifact/tfplan _infra/tfplan
+          find _infra/plan-artifact -maxdepth 1 -name "*.zip" -exec cp {} _infra/ \;
 
       - name: Write Terraform variables
         env:
@@ -241,4 +242,4 @@ jobs:
 
       - name: Remove generated files
         if: always()
-        run: rm -rf _infra/terraform.auto.tfvars.json _infra/tfplan _infra/plan-artifact
+        run: rm -rf _infra/terraform.auto.tfvars.json _infra/tfplan _infra/plan-artifact _infra/*.zip
