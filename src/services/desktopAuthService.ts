@@ -83,6 +83,21 @@ export const hasDesktopScopes = (
   required: DesktopAuthScope[],
 ) => required.every((scope) => granted.includes(scope));
 
+export const isDesktopUserAllowed = (userId: string) => {
+  if (config.desktop.allowedUserIds.length === 0) return config.mock.enabled;
+  return config.desktop.allowedUserIds.includes(userId);
+};
+
+const assertDesktopUserAllowed = (userId: string) => {
+  if (!isDesktopUserAllowed(userId)) {
+    throw new DesktopAuthError(
+      "access_denied",
+      "Desktop beta is not enabled for this account.",
+      403,
+    );
+  }
+};
+
 export const isDesktopRedirectUriAllowed = (value: string) => {
   try {
     const url = new URL(value);
@@ -115,6 +130,7 @@ const issueTokenPair = async (params: {
   avatar?: string | null;
   scopes: DesktopAuthScope[];
 }): Promise<DesktopTokenResponse> => {
+  assertDesktopUserAllowed(params.userId);
   const repository = getDesktopAuthRepository();
   const createdAt = nowIso();
   const accessToken = `desktop_at_${randomToken(ACCESS_TOKEN_BYTES)}`;
@@ -178,6 +194,7 @@ export async function issueDesktopAuthorizationCode(params: {
   if (params.codeChallengeMethod !== "S256") {
     throw new DesktopAuthError("invalid_request", "PKCE S256 is required.");
   }
+  assertDesktopUserAllowed(params.user.id);
   const scopes = parseDesktopScopes(params.scope);
   const code = `desktop_code_${randomToken(AUTH_CODE_BYTES)}`;
   await getDesktopAuthRepository().writeAuthorizationCode({

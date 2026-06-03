@@ -149,6 +149,13 @@ Notes:
 - These secrets should **not** live in `terraform.tfvars`.
 - Local development still uses `.env` values.
 - Each secret must have an `AWSCURRENT` value. If a secret exists without a value, set **SecretString** to create one.
+- Do not copy production secrets into sandbox. Provision sandbox credentials case by case:
+  - `discord-bot-token` and `discord-client-secret`: use a separate sandbox Discord application and bot.
+  - `oauth-secret`: generate a sandbox-only random signing secret.
+  - `openai-api-key`: prefer a separate OpenAI project/service account with sandbox budget limits.
+  - `langfuse-public-key` and `langfuse-secret-key`: prefer a sandbox Langfuse project or environment. If sharing one project intentionally, keep `LANGFUSE_TRACING_ENVIRONMENT=sandbox`.
+  - `stripe-secret-key` and `stripe-webhook-secret`: use Stripe sandbox/test-mode credentials and a sandbox webhook endpoint.
+  - `notion-client-secret`: use a sandbox Notion public connection, or keep `NOTION_CLIENT_ID` blank and set a dummy value because ECS currently references this secret unconditionally.
 
 Example CLI:
 

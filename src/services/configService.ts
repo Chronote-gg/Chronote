@@ -7,6 +7,17 @@ dotenv.config();
 const isMockMode =
   process.env.MOCK_MODE === "true" || process.argv.includes("--mock");
 
+const parseCsv = (value?: string) =>
+  (value || "")
+    .split(",")
+    .map((item) => item.trim())
+    .filter((item) => item.length > 0);
+
+const parseBoolean = (value: string | undefined, fallback: boolean) => {
+  if (value === undefined) return fallback;
+  return value === "true";
+};
+
 /**
  * Centralized configuration service
  * All environment variable access should go through this service
@@ -160,10 +171,15 @@ class ConfigService {
 
   // Admin configuration
   readonly admin = {
-    superAdminUserIds: (process.env.SUPER_ADMIN_USER_IDS || "")
-      .split(",")
-      .map((value) => value.trim())
-      .filter((value) => value.length > 0),
+    superAdminUserIds: parseCsv(process.env.SUPER_ADMIN_USER_IDS),
+  };
+
+  readonly desktop = {
+    enabled: parseBoolean(process.env.ENABLE_DESKTOP_API, this.mock.enabled),
+    allowedUserIds:
+      parseCsv(process.env.DESKTOP_ALLOWED_USER_IDS).length > 0
+        ? parseCsv(process.env.DESKTOP_ALLOWED_USER_IDS)
+        : this.admin.superAdminUserIds,
   };
 
   // Contact feedback configuration

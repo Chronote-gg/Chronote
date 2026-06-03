@@ -9,7 +9,7 @@ import { Profile, Strategy as DiscordStrategy } from "passport-discord";
 import { User } from "discord.js";
 import * as trpcExpress from "@trpc/server/adapters/express";
 import { registerBillingRoutes } from "./api/billing";
-import { registerDesktopRoutes } from "./api/desktop";
+import { registerDesktopRoutesIfEnabled } from "./api/desktop";
 import { registerGuildRoutes } from "./api/guilds";
 import { registerLiveMeetingRoutes } from "./api/liveMeetings";
 import { getMcpServerCard, registerMcpRoutes } from "./api/mcp";
@@ -440,7 +440,7 @@ export function setupWebServer() {
 
   registerNotionOAuthRoutes(app);
   registerMockStorageRoutes(app);
-  registerDesktopRoutes(app);
+  registerDesktopRoutesIfEnabled(app);
 
   // tRPC API
   app.use(

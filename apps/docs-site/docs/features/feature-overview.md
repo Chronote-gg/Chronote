@@ -216,6 +216,8 @@ When processing completes, the meeting appears in **My Meetings** under your per
 
 Chronote Desktop records a personal meeting directly from a Windows computer. It captures your microphone as **Me**, captures system audio as **System/Other**, uploads both sources to Chronote, and creates a personal meeting in **My Meetings**.
 
+Chronote Desktop is currently available as a limited beta. Your account must have desktop access enabled before sign-in and upload will work.
+
 1. Open Chronote Desktop.
 2. Sign in with Chronote. The app opens your browser and returns to the desktop app after authorization.
 3. Choose a microphone and system output device, or keep the defaults.

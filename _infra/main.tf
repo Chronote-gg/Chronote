@@ -1638,6 +1638,14 @@ resource "aws_ecs_task_definition" "app_task" {
           value = var.ENABLE_ONBOARDING
         },
         {
+          name  = "ENABLE_DESKTOP_API"
+          value = var.ENABLE_DESKTOP_API
+        },
+        {
+          name  = "DESKTOP_ALLOWED_USER_IDS"
+          value = var.DESKTOP_ALLOWED_USER_IDS
+        },
+        {
           name  = "FRONTEND_ALLOWED_ORIGINS"
           value = var.FRONTEND_ALLOWED_ORIGINS
         },
