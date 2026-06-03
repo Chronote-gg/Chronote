@@ -149,6 +149,13 @@ Notes:
 - These secrets should **not** live in `terraform.tfvars`.
 - Local development still uses `.env` values.
 - Each secret must have an `AWSCURRENT` value. If a secret exists without a value, set **SecretString** to create one.
+- Do not copy production secrets into sandbox. Provision sandbox credentials case by case:
+  - `discord-bot-token` and `discord-client-secret`: use a separate sandbox Discord application and bot.
+  - `oauth-secret`: generate a sandbox-only random signing secret.
+  - `openai-api-key`: prefer a separate OpenAI project/service account with sandbox budget limits.
+  - `langfuse-public-key` and `langfuse-secret-key`: prefer a sandbox Langfuse project or environment. If sharing one project intentionally, keep `LANGFUSE_TRACING_ENVIRONMENT=sandbox`.
+  - `stripe-secret-key` and `stripe-webhook-secret`: use Stripe sandbox/test-mode credentials and a sandbox webhook endpoint.
+  - `notion-client-secret`: use a sandbox Notion public connection, or keep `NOTION_CLIENT_ID` blank and set a dummy value because ECS currently references this secret unconditionally.
 
 Example CLI:
 
@@ -192,6 +199,9 @@ Deploy workflows use those variables to publish `apps/docs-site` to `docs.chrono
 
 Terraform now supports environment-specific resource naming via `environment`
 and `project_name` in `terraform.tfvars`.
+Shared-account singleton names should include the environment prefix. This
+includes VPC flow log IAM roles and CloudWatch log groups, which otherwise
+collide when provisioning sandbox alongside production.
 
 Recommended workflow:
 
@@ -245,7 +255,11 @@ workspace.
 `TERRAFORM_TFVARS_JSON` is the environment-specific Terraform variable file as
 JSON. Keep it aligned with the private `terraform.tfvars` values used for manual
 plans. The workflow validates that required variables are present and rejects a
-non-empty `grafana_api_key` after Grafana token rotation is active. Use
+non-empty `grafana_api_key` after Grafana token rotation is active. Scalar
+values must be JSON strings; the workflow normalizes string arrays only when
+they contain exactly one non-empty value, to tolerate existing malformed
+environment secrets. During GitHub Actions runs, `AWS_TOKEN_KEY` is overwritten
+from the environment's `AWS_ACCESS_KEY_ID` secret before Terraform runs. Use
 `grafana_service_account_id` and the rotated Secrets Manager token instead.
 
 Recommended apply flow:

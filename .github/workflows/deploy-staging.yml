@@ -193,6 +193,28 @@ jobs:
           fi
           echo "Build artifacts verified successfully"
 
+  desktop-check:
+    name: Desktop Check
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: "24.15.0"
+          cache: "yarn"
+          cache-dependency-path: |
+            yarn.lock
+            apps/desktop/yarn.lock
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Validate desktop app
+        run: yarn desktop:ci
+
   docs-check:
     name: Docs Check
     runs-on: ubuntu-latest
@@ -262,6 +284,7 @@ jobs:
         prompts-check,
         llm-connections-check,
         build,
+        desktop-check,
         docs-check,
         e2e-tests,
       ]
@@ -286,7 +309,6 @@ jobs:
       - name: Reject production resources for sandbox deploys
         run: |
           set -euo pipefail
-
           required_names=(
             AWS_ACCESS_KEY_ID
             AWS_REGION
@@ -599,6 +621,7 @@ jobs:
             echo "" >> $GITHUB_STEP_SUMMARY
             echo "- **Commit:** $COMMIT_SHA" >> $GITHUB_STEP_SUMMARY
             echo "- **Branch:** $REF_NAME" >> $GITHUB_STEP_SUMMARY
+            echo "- **Environment:** sandbox" >> $GITHUB_STEP_SUMMARY
             echo "- **Deployed by:** $ACTOR" >> $GITHUB_STEP_SUMMARY
             echo "- **Deployment time:** $(date -u +"%Y-%m-%d %H:%M:%S UTC")" >> $GITHUB_STEP_SUMMARY
           else
@@ -606,6 +629,7 @@ jobs:
             echo "" >> $GITHUB_STEP_SUMMARY
             echo "- **Commit:** $COMMIT_SHA" >> $GITHUB_STEP_SUMMARY
             echo "- **Branch:** $REF_NAME" >> $GITHUB_STEP_SUMMARY
+            echo "- **Environment:** sandbox" >> $GITHUB_STEP_SUMMARY
             echo "- **Failed by:** $ACTOR" >> $GITHUB_STEP_SUMMARY
             echo "- **Failure time:** $(date -u +"%Y-%m-%d %H:%M:%S UTC")" >> $GITHUB_STEP_SUMMARY
           fi

@@ -48,7 +48,8 @@ data "aws_secretsmanager_secret_version" "grafana_token" {
 }
 
 locals {
-  grafana_rotation_enabled = var.grafana_service_account_id != "" && var.grafana_url != "http://localhost"
+  grafana_provider_url     = var.grafana_url != "" ? var.grafana_url : "http://localhost"
+  grafana_rotation_enabled = var.grafana_service_account_id != "" && local.grafana_provider_url != "http://localhost"
 
   # Prefer the rotated secret; fall back to the manual tfvar for bootstrapping
   grafana_reads_rotated_token = local.grafana_rotation_enabled && var.grafana_api_key == ""
@@ -57,12 +58,12 @@ locals {
   ) : ""
   grafana_resolved_token = local.grafana_token_from_secret != "" ? local.grafana_token_from_secret : var.grafana_api_key
 
-  grafana_enabled = local.grafana_resolved_token != "" && var.grafana_url != "" && var.grafana_url != "http://localhost"
+  grafana_enabled = local.grafana_resolved_token != "" && local.grafana_provider_url != "http://localhost"
 }
 
 provider "grafana" {
   alias = "amg"
-  url   = var.grafana_url
+  url   = local.grafana_provider_url
   auth  = local.grafana_resolved_token
 }
 

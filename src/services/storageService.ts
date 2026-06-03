@@ -9,6 +9,7 @@ import { createPresignedPost } from "@aws-sdk/s3-presigned-post";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { config } from "./configService";
 import { getMockStore } from "../repositories/mockStore";
+import { MOCK_STORAGE_UPLOAD_PATH } from "../constants";
 
 export type SignedUploadPost = {
   url: string;
@@ -43,11 +44,32 @@ const s3Client = new S3Client({
   ...(storageCredentials ? { credentials: storageCredentials } : {}),
 });
 
+const buildMockUploadPost = (
+  key: string,
+  contentType: string,
+  maxBytes: number,
+): SignedUploadPost => ({
+  url: `${config.mcp.publicBaseUrl}${MOCK_STORAGE_UPLOAD_PATH}`,
+  fields: {
+    key,
+    "Content-Type": contentType,
+    "x-chronote-max-bytes": String(maxBytes),
+  },
+});
+
 export async function uploadObjectToS3(
   key: string,
   body: string | Uint8Array | Buffer,
   contentType: string,
 ): Promise<string | undefined> {
+  if (config.mock.enabled) {
+    getMockStore().objectsByKey.set(
+      key,
+      typeof body === "string" ? body : Buffer.from(body),
+    );
+    return key;
+  }
+
   if (!config.storage.transcriptBucket) {
     console.warn("TRANSCRIPTS_BUCKET not set; skipping upload to S3.");
     return undefined;
@@ -95,7 +117,9 @@ const isMissingKeyError = (error: unknown): boolean => {
 async function fetchObjectAsString(key: string): Promise<string | undefined> {
   if (config.mock.enabled) {
     const mockObject = getMockStore().objectsByKey.get(key);
-    return mockObject;
+    return Buffer.isBuffer(mockObject)
+      ? mockObject.toString("utf8")
+      : mockObject;
   }
 
   if (!config.storage.transcriptBucket) {
@@ -166,6 +190,10 @@ export async function getSignedUploadPost(
   maxBytes: number,
   expiresInSeconds: number = 300,
 ): Promise<SignedUploadPost | undefined> {
+  if (config.mock.enabled) {
+    return buildMockUploadPost(key, contentType, maxBytes);
+  }
+
   if (!config.storage.transcriptBucket) {
     return undefined;
   }
@@ -191,10 +219,14 @@ export async function getSignedUploadPost(
 export async function getStoredObjectMetadata(
   key: string,
 ): Promise<StoredObjectMetadata | undefined> {
-  if (config.mock.enabled && !config.storage.transcriptBucket) {
+  if (config.mock.enabled) {
     const mockObject = getMockStore().objectsByKey.get(key);
     return mockObject
-      ? { contentLength: Buffer.byteLength(mockObject) }
+      ? {
+          contentLength: Buffer.isBuffer(mockObject)
+            ? mockObject.byteLength
+            : Buffer.byteLength(mockObject),
+        }
       : undefined;
   }
 
@@ -249,6 +281,13 @@ export async function downloadObjectToFile(
   key: string,
   destinationPath: string,
 ): Promise<boolean> {
+  if (config.mock.enabled) {
+    const mockObject = getMockStore().objectsByKey.get(key);
+    if (!mockObject) return false;
+    await fs.writeFile(destinationPath, mockObject);
+    return true;
+  }
+
   if (!config.storage.transcriptBucket) {
     console.warn("TRANSCRIPTS_BUCKET not set; cannot download object from S3.");
     return false;

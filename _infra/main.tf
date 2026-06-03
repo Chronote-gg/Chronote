@@ -61,7 +61,6 @@ variable "github_repository" {
   default     = "Chronote"
 }
 
-
 variable "GITHUB_TOKEN" {
   sensitive = true
 }
@@ -1639,6 +1638,14 @@ resource "aws_ecs_task_definition" "app_task" {
           value = var.ENABLE_ONBOARDING
         },
         {
+          name  = "ENABLE_DESKTOP_API"
+          value = var.ENABLE_DESKTOP_API
+        },
+        {
+          name  = "DESKTOP_ALLOWED_USER_IDS"
+          value = var.DESKTOP_ALLOWED_USER_IDS
+        },
+        {
           name  = "FRONTEND_ALLOWED_ORIGINS"
           value = var.FRONTEND_ALLOWED_ORIGINS
         },
@@ -2683,7 +2690,7 @@ output "docs_distribution_id" {
 
 # Flow logs IAM role
 resource "aws_iam_role" "vpc_flow_logs_role" {
-  name = "vpc_flow_logs_role"
+  name = "${local.name_prefix}-vpc-flow-logs-role"
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17",
@@ -2729,7 +2736,7 @@ resource "aws_iam_role_policy" "vpc_flow_logs_policy" {
 }
 
 resource "aws_cloudwatch_log_group" "vpc_flow_logs" {
-  name              = "/vpc/flow/app-vpc"
+  name              = "/vpc/flow/${local.name_prefix}-app-vpc"
   retention_in_days = 365
   kms_key_id        = aws_kms_key.app_general.arn
 

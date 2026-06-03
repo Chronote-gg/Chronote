@@ -3,7 +3,12 @@ import path from "node:path";
 import ffmpeg from "fluent-ffmpeg";
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions";
 import type { TranscriptionCreateParamsNonStreaming } from "openai/resources/audio";
-import type { MeetingHistory, PersonalMediaUploadJobRecord } from "../types/db";
+import type {
+  MeetingHistory,
+  PersonalMediaUploadJobRecord,
+  PersonalRecordingSourceRecord,
+} from "../types/db";
+import type { TranscriptSegment } from "../types/transcript";
 import { MEETING_STATUS } from "../types/meetingLifecycle";
 import {
   PERSONAL_MEDIA_UPLOAD_MAX_PROCESSING_ATTEMPTS,
@@ -45,6 +50,17 @@ type PersonalUploadProcessingResult = {
   transcriptS3Key?: string;
 };
 
+type PersonalUploadTranscriptArtifact = {
+  segments: TranscriptSegment[];
+  text: string;
+};
+
+type ProcessedPersonalRecordingSource = {
+  audioPath: string;
+  durationSeconds: number;
+  segment: TranscriptSegment;
+};
+
 const buildJobMeetingKey = (job: PersonalMediaUploadJobRecord) => {
   const timestamp = job.createdAt;
   return {
@@ -59,6 +75,33 @@ const runFfmpeg = (inputPath: string, outputPath: string) =>
   new Promise<void>((resolve, reject) => {
     ffmpeg(inputPath)
       .noVideo()
+      .audioCodec("libmp3lame")
+      .audioBitrate("64k")
+      .audioChannels(1)
+      .audioFrequency(16_000)
+      .output(outputPath)
+      .on("end", () => resolve())
+      .on("error", reject)
+      .run();
+  });
+
+const mixAudioFiles = (inputPaths: string[], outputPath: string) =>
+  new Promise<void>((resolve, reject) => {
+    if (inputPaths.length === 0) {
+      reject(new Error("No audio files were available to mix."));
+      return;
+    }
+    if (inputPaths.length === 1) {
+      fs.copyFile(inputPaths[0], outputPath).then(resolve, reject);
+      return;
+    }
+
+    let command = ffmpeg();
+    for (const inputPath of inputPaths) command = command.input(inputPath);
+    command
+      .complexFilter([
+        `amix=inputs=${inputPaths.length}:duration=longest:dropout_transition=0`,
+      ])
       .audioCodec("libmp3lame")
       .audioBitrate("64k")
       .audioChannels(1)
@@ -147,6 +190,21 @@ const transcribeAudioFiles = async (filePaths: string[]) => {
   return chunks.join("\n\n");
 };
 
+const formatTranscriptLine = (segment: TranscriptSegment) =>
+  `[${segment.displayName ?? segment.username ?? segment.userId} @ ${new Date(
+    segment.startedAt,
+  ).toLocaleString()}]: ${segment.text ?? ""}`;
+
+const buildTranscriptArtifactFromSegments = (
+  segments: TranscriptSegment[],
+): PersonalUploadTranscriptArtifact => ({
+  segments,
+  text: segments
+    .filter((segment) => segment.text?.trim())
+    .map(formatTranscriptLine)
+    .join("\n"),
+});
+
 const generateNotesForTranscript = async (
   job: PersonalMediaUploadJobRecord,
   transcript: string,
@@ -184,23 +242,15 @@ const resolvePersonalUploadMeetingName = async (
 
 const buildTranscriptArtifact = (
   job: PersonalMediaUploadJobRecord,
-  transcript: string,
+  transcript: PersonalUploadTranscriptArtifact,
 ) =>
   JSON.stringify(
     {
       generatedAt: new Date().toISOString(),
       uploadId: job.uploadId,
       mediaKind: job.mediaKind,
-      segments: [
-        {
-          userId: job.ownerUserId,
-          displayName: "Uploader",
-          startedAt: job.createdAt,
-          text: transcript,
-          source: "personal_upload",
-        },
-      ],
-      text: transcript,
+      segments: transcript.segments,
+      text: transcript.text,
     },
     null,
     2,
@@ -209,7 +259,7 @@ const buildTranscriptArtifact = (
 const uploadPersonalUploadArtifacts = async (
   job: PersonalMediaUploadJobRecord,
   audioPath: string,
-  transcript: string,
+  transcript: PersonalUploadTranscriptArtifact,
 ) => {
   const folder = `personal/${job.ownerUserId}/${job.uploadId}/`;
   const audioS3Key = await uploadObjectToS3(
@@ -224,6 +274,21 @@ const uploadPersonalUploadArtifacts = async (
   );
   return { audioS3Key, transcriptS3Key };
 };
+
+const buildSingleSourceTranscriptArtifact = (
+  job: PersonalMediaUploadJobRecord,
+  transcript: string,
+) =>
+  buildTranscriptArtifactFromSegments([
+    {
+      userId: job.ownerUserId,
+      username: "Uploader",
+      displayName: "Uploader",
+      startedAt: job.createdAt,
+      text: transcript,
+      source: "personal_upload",
+    },
+  ]);
 
 const downloadAndNormalizeMedia = async (
   job: PersonalMediaUploadJobRecord,
@@ -240,10 +305,111 @@ const downloadAndNormalizeMedia = async (
   return { audioPath, durationSeconds };
 };
 
+const downloadAndNormalizeRecordingSource = async (
+  source: PersonalRecordingSourceRecord,
+  workDir: string,
+) => {
+  const sourceDir = path.join(workDir, source.sourceId);
+  await fs.mkdir(sourceDir, { recursive: true });
+  const sourcePath = path.join(sourceDir, "source");
+  const audioPath = path.join(sourceDir, "audio.mp3");
+  const downloaded = await downloadObjectToFile(source.sourceS3Key, sourcePath);
+  if (!downloaded) throw new Error("Uploaded media could not be downloaded.");
+  const durationSeconds = Math.round(
+    await probeMediaDurationSeconds(sourcePath),
+  );
+  await runFfmpeg(sourcePath, audioPath);
+  return { audioPath, durationSeconds };
+};
+
+const buildRecordingSegment = (input: {
+  job: PersonalMediaUploadJobRecord;
+  source: PersonalRecordingSourceRecord;
+  transcript: string;
+}): TranscriptSegment => ({
+  userId:
+    input.source.kind === "owner_mic"
+      ? input.job.ownerUserId
+      : `system:${input.job.uploadId}`,
+  username: input.source.label,
+  displayName: input.source.label,
+  startedAt: input.job.createdAt,
+  text: input.transcript,
+  source: "desktop_recording",
+});
+
+const processPersonalRecordingSource = async (
+  job: PersonalMediaUploadJobRecord,
+  source: PersonalRecordingSourceRecord,
+  workDir: string,
+): Promise<ProcessedPersonalRecordingSource> => {
+  const { audioPath, durationSeconds } =
+    await downloadAndNormalizeRecordingSource(source, workDir);
+  const transcriptionInputs = await resolveTranscriptionInputs(
+    audioPath,
+    path.dirname(audioPath),
+  );
+  const transcript = await transcribeAudioFiles(transcriptionInputs);
+  return {
+    audioPath,
+    durationSeconds,
+    segment: buildRecordingSegment({ job, source, transcript }),
+  };
+};
+
+const processPersonalRecordingContent = async (
+  job: PersonalMediaUploadJobRecord,
+  workDir: string,
+): Promise<PersonalUploadProcessingResult> => {
+  const sources = job.sourceManifest ?? [];
+  if (sources.length === 0) {
+    throw new Error("Desktop recording upload has no source manifest.");
+  }
+
+  const processedSources: ProcessedPersonalRecordingSource[] = [];
+  for (const source of sources) {
+    processedSources.push(
+      await processPersonalRecordingSource(job, source, workDir),
+    );
+  }
+
+  const audioPath = path.join(workDir, "audio.mp3");
+  await mixAudioFiles(
+    processedSources.map((source) => source.audioPath),
+    audioPath,
+  );
+  const transcriptArtifact = buildTranscriptArtifactFromSegments(
+    processedSources.map((source) => source.segment),
+  );
+  const notes = await generateNotesForTranscript(job, transcriptArtifact.text);
+  const summaries = await generateSummariesForNotes(job, notes);
+  const meetingName = await resolvePersonalUploadMeetingName(job, summaries);
+  const artifacts = await uploadPersonalUploadArtifacts(
+    job,
+    audioPath,
+    transcriptArtifact,
+  );
+
+  return {
+    ...artifacts,
+    durationSeconds: Math.max(
+      0,
+      ...processedSources.map((source) => source.durationSeconds),
+    ),
+    meetingName,
+    notes,
+    summaries,
+  };
+};
+
 const processPersonalMediaContent = async (
   job: PersonalMediaUploadJobRecord,
   workDir: string,
 ): Promise<PersonalUploadProcessingResult> => {
+  if (job.uploadOrigin === "desktop_recording" || job.sourceManifest?.length) {
+    return processPersonalRecordingContent(job, workDir);
+  }
+
   const { audioPath, durationSeconds } = await downloadAndNormalizeMedia(
     job,
     workDir,
@@ -253,13 +419,17 @@ const processPersonalMediaContent = async (
     workDir,
   );
   const transcript = await transcribeAudioFiles(transcriptionInputs);
-  const notes = await generateNotesForTranscript(job, transcript);
+  const transcriptArtifact = buildSingleSourceTranscriptArtifact(
+    job,
+    transcript,
+  );
+  const notes = await generateNotesForTranscript(job, transcriptArtifact.text);
   const summaries = await generateSummariesForNotes(job, notes);
   const meetingName = await resolvePersonalUploadMeetingName(job, summaries);
   const artifacts = await uploadPersonalUploadArtifacts(
     job,
     audioPath,
-    transcript,
+    transcriptArtifact,
   );
 
   return {

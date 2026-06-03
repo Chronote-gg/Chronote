@@ -162,6 +162,28 @@ jobs:
       - name: Build backend and frontend
         run: yarn build:all
 
+  desktop-check:
+    name: Desktop Check
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: "24.15.0"
+          cache: "yarn"
+          cache-dependency-path: |
+            yarn.lock
+            apps/desktop/yarn.lock
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Validate desktop app
+        run: yarn desktop:ci
+
   docs-check:
     name: Docs Check
     runs-on: ubuntu-latest
@@ -271,15 +293,18 @@ jobs:
       - name: Install Playwright browsers
         run: npx playwright install
 
+      - name: Install desktop dependencies
+        run: yarn desktop:install
+
       - name: Restore baseline snapshots
         env:
           BASE_REF: ${{ github.base_ref }}
         run: |
           git fetch origin "$BASE_REF" --depth=1
-          if git diff --name-only "origin/${BASE_REF}...HEAD" -- test/e2e/visual.spec.ts-snapshots | grep -q .; then
+          if git diff --name-only "origin/${BASE_REF}...HEAD" -- ':(glob)test/e2e/*-snapshots/**' | grep -q .; then
             echo "Snapshots updated in this PR, skipping baseline restore."
           else
-            git checkout "origin/${BASE_REF}" -- test/e2e/visual.spec.ts-snapshots || echo "No baseline snapshots found"
+            git checkout "origin/${BASE_REF}" -- ':(glob)test/e2e/*-snapshots/**' || echo "No baseline snapshots found"
           fi
 
       - name: Run visual tests
@@ -306,7 +331,7 @@ jobs:
         env:
           BASE_REF: ${{ github.base_ref }}
         run: |
-          git diff --name-status "origin/${BASE_REF}...HEAD" -- test/e2e/visual.spec.ts-snapshots > snapshot-changes.txt || true
+          git diff --name-status "origin/${BASE_REF}...HEAD" -- ':(glob)test/e2e/*-snapshots/**' > snapshot-changes.txt || true
           if [ -s snapshot-changes.txt ]; then
             echo "has_snapshot_changes=true" >> "$GITHUB_OUTPUT"
           else

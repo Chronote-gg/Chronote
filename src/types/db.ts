@@ -151,13 +151,27 @@ export type PersonalMediaUploadStatus =
   | "failed";
 
 export type PersonalMediaUploadKind = "audio" | "video";
+export type PersonalMediaUploadOrigin = "web_upload" | "desktop_recording";
+export type PersonalRecordingSourceKind = "owner_mic" | "system_output";
+
+export interface PersonalRecordingSourceRecord {
+  sourceId: string;
+  kind: PersonalRecordingSourceKind;
+  label: string;
+  sourceS3Key: string;
+  contentType: string;
+  fileSize: number;
+  originalFileName?: string;
+}
 
 export interface PersonalMediaUploadJobRecord {
   uploadId: string; // Partition key
   ownerUserId: string;
   status: PersonalMediaUploadStatus;
   mediaKind: PersonalMediaUploadKind;
+  uploadOrigin?: PersonalMediaUploadOrigin;
   sourceS3Key: string;
+  sourceManifest?: PersonalRecordingSourceRecord[];
   contentType: string;
   fileSize: number;
   originalFileName?: string;

@@ -85,12 +85,46 @@ jobs:
 
           python3 - <<'PY'
           import json
+          import os
           from pathlib import Path
 
           path = Path("_infra/terraform.auto.tfvars.json")
           data = json.loads(path.read_text())
+          aws_access_key_id = os.environ.get("AWS_ACCESS_KEY_ID", "").strip()
+          if aws_access_key_id:
+              data["AWS_TOKEN_KEY"] = aws_access_key_id
 
           required = ["GITHUB_TOKEN", "AWS_TOKEN_KEY", "DISCORD_CLIENT_ID"]
+          string_fields = required + [
+              "grafana_api_key",
+              "grafana_url",
+              "grafana_service_account_id",
+          ]
+          for name in string_fields:
+              value = data.get(name)
+              if isinstance(value, list) and all(isinstance(item, str) for item in value):
+                  non_empty_items = [item for item in value if item.strip()]
+                  if len(non_empty_items) == 1:
+                      data[name] = non_empty_items[0]
+
+          def describe_type(value):
+              if isinstance(value, list):
+                  item_types = sorted({type(item).__name__ for item in value})
+                  return f"list length {len(value)} with item types {item_types}"
+              return type(value).__name__
+
+          wrong_type = [
+              f"{name} ({describe_type(data[name])})"
+              for name in string_fields
+              if name in data and data[name] is not None and not isinstance(data[name], str)
+          ]
+          if wrong_type:
+              raise SystemExit(
+                  "Terraform variables must be JSON strings: " + ", ".join(wrong_type)
+              )
+
+          path.write_text(json.dumps(data, separators=(",", ":")))
+
           missing = [name for name in required if not data.get(name)]
           if missing:
               raise SystemExit(
