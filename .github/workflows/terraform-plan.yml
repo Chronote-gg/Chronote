@@ -190,6 +190,13 @@ jobs:
           set -euo pipefail
 
           sha256sum _infra/tfplan | awk '{print $1}' > _infra/tfplan.sha256
+          find _infra -maxdepth 1 -type f -name "*.zip" -print0 \
+            | sort -z \
+            | while IFS= read -r -d '' zip_path; do
+              zip_name="$(basename "$zip_path")"
+              zip_hash="$(sha256sum "$zip_path" | awk '{print $1}')"
+              printf '%s  %s\n' "$zip_hash" "$zip_name"
+            done > _infra/lambda-zips.sha256
 
           echo "name=$PLAN_ARTIFACT_NAME" >> "$GITHUB_OUTPUT"
           echo "sha256=$(cat _infra/tfplan.sha256)" >> "$GITHUB_OUTPUT"
@@ -202,6 +209,7 @@ jobs:
           path: |
             _infra/tfplan
             _infra/tfplan.sha256
+            _infra/lambda-zips.sha256
             _infra/terraform-plan.txt
             _infra/*.zip
           retention-days: 1
@@ -234,4 +242,4 @@ jobs:
 
       - name: Remove generated tfvars
         if: always()
-        run: rm -f _infra/terraform.auto.tfvars.json _infra/tfplan _infra/tfplan.sha256 _infra/terraform-plan.txt _infra/*.zip
+        run: rm -f _infra/terraform.auto.tfvars.json _infra/tfplan _infra/tfplan.sha256 _infra/lambda-zips.sha256 _infra/terraform-plan.txt _infra/*.zip

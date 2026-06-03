@@ -122,7 +122,38 @@ jobs:
           fi
 
           cp _infra/plan-artifact/tfplan _infra/tfplan
-          find _infra/plan-artifact -maxdepth 1 -name "*.zip" -exec cp {} _infra/ \;
+
+          if [ ! -f _infra/plan-artifact/lambda-zips.sha256 ]; then
+            echo "ERROR: artifact did not contain lambda-zips.sha256."
+            exit 1
+          fi
+
+          while read -r expected_sha256 zip_file; do
+            if [ -z "${expected_sha256:-}" ]; then
+              continue
+            fi
+
+            if [ "$zip_file" != "$(basename "$zip_file")" ] || [[ "$zip_file" != *.zip ]]; then
+              echo "ERROR: invalid Lambda zip manifest entry: $zip_file"
+              exit 1
+            fi
+
+            zip_path="_infra/plan-artifact/$zip_file"
+            if [ ! -f "$zip_path" ]; then
+              echo "ERROR: Lambda zip listed in manifest is missing: $zip_file"
+              exit 1
+            fi
+
+            actual_sha256="$(sha256sum "$zip_path" | awk '{print $1}')"
+            if [ "$actual_sha256" != "$expected_sha256" ]; then
+              echo "ERROR: Lambda zip SHA-256 mismatch for $zip_file."
+              echo "Expected: $expected_sha256"
+              echo "Actual:   $actual_sha256"
+              exit 1
+            fi
+
+            cp "$zip_path" _infra/
+          done < _infra/plan-artifact/lambda-zips.sha256
 
       - name: Write Terraform variables
         env:
