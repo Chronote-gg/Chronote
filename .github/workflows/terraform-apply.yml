@@ -126,6 +126,7 @@ jobs:
       - name: Write Terraform variables
         env:
           TERRAFORM_TFVARS_JSON: ${{ secrets.TERRAFORM_TFVARS_JSON }}
+          REDIS_AUTH_TOKEN: ${{ secrets.REDIS_AUTH_TOKEN }}
         run: |
           set -euo pipefail
 
@@ -147,6 +148,10 @@ jobs:
           aws_access_key_id = os.environ.get("AWS_ACCESS_KEY_ID", "").strip()
           if aws_access_key_id:
               data["AWS_TOKEN_KEY"] = aws_access_key_id
+
+          redis_auth_token = os.environ.get("REDIS_AUTH_TOKEN", "").strip()
+          if redis_auth_token:
+              data["REDIS_AUTH_TOKEN"] = redis_auth_token
 
           required = ["GITHUB_TOKEN", "AWS_TOKEN_KEY", "DISCORD_CLIENT_ID"]
           string_fields = required + [

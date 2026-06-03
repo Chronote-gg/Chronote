@@ -248,6 +248,7 @@ Each GitHub environment used by the workflow must provide:
 - Secret `AWS_ACCESS_KEY_ID`
 - Secret `AWS_SECRET_ACCESS_KEY`
 - Secret `TERRAFORM_TFVARS_JSON`
+- Optional secret `REDIS_AUTH_TOKEN`
 
 The workflow dispatch choices should only list GitHub Actions environments that
 already exist and have these secrets configured. Production plans must use the
@@ -264,6 +265,10 @@ they contain exactly one non-empty value, to tolerate existing malformed
 environment secrets. During GitHub Actions runs, `AWS_TOKEN_KEY` is overwritten
 from the environment's `AWS_ACCESS_KEY_ID` secret before Terraform runs. Use
 `grafana_service_account_id` and the rotated Secrets Manager token instead.
+When `REDIS_AUTH_TOKEN` is set as a GitHub environment secret, the plan/apply
+workflows overlay it onto `TERRAFORM_TFVARS_JSON` before Terraform runs. Use this
+for Redis token preservation or rotation instead of editing the large tfvars JSON
+blob.
 
 Recommended apply flow:
 
