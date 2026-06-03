@@ -25,15 +25,19 @@ output "amp_workspace_id" {
 # -------------------------------------------------------------------------------
 
 variable "grafana_suffix_seed" {
-  description = "Change this value to force a new AMG workspace name suffix"
+  description = "Change this value to force a new non-production AMG workspace name suffix"
   type        = string
   default     = "2025-12-18-1"
+}
+
+locals {
+  effective_grafana_suffix_seed = var.environment == "prod" ? "2025-12-18-1" : var.grafana_suffix_seed
 }
 
 resource "random_id" "grafana_suffix" {
   byte_length = 2
   keepers = {
-    seed = var.grafana_suffix_seed
+    seed = local.effective_grafana_suffix_seed
   }
 }
 
