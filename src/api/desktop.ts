@@ -31,6 +31,9 @@ const DESKTOP_RATE_LIMIT_MAX = 60;
 const REQUIRED_UPLOAD_SCOPES: DesktopAuthScope[] = ["personal_uploads:write"];
 const REQUIRED_PROFILE_SCOPES: DesktopAuthScope[] = ["profile:read"];
 
+const hasUniqueSourceIds = (sources: Array<{ sourceId: string }>) =>
+  new Set(sources.map((source) => source.sourceId)).size === sources.length;
+
 const authorizeQuerySchema = z.object({
   response_type: z.literal("code"),
   redirect_uri: z.string().min(1),
@@ -73,7 +76,10 @@ const recordingIntentSchema = z.object({
       }),
     )
     .min(1)
-    .max(4),
+    .max(4)
+    .refine(hasUniqueSourceIds, {
+      message: "sourceId values must be unique.",
+    }),
 });
 
 const recordingCompleteSchema = z.object({
@@ -92,7 +98,10 @@ const recordingCompleteSchema = z.object({
       }),
     )
     .min(1)
-    .max(4),
+    .max(4)
+    .refine(hasUniqueSourceIds, {
+      message: "sourceId values must be unique.",
+    }),
   title: z.string().min(1).max(100).optional(),
   tags: z.array(z.string().min(1).max(50)).max(20).optional(),
 });
@@ -167,8 +176,11 @@ const redirectWithCode = (
   res.redirect(url.toString());
 };
 
-const buildAuthorizeUrl = (req: Request) =>
-  `${req.protocol}://${req.get("host")}${req.originalUrl}`;
+const buildAuthorizeUrl = (req: Request) => {
+  const queryStart = req.originalUrl.indexOf("?");
+  const query = queryStart >= 0 ? req.originalUrl.slice(queryStart) : "";
+  return `${req.baseUrl}${req.path}${query}`;
+};
 
 const stashAuthorizeRedirect = (req: Request, redirect: string) => {
   const session = req.session as typeof req.session & {

@@ -77,23 +77,32 @@ const mockDesktopUser = {
   avatar: null,
 };
 
-const createServer = () => {
+const createServer = (options: { authenticated?: boolean } = {}) => {
+  const authenticated = options.authenticated ?? true;
+  const session: {
+    oauthRedirect?: string;
+    save: (callback: (error?: Error) => void) => void;
+  } = {
+    save: (callback) => callback(),
+  };
   const app = express();
   app.use(express.json());
   app.use((req, _res, next) => {
     const request = req as typeof req & {
+      session?: typeof session;
       user?: typeof mockDesktopUser;
       isAuthenticated?: () => boolean;
     };
-    request.user = mockDesktopUser;
-    request.isAuthenticated = () => true;
+    request.session = session;
+    if (authenticated) request.user = mockDesktopUser;
+    request.isAuthenticated = () => authenticated;
     next();
   });
   registerDesktopRoutesIfEnabled(app);
   registerMockStorageRoutes(app);
   const server = app.listen(0);
   const { port } = server.address() as AddressInfo;
-  return { server, baseUrl: `http://127.0.0.1:${port}` };
+  return { server, baseUrl: `http://127.0.0.1:${port}`, session };
 };
 
 const closeServer = async (server: http.Server) =>
@@ -264,6 +273,24 @@ describe("desktop API", () => {
     }
   });
 
+  test("stores unauthenticated desktop authorization redirects as relative paths", async () => {
+    const { server, baseUrl, session } = createServer({ authenticated: false });
+
+    try {
+      const redirectUri = "http://127.0.0.1:49152/auth/callback";
+      const { authorizeUrl } = buildAuthorizeUrl(baseUrl, redirectUri);
+      const response = await fetch(authorizeUrl, { redirect: "manual" });
+      expect(response.status).toBe(302);
+      expect(response.headers.get("location")).toBe("/auth/discord");
+      expect(session.oauthRedirect).toBe(
+        `${authorizeUrl.pathname}${authorizeUrl.search}`,
+      );
+      expect(session.oauthRedirect).not.toContain(baseUrl);
+    } finally {
+      await closeServer(server);
+    }
+  });
+
   test("denies recording upload after a user is removed from the beta allowlist", async () => {
     const { server, baseUrl } = createServer();
     Object.defineProperty(config.mcp, "publicBaseUrl", {
@@ -414,6 +441,49 @@ describe("desktop API", () => {
       const status = await readJson<RecordingJobResponse>(statusResponse);
       expect(status.job.status).toBe("queued");
       expect(status.job.sourceManifest).toHaveLength(2);
+    } finally {
+      await closeServer(server);
+    }
+  });
+
+  test("rejects duplicate source IDs when completing a desktop recording", async () => {
+    const { server, baseUrl } = createServer();
+    Object.defineProperty(config.mcp, "publicBaseUrl", {
+      get: () => baseUrl,
+      configurable: true,
+    });
+
+    try {
+      const token = await authorizeDesktopToken(baseUrl);
+      const response = await fetch(
+        `${baseUrl}/api/desktop/recordings/complete`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token.access_token}`,
+          },
+          body: JSON.stringify({
+            uploadId: crypto.randomUUID(),
+            sources: [
+              {
+                sourceId: "owner_mic",
+                key: "recordings/source-a.wav",
+                uploadToken: "token-a",
+              },
+              {
+                sourceId: "owner_mic",
+                key: "recordings/source-b.wav",
+                uploadToken: "token-b",
+              },
+            ],
+          }),
+        },
+      );
+      expect(response.status).toBe(400);
+      await expect(readJson<{ error: string }>(response)).resolves.toEqual(
+        expect.objectContaining({ error: "invalid_request" }),
+      );
     } finally {
       await closeServer(server);
     }

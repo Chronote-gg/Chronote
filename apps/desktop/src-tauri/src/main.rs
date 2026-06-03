@@ -25,6 +25,7 @@ const KEYRING_ACCOUNT: &str = "chronote-desktop-session";
 const TOKEN_REFRESH_SKEW_SECONDS: u64 = 60;
 const LOGIN_TIMEOUT_SECONDS: u64 = 300;
 const DESKTOP_SCOPES: &str = "profile:read personal_uploads:write meetings:read";
+const WAV_HEADER_BYTES: u64 = 44;
 
 #[derive(Default)]
 struct AppState {
@@ -57,6 +58,8 @@ struct DesktopUser {
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct DesktopSession {
+    #[serde(default)]
+    api_base_url: String,
     access_token: String,
     refresh_token: String,
     expires_at: u64,
@@ -200,8 +203,12 @@ struct CapturedSourceFile {
 }
 
 #[tauri::command]
-fn get_session(state: State<'_, AppState>) -> Result<Option<DesktopUser>, String> {
-    let session = get_cached_or_stored_session(&state)?;
+fn get_session(
+    api_base_url: String,
+    state: State<'_, AppState>,
+) -> Result<Option<DesktopUser>, String> {
+    let api_base_url = normalize_api_base_url(&api_base_url)?;
+    let session = get_cached_or_stored_session(&api_base_url, &state)?;
     Ok(session.map(|session| session.user))
 }
 
@@ -228,7 +235,7 @@ async fn login(api_base_url: String, state: State<'_, AppState>) -> Result<Deskt
         &code_verifier,
     )
     .await?;
-    let session = session_from_token_response(token_response);
+    let session = session_from_token_response(&api_base_url, token_response);
     store_session(&session)?;
     set_cached_session(&state, Some(session.clone()))?;
     Ok(session.user)
@@ -237,7 +244,7 @@ async fn login(api_base_url: String, state: State<'_, AppState>) -> Result<Deskt
 #[tauri::command]
 async fn logout(api_base_url: String, state: State<'_, AppState>) -> Result<(), String> {
     let api_base_url = normalize_api_base_url(&api_base_url)?;
-    if let Some(session) = get_cached_or_stored_session(&state)? {
+    if let Some(session) = get_cached_or_stored_session(&api_base_url, &state)? {
         let client = reqwest::Client::new();
         let _ = post_json::<_, serde_json::Value>(
             &client,
@@ -550,11 +557,12 @@ async fn refresh_session(
         },
     )
     .await?;
-    Ok(session_from_token_response(token_response))
+    Ok(session_from_token_response(api_base_url, token_response))
 }
 
-fn session_from_token_response(response: TokenResponse) -> DesktopSession {
+fn session_from_token_response(api_base_url: &str, response: TokenResponse) -> DesktopSession {
     DesktopSession {
+        api_base_url: api_base_url.to_string(),
         access_token: response.access_token,
         refresh_token: response.refresh_token,
         expires_at: now_epoch_seconds() + response.expires_in,
@@ -576,7 +584,7 @@ async fn access_token_for(
     state: &State<'_, AppState>,
     client: &reqwest::Client,
 ) -> Result<String, String> {
-    let session = get_cached_or_stored_session(state)?
+    let session = get_cached_or_stored_session(api_base_url, state)?
         .ok_or_else(|| "Sign in before uploading recordings.".to_string())?;
     if session.expires_at > now_epoch_seconds() + TOKEN_REFRESH_SKEW_SECONDS {
         return Ok(session.access_token);
@@ -777,7 +785,7 @@ fn stop_recording_sources(active: ActiveRecording) -> Result<Vec<CapturedSourceF
         let path = source.path.clone();
         source.capture.stop()?;
         let metadata = fs::metadata(&path).map_err(|error| error.to_string())?;
-        if metadata.len() <= 1 {
+        if metadata.len() <= WAV_HEADER_BYTES {
             return Err("Recorded audio source was empty.".to_string());
         }
         sources.push(CapturedSourceFile {
@@ -792,16 +800,22 @@ fn stop_recording_sources(active: ActiveRecording) -> Result<Vec<CapturedSourceF
 }
 
 fn get_cached_or_stored_session(
+    api_base_url: &str,
     state: &State<'_, AppState>,
 ) -> Result<Option<DesktopSession>, String> {
     if let Some(session) = state.session.lock().map_err(lock_error)?.clone() {
-        return Ok(Some(session));
+        if session.api_base_url == api_base_url {
+            return Ok(Some(session));
+        }
     }
     let stored = load_stored_session()?;
-    if let Some(session) = stored.clone() {
+    let matching = stored.filter(|session| session.api_base_url == api_base_url);
+    if let Some(session) = matching.clone() {
         set_cached_session(state, Some(session))?;
+    } else {
+        set_cached_session(state, None)?;
     }
-    Ok(stored)
+    Ok(matching)
 }
 
 fn set_cached_session(

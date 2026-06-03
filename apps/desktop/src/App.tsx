@@ -103,13 +103,13 @@ export default function App() {
       : "Signed out";
 
   useEffect(() => {
-    void invoke<DesktopUser | null>("get_session")
+    void invoke<DesktopUser | null>("get_session", { apiBaseUrl })
       .then(setUser)
       .catch(() => undefined);
     void invoke<RecordingStatus>("get_recording_status")
       .then(setRecording)
       .catch(() => undefined);
-  }, []);
+  }, [apiBaseUrl]);
 
   useEffect(() => {
     void invoke<AudioDevice[]>("list_audio_devices")

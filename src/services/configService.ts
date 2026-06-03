@@ -176,10 +176,10 @@ class ConfigService {
 
   readonly desktop = {
     enabled: parseBoolean(process.env.ENABLE_DESKTOP_API, this.mock.enabled),
-    allowedUserIds:
-      parseCsv(process.env.DESKTOP_ALLOWED_USER_IDS).length > 0
-        ? parseCsv(process.env.DESKTOP_ALLOWED_USER_IDS)
-        : this.admin.superAdminUserIds,
+    allowedUserIds: (() => {
+      const ids = parseCsv(process.env.DESKTOP_ALLOWED_USER_IDS);
+      return ids.length > 0 ? ids : this.admin.superAdminUserIds;
+    })(),
   };
 
   // Contact feedback configuration
