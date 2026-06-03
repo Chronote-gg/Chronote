@@ -75,7 +75,7 @@ or create a new token with the bootstrap steps above.
 
 ### Useful tips
 
-- If AMG workspace creation conflicts, bump `grafana_suffix_seed` in `terraform.tfvars` to force a new workspace name suffix.
+- If AMG workspace creation conflicts, bump `grafana_suffix_seed` in `terraform.tfvars` to force a new workspace name suffix. Treat this as a replacement of the AMG workspace, and do not change the production seed without an approved replacement plan.
 - If you change the workspace name, you may want to update `grafana_url` before the second apply.
 - To force an immediate rotation: `aws lambda invoke --function-name <project_name>-<environment>-grafana-token-rotation --region us-east-1 /dev/stdout`
 
@@ -202,6 +202,9 @@ and `project_name` in `terraform.tfvars`.
 Shared-account singleton names should include the environment prefix. This
 includes VPC flow log IAM roles and CloudWatch log groups, which otherwise
 collide when provisioning sandbox alongside production.
+Production keeps its original VPC flow log IAM role and CloudWatch log group
+names (`vpc_flow_logs_role` and `/vpc/flow/app-vpc`) to avoid replacing live
+logging resources. Non-production environments use environment-scoped names.
 
 Recommended workflow:
 

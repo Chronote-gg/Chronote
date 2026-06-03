@@ -440,6 +440,9 @@ locals {
   transcripts_bucket_name = var.TRANSCRIPTS_BUCKET != "" ? var.TRANSCRIPTS_BUCKET : "${local.name_prefix}-transcripts-${data.aws_caller_identity.current.account_id}"
   frontend_bucket_name    = var.FRONTEND_BUCKET != "" ? var.FRONTEND_BUCKET : "${local.name_prefix}-frontend-${data.aws_caller_identity.current.account_id}"
   docs_bucket_name        = var.DOCS_BUCKET != "" ? var.DOCS_BUCKET : "${local.name_prefix}-docs-${data.aws_caller_identity.current.account_id}"
+  # Preserve existing production resources while keeping non-prod names scoped.
+  vpc_flow_logs_role_name      = var.environment == "prod" ? "vpc_flow_logs_role" : "${local.name_prefix}-vpc-flow-logs-role"
+  vpc_flow_logs_log_group_name = var.environment == "prod" ? "/vpc/flow/app-vpc" : "/vpc/flow/${local.name_prefix}-app-vpc"
   frontend_cert_arn = var.FRONTEND_CERT_ARN != "" ? var.FRONTEND_CERT_ARN : (
     length(aws_acm_certificate_validation.frontend_cert) > 0 ? aws_acm_certificate_validation.frontend_cert[0].certificate_arn : ""
   )
@@ -2690,7 +2693,7 @@ output "docs_distribution_id" {
 
 # Flow logs IAM role
 resource "aws_iam_role" "vpc_flow_logs_role" {
-  name = "${local.name_prefix}-vpc-flow-logs-role"
+  name = local.vpc_flow_logs_role_name
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17",
@@ -2736,7 +2739,7 @@ resource "aws_iam_role_policy" "vpc_flow_logs_policy" {
 }
 
 resource "aws_cloudwatch_log_group" "vpc_flow_logs" {
-  name              = "/vpc/flow/${local.name_prefix}-app-vpc"
+  name              = local.vpc_flow_logs_log_group_name
   retention_in_days = 365
   kms_key_id        = aws_kms_key.app_general.arn
 

@@ -4,7 +4,7 @@
 
 resource "aws_prometheus_workspace" "amp" {
   alias = "${local.name_prefix}-amp"
-  tags  = {
+  tags = {
     Project     = "${var.project_name}-discord-bot"
     Environment = var.environment
   }
@@ -27,7 +27,7 @@ output "amp_workspace_id" {
 variable "grafana_suffix_seed" {
   description = "Change this value to force a new AMG workspace name suffix"
   type        = string
-  default     = "reset-2025-12-29-2"
+  default     = "2025-12-18-1"
 }
 
 resource "random_id" "grafana_suffix" {
