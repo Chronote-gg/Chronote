@@ -27,7 +27,7 @@ output "amp_workspace_id" {
 variable "grafana_suffix_seed" {
   description = "Change this value to force a new non-production AMG workspace name suffix"
   type        = string
-  default     = "2025-12-18-1"
+  default     = "reset-2025-12-29-2"
 }
 
 locals {
