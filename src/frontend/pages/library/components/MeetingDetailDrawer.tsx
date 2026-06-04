@@ -906,6 +906,8 @@ export default function MeetingDetailDrawer({
       Boolean(notionExportStatus.lastError));
   const canRetryNotionAutomation =
     canManageSelectedGuild || personalShareManageable;
+  const canManageMeetingMetadata =
+    canManageSelectedGuild || detail?.personalShareManageable === true;
   const notionActionLabel = !notionConfigured
     ? "Notion unavailable"
     : notionExportStatusLoading
@@ -1105,6 +1107,7 @@ export default function MeetingDetailDrawer({
                   meeting={meeting}
                   displayStatus={displayStatus}
                   canManageSelectedGuild={canManageSelectedGuild}
+                  canManageMeetingMetadata={canManageMeetingMetadata}
                   endMeetingPreflightLoading={endMeetingPreflightLoading}
                   archivePending={archiveMutation.isPending}
                   sharePending={

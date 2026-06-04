@@ -17,6 +17,7 @@ type MeetingDetailHeaderProps = {
   meeting: MeetingDetails;
   displayStatus: MeetingStatus;
   canManageSelectedGuild: boolean;
+  canManageMeetingMetadata: boolean;
   endMeetingPreflightLoading: boolean;
   archivePending: boolean;
   sharePending: boolean;
@@ -33,6 +34,7 @@ export default function MeetingDetailHeader({
   meeting,
   displayStatus,
   canManageSelectedGuild,
+  canManageMeetingMetadata,
   endMeetingPreflightLoading,
   archivePending,
   sharePending,
@@ -75,7 +77,7 @@ export default function MeetingDetailHeader({
         >
           Share
         </Button>
-        {canManageSelectedGuild ? (
+        {canManageMeetingMetadata ? (
           <Button
             variant="subtle"
             leftSection={

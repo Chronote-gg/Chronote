@@ -450,6 +450,25 @@ describe("MeetingDetailDrawer summary copy", () => {
     );
   });
 
+  it("shows archive actions for personal meeting owners", () => {
+    useMeetingDetailMock.mockReturnValue(
+      buildUseMeetingDetailResult({
+        detail: buildDetail({
+          ownershipScope: "personal",
+          ownerUserId: "user-1",
+          personalShareManageable: true,
+        }),
+      }),
+    );
+
+    renderDrawer({
+      canManageSelectedGuild: false,
+      selectedGuildId: "personal:user-1",
+    });
+
+    expect(screen.getByTestId("meeting-archive")).toBeEnabled();
+  });
+
   it("does not query Notion export status when Notion is not configured", () => {
     mockNotionStatusQuery.data = { configured: false, connected: false };
 

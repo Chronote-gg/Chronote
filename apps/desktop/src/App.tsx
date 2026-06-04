@@ -73,6 +73,10 @@ function openMeetingUrl(portalBaseUrl: string, job: UploadJob) {
   )}/${encodeURIComponent(job.channelId_timestamp)}`;
 }
 
+function openPortalUrl(portalBaseUrl: string) {
+  return `${portalBaseUrl.replace(/\/$/, "")}/portal/meetings`;
+}
+
 export default function App() {
   const [apiBaseUrl, setApiBaseUrl] = useState(DEFAULT_API_BASE_URL);
   const [portalBaseUrl, setPortalBaseUrl] = useState(DEFAULT_PORTAL_BASE_URL);
@@ -324,7 +328,7 @@ export default function App() {
               )}
               <a
                 className="meeting-link"
-                href={portalBaseUrl}
+                href={openPortalUrl(portalBaseUrl)}
                 target="_blank"
                 rel="noreferrer"
               >
