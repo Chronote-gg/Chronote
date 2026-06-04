@@ -155,6 +155,9 @@ test.describe("desktop visual regression", () => {
     await page.getByRole("button", { name: "Sign in with Chronote" }).click();
     await expect(page.getByRole("heading", { name: "Recorder" })).toBeVisible();
     await expect(page.getByText("Signed in as Visual Tester")).toBeVisible();
+    await expect(
+      page.getByRole("link", { name: "Open Chronote" }),
+    ).toHaveAttribute("href", "http://127.0.0.1:5173/portal/meetings");
     await page.getByLabel("Title").fill("Design review");
     await page.getByLabel("Tags").fill("desktop, visual");
     await expectDesktopScreenshot(page, "desktop-ready");
@@ -177,7 +180,10 @@ test.describe("desktop visual regression", () => {
     await expect(page.getByText("queued")).toBeVisible();
     await expect(
       page.getByRole("link", { name: "Open meeting in Chronote" }),
-    ).toBeVisible();
+    ).toHaveAttribute(
+      "href",
+      "http://127.0.0.1:5173/portal/meetings/personal%3Auser-visual/personal%232025-01-01T12%3A00%3A00.000Z",
+    );
     await expectDesktopScreenshot(page, "desktop-uploaded");
   });
 
