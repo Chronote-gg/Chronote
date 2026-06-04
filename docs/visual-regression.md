@@ -43,7 +43,10 @@ filenames and diffs.
   - `test-results` with expected, actual, and diff images
   - `visual-summary.md` with the change list
 - A PR comment is posted with the summary, committed snapshot file changes, and
-  a link to the Actions run.
+  a link to the Actions run. For same-repository PRs with generated visual
+  diffs, the job also publishes preview images to the
+  `visual-regression-previews` branch so the comment can render inline diff
+  images.
 
 ## Adding new views
 
