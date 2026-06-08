@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { type MouseEvent, useEffect, useState } from "react";
 
 type DesktopUser = {
   id: string;
@@ -204,6 +204,19 @@ export default function App() {
     }
   }
 
+  async function openExternalUrl(
+    event: MouseEvent<HTMLAnchorElement>,
+    url: string,
+  ) {
+    event.preventDefault();
+    setError(null);
+    try {
+      await invoke("open_external_url", { url });
+    } catch (err) {
+      setError(formatError(err, "Failed to open Chronote."));
+    }
+  }
+
   return (
     <main className="app-shell">
       <header className="top-bar">
@@ -315,6 +328,7 @@ export default function App() {
                       href={meetingUrl}
                       target="_blank"
                       rel="noreferrer"
+                      onClick={(event) => openExternalUrl(event, meetingUrl)}
                     >
                       Open meeting in Chronote
                     </a>
@@ -331,6 +345,9 @@ export default function App() {
                 href={openPortalUrl(portalBaseUrl)}
                 target="_blank"
                 rel="noreferrer"
+                onClick={(event) =>
+                  openExternalUrl(event, openPortalUrl(portalBaseUrl))
+                }
               >
                 Open Chronote
               </a>

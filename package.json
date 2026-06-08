@@ -34,6 +34,8 @@
     "frontend:dev": "vite",
     "frontend:preview": "vite preview",
     "desktop:install": "yarn --cwd apps/desktop install --frozen-lockfile --ignore-scripts",
+    "desktop:start:prod": "yarn --cwd apps/desktop start:prod",
+    "desktop:dev:prod": "yarn --cwd apps/desktop dev:prod",
     "desktop:dev:web": "yarn --cwd apps/desktop dev:web",
     "desktop:typecheck": "yarn --cwd apps/desktop typecheck",
     "desktop:build:web": "yarn --cwd apps/desktop build:web",

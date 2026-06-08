@@ -384,6 +384,15 @@ async fn get_upload_status(
     Ok(UploadResult { job: response.job })
 }
 
+#[tauri::command]
+fn open_external_url(url: String) -> Result<(), String> {
+    let url = Url::parse(&url).map_err(|error| error.to_string())?;
+    if url.scheme() != "http" && url.scheme() != "https" {
+        return Err("Only http and https URLs can be opened.".to_string());
+    }
+    open::that(url.as_str()).map_err(|error| error.to_string())
+}
+
 fn main() {
     tauri::Builder::default()
         .manage(AppState::default())
@@ -396,6 +405,7 @@ fn main() {
             start_recording,
             stop_and_upload_recording,
             get_upload_status,
+            open_external_url,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Chronote Desktop");

@@ -121,6 +121,7 @@
 - Config access: prefer shared helpers that resolve and transform config values (trim strings, validate enums, etc.) instead of inline snapshot parsing. When you add a helper to replace boilerplate, update existing consumers proactively, keep it KISS, and avoid hedging.
 - Portal base URLs are always configured. Do not add fallback behavior for missing `FRONTEND_SITE_URL` or relative portal links; treat missing config as an error.
 - Desktop recorder hosted API routes are gated by `ENABLE_DESKTOP_API`; keep it false unless running an intentional beta/canary, and restrict access with `DESKTOP_ALLOWED_USER_IDS` or `SUPER_ADMIN_USER_IDS`.
+- When launching Chronote Desktop for operator/manual testing, use production endpoints by default: run `yarn desktop:start:prod` from the repo root. Use `yarn desktop:dev:prod` only when an interactive Tauri dev server is needed. Do not use generic `yarn dev` unless explicitly testing a local API/portal flow.
 - Avoid hedging and speculative fallbacks. Follow YAGNI and KISS, do not add code for hypothetical cases unless explicitly required.
 - Config constraints: when numeric settings depend on caps, use minKey/maxKey to reference other config entries, clamp inputs in the UI, and enforce bounds in API validation.
 - My Meetings UX: default the portal home list to All time, keep the initial page bounded, and use an explicit Load more control for older meetings.
