@@ -7,6 +7,7 @@ on:
       - "apps/desktop/**"
       - "scripts/desktop-*.js"
       - "scripts/desktop-*.mjs"
+      - "jest.desktop-coverage.config.ts"
       - "package.json"
   push:
     branches: [master]
@@ -15,6 +16,7 @@ on:
       - "apps/desktop/**"
       - "scripts/desktop-*.js"
       - "scripts/desktop-*.mjs"
+      - "jest.desktop-coverage.config.ts"
       - "package.json"
   workflow_dispatch:
 
@@ -71,7 +73,7 @@ jobs:
           path: apps/desktop/src-tauri/target/release/bundle/**
 
   packaged-smoke:
-    name: Packaged Desktop Smoke
+    name: Native Desktop Smoke
     runs-on: windows-latest
     steps:
       - name: Checkout
@@ -107,7 +109,7 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path "$env:RUNNER_TEMP\msedgedriver" | Out-Null
-          cargo install --git https://github.com/chippers/msedgedriver-tool
+          cargo install --git https://github.com/chippers/msedgedriver-tool --rev 8c4b34f51b45f5cf08013366d703de464ab871d1
           Push-Location "$env:RUNNER_TEMP\msedgedriver"
           & "$env:USERPROFILE\.cargo\bin\msedgedriver-tool.exe"
           $driver = Get-ChildItem -Path "$env:RUNNER_TEMP\msedgedriver" -Filter "msedgedriver.exe" -Recurse | Select-Object -First 1
@@ -118,5 +120,5 @@ jobs:
           "CHRONOTE_DESKTOP_WEBDRIVER_DIR=$($driver.DirectoryName)" | Out-File -FilePath $env:GITHUB_ENV -Append
           Pop-Location
 
-      - name: Run packaged desktop smoke
+      - name: Run native desktop smoke
         run: yarn desktop:smoke:packaged

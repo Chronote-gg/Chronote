@@ -20,12 +20,16 @@ const meetingGuildId = "personal:desktop-smoke-user";
 const channelIdTimestamp = "personal#2026-06-08T12:00:00.000Z";
 
 function run(command, args, options = {}) {
-  const result = spawnSync(command, args, {
-    cwd: repoRoot,
-    env: options.env ?? process.env,
-    shell: isWindows,
-    stdio: "inherit",
-  });
+  const result = spawnSync(
+    isWindows ? [command, ...args].join(" ") : command,
+    isWindows ? [] : args,
+    {
+      cwd: repoRoot,
+      env: options.env ?? process.env,
+      shell: isWindows,
+      stdio: "inherit",
+    },
+  );
   if (result.error) throw result.error;
   if (result.status !== 0) {
     throw new Error(
@@ -270,10 +274,19 @@ async function runSmoke(application, env) {
     },
     stdio: ["ignore", "inherit", "inherit"],
   });
-  tauriDriver.on("error", (error) => {
-    throw error;
+  let spawnError;
+  const spawnErrorReady = new Promise((resolve) => {
+    tauriDriver.once("error", (error) => {
+      spawnError = error;
+      resolve();
+    });
   });
-  await waitForWebDriver(tauriDriver);
+  await Promise.race([
+    waitForWebDriver(tauriDriver),
+    spawnErrorReady.then(() => {
+      throw spawnError;
+    }),
+  ]);
 
   let sessionId;
   try {

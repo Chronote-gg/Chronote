@@ -1,5 +1,6 @@
 import {
   existsSync,
+  mkdirSync,
   mkdtempSync,
   readFileSync,
   rmSync,
@@ -53,6 +54,32 @@ describe("desktop artifact validation", () => {
     expect(existsSync(checksumPath)).toBe(true);
     expect(readFileSync(checksumPath, "utf8")).toContain(path.basename(msi));
     expect(readFileSync(checksumPath, "utf8")).toContain(path.basename(setup));
+  });
+
+  test("can write release checksums with asset basenames", () => {
+    const msiDir = path.join(artifactDir, "msi");
+    const nsisDir = path.join(artifactDir, "nsis");
+    mkdirSync(msiDir);
+    mkdirSync(nsisDir);
+    const msi = path.join(msiDir, "Chronote Desktop_0.1.0_x64_en-US.msi");
+    const setup = path.join(nsisDir, "Chronote Desktop_0.1.0_x64-setup.exe");
+    writeFileSync(msi, "fake msi");
+    writeFileSync(setup, "fake setup");
+
+    const result = runArtifactsScript(artifactDir, [
+      "--write",
+      "--checksum-paths=basename",
+    ]);
+    const checksumText = readFileSync(
+      path.join(artifactDir, "SHA256SUMS.txt"),
+      "utf8",
+    );
+
+    expect(result.status).toBe(0);
+    expect(checksumText).toContain(`  ${path.basename(msi)}`);
+    expect(checksumText).toContain(`  ${path.basename(setup)}`);
+    expect(checksumText).not.toContain("msi/");
+    expect(checksumText).not.toContain("nsis/");
   });
 
   test("rejects artifacts that do not include the expected product and version", () => {

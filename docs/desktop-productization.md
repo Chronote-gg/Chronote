@@ -22,7 +22,9 @@ Tracking issue: [#249](https://github.com/Chronote-gg/Chronote/issues/249)
 It has two Windows jobs:
 
 - `Build Windows Desktop Artifacts`: builds unsigned Tauri Windows bundles, validates artifacts, writes `SHA256SUMS.txt`, and uploads workflow artifacts.
-- `Packaged Desktop Smoke`: builds a test-flavored desktop binary and launches it through `tauri-driver` against a mock local Chronote API.
+- `Native Desktop Smoke`: builds a test-flavored desktop binary and launches it through `tauri-driver` against a mock local Chronote API.
+
+The native smoke test verifies the Tauri shell, desktop API flow, audio capture commands, upload flow, and rendered meeting link. Installer install/uninstall validation remains in the manual hardware smoke checklist.
 
 The smoke build uses two Rust features that must not be enabled for production releases:
 
