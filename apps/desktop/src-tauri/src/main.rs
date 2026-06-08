@@ -1,3 +1,8 @@
+#![cfg_attr(
+    all(not(debug_assertions), target_os = "windows"),
+    windows_subsystem = "windows"
+)]
+
 mod audio;
 
 use std::collections::HashMap;
@@ -425,6 +430,30 @@ fn open_external_url(url: String) -> Result<(), String> {
     open::that(url.as_str()).map_err(|error| error.to_string())
 }
 
+#[tauri::command]
+fn start_window_drag(window: tauri::Window) -> Result<(), String> {
+    window.start_dragging().map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn minimize_window(window: tauri::Window) -> Result<(), String> {
+    window.minimize().map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn toggle_maximize_window(window: tauri::Window) -> Result<(), String> {
+    if window.is_maximized().map_err(|error| error.to_string())? {
+        window.unmaximize().map_err(|error| error.to_string())
+    } else {
+        window.maximize().map_err(|error| error.to_string())
+    }
+}
+
+#[tauri::command]
+fn close_window(window: tauri::Window) -> Result<(), String> {
+    window.close().map_err(|error| error.to_string())
+}
+
 fn main() {
     tauri::Builder::default()
         .manage(initial_app_state())
@@ -438,6 +467,10 @@ fn main() {
             stop_and_upload_recording,
             get_upload_status,
             open_external_url,
+            start_window_drag,
+            minimize_window,
+            toggle_maximize_window,
+            close_window,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Chronote Desktop");
@@ -456,7 +489,11 @@ fn initial_app_state() -> AppState {
 
 #[cfg(feature = "test-hooks")]
 fn test_session_from_env() -> Option<DesktopSession> {
-    if std::env::var("CHRONOTE_DESKTOP_TEST_SESSION").ok()?.as_str() != "1" {
+    if std::env::var("CHRONOTE_DESKTOP_TEST_SESSION")
+        .ok()?
+        .as_str()
+        != "1"
+    {
         return None;
     }
     let api_base_url = std::env::var("CHRONOTE_DESKTOP_TEST_API_BASE_URL")
