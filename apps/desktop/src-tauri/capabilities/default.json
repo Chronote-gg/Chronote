@@ -3,5 +3,5 @@
   "identifier": "default",
   "description": "Default Chronote desktop permissions",
   "windows": ["main"],
-  "permissions": ["core:default"]
+  "permissions": ["core:default", "core:event:default"]
 }

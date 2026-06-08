@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{mpsc, Arc};
 use std::thread::JoinHandle;
 
 use serde::Serialize;
@@ -41,6 +41,14 @@ impl CaptureHandle {
     }
 }
 
+#[derive(Clone, Copy, Default)]
+pub struct CaptureSignalLevel {
+    pub peak_level: f32,
+    pub rms_level: f32,
+    pub sample_count: u64,
+    pub updated_at_epoch_ms: u64,
+}
+
 #[cfg(windows)]
 mod platform {
     use std::collections::VecDeque;
@@ -49,19 +57,22 @@ mod platform {
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::{mpsc, Arc};
     use std::thread;
-    use std::time::Duration;
+    use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
     use hound::{SampleFormat, WavSpec, WavWriter};
     use wasapi::{
         Device, DeviceEnumerator, Direction, SampleType, StreamMode, WasapiError, WaveFormat,
     };
 
-    use super::{AudioDevice, AudioDeviceDirection, CaptureDirection, CaptureHandle};
+    use super::{
+        AudioDevice, AudioDeviceDirection, CaptureDirection, CaptureHandle, CaptureSignalLevel,
+    };
 
     const CAPTURE_SAMPLE_RATE: usize = 48_000;
     const CAPTURE_CHANNELS: usize = 1;
     const CAPTURE_BITS_PER_SAMPLE: usize = 32;
     const EVENT_WAIT_MS: u32 = 250;
+    const SIGNAL_UPDATE_INTERVAL: Duration = Duration::from_millis(100);
     const STARTUP_TIMEOUT: Duration = Duration::from_secs(5);
 
     pub fn list_audio_devices() -> Result<Vec<AudioDevice>, String> {
@@ -85,6 +96,7 @@ mod platform {
         direction: CaptureDirection,
         device_id: Option<String>,
         output_path: PathBuf,
+        signal_tx: Option<mpsc::Sender<CaptureSignalLevel>>,
     ) -> Result<CaptureHandle, String> {
         if let Some(parent) = output_path.parent() {
             fs::create_dir_all(parent).map_err(to_string)?;
@@ -101,7 +113,16 @@ mod platform {
                     CaptureDirection::Output => "system",
                 }
             ))
-            .spawn(move || capture_to_wav(direction, device_id, output_path, thread_stop, ready_tx))
+            .spawn(move || {
+                capture_to_wav(
+                    direction,
+                    device_id,
+                    output_path,
+                    thread_stop,
+                    signal_tx,
+                    ready_tx,
+                )
+            })
             .map_err(to_string)?;
 
         match ready_rx.recv_timeout(STARTUP_TIMEOUT) {
@@ -189,9 +210,10 @@ mod platform {
         device_id: Option<String>,
         output_path: PathBuf,
         stop: Arc<AtomicBool>,
+        signal_tx: Option<mpsc::Sender<CaptureSignalLevel>>,
         ready_tx: mpsc::Sender<Result<(), String>>,
     ) -> Result<(), String> {
-        let init_result = initialize_capture(direction, device_id, &output_path);
+        let init_result = initialize_capture(direction, device_id, &output_path, signal_tx);
         let Ok(mut capture) = init_result else {
             let error = init_result
                 .err()
@@ -212,6 +234,7 @@ mod platform {
         capture_client: wasapi::AudioCaptureClient,
         event_handle: wasapi::Handle,
         writer: WavWriter<std::io::BufWriter<std::fs::File>>,
+        signal_tx: Option<mpsc::Sender<CaptureSignalLevel>>,
         sample_queue: VecDeque<u8>,
         block_align: usize,
     }
@@ -220,6 +243,7 @@ mod platform {
         direction: CaptureDirection,
         device_id: Option<String>,
         output_path: &PathBuf,
+        signal_tx: Option<mpsc::Sender<CaptureSignalLevel>>,
     ) -> Result<ActiveWasapiCapture, String> {
         wasapi::initialize_mta().ok().map_err(to_string)?;
         let enumerator = DeviceEnumerator::new().map_err(to_string)?;
@@ -262,6 +286,7 @@ mod platform {
             capture_client,
             event_handle,
             writer,
+            signal_tx,
             sample_queue: VecDeque::with_capacity(
                 100 * block_align * (1024 + 2 * buffer_frame_count as usize),
             ),
@@ -270,6 +295,9 @@ mod platform {
     }
 
     fn capture_loop(capture: &mut ActiveWasapiCapture, stop: &AtomicBool) -> Result<(), String> {
+        let mut signal = SignalAccumulator::default();
+        let mut next_signal_update = Instant::now() + SIGNAL_UPDATE_INTERVAL;
+
         while !stop.load(Ordering::SeqCst) {
             match capture.event_handle.wait_for_event(EVENT_WAIT_MS) {
                 Ok(()) => {}
@@ -288,10 +316,61 @@ mod platform {
                     capture.sample_queue.pop_front().unwrap_or_default(),
                 ];
                 let sample = f32::from_le_bytes(bytes).clamp(-1.0, 1.0);
+                signal.observe(sample);
                 capture.writer.write_sample(sample).map_err(to_string)?;
             }
+            if Instant::now() >= next_signal_update {
+                signal.publish(capture.signal_tx.as_ref());
+                next_signal_update = Instant::now() + SIGNAL_UPDATE_INTERVAL;
+            }
         }
+        signal.publish(capture.signal_tx.as_ref());
         capture.writer.flush().map_err(to_string)
+    }
+
+    #[derive(Default)]
+    struct SignalAccumulator {
+        peak: f32,
+        square_sum: f64,
+        samples: u64,
+        total_samples: u64,
+    }
+
+    impl SignalAccumulator {
+        fn observe(&mut self, sample: f32) {
+            let absolute = sample.abs();
+            self.peak = self.peak.max(absolute);
+            self.square_sum += f64::from(sample) * f64::from(sample);
+            self.samples = self.samples.saturating_add(1);
+        }
+
+        fn publish(&mut self, signal_tx: Option<&mpsc::Sender<CaptureSignalLevel>>) {
+            if self.samples == 0 {
+                return;
+            }
+
+            let rms = (self.square_sum / self.samples as f64).sqrt() as f32;
+            self.total_samples = self.total_samples.saturating_add(self.samples);
+            if let Some(signal_tx) = signal_tx {
+                let _ = signal_tx.send(CaptureSignalLevel {
+                    peak_level: self.peak.clamp(0.0, 1.0),
+                    rms_level: rms.clamp(0.0, 1.0),
+                    sample_count: self.total_samples,
+                    updated_at_epoch_ms: now_epoch_millis(),
+                });
+            }
+            self.peak = 0.0;
+            self.square_sum = 0.0;
+            self.samples = 0;
+        }
+    }
+
+    fn now_epoch_millis() -> u64 {
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis()
+            .min(u128::from(u64::MAX)) as u64
     }
 }
 
@@ -312,6 +391,7 @@ mod platform {
         _direction: CaptureDirection,
         _device_id: Option<String>,
         _output_path: PathBuf,
+        _signal_tx: Option<std::sync::mpsc::Sender<super::CaptureSignalLevel>>,
     ) -> Result<CaptureHandle, String> {
         Err("Chronote desktop recording is currently Windows-only.".to_string())
     }
@@ -336,6 +416,7 @@ pub fn start_capture(
     direction: CaptureDirection,
     device_id: Option<String>,
     output_path: PathBuf,
+    signal_tx: Option<mpsc::Sender<CaptureSignalLevel>>,
 ) -> Result<CaptureHandle, String> {
-    platform::start_capture(direction, device_id, output_path)
+    platform::start_capture(direction, device_id, output_path, signal_tx)
 }
