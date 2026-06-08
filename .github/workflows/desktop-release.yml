@@ -1,0 +1,93 @@
+name: Desktop Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Desktop release tag, for example desktop-v0.1.0-beta.1"
+        required: true
+        type: string
+      prerelease:
+        description: "Mark the GitHub release as a prerelease"
+        required: true
+        default: true
+        type: boolean
+
+permissions:
+  contents: write
+
+concurrency:
+  group: desktop-release-${{ inputs.tag }}
+  cancel-in-progress: false
+
+env:
+  CARGO_REGISTRIES_CRATES_IO_PROTOCOL: sparse
+
+jobs:
+  release-windows:
+    name: Build Draft Windows Desktop Release
+    runs-on: windows-latest
+    environment: desktop-release
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Set up Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: "24.15.0"
+          cache: "yarn"
+          cache-dependency-path: |
+            yarn.lock
+            apps/desktop/yarn.lock
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: apps/desktop/src-tauri
+
+      - name: Install dependencies
+        run: yarn install --frozen-lockfile --ignore-scripts
+
+      - name: Install desktop dependencies
+        run: yarn desktop:install
+
+      - name: Build and upload desktop release artifacts
+        id: tauri-release
+        uses: tauri-apps/tauri-action@v1
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        with:
+          projectPath: apps/desktop
+          tagName: ${{ inputs.tag }}
+          releaseName: Chronote Desktop ${{ inputs.tag }}
+          releaseBody: |
+            [AGENT]
+
+            Draft Chronote Desktop Windows release artifacts.
+
+            These artifacts are unsigned for beta validation. Do not publish as stable until Windows Authenticode signing is configured and verified.
+          releaseDraft: true
+          prerelease: ${{ inputs.prerelease }}
+          args: --ci --no-sign
+          uploadUpdaterJson: false
+          releaseAssetNamePattern: Chronote-Desktop-[version]-[platform]-[arch]-[bundle][setup][ext]
+
+      - name: Validate desktop artifacts
+        run: yarn desktop:artifacts --write
+
+      - name: Upload checksum artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: chronote-desktop-checksums
+          path: apps/desktop/src-tauri/target/release/bundle/SHA256SUMS.txt
+
+      - name: Upload checksums to draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "${{ inputs.tag }}" apps/desktop/src-tauri/target/release/bundle/SHA256SUMS.txt --clobber

@@ -49,7 +49,138 @@ pub struct CaptureSignalLevel {
     pub updated_at_epoch_ms: u64,
 }
 
-#[cfg(windows)]
+#[cfg(feature = "synthetic-audio")]
+mod platform {
+    use std::fs;
+    use std::path::PathBuf;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::{mpsc, Arc};
+    use std::thread;
+    use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+    use hound::{SampleFormat, WavSpec, WavWriter};
+
+    use super::{
+        AudioDevice, AudioDeviceDirection, CaptureDirection, CaptureHandle, CaptureSignalLevel,
+    };
+
+    const SYNTHETIC_SAMPLE_RATE: u32 = 48_000;
+    const SYNTHETIC_CHANNELS: u16 = 1;
+    const SYNTHETIC_BITS_PER_SAMPLE: u16 = 32;
+    const SYNTHETIC_CHUNK_SAMPLES: usize = 4_800;
+    const SYNTHETIC_CHUNK_DELAY: Duration = Duration::from_millis(100);
+
+    pub fn list_audio_devices() -> Result<Vec<AudioDevice>, String> {
+        Ok(vec![
+            AudioDevice {
+                id: "synthetic-mic".to_string(),
+                name: "Synthetic Microphone".to_string(),
+                direction: AudioDeviceDirection::Input,
+                is_default_communications: true,
+            },
+            AudioDevice {
+                id: "synthetic-output".to_string(),
+                name: "Synthetic System Output".to_string(),
+                direction: AudioDeviceDirection::Output,
+                is_default_communications: true,
+            },
+        ])
+    }
+
+    pub fn start_capture(
+        direction: CaptureDirection,
+        _device_id: Option<String>,
+        output_path: PathBuf,
+        signal_tx: Option<mpsc::Sender<CaptureSignalLevel>>,
+    ) -> Result<CaptureHandle, String> {
+        if let Some(parent) = output_path.parent() {
+            fs::create_dir_all(parent).map_err(to_string)?;
+        }
+
+        let stop = Arc::new(AtomicBool::new(false));
+        let thread_stop = Arc::clone(&stop);
+        let thread = thread::Builder::new()
+            .name(format!(
+                "chronote-synthetic-{}-capture",
+                match direction {
+                    CaptureDirection::Input => "mic",
+                    CaptureDirection::Output => "system",
+                }
+            ))
+            .spawn(move || synthetic_capture_loop(direction, output_path, thread_stop, signal_tx))
+            .map_err(to_string)?;
+
+        Ok(CaptureHandle { stop, thread })
+    }
+
+    fn synthetic_capture_loop(
+        direction: CaptureDirection,
+        output_path: PathBuf,
+        stop: Arc<AtomicBool>,
+        signal_tx: Option<mpsc::Sender<CaptureSignalLevel>>,
+    ) -> Result<(), String> {
+        let mut writer = WavWriter::create(
+            output_path,
+            WavSpec {
+                channels: SYNTHETIC_CHANNELS,
+                sample_rate: SYNTHETIC_SAMPLE_RATE,
+                bits_per_sample: SYNTHETIC_BITS_PER_SAMPLE,
+                sample_format: SampleFormat::Float,
+            },
+        )
+        .map_err(to_string)?;
+        let amplitude = match direction {
+            CaptureDirection::Input => 0.42_f32,
+            CaptureDirection::Output => 0.28_f32,
+        };
+        let mut total_samples = 0_u64;
+
+        while !stop.load(Ordering::SeqCst) {
+            write_synthetic_chunk(&mut writer, amplitude)?;
+            total_samples = total_samples.saturating_add(SYNTHETIC_CHUNK_SAMPLES as u64);
+            if let Some(signal_tx) = signal_tx.as_ref() {
+                let _ = signal_tx.send(CaptureSignalLevel {
+                    peak_level: amplitude,
+                    rms_level: amplitude / 2.0_f32.sqrt(),
+                    sample_count: total_samples,
+                    updated_at_epoch_ms: now_epoch_millis(),
+                });
+            }
+            thread::sleep(SYNTHETIC_CHUNK_DELAY);
+        }
+
+        if total_samples == 0 {
+            write_synthetic_chunk(&mut writer, amplitude)?;
+        }
+        writer.flush().map_err(to_string)?;
+        writer.finalize().map_err(to_string)
+    }
+
+    fn write_synthetic_chunk(
+        writer: &mut WavWriter<std::io::BufWriter<std::fs::File>>,
+        amplitude: f32,
+    ) -> Result<(), String> {
+        for index in 0..SYNTHETIC_CHUNK_SAMPLES {
+            let phase = if index % 2 == 0 { 1.0 } else { -1.0 };
+            writer.write_sample(amplitude * phase).map_err(to_string)?;
+        }
+        Ok(())
+    }
+
+    fn now_epoch_millis() -> u64 {
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis()
+            .min(u128::from(u64::MAX)) as u64
+    }
+
+    fn to_string(error: impl std::fmt::Display) -> String {
+        error.to_string()
+    }
+}
+
+#[cfg(all(windows, not(feature = "synthetic-audio")))]
 mod platform {
     use std::collections::VecDeque;
     use std::fs;
@@ -374,7 +505,7 @@ mod platform {
     }
 }
 
-#[cfg(not(windows))]
+#[cfg(all(not(windows), not(feature = "synthetic-audio")))]
 mod platform {
     use std::path::PathBuf;
     use std::sync::atomic::AtomicBool;
@@ -397,19 +528,21 @@ mod platform {
     }
 }
 
-#[cfg(windows)]
 pub fn list_audio_devices() -> Result<Vec<AudioDevice>, String> {
-    std::thread::Builder::new()
-        .name("chronote-audio-device-list".to_string())
-        .spawn(platform::list_audio_devices)
-        .map_err(|error| error.to_string())?
-        .join()
-        .map_err(|_| "Audio device enumeration thread panicked.".to_string())?
-}
+    #[cfg(all(windows, not(feature = "synthetic-audio")))]
+    {
+        return std::thread::Builder::new()
+            .name("chronote-audio-device-list".to_string())
+            .spawn(platform::list_audio_devices)
+            .map_err(|error| error.to_string())?
+            .join()
+            .map_err(|_| "Audio device enumeration thread panicked.".to_string())?;
+    }
 
-#[cfg(not(windows))]
-pub fn list_audio_devices() -> Result<Vec<AudioDevice>, String> {
-    platform::list_audio_devices()
+    #[cfg(any(feature = "synthetic-audio", not(windows)))]
+    {
+        platform::list_audio_devices()
+    }
 }
 
 pub fn start_capture(

@@ -6,6 +6,11 @@ authors = ["Chronote"]
 edition = "2021"
 build = "build.rs"
 
+[features]
+default = []
+synthetic-audio = []
+test-hooks = []
+
 [build-dependencies]
 tauri-build = { version = "2.5.1", features = [] }
 
