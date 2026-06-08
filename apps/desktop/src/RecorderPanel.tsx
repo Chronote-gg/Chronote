@@ -36,9 +36,16 @@ const clampLevel = (level: number | null) => {
   return Math.min(1, Math.max(0, level));
 };
 
+const statusHints: Partial<Record<SourceSignalStatus, string>> = {
+  checking: "Checking signal...",
+  silent: "No signal detected",
+  unavailable: "Source unavailable",
+};
+
 function SourceSignalCard({ source }: { source: SourceSignal }) {
   const level = clampLevel(source.level);
   const levelPercent = level === null ? 0 : Math.round(level * 100);
+  const statusHint = statusHints[source.status];
   const meterStyle = {
     "--source-signal-level": `${levelPercent}%`,
   } as CSSProperties;
@@ -52,16 +59,20 @@ function SourceSignalCard({ source }: { source: SourceSignal }) {
         </div>
       </div>
       <div
-        aria-label={`${source.label} signal level`}
+        aria-label={`${source.label} signal level${statusHint ? `: ${statusHint}` : ""}`}
         aria-valuemax={100}
         aria-valuemin={0}
         aria-valuenow={level === null ? undefined : levelPercent}
+        data-status={source.status}
         className="source-meter"
         role="meter"
         style={meterStyle}
       >
         <span />
       </div>
+      {statusHint ? (
+        <span className="source-status-hint">{statusHint}</span>
+      ) : null}
     </article>
   );
 }

@@ -57,6 +57,7 @@ const DEFAULT_PORTAL_BASE_URL =
 const SIGNAL_STALE_MS = 2000;
 const SILENCE_RMS_THRESHOLD = 0.01;
 const UPLOAD_STATUS_POLL_MS = 2000;
+const COMPLETE_WITHOUT_LINK_POLL_TIMEOUT_MS = 30_000;
 const RECORDING_SIGNAL_EVENT = "recording-source-signal";
 
 const invoke = <T,>(command: string, args?: Record<string, unknown>) => {
@@ -87,8 +88,15 @@ const isProcessingJob = (job?: UploadJob | null) =>
   job?.status === "queued" ||
   job?.status === "processing";
 
-const uploadStatusCopy = (job: UploadJob, meetingUrl?: string) => {
+const uploadStatusCopy = (
+  job: UploadJob,
+  meetingUrl?: string,
+  completeMissingLinkTimedOut = false,
+) => {
   if (job.status === "complete" && meetingUrl) return "Your meeting is ready.";
+  if (job.status === "complete" && completeMissingLinkTimedOut) {
+    return "Your meeting is ready, but Chronote could not get a direct link.";
+  }
   if (job.status === "complete") {
     return "Your meeting is ready, but Chronote is still syncing the link.";
   }
@@ -169,6 +177,8 @@ export default function App() {
   const [title, setTitle] = useState("");
   const [tags, setTags] = useState("");
   const [job, setJob] = useState<UploadJob | null>(null);
+  const [completeMissingLinkStartedAt, setCompleteMissingLinkStartedAt] =
+    useState<number | null>(null);
   const [busy, setBusy] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
@@ -179,6 +189,13 @@ export default function App() {
     (device) => device.direction === "output",
   );
   const meetingUrl = job ? openMeetingUrl(portalBaseUrl, job) : undefined;
+  const completeMissingLinkTimedOut = Boolean(
+    job?.status === "complete" &&
+    !meetingUrl &&
+    completeMissingLinkStartedAt !== null &&
+    Date.now() - completeMissingLinkStartedAt >=
+      COMPLETE_WITHOUT_LINK_POLL_TIMEOUT_MS,
+  );
   const statusLabel = recording.isRecording
     ? "Recording"
     : user
@@ -233,10 +250,18 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    if (job?.status !== "complete" || meetingUrl) {
+      setCompleteMissingLinkStartedAt(null);
+      return;
+    }
+    setCompleteMissingLinkStartedAt((current) => current ?? Date.now());
+  }, [job?.status, job?.uploadId, meetingUrl]);
+
+  useEffect(() => {
     if (
       !job ||
       job.status === "failed" ||
-      (job.status === "complete" && meetingUrl)
+      (job.status === "complete" && (meetingUrl || completeMissingLinkTimedOut))
     ) {
       return;
     }
@@ -249,7 +274,7 @@ export default function App() {
         .catch(() => undefined);
     }, UPLOAD_STATUS_POLL_MS);
     return () => window.clearInterval(timer);
-  }, [apiBaseUrl, job, meetingUrl]);
+  }, [apiBaseUrl, completeMissingLinkTimedOut, job, meetingUrl]);
 
   useEffect(() => {
     if (!recording.isRecording) {
@@ -437,7 +462,13 @@ export default function App() {
               <h2>Recent</h2>
               {job ? (
                 <>
-                  <p>{uploadStatusCopy(job, meetingUrl)}</p>
+                  <p>
+                    {uploadStatusCopy(
+                      job,
+                      meetingUrl,
+                      completeMissingLinkTimedOut,
+                    )}
+                  </p>
                   {job.errorMessage ? (
                     <p className="error">{job.errorMessage}</p>
                   ) : null}
@@ -455,8 +486,25 @@ export default function App() {
                   {isProcessingJob(job) && !meetingUrl ? (
                     <p className="message">Checking processing status...</p>
                   ) : null}
-                  {job.status === "complete" && !meetingUrl ? (
+                  {job.status === "complete" &&
+                  !meetingUrl &&
+                  !completeMissingLinkTimedOut ? (
                     <p className="message">Checking status again...</p>
+                  ) : null}
+                  {job.status === "complete" &&
+                  !meetingUrl &&
+                  completeMissingLinkTimedOut ? (
+                    <a
+                      className="meeting-link"
+                      href={openPortalUrl(portalBaseUrl)}
+                      target="_blank"
+                      rel="noreferrer"
+                      onClick={(event) =>
+                        openExternalUrl(event, openPortalUrl(portalBaseUrl))
+                      }
+                    >
+                      Open Chronote meetings
+                    </a>
                   ) : null}
                 </>
               ) : (

@@ -59,7 +59,12 @@ console.log("Launching Chronote Desktop against production endpoints:");
 console.log(`  API: ${apiBaseUrl}`);
 console.log(`  Portal: ${portalBaseUrl}`);
 
-run("cargo", ["build", "--manifest-path", "src-tauri/Cargo.toml"]);
+run("cargo", [
+  "build",
+  "--manifest-path",
+  "src-tauri/Cargo.toml",
+  "--no-default-features",
+]);
 
 const vite = spawn(
   process.execPath,

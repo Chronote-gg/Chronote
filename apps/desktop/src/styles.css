@@ -243,6 +243,11 @@ h2 {
     background-color 120ms ease;
 }
 
+.source-status-hint {
+  color: #9fb4cf;
+  font-size: 0.76rem;
+}
+
 .recorder-panel-compact {
   max-width: 26rem;
 }

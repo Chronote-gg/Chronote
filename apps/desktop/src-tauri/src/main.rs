@@ -26,6 +26,7 @@ const KEYRING_ACCOUNT: &str = "chronote-desktop-session";
 const TOKEN_REFRESH_SKEW_SECONDS: u64 = 60;
 const LOGIN_TIMEOUT_SECONDS: u64 = 300;
 const DESKTOP_SCOPES: &str = "profile:read personal_uploads:write meetings:read";
+const RECORDING_SOURCE_SIGNAL_EVENT: &str = "recording-source-signal";
 const WAV_HEADER_BYTES: u64 = 44;
 
 #[derive(Default)]
@@ -846,7 +847,7 @@ fn spawn_signal_relay(
         .spawn(move || {
             for signal in signal_rx {
                 let _ = app.emit(
-                    "recording-source-signal",
+                    RECORDING_SOURCE_SIGNAL_EVENT,
                     RecordingSourceSignal {
                         source_id: source_id.clone(),
                         kind: kind.clone(),
