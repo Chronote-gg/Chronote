@@ -77,6 +77,11 @@ const NAV_ITEMS: Array<{
   },
 ];
 
+const SUPPORT_EMAIL = "basic@basicbit.net";
+const SUPPORT_MAILTO = `mailto:${SUPPORT_EMAIL}?subject=${encodeURIComponent(
+  "Chronote support",
+)}`;
+
 export function SiteNavbar({ onClose, pathname }: SiteNavbarProps) {
   const theme = useMantineTheme();
   const scheme = useComputedColorScheme("dark");
@@ -186,14 +191,14 @@ export function SiteNavbar({ onClose, pathname }: SiteNavbarProps) {
         <Stack gap={4}>
           <NavLink
             label="Support"
-            description="Docs and quick help"
+            description="Email support"
             data-testid="nav-support"
             leftSection={
               <ThemeIcon variant="transparent" color="gray" size={34}>
                 <IconMessageCircle size={18} />
               </ThemeIcon>
             }
-            onClick={() => window.open("https://chronote.gg", "_blank")}
+            onClick={() => window.open(SUPPORT_MAILTO, "_blank")}
             style={{ borderRadius: theme.radius[uiRadii.control] }}
           />
         </Stack>

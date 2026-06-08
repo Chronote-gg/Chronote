@@ -5,10 +5,11 @@ use std::fs;
 use std::io::{Read, Write};
 use std::net::TcpListener;
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::{mpsc, Mutex};
+use std::thread::{self, JoinHandle};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use audio::{AudioDevice, CaptureDirection, CaptureHandle};
+use audio::{AudioDevice, CaptureDirection, CaptureHandle, CaptureSignalLevel};
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use chrono::{SecondsFormat, Utc};
 use directories::ProjectDirs;
@@ -16,7 +17,7 @@ use rand::{rngs::OsRng, RngCore};
 use reqwest::multipart::{Form, Part};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use tauri::State;
+use tauri::{Emitter, State};
 use url::Url;
 use uuid::Uuid;
 
@@ -25,6 +26,7 @@ const KEYRING_ACCOUNT: &str = "chronote-desktop-session";
 const TOKEN_REFRESH_SKEW_SECONDS: u64 = 60;
 const LOGIN_TIMEOUT_SECONDS: u64 = 300;
 const DESKTOP_SCOPES: &str = "profile:read personal_uploads:write meetings:read";
+const RECORDING_SOURCE_SIGNAL_EVENT: &str = "recording-source-signal";
 const WAV_HEADER_BYTES: u64 = 44;
 
 #[derive(Default)]
@@ -44,6 +46,7 @@ struct RecordingSourceHandle {
     label: String,
     path: PathBuf,
     capture: CaptureHandle,
+    signal_relay: JoinHandle<()>,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -89,6 +92,26 @@ struct RecordingStatus {
     started_at: Option<String>,
 }
 
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RecordingSourceSignal {
+    source_id: String,
+    kind: String,
+    label: String,
+    peak_level: f32,
+    rms_level: f32,
+    sample_count: u64,
+    updated_at_epoch_ms: u64,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct LoginResult {
+    user: DesktopUser,
+    session_persisted: bool,
+    persistence_warning: Option<String>,
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct UploadResult {
@@ -102,6 +125,7 @@ struct UploadJob {
     status: String,
     error_message: Option<String>,
     meeting_guild_id: Option<String>,
+    #[serde(rename = "channelIdTimestamp", alias = "channelId_timestamp")]
     channel_id_timestamp: Option<String>,
 }
 
@@ -213,7 +237,7 @@ fn get_session(
 }
 
 #[tauri::command]
-async fn login(api_base_url: String, state: State<'_, AppState>) -> Result<DesktopUser, String> {
+async fn login(api_base_url: String, state: State<'_, AppState>) -> Result<LoginResult, String> {
     let api_base_url = normalize_api_base_url(&api_base_url)?;
     let PendingLogin {
         listener,
@@ -236,9 +260,13 @@ async fn login(api_base_url: String, state: State<'_, AppState>) -> Result<Deskt
     )
     .await?;
     let session = session_from_token_response(&api_base_url, token_response);
-    store_session(&session)?;
+    let persistence_warning = persist_session(&session).err();
     set_cached_session(&state, Some(session.clone()))?;
-    Ok(session.user)
+    Ok(LoginResult {
+        user: session.user,
+        session_persisted: persistence_warning.is_none(),
+        persistence_warning,
+    })
 }
 
 #[tauri::command]
@@ -279,6 +307,7 @@ fn get_recording_status(state: State<'_, AppState>) -> Result<RecordingStatus, S
 fn start_recording(
     mic_device_id: Option<String>,
     output_device_id: Option<String>,
+    app: tauri::AppHandle,
     state: State<'_, AppState>,
 ) -> Result<RecordingStatus, String> {
     let mut recording = state.recording.lock().map_err(lock_error)?;
@@ -296,6 +325,7 @@ fn start_recording(
         CaptureDirection::Input,
         mic_device_id,
         &directory,
+        &app,
     )?;
     let system = match start_source_capture(
         "system_output",
@@ -304,10 +334,12 @@ fn start_recording(
         CaptureDirection::Output,
         output_device_id,
         &directory,
+        &app,
     ) {
         Ok(system) => system,
         Err(error) => {
             let _ = mic.capture.stop();
+            let _ = mic.signal_relay.join();
             return Err(error);
         }
     };
@@ -384,6 +416,15 @@ async fn get_upload_status(
     Ok(UploadResult { job: response.job })
 }
 
+#[tauri::command]
+fn open_external_url(url: String) -> Result<(), String> {
+    let url = Url::parse(&url).map_err(|error| error.to_string())?;
+    if url.scheme() != "http" && url.scheme() != "https" {
+        return Err("Only http and https URLs can be opened.".to_string());
+    }
+    open::that(url.as_str()).map_err(|error| error.to_string())
+}
+
 fn main() {
     tauri::Builder::default()
         .manage(AppState::default())
@@ -396,6 +437,7 @@ fn main() {
             start_recording,
             stop_and_upload_recording,
             get_upload_status,
+            open_external_url,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Chronote Desktop");
@@ -591,7 +633,7 @@ async fn access_token_for(
     }
 
     let refreshed = refresh_session(api_base_url, client, &session.refresh_token).await?;
-    store_session(&refreshed)?;
+    let _ = persist_session(&refreshed);
     set_cached_session(state, Some(refreshed.clone()))?;
     Ok(refreshed.access_token)
 }
@@ -767,16 +809,58 @@ fn start_source_capture(
     direction: CaptureDirection,
     device_id: Option<String>,
     directory: &Path,
+    app: &tauri::AppHandle,
 ) -> Result<RecordingSourceHandle, String> {
     let path = directory.join(format!("{source_id}.wav"));
-    let capture = audio::start_capture(direction, device_id, path.clone())?;
+    let (signal_tx, signal_rx) = mpsc::channel();
+    let signal_relay = spawn_signal_relay(app, source_id, kind, label, signal_rx)?;
+    let capture = match audio::start_capture(direction, device_id, path.clone(), Some(signal_tx)) {
+        Ok(capture) => capture,
+        Err(error) => {
+            let _ = signal_relay.join();
+            return Err(error);
+        }
+    };
     Ok(RecordingSourceHandle {
         source_id: source_id.to_string(),
         kind: kind.to_string(),
         label: label.to_string(),
         path,
         capture,
+        signal_relay,
     })
+}
+
+fn spawn_signal_relay(
+    app: &tauri::AppHandle,
+    source_id: &str,
+    kind: &str,
+    label: &str,
+    signal_rx: mpsc::Receiver<CaptureSignalLevel>,
+) -> Result<JoinHandle<()>, String> {
+    let app = app.clone();
+    let source_id = source_id.to_string();
+    let kind = kind.to_string();
+    let label = label.to_string();
+    thread::Builder::new()
+        .name(format!("chronote-{source_id}-signal-relay"))
+        .spawn(move || {
+            for signal in signal_rx {
+                let _ = app.emit(
+                    RECORDING_SOURCE_SIGNAL_EVENT,
+                    RecordingSourceSignal {
+                        source_id: source_id.clone(),
+                        kind: kind.clone(),
+                        label: label.clone(),
+                        peak_level: signal.peak_level,
+                        rms_level: signal.rms_level,
+                        sample_count: signal.sample_count,
+                        updated_at_epoch_ms: signal.updated_at_epoch_ms,
+                    },
+                );
+            }
+        })
+        .map_err(|error| error.to_string())
 }
 
 fn stop_recording_sources(active: ActiveRecording) -> Result<Vec<CapturedSourceFile>, String> {
@@ -784,6 +868,10 @@ fn stop_recording_sources(active: ActiveRecording) -> Result<Vec<CapturedSourceF
     for source in active.sources {
         let path = source.path.clone();
         source.capture.stop()?;
+        source
+            .signal_relay
+            .join()
+            .map_err(|_| "Recording signal relay thread panicked.".to_string())?;
         let metadata = fs::metadata(&path).map_err(|error| error.to_string())?;
         if metadata.len() <= WAV_HEADER_BYTES {
             return Err("Recorded audio source was empty.".to_string());
@@ -844,6 +932,21 @@ fn store_session(session: &DesktopSession) -> Result<(), String> {
     entry
         .set_password(&serde_json::to_string(session).map_err(|error| error.to_string())?)
         .map_err(|error| error.to_string())
+}
+
+fn persist_session(session: &DesktopSession) -> Result<(), String> {
+    store_session(session)?;
+    match load_stored_session()? {
+        Some(stored)
+            if stored.api_base_url == session.api_base_url
+                && stored.refresh_token == session.refresh_token
+                && stored.user.id == session.user.id =>
+        {
+            Ok(())
+        }
+        Some(_) => Err("Credential store returned a different Chronote session.".to_string()),
+        None => Err("Credential store did not return the saved Chronote session.".to_string()),
+    }
 }
 
 fn clear_stored_session() {

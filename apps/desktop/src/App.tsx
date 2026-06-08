@@ -1,4 +1,5 @@
-import { useEffect, useState } from "react";
+import { type MouseEvent, useEffect, useState } from "react";
+import { RecorderPanel, type SourceSignal } from "./RecorderPanel";
 
 type DesktopUser = {
   id: string;
@@ -19,12 +20,28 @@ type RecordingStatus = {
   startedAt?: string;
 };
 
+type RecordingSourceSignal = {
+  sourceId: string;
+  kind: string;
+  label: string;
+  peakLevel: number;
+  rmsLevel: number;
+  sampleCount: number;
+  updatedAtEpochMs: number;
+};
+
+type LoginResult = {
+  user: DesktopUser;
+  sessionPersisted: boolean;
+  persistenceWarning?: string;
+};
+
 type UploadJob = {
   uploadId: string;
   status: "pending_upload" | "queued" | "processing" | "complete" | "failed";
   errorMessage?: string;
   meetingGuildId?: string;
-  channelId_timestamp?: string;
+  channelIdTimestamp?: string;
 };
 
 type UploadResult = {
@@ -37,7 +54,11 @@ const DEFAULT_API_BASE_URL =
 const DEFAULT_PORTAL_BASE_URL =
   import.meta.env.VITE_DESKTOP_PORTAL_BASE_URL ||
   (import.meta.env.DEV ? "http://127.0.0.1:5173" : "https://chronote.gg");
-const STATUS_POLL_MS = 5000;
+const SIGNAL_STALE_MS = 2000;
+const SILENCE_RMS_THRESHOLD = 0.01;
+const UPLOAD_STATUS_POLL_MS = 2000;
+const COMPLETE_WITHOUT_LINK_POLL_TIMEOUT_MS = 30_000;
+const RECORDING_SIGNAL_EVENT = "recording-source-signal";
 
 const invoke = <T,>(command: string, args?: Record<string, unknown>) => {
   const tauriInvoke = window.__TAURI__?.core.invoke;
@@ -62,15 +83,81 @@ const formatError = (err: unknown, fallback: string) => {
   return fallback;
 };
 
-const isBlockingJob = (job?: UploadJob | null) =>
-  job?.status === "queued" || job?.status === "processing";
+const isProcessingJob = (job?: UploadJob | null) =>
+  job?.status === "pending_upload" ||
+  job?.status === "queued" ||
+  job?.status === "processing";
+
+const uploadStatusCopy = (
+  job: UploadJob,
+  meetingUrl?: string,
+  completeMissingLinkTimedOut = false,
+) => {
+  if (job.status === "complete" && meetingUrl) return "Your meeting is ready.";
+  if (job.status === "complete" && completeMissingLinkTimedOut) {
+    return "Your meeting is ready, but Chronote could not get a direct link.";
+  }
+  if (job.status === "complete") {
+    return "Your meeting is ready, but Chronote is still syncing the link.";
+  }
+  if (job.status === "failed") return "Processing failed.";
+  if (meetingUrl) return "Your meeting is processing. You can open it now.";
+  return "Processing your meeting. This will update when notes are ready.";
+};
 
 function openMeetingUrl(portalBaseUrl: string, job: UploadJob) {
-  if (!job.meetingGuildId || !job.channelId_timestamp) return undefined;
+  if (!job.meetingGuildId || !job.channelIdTimestamp) return undefined;
   const base = portalBaseUrl.replace(/\/$/, "");
   return `${base}/portal/meetings/${encodeURIComponent(
     job.meetingGuildId,
-  )}/${encodeURIComponent(job.channelId_timestamp)}`;
+  )}/${encodeURIComponent(job.channelIdTimestamp)}`;
+}
+
+function openPortalUrl(portalBaseUrl: string) {
+  return `${portalBaseUrl.replace(/\/$/, "")}/portal/meetings`;
+}
+
+function getDeviceLabel(
+  devices: AudioDevice[],
+  selectedId: string,
+  fallback: string,
+) {
+  if (!selectedId) return fallback;
+  return devices.find((device) => device.id === selectedId)?.name ?? fallback;
+}
+
+function buildSourceSignal(
+  source: Pick<SourceSignal, "id" | "label">,
+  detail: string,
+  devicesLoaded: boolean,
+  hasDevice: boolean,
+  isRecording: boolean,
+  signal?: RecordingSourceSignal,
+): SourceSignal {
+  const level = signal ? Math.max(0, Math.min(1, signal.peakLevel)) : null;
+  const stale = signal
+    ? Date.now() - signal.updatedAtEpochMs > SIGNAL_STALE_MS
+    : false;
+  const hasSamples = Boolean(signal && signal.sampleCount > 0);
+  const status = !devicesLoaded
+    ? "checking"
+    : !hasDevice
+      ? "unavailable"
+      : isRecording && !hasSamples
+        ? "checking"
+        : isRecording &&
+            (stale || (signal?.rmsLevel ?? 0) < SILENCE_RMS_THRESHOLD)
+          ? "silent"
+          : isRecording
+            ? "recording"
+            : "ready";
+
+  return {
+    ...source,
+    detail,
+    level,
+    status,
+  };
 }
 
 export default function App() {
@@ -78,6 +165,10 @@ export default function App() {
   const [portalBaseUrl, setPortalBaseUrl] = useState(DEFAULT_PORTAL_BASE_URL);
   const [user, setUser] = useState<DesktopUser | null>(null);
   const [devices, setDevices] = useState<AudioDevice[]>([]);
+  const [devicesLoaded, setDevicesLoaded] = useState(false);
+  const [recordingSignals, setRecordingSignals] = useState<
+    Record<string, RecordingSourceSignal>
+  >({});
   const [micDeviceId, setMicDeviceId] = useState("");
   const [outputDeviceId, setOutputDeviceId] = useState("");
   const [recording, setRecording] = useState<RecordingStatus>({
@@ -86,6 +177,8 @@ export default function App() {
   const [title, setTitle] = useState("");
   const [tags, setTags] = useState("");
   const [job, setJob] = useState<UploadJob | null>(null);
+  const [completeMissingLinkStartedAt, setCompleteMissingLinkStartedAt] =
+    useState<number | null>(null);
   const [busy, setBusy] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
@@ -96,11 +189,44 @@ export default function App() {
     (device) => device.direction === "output",
   );
   const meetingUrl = job ? openMeetingUrl(portalBaseUrl, job) : undefined;
+  const completeMissingLinkTimedOut = Boolean(
+    job?.status === "complete" &&
+    !meetingUrl &&
+    completeMissingLinkStartedAt !== null &&
+    Date.now() - completeMissingLinkStartedAt >=
+      COMPLETE_WITHOUT_LINK_POLL_TIMEOUT_MS,
+  );
   const statusLabel = recording.isRecording
     ? "Recording"
     : user
       ? "Ready"
       : "Signed out";
+  const sourceSignals = [
+    buildSourceSignal(
+      { id: "mic", label: "Mic" },
+      getDeviceLabel(
+        inputDevices,
+        micDeviceId,
+        "Default communications microphone",
+      ),
+      devicesLoaded,
+      inputDevices.length > 0,
+      recording.isRecording,
+      recordingSignals.owner_mic,
+    ),
+    buildSourceSignal(
+      { id: "system", label: "System/Other" },
+      getDeviceLabel(
+        outputDevices,
+        outputDeviceId,
+        "Default communications output",
+      ),
+      devicesLoaded,
+      outputDevices.length > 0,
+      recording.isRecording,
+      recordingSignals.system_output,
+    ),
+  ];
 
   useEffect(() => {
     void invoke<DesktopUser | null>("get_session", { apiBaseUrl })
@@ -113,14 +239,32 @@ export default function App() {
 
   useEffect(() => {
     void invoke<AudioDevice[]>("list_audio_devices")
-      .then(setDevices)
+      .then((nextDevices) => {
+        setDevices(nextDevices);
+        setDevicesLoaded(true);
+      })
       .catch((err: unknown) => {
+        setDevicesLoaded(true);
         setError(formatError(err, "Failed to load devices."));
       });
   }, []);
 
   useEffect(() => {
-    if (!job || job.status === "complete" || job.status === "failed") return;
+    if (job?.status !== "complete" || meetingUrl) {
+      setCompleteMissingLinkStartedAt(null);
+      return;
+    }
+    setCompleteMissingLinkStartedAt((current) => current ?? Date.now());
+  }, [job?.status, job?.uploadId, meetingUrl]);
+
+  useEffect(() => {
+    if (
+      !job ||
+      job.status === "failed" ||
+      (job.status === "complete" && (meetingUrl || completeMissingLinkTimedOut))
+    ) {
+      return;
+    }
     const timer = window.setInterval(() => {
       void invoke<{ job: UploadJob }>("get_upload_status", {
         apiBaseUrl,
@@ -128,18 +272,56 @@ export default function App() {
       })
         .then((result) => setJob(result.job))
         .catch(() => undefined);
-    }, STATUS_POLL_MS);
+    }, UPLOAD_STATUS_POLL_MS);
     return () => window.clearInterval(timer);
-  }, [apiBaseUrl, job]);
+  }, [apiBaseUrl, completeMissingLinkTimedOut, job, meetingUrl]);
+
+  useEffect(() => {
+    if (!recording.isRecording) {
+      setRecordingSignals({});
+      return;
+    }
+
+    let cancelled = false;
+    let unlisten: (() => void) | undefined;
+    void window.__TAURI__?.event
+      ?.listen<RecordingSourceSignal>(RECORDING_SIGNAL_EVENT, (event) => {
+        if (cancelled) return;
+        setRecordingSignals((current) => ({
+          ...current,
+          [event.payload.sourceId]: event.payload,
+        }));
+      })
+      .then((nextUnlisten) => {
+        if (cancelled) {
+          nextUnlisten();
+          return;
+        }
+        unlisten = nextUnlisten;
+      })
+      .catch(() => undefined);
+
+    return () => {
+      cancelled = true;
+      setRecordingSignals({});
+      unlisten?.();
+    };
+  }, [recording.isRecording]);
 
   async function login() {
     setBusy(true);
     setError(null);
     setMessage("Opening browser sign-in...");
     try {
-      const nextUser = await invoke<DesktopUser>("login", { apiBaseUrl });
-      setUser(nextUser);
-      setMessage("Signed in to Chronote.");
+      const result = await invoke<LoginResult>("login", { apiBaseUrl });
+      setUser(result.user);
+      setMessage(
+        result.sessionPersisted
+          ? "Signed in to Chronote."
+          : `Signed in for this session, but Chronote could not save your session: ${
+              result.persistenceWarning ?? "credential storage failed"
+            }`,
+      );
     } catch (err) {
       setError(formatError(err, "Sign-in failed."));
     } finally {
@@ -192,11 +374,24 @@ export default function App() {
       });
       setJob(result.job);
       setRecording({ isRecording: false });
-      setMessage("Upload received. Chronote is processing your meeting.");
+      setMessage("Upload received.");
     } catch (err) {
       setError(formatError(err, "Upload failed."));
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function openExternalUrl(
+    event: MouseEvent<HTMLAnchorElement>,
+    url: string,
+  ) {
+    event.preventDefault();
+    setError(null);
+    try {
+      await invoke("open_external_url", { url });
+    } catch (err) {
+      setError(formatError(err, "Failed to open Chronote."));
     }
   }
 
@@ -207,14 +402,29 @@ export default function App() {
           <strong className="brand">Chronote</strong>
           <span className="status-text">{statusLabel}</span>
         </div>
-        <button
-          type="button"
-          className="secondary-button"
-          onClick={() => setShowSettings((value) => !value)}
-          disabled={busy || recording.isRecording}
-        >
-          {showSettings ? "Hide settings" : "Settings"}
-        </button>
+        <div className="top-actions">
+          {user ? (
+            <span className="account-label">Signed in as {user.username}</span>
+          ) : null}
+          <button
+            type="button"
+            className="secondary-button"
+            onClick={() => setShowSettings((value) => !value)}
+            disabled={busy || recording.isRecording}
+          >
+            {showSettings ? "Hide settings" : "Settings"}
+          </button>
+          {user ? (
+            <button
+              type="button"
+              className="secondary-button"
+              onClick={logout}
+              disabled={busy || recording.isRecording}
+            >
+              Sign out
+            </button>
+          ) : null}
+        </div>
       </header>
 
       {!user ? (
@@ -233,74 +443,31 @@ export default function App() {
       ) : (
         <>
           <section className="record-layout">
-            <div className="panel recorder-panel">
-              <div>
-                <h1>Recorder</h1>
-                <p className="lede">
-                  Mic is labeled Me. Computer audio is labeled System/Other.
-                </p>
-              </div>
-              <div className="record-action-row">
-                {!recording.isRecording ? (
-                  <button
-                    type="button"
-                    className="record-button"
-                    onClick={startRecording}
-                    disabled={busy}
-                  >
-                    Record
-                  </button>
-                ) : (
-                  <button
-                    type="button"
-                    className="record-button recording"
-                    onClick={stopAndUpload}
-                    disabled={busy}
-                  >
-                    Stop and upload
-                  </button>
-                )}
-                <div className="record-meta">
-                  <strong>
-                    {recording.isRecording
-                      ? "Recording in progress"
-                      : "Ready for a new personal meeting"}
-                  </strong>
-                  {recording.startedAt ? (
-                    <span>Started {recording.startedAt}</span>
-                  ) : null}
-                </div>
-              </div>
-              <div className="details-grid">
-                <label>
-                  Title
-                  <input
-                    value={title}
-                    onChange={(event) => setTitle(event.currentTarget.value)}
-                    placeholder="Optional"
-                    disabled={busy || recording.isRecording}
-                  />
-                </label>
-                <label>
-                  Tags
-                  <input
-                    value={tags}
-                    onChange={(event) => setTags(event.currentTarget.value)}
-                    placeholder="planning, research"
-                    disabled={busy || recording.isRecording}
-                  />
-                </label>
-              </div>
-              {message ? <p className="message">{message}</p> : null}
-              {error ? <p className="error">{error}</p> : null}
-            </div>
+            <RecorderPanel
+              busy={busy}
+              error={error}
+              isRecording={recording.isRecording}
+              message={message}
+              sourceSignals={sourceSignals}
+              startedAt={recording.startedAt}
+              tags={tags}
+              title={title}
+              onStartRecording={startRecording}
+              onStopAndUpload={stopAndUpload}
+              onTagsChange={setTags}
+              onTitleChange={setTitle}
+            />
 
             <aside className="panel side-panel">
               <h2>Recent</h2>
               {job ? (
                 <>
                   <p>
-                    Upload status: <strong>{job.status}</strong>
+                    {uploadStatusCopy(
+                      job,
+                      meetingUrl,
+                      completeMissingLinkTimedOut,
+                    )}
                   </p>
                   {job.errorMessage ? (
                     <p className="error">{job.errorMessage}</p>
@@ -311,38 +478,53 @@ export default function App() {
                       href={meetingUrl}
                       target="_blank"
                       rel="noreferrer"
+                      onClick={(event) => openExternalUrl(event, meetingUrl)}
                     >
-                      Open meeting in Chronote
+                      Open created meeting
                     </a>
                   ) : null}
-                  {isBlockingJob(job) ? (
-                    <p className="message">Checking status...</p>
+                  {isProcessingJob(job) && !meetingUrl ? (
+                    <p className="message">Checking processing status...</p>
+                  ) : null}
+                  {job.status === "complete" &&
+                  !meetingUrl &&
+                  !completeMissingLinkTimedOut ? (
+                    <p className="message">Checking status again...</p>
+                  ) : null}
+                  {job.status === "complete" &&
+                  !meetingUrl &&
+                  completeMissingLinkTimedOut ? (
+                    <a
+                      className="meeting-link"
+                      href={openPortalUrl(portalBaseUrl)}
+                      target="_blank"
+                      rel="noreferrer"
+                      onClick={(event) =>
+                        openExternalUrl(event, openPortalUrl(portalBaseUrl))
+                      }
+                    >
+                      Open Chronote meetings
+                    </a>
                   ) : null}
                 </>
               ) : (
-                <p>No desktop uploads in this session yet.</p>
+                <>
+                  <p>No desktop uploads in this session yet.</p>
+                  <a
+                    className="meeting-link"
+                    href={openPortalUrl(portalBaseUrl)}
+                    target="_blank"
+                    rel="noreferrer"
+                    onClick={(event) =>
+                      openExternalUrl(event, openPortalUrl(portalBaseUrl))
+                    }
+                  >
+                    Open Chronote meetings
+                  </a>
+                </>
               )}
-              <a
-                className="meeting-link"
-                href={portalBaseUrl}
-                target="_blank"
-                rel="noreferrer"
-              >
-                Open Chronote
-              </a>
             </aside>
           </section>
-          <footer className="account-row">
-            <span>Signed in as {user.username}</span>
-            <button
-              type="button"
-              className="secondary-button"
-              onClick={logout}
-              disabled={busy || recording.isRecording}
-            >
-              Sign out
-            </button>
-          </footer>
         </>
       )}
 
