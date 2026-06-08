@@ -121,4 +121,4 @@ jobs:
           Pop-Location
 
       - name: Run native desktop smoke
-        run: yarn desktop:smoke:packaged
+        run: yarn desktop:smoke:native

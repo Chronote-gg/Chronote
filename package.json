@@ -41,7 +41,7 @@
     "desktop:build:web": "yarn --cwd apps/desktop build:web",
     "desktop:package": "yarn --cwd apps/desktop build:ci",
     "desktop:artifacts": "node scripts/desktop-artifacts.mjs",
-    "desktop:smoke:packaged": "node scripts/desktop-packaged-smoke.mjs",
+    "desktop:smoke:native": "node scripts/desktop-native-smoke.mjs",
     "desktop:check": "node scripts/desktop-check.js",
     "desktop:ci": "yarn desktop:install && yarn desktop:typecheck && yarn desktop:build:web && yarn desktop:check",
     "test:desktop:coverage": "jest --config jest.desktop-coverage.config.ts --runTestsByPath test/api/desktop.test.ts",

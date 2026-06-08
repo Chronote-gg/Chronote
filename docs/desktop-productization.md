@@ -48,10 +48,10 @@ yarn desktop:ci
 yarn test:desktop:coverage
 yarn desktop:package
 yarn desktop:artifacts --write
-yarn desktop:smoke:packaged
+yarn desktop:smoke:native
 ```
 
-`yarn desktop:smoke:packaged` requires `tauri-driver` and Microsoft Edge WebDriver on `PATH`.
+`yarn desktop:smoke:native` requires `tauri-driver` and Microsoft Edge WebDriver on `PATH`.
 Set `CHRONOTE_DESKTOP_WEBDRIVER_DIR` to a local driver directory if EdgeDriver is not globally installed.
 
 ## Release Tagging

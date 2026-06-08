@@ -346,7 +346,7 @@ try {
     run("yarn", ["--cwd", "apps/desktop", "build:smoke"], { env: smokeEnv });
   }
   await runSmoke(appBinaryPath, smokeEnv);
-  console.log("Packaged desktop smoke test passed.");
+  console.log("Native desktop smoke test passed.");
 } finally {
   await new Promise((resolve) => api.close(resolve));
 }
