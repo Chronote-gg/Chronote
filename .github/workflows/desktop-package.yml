@@ -110,7 +110,12 @@ jobs:
           cargo install --git https://github.com/chippers/msedgedriver-tool
           Push-Location "$env:RUNNER_TEMP\msedgedriver"
           & "$env:USERPROFILE\.cargo\bin\msedgedriver-tool.exe"
-          $PWD.Path | Out-File -FilePath $env:GITHUB_PATH -Append
+          $driver = Get-ChildItem -Path "$env:RUNNER_TEMP\msedgedriver" -Filter "msedgedriver.exe" -Recurse | Select-Object -First 1
+          if ($null -eq $driver) {
+            throw "msedgedriver.exe was not downloaded."
+          }
+          $driver.DirectoryName | Out-File -FilePath $env:GITHUB_PATH -Append
+          "CHRONOTE_DESKTOP_WEBDRIVER_DIR=$($driver.DirectoryName)" | Out-File -FilePath $env:GITHUB_ENV -Append
           Pop-Location
 
       - name: Run packaged desktop smoke
