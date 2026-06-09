@@ -8,6 +8,7 @@ import type {
   PersonalMediaUploadJobRecord,
   PersonalRecordingSourceRecord,
 } from "../types/db";
+import type { Participant } from "../types/participants";
 import type { TranscriptSegment } from "../types/transcript";
 import { MEETING_STATUS } from "../types/meetingLifecycle";
 import {
@@ -70,6 +71,16 @@ const buildJobMeetingKey = (job: PersonalMediaUploadJobRecord) => {
     timestamp,
   };
 };
+
+const buildPersonalUploadParticipants = (
+  job: PersonalMediaUploadJobRecord,
+): Participant[] => [
+  {
+    id: job.ownerUserId,
+    username: "Me",
+    displayName: "Me",
+  },
+];
 
 const runFfmpeg = (inputPath: string, outputPath: string) =>
   new Promise<void>((resolve, reject) => {
@@ -496,7 +507,7 @@ const writeProcessingMeeting = async (job: PersonalMediaUploadJobRecord) => {
     channelId: PERSONAL_UPLOAD_CHANNEL_ID,
     timestamp: identity.timestamp,
     tags: job.tags,
-    participants: [],
+    participants: buildPersonalUploadParticipants(job),
     duration: job.durationSeconds ?? 0,
     transcribeMeeting: true,
     generateNotes: true,
@@ -562,7 +573,7 @@ const buildCompletedMeetingHistory = (
   meetingName: result.meetingName,
   summarySentence: result.summaries.summarySentence,
   summaryLabel: result.summaries.summaryLabel,
-  participants: [],
+  participants: buildPersonalUploadParticipants(job),
   duration: result.durationSeconds,
   transcribeMeeting: true,
   generateNotes: true,

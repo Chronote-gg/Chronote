@@ -203,7 +203,7 @@ jobs:
 
       - name: Upload reviewed plan artifact
         if: steps.plan.outputs.changes == 'true'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ${{ steps.artifact.outputs.name }}
           path: |

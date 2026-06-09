@@ -121,6 +121,7 @@
 - Config access: prefer shared helpers that resolve and transform config values (trim strings, validate enums, etc.) instead of inline snapshot parsing. When you add a helper to replace boilerplate, update existing consumers proactively, keep it KISS, and avoid hedging.
 - Portal base URLs are always configured. Do not add fallback behavior for missing `FRONTEND_SITE_URL` or relative portal links; treat missing config as an error.
 - Desktop recorder hosted API routes are gated by `ENABLE_DESKTOP_API`; keep it false unless running an intentional beta/canary, and restrict access with `DESKTOP_ALLOWED_USER_IDS` or `SUPER_ADMIN_USER_IDS`.
+- When launching Chronote Desktop for operator/manual testing, use production endpoints by default: run `yarn desktop:start:prod` from the repo root. Use `yarn desktop:dev:prod` only when an interactive Tauri dev server is needed. Do not use generic `yarn dev` unless explicitly testing a local API/portal flow.
 - Avoid hedging and speculative fallbacks. Follow YAGNI and KISS, do not add code for hypothetical cases unless explicitly required.
 - Config constraints: when numeric settings depend on caps, use minKey/maxKey to reference other config entries, clamp inputs in the UI, and enforce bounds in API validation.
 - My Meetings UX: default the portal home list to All time, keep the initial page bounded, and use an explicit Load more control for older meetings.
@@ -133,6 +134,8 @@
   Markdown heading, put `[AGENT]` on its own line or add a blank line before the
   heading; never concatenate the prefix directly with a heading like
   `[AGENT]## Summary`.
+- PR descriptions should stay concise. Do not publish long "Tests" or "Verification" checklists for checks already enforced by CI; mention validation only when it adds non-obvious signal, such as manual/provider checks, visual-review rationale, skipped checks, or rollout risk.
+- Durable instruction capture: when the user corrects a standing behavior or asks future agents to know something, update the appropriate durable surface in the same turn. Use repo `AGENTS.md` for Chronote-specific rules, and global OpenCode or basics-agentic-dogfooding guidance for cross-repo meta-instructions.
 - PR review hygiene: before asking the user to merge a PR, reply to and resolve all AI bot review threads (Copilot, Greptile, etc). If we disagree with the suggestion, say so and resolve the thread anyway. Use reactions when helpful. When replying to review comments, reply directly to each thread using the review comment replies API (`POST /repos/OWNER/REPO/pulls/PR/comments/COMMENT_ID/replies`), not by creating a new pending review. Direct replies keep each response in its original thread context.
 - PR bot thread audit: when checking for unresolved AI comments, fetch _all_ review threads via the GitHub GraphQL API and paginate until `hasNextPage=false` (don't assume `first: 100` is enough). Also scan PR issue comments for bot follow-ups (Greptile sometimes posts as regular PR comments, which cannot be "resolved" but should still be replied to or reacted to).
 - Post-push PR SOP: after every commit push to an active PR, run a full checks and review audit (status checks, unresolved AI threads, bot issue comments, mergeability), then wait at least 5 minutes and re-check for late AI reviewer comments before declaring merge-ready.

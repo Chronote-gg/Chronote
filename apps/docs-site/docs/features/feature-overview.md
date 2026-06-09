@@ -198,7 +198,7 @@ The Chronote web portal provides a browser-based interface for:
 - Importing Markdown or plain-text notes from another app.
 - Managing server settings (context, dictionary, auto-record, Notion automation).
 
-Access the portal from the **Open in Chronote** button on any meeting summary, or open the portal directly to start from **My Meetings**. Use **Upload media** to create a personal meeting from a local recording. Use **View servers** or the server switcher when you want to choose a server for Library, Ask, Billing, or Settings.
+Access the portal from the **Open in Chronote** button on any meeting summary, or open the portal directly to start from **My Meetings**. Use **Upload media** to create a personal meeting from a local recording. Use **View servers** or the server switcher when you want to choose a server for Library, Ask, Billing, or Settings. Use **Support** in the portal sidebar to email Chronote support.
 
 ## Personal media uploads
 
@@ -224,7 +224,7 @@ Chronote Desktop is currently available as a limited beta. Your account must hav
 4. Click **Start recording**.
 5. Click **Stop and upload** when the meeting ends.
 
-Desktop recordings use your Chronote account and do not require a Discord voice channel. Keep the app open until the upload is received. Processing continues in Chronote after the upload completes.
+Desktop recordings use your Chronote account and do not require a Discord voice channel. Keep the app open until the upload is received. Processing continues in Chronote after the upload completes. Use **Open Chronote** in the desktop app to open **My Meetings** in the web portal.
 
 ## Context menu commands
 
