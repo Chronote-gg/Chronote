@@ -18,6 +18,7 @@ const accessToken = "chronote-desktop-smoke-access-token";
 const uploadId = "00000000-0000-4000-8000-000000000249";
 const meetingGuildId = "personal:desktop-smoke-user";
 const channelIdTimestamp = "personal#2026-06-08T12:00:00.000Z";
+const expectedUploadSourceIds = ["owner_mic", "system_output"];
 
 function run(command, args, options = {}) {
   const result = spawnSync(
@@ -128,9 +129,30 @@ function createMockApi() {
       request.method === "POST" &&
       url.pathname === "/api/desktop/recordings/complete"
     ) {
-      await readRequestBody(request);
-      if (!uploads.has("owner_mic") || !uploads.has("system_output")) {
-        sendJson(response, 400, { error: "missing_uploads" });
+      const completeRequestText = (await readRequestBody(request)).toString(
+        "utf8",
+      );
+      const completeRequest = completeRequestText
+        ? JSON.parse(completeRequestText)
+        : {};
+      const missingSourceIds = expectedUploadSourceIds.filter(
+        (sourceId) => !uploads.has(sourceId),
+      );
+      if (missingSourceIds.length > 0) {
+        const receivedSourceIds = [...uploads.keys()];
+        const completedSourceIds = Array.isArray(completeRequest.sources)
+          ? completeRequest.sources.map((source) => source.sourceId)
+          : [];
+        const detail = [
+          `missing expected upload source(s): ${missingSourceIds.join(", ")}`,
+          `received upload source(s): ${receivedSourceIds.join(", ") || "none"}`,
+          `complete request source(s): ${completedSourceIds.join(", ") || "none"}`,
+        ].join("; ");
+        console.error(`Desktop smoke mock rejected completion: ${detail}`);
+        sendJson(response, 400, {
+          error: "missing_uploads",
+          message: `Desktop smoke mock rejected completion: ${detail}`,
+        });
         return;
       }
       sendJson(response, 200, {

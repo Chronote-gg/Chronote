@@ -12,6 +12,7 @@ import { spawnSync } from "node:child_process";
 
 const repoRoot = path.resolve(__dirname, "../..");
 const scriptPath = path.join(repoRoot, "scripts", "desktop-artifacts.mjs");
+const fixtureVersion = "0.1.0";
 
 function runArtifactsScript(artifactDir: string, args: string[] = []) {
   return spawnSync(process.execPath, [scriptPath, ...args], {
@@ -19,6 +20,7 @@ function runArtifactsScript(artifactDir: string, args: string[] = []) {
     env: {
       ...process.env,
       DESKTOP_ARTIFACT_DIR: artifactDir,
+      DESKTOP_ARTIFACT_VERSION: fixtureVersion,
     },
     encoding: "utf8",
   });
@@ -38,10 +40,13 @@ describe("desktop artifact validation", () => {
   });
 
   test("accepts versioned Chronote desktop installers and writes checksums", () => {
-    const msi = path.join(artifactDir, "Chronote Desktop_0.1.0_x64_en-US.msi");
+    const msi = path.join(
+      artifactDir,
+      `Chronote Desktop_${fixtureVersion}_x64_en-US.msi`,
+    );
     const setup = path.join(
       artifactDir,
-      "Chronote Desktop_0.1.0_x64-setup.exe",
+      `Chronote Desktop_${fixtureVersion}_x64-setup.exe`,
     );
     writeFileSync(msi, "fake msi");
     writeFileSync(setup, "fake setup");
@@ -61,8 +66,14 @@ describe("desktop artifact validation", () => {
     const nsisDir = path.join(artifactDir, "nsis");
     mkdirSync(msiDir);
     mkdirSync(nsisDir);
-    const msi = path.join(msiDir, "Chronote Desktop_0.1.0_x64_en-US.msi");
-    const setup = path.join(nsisDir, "Chronote Desktop_0.1.0_x64-setup.exe");
+    const msi = path.join(
+      msiDir,
+      `Chronote Desktop_${fixtureVersion}_x64_en-US.msi`,
+    );
+    const setup = path.join(
+      nsisDir,
+      `Chronote Desktop_${fixtureVersion}_x64-setup.exe`,
+    );
     writeFileSync(msi, "fake msi");
     writeFileSync(setup, "fake setup");
 
