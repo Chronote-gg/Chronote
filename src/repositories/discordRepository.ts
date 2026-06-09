@@ -19,7 +19,7 @@ export class DiscordApiError extends Error {
   }
 }
 
-const shouldRetryDiscordError = (error: Error) => {
+const shouldRetryDiscordError = (error: unknown) => {
   if (isDiscordApiError(error)) {
     return error.status === 429 || error.status >= 500;
   }
