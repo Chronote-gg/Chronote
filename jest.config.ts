@@ -66,7 +66,7 @@ const config: Config.InitialOptions = {
   },
 
   // An array of regexp pattern strings that are matched against all source file paths, matched files will skip transformation
-  transformIgnorePatterns: ["node_modules/"],
+  transformIgnorePatterns: ["node_modules/(?!cockatiel/)"],
 
   // The glob patterns Jest uses to detect test files
   testMatch: ["**/__tests__/**/*.[jt]s?(x)", "**/?(*.)+(spec|test).[tj]s?(x)"],
