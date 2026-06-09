@@ -53,3 +53,4 @@ Costs and risks:
 - The desktop app is a Chronote client, not a Discord client.
 - Desktop tokens currently use the existing OAuth storage table with desktop-specific key prefixes.
 - Process-scoped loopback, echo cancellation, signed auto-update, and cross-platform capture should be separate follow-up decisions when implemented.
+- Desktop productization, release CI/CD, native smoke testing, signing, and update gates are tracked in `docs/desktop-productization.md` and issue #249.

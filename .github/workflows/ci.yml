@@ -371,7 +371,7 @@ jobs:
           fi
 
           repo_url="https://github.com/${GITHUB_REPOSITORY}.git"
-          auth_header="AUTHORIZATION: bearer ${GH_TOKEN}"
+          auth_header="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$GH_TOKEN" | base64 | tr -d '\n')"
           if git -c http.extraheader="$auth_header" ls-remote --exit-code --heads "$repo_url" "$PREVIEW_BRANCH" >/dev/null 2>&1; then
             git -c http.extraheader="$auth_header" clone --depth=1 --branch "$PREVIEW_BRANCH" "$repo_url" "$preview_repo"
           else

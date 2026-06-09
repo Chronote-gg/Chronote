@@ -1,3 +1,8 @@
+#![cfg_attr(
+    all(not(debug_assertions), target_os = "windows"),
+    windows_subsystem = "windows"
+)]
+
 mod audio;
 
 use std::collections::HashMap;
@@ -425,9 +430,33 @@ fn open_external_url(url: String) -> Result<(), String> {
     open::that(url.as_str()).map_err(|error| error.to_string())
 }
 
+#[tauri::command]
+fn start_window_drag(window: tauri::Window) -> Result<(), String> {
+    window.start_dragging().map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn minimize_window(window: tauri::Window) -> Result<(), String> {
+    window.minimize().map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn toggle_maximize_window(window: tauri::Window) -> Result<(), String> {
+    if window.is_maximized().map_err(|error| error.to_string())? {
+        window.unmaximize().map_err(|error| error.to_string())
+    } else {
+        window.maximize().map_err(|error| error.to_string())
+    }
+}
+
+#[tauri::command]
+fn close_window(window: tauri::Window) -> Result<(), String> {
+    window.close().map_err(|error| error.to_string())
+}
+
 fn main() {
     tauri::Builder::default()
-        .manage(AppState::default())
+        .manage(initial_app_state())
         .invoke_handler(tauri::generate_handler![
             get_session,
             login,
@@ -438,9 +467,63 @@ fn main() {
             stop_and_upload_recording,
             get_upload_status,
             open_external_url,
+            start_window_drag,
+            minimize_window,
+            toggle_maximize_window,
+            close_window,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Chronote Desktop");
+}
+
+fn initial_app_state() -> AppState {
+    let state = AppState::default();
+    #[cfg(feature = "test-hooks")]
+    if let Some(session) = test_session_from_env() {
+        if let Ok(mut cached_session) = state.session.lock() {
+            *cached_session = Some(session);
+        }
+    }
+    state
+}
+
+#[cfg(feature = "test-hooks")]
+fn test_session_from_env() -> Option<DesktopSession> {
+    if std::env::var("CHRONOTE_DESKTOP_TEST_SESSION")
+        .ok()?
+        .as_str()
+        != "1"
+    {
+        return None;
+    }
+    let api_base_url = std::env::var("CHRONOTE_DESKTOP_TEST_API_BASE_URL")
+        .or_else(|_| std::env::var("VITE_DESKTOP_API_BASE_URL"))
+        .ok()
+        .and_then(|value| normalize_api_base_url(&value).ok())?;
+    let access_token = std::env::var("CHRONOTE_DESKTOP_TEST_ACCESS_TOKEN")
+        .unwrap_or_else(|_| "chronote-desktop-smoke-access-token".to_string());
+    let refresh_token = std::env::var("CHRONOTE_DESKTOP_TEST_REFRESH_TOKEN")
+        .unwrap_or_else(|_| "chronote-desktop-smoke-refresh-token".to_string());
+    let user_id = std::env::var("CHRONOTE_DESKTOP_TEST_USER_ID")
+        .unwrap_or_else(|_| "desktop-smoke-user".to_string());
+    let username = std::env::var("CHRONOTE_DESKTOP_TEST_USERNAME")
+        .unwrap_or_else(|_| "Desktop Smoke Tester".to_string());
+
+    Some(DesktopSession {
+        api_base_url,
+        access_token,
+        refresh_token,
+        expires_at: now_epoch_seconds() + 3_600,
+        user: DesktopUser {
+            id: user_id,
+            username,
+            avatar: None,
+            scopes: DESKTOP_SCOPES
+                .split_whitespace()
+                .map(ToString::to_string)
+                .collect(),
+        },
+    })
 }
 
 struct PendingLogin {

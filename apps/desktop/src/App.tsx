@@ -1,4 +1,5 @@
 import { type MouseEvent, useEffect, useState } from "react";
+import chronoteIconSrc from "../src-tauri/icons/64x64.png";
 import { RecorderPanel, type SourceSignal } from "./RecorderPanel";
 
 type DesktopUser = {
@@ -59,6 +60,7 @@ const SILENCE_RMS_THRESHOLD = 0.01;
 const UPLOAD_STATUS_POLL_MS = 2000;
 const COMPLETE_WITHOUT_LINK_POLL_TIMEOUT_MS = 30_000;
 const RECORDING_SIGNAL_EVENT = "recording-source-signal";
+const INTERACTIVE_SELECTOR = "button, input, select, textarea, a";
 
 const invoke = <T,>(command: string, args?: Record<string, unknown>) => {
   const tauriInvoke = window.__TAURI__?.core.invoke;
@@ -229,6 +231,16 @@ export default function App() {
   ];
 
   useEffect(() => {
+    const preventBrowserContextMenu = (event: Event) => {
+      event.preventDefault();
+    };
+    document.addEventListener("contextmenu", preventBrowserContextMenu);
+    return () => {
+      document.removeEventListener("contextmenu", preventBrowserContextMenu);
+    };
+  }, []);
+
+  useEffect(() => {
     void invoke<DesktopUser | null>("get_session", { apiBaseUrl })
       .then(setUser)
       .catch(() => undefined);
@@ -395,14 +407,37 @@ export default function App() {
     }
   }
 
+  function startWindowDrag(event: MouseEvent<HTMLElement>) {
+    if (event.button !== 0) return;
+    const target = event.target;
+    if (target instanceof Element && target.closest(INTERACTIVE_SELECTOR)) {
+      return;
+    }
+    void invoke("start_window_drag").catch(() => undefined);
+  }
+
+  function runWindowCommand(command: string) {
+    void invoke(command).catch((err: unknown) => {
+      setError(formatError(err, "Window action failed."));
+    });
+  }
+
   return (
     <main className="app-shell">
-      <header className="top-bar">
-        <div>
-          <strong className="brand">Chronote</strong>
-          <span className="status-text">{statusLabel}</span>
+      <header className="desktop-titlebar" onMouseDown={startWindowDrag}>
+        <div className="titlebar-brand">
+          <img
+            src={chronoteIconSrc}
+            alt=""
+            className="titlebar-icon"
+            draggable={false}
+          />
+          <div className="titlebar-copy">
+            <strong>Chronote Desktop</strong>
+            <span>{statusLabel}</span>
+          </div>
         </div>
-        <div className="top-actions">
+        <div className="top-actions" aria-label="Application actions">
           {user ? (
             <span className="account-label">Signed in as {user.username}</span>
           ) : null}
@@ -424,6 +459,35 @@ export default function App() {
               Sign out
             </button>
           ) : null}
+        </div>
+        <div className="window-controls" aria-label="Window controls">
+          <button
+            type="button"
+            className="window-control"
+            aria-label="Minimize window"
+            title="Minimize"
+            onClick={() => runWindowCommand("minimize_window")}
+          >
+            <span aria-hidden="true">-</span>
+          </button>
+          <button
+            type="button"
+            className="window-control"
+            aria-label="Maximize or restore window"
+            title="Maximize or restore"
+            onClick={() => runWindowCommand("toggle_maximize_window")}
+          >
+            <span aria-hidden="true">[]</span>
+          </button>
+          <button
+            type="button"
+            className="window-control window-control-close"
+            aria-label="Close window"
+            title="Close"
+            onClick={() => runWindowCommand("close_window")}
+          >
+            <span aria-hidden="true">x</span>
+          </button>
         </div>
       </header>
 
