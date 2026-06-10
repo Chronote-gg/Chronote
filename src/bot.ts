@@ -1031,14 +1031,14 @@ async function setupApplicationCommands() {
             option
               .setName("voice-channel")
               .setDescription("The voice channel to auto-record")
-              .addChannelTypes(2)
+              .addChannelTypes(ChannelType.GuildVoice)
               .setRequired(true),
           )
           .addChannelOption((option) =>
             option
               .setName("text-channel")
               .setDescription("The text channel to send meeting notifications")
-              .addChannelTypes(0)
+              .addChannelTypes(ChannelType.GuildText)
               .setRequired(true),
           )
           .addStringOption((option) =>
@@ -1057,7 +1057,7 @@ async function setupApplicationCommands() {
             option
               .setName("voice-channel")
               .setDescription("The voice channel to stop auto-recording")
-              .addChannelTypes(2)
+              .addChannelTypes(ChannelType.GuildVoice)
               .setRequired(true),
           ),
       )
@@ -1069,7 +1069,7 @@ async function setupApplicationCommands() {
             option
               .setName("text-channel")
               .setDescription("The text channel to send meeting notifications")
-              .addChannelTypes(0)
+              .addChannelTypes(ChannelType.GuildText)
               .setRequired(true),
           )
           .addStringOption((option) =>
@@ -1192,14 +1192,14 @@ async function setupApplicationCommands() {
             option
               .setName("voice-channel")
               .setDescription("Voice channel where TTS should auto-start")
-              .addChannelTypes(2)
+              .addChannelTypes(ChannelType.GuildVoice)
               .setRequired(true),
           )
           .addChannelOption((option) =>
             option
               .setName("text-channel")
               .setDescription("Text channel for TTS status messages")
-              .addChannelTypes(0)
+              .addChannelTypes(ChannelType.GuildText)
               .setRequired(true),
           ),
       )
@@ -1213,7 +1213,7 @@ async function setupApplicationCommands() {
             option
               .setName("voice-channel")
               .setDescription("Voice channel to disable TTS for")
-              .addChannelTypes(2)
+              .addChannelTypes(ChannelType.GuildVoice)
               .setRequired(true),
           ),
       )
@@ -1282,7 +1282,7 @@ async function setupApplicationCommands() {
             option
               .setName("channel")
               .setDescription("The voice channel to set context for")
-              .addChannelTypes(2) // Voice channel type
+              .addChannelTypes(ChannelType.GuildVoice)
               .setRequired(true),
           )
           .addStringOption((option) =>
@@ -1303,7 +1303,7 @@ async function setupApplicationCommands() {
             option
               .setName("channel")
               .setDescription("Optional: View context for a specific channel")
-              .addChannelTypes(2) // Voice channel type
+              .addChannelTypes(ChannelType.GuildVoice)
               .setRequired(false),
           ),
       )
@@ -1320,7 +1320,7 @@ async function setupApplicationCommands() {
             option
               .setName("channel")
               .setDescription("The voice channel to clear context for")
-              .addChannelTypes(2) // Voice channel type
+              .addChannelTypes(ChannelType.GuildVoice)
               .setRequired(true),
           ),
       )

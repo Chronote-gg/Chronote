@@ -16,6 +16,7 @@ const CHANNEL_CONTEXT_KEYS = new Set<string>([
   CONFIG_KEYS.chatTts.enabled,
   CONFIG_KEYS.chatTts.ttsOnlyEnabled,
 ]);
+const CHANNEL_CONTEXT_CLEAR_KEYS = [CONFIG_KEYS.context.instructions];
 const resolveLatestRecord = <T extends { updatedAt: string }>(records: T[]) =>
   records.reduce(
     (latest, record) =>
@@ -188,6 +189,18 @@ export async function fetchChannelContext(guildId: string, channelId: string) {
 }
 
 export async function clearChannelContext(guildId: string, channelId: string) {
+  const scope = { scope: "channel", guildId, channelId } as const;
+  await Promise.all(
+    CHANNEL_CONTEXT_CLEAR_KEYS.map((key) =>
+      clearConfigOverrideForScope(scope, key),
+    ),
+  );
+}
+
+export async function clearChannelContextSettings(
+  guildId: string,
+  channelId: string,
+) {
   const scope = { scope: "channel", guildId, channelId } as const;
   await Promise.all(
     Array.from(CHANNEL_CONTEXT_KEYS, (key) =>

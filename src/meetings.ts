@@ -240,6 +240,7 @@ export async function initializeMeeting(
     (isAutoRecording
       ? MEETING_START_REASONS.AUTO_RECORD_CHANNEL
       : MEETING_START_REASONS.MANUAL_COMMAND);
+  const canCaptureAudio = captureAudio && sessionMode === "meeting";
 
   // Join the voice channel
   let connection;
@@ -249,7 +250,7 @@ export async function initializeMeeting(
       guildId: guild.id,
       adapterCreator:
         guild.voiceAdapterCreator as unknown as DiscordGatewayAdapterCreator,
-      selfDeaf: false,
+      selfDeaf: !canCaptureAudio,
       selfMute: false, // must be unmuted to play TTS into the channel
     });
   } catch (error) {
@@ -262,7 +263,6 @@ export async function initializeMeeting(
 
   const receiver = connection.receiver;
   const attendance: Set<string> = new Set<string>();
-  const canCaptureAudio = captureAudio && sessionMode === "meeting";
   const liveVoiceEnabled =
     canCaptureAudio &&
     config.liveVoice.mode === "tts_gate" &&

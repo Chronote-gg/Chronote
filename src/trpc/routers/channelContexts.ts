@@ -1,6 +1,6 @@
 import { z } from "zod";
 import {
-  clearChannelContext,
+  clearChannelContextSettings,
   listChannelContexts,
   setChannelContext,
 } from "../../services/channelContextService";
@@ -59,7 +59,7 @@ const clear = manageGuildProcedure
   .input(z.object({ serverId: z.string(), channelId: z.string() }))
   .mutation(async ({ ctx, input }) => {
     await ensureBotPresence(ctx, input.serverId);
-    await clearChannelContext(input.serverId, input.channelId);
+    await clearChannelContextSettings(input.serverId, input.channelId);
     return { ok: true };
   });
 

@@ -143,6 +143,9 @@ describe("initializeMeeting", () => {
     expect(listDictionaryEntriesService).not.toHaveBeenCalled();
     expect(createAudioPlayer).toHaveBeenCalled();
     expect(createTtsQueue).toHaveBeenCalled();
+    expect(joinVoiceChannel).toHaveBeenCalledWith(
+      expect.objectContaining({ selfDeaf: true }),
+    );
     const connection = jest.mocked(joinVoiceChannel).mock.results[0].value;
     expect(connection.receiver.speaking.on).not.toHaveBeenCalled();
 
@@ -167,6 +170,9 @@ describe("initializeMeeting", () => {
     expect(openOutputFile).toHaveBeenCalledWith(meeting);
     expect(subscribeToUserVoice).toHaveBeenCalledWith(meeting, "user-1");
     expect(listDictionaryEntriesService).toHaveBeenCalledWith("guild-1");
+    expect(joinVoiceChannel).toHaveBeenCalledWith(
+      expect.objectContaining({ selfDeaf: false }),
+    );
     const connection = jest.mocked(joinVoiceChannel).mock.results[0].value;
     expect(connection.receiver.speaking.on).toHaveBeenCalledWith(
       "start",
