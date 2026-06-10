@@ -1,6 +1,7 @@
 import {
   ButtonInteraction,
   ChatInputCommandInteraction,
+  ChannelType,
   Client,
   GatewayIntentBits,
   ModalSubmitInteraction,
@@ -15,7 +16,12 @@ import {
 } from "discord.js";
 import { Routes } from "discord-api-types/v10";
 import { CONFIG_KEYS } from "./config/keys";
-import { getAllMeetings, getMeeting } from "./meetings";
+import {
+  endTtsOnlySession,
+  getAllMeetings,
+  getMeeting,
+  initializeMeeting,
+} from "./meetings";
 import {
   handleRequestStartMeeting,
   handleAutoStartMeeting,
@@ -93,8 +99,14 @@ import { handleAskCommand } from "./commands/ask";
 import { handleDictionaryCommand } from "./commands/dictionary";
 import { billingCommand, handleBillingCommand } from "./commands/billing";
 import { handleSayCommand } from "./commands/say";
-import { handleTtsCommand } from "./commands/tts";
+import { handleTtsCommand, handleWhoisCommand } from "./commands/tts";
+import { handleLeaveCommand } from "./commands/leave";
 import { TTS_VOICE_OPTIONS } from "./utils/ttsVoices";
+import { USER_CHAT_TTS_SPEAKER_PREFIX_MODE_OPTIONS } from "./utils/ttsText";
+import {
+  MAX_TTS_VOLUME_PERCENT,
+  MIN_TTS_VOLUME_PERCENT,
+} from "./utils/ttsVolume";
 import {
   invalidateDiscordBotGuildsCache,
   invalidateDiscordGuildCache,
@@ -132,6 +144,7 @@ import {
 } from "./commands/startMeetingContextMenu";
 import { claimInteractionReceipt } from "./services/interactionIdempotencyService";
 import { tryReplyToUnacknowledgedInteraction } from "./services/interactionResponseService";
+import { checkBotPermissions } from "./utils/permissions";
 
 const TOKEN = config.discord.botToken;
 const CLIENT_ID = config.discord.clientId;
@@ -142,6 +155,12 @@ const TTS_VOICE_CHOICES = [
     value,
   })),
 ];
+const TTS_PREFIX_MODE_CHOICES = USER_CHAT_TTS_SPEAKER_PREFIX_MODE_OPTIONS.map(
+  ({ label, value }) => ({
+    name: label,
+    value,
+  }),
+);
 
 const client = new Client({
   intents: [
@@ -196,6 +215,8 @@ const commandHandlers: Record<
   billing: handleBillingCommand,
   say: handleSayCommand,
   tts: handleTtsCommand,
+  leave: (interaction) => handleLeaveCommand(client, interaction),
+  whois: handleWhoisCommand,
   feedback: handleFeedbackCommand,
 };
 
@@ -638,6 +659,10 @@ async function handleBotVoiceUpdate(
   const wasInMeetingChannel = oldState.channelId === meeting.voiceChannel.id;
   const stillInMeetingChannel = newState.channelId === meeting.voiceChannel.id;
   if (wasInMeetingChannel && !stillInMeetingChannel) {
+    if (meeting.sessionMode === "tts_only") {
+      await endTtsOnlySession(meeting);
+      return;
+    }
     if (meeting.isAutoRecording) {
       const nonBotMemberIds = meeting.voiceChannel.members
         .filter((member) => !member.user.bot)
@@ -668,6 +693,101 @@ async function handleBotVoiceUpdate(
   }
 }
 
+async function resolveAutomationTextChannel(
+  voiceState: VoiceState,
+  tier: Awaited<ReturnType<typeof getGuildLimits>>["subscription"]["tier"],
+): Promise<TextChannel | undefined> {
+  if (!voiceState.channelId) return undefined;
+  const snapshot = await resolveConfigSnapshot({
+    guildId: voiceState.guild.id,
+    channelId: voiceState.channelId,
+    tier,
+  });
+  const textChannelId = getSnapshotString(
+    snapshot,
+    CONFIG_KEYS.notes.channelId,
+    {
+      trim: true,
+    },
+  );
+  if (!textChannelId) return undefined;
+
+  const channel =
+    voiceState.guild.channels.cache.get(textChannelId) ??
+    (await voiceState.guild.channels.fetch(textChannelId).catch(() => null));
+  if (!channel || channel.type !== ChannelType.GuildText) {
+    console.warn("Auto TTS text channel is not a guild text channel.", {
+      guildId: voiceState.guild.id,
+      voiceChannelId: voiceState.channelId,
+      textChannelId,
+    });
+    return undefined;
+  }
+  return channel;
+}
+
+async function maybeStartAutoTtsOnly(newState: VoiceState) {
+  if (!newState.channel || !newState.member) return false;
+  if (newState.member.user.id === client.user!.id) return false;
+
+  const { subscription, limits } = await getGuildLimits(newState.guild.id);
+  const voiceSettings = await resolveMeetingVoiceSettings(
+    newState.guild.id,
+    newState.channel.id,
+    limits,
+  );
+  if (!voiceSettings.chatTtsEnabled || !voiceSettings.chatTtsTtsOnlyEnabled) {
+    return false;
+  }
+
+  const textChannel = await resolveAutomationTextChannel(
+    newState,
+    subscription.tier,
+  );
+  if (!textChannel) {
+    console.warn("Auto TTS is enabled but no text channel is configured.", {
+      guildId: newState.guild.id,
+      voiceChannelId: newState.channel.id,
+    });
+    return false;
+  }
+
+  const botMember = newState.guild.members.cache.get(client.user!.id);
+  if (!botMember) return false;
+  const permissionCheck = checkBotPermissions(
+    newState.channel,
+    textChannel,
+    botMember,
+  );
+  if (!permissionCheck.success) {
+    await textChannel.send(
+      `Cannot start TTS-only chat-to-speech in **${newState.channel.name}**. ${permissionCheck.errorMessage}`,
+    );
+    return false;
+  }
+
+  await initializeMeeting({
+    sessionMode: "tts_only",
+    captureAudio: false,
+    recordBotAudio: false,
+    storeChatLog: false,
+    voiceChannel: newState.channel,
+    textChannel,
+    guild: newState.guild,
+    creator: newState.member.user,
+    transcribeMeeting: false,
+    generateNotes: false,
+    chatTtsEnabled: true,
+    chatTtsVoice: voiceSettings.chatTtsVoice,
+    chatTtsSpeakerPrefixMode: voiceSettings.chatTtsSpeakerPrefixMode,
+    subscriptionTier: subscription.tier,
+  });
+  await textChannel.send(
+    `TTS-only chat-to-speech started in **${newState.channel.name}**. No recording or transcription is active.`,
+  );
+  return true;
+}
+
 async function handleUserJoin(newState: VoiceState) {
   const meeting = getMeeting(newState.guild.id);
 
@@ -684,16 +804,20 @@ async function handleUserJoin(newState: VoiceState) {
       fallbackName: newState.member.user.username,
     });
     console.log(`${userLabel} joined the voice channel.`);
-    meeting.attendance.add(formatUserMention(participant.id));
     meeting.participants.set(participant.id, participant);
-    meeting.chatLog.push({
-      type: "join",
-      user: participant,
-      channelId: newState.channelId!,
-      timestamp: new Date().toISOString(),
-    });
+    if (meeting.storeChatLog !== false) {
+      meeting.attendance.add(formatUserMention(participant.id));
+      meeting.chatLog.push({
+        type: "join",
+        user: participant,
+        channelId: newState.channelId!,
+        timestamp: new Date().toISOString(),
+      });
+    }
 
-    await subscribeToUserVoice(meeting, newState.member!.user.id);
+    if (meeting.captureAudio !== false) {
+      await subscribeToUserVoice(meeting, newState.member!.user.id);
+    }
     return; // Exit early if we're already recording
   }
 
@@ -780,6 +904,7 @@ async function handleUserJoin(newState: VoiceState) {
             liveVoiceTtsVoice,
             chatTtsEnabled,
             chatTtsVoice,
+            chatTtsSpeakerPrefixMode,
           } = await resolveMeetingVoiceSettings(
             newState.guild.id,
             newState.channelId!,
@@ -801,18 +926,22 @@ async function handleUserJoin(newState: VoiceState) {
             liveVoiceTtsVoice,
             chatTtsEnabled,
             chatTtsVoice,
+            chatTtsSpeakerPrefixMode,
             startReason,
             startTriggeredByUserId,
             autoRecordRule,
           });
+          return;
         } else {
           console.error(
             `Could not find text channel ${resolvedTextChannelId} for auto-recording`,
           );
         }
       }
+
+      await maybeStartAutoTtsOnly(newState);
     } catch (error) {
-      console.error("Error checking auto-record settings:", error);
+      console.error("Error checking voice automation settings:", error);
     }
   }
 }
@@ -832,16 +961,27 @@ async function handleUserLeave(oldState: VoiceState) {
     });
     console.log(`${userLabel} left the voice channel.`);
     meeting.participants.set(participant.id, participant);
-    meeting.chatLog.push({
-      type: "leave",
-      user: participant,
-      channelId: oldState.channelId!,
-      timestamp: new Date().toISOString(),
-    });
+    if (meeting.storeChatLog !== false) {
+      meeting.chatLog.push({
+        type: "leave",
+        user: participant,
+        channelId: oldState.channelId!,
+        timestamp: new Date().toISOString(),
+      });
+    }
 
-    unsubscribeToVoiceUponLeaving(meeting, oldState.member!.user.id);
+    if (meeting.captureAudio !== false) {
+      unsubscribeToVoiceUponLeaving(meeting, oldState.member!.user.id);
+    }
 
     if (meeting.voiceChannel.members.size <= 1) {
+      if (meeting.sessionMode === "tts_only") {
+        await endTtsOnlySession(meeting);
+        await meeting.textChannel.send(
+          "TTS-only session ended because the voice channel is empty.",
+        );
+        return;
+      }
       if (!meeting.endReason) {
         meeting.endReason = MEETING_END_REASONS.CHANNEL_EMPTY;
       }
@@ -891,14 +1031,14 @@ async function setupApplicationCommands() {
             option
               .setName("voice-channel")
               .setDescription("The voice channel to auto-record")
-              .addChannelTypes(2)
+              .addChannelTypes(ChannelType.GuildVoice)
               .setRequired(true),
           )
           .addChannelOption((option) =>
             option
               .setName("text-channel")
               .setDescription("The text channel to send meeting notifications")
-              .addChannelTypes(0)
+              .addChannelTypes(ChannelType.GuildText)
               .setRequired(true),
           )
           .addStringOption((option) =>
@@ -917,7 +1057,7 @@ async function setupApplicationCommands() {
             option
               .setName("voice-channel")
               .setDescription("The voice channel to stop auto-recording")
-              .addChannelTypes(2)
+              .addChannelTypes(ChannelType.GuildVoice)
               .setRequired(true),
           ),
       )
@@ -929,7 +1069,7 @@ async function setupApplicationCommands() {
             option
               .setName("text-channel")
               .setDescription("The text channel to send meeting notifications")
-              .addChannelTypes(0)
+              .addChannelTypes(ChannelType.GuildText)
               .setRequired(true),
           )
           .addStringOption((option) =>
@@ -978,7 +1118,7 @@ async function setupApplicationCommands() {
       ),
     new SlashCommandBuilder()
       .setName("tts")
-      .setDescription("Control chat-to-speech preferences")
+      .setDescription("Control chat-to-speech preferences and automation")
       .addSubcommand((subcommand) =>
         subcommand
           .setName("disable")
@@ -1004,8 +1144,101 @@ async function setupApplicationCommands() {
       )
       .addSubcommand((subcommand) =>
         subcommand
+          .setName("prefix")
+          .setDescription("Set whether TTS says your name before messages")
+          .addStringOption((option) =>
+            option
+              .setName("mode")
+              .setDescription("Speaker-name prefix behavior")
+              .setRequired(true)
+              .addChoices(...TTS_PREFIX_MODE_CHOICES),
+          ),
+      )
+      .addSubcommand((subcommand) =>
+        subcommand
+          .setName("nickname")
+          .setDescription("Set your spoken TTS name for this server")
+          .addStringOption((option) =>
+            option
+              .setName("name")
+              .setDescription("Name Chronote should say for you")
+              .setRequired(true)
+              .setMaxLength(64),
+          ),
+      )
+      .addSubcommand((subcommand) =>
+        subcommand
+          .setName("clear-nickname")
+          .setDescription("Use your Discord display name for TTS again"),
+      )
+      .addSubcommand((subcommand) =>
+        subcommand
+          .setName("volume")
+          .setDescription("Set your chat-to-speech volume for this server")
+          .addIntegerOption((option) =>
+            option
+              .setName("percent")
+              .setDescription("Volume percent, 100 resets to default")
+              .setRequired(true)
+              .setMinValue(MIN_TTS_VOLUME_PERCENT)
+              .setMaxValue(MAX_TTS_VOLUME_PERCENT),
+          ),
+      )
+      .addSubcommand((subcommand) =>
+        subcommand
+          .setName("enable-channel")
+          .setDescription("Enable automatic chat-to-speech for a voice channel")
+          .addChannelOption((option) =>
+            option
+              .setName("voice-channel")
+              .setDescription("Voice channel where TTS should auto-start")
+              .addChannelTypes(ChannelType.GuildVoice)
+              .setRequired(true),
+          )
+          .addChannelOption((option) =>
+            option
+              .setName("text-channel")
+              .setDescription("Text channel for TTS status messages")
+              .addChannelTypes(ChannelType.GuildText)
+              .setRequired(true),
+          ),
+      )
+      .addSubcommand((subcommand) =>
+        subcommand
+          .setName("disable-channel")
+          .setDescription(
+            "Disable automatic chat-to-speech for a voice channel",
+          )
+          .addChannelOption((option) =>
+            option
+              .setName("voice-channel")
+              .setDescription("Voice channel to disable TTS for")
+              .addChannelTypes(ChannelType.GuildVoice)
+              .setRequired(true),
+          ),
+      )
+      .addSubcommand((subcommand) =>
+        subcommand
           .setName("stop")
           .setDescription("Stop current bot playback and clear the queue"),
+      ),
+    new SlashCommandBuilder()
+      .setName("whois")
+      .setDescription("Show how Chronote will identify someone in TTS")
+      .addUserOption((option) =>
+        option
+          .setName("user")
+          .setDescription("User to inspect, defaults to you")
+          .setRequired(false),
+      ),
+    new SlashCommandBuilder()
+      .setName("leave")
+      .setDescription("Disconnect Chronote from the current voice session")
+      .addBooleanOption((option) =>
+        option
+          .setName("confirm")
+          .setDescription("Required to end an active recorded meeting")
+          .setRequired(false),
       ),
     new SlashCommandBuilder()
       .setName("say")
@@ -1049,7 +1282,7 @@ async function setupApplicationCommands() {
             option
               .setName("channel")
               .setDescription("The voice channel to set context for")
-              .addChannelTypes(2) // Voice channel type
+              .addChannelTypes(ChannelType.GuildVoice)
               .setRequired(true),
           )
           .addStringOption((option) =>
@@ -1070,7 +1303,7 @@ async function setupApplicationCommands() {
             option
               .setName("channel")
               .setDescription("Optional: View context for a specific channel")
-              .addChannelTypes(2) // Voice channel type
+              .addChannelTypes(ChannelType.GuildVoice)
               .setRequired(false),
           ),
       )
@@ -1087,7 +1320,7 @@ async function setupApplicationCommands() {
             option
               .setName("channel")
               .setDescription("The voice channel to clear context for")
-              .addChannelTypes(2) // Voice channel type
+              .addChannelTypes(ChannelType.GuildVoice)
               .setRequired(true),
           ),
       )

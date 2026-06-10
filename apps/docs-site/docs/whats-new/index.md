@@ -46,7 +46,10 @@ Notable product changes for Chronote users. For the full changelog, see the [Git
 
 - Use `/tts enable` to have your chat messages spoken aloud in the meeting voice channel.
 - Choose from multiple voice options with `/tts voice`.
+- Set your spoken name, speaker prefix mode, and volume from `/tts`.
 - Use `/say` for one-off messages without enabling ongoing TTS.
+- Enable TTS-only channel startup so Chronote can speak chat messages without recording, transcription, notes, chat logs, or meeting artifacts.
+- Use `/leave` to make Chronote leave a TTS-only session immediately, or require explicit confirmation before ending a recorded meeting.
 
 ### Ask past meetings
 

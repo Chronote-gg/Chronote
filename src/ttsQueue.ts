@@ -18,6 +18,7 @@ import type {
   AudioSegmentSource,
 } from "./types/audio";
 import { chatTtsSpoken } from "./metrics";
+import { ttsVolumePercentToMultiplier } from "./utils/ttsVolume";
 
 export type TtsQueueSource = "live_voice" | "chat_tts";
 export type TtsQueueTtsItem = {
@@ -27,6 +28,7 @@ export type TtsQueueTtsItem = {
   userId: string;
   source: TtsQueueSource;
   messageId?: string;
+  volumePercent?: number;
   priority?: "high" | "normal";
   onBeforePlay?: (meeting: MeetingData) => void;
 };
@@ -51,6 +53,7 @@ export type TtsQueue = {
 };
 
 const OUTPUT_SAMPLE_RATE = 48000;
+const TTS_ATTACK_SECONDS = 0.04;
 
 const isSfxItem = (item: TtsQueueItem): item is TtsQueueSfxItem =>
   item.kind === "sfx";
@@ -150,17 +153,25 @@ async function playTtsItem(
     speechResponse.body as unknown as WebReadableStream<Uint8Array>,
   );
 
-  const resampledPcm = ffmpeg(pcm24Stream)
+  const volumeMultiplier = ttsVolumePercentToMultiplier(item.volumePercent);
+  const command = ffmpeg(pcm24Stream)
     .inputOptions(["-f s16le", "-ar 24000", "-ac 1"])
     .audioFrequency(OUTPUT_SAMPLE_RATE)
     .audioChannels(2)
     .format("s16le")
-    .on("error", (err) => console.error("ffmpeg TTS pipeline error:", err))
-    .pipe() as Readable;
+    .on("error", (err) => console.error("ffmpeg TTS pipeline error:", err));
+  const audioFilters = [`afade=t=in:st=0:d=${TTS_ATTACK_SECONDS}`];
+  if (volumeMultiplier !== 1) {
+    audioFilters.push(`volume=${volumeMultiplier}`);
+  }
+  command.audioFilters(audioFilters);
+  const resampledPcm = command.pipe() as Readable;
 
-  // Tee the PCM to the meeting recording so bot audio is captured in the MP3.
   resampledPcm.on("data", (chunk: Buffer) => {
-    if (meeting.audioData.audioPassThrough) {
+    if (
+      meeting.recordBotAudio !== false &&
+      meeting.audioData.audioPassThrough
+    ) {
       meeting.audioData.audioPassThrough.write(chunk, (err) => {
         if (err) {
           console.error("Error writing TTS chunk to recording:", err);

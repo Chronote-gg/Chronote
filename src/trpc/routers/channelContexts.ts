@@ -1,6 +1,6 @@
 import { z } from "zod";
 import {
-  clearChannelContext,
+  clearChannelContextSettings,
   listChannelContexts,
   setChannelContext,
 } from "../../services/channelContextService";
@@ -21,9 +21,11 @@ const set = manageGuildProcedure
       serverId: z.string(),
       channelId: z.string(),
       context: z.string().optional(),
+      defaultNotesChannelId: z.string().nullable().optional(),
       liveVoiceEnabled: z.boolean().optional().nullable(),
       liveVoiceCommandsEnabled: z.boolean().optional().nullable(),
       chatTtsEnabled: z.boolean().optional().nullable(),
+      chatTtsTtsOnlyEnabled: z.boolean().optional().nullable(),
     }),
   )
   .mutation(async ({ ctx, input }) => {
@@ -31,6 +33,10 @@ const set = manageGuildProcedure
     const trimmedContext = input.context?.trim();
     await setChannelContext(input.serverId, input.channelId, ctx.user.id, {
       context: trimmedContext ? trimmedContext : null,
+      defaultNotesChannelId:
+        input.defaultNotesChannelId === undefined
+          ? undefined
+          : input.defaultNotesChannelId,
       liveVoiceEnabled:
         input.liveVoiceEnabled === undefined
           ? undefined
@@ -41,6 +47,10 @@ const set = manageGuildProcedure
           : input.liveVoiceCommandsEnabled,
       chatTtsEnabled:
         input.chatTtsEnabled === undefined ? undefined : input.chatTtsEnabled,
+      chatTtsTtsOnlyEnabled:
+        input.chatTtsTtsOnlyEnabled === undefined
+          ? undefined
+          : input.chatTtsTtsOnlyEnabled,
     });
     return { ok: true };
   });
@@ -49,7 +59,7 @@ const clear = manageGuildProcedure
   .input(z.object({ serverId: z.string(), channelId: z.string() }))
   .mutation(async ({ ctx, input }) => {
     await ensureBotPresence(ctx, input.serverId);
-    await clearChannelContext(input.serverId, input.channelId);
+    await clearChannelContextSettings(input.serverId, input.channelId);
     return { ok: true };
   });
 

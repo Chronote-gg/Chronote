@@ -96,6 +96,7 @@ jest.mock("../../src/meetings", () => ({
   deleteMeeting: jest.fn(),
   getMeeting: jest.fn(),
   hasMeeting: jest.fn(),
+  restoreVoiceSessionNickname: jest.fn(),
 }));
 jest.mock("../../src/services/meetingUsageService", () => ({
   getNextAvailableAt: jest.fn(),

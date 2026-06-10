@@ -14,10 +14,12 @@ export type ChannelOverride = {
   textChannelId?: string;
   tags?: string[];
   context?: string;
+  defaultNotesChannelId?: string;
   autoRecordEnabled: boolean;
   liveVoiceEnabled?: boolean;
   liveVoiceCommandsEnabled?: boolean;
   chatTtsEnabled?: boolean;
+  chatTtsTtsOnlyEnabled?: boolean;
 };
 
 type ChannelOverrideSource = {
@@ -48,8 +50,13 @@ export const resolveVoiceLabel = (
 
 export const resolveTextChannelId = (
   rule: AutoRecordSettings | undefined,
+  context: ChannelContext | undefined,
   defaultNotesChannelId: string | null,
-) => rule?.textChannelId ?? defaultNotesChannelId ?? undefined;
+) =>
+  rule?.textChannelId ??
+  context?.defaultNotesChannelId ??
+  defaultNotesChannelId ??
+  undefined;
 
 export const resolveOverrideTextLabel = (options: {
   rule?: AutoRecordSettings;
@@ -59,7 +66,7 @@ export const resolveOverrideTextLabel = (options: {
 }) => {
   const { rule, resolvedTextChannelId, textChannelMap, defaultNotesChannelId } =
     options;
-  if (!rule) return undefined;
+  if (!rule && !resolvedTextChannelId) return undefined;
   const label = textChannelMap.get(resolvedTextChannelId ?? "");
   if (label) return label;
   return defaultNotesChannelId ? "Default notes channel" : "Unknown channel";
@@ -82,6 +89,7 @@ const toChannelOverride = (options: {
   const voiceLabel = resolveVoiceLabel(voiceChannelMap, channelId);
   const resolvedTextChannelId = resolveTextChannelId(
     entry.rule,
+    entry.context,
     defaultNotesChannelId,
   );
   const textLabel = resolveOverrideTextLabel({
@@ -94,13 +102,16 @@ const toChannelOverride = (options: {
     channelId,
     voiceLabel,
     textLabel,
-    textChannelId: entry.rule?.textChannelId,
+    textChannelId:
+      entry.rule?.textChannelId ?? entry.context?.defaultNotesChannelId,
     tags: entry.rule?.tags,
     context: entry.context?.context,
+    defaultNotesChannelId: entry.context?.defaultNotesChannelId,
     autoRecordEnabled: Boolean(entry.rule?.enabled),
     liveVoiceEnabled: entry.context?.liveVoiceEnabled,
     liveVoiceCommandsEnabled: entry.context?.liveVoiceCommandsEnabled,
     chatTtsEnabled: entry.context?.chatTtsEnabled,
+    chatTtsTtsOnlyEnabled: entry.context?.chatTtsTtsOnlyEnabled,
   };
 };
 

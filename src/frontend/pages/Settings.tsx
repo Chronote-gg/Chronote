@@ -42,6 +42,11 @@ import { ServerConfigCard } from "../features/settings/ServerConfigCard";
 import { DictionaryCard } from "../features/settings/DictionaryCard";
 import { NotionIntegrationCard } from "../features/settings/NotionIntegrationCard";
 
+type OverrideMode = "inherit" | "on" | "off";
+
+const overrideModeFromBoolean = (value: boolean | undefined): OverrideMode =>
+  value === undefined ? "inherit" : value ? "on" : "off";
+
 const SettingsLoadingState = () => (
   <Stack gap="xl" data-testid="settings-page-loading">
     <PageHeader
@@ -133,6 +138,9 @@ export default function Settings() {
   const [channelChatTtsMode, setChannelChatTtsMode] = useState<
     "inherit" | "on" | "off"
   >("inherit");
+  const [channelChatTtsTtsOnlyMode, setChannelChatTtsTtsOnlyMode] = useState<
+    "inherit" | "on" | "off"
+  >("inherit");
 
   useEffect(() => {
     setEditingChannelId(null);
@@ -144,6 +152,7 @@ export default function Settings() {
     setChannelLiveVoiceMode("inherit");
     setChannelLiveVoiceCommandsMode("inherit");
     setChannelChatTtsMode("inherit");
+    setChannelChatTtsTtsOnlyMode("inherit");
     channelModal.close();
   }, [selectedGuildId]);
 
@@ -160,6 +169,14 @@ export default function Settings() {
   const recordAllEnabled = Boolean(recordAllRule);
   const serverNotesChannelValue =
     configQuery.data?.snapshot?.values[CONFIG_KEYS.notes.channelId]?.value;
+  const serverChatTtsEnabled = Boolean(
+    configQuery.data?.snapshot?.values[CONFIG_KEYS.chatTts.enabled]?.value,
+  );
+  const serverTtsOnlyValue =
+    configQuery.data?.snapshot?.values[CONFIG_KEYS.chatTts.ttsOnlyEnabled]
+      ?.value;
+  const serverTtsOnlyEnabled =
+    serverTtsOnlyValue === undefined ? true : Boolean(serverTtsOnlyValue);
   const serverNotesChannelId =
     typeof serverNotesChannelValue === "string" &&
     serverNotesChannelValue.trim().length > 0
@@ -298,6 +315,7 @@ export default function Settings() {
     setChannelLiveVoiceMode("inherit");
     setChannelLiveVoiceCommandsMode("inherit");
     setChannelChatTtsMode("inherit");
+    setChannelChatTtsTtsOnlyMode("inherit");
     channelModal.open();
   };
 
@@ -308,26 +326,13 @@ export default function Settings() {
     setChannelTextChannelId(override.textChannelId ?? null);
     setChannelTags(override.tags?.join(", ") ?? "");
     setChannelContext(override.context ?? "");
-    setChannelLiveVoiceMode(
-      override.liveVoiceEnabled === undefined
-        ? "inherit"
-        : override.liveVoiceEnabled
-          ? "on"
-          : "off",
-    );
+    setChannelLiveVoiceMode(overrideModeFromBoolean(override.liveVoiceEnabled));
     setChannelLiveVoiceCommandsMode(
-      override.liveVoiceCommandsEnabled === undefined
-        ? "inherit"
-        : override.liveVoiceCommandsEnabled
-          ? "on"
-          : "off",
+      overrideModeFromBoolean(override.liveVoiceCommandsEnabled),
     );
-    setChannelChatTtsMode(
-      override.chatTtsEnabled === undefined
-        ? "inherit"
-        : override.chatTtsEnabled
-          ? "on"
-          : "off",
+    setChannelChatTtsMode(overrideModeFromBoolean(override.chatTtsEnabled));
+    setChannelChatTtsTtsOnlyMode(
+      overrideModeFromBoolean(override.chatTtsTtsOnlyEnabled),
     );
     channelModal.open();
   };
@@ -339,7 +344,18 @@ export default function Settings() {
   const selectedVoiceChannel = channelVoiceChannelId
     ? voiceChannelAccess.get(channelVoiceChannelId)
     : undefined;
-  const resolvedTextChannelId = channelAutoRecord
+  const effectiveChannelChatTtsEnabled =
+    channelChatTtsMode === "inherit"
+      ? serverChatTtsEnabled
+      : channelChatTtsMode === "on";
+  const effectiveChannelTtsOnlyEnabled =
+    channelChatTtsTtsOnlyMode === "inherit"
+      ? serverTtsOnlyEnabled
+      : channelChatTtsTtsOnlyMode === "on";
+  const channelNeedsStatusChannel =
+    channelAutoRecord ||
+    (effectiveChannelChatTtsEnabled && effectiveChannelTtsOnlyEnabled);
+  const resolvedTextChannelId = channelNeedsStatusChannel
     ? (channelTextChannelId ?? defaultNotesChannelId ?? null)
     : null;
   const selectedTextChannel = resolvedTextChannelId
@@ -358,7 +374,7 @@ export default function Settings() {
     !selectedGuildId ||
     !channelVoiceChannelId ||
     voiceMissingPermissions.length > 0 ||
-    (channelAutoRecord &&
+    (channelNeedsStatusChannel &&
       (!resolvedTextChannelId || textMissingPermissions.length > 0));
 
   const handleSaveChannel = async () => {
@@ -368,7 +384,8 @@ export default function Settings() {
       (override) => override.channelId === channelVoiceChannelId,
     );
     const trimmedContext = channelContext.trim();
-    const tasks: Promise<unknown>[] = [];
+    const autoRecordTasks: Promise<unknown>[] = [];
+    const contextTasks: Promise<unknown>[] = [];
     const liveVoiceOverride =
       channelLiveVoiceMode === "inherit" ? null : channelLiveVoiceMode === "on";
     const liveVoiceCommandsOverride =
@@ -377,30 +394,47 @@ export default function Settings() {
         : channelLiveVoiceCommandsMode === "on";
     const chatTtsOverride =
       channelChatTtsMode === "inherit" ? null : channelChatTtsMode === "on";
+    const chatTtsTtsOnlyOverride =
+      channelChatTtsTtsOnlyMode === "inherit"
+        ? null
+        : channelChatTtsTtsOnlyMode === "on";
+    const shouldManageContextTextChannel =
+      !channelAutoRecord &&
+      (channelNeedsStatusChannel ||
+        existingOverride?.textChannelId !== undefined);
     const shouldUpdateContext =
       trimmedContext.length > 0 ||
       existingOverride?.context ||
+      shouldManageContextTextChannel ||
       liveVoiceOverride !== null ||
       existingOverride?.liveVoiceEnabled !== undefined ||
       liveVoiceCommandsOverride !== null ||
       existingOverride?.liveVoiceCommandsEnabled !== undefined ||
       chatTtsOverride !== null ||
-      existingOverride?.chatTtsEnabled !== undefined;
+      existingOverride?.chatTtsEnabled !== undefined ||
+      chatTtsTtsOnlyOverride !== null ||
+      existingOverride?.chatTtsTtsOnlyEnabled !== undefined;
     if (shouldUpdateContext) {
-      tasks.push(
+      contextTasks.push(
         setChannelContextMutation.mutateAsync({
           serverId: selectedGuildId,
           channelId: channelVoiceChannelId,
           context: trimmedContext.length > 0 ? trimmedContext : undefined,
+          defaultNotesChannelId: shouldManageContextTextChannel
+            ? channelNeedsStatusChannel
+              ? channelTextChannelId
+              : null
+            : undefined,
           liveVoiceEnabled: liveVoiceOverride,
           liveVoiceCommandsEnabled: liveVoiceCommandsOverride,
           chatTtsEnabled: chatTtsOverride,
+          chatTtsTtsOnlyEnabled: chatTtsTtsOnlyOverride,
         }),
       );
     }
 
     if (channelAutoRecord) {
-      tasks.push(
+      autoRecordTasks.push(
         addRuleMutation.mutateAsync({
           serverId: selectedGuildId,
           mode: "one",
@@ -410,7 +444,7 @@ export default function Settings() {
         }),
       );
     } else if (existingOverride?.autoRecordEnabled) {
-      tasks.push(
+      autoRecordTasks.push(
         removeRuleMutation.mutateAsync({
           serverId: selectedGuildId,
           channelId: channelVoiceChannelId,
@@ -419,7 +453,8 @@ export default function Settings() {
     }
 
     try {
-      await Promise.all(tasks);
+      await Promise.all(autoRecordTasks);
+      await Promise.all(contextTasks);
       await Promise.all([
         trpcUtils.autorecord.list.invalidate({ serverId: selectedGuildId }),
         trpcUtils.channelContexts.list.invalidate({
@@ -445,9 +480,11 @@ export default function Settings() {
     }
     if (
       override.context ||
+      override.defaultNotesChannelId !== undefined ||
       override.liveVoiceEnabled !== undefined ||
       override.liveVoiceCommandsEnabled !== undefined ||
-      override.chatTtsEnabled !== undefined
+      override.chatTtsEnabled !== undefined ||
+      override.chatTtsTtsOnlyEnabled !== undefined
     ) {
       tasks.push(
         clearChannelContextMutation.mutateAsync({
@@ -708,9 +745,9 @@ export default function Settings() {
               back to the global setting.
             </Alert>
           ) : null}
-          {channelAutoRecord ? (
+          {channelNeedsStatusChannel ? (
             <FormSelect
-              label="Notes channel"
+              label={channelAutoRecord ? "Notes channel" : "Status channel"}
               placeholder={
                 channelsQuery.isLoading ? "Loading..." : "Select channel"
               }
@@ -741,18 +778,18 @@ export default function Settings() {
               }}
             />
           ) : null}
-          {channelAutoRecord && !resolvedTextChannelId ? (
+          {channelNeedsStatusChannel && !resolvedTextChannelId ? (
             <Text size="sm" c="red">
-              Select a notes channel or set a default notes channel first.
+              Select a status channel or set a default notes channel first.
             </Text>
           ) : null}
-          {channelAutoRecord && textMissingPermissions.length > 0 ? (
+          {channelNeedsStatusChannel && textMissingPermissions.length > 0 ? (
             <Alert
               icon={<IconAlertTriangle size={16} />}
               color="red"
               variant="light"
             >
-              Bot needs access to post notes (
+              Bot needs access to post status and notes (
               {textMissingPermissions.join(", ")}).
             </Alert>
           ) : null}
@@ -824,6 +861,27 @@ export default function Settings() {
             />
             <Text size="xs" c="dimmed">
               Use default to inherit the server-wide setting.
+            </Text>
+          </Stack>
+          <Stack gap={6}>
+            <Text size="sm" fw={600}>
+              TTS-only auto-start
+            </Text>
+            <SegmentedControl
+              value={channelChatTtsTtsOnlyMode}
+              onChange={(value) =>
+                setChannelChatTtsTtsOnlyMode(value as "inherit" | "on" | "off")
+              }
+              data={[
+                { label: "Use default", value: "inherit" },
+                { label: "On", value: "on" },
+                { label: "Off", value: "off" },
+              ]}
+              fullWidth
+            />
+            <Text size="xs" c="dimmed">
+              Allows chat TTS to join this voice channel without recording or
+              transcribing.
             </Text>
           </Stack>
           <Textarea

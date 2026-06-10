@@ -11,6 +11,7 @@ A meeting starts in three ways:
 
 - **Manual**: A user runs `/startmeeting` while in a voice channel, or right-clicks themselves, Chronote, or someone in their voice channel and selects **Apps** -> **Start meeting**. The slash command can optionally include a `context` description and `tags`.
 - **Auto-record**: A user joins a voice channel that has auto-recording enabled. Chronote starts recording automatically and posts an "Auto-Recording Started" embed.
+- **TTS-only**: A user runs `/say`, or joins a channel with automatic chat-to-speech enabled. Chronote joins only to play TTS and does not create a recorded meeting.
 - **Personal upload**: A user uploads an existing audio or video file from the web portal. Chronote creates a personal meeting owned by that user.
 
 At this point, Chronote joins the voice channel and begins capturing audio from each participant separately. A meeting embed appears in the text channel with controls.
@@ -19,13 +20,15 @@ At this point, Chronote joins the voice channel and begins capturing audio from 
 
 ## Stage 2: Capture
 
-While the meeting is active, Chronote captures three streams of data:
+While a recorded meeting is active, Chronote captures three streams of data:
 
 - **Voice audio** from each participant as individual audio snippets. Audio is processed through a noise gate that filters silence and very quiet segments.
 - **Chat messages** from the text channel, including any images shared (which are later captioned by AI).
 - **Attendance** tracking who joins and leaves the voice channel.
 
 During capture, the meeting embed stays pinned with buttons for **End Meeting**, **Edit Tags**, and a link to the **Live Transcript** on the web portal (if configured).
+
+TTS-only sessions skip capture entirely. Chronote does not subscribe to user voice, record bot audio, transcribe speech, store chat logs, generate notes, or upload meeting artifacts. The bot leaves when the voice channel empties or when an authorized user runs `/tts stop` or `/leave`.
 
 ## Stage 3: Process
 

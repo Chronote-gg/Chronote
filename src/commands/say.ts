@@ -1,16 +1,31 @@
-import { ChatInputCommandInteraction, GuildMember } from "discord.js";
+import {
+  ChannelType,
+  ChatInputCommandInteraction,
+  GuildMember,
+  TextChannel,
+} from "discord.js";
 import { NoSubscriberBehavior, createAudioPlayer } from "@discordjs/voice";
-import { getMeeting } from "../meetings";
+import { getMeeting, initializeMeeting } from "../meetings";
 import { createTtsQueue } from "../ttsQueue";
 import { config } from "../services/configService";
 import { fetchUserSpeechSettings } from "../services/userSpeechSettingsService";
 import { chatTtsDropped, chatTtsEnqueued } from "../metrics";
 import { buildUpgradePrompt } from "../utils/upgradePrompt";
 import { getGuildLimits } from "../services/subscriptionService";
-import { formatUserMention, fromMember } from "../utils/participants";
+import {
+  formatParticipantLabel,
+  formatUserMention,
+  fromMember,
+} from "../utils/participants";
 import { resolveTtsVoice } from "../utils/ttsVoices";
 import type { MeetingData } from "../types/meeting-data";
 import type { ChatEntry } from "../types/chat";
+import { checkBotPermissions } from "../utils/permissions";
+import { resolveMeetingVoiceSettings } from "../services/meetingVoiceSettingsService";
+import {
+  buildTtsSpeechText,
+  resolveChatTtsSpeakerPrefixMode,
+} from "../utils/ttsText";
 
 async function resolveMember(
   interaction: ChatInputCommandInteraction,
@@ -52,6 +67,13 @@ type SayMessage = {
   text: string;
 };
 
+type GuildLimitsResult = Awaited<ReturnType<typeof getGuildLimits>>;
+
+type SaySession = {
+  meeting: MeetingData;
+  startedTtsOnly: boolean;
+};
+
 async function requireGuild(
   interaction: ChatInputCommandInteraction,
 ): Promise<string | null> {
@@ -65,35 +87,21 @@ async function requireGuild(
   return interaction.guildId;
 }
 
-async function requireMeeting(
-  interaction: ChatInputCommandInteraction,
-  guildId: string,
-): Promise<MeetingData | null> {
-  const meeting = getMeeting(guildId);
-  if (!meeting || meeting.finished) {
-    await interaction.reply({
-      content: "There is no active meeting to speak in right now.",
-      ephemeral: true,
-    });
-    return null;
-  }
-  return meeting;
-}
-
 async function requireTier(
   interaction: ChatInputCommandInteraction,
   guildId: string,
-): Promise<boolean> {
-  const { limits } = await getGuildLimits(guildId);
+): Promise<GuildLimitsResult | null> {
+  const result = await getGuildLimits(guildId);
+  const { limits } = result;
   if (!limits.liveVoiceEnabled) {
     await interaction.reply(
       buildUpgradePrompt(
         "Chat-to-speech is available on the Basic plan. Upgrade to use /say.",
       ),
     );
-    return false;
+    return null;
   }
-  return true;
+  return result;
 }
 
 async function requireMemberInMeeting(
@@ -116,6 +124,118 @@ async function requireMemberInMeeting(
     return null;
   }
   return member;
+}
+
+async function requireTextChannel(
+  interaction: ChatInputCommandInteraction,
+): Promise<TextChannel | null> {
+  if (
+    !interaction.channel ||
+    interaction.channel.type !== ChannelType.GuildText
+  ) {
+    await interaction.reply({
+      content:
+        "Use /say from a server text channel so I know where to post status.",
+      ephemeral: true,
+    });
+    return null;
+  }
+  return interaction.channel;
+}
+
+async function startTtsOnlySession(options: {
+  interaction: ChatInputCommandInteraction;
+  guildId: string;
+  member: GuildMember;
+  limitsResult: GuildLimitsResult;
+}): Promise<SaySession | null> {
+  const { interaction, guildId, member, limitsResult } = options;
+  const textChannel = await requireTextChannel(interaction);
+  if (!textChannel) return null;
+
+  const voiceChannel = member.voice.channel;
+  if (!voiceChannel) {
+    await interaction.reply({
+      content: "Join a voice channel to use /say.",
+      ephemeral: true,
+    });
+    return null;
+  }
+
+  const botMember = interaction.guild!.members.cache.get(
+    interaction.client.user!.id,
+  );
+  if (!botMember) {
+    await interaction.reply({
+      content: "Bot not found in this server.",
+      ephemeral: true,
+    });
+    return null;
+  }
+
+  const permissionCheck = checkBotPermissions(
+    voiceChannel,
+    textChannel,
+    botMember,
+  );
+  if (!permissionCheck.success) {
+    await interaction.reply({
+      content: `I can't start a TTS-only session yet. ${permissionCheck.errorMessage}`,
+      ephemeral: true,
+    });
+    return null;
+  }
+
+  const voiceSettings = await resolveMeetingVoiceSettings(
+    guildId,
+    voiceChannel.id,
+    limitsResult.limits,
+  );
+  if (!voiceSettings.chatTtsTtsOnlyEnabled) {
+    await interaction.reply({
+      content: "TTS-only sessions are disabled for this channel or server.",
+      ephemeral: true,
+    });
+    return null;
+  }
+
+  const meeting = await initializeMeeting({
+    sessionMode: "tts_only",
+    captureAudio: false,
+    recordBotAudio: false,
+    storeChatLog: false,
+    voiceChannel,
+    textChannel,
+    guild: interaction.guild!,
+    creator: interaction.user,
+    transcribeMeeting: false,
+    generateNotes: false,
+    chatTtsEnabled: false,
+    chatTtsVoice: voiceSettings.chatTtsVoice,
+    chatTtsSpeakerPrefixMode: voiceSettings.chatTtsSpeakerPrefixMode,
+    subscriptionTier: limitsResult.subscription.tier,
+  });
+
+  return { meeting, startedTtsOnly: true };
+}
+
+async function resolveSaySession(options: {
+  interaction: ChatInputCommandInteraction;
+  guildId: string;
+  member: GuildMember;
+  limitsResult: GuildLimitsResult;
+}): Promise<SaySession | null> {
+  const existing = getMeeting(options.guildId);
+  if (existing && !existing.finished) {
+    const memberInMeeting = await requireMemberInMeeting(
+      options.interaction,
+      existing,
+    );
+    if (!memberInMeeting) return null;
+    return { meeting: existing, startedTtsOnly: false };
+  }
+
+  return startTtsOnlySession(options);
 }
 
 async function requireSayMessage(
@@ -164,6 +284,7 @@ async function enqueueOrReply(
     voice: string;
     userId: string;
     messageId: string;
+    volumePercent?: number;
   },
 ): Promise<boolean> {
   const enqueued = queue.enqueue({
@@ -172,6 +293,7 @@ async function enqueueOrReply(
     userId: payload.userId,
     source: "chat_tts",
     messageId: payload.messageId,
+    volumePercent: payload.volumePercent,
   });
 
   if (!enqueued) {
@@ -193,17 +315,29 @@ export async function handleSayCommand(
   const guildId = await requireGuild(interaction);
   if (!guildId) return;
 
-  const meeting = await requireMeeting(interaction, guildId);
-  if (!meeting) return;
+  const limitsResult = await requireTier(interaction, guildId);
+  if (!limitsResult) return;
 
-  const tierOk = await requireTier(interaction, guildId);
-  if (!tierOk) return;
-
-  const member = await requireMemberInMeeting(interaction, meeting);
-  if (!member) return;
+  const member = await resolveMember(interaction);
+  if (!member) {
+    await interaction.reply({
+      content: "Could not resolve your membership in this server.",
+      ephemeral: true,
+    });
+    return;
+  }
 
   const message = await requireSayMessage(interaction);
   if (!message) return;
+
+  const session = await resolveSaySession({
+    interaction,
+    guildId,
+    member,
+    limitsResult,
+  });
+  if (!session) return;
+  const { meeting } = session;
 
   const queue = await requireQueue(interaction, meeting);
   if (!queue) return;
@@ -211,33 +345,50 @@ export async function handleSayCommand(
   const settings = await resolveUserSettings(meeting, interaction.user.id);
   const meetingDefault = meeting.chatTtsVoice ?? config.chatTts.defaultVoice;
   const voice = resolveTtsVoice(settings?.chatTtsVoice, meetingDefault);
+  const participant =
+    meeting.participants.get(interaction.user.id) ?? fromMember(member);
+  const speakerName =
+    settings?.chatTtsSpokenName ??
+    formatParticipantLabel(participant, {
+      includeUsername: false,
+      fallbackName: interaction.user.username,
+    });
+  const prefixMode = resolveChatTtsSpeakerPrefixMode(
+    settings?.chatTtsSpeakerPrefixMode,
+    meeting.chatTtsSpeakerPrefixMode,
+  );
+  const speechText = buildTtsSpeechText({
+    message: message.text,
+    speakerName,
+    prefixMode,
+    context: "say",
+  });
 
   const enqueued = await enqueueOrReply(interaction, queue, {
-    text: message.text,
+    text: speechText,
     voice,
     userId: interaction.user.id,
     messageId: interaction.id,
+    volumePercent: settings?.chatTtsVolumePercent,
   });
   if (!enqueued) return;
 
-  const participant =
-    meeting.participants.get(interaction.user.id) ?? fromMember(member);
   meeting.participants.set(participant.id, participant);
   meeting.attendance.add(formatUserMention(participant.id));
 
-  const entry: ChatEntry = {
-    type: "message",
-    source: "chat_tts",
-    user: participant,
-    channelId: interaction.channelId,
-    content: message.text,
-    messageId: interaction.id,
-    timestamp: new Date(interaction.createdTimestamp).toISOString(),
-  };
-  meeting.chatLog.push(entry);
+  if (meeting.storeChatLog !== false) {
+    const entry: ChatEntry = {
+      type: "message",
+      source: "chat_tts",
+      user: participant,
+      channelId: interaction.channelId,
+      content: message.text,
+      messageId: interaction.id,
+      timestamp: new Date(interaction.createdTimestamp).toISOString(),
+    };
+    meeting.chatLog.push(entry);
+  }
 
-  await interaction.reply({
-    content: "Queued your message to be spoken.",
-    ephemeral: true,
-  });
+  await interaction.deferReply({ ephemeral: true });
+  await interaction.deleteReply();
 }

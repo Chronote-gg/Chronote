@@ -71,6 +71,8 @@ const makeInteraction = (
       getString: jest.fn().mockReturnValue(message),
     },
     reply: jest.fn().mockResolvedValue(undefined),
+    deferReply: jest.fn().mockResolvedValue(undefined),
+    deleteReply: jest.fn().mockResolvedValue(undefined),
   }) as unknown as ChatInputCommandInteraction;
 
 const makeMeeting = (queueResult = true): MeetingData =>
@@ -171,9 +173,8 @@ describe("handleSayCommand", () => {
         messageId: interaction.id,
       }),
     );
-    expect(interaction.reply).toHaveBeenCalledWith(
-      expect.objectContaining({ content: "Queued your message to be spoken." }),
-    );
+    expect(interaction.deferReply).toHaveBeenCalledWith({ ephemeral: true });
+    expect(interaction.deleteReply).toHaveBeenCalled();
   });
 
   it("rejects messages that exceed the max length", async () => {

@@ -10,10 +10,13 @@ import {
 
 const CHANNEL_CONTEXT_KEYS = new Set<string>([
   CONFIG_KEYS.context.instructions,
+  CONFIG_KEYS.notes.channelId,
   CONFIG_KEYS.liveVoice.enabled,
   CONFIG_KEYS.liveVoice.commandsEnabled,
   CONFIG_KEYS.chatTts.enabled,
+  CONFIG_KEYS.chatTts.ttsOnlyEnabled,
 ]);
+const CHANNEL_CONTEXT_CLEAR_KEYS = [CONFIG_KEYS.context.instructions];
 const resolveLatestRecord = <T extends { updatedAt: string }>(records: T[]) =>
   records.reduce(
     (latest, record) =>
@@ -27,11 +30,44 @@ const coerceString = (value: unknown) =>
 const coerceBoolean = (value: unknown) =>
   typeof value === "boolean" ? value : undefined;
 
+const queueStringOverride = (
+  tasks: Promise<void>[],
+  scope: { scope: "channel"; guildId: string; channelId: string },
+  key: string,
+  value: string | null | undefined,
+  userId: string,
+) => {
+  if (value === undefined) return;
+  const trimmed = value?.trim() ?? "";
+  tasks.push(
+    trimmed
+      ? setConfigOverrideForScope(scope, key, trimmed, userId)
+      : clearConfigOverrideForScope(scope, key),
+  );
+};
+
+const queueNullableOverride = <T>(
+  tasks: Promise<void>[],
+  scope: { scope: "channel"; guildId: string; channelId: string },
+  key: string,
+  value: T | null | undefined,
+  userId: string,
+) => {
+  if (value === undefined) return;
+  tasks.push(
+    value === null
+      ? clearConfigOverrideForScope(scope, key)
+      : setConfigOverrideForScope(scope, key, value, userId),
+  );
+};
+
 export type ChannelContextUpdate = {
   context?: string | null;
+  defaultNotesChannelId?: string | null;
   liveVoiceEnabled?: boolean | null;
   liveVoiceCommandsEnabled?: boolean | null;
   chatTtsEnabled?: boolean | null;
+  chatTtsTtsOnlyEnabled?: boolean | null;
 };
 
 export async function setChannelContext(
@@ -43,77 +79,48 @@ export async function setChannelContext(
   const scope = { scope: "channel", guildId, channelId } as const;
   const tasks: Promise<void>[] = [];
 
-  if (update.context !== undefined) {
-    const trimmed = update.context?.trim() ?? "";
-    if (trimmed.length > 0) {
-      tasks.push(
-        setConfigOverrideForScope(
-          scope,
-          CONFIG_KEYS.context.instructions,
-          trimmed,
-          userId,
-        ),
-      );
-    } else {
-      tasks.push(
-        clearConfigOverrideForScope(scope, CONFIG_KEYS.context.instructions),
-      );
-    }
-  }
-
-  if (update.liveVoiceEnabled !== undefined) {
-    if (update.liveVoiceEnabled === null) {
-      tasks.push(
-        clearConfigOverrideForScope(scope, CONFIG_KEYS.liveVoice.enabled),
-      );
-    } else {
-      tasks.push(
-        setConfigOverrideForScope(
-          scope,
-          CONFIG_KEYS.liveVoice.enabled,
-          update.liveVoiceEnabled,
-          userId,
-        ),
-      );
-    }
-  }
-
-  if (update.liveVoiceCommandsEnabled !== undefined) {
-    if (update.liveVoiceCommandsEnabled === null) {
-      tasks.push(
-        clearConfigOverrideForScope(
-          scope,
-          CONFIG_KEYS.liveVoice.commandsEnabled,
-        ),
-      );
-    } else {
-      tasks.push(
-        setConfigOverrideForScope(
-          scope,
-          CONFIG_KEYS.liveVoice.commandsEnabled,
-          update.liveVoiceCommandsEnabled,
-          userId,
-        ),
-      );
-    }
-  }
-
-  if (update.chatTtsEnabled !== undefined) {
-    if (update.chatTtsEnabled === null) {
-      tasks.push(
-        clearConfigOverrideForScope(scope, CONFIG_KEYS.chatTts.enabled),
-      );
-    } else {
-      tasks.push(
-        setConfigOverrideForScope(
-          scope,
-          CONFIG_KEYS.chatTts.enabled,
-          update.chatTtsEnabled,
-          userId,
-        ),
-      );
-    }
-  }
+  queueStringOverride(
+    tasks,
+    scope,
+    CONFIG_KEYS.context.instructions,
+    update.context,
+    userId,
+  );
+  queueStringOverride(
+    tasks,
+    scope,
+    CONFIG_KEYS.notes.channelId,
+    update.defaultNotesChannelId,
+    userId,
+  );
+  queueNullableOverride(
+    tasks,
+    scope,
+    CONFIG_KEYS.liveVoice.enabled,
+    update.liveVoiceEnabled,
+    userId,
+  );
+  queueNullableOverride(
+    tasks,
+    scope,
+    CONFIG_KEYS.liveVoice.commandsEnabled,
+    update.liveVoiceCommandsEnabled,
+    userId,
+  );
+  queueNullableOverride(
+    tasks,
+    scope,
+    CONFIG_KEYS.chatTts.enabled,
+    update.chatTtsEnabled,
+    userId,
+  );
+  queueNullableOverride(
+    tasks,
+    scope,
+    CONFIG_KEYS.chatTts.ttsOnlyEnabled,
+    update.chatTtsTtsOnlyEnabled,
+    userId,
+  );
 
   if (tasks.length > 0) {
     await Promise.all(tasks);
@@ -138,6 +145,9 @@ export async function fetchChannelContext(guildId: string, channelId: string) {
     relevant.map((record) => [record.configKey, record.value]),
   );
   const context = coerceString(map.get(CONFIG_KEYS.context.instructions));
+  const defaultNotesChannelId = coerceString(
+    map.get(CONFIG_KEYS.notes.channelId),
+  );
   const liveVoiceEnabled = coerceBoolean(
     map.get(CONFIG_KEYS.liveVoice.enabled),
   );
@@ -145,6 +155,9 @@ export async function fetchChannelContext(guildId: string, channelId: string) {
     map.get(CONFIG_KEYS.liveVoice.commandsEnabled),
   );
   const chatTtsEnabled = coerceBoolean(map.get(CONFIG_KEYS.chatTts.enabled));
+  const chatTtsTtsOnlyEnabled = coerceBoolean(
+    map.get(CONFIG_KEYS.chatTts.ttsOnlyEnabled),
+  );
 
   const next: ChannelContext = {
     guildId,
@@ -156,6 +169,9 @@ export async function fetchChannelContext(guildId: string, channelId: string) {
   if (context) {
     next.context = context;
   }
+  if (defaultNotesChannelId) {
+    next.defaultNotesChannelId = defaultNotesChannelId;
+  }
   if (liveVoiceEnabled !== undefined) {
     next.liveVoiceEnabled = liveVoiceEnabled;
   }
@@ -165,11 +181,26 @@ export async function fetchChannelContext(guildId: string, channelId: string) {
   if (chatTtsEnabled !== undefined) {
     next.chatTtsEnabled = chatTtsEnabled;
   }
+  if (chatTtsTtsOnlyEnabled !== undefined) {
+    next.chatTtsTtsOnlyEnabled = chatTtsTtsOnlyEnabled;
+  }
 
   return next;
 }
 
 export async function clearChannelContext(guildId: string, channelId: string) {
+  const scope = { scope: "channel", guildId, channelId } as const;
+  await Promise.all(
+    CHANNEL_CONTEXT_CLEAR_KEYS.map((key) =>
+      clearConfigOverrideForScope(scope, key),
+    ),
+  );
+}
+
+export async function clearChannelContextSettings(
+  guildId: string,
+  channelId: string,
+) {
   const scope = { scope: "channel", guildId, channelId } as const;
   await Promise.all(
     Array.from(CHANNEL_CONTEXT_KEYS, (key) =>
@@ -204,6 +235,9 @@ export async function listChannelContexts(guildId: string) {
       records.map((record) => [record.configKey, record.value]),
     );
     const context = coerceString(map.get(CONFIG_KEYS.context.instructions));
+    const defaultNotesChannelId = coerceString(
+      map.get(CONFIG_KEYS.notes.channelId),
+    );
     const liveVoiceEnabled = coerceBoolean(
       map.get(CONFIG_KEYS.liveVoice.enabled),
     );
@@ -211,6 +245,9 @@ export async function listChannelContexts(guildId: string) {
       map.get(CONFIG_KEYS.liveVoice.commandsEnabled),
     );
     const chatTtsEnabled = coerceBoolean(map.get(CONFIG_KEYS.chatTts.enabled));
+    const chatTtsTtsOnlyEnabled = coerceBoolean(
+      map.get(CONFIG_KEYS.chatTts.ttsOnlyEnabled),
+    );
 
     const next: ChannelContext = {
       guildId,
@@ -222,6 +259,9 @@ export async function listChannelContexts(guildId: string) {
     if (context) {
       next.context = context;
     }
+    if (defaultNotesChannelId) {
+      next.defaultNotesChannelId = defaultNotesChannelId;
+    }
     if (liveVoiceEnabled !== undefined) {
       next.liveVoiceEnabled = liveVoiceEnabled;
     }
@@ -230,6 +270,9 @@ export async function listChannelContexts(guildId: string) {
     }
     if (chatTtsEnabled !== undefined) {
       next.chatTtsEnabled = chatTtsEnabled;
+    }
+    if (chatTtsTtsOnlyEnabled !== undefined) {
+      next.chatTtsTtsOnlyEnabled = chatTtsTtsOnlyEnabled;
     }
 
     return [next];

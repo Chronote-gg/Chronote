@@ -88,16 +88,28 @@ Chronote searches your meeting history and generates an answer with citations li
 
 ### `/tts`
 
-Controls text-to-speech for your chat messages during meetings.
+Controls text-to-speech for chat messages and TTS-only voice sessions.
 
-| Subcommand | Options                               | Description                           |
-| ---------- | ------------------------------------- | ------------------------------------- |
-| `enable`   | (none)                                | Your chat messages are spoken aloud   |
-| `disable`  | (none)                                | Stop speaking your messages           |
-| `voice`    | `voice` (pick from list or "default") | Choose a TTS voice                    |
-| `stop`     | (none)                                | Stop current playback and clear queue |
+| Subcommand        | Options                               | Description                                      |
+| ----------------- | ------------------------------------- | ------------------------------------------------ |
+| `enable`          | (none)                                | Your chat messages are spoken aloud              |
+| `disable`         | (none)                                | Stop speaking your messages                      |
+| `voice`           | `voice` (pick from list or "default") | Choose a TTS voice                               |
+| `prefix`          | `mode`                                | Choose when your spoken name prefixes TTS output |
+| `nickname`        | `name`                                | Set a spoken TTS name                            |
+| `clear-nickname`  | (none)                                | Reset your spoken TTS name                       |
+| `volume`          | `percent`                             | Set your personal TTS playback volume            |
+| `enable-channel`  | `voice-channel`, `text-channel`       | Enable automatic TTS-only startup for a channel  |
+| `disable-channel` | `voice-channel`                       | Disable automatic chat-to-speech for a channel   |
+| `stop`            | (none)                                | Stop current playback or a TTS-only session      |
 
-When enabled, any message you send in the meeting text channel is spoken aloud in the voice channel. This is useful for remote participants who cannot speak.
+When enabled during a recorded meeting, any message you send in the meeting text channel is spoken aloud in the voice channel. TTS that plays during a recorded meeting is included in the meeting recording and transcript.
+
+When TTS-only startup is enabled, Chronote can join a voice channel to speak chat messages without starting a recorded meeting. TTS-only sessions do not record audio, transcribe speech, save chat logs, generate notes, or create meeting artifacts.
+
+### `/whois`
+
+Shows a user's Discord name and spoken TTS settings, including spoken name, voice, prefix mode, volume, and chat TTS opt-out state. The response is visible only to you.
 
 ### `/say`
 
@@ -107,7 +119,13 @@ Speak a single message aloud in the meeting voice channel.
 | --------- | -------- | ----------------- |
 | `message` | Yes      | The text to speak |
 
-Unlike `/tts`, this is a one-shot command. It does not enable ongoing text-to-speech.
+Unlike `/tts enable`, this is a one-shot command. If no recorded meeting is active and TTS-only startup is enabled for the channel, `/say` starts a privacy-safe TTS-only session automatically.
+
+### `/leave`
+
+Disconnects Chronote from the active voice channel.
+
+For TTS-only sessions, `/leave` makes Chronote leave immediately after the normal permission check. For recorded meetings, `/leave confirm:true` is required because leaving ends the recording and starts normal meeting processing.
 
 ### `/billing`
 

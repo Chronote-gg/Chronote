@@ -5,7 +5,68 @@ import type { UserSpeechSettings } from "../types/db";
 export type UserSpeechSettingsUpdate = {
   chatTtsDisabled?: boolean;
   chatTtsVoice?: string | null;
+  chatTtsSpokenName?: string | null;
+  chatTtsSpeakerPrefixMode?: "never" | "chat_only" | "always" | null;
+  chatTtsVolumePercent?: number | null;
 };
+
+const resolveNullableSetting = <T>(
+  existingValue: T | undefined,
+  updateValue: T | null | undefined,
+) => (updateValue === null ? undefined : (updateValue ?? existingValue));
+
+export function buildUserSpeechSettingsRecord(options: {
+  guildId: string;
+  userId: string;
+  updatedBy: string;
+  existing?: UserSpeechSettings | null;
+  update: UserSpeechSettingsUpdate;
+}): UserSpeechSettings | undefined {
+  const { guildId, userId, updatedBy, existing, update } = options;
+  const disabled = update.chatTtsDisabled ?? existing?.chatTtsDisabled;
+  const voice = resolveNullableSetting(
+    existing?.chatTtsVoice,
+    update.chatTtsVoice,
+  );
+  const spokenName = resolveNullableSetting(
+    existing?.chatTtsSpokenName,
+    update.chatTtsSpokenName,
+  );
+  const speakerPrefixMode = resolveNullableSetting(
+    existing?.chatTtsSpeakerPrefixMode,
+    update.chatTtsSpeakerPrefixMode,
+  );
+  const volumePercent = resolveNullableSetting(
+    existing?.chatTtsVolumePercent,
+    update.chatTtsVolumePercent,
+  );
+
+  if (
+    !disabled &&
+    !voice &&
+    !spokenName &&
+    !speakerPrefixMode &&
+    volumePercent === undefined
+  ) {
+    return undefined;
+  }
+
+  return {
+    guildId,
+    userId,
+    updatedAt: nowIso(),
+    updatedBy,
+    ...(disabled ? { chatTtsDisabled: true } : {}),
+    ...(voice ? { chatTtsVoice: voice } : {}),
+    ...(spokenName ? { chatTtsSpokenName: spokenName } : {}),
+    ...(speakerPrefixMode
+      ? { chatTtsSpeakerPrefixMode: speakerPrefixMode }
+      : {}),
+    ...(volumePercent !== undefined
+      ? { chatTtsVolumePercent: volumePercent }
+      : {}),
+  };
+}
 
 export async function fetchUserSpeechSettings(
   guildId: string,
@@ -22,29 +83,19 @@ export async function setUserSpeechSettings(
 ): Promise<void> {
   const repo = getUserSpeechSettingsRepository();
   const existing = await repo.get(guildId, userId);
-  const nextDisabled =
-    update.chatTtsDisabled !== undefined
-      ? update.chatTtsDisabled
-      : existing?.chatTtsDisabled;
-  const nextVoice =
-    update.chatTtsVoice === null
-      ? undefined
-      : (update.chatTtsVoice ?? existing?.chatTtsVoice);
-
-  if (!nextDisabled && !nextVoice) {
+  const next = buildUserSpeechSettingsRecord({
+    guildId,
+    userId,
+    updatedBy,
+    existing,
+    update,
+  });
+  if (!next) {
     if (existing) {
       await repo.remove(guildId, userId);
     }
     return;
   }
 
-  const next: UserSpeechSettings = {
-    guildId,
-    userId,
-    updatedAt: nowIso(),
-    updatedBy,
-    ...(nextDisabled ? { chatTtsDisabled: true } : {}),
-    ...(nextVoice ? { chatTtsVoice: nextVoice } : {}),
-  };
   await repo.write(next);
 }

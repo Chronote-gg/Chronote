@@ -38,7 +38,13 @@ import { evaluateAutoRecordCancellation } from "../services/autoRecordCancellati
 import { autoRecordJoinSuppressionService } from "../services/autoRecordJoinSuppressionService";
 import { meetingsCancelled } from "../metrics";
 import { describeAutoRecordRule } from "../utils/meetingLifecycle";
-import { deleteMeeting, getMeeting, hasMeeting } from "../meetings";
+import {
+  deleteMeeting,
+  endTtsOnlySession,
+  getMeeting,
+  hasMeeting,
+  restoreVoiceSessionNickname,
+} from "../meetings";
 import { MEETING_END_REASONS, MEETING_STATUS } from "../types/meetingLifecycle";
 import {
   ensureMeetingNotes,
@@ -142,6 +148,7 @@ export async function handleEndMeetingButton(
   } catch (error) {
     console.error("Error during meeting end:", error);
     if (meeting && hasMeeting(meeting.guildId)) {
+      await restoreVoiceSessionNickname(meeting);
       if (shouldReleaseLeaseDuringErrorCleanup(meeting)) {
         try {
           await releaseMeetingLeaseForMeeting(meeting);
@@ -177,6 +184,7 @@ export async function handleEndMeetingOther(
   } catch (error) {
     console.error("Error during meeting end:", error);
     if (meeting && hasMeeting(meeting.guildId)) {
+      await restoreVoiceSessionNickname(meeting);
       if (shouldReleaseLeaseDuringErrorCleanup(meeting)) {
         try {
           await releaseMeetingLeaseForMeeting(meeting);
@@ -202,6 +210,10 @@ export async function handleEndMeetingOther(
 async function runEndMeetingFlow(options: EndMeetingFlowOptions) {
   const { client, meeting } = options;
   if (meeting.finishing || meeting.finished) {
+    return;
+  }
+  if (meeting.sessionMode === "tts_only") {
+    await endTtsOnlySession(meeting);
     return;
   }
   if (meeting.timeoutTimer) {
@@ -244,6 +256,9 @@ async function runEndMeetingFlow(options: EndMeetingFlowOptions) {
       meeting.connection.disconnect();
       meeting.connection.destroy();
     }
+    await runMeetingEndStep(meeting, "restore-bot-nickname", () =>
+      restoreVoiceSessionNickname(meeting),
+    );
 
     await runMeetingEndStep(meeting, "wait-audio-only", () =>
       waitForAudioOnlyFinishProcessing(meeting),
