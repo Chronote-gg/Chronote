@@ -284,6 +284,7 @@ async function enqueueOrReply(
     voice: string;
     userId: string;
     messageId: string;
+    volumePercent?: number;
   },
 ): Promise<boolean> {
   const enqueued = queue.enqueue({
@@ -292,6 +293,7 @@ async function enqueueOrReply(
     userId: payload.userId,
     source: "chat_tts",
     messageId: payload.messageId,
+    volumePercent: payload.volumePercent,
   });
 
   if (!enqueued) {
@@ -367,6 +369,7 @@ export async function handleSayCommand(
     voice,
     userId: interaction.user.id,
     messageId: interaction.id,
+    volumePercent: settings?.chatTtsVolumePercent,
   });
   if (!enqueued) return;
 

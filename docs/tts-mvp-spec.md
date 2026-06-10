@@ -2,7 +2,7 @@
 
 ### Summary
 
-Add a chat-to-speech (TTS) feature that speaks every message typed in the voice-channel text chat during active meetings, plus a /say command for manual speech. The feature is gated to Basic/Pro, supports a server default and channel override, and allows per-user voice selection with per-user opt-out. Spoken chat is queued with Chronote live voice replies so audio never overlaps. During recorded meetings, spoken chat is included in the meeting recording and transcript. Outside recorded meetings, /say can start a TTS-only session that does not record, transcribe, or create meeting artifacts.
+Add a chat-to-speech (TTS) feature that speaks every message typed in the voice-channel text chat during active meetings, plus a /say command for manual speech. The feature is gated to Basic/Pro, supports a server default and channel override, and allows per-user voice, spoken name, prefix, volume, and opt-out settings. Spoken chat is queued with Chronote live voice replies so audio never overlaps. During recorded meetings, spoken chat is included in the meeting recording and transcript. Outside recorded meetings, /say can start a TTS-only session that does not record, transcribe, or create meeting artifacts.
 
 ### Goals
 
@@ -12,6 +12,7 @@ Add a chat-to-speech (TTS) feature that speaks every message typed in the voice-
 - Allow server default + channel override (channel can enable even if server default is off).
 - Allow per-user opt-out ("do not speak my messages").
 - Allow per-user voice selection (per server).
+- Allow per-user volume selection (per server).
 - Ensure bot audio never overlaps and supports a stop/clear command.
 - Include spoken chat in recording and transcript.
 - Allow explicit /say playback in TTS-only mode without recording or transcription.
@@ -93,6 +94,9 @@ New UserSpeechSettings table:
 - userId (sk)
 - chatTtsDisabled?: boolean
 - chatTtsVoice?: string
+- chatTtsSpokenName?: string
+- chatTtsSpeakerPrefixMode?: "never" | "chat_only" | "always"
+- chatTtsVolumePercent?: number
 - updatedAt, updatedBy
 
 ### Resolution order (MVP)
@@ -102,6 +106,8 @@ New UserSpeechSettings table:
   - If chatTtsDisabled === true, do not speak that user's messages.
 - Voice selection:
   - voice = user.chatTtsVoice ?? server.chatTtsVoice ?? config default
+- Volume selection:
+  - volume = user.chatTtsVolumePercent ?? 100
 - Chronote live voice uses:
   - server.liveVoiceTtsVoice ?? config default
 
@@ -140,8 +146,12 @@ Add table: UserSpeechSettings
 1. /tts disable - opt out (per server)
 2. /tts enable - remove opt-out
 3. /tts voice <voice> - set per-user voice (per server)
-4. /tts stop - stop current playback and clear queue (requires ManageChannels OR meeting creator)
-5. /say message - speak one message aloud (requires active meeting and voice channel presence)
+4. /tts prefix `mode` - set whether speech includes the user's name
+5. /tts nickname `name` - set the spoken TTS name
+6. /tts volume `percent` - set per-user TTS volume; 100 resets to default
+7. /tts stop - stop current playback and clear queue (requires ManageChannels OR meeting creator)
+8. /leave - disconnect Chronote from TTS-only mode; `confirm:true` ends an active recorded meeting after permission checks
+9. /say message - speak one message aloud (requires voice channel presence; can start TTS-only mode)
 
 ### Frontend Settings (server settings page)
 
@@ -188,5 +198,5 @@ Add event type tts with a unique icon and label (e.g., "Spoken chat").
    - Start meeting, send messages as voice channel member and non-member.
    - Confirm bot speaks only member messages.
    - Toggle server default and channel override; verify behavior.
-   - Set per-user voice and opt-out.
+   - Set per-user voice, volume, and opt-out.
    - Test /tts stop.

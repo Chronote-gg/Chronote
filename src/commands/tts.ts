@@ -22,6 +22,12 @@ import {
   fromUser,
 } from "../utils/participants";
 import { normalizeUserChatTtsSpeakerPrefixMode } from "../utils/ttsText";
+import {
+  DEFAULT_TTS_VOLUME_PERCENT,
+  MAX_TTS_VOLUME_PERCENT,
+  MIN_TTS_VOLUME_PERCENT,
+  normalizeTtsVolumePercent,
+} from "../utils/ttsVolume";
 import { setChannelContext } from "../services/channelContextService";
 import { getGuildLimits } from "../services/subscriptionService";
 import { buildUpgradePrompt } from "../utils/upgradePrompt";
@@ -40,6 +46,7 @@ type UserSettingsUpdate = {
   chatTtsVoice?: string | null;
   chatTtsSpokenName?: string | null;
   chatTtsSpeakerPrefixMode?: "never" | "chat_only" | "always" | null;
+  chatTtsVolumePercent?: number | null;
 };
 
 const applyMeetingUserSettingsCache = (options: {
@@ -71,12 +78,17 @@ const applyMeetingUserSettingsCache = (options: {
     update.chatTtsSpeakerPrefixMode === null
       ? undefined
       : (update.chatTtsSpeakerPrefixMode ?? existing?.chatTtsSpeakerPrefixMode);
+  const nextVolumePercent =
+    update.chatTtsVolumePercent === null
+      ? undefined
+      : (update.chatTtsVolumePercent ?? existing?.chatTtsVolumePercent);
 
   if (
     !nextDisabled &&
     !nextVoice &&
     !nextSpokenName &&
-    !nextSpeakerPrefixMode
+    !nextSpeakerPrefixMode &&
+    nextVolumePercent === undefined
   ) {
     meeting.chatTtsUserSettings.delete(userId);
     return;
@@ -92,6 +104,9 @@ const applyMeetingUserSettingsCache = (options: {
     ...(nextSpokenName ? { chatTtsSpokenName: nextSpokenName } : {}),
     ...(nextSpeakerPrefixMode
       ? { chatTtsSpeakerPrefixMode: nextSpeakerPrefixMode }
+      : {}),
+    ...(nextVolumePercent !== undefined
+      ? { chatTtsVolumePercent: nextVolumePercent }
       : {}),
   };
   meeting.chatTtsUserSettings.set(userId, nextSettings);
@@ -290,6 +305,30 @@ const handleClearNickname: TtsSubcommandHandler = async (
   });
 };
 
+const handleVolume: TtsSubcommandHandler = async (interaction, guildId) => {
+  const rawPercent = interaction.options.getInteger("percent", true);
+  const percent = normalizeTtsVolumePercent(rawPercent);
+  if (percent === undefined) {
+    await interaction.reply({
+      content: `Choose a TTS volume from ${MIN_TTS_VOLUME_PERCENT}% to ${MAX_TTS_VOLUME_PERCENT}%.`,
+      ephemeral: true,
+    });
+    return;
+  }
+
+  const volumeValue = percent === DEFAULT_TTS_VOLUME_PERCENT ? null : percent;
+  await saveUserSettings(interaction, guildId, {
+    chatTtsVolumePercent: volumeValue,
+  });
+  await interaction.reply({
+    content:
+      volumeValue === null
+        ? `Reset your TTS volume to ${DEFAULT_TTS_VOLUME_PERCENT}%.`
+        : `Saved your TTS volume as ${volumeValue}%.`,
+    ephemeral: true,
+  });
+};
+
 const handleEnableChannel: TtsSubcommandHandler = async (
   interaction,
   guildId,
@@ -409,6 +448,7 @@ const subcommandHandlers: Record<string, TtsSubcommandHandler> = {
   prefix: handlePrefix,
   nickname: handleNickname,
   "clear-nickname": handleClearNickname,
+  volume: handleVolume,
   "enable-channel": handleEnableChannel,
   "disable-channel": handleDisableChannel,
   stop: handleStop,
@@ -447,6 +487,7 @@ export async function handleWhoisCommand(
   const spokenName = settings?.chatTtsSpokenName ?? discordName;
   const voice = settings?.chatTtsVoice ?? "server default";
   const prefix = settings?.chatTtsSpeakerPrefixMode ?? "server default";
+  const volume = settings?.chatTtsVolumePercent ?? DEFAULT_TTS_VOLUME_PERCENT;
   const optOut = settings?.chatTtsDisabled ? "yes" : "no";
 
   await interaction.reply({
@@ -455,6 +496,7 @@ export async function handleWhoisCommand(
       `Spoken TTS name: ${spokenName}`,
       `TTS voice: ${voice}`,
       `Speaker prefix: ${prefix}`,
+      `TTS volume: ${volume}%`,
       `Automatic chat TTS opt-out: ${optOut}`,
     ].join("\n"),
     ephemeral: true,

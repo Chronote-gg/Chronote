@@ -86,5 +86,5 @@ export function buildTtsSpeechText(input: {
   if (!speakerName || !shouldPrefixSpeech(input.context, input.prefixMode)) {
     return message;
   }
-  return `${speakerName} said: ${message}`;
+  return `${speakerName} said ${message}`;
 }

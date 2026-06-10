@@ -269,6 +269,7 @@ export interface UserSpeechSettings {
   chatTtsVoice?: string;
   chatTtsSpokenName?: string;
   chatTtsSpeakerPrefixMode?: "never" | "chat_only" | "always";
+  chatTtsVolumePercent?: number;
   updatedAt: string; // ISO timestamp
   updatedBy: string; // User ID who last updated
 }

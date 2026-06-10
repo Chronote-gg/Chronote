@@ -100,8 +100,13 @@ import { handleDictionaryCommand } from "./commands/dictionary";
 import { billingCommand, handleBillingCommand } from "./commands/billing";
 import { handleSayCommand } from "./commands/say";
 import { handleTtsCommand, handleWhoisCommand } from "./commands/tts";
+import { handleLeaveCommand } from "./commands/leave";
 import { TTS_VOICE_OPTIONS } from "./utils/ttsVoices";
 import { USER_CHAT_TTS_SPEAKER_PREFIX_MODE_OPTIONS } from "./utils/ttsText";
+import {
+  MAX_TTS_VOLUME_PERCENT,
+  MIN_TTS_VOLUME_PERCENT,
+} from "./utils/ttsVolume";
 import {
   invalidateDiscordBotGuildsCache,
   invalidateDiscordGuildCache,
@@ -210,6 +215,7 @@ const commandHandlers: Record<
   billing: handleBillingCommand,
   say: handleSayCommand,
   tts: handleTtsCommand,
+  leave: (interaction) => handleLeaveCommand(client, interaction),
   whois: handleWhoisCommand,
   feedback: handleFeedbackCommand,
 };
@@ -1167,6 +1173,19 @@ async function setupApplicationCommands() {
       )
       .addSubcommand((subcommand) =>
         subcommand
+          .setName("volume")
+          .setDescription("Set your chat-to-speech volume for this server")
+          .addIntegerOption((option) =>
+            option
+              .setName("percent")
+              .setDescription("Volume percent, 100 resets to default")
+              .setRequired(true)
+              .setMinValue(MIN_TTS_VOLUME_PERCENT)
+              .setMaxValue(MAX_TTS_VOLUME_PERCENT),
+          ),
+      )
+      .addSubcommand((subcommand) =>
+        subcommand
           .setName("enable-channel")
           .setDescription("Enable automatic chat-to-speech for a voice channel")
           .addChannelOption((option) =>
@@ -1210,6 +1229,15 @@ async function setupApplicationCommands() {
         option
           .setName("user")
           .setDescription("User to inspect, defaults to you")
+          .setRequired(false),
+      ),
+    new SlashCommandBuilder()
+      .setName("leave")
+      .setDescription("Disconnect Chronote from the current voice session")
+      .addBooleanOption((option) =>
+        option
+          .setName("confirm")
+          .setDescription("Required to end an active recorded meeting")
           .setRequired(false),
       ),
     new SlashCommandBuilder()

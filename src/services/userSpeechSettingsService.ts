@@ -7,6 +7,7 @@ export type UserSpeechSettingsUpdate = {
   chatTtsVoice?: string | null;
   chatTtsSpokenName?: string | null;
   chatTtsSpeakerPrefixMode?: "never" | "chat_only" | "always" | null;
+  chatTtsVolumePercent?: number | null;
 };
 
 export async function fetchUserSpeechSettings(
@@ -40,12 +41,17 @@ export async function setUserSpeechSettings(
     update.chatTtsSpeakerPrefixMode === null
       ? undefined
       : (update.chatTtsSpeakerPrefixMode ?? existing?.chatTtsSpeakerPrefixMode);
+  const nextVolumePercent =
+    update.chatTtsVolumePercent === null
+      ? undefined
+      : (update.chatTtsVolumePercent ?? existing?.chatTtsVolumePercent);
 
   if (
     !nextDisabled &&
     !nextVoice &&
     !nextSpokenName &&
-    !nextSpeakerPrefixMode
+    !nextSpeakerPrefixMode &&
+    nextVolumePercent === undefined
   ) {
     if (existing) {
       await repo.remove(guildId, userId);
@@ -63,6 +69,9 @@ export async function setUserSpeechSettings(
     ...(nextSpokenName ? { chatTtsSpokenName: nextSpokenName } : {}),
     ...(nextSpeakerPrefixMode
       ? { chatTtsSpeakerPrefixMode: nextSpeakerPrefixMode }
+      : {}),
+    ...(nextVolumePercent !== undefined
+      ? { chatTtsVolumePercent: nextVolumePercent }
       : {}),
   };
   await repo.write(next);

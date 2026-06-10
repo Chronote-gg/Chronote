@@ -14,7 +14,7 @@ describe("ttsText", () => {
         prefixMode: "chat_only",
         context: "chat",
       }),
-    ).toBe("Alex said: hello");
+    ).toBe("Alex said hello");
   });
 
   it("does not prefix /say in chat-only mode", () => {
@@ -36,7 +36,7 @@ describe("ttsText", () => {
         prefixMode: "always",
         context: "say",
       }),
-    ).toBe("Alex said: hello");
+    ).toBe("Alex said hello");
     expect(
       buildTtsSpeechText({
         message: "hello",

@@ -69,6 +69,7 @@ export async function maybeSpeakChatMessage(
     userId: message.author.id,
     source: "chat_tts",
     messageId: message.id,
+    volumePercent: settings?.chatTtsVolumePercent,
   });
 
   if (!enqueued) {
