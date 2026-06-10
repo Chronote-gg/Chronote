@@ -49,11 +49,7 @@ Required `desktop-release` environment variables for signed builds:
 - `AZURE_ARTIFACT_SIGNING_CERTIFICATE_PROFILE_NAME`
 - `DESKTOP_SIGNING_ENABLED=true`
 
-Optional override:
-
-- `AZURE_ARTIFACT_SIGNING_CLI`: defaults to `artifact-signing-cli`.
-
-The signed path uses GitHub OIDC through `azure/login`, installs the Azure Artifact Signing CLI, writes a CI-only Tauri config override with `bundle.windows.signCommand`, and verifies Authenticode signatures before validating checksums. Keep `DESKTOP_SIGNING_ENABLED=false` for unsigned beta drafts.
+The signed path uses GitHub OIDC through `azure/login`, signs built `.exe` and `.msi` files with `azure/artifact-signing-action`, and verifies Authenticode signatures before validating checksums or uploading release assets. Keep `DESKTOP_SIGNING_ENABLED=false` for unsigned beta drafts.
 
 ### Production Desktop API Enablement
 
@@ -113,13 +109,13 @@ Recommended Authenticode provider:
 - Identity validation is the slow path. Microsoft documents 1 to 20 business days, possibly longer if more documents are requested.
 - Prefer Artifact Signing over a checked-in or CI-stored PFX because certificate lifecycle and keys stay in Microsoft's managed HSM-backed service.
 
-Recommended GitHub/Tauri integration:
+Recommended GitHub packaging integration:
 
 1. Create an Artifact Signing account, complete public identity validation for the publisher entity, and create a Public Trust certificate profile.
 2. Grant only the release workflow identity the `Artifact Signing Certificate Profile Signer` role.
 3. Prefer GitHub OIDC through `azure/login` instead of a long-lived `AZURE_CLIENT_SECRET` when configuring the protected `desktop-release` environment.
 4. Add environment-scoped signing configuration for the endpoint, signing account name, and certificate profile name.
-5. Use Tauri's `bundle.windows.signCommand` through a CI-only config override so the app executable and installer are signed during bundling, not only after packaging.
+5. Use Azure's Artifact Signing GitHub Action after Tauri packaging and before release upload so the workflow stays on OIDC instead of long-lived client secrets.
 6. Timestamp every Authenticode signature with `http://timestamp.acs.microsoft.com`; Artifact Signing certificates are short-lived, so timestamping is required for signatures to remain valid beyond the certificate validity window.
 7. Set `DESKTOP_SIGNING_ENABLED=true` only after the provider setup and timestamped signature validation are verified.
 8. Verify both the installer and installed executable signatures before promoting any stable release.

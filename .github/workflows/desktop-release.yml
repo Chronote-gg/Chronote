@@ -92,60 +92,23 @@ jobs:
           tenant-id: ${{ vars.AZURE_TENANT_ID }}
           subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
 
-      - name: Install Azure Artifact Signing CLI
+      - name: Build desktop release artifacts
+        run: yarn desktop:package
+
+      - name: Sign Windows artifacts
         if: env.DESKTOP_SIGNING_ENABLED == 'true'
-        run: cargo install artifact-signing-cli --locked
-
-      - name: Write Tauri signing config
-        if: env.DESKTOP_SIGNING_ENABLED == 'true'
-        shell: pwsh
-        env:
-          AZURE_ARTIFACT_SIGNING_CLI: ${{ vars.AZURE_ARTIFACT_SIGNING_CLI || 'artifact-signing-cli' }}
-          AZURE_ARTIFACT_SIGNING_ENDPOINT: ${{ vars.AZURE_ARTIFACT_SIGNING_ENDPOINT }}
-          AZURE_ARTIFACT_SIGNING_ACCOUNT_NAME: ${{ vars.AZURE_ARTIFACT_SIGNING_ACCOUNT_NAME }}
-          AZURE_ARTIFACT_SIGNING_CERTIFICATE_PROFILE_NAME: ${{ vars.AZURE_ARTIFACT_SIGNING_CERTIFICATE_PROFILE_NAME }}
-        run: |
-          $signCommand = "$env:AZURE_ARTIFACT_SIGNING_CLI -e `"$env:AZURE_ARTIFACT_SIGNING_ENDPOINT`" -a `"$env:AZURE_ARTIFACT_SIGNING_ACCOUNT_NAME`" -c `"$env:AZURE_ARTIFACT_SIGNING_CERTIFICATE_PROFILE_NAME`" %1"
-          $config = @{
-            bundle = @{
-              windows = @{
-                signCommand = $signCommand
-              }
-            }
-          }
-
-          $config | ConvertTo-Json -Depth 5 | Set-Content -Path apps/desktop/src-tauri/tauri.signing.conf.json -Encoding utf8
-
-      - name: Resolve desktop release build args
-        id: release-args
-        shell: pwsh
-        run: |
-          $buildArgs = "--ci --no-sign"
-          if ($env:DESKTOP_SIGNING_ENABLED -eq "true") {
-            $buildArgs = "--ci --config src-tauri/tauri.signing.conf.json"
-          }
-
-          "args=$buildArgs" >> $env:GITHUB_OUTPUT
-
-      - name: Build and upload desktop release artifacts
-        id: tauri-release
-        uses: tauri-apps/tauri-action@v0.6.2
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
+        uses: azure/artifact-signing-action@v2
         with:
-          projectPath: apps/desktop
-          tagName: ${{ inputs.tag }}
-          releaseName: Chronote Desktop ${{ inputs.tag }}
-          releaseBody: |
-            [AGENT]
-
-            Draft Chronote Desktop Windows release artifacts.
-
-            Keep unsigned beta artifacts in draft/prerelease status. Do not publish as stable unless Windows Authenticode signing is enabled and verified.
-          releaseDraft: true
-          prerelease: ${{ inputs.prerelease }}
-          args: ${{ steps.release-args.outputs.args }}
-          includeUpdaterJson: false
+          endpoint: ${{ vars.AZURE_ARTIFACT_SIGNING_ENDPOINT }}
+          signing-account-name: ${{ vars.AZURE_ARTIFACT_SIGNING_ACCOUNT_NAME }}
+          certificate-profile-name: ${{ vars.AZURE_ARTIFACT_SIGNING_CERTIFICATE_PROFILE_NAME }}
+          files-folder: ${{ github.workspace }}\apps\desktop\src-tauri\target\release
+          files-folder-filter: exe,msi
+          files-folder-recurse: true
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
+          description: Chronote Desktop
 
       - name: Verify signed Windows artifacts
         if: env.DESKTOP_SIGNING_ENABLED == 'true'
@@ -187,8 +150,67 @@ jobs:
           name: chronote-desktop-checksums
           path: apps/desktop/src-tauri/target/release/bundle/SHA256SUMS.txt
 
-      - name: Upload checksums to draft release
+      - name: Create draft release
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ inputs.tag }}
-        run: gh release upload "$env:RELEASE_TAG" apps/desktop/src-tauri/target/release/bundle/SHA256SUMS.txt --clobber
+          PRERELEASE: ${{ inputs.prerelease }}
+        shell: pwsh
+        run: |
+          $notesPath = Join-Path $env:RUNNER_TEMP "desktop-release-notes.md"
+          $notes = @(
+            "[AGENT]",
+            "",
+            "Draft Chronote Desktop Windows release artifacts.",
+            "",
+            "Keep unsigned beta artifacts in draft/prerelease status. Do not publish as stable unless Windows Authenticode signing is enabled and verified."
+          )
+          Set-Content -Path $notesPath -Value $notes -Encoding utf8
+
+          gh release view "$env:RELEASE_TAG" --repo "$env:GITHUB_REPOSITORY" *> $null
+          if ($LASTEXITCODE -ne 0) {
+            $createArgs = @(
+              "release",
+              "create",
+              $env:RELEASE_TAG,
+              "--repo",
+              $env:GITHUB_REPOSITORY,
+              "--target",
+              $env:GITHUB_SHA,
+              "--draft",
+              "--title",
+              "Chronote Desktop $env:RELEASE_TAG",
+              "--notes-file",
+              $notesPath
+            )
+
+            if ($env:PRERELEASE -eq "true") {
+              $createArgs += "--prerelease"
+            }
+
+            & gh @createArgs
+          }
+
+      - name: Upload release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.tag }}
+        shell: pwsh
+        run: |
+          $bundlePath = "apps/desktop/src-tauri/target/release/bundle"
+          $assetExtensions = @(".exe", ".msi", ".json", ".sig")
+          $assetPaths = Get-ChildItem -Path $bundlePath -Recurse -File |
+            Where-Object { $assetExtensions -contains $_.Extension.ToLowerInvariant() } |
+            ForEach-Object { $_.FullName }
+
+          $checksumPath = Join-Path $bundlePath "SHA256SUMS.txt"
+          if (Test-Path $checksumPath) {
+            $assetPaths += $checksumPath
+          }
+
+          if ($assetPaths.Count -eq 0) {
+            throw "No desktop release assets found under $bundlePath."
+          }
+
+          $uploadArgs = @("release", "upload", $env:RELEASE_TAG) + $assetPaths + @("--clobber", "--repo", $env:GITHUB_REPOSITORY)
+          & gh @uploadArgs
