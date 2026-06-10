@@ -19,6 +19,9 @@ import type {
   MeetingStartReason,
 } from "./meetingLifecycle";
 import type { ConfigTier, MeetingRuntimeConfig } from "../config/types";
+import type { ChatTtsSpeakerPrefixMode } from "../utils/ttsText";
+
+export type VoiceSessionMode = "meeting" | "tts_only";
 
 export type LiveVoiceCommandPending = {
   type: "end_meeting";
@@ -35,6 +38,10 @@ export type LiveVoiceThinkingCueState = {
 
 export interface MeetingData {
   meetingId: string;
+  sessionMode?: VoiceSessionMode;
+  captureAudio?: boolean;
+  recordBotAudio?: boolean;
+  storeChatLog?: boolean;
   chatLog: ChatEntry[];
   attendance: Set<string>;
   connection: VoiceConnection;
@@ -68,8 +75,11 @@ export interface MeetingData {
 
   chatTtsEnabled?: boolean;
   chatTtsVoice?: string;
+  chatTtsSpeakerPrefixMode?: ChatTtsSpeakerPrefixMode;
   chatTtsUserSettings?: Map<string, UserSpeechSettings | null>;
   ttsQueue?: TtsQueue;
+  botNicknameBeforeSession?: string | null;
+  botNicknameChanged?: boolean;
 
   finishing: boolean;
   // Used for functions that are waiting for the meeting to be completely over

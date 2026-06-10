@@ -33,9 +33,15 @@ import {
 } from "./utils/participants";
 import { config } from "./services/configService";
 import { resolveMeetingRuntimeConfig } from "./services/meetingConfigService";
+import {
+  getSnapshotBoolean,
+  getSnapshotString,
+  resolveConfigSnapshot,
+} from "./services/unifiedConfigService";
 import { listDictionaryEntriesService } from "./services/dictionaryService";
 import { createTtsQueue } from "./ttsQueue";
 import { maybeSpeakChatMessage } from "./chatTts";
+import { CONFIG_KEYS } from "./config/keys";
 import {
   MEETING_END_REASONS,
   MEETING_START_REASONS,
@@ -44,6 +50,8 @@ import {
 } from "./types/meetingLifecycle";
 import { meetingsStarted } from "./metrics";
 import type { ConfigTier } from "./config/types";
+import type { ChatTtsSpeakerPrefixMode } from "./utils/ttsText";
+import { DEFAULT_CHAT_TTS_SPEAKER_PREFIX_MODE as DEFAULT_PREFIX_MODE } from "./utils/ttsText";
 
 const meetings = new Map<string, MeetingData>();
 
@@ -86,6 +94,10 @@ export function deleteMeetingSetup(key: string) {
 
 export interface MeetingInitOptions {
   meetingId?: string;
+  sessionMode?: "meeting" | "tts_only";
+  captureAudio?: boolean;
+  recordBotAudio?: boolean;
+  storeChatLog?: boolean;
   leaseOwnerInstanceId?: string;
   voiceChannel: VoiceBasedChannel;
   textChannel: TextChannel;
@@ -106,10 +118,78 @@ export interface MeetingInitOptions {
   liveVoiceTtsVoice?: string;
   chatTtsEnabled?: boolean;
   chatTtsVoice?: string;
+  chatTtsSpeakerPrefixMode?: ChatTtsSpeakerPrefixMode;
   maxMeetingDurationMs?: number;
   maxMeetingDurationPretty?: string;
   subscriptionTier?: ConfigTier;
   onEndMeeting?: (meeting: MeetingData) => Promise<void> | void;
+}
+
+const DISCORD_NICKNAME_MAX_LENGTH = 32;
+
+async function applyVoiceSessionNickname(meeting: MeetingData) {
+  try {
+    const snapshot = await resolveConfigSnapshot({
+      guildId: meeting.guildId,
+      channelId: meeting.voiceChannel.id,
+      tier: meeting.subscriptionTier,
+    });
+    const enabled = getSnapshotBoolean(
+      snapshot,
+      CONFIG_KEYS.chatTts.statusNicknameEnabled,
+    );
+    if (!enabled) return;
+
+    const nicknameKey =
+      meeting.sessionMode === "tts_only"
+        ? CONFIG_KEYS.chatTts.statusNicknameTtsOnly
+        : CONFIG_KEYS.chatTts.statusNicknameRecording;
+    const nickname = getSnapshotString(snapshot, nicknameKey, { trim: true });
+    const botMember = meeting.guild.members.me;
+    if (!nickname || !botMember) return;
+
+    const nextNickname = nickname.slice(0, DISCORD_NICKNAME_MAX_LENGTH);
+    if (botMember.nickname === nextNickname) return;
+
+    meeting.botNicknameBeforeSession = botMember.nickname ?? null;
+    await botMember.setNickname(nextNickname);
+    meeting.botNicknameChanged = true;
+  } catch (error) {
+    console.warn("Failed to update bot session nickname.", error);
+  }
+}
+
+export async function restoreVoiceSessionNickname(meeting: MeetingData) {
+  if (!meeting.botNicknameChanged) return;
+  try {
+    const botMember = meeting.guild.members.me;
+    if (!botMember) return;
+    await botMember.setNickname(meeting.botNicknameBeforeSession ?? null);
+    meeting.botNicknameChanged = false;
+  } catch (error) {
+    console.warn("Failed to restore bot session nickname.", error);
+  }
+}
+
+export async function endTtsOnlySession(meeting: MeetingData) {
+  if (meeting.finishing || meeting.finished) return;
+  if (meeting.timeoutTimer) {
+    clearTimeout(meeting.timeoutTimer);
+    meeting.timeoutTimer = undefined;
+  }
+  meeting.finishing = true;
+  meeting.endTime = new Date();
+  meeting.ttsQueue?.stopAndClear();
+  try {
+    meeting.connection.disconnect();
+    meeting.connection.destroy();
+  } catch (error) {
+    console.warn("Failed to disconnect TTS-only voice session.", error);
+  }
+  await restoreVoiceSessionNickname(meeting);
+  meeting.setFinished();
+  meeting.finished = true;
+  deleteMeeting(meeting.guildId);
 }
 
 /**
@@ -125,6 +205,10 @@ export async function initializeMeeting(
 ): Promise<MeetingData> {
   const {
     meetingId,
+    sessionMode = "meeting",
+    captureAudio = sessionMode === "meeting",
+    recordBotAudio = captureAudio,
+    storeChatLog = sessionMode === "meeting",
     leaseOwnerInstanceId,
     voiceChannel,
     textChannel,
@@ -145,6 +229,7 @@ export async function initializeMeeting(
     liveVoiceTtsVoice,
     chatTtsEnabled: chatTtsOverride,
     chatTtsVoice,
+    chatTtsSpeakerPrefixMode = DEFAULT_PREFIX_MODE,
     maxMeetingDurationMs,
     maxMeetingDurationPretty,
     subscriptionTier,
@@ -177,10 +262,15 @@ export async function initializeMeeting(
 
   const receiver = connection.receiver;
   const attendance: Set<string> = new Set<string>();
+  const canCaptureAudio = captureAudio && sessionMode === "meeting";
   const liveVoiceEnabled =
-    config.liveVoice.mode === "tts_gate" && liveVoiceOverride !== false;
+    canCaptureAudio &&
+    config.liveVoice.mode === "tts_gate" &&
+    liveVoiceOverride !== false;
   const liveVoiceCommandsEnabled =
-    config.liveVoice.mode === "tts_gate" && liveVoiceCommandsOverride === true;
+    canCaptureAudio &&
+    config.liveVoice.mode === "tts_gate" &&
+    liveVoiceCommandsOverride === true;
   const chatTtsEnabled = chatTtsOverride ?? false;
   const botAudioEnabled =
     liveVoiceEnabled || chatTtsEnabled || liveVoiceCommandsEnabled;
@@ -203,6 +293,10 @@ export async function initializeMeeting(
 
   const meeting: MeetingData = {
     meetingId: meetingId ?? uuidv4(),
+    sessionMode,
+    captureAudio: canCaptureAudio,
+    recordBotAudio,
+    storeChatLog,
     chatLog: [],
     attendance,
     connection,
@@ -222,6 +316,7 @@ export async function initializeMeeting(
     liveVoiceTtsVoice,
     chatTtsEnabled,
     chatTtsVoice,
+    chatTtsSpeakerPrefixMode,
     chatTtsUserSettings: new Map(),
     isFinished,
     setFinished: () => setFinished && setFinished(),
@@ -247,8 +342,9 @@ export async function initializeMeeting(
     meeting.ttsQueue = createTtsQueue(meeting, liveAudioPlayer);
   }
 
-  // Open output file for audio recording
-  openOutputFile(meeting);
+  if (meeting.captureAudio || meeting.recordBotAudio) {
+    openOutputFile(meeting);
+  }
 
   // Set up error handling for the connection
   connection.on("error", (error) => {
@@ -272,70 +368,77 @@ export async function initializeMeeting(
     }),
   );
 
-  // Subscribe to initial members' voice
-  await Promise.all(
-    voiceChannel.members.map((member) =>
-      subscribeToUserVoice(meeting, member.user.id),
-    ),
-  );
+  if (meeting.captureAudio) {
+    await Promise.all(
+      voiceChannel.members.map((member) =>
+        subscribeToUserVoice(meeting, member.user.id),
+      ),
+    );
 
-  // Set up speaking event handlers
-  receiver.speaking.on("start", (userId) => {
-    userStartTalking(meeting, userId);
-  });
+    receiver.speaking.on("start", (userId) => {
+      userStartTalking(meeting, userId);
+    });
 
-  receiver.speaking.on("end", (userId) => {
-    userStopTalking(meeting, userId);
-  });
+    receiver.speaking.on("end", (userId) => {
+      userStopTalking(meeting, userId);
+    });
+  }
 
-  // Set up chat collector
-  const collector = voiceChannel.createMessageCollector();
-  collector.on("collect", (message) => {
-    if (message.author.bot) return;
+  if (meeting.storeChatLog || meeting.chatTtsEnabled) {
+    const collector = voiceChannel.createMessageCollector();
+    collector.on("collect", (message) => {
+      if (message.author.bot) return;
 
-    const participant =
-      meeting.participants.get(message.author.id) ??
-      (message.member ? fromMember(message.member) : fromUser(message.author));
+      const participant =
+        meeting.participants.get(message.author.id) ??
+        (message.member
+          ? fromMember(message.member)
+          : fromUser(message.author));
 
-    meeting.participants.set(message.author.id, participant);
+      meeting.participants.set(message.author.id, participant);
 
-    const attachments =
-      message.attachments.size > 0
-        ? Array.from(message.attachments.values()).map((attachment) => ({
-            id: attachment.id,
-            name: attachment.name ?? "attachment",
-            size: attachment.size,
-            url: attachment.url,
-            proxyUrl: attachment.proxyURL,
-            contentType: attachment.contentType ?? undefined,
-            width: attachment.width ?? undefined,
-            height: attachment.height ?? undefined,
-            durationSeconds: attachment.duration ?? undefined,
-            description: attachment.description ?? undefined,
-            ephemeral: attachment.ephemeral ?? undefined,
-          }))
-        : undefined;
+      const attachments =
+        message.attachments.size > 0
+          ? Array.from(message.attachments.values()).map((attachment) => ({
+              id: attachment.id,
+              name: attachment.name ?? "attachment",
+              size: attachment.size,
+              url: attachment.url,
+              proxyUrl: attachment.proxyURL,
+              contentType: attachment.contentType ?? undefined,
+              width: attachment.width ?? undefined,
+              height: attachment.height ?? undefined,
+              durationSeconds: attachment.duration ?? undefined,
+              description: attachment.description ?? undefined,
+              ephemeral: attachment.ephemeral ?? undefined,
+            }))
+          : undefined;
 
-    const entry: ChatEntry = {
-      type: "message",
-      source: "chat",
-      user: participant,
-      channelId: message.channelId,
-      content: message.content,
-      attachments,
-      messageId: message.id,
-      timestamp: new Date(message.createdTimestamp).toISOString(),
-    };
+      const entry: ChatEntry = {
+        type: "message",
+        source: "chat",
+        user: participant,
+        channelId: message.channelId,
+        content: message.content,
+        attachments,
+        messageId: message.id,
+        timestamp: new Date(message.createdTimestamp).toISOString(),
+      };
 
-    meeting.chatLog.push(entry);
-    meeting.attendance.add(formatUserMention(message.author.id));
+      if (meeting.storeChatLog) {
+        meeting.chatLog.push(entry);
+        meeting.attendance.add(formatUserMention(message.author.id));
+      }
 
-    void maybeSpeakChatMessage(meeting, message, entry);
-  });
+      void maybeSpeakChatMessage(meeting, message, entry);
+    });
+  }
 
   // Add meeting to the global map
   addMeeting(meeting);
-  meetingsStarted.inc();
+  if (meeting.sessionMode === "meeting") {
+    meetingsStarted.inc();
+  }
 
   try {
     meeting.runtimeConfig = await resolveMeetingRuntimeConfig({
@@ -348,12 +451,16 @@ export async function initializeMeeting(
     console.warn("Failed to resolve meeting runtime config:", error);
   }
 
-  try {
-    meeting.dictionaryEntries = await listDictionaryEntriesService(
-      meeting.guildId,
-    );
-  } catch (error) {
-    console.warn("Failed to load dictionary entries:", error);
+  await applyVoiceSessionNickname(meeting);
+
+  if (meeting.captureAudio) {
+    try {
+      meeting.dictionaryEntries = await listDictionaryEntriesService(
+        meeting.guildId,
+      );
+    } catch (error) {
+      console.warn("Failed to load dictionary entries:", error);
+    }
   }
 
   // Set a timer to automatically end the meeting after the specified duration

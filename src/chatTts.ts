@@ -5,6 +5,11 @@ import type { ChatEntry } from "./types/chat";
 import { fetchUserSpeechSettings } from "./services/userSpeechSettingsService";
 import { chatTtsDropped, chatTtsEnqueued } from "./metrics";
 import { resolveTtsVoice } from "./utils/ttsVoices";
+import { formatParticipantLabel } from "./utils/participants";
+import {
+  buildTtsSpeechText,
+  resolveChatTtsSpeakerPrefixMode,
+} from "./utils/ttsText";
 
 async function resolveUserSettings(meeting: MeetingData, userId: string) {
   if (!meeting.chatTtsUserSettings) {
@@ -41,9 +46,25 @@ export async function maybeSpeakChatMessage(
 
   const meetingDefault = meeting.chatTtsVoice ?? config.chatTts.defaultVoice;
   const voice = resolveTtsVoice(settings?.chatTtsVoice, meetingDefault);
+  const prefixMode = resolveChatTtsSpeakerPrefixMode(
+    settings?.chatTtsSpeakerPrefixMode,
+    meeting.chatTtsSpeakerPrefixMode,
+  );
+  const speakerName =
+    settings?.chatTtsSpokenName ??
+    formatParticipantLabel(entry.user, {
+      includeUsername: false,
+      fallbackName: message.author.username,
+    });
+  const speechText = buildTtsSpeechText({
+    message: text,
+    speakerName,
+    prefixMode,
+    context: "chat",
+  });
 
   const enqueued = meeting.ttsQueue.enqueue({
-    text,
+    text: speechText,
     voice,
     userId: message.author.id,
     source: "chat_tts",

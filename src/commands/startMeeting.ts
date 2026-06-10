@@ -56,6 +56,7 @@ import {
   tryAcquireMeetingLease,
 } from "../services/activeMeetingLeaseService";
 import { fetchGuildMember } from "../utils/guildMembers";
+import type { ChatTtsSpeakerPrefixMode } from "../utils/ttsText";
 
 type GuildLimits = Awaited<ReturnType<typeof getGuildLimits>>["limits"];
 
@@ -380,6 +381,7 @@ export async function startManualMeetingFromChannels({
     liveVoiceCommandsEnabled,
     chatTtsEnabled,
     chatTtsVoice,
+    chatTtsSpeakerPrefixMode,
     liveVoiceTtsVoice,
   } = await resolveMeetingVoiceSettings(guildId, voiceChannel.id, limits);
 
@@ -423,6 +425,7 @@ export async function startManualMeetingFromChannels({
       liveVoiceTtsVoice,
       chatTtsEnabled,
       chatTtsVoice,
+      chatTtsSpeakerPrefixMode,
       maxMeetingDurationMs: limits.maxMeetingDurationMs,
       maxMeetingDurationPretty: limits.maxMeetingDurationPretty,
       subscriptionTier: subscription.tier,
@@ -609,6 +612,7 @@ export async function handleAutoStartMeeting(
     liveVoiceTtsVoice?: string;
     chatTtsEnabled?: boolean;
     chatTtsVoice?: string;
+    chatTtsSpeakerPrefixMode?: ChatTtsSpeakerPrefixMode;
     startReason?: MeetingStartReason;
     startTriggeredByUserId?: string;
     autoRecordRule?: AutoRecordRule;
@@ -712,6 +716,7 @@ export async function handleAutoStartMeeting(
       liveVoiceTtsVoice: options?.liveVoiceTtsVoice,
       chatTtsEnabled: options?.chatTtsEnabled,
       chatTtsVoice: options?.chatTtsVoice,
+      chatTtsSpeakerPrefixMode: options?.chatTtsSpeakerPrefixMode,
       subscriptionTier: subscription.tier,
     });
   } catch (error) {

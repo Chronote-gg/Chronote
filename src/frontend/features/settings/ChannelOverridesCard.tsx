@@ -88,8 +88,8 @@ export function ChannelOverridesCard({
         {overrides.length === 0 ? (
           <Surface tone="soft" p="md">
             <Text c="dimmed" size="sm">
-              No channel overrides yet. Add one to customize recording or
-              context per voice channel.
+              No channel overrides yet. Add one to customize recording,
+              chat-to-speech, or context per voice channel.
             </Text>
           </Surface>
         ) : (
@@ -107,7 +107,7 @@ export function ChannelOverridesCard({
                   <Stack gap={2}>
                     <Text fw={600}>{override.voiceLabel}</Text>
                     <Text size="xs" c="dimmed">
-                      Notes:{" "}
+                      Status/notes:{" "}
                       {override.textLabel
                         ? formatChannelLabel({
                             value: override.channelId,
@@ -118,11 +118,27 @@ export function ChannelOverridesCard({
                         : "Defaults"}
                     </Text>
                   </Stack>
-                  <Text size="xs" c="dimmed">
-                    {override.autoRecordEnabled
-                      ? "Auto-record on"
-                      : "Auto-record off"}
-                  </Text>
+                  <Stack gap={2} align="flex-end">
+                    <Text size="xs" c="dimmed">
+                      {override.autoRecordEnabled
+                        ? "Auto-record on"
+                        : "Auto-record off"}
+                    </Text>
+                    <Text size="xs" c="dimmed">
+                      {override.chatTtsEnabled === undefined
+                        ? "Chat TTS default"
+                        : override.chatTtsEnabled
+                          ? "Chat TTS on"
+                          : "Chat TTS off"}
+                    </Text>
+                    <Text size="xs" c="dimmed">
+                      {override.chatTtsTtsOnlyEnabled === undefined
+                        ? "TTS-only default"
+                        : override.chatTtsTtsOnlyEnabled
+                          ? "TTS-only on"
+                          : "TTS-only off"}
+                    </Text>
+                  </Stack>
                   {onRemove ? (
                     <ActionIcon
                       variant="subtle"

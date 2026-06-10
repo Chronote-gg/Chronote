@@ -57,7 +57,9 @@ describe("settingsChannels utils", () => {
         {
           channelId: "c",
           context: "ctx-c",
+          defaultNotesChannelId: "t2",
           chatTtsEnabled: true,
+          chatTtsTtsOnlyEnabled: true,
           guildId: "g1",
           updatedAt: "2025-01-01T00:00:00.000Z",
           updatedBy: "u1",
@@ -68,7 +70,10 @@ describe("settingsChannels utils", () => {
         ["b", "Beta"],
         ["c", "Gamma"],
       ]),
-      textChannelMap: new Map([["t1", "Notes"]]),
+      textChannelMap: new Map([
+        ["t1", "Notes"],
+        ["t2", "TTS Status"],
+      ]),
       defaultNotesChannelId: "t1",
     });
     expect(overrides.map((o) => o.channelId)).toEqual(["a", "b", "c"]);
@@ -80,7 +85,9 @@ describe("settingsChannels utils", () => {
     const b = overrides[1];
     expect(b.context).toBe("ctx-b");
     const c = overrides[2];
-    expect(c.textLabel).toBeUndefined();
+    expect(c.textLabel).toBe("TTS Status");
+    expect(c.textChannelId).toBe("t2");
+    expect(c.chatTtsTtsOnlyEnabled).toBe(true);
   });
 
   it("resolves default notes channel from context or record-all rule", () => {

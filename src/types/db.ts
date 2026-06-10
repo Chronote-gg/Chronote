@@ -253,9 +253,11 @@ export interface ChannelContext {
   guildId: string; // Partition key
   channelId: string; // Sort key
   context?: string; // The context/instructions for the channel
+  defaultNotesChannelId?: string;
   liveVoiceEnabled?: boolean;
   liveVoiceCommandsEnabled?: boolean;
   chatTtsEnabled?: boolean;
+  chatTtsTtsOnlyEnabled?: boolean;
   updatedAt: string; // ISO timestamp
   updatedBy: string; // User ID who last updated
 }
@@ -265,6 +267,8 @@ export interface UserSpeechSettings {
   userId: string; // Sort key
   chatTtsDisabled?: boolean;
   chatTtsVoice?: string;
+  chatTtsSpokenName?: string;
+  chatTtsSpeakerPrefixMode?: "never" | "chat_only" | "always";
   updatedAt: string; // ISO timestamp
   updatedBy: string; // User ID who last updated
 }

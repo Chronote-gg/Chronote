@@ -5,6 +5,8 @@ import type { UserSpeechSettings } from "../types/db";
 export type UserSpeechSettingsUpdate = {
   chatTtsDisabled?: boolean;
   chatTtsVoice?: string | null;
+  chatTtsSpokenName?: string | null;
+  chatTtsSpeakerPrefixMode?: "never" | "chat_only" | "always" | null;
 };
 
 export async function fetchUserSpeechSettings(
@@ -30,8 +32,21 @@ export async function setUserSpeechSettings(
     update.chatTtsVoice === null
       ? undefined
       : (update.chatTtsVoice ?? existing?.chatTtsVoice);
+  const nextSpokenName =
+    update.chatTtsSpokenName === null
+      ? undefined
+      : (update.chatTtsSpokenName ?? existing?.chatTtsSpokenName);
+  const nextSpeakerPrefixMode =
+    update.chatTtsSpeakerPrefixMode === null
+      ? undefined
+      : (update.chatTtsSpeakerPrefixMode ?? existing?.chatTtsSpeakerPrefixMode);
 
-  if (!nextDisabled && !nextVoice) {
+  if (
+    !nextDisabled &&
+    !nextVoice &&
+    !nextSpokenName &&
+    !nextSpeakerPrefixMode
+  ) {
     if (existing) {
       await repo.remove(guildId, userId);
     }
@@ -45,6 +60,10 @@ export async function setUserSpeechSettings(
     updatedBy,
     ...(nextDisabled ? { chatTtsDisabled: true } : {}),
     ...(nextVoice ? { chatTtsVoice: nextVoice } : {}),
+    ...(nextSpokenName ? { chatTtsSpokenName: nextSpokenName } : {}),
+    ...(nextSpeakerPrefixMode
+      ? { chatTtsSpeakerPrefixMode: nextSpeakerPrefixMode }
+      : {}),
   };
   await repo.write(next);
 }

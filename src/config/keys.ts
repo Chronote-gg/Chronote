@@ -75,6 +75,11 @@ export const CONFIG_KEYS = {
   chatTts: {
     enabled: "chatTts.enabled",
     voice: "chatTts.voice",
+    ttsOnlyEnabled: "chatTts.ttsOnly.enabled",
+    speakerPrefixMode: "chatTts.speakerPrefix.mode",
+    statusNicknameEnabled: "chatTts.statusNickname.enabled",
+    statusNicknameRecording: "chatTts.statusNickname.recording",
+    statusNicknameTtsOnly: "chatTts.statusNickname.ttsOnly",
   },
   dictionary: {
     maxEntries: "dictionary.maxEntries",
@@ -102,6 +107,11 @@ export const SERVER_CONTEXT_KEYS = {
   liveVoiceTtsVoice: CONFIG_KEYS.liveVoice.ttsVoice,
   chatTtsEnabled: CONFIG_KEYS.chatTts.enabled,
   chatTtsVoice: CONFIG_KEYS.chatTts.voice,
+  chatTtsTtsOnlyEnabled: CONFIG_KEYS.chatTts.ttsOnlyEnabled,
+  chatTtsSpeakerPrefixMode: CONFIG_KEYS.chatTts.speakerPrefixMode,
+  chatTtsStatusNicknameEnabled: CONFIG_KEYS.chatTts.statusNicknameEnabled,
+  chatTtsStatusNicknameRecording: CONFIG_KEYS.chatTts.statusNicknameRecording,
+  chatTtsStatusNicknameTtsOnly: CONFIG_KEYS.chatTts.statusNicknameTtsOnly,
   askMembersEnabled: CONFIG_KEYS.ask.membersEnabled,
   askSharingPolicy: CONFIG_KEYS.ask.sharingPolicy,
 } as const;

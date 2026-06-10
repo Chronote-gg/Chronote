@@ -19,6 +19,10 @@ import {
 } from "../constants";
 import { DEFAULT_TTS_VOICE, TTS_VOICES } from "../utils/ttsVoices";
 import {
+  CHAT_TTS_SPEAKER_PREFIX_MODES,
+  DEFAULT_CHAT_TTS_SPEAKER_PREFIX_MODE,
+} from "../utils/ttsText";
+import {
   MODEL_PARAM_DEFAULTS,
   MODEL_PARAM_ROLE_LABELS,
   MODEL_PARAM_ROLES,
@@ -913,6 +917,80 @@ export const CONFIG_REGISTRY: ConfigEntry[] = [
       renderer: "TtsVoiceSelect",
       options: [...TTS_VOICES],
     },
+  },
+  {
+    key: "chatTts.ttsOnly.enabled",
+    label: "TTS-only sessions",
+    description:
+      "Allow /say to start a voice session that only plays bot speech and does not record or transcribe.",
+    category: "Chat TTS",
+    group: "Standard",
+    valueType: "boolean",
+    defaultValue: true,
+    scopes: {
+      global: scope(true, true, "superadmin", "toggle"),
+      server: scope(true, false, "admin", "toggle"),
+      channel: scope(true, false, "admin", "tri-state"),
+    },
+    ui: { type: "toggle" },
+  },
+  {
+    key: "chatTts.speakerPrefix.mode",
+    label: "TTS speaker prefix",
+    description:
+      "Controls whether spoken TTS includes the speaker name, such as 'Name said'.",
+    category: "Chat TTS",
+    group: "Standard",
+    valueType: "select",
+    defaultValue: DEFAULT_CHAT_TTS_SPEAKER_PREFIX_MODE,
+    scopes: {
+      global: scope(true, true, "superadmin", "select"),
+      server: scope(true, false, "admin", "select"),
+    },
+    ui: { type: "select", options: [...CHAT_TTS_SPEAKER_PREFIX_MODES] },
+  },
+  {
+    key: "chatTts.statusNickname.enabled",
+    label: "TTS status nickname",
+    description:
+      "Best-effort bot nickname updates for recording and TTS-only voice sessions.",
+    category: "Chat TTS",
+    group: "Advanced",
+    valueType: "boolean",
+    defaultValue: true,
+    scopes: {
+      global: scope(true, true, "superadmin", "toggle"),
+      server: scope(true, false, "admin", "toggle"),
+    },
+    ui: { type: "toggle" },
+  },
+  {
+    key: "chatTts.statusNickname.recording",
+    label: "Recording nickname",
+    description: "Bot nickname while recording a meeting.",
+    category: "Chat TTS",
+    group: "Advanced",
+    valueType: "string",
+    defaultValue: "Chronote (Recording)",
+    scopes: {
+      global: scope(true, true, "superadmin", "text"),
+      server: scope(true, false, "admin", "text"),
+    },
+    ui: { type: "text", placeholder: "Chronote (Recording)" },
+  },
+  {
+    key: "chatTts.statusNickname.ttsOnly",
+    label: "TTS-only nickname",
+    description: "Bot nickname while in a TTS-only voice session.",
+    category: "Chat TTS",
+    group: "Advanced",
+    valueType: "string",
+    defaultValue: "Chronote (TTS only)",
+    scopes: {
+      global: scope(true, true, "superadmin", "text"),
+      server: scope(true, false, "admin", "text"),
+    },
+    ui: { type: "text", placeholder: "Chronote (TTS only)" },
   },
   {
     key: "ask.members.enabled",

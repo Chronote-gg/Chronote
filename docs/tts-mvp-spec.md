@@ -2,7 +2,7 @@
 
 ### Summary
 
-Add a chat-to-speech (TTS) feature that speaks every message typed in the voice-channel text chat during active meetings, plus a /say command for manual speech. The feature is gated to Basic/Pro, supports a server default and channel override, and allows per-user voice selection with per-user opt-out. Spoken chat is queued with Chronote live voice replies so audio never overlaps, and it is included in the meeting recording and transcript.
+Add a chat-to-speech (TTS) feature that speaks every message typed in the voice-channel text chat during active meetings, plus a /say command for manual speech. The feature is gated to Basic/Pro, supports a server default and channel override, and allows per-user voice selection with per-user opt-out. Spoken chat is queued with Chronote live voice replies so audio never overlaps. During recorded meetings, spoken chat is included in the meeting recording and transcript. Outside recorded meetings, /say can start a TTS-only session that does not record, transcribe, or create meeting artifacts.
 
 ### Goals
 
@@ -14,6 +14,7 @@ Add a chat-to-speech (TTS) feature that speaks every message typed in the voice-
 - Allow per-user voice selection (per server).
 - Ensure bot audio never overlaps and supports a stop/clear command.
 - Include spoken chat in recording and transcript.
+- Allow explicit /say playback in TTS-only mode without recording or transcription.
 - Avoid duplicate chat vs transcript entries in the Library timeline.
 
 ### Non-goals (Future improvements)
@@ -36,6 +37,7 @@ Add a chat-to-speech (TTS) feature that speaks every message typed in the voice-
 - Message author is currently connected to the same voice channel.
 - Message author is not a bot.
 - Message content is non-empty after trimming.
+- If no recorded meeting is active, automatic chat-to-speech can start a TTS-only session when `chatTts.enabled` and `chatTts.ttsOnly.enabled` both resolve true for the voice channel.
 
 ### Playback behavior
 
@@ -50,6 +52,14 @@ Add a chat-to-speech (TTS) feature that speaks every message typed in the voice-
   - source: "chat_tts"
   - messageId (Discord message id)
 - The transcript remains the canonical "what was heard" source.
+- TTS-only sessions are different: they do not create a recording, transcript, notes, or meeting history artifact.
+
+### TTS-only auto-start
+
+- Auto-record has priority over auto TTS. If auto-record starts, chat TTS stays inside that recorded meeting.
+- If auto-record does not start and automatic chat TTS is enabled for the joined voice channel, Chronote can join in TTS-only mode.
+- TTS-only auto-start uses the configured notes/status channel for public status messages, but it listens only for voice-channel text chat to speak messages.
+- TTS-only auto-start does not subscribe to member voice, open a recording output, or create meeting history.
 
 ### Library timeline (de-dupe)
 

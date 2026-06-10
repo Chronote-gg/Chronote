@@ -158,9 +158,11 @@ async function playTtsItem(
     .on("error", (err) => console.error("ffmpeg TTS pipeline error:", err))
     .pipe() as Readable;
 
-  // Tee the PCM to the meeting recording so bot audio is captured in the MP3.
   resampledPcm.on("data", (chunk: Buffer) => {
-    if (meeting.audioData.audioPassThrough) {
+    if (
+      meeting.recordBotAudio !== false &&
+      meeting.audioData.audioPassThrough
+    ) {
       meeting.audioData.audioPassThrough.write(chunk, (err) => {
         if (err) {
           console.error("Error writing TTS chunk to recording:", err);

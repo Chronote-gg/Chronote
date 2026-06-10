@@ -10,9 +10,11 @@ import {
 
 const CHANNEL_CONTEXT_KEYS = new Set<string>([
   CONFIG_KEYS.context.instructions,
+  CONFIG_KEYS.notes.channelId,
   CONFIG_KEYS.liveVoice.enabled,
   CONFIG_KEYS.liveVoice.commandsEnabled,
   CONFIG_KEYS.chatTts.enabled,
+  CONFIG_KEYS.chatTts.ttsOnlyEnabled,
 ]);
 const resolveLatestRecord = <T extends { updatedAt: string }>(records: T[]) =>
   records.reduce(
@@ -29,9 +31,11 @@ const coerceBoolean = (value: unknown) =>
 
 export type ChannelContextUpdate = {
   context?: string | null;
+  defaultNotesChannelId?: string | null;
   liveVoiceEnabled?: boolean | null;
   liveVoiceCommandsEnabled?: boolean | null;
   chatTtsEnabled?: boolean | null;
+  chatTtsTtsOnlyEnabled?: boolean | null;
 };
 
 export async function setChannelContext(
@@ -57,6 +61,23 @@ export async function setChannelContext(
     } else {
       tasks.push(
         clearConfigOverrideForScope(scope, CONFIG_KEYS.context.instructions),
+      );
+    }
+  }
+
+  if (update.defaultNotesChannelId !== undefined) {
+    if (update.defaultNotesChannelId) {
+      tasks.push(
+        setConfigOverrideForScope(
+          scope,
+          CONFIG_KEYS.notes.channelId,
+          update.defaultNotesChannelId,
+          userId,
+        ),
+      );
+    } else {
+      tasks.push(
+        clearConfigOverrideForScope(scope, CONFIG_KEYS.notes.channelId),
       );
     }
   }
@@ -115,6 +136,23 @@ export async function setChannelContext(
     }
   }
 
+  if (update.chatTtsTtsOnlyEnabled !== undefined) {
+    if (update.chatTtsTtsOnlyEnabled === null) {
+      tasks.push(
+        clearConfigOverrideForScope(scope, CONFIG_KEYS.chatTts.ttsOnlyEnabled),
+      );
+    } else {
+      tasks.push(
+        setConfigOverrideForScope(
+          scope,
+          CONFIG_KEYS.chatTts.ttsOnlyEnabled,
+          update.chatTtsTtsOnlyEnabled,
+          userId,
+        ),
+      );
+    }
+  }
+
   if (tasks.length > 0) {
     await Promise.all(tasks);
   }
@@ -138,6 +176,9 @@ export async function fetchChannelContext(guildId: string, channelId: string) {
     relevant.map((record) => [record.configKey, record.value]),
   );
   const context = coerceString(map.get(CONFIG_KEYS.context.instructions));
+  const defaultNotesChannelId = coerceString(
+    map.get(CONFIG_KEYS.notes.channelId),
+  );
   const liveVoiceEnabled = coerceBoolean(
     map.get(CONFIG_KEYS.liveVoice.enabled),
   );
@@ -145,6 +186,9 @@ export async function fetchChannelContext(guildId: string, channelId: string) {
     map.get(CONFIG_KEYS.liveVoice.commandsEnabled),
   );
   const chatTtsEnabled = coerceBoolean(map.get(CONFIG_KEYS.chatTts.enabled));
+  const chatTtsTtsOnlyEnabled = coerceBoolean(
+    map.get(CONFIG_KEYS.chatTts.ttsOnlyEnabled),
+  );
 
   const next: ChannelContext = {
     guildId,
@@ -156,6 +200,9 @@ export async function fetchChannelContext(guildId: string, channelId: string) {
   if (context) {
     next.context = context;
   }
+  if (defaultNotesChannelId) {
+    next.defaultNotesChannelId = defaultNotesChannelId;
+  }
   if (liveVoiceEnabled !== undefined) {
     next.liveVoiceEnabled = liveVoiceEnabled;
   }
@@ -164,6 +211,9 @@ export async function fetchChannelContext(guildId: string, channelId: string) {
   }
   if (chatTtsEnabled !== undefined) {
     next.chatTtsEnabled = chatTtsEnabled;
+  }
+  if (chatTtsTtsOnlyEnabled !== undefined) {
+    next.chatTtsTtsOnlyEnabled = chatTtsTtsOnlyEnabled;
   }
 
   return next;
@@ -204,6 +254,9 @@ export async function listChannelContexts(guildId: string) {
       records.map((record) => [record.configKey, record.value]),
     );
     const context = coerceString(map.get(CONFIG_KEYS.context.instructions));
+    const defaultNotesChannelId = coerceString(
+      map.get(CONFIG_KEYS.notes.channelId),
+    );
     const liveVoiceEnabled = coerceBoolean(
       map.get(CONFIG_KEYS.liveVoice.enabled),
     );
@@ -211,6 +264,9 @@ export async function listChannelContexts(guildId: string) {
       map.get(CONFIG_KEYS.liveVoice.commandsEnabled),
     );
     const chatTtsEnabled = coerceBoolean(map.get(CONFIG_KEYS.chatTts.enabled));
+    const chatTtsTtsOnlyEnabled = coerceBoolean(
+      map.get(CONFIG_KEYS.chatTts.ttsOnlyEnabled),
+    );
 
     const next: ChannelContext = {
       guildId,
@@ -222,6 +278,9 @@ export async function listChannelContexts(guildId: string) {
     if (context) {
       next.context = context;
     }
+    if (defaultNotesChannelId) {
+      next.defaultNotesChannelId = defaultNotesChannelId;
+    }
     if (liveVoiceEnabled !== undefined) {
       next.liveVoiceEnabled = liveVoiceEnabled;
     }
@@ -230,6 +289,9 @@ export async function listChannelContexts(guildId: string) {
     }
     if (chatTtsEnabled !== undefined) {
       next.chatTtsEnabled = chatTtsEnabled;
+    }
+    if (chatTtsTtsOnlyEnabled !== undefined) {
+      next.chatTtsTtsOnlyEnabled = chatTtsTtsOnlyEnabled;
     }
 
     return [next];
