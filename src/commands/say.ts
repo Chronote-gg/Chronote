@@ -335,7 +335,7 @@ export async function handleSayCommand(
     limitsResult,
   });
   if (!session) return;
-  const { meeting, startedTtsOnly } = session;
+  const { meeting } = session;
 
   const queue = await requireQueue(interaction, meeting);
   if (!queue) return;
@@ -386,10 +386,6 @@ export async function handleSayCommand(
     meeting.chatLog.push(entry);
   }
 
-  await interaction.reply({
-    content: startedTtsOnly
-      ? "Started a TTS-only voice session with no recording or transcription, and queued your message."
-      : "Queued your message to be spoken.",
-    ephemeral: true,
-  });
+  await interaction.deferReply({ ephemeral: true });
+  await interaction.deleteReply();
 }
