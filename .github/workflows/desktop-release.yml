@@ -15,6 +15,7 @@ on:
 
 permissions:
   contents: write
+  id-token: write
 
 concurrency:
   group: desktop-release-${{ inputs.tag }}
@@ -22,6 +23,7 @@ concurrency:
 
 env:
   CARGO_REGISTRIES_CRATES_IO_PROTOCOL: sparse
+  DESKTOP_SIGNING_ENABLED: ${{ vars.DESKTOP_SIGNING_ENABLED || 'false' }}
 
 jobs:
   release-windows:
@@ -57,9 +59,77 @@ jobs:
       - name: Install desktop dependencies
         run: yarn desktop:install
 
+      - name: Validate signing configuration
+        if: env.DESKTOP_SIGNING_ENABLED == 'true'
+        shell: pwsh
+        env:
+          AZURE_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+          AZURE_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+          AZURE_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+          AZURE_ARTIFACT_SIGNING_ENDPOINT: ${{ vars.AZURE_ARTIFACT_SIGNING_ENDPOINT }}
+          AZURE_ARTIFACT_SIGNING_ACCOUNT_NAME: ${{ vars.AZURE_ARTIFACT_SIGNING_ACCOUNT_NAME }}
+          AZURE_ARTIFACT_SIGNING_CERTIFICATE_PROFILE_NAME: ${{ vars.AZURE_ARTIFACT_SIGNING_CERTIFICATE_PROFILE_NAME }}
+        run: |
+          $required = @(
+            "AZURE_CLIENT_ID",
+            "AZURE_TENANT_ID",
+            "AZURE_SUBSCRIPTION_ID",
+            "AZURE_ARTIFACT_SIGNING_ENDPOINT",
+            "AZURE_ARTIFACT_SIGNING_ACCOUNT_NAME",
+            "AZURE_ARTIFACT_SIGNING_CERTIFICATE_PROFILE_NAME"
+          )
+
+          $missing = $required | Where-Object { [string]::IsNullOrWhiteSpace([Environment]::GetEnvironmentVariable($_)) }
+          if ($missing.Count -gt 0) {
+            throw "Desktop signing is enabled, but required environment variables are missing: $($missing -join ', ')"
+          }
+
+      - name: Azure login for Artifact Signing
+        if: env.DESKTOP_SIGNING_ENABLED == 'true'
+        uses: azure/login@v3
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Install Azure Artifact Signing CLI
+        if: env.DESKTOP_SIGNING_ENABLED == 'true'
+        run: cargo install artifact-signing-cli --locked
+
+      - name: Write Tauri signing config
+        if: env.DESKTOP_SIGNING_ENABLED == 'true'
+        shell: pwsh
+        env:
+          AZURE_ARTIFACT_SIGNING_CLI: ${{ vars.AZURE_ARTIFACT_SIGNING_CLI || 'artifact-signing-cli' }}
+          AZURE_ARTIFACT_SIGNING_ENDPOINT: ${{ vars.AZURE_ARTIFACT_SIGNING_ENDPOINT }}
+          AZURE_ARTIFACT_SIGNING_ACCOUNT_NAME: ${{ vars.AZURE_ARTIFACT_SIGNING_ACCOUNT_NAME }}
+          AZURE_ARTIFACT_SIGNING_CERTIFICATE_PROFILE_NAME: ${{ vars.AZURE_ARTIFACT_SIGNING_CERTIFICATE_PROFILE_NAME }}
+        run: |
+          $signCommand = "$env:AZURE_ARTIFACT_SIGNING_CLI -e `"$env:AZURE_ARTIFACT_SIGNING_ENDPOINT`" -a `"$env:AZURE_ARTIFACT_SIGNING_ACCOUNT_NAME`" -c `"$env:AZURE_ARTIFACT_SIGNING_CERTIFICATE_PROFILE_NAME`" %1"
+          $config = @{
+            bundle = @{
+              windows = @{
+                signCommand = $signCommand
+              }
+            }
+          }
+
+          $config | ConvertTo-Json -Depth 5 | Set-Content -Path apps/desktop/src-tauri/tauri.signing.conf.json -Encoding utf8
+
+      - name: Resolve desktop release build args
+        id: release-args
+        shell: pwsh
+        run: |
+          $buildArgs = "--ci --no-sign"
+          if ($env:DESKTOP_SIGNING_ENABLED -eq "true") {
+            $buildArgs = "--ci --config src-tauri/tauri.signing.conf.json"
+          }
+
+          "args=$buildArgs" >> $env:GITHUB_OUTPUT
+
       - name: Build and upload desktop release artifacts
         id: tauri-release
-        uses: tauri-apps/tauri-action@v1
+        uses: tauri-apps/tauri-action@v0.6.2
         env:
           GITHUB_TOKEN: ${{ github.token }}
         with:
@@ -71,11 +141,42 @@ jobs:
 
             Draft Chronote Desktop Windows release artifacts.
 
-            These artifacts are unsigned for beta validation. Do not publish as stable until Windows Authenticode signing is configured and verified.
+            Keep unsigned beta artifacts in draft/prerelease status. Do not publish as stable unless Windows Authenticode signing is enabled and verified.
           releaseDraft: true
           prerelease: ${{ inputs.prerelease }}
-          args: --ci --no-sign
-          uploadUpdaterJson: false
+          args: ${{ steps.release-args.outputs.args }}
+          includeUpdaterJson: false
+
+      - name: Verify signed Windows artifacts
+        if: env.DESKTOP_SIGNING_ENABLED == 'true'
+        shell: pwsh
+        run: |
+          $releasePath = "apps/desktop/src-tauri/target/release"
+          $bundlePath = "apps/desktop/src-tauri/target/release/bundle"
+          $artifacts = @()
+
+          if (Test-Path $releasePath) {
+            $artifacts += Get-ChildItem -Path $releasePath -File -Filter *.exe
+          }
+
+          if (Test-Path $bundlePath) {
+            $artifacts += Get-ChildItem -Path $bundlePath -Recurse -File -Include *.exe,*.msi
+          }
+
+          if ($artifacts.Count -eq 0) {
+            throw "No Windows artifacts were found under $releasePath."
+          }
+
+          foreach ($artifact in $artifacts) {
+            $signature = Get-AuthenticodeSignature -FilePath $artifact.FullName
+            if ($signature.Status -ne "Valid") {
+              throw "Invalid Authenticode signature for $($artifact.FullName): $($signature.Status)"
+            }
+
+            if ($null -eq $signature.TimeStamperCertificate) {
+              throw "Missing Authenticode timestamp for $($artifact.FullName)."
+            }
+          }
 
       - name: Validate desktop artifacts
         run: yarn desktop:artifacts --write --checksum-paths=basename

@@ -35,9 +35,34 @@ The smoke build uses two Rust features that must not be enabled for production r
 
 `.github/workflows/desktop-release.yml` is manually dispatched with a tag such as `desktop-v0.1.0-beta.1`.
 
-It creates a draft GitHub Release and uploads unsigned Windows artifacts plus `SHA256SUMS.txt`.
+It creates a draft GitHub Release and uploads Windows artifacts plus `SHA256SUMS.txt`.
 
-The workflow uses the protected `desktop-release` GitHub environment. Add signing secrets to that environment once Authenticode and updater-signing custody are decided.
+By default the workflow builds unsigned beta artifacts with `--no-sign`. Set `DESKTOP_SIGNING_ENABLED=true` in the protected `desktop-release` GitHub environment only after Azure Artifact Signing and signature verification are ready.
+
+Required `desktop-release` environment variables for signed builds:
+
+- `AZURE_CLIENT_ID`
+- `AZURE_TENANT_ID`
+- `AZURE_SUBSCRIPTION_ID`
+- `AZURE_ARTIFACT_SIGNING_ENDPOINT`
+- `AZURE_ARTIFACT_SIGNING_ACCOUNT_NAME`
+- `AZURE_ARTIFACT_SIGNING_CERTIFICATE_PROFILE_NAME`
+- `DESKTOP_SIGNING_ENABLED=true`
+
+Optional override:
+
+- `AZURE_ARTIFACT_SIGNING_CLI`: defaults to `artifact-signing-cli`.
+
+The signed path uses GitHub OIDC through `azure/login`, installs the Azure Artifact Signing CLI, writes a CI-only Tauri config override with `bundle.windows.signCommand`, and verifies Authenticode signatures before validating checksums. Keep `DESKTOP_SIGNING_ENABLED=false` for unsigned beta drafts.
+
+### Production Desktop API Enablement
+
+Production Terraform plans and applies hydrate most variables from the protected environment's `TERRAFORM_TFVARS_JSON` secret. Desktop canary rollout has dedicated GitHub environment variable overlays so future applies do not silently turn the hosted desktop API off again:
+
+- `ENABLE_DESKTOP_API`: set to `true` for the beta/canary window.
+- `DESKTOP_ALLOWED_USER_IDS`: comma-separated Discord user IDs for beta access.
+
+If `ENABLE_DESKTOP_API=true`, the Terraform workflows fail unless either `DESKTOP_ALLOWED_USER_IDS` or `SUPER_ADMIN_USER_IDS` is configured. This keeps hosted desktop routes gated even when the API is intentionally enabled.
 
 ## Local Commands
 
@@ -73,9 +98,8 @@ Two signing concerns are intentionally separate:
 - Windows Authenticode signing: makes Windows trust the installer/executable publisher.
 - Tauri updater signing: lets installed clients verify update artifacts.
 
-Deferred decisions:
+Remaining deferred decisions:
 
-- Authenticode provider setup timing and Azure account ownership.
 - Tauri updater key custody and rotation.
 - Beta/stable updater endpoint layout.
 
@@ -97,31 +121,53 @@ Recommended GitHub/Tauri integration:
 4. Add environment-scoped signing configuration for the endpoint, signing account name, and certificate profile name.
 5. Use Tauri's `bundle.windows.signCommand` through a CI-only config override so the app executable and installer are signed during bundling, not only after packaging.
 6. Timestamp every Authenticode signature with `http://timestamp.acs.microsoft.com`; Artifact Signing certificates are short-lived, so timestamping is required for signatures to remain valid beyond the certificate validity window.
-7. Remove `--no-sign` from `.github/workflows/desktop-release.yml` only after signed artifact validation is added.
+7. Set `DESKTOP_SIGNING_ENABLED=true` only after the provider setup and timestamped signature validation are verified.
 8. Verify both the installer and installed executable signatures before promoting any stable release.
 
 Stable release blockers:
 
-- Authenticode signing configured in `tauri.conf.json` or via a protected signing command.
+- Authenticode signing enabled through the protected `desktop-release` environment.
 - Signed artifact validation in CI.
 - Updater artifact signing if updater is enabled.
 
-## Manual Hardware Smoke Checklist
+## QA Card: Windows Installer Smoke
 
-Before broad beta or stable release, run on a real Windows machine:
+Purpose: verify the installer lifecycle and real-device recorder path before broad beta or stable release.
 
-1. Install the generated desktop artifact.
-2. Launch Chronote Desktop from the Start menu.
-3. Sign in with a desktop-allowed Chronote account.
-4. Verify microphone and system/output devices are listed.
-5. Record at least 15 seconds with microphone input and system audio playing.
-6. Confirm both source meters move during recording.
-7. Stop and upload.
-8. Open the created meeting during processing.
-9. Confirm the meeting appears in My Meetings.
-10. Confirm transcript/notes contain the expected personal recording labels.
-11. Sign out and relaunch to verify session clearing.
-12. Uninstall and confirm the app is removed.
+Prerequisites:
+
+- A Windows test machine that has not already installed the same Chronote Desktop build, or a machine where the previous build was removed first.
+- A Chronote account listed in `DESKTOP_ALLOWED_USER_IDS` or `SUPER_ADMIN_USER_IDS`.
+- A working microphone and a local audio source, such as a browser tab playing a short test clip.
+- The release MSI or NSIS artifact plus `SHA256SUMS.txt` from the draft GitHub Release.
+
+Smoke steps:
+
+1. Verify the downloaded installer checksum against `SHA256SUMS.txt`.
+2. Install the generated desktop artifact.
+3. Launch Chronote Desktop from the Start menu.
+4. Sign in with the desktop-allowed Chronote account.
+5. Verify microphone and system/output devices are listed.
+6. Record at least 15 seconds with microphone input and system audio playing.
+7. Confirm both source meters move during recording.
+8. Stop and upload.
+9. Open the created meeting during processing.
+10. Confirm the meeting appears in My Meetings.
+11. Confirm transcript/notes contain the expected personal recording labels.
+12. Sign out and relaunch to verify session clearing.
+13. Close the app, uninstall it, and confirm the Start menu entry is removed.
+14. Reboot or sign out/in if Windows keeps stale shortcuts, then confirm Chronote Desktop no longer launches.
+
+Pass criteria:
+
+- Install completes without requiring developer tools or local source checkout.
+- Launch, sign-in, recording, upload, and meeting navigation work against `https://api.chronote.gg` and `https://chronote.gg`.
+- Uninstall removes the app entry and does not leave a launchable stale installation.
+
+Failure capture:
+
+- Record installer filename, checksum status, Windows version, installer type, and whether the artifact was signed.
+- Capture app logs and upload/meeting IDs only in private support or ops notes; do not post tokens or signed upload fields in public issues.
 
 ## Rollback Checklist
 
