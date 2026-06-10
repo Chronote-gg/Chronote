@@ -42,6 +42,11 @@ import { ServerConfigCard } from "../features/settings/ServerConfigCard";
 import { DictionaryCard } from "../features/settings/DictionaryCard";
 import { NotionIntegrationCard } from "../features/settings/NotionIntegrationCard";
 
+type OverrideMode = "inherit" | "on" | "off";
+
+const overrideModeFromBoolean = (value: boolean | undefined): OverrideMode =>
+  value === undefined ? "inherit" : value ? "on" : "off";
+
 const SettingsLoadingState = () => (
   <Stack gap="xl" data-testid="settings-page-loading">
     <PageHeader
@@ -321,33 +326,13 @@ export default function Settings() {
     setChannelTextChannelId(override.textChannelId ?? null);
     setChannelTags(override.tags?.join(", ") ?? "");
     setChannelContext(override.context ?? "");
-    setChannelLiveVoiceMode(
-      override.liveVoiceEnabled === undefined
-        ? "inherit"
-        : override.liveVoiceEnabled
-          ? "on"
-          : "off",
-    );
+    setChannelLiveVoiceMode(overrideModeFromBoolean(override.liveVoiceEnabled));
     setChannelLiveVoiceCommandsMode(
-      override.liveVoiceCommandsEnabled === undefined
-        ? "inherit"
-        : override.liveVoiceCommandsEnabled
-          ? "on"
-          : "off",
+      overrideModeFromBoolean(override.liveVoiceCommandsEnabled),
     );
-    setChannelChatTtsMode(
-      override.chatTtsEnabled === undefined
-        ? "inherit"
-        : override.chatTtsEnabled
-          ? "on"
-          : "off",
-    );
+    setChannelChatTtsMode(overrideModeFromBoolean(override.chatTtsEnabled));
     setChannelChatTtsTtsOnlyMode(
-      override.chatTtsTtsOnlyEnabled === undefined
-        ? "inherit"
-        : override.chatTtsTtsOnlyEnabled
-          ? "on"
-          : "off",
+      overrideModeFromBoolean(override.chatTtsTtsOnlyEnabled),
     );
     channelModal.open();
   };

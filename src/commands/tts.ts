@@ -9,12 +9,11 @@ import {
 } from "discord.js";
 import { endTtsOnlySession, getMeeting } from "../meetings";
 import {
+  buildUserSpeechSettingsRecord,
   fetchUserSpeechSettings,
   setUserSpeechSettings,
 } from "../services/userSpeechSettingsService";
-import { nowIso } from "../utils/time";
 import { TTS_VOICES, normalizeTtsVoice } from "../utils/ttsVoices";
-import type { UserSpeechSettings } from "../types/db";
 import type { MeetingData } from "../types/meeting-data";
 import {
   formatParticipantLabel,
@@ -62,53 +61,18 @@ const applyMeetingUserSettingsCache = (options: {
     meeting.chatTtsUserSettings = new Map();
   }
   const existing = meeting.chatTtsUserSettings.get(userId) ?? null;
-  const nextDisabled =
-    update.chatTtsDisabled !== undefined
-      ? update.chatTtsDisabled
-      : existing?.chatTtsDisabled;
-  const nextVoice =
-    update.chatTtsVoice === null
-      ? undefined
-      : (update.chatTtsVoice ?? existing?.chatTtsVoice);
-  const nextSpokenName =
-    update.chatTtsSpokenName === null
-      ? undefined
-      : (update.chatTtsSpokenName ?? existing?.chatTtsSpokenName);
-  const nextSpeakerPrefixMode =
-    update.chatTtsSpeakerPrefixMode === null
-      ? undefined
-      : (update.chatTtsSpeakerPrefixMode ?? existing?.chatTtsSpeakerPrefixMode);
-  const nextVolumePercent =
-    update.chatTtsVolumePercent === null
-      ? undefined
-      : (update.chatTtsVolumePercent ?? existing?.chatTtsVolumePercent);
-
-  if (
-    !nextDisabled &&
-    !nextVoice &&
-    !nextSpokenName &&
-    !nextSpeakerPrefixMode &&
-    nextVolumePercent === undefined
-  ) {
+  const nextSettings = buildUserSpeechSettingsRecord({
+    guildId,
+    userId,
+    updatedBy,
+    existing,
+    update,
+  });
+  if (!nextSettings) {
     meeting.chatTtsUserSettings.delete(userId);
     return;
   }
 
-  const nextSettings: UserSpeechSettings = {
-    guildId,
-    userId,
-    updatedAt: nowIso(),
-    updatedBy,
-    ...(nextDisabled ? { chatTtsDisabled: true } : {}),
-    ...(nextVoice ? { chatTtsVoice: nextVoice } : {}),
-    ...(nextSpokenName ? { chatTtsSpokenName: nextSpokenName } : {}),
-    ...(nextSpeakerPrefixMode
-      ? { chatTtsSpeakerPrefixMode: nextSpeakerPrefixMode }
-      : {}),
-    ...(nextVolumePercent !== undefined
-      ? { chatTtsVolumePercent: nextVolumePercent }
-      : {}),
-  };
   meeting.chatTtsUserSettings.set(userId, nextSettings);
 };
 
@@ -460,6 +424,32 @@ async function resolveWhoisTarget(
   return interaction.options.getUser("user") ?? interaction.user;
 }
 
+async function resolveWhoisMember(
+  interaction: ChatInputCommandInteraction,
+  target: User,
+): Promise<GuildMember | null> {
+  return (
+    interaction.guild?.members.cache.get(target.id) ??
+    (await interaction.guild?.members.fetch(target.id).catch(() => null)) ??
+    null
+  );
+}
+
+const buildWhoisLines = (options: {
+  discordName: string;
+  settings: Awaited<ReturnType<typeof fetchUserSpeechSettings>>;
+}) => {
+  const { discordName, settings } = options;
+  return [
+    `Discord name: ${discordName}`,
+    `Spoken TTS name: ${settings?.chatTtsSpokenName ?? discordName}`,
+    `TTS voice: ${settings?.chatTtsVoice ?? "server default"}`,
+    `Speaker prefix: ${settings?.chatTtsSpeakerPrefixMode ?? "server default"}`,
+    `TTS volume: ${settings?.chatTtsVolumePercent ?? DEFAULT_TTS_VOLUME_PERCENT}%`,
+    `Automatic chat TTS opt-out: ${settings?.chatTtsDisabled ? "yes" : "no"}`,
+  ];
+};
+
 export async function handleWhoisCommand(
   interaction: ChatInputCommandInteraction,
 ) {
@@ -472,9 +462,7 @@ export async function handleWhoisCommand(
   }
 
   const target = await resolveWhoisTarget(interaction);
-  const member =
-    interaction.guild.members.cache.get(target.id) ??
-    (await interaction.guild.members.fetch(target.id).catch(() => null));
+  const member = await resolveWhoisMember(interaction, target);
   const settings = await fetchUserSpeechSettings(
     interaction.guildId,
     target.id,
@@ -484,21 +472,9 @@ export async function handleWhoisCommand(
     includeUsername: true,
     fallbackName: target.username,
   });
-  const spokenName = settings?.chatTtsSpokenName ?? discordName;
-  const voice = settings?.chatTtsVoice ?? "server default";
-  const prefix = settings?.chatTtsSpeakerPrefixMode ?? "server default";
-  const volume = settings?.chatTtsVolumePercent ?? DEFAULT_TTS_VOLUME_PERCENT;
-  const optOut = settings?.chatTtsDisabled ? "yes" : "no";
 
   await interaction.reply({
-    content: [
-      `Discord name: ${discordName}`,
-      `Spoken TTS name: ${spokenName}`,
-      `TTS voice: ${voice}`,
-      `Speaker prefix: ${prefix}`,
-      `TTS volume: ${volume}%`,
-      `Automatic chat TTS opt-out: ${optOut}`,
-    ].join("\n"),
+    content: buildWhoisLines({ discordName, settings }).join("\n"),
     ephemeral: true,
   });
 }

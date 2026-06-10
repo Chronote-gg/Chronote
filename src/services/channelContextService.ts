@@ -29,6 +29,37 @@ const coerceString = (value: unknown) =>
 const coerceBoolean = (value: unknown) =>
   typeof value === "boolean" ? value : undefined;
 
+const queueStringOverride = (
+  tasks: Promise<void>[],
+  scope: { scope: "channel"; guildId: string; channelId: string },
+  key: string,
+  value: string | null | undefined,
+  userId: string,
+) => {
+  if (value === undefined) return;
+  const trimmed = value?.trim() ?? "";
+  tasks.push(
+    trimmed
+      ? setConfigOverrideForScope(scope, key, trimmed, userId)
+      : clearConfigOverrideForScope(scope, key),
+  );
+};
+
+const queueNullableOverride = <T>(
+  tasks: Promise<void>[],
+  scope: { scope: "channel"; guildId: string; channelId: string },
+  key: string,
+  value: T | null | undefined,
+  userId: string,
+) => {
+  if (value === undefined) return;
+  tasks.push(
+    value === null
+      ? clearConfigOverrideForScope(scope, key)
+      : setConfigOverrideForScope(scope, key, value, userId),
+  );
+};
+
 export type ChannelContextUpdate = {
   context?: string | null;
   defaultNotesChannelId?: string | null;
@@ -47,111 +78,48 @@ export async function setChannelContext(
   const scope = { scope: "channel", guildId, channelId } as const;
   const tasks: Promise<void>[] = [];
 
-  if (update.context !== undefined) {
-    const trimmed = update.context?.trim() ?? "";
-    if (trimmed.length > 0) {
-      tasks.push(
-        setConfigOverrideForScope(
-          scope,
-          CONFIG_KEYS.context.instructions,
-          trimmed,
-          userId,
-        ),
-      );
-    } else {
-      tasks.push(
-        clearConfigOverrideForScope(scope, CONFIG_KEYS.context.instructions),
-      );
-    }
-  }
-
-  if (update.defaultNotesChannelId !== undefined) {
-    if (update.defaultNotesChannelId) {
-      tasks.push(
-        setConfigOverrideForScope(
-          scope,
-          CONFIG_KEYS.notes.channelId,
-          update.defaultNotesChannelId,
-          userId,
-        ),
-      );
-    } else {
-      tasks.push(
-        clearConfigOverrideForScope(scope, CONFIG_KEYS.notes.channelId),
-      );
-    }
-  }
-
-  if (update.liveVoiceEnabled !== undefined) {
-    if (update.liveVoiceEnabled === null) {
-      tasks.push(
-        clearConfigOverrideForScope(scope, CONFIG_KEYS.liveVoice.enabled),
-      );
-    } else {
-      tasks.push(
-        setConfigOverrideForScope(
-          scope,
-          CONFIG_KEYS.liveVoice.enabled,
-          update.liveVoiceEnabled,
-          userId,
-        ),
-      );
-    }
-  }
-
-  if (update.liveVoiceCommandsEnabled !== undefined) {
-    if (update.liveVoiceCommandsEnabled === null) {
-      tasks.push(
-        clearConfigOverrideForScope(
-          scope,
-          CONFIG_KEYS.liveVoice.commandsEnabled,
-        ),
-      );
-    } else {
-      tasks.push(
-        setConfigOverrideForScope(
-          scope,
-          CONFIG_KEYS.liveVoice.commandsEnabled,
-          update.liveVoiceCommandsEnabled,
-          userId,
-        ),
-      );
-    }
-  }
-
-  if (update.chatTtsEnabled !== undefined) {
-    if (update.chatTtsEnabled === null) {
-      tasks.push(
-        clearConfigOverrideForScope(scope, CONFIG_KEYS.chatTts.enabled),
-      );
-    } else {
-      tasks.push(
-        setConfigOverrideForScope(
-          scope,
-          CONFIG_KEYS.chatTts.enabled,
-          update.chatTtsEnabled,
-          userId,
-        ),
-      );
-    }
-  }
-
-  if (update.chatTtsTtsOnlyEnabled !== undefined) {
-    if (update.chatTtsTtsOnlyEnabled === null) {
-      tasks.push(
-        clearConfigOverrideForScope(scope, CONFIG_KEYS.chatTts.ttsOnlyEnabled),
-      );
-    } else {
-      tasks.push(
-        setConfigOverrideForScope(
-          scope,
-          CONFIG_KEYS.chatTts.ttsOnlyEnabled,
-          update.chatTtsTtsOnlyEnabled,
-          userId,
-        ),
-      );
-    }
-  }
+  queueStringOverride(
+    tasks,
+    scope,
+    CONFIG_KEYS.context.instructions,
+    update.context,
+    userId,
+  );
+  queueStringOverride(
+    tasks,
+    scope,
+    CONFIG_KEYS.notes.channelId,
+    update.defaultNotesChannelId,
+    userId,
+  );
+  queueNullableOverride(
+    tasks,
+    scope,
+    CONFIG_KEYS.liveVoice.enabled,
+    update.liveVoiceEnabled,
+    userId,
+  );
+  queueNullableOverride(
+    tasks,
+    scope,
+    CONFIG_KEYS.liveVoice.commandsEnabled,
+    update.liveVoiceCommandsEnabled,
+    userId,
+  );
+  queueNullableOverride(
+    tasks,
+    scope,
+    CONFIG_KEYS.chatTts.enabled,
+    update.chatTtsEnabled,
+    userId,
+  );
+  queueNullableOverride(
+    tasks,
+    scope,
+    CONFIG_KEYS.chatTts.ttsOnlyEnabled,
+    update.chatTtsTtsOnlyEnabled,
+    userId,
+  );
 
   if (tasks.length > 0) {
     await Promise.all(tasks);
