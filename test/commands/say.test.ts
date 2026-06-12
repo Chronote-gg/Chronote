@@ -4,6 +4,11 @@ import { handleSayCommand } from "../../src/commands/say";
 import { getMeeting } from "../../src/meetings";
 import { getGuildLimits } from "../../src/services/subscriptionService";
 import { fetchUserSpeechSettings } from "../../src/services/userSpeechSettingsService";
+import {
+  buildChatTtsMonthlyLimitMessage,
+  releaseChatTtsMessageUsageReservation,
+  reserveChatTtsMessageUsage,
+} from "../../src/services/chatTtsUsageService";
 import { buildUpgradePrompt } from "../../src/utils/upgradePrompt";
 import { config } from "../../src/services/configService";
 
@@ -15,6 +20,11 @@ jest.mock("../../src/ttsQueue", () => ({
 }));
 jest.mock("../../src/services/subscriptionService");
 jest.mock("../../src/services/userSpeechSettingsService");
+jest.mock("../../src/services/chatTtsUsageService", () => ({
+  buildChatTtsMonthlyLimitMessage: jest.fn(() => "monthly limit reached"),
+  releaseChatTtsMessageUsageReservation: jest.fn(),
+  reserveChatTtsMessageUsage: jest.fn(),
+}));
 jest.mock("../../src/utils/upgradePrompt", () => ({
   buildUpgradePrompt: jest.fn((content: string) => ({
     content,
@@ -29,6 +39,18 @@ const mockedGetGuildLimits = getGuildLimits as jest.MockedFunction<
 const mockedFetchUserSpeechSettings =
   fetchUserSpeechSettings as jest.MockedFunction<
     typeof fetchUserSpeechSettings
+  >;
+const mockedBuildChatTtsMonthlyLimitMessage =
+  buildChatTtsMonthlyLimitMessage as jest.MockedFunction<
+    typeof buildChatTtsMonthlyLimitMessage
+  >;
+const mockedReleaseChatTtsMessageUsageReservation =
+  releaseChatTtsMessageUsageReservation as jest.MockedFunction<
+    typeof releaseChatTtsMessageUsageReservation
+  >;
+const mockedReserveChatTtsMessageUsage =
+  reserveChatTtsMessageUsage as jest.MockedFunction<
+    typeof reserveChatTtsMessageUsage
   >;
 const mockedBuildUpgradePrompt = buildUpgradePrompt as jest.MockedFunction<
   typeof buildUpgradePrompt
@@ -97,6 +119,22 @@ describe("handleSayCommand", () => {
     mockedGetMeeting.mockReset();
     mockedGetGuildLimits.mockReset();
     mockedFetchUserSpeechSettings.mockReset();
+    mockedBuildChatTtsMonthlyLimitMessage.mockReset();
+    mockedBuildChatTtsMonthlyLimitMessage.mockReturnValue(
+      "monthly limit reached",
+    );
+    mockedReleaseChatTtsMessageUsageReservation.mockReset();
+    mockedReleaseChatTtsMessageUsageReservation.mockResolvedValue(undefined);
+    mockedReserveChatTtsMessageUsage.mockReset();
+    mockedReserveChatTtsMessageUsage.mockResolvedValue({
+      allowed: true,
+      reserved: true,
+      guildId: "guild-1",
+      period: "2026-06",
+      limit: 1000,
+      used: 42,
+      remaining: 958,
+    });
     mockedBuildUpgradePrompt.mockClear();
   });
 
@@ -135,6 +173,11 @@ describe("handleSayCommand", () => {
         content: "Join the meeting voice channel to use /say.",
       }),
     );
+    expect(mockedReleaseChatTtsMessageUsageReservation).toHaveBeenCalledWith({
+      guildId: "guild-1",
+      period: "2026-06",
+    });
+    expect(meeting.ttsQueue?.enqueue).not.toHaveBeenCalled();
   });
 
   it("enqueues chat-to-speech and stores a chat entry", async () => {
@@ -175,6 +218,74 @@ describe("handleSayCommand", () => {
     );
     expect(interaction.deferReply).toHaveBeenCalledWith({ ephemeral: true });
     expect(interaction.deleteReply).toHaveBeenCalled();
+  });
+
+  it("blocks /say when the monthly chat-to-speech cap is reached", async () => {
+    const member = makeMember("voice-1");
+    const interaction = makeInteraction(member, "hello");
+    mockedGetGuildLimits.mockResolvedValue({
+      subscription: { tier: "basic", status: "active", source: "stripe" },
+      limits: {
+        liveVoiceEnabled: true,
+        imagesEnabled: true,
+        maxChatTtsMessagesMonthly: 1000,
+      },
+    });
+    mockedReserveChatTtsMessageUsage.mockResolvedValueOnce({
+      allowed: false,
+      reserved: false,
+      guildId: "guild-1",
+      period: "2026-06",
+      limit: 1000,
+      used: 1000,
+      remaining: 0,
+    });
+
+    await handleSayCommand(interaction);
+
+    expect(mockedBuildChatTtsMonthlyLimitMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ allowed: false, remaining: 0 }),
+      {},
+    );
+    expect(mockedBuildUpgradePrompt).toHaveBeenCalledWith(
+      "monthly limit reached",
+    );
+    expect(interaction.reply).toHaveBeenCalledWith(
+      expect.objectContaining({ content: "monthly limit reached" }),
+    );
+    expect(mockedReserveChatTtsMessageUsage).toHaveBeenCalledWith({
+      guildId: "guild-1",
+      limit: 1000,
+    });
+    expect(mockedGetMeeting).not.toHaveBeenCalled();
+  });
+
+  it("releases a reserved monthly usage count when the queue is full", async () => {
+    const member = makeMember("voice-1");
+    const interaction = makeInteraction(member, "hello");
+    const meeting = makeMeeting(false);
+    mockedGetMeeting.mockReturnValue(meeting);
+    mockedGetGuildLimits.mockResolvedValue({
+      subscription: { tier: "basic", status: "active", source: "stripe" },
+      limits: {
+        liveVoiceEnabled: true,
+        imagesEnabled: true,
+        maxChatTtsMessagesMonthly: 1000,
+      },
+    });
+
+    await handleSayCommand(interaction);
+
+    expect(mockedReleaseChatTtsMessageUsageReservation).toHaveBeenCalledWith({
+      guildId: "guild-1",
+      period: "2026-06",
+    });
+    expect(interaction.reply).toHaveBeenCalledWith(
+      expect.objectContaining({
+        content: "The speech queue is full right now. Try again in a moment.",
+      }),
+    );
+    expect(meeting.chatLog).toHaveLength(0);
   });
 
   it("rejects messages that exceed the max length", async () => {

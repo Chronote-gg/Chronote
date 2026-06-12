@@ -105,7 +105,9 @@ Controls text-to-speech for chat messages and TTS-only voice sessions.
 
 When enabled during a recorded meeting, any message you send in the meeting text channel is spoken aloud in the voice channel. TTS that plays during a recorded meeting is included in the meeting recording and transcript.
 
-When TTS-only startup is enabled, Chronote can join a voice channel to speak chat messages without starting a recorded meeting. TTS-only sessions do not record audio, transcribe speech, save chat logs, generate notes, or create meeting artifacts.
+When TTS-only startup is enabled, Chronote can join a voice channel to speak chat messages without starting a recorded meeting. TTS-only sessions do not record audio, transcribe speech, save chat logs, generate notes, or create meeting artifacts. They end automatically when the voice channel empties or after a period without spoken TTS activity.
+
+Chronote may enforce a monthly chat-to-speech message cap for your server's plan. When the cap is reached, `/say` and automatic chat-to-speech stop accepting new messages and show an upgrade prompt.
 
 ### `/whois`
 
@@ -119,7 +121,7 @@ Speak a single message aloud in the meeting voice channel.
 | --------- | -------- | ----------------- |
 | `message` | Yes      | The text to speak |
 
-Unlike `/tts enable`, this is a one-shot command. If no recorded meeting is active and TTS-only startup is enabled for the channel, `/say` starts a privacy-safe TTS-only session automatically.
+Unlike `/tts enable`, this is a one-shot command. If no recorded meeting is active and TTS-only startup is enabled for the channel, `/say` starts a privacy-safe TTS-only session automatically. The same monthly chat-to-speech cap applies to `/say` messages.
 
 ### `/leave`
 

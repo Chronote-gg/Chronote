@@ -3,9 +3,23 @@ import { config } from "./services/configService";
 import type { MeetingData } from "./types/meeting-data";
 import type { ChatEntry } from "./types/chat";
 import { fetchUserSpeechSettings } from "./services/userSpeechSettingsService";
-import { chatTtsDropped, chatTtsEnqueued } from "./metrics";
+import {
+  chatTtsDropped,
+  chatTtsEnqueued,
+  chatTtsMonthlyLimitBlocked,
+} from "./metrics";
 import { resolveTtsVoice } from "./utils/ttsVoices";
 import { formatParticipantLabel } from "./utils/participants";
+import {
+  getGuildLimits,
+  getLimitsForTier,
+} from "./services/subscriptionService";
+import {
+  buildChatTtsMonthlyLimitTextOnly,
+  releaseChatTtsMessageUsageReservation,
+  reserveChatTtsMessageUsage,
+  type ChatTtsUsageReservation,
+} from "./services/chatTtsUsageService";
 import {
   buildTtsSpeechText,
   resolveChatTtsSpeakerPrefixMode,
@@ -23,27 +37,47 @@ async function resolveUserSettings(meeting: MeetingData, userId: string) {
   return settings;
 }
 
-export async function maybeSpeakChatMessage(
+async function sendMonthlyLimitNotice(
+  meeting: MeetingData,
+  status: ChatTtsUsageReservation,
+  options: { finalAcceptedMessage?: boolean } = {},
+) {
+  if (meeting.chatTtsMonthlyLimitNoticeSent) return;
+  meeting.chatTtsMonthlyLimitNoticeSent = true;
+  await Promise.resolve(
+    meeting.textChannel.send(buildChatTtsMonthlyLimitTextOnly(status, options)),
+  ).catch((error) => {
+    console.warn("Failed to send chat TTS monthly limit notice.", error);
+  });
+}
+
+type ChatTtsPlayback = {
+  queue: NonNullable<MeetingData["ttsQueue"]>;
+  text: string;
+  voice: string;
+  volumePercent?: number;
+};
+
+async function resolveChatTtsPlayback(
   meeting: MeetingData,
   message: Message,
   entry: ChatEntry,
-): Promise<void> {
-  if (!meeting.chatTtsEnabled) return;
-  if (!meeting.ttsQueue) return;
-  if (!meeting.voiceChannel.members.has(message.author.id)) return;
+): Promise<ChatTtsPlayback | null> {
+  if (!meeting.chatTtsEnabled) return null;
+  if (!meeting.ttsQueue) return null;
+  if (!meeting.voiceChannel.members.has(message.author.id)) return null;
 
   const trimmed = message.content.trim();
-  if (!trimmed) return;
+  if (!trimmed) return null;
 
   const settings = await resolveUserSettings(meeting, message.author.id);
-  if (settings?.chatTtsDisabled) return;
+  if (settings?.chatTtsDisabled) return null;
 
   const maxChars = config.chatTts.maxChars;
   const text =
     maxChars > 0 && trimmed.length > maxChars
       ? trimmed.slice(0, maxChars)
       : trimmed;
-
   const meetingDefault = meeting.chatTtsVoice ?? config.chatTts.defaultVoice;
   const voice = resolveTtsVoice(settings?.chatTtsVoice, meetingDefault);
   const prefixMode = resolveChatTtsSpeakerPrefixMode(
@@ -56,23 +90,82 @@ export async function maybeSpeakChatMessage(
       includeUsername: false,
       fallbackName: message.author.username,
     });
-  const speechText = buildTtsSpeechText({
-    message: text,
-    speakerName,
-    prefixMode,
-    context: "chat",
-  });
 
-  const enqueued = meeting.ttsQueue.enqueue({
-    text: speechText,
+  return {
+    queue: meeting.ttsQueue,
+    text: buildTtsSpeechText({
+      message: text,
+      speakerName,
+      prefixMode,
+      context: "chat",
+    }),
     voice,
+    volumePercent: settings?.chatTtsVolumePercent,
+  };
+}
+
+async function resolveMonthlyMessageLimit(meeting: MeetingData) {
+  const limits = meeting.subscriptionTier
+    ? getLimitsForTier(meeting.subscriptionTier)
+    : (await getGuildLimits(meeting.guildId)).limits;
+  return limits.maxChatTtsMessagesMonthly;
+}
+
+async function releaseReservationIfNeeded(
+  usageReservation: ChatTtsUsageReservation,
+) {
+  if (!usageReservation.reserved) return;
+  await releaseChatTtsMessageUsageReservation({
+    guildId: usageReservation.guildId,
+    period: usageReservation.period,
+  });
+}
+
+async function sendFinalMonthlyLimitNoticeIfNeeded(
+  meeting: MeetingData,
+  usageReservation: ChatTtsUsageReservation,
+) {
+  if (
+    usageReservation.limit === undefined ||
+    usageReservation.remaining !== 0
+  ) {
+    return;
+  }
+  await sendMonthlyLimitNotice(meeting, usageReservation, {
+    finalAcceptedMessage: true,
+  });
+}
+
+export async function maybeSpeakChatMessage(
+  meeting: MeetingData,
+  message: Message,
+  entry: ChatEntry,
+): Promise<void> {
+  const playback = await resolveChatTtsPlayback(meeting, message, entry);
+  if (!playback) return;
+
+  const usageReservation = await reserveChatTtsMessageUsage({
+    guildId: meeting.guildId,
+    limit: await resolveMonthlyMessageLimit(meeting),
+  });
+  if (!usageReservation.allowed) {
+    chatTtsDropped.inc();
+    chatTtsMonthlyLimitBlocked.inc();
+    await sendMonthlyLimitNotice(meeting, usageReservation);
+    return;
+  }
+
+  const enqueued = playback.queue.enqueue({
+    text: playback.text,
+    voice: playback.voice,
     userId: message.author.id,
     source: "chat_tts",
     messageId: message.id,
-    volumePercent: settings?.chatTtsVolumePercent,
+    volumePercent: playback.volumePercent,
   });
 
   if (!enqueued) {
+    await releaseReservationIfNeeded(usageReservation);
     chatTtsDropped.inc();
     console.warn(
       `Chat TTS queue full, dropping message ${message.id} from ${message.author.id}`,
@@ -82,4 +175,5 @@ export async function maybeSpeakChatMessage(
 
   chatTtsEnqueued.inc();
   entry.source = "chat_tts";
+  await sendFinalMonthlyLimitNoticeIfNeeded(meeting, usageReservation);
 }

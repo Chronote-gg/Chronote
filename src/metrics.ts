@@ -56,6 +56,12 @@ export const chatTtsDropped = new Counter({
   registers: [metricsRegistry],
 });
 
+export const chatTtsMonthlyLimitBlocked = new Counter({
+  name: "chat_tts_monthly_limit_blocked_total",
+  help: "Total chat-to-speech messages blocked by monthly usage limits",
+  registers: [metricsRegistry],
+});
+
 // Express middleware to time requests
 export function metricsMiddleware(
   req: Request,

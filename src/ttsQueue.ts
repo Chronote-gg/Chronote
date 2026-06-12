@@ -203,6 +203,7 @@ async function playTtsItem(
 
   if (item.source === "chat_tts") {
     chatTtsSpoken.inc();
+    meeting.resetTtsOnlyIdleTimer?.();
   }
 }
 
@@ -292,6 +293,9 @@ export function createTtsQueue(
       }
     }
     queue.push(item);
+    if (!isSfxItem(item) && item.source === "chat_tts") {
+      meeting.resetTtsOnlyIdleTimer?.();
+    }
     void playNext();
     return true;
   };

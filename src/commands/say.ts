@@ -9,9 +9,19 @@ import { getMeeting, initializeMeeting } from "../meetings";
 import { createTtsQueue } from "../ttsQueue";
 import { config } from "../services/configService";
 import { fetchUserSpeechSettings } from "../services/userSpeechSettingsService";
-import { chatTtsDropped, chatTtsEnqueued } from "../metrics";
+import {
+  chatTtsDropped,
+  chatTtsEnqueued,
+  chatTtsMonthlyLimitBlocked,
+} from "../metrics";
 import { buildUpgradePrompt } from "../utils/upgradePrompt";
 import { getGuildLimits } from "../services/subscriptionService";
+import {
+  buildChatTtsMonthlyLimitMessage,
+  releaseChatTtsMessageUsageReservation,
+  reserveChatTtsMessageUsage,
+  type ChatTtsUsageReservation,
+} from "../services/chatTtsUsageService";
 import {
   formatParticipantLabel,
   formatUserMention,
@@ -20,6 +30,7 @@ import {
 import { resolveTtsVoice } from "../utils/ttsVoices";
 import type { MeetingData } from "../types/meeting-data";
 import type { ChatEntry } from "../types/chat";
+import type { Participant } from "../types/participants";
 import { checkBotPermissions } from "../utils/permissions";
 import { resolveMeetingVoiceSettings } from "../services/meetingVoiceSettingsService";
 import {
@@ -72,6 +83,20 @@ type GuildLimitsResult = Awaited<ReturnType<typeof getGuildLimits>>;
 type SaySession = {
   meeting: MeetingData;
   startedTtsOnly: boolean;
+};
+
+type SayInitialContext = {
+  guildId: string;
+  limitsResult: GuildLimitsResult;
+  member: GuildMember;
+  message: SayMessage;
+};
+
+type SayPlaybackPayload = {
+  participant: Participant;
+  text: string;
+  voice: string;
+  volumePercent?: number;
 };
 
 async function requireGuild(
@@ -279,6 +304,7 @@ async function requireQueue(
 async function enqueueOrReply(
   interaction: ChatInputCommandInteraction,
   queue: ReturnType<typeof ensureTtsQueue>,
+  usageReservation: ChatTtsUsageReservation,
   payload: {
     text: string;
     voice: string;
@@ -297,6 +323,7 @@ async function enqueueOrReply(
   });
 
   if (!enqueued) {
+    await releaseMonthlyUsageReservationIfNeeded(usageReservation);
     chatTtsDropped.inc();
     await interaction.reply({
       content: "The speech queue is full right now. Try again in a moment.",
@@ -309,14 +336,25 @@ async function enqueueOrReply(
   return true;
 }
 
-export async function handleSayCommand(
+async function replyWithMonthlyLimit(
   interaction: ChatInputCommandInteraction,
+  status: Parameters<typeof buildChatTtsMonthlyLimitMessage>[0],
+  options: { finalAcceptedMessage?: boolean } = {},
 ) {
+  chatTtsMonthlyLimitBlocked.inc();
+  await interaction.reply(
+    buildUpgradePrompt(buildChatTtsMonthlyLimitMessage(status, options)),
+  );
+}
+
+async function resolveSayInitialContext(
+  interaction: ChatInputCommandInteraction,
+): Promise<SayInitialContext | null> {
   const guildId = await requireGuild(interaction);
-  if (!guildId) return;
+  if (!guildId) return null;
 
   const limitsResult = await requireTier(interaction, guildId);
-  if (!limitsResult) return;
+  if (!limitsResult) return null;
 
   const member = await resolveMember(interaction);
   if (!member) {
@@ -324,27 +362,48 @@ export async function handleSayCommand(
       content: "Could not resolve your membership in this server.",
       ephemeral: true,
     });
-    return;
+    return null;
   }
 
   const message = await requireSayMessage(interaction);
-  if (!message) return;
+  if (!message) return null;
 
-  const session = await resolveSaySession({
-    interaction,
-    guildId,
-    member,
-    limitsResult,
+  return { guildId, limitsResult, member, message };
+}
+
+async function reserveMonthlyUsageOrReply(options: {
+  interaction: ChatInputCommandInteraction;
+  guildId: string;
+  limit?: number;
+}): Promise<ChatTtsUsageReservation | null> {
+  const { interaction, guildId, limit } = options;
+  const usageReservation = await reserveChatTtsMessageUsage({ guildId, limit });
+  if (!usageReservation.allowed) {
+    await replyWithMonthlyLimit(interaction, usageReservation);
+    return null;
+  }
+  return usageReservation;
+}
+
+async function releaseMonthlyUsageReservationIfNeeded(
+  usageReservation: ChatTtsUsageReservation,
+) {
+  if (!usageReservation.reserved) return;
+  await releaseChatTtsMessageUsageReservation({
+    guildId: usageReservation.guildId,
+    period: usageReservation.period,
   });
-  if (!session) return;
-  const { meeting } = session;
+}
 
-  const queue = await requireQueue(interaction, meeting);
-  if (!queue) return;
-
+async function buildSayPlaybackPayload(options: {
+  interaction: ChatInputCommandInteraction;
+  meeting: MeetingData;
+  member: GuildMember;
+  message: SayMessage;
+}): Promise<SayPlaybackPayload> {
+  const { interaction, meeting, member, message } = options;
   const settings = await resolveUserSettings(meeting, interaction.user.id);
   const meetingDefault = meeting.chatTtsVoice ?? config.chatTts.defaultVoice;
-  const voice = resolveTtsVoice(settings?.chatTtsVoice, meetingDefault);
   const participant =
     meeting.participants.get(interaction.user.id) ?? fromMember(member);
   const speakerName =
@@ -357,38 +416,125 @@ export async function handleSayCommand(
     settings?.chatTtsSpeakerPrefixMode,
     meeting.chatTtsSpeakerPrefixMode,
   );
-  const speechText = buildTtsSpeechText({
-    message: message.text,
-    speakerName,
-    prefixMode,
-    context: "say",
-  });
 
-  const enqueued = await enqueueOrReply(interaction, queue, {
-    text: speechText,
-    voice,
-    userId: interaction.user.id,
-    messageId: interaction.id,
+  return {
+    participant,
+    text: buildTtsSpeechText({
+      message: message.text,
+      speakerName,
+      prefixMode,
+      context: "say",
+    }),
+    voice: resolveTtsVoice(settings?.chatTtsVoice, meetingDefault),
     volumePercent: settings?.chatTtsVolumePercent,
-  });
-  if (!enqueued) return;
+  };
+}
 
+function recordSayChatEntry(options: {
+  interaction: ChatInputCommandInteraction;
+  meeting: MeetingData;
+  message: SayMessage;
+  participant: Participant;
+}) {
+  const { interaction, meeting, message, participant } = options;
   meeting.participants.set(participant.id, participant);
   meeting.attendance.add(formatUserMention(participant.id));
 
-  if (meeting.storeChatLog !== false) {
-    const entry: ChatEntry = {
-      type: "message",
-      source: "chat_tts",
-      user: participant,
-      channelId: interaction.channelId,
-      content: message.text,
-      messageId: interaction.id,
-      timestamp: new Date(interaction.createdTimestamp).toISOString(),
-    };
-    meeting.chatLog.push(entry);
-  }
+  if (meeting.storeChatLog === false) return;
+  const entry: ChatEntry = {
+    type: "message",
+    source: "chat_tts",
+    user: participant,
+    channelId: interaction.channelId,
+    content: message.text,
+    messageId: interaction.id,
+    timestamp: new Date(interaction.createdTimestamp).toISOString(),
+  };
+  meeting.chatLog.push(entry);
+}
 
+async function replyWithFinalMonthlyLimitIfNeeded(
+  interaction: ChatInputCommandInteraction,
+  usageReservation: ChatTtsUsageReservation,
+): Promise<boolean> {
+  if (
+    usageReservation.limit === undefined ||
+    usageReservation.remaining !== 0
+  ) {
+    return false;
+  }
+  await interaction.reply(
+    buildUpgradePrompt(
+      buildChatTtsMonthlyLimitMessage(usageReservation, {
+        finalAcceptedMessage: true,
+      }),
+    ),
+  );
+  return true;
+}
+
+async function acknowledgeSayQueued(interaction: ChatInputCommandInteraction) {
   await interaction.deferReply({ ephemeral: true });
   await interaction.deleteReply();
+}
+
+export async function handleSayCommand(
+  interaction: ChatInputCommandInteraction,
+) {
+  const initial = await resolveSayInitialContext(interaction);
+  if (!initial) return;
+  const { guildId, limitsResult, member, message } = initial;
+  const limit = limitsResult.limits.maxChatTtsMessagesMonthly;
+
+  const usageReservation = await reserveMonthlyUsageOrReply({
+    interaction,
+    guildId,
+    limit,
+  });
+  if (!usageReservation) return;
+
+  const session = await resolveSaySession({
+    interaction,
+    guildId,
+    member,
+    limitsResult,
+  });
+  if (!session) {
+    await releaseMonthlyUsageReservationIfNeeded(usageReservation);
+    return;
+  }
+  const { meeting } = session;
+
+  const queue = await requireQueue(interaction, meeting);
+  if (!queue) {
+    await releaseMonthlyUsageReservationIfNeeded(usageReservation);
+    return;
+  }
+
+  const payload = await buildSayPlaybackPayload({
+    interaction,
+    meeting,
+    member,
+    message,
+  });
+
+  const enqueued = await enqueueOrReply(interaction, queue, usageReservation, {
+    text: payload.text,
+    voice: payload.voice,
+    userId: interaction.user.id,
+    messageId: interaction.id,
+    volumePercent: payload.volumePercent,
+  });
+  if (!enqueued) return;
+
+  recordSayChatEntry({
+    interaction,
+    meeting,
+    message,
+    participant: payload.participant,
+  });
+  if (await replyWithFinalMonthlyLimitIfNeeded(interaction, usageReservation)) {
+    return;
+  }
+  await acknowledgeSayQueued(interaction);
 }

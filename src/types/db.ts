@@ -274,6 +274,15 @@ export interface UserSpeechSettings {
   updatedBy: string; // User ID who last updated
 }
 
+export interface ChatTtsMonthlyUsage {
+  guildId: string; // Partition key
+  period: string; // Sort key, YYYY-MM in UTC
+  acceptedMessages: number;
+  createdAt: string; // ISO timestamp
+  updatedAt: string; // ISO timestamp
+  expiresAt: number; // Dynamo TTL epoch seconds
+}
+
 export interface DictionaryEntry {
   guildId: string; // Partition key
   termKey: string; // Sort key, normalized term

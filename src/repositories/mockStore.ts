@@ -10,6 +10,7 @@ import type {
   OnboardingState,
   StripeWebhookEvent,
   UserSpeechSettings,
+  ChatTtsMonthlyUsage,
   ConfigOverrideRecord,
   DictionaryEntry,
   FeedbackRecord,
@@ -59,6 +60,7 @@ type MockStore = {
   feedbackByTarget: Map<string, FeedbackRecord[]>;
   contactFeedback: ContactFeedbackRecord[];
   userSpeechSettings: Map<string, UserSpeechSettings>;
+  chatTtsMonthlyUsage: Map<string, ChatTtsMonthlyUsage>;
   configOverrides: Map<string, ConfigOverrideRecord>;
   dictionaryEntriesByGuild: Map<string, DictionaryEntry[]>;
 };
@@ -223,6 +225,7 @@ function buildDefaultStore(): MockStore {
   const stripeWebhookEvents = new Map<string, StripeWebhookEvent>();
   const onboardingStates = new Map<string, OnboardingState>();
   const userSpeechSettings = new Map<string, UserSpeechSettings>();
+  const chatTtsMonthlyUsage = new Map<string, ChatTtsMonthlyUsage>();
   const configOverrides = new Map<string, ConfigOverrideRecord>();
   const dictionaryEntriesByGuild = new Map<string, DictionaryEntry[]>();
   const feedbackByTarget = new Map<string, FeedbackRecord[]>();
@@ -936,6 +939,7 @@ function buildDefaultStore(): MockStore {
       },
     ] satisfies ContactFeedbackRecord[],
     userSpeechSettings,
+    chatTtsMonthlyUsage,
     configOverrides,
     dictionaryEntriesByGuild,
   };

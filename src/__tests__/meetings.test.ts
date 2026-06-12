@@ -17,11 +17,13 @@ jest.mock("../audio", () => ({
   userStopTalking: jest.fn(),
 }));
 
+const mockConfig = {
+  liveVoice: { mode: "tts_gate" },
+  chatTts: { queueLimit: 10, ttsOnlyIdleTimeoutMs: 0 },
+};
+
 jest.mock("../services/configService", () => ({
-  config: {
-    liveVoice: { mode: "tts_gate" },
-    chatTts: { queueLimit: 10 },
-  },
+  config: mockConfig,
 }));
 
 jest.mock("../services/meetingConfigService", () => ({
@@ -77,8 +79,16 @@ import {
   userStopTalking,
 } from "../audio";
 import { listDictionaryEntriesService } from "../services/dictionaryService";
+import {
+  getSnapshotBoolean,
+  getSnapshotString,
+} from "../services/unifiedConfigService";
 import { createTtsQueue } from "../ttsQueue";
-import { deleteMeeting, initializeMeeting } from "../meetings";
+import {
+  deleteMeeting,
+  initializeMeeting,
+  restoreVoiceSessionNickname,
+} from "../meetings";
 import type { Guild, TextChannel, User, VoiceBasedChannel } from "discord.js";
 
 const buildMembers = (members: Array<{ user: { id: string } }> = []) => ({
@@ -88,11 +98,27 @@ const buildMembers = (members: Array<{ user: { id: string } }> = []) => ({
   size: members.length,
 });
 
-const buildMeetingOptions = () => {
+const buildBotMember = (
+  displayName = "Meeting Notes Bot",
+  nickname: string | null = null,
+) => {
+  const originalDisplayName = displayName;
+  const botMember = {
+    displayName,
+    nickname: nickname as string | null,
+    setNickname: jest.fn(async (nextNickname: string | null) => {
+      botMember.nickname = nextNickname;
+      botMember.displayName = nextNickname ?? originalDisplayName;
+    }),
+  };
+  return botMember;
+};
+
+const buildMeetingOptions = (botMember: unknown = null) => {
   const guild = {
     id: "guild-1",
     voiceAdapterCreator: {},
-    members: { me: null },
+    members: { me: botMember },
   } as unknown as Guild;
   const voiceChannel = {
     id: "voice-1",
@@ -113,6 +139,13 @@ const buildMeetingOptions = () => {
 describe("initializeMeeting", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    mockConfig.chatTts.ttsOnlyIdleTimeoutMs = 0;
+    jest.mocked(getSnapshotBoolean).mockReturnValue(false);
+    jest.mocked(getSnapshotString).mockReturnValue(undefined);
+  });
+
+  afterEach(() => {
+    jest.useRealTimers();
   });
 
   it("does not create capture or recording plumbing for TTS-only sessions", async () => {
@@ -150,6 +183,137 @@ describe("initializeMeeting", () => {
     expect(connection.receiver.speaking.on).not.toHaveBeenCalled();
 
     deleteMeeting(meeting.guildId);
+  });
+
+  it("appends the session status suffix to the current bot display name", async () => {
+    const botMember = buildBotMember("Meeting Notes Bot");
+    const { guild, voiceChannel, textChannel, creator } =
+      buildMeetingOptions(botMember);
+    jest.mocked(getSnapshotBoolean).mockReturnValue(true);
+    jest.mocked(getSnapshotString).mockReturnValue("(TTS Only)");
+
+    const meeting = await initializeMeeting({
+      sessionMode: "tts_only",
+      captureAudio: false,
+      recordBotAudio: false,
+      storeChatLog: false,
+      guild,
+      voiceChannel,
+      textChannel,
+      creator,
+      transcribeMeeting: false,
+      generateNotes: false,
+      chatTtsEnabled: true,
+    });
+
+    expect(botMember.setNickname).toHaveBeenCalledWith(
+      "Meeting Notes Bot (TTS Only)",
+    );
+    expect(meeting.botNicknameBeforeSession).toBeNull();
+
+    await restoreVoiceSessionNickname(meeting);
+    expect(botMember.setNickname).toHaveBeenLastCalledWith(null);
+
+    deleteMeeting(meeting.guildId);
+  });
+
+  it("does not duplicate an existing session status suffix", async () => {
+    const botMember = buildBotMember(
+      "Meeting Notes Bot (TTS Only)",
+      "Meeting Notes Bot (TTS Only)",
+    );
+    const { guild, voiceChannel, textChannel, creator } =
+      buildMeetingOptions(botMember);
+    jest.mocked(getSnapshotBoolean).mockReturnValue(true);
+    jest.mocked(getSnapshotString).mockReturnValue("(TTS Only)");
+
+    const meeting = await initializeMeeting({
+      sessionMode: "tts_only",
+      captureAudio: false,
+      recordBotAudio: false,
+      storeChatLog: false,
+      guild,
+      voiceChannel,
+      textChannel,
+      creator,
+      transcribeMeeting: false,
+      generateNotes: false,
+      chatTtsEnabled: true,
+    });
+
+    expect(botMember.setNickname).not.toHaveBeenCalled();
+
+    deleteMeeting(meeting.guildId);
+  });
+
+  it("ends a TTS-only session after inactivity", async () => {
+    jest.useFakeTimers();
+    mockConfig.chatTts.ttsOnlyIdleTimeoutMs = 1000;
+    const { guild, voiceChannel, textChannel, creator } = buildMeetingOptions();
+
+    const meeting = await initializeMeeting({
+      sessionMode: "tts_only",
+      captureAudio: false,
+      recordBotAudio: false,
+      storeChatLog: false,
+      guild,
+      voiceChannel,
+      textChannel,
+      creator,
+      transcribeMeeting: false,
+      generateNotes: false,
+      chatTtsEnabled: true,
+    });
+    const connection = jest.mocked(joinVoiceChannel).mock.results[0].value;
+
+    jest.advanceTimersByTime(1000);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(connection.disconnect).toHaveBeenCalled();
+    expect(connection.destroy).toHaveBeenCalled();
+    expect(meeting.finished).toBe(true);
+    expect(textChannel.send).toHaveBeenCalledWith(
+      expect.stringContaining("after 1 second without speech activity"),
+    );
+  });
+
+  it("resets the TTS-only inactivity timer when speech activity occurs", async () => {
+    jest.useFakeTimers();
+    mockConfig.chatTts.ttsOnlyIdleTimeoutMs = 1000;
+    const { guild, voiceChannel, textChannel, creator } = buildMeetingOptions();
+
+    const meeting = await initializeMeeting({
+      sessionMode: "tts_only",
+      captureAudio: false,
+      recordBotAudio: false,
+      storeChatLog: false,
+      guild,
+      voiceChannel,
+      textChannel,
+      creator,
+      transcribeMeeting: false,
+      generateNotes: false,
+      chatTtsEnabled: true,
+    });
+    const connection = jest.mocked(joinVoiceChannel).mock.results[0].value;
+
+    jest.advanceTimersByTime(999);
+    meeting.resetTtsOnlyIdleTimer?.();
+    jest.advanceTimersByTime(999);
+    await Promise.resolve();
+
+    expect(connection.disconnect).not.toHaveBeenCalled();
+    expect(textChannel.send).not.toHaveBeenCalled();
+
+    jest.advanceTimersByTime(1);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(connection.disconnect).toHaveBeenCalled();
+    expect(textChannel.send).toHaveBeenCalledWith(
+      expect.stringContaining("after 1 second without speech activity"),
+    );
   });
 
   it("keeps capture and recording plumbing for normal meetings", async () => {

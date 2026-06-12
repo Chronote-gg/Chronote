@@ -1369,6 +1369,7 @@ resource "aws_iam_policy" "dynamodb_access_policy" {
           aws_dynamodb_table.channel_context_table.arn,
           aws_dynamodb_table.dictionary_table.arn,
           aws_dynamodb_table.user_speech_settings_table.arn,
+          aws_dynamodb_table.chat_tts_usage_table.arn,
           aws_dynamodb_table.config_overrides_table.arn,
           aws_dynamodb_table.ask_conversation_table.arn,
           aws_dynamodb_table.feedback_table.arn,
@@ -2500,6 +2501,41 @@ resource "aws_dynamodb_table" "user_speech_settings_table" {
 
   tags = {
     Name = "UserSpeechSettingsTable"
+  }
+}
+
+resource "aws_dynamodb_table" "chat_tts_usage_table" {
+  name         = "${local.name_prefix}-ChatTtsUsageTable"
+  billing_mode = "PAY_PER_REQUEST"
+  hash_key     = "guildId"
+  range_key    = "period"
+
+  attribute {
+    name = "guildId"
+    type = "S"
+  }
+
+  attribute {
+    name = "period"
+    type = "S"
+  }
+
+  ttl {
+    attribute_name = "expiresAt"
+    enabled        = true
+  }
+
+  point_in_time_recovery {
+    enabled = true
+  }
+
+  server_side_encryption {
+    enabled     = true
+    kms_key_arn = aws_kms_key.app_general.arn
+  }
+
+  tags = {
+    Name = "ChatTtsUsageTable"
   }
 }
 
