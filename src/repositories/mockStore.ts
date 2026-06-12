@@ -1,6 +1,7 @@
 import type { AuthedProfile } from "../trpc/context";
 import type {
   AutoRecordSettings,
+  EntitlementGrant,
   GuildSubscription,
   ChannelContext,
   ServerContext,
@@ -46,6 +47,7 @@ type MockStore = {
   serverContexts: Map<string, ServerContext>;
   channelContexts: Map<string, ChannelContext>;
   guildInstallers: Map<string, GuildInstaller>;
+  entitlementGrants: Map<string, EntitlementGrant>;
   subscriptions: Map<string, GuildSubscription>;
   paymentTransactions: Map<string, PaymentTransaction>;
   stripeWebhookEvents: Map<string, StripeWebhookEvent>;
@@ -199,6 +201,7 @@ function buildDefaultStore(): MockStore {
   });
 
   const subscriptions = new Map<string, GuildSubscription>();
+  const entitlementGrants = new Map<string, EntitlementGrant>();
   subscriptions.set("1249723747896918109", {
     guildId: "1249723747896918109",
     status: "active",
@@ -904,6 +907,7 @@ function buildDefaultStore(): MockStore {
     serverContexts,
     channelContexts,
     guildInstallers,
+    entitlementGrants,
     subscriptions,
     paymentTransactions,
     stripeWebhookEvents,

@@ -154,10 +154,16 @@ export async function releaseChatTtsMessageUsageReservation(options: {
 
 export function buildChatTtsMonthlyLimitMessage(
   status: ChatTtsUsageLimitStatus,
-  options: { finalAcceptedMessage?: boolean } = {},
+  options: {
+    finalAcceptedMessage?: boolean;
+    compedTier?: "basic" | "pro" | null;
+  } = {},
 ): string {
   const count = Math.max(status.used, status.limit ?? 0);
   const formattedCount = count.toLocaleString("en-US");
+  if (options.compedTier === "basic") {
+    return "This server has used its included Basic chat-to-speech messages this month. Basic is currently comped by Chronote; upgrade to Pro or start paying to support continued usage.";
+  }
   if (options.finalAcceptedMessage) {
     return `That was this server's ${formatOrdinal(count)} chat-to-speech message this month. Upgrade to keep using TTS and support our team.`;
   }
@@ -166,7 +172,10 @@ export function buildChatTtsMonthlyLimitMessage(
 
 export function buildChatTtsMonthlyLimitTextOnly(
   status: ChatTtsUsageLimitStatus,
-  options: { finalAcceptedMessage?: boolean } = {},
+  options: {
+    finalAcceptedMessage?: boolean;
+    compedTier?: "basic" | "pro" | null;
+  } = {},
 ): string {
   return buildUpgradeTextOnly(buildChatTtsMonthlyLimitMessage(status, options));
 }

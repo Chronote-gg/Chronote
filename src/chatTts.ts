@@ -40,7 +40,7 @@ async function resolveUserSettings(meeting: MeetingData, userId: string) {
 async function sendMonthlyLimitNotice(
   meeting: MeetingData,
   status: ChatTtsUsageReservation,
-  options: { finalAcceptedMessage?: boolean } = {},
+  options: Parameters<typeof buildChatTtsMonthlyLimitTextOnly>[1] = {},
 ) {
   if (meeting.chatTtsMonthlyLimitNoticeSent) return;
   meeting.chatTtsMonthlyLimitNoticeSent = true;
@@ -105,10 +105,17 @@ async function resolveChatTtsPlayback(
 }
 
 async function resolveMonthlyMessageLimit(meeting: MeetingData) {
+  const resolved = await getGuildLimits(meeting.guildId);
   const limits = meeting.subscriptionTier
     ? getLimitsForTier(meeting.subscriptionTier)
-    : (await getGuildLimits(meeting.guildId)).limits;
-  return limits.maxChatTtsMessagesMonthly;
+    : resolved.limits;
+  return {
+    limit: limits.maxChatTtsMessagesMonthly,
+    compedTier:
+      resolved.subscription.billingSource === "manual_comp"
+        ? resolved.subscription.grantTier
+        : null,
+  };
 }
 
 async function releaseReservationIfNeeded(
@@ -124,6 +131,7 @@ async function releaseReservationIfNeeded(
 async function sendFinalMonthlyLimitNoticeIfNeeded(
   meeting: MeetingData,
   usageReservation: ChatTtsUsageReservation,
+  compedTier?: "basic" | "pro" | null,
 ) {
   if (
     usageReservation.limit === undefined ||
@@ -133,6 +141,7 @@ async function sendFinalMonthlyLimitNoticeIfNeeded(
   }
   await sendMonthlyLimitNotice(meeting, usageReservation, {
     finalAcceptedMessage: true,
+    compedTier,
   });
 }
 
@@ -144,14 +153,17 @@ export async function maybeSpeakChatMessage(
   const playback = await resolveChatTtsPlayback(meeting, message, entry);
   if (!playback) return;
 
+  const monthlyLimit = await resolveMonthlyMessageLimit(meeting);
   const usageReservation = await reserveChatTtsMessageUsage({
     guildId: meeting.guildId,
-    limit: await resolveMonthlyMessageLimit(meeting),
+    limit: monthlyLimit.limit,
   });
   if (!usageReservation.allowed) {
     chatTtsDropped.inc();
     chatTtsMonthlyLimitBlocked.inc();
-    await sendMonthlyLimitNotice(meeting, usageReservation);
+    await sendMonthlyLimitNotice(meeting, usageReservation, {
+      compedTier: monthlyLimit.compedTier,
+    });
     return;
   }
 
@@ -175,5 +187,9 @@ export async function maybeSpeakChatMessage(
 
   chatTtsEnqueued.inc();
   entry.source = "chat_tts";
-  await sendFinalMonthlyLimitNoticeIfNeeded(meeting, usageReservation);
+  await sendFinalMonthlyLimitNoticeIfNeeded(
+    meeting,
+    usageReservation,
+    monthlyLimit.compedTier,
+  );
 }

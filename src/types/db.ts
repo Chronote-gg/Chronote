@@ -23,6 +23,34 @@ export interface GuildSubscription {
   mode?: "live" | "test";
 }
 
+export type EntitlementGrantTier = "basic" | "pro";
+export type EntitlementGrantStatus = "active" | "revoked" | "expired";
+export type EntitlementGrantSource = "manual_comp";
+
+export interface EntitlementGrant {
+  grantId: string;
+  guildId: string;
+  label?: string;
+  tier: EntitlementGrantTier;
+  status: EntitlementGrantStatus;
+  source: EntitlementGrantSource;
+  startsAt: string;
+  expiresAt?: string;
+  createdAt: string;
+  createdBy: string;
+  updatedAt?: string;
+  updatedBy?: string;
+  revokedAt?: string;
+  revokedBy?: string;
+  revocationReason?: string;
+  reason?: string;
+  internalNotes?: string;
+  publicNote?: string;
+  recipientName?: string;
+  recipientContact?: string;
+  autoRevokedByStripeSubscriptionId?: string;
+}
+
 // Payment Transaction Type
 export interface PaymentTransaction {
   transactionID: string;

@@ -41,6 +41,9 @@ const Settings = lazyRouteComponent(() => import("./pages/Settings"));
 const LiveMeeting = lazyRouteComponent(() => import("./pages/LiveMeeting"));
 const AdminHome = lazyRouteComponent(() => import("./pages/AdminHome"));
 const AdminConfig = lazyRouteComponent(() => import("./pages/AdminConfig"));
+const AdminEntitlements = lazyRouteComponent(
+  () => import("./pages/AdminEntitlements"),
+);
 const AdminFeedback = lazyRouteComponent(() => import("./pages/AdminFeedback"));
 const ContactFeedback = lazyRouteComponent(
   () => import("./pages/ContactFeedback"),
@@ -309,6 +312,12 @@ const adminConfigRoute = new Route({
   component: AdminConfig,
 });
 
+const adminEntitlementsRoute = new Route({
+  getParentRoute: () => adminRoute,
+  path: "entitlements",
+  component: AdminEntitlements,
+});
+
 const adminFeedbackRoute = new Route({
   getParentRoute: () => adminRoute,
   path: "feedback",
@@ -335,6 +344,7 @@ const routeTree = rootRoute.addChildren([
   adminRoute.addChildren([
     adminIndexRoute,
     adminConfigRoute,
+    adminEntitlementsRoute,
     adminFeedbackRoute,
   ]),
   publicAskRoute,

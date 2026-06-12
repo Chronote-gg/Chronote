@@ -160,4 +160,22 @@ describe("chatTtsUsageService", () => {
       "That was this server's 1,001st chat-to-speech message this month.",
     );
   });
+
+  it("builds comped Basic monthly cap copy", () => {
+    const text = buildChatTtsMonthlyLimitTextOnly(
+      {
+        allowed: false,
+        guildId: "guild-1",
+        period: "2026-06",
+        limit: 1000,
+        used: 1000,
+        remaining: 0,
+      },
+      { compedTier: "basic" },
+    );
+
+    expect(text).toContain(
+      "Basic is currently comped by Chronote; upgrade to Pro or start paying",
+    );
+  });
 });

@@ -148,6 +148,9 @@ const formatStatusLine = (
       ).toLocaleDateString()}`
     : statusLabel;
 
+const normalPlanValue = (tier: PlanTier) =>
+  tier === "basic" ? "$5/month" : "the normal Pro plan price";
+
 const BillingShell = ({
   children,
   description = DEFAULT_DESCRIPTION,
@@ -257,71 +260,103 @@ const BillingPaidPanel = ({
     style={{ backgroundImage: uiGradients.billingPanel(isDark) }}
     data-testid="billing-current-plan"
   >
-    <SimpleGrid cols={{ base: 1, md: 2 }} spacing="xl">
-      <Stack gap="md">
-        <Stack gap="xs">
-          <Group gap="sm">
-            <ThemeIcon color="brand" variant="light">
-              <IconCreditCard size={18} />
-            </ThemeIcon>
-            <Text fw={600}>Current plan</Text>
-          </Group>
-          <Group gap="sm" align="center">
-            <Text size="lg" fw={700}>
-              {data.tier === "pro" ? "Pro" : "Basic"}
-            </Text>
-            <Badge color="brand">{statusLabel}</Badge>
-          </Group>
-          <Text c="dimmed" size="sm">
-            {statusLine}
-          </Text>
-          <Text size="sm" c="dimmed">
-            Server: {serverName}
-          </Text>
-          <BillingUsageMeter usage={usage} />
-        </Stack>
+    {(() => {
+      const isComped = data.billingSource === "manual_comp";
+      const planName = data.tier === "pro" ? "Pro" : "Basic";
+      const expiryLine = data.activeGrant?.expiresAt
+        ? `Comp runs through ${new Date(
+            data.activeGrant.expiresAt,
+          ).toLocaleDateString()}.`
+        : "No payment required.";
+      return (
+        <SimpleGrid cols={{ base: 1, md: 2 }} spacing="xl">
+          <Stack gap="md">
+            <Stack gap="xs">
+              <Group gap="sm">
+                <ThemeIcon color="brand" variant="light">
+                  <IconCreditCard size={18} />
+                </ThemeIcon>
+                <Text fw={600}>Current plan</Text>
+              </Group>
+              <Group gap="sm" align="center">
+                <Text size="lg" fw={700}>
+                  {planName}
+                </Text>
+                <Badge color={isComped ? "teal" : "brand"}>
+                  {isComped ? "Comped by Chronote" : statusLabel}
+                </Badge>
+              </Group>
+              {isComped ? (
+                <Stack gap={4}>
+                  <Text c="dimmed" size="sm">
+                    Chronote has granted this server {planName} for free. This
+                    is normally {normalPlanValue(data.tier)}.
+                  </Text>
+                  <Text c="dimmed" size="sm">
+                    {expiryLine}
+                  </Text>
+                  {data.activeGrant?.publicNote ? (
+                    <Text size="sm">{data.activeGrant.publicNote}</Text>
+                  ) : null}
+                </Stack>
+              ) : (
+                <Text c="dimmed" size="sm">
+                  {statusLine}
+                </Text>
+              )}
+              <Text size="sm" c="dimmed">
+                Server: {serverName}
+              </Text>
+              <BillingUsageMeter usage={usage} />
+            </Stack>
 
-        <Divider />
+            <Divider />
 
-        <Stack gap="xs">
-          <Text fw={600}>Actions</Text>
-          <Group gap="sm" wrap="wrap">
-            <Button
-              variant="gradient"
-              gradient={{ from: "brand", to: "violet" }}
-              disabled={!canManage}
-              loading={isPortalPending}
-              onClick={onPortal}
-              data-testid="billing-manage"
+            <Stack gap="xs">
+              <Text fw={600}>Actions</Text>
+              {data.canManageBillingPortal ? (
+                <Group gap="sm" wrap="wrap">
+                  <Button
+                    variant="gradient"
+                    gradient={{ from: "brand", to: "violet" }}
+                    disabled={!canManage}
+                    loading={isPortalPending}
+                    onClick={onPortal}
+                    data-testid="billing-manage"
+                  >
+                    Manage billing
+                  </Button>
+                </Group>
+              ) : null}
+              <Text size="xs" c="dimmed">
+                {isComped
+                  ? "Use the plans below to start paying or upgrade when you're ready."
+                  : "Changes apply immediately."}
+              </Text>
+            </Stack>
+          </Stack>
+
+          <Stack gap="xs">
+            <Text fw={600}>Included in this plan</Text>
+            <List
+              spacing="xs"
+              size="sm"
+              icon={
+                <ThemeIcon color="brand" size={20}>
+                  <IconCheck size={12} />
+                </ThemeIcon>
+              }
             >
-              Manage billing
-            </Button>
-          </Group>
-          <Text size="xs" c="dimmed">
-            Changes apply immediately.
-          </Text>
-        </Stack>
-      </Stack>
-
-      <Stack gap="xs">
-        <Text fw={600}>Included in this plan</Text>
-        <List
-          spacing="xs"
-          size="sm"
-          icon={
-            <ThemeIcon color="brand" size={20}>
-              <IconCheck size={12} />
-            </ThemeIcon>
-          }
-        >
-          {BENEFITS.map((benefit) => (
-            <List.Item key={benefit.label}>
-              {benefit.label}: {benefit.values[data.tier]}
-            </List.Item>
-          ))}
-        </List>
-      </Stack>
-    </SimpleGrid>
+              {BENEFITS.map((benefit) => (
+                <List.Item key={benefit.label}>
+                  {benefit.label}: {benefit.values[data.tier]}
+                </List.Item>
+              ))}
+            </List>
+          </Stack>
+        </SimpleGrid>
+      );
+    })()}
   </Surface>
 );
 
@@ -340,8 +375,26 @@ const BillingPlansSection = ({
   proPlan,
 }: BillingPlansProps) => {
   const isFreePlan = data.tier === "free";
-  const plansExpanded = isFreePlan ? true : showPlans;
+  const isComped = data.billingSource === "manual_comp";
+  const plansExpanded = isFreePlan || isComped ? true : showPlans;
   const hasPromo = promoCode.trim().length > 0;
+  const basicCta =
+    data.tier === "basic"
+      ? isComped
+        ? "Start paying for Basic"
+        : "Current plan"
+      : data.tier === "pro"
+        ? "Included in Pro"
+        : "Upgrade to Basic";
+  const proCta =
+    data.tier === "pro"
+      ? isComped
+        ? "Start paying for Pro"
+        : "Current plan"
+      : "Upgrade to Pro";
+  const basicDisabled =
+    !basicPlan || data.tier === "pro" || (data.tier === "basic" && !isComped);
+  const proDisabled = !proPlan || (data.tier === "pro" && !isComped);
   return (
     <Surface
       p="lg"
@@ -449,12 +502,14 @@ const BillingPlansSection = ({
                 "Ask across longer history",
                 "Live voice mode",
               ]}
-              cta={data.tier === "basic" ? "Current plan" : "Upgrade to Basic"}
-              ctaDisabled={data.tier === "basic" || !basicPlan}
+              cta={basicCta}
+              ctaDisabled={basicDisabled}
               ctaProps={
-                data.tier === "basic"
+                data.tier === "basic" && !isComped
                   ? { variant: "light" }
-                  : { onClick: () => onCheckout("basic") }
+                  : basicDisabled
+                    ? { variant: "light" }
+                    : { onClick: () => onCheckout("basic") }
               }
               highlighted
               badge={data.tier === "basic" ? "Current plan" : "Best value"}
@@ -474,12 +529,14 @@ const BillingPlansSection = ({
                 "Up to 2 hours per meeting (8 hours coming soon)",
                 "Priority features + support",
               ]}
-              cta={data.tier === "pro" ? "Current plan" : "Upgrade to Pro"}
-              ctaDisabled={data.tier === "pro" || !proPlan}
+              cta={proCta}
+              ctaDisabled={proDisabled}
               ctaProps={
-                data.tier === "pro"
+                data.tier === "pro" && !isComped
                   ? { variant: "light" }
-                  : { onClick: () => onCheckout("pro") }
+                  : proDisabled
+                    ? { variant: "light" }
+                    : { onClick: () => onCheckout("pro") }
               }
               badge={
                 data.tier === "pro" ? "Current plan" : "Unlimited meetings"
@@ -625,7 +682,7 @@ export function Billing() {
           statusLine={statusLine}
           usage={data.usage}
           isPortalPending={isPortalPending}
-          canManage={Boolean(selectedGuildId)}
+          canManage={Boolean(selectedGuildId) && data.canManageBillingPortal}
           onPortal={handlePortal}
           isDark={isDark}
         />

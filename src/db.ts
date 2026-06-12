@@ -14,6 +14,8 @@ import {
   AccessLog,
   AutoRecordSettings,
   ChannelContext,
+  EntitlementGrant,
+  EntitlementGrantStatus,
   GuildSubscription,
   MeetingHistory,
   MeetingAccessGrant,
@@ -92,6 +94,170 @@ export async function getGuildSubscription(
     return unmarshall(result.Item) as GuildSubscription;
   }
   return undefined;
+}
+
+// Entitlement Grant Table
+export async function writeEntitlementGrant(
+  grant: EntitlementGrant,
+): Promise<void> {
+  const params = {
+    TableName: tableName("EntitlementGrantTable"),
+    Item: marshall(grant, { removeUndefinedValues: true }),
+  };
+  const command = new PutItemCommand(params);
+  await dynamoDbClient.send(command);
+}
+
+export async function getEntitlementGrant(
+  grantId: string,
+): Promise<EntitlementGrant | undefined> {
+  const params = {
+    TableName: tableName("EntitlementGrantTable"),
+    Key: marshall({ grantId }),
+  };
+  const command = new GetItemCommand(params);
+  const result = await dynamoDbClient.send(command);
+  if (result.Item) {
+    return unmarshall(result.Item) as EntitlementGrant;
+  }
+  return undefined;
+}
+
+export async function listEntitlementGrants(params?: {
+  guildId?: string;
+  status?: EntitlementGrantStatus;
+  limit?: number;
+}): Promise<EntitlementGrant[]> {
+  const items: EntitlementGrant[] = [];
+  if (params?.guildId) {
+    const expressionAttributeNames: Record<string, string> = {
+      "#guildId": "guildId",
+    };
+    const expressionAttributeValues: Record<string, AttributeValue> = marshall({
+      ":guildId": params.guildId,
+      ...(params.status ? { ":status": params.status } : {}),
+    });
+    let exclusiveStartKey: Record<string, AttributeValue> | undefined;
+    do {
+      const command = new QueryCommand({
+        TableName: tableName("EntitlementGrantTable"),
+        IndexName: "GuildIdIndex",
+        KeyConditionExpression: "#guildId = :guildId",
+        ...(params.status
+          ? {
+              FilterExpression: "#status = :status",
+              ExpressionAttributeNames: {
+                ...expressionAttributeNames,
+                "#status": "status",
+              },
+            }
+          : { ExpressionAttributeNames: expressionAttributeNames }),
+        ExpressionAttributeValues: expressionAttributeValues,
+        ExclusiveStartKey: exclusiveStartKey,
+        Limit: params.limit ? params.limit - items.length : undefined,
+      });
+      const result = await dynamoDbClient.send(command);
+      items.push(
+        ...(result.Items ?? []).map(
+          (item) => unmarshall(item) as EntitlementGrant,
+        ),
+      );
+      exclusiveStartKey = result.LastEvaluatedKey;
+    } while (
+      exclusiveStartKey &&
+      (!params.limit || items.length < params.limit)
+    );
+    return params.limit ? items.slice(0, params.limit) : items;
+  }
+
+  const expressionAttributeNames: Record<string, string> = {};
+  let expressionAttributeValues: Record<string, AttributeValue> | undefined;
+  let filterExpression: string | undefined;
+  if (params?.status) {
+    expressionAttributeNames["#status"] = "status";
+    expressionAttributeValues = marshall({ ":status": params.status });
+    filterExpression = "#status = :status";
+  }
+  let exclusiveStartKey: Record<string, AttributeValue> | undefined;
+  do {
+    const command = new ScanCommand({
+      TableName: tableName("EntitlementGrantTable"),
+      FilterExpression: filterExpression,
+      ExpressionAttributeNames: Object.keys(expressionAttributeNames).length
+        ? expressionAttributeNames
+        : undefined,
+      ExpressionAttributeValues: expressionAttributeValues,
+      ExclusiveStartKey: exclusiveStartKey,
+      Limit: params?.limit ? params.limit - items.length : undefined,
+    });
+    const result = await dynamoDbClient.send(command);
+    items.push(
+      ...(result.Items ?? []).map(
+        (item) => unmarshall(item) as EntitlementGrant,
+      ),
+    );
+    exclusiveStartKey = result.LastEvaluatedKey;
+  } while (
+    exclusiveStartKey &&
+    (!params?.limit || items.length < params.limit)
+  );
+  return params?.limit ? items.slice(0, params.limit) : items;
+}
+
+export async function listActiveEntitlementGrantsForGuild(
+  guildId: string,
+): Promise<EntitlementGrant[]> {
+  return listEntitlementGrants({ guildId, status: "active" });
+}
+
+export async function revokeEntitlementGrant(params: {
+  grantId: string;
+  revokedAt: string;
+  revokedBy: string;
+  revocationReason: string;
+  autoRevokedByStripeSubscriptionId?: string;
+}): Promise<void> {
+  const expressionAttributeNames: Record<string, string> = {
+    "#status": "status",
+    "#updatedAt": "updatedAt",
+    "#updatedBy": "updatedBy",
+    "#revokedAt": "revokedAt",
+    "#revokedBy": "revokedBy",
+    "#revocationReason": "revocationReason",
+  };
+  const values = {
+    ":status": "revoked",
+    ":updatedAt": params.revokedAt,
+    ":updatedBy": params.revokedBy,
+    ":revokedAt": params.revokedAt,
+    ":revokedBy": params.revokedBy,
+    ":revocationReason": params.revocationReason,
+    ...(params.autoRevokedByStripeSubscriptionId
+      ? {
+          ":autoRevokedByStripeSubscriptionId":
+            params.autoRevokedByStripeSubscriptionId,
+        }
+      : {}),
+  };
+  let updateExpression =
+    "SET #status = :status, #updatedAt = :updatedAt, #updatedBy = :updatedBy, #revokedAt = :revokedAt, #revokedBy = :revokedBy, #revocationReason = :revocationReason";
+  if (params.autoRevokedByStripeSubscriptionId) {
+    expressionAttributeNames["#autoRevokedByStripeSubscriptionId"] =
+      "autoRevokedByStripeSubscriptionId";
+    updateExpression +=
+      ", #autoRevokedByStripeSubscriptionId = :autoRevokedByStripeSubscriptionId";
+  }
+  const command = new UpdateItemCommand({
+    TableName: tableName("EntitlementGrantTable"),
+    Key: marshall({ grantId: params.grantId }),
+    UpdateExpression: updateExpression,
+    ConditionExpression: "attribute_exists(grantId)",
+    ExpressionAttributeNames: expressionAttributeNames,
+    ExpressionAttributeValues: marshall(values, {
+      removeUndefinedValues: true,
+    }),
+  });
+  await dynamoDbClient.send(command);
 }
 
 // Write to PaymentTransaction Table

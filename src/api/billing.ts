@@ -5,7 +5,9 @@ import {
 } from "../services/billingService";
 import { getSubscriptionRepository } from "../repositories/subscriptionRepository";
 import { config } from "../services/configService";
+import { autoRevokeCoveredCompGrants } from "../services/entitlementService";
 import { resolveTierFromPrice } from "../services/pricingService";
+import { clearGuildSubscriptionCache } from "../services/subscriptionService";
 import { getStripeWebhookRepository } from "../repositories/stripeWebhookRepository";
 import type {
   StripeCheckoutSession,
@@ -173,6 +175,24 @@ const buildSubscriptionPayload = (params: {
   mode: params.mode,
 });
 
+const maybeAutoRevokeCoveredCompGrants = async (params: {
+  guildId: string;
+  tier: KnownTier;
+  status: string;
+  stripeSubscriptionId?: string;
+  updatedBy?: string;
+}) => {
+  if (params.tier !== "basic" && params.tier !== "pro") return;
+  if (params.status !== "active" && params.status !== "trialing") return;
+  await autoRevokeCoveredCompGrants({
+    guildId: params.guildId,
+    paidTier: params.tier,
+    stripeSubscriptionId: params.stripeSubscriptionId,
+    revokedBy: params.updatedBy ?? "stripe",
+  });
+  clearGuildSubscriptionCache(params.guildId);
+};
+
 const handleCheckoutSessionCompleted: WebhookHandler = async ({
   stripe,
   event,
@@ -193,6 +213,12 @@ const handleCheckoutSessionCompleted: WebhookHandler = async ({
     return;
   }
   const tier = resolveTierFromSubscription(sub);
+  const stripeSubscriptionId =
+    typeof session.subscription === "string" ? session.subscription : undefined;
+  const updatedBy =
+    readMetadataValue(session.metadata, "discord_id") ||
+    readMetadataValue(sub.metadata, "discord_id") ||
+    undefined;
   await saveGuildSubscription(
     buildSubscriptionPayload({
       guildId,
@@ -204,14 +230,8 @@ const handleCheckoutSessionCompleted: WebhookHandler = async ({
       paymentMethod: session.payment_method_types?.[0],
       stripeCustomerId:
         typeof session.customer === "string" ? session.customer : undefined,
-      stripeSubscriptionId:
-        typeof session.subscription === "string"
-          ? session.subscription
-          : undefined,
-      updatedBy:
-        readMetadataValue(session.metadata, "discord_id") ||
-        readMetadataValue(sub.metadata, "discord_id") ||
-        undefined,
+      stripeSubscriptionId,
+      updatedBy,
       priceId:
         typeof sub.items?.data?.[0]?.price?.id === "string"
           ? sub.items?.data?.[0]?.price?.id
@@ -219,6 +239,13 @@ const handleCheckoutSessionCompleted: WebhookHandler = async ({
       mode: sub.livemode ? "live" : "test",
     }),
   );
+  await maybeAutoRevokeCoveredCompGrants({
+    guildId,
+    tier,
+    status: sub.status,
+    stripeSubscriptionId,
+    updatedBy,
+  });
 };
 
 const handleInvoicePaymentFailed: WebhookHandler = async ({
@@ -236,13 +263,18 @@ const handleInvoicePaymentFailed: WebhookHandler = async ({
   const existingTier = normalizeTier(existing?.tier);
   const tierFromInvoice = resolveTierFromInvoice(invoice);
   const priceInfo = resolveInvoicePriceInfo(invoice);
+  const stripeSubscriptionId =
+    typeof invoiceSubscription === "string"
+      ? invoiceSubscription
+      : invoiceSubscription?.id;
+  const tier =
+    tierFromInvoice ??
+    (existingTier && existingTier !== "free" ? existingTier : "basic");
   await saveGuildSubscription(
     buildSubscriptionPayload({
       guildId,
       status: "past_due",
-      tier:
-        tierFromInvoice ??
-        (existingTier && existingTier !== "free" ? existingTier : "basic"),
+      tier,
       startDate:
         existing?.startDate ?? new Date(invoice.created * 1000).toISOString(),
       nextBillingDate: invoice.next_payment_attempt
@@ -251,10 +283,7 @@ const handleInvoicePaymentFailed: WebhookHandler = async ({
       paymentMethod: invoice.default_payment_method ? "card" : "unknown",
       stripeCustomerId:
         typeof invoice.customer === "string" ? invoice.customer : undefined,
-      stripeSubscriptionId:
-        typeof invoiceSubscription === "string"
-          ? invoiceSubscription
-          : invoiceSubscription?.id,
+      stripeSubscriptionId,
       priceId: priceInfo.priceId ?? existing?.priceId,
       mode: invoice.livemode ? "live" : "test",
     }),
@@ -272,6 +301,8 @@ const handleSubscriptionUpsert: WebhookHandler = async ({ event }) => {
     return;
   }
   const tier = resolveTierFromSubscription(subscription);
+  const updatedBy =
+    readMetadataValue(subscription.metadata, "discord_id") || undefined;
   await saveGuildSubscription(
     buildSubscriptionPayload({
       guildId,
@@ -286,8 +317,7 @@ const handleSubscriptionUpsert: WebhookHandler = async ({ event }) => {
           ? subscription.customer
           : undefined,
       stripeSubscriptionId: subscription.id,
-      updatedBy:
-        readMetadataValue(subscription.metadata, "discord_id") || undefined,
+      updatedBy,
       priceId:
         typeof subscription.items?.data?.[0]?.price?.id === "string"
           ? subscription.items?.data?.[0]?.price?.id
@@ -295,6 +325,13 @@ const handleSubscriptionUpsert: WebhookHandler = async ({ event }) => {
       mode: subscription.livemode ? "live" : "test",
     }),
   );
+  await maybeAutoRevokeCoveredCompGrants({
+    guildId,
+    tier,
+    status: subscription.status,
+    stripeSubscriptionId: subscription.id,
+    updatedBy,
+  });
 };
 
 const handleSubscriptionDeleted: WebhookHandler = async ({ event }) => {
@@ -388,17 +425,17 @@ export function registerBillingRoutes(
         res.json({ received: true });
         return;
       }
+      const handler = handlersByEvent[event.type];
+      if (handler) {
+        await handler({ stripe, event });
+      }
+
       const ttlSeconds = 60 * 60 * 24 * 30;
       await webhookRepo.write({
         eventId: event.id,
         receivedAt: new Date().toISOString(),
         expiresAt: Math.floor(Date.now() / 1000) + ttlSeconds,
       });
-
-      const handler = handlersByEvent[event.type];
-      if (handler) {
-        await handler({ stripe, event });
-      }
       res.json({ received: true });
     } catch (err) {
       console.error("Stripe webhook handler error", err);

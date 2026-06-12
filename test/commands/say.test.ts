@@ -144,7 +144,15 @@ describe("handleSayCommand", () => {
     const meeting = makeMeeting();
     mockedGetMeeting.mockReturnValue(meeting);
     mockedGetGuildLimits.mockResolvedValue({
-      subscription: { tier: "free", status: "free", source: "default" },
+      subscription: {
+        tier: "free",
+        status: "free",
+        source: "default",
+        billingSource: "free",
+        stripeTier: null,
+        grantTier: null,
+        activeGrant: null,
+      },
       limits: { liveVoiceEnabled: false, imagesEnabled: false },
     });
 
@@ -162,7 +170,15 @@ describe("handleSayCommand", () => {
     const meeting = makeMeeting();
     mockedGetMeeting.mockReturnValue(meeting);
     mockedGetGuildLimits.mockResolvedValue({
-      subscription: { tier: "basic", status: "active", source: "stripe" },
+      subscription: {
+        tier: "basic",
+        status: "active",
+        source: "stripe",
+        billingSource: "stripe",
+        stripeTier: "basic",
+        grantTier: null,
+        activeGrant: null,
+      },
       limits: { liveVoiceEnabled: true, imagesEnabled: true },
     });
 
@@ -186,7 +202,15 @@ describe("handleSayCommand", () => {
     const meeting = makeMeeting();
     mockedGetMeeting.mockReturnValue(meeting);
     mockedGetGuildLimits.mockResolvedValue({
-      subscription: { tier: "basic", status: "active", source: "stripe" },
+      subscription: {
+        tier: "basic",
+        status: "active",
+        source: "stripe",
+        billingSource: "stripe",
+        stripeTier: "basic",
+        grantTier: null,
+        activeGrant: null,
+      },
       limits: { liveVoiceEnabled: true, imagesEnabled: true },
     });
     mockedFetchUserSpeechSettings.mockResolvedValue({
@@ -224,7 +248,15 @@ describe("handleSayCommand", () => {
     const member = makeMember("voice-1");
     const interaction = makeInteraction(member, "hello");
     mockedGetGuildLimits.mockResolvedValue({
-      subscription: { tier: "basic", status: "active", source: "stripe" },
+      subscription: {
+        tier: "basic",
+        status: "active",
+        source: "stripe",
+        billingSource: "stripe",
+        stripeTier: "basic",
+        grantTier: null,
+        activeGrant: null,
+      },
       limits: {
         liveVoiceEnabled: true,
         imagesEnabled: true,
@@ -245,7 +277,7 @@ describe("handleSayCommand", () => {
 
     expect(mockedBuildChatTtsMonthlyLimitMessage).toHaveBeenCalledWith(
       expect.objectContaining({ allowed: false, remaining: 0 }),
-      {},
+      { compedTier: null },
     );
     expect(mockedBuildUpgradePrompt).toHaveBeenCalledWith(
       "monthly limit reached",
@@ -266,7 +298,15 @@ describe("handleSayCommand", () => {
     const meeting = makeMeeting(false);
     mockedGetMeeting.mockReturnValue(meeting);
     mockedGetGuildLimits.mockResolvedValue({
-      subscription: { tier: "basic", status: "active", source: "stripe" },
+      subscription: {
+        tier: "basic",
+        status: "active",
+        source: "stripe",
+        billingSource: "stripe",
+        stripeTier: "basic",
+        grantTier: null,
+        activeGrant: null,
+      },
       limits: {
         liveVoiceEnabled: true,
         imagesEnabled: true,
@@ -298,7 +338,15 @@ describe("handleSayCommand", () => {
     const meeting = makeMeeting();
     mockedGetMeeting.mockReturnValue(meeting);
     mockedGetGuildLimits.mockResolvedValue({
-      subscription: { tier: "basic", status: "active", source: "stripe" },
+      subscription: {
+        tier: "basic",
+        status: "active",
+        source: "stripe",
+        billingSource: "stripe",
+        stripeTier: "basic",
+        grantTier: null,
+        activeGrant: null,
+      },
       limits: { liveVoiceEnabled: true, imagesEnabled: true },
     });
 

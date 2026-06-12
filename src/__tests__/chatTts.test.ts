@@ -9,6 +9,18 @@ jest.mock("../services/userSpeechSettingsService", () => ({
 }));
 
 jest.mock("../services/subscriptionService", () => ({
+  getGuildLimits: jest.fn(async () => ({
+    subscription: {
+      tier: "basic",
+      status: "active",
+      source: "stripe",
+      billingSource: "stripe",
+      stripeTier: "basic",
+      grantTier: null,
+      activeGrant: null,
+    },
+    limits: { maxChatTtsMessagesMonthly: 1000 },
+  })),
   getLimitsForTier: jest.fn(() => ({ maxChatTtsMessagesMonthly: 1000 })),
 }));
 
