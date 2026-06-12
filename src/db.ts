@@ -32,6 +32,7 @@ import {
   InteractionReceipt,
   SuggestionHistoryEntry,
   UserSpeechSettings,
+  ChatTtsMonthlyUsage,
   DictionaryEntry,
   ConfigOverrideRecord,
   AskConversationShareRecord,
@@ -657,6 +658,96 @@ export async function deleteUserSpeechSettings(
   };
   const command = new DeleteItemCommand(params);
   await dynamoDbClient.send(command);
+}
+
+// Chat TTS Monthly Usage
+export async function getChatTtsMonthlyUsage(
+  guildId: string,
+  period: string,
+): Promise<ChatTtsMonthlyUsage | undefined> {
+  const params = {
+    TableName: tableName("ChatTtsUsageTable"),
+    Key: marshall({ guildId, period }),
+    ConsistentRead: true,
+  };
+  const command = new GetItemCommand(params);
+  const result = await dynamoDbClient.send(command);
+  if (result.Item) {
+    return unmarshall(result.Item) as ChatTtsMonthlyUsage;
+  }
+  return undefined;
+}
+
+export async function tryReserveChatTtsMonthlyUsage(
+  usage: ChatTtsMonthlyUsage,
+  maxMessages: number,
+): Promise<ChatTtsMonthlyUsage | undefined> {
+  const params: UpdateItemCommand["input"] = {
+    TableName: tableName("ChatTtsUsageTable"),
+    Key: marshall({ guildId: usage.guildId, period: usage.period }),
+    UpdateExpression:
+      "SET #createdAt = if_not_exists(#createdAt, :createdAt), #updatedAt = :updatedAt, #expiresAt = :expiresAt ADD #acceptedMessages :one",
+    ConditionExpression:
+      "attribute_not_exists(#acceptedMessages) OR #acceptedMessages < :maxMessages",
+    ExpressionAttributeNames: {
+      "#acceptedMessages": "acceptedMessages",
+      "#createdAt": "createdAt",
+      "#updatedAt": "updatedAt",
+      "#expiresAt": "expiresAt",
+    },
+    ExpressionAttributeValues: marshall({
+      ":createdAt": usage.createdAt,
+      ":updatedAt": usage.updatedAt,
+      ":expiresAt": usage.expiresAt,
+      ":one": 1,
+      ":maxMessages": maxMessages,
+    }),
+    ReturnValues: "ALL_NEW",
+  };
+  const command = new UpdateItemCommand(params);
+  try {
+    const result = await dynamoDbClient.send(command);
+    return result.Attributes
+      ? (unmarshall(result.Attributes) as ChatTtsMonthlyUsage)
+      : undefined;
+  } catch (error) {
+    if (isConditionalCheckFailed(error)) {
+      return undefined;
+    }
+    throw error;
+  }
+}
+
+export async function releaseChatTtsMonthlyUsageReservation(
+  guildId: string,
+  period: string,
+  updatedAt: string,
+): Promise<void> {
+  const params: UpdateItemCommand["input"] = {
+    TableName: tableName("ChatTtsUsageTable"),
+    Key: marshall({ guildId, period }),
+    UpdateExpression:
+      "SET #updatedAt = :updatedAt ADD #acceptedMessages :minusOne",
+    ConditionExpression: "#acceptedMessages >= :one",
+    ExpressionAttributeNames: {
+      "#acceptedMessages": "acceptedMessages",
+      "#updatedAt": "updatedAt",
+    },
+    ExpressionAttributeValues: marshall({
+      ":updatedAt": updatedAt,
+      ":minusOne": -1,
+      ":one": 1,
+    }),
+  };
+  const command = new UpdateItemCommand(params);
+  try {
+    await dynamoDbClient.send(command);
+  } catch (error) {
+    if (isConditionalCheckFailed(error)) {
+      return;
+    }
+    throw error;
+  }
 }
 
 // Dictionary operations

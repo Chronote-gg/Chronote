@@ -42,6 +42,7 @@ TTS-only mode must guarantee these behaviors:
 - Do not pass ambient chat history to an LLM for TTS. Only the specific text selected for speech may be sent to the TTS provider.
 - Do not enable live voice responses or live voice commands in the same session.
 - If the bot can update its nickname/status, show that it is in a non-recording TTS mode.
+- End idle TTS-only sessions automatically so the bot does not remain connected without speech activity.
 
 ## Recommended Data Model
 
@@ -69,8 +70,10 @@ Add or refine these keys:
 - `chatTts.announceSpeaker.enabled`: new boolean, default `true` for normal chat TTS, configurable globally/server-side.
 - `chatTts.announceSpeaker.template`: optional string, default `{name} said: {message}` if templating is worth the extra UI surface.
 - `chatTts.statusNickname.enabled`: new boolean, default `true` if the bot has permission.
-- `chatTts.statusNickname.ttsOnly`: optional string, for example `Chronote (TTS only)`.
-- `chatTts.statusNickname.recording`: optional string, for example `Chronote (Recording)`.
+- `chatTts.statusNickname.ttsOnly`: optional suffix, for example `(TTS Only)`.
+- `chatTts.statusNickname.recording`: optional suffix, for example `(Recording)`.
+- `CHAT_TTS_TTS_ONLY_IDLE_TIMEOUT_MS`: environment-level idle timeout for TTS-only sessions.
+- `CHAT_TTS_MONTHLY_*_MESSAGE_LIMIT`: environment-level monthly accepted-message caps by tier.
 - `liveVoice.commands.enabled`: existing, but force off in TTS-only runtime.
 - `liveVoice.enabled`: existing, but force off in TTS-only runtime.
 
@@ -203,6 +206,8 @@ Automatic TTS-only sessions should use the existing config system instead of cre
 - `notes.channelId` resolves the status/notification text channel for an auto-started TTS-only session.
 - Auto-record remains higher priority. If auto-record starts for a voice join, a separate TTS-only session should not start.
 - When a recorded meeting is active, automatic chat TTS stays inside the recorded meeting and keeps the current recording/transcript behavior.
+- TTS-only sessions reset an inactivity timer when chat-to-speech activity is accepted or spoken, then disconnect with a clear no-recording notice after the idle timeout.
+- Chat-to-speech accepted messages are counted in a monthly DynamoDB usage record so capped tiers get a hard stop and upgrade/support CTA when the cap is reached.
 
 Open UX follow-up: the backend shape now behaves like channel automation, but the Discord command and website UX should still decide whether this appears under `/tts`, `/autorecord`, or a combined "voice automation" surface.
 
@@ -211,6 +216,8 @@ Open UX follow-up: the backend shape now behaves like channel automation, but th
 Unit tests:
 
 - TTS-only initialization does not call recording or voice subscription helpers.
+- TTS-only idle timeout arms, resets on activity, and ends the session.
+- Chat TTS monthly usage caps allow below-limit messages, block at the limit, and release a reserved count if the queue rejects the message.
 - Meeting initialization still records and subscribes normally.
 - TTS queue does not write PCM to a recording stream when `recordBotAudio` is false.
 - Chat TTS prefixes messages with the effective display name when configured.

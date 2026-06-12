@@ -9,9 +9,20 @@ import { getMeeting, initializeMeeting } from "../meetings";
 import { createTtsQueue } from "../ttsQueue";
 import { config } from "../services/configService";
 import { fetchUserSpeechSettings } from "../services/userSpeechSettingsService";
-import { chatTtsDropped, chatTtsEnqueued } from "../metrics";
+import {
+  chatTtsDropped,
+  chatTtsEnqueued,
+  chatTtsMonthlyLimitBlocked,
+} from "../metrics";
 import { buildUpgradePrompt } from "../utils/upgradePrompt";
 import { getGuildLimits } from "../services/subscriptionService";
+import {
+  buildChatTtsMonthlyLimitMessage,
+  checkChatTtsMessageUsageLimit,
+  releaseChatTtsMessageUsageReservation,
+  reserveChatTtsMessageUsage,
+  type ChatTtsUsageReservation,
+} from "../services/chatTtsUsageService";
 import {
   formatParticipantLabel,
   formatUserMention,
@@ -279,6 +290,7 @@ async function requireQueue(
 async function enqueueOrReply(
   interaction: ChatInputCommandInteraction,
   queue: ReturnType<typeof ensureTtsQueue>,
+  usageReservation: ChatTtsUsageReservation,
   payload: {
     text: string;
     voice: string;
@@ -297,6 +309,12 @@ async function enqueueOrReply(
   });
 
   if (!enqueued) {
+    if (usageReservation.reserved) {
+      await releaseChatTtsMessageUsageReservation({
+        guildId: usageReservation.guildId,
+        period: usageReservation.period,
+      });
+    }
     chatTtsDropped.inc();
     await interaction.reply({
       content: "The speech queue is full right now. Try again in a moment.",
@@ -307,6 +325,17 @@ async function enqueueOrReply(
 
   chatTtsEnqueued.inc();
   return true;
+}
+
+async function replyWithMonthlyLimit(
+  interaction: ChatInputCommandInteraction,
+  status: Parameters<typeof buildChatTtsMonthlyLimitMessage>[0],
+  options: { finalAcceptedMessage?: boolean } = {},
+) {
+  chatTtsMonthlyLimitBlocked.inc();
+  await interaction.reply(
+    buildUpgradePrompt(buildChatTtsMonthlyLimitMessage(status, options)),
+  );
 }
 
 export async function handleSayCommand(
@@ -329,6 +358,13 @@ export async function handleSayCommand(
 
   const message = await requireSayMessage(interaction);
   if (!message) return;
+
+  const limit = limitsResult.limits.maxChatTtsMessagesMonthly;
+  const usageStatus = await checkChatTtsMessageUsageLimit({ guildId, limit });
+  if (!usageStatus.allowed) {
+    await replyWithMonthlyLimit(interaction, usageStatus);
+    return;
+  }
 
   const session = await resolveSaySession({
     interaction,
@@ -364,7 +400,16 @@ export async function handleSayCommand(
     context: "say",
   });
 
-  const enqueued = await enqueueOrReply(interaction, queue, {
+  const usageReservation = await reserveChatTtsMessageUsage({
+    guildId,
+    limit,
+  });
+  if (!usageReservation.allowed) {
+    await replyWithMonthlyLimit(interaction, usageReservation);
+    return;
+  }
+
+  const enqueued = await enqueueOrReply(interaction, queue, usageReservation, {
     text: speechText,
     voice,
     userId: interaction.user.id,
@@ -387,6 +432,20 @@ export async function handleSayCommand(
       timestamp: new Date(interaction.createdTimestamp).toISOString(),
     };
     meeting.chatLog.push(entry);
+  }
+
+  if (
+    usageReservation.limit !== undefined &&
+    usageReservation.remaining === 0
+  ) {
+    await interaction.reply(
+      buildUpgradePrompt(
+        buildChatTtsMonthlyLimitMessage(usageReservation, {
+          finalAcceptedMessage: true,
+        }),
+      ),
+    );
+    return;
   }
 
   await interaction.deferReply({ ephemeral: true });

@@ -76,6 +76,10 @@ export function deleteMeeting(guildId: string) {
     clearInterval(meeting.leaseHeartbeatTimer);
     meeting.leaseHeartbeatTimer = undefined;
   }
+  if (meeting?.ttsOnlyIdleTimer) {
+    clearTimeout(meeting.ttsOnlyIdleTimer);
+    meeting.ttsOnlyIdleTimer = undefined;
+  }
   meetings.delete(guildId);
 }
 
@@ -127,6 +131,28 @@ export interface MeetingInitOptions {
 
 const DISCORD_NICKNAME_MAX_LENGTH = 32;
 
+function buildVoiceSessionNickname(displayName: string, suffix: string) {
+  const trimmedName = displayName.trim();
+  const trimmedSuffix = suffix.trim();
+  if (!trimmedName || !trimmedSuffix) return undefined;
+  if (trimmedName.endsWith(trimmedSuffix)) {
+    return trimmedName.slice(0, DISCORD_NICKNAME_MAX_LENGTH);
+  }
+
+  const separator = " ";
+  const maxNameLength =
+    DISCORD_NICKNAME_MAX_LENGTH - trimmedSuffix.length - separator.length;
+  if (maxNameLength <= 0) {
+    return trimmedSuffix.slice(0, DISCORD_NICKNAME_MAX_LENGTH);
+  }
+
+  const baseName = trimmedName.slice(0, maxNameLength).trimEnd();
+  return `${baseName}${separator}${trimmedSuffix}`.slice(
+    0,
+    DISCORD_NICKNAME_MAX_LENGTH,
+  );
+}
+
 async function applyVoiceSessionNickname(meeting: MeetingData) {
   try {
     const snapshot = await resolveConfigSnapshot({
@@ -144,11 +170,17 @@ async function applyVoiceSessionNickname(meeting: MeetingData) {
       meeting.sessionMode === "tts_only"
         ? CONFIG_KEYS.chatTts.statusNicknameTtsOnly
         : CONFIG_KEYS.chatTts.statusNicknameRecording;
-    const nickname = getSnapshotString(snapshot, nicknameKey, { trim: true });
+    const nicknameSuffix = getSnapshotString(snapshot, nicknameKey, {
+      trim: true,
+    });
     const botMember = meeting.guild.members.me;
-    if (!nickname || !botMember) return;
+    if (!nicknameSuffix || !botMember) return;
 
-    const nextNickname = nickname.slice(0, DISCORD_NICKNAME_MAX_LENGTH);
+    const nextNickname = buildVoiceSessionNickname(
+      botMember.displayName,
+      nicknameSuffix,
+    );
+    if (!nextNickname) return;
     if (botMember.nickname === nextNickname) return;
 
     meeting.botNicknameBeforeSession = botMember.nickname ?? null;
@@ -171,12 +203,62 @@ export async function restoreVoiceSessionNickname(meeting: MeetingData) {
   }
 }
 
+function formatIdleTimeoutDuration(timeoutMs: number) {
+  const totalSeconds = Math.max(Math.round(timeoutMs / 1000), 1);
+  if (totalSeconds < 60) {
+    return `${totalSeconds} second${totalSeconds === 1 ? "" : "s"}`;
+  }
+  const totalMinutes = Math.max(Math.round(totalSeconds / 60), 1);
+  return `${totalMinutes} minute${totalMinutes === 1 ? "" : "s"}`;
+}
+
+function clearTtsOnlyIdleTimeout(meeting: MeetingData) {
+  if (!meeting.ttsOnlyIdleTimer) return;
+  clearTimeout(meeting.ttsOnlyIdleTimer);
+  meeting.ttsOnlyIdleTimer = undefined;
+}
+
+export function resetTtsOnlyIdleTimeout(meeting: MeetingData) {
+  clearTtsOnlyIdleTimeout(meeting);
+  const timeoutMs = config.chatTts.ttsOnlyIdleTimeoutMs ?? 0;
+  if (
+    meeting.sessionMode !== "tts_only" ||
+    meeting.finishing ||
+    meeting.finished ||
+    !Number.isFinite(timeoutMs) ||
+    timeoutMs <= 0
+  ) {
+    return;
+  }
+
+  meeting.ttsOnlyIdleTimer = setTimeout(() => {
+    void (async () => {
+      if (
+        meeting.finishing ||
+        meeting.finished ||
+        meetings.get(meeting.guildId) !== meeting
+      ) {
+        return;
+      }
+      await endTtsOnlySession(meeting);
+      await Promise.resolve(
+        meeting.textChannel.send(
+          `TTS-only session ended after ${formatIdleTimeoutDuration(timeoutMs)} without speech activity. No recording or transcription was active.`,
+        ),
+      ).catch((error) => {
+        console.warn("Failed to send TTS-only idle timeout notice.", error);
+      });
+    })();
+  }, timeoutMs);
+}
+
 export async function endTtsOnlySession(meeting: MeetingData) {
   if (meeting.finishing || meeting.finished) return;
   if (meeting.timeoutTimer) {
     clearTimeout(meeting.timeoutTimer);
     meeting.timeoutTimer = undefined;
   }
+  clearTtsOnlyIdleTimeout(meeting);
   meeting.finishing = true;
   meeting.endTime = new Date();
   meeting.ttsQueue?.stopAndClear();
@@ -338,6 +420,10 @@ export async function initializeMeeting(
     leaseOwnerInstanceId,
   };
 
+  if (meeting.sessionMode === "tts_only") {
+    meeting.resetTtsOnlyIdleTimer = () => resetTtsOnlyIdleTimeout(meeting);
+  }
+
   if (liveAudioPlayer) {
     meeting.ttsQueue = createTtsQueue(meeting, liveAudioPlayer);
   }
@@ -452,6 +538,7 @@ export async function initializeMeeting(
   }
 
   await applyVoiceSessionNickname(meeting);
+  resetTtsOnlyIdleTimeout(meeting);
 
   if (meeting.captureAudio) {
     try {

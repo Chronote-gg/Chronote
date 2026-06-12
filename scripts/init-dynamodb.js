@@ -185,6 +185,18 @@ const tables = [
     BillingMode: "PAY_PER_REQUEST",
   },
   {
+    TableName: "ChatTtsUsageTable",
+    KeySchema: [
+      { AttributeName: "guildId", KeyType: "HASH" },
+      { AttributeName: "period", KeyType: "RANGE" },
+    ],
+    AttributeDefinitions: [
+      { AttributeName: "guildId", AttributeType: "S" },
+      { AttributeName: "period", AttributeType: "S" },
+    ],
+    BillingMode: "PAY_PER_REQUEST",
+  },
+  {
     TableName: "ConfigOverridesTable",
     KeySchema: [
       { AttributeName: "scopeId", KeyType: "HASH" },
@@ -412,14 +424,15 @@ async function createTables() {
     await ensureFeedbackIndexExists();
   }
 
-  await ensureMeetingControlCommandTtlEnabled();
+  await ensureTableTtlEnabled("MeetingControlCommandTable");
+  await ensureTableTtlEnabled("ChatTtsUsageTable");
 
   console.log("\nDynamoDB initialization complete!");
   console.log("You can view your tables at http://localhost:8001");
 }
 
-async function ensureMeetingControlCommandTtlEnabled() {
-  const commandTableName = tableName("MeetingControlCommandTable");
+async function ensureTableTtlEnabled(tableBaseName) {
+  const commandTableName = tableName(tableBaseName);
 
   try {
     const result = await client.send(

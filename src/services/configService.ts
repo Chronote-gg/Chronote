@@ -18,6 +18,12 @@ const parseBoolean = (value: string | undefined, fallback: boolean) => {
   return value === "true";
 };
 
+const parseOptionalNonNegativeInteger = (value: string | undefined) => {
+  if (value === undefined || value.trim() === "") return undefined;
+  const parsed = parseInt(value, 10);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : undefined;
+};
+
 /**
  * Centralized configuration service
  * All environment variable access should go through this service
@@ -156,6 +162,21 @@ class ConfigService {
     maxChars: parseInt(process.env.CHAT_TTS_MAX_CHARS || "400", 10),
     queueLimit: parseInt(process.env.CHAT_TTS_QUEUE_LIMIT || "10", 10),
     defaultVoice: process.env.CHAT_TTS_DEFAULT_VOICE || "alloy",
+    ttsOnlyIdleTimeoutMs: parseInt(
+      process.env.CHAT_TTS_TTS_ONLY_IDLE_TIMEOUT_MS || `${10 * 60 * 1000}`,
+      10,
+    ),
+    monthlyMessageLimitFree: parseInt(
+      process.env.CHAT_TTS_MONTHLY_FREE_MESSAGE_LIMIT || "0",
+      10,
+    ),
+    monthlyMessageLimitBasic: parseInt(
+      process.env.CHAT_TTS_MONTHLY_BASIC_MESSAGE_LIMIT || "1000",
+      10,
+    ),
+    monthlyMessageLimitPro: parseOptionalNonNegativeInteger(
+      process.env.CHAT_TTS_MONTHLY_PRO_MESSAGE_LIMIT,
+    ),
   };
 
   // Ask/Recall configuration

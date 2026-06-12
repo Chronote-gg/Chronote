@@ -8,6 +8,7 @@ export interface TierLimits {
   maxMeetingDurationPretty?: string;
   maxMeetingMinutesRolling?: number;
   maxAskMeetings?: number;
+  maxChatTtsMessagesMonthly?: number;
   liveVoiceEnabled: boolean;
   imagesEnabled: boolean;
 }
@@ -18,12 +19,19 @@ export interface ResolvedSubscription {
   source: "stripe" | "forced" | "default";
 }
 
+const chatTtsLimits = {
+  free: config.chatTts?.monthlyMessageLimitFree ?? 0,
+  basic: config.chatTts?.monthlyMessageLimitBasic ?? 1000,
+  pro: config.chatTts?.monthlyMessageLimitPro,
+};
+
 const DEFAULT_LIMITS: Record<Tier, TierLimits> = {
   free: {
     maxMeetingDurationMs: 90 * 60 * 1000, // 90 minutes
     maxMeetingDurationPretty: "90 minutes",
     maxMeetingMinutesRolling: 4 * 60,
     maxAskMeetings: 5,
+    maxChatTtsMessagesMonthly: chatTtsLimits.free,
     liveVoiceEnabled: false,
     imagesEnabled: false,
   },
@@ -32,6 +40,7 @@ const DEFAULT_LIMITS: Record<Tier, TierLimits> = {
     maxMeetingDurationPretty: "2 hours",
     maxMeetingMinutesRolling: 20 * 60,
     maxAskMeetings: 25,
+    maxChatTtsMessagesMonthly: chatTtsLimits.basic,
     liveVoiceEnabled: true,
     imagesEnabled: true,
   },
@@ -40,6 +49,7 @@ const DEFAULT_LIMITS: Record<Tier, TierLimits> = {
     maxMeetingDurationPretty: "2 hours",
     maxMeetingMinutesRolling: undefined,
     maxAskMeetings: 100,
+    maxChatTtsMessagesMonthly: chatTtsLimits.pro,
     liveVoiceEnabled: true,
     imagesEnabled: true,
   },

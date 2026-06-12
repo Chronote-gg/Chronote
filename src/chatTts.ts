@@ -3,9 +3,23 @@ import { config } from "./services/configService";
 import type { MeetingData } from "./types/meeting-data";
 import type { ChatEntry } from "./types/chat";
 import { fetchUserSpeechSettings } from "./services/userSpeechSettingsService";
-import { chatTtsDropped, chatTtsEnqueued } from "./metrics";
+import {
+  chatTtsDropped,
+  chatTtsEnqueued,
+  chatTtsMonthlyLimitBlocked,
+} from "./metrics";
 import { resolveTtsVoice } from "./utils/ttsVoices";
 import { formatParticipantLabel } from "./utils/participants";
+import {
+  getGuildLimits,
+  getLimitsForTier,
+} from "./services/subscriptionService";
+import {
+  buildChatTtsMonthlyLimitTextOnly,
+  releaseChatTtsMessageUsageReservation,
+  reserveChatTtsMessageUsage,
+  type ChatTtsUsageReservation,
+} from "./services/chatTtsUsageService";
 import {
   buildTtsSpeechText,
   resolveChatTtsSpeakerPrefixMode,
@@ -21,6 +35,20 @@ async function resolveUserSettings(meeting: MeetingData, userId: string) {
   const settings = await fetchUserSpeechSettings(meeting.guildId, userId);
   meeting.chatTtsUserSettings.set(userId, settings ?? null);
   return settings;
+}
+
+async function sendMonthlyLimitNotice(
+  meeting: MeetingData,
+  status: ChatTtsUsageReservation,
+  options: { finalAcceptedMessage?: boolean } = {},
+) {
+  if (meeting.chatTtsMonthlyLimitNoticeSent) return;
+  meeting.chatTtsMonthlyLimitNoticeSent = true;
+  await Promise.resolve(
+    meeting.textChannel.send(buildChatTtsMonthlyLimitTextOnly(status, options)),
+  ).catch((error) => {
+    console.warn("Failed to send chat TTS monthly limit notice.", error);
+  });
 }
 
 export async function maybeSpeakChatMessage(
@@ -63,6 +91,20 @@ export async function maybeSpeakChatMessage(
     context: "chat",
   });
 
+  const limits = meeting.subscriptionTier
+    ? getLimitsForTier(meeting.subscriptionTier)
+    : (await getGuildLimits(meeting.guildId)).limits;
+  const usageReservation = await reserveChatTtsMessageUsage({
+    guildId: meeting.guildId,
+    limit: limits.maxChatTtsMessagesMonthly,
+  });
+  if (!usageReservation.allowed) {
+    chatTtsDropped.inc();
+    chatTtsMonthlyLimitBlocked.inc();
+    await sendMonthlyLimitNotice(meeting, usageReservation);
+    return;
+  }
+
   const enqueued = meeting.ttsQueue.enqueue({
     text: speechText,
     voice,
@@ -73,6 +115,12 @@ export async function maybeSpeakChatMessage(
   });
 
   if (!enqueued) {
+    if (usageReservation.reserved) {
+      await releaseChatTtsMessageUsageReservation({
+        guildId: usageReservation.guildId,
+        period: usageReservation.period,
+      });
+    }
     chatTtsDropped.inc();
     console.warn(
       `Chat TTS queue full, dropping message ${message.id} from ${message.author.id}`,
@@ -82,4 +130,12 @@ export async function maybeSpeakChatMessage(
 
   chatTtsEnqueued.inc();
   entry.source = "chat_tts";
+  if (
+    usageReservation.limit !== undefined &&
+    usageReservation.remaining === 0
+  ) {
+    await sendMonthlyLimitNotice(meeting, usageReservation, {
+      finalAcceptedMessage: true,
+    });
+  }
 }

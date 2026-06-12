@@ -78,6 +78,9 @@ export interface MeetingData {
   chatTtsSpeakerPrefixMode?: ChatTtsSpeakerPrefixMode;
   chatTtsUserSettings?: Map<string, UserSpeechSettings | null>;
   ttsQueue?: TtsQueue;
+  ttsOnlyIdleTimer?: ReturnType<typeof setTimeout>;
+  resetTtsOnlyIdleTimer?: () => void;
+  chatTtsMonthlyLimitNoticeSent?: boolean;
   botNicknameBeforeSession?: string | null;
   botNicknameChanged?: boolean;
 
