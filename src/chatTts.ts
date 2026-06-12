@@ -51,27 +51,33 @@ async function sendMonthlyLimitNotice(
   });
 }
 
-export async function maybeSpeakChatMessage(
+type ChatTtsPlayback = {
+  queue: NonNullable<MeetingData["ttsQueue"]>;
+  text: string;
+  voice: string;
+  volumePercent?: number;
+};
+
+async function resolveChatTtsPlayback(
   meeting: MeetingData,
   message: Message,
   entry: ChatEntry,
-): Promise<void> {
-  if (!meeting.chatTtsEnabled) return;
-  if (!meeting.ttsQueue) return;
-  if (!meeting.voiceChannel.members.has(message.author.id)) return;
+): Promise<ChatTtsPlayback | null> {
+  if (!meeting.chatTtsEnabled) return null;
+  if (!meeting.ttsQueue) return null;
+  if (!meeting.voiceChannel.members.has(message.author.id)) return null;
 
   const trimmed = message.content.trim();
-  if (!trimmed) return;
+  if (!trimmed) return null;
 
   const settings = await resolveUserSettings(meeting, message.author.id);
-  if (settings?.chatTtsDisabled) return;
+  if (settings?.chatTtsDisabled) return null;
 
   const maxChars = config.chatTts.maxChars;
   const text =
     maxChars > 0 && trimmed.length > maxChars
       ? trimmed.slice(0, maxChars)
       : trimmed;
-
   const meetingDefault = meeting.chatTtsVoice ?? config.chatTts.defaultVoice;
   const voice = resolveTtsVoice(settings?.chatTtsVoice, meetingDefault);
   const prefixMode = resolveChatTtsSpeakerPrefixMode(
@@ -84,19 +90,63 @@ export async function maybeSpeakChatMessage(
       includeUsername: false,
       fallbackName: message.author.username,
     });
-  const speechText = buildTtsSpeechText({
-    message: text,
-    speakerName,
-    prefixMode,
-    context: "chat",
-  });
 
+  return {
+    queue: meeting.ttsQueue,
+    text: buildTtsSpeechText({
+      message: text,
+      speakerName,
+      prefixMode,
+      context: "chat",
+    }),
+    voice,
+    volumePercent: settings?.chatTtsVolumePercent,
+  };
+}
+
+async function resolveMonthlyMessageLimit(meeting: MeetingData) {
   const limits = meeting.subscriptionTier
     ? getLimitsForTier(meeting.subscriptionTier)
     : (await getGuildLimits(meeting.guildId)).limits;
+  return limits.maxChatTtsMessagesMonthly;
+}
+
+async function releaseReservationIfNeeded(
+  usageReservation: ChatTtsUsageReservation,
+) {
+  if (!usageReservation.reserved) return;
+  await releaseChatTtsMessageUsageReservation({
+    guildId: usageReservation.guildId,
+    period: usageReservation.period,
+  });
+}
+
+async function sendFinalMonthlyLimitNoticeIfNeeded(
+  meeting: MeetingData,
+  usageReservation: ChatTtsUsageReservation,
+) {
+  if (
+    usageReservation.limit === undefined ||
+    usageReservation.remaining !== 0
+  ) {
+    return;
+  }
+  await sendMonthlyLimitNotice(meeting, usageReservation, {
+    finalAcceptedMessage: true,
+  });
+}
+
+export async function maybeSpeakChatMessage(
+  meeting: MeetingData,
+  message: Message,
+  entry: ChatEntry,
+): Promise<void> {
+  const playback = await resolveChatTtsPlayback(meeting, message, entry);
+  if (!playback) return;
+
   const usageReservation = await reserveChatTtsMessageUsage({
     guildId: meeting.guildId,
-    limit: limits.maxChatTtsMessagesMonthly,
+    limit: await resolveMonthlyMessageLimit(meeting),
   });
   if (!usageReservation.allowed) {
     chatTtsDropped.inc();
@@ -105,22 +155,17 @@ export async function maybeSpeakChatMessage(
     return;
   }
 
-  const enqueued = meeting.ttsQueue.enqueue({
-    text: speechText,
-    voice,
+  const enqueued = playback.queue.enqueue({
+    text: playback.text,
+    voice: playback.voice,
     userId: message.author.id,
     source: "chat_tts",
     messageId: message.id,
-    volumePercent: settings?.chatTtsVolumePercent,
+    volumePercent: playback.volumePercent,
   });
 
   if (!enqueued) {
-    if (usageReservation.reserved) {
-      await releaseChatTtsMessageUsageReservation({
-        guildId: usageReservation.guildId,
-        period: usageReservation.period,
-      });
-    }
+    await releaseReservationIfNeeded(usageReservation);
     chatTtsDropped.inc();
     console.warn(
       `Chat TTS queue full, dropping message ${message.id} from ${message.author.id}`,
@@ -130,12 +175,5 @@ export async function maybeSpeakChatMessage(
 
   chatTtsEnqueued.inc();
   entry.source = "chat_tts";
-  if (
-    usageReservation.limit !== undefined &&
-    usageReservation.remaining === 0
-  ) {
-    await sendMonthlyLimitNotice(meeting, usageReservation, {
-      finalAcceptedMessage: true,
-    });
-  }
+  await sendFinalMonthlyLimitNoticeIfNeeded(meeting, usageReservation);
 }
