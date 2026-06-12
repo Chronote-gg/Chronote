@@ -28,7 +28,7 @@ While a recorded meeting is active, Chronote captures three streams of data:
 
 During capture, the meeting embed stays pinned with buttons for **End Meeting**, **Edit Tags**, and a link to the **Live Transcript** on the web portal (if configured).
 
-TTS-only sessions skip capture entirely. Chronote does not subscribe to user voice, record bot audio, transcribe speech, store chat logs, generate notes, or upload meeting artifacts. The bot leaves when the voice channel empties or when an authorized user runs `/tts stop` or `/leave`.
+TTS-only sessions skip capture entirely. Chronote does not subscribe to user voice, record bot audio, transcribe speech, store chat logs, generate notes, or upload meeting artifacts. The bot leaves when the voice channel empties, after a period without spoken TTS activity, or when an authorized user runs `/tts stop` or `/leave`.
 
 ## Stage 3: Process
 

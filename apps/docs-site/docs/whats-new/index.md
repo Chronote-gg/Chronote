@@ -49,6 +49,7 @@ Notable product changes for Chronote users. For the full changelog, see the [Git
 - Set your spoken name, speaker prefix mode, and volume from `/tts`.
 - Use `/say` for one-off messages without enabling ongoing TTS.
 - Enable TTS-only channel startup so Chronote can speak chat messages without recording, transcription, notes, chat logs, or meeting artifacts.
+- TTS-only sessions now clean themselves up after inactivity, and servers may see a monthly chat-to-speech cap notice when plan limits are reached.
 - Use `/leave` to make Chronote leave a TTS-only session immediately, or require explicit confirmation before ending a recorded meeting.
 
 ### Ask past meetings
