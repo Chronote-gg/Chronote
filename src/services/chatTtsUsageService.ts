@@ -32,6 +32,13 @@ function getRemaining(used: number, limit?: number) {
   return limit === undefined ? undefined : Math.max(limit - used, 0);
 }
 
+function formatOrdinal(value: number): string {
+  const mod100 = value % 100;
+  if (mod100 >= 11 && mod100 <= 13) return `${value.toLocaleString("en-US")}th`;
+  const suffix = ["th", "st", "nd", "rd"][Math.min(value % 10, 3)] ?? "th";
+  return `${value.toLocaleString("en-US")}${suffix}`;
+}
+
 function buildStatus(options: {
   guildId: string;
   period: string;
@@ -152,7 +159,7 @@ export function buildChatTtsMonthlyLimitMessage(
   const count = Math.max(status.used, status.limit ?? 0);
   const formattedCount = count.toLocaleString("en-US");
   if (options.finalAcceptedMessage) {
-    return `That was this server's ${formattedCount}th chat-to-speech message this month. Upgrade to keep using TTS and support our team.`;
+    return `That was this server's ${formatOrdinal(count)} chat-to-speech message this month. Upgrade to keep using TTS and support our team.`;
   }
   return `This server has spoken ${formattedCount} chat-to-speech messages out loud with Chronote this month. Upgrade to keep using TTS and support our team.`;
 }

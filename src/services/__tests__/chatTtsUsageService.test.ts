@@ -142,4 +142,22 @@ describe("chatTtsUsageService", () => {
     );
     expect(text).toContain("Upgrade: https://chronote.gg/upgrade");
   });
+
+  it("formats final accepted message counts as ordinals", () => {
+    const text = buildChatTtsMonthlyLimitTextOnly(
+      {
+        allowed: true,
+        guildId: "guild-1",
+        period: "2026-06",
+        limit: 1001,
+        used: 1001,
+        remaining: 0,
+      },
+      { finalAcceptedMessage: true },
+    );
+
+    expect(text).toContain(
+      "That was this server's 1,001st chat-to-speech message this month.",
+    );
+  });
 });

@@ -166,14 +166,14 @@ class ConfigService {
       process.env.CHAT_TTS_TTS_ONLY_IDLE_TIMEOUT_MS || `${10 * 60 * 1000}`,
       10,
     ),
-    monthlyMessageLimitFree: parseInt(
-      process.env.CHAT_TTS_MONTHLY_FREE_MESSAGE_LIMIT || "0",
-      10,
-    ),
-    monthlyMessageLimitBasic: parseInt(
-      process.env.CHAT_TTS_MONTHLY_BASIC_MESSAGE_LIMIT || "1000",
-      10,
-    ),
+    monthlyMessageLimitFree:
+      parseOptionalNonNegativeInteger(
+        process.env.CHAT_TTS_MONTHLY_FREE_MESSAGE_LIMIT,
+      ) ?? 0,
+    monthlyMessageLimitBasic:
+      parseOptionalNonNegativeInteger(
+        process.env.CHAT_TTS_MONTHLY_BASIC_MESSAGE_LIMIT,
+      ) ?? 1000,
     monthlyMessageLimitPro: parseOptionalNonNegativeInteger(
       process.env.CHAT_TTS_MONTHLY_PRO_MESSAGE_LIMIT,
     ),

@@ -18,7 +18,6 @@ import { buildUpgradePrompt } from "../utils/upgradePrompt";
 import { getGuildLimits } from "../services/subscriptionService";
 import {
   buildChatTtsMonthlyLimitMessage,
-  checkChatTtsMessageUsageLimit,
   releaseChatTtsMessageUsageReservation,
   reserveChatTtsMessageUsage,
   type ChatTtsUsageReservation,
@@ -324,12 +323,7 @@ async function enqueueOrReply(
   });
 
   if (!enqueued) {
-    if (usageReservation.reserved) {
-      await releaseChatTtsMessageUsageReservation({
-        guildId: usageReservation.guildId,
-        period: usageReservation.period,
-      });
-    }
+    await releaseMonthlyUsageReservationIfNeeded(usageReservation);
     chatTtsDropped.inc();
     await interaction.reply({
       content: "The speech queue is full right now. Try again in a moment.",
@@ -377,20 +371,6 @@ async function resolveSayInitialContext(
   return { guildId, limitsResult, member, message };
 }
 
-async function requireMonthlyCapacity(options: {
-  interaction: ChatInputCommandInteraction;
-  guildId: string;
-  limit?: number;
-}): Promise<boolean> {
-  const { interaction, guildId, limit } = options;
-  const usageStatus = await checkChatTtsMessageUsageLimit({ guildId, limit });
-  if (!usageStatus.allowed) {
-    await replyWithMonthlyLimit(interaction, usageStatus);
-    return false;
-  }
-  return true;
-}
-
 async function reserveMonthlyUsageOrReply(options: {
   interaction: ChatInputCommandInteraction;
   guildId: string;
@@ -403,6 +383,16 @@ async function reserveMonthlyUsageOrReply(options: {
     return null;
   }
   return usageReservation;
+}
+
+async function releaseMonthlyUsageReservationIfNeeded(
+  usageReservation: ChatTtsUsageReservation,
+) {
+  if (!usageReservation.reserved) return;
+  await releaseChatTtsMessageUsageReservation({
+    guildId: usageReservation.guildId,
+    period: usageReservation.period,
+  });
 }
 
 async function buildSayPlaybackPayload(options: {
@@ -496,12 +486,12 @@ export async function handleSayCommand(
   const { guildId, limitsResult, member, message } = initial;
   const limit = limitsResult.limits.maxChatTtsMessagesMonthly;
 
-  const hasMonthlyCapacity = await requireMonthlyCapacity({
+  const usageReservation = await reserveMonthlyUsageOrReply({
     interaction,
     guildId,
     limit,
   });
-  if (!hasMonthlyCapacity) return;
+  if (!usageReservation) return;
 
   const session = await resolveSaySession({
     interaction,
@@ -509,11 +499,17 @@ export async function handleSayCommand(
     member,
     limitsResult,
   });
-  if (!session) return;
+  if (!session) {
+    await releaseMonthlyUsageReservationIfNeeded(usageReservation);
+    return;
+  }
   const { meeting } = session;
 
   const queue = await requireQueue(interaction, meeting);
-  if (!queue) return;
+  if (!queue) {
+    await releaseMonthlyUsageReservationIfNeeded(usageReservation);
+    return;
+  }
 
   const payload = await buildSayPlaybackPayload({
     interaction,
@@ -521,13 +517,6 @@ export async function handleSayCommand(
     member,
     message,
   });
-
-  const usageReservation = await reserveMonthlyUsageOrReply({
-    interaction,
-    guildId,
-    limit,
-  });
-  if (!usageReservation) return;
 
   const enqueued = await enqueueOrReply(interaction, queue, usageReservation, {
     text: payload.text,
