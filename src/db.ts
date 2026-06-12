@@ -128,48 +128,78 @@ export async function listEntitlementGrants(params?: {
   status?: EntitlementGrantStatus;
   limit?: number;
 }): Promise<EntitlementGrant[]> {
-  const items: EntitlementGrant[] = [];
-  if (params?.guildId) {
-    const expressionAttributeNames: Record<string, string> = {
-      "#guildId": "guildId",
-    };
-    const expressionAttributeValues: Record<string, AttributeValue> = marshall({
-      ":guildId": params.guildId,
-      ...(params.status ? { ":status": params.status } : {}),
-    });
-    let exclusiveStartKey: Record<string, AttributeValue> | undefined;
-    do {
-      const command = new QueryCommand({
-        TableName: tableName("EntitlementGrantTable"),
-        IndexName: "GuildIdIndex",
-        KeyConditionExpression: "#guildId = :guildId",
-        ...(params.status
-          ? {
-              FilterExpression: "#status = :status",
-              ExpressionAttributeNames: {
-                ...expressionAttributeNames,
-                "#status": "status",
-              },
-            }
-          : { ExpressionAttributeNames: expressionAttributeNames }),
-        ExpressionAttributeValues: expressionAttributeValues,
-        ExclusiveStartKey: exclusiveStartKey,
-        Limit: params.limit ? params.limit - items.length : undefined,
-      });
-      const result = await dynamoDbClient.send(command);
-      items.push(
-        ...(result.Items ?? []).map(
-          (item) => unmarshall(item) as EntitlementGrant,
-        ),
-      );
-      exclusiveStartKey = result.LastEvaluatedKey;
-    } while (
-      exclusiveStartKey &&
-      (!params.limit || items.length < params.limit)
-    );
-    return params.limit ? items.slice(0, params.limit) : items;
-  }
+  return params?.guildId
+    ? queryEntitlementGrantsByGuild({ ...params, guildId: params.guildId })
+    : scanEntitlementGrants(params);
+}
 
+function applyEntitlementGrantLimit(
+  items: EntitlementGrant[],
+  limit?: number,
+): EntitlementGrant[] {
+  return limit ? items.slice(0, limit) : items;
+}
+
+function remainingEntitlementGrantLimit(
+  items: EntitlementGrant[],
+  limit?: number,
+): number | undefined {
+  return limit ? limit - items.length : undefined;
+}
+
+function unmarshallEntitlementGrantItems(
+  items?: Record<string, AttributeValue>[],
+): EntitlementGrant[] {
+  return (items ?? []).map((item) => unmarshall(item) as EntitlementGrant);
+}
+
+async function queryEntitlementGrantsByGuild(params: {
+  guildId: string;
+  status?: EntitlementGrantStatus;
+  limit?: number;
+}): Promise<EntitlementGrant[]> {
+  const items: EntitlementGrant[] = [];
+  const expressionAttributeNames: Record<string, string> = {
+    "#guildId": "guildId",
+  };
+  const expressionAttributeValues: Record<string, AttributeValue> = marshall({
+    ":guildId": params.guildId,
+    ...(params.status ? { ":status": params.status } : {}),
+  });
+  let exclusiveStartKey: Record<string, AttributeValue> | undefined;
+  do {
+    const command = new QueryCommand({
+      TableName: tableName("EntitlementGrantTable"),
+      IndexName: "GuildIdIndex",
+      KeyConditionExpression: "#guildId = :guildId",
+      ...(params.status
+        ? {
+            FilterExpression: "#status = :status",
+            ExpressionAttributeNames: {
+              ...expressionAttributeNames,
+              "#status": "status",
+            },
+          }
+        : { ExpressionAttributeNames: expressionAttributeNames }),
+      ExpressionAttributeValues: expressionAttributeValues,
+      ExclusiveStartKey: exclusiveStartKey,
+      Limit: remainingEntitlementGrantLimit(items, params.limit),
+    });
+    const result = await dynamoDbClient.send(command);
+    items.push(...unmarshallEntitlementGrantItems(result.Items));
+    exclusiveStartKey = result.LastEvaluatedKey;
+  } while (
+    exclusiveStartKey &&
+    remainingEntitlementGrantLimit(items, params.limit)
+  );
+  return applyEntitlementGrantLimit(items, params.limit);
+}
+
+async function scanEntitlementGrants(params?: {
+  status?: EntitlementGrantStatus;
+  limit?: number;
+}): Promise<EntitlementGrant[]> {
+  const items: EntitlementGrant[] = [];
   const expressionAttributeNames: Record<string, string> = {};
   let expressionAttributeValues: Record<string, AttributeValue> | undefined;
   let filterExpression: string | undefined;
@@ -188,20 +218,16 @@ export async function listEntitlementGrants(params?: {
         : undefined,
       ExpressionAttributeValues: expressionAttributeValues,
       ExclusiveStartKey: exclusiveStartKey,
-      Limit: params?.limit ? params.limit - items.length : undefined,
+      Limit: remainingEntitlementGrantLimit(items, params?.limit),
     });
     const result = await dynamoDbClient.send(command);
-    items.push(
-      ...(result.Items ?? []).map(
-        (item) => unmarshall(item) as EntitlementGrant,
-      ),
-    );
+    items.push(...unmarshallEntitlementGrantItems(result.Items));
     exclusiveStartKey = result.LastEvaluatedKey;
   } while (
     exclusiveStartKey &&
-    (!params?.limit || items.length < params.limit)
+    remainingEntitlementGrantLimit(items, params?.limit)
   );
-  return params?.limit ? items.slice(0, params.limit) : items;
+  return applyEntitlementGrantLimit(items, params?.limit);
 }
 
 export async function listActiveEntitlementGrantsForGuild(

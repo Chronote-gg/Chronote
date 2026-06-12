@@ -82,6 +82,8 @@ src/frontend/pages/Settings.tsx:handleSaveChannel
 src\frontend\pages\Settings.tsx:handleSaveChannel
 src/frontend/pages/AdminFeedback.tsx:AdminFeedback
 src\frontend\pages\AdminFeedback.tsx:AdminFeedback
+src/frontend/pages/AdminEntitlements.tsx:AdminEntitlements
+src\frontend\pages\AdminEntitlements.tsx:AdminEntitlements
 src/frontend/pages/UpgradeServerSelect.tsx:UpgradeServerSelect
 src\frontend\pages\UpgradeServerSelect.tsx:UpgradeServerSelect
 src/frontend/pages/Upgrade.tsx:Upgrade

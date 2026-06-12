@@ -101,21 +101,66 @@ function resolveCacheExpiresAt(activeGrantExpiresAt?: string) {
   return Math.min(defaultExpiresAt, grantExpiresAt);
 }
 
+function resolveForcedSubscription(): ResolvedSubscription | null {
+  const forced = config.subscription.forceTier;
+  if (forced !== "free" && forced !== "basic" && forced !== "pro") {
+    return null;
+  }
+  return {
+    tier: forced,
+    status: forced,
+    source: "forced",
+    billingSource: "forced",
+    stripeTier: null,
+    grantTier: null,
+    activeGrant: null,
+  };
+}
+
+function resolveBillingSource(params: {
+  effectiveTier: Tier;
+  stripeTier: Tier | null;
+  grantTier: "basic" | "pro" | null;
+}): BillingSource {
+  const { effectiveTier, stripeTier, grantTier } = params;
+  if (!grantTier) return stripeTier ? "stripe" : "free";
+  if (effectiveTier === grantTier && grantTier !== stripeTier) {
+    return "manual_comp";
+  }
+  return stripeTier ? "stripe" : "manual_comp";
+}
+
+function buildResolvedSubscription(params: {
+  status: string;
+  stripeTier: Tier | null;
+  grantTier: "basic" | "pro" | null;
+  activeGrant: PublicEntitlementGrant | null;
+}): ResolvedSubscription {
+  const effectiveTier = highestTier(
+    params.stripeTier ?? "free",
+    params.grantTier ?? "free",
+  );
+  const billingSource = resolveBillingSource({
+    effectiveTier,
+    stripeTier: params.stripeTier,
+    grantTier: params.grantTier,
+  });
+  return {
+    tier: effectiveTier,
+    status: billingSource === "manual_comp" ? "comped" : params.status,
+    source: billingSource === "free" ? "default" : billingSource,
+    billingSource,
+    stripeTier: params.stripeTier,
+    grantTier: params.grantTier,
+    activeGrant: params.activeGrant,
+  };
+}
+
 export async function resolveGuildSubscription(
   guildId: string,
 ): Promise<ResolvedSubscription> {
-  const forced = config.subscription.forceTier;
-  if (forced === "free" || forced === "basic" || forced === "pro") {
-    return {
-      tier: forced,
-      status: forced,
-      source: "forced",
-      billingSource: "forced",
-      stripeTier: null,
-      grantTier: null,
-      activeGrant: null,
-    };
-  }
+  const forced = resolveForcedSubscription();
+  if (forced) return forced;
 
   const cached = getCachedGuildSubscription<ResolvedSubscription>(guildId);
   if (cached) return cached;
@@ -132,28 +177,13 @@ export async function resolveGuildSubscription(
   const status = subscription?.status || "free";
   const stripeTier = resolveStripeTier(subscription);
   const grantTier = activeGrant?.tier ?? null;
-  const effectiveTier = highestTier(stripeTier ?? "free", grantTier ?? "free");
-  const billingSource: BillingSource = activeGrant
-    ? effectiveTier === activeGrant.tier && activeGrant.tier !== stripeTier
-      ? "manual_comp"
-      : stripeTier
-        ? "stripe"
-        : "manual_comp"
-    : stripeTier
-      ? "stripe"
-      : "free";
-  const source: ResolvedSubscription["source"] =
-    billingSource === "free" ? "default" : billingSource;
-
-  const sub: ResolvedSubscription = {
-    tier: effectiveTier,
-    status: billingSource === "manual_comp" ? "comped" : status,
-    source,
-    billingSource,
+  const publicGrant = toPublicEntitlementGrant(activeGrant);
+  const sub = buildResolvedSubscription({
+    status,
     stripeTier,
     grantTier,
-    activeGrant: toPublicEntitlementGrant(activeGrant),
-  };
+    activeGrant: publicGrant,
+  });
   setCachedGuildSubscription(
     guildId,
     sub,
