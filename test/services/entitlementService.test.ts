@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from "@jest/globals";
+import { beforeEach, describe, expect, it, jest } from "@jest/globals";
 import { getEntitlementGrantRepository } from "../../src/repositories/entitlementGrantRepository";
 import { getSubscriptionRepository } from "../../src/repositories/subscriptionRepository";
 import { resetMockStore } from "../../src/repositories/mockStore";
@@ -53,6 +53,28 @@ describe("entitlement grants", () => {
       tier: "basic",
       billingSource: "manual_comp",
     });
+  });
+
+  it("falls back to free when the entitlement grant table is not deployed", async () => {
+    const error = Object.assign(new Error("missing table"), {
+      name: "ResourceNotFoundException",
+    });
+    const listActive = jest
+      .spyOn(getEntitlementGrantRepository(), "listActiveForGuild")
+      .mockRejectedValue(error);
+
+    try {
+      await expect(
+        resolveGuildSubscription(freeGuildId),
+      ).resolves.toMatchObject({
+        tier: "free",
+        billingSource: "free",
+        grantTier: null,
+        activeGrant: null,
+      });
+    } finally {
+      listActive.mockRestore();
+    }
   });
 
   it("ignores expired active grants", async () => {
@@ -168,6 +190,54 @@ describe("entitlement grants", () => {
       tier: "free",
       billingSource: "free",
     });
+  });
+
+  it("does not overwrite revocation audit when a revoke is repeated", async () => {
+    const grant = await createManualEntitlementGrant({
+      guildId: freeGuildId,
+      tier: "basic",
+      createdBy: "admin-1",
+    });
+
+    await revokeManualEntitlementGrant({
+      grantId: grant.grantId,
+      revokedBy: "admin-1",
+      revocationReason: "first_revoke",
+    });
+    await revokeManualEntitlementGrant({
+      grantId: grant.grantId,
+      revokedBy: "admin-2",
+      revocationReason: "second_revoke",
+    });
+
+    await expect(
+      getEntitlementGrantRepository().get(grant.grantId),
+    ).resolves.toMatchObject({
+      status: "revoked",
+      revokedBy: "admin-1",
+      revocationReason: "first_revoke",
+    });
+  });
+
+  it("skips auto-revocation when the entitlement grant table is not deployed", async () => {
+    const error = Object.assign(new Error("missing table"), {
+      name: "ResourceNotFoundException",
+    });
+    const listActive = jest
+      .spyOn(getEntitlementGrantRepository(), "listActiveForGuild")
+      .mockRejectedValue(error);
+
+    try {
+      await expect(
+        autoRevokeCoveredCompGrants({
+          guildId: paidBasicGuildId,
+          paidTier: "pro",
+          stripeSubscriptionId: "sub_pro",
+        }),
+      ).resolves.toBe(0);
+    } finally {
+      listActive.mockRestore();
+    }
   });
 
   it("invalidates cached comped tiers when grants are auto-revoked", async () => {

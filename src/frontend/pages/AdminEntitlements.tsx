@@ -42,9 +42,11 @@ const statusColor = (status: string) => {
 const formatDateTime = (value?: string | null) =>
   value ? new Date(value).toLocaleString() : "No expiry";
 
-const buildExpiryIso = (mode: ExpiryMode, dateValue: string) => {
+export const buildExpiryIso = (mode: ExpiryMode, dateValue: string) => {
   if (mode !== "expires" || !dateValue) return undefined;
-  return new Date(`${dateValue}T23:59:59.999Z`).toISOString();
+  const [year, month, day] = dateValue.split("-").map(Number);
+  if (!year || !month || !day) return undefined;
+  return new Date(year, month - 1, day, 23, 59, 59, 999).toISOString();
 };
 
 const buildProspectMessage = (grant: Grant, guildName?: string) => {
@@ -261,6 +263,7 @@ export default function AdminEntitlements() {
             />
             <TextInput
               label="Expiry date"
+              description="Expires at the end of this date in your local time."
               type="date"
               value={expiresOn}
               onChange={(event) => setExpiresOn(event.currentTarget.value)}

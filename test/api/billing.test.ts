@@ -158,6 +158,39 @@ const failedCheckoutEvent = {
   },
 } as unknown as StripeEvent;
 
+const checkoutCompletedEvent = {
+  id: "evt_checkout_concurrent",
+  type: "checkout.session.completed",
+  data: {
+    object: {
+      id: "cs_complete",
+      subscription: "sub_basic",
+      metadata: { guild_id: guildId },
+      payment_method_types: ["card"],
+      customer: "cus_basic",
+    },
+  },
+} as unknown as StripeEvent;
+
+const activeStripeSubscription = {
+  id: "sub_basic",
+  status: "active",
+  metadata: { guild_id: guildId },
+  start_date: 1_767_225_600,
+  ended_at: null,
+  customer: "cus_basic",
+  default_payment_method: "pm_basic",
+  livemode: false,
+  items: {
+    data: [
+      {
+        price: basicPrice,
+        current_period_end: 1_769_904_000,
+      },
+    ],
+  },
+};
+
 describe("billing webhook routes", () => {
   beforeEach(() => {
     resetMockStore();
@@ -228,6 +261,40 @@ describe("billing webhook routes", () => {
       ).toBe("revoked");
       expect(
         await getStripeWebhookRepository().get("evt_active"),
+      ).toBeDefined();
+    } finally {
+      await closeServer(server);
+    }
+  });
+
+  test("claims duplicate webhooks before running handler side effects", async () => {
+    const grant = await createManualEntitlementGrant({
+      guildId,
+      tier: "basic",
+      createdBy: "admin-1",
+    });
+    const retrieve = jest.fn(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      return activeStripeSubscription;
+    });
+    const { server, baseUrl } = createServer(
+      createStripe(checkoutCompletedEvent, retrieve),
+    );
+    try {
+      const responses = await Promise.all([
+        postWebhook(baseUrl),
+        postWebhook(baseUrl),
+      ]);
+
+      expect(responses.map((response) => response.statusCode)).toEqual([
+        200, 200,
+      ]);
+      expect(retrieve).toHaveBeenCalledTimes(1);
+      expect(
+        (await getEntitlementGrantRepository().get(grant.grantId))?.status,
+      ).toBe("revoked");
+      expect(
+        await getStripeWebhookRepository().get("evt_checkout_concurrent"),
       ).toBeDefined();
     } finally {
       await closeServer(server);

@@ -38,6 +38,18 @@ const normalizeText = (value?: string | null) => {
   return trimmed ? trimmed : undefined;
 };
 
+const isMissingEntitlementGrantTable = (error: unknown) =>
+  (error as { name?: string }).name === "ResourceNotFoundException";
+
+const listActiveGrantsForGuildOrEmpty = async (guildId: string) => {
+  try {
+    return await getEntitlementGrantRepository().listActiveForGuild(guildId);
+  } catch (error) {
+    if (isMissingEntitlementGrantTable(error)) return [];
+    throw error;
+  }
+};
+
 export function isPaidTier(tier?: string | null): tier is EntitlementGrantTier {
   return tier === "basic" || tier === "pro";
 }
@@ -159,22 +171,20 @@ export async function revokeManualEntitlementGrant(input: {
 }): Promise<void> {
   const repo = getEntitlementGrantRepository();
   const existing = await repo.get(input.grantId);
+  if (!existing || getGrantEffectiveStatus(existing) !== "active") return;
   await repo.revoke({
     grantId: input.grantId,
     revokedAt: nowIso(),
     revokedBy: input.revokedBy,
     revocationReason: normalizeText(input.revocationReason) ?? "manual_revoke",
   });
-  if (existing) {
-    clearGuildSubscriptionCache(existing.guildId);
-  }
+  clearGuildSubscriptionCache(existing.guildId);
 }
 
 export async function getBestActiveEntitlementGrantForGuild(
   guildId: string,
 ): Promise<EntitlementGrant | null> {
-  const grants =
-    await getEntitlementGrantRepository().listActiveForGuild(guildId);
+  const grants = await listActiveGrantsForGuildOrEmpty(guildId);
   const active = grants.filter((grant) => isGrantCurrentlyActive(grant));
   active.sort((a, b) => {
     const tierDiff = tierRank[b.tier] - tierRank[a.tier];
@@ -190,9 +200,7 @@ export async function autoRevokeCoveredCompGrants(input: {
   stripeSubscriptionId?: string | null;
   revokedBy?: string;
 }): Promise<number> {
-  const grants = await getEntitlementGrantRepository().listActiveForGuild(
-    input.guildId,
-  );
+  const grants = await listActiveGrantsForGuildOrEmpty(input.guildId);
   const covered = grants.filter(
     (grant) =>
       isGrantCurrentlyActive(grant) &&

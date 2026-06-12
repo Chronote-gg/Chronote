@@ -253,6 +253,7 @@ export async function revokeEntitlementGrant(params: {
   };
   const values = {
     ":status": "revoked",
+    ":activeStatus": "active",
     ":updatedAt": params.revokedAt,
     ":updatedBy": params.revokedBy,
     ":revokedAt": params.revokedAt,
@@ -277,13 +278,19 @@ export async function revokeEntitlementGrant(params: {
     TableName: tableName("EntitlementGrantTable"),
     Key: marshall({ grantId: params.grantId }),
     UpdateExpression: updateExpression,
-    ConditionExpression: "attribute_exists(grantId)",
+    ConditionExpression:
+      "attribute_exists(grantId) AND #status = :activeStatus",
     ExpressionAttributeNames: expressionAttributeNames,
     ExpressionAttributeValues: marshall(values, {
       removeUndefinedValues: true,
     }),
   });
-  await dynamoDbClient.send(command);
+  try {
+    await dynamoDbClient.send(command);
+  } catch (error) {
+    if (isConditionalCheckFailed(error)) return;
+    throw error;
+  }
 }
 
 // Write to PaymentTransaction Table
@@ -299,14 +306,30 @@ export async function writePaymentTransaction(
 }
 
 // Stripe Webhook Event Table (idempotency)
-export async function writeStripeWebhookEvent(
+export async function tryCreateStripeWebhookEvent(
   event: StripeWebhookEvent,
-): Promise<void> {
+): Promise<boolean> {
   const params = {
     TableName: tableName("StripeWebhookEventTable"),
     Item: marshall(event, { removeUndefinedValues: true }),
+    ConditionExpression: "attribute_not_exists(eventId)",
   };
   const command = new PutItemCommand(params);
+  try {
+    await dynamoDbClient.send(command);
+    return true;
+  } catch (error) {
+    if (isConditionalCheckFailed(error)) return false;
+    throw error;
+  }
+}
+
+export async function deleteStripeWebhookEvent(eventId: string): Promise<void> {
+  const params = {
+    TableName: tableName("StripeWebhookEventTable"),
+    Key: marshall({ eventId }),
+  };
+  const command = new DeleteItemCommand(params);
   await dynamoDbClient.send(command);
 }
 

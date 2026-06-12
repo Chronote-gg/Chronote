@@ -420,22 +420,26 @@ export function registerBillingRoutes(
 
     try {
       const webhookRepo = getStripeWebhookRepository();
-      const existing = await webhookRepo.get(event.id);
-      if (existing) {
-        res.json({ received: true });
-        return;
-      }
-      const handler = handlersByEvent[event.type];
-      if (handler) {
-        await handler({ stripe, event });
-      }
-
       const ttlSeconds = 60 * 60 * 24 * 30;
-      await webhookRepo.write({
+      const claimed = await webhookRepo.tryCreate({
         eventId: event.id,
         receivedAt: new Date().toISOString(),
         expiresAt: Math.floor(Date.now() / 1000) + ttlSeconds,
       });
+      if (!claimed) {
+        res.json({ received: true });
+        return;
+      }
+
+      try {
+        const handler = handlersByEvent[event.type];
+        if (handler) {
+          await handler({ stripe, event });
+        }
+      } catch (handlerError) {
+        await webhookRepo.delete(event.id);
+        throw handlerError;
+      }
       res.json({ received: true });
     } catch (err) {
       console.error("Stripe webhook handler error", err);
