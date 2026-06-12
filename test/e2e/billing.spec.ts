@@ -1,7 +1,7 @@
 import { expect, test } from "./fixtures";
 import { mockBilling, mockGuilds } from "./mockData";
 
-test("billing page shows paid and free states (mock)", async ({
+test("billing page shows current plan states (mock)", async ({
   serverSelectPage,
   nav,
   billingPage,
@@ -27,5 +27,7 @@ test("billing page shows paid and free states (mock)", async ({
   await serverSelectPage.openServerByName(mockGuilds.chronote.name);
   await nav.goToBilling();
   await billingPage.waitForLoaded();
-  await expect(billingPage.currentPlan()).toContainText(/free plan/i);
+  await expect(billingPage.currentPlan()).toContainText(
+    mockBilling.freeTierLabel,
+  );
 });
