@@ -33,12 +33,23 @@ const overrideChannelName =
 const overrideTag = firstRule?.tags?.[0] ?? "";
 
 const subscription = store.subscriptions.get(ddmGuild.id);
-const paidTierLabel =
+const forcedTier = process.env.FORCE_TIER;
+const forcedTierLabel =
+  forcedTier === "pro"
+    ? "Pro"
+    : forcedTier === "basic"
+      ? "Basic"
+      : forcedTier === "free"
+        ? "Free plan"
+        : null;
+const subscriptionTierLabel =
   subscription?.tier === "pro"
     ? "Pro"
     : subscription?.tier === "basic"
       ? "Basic"
       : "Free";
+const paidTierLabel = forcedTierLabel ?? subscriptionTierLabel;
+const freeTierLabel = forcedTierLabel ?? "Free plan";
 
 export const mockGuilds = {
   ddm: ddmGuild,
@@ -62,4 +73,5 @@ export const mockSettings = {
 
 export const mockBilling = {
   paidTierLabel,
+  freeTierLabel,
 };

@@ -339,7 +339,7 @@ async function enqueueOrReply(
 async function replyWithMonthlyLimit(
   interaction: ChatInputCommandInteraction,
   status: Parameters<typeof buildChatTtsMonthlyLimitMessage>[0],
-  options: { finalAcceptedMessage?: boolean } = {},
+  options: Parameters<typeof buildChatTtsMonthlyLimitMessage>[1] = {},
 ) {
   chatTtsMonthlyLimitBlocked.inc();
   await interaction.reply(
@@ -375,11 +375,12 @@ async function reserveMonthlyUsageOrReply(options: {
   interaction: ChatInputCommandInteraction;
   guildId: string;
   limit?: number;
+  compedTier?: "basic" | "pro" | null;
 }): Promise<ChatTtsUsageReservation | null> {
-  const { interaction, guildId, limit } = options;
+  const { interaction, guildId, limit, compedTier } = options;
   const usageReservation = await reserveChatTtsMessageUsage({ guildId, limit });
   if (!usageReservation.allowed) {
-    await replyWithMonthlyLimit(interaction, usageReservation);
+    await replyWithMonthlyLimit(interaction, usageReservation, { compedTier });
     return null;
   }
   return usageReservation;
@@ -456,6 +457,7 @@ function recordSayChatEntry(options: {
 async function replyWithFinalMonthlyLimitIfNeeded(
   interaction: ChatInputCommandInteraction,
   usageReservation: ChatTtsUsageReservation,
+  compedTier?: "basic" | "pro" | null,
 ): Promise<boolean> {
   if (
     usageReservation.limit === undefined ||
@@ -467,6 +469,7 @@ async function replyWithFinalMonthlyLimitIfNeeded(
     buildUpgradePrompt(
       buildChatTtsMonthlyLimitMessage(usageReservation, {
         finalAcceptedMessage: true,
+        compedTier,
       }),
     ),
   );
@@ -485,11 +488,16 @@ export async function handleSayCommand(
   if (!initial) return;
   const { guildId, limitsResult, member, message } = initial;
   const limit = limitsResult.limits.maxChatTtsMessagesMonthly;
+  const compedTier =
+    limitsResult.subscription.billingSource === "manual_comp"
+      ? limitsResult.subscription.grantTier
+      : null;
 
   const usageReservation = await reserveMonthlyUsageOrReply({
     interaction,
     guildId,
     limit,
+    compedTier,
   });
   if (!usageReservation) return;
 
@@ -533,7 +541,13 @@ export async function handleSayCommand(
     message,
     participant: payload.participant,
   });
-  if (await replyWithFinalMonthlyLimitIfNeeded(interaction, usageReservation)) {
+  if (
+    await replyWithFinalMonthlyLimitIfNeeded(
+      interaction,
+      usageReservation,
+      compedTier,
+    )
+  ) {
     return;
   }
   await acknowledgeSayQueued(interaction);

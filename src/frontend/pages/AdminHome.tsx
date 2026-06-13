@@ -7,7 +7,7 @@ import {
   ThemeIcon,
   Title,
 } from "@mantine/core";
-import { IconMessageCircle, IconSettings } from "@tabler/icons-react";
+import { IconGift, IconMessageCircle, IconSettings } from "@tabler/icons-react";
 import { Link } from "@tanstack/react-router";
 import Surface from "../components/Surface";
 
@@ -42,6 +42,30 @@ export default function AdminHome() {
               data-testid="admin-home-config"
             >
               Open configuration
+            </Button>
+          </Stack>
+        </Surface>
+        <Surface tone="raised" p="lg">
+          <Stack gap="md">
+            <Group gap="sm">
+              <ThemeIcon variant="light" color="brand" size={40}>
+                <IconGift size={20} />
+              </ThemeIcon>
+              <Stack gap={0}>
+                <Text fw={600}>Entitlement grants</Text>
+                <Text size="sm" c="dimmed">
+                  Comp Basic or Pro for selected Discord servers.
+                </Text>
+              </Stack>
+            </Group>
+            <Button
+              component={Link}
+              to="/admin/entitlements"
+              variant="light"
+              color="brand"
+              data-testid="admin-home-entitlements"
+            >
+              Open entitlements
             </Button>
           </Stack>
         </Surface>

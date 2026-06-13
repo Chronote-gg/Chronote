@@ -1,5 +1,19 @@
 import { getSubscriptionRepository } from "../repositories/subscriptionRepository";
+import {
+  getBestActiveEntitlementGrantForGuild,
+  highestTier,
+  toPublicEntitlementGrant,
+  type BillingSource,
+  type PublicEntitlementGrant,
+} from "./entitlementService";
+import {
+  getCachedGuildSubscription,
+  setCachedGuildSubscription,
+} from "./subscriptionCache";
 import { config } from "./configService";
+import type { GuildSubscription } from "../types/db";
+
+export { clearGuildSubscriptionCache } from "./subscriptionCache";
 
 export type Tier = "free" | "basic" | "pro";
 
@@ -16,7 +30,11 @@ export interface TierLimits {
 export interface ResolvedSubscription {
   tier: Tier;
   status: string; // raw Stripe status or "free"
-  source: "stripe" | "forced" | "default";
+  source: "stripe" | "forced" | "default" | "manual_comp";
+  billingSource: BillingSource;
+  stripeTier: Tier | null;
+  grantTier: "basic" | "pro" | null;
+  activeGrant: PublicEntitlementGrant | null;
 }
 
 const chatTtsLimits = {
@@ -55,59 +73,122 @@ const DEFAULT_LIMITS: Record<Tier, TierLimits> = {
   },
 };
 
-type CacheEntry = { sub: ResolvedSubscription; expiresAt: number };
-const cache = new Map<string, CacheEntry>();
 const CACHE_TTL_MS = 5 * 60 * 1000;
-
-function isCacheValid(entry?: CacheEntry) {
-  return !!entry && entry.expiresAt > Date.now();
-}
 
 export function getLimitsForTier(tier: Tier): TierLimits {
   return DEFAULT_LIMITS[tier];
 }
 
-export async function resolveGuildSubscription(
-  guildId: string,
-): Promise<ResolvedSubscription> {
-  const forced = config.subscription.forceTier;
-  if (forced === "free" || forced === "basic" || forced === "pro") {
-    return { tier: forced, status: forced, source: "forced" };
-  }
+const paidStatuses = new Set(["active", "trialing", "past_due"]);
 
-  const cached = cache.get(guildId);
-  if (isCacheValid(cached)) return cached!.sub;
-
-  // If Stripe is disabled, everyone is free
-  if (
-    !config.stripe.secretKey ||
-    config.subscription.stripeMode === "disabled"
-  ) {
-    const sub: ResolvedSubscription = {
-      tier: "free",
-      status: "free",
-      source: "default",
-    };
-    cache.set(guildId, { sub, expiresAt: Date.now() + CACHE_TTL_MS });
-    return sub;
-  }
-
-  const subscription = await getSubscriptionRepository().get(guildId);
+function resolveStripeTier(
+  subscription: GuildSubscription | undefined,
+): Tier | null {
   const status = subscription?.status || "free";
-  const paidStatuses = new Set(["active", "trialing", "past_due"]);
   const storedTier =
     subscription?.tier === "basic" || subscription?.tier === "pro"
       ? subscription.tier
       : null;
-  const tier: Tier =
-    storedTier ?? (paidStatuses.has(status) ? "basic" : "free");
+  if (!paidStatuses.has(status)) return null;
+  return storedTier ?? "basic";
+}
 
-  const sub: ResolvedSubscription = {
-    tier,
-    status,
-    source: "stripe",
+function resolveCacheExpiresAt(activeGrantExpiresAt?: string) {
+  const defaultExpiresAt = Date.now() + CACHE_TTL_MS;
+  if (!activeGrantExpiresAt) return defaultExpiresAt;
+  const grantExpiresAt = Date.parse(activeGrantExpiresAt);
+  if (!Number.isFinite(grantExpiresAt)) return defaultExpiresAt;
+  return Math.min(defaultExpiresAt, grantExpiresAt);
+}
+
+function resolveForcedSubscription(): ResolvedSubscription | null {
+  const forced = config.subscription.forceTier;
+  if (forced !== "free" && forced !== "basic" && forced !== "pro") {
+    return null;
+  }
+  return {
+    tier: forced,
+    status: forced,
+    source: "forced",
+    billingSource: "forced",
+    stripeTier: null,
+    grantTier: null,
+    activeGrant: null,
   };
-  cache.set(guildId, { sub, expiresAt: Date.now() + CACHE_TTL_MS });
+}
+
+function resolveBillingSource(params: {
+  effectiveTier: Tier;
+  stripeTier: Tier | null;
+  grantTier: "basic" | "pro" | null;
+}): BillingSource {
+  const { effectiveTier, stripeTier, grantTier } = params;
+  if (!grantTier) return stripeTier ? "stripe" : "free";
+  if (effectiveTier === grantTier && grantTier !== stripeTier) {
+    return "manual_comp";
+  }
+  return stripeTier ? "stripe" : "manual_comp";
+}
+
+function buildResolvedSubscription(params: {
+  status: string;
+  stripeTier: Tier | null;
+  grantTier: "basic" | "pro" | null;
+  activeGrant: PublicEntitlementGrant | null;
+}): ResolvedSubscription {
+  const effectiveTier = highestTier(
+    params.stripeTier ?? "free",
+    params.grantTier ?? "free",
+  );
+  const billingSource = resolveBillingSource({
+    effectiveTier,
+    stripeTier: params.stripeTier,
+    grantTier: params.grantTier,
+  });
+  return {
+    tier: effectiveTier,
+    status: billingSource === "manual_comp" ? "comped" : params.status,
+    source: billingSource === "free" ? "default" : billingSource,
+    billingSource,
+    stripeTier: params.stripeTier,
+    grantTier: params.grantTier,
+    activeGrant: params.activeGrant,
+  };
+}
+
+export async function resolveGuildSubscription(
+  guildId: string,
+): Promise<ResolvedSubscription> {
+  const forced = resolveForcedSubscription();
+  if (forced) return forced;
+
+  const cached = getCachedGuildSubscription<ResolvedSubscription>(guildId);
+  if (cached) return cached;
+
+  const stripeEnabled =
+    Boolean(config.stripe.secretKey) &&
+    config.subscription.stripeMode !== "disabled";
+  const [subscription, activeGrant] = await Promise.all([
+    stripeEnabled
+      ? getSubscriptionRepository().get(guildId)
+      : Promise.resolve(undefined),
+    getBestActiveEntitlementGrantForGuild(guildId),
+  ]);
+  const status = subscription?.status || "free";
+  const stripeTier = resolveStripeTier(subscription);
+  const grantTier = activeGrant?.tier ?? null;
+  const publicGrant = toPublicEntitlementGrant(activeGrant);
+  const sub = buildResolvedSubscription({
+    status,
+    stripeTier,
+    grantTier,
+    activeGrant: publicGrant,
+  });
+  setCachedGuildSubscription(
+    guildId,
+    sub,
+    resolveCacheExpiresAt(activeGrant?.expiresAt),
+  );
   return sub;
 }
 
@@ -117,7 +198,15 @@ export async function getGuildLimits(guildId: string | null): Promise<{
 }> {
   if (!guildId) {
     return {
-      subscription: { tier: "free", status: "free", source: "default" },
+      subscription: {
+        tier: "free",
+        status: "free",
+        source: "default",
+        billingSource: "free",
+        stripeTier: null,
+        grantTier: null,
+        activeGrant: null,
+      },
       limits: DEFAULT_LIMITS.free,
     };
   }

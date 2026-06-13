@@ -282,6 +282,22 @@ const tables = [
     BillingMode: "PAY_PER_REQUEST",
   },
   {
+    TableName: "EntitlementGrantTable",
+    KeySchema: [{ AttributeName: "grantId", KeyType: "HASH" }],
+    AttributeDefinitions: [
+      { AttributeName: "grantId", AttributeType: "S" },
+      { AttributeName: "guildId", AttributeType: "S" },
+    ],
+    GlobalSecondaryIndexes: [
+      {
+        IndexName: "GuildIdIndex",
+        KeySchema: [{ AttributeName: "guildId", KeyType: "HASH" }],
+        Projection: { ProjectionType: "ALL" },
+      },
+    ],
+    BillingMode: "PAY_PER_REQUEST",
+  },
+  {
     TableName: "InstallerTable",
     KeySchema: [{ AttributeName: "guildId", KeyType: "HASH" }],
     AttributeDefinitions: [{ AttributeName: "guildId", AttributeType: "S" }],

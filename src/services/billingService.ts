@@ -1,21 +1,33 @@
 import { getSubscriptionRepository } from "../repositories/subscriptionRepository";
 import { getPaymentTransactionRepository } from "../repositories/paymentTransactionRepository";
 import { config } from "./configService";
-import { getLimitsForTier } from "./subscriptionService";
+import {
+  clearGuildSubscriptionCache,
+  getLimitsForTier,
+  resolveGuildSubscription,
+} from "./subscriptionService";
+import { autoRevokeCoveredCompGrants } from "./entitlementService";
 import { getRollingUsageForGuild } from "./meetingUsageService";
 import { nowIso } from "../utils/time";
 import type { BillingInterval, PaidTier } from "../types/pricing";
 import type { GuildSubscription, PaymentTransaction } from "../types/db";
 import type { StripeClient } from "../types/stripe";
+import type { PublicEntitlementGrant } from "./entitlementService";
 
 export type BillingSnapshot = {
   billingEnabled: boolean;
   stripeMode: string;
   tier: "free" | "basic" | "pro";
   status: string;
+  billingSource: "free" | "stripe" | "manual_comp" | "forced";
+  stripeTier: "free" | "basic" | "pro" | null;
+  grantTier: "basic" | "pro" | null;
+  activeGrant: PublicEntitlementGrant | null;
   nextBillingDate: string | null;
   subscriptionId: string | null;
   customerId: string | null;
+  hasStripeBilling: boolean;
+  canManageBillingPortal: boolean;
   upgradeUrl: string | null;
   portalUrl: string | null;
   usage: {
@@ -36,9 +48,15 @@ export function buildBillingDisabledSnapshot(): BillingSnapshot {
   return {
     tier: "free",
     status: "free",
+    billingSource: "free",
+    stripeTier: null,
+    grantTier: null,
+    activeGrant: null,
     nextBillingDate: null,
     subscriptionId: null,
     customerId: null,
+    hasStripeBilling: false,
+    canManageBillingPortal: false,
     upgradeUrl: config.stripe.billingLandingUrl || null,
     portalUrl: null,
     billingEnabled: false,
@@ -56,28 +74,34 @@ export async function getBillingSnapshot(params: {
     return buildBillingDisabledSnapshot();
   }
 
-  const subscription = await getSubscriptionRepository().get(guildId);
-  const status = subscription?.status || "free";
-  const nextBillingDate = subscription?.nextBillingDate || null;
-  const storedTier = subscription?.tier;
-  const tier =
-    storedTier === "free" || storedTier === "basic" || storedTier === "pro"
-      ? storedTier
-      : status === "free"
-        ? "free"
-        : "basic";
+  const [subscription, resolvedSubscription] = await Promise.all([
+    getSubscriptionRepository().get(guildId),
+    resolveGuildSubscription(guildId),
+  ]);
 
-  const limits = getLimitsForTier(tier);
+  const limits = getLimitsForTier(resolvedSubscription.tier);
   const usage = await getRollingUsageForGuild(guildId);
   const usedMinutes = Math.ceil(usage.usedSeconds / 60);
   const limitMinutes = limits.maxMeetingMinutesRolling ?? null;
+  const hasStripeBilling = Boolean(
+    subscription?.stripeSubscriptionId || subscription?.stripeCustomerId,
+  );
 
   return {
-    tier,
-    status,
-    nextBillingDate,
+    tier: resolvedSubscription.tier,
+    status: resolvedSubscription.status,
+    billingSource: resolvedSubscription.billingSource,
+    stripeTier: resolvedSubscription.stripeTier,
+    grantTier: resolvedSubscription.grantTier,
+    activeGrant: resolvedSubscription.activeGrant,
+    nextBillingDate:
+      resolvedSubscription.billingSource === "stripe"
+        ? subscription?.nextBillingDate || null
+        : null,
     subscriptionId: subscription?.stripeSubscriptionId || null,
     customerId: subscription?.stripeCustomerId || null,
+    hasStripeBilling,
+    canManageBillingPortal: hasStripeBilling,
     upgradeUrl: config.stripe.billingLandingUrl || null,
     portalUrl: null,
     billingEnabled: true,
@@ -94,26 +118,33 @@ export async function getBillingSnapshot(params: {
 export async function getMockBillingSnapshot(
   guildId: string,
 ): Promise<BillingSnapshot> {
-  const subscription = await getSubscriptionRepository().get(guildId);
-  const status = subscription?.status || "free";
-  const storedTier = subscription?.tier;
-  const tier =
-    storedTier === "free" || storedTier === "basic" || storedTier === "pro"
-      ? storedTier
-      : status === "free"
-        ? "free"
-        : "basic";
-  const limits = getLimitsForTier(tier);
+  const [subscription, resolvedSubscription] = await Promise.all([
+    getSubscriptionRepository().get(guildId),
+    resolveGuildSubscription(guildId),
+  ]);
+  const limits = getLimitsForTier(resolvedSubscription.tier);
   const usage = await getRollingUsageForGuild(guildId);
   const usedMinutes = Math.ceil(usage.usedSeconds / 60);
   const limitMinutes = limits.maxMeetingMinutesRolling ?? null;
+  const hasStripeBilling = Boolean(
+    subscription?.stripeSubscriptionId || subscription?.stripeCustomerId,
+  );
 
   return {
-    tier,
-    status,
-    nextBillingDate: subscription?.nextBillingDate || null,
+    tier: resolvedSubscription.tier,
+    status: resolvedSubscription.status,
+    billingSource: resolvedSubscription.billingSource,
+    stripeTier: resolvedSubscription.stripeTier,
+    grantTier: resolvedSubscription.grantTier,
+    activeGrant: resolvedSubscription.activeGrant,
+    nextBillingDate:
+      resolvedSubscription.billingSource === "stripe"
+        ? subscription?.nextBillingDate || null
+        : null,
     subscriptionId: subscription?.stripeSubscriptionId || null,
     customerId: subscription?.stripeCustomerId || null,
+    hasStripeBilling,
+    canManageBillingPortal: hasStripeBilling,
     upgradeUrl: `/portal/server/${guildId}/billing?mock=checkout`,
     portalUrl: null,
     billingEnabled: true,
@@ -143,10 +174,18 @@ export async function seedMockSubscription(guildId: string) {
     stripeSubscriptionId: existing?.stripeSubscriptionId ?? "sub_mock_basic",
     mode: "test",
   });
+  clearGuildSubscriptionCache(guildId);
+  await autoRevokeCoveredCompGrants({
+    guildId,
+    paidTier: "basic",
+    stripeSubscriptionId: "sub_mock_basic",
+  });
+  clearGuildSubscriptionCache(guildId);
 }
 
 export async function saveGuildSubscription(subscription: GuildSubscription) {
   await getSubscriptionRepository().write(subscription);
+  clearGuildSubscriptionCache(subscription.guildId);
 }
 
 export async function recordPaymentTransaction(
@@ -291,6 +330,9 @@ export async function createPortalSession(params: {
 }): Promise<string> {
   const { stripe, user, guildId } = params;
   const subscription = await getSubscriptionRepository().get(guildId);
+  if (!subscription?.stripeCustomerId && !subscription?.stripeSubscriptionId) {
+    throw new Error("No Stripe billing found for guild");
+  }
   let customerId =
     subscription?.stripeCustomerId ||
     (typeof subscription?.stripeSubscriptionId === "string"

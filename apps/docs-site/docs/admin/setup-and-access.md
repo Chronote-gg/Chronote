@@ -145,3 +145,5 @@ Use `/billing` to manage your server's subscription. This opens the Stripe billi
 - View invoice history.
 
 Plan tiers affect weekly meeting minutes, the number of meetings searchable by `/ask`, and access to features like image generation.
+
+Chronote may also grant a server a complimentary Basic or Pro plan. Comped servers see the granted plan and any public note on the billing page, but they do not see Stripe billing management until a paid subscription exists. Server admins can still start paying or upgrade from the billing page when they are ready.

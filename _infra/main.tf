@@ -1385,7 +1385,9 @@ resource "aws_iam_policy" "dynamodb_access_policy" {
           "${aws_dynamodb_table.contact_feedback_table.arn}/index/*",
           aws_dynamodb_table.installer_table.arn,
           aws_dynamodb_table.onboarding_state_table.arn,
-          aws_dynamodb_table.guild_subscription_table.arn
+          aws_dynamodb_table.guild_subscription_table.arn,
+          aws_dynamodb_table.entitlement_grant_table.arn,
+          "${aws_dynamodb_table.entitlement_grant_table.arn}/index/*"
         ]
       }
     ]
@@ -1868,6 +1870,41 @@ resource "aws_dynamodb_table" "guild_subscription_table" {
 
   tags = {
     Name = "GuildSubscriptionTable"
+  }
+}
+
+resource "aws_dynamodb_table" "entitlement_grant_table" {
+  name         = "${local.name_prefix}-EntitlementGrantTable"
+  billing_mode = "PAY_PER_REQUEST"
+  hash_key     = "grantId"
+
+  attribute {
+    name = "grantId"
+    type = "S"
+  }
+
+  attribute {
+    name = "guildId"
+    type = "S"
+  }
+
+  global_secondary_index {
+    name            = "GuildIdIndex"
+    hash_key        = "guildId"
+    projection_type = "ALL"
+  }
+
+  point_in_time_recovery {
+    enabled = true
+  }
+
+  server_side_encryption {
+    enabled     = true
+    kms_key_arn = aws_kms_key.app_general.arn
+  }
+
+  tags = {
+    Name = "EntitlementGrantTable"
   }
 }
 

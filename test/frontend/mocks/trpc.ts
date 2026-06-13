@@ -46,7 +46,26 @@ export type BillingData = {
   billingEnabled: boolean;
   tier: "free" | "basic" | "pro";
   status: string;
+  billingSource?: "free" | "stripe" | "manual_comp" | "forced";
+  stripeTier?: "free" | "basic" | "pro" | null;
+  grantTier?: "basic" | "pro" | null;
+  activeGrant?: {
+    grantId: string;
+    guildId: string;
+    tier: "basic" | "pro";
+    status: "active" | "revoked" | "expired";
+    source: "manual_comp";
+    startsAt: string;
+    expiresAt?: string;
+    publicNote?: string;
+  } | null;
   nextBillingDate?: string | null;
+  subscriptionId?: string | null;
+  customerId?: string | null;
+  hasStripeBilling?: boolean;
+  canManageBillingPortal?: boolean;
+  upgradeUrl?: string | null;
+  portalUrl?: string | null;
   usage?: { usedMinutes?: number; limitMinutes?: number } | null;
 };
 

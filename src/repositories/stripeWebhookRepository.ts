@@ -1,24 +1,36 @@
 import { config } from "../services/configService";
-import { getStripeWebhookEvent, writeStripeWebhookEvent } from "../db";
+import {
+  deleteStripeWebhookEvent,
+  getStripeWebhookEvent,
+  tryCreateStripeWebhookEvent,
+} from "../db";
 import type { StripeWebhookEvent } from "../types/db";
 import { getMockStore } from "./mockStore";
 
 export type StripeWebhookRepository = {
   get: (eventId: string) => Promise<StripeWebhookEvent | undefined>;
-  write: (event: StripeWebhookEvent) => Promise<void>;
+  tryCreate: (event: StripeWebhookEvent) => Promise<boolean>;
+  delete: (eventId: string) => Promise<void>;
 };
 
 const realRepository: StripeWebhookRepository = {
   get: getStripeWebhookEvent,
-  write: writeStripeWebhookEvent,
+  tryCreate: tryCreateStripeWebhookEvent,
+  delete: deleteStripeWebhookEvent,
 };
 
 const mockRepository: StripeWebhookRepository = {
   async get(eventId) {
     return getMockStore().stripeWebhookEvents.get(eventId);
   },
-  async write(event) {
-    getMockStore().stripeWebhookEvents.set(event.eventId, event);
+  async tryCreate(event) {
+    const events = getMockStore().stripeWebhookEvents;
+    if (events.has(event.eventId)) return false;
+    events.set(event.eventId, event);
+    return true;
+  },
+  async delete(eventId) {
+    getMockStore().stripeWebhookEvents.delete(eventId);
   },
 };
 

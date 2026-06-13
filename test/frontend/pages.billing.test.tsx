@@ -54,4 +54,39 @@ describe("Billing page", () => {
     expect(within(currentPanel).getByText("Current plan")).toBeInTheDocument();
     expect(screen.getByText(/next billing/i)).toBeInTheDocument();
   });
+
+  test("renders comped plan copy without Stripe management", () => {
+    guildState.selectedGuildId = "g1";
+    guildState.guilds = [{ id: "g1", name: "Guild One", canManage: true }];
+    setBillingQuery({
+      data: {
+        billingEnabled: true,
+        tier: "basic",
+        status: "comped",
+        billingSource: "manual_comp",
+        stripeTier: null,
+        grantTier: "basic",
+        activeGrant: {
+          grantId: "grant-1",
+          guildId: "g1",
+          tier: "basic",
+          status: "active",
+          source: "manual_comp",
+          startsAt: "2026-06-12T00:00:00.000Z",
+          publicNote: "Thanks for trying Chronote.",
+        },
+        nextBillingDate: null,
+        subscriptionId: null,
+        customerId: null,
+        hasStripeBilling: false,
+        canManageBillingPortal: false,
+        usage: { usedMinutes: 30, limitMinutes: 1200 },
+      },
+    });
+    renderWithMantine(<Billing />);
+    expect(screen.getByText(/comped by Chronote/i)).toBeInTheDocument();
+    expect(screen.getByText(/normally \$5\/month/i)).toBeInTheDocument();
+    expect(screen.queryByTestId("billing-manage")).not.toBeInTheDocument();
+    expect(screen.getByText(/Start paying for Basic/i)).toBeVisible();
+  });
 });

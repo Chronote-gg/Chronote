@@ -14,6 +14,8 @@ import {
   AccessLog,
   AutoRecordSettings,
   ChannelContext,
+  EntitlementGrant,
+  EntitlementGrantStatus,
   GuildSubscription,
   MeetingHistory,
   MeetingAccessGrant,
@@ -94,6 +96,203 @@ export async function getGuildSubscription(
   return undefined;
 }
 
+// Entitlement Grant Table
+export async function writeEntitlementGrant(
+  grant: EntitlementGrant,
+): Promise<void> {
+  const params = {
+    TableName: tableName("EntitlementGrantTable"),
+    Item: marshall(grant, { removeUndefinedValues: true }),
+  };
+  const command = new PutItemCommand(params);
+  await dynamoDbClient.send(command);
+}
+
+export async function getEntitlementGrant(
+  grantId: string,
+): Promise<EntitlementGrant | undefined> {
+  const params = {
+    TableName: tableName("EntitlementGrantTable"),
+    Key: marshall({ grantId }),
+  };
+  const command = new GetItemCommand(params);
+  const result = await dynamoDbClient.send(command);
+  if (result.Item) {
+    return unmarshall(result.Item) as EntitlementGrant;
+  }
+  return undefined;
+}
+
+export async function listEntitlementGrants(params?: {
+  guildId?: string;
+  status?: EntitlementGrantStatus;
+  limit?: number;
+}): Promise<EntitlementGrant[]> {
+  return params?.guildId
+    ? queryEntitlementGrantsByGuild({ ...params, guildId: params.guildId })
+    : scanEntitlementGrants(params);
+}
+
+function applyEntitlementGrantLimit(
+  items: EntitlementGrant[],
+  limit?: number,
+): EntitlementGrant[] {
+  return limit ? items.slice(0, limit) : items;
+}
+
+function remainingEntitlementGrantLimit(
+  items: EntitlementGrant[],
+  limit?: number,
+): number | undefined {
+  return limit ? limit - items.length : undefined;
+}
+
+function unmarshallEntitlementGrantItems(
+  items?: Record<string, AttributeValue>[],
+): EntitlementGrant[] {
+  return (items ?? []).map((item) => unmarshall(item) as EntitlementGrant);
+}
+
+async function queryEntitlementGrantsByGuild(params: {
+  guildId: string;
+  status?: EntitlementGrantStatus;
+  limit?: number;
+}): Promise<EntitlementGrant[]> {
+  const items: EntitlementGrant[] = [];
+  const expressionAttributeNames: Record<string, string> = {
+    "#guildId": "guildId",
+  };
+  const expressionAttributeValues: Record<string, AttributeValue> = marshall({
+    ":guildId": params.guildId,
+    ...(params.status ? { ":status": params.status } : {}),
+  });
+  let exclusiveStartKey: Record<string, AttributeValue> | undefined;
+  do {
+    const command = new QueryCommand({
+      TableName: tableName("EntitlementGrantTable"),
+      IndexName: "GuildIdIndex",
+      KeyConditionExpression: "#guildId = :guildId",
+      ...(params.status
+        ? {
+            FilterExpression: "#status = :status",
+            ExpressionAttributeNames: {
+              ...expressionAttributeNames,
+              "#status": "status",
+            },
+          }
+        : { ExpressionAttributeNames: expressionAttributeNames }),
+      ExpressionAttributeValues: expressionAttributeValues,
+      ExclusiveStartKey: exclusiveStartKey,
+      Limit: remainingEntitlementGrantLimit(items, params.limit),
+    });
+    const result = await dynamoDbClient.send(command);
+    items.push(...unmarshallEntitlementGrantItems(result.Items));
+    exclusiveStartKey = result.LastEvaluatedKey;
+  } while (
+    exclusiveStartKey &&
+    remainingEntitlementGrantLimit(items, params.limit)
+  );
+  return applyEntitlementGrantLimit(items, params.limit);
+}
+
+async function scanEntitlementGrants(params?: {
+  status?: EntitlementGrantStatus;
+  limit?: number;
+}): Promise<EntitlementGrant[]> {
+  const items: EntitlementGrant[] = [];
+  const expressionAttributeNames: Record<string, string> = {};
+  let expressionAttributeValues: Record<string, AttributeValue> | undefined;
+  let filterExpression: string | undefined;
+  if (params?.status) {
+    expressionAttributeNames["#status"] = "status";
+    expressionAttributeValues = marshall({ ":status": params.status });
+    filterExpression = "#status = :status";
+  }
+  let exclusiveStartKey: Record<string, AttributeValue> | undefined;
+  do {
+    const command = new ScanCommand({
+      TableName: tableName("EntitlementGrantTable"),
+      FilterExpression: filterExpression,
+      ExpressionAttributeNames: Object.keys(expressionAttributeNames).length
+        ? expressionAttributeNames
+        : undefined,
+      ExpressionAttributeValues: expressionAttributeValues,
+      ExclusiveStartKey: exclusiveStartKey,
+      Limit: remainingEntitlementGrantLimit(items, params?.limit),
+    });
+    const result = await dynamoDbClient.send(command);
+    items.push(...unmarshallEntitlementGrantItems(result.Items));
+    exclusiveStartKey = result.LastEvaluatedKey;
+  } while (
+    exclusiveStartKey &&
+    remainingEntitlementGrantLimit(items, params?.limit)
+  );
+  return applyEntitlementGrantLimit(items, params?.limit);
+}
+
+export async function listActiveEntitlementGrantsForGuild(
+  guildId: string,
+): Promise<EntitlementGrant[]> {
+  return listEntitlementGrants({ guildId, status: "active" });
+}
+
+export async function revokeEntitlementGrant(params: {
+  grantId: string;
+  revokedAt: string;
+  revokedBy: string;
+  revocationReason: string;
+  autoRevokedByStripeSubscriptionId?: string;
+}): Promise<void> {
+  const expressionAttributeNames: Record<string, string> = {
+    "#status": "status",
+    "#updatedAt": "updatedAt",
+    "#updatedBy": "updatedBy",
+    "#revokedAt": "revokedAt",
+    "#revokedBy": "revokedBy",
+    "#revocationReason": "revocationReason",
+  };
+  const values = {
+    ":status": "revoked",
+    ":activeStatus": "active",
+    ":updatedAt": params.revokedAt,
+    ":updatedBy": params.revokedBy,
+    ":revokedAt": params.revokedAt,
+    ":revokedBy": params.revokedBy,
+    ":revocationReason": params.revocationReason,
+    ...(params.autoRevokedByStripeSubscriptionId
+      ? {
+          ":autoRevokedByStripeSubscriptionId":
+            params.autoRevokedByStripeSubscriptionId,
+        }
+      : {}),
+  };
+  let updateExpression =
+    "SET #status = :status, #updatedAt = :updatedAt, #updatedBy = :updatedBy, #revokedAt = :revokedAt, #revokedBy = :revokedBy, #revocationReason = :revocationReason";
+  if (params.autoRevokedByStripeSubscriptionId) {
+    expressionAttributeNames["#autoRevokedByStripeSubscriptionId"] =
+      "autoRevokedByStripeSubscriptionId";
+    updateExpression +=
+      ", #autoRevokedByStripeSubscriptionId = :autoRevokedByStripeSubscriptionId";
+  }
+  const command = new UpdateItemCommand({
+    TableName: tableName("EntitlementGrantTable"),
+    Key: marshall({ grantId: params.grantId }),
+    UpdateExpression: updateExpression,
+    ConditionExpression:
+      "attribute_exists(grantId) AND #status = :activeStatus",
+    ExpressionAttributeNames: expressionAttributeNames,
+    ExpressionAttributeValues: marshall(values, {
+      removeUndefinedValues: true,
+    }),
+  });
+  try {
+    await dynamoDbClient.send(command);
+  } catch (error) {
+    if (isConditionalCheckFailed(error)) return;
+    throw error;
+  }
+}
+
 // Write to PaymentTransaction Table
 export async function writePaymentTransaction(
   transaction: PaymentTransaction,
@@ -107,14 +306,30 @@ export async function writePaymentTransaction(
 }
 
 // Stripe Webhook Event Table (idempotency)
-export async function writeStripeWebhookEvent(
+export async function tryCreateStripeWebhookEvent(
   event: StripeWebhookEvent,
-): Promise<void> {
+): Promise<boolean> {
   const params = {
     TableName: tableName("StripeWebhookEventTable"),
     Item: marshall(event, { removeUndefinedValues: true }),
+    ConditionExpression: "attribute_not_exists(eventId)",
   };
   const command = new PutItemCommand(params);
+  try {
+    await dynamoDbClient.send(command);
+    return true;
+  } catch (error) {
+    if (isConditionalCheckFailed(error)) return false;
+    throw error;
+  }
+}
+
+export async function deleteStripeWebhookEvent(eventId: string): Promise<void> {
+  const params = {
+    TableName: tableName("StripeWebhookEventTable"),
+    Key: marshall({ eventId }),
+  };
+  const command = new DeleteItemCommand(params);
   await dynamoDbClient.send(command);
 }
 

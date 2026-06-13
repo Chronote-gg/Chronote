@@ -9,6 +9,7 @@ import { contextRouter } from "./routers/context";
 import { dictionaryRouter } from "./routers/dictionary";
 import { contactFeedbackRouter } from "./routers/contactFeedback";
 import { feedbackRouter } from "./routers/feedback";
+import { adminEntitlementsRouter } from "./routers/adminEntitlements";
 import { adminFeedbackRouter } from "./routers/adminFeedback";
 import { meetingsRouter } from "./routers/meetings";
 import { meetingSharesRouter } from "./routers/meetingShares";
@@ -28,6 +29,7 @@ export const appRouter = router({
   context: contextRouter,
   dictionary: dictionaryRouter,
   feedback: feedbackRouter,
+  adminEntitlements: adminEntitlementsRouter,
   adminFeedback: adminFeedbackRouter,
   meetings: meetingsRouter,
   meetingShares: meetingSharesRouter,
