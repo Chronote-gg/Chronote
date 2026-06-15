@@ -49,6 +49,33 @@ type UploadResult = {
   job: UploadJob;
 };
 
+type RetainedRecordingSource = {
+  sourceId: string;
+  kind: string;
+  label: string;
+  contentType: string;
+  fileName: string;
+  fileSize: number;
+};
+
+type RetainedRecording = {
+  recordingId: string;
+  startedAt: string;
+  stoppedAt: string;
+  retainedAt: string;
+  title?: string | null;
+  tags: string[];
+  status: string;
+  errorMessage?: string | null;
+  localPath: string;
+  sources: RetainedRecordingSource[];
+};
+
+type RetainedRecordingAction = {
+  recordingId: string;
+  action: "retry" | "open" | "delete";
+};
+
 const DEFAULT_API_BASE_URL =
   import.meta.env.VITE_DESKTOP_API_BASE_URL ||
   (import.meta.env.DEV ? "http://127.0.0.1:3001" : "https://api.chronote.gg");
@@ -119,6 +146,18 @@ function openPortalUrl(portalBaseUrl: string) {
   return `${portalBaseUrl.replace(/\/$/, "")}/portal/meetings`;
 }
 
+function formatRetainedDate(value: string) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleString();
+}
+
+function formatBytes(bytes: number) {
+  if (bytes >= 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  if (bytes >= 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${bytes} B`;
+}
+
 function getDeviceLabel(
   devices: AudioDevice[],
   selectedId: string,
@@ -179,6 +218,11 @@ export default function App() {
   const [title, setTitle] = useState("");
   const [tags, setTags] = useState("");
   const [job, setJob] = useState<UploadJob | null>(null);
+  const [retainedRecordings, setRetainedRecordings] = useState<
+    RetainedRecording[]
+  >([]);
+  const [retainedAction, setRetainedAction] =
+    useState<RetainedRecordingAction | null>(null);
   const [completeMissingLinkStartedAt, setCompleteMissingLinkStartedAt] =
     useState<number | null>(null);
   const [busy, setBusy] = useState(false);
@@ -248,6 +292,18 @@ export default function App() {
       .then(setRecording)
       .catch(() => undefined);
   }, [apiBaseUrl]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void invoke<RetainedRecording[]>("list_retained_recordings")
+      .then((recordings) => {
+        if (!cancelled) setRetainedRecordings(recordings);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     void invoke<AudioDevice[]>("list_audio_devices")
@@ -374,6 +430,16 @@ export default function App() {
     }
   }
 
+  async function refreshRetainedRecordings() {
+    try {
+      setRetainedRecordings(
+        await invoke<RetainedRecording[]>("list_retained_recordings"),
+      );
+    } catch {
+      // Retained recordings are a recovery affordance; keep the main recorder usable.
+    }
+  }
+
   async function stopAndUpload() {
     setBusy(true);
     setError(null);
@@ -388,9 +454,74 @@ export default function App() {
       setRecording({ isRecording: false });
       setMessage("Upload received.");
     } catch (err) {
-      setError(formatError(err, "Upload failed."));
+      setError(
+        formatError(
+          err,
+          "Upload failed. Your recording was saved locally for retry.",
+        ),
+      );
     } finally {
+      await invoke<RecordingStatus>("get_recording_status")
+        .then(setRecording)
+        .catch(() => undefined);
+      await refreshRetainedRecordings();
       setBusy(false);
+    }
+  }
+
+  async function retryRetainedRecording(recordingId: string) {
+    setBusy(true);
+    setRetainedAction({ recordingId, action: "retry" });
+    setError(null);
+    setMessage("Retrying saved recording upload...");
+    try {
+      const result = await invoke<UploadResult>("retry_retained_recording", {
+        apiBaseUrl,
+        recordingId,
+      });
+      setJob(result.job);
+      setMessage("Upload received.");
+      await refreshRetainedRecordings();
+    } catch (err) {
+      setError(
+        formatError(
+          err,
+          "Retry failed. Your recording is still saved locally.",
+        ),
+      );
+      await refreshRetainedRecordings();
+    } finally {
+      setRetainedAction(null);
+      setBusy(false);
+    }
+  }
+
+  async function openRetainedRecording(recordingId: string) {
+    setRetainedAction({ recordingId, action: "open" });
+    setError(null);
+    try {
+      await invoke("open_retained_recording", { recordingId });
+    } catch (err) {
+      setError(formatError(err, "Failed to open saved recording folder."));
+    } finally {
+      setRetainedAction(null);
+    }
+  }
+
+  async function deleteRetainedRecording(recordingId: string) {
+    if (!window.confirm("Delete this saved recording from this computer?")) {
+      return;
+    }
+    setRetainedAction({ recordingId, action: "delete" });
+    setError(null);
+    try {
+      await invoke("delete_retained_recording", { recordingId });
+      await refreshRetainedRecordings();
+      setMessage("Saved recording deleted.");
+    } catch (err) {
+      setError(formatError(err, "Failed to delete saved recording."));
+    } finally {
+      setRetainedAction(null);
     }
   }
 
@@ -587,6 +718,95 @@ export default function App() {
                   </a>
                 </>
               )}
+              {retainedRecordings.length > 0 ? (
+                <div className="retained-recordings">
+                  <h3>Saved recordings</h3>
+                  <p>
+                    Uploads that fail stay on this computer until you retry or
+                    delete them.
+                  </p>
+                  {retainedRecordings.map((retained) => {
+                    const runningAction =
+                      retainedAction?.recordingId === retained.recordingId
+                        ? retainedAction.action
+                        : null;
+                    const retryable = retained.status === "failed_upload";
+                    return (
+                      <article
+                        className="retained-recording-card"
+                        key={retained.recordingId}
+                      >
+                        <strong>
+                          {retained.title || "Untitled recording"}
+                        </strong>
+                        <span>
+                          Saved {formatRetainedDate(retained.retainedAt)}
+                        </span>
+                        {retained.errorMessage ? (
+                          <p className="error">{retained.errorMessage}</p>
+                        ) : null}
+                        <p>
+                          {retained.sources
+                            .map(
+                              (source) =>
+                                `${source.label}: ${formatBytes(source.fileSize)}`,
+                            )
+                            .join(" | ")}
+                        </p>
+                        <code>{retained.localPath}</code>
+                        <div className="retained-actions">
+                          <button
+                            type="button"
+                            onClick={() =>
+                              void retryRetainedRecording(retained.recordingId)
+                            }
+                            disabled={
+                              busy ||
+                              recording.isRecording ||
+                              runningAction !== null ||
+                              !retryable
+                            }
+                          >
+                            {runningAction === "retry"
+                              ? "Retrying..."
+                              : retryable
+                                ? "Retry upload"
+                                : "Not retryable"}
+                          </button>
+                          <button
+                            type="button"
+                            className="secondary-button"
+                            onClick={() =>
+                              void openRetainedRecording(retained.recordingId)
+                            }
+                            disabled={runningAction !== null}
+                          >
+                            {runningAction === "open"
+                              ? "Opening..."
+                              : "Open folder"}
+                          </button>
+                          <button
+                            type="button"
+                            className="secondary-button"
+                            onClick={() =>
+                              void deleteRetainedRecording(retained.recordingId)
+                            }
+                            disabled={
+                              busy ||
+                              recording.isRecording ||
+                              runningAction !== null
+                            }
+                          >
+                            {runningAction === "delete"
+                              ? "Deleting..."
+                              : "Delete"}
+                          </button>
+                        </div>
+                      </article>
+                    );
+                  })}
+                </div>
+              ) : null}
             </aside>
           </section>
         </>

@@ -48,4 +48,42 @@ describe("tempFileService", () => {
     await service.cleanupTempBaseDir();
     expect(fs.existsSync(dir)).toBe(false);
   });
+
+  it("retains meeting temp directories outside the cleanup base", async () => {
+    const baseDir = path.join(os.tmpdir(), `chronote-test-${Date.now()}`);
+    const service = await loadService(baseDir);
+    const meeting = buildMeeting();
+    const dir = await service.ensureMeetingTempDir(meeting);
+    const recordingPath = path.join(dir, "recording.mp3");
+    await fs.promises.writeFile(recordingPath, Buffer.from([1, 2, 3]));
+
+    const retainedDir = await service.retainMeetingTempDir(
+      meeting,
+      "audio_upload_failed",
+    );
+
+    expect(retainedDir).toBe(service.getRetainedMeetingTempDir(meeting));
+    expect(fs.existsSync(dir)).toBe(false);
+    expect(fs.existsSync(path.join(retainedDir!, "recording.mp3"))).toBe(true);
+    await service.cleanupTempBaseDir();
+    expect(fs.existsSync(retainedDir!)).toBe(true);
+
+    const retention = JSON.parse(
+      await fs.promises.readFile(
+        path.join(retainedDir!, "retention.json"),
+        "utf8",
+      ),
+    ) as { reason: string; meetingId: string };
+    expect(retention).toEqual(
+      expect.objectContaining({
+        reason: "audio_upload_failed",
+        meetingId: meeting.meetingId,
+      }),
+    );
+
+    await fs.promises.rm(path.dirname(retainedDir!), {
+      recursive: true,
+      force: true,
+    });
+  });
 });
