@@ -215,6 +215,11 @@ h2 {
   font-size: 1.15rem;
 }
 
+h3 {
+  margin: 0;
+  font-size: 1rem;
+}
+
 .lede {
   margin: 0.45rem 0 0;
   color: #cbd5e1;
@@ -377,6 +382,49 @@ h2 {
   margin-top: 0.7rem;
   color: #7dd3fc;
   font-weight: 800;
+}
+
+.retained-recordings {
+  display: grid;
+  gap: 0.75rem;
+  margin-top: 1rem;
+  padding-top: 1rem;
+  border-top: 1px solid rgba(148, 163, 184, 0.18);
+}
+
+.retained-recording-card {
+  display: grid;
+  gap: 0.45rem;
+  padding: 0.75rem;
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  border-radius: 0.7rem;
+  background: rgba(15, 23, 42, 0.62);
+}
+
+.retained-recording-card strong {
+  color: #f8fbff;
+}
+
+.retained-recording-card span {
+  color: #93a4bc;
+  font-size: 0.78rem;
+}
+
+.retained-recording-card code {
+  overflow-wrap: anywhere;
+  user-select: text;
+  color: #c4b5fd;
+  font-size: 0.78rem;
+}
+
+.retained-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.retained-actions button {
+  padding: 0.52rem 0.72rem;
 }
 
 @media (max-width: 760px) {

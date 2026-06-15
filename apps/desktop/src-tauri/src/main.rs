@@ -33,6 +33,9 @@ const LOGIN_TIMEOUT_SECONDS: u64 = 300;
 const DESKTOP_SCOPES: &str = "profile:read personal_uploads:write meetings:read";
 const RECORDING_SOURCE_SIGNAL_EVENT: &str = "recording-source-signal";
 const WAV_HEADER_BYTES: u64 = 44;
+const RETAINED_RECORDING_MANIFEST_FILE: &str = "recording.json";
+const RETAINED_RECORDING_MANIFEST_VERSION: u32 = 1;
+const RETAINED_RECORDING_STATUS_FAILED_UPLOAD: &str = "failed_upload";
 
 #[derive(Default)]
 struct AppState {
@@ -196,6 +199,47 @@ struct RecordingCompleteSourceRequest {
 #[serde(rename_all = "camelCase")]
 struct UploadJobResponse {
     job: UploadJob,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RetainedRecordingSource {
+    source_id: String,
+    kind: String,
+    label: String,
+    content_type: String,
+    file_name: String,
+    file_size: u64,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RetainedRecordingManifest {
+    version: u32,
+    recording_id: String,
+    started_at: String,
+    stopped_at: String,
+    retained_at: String,
+    title: Option<String>,
+    tags: Vec<String>,
+    status: String,
+    error_message: Option<String>,
+    sources: Vec<RetainedRecordingSource>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RetainedRecording {
+    recording_id: String,
+    started_at: String,
+    stopped_at: String,
+    retained_at: String,
+    title: Option<String>,
+    tags: Vec<String>,
+    status: String,
+    error_message: Option<String>,
+    local_path: String,
+    sources: Vec<RetainedRecordingSource>,
 }
 
 #[derive(Deserialize)]
@@ -368,12 +412,15 @@ async fn stop_and_upload_recording(
     state: State<'_, AppState>,
 ) -> Result<UploadResult, String> {
     let api_base_url = normalize_api_base_url(&api_base_url)?;
+    let title = normalize_optional_title(title);
+    let tags = normalize_tags(tags);
     let active = {
         let mut recording = state.recording.lock().map_err(lock_error)?;
         recording
             .take()
             .ok_or_else(|| "No recording is in progress.".to_string())?
     };
+    let started_at = active.started_at.clone();
     let sources = stop_recording_sources(active)?;
     let cleanup_dir = sources
         .first()
@@ -390,17 +437,146 @@ async fn stop_and_upload_recording(
             &access_token,
             &client,
             intent,
-            title.filter(|value| !value.trim().is_empty()),
-            tags,
+            title.clone(),
+            tags.clone(),
         )
         .await
     }
     .await;
-    if let Some(cleanup_dir) = cleanup_dir {
-        let _ = fs::remove_dir_all(cleanup_dir);
+    match upload_result {
+        Ok(job) => {
+            if let Some(cleanup_dir) = cleanup_dir {
+                let _ = fs::remove_dir_all(cleanup_dir);
+            }
+            Ok(UploadResult { job })
+        }
+        Err(error) => {
+            if let Some(cleanup_dir) = cleanup_dir {
+                if let Err(manifest_error) = write_retained_recording_manifest(
+                    &cleanup_dir,
+                    &started_at,
+                    &sources,
+                    title,
+                    tags,
+                    &error,
+                ) {
+                    return Err(format!(
+                        "{error} Recording files were retained, but Chronote could not write recovery metadata: {manifest_error}"
+                    ));
+                }
+            }
+            Err(format!("{error} Recording saved locally for retry."))
+        }
     }
-    let job = upload_result?;
-    Ok(UploadResult { job })
+}
+
+#[tauri::command]
+fn list_retained_recordings() -> Result<Vec<RetainedRecording>, String> {
+    let base = recording_base_directory()?;
+    if !base.exists() {
+        return Ok(Vec::new());
+    }
+
+    let mut recordings = Vec::new();
+    let entries = fs::read_dir(base).map_err(|error| error.to_string())?;
+    for entry in entries {
+        let entry = entry.map_err(|error| error.to_string())?;
+        let path = entry.path();
+        if !path.is_dir() {
+            continue;
+        }
+        let manifest_path = retained_manifest_path(&path);
+        if !manifest_path.exists() {
+            continue;
+        }
+        let manifest = match read_retained_recording_manifest(&path) {
+            Ok(manifest) => manifest,
+            Err(error) => {
+                eprintln!(
+                    "Skipping unreadable retained recording manifest {}: {}",
+                    manifest_path.display(),
+                    error
+                );
+                continue;
+            }
+        };
+        recordings.push(RetainedRecording {
+            recording_id: manifest.recording_id,
+            started_at: manifest.started_at,
+            stopped_at: manifest.stopped_at,
+            retained_at: manifest.retained_at,
+            title: manifest.title,
+            tags: manifest.tags,
+            status: manifest.status,
+            error_message: manifest.error_message,
+            local_path: path.display().to_string(),
+            sources: manifest.sources,
+        });
+    }
+    recordings.sort_by(|a, b| b.retained_at.cmp(&a.retained_at));
+    Ok(recordings)
+}
+
+#[tauri::command]
+async fn retry_retained_recording(
+    api_base_url: String,
+    recording_id: String,
+    state: State<'_, AppState>,
+) -> Result<UploadResult, String> {
+    let api_base_url = normalize_api_base_url(&api_base_url)?;
+    let directory = retained_recording_directory(&recording_id)?;
+    let mut manifest = read_retained_recording_manifest(&directory)?;
+    let sources = captured_sources_from_retained_manifest(&directory, &manifest)?;
+    let client = reqwest::Client::new();
+    let upload_result = async {
+        let access_token = access_token_for(&api_base_url, &state, &client).await?;
+        let intent =
+            create_recording_upload_intent(&api_base_url, &access_token, &client, &sources).await?;
+        upload_sources(&client, &intent, &sources).await?;
+        complete_recording_upload(
+            &api_base_url,
+            &access_token,
+            &client,
+            intent,
+            manifest.title.clone(),
+            manifest.tags.clone(),
+        )
+        .await
+    }
+    .await;
+    match upload_result {
+        Ok(job) => {
+            let _ = fs::remove_dir_all(directory);
+            Ok(UploadResult { job })
+        }
+        Err(error) => {
+            manifest.retained_at = now_iso();
+            manifest.status = RETAINED_RECORDING_STATUS_FAILED_UPLOAD.to_string();
+            manifest.error_message = Some(error.clone());
+            write_retained_recording_manifest_file(&directory, &manifest)?;
+            Err(format!(
+                "{error} Recording is still saved locally for retry."
+            ))
+        }
+    }
+}
+
+#[tauri::command]
+fn open_retained_recording(recording_id: String) -> Result<(), String> {
+    let directory = retained_recording_directory(&recording_id)?;
+    if !directory.exists() {
+        return Err("Retained recording was not found.".to_string());
+    }
+    open::that(directory).map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn delete_retained_recording(recording_id: String) -> Result<(), String> {
+    let directory = retained_recording_directory(&recording_id)?;
+    if !directory.exists() {
+        return Ok(());
+    }
+    fs::remove_dir_all(directory).map_err(|error| error.to_string())
 }
 
 #[tauri::command]
@@ -465,6 +641,10 @@ fn main() {
             get_recording_status,
             start_recording,
             stop_and_upload_recording,
+            list_retained_recordings,
+            retry_retained_recording,
+            open_retained_recording,
+            delete_retained_recording,
             get_upload_status,
             open_external_url,
             start_window_drag,
@@ -1048,10 +1228,7 @@ fn normalize_api_base_url(value: &str) -> Result<String, String> {
 }
 
 fn recording_directory() -> Result<PathBuf, String> {
-    let base = ProjectDirs::from("gg", "Chronote", "Chronote Desktop")
-        .map(|dirs| dirs.data_local_dir().to_path_buf())
-        .unwrap_or_else(|| std::env::temp_dir().join("chronote-desktop"));
-    Ok(base.join("recordings").join(Uuid::new_v4().to_string()))
+    Ok(recording_base_directory()?.join(Uuid::new_v4().to_string()))
 }
 
 fn source_file_name(path: &Path) -> Result<String, String> {
@@ -1059,6 +1236,142 @@ fn source_file_name(path: &Path) -> Result<String, String> {
         .and_then(|name| name.to_str())
         .map(ToString::to_string)
         .ok_or_else(|| "Recording file name could not be resolved.".to_string())
+}
+
+fn normalize_optional_title(title: Option<String>) -> Option<String> {
+    title
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+}
+
+fn normalize_tags(tags: Vec<String>) -> Vec<String> {
+    tags.into_iter()
+        .map(|tag| tag.trim().to_string())
+        .filter(|tag| !tag.is_empty())
+        .take(20)
+        .collect()
+}
+
+fn recording_base_directory() -> Result<PathBuf, String> {
+    let base = ProjectDirs::from("gg", "Chronote", "Chronote Desktop")
+        .map(|dirs| dirs.data_local_dir().to_path_buf())
+        .unwrap_or_else(|| std::env::temp_dir().join("chronote-desktop"));
+    Ok(base.join("recordings"))
+}
+
+fn retained_recording_directory(recording_id: &str) -> Result<PathBuf, String> {
+    let recording_uuid =
+        Uuid::parse_str(recording_id).map_err(|_| "Invalid retained recording ID.".to_string())?;
+    Ok(recording_base_directory()?.join(recording_uuid.to_string()))
+}
+
+fn retained_manifest_path(directory: &Path) -> PathBuf {
+    directory.join(RETAINED_RECORDING_MANIFEST_FILE)
+}
+
+fn recording_id_from_directory(directory: &Path) -> Result<String, String> {
+    directory
+        .file_name()
+        .and_then(|name| name.to_str())
+        .map(ToString::to_string)
+        .ok_or_else(|| "Recording directory name could not be resolved.".to_string())
+}
+
+fn retained_source_from_captured_source(
+    source: &CapturedSourceFile,
+) -> Result<RetainedRecordingSource, String> {
+    Ok(RetainedRecordingSource {
+        source_id: source.source_id.clone(),
+        kind: source.kind.clone(),
+        label: source.label.clone(),
+        content_type: "audio/wav".to_string(),
+        file_name: source_file_name(&source.path)?,
+        file_size: source.file_size,
+    })
+}
+
+fn write_retained_recording_manifest(
+    directory: &Path,
+    started_at: &str,
+    sources: &[CapturedSourceFile],
+    title: Option<String>,
+    tags: Vec<String>,
+    error_message: &str,
+) -> Result<(), String> {
+    let now = now_iso();
+    let manifest = RetainedRecordingManifest {
+        version: RETAINED_RECORDING_MANIFEST_VERSION,
+        recording_id: recording_id_from_directory(directory)?,
+        started_at: started_at.to_string(),
+        stopped_at: now.clone(),
+        retained_at: now,
+        title,
+        tags,
+        status: RETAINED_RECORDING_STATUS_FAILED_UPLOAD.to_string(),
+        error_message: Some(error_message.to_string()),
+        sources: sources
+            .iter()
+            .map(retained_source_from_captured_source)
+            .collect::<Result<Vec<_>, _>>()?,
+    };
+    write_retained_recording_manifest_file(directory, &manifest)
+}
+
+fn write_retained_recording_manifest_file(
+    directory: &Path,
+    manifest: &RetainedRecordingManifest,
+) -> Result<(), String> {
+    fs::create_dir_all(directory).map_err(|error| error.to_string())?;
+    let body = serde_json::to_string_pretty(manifest).map_err(|error| error.to_string())?;
+    fs::write(retained_manifest_path(directory), body).map_err(|error| error.to_string())
+}
+
+fn read_retained_recording_manifest(directory: &Path) -> Result<RetainedRecordingManifest, String> {
+    let body =
+        fs::read_to_string(retained_manifest_path(directory)).map_err(|error| error.to_string())?;
+    let manifest: RetainedRecordingManifest =
+        serde_json::from_str(&body).map_err(|error| error.to_string())?;
+    if manifest.version != RETAINED_RECORDING_MANIFEST_VERSION {
+        return Err("Retained recording manifest version is unsupported.".to_string());
+    }
+    Ok(manifest)
+}
+
+fn retained_source_path(directory: &Path, file_name: &str) -> Result<PathBuf, String> {
+    let relative_path = Path::new(file_name);
+    if relative_path.components().count() != 1
+        || relative_path.file_name().and_then(|name| name.to_str()) != Some(file_name)
+    {
+        return Err("Retained recording source file name is invalid.".to_string());
+    }
+    Ok(directory.join(relative_path))
+}
+
+fn captured_sources_from_retained_manifest(
+    directory: &Path,
+    manifest: &RetainedRecordingManifest,
+) -> Result<Vec<CapturedSourceFile>, String> {
+    manifest
+        .sources
+        .iter()
+        .map(|source| {
+            let path = retained_source_path(directory, &source.file_name)?;
+            let metadata = fs::metadata(&path).map_err(|error| error.to_string())?;
+            if metadata.len() <= WAV_HEADER_BYTES {
+                return Err(format!(
+                    "Retained recording source {} was empty.",
+                    source.source_id
+                ));
+            }
+            Ok(CapturedSourceFile {
+                source_id: source.source_id.clone(),
+                kind: source.kind.clone(),
+                label: source.label.clone(),
+                path,
+                file_size: metadata.len(),
+            })
+        })
+        .collect()
 }
 
 fn random_url_token(byte_count: usize) -> String {
@@ -1084,4 +1397,86 @@ fn now_epoch_seconds() -> u64 {
 
 fn lock_error<T>(error: std::sync::PoisonError<T>) -> String {
     error.to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn retained_manifest_keeps_source_files_available_for_retry() {
+        let directory = std::env::temp_dir().join(format!(
+            "chronote-retained-recording-test-{}",
+            Uuid::new_v4()
+        ));
+        fs::create_dir_all(&directory).unwrap();
+        let source_path = directory.join("owner_mic.wav");
+        fs::write(&source_path, vec![0_u8; (WAV_HEADER_BYTES + 8) as usize]).unwrap();
+        let source = CapturedSourceFile {
+            source_id: "owner_mic".to_string(),
+            kind: "owner_mic".to_string(),
+            label: "Me".to_string(),
+            path: source_path.clone(),
+            file_size: WAV_HEADER_BYTES + 8,
+        };
+
+        write_retained_recording_manifest(
+            &directory,
+            "2026-06-15T00:00:00.000Z",
+            &[source],
+            Some("Planning".to_string()),
+            vec!["research".to_string()],
+            "upload failed",
+        )
+        .unwrap();
+
+        let manifest = read_retained_recording_manifest(&directory).unwrap();
+        let retry_sources = captured_sources_from_retained_manifest(&directory, &manifest).unwrap();
+
+        assert!(source_path.exists());
+        assert_eq!(manifest.status, RETAINED_RECORDING_STATUS_FAILED_UPLOAD);
+        assert_eq!(manifest.error_message.as_deref(), Some("upload failed"));
+        assert_eq!(retry_sources.len(), 1);
+        assert_eq!(retry_sources[0].source_id, "owner_mic");
+        assert_eq!(retry_sources[0].file_size, WAV_HEADER_BYTES + 8);
+
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn retained_manifest_rejects_nested_source_file_names() {
+        let directory = std::env::temp_dir().join(format!(
+            "chronote-retained-recording-test-{}",
+            Uuid::new_v4()
+        ));
+        fs::create_dir_all(&directory).unwrap();
+        let manifest = RetainedRecordingManifest {
+            version: RETAINED_RECORDING_MANIFEST_VERSION,
+            recording_id: "recording-1".to_string(),
+            started_at: "2026-06-15T00:00:00.000Z".to_string(),
+            stopped_at: "2026-06-15T00:01:00.000Z".to_string(),
+            retained_at: "2026-06-15T00:01:00.000Z".to_string(),
+            title: None,
+            tags: Vec::new(),
+            status: RETAINED_RECORDING_STATUS_FAILED_UPLOAD.to_string(),
+            error_message: None,
+            sources: vec![RetainedRecordingSource {
+                source_id: "owner_mic".to_string(),
+                kind: "owner_mic".to_string(),
+                label: "Me".to_string(),
+                content_type: "audio/wav".to_string(),
+                file_name: "../secret.wav".to_string(),
+                file_size: WAV_HEADER_BYTES + 8,
+            }],
+        };
+
+        let error = match captured_sources_from_retained_manifest(&directory, &manifest) {
+            Ok(_) => panic!("nested source file name should be rejected"),
+            Err(error) => error,
+        };
+
+        assert!(error.contains("file name is invalid"));
+
+        fs::remove_dir_all(directory).unwrap();
+    }
 }

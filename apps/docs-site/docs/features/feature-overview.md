@@ -244,7 +244,7 @@ Chronote Desktop is currently available as a limited beta. Your account must hav
 4. Click **Start recording**.
 5. Click **Stop and upload** when the meeting ends.
 
-Desktop recordings use your Chronote account and do not require a Discord voice channel. Keep the app open until the upload is received. Processing continues in Chronote after the upload completes. Use **Open Chronote** in the desktop app to open **My Meetings** in the web portal.
+Desktop recordings use your Chronote account and do not require a Discord voice channel. Keep the app open until the upload is received. Processing continues in Chronote after the upload completes. If upload fails, Chronote Desktop keeps the local recording available in **Saved recordings** so you can retry the upload, open the local folder, or delete it when you no longer need it. Use **Open Chronote** in the desktop app to open **My Meetings** in the web portal.
 
 ## Context menu commands
 

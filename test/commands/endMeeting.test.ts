@@ -18,8 +18,13 @@ import {
 } from "../../src/audio";
 import { uploadMeetingArtifacts } from "../../src/services/uploadService";
 import { saveMeetingHistoryToDatabase } from "../../src/commands/saveMeetingHistory";
+import {
+  cleanupMeetingTempDir,
+  retainMeetingTempDir,
+} from "../../src/services/tempFileService";
 import { getGuildLimits } from "../../src/services/subscriptionService";
 import { updateMeetingStatusService } from "../../src/services/meetingHistoryService";
+import { deleteIfExists } from "../../src/util";
 import { deleteMeeting, getMeeting, hasMeeting } from "../../src/meetings";
 import { describeAutoRecordRule } from "../../src/utils/meetingLifecycle";
 import { MEETING_END_REASONS } from "../../src/types/meetingLifecycle";
@@ -42,6 +47,12 @@ jest.mock("../../src/embed", () => ({
 jest.mock("../../src/util", () => ({
   deleteDirectoryRecursively: jest.fn(),
   deleteIfExists: jest.fn(),
+}));
+jest.mock("../../src/services/tempFileService", () => ({
+  cleanupMeetingTempDir: jest.fn(),
+  ensureMeetingTempDir: jest.fn(async () => "tmp/meetings/meeting-1"),
+  getMeetingTempDir: jest.fn(() => "tmp/meetings/meeting-1"),
+  retainMeetingTempDir: jest.fn(async () => "tmp/retained-meetings/meeting-1"),
 }));
 jest.mock("../../src/services/meetingNotesService", () => ({
   ensureMeetingNotes: jest.fn(),
@@ -145,6 +156,14 @@ const mockedWaitForFinishProcessing =
   >;
 const mockedUploadMeetingArtifacts =
   uploadMeetingArtifacts as jest.MockedFunction<typeof uploadMeetingArtifacts>;
+const mockedCleanupMeetingTempDir =
+  cleanupMeetingTempDir as jest.MockedFunction<typeof cleanupMeetingTempDir>;
+const mockedRetainMeetingTempDir = retainMeetingTempDir as jest.MockedFunction<
+  typeof retainMeetingTempDir
+>;
+const mockedDeleteIfExists = deleteIfExists as jest.MockedFunction<
+  typeof deleteIfExists
+>;
 const mockedSaveMeetingHistoryToDatabase =
   saveMeetingHistoryToDatabase as jest.MockedFunction<
     typeof saveMeetingHistoryToDatabase
@@ -172,10 +191,22 @@ const mockedRunTranscriptionFinalPass =
     typeof runTranscriptionFinalPass
   >;
 
+const successfulArtifactUpload = {
+  audioUploadExpected: true,
+  chatUploadExpected: true,
+  transcriptUploadExpected: false,
+  audioS3Key: "audio/meeting-1.mp3",
+  chatS3Key: "chat/meeting-1.json",
+};
+
 describe("handleEndMeetingOther", () => {
   beforeEach(() => {
     jest.clearAllMocks();
     mockedCleanupSpeakerTracks.mockResolvedValue(undefined);
+    mockedUploadMeetingArtifacts.mockResolvedValue(successfulArtifactUpload);
+    mockedRetainMeetingTempDir.mockResolvedValue(
+      "tmp/retained-meetings/meeting-1",
+    );
     mockedRunTranscriptionFinalPass.mockResolvedValue({
       enabled: true,
       applied: false,
@@ -202,7 +233,6 @@ describe("handleEndMeetingOther", () => {
     mockedBuildMixedAudio.mockResolvedValue(undefined);
     mockedCloseOutputFile.mockResolvedValue(undefined);
     mockedWaitForAudioOnlyFinishProcessing.mockResolvedValue(undefined);
-    mockedUploadMeetingArtifacts.mockResolvedValue(undefined);
     mockedSaveMeetingHistoryToDatabase.mockResolvedValue(undefined);
     mockedGetGuildLimits.mockResolvedValue({ limits: {} } as never);
     mockedUpdateMeetingStatusService.mockResolvedValue(undefined);
@@ -283,7 +313,6 @@ describe("handleEndMeetingOther", () => {
     mockedWaitForFinishProcessing.mockResolvedValue(undefined);
     mockedBuildMixedAudio.mockResolvedValue(undefined);
     mockedCompileTranscriptions.mockResolvedValue("Recovered transcript");
-    mockedUploadMeetingArtifacts.mockResolvedValue(undefined);
     mockedGetGuildLimits.mockResolvedValue({ limits: {} } as never);
     mockedSaveMeetingHistoryToDatabase.mockResolvedValue(undefined);
 
@@ -432,7 +461,6 @@ describe("handleEndMeetingOther", () => {
     mockedBuildMixedAudio.mockResolvedValue(undefined);
     mockedCloseOutputFile.mockResolvedValue(undefined);
     mockedWaitForAudioOnlyFinishProcessing.mockResolvedValue(undefined);
-    mockedUploadMeetingArtifacts.mockResolvedValue(undefined);
     mockedSaveMeetingHistoryToDatabase.mockResolvedValue(undefined);
     mockedGetGuildLimits.mockResolvedValue({ limits: {} } as never);
     mockedUpdateMeetingStatusService.mockResolvedValue(undefined);
@@ -483,6 +511,64 @@ describe("handleEndMeetingOther", () => {
     });
   });
 
+  it("retains local artifacts when completed meeting audio upload is not durable", async () => {
+    mockedWithMeetingEndTrace.mockImplementation(async (_meeting, fn) => fn());
+    mockedEvaluateAutoRecordCancellation.mockResolvedValue({ cancel: false });
+    mockedBuildMixedAudio.mockResolvedValue(undefined);
+    mockedCloseOutputFile.mockResolvedValue(undefined);
+    mockedWaitForAudioOnlyFinishProcessing.mockResolvedValue(undefined);
+    mockedUploadMeetingArtifacts.mockResolvedValue({
+      audioUploadExpected: true,
+      chatUploadExpected: true,
+      transcriptUploadExpected: false,
+    });
+    mockedSaveMeetingHistoryToDatabase.mockResolvedValue(undefined);
+    mockedGetGuildLimits.mockResolvedValue({ limits: {} } as never);
+
+    const meeting = {
+      guildId: "guild-1",
+      channelId: "text-1",
+      meetingId: "meeting-1",
+      voiceChannel: { id: "voice-1", name: "Voice", members: new Collection() },
+      textChannel: {
+        id: "text-1",
+        send: jest.fn().mockResolvedValue(undefined),
+        messages: { fetch: jest.fn() },
+      },
+      connection: {
+        disconnect: jest.fn(),
+        destroy: jest.fn(),
+      },
+      chatLog: [],
+      audioData: {
+        audioFiles: [],
+        currentSnippets: new Map(),
+        outputFileName: "recording.mp3",
+      },
+      startTime: new Date("2025-01-01T00:00:00.000Z"),
+      endTime: undefined,
+      finishing: false,
+      finished: false,
+      transcribeMeeting: false,
+      generateNotes: false,
+      isAutoRecording: false,
+      creator: { id: "user-1" },
+      guild: { id: "guild-1", name: "Guild", members: { cache: new Map() } },
+      ttsQueue: { stopAndClear: jest.fn() },
+      setFinished: jest.fn(),
+    } as unknown as MeetingData;
+
+    await handleEndMeetingOther({} as Client, meeting);
+
+    expect(mockedRetainMeetingTempDir).toHaveBeenCalledWith(
+      meeting,
+      "audio_upload_failed",
+    );
+    expect(mockedDeleteIfExists).not.toHaveBeenCalledWith("recording.mp3");
+    expect(mockedCleanupSpeakerTracks).not.toHaveBeenCalled();
+    expect(mockedCleanupMeetingTempDir).not.toHaveBeenCalled();
+  });
+
   it("continues error cleanup when lease release fails", async () => {
     mockedWithMeetingEndTrace.mockRejectedValue(new Error("end flow failed"));
     mockedHasMeeting.mockReturnValue(true);
@@ -512,7 +598,6 @@ describe("handleEndMeetingOther", () => {
     mockedWaitForAudioOnlyFinishProcessing.mockResolvedValue(undefined);
     mockedCloseOutputFile.mockResolvedValue(undefined);
     mockedWaitForFinishProcessing.mockResolvedValue(undefined);
-    mockedUploadMeetingArtifacts.mockResolvedValue(undefined);
     mockedCompileTranscriptions.mockResolvedValueOnce(
       "Transcript without cues",
     );
@@ -575,6 +660,71 @@ describe("handleEndMeetingOther", () => {
     ).toBeLessThan(
       mockedSaveMeetingHistoryToDatabase.mock.invocationCallOrder[0],
     );
+  });
+
+  it("retains cancelled auto-record artifacts when audio upload is not durable", async () => {
+    mockedWithMeetingEndTrace.mockImplementation(async (_meeting, fn) => fn());
+    mockedWaitForAudioOnlyFinishProcessing.mockResolvedValue(undefined);
+    mockedCloseOutputFile.mockResolvedValue(undefined);
+    mockedUploadMeetingArtifacts.mockResolvedValue({
+      audioUploadExpected: true,
+      chatUploadExpected: true,
+      transcriptUploadExpected: false,
+    });
+    mockedDescribeAutoRecordRule.mockReturnValue(
+      "Auto-record rule: test-channel",
+    );
+    mockedSaveMeetingHistoryToDatabase.mockResolvedValue(undefined);
+
+    const meeting = {
+      guildId: "guild-1",
+      channelId: "text-1",
+      meetingId: "meeting-1",
+      voiceChannel: {
+        id: "voice-1",
+        name: "Voice",
+        members: new Collection(),
+      },
+      textChannel: {
+        send: jest.fn().mockResolvedValue(undefined),
+        messages: { fetch: jest.fn() },
+      },
+      connection: {
+        disconnect: jest.fn(),
+        destroy: jest.fn(),
+      },
+      chatLog: [],
+      audioData: {
+        audioFiles: [],
+        currentSnippets: new Map(),
+        outputFileName: "recording.mp3",
+      },
+      startTime: new Date("2025-01-01T00:00:00.000Z"),
+      endTime: undefined,
+      finishing: false,
+      finished: false,
+      transcribeMeeting: false,
+      generateNotes: false,
+      isAutoRecording: true,
+      cancelled: true,
+      cancellationReason: "Stopped by user",
+      endReason: MEETING_END_REASONS.AUTO_CANCELLED,
+      creator: { id: "bot-1" },
+      guild: { id: "guild-1", members: { cache: new Map() } },
+      ttsQueue: { stopAndClear: jest.fn() },
+      setFinished: jest.fn(),
+      participants: new Map(),
+    } as unknown as MeetingData;
+
+    await handleEndMeetingOther({} as Client, meeting);
+
+    expect(mockedRetainMeetingTempDir).toHaveBeenCalledWith(
+      meeting,
+      "cancelled_audio_upload_failed",
+    );
+    expect(mockedDeleteIfExists).not.toHaveBeenCalledWith("recording.mp3");
+    expect(mockedCleanupSpeakerTracks).not.toHaveBeenCalled();
+    expect(mockedCleanupMeetingTempDir).not.toHaveBeenCalled();
   });
 
   it("uses stopped messaging for short dismissed auto-record meetings", async () => {
