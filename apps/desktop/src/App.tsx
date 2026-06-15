@@ -71,6 +71,11 @@ type RetainedRecording = {
   sources: RetainedRecordingSource[];
 };
 
+type RetainedRecordingAction = {
+  recordingId: string;
+  action: "retry" | "open" | "delete";
+};
+
 const DEFAULT_API_BASE_URL =
   import.meta.env.VITE_DESKTOP_API_BASE_URL ||
   (import.meta.env.DEV ? "http://127.0.0.1:3001" : "https://api.chronote.gg");
@@ -216,7 +221,8 @@ export default function App() {
   const [retainedRecordings, setRetainedRecordings] = useState<
     RetainedRecording[]
   >([]);
-  const [retainedActionId, setRetainedActionId] = useState<string | null>(null);
+  const [retainedAction, setRetainedAction] =
+    useState<RetainedRecordingAction | null>(null);
   const [completeMissingLinkStartedAt, setCompleteMissingLinkStartedAt] =
     useState<number | null>(null);
   const [busy, setBusy] = useState(false);
@@ -465,7 +471,7 @@ export default function App() {
 
   async function retryRetainedRecording(recordingId: string) {
     setBusy(true);
-    setRetainedActionId(recordingId);
+    setRetainedAction({ recordingId, action: "retry" });
     setError(null);
     setMessage("Retrying saved recording upload...");
     try {
@@ -485,20 +491,20 @@ export default function App() {
       );
       await refreshRetainedRecordings();
     } finally {
-      setRetainedActionId(null);
+      setRetainedAction(null);
       setBusy(false);
     }
   }
 
   async function openRetainedRecording(recordingId: string) {
-    setRetainedActionId(recordingId);
+    setRetainedAction({ recordingId, action: "open" });
     setError(null);
     try {
       await invoke("open_retained_recording", { recordingId });
     } catch (err) {
       setError(formatError(err, "Failed to open saved recording folder."));
     } finally {
-      setRetainedActionId(null);
+      setRetainedAction(null);
     }
   }
 
@@ -506,7 +512,7 @@ export default function App() {
     if (!window.confirm("Delete this saved recording from this computer?")) {
       return;
     }
-    setRetainedActionId(recordingId);
+    setRetainedAction({ recordingId, action: "delete" });
     setError(null);
     try {
       await invoke("delete_retained_recording", { recordingId });
@@ -515,7 +521,7 @@ export default function App() {
     } catch (err) {
       setError(formatError(err, "Failed to delete saved recording."));
     } finally {
-      setRetainedActionId(null);
+      setRetainedAction(null);
     }
   }
 
@@ -720,8 +726,10 @@ export default function App() {
                     delete them.
                   </p>
                   {retainedRecordings.map((retained) => {
-                    const actionRunning =
-                      retainedActionId === retained.recordingId;
+                    const runningAction =
+                      retainedAction?.recordingId === retained.recordingId
+                        ? retainedAction.action
+                        : null;
                     return (
                       <article
                         className="retained-recording-card"
@@ -753,7 +761,9 @@ export default function App() {
                             }
                             disabled={busy || recording.isRecording}
                           >
-                            {actionRunning ? "Working..." : "Retry upload"}
+                            {runningAction === "retry"
+                              ? "Retrying..."
+                              : "Retry upload"}
                           </button>
                           <button
                             type="button"
@@ -761,9 +771,11 @@ export default function App() {
                             onClick={() =>
                               void openRetainedRecording(retained.recordingId)
                             }
-                            disabled={actionRunning}
+                            disabled={runningAction !== null}
                           >
-                            Open folder
+                            {runningAction === "open"
+                              ? "Opening..."
+                              : "Open folder"}
                           </button>
                           <button
                             type="button"
@@ -771,9 +783,15 @@ export default function App() {
                             onClick={() =>
                               void deleteRetainedRecording(retained.recordingId)
                             }
-                            disabled={busy || recording.isRecording}
+                            disabled={
+                              busy ||
+                              recording.isRecording ||
+                              runningAction !== null
+                            }
                           >
-                            Delete
+                            {runningAction === "delete"
+                              ? "Deleting..."
+                              : "Delete"}
                           </button>
                         </div>
                       </article>

@@ -129,6 +129,8 @@ export async function uploadMeetingArtifacts(
   meeting: MeetingData,
   opts: UploadArtifactsOptions,
 ): Promise<UploadMeetingArtifactsResult> {
+  // Missing storage config still means captured audio was not durably persisted;
+  // callers use these flags to retain local artifacts instead of deleting them.
   const result: UploadMeetingArtifactsResult = {
     audioUploadExpected: Boolean(opts.audioFilePath),
     chatUploadExpected: Boolean(opts.chatFilePath),
