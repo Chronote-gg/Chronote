@@ -36,6 +36,7 @@ const WAV_HEADER_BYTES: u64 = 44;
 const RETAINED_RECORDING_MANIFEST_FILE: &str = "recording.json";
 const RETAINED_RECORDING_MANIFEST_VERSION: u32 = 1;
 const RETAINED_RECORDING_STATUS_FAILED_UPLOAD: &str = "failed_upload";
+const RETAINED_RECORDING_STATUS_UPLOADED_CLEANUP_FAILED: &str = "uploaded_cleanup_failed";
 
 #[derive(Default)]
 struct AppState {
@@ -526,6 +527,12 @@ async fn retry_retained_recording(
     let api_base_url = normalize_api_base_url(&api_base_url)?;
     let directory = retained_recording_directory(&recording_id)?;
     let mut manifest = read_retained_recording_manifest(&directory)?;
+    if manifest.status != RETAINED_RECORDING_STATUS_FAILED_UPLOAD {
+        return Err(
+            "This saved recording is no longer retryable. Open the folder or delete it."
+                .to_string(),
+        );
+    }
     let sources = captured_sources_from_retained_manifest(&directory, &manifest)?;
     let client = reqwest::Client::new();
     let upload_result = async {
@@ -546,7 +553,16 @@ async fn retry_retained_recording(
     .await;
     match upload_result {
         Ok(job) => {
-            let _ = fs::remove_dir_all(directory);
+            if let Err(error) = fs::remove_dir_all(&directory) {
+                let message = format!(
+                    "Upload completed, but Chronote could not delete local saved recording files: {error}"
+                );
+                manifest.retained_at = now_iso();
+                manifest.status = RETAINED_RECORDING_STATUS_UPLOADED_CLEANUP_FAILED.to_string();
+                manifest.error_message = Some(message.clone());
+                write_retained_recording_manifest_file(&directory, &manifest)?;
+                return Err(format!("{message}. Open the folder or delete it manually."));
+            }
             Ok(UploadResult { job })
         }
         Err(error) => {

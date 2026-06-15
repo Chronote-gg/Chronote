@@ -730,6 +730,7 @@ export default function App() {
                       retainedAction?.recordingId === retained.recordingId
                         ? retainedAction.action
                         : null;
+                    const retryable = retained.status === "failed_upload";
                     return (
                       <article
                         className="retained-recording-card"
@@ -759,11 +760,18 @@ export default function App() {
                             onClick={() =>
                               void retryRetainedRecording(retained.recordingId)
                             }
-                            disabled={busy || recording.isRecording}
+                            disabled={
+                              busy ||
+                              recording.isRecording ||
+                              runningAction !== null ||
+                              !retryable
+                            }
                           >
                             {runningAction === "retry"
                               ? "Retrying..."
-                              : "Retry upload"}
+                              : retryable
+                                ? "Retry upload"
+                                : "Not retryable"}
                           </button>
                           <button
                             type="button"
