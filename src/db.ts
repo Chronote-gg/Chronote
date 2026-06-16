@@ -1686,6 +1686,48 @@ export async function renewPersonalMediaUploadJobClaim(options: {
   }
 }
 
+export async function updateClaimedPersonalMediaUploadJobProgress(options: {
+  uploadId: string;
+  instanceId: string;
+  segmentCount: number;
+  uploadedSegmentCount: number;
+  processedSegmentCount: number;
+  updatedAt: string;
+}): Promise<boolean> {
+  try {
+    await dynamoDbClient.send(
+      new UpdateItemCommand({
+        TableName: tableName("PersonalMediaUploadJobTable"),
+        Key: marshall({ uploadId: options.uploadId }),
+        UpdateExpression:
+          "SET #segmentCount = :segmentCount, #uploadedSegmentCount = :uploadedSegmentCount, #processedSegmentCount = :processedSegmentCount, #updatedAt = :updatedAt",
+        ConditionExpression:
+          "#status = :processing AND #processingOwnerInstanceId = :instanceId",
+        ExpressionAttributeNames: {
+          "#status": "status",
+          "#processingOwnerInstanceId": "processingOwnerInstanceId",
+          "#segmentCount": "segmentCount",
+          "#uploadedSegmentCount": "uploadedSegmentCount",
+          "#processedSegmentCount": "processedSegmentCount",
+          "#updatedAt": "updatedAt",
+        },
+        ExpressionAttributeValues: marshall({
+          ":processing": "processing",
+          ":instanceId": options.instanceId,
+          ":segmentCount": options.segmentCount,
+          ":uploadedSegmentCount": options.uploadedSegmentCount,
+          ":processedSegmentCount": options.processedSegmentCount,
+          ":updatedAt": options.updatedAt,
+        }),
+      }),
+    );
+    return true;
+  } catch (error) {
+    if (isConditionalCheckFailed(error)) return false;
+    throw error;
+  }
+}
+
 export async function writeClaimedPersonalMediaUploadJob(
   job: PersonalMediaUploadJobRecord,
   instanceId: string,

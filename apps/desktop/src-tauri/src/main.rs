@@ -290,6 +290,30 @@ struct RetainedRecordingSourceManifest {
     label: String,
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RetainedRecordingSourceV1 {
+    source_id: String,
+    kind: String,
+    label: String,
+    content_type: String,
+    file_name: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RetainedRecordingManifestV1 {
+    recording_id: String,
+    started_at: String,
+    stopped_at: String,
+    retained_at: String,
+    title: Option<String>,
+    tags: Vec<String>,
+    status: String,
+    error_message: Option<String>,
+    sources: Vec<RetainedRecordingSourceV1>,
+}
+
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct RetainedRecordingManifest {
@@ -300,10 +324,12 @@ struct RetainedRecordingManifest {
     retained_at: String,
     title: Option<String>,
     tags: Vec<String>,
+    #[serde(default)]
     upload_id: Option<String>,
     status: String,
     error_message: Option<String>,
     sources: Vec<RetainedRecordingSourceManifest>,
+    #[serde(default)]
     segments: Vec<RetainedRecordingSegment>,
 }
 
@@ -1215,7 +1241,7 @@ fn spawn_segment_upload_worker(
 ) -> tauri::async_runtime::JoinHandle<()> {
     tauri::async_runtime::spawn(async move {
         while let Some(event) = segment_rx.recv().await {
-            let upload_file = match segment_upload_file_from_event(&directory, &event) {
+            let upload_file = match segment_upload_file_from_event(&directory, event).await {
                 Ok(upload_file) => upload_file,
                 Err(error) => {
                     eprintln!("Failed to read sealed recording segment: {error}");
@@ -1569,21 +1595,27 @@ fn write_shared_recording_manifest(
     write_retained_recording_manifest_file(directory, &manifest)
 }
 
-fn segment_upload_file_from_event(
+async fn segment_upload_file_from_event(
     directory: &Path,
-    event: &SealedSegmentEvent,
+    event: SealedSegmentEvent,
 ) -> Result<SegmentUploadFile, String> {
     let file_name = relative_recording_file_name(directory, &event.path)?;
-    let metadata = fs::metadata(&event.path).map_err(|error| error.to_string())?;
-    if metadata.len() <= WAV_HEADER_BYTES {
+    let file_size = fs::metadata(&event.path)
+        .map_err(|error| error.to_string())?
+        .len();
+    if file_size <= WAV_HEADER_BYTES {
         return Err("Recorded segment was empty.".to_string());
     }
+    let checksum_path = event.path.clone();
+    let checksum_sha256 = tokio::task::spawn_blocking(move || sha256_file(&checksum_path))
+        .await
+        .map_err(|error| error.to_string())??;
     Ok(SegmentUploadFile {
         source_id: event.source_id.clone(),
         sequence: event.segment.sequence,
         path: event.path.clone(),
-        file_size: metadata.len(),
-        checksum_sha256: sha256_file(&event.path)?,
+        file_size,
+        checksum_sha256,
         duration_millis: event.segment.duration_millis,
         started_at: epoch_millis_to_iso(event.segment.started_at_epoch_ms),
         ended_at: epoch_millis_to_iso(event.segment.ended_at_epoch_ms),
@@ -1914,12 +1946,91 @@ fn write_retained_recording_manifest_file(
 fn read_retained_recording_manifest(directory: &Path) -> Result<RetainedRecordingManifest, String> {
     let body =
         fs::read_to_string(retained_manifest_path(directory)).map_err(|error| error.to_string())?;
-    let manifest: RetainedRecordingManifest =
+    let value: serde_json::Value =
         serde_json::from_str(&body).map_err(|error| error.to_string())?;
-    if manifest.version != RETAINED_RECORDING_MANIFEST_VERSION {
+    let version = value
+        .get("version")
+        .and_then(serde_json::Value::as_u64)
+        .ok_or_else(|| "Retained recording manifest version is missing.".to_string())?;
+    if version == 1 {
+        let manifest: RetainedRecordingManifestV1 =
+            serde_json::from_value(value).map_err(|error| error.to_string())?;
+        let migrated = migrate_retained_recording_manifest_v1(directory, manifest)?;
+        if let Err(error) = write_retained_recording_manifest_file(directory, &migrated) {
+            eprintln!(
+                "Failed to persist migrated retained recording manifest {}: {}",
+                retained_manifest_path(directory).display(),
+                error
+            );
+        }
+        return Ok(migrated);
+    }
+    if version != RETAINED_RECORDING_MANIFEST_VERSION as u64 {
         return Err("Retained recording manifest version is unsupported.".to_string());
     }
+    let manifest: RetainedRecordingManifest =
+        serde_json::from_value(value).map_err(|error| error.to_string())?;
     Ok(manifest)
+}
+
+fn migrate_retained_recording_manifest_v1(
+    directory: &Path,
+    manifest: RetainedRecordingManifestV1,
+) -> Result<RetainedRecordingManifest, String> {
+    let mut segments = manifest
+        .sources
+        .iter()
+        .map(|source| {
+            let path = retained_source_path(directory, &source.file_name)?;
+            let metadata = fs::metadata(&path).map_err(|error| error.to_string())?;
+            if metadata.len() <= WAV_HEADER_BYTES {
+                return Err(format!(
+                    "Retained recording source {} was empty.",
+                    source.source_id
+                ));
+            }
+            Ok(RetainedRecordingSegment {
+                source_id: source.source_id.clone(),
+                sequence: 0,
+                content_type: source.content_type.clone(),
+                file_name: source.file_name.clone(),
+                file_size: metadata.len(),
+                checksum_sha256: sha256_file(&path)?,
+                duration_millis: estimate_wav_duration_millis(metadata.len()),
+                started_at: manifest.started_at.clone(),
+                ended_at: manifest.stopped_at.clone(),
+                status: RECORDING_SEGMENT_STATUS_SEALED.to_string(),
+                source_s3_key: None,
+                error_message: None,
+            })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    segments.sort_by(|left, right| {
+        (&left.source_id, left.sequence).cmp(&(&right.source_id, right.sequence))
+    });
+    let next = RetainedRecordingManifest {
+        version: RETAINED_RECORDING_MANIFEST_VERSION,
+        recording_id: manifest.recording_id,
+        started_at: manifest.started_at,
+        stopped_at: manifest.stopped_at,
+        retained_at: manifest.retained_at,
+        title: manifest.title,
+        tags: manifest.tags,
+        upload_id: None,
+        status: manifest.status,
+        error_message: manifest.error_message,
+        sources: manifest
+            .sources
+            .into_iter()
+            .map(|source| RetainedRecordingSourceManifest {
+                source_id: source.source_id,
+                kind: source.kind,
+                label: source.label,
+            })
+            .collect(),
+        segments,
+    };
+    Ok(next)
 }
 
 fn repair_retained_recording_manifest(
@@ -2125,6 +2236,55 @@ mod tests {
         assert_eq!(repaired.segments[0].file_size, WAV_HEADER_BYTES + 8);
         assert_eq!(sources[0].segment_count, 1);
         assert_eq!(sources[0].uploaded_segment_count, 0);
+
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn retained_v1_manifest_migrates_to_segment_manifest() {
+        let directory = std::env::temp_dir().join(format!(
+            "chronote-retained-recording-test-{}",
+            Uuid::new_v4()
+        ));
+        fs::create_dir_all(&directory).unwrap();
+        let source_path = directory.join("owner_mic.wav");
+        fs::write(&source_path, vec![0_u8; (WAV_HEADER_BYTES + 8) as usize]).unwrap();
+        fs::write(
+            retained_manifest_path(&directory),
+            serde_json::json!({
+                "version": 1,
+                "recordingId": "recording-1",
+                "startedAt": "2026-06-15T00:00:00.000Z",
+                "stoppedAt": "2026-06-15T00:01:00.000Z",
+                "retainedAt": "2026-06-15T00:01:00.000Z",
+                "title": "Planning",
+                "tags": ["research"],
+                "status": RETAINED_RECORDING_STATUS_FAILED_UPLOAD,
+                "errorMessage": "upload failed",
+                "sources": [{
+                    "sourceId": "owner_mic",
+                    "kind": "owner_mic",
+                    "label": "Me",
+                    "contentType": "audio/wav",
+                    "fileName": "owner_mic.wav",
+                    "fileSize": WAV_HEADER_BYTES + 8
+                }]
+            })
+            .to_string(),
+        )
+        .unwrap();
+
+        let manifest = read_retained_recording_manifest(&directory).unwrap();
+        let persisted = read_retained_recording_manifest(&directory).unwrap();
+
+        assert_eq!(manifest.version, RETAINED_RECORDING_MANIFEST_VERSION);
+        assert_eq!(manifest.sources.len(), 1);
+        assert_eq!(manifest.segments.len(), 1);
+        assert_eq!(manifest.segments[0].source_id, "owner_mic");
+        assert_eq!(manifest.segments[0].file_name, "owner_mic.wav");
+        assert_eq!(manifest.segments[0].file_size, WAV_HEADER_BYTES + 8);
+        assert_eq!(manifest.segments[0].status, RECORDING_SEGMENT_STATUS_SEALED);
+        assert_eq!(persisted.version, RETAINED_RECORDING_MANIFEST_VERSION);
 
         fs::remove_dir_all(directory).unwrap();
     }

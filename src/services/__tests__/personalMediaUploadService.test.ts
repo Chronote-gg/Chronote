@@ -49,6 +49,7 @@ const uploadRepository = {
   claim: jest.fn(async () => undefined),
   renewClaim: jest.fn(async () => false),
   updateClaimed: jest.fn(async () => false),
+  updateProgress: jest.fn(async () => false),
 } satisfies jest.Mocked<PersonalMediaUploadRepository>;
 
 const getWrittenJob = () => {

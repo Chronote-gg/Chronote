@@ -742,26 +742,6 @@ export async function listPersonalRecordingUploadSegments(uploadId: string) {
   return getPersonalRecordingSegmentRepository().listByUpload(uploadId);
 }
 
-export async function markPersonalRecordingUploadSegmentsProcessing(
-  uploadId: string,
-) {
-  const repository = getPersonalRecordingSegmentRepository();
-  const now = new Date().toISOString();
-  const segments = await repository.listByUpload(uploadId);
-  await Promise.all(
-    segments
-      .filter((segment) => segment.status === "submitted")
-      .map((segment) =>
-        repository.update({
-          ...segment,
-          status: "processing",
-          errorMessage: undefined,
-          updatedAt: now,
-        }),
-      ),
-  );
-}
-
 export async function markPersonalRecordingUploadSegmentProcessing(
   segment: PersonalRecordingSegmentRecord,
 ) {
@@ -810,27 +790,6 @@ export async function markPersonalRecordingUploadSegmentFailed(
   return next;
 }
 
-export async function markPersonalRecordingUploadSegmentsProcessed(
-  uploadId: string,
-) {
-  const repository = getPersonalRecordingSegmentRepository();
-  const now = new Date().toISOString();
-  const segments = await repository.listByUpload(uploadId);
-  await Promise.all(
-    segments
-      .filter((segment) => segment.status !== "processed")
-      .map((segment) =>
-        repository.update({
-          ...segment,
-          status: "processed",
-          errorMessage: undefined,
-          processedAt: now,
-          updatedAt: now,
-        }),
-      ),
-  );
-}
-
 export async function markPersonalRecordingUploadSegmentsFailed(
   uploadId: string,
   error: unknown,
@@ -865,4 +824,15 @@ export async function updateClaimedPersonalMediaUploadJobRecord(
   instanceId: string,
 ) {
   return getPersonalMediaUploadRepository().updateClaimed(job, instanceId);
+}
+
+export async function updateClaimedPersonalMediaUploadJobProgress(options: {
+  uploadId: string;
+  instanceId: string;
+  segmentCount: number;
+  uploadedSegmentCount: number;
+  processedSegmentCount: number;
+  updatedAt: string;
+}) {
+  return getPersonalMediaUploadRepository().updateProgress(options);
 }

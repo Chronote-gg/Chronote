@@ -8,6 +8,7 @@ import {
   listPersonalRecordingUploadSegments,
   markPersonalRecordingUploadSegmentProcessed,
   markPersonalRecordingUploadSegmentProcessing,
+  updateClaimedPersonalMediaUploadJobProgress,
   updateClaimedPersonalMediaUploadJobRecord,
   updatePersonalMediaUploadJobRecord,
 } from "../personalMediaUploadService";
@@ -107,6 +108,7 @@ jest.mock("../personalMediaUploadService", () => ({
     async (segment: unknown) => segment,
   ),
   markPersonalRecordingUploadSegmentsFailed: jest.fn(async () => undefined),
+  updateClaimedPersonalMediaUploadJobProgress: jest.fn(async () => false),
   updateClaimedPersonalMediaUploadJobRecord: jest.fn(async () => false),
   updatePersonalMediaUploadJobRecord: jest.fn(async () => undefined),
 }));
@@ -249,6 +251,9 @@ describe("personalMediaUploadProcessingService", () => {
         }),
       );
     jest
+      .mocked(updateClaimedPersonalMediaUploadJobProgress)
+      .mockResolvedValue(true);
+    jest
       .mocked(updateClaimedPersonalMediaUploadJobRecord)
       .mockResolvedValue(true);
   });
@@ -302,6 +307,17 @@ describe("personalMediaUploadProcessingService", () => {
           "personal/user-1/upload-1/segments/owner_mic-000001.transcript.json",
       }),
     ]);
+    expect(
+      updateClaimedPersonalMediaUploadJobProgress,
+    ).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        uploadId: "upload-1",
+        instanceId: "instance-1",
+        segmentCount: 2,
+        uploadedSegmentCount: 2,
+        processedSegmentCount: 2,
+      }),
+    );
     expect(updateClaimedPersonalMediaUploadJobRecord).toHaveBeenLastCalledWith(
       expect.objectContaining({
         status: "complete",

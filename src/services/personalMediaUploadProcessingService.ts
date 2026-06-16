@@ -41,6 +41,7 @@ import {
   markPersonalRecordingUploadSegmentProcessed,
   markPersonalRecordingUploadSegmentProcessing,
   markPersonalRecordingUploadSegmentsFailed,
+  updateClaimedPersonalMediaUploadJobProgress,
   updateClaimedPersonalMediaUploadJobRecord,
   updatePersonalMediaUploadJobRecord,
 } from "./personalMediaUploadService";
@@ -492,14 +493,12 @@ const updatePersonalRecordingProcessingProgress = async (
   instanceId: string,
 ) => {
   const segments = await listPersonalRecordingUploadSegments(job.uploadId);
-  await updateClaimedPersonalMediaUploadJobRecord(
-    {
-      ...job,
-      ...summarizeRecordingSegmentProgress(segments),
-      updatedAt: new Date().toISOString(),
-    },
+  await updateClaimedPersonalMediaUploadJobProgress({
+    uploadId: job.uploadId,
     instanceId,
-  );
+    ...summarizeRecordingSegmentProgress(segments),
+    updatedAt: new Date().toISOString(),
+  });
   return segments;
 };
 
