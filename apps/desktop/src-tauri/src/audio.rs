@@ -193,8 +193,8 @@ mod platform {
     use hound::{SampleFormat, WavSpec};
 
     use super::{
-        AudioDevice, AudioDeviceDirection, CaptureDirection, CaptureHandle, CaptureSegment,
-        CaptureSignalLevel, SegmentedWavWriter,
+        to_string, AudioDevice, AudioDeviceDirection, CaptureDirection, CaptureHandle,
+        CaptureSegment, CaptureSignalLevel, SegmentedWavWriter,
     };
 
     const SYNTHETIC_SAMPLE_RATE: u32 = 48_000;
