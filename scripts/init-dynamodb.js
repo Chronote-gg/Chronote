@@ -264,6 +264,18 @@ const tables = [
     BillingMode: "PAY_PER_REQUEST",
   },
   {
+    TableName: "PersonalRecordingSegmentTable",
+    KeySchema: [
+      { AttributeName: "uploadId", KeyType: "HASH" },
+      { AttributeName: "segmentKey", KeyType: "RANGE" },
+    ],
+    AttributeDefinitions: [
+      { AttributeName: "uploadId", AttributeType: "S" },
+      { AttributeName: "segmentKey", AttributeType: "S" },
+    ],
+    BillingMode: "PAY_PER_REQUEST",
+  },
+  {
     TableName: "MeetingShareTable",
     KeySchema: [
       { AttributeName: "pk", KeyType: "HASH" },

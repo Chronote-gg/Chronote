@@ -2,10 +2,12 @@ import type { Express, Request, Response } from "express";
 import { z } from "zod";
 import type { Profile } from "passport-discord";
 import {
-  createPersonalRecordingUploadIntent,
+  createPersonalRecordingSegmentUploadIntent,
+  createPersonalRecordingUploadSession,
   getPersonalMediaUploadJobForUser,
-  markPersonalRecordingUploadComplete,
+  markPersonalRecordingSegmentUploadComplete,
   PersonalMediaUploadError,
+  submitPersonalRecordingUpload,
 } from "../services/personalMediaUploadService";
 import {
   DESKTOP_AUTH_SCOPES,
@@ -24,6 +26,7 @@ import {
   validateDesktopAccessToken,
 } from "../services/desktopAuthService";
 import { createAuthRateLimiter } from "../services/authRateLimitService";
+import { PERSONAL_RECORDING_SEGMENT_MAX_BYTES } from "../constants";
 import { config } from "../services/configService";
 
 const DESKTOP_RATE_LIMIT_WINDOW_MS = 60_000;
@@ -60,21 +63,19 @@ const revokeBodySchema = z.object({
   token: z.string().min(1),
 });
 
-const recordingIntentSchema = z.object({
+const recordingSourceSchema = z.object({
+  sourceId: z
+    .string()
+    .min(1)
+    .max(64)
+    .regex(/^[A-Za-z0-9_-]+$/),
+  kind: z.enum(["owner_mic", "system_output"]),
+  label: z.string().min(1).max(80).optional(),
+});
+
+const recordingSessionSchema = z.object({
   sources: z
-    .array(
-      z.object({
-        sourceId: z
-          .string()
-          .min(1)
-          .max(64)
-          .regex(/^[A-Za-z0-9_-]+$/),
-        kind: z.enum(["owner_mic", "system_output"]),
-        label: z.string().min(1).max(80).optional(),
-        contentType: z.string().min(1),
-        fileSize: z.number().int().min(1),
-      }),
-    )
+    .array(recordingSourceSchema)
     .min(1)
     .max(4)
     .refine(hasUniqueSourceIds, {
@@ -82,26 +83,29 @@ const recordingIntentSchema = z.object({
     }),
 });
 
-const recordingCompleteSchema = z.object({
+const recordingSegmentIntentSchema = z.object({
   uploadId: z.string().uuid(),
-  sources: z
-    .array(
-      z.object({
-        sourceId: z
-          .string()
-          .min(1)
-          .max(64)
-          .regex(/^[A-Za-z0-9_-]+$/),
-        key: z.string().min(1).max(1024),
-        uploadToken: z.string().min(1).max(512),
-        originalFileName: z.string().min(1).max(255).optional(),
-      }),
-    )
-    .min(1)
-    .max(4)
-    .refine(hasUniqueSourceIds, {
-      message: "sourceId values must be unique.",
-    }),
+  sourceId: recordingSourceSchema.shape.sourceId,
+  sequence: z.number().int().min(0),
+  contentType: z.string().min(1),
+  fileSize: z.number().int().min(1).max(PERSONAL_RECORDING_SEGMENT_MAX_BYTES),
+  checksumSha256: z.string().regex(/^[a-f0-9]{64}$/),
+  durationMillis: z.number().int().min(1),
+  startedAt: z.string().datetime(),
+  endedAt: z.string().datetime(),
+  originalFileName: z.string().min(1).max(255).optional(),
+});
+
+const recordingSegmentCompleteSchema = z.object({
+  uploadId: z.string().uuid(),
+  sourceId: recordingSourceSchema.shape.sourceId,
+  sequence: z.number().int().min(0),
+  key: z.string().min(1).max(1024),
+  uploadToken: z.string().min(1).max(512),
+});
+
+const recordingSubmitSchema = z.object({
+  uploadId: z.string().uuid(),
   title: z.string().min(1).max(100).optional(),
   tags: z.array(z.string().min(1).max(50)).max(20).optional(),
 });
@@ -340,15 +344,15 @@ export function registerDesktopRoutes(app: Express) {
   );
 
   app.post(
-    "/api/desktop/recordings/intent",
+    "/api/desktop/recordings/session",
     rateLimiter,
     requireDesktopAuth(REQUIRED_UPLOAD_SCOPES),
     async (req: DesktopRequest, res) => {
       try {
-        const input = recordingIntentSchema.parse(req.body);
+        const input = recordingSessionSchema.parse(req.body);
         const user = getDesktopUser(req);
         res.json(
-          await createPersonalRecordingUploadIntent({
+          await createPersonalRecordingUploadSession({
             userId: user.userId,
             sources: input.sources,
           }),
@@ -360,18 +364,57 @@ export function registerDesktopRoutes(app: Express) {
   );
 
   app.post(
-    "/api/desktop/recordings/complete",
+    "/api/desktop/recordings/segment-intent",
     rateLimiter,
     requireDesktopAuth(REQUIRED_UPLOAD_SCOPES),
     async (req: DesktopRequest, res) => {
       try {
-        const input = recordingCompleteSchema.parse(req.body);
+        const input = recordingSegmentIntentSchema.parse(req.body);
+        const user = getDesktopUser(req);
+        res.json(
+          await createPersonalRecordingSegmentUploadIntent({
+            userId: user.userId,
+            ...input,
+          }),
+        );
+      } catch (error) {
+        sendUploadError(res, error);
+      }
+    },
+  );
+
+  app.post(
+    "/api/desktop/recordings/segment-complete",
+    rateLimiter,
+    requireDesktopAuth(REQUIRED_UPLOAD_SCOPES),
+    async (req: DesktopRequest, res) => {
+      try {
+        const input = recordingSegmentCompleteSchema.parse(req.body);
         const user = getDesktopUser(req);
         res.json({
-          job: await markPersonalRecordingUploadComplete({
-            uploadId: input.uploadId,
+          segment: await markPersonalRecordingSegmentUploadComplete({
             userId: user.userId,
-            sources: input.sources,
+            ...input,
+          }),
+        });
+      } catch (error) {
+        sendUploadError(res, error);
+      }
+    },
+  );
+
+  app.post(
+    "/api/desktop/recordings/submit",
+    rateLimiter,
+    requireDesktopAuth(REQUIRED_UPLOAD_SCOPES),
+    async (req: DesktopRequest, res) => {
+      try {
+        const input = recordingSubmitSchema.parse(req.body);
+        const user = getDesktopUser(req);
+        res.json({
+          job: await submitPersonalRecordingUpload({
+            userId: user.userId,
+            uploadId: input.uploadId,
             title: input.title,
             tags: input.tags,
           }),

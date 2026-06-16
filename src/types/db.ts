@@ -181,15 +181,48 @@ export type PersonalMediaUploadStatus =
 export type PersonalMediaUploadKind = "audio" | "video";
 export type PersonalMediaUploadOrigin = "web_upload" | "desktop_recording";
 export type PersonalRecordingSourceKind = "owner_mic" | "system_output";
+export type PersonalRecordingSegmentStatus =
+  | "pending_upload"
+  | "uploaded"
+  | "submitted"
+  | "processing"
+  | "processed"
+  | "failed";
 
 export interface PersonalRecordingSourceRecord {
   sourceId: string;
   kind: PersonalRecordingSourceKind;
   label: string;
+  sourceS3Key?: string;
+  contentType?: string;
+  fileSize?: number;
+  originalFileName?: string;
+}
+
+export interface PersonalRecordingSegmentRecord {
+  uploadId: string; // Partition key
+  segmentKey: string; // Sort key: <sourceId>#<zero-padded sequence>
+  ownerUserId: string;
+  sourceId: string;
+  sequence: number;
+  kind: PersonalRecordingSourceKind;
+  label: string;
   sourceS3Key: string;
   contentType: string;
   fileSize: number;
+  checksumSha256: string;
+  durationMillis: number;
+  startedAt: string;
+  endedAt: string;
+  status: PersonalRecordingSegmentStatus;
   originalFileName?: string;
+  errorMessage?: string;
+  createdAt: string;
+  updatedAt: string;
+  uploadedAt?: string;
+  submittedAt?: string;
+  processedAt?: string;
+  transcriptS3Key?: string;
 }
 
 export interface PersonalMediaUploadJobRecord {
@@ -216,6 +249,9 @@ export interface PersonalMediaUploadJobRecord {
   processingOwnerInstanceId?: string;
   claimExpiresAt?: number;
   durationSeconds?: number;
+  segmentCount?: number;
+  uploadedSegmentCount?: number;
+  processedSegmentCount?: number;
   createdAt: string;
   updatedAt: string;
   completedAt?: string;

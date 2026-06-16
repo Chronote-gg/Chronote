@@ -22,18 +22,28 @@ type TokenResponse = {
   };
 };
 
-type RecordingIntentResponse = {
+type RecordingSessionResponse = {
   uploadId: string;
   sources: Array<{
     sourceId: string;
+    kind: string;
+    label: string;
+  }>;
+};
+
+type RecordingSegmentIntentResponse = {
+  segment: {
+    sourceId: string;
+    sequence: number;
     sourceS3Key: string;
     contentType: string;
-    uploadToken: string;
-    upload: {
-      url: string;
-      fields: Record<string, string>;
-    };
-  }>;
+  };
+  uploadRequired: boolean;
+  uploadToken?: string;
+  upload?: {
+    url: string;
+    fields: Record<string, string>;
+  };
 };
 
 type RecordingJobResponse = {
@@ -44,12 +54,13 @@ type RecordingJobResponse = {
     uploadOrigin?: string;
     title?: string;
     tags?: string[];
+    segmentCount?: number;
+    uploadedSegmentCount?: number;
+    processedSegmentCount?: number;
     sourceManifest?: Array<{
       sourceId: string;
       kind: string;
       label: string;
-      sourceS3Key: string;
-      originalFileName?: string;
     }>;
   };
 };
@@ -177,26 +188,30 @@ const authorizeDesktopToken = async (baseUrl: string) => {
   return readJson<TokenResponse>(tokenResponse);
 };
 
-const uploadSource = async (
-  source: RecordingIntentResponse["sources"][number],
+const uploadSegment = async (
+  intent: RecordingSegmentIntentResponse,
   body: Buffer,
 ) => {
+  expect(intent.upload).toBeDefined();
   const form = new FormData();
-  Object.entries(source.upload.fields).forEach(([name, value]) => {
+  Object.entries(intent.upload!.fields).forEach(([name, value]) => {
     form.set(name, value);
   });
   form.set(
     "file",
-    new Blob([body], { type: source.contentType }),
-    `${source.sourceId}.wav`,
+    new Blob([body], { type: intent.segment.contentType }),
+    `${intent.segment.sourceId}.wav`,
   );
 
-  const response = await fetch(source.upload.url, {
+  const response = await fetch(intent.upload!.url, {
     method: "POST",
     body: form,
   });
   expect(response.status).toBe(204);
 };
+
+const checksumSha256 = (body: Buffer) =>
+  crypto.createHash("sha256").update(body).digest("hex");
 
 describe("desktop API", () => {
   beforeEach(() => {
@@ -305,24 +320,25 @@ describe("desktop API", () => {
         configurable: true,
       });
 
-      const response = await fetch(`${baseUrl}/api/desktop/recordings/intent`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token.access_token}`,
+      const response = await fetch(
+        `${baseUrl}/api/desktop/recordings/session`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token.access_token}`,
+          },
+          body: JSON.stringify({
+            sources: [
+              {
+                sourceId: "owner_mic",
+                kind: "owner_mic",
+                label: "Me",
+              },
+            ],
+          }),
         },
-        body: JSON.stringify({
-          sources: [
-            {
-              sourceId: "owner_mic",
-              kind: "owner_mic",
-              label: "Me",
-              contentType: "audio/wav",
-              fileSize: 4,
-            },
-          ],
-        }),
-      });
+      );
       expect(response.status).toBe(403);
       await expect(readJson<{ error: string }>(response)).resolves.toEqual(
         expect.objectContaining({ error: "access_denied" }),
@@ -348,8 +364,8 @@ describe("desktop API", () => {
         "meetings:read",
       ]);
 
-      const intentResponse = await fetch(
-        `${baseUrl}/api/desktop/recordings/intent`,
+      const sessionResponse = await fetch(
+        `${baseUrl}/api/desktop/recordings/session`,
         {
           method: "POST",
           headers: {
@@ -362,29 +378,24 @@ describe("desktop API", () => {
                 sourceId: "owner_mic",
                 kind: "owner_mic",
                 label: "Me",
-                contentType: "audio/wav",
-                fileSize: 4,
               },
               {
                 sourceId: "system_output",
                 kind: "system_output",
                 label: "System/Other",
-                contentType: "audio/wav",
-                fileSize: 6,
               },
             ],
           }),
         },
       );
-      await expectSuccess(intentResponse);
-      const intent = await readJson<RecordingIntentResponse>(intentResponse);
-      expect(intent.sources).toHaveLength(2);
+      await expectSuccess(sessionResponse);
+      const session = await readJson<RecordingSessionResponse>(sessionResponse);
+      expect(session.sources).toHaveLength(2);
 
-      await uploadSource(intent.sources[0], Buffer.from([0, 1, 2, 3]));
-      await uploadSource(intent.sources[1], Buffer.from([4, 5, 6, 7, 8, 9]));
-
-      const completeResponse = await fetch(
-        `${baseUrl}/api/desktop/recordings/complete`,
+      const ownerBody = Buffer.from([0, 1, 2, 3]);
+      const systemBody = Buffer.from([4, 5, 6, 7, 8, 9]);
+      const ownerIntentResponse = await fetch(
+        `${baseUrl}/api/desktop/recordings/segment-intent`,
         {
           method: "POST",
           headers: {
@@ -392,28 +403,100 @@ describe("desktop API", () => {
             Authorization: `Bearer ${token.access_token}`,
           },
           body: JSON.stringify({
-            uploadId: intent.uploadId,
-            title: "Desktop smoke recording",
-            tags: ["desktop", "smoke"],
-            sources: intent.sources.map((source) => ({
-              sourceId: source.sourceId,
-              key: source.sourceS3Key,
-              uploadToken: source.uploadToken,
-              originalFileName: `${source.sourceId}.wav`,
-            })),
+            uploadId: session.uploadId,
+            sourceId: "owner_mic",
+            sequence: 0,
+            contentType: "audio/wav",
+            fileSize: ownerBody.byteLength,
+            checksumSha256: checksumSha256(ownerBody),
+            durationMillis: 1000,
+            startedAt: "2026-06-15T00:00:00.000Z",
+            endedAt: "2026-06-15T00:00:01.000Z",
+            originalFileName: "owner_mic.wav",
           }),
         },
       );
-      await expectSuccess(completeResponse);
-      const completed = await readJson<RecordingJobResponse>(completeResponse);
+      await expectSuccess(ownerIntentResponse);
+      const ownerIntent =
+        await readJson<RecordingSegmentIntentResponse>(ownerIntentResponse);
+      const systemIntentResponse = await fetch(
+        `${baseUrl}/api/desktop/recordings/segment-intent`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token.access_token}`,
+          },
+          body: JSON.stringify({
+            uploadId: session.uploadId,
+            sourceId: "system_output",
+            sequence: 0,
+            contentType: "audio/wav",
+            fileSize: systemBody.byteLength,
+            checksumSha256: checksumSha256(systemBody),
+            durationMillis: 1000,
+            startedAt: "2026-06-15T00:00:00.000Z",
+            endedAt: "2026-06-15T00:00:01.000Z",
+            originalFileName: "system_output.wav",
+          }),
+        },
+      );
+      await expectSuccess(systemIntentResponse);
+      const systemIntent =
+        await readJson<RecordingSegmentIntentResponse>(systemIntentResponse);
+
+      await uploadSegment(ownerIntent, ownerBody);
+      await uploadSegment(systemIntent, systemBody);
+
+      for (const intent of [ownerIntent, systemIntent]) {
+        const response = await fetch(
+          `${baseUrl}/api/desktop/recordings/segment-complete`,
+          {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${token.access_token}`,
+            },
+            body: JSON.stringify({
+              uploadId: session.uploadId,
+              sourceId: intent.segment.sourceId,
+              sequence: intent.segment.sequence,
+              key: intent.segment.sourceS3Key,
+              uploadToken: intent.uploadToken,
+            }),
+          },
+        );
+        await expectSuccess(response);
+      }
+
+      const submitResponse = await fetch(
+        `${baseUrl}/api/desktop/recordings/submit`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token.access_token}`,
+          },
+          body: JSON.stringify({
+            uploadId: session.uploadId,
+            title: "Desktop smoke recording",
+            tags: ["desktop", "smoke"],
+          }),
+        },
+      );
+      await expectSuccess(submitResponse);
+      const completed = await readJson<RecordingJobResponse>(submitResponse);
       expect(completed.job).toEqual(
         expect.objectContaining({
-          uploadId: intent.uploadId,
+          uploadId: session.uploadId,
           ownerUserId: mockDesktopUser.id,
           status: "queued",
           uploadOrigin: "desktop_recording",
           title: "Desktop smoke recording",
           tags: ["desktop", "smoke"],
+          segmentCount: 2,
+          uploadedSegmentCount: 2,
+          processedSegmentCount: 0,
         }),
       );
       expect(completed.job.sourceManifest).toEqual([
@@ -421,18 +504,16 @@ describe("desktop API", () => {
           sourceId: "owner_mic",
           kind: "owner_mic",
           label: "Me",
-          originalFileName: "owner_mic.wav",
         }),
         expect.objectContaining({
           sourceId: "system_output",
           kind: "system_output",
           label: "System/Other",
-          originalFileName: "system_output.wav",
         }),
       ]);
 
       const statusResponse = await fetch(
-        `${baseUrl}/api/desktop/recordings/${intent.uploadId}`,
+        `${baseUrl}/api/desktop/recordings/${session.uploadId}`,
         {
           headers: { Authorization: `Bearer ${token.access_token}` },
         },
@@ -446,7 +527,7 @@ describe("desktop API", () => {
     }
   });
 
-  test("rejects duplicate source IDs when completing a desktop recording", async () => {
+  test("rejects duplicate source IDs when creating a desktop recording session", async () => {
     const { server, baseUrl } = createServer();
     Object.defineProperty(config.mcp, "publicBaseUrl", {
       get: () => baseUrl,
@@ -456,7 +537,7 @@ describe("desktop API", () => {
     try {
       const token = await authorizeDesktopToken(baseUrl);
       const response = await fetch(
-        `${baseUrl}/api/desktop/recordings/complete`,
+        `${baseUrl}/api/desktop/recordings/session`,
         {
           method: "POST",
           headers: {
@@ -464,17 +545,14 @@ describe("desktop API", () => {
             Authorization: `Bearer ${token.access_token}`,
           },
           body: JSON.stringify({
-            uploadId: crypto.randomUUID(),
             sources: [
               {
                 sourceId: "owner_mic",
-                key: "recordings/source-a.wav",
-                uploadToken: "token-a",
+                kind: "owner_mic",
               },
               {
                 sourceId: "owner_mic",
-                key: "recordings/source-b.wav",
-                uploadToken: "token-b",
+                kind: "owner_mic",
               },
             ],
           }),
