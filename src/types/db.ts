@@ -222,6 +222,7 @@ export interface PersonalRecordingSegmentRecord {
   uploadedAt?: string;
   submittedAt?: string;
   processedAt?: string;
+  transcriptS3Key?: string;
 }
 
 export interface PersonalMediaUploadJobRecord {
@@ -248,6 +249,9 @@ export interface PersonalMediaUploadJobRecord {
   processingOwnerInstanceId?: string;
   claimExpiresAt?: number;
   durationSeconds?: number;
+  segmentCount?: number;
+  uploadedSegmentCount?: number;
+  processedSegmentCount?: number;
   createdAt: string;
   updatedAt: string;
   completedAt?: string;

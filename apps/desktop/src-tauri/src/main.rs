@@ -160,6 +160,9 @@ struct UploadJob {
     status: String,
     error_message: Option<String>,
     meeting_guild_id: Option<String>,
+    segment_count: Option<u32>,
+    uploaded_segment_count: Option<u32>,
+    processed_segment_count: Option<u32>,
     #[serde(rename = "channelIdTimestamp", alias = "channelId_timestamp")]
     channel_id_timestamp: Option<String>,
 }

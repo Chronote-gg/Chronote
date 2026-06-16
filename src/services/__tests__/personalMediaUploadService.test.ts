@@ -6,6 +6,8 @@ import {
   createPersonalRecordingUploadSession,
   getPersonalMediaUploadJobForUser,
   markPersonalMediaUploadComplete,
+  markPersonalRecordingUploadSegmentProcessed,
+  markPersonalRecordingUploadSegmentProcessing,
   markPersonalRecordingSegmentUploadComplete,
   PersonalMediaUploadError,
   resolvePersonalMediaKind,
@@ -411,6 +413,9 @@ describe("personalMediaUploadService", () => {
       title: "Desktop recording",
       tags: ["desktop"],
       fileSize: 3000,
+      segmentCount: 2,
+      uploadedSegmentCount: 2,
+      processedSegmentCount: 0,
       sourceManifest: [
         expect.objectContaining({ sourceId: "owner_mic" }),
         expect.objectContaining({ sourceId: "system_output" }),
@@ -425,6 +430,58 @@ describe("personalMediaUploadService", () => {
         expect.objectContaining({
           sourceId: "system_output",
           status: "submitted",
+        }),
+      ]),
+    );
+  });
+
+  it("marks individual recording segments as processed with transcript artifacts", async () => {
+    const session = await createPersonalRecordingUploadSession({
+      userId: "user-1",
+      sources: [{ sourceId: "owner_mic", kind: "owner_mic" }],
+    });
+    uploadRepository.get.mockResolvedValue(getWrittenJob());
+    jest.mocked(getStoredObjectMetadata).mockResolvedValue({
+      contentLength: 1000,
+      contentType: "audio/wav",
+    });
+    const intent = await createPersonalRecordingSegmentUploadIntent(
+      segmentInput({
+        uploadId: session.uploadId,
+        sourceId: "owner_mic",
+        fileSize: 1000,
+      }),
+    );
+    const uploaded = await markPersonalRecordingSegmentUploadComplete({
+      uploadId: session.uploadId,
+      userId: "user-1",
+      sourceId: "owner_mic",
+      sequence: 0,
+      key: intent.segment.sourceS3Key,
+      uploadToken: intent.uploadToken!,
+    });
+
+    const processing =
+      await markPersonalRecordingUploadSegmentProcessing(uploaded);
+    const processed = await markPersonalRecordingUploadSegmentProcessed(
+      processing,
+      {
+        transcriptS3Key: "personal/user-1/upload/segments/owner_mic.json",
+      },
+    );
+
+    expect(processed).toMatchObject({
+      status: "processed",
+      transcriptS3Key: "personal/user-1/upload/segments/owner_mic.json",
+    });
+    await expect(
+      segmentRepository.listByUpload(session.uploadId),
+    ).resolves.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          sourceId: "owner_mic",
+          status: "processed",
+          transcriptS3Key: "personal/user-1/upload/segments/owner_mic.json",
         }),
       ]),
     );

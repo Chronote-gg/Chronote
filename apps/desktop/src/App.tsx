@@ -43,6 +43,9 @@ type UploadJob = {
   errorMessage?: string;
   meetingGuildId?: string;
   channelIdTimestamp?: string;
+  segmentCount?: number;
+  uploadedSegmentCount?: number;
+  processedSegmentCount?: number;
 };
 
 type UploadResult = {
@@ -683,6 +686,12 @@ export default function App() {
                   ) : null}
                   {isProcessingJob(job) && !meetingUrl ? (
                     <p className="message">Checking processing status...</p>
+                  ) : null}
+                  {isProcessingJob(job) && job.segmentCount ? (
+                    <p className="message">
+                      Processed {job.processedSegmentCount ?? 0}/
+                      {job.segmentCount} recording segments.
+                    </p>
                   ) : null}
                   {job.status === "complete" &&
                   !meetingUrl &&

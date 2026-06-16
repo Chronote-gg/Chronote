@@ -54,6 +54,9 @@ type RecordingJobResponse = {
     uploadOrigin?: string;
     title?: string;
     tags?: string[];
+    segmentCount?: number;
+    uploadedSegmentCount?: number;
+    processedSegmentCount?: number;
     sourceManifest?: Array<{
       sourceId: string;
       kind: string;
@@ -491,6 +494,9 @@ describe("desktop API", () => {
           uploadOrigin: "desktop_recording",
           title: "Desktop smoke recording",
           tags: ["desktop", "smoke"],
+          segmentCount: 2,
+          uploadedSegmentCount: 2,
+          processedSegmentCount: 0,
         }),
       );
       expect(completed.job.sourceManifest).toEqual([

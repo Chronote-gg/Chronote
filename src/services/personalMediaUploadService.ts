@@ -722,6 +722,11 @@ export async function submitPersonalRecordingUpload(options: {
     title: options.title,
     tags: options.tags,
     fileSize: totalBytes,
+    segmentCount: segments.length,
+    uploadedSegmentCount: segments.length,
+    processedSegmentCount: segments.filter(
+      (segment) => segment.status === "processed",
+    ).length,
     queuedAt: now,
     errorMessage: undefined,
     retryable: undefined,
@@ -744,15 +749,65 @@ export async function markPersonalRecordingUploadSegmentsProcessing(
   const now = new Date().toISOString();
   const segments = await repository.listByUpload(uploadId);
   await Promise.all(
-    segments.map((segment) =>
-      repository.update({
-        ...segment,
-        status: "processing",
-        errorMessage: undefined,
-        updatedAt: now,
-      }),
-    ),
+    segments
+      .filter((segment) => segment.status === "submitted")
+      .map((segment) =>
+        repository.update({
+          ...segment,
+          status: "processing",
+          errorMessage: undefined,
+          updatedAt: now,
+        }),
+      ),
   );
+}
+
+export async function markPersonalRecordingUploadSegmentProcessing(
+  segment: PersonalRecordingSegmentRecord,
+) {
+  const now = new Date().toISOString();
+  const next: PersonalRecordingSegmentRecord = {
+    ...segment,
+    status: "processing",
+    errorMessage: undefined,
+    updatedAt: now,
+  };
+  await getPersonalRecordingSegmentRepository().update(next);
+  return next;
+}
+
+export async function markPersonalRecordingUploadSegmentProcessed(
+  segment: PersonalRecordingSegmentRecord,
+  options: { transcriptS3Key?: string } = {},
+) {
+  const now = new Date().toISOString();
+  const next: PersonalRecordingSegmentRecord = {
+    ...segment,
+    status: "processed",
+    errorMessage: undefined,
+    processedAt: now,
+    transcriptS3Key: options.transcriptS3Key ?? segment.transcriptS3Key,
+    updatedAt: now,
+  };
+  await getPersonalRecordingSegmentRepository().update(next);
+  return next;
+}
+
+export async function markPersonalRecordingUploadSegmentFailed(
+  segment: PersonalRecordingSegmentRecord,
+  error: unknown,
+) {
+  const now = new Date().toISOString();
+  const errorMessage =
+    error instanceof Error ? error.message : "Processing failed.";
+  const next: PersonalRecordingSegmentRecord = {
+    ...segment,
+    status: "failed",
+    errorMessage,
+    updatedAt: now,
+  };
+  await getPersonalRecordingSegmentRepository().update(next);
+  return next;
 }
 
 export async function markPersonalRecordingUploadSegmentsProcessed(
@@ -762,15 +817,17 @@ export async function markPersonalRecordingUploadSegmentsProcessed(
   const now = new Date().toISOString();
   const segments = await repository.listByUpload(uploadId);
   await Promise.all(
-    segments.map((segment) =>
-      repository.update({
-        ...segment,
-        status: "processed",
-        errorMessage: undefined,
-        processedAt: now,
-        updatedAt: now,
-      }),
-    ),
+    segments
+      .filter((segment) => segment.status !== "processed")
+      .map((segment) =>
+        repository.update({
+          ...segment,
+          status: "processed",
+          errorMessage: undefined,
+          processedAt: now,
+          updatedAt: now,
+        }),
+      ),
   );
 }
 
@@ -784,14 +841,16 @@ export async function markPersonalRecordingUploadSegmentsFailed(
     error instanceof Error ? error.message : "Processing failed.";
   const segments = await repository.listByUpload(uploadId);
   await Promise.all(
-    segments.map((segment) =>
-      repository.update({
-        ...segment,
-        status: "failed",
-        errorMessage,
-        updatedAt: now,
-      }),
-    ),
+    segments
+      .filter((segment) => segment.status === "processing")
+      .map((segment) =>
+        repository.update({
+          ...segment,
+          status: "failed",
+          errorMessage,
+          updatedAt: now,
+        }),
+      ),
   );
 }
 

@@ -18,7 +18,11 @@ import {
   TRANSCRIPTION_FINAL_PASS_MAX_REQUEST_BYTES,
 } from "../constants";
 import { writeMeetingHistoryService } from "./meetingHistoryService";
-import { downloadObjectToFile, uploadObjectToS3 } from "./storageService";
+import {
+  downloadObjectToFile,
+  fetchJsonFromS3,
+  uploadObjectToS3,
+} from "./storageService";
 import { ensureTempBaseDir } from "./tempFileService";
 import { createOpenAIClient } from "./openaiClient";
 import { getModelChoice } from "./modelFactory";
@@ -33,9 +37,10 @@ import { resolveMeetingNameFromSummary } from "./meetingNameService";
 import { maybeAutoExportCompletedMeeting } from "./notionAutomationService";
 import {
   listPersonalRecordingUploadSegments,
+  markPersonalRecordingUploadSegmentFailed,
+  markPersonalRecordingUploadSegmentProcessed,
+  markPersonalRecordingUploadSegmentProcessing,
   markPersonalRecordingUploadSegmentsFailed,
-  markPersonalRecordingUploadSegmentsProcessed,
-  markPersonalRecordingUploadSegmentsProcessing,
   updateClaimedPersonalMediaUploadJobRecord,
   updatePersonalMediaUploadJobRecord,
 } from "./personalMediaUploadService";
@@ -52,8 +57,11 @@ type PersonalUploadProcessingResult = {
   durationSeconds: number;
   meetingName?: string;
   notes: string;
+  processedSegmentCount?: number;
+  segmentCount?: number;
   summaries: MeetingSummaries;
   transcriptS3Key?: string;
+  uploadedSegmentCount?: number;
 };
 
 type PersonalUploadTranscriptArtifact = {
@@ -64,7 +72,17 @@ type PersonalUploadTranscriptArtifact = {
 type ProcessedPersonalRecordingSource = {
   audioPath: string;
   durationSeconds: number;
+  segments: TranscriptSegment[];
+};
+
+type PersonalRecordingSegmentTranscriptArtifact = {
+  generatedAt: string;
+  uploadId: string;
+  segmentKey: string;
+  sourceId: string;
+  sequence: number;
   segment: TranscriptSegment;
+  text: string;
 };
 
 const buildJobMeetingKey = (job: PersonalMediaUploadJobRecord) => {
@@ -291,6 +309,48 @@ const uploadPersonalUploadArtifacts = async (
   return { audioS3Key, transcriptS3Key };
 };
 
+const buildRecordingSegmentTranscriptKey = (
+  job: PersonalMediaUploadJobRecord,
+  segment: PersonalRecordingSegmentRecord,
+) =>
+  `personal/${job.ownerUserId}/${job.uploadId}/segments/${segment.sourceId}-${String(
+    segment.sequence,
+  ).padStart(6, "0")}.transcript.json`;
+
+const buildRecordingSegmentTranscriptArtifact = (
+  job: PersonalMediaUploadJobRecord,
+  segment: PersonalRecordingSegmentRecord,
+  transcriptSegment: TranscriptSegment,
+): PersonalRecordingSegmentTranscriptArtifact => ({
+  generatedAt: new Date().toISOString(),
+  uploadId: job.uploadId,
+  segmentKey: segment.segmentKey,
+  sourceId: segment.sourceId,
+  sequence: segment.sequence,
+  segment: transcriptSegment,
+  text: transcriptSegment.text ?? "",
+});
+
+const loadProcessedRecordingSegmentTranscript = async (
+  segment: PersonalRecordingSegmentRecord,
+) => {
+  if (segment.status !== "processed" || !segment.transcriptS3Key) {
+    return undefined;
+  }
+  const artifact =
+    await fetchJsonFromS3<PersonalRecordingSegmentTranscriptArtifact>(
+      segment.transcriptS3Key,
+    );
+  return artifact?.segment;
+};
+
+const sortTranscriptSegments = (segments: TranscriptSegment[]) =>
+  [...segments].sort((left, right) => {
+    const time = left.startedAt.localeCompare(right.startedAt);
+    if (time !== 0) return time;
+    return left.userId.localeCompare(right.userId);
+  });
+
 const buildSingleSourceTranscriptArtifact = (
   job: PersonalMediaUploadJobRecord,
   transcript: string,
@@ -371,41 +431,36 @@ const concatAudioFiles = async (inputPaths: string[], outputPath: string) => {
   });
 };
 
-const downloadAndNormalizeRecordingSegments = async (
-  source: PersonalRecordingSourceRecord,
-  segments: PersonalRecordingSegmentRecord[],
-  workDir: string,
+const downloadAndNormalizeRecordingSegment = async (
+  segment: PersonalRecordingSegmentRecord,
+  sourceDir: string,
 ) => {
-  const sourceDir = path.join(workDir, source.sourceId);
-  await fs.mkdir(sourceDir, { recursive: true });
-  const segmentPaths: string[] = [];
-  for (const segment of segments) {
-    const segmentPath = path.join(
-      sourceDir,
-      `segment-${String(segment.sequence).padStart(6, "0")}`,
-    );
-    const downloaded = await downloadObjectToFile(
-      segment.sourceS3Key,
-      segmentPath,
-    );
-    if (!downloaded)
-      throw new Error("Uploaded recording segment could not be downloaded.");
-    segmentPaths.push(segmentPath);
-  }
-  const sourcePath = path.join(sourceDir, "source.wav");
-  const audioPath = path.join(sourceDir, "audio.mp3");
-  await concatAudioFiles(segmentPaths, sourcePath);
-  const durationSeconds = Math.round(
-    segments.reduce((sum, segment) => sum + segment.durationMillis, 0) / 1000,
+  const segmentDir = path.join(
+    sourceDir,
+    `segment-${String(segment.sequence).padStart(6, "0")}`,
   );
+  await fs.mkdir(segmentDir, { recursive: true });
+  const sourcePath = path.join(segmentDir, "source");
+  const audioPath = path.join(segmentDir, "audio.mp3");
+  const downloaded = await downloadObjectToFile(
+    segment.sourceS3Key,
+    sourcePath,
+  );
+  if (!downloaded) {
+    throw new Error("Uploaded recording segment could not be downloaded.");
+  }
   await runFfmpeg(sourcePath, audioPath);
-  return { audioPath, durationSeconds };
+  return {
+    audioPath,
+    durationSeconds: Math.round(segment.durationMillis / 1000),
+  };
 };
 
 const buildRecordingSegment = (input: {
   job: PersonalMediaUploadJobRecord;
   source: PersonalRecordingSourceRecord;
   transcript: string;
+  startedAt?: string;
 }): TranscriptSegment => ({
   userId:
     input.source.kind === "owner_mic"
@@ -413,10 +468,40 @@ const buildRecordingSegment = (input: {
       : `system:${input.job.uploadId}`,
   username: input.source.label,
   displayName: input.source.label,
-  startedAt: input.job.createdAt,
+  startedAt: input.startedAt ?? input.job.createdAt,
   text: input.transcript,
   source: "desktop_recording",
 });
+
+const summarizeRecordingSegmentProgress = (
+  segments: PersonalRecordingSegmentRecord[],
+) => ({
+  segmentCount: segments.length,
+  uploadedSegmentCount: segments.filter((segment) =>
+    ["uploaded", "submitted", "processing", "processed", "failed"].includes(
+      segment.status,
+    ),
+  ).length,
+  processedSegmentCount: segments.filter(
+    (segment) => segment.status === "processed",
+  ).length,
+});
+
+const updatePersonalRecordingProcessingProgress = async (
+  job: PersonalMediaUploadJobRecord,
+  instanceId: string,
+) => {
+  const segments = await listPersonalRecordingUploadSegments(job.uploadId);
+  await updateClaimedPersonalMediaUploadJobRecord(
+    {
+      ...job,
+      ...summarizeRecordingSegmentProgress(segments),
+      updatedAt: new Date().toISOString(),
+    },
+    instanceId,
+  );
+  return segments;
+};
 
 const processPersonalRecordingSource = async (
   job: PersonalMediaUploadJobRecord,
@@ -433,8 +518,57 @@ const processPersonalRecordingSource = async (
   return {
     audioPath,
     durationSeconds,
-    segment: buildRecordingSegment({ job, source, transcript }),
+    segments: [buildRecordingSegment({ job, source, transcript })],
   };
+};
+
+const processPersonalRecordingSegment = async (
+  job: PersonalMediaUploadJobRecord,
+  source: PersonalRecordingSourceRecord,
+  segment: PersonalRecordingSegmentRecord,
+  sourceDir: string,
+) => {
+  const { audioPath, durationSeconds } =
+    await downloadAndNormalizeRecordingSegment(segment, sourceDir);
+  const cachedTranscript =
+    await loadProcessedRecordingSegmentTranscript(segment);
+  if (cachedTranscript) {
+    return { audioPath, durationSeconds, segment: cachedTranscript };
+  }
+
+  let processingSegment = segment;
+  try {
+    processingSegment =
+      await markPersonalRecordingUploadSegmentProcessing(segment);
+    const transcriptionInputs = await resolveTranscriptionInputs(
+      audioPath,
+      path.dirname(audioPath),
+    );
+    const transcript = await transcribeAudioFiles(transcriptionInputs);
+    const transcriptSegment = buildRecordingSegment({
+      job,
+      source,
+      transcript,
+      startedAt: segment.startedAt,
+    });
+    const transcriptArtifact = buildRecordingSegmentTranscriptArtifact(
+      job,
+      segment,
+      transcriptSegment,
+    );
+    const transcriptS3Key = await uploadObjectToS3(
+      buildRecordingSegmentTranscriptKey(job, segment),
+      JSON.stringify(transcriptArtifact, null, 2),
+      "application/json",
+    );
+    await markPersonalRecordingUploadSegmentProcessed(processingSegment, {
+      transcriptS3Key,
+    });
+    return { audioPath, durationSeconds, segment: transcriptSegment };
+  } catch (error) {
+    await markPersonalRecordingUploadSegmentFailed(processingSegment, error);
+    throw error;
+  }
 };
 
 const processPersonalRecordingSegmentSource = async (
@@ -442,24 +576,40 @@ const processPersonalRecordingSegmentSource = async (
   source: PersonalRecordingSourceRecord,
   segments: PersonalRecordingSegmentRecord[],
   workDir: string,
+  instanceId: string,
 ): Promise<ProcessedPersonalRecordingSource> => {
-  const { audioPath, durationSeconds } =
-    await downloadAndNormalizeRecordingSegments(source, segments, workDir);
-  const transcriptionInputs = await resolveTranscriptionInputs(
+  const sourceDir = path.join(workDir, source.sourceId);
+  await fs.mkdir(sourceDir, { recursive: true });
+  const processedSegments: Array<{
+    audioPath: string;
+    durationSeconds: number;
+    segment: TranscriptSegment;
+  }> = [];
+  for (const segment of segments) {
+    processedSegments.push(
+      await processPersonalRecordingSegment(job, source, segment, sourceDir),
+    );
+    await updatePersonalRecordingProcessingProgress(job, instanceId);
+  }
+  const audioPath = path.join(sourceDir, "audio.mp3");
+  await concatAudioFiles(
+    processedSegments.map((segment) => segment.audioPath),
     audioPath,
-    path.dirname(audioPath),
   );
-  const transcript = await transcribeAudioFiles(transcriptionInputs);
   return {
     audioPath,
-    durationSeconds,
-    segment: buildRecordingSegment({ job, source, transcript }),
+    durationSeconds: processedSegments.reduce(
+      (sum, segment) => sum + segment.durationSeconds,
+      0,
+    ),
+    segments: processedSegments.map((segment) => segment.segment),
   };
 };
 
 const processPersonalRecordingContent = async (
   job: PersonalMediaUploadJobRecord,
   workDir: string,
+  instanceId: string,
 ): Promise<PersonalUploadProcessingResult> => {
   const sources = job.sourceManifest ?? [];
   if (sources.length === 0) {
@@ -469,11 +619,8 @@ const processPersonalRecordingContent = async (
   const processedSources: ProcessedPersonalRecordingSource[] = [];
   const segments = await listPersonalRecordingUploadSegments(job.uploadId);
   const submittedSegments = segments.filter((segment) =>
-    ["submitted", "processing", "processed"].includes(segment.status),
+    ["submitted", "processing", "processed", "failed"].includes(segment.status),
   );
-  if (submittedSegments.length > 0) {
-    await markPersonalRecordingUploadSegmentsProcessing(job.uploadId);
-  }
   for (const source of sources) {
     const sourceSegments = submittedSegments
       .filter((segment) => segment.sourceId === source.sourceId)
@@ -485,6 +632,7 @@ const processPersonalRecordingContent = async (
             source,
             sourceSegments,
             workDir,
+            instanceId,
           )
         : await processPersonalRecordingSource(job, source, workDir),
     );
@@ -496,7 +644,9 @@ const processPersonalRecordingContent = async (
     audioPath,
   );
   const transcriptArtifact = buildTranscriptArtifactFromSegments(
-    processedSources.map((source) => source.segment),
+    sortTranscriptSegments(
+      processedSources.flatMap((source) => source.segments),
+    ),
   );
   const notes = await generateNotesForTranscript(job, transcriptArtifact.text);
   const summaries = await generateSummariesForNotes(job, notes);
@@ -515,6 +665,9 @@ const processPersonalRecordingContent = async (
     ),
     meetingName,
     notes,
+    ...summarizeRecordingSegmentProgress(
+      await listPersonalRecordingUploadSegments(job.uploadId),
+    ),
     summaries,
   };
 };
@@ -522,9 +675,10 @@ const processPersonalRecordingContent = async (
 const processPersonalMediaContent = async (
   job: PersonalMediaUploadJobRecord,
   workDir: string,
+  instanceId: string,
 ): Promise<PersonalUploadProcessingResult> => {
   if (job.uploadOrigin === "desktop_recording" || job.sourceManifest?.length) {
-    return processPersonalRecordingContent(job, workDir);
+    return processPersonalRecordingContent(job, workDir, instanceId);
   }
 
   const { audioPath, durationSeconds } = await downloadAndNormalizeMedia(
@@ -710,6 +864,11 @@ const markPersonalMediaUploadComplete = async (
       meetingId: identity.meetingId,
       channelId_timestamp: identity.channelIdTimestamp,
       durationSeconds: result.durationSeconds,
+      segmentCount: result.segmentCount ?? job.segmentCount,
+      uploadedSegmentCount:
+        result.uploadedSegmentCount ?? job.uploadedSegmentCount,
+      processedSegmentCount:
+        result.processedSegmentCount ?? job.processedSegmentCount,
       errorMessage: undefined,
       retryable: undefined,
       claimExpiresAt: undefined,
@@ -752,7 +911,7 @@ export async function processPersonalMediaUpload(
   const workDir = path.join(tempRoot, "personal-upload", job.uploadId);
   await fs.mkdir(workDir, { recursive: true });
   try {
-    const result = await processPersonalMediaContent(job, workDir);
+    const result = await processPersonalMediaContent(job, workDir, instanceId);
     const identity = buildJobMeetingKey(job);
     const completedAt = new Date().toISOString();
     const meetingHistory = buildCompletedMeetingHistory(
@@ -763,9 +922,6 @@ export async function processPersonalMediaUpload(
     );
     await writeMeetingHistoryService(meetingHistory);
     await maybeAutoExportCompletedMeeting(meetingHistory);
-    if (job.uploadOrigin === "desktop_recording") {
-      await markPersonalRecordingUploadSegmentsProcessed(job.uploadId);
-    }
     await markPersonalMediaUploadComplete(
       job,
       identity,
