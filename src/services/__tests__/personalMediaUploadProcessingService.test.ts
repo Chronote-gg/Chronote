@@ -15,7 +15,6 @@ import {
   createPersonalMediaProcessingMeeting,
   processPersonalMediaUpload,
 } from "../personalMediaUploadProcessingService";
-import { createOpenAIClient } from "../openaiClient";
 import { fetchJsonFromS3, uploadObjectToS3 } from "../storageService";
 
 const mockUploadedObjects = new Map<string, string | Buffer>();
@@ -25,8 +24,8 @@ const mockChatComplete = jest.fn(async () => ({
 }));
 
 jest.mock("fluent-ffmpeg", () => {
-  const fs = require("node:fs") as typeof import("node:fs");
-  const path = require("node:path") as typeof import("node:path");
+  const fs = jest.requireActual<typeof import("node:fs")>("node:fs");
+  const path = jest.requireActual<typeof import("node:path")>("node:path");
 
   const ffmpeg = jest.fn(() => {
     const command = {
