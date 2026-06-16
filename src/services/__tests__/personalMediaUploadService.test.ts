@@ -2,18 +2,27 @@ import { jest } from "@jest/globals";
 import { PERSONAL_MEDIA_UPLOAD_MAX_BYTES } from "../../constants";
 import {
   createPersonalMediaUploadIntent,
-  createPersonalRecordingUploadIntent,
+  createPersonalRecordingSegmentUploadIntent,
+  createPersonalRecordingUploadSession,
   getPersonalMediaUploadJobForUser,
   markPersonalMediaUploadComplete,
-  markPersonalRecordingUploadComplete,
+  markPersonalRecordingSegmentUploadComplete,
   PersonalMediaUploadError,
   resolvePersonalMediaKind,
+  submitPersonalRecordingUpload,
 } from "../personalMediaUploadService";
 import {
   getPersonalMediaUploadRepository,
   type PersonalMediaUploadRepository,
 } from "../../repositories/personalMediaUploadRepository";
-import type { PersonalMediaUploadJobRecord } from "../../types/db";
+import {
+  getPersonalRecordingSegmentRepository,
+  type PersonalRecordingSegmentRepository,
+} from "../../repositories/personalRecordingSegmentRepository";
+import type {
+  PersonalMediaUploadJobRecord,
+  PersonalRecordingSegmentRecord,
+} from "../../types/db";
 import {
   getSignedUploadPost,
   getStoredObjectMetadata,
@@ -46,8 +55,58 @@ const getWrittenJob = () => {
   return job;
 };
 
+const segmentStore = new Map<string, PersonalRecordingSegmentRecord>();
+const segmentStoreKey = (uploadId: string, segmentKey: string) =>
+  `${uploadId}:${segmentKey}`;
+
+const segmentRepository = {
+  write: jest.fn(async (segment: PersonalRecordingSegmentRecord) => {
+    segmentStore.set(
+      segmentStoreKey(segment.uploadId, segment.segmentKey),
+      segment,
+    );
+  }),
+  get: jest.fn(async (uploadId: string, segmentKey: string) =>
+    segmentStore.get(segmentStoreKey(uploadId, segmentKey)),
+  ),
+  listByUpload: jest.fn(async (uploadId: string) =>
+    [...segmentStore.values()]
+      .filter((segment) => segment.uploadId === uploadId)
+      .sort((left, right) => left.segmentKey.localeCompare(right.segmentKey)),
+  ),
+  update: jest.fn(async (segment: PersonalRecordingSegmentRecord) => {
+    segmentStore.set(
+      segmentStoreKey(segment.uploadId, segment.segmentKey),
+      segment,
+    );
+  }),
+} satisfies jest.Mocked<PersonalRecordingSegmentRepository>;
+
+const segmentInput = (options: {
+  uploadId: string;
+  sourceId: string;
+  sequence?: number;
+  fileSize: number;
+}) => ({
+  uploadId: options.uploadId,
+  userId: "user-1",
+  sourceId: options.sourceId,
+  sequence: options.sequence ?? 0,
+  contentType: "audio/wav",
+  fileSize: options.fileSize,
+  checksumSha256: "a".repeat(64),
+  durationMillis: 60_000,
+  startedAt: "2026-06-15T00:00:00.000Z",
+  endedAt: "2026-06-15T00:01:00.000Z",
+  originalFileName: `${options.sourceId}.wav`,
+});
+
 jest.mock("../../repositories/personalMediaUploadRepository", () => ({
   getPersonalMediaUploadRepository: jest.fn(() => uploadRepository),
+}));
+
+jest.mock("../../repositories/personalRecordingSegmentRepository", () => ({
+  getPersonalRecordingSegmentRepository: jest.fn(() => segmentRepository),
 }));
 
 jest.mock("../storageService", () => ({
@@ -61,6 +120,10 @@ describe("personalMediaUploadService", () => {
     jest
       .mocked(getPersonalMediaUploadRepository)
       .mockReturnValue(uploadRepository);
+    jest
+      .mocked(getPersonalRecordingSegmentRepository)
+      .mockReturnValue(segmentRepository);
+    segmentStore.clear();
     jest.spyOn(Date, "now").mockReturnValue(1_700_000_000_000);
     jest.mocked(getSignedUploadPost).mockResolvedValue({
       url: "https://uploads.example/form",
@@ -121,53 +184,82 @@ describe("personalMediaUploadService", () => {
     expect(intent.key).toMatch(/source\.mov$/);
   });
 
-  it("creates a multi-source desktop recording upload intent", async () => {
-    const intent = await createPersonalRecordingUploadIntent({
+  it("creates a multi-source desktop recording upload session", async () => {
+    const session = await createPersonalRecordingUploadSession({
       userId: "user-1",
       sources: [
         {
           sourceId: "owner_mic",
           kind: "owner_mic",
-          contentType: "audio/wav",
-          fileSize: 1000,
         },
         {
           sourceId: "system_output",
           kind: "system_output",
-          contentType: "audio/wav",
-          fileSize: 2000,
         },
       ],
     });
 
-    expect(intent.sources).toHaveLength(2);
-    expect(intent.sources[0]).toMatchObject({
+    expect(session.sources).toHaveLength(2);
+    expect(session.sources[0]).toMatchObject({
       sourceId: "owner_mic",
       kind: "owner_mic",
       label: "Me",
-      contentType: "audio/wav",
-      fileSize: 1000,
     });
-    expect(intent.sources[1]).toMatchObject({
+    expect(session.sources[1]).toMatchObject({
       sourceId: "system_output",
       kind: "system_output",
       label: "System/Other",
-      contentType: "audio/wav",
-      fileSize: 2000,
     });
-    expect(getSignedUploadPost).toHaveBeenCalledTimes(2);
+    expect(getSignedUploadPost).not.toHaveBeenCalled();
     expect(uploadRepository.write).toHaveBeenCalledWith(
       expect.objectContaining({
-        uploadId: intent.uploadId,
+        uploadId: session.uploadId,
         ownerUserId: "user-1",
         uploadOrigin: "desktop_recording",
         sourceManifest: [
           expect.objectContaining({ sourceId: "owner_mic" }),
           expect.objectContaining({ sourceId: "system_output" }),
         ],
-        fileSize: 3000,
+        fileSize: 0,
       }),
     );
+  });
+
+  it("creates an idempotent desktop recording segment upload intent", async () => {
+    const session = await createPersonalRecordingUploadSession({
+      userId: "user-1",
+      sources: [{ sourceId: "owner_mic", kind: "owner_mic" }],
+    });
+    uploadRepository.get.mockResolvedValue(getWrittenJob());
+
+    const intent = await createPersonalRecordingSegmentUploadIntent(
+      segmentInput({
+        uploadId: session.uploadId,
+        sourceId: "owner_mic",
+        fileSize: 1000,
+      }),
+    );
+    const repeat = await createPersonalRecordingSegmentUploadIntent(
+      segmentInput({
+        uploadId: session.uploadId,
+        sourceId: "owner_mic",
+        fileSize: 1000,
+      }),
+    );
+
+    expect(intent.segment).toMatchObject({
+      uploadId: session.uploadId,
+      sourceId: "owner_mic",
+      sequence: 0,
+      status: "pending_upload",
+      fileSize: 1000,
+    });
+    expect(intent.segment.sourceS3Key).toMatch(
+      /^personal-media-uploads\/user-1\/[0-9a-f-]+\/segments\/owner_mic-000000\.wav$/,
+    );
+    expect(intent.uploadRequired).toBe(true);
+    expect(repeat.segment.segmentKey).toBe(intent.segment.segmentKey);
+    expect(getSignedUploadPost).toHaveBeenCalledTimes(2);
   });
 
   it("rejects unsupported media types", async () => {
@@ -261,22 +353,12 @@ describe("personalMediaUploadService", () => {
     expect(uploadRepository.update).toHaveBeenCalledWith(completed);
   });
 
-  it("marks all desktop recording sources as ready for processing", async () => {
-    const intent = await createPersonalRecordingUploadIntent({
+  it("marks all desktop recording segments as ready for processing", async () => {
+    const session = await createPersonalRecordingUploadSession({
       userId: "user-1",
       sources: [
-        {
-          sourceId: "owner_mic",
-          kind: "owner_mic",
-          contentType: "audio/wav",
-          fileSize: 1000,
-        },
-        {
-          sourceId: "system_output",
-          kind: "system_output",
-          contentType: "audio/wav",
-          fileSize: 2000,
-        },
+        { sourceId: "owner_mic", kind: "owner_mic" },
+        { sourceId: "system_output", kind: "system_output" },
       ],
     });
     const job = getWrittenJob();
@@ -285,70 +367,102 @@ describe("personalMediaUploadService", () => {
       contentLength: key.includes("owner_mic") ? 1000 : 2000,
       contentType: "audio/wav",
     }));
-
-    const completed = await markPersonalRecordingUploadComplete({
-      uploadId: intent.uploadId,
+    const ownerIntent = await createPersonalRecordingSegmentUploadIntent(
+      segmentInput({
+        uploadId: session.uploadId,
+        sourceId: "owner_mic",
+        fileSize: 1000,
+      }),
+    );
+    const systemIntent = await createPersonalRecordingSegmentUploadIntent(
+      segmentInput({
+        uploadId: session.uploadId,
+        sourceId: "system_output",
+        fileSize: 2000,
+      }),
+    );
+    await markPersonalRecordingSegmentUploadComplete({
+      uploadId: session.uploadId,
       userId: "user-1",
-      sources: intent.sources.map((source) => ({
-        sourceId: source.sourceId,
-        key: source.sourceS3Key,
-        uploadToken: source.uploadToken,
-        originalFileName: `${source.sourceId}.wav`,
-      })),
+      sourceId: "owner_mic",
+      sequence: 0,
+      key: ownerIntent.segment.sourceS3Key,
+      uploadToken: ownerIntent.uploadToken!,
+    });
+    await markPersonalRecordingSegmentUploadComplete({
+      uploadId: session.uploadId,
+      userId: "user-1",
+      sourceId: "system_output",
+      sequence: 0,
+      key: systemIntent.segment.sourceS3Key,
+      uploadToken: systemIntent.uploadToken!,
+    });
+
+    const completed = await submitPersonalRecordingUpload({
+      uploadId: session.uploadId,
+      userId: "user-1",
       title: "Desktop recording",
       tags: ["desktop"],
     });
 
     expect(completed).toMatchObject({
-      uploadId: intent.uploadId,
+      uploadId: session.uploadId,
       status: "queued",
       title: "Desktop recording",
       tags: ["desktop"],
+      fileSize: 3000,
       sourceManifest: [
-        expect.objectContaining({
-          sourceId: "owner_mic",
-          originalFileName: "owner_mic.wav",
-        }),
-        expect.objectContaining({
-          sourceId: "system_output",
-          originalFileName: "system_output.wav",
-        }),
+        expect.objectContaining({ sourceId: "owner_mic" }),
+        expect.objectContaining({ sourceId: "system_output" }),
       ],
     });
     expect(uploadRepository.update).toHaveBeenCalledWith(completed);
+    await expect(
+      segmentRepository.listByUpload(session.uploadId),
+    ).resolves.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ sourceId: "owner_mic", status: "submitted" }),
+        expect.objectContaining({
+          sourceId: "system_output",
+          status: "submitted",
+        }),
+      ]),
+    );
   });
 
-  it("rejects desktop recording completion unless every source is submitted", async () => {
-    const intent = await createPersonalRecordingUploadIntent({
+  it("rejects desktop recording submission unless every source has a segment", async () => {
+    const session = await createPersonalRecordingUploadSession({
       userId: "user-1",
       sources: [
-        {
-          sourceId: "owner_mic",
-          kind: "owner_mic",
-          contentType: "audio/wav",
-          fileSize: 1000,
-        },
-        {
-          sourceId: "system_output",
-          kind: "system_output",
-          contentType: "audio/wav",
-          fileSize: 2000,
-        },
+        { sourceId: "owner_mic", kind: "owner_mic" },
+        { sourceId: "system_output", kind: "system_output" },
       ],
     });
     uploadRepository.get.mockResolvedValue(getWrittenJob());
+    const ownerIntent = await createPersonalRecordingSegmentUploadIntent(
+      segmentInput({
+        uploadId: session.uploadId,
+        sourceId: "owner_mic",
+        fileSize: 1000,
+      }),
+    );
+    jest.mocked(getStoredObjectMetadata).mockResolvedValue({
+      contentLength: 1000,
+      contentType: "audio/wav",
+    });
+    await markPersonalRecordingSegmentUploadComplete({
+      uploadId: session.uploadId,
+      userId: "user-1",
+      sourceId: "owner_mic",
+      sequence: 0,
+      key: ownerIntent.segment.sourceS3Key,
+      uploadToken: ownerIntent.uploadToken!,
+    });
 
     await expect(
-      markPersonalRecordingUploadComplete({
-        uploadId: intent.uploadId,
+      submitPersonalRecordingUpload({
+        uploadId: session.uploadId,
         userId: "user-1",
-        sources: [
-          {
-            sourceId: intent.sources[0].sourceId,
-            key: intent.sources[0].sourceS3Key,
-            uploadToken: intent.sources[0].uploadToken,
-          },
-        ],
       }),
     ).rejects.toMatchObject<Partial<PersonalMediaUploadError>>({
       code: "invalid_state",

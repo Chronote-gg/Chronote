@@ -1380,6 +1380,7 @@ resource "aws_iam_policy" "dynamodb_access_policy" {
           aws_dynamodb_table.meeting_user_index_table.arn,
           aws_dynamodb_table.personal_media_upload_job_table.arn,
           "${aws_dynamodb_table.personal_media_upload_job_table.arn}/index/*",
+          aws_dynamodb_table.personal_recording_segment_table.arn,
           aws_dynamodb_table.meeting_share_table.arn,
           aws_dynamodb_table.contact_feedback_table.arn,
           "${aws_dynamodb_table.contact_feedback_table.arn}/index/*",
@@ -2688,6 +2689,36 @@ resource "aws_dynamodb_table" "personal_media_upload_job_table" {
 
   tags = {
     Name = "PersonalMediaUploadJobTable"
+  }
+}
+
+resource "aws_dynamodb_table" "personal_recording_segment_table" {
+  name         = "${local.name_prefix}-PersonalRecordingSegmentTable"
+  billing_mode = "PAY_PER_REQUEST"
+  hash_key     = "uploadId"
+  range_key    = "segmentKey"
+
+  attribute {
+    name = "uploadId"
+    type = "S"
+  }
+
+  attribute {
+    name = "segmentKey"
+    type = "S"
+  }
+
+  point_in_time_recovery {
+    enabled = true
+  }
+
+  server_side_encryption {
+    enabled     = true
+    kms_key_arn = aws_kms_key.app_general.arn
+  }
+
+  tags = {
+    Name = "PersonalRecordingSegmentTable"
   }
 }
 

@@ -222,7 +222,7 @@ Notes:
 - Terraform in `_infra/` provisions ECS/Fargate bot, Dynamo tables, transcripts bucket, SessionTable, the static frontend (S3 + CloudFront with OAC, SPA fallback), and the docs site (S3 + CloudFront with OAC).
 - When `API_DOMAIN` is set, Terraform also provisions an internet-facing ALB for the API (listener on 80/443) plus Route53 alias + ACM cert.
 - Runtime secrets for ECS are stored in **AWS Secrets Manager** and referenced by the task definition (see `_infra/README.md`).
-- Hosted desktop recorder routes are off by default. Enable with `ENABLE_DESKTOP_API=true` and limit beta access with `DESKTOP_ALLOWED_USER_IDS` or `SUPER_ADMIN_USER_IDS`.
+- Hosted desktop recorder routes are off by default. Enable with `ENABLE_DESKTOP_API=true` and limit beta access with `DESKTOP_ALLOWED_USER_IDS` or `SUPER_ADMIN_USER_IDS`. Desktop recordings use segmented upload state in DynamoDB plus S3 audio objects.
 - Desktop productization and release gates are documented in `docs/desktop-productization.md`.
 - Helpers: `yarn terraform:init | plan | apply`.
 - IaC scanning: `yarn checkov` (Checkov) locally; also runs in CI.

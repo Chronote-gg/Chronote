@@ -1,8 +1,11 @@
+use std::fs;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc};
 use std::thread::JoinHandle;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use hound::{WavSpec, WavWriter};
 use serde::Serialize;
 
 #[derive(Clone, Serialize)]
@@ -32,6 +35,15 @@ pub struct CaptureHandle {
     thread: JoinHandle<Result<(), String>>,
 }
 
+#[derive(Clone)]
+pub struct CaptureSegment {
+    pub sequence: u32,
+    pub path: PathBuf,
+    pub started_at_epoch_ms: u64,
+    pub ended_at_epoch_ms: u64,
+    pub duration_millis: u64,
+}
+
 impl CaptureHandle {
     pub fn stop(self) -> Result<(), String> {
         self.stop.store(true, Ordering::SeqCst);
@@ -49,19 +61,140 @@ pub struct CaptureSignalLevel {
     pub updated_at_epoch_ms: u64,
 }
 
+type WavFileWriter = WavWriter<std::io::BufWriter<std::fs::File>>;
+
+struct SegmentedWavWriter {
+    output_dir: PathBuf,
+    source_id: String,
+    spec: WavSpec,
+    segment_sample_limit: u32,
+    sequence: u32,
+    current_started_at_epoch_ms: u64,
+    writer: Option<WavFileWriter>,
+    tmp_path: PathBuf,
+    segment_tx: mpsc::Sender<CaptureSegment>,
+}
+
+impl SegmentedWavWriter {
+    fn create(
+        output_dir: PathBuf,
+        source_id: String,
+        spec: WavSpec,
+        segment_duration: Duration,
+        segment_tx: mpsc::Sender<CaptureSegment>,
+    ) -> Result<Self, String> {
+        fs::create_dir_all(&output_dir).map_err(to_string)?;
+        let segment_millis = segment_duration.as_millis().max(1);
+        let segment_sample_limit = ((u128::from(spec.sample_rate) * segment_millis) / 1000)
+            .max(1)
+            .min(u128::from(u32::MAX)) as u32;
+        let mut writer = Self {
+            output_dir,
+            source_id,
+            spec,
+            segment_sample_limit,
+            sequence: 0,
+            current_started_at_epoch_ms: now_epoch_millis(),
+            writer: None,
+            tmp_path: PathBuf::new(),
+            segment_tx,
+        };
+        writer.start_segment(now_epoch_millis())?;
+        Ok(writer)
+    }
+
+    fn write_sample(&mut self, sample: f32) -> Result<(), String> {
+        let writer = self
+            .writer
+            .as_mut()
+            .ok_or_else(|| "Segment writer was not initialized.".to_string())?;
+        writer.write_sample(sample).map_err(to_string)?;
+        if writer.duration() >= self.segment_sample_limit {
+            self.finish_segment(now_epoch_millis(), true)?;
+        }
+        Ok(())
+    }
+
+    fn flush(&mut self) -> Result<(), String> {
+        if let Some(writer) = self.writer.as_mut() {
+            writer.flush().map_err(to_string)?;
+        }
+        Ok(())
+    }
+
+    fn finalize(mut self) -> Result<(), String> {
+        self.finish_segment(now_epoch_millis(), false)
+    }
+
+    fn start_segment(&mut self, started_at_epoch_ms: u64) -> Result<(), String> {
+        self.current_started_at_epoch_ms = started_at_epoch_ms;
+        self.tmp_path = self
+            .output_dir
+            .join(format!("{}-{:06}.wav.part", self.source_id, self.sequence));
+        self.writer = Some(WavWriter::create(&self.tmp_path, self.spec).map_err(to_string)?);
+        Ok(())
+    }
+
+    fn finish_segment(&mut self, ended_at_epoch_ms: u64, start_next: bool) -> Result<(), String> {
+        let Some(writer) = self.writer.take() else {
+            return Ok(());
+        };
+        let sample_count = u64::from(writer.duration());
+        if sample_count == 0 {
+            drop(writer);
+            let _ = fs::remove_file(&self.tmp_path);
+            if start_next {
+                self.start_segment(ended_at_epoch_ms)?;
+            }
+            return Ok(());
+        }
+        writer.finalize().map_err(to_string)?;
+        let final_path = self
+            .output_dir
+            .join(format!("{}-{:06}.wav", self.source_id, self.sequence));
+        fs::rename(&self.tmp_path, &final_path).map_err(to_string)?;
+        let duration_millis = ((sample_count as u128 * 1000) / u128::from(self.spec.sample_rate))
+            .min(u128::from(u64::MAX)) as u64;
+        let _ = self.segment_tx.send(CaptureSegment {
+            sequence: self.sequence,
+            path: final_path,
+            started_at_epoch_ms: self.current_started_at_epoch_ms,
+            ended_at_epoch_ms: ended_at_epoch_ms.max(self.current_started_at_epoch_ms),
+            duration_millis,
+        });
+        self.sequence = self.sequence.saturating_add(1);
+        if start_next {
+            self.start_segment(ended_at_epoch_ms)?;
+        }
+        Ok(())
+    }
+}
+
+fn now_epoch_millis() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis()
+        .min(u128::from(u64::MAX)) as u64
+}
+
+fn to_string(error: impl std::fmt::Display) -> String {
+    error.to_string()
+}
+
 #[cfg(feature = "synthetic-audio")]
 mod platform {
-    use std::fs;
     use std::path::PathBuf;
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::{mpsc, Arc};
     use std::thread;
-    use std::time::{Duration, SystemTime, UNIX_EPOCH};
+    use std::time::Duration;
 
-    use hound::{SampleFormat, WavSpec, WavWriter};
+    use hound::{SampleFormat, WavSpec};
 
     use super::{
-        AudioDevice, AudioDeviceDirection, CaptureDirection, CaptureHandle, CaptureSignalLevel,
+        AudioDevice, AudioDeviceDirection, CaptureDirection, CaptureHandle, CaptureSegment,
+        CaptureSignalLevel, SegmentedWavWriter,
     };
 
     const SYNTHETIC_SAMPLE_RATE: u32 = 48_000;
@@ -90,13 +223,12 @@ mod platform {
     pub fn start_capture(
         direction: CaptureDirection,
         _device_id: Option<String>,
-        output_path: PathBuf,
+        output_dir: PathBuf,
+        source_id: String,
+        segment_duration: Duration,
         signal_tx: Option<mpsc::Sender<CaptureSignalLevel>>,
+        segment_tx: mpsc::Sender<CaptureSegment>,
     ) -> Result<CaptureHandle, String> {
-        if let Some(parent) = output_path.parent() {
-            fs::create_dir_all(parent).map_err(to_string)?;
-        }
-
         let stop = Arc::new(AtomicBool::new(false));
         let thread_stop = Arc::clone(&stop);
         let thread = thread::Builder::new()
@@ -107,7 +239,17 @@ mod platform {
                     CaptureDirection::Output => "system",
                 }
             ))
-            .spawn(move || synthetic_capture_loop(direction, output_path, thread_stop, signal_tx))
+            .spawn(move || {
+                synthetic_capture_loop(
+                    direction,
+                    output_dir,
+                    source_id,
+                    segment_duration,
+                    thread_stop,
+                    signal_tx,
+                    segment_tx,
+                )
+            })
             .map_err(to_string)?;
 
         Ok(CaptureHandle { stop, thread })
@@ -115,18 +257,24 @@ mod platform {
 
     fn synthetic_capture_loop(
         direction: CaptureDirection,
-        output_path: PathBuf,
+        output_dir: PathBuf,
+        source_id: String,
+        segment_duration: Duration,
         stop: Arc<AtomicBool>,
         signal_tx: Option<mpsc::Sender<CaptureSignalLevel>>,
+        segment_tx: mpsc::Sender<CaptureSegment>,
     ) -> Result<(), String> {
-        let mut writer = WavWriter::create(
-            output_path,
+        let mut writer = SegmentedWavWriter::create(
+            output_dir,
+            source_id,
             WavSpec {
                 channels: SYNTHETIC_CHANNELS,
                 sample_rate: SYNTHETIC_SAMPLE_RATE,
                 bits_per_sample: SYNTHETIC_BITS_PER_SAMPLE,
                 sample_format: SampleFormat::Float,
             },
+            segment_duration,
+            segment_tx,
         )
         .map_err(to_string)?;
         let amplitude = match direction {
@@ -143,7 +291,7 @@ mod platform {
                     peak_level: amplitude,
                     rms_level: amplitude / 2.0_f32.sqrt(),
                     sample_count: total_samples,
-                    updated_at_epoch_ms: now_epoch_millis(),
+                    updated_at_epoch_ms: super::now_epoch_millis(),
                 });
             }
             thread::sleep(SYNTHETIC_CHUNK_DELAY);
@@ -152,51 +300,39 @@ mod platform {
         if total_samples == 0 {
             write_synthetic_chunk(&mut writer, amplitude)?;
         }
-        writer.flush().map_err(to_string)?;
-        writer.finalize().map_err(to_string)
+        writer.flush()?;
+        writer.finalize()
     }
 
     fn write_synthetic_chunk(
-        writer: &mut WavWriter<std::io::BufWriter<std::fs::File>>,
+        writer: &mut SegmentedWavWriter,
         amplitude: f32,
     ) -> Result<(), String> {
         for index in 0..SYNTHETIC_CHUNK_SAMPLES {
             let phase = if index % 2 == 0 { 1.0 } else { -1.0 };
-            writer.write_sample(amplitude * phase).map_err(to_string)?;
+            writer.write_sample(amplitude * phase)?;
         }
         Ok(())
-    }
-
-    fn now_epoch_millis() -> u64 {
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_millis()
-            .min(u128::from(u64::MAX)) as u64
-    }
-
-    fn to_string(error: impl std::fmt::Display) -> String {
-        error.to_string()
     }
 }
 
 #[cfg(all(windows, not(feature = "synthetic-audio")))]
 mod platform {
     use std::collections::VecDeque;
-    use std::fs;
     use std::path::PathBuf;
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::{mpsc, Arc};
     use std::thread;
-    use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+    use std::time::{Duration, Instant};
 
-    use hound::{SampleFormat, WavSpec, WavWriter};
+    use hound::{SampleFormat, WavSpec};
     use wasapi::{
         Device, DeviceEnumerator, Direction, SampleType, StreamMode, WasapiError, WaveFormat,
     };
 
     use super::{
-        AudioDevice, AudioDeviceDirection, CaptureDirection, CaptureHandle, CaptureSignalLevel,
+        AudioDevice, AudioDeviceDirection, CaptureDirection, CaptureHandle, CaptureSegment,
+        CaptureSignalLevel, SegmentedWavWriter,
     };
 
     const CAPTURE_SAMPLE_RATE: usize = 48_000;
@@ -226,13 +362,12 @@ mod platform {
     pub fn start_capture(
         direction: CaptureDirection,
         device_id: Option<String>,
-        output_path: PathBuf,
+        output_dir: PathBuf,
+        source_id: String,
+        segment_duration: Duration,
         signal_tx: Option<mpsc::Sender<CaptureSignalLevel>>,
+        segment_tx: mpsc::Sender<CaptureSegment>,
     ) -> Result<CaptureHandle, String> {
-        if let Some(parent) = output_path.parent() {
-            fs::create_dir_all(parent).map_err(to_string)?;
-        }
-
         let stop = Arc::new(AtomicBool::new(false));
         let thread_stop = Arc::clone(&stop);
         let (ready_tx, ready_rx) = mpsc::channel();
@@ -248,9 +383,12 @@ mod platform {
                 capture_to_wav(
                     direction,
                     device_id,
-                    output_path,
+                    output_dir,
+                    source_id,
+                    segment_duration,
                     thread_stop,
                     signal_tx,
+                    segment_tx,
                     ready_tx,
                 )
             })
@@ -339,12 +477,23 @@ mod platform {
     fn capture_to_wav(
         direction: CaptureDirection,
         device_id: Option<String>,
-        output_path: PathBuf,
+        output_dir: PathBuf,
+        source_id: String,
+        segment_duration: Duration,
         stop: Arc<AtomicBool>,
         signal_tx: Option<mpsc::Sender<CaptureSignalLevel>>,
+        segment_tx: mpsc::Sender<CaptureSegment>,
         ready_tx: mpsc::Sender<Result<(), String>>,
     ) -> Result<(), String> {
-        let init_result = initialize_capture(direction, device_id, &output_path, signal_tx);
+        let init_result = initialize_capture(
+            direction,
+            device_id,
+            output_dir,
+            source_id,
+            segment_duration,
+            signal_tx,
+            segment_tx,
+        );
         let Ok(mut capture) = init_result else {
             let error = init_result
                 .err()
@@ -356,7 +505,7 @@ mod platform {
         let _ = ready_tx.send(Ok(()));
         let result = capture_loop(&mut capture, &stop);
         let stop_result = capture.audio_client.stop_stream().map_err(to_string);
-        let finalize_result = capture.writer.finalize().map_err(to_string);
+        let finalize_result = capture.writer.finalize();
         result.and(stop_result).and(finalize_result)
     }
 
@@ -364,7 +513,7 @@ mod platform {
         audio_client: wasapi::AudioClient,
         capture_client: wasapi::AudioCaptureClient,
         event_handle: wasapi::Handle,
-        writer: WavWriter<std::io::BufWriter<std::fs::File>>,
+        writer: SegmentedWavWriter,
         signal_tx: Option<mpsc::Sender<CaptureSignalLevel>>,
         sample_queue: VecDeque<u8>,
         block_align: usize,
@@ -373,8 +522,11 @@ mod platform {
     fn initialize_capture(
         direction: CaptureDirection,
         device_id: Option<String>,
-        output_path: &PathBuf,
+        output_dir: PathBuf,
+        source_id: String,
+        segment_duration: Duration,
         signal_tx: Option<mpsc::Sender<CaptureSignalLevel>>,
+        segment_tx: mpsc::Sender<CaptureSegment>,
     ) -> Result<ActiveWasapiCapture, String> {
         wasapi::initialize_mta().ok().map_err(to_string)?;
         let enumerator = DeviceEnumerator::new().map_err(to_string)?;
@@ -400,14 +552,17 @@ mod platform {
         let event_handle = audio_client.set_get_eventhandle().map_err(to_string)?;
         let buffer_frame_count = audio_client.get_buffer_size().map_err(to_string)?;
         let capture_client = audio_client.get_audiocaptureclient().map_err(to_string)?;
-        let writer = WavWriter::create(
-            output_path,
+        let writer = SegmentedWavWriter::create(
+            output_dir,
+            source_id,
             WavSpec {
                 channels: CAPTURE_CHANNELS as u16,
                 sample_rate: CAPTURE_SAMPLE_RATE as u32,
                 bits_per_sample: CAPTURE_BITS_PER_SAMPLE as u16,
                 sample_format: SampleFormat::Float,
             },
+            segment_duration,
+            segment_tx,
         )
         .map_err(to_string)?;
         audio_client.start_stream().map_err(to_string)?;
@@ -448,15 +603,16 @@ mod platform {
                 ];
                 let sample = f32::from_le_bytes(bytes).clamp(-1.0, 1.0);
                 signal.observe(sample);
-                capture.writer.write_sample(sample).map_err(to_string)?;
+                capture.writer.write_sample(sample)?;
             }
             if Instant::now() >= next_signal_update {
                 signal.publish(capture.signal_tx.as_ref());
+                capture.writer.flush()?;
                 next_signal_update = Instant::now() + SIGNAL_UPDATE_INTERVAL;
             }
         }
         signal.publish(capture.signal_tx.as_ref());
-        capture.writer.flush().map_err(to_string)
+        capture.writer.flush()
     }
 
     #[derive(Default)]
@@ -487,7 +643,7 @@ mod platform {
                     peak_level: self.peak.clamp(0.0, 1.0),
                     rms_level: rms.clamp(0.0, 1.0),
                     sample_count: self.total_samples,
-                    updated_at_epoch_ms: now_epoch_millis(),
+                    updated_at_epoch_ms: super::now_epoch_millis(),
                 });
             }
             self.peak = 0.0;
@@ -495,24 +651,17 @@ mod platform {
             self.samples = 0;
         }
     }
-
-    fn now_epoch_millis() -> u64 {
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_millis()
-            .min(u128::from(u64::MAX)) as u64
-    }
 }
 
 #[cfg(all(not(windows), not(feature = "synthetic-audio")))]
 mod platform {
     use std::path::PathBuf;
     use std::sync::atomic::AtomicBool;
-    use std::sync::Arc;
+    use std::sync::{mpsc, Arc};
     use std::thread;
+    use std::time::Duration;
 
-    use super::{AudioDevice, CaptureDirection, CaptureHandle};
+    use super::{AudioDevice, CaptureDirection, CaptureHandle, CaptureSegment, CaptureSignalLevel};
 
     pub fn list_audio_devices() -> Result<Vec<AudioDevice>, String> {
         Ok(Vec::new())
@@ -521,8 +670,11 @@ mod platform {
     pub fn start_capture(
         _direction: CaptureDirection,
         _device_id: Option<String>,
-        _output_path: PathBuf,
-        _signal_tx: Option<std::sync::mpsc::Sender<super::CaptureSignalLevel>>,
+        _output_dir: PathBuf,
+        _source_id: String,
+        _segment_duration: Duration,
+        _signal_tx: Option<mpsc::Sender<CaptureSignalLevel>>,
+        _segment_tx: mpsc::Sender<CaptureSegment>,
     ) -> Result<CaptureHandle, String> {
         Err("Chronote desktop recording is currently Windows-only.".to_string())
     }
@@ -548,8 +700,19 @@ pub fn list_audio_devices() -> Result<Vec<AudioDevice>, String> {
 pub fn start_capture(
     direction: CaptureDirection,
     device_id: Option<String>,
-    output_path: PathBuf,
+    output_dir: PathBuf,
+    source_id: String,
+    segment_duration: Duration,
     signal_tx: Option<mpsc::Sender<CaptureSignalLevel>>,
+    segment_tx: mpsc::Sender<CaptureSegment>,
 ) -> Result<CaptureHandle, String> {
-    platform::start_capture(direction, device_id, output_path, signal_tx)
+    platform::start_capture(
+        direction,
+        device_id,
+        output_dir,
+        source_id,
+        segment_duration,
+        signal_tx,
+        segment_tx,
+    )
 }

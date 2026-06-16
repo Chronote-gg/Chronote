@@ -44,6 +44,7 @@ import {
   FeedbackTargetType,
   ContactFeedbackRecord,
   PersonalMediaUploadJobRecord,
+  PersonalRecordingSegmentRecord,
 } from "./types/db";
 import type { MeetingStatus } from "./types/meetingLifecycle";
 import { trimNotesForHistory } from "./utils/notesHistory";
@@ -1487,6 +1488,64 @@ export async function updatePersonalMediaUploadJob(
   job: PersonalMediaUploadJobRecord,
 ): Promise<void> {
   await writePersonalMediaUploadJob(job);
+}
+
+export async function writePersonalRecordingSegment(
+  segment: PersonalRecordingSegmentRecord,
+): Promise<void> {
+  await dynamoDbClient.send(
+    new PutItemCommand({
+      TableName: tableName("PersonalRecordingSegmentTable"),
+      Item: marshall(segment, { removeUndefinedValues: true }),
+    }),
+  );
+}
+
+export async function getPersonalRecordingSegment(
+  uploadId: string,
+  segmentKey: string,
+): Promise<PersonalRecordingSegmentRecord | undefined> {
+  const result = await dynamoDbClient.send(
+    new GetItemCommand({
+      TableName: tableName("PersonalRecordingSegmentTable"),
+      Key: marshall({ uploadId, segmentKey }),
+    }),
+  );
+  return result.Item
+    ? (unmarshall(result.Item) as PersonalRecordingSegmentRecord)
+    : undefined;
+}
+
+export async function listPersonalRecordingSegments(
+  uploadId: string,
+): Promise<PersonalRecordingSegmentRecord[]> {
+  const segments: PersonalRecordingSegmentRecord[] = [];
+  let exclusiveStartKey: Record<string, AttributeValue> | undefined;
+  do {
+    const result = await dynamoDbClient.send(
+      new QueryCommand({
+        TableName: tableName("PersonalRecordingSegmentTable"),
+        KeyConditionExpression: "#uploadId = :uploadId",
+        ExpressionAttributeNames: { "#uploadId": "uploadId" },
+        ExpressionAttributeValues: marshall({ ":uploadId": uploadId }),
+        ExclusiveStartKey: exclusiveStartKey,
+        ScanIndexForward: true,
+      }),
+    );
+    segments.push(
+      ...(result.Items ?? []).map(
+        (item) => unmarshall(item) as PersonalRecordingSegmentRecord,
+      ),
+    );
+    exclusiveStartKey = result.LastEvaluatedKey;
+  } while (exclusiveStartKey);
+  return segments;
+}
+
+export async function updatePersonalRecordingSegment(
+  segment: PersonalRecordingSegmentRecord,
+): Promise<void> {
+  await writePersonalRecordingSegment(segment);
 }
 
 export async function listClaimablePersonalMediaUploadJobs(options: {

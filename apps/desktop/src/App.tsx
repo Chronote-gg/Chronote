@@ -53,9 +53,9 @@ type RetainedRecordingSource = {
   sourceId: string;
   kind: string;
   label: string;
-  contentType: string;
-  fileName: string;
   fileSize: number;
+  segmentCount: number;
+  uploadedSegmentCount: number;
 };
 
 type RetainedRecording = {
@@ -418,6 +418,9 @@ export default function App() {
     setJob(null);
     try {
       const status = await invoke<RecordingStatus>("start_recording", {
+        apiBaseUrl,
+        title: title.trim() || null,
+        tags: parseTags(tags),
         micDeviceId: micDeviceId || null,
         outputDeviceId: outputDeviceId || null,
       });
@@ -749,7 +752,7 @@ export default function App() {
                           {retained.sources
                             .map(
                               (source) =>
-                                `${source.label}: ${formatBytes(source.fileSize)}`,
+                                `${source.label}: ${source.uploadedSegmentCount}/${source.segmentCount} segments, ${formatBytes(source.fileSize)}`,
                             )
                             .join(" | ")}
                         </p>

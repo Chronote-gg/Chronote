@@ -234,7 +234,7 @@ When processing completes, the meeting appears in **My Meetings** under your per
 
 ## Chronote Desktop recordings
 
-Chronote Desktop records a personal meeting directly from a Windows computer. It captures your microphone as **Me**, captures system audio as **System/Other**, uploads both sources to Chronote, and creates a personal meeting in **My Meetings**.
+Chronote Desktop records a personal meeting directly from a Windows computer. It captures your microphone as **Me**, captures system audio as **System/Other**, saves sealed local audio segments while recording, uploads those segments to Chronote, and creates a personal meeting in **My Meetings**.
 
 Chronote Desktop is currently available as a limited beta. Your account must have desktop access enabled before sign-in and upload will work.
 
@@ -244,7 +244,7 @@ Chronote Desktop is currently available as a limited beta. Your account must hav
 4. Click **Start recording**.
 5. Click **Stop and upload** when the meeting ends.
 
-Desktop recordings use your Chronote account and do not require a Discord voice channel. Keep the app open until the upload is received. Processing continues in Chronote after the upload completes. If upload fails, Chronote Desktop keeps the local recording available in **Saved recordings** so you can retry the upload, open the local folder, or delete it when you no longer need it. Use **Open Chronote** in the desktop app to open **My Meetings** in the web portal.
+Desktop recordings use your Chronote account and do not require a Discord voice channel. Keep the app open until the upload is received. Processing continues in Chronote after the upload completes. If upload fails, or if the app closes after one or more segments were sealed, Chronote Desktop keeps the local recording available in **Saved recordings** so you can retry the upload, open the local folder, or delete it when you no longer need it. Use **Open Chronote** in the desktop app to open **My Meetings** in the web portal.
 
 ## Context menu commands
 

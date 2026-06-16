@@ -7,6 +7,7 @@ import type {
   MeetingHistory,
   PersonalMediaUploadJobRecord,
   PersonalRecordingSourceRecord,
+  PersonalRecordingSegmentRecord,
 } from "../types/db";
 import type { Participant } from "../types/participants";
 import type { TranscriptSegment } from "../types/transcript";
@@ -31,6 +32,10 @@ import {
 import { resolveMeetingNameFromSummary } from "./meetingNameService";
 import { maybeAutoExportCompletedMeeting } from "./notionAutomationService";
 import {
+  listPersonalRecordingUploadSegments,
+  markPersonalRecordingUploadSegmentsFailed,
+  markPersonalRecordingUploadSegmentsProcessed,
+  markPersonalRecordingUploadSegmentsProcessing,
   updateClaimedPersonalMediaUploadJobRecord,
   updatePersonalMediaUploadJobRecord,
 } from "./personalMediaUploadService";
@@ -320,6 +325,9 @@ const downloadAndNormalizeRecordingSource = async (
   source: PersonalRecordingSourceRecord,
   workDir: string,
 ) => {
+  if (!source.sourceS3Key) {
+    throw new Error("Desktop recording source is missing an S3 object key.");
+  }
   const sourceDir = path.join(workDir, source.sourceId);
   await fs.mkdir(sourceDir, { recursive: true });
   const sourcePath = path.join(sourceDir, "source");
@@ -328,6 +336,67 @@ const downloadAndNormalizeRecordingSource = async (
   if (!downloaded) throw new Error("Uploaded media could not be downloaded.");
   const durationSeconds = Math.round(
     await probeMediaDurationSeconds(sourcePath),
+  );
+  await runFfmpeg(sourcePath, audioPath);
+  return { audioPath, durationSeconds };
+};
+
+const quoteFfmpegConcatPath = (filePath: string) =>
+  filePath.replace(/'/g, "'\\''");
+
+const concatAudioFiles = async (inputPaths: string[], outputPath: string) => {
+  if (inputPaths.length === 0) {
+    throw new Error("No recording segments were available to assemble.");
+  }
+  if (inputPaths.length === 1) {
+    await fs.copyFile(inputPaths[0], outputPath);
+    return;
+  }
+  const listPath = `${outputPath}.txt`;
+  await fs.writeFile(
+    listPath,
+    inputPaths
+      .map((inputPath) => `file '${quoteFfmpegConcatPath(inputPath)}'`)
+      .join("\n"),
+  );
+  await new Promise<void>((resolve, reject) => {
+    ffmpeg()
+      .input(listPath)
+      .inputOptions(["-f", "concat", "-safe", "0"])
+      .outputOptions(["-c", "copy"])
+      .output(outputPath)
+      .on("end", () => resolve())
+      .on("error", reject)
+      .run();
+  });
+};
+
+const downloadAndNormalizeRecordingSegments = async (
+  source: PersonalRecordingSourceRecord,
+  segments: PersonalRecordingSegmentRecord[],
+  workDir: string,
+) => {
+  const sourceDir = path.join(workDir, source.sourceId);
+  await fs.mkdir(sourceDir, { recursive: true });
+  const segmentPaths: string[] = [];
+  for (const segment of segments) {
+    const segmentPath = path.join(
+      sourceDir,
+      `segment-${String(segment.sequence).padStart(6, "0")}`,
+    );
+    const downloaded = await downloadObjectToFile(
+      segment.sourceS3Key,
+      segmentPath,
+    );
+    if (!downloaded)
+      throw new Error("Uploaded recording segment could not be downloaded.");
+    segmentPaths.push(segmentPath);
+  }
+  const sourcePath = path.join(sourceDir, "source.wav");
+  const audioPath = path.join(sourceDir, "audio.mp3");
+  await concatAudioFiles(segmentPaths, sourcePath);
+  const durationSeconds = Math.round(
+    segments.reduce((sum, segment) => sum + segment.durationMillis, 0) / 1000,
   );
   await runFfmpeg(sourcePath, audioPath);
   return { audioPath, durationSeconds };
@@ -368,6 +437,26 @@ const processPersonalRecordingSource = async (
   };
 };
 
+const processPersonalRecordingSegmentSource = async (
+  job: PersonalMediaUploadJobRecord,
+  source: PersonalRecordingSourceRecord,
+  segments: PersonalRecordingSegmentRecord[],
+  workDir: string,
+): Promise<ProcessedPersonalRecordingSource> => {
+  const { audioPath, durationSeconds } =
+    await downloadAndNormalizeRecordingSegments(source, segments, workDir);
+  const transcriptionInputs = await resolveTranscriptionInputs(
+    audioPath,
+    path.dirname(audioPath),
+  );
+  const transcript = await transcribeAudioFiles(transcriptionInputs);
+  return {
+    audioPath,
+    durationSeconds,
+    segment: buildRecordingSegment({ job, source, transcript }),
+  };
+};
+
 const processPersonalRecordingContent = async (
   job: PersonalMediaUploadJobRecord,
   workDir: string,
@@ -378,9 +467,26 @@ const processPersonalRecordingContent = async (
   }
 
   const processedSources: ProcessedPersonalRecordingSource[] = [];
+  const segments = await listPersonalRecordingUploadSegments(job.uploadId);
+  const submittedSegments = segments.filter((segment) =>
+    ["submitted", "processing", "processed"].includes(segment.status),
+  );
+  if (submittedSegments.length > 0) {
+    await markPersonalRecordingUploadSegmentsProcessing(job.uploadId);
+  }
   for (const source of sources) {
+    const sourceSegments = submittedSegments
+      .filter((segment) => segment.sourceId === source.sourceId)
+      .sort((left, right) => left.sequence - right.sequence);
     processedSources.push(
-      await processPersonalRecordingSource(job, source, workDir),
+      sourceSegments.length > 0
+        ? await processPersonalRecordingSegmentSource(
+            job,
+            source,
+            sourceSegments,
+            workDir,
+          )
+        : await processPersonalRecordingSource(job, source, workDir),
     );
   }
 
@@ -657,6 +763,9 @@ export async function processPersonalMediaUpload(
     );
     await writeMeetingHistoryService(meetingHistory);
     await maybeAutoExportCompletedMeeting(meetingHistory);
+    if (job.uploadOrigin === "desktop_recording") {
+      await markPersonalRecordingUploadSegmentsProcessed(job.uploadId);
+    }
     await markPersonalMediaUploadComplete(
       job,
       identity,
@@ -665,6 +774,9 @@ export async function processPersonalMediaUpload(
       instanceId,
     );
   } catch (error) {
+    if (job.uploadOrigin === "desktop_recording") {
+      await markPersonalRecordingUploadSegmentsFailed(job.uploadId, error);
+    }
     await markPersonalMediaUploadFailed(job, error, instanceId);
     console.error("Failed to process personal media upload", {
       uploadId: job.uploadId,
