@@ -22,7 +22,7 @@ use rand::{rngs::OsRng, RngCore};
 use reqwest::multipart::{Form, Part};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use tauri::{Emitter, State};
+use tauri::{Emitter, Manager, State};
 use tokio::sync::mpsc as async_mpsc;
 use url::Url;
 use uuid::Uuid;
@@ -497,7 +497,7 @@ async fn start_recording(
             label: "System/Other".to_string(),
         },
     ];
-    let upload_session = get_cached_or_stored_session(&api_base_url, &state).unwrap_or(None);
+    let upload_session = get_cached_or_stored_session(&api_base_url, &state)?;
     let manifest = Arc::new(Mutex::new(create_active_recording_manifest(
         &recording_id,
         &started_at,
@@ -508,6 +508,7 @@ async fn start_recording(
     write_shared_recording_manifest(&directory, &manifest)?;
     let (segment_tx, segment_rx) = async_mpsc::unbounded_channel();
     let upload_task = spawn_segment_upload_worker(
+        app.clone(),
         api_base_url.clone(),
         directory.clone(),
         Arc::clone(&manifest),
@@ -1051,6 +1052,7 @@ async fn access_token_for_stored_session(
 async fn access_token_for_session_snapshot(
     api_base_url: &str,
     client: &reqwest::Client,
+    app: &tauri::AppHandle,
     session: &mut Option<DesktopSession>,
 ) -> Result<String, String> {
     if session
@@ -1070,6 +1072,8 @@ async fn access_token_for_session_snapshot(
     }
     let refreshed = refresh_session(api_base_url, client, &current.refresh_token).await?;
     let _ = persist_session(&refreshed);
+    let state = app.state::<AppState>();
+    set_cached_session(&state, Some(refreshed.clone()))?;
     *session = Some(refreshed.clone());
     Ok(refreshed.access_token)
 }
@@ -1262,6 +1266,7 @@ async fn parse_api_response<T: DeserializeOwned>(response: reqwest::Response) ->
 }
 
 fn spawn_segment_upload_worker(
+    app: tauri::AppHandle,
     api_base_url: String,
     directory: PathBuf,
     manifest: SharedRecordingManifest,
@@ -1282,6 +1287,7 @@ fn spawn_segment_upload_worker(
                 continue;
             }
             if let Err(error) = upload_segment_file(
+                Some(&app),
                 &api_base_url,
                 &directory,
                 &manifest,
@@ -1320,6 +1326,7 @@ async fn upload_manifest_segments(
     for segment in segments {
         let upload_file = segment_upload_file_from_manifest(directory, &segment)?;
         upload_segment_file(
+            None,
             api_base_url,
             directory,
             manifest,
@@ -1333,6 +1340,7 @@ async fn upload_manifest_segments(
 }
 
 async fn upload_segment_file(
+    app: Option<&tauri::AppHandle>,
     api_base_url: &str,
     directory: &Path,
     manifest: &SharedRecordingManifest,
@@ -1345,7 +1353,15 @@ async fn upload_segment_file(
         Some(access_token) => access_token.to_string(),
         None => match session {
             Some(session) => {
-                access_token_for_session_snapshot(api_base_url, &client, session).await?
+                access_token_for_session_snapshot(
+                    api_base_url,
+                    &client,
+                    app.ok_or_else(|| {
+                        "Recording upload worker state was unavailable.".to_string()
+                    })?,
+                    session,
+                )
+                .await?
             }
             None => access_token_for_stored_session(api_base_url, &client).await?,
         },
