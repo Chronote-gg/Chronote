@@ -679,18 +679,6 @@ export async function submitPersonalRecordingUpload(options: {
       "invalid_state",
     );
   }
-  const sourcesWithSegments = new Set(
-    segments.map((segment) => segment.sourceId),
-  );
-  const missingSource = job.sourceManifest?.find(
-    (source) => !sourcesWithSegments.has(source.sourceId),
-  );
-  if (missingSource) {
-    throw new PersonalMediaUploadError(
-      "Every recording source must include at least one uploaded segment.",
-      "invalid_state",
-    );
-  }
   const notUploaded = segments.find(
     (segment) =>
       !["uploaded", "submitted", "processed"].includes(segment.status),

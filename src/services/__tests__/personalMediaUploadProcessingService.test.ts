@@ -328,6 +328,39 @@ describe("personalMediaUploadProcessingService", () => {
     );
   });
 
+  it("skips desktop sources that did not produce segments", async () => {
+    recordingSegments = [buildSegment(0)];
+    const job = {
+      ...buildDesktopJob(),
+      sourceManifest: [
+        { sourceId: "owner_mic", kind: "owner_mic", label: "Me" },
+        {
+          sourceId: "system_output",
+          kind: "system_output",
+          label: "System/Other",
+        },
+      ],
+    } satisfies PersonalMediaUploadJobRecord;
+
+    await processPersonalMediaUpload(job, "instance-1");
+
+    expect(mockTranscribe).toHaveBeenCalledTimes(1);
+    expect(markPersonalRecordingUploadSegmentProcessed).toHaveBeenCalledTimes(
+      1,
+    );
+    expect(recordingSegments).toEqual([
+      expect.objectContaining({ sourceId: "owner_mic", status: "processed" }),
+    ]);
+    expect(updateClaimedPersonalMediaUploadJobRecord).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        status: "complete",
+        segmentCount: 1,
+        processedSegmentCount: 1,
+      }),
+      "instance-1",
+    );
+  });
+
   it("reuses processed segment transcript artifacts on retry", async () => {
     const processedSegment = {
       ...buildSegment(0, "processed"),
