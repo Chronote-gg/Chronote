@@ -624,6 +624,9 @@ const processPersonalRecordingContent = async (
     const sourceSegments = submittedSegments
       .filter((segment) => segment.sourceId === source.sourceId)
       .sort((left, right) => left.sequence - right.sequence);
+    if (sourceSegments.length === 0 && !source.sourceS3Key) {
+      continue;
+    }
     processedSources.push(
       sourceSegments.length > 0
         ? await processPersonalRecordingSegmentSource(
@@ -635,6 +638,9 @@ const processPersonalRecordingContent = async (
           )
         : await processPersonalRecordingSource(job, source, workDir),
     );
+  }
+  if (processedSources.length === 0) {
+    throw new Error("No recording segments were available to assemble.");
   }
 
   const audioPath = path.join(workDir, "audio.mp3");
