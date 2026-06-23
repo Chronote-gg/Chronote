@@ -168,7 +168,7 @@
     "remark-gfm": "^4.0.1",
     "stripe": "22.2.1",
     "syllable": "^5.0.1",
-    "uuid": "^14.0.0",
+    "uuid": "^11.1.1",
     "web-vitals": "^5.3.0",
     "zod": "^4.4.3",
     "zustand": "^5.0.14"
@@ -205,7 +205,7 @@
     "tar": "7.5.16",
     "@smithy/util-retry": "4.3.8",
     "undici": "6.27.0",
-    "uuid": "14.0.0",
+    "uuid": "11.1.1",
     "webpack-dev-server": "5.2.5",
     "ws": "8.21.0",
     "yaml": "2.9.0"
