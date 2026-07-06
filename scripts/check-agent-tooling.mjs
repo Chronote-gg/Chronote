@@ -5,6 +5,13 @@ import { fileURLToPath } from "node:url";
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const failures = [];
 const warnings = [];
+const expectedSkills = [
+  "docs-authoring",
+  "investigate-and-plan",
+  "mcp-setup-and-debug",
+  "pr-post-push-sop",
+  "pr-review-recycle",
+];
 
 function repoPath(...parts) {
   return path.join(root, ...parts);
@@ -72,9 +79,6 @@ const skillRoots = {
 const skillInventory = Object.fromEntries(
   Object.entries(skillRoots).map(([client, dir]) => [client, listSkills(dir)]),
 );
-const expectedSkills = [
-  ...new Set(Object.values(skillInventory).flat()),
-].sort();
 
 for (const [client, skills] of Object.entries(skillInventory)) {
   for (const skill of expectedSkills) {
