@@ -201,11 +201,19 @@ Optional Windows helper (prints loaded env, supports `-Mock` / `-SkipDocker`):
 
 ## Agent Skills
 
-OpenCode skills are stored as `.opencode/skills/<name>/SKILL.md`. Skills are discovered at OpenCode startup and cached. Adding or modifying skills may require restarting OpenCode.
+Agent workflow skills are mirrored by client:
+
+- Codex: `.codex/skills/<name>/SKILL.md`
+- Claude Code: `.claude/skills/<name>/SKILL.md`
+- OpenCode: `.opencode/skills/<name>/SKILL.md`
+
+When a shared workflow changes, keep all three skill mirrors in sync. Skills are discovered at client startup and cached, so adding or modifying skills may require restarting the client. Run `yarn agent:check` after agent-tooling changes.
 
 - `pr-review-recycle`: agentic loop for processing Copilot/Greptile/Codex PR review threads until checks are green.
 - `docs-authoring`: workflow for creating and maintaining public product docs in `apps/docs-site/`.
 - `pr-post-push-sop`: post-push checklist for checks, AI review audit, and a 5 minute late-comment wait before merge-ready updates.
+- `investigate-and-plan`: investigation and planning workflow for errors, incidents, product ideas, issues, and PRs.
+- `mcp-setup-and-debug`: MCP setup and debugging workflow for OpenCode, Codex CLI, and Claude Code.
 
 ## Non-idiomatic typing
 
