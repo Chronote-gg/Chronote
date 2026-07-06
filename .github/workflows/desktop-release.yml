@@ -27,7 +27,7 @@ env:
 jobs:
   release-windows:
     name: Build Draft Windows Desktop Release
-    runs-on: windows-latest
+    runs-on: blacksmith-4vcpu-windows-2025
     environment: desktop-release
     permissions:
       contents: write

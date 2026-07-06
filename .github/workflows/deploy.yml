@@ -17,7 +17,7 @@ concurrency:
 jobs:
   lint:
     name: Lint
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -37,7 +37,7 @@ jobs:
 
   prettier:
     name: Prettier
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -57,7 +57,7 @@ jobs:
 
   markdownlint:
     name: Markdown Lint
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -77,7 +77,7 @@ jobs:
 
   test:
     name: Unit Tests
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -97,7 +97,7 @@ jobs:
 
   build:
     name: Build
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -129,7 +129,7 @@ jobs:
 
   desktop-check:
     name: Desktop Check
-    runs-on: windows-latest
+    runs-on: blacksmith-4vcpu-windows-2025
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -151,7 +151,7 @@ jobs:
 
   docs-check:
     name: Docs Check
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -171,7 +171,7 @@ jobs:
 
   code-stats:
     name: Code Stats
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -202,7 +202,7 @@ jobs:
 
   checkov:
     name: Checkov (Terraform)
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -224,7 +224,7 @@ jobs:
 
   prompts-check:
     name: Prompts Check
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -249,7 +249,7 @@ jobs:
 
   llm-connections-check:
     name: LLM Connections Check
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -274,7 +274,7 @@ jobs:
 
   e2e-tests:
     name: E2E Tests (Playwright)
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     env:
       FRONTEND_SITE_URL: http://127.0.0.1:5173
     steps:
@@ -327,7 +327,7 @@ jobs:
         llm-connections-check,
         e2e-tests,
       ]
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     environment: production
     env:
       ECS_CLUSTER: ${{ vars.ECS_CLUSTER }}
@@ -632,7 +632,7 @@ jobs:
         llm-connections-check,
         e2e-tests,
       ]
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     environment: production
     env:
       VITE_API_BASE_URL: ${{ vars.VITE_API_BASE_URL }}
@@ -702,7 +702,7 @@ jobs:
         llm-connections-check,
         e2e-tests,
       ]
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     environment: production
     steps:
       - name: Checkout
