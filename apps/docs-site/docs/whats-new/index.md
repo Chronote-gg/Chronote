@@ -14,6 +14,7 @@ Notable product changes for Chronote users. For the full changelog, see the [Git
 - Optional titles and tags can be added before processing starts.
 - Personal Notion automation can export uploaded and personal meetings to your Notion destination after processing completes.
 - Personal Notion automation is managed from Personal Settings, keeping My Meetings focused on finding and opening meetings.
+- The web portal sidebar now separates Personal flows from Server flows so account-owned meetings, uploads, and integrations are visually distinct from server Library, Ask, Billing, and Server Settings.
 
 ### Remote MCP live controls
 

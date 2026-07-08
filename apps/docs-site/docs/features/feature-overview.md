@@ -218,7 +218,7 @@ The Chronote web portal provides a browser-based interface for:
 - Importing Markdown or plain-text notes from another app.
 - Managing server settings (context, dictionary, auto-record, Notion automation).
 
-Access the portal from the **Open in Chronote** button on any meeting summary, or open the portal directly to start from **My Meetings**. Use **Upload media** to create a personal meeting from a local recording, and use **Personal Settings** for account-owned integrations. Use **View servers** or the server switcher when you want to choose a server for Library, Ask, Billing, or Server Settings. Use **Support** in the portal sidebar to email Chronote support.
+Access the portal from the **Open in Chronote** button on any meeting summary, or open the portal directly to start from **My Meetings**. The sidebar separates **Personal** flows from **Server** flows: use **My Meetings**, **Upload Media**, and **Personal Settings** for account-owned work, then choose a server in the **Server** section before opening Library, Ask, Billing, or Server Settings. Use **Support** in the portal sidebar to email Chronote support.
 
 ## Personal media uploads
 
