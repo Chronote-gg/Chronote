@@ -172,11 +172,7 @@ export type MeetingAccessGrant =
     };
 
 export type PersonalMediaUploadStatus =
-  | "pending_upload"
-  | "queued"
-  | "processing"
-  | "complete"
-  | "failed";
+  "pending_upload" | "queued" | "processing" | "complete" | "failed";
 
 export type PersonalMediaUploadKind = "audio" | "video";
 export type PersonalMediaUploadOrigin = "web_upload" | "desktop_recording";
@@ -373,11 +369,7 @@ export interface GuildInstaller {
 }
 
 export type OnboardingStep =
-  | "context"
-  | "autorecord"
-  | "tour"
-  | "upgrade"
-  | "complete";
+  "context" | "autorecord" | "tour" | "upgrade" | "complete";
 
 export interface OnboardingState {
   guildId: string; // Partition key

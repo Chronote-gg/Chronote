@@ -33,9 +33,7 @@ export type LiveMeetingCommandInput = {
 };
 
 export type MeetingControlCommandInput =
-  | StartMeetingCommandInput
-  | StopMeetingCommandInput
-  | LiveMeetingCommandInput;
+  StartMeetingCommandInput | StopMeetingCommandInput | LiveMeetingCommandInput;
 
 export type MeetingControlStartedResult = {
   status: "started";

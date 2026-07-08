@@ -21,12 +21,7 @@ export type ModelParamRole = Exclude<
 >;
 export type ModelSamplingMode = "reasoning" | "temperature";
 export type ModelReasoningEffort =
-  | "none"
-  | "minimal"
-  | "low"
-  | "medium"
-  | "high"
-  | "xhigh";
+  "none" | "minimal" | "low" | "medium" | "high" | "xhigh";
 export type ModelVerbosity = "default" | "low" | "medium" | "high";
 export type ModelParamConfig = {
   samplingMode: ModelSamplingMode;
@@ -38,17 +33,10 @@ export type ModelParamsByRole = Partial<
   Record<ModelParamRole, ModelParamConfig>
 >;
 export type ConfigGroup =
-  | "Recommended"
-  | "Standard"
-  | "Experimental"
-  | "Advanced";
+  "Recommended" | "Standard" | "Experimental" | "Advanced";
 export type ConfigScopeRole = "superadmin" | "admin" | "member";
 export type ConfigScopeControl =
-  | "toggle"
-  | "tri-state"
-  | "select"
-  | "number"
-  | "text";
+  "toggle" | "tri-state" | "select" | "number" | "text";
 export type ConfigScopeConfig = {
   enabled: boolean;
   required: boolean;

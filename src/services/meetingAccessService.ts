@@ -13,8 +13,7 @@ import {
 } from "./guildAccessService";
 
 export type MeetingAccessMissingPermission =
-  | "voice_connect"
-  | "notes_read_history";
+  "voice_connect" | "notes_read_history";
 
 export type MeetingAccessDecision =
   | {

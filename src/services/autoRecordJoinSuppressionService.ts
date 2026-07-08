@@ -1,6 +1,5 @@
 export type AutoRecordJoinSuppressionReason =
-  | "explicit_end"
-  | "forced_disconnect";
+  "explicit_end" | "forced_disconnect";
 
 type ChannelKey = string;
 

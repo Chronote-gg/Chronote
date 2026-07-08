@@ -41,8 +41,7 @@ function hasAdminPermissions(interaction: UserContextMenuCommandInteraction) {
 }
 
 type StopRecordingPermissionDecision =
-  | { allowed: true }
-  | { allowed: false; hint: string };
+  { allowed: true } | { allowed: false; hint: string };
 
 function resolveStopRecordingPermission(options: {
   policy: DismissPolicy;

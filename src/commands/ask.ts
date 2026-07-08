@@ -13,8 +13,7 @@ export async function handleAskCommand(
   const question = interaction.options.getString("question");
   const tagsInput = interaction.options.getString("tags");
   const scope = (interaction.options.getString("scope") || "guild") as
-    | "guild"
-    | "channel";
+    "guild" | "channel";
 
   if (!question) {
     await interaction.reply({
