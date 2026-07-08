@@ -38,8 +38,7 @@ const NOTION_TEXT_ESCAPE_CHARS = new Set([
 type NotionFetch = typeof fetch;
 
 type NotionPageParent =
-  | { type: "workspace"; workspace: true }
-  | { type: "page_id"; page_id: string };
+  { type: "workspace"; workspace: true } | { type: "page_id"; page_id: string };
 
 let notionFetch: NotionFetch = (...args) => fetch(...args);
 

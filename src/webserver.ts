@@ -282,8 +282,7 @@ export function setupWebServer() {
         });
       }
       const sessionWithPassport = req.session as
-        | (typeof req.session & { passport?: { user?: unknown } })
-        | undefined;
+        (typeof req.session & { passport?: { user?: unknown } }) | undefined;
       if (sessionWithPassport?.passport?.user) {
         sessionWithPassport.passport.user = undefined;
       }
@@ -325,8 +324,7 @@ export function setupWebServer() {
         const updated = refreshResult.user;
         req.user = updated;
         const sessionWithPassport = req.session as
-          | (typeof req.session & { passport?: { user?: unknown } })
-          | undefined;
+          (typeof req.session & { passport?: { user?: unknown } }) | undefined;
         if (sessionWithPassport?.passport?.user) {
           sessionWithPassport.passport.user = updated;
         }

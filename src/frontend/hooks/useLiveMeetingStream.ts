@@ -12,12 +12,7 @@ import type { MeetingEvent } from "../../types/meetingTimeline";
 import { MEETING_STATUS } from "../../types/meetingLifecycle";
 
 type LiveStreamStatus =
-  | "connecting"
-  | "live"
-  | "processing"
-  | "complete"
-  | "cancelled"
-  | "error";
+  "connecting" | "live" | "processing" | "complete" | "cancelled" | "error";
 
 const toStreamStatus = (status: LiveMeetingStatus): LiveStreamStatus => {
   if (status === MEETING_STATUS.COMPLETE) return "complete";

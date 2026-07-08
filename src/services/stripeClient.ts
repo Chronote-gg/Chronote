@@ -9,7 +9,7 @@ export function getStripeClient(): StripeClient | null {
     return stripeClient;
   }
   stripeClient = config.stripe.secretKey
-    ? new Stripe(config.stripe.secretKey, { apiVersion: "2026-05-27.dahlia" })
+    ? new Stripe(config.stripe.secretKey, { apiVersion: "2026-06-24.dahlia" })
     : null;
   return stripeClient;
 }

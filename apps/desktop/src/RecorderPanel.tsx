@@ -1,11 +1,7 @@
 import type { CSSProperties } from "react";
 
 export type SourceSignalStatus =
-  | "checking"
-  | "ready"
-  | "recording"
-  | "silent"
-  | "unavailable";
+  "checking" | "ready" | "recording" | "silent" | "unavailable";
 
 export type SourceSignal = {
   id: string;

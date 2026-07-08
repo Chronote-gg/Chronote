@@ -1,9 +1,5 @@
 export type TranscriptSegmentSource =
-  | "voice"
-  | "chat_tts"
-  | "bot"
-  | "personal_upload"
-  | "desktop_recording";
+  "voice" | "chat_tts" | "bot" | "personal_upload" | "desktop_recording";
 
 export type TranscriptSegment = {
   userId: string;

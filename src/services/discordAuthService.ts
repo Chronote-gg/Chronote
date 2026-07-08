@@ -31,8 +31,7 @@ type DiscordTokenRefreshFailure = {
 };
 
 type DiscordTokenRefreshResult =
-  | DiscordTokenRefreshSuccess
-  | DiscordTokenRefreshFailure;
+  DiscordTokenRefreshSuccess | DiscordTokenRefreshFailure;
 
 type DiscordRefreshErrorSummary = {
   status: number;
