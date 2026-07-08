@@ -26,7 +26,7 @@ type SiteHeaderProps = {
   showNavbarToggle?: boolean;
   navbarOpened: boolean;
   onNavbarToggle: () => void;
-  context?: "marketing" | "portal" | "portal-select";
+  context?: "marketing" | "portal-personal" | "portal-server" | "portal-select";
 };
 
 type AuthState = ReturnType<typeof useAuth>["state"];
@@ -282,10 +282,15 @@ export function SiteHeader({
   const showGithubLink = true;
   const isPortalLayout = context !== "marketing";
   const portalLabel =
-    authState === "authenticated" && context === "portal"
+    authState === "authenticated" && context === "portal-server"
       ? "Switch server"
-      : "Open portal";
-  const portalPath = context === "portal" ? "/portal/select-server" : "/portal";
+      : authState === "authenticated" && context === "portal-personal"
+        ? "Servers"
+        : "Open portal";
+  const portalPath =
+    context === "portal-server" || context === "portal-personal"
+      ? "/portal/select-server"
+      : "/portal";
   const isSuperAdmin =
     authState === "authenticated" && Boolean(user?.isSuperAdmin);
   const headerPaddingRight = isMobile ? theme.spacing.xs : theme.spacing.sm;

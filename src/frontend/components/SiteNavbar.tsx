@@ -17,14 +17,15 @@ import {
   IconCreditCard,
   IconMessageCircle,
   IconSettings,
+  IconUserCog,
   IconServer,
   IconSparkles,
   IconUpload,
 } from "@tabler/icons-react";
-import type { ComponentType } from "react";
+import type { ComponentType, ReactNode } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { useAuth } from "../contexts/AuthContext";
-import { useGuildContext } from "../contexts/GuildContext";
+import { type Guild, useGuildContext } from "../contexts/GuildContext";
 import { uiRadii } from "../uiTokens";
 
 type SiteNavbarProps = {
@@ -32,14 +33,30 @@ type SiteNavbarProps = {
   pathname: string;
 };
 
-const NAV_ITEMS: Array<{
+type SiteNavbarViewProps = SiteNavbarProps & {
+  authState: ReturnType<typeof useAuth>["state"];
+  guilds: Guild[];
+  selectedGuildId: string | null;
+  onNavigate: (to: string) => void;
+};
+
+type NavItem = {
   label: string;
-  value: "meetings" | "upload" | "library" | "ask" | "billing" | "settings";
+  value:
+    | "meetings"
+    | "upload"
+    | "personal-settings"
+    | "library"
+    | "ask"
+    | "billing"
+    | "settings";
   icon: ComponentType<{ size?: number }>;
   requiresAuth: boolean;
   requiresManage?: boolean;
   to?: string;
-}> = [
+};
+
+const PERSONAL_NAV_ITEMS: NavItem[] = [
   {
     label: "My Meetings",
     value: "meetings",
@@ -55,6 +72,16 @@ const NAV_ITEMS: Array<{
     to: "/portal/upload",
   },
   {
+    label: "Personal Settings",
+    value: "personal-settings",
+    icon: IconUserCog,
+    requiresAuth: true,
+    to: "/portal/settings",
+  },
+];
+
+const SERVER_NAV_ITEMS: NavItem[] = [
+  {
     label: "Library",
     value: "library",
     icon: IconBook2,
@@ -69,7 +96,7 @@ const NAV_ITEMS: Array<{
     requiresManage: true,
   },
   {
-    label: "Settings",
+    label: "Server Settings",
     value: "settings",
     icon: IconSettings,
     requiresAuth: true,
@@ -82,13 +109,32 @@ const SUPPORT_MAILTO = `mailto:${SUPPORT_EMAIL}?subject=${encodeURIComponent(
   "Chronote support",
 )}`;
 
-export function SiteNavbar({ onClose, pathname }: SiteNavbarProps) {
+const NavSection = ({
+  label,
+  children,
+}: {
+  label: string;
+  children: ReactNode;
+}) => (
+  <Stack gap={6}>
+    <Text size="xs" fw={700} c="dimmed">
+      {label}
+    </Text>
+    {children}
+  </Stack>
+);
+
+export function SiteNavbarView({
+  authState,
+  guilds,
+  onClose,
+  onNavigate,
+  pathname,
+  selectedGuildId,
+}: SiteNavbarViewProps) {
   const theme = useMantineTheme();
   const scheme = useComputedColorScheme("dark");
   const isDark = scheme === "dark";
-  const { state: authState } = useAuth();
-  const { selectedGuildId, guilds } = useGuildContext();
-  const navigate = useNavigate();
 
   const serverIdFromPath = pathname.match(/\/portal\/server\/([^/]+)/)?.[1];
   const selectedGuild = selectedGuildId
@@ -101,32 +147,93 @@ export function SiteNavbar({ onClose, pathname }: SiteNavbarProps) {
   const activeServerId = resolvedGuild?.id ?? selectedGuildId ?? null;
   const selectedServerName = resolvedGuild?.name ?? null;
   const canManage = resolvedGuild?.canManage ?? false;
+  const isAuthenticated = authState === "authenticated";
+  const navRadius = theme.radius[uiRadii.control];
 
   const resolveServerPath = (page: string) =>
     activeServerId
       ? `/portal/server/${activeServerId}/${page}`
       : "/portal/select-server";
+  const isServerNavActive = (page: string) =>
+    new RegExp(`^/portal/server/[^/]+/${page}(?:/|$)`).test(pathname);
+  const resolveItemDescription = (item: NavItem) => {
+    if (item.to) return undefined;
+    if (!activeServerId) return "Choose a server first";
+    if (item.requiresManage && !canManage) return "Requires Manage Server";
+    return undefined;
+  };
+  const renderNavItem = (item: NavItem) => {
+    const Icon = item.icon;
+    const isActive = item.to
+      ? pathname === item.to || pathname.startsWith(`${item.to}/`)
+      : isServerNavActive(item.value);
+    const disabled =
+      (item.requiresAuth && !isAuthenticated) ||
+      (!item.to && !activeServerId) ||
+      (item.requiresManage && !canManage);
+    return (
+      <NavLink
+        key={item.value}
+        label={item.label}
+        description={resolveItemDescription(item)}
+        data-testid={`nav-${item.value}`}
+        leftSection={
+          <ThemeIcon
+            variant={isActive ? "light" : "transparent"}
+            color={isActive ? "brand" : "gray"}
+            size={34}
+          >
+            <Icon size={18} />
+          </ThemeIcon>
+        }
+        active={isActive}
+        disabled={disabled}
+        onClick={
+          disabled
+            ? undefined
+            : () => {
+                onNavigate(item.to ?? resolveServerPath(item.value));
+                onClose?.();
+              }
+        }
+        style={{
+          borderRadius: navRadius,
+        }}
+      />
+    );
+  };
 
   return (
     <ScrollArea h="100%" offsetScrollbars data-visual-scroll>
-      <Stack gap="md" p="md">
-        {authState === "authenticated" ? (
+      <Stack gap="lg" p="md">
+        <NavSection label="Personal">
+          <Stack gap={4}>{PERSONAL_NAV_ITEMS.map(renderNavItem)}</Stack>
+        </NavSection>
+
+        <Divider />
+
+        <NavSection label="Server">
           <Stack gap={6}>
             <Button
               variant="light"
-              color="gray"
+              color={activeServerId ? "brand" : "gray"}
               leftSection={<IconServer size={16} />}
               rightSection={<IconChevronRight size={16} />}
               data-testid="nav-server-button"
-              data-selected-guild-id={selectedGuildId ?? ""}
+              data-selected-guild-id={activeServerId ?? ""}
+              disabled={!isAuthenticated}
               justify="space-between"
               styles={{
                 section: { marginInlineStart: 8, marginInlineEnd: 0 },
               }}
-              onClick={() => {
-                navigate({ to: "/portal/select-server" });
-                onClose?.();
-              }}
+              onClick={
+                isAuthenticated
+                  ? () => {
+                      onNavigate("/portal/select-server");
+                      onClose?.();
+                    }
+                  : undefined
+              }
             >
               <Group gap="xs" wrap="nowrap" style={{ flex: 1, minWidth: 0 }}>
                 <Text
@@ -143,52 +250,13 @@ export function SiteNavbar({ onClose, pathname }: SiteNavbarProps) {
                 </Text>
               </Group>
             </Button>
+            <Stack gap={4}>{SERVER_NAV_ITEMS.map(renderNavItem)}</Stack>
           </Stack>
-        ) : null}
+        </NavSection>
 
         <Divider />
 
-        <Stack gap={4}>
-          {NAV_ITEMS.map((item) => {
-            const Icon = item.icon;
-            const isActive = item.to
-              ? pathname === item.to || pathname.startsWith(`${item.to}/`)
-              : pathname.includes(`/${item.value}`);
-            const disabled =
-              (item.requiresAuth && authState !== "authenticated") ||
-              (item.requiresManage && !canManage);
-            const navRadius = theme.radius[uiRadii.control];
-            return (
-              <NavLink
-                key={item.value}
-                label={item.label}
-                data-testid={`nav-${item.value}`}
-                leftSection={
-                  <ThemeIcon
-                    variant={isActive ? "light" : "transparent"}
-                    color={isActive ? "brand" : "gray"}
-                    size={34}
-                  >
-                    <Icon size={18} />
-                  </ThemeIcon>
-                }
-                active={isActive}
-                disabled={disabled}
-                onClick={() => {
-                  navigate({ to: item.to ?? resolveServerPath(item.value) });
-                  onClose?.();
-                }}
-                style={{
-                  borderRadius: navRadius,
-                }}
-              />
-            );
-          })}
-        </Stack>
-
-        <Divider />
-
-        <Stack gap={4}>
+        <NavSection label="Help">
           <NavLink
             label="Support"
             description="Email support"
@@ -201,9 +269,26 @@ export function SiteNavbar({ onClose, pathname }: SiteNavbarProps) {
             onClick={() => window.open(SUPPORT_MAILTO, "_blank")}
             style={{ borderRadius: theme.radius[uiRadii.control] }}
           />
-        </Stack>
+        </NavSection>
       </Stack>
     </ScrollArea>
+  );
+}
+
+export function SiteNavbar({ onClose, pathname }: SiteNavbarProps) {
+  const { state: authState } = useAuth();
+  const { selectedGuildId, guilds } = useGuildContext();
+  const navigate = useNavigate();
+
+  return (
+    <SiteNavbarView
+      authState={authState}
+      guilds={guilds}
+      onClose={onClose}
+      onNavigate={(to) => navigate({ to })}
+      pathname={pathname}
+      selectedGuildId={selectedGuildId}
+    />
   );
 }
 
