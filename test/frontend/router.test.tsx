@@ -112,4 +112,17 @@ describe("router", () => {
     );
     expect(detailRoute).toBeDefined();
   });
+
+  test("portal includes personal settings route", () => {
+    const portalRoute = router.routeTree.children.find(
+      (child) => child.path === "portal",
+    );
+    if (!portalRoute) {
+      throw new Error("Missing portal route");
+    }
+    const personalSettingsRoute = portalRoute.children.find(
+      (child) => child.path === "settings",
+    );
+    expect(personalSettingsRoute).toBeDefined();
+  });
 });

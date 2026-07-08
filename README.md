@@ -167,6 +167,7 @@ Coverage update rule:
   - `/portal` -> `/portal/meetings`
   - `/portal/meetings` opens My Meetings with All time results and a Load more control
   - `/portal/meetings/:serverId/:meetingId`
+  - `/portal/settings` opens Personal settings for account-owned integrations
   - `/portal/select-server`
   - `/portal/server/:serverId/{library|ask|billing|settings}`
 - Upgrade flow entry points live under `/upgrade`, `/promo/:code`, and `/upgrade/select-server` with a success page at `/upgrade/success`. See `docs/upgrade-flow.md` for details and planned short-link support.
