@@ -9,7 +9,7 @@ Chronote integrations extend meeting data into external tools and workflows.
 
 ### Web portal
 
-Chronote includes a built-in web portal for browsing meetings, reading transcripts, sharing links, and managing settings. **Open portal** opens **My Meetings** by default with All time results and a **Load more** control for older meetings. The **Open in Chronote** button on a meeting summary opens that meeting directly. Choose **View servers** when you need a server-scoped Library, Ask, Billing, or Settings view.
+Chronote includes a built-in web portal for browsing meetings, reading transcripts, sharing links, and managing settings. **Open portal** opens **My Meetings** by default with All time results and a **Load more** control for older meetings. The **Open in Chronote** button on a meeting summary opens that meeting directly. The sidebar separates **Personal** flows such as Personal Settings from **Server** flows such as Library, Ask, Billing, and Server Settings.
 
 The portal authenticates through Discord OAuth so channel permissions are respected.
 
@@ -21,7 +21,7 @@ Chronote can export meeting notes to Notion from the web portal. Connect Notion 
 
 If Chronote notes are edited later, use **Sync latest to Notion** to replace the exported Notion page with the newest Chronote notes version.
 
-Server managers can also open **Server settings** -> **Notion integration** to choose a shared destination page and enable automatic exports for completed meetings. Automatic exports can be limited to specific voice channels or tags. Later Chronote note edits sync one-way to the existing Notion page.
+Server managers can also open **Server Settings** -> **Notion integration** to choose a shared destination page and enable automatic exports for completed meetings. Personal meeting owners can open **Personal Settings** -> **Notion integration** to choose a personal destination for personal uploads and other personal meetings. Automatic exports can be limited to specific voice channels or tags for server automation, or tags for personal automation. Later Chronote note edits sync one-way to the existing Notion page.
 
 Chronote is the source of truth for this integration. Notion export and sync are one-way from Chronote to Notion.
 

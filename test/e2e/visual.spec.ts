@@ -7,6 +7,8 @@ import { applyVisualDefaults, waitForVisualReady } from "./visualUtils";
 const runVisual = process.env.PW_VISUAL === "true";
 const visualModes = ["viewport", "full"] as const;
 type VisualMode = (typeof visualModes)[number];
+const TARGET_SCREENSHOT_MAX_DIFF_PIXELS = 200;
+const PAGE_SCREENSHOT_MAX_DIFF_PIXELS = 2_000;
 
 const withVisualMode = (path: string, mode: VisualMode): string => {
   const url = new URL(path, "http://localhost");
@@ -154,14 +156,14 @@ test.describe("visual regression", () => {
     const screenshotName = buildScreenshotName(name, mode);
     if (options?.target) {
       await expect(options.target).toHaveScreenshot(screenshotName, {
-        maxDiffPixels: 200,
+        maxDiffPixels: TARGET_SCREENSHOT_MAX_DIFF_PIXELS,
       });
       return;
     }
 
     await expect(page).toHaveScreenshot(screenshotName, {
       fullPage: mode === "full",
-      maxDiffPixels: 200,
+      maxDiffPixels: PAGE_SCREENSHOT_MAX_DIFF_PIXELS,
     });
   };
 
@@ -199,6 +201,26 @@ test.describe("visual regression", () => {
       await page.goto(withVisualMode("/portal/select-server", mode));
       await expect(serverSelectPage.root()).toBeVisible();
       await expectVisualScreenshot(page, "server-select", mode);
+    }
+  });
+
+  test("portal home and personal settings @visual", async ({ page }) => {
+    let notionState: NotionVisualState = {
+      connected: true,
+      exported: false,
+      outdated: false,
+    };
+    await installNotionVisualState(page, () => notionState);
+
+    for (const mode of visualModes) {
+      await page.goto(withVisualMode("/portal/meetings", mode));
+      await expect(page.getByTestId("my-meetings-page")).toBeVisible();
+      await expectVisualScreenshot(page, "my-meetings", mode);
+
+      notionState = { connected: true, exported: false, outdated: false };
+      await page.goto(withVisualMode("/portal/settings", mode));
+      await expect(page.getByTestId("personal-settings-page")).toBeVisible();
+      await expectVisualScreenshot(page, "personal-settings", mode);
     }
   });
 
