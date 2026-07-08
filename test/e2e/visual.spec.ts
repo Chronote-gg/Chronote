@@ -202,6 +202,26 @@ test.describe("visual regression", () => {
     }
   });
 
+  test("portal home and personal settings @visual", async ({ page }) => {
+    let notionState: NotionVisualState = {
+      connected: true,
+      exported: false,
+      outdated: false,
+    };
+    await installNotionVisualState(page, () => notionState);
+
+    for (const mode of visualModes) {
+      await page.goto(withVisualMode("/portal/meetings", mode));
+      await expect(page.getByTestId("my-meetings-page")).toBeVisible();
+      await expectVisualScreenshot(page, "my-meetings", mode);
+
+      notionState = { connected: true, exported: false, outdated: false };
+      await page.goto(withVisualMode("/portal/settings", mode));
+      await expect(page.getByTestId("personal-settings-page")).toBeVisible();
+      await expectVisualScreenshot(page, "personal-settings", mode);
+    }
+  });
+
   test("library page @visual", async ({
     serverSelectPage,
     libraryPage,

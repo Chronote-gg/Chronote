@@ -18,10 +18,10 @@ jest.mock("../contexts/GuildContext", () => ({
   useGuildContext: jest.fn(),
 }));
 
-const renderNavbar = () =>
+const renderNavbar = (pathname = "/portal/meetings") =>
   render(
     <MantineProvider>
-      <SiteNavbar pathname="/portal/meetings" />
+      <SiteNavbar pathname={pathname} />
     </MantineProvider>,
   );
 
@@ -65,5 +65,29 @@ describe("SiteNavbar", () => {
       "mailto:basic@basicbit.net?subject=Chronote%20support",
       "_blank",
     );
+  });
+
+  it("opens personal settings from a global nav item", () => {
+    renderNavbar();
+
+    fireEvent.click(screen.getByTestId("nav-personal-settings"));
+
+    expect(navigateMock).toHaveBeenCalledWith({ to: "/portal/settings" });
+  });
+
+  it("labels server settings separately from personal settings", () => {
+    jest.mocked(useGuildContext).mockReturnValue({
+      guilds: [{ id: "guild-1", name: "Guild 1", canManage: true }],
+      selectedGuildId: "guild-1",
+      setSelectedGuildId: jest.fn(),
+      loading: false,
+      error: null,
+      refresh: jest.fn(async () => undefined),
+    });
+
+    renderNavbar("/portal/server/guild-1/settings");
+
+    expect(screen.getByText("Personal Settings")).toBeInTheDocument();
+    expect(screen.getByText("Server Settings")).toBeInTheDocument();
   });
 });

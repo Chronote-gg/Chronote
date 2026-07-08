@@ -17,6 +17,7 @@ import {
   IconCreditCard,
   IconMessageCircle,
   IconSettings,
+  IconUserCog,
   IconServer,
   IconSparkles,
   IconUpload,
@@ -34,7 +35,14 @@ type SiteNavbarProps = {
 
 const NAV_ITEMS: Array<{
   label: string;
-  value: "meetings" | "upload" | "library" | "ask" | "billing" | "settings";
+  value:
+    | "meetings"
+    | "upload"
+    | "personal-settings"
+    | "library"
+    | "ask"
+    | "billing"
+    | "settings";
   icon: ComponentType<{ size?: number }>;
   requiresAuth: boolean;
   requiresManage?: boolean;
@@ -55,6 +63,13 @@ const NAV_ITEMS: Array<{
     to: "/portal/upload",
   },
   {
+    label: "Personal Settings",
+    value: "personal-settings",
+    icon: IconUserCog,
+    requiresAuth: true,
+    to: "/portal/settings",
+  },
+  {
     label: "Library",
     value: "library",
     icon: IconBook2,
@@ -69,7 +84,7 @@ const NAV_ITEMS: Array<{
     requiresManage: true,
   },
   {
-    label: "Settings",
+    label: "Server Settings",
     value: "settings",
     icon: IconSettings,
     requiresAuth: true,
@@ -106,6 +121,8 @@ export function SiteNavbar({ onClose, pathname }: SiteNavbarProps) {
     activeServerId
       ? `/portal/server/${activeServerId}/${page}`
       : "/portal/select-server";
+  const isServerNavActive = (page: string) =>
+    new RegExp(`^/portal/server/[^/]+/${page}(?:/|$)`).test(pathname);
 
   return (
     <ScrollArea h="100%" offsetScrollbars data-visual-scroll>
@@ -153,7 +170,7 @@ export function SiteNavbar({ onClose, pathname }: SiteNavbarProps) {
             const Icon = item.icon;
             const isActive = item.to
               ? pathname === item.to || pathname.startsWith(`${item.to}/`)
-              : pathname.includes(`/${item.value}`);
+              : isServerNavActive(item.value);
             const disabled =
               (item.requiresAuth && authState !== "authenticated") ||
               (item.requiresManage && !canManage);

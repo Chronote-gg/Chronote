@@ -13,6 +13,7 @@ Notable product changes for Chronote users. For the full changelog, see the [Git
 - Uploaded media is transcribed, summarized, and saved in My Meetings under your personal workspace.
 - Optional titles and tags can be added before processing starts.
 - Personal Notion automation can export uploaded and personal meetings to your Notion destination after processing completes.
+- Personal Notion automation is managed from Personal Settings, keeping My Meetings focused on finding and opening meetings.
 
 ### Remote MCP live controls
 

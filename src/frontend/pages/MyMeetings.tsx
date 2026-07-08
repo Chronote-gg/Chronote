@@ -10,18 +10,13 @@ import {
 } from "@mantine/core";
 import { IconSearch, IconUpload } from "@tabler/icons-react";
 import { useNavigate } from "@tanstack/react-router";
-import { notifications } from "@mantine/notifications";
 import PageHeader from "../components/PageHeader";
 import FormSelect from "../components/FormSelect";
 import { RefreshButton } from "../components/RefreshButton";
 import Surface from "../components/Surface";
 import { MeetingList } from "../features/library/MeetingList";
 import { useGuildContext } from "../contexts/GuildContext";
-import { useAuth } from "../contexts/AuthContext";
 import { trpc } from "../services/trpc";
-import { buildApiUrl } from "../services/apiClient";
-import { NotionIntegrationCard } from "../features/settings/NotionIntegrationCard";
-import { buildPersonalMeetingGuildId } from "../../utils/meetingOwnership";
 import {
   deriveSummary,
   filterMeetingItems,
@@ -411,8 +406,6 @@ function MyMeetingsLoadMore({
 export default function MyMeetings() {
   const navigate = useNavigate({ from: "/portal/meetings" });
   const { guilds } = useGuildContext();
-  const { user } = useAuth();
-  const trpcUtils = trpc.useUtils();
   const [mode, setMode] = useState<MyMeetingsMode>("attended");
   const [selectedRange, setSelectedRange] = useState<MyMeetingsRange>("all");
   const [archiveFilter, setArchiveFilter] = useState<ArchiveFilter>("active");
@@ -420,11 +413,7 @@ export default function MyMeetings() {
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
   const [query, setQuery] = useState("");
   const [pageCursor, setPageCursor] = useState<string | null>(null);
-  const [notionDestinationSearch, setNotionDestinationSearch] = useState<
-    string | null
-  >(null);
   const deferredQuery = useDeferredValue(query);
-  const personalServerId = user ? buildPersonalMeetingGuildId(user.id) : "";
 
   const rangeInput = useMemo(
     () => resolveRangeInput(selectedRange),
@@ -440,20 +429,6 @@ export default function MyMeetings() {
     tags: optionalArray(selectedTags),
     ...rangeInput,
   });
-  const notionStatusQuery = trpc.notion.automationStatus.useQuery(
-    { serverId: personalServerId },
-    { enabled: Boolean(personalServerId) },
-  );
-  const notionDestinationQuery = trpc.notion.destinationPages.useQuery(
-    { serverId: personalServerId, query: notionDestinationSearch ?? "" },
-    {
-      enabled: Boolean(personalServerId) && notionDestinationSearch !== null,
-    },
-  );
-  const saveNotionAutomationMutation =
-    trpc.notion.saveAutomationConfig.useMutation();
-  const disableNotionAutomationMutation =
-    trpc.notion.disableAutomation.useMutation();
 
   const { loadedPages, setLoadedPages } = useLoadedMeetingPages(
     meetingsQuery.data,
@@ -549,58 +524,6 @@ export default function MyMeetings() {
   const openUpload = () => {
     navigate({ to: "/portal/upload" });
   };
-  const handleConnectNotion = () => {
-    const redirect = `${window.location.pathname}${window.location.search}${window.location.hash}`;
-    const url = `${buildApiUrl("/api/notion/connect")}?redirect=${encodeURIComponent(
-      redirect,
-    )}`;
-    window.location.assign(url);
-  };
-  const handleSaveNotionAutomation = async (input: {
-    destinationPageId: string;
-    autoExportEnabled: boolean;
-    channelIds: string[];
-    tags: string[];
-  }) => {
-    if (!personalServerId) return;
-    try {
-      await saveNotionAutomationMutation.mutateAsync({
-        serverId: personalServerId,
-        ...input,
-      });
-      notifications.show({ message: "Personal Notion automation saved." });
-      await trpcUtils.notion.automationStatus.invalidate({
-        serverId: personalServerId,
-      });
-    } catch (error) {
-      const message =
-        error instanceof Error && error.message
-          ? error.message
-          : "Unable to save personal Notion automation right now.";
-      notifications.show({ color: "red", message });
-    }
-  };
-  const handleDisableNotionAutomation = async () => {
-    if (!personalServerId) return;
-    try {
-      await disableNotionAutomationMutation.mutateAsync({
-        serverId: personalServerId,
-      });
-      notifications.show({ message: "Personal Notion automation disabled." });
-      await trpcUtils.notion.automationStatus.invalidate({
-        serverId: personalServerId,
-      });
-    } catch (error) {
-      const message =
-        error instanceof Error && error.message
-          ? error.message
-          : "Unable to disable personal Notion automation right now.";
-      notifications.show({ color: "red", message });
-    }
-  };
-  const notionBusy =
-    saveNotionAutomationMutation.isPending ||
-    disableNotionAutomationMutation.isPending;
 
   return (
     <Stack gap="lg" data-testid="my-meetings-page">
@@ -619,30 +542,6 @@ export default function MyMeetings() {
           Upload media
         </Button>
       </Group>
-      {user ? (
-        <NotionIntegrationCard
-          personal
-          status={notionStatusQuery.data}
-          loading={notionStatusQuery.isLoading || notionStatusQuery.isFetching}
-          busy={notionBusy}
-          destinationPages={notionDestinationQuery.data?.pages ?? []}
-          destinationLoading={
-            notionDestinationQuery.isLoading ||
-            notionDestinationQuery.isFetching
-          }
-          voiceChannels={[]}
-          onConnect={handleConnectNotion}
-          onSearchDestinations={(query) => {
-            const next = query.trim();
-            setNotionDestinationSearch(next);
-            if (notionDestinationSearch === next) {
-              void notionDestinationQuery.refetch();
-            }
-          }}
-          onSave={handleSaveNotionAutomation}
-          onDisable={handleDisableNotionAutomation}
-        />
-      ) : null}
       <MyMeetingsFilters
         archiveFilter={archiveFilter}
         mode={mode}
