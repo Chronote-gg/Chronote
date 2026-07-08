@@ -70,6 +70,10 @@ describe("SiteNavbar", () => {
   it("opens personal settings from a global nav item", () => {
     renderNavbar();
 
+    expect(screen.getByText("Personal")).toBeInTheDocument();
+    expect(screen.getByText("Server")).toBeInTheDocument();
+    expect(screen.getByText("Help")).toBeInTheDocument();
+
     fireEvent.click(screen.getByTestId("nav-personal-settings"));
 
     expect(navigateMock).toHaveBeenCalledWith({ to: "/portal/settings" });
@@ -89,5 +93,29 @@ describe("SiteNavbar", () => {
 
     expect(screen.getByText("Personal Settings")).toBeInTheDocument();
     expect(screen.getByText("Server Settings")).toBeInTheDocument();
+  });
+
+  it("keeps manager-only server links visible with permission context", () => {
+    jest.mocked(useGuildContext).mockReturnValue({
+      guilds: [{ id: "guild-1", name: "Guild 1", canManage: false }],
+      selectedGuildId: "guild-1",
+      setSelectedGuildId: jest.fn(),
+      loading: false,
+      error: null,
+      refresh: jest.fn(async () => undefined),
+    });
+
+    renderNavbar("/portal/server/guild-1/ask");
+
+    expect(screen.getByText("Guild 1")).toBeInTheDocument();
+    expect(screen.getAllByText("Requires Manage Server").length).toBe(2);
+    expect(screen.getByTestId("nav-billing")).toHaveAttribute(
+      "data-disabled",
+      "true",
+    );
+    expect(screen.getByTestId("nav-settings")).toHaveAttribute(
+      "data-disabled",
+      "true",
+    );
   });
 });

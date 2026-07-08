@@ -209,7 +209,7 @@ describe("frontend components", () => {
         navbarOpened
         showNavbarToggle
         onNavbarToggle={() => {}}
-        context="portal"
+        context="portal-server"
       />,
     );
     expect(screen.getByText("Switch server")).toBeInTheDocument();
@@ -222,6 +222,21 @@ describe("frontend components", () => {
     expect(logoutButton).toHaveAttribute("href", authState.logoutUrl);
     expect(screen.getByLabelText("Switch account")).toBeInTheDocument();
     unmount();
+
+    const personalHeader = renderWithMantine(
+      <SiteHeader
+        navbarOpened={false}
+        showNavbarToggle
+        onNavbarToggle={() => {}}
+        context="portal-personal"
+      />,
+    );
+    expect(screen.getByText("Servers")).toBeInTheDocument();
+    expect(screen.getByTestId("portal-cta")).toHaveAttribute(
+      "to",
+      "/portal/select-server",
+    );
+    personalHeader.unmount();
 
     renderWithMantine(
       <SiteHeader
@@ -261,6 +276,9 @@ describe("frontend components", () => {
     const openSpy = jest.spyOn(window, "open").mockImplementation(() => null);
 
     renderWithMantine(<SiteNavbar pathname="/portal/server/g1/library" />);
+    expect(screen.getByText("Personal")).toBeInTheDocument();
+    expect(screen.getByText("Server")).toBeInTheDocument();
+    expect(screen.getByText("Help")).toBeInTheDocument();
     expect(screen.getByText("Guild One")).toBeInTheDocument();
     fireEvent.click(screen.getByTestId("nav-ask"));
     expect(navigateSpy).toHaveBeenCalledWith({
@@ -283,9 +301,12 @@ describe("frontend components", () => {
     );
 
     expect(screen.getByText("Choose a server")).toBeInTheDocument();
+    expect(screen.getAllByText("Choose a server first").length).toBeGreaterThan(
+      0,
+    );
     fireEvent.click(screen.getByTestId("nav-ask"));
-    expect(navigateSpy).toHaveBeenCalledWith({ to: "/portal/select-server" });
-    expect(onClose).toHaveBeenCalled();
+    expect(navigateSpy).not.toHaveBeenCalled();
+    expect(onClose).not.toHaveBeenCalled();
   });
 
   test("SiteNavbar disables nav items when unauthenticated", () => {
@@ -299,5 +320,23 @@ describe("frontend components", () => {
       navLibrary.getAttribute("data-disabled") ||
       navLibrary.getAttribute("aria-disabled");
     expect(disabledAttr).toBe("true");
+  });
+
+  test("SiteNavbar keeps server manager actions visible with a permission hint", () => {
+    authState.state = "authenticated";
+    guildState.selectedGuildId = "g1";
+    guildState.guilds = [{ id: "g1", name: "Guild One", canManage: false }];
+
+    renderWithMantine(<SiteNavbar pathname="/portal/server/g1/ask" />);
+
+    expect(screen.getByTestId("nav-billing")).toHaveAttribute(
+      "data-disabled",
+      "true",
+    );
+    expect(screen.getByTestId("nav-settings")).toHaveAttribute(
+      "data-disabled",
+      "true",
+    );
+    expect(screen.getAllByText("Requires Manage Server").length).toBe(2);
   });
 });

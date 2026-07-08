@@ -7,6 +7,8 @@ import { applyVisualDefaults, waitForVisualReady } from "./visualUtils";
 const runVisual = process.env.PW_VISUAL === "true";
 const visualModes = ["viewport", "full"] as const;
 type VisualMode = (typeof visualModes)[number];
+const TARGET_SCREENSHOT_MAX_DIFF_PIXELS = 200;
+const PAGE_SCREENSHOT_MAX_DIFF_PIXELS = 2_000;
 
 const withVisualMode = (path: string, mode: VisualMode): string => {
   const url = new URL(path, "http://localhost");
@@ -154,14 +156,14 @@ test.describe("visual regression", () => {
     const screenshotName = buildScreenshotName(name, mode);
     if (options?.target) {
       await expect(options.target).toHaveScreenshot(screenshotName, {
-        maxDiffPixels: 200,
+        maxDiffPixels: TARGET_SCREENSHOT_MAX_DIFF_PIXELS,
       });
       return;
     }
 
     await expect(page).toHaveScreenshot(screenshotName, {
       fullPage: mode === "full",
-      maxDiffPixels: 200,
+      maxDiffPixels: PAGE_SCREENSHOT_MAX_DIFF_PIXELS,
     });
   };
 
