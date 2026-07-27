@@ -101,7 +101,12 @@ export default function Home() {
     [pricingQuery.data],
   );
   const planLookup = useMemo(() => buildPaidPlanLookup(paidPlans), [paidPlans]);
-  const hasAnnualPlans = paidPlans.some((plan) => plan.interval === "year");
+  // Every paid tier needs an annual price before the toggle is offered.
+  // Otherwise resolvePaidPlan quietly falls back to the monthly amount and
+  // renders it as a yearly one.
+  const hasAnnualPlans = (["basic", "pro"] as const).every((tier) =>
+    Boolean(planLookup[tier]?.year),
+  );
   const basicPlan = resolvePaidPlan(planLookup, "basic", billingInterval);
   const proPlan = resolvePaidPlan(planLookup, "pro", billingInterval);
 
@@ -134,7 +139,7 @@ export default function Home() {
           <AddToDiscordButton location="hero" testId="home-cta-discord" />
         </Stack>
 
-        <Stack gap="md" id="what-comes-back">
+        <Stack gap="md">
           <Title order={2} fz={22} fw={600}>
             What comes back
           </Title>
