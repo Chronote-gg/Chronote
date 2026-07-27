@@ -124,19 +124,15 @@ export default function Home() {
           <Title
             order={1}
             fw={600}
-            fz={{ base: 30, md: 42 }}
-            lh={1.15}
-            style={{ letterSpacing: "-0.03em" }}
+            fz={{ base: 34, md: 48 }}
+            lh={1.1}
+            style={{ letterSpacing: "-0.03em", textWrap: "balance" }}
           >
-            Saves the whole call.
-            <br />
-            Takes the notes so you don&apos;t have to.
-            <br />
-            Finds the quote when you ask.
+            Your Discord meetings, written down.
           </Title>
           <Text size="lg" c="dimmed" maw={560}>
-            A Discord bot that records your voice calls and posts the notes back
-            to the channel.
+            Chronote joins the call and posts the notes back to your channel.
+            Ask it anything later.
           </Text>
           <Group gap="sm" wrap="wrap">
             <Button
