@@ -84,7 +84,7 @@ If we change these terms materially, we will note it on this page and in the [Wh
 
 ## Governing law
 
-[TODO: confirm governing law and venue with counsel, for example the state where BASIC BIT LLC is registered, before publishing.]
+These terms are governed by the laws of the State of Indiana, United States, without regard to its conflict of laws rules. Any dispute that cannot be resolved between us will be heard in the state or federal courts located in Indiana, and both of us agree to that venue.
 
 ## Contact
 

@@ -64,7 +64,7 @@ Chronote depends on the following providers. Each one sees only what it needs to
 | Stripe              | Payments and subscription billing                                                                                                                                                                                    |
 | Langfuse            | Engineering observability for the transcription and notes pipeline. Traces can include transcript and notes content, and attach a compressed copy of the meeting audio                                               |
 | Notion              | Only if a user connects their Notion account, to export notes there                                                                                                                                                  |
-| PostHog             | Product analytics for the website and web portal: page views and clicks on things like the pricing buttons. Share link ids are removed before anything is sent, and we honour Do Not Track                           |
+| PostHog             | Product analytics for the website and web portal. See the analytics section below for what this covers                                                                                                               |
 
 ## How long we keep things
 
@@ -73,6 +73,17 @@ We keep meetings until you ask us to remove them. Plan limits control how far ba
 Archiving a meeting hides it from your library views. It does not erase the recording, transcript, or notes from storage. If you want a meeting removed entirely, email us and we will do it. [TODO: confirm the removal turnaround and whether a self-service delete is planned before publishing.]
 
 Operational logs are retained for up to 365 days.
+
+## Analytics
+
+We use PostHog to understand how people use the website and the web portal, so we can see where the product is confusing and what people actually do with it. This is worth stating plainly, because it is more than counting page views:
+
+- **Page views and clicks.** Which pages you visit and which elements you interact with, including the text and labels of what you clicked.
+- **Session replay.** A reconstruction of your session, so we can watch how a page was actually used. In the web portal this can include meeting content shown on screen, such as notes and transcript text.
+
+Two things are deliberately excluded: share link ids are stripped before anything is sent, because those act as passwords for a shared meeting, and we do not send analytics at all if your browser sends a Do Not Track signal.
+
+**Turning it off.** Enable Do Not Track in your browser and Chronote sends nothing to PostHog. If you would rather we exclude your account entirely, email us and we will do it.
 
 ## Who can see a meeting
 

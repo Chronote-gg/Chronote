@@ -56,12 +56,10 @@ export function initAnalytics() {
     // API navigation rather than full document loads.
     capture_pageview: "history_change",
     respect_dnt: true,
-    // The portal renders meeting transcripts, notes, and member names. Both of
-    // these would otherwise ship that content to a third party: autocapture
-    // sends DOM text and attributes with every click, and session recording
-    // replays the page. Every event we want is sent explicitly via track().
-    autocapture: false,
-    disable_session_recording: true,
+    // Autocapture and session replay are deliberately left on: the product
+    // needs behavioural data and the privacy policy discloses both. Share ids
+    // are still redacted below, because those are bearer credentials rather
+    // than analytics data.
     sanitize_properties: sanitizeProperties,
   });
 }
