@@ -1,6 +1,10 @@
 import { afterEach, describe, expect, jest, test } from "@jest/globals";
 import posthog from "posthog-js";
-import { initAnalytics, track } from "../../src/frontend/services/analytics";
+import {
+  initAnalytics,
+  redactShareIds,
+  track,
+} from "../../src/frontend/services/analytics";
 
 jest.mock("posthog-js", () => ({
   __esModule: true,
@@ -52,6 +56,21 @@ describe("analytics", () => {
     expect(posthog.capture).toHaveBeenCalledWith("pricing_cta_clicked", {
       plan: "basic",
     });
+  });
+
+  test("redacts share ids, which are bearer credentials", () => {
+    expect(
+      redactShareIds("https://chronote.gg/share/meeting/guild-1/secret-token"),
+    ).toBe("https://chronote.gg/share/meeting/:serverId/:shareId");
+    expect(
+      redactShareIds("https://chronote.gg/share/ask/guild-1/conversation-9"),
+    ).toBe("https://chronote.gg/share/ask/:serverId/:shareId");
+  });
+
+  test("leaves non-share urls alone", () => {
+    expect(redactShareIds("https://chronote.gg/portal/meetings")).toBe(
+      "https://chronote.gg/portal/meetings",
+    );
   });
 
   test("falls back to the default host when none is injected", () => {

@@ -28,7 +28,10 @@ import {
   normalizeTtsVolumePercent,
 } from "../utils/ttsVolume";
 import { setChannelContext } from "../services/channelContextService";
-import { getGuildLimits } from "../services/subscriptionService";
+import {
+  getGuildLimits,
+  isChatTtsAvailable,
+} from "../services/subscriptionService";
 import { buildUpgradePrompt } from "../utils/upgradePrompt";
 import { checkBotPermissions } from "../utils/permissions";
 
@@ -126,10 +129,10 @@ async function requireTtsTier(
   guildId: string,
 ): Promise<boolean> {
   const { limits } = await getGuildLimits(guildId);
-  if (limits.liveVoiceEnabled) return true;
+  if (isChatTtsAvailable(limits)) return true;
   await interaction.reply(
     buildUpgradePrompt(
-      "Chat-to-speech is available on the Basic plan. Upgrade to enable channel TTS automation.",
+      "Chat-to-speech is not available on your plan. Upgrade to enable channel TTS automation.",
     ),
   );
   return false;

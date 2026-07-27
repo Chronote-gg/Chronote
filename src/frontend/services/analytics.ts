@@ -22,6 +22,26 @@ const readGlobals = () => globalThis as AnalyticsGlobal;
 const resolveKey = () => resolveInjectedValue(readGlobals().__POSTHOG_KEY__);
 
 /**
+ * Share links are bearer credentials: anyone holding the id can read the
+ * meeting or conversation. Automatic pageview capture would otherwise hand
+ * those ids to a third party, so replace them before anything is sent.
+ */
+const SHARE_ID_PATTERN = /\/share\/(meeting|ask)\/[^/?#]+\/[^/?#]+/g;
+
+export function redactShareIds(value: string): string {
+  return value.replace(SHARE_ID_PATTERN, "/share/$1/:serverId/:shareId");
+}
+
+function sanitizeProperties(properties: Record<string, unknown>) {
+  const sanitized: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(properties)) {
+    sanitized[key] =
+      typeof value === "string" ? redactShareIds(value) : (value as unknown);
+  }
+  return sanitized;
+}
+
+/**
  * No-ops when no key is configured, which keeps local dev, Jest, Playwright
  * mock runs, and CI builds free of analytics traffic.
  */
@@ -36,6 +56,7 @@ export function initAnalytics() {
     // API navigation rather than full document loads.
     capture_pageview: "history_change",
     respect_dnt: true,
+    sanitize_properties: sanitizeProperties,
   });
 }
 

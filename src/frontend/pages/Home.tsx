@@ -40,7 +40,7 @@ const CAPABILITIES = [
 const CONTROLS = [
   "Records only on /startmeeting, or in channels you choose.",
   "The bot sits visibly in the channel the whole time.",
-  "Delete any meeting. Remove the bot to stop everything.",
+  "Archive any meeting. Remove the bot to stop everything.",
 ];
 
 type PricingRow = {

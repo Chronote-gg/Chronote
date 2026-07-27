@@ -15,7 +15,7 @@ Chronote is operated by BASIC BIT LLC ("we", "us"). If you add Chronote to a Dis
 - While a meeting runs, Chronote captures the voice audio, the text chat in the meeting channel, and who was present.
 - Recordings are transcribed and summarized using OpenAI. Your audio and text pass through their systems to produce the transcript and notes.
 - Meeting records are visible to people in your Discord server, subject to the access rules below, and to anyone you deliberately share a public link with.
-- You can delete a meeting from your library at any time.
+- You can archive a meeting so it drops out of your library views, and you can ask us to remove one entirely.
 
 ## What Chronote records, and when
 
@@ -53,20 +53,21 @@ We do not receive or store your payment card details. Stripe handles card data d
 
 Chronote depends on the following providers. Each one sees only what it needs to do its job.
 
-| Provider            | What it handles                                                                                                                                 |
-| ------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
-| Discord             | The platform Chronote runs on, and how you sign in                                                                                              |
-| Amazon Web Services | Hosting, storage, and logging                                                                                                                   |
-| OpenAI              | Transcribing audio, and generating notes, corrections, and optional images. Content sent for processing includes your audio and transcript text |
-| Stripe              | Payments and subscription billing                                                                                                               |
-| Langfuse            | Engineering observability for the transcription and notes pipeline. Traces can include transcript and notes content                             |
-| Notion              | Only if a user connects their Notion account, to export notes there                                                                             |
+| Provider            | What it handles                                                                                                                                                                            |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Discord             | The platform Chronote runs on, and how you sign in                                                                                                                                         |
+| Amazon Web Services | Hosting, storage, and logging                                                                                                                                                              |
+| OpenAI              | Transcribing audio, and generating notes, corrections, and optional images. Content sent for processing includes your audio and transcript text                                            |
+| Stripe              | Payments and subscription billing                                                                                                                                                          |
+| Langfuse            | Engineering observability for the transcription and notes pipeline. Traces can include transcript and notes content                                                                        |
+| Notion              | Only if a user connects their Notion account, to export notes there                                                                                                                        |
+| PostHog             | Product analytics for the website and web portal: page views and clicks on things like the pricing buttons. Share link ids are removed before anything is sent, and we honour Do Not Track |
 
 ## How long we keep things
 
 Retention depends on the plan the server is on, and is described on the [pricing section of our site](https://chronote.gg). Paid plans keep meeting history longer, and the Pro plan keeps it without a time limit.
 
-When you delete a meeting, it is removed from your library and stops being accessible through Chronote. [TODO: confirm and state the purge window for underlying audio and transcript storage before publishing.]
+Archiving a meeting hides it from your library views. It does not erase the recording, transcript, or notes from storage. If you want a meeting removed entirely, email us and we will do it. [TODO: confirm the removal turnaround and whether a self-service delete is planned before publishing.]
 
 Operational logs are retained for up to 365 days.
 
@@ -80,9 +81,11 @@ Operational logs are retained for up to 365 days.
 
 - **See your data.** Sign in to the web portal to read any meeting you have access to.
 - **Take it with you.** Export audio, transcripts, and notes from the portal.
-- **Delete it.** Delete any meeting you own from your library.
+- **Archive it.** Archive any meeting you own so it drops out of your library views, and unarchive it later if you change your mind.
+- **Have it removed.** Email us to have a meeting and its recording removed from storage entirely.
 - **Turn recording off.** Server admins can disable auto-record per channel or entirely, and can remove Chronote from the server at any time, which stops all recording.
 - **Correct the record.** Notes can be corrected through the correction and approval flow, so the stored record reflects what actually happened.
+- **Opt out of analytics.** Turn on Do Not Track in your browser and the site will not send analytics events.
 - **Ask us.** Email [basic@basicbit.net](mailto:basic@basicbit.net) with a data access or deletion request and we will action it. [TODO: confirm the response window you want to commit to, for example 30 days.]
 
 If you are in a region with specific data protection rights, such as the UK, EU, or California, those rights apply and the same contact address handles those requests. [TODO: legal review needed on controller versus processor roles and the exact statutory language.]

@@ -15,7 +15,10 @@ import {
   chatTtsMonthlyLimitBlocked,
 } from "../metrics";
 import { buildUpgradePrompt } from "../utils/upgradePrompt";
-import { getGuildLimits } from "../services/subscriptionService";
+import {
+  getGuildLimits,
+  isChatTtsAvailable,
+} from "../services/subscriptionService";
 import {
   buildChatTtsMonthlyLimitMessage,
   releaseChatTtsMessageUsageReservation,
@@ -118,10 +121,10 @@ async function requireTier(
 ): Promise<GuildLimitsResult | null> {
   const result = await getGuildLimits(guildId);
   const { limits } = result;
-  if (!limits.liveVoiceEnabled) {
+  if (!isChatTtsAvailable(limits)) {
     await interaction.reply(
       buildUpgradePrompt(
-        "Chat-to-speech is available on the Basic plan. Upgrade to use /say.",
+        "Chat-to-speech is not available on your plan. Upgrade to use /say.",
       ),
     );
     return null;

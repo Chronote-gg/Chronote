@@ -58,7 +58,7 @@ describe("meetingVoiceSettingsService", () => {
     expect(settings.liveVoiceTtsVoice).toBe("alloy");
   });
 
-  it("disables chat-to-speech when tier disallows live voice", async () => {
+  it("keeps chat-to-speech available when the tier has no live voice", async () => {
     await setConfigOverrideForScope(
       { scope: "server", guildId: "guild-2" },
       CONFIG_KEYS.liveVoice.commandsEnabled,
@@ -77,8 +77,25 @@ describe("meetingVoiceSettingsService", () => {
       imagesEnabled: false,
     });
 
-    expect(settings.chatTtsEnabled).toBe(false);
+    expect(settings.chatTtsEnabled).toBe(true);
     expect(settings.liveVoiceEnabled).toBe(false);
     expect(settings.liveVoiceCommandsEnabled).toBe(false);
+  });
+
+  it("disables chat-to-speech when the tier allows no monthly messages", async () => {
+    await setConfigOverrideForScope(
+      { scope: "server", guildId: "guild-3" },
+      CONFIG_KEYS.chatTts.enabled,
+      true,
+      "user-3",
+    );
+
+    const settings = await resolveMeetingVoiceSettings("guild-3", "voice-3", {
+      liveVoiceEnabled: false,
+      imagesEnabled: false,
+      maxChatTtsMessagesMonthly: 0,
+    });
+
+    expect(settings.chatTtsEnabled).toBe(false);
   });
 });
