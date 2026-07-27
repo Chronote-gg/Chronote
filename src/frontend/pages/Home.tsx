@@ -23,6 +23,7 @@ import {
   formatPlanPrice,
   resolvePaidPlan,
 } from "../utils/pricing";
+import { uiTypography } from "../uiTokens";
 
 const PRICING_TABLE_MIN_WIDTH = 560;
 
@@ -117,15 +118,20 @@ export default function Home() {
     <Container size={720} py={{ base: 48, md: 96 }}>
       <Stack gap={96}>
         <Stack gap="xl" data-testid="home-hero" align="flex-start">
-          <Title
-            order={1}
-            fw={600}
-            fz={{ base: 34, md: 48 }}
-            lh={1.1}
-            style={{ letterSpacing: "-0.03em", textWrap: "balance" }}
-          >
-            Writes down notes so you don&apos;t have to.
-          </Title>
+          <Stack gap="sm" align="flex-start">
+            <Text style={uiTypography.logo} fz={{ base: 20, md: 24 }}>
+              Chronote
+            </Text>
+            <Title
+              order={1}
+              fw={600}
+              fz={{ base: 34, md: 48 }}
+              lh={1.1}
+              style={{ letterSpacing: "-0.03em", textWrap: "balance" }}
+            >
+              Writes down notes so you don&apos;t have to.
+            </Title>
+          </Stack>
           <Text size="lg" c="dimmed" maw={560}>
             Chronote joins your Discord voice calls and posts the summary back
             to the channel.
@@ -242,7 +248,7 @@ export default function Home() {
           </Table.ScrollContainer>
         </Stack>
 
-        <Group>
+        <Group justify="center">
           <AddToDiscordButton location="footer-cta" />
         </Group>
       </Stack>
