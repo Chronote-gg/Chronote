@@ -70,7 +70,7 @@ Chronote depends on the following providers. Each one sees only what it needs to
 
 We keep meetings until you ask us to remove them. Plan limits control how far back the Ask feature searches, not how long we store your data, so a meeting recorded on the Free plan is retained the same way a Pro one is.
 
-Archiving a meeting hides it from your library views. It does not erase the recording, transcript, or notes from storage. If you want a meeting removed entirely, email us and we will do it. [TODO: confirm the removal turnaround and whether a self-service delete is planned before publishing.]
+Archiving a meeting hides it from your library views. It does not erase the recording, transcript, or notes from storage. If you want a meeting removed entirely, email us and we will remove it, including the audio and transcript, within 30 days. Self-service deletion is not available yet.
 
 Operational logs are retained for up to 365 days.
 
@@ -100,9 +100,16 @@ Two things are deliberately excluded: share link ids are stripped before anythin
 - **Turn recording off.** Server admins can disable auto-record per channel or entirely, and can remove Chronote from the server at any time, which stops all recording.
 - **Correct the record.** Notes can be corrected through the correction and approval flow, so the stored record reflects what actually happened.
 - **Opt out of analytics.** Turn on Do Not Track in your browser and the site will not send analytics events.
-- **Ask us.** Email [basic@basicbit.net](mailto:basic@basicbit.net) with a data access or deletion request and we will action it. [TODO: confirm the response window you want to commit to, for example 30 days.]
+- **Ask us.** Email [basic@basicbit.net](mailto:basic@basicbit.net) with a data access or deletion request. We respond within 30 days.
 
-If you are in a region with specific data protection rights, such as the UK, EU, or California, those rights apply and the same contact address handles those requests. [TODO: legal review needed on controller versus processor roles and the exact statutory language.]
+### If you have data protection rights
+
+If you are in the UK, the EU, California, or another region with specific data protection rights, those rights apply and the same address handles the request.
+
+Which of us is answerable depends on the data:
+
+- **For your account**, meaning your Discord identity, your sign-in session, billing records, and analytics, BASIC BIT LLC decides how that data is used and is the controller.
+- **For meeting content**, meaning recordings, transcripts, notes, and chat logs, the Discord server that installed Chronote decides what gets recorded and why. That server's admins are the controller and Chronote acts as their processor. If you are a member of a server and want a recording of you removed, ask that server's admins first. You can also come to us and we will act on their instruction.
 
 ## Security
 

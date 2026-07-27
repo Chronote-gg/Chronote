@@ -70,7 +70,7 @@ Nothing here limits liability that cannot be limited by law.
 
 ## Ending it
 
-You can stop using Chronote at any time by removing the bot from your server, which stops all recording. You can archive meetings from the library, and you can email us to have meetings and their recordings removed from storage.
+You can stop using Chronote at any time by removing the bot from your server, which stops all recording. You can archive meetings from the library, and you can email us to have meetings and their recordings removed from storage, which we do within 30 days.
 
 We can suspend or end access if these terms are broken, if it is needed to protect the service or its users, or if we stop offering the service. If we discontinue Chronote, we will give reasonable notice and a window to export your data.
 
