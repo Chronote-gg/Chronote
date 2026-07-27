@@ -3,6 +3,7 @@ import {
   Group,
   List,
   SegmentedControl,
+  SimpleGrid,
   Stack,
   Table,
   Text,
@@ -26,6 +27,7 @@ import {
 const PRICING_TABLE_MIN_WIDTH = 560;
 
 const CAPABILITIES = [
+  "Ask what was decided and get the quote with its timestamp",
   "Auto-record the channels you pick",
   "Captures chat and attendance too",
   "Corrections, approved by your team",
@@ -34,6 +36,11 @@ const CAPABILITIES = [
   "Send notes to Notion",
   "Replies out loud, and reads typed messages aloud",
   "MCP access for Claude and other clients",
+];
+
+const CAPABILITY_COLUMNS = [
+  CAPABILITIES.slice(0, Math.ceil(CAPABILITIES.length / 2)),
+  CAPABILITIES.slice(Math.ceil(CAPABILITIES.length / 2)),
 ];
 
 type PricingRow = {
@@ -138,23 +145,21 @@ export default function Home() {
 
         <Stack gap="md">
           <Title order={2} fz={22} fw={600}>
-            Ask it later
-          </Title>
-          <Text>
-            Ask &quot;what did we decide about the schedule?&quot; Get the
-            answer, the quote, and the timestamp.
-          </Text>
-        </Stack>
-
-        <Stack gap="md">
-          <Title order={2} fz={22} fw={600}>
             Also
           </Title>
-          <List spacing="sm" size="md" withPadding>
-            {CAPABILITIES.map((capability) => (
-              <List.Item key={capability}>{capability}</List.Item>
+          <SimpleGrid
+            cols={{ base: 1, sm: 2 }}
+            spacing="xl"
+            verticalSpacing={0}
+          >
+            {CAPABILITY_COLUMNS.map((column) => (
+              <List key={column[0]} spacing="sm" size="md" withPadding>
+                {column.map((capability) => (
+                  <List.Item key={capability}>{capability}</List.Item>
+                ))}
+              </List>
             ))}
-          </List>
+          </SimpleGrid>
         </Stack>
 
         <Stack gap="md">
