@@ -36,7 +36,7 @@ export const formatPlanPrice = (
 export const billingLabelForInterval = (interval: BillingInterval) =>
   interval === "month" ? "Billed monthly" : "Billed yearly";
 
-export const annualSavingsLabel = "Best annual value";
+export const annualSavingsLabel = "2 months free";
 
 export const resolvePaidPlan = (
   lookup: PaidPlanLookup,

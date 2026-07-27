@@ -14,6 +14,9 @@ import { QueryClientProvider } from "@tanstack/react-query";
 import { trpc } from "./services/trpc";
 import { trpcClient } from "./services/trpcClient";
 import { queryClient } from "./queryClient";
+import { initAnalytics } from "./services/analytics";
+
+initAnalytics();
 
 const root = ReactDOM.createRoot(
   document.getElementById("root") as HTMLElement,

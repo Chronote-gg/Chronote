@@ -35,6 +35,11 @@ const sidebars: SidebarsConfig = {
       items: ["maintaining-docs/style-guide"],
     },
     "whats-new/index",
+    {
+      type: "category",
+      label: "Legal",
+      items: ["legal/privacy", "legal/terms"],
+    },
   ],
 };
 

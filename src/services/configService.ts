@@ -166,10 +166,12 @@ class ConfigService {
       process.env.CHAT_TTS_TTS_ONLY_IDLE_TIMEOUT_MS || `${10 * 60 * 1000}`,
       10,
     ),
+    // Free servers get a small allowance so members can actually experience
+    // chat-to-speech; a feature nobody has tried is a weak upgrade driver.
     monthlyMessageLimitFree:
       parseOptionalNonNegativeInteger(
         process.env.CHAT_TTS_MONTHLY_FREE_MESSAGE_LIMIT,
-      ) ?? 0,
+      ) ?? 50,
     monthlyMessageLimitBasic:
       parseOptionalNonNegativeInteger(
         process.env.CHAT_TTS_MONTHLY_BASIC_MESSAGE_LIMIT,
