@@ -1,4 +1,4 @@
-import { Badge, Divider, Group, Paper, Stack, Text } from "@mantine/core";
+import { Divider, Group, Paper, Stack, Text } from "@mantine/core";
 
 const DECISIONS = [
   "Community game night moves to Saturdays at 8pm ET.",
@@ -31,9 +31,6 @@ export function SampleSummary() {
               38 minutes, 5 people
             </Text>
           </Stack>
-          <Badge variant="light" size="sm">
-            Example
-          </Badge>
         </Group>
 
         <Stack gap={6}>

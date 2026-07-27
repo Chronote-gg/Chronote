@@ -1,173 +1,93 @@
 import {
   Button,
+  Code,
   Container,
   Group,
   Stack,
   Text,
-  ThemeIcon,
   Title,
-  useComputedColorScheme,
-  useMantineTheme,
 } from "@mantine/core";
-import {
-  IconMicrophone,
-  IconFileText,
-  IconSearch,
-  IconArrowRight,
-} from "@tabler/icons-react";
 import { Link } from "@tanstack/react-router";
-import Surface from "../components/Surface";
-import { heroBackground, uiTypography } from "../uiTokens";
 import { useAuth } from "../contexts/AuthContext";
+import { track } from "../services/analytics";
 import { JOIN_PAGE_INVITE_URL } from "../utils/discordInvite";
 
-const STEP_ICON_SIZE = 44;
-const STEP_INNER_ICON_SIZE = 22;
-
-const steps = [
-  {
-    icon: IconMicrophone,
-    title: "Add the bot",
-    description: "Invite Chronote to your Discord server with one click.",
-    color: "cyan",
-  },
-  {
-    icon: IconFileText,
-    title: "Record a meeting",
-    description:
-      "Start a voice call and use /startmeeting (or turn on auto-record).",
-    color: "violet",
-  },
-  {
-    icon: IconSearch,
-    title: "Get your notes",
-    description:
-      "Chronote posts a transcript and summary right back in Discord.",
-    color: "brand",
-  },
-] as const;
+const STEPS = [
+  "Join a voice channel in your server.",
+  "Run /startmeeting.",
+  "Talk. When the meeting ends, the notes post back to the channel.",
+];
 
 export default function Join() {
-  const theme = useMantineTheme();
-  const scheme = useComputedColorScheme("dark");
-  const isDark = scheme === "dark";
   const { state: authState, loginUrl, loading } = useAuth();
 
   return (
-    <Container size="sm" py={{ base: "xl", md: 80 }}>
-      <Stack gap="xl" align="center">
-        {/* Hero */}
-        <Stack
-          data-testid="join-hero"
-          align="center"
-          gap="md"
-          p={{ base: "lg", md: "xl" }}
-          style={{
-            backgroundImage: heroBackground(isDark),
-            borderRadius: theme.radius.lg,
-            textAlign: "center",
-          }}
-        >
-          <Text
-            size="xs"
-            c={isDark ? theme.colors.cyan[3] : theme.colors.cyan[7]}
-            style={uiTypography.heroKicker}
+    <Container size={720} py={{ base: 48, md: 96 }}>
+      <Stack gap={64}>
+        <Stack gap="xl" data-testid="join-hero">
+          <Title
+            order={1}
+            fw={600}
+            fz={{ base: 30, md: 40 }}
+            lh={1.15}
+            style={{ letterSpacing: "-0.03em", textWrap: "balance" }}
           >
-            Discord voice logbook
-          </Text>
-          <Title order={1} fw={750}>
-            Transcripts and summaries, automatically.
+            Chronote is in your server.
           </Title>
-          <Text size="lg" c="dimmed" maw={480}>
-            Add Chronote to your Discord server and turn every voice call into
-            searchable notes.
+          <Text size="lg" c="dimmed" maw={560}>
+            Nothing records until you start a meeting. Here is how to get your
+            first set of notes.
           </Text>
-          <Button
-            size="lg"
-            variant="gradient"
-            gradient={{ from: "brand", to: "violet" }}
-            component="a"
-            href={JOIN_PAGE_INVITE_URL}
-            data-testid="join-cta-discord"
-            rightSection={<IconArrowRight size={18} />}
-          >
-            Add to Discord
-          </Button>
         </Stack>
 
-        {/* How it works */}
-        <Stack gap="md" w="100%">
-          <Text
-            size="xs"
-            c={isDark ? theme.colors.cyan[3] : theme.colors.cyan[7]}
-            ta="center"
-            style={uiTypography.sectionEyebrow}
-          >
-            How it works
+        <Stack gap="md">
+          {STEPS.map((step, index) => (
+            <Group key={step} gap="md" wrap="nowrap" align="baseline">
+              <Text size="sm" c="dimmed" ff="monospace">
+                {index + 1}
+              </Text>
+              <Text>{step}</Text>
+            </Group>
+          ))}
+          <Text size="sm" c="dimmed">
+            Prefer it hands free? Run <Code>/autorecord</Code> to have Chronote
+            join the channels you pick automatically.
           </Text>
-          <Title order={2} ta="center">
-            Three steps to meeting notes
-          </Title>
-
-          <Stack gap="sm" mt="sm">
-            {steps.map((step) => (
-              <Surface key={step.title} p="md">
-                <Group gap="md" wrap="nowrap" align="flex-start">
-                  <ThemeIcon
-                    variant="light"
-                    color={step.color}
-                    size={STEP_ICON_SIZE}
-                    radius="md"
-                  >
-                    <step.icon size={STEP_INNER_ICON_SIZE} />
-                  </ThemeIcon>
-                  <Stack gap={4}>
-                    <Text fw={600}>{step.title}</Text>
-                    <Text size="sm" c="dimmed">
-                      {step.description}
-                    </Text>
-                  </Stack>
-                </Group>
-              </Surface>
-            ))}
-          </Stack>
         </Stack>
 
-        {/* Portal link for existing users */}
-        <Surface p="md" w="100%" tone="soft">
-          <Group justify="space-between" align="center" wrap="wrap" gap="sm">
-            <Stack gap={2}>
-              <Text fw={600} size="sm">
-                Already using Chronote?
-              </Text>
-              <Text size="xs" c="dimmed">
-                Open the web portal to browse your meeting history.
-              </Text>
-            </Stack>
+        <Stack gap="md">
+          <Title order={2} fz={22} fw={600}>
+            Your meeting library
+          </Title>
+          <Text c="dimmed">
+            Every recorded meeting is kept on the web, where you can read the
+            transcript, correct the notes, and ask questions about past
+            meetings.
+          </Text>
+          <Group gap="sm" wrap="wrap">
             {authState === "authenticated" ? (
-              <Button
-                component={Link}
-                to="/portal"
-                variant="light"
-                color="brand"
-                size="sm"
-              >
+              <Button component={Link} to="/portal" size="md">
                 Open portal
               </Button>
             ) : (
-              <Button
-                component="a"
-                href={loginUrl}
-                disabled={loading}
-                variant="light"
-                color="brand"
-                size="sm"
-              >
+              <Button component="a" href={loginUrl} loading={loading} size="md">
                 Open portal
               </Button>
             )}
+            <Button
+              size="md"
+              variant="subtle"
+              component="a"
+              href={JOIN_PAGE_INVITE_URL}
+              data-testid="join-cta-discord"
+              onClick={() =>
+                track("add_to_discord_clicked", { location: "join" })
+              }
+            >
+              Add to another server
+            </Button>
           </Group>
-        </Surface>
+        </Stack>
       </Stack>
     </Container>
   );

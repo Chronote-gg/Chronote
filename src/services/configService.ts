@@ -276,7 +276,10 @@ class ConfigService {
     sessionSecret: process.env.SESSION_SECRET || process.env.OAUTH_SECRET || "",
     oauthSecret: process.env.OAUTH_SECRET || "",
     oauthEnabled: process.env.ENABLE_OAUTH !== "false" && !this.mock.enabled,
-    onboardingEnabled: process.env.ENABLE_ONBOARDING === "true",
+    // On by default: the bot invite cannot return installers to the site
+    // (Discord needs a registered redirect_uri), so this DM is the only path
+    // that tells a new installer to run /startmeeting.
+    onboardingEnabled: process.env.ENABLE_ONBOARDING !== "false",
     npmPackageVersion: process.env.npm_package_version || "unknown",
     sessionTtlSeconds: parseInt(
       process.env.SESSION_TTL_SECONDS || `${60 * 60 * 24 * 7}`,

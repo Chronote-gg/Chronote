@@ -1,17 +1,17 @@
 import { useMemo, useState } from "react";
 import {
-  Anchor,
-  Button,
-  Container,
   Group,
+  List,
   SegmentedControl,
-  SimpleGrid,
   Stack,
   Table,
   Text,
   Title,
+  Button,
+  Container,
 } from "@mantine/core";
 import { useNavigate } from "@tanstack/react-router";
+import AddToDiscordButton from "../components/AddToDiscordButton";
 import SampleSummary from "../components/SampleSummary";
 import { trpc } from "../services/trpc";
 import { track } from "../services/analytics";
@@ -22,7 +22,6 @@ import {
   formatPlanPrice,
   resolvePaidPlan,
 } from "../utils/pricing";
-import { DISCORD_BOT_INVITE_URL } from "../utils/discordInvite";
 
 const PRICING_TABLE_MIN_WIDTH = 560;
 
@@ -35,12 +34,6 @@ const CAPABILITIES = [
   "Send notes to Notion",
   "Replies out loud, and reads typed messages aloud",
   "MCP access for Claude and other clients",
-];
-
-const CONTROLS = [
-  "Records only on /startmeeting, or in channels you choose.",
-  "The bot sits visibly in the channel the whole time.",
-  "Archive any meeting. Remove the bot to stop everything.",
 ];
 
 type PricingRow = {
@@ -113,14 +106,10 @@ export default function Home() {
     });
   };
 
-  const trackInvite = (location: string) => () => {
-    track("add_to_discord_clicked", { location });
-  };
-
   return (
     <Container size={720} py={{ base: 48, md: 96 }}>
       <Stack gap={96}>
-        <Stack gap="xl" data-testid="home-hero">
+        <Stack gap="xl" data-testid="home-hero" align="flex-start">
           <Title
             order={1}
             fw={600}
@@ -132,40 +121,22 @@ export default function Home() {
           </Title>
           <Text size="lg" c="dimmed" maw={560}>
             Chronote joins your Discord voice calls and posts the summary back
-            to the channel. Ask it anything later.
+            to the channel.
           </Text>
-          <Group gap="sm" wrap="wrap">
-            <Button
-              size="md"
-              component="a"
-              href={DISCORD_BOT_INVITE_URL}
-              data-testid="home-cta-discord"
-              onClick={trackInvite("hero")}
-            >
-              Add to Discord
-            </Button>
-            <Button
-              size="md"
-              variant="subtle"
-              component="a"
-              href="#what-comes-back"
-            >
-              See what it sends back
-            </Button>
-          </Group>
-          <Text size="sm" c="dimmed">
-            Free tier, no card. Nothing records until you turn it on.
-          </Text>
+          <AddToDiscordButton location="hero" testId="home-cta-discord" />
         </Stack>
 
-        <Stack gap="lg" id="what-comes-back">
+        <Stack gap="md" id="what-comes-back">
           <Title order={2} fz={22} fw={600}>
             What comes back
           </Title>
+          <Text size="sm" c="dimmed">
+            An example of the summary Chronote posts to your channel.
+          </Text>
           <SampleSummary />
         </Stack>
 
-        <Stack gap="lg">
+        <Stack gap="md">
           <Title order={2} fz={22} fw={600}>
             Ask it later
           </Title>
@@ -173,53 +144,20 @@ export default function Home() {
             Ask &quot;what did we decide about the schedule?&quot; Get the
             answer, the quote, and the timestamp.
           </Text>
-          <Text size="sm" c="dimmed">
-            Already run Craig? This is the part you do by hand.
-          </Text>
         </Stack>
 
-        <Stack gap="lg">
+        <Stack gap="md">
           <Title order={2} fz={22} fw={600}>
             Also
           </Title>
-          <SimpleGrid
-            cols={{ base: 1, sm: 2 }}
-            spacing="sm"
-            verticalSpacing="sm"
-          >
+          <List spacing="sm" size="md" withPadding>
             {CAPABILITIES.map((capability) => (
-              <Text key={capability} size="sm" c="dimmed">
-                {capability}
-              </Text>
+              <List.Item key={capability}>{capability}</List.Item>
             ))}
-          </SimpleGrid>
+          </List>
         </Stack>
 
-        <Stack gap="lg">
-          <Title order={2} fz={22} fw={600}>
-            Who controls it
-          </Title>
-          <Stack gap="xs">
-            {CONTROLS.map((line) => (
-              <Text key={line} size="sm" c="dimmed">
-                {line}
-              </Text>
-            ))}
-            <Text size="sm" c="dimmed">
-              Open source under the AGPL, on{" "}
-              <Anchor
-                href="https://github.com/Chronote-gg/chronote"
-                target="_blank"
-                rel="noreferrer"
-              >
-                GitHub
-              </Anchor>
-              .
-            </Text>
-          </Stack>
-        </Stack>
-
-        <Stack gap="lg">
+        <Stack gap="md">
           <Group justify="space-between" align="baseline" wrap="wrap" gap="sm">
             <Title order={2} fz={22} fw={600}>
               Pricing
@@ -273,17 +211,7 @@ export default function Home() {
                 ))}
                 <Table.Tr>
                   <Table.Td />
-                  <Table.Td>
-                    <Button
-                      size="xs"
-                      variant="subtle"
-                      component="a"
-                      href={DISCORD_BOT_INVITE_URL}
-                      onClick={trackInvite("pricing-free")}
-                    >
-                      Get started
-                    </Button>
-                  </Table.Td>
+                  <Table.Td />
                   <Table.Td>
                     <Button
                       size="xs"
@@ -307,23 +235,10 @@ export default function Home() {
               </Table.Tbody>
             </Table>
           </Table.ScrollContainer>
-          <Text size="xs" c="dimmed">
-            Meetings cap at 2 hours right now.
-          </Text>
         </Stack>
 
-        <Group gap="md" wrap="wrap" align="center">
-          <Button
-            size="md"
-            component="a"
-            href={DISCORD_BOT_INVITE_URL}
-            onClick={trackInvite("footer-cta")}
-          >
-            Add to Discord
-          </Button>
-          <Text size="sm" c="dimmed">
-            The first summary lands after your next call.
-          </Text>
+        <Group>
+          <AddToDiscordButton location="footer-cta" />
         </Group>
       </Stack>
     </Container>
