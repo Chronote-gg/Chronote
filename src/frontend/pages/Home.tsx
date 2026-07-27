@@ -1,15 +1,17 @@
 import { useMemo, useState } from "react";
 import {
+  Badge,
+  Button,
+  Container,
   Group,
   List,
+  Paper,
   SegmentedControl,
   SimpleGrid,
   Stack,
   Table,
   Text,
   Title,
-  Button,
-  Container,
 } from "@mantine/core";
 import { useNavigate } from "@tanstack/react-router";
 import AddToDiscordButton from "../components/AddToDiscordButton";
@@ -26,6 +28,7 @@ import {
 import { uiTypography } from "../uiTokens";
 
 const PRICING_TABLE_MIN_WIDTH = 560;
+const RECOMMENDED_TIER_TINT = "rgba(111, 117, 255, 0.08)";
 
 const CAPABILITIES = [
   "Ask what was decided and get the quote with its timestamp",
@@ -90,6 +93,8 @@ const PRICING_ROWS: PricingRow[] = [
   },
 ];
 
+const recommendedCell = { backgroundColor: RECOMMENDED_TIER_TINT };
+
 export default function Home() {
   const navigate = useNavigate();
   const [billingInterval, setBillingInterval] =
@@ -115,23 +120,21 @@ export default function Home() {
   };
 
   return (
-    <Container size={720} py={{ base: 48, md: 96 }}>
+    <Container size={720} pt={{ base: 28, md: 48 }} pb={{ base: 48, md: 96 }}>
       <Stack gap={96}>
-        <Stack gap="xl" data-testid="home-hero" align="flex-start">
-          <Stack gap="sm" align="flex-start">
-            <Text style={uiTypography.logo} fz={{ base: 20, md: 24 }}>
-              Chronote
-            </Text>
-            <Title
-              order={1}
-              fw={600}
-              fz={{ base: 34, md: 48 }}
-              lh={1.1}
-              style={{ letterSpacing: "-0.03em", textWrap: "balance" }}
-            >
-              Writes down notes so you don&apos;t have to.
-            </Title>
-          </Stack>
+        <Stack gap="xl" align="center" ta="center" data-testid="home-hero">
+          <Text style={uiTypography.logo} fz={{ base: 20, md: 24 }}>
+            Chronote
+          </Text>
+          <Title
+            order={1}
+            fw={600}
+            fz={{ base: 34, md: 48 }}
+            lh={1.1}
+            style={{ letterSpacing: "-0.03em", textWrap: "balance" }}
+          >
+            Writes down notes so you don&apos;t have to.
+          </Title>
           <Text size="lg" c="dimmed" maw={560}>
             Chronote joins your Discord voice calls and posts the summary back
             to the channel.
@@ -191,61 +194,75 @@ export default function Home() {
             Per server, not per member.
             {billingInterval === "year" ? ` ${annualSavingsLabel}.` : ""}
           </Text>
-          <Table.ScrollContainer minWidth={PRICING_TABLE_MIN_WIDTH}>
-            <Table verticalSpacing="xs" horizontalSpacing="md" fz="sm">
-              <Table.Thead>
-                <Table.Tr>
-                  <Table.Th />
-                  <Table.Th>Free</Table.Th>
-                  <Table.Th>Basic</Table.Th>
-                  <Table.Th>Pro</Table.Th>
-                </Table.Tr>
-              </Table.Thead>
-              <Table.Tbody>
-                <Table.Tr>
-                  <Table.Td c="dimmed">Price</Table.Td>
-                  <Table.Td fw={600}>$0</Table.Td>
-                  <Table.Td fw={600}>
-                    {formatPlanPrice(basicPlan, billingInterval)}
-                  </Table.Td>
-                  <Table.Td fw={600}>
-                    {formatPlanPrice(proPlan, billingInterval)}
-                  </Table.Td>
-                </Table.Tr>
-                {PRICING_ROWS.map((row) => (
-                  <Table.Tr key={row.label}>
-                    <Table.Td c="dimmed">{row.label}</Table.Td>
-                    <Table.Td>{row.free}</Table.Td>
-                    <Table.Td>{row.basic}</Table.Td>
-                    <Table.Td>{row.pro}</Table.Td>
+          <Paper withBorder radius="md" p={{ base: "sm", sm: "lg" }}>
+            <Table.ScrollContainer minWidth={PRICING_TABLE_MIN_WIDTH}>
+              <Table verticalSpacing="sm" horizontalSpacing="md" fz="sm">
+                <Table.Thead>
+                  <Table.Tr>
+                    <Table.Th />
+                    <Table.Th>Free</Table.Th>
+                    <Table.Th style={recommendedCell}>
+                      <Group gap="xs" wrap="nowrap">
+                        <span>Basic</span>
+                        <Badge size="xs" variant="light">
+                          Best value
+                        </Badge>
+                      </Group>
+                    </Table.Th>
+                    <Table.Th>Pro</Table.Th>
                   </Table.Tr>
-                ))}
-                <Table.Tr>
-                  <Table.Td />
-                  <Table.Td />
-                  <Table.Td>
-                    <Button
-                      size="xs"
-                      data-testid="home-cta-basic"
-                      onClick={() => startUpgrade("basic")}
-                    >
-                      Upgrade
-                    </Button>
-                  </Table.Td>
-                  <Table.Td>
-                    <Button
-                      size="xs"
-                      variant="default"
-                      data-testid="home-cta-pro"
-                      onClick={() => startUpgrade("pro")}
-                    >
-                      Upgrade
-                    </Button>
-                  </Table.Td>
-                </Table.Tr>
-              </Table.Tbody>
-            </Table>
-          </Table.ScrollContainer>
+                </Table.Thead>
+                <Table.Tbody>
+                  <Table.Tr>
+                    <Table.Td c="dimmed">Price</Table.Td>
+                    <Table.Td fw={700} fz="lg">
+                      $0
+                    </Table.Td>
+                    <Table.Td fw={700} fz="lg" style={recommendedCell}>
+                      {formatPlanPrice(basicPlan, billingInterval)}
+                    </Table.Td>
+                    <Table.Td fw={700} fz="lg">
+                      {formatPlanPrice(proPlan, billingInterval)}
+                    </Table.Td>
+                  </Table.Tr>
+                  {PRICING_ROWS.map((row) => (
+                    <Table.Tr key={row.label}>
+                      <Table.Td c="dimmed">{row.label}</Table.Td>
+                      <Table.Td>{row.free}</Table.Td>
+                      <Table.Td style={recommendedCell}>{row.basic}</Table.Td>
+                      <Table.Td>{row.pro}</Table.Td>
+                    </Table.Tr>
+                  ))}
+                  <Table.Tr>
+                    <Table.Td />
+                    <Table.Td />
+                    <Table.Td style={recommendedCell}>
+                      <Button
+                        size="sm"
+                        radius="md"
+                        fw={600}
+                        data-testid="home-cta-basic"
+                        onClick={() => startUpgrade("basic")}
+                      >
+                        Upgrade
+                      </Button>
+                    </Table.Td>
+                    <Table.Td>
+                      <Button
+                        size="sm"
+                        radius="md"
+                        variant="default"
+                        data-testid="home-cta-pro"
+                        onClick={() => startUpgrade("pro")}
+                      >
+                        Upgrade
+                      </Button>
+                    </Table.Td>
+                  </Table.Tr>
+                </Table.Tbody>
+              </Table>
+            </Table.ScrollContainer>
+          </Paper>
         </Stack>
 
         <Group justify="center">
