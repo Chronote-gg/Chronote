@@ -295,7 +295,7 @@ export function SiteHeader({
     authState === "authenticated" && Boolean(user?.isSuperAdmin);
   const headerPaddingRight = isMobile ? theme.spacing.xs : theme.spacing.sm;
 
-  const logo = <SiteHeaderLogo isMobile={isMobile} isDark={isDark} />;
+  const logo = <SiteHeaderLogo isMobile={isMobile} />;
   const rightControls = (
     <HeaderActions
       isSuperAdmin={isSuperAdmin}

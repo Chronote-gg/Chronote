@@ -16,6 +16,7 @@ import {
 import { useNavigate } from "@tanstack/react-router";
 import AddToDiscordButton from "../components/AddToDiscordButton";
 import SampleSummary from "../components/SampleSummary";
+import Wordmark from "../components/Wordmark";
 import { trpc } from "../services/trpc";
 import { track } from "../services/analytics";
 import type { BillingInterval, PaidTier } from "../../types/pricing";
@@ -25,7 +26,6 @@ import {
   formatPlanPrice,
   resolvePaidPlan,
 } from "../utils/pricing";
-import { uiTypography } from "../uiTokens";
 
 const PRICING_TABLE_MIN_WIDTH = 560;
 const RECOMMENDED_TIER_TINT = "rgba(111, 117, 255, 0.08)";
@@ -123,9 +123,7 @@ export default function Home() {
     <Container size={720} pt={{ base: 28, md: 48 }} pb={{ base: 48, md: 96 }}>
       <Stack gap={96}>
         <Stack gap="xl" align="center" ta="center" data-testid="home-hero">
-          <Text style={uiTypography.logo} fz={{ base: 20, md: 24 }}>
-            Chronote
-          </Text>
+          <Wordmark fz={{ base: 26, md: 34 }} />
           <Title
             order={1}
             fw={600}
