@@ -128,11 +128,11 @@ export default function Home() {
             lh={1.1}
             style={{ letterSpacing: "-0.03em", textWrap: "balance" }}
           >
-            Your Discord meetings, written down.
+            Writes down notes so you don&apos;t have to.
           </Title>
           <Text size="lg" c="dimmed" maw={560}>
-            Chronote joins the call and posts the notes back to your channel.
-            Ask it anything later.
+            Chronote joins your Discord voice calls and posts the summary back
+            to the channel. Ask it anything later.
           </Text>
           <Group gap="sm" wrap="wrap">
             <Button
