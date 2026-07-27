@@ -17,7 +17,7 @@ This file provides Copilot review context. AGENTS.md remains the source of truth
 - Discord: discord.js v14, discord-api-types, @discordjs/voice for audio capture, @discordjs/opus, prism-media.
 - AI: openai SDK; gpt-4o-transcribe for transcription; gpt-5.1 for cleanup/notes/corrections; gpt-5-mini for live gate; DALL-E 3 for images.
 - Observability and prompt management: Langfuse for tracing, prompt versioning, and prompt sync scripts.
-- Storage: AWS DynamoDB (tables: GuildSubscription, PaymentTransaction, StripeWebhookEvent, InteractionReceipt, ActiveMeeting, MeetingControlCommand, AccessLogs, RecordingTranscript, AutoRecordSettings, ServerContext, ChannelContext, DictionaryTable, MeetingHistory, MeetingUserIndex, SessionTable, McpOAuthTable, NotionIntegrationTable), S3 for transcripts/audio.
+- Storage: AWS DynamoDB (tables include MeetingHistory, MeetingUserIndex, PersonalMediaUploadJob, PersonalRecordingSegment, SessionTable, McpOAuthTable, NotionIntegrationTable), S3 for transcripts/audio.
 - Infra: Terraform -> AWS ECS Fargate, ECR, CloudWatch logs; static frontend on S3 + CloudFront with OAC; local Dynamo via docker-compose.
 - IaC scanning: Checkov runs in `.github/workflows/ci.yml` on PRs and main pushes. Local: `npm run checkov` (uses `uvx --from checkov checkov`; install uv first: https://docs.astral.sh/uv/).
 - Known/suppressed infra choices:
@@ -77,6 +77,7 @@ This file provides Copilot review context. AGENTS.md remains the source of truth
 
 - MeetingHistory: guildId, channelId_timestamp, meetingId, notes, `transcriptS3Key`, context, attendees, duration, transcribe/generate flags, notesMessageId/channelId, notesVersion, notesLastEditedBy/At, meetingCreatorId, isAutoRecording, `suggestionsHistory`, `notesHistory`.
 - MeetingUserIndex: cross-guild pointer index for My Meetings. Re-check MeetingHistory access before returning indexed data.
+- PersonalMediaUploadJob and PersonalRecordingSegment track personal media uploads and segmented desktop recording uploads.
 - DictionaryEntry: guildId, termKey, term, definition, created/updated metadata.
 - ServerContext / ChannelContext store prompt context.
 - AutoRecordSettings enable record-all or per-channel auto-start.
@@ -117,6 +118,7 @@ This file provides Copilot review context. AGENTS.md remains the source of truth
 - Config access: prefer shared helpers that resolve and transform config values (trim strings, validate enums, etc.) instead of inline snapshot parsing. When you add a helper to replace boilerplate, update existing consumers proactively, keep it KISS, and avoid hedging.
 - Portal base URLs are always configured. Do not add fallback behavior for missing `FRONTEND_SITE_URL` or relative portal links; treat missing config as an error.
 - My Meetings defaults to All time with a bounded initial page and explicit Load more control for older meetings.
+- Personal Settings owns account-scoped integrations and preferences at `/portal/settings`; keep My Meetings focused on meeting browsing.
 - Avoid hedging and speculative fallbacks. Follow YAGNI and KISS, do not add code for hypothetical cases unless explicitly required.
 - Config constraints: when numeric settings depend on caps, use minKey/maxKey to reference other config entries, clamp inputs in the UI, and enforce bounds in API validation.
 - Playwright mock mode: ensure only the mock API (port 3001) and frontend dev server (port 5173) are running. If ports are occupied, stop them first (`Get-NetTCPConnection -LocalPort 3001,5173 | Select-Object -ExpandProperty OwningProcess -Unique | ForEach-Object { Stop-Process -Id $_ }`). Clear `VITE_API_BASE_URL` (for example via `.env.local`) so the frontend uses the mock server.

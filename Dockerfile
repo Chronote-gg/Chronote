@@ -13,9 +13,10 @@ RUN apk add --no-cache \
 # Set the working directory
 WORKDIR /app
 
-# Copy package.json and package-lock.json
+# Copy dependency manifests and patches used by postinstall
 COPY package*.json ./
 COPY yarn.lock ./
+COPY patches ./patches
 
 # Install dependencies
 RUN npx yarn install --frozen-lockfile

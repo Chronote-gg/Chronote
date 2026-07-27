@@ -19,7 +19,7 @@ Owners: Desktop recorder, Voice/Transcription
 3. Store desktop tokens in the operating-system keyring. The desktop app never stores OpenAI credentials.
 4. Capture microphone and system output as separate Windows audio sources in v1.
 5. Label microphone audio as **Me** and system output as **System/Other** in v1. Speaker diarization and app/process attribution are later work.
-6. Upload each captured source through Chronote signed S3 POST forms, then complete one personal recording upload job.
+6. Save captured audio as sealed local WAV segments, upload each segment through Chronote signed S3 POST forms, then submit one personal recording upload job after all sealed segments are uploaded.
 7. Process desktop recordings in the existing personal meeting pipeline by transcribing each source separately, preserving source labels, mixing a normalized playback artifact, generating notes, and saving the result in **My Meetings**.
 8. Keep the capture backend isolated so process-scoped loopback, echo cancellation, macOS, and Linux implementations can be added later.
 9. Start with manual/dev installer notes. Signed production auto-update can follow once release signing custody and artifact hosting are ready.
@@ -52,5 +52,6 @@ Costs and risks:
 
 - The desktop app is a Chronote client, not a Discord client.
 - Desktop tokens currently use the existing OAuth storage table with desktop-specific key prefixes.
+- Desktop segment metadata is stored separately from the personal upload job so long recordings do not exceed DynamoDB item limits.
 - Process-scoped loopback, echo cancellation, signed auto-update, and cross-platform capture should be separate follow-up decisions when implemented.
 - Desktop productization, release CI/CD, native smoke testing, signing, and update gates are tracked in `docs/desktop-productization.md` and issue #249.

@@ -4,6 +4,7 @@ import {
   getPersonalMediaUploadJob,
   listClaimablePersonalMediaUploadJobs,
   renewPersonalMediaUploadJobClaim,
+  updateClaimedPersonalMediaUploadJobProgress,
   updatePersonalMediaUploadJob,
   writeClaimedPersonalMediaUploadJob,
   writePersonalMediaUploadJob,
@@ -39,6 +40,14 @@ export type PersonalMediaUploadRepository = {
     job: PersonalMediaUploadJobRecord,
     instanceId: string,
   ) => Promise<boolean>;
+  updateProgress: (options: {
+    uploadId: string;
+    instanceId: string;
+    segmentCount: number;
+    uploadedSegmentCount: number;
+    processedSegmentCount: number;
+    updatedAt: string;
+  }) => Promise<boolean>;
 };
 
 const realRepository: PersonalMediaUploadRepository = {
@@ -49,6 +58,7 @@ const realRepository: PersonalMediaUploadRepository = {
   claim: claimPersonalMediaUploadJob,
   renewClaim: renewPersonalMediaUploadJobClaim,
   updateClaimed: writeClaimedPersonalMediaUploadJob,
+  updateProgress: updateClaimedPersonalMediaUploadJobProgress,
 };
 
 const mockRepository: PersonalMediaUploadRepository = {
@@ -128,6 +138,31 @@ const mockRepository: PersonalMediaUploadRepository = {
       return false;
     }
     getMockStore().personalMediaUploadsById.set(job.uploadId, job);
+    return true;
+  },
+  async updateProgress({
+    uploadId,
+    instanceId,
+    segmentCount,
+    uploadedSegmentCount,
+    processedSegmentCount,
+    updatedAt,
+  }) {
+    const current = getMockStore().personalMediaUploadsById.get(uploadId);
+    if (
+      !current ||
+      current.status !== "processing" ||
+      current.processingOwnerInstanceId !== instanceId
+    ) {
+      return false;
+    }
+    getMockStore().personalMediaUploadsById.set(uploadId, {
+      ...current,
+      segmentCount,
+      uploadedSegmentCount,
+      processedSegmentCount,
+      updatedAt,
+    });
     return true;
   },
 };

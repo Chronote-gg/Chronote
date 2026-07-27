@@ -116,13 +116,30 @@ export interface UploadArtifactsOptions {
   transcriptText?: string;
 }
 
+export interface UploadMeetingArtifactsResult {
+  audioUploadExpected: boolean;
+  chatUploadExpected: boolean;
+  transcriptUploadExpected: boolean;
+  audioS3Key?: string;
+  chatS3Key?: string;
+  transcriptS3Key?: string;
+}
+
 export async function uploadMeetingArtifacts(
   meeting: MeetingData,
   opts: UploadArtifactsOptions,
-): Promise<void> {
+): Promise<UploadMeetingArtifactsResult> {
+  // Missing storage config still means captured audio was not durably persisted;
+  // callers use these flags to retain local artifacts instead of deleting them.
+  const result: UploadMeetingArtifactsResult = {
+    audioUploadExpected: Boolean(opts.audioFilePath),
+    chatUploadExpected: Boolean(opts.chatFilePath),
+    transcriptUploadExpected: Boolean(opts.transcriptText),
+  };
+
   if (!config.storage.transcriptBucket) {
     console.warn("TRANSCRIPTS_BUCKET not set; skipping uploads.");
-    return;
+    return result;
   }
 
   const folder = getMeetingFolder(meeting);
@@ -145,6 +162,7 @@ export async function uploadMeetingArtifacts(
       const uploaded = await uploadObjectToS3(key, audioBuffer, "audio/mpeg");
       if (uploaded) {
         meeting.audioS3Key = uploaded;
+        result.audioS3Key = uploaded;
       }
     } catch (error) {
       console.error("Failed to read/upload audio file", error);
@@ -163,14 +181,15 @@ export async function uploadMeetingArtifacts(
         chatText,
         "text/plain; charset=utf-8",
       );
-      await uploadObjectToS3(
+      const jsonUploaded = await uploadObjectToS3(
         chatJsonKey,
         JSON.stringify(chatEntriesToJson(meeting.chatLog), null, 2),
         "application/json",
       );
 
-      if (txtUploaded) {
-        meeting.chatS3Key = chatJsonKey; // point to structured file for lookups
+      if (txtUploaded && jsonUploaded) {
+        meeting.chatS3Key = jsonUploaded;
+        result.chatS3Key = jsonUploaded;
       }
     } catch (error) {
       console.error("Failed to upload chat artifacts", error);
@@ -179,18 +198,27 @@ export async function uploadMeetingArtifacts(
 
   // Transcript
   if (opts.transcriptText) {
-    const transcriptJsonKey = `${folder}transcript.json`;
+    try {
+      const transcriptJsonKey = `${folder}transcript.json`;
 
-    await uploadObjectToS3(
-      transcriptJsonKey,
-      JSON.stringify(
-        buildTranscriptJson(meeting, opts.transcriptText),
-        null,
-        2,
-      ),
-      "application/json",
-    );
+      const uploaded = await uploadObjectToS3(
+        transcriptJsonKey,
+        JSON.stringify(
+          buildTranscriptJson(meeting, opts.transcriptText),
+          null,
+          2,
+        ),
+        "application/json",
+      );
 
-    meeting.transcriptS3Key = transcriptJsonKey;
+      if (uploaded) {
+        meeting.transcriptS3Key = uploaded;
+        result.transcriptS3Key = uploaded;
+      }
+    } catch (error) {
+      console.error("Failed to upload transcript artifact", error);
+    }
   }
+
+  return result;
 }

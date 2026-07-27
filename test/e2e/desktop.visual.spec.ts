@@ -155,6 +155,9 @@ const installDesktopMock = async (page: Page): Promise<void> => {
             state.user = null;
             return null;
           }
+          if (command === "list_retained_recordings") {
+            return [];
+          }
           if (command === "start_recording") {
             state.recording = {
               isRecording: true,

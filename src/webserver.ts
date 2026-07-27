@@ -192,8 +192,10 @@ export function setupWebServer() {
         "/oauth/authorize/consent",
         "/api/desktop/auth/token",
         "/api/desktop/auth/revoke",
-        "/api/desktop/recordings/intent",
-        "/api/desktop/recordings/complete",
+        "/api/desktop/recordings/session",
+        "/api/desktop/recordings/segment-intent",
+        "/api/desktop/recordings/segment-complete",
+        "/api/desktop/recordings/submit",
         MOCK_STORAGE_UPLOAD_PATH,
       ],
     }),
@@ -280,8 +282,7 @@ export function setupWebServer() {
         });
       }
       const sessionWithPassport = req.session as
-        | (typeof req.session & { passport?: { user?: unknown } })
-        | undefined;
+        (typeof req.session & { passport?: { user?: unknown } }) | undefined;
       if (sessionWithPassport?.passport?.user) {
         sessionWithPassport.passport.user = undefined;
       }
@@ -323,8 +324,7 @@ export function setupWebServer() {
         const updated = refreshResult.user;
         req.user = updated;
         const sessionWithPassport = req.session as
-          | (typeof req.session & { passport?: { user?: unknown } })
-          | undefined;
+          (typeof req.session & { passport?: { user?: unknown } }) | undefined;
         if (sessionWithPassport?.passport?.user) {
           sessionWithPassport.passport.user = updated;
         }

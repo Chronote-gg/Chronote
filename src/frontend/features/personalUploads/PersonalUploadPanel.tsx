@@ -17,11 +17,7 @@ import {
 import Surface from "../../components/Surface";
 
 export type PersonalUploadStatus =
-  | "pending_upload"
-  | "queued"
-  | "processing"
-  | "complete"
-  | "failed";
+  "pending_upload" | "queued" | "processing" | "complete" | "failed";
 
 export type PersonalUploadPanelJob = {
   status: PersonalUploadStatus;

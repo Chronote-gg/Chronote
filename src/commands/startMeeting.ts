@@ -61,8 +61,7 @@ import type { ChatTtsSpeakerPrefixMode } from "../utils/ttsText";
 type GuildLimits = Awaited<ReturnType<typeof getGuildLimits>>["limits"];
 
 type StartMeetingInteraction =
-  | ChatInputCommandInteraction
-  | UserContextMenuCommandInteraction;
+  ChatInputCommandInteraction | UserContextMenuCommandInteraction;
 
 type StartMeetingOptions = {
   deferredEphemeralReply?: boolean;
@@ -325,8 +324,7 @@ const ensureNoActiveMeeting = async (guildId: string) => {
 };
 
 type VoiceChannelResult =
-  | { ok: true; voiceChannel: VoiceBasedChannel }
-  | { ok: false; error: string };
+  { ok: true; voiceChannel: VoiceBasedChannel } | { ok: false; error: string };
 
 const resolveMemberVoiceChannel = (member: GuildMember): VoiceChannelResult => {
   const voiceChannel = member.voice.channel;

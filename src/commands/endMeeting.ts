@@ -19,7 +19,10 @@ import { MeetingData } from "../types/meeting-data";
 import { saveMeetingHistoryToDatabase } from "./saveMeetingHistory";
 import { updateMeetingStatusService } from "../services/meetingHistoryService";
 import { renderChatEntryLine } from "../utils/chatLog";
-import { uploadMeetingArtifacts } from "../services/uploadService";
+import {
+  uploadMeetingArtifacts,
+  type UploadMeetingArtifactsResult,
+} from "../services/uploadService";
 import { buildUpgradeTextOnly } from "../utils/upgradePrompt";
 import { getGuildLimits } from "../services/subscriptionService";
 import { stopThinkingCueLoop } from "../audio/soundCues";
@@ -54,6 +57,8 @@ import { captionMeetingImages } from "../services/imageCaptionService";
 import {
   cleanupMeetingTempDir,
   ensureMeetingTempDir,
+  getMeetingTempDir,
+  retainMeetingTempDir,
 } from "../services/tempFileService";
 import { releaseMeetingLeaseForMeeting } from "../services/activeMeetingLeaseService";
 import { runTranscriptionFinalPass } from "../services/transcriptionFinalPassService";
@@ -61,6 +66,11 @@ import { runTranscriptionFinalPass } from "../services/transcriptionFinalPassSer
 type EndMeetingFlowOptions = {
   client: Client;
   meeting: MeetingData;
+};
+
+type LocalArtifactRetentionResult = {
+  preserveLocalArtifacts: boolean;
+  retainedTempDir?: string;
 };
 
 const DISMISSED_AUTO_RECORD_COMPLETE_MIN_DURATION_MS = 10 * 60 * 1000;
@@ -102,6 +112,33 @@ function shouldFinalizeDismissedAutoRecording(meeting: MeetingData): boolean {
     (entry) => entry.type === "message",
   ).length;
   return chatMessageCount >= DISMISSED_AUTO_RECORD_COMPLETE_MIN_CHAT_MESSAGES;
+}
+
+function shouldRetainLocalAudioArtifacts(
+  result: UploadMeetingArtifactsResult,
+): boolean {
+  return result.audioUploadExpected && !result.audioS3Key;
+}
+
+async function retainLocalMeetingArtifacts(
+  meeting: MeetingData,
+  reason: string,
+): Promise<LocalArtifactRetentionResult> {
+  const retainedTempDir = await retainMeetingTempDir(meeting, reason);
+  const localPath = retainedTempDir ?? getMeetingTempDir(meeting);
+  console.error(
+    "Meeting audio was not durably uploaded; retained local artifacts",
+    {
+      guildId: meeting.guildId,
+      meetingId: meeting.meetingId,
+      reason,
+      localPath,
+    },
+  );
+  return {
+    preserveLocalArtifacts: true,
+    retainedTempDir,
+  };
 }
 
 export async function handleEndMeetingButton(
@@ -236,6 +273,8 @@ async function runEndMeetingFlow(options: EndMeetingFlowOptions) {
   );
 
   const meetingTempDir = await ensureMeetingTempDir(meeting);
+  let preserveMeetingTempDir = false;
+  let retainedMeetingTempDir: string | undefined;
   try {
     const chatLogFilePath = path.join(meetingTempDir, "chat.txt");
     writeFileSync(
@@ -276,12 +315,18 @@ async function runEndMeetingFlow(options: EndMeetingFlowOptions) {
     }
 
     if (meeting.cancelled) {
-      await runMeetingEndStep(meeting, "auto-record-cancel-flow", () =>
-        handleAutoRecordCancellation(client, meeting, chatLogFilePath),
+      const retention = await runMeetingEndStep(
+        meeting,
+        "auto-record-cancel-flow",
+        () => handleAutoRecordCancellation(client, meeting, chatLogFilePath),
       );
-      await runMeetingEndStep(meeting, "cleanup-speaker-tracks", () =>
-        cleanupSpeakerTracks(meeting),
-      );
+      preserveMeetingTempDir = retention.preserveLocalArtifacts;
+      retainedMeetingTempDir = retention.retainedTempDir;
+      if (!preserveMeetingTempDir) {
+        await runMeetingEndStep(meeting, "cleanup-speaker-tracks", () =>
+          cleanupSpeakerTracks(meeting),
+        );
+      }
       return;
     }
 
@@ -300,12 +345,18 @@ async function runEndMeetingFlow(options: EndMeetingFlowOptions) {
         meeting.cancelled = true;
         meeting.cancellationReason = cancellationDecision.reason;
         meeting.endReason = MEETING_END_REASONS.AUTO_CANCELLED;
-        await runMeetingEndStep(meeting, "auto-record-cancel-flow", () =>
-          handleAutoRecordCancellation(client, meeting, chatLogFilePath),
+        const retention = await runMeetingEndStep(
+          meeting,
+          "auto-record-cancel-flow",
+          () => handleAutoRecordCancellation(client, meeting, chatLogFilePath),
         );
-        await runMeetingEndStep(meeting, "cleanup-speaker-tracks", () =>
-          cleanupSpeakerTracks(meeting),
-        );
+        preserveMeetingTempDir = retention.preserveLocalArtifacts;
+        retainedMeetingTempDir = retention.retainedTempDir;
+        if (!preserveMeetingTempDir) {
+          await runMeetingEndStep(meeting, "cleanup-speaker-tracks", () =>
+            cleanupSpeakerTracks(meeting),
+          );
+        }
         return;
       }
     }
@@ -398,27 +449,41 @@ async function runEndMeetingFlow(options: EndMeetingFlowOptions) {
     }
 
     // Upload artifacts after transcript generation (or audio/chat only)
-    await runMeetingEndStep(meeting, "upload-artifacts", () =>
-      uploadMeetingArtifacts(meeting, {
-        audioFilePath: outputAudioFile,
-        chatFilePath: chatLogFilePath,
-        transcriptText: transcriptForUpload,
-      }),
+    const uploadResult = await runMeetingEndStep(
+      meeting,
+      "upload-artifacts",
+      () =>
+        uploadMeetingArtifacts(meeting, {
+          audioFilePath: outputAudioFile,
+          chatFilePath: chatLogFilePath,
+          transcriptText: transcriptForUpload,
+        }),
     );
+    if (shouldRetainLocalAudioArtifacts(uploadResult)) {
+      const retention = await runMeetingEndStep(
+        meeting,
+        "retain-local-artifacts",
+        () => retainLocalMeetingArtifacts(meeting, "audio_upload_failed"),
+      );
+      preserveMeetingTempDir = retention.preserveLocalArtifacts;
+      retainedMeetingTempDir = retention.retainedTempDir;
+    }
 
     await runMeetingEndStep(meeting, "update-summary-message", () =>
       updateMeetingSummaryMessage(meeting),
     );
 
-    deleteIfExists(chatLogFilePath);
-    deleteIfExists(outputAudioFile);
-    if (outputAudioFile !== combinedAudioFile) {
-      // Only delete the combined file when a separate mixed file was used.
-      deleteIfExists(combinedAudioFile);
+    if (!preserveMeetingTempDir) {
+      deleteIfExists(chatLogFilePath);
+      deleteIfExists(outputAudioFile);
+      if (outputAudioFile !== combinedAudioFile) {
+        // Only delete the combined file when a separate mixed file was used.
+        deleteIfExists(combinedAudioFile);
+      }
+      await runMeetingEndStep(meeting, "cleanup-speaker-tracks", () =>
+        cleanupSpeakerTracks(meeting),
+      );
     }
-    await runMeetingEndStep(meeting, "cleanup-speaker-tracks", () =>
-      cleanupSpeakerTracks(meeting),
-    );
 
     // Save meeting history to database before cleanup
     await runMeetingEndStep(meeting, "save-meeting-history", () =>
@@ -447,7 +512,18 @@ async function runEndMeetingFlow(options: EndMeetingFlowOptions) {
         error,
       });
     }
-    await cleanupMeetingTempDir(meeting);
+    if (preserveMeetingTempDir) {
+      console.warn(
+        "Skipping meeting temp cleanup because local artifacts were retained",
+        {
+          guildId: meeting.guildId,
+          meetingId: meeting.meetingId,
+          localPath: retainedMeetingTempDir ?? meetingTempDir,
+        },
+      );
+    } else {
+      await cleanupMeetingTempDir(meeting);
+    }
   }
 }
 
@@ -482,26 +558,39 @@ async function handleAutoRecordCancellation(
   client: Client,
   meeting: MeetingData,
   chatLogFilePath: string,
-) {
+): Promise<LocalArtifactRetentionResult> {
   meetingsCancelled.inc();
-  await uploadCancelledMeetingArtifacts(client, meeting, chatLogFilePath);
+  const uploadResult = await uploadCancelledMeetingArtifacts(
+    client,
+    meeting,
+    chatLogFilePath,
+  );
+  const retention = shouldRetainLocalAudioArtifacts(uploadResult)
+    ? await retainLocalMeetingArtifacts(
+        meeting,
+        "cancelled_audio_upload_failed",
+      )
+    : { preserveLocalArtifacts: false };
   await updateAutoRecordCancelledMessage(meeting);
   await deleteTrackedMessages(meeting);
-  deleteIfExists(chatLogFilePath);
-  if (meeting.audioData.outputFileName) {
-    deleteIfExists(meeting.audioData.outputFileName);
+  if (!retention.preserveLocalArtifacts) {
+    deleteIfExists(chatLogFilePath);
+    if (meeting.audioData.outputFileName) {
+      deleteIfExists(meeting.audioData.outputFileName);
+    }
   }
   await saveMeetingHistoryToDatabase(meeting);
   meeting.setFinished();
   meeting.finished = true;
   deleteMeeting(meeting.guildId);
+  return retention;
 }
 
 async function uploadCancelledMeetingArtifacts(
   client: Client,
   meeting: MeetingData,
   chatLogFilePath: string,
-) {
+): Promise<UploadMeetingArtifactsResult> {
   let transcriptForUpload: string | undefined;
 
   if (meeting.transcribeMeeting) {
@@ -531,7 +620,7 @@ async function uploadCancelledMeetingArtifacts(
     transcriptForUpload = transcriptions;
   }
 
-  await runMeetingEndStep(meeting, "upload-cancelled-artifacts", () =>
+  return await runMeetingEndStep(meeting, "upload-cancelled-artifacts", () =>
     uploadMeetingArtifacts(meeting, {
       audioFilePath: meeting.audioData.outputFileName,
       chatFilePath: chatLogFilePath,

@@ -190,11 +190,11 @@ Open a meeting in the web portal and choose **Export to Notion** from the notes 
 
 After export, Chronote stores the Notion page link on that meeting for your user account. If Chronote notes are edited later, choose **Sync latest to Notion** to replace the Notion page content with the newest Chronote notes version.
 
-Server managers can configure automatic Notion export from **Server settings** -> **Notion integration**. Choose a shared destination page, turn on automatic export, and optionally limit exports to selected voice channels or tags. Meeting viewers can open the automated Notion page from the meeting detail when they have access to the Chronote meeting.
+Server managers can configure automatic Notion export from **Server Settings** -> **Notion integration**. Choose a shared destination page, turn on automatic export, and optionally limit exports to selected voice channels or tags. Meeting viewers can open the automated Notion page from the meeting detail when they have access to the Chronote meeting.
 
-You can also configure personal Notion automation from **My Meetings**. Personal automation exports personal uploads and other personal meetings to your Notion destination. Shared viewers can export their own manual copy, but only the personal meeting owner can manage or retry owner automation.
+You can also configure personal Notion automation from **Personal Settings**. Personal automation exports personal uploads and other personal meetings to your Notion destination. Shared viewers can export their own manual copy, but only the personal meeting owner can manage or retry owner automation.
 
-If automated export fails because Notion access was revoked or the destination is unavailable, Chronote keeps the automation setting and shows the latest error in Settings and the Library. A server manager can reconnect Notion, choose a new destination, or retry the export from the meeting actions.
+If automated export fails because Notion access was revoked or the destination is unavailable, Chronote keeps the automation setting and shows the latest error in Personal Settings, Server Settings, and the Library. A server manager can reconnect Notion, choose a new destination, or retry the export from the meeting actions.
 
 Chronote remains the source of truth. Notion export and sync are one-way from Chronote to Notion.
 
@@ -211,14 +211,14 @@ The Chronote web portal provides a browser-based interface for:
 - Browsing meeting history with search and filters.
 - Viewing **My Meetings** as your portal home, with All time results, a **Load more** control for older meetings, and direct links to meetings across servers you can access.
 - Uploading personal audio or video files for transcription and notes.
-- Configuring personal Notion automation for uploaded and personal meetings.
+- Configuring personal Notion automation from **Personal Settings** for uploaded and personal meetings.
 - Reading full transcripts and notes.
 - Sharing meeting links with teammates.
 - Suggesting and applying notes corrections.
 - Importing Markdown or plain-text notes from another app.
 - Managing server settings (context, dictionary, auto-record, Notion automation).
 
-Access the portal from the **Open in Chronote** button on any meeting summary, or open the portal directly to start from **My Meetings**. Use **Upload media** to create a personal meeting from a local recording. Use **View servers** or the server switcher when you want to choose a server for Library, Ask, Billing, or Settings. Use **Support** in the portal sidebar to email Chronote support.
+Access the portal from the **Open in Chronote** button on any meeting summary, or open the portal directly to start from **My Meetings**. The sidebar separates **Personal** flows from **Server** flows: use **My Meetings**, **Upload Media**, and **Personal Settings** for account-owned work, then choose a server in the **Server** section before opening Library, Ask, Billing, or Server Settings. Use **Support** in the portal sidebar to email Chronote support.
 
 ## Personal media uploads
 
@@ -234,7 +234,7 @@ When processing completes, the meeting appears in **My Meetings** under your per
 
 ## Chronote Desktop recordings
 
-Chronote Desktop records a personal meeting directly from a Windows computer. It captures your microphone as **Me**, captures system audio as **System/Other**, uploads both sources to Chronote, and creates a personal meeting in **My Meetings**.
+Chronote Desktop records a personal meeting directly from a Windows computer. It captures your microphone as **Me**, captures system audio as **System/Other**, saves sealed local audio segments while recording, uploads those segments to Chronote, and creates a personal meeting in **My Meetings**.
 
 Chronote Desktop is currently available as a limited beta. Your account must have desktop access enabled before sign-in and upload will work.
 
@@ -244,7 +244,7 @@ Chronote Desktop is currently available as a limited beta. Your account must hav
 4. Click **Start recording**.
 5. Click **Stop and upload** when the meeting ends.
 
-Desktop recordings use your Chronote account and do not require a Discord voice channel. Keep the app open until the upload is received. Processing continues in Chronote after the upload completes. Use **Open Chronote** in the desktop app to open **My Meetings** in the web portal.
+Desktop recordings use your Chronote account and do not require a Discord voice channel. Keep the app open until the upload is received. Processing continues in Chronote after the upload completes. If upload fails, or if the app closes after one or more segments were sealed, Chronote Desktop keeps the local recording available in **Saved recordings** so you can retry the upload, open the local folder, or delete it when you no longer need it. Use **Open Chronote** in the desktop app to open **My Meetings** in the web portal.
 
 ## Context menu commands
 

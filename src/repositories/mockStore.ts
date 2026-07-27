@@ -19,6 +19,7 @@ import type {
   MeetingShareByMeetingRecord,
   MeetingShareRecord,
   PersonalMediaUploadJobRecord,
+  PersonalRecordingSegmentRecord,
 } from "../types/db";
 import type {
   AskConversation,
@@ -54,6 +55,10 @@ type MockStore = {
   onboardingStates: Map<string, OnboardingState>;
   meetingHistoryByGuild: Map<string, MeetingHistory[]>;
   personalMediaUploadsById: Map<string, PersonalMediaUploadJobRecord>;
+  personalRecordingSegmentsByUploadId: Map<
+    string,
+    Map<string, PersonalRecordingSegmentRecord>
+  >;
   meetingSharesByShareKey: Map<string, MeetingShareRecord>;
   meetingSharesByMeetingKey: Map<string, MeetingShareByMeetingRecord>;
   askConversationsByKey: Map<string, AskConversation[]>;
@@ -914,6 +919,10 @@ function buildDefaultStore(): MockStore {
     onboardingStates,
     meetingHistoryByGuild,
     personalMediaUploadsById: new Map<string, PersonalMediaUploadJobRecord>(),
+    personalRecordingSegmentsByUploadId: new Map<
+      string,
+      Map<string, PersonalRecordingSegmentRecord>
+    >(),
     meetingSharesByShareKey,
     meetingSharesByMeetingKey,
     askConversationsByKey,

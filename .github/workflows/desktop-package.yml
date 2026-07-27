@@ -29,10 +29,10 @@ env:
 jobs:
   package:
     name: Build Windows Desktop Artifacts
-    runs-on: windows-latest
+    runs-on: blacksmith-4vcpu-windows-2025
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Set up Node
         uses: actions/setup-node@v6
@@ -74,10 +74,10 @@ jobs:
 
   packaged-smoke:
     name: Native Desktop Smoke
-    runs-on: windows-latest
+    runs-on: blacksmith-4vcpu-windows-2025
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Set up Node
         uses: actions/setup-node@v6

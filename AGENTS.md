@@ -11,7 +11,7 @@
 - Discord: discord.js v14, discord-api-types, @discordjs/voice for audio capture, @discordjs/opus, prism-media.
 - AI: openai SDK; gpt-4o-transcribe for transcription; gpt-5.1 for cleanup/notes/corrections; gpt-5-mini for live gate; DALL-E 3 for images.
 - Observability and prompt management: Langfuse for tracing, prompt versioning, and prompt sync scripts. AMG (Grafana) service account token is auto-rotated via EventBridge + Lambda (see `_infra/grafana.tf` and `_infra/README.md`). Critical alerts (ECS down, ALB 5xx, unhealthy hosts, rotation failures) are sent via SNS email and optionally to a Discord channel via a separate Node.js Lambda (see `_infra/notifications.tf` and `_infra/README.md`).
-- Storage: AWS DynamoDB (tables: GuildSubscription, PaymentTransaction, StripeWebhookEvent, InteractionReceipt, ActiveMeeting, MeetingControlCommand, AccessLogs, RecordingTranscript, AutoRecordSettings, ServerContext, ChannelContext, DictionaryTable, MeetingHistory, MeetingUserIndex, PersonalMediaUploadJob, SessionTable, McpOAuthTable, NotionIntegrationTable), S3 for transcripts/audio.
+- Storage: AWS DynamoDB (tables: GuildSubscription, PaymentTransaction, StripeWebhookEvent, InteractionReceipt, ActiveMeeting, MeetingControlCommand, AccessLogs, RecordingTranscript, AutoRecordSettings, ServerContext, ChannelContext, DictionaryTable, MeetingHistory, MeetingUserIndex, PersonalMediaUploadJob, PersonalRecordingSegment, SessionTable, McpOAuthTable, NotionIntegrationTable), S3 for transcripts/audio.
 - Infra: Terraform -> AWS ECS Fargate, ECR, CloudWatch logs; static frontend on S3 + CloudFront with OAC; local Dynamo via docker-compose.
 - IaC scanning: Checkov runs in `.github/workflows/ci.yml` on PRs and main pushes. Local: `npm run checkov` (uses `uvx --from checkov checkov`; install uv first: https://docs.astral.sh/uv/).
 - Known/suppressed infra choices:
@@ -73,7 +73,8 @@
 
 - MeetingHistory: guildId, channelId_timestamp, meetingId, notes, `transcriptS3Key`, context, attendees, duration, transcribe/generate flags, notesMessageId/channelId, notesVersion, notesLastEditedBy/At, ownershipScope/ownerUserId/accessGrants for personal meeting ownership and shares, meetingCreatorId, isAutoRecording, `suggestionsHistory`, `notesHistory`.
 - MeetingUserIndex: userId, userTimestamp, guildId, channelId_timestamp, meetingId, timestamp, optional accessReason. This is a pointer index for cross-guild/personal My Meetings views; always re-check MeetingHistory access before returning data.
-- PersonalMediaUploadJob: uploadId, ownerUserId, status, mediaKind, sourceS3Key, file metadata, optional meeting pointers, error/retry metadata, created/updated/completed timestamps, and upload expiry.
+- PersonalMediaUploadJob: uploadId, ownerUserId, status, mediaKind, sourceS3Key, file metadata, optional desktop source manifest, optional meeting pointers, error/retry metadata, created/updated/completed timestamps, and upload expiry.
+- PersonalRecordingSegment: per-segment desktop recording state keyed by uploadId and source/sequence, including source label, S3 key, checksum, duration, status, and timestamps.
 - DictionaryEntry: guildId, termKey, term, definition, created/updated metadata.
 - ServerContext / ChannelContext store prompt context.
 - AutoRecordSettings enable record-all or per-channel auto-start.
@@ -125,6 +126,7 @@
 - Avoid hedging and speculative fallbacks. Follow YAGNI and KISS, do not add code for hypothetical cases unless explicitly required.
 - Config constraints: when numeric settings depend on caps, use minKey/maxKey to reference other config entries, clamp inputs in the UI, and enforce bounds in API validation.
 - My Meetings UX: default the portal home list to All time, keep the initial page bounded, and use an explicit Load more control for older meetings.
+- Personal Settings UX: keep account-owned integrations and preferences under `/portal/settings`; keep My Meetings focused on browsing, filtering, upload entry, and meeting detail access.
 - Playwright mock mode: ensure only the mock API (port 3001) and frontend dev server (port 5173) are running. If ports are occupied, stop them first (`Get-NetTCPConnection -LocalPort 3001,5173 | Select-Object -ExpandProperty OwningProcess -Unique | ForEach-Object { Stop-Process -Id $_ }`). Clear `VITE_API_BASE_URL` (for example via `.env.local`) so the frontend uses the mock server.
 - Comment hygiene: don’t leave transient or change-log style comments (e.g., “SDK v3 exposes transformToString”). Use comments only to clarify non-obvious logic, constraints, or intent.
 - Writing style: do not use em dashes in copy/docs/comments; prefer commas, parentheses, or hyphens.
@@ -200,11 +202,19 @@ Optional Windows helper (prints loaded env, supports `-Mock` / `-SkipDocker`):
 
 ## Agent Skills
 
-OpenCode skills are stored as `.opencode/skills/<name>/SKILL.md`. Skills are discovered at OpenCode startup and cached. Adding or modifying skills may require restarting OpenCode.
+Agent workflow skills are mirrored by client:
+
+- Codex: `.codex/skills/<name>/SKILL.md`
+- Claude Code: `.claude/skills/<name>/SKILL.md`
+- OpenCode: `.opencode/skills/<name>/SKILL.md`
+
+When a shared workflow changes, keep all three skill mirrors in sync. Skills are discovered at client startup and cached, so adding or modifying skills may require restarting the client. Run `yarn agent:check` after agent-tooling changes.
 
 - `pr-review-recycle`: agentic loop for processing Copilot/Greptile/Codex PR review threads until checks are green.
 - `docs-authoring`: workflow for creating and maintaining public product docs in `apps/docs-site/`.
 - `pr-post-push-sop`: post-push checklist for checks, AI review audit, and a 5 minute late-comment wait before merge-ready updates.
+- `investigate-and-plan`: investigation and planning workflow for errors, incidents, product ideas, issues, and PRs.
+- `mcp-setup-and-debug`: MCP setup and debugging workflow for OpenCode, Codex CLI, and Claude Code.
 
 ## Non-idiomatic typing
 

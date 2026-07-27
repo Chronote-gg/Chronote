@@ -81,12 +81,15 @@ function sendJson(response, status, body) {
 
 function createMockApi() {
   const uploads = new Map();
+  const completedSegments = new Map();
   let statusChecks = 0;
   const server = http.createServer(async (request, response) => {
     const url = new URL(request.url ?? "/", "http://127.0.0.1");
     if (request.method === "POST" && url.pathname.startsWith("/mock-upload/")) {
-      const sourceId = decodeURIComponent(url.pathname.split("/").pop() ?? "");
-      uploads.set(sourceId, await readRequestBody(request));
+      const [, , sourceIdText, sequenceText] = url.pathname.split("/");
+      const sourceId = decodeURIComponent(sourceIdText ?? "");
+      const sequence = Number.parseInt(sequenceText ?? "", 10);
+      uploads.set(`${sourceId}#${sequence}`, await readRequestBody(request));
       response.writeHead(204);
       response.end();
       return;
@@ -103,23 +106,18 @@ function createMockApi() {
 
     if (
       request.method === "POST" &&
-      url.pathname === "/api/desktop/recordings/intent"
+      url.pathname === "/api/desktop/recordings/session"
     ) {
-      const baseUrl = `http://127.0.0.1:${server.address().port}`;
       const body = JSON.parse(
         (await readRequestBody(request)).toString("utf8"),
       );
       sendJson(response, 200, {
         uploadId,
+        mediaKind: "audio",
         sources: body.sources.map((source) => ({
           sourceId: source.sourceId,
-          sourceS3Key: `desktop-smoke/${source.sourceId}.wav`,
-          contentType: "audio/wav",
-          uploadToken: `token-${source.sourceId}`,
-          upload: {
-            url: `${baseUrl}/mock-upload/${encodeURIComponent(source.sourceId)}`,
-            fields: {},
-          },
+          kind: source.kind,
+          label: source.label,
         })),
       });
       return;
@@ -127,31 +125,75 @@ function createMockApi() {
 
     if (
       request.method === "POST" &&
-      url.pathname === "/api/desktop/recordings/complete"
+      url.pathname === "/api/desktop/recordings/segment-intent"
     ) {
-      const completeRequestText = (await readRequestBody(request)).toString(
-        "utf8",
+      const baseUrl = `http://127.0.0.1:${server.address().port}`;
+      const body = JSON.parse(
+        (await readRequestBody(request)).toString("utf8"),
       );
-      const completeRequest = completeRequestText
-        ? JSON.parse(completeRequestText)
-        : {};
+      const sourceS3Key = `desktop-smoke/${body.sourceId}-${String(body.sequence).padStart(6, "0")}.wav`;
+      sendJson(response, 200, {
+        segment: {
+          sourceS3Key,
+        },
+        uploadRequired: true,
+        uploadToken: `token-${body.sourceId}-${body.sequence}`,
+        expiresAt: Date.now() + 60_000,
+        upload: {
+          url: `${baseUrl}/mock-upload/${encodeURIComponent(body.sourceId)}/${body.sequence}`,
+          fields: {},
+        },
+      });
+      return;
+    }
+
+    if (
+      request.method === "POST" &&
+      url.pathname === "/api/desktop/recordings/segment-complete"
+    ) {
+      const body = JSON.parse(
+        (await readRequestBody(request)).toString("utf8"),
+      );
+      const segmentId = `${body.sourceId}#${body.sequence}`;
+      if (!uploads.has(segmentId)) {
+        sendJson(response, 400, {
+          error: "missing_upload",
+          message: `Segment ${segmentId} was completed before upload.`,
+        });
+        return;
+      }
+      completedSegments.set(segmentId, body);
+      sendJson(response, 200, {
+        segment: {
+          sourceS3Key: body.key,
+        },
+      });
+      return;
+    }
+
+    if (
+      request.method === "POST" &&
+      url.pathname === "/api/desktop/recordings/submit"
+    ) {
+      await readRequestBody(request);
+      const completedSourceIds = new Set(
+        [...completedSegments.values()].map((segment) => segment.sourceId),
+      );
       const missingSourceIds = expectedUploadSourceIds.filter(
-        (sourceId) => !uploads.has(sourceId),
+        (sourceId) => !completedSourceIds.has(sourceId),
       );
       if (missingSourceIds.length > 0) {
-        const receivedSourceIds = [...uploads.keys()];
-        const completedSourceIds = Array.isArray(completeRequest.sources)
-          ? completeRequest.sources.map((source) => source.sourceId)
-          : [];
+        const receivedSegments = [...uploads.keys()];
+        const completedSegmentIds = [...completedSegments.keys()];
         const detail = [
           `missing expected upload source(s): ${missingSourceIds.join(", ")}`,
-          `received upload source(s): ${receivedSourceIds.join(", ") || "none"}`,
-          `complete request source(s): ${completedSourceIds.join(", ") || "none"}`,
+          `received upload segment(s): ${receivedSegments.join(", ") || "none"}`,
+          `completed segment(s): ${completedSegmentIds.join(", ") || "none"}`,
         ].join("; ");
-        console.error(`Desktop smoke mock rejected completion: ${detail}`);
+        console.error(`Desktop smoke mock rejected submission: ${detail}`);
         sendJson(response, 400, {
           error: "missing_uploads",
-          message: `Desktop smoke mock rejected completion: ${detail}`,
+          message: `Desktop smoke mock rejected submission: ${detail}`,
         });
         return;
       }

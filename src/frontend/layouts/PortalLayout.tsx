@@ -48,6 +48,7 @@ export default function PortalLayout() {
   const showNavbar =
     authState !== "unauthenticated" &&
     !pathname.startsWith("/portal/select-server");
+  const isServerWorkspace = pathname.startsWith("/portal/server/");
   const navbarWidth = 300;
   const useInnerScroll =
     !visualMode &&
@@ -57,7 +58,9 @@ export default function PortalLayout() {
     authState === "unauthenticated"
       ? "portal-select"
       : showNavbar
-        ? "portal"
+        ? isServerWorkspace
+          ? "portal-server"
+          : "portal-personal"
         : "portal-select";
 
   const gridTemplateAreas = showNavbar

@@ -1,0 +1,18 @@
+diff --git a/node_modules/js-yaml/index.js b/node_modules/js-yaml/index.js
+index 0b66b8f..93031b3 100644
+--- a/node_modules/js-yaml/index.js
++++ b/node_modules/js-yaml/index.js
+@@ -41,4 +41,9 @@
+-// Removed functions from JS-YAML 3.0.x
+-module.exports.safeLoad = renamed('safeLoad', 'load')
+-module.exports.safeLoadAll = renamed('safeLoadAll', 'loadAll')
+-module.exports.safeDump = renamed('safeDump', 'dump')
++// Compatibility aliases for legacy consumers; load/dump are safe by default in JS-YAML 4.
++function safeLoad(input, options) {
++  const result = loader.load(input, options)
++  return result === undefined ? null : result
++}
++
++module.exports.safeLoad = safeLoad
++module.exports.safeLoadAll = loader.loadAll
++module.exports.safeDump = dumper.dump

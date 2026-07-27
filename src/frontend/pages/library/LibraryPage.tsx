@@ -25,7 +25,7 @@ const getNotionStatusTone = (automation?: LibraryNotionAutomation) => {
 
 const getNotionStatusCopy = (automation?: LibraryNotionAutomation) => {
   if (!automation) {
-    return "Notion automation is available. Choose a shared destination in Settings to auto-export completed meetings.";
+    return "Notion automation is available. Choose a shared destination in Server Settings to auto-export completed meetings.";
   }
   if (!automation.enabled) {
     return "Notion automation is configured but paused for this server.";
