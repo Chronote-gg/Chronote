@@ -85,12 +85,6 @@ const PRICING_ROWS: PricingRow[] = [
     basic: "Yes",
     pro: "Yes",
   },
-  {
-    label: "History",
-    free: "Recent",
-    basic: "Longer",
-    pro: "No limit",
-  },
 ];
 
 const recommendedCell = { backgroundColor: RECOMMENDED_TIER_TINT };
@@ -239,6 +233,7 @@ export default function Home() {
                         size="sm"
                         radius="md"
                         fw={600}
+                        aria-label="Upgrade to Basic"
                         data-testid="home-cta-basic"
                         onClick={() => startUpgrade("basic")}
                       >
@@ -250,6 +245,7 @@ export default function Home() {
                         size="sm"
                         radius="md"
                         variant="default"
+                        aria-label="Upgrade to Pro"
                         data-testid="home-cta-pro"
                         onClick={() => startUpgrade("pro")}
                       >

@@ -36,16 +36,19 @@ During a meeting, Chronote captures:
 
 ## What we store
 
-| Data                                                                                               | Where it lives                                        |
-| -------------------------------------------------------------------------------------------------- | ----------------------------------------------------- |
-| Audio recordings and transcripts                                                                   | Amazon S3, encrypted at rest                          |
-| Notes, summaries, decisions, action items, correction history                                      | Amazon DynamoDB, encrypted at rest                    |
-| Attendance records                                                                                 | DynamoDB, stored as Discord account IDs               |
-| Your Discord account identity (account ID, username, avatar) and the list of servers you belong to | DynamoDB, obtained when you sign in to the web portal |
-| Server settings: context, dictionary terms, auto-record rules, voice preferences                   | DynamoDB                                              |
-| Subscription and payment records (not card numbers)                                                | DynamoDB, alongside Stripe                            |
-| Access logs and operational logs                                                                   | DynamoDB and Amazon CloudWatch                        |
-| Notion and MCP connection tokens, if you connect them                                              | DynamoDB, encrypted or hashed                         |
+| Data                                                                                                      | Where it lives                                        |
+| --------------------------------------------------------------------------------------------------------- | ----------------------------------------------------- |
+| Audio recordings and transcripts                                                                          | Amazon S3, encrypted at rest                          |
+| Notes, summaries, decisions, action items, correction history                                             | Amazon DynamoDB, encrypted at rest                    |
+| The meeting's text chat log, including any attachment links posted during the meeting                     | Amazon S3, as text and JSON                           |
+| Attendance records                                                                                        | DynamoDB, stored as Discord account IDs               |
+| Ask conversations: your questions and Chronote's answers                                                  | DynamoDB                                              |
+| Your Discord account identity (account ID, username, avatar, email) and the list of servers you belong to | DynamoDB, obtained when you sign in to the web portal |
+| Your Discord sign-in session, which includes access and refresh tokens issued by Discord                  | DynamoDB, for as long as the session lasts            |
+| Server settings: context, dictionary terms, auto-record rules, voice preferences                          | DynamoDB                                              |
+| Subscription and payment records (not card numbers)                                                       | DynamoDB, alongside Stripe                            |
+| Access logs and operational logs                                                                          | DynamoDB and Amazon CloudWatch                        |
+| Notion and MCP connection tokens, if you connect them                                                     | DynamoDB, encrypted or hashed                         |
 
 We do not receive or store your payment card details. Stripe handles card data directly.
 
@@ -53,19 +56,19 @@ We do not receive or store your payment card details. Stripe handles card data d
 
 Chronote depends on the following providers. Each one sees only what it needs to do its job.
 
-| Provider            | What it handles                                                                                                                                                                            |
-| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Discord             | The platform Chronote runs on, and how you sign in                                                                                                                                         |
-| Amazon Web Services | Hosting, storage, and logging                                                                                                                                                              |
-| OpenAI              | Transcribing audio, and generating notes, corrections, and optional images. Content sent for processing includes your audio and transcript text                                            |
-| Stripe              | Payments and subscription billing                                                                                                                                                          |
-| Langfuse            | Engineering observability for the transcription and notes pipeline. Traces can include transcript and notes content                                                                        |
-| Notion              | Only if a user connects their Notion account, to export notes there                                                                                                                        |
-| PostHog             | Product analytics for the website and web portal: page views and clicks on things like the pricing buttons. Share link ids are removed before anything is sent, and we honour Do Not Track |
+| Provider            | What it handles                                                                                                                                                                                                      |
+| ------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Discord             | The platform Chronote runs on, and how you sign in                                                                                                                                                                   |
+| Amazon Web Services | Hosting, storage, and logging                                                                                                                                                                                        |
+| OpenAI              | Transcribing audio, and generating notes, corrections, answers to Ask questions, and optional images. Content sent for processing includes your audio, transcript text, the meeting chat log, and your Ask questions |
+| Stripe              | Payments and subscription billing                                                                                                                                                                                    |
+| Langfuse            | Engineering observability for the transcription and notes pipeline. Traces can include transcript and notes content, and attach a compressed copy of the meeting audio                                               |
+| Notion              | Only if a user connects their Notion account, to export notes there                                                                                                                                                  |
+| PostHog             | Product analytics for the website and web portal: page views and clicks on things like the pricing buttons. Share link ids are removed before anything is sent, and we honour Do Not Track                           |
 
 ## How long we keep things
 
-Retention depends on the plan the server is on, and is described on the [pricing section of our site](https://chronote.gg). Paid plans keep meeting history longer, and the Pro plan keeps it without a time limit.
+We keep meetings until you ask us to remove them. Plan limits control how far back the Ask feature searches, not how long we store your data, so a meeting recorded on the Free plan is retained the same way a Pro one is.
 
 Archiving a meeting hides it from your library views. It does not erase the recording, transcript, or notes from storage. If you want a meeting removed entirely, email us and we will do it. [TODO: confirm the removal turnaround and whether a self-service delete is planned before publishing.]
 

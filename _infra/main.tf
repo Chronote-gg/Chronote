@@ -254,9 +254,9 @@ variable "NODE_ENV" {
 }
 
 variable "ENABLE_ONBOARDING" {
-  description = "Enable onboarding flow in the web app"
+  description = "DM the installer on guild join with first-run instructions"
   type        = string
-  default     = "false"
+  default     = "true"
 }
 
 variable "FRONTEND_ALLOWED_ORIGINS" {
