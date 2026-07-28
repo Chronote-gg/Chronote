@@ -286,12 +286,17 @@ export const formatParticipantRoster = (
     .join("\n");
 };
 
-const countParticipantsWithRole = (
+const countRoleHoldersInMeeting = (
   participants: Participant[],
-  roleId: string,
-): number =>
-  participants.filter((participant) => participant.roleIds?.includes(roleId))
-    .length;
+): Map<string, number> => {
+  const counts = new Map<string, number>();
+  for (const participant of participants) {
+    for (const roleId of participant.roleIds ?? []) {
+      counts.set(roleId, (counts.get(roleId) ?? 0) + 1);
+    }
+  }
+  return counts;
+};
 
 /**
  * Roles are listed with their mention strings so notes can address a group.
@@ -306,12 +311,13 @@ export const formatRoleRoster = (
     return NO_ROLES_AVAILABLE_TEXT;
   }
 
+  const holderCounts = countRoleHoldersInMeeting(participants);
   return (
     mentionableRoles
       .map((role) => ({
         name: role.name,
         mention: formatRoleMention(role.id),
-        participantCount: countParticipantsWithRole(participants, role.id),
+        participantCount: holderCounts.get(role.id) ?? 0,
       }))
       .sort(
         (left, right) =>

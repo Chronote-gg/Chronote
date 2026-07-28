@@ -18,13 +18,11 @@ const resolveGuildRoleNames = async (
 ): Promise<Map<string, string>> => {
   try {
     const roles = await listGuildRolesCached(guildId);
-    return new Map(
-      roles
-        .filter((role): role is typeof role & { name: string } =>
-          Boolean(role.name),
-        )
-        .map((role) => [role.id, role.name]),
-    );
+    const named = new Map<string, string>();
+    for (const role of roles) {
+      if (role.name) named.set(role.id, role.name);
+    }
+    return named;
   } catch (error) {
     // Role names are cosmetic. Losing them leaves raw mentions in the output,
     // which is far better than failing a meeting read on a Discord hiccup.
