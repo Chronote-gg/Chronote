@@ -11,8 +11,13 @@ import {
 } from "../../src/services/notesPromptService";
 import { fetchJsonFromS3 } from "../../src/services/storageService";
 import type { MeetingHistory } from "../../src/types/db";
+import type { Participant } from "../../src/types/participants";
 import type { TranscriptPayload } from "../../src/types/transcript";
 import { isPersonalMeeting } from "../../src/utils/meetingOwnership";
+import {
+  formatParticipantLabel,
+  resolveAttendeeDisplayName,
+} from "../../src/utils/participants";
 
 const DEFAULT_LIMIT = 25;
 const REPO_ROOT = path.resolve(__dirname, "..", "..");
@@ -108,6 +113,21 @@ const resolveDownvotedNotes = (
     : { notes: meeting.notes ?? "", exactVersion: false };
 };
 
+const resolveHarvestedAttendees = (
+  meeting: MeetingHistory,
+  participants: Participant[],
+): string[] => {
+  const participantMap = new Map(participants.map((p) => [p.id, p]));
+  if (meeting.attendees?.length) {
+    return meeting.attendees.map((attendee) =>
+      resolveAttendeeDisplayName(attendee, participantMap),
+    );
+  }
+  return participants.map((participant) =>
+    formatParticipantLabel(participant, { includeUsername: false }),
+  );
+};
+
 const buildEvalCase = async (
   meeting: MeetingHistory,
   comments: string[],
@@ -140,9 +160,10 @@ const buildEvalCase = async (
           new Map(mentionableRoles.map((role) => [role.id, role.name])),
         ) ?? "No participant roster captured.",
       roles: formatRoleRoster(mentionableRoles, participants),
-      attendees: participants
-        .map((participant) => participant.username)
-        .join(", "),
+      // Production resolves attendance mentions through the participant
+      // snapshot and prefers nicknames and display names, so emitting bare
+      // usernames would put different person names in front of the model.
+      attendees: resolveHarvestedAttendees(meeting, participants).join(", "),
       allowedUserIds: participants.map((participant) => participant.id),
       allowedRoleIds: promptRoles.map((role) => role.id),
       guildId: isPersonalMeeting(meeting) ? undefined : meeting.guildId,

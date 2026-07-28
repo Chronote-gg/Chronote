@@ -73,11 +73,25 @@ const gradeRecall = (
   emitted: string[],
   expected: string[],
 ): MentionGrade => {
+  // An explicitly empty expectation means "this case should mention nobody",
+  // which is a real assertion. Scoring it as an unconditional pass would let a
+  // case built to reject unnecessary mentions score full marks while making
+  // them.
+  if (expected.length === 0) {
+    return {
+      name,
+      value: emitted.length === 0 ? PASS : FAIL,
+      comment:
+        emitted.length === 0
+          ? undefined
+          : `${emitted.length} mention(s) emitted where none were expected`,
+    };
+  }
   const emittedSet = new Set(emitted);
   const found = expected.filter((id) => emittedSet.has(id));
   return {
     name,
-    value: expected.length === 0 ? PASS : found.length / expected.length,
+    value: found.length / expected.length,
     comment:
       found.length === expected.length
         ? undefined

@@ -149,6 +149,26 @@ describe("gradeMentions", () => {
     expect(gradeValue(grades, "expected_user_recall")).toBe(0);
   });
 
+  test("fails an explicitly empty expectation when a mention is emitted", () => {
+    const grades = gradeMentions({
+      ...baseInput,
+      notes: `<@&${ROLE_DESIGN}> should look at this.`,
+      expectedRoleIds: [],
+    });
+
+    expect(gradeValue(grades, "expected_role_recall")).toBe(0);
+  });
+
+  test("passes an explicitly empty expectation when nothing is mentioned", () => {
+    const grades = gradeMentions({
+      ...baseInput,
+      notes: "Nothing was assigned.",
+      expectedRoleIds: [],
+    });
+
+    expect(gradeValue(grades, "expected_role_recall")).toBe(1);
+  });
+
   test("omits recall grades when a case does not declare expectations", () => {
     const grades = gradeMentions({ ...baseInput, notes: "Nothing assigned." });
 

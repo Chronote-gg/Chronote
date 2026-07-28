@@ -49,6 +49,11 @@ export async function handleAskCommand(
     await interaction.editReply({
       content: rendered,
       components: [buildAskFeedbackRow()],
+      // Answers quote meeting notes, which can contain member and role
+      // mentions. Unlike notes embeds, this is ordinary message content, so
+      // without this a repeated role mention would notify the whole group.
+      // Mentions still render as names, they just do not ping.
+      allowedMentions: { parse: [] },
     });
   } catch (error) {
     console.error("Error handling /ask:", error);
