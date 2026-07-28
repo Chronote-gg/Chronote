@@ -53,3 +53,6 @@ yarn-debug.log*
 yarn-error.log*
 
 minio-data/
+
+# Harvested eval cases contain real meeting content and must stay out of git.
+*.harvested.json

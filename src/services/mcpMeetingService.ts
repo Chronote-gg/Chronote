@@ -23,7 +23,7 @@ import type { MeetingHistory } from "../types/db";
 import { MEETING_STATUS } from "../types/meetingLifecycle";
 import type { Participant } from "../types/participants";
 import type { TranscriptPayload } from "../types/transcript";
-import { replaceDiscordMentionsWithDisplayNames } from "../utils/participants";
+import { createMeetingMentionReplacer } from "./meetingMentionService";
 import { isMeetingIndexedForUser } from "../utils/meetingUserIndex";
 import {
   isPersonalMeeting,
@@ -158,11 +158,6 @@ const normalizeTranscriptWindow = (input?: {
     ),
   ),
 });
-
-const buildParticipantMap = (participants?: Participant[]) =>
-  new Map(
-    (participants ?? []).map((participant) => [participant.id, participant]),
-  );
 
 const resolveParticipantLabel = (participant: Participant) =>
   participant.serverNickname ||
@@ -1012,16 +1007,10 @@ export async function getMcpMeetingSummary(input: {
   const channelMap = isPersonalMeeting(meeting)
     ? new Map<string, string>()
     : await resolveChannelMap(input.guildId);
-  const participants = buildParticipantMap(meeting.participants);
-  const notes = replaceDiscordMentionsWithDisplayNames(
-    meeting.notes ?? "",
-    participants,
-  );
+  const resolveMentions = await createMeetingMentionReplacer(meeting);
+  const notes = resolveMentions(meeting.notes ?? "");
   const summarySentence = meeting.summarySentence
-    ? replaceDiscordMentionsWithDisplayNames(
-        meeting.summarySentence,
-        participants,
-      )
+    ? resolveMentions(meeting.summarySentence)
     : meeting.summarySentence;
   return {
     meeting: {
@@ -1078,10 +1067,9 @@ export async function getMcpMeetingTranscript(input: {
   const transcriptPayload = meeting.transcriptS3Key
     ? await fetchJsonFromS3<TranscriptPayload>(meeting.transcriptS3Key)
     : undefined;
-  const participants = buildParticipantMap(meeting.participants);
-  const transcript = replaceDiscordMentionsWithDisplayNames(
+  const resolveMentions = await createMeetingMentionReplacer(meeting);
+  const transcript = resolveMentions(
     transcriptPayload?.text ?? meeting.transcript ?? "",
-    participants,
   );
   const transcriptWindow = sliceTranscript(
     transcript,

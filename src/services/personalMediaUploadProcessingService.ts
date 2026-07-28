@@ -28,6 +28,7 @@ import { createOpenAIClient } from "./openaiClient";
 import { getModelChoice } from "./modelFactory";
 import { resolveChatParamsForRole } from "./openaiModelParams";
 import { getLangfuseChatPrompt } from "./langfusePromptService";
+import { NO_ROLES_AVAILABLE_TEXT } from "./notesPromptService";
 import { config } from "./configService";
 import {
   generateMeetingSummaries,
@@ -737,7 +738,7 @@ const generatePersonalUploadNotes = async (input: {
       serverDescription: "Personal Chronote upload.",
       voiceChannelName: PERSONAL_UPLOAD_CHANNEL_NAME,
       attendees: "Uploader",
-      roles: "",
+      roles: NO_ROLES_AVAILABLE_TEXT,
       events: "",
       channelNames: PERSONAL_UPLOAD_CHANNEL_NAME,
       longStoryTargetChars: config.notes.longStoryTargetChars,

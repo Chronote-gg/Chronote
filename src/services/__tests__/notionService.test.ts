@@ -1,5 +1,6 @@
 import type { MeetingHistory } from "../../types/db";
 import {
+  buildMeetingNotionMarkdown,
   exportMeetingToNotionAutomation,
   exportMeetingToNotion,
   getEffectiveMeetingNotionExportStatus,
@@ -63,6 +64,36 @@ const tokenResponse = {
   workspace_name: "Workspace One",
   workspace_icon: null,
 };
+
+describe("buildMeetingNotionMarkdown", () => {
+  // Snowflake ids, since mention parsing is numeric by design.
+  const speakerId = "200000000000000001";
+  const meetingWithSnowflakeParticipant: MeetingHistory = {
+    ...meeting,
+    participants: [
+      { id: speakerId, username: "user-a", displayName: "User A" },
+    ],
+  };
+
+  test("resolves participant mentions instead of exporting raw ids", async () => {
+    const markdown = await buildMeetingNotionMarkdown({
+      ...meetingWithSnowflakeParticipant,
+      notes: `- <@${speakerId}> owns the rollout`,
+    });
+
+    expect(markdown).toContain("@User A owns the rollout");
+    expect(markdown).not.toContain(`<@${speakerId}>`);
+  });
+
+  test("leaves unresolvable mentions untouched", async () => {
+    const markdown = await buildMeetingNotionMarkdown({
+      ...meetingWithSnowflakeParticipant,
+      notes: "- <@299999999999999999> owns the rollout",
+    });
+
+    expect(markdown).toContain("<@299999999999999999>");
+  });
+});
 
 describe("notionService", () => {
   beforeEach(() => {

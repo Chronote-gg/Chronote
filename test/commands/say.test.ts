@@ -65,7 +65,9 @@ const makeMember = (voiceChannelId: string): GuildMember =>
     voice: {
       channelId: voiceChannelId,
     },
-  }) as GuildMember;
+    guild: { id: "guild-1" },
+    roles: { cache: [{ id: "role-1" }] },
+  }) as unknown as GuildMember;
 
 const makeInteraction = (
   member: GuildMember,

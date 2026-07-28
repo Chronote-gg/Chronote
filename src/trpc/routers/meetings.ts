@@ -79,10 +79,11 @@ import {
   buildImportedMeetingNotes,
   normalizeImportedNotes,
 } from "../../utils/importedNotes";
+import { resolveAttendeeDisplayName } from "../../utils/participants";
 import {
-  replaceDiscordMentionsWithDisplayNames,
-  resolveAttendeeDisplayName,
-} from "../../utils/participants";
+  buildParticipantMap,
+  createMeetingMentionReplacer,
+} from "../../services/meetingMentionService";
 import {
   isPersonalMeeting,
   PERSONAL_MEETING_CHANNEL_NAME,
@@ -107,11 +108,6 @@ const resolveParticipantLabel = (participant: Participant) =>
   participant.username ||
   participant.tag ||
   "Unknown";
-
-const buildParticipantMap = (participants?: Participant[]) =>
-  new Map(
-    (participants ?? []).map((participant) => [participant.id, participant]),
-  );
 
 const parseChannelIdTimestamp = (channelIdTimestamp: string) => {
   const hashIndex = channelIdTimestamp.indexOf("#");
@@ -1064,20 +1060,11 @@ const detail = authedProcedure
     const transcriptPayload = history.transcriptS3Key
       ? await fetchJsonFromS3<TranscriptPayload>(history.transcriptS3Key)
       : undefined;
-    const participants = buildParticipantMap(history.participants);
-    const transcript = replaceDiscordMentionsWithDisplayNames(
-      transcriptPayload?.text ?? "",
-      participants,
-    );
-    const notes = replaceDiscordMentionsWithDisplayNames(
-      history.notes ?? "",
-      participants,
-    );
+    const resolveMentions = await createMeetingMentionReplacer(history);
+    const transcript = resolveMentions(transcriptPayload?.text ?? "");
+    const notes = resolveMentions(history.notes ?? "");
     const summarySentence = history.summarySentence
-      ? replaceDiscordMentionsWithDisplayNames(
-          history.summarySentence,
-          participants,
-        )
+      ? resolveMentions(history.summarySentence)
       : history.summarySentence;
 
     let chatEntries: ChatEntry[] | undefined;
@@ -1218,9 +1205,8 @@ const updateNotes = authedProcedure
       });
     }
 
-    markdownNotes = replaceDiscordMentionsWithDisplayNames(
+    markdownNotes = (await createMeetingMentionReplacer(history))(
       markdownNotes,
-      buildParticipantMap(history.participants),
     );
 
     if (markdownNotes.length === 0) {
@@ -1335,9 +1321,8 @@ const importNotes = authedProcedure
       source,
     });
 
-    markdownNotes = replaceDiscordMentionsWithDisplayNames(
+    markdownNotes = (await createMeetingMentionReplacer(history))(
       markdownNotes,
-      buildParticipantMap(history.participants),
     );
 
     if (utf8ByteLength(markdownNotes) > NOTES_EDITOR_MARKDOWN_BYTE_LIMIT) {

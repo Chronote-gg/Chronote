@@ -3,14 +3,19 @@ import type { MeetingData } from "../../src/types/meeting-data";
 import type { Participant } from "../../src/types/participants";
 import type { ChatEntry } from "../../src/types/chat";
 
-const buildCollection = <T extends { name: string }>(items: T[]) => ({
+const buildCollection = <T>(items: T[]) => ({
   valueOf: () => items,
 });
 
+const GUILD_ID = "guild-1";
+const ROLE_DESIGN_ID = "role-design";
+const ROLE_ALUMNI_ID = "role-alumni";
+const ROLE_BOT_ID = "role-bot";
+
 const buildMeeting = (): MeetingData => {
   const guild = {
-    id: "guild-1",
-    name: "The Faceless",
+    id: GUILD_ID,
+    name: "Server X",
     description: "Server description",
     members: {
       me: {
@@ -19,19 +24,25 @@ const buildMeeting = (): MeetingData => {
         user: { username: "Chronote" },
       },
     },
-    roles: buildCollection([{ name: "Role A" }]),
+    roles: buildCollection([
+      { id: ROLE_DESIGN_ID, name: "Design" },
+      { id: ROLE_ALUMNI_ID, name: "Alumni" },
+      { id: ROLE_BOT_ID, name: "Bot Role", managed: true },
+      { id: GUILD_ID, name: "@everyone" },
+    ]),
     scheduledEvents: buildCollection([{ name: "Event A" }]),
     channels: buildCollection([{ name: "general" }]),
   };
   const voiceChannel = {
     id: "voice-1",
-    name: "Hall of Faces",
+    name: "Channel Y",
   };
   const participant: Participant = {
     id: "user-1",
-    username: "kitpup",
-    displayName: "Kit Pup",
-    serverNickname: "Kit",
+    username: "user-a",
+    displayName: "User A",
+    serverNickname: "User A nick",
+    roleIds: [ROLE_DESIGN_ID],
   };
   const chatLog: ChatEntry[] = [
     {
@@ -48,7 +59,7 @@ const buildMeeting = (): MeetingData => {
     guild,
     chatLog,
     participants: new Map([[participant.id, participant]]),
-    attendance: new Set(["kitpup"]),
+    attendance: new Set(["user-a"]),
     finalTranscript: "Transcript text",
     runtimeConfig: {
       visionCaptions: {
@@ -115,7 +126,78 @@ describe("notesPromptService", () => {
     );
     expect(call.variables.chatContextBlock).toContain("Chat context");
     expect(call.variables.participantRoster).toContain("profile");
-    expect(call.variables.attendees).toBe("kitpup");
+    expect(call.variables.attendees).toBe("user-a");
+  });
+
+  test("role roster lists mention strings and in-meeting counts", async () => {
+    const { module, getLangfuseChatPrompt } = await loadModule();
+
+    await module.getNotesPrompt(buildMeeting());
+
+    const { roles } = getLangfuseChatPrompt.mock.calls[0][0].variables;
+    expect(roles).toContain(`- Design | mention: <@&${ROLE_DESIGN_ID}>`);
+    expect(roles).toContain("in this meeting: 1");
+    expect(roles).toContain(`- Alumni | mention: <@&${ROLE_ALUMNI_ID}>`);
+    expect(roles).toContain("in this meeting: 0");
+  });
+
+  test("role roster sorts roles held by participants first", async () => {
+    const { module, getLangfuseChatPrompt } = await loadModule();
+
+    await module.getNotesPrompt(buildMeeting());
+
+    const { roles } = getLangfuseChatPrompt.mock.calls[0][0].variables;
+    // Alumni sorts first alphabetically, so leading Design proves the sort is
+    // driven by in-meeting membership rather than by name.
+    expect(roles.indexOf("Design")).toBeLessThan(roles.indexOf("Alumni"));
+  });
+
+  test("role roster excludes @everyone and managed roles", async () => {
+    const { module, getLangfuseChatPrompt } = await loadModule();
+
+    await module.getNotesPrompt(buildMeeting());
+
+    const { roles } = getLangfuseChatPrompt.mock.calls[0][0].variables;
+    expect(roles).not.toContain("@everyone");
+    expect(roles).not.toContain(GUILD_ID);
+    expect(roles).not.toContain("Bot Role");
+  });
+
+  test("participant roster lists each participant's role names", async () => {
+    const { module, getLangfuseChatPrompt } = await loadModule();
+
+    await module.getNotesPrompt(buildMeeting());
+
+    const { participantRoster } =
+      getLangfuseChatPrompt.mock.calls[0][0].variables;
+    expect(participantRoster).toContain("mention: <@user-1>");
+    expect(participantRoster).toContain("roles: Design");
+  });
+
+  test("participant roster marks participants with no roles", async () => {
+    const { module, getLangfuseChatPrompt } = await loadModule();
+    const meeting = buildMeeting();
+    meeting.participants.get("user-1")!.roleIds = undefined;
+
+    await module.getNotesPrompt(meeting);
+
+    const { participantRoster } =
+      getLangfuseChatPrompt.mock.calls[0][0].variables;
+    expect(participantRoster).toContain("roles: -");
+  });
+
+  test("role roster reports when a server has no mentionable roles", async () => {
+    const { module, getLangfuseChatPrompt } = await loadModule();
+    const meeting = buildMeeting();
+    meeting.guild.roles = buildCollection([
+      { id: GUILD_ID, name: "@everyone" },
+    ]) as unknown as MeetingData["guild"]["roles"];
+
+    await module.getNotesPrompt(meeting);
+
+    expect(getLangfuseChatPrompt.mock.calls[0][0].variables.roles).toBe(
+      module.NO_ROLES_AVAILABLE_TEXT,
+    );
   });
 
   test("getNotesPrompt falls back when no chat log exists", async () => {

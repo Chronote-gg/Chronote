@@ -1,0 +1,45 @@
+[
+  {
+    "input": {
+      "transcript": "User A: The onboarding doc is stale, someone on the design team should redo the screenshots. User B: Agreed, and all moderators need to re-read the escalation policy before Friday. User A: I will file the ticket for the doc myself.",
+      "participantRoster": "- User A | username: user-a | display name: User A | server nickname: - | id: 200000000000000001 | mention: <@200000000000000001> | profile: https://discord.com/users/200000000000000001 | roles: Design\n- User B | username: user-b | display name: User B | server nickname: - | id: 200000000000000002 | mention: <@200000000000000002> | profile: https://discord.com/users/200000000000000002 | roles: Moderator",
+      "roles": "- Design | mention: <@&300000000000000001> | in this meeting: 1\n- Moderator | mention: <@&300000000000000002> | in this meeting: 1\n- Alumni | mention: <@&300000000000000003> | in this meeting: 0",
+      "serverName": "Server X",
+      "voiceChannelName": "Channel Y",
+      "attendees": "User A, User B",
+      "allowedUserIds": ["200000000000000001", "200000000000000002"],
+      "allowedRoleIds": [
+        "300000000000000001",
+        "300000000000000002",
+        "300000000000000003"
+      ],
+      "guildId": "100000000000000001"
+    },
+    "expectedOutput": {
+      "expectedUserIds": ["200000000000000001"],
+      "expectedRoleIds": ["300000000000000001", "300000000000000002"]
+    },
+    "metadata": {
+      "label": "group-and-individual-assignment"
+    }
+  },
+  {
+    "input": {
+      "transcript": "User A: Nothing to assign today, we just walked through the roadmap and agreed it looks fine.",
+      "participantRoster": "- User A | username: user-a | display name: User A | server nickname: - | id: 200000000000000001 | mention: <@200000000000000001> | profile: https://discord.com/users/200000000000000001 | roles: -",
+      "roles": "- Design | mention: <@&300000000000000001> | in this meeting: 0",
+      "serverName": "Server X",
+      "voiceChannelName": "Channel Y",
+      "attendees": "User A",
+      "allowedUserIds": ["200000000000000001"],
+      "allowedRoleIds": ["300000000000000001"],
+      "guildId": "100000000000000001"
+    },
+    "expectedOutput": {
+      "expectedRoleIds": []
+    },
+    "metadata": {
+      "label": "no-assignment-should-not-invent-role-mentions"
+    }
+  }
+]

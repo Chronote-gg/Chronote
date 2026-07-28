@@ -7,6 +7,13 @@ Notable product changes for Chronote users. For the full changelog, see the [Git
 
 ## 2026
 
+### Role mentions in meeting notes
+
+- Notes now mention server roles when work is assigned to a group rather than to one person.
+- Member and role mentions can appear anywhere in the notes.
+- Role mentions resolve to readable role names in the web portal, shared links, Notion exports, and Markdown exports.
+- Mentions in notes stay display-only, so posting notes still does not ping anyone.
+
 ### Personal media uploads
 
 - Upload existing audio or video files from the web portal to create personal Chronote meetings.
