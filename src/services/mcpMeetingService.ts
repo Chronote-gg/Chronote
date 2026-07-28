@@ -1083,9 +1083,11 @@ export async function getMcpMeetingTranscript(input: {
     ? await fetchJsonFromS3<TranscriptPayload>(meeting.transcriptS3Key)
     : undefined;
   const resolveMentions = await createMeetingMentionReplacer(meeting);
-  const transcript = resolveMentions(
-    transcriptPayload?.text ?? meeting.transcript ?? "",
-  );
+  // Page the stored transcript, then resolve only the page. Resolution changes
+  // text length and depends on a Discord lookup that can fail, so offsets
+  // taken over resolved text would shift between requests and a client
+  // following nextOffset would skip or repeat characters.
+  const transcript = transcriptPayload?.text ?? meeting.transcript ?? "";
   const transcriptWindow = sliceTranscript(
     transcript,
     normalizeTranscriptWindow(input),
@@ -1093,7 +1095,7 @@ export async function getMcpMeetingTranscript(input: {
   return {
     meetingId: meeting.meetingId,
     id: meeting.channelId_timestamp,
-    transcript: transcriptWindow.transcript,
+    transcript: resolveMentions(transcriptWindow.transcript),
     transcriptAvailable: Boolean(transcript),
     offset: transcriptWindow.offset,
     totalChars: transcriptWindow.totalChars,

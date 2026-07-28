@@ -18,6 +18,12 @@ export type AllowedMentions = {
  * unknown id renders as a broken mention in Discord and the guild id renders
  * as @everyone, so generated notes are checked against the rosters before they
  * are persisted and posted rather than trusting the instruction alone.
+ *
+ * Deliberately limited to mention syntax. Literal "@everyone" text is prose,
+ * not a mention: it never pings from an embed and may legitimately describe
+ * what someone said. Rewriting it would be content mangling on a keyword
+ * match. The eval grader still flags it, because prompt adherence is a
+ * different question from what is safe to persist.
  */
 export const stripUnknownMentions = (
   notes: string,

@@ -44,12 +44,23 @@ const resolveSafeOutputPath = (output: string): string => {
   return resolved;
 };
 
+/**
+ * Returns null when the guild's roles cannot be read, for example because the
+ * bot has left it. A case without its role roster cannot be graded honestly,
+ * so the caller skips it rather than harvesting a misleading one, and rather
+ * than aborting a batch that may contain valid meetings from other guilds.
+ */
 const resolveMentionableRolesForGuild = async (meeting: MeetingHistory) => {
   if (isPersonalMeeting(meeting)) return [];
-  const roles = await listGuildRolesCached(meeting.guildId);
-  return roles
-    .filter((role) => isMentionableRole(role, meeting.guildId))
-    .map((role) => ({ id: role.id, name: role.name }));
+  try {
+    const roles = await listGuildRolesCached(meeting.guildId);
+    return roles
+      .filter((role) => isMentionableRole(role, meeting.guildId))
+      .map((role) => ({ id: role.id, name: role.name }));
+  } catch (error) {
+    console.warn(`Could not read roles for guild ${meeting.guildId}`, error);
+    return null;
+  }
 };
 
 /**
@@ -80,6 +91,7 @@ const buildEvalCase = async (
 ) => {
   const participants = meeting.participants ?? [];
   const mentionableRoles = await resolveMentionableRolesForGuild(meeting);
+  if (!mentionableRoles) return null;
   // Only the roles the prompt actually renders count as allowed, otherwise an
   // id from the dropped tail would silently pass the hallucination grade.
   const promptRoles = selectRolesForPrompt(mentionableRoles, participants);
@@ -184,9 +196,16 @@ async function main() {
       console.warn(`Skipping ${entry.targetId}: meeting history not found.`);
       continue;
     }
-    cases.push(
-      await buildEvalCase(meeting, entry.comments, entry.notesVersion),
+    const evalCase = await buildEvalCase(
+      meeting,
+      entry.comments,
+      entry.notesVersion,
     );
+    if (!evalCase) {
+      console.warn(`Skipping ${entry.targetId}: role roster unavailable.`);
+      continue;
+    }
+    cases.push(evalCase);
   }
 
   await mkdir(path.dirname(resolvedOutput), { recursive: true });

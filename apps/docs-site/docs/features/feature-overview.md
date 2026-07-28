@@ -161,7 +161,7 @@ Chronote writes notes that refer to people and groups using Discord mentions, so
 
 - Individual assignments use a member mention, for example when one person owns a follow-up.
 - Group assignments use a role mention, for example when the transcript says all moderators or the whole design team should do something.
-- Chronote only mentions members who attended and roles that exist in your server. It never mentions `@everyone` or `@here`.
+- Chronote only mentions members who attended and roles that exist in your server, and it never produces an `@everyone` or `@here` mention. Mentions in generated notes are checked against those lists before the notes are saved, so a mention is never a guess.
 
 Mentions inside meeting notes are display-only. Discord does not send notifications for mentions in an embed, so nobody is pinged when notes are posted.
 

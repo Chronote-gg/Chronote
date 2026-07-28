@@ -70,3 +70,16 @@ downvote comment in `metadata` for context.
 contain real meeting content, and this repository is public. Write them to a
 private location, curate `expectedOutput`, strip identifying details, then upload
 to Langfuse. `*.harvested.json` is gitignored as a backstop.
+
+Cases are grouped by meeting and notes version, since two downvotes on different
+versions are different failures. Notes come from the matching `notesHistory`
+entry; `notesVersionResolved: false` in metadata means that version was no longer
+retained and the current notes were used instead, so the case may not reproduce.
+
+Known limitation: the role roster is rebuilt from the guild's **current** roles,
+not the roster as it stood during the meeting. Roles are not snapshotted per
+meeting (a deliberate simplicity tradeoff), so renamed, deleted, or newly created
+roles will shift a harvested prompt away from the original. Harvest and curate
+downvotes reasonably soon after they arrive, and treat role-heavy cases from old
+meetings with suspicion. Meetings whose guild can no longer be read at all are
+skipped with a warning rather than harvested with an empty roster.
