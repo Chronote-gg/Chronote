@@ -23,7 +23,11 @@ import type { MeetingHistory } from "../types/db";
 import { MEETING_STATUS } from "../types/meetingLifecycle";
 import type { Participant } from "../types/participants";
 import type { TranscriptPayload } from "../types/transcript";
-import { createMeetingMentionReplacer } from "./meetingMentionService";
+import {
+  buildMeetingMentionReplacer,
+  createMeetingMentionReplacer,
+  resolveGuildRoleNames,
+} from "./meetingMentionService";
 import { isMeetingIndexedForUser } from "../utils/meetingUserIndex";
 import {
   isPersonalMeeting,
@@ -801,12 +805,16 @@ export async function listMcpMeetings(input: ListMcpMeetingsInput) {
     accessContext,
   );
   const channelMap = await resolveChannelMap(input.guildId);
-  const replacers = await Promise.all(
-    allowedMeetings.map(createMeetingMentionReplacer),
-  );
+  const roleNamesByGuildId = new Map([
+    [input.guildId, await resolveGuildRoleNames(input.guildId)],
+  ]);
   return {
-    meetings: allowedMeetings.map((meeting, index) =>
-      summarizeMeeting(meeting, channelMap, replacers[index]),
+    meetings: allowedMeetings.map((meeting) =>
+      summarizeMeeting(
+        meeting,
+        channelMap,
+        buildMeetingMentionReplacer(meeting, roleNamesByGuildId),
+      ),
     ),
   };
 }
@@ -880,29 +888,31 @@ const summarizeUserMeetings = async (
         .map((meeting) => meeting.guildId),
     ),
   );
-  const channelEntries = await runInBatches(
+  // Batched per guild, not per meeting, so a user with meetings across many
+  // servers does not fan out one Discord request per row.
+  const guildEntries = await runInBatches(
     guildIds,
     MCP_CHANNEL_MAP_BATCH_SIZE,
     async (guildId) => ({
       guildId,
       channelMap: await resolveChannelMap(guildId),
+      roleNames: await resolveGuildRoleNames(guildId),
     }),
   );
   const channelMaps = new Map<string, Map<string, string>>();
-  channelEntries.forEach((entry) => {
+  const roleNamesByGuildId = new Map<string, Map<string, string>>();
+  guildEntries.forEach((entry) => {
     channelMaps.set(entry.guildId, entry.channelMap);
+    roleNamesByGuildId.set(entry.guildId, entry.roleNames);
   });
-  const replacers = await Promise.all(
-    meetings.map(createMeetingMentionReplacer),
-  );
 
-  return meetings.map((meeting, index) => {
+  return meetings.map((meeting) => {
     const server = serverMap.get(meeting.guildId);
     return {
       ...summarizeMeeting(
         meeting,
         channelMaps.get(meeting.guildId) ?? new Map<string, string>(),
-        replacers[index],
+        buildMeetingMentionReplacer(meeting, roleNamesByGuildId),
       ),
       serverId: meeting.guildId,
       serverName: isPersonalMeeting(meeting)

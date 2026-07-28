@@ -81,8 +81,10 @@ import {
 } from "../../utils/importedNotes";
 import { resolveAttendeeDisplayName } from "../../utils/participants";
 import {
+  buildMeetingMentionReplacer,
   buildParticipantMap,
   createMeetingMentionReplacer,
+  resolveGuildRoleNames,
 } from "../../services/meetingMentionService";
 import {
   isPersonalMeeting,
@@ -917,14 +919,18 @@ const list = guildMemberProcedure
     );
     // Library cards derive their summary from notes when no summarySentence
     // exists, so list payloads need the same mention resolution as detail.
-    const replacers = await Promise.all(
-      allowedMeetings.map(createMeetingMentionReplacer),
-    );
+    // One role fetch for the whole list, since this endpoint is guild scoped.
+    const roleNamesByGuildId = new Map([
+      [input.serverId, await resolveGuildRoleNames(input.serverId)],
+    ]);
 
     return {
-      meetings: allowedMeetings.map((meeting, index) => {
+      meetings: allowedMeetings.map((meeting) => {
         const channelId = resolveMeetingListChannelId(meeting);
-        const resolveMentions = replacers[index];
+        const resolveMentions = buildMeetingMentionReplacer(
+          meeting,
+          roleNamesByGuildId,
+        );
         return {
           status: resolveMeetingListStatus(meeting.status),
           id: meeting.channelId_timestamp,

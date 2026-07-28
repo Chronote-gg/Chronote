@@ -13,7 +13,7 @@ type MentionSource = Pick<MeetingHistory, "guildId" | "ownershipScope"> & {
   participants?: Participant[];
 };
 
-const resolveGuildRoleNames = async (
+export const resolveGuildRoleNames = async (
   guildId: string,
 ): Promise<Map<string, string>> => {
   try {
@@ -32,6 +32,23 @@ const resolveGuildRoleNames = async (
 };
 
 /**
+ * Builds a rewriter from role names the caller already has. Cross-guild list
+ * endpoints use this so they can fetch role maps once per guild, in batches,
+ * instead of once per meeting.
+ */
+export const buildMeetingMentionReplacer = (
+  meeting: MentionSource,
+  roleNamesByGuildId: Map<string, Map<string, string>>,
+): ((text: string) => string) => {
+  const participants = buildParticipantMap(meeting.participants);
+  const roleNames = isPersonalMeeting(meeting)
+    ? new Map<string, string>()
+    : (roleNamesByGuildId.get(meeting.guildId) ?? new Map<string, string>());
+  return (text: string) =>
+    replaceDiscordMentionsWithDisplayNames(text, participants, roleNames);
+};
+
+/**
  * Builds a rewriter that turns Discord user and role mentions into readable
  * `@Name` text. Role names are resolved once per meeting so a caller can
  * rewrite notes, transcript, and summary without extra Discord calls.
@@ -40,10 +57,12 @@ const resolveGuildRoleNames = async (
 export const createMeetingMentionReplacer = async (
   meeting: MentionSource,
 ): Promise<(text: string) => string> => {
-  const participants = buildParticipantMap(meeting.participants);
-  const roleNames = isPersonalMeeting(meeting)
-    ? new Map<string, string>()
-    : await resolveGuildRoleNames(meeting.guildId);
-  return (text: string) =>
-    replaceDiscordMentionsWithDisplayNames(text, participants, roleNames);
+  if (isPersonalMeeting(meeting)) {
+    return buildMeetingMentionReplacer(meeting, new Map());
+  }
+  const roleNames = await resolveGuildRoleNames(meeting.guildId);
+  return buildMeetingMentionReplacer(
+    meeting,
+    new Map([[meeting.guildId, roleNames]]),
+  );
 };

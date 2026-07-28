@@ -76,6 +76,30 @@ describe("createMeetingMentionReplacer", () => {
     warn.mockRestore();
   });
 
+  test("reuses prefetched role names without hitting Discord", async () => {
+    const listGuildRolesCached = rolesOk();
+    const { buildMeetingMentionReplacer } =
+      await loadModule(listGuildRolesCached);
+
+    const resolve = buildMeetingMentionReplacer(
+      buildHistory(),
+      new Map([[GUILD_ID, new Map([[ROLE_ID, "Design"]])]]),
+    );
+
+    expect(resolve(`<@&${ROLE_ID}> reviews.`)).toBe("@Design reviews.");
+    expect(listGuildRolesCached).not.toHaveBeenCalled();
+  });
+
+  test("leaves role mentions raw when a guild is missing from the prefetch", async () => {
+    const { buildMeetingMentionReplacer } = await loadModule(rolesOk());
+
+    const resolve = buildMeetingMentionReplacer(buildHistory(), new Map());
+
+    expect(resolve(`<@${USER_ID}> and <@&${ROLE_ID}>`)).toBe(
+      `@User A and <@&${ROLE_ID}>`,
+    );
+  });
+
   test("ignores roles that have no name", async () => {
     const listGuildRolesCached = jest
       .fn<(guildId: string) => Promise<unknown[]>>()
