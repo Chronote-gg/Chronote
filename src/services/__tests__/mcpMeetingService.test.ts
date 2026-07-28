@@ -938,6 +938,18 @@ describe("mcpMeetingService", () => {
       "channel-1#2026-01-02T00:00:00.000Z",
     );
   });
+});
+
+describe("mcpMeetingService transcripts", () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    jest.mocked(getGuildMemberCached).mockResolvedValue({ roles: [] });
+    jest.mocked(listBotGuildsCached).mockResolvedValue([]);
+    jest
+      .mocked(listGuildChannelsCached)
+      .mockResolvedValue([{ id: "channel-1", name: "Meeting Room", type: 2 }]);
+    jest.mocked(listGuildRolesCached).mockResolvedValue([]);
+  });
 
   it("loads a transcript by the list item id", async () => {
     const meeting = createMeeting("meeting-1", {
