@@ -1088,7 +1088,12 @@ const detail = authedProcedure
     const transcript = resolveMentions.toText(transcriptPayload?.text ?? "");
     const notes = resolveMentions.toMarkdown(history.notes ?? "");
     const summarySentence = history.summarySentence
-      ? resolveMentions.toText(history.summarySentence)
+      ? // The portal renders this through MarkdownBody, so it needs escaping.
+        // It can also feed a title fallback, but only when both meetingName and
+        // summaryLabel are absent, and summaryLabel is normalized to
+        // alphanumerics so it is almost always present. Escaping the common
+        // rendered path beats leaving an injection open for the rare one.
+        resolveMentions.toMarkdown(history.summarySentence)
       : history.summarySentence;
 
     let chatEntries: ChatEntry[] | undefined;

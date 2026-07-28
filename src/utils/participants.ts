@@ -50,10 +50,16 @@ export function resolveAttendeeDisplayName(
 // clickable link, so those surfaces opt into escaping. Only inline-dangerous
 // characters: escaping "-" or "." would mangle ordinary names like "Jane-Doe",
 // and those are only significant at the start of a line.
-const MARKDOWN_METACHARACTERS = /([\\`*_[\]()~<>|])/g;
+const MARKDOWN_METACHARACTERS = /([\\`*_[\]()~<>|:])/g;
+// The portal and shared notes render with remark-gfm, which autolinks bare
+// URLs. Escaping ":" breaks the scheme form; "www." needs the dot broken too,
+// and only in that prefix so ordinary names like "Dr. Smith" stay intact.
+const GFM_WWW_AUTOLINK = /\bwww\./gi;
 
 const escapeMarkdown = (value: string): string =>
-  value.replace(MARKDOWN_METACHARACTERS, "\\$1");
+  value
+    .replace(MARKDOWN_METACHARACTERS, "\\$1")
+    .replace(GFM_WWW_AUTOLINK, (match) => `${match.slice(0, -1)}\\.`);
 
 const formatResolvedMention = (name: string, forMarkdown: boolean): string => {
   const trimmed = name.replace(/^@+/, "");
@@ -157,10 +163,12 @@ export function fromMember(member: GuildMember): Participant {
   // @everyone is on every member and carries no signal, so it is dropped here.
   // Discord allows up to 250 roles per member; these snapshots are embedded in
   // a single MeetingHistory item, and a roster line listing that many roles
-  // would bloat the notes prompt for no benefit. Highest roles win because
-  // Discord orders the cache by position.
+  // would bloat the notes prompt for no benefit. Sorted explicitly because the
+  // role cache is not ordered by position, so slicing it raw could drop a
+  // member's most significant roles and keep trivial ones.
   const roleIds = member.roles.cache
     .filter((role) => role.id !== member.guild.id)
+    .sort((left, right) => right.position - left.position)
     .map((role) => role.id)
     .slice(0, MAX_SNAPSHOT_ROLES_PER_MEMBER);
   return {

@@ -75,7 +75,9 @@ describe("replaceDiscordMentionsWithDisplayNames", () => {
       { forMarkdown: true },
     );
 
-    expect(result).toBe("@\\[Support\\]\\(https://example.invalid\\) owns it.");
+    expect(result).toBe(
+      "@\\[Support\\]\\(https\\://example.invalid\\) owns it.",
+    );
     expect(result).not.toContain("](");
   });
 
@@ -90,6 +92,30 @@ describe("replaceDiscordMentionsWithDisplayNames", () => {
         { forMarkdown: true },
       ),
     ).toBe("@a\\*b\\*c spoke.");
+  });
+
+  test("neutralizes bare URL names that remark-gfm would autolink", () => {
+    const asMarkdown = (roleName: string) =>
+      replaceDiscordMentionsWithDisplayNames(
+        `<@&${ROLE_ID}>`,
+        participants,
+        new Map([[ROLE_ID, roleName]]),
+        { forMarkdown: true },
+      );
+
+    expect(asMarkdown("https://example.invalid")).not.toContain("https://");
+    expect(asMarkdown("www.example.invalid")).not.toContain("www.");
+  });
+
+  test("does not break an ordinary name containing a period", () => {
+    expect(
+      replaceDiscordMentionsWithDisplayNames(
+        `<@&${ROLE_ID}>`,
+        participants,
+        new Map([[ROLE_ID, "Dr. Smith"]]),
+        { forMarkdown: true },
+      ),
+    ).toBe("@Dr. Smith");
   });
 
   test("leaves names verbatim for plain-text consumers", () => {
@@ -126,7 +152,9 @@ describe("fromMember", () => {
       },
       nickname: "Nick",
       guild: { id: GUILD_ID },
-      roles: { cache: roleIds.map((id) => ({ id })) },
+      // Ascending position, matching that Discord's role cache is not ordered
+      // by position, so the cap has to sort before slicing.
+      roles: { cache: roleIds.map((id, index) => ({ id, position: index })) },
     }) as unknown as GuildMember;
 
   test("captures role ids and drops @everyone", () => {
@@ -139,7 +167,8 @@ describe("fromMember", () => {
     expect(fromMember(buildMember([GUILD_ID])).roleIds).toBeUndefined();
   });
 
-  test("caps snapshotted roles so one member cannot bloat the history item", () => {
+  test("caps snapshotted roles, keeping the highest positions", () => {
+    // Ascending position, so the cap must keep the tail, not the head.
     const manyRoles = Array.from(
       { length: 250 },
       (_, index) => `3000000000000000${String(index).padStart(2, "0")}`,
@@ -148,6 +177,7 @@ describe("fromMember", () => {
     const roleIds = fromMember(buildMember(manyRoles)).roleIds ?? [];
 
     expect(roleIds).toHaveLength(40);
-    expect(roleIds[0]).toBe(manyRoles[0]);
+    expect(roleIds[0]).toBe(manyRoles[manyRoles.length - 1]);
+    expect(roleIds).not.toContain(manyRoles[0]);
   });
 });
