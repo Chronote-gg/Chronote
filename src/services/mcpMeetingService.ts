@@ -1121,6 +1121,14 @@ export async function getMcpMeetingTranscript(input: {
   // text length and depends on a Discord lookup that can fail, so offsets
   // taken over resolved text would shift between requests and a client
   // following nextOffset would skip or repeat characters.
+  //
+  // offset, nextOffset, totalChars, and maxChars are therefore all in stored
+  // transcript coordinates. Resolution is a display transform applied after
+  // paging, so a page whose mentions resolve to longer names can exceed
+  // maxChars slightly. Sizing the window to the resolved length instead would
+  // put the bound and the offsets in different coordinate systems and make the
+  // response shape depend on whether a Discord lookup succeeded, which is the
+  // instability this ordering exists to avoid.
   const transcript = transcriptPayload?.text ?? meeting.transcript ?? "";
   const transcriptWindow = sliceTranscript(
     transcript,
