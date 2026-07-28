@@ -85,6 +85,7 @@ import {
   buildParticipantMap,
   createMeetingMentionReplacer,
   resolveGuildRoleNames,
+  resolveMentionsInTimelineEvents,
 } from "../../services/meetingMentionService";
 import {
   isPersonalMeeting,
@@ -1085,11 +1086,14 @@ const detail = authedProcedure
     if (history.chatS3Key) {
       chatEntries = await fetchJsonFromS3<ChatEntry[]>(history.chatS3Key);
     }
-    const events: MeetingEvent[] = buildMeetingTimelineEventsFromHistory({
-      history,
-      transcriptPayload,
-      chatEntries,
-    });
+    const events: MeetingEvent[] = resolveMentionsInTimelineEvents(
+      buildMeetingTimelineEventsFromHistory({
+        history,
+        transcriptPayload,
+        chatEntries,
+      }),
+      resolveMentions,
+    );
 
     const audioUrl = history.audioS3Key
       ? await getSignedObjectUrl(history.audioS3Key)

@@ -105,6 +105,18 @@ describe("gradeMentions", () => {
     expect(gradeValue(grades, "no_broadcast_mention")).toBe(0);
   });
 
+  test.each([
+    "Type `@everyone` to notify the server.",
+    "```\n@here is how you ping\n```",
+  ])("does not fail broadcast text Discord renders as code: %s", (notes) => {
+    expect(
+      gradeValue(
+        gradeMentions({ ...baseInput, notes }),
+        "no_broadcast_mention",
+      ),
+    ).toBe(1);
+  });
+
   test.each(["@everyone should read this.", "@here is the recap."])(
     "fails literal broadcast text: %s",
     (notes) => {

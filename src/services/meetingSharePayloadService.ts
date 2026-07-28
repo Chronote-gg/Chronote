@@ -8,6 +8,7 @@ import { fetchJsonFromS3 } from "./storageService";
 import {
   buildParticipantMap,
   createMeetingMentionReplacer,
+  resolveMentionsInTimelineEvents,
 } from "./meetingMentionService";
 import { buildMeetingTimelineEventsFromHistory } from "./meetingTimelineService";
 
@@ -93,11 +94,14 @@ export async function buildSharedMeetingPayloadService(
   // Titles can fall back to the summary sentence, so resolve mentions before
   // deriving one or a raw id leaks into the shared page title.
   const title = resolveSharedMeetingTitle({ ...history, summarySentence });
-  const events = buildMeetingTimelineEventsFromHistory({
-    history,
-    transcriptPayload,
-    chatEntries,
-  });
+  const events = resolveMentionsInTimelineEvents(
+    buildMeetingTimelineEventsFromHistory({
+      history,
+      transcriptPayload,
+      chatEntries,
+    }),
+    resolveMentions,
+  );
 
   return {
     meeting: {

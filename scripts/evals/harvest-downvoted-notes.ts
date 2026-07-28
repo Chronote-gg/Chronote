@@ -52,12 +52,38 @@ const resolveMentionableRolesForGuild = async (meeting: MeetingHistory) => {
     .map((role) => ({ id: role.id, name: role.name }));
 };
 
-const buildEvalCase = async (meeting: MeetingHistory, comments: string[]) => {
+/**
+ * A downvote is about the notes as they were when it was cast. If the notes
+ * were corrected afterwards, the current text no longer reproduces the
+ * complaint, so the matching history version is preferred.
+ */
+const resolveDownvotedNotes = (
+  meeting: MeetingHistory,
+  notesVersion?: number,
+): { notes: string; exactVersion: boolean } => {
+  const currentVersion = meeting.notesVersion ?? 1;
+  if (!notesVersion || notesVersion === currentVersion) {
+    return { notes: meeting.notes ?? "", exactVersion: true };
+  }
+  const historical = meeting.notesHistory?.find(
+    (entry) => entry.version === notesVersion,
+  );
+  return historical
+    ? { notes: historical.notes, exactVersion: true }
+    : { notes: meeting.notes ?? "", exactVersion: false };
+};
+
+const buildEvalCase = async (
+  meeting: MeetingHistory,
+  comments: string[],
+  notesVersion?: number,
+) => {
   const participants = meeting.participants ?? [];
   const mentionableRoles = await resolveMentionableRolesForGuild(meeting);
   // Only the roles the prompt actually renders count as allowed, otherwise an
   // id from the dropped tail would silently pass the hallucination grade.
   const promptRoles = selectRolesForPrompt(mentionableRoles, participants);
+  const downvotedNotes = resolveDownvotedNotes(meeting, notesVersion);
   const transcriptPayload = meeting.transcriptS3Key
     ? await fetchJsonFromS3<TranscriptPayload>(meeting.transcriptS3Key)
     : undefined;
@@ -85,9 +111,13 @@ const buildEvalCase = async (meeting: MeetingHistory, comments: string[]) => {
     expectedOutput: {},
     metadata: {
       meetingId: meeting.meetingId,
-      notesVersion: meeting.notesVersion,
+      downvotedNotesVersion: notesVersion,
+      currentNotesVersion: meeting.notesVersion,
+      // False means the downvoted version was not in notesHistory and the
+      // notes below are the current text, so the case may not reproduce.
+      notesVersionResolved: downvotedNotes.exactVersion,
       downvoteComments: comments,
-      generatedNotes: meeting.notes,
+      generatedNotes: downvotedNotes.notes,
     },
   };
 };
@@ -103,11 +133,17 @@ async function main() {
   const limit = Number(parseFlagValue("--limit") ?? DEFAULT_LIMIT);
 
   // Feedback is keyed per user, so one meeting appears once per downvoter.
-  // --limit counts distinct meetings, so keep paging until that many are
-  // collected rather than deduplicating a single page down to fewer.
+  // Group by meeting and notes version: two versions of the same meeting are
+  // different failures. --limit counts those groups, so keep paging until
+  // that many are collected rather than deduplicating one page down to fewer.
   const commentsByMeeting = new Map<
     string,
-    { guildId: string; targetId: string; comments: string[] }
+    {
+      guildId: string;
+      targetId: string;
+      notesVersion?: number;
+      comments: string[];
+    }
   >();
   let cursor: string | undefined;
   let recordCount = 0;
@@ -120,10 +156,11 @@ async function main() {
     });
     recordCount += page.items.length;
     for (const item of page.items) {
-      const key = `${item.guildId}#${item.targetId}`;
+      const key = `${item.guildId}#${item.targetId}#${item.notesVersion ?? "current"}`;
       const entry = commentsByMeeting.get(key) ?? {
         guildId: item.guildId,
         targetId: item.targetId,
+        notesVersion: item.notesVersion,
         comments: [],
       };
       if (item.comment) entry.comments.push(item.comment);
@@ -134,7 +171,7 @@ async function main() {
 
   const selected = Array.from(commentsByMeeting.values()).slice(0, limit);
   console.log(
-    `Read ${recordCount} downvote record(s), ${commentsByMeeting.size} distinct meeting(s), harvesting ${selected.length}.`,
+    `Read ${recordCount} downvote record(s), ${commentsByMeeting.size} distinct meeting/version pair(s), harvesting ${selected.length}.`,
   );
 
   const cases = [];
@@ -147,7 +184,9 @@ async function main() {
       console.warn(`Skipping ${entry.targetId}: meeting history not found.`);
       continue;
     }
-    cases.push(await buildEvalCase(meeting, entry.comments));
+    cases.push(
+      await buildEvalCase(meeting, entry.comments, entry.notesVersion),
+    );
   }
 
   await mkdir(path.dirname(resolvedOutput), { recursive: true });

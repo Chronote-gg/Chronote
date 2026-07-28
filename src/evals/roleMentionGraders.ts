@@ -41,17 +41,15 @@ const stripNonRenderingMentions = (text: string): string =>
 
 const extractIds = (text: string, pattern: RegExp): string[] => {
   // Fresh regex per call so the shared /g lastIndex never leaks between calls.
-  const matches = stripNonRenderingMentions(text).matchAll(
-    new RegExp(pattern.source, pattern.flags),
-  );
+  const matches = text.matchAll(new RegExp(pattern.source, pattern.flags));
   return Array.from(new Set(Array.from(matches, (match) => match[1])));
 };
 
 export const extractUserMentionIds = (text: string): string[] =>
-  extractIds(text, USER_MENTION_PATTERN);
+  extractIds(stripNonRenderingMentions(text), USER_MENTION_PATTERN);
 
 export const extractRoleMentionIds = (text: string): string[] =>
-  extractIds(text, ROLE_MENTION_PATTERN);
+  extractIds(stripNonRenderingMentions(text), ROLE_MENTION_PATTERN);
 
 const gradeResolvable = (
   name: string,
@@ -93,8 +91,11 @@ const gradeRecall = (
  * than copied, without spending a judge model on it.
  */
 export const gradeMentions = (input: MentionGradeInput): MentionGrade[] => {
-  const roleIds = extractRoleMentionIds(input.notes);
-  const userIds = extractUserMentionIds(input.notes);
+  // Everything is graded against what Discord actually renders, so quoting
+  // mention or broadcast syntax inside code does not count against a run.
+  const rendered = stripNonRenderingMentions(input.notes);
+  const roleIds = extractIds(rendered, ROLE_MENTION_PATTERN);
+  const userIds = extractIds(rendered, USER_MENTION_PATTERN);
 
   const mentionsEveryoneRole = input.guildId
     ? roleIds.includes(input.guildId)
@@ -105,7 +106,7 @@ export const gradeMentions = (input: MentionGradeInput): MentionGrade[] => {
     {
       name: "no_broadcast_mention",
       value:
-        BROADCAST_MENTION_PATTERN.test(input.notes) || mentionsEveryoneRole
+        BROADCAST_MENTION_PATTERN.test(rendered) || mentionsEveryoneRole
           ? FAIL
           : PASS,
       comment: mentionsEveryoneRole

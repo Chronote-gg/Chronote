@@ -63,7 +63,9 @@ jest.mock("../../src/services/storageService", () => ({
 }));
 
 jest.mock("../../src/services/meetingTimelineService", () => ({
-  buildMeetingTimelineEventsFromHistory: jest.fn(),
+  // The real builder always returns an array, and the detail route now maps
+  // over it to resolve mentions in event text.
+  buildMeetingTimelineEventsFromHistory: jest.fn(() => []),
 }));
 
 jest.mock("../../src/services/summaryFeedbackService", () => ({
@@ -135,6 +137,9 @@ describe("meetings router detail", () => {
 
   beforeEach(() => {
     jest.resetAllMocks();
+    // The real builder always returns an array, and the detail route maps over
+    // it to resolve mentions in event text.
+    mockedBuildTimeline.mockReturnValue([]);
     mockedEnsureManageGuild.mockResolvedValue(true);
     mockedEnsureUserInGuild.mockResolvedValue(true);
     mockedEnsureMeetingAccess.mockResolvedValue(true);

@@ -100,6 +100,26 @@ describe("createMeetingMentionReplacer", () => {
     );
   });
 
+  test("resolves mentions inside timeline event text", async () => {
+    const { createMeetingMentionReplacer, resolveMentionsInTimelineEvents } =
+      await loadModule(rolesOk());
+    const resolve = await createMeetingMentionReplacer(buildHistory());
+
+    const events = resolveMentionsInTimelineEvents(
+      [
+        { id: "evt-1", text: `hey <@&${ROLE_ID}> look at this` },
+        { id: "evt-2", text: `<@${USER_ID}> joined` },
+      ],
+      resolve,
+    );
+
+    expect(events[0]).toEqual({
+      id: "evt-1",
+      text: "hey @Design look at this",
+    });
+    expect(events[1]).toEqual({ id: "evt-2", text: "@User A joined" });
+  });
+
   test("ignores roles that have no name", async () => {
     const listGuildRolesCached = jest
       .fn<(guildId: string) => Promise<unknown[]>>()

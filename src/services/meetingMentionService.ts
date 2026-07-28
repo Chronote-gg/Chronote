@@ -32,6 +32,16 @@ export const resolveGuildRoleNames = async (
 };
 
 /**
+ * Timeline events carry chat message text verbatim, so a participant who typed
+ * a mention would otherwise surface a raw id on shared pages and the portal.
+ */
+export const resolveMentionsInTimelineEvents = <T extends { text: string }>(
+  events: T[],
+  resolveMentions: (text: string) => string,
+): T[] =>
+  events.map((event) => ({ ...event, text: resolveMentions(event.text) }));
+
+/**
  * Builds a rewriter from role names the caller already has. Cross-guild list
  * endpoints use this so they can fetch role maps once per guild, in batches,
  * instead of once per meeting.
