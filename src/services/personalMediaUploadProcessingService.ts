@@ -29,6 +29,7 @@ import { getModelChoice } from "./modelFactory";
 import { resolveChatParamsForRole } from "./openaiModelParams";
 import { getLangfuseChatPrompt } from "./langfusePromptService";
 import { NO_ROLES_AVAILABLE_TEXT } from "./notesPromptService";
+import { stripUnknownMentions } from "../utils/mentionSanitizer";
 import { config } from "./configService";
 import {
   generateMeetingSummaries,
@@ -246,7 +247,11 @@ const generateNotesForTranscript = async (
   transcript: string,
 ) => {
   if (!transcript.trim()) return "";
-  return generatePersonalUploadNotes({ transcript, title: job.title });
+  return generatePersonalUploadNotes({
+    transcript,
+    title: job.title,
+    ownerUserId: job.ownerUserId,
+  });
 };
 
 const generateSummariesForNotes = async (
@@ -721,6 +726,7 @@ const processPersonalMediaContent = async (
 const generatePersonalUploadNotes = async (input: {
   transcript: string;
   title?: string;
+  ownerUserId: string;
 }) => {
   const { messages, langfusePrompt } = await getLangfuseChatPrompt({
     name: config.langfuse.notesPromptName,
@@ -761,7 +767,12 @@ const generatePersonalUploadNotes = async (input: {
     messages: messages as ChatCompletionMessageParam[],
     ...chatParams,
   });
-  return completion.choices[0]?.message?.content?.trim() ?? "";
+  // Personal uploads have no guild and no mention-bearing roster, so any
+  // mention here was invented. Only the uploader is a real participant.
+  return stripUnknownMentions(
+    completion.choices[0]?.message?.content?.trim() ?? "",
+    { userIds: [input.ownerUserId], roleIds: [] },
+  );
 };
 
 const writeProcessingMeeting = async (job: PersonalMediaUploadJobRecord) => {
