@@ -1040,16 +1040,47 @@ export async function getMcpMeetingSummary(input: {
   };
 }
 
+// `<@&` plus a 20 digit snowflake plus `>` is 24 characters; round up.
+const MAX_MENTION_TOKEN_LENGTH = 32;
+const MENTION_TOKEN_PATTERN = /<@[!&]?\d+>/g;
+
+/**
+ * Moves a page boundary back to just before a mention it would otherwise cut
+ * in half, so a client following `nextOffset` never receives raw id fragments
+ * like `<@&1` and `23>` on adjacent pages. Offsets stay in stored transcript
+ * coordinates, and the page only ever gets shorter, never past `maxChars`.
+ * A mention longer than the whole page is left split, since shrinking to
+ * nothing would stall paging.
+ */
+const clampEndToWholeMention = (
+  transcript: string,
+  offset: number,
+  end: number,
+): number => {
+  const searchStart = Math.max(offset, end - MAX_MENTION_TOKEN_LENGTH);
+  const region = transcript.slice(searchStart, end + MAX_MENTION_TOKEN_LENGTH);
+  for (const match of region.matchAll(MENTION_TOKEN_PATTERN)) {
+    const tokenStart = searchStart + match.index;
+    const tokenEnd = tokenStart + match[0].length;
+    if (tokenStart < end && tokenEnd > end && tokenStart > offset) {
+      return tokenStart;
+    }
+  }
+  return end;
+};
+
 function sliceTranscript(
   transcript: string,
   transcriptWindow: TranscriptWindow,
 ) {
   const totalChars = transcript.length;
   const offset = Math.min(transcriptWindow.offset, totalChars);
-  const transcriptSlice = transcript.slice(
-    offset,
-    offset + transcriptWindow.maxChars,
-  );
+  const requestedEnd = Math.min(offset + transcriptWindow.maxChars, totalChars);
+  const end =
+    requestedEnd < totalChars
+      ? clampEndToWholeMention(transcript, offset, requestedEnd)
+      : requestedEnd;
+  const transcriptSlice = transcript.slice(offset, end);
   const nextOffset = offset + transcriptSlice.length;
   return {
     transcript: transcriptSlice,

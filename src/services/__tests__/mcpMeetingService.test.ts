@@ -1044,6 +1044,50 @@ describe("mcpMeetingService", () => {
     expect(degraded.transcript).toContain(`<@&${roleId}>`);
   });
 
+  it("does not split a mention across transcript pages", async () => {
+    const roleId = "300000000000000001";
+    const transcript = `abcdefghij <@&${roleId}> tail text here`;
+    const meeting = createMeeting("meeting-1", {
+      guildId: "guild-1",
+      channelId_timestamp: "channel-1#2026-01-02T00:00:00.000Z",
+      transcript,
+    });
+    jest.mocked(getMeetingHistoryService).mockResolvedValue(meeting);
+    jest.mocked(checkUserMeetingAccess).mockResolvedValue({
+      allowed: true,
+      via: "attendee",
+    });
+    jest
+      .mocked(listGuildRolesCached)
+      .mockResolvedValue([
+        { id: roleId, name: "Design", permissions: "0" },
+      ] as never);
+
+    // maxChars lands in the middle of the mention token.
+    const first = await getMcpMeetingTranscript({
+      userId: "user-1",
+      guildId: "guild-1",
+      id: "channel-1#2026-01-02T00:00:00.000Z",
+      offset: 0,
+      maxChars: 15,
+    });
+
+    expect(first.transcript).not.toContain("<@&");
+    expect(first.transcript).toBe("abcdefghij ");
+
+    const second = await getMcpMeetingTranscript({
+      userId: "user-1",
+      guildId: "guild-1",
+      id: "channel-1#2026-01-02T00:00:00.000Z",
+      offset: first.nextOffset ?? 0,
+      maxChars: 40,
+    });
+
+    // The whole mention lands on the next page and resolves cleanly.
+    expect(second.transcript).toContain("@Design");
+    expect(second.transcript).not.toContain(roleId);
+  });
+
   it("clamps transcript offsets beyond the transcript length", async () => {
     const meeting = createMeeting("meeting-1", {
       guildId: "guild-1",

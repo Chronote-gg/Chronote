@@ -247,11 +247,7 @@ const generateNotesForTranscript = async (
   transcript: string,
 ) => {
   if (!transcript.trim()) return "";
-  return generatePersonalUploadNotes({
-    transcript,
-    title: job.title,
-    ownerUserId: job.ownerUserId,
-  });
+  return generatePersonalUploadNotes({ transcript, title: job.title });
 };
 
 const generateSummariesForNotes = async (
@@ -726,7 +722,6 @@ const processPersonalMediaContent = async (
 const generatePersonalUploadNotes = async (input: {
   transcript: string;
   title?: string;
-  ownerUserId: string;
 }) => {
   const { messages, langfusePrompt } = await getLangfuseChatPrompt({
     name: config.langfuse.notesPromptName,
@@ -767,11 +762,12 @@ const generatePersonalUploadNotes = async (input: {
     messages: messages as ChatCompletionMessageParam[],
     ...chatParams,
   });
-  // Personal uploads have no guild and no mention-bearing roster, so any
-  // mention here was invented. Only the uploader is a real participant.
+  // This prompt supplies no mention strings at all, so every allowlist is
+  // empty: any mention in the output was invented, including one that happens
+  // to match the uploader.
   return stripUnknownMentions(
     completion.choices[0]?.message?.content?.trim() ?? "",
-    { userIds: [input.ownerUserId], roleIds: [] },
+    { userIds: [], roleIds: [] },
   );
 };
 
