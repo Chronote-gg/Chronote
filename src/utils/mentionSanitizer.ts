@@ -25,6 +25,26 @@ export type AllowedMentions = {
  * match. The eval grader still flags it, because prompt adherence is a
  * different question from what is safe to persist.
  */
+/**
+ * The mention ids already present in a piece of text.
+ *
+ * Note edits use this as their allowlist: a correction makes minimal changes to
+ * notes whose mentions were already validated when generated, so anything that
+ * was not there before is something the edit introduced. Deriving the list from
+ * the text needs no Discord lookup, which matters because a failed role fetch
+ * would otherwise look like "no roles are valid" and strip real mentions out of
+ * the notes.
+ */
+export const collectMentionIds = (text: string): AllowedMentions => {
+  const userIds = new Set<string>();
+  const roleIds = new Set<string>();
+  for (const match of text.matchAll(MENTION_PATTERN)) {
+    const [, sigil, id] = match;
+    (sigil === ROLE_MENTION_SIGIL ? roleIds : userIds).add(id);
+  }
+  return { userIds: Array.from(userIds), roleIds: Array.from(roleIds) };
+};
+
 export const stripUnknownMentions = (
   notes: string,
   allowed: AllowedMentions,

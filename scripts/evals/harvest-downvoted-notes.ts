@@ -105,6 +105,11 @@ const buildEvalCase = async (
       // Rows predating S3 transcript storage still carry the deprecated
       // inline transcript, same fallback the MCP transcript path uses.
       transcript: transcriptPayload?.text ?? meeting.transcript ?? "",
+      // Meeting-specific context shaped the downvoted output, so a rerun
+      // without it can ignore the instructions that produced the failure.
+      // Server and channel context are not retained per meeting, so this is
+      // the meeting layer only.
+      formattedContext: meeting.context ?? "",
       participantRoster:
         formatParticipantRoster(
           participants,

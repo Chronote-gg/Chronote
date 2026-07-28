@@ -1,5 +1,5 @@
 import { describe, expect, test } from "@jest/globals";
-import { stripUnknownMentions } from "../mentionSanitizer";
+import { collectMentionIds, stripUnknownMentions } from "../mentionSanitizer";
 
 const GUILD_ID = "100000000000000001";
 const USER_ID = "200000000000000001";
@@ -61,5 +61,31 @@ describe("stripUnknownMentions", () => {
 
   test("returns empty notes unchanged", () => {
     expect(stripUnknownMentions("", allowed)).toBe("");
+  });
+});
+
+describe("collectMentionIds", () => {
+  test("separates user and role ids already present in notes", () => {
+    expect(
+      collectMentionIds(
+        `- <@${USER_ID}> and <@!${USER_ID}> and <@&${ROLE_ID}> ship it.`,
+      ),
+    ).toEqual({ userIds: [USER_ID], roleIds: [ROLE_ID] });
+  });
+
+  test("returns empty lists for notes with no mentions", () => {
+    expect(collectMentionIds("No assignments.")).toEqual({
+      userIds: [],
+      roleIds: [],
+    });
+  });
+
+  test("used as a correction allowlist, keeps existing and blocks new mentions", () => {
+    const currentNotes = `- <@&${ROLE_ID}> owns the rollout.`;
+    const corrected = `- <@&${ROLE_ID}> owns the rollout, <@&${GUILD_ID}> review it, <@${USER_ID}> assists.`;
+
+    expect(
+      stripUnknownMentions(corrected, collectMentionIds(currentNotes)),
+    ).toBe(`- <@&${ROLE_ID}> owns the rollout, review it, assists.`);
   });
 });

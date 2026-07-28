@@ -76,6 +76,10 @@ import { MEETING_STATUS } from "../../types/meetingLifecycle";
 import { buildMeetingNotesEmbeds } from "../../utils/meetingNotes";
 import { stripCodeFences } from "../../utils/text";
 import {
+  collectMentionIds,
+  stripUnknownMentions,
+} from "../../utils/mentionSanitizer";
+import {
   buildImportedMeetingNotes,
   normalizeImportedNotes,
 } from "../../utils/importedNotes";
@@ -567,7 +571,12 @@ async function generateCorrectedNotes(options: {
 
     const content = completion.choices[0]?.message?.content;
     if (content && content.trim().length > 0) {
-      return stripCodeFences(content.trim());
+      // A correction may keep the mentions already in the notes but must not
+      // introduce a new id, which would be invented rather than copied.
+      return stripUnknownMentions(
+        stripCodeFences(content.trim()),
+        collectMentionIds(options.currentNotes),
+      );
     }
 
     throw new TRPCError({
