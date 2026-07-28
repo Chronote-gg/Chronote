@@ -30,6 +30,28 @@ describe("mention extraction", () => {
     expect(extractRoleMentionIds(notes)).toEqual([ROLE_MODS]);
   });
 
+  test("ignores mentions Discord will not render", () => {
+    expect(
+      extractRoleMentionIds(`Use \`<@&${ROLE_DESIGN}>\` in the template.`),
+    ).toEqual([]);
+    expect(
+      extractRoleMentionIds(
+        "```\nping <@&300000000000000002> here\n```\nnothing else",
+      ),
+    ).toEqual([]);
+    expect(
+      extractRoleMentionIds(`Escaped \\<@&${ROLE_DESIGN}> stays text.`),
+    ).toEqual([]);
+  });
+
+  test("still counts a rendering mention alongside a code span", () => {
+    expect(
+      extractRoleMentionIds(
+        `\`<@&${ROLE_MODS}>\` is the syntax, <@&${ROLE_DESIGN}> owns it.`,
+      ),
+    ).toEqual([ROLE_DESIGN]);
+  });
+
   test("repeated calls are not affected by regex state", () => {
     const notes = `<@&${ROLE_DESIGN}>`;
 

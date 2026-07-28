@@ -251,6 +251,16 @@ const resolveMentionableRoles = (meeting: MeetingData): MentionableRole[] =>
     .map((role) => ({ id: role.id, name: role.name }));
 
 /**
+ * The role ids the model was actually shown for this meeting. The prompt tells
+ * it to copy only these, and the notes pipeline enforces that afterwards.
+ */
+export const resolvePromptVisibleRoleIds = (meeting: MeetingData): string[] =>
+  selectRolesForPrompt(
+    resolveMentionableRoles(meeting),
+    Array.from(meeting.participants.values()),
+  ).map((role) => role.id);
+
+/**
  * Both rosters are rendered from plain participant and role data so eval
  * tooling can build the exact prompt the bot would send without reconstructing
  * Discord state.

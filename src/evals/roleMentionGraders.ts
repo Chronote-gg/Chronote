@@ -23,9 +23,27 @@ export type MentionGradeInput = {
   expectedRoleIds?: string[];
 };
 
+const FENCED_CODE_PATTERN = /```[\s\S]*?```/g;
+const INLINE_CODE_PATTERN = /`[^`\n]*`/g;
+const ESCAPED_MENTION_PATTERN = /\\<@[!&]?\d+>/g;
+
+/**
+ * Discord renders a mention inside a code span, or one escaped with a
+ * backslash, as literal text. Grading those as real mentions would let an
+ * experiment report full recall on output where users see nothing, so they are
+ * removed before ids are extracted.
+ */
+const stripNonRenderingMentions = (text: string): string =>
+  text
+    .replace(FENCED_CODE_PATTERN, " ")
+    .replace(INLINE_CODE_PATTERN, " ")
+    .replace(ESCAPED_MENTION_PATTERN, " ");
+
 const extractIds = (text: string, pattern: RegExp): string[] => {
   // Fresh regex per call so the shared /g lastIndex never leaks between calls.
-  const matches = text.matchAll(new RegExp(pattern.source, pattern.flags));
+  const matches = stripNonRenderingMentions(text).matchAll(
+    new RegExp(pattern.source, pattern.flags),
+  );
   return Array.from(new Set(Array.from(matches, (match) => match[1])));
 };
 

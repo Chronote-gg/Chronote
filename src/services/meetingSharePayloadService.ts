@@ -90,6 +90,9 @@ export async function buildSharedMeetingPayloadService(
   const summarySentence = history.summarySentence
     ? resolveMentions(history.summarySentence)
     : history.summarySentence;
+  // Titles can fall back to the summary sentence, so resolve mentions before
+  // deriving one or a raw id leaks into the shared page title.
+  const title = resolveSharedMeetingTitle({ ...history, summarySentence });
   const events = buildMeetingTimelineEventsFromHistory({
     history,
     transcriptPayload,
@@ -98,7 +101,7 @@ export async function buildSharedMeetingPayloadService(
 
   return {
     meeting: {
-      title: resolveSharedMeetingTitle(history),
+      title,
       meetingName: history.meetingName,
       summarySentence,
       summaryLabel: history.summaryLabel,

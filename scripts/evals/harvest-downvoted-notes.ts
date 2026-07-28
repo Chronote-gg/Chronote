@@ -64,7 +64,9 @@ const buildEvalCase = async (meeting: MeetingHistory, comments: string[]) => {
 
   return {
     input: {
-      transcript: transcriptPayload?.text ?? "",
+      // Rows predating S3 transcript storage still carry the deprecated
+      // inline transcript, same fallback the MCP transcript path uses.
+      transcript: transcriptPayload?.text ?? meeting.transcript ?? "",
       participantRoster:
         formatParticipantRoster(
           participants,
@@ -100,33 +102,43 @@ async function main() {
   const resolvedOutput = resolveSafeOutputPath(output);
   const limit = Number(parseFlagValue("--limit") ?? DEFAULT_LIMIT);
 
-  const { items } = await listFeedbackEntries({
-    targetType: "meeting_summary",
-    rating: "down",
-    limit,
-  });
-  console.log(`Found ${items.length} downvoted meeting summaries.`);
-
   // Feedback is keyed per user, so one meeting appears once per downvoter.
-  // Collapse to one case per meeting and keep every comment for context.
+  // --limit counts distinct meetings, so keep paging until that many are
+  // collected rather than deduplicating a single page down to fewer.
   const commentsByMeeting = new Map<
     string,
     { guildId: string; targetId: string; comments: string[] }
   >();
-  for (const item of items) {
-    const key = `${item.guildId}#${item.targetId}`;
-    const entry = commentsByMeeting.get(key) ?? {
-      guildId: item.guildId,
-      targetId: item.targetId,
-      comments: [],
-    };
-    if (item.comment) entry.comments.push(item.comment);
-    commentsByMeeting.set(key, entry);
-  }
-  console.log(`Collapsed to ${commentsByMeeting.size} distinct meeting(s).`);
+  let cursor: string | undefined;
+  let recordCount = 0;
+  do {
+    const page = await listFeedbackEntries({
+      targetType: "meeting_summary",
+      rating: "down",
+      limit,
+      cursor,
+    });
+    recordCount += page.items.length;
+    for (const item of page.items) {
+      const key = `${item.guildId}#${item.targetId}`;
+      const entry = commentsByMeeting.get(key) ?? {
+        guildId: item.guildId,
+        targetId: item.targetId,
+        comments: [],
+      };
+      if (item.comment) entry.comments.push(item.comment);
+      commentsByMeeting.set(key, entry);
+    }
+    cursor = page.nextCursor;
+  } while (cursor && commentsByMeeting.size < limit);
+
+  const selected = Array.from(commentsByMeeting.values()).slice(0, limit);
+  console.log(
+    `Read ${recordCount} downvote record(s), ${commentsByMeeting.size} distinct meeting(s), harvesting ${selected.length}.`,
+  );
 
   const cases = [];
-  for (const entry of commentsByMeeting.values()) {
+  for (const entry of selected) {
     const meeting = await getMeetingHistoryService(
       entry.guildId,
       entry.targetId,

@@ -81,7 +81,7 @@ messages:
       1. **For Meetings or Task-Oriented Discussions**:
 
          - Provide a **Summary** of key points discussed.
-         - List any **Action Items**, **Next Steps**, or **To-Do Items**. Ensure tasks are assigned to specific attendees if mentioned. For these sections only, mention assigned attendees using their Discord mention string from the participant roster (format `<@snowflakeId>`). If you cannot match a person to the roster, keep their name without a mention.
+         - List any **Action Items**, **Next Steps**, or **To-Do Items**. Ensure tasks are assigned to specific attendees or roles if mentioned.
 
       2. **For TTRPG Sessions or Casual Conversations**:
 
@@ -91,7 +91,7 @@ messages:
 
       3. **For All Types of Conversations**:
          - Summarize important **takeaways** or **insights** for people who missed the conversation, ensuring these are concise and offer a quick understanding of what was discussed.
-         - List any **To-Do Items** or plans, with specific names if people were assigned tasks. For Action Items, Next Steps, and To-Do Items, use `<@snowflakeId>` mentions from the roster when possible.
+         - List any **To-Do Items** or plans, naming whoever was assigned the work.
 
       ### Additional Inputs:
 
@@ -104,12 +104,18 @@ messages:
       - **Transcript ordering caution**: Speaker order can be unreliable because
       audio is batched until about 5 seconds of silence.
 
-      - **Participant naming guidance**: Use server nicknames when provided;
-      otherwise use global display names; if absent, use usernames. Be
-      consistent across the summary. For Action Items, Next Steps, and To-Do
-      Items, use the roster mention string (`<@snowflakeId>`) instead of names.
-      If useful, you may link a participant's name to their profile URL from
-      the roster.
+      - **Mention guidance**: Refer to people and groups using the mention
+      strings from the rosters below, anywhere in the notes. Use a
+      participant's mention string (`<@snowflakeId>`) for an individual, and a
+      role's mention string (`<@&snowflakeId>`) when work belongs to a group
+      rather than one person, for example when the transcript says all
+      moderators or the design team should do something. Copy mention strings
+      exactly from the rosters, never invent or guess an id, and never mention
+      everyone or here. If you cannot match a person or group to a roster, use
+      their plain name with no mention. When writing a name instead of a
+      mention, prefer server nicknames, then global display names, then
+      usernames, and stay consistent. If useful, you may link a participant's
+      name to their profile URL from the roster.
 
 
       {{chatContextBlock}}
@@ -121,6 +127,12 @@ messages:
       {{participantRoster}}
 
 
+      ### Roles:
+
+
+      {{roles}}
+
+
       ### Contextual Information:
 
 
@@ -129,8 +141,6 @@ messages:
       - **Voice Channel**: {{voiceChannelName}}.
 
       - **Attendees**: {{attendees}}.
-
-      - **Available Roles**: {{roles}}.
 
       - **Upcoming Events**: {{events}}.
 

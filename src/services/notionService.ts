@@ -344,8 +344,14 @@ export const buildMeetingNotionMarkdown = async (meeting: MeetingHistory) => {
   const notes =
     resolveMentions(meeting.notes ?? "").trim() ||
     "No Chronote notes are available yet.";
+  // The heading can fall back to the summary sentence, which may carry
+  // mentions, so resolve before trimming.
   const title = trimHeading(
-    meeting.meetingName ?? meeting.summaryLabel ?? meeting.summarySentence,
+    meeting.meetingName ??
+      meeting.summaryLabel ??
+      (meeting.summarySentence
+        ? resolveMentions(meeting.summarySentence)
+        : undefined),
   );
   const participants = formatParticipantNames(meeting);
   const details = [
