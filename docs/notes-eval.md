@@ -76,6 +76,11 @@ versions are different failures. Notes come from the matching `notesHistory`
 entry; `notesVersionResolved: false` in metadata means that version was no longer
 retained and the current notes were used instead, so the case may not reproduce.
 
+Known limitation: production composes `formattedContext` from server, channel,
+and meeting context plus recent history, but only the meeting layer is retained
+per meeting. A harvested case carries that layer and not the server or channel
+context in force at the time.
+
 Known limitation: the role roster is rebuilt from the guild's **current** roles,
 not the roster as it stood during the meeting. Roles are not snapshotted per
 meeting (a deliberate simplicity tradeoff), so renamed, deleted, or newly created
