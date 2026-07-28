@@ -1062,9 +1062,12 @@ const clampEndToWholeMention = (
   for (const match of region.matchAll(MENTION_TOKEN_PATTERN)) {
     const tokenStart = searchStart + match.index;
     const tokenEnd = tokenStart + match[0].length;
-    if (tokenStart < end && tokenEnd > end && tokenStart > offset) {
-      return tokenStart;
-    }
+    if (tokenStart >= end || tokenEnd <= end) continue;
+    // Ending before the token would leave an empty page and stall paging when
+    // the page begins inside or exactly at a mention, so the page is extended
+    // to the end of that token instead. This is the only case where a page
+    // exceeds maxChars, and it is bounded by one mention.
+    return tokenStart > offset ? tokenStart : tokenEnd;
   }
   return end;
 };

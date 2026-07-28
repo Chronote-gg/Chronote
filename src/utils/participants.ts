@@ -44,8 +44,20 @@ export function resolveAttendeeDisplayName(
   });
 }
 
+// Role and member names are set by server admins and users, and resolved
+// mentions land in Markdown that the portal, shared pages, exports, and Notion
+// all render. Without escaping, a role named "[Support](https://evil.example)"
+// would turn a display-only mention into a clickable link.
+// Only characters that are dangerous inline. Escaping things like "-" or "."
+// would mangle ordinary names such as "Jane-Doe" or "Dr. Smith", and those are
+// only Markdown-significant at the start of a line, where a mention never is.
+const MARKDOWN_METACHARACTERS = /([\\`*_[\]()~<>|])/g;
+
+const escapeMarkdown = (value: string): string =>
+  value.replace(MARKDOWN_METACHARACTERS, "\\$1");
+
 const formatResolvedMention = (name: string): string =>
-  `@${name.replace(/^@+/, "")}`;
+  `@${escapeMarkdown(name.replace(/^@+/, ""))}`;
 
 /**
  * Rewrites Discord user and role mentions into readable `@Name` text for

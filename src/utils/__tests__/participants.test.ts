@@ -66,6 +66,38 @@ describe("replaceDiscordMentionsWithDisplayNames", () => {
   test("returns empty text unchanged", () => {
     expect(replaceDiscordMentionsWithDisplayNames("", participants)).toBe("");
   });
+
+  test("escapes Markdown syntax in a role name", () => {
+    const result = replaceDiscordMentionsWithDisplayNames(
+      `<@&${ROLE_ID}> owns it.`,
+      participants,
+      new Map([[ROLE_ID, "[Support](https://example.invalid)"]]),
+    );
+
+    expect(result).toBe("@\\[Support\\]\\(https://example.invalid\\) owns it.");
+    expect(result).not.toContain("](");
+  });
+
+  test("escapes Markdown syntax in a member name", () => {
+    expect(
+      replaceDiscordMentionsWithDisplayNames(
+        `<@${USER_ID}> spoke.`,
+        new Map([
+          [USER_ID, { id: USER_ID, username: "u", displayName: "a*b*c" }],
+        ]),
+      ),
+    ).toBe("@a\\*b\\*c spoke.");
+  });
+
+  test("leaves ordinary punctuation in names alone", () => {
+    expect(
+      replaceDiscordMentionsWithDisplayNames(
+        `<@&${ROLE_ID}>`,
+        participants,
+        new Map([[ROLE_ID, "Dr. Jane-Doe"]]),
+      ),
+    ).toBe("@Dr. Jane-Doe");
+  });
 });
 
 describe("fromMember", () => {

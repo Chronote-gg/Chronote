@@ -18,13 +18,12 @@ const loadModule = async (notesOutput = "notes output") => {
   const getNotesPrompt = jest.fn().mockResolvedValue({
     messages: [{ role: "system", content: "prompt" }],
     langfusePrompt: { name: "notes", version: 1, isFallback: false },
+    promptVisibleRoleIds: [ROLE_ID],
   });
-  const resolvePromptVisibleRoleIds = jest.fn().mockReturnValue([ROLE_ID]);
   const chat = jest.fn().mockResolvedValue(notesOutput);
 
   jest.doMock("../../src/services/notesPromptService", () => ({
     getNotesPrompt,
-    resolvePromptVisibleRoleIds,
   }));
   jest.doMock("../../src/services/openaiChatService", () => ({ chat }));
 

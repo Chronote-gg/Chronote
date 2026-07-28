@@ -251,16 +251,6 @@ const resolveMentionableRoles = (meeting: MeetingData): MentionableRole[] =>
     .map((role) => ({ id: role.id, name: role.name }));
 
 /**
- * The role ids the model was actually shown for this meeting. The prompt tells
- * it to copy only these, and the notes pipeline enforces that afterwards.
- */
-export const resolvePromptVisibleRoleIds = (meeting: MeetingData): string[] =>
-  selectRolesForPrompt(
-    resolveMentionableRoles(meeting),
-    Array.from(meeting.participants.values()),
-  ).map((role) => role.id);
-
-/**
  * Both rosters are rendered from plain participant and role data so eval
  * tooling can build the exact prompt the bot would send without reconstructing
  * Discord state.
@@ -362,6 +352,13 @@ export async function getNotesPrompt(meeting: MeetingData) {
   const serverDescription = meeting.guild.description ?? "";
   const mentionableRoles = resolveMentionableRoles(meeting);
   const participants = Array.from(meeting.participants.values());
+  // Captured here, from the same selection the roster is rendered from. The
+  // guild role cache can change while the model call is in flight, so
+  // recomputing this afterwards could strip a mention the model was given.
+  const promptVisibleRoleIds = selectRolesForPrompt(
+    mentionableRoles,
+    participants,
+  ).map((role) => role.id);
   const roles = formatRoleRoster(mentionableRoles, participants);
   const events = meeting.guild.scheduledEvents
     .valueOf()
@@ -392,7 +389,7 @@ export async function getNotesPrompt(meeting: MeetingData) {
       ? config.langfuse.notesContextTestPromptName
       : config.langfuse.notesPromptName;
 
-  return await getLangfuseChatPrompt({
+  const prompt = await getLangfuseChatPrompt({
     name: promptName,
     variables: {
       formattedContext,
@@ -415,4 +412,6 @@ export async function getNotesPrompt(meeting: MeetingData) {
       transcript: meeting.finalTranscript ?? "",
     },
   });
+
+  return { ...prompt, promptVisibleRoleIds };
 }

@@ -1,4 +1,4 @@
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, realpath, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { listFeedbackEntries } from "../../src/services/adminFeedbackService";
 import { listGuildRolesCached } from "../../src/services/discordCacheService";
@@ -26,22 +26,46 @@ function parseFlagValue(flag: string): string | undefined {
   return process.argv[index + 1];
 }
 
+const realpathOfNearestExistingAncestor = async (
+  dir: string,
+): Promise<string> => {
+  let current = dir;
+  for (;;) {
+    try {
+      return await realpath(current);
+    } catch {
+      const parent = path.dirname(current);
+      if (parent === current) return current;
+      current = parent;
+    }
+  }
+};
+
 /**
  * Refuses to write real meeting content into a trackable path in this public
  * repo. Checked before any data is fetched, so a bad path fails fast rather
  * than after the sensitive file already exists.
  */
-const resolveSafeOutputPath = (output: string): string => {
+const resolveSafeOutputPath = async (output: string): Promise<string> => {
   const resolved = path.resolve(output);
-  const relativeToRepo = path.relative(REPO_ROOT, resolved);
+  // Compare physical paths, not lexical ones: a symlinked parent would let a
+  // path that looks external resolve into the worktree, and writeFile follows
+  // the link. The nearest existing ancestor is used because the target file
+  // and its directory may not exist yet.
+  const [realRepoRoot, realParent] = await Promise.all([
+    realpath(REPO_ROOT),
+    realpathOfNearestExistingAncestor(path.dirname(resolved)),
+  ]);
+  const physical = path.join(realParent, path.basename(resolved));
+  const relativeToRepo = path.relative(realRepoRoot, physical);
   const insideRepo =
     !relativeToRepo.startsWith("..") && !path.isAbsolute(relativeToRepo);
-  if (insideRepo && !resolved.endsWith(IGNORED_OUTPUT_SUFFIX)) {
+  if (insideRepo && !physical.endsWith(IGNORED_OUTPUT_SUFFIX)) {
     throw new Error(
-      `Refusing to write harvested cases to ${resolved}. This repository is public and harvested cases contain real meeting content. Write outside the repo, or use a filename ending in ${IGNORED_OUTPUT_SUFFIX} which is gitignored.`,
+      `Refusing to write harvested cases to ${physical}. This repository is public and harvested cases contain real meeting content. Write outside the repo, or use a filename ending in ${IGNORED_OUTPUT_SUFFIX} which is gitignored.`,
     );
   }
-  return resolved;
+  return physical;
 };
 
 /**
@@ -146,7 +170,7 @@ async function main() {
       "--output <path> is required. Harvested cases contain real meeting content, so write them outside this public repo (for example a private ops repo or a Langfuse upload staging file).",
     );
   }
-  const resolvedOutput = resolveSafeOutputPath(output);
+  const resolvedOutput = await resolveSafeOutputPath(output);
   const limit = Number(parseFlagValue("--limit") ?? DEFAULT_LIMIT);
 
   // Feedback is keyed per user, so one meeting appears once per downvoter.
