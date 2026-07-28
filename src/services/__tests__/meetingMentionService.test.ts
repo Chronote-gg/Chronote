@@ -30,7 +30,7 @@ const rolesOk = () =>
 describe("createMeetingMentionReplacer", () => {
   test("resolves user and role mentions to readable names", async () => {
     const { createMeetingMentionReplacer } = await loadModule(rolesOk());
-    const resolve = await createMeetingMentionReplacer(buildHistory());
+    const resolve = (await createMeetingMentionReplacer(buildHistory())).toText;
 
     expect(resolve(`<@${USER_ID}> and <@&${ROLE_ID}> own this.`)).toBe(
       "@User A and @Design own this.",
@@ -39,7 +39,7 @@ describe("createMeetingMentionReplacer", () => {
 
   test("leaves unknown ids as raw mentions", async () => {
     const { createMeetingMentionReplacer } = await loadModule(rolesOk());
-    const resolve = await createMeetingMentionReplacer(buildHistory());
+    const resolve = (await createMeetingMentionReplacer(buildHistory())).toText;
 
     expect(resolve("<@999999999999999999> <@&888888888888888888>")).toBe(
       "<@999999999999999999> <@&888888888888888888>",
@@ -51,9 +51,11 @@ describe("createMeetingMentionReplacer", () => {
     const { createMeetingMentionReplacer } =
       await loadModule(listGuildRolesCached);
 
-    const resolve = await createMeetingMentionReplacer(
-      buildHistory({ ownershipScope: "personal" }),
-    );
+    const resolve = (
+      await createMeetingMentionReplacer(
+        buildHistory({ ownershipScope: "personal" }),
+      )
+    ).toText;
 
     expect(listGuildRolesCached).not.toHaveBeenCalled();
     expect(resolve(`<@${USER_ID}> spoke.`)).toBe("@User A spoke.");
@@ -67,7 +69,7 @@ describe("createMeetingMentionReplacer", () => {
     const { createMeetingMentionReplacer } =
       await loadModule(listGuildRolesCached);
 
-    const resolve = await createMeetingMentionReplacer(buildHistory());
+    const resolve = (await createMeetingMentionReplacer(buildHistory())).toText;
 
     expect(resolve(`<@${USER_ID}> and <@&${ROLE_ID}>`)).toBe(
       `@User A and <@&${ROLE_ID}>`,
@@ -84,7 +86,7 @@ describe("createMeetingMentionReplacer", () => {
     const resolve = buildMeetingMentionReplacer(
       buildHistory(),
       new Map([[GUILD_ID, new Map([[ROLE_ID, "Design"]])]]),
-    );
+    ).toText;
 
     expect(resolve(`<@&${ROLE_ID}> reviews.`)).toBe("@Design reviews.");
     expect(listGuildRolesCached).not.toHaveBeenCalled();
@@ -93,17 +95,33 @@ describe("createMeetingMentionReplacer", () => {
   test("leaves role mentions raw when a guild is missing from the prefetch", async () => {
     const { buildMeetingMentionReplacer } = await loadModule(rolesOk());
 
-    const resolve = buildMeetingMentionReplacer(buildHistory(), new Map());
+    const resolve = buildMeetingMentionReplacer(
+      buildHistory(),
+      new Map(),
+    ).toText;
 
     expect(resolve(`<@${USER_ID}> and <@&${ROLE_ID}>`)).toBe(
       `@User A and <@&${ROLE_ID}>`,
     );
   });
 
+  test("toText leaves names verbatim and toMarkdown escapes them", async () => {
+    const { buildMeetingMentionReplacer } = await loadModule(rolesOk());
+    const replacer = buildMeetingMentionReplacer(
+      buildHistory(),
+      new Map([[GUILD_ID, new Map([[ROLE_ID, "Ops_Team"]])]]),
+    );
+
+    // Timeline text, titles, and model context show the result verbatim, so a
+    // backslash there would be a visible artifact.
+    expect(replacer.toText(`<@&${ROLE_ID}>`)).toBe("@Ops_Team");
+    expect(replacer.toMarkdown(`<@&${ROLE_ID}>`)).toBe("@Ops\\_Team");
+  });
+
   test("resolves mentions inside timeline event text", async () => {
     const { createMeetingMentionReplacer, resolveMentionsInTimelineEvents } =
       await loadModule(rolesOk());
-    const resolve = await createMeetingMentionReplacer(buildHistory());
+    const resolve = (await createMeetingMentionReplacer(buildHistory())).toText;
 
     const events = resolveMentionsInTimelineEvents(
       [
@@ -127,7 +145,7 @@ describe("createMeetingMentionReplacer", () => {
     const { createMeetingMentionReplacer } =
       await loadModule(listGuildRolesCached);
 
-    const resolve = await createMeetingMentionReplacer(buildHistory());
+    const resolve = (await createMeetingMentionReplacer(buildHistory())).toText;
 
     expect(resolve(`<@&${ROLE_ID}>`)).toBe(`<@&${ROLE_ID}>`);
   });

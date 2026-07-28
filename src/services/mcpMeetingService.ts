@@ -813,7 +813,7 @@ export async function listMcpMeetings(input: ListMcpMeetingsInput) {
       summarizeMeeting(
         meeting,
         channelMap,
-        buildMeetingMentionReplacer(meeting, roleNamesByGuildId),
+        buildMeetingMentionReplacer(meeting, roleNamesByGuildId).toText,
       ),
     ),
   };
@@ -912,7 +912,7 @@ const summarizeUserMeetings = async (
       ...summarizeMeeting(
         meeting,
         channelMaps.get(meeting.guildId) ?? new Map<string, string>(),
-        buildMeetingMentionReplacer(meeting, roleNamesByGuildId),
+        buildMeetingMentionReplacer(meeting, roleNamesByGuildId).toText,
       ),
       serverId: meeting.guildId,
       serverName: isPersonalMeeting(meeting)
@@ -1030,8 +1030,8 @@ export async function getMcpMeetingSummary(input: {
   const resolveMentions = await createMeetingMentionReplacer(meeting);
   return {
     meeting: {
-      ...summarizeMeeting(meeting, channelMap, resolveMentions),
-      notes: resolveMentions(meeting.notes ?? ""),
+      ...summarizeMeeting(meeting, channelMap, resolveMentions.toText),
+      notes: resolveMentions.toText(meeting.notes ?? ""),
       notesVersion: meeting.notesVersion ?? 1,
       attendees: resolveMeetingAttendees(meeting),
       notesChannelId: meeting.notesChannelId,
@@ -1137,7 +1137,7 @@ export async function getMcpMeetingTranscript(input: {
   return {
     meetingId: meeting.meetingId,
     id: meeting.channelId_timestamp,
-    transcript: resolveMentions(transcriptWindow.transcript),
+    transcript: resolveMentions.toText(transcriptWindow.transcript),
     transcriptAvailable: Boolean(transcript),
     offset: transcriptWindow.offset,
     totalChars: transcriptWindow.totalChars,

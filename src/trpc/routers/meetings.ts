@@ -956,10 +956,10 @@ const list = guildMemberProcedure
           timestamp: meeting.timestamp,
           duration: resolveMeetingListDuration(meeting),
           tags: resolveMeetingListTags(meeting.tags),
-          notes: resolveMentions(resolveMeetingListNotes(meeting.notes)),
+          notes: resolveMentions.toText(resolveMeetingListNotes(meeting.notes)),
           meetingName: meeting.meetingName,
           summarySentence: meeting.summarySentence
-            ? resolveMentions(meeting.summarySentence)
+            ? resolveMentions.toText(meeting.summarySentence)
             : meeting.summarySentence,
           summaryLabel: meeting.summaryLabel,
           notesChannelId: meeting.notesChannelId,
@@ -1085,10 +1085,10 @@ const detail = authedProcedure
       ? await fetchJsonFromS3<TranscriptPayload>(history.transcriptS3Key)
       : undefined;
     const resolveMentions = await createMeetingMentionReplacer(history);
-    const transcript = resolveMentions(transcriptPayload?.text ?? "");
-    const notes = resolveMentions(history.notes ?? "");
+    const transcript = resolveMentions.toText(transcriptPayload?.text ?? "");
+    const notes = resolveMentions.toMarkdown(history.notes ?? "");
     const summarySentence = history.summarySentence
-      ? resolveMentions(history.summarySentence)
+      ? resolveMentions.toText(history.summarySentence)
       : history.summarySentence;
 
     let chatEntries: ChatEntry[] | undefined;
@@ -1101,7 +1101,7 @@ const detail = authedProcedure
         transcriptPayload,
         chatEntries,
       }),
-      resolveMentions,
+      resolveMentions.toText,
     );
 
     const audioUrl = history.audioS3Key
@@ -1232,7 +1232,7 @@ const updateNotes = authedProcedure
       });
     }
 
-    markdownNotes = (await createMeetingMentionReplacer(history))(
+    markdownNotes = (await createMeetingMentionReplacer(history)).toMarkdown(
       markdownNotes,
     );
 
@@ -1348,7 +1348,7 @@ const importNotes = authedProcedure
       source,
     });
 
-    markdownNotes = (await createMeetingMentionReplacer(history))(
+    markdownNotes = (await createMeetingMentionReplacer(history)).toMarkdown(
       markdownNotes,
     );
 

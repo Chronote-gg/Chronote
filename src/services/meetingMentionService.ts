@@ -46,16 +46,29 @@ export const resolveMentionsInTimelineEvents = <T extends { text: string }>(
  * endpoints use this so they can fetch role maps once per guild, in batches,
  * instead of once per meeting.
  */
+export type MentionReplacer = {
+  /** For consumers that show the result verbatim: plain React text, titles, model context. */
+  toText: (text: string) => string;
+  /** For consumers that parse the result as Markdown, where a name like `[x](y)` would become a link. */
+  toMarkdown: (text: string) => string;
+};
+
 export const buildMeetingMentionReplacer = (
   meeting: MentionSource,
   roleNamesByGuildId: Map<string, Map<string, string>>,
-): ((text: string) => string) => {
+): MentionReplacer => {
   const participants = buildParticipantMap(meeting.participants);
   const roleNames = isPersonalMeeting(meeting)
     ? new Map<string, string>()
     : (roleNamesByGuildId.get(meeting.guildId) ?? new Map<string, string>());
-  return (text: string) =>
-    replaceDiscordMentionsWithDisplayNames(text, participants, roleNames);
+  return {
+    toText: (text) =>
+      replaceDiscordMentionsWithDisplayNames(text, participants, roleNames),
+    toMarkdown: (text) =>
+      replaceDiscordMentionsWithDisplayNames(text, participants, roleNames, {
+        forMarkdown: true,
+      }),
+  };
 };
 
 /**
@@ -66,7 +79,7 @@ export const buildMeetingMentionReplacer = (
  */
 export const createMeetingMentionReplacer = async (
   meeting: MentionSource,
-): Promise<(text: string) => string> => {
+): Promise<MentionReplacer> => {
   if (isPersonalMeeting(meeting)) {
     return buildMeetingMentionReplacer(meeting, new Map());
   }

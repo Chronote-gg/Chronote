@@ -31,16 +31,22 @@ function parseFlagValue(flag: string): string | undefined {
   return process.argv[index + 1];
 }
 
-const realpathOfNearestExistingAncestor = async (
-  dir: string,
-): Promise<string> => {
-  let current = dir;
+/**
+ * Canonicalizes as much of a path as exists on disk, keeping the segments that
+ * do not exist yet. Returning only the existing ancestor would silently move
+ * the destination: with /tmp/private present but run/ absent,
+ * /tmp/private/run/cases.json would collapse to /tmp/private/cases.json.
+ */
+const canonicalizePath = async (target: string): Promise<string> => {
+  const missing: string[] = [];
+  let current = target;
   for (;;) {
     try {
-      return await realpath(current);
+      return path.join(await realpath(current), ...missing);
     } catch {
       const parent = path.dirname(current);
-      if (parent === current) return current;
+      if (parent === current) return path.join(current, ...missing);
+      missing.unshift(path.basename(current));
       current = parent;
     }
   }
@@ -52,16 +58,13 @@ const realpathOfNearestExistingAncestor = async (
  * than after the sensitive file already exists.
  */
 const resolveSafeOutputPath = async (output: string): Promise<string> => {
-  const resolved = path.resolve(output);
   // Compare physical paths, not lexical ones: a symlinked parent would let a
   // path that looks external resolve into the worktree, and writeFile follows
-  // the link. The nearest existing ancestor is used because the target file
-  // and its directory may not exist yet.
-  const [realRepoRoot, realParent] = await Promise.all([
+  // the link.
+  const [realRepoRoot, physical] = await Promise.all([
     realpath(REPO_ROOT),
-    realpathOfNearestExistingAncestor(path.dirname(resolved)),
+    canonicalizePath(path.resolve(output)),
   ]);
-  const physical = path.join(realParent, path.basename(resolved));
   const relativeToRepo = path.relative(realRepoRoot, physical);
   const insideRepo =
     !relativeToRepo.startsWith("..") && !path.isAbsolute(relativeToRepo);

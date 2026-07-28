@@ -342,7 +342,7 @@ export const buildNotionAuthorizationUrl = (state: string) => {
 export const buildMeetingNotionMarkdown = async (meeting: MeetingHistory) => {
   const resolveMentions = await createMeetingMentionReplacer(meeting);
   const notes =
-    resolveMentions(meeting.notes ?? "").trim() ||
+    resolveMentions.toMarkdown(meeting.notes ?? "").trim() ||
     "No Chronote notes are available yet.";
   // The heading can fall back to the summary sentence, which may carry
   // mentions, so resolve before trimming.
@@ -350,7 +350,7 @@ export const buildMeetingNotionMarkdown = async (meeting: MeetingHistory) => {
     meeting.meetingName ??
       meeting.summaryLabel ??
       (meeting.summarySentence
-        ? resolveMentions(meeting.summarySentence)
+        ? resolveMentions.toText(meeting.summarySentence)
         : undefined),
   );
   const participants = formatParticipantNames(meeting);

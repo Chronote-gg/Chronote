@@ -86,10 +86,10 @@ export async function buildSharedMeetingPayloadService(
     ? await fetchJsonFromS3<ChatEntry[]>(history.chatS3Key)
     : undefined;
   const resolveMentions = await createMeetingMentionReplacer(history);
-  const transcript = resolveMentions(transcriptPayload?.text ?? "");
-  const notes = resolveMentions(history.notes ?? "");
+  const transcript = resolveMentions.toText(transcriptPayload?.text ?? "");
+  const notes = resolveMentions.toMarkdown(history.notes ?? "");
   const summarySentence = history.summarySentence
-    ? resolveMentions(history.summarySentence)
+    ? resolveMentions.toText(history.summarySentence)
     : history.summarySentence;
   // Titles can fall back to the summary sentence, so resolve mentions before
   // deriving one or a raw id leaks into the shared page title.
@@ -100,7 +100,7 @@ export async function buildSharedMeetingPayloadService(
       transcriptPayload,
       chatEntries,
     }),
-    resolveMentions,
+    resolveMentions.toText,
   );
 
   return {

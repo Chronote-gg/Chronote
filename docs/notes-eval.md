@@ -76,6 +76,13 @@ versions are different failures. Notes come from the matching `notesHistory`
 entry; `notesVersionResolved: false` in metadata means that version was no longer
 retained and the current notes were used instead, so the case may not reproduce.
 
+Known limitation: participant chat is not carried into harvested cases. When a
+meeting had chat, production renders it into `chatContextInstruction` and
+`chatContextBlock`, including any explicit include or omit instruction, and a
+harvested rerun falls back to "no chat was captured". A downvote caused by an
+ignored chat instruction will not reproduce. The chat log is retained under
+`chatS3Key`, so this is recoverable work rather than lost data.
+
 Known limitation: production composes `formattedContext` from server, channel,
 and meeting context plus recent history, but only the meeting layer is retained
 per meeting. A harvested case carries that layer and not the server or channel

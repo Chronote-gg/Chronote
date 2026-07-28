@@ -44,20 +44,21 @@ export function resolveAttendeeDisplayName(
   });
 }
 
-// Role and member names are set by server admins and users, and resolved
-// mentions land in Markdown that the portal, shared pages, exports, and Notion
-// all render. Without escaping, a role named "[Support](https://evil.example)"
-// would turn a display-only mention into a clickable link.
-// Only characters that are dangerous inline. Escaping things like "-" or "."
-// would mangle ordinary names such as "Jane-Doe" or "Dr. Smith", and those are
-// only Markdown-significant at the start of a line, where a mention never is.
+// Role and member names are set by server admins and users. Where a resolved
+// mention lands in text that is parsed as Markdown, a name like
+// "[Support](https://evil.example)" would turn a display-only mention into a
+// clickable link, so those surfaces opt into escaping. Only inline-dangerous
+// characters: escaping "-" or "." would mangle ordinary names like "Jane-Doe",
+// and those are only significant at the start of a line.
 const MARKDOWN_METACHARACTERS = /([\\`*_[\]()~<>|])/g;
 
 const escapeMarkdown = (value: string): string =>
   value.replace(MARKDOWN_METACHARACTERS, "\\$1");
 
-const formatResolvedMention = (name: string): string =>
-  `@${escapeMarkdown(name.replace(/^@+/, ""))}`;
+const formatResolvedMention = (name: string, forMarkdown: boolean): string => {
+  const trimmed = name.replace(/^@+/, "");
+  return `@${forMarkdown ? escapeMarkdown(trimmed) : trimmed}`;
+};
 
 /**
  * Rewrites Discord user and role mentions into readable `@Name` text for
@@ -69,19 +70,22 @@ export function replaceDiscordMentionsWithDisplayNames(
   text: string,
   participants: Map<string, Participant>,
   roleNamesById: Map<string, string> = new Map(),
+  options: { forMarkdown?: boolean } = {},
 ): string {
   if (!text) return text;
+  const forMarkdown = options.forMarkdown === true;
   return text.replace(
     DISCORD_ANY_MENTION_PATTERN,
     (match, sigil: string, id: string) => {
       if (sigil === ROLE_MENTION_SIGIL) {
         const roleName = roleNamesById.get(id);
-        return roleName ? formatResolvedMention(roleName) : match;
+        return roleName ? formatResolvedMention(roleName, forMarkdown) : match;
       }
       const participant = participants.get(id);
       if (!participant) return match;
       return formatResolvedMention(
         getParticipantPreferredName(participant, id) ?? id,
+        forMarkdown,
       );
     },
   );

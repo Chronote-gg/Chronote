@@ -67,26 +67,41 @@ describe("replaceDiscordMentionsWithDisplayNames", () => {
     expect(replaceDiscordMentionsWithDisplayNames("", participants)).toBe("");
   });
 
-  test("escapes Markdown syntax in a role name", () => {
+  test("escapes Markdown syntax in a role name when the target is Markdown", () => {
     const result = replaceDiscordMentionsWithDisplayNames(
       `<@&${ROLE_ID}> owns it.`,
       participants,
       new Map([[ROLE_ID, "[Support](https://example.invalid)"]]),
+      { forMarkdown: true },
     );
 
     expect(result).toBe("@\\[Support\\]\\(https://example.invalid\\) owns it.");
     expect(result).not.toContain("](");
   });
 
-  test("escapes Markdown syntax in a member name", () => {
+  test("escapes Markdown syntax in a member name when the target is Markdown", () => {
     expect(
       replaceDiscordMentionsWithDisplayNames(
         `<@${USER_ID}> spoke.`,
         new Map([
           [USER_ID, { id: USER_ID, username: "u", displayName: "a*b*c" }],
         ]),
+        new Map(),
+        { forMarkdown: true },
       ),
     ).toBe("@a\\*b\\*c spoke.");
+  });
+
+  test("leaves names verbatim for plain-text consumers", () => {
+    // Timeline text and titles are rendered as plain React text, so escaping
+    // there would surface visible backslashes.
+    expect(
+      replaceDiscordMentionsWithDisplayNames(
+        `<@&${ROLE_ID}> owns it.`,
+        participants,
+        new Map([[ROLE_ID, "Ops_Team"]]),
+      ),
+    ).toBe("@Ops_Team owns it.");
   });
 
   test("leaves ordinary punctuation in names alone", () => {
