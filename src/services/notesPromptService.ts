@@ -299,24 +299,20 @@ const countRoleHoldersInMeeting = (
 };
 
 /**
- * Roles are listed with their mention strings so notes can address a group.
- * Roles held by people in the meeting sort first, which puts the plausible
- * assignees at the top without needing a separate relevance pass.
+ * The roles the model is actually shown, in the order it sees them. Roles held
+ * by people in the meeting sort first, which puts the plausible assignees at
+ * the top without needing a separate relevance pass. Exported so eval tooling
+ * can treat exactly these ids as the allowed mention set.
  */
-export const formatRoleRoster = (
+export const selectRolesForPrompt = (
   mentionableRoles: MentionableRole[],
   participants: Participant[],
-): string => {
-  if (mentionableRoles.length === 0) {
-    return NO_ROLES_AVAILABLE_TEXT;
-  }
-
+): Array<MentionableRole & { participantCount: number }> => {
   const holderCounts = countRoleHoldersInMeeting(participants);
   return (
     mentionableRoles
       .map((role) => ({
-        name: role.name,
-        mention: formatRoleMention(role.id),
+        ...role,
         participantCount: holderCounts.get(role.id) ?? 0,
       }))
       .sort(
@@ -327,12 +323,25 @@ export const formatRoleRoster = (
       // ponytail: flat cap instead of a relevance-scoring pass. Revisit if real
       // servers exceed this and the dropped tail turns out to matter.
       .slice(0, MAX_ROLES_IN_PROMPT)
-      .map(
-        (role) =>
-          `- ${role.name} | mention: ${role.mention} | in this meeting: ${role.participantCount}`,
-      )
-      .join("\n")
   );
+};
+
+/** Roles are listed with their mention strings so notes can address a group. */
+export const formatRoleRoster = (
+  mentionableRoles: MentionableRole[],
+  participants: Participant[],
+): string => {
+  const selected = selectRolesForPrompt(mentionableRoles, participants);
+  if (selected.length === 0) {
+    return NO_ROLES_AVAILABLE_TEXT;
+  }
+
+  return selected
+    .map(
+      (role) =>
+        `- ${role.name} | mention: ${formatRoleMention(role.id)} | in this meeting: ${role.participantCount}`,
+    )
+    .join("\n");
 };
 
 export async function getNotesPrompt(meeting: MeetingData) {

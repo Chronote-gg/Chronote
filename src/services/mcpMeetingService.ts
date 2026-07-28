@@ -302,6 +302,7 @@ const resolveChannelMap = async (guildId: string) => {
 const summarizeMeeting = (
   meeting: MeetingHistory,
   channelMap: Map<string, string>,
+  resolveMentions: (text: string) => string = (text) => text,
 ) => {
   const channelId = resolveMeetingChannelId(meeting);
   const personalMeeting = isPersonalMeeting(meeting);
@@ -319,7 +320,9 @@ const summarizeMeeting = (
     duration: resolveMeetingDuration(meeting),
     tags: meeting.tags ?? [],
     meetingName: meeting.meetingName,
-    summarySentence: meeting.summarySentence,
+    summarySentence: meeting.summarySentence
+      ? resolveMentions(meeting.summarySentence)
+      : meeting.summarySentence,
     summaryLabel: meeting.summaryLabel,
     notesAvailable: Boolean(meeting.notes),
     transcriptAvailable: Boolean(meeting.transcriptS3Key),
@@ -798,9 +801,12 @@ export async function listMcpMeetings(input: ListMcpMeetingsInput) {
     accessContext,
   );
   const channelMap = await resolveChannelMap(input.guildId);
+  const replacers = await Promise.all(
+    allowedMeetings.map(createMeetingMentionReplacer),
+  );
   return {
-    meetings: allowedMeetings.map((meeting) =>
-      summarizeMeeting(meeting, channelMap),
+    meetings: allowedMeetings.map((meeting, index) =>
+      summarizeMeeting(meeting, channelMap, replacers[index]),
     ),
   };
 }
@@ -886,13 +892,17 @@ const summarizeUserMeetings = async (
   channelEntries.forEach((entry) => {
     channelMaps.set(entry.guildId, entry.channelMap);
   });
+  const replacers = await Promise.all(
+    meetings.map(createMeetingMentionReplacer),
+  );
 
-  return meetings.map((meeting) => {
+  return meetings.map((meeting, index) => {
     const server = serverMap.get(meeting.guildId);
     return {
       ...summarizeMeeting(
         meeting,
         channelMaps.get(meeting.guildId) ?? new Map<string, string>(),
+        replacers[index],
       ),
       serverId: meeting.guildId,
       serverName: isPersonalMeeting(meeting)
@@ -1008,17 +1018,12 @@ export async function getMcpMeetingSummary(input: {
     ? new Map<string, string>()
     : await resolveChannelMap(input.guildId);
   const resolveMentions = await createMeetingMentionReplacer(meeting);
-  const notes = resolveMentions(meeting.notes ?? "");
-  const summarySentence = meeting.summarySentence
-    ? resolveMentions(meeting.summarySentence)
-    : meeting.summarySentence;
   return {
     meeting: {
-      ...summarizeMeeting(meeting, channelMap),
-      notes,
+      ...summarizeMeeting(meeting, channelMap, resolveMentions),
+      notes: resolveMentions(meeting.notes ?? ""),
       notesVersion: meeting.notesVersion ?? 1,
       attendees: resolveMeetingAttendees(meeting),
-      summarySentence,
       notesChannelId: meeting.notesChannelId,
       notesMessageId: meeting.notesMessageIds?.[0],
     },

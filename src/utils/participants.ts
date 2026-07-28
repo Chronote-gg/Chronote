@@ -7,6 +7,7 @@ const DISCORD_MENTION_REGEX = /^<@!?(\d+)>$/;
 // Matches user (<@123>, <@!123>) and role (<@&123>) mentions in note bodies.
 const DISCORD_ANY_MENTION_PATTERN = /<@([!&]?)(\d+)>/g;
 const ROLE_MENTION_SIGIL = "&";
+const MAX_SNAPSHOT_ROLES_PER_MEMBER = 40;
 const DISCORD_PROFILE_REGEX =
   /https?:\/\/(?:ptb\.|canary\.)?discord\.com\/users\/(\d+)/i;
 const DISCORD_ID_REGEX = /^\d{15,20}$/;
@@ -138,9 +139,14 @@ export function formatParticipantLabel(
 
 export function fromMember(member: GuildMember): Participant {
   // @everyone is on every member and carries no signal, so it is dropped here.
+  // Discord allows up to 250 roles per member; these snapshots are embedded in
+  // a single MeetingHistory item, and a roster line listing that many roles
+  // would bloat the notes prompt for no benefit. Highest roles win because
+  // Discord orders the cache by position.
   const roleIds = member.roles.cache
     .filter((role) => role.id !== member.guild.id)
-    .map((role) => role.id);
+    .map((role) => role.id)
+    .slice(0, MAX_SNAPSHOT_ROLES_PER_MEMBER);
   return {
     id: member.user.id,
     username: member.user.username,

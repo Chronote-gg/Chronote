@@ -7,6 +7,7 @@ import {
   formatParticipantRoster,
   formatRoleRoster,
   isMentionableRole,
+  selectRolesForPrompt,
 } from "../../src/services/notesPromptService";
 import { fetchJsonFromS3 } from "../../src/services/storageService";
 import type { MeetingHistory } from "../../src/types/db";
@@ -14,6 +15,8 @@ import type { TranscriptPayload } from "../../src/types/transcript";
 import { isPersonalMeeting } from "../../src/utils/meetingOwnership";
 
 const DEFAULT_LIMIT = 25;
+const REPO_ROOT = path.resolve(__dirname, "..", "..");
+const IGNORED_OUTPUT_SUFFIX = ".harvested.json";
 
 function parseFlagValue(flag: string): string | undefined {
   const index = process.argv.indexOf(flag);
@@ -23,6 +26,24 @@ function parseFlagValue(flag: string): string | undefined {
   return process.argv[index + 1];
 }
 
+/**
+ * Refuses to write real meeting content into a trackable path in this public
+ * repo. Checked before any data is fetched, so a bad path fails fast rather
+ * than after the sensitive file already exists.
+ */
+const resolveSafeOutputPath = (output: string): string => {
+  const resolved = path.resolve(output);
+  const relativeToRepo = path.relative(REPO_ROOT, resolved);
+  const insideRepo =
+    !relativeToRepo.startsWith("..") && !path.isAbsolute(relativeToRepo);
+  if (insideRepo && !resolved.endsWith(IGNORED_OUTPUT_SUFFIX)) {
+    throw new Error(
+      `Refusing to write harvested cases to ${resolved}. This repository is public and harvested cases contain real meeting content. Write outside the repo, or use a filename ending in ${IGNORED_OUTPUT_SUFFIX} which is gitignored.`,
+    );
+  }
+  return resolved;
+};
+
 const resolveMentionableRolesForGuild = async (meeting: MeetingHistory) => {
   if (isPersonalMeeting(meeting)) return [];
   const roles = await listGuildRolesCached(meeting.guildId);
@@ -31,9 +52,12 @@ const resolveMentionableRolesForGuild = async (meeting: MeetingHistory) => {
     .map((role) => ({ id: role.id, name: role.name }));
 };
 
-const buildEvalCase = async (meeting: MeetingHistory, comment?: string) => {
+const buildEvalCase = async (meeting: MeetingHistory, comments: string[]) => {
   const participants = meeting.participants ?? [];
   const mentionableRoles = await resolveMentionableRolesForGuild(meeting);
+  // Only the roles the prompt actually renders count as allowed, otherwise an
+  // id from the dropped tail would silently pass the hallucination grade.
+  const promptRoles = selectRolesForPrompt(mentionableRoles, participants);
   const transcriptPayload = meeting.transcriptS3Key
     ? await fetchJsonFromS3<TranscriptPayload>(meeting.transcriptS3Key)
     : undefined;
@@ -51,7 +75,7 @@ const buildEvalCase = async (meeting: MeetingHistory, comment?: string) => {
         .map((participant) => participant.username)
         .join(", "),
       allowedUserIds: participants.map((participant) => participant.id),
-      allowedRoleIds: mentionableRoles.map((role) => role.id),
+      allowedRoleIds: promptRoles.map((role) => role.id),
       guildId: isPersonalMeeting(meeting) ? undefined : meeting.guildId,
     },
     // Left blank on purpose. A human decides what good output looks like before
@@ -60,7 +84,7 @@ const buildEvalCase = async (meeting: MeetingHistory, comment?: string) => {
     metadata: {
       meetingId: meeting.meetingId,
       notesVersion: meeting.notesVersion,
-      downvoteComment: comment,
+      downvoteComments: comments,
       generatedNotes: meeting.notes,
     },
   };
@@ -73,6 +97,7 @@ async function main() {
       "--output <path> is required. Harvested cases contain real meeting content, so write them outside this public repo (for example a private ops repo or a Langfuse upload staging file).",
     );
   }
+  const resolvedOutput = resolveSafeOutputPath(output);
   const limit = Number(parseFlagValue("--limit") ?? DEFAULT_LIMIT);
 
   const { items } = await listFeedbackEntries({
@@ -82,23 +107,44 @@ async function main() {
   });
   console.log(`Found ${items.length} downvoted meeting summaries.`);
 
-  const cases = [];
+  // Feedback is keyed per user, so one meeting appears once per downvoter.
+  // Collapse to one case per meeting and keep every comment for context.
+  const commentsByMeeting = new Map<
+    string,
+    { guildId: string; targetId: string; comments: string[] }
+  >();
   for (const item of items) {
-    const meeting = await getMeetingHistoryService(item.guildId, item.targetId);
+    const key = `${item.guildId}#${item.targetId}`;
+    const entry = commentsByMeeting.get(key) ?? {
+      guildId: item.guildId,
+      targetId: item.targetId,
+      comments: [],
+    };
+    if (item.comment) entry.comments.push(item.comment);
+    commentsByMeeting.set(key, entry);
+  }
+  console.log(`Collapsed to ${commentsByMeeting.size} distinct meeting(s).`);
+
+  const cases = [];
+  for (const entry of commentsByMeeting.values()) {
+    const meeting = await getMeetingHistoryService(
+      entry.guildId,
+      entry.targetId,
+    );
     if (!meeting) {
-      console.warn(`Skipping ${item.targetId}: meeting history not found.`);
+      console.warn(`Skipping ${entry.targetId}: meeting history not found.`);
       continue;
     }
-    cases.push(await buildEvalCase(meeting, item.comment));
+    cases.push(await buildEvalCase(meeting, entry.comments));
   }
 
-  await mkdir(path.dirname(path.resolve(output)), { recursive: true });
+  await mkdir(path.dirname(resolvedOutput), { recursive: true });
   await writeFile(
-    path.resolve(output),
+    resolvedOutput,
     `${JSON.stringify(cases, null, 2)}\n`,
     "utf8",
   );
-  console.log(`Wrote ${cases.length} eval case stub(s) to ${output}`);
+  console.log(`Wrote ${cases.length} eval case stub(s) to ${resolvedOutput}`);
   console.log(
     "These stubs contain real user content. Fill in expectedOutput, strip anything identifying, then upload to Langfuse. Do not commit them.",
   );

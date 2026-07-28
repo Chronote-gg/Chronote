@@ -186,6 +186,23 @@ describe("notesPromptService", () => {
     expect(participantRoster).toContain("roles: -");
   });
 
+  test("selectRolesForPrompt caps the roster and reports what was kept", async () => {
+    const { module } = await loadModule();
+    const roles = Array.from({ length: 120 }, (_, index) => ({
+      id: `role-${String(index).padStart(3, "0")}`,
+      name: `Role ${String(index).padStart(3, "0")}`,
+    }));
+
+    const selected = module.selectRolesForPrompt(roles, []);
+
+    expect(selected).toHaveLength(100);
+    // The rendered roster must never mention a role outside the capped set,
+    // otherwise eval grading would allow an id the model never saw.
+    const rendered = module.formatRoleRoster(roles, []);
+    expect(rendered).toContain(selected[0].id);
+    expect(rendered).not.toContain("role-119");
+  });
+
   test("role roster reports when a server has no mentionable roles", async () => {
     const { module, getLangfuseChatPrompt } = await loadModule();
     const meeting = buildMeeting();

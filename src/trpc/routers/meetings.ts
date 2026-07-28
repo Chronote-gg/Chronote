@@ -915,10 +915,16 @@ const list = guildMemberProcedure
     const channelMap = new Map(
       channels.map((channel) => [channel.id, channel.name]),
     );
+    // Library cards derive their summary from notes when no summarySentence
+    // exists, so list payloads need the same mention resolution as detail.
+    const replacers = await Promise.all(
+      allowedMeetings.map(createMeetingMentionReplacer),
+    );
 
     return {
-      meetings: allowedMeetings.map((meeting) => {
+      meetings: allowedMeetings.map((meeting, index) => {
         const channelId = resolveMeetingListChannelId(meeting);
+        const resolveMentions = replacers[index];
         return {
           status: resolveMeetingListStatus(meeting.status),
           id: meeting.channelId_timestamp,
@@ -934,9 +940,11 @@ const list = guildMemberProcedure
           timestamp: meeting.timestamp,
           duration: resolveMeetingListDuration(meeting),
           tags: resolveMeetingListTags(meeting.tags),
-          notes: resolveMeetingListNotes(meeting.notes),
+          notes: resolveMentions(resolveMeetingListNotes(meeting.notes)),
           meetingName: meeting.meetingName,
-          summarySentence: meeting.summarySentence,
+          summarySentence: meeting.summarySentence
+            ? resolveMentions(meeting.summarySentence)
+            : meeting.summarySentence,
           summaryLabel: meeting.summaryLabel,
           notesChannelId: meeting.notesChannelId,
           notesMessageId: resolveMeetingListNotesMessageId(

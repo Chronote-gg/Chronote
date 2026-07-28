@@ -91,4 +91,16 @@ describe("fromMember", () => {
   test("omits roleIds entirely when a member holds only @everyone", () => {
     expect(fromMember(buildMember([GUILD_ID])).roleIds).toBeUndefined();
   });
+
+  test("caps snapshotted roles so one member cannot bloat the history item", () => {
+    const manyRoles = Array.from(
+      { length: 250 },
+      (_, index) => `3000000000000000${String(index).padStart(2, "0")}`,
+    );
+
+    const roleIds = fromMember(buildMember(manyRoles)).roleIds ?? [];
+
+    expect(roleIds).toHaveLength(40);
+    expect(roleIds[0]).toBe(manyRoles[0]);
+  });
 });
