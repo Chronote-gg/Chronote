@@ -1,7 +1,12 @@
 import type { ChatAttachment, ChatEntry } from "../types/chat";
 import type { MeetingData } from "../types/meeting-data";
+import type { Participant } from "../types/participants";
 import { renderChatEntryLine } from "../utils/chatLog";
-import { formatParticipantLabel } from "../utils/participants";
+import {
+  formatParticipantLabel,
+  formatRoleMention,
+  formatUserMention,
+} from "../utils/participants";
 import {
   buildMeetingContext,
   formatContextForPrompt,
@@ -12,6 +17,9 @@ import { getLangfuseChatPrompt } from "./langfusePromptService";
 import { resolveMeetingAttendees } from "../utils/meetingAttendees";
 
 const MAX_CHAT_LOG_PROMPT_LENGTH = 20000;
+const MAX_ROLES_IN_PROMPT = 100;
+export const NO_ROLES_AVAILABLE_TEXT = "No roles are available in this server.";
+const NO_ROLES_FOR_PARTICIPANT_TEXT = "-";
 const DEFAULT_IMAGE_CAPTION_MAX_CHARS = 3000;
 const IMAGE_CAPTIONS_SUFFIX_HEADER =
   "\n\nShared images (AI captions, OCR-lite):\n";
@@ -224,8 +232,33 @@ const formatChatLogForPrompt = (
   return chatBlock + captionsSuffix;
 };
 
-const formatParticipantRoster = (meeting: MeetingData): string | undefined => {
-  const participants = Array.from(meeting.participants.values());
+export type MentionableRole = { id: string; name: string };
+
+/**
+ * Roles worth showing the model. @everyone carries no signal and must never be
+ * mentioned, and managed roles belong to integrations rather than to people.
+ */
+export const isMentionableRole = (
+  role: { id: string; name?: string; managed?: boolean },
+  guildId: string,
+): role is MentionableRole =>
+  role.id !== guildId && !role.managed && Boolean(role.name);
+
+const resolveMentionableRoles = (meeting: MeetingData): MentionableRole[] =>
+  meeting.guild.roles
+    .valueOf()
+    .filter((role) => isMentionableRole(role, meeting.guild.id))
+    .map((role) => ({ id: role.id, name: role.name }));
+
+/**
+ * Both rosters are rendered from plain participant and role data so eval
+ * tooling can build the exact prompt the bot would send without reconstructing
+ * Discord state.
+ */
+export const formatParticipantRoster = (
+  participants: Participant[],
+  roleNamesById: Map<string, string>,
+): string | undefined => {
   if (participants.length === 0) {
     return undefined;
   }
@@ -239,9 +272,75 @@ const formatParticipantRoster = (meeting: MeetingData): string | undefined => {
       const displayName = participant.displayName ?? "-";
       const serverNickname = participant.serverNickname ?? "-";
       const profile = `https://discord.com/users/${participant.id}`;
-      const mention = `<@${participant.id}>`;
-      return `- ${preferred} | username: ${username} | display name: ${displayName} | server nickname: ${serverNickname} | id: ${participant.id} | mention: ${mention} | profile: ${profile}`;
+      const mention = formatUserMention(participant.id);
+      const roleNames =
+        participant.roleIds
+          ?.map((roleId) => roleNamesById.get(roleId))
+          .filter((name): name is string => Boolean(name)) ?? [];
+      const roles =
+        roleNames.length > 0
+          ? roleNames.join(", ")
+          : NO_ROLES_FOR_PARTICIPANT_TEXT;
+      return `- ${preferred} | username: ${username} | display name: ${displayName} | server nickname: ${serverNickname} | id: ${participant.id} | mention: ${mention} | profile: ${profile} | roles: ${roles}`;
     })
+    .join("\n");
+};
+
+const countRoleHoldersInMeeting = (
+  participants: Participant[],
+): Map<string, number> => {
+  const counts = new Map<string, number>();
+  for (const participant of participants) {
+    for (const roleId of participant.roleIds ?? []) {
+      counts.set(roleId, (counts.get(roleId) ?? 0) + 1);
+    }
+  }
+  return counts;
+};
+
+/**
+ * The roles the model is actually shown, in the order it sees them. Roles held
+ * by people in the meeting sort first, which puts the plausible assignees at
+ * the top without needing a separate relevance pass. Exported so eval tooling
+ * can treat exactly these ids as the allowed mention set.
+ */
+export const selectRolesForPrompt = (
+  mentionableRoles: MentionableRole[],
+  participants: Participant[],
+): Array<MentionableRole & { participantCount: number }> => {
+  const holderCounts = countRoleHoldersInMeeting(participants);
+  return (
+    mentionableRoles
+      .map((role) => ({
+        ...role,
+        participantCount: holderCounts.get(role.id) ?? 0,
+      }))
+      .sort(
+        (left, right) =>
+          right.participantCount - left.participantCount ||
+          left.name.localeCompare(right.name),
+      )
+      // ponytail: flat cap instead of a relevance-scoring pass. Revisit if real
+      // servers exceed this and the dropped tail turns out to matter.
+      .slice(0, MAX_ROLES_IN_PROMPT)
+  );
+};
+
+/** Roles are listed with their mention strings so notes can address a group. */
+export const formatRoleRoster = (
+  mentionableRoles: MentionableRole[],
+  participants: Participant[],
+): string => {
+  const selected = selectRolesForPrompt(mentionableRoles, participants);
+  if (selected.length === 0) {
+    return NO_ROLES_AVAILABLE_TEXT;
+  }
+
+  return selected
+    .map(
+      (role) =>
+        `- ${role.name} | mention: ${formatRoleMention(role.id)} | in this meeting: ${role.participantCount}`,
+    )
     .join("\n");
 };
 
@@ -251,10 +350,16 @@ export async function getNotesPrompt(meeting: MeetingData) {
 
   const serverName = meeting.guild.name;
   const serverDescription = meeting.guild.description ?? "";
-  const roles = meeting.guild.roles
-    .valueOf()
-    .map((role) => role.name)
-    .join(", ");
+  const mentionableRoles = resolveMentionableRoles(meeting);
+  const participants = Array.from(meeting.participants.values());
+  // Captured here, from the same selection the roster is rendered from. The
+  // guild role cache can change while the model call is in flight, so
+  // recomputing this afterwards could strip a mention the model was given.
+  const promptVisibleRoleIds = selectRolesForPrompt(
+    mentionableRoles,
+    participants,
+  ).map((role) => role.id);
+  const roles = formatRoleRoster(mentionableRoles, participants);
   const events = meeting.guild.scheduledEvents
     .valueOf()
     .map((event) => event.name)
@@ -271,7 +376,10 @@ export async function getNotesPrompt(meeting: MeetingData) {
     "Meeting Notes Bot";
 
   const chatContext = formatChatLogForPrompt(meeting);
-  const participantRoster = formatParticipantRoster(meeting);
+  const participantRoster = formatParticipantRoster(
+    participants,
+    new Map(mentionableRoles.map((role) => [role.id, role.name])),
+  );
 
   const longStoryTestMode = config.notes.longStoryTestMode;
   const contextTestMode = config.context.testMode;
@@ -281,7 +389,7 @@ export async function getNotesPrompt(meeting: MeetingData) {
       ? config.langfuse.notesContextTestPromptName
       : config.langfuse.notesPromptName;
 
-  return await getLangfuseChatPrompt({
+  const prompt = await getLangfuseChatPrompt({
     name: promptName,
     variables: {
       formattedContext,
@@ -304,4 +412,6 @@ export async function getNotesPrompt(meeting: MeetingData) {
       transcript: meeting.finalTranscript ?? "",
     },
   });
+
+  return { ...prompt, promptVisibleRoleIds };
 }

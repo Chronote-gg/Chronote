@@ -23,7 +23,11 @@ import type { MeetingHistory } from "../types/db";
 import { MEETING_STATUS } from "../types/meetingLifecycle";
 import type { Participant } from "../types/participants";
 import type { TranscriptPayload } from "../types/transcript";
-import { replaceDiscordMentionsWithDisplayNames } from "../utils/participants";
+import {
+  buildMeetingMentionReplacer,
+  createMeetingMentionReplacer,
+  resolveGuildRoleNames,
+} from "./meetingMentionService";
 import { isMeetingIndexedForUser } from "../utils/meetingUserIndex";
 import {
   isPersonalMeeting,
@@ -158,11 +162,6 @@ const normalizeTranscriptWindow = (input?: {
     ),
   ),
 });
-
-const buildParticipantMap = (participants?: Participant[]) =>
-  new Map(
-    (participants ?? []).map((participant) => [participant.id, participant]),
-  );
 
 const resolveParticipantLabel = (participant: Participant) =>
   participant.serverNickname ||
@@ -307,6 +306,7 @@ const resolveChannelMap = async (guildId: string) => {
 const summarizeMeeting = (
   meeting: MeetingHistory,
   channelMap: Map<string, string>,
+  resolveMentions: (text: string) => string = (text) => text,
 ) => {
   const channelId = resolveMeetingChannelId(meeting);
   const personalMeeting = isPersonalMeeting(meeting);
@@ -324,7 +324,9 @@ const summarizeMeeting = (
     duration: resolveMeetingDuration(meeting),
     tags: meeting.tags ?? [],
     meetingName: meeting.meetingName,
-    summarySentence: meeting.summarySentence,
+    summarySentence: meeting.summarySentence
+      ? resolveMentions(meeting.summarySentence)
+      : meeting.summarySentence,
     summaryLabel: meeting.summaryLabel,
     notesAvailable: Boolean(meeting.notes),
     transcriptAvailable: Boolean(meeting.transcriptS3Key),
@@ -803,9 +805,16 @@ export async function listMcpMeetings(input: ListMcpMeetingsInput) {
     accessContext,
   );
   const channelMap = await resolveChannelMap(input.guildId);
+  const roleNamesByGuildId = new Map([
+    [input.guildId, await resolveGuildRoleNames(input.guildId)],
+  ]);
   return {
     meetings: allowedMeetings.map((meeting) =>
-      summarizeMeeting(meeting, channelMap),
+      summarizeMeeting(
+        meeting,
+        channelMap,
+        buildMeetingMentionReplacer(meeting, roleNamesByGuildId).toText,
+      ),
     ),
   };
 }
@@ -879,17 +888,22 @@ const summarizeUserMeetings = async (
         .map((meeting) => meeting.guildId),
     ),
   );
-  const channelEntries = await runInBatches(
+  // Batched per guild, not per meeting, so a user with meetings across many
+  // servers does not fan out one Discord request per row.
+  const guildEntries = await runInBatches(
     guildIds,
     MCP_CHANNEL_MAP_BATCH_SIZE,
     async (guildId) => ({
       guildId,
       channelMap: await resolveChannelMap(guildId),
+      roleNames: await resolveGuildRoleNames(guildId),
     }),
   );
   const channelMaps = new Map<string, Map<string, string>>();
-  channelEntries.forEach((entry) => {
+  const roleNamesByGuildId = new Map<string, Map<string, string>>();
+  guildEntries.forEach((entry) => {
     channelMaps.set(entry.guildId, entry.channelMap);
+    roleNamesByGuildId.set(entry.guildId, entry.roleNames);
   });
 
   return meetings.map((meeting) => {
@@ -898,6 +912,7 @@ const summarizeUserMeetings = async (
       ...summarizeMeeting(
         meeting,
         channelMaps.get(meeting.guildId) ?? new Map<string, string>(),
+        buildMeetingMentionReplacer(meeting, roleNamesByGuildId).toText,
       ),
       serverId: meeting.guildId,
       serverName: isPersonalMeeting(meeting)
@@ -1012,29 +1027,50 @@ export async function getMcpMeetingSummary(input: {
   const channelMap = isPersonalMeeting(meeting)
     ? new Map<string, string>()
     : await resolveChannelMap(input.guildId);
-  const participants = buildParticipantMap(meeting.participants);
-  const notes = replaceDiscordMentionsWithDisplayNames(
-    meeting.notes ?? "",
-    participants,
-  );
-  const summarySentence = meeting.summarySentence
-    ? replaceDiscordMentionsWithDisplayNames(
-        meeting.summarySentence,
-        participants,
-      )
-    : meeting.summarySentence;
+  const resolveMentions = await createMeetingMentionReplacer(meeting);
   return {
     meeting: {
-      ...summarizeMeeting(meeting, channelMap),
-      notes,
+      ...summarizeMeeting(meeting, channelMap, resolveMentions.toText),
+      notes: resolveMentions.toText(meeting.notes ?? ""),
       notesVersion: meeting.notesVersion ?? 1,
       attendees: resolveMeetingAttendees(meeting),
-      summarySentence,
       notesChannelId: meeting.notesChannelId,
       notesMessageId: meeting.notesMessageIds?.[0],
     },
   };
 }
+
+// `<@&` plus a 20 digit snowflake plus `>` is 24 characters; round up.
+const MAX_MENTION_TOKEN_LENGTH = 32;
+const MENTION_TOKEN_PATTERN = /<@[!&]?\d+>/g;
+
+/**
+ * Moves a page boundary back to just before a mention it would otherwise cut
+ * in half, so a client following `nextOffset` never receives raw id fragments
+ * like `<@&1` and `23>` on adjacent pages. Offsets stay in stored transcript
+ * coordinates, and the page only ever gets shorter, never past `maxChars`.
+ * A mention longer than the whole page is left split, since shrinking to
+ * nothing would stall paging.
+ */
+const clampEndToWholeMention = (
+  transcript: string,
+  offset: number,
+  end: number,
+): number => {
+  const searchStart = Math.max(offset, end - MAX_MENTION_TOKEN_LENGTH);
+  const region = transcript.slice(searchStart, end + MAX_MENTION_TOKEN_LENGTH);
+  for (const match of region.matchAll(MENTION_TOKEN_PATTERN)) {
+    const tokenStart = searchStart + match.index;
+    const tokenEnd = tokenStart + match[0].length;
+    if (tokenStart >= end || tokenEnd <= end) continue;
+    // Ending before the token would leave an empty page and stall paging when
+    // the page begins inside or exactly at a mention, so the page is extended
+    // to the end of that token instead. This is the only case where a page
+    // exceeds maxChars, and it is bounded by one mention.
+    return tokenStart > offset ? tokenStart : tokenEnd;
+  }
+  return end;
+};
 
 function sliceTranscript(
   transcript: string,
@@ -1042,10 +1078,12 @@ function sliceTranscript(
 ) {
   const totalChars = transcript.length;
   const offset = Math.min(transcriptWindow.offset, totalChars);
-  const transcriptSlice = transcript.slice(
-    offset,
-    offset + transcriptWindow.maxChars,
-  );
+  const requestedEnd = Math.min(offset + transcriptWindow.maxChars, totalChars);
+  const end =
+    requestedEnd < totalChars
+      ? clampEndToWholeMention(transcript, offset, requestedEnd)
+      : requestedEnd;
+  const transcriptSlice = transcript.slice(offset, end);
   const nextOffset = offset + transcriptSlice.length;
   return {
     transcript: transcriptSlice,
@@ -1078,11 +1116,20 @@ export async function getMcpMeetingTranscript(input: {
   const transcriptPayload = meeting.transcriptS3Key
     ? await fetchJsonFromS3<TranscriptPayload>(meeting.transcriptS3Key)
     : undefined;
-  const participants = buildParticipantMap(meeting.participants);
-  const transcript = replaceDiscordMentionsWithDisplayNames(
-    transcriptPayload?.text ?? meeting.transcript ?? "",
-    participants,
-  );
+  const resolveMentions = await createMeetingMentionReplacer(meeting);
+  // Page the stored transcript, then resolve only the page. Resolution changes
+  // text length and depends on a Discord lookup that can fail, so offsets
+  // taken over resolved text would shift between requests and a client
+  // following nextOffset would skip or repeat characters.
+  //
+  // offset, nextOffset, totalChars, and maxChars are therefore all in stored
+  // transcript coordinates. Resolution is a display transform applied after
+  // paging, so a page whose mentions resolve to longer names can exceed
+  // maxChars slightly. Sizing the window to the resolved length instead would
+  // put the bound and the offsets in different coordinate systems and make the
+  // response shape depend on whether a Discord lookup succeeded, which is the
+  // instability this ordering exists to avoid.
+  const transcript = transcriptPayload?.text ?? meeting.transcript ?? "";
   const transcriptWindow = sliceTranscript(
     transcript,
     normalizeTranscriptWindow(input),
@@ -1090,7 +1137,7 @@ export async function getMcpMeetingTranscript(input: {
   return {
     meetingId: meeting.meetingId,
     id: meeting.channelId_timestamp,
-    transcript: transcriptWindow.transcript,
+    transcript: resolveMentions.toText(transcriptWindow.transcript),
     transcriptAvailable: Boolean(transcript),
     offset: transcriptWindow.offset,
     totalChars: transcriptWindow.totalChars,

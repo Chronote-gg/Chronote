@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { config } from "./configService";
+import { createMeetingMentionReplacer } from "./meetingMentionService";
 import { decryptToken, encryptToken } from "./tokenEncryptionService";
 import {
   getNotionIntegrationRepository,
@@ -288,7 +289,7 @@ const createMeetingPageInNotion = async (params: {
     userId: params.userId,
     repository: params.repository,
     async action(accessToken, connection) {
-      const markdown = buildMeetingNotionMarkdown(params.meeting);
+      const markdown = await buildMeetingNotionMarkdown(params.meeting);
       const page = await requestNotionApi({
         accessToken,
         method: "POST",
@@ -313,7 +314,7 @@ const replaceMeetingPageInNotion = async (params: {
     userId: params.userId,
     repository: params.repository,
     async action(accessToken) {
-      const markdown = buildMeetingNotionMarkdown(params.meeting);
+      const markdown = await buildMeetingNotionMarkdown(params.meeting);
       return requestNotionApi({
         accessToken,
         method: "PATCH",
@@ -338,10 +339,19 @@ export const buildNotionAuthorizationUrl = (state: string) => {
   return `${NOTION_AUTHORIZE_URL}?${params.toString()}`;
 };
 
-export const buildMeetingNotionMarkdown = (meeting: MeetingHistory) => {
-  const notes = meeting.notes?.trim() || "No Chronote notes are available yet.";
+export const buildMeetingNotionMarkdown = async (meeting: MeetingHistory) => {
+  const resolveMentions = await createMeetingMentionReplacer(meeting);
+  const notes =
+    resolveMentions.toMarkdown(meeting.notes ?? "").trim() ||
+    "No Chronote notes are available yet.";
+  // The heading can fall back to the summary sentence, which may carry
+  // mentions, so resolve before trimming.
   const title = trimHeading(
-    meeting.meetingName ?? meeting.summaryLabel ?? meeting.summarySentence,
+    meeting.meetingName ??
+      meeting.summaryLabel ??
+      (meeting.summarySentence
+        ? resolveMentions.toText(meeting.summarySentence)
+        : undefined),
   );
   const participants = formatParticipantNames(meeting);
   const details = [

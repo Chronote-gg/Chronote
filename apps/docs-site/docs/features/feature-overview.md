@@ -155,6 +155,18 @@ These buttons appear on meeting embeds:
 | Rename meeting     | After meeting ends    | Opens a modal to rename the meeting                  |
 | Generate Image     | After meeting ends    | Creates a DALL-E image from the meeting (plan-gated) |
 
+## Mentions in notes
+
+Chronote writes notes that refer to people and groups using Discord mentions, so an assignment reads as the actual person or team rather than a guessed name.
+
+- Individual assignments use a member mention, for example when one person owns a follow-up.
+- Group assignments use a role mention, for example when the transcript says all moderators or the whole design team should do something.
+- Chronote only mentions members who attended and roles that exist in your server, and it never produces an `@everyone` or `@here` mention. Mentions in generated notes are checked against those lists before the notes are saved, so a mention is never a guess.
+
+Mentions inside meeting notes are display-only. Discord does not send notifications for mentions in an embed, so nobody is pinged when notes are posted.
+
+In the web portal, shared links, Notion exports, and Markdown exports, mentions are shown as readable names instead of raw ids.
+
 ## Notes correction flow
 
 1. Click **Suggest correction** on a meeting summary.

@@ -76,13 +76,21 @@ import { MEETING_STATUS } from "../../types/meetingLifecycle";
 import { buildMeetingNotesEmbeds } from "../../utils/meetingNotes";
 import { stripCodeFences } from "../../utils/text";
 import {
+  collectMentionIds,
+  stripUnknownMentions,
+} from "../../utils/mentionSanitizer";
+import {
   buildImportedMeetingNotes,
   normalizeImportedNotes,
 } from "../../utils/importedNotes";
+import { resolveAttendeeDisplayName } from "../../utils/participants";
 import {
-  replaceDiscordMentionsWithDisplayNames,
-  resolveAttendeeDisplayName,
-} from "../../utils/participants";
+  buildMeetingMentionReplacer,
+  buildParticipantMap,
+  createMeetingMentionReplacer,
+  resolveGuildRoleNames,
+  resolveMentionsInTimelineEvents,
+} from "../../services/meetingMentionService";
 import {
   isPersonalMeeting,
   PERSONAL_MEETING_CHANNEL_NAME,
@@ -107,11 +115,6 @@ const resolveParticipantLabel = (participant: Participant) =>
   participant.username ||
   participant.tag ||
   "Unknown";
-
-const buildParticipantMap = (participants?: Participant[]) =>
-  new Map(
-    (participants ?? []).map((participant) => [participant.id, participant]),
-  );
 
 const parseChannelIdTimestamp = (channelIdTimestamp: string) => {
   const hashIndex = channelIdTimestamp.indexOf("#");
@@ -568,7 +571,12 @@ async function generateCorrectedNotes(options: {
 
     const content = completion.choices[0]?.message?.content;
     if (content && content.trim().length > 0) {
-      return stripCodeFences(content.trim());
+      // A correction may keep the mentions already in the notes but must not
+      // introduce a new id, which would be invented rather than copied.
+      return stripUnknownMentions(
+        stripCodeFences(content.trim()),
+        collectMentionIds(options.currentNotes),
+      );
     }
 
     throw new TRPCError({
@@ -919,10 +927,20 @@ const list = guildMemberProcedure
     const channelMap = new Map(
       channels.map((channel) => [channel.id, channel.name]),
     );
+    // Library cards derive their summary from notes when no summarySentence
+    // exists, so list payloads need the same mention resolution as detail.
+    // One role fetch for the whole list, since this endpoint is guild scoped.
+    const roleNamesByGuildId = new Map([
+      [input.serverId, await resolveGuildRoleNames(input.serverId)],
+    ]);
 
     return {
       meetings: allowedMeetings.map((meeting) => {
         const channelId = resolveMeetingListChannelId(meeting);
+        const resolveMentions = buildMeetingMentionReplacer(
+          meeting,
+          roleNamesByGuildId,
+        );
         return {
           status: resolveMeetingListStatus(meeting.status),
           id: meeting.channelId_timestamp,
@@ -938,9 +956,11 @@ const list = guildMemberProcedure
           timestamp: meeting.timestamp,
           duration: resolveMeetingListDuration(meeting),
           tags: resolveMeetingListTags(meeting.tags),
-          notes: resolveMeetingListNotes(meeting.notes),
+          notes: resolveMentions.toText(resolveMeetingListNotes(meeting.notes)),
           meetingName: meeting.meetingName,
-          summarySentence: meeting.summarySentence,
+          summarySentence: meeting.summarySentence
+            ? resolveMentions.toText(meeting.summarySentence)
+            : meeting.summarySentence,
           summaryLabel: meeting.summaryLabel,
           notesChannelId: meeting.notesChannelId,
           notesMessageId: resolveMeetingListNotesMessageId(
@@ -1064,31 +1084,30 @@ const detail = authedProcedure
     const transcriptPayload = history.transcriptS3Key
       ? await fetchJsonFromS3<TranscriptPayload>(history.transcriptS3Key)
       : undefined;
-    const participants = buildParticipantMap(history.participants);
-    const transcript = replaceDiscordMentionsWithDisplayNames(
-      transcriptPayload?.text ?? "",
-      participants,
-    );
-    const notes = replaceDiscordMentionsWithDisplayNames(
-      history.notes ?? "",
-      participants,
-    );
+    const resolveMentions = await createMeetingMentionReplacer(history);
+    const transcript = resolveMentions.toText(transcriptPayload?.text ?? "");
+    const notes = resolveMentions.toMarkdown(history.notes ?? "");
     const summarySentence = history.summarySentence
-      ? replaceDiscordMentionsWithDisplayNames(
-          history.summarySentence,
-          participants,
-        )
+      ? // The portal renders this through MarkdownBody, so it needs escaping.
+        // It can also feed a title fallback, but only when both meetingName and
+        // summaryLabel are absent, and summaryLabel is normalized to
+        // alphanumerics so it is almost always present. Escaping the common
+        // rendered path beats leaving an injection open for the rare one.
+        resolveMentions.toMarkdown(history.summarySentence)
       : history.summarySentence;
 
     let chatEntries: ChatEntry[] | undefined;
     if (history.chatS3Key) {
       chatEntries = await fetchJsonFromS3<ChatEntry[]>(history.chatS3Key);
     }
-    const events: MeetingEvent[] = buildMeetingTimelineEventsFromHistory({
-      history,
-      transcriptPayload,
-      chatEntries,
-    });
+    const events: MeetingEvent[] = resolveMentionsInTimelineEvents(
+      buildMeetingTimelineEventsFromHistory({
+        history,
+        transcriptPayload,
+        chatEntries,
+      }),
+      resolveMentions.toText,
+    );
 
     const audioUrl = history.audioS3Key
       ? await getSignedObjectUrl(history.audioS3Key)
@@ -1218,9 +1237,8 @@ const updateNotes = authedProcedure
       });
     }
 
-    markdownNotes = replaceDiscordMentionsWithDisplayNames(
+    markdownNotes = (await createMeetingMentionReplacer(history)).toMarkdown(
       markdownNotes,
-      buildParticipantMap(history.participants),
     );
 
     if (markdownNotes.length === 0) {
@@ -1335,9 +1353,8 @@ const importNotes = authedProcedure
       source,
     });
 
-    markdownNotes = replaceDiscordMentionsWithDisplayNames(
+    markdownNotes = (await createMeetingMentionReplacer(history)).toMarkdown(
       markdownNotes,
-      buildParticipantMap(history.participants),
     );
 
     if (utf8ByteLength(markdownNotes) > NOTES_EDITOR_MARKDOWN_BYTE_LIMIT) {

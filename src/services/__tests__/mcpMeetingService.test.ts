@@ -3,6 +3,7 @@ import {
   getGuildMemberCached,
   listBotGuildsCached,
   listGuildChannelsCached,
+  listGuildRolesCached,
 } from "../discordCacheService";
 import { checkUserMeetingAccess } from "../meetingAccessService";
 import {
@@ -31,6 +32,7 @@ jest.mock("../discordCacheService", () => ({
   getGuildMemberCached: jest.fn(),
   listBotGuildsCached: jest.fn(),
   listGuildChannelsCached: jest.fn(),
+  listGuildRolesCached: jest.fn(async () => []),
 }));
 
 jest.mock("../meetingAccessService", () => ({
@@ -936,6 +938,18 @@ describe("mcpMeetingService", () => {
       "channel-1#2026-01-02T00:00:00.000Z",
     );
   });
+});
+
+describe("mcpMeetingService transcripts", () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    jest.mocked(getGuildMemberCached).mockResolvedValue({ roles: [] });
+    jest.mocked(listBotGuildsCached).mockResolvedValue([]);
+    jest
+      .mocked(listGuildChannelsCached)
+      .mockResolvedValue([{ id: "channel-1", name: "Meeting Room", type: 2 }]);
+    jest.mocked(listGuildRolesCached).mockResolvedValue([]);
+  });
 
   it("loads a transcript by the list item id", async () => {
     const meeting = createMeeting("meeting-1", {
@@ -997,6 +1011,93 @@ describe("mcpMeetingService", () => {
       truncated: true,
       nextOffset: 9,
     });
+  });
+
+  it("keeps transcript paging offsets stable whether or not roles resolve", async () => {
+    const roleId = "300000000000000001";
+    // Long enough that the mention sits inside the first page.
+    const meeting = createMeeting("meeting-1", {
+      guildId: "guild-1",
+      channelId_timestamp: "channel-1#2026-01-02T00:00:00.000Z",
+      transcript: `ping <@&${roleId}> now and then keep talking for a while`,
+    });
+    jest.mocked(getMeetingHistoryService).mockResolvedValue(meeting);
+    jest.mocked(checkUserMeetingAccess).mockResolvedValue({
+      allowed: true,
+      via: "attendee",
+    });
+    const args = {
+      userId: "user-1",
+      guildId: "guild-1",
+      id: "channel-1#2026-01-02T00:00:00.000Z",
+      offset: 0,
+      maxChars: 30,
+    };
+
+    jest
+      .mocked(listGuildRolesCached)
+      .mockResolvedValue([
+        { id: roleId, name: "Design", permissions: "0" },
+      ] as never);
+    const resolved = await getMcpMeetingTranscript(args);
+
+    jest
+      .mocked(listGuildRolesCached)
+      .mockRejectedValue(new Error("rate limited"));
+    const warn = jest.spyOn(console, "warn").mockImplementation(() => {});
+    const degraded = await getMcpMeetingTranscript(args);
+    warn.mockRestore();
+
+    // Offsets describe the stored transcript, so a client following
+    // nextOffset is unaffected by role lookup succeeding or failing.
+    expect(resolved.totalChars).toBe(degraded.totalChars);
+    expect(resolved.nextOffset).toBe(degraded.nextOffset);
+    expect(resolved.transcript).toContain("@Design");
+    expect(degraded.transcript).toContain(`<@&${roleId}>`);
+  });
+
+  it("does not split a mention across transcript pages", async () => {
+    const roleId = "300000000000000001";
+    const transcript = `abcdefghij <@&${roleId}> tail text here`;
+    const meeting = createMeeting("meeting-1", {
+      guildId: "guild-1",
+      channelId_timestamp: "channel-1#2026-01-02T00:00:00.000Z",
+      transcript,
+    });
+    jest.mocked(getMeetingHistoryService).mockResolvedValue(meeting);
+    jest.mocked(checkUserMeetingAccess).mockResolvedValue({
+      allowed: true,
+      via: "attendee",
+    });
+    jest
+      .mocked(listGuildRolesCached)
+      .mockResolvedValue([
+        { id: roleId, name: "Design", permissions: "0" },
+      ] as never);
+
+    // maxChars lands in the middle of the mention token.
+    const first = await getMcpMeetingTranscript({
+      userId: "user-1",
+      guildId: "guild-1",
+      id: "channel-1#2026-01-02T00:00:00.000Z",
+      offset: 0,
+      maxChars: 15,
+    });
+
+    expect(first.transcript).not.toContain("<@&");
+    expect(first.transcript).toBe("abcdefghij ");
+
+    const second = await getMcpMeetingTranscript({
+      userId: "user-1",
+      guildId: "guild-1",
+      id: "channel-1#2026-01-02T00:00:00.000Z",
+      offset: first.nextOffset ?? 0,
+      maxChars: 40,
+    });
+
+    // The whole mention lands on the next page and resolves cleanly.
+    expect(second.transcript).toContain("@Design");
+    expect(second.transcript).not.toContain(roleId);
   });
 
   it("clamps transcript offsets beyond the transcript length", async () => {

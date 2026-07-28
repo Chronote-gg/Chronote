@@ -20,6 +20,10 @@ import {
   updateMeetingNotesMessageMetadataService,
 } from "../services/meetingHistoryService";
 import { stripCodeFences } from "../utils/text";
+import {
+  collectMentionIds,
+  stripUnknownMentions,
+} from "../utils/mentionSanitizer";
 import { MeetingHistory, SuggestionHistoryEntry } from "../types/db";
 import { fetchJsonFromS3 } from "../services/storageService";
 import { formatParticipantLabel } from "../utils/participants";
@@ -212,7 +216,12 @@ async function generateCorrectedNotes({
 
     const content = completion.choices[0]?.message?.content;
     if (content && content.trim().length > 0) {
-      return stripCodeFences(content.trim());
+      // A correction may keep the mentions already in the notes but must not
+      // introduce a new id, which would be invented rather than copied.
+      return stripUnknownMentions(
+        stripCodeFences(content.trim()),
+        collectMentionIds(currentNotes),
+      );
     }
   } catch (error) {
     console.error("Failed to generate corrected notes:", error);
@@ -400,6 +409,10 @@ export async function handleNotesCorrectionModal(
         history.isAutoRecording ? " or a server context manager" : ""
       } can accept.`,
       components: [row],
+      // The diff quotes notes that can contain mentions. The code fence
+      // already suppresses them, this makes it explicit rather than relying
+      // on that rendering detail.
+      allowedMentions: { parse: [] },
     });
   } catch (error) {
     console.error("Failed to handle notes correction modal:", error);

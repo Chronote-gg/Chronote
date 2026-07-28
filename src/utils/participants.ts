@@ -4,12 +4,20 @@ import { Participant } from "../types/participants";
 // Accept both legacy (<@!123>) and current (<@123>) mention formats.
 // Outgoing mentions normalize to <@id>, but we still parse stored legacy values.
 const DISCORD_MENTION_REGEX = /^<@!?(\d+)>$/;
+// Matches user (<@123>, <@!123>) and role (<@&123>) mentions in note bodies.
+const DISCORD_ANY_MENTION_PATTERN = /<@([!&]?)(\d+)>/g;
+const ROLE_MENTION_SIGIL = "&";
+const MAX_SNAPSHOT_ROLES_PER_MEMBER = 40;
 const DISCORD_PROFILE_REGEX =
   /https?:\/\/(?:ptb\.|canary\.)?discord\.com\/users\/(\d+)/i;
 const DISCORD_ID_REGEX = /^\d{15,20}$/;
 
 export function formatUserMention(userId: string): string {
   return `<@${userId}>`;
+}
+
+export function formatRoleMention(roleId: string): string {
+  return `<@&${roleId}>`;
 }
 
 export function extractDiscordUserId(reference: string): string | undefined {
@@ -36,18 +44,57 @@ export function resolveAttendeeDisplayName(
   });
 }
 
+// Role and member names are set by server admins and users. Where a resolved
+// mention lands in text that is parsed as Markdown, a name like
+// "[Support](https://evil.example)" would turn a display-only mention into a
+// clickable link, so those surfaces opt into escaping. Only inline-dangerous
+// characters: escaping "-" or "." would mangle ordinary names like "Jane-Doe",
+// and those are only significant at the start of a line.
+const MARKDOWN_METACHARACTERS = /([\\`*_[\]()~<>|:])/g;
+// The portal and shared notes render with remark-gfm, which autolinks bare
+// URLs. Escaping ":" breaks the scheme form; "www." needs the dot broken too,
+// and only in that prefix so ordinary names like "Dr. Smith" stay intact.
+const GFM_WWW_AUTOLINK = /\bwww\./gi;
+
+const escapeMarkdown = (value: string): string =>
+  value
+    .replace(MARKDOWN_METACHARACTERS, "\\$1")
+    .replace(GFM_WWW_AUTOLINK, (match) => `${match.slice(0, -1)}\\.`);
+
+const formatResolvedMention = (name: string, forMarkdown: boolean): string => {
+  const trimmed = name.replace(/^@+/, "");
+  return `@${forMarkdown ? escapeMarkdown(trimmed) : trimmed}`;
+};
+
+/**
+ * Rewrites Discord user and role mentions into readable `@Name` text for
+ * surfaces that cannot render mentions (web portal, MCP, Notion, Markdown
+ * export). Unknown ids are left untouched so raw mentions never become
+ * misleading names.
+ */
 export function replaceDiscordMentionsWithDisplayNames(
   text: string,
   participants: Map<string, Participant>,
+  roleNamesById: Map<string, string> = new Map(),
+  options: { forMarkdown?: boolean } = {},
 ): string {
   if (!text) return text;
-  return text.replace(/<@!?(\d+)>/g, (match, id: string) => {
-    const participant = participants.get(id);
-    if (!participant) return match;
-    const preferred = getParticipantPreferredName(participant, id) ?? id;
-    const normalizedPreferred = preferred.replace(/^@+/, "");
-    return `@${normalizedPreferred}`;
-  });
+  const forMarkdown = options.forMarkdown === true;
+  return text.replace(
+    DISCORD_ANY_MENTION_PATTERN,
+    (match, sigil: string, id: string) => {
+      if (sigil === ROLE_MENTION_SIGIL) {
+        const roleName = roleNamesById.get(id);
+        return roleName ? formatResolvedMention(roleName, forMarkdown) : match;
+      }
+      const participant = participants.get(id);
+      if (!participant) return match;
+      return formatResolvedMention(
+        getParticipantPreferredName(participant, id) ?? id,
+        forMarkdown,
+      );
+    },
+  );
 }
 
 export async function buildParticipantSnapshot(
@@ -113,12 +160,24 @@ export function formatParticipantLabel(
 }
 
 export function fromMember(member: GuildMember): Participant {
+  // @everyone is on every member and carries no signal, so it is dropped here.
+  // Discord allows up to 250 roles per member; these snapshots are embedded in
+  // a single MeetingHistory item, and a roster line listing that many roles
+  // would bloat the notes prompt for no benefit. Sorted explicitly because the
+  // role cache is not ordered by position, so slicing it raw could drop a
+  // member's most significant roles and keep trivial ones.
+  const roleIds = member.roles.cache
+    .filter((role) => role.id !== member.guild.id)
+    .sort((left, right) => right.position - left.position)
+    .map((role) => role.id)
+    .slice(0, MAX_SNAPSHOT_ROLES_PER_MEMBER);
   return {
     id: member.user.id,
     username: member.user.username,
     displayName: member.user.globalName ?? undefined,
     serverNickname: member.nickname ?? undefined,
     tag: member.user.tag,
+    roleIds: roleIds.length > 0 ? roleIds : undefined,
   };
 }
 

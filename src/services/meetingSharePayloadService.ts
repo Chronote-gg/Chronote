@@ -3,11 +3,13 @@ import type { ChatEntry } from "../types/chat";
 import type { MeetingEvent } from "../types/meetingTimeline";
 import type { Participant } from "../types/participants";
 import type { TranscriptPayload } from "../types/transcript";
-import {
-  replaceDiscordMentionsWithDisplayNames,
-  resolveAttendeeDisplayName,
-} from "../utils/participants";
+import { resolveAttendeeDisplayName } from "../utils/participants";
 import { fetchJsonFromS3 } from "./storageService";
+import {
+  buildParticipantMap,
+  createMeetingMentionReplacer,
+  resolveMentionsInTimelineEvents,
+} from "./meetingMentionService";
 import { buildMeetingTimelineEventsFromHistory } from "./meetingTimelineService";
 
 export type SharedMeetingPayload = {
@@ -33,11 +35,6 @@ const resolveParticipantLabel = (participant: Participant) =>
   participant.username ||
   participant.tag ||
   "Unknown";
-
-const buildParticipantMap = (participants?: Participant[]) =>
-  new Map(
-    (participants ?? []).map((participant) => [participant.id, participant]),
-  );
 
 const resolveMeetingAttendees = (history: {
   participants?: Participant[];
@@ -88,30 +85,27 @@ export async function buildSharedMeetingPayloadService(
   const chatEntries = history.chatS3Key
     ? await fetchJsonFromS3<ChatEntry[]>(history.chatS3Key)
     : undefined;
-  const participants = buildParticipantMap(history.participants);
-  const transcript = replaceDiscordMentionsWithDisplayNames(
-    transcriptPayload?.text ?? "",
-    participants,
-  );
-  const notes = replaceDiscordMentionsWithDisplayNames(
-    history.notes ?? "",
-    participants,
-  );
+  const resolveMentions = await createMeetingMentionReplacer(history);
+  const transcript = resolveMentions.toText(transcriptPayload?.text ?? "");
+  const notes = resolveMentions.toMarkdown(history.notes ?? "");
   const summarySentence = history.summarySentence
-    ? replaceDiscordMentionsWithDisplayNames(
-        history.summarySentence,
-        participants,
-      )
+    ? resolveMentions.toText(history.summarySentence)
     : history.summarySentence;
-  const events = buildMeetingTimelineEventsFromHistory({
-    history,
-    transcriptPayload,
-    chatEntries,
-  });
+  // Titles can fall back to the summary sentence, so resolve mentions before
+  // deriving one or a raw id leaks into the shared page title.
+  const title = resolveSharedMeetingTitle({ ...history, summarySentence });
+  const events = resolveMentionsInTimelineEvents(
+    buildMeetingTimelineEventsFromHistory({
+      history,
+      transcriptPayload,
+      chatEntries,
+    }),
+    resolveMentions.toText,
+  );
 
   return {
     meeting: {
-      title: resolveSharedMeetingTitle(history),
+      title,
       meetingName: history.meetingName,
       summarySentence,
       summaryLabel: history.summaryLabel,

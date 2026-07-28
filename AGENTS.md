@@ -112,6 +112,11 @@
 - Auto-record will end meeting if channel empties.
 - Noise gate can suppress very quiet snippets; forced transcriptions bypass it.
 - Attendance entries are stored as Discord mentions (`<@snowflakeId>`), and the web UI resolves them to display names server-side.
+- Notes may contain user mentions (`<@snowflakeId>`) and role mentions (`<@&snowflakeId>`). All read surfaces (web portal, share payload, MCP, Notion, Markdown export) must resolve them through `createMeetingMentionReplacer` in `services/meetingMentionService.ts`; do not resolve mentions inline at a call site. Role names are fetched via `listGuildRolesCached` and degrade to raw mentions if Discord is unavailable.
+- Mentions inside Discord embeds render but never notify. Notes are posted as embed descriptions, so mentions in notes are display-only. Do not move notes out of embeds without an explicit product decision to start pinging people.
+- Any surface that posts notes-derived text as **ordinary message content** (not an embed) must set `allowedMentions: { parse: [] }`, because message content does ping. `/ask` answers and the correction diff already do. Mentions still render as names; they just do not notify.
+- Prompt-visible role lists exclude `@everyone` (role id equals guild id) and managed integration roles. `MAX_ROLES_IN_PROMPT` in `notesPromptService.ts` caps the list.
+- Generated notes are persisted and posted verbatim, so mention ids must be validated, not trusted to the prompt. Any path that generates notes runs the output through `stripUnknownMentions` (`utils/mentionSanitizer.ts`) against the ids that path actually showed the model. An invented id renders as a broken mention and the guild id renders as `@everyone`. New note-generating paths must add this call; `getNotes` and the personal upload path are the current examples.
 - Prompt fragments live in `prompts/_fragments` and are composed via `extends` in front matter. `prompts:pull` skips prompts that use `extends` unless `--force` is passed.
 - Transcription guardrails include a loudness gate (noise gate metrics, hard silence threshold, syllable rate, and logprobs), a prompt echo gate using similarity checks, and a low-confidence prompt/no-prompt vote fallback on slow snippets.
 - **Current outbound network rules (ECS service SG)**: temporarily allowing all egress (UDP/TCP any port) for Discord voice debugging. Previously it was limited to TCP 443 and DNS (53) only. Remember to tighten this once voice is stable and update this note.
@@ -192,7 +197,13 @@ Optional Windows helper (prints loaded env, supports `-Mock` / `-SkipDocker`):
 - Code stats and complexity (scc + lizard) keep size and complexity visible in CI. Lizard uses its default warning thresholds (CCN > 15, length > 1000, nloc > 1000000, parameter_count > 100). Use `.sccignore` for scc exclusions and `whitelizard.txt` to suppress known complexity offenders. Docs: https://github.com/boyter/scc and https://github.com/terryyin/lizard
 - Markdown lint (markdownlint-cli2) enforces consistent Markdown style across all repo `.md` files. Config in `.markdownlint-cli2.jsonc`. Command: `yarn markdownlint:check` (or `yarn markdownlint:fix` to auto-fix). Docs: https://github.com/DavidAnson/markdownlint-cli2 and https://github.com/DavidAnson/markdownlint/blob/main/doc/Rules.md
 - IaC scan (Checkov via uvx) catches Terraform misconfigurations. Docs: https://www.checkov.io/2.Basics/CLI%20Command%20Reference.html and https://docs.astral.sh/uv/concepts/tools/
-- Prompt sync (Langfuse) keeps repo prompt files aligned with Langfuse. Command: `yarn prompts:check`.
+- Prompt sync (Langfuse) keeps repo prompt files aligned with Langfuse. Command: `yarn prompts:check`. A PR that edits a file in `prompts/` will fail this check until `yarn prompts:push` runs, because the check diffs the repo against the live Langfuse label. Do not push prompts to make a PR go green: the push belongs at deploy time so the prompt and the code that supplies its variables go live together. Promoting a prompt early can tell the model to use inputs the deployed code does not send yet. Leave the check red, call out the pending push in the PR description, and push when the deploy happens.
+
+### Evals
+
+- `yarn eval:meeting-notes` runs the notes eval against a Langfuse dataset (`LANGFUSE_EVAL_DATASET`, default `meeting-notes`). Cases carry rendered prompt variables rather than a `MeetingData` object, so `formatParticipantRoster` and `formatRoleRoster` are exported from `notesPromptService.ts` for reuse.
+- Mention grading is deterministic (`src/evals/roleMentionGraders.ts`): it verifies every emitted mention id came from the roster, blocks `@everyone`/`@here`, and scores recall against expected ids. Prefer extending these graders over adding a judge model.
+- `yarn evals:harvest-downvotes --output <path>` turns downvoted meetings into eval case stubs with `expectedOutput` left blank for a human to curate. Output contains real meeting content: write it outside this public repo. `*.harvested.json` is gitignored as a backstop.
 
 ### Coverage guidance
 

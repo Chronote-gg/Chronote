@@ -28,6 +28,8 @@ import { createOpenAIClient } from "./openaiClient";
 import { getModelChoice } from "./modelFactory";
 import { resolveChatParamsForRole } from "./openaiModelParams";
 import { getLangfuseChatPrompt } from "./langfusePromptService";
+import { NO_ROLES_AVAILABLE_TEXT } from "./notesPromptService";
+import { stripUnknownMentions } from "../utils/mentionSanitizer";
 import { config } from "./configService";
 import {
   generateMeetingSummaries,
@@ -737,7 +739,7 @@ const generatePersonalUploadNotes = async (input: {
       serverDescription: "Personal Chronote upload.",
       voiceChannelName: PERSONAL_UPLOAD_CHANNEL_NAME,
       attendees: "Uploader",
-      roles: "",
+      roles: NO_ROLES_AVAILABLE_TEXT,
       events: "",
       channelNames: PERSONAL_UPLOAD_CHANNEL_NAME,
       longStoryTargetChars: config.notes.longStoryTargetChars,
@@ -760,7 +762,13 @@ const generatePersonalUploadNotes = async (input: {
     messages: messages as ChatCompletionMessageParam[],
     ...chatParams,
   });
-  return completion.choices[0]?.message?.content?.trim() ?? "";
+  // This prompt supplies no mention strings at all, so every allowlist is
+  // empty: any mention in the output was invented, including one that happens
+  // to match the uploader.
+  return stripUnknownMentions(
+    completion.choices[0]?.message?.content?.trim() ?? "",
+    { userIds: [], roleIds: [] },
+  );
 };
 
 const writeProcessingMeeting = async (job: PersonalMediaUploadJobRecord) => {
