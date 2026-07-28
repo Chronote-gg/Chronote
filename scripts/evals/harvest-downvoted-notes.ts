@@ -7,7 +7,6 @@ import {
   formatParticipantRoster,
   formatRoleRoster,
   isMentionableRole,
-  NO_ROLES_AVAILABLE_TEXT,
 } from "../../src/services/notesPromptService";
 import { fetchJsonFromS3 } from "../../src/services/storageService";
 import type { MeetingHistory } from "../../src/types/db";
@@ -47,10 +46,7 @@ const buildEvalCase = async (meeting: MeetingHistory, comment?: string) => {
           participants,
           new Map(mentionableRoles.map((role) => [role.id, role.name])),
         ) ?? "No participant roster captured.",
-      roles:
-        mentionableRoles.length > 0
-          ? formatRoleRoster(mentionableRoles, participants)
-          : NO_ROLES_AVAILABLE_TEXT,
+      roles: formatRoleRoster(mentionableRoles, participants),
       attendees: participants
         .map((participant) => participant.username)
         .join(", "),
