@@ -1,3 +1,18 @@
+# This file is the template for the TERRAFORM_TFVARS_JSON secret, which the
+# plan and apply workflows write out as terraform.auto.tfvars.json.
+#
+# Any key here that is NOT a credential can be overridden without touching that
+# secret: set a GitHub Actions variable named TFVAR_<KEY> on the environment and
+# it wins over the value below. Prefer that for anything you may want to read or
+# change later (feature flags, model names, URLs, tuning knobs), because the
+# secret is write-only: nobody can see its current contents, and changing one
+# key means retyping the whole blob including the credentials in it.
+#
+# These keys are credentials and are refused via TFVAR_, deliberately, because
+# Actions variables are writable by people who cannot write secrets:
+# GITHUB_TOKEN, AWS_TOKEN_KEY, LANGFUSE_SECRET_KEY, DOCS_ALGOLIA_API_KEY,
+# REDIS_AUTH_TOKEN, grafana_api_key.
+
 # Required
 DISCORD_CLIENT_ID="your-discord-client-id-here"
 GITHUB_TOKEN="your-github-token-here"

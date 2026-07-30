@@ -75,6 +75,7 @@ jobs:
           REDIS_AUTH_TOKEN: ${{ secrets.REDIS_AUTH_TOKEN }}
           ENABLE_DESKTOP_API: ${{ vars.ENABLE_DESKTOP_API }}
           DESKTOP_ALLOWED_USER_IDS: ${{ vars.DESKTOP_ALLOWED_USER_IDS }}
+          GITHUB_VARS_JSON: ${{ toJSON(vars) }}
         run: |
           set -euo pipefail
 
@@ -105,6 +106,35 @@ jobs:
               value = os.environ.get(name, "").strip()
               if value:
                   data[name] = value
+
+          # Terraform inputs that are not credentials belong in GitHub Actions
+          # variables rather than in the write-only tfvars secret. A variable can
+          # be read, diffed and changed on its own, where editing one key in the
+          # secret means rewriting a blob that also carries credentials, so in
+          # practice non-secret flags there are unreadable and never get changed.
+          # Any variable named TFVAR_<KEY> overrides <KEY>.
+          credential_tfvars = {
+              "GITHUB_TOKEN",
+              "AWS_TOKEN_KEY",
+              "LANGFUSE_SECRET_KEY",
+              "DOCS_ALGOLIA_API_KEY",
+              "REDIS_AUTH_TOKEN",
+              "grafana_api_key",
+          }
+          github_vars = json.loads(os.environ.get("GITHUB_VARS_JSON") or "{}")
+          for name, value in github_vars.items():
+              if not name.startswith("TFVAR_"):
+                  continue
+              key = name[len("TFVAR_") :]
+              # Variables are writable by people who cannot write secrets, so a
+              # credential must never be settable through this path.
+              if key in credential_tfvars:
+                  raise SystemExit(
+                      f"{name} would override the credential {key}. "
+                      "Credentials belong in TERRAFORM_TFVARS_JSON."
+                  )
+              if str(value).strip():
+                  data[key] = str(value).strip()
 
           required = ["GITHUB_TOKEN", "AWS_TOKEN_KEY", "DISCORD_CLIENT_ID"]
           string_fields = required + [
