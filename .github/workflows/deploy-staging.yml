@@ -111,55 +111,13 @@ jobs:
           python3 -m pip install --quiet lizard
           lizard -W whitelizard.txt -l ts -l tsx -l js -l jsx src test
 
-  prompts-check:
-    name: Prompts Check
-    runs-on: blacksmith-4vcpu-ubuntu-2404
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v7
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v7
-        with:
-          node-version: "24.15.0"
-          cache: "yarn"
-          cache-dependency-path: "yarn.lock"
-
-      - name: Install dependencies
-        run: yarn install --frozen-lockfile
-
-      - name: Run Langfuse prompt check
-        env:
-          LANGFUSE_PUBLIC_KEY: ${{ secrets.LANGFUSE_PUBLIC_KEY }}
-          LANGFUSE_SECRET_KEY: ${{ secrets.LANGFUSE_SECRET_KEY }}
-          LANGFUSE_BASE_URL: ${{ vars.LANGFUSE_BASE_URL }}
-          LANGFUSE_PROMPT_LABEL: ${{ vars.LANGFUSE_PROMPT_LABEL }}
-        run: yarn prompts:check
-
-  llm-connections-check:
-    name: LLM Connections Check
-    runs-on: blacksmith-4vcpu-ubuntu-2404
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v7
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v7
-        with:
-          node-version: "24.15.0"
-          cache: "yarn"
-          cache-dependency-path: "yarn.lock"
-
-      - name: Install dependencies
-        run: yarn install --frozen-lockfile
-
-      - name: Run Langfuse LLM connection check
-        env:
-          LANGFUSE_PUBLIC_KEY: ${{ secrets.LANGFUSE_PUBLIC_KEY }}
-          LANGFUSE_SECRET_KEY: ${{ secrets.LANGFUSE_SECRET_KEY }}
-          LANGFUSE_BASE_URL: ${{ vars.LANGFUSE_BASE_URL }}
-          LLM_CONNECTIONS_ENV: ${{ vars.LLM_CONNECTIONS_ENV }}
-        run: yarn llm-connections:check
+  # Prompts Check and LLM Connections Check are intentionally absent here.
+  # They describe external Langfuse state rather than code quality, ci.yml
+  # already enforces them, and while they gated this workflow an unpromoted
+  # prompt or a brief Langfuse outage would skip every deploy job. Sandbox
+  # also does not promote prompts: this workflow is manual dispatch and shares
+  # the Langfuse project, so pushing from here could overwrite production
+  # prompts. Promotion happens only in deploy.yml, after Deploy Backend.
 
   build:
     name: Build
@@ -281,8 +239,6 @@ jobs:
         markdownlint,
         test,
         code-stats,
-        prompts-check,
-        llm-connections-check,
         build,
         desktop-check,
         docs-check,

@@ -222,56 +222,6 @@ jobs:
       - name: Run Checkov
         run: yarn checkov
 
-  prompts-check:
-    name: Prompts Check
-    runs-on: blacksmith-4vcpu-ubuntu-2404
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v7
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v7
-        with:
-          node-version: "24.15.0"
-          cache: "yarn"
-          cache-dependency-path: "yarn.lock"
-
-      - name: Install dependencies
-        run: yarn install --frozen-lockfile
-
-      - name: Run Langfuse prompt check
-        env:
-          LANGFUSE_PUBLIC_KEY: ${{ secrets.LANGFUSE_PUBLIC_KEY }}
-          LANGFUSE_SECRET_KEY: ${{ secrets.LANGFUSE_SECRET_KEY }}
-          LANGFUSE_BASE_URL: ${{ vars.LANGFUSE_BASE_URL }}
-          LANGFUSE_PROMPT_LABEL: ${{ vars.LANGFUSE_PROMPT_LABEL }}
-        run: yarn prompts:check
-
-  llm-connections-check:
-    name: LLM Connections Check
-    runs-on: blacksmith-4vcpu-ubuntu-2404
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v7
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v7
-        with:
-          node-version: "24.15.0"
-          cache: "yarn"
-          cache-dependency-path: "yarn.lock"
-
-      - name: Install dependencies
-        run: yarn install --frozen-lockfile
-
-      - name: Run Langfuse LLM connection check
-        env:
-          LANGFUSE_PUBLIC_KEY: ${{ secrets.LANGFUSE_PUBLIC_KEY }}
-          LANGFUSE_SECRET_KEY: ${{ secrets.LANGFUSE_SECRET_KEY }}
-          LANGFUSE_BASE_URL: ${{ vars.LANGFUSE_BASE_URL }}
-          LLM_CONNECTIONS_ENV: ${{ vars.LLM_CONNECTIONS_ENV }}
-        run: yarn llm-connections:check
-
   e2e-tests:
     name: E2E Tests (Playwright)
     runs-on: blacksmith-4vcpu-ubuntu-2404
@@ -323,8 +273,6 @@ jobs:
         docs-check,
         code-stats,
         checkov,
-        prompts-check,
-        llm-connections-check,
         e2e-tests,
       ]
     runs-on: blacksmith-4vcpu-ubuntu-2404
@@ -628,8 +576,6 @@ jobs:
         docs-check,
         code-stats,
         checkov,
-        prompts-check,
-        llm-connections-check,
         e2e-tests,
       ]
     runs-on: blacksmith-4vcpu-ubuntu-2404
@@ -700,8 +646,6 @@ jobs:
         docs-check,
         code-stats,
         checkov,
-        prompts-check,
-        llm-connections-check,
         e2e-tests,
       ]
     runs-on: blacksmith-4vcpu-ubuntu-2404
@@ -784,3 +728,51 @@ jobs:
           fi
 
           aws cloudfront create-invalidation --distribution-id "$DOCS_DISTRIBUTION_ID" --paths "/*"
+
+  # Promotes prompts only after the backend that supplies their variables is
+  # live. A prompt is safe to run against newer code (unused variables are
+  # ignored) but not against older code, which is how a role-mention prompt
+  # once shipped ahead of the code that filled its roster. Running here also
+  # guarantees the push happens from the merged revision, so it cannot revert
+  # a prompt someone else pushed from a stale checkout.
+  promote-prompts:
+    name: Promote Prompts
+    needs: [deploybackend]
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: "24.15.0"
+          cache: "yarn"
+          cache-dependency-path: "yarn.lock"
+
+      - name: Install dependencies
+        run: yarn install --frozen-lockfile
+
+      - name: Show pending prompt changes
+        env:
+          LANGFUSE_PUBLIC_KEY: ${{ secrets.LANGFUSE_PUBLIC_KEY }}
+          LANGFUSE_SECRET_KEY: ${{ secrets.LANGFUSE_SECRET_KEY }}
+          LANGFUSE_BASE_URL: ${{ vars.LANGFUSE_BASE_URL }}
+          LANGFUSE_PROMPT_LABEL: ${{ vars.LANGFUSE_PROMPT_LABEL }}
+        run: yarn prompts:push --dry-run
+
+      - name: Promote prompts to Langfuse
+        env:
+          LANGFUSE_PUBLIC_KEY: ${{ secrets.LANGFUSE_PUBLIC_KEY }}
+          LANGFUSE_SECRET_KEY: ${{ secrets.LANGFUSE_SECRET_KEY }}
+          LANGFUSE_BASE_URL: ${{ vars.LANGFUSE_BASE_URL }}
+          LANGFUSE_PROMPT_LABEL: ${{ vars.LANGFUSE_PROMPT_LABEL }}
+        run: yarn prompts:push
+
+      - name: Verify repo and Langfuse agree
+        env:
+          LANGFUSE_PUBLIC_KEY: ${{ secrets.LANGFUSE_PUBLIC_KEY }}
+          LANGFUSE_SECRET_KEY: ${{ secrets.LANGFUSE_SECRET_KEY }}
+          LANGFUSE_BASE_URL: ${{ vars.LANGFUSE_BASE_URL }}
+          LANGFUSE_PROMPT_LABEL: ${{ vars.LANGFUSE_PROMPT_LABEL }}
+        run: yarn prompts:check
