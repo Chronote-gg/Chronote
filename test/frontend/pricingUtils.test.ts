@@ -58,6 +58,6 @@ describe("pricing utils", () => {
   test("billing labels stay consistent", () => {
     expect(billingLabelForInterval("month")).toBe("Billed monthly");
     expect(billingLabelForInterval("year")).toBe("Billed yearly");
-    expect(annualSavingsLabel).toBe("Best annual value");
+    expect(annualSavingsLabel).toBe("2 months free");
   });
 });

@@ -79,6 +79,15 @@ export function getLimitsForTier(tier: Tier): TierLimits {
   return DEFAULT_LIMITS[tier];
 }
 
+/**
+ * Chat-to-speech is gated by its monthly message quota, not by the live voice
+ * entitlement. An explicit limit of 0 turns it off for the tier; undefined
+ * means unlimited.
+ */
+export function isChatTtsAvailable(limits: TierLimits): boolean {
+  return limits.maxChatTtsMessagesMonthly !== 0;
+}
+
 const paidStatuses = new Set(["active", "trialing", "past_due"]);
 
 function resolveStripeTier(

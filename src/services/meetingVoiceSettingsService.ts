@@ -1,5 +1,5 @@
 import { CONFIG_KEYS } from "../config/keys";
-import type { TierLimits } from "./subscriptionService";
+import { isChatTtsAvailable, type TierLimits } from "./subscriptionService";
 import {
   getSnapshotBoolean,
   getSnapshotEnum,
@@ -47,9 +47,9 @@ export async function resolveMeetingVoiceSettings(
   const liveVoiceEnabled = limits.liveVoiceEnabled && liveVoiceEnabledRaw;
   const liveVoiceCommandsEnabled =
     limits.liveVoiceEnabled && liveVoiceCommandsRaw;
-  const chatTtsEnabled = limits.liveVoiceEnabled && chatTtsEnabledRaw;
-  const chatTtsTtsOnlyEnabled =
-    limits.liveVoiceEnabled && chatTtsTtsOnlyEnabledRaw;
+  const chatTtsAvailable = isChatTtsAvailable(limits);
+  const chatTtsEnabled = chatTtsAvailable && chatTtsEnabledRaw;
+  const chatTtsTtsOnlyEnabled = chatTtsAvailable && chatTtsTtsOnlyEnabledRaw;
   const liveVoiceTtsVoice = getSnapshotString(
     snapshot,
     CONFIG_KEYS.liveVoice.ttsVoice,

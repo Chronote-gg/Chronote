@@ -69,6 +69,35 @@ describe("UpgradeSuccess", () => {
     });
   });
 
+  it("confirms which plan and interval was bought", () => {
+    mockUseSearch.mockReturnValue({
+      serverId: "s1",
+      plan: "pro",
+      interval: "year",
+    });
+
+    renderUpgradeSuccess();
+
+    expect(
+      screen.getByText("Your Chronote is now upgraded to Pro!"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("For Engineering HQ, billed annually."),
+    ).toBeInTheDocument();
+  });
+
+  it("falls back to a generic confirmation when Stripe omits the plan", () => {
+    mockUseSearch.mockReturnValue({ serverId: "s1" });
+
+    renderUpgradeSuccess();
+
+    expect(
+      screen.getByText("Your Chronote is now upgraded!"),
+    ).toBeInTheDocument();
+    expect(screen.getByText("For Engineering HQ.")).toBeInTheDocument();
+    expect(screen.queryByText(/billed/)).toBeNull();
+  });
+
   it("uses a library redirect for login when guild access is not loaded", () => {
     mockUseAuth.mockReturnValue({ state: "unauthenticated", loading: false });
     mockUseGuildContext.mockReturnValue({ guilds: [] });

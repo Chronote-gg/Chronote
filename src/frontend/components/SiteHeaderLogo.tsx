@@ -1,13 +1,13 @@
-import { Box, Group, Text } from "@mantine/core";
+import { Box, Group } from "@mantine/core";
 import { Link } from "@tanstack/react-router";
-import { uiLinks, uiTypography } from "../uiTokens";
+import { uiLinks } from "../uiTokens";
+import Wordmark from "./Wordmark";
 
 type SiteHeaderLogoProps = {
   isMobile: boolean;
-  isDark: boolean;
 };
 
-export function SiteHeaderLogo({ isMobile, isDark }: SiteHeaderLogoProps) {
+export function SiteHeaderLogo({ isMobile }: SiteHeaderLogoProps) {
   return (
     <Link to="/" style={uiLinks.plain} data-testid="site-logo">
       <Group gap="sm" align="center" wrap="nowrap">
@@ -17,13 +17,7 @@ export function SiteHeaderLogo({ isMobile, isDark }: SiteHeaderLogoProps) {
           alt="Chronote logo"
           style={{ width: 40, height: 40 }}
         />
-        <Text
-          size={isMobile ? "lg" : "xl"}
-          c={isDark ? "white" : "dark.9"}
-          style={uiTypography.logo}
-        >
-          Chronote
-        </Text>
+        <Wordmark size={isMobile ? "lg" : "xl"} />
       </Group>
     </Link>
   );

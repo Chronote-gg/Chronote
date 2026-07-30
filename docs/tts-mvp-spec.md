@@ -2,7 +2,7 @@
 
 ### Summary
 
-Add a chat-to-speech (TTS) feature that speaks every message typed in the voice-channel text chat during active meetings, plus a /say command for manual speech. The feature is gated to Basic/Pro, supports a server default and channel override, and allows per-user voice, spoken name, prefix, volume, and opt-out settings. Spoken chat is queued with Chronote live voice replies so audio never overlaps. During recorded meetings, spoken chat is included in the meeting recording and transcript. Outside recorded meetings, /say can start a TTS-only session that does not record, transcribe, or create meeting artifacts.
+Add a chat-to-speech (TTS) feature that speaks every message typed in the voice-channel text chat during active meetings, plus a /say command for manual speech. The feature is gated on the per-tier monthly message allowance rather than on live voice, so Free servers get a small allowance and paid tiers get more. It supports a server default and channel override, and allows per-user voice, spoken name, prefix, volume, and opt-out settings. Spoken chat is queued with Chronote live voice replies so audio never overlaps. During recorded meetings, spoken chat is included in the meeting recording and transcript. Outside recorded meetings, /say can start a TTS-only session that does not record, transcribe, or create meeting artifacts.
 
 ### Goals
 

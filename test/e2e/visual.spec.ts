@@ -389,7 +389,7 @@ test.describe("visual regression", () => {
 
       await page.goto(
         withVisualMode(
-          `/upgrade/success?promo=SAVE20&serverId=${mockGuilds.ddm.id}`,
+          `/upgrade/success?promo=SAVE20&serverId=${mockGuilds.ddm.id}&plan=basic&interval=month`,
           mode,
         ),
       );

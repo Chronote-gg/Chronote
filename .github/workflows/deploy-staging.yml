@@ -641,6 +641,8 @@ jobs:
     environment: sandbox
     env:
       VITE_API_BASE_URL: ${{ vars.VITE_API_BASE_URL }}
+      VITE_POSTHOG_KEY: ${{ vars.VITE_POSTHOG_KEY }}
+      VITE_POSTHOG_HOST: ${{ vars.VITE_POSTHOG_HOST }}
     steps:
       - name: Checkout
         uses: actions/checkout@v7

@@ -479,8 +479,15 @@ export async function setupBot() {
       const recipient = dmTarget ?? (await guild.fetchOwner());
       if (recipient) {
         const targetUser = "user" in recipient ? recipient.user : recipient;
+        const setupUrl = `${config.frontend.siteUrl.replace(/\/$/, "")}/join`;
         await targetUser.send(
-          "Thanks for adding Meeting Notes Bot! Run `/onboard` in your server (Manage Guild required) for a 1-minute setup.",
+          [
+            "Thanks for adding Chronote.",
+            "",
+            "To record your first meeting, join a voice channel and run `/startmeeting`. The notes post back to the channel when the meeting ends.",
+            "",
+            `Setup walkthrough: run \`/onboard\` (needs Manage Guild), or see ${setupUrl}`,
+          ].join("\n"),
         );
       }
     } catch (err) {

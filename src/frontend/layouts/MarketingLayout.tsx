@@ -14,7 +14,6 @@ import { useVisualMode } from "../hooks/useVisualMode";
 import {
   appBackground,
   pagePaddingX,
-  portalBackground,
   shellBorder,
   shellHeaderBackground,
   shellHeights,
@@ -80,12 +79,7 @@ export default function MarketingLayout() {
         />
       </AppShell.Header>
       <AppShell.Main>
-        <Box
-          py={{ base: "xl", md: "xl" }}
-          style={{
-            backgroundImage: portalBackground(isDark),
-          }}
-        >
+        <Box py={{ base: "xl", md: "xl" }}>
           <Container size="xl" px={pagePaddingX}>
             <Outlet />
           </Container>

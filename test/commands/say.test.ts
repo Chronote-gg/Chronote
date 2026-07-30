@@ -2,7 +2,10 @@ import type { ChatInputCommandInteraction, GuildMember } from "discord.js";
 import type { MeetingData } from "../../src/types/meeting-data";
 import { handleSayCommand } from "../../src/commands/say";
 import { getMeeting } from "../../src/meetings";
-import { getGuildLimits } from "../../src/services/subscriptionService";
+import {
+  getGuildLimits,
+  isChatTtsAvailable,
+} from "../../src/services/subscriptionService";
 import { fetchUserSpeechSettings } from "../../src/services/userSpeechSettingsService";
 import {
   buildChatTtsMonthlyLimitMessage,
@@ -35,6 +38,9 @@ jest.mock("../../src/utils/upgradePrompt", () => ({
 const mockedGetMeeting = getMeeting as jest.MockedFunction<typeof getMeeting>;
 const mockedGetGuildLimits = getGuildLimits as jest.MockedFunction<
   typeof getGuildLimits
+>;
+const mockedIsChatTtsAvailable = isChatTtsAvailable as jest.MockedFunction<
+  typeof isChatTtsAvailable
 >;
 const mockedFetchUserSpeechSettings =
   fetchUserSpeechSettings as jest.MockedFunction<
@@ -120,6 +126,8 @@ describe("handleSayCommand", () => {
   beforeEach(() => {
     mockedGetMeeting.mockReset();
     mockedGetGuildLimits.mockReset();
+    mockedIsChatTtsAvailable.mockReset();
+    mockedIsChatTtsAvailable.mockReturnValue(true);
     mockedFetchUserSpeechSettings.mockReset();
     mockedBuildChatTtsMonthlyLimitMessage.mockReset();
     mockedBuildChatTtsMonthlyLimitMessage.mockReturnValue(
@@ -140,11 +148,12 @@ describe("handleSayCommand", () => {
     mockedBuildUpgradePrompt.mockClear();
   });
 
-  it("blocks /say on free tier", async () => {
+  it("blocks /say when the plan allows no chat-to-speech messages", async () => {
     const member = makeMember("voice-1");
     const interaction = makeInteraction(member, "hello");
     const meeting = makeMeeting();
     mockedGetMeeting.mockReturnValue(meeting);
+    mockedIsChatTtsAvailable.mockReturnValue(false);
     mockedGetGuildLimits.mockResolvedValue({
       subscription: {
         tier: "free",
@@ -155,7 +164,11 @@ describe("handleSayCommand", () => {
         grantTier: null,
         activeGrant: null,
       },
-      limits: { liveVoiceEnabled: false, imagesEnabled: false },
+      limits: {
+        liveVoiceEnabled: false,
+        imagesEnabled: false,
+        maxChatTtsMessagesMonthly: 0,
+      },
     });
 
     await handleSayCommand(interaction);

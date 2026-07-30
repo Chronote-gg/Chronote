@@ -1,298 +1,275 @@
 import { useMemo, useState } from "react";
 import {
+  Badge,
   Button,
   Container,
   Group,
+  List,
+  Paper,
   SegmentedControl,
   SimpleGrid,
   Stack,
+  Table,
   Text,
-  ThemeIcon,
   Title,
-  useComputedColorScheme,
-  useMantineTheme,
 } from "@mantine/core";
-import {
-  IconArrowRight,
-  IconDownload,
-  IconFileText,
-  IconMicrophone,
-  IconSearch,
-  IconSparkles,
-} from "@tabler/icons-react";
-import FeatureCard from "../components/FeatureCard";
-import PricingCard from "../components/PricingCard";
-import Section from "../components/Section";
-import Surface from "../components/Surface";
-import { heroBackground, uiBorders, uiColors, uiTypography } from "../uiTokens";
+import { useNavigate } from "@tanstack/react-router";
+import AddToDiscordButton from "../components/AddToDiscordButton";
+import SampleSummary from "../components/SampleSummary";
+import Wordmark from "../components/Wordmark";
 import { trpc } from "../services/trpc";
-import type { BillingInterval } from "../../types/pricing";
+import { track } from "../services/analytics";
+import type { BillingInterval, PaidTier } from "../../types/pricing";
 import {
   annualSavingsLabel,
-  billingLabelForInterval,
   buildPaidPlanLookup,
   formatPlanPrice,
   resolvePaidPlan,
 } from "../utils/pricing";
-import { DISCORD_BOT_INVITE_URL } from "../utils/discordInvite";
 
-const STEP_ICON_SIZE = 44;
-const STEP_INNER_ICON_SIZE = 22;
+const PRICING_TABLE_MIN_WIDTH = 560;
+const RECOMMENDED_TIER_TINT = "rgba(111, 117, 255, 0.08)";
 
-const steps = [
-  {
-    icon: IconMicrophone,
-    title: "Add the bot",
-    description:
-      "Invite Chronote to your Discord server with one click. No config required.",
-    color: "cyan",
-  },
-  {
-    icon: IconFileText,
-    title: "Record a meeting",
-    description:
-      "Start a voice call and use /startmeeting, or turn on auto-record for hands-free capture.",
-    color: "violet",
-  },
-  {
-    icon: IconSparkles,
-    title: "Get your notes",
-    description:
-      "Chronote posts a transcript and structured summary right back in your Discord channel.",
-    color: "brand",
-  },
-] as const;
+const CAPABILITIES = [
+  "Ask what was decided and get the quote with its timestamp",
+  "Auto-record the channels you pick",
+  "Captures chat and attendance too",
+  "Corrections, approved by your team",
+  "A dictionary for your server's jargon",
+  "Export audio, transcript, and notes",
+  "Send notes to Notion",
+  "Replies out loud, and reads typed messages aloud",
+  "MCP access for Claude and other clients",
+];
 
-const features = [
+const CAPABILITY_COLUMNS = [
+  CAPABILITIES.slice(0, Math.ceil(CAPABILITIES.length / 2)),
+  CAPABILITIES.slice(Math.ceil(CAPABILITIES.length / 2)),
+];
+
+type PricingRow = {
+  label: string;
+  free: string;
+  basic: string;
+  pro: string;
+};
+
+const PRICING_ROWS: PricingRow[] = [
   {
-    title: "Automatic capture",
-    description:
-      "Join on demand or auto-record a channel. Capture audio, chat, and attendance.",
-    icon: <IconMicrophone size={22} />,
+    label: "Recording",
+    free: "4 hours a week",
+    basic: "20 hours a week",
+    pro: "No weekly limit",
   },
   {
-    title: "Transcript + summary",
-    description:
-      "Structured notes land back in Discord with decisions and action items.",
-    icon: <IconFileText size={22} />,
+    label: "Longest meeting",
+    free: "90 minutes",
+    basic: "2 hours",
+    pro: "2 hours",
   },
   {
-    title: "Search with quotes",
-    description:
-      "Ask across recent sessions with quotes and timestamps attached.",
-    icon: <IconSearch size={22} />,
+    label: "Ask searches",
+    free: "Last 5 meetings",
+    basic: "Last 25 meetings",
+    pro: "Last 100 meetings",
   },
   {
-    title: "Exports + retention",
-    description: "Download audio, transcript, and notes from the web library.",
-    icon: <IconDownload size={22} />,
+    label: "Text to speech",
+    free: "50 a month",
+    basic: "1,000 a month",
+    pro: "Unlimited",
+  },
+  {
+    label: "Live voice",
+    free: "No",
+    basic: "Yes",
+    pro: "Yes",
   },
 ];
 
+const recommendedCell = { backgroundColor: RECOMMENDED_TIER_TINT };
+
 export default function Home() {
-  const theme = useMantineTheme();
-  const scheme = useComputedColorScheme("dark");
-  const isDark = scheme === "dark";
-  const [interval, setInterval] = useState<BillingInterval>("month");
+  const navigate = useNavigate();
+  const [billingInterval, setBillingInterval] =
+    useState<BillingInterval>("month");
   const pricingQuery = trpc.pricing.plans.useQuery(undefined, {
     staleTime: 1000 * 60 * 5,
   });
-  const paidPlans = pricingQuery.data?.plans ?? [];
+  const paidPlans = useMemo(
+    () => pricingQuery.data?.plans ?? [],
+    [pricingQuery.data],
+  );
   const planLookup = useMemo(() => buildPaidPlanLookup(paidPlans), [paidPlans]);
-  const hasAnnualPlans = paidPlans.some((plan) => plan.interval === "year");
-  const basicPlan = resolvePaidPlan(planLookup, "basic", interval);
-  const proPlan = resolvePaidPlan(planLookup, "pro", interval);
+  // Every paid tier needs an annual price before the toggle is offered.
+  // Otherwise resolvePaidPlan quietly falls back to the monthly amount and
+  // renders it as a yearly one.
+  const hasAnnualPlans = (["basic", "pro"] as const).every((tier) =>
+    Boolean(planLookup[tier]?.year),
+  );
+  const basicPlan = resolvePaidPlan(planLookup, "basic", billingInterval);
+  const proPlan = resolvePaidPlan(planLookup, "pro", billingInterval);
+
+  const startUpgrade = (plan: PaidTier) => {
+    track("pricing_cta_clicked", { plan, interval: billingInterval });
+    navigate({
+      to: "/upgrade/select-server",
+      search: { plan, interval: billingInterval },
+    });
+  };
 
   return (
-    <Stack gap="xl">
-      {/* Hero */}
-      <Container size="md" py={{ base: "xl", md: 80 }}>
-        <Stack
-          align="center"
-          gap="md"
-          p={{ base: "lg", md: "xl" }}
-          data-testid="home-hero"
-          style={{
-            backgroundImage: heroBackground(isDark),
-            borderRadius: theme.radius.lg,
-            textAlign: "center",
-          }}
-        >
-          <Text
-            size="xs"
-            c={isDark ? theme.colors.cyan[3] : theme.colors.cyan[7]}
-            style={uiTypography.heroKicker}
+    <Container size={720} pt={{ base: 28, md: 48 }} pb={{ base: 48, md: 96 }}>
+      <Stack gap={96}>
+        <Stack gap="xl" align="center" ta="center" data-testid="home-hero">
+          <Wordmark fz={{ base: 26, md: 34 }} />
+          <Title
+            order={1}
+            fw={600}
+            fz={{ base: 34, md: 48 }}
+            lh={1.1}
+            style={{ letterSpacing: "-0.03em", textWrap: "balance" }}
           >
-            Discord voice logbook
-          </Text>
-          <Title order={1} fw={750}>
-            Transcripts and summaries for Discord voice.
+            Writes down notes so you don&apos;t have to.
           </Title>
-          <Text size="lg" c="dimmed" maw={520}>
-            Record voice channels, get notes back in Discord, and keep a
-            searchable logbook on the web.
+          <Text size="lg" c="dimmed" maw={560}>
+            Chronote joins your Discord voice calls and posts the summary back
+            to the channel.
           </Text>
-          <Button
-            size="lg"
-            variant="gradient"
-            gradient={{ from: "brand", to: "violet" }}
-            component="a"
-            href={DISCORD_BOT_INVITE_URL}
-            data-testid="home-cta-discord"
-            rightSection={<IconArrowRight size={18} />}
-          >
-            Add to Discord
-          </Button>
+          <AddToDiscordButton location="hero" testId="home-cta-discord" />
         </Stack>
-      </Container>
 
-      {/* How it works */}
-      <Section
-        eyebrow="How it works"
-        title="Three steps to meeting notes"
-        align="center"
-      >
-        <SimpleGrid cols={{ base: 1, md: 3 }} spacing="lg">
-          {steps.map((step) => (
-            <Surface key={step.title} p="lg">
-              <Stack gap="sm" align="center" ta="center">
-                <ThemeIcon
-                  variant="light"
-                  color={step.color}
-                  size={STEP_ICON_SIZE}
-                  radius="md"
-                >
-                  <step.icon size={STEP_INNER_ICON_SIZE} />
-                </ThemeIcon>
-                <Text fw={600}>{step.title}</Text>
-                <Text size="sm" c="dimmed">
-                  {step.description}
-                </Text>
-              </Stack>
-            </Surface>
-          ))}
-        </SimpleGrid>
-      </Section>
-
-      {/* Features */}
-      <Section
-        eyebrow="Features"
-        title="Everything you need to remember the meeting"
-        description="Capture now, find it later, all without leaving Discord."
-        align="center"
-      >
-        <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="lg">
-          {features.map((feature) => (
-            <FeatureCard
-              key={feature.title}
-              title={feature.title}
-              description={feature.description}
-              icon={feature.icon}
-            />
-          ))}
-        </SimpleGrid>
-      </Section>
-
-      {/* Pricing */}
-      <Section
-        eyebrow="Pricing"
-        title="Memory power, server-based pricing"
-        description="Start free, upgrade when you need more history and longer retention."
-      >
-        <Group justify="space-between" align="center" wrap="wrap">
+        <Stack gap="md">
+          <Title order={2} fz={22} fw={600}>
+            What comes back
+          </Title>
           <Text size="sm" c="dimmed">
-            Pricing shown per server.
+            An example of the summary Chronote posts to your channel.
           </Text>
-          <SegmentedControl
-            value={interval}
-            onChange={(value) => setInterval(value as BillingInterval)}
-            data={[
-              { label: "Monthly", value: "month" },
-              {
-                label: "Annual (best value)",
-                value: "year",
-                disabled: !hasAnnualPlans,
-              },
-            ]}
-            size="sm"
-          />
-        </Group>
-        <SimpleGrid cols={{ base: 1, md: 3 }} spacing="lg">
-          <PricingCard
-            name="Free"
-            price="$0"
-            description="Great for smaller servers and one-off sessions."
-            badge="Free forever"
-            features={[
-              "Up to 4 hours per week",
-              "Up to 60 minutes per meeting",
-              "Ask across recent meetings",
-              "Notes, tags, and summary embeds",
-            ]}
-            cta="Get started"
-            billingLabel="Always free"
-          />
-          <PricingCard
-            name="Basic"
-            price={formatPlanPrice(basicPlan, interval)}
-            description="Unlock longer sessions and more history."
-            features={[
-              "Up to 20 hours per week",
-              "Up to 2 hours per meeting",
-              "Ask across longer history",
-              "Live voice mode",
-            ]}
-            cta="Upgrade to Basic"
-            highlighted
-            billingLabel={`${billingLabelForInterval(interval)}${
-              interval === "year" ? ` • ${annualSavingsLabel}` : ""
-            }`}
-          />
-          <PricingCard
-            name="Pro"
-            price={formatPlanPrice(proPlan, interval)}
-            description="Unlimited retention and full-history search."
-            features={[
-              "Unlimited retention",
-              "Unlimited recording time",
-              "Ask across full retention",
-              "Up to 2 hours per meeting (8 hours coming soon)",
-              "Priority features + support",
-            ]}
-            cta="Upgrade to Pro"
-            ctaDisabled
-            badge="Unlimited meetings"
-            tone="raised"
-            borderColor={uiColors.accentBorder}
-            borderWidth={uiBorders.accentWidth}
-            billingLabel={`${billingLabelForInterval(interval)}${
-              interval === "year" ? ` • ${annualSavingsLabel}` : ""
-            }`}
-          />
-        </SimpleGrid>
-      </Section>
+          <SampleSummary />
+        </Stack>
 
-      {/* Bottom CTA */}
-      <Container size="sm">
-        <Surface p={{ base: "lg", md: "xl" }}>
-          <Stack align="center" gap="md" ta="center">
-            <Title order={3}>Ready to keep the record?</Title>
-            <Text c="dimmed" maw={420}>
-              Add Chronote, record your first session, and get notes in minutes.
-            </Text>
-            <Button
-              size="md"
-              variant="gradient"
-              gradient={{ from: "brand", to: "violet" }}
-              component="a"
-              href={DISCORD_BOT_INVITE_URL}
-              rightSection={<IconArrowRight size={16} />}
-            >
-              Add to Discord
-            </Button>
-          </Stack>
-        </Surface>
-      </Container>
-    </Stack>
+        <Stack gap="md">
+          <Title order={2} fz={22} fw={600}>
+            Also
+          </Title>
+          <SimpleGrid
+            cols={{ base: 1, sm: 2 }}
+            spacing="xl"
+            verticalSpacing={0}
+          >
+            {CAPABILITY_COLUMNS.map((column) => (
+              <List key={column[0]} spacing="sm" size="md" withPadding>
+                {column.map((capability) => (
+                  <List.Item key={capability}>{capability}</List.Item>
+                ))}
+              </List>
+            ))}
+          </SimpleGrid>
+        </Stack>
+
+        <Stack gap="md">
+          <Group justify="space-between" align="baseline" wrap="wrap" gap="sm">
+            <Title order={2} fz={22} fw={600}>
+              Pricing
+            </Title>
+            <SegmentedControl
+              value={billingInterval}
+              onChange={(value) => setBillingInterval(value as BillingInterval)}
+              data={[
+                { label: "Monthly", value: "month" },
+                {
+                  label: "Annual",
+                  value: "year",
+                  disabled: !hasAnnualPlans,
+                },
+              ]}
+              size="xs"
+            />
+          </Group>
+          <Text size="sm" c="dimmed">
+            Per server, not per member.
+            {billingInterval === "year" ? ` ${annualSavingsLabel}.` : ""}
+          </Text>
+          <Paper withBorder radius="md" p={{ base: "sm", sm: "lg" }}>
+            <Table.ScrollContainer minWidth={PRICING_TABLE_MIN_WIDTH}>
+              <Table verticalSpacing="sm" horizontalSpacing="md" fz="sm">
+                <Table.Thead>
+                  <Table.Tr>
+                    <Table.Th />
+                    <Table.Th>Free</Table.Th>
+                    <Table.Th style={recommendedCell}>
+                      <Group gap="xs" wrap="nowrap">
+                        <span>Basic</span>
+                        <Badge size="xs" variant="light">
+                          Best value
+                        </Badge>
+                      </Group>
+                    </Table.Th>
+                    <Table.Th>Pro</Table.Th>
+                  </Table.Tr>
+                </Table.Thead>
+                <Table.Tbody>
+                  <Table.Tr>
+                    <Table.Td c="dimmed">Price</Table.Td>
+                    <Table.Td fw={700} fz="lg">
+                      $0
+                    </Table.Td>
+                    <Table.Td fw={700} fz="lg" style={recommendedCell}>
+                      {formatPlanPrice(basicPlan, billingInterval)}
+                    </Table.Td>
+                    <Table.Td fw={700} fz="lg">
+                      {formatPlanPrice(proPlan, billingInterval)}
+                    </Table.Td>
+                  </Table.Tr>
+                  {PRICING_ROWS.map((row) => (
+                    <Table.Tr key={row.label}>
+                      <Table.Td c="dimmed">{row.label}</Table.Td>
+                      <Table.Td>{row.free}</Table.Td>
+                      <Table.Td style={recommendedCell}>{row.basic}</Table.Td>
+                      <Table.Td>{row.pro}</Table.Td>
+                    </Table.Tr>
+                  ))}
+                  <Table.Tr>
+                    <Table.Td />
+                    <Table.Td />
+                    <Table.Td style={recommendedCell}>
+                      <Button
+                        size="sm"
+                        radius="md"
+                        fw={600}
+                        aria-label="Upgrade to Basic"
+                        data-testid="home-cta-basic"
+                        disabled={!basicPlan}
+                        onClick={() => startUpgrade("basic")}
+                      >
+                        Upgrade
+                      </Button>
+                    </Table.Td>
+                    <Table.Td>
+                      <Button
+                        size="sm"
+                        radius="md"
+                        variant="default"
+                        aria-label="Upgrade to Pro"
+                        data-testid="home-cta-pro"
+                        disabled={!proPlan}
+                        onClick={() => startUpgrade("pro")}
+                      >
+                        Upgrade
+                      </Button>
+                    </Table.Td>
+                  </Table.Tr>
+                </Table.Tbody>
+              </Table>
+            </Table.ScrollContainer>
+          </Paper>
+        </Stack>
+
+        <Group justify="center">
+          <AddToDiscordButton location="footer-cta" />
+        </Group>
+      </Stack>
+    </Container>
   );
 }
