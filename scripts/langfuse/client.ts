@@ -1,7 +1,7 @@
 import "dotenv/config";
 import { LangfuseClient, type LangfuseClientParams } from "@langfuse/client";
 
-import { DEFAULT_LANGFUSE_BASE_URL } from "../../src/services/langfuseDefaults";
+import { resolveLangfuseBaseUrl } from "../../src/services/langfuseDefaults";
 
 function requireEnv(value: string | undefined, name: string): string {
   const trimmed = value?.trim();
@@ -9,11 +9,6 @@ function requireEnv(value: string | undefined, name: string): string {
     throw new Error(`${name} is required.`);
   }
   return trimmed;
-}
-
-function resolveBaseUrl(): string {
-  const baseUrl = process.env.LANGFUSE_BASE_URL?.trim();
-  return baseUrl && baseUrl.length > 0 ? baseUrl : DEFAULT_LANGFUSE_BASE_URL;
 }
 
 export function getLangfuseClient(): LangfuseClient {
@@ -29,7 +24,7 @@ export function getLangfuseClient(): LangfuseClient {
   const params: LangfuseClientParams = {
     publicKey,
     secretKey,
-    baseUrl: resolveBaseUrl(),
+    baseUrl: resolveLangfuseBaseUrl(process.env.LANGFUSE_BASE_URL),
   };
 
   return new LangfuseClient(params);

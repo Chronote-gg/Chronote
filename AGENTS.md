@@ -213,7 +213,8 @@ Optional Windows helper (prints loaded env, supports `-Mock` / `-SkipDocker`):
 - **Running any eval needs a full app environment, not just Langfuse keys.** The runners import `configService`, which validates the entire config at module load, so `DISCORD_CLIENT_ID`, `OPENAI_API_KEY`, `FRONTEND_SITE_URL`, `OAUTH_SECRET` and friends must be set or the process exits before it reaches Langfuse. `scripts/mock.env.example` covers the non-OpenAI values.
 - Do not point `eval:transcription` at the project's existing `Transcription` dataset. It was created outside this repo, holds one item with an empty `expectedOutput`, and its input shape does not match `DatasetInputSchema`. Seed a kebab-case `transcription-eval` instead, matching the other names.
 - The two datasets that do exist were created outside this repo and are not eval-ready: `Transcription` (1 item, empty `expectedOutput`) and `hallucination-audit-20260209` (198 items, `expectedOutput` null). Neither matches the runners' input schemas. Treat them as raw corpora, not graded sets.
-- No eval has been executed end to end yet. Seeding, the upload path, and the missing-dataset error are verified, but an actual run still needs the app environment above plus a real OpenAI key, so treat grader behaviour against live model output as unproven.
+- `yarn eval:meeting-notes` has been run end to end against live model output (2026-07-30, `meeting-notes`, 2 cases, all six grades 1.000). The graders work on real notes: the multi-assignment case emitted both expected role mentions plus the expected member mention, and the no-assignment case correctly emitted none. Recall over a non-empty expected set cannot pass without the mentions actually being present, so that result is not vacuous.
+- Pass `--items` to print each case's generated notes and per-case grades. Aggregate scores tell you a run regressed but not why.
 
 ### Coverage guidance
 
