@@ -1,5 +1,9 @@
 import { describe, expect, test } from "@jest/globals";
-import { collectMentionIds, stripUnknownMentions } from "../mentionSanitizer";
+import {
+  collectMentionIds,
+  mergeAllowedMentions,
+  stripUnknownMentions,
+} from "../mentionSanitizer";
 
 const GUILD_ID = "100000000000000001";
 const USER_ID = "200000000000000001";
@@ -87,5 +91,40 @@ describe("collectMentionIds", () => {
     expect(
       stripUnknownMentions(corrected, collectMentionIds(currentNotes)),
     ).toBe(`- <@&${ROLE_ID}> owns the rollout, review it, assists.`);
+  });
+});
+
+describe("mergeAllowedMentions", () => {
+  const ROLE_FROM_ROSTER = "300000000000000002";
+
+  test("unions and dedupes both lists", () => {
+    expect(
+      mergeAllowedMentions(
+        { userIds: [USER_ID], roleIds: [ROLE_ID] },
+        { userIds: [USER_ID], roleIds: [ROLE_FROM_ROSTER] },
+      ),
+    ).toMatchObject({
+      userIds: [USER_ID],
+      roleIds: [ROLE_ID, ROLE_FROM_ROSTER],
+    });
+  });
+
+  test("lets a correction add a roster mention while still blocking invented ids", () => {
+    // The behaviour the correction flow depends on: a role that was never in
+    // the notes is allowed because the roster offered it, but a guild id
+    // (@everyone) and an unknown id are still removed.
+    const currentNotes = `- <@&${ROLE_ID}> owns the rollout.`;
+    const corrected =
+      `- <@&${ROLE_ID}> owns the rollout, <@&${ROLE_FROM_ROSTER}> reviews it, ` +
+      `<@&${GUILD_ID}> read this, <@299999999999999999> helps.`;
+
+    const allowed = mergeAllowedMentions(collectMentionIds(currentNotes), {
+      userIds: [],
+      roleIds: [ROLE_FROM_ROSTER],
+    });
+
+    expect(stripUnknownMentions(corrected, allowed)).toBe(
+      `- <@&${ROLE_ID}> owns the rollout, <@&${ROLE_FROM_ROSTER}> reviews it, read this, helps.`,
+    );
   });
 });

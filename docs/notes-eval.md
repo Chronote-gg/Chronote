@@ -39,11 +39,19 @@ Environment:
 - `LANGFUSE_EVAL_DATASET` selects the dataset (default `meeting-notes`).
 - `LANGFUSE_EVAL_EXPERIMENT` names the run (defaults to a timestamped name).
 
+Pass `--items` to print each case's generated notes and per-case grades.
+Aggregate scores tell you a run regressed but not which case or why.
+
 The mention graders are unit tested
-(`src/evals/__tests__/roleMentionGraders.test.ts`). The case format below is only
-exercised by the runner at runtime: no test parses `EvalInputSchema` or the
-sample dataset file, so treat the shape as unverified until a runner executes
-against it.
+(`src/evals/__tests__/roleMentionGraders.test.ts`) and have now been exercised
+against live model output: a run on 2026-07-30 over the seeded `meeting-notes`
+cases scored 1.000 on all six grades, with the multi-assignment case emitting
+both expected role mentions and the expected member mention. Recall over a
+non-empty expected set cannot pass unless those mentions are really present, so
+that is a real signal rather than a vacuous pass. Note the no-assignment case
+has an empty `expectedRoleIds`, which makes its recall grades trivially 1.000;
+its value is `role_mentions_resolvable`, proving the model does not invent a
+role mention when nothing was assigned to a group.
 
 ## Case shape
 

@@ -5,6 +5,8 @@ variables:
   - transcript
   - requesterTag
   - suggestion
+  - participantRoster
+  - roles
 name: chronote-notes-correction-chat
 type: chat
 version: 1
@@ -23,10 +25,15 @@ messages:
       other content unchanged. Preserve any existing mentions exactly as
       written, both member mentions (`<@snowflakeId>`) and role mentions
       (`<@&snowflakeId>`), wherever they appear, and keep mention formatting
-      when editing around them. Never invent a mention id: if the suggestion
-      asks to assign work to someone or some group that is not already
-      mentioned in the notes, use their plain name instead. Return the full
-      revised notes as markdown.
+      when editing around them.
+
+      If the suggestion assigns work to someone or some group, you may add a
+      mention using the mention strings in the rosters below: a participant's
+      `<@snowflakeId>` for one person, or a role's `<@&snowflakeId>` when the
+      work belongs to a group rather than an individual. Copy mention strings
+      exactly from a roster. Never invent or guess an id, and never mention
+      everyone or here. If the person or group is not in a roster, use their
+      plain name with no mention. Return the full revised notes as markdown.
   - role: user
     content: |
       Current notes:
@@ -37,6 +44,12 @@ messages:
 
       Transcript:
       {{transcript}}
+
+      Participants:
+      {{participantRoster}}
+
+      Roles:
+      {{roles}}
 
       User ({{requesterTag}}) suggests:
       "{{suggestion}}"

@@ -45,6 +45,21 @@ export const collectMentionIds = (text: string): AllowedMentions => {
   return { userIds: Array.from(userIds), roleIds: Array.from(roleIds) };
 };
 
+/**
+ * Unions two allowlists. Corrections need both what the notes already contained
+ * and what the rosters offered, so an edit can add a roster-backed mention
+ * without a mention that predates the rosters being stripped.
+ */
+export const mergeAllowedMentions = (
+  ...lists: AllowedMentions[]
+): AllowedMentions => ({
+  userIds: Array.from(new Set(lists.flatMap((list) => list.userIds))),
+  roleIds: Array.from(new Set(lists.flatMap((list) => list.roleIds))),
+  roleNamesById: new Map(
+    lists.flatMap((list) => Array.from(list.roleNamesById ?? [])),
+  ),
+});
+
 export const stripUnknownMentions = (
   notes: string,
   allowed: AllowedMentions,

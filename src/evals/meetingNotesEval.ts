@@ -128,7 +128,11 @@ async function run() {
     ],
   });
 
-  console.log(await result.format());
+  // Aggregate scores say a run regressed but not why. --items prints each
+  // case's generated notes and grades, which is what you need to tell a real
+  // failure from a bad case.
+  const includeItemResults = process.argv.includes("--items");
+  console.log(await result.format({ includeItemResults }));
   await langfuse.shutdown();
 }
 

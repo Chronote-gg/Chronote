@@ -1,5 +1,6 @@
 import dotenv from "dotenv";
 import path from "node:path";
+import { resolveLangfuseBaseUrl } from "./langfuseDefaults";
 
 // Load environment variables once
 dotenv.config();
@@ -52,7 +53,7 @@ class ConfigService {
   readonly langfuse = {
     publicKey: process.env.LANGFUSE_PUBLIC_KEY || "",
     secretKey: process.env.LANGFUSE_SECRET_KEY || "",
-    baseUrl: process.env.LANGFUSE_BASE_URL || "",
+    baseUrl: resolveLangfuseBaseUrl(process.env.LANGFUSE_BASE_URL),
     tracingEnabled: process.env.LANGFUSE_TRACING_ENABLED !== "false",
     tracingEnvironment: process.env.LANGFUSE_TRACING_ENVIRONMENT || "",
     release: process.env.LANGFUSE_RELEASE || "",

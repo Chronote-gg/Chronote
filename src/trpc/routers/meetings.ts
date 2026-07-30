@@ -77,8 +77,10 @@ import { buildMeetingNotesEmbeds } from "../../utils/meetingNotes";
 import { stripCodeFences } from "../../utils/text";
 import {
   collectMentionIds,
+  mergeAllowedMentions,
   stripUnknownMentions,
 } from "../../utils/mentionSanitizer";
+import { buildMentionRosters } from "../../services/mentionRosterService";
 import {
   buildImportedMeetingNotes,
   normalizeImportedNotes,
@@ -522,6 +524,8 @@ async function generateCorrectedNotes(options: {
   transcript: string;
   suggestion: string;
   requesterTag: string;
+  /** Supplies the rosters, so a correction can add a mention rather than a bare name. */
+  meeting: Pick<MeetingHistory, "guildId" | "ownershipScope" | "participants">;
   previousSuggestions?: SuggestionHistoryEntry[];
   modelParams?: Parameters<typeof resolveChatParamsForRole>[0]["config"];
   modelOverride?: string;
@@ -529,6 +533,7 @@ async function generateCorrectedNotes(options: {
   const priorSuggestions = formatSuggestionsForPrompt(
     options.previousSuggestions,
   );
+  const rosters = await buildMentionRosters(options.meeting);
   const { messages, langfusePrompt } = await getLangfuseChatPrompt({
     name: config.langfuse.notesCorrectionPromptName,
     variables: {
@@ -537,6 +542,8 @@ async function generateCorrectedNotes(options: {
       transcript: options.transcript,
       requesterTag: options.requesterTag,
       suggestion: options.suggestion,
+      participantRoster: rosters.participantRoster,
+      roles: rosters.roles,
     },
   });
 
@@ -571,11 +578,14 @@ async function generateCorrectedNotes(options: {
 
     const content = completion.choices[0]?.message?.content;
     if (content && content.trim().length > 0) {
-      // A correction may keep the mentions already in the notes but must not
-      // introduce a new id, which would be invented rather than copied.
+      // A correction may keep the mentions already in the notes and may add one
+      // the rosters offered, but anything outside both was invented.
       return stripUnknownMentions(
         stripCodeFences(content.trim()),
-        collectMentionIds(options.currentNotes),
+        mergeAllowedMentions(collectMentionIds(options.currentNotes), {
+          userIds: rosters.allowedUserIds,
+          roleIds: rosters.allowedRoleIds,
+        }),
       );
     }
 
@@ -1556,6 +1566,7 @@ const suggestNotesCorrection = authedProcedure
       transcript,
       suggestion: input.suggestion,
       requesterTag,
+      meeting: history,
       previousSuggestions: history.suggestionsHistory,
       modelParams: modelParams.notesCorrection,
       modelOverride: modelChoices.notesCorrection,
