@@ -69,6 +69,28 @@ describe("UpgradeSuccess", () => {
     });
   });
 
+  it("confirms which plan and interval was bought", () => {
+    mockUseSearch.mockReturnValue({
+      serverId: "s1",
+      plan: "pro",
+      interval: "year",
+    });
+
+    renderUpgradeSuccess();
+
+    expect(screen.getByText("Engineering HQ is on Pro")).toBeInTheDocument();
+    expect(screen.getByText(/Billed annually\./)).toBeInTheDocument();
+  });
+
+  it("falls back to a generic confirmation when Stripe omits the plan", () => {
+    mockUseSearch.mockReturnValue({ serverId: "s1" });
+
+    renderUpgradeSuccess();
+
+    expect(screen.getByText("Engineering HQ is upgraded")).toBeInTheDocument();
+    expect(screen.queryByText(/Billed/)).toBeNull();
+  });
+
   it("uses a library redirect for login when guild access is not loaded", () => {
     mockUseAuth.mockReturnValue({ state: "unauthenticated", loading: false });
     mockUseGuildContext.mockReturnValue({ guilds: [] });

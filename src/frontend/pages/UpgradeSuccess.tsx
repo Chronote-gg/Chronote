@@ -1,150 +1,22 @@
-import {
-  Box,
-  Button,
-  Group,
-  List,
-  SimpleGrid,
-  Stack,
-  Text,
-  ThemeIcon,
-  Title,
-  useComputedColorScheme,
-} from "@mantine/core";
-import {
-  IconArrowRight,
-  IconCheck,
-  IconCreditCard,
-  IconConfetti,
-  IconSparkles,
-  IconTicket,
-} from "@tabler/icons-react";
+import { Button, Container, Group, Stack, Text, Title } from "@mantine/core";
+import { IconArrowRight } from "@tabler/icons-react";
 import { useNavigate, useSearch } from "@tanstack/react-router";
-import { type CSSProperties } from "react";
-import Surface from "../components/Surface";
 import { useAuth } from "../contexts/AuthContext";
 import { type Guild, useGuildContext } from "../contexts/GuildContext";
 import { buildApiUrl } from "../services/apiClient";
-import { heroBackground, uiTypography } from "../uiTokens";
-import styles from "./UpgradeSuccess.module.css";
+import type { BillingInterval, PaidTier } from "../../types/pricing";
 
-const CONFETTI_PIECES = [
-  { left: 6, delayMs: 0, durationMs: 1800, rotateDeg: -20, color: "#22d3ee" },
-  {
-    left: 14,
-    delayMs: 120,
-    durationMs: 2100,
-    rotateDeg: 30,
-    color: "#60a5fa",
-  },
-  {
-    left: 22,
-    delayMs: 240,
-    durationMs: 1700,
-    rotateDeg: -32,
-    color: "#34d399",
-  },
-  {
-    left: 31,
-    delayMs: 80,
-    durationMs: 1950,
-    rotateDeg: 28,
-    color: "#f59e0b",
-  },
-  {
-    left: 43,
-    delayMs: 260,
-    durationMs: 2250,
-    rotateDeg: -36,
-    color: "#22d3ee",
-  },
-  {
-    left: 54,
-    delayMs: 40,
-    durationMs: 1850,
-    rotateDeg: 20,
-    color: "#c084fc",
-  },
-  {
-    left: 62,
-    delayMs: 180,
-    durationMs: 2120,
-    rotateDeg: -26,
-    color: "#34d399",
-  },
-  {
-    left: 71,
-    delayMs: 300,
-    durationMs: 2050,
-    rotateDeg: 36,
-    color: "#f97316",
-  },
-  {
-    left: 79,
-    delayMs: 140,
-    durationMs: 1820,
-    rotateDeg: -18,
-    color: "#22d3ee",
-  },
-  {
-    left: 88,
-    delayMs: 340,
-    durationMs: 2350,
-    rotateDeg: 22,
-    color: "#6366f1",
-  },
-  {
-    left: 94,
-    delayMs: 210,
-    durationMs: 1900,
-    rotateDeg: -28,
-    color: "#fde047",
-  },
-] as const;
-
-const UPGRADE_CHECKLIST = [
-  "Higher plan limits are now active.",
-  "Billing controls are available in your server portal.",
-  "Your saved meetings and notes stay exactly where they are.",
-] as const;
-
-type UpgradeSuccessPrimaryActionProps = {
-  isAuthenticated: boolean;
-  authLoading: boolean;
-  loginUrl: string;
-  serverId: string;
-  serverName: string;
-  onOpenPortal: () => void;
+const PLAN_LABELS: Record<PaidTier, string> = {
+  basic: "Basic",
+  pro: "Pro",
 };
 
-type UpgradeSuccessSecondaryActionProps = {
-  isAuthenticated: boolean;
-  onOpenBilling: () => void;
-  onBackToHomepage: () => void;
-};
-
-type PromoAppliedRowProps = {
-  promoCode: string;
-};
-
-type ConfettiPieceStyle = CSSProperties & {
-  "--confetti-rotate-start": string;
-  "--confetti-rotate-end": string;
+const INTERVAL_LABELS: Record<BillingInterval, string> = {
+  month: "Billed monthly.",
+  year: "Billed annually.",
 };
 
 const encodeServerId = (serverId: string) => encodeURIComponent(serverId);
-
-const resolveUpgradeSuccessCopy = (serverId: string, serverName: string) =>
-  serverId
-    ? `Your subscription is active for ${serverName}.`
-    : "Your subscription is active and ready to power your next meeting.";
-
-const resolveUpgradeSuccessTitle = (serverId: string, serverName: string) => {
-  if (!serverId) {
-    return "Upgrade complete";
-  }
-
-  return serverName ? `${serverName} is upgraded` : "Your server is upgraded";
-};
 
 const resolvePrimaryActionLabel = (serverId: string, serverName: string) => {
   if (!serverId) {
@@ -200,45 +72,31 @@ export const resolveBillingPath = (serverId: string) => {
   return "/portal/select-server";
 };
 
-const buildConfettiPieceStyle = (
-  piece: (typeof CONFETTI_PIECES)[number],
-): ConfettiPieceStyle => ({
-  left: `${piece.left}%`,
-  backgroundColor: piece.color,
-  animationDelay: `${piece.delayMs}ms`,
-  animationDuration: `${piece.durationMs}ms`,
-  "--confetti-rotate-start": `${piece.rotateDeg}deg`,
-  "--confetti-rotate-end": `${piece.rotateDeg + 240}deg`,
-});
-
-function PromoAppliedRow({ promoCode }: PromoAppliedRowProps) {
-  if (!promoCode) {
-    return null;
+/**
+ * Stripe sends the plan and interval back on the success URL, so the page can
+ * confirm what was actually bought rather than saying only that something was.
+ */
+export const resolveUpgradeSuccessTitle = (
+  planLabel: string,
+  serverName: string,
+) => {
+  if (!planLabel) {
+    return serverName ? `${serverName} is upgraded` : "Upgrade complete";
   }
 
-  return (
-    <Group gap="xs">
-      <ThemeIcon color="brand" variant="light" size="sm">
-        <IconTicket size={14} />
-      </ThemeIcon>
-      <Text size="sm" fw={600}>
-        Promo applied
-      </Text>
-      <Text size="sm" c="dimmed">
-        {promoCode}
-      </Text>
-    </Group>
-  );
-}
+  return serverName
+    ? `${serverName} is on ${planLabel}`
+    : `You are on ${planLabel}`;
+};
 
 type UpgradeSuccessHeroProps = {
-  isDark: boolean;
   isAuthenticated: boolean;
   authLoading: boolean;
   loginUrl: string;
   serverId: string;
   serverName: string;
-  headerCopy: string;
+  planLabel?: string;
+  intervalLabel?: string;
   promoCode: string;
   onOpenPortal: () => void;
   onOpenBilling: () => void;
@@ -246,183 +104,97 @@ type UpgradeSuccessHeroProps = {
 };
 
 export function UpgradeSuccessHero({
-  isDark,
   isAuthenticated,
   authLoading,
   loginUrl,
   serverId,
   serverName,
-  headerCopy,
+  planLabel = "",
+  intervalLabel = "",
   promoCode,
   onOpenPortal,
   onOpenBilling,
   onBackToHomepage,
 }: UpgradeSuccessHeroProps) {
   return (
-    <Surface
-      p={{ base: "lg", md: "xl" }}
-      tone="raised"
-      className={styles.heroSurface}
-      style={{ backgroundImage: heroBackground(isDark) }}
-    >
-      <Box className={styles.confettiLayer} aria-hidden="true">
-        {CONFETTI_PIECES.map((piece) => (
-          <Box
-            key={`${piece.left}-${piece.delayMs}`}
-            className={styles.confettiPiece}
-            style={buildConfettiPieceStyle(piece)}
-          />
-        ))}
-      </Box>
-
-      <SimpleGrid cols={{ base: 1, md: 2 }} spacing="lg">
-        <Stack gap="md" className={styles.heroContent}>
-          <Text size="xs" c="dimmed" style={uiTypography.heroKicker}>
-            Upgrade successful
+    <Stack gap="xl" align="flex-start">
+      <Stack gap="sm" align="flex-start">
+        <Title
+          order={1}
+          fw={600}
+          fz={{ base: 28, md: 36 }}
+          lh={1.15}
+          style={{ letterSpacing: "-0.02em", textWrap: "balance" }}
+        >
+          {resolveUpgradeSuccessTitle(planLabel, serverName)}
+        </Title>
+        <Text c="dimmed">
+          {intervalLabel
+            ? `${intervalLabel} Your saved meetings and notes are untouched.`
+            : "Your saved meetings and notes are untouched."}
+        </Text>
+        {promoCode ? (
+          <Text size="sm" c="dimmed">
+            Promo {promoCode} applied.
           </Text>
-          <Group gap="sm" align="center">
-            <ThemeIcon color="brand" variant="light" size="lg">
-              <IconConfetti size={18} />
-            </ThemeIcon>
-            <Title order={2}>
-              {resolveUpgradeSuccessTitle(serverId, serverName)}
-            </Title>
-          </Group>
-          <Text c="dimmed" size="sm">
-            {headerCopy}
-          </Text>
-          <PromoAppliedRow promoCode={promoCode} />
-          <Group gap="sm" wrap="wrap">
-            <UpgradeSuccessPrimaryAction
-              isAuthenticated={isAuthenticated}
-              authLoading={authLoading}
-              loginUrl={loginUrl}
-              serverId={serverId}
-              serverName={serverName}
-              onOpenPortal={onOpenPortal}
-            />
-            <UpgradeSuccessSecondaryAction
-              isAuthenticated={isAuthenticated}
-              onOpenBilling={onOpenBilling}
-              onBackToHomepage={onBackToHomepage}
-            />
-          </Group>
-        </Stack>
+        ) : null}
+      </Stack>
 
-        <Surface p="lg" tone="soft" className={styles.detailsPanel}>
-          <Stack gap="sm">
-            <Text fw={600}>What unlocked today</Text>
-            <List
-              spacing="sm"
-              size="sm"
-              icon={
-                <ThemeIcon color="brand" size={18} radius="xl">
-                  <IconCheck size={12} />
-                </ThemeIcon>
-              }
-            >
-              {UPGRADE_CHECKLIST.map((line) => (
-                <List.Item key={line}>
-                  <Text size="sm" c="dimmed">
-                    {line}
-                  </Text>
-                </List.Item>
-              ))}
-            </List>
-          </Stack>
-        </Surface>
-      </SimpleGrid>
-    </Surface>
-  );
-}
+      <Group gap="sm" wrap="wrap">
+        {isAuthenticated ? (
+          <Button
+            size="md"
+            radius="md"
+            onClick={onOpenPortal}
+            rightSection={<IconArrowRight size={16} />}
+          >
+            {resolvePrimaryActionLabel(serverId, serverName)}
+          </Button>
+        ) : (
+          <Button
+            size="md"
+            radius="md"
+            component="a"
+            href={loginUrl}
+            loading={authLoading}
+            rightSection={<IconArrowRight size={16} />}
+          >
+            Connect Discord
+          </Button>
+        )}
+        {isAuthenticated ? (
+          <Button size="md" variant="subtle" onClick={onOpenBilling}>
+            Manage billing
+          </Button>
+        ) : (
+          <Button size="md" variant="subtle" onClick={onBackToHomepage}>
+            Back to homepage
+          </Button>
+        )}
+      </Group>
 
-function UpgradeSuccessPrimaryAction({
-  isAuthenticated,
-  authLoading,
-  loginUrl,
-  serverId,
-  serverName,
-  onOpenPortal,
-}: UpgradeSuccessPrimaryActionProps) {
-  if (isAuthenticated) {
-    return (
-      <Button
-        onClick={onOpenPortal}
-        rightSection={<IconArrowRight size={16} />}
-      >
-        {resolvePrimaryActionLabel(serverId, serverName)}
-      </Button>
-    );
-  }
-  return (
-    <Button
-      component="a"
-      href={loginUrl}
-      rightSection={<IconArrowRight size={16} />}
-      loading={authLoading}
-    >
-      Connect Discord
-    </Button>
-  );
-}
-
-function UpgradeSuccessSecondaryAction({
-  isAuthenticated,
-  onOpenBilling,
-  onBackToHomepage,
-}: UpgradeSuccessSecondaryActionProps) {
-  if (isAuthenticated) {
-    return (
-      <Button
-        variant="light"
-        onClick={onOpenBilling}
-        rightSection={<IconSparkles size={16} />}
-      >
-        Manage billing
-      </Button>
-    );
-  }
-  return (
-    <Button
-      variant="light"
-      onClick={onBackToHomepage}
-      rightSection={<IconSparkles size={16} />}
-    >
-      Back to homepage
-    </Button>
+      <Text size="sm" c="dimmed">
+        New limits apply to your next meeting. If the plan still looks the same
+        in the portal, give it a minute and refresh.
+      </Text>
+    </Stack>
   );
 }
 
 export default function UpgradeSuccess() {
-  const scheme = useComputedColorScheme("dark");
-  const isDark = scheme === "dark";
   const { state: authState, loading: authLoading } = useAuth();
   const navigate = useNavigate();
   const { guilds } = useGuildContext();
   const search = useSearch({ from: "/marketing/upgrade/success" });
   const promoCode = search.promo?.trim() ?? "";
   const serverId = search.serverId?.trim() ?? "";
+  const planLabel = search.plan ? PLAN_LABELS[search.plan] : "";
+  const intervalLabel = search.interval ? INTERVAL_LABELS[search.interval] : "";
   const isAuthenticated = authState === "authenticated";
-  const resolvedServerName = guilds.find(
-    (guild) => guild.id === serverId,
-  )?.name;
-  const serverName = resolvedServerName ?? "";
-  const headerCopy = resolveUpgradeSuccessCopy(
-    serverId,
-    resolvedServerName ?? "your server",
-  );
+  const serverName = guilds.find((guild) => guild.id === serverId)?.name ?? "";
   const openPortalPath = resolveOpenPortalPath(serverId, guilds);
   const postAuthPortalPath = resolvePostAuthPortalPath(serverId, guilds);
   const billingPath = resolveBillingPath(serverId);
-  const handleOpenPortal = () => {
-    navigate({ to: openPortalPath });
-  };
-  const handleOpenBilling = () => {
-    navigate({ to: billingPath });
-  };
-  const handleBackToHomepage = () => {
-    navigate({ to: "/" });
-  };
 
   const redirectTarget = `${window.location.origin}${postAuthPortalPath}`;
   const loginUrl = `${buildApiUrl("/auth/discord")}?redirect=${encodeURIComponent(
@@ -430,57 +202,20 @@ export default function UpgradeSuccess() {
   )}`;
 
   return (
-    <Stack gap="xl">
+    <Container size={720} pt={{ base: 28, md: 48 }} pb={{ base: 48, md: 96 }}>
       <UpgradeSuccessHero
-        isDark={isDark}
         isAuthenticated={isAuthenticated}
         authLoading={authLoading}
         loginUrl={loginUrl}
         serverId={serverId}
         serverName={serverName}
-        headerCopy={headerCopy}
+        planLabel={planLabel}
+        intervalLabel={intervalLabel}
         promoCode={promoCode}
-        onOpenPortal={handleOpenPortal}
-        onOpenBilling={handleOpenBilling}
-        onBackToHomepage={handleBackToHomepage}
+        onOpenPortal={() => navigate({ to: openPortalPath })}
+        onOpenBilling={() => navigate({ to: billingPath })}
+        onBackToHomepage={() => navigate({ to: "/" })}
       />
-
-      <SimpleGrid cols={{ base: 1, md: 3 }} spacing="lg">
-        <Surface p="lg" tone="soft">
-          <Stack gap="sm">
-            <ThemeIcon color="brand" variant="light">
-              <IconSparkles size={18} />
-            </ThemeIcon>
-            <Text fw={600}>Announce the upgrade</Text>
-            <Text size="sm" c="dimmed">
-              Drop a quick message so your team knows the new plan is live.
-            </Text>
-          </Stack>
-        </Surface>
-        <Surface p="lg" tone="soft">
-          <Stack gap="sm">
-            <ThemeIcon color="brand" variant="light">
-              <IconCreditCard size={18} />
-            </ThemeIcon>
-            <Text fw={600}>Keep billing in sync</Text>
-            <Text size="sm" c="dimmed">
-              Update payment methods, invoices, and plan settings from one
-              place.
-            </Text>
-          </Stack>
-        </Surface>
-        <Surface p="lg" tone="soft">
-          <Stack gap="sm">
-            <ThemeIcon color="brand" variant="light">
-              <IconSparkles size={18} />
-            </ThemeIcon>
-            <Text fw={600}>Run your first upgraded meeting</Text>
-            <Text size="sm" c="dimmed">
-              Start a session and use the higher limits right away.
-            </Text>
-          </Stack>
-        </Surface>
-      </SimpleGrid>
-    </Stack>
+    </Container>
   );
 }
