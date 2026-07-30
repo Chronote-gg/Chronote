@@ -39,8 +39,7 @@ export default function Join() {
             Chronote is now in your server!
           </Title>
           <Text size="lg" c="dimmed" maw={560}>
-            Nothing records until you start a meeting. Here is how to get your
-            first set of notes.
+            Here is how to get your first set of notes.
           </Text>
         </Stack>
 
