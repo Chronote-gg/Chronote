@@ -3,6 +3,19 @@
 This CLI runs the notes prompt against a Langfuse dataset and grades how the
 generated notes handle Discord mentions.
 
+## Status: cannot run yet
+
+Verified 2026-07-30: the `meeting-notes` dataset does not exist in the Langfuse
+project, and there is no code anywhere in this repo that creates a dataset or
+uploads items to one. `yarn eval:meeting-notes` therefore fails on
+`dataset.get`. The same is true of `yarn eval:meeting-summary`
+(`meeting-summary` is absent too); `yarn eval:transcription` works only through
+its local `--file` mode.
+
+The graders and the case format below are real and unit tested. What is missing
+is the seeding step. Closing that means an upload command that creates a dataset
+and its items from a case file, so the harvest output has somewhere to go.
+
 ## Running
 
 ```bash
@@ -68,8 +81,12 @@ downvote comment in `metadata` for context.
 
 `--output` is required and has no default inside this repo on purpose: stubs
 contain real meeting content, and this repository is public. Write them to a
-private location, curate `expectedOutput`, strip identifying details, then upload
-to Langfuse. `*.harvested.json` is gitignored as a backstop.
+private location, curate `expectedOutput`, and strip identifying details.
+`*.harvested.json` is gitignored as a backstop.
+
+There is currently no way to get a curated file into Langfuse: no upload command
+exists, so harvested stubs have no consumer until the seeding step above is
+built. Harvesting is still useful for reading what went wrong by hand.
 
 Cases are grouped by meeting and notes version, since two downvotes on different
 versions are different failures. Notes come from the matching `notesHistory`

@@ -197,13 +197,22 @@ Optional Windows helper (prints loaded env, supports `-Mock` / `-SkipDocker`):
 - Code stats and complexity (scc + lizard) keep size and complexity visible in CI. Lizard uses its default warning thresholds (CCN > 15, length > 1000, nloc > 1000000, parameter_count > 100). Use `.sccignore` for scc exclusions and `whitelizard.txt` to suppress known complexity offenders. Docs: https://github.com/boyter/scc and https://github.com/terryyin/lizard
 - Markdown lint (markdownlint-cli2) enforces consistent Markdown style across all repo `.md` files. Config in `.markdownlint-cli2.jsonc`. Command: `yarn markdownlint:check` (or `yarn markdownlint:fix` to auto-fix). Docs: https://github.com/DavidAnson/markdownlint-cli2 and https://github.com/DavidAnson/markdownlint/blob/main/doc/Rules.md
 - IaC scan (Checkov via uvx) catches Terraform misconfigurations. Docs: https://www.checkov.io/2.Basics/CLI%20Command%20Reference.html and https://docs.astral.sh/uv/concepts/tools/
-- Prompt sync (Langfuse) keeps repo prompt files aligned with Langfuse. Command: `yarn prompts:check`. A PR that edits a file in `prompts/` will fail this check until `yarn prompts:push` runs, because the check diffs the repo against the live Langfuse label. Do not push prompts to make a PR go green: the push belongs at deploy time so the prompt and the code that supplies its variables go live together. Promoting a prompt early can tell the model to use inputs the deployed code does not send yet. Leave the check red, call out the pending push in the PR description, and push when the deploy happens.
+- Prompt sync (Langfuse) keeps repo prompt files aligned with Langfuse. Command: `yarn prompts:check`. It diffs the repo against the live Langfuse label, so a PR that edits anything in `prompts/` fails this check until `yarn prompts:push` runs. Leave it red on the PR and call out the pending push in the description.
+- **Prompt-touching changes need a deploy step after merge, in this order.** `Deploy Backend` in `deploy.yml` gates on `Prompts Check`, so a merge with unpushed prompts skips the deploy entirely and the running bot keeps the old code:
+  1. Merge the PR. Expect the deploy run to fail on `Prompts Check` and skip all three deploy jobs.
+  2. Run `yarn prompts:push` (`--dry-run` first, confirm the changed prompt list matches the merge).
+  3. Re-run the deploy workflow and **verify `Deploy Backend` actually succeeded**, not just that the run is green.
+
+  Between steps 2 and 3 the live prompt is ahead of the deployed code, so a prompt asking for variables the old code does not send will silently degrade. Keep that window short, and never treat "merged" as "deployed".
 
 ### Evals
 
 - `yarn eval:meeting-notes` runs the notes eval against a Langfuse dataset (`LANGFUSE_EVAL_DATASET`, default `meeting-notes`). Cases carry rendered prompt variables rather than a `MeetingData` object, so `formatParticipantRoster` and `formatRoleRoster` are exported from `notesPromptService.ts` for reuse.
 - Mention grading is deterministic (`src/evals/roleMentionGraders.ts`): it verifies every emitted mention id came from the roster, blocks `@everyone`/`@here`, and scores recall against expected ids. Prefer extending these graders over adding a judge model.
 - `yarn evals:harvest-downvotes --output <path>` turns downvoted meetings into eval case stubs with `expectedOutput` left blank for a human to curate. Output contains real meeting content: write it outside this public repo. `*.harvested.json` is gitignored as a backstop.
+- **The Langfuse dataset path is not wired up yet (verified 2026-07-30).** None of the dataset names the runners default to exist in the project (`meeting-notes`, `meeting-summary`, `transcription-eval` all 404), and there is no dataset creation or upload code anywhere in `src/` or `scripts/`. So `eval:meeting-notes` and `eval:meeting-summary` cannot run at all today, and the harvest script emits JSON that nothing consumes. `eval:transcription` is usable only through its local `--file` mode.
+- The two datasets that do exist were created outside this repo and are not eval-ready: `Transcription` (1 item, empty `expectedOutput`) and `hallucination-audit-20260209` (198 items, `expectedOutput` null). Neither matches the runners' input schemas. Treat them as raw corpora, not graded sets.
+- Before extending the eval runners, build the missing seeding step: an upload command that creates a dataset and its items from a case file, plus a clear error when a dataset is absent instead of a raw throw from `dataset.get`.
 
 ### Coverage guidance
 
