@@ -18,12 +18,15 @@ const EvalInputSchema = z.object({
   previousSummaryLabel: z.string().optional(),
 });
 
+// nullish, not optional: Langfuse returns expectedOutput as null for a case
+// that declares none, and `.optional()` rejects null, which crashes the
+// evaluator on every unlabelled case rather than skipping the exact-match grades.
 const ExpectedOutputSchema = z
   .object({
     summarySentence: z.string().optional(),
     summaryLabel: z.string().optional(),
   })
-  .optional();
+  .nullish();
 
 function normalize(value?: string) {
   return value?.trim().toLowerCase() ?? "";

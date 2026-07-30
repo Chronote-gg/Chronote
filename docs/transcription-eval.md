@@ -33,12 +33,21 @@ Required env vars for Bedrock evals:
 
 ## Langfuse dataset runs
 
-**Needs seeding first (verified 2026-07-30).** No `transcription-eval` dataset
-exists yet. Create one before using this path:
+**Needs seeding first, and seeding needs a labelled clip (verified 2026-07-30).**
+No `transcription-eval` dataset exists. Unlike the notes and summary evals, this
+one cannot be seeded from the sample file as it stands: `docs/evals/transcription-eval.dataset.json`
+points at `audio/clip.wav`, which is not in the repo, and grading needs a
+reference transcript that a human has checked. Transcribing a clip with the same
+model to produce that reference would be circular and grade nothing.
+
+So seeding this is a content task, not a code task: add a short audio file, write
+its reference transcript by hand, point a case at both, then:
 
 ```bash
 yarn evals:upload --dataset transcription-eval --file docs/evals/transcription-eval.dataset.json
 ```
+
+The local `--file` runs above work today and need no dataset.
 
 Do not point this at the project's existing `Transcription` dataset. That one was
 created outside this repo, holds a single item with an empty `expectedOutput`, and
