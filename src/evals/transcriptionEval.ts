@@ -25,6 +25,7 @@ import {
   getLangfuseClient,
   isLangfuseEnabled,
 } from "../services/langfuseClient";
+import { getEvalDataset } from "./evalDataset";
 import { getTranscriptionTextQuality } from "../utils/transcriptionText";
 
 type ProviderName = "openai" | "bedrock";
@@ -925,7 +926,7 @@ async function runLangfuseEval(options: EvalOptions) {
   const s3Client =
     options.provider === "bedrock" ? new S3Client({ region }) : null;
 
-  const dataset = await langfuse.dataset.get(datasetName);
+  const dataset = await getEvalDataset(langfuse, datasetName);
 
   const result = await dataset.runExperiment({
     name: experimentName,

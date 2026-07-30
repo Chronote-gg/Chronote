@@ -86,6 +86,7 @@
     "eval:transcription": "ts-node src/evals/transcriptionEval.ts",
     "eval:meeting-notes": "ts-node src/evals/meetingNotesEval.ts",
     "evals:harvest-downvotes": "ts-node scripts/evals/harvest-downvoted-notes.ts",
+    "evals:upload": "ts-node scripts/evals/upload-dataset.ts",
     "prompts:push": "ts-node scripts/prompts/push.ts",
     "prompts:pull": "ts-node scripts/prompts/pull.ts",
     "prompts:check": "ts-node scripts/prompts/check.ts",
