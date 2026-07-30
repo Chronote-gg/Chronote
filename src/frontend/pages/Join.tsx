@@ -36,7 +36,7 @@ export default function Join() {
             lh={1.15}
             style={{ letterSpacing: "-0.02em", textWrap: "balance" }}
           >
-            Chronote is in your server.
+            Chronote is now in your server!
           </Title>
           <Text size="lg" c="dimmed" maw={560}>
             Nothing records until you start a meeting. Here is how to get your

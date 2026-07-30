@@ -78,8 +78,10 @@ describe("UpgradeSuccess", () => {
 
     renderUpgradeSuccess();
 
-    expect(screen.getByText("Engineering HQ is on Pro")).toBeInTheDocument();
-    expect(screen.getByText(/Billed annually\./)).toBeInTheDocument();
+    expect(screen.getByText("Welcome to Pro!")).toBeInTheDocument();
+    expect(
+      screen.getByText("Engineering HQ is upgraded. Billed annually."),
+    ).toBeInTheDocument();
   });
 
   it("falls back to a generic confirmation when Stripe omits the plan", () => {
@@ -87,7 +89,7 @@ describe("UpgradeSuccess", () => {
 
     renderUpgradeSuccess();
 
-    expect(screen.getByText("Engineering HQ is upgraded")).toBeInTheDocument();
+    expect(screen.getByText("Engineering HQ is upgraded!")).toBeInTheDocument();
     expect(screen.queryByText(/Billed/)).toBeNull();
   });
 

@@ -80,14 +80,22 @@ export const resolveUpgradeSuccessTitle = (
   planLabel: string,
   serverName: string,
 ) => {
-  if (!planLabel) {
-    return serverName ? `${serverName} is upgraded` : "Upgrade complete";
+  if (planLabel) {
+    return `Welcome to ${planLabel}!`;
   }
 
-  return serverName
-    ? `${serverName} is on ${planLabel}`
-    : `You are on ${planLabel}`;
+  return serverName ? `${serverName} is upgraded!` : "Upgrade complete!";
 };
+
+/** Names the server and the billing cadence under the greeting. */
+export const resolveUpgradeSuccessSubtitle = (
+  planLabel: string,
+  serverName: string,
+  intervalLabel: string,
+) =>
+  [planLabel && serverName ? `${serverName} is upgraded.` : "", intervalLabel]
+    .filter(Boolean)
+    .join(" ");
 
 type UpgradeSuccessHeroProps = {
   isAuthenticated: boolean;
@@ -116,6 +124,11 @@ export function UpgradeSuccessHero({
   onOpenBilling,
   onBackToHomepage,
 }: UpgradeSuccessHeroProps) {
+  const subtitle = resolveUpgradeSuccessSubtitle(
+    planLabel,
+    serverName,
+    intervalLabel,
+  );
   return (
     <Stack gap="xl" align="flex-start">
       <Stack gap="sm" align="flex-start">
@@ -128,11 +141,11 @@ export function UpgradeSuccessHero({
         >
           {resolveUpgradeSuccessTitle(planLabel, serverName)}
         </Title>
-        <Text c="dimmed">
-          {intervalLabel
-            ? `${intervalLabel} Your saved meetings and notes are untouched.`
-            : "Your saved meetings and notes are untouched."}
-        </Text>
+        {subtitle ? (
+          <Text size="lg" c="dimmed">
+            {subtitle}
+          </Text>
+        ) : null}
         {promoCode ? (
           <Text size="sm" c="dimmed">
             Promo {promoCode} applied.
@@ -174,8 +187,9 @@ export function UpgradeSuccessHero({
       </Group>
 
       <Text size="sm" c="dimmed">
-        New limits apply to your next meeting. If the plan still looks the same
-        in the portal, give it a minute and refresh.
+        New limits apply to your next meeting, and everything you have already
+        recorded stays exactly where it is. If the plan still looks the same in
+        the portal, give it a minute and refresh.
       </Text>
     </Stack>
   );
