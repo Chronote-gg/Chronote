@@ -240,6 +240,7 @@ export default function Home() {
                         fw={600}
                         aria-label="Upgrade to Basic"
                         data-testid="home-cta-basic"
+                        disabled={!basicPlan}
                         onClick={() => startUpgrade("basic")}
                       >
                         Upgrade
@@ -252,6 +253,7 @@ export default function Home() {
                         variant="default"
                         aria-label="Upgrade to Pro"
                         data-testid="home-cta-pro"
+                        disabled={!proPlan}
                         onClick={() => startUpgrade("pro")}
                       >
                         Upgrade
