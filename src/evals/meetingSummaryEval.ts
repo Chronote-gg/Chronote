@@ -7,6 +7,7 @@ import {
   getLangfuseClient,
   isLangfuseEnabled,
 } from "../services/langfuseClient";
+import { getEvalDataset } from "./evalDataset";
 
 const EvalInputSchema = z.object({
   notes: z.string(),
@@ -43,7 +44,7 @@ async function run() {
     throw new Error("Langfuse client is unavailable.");
   }
 
-  const dataset = await langfuse.dataset.get(datasetName);
+  const dataset = await getEvalDataset(langfuse, datasetName);
 
   const result = await dataset.runExperiment({
     name: experimentName,

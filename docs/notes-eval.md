@@ -3,21 +3,23 @@
 This CLI runs the notes prompt against a Langfuse dataset and grades how the
 generated notes handle Discord mentions.
 
-## Status: cannot run yet
+## Seeding a dataset
 
-Verified 2026-07-30: the `meeting-notes` dataset does not exist in the Langfuse
-project, and there is no code anywhere in this repo that creates a dataset or
-uploads items to one. `yarn eval:meeting-notes` therefore fails on
-`dataset.get`. The same is true of `yarn eval:meeting-summary`
-(`meeting-summary` is absent too); `yarn eval:transcription` works only through
-its local `--file` mode.
+A dataset has to exist before any runner can use it. Nothing creates one
+implicitly.
 
-The mention graders are unit tested (`src/evals/__tests__/roleMentionGraders.test.ts`).
-The case format below is only exercised by the runner at runtime: no test parses
-`EvalInputSchema` or the sample dataset file, so treat the shape as unverified
-until the runner actually executes. What is missing is the seeding step. Closing
-that means an upload command that creates a dataset and its items from a case
-file, so the harvest output has somewhere to go.
+```bash
+yarn evals:upload --dataset meeting-notes --file docs/evals/meeting-notes-eval.dataset.json
+```
+
+This creates the dataset if absent and upserts each item. Items upsert on id,
+resolved from an explicit `id` field or from `metadata.label`, so re-running the
+same file is idempotent rather than duplicating cases. A case with neither gets a
+generated id and the command warns that re-uploading will duplicate it.
+
+`meeting-notes` was seeded from the sample file on 2026-07-30 (2 synthetic
+cases). A runner pointed at a dataset that does not exist now fails with the
+upload command to run rather than a raw `dataset.get` error.
 
 ## Running
 
@@ -27,9 +29,21 @@ yarn eval:meeting-notes
 
 Environment:
 
-- `LANGFUSE_PUBLIC_KEY` and `LANGFUSE_SECRET_KEY` are required.
+- `LANGFUSE_PUBLIC_KEY` and `LANGFUSE_SECRET_KEY`.
+- **A full app environment.** The runners import `configService`, which validates
+  the whole config at module load, so `DISCORD_CLIENT_ID`, `OPENAI_API_KEY`,
+  `FRONTEND_SITE_URL`, `OAUTH_SECRET`, and the rest must be present or the
+  process exits before touching Langfuse. Langfuse keys alone are not enough.
+  `scripts/mock.env.example` is the quickest way to satisfy the non-OpenAI
+  values; the OpenAI key has to be real since the eval calls the model.
 - `LANGFUSE_EVAL_DATASET` selects the dataset (default `meeting-notes`).
 - `LANGFUSE_EVAL_EXPERIMENT` names the run (defaults to a timestamped name).
+
+The mention graders are unit tested
+(`src/evals/__tests__/roleMentionGraders.test.ts`). The case format below is only
+exercised by the runner at runtime: no test parses `EvalInputSchema` or the
+sample dataset file, so treat the shape as unverified until a runner executes
+against it.
 
 ## Case shape
 
@@ -87,9 +101,8 @@ contain real meeting content, and this repository is public. Write them to a
 private location, curate `expectedOutput`, and strip identifying details.
 `*.harvested.json` is gitignored as a backstop.
 
-There is currently no way to get a curated file into Langfuse: no upload command
-exists, so harvested stubs have no consumer until the seeding step above is
-built. Harvesting is still useful for reading what went wrong by hand.
+Once curated, load the file with `yarn evals:upload` as above. Give each case a
+`metadata.label` so re-uploads upsert rather than duplicating.
 
 Cases are grouped by meeting and notes version, since two downvotes on different
 versions are different failures. Notes come from the matching `notesHistory`

@@ -9,6 +9,7 @@ import {
 import { getModelChoice } from "../services/modelFactory";
 import { createOpenAIClient } from "../services/openaiClient";
 import { resolveChatParamsForRole } from "../services/openaiModelParams";
+import { getEvalDataset } from "./evalDataset";
 import { gradeMentions } from "./roleMentionGraders";
 
 /**
@@ -101,7 +102,7 @@ async function run() {
     throw new Error("Langfuse client is unavailable.");
   }
 
-  const dataset = await langfuse.dataset.get(datasetName);
+  const dataset = await getEvalDataset(langfuse, datasetName);
 
   const result = await dataset.runExperiment({
     name: experimentName,
