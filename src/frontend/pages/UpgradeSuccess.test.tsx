@@ -78,9 +78,11 @@ describe("UpgradeSuccess", () => {
 
     renderUpgradeSuccess();
 
-    expect(screen.getByText("Welcome to Pro!")).toBeInTheDocument();
     expect(
-      screen.getByText("Engineering HQ is upgraded. Billed annually."),
+      screen.getByText("Your Chronote is now upgraded to Pro!"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("For Engineering HQ, billed annually."),
     ).toBeInTheDocument();
   });
 
@@ -89,8 +91,11 @@ describe("UpgradeSuccess", () => {
 
     renderUpgradeSuccess();
 
-    expect(screen.getByText("Engineering HQ is upgraded!")).toBeInTheDocument();
-    expect(screen.queryByText(/Billed/)).toBeNull();
+    expect(
+      screen.getByText("Your Chronote is now upgraded!"),
+    ).toBeInTheDocument();
+    expect(screen.getByText("For Engineering HQ.")).toBeInTheDocument();
+    expect(screen.queryByText(/billed/)).toBeNull();
   });
 
   it("uses a library redirect for login when guild access is not loaded", () => {

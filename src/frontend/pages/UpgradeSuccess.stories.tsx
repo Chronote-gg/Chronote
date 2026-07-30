@@ -11,7 +11,7 @@ const meta: Meta<typeof UpgradeSuccessHero> = {
     serverId: "1234567890",
     serverName: "Engineering HQ",
     planLabel: "Basic",
-    intervalLabel: "Billed monthly.",
+    intervalWord: "monthly",
     promoCode: "SAVE20",
     onOpenPortal: () => {},
     onOpenBilling: () => {},
@@ -28,7 +28,7 @@ export const Default: Story = {};
 export const Annual: Story = {
   args: {
     planLabel: "Pro",
-    intervalLabel: "Billed annually.",
+    intervalWord: "annually",
     promoCode: "",
   },
 };
@@ -39,7 +39,7 @@ export const ConnectDiscordState: Story = {
     serverId: "",
     serverName: "",
     planLabel: "",
-    intervalLabel: "",
+    intervalWord: "",
     promoCode: "",
   },
 };

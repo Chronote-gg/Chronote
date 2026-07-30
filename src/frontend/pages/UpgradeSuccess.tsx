@@ -11,9 +11,9 @@ const PLAN_LABELS: Record<PaidTier, string> = {
   pro: "Pro",
 };
 
-const INTERVAL_LABELS: Record<BillingInterval, string> = {
-  month: "Billed monthly.",
-  year: "Billed annually.",
+const INTERVAL_WORDS: Record<BillingInterval, string> = {
+  month: "monthly",
+  year: "annually",
 };
 
 const encodeServerId = (serverId: string) => encodeURIComponent(serverId);
@@ -76,26 +76,24 @@ export const resolveBillingPath = (serverId: string) => {
  * Stripe sends the plan and interval back on the success URL, so the page can
  * confirm what was actually bought rather than saying only that something was.
  */
-export const resolveUpgradeSuccessTitle = (
-  planLabel: string,
-  serverName: string,
-) => {
-  if (planLabel) {
-    return `Welcome to ${planLabel}!`;
-  }
-
-  return serverName ? `${serverName} is upgraded!` : "Upgrade complete!";
-};
+export const resolveUpgradeSuccessTitle = (planLabel: string) =>
+  planLabel
+    ? `Your Chronote is now upgraded to ${planLabel}!`
+    : "Your Chronote is now upgraded!";
 
 /** Names the server and the billing cadence under the greeting. */
 export const resolveUpgradeSuccessSubtitle = (
-  planLabel: string,
   serverName: string,
-  intervalLabel: string,
-) =>
-  [planLabel && serverName ? `${serverName} is upgraded.` : "", intervalLabel]
-    .filter(Boolean)
-    .join(" ");
+  intervalWord: string,
+) => {
+  if (serverName && intervalWord) {
+    return `For ${serverName}, billed ${intervalWord}.`;
+  }
+  if (serverName) {
+    return `For ${serverName}.`;
+  }
+  return intervalWord ? `Billed ${intervalWord}.` : "";
+};
 
 type UpgradeSuccessHeroProps = {
   isAuthenticated: boolean;
@@ -104,7 +102,7 @@ type UpgradeSuccessHeroProps = {
   serverId: string;
   serverName: string;
   planLabel?: string;
-  intervalLabel?: string;
+  intervalWord?: string;
   promoCode: string;
   onOpenPortal: () => void;
   onOpenBilling: () => void;
@@ -118,17 +116,13 @@ export function UpgradeSuccessHero({
   serverId,
   serverName,
   planLabel = "",
-  intervalLabel = "",
+  intervalWord = "",
   promoCode,
   onOpenPortal,
   onOpenBilling,
   onBackToHomepage,
 }: UpgradeSuccessHeroProps) {
-  const subtitle = resolveUpgradeSuccessSubtitle(
-    planLabel,
-    serverName,
-    intervalLabel,
-  );
+  const subtitle = resolveUpgradeSuccessSubtitle(serverName, intervalWord);
   return (
     <Stack gap="xl" align="flex-start">
       <Stack gap="sm" align="flex-start">
@@ -139,7 +133,7 @@ export function UpgradeSuccessHero({
           lh={1.15}
           style={{ letterSpacing: "-0.02em", textWrap: "balance" }}
         >
-          {resolveUpgradeSuccessTitle(planLabel, serverName)}
+          {resolveUpgradeSuccessTitle(planLabel)}
         </Title>
         {subtitle ? (
           <Text size="lg" c="dimmed">
@@ -203,7 +197,7 @@ export default function UpgradeSuccess() {
   const promoCode = search.promo?.trim() ?? "";
   const serverId = search.serverId?.trim() ?? "";
   const planLabel = search.plan ? PLAN_LABELS[search.plan] : "";
-  const intervalLabel = search.interval ? INTERVAL_LABELS[search.interval] : "";
+  const intervalWord = search.interval ? INTERVAL_WORDS[search.interval] : "";
   const isAuthenticated = authState === "authenticated";
   const serverName = guilds.find((guild) => guild.id === serverId)?.name ?? "";
   const openPortalPath = resolveOpenPortalPath(serverId, guilds);
@@ -224,7 +218,7 @@ export default function UpgradeSuccess() {
         serverId={serverId}
         serverName={serverName}
         planLabel={planLabel}
-        intervalLabel={intervalLabel}
+        intervalWord={intervalWord}
         promoCode={promoCode}
         onOpenPortal={() => navigate({ to: openPortalPath })}
         onOpenBilling={() => navigate({ to: billingPath })}
