@@ -1,5 +1,9 @@
 import { describe, expect, test } from "@jest/globals";
-import { resolveItemId } from "../../scripts/evals/upload-dataset";
+import {
+  MAX_ITEM_ID_LENGTH,
+  resolveItemId,
+  resolveItemIds,
+} from "../../scripts/evals/upload-dataset";
 
 const DATASET = "meeting-notes";
 
@@ -26,10 +30,53 @@ describe("resolveItemId", () => {
     expect(resolveItemId(DATASET, { metadata: { label: "" } })).toBeUndefined();
   });
 
-  test("clamps to the 255 character id limit Langfuse enforces", () => {
-    const id = resolveItemId(DATASET, { metadata: { label: "x".repeat(400) } });
+  test("rejects a label too long to fit the id limit", () => {
+    // Truncating would collapse two long labels sharing a prefix onto one id,
+    // silently dropping a case, so the file is refused instead.
+    expect(() =>
+      resolveItemId(DATASET, { metadata: { label: "x".repeat(400) } }),
+    ).toThrow(/too long/);
+  });
 
-    expect(id).toHaveLength(255);
-    expect(id?.startsWith("meeting-notes:")).toBe(true);
+  test("accepts a label that exactly fits", () => {
+    const label = "x".repeat(MAX_ITEM_ID_LENGTH - `${DATASET}:`.length);
+
+    expect(resolveItemId(DATASET, { metadata: { label } })).toHaveLength(
+      MAX_ITEM_ID_LENGTH,
+    );
+  });
+});
+
+describe("resolveItemIds", () => {
+  test("resolves every case in order", () => {
+    expect(
+      resolveItemIds(DATASET, [
+        { metadata: { label: "a" } },
+        { id: "explicit" },
+        {},
+      ]),
+    ).toEqual(["meeting-notes:a", "explicit", undefined]);
+  });
+
+  test("rejects two cases that resolve to the same id", () => {
+    expect(() =>
+      resolveItemIds(DATASET, [
+        { metadata: { label: "same" } },
+        { metadata: { label: "same" } },
+      ]),
+    ).toThrow(/Duplicate dataset item id/);
+  });
+
+  test("rejects an explicit id colliding with a derived one", () => {
+    expect(() =>
+      resolveItemIds(DATASET, [
+        { metadata: { label: "dup" } },
+        { id: "meeting-notes:dup" },
+      ]),
+    ).toThrow(/Duplicate dataset item id/);
+  });
+
+  test("allows multiple cases with no id at all", () => {
+    expect(resolveItemIds(DATASET, [{}, {}])).toEqual([undefined, undefined]);
   });
 });

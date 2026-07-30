@@ -175,6 +175,11 @@ const buildEvalCase = async (
     // a harvested case is worth anything as an eval.
     expectedOutput: {},
     metadata: {
+      // evals:upload derives a dataset item id from this, so re-harvesting and
+      // re-uploading the same downvote upserts rather than duplicating. Keyed
+      // on meeting plus the version that was downvoted, since two versions of
+      // one meeting are different cases.
+      label: `${meeting.meetingId}-v${notesVersion ?? meeting.notesVersion ?? 1}`,
       meetingId: meeting.meetingId,
       downvotedNotesVersion: notesVersion,
       currentNotesVersion: meeting.notesVersion,
@@ -272,7 +277,10 @@ async function main() {
     "These stubs contain real user content. Fill in expectedOutput, strip anything identifying, and do not commit them.",
   );
   console.log(
-    "Note: there is no upload command yet, so these cannot be loaded into Langfuse. See docs/notes-eval.md for the missing seeding step.",
+    `Once curated, load them with: yarn evals:upload --dataset meeting-notes --file ${resolvedOutput}`,
+  );
+  console.log(
+    "Each case already carries metadata.label, so re-uploading upserts instead of duplicating.",
   );
 }
 
