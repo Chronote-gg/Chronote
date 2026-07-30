@@ -171,7 +171,7 @@
     "react-markdown": "^10.1.0",
     "react-quill-new": "^3.8.3",
     "remark-gfm": "^4.0.1",
-    "stripe": "22.3.2",
+    "stripe": "22.4.0",
     "syllable": "^5.0.1",
     "uuid": "^14.0.1",
     "web-vitals": "^6.0.1",
