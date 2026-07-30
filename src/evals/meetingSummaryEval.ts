@@ -8,6 +8,7 @@ import {
   isLangfuseEnabled,
 } from "../services/langfuseClient";
 import { getEvalDataset } from "./evalDataset";
+import { expectedOutputSchema } from "./expectedOutput";
 
 const EvalInputSchema = z.object({
   notes: z.string(),
@@ -18,12 +19,10 @@ const EvalInputSchema = z.object({
   previousSummaryLabel: z.string().optional(),
 });
 
-const ExpectedOutputSchema = z
-  .object({
-    summarySentence: z.string().optional(),
-    summaryLabel: z.string().optional(),
-  })
-  .optional();
+const ExpectedOutputSchema = expectedOutputSchema({
+  summarySentence: z.string().optional(),
+  summaryLabel: z.string().optional(),
+});
 
 function normalize(value?: string) {
   return value?.trim().toLowerCase() ?? "";

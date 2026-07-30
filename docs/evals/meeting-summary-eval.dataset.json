@@ -1,0 +1,36 @@
+[
+  {
+    "input": {
+      "notes": "## Summary\n- The team agreed to move the onboarding docs to the new site before the next release.\n- Screenshots are stale and need retaking.\n\n## Action Items\n- Redo the onboarding screenshots.\n- Re-read the escalation policy before Friday.",
+      "serverName": "Server X",
+      "channelName": "Channel Y",
+      "tags": ["planning"]
+    },
+    "metadata": {
+      "label": "task-oriented-notes"
+    }
+  },
+  {
+    "input": {
+      "notes": "## Highlights\n- The party crossed the frozen pass and lost a supply cart.\n- A stranger offered directions in exchange for a favour.\n\n## Open Questions\n- Whether to trust the stranger.",
+      "serverName": "Server X",
+      "channelName": "Channel Y",
+      "tags": ["ttrpg"]
+    },
+    "metadata": {
+      "label": "narrative-notes"
+    }
+  },
+  {
+    "input": {
+      "notes": "## Summary\n- Short check-in, nothing decided.",
+      "serverName": "Server X",
+      "channelName": "Channel Y",
+      "previousSummarySentence": "The team reviewed the roadmap and deferred the pricing decision.",
+      "previousSummaryLabel": "Roadmap Review"
+    },
+    "metadata": {
+      "label": "sparse-notes-with-previous-summary"
+    }
+  }
+]
