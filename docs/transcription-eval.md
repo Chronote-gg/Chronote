@@ -33,6 +33,14 @@ Required env vars for Bedrock evals:
 
 ## Langfuse dataset runs
 
+**Not usable as written (verified 2026-07-30).** No `transcription-eval` dataset
+exists in the Langfuse project, and nothing in this repo creates or uploads one,
+so this path fails on `dataset.get`. The project's one transcription dataset is
+named `Transcription` and holds a single item with an empty `expectedOutput`, so
+it will not grade either. Use the local file runs above until the seeding step
+described in `docs/notes-eval.md` exists. The commands below record the intended
+interface, not a working flow.
+
 ```bash
 LANGFUSE_EVAL_DATASET=transcription-eval
 ```

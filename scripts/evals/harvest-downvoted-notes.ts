@@ -269,7 +269,10 @@ async function main() {
   );
   console.log(`Wrote ${cases.length} eval case stub(s) to ${resolvedOutput}`);
   console.log(
-    "These stubs contain real user content. Fill in expectedOutput, strip anything identifying, then upload to Langfuse. Do not commit them.",
+    "These stubs contain real user content. Fill in expectedOutput, strip anything identifying, and do not commit them.",
+  );
+  console.log(
+    "Note: there is no upload command yet, so these cannot be loaded into Langfuse. See docs/notes-eval.md for the missing seeding step.",
   );
 }
 
