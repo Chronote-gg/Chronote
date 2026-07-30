@@ -12,9 +12,12 @@ uploads items to one. `yarn eval:meeting-notes` therefore fails on
 (`meeting-summary` is absent too); `yarn eval:transcription` works only through
 its local `--file` mode.
 
-The graders and the case format below are real and unit tested. What is missing
-is the seeding step. Closing that means an upload command that creates a dataset
-and its items from a case file, so the harvest output has somewhere to go.
+The mention graders are unit tested (`src/evals/__tests__/roleMentionGraders.test.ts`).
+The case format below is only exercised by the runner at runtime: no test parses
+`EvalInputSchema` or the sample dataset file, so treat the shape as unverified
+until the runner actually executes. What is missing is the seeding step. Closing
+that means an upload command that creates a dataset and its items from a case
+file, so the harvest output has somewhere to go.
 
 ## Running
 
