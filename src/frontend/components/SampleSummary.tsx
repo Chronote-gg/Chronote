@@ -6,6 +6,7 @@ import { Box, Stack, Text } from "@mantine/core";
  * the artifact Chronote posts, not like the rest of the site.
  */
 const DISCORD = {
+  messageBackground: "#313338",
   embedBackground: "#2B2D31",
   accent: "#3BA55C",
   heading: "#F2F3F5",
@@ -65,7 +66,17 @@ function SectionHeading({ children }: { children: React.ReactNode }) {
 
 export function SampleSummary() {
   return (
-    <Stack gap={6} data-testid="sample-summary">
+    <Stack
+      gap={6}
+      data-testid="sample-summary"
+      // The message ground travels with the artifact so the author row keeps
+      // its Discord colours in light mode too.
+      style={{
+        background: DISCORD.messageBackground,
+        borderRadius: 8,
+        padding: 16,
+      }}
+    >
       <Box style={{ display: "flex", alignItems: "center", gap: 8 }}>
         <Box
           style={{

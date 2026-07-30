@@ -32,13 +32,26 @@ export function redactShareIds(value: string): string {
   return value.replace(SHARE_ID_PATTERN, "/share/$1/:serverId/:shareId");
 }
 
-function sanitizeProperties(properties: Record<string, unknown>) {
-  const sanitized: Record<string, unknown> = {};
-  for (const [key, value] of Object.entries(properties)) {
-    sanitized[key] =
-      typeof value === "string" ? redactShareIds(value) : (value as unknown);
+/**
+ * Share ids turn up nested inside replay and autocapture payloads, not just as
+ * top level properties, so this walks the whole structure.
+ */
+export function redactDeep(value: unknown): unknown {
+  if (typeof value === "string") return redactShareIds(value);
+  if (Array.isArray(value)) return value.map(redactDeep);
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>).map(([key, nested]) => [
+        key,
+        redactDeep(nested),
+      ]),
+    );
   }
-  return sanitized;
+  return value;
+}
+
+function sanitizeProperties(properties: Record<string, unknown>) {
+  return redactDeep(properties) as Record<string, unknown>;
 }
 
 /**

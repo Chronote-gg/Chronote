@@ -56,15 +56,15 @@ We do not receive or store your payment card details. Stripe handles card data d
 
 Chronote depends on the following providers. Each one sees only what it needs to do its job.
 
-| Provider            | What it handles                                                                                                                                                                                                      |
-| ------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Discord             | The platform Chronote runs on, and how you sign in                                                                                                                                                                   |
-| Amazon Web Services | Hosting, storage, and logging                                                                                                                                                                                        |
-| OpenAI              | Transcribing audio, and generating notes, corrections, answers to Ask questions, and optional images. Content sent for processing includes your audio, transcript text, the meeting chat log, and your Ask questions |
-| Stripe              | Payments and subscription billing                                                                                                                                                                                    |
-| Langfuse            | Engineering observability for the transcription and notes pipeline. Traces can include transcript and notes content, and attach a compressed copy of the meeting audio                                               |
-| Notion              | Only if a user connects their Notion account, to export notes there                                                                                                                                                  |
-| PostHog             | Product analytics for the website and web portal. See the analytics section below for what this covers                                                                                                               |
+| Provider            | What it handles                                                                                                                                                                                                                                                                                                                                                                                                   |
+| ------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Discord             | The platform Chronote runs on, and how you sign in                                                                                                                                                                                                                                                                                                                                                                |
+| Amazon Web Services | Hosting, storage, and logging                                                                                                                                                                                                                                                                                                                                                                                     |
+| OpenAI              | Transcribing audio, and generating notes, corrections, answers to Ask questions, and optional images. Content sent for processing includes your audio, transcript text, the meeting chat log, your Ask questions, and the context we attach to improve accuracy: server and channel names, the server description, attendee labels, role and event names, your dictionary terms, and any context you have written |
+| Stripe              | Payments and subscription billing                                                                                                                                                                                                                                                                                                                                                                                 |
+| Langfuse            | Engineering observability for the transcription and notes pipeline. Traces can include transcript and notes content, and attach a compressed copy of the meeting audio                                                                                                                                                                                                                                            |
+| Notion              | Only if a user connects their Notion account, to export notes there                                                                                                                                                                                                                                                                                                                                               |
+| PostHog             | Product analytics for the website and web portal. See the analytics section below for what this covers                                                                                                                                                                                                                                                                                                            |
 
 ## How long we keep things
 
@@ -72,7 +72,7 @@ We keep meetings until you ask us to remove them. Plan limits control how far ba
 
 Archiving a meeting hides it from your library views. It does not erase the recording, transcript, or notes from storage. If you want a meeting removed entirely, email us and we will remove it, including the audio and transcript, within 30 days. Self-service deletion is not available yet.
 
-Operational logs are retained for up to 365 days.
+Server and application logs held in Amazon CloudWatch expire after 365 days. Access records stored in our database do not expire on their own and are kept until we remove them.
 
 ## Analytics
 
@@ -80,6 +80,7 @@ We use PostHog to understand how people use the website and the web portal, so w
 
 - **Page views and clicks.** Which pages you visit and which elements you interact with, including the text and labels of what you clicked.
 - **Session replay.** A reconstruction of your session, so we can watch how a page was actually used. In the web portal this can include meeting content shown on screen, such as notes and transcript text.
+- **Technical metadata.** PostHog's SDK attaches an anonymous identifier to your browser and records the usual request details alongside each event: browser and device type, the page you came from, the page you are on, and an approximate location derived from your IP address.
 
 Two things are deliberately excluded: share link ids are stripped before anything is sent, because those act as passwords for a shared meeting, and we do not send analytics at all if your browser sends a Do Not Track signal.
 
@@ -109,11 +110,12 @@ If you are in the UK, the EU, California, or another region with specific data p
 Which of us is answerable depends on the data:
 
 - **For your account**, meaning your Discord identity, your sign-in session, billing records, and analytics, BASIC BIT LLC decides how that data is used and is the controller.
-- **For meeting content**, meaning recordings, transcripts, notes, and chat logs, the Discord server that installed Chronote decides what gets recorded and why. That server's admins are the controller and Chronote acts as their processor. If you are a member of a server and want a recording of you removed, ask that server's admins first. You can also come to us and we will act on their instruction.
+- **For meeting content recorded in a Discord server**, meaning recordings, transcripts, notes, and chat logs, the server that installed Chronote decides what gets recorded and why. That server's admins are the controller and Chronote acts as their processor. If you are a member of a server and want a recording of you removed, ask that server's admins first. You can also come to us and we will act on their instruction.
+- **For personal meetings**, meaning uploads and recordings that belong to your account rather than to a server, there is no server admin in the middle. You decide what to upload, and BASIC BIT LLC is the controller. Contact us directly for those.
 
 ## Security
 
-Data is encrypted in transit and at rest. Storage uses AWS-managed keys, access is restricted to the systems that need it, and access is logged. No system is perfectly secure, and we will tell affected users if we become aware of a breach affecting their data.
+Data is encrypted in transit and at rest, using a KMS key we create and control rather than a default AWS-managed one, with automatic key rotation enabled. Access is restricted to the systems that need it, and access is logged. No system is perfectly secure, and we will tell affected users if we become aware of a breach affecting their data.
 
 ## Age
 

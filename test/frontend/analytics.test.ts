@@ -2,6 +2,7 @@ import { afterEach, describe, expect, jest, test } from "@jest/globals";
 import posthog from "posthog-js";
 import {
   initAnalytics,
+  redactDeep,
   redactShareIds,
   track,
 } from "../../src/frontend/services/analytics";
@@ -65,6 +66,28 @@ describe("analytics", () => {
     expect(
       redactShareIds("https://chronote.gg/share/ask/guild-1/conversation-9"),
     ).toBe("https://chronote.gg/share/ask/:serverId/:shareId");
+  });
+
+  test("redacts share ids nested inside replay payloads", () => {
+    const payload = {
+      $snapshot_data: [
+        { href: "https://chronote.gg/share/ask/guild-1/conversation-9" },
+      ],
+      meta: {
+        nested: { url: "https://chronote.gg/share/meeting/guild-1/secret" },
+      },
+      count: 3,
+    };
+
+    expect(redactDeep(payload)).toEqual({
+      $snapshot_data: [
+        { href: "https://chronote.gg/share/ask/:serverId/:shareId" },
+      ],
+      meta: {
+        nested: { url: "https://chronote.gg/share/meeting/:serverId/:shareId" },
+      },
+      count: 3,
+    });
   });
 
   test("leaves non-share urls alone", () => {
