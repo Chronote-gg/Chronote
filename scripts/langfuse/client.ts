@@ -1,7 +1,7 @@
 import "dotenv/config";
 import { LangfuseClient, type LangfuseClientParams } from "@langfuse/client";
 
-const DEFAULT_LANGFUSE_BASE_URL = "https://us.cloud.langfuse.com";
+import { DEFAULT_LANGFUSE_BASE_URL } from "../../src/services/langfuseDefaults";
 
 function requireEnv(value: string | undefined, name: string): string {
   const trimmed = value?.trim();
