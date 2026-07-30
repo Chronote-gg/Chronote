@@ -8,6 +8,7 @@ import {
   isLangfuseEnabled,
 } from "../services/langfuseClient";
 import { getEvalDataset } from "./evalDataset";
+import { expectedOutputSchema } from "./expectedOutput";
 
 const EvalInputSchema = z.object({
   notes: z.string(),
@@ -18,15 +19,10 @@ const EvalInputSchema = z.object({
   previousSummaryLabel: z.string().optional(),
 });
 
-// nullish, not optional: Langfuse returns expectedOutput as null for a case
-// that declares none, and `.optional()` rejects null, which crashes the
-// evaluator on every unlabelled case rather than skipping the exact-match grades.
-const ExpectedOutputSchema = z
-  .object({
-    summarySentence: z.string().optional(),
-    summaryLabel: z.string().optional(),
-  })
-  .nullish();
+const ExpectedOutputSchema = expectedOutputSchema({
+  summarySentence: z.string().optional(),
+  summaryLabel: z.string().optional(),
+});
 
 function normalize(value?: string) {
   return value?.trim().toLowerCase() ?? "";

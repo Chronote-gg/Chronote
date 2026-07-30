@@ -10,6 +10,7 @@ import { getModelChoice } from "../services/modelFactory";
 import { createOpenAIClient } from "../services/openaiClient";
 import { resolveChatParamsForRole } from "../services/openaiModelParams";
 import { getEvalDataset } from "./evalDataset";
+import { expectedOutputSchema } from "./expectedOutput";
 import { gradeMentions } from "./roleMentionGraders";
 
 /**
@@ -40,15 +41,10 @@ const EvalInputSchema = z.object({
   guildId: z.string().optional(),
 });
 
-// nullish, not optional: Langfuse returns expectedOutput as null for a case
-// that declares none, and `.optional()` rejects null. Both seeded cases here
-// happen to declare one, so this was latent rather than visible.
-const ExpectedOutputSchema = z
-  .object({
-    expectedUserIds: z.array(z.string()).optional(),
-    expectedRoleIds: z.array(z.string()).optional(),
-  })
-  .nullish();
+const ExpectedOutputSchema = expectedOutputSchema({
+  expectedUserIds: z.array(z.string()).optional(),
+  expectedRoleIds: z.array(z.string()).optional(),
+});
 
 type EvalInput = z.infer<typeof EvalInputSchema>;
 

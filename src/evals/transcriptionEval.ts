@@ -26,6 +26,7 @@ import {
   isLangfuseEnabled,
 } from "../services/langfuseClient";
 import { getEvalDataset } from "./evalDataset";
+import { expectedOutputSchema } from "./expectedOutput";
 import { getTranscriptionTextQuality } from "../utils/transcriptionText";
 
 type ProviderName = "openai" | "bedrock";
@@ -136,11 +137,9 @@ const DatasetInputSchema = z.object({
   glossaryFile: z.string().optional(),
 });
 
-const DatasetExpectedSchema = z
-  .object({
-    transcript: z.string().optional(),
-  })
-  .optional();
+const DatasetExpectedSchema = expectedOutputSchema({
+  transcript: z.string().optional(),
+});
 
 const EvalOutputSchema = z.object({
   text: z.string(),
