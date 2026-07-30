@@ -200,10 +200,11 @@ Optional Windows helper (prints loaded env, supports `-Mock` / `-SkipDocker`):
 - Prompt sync (Langfuse) keeps repo prompt files aligned with Langfuse. Command: `yarn prompts:check`. It diffs the repo against the live Langfuse label, so a PR that edits anything in `prompts/` fails this check until `yarn prompts:push` runs. Leave it red on the PR and call out the pending push in the description.
 - **Prompt-touching changes need a deploy step after merge, in this order.** `Deploy Backend` in `deploy.yml` gates on `Prompts Check`, so a merge with unpushed prompts skips the deploy entirely and the running bot keeps the old code:
   1. Merge the PR. Expect the deploy run to fail on `Prompts Check` and skip all three deploy jobs.
-  2. Run `yarn prompts:push` (`--dry-run` first, confirm the changed prompt list matches the merge).
-  3. Re-run the deploy workflow and **verify `Deploy Backend` actually succeeded**, not just that the run is green.
+  2. Check out the merged `master` revision and pull, then push from there, never from the PR branch. `prompts:push` scans every local prompt file and versions any that differ from the remote, so a stale checkout can overwrite a newer prompt someone else pushed and silently revert it in production.
+  3. Run `yarn prompts:push --dry-run` and confirm the "would push" list contains exactly the prompts the merge changed. Any extra name means the checkout is behind; stop and re-sync rather than pushing. Then push for real.
+  4. Re-run the deploy workflow and **verify `Deploy Backend` actually succeeded**, not just that the run is green.
 
-  Between steps 2 and 3 the live prompt is ahead of the deployed code, so a prompt asking for variables the old code does not send will silently degrade. Keep that window short, and never treat "merged" as "deployed".
+  Between the push and the deploy the live prompt is ahead of the deployed code, so a prompt asking for variables the old code does not send will silently degrade. Keep that window short, and never treat "merged" as "deployed".
 
 ### Evals
 
