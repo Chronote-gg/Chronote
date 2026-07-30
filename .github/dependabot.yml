@@ -17,13 +17,18 @@ updates:
     patterns:
       - "*"
     multi-ecosystem-group: "app"
-    # TypeScript 7 is the Go compiler rewrite. It ships no programmatic
-    # compiler API until 7.1, so typescript-eslint and ts-jest cannot consume
-    # it and both fail hard on a 7.x bump. Hold at 6.x so the app group stays
-    # mergeable, and treat the 7.x move as a deliberate migration.
+    # TypeScript 7.0 is the Go compiler rewrite and ships no programmatic
+    # compiler API, so typescript-eslint and ts-jest cannot consume it and both
+    # fail hard on a 7.0 bump.
+    #
+    # Scoped to 7.0.x rather than all majors on purpose. 6.0.3 is the last 6.x
+    # that will ever be published, so ignoring every major would pin TypeScript
+    # here permanently with nothing left to surface the decision again. This
+    # way, when 7.1 ships the promised API, Dependabot proposes it on its own
+    # and CI reports whether typescript-eslint and ts-jest support it yet.
     ignore:
       - dependency-name: "typescript"
-        update-types: ["version-update:semver-major"]
+        versions: ["7.0.x"]
 
   - package-ecosystem: "uv"
     directory: "/"
