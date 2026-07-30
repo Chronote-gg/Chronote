@@ -184,6 +184,8 @@ Accepted corrections:
 
 Each correction uses the transcript as ground truth, so the AI cannot fabricate content that was not actually discussed.
 
+Corrections can also assign work to a member or a role. Asking for something like "assign this to the moderators" produces a role mention, the same way generated notes do. Existing mentions in the notes are preserved, and a correction can only mention members who attended and roles that exist in your server, so it cannot invent one.
+
 ## Importing external notes
 
 If you took notes in another app, open the meeting in the web portal and choose **Import notes** from the notes actions menu.
