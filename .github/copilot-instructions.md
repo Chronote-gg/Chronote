@@ -62,7 +62,7 @@ This file provides Copilot review context. AGENTS.md remains the source of truth
 - Central config: `src/services/configService.ts`; preferred source (avoid re-exporting secrets from `constants.ts`).
 - Required always: `DISCORD_BOT_TOKEN`, `DISCORD_CLIENT_ID`, `OPENAI_API_KEY`.
 - OAuth (optional): `ENABLE_OAUTH` (default true). If true, also require `DISCORD_CLIENT_SECRET`, `DISCORD_CALLBACK_URL`, `OAUTH_SECRET`. If not using OAuth, set `ENABLE_OAUTH=false` (wired into Terraform env).
-- Production OAuth should use the API domain callback (e.g., `https://api.chronote.gg/auth/discord/callback`). When `API_DOMAIN` is set in Terraform, the backend is behind an ALB and the frontend build uses `VITE_API_BASE_URL` from GitHub Actions env vars.
+- Production OAuth should use the API domain callback (e.g., `https://api.chronote.gg/auth/discord/callback`). The backend sits behind an ALB unless `ENABLE_API_ALB=false`; `API_DOMAIN` selects its hostname and is independent of whether the ALB exists. The frontend build uses `VITE_API_BASE_URL` from GitHub Actions env vars.
 - Remote MCP: `ENABLE_MCP` defaults true only when Discord OAuth is enabled, requires `OAUTH_SECRET`, and exposes `/mcp` on the API server. Use `MCP_PUBLIC_BASE_URL` for the external API origin so OAuth tokens are resource-bound to the public MCP endpoint.
 - OpenAI org/project IDs are optional (defaults empty).
 - Langfuse prompt sync uses `LANGFUSE_PUBLIC_KEY` and `LANGFUSE_SECRET_KEY`. Optional: `LANGFUSE_BASE_URL`, `LANGFUSE_PROMPT_LABEL`, `LANGFUSE_PROMPT_TRANSCRIPTION`.

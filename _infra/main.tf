@@ -1,4 +1,8 @@
 terraform {
+  # 1.9 is the floor for referencing another variable from a validation block,
+  # which ENABLE_API_ALB does to require API_DOMAIN.
+  required_version = ">= 1.9"
+
   required_providers {
     aws = {
       source  = "hashicorp/aws"
@@ -41,6 +45,20 @@ variable "environment" {
   description = "Deployment environment (e.g., prod, sandbox, staging)"
   type        = string
   default     = "prod"
+}
+
+variable "ECS_DESIRED_COUNT" {
+  description = "Tasks the bot service should run. 0 parks a non-production environment without destroying it."
+  type        = number
+  default     = 1
+
+  # Terraform stops the task directly, bypassing the ActiveMeetingTable lease
+  # wait that both deploy workflows run, so parking can truncate a live
+  # recording. Non-production environments accept that; production does not.
+  validation {
+    condition     = var.ECS_DESIRED_COUNT > 0 || var.environment != "prod"
+    error_message = "Refusing to park production: scaling the prod service to zero from Terraform bypasses the ActiveMeetingTable lease wait and can truncate an in-progress recording."
+  }
 }
 
 variable "github_environment" {
@@ -452,7 +470,7 @@ locals {
   api_cert_arn = var.API_CERT_ARN != "" ? var.API_CERT_ARN : (
     length(aws_acm_certificate_validation.api_cert) > 0 ? aws_acm_certificate_validation.api_cert[0].certificate_arn : ""
   )
-  api_base_url = var.API_DOMAIN != "" ? "https://${var.API_DOMAIN}" : "http://${aws_lb.api_alb.dns_name}"
+  api_base_url = var.API_DOMAIN != "" ? "https://${var.API_DOMAIN}" : "http://${local.api_alb_dns_name}"
   discord_callback_url = var.DISCORD_CALLBACK_URL != "" ? var.DISCORD_CALLBACK_URL : (
     var.API_DOMAIN != "" ? "https://${var.API_DOMAIN}/auth/discord/callback" : ""
   )
@@ -707,12 +725,16 @@ resource "aws_security_group" "ecs_service_sg" {
   description = "ECS service SG for ${local.name_prefix}-bot"
   vpc_id      = aws_vpc.app_vpc.id
 
-  ingress {
-    description     = "Allow app traffic from the ALB to port 3001"
-    from_port       = 3001
-    to_port         = 3001
-    protocol        = "tcp"
-    security_groups = [aws_security_group.api_alb_sg.id]
+  # Only meaningful when the ALB exists; a parked environment has no inbound path.
+  dynamic "ingress" {
+    for_each = aws_security_group.api_alb_sg
+    content {
+      description     = "Allow app traffic from the ALB to port 3001"
+      from_port       = 3001
+      to_port         = 3001
+      protocol        = "tcp"
+      security_groups = [ingress.value.id]
+    }
   }
 
   # Outbound HTTPS for Discord/OpenAI/AWS APIs
@@ -1825,7 +1847,7 @@ resource "aws_ecs_service" "app_service" {
 
   enable_execute_command = true
 
-  desired_count = 1
+  desired_count = var.ECS_DESIRED_COUNT
   launch_type   = "FARGATE"
 
   deployment_controller {
@@ -1841,10 +1863,13 @@ resource "aws_ecs_service" "app_service" {
     assign_public_ip = true
   }
 
-  load_balancer {
-    target_group_arn = aws_lb_target_group.api_tg.arn
-    container_name   = "${local.name_prefix}-bot"
-    container_port   = 3001
+  dynamic "load_balancer" {
+    for_each = aws_lb_target_group.api_tg
+    content {
+      target_group_arn = load_balancer.value.arn
+      container_name   = "${local.name_prefix}-bot"
+      container_port   = 3001
+    }
   }
 
   depends_on = [aws_lb_listener.api_http]

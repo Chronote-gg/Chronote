@@ -54,8 +54,16 @@ LANGFUSE_PROMPT_CACHE_TTL_MS="60000"
 DOCS_ALGOLIA_APP_ID=""
 DOCS_ALGOLIA_API_KEY=""
 DOCS_ALGOLIA_INDEX_NAME=""
+# Staging is non-production, so it parks like sandbox: no cache cluster, no ALB
+# and no running task between uses. To work in it, set ENABLE_API_ALB=true (a
+# bool) and ECS_DESIRED_COUNT=1 (a number). With ENABLE_ELASTICACHE false and no
+# REDIS_URL, the app falls back to its in-process memory cache.
+ENABLE_ELASTICACHE=false
 REDIS_URL=""
-REDIS_AUTH_TOKEN="change-me-redis-auth-token"
+REDIS_AUTH_TOKEN=""
+ENABLE_API_ALB=false
+ENABLE_API_ALB_DELETION_PROTECTION=false
+ECS_DESIRED_COUNT=0
 
 # Alerting
 alert_email=""                                # critical alerts email; requires manual confirmation after first apply

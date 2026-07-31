@@ -90,7 +90,9 @@ resource "aws_sns_topic_subscription" "critical_alerts_email" {
 # --- ECS: bot completely down (running task count = 0) ---
 
 resource "aws_cloudwatch_metric_alarm" "ecs_no_running_tasks" {
-  count               = local.alerts_enabled ? 1 : 0
+  # treat_missing_data is "breaching", so a parked environment would sit in ALARM
+  # and page for its intended state.
+  count               = local.alerts_enabled && var.ECS_DESIRED_COUNT > 0 ? 1 : 0
   alarm_name          = "${local.name_prefix}-ecs-no-running-tasks"
   alarm_description   = "ECS bot service has zero running tasks"
   namespace           = "ECS/ContainerInsights"
@@ -119,7 +121,7 @@ resource "aws_cloudwatch_metric_alarm" "ecs_no_running_tasks" {
 # --- ALB: HTTP 5xx spike ---
 
 resource "aws_cloudwatch_metric_alarm" "alb_5xx_errors" {
-  count               = local.alerts_enabled ? 1 : 0
+  count               = local.alerts_enabled && var.ENABLE_API_ALB ? 1 : 0
   alarm_name          = "${local.name_prefix}-alb-target-5xx-errors"
   alarm_description   = "ALB targets returning elevated 5xx errors"
   namespace           = "AWS/ApplicationELB"
@@ -132,7 +134,7 @@ resource "aws_cloudwatch_metric_alarm" "alb_5xx_errors" {
   treat_missing_data  = "notBreaching"
 
   dimensions = {
-    LoadBalancer = aws_lb.api_alb.arn_suffix
+    LoadBalancer = aws_lb.api_alb[0].arn_suffix
   }
 
   alarm_actions = [aws_sns_topic.critical_alerts[0].arn]
@@ -147,7 +149,7 @@ resource "aws_cloudwatch_metric_alarm" "alb_5xx_errors" {
 # --- ALB: unhealthy hosts ---
 
 resource "aws_cloudwatch_metric_alarm" "alb_unhealthy_hosts" {
-  count               = local.alerts_enabled ? 1 : 0
+  count               = local.alerts_enabled && var.ENABLE_API_ALB ? 1 : 0
   alarm_name          = "${local.name_prefix}-alb-unhealthy-hosts"
   alarm_description   = "ALB target group has unhealthy hosts"
   namespace           = "AWS/ApplicationELB"
@@ -160,8 +162,8 @@ resource "aws_cloudwatch_metric_alarm" "alb_unhealthy_hosts" {
   treat_missing_data  = "notBreaching"
 
   dimensions = {
-    LoadBalancer = aws_lb.api_alb.arn_suffix
-    TargetGroup  = aws_lb_target_group.api_tg.arn_suffix
+    LoadBalancer = aws_lb.api_alb[0].arn_suffix
+    TargetGroup  = aws_lb_target_group.api_tg[0].arn_suffix
   }
 
   alarm_actions = [aws_sns_topic.critical_alerts[0].arn]

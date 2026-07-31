@@ -1,3 +1,27 @@
+variable "ENABLE_API_ALB" {
+  description = "Provision the public ALB in front of the API. False leaves the bot reachable only outbound (Discord gateway), which is all a bot-only environment needs."
+  type        = bool
+  default     = true
+
+  validation {
+    condition     = var.ENABLE_API_ALB || var.API_DOMAIN != ""
+    error_message = "API_DOMAIN must be set when ENABLE_API_ALB is false, because api_base_url has nothing else to resolve to."
+  }
+}
+
+locals {
+  # Must be "" and never null when the ALB is absent, because api_base_url
+  # interpolates it. coalesce() is wrong here: it rejects empty strings as well
+  # as nulls, so it cannot return "". Same length() guard as local.api_cert_arn.
+  api_alb_dns_name = length(aws_lb.api_alb) > 0 ? aws_lb.api_alb[0].dns_name : ""
+}
+
+variable "ENABLE_API_ALB_DELETION_PROTECTION" {
+  description = "Deletion protection on the API ALB. Must be false before ENABLE_API_ALB can be flipped off, or the destroy is refused."
+  type        = bool
+  default     = true
+}
+
 data "aws_route53_zone" "api_hosted_zone" {
   count = var.API_DOMAIN != "" && var.HOSTED_ZONE_NAME != "" ? 1 : 0
   name  = var.HOSTED_ZONE_NAME
@@ -32,6 +56,8 @@ resource "aws_acm_certificate_validation" "api_cert" {
 }
 
 resource "aws_security_group" "api_alb_sg" {
+  #checkov:skip=CKV2_AWS_5: Attached to aws_lb.api_alb via a count-indexed reference, which checkov's graph does not resolve.
+  count       = var.ENABLE_API_ALB ? 1 : 0
   name_prefix = "${local.name_prefix}-api-alb-"
   description = "ALB SG for ${local.name_prefix} API"
   vpc_id      = aws_vpc.app_vpc.id
@@ -65,17 +91,19 @@ resource "aws_security_group" "api_alb_sg" {
 resource "aws_lb" "api_alb" {
   #checkov:skip=CKV_AWS_91: Access logs not yet enabled for the API ALB.
   #checkov:skip=CKV2_AWS_28: WAF not enabled yet; revisit before public launch.
+  count                      = var.ENABLE_API_ALB ? 1 : 0
   name                       = "${local.name_prefix}-api"
   internal                   = false
   load_balancer_type         = "application"
-  security_groups            = [aws_security_group.api_alb_sg.id]
+  security_groups            = [aws_security_group.api_alb_sg[0].id]
   subnets                    = [aws_subnet.app_public_subnet_1.id, aws_subnet.app_public_subnet_2.id]
   drop_invalid_header_fields = true
-  enable_deletion_protection = true
+  enable_deletion_protection = var.ENABLE_API_ALB_DELETION_PROTECTION
 }
 
-#checkov:skip=CKV_AWS_378: TLS terminates at the ALB; target group uses HTTP.
 resource "aws_lb_target_group" "api_tg" {
+  #checkov:skip=CKV_AWS_378: TLS terminates at the ALB; target group uses HTTP.
+  count       = var.ENABLE_API_ALB ? 1 : 0
   name        = "${local.name_prefix}-api-tg"
   port        = 3001
   protocol    = "HTTP"
@@ -95,7 +123,8 @@ resource "aws_lb_target_group" "api_tg" {
 resource "aws_lb_listener" "api_http" {
   #checkov:skip=CKV_AWS_2: HTTP listener only redirects to HTTPS.
   #checkov:skip=CKV_AWS_103: TLS enforcement handled on HTTPS listener.
-  load_balancer_arn = aws_lb.api_alb.arn
+  count             = var.ENABLE_API_ALB ? 1 : 0
+  load_balancer_arn = aws_lb.api_alb[0].arn
   port              = 80
   protocol          = "HTTP"
 
@@ -110,8 +139,8 @@ resource "aws_lb_listener" "api_http" {
 }
 
 resource "aws_lb_listener" "api_https" {
-  count             = var.API_DOMAIN != "" && (var.API_CERT_ARN != "" || var.HOSTED_ZONE_NAME != "") ? 1 : 0
-  load_balancer_arn = aws_lb.api_alb.arn
+  count             = var.ENABLE_API_ALB && var.API_DOMAIN != "" && (var.API_CERT_ARN != "" || var.HOSTED_ZONE_NAME != "") ? 1 : 0
+  load_balancer_arn = aws_lb.api_alb[0].arn
   port              = 443
   protocol          = "HTTPS"
   ssl_policy        = "ELBSecurityPolicy-TLS13-1-2-2021-06"
@@ -119,28 +148,28 @@ resource "aws_lb_listener" "api_https" {
 
   default_action {
     type             = "forward"
-    target_group_arn = aws_lb_target_group.api_tg.arn
+    target_group_arn = aws_lb_target_group.api_tg[0].arn
   }
 
   depends_on = [aws_acm_certificate_validation.api_cert]
 }
 
 resource "aws_route53_record" "api_alias" {
-  count = var.API_DOMAIN != "" && var.HOSTED_ZONE_NAME != "" ? 1 : 0
+  count = var.ENABLE_API_ALB && var.API_DOMAIN != "" && var.HOSTED_ZONE_NAME != "" ? 1 : 0
 
   zone_id = data.aws_route53_zone.api_hosted_zone[0].zone_id
   name    = var.API_DOMAIN
   type    = "A"
 
   alias {
-    name                   = aws_lb.api_alb.dns_name
-    zone_id                = aws_lb.api_alb.zone_id
+    name                   = aws_lb.api_alb[0].dns_name
+    zone_id                = aws_lb.api_alb[0].zone_id
     evaluate_target_health = true
   }
 }
 
 output "api_alb_dns_name" {
-  value = aws_lb.api_alb.dns_name
+  value = local.api_alb_dns_name
 }
 
 output "api_domain" {
