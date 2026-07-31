@@ -2,6 +2,13 @@
 // redis:8-alpine with no TLS for local development.
 const LOCAL_CACHE_HOSTS = new Set(["localhost", "127.0.0.1", "::1", "redis"]);
 
+// `redis:` and `rediss:` are not special schemes, so the WHATWG parser keeps the
+// host verbatim: it does not lowercase it, and it leaves IPv6 literals in their
+// brackets. Both would miss the allowlist above and quietly demote a working
+// local Redis to the memory cache.
+const normalizeHost = (hostname: string) =>
+  hostname.toLowerCase().replace(/^\[(.+)\]$/, "$1");
+
 /**
  * Managed Redis (Upstash, ElastiCache) accepts TLS only, and ioredis decides
  * whether to negotiate TLS from the URL scheme alone. A `redis://` URL pointed
@@ -25,8 +32,17 @@ export function isUsableRedisUrl(url: string): boolean {
     return false;
   }
 
+  // A truncated secret such as "rediss://" parses with an empty hostname, and
+  // ioredis would then retry a connection that can never resolve. That is the
+  // same loop this guard exists to prevent, so check the host before the scheme.
+  const hostname = normalizeHost(parsed.hostname);
+  if (!hostname) {
+    console.error("Cache disabled: REDIS_URL has no host.");
+    return false;
+  }
+
   if (parsed.protocol === "rediss:") return true;
-  if (LOCAL_CACHE_HOSTS.has(parsed.hostname)) return true;
+  if (LOCAL_CACHE_HOSTS.has(hostname)) return true;
 
   console.error(
     `Cache disabled: REDIS_URL uses ${parsed.protocol}// for remote host ${parsed.hostname}. ` +

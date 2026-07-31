@@ -43,4 +43,19 @@ describe("isUsableRedisUrl", () => {
     expect(isUsableRedisUrl("")).toBe(false);
     expect(isUsableRedisUrl("not-a-url")).toBe(false);
   });
+
+  it("rejects a TLS URL with no host", () => {
+    // A truncated secret parses as rediss: with an empty hostname, and ioredis
+    // would retry a connection that can never resolve. Scheme alone is not
+    // enough to accept a URL.
+    expect(isUsableRedisUrl("rediss://")).toBe(false);
+    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("no host"));
+  });
+
+  it("matches local hosts regardless of case or IPv6 brackets", () => {
+    // redis: is not a special scheme, so the parser preserves host case and
+    // keeps IPv6 literals bracketed.
+    expect(isUsableRedisUrl("redis://LOCALHOST:6379")).toBe(true);
+    expect(isUsableRedisUrl("redis://[::1]:6379")).toBe(true);
+  });
 });
