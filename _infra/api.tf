@@ -56,8 +56,12 @@ resource "aws_acm_certificate_validation" "api_cert" {
 }
 
 resource "aws_security_group" "api_alb_sg" {
-  #checkov:skip=CKV2_AWS_5: Attached to aws_lb.api_alb via a count-indexed reference, which checkov's graph does not resolve.
-  count       = var.ENABLE_API_ALB ? 1 : 0
+  #checkov:skip=CKV2_AWS_5: Attached to aws_lb.api_alb via a count-indexed reference, which checkov's graph does not resolve. Unattached while the ALB is parked.
+  # Deliberately not gated on ENABLE_API_ALB. Security groups are free, and the
+  # ECS service SG holds an inline ingress rule referencing this one: an inline
+  # rule block that stops being emitted is treated by the AWS provider as
+  # unmanaged rather than removed, so the reference would survive and block this
+  # group's deletion with a DependencyViolation. Only the billable ALB is gated.
   name_prefix = "${local.name_prefix}-api-alb-"
   description = "ALB SG for ${local.name_prefix} API"
   vpc_id      = aws_vpc.app_vpc.id
@@ -95,7 +99,7 @@ resource "aws_lb" "api_alb" {
   name                       = "${local.name_prefix}-api"
   internal                   = false
   load_balancer_type         = "application"
-  security_groups            = [aws_security_group.api_alb_sg[0].id]
+  security_groups            = [aws_security_group.api_alb_sg.id]
   subnets                    = [aws_subnet.app_public_subnet_1.id, aws_subnet.app_public_subnet_2.id]
   drop_invalid_header_fields = true
   enable_deletion_protection = var.ENABLE_API_ALB_DELETION_PROTECTION

@@ -725,16 +725,16 @@ resource "aws_security_group" "ecs_service_sg" {
   description = "ECS service SG for ${local.name_prefix}-bot"
   vpc_id      = aws_vpc.app_vpc.id
 
-  # Only meaningful when the ALB exists; a parked environment has no inbound path.
-  dynamic "ingress" {
-    for_each = aws_security_group.api_alb_sg
-    content {
-      description     = "Allow app traffic from the ALB to port 3001"
-      from_port       = 3001
-      to_port         = 3001
-      protocol        = "tcp"
-      security_groups = [ingress.value.id]
-    }
+  # Kept unconditional. A dynamic block that emits nothing leaves the rule in
+  # place rather than removing it, because the AWS provider treats an absent
+  # inline rule attribute as unmanaged, so gating this on the ALB blocked the
+  # ALB security group's deletion instead of tidying up after it.
+  ingress {
+    description     = "Allow app traffic from the ALB to port 3001"
+    from_port       = 3001
+    to_port         = 3001
+    protocol        = "tcp"
+    security_groups = [aws_security_group.api_alb_sg.id]
   }
 
   # Outbound HTTPS for Discord/OpenAI/AWS APIs
