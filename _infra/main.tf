@@ -1,4 +1,8 @@
 terraform {
+  # 1.9 is the floor for referencing another variable from a validation block,
+  # which ENABLE_API_ALB does to require API_DOMAIN.
+  required_version = ">= 1.9"
+
   required_providers {
     aws = {
       source  = "hashicorp/aws"
