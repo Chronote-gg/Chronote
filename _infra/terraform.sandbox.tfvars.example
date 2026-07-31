@@ -55,8 +55,18 @@ LANGFUSE_PROMPT_CACHE_TTL_MS="60000"
 DOCS_ALGOLIA_APP_ID=""
 DOCS_ALGOLIA_API_KEY=""
 DOCS_ALGOLIA_INDEX_NAME=""
+# Sandbox runs without a cache cluster. With ENABLE_ELASTICACHE false and no
+# REDIS_URL, the app falls back to its in-process memory cache.
+ENABLE_ELASTICACHE=false
 REDIS_URL=""
-REDIS_AUTH_TOKEN="change-me-redis-auth-token"
+REDIS_AUTH_TOKEN=""
+
+# Parked by default: no ALB and no running task, so the environment costs almost
+# nothing between uses. Flip ENABLE_API_ALB and ECS_DESIRED_COUNT to 1 to work in
+# it. Deletion protection stays off here so the ALB can actually be torn down.
+ENABLE_API_ALB=false
+ENABLE_API_ALB_DELETION_PROTECTION=false
+ECS_DESIRED_COUNT=0
 
 # Alerting
 alert_email=""

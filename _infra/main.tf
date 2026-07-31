@@ -43,6 +43,12 @@ variable "environment" {
   default     = "prod"
 }
 
+variable "ECS_DESIRED_COUNT" {
+  description = "Tasks the bot service should run. 0 parks a non-production environment without destroying it."
+  type        = number
+  default     = 1
+}
+
 variable "github_environment" {
   description = "GitHub Actions environment name to populate with deploy variables"
   type        = string
@@ -452,7 +458,7 @@ locals {
   api_cert_arn = var.API_CERT_ARN != "" ? var.API_CERT_ARN : (
     length(aws_acm_certificate_validation.api_cert) > 0 ? aws_acm_certificate_validation.api_cert[0].certificate_arn : ""
   )
-  api_base_url = var.API_DOMAIN != "" ? "https://${var.API_DOMAIN}" : "http://${aws_lb.api_alb.dns_name}"
+  api_base_url = var.API_DOMAIN != "" ? "https://${var.API_DOMAIN}" : "http://${local.api_alb_dns_name}"
   discord_callback_url = var.DISCORD_CALLBACK_URL != "" ? var.DISCORD_CALLBACK_URL : (
     var.API_DOMAIN != "" ? "https://${var.API_DOMAIN}/auth/discord/callback" : ""
   )
@@ -1825,7 +1831,7 @@ resource "aws_ecs_service" "app_service" {
 
   enable_execute_command = true
 
-  desired_count = 1
+  desired_count = var.ECS_DESIRED_COUNT
   launch_type   = "FARGATE"
 
   deployment_controller {
@@ -1841,10 +1847,13 @@ resource "aws_ecs_service" "app_service" {
     assign_public_ip = true
   }
 
-  load_balancer {
-    target_group_arn = aws_lb_target_group.api_tg.arn
-    container_name   = "${local.name_prefix}-bot"
-    container_port   = 3001
+  dynamic "load_balancer" {
+    for_each = aws_lb_target_group.api_tg
+    content {
+      target_group_arn = load_balancer.value.arn
+      container_name   = "${local.name_prefix}-bot"
+      container_port   = 3001
+    }
   }
 
   depends_on = [aws_lb_listener.api_http]

@@ -249,6 +249,7 @@ Each GitHub environment used by the workflow must provide:
 - Secret `AWS_SECRET_ACCESS_KEY`
 - Secret `TERRAFORM_TFVARS_JSON`
 - Optional secret `REDIS_AUTH_TOKEN`
+- Optional secret `REDIS_URL`
 
 The workflow dispatch choices should only list GitHub Actions environments that
 already exist and have these secrets configured. Production plans must use the
@@ -265,10 +266,54 @@ they contain exactly one non-empty value, to tolerate existing malformed
 environment secrets. During GitHub Actions runs, `AWS_TOKEN_KEY` is overwritten
 from the environment's `AWS_ACCESS_KEY_ID` secret before Terraform runs. Use
 `grafana_service_account_id` and the rotated Secrets Manager token instead.
-When `REDIS_AUTH_TOKEN` is set as a GitHub environment secret, the plan/apply
-workflows overlay it onto `TERRAFORM_TFVARS_JSON` before Terraform runs. Use this
-for Redis token preservation or rotation instead of editing the large tfvars JSON
-blob.
+When `REDIS_AUTH_TOKEN` or `REDIS_URL` is set as a GitHub environment secret, the
+plan/apply workflows overlay it onto `TERRAFORM_TFVARS_JSON` before Terraform
+runs. Use this for Redis credential preservation or rotation instead of editing
+the large tfvars JSON blob. Both carry credentials, so both are refused through
+the `TFVAR_` variable path.
+
+## Cache backend
+
+`ENABLE_ELASTICACHE` decides whether an in-VPC ElastiCache cluster is
+provisioned, and `REDIS_URL` always wins over it when set. That gives three
+configurations:
+
+- `ENABLE_ELASTICACHE=true`, `REDIS_URL` empty: in-VPC cluster, its endpoint is
+  passed to the app. Roughly $12/month per environment.
+- `ENABLE_ELASTICACHE=false`, `REDIS_URL` set: external provider (Upstash). No
+  cluster, no cost. The URL carries the password, so it belongs in the secret.
+- `ENABLE_ELASTICACHE=false`, `REDIS_URL` empty: no Redis at all. The app falls
+  back to an in-process memory cache (`src/services/cacheService.ts`), which is
+  correct for a single-task environment like sandbox but loses the cache on every
+  task replacement.
+
+An external provider reaches the task over the public internet on 6379/TLS. The
+ECS service security group currently allows all egress for voice debugging; when
+that is tightened back to 443 and DNS, add a rule for the Redis port or the cache
+silently falls back to erroring on every call.
+
+## Parking a non-production environment
+
+Nearly all of an idle environment's cost is the API ALB and the cache cluster.
+The DynamoDB tables are on-demand, and S3, CloudFront, ACM and ECR are free while
+unused, so there is no reason to destroy the whole workspace to stop paying for
+it. Three variables park it instead:
+
+- `ENABLE_API_ALB=false` removes the load balancer, its listeners, target group,
+  security group and alias record. A bot-only environment does not need inbound
+  traffic at all, because the Discord gateway connection is outbound. You do lose
+  the portal, OAuth callbacks and Stripe webhooks until it is flipped back.
+- `ECS_DESIRED_COUNT=0` stops the task without touching the service definition.
+- `ENABLE_ELASTICACHE=false` drops the cache cluster.
+
+**`ENABLE_API_ALB_DELETION_PROTECTION` has to be false before `ENABLE_API_ALB`
+can go false.** Terraform cannot destroy a protected load balancer, and it does
+not clear the flag first, so flipping both at once fails the apply. Non-production
+environments should just leave protection off permanently.
+
+`ENABLE_API_ALB=false` requires `API_DOMAIN` to be set, enforced by a variable
+validation: `api_base_url` falls back to the ALB's DNS name, and with no ALB and
+no domain there is nothing left for it to resolve to.
 
 Recommended apply flow:
 

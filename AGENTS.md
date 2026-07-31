@@ -104,6 +104,7 @@
 - Production keeps legacy VPC flow log resource names (`vpc_flow_logs_role` and `/vpc/flow/app-vpc`) to avoid replacing live logging resources; non-production environments use scoped names. Production AMG workspace naming is pinned to the existing seed in Terraform code; do not change it without an approved AMG workspace replacement plan.
 - Backend deploy workflows must wait for unexpired `ActiveMeetingTable` leases to clear before replacing the ECS task, so merges do not kill in-progress recordings. Keep production and sandbox deploy guards aligned.
 - Future work suggestion: keep cache and Redis Terraform resources in `_infra/cache.tf`, and add new cache infrastructure there.
+- Cache backend is chosen by two Terraform variables, not by code. `REDIS_URL` always wins; `ENABLE_ELASTICACHE` decides whether an in-VPC cluster is provisioned at all; with neither set the app falls back to an in-process memory cache in `src/services/cacheService.ts`. Sandbox runs on the memory fallback. See `_infra/README.md` for the full matrix and the egress caveat for external providers.
 
 ## Known nuances / gotchas
 
