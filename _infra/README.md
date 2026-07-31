@@ -318,10 +318,16 @@ The DynamoDB tables are on-demand, and S3, CloudFront, ACM and ECR are free whil
 unused, so there is no reason to destroy the whole workspace to stop paying for
 it. Three variables park it instead:
 
-- `ENABLE_API_ALB=false` removes the load balancer, its listeners, target group,
-  security group and alias record. A bot-only environment does not need inbound
-  traffic at all, because the Discord gateway connection is outbound. You do lose
-  the portal, OAuth callbacks and Stripe webhooks until it is flipped back.
+- `ENABLE_API_ALB=false` removes the load balancer, its listeners, target group
+  and alias record. A bot-only environment does not need inbound traffic at all,
+  because the Discord gateway connection is outbound. You do lose the portal,
+  OAuth callbacks and Stripe webhooks until it is flipped back.
+  The ALB **security group is deliberately kept**, along with the ECS service's
+  ingress rule referencing it. Security groups are free, and the alternative does
+  not work: the AWS provider treats an absent inline rule attribute as unmanaged
+  rather than empty, so a rule that stops being emitted is left in place and then
+  blocks the group's own deletion with a `DependencyViolation`. Expect an
+  unattached security group in a parked environment; it is not leftover cruft.
 - `ECS_DESIRED_COUNT=0` stops the task without touching the service definition.
   Terraform stops it immediately, without the `ActiveMeetingTable` lease wait that
   `deploy.yml` and `deploy-staging.yml` run before replacing a task, so parking an
