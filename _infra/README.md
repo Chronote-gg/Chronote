@@ -282,6 +282,11 @@ configurations:
   passed to the app. Roughly $12/month per environment.
 - `ENABLE_ELASTICACHE=false`, `REDIS_URL` set: external provider (Upstash). No
   cluster, no cost. The URL carries the password, so it belongs in the secret.
+  **It must start with `rediss://`, not `redis://`.** Upstash shows the string as
+  `redis-cli --tls -u redis://...`, where TLS comes from the flag rather than the
+  scheme; ioredis reads only the scheme, so pasting that verbatim connects in
+  plaintext to a TLS-only port and retries a reset socket forever. The app now
+  refuses such a URL and falls back to its memory cache instead of looping.
 - `ENABLE_ELASTICACHE=false`, `REDIS_URL` empty: no Redis at all. The app falls
   back to an in-process memory cache (`src/services/cacheService.ts`), which is
   correct for a single-task environment like sandbox but loses the cache on every

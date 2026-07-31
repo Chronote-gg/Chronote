@@ -1,6 +1,7 @@
 import { createCache } from "async-cache-dedupe";
 import Redis from "ioredis";
 import { config } from "./configService";
+import { isUsableRedisUrl } from "../utils/redisUrl";
 
 const normalizePrefix = (value: string) => value.replace(/:+$/, "").trim();
 const rawPrefix = normalizePrefix(config.cache.keyPrefix);
@@ -9,7 +10,11 @@ const cachePrefix = rawPrefix ? `${rawPrefix}:` : "";
 export const buildCacheKey = (key: string) => `${cachePrefix}${key}`;
 
 const cacheEnabled = config.cache.enabled;
-const redisUrl = config.cache.redisUrl;
+// An unusable URL falls through to memory storage below rather than looping on
+// a connection that cannot succeed.
+const redisUrl = isUsableRedisUrl(config.cache.redisUrl)
+  ? config.cache.redisUrl
+  : "";
 
 const redisClient =
   cacheEnabled && redisUrl
