@@ -292,6 +292,25 @@ ECS service security group currently allows all egress for voice debugging; when
 that is tightened back to 443 and DNS, add a rule for the Redis port or the cache
 silently falls back to erroring on every call.
 
+### Moving a running environment off ElastiCache
+
+**Do this as two applies with a deploy in between, never as one.** Terraform
+writes `REDIS_URL` into a newly registered task definition, but
+`aws_ecs_service.app_service` sets `ignore_changes = [task_definition]`, so the
+running tasks keep the old value until a backend deploy repoints the service.
+Setting `REDIS_URL` and `ENABLE_ELASTICACHE=false` in a single apply therefore
+deletes the cluster out from under tasks that are still connected to it, and they
+log cache failures until the next unrelated deploy happens to pick up the change.
+
+1. Set `REDIS_URL` to the external provider. Apply. The cluster is still there.
+2. Run a backend deploy so the service picks up the new task definition.
+3. Confirm the cache is actually working against the new provider.
+4. Set `ENABLE_ELASTICACHE=false`. Apply. Now the cluster goes away.
+
+The same ordering applies in reverse, and it is the general rule from the root
+`AGENTS.md`: changing a Terraform-managed ECS environment variable takes three
+steps, and the deploy is the one people miss.
+
 ## Parking a non-production environment
 
 Nearly all of an idle environment's cost is the API ALB and the cache cluster.

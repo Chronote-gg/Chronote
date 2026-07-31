@@ -500,6 +500,14 @@ jobs:
         run: |
           echo "Verifying deployment health..."
 
+          # A parked environment (ECS_DESIRED_COUNT=0) is supposed to have no
+          # tasks, so zero is the expected result rather than a failed rollout.
+          DESIRED_COUNT=$(aws ecs describe-services --cluster "$ECS_CLUSTER" --services "$ECS_SERVICE" --region $AWS_REGION --query 'services[0].desiredCount' --output text)
+          if [ "$DESIRED_COUNT" = "0" ]; then
+            echo "Service is parked (desiredCount=0). Image and task definition are updated; skipping running-task health check."
+            exit 0
+          fi
+
           # Get the running tasks
           RUNNING_TASKS=$(aws ecs list-tasks --cluster "$ECS_CLUSTER" --service-name "$ECS_SERVICE" --desired-status RUNNING --region $AWS_REGION | jq -r '.taskArns[]')
 

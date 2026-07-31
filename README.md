@@ -175,7 +175,7 @@ Coverage update rule:
 - Static hosting variables (frontend): `FRONTEND_BUCKET`, `FRONTEND_DOMAIN` (optional), `FRONTEND_CERT_ARN` (when custom domain is set).
 - Static hosting variables (docs): `DOCS_BUCKET`, `DOCS_DOMAIN` (optional), `DOCS_CERT_ARN` (when custom domain is set).
 - Allow the SPA to call the API by setting `FRONTEND_ALLOWED_ORIGINS` (comma-separated, e.g., CloudFront domain). CloudFront distribution outputs are emitted by Terraform.
-- API hosting: backend runs behind an ALB when `API_DOMAIN` is set (e.g., `api.chronote.gg`). Terraform sets a GitHub Actions env var `VITE_API_BASE_URL` so the frontend uses the API domain at build time. OAuth callback should be `https://api.<domain>/auth/discord/callback`.
+- API hosting: backend runs behind an ALB when `ENABLE_API_ALB` is true (the default). `API_DOMAIN` (e.g., `api.chronote.gg`) selects the hostname and adds the HTTPS listener, Route53 alias and ACM cert, but the two are independent: a parked environment can keep `API_DOMAIN` set while `ENABLE_API_ALB=false` removes the load balancer. Terraform sets a GitHub Actions env var `VITE_API_BASE_URL` so the frontend uses the API domain at build time. OAuth callback should be `https://api.<domain>/auth/discord/callback`.
 - Local dev uses Vite proxying for `/auth`, `/user`, `/api`, and `/trpc` (tRPC).
 
 ## Architecture decision records
@@ -221,7 +221,7 @@ Notes:
 ## Infrastructure
 
 - Terraform in `_infra/` provisions ECS/Fargate bot, Dynamo tables, transcripts bucket, SessionTable, the static frontend (S3 + CloudFront with OAC, SPA fallback), and the docs site (S3 + CloudFront with OAC).
-- When `API_DOMAIN` is set, Terraform also provisions an internet-facing ALB for the API (listener on 80/443) plus Route53 alias + ACM cert.
+- Terraform provisions an internet-facing ALB for the API (listener on 80/443) unless `ENABLE_API_ALB=false`, and adds the Route53 alias + ACM cert when `API_DOMAIN` is also set. A bot-only environment needs neither, because the Discord gateway connection is outbound. See `_infra/README.md` for parking a non-production environment.
 - Runtime secrets for ECS are stored in **AWS Secrets Manager** and referenced by the task definition (see `_infra/README.md`).
 - Hosted desktop recorder routes are off by default. Enable with `ENABLE_DESKTOP_API=true` and limit beta access with `DESKTOP_ALLOWED_USER_IDS` or `SUPER_ADMIN_USER_IDS`. Desktop recordings use segmented upload state in DynamoDB plus S3 audio objects.
 - Desktop productization and release gates are documented in `docs/desktop-productization.md`.
