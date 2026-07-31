@@ -323,6 +323,11 @@ it. Three variables park it instead:
   traffic at all, because the Discord gateway connection is outbound. You do lose
   the portal, OAuth callbacks and Stripe webhooks until it is flipped back.
 - `ECS_DESIRED_COUNT=0` stops the task without touching the service definition.
+  Terraform stops it immediately, without the `ActiveMeetingTable` lease wait that
+  `deploy.yml` and `deploy-staging.yml` run before replacing a task, so parking an
+  environment while a recording is in progress truncates it and loses the
+  in-memory state. Check for unexpired leases first if anyone might be recording.
+  A variable validation refuses this outright when `environment` is `prod`.
 - `ENABLE_ELASTICACHE=false` drops the cache cluster.
 
 **`ENABLE_API_ALB_DELETION_PROTECTION` has to be false before `ENABLE_API_ALB`

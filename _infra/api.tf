@@ -10,9 +10,10 @@ variable "ENABLE_API_ALB" {
 }
 
 locals {
-  # Never null: interpolating a null into a template errors, and api_base_url
-  # references this in an arm Terraform may still evaluate when the ALB is off.
-  api_alb_dns_name = coalesce(one(aws_lb.api_alb[*].dns_name), "")
+  # Must be "" and never null when the ALB is absent, because api_base_url
+  # interpolates it. coalesce() is wrong here: it rejects empty strings as well
+  # as nulls, so it cannot return "". Same length() guard as local.api_cert_arn.
+  api_alb_dns_name = length(aws_lb.api_alb) > 0 ? aws_lb.api_alb[0].dns_name : ""
 }
 
 variable "ENABLE_API_ALB_DELETION_PROTECTION" {

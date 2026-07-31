@@ -62,8 +62,9 @@ REDIS_URL=""
 REDIS_AUTH_TOKEN=""
 
 # Parked by default: no ALB and no running task, so the environment costs almost
-# nothing between uses. Flip ENABLE_API_ALB and ECS_DESIRED_COUNT to 1 to work in
-# it. Deletion protection stays off here so the ALB can actually be torn down.
+# nothing between uses. To work in it, set ENABLE_API_ALB=true (a bool) and
+# ECS_DESIRED_COUNT=1 (a number). Deletion protection stays off here so the ALB
+# can actually be torn down.
 ENABLE_API_ALB=false
 ENABLE_API_ALB_DELETION_PROTECTION=false
 ECS_DESIRED_COUNT=0

@@ -23,10 +23,10 @@ locals {
   redis_auth_token_encoded = urlencode(local.redis_auth_token)
   redis_auth_prefix        = local.redis_auth_token_encoded != "" ? ":${local.redis_auth_token_encoded}@" : ""
 
-  # Empty string rather than null when the cluster is not provisioned: indexing
-  # [0] would fail, and interpolating a null into a template would too, so every
-  # arm below has to stay a string whether or not the cluster exists.
-  elasticache_endpoint = coalesce(one(aws_elasticache_replication_group.redis[*].primary_endpoint_address), "")
+  # Must be "" and never null when the cluster is absent, because redis_url
+  # interpolates it. coalesce() is wrong here: it rejects empty strings as well
+  # as nulls, so it cannot return "". Same length() guard as local.api_cert_arn.
+  elasticache_endpoint = length(aws_elasticache_replication_group.redis) > 0 ? aws_elasticache_replication_group.redis[0].primary_endpoint_address : ""
 
   redis_url = (
     var.REDIS_URL != "" ? var.REDIS_URL :

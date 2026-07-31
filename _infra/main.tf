@@ -51,6 +51,14 @@ variable "ECS_DESIRED_COUNT" {
   description = "Tasks the bot service should run. 0 parks a non-production environment without destroying it."
   type        = number
   default     = 1
+
+  # Terraform stops the task directly, bypassing the ActiveMeetingTable lease
+  # wait that both deploy workflows run, so parking can truncate a live
+  # recording. Non-production environments accept that; production does not.
+  validation {
+    condition     = var.ECS_DESIRED_COUNT > 0 || var.environment != "prod"
+    error_message = "Refusing to park production: scaling the prod service to zero from Terraform bypasses the ActiveMeetingTable lease wait and can truncate an in-progress recording."
+  }
 }
 
 variable "github_environment" {
