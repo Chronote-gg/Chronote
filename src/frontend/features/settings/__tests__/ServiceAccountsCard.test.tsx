@@ -124,6 +124,27 @@ describe("ServiceAccountsCard", () => {
     );
   });
 
+  it("always pairs transcript access with meetings:read", async () => {
+    // A transcripts-only token would mint fine and then be unable to call
+    // anything, because every transcript tool also requires meetings:read.
+    renderCard();
+    const form = await openCreateModal();
+    fireEvent.change(form.botUserId, {
+      target: { value: "100000000000000009" },
+    });
+    fireEvent.change(form.name, { target: { value: "Agent" } });
+    fireEvent.click(screen.getByLabelText(/Also allow reading transcripts/i));
+    fireEvent.click(form.submit);
+
+    await waitFor(() =>
+      expect(baseProps.onCreate).toHaveBeenCalledWith(
+        expect.objectContaining({
+          scopes: ["meetings:read", "transcripts:read"],
+        }),
+      ),
+    );
+  });
+
   it("revokes by token id", async () => {
     renderCard({ accounts: [account] });
     fireEvent.click(screen.getByRole("button", { name: /Revoke Ops agent/i }));

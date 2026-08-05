@@ -11,6 +11,7 @@ import {
   MultiSelect,
   NumberInput,
   Stack,
+  Switch,
   Text,
   TextInput,
   Tooltip,
@@ -187,9 +188,7 @@ export function ServiceAccountsCard({
   const [modalOpen, setModalOpen] = useState(false);
   const [botUserId, setBotUserId] = useState("");
   const [name, setName] = useState("");
-  const [scopes, setScopes] = useState<McpServiceAccountScope[]>([
-    "meetings:read",
-  ]);
+  const [transcriptsEnabled, setTranscriptsEnabled] = useState(false);
   const [channelIds, setChannelIds] = useState<string[]>([]);
   const [expiresInDays, setExpiresInDays] = useState<number | undefined>(90);
   const [token, setToken] = useState<string | undefined>();
@@ -198,13 +197,12 @@ export function ServiceAccountsCard({
     voiceChannels.map((channel) => [channel.value, channel.label]),
   );
   const botUserIdValid = DISCORD_ID_PATTERN.test(botUserId.trim());
-  const submitDisabled =
-    busy || !botUserIdValid || !name.trim() || scopes.length === 0;
+  const submitDisabled = busy || !botUserIdValid || !name.trim();
 
   const resetForm = () => {
     setBotUserId("");
     setName("");
-    setScopes(["meetings:read"]);
+    setTranscriptsEnabled(false);
     setChannelIds([]);
     setExpiresInDays(90);
   };
@@ -219,7 +217,9 @@ export function ServiceAccountsCard({
     const created = await onCreate({
       botUserId: botUserId.trim(),
       name: name.trim(),
-      scopes,
+      scopes: transcriptsEnabled
+        ? ["meetings:read", "transcripts:read"]
+        : ["meetings:read"],
       channelIds: channelIds.length > 0 ? channelIds : undefined,
       expiresInDays,
     });
@@ -310,12 +310,14 @@ export function ServiceAccountsCard({
               value={name}
               onChange={(event) => setName(event.currentTarget.value)}
             />
-            <MultiSelect
-              label="Scopes"
-              data={SCOPE_OPTIONS}
-              value={scopes}
-              onChange={(value) =>
-                setScopes(value as unknown as McpServiceAccountScope[])
+            {/* meetings:read is not optional: every transcript tool requires
+                it too, so a transcripts-only token could not call anything. */}
+            <Switch
+              label="Also allow reading transcripts"
+              description="Off means the agent gets notes and summaries but never the raw transcript."
+              checked={transcriptsEnabled}
+              onChange={(event) =>
+                setTranscriptsEnabled(event.currentTarget.checked)
               }
             />
             <MultiSelect

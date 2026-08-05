@@ -582,7 +582,10 @@ export default function Settings() {
         guildId: selectedGuildId,
         ...input,
       });
-      await trpcUtils.serviceAccounts.list.invalidate({
+      // The raw token is returned before the list refresh is awaited. A slow
+      // refetch would otherwise re-enable the form while the one-time token is
+      // still hidden, and it cannot be fetched again once that view is lost.
+      void trpcUtils.serviceAccounts.list.invalidate({
         guildId: selectedGuildId,
       });
       return result.token;
