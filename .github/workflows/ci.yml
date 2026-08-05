@@ -219,9 +219,10 @@ jobs:
       - name: Install dependencies
         run: yarn install --frozen-lockfile
 
-      # AGENTS.md requires Storybook screenshots for UI changes, but nothing
-      # gated Storybook, so it broke and stayed broken. A build is the cheap
-      # guard: it exits non-zero on the transform failure that caused this.
+      # UI changes are expected to ship Storybook screenshots, so the build has
+      # to stay green. A build is sufficient: a preview-level transform failure
+      # takes every story down at once and exits non-zero here, without the
+      # cost of running the browser test runner in CI.
       - name: Build Storybook
         run: yarn build-storybook --quiet
 
