@@ -27,7 +27,7 @@ Use an interactive Discord sign-in for live control.
 
 ## Creating One
 
-You need Manage Server permission in the target Discord server.
+You need Administrator in the target Discord server, or to be its owner. This is stricter than the Manage Server permission most Chronote settings use, because a service account can read whatever its bot can read, and Manage Server does not by itself grant access to any particular channel. Administrator already reaches every channel, so it cannot hand out more than it holds.
 
 1. Invite the agent's bot to your server if it is not already there.
 2. Give that bot a role that can view and connect to the voice channels whose meetings the agent should read, and read message history in the matching notes channels.
@@ -87,6 +87,6 @@ Prefer `list_meetings` with `serverId` over `list_my_meetings`. `list_my_meeting
 
 ## Revoking
 
-Revoke a service account from the same screen you created it on. Revocation is immediate. Setting an expiry gives you a backstop if a token is forgotten.
+Revocation is immediate, and goes through the same authenticated API as creation until the portal screen ships. Setting an expiry gives you a backstop if a token is forgotten.
 
 Removing the bot's role in Discord, or removing the bot from the server, also cuts off access without touching the token.

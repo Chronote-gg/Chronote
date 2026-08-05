@@ -1015,7 +1015,10 @@ export async function listMcpMyMeetings(input: ListMcpMyMeetingsInput) {
     ),
   );
   const servers = filterMcpServers(
-    await listMcpServersForUser(input.userId),
+    await listMcpServersForToken({
+      userId: input.userId,
+      restriction: input.restriction,
+    }),
     filters.serverIds,
   );
 
