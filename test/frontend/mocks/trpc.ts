@@ -476,6 +476,18 @@ export const notionDisableAutomationMutation = buildMutationState<
   [unknown],
   { ok: true }
 >({ ok: true });
+export const serviceAccountsListQuery = buildQueryState<{
+  serviceAccounts: never[];
+  canCreate: boolean;
+}>({ serviceAccounts: [], canCreate: true });
+export const serviceAccountCreateMutation = buildMutationState<
+  [unknown],
+  { token: string }
+>({ token: "cnsa_mock_token" });
+export const serviceAccountRevokeMutation = buildMutationState<
+  [unknown],
+  { revoked: true }
+>({ revoked: true });
 export const autorecordAddMutation = buildMutationState<[unknown], void>(
   undefined,
 );
@@ -596,6 +608,9 @@ export const trpcUtils = {
   notion: {
     exportStatus: { invalidate: jest.fn<Promise<void>, [unknown]>() },
     automationStatus: { invalidate: jest.fn<Promise<void>, [unknown]>() },
+  },
+  serviceAccounts: {
+    list: { invalidate: jest.fn<Promise<void>, [unknown]>() },
   },
   servers: {
     channels: { invalidate: jest.fn<Promise<void>, [unknown]>() },
@@ -1023,6 +1038,11 @@ jest.mock("../../../src/frontend/services/trpc", () => ({
       },
       saveAutomationConfig: { useMutation: () => notionSaveAutomationMutation },
       disableAutomation: { useMutation: () => notionDisableAutomationMutation },
+    },
+    serviceAccounts: {
+      list: { useQuery: () => serviceAccountsListQuery },
+      create: { useMutation: () => serviceAccountCreateMutation },
+      revoke: { useMutation: () => serviceAccountRevokeMutation },
     },
     autorecord: {
       list: { useQuery: () => autorecordListQuery },

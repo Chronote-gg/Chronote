@@ -50,6 +50,11 @@ jest.mock("../../services/trpc", () => {
         saveAutomationConfig: { useMutation: jest.fn(() => buildMutation()) },
         disableAutomation: { useMutation: jest.fn(() => buildMutation()) },
       },
+      serviceAccounts: {
+        list: { useQuery: jest.fn(() => buildQuery()) },
+        create: { useMutation: jest.fn(() => buildMutation()) },
+        revoke: { useMutation: jest.fn(() => buildMutation()) },
+      },
     },
   };
 });
@@ -111,6 +116,11 @@ const trpcMock = trpc as unknown as {
     destinationPages: { useQuery: jest.Mock };
     saveAutomationConfig: { useMutation: jest.Mock };
     disableAutomation: { useMutation: jest.Mock };
+  };
+  serviceAccounts: {
+    list: { useQuery: jest.Mock };
+    create: { useMutation: jest.Mock };
+    revoke: { useMutation: jest.Mock };
   };
 };
 

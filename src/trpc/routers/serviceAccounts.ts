@@ -91,9 +91,20 @@ const assertGuildAdministrator = async (params: {
 };
 
 export const serviceAccountsRouter = router({
+  // `canCreate` rides along because minting needs Administrator while listing
+  // only needs Manage Server, and the guild list the portal already holds does
+  // not carry permissions. Returning it here keeps that out of a second call.
   list: manageGuildProcedure
     .input(guildInput)
-    .query(({ input }) => listMcpServiceAccountTokens(input.guildId)),
+    .query(async ({ ctx, input }) => ({
+      serviceAccounts: await listMcpServiceAccountTokens(input.guildId),
+      canCreate:
+        (await ensureGuildAdministratorWithUserToken(
+          ctx.user.accessToken,
+          input.guildId,
+          { userId: ctx.user.id, session: ctx.req.session },
+        )) === true,
+    })),
 
   // The raw token is returned exactly once here and never stored in readable
   // form, so a lost token has to be revoked and reissued.

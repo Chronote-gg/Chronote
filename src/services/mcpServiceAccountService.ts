@@ -50,7 +50,7 @@ const toSummary = (
   guildId: token.guildId,
   botUserId: token.botUserId,
   name: token.name,
-  scopes: parseMcpScopes(token.scope),
+  scopes: parseMcpScopes(token.scope).filter(isMcpServiceAccountScope),
   channelIds: token.channelIds,
   createdAt: token.createdAt,
   createdByUserId: token.createdByUserId,
