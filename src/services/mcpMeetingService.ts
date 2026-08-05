@@ -63,6 +63,7 @@ type ListMcpMeetingsInput = {
   endDate?: string;
   tags?: string[];
   includeArchived?: boolean;
+  allowedChannelIds?: string[];
 };
 
 type MeetingListFilters = {
@@ -70,6 +71,12 @@ type MeetingListFilters = {
   tags?: string[];
   archivedOnly?: boolean;
   includeArchived?: boolean;
+  /**
+   * Channel allowlist carried by a service account token. Unlike `channelId`
+   * this is a hard bound rather than a caller-chosen filter, so it applies on
+   * every read path a restricted token can reach.
+   */
+  allowedChannelIds?: string[];
 };
 
 type ListMcpMyMeetingsInput = {
@@ -85,6 +92,7 @@ type ListMcpMyMeetingsInput = {
   tags?: string[];
   archivedOnly?: boolean;
   includeArchived?: boolean;
+  allowedChannelIds?: string[];
 };
 
 type McpMeetingAccessContext = {
@@ -404,6 +412,23 @@ export async function listMcpServersForUser(userId: string) {
   );
 }
 
+const isMeetingChannelAllowed = (
+  meeting: MeetingHistory,
+  allowedChannelIds?: string[],
+) =>
+  !allowedChannelIds ||
+  allowedChannelIds.includes(resolveMeetingChannelId(meeting));
+
+const assertMeetingChannelAllowed = (
+  meeting: MeetingHistory,
+  allowedChannelIds?: string[],
+) => {
+  if (isMeetingChannelAllowed(meeting, allowedChannelIds)) return;
+  // Same shape as a permission denial so a restricted token cannot use the
+  // error to tell an out-of-scope meeting apart from one that does not exist.
+  throw new McpMeetingAccessError("Meeting access required.", "forbidden");
+};
+
 const meetingMatchesListFilters = (
   meeting: MeetingHistory,
   input: MeetingListFilters,
@@ -414,6 +439,7 @@ const meetingMatchesListFilters = (
   if (!input.archivedOnly && !input.includeArchived && meeting.archivedAt) {
     return false;
   }
+  if (!isMeetingChannelAllowed(meeting, input.allowedChannelIds)) return false;
   if (input.channelId && resolveMeetingChannelId(meeting) !== input.channelId) {
     return false;
   }
@@ -827,6 +853,7 @@ const collectAccessibleUserMeetings = async (input: {
   tags?: string[];
   includeArchived?: boolean;
   archivedOnly?: boolean;
+  allowedChannelIds?: string[];
 }) => {
   const requestedTags = new Set(
     (input.tags ?? []).map((tag) => tag.toLowerCase()),
@@ -987,6 +1014,7 @@ export async function listMcpMyMeetings(input: ListMcpMyMeetingsInput) {
     tags: filters.tags,
     includeArchived: filters.includeArchived,
     archivedOnly: filters.archivedOnly,
+    allowedChannelIds: input.allowedChannelIds,
   });
   const pageMeetings = allowedMeetings.slice(0, limit);
   const hasMore = allowedMeetings.length > limit;
@@ -1011,6 +1039,7 @@ export async function getMcpMeetingSummary(input: {
   userId: string;
   guildId: string;
   id: string;
+  allowedChannelIds?: string[];
 }) {
   const meeting = await getMeetingHistoryService(
     input.guildId,
@@ -1019,6 +1048,7 @@ export async function getMcpMeetingSummary(input: {
   if (!meeting) {
     throw new McpMeetingAccessError("Meeting not found.", "not_found");
   }
+  assertMeetingChannelAllowed(meeting, input.allowedChannelIds);
   await ensureMcpMeetingAccess({
     guildId: input.guildId,
     meeting,
@@ -1100,6 +1130,7 @@ export async function getMcpMeetingTranscript(input: {
   id: string;
   offset?: number;
   maxChars?: number;
+  allowedChannelIds?: string[];
 }) {
   const meeting = await getMeetingHistoryService(
     input.guildId,
@@ -1108,6 +1139,7 @@ export async function getMcpMeetingTranscript(input: {
   if (!meeting) {
     throw new McpMeetingAccessError("Meeting not found.", "not_found");
   }
+  assertMeetingChannelAllowed(meeting, input.allowedChannelIds);
   await ensureMcpMeetingAccess({
     guildId: input.guildId,
     meeting,

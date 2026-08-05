@@ -4,6 +4,7 @@ import { handleMcpJsonRpcRequest, registerMcpRoutes } from "../mcp";
 import {
   getMcpMeetingSummary,
   getMcpMeetingTranscript,
+  listMcpMeetings,
   listMcpMyMeetings,
   listMcpServersForUser,
 } from "../../services/mcpMeetingService";
@@ -18,6 +19,7 @@ import {
   markMcpAccessTokenScopeChallenge,
   validateMcpAccessToken,
 } from "../../services/mcpOAuthService";
+import { validateMcpServiceAccountToken } from "../../services/mcpServiceAccountService";
 import type { McpAccessTokenInfo } from "../../types/mcpOAuth";
 
 jest.mock("../../services/mcpMeetingService", () => ({
@@ -59,6 +61,13 @@ jest.mock("../../services/mcpOAuthService", () => ({
   ),
   markMcpAccessTokenScopeChallenge: jest.fn(),
   validateMcpAccessToken: jest.fn(),
+}));
+
+jest.mock("../../services/mcpServiceAccountService", () => ({
+  isMcpServiceAccountToken: jest.fn((token: string) =>
+    token.startsWith("cnsa_"),
+  ),
+  validateMcpServiceAccountToken: jest.fn(),
 }));
 
 jest.mock("../../services/mcpMeetingControlService", () => ({
@@ -838,5 +847,194 @@ describe("MCP JSON-RPC handler", () => {
 
     expect(response.statusCode).toBe(401);
     expect(response.headers.get("WWW-Authenticate")).toBe("Bearer");
+  });
+});
+
+describe("MCP service account restrictions", () => {
+  const restrictedAuth: McpAccessTokenInfo = {
+    ...auth,
+    clientId: "service-account:token-1",
+    userId: "bot-1",
+    scopes: [
+      "meetings:read",
+      "transcripts:read",
+      "meetings:start",
+      "meetings:stop",
+    ],
+    restriction: { guildId: "guild-1", channelIds: ["voice-1"] },
+  };
+  const guildOnlyAuth: McpAccessTokenInfo = {
+    ...restrictedAuth,
+    restriction: { guildId: "guild-1" },
+  };
+
+  const callRestrictedTool = (
+    tokenAuth: McpAccessTokenInfo,
+    name: string,
+    args: unknown,
+  ) =>
+    handleMcpJsonRpcRequest(tokenAuth, {
+      jsonrpc: "2.0",
+      id: name,
+      method: "tools/call",
+      params: { name, arguments: args },
+    });
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  it("hides servers outside the token guild", async () => {
+    jest.mocked(listMcpServersForUser).mockResolvedValue([
+      { id: "guild-1", name: "Server A", icon: null },
+      { id: "guild-2", name: "Server B", icon: null },
+    ]);
+
+    await expect(
+      callRestrictedTool(guildOnlyAuth, "list_servers", {}),
+    ).resolves.toMatchObject({
+      result: {
+        structuredContent: { servers: [{ id: "guild-1", name: "Server A" }] },
+      },
+    });
+  });
+
+  it("refuses a meeting lookup in another guild", async () => {
+    await expect(
+      callRestrictedTool(guildOnlyAuth, "get_meeting_summary", {
+        serverId: "guild-2",
+        id: "voice-1#2026-01-01T00:00:00.000Z",
+      }),
+    ).resolves.toMatchObject({
+      result: {
+        isError: true,
+        content: [
+          {
+            type: "text",
+            text: "This token is scoped to a different Discord server.",
+          },
+        ],
+      },
+    });
+    expect(getMcpMeetingSummary).not.toHaveBeenCalled();
+  });
+
+  it("pins list_my_meetings to the token guild even when other servers are requested", async () => {
+    jest.mocked(listMcpMyMeetings).mockResolvedValue({
+      meetings: [],
+      hasMore: false,
+      nextCursor: null,
+    });
+
+    await callRestrictedTool(guildOnlyAuth, "list_my_meetings", {
+      serverIds: ["guild-1"],
+    });
+
+    expect(listMcpMyMeetings).toHaveBeenCalledWith(
+      expect.objectContaining({ serverIds: ["guild-1"] }),
+    );
+
+    await expect(
+      callRestrictedTool(guildOnlyAuth, "list_my_meetings", {
+        serverIds: ["guild-2"],
+      }),
+    ).resolves.toMatchObject({ result: { isError: true } });
+    expect(listMcpMyMeetings).toHaveBeenCalledTimes(1);
+  });
+
+  it("passes the channel allowlist through to every read path", async () => {
+    jest.mocked(listMcpMeetings).mockResolvedValue({ meetings: [] });
+    jest.mocked(getMcpMeetingTranscript).mockResolvedValue({
+      meetingId: "meeting-1",
+      id: "voice-1#2026-01-01T00:00:00.000Z",
+      transcript: "",
+      transcriptAvailable: false,
+      offset: 0,
+      totalChars: 0,
+      truncated: false,
+      nextOffset: undefined,
+    });
+
+    await callRestrictedTool(restrictedAuth, "list_meetings", {
+      serverId: "guild-1",
+    });
+    await callRestrictedTool(restrictedAuth, "get_meeting_transcript", {
+      serverId: "guild-1",
+      id: "voice-1#2026-01-01T00:00:00.000Z",
+    });
+
+    expect(listMcpMeetings).toHaveBeenCalledWith(
+      expect.objectContaining({ allowedChannelIds: ["voice-1"] }),
+    );
+    expect(getMcpMeetingTranscript).toHaveBeenCalledWith(
+      expect.objectContaining({ allowedChannelIds: ["voice-1"] }),
+    );
+  });
+
+  it("requires a named voice channel when the token limits channels", async () => {
+    await expect(
+      callRestrictedTool(restrictedAuth, "start_meeting", {}),
+    ).resolves.toMatchObject({
+      result: {
+        isError: true,
+        content: [
+          {
+            type: "text",
+            text: "This token is limited to specific channels, so voiceChannelId is required.",
+          },
+        ],
+      },
+    });
+
+    await expect(
+      callRestrictedTool(restrictedAuth, "start_meeting", {
+        voiceChannelId: "voice-9",
+      }),
+    ).resolves.toMatchObject({ result: { isError: true } });
+    expect(startMcpMeetingControl).not.toHaveBeenCalled();
+  });
+
+  it("fills in the token guild when a control tool omits serverId", async () => {
+    jest.mocked(stopMcpMeetingControl).mockResolvedValue({
+      requestId: "request-1",
+      queueStatus: "pending",
+      commandType: "stop_meeting",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    });
+
+    await callRestrictedTool(guildOnlyAuth, "stop_meeting", {});
+
+    expect(stopMcpMeetingControl).toHaveBeenCalledWith(
+      expect.objectContaining({
+        request: expect.objectContaining({ serverId: "guild-1" }),
+      }),
+    );
+  });
+
+  it("skips the OAuth step-up challenge for a service account token", async () => {
+    jest
+      .mocked(validateMcpServiceAccountToken)
+      .mockResolvedValue({ ...guildOnlyAuth, scopes: ["meetings:read"] });
+    const postHandler = captureMcpPostHandler();
+    const response = createResponse();
+
+    await postHandler(
+      {
+        headers: { authorization: "Bearer cnsa_token" },
+        body: {
+          jsonrpc: "2.0",
+          id: "start-scope",
+          method: "tools/call",
+          params: { name: "start_meeting", arguments: {} },
+        },
+      } as never,
+      response as never,
+      jest.fn(),
+    );
+
+    expect(response.statusCode).toBe(403);
+    expect(validateMcpAccessToken).not.toHaveBeenCalled();
+    expect(markMcpAccessTokenScopeChallenge).not.toHaveBeenCalled();
   });
 });

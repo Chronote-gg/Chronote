@@ -26,7 +26,15 @@ import {
   startMcpMeetingControl,
   stopMcpMeetingControl,
 } from "../services/mcpMeetingControlService";
-import type { McpAccessTokenInfo, McpScope } from "../types/mcpOAuth";
+import {
+  isMcpServiceAccountToken,
+  validateMcpServiceAccountToken,
+} from "../services/mcpServiceAccountService";
+import type {
+  McpAccessTokenInfo,
+  McpScope,
+  McpTokenRestriction,
+} from "../types/mcpOAuth";
 import type { MeetingControlCommandSnapshot } from "../services/meetingControlQueueService";
 
 const MCP_PROTOCOL_VERSION = "2025-11-25";
@@ -442,6 +450,70 @@ const toolScopes = new Map<string, McpScope[]>([
   ["get_meeting_control_request", []],
 ]);
 
+const TOKEN_SERVER_SCOPE_ERROR =
+  "This token is scoped to a different Discord server.";
+const TOKEN_CHANNEL_SCOPE_ERROR =
+  "This token is scoped to a different set of channels.";
+const TOKEN_CHANNEL_REQUIRED_ERROR =
+  "This token is limited to specific channels, so voiceChannelId is required.";
+
+/** A service account token asked for something outside its own bounds. */
+class McpTokenScopeError extends Error {}
+
+const assertTokenGuildId = (
+  restriction: McpTokenRestriction | undefined,
+  serverId?: string,
+) => {
+  if (restriction && serverId && serverId !== restriction.guildId) {
+    throw new McpTokenScopeError(TOKEN_SERVER_SCOPE_ERROR);
+  }
+};
+
+const resolveTokenGuildId = (
+  restriction: McpTokenRestriction | undefined,
+  serverId?: string,
+) => {
+  assertTokenGuildId(restriction, serverId);
+  return serverId ?? restriction?.guildId;
+};
+
+const resolveTokenServerIds = (
+  restriction: McpTokenRestriction | undefined,
+  serverIds?: string[],
+) => {
+  if (!restriction) return serverIds;
+  if (serverIds?.some((serverId) => serverId !== restriction.guildId)) {
+    throw new McpTokenScopeError(TOKEN_SERVER_SCOPE_ERROR);
+  }
+  return [restriction.guildId];
+};
+
+const restrictTokenServers = <Server extends { id: string }>(
+  restriction: McpTokenRestriction | undefined,
+  servers: Server[],
+) =>
+  restriction
+    ? servers.filter((server) => server.id === restriction.guildId)
+    : servers;
+
+/**
+ * `start_meeting` normally infers the voice channel from the caller's own
+ * presence, which a bot identity does not have. A channel-limited token must
+ * therefore name the channel so the allowlist has something to check.
+ */
+const assertTokenVoiceChannelId = (
+  restriction: McpTokenRestriction | undefined,
+  voiceChannelId?: string,
+) => {
+  if (!restriction?.channelIds) return;
+  if (!voiceChannelId) {
+    throw new McpTokenScopeError(TOKEN_CHANNEL_REQUIRED_ERROR);
+  }
+  if (!restriction.channelIds.includes(voiceChannelId)) {
+    throw new McpTokenScopeError(TOKEN_CHANNEL_SCOPE_ERROR);
+  }
+};
+
 const isJsonRpcRequest = (value: unknown): value is JsonRpcRequest => {
   if (!value || typeof value !== "object") return false;
   const candidate = value as { jsonrpc?: unknown; method?: unknown };
@@ -457,6 +529,15 @@ const getBearerToken = (req: Request) => {
   return authorization.slice("Bearer ".length).trim();
 };
 
+/**
+ * Service account tokens carry a recognizable prefix, so the credential kind is
+ * decided before any lookup and the two stores never have to be searched twice.
+ */
+const validateMcpBearerToken = (token: string) =>
+  isMcpServiceAccountToken(token)
+    ? validateMcpServiceAccountToken(token)
+    : validateMcpAccessToken(token);
+
 const sendUnauthorized = (res: Response) => {
   res.set("WWW-Authenticate", buildMcpBearerChallenge());
   res.status(401).json({ error: "unauthorized" });
@@ -466,11 +547,16 @@ const sendInsufficientScope = async (
   res: Response,
   accessToken: string,
   scopes: McpScope[],
+  // Service account scopes are fixed at mint time, so there is no interactive
+  // grant for the client to step up into and nothing to record a challenge on.
+  supportsStepUp = true,
 ) => {
-  try {
-    await markMcpAccessTokenScopeChallenge(accessToken, scopes);
-  } catch (error) {
-    console.error("Failed to mark MCP OAuth scope challenge", error);
+  if (supportsStepUp) {
+    try {
+      await markMcpAccessTokenScopeChallenge(accessToken, scopes);
+    } catch (error) {
+      console.error("Failed to mark MCP OAuth scope challenge", error);
+    }
   }
   res.set(
     "WWW-Authenticate",
@@ -611,13 +697,21 @@ const rejectInvalidOrigin = (req: Request, res: Response) => {
 };
 
 async function callTool(auth: McpAccessTokenInfo, name: string, args: unknown) {
+  const restriction = auth.restriction;
+  const allowedChannelIds = restriction?.channelIds;
   try {
     if (name === "list_servers") {
       listServersSchema.parse(args);
-      return toolResult({ servers: await listMcpServersForUser(auth.userId) });
+      return toolResult({
+        servers: restrictTokenServers(
+          restriction,
+          await listMcpServersForUser(auth.userId),
+        ),
+      });
     }
     if (name === "list_meetings") {
       const input = listMeetingsSchema.parse(args);
+      assertTokenGuildId(restriction, input.serverId);
       return toolResult(
         await listMcpMeetings({
           userId: auth.userId,
@@ -628,6 +722,7 @@ async function callTool(auth: McpAccessTokenInfo, name: string, args: unknown) {
           endDate: input.endDate,
           tags: input.tags,
           includeArchived: input.includeArchived,
+          allowedChannelIds,
         }),
       );
     }
@@ -643,25 +738,29 @@ async function callTool(auth: McpAccessTokenInfo, name: string, args: unknown) {
           startDate: input.startDate,
           endDate: input.endDate,
           timeZoneOffsetMinutes: input.timeZoneOffsetMinutes,
-          serverIds: input.serverIds,
+          serverIds: resolveTokenServerIds(restriction, input.serverIds),
           tags: input.tags,
           archivedOnly: input.archivedOnly,
           includeArchived: input.includeArchived,
+          allowedChannelIds,
         }),
       );
     }
     if (name === "get_meeting_summary") {
       const input = meetingSummaryLookupSchema.parse(args);
+      assertTokenGuildId(restriction, input.serverId);
       return toolResult(
         await getMcpMeetingSummary({
           userId: auth.userId,
           guildId: input.serverId,
           id: input.id,
+          allowedChannelIds,
         }),
       );
     }
     if (name === "get_meeting_transcript") {
       const input = meetingTranscriptLookupSchema.parse(args);
+      assertTokenGuildId(restriction, input.serverId);
       return toolResult(
         await getMcpMeetingTranscript({
           userId: auth.userId,
@@ -669,29 +768,50 @@ async function callTool(auth: McpAccessTokenInfo, name: string, args: unknown) {
           id: input.id,
           offset: input.offset,
           maxChars: input.maxChars,
+          allowedChannelIds,
         }),
       );
     }
     if (name === "start_meeting") {
       const input = startMeetingControlSchema.parse(args);
+      assertTokenVoiceChannelId(restriction, input.voiceChannelId);
       return meetingControlToolResult(
-        await startMcpMeetingControl({ userId: auth.userId, request: input }),
+        await startMcpMeetingControl({
+          userId: auth.userId,
+          request: {
+            ...input,
+            serverId: resolveTokenGuildId(restriction, input.serverId),
+          },
+        }),
       );
     }
     if (name === "stop_meeting") {
       const input = stopMeetingControlSchema.parse(args);
       return meetingControlToolResult(
-        await stopMcpMeetingControl({ userId: auth.userId, request: input }),
+        await stopMcpMeetingControl({
+          userId: auth.userId,
+          request: {
+            ...input,
+            serverId: resolveTokenGuildId(restriction, input.serverId),
+          },
+        }),
       );
     }
     if (name === "get_live_meeting_status") {
       const input = liveMeetingControlSchema.parse(args);
       return meetingControlToolResult(
-        await getMcpLiveMeetingStatus({ userId: auth.userId, request: input }),
+        await getMcpLiveMeetingStatus({
+          userId: auth.userId,
+          request: {
+            ...input,
+            serverId: resolveTokenGuildId(restriction, input.serverId),
+          },
+        }),
       );
     }
     if (name === "get_live_meeting_transcript") {
       const input = liveMeetingTranscriptControlSchema.parse(args);
+      assertTokenGuildId(restriction, input.serverId);
       return meetingControlToolResult(
         await getMcpLiveMeetingTranscript({
           userId: auth.userId,
@@ -712,6 +832,7 @@ async function callTool(auth: McpAccessTokenInfo, name: string, args: unknown) {
   } catch (error) {
     if (error instanceof z.ZodError)
       return toolError(formatZodToolError(error));
+    if (error instanceof McpTokenScopeError) return toolError(error.message);
     const meetingError = mapMeetingError(error);
     if (meetingError) return meetingError;
     const controlError = mapMeetingControlError(error);
@@ -805,7 +926,7 @@ export function registerMcpRoutes(app: Express) {
       sendUnauthorized(res);
       return;
     }
-    const auth = await validateMcpAccessToken(rawToken);
+    const auth = await validateMcpBearerToken(rawToken);
     if (!auth) {
       sendUnauthorized(res);
       return;
@@ -824,6 +945,7 @@ export function registerMcpRoutes(app: Express) {
         res,
         rawToken,
         resolveStepUpScopes(auth.scopes, requiredScopes),
+        !auth.restriction,
       );
       return;
     }

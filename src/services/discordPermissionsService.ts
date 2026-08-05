@@ -62,6 +62,26 @@ const resolveChannel = (
 ): DiscordChannel | undefined =>
   channels.find((channel) => channel.id === channelId);
 
+/**
+ * Guild-wide permissions for a member: the @everyone role (whose id equals the
+ * guild id) unioned with every role the member holds, before channel overwrites.
+ */
+const resolveGuildBasePermissions = async (guildId: string, userId: string) => {
+  const [roles, member] = await Promise.all([
+    listGuildRolesCached(guildId),
+    getGuildMemberCached(guildId, userId),
+  ]);
+  const rolePermissions = new Map(
+    roles.map((role) => [role.id, parsePermissions(role.permissions)]),
+  );
+  const memberRoles = member.roles ?? [];
+  let permissions = rolePermissions.get(guildId) ?? 0n;
+  for (const roleId of memberRoles) {
+    permissions |= rolePermissions.get(roleId) ?? 0n;
+  }
+  return { permissions, memberRoles };
+};
+
 const ensureUserHasChannelPermissions = async (options: {
   guildId: string;
   channelId: string;
@@ -71,23 +91,16 @@ const ensureUserHasChannelPermissions = async (options: {
 }): Promise<boolean | null> => {
   const { guildId, channelId, userId, required, logLabel } = options;
   try {
-    const [channels, roles, member] = await Promise.all([
+    const [channels, base] = await Promise.all([
       listGuildChannelsCached(guildId),
-      listGuildRolesCached(guildId),
-      getGuildMemberCached(guildId, userId),
+      resolveGuildBasePermissions(guildId, userId),
     ]);
 
     const channel = resolveChannel(channels, channelId);
     if (!channel) return false;
 
-    const rolePermissions = new Map(
-      roles.map((role) => [role.id, parsePermissions(role.permissions)]),
-    );
-    let permissions = rolePermissions.get(guildId) ?? 0n;
-    const memberRoles = member.roles ?? [];
-    for (const roleId of memberRoles) {
-      permissions |= rolePermissions.get(roleId) ?? 0n;
-    }
+    const { memberRoles } = base;
+    let permissions = base.permissions;
 
     if ((permissions & PERMISSION_ADMIN) !== 0n) {
       return true;
@@ -168,4 +181,31 @@ export async function ensureUserCanReadChannelHistory(options: {
     required: PERMISSION_VIEW_CHANNEL | PERMISSION_READ_MESSAGE_HISTORY,
     logLabel: "ensureUserCanReadChannelHistory",
   });
+}
+
+/**
+ * Administrator short-circuits every channel overwrite, so a member holding it
+ * can reach every meeting in the guild regardless of how channels are locked
+ * down. Callers that treat channel permissions as a boundary must check this.
+ */
+export async function hasGuildAdministrator(options: {
+  guildId: string;
+  userId: string;
+}): Promise<boolean | null> {
+  try {
+    const { permissions } = await resolveGuildBasePermissions(
+      options.guildId,
+      options.userId,
+    );
+    return (permissions & PERMISSION_ADMIN) !== 0n;
+  } catch (error) {
+    if (isDiscordApiError(error) && error.status === 429) {
+      console.warn("hasGuildAdministrator rate limited", {
+        guildId: options.guildId,
+      });
+      return null;
+    }
+    console.error("hasGuildAdministrator error", error);
+    return null;
+  }
 }

@@ -940,6 +940,92 @@ describe("mcpMeetingService", () => {
   });
 });
 
+describe("mcpMeetingService service account channel allowlist", () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    jest.mocked(getGuildMemberCached).mockResolvedValue({ roles: [] });
+    jest.mocked(listGuildChannelsCached).mockResolvedValue([
+      { id: "channel-1", name: "Meeting Room", type: 2 },
+      { id: "channel-2", name: "Board Room", type: 2 },
+    ]);
+    jest.mocked(checkUserMeetingAccess).mockResolvedValue({
+      allowed: true,
+      via: "attendee",
+    });
+  });
+
+  it("drops meetings outside the allowlist before any access check runs", async () => {
+    jest
+      .mocked(listRecentMeetingsForGuildService)
+      .mockResolvedValue([
+        createMeeting("allowed", { channelId: "channel-1" }),
+        createMeeting("blocked", { channelId: "channel-2" }),
+      ]);
+
+    await expect(
+      listMcpMeetings({
+        userId: "bot-1",
+        guildId: "guild-1",
+        allowedChannelIds: ["channel-1"],
+      }),
+    ).resolves.toMatchObject({ meetings: [{ meetingId: "allowed" }] });
+    expect(checkUserMeetingAccess).toHaveBeenCalledTimes(1);
+  });
+
+  it("refuses a direct lookup outside the allowlist even when Discord would allow it", async () => {
+    jest.mocked(getMeetingHistoryService).mockResolvedValue(
+      createMeeting("blocked", {
+        channelId: "channel-2",
+        channelId_timestamp: "channel-2#2026-01-02T00:00:00.000Z",
+      }),
+    );
+
+    await expect(
+      getMcpMeetingSummary({
+        userId: "bot-1",
+        guildId: "guild-1",
+        id: "channel-2#2026-01-02T00:00:00.000Z",
+        allowedChannelIds: ["channel-1"],
+      }),
+    ).rejects.toMatchObject({ code: "forbidden" });
+    expect(checkUserMeetingAccess).not.toHaveBeenCalled();
+  });
+
+  it("refuses a transcript read outside the allowlist", async () => {
+    jest.mocked(getMeetingHistoryService).mockResolvedValue(
+      createMeeting("blocked", {
+        channelId: "channel-2",
+        channelId_timestamp: "channel-2#2026-01-02T00:00:00.000Z",
+      }),
+    );
+
+    await expect(
+      getMcpMeetingTranscript({
+        userId: "bot-1",
+        guildId: "guild-1",
+        id: "channel-2#2026-01-02T00:00:00.000Z",
+        allowedChannelIds: ["channel-1"],
+      }),
+    ).rejects.toMatchObject({ code: "forbidden" });
+    expect(fetchJsonFromS3).not.toHaveBeenCalled();
+  });
+
+  it("leaves reads unfiltered when the token carries no allowlist", async () => {
+    jest
+      .mocked(listRecentMeetingsForGuildService)
+      .mockResolvedValue([
+        createMeeting("first", { channelId: "channel-1" }),
+        createMeeting("second", { channelId: "channel-2" }),
+      ]);
+
+    await expect(
+      listMcpMeetings({ userId: "user-1", guildId: "guild-1" }),
+    ).resolves.toMatchObject({
+      meetings: [{ meetingId: "first" }, { meetingId: "second" }],
+    });
+  });
+});
+
 describe("mcpMeetingService transcripts", () => {
   beforeEach(() => {
     jest.clearAllMocks();
