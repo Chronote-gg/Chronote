@@ -203,6 +203,29 @@ jobs:
       - name: Build and validate docs
         run: yarn docs:check
 
+  storybook-build:
+    name: Storybook Build
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: "24.15.0"
+          cache: "yarn"
+
+      - name: Install dependencies
+        run: yarn install --frozen-lockfile
+
+      # UI changes are expected to ship Storybook screenshots, so the build has
+      # to stay green. A build is sufficient: a preview-level transform failure
+      # takes every story down at once and exits non-zero here, without the
+      # cost of running the browser test runner in CI.
+      - name: Build Storybook
+        run: yarn build-storybook --quiet
+
   docker-build:
     name: Docker Build
     runs-on: blacksmith-4vcpu-ubuntu-2404

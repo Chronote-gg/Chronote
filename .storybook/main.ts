@@ -18,6 +18,13 @@ const config: StorybookConfig = {
     options: {},
   },
   staticDirs: ["../public"],
+  // The default react-docgen parser picks up the root babel.config.js, which
+  // exists for Jest and carries preset-typescript with no JSX support. That
+  // makes it parse every .tsx as plain TS, so `<Component prop={x}>` reads as
+  // an unterminated type assertion and the transform throws. Every .tsx in the
+  // project then 404s, which takes the whole preview down. The TypeScript
+  // parser does not go through babel, and gives better prop tables anyway.
+  typescript: { reactDocgen: "react-docgen-typescript" },
   async viteFinal(config) {
     return mergeConfig(config, {
       envDir: rootDir,
