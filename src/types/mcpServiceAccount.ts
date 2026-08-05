@@ -54,7 +54,7 @@ export type McpServiceAccountSummary = {
   guildId: string;
   botUserId: string;
   name: string;
-  scopes: McpScope[];
+  scopes: McpServiceAccountScope[];
   channelIds?: string[];
   createdAt: string;
   createdByUserId: string;

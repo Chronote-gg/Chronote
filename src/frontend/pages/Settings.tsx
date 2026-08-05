@@ -41,6 +41,10 @@ import { ChannelOverridesCard } from "../features/settings/ChannelOverridesCard"
 import { ServerConfigCard } from "../features/settings/ServerConfigCard";
 import { DictionaryCard } from "../features/settings/DictionaryCard";
 import { NotionIntegrationCard } from "../features/settings/NotionIntegrationCard";
+import {
+  ServiceAccountsCard,
+  type CreateServiceAccountInput,
+} from "../features/settings/ServiceAccountsCard";
 
 type OverrideMode = "inherit" | "on" | "off";
 
@@ -118,6 +122,14 @@ export default function Settings() {
     trpc.notion.saveAutomationConfig.useMutation();
   const disableNotionAutomationMutation =
     trpc.notion.disableAutomation.useMutation();
+  const serviceAccountsQuery = trpc.serviceAccounts.list.useQuery(
+    { guildId: selectedGuildId ?? "" },
+    { enabled: Boolean(selectedGuildId) && !guildLoading },
+  );
+  const createServiceAccountMutation =
+    trpc.serviceAccounts.create.useMutation();
+  const revokeServiceAccountMutation =
+    trpc.serviceAccounts.revoke.useMutation();
 
   const [channelModalOpen, channelModal] = useDisclosure(false);
   const [editingChannelId, setEditingChannelId] = useState<string | null>(null);
@@ -295,6 +307,9 @@ export default function Settings() {
   const notionBusy =
     saveNotionAutomationMutation.isPending ||
     disableNotionAutomationMutation.isPending;
+  const serviceAccountBusy =
+    createServiceAccountMutation.isPending ||
+    revokeServiceAccountMutation.isPending;
 
   const settingsInitialLoading =
     guildLoading ||
@@ -558,6 +573,49 @@ export default function Settings() {
     }
   };
 
+  const handleCreateServiceAccount = async (
+    input: CreateServiceAccountInput,
+  ) => {
+    if (!selectedGuildId) return undefined;
+    try {
+      const result = await createServiceAccountMutation.mutateAsync({
+        guildId: selectedGuildId,
+        ...input,
+      });
+      await trpcUtils.serviceAccounts.list.invalidate({
+        guildId: selectedGuildId,
+      });
+      return result.token;
+    } catch (error) {
+      const message =
+        error instanceof Error && error.message
+          ? error.message
+          : "Unable to create that service account right now.";
+      notifications.show({ color: "red", message });
+      return undefined;
+    }
+  };
+
+  const handleRevokeServiceAccount = async (tokenId: string) => {
+    if (!selectedGuildId) return;
+    try {
+      await revokeServiceAccountMutation.mutateAsync({
+        guildId: selectedGuildId,
+        tokenId,
+      });
+      notifications.show({ message: "Service account revoked." });
+      await trpcUtils.serviceAccounts.list.invalidate({
+        guildId: selectedGuildId,
+      });
+    } catch (error) {
+      const message =
+        error instanceof Error && error.message
+          ? error.message
+          : "Unable to revoke that service account right now.";
+      notifications.show({ color: "red", message });
+    }
+  };
+
   if (settingsInitialLoading) {
     return <SettingsLoadingState />;
   }
@@ -662,6 +720,16 @@ export default function Settings() {
         }}
         onSave={handleSaveNotionAutomation}
         onDisable={handleDisableNotionAutomation}
+      />
+
+      <ServiceAccountsCard
+        accounts={serviceAccountsQuery.data?.serviceAccounts ?? []}
+        loading={serviceAccountsQuery.isLoading}
+        busy={serviceAccountBusy}
+        canCreate={serviceAccountsQuery.data?.canCreate ?? false}
+        voiceChannels={voiceChannels}
+        onCreate={handleCreateServiceAccount}
+        onRevoke={handleRevokeServiceAccount}
       />
 
       <ChannelOverridesCard
