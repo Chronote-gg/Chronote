@@ -17,6 +17,7 @@ import { notionRouter } from "./routers/notion";
 import { personalUploadsRouter } from "./routers/personalUploads";
 import { pricingRouter } from "./routers/pricing";
 import { serversRouter } from "./routers/servers";
+import { serviceAccountsRouter } from "./routers/serviceAccounts";
 
 export const appRouter = router({
   ask: askRouter,
@@ -37,6 +38,7 @@ export const appRouter = router({
   personalUploads: personalUploadsRouter,
   pricing: pricingRouter,
   servers: serversRouter,
+  serviceAccounts: serviceAccountsRouter,
 });
 
 export type AppRouter = typeof appRouter;

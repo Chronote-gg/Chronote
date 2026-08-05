@@ -20,6 +20,7 @@ import {
 } from "./unifiedConfigService";
 import { CONFIG_KEYS } from "../config/keys";
 import type { MeetingHistory } from "../types/db";
+import type { McpTokenRestriction } from "../types/mcpOAuth";
 import { MEETING_STATUS } from "../types/meetingLifecycle";
 import type { Participant } from "../types/participants";
 import type { TranscriptPayload } from "../types/transcript";
@@ -63,6 +64,7 @@ type ListMcpMeetingsInput = {
   endDate?: string;
   tags?: string[];
   includeArchived?: boolean;
+  restriction?: McpTokenRestriction;
 };
 
 type MeetingListFilters = {
@@ -70,6 +72,12 @@ type MeetingListFilters = {
   tags?: string[];
   archivedOnly?: boolean;
   includeArchived?: boolean;
+  /**
+   * Bounds carried by a service account token. Unlike `channelId` these are
+   * hard limits rather than caller-chosen filters, so they apply on every read
+   * path a restricted token can reach.
+   */
+  restriction?: McpTokenRestriction;
 };
 
 type ListMcpMyMeetingsInput = {
@@ -85,6 +93,7 @@ type ListMcpMyMeetingsInput = {
   tags?: string[];
   archivedOnly?: boolean;
   includeArchived?: boolean;
+  restriction?: McpTokenRestriction;
 };
 
 type McpMeetingAccessContext = {
@@ -228,13 +237,21 @@ const assertMcpGuildMembership = async (guildId: string, userId: string) => {
 const resolveMcpMeetingAccessContext = async (
   guildId: string,
   userId: string,
-  options: { requireGuildMembership?: boolean } = {},
+  options: { requireGuildMembership?: boolean; restricted?: boolean } = {},
 ): Promise<McpMeetingAccessContext> => {
   if (options.requireGuildMembership !== false) {
     await assertMcpGuildMembership(guildId, userId);
   }
   return {
-    attendeeOverrideEnabled: await resolveAttendeeAccessEnabled(guildId),
+    // Attendee access is a permanent grant recorded at meeting time, and the
+    // participant snapshot in `meetings.ts` does not filter bots out of a voice
+    // channel. A bot that once sat in a private channel would therefore keep
+    // reading that meeting after its roles were removed, which is exactly the
+    // revocation a service account is supposed to honour. Restricted tokens are
+    // always evaluated against current channel permissions instead.
+    attendeeOverrideEnabled: options.restricted
+      ? false
+      : await resolveAttendeeAccessEnabled(guildId),
   };
 };
 
@@ -250,15 +267,18 @@ const ensureMcpMeetingAccess = async (options: {
   meeting: MeetingHistory;
   userId: string;
   accessContext?: McpMeetingAccessContext;
+  restricted?: boolean;
 }) => {
-  const indexedForUser = isMeetingIndexedForUser(
-    options.meeting,
-    options.userId,
-  );
+  // A restricted token never skips the membership check on the strength of an
+  // index entry, for the same reason it does not get attendee access.
+  const indexedForUser =
+    !options.restricted &&
+    isMeetingIndexedForUser(options.meeting, options.userId);
   const accessContext =
     options.accessContext ??
     (await resolveMcpMeetingAccessContext(options.guildId, options.userId, {
       requireGuildMembership: !indexedForUser,
+      restricted: options.restricted,
     }));
   let decision = await checkUserMeetingAccess({
     guildId: options.guildId,
@@ -404,6 +424,41 @@ export async function listMcpServersForUser(userId: string) {
   );
 }
 
+/**
+ * Server list for one MCP caller. A restricted token resolves only its own
+ * guild: validation already proved the bot is a member there, so the
+ * cross-guild membership scan would add a request per guild Chronote is in and
+ * let an unrelated rate limit fail a call whose answer is already known.
+ */
+export async function listMcpServersForToken(input: {
+  userId: string;
+  restriction?: McpTokenRestriction;
+}) {
+  const { restriction } = input;
+  if (!restriction) return listMcpServersForUser(input.userId);
+  const guilds = await listBotGuildsCached();
+  return guilds
+    .filter((guild) => guild.id === restriction.guildId)
+    .map((guild) => ({ id: guild.id, name: guild.name, icon: guild.icon }));
+}
+
+const isMeetingChannelAllowed = (
+  meeting: MeetingHistory,
+  allowedChannelIds?: string[],
+) =>
+  !allowedChannelIds ||
+  allowedChannelIds.includes(resolveMeetingChannelId(meeting));
+
+const assertMeetingChannelAllowed = (
+  meeting: MeetingHistory,
+  allowedChannelIds?: string[],
+) => {
+  if (isMeetingChannelAllowed(meeting, allowedChannelIds)) return;
+  // Same shape as a permission denial so a restricted token cannot use the
+  // error to tell an out-of-scope meeting apart from one that does not exist.
+  throw new McpMeetingAccessError("Meeting access required.", "forbidden");
+};
+
 const meetingMatchesListFilters = (
   meeting: MeetingHistory,
   input: MeetingListFilters,
@@ -414,6 +469,8 @@ const meetingMatchesListFilters = (
   if (!input.archivedOnly && !input.includeArchived && meeting.archivedAt) {
     return false;
   }
+  if (!isMeetingChannelAllowed(meeting, input.restriction?.channelIds))
+    return false;
   if (input.channelId && resolveMeetingChannelId(meeting) !== input.channelId) {
     return false;
   }
@@ -748,6 +805,7 @@ const collectAccessibleMeetings = async (
         meeting,
         userId: input.userId,
         accessContext,
+        restricted: Boolean(input.restriction),
       });
       allowedMeetings.push(meeting);
       if (allowedMeetings.length >= limit) break;
@@ -773,6 +831,7 @@ export async function listMcpMeetings(input: ListMcpMeetingsInput) {
     accessContext = await resolveMcpMeetingAccessContext(
       input.guildId,
       input.userId,
+      { restricted: Boolean(input.restriction) },
     );
   } catch (error) {
     if (error instanceof McpMeetingAccessError && error.code === "forbidden") {
@@ -827,6 +886,7 @@ const collectAccessibleUserMeetings = async (input: {
   tags?: string[];
   includeArchived?: boolean;
   archivedOnly?: boolean;
+  restriction?: McpTokenRestriction;
 }) => {
   const requestedTags = new Set(
     (input.tags ?? []).map((tag) => tag.toLowerCase()),
@@ -843,15 +903,16 @@ const collectAccessibleUserMeetings = async (input: {
       continue;
     }
     try {
+      const restricted = Boolean(input.restriction);
       const requireGuildMembership =
-        input.mode !== "attended" || !indexedForUser;
+        restricted || input.mode !== "attended" || !indexedForUser;
       const accessContextKey = `${meeting.guildId}:${requireGuildMembership}`;
       let accessContext = accessContexts.get(accessContextKey);
       if (!accessContext) {
         accessContext = await resolveMcpMeetingAccessContext(
           meeting.guildId,
           input.userId,
-          { requireGuildMembership },
+          { requireGuildMembership, restricted },
         );
         accessContexts.set(accessContextKey, accessContext);
       }
@@ -860,6 +921,7 @@ const collectAccessibleUserMeetings = async (input: {
         meeting,
         userId: input.userId,
         accessContext,
+        restricted,
       });
       allowedMeetings.push(meeting);
       if (allowedMeetings.length >= input.limit) break;
@@ -953,7 +1015,10 @@ export async function listMcpMyMeetings(input: ListMcpMyMeetingsInput) {
     ),
   );
   const servers = filterMcpServers(
-    await listMcpServersForUser(input.userId),
+    await listMcpServersForToken({
+      userId: input.userId,
+      restriction: input.restriction,
+    }),
     filters.serverIds,
   );
 
@@ -987,6 +1052,7 @@ export async function listMcpMyMeetings(input: ListMcpMyMeetingsInput) {
     tags: filters.tags,
     includeArchived: filters.includeArchived,
     archivedOnly: filters.archivedOnly,
+    restriction: input.restriction,
   });
   const pageMeetings = allowedMeetings.slice(0, limit);
   const hasMore = allowedMeetings.length > limit;
@@ -1011,6 +1077,7 @@ export async function getMcpMeetingSummary(input: {
   userId: string;
   guildId: string;
   id: string;
+  restriction?: McpTokenRestriction;
 }) {
   const meeting = await getMeetingHistoryService(
     input.guildId,
@@ -1019,10 +1086,12 @@ export async function getMcpMeetingSummary(input: {
   if (!meeting) {
     throw new McpMeetingAccessError("Meeting not found.", "not_found");
   }
+  assertMeetingChannelAllowed(meeting, input.restriction?.channelIds);
   await ensureMcpMeetingAccess({
     guildId: input.guildId,
     meeting,
     userId: input.userId,
+    restricted: Boolean(input.restriction),
   });
   const channelMap = isPersonalMeeting(meeting)
     ? new Map<string, string>()
@@ -1100,6 +1169,7 @@ export async function getMcpMeetingTranscript(input: {
   id: string;
   offset?: number;
   maxChars?: number;
+  restriction?: McpTokenRestriction;
 }) {
   const meeting = await getMeetingHistoryService(
     input.guildId,
@@ -1108,10 +1178,12 @@ export async function getMcpMeetingTranscript(input: {
   if (!meeting) {
     throw new McpMeetingAccessError("Meeting not found.", "not_found");
   }
+  assertMeetingChannelAllowed(meeting, input.restriction?.channelIds);
   await ensureMcpMeetingAccess({
     guildId: input.guildId,
     meeting,
     userId: input.userId,
+    restricted: Boolean(input.restriction),
   });
   const transcriptPayload = meeting.transcriptS3Key
     ? await fetchJsonFromS3<TranscriptPayload>(meeting.transcriptS3Key)

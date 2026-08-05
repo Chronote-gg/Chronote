@@ -54,10 +54,21 @@ export type McpOAuthConsent = {
   updatedAt: string;
 };
 
+/**
+ * Hard bounds carried by a service account bearer token. Enforced on every MCP
+ * tool call in addition to the Discord permission checks every caller gets, so
+ * a restricted token can only ever see less than the bound identity could.
+ */
+export type McpTokenRestriction = {
+  guildId: string;
+  channelIds?: string[];
+};
+
 export type McpAccessTokenInfo = {
   clientId: string;
   userId: string;
   scopes: McpScope[];
   resource: string;
   expiresAt: number;
+  restriction?: McpTokenRestriction;
 };

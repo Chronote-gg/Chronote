@@ -20,7 +20,7 @@ export type DiscordRole = {
 };
 
 export type DiscordGuildMember = {
-  user?: { id: string };
+  user?: { id: string; bot?: boolean };
   roles: string[];
   permissions?: string;
 };

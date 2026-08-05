@@ -7,6 +7,8 @@ Chronote exposes a remote MCP (Model Context Protocol) endpoint for AI assistant
 
 The endpoint uses OAuth with Discord sign-in. Chronote checks the same meeting access rules used by the web portal before returning data, and write tools require separate consent scopes.
 
+For an unattended agent that cannot complete a browser sign-in, see [Service Accounts](/integrations/service-accounts).
+
 ## Endpoint
 
 Use the API MCP endpoint:
@@ -94,3 +96,5 @@ Chronote only returns meeting data if the authenticated Discord user can access 
 - Transcript access requires explicit transcript scope consent.
 - Starting a live meeting requires the authenticated Discord user to already be in the target voice channel.
 - Stopping a meeting requires creator or meeting-management permissions.
+
+Service account tokens run through these same rules, resolved against the bot they act as, plus the server and channel bounds recorded on the token.
