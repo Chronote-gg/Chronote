@@ -696,139 +696,159 @@ const rejectInvalidOrigin = (req: Request, res: Response) => {
   return true;
 };
 
-async function callTool(auth: McpAccessTokenInfo, name: string, args: unknown) {
+async function callMeetingTool(
+  auth: McpAccessTokenInfo,
+  name: string,
+  args: unknown,
+) {
   const restriction = auth.restriction;
   const allowedChannelIds = restriction?.channelIds;
+  if (name === "list_servers") {
+    listServersSchema.parse(args);
+    return toolResult({
+      servers: restrictTokenServers(
+        restriction,
+        await listMcpServersForUser(auth.userId),
+      ),
+    });
+  }
+  if (name === "list_meetings") {
+    const input = listMeetingsSchema.parse(args);
+    assertTokenGuildId(restriction, input.serverId);
+    return toolResult(
+      await listMcpMeetings({
+        userId: auth.userId,
+        guildId: input.serverId,
+        limit: input.limit,
+        channelId: input.channelId,
+        startDate: input.startDate,
+        endDate: input.endDate,
+        tags: input.tags,
+        includeArchived: input.includeArchived,
+        allowedChannelIds,
+      }),
+    );
+  }
+  if (name === "list_my_meetings") {
+    const input = listMyMeetingsSchema.parse(args);
+    return toolResult(
+      await listMcpMyMeetings({
+        userId: auth.userId,
+        mode: input.mode,
+        range: input.range,
+        limit: input.limit,
+        cursor: input.cursor,
+        startDate: input.startDate,
+        endDate: input.endDate,
+        timeZoneOffsetMinutes: input.timeZoneOffsetMinutes,
+        serverIds: resolveTokenServerIds(restriction, input.serverIds),
+        tags: input.tags,
+        archivedOnly: input.archivedOnly,
+        includeArchived: input.includeArchived,
+        allowedChannelIds,
+      }),
+    );
+  }
+  if (name === "get_meeting_summary") {
+    const input = meetingSummaryLookupSchema.parse(args);
+    assertTokenGuildId(restriction, input.serverId);
+    return toolResult(
+      await getMcpMeetingSummary({
+        userId: auth.userId,
+        guildId: input.serverId,
+        id: input.id,
+        allowedChannelIds,
+      }),
+    );
+  }
+  if (name === "get_meeting_transcript") {
+    const input = meetingTranscriptLookupSchema.parse(args);
+    assertTokenGuildId(restriction, input.serverId);
+    return toolResult(
+      await getMcpMeetingTranscript({
+        userId: auth.userId,
+        guildId: input.serverId,
+        id: input.id,
+        offset: input.offset,
+        maxChars: input.maxChars,
+        allowedChannelIds,
+      }),
+    );
+  }
+  return undefined;
+}
+
+async function callMeetingControlTool(
+  auth: McpAccessTokenInfo,
+  name: string,
+  args: unknown,
+) {
+  const restriction = auth.restriction;
+  if (name === "start_meeting") {
+    const input = startMeetingControlSchema.parse(args);
+    assertTokenVoiceChannelId(restriction, input.voiceChannelId);
+    return meetingControlToolResult(
+      await startMcpMeetingControl({
+        userId: auth.userId,
+        request: {
+          ...input,
+          serverId: resolveTokenGuildId(restriction, input.serverId),
+        },
+      }),
+    );
+  }
+  if (name === "stop_meeting") {
+    const input = stopMeetingControlSchema.parse(args);
+    return meetingControlToolResult(
+      await stopMcpMeetingControl({
+        userId: auth.userId,
+        request: {
+          ...input,
+          serverId: resolveTokenGuildId(restriction, input.serverId),
+        },
+      }),
+    );
+  }
+  if (name === "get_live_meeting_status") {
+    const input = liveMeetingControlSchema.parse(args);
+    return meetingControlToolResult(
+      await getMcpLiveMeetingStatus({
+        userId: auth.userId,
+        request: {
+          ...input,
+          serverId: resolveTokenGuildId(restriction, input.serverId),
+        },
+      }),
+    );
+  }
+  if (name === "get_live_meeting_transcript") {
+    const input = liveMeetingTranscriptControlSchema.parse(args);
+    assertTokenGuildId(restriction, input.serverId);
+    return meetingControlToolResult(
+      await getMcpLiveMeetingTranscript({
+        userId: auth.userId,
+        request: input,
+      }),
+    );
+  }
+  if (name === "get_meeting_control_request") {
+    const input = meetingControlRequestSchema.parse(args);
+    return meetingControlToolResult(
+      await getMcpMeetingControlRequest({
+        userId: auth.userId,
+        requestId: input.requestId,
+      }),
+    );
+  }
+  return undefined;
+}
+
+async function callTool(auth: McpAccessTokenInfo, name: string, args: unknown) {
   try {
-    if (name === "list_servers") {
-      listServersSchema.parse(args);
-      return toolResult({
-        servers: restrictTokenServers(
-          restriction,
-          await listMcpServersForUser(auth.userId),
-        ),
-      });
-    }
-    if (name === "list_meetings") {
-      const input = listMeetingsSchema.parse(args);
-      assertTokenGuildId(restriction, input.serverId);
-      return toolResult(
-        await listMcpMeetings({
-          userId: auth.userId,
-          guildId: input.serverId,
-          limit: input.limit,
-          channelId: input.channelId,
-          startDate: input.startDate,
-          endDate: input.endDate,
-          tags: input.tags,
-          includeArchived: input.includeArchived,
-          allowedChannelIds,
-        }),
-      );
-    }
-    if (name === "list_my_meetings") {
-      const input = listMyMeetingsSchema.parse(args);
-      return toolResult(
-        await listMcpMyMeetings({
-          userId: auth.userId,
-          mode: input.mode,
-          range: input.range,
-          limit: input.limit,
-          cursor: input.cursor,
-          startDate: input.startDate,
-          endDate: input.endDate,
-          timeZoneOffsetMinutes: input.timeZoneOffsetMinutes,
-          serverIds: resolveTokenServerIds(restriction, input.serverIds),
-          tags: input.tags,
-          archivedOnly: input.archivedOnly,
-          includeArchived: input.includeArchived,
-          allowedChannelIds,
-        }),
-      );
-    }
-    if (name === "get_meeting_summary") {
-      const input = meetingSummaryLookupSchema.parse(args);
-      assertTokenGuildId(restriction, input.serverId);
-      return toolResult(
-        await getMcpMeetingSummary({
-          userId: auth.userId,
-          guildId: input.serverId,
-          id: input.id,
-          allowedChannelIds,
-        }),
-      );
-    }
-    if (name === "get_meeting_transcript") {
-      const input = meetingTranscriptLookupSchema.parse(args);
-      assertTokenGuildId(restriction, input.serverId);
-      return toolResult(
-        await getMcpMeetingTranscript({
-          userId: auth.userId,
-          guildId: input.serverId,
-          id: input.id,
-          offset: input.offset,
-          maxChars: input.maxChars,
-          allowedChannelIds,
-        }),
-      );
-    }
-    if (name === "start_meeting") {
-      const input = startMeetingControlSchema.parse(args);
-      assertTokenVoiceChannelId(restriction, input.voiceChannelId);
-      return meetingControlToolResult(
-        await startMcpMeetingControl({
-          userId: auth.userId,
-          request: {
-            ...input,
-            serverId: resolveTokenGuildId(restriction, input.serverId),
-          },
-        }),
-      );
-    }
-    if (name === "stop_meeting") {
-      const input = stopMeetingControlSchema.parse(args);
-      return meetingControlToolResult(
-        await stopMcpMeetingControl({
-          userId: auth.userId,
-          request: {
-            ...input,
-            serverId: resolveTokenGuildId(restriction, input.serverId),
-          },
-        }),
-      );
-    }
-    if (name === "get_live_meeting_status") {
-      const input = liveMeetingControlSchema.parse(args);
-      return meetingControlToolResult(
-        await getMcpLiveMeetingStatus({
-          userId: auth.userId,
-          request: {
-            ...input,
-            serverId: resolveTokenGuildId(restriction, input.serverId),
-          },
-        }),
-      );
-    }
-    if (name === "get_live_meeting_transcript") {
-      const input = liveMeetingTranscriptControlSchema.parse(args);
-      assertTokenGuildId(restriction, input.serverId);
-      return meetingControlToolResult(
-        await getMcpLiveMeetingTranscript({
-          userId: auth.userId,
-          request: input,
-        }),
-      );
-    }
-    if (name === "get_meeting_control_request") {
-      const input = meetingControlRequestSchema.parse(args);
-      return meetingControlToolResult(
-        await getMcpMeetingControlRequest({
-          userId: auth.userId,
-          requestId: input.requestId,
-        }),
-      );
-    }
-    return toolError(`Unknown tool: ${name}`);
+    const result =
+      (await callMeetingTool(auth, name, args)) ??
+      (await callMeetingControlTool(auth, name, args));
+    return result ?? toolError(`Unknown tool: ${name}`);
   } catch (error) {
     if (error instanceof z.ZodError)
       return toolError(formatZodToolError(error));
