@@ -6,6 +6,27 @@ import type { McpScope } from "./mcpOAuth";
  */
 export const MCP_SERVICE_ACCOUNT_TOKEN_PREFIX = "cnsa_";
 
+/**
+ * Service accounts are read-only. Starting a meeting requires the caller's own
+ * Discord voice presence (`assertSameVoiceChannel` in `meetingControlBotService`),
+ * which a bot identity does not have, and the live and control tools resolve a
+ * meeting inside a bot worker that has no view of the token's channel bounds.
+ * Granting either would advertise something that cannot work and would let a
+ * channel-limited token reach meetings outside its allowlist.
+ */
+export const MCP_SERVICE_ACCOUNT_SCOPES = [
+  "meetings:read",
+  "transcripts:read",
+] as const satisfies readonly McpScope[];
+
+export type McpServiceAccountScope =
+  (typeof MCP_SERVICE_ACCOUNT_SCOPES)[number];
+
+export const isMcpServiceAccountScope = (
+  scope: McpScope,
+): scope is McpServiceAccountScope =>
+  MCP_SERVICE_ACCOUNT_SCOPES.some((allowed) => allowed === scope);
+
 export const MCP_SERVICE_ACCOUNT_NAME_MAX_LENGTH = 80;
 export const MCP_SERVICE_ACCOUNT_MAX_CHANNEL_IDS = 50;
 export const MCP_SERVICE_ACCOUNT_MAX_EXPIRY_DAYS = 365;

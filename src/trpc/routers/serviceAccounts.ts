@@ -6,11 +6,11 @@ import {
   McpServiceAccountError,
   revokeMcpServiceAccountToken,
 } from "../../services/mcpServiceAccountService";
-import { MCP_SCOPES } from "../../types/mcpOAuth";
 import {
   MCP_SERVICE_ACCOUNT_MAX_CHANNEL_IDS,
   MCP_SERVICE_ACCOUNT_MAX_EXPIRY_DAYS,
   MCP_SERVICE_ACCOUNT_NAME_MAX_LENGTH,
+  MCP_SERVICE_ACCOUNT_SCOPES,
 } from "../../types/mcpServiceAccount";
 import { manageGuildProcedure, router } from "../trpc";
 
@@ -21,7 +21,7 @@ const guildInput = z.object({ guildId: snowflake });
 const createInput = guildInput.extend({
   botUserId: snowflake,
   name: z.string().trim().min(1).max(MCP_SERVICE_ACCOUNT_NAME_MAX_LENGTH),
-  scopes: z.array(z.enum(MCP_SCOPES)).min(1),
+  scopes: z.array(z.enum(MCP_SERVICE_ACCOUNT_SCOPES)).min(1),
   channelIds: z
     .array(snowflake)
     .max(MCP_SERVICE_ACCOUNT_MAX_CHANNEL_IDS)

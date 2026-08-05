@@ -971,30 +971,32 @@ describe("MCP service account restrictions", () => {
     );
   });
 
-  it("requires a named voice channel when the token limits channels", async () => {
-    await expect(
-      callRestrictedTool(restrictedAuth, "start_meeting", {}),
-    ).resolves.toMatchObject({
-      result: {
-        isError: true,
-        content: [
-          {
-            type: "text",
-            text: "This token is limited to specific channels, so voiceChannelId is required.",
-          },
-        ],
-      },
-    });
+  it.each([
+    ["start_meeting", {}],
+    ["stop_meeting", {}],
+    ["get_live_meeting_status", {}],
+    ["get_live_meeting_transcript", { serverId: "guild-1" }],
+    ["get_meeting_control_request", { requestId: "request-1" }],
+  ])(
+    "refuses %s for a service account, whose bounds never reach the bot worker",
+    async (name, args) => {
+      await expect(
+        callRestrictedTool(restrictedAuth, name, args),
+      ).resolves.toMatchObject({
+        result: {
+          isError: true,
+          content: [
+            {
+              type: "text",
+              text: "Service account tokens are read-only. Live meeting and meeting control tools require an interactive Discord sign-in.",
+            },
+          ],
+        },
+      });
+    },
+  );
 
-    await expect(
-      callRestrictedTool(restrictedAuth, "start_meeting", {
-        voiceChannelId: "voice-9",
-      }),
-    ).resolves.toMatchObject({ result: { isError: true } });
-    expect(startMcpMeetingControl).not.toHaveBeenCalled();
-  });
-
-  it("fills in the token guild when a control tool omits serverId", async () => {
+  it("leaves control tools working for an interactive OAuth token", async () => {
     jest.mocked(stopMcpMeetingControl).mockResolvedValue({
       requestId: "request-1",
       queueStatus: "pending",
@@ -1003,7 +1005,11 @@ describe("MCP service account restrictions", () => {
       updatedAt: "2026-01-01T00:00:00.000Z",
     });
 
-    await callRestrictedTool(guildOnlyAuth, "stop_meeting", {});
+    await callRestrictedTool(
+      { ...restrictedAuth, restriction: undefined },
+      "stop_meeting",
+      { serverId: "guild-1" },
+    );
 
     expect(stopMcpMeetingControl).toHaveBeenCalledWith(
       expect.objectContaining({

@@ -241,11 +241,14 @@ const realRepository: McpOAuthRepository = {
     );
   },
   async deleteServiceAccountToken(guildId, tokenId) {
-    const item = await consumeItem<McpOAuthItem>(
-      serviceAccountGuildKey(guildId, tokenId),
-    );
+    const key = serviceAccountGuildKey(guildId, tokenId);
+    const item = await getItem<McpOAuthItem>(key);
     if (item?.recordType !== "service_account_token") return false;
+    // The secret goes first. If the second delete fails the token is already
+    // dead and still listed, so a retry works. The other order would leave a
+    // credential that still validates but no longer appears in the portal.
     await deleteItem(serviceAccountSecretKey(item.tokenHash));
+    await deleteItem(key);
     return true;
   },
 };

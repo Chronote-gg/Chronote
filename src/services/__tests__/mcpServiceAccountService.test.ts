@@ -124,6 +124,38 @@ describe("mcpServiceAccountService", () => {
     ).rejects.toMatchObject({ code: "unknown_channel" });
   });
 
+  it("stops honouring a token once its bot is granted Administrator", async () => {
+    const { token } = await createToken();
+    expect(await validateMcpServiceAccountToken(token)).toBeDefined();
+
+    hasGuildAdministratorMock.mockResolvedValue(true);
+
+    expect(await validateMcpServiceAccountToken(token)).toBeUndefined();
+  });
+
+  it("denies rather than allows when the Administrator check is rate limited", async () => {
+    const { token } = await createToken();
+    hasGuildAdministratorMock.mockResolvedValue(null);
+
+    expect(await validateMcpServiceAccountToken(token)).toBeUndefined();
+  });
+
+  it("drops write scopes from a stored record", async () => {
+    const { token } = await createToken();
+    const repository = getMcpOAuthRepository();
+    const record = await repository.getServiceAccountTokenByHash(
+      hashMcpToken(token),
+    );
+    if (!record) throw new Error("Expected a stored service account token.");
+    await repository.writeServiceAccountToken({
+      ...record,
+      scope: "meetings:read meetings:start meetings:stop",
+    });
+
+    const auth = await validateMcpServiceAccountToken(token);
+    expect(auth?.scopes).toEqual(["meetings:read"]);
+  });
+
   it("rejects an expired token without waiting for the TTL sweep", async () => {
     const { token, serviceAccount } = await createToken({ expiresInDays: 1 });
     const repository = getMcpOAuthRepository();

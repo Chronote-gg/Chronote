@@ -1,11 +1,13 @@
 import crypto from "node:crypto";
 import { getMcpOAuthRepository } from "../repositories/mcpOAuthRepository";
 import {
+  isMcpServiceAccountScope,
   MCP_SERVICE_ACCOUNT_TOKEN_PREFIX,
+  type McpServiceAccountScope,
   type McpServiceAccountSummary,
   type McpServiceAccountToken,
 } from "../types/mcpServiceAccount";
-import type { McpAccessTokenInfo, McpScope } from "../types/mcpOAuth";
+import type { McpAccessTokenInfo } from "../types/mcpOAuth";
 import {
   formatMcpScope,
   getMcpResourceUrl,
@@ -141,7 +143,7 @@ export async function createMcpServiceAccountToken(params: {
   guildId: string;
   botUserId: string;
   name: string;
-  scopes: McpScope[];
+  scopes: McpServiceAccountScope[];
   channelIds?: string[];
   expiresInDays?: number;
   createdByUserId: string;
@@ -206,11 +208,26 @@ export async function validateMcpServiceAccountToken(
   if (!record) return undefined;
   // DynamoDB TTL deletion is eventual, so an expired record can still be read.
   if (record.expiresAt && record.expiresAt <= epochSeconds()) return undefined;
+  // Checking this only at mint time would let a bot granted Administrator later
+  // silently widen an existing token to every meeting in the guild, because
+  // Administrator short-circuits the channel checks the whole model rests on.
+  // A rate limit denies rather than allows: the agent retries once Discord
+  // answers, whereas failing open would make the guard bypassable under load.
+  if (
+    (await hasGuildAdministrator({
+      guildId: record.guildId,
+      userId: record.botUserId,
+    })) !== false
+  ) {
+    return undefined;
+  }
   try {
     return {
       clientId: `service-account:${record.tokenId}`,
       userId: record.botUserId,
-      scopes: parseMcpScopes(record.scope),
+      // Filtered rather than trusted, so a record written before the read-only
+      // rule, or by a future path that forgets it, cannot carry a write scope.
+      scopes: parseMcpScopes(record.scope).filter(isMcpServiceAccountScope),
       resource: getMcpResourceUrl(),
       expiresAt: record.expiresAt ?? Number.MAX_SAFE_INTEGER,
       restriction: {

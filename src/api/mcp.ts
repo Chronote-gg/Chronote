@@ -452,10 +452,8 @@ const toolScopes = new Map<string, McpScope[]>([
 
 const TOKEN_SERVER_SCOPE_ERROR =
   "This token is scoped to a different Discord server.";
-const TOKEN_CHANNEL_SCOPE_ERROR =
-  "This token is scoped to a different set of channels.";
-const TOKEN_CHANNEL_REQUIRED_ERROR =
-  "This token is limited to specific channels, so voiceChannelId is required.";
+const TOKEN_CONTROL_UNAVAILABLE_ERROR =
+  "Service account tokens are read-only. Live meeting and meeting control tools require an interactive Discord sign-in.";
 
 /** A service account token asked for something outside its own bounds. */
 class McpTokenScopeError extends Error {}
@@ -467,14 +465,6 @@ const assertTokenGuildId = (
   if (restriction && serverId && serverId !== restriction.guildId) {
     throw new McpTokenScopeError(TOKEN_SERVER_SCOPE_ERROR);
   }
-};
-
-const resolveTokenGuildId = (
-  restriction: McpTokenRestriction | undefined,
-  serverId?: string,
-) => {
-  assertTokenGuildId(restriction, serverId);
-  return serverId ?? restriction?.guildId;
 };
 
 const resolveTokenServerIds = (
@@ -495,24 +485,6 @@ const restrictTokenServers = <Server extends { id: string }>(
   restriction
     ? servers.filter((server) => server.id === restriction.guildId)
     : servers;
-
-/**
- * `start_meeting` normally infers the voice channel from the caller's own
- * presence, which a bot identity does not have. A channel-limited token must
- * therefore name the channel so the allowlist has something to check.
- */
-const assertTokenVoiceChannelId = (
-  restriction: McpTokenRestriction | undefined,
-  voiceChannelId?: string,
-) => {
-  if (!restriction?.channelIds) return;
-  if (!voiceChannelId) {
-    throw new McpTokenScopeError(TOKEN_CHANNEL_REQUIRED_ERROR);
-  }
-  if (!restriction.channelIds.includes(voiceChannelId)) {
-    throw new McpTokenScopeError(TOKEN_CHANNEL_SCOPE_ERROR);
-  }
-};
 
 const isJsonRpcRequest = (value: unknown): value is JsonRpcRequest => {
   if (!value || typeof value !== "object") return false;
@@ -783,47 +755,37 @@ async function callMeetingControlTool(
   name: string,
   args: unknown,
 ) {
-  const restriction = auth.restriction;
+  // Every tool below resolves a meeting inside a bot worker that never sees the
+  // token's channel bounds, so a channel-limited token could reach a live
+  // meeting or stop one outside its allowlist by passing a meeting id. Scope
+  // checks do not cover this: live status and request polling need no write
+  // scope. Starting is worse than leaky, it cannot work at all, because
+  // `assertSameVoiceChannel` requires the caller's own Discord voice presence
+  // and a bot identity has none. Service accounts stay read-only until the
+  // token bounds reach the worker.
+  if (auth.restriction) {
+    throw new McpTokenScopeError(TOKEN_CONTROL_UNAVAILABLE_ERROR);
+  }
   if (name === "start_meeting") {
     const input = startMeetingControlSchema.parse(args);
-    assertTokenVoiceChannelId(restriction, input.voiceChannelId);
     return meetingControlToolResult(
-      await startMcpMeetingControl({
-        userId: auth.userId,
-        request: {
-          ...input,
-          serverId: resolveTokenGuildId(restriction, input.serverId),
-        },
-      }),
+      await startMcpMeetingControl({ userId: auth.userId, request: input }),
     );
   }
   if (name === "stop_meeting") {
     const input = stopMeetingControlSchema.parse(args);
     return meetingControlToolResult(
-      await stopMcpMeetingControl({
-        userId: auth.userId,
-        request: {
-          ...input,
-          serverId: resolveTokenGuildId(restriction, input.serverId),
-        },
-      }),
+      await stopMcpMeetingControl({ userId: auth.userId, request: input }),
     );
   }
   if (name === "get_live_meeting_status") {
     const input = liveMeetingControlSchema.parse(args);
     return meetingControlToolResult(
-      await getMcpLiveMeetingStatus({
-        userId: auth.userId,
-        request: {
-          ...input,
-          serverId: resolveTokenGuildId(restriction, input.serverId),
-        },
-      }),
+      await getMcpLiveMeetingStatus({ userId: auth.userId, request: input }),
     );
   }
   if (name === "get_live_meeting_transcript") {
     const input = liveMeetingTranscriptControlSchema.parse(args);
-    assertTokenGuildId(restriction, input.serverId);
     return meetingControlToolResult(
       await getMcpLiveMeetingTranscript({
         userId: auth.userId,

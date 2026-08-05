@@ -17,13 +17,21 @@ Binding the token to a bot rather than a person means:
 
 Chronote refuses to create a service account for a bot holding Administrator, because Administrator overrides every channel permission and there would be no boundary left to set.
 
+## Read Only
+
+A service account can read meetings. It cannot start one, stop one, or watch a live one.
+
+That follows from the identity rather than from policy. Starting a recording requires the caller to already be sitting in the target Discord voice channel, and a bot acting as a service account is never in voice. The live and control tools resolve a meeting inside Chronote's bot worker, which does not see a token's channel limits, so honoring them would let a channel-limited token reach a meeting outside its allowlist.
+
+Use an interactive Discord sign-in for live control.
+
 ## Creating One
 
 You need Manage Server permission in the target Discord server.
 
 1. Invite the agent's bot to your server if it is not already there.
 2. Give that bot a role that can view and connect to the voice channels whose meetings the agent should read, and read message history in the matching notes channels.
-3. In Chronote, create a service account for that server and choose:
+3. Create a service account for that server, choosing:
    - the bot's Discord user ID
    - a name you will recognize later
    - the scopes the agent needs
@@ -31,6 +39,8 @@ You need Manage Server permission in the target Discord server.
    - an optional expiry in days
 
 The token is shown once. Chronote stores only a hash of it, so a lost token has to be revoked and replaced.
+
+The portal screen for step 3 is not available yet. Until it ships, service accounts are created through Chronote's authenticated API.
 
 ## Scopes
 
@@ -40,8 +50,6 @@ Grant the narrowest set that does the job:
 | ------------------ | ---------------------------------- |
 | `meetings:read`    | Listing meetings and reading notes |
 | `transcripts:read` | Reading transcript text            |
-| `meetings:start`   | Starting a recording               |
-| `meetings:stop`    | Stopping a recording               |
 
 `meetings:read` on its own is a useful tier: the agent gets meeting notes and summaries but never the raw transcript.
 
@@ -50,8 +58,6 @@ Grant the narrowest set that does the job:
 The optional channel allowlist narrows a token further, and only ever narrows. A meeting has to pass the bot's Discord permissions **and** be in an allowed channel.
 
 Use it when you want a limit visible inside Chronote without restructuring Discord roles, or as a second layer in front of channels that hold sensitive material. It is not a substitute for Discord permissions, because it only constrains this one token.
-
-When a token has a channel allowlist, `start_meeting` must name `voiceChannelId`. There is no voice presence to infer a channel from, so an unnamed channel could not be checked against the list.
 
 ## Scope Of A Token
 
