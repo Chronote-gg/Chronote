@@ -242,6 +242,37 @@ export async function ensureManageGuildWithUserToken(
   }
 }
 
+/**
+ * Administrator (or guild ownership), which is strictly stronger than Manage
+ * Server. Manage Server does not imply access to any particular channel, so a
+ * manager who is denied a private channel must not be able to delegate reads of
+ * it. Administrator reaches every channel already, so anything it delegates is
+ * something the delegator could read directly.
+ */
+export async function ensureGuildAdministratorWithUserToken(
+  userAccessToken: string | undefined,
+  guildId: string,
+  options?: EnsureUserGuildOptions,
+): Promise<boolean | null> {
+  if (!userAccessToken) return false;
+  try {
+    const guilds = await getUserGuildsWithCache(userAccessToken, options);
+    const target = guilds.find((guild) => guild.id === guildId);
+    if (!target) return false;
+    if (target.owner) return true;
+    return (parsePermissions(target.permissions) & ADMIN) !== 0n;
+  } catch (err) {
+    if (isDiscordApiError(err) && err.status === 429) {
+      console.warn("ensureGuildAdministratorWithUserToken rate limited", {
+        guildId,
+      });
+      return null;
+    }
+    console.error("ensureGuildAdministratorWithUserToken error", err);
+    return false;
+  }
+}
+
 export async function ensureUserInGuild(
   userAccessToken: string | undefined,
   guildId: string,

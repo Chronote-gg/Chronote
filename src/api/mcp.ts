@@ -14,7 +14,7 @@ import {
   getMcpMeetingTranscript,
   listMcpMyMeetings,
   listMcpMeetings,
-  listMcpServersForUser,
+  listMcpServersForToken,
   MAX_MCP_TRANSCRIPT_MAX_CHARS,
   McpMeetingAccessError,
 } from "../services/mcpMeetingService";
@@ -478,14 +478,6 @@ const resolveTokenServerIds = (
   return [restriction.guildId];
 };
 
-const restrictTokenServers = <Server extends { id: string }>(
-  restriction: McpTokenRestriction | undefined,
-  servers: Server[],
-) =>
-  restriction
-    ? servers.filter((server) => server.id === restriction.guildId)
-    : servers;
-
 const isJsonRpcRequest = (value: unknown): value is JsonRpcRequest => {
   if (!value || typeof value !== "object") return false;
   const candidate = value as { jsonrpc?: unknown; method?: unknown };
@@ -674,14 +666,13 @@ async function callMeetingTool(
   args: unknown,
 ) {
   const restriction = auth.restriction;
-  const allowedChannelIds = restriction?.channelIds;
   if (name === "list_servers") {
     listServersSchema.parse(args);
     return toolResult({
-      servers: restrictTokenServers(
+      servers: await listMcpServersForToken({
+        userId: auth.userId,
         restriction,
-        await listMcpServersForUser(auth.userId),
-      ),
+      }),
     });
   }
   if (name === "list_meetings") {
@@ -697,7 +688,7 @@ async function callMeetingTool(
         endDate: input.endDate,
         tags: input.tags,
         includeArchived: input.includeArchived,
-        allowedChannelIds,
+        restriction,
       }),
     );
   }
@@ -717,7 +708,7 @@ async function callMeetingTool(
         tags: input.tags,
         archivedOnly: input.archivedOnly,
         includeArchived: input.includeArchived,
-        allowedChannelIds,
+        restriction,
       }),
     );
   }
@@ -729,7 +720,7 @@ async function callMeetingTool(
         userId: auth.userId,
         guildId: input.serverId,
         id: input.id,
-        allowedChannelIds,
+        restriction,
       }),
     );
   }
@@ -743,7 +734,7 @@ async function callMeetingTool(
         id: input.id,
         offset: input.offset,
         maxChars: input.maxChars,
-        allowedChannelIds,
+        restriction,
       }),
     );
   }

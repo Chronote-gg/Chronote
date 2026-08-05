@@ -6,7 +6,7 @@ import {
   getMcpMeetingTranscript,
   listMcpMeetings,
   listMcpMyMeetings,
-  listMcpServersForUser,
+  listMcpServersForToken,
 } from "../../services/mcpMeetingService";
 import {
   getMcpLiveMeetingStatus,
@@ -37,7 +37,7 @@ jest.mock("../../services/mcpMeetingService", () => ({
   getMcpMeetingTranscript: jest.fn(),
   listMcpMyMeetings: jest.fn(),
   listMcpMeetings: jest.fn(),
-  listMcpServersForUser: jest.fn(),
+  listMcpServersForToken: jest.fn(),
 }));
 
 jest.mock("../../services/mcpOAuthService", () => ({
@@ -448,7 +448,7 @@ describe("MCP JSON-RPC handler", () => {
 
   it("calls the list_servers tool with the authenticated user id", async () => {
     jest
-      .mocked(listMcpServersForUser)
+      .mocked(listMcpServersForToken)
       .mockResolvedValue([{ id: "guild-1", name: "Server 1", icon: null }]);
 
     await expect(
@@ -468,7 +468,10 @@ describe("MCP JSON-RPC handler", () => {
         isError: false,
       },
     });
-    expect(listMcpServersForUser).toHaveBeenCalledWith("user-1");
+    expect(listMcpServersForToken).toHaveBeenCalledWith({
+      userId: "user-1",
+      restriction: undefined,
+    });
   });
 
   it("rejects transcript access without transcripts:read", async () => {
@@ -884,11 +887,10 @@ describe("MCP service account restrictions", () => {
     jest.clearAllMocks();
   });
 
-  it("hides servers outside the token guild", async () => {
-    jest.mocked(listMcpServersForUser).mockResolvedValue([
-      { id: "guild-1", name: "Server A", icon: null },
-      { id: "guild-2", name: "Server B", icon: null },
-    ]);
+  it("resolves servers through the token restriction rather than a cross-guild scan", async () => {
+    jest
+      .mocked(listMcpServersForToken)
+      .mockResolvedValue([{ id: "guild-1", name: "Server A", icon: null }]);
 
     await expect(
       callRestrictedTool(guildOnlyAuth, "list_servers", {}),
@@ -896,6 +898,10 @@ describe("MCP service account restrictions", () => {
       result: {
         structuredContent: { servers: [{ id: "guild-1", name: "Server A" }] },
       },
+    });
+    expect(listMcpServersForToken).toHaveBeenCalledWith({
+      userId: "bot-1",
+      restriction: { guildId: "guild-1" },
     });
   });
 
@@ -964,10 +970,14 @@ describe("MCP service account restrictions", () => {
     });
 
     expect(listMcpMeetings).toHaveBeenCalledWith(
-      expect.objectContaining({ allowedChannelIds: ["voice-1"] }),
+      expect.objectContaining({
+        restriction: { guildId: "guild-1", channelIds: ["voice-1"] },
+      }),
     );
     expect(getMcpMeetingTranscript).toHaveBeenCalledWith(
-      expect.objectContaining({ allowedChannelIds: ["voice-1"] }),
+      expect.objectContaining({
+        restriction: { guildId: "guild-1", channelIds: ["voice-1"] },
+      }),
     );
   });
 

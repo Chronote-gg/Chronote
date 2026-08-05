@@ -7,6 +7,10 @@ import {
   revokeMcpServiceAccountToken,
 } from "../../services/mcpServiceAccountService";
 import {
+  ensureGuildAdministratorWithUserToken,
+  type GuildSessionCache,
+} from "../../services/guildAccessService";
+import {
   MCP_SERVICE_ACCOUNT_MAX_CHANNEL_IDS,
   MCP_SERVICE_ACCOUNT_MAX_EXPIRY_DAYS,
   MCP_SERVICE_ACCOUNT_NAME_MAX_LENGTH,
@@ -53,6 +57,39 @@ const toTrpcError = (error: unknown) => {
   });
 };
 
+/**
+ * Minting needs more than the Manage Server permission the other procedures
+ * take. Manage Server does not grant access to any particular channel, so a
+ * manager denied a private channel could otherwise bind a token to a bot that
+ * can see it and read those meetings as the bot. Administrator already reaches
+ * every channel, so it cannot delegate more than it holds.
+ */
+const assertGuildAdministrator = async (params: {
+  accessToken?: string;
+  guildId: string;
+  userId: string;
+  session?: GuildSessionCache;
+}) => {
+  const allowed = await ensureGuildAdministratorWithUserToken(
+    params.accessToken,
+    params.guildId,
+    { userId: params.userId, session: params.session },
+  );
+  if (allowed === null) {
+    throw new TRPCError({
+      code: "TOO_MANY_REQUESTS",
+      message: "Discord rate limited. Please retry.",
+    });
+  }
+  if (!allowed) {
+    throw new TRPCError({
+      code: "FORBIDDEN",
+      message:
+        "Creating a service account requires Administrator in this server.",
+    });
+  }
+};
+
 export const serviceAccountsRouter = router({
   list: manageGuildProcedure
     .input(guildInput)
@@ -63,6 +100,12 @@ export const serviceAccountsRouter = router({
   create: manageGuildProcedure
     .input(createInput)
     .mutation(async ({ ctx, input }) => {
+      await assertGuildAdministrator({
+        accessToken: ctx.user.accessToken,
+        guildId: input.guildId,
+        userId: ctx.user.id,
+        session: ctx.req.session,
+      });
       try {
         return await createMcpServiceAccountToken({
           guildId: input.guildId,

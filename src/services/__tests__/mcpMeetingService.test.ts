@@ -966,7 +966,7 @@ describe("mcpMeetingService service account channel allowlist", () => {
       listMcpMeetings({
         userId: "bot-1",
         guildId: "guild-1",
-        allowedChannelIds: ["channel-1"],
+        restriction: { guildId: "guild-1", channelIds: ["channel-1"] },
       }),
     ).resolves.toMatchObject({ meetings: [{ meetingId: "allowed" }] });
     expect(checkUserMeetingAccess).toHaveBeenCalledTimes(1);
@@ -985,7 +985,7 @@ describe("mcpMeetingService service account channel allowlist", () => {
         userId: "bot-1",
         guildId: "guild-1",
         id: "channel-2#2026-01-02T00:00:00.000Z",
-        allowedChannelIds: ["channel-1"],
+        restriction: { guildId: "guild-1", channelIds: ["channel-1"] },
       }),
     ).rejects.toMatchObject({ code: "forbidden" });
     expect(checkUserMeetingAccess).not.toHaveBeenCalled();
@@ -1004,10 +1004,42 @@ describe("mcpMeetingService service account channel allowlist", () => {
         userId: "bot-1",
         guildId: "guild-1",
         id: "channel-2#2026-01-02T00:00:00.000Z",
-        allowedChannelIds: ["channel-1"],
+        restriction: { guildId: "guild-1", channelIds: ["channel-1"] },
       }),
     ).rejects.toMatchObject({ code: "forbidden" });
     expect(fetchJsonFromS3).not.toHaveBeenCalled();
+  });
+
+  it("does not let attendee access outlive a permission change for a service account", async () => {
+    // Voice participants are snapshotted without filtering bots, so a bot that
+    // once sat in a channel would otherwise keep attendee access to it forever.
+    const meeting = createMeeting("bot-attended", {
+      channelId: "channel-1",
+      participants: [{ id: "bot-1", username: "agent" }],
+    });
+    jest.mocked(listRecentMeetingsForGuildService).mockResolvedValue([meeting]);
+
+    await listMcpMeetings({
+      userId: "bot-1",
+      guildId: "guild-1",
+      restriction: { guildId: "guild-1" },
+    });
+
+    expect(checkUserMeetingAccess).toHaveBeenCalledWith(
+      expect.objectContaining({ attendeeOverrideEnabled: false }),
+    );
+  });
+
+  it("keeps attendee access for an interactive token", async () => {
+    jest
+      .mocked(listRecentMeetingsForGuildService)
+      .mockResolvedValue([createMeeting("attended")]);
+
+    await listMcpMeetings({ userId: "user-1", guildId: "guild-1" });
+
+    expect(checkUserMeetingAccess).toHaveBeenCalledWith(
+      expect.objectContaining({ attendeeOverrideEnabled: true }),
+    );
   });
 
   it("leaves reads unfiltered when the token carries no allowlist", async () => {
