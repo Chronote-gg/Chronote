@@ -16,6 +16,7 @@ import {
   resetMcpOAuthMemoryRepository,
 } from "../../repositories/mcpOAuthRepository";
 import { hashMcpToken } from "../mcpOAuthService";
+import { isDiscordApiError } from "../discordService";
 
 jest.mock("../discordService", () => ({
   isDiscordApiError: jest.fn(() => false),
@@ -56,6 +57,9 @@ describe("mcpServiceAccountService", () => {
   beforeEach(() => {
     resetMcpOAuthMemoryRepository();
     jest.clearAllMocks();
+    // clearAllMocks leaves implementations in place, so this is pinned rather
+    // than inherited from whichever test ran last.
+    jest.mocked(isDiscordApiError).mockReturnValue(false);
     getGuildMemberCachedMock.mockResolvedValue(asBotMember(true));
     listGuildChannelsCachedMock.mockResolvedValue([
       { id: CHANNEL_ID, name: "meetings", type: 2 },
@@ -118,6 +122,25 @@ describe("mcpServiceAccountService", () => {
     expect(await validateMcpServiceAccountToken(token)).toMatchObject({
       userId: BOT_USER_ID,
     });
+  });
+
+  it("stops honouring a token once its bot leaves the guild", async () => {
+    const { token } = await createToken();
+    expect(await validateMcpServiceAccountToken(token)).toBeDefined();
+
+    getGuildMemberCachedMock.mockRejectedValue(new Error("404"));
+
+    expect(await validateMcpServiceAccountToken(token)).toBeUndefined();
+  });
+
+  it("keeps a token alive when Discord rate limits the membership check", async () => {
+    // A 429 is not evidence the bot left, so a Discord blip must not sign the
+    // agent out mid-run.
+    const { token } = await createToken();
+    jest.mocked(isDiscordApiError).mockReturnValue(true);
+    getGuildMemberCachedMock.mockRejectedValue({ status: 429 });
+
+    expect(await validateMcpServiceAccountToken(token)).toBeDefined();
   });
 
   it("still bounds an Administrator bot by the channel allowlist", async () => {

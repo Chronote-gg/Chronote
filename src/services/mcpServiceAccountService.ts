@@ -185,6 +185,25 @@ export async function revokeMcpServiceAccountToken(params: {
 export const isMcpServiceAccountToken = (token: string) =>
   token.startsWith(MCP_SERVICE_ACCOUNT_TOKEN_PREFIX);
 
+/**
+ * Guild membership is what a service account's access is built on, so removing
+ * the bot from the guild has to stop the token authenticating rather than
+ * leaving it alive until someone revokes it. Meeting reads check membership
+ * again downstream, but `listMcpServersForToken` skips that check on the
+ * strength of this one, so the check belongs here rather than per read path.
+ *
+ * A rate limit is not evidence of absence and leaves the token alone; anything
+ * else means Discord could not confirm the bot is a member.
+ */
+const isBotStillInGuild = async (guildId: string, botUserId: string) => {
+  try {
+    await getGuildMemberCached(guildId, botUserId);
+    return true;
+  } catch (error) {
+    return isDiscordApiError(error) && error.status === 429;
+  }
+};
+
 export async function validateMcpServiceAccountToken(
   token: string,
 ): Promise<McpAccessTokenInfo | undefined> {
@@ -194,6 +213,9 @@ export async function validateMcpServiceAccountToken(
   if (!record) return undefined;
   // DynamoDB TTL deletion is eventual, so an expired record can still be read.
   if (record.expiresAt && record.expiresAt <= epochSeconds()) return undefined;
+  if (!(await isBotStillInGuild(record.guildId, record.botUserId))) {
+    return undefined;
+  }
   try {
     return {
       clientId: `service-account:${record.tokenId}`,
