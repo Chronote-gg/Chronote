@@ -1,5 +1,6 @@
 import { listRecentMeetingsForGuildService } from "./meetingHistoryService";
 import { config } from "./configService";
+import { captureEvent } from "./analyticsService";
 import { listDictionaryEntriesService } from "./dictionaryService";
 import { normalizeTags, parseTags } from "../utils/tags";
 import { buildUpgradeTextOnly } from "../utils/upgradePrompt";
@@ -236,6 +237,17 @@ export async function answerQuestionService(
   const tags = req.tags
     ? normalizeTags(parseTags(req.tags.join(",")))
     : undefined;
+
+  // The question text is user content, so only its shape and scope are sent.
+  captureEvent("ask_question_asked", {
+    userId: req.viewerUserId,
+    guildId,
+    properties: {
+      scope,
+      has_tag_filter: Boolean(tags?.length),
+      question_length: question.length,
+    },
+  });
 
   const maxMeetings = req.maxMeetings ?? config.ask.maxMeetings;
   let attendeeOverrideEnabled = true;

@@ -49,6 +49,7 @@ import {
   type MeetingStartReason,
 } from "./types/meetingLifecycle";
 import { meetingsStarted } from "./metrics";
+import { captureEvent } from "./services/analyticsService";
 import type { ConfigTier } from "./config/types";
 import type { ChatTtsSpeakerPrefixMode } from "./utils/ttsText";
 import { DEFAULT_CHAT_TTS_SPEAKER_PREFIX_MODE as DEFAULT_PREFIX_MODE } from "./utils/ttsText";
@@ -524,6 +525,15 @@ export async function initializeMeeting(
   addMeeting(meeting);
   if (meeting.sessionMode === "meeting") {
     meetingsStarted.inc();
+    captureEvent("meeting_started", {
+      userId: meeting.creator.id,
+      guildId: meeting.guildId,
+      properties: {
+        trigger: meeting.startReason,
+        is_auto_recording: meeting.isAutoRecording,
+        channel_id: meeting.voiceChannel.id,
+      },
+    });
   }
 
   try {

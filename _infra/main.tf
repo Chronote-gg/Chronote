@@ -201,6 +201,15 @@ variable "DOCS_DOMAIN" {
   default     = ""
 }
 
+# Not a secret: this is the public ingestion token, already shipped in the
+# frontend bundle. Blank disables server-side capture, which is what a
+# non-production workspace wants so its traffic stays out of the real project.
+variable "POSTHOG_KEY" {
+  description = "PostHog project ingestion key for server-side analytics; leave blank to disable capture"
+  type        = string
+  default     = ""
+}
+
 variable "DOCS_CERT_ARN" {
   description = "ACM cert ARN in us-east-1 for docs CloudFront (required if DOCS_DOMAIN set)"
   type        = string
@@ -1781,6 +1790,10 @@ resource "aws_ecs_task_definition" "app_task" {
         {
           name  = "SUPER_ADMIN_USER_IDS"
           value = var.SUPER_ADMIN_USER_IDS
+        },
+        {
+          name  = "POSTHOG_KEY"
+          value = var.POSTHOG_KEY
         },
       ]
       secrets = [

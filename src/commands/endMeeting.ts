@@ -40,6 +40,7 @@ import {
 import { evaluateAutoRecordCancellation } from "../services/autoRecordCancellationService";
 import { autoRecordJoinSuppressionService } from "../services/autoRecordJoinSuppressionService";
 import { meetingsCancelled } from "../metrics";
+import { captureEvent } from "../services/analyticsService";
 import { describeAutoRecordRule } from "../utils/meetingLifecycle";
 import {
   deleteMeeting,
@@ -91,6 +92,39 @@ async function runMeetingEndStep<T>(
 
 function shouldReleaseLeaseDuringErrorCleanup(meeting: MeetingData): boolean {
   return !meeting.finishing && !meeting.finished;
+}
+
+/**
+ * Counts and flags only. Notes, transcript, and chat content are user data and
+ * must not leave the system as event properties.
+ *
+ * Reading the meeting to build those properties happens inside the guard on
+ * purpose. This runs on the successful-completion path, so an unexpected shape
+ * here would otherwise throw into the caller's error cleanup and tear down a
+ * meeting that had already finished, for the sake of an analytics event.
+ */
+function captureMeetingCompleted(meeting: MeetingData): void {
+  try {
+    const endTime = meeting.endTime ?? new Date();
+    captureEvent("meeting_completed", {
+      userId: meeting.creator.id,
+      guildId: meeting.guildId,
+      properties: {
+        duration_ms: endTime.getTime() - meeting.startTime.getTime(),
+        attendee_count: meeting.attendance.size,
+        end_reason: meeting.endReason ?? MEETING_END_REASONS.UNKNOWN,
+        trigger: meeting.startReason,
+        transcribed: meeting.transcribeMeeting,
+        notes_generated: meeting.generateNotes,
+        cancelled: Boolean(meeting.cancelled),
+      },
+    });
+  } catch (error) {
+    console.warn("Failed to capture meeting_completed", {
+      meetingId: meeting.meetingId,
+      error,
+    });
+  }
 }
 
 function shouldFinalizeDismissedAutoRecording(meeting: MeetingData): boolean {
@@ -495,6 +529,7 @@ async function runEndMeetingFlow(options: EndMeetingFlowOptions) {
 
     meeting.setFinished();
     meeting.finished = true;
+    captureMeetingCompleted(meeting);
     deleteMeeting(meeting.guildId);
   } finally {
     try {

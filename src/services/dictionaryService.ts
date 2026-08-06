@@ -7,6 +7,7 @@ import {
   normalizeDictionaryDefinition,
   normalizeDictionaryTerm,
 } from "../utils/dictionary";
+import { captureEvent } from "./analyticsService";
 
 const sortEntries = (entries: DictionaryEntry[]) =>
   [...entries].sort((a, b) => {
@@ -61,6 +62,16 @@ export async function upsertDictionaryEntryService(params: {
   };
 
   await repository.write(entry);
+  // The term itself is user content, so only its shape is reported.
+  captureEvent("dictionary_updated", {
+    userId: params.userId,
+    guildId: params.guildId,
+    properties: {
+      action: existing ? "updated" : "added",
+      has_definition: Boolean(definition),
+      term_length: term.length,
+    },
+  });
   return entry;
 }
 

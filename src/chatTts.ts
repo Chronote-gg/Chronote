@@ -9,6 +9,7 @@ import {
   chatTtsMonthlyLimitBlocked,
 } from "./metrics";
 import { resolveTtsVoice } from "./utils/ttsVoices";
+import { captureEvent } from "./services/analyticsService";
 import { formatParticipantLabel } from "./utils/participants";
 import {
   getGuildLimits,
@@ -186,6 +187,12 @@ export async function maybeSpeakChatMessage(
   }
 
   chatTtsEnqueued.inc();
+  captureEvent("chat_tts_message_spoken", {
+    userId: message.author.id,
+    guildId: meeting.guildId,
+    // Message text is user content and stays out of the event.
+    properties: { tier: monthlyLimit.compedTier ?? undefined },
+  });
   entry.source = "chat_tts";
   await sendFinalMonthlyLimitNoticeIfNeeded(
     meeting,

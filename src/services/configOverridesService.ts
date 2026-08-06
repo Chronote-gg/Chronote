@@ -2,6 +2,7 @@ import { getConfigOverridesRepository } from "../repositories/configOverridesRep
 import type { ConfigOverrideRecord } from "../types/db";
 import type { ConfigScope } from "../config/types";
 import { nowIso } from "../utils/time";
+import { captureEvent } from "./analyticsService";
 
 export type ConfigOverrideScopeContext = {
   scope: ConfigScope;
@@ -86,6 +87,17 @@ export async function setConfigOverrideForScope(
     updatedBy: userId,
   };
   await getConfigOverridesRepository().write(record);
+
+  // Every settings change routes through here: the settings UI, channel
+  // overrides, and autorecord all write overrides, so this one call site
+  // covers all three. The key and scope describe what was configured; the
+  // value is deliberately omitted because context prompts and note templates
+  // are user content.
+  captureEvent("setting_changed", {
+    userId,
+    guildId: context.guildId,
+    properties: { key: configKey, scope: context.scope },
+  });
 }
 
 export async function clearConfigOverrideForScope(
