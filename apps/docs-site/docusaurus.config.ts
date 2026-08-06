@@ -14,7 +14,7 @@ const useAlgolia = hasAlgoliaConfig && !forceLocalSearch;
 const config: Config = {
   title: "Chronote Docs",
   tagline: "Product documentation for Chronote",
-  favicon: "img/chronote-mark.svg",
+  favicon: "img/favicon.ico",
 
   url: siteUrl,
   baseUrl: "/",
@@ -71,12 +71,12 @@ const config: Config = {
     : [],
 
   themeConfig: {
-    image: "img/chronote-mark.svg",
+    image: "img/chronote-social-card.png",
     navbar: {
       title: "Chronote Docs",
       logo: {
         alt: "Chronote",
-        src: "img/chronote-mark.svg",
+        src: "img/chronote-mark.png",
       },
       items: [
         {

@@ -1,3 +1,12 @@
 # https://www.robotstxt.org/robotstxt.html
 User-agent: *
-Disallow:
+Allow: /
+
+# Share links are unlisted rather than secret, and the portal is sign-in only.
+# Neither belongs in an index.
+Disallow: /share/
+Disallow: /portal/
+Disallow: /admin/
+Disallow: /live/
+
+Sitemap: https://chronote.gg/sitemap.xml
