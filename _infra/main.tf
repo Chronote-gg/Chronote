@@ -1148,6 +1148,14 @@ resource "aws_cloudfront_distribution" "frontend" {
   aliases = var.FRONTEND_DOMAIN != "" ? [var.FRONTEND_DOMAIN] : []
 }
 
+resource "aws_cloudfront_function" "docs_index_rewrite" {
+  name    = "${local.name_prefix}-docs-index-rewrite"
+  runtime = "cloudfront-js-2.0"
+  comment = "Appends index.html to directory-style docs URLs so they return 200 instead of 404"
+  publish = true
+  code    = file("${path.module}/functions/docs-index-rewrite.js")
+}
+
 resource "aws_cloudfront_distribution" "docs" {
   #checkov:skip=CKV_AWS_86 reason: Access logging not enabled yet; will add if/when audit requirements demand it.
   #checkov:skip=CKV_AWS_310 reason: Origin failover not configured; single-origin setup is acceptable for now.
@@ -1171,6 +1179,11 @@ resource "aws_cloudfront_distribution" "docs" {
     allowed_methods        = ["GET", "HEAD"]
     cached_methods         = ["GET", "HEAD"]
 
+    function_association {
+      event_type   = "viewer-request"
+      function_arn = aws_cloudfront_function.docs_index_rewrite.arn
+    }
+
     forwarded_values {
       query_string = false
       cookies {
@@ -1184,6 +1197,8 @@ resource "aws_cloudfront_distribution" "docs" {
     max_ttl     = 3600
   }
 
+  # /assets/* is intentionally left without the rewrite: those requests always
+  # carry a file extension, so the function would be a no-op on the hottest path.
   ordered_cache_behavior {
     path_pattern           = "/assets/*"
     target_origin_id       = "docs-s3"
