@@ -18,7 +18,6 @@ import {
   getGuildMemberCached,
   listGuildChannelsCached,
 } from "./discordCacheService";
-import { hasGuildAdministrator } from "./discordPermissionsService";
 import { isDiscordApiError } from "./discordService";
 
 const SERVICE_ACCOUNT_TOKEN_BYTES = 32;
@@ -27,7 +26,6 @@ const SECONDS_PER_DAY = 24 * 60 * 60;
 export type McpServiceAccountErrorCode =
   | "bot_not_in_guild"
   | "not_a_bot"
-  | "administrator_bot"
   | "unknown_channel"
   | "rate_limited"
   | "not_found";
@@ -87,24 +85,12 @@ const assertBotIdentity = async (guildId: string, botUserId: string) => {
       "not_a_bot",
     );
   }
-  const administrator = await hasGuildAdministrator({
-    guildId,
-    userId: botUserId,
-  });
-  if (administrator === null) {
-    throw new McpServiceAccountError(
-      "Discord rate limited. Please retry.",
-      "rate_limited",
-    );
-  }
-  // Administrator bypasses every channel overwrite, so channel permissions
-  // would stop being a boundary and the token would reach every meeting.
-  if (administrator) {
-    throw new McpServiceAccountError(
-      "That bot has Administrator in this server, so channel permissions cannot limit it. Remove Administrator first.",
-      "administrator_bot",
-    );
-  }
+  // A bot holding Administrator is deliberately allowed. Administrator does
+  // bypass every channel overwrite, so such a token reaches every meeting in
+  // the guild, but minting already requires Administrator and an administrator
+  // can read all of those meetings in the portal anyway. Refusing it prevented
+  // no escalation and only forced people to restructure Discord for Chronote's
+  // benefit. Use the channel allowlist when a bound token is wanted.
 };
 
 const assertChannelsInGuild = async (
@@ -208,19 +194,6 @@ export async function validateMcpServiceAccountToken(
   if (!record) return undefined;
   // DynamoDB TTL deletion is eventual, so an expired record can still be read.
   if (record.expiresAt && record.expiresAt <= epochSeconds()) return undefined;
-  // Checking this only at mint time would let a bot granted Administrator later
-  // silently widen an existing token to every meeting in the guild, because
-  // Administrator short-circuits the channel checks the whole model rests on.
-  // A rate limit denies rather than allows: the agent retries once Discord
-  // answers, whereas failing open would make the guard bypassable under load.
-  if (
-    (await hasGuildAdministrator({
-      guildId: record.guildId,
-      userId: record.botUserId,
-    })) !== false
-  ) {
-    return undefined;
-  }
   try {
     return {
       clientId: `service-account:${record.tokenId}`,

@@ -15,7 +15,7 @@ Binding the token to a bot rather than a person means:
 - **Revoking is one act.** Remove the role in Discord and the agent loses access within about a minute, the same as removing a person's access.
 - **Nobody's personal reach leaks.** A token bound to a human would inherit their personal meetings and their access in every other server. A server manager cannot grant that, so Chronote does not allow it.
 
-Chronote refuses to create a service account for a bot holding Administrator, because Administrator overrides every channel permission and there would be no boundary left to set.
+One caveat: a bot with Administrator is not limited by channel permissions, because Administrator overrides them. Such a service account can read every meeting in the server. That is allowed, since creating one already requires Administrator and anyone with it can read those meetings in the portal anyway, but if you want a bound token either give the bot an ordinary role or use the channel allowlist below.
 
 ## Read Only
 
