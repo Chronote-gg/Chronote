@@ -82,9 +82,12 @@ We use PostHog to understand how people use the website and the web portal, so w
 
 - **Page views and clicks.** Which pages you visit and which elements you interact with, including the text and labels of what you clicked.
 - **Session replay.** A reconstruction of your session, so we can watch how a page was actually used. In the web portal this can include meeting content shown on screen, such as notes and transcript text.
-- **Technical metadata.** PostHog's SDK attaches an anonymous identifier to your browser and records the usual request details alongside each event: browser and device type, the page you came from, the page you are on, and an approximate location derived from your IP address.
+- **What you do in Discord.** Actions the bot takes on your behalf, such as starting and ending a meeting, changing a server setting, or asking a question. These record that the action happened and its shape, for example how long a meeting ran or how many people attended. They never carry the content: not notes, not transcripts, not the text of your questions, dictionary terms, or context prompts.
+- **Technical metadata.** Your browser and device type, the page you came from, and the page you are on.
 
-Two things are deliberately excluded: share link ids are stripped before anything is sent, because those act as passwords for a shared meeting, and we do not send analytics at all if your browser sends a Do Not Track signal.
+While you are signed in, these events are tied to your Discord account rather than to an anonymous browser identifier, so that your activity on the website and in Discord is understood as one person rather than two strangers. Signing out unlinks the browser from your account again.
+
+Three things are deliberately excluded: share link ids are stripped before anything is sent, because those act as passwords for a shared meeting; your IP address is discarded on arrival, so we do not derive a location from it; and we do not send analytics at all if your browser sends a Do Not Track signal.
 
 **Turning it off.** Enable Do Not Track in your browser and Chronote sends nothing to PostHog. If you would rather we exclude your account entirely, email us and we will do it.
 
