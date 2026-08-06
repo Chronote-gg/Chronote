@@ -1,4 +1,8 @@
 import type { Config } from "@docusaurus/types";
+import { writeFile } from "node:fs/promises";
+import path from "node:path";
+
+type PostBuildArgs = { outDir: string; siteConfig: { url: string } };
 
 const siteUrl = process.env.DOCS_SITE_URL?.trim() || "https://docs.chronote.gg";
 const algoliaAppId = process.env.DOCS_ALGOLIA_APP_ID ?? "";
@@ -10,6 +14,24 @@ const hasAlgoliaConfig =
 const forceLocalSearch = process.env.DOCS_SEARCH_PROVIDER === "local";
 const useLocalSearch = forceLocalSearch || !hasAlgoliaConfig;
 const useAlgolia = hasAlgoliaConfig && !forceLocalSearch;
+
+const robotsTxtPlugin = () => ({
+  name: "chronote-robots-txt",
+  // Written at build time rather than kept in static/, so sandbox and staging
+  // advertise their own sitemap instead of the production one. Docusaurus
+  // copies static/ verbatim and would hardcode whichever host was committed.
+  async postBuild({ outDir, siteConfig }: PostBuildArgs) {
+    const body = [
+      "# https://www.robotstxt.org/robotstxt.html",
+      "User-agent: *",
+      "Allow: /",
+      "",
+      `Sitemap: ${new URL("sitemap.xml", siteConfig.url).toString()}`,
+      "",
+    ].join("\n");
+    await writeFile(path.join(outDir, "robots.txt"), body, "utf8");
+  },
+});
 
 const config: Config = {
   title: "Chronote Docs",
@@ -67,8 +89,9 @@ const config: Config = {
             hashed: true,
           },
         ],
+        robotsTxtPlugin,
       ]
-    : [],
+    : [robotsTxtPlugin],
 
   themeConfig: {
     image: "img/chronote-social-card.png",

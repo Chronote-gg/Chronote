@@ -2,11 +2,15 @@
 User-agent: *
 Allow: /
 
-# Share links are unlisted rather than secret, and the portal is sign-in only.
-# Neither belongs in an index.
-Disallow: /share/
-Disallow: /portal/
-Disallow: /admin/
-Disallow: /live/
+# Sign-in only, nothing to index. No trailing slashes: robots.txt matches on
+# prefix, so "/portal/" would miss the bare "/portal" route.
+Disallow: /portal
+Disallow: /admin
+Disallow: /live
+
+# /share is deliberately NOT disallowed. Share URLs are bearer credentials and
+# the pages install noindex,nofollow themselves; blocking the crawl would stop
+# a crawler ever seeing that directive, while a URL discovered via a backlink
+# could still be listed. Crawlable-but-noindex is what actually removes them.
 
 Sitemap: https://chronote.gg/sitemap.xml
