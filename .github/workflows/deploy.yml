@@ -624,6 +624,7 @@ jobs:
             echo "FRONTEND_BUCKET not set in environment variables"
             exit 1
           fi
+          # Keep this block aligned with deploy-staging.yml.
           # Long cache for hashed assets; shorter for anything that is rewritten
           # in place under a stable name.
           aws s3 sync build/frontend s3://$FRONTEND_BUCKET --delete --exclude "index.html" --cache-control "public,max-age=31536000,immutable"

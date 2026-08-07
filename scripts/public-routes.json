@@ -26,6 +26,15 @@
       "priority": "0.6",
       "title": "Upgrade Chronote",
       "description": "Unlock longer recordings, unlimited retention, and priority features for your team."
+    },
+    {
+      "path": "/feedback",
+      "key": "feedback",
+      "emitHtml": true,
+      "changefreq": "monthly",
+      "priority": "0.4",
+      "title": "Send Chronote feedback",
+      "description": "Bug reports, feature requests, or general feedback. We read every submission."
     }
   ]
 }
