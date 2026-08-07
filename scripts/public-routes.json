@@ -1,0 +1,40 @@
+{
+  "origin": "https://chronote.gg",
+  "comment": "Public, indexable routes. Single source for the generated sitemap and for the per-route HTML that gives each page its own canonical URL and link preview. Anything behind sign-in does not belong here. `key` is the extensionless S3 key deploy.yml uploads the HTML to, so it has to match the path. Consumed by scripts/build-route-html.mjs.",
+  "routes": [
+    {
+      "path": "/",
+      "key": "index",
+      "emitHtml": false,
+      "changefreq": "weekly",
+      "priority": "1.0"
+    },
+    {
+      "path": "/join",
+      "key": "join",
+      "emitHtml": true,
+      "changefreq": "monthly",
+      "priority": "0.8",
+      "title": "Getting started with Chronote",
+      "description": "Join a voice channel, run /startmeeting, and Chronote posts the notes back to the channel when the meeting ends."
+    },
+    {
+      "path": "/upgrade",
+      "key": "upgrade",
+      "emitHtml": true,
+      "changefreq": "monthly",
+      "priority": "0.6",
+      "title": "Upgrade Chronote",
+      "description": "Unlock longer recordings, unlimited retention, and priority features for your team."
+    },
+    {
+      "path": "/feedback",
+      "key": "feedback",
+      "emitHtml": true,
+      "changefreq": "monthly",
+      "priority": "0.4",
+      "title": "Send Chronote feedback",
+      "description": "Bug reports, feature requests, or general feedback. We read every submission."
+    }
+  ]
+}
