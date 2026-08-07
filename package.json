@@ -10,7 +10,7 @@
     "start:mock:inner": "nodemon --exec \"ts-node src/index.ts --mock\"",
     "start:mock:once": "ts-node src/index.ts --mock",
     "build": "tsc",
-    "build:web": "vite build",
+    "build:web": "vite build && node scripts/build-route-html.mjs",
     "build:all": "yarn build && yarn build:web",
     "serve": "node dist/index.js",
     "serve:bot": "node dist/apps/bot/main.js",

@@ -624,12 +624,23 @@ jobs:
             echo "FRONTEND_BUCKET not set in environment variables"
             exit 1
           fi
-          # Long cache for hashed assets; shorter for HTML
+          # Long cache for hashed assets; shorter for anything that is rewritten
+          # in place under a stable name.
           aws s3 sync build/frontend s3://$FRONTEND_BUCKET --delete --exclude "index.html" --cache-control "public,max-age=31536000,immutable"
           aws s3 cp build/frontend/index.html s3://$FRONTEND_BUCKET/index.html --cache-control "public,max-age=600"
-          if [ -f build/frontend/manifest.json ]; then
-            aws s3 cp build/frontend/manifest.json s3://$FRONTEND_BUCKET/manifest.json --cache-control "public,max-age=600"
-          fi
+          for stable in manifest.json sitemap.xml robots.txt; do
+            if [ -f "build/frontend/$stable" ]; then
+              aws s3 cp "build/frontend/$stable" "s3://$FRONTEND_BUCKET/$stable" --cache-control "public,max-age=600"
+            fi
+          done
+          # Extensionless keys, so CloudFront serves /join from its own document
+          # rather than falling back to index.html and its homepage metadata.
+          # Written after the sync because --delete would otherwise remove them.
+          for route in build/frontend-routes/*.html; do
+            [ -f "$route" ] || continue
+            key="$(basename "$route" .html)"
+            aws s3 cp "$route" "s3://$FRONTEND_BUCKET/$key" --content-type "text/html; charset=utf-8" --cache-control "public,max-age=600"
+          done
 
       - name: Invalidate CloudFront
         env:
