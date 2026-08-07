@@ -38,12 +38,21 @@ const indexHtml = readFileSync(
 
 let buildRoot: string;
 
-const run = (html: string) => {
+const run = (html: string, configOverride?: object) => {
   mkdirSync(path.join(buildRoot, "frontend"), { recursive: true });
   writeFileSync(path.join(buildRoot, "frontend", "index.html"), html, "utf8");
+  const env: NodeJS.ProcessEnv = {
+    ...process.env,
+    ROUTE_HTML_BUILD_ROOT: buildRoot,
+  };
+  if (configOverride) {
+    const configPath = path.join(buildRoot, "routes.json");
+    writeFileSync(configPath, JSON.stringify(configOverride), "utf8");
+    env.ROUTE_HTML_CONFIG = configPath;
+  }
   return spawnSync(process.execPath, [scriptPath], {
     cwd: repoRoot,
-    env: { ...process.env, ROUTE_HTML_BUILD_ROOT: buildRoot },
+    env,
     encoding: "utf8",
   });
 };
@@ -94,6 +103,37 @@ describe("build-route-html", () => {
     expect(locs).toEqual(
       config.routes.map((route) => `${config.origin}${route.path}`),
     );
+  });
+
+  it("leaves the shared share card in place unless a route overrides it", () => {
+    run(indexHtml);
+
+    expect(readRoute("join")).toContain(
+      `content="${config.origin}/og-image.png"`,
+    );
+  });
+
+  it("gives a route its own share card when one is configured", () => {
+    const result = run(indexHtml, {
+      origin: config.origin,
+      routes: [
+        {
+          path: "/upgrade",
+          key: "upgrade",
+          emitHtml: true,
+          changefreq: "monthly",
+          priority: "0.6",
+          title: "Upgrade",
+          description: "Plans.",
+          ogImage: "/og-upgrade.png",
+        },
+      ],
+    });
+
+    expect(result.status).toBe(0);
+    const html = readRoute("upgrade");
+    expect(html).toContain(`content="${config.origin}/og-upgrade.png"`);
+    expect(html).not.toContain("/og-image.png");
   });
 
   // Silently leaving the homepage's canonical URL in place is the bug this

@@ -630,40 +630,11 @@ jobs:
       - name: Build frontend (Vite)
         run: yarn build:web
 
-      - name: Sync frontend to S3
-        env:
-          FRONTEND_BUCKET: ${{ vars.FRONTEND_BUCKET }}
-        run: |
-          if [ -z "$FRONTEND_BUCKET" ]; then
-            echo "FRONTEND_BUCKET not set in environment variables"
-            exit 1
-          fi
-          # Keep this block aligned with deploy.yml.
-          aws s3 sync build/frontend s3://$FRONTEND_BUCKET --delete --exclude "index.html" --cache-control "public,max-age=31536000,immutable"
-          aws s3 cp build/frontend/index.html s3://$FRONTEND_BUCKET/index.html --cache-control "public,max-age=600"
-          for stable in manifest.json sitemap.xml robots.txt; do
-            if [ -f "build/frontend/$stable" ]; then
-              aws s3 cp "build/frontend/$stable" "s3://$FRONTEND_BUCKET/$stable" --cache-control "public,max-age=600"
-            fi
-          done
-          # Extensionless keys, so CloudFront serves /join from its own document
-          # rather than falling back to index.html and its homepage metadata.
-          # Written after the sync because --delete would otherwise remove them.
-          for route in build/frontend-routes/*.html; do
-            [ -f "$route" ] || continue
-            key="$(basename "$route" .html)"
-            aws s3 cp "$route" "s3://$FRONTEND_BUCKET/$key" --content-type "text/html; charset=utf-8" --cache-control "public,max-age=600"
-          done
-
-      - name: Invalidate CloudFront
-        env:
-          FRONTEND_DISTRIBUTION_ID: ${{ vars.FRONTEND_DISTRIBUTION_ID }}
-        run: |
-          if [ -z "$FRONTEND_DISTRIBUTION_ID" ]; then
-            echo "FRONTEND_DISTRIBUTION_ID not set in environment variables"
-            exit 1
-          fi
-          aws cloudfront create-invalidation --distribution-id "$FRONTEND_DISTRIBUTION_ID" --paths "/*"
+      - name: Sync frontend to S3 and invalidate CloudFront
+        uses: ./.github/actions/sync-frontend
+        with:
+          bucket: ${{ vars.FRONTEND_BUCKET }}
+          distribution-id: ${{ vars.FRONTEND_DISTRIBUTION_ID }}
 
   deploy-docs:
     name: Deploy Docs (Sandbox)

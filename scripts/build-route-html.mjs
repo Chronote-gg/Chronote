@@ -28,7 +28,11 @@ const buildDir = path.join(buildRoot, "frontend");
 const routesOutDir = path.join(buildRoot, "frontend-routes");
 
 const config = JSON.parse(
-  fs.readFileSync(path.join(repoRoot, "scripts", "public-routes.json"), "utf8"),
+  fs.readFileSync(
+    process.env.ROUTE_HTML_CONFIG ||
+      path.join(repoRoot, "scripts", "public-routes.json"),
+    "utf8",
+  ),
 );
 
 const escapeHtml = (value) =>
@@ -66,6 +70,17 @@ const buildRouteHtml = (indexHtml, route) => {
     ['property="og:description"', "content", route.description],
     ['name="twitter:description"', "content", route.description],
   ];
+  // Optional. A route only needs its own share card when the image would carry
+  // route-specific information; otherwise the shared card from index.html is
+  // the better answer, because it keeps the brand mark consistent across every
+  // link and leaves one asset to maintain instead of one per route.
+  if (route.ogImage) {
+    const image = `${config.origin}${route.ogImage}`;
+    edits.push(
+      ['property="og:image"', "content", image],
+      ['name="twitter:image"', "content", image],
+    );
+  }
   const html = edits.reduce(
     (current, [matcher, attribute, value]) =>
       setTagValue(current, matcher, attribute, value),
