@@ -88,22 +88,33 @@ export async function setConfigOverrideForScope(
   };
   await getConfigOverridesRepository().write(record);
 
-  // Every settings change routes through here: the settings UI, channel
-  // overrides, and autorecord all write overrides, so this one call site
-  // covers all three. The key and scope describe what was configured; the
-  // value is deliberately omitted because context prompts and note templates
-  // are user content.
+  // Setting a value and resetting to default are the two ways config changes,
+  // and both flow through this pair: the settings UI, channel overrides, and
+  // autorecord all use them. The key and scope describe what was configured;
+  // the value is deliberately omitted because context prompts and note
+  // templates are user content.
   captureEvent("setting_changed", {
     userId,
     guildId: context.guildId,
-    properties: { key: configKey, scope: context.scope },
+    properties: { key: configKey, scope: context.scope, action: "set" },
   });
 }
 
 export async function clearConfigOverrideForScope(
   context: ConfigOverrideScopeContext,
   configKey: string,
+  userId?: string,
 ): Promise<void> {
   const scopeId = buildScopeId(context);
   await getConfigOverridesRepository().remove(scopeId, configKey);
+
+  // Optional actor: callers that know who reset the value should pass it, and
+  // the ones that do not still record that the reset happened, scoped to the
+  // guild. Omitting resets entirely would make "setting_changed" read as if
+  // every override were permanent.
+  captureEvent("setting_changed", {
+    userId,
+    guildId: context.guildId,
+    properties: { key: configKey, scope: context.scope, action: "reset" },
+  });
 }

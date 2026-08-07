@@ -1,4 +1,10 @@
-import React, { createContext, useContext, useEffect, useMemo } from "react";
+import React, {
+  createContext,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+} from "react";
 import { buildApiUrl } from "../services/apiClient";
 import { trpc } from "../services/trpc";
 import { identifyUser, resetAnalyticsIdentity } from "../services/analytics";
@@ -71,13 +77,22 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const logoutUrl = buildLogoutUrl(getBrowserLocation());
 
   const userId = authQuery.data?.id;
+  const wasAuthenticated = useRef(false);
   useEffect(() => {
     // "unknown" means the query is still in flight, so neither branch applies
     // yet; acting on it would reset the identity on every page load.
     if (state === "authenticated" && userId) {
       identifyUser(userId);
-    } else if (state === "unauthenticated") {
+      wasAuthenticated.current = true;
+      return;
+    }
+    // Reset only on a real authenticated -> unauthenticated transition. Doing
+    // it on every logged-out load would mint a new anonymous id each time,
+    // which breaks return-visit and funnel continuity for visitors who have
+    // never signed in.
+    if (state === "unauthenticated" && wasAuthenticated.current) {
       resetAnalyticsIdentity();
+      wasAuthenticated.current = false;
     }
   }, [state, userId]);
 

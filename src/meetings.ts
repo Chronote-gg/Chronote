@@ -54,6 +54,23 @@ import type { ConfigTier } from "./config/types";
 import type { ChatTtsSpeakerPrefixMode } from "./utils/ttsText";
 import { DEFAULT_CHAT_TTS_SPEAKER_PREFIX_MODE as DEFAULT_PREFIX_MODE } from "./utils/ttsText";
 
+/**
+ * Who to attribute a meeting's analytics to.
+ *
+ * Auto-recorded meetings are constructed with `creator: client.user`, so using
+ * the creator would file every auto-record meeting under the bot's own account
+ * and collapse all of that usage onto one profile. The member whose voice join
+ * triggered the recording is the real actor; when there is none, returning
+ * undefined lets the event fall back to a guild-scoped identity rather than
+ * inventing a person.
+ */
+export function resolveMeetingActorId(
+  meeting: MeetingData,
+): string | undefined {
+  if (meeting.startTriggeredByUserId) return meeting.startTriggeredByUserId;
+  return meeting.isAutoRecording ? undefined : meeting.creator.id;
+}
+
 const meetings = new Map<string, MeetingData>();
 
 // Since the bot can't be in multiple channels at once, we can just track a single meeting per guild, that's good enough.
@@ -526,7 +543,7 @@ export async function initializeMeeting(
   if (meeting.sessionMode === "meeting") {
     meetingsStarted.inc();
     captureEvent("meeting_started", {
-      userId: meeting.creator.id,
+      userId: resolveMeetingActorId(meeting),
       guildId: meeting.guildId,
       properties: {
         trigger: meeting.startReason,
