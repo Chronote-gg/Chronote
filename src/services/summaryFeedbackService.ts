@@ -1,4 +1,5 @@
 import { getFeedbackRepository } from "../repositories/feedbackRepository";
+import { captureEvent } from "./analyticsService";
 import type {
   FeedbackRating,
   FeedbackRecord,
@@ -71,6 +72,19 @@ export async function submitMeetingSummaryFeedback(params: {
   };
 
   await getFeedbackRepository().write(record);
+
+  // Downvotes feed the eval harvest, so the rating and surface are worth
+  // tracking as a trend. The comment itself is user content and stays out.
+  captureEvent("feedback_submitted", {
+    userId: params.userId,
+    guildId: params.guildId,
+    properties: {
+      target: "meeting_summary",
+      rating: params.rating,
+      surface: record.source,
+      has_comment: Boolean(comment),
+    },
+  });
 
   return {
     ok: true as const,

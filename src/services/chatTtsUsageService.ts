@@ -1,6 +1,7 @@
 import { getChatTtsUsageRepository } from "../repositories/chatTtsUsageRepository";
 import type { ChatTtsMonthlyUsage } from "../types/db";
 import { buildUpgradeTextOnly } from "../utils/upgradePrompt";
+import { captureEvent } from "./analyticsService";
 
 const USAGE_TTL_DAYS = 400;
 const USAGE_TTL_MS = USAGE_TTL_DAYS * 24 * 60 * 60 * 1000;
@@ -82,6 +83,26 @@ export async function checkChatTtsMessageUsageLimit(options: {
   });
 }
 
+/**
+ * A server running into a tier ceiling is the clearest upgrade-intent signal
+ * the product produces, so it is worth an event of its own rather than only a
+ * Prometheus counter.
+ */
+function captureLimitBlocked(params: {
+  guildId: string;
+  limit: number;
+  used: number;
+}): void {
+  captureEvent("limit_blocked", {
+    guildId: params.guildId,
+    properties: {
+      feature: "chat_tts",
+      limit: params.limit,
+      used: params.used,
+    },
+  });
+}
+
 export async function reserveChatTtsMessageUsage(options: {
   guildId: string;
   limit?: number;
@@ -96,6 +117,7 @@ export async function reserveChatTtsMessageUsage(options: {
     };
   }
   if (limit <= 0) {
+    captureLimitBlocked({ guildId, limit, used: 0 });
     return {
       ...buildStatus({ guildId, period, limit, used: 0 }),
       allowed: false,
@@ -127,12 +149,14 @@ export async function reserveChatTtsMessageUsage(options: {
   }
 
   const current = await getChatTtsUsageRepository().get(guildId, period);
+  const used = current?.acceptedMessages ?? limit;
+  captureLimitBlocked({ guildId, limit, used });
   return {
     ...buildStatus({
       guildId,
       period,
       limit,
-      used: current?.acceptedMessages ?? limit,
+      used,
     }),
     allowed: false,
     reserved: false,

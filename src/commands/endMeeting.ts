@@ -40,12 +40,14 @@ import {
 import { evaluateAutoRecordCancellation } from "../services/autoRecordCancellationService";
 import { autoRecordJoinSuppressionService } from "../services/autoRecordJoinSuppressionService";
 import { meetingsCancelled } from "../metrics";
+import { captureEvent } from "../services/analyticsService";
 import { describeAutoRecordRule } from "../utils/meetingLifecycle";
 import {
   deleteMeeting,
   endTtsOnlySession,
   getMeeting,
   hasMeeting,
+  resolveMeetingActorId,
   restoreVoiceSessionNickname,
 } from "../meetings";
 import { MEETING_END_REASONS, MEETING_STATUS } from "../types/meetingLifecycle";
@@ -91,6 +93,44 @@ async function runMeetingEndStep<T>(
 
 function shouldReleaseLeaseDuringErrorCleanup(meeting: MeetingData): boolean {
   return !meeting.finishing && !meeting.finished;
+}
+
+/**
+ * Counts and flags only. Notes, transcript, and chat content are user data and
+ * must not leave the system as event properties.
+ *
+ * Reading the meeting to build those properties happens inside the guard on
+ * purpose. This runs on a finalization path, so an unexpected shape here would
+ * otherwise throw into the caller's error cleanup and tear down a meeting that
+ * had already finished, for the sake of an analytics event.
+ *
+ * Called from both finalization paths. A cancelled auto-recording finishes
+ * through its own branch, and skipping it there would leave those meetings
+ * emitting meeting_started with no completion, so ordinary cancellation would
+ * read as funnel abandonment.
+ */
+function captureMeetingCompleted(meeting: MeetingData): void {
+  try {
+    const endTime = meeting.endTime ?? new Date();
+    captureEvent("meeting_completed", {
+      userId: resolveMeetingActorId(meeting),
+      guildId: meeting.guildId,
+      properties: {
+        duration_ms: endTime.getTime() - meeting.startTime.getTime(),
+        attendee_count: meeting.attendance.size,
+        end_reason: meeting.endReason ?? MEETING_END_REASONS.UNKNOWN,
+        trigger: meeting.startReason,
+        transcribed: meeting.transcribeMeeting,
+        notes_generated: meeting.generateNotes,
+        cancelled: Boolean(meeting.cancelled),
+      },
+    });
+  } catch (error) {
+    console.warn("Failed to capture meeting_completed", {
+      meetingId: meeting.meetingId,
+      error,
+    });
+  }
 }
 
 function shouldFinalizeDismissedAutoRecording(meeting: MeetingData): boolean {
@@ -495,6 +535,7 @@ async function runEndMeetingFlow(options: EndMeetingFlowOptions) {
 
     meeting.setFinished();
     meeting.finished = true;
+    captureMeetingCompleted(meeting);
     deleteMeeting(meeting.guildId);
   } finally {
     try {
@@ -582,6 +623,7 @@ async function handleAutoRecordCancellation(
   await saveMeetingHistoryToDatabase(meeting);
   meeting.setFinished();
   meeting.finished = true;
+  captureMeetingCompleted(meeting);
   deleteMeeting(meeting.guildId);
   return retention;
 }

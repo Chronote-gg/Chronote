@@ -78,15 +78,23 @@ Server and application logs held in Amazon CloudWatch expire after 365 days. Acc
 
 ## Analytics
 
-We use PostHog to understand how people use the website and the web portal, so we can see where the product is confusing and what people actually do with it. This is worth stating plainly, because it is more than counting page views:
+We use PostHog to understand how people use Chronote, both on the website and in Discord, so we can see where the product is confusing and what people actually do with it. This is worth stating plainly, because it is more than counting page views:
 
 - **Page views and clicks.** Which pages you visit and which elements you interact with, including the text and labels of what you clicked.
 - **Session replay.** A reconstruction of your session, so we can watch how a page was actually used. In the web portal this can include meeting content shown on screen, such as notes and transcript text.
-- **Technical metadata.** PostHog's SDK attaches an anonymous identifier to your browser and records the usual request details alongside each event: browser and device type, the page you came from, the page you are on, and an approximate location derived from your IP address.
+- **What you do in Discord.** Actions the bot takes on your behalf, such as starting and ending a meeting, changing a server setting, or asking a question. These record that the action happened and its shape, for example how long a meeting ran or how many people attended. They never carry the content: not notes, not transcripts, not the text of your questions, dictionary terms, or context prompts.
+- **Technical metadata.** Your browser and device type, the page you came from, and the page you are on.
 
-Two things are deliberately excluded: share link ids are stripped before anything is sent, because those act as passwords for a shared meeting, and we do not send analytics at all if your browser sends a Do Not Track signal.
+While you are signed in, these events are tied to your Discord account rather than to an anonymous browser identifier, so that your activity on the website and in Discord is understood as one person rather than two strangers. Signing out unlinks the browser from your account again.
 
-**Turning it off.** Enable Do Not Track in your browser and Chronote sends nothing to PostHog. If you would rather we exclude your account entirely, email us and we will do it.
+Two things are deliberately excluded: share link ids are stripped before anything is sent, because those act as passwords for a shared meeting, and your IP address is discarded on arrival, so we do not derive a location from it.
+
+**Turning it off.** These are two separate things, and it is worth being clear about which is which.
+
+- **On the website and web portal**, enable Do Not Track in your browser and Chronote sends nothing to PostHog.
+- **In Discord**, Do Not Track does not apply. It is a browser signal, and the bot never sees your browser, so actions you take through Chronote in Discord are recorded whether or not you have it enabled, including if you have never opened the portal.
+
+To opt out of both, email us and we will exclude your account. We do not yet have a self-service switch for the Discord side.
 
 ## Who can see a meeting
 
@@ -102,7 +110,7 @@ Two things are deliberately excluded: share link ids are stripped before anythin
 - **Have it removed.** Email us to have a meeting and its recording removed from storage entirely.
 - **Turn recording off.** Server admins can disable auto-record per channel or entirely, and can remove Chronote from the server at any time, which stops all recording.
 - **Correct the record.** Notes can be corrected through the correction and approval flow, so the stored record reflects what actually happened.
-- **Opt out of analytics.** Turn on Do Not Track in your browser and the site will not send analytics events.
+- **Opt out of analytics.** Turn on Do Not Track in your browser and the website and portal will not send analytics events. Do Not Track cannot cover what you do in Discord, because the bot never sees your browser, so email us to opt out of that as well.
 - **Ask us.** Email [basic@basicbit.net](mailto:basic@basicbit.net) with a data access or deletion request. We respond within 30 days.
 
 ### If you have data protection rights

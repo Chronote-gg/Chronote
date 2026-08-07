@@ -198,6 +198,14 @@ class ConfigService {
     superAdminUserIds: parseCsv(process.env.SUPER_ADMIN_USER_IDS),
   };
 
+  // Product analytics. Empty key disables capture entirely.
+  // The frontend points at a reverse proxy so ad blockers cannot drop events;
+  // server-side traffic has no such problem, so it goes to PostHog directly.
+  readonly analytics = {
+    posthogKey: process.env.POSTHOG_KEY || "",
+    posthogHost: process.env.POSTHOG_HOST || "https://us.i.posthog.com",
+  };
+
   readonly desktop = {
     enabled: parseBoolean(process.env.ENABLE_DESKTOP_API, this.mock.enabled),
     allowedUserIds: (() => {
