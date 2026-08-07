@@ -3,7 +3,6 @@ import {
   getGuildMemberCached,
   listGuildChannelsCached,
 } from "../discordCacheService";
-import { hasGuildAdministrator } from "../discordPermissionsService";
 import {
   createMcpServiceAccountToken,
   isMcpServiceAccountToken,
@@ -17,6 +16,7 @@ import {
   resetMcpOAuthMemoryRepository,
 } from "../../repositories/mcpOAuthRepository";
 import { hashMcpToken } from "../mcpOAuthService";
+import { isDiscordApiError } from "../discordService";
 
 jest.mock("../discordService", () => ({
   isDiscordApiError: jest.fn(() => false),
@@ -27,13 +27,8 @@ jest.mock("../discordCacheService", () => ({
   listGuildChannelsCached: jest.fn(),
 }));
 
-jest.mock("../discordPermissionsService", () => ({
-  hasGuildAdministrator: jest.fn(),
-}));
-
 const getGuildMemberCachedMock = jest.mocked(getGuildMemberCached);
 const listGuildChannelsCachedMock = jest.mocked(listGuildChannelsCached);
-const hasGuildAdministratorMock = jest.mocked(hasGuildAdministrator);
 
 const GUILD_ID = "100000000000000001";
 const BOT_USER_ID = "100000000000000002";
@@ -62,8 +57,10 @@ describe("mcpServiceAccountService", () => {
   beforeEach(() => {
     resetMcpOAuthMemoryRepository();
     jest.clearAllMocks();
+    // clearAllMocks leaves implementations in place, so this is pinned rather
+    // than inherited from whichever test ran last.
+    jest.mocked(isDiscordApiError).mockReturnValue(false);
     getGuildMemberCachedMock.mockResolvedValue(asBotMember(true));
-    hasGuildAdministratorMock.mockResolvedValue(false);
     listGuildChannelsCachedMock.mockResolvedValue([
       { id: CHANNEL_ID, name: "meetings", type: 2 },
       { id: OTHER_CHANNEL_ID, name: "board", type: 2 },
@@ -102,14 +99,6 @@ describe("mcpServiceAccountService", () => {
     await expect(createToken()).rejects.toMatchObject({ code: "not_a_bot" });
   });
 
-  it("refuses a bot holding Administrator, which would bypass channel overwrites", async () => {
-    hasGuildAdministratorMock.mockResolvedValue(true);
-
-    await expect(createToken()).rejects.toMatchObject({
-      code: "administrator_bot",
-    });
-  });
-
   it("refuses a bot that is not in the guild", async () => {
     getGuildMemberCachedMock.mockRejectedValue(new Error("404"));
 
@@ -124,20 +113,42 @@ describe("mcpServiceAccountService", () => {
     ).rejects.toMatchObject({ code: "unknown_channel" });
   });
 
-  it("stops honouring a token once its bot is granted Administrator", async () => {
+  // Minting already requires the caller to be a guild administrator, who can
+  // read every meeting in the portal, so binding to an administrator bot
+  // delegates nothing they did not already hold.
+  it("allows a bot holding Administrator", async () => {
+    const { token } = await createToken();
+
+    expect(await validateMcpServiceAccountToken(token)).toMatchObject({
+      userId: BOT_USER_ID,
+    });
+  });
+
+  it("stops honouring a token once its bot leaves the guild", async () => {
     const { token } = await createToken();
     expect(await validateMcpServiceAccountToken(token)).toBeDefined();
 
-    hasGuildAdministratorMock.mockResolvedValue(true);
+    getGuildMemberCachedMock.mockRejectedValue(new Error("404"));
 
     expect(await validateMcpServiceAccountToken(token)).toBeUndefined();
   });
 
-  it("denies rather than allows when the Administrator check is rate limited", async () => {
+  it("keeps a token alive when Discord rate limits the membership check", async () => {
+    // A 429 is not evidence the bot left, so a Discord blip must not sign the
+    // agent out mid-run.
     const { token } = await createToken();
-    hasGuildAdministratorMock.mockResolvedValue(null);
+    jest.mocked(isDiscordApiError).mockReturnValue(true);
+    getGuildMemberCachedMock.mockRejectedValue({ status: 429 });
 
-    expect(await validateMcpServiceAccountToken(token)).toBeUndefined();
+    expect(await validateMcpServiceAccountToken(token)).toBeDefined();
+  });
+
+  it("still bounds an Administrator bot by the channel allowlist", async () => {
+    const { token } = await createToken({ channelIds: [CHANNEL_ID] });
+
+    expect(await validateMcpServiceAccountToken(token)).toMatchObject({
+      restriction: { guildId: GUILD_ID, channelIds: [CHANNEL_ID] },
+    });
   });
 
   it("drops write scopes from a stored record", async () => {

@@ -182,30 +182,3 @@ export async function ensureUserCanReadChannelHistory(options: {
     logLabel: "ensureUserCanReadChannelHistory",
   });
 }
-
-/**
- * Administrator short-circuits every channel overwrite, so a member holding it
- * can reach every meeting in the guild regardless of how channels are locked
- * down. Callers that treat channel permissions as a boundary must check this.
- */
-export async function hasGuildAdministrator(options: {
-  guildId: string;
-  userId: string;
-}): Promise<boolean | null> {
-  try {
-    const { permissions } = await resolveGuildBasePermissions(
-      options.guildId,
-      options.userId,
-    );
-    return (permissions & PERMISSION_ADMIN) !== 0n;
-  } catch (error) {
-    if (isDiscordApiError(error) && error.status === 429) {
-      console.warn("hasGuildAdministrator rate limited", {
-        guildId: options.guildId,
-      });
-      return null;
-    }
-    console.error("hasGuildAdministrator error", error);
-    return null;
-  }
-}

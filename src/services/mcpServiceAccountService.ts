@@ -18,7 +18,6 @@ import {
   getGuildMemberCached,
   listGuildChannelsCached,
 } from "./discordCacheService";
-import { hasGuildAdministrator } from "./discordPermissionsService";
 import { isDiscordApiError } from "./discordService";
 
 const SERVICE_ACCOUNT_TOKEN_BYTES = 32;
@@ -27,7 +26,6 @@ const SECONDS_PER_DAY = 24 * 60 * 60;
 export type McpServiceAccountErrorCode =
   | "bot_not_in_guild"
   | "not_a_bot"
-  | "administrator_bot"
   | "unknown_channel"
   | "rate_limited"
   | "not_found";
@@ -87,24 +85,12 @@ const assertBotIdentity = async (guildId: string, botUserId: string) => {
       "not_a_bot",
     );
   }
-  const administrator = await hasGuildAdministrator({
-    guildId,
-    userId: botUserId,
-  });
-  if (administrator === null) {
-    throw new McpServiceAccountError(
-      "Discord rate limited. Please retry.",
-      "rate_limited",
-    );
-  }
-  // Administrator bypasses every channel overwrite, so channel permissions
-  // would stop being a boundary and the token would reach every meeting.
-  if (administrator) {
-    throw new McpServiceAccountError(
-      "That bot has Administrator in this server, so channel permissions cannot limit it. Remove Administrator first.",
-      "administrator_bot",
-    );
-  }
+  // A bot holding Administrator is deliberately allowed. Administrator does
+  // bypass every channel overwrite, so such a token reaches every meeting in
+  // the guild, but minting already requires Administrator and an administrator
+  // can read all of those meetings in the portal anyway. Refusing it prevented
+  // no escalation and only forced people to restructure Discord for Chronote's
+  // benefit. Use the channel allowlist when a bound token is wanted.
 };
 
 const assertChannelsInGuild = async (
@@ -199,6 +185,25 @@ export async function revokeMcpServiceAccountToken(params: {
 export const isMcpServiceAccountToken = (token: string) =>
   token.startsWith(MCP_SERVICE_ACCOUNT_TOKEN_PREFIX);
 
+/**
+ * Guild membership is what a service account's access is built on, so removing
+ * the bot from the guild has to stop the token authenticating rather than
+ * leaving it alive until someone revokes it. Meeting reads check membership
+ * again downstream, but `listMcpServersForToken` skips that check on the
+ * strength of this one, so the check belongs here rather than per read path.
+ *
+ * A rate limit is not evidence of absence and leaves the token alone; anything
+ * else means Discord could not confirm the bot is a member.
+ */
+const isBotStillInGuild = async (guildId: string, botUserId: string) => {
+  try {
+    await getGuildMemberCached(guildId, botUserId);
+    return true;
+  } catch (error) {
+    return isDiscordApiError(error) && error.status === 429;
+  }
+};
+
 export async function validateMcpServiceAccountToken(
   token: string,
 ): Promise<McpAccessTokenInfo | undefined> {
@@ -208,17 +213,7 @@ export async function validateMcpServiceAccountToken(
   if (!record) return undefined;
   // DynamoDB TTL deletion is eventual, so an expired record can still be read.
   if (record.expiresAt && record.expiresAt <= epochSeconds()) return undefined;
-  // Checking this only at mint time would let a bot granted Administrator later
-  // silently widen an existing token to every meeting in the guild, because
-  // Administrator short-circuits the channel checks the whole model rests on.
-  // A rate limit denies rather than allows: the agent retries once Discord
-  // answers, whereas failing open would make the guard bypassable under load.
-  if (
-    (await hasGuildAdministrator({
-      guildId: record.guildId,
-      userId: record.botUserId,
-    })) !== false
-  ) {
+  if (!(await isBotStillInGuild(record.guildId, record.botUserId))) {
     return undefined;
   }
   try {

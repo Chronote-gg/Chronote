@@ -43,7 +43,6 @@ const revokeInput = guildInput.extend({ tokenId: z.string().uuid() });
 const SERVICE_ACCOUNT_ERROR_CODES = {
   bot_not_in_guild: "BAD_REQUEST",
   not_a_bot: "BAD_REQUEST",
-  administrator_bot: "BAD_REQUEST",
   unknown_channel: "BAD_REQUEST",
   rate_limited: "TOO_MANY_REQUESTS",
   not_found: "NOT_FOUND",
