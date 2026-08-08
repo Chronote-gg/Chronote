@@ -3,7 +3,7 @@ title: Privacy Policy
 slug: /legal/privacy
 ---
 
-Last updated: July 27, 2026
+Last updated: August 8, 2026
 
 This policy explains what Chronote records, what we store, who else processes it, and what you can do about it. It is written to be read by the people it affects, not only by lawyers.
 
@@ -66,7 +66,7 @@ Chronote depends on the following providers. Each one sees only what it needs to
 | Stripe              | Payments and subscription billing. Receives your Discord email address, account ID, and username so a subscription can be matched to the right person and server                                                                                                                                                                                                                                                                                                                                                                  |
 | Langfuse            | Engineering observability for the transcription and notes pipeline. Traces can include transcript and notes content, and attach a compressed copy of the meeting audio                                                                                                                                                                                                                                                                                                                                                            |
 | Notion              | Only if a user connects their Notion account, to export notes there                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
-| PostHog             | Product analytics for the website and web portal. See the analytics section below for what this covers                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| PostHog             | Product analytics for the website and web portal, and for what you do with Chronote in Discord. See the analytics section below for what this covers                                                                                                                                                                                                                                                                                                                                                                              |
 
 ## How long we keep things
 

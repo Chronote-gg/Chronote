@@ -7,6 +7,14 @@ Notable product changes for Chronote users. For the full changelog, see the [Git
 
 ## 2026
 
+### Analytics now cover what you do in Discord
+
+- Product analytics now record actions taken through Chronote in Discord, not only on the website and web portal. They capture that an action happened and its shape, never its content.
+- While you are signed in, analytics are tied to your Discord account rather than an anonymous browser identifier. Signing out unlinks the browser again.
+- IP addresses are discarded on arrival, so we no longer derive an approximate location from them.
+- Do Not Track still covers the website and portal, but cannot cover Discord, because the bot never sees your browser. Email us to opt out of that side.
+- See [Analytics now cover what you do in Discord](/whats-new/analytics-in-discord) and the updated [privacy policy](/legal/privacy).
+
 ### Role mentions in meeting notes
 
 - Notes now mention server roles when work is assigned to a group rather than to one person.
