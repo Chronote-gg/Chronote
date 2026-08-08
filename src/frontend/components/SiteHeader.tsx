@@ -21,6 +21,7 @@ import { Link } from "@tanstack/react-router";
 import type { ReactNode } from "react";
 import SiteHeaderLogo from "./SiteHeaderLogo";
 import { useAuth } from "../contexts/AuthContext";
+import { resetAnalyticsIdentity } from "../services/analytics";
 
 type SiteHeaderProps = {
   showNavbarToggle?: boolean;
@@ -110,6 +111,13 @@ function LogoutButton({ authState, user, logoutUrl }: LogoutButtonProps) {
       <ActionIcon
         component="a"
         href={logoutUrl}
+        // Sign-out is a full page navigation to the server route, so the React
+        // tree is torn down and never re-renders as unauthenticated. Clearing
+        // the identity here is what actually unlinks the browser from the
+        // account, which the privacy policy says signing out does. Matters most
+        // on a shared browser, where the next person would otherwise be
+        // attributed to the previous account.
+        onClick={() => resetAnalyticsIdentity()}
         variant="outline"
         size="lg"
         aria-label="Switch account"

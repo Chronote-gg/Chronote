@@ -106,7 +106,14 @@ export async function clearConfigOverrideForScope(
   userId?: string,
 ): Promise<void> {
   const scopeId = buildScopeId(context);
-  await getConfigOverridesRepository().remove(scopeId, configKey);
+  const repository = getConfigOverridesRepository();
+  // The removal is idempotent, and callers clear keys that were never set:
+  // saveAutoRecordSetting clears the optional channel and tag keys on every
+  // save, including for a channel being configured for the first time. Only an
+  // override that actually existed is a reset worth reporting.
+  const existing = await repository.get(scopeId, configKey);
+  await repository.remove(scopeId, configKey);
+  if (!existing) return;
 
   // Optional actor: callers that know who reset the value should pass it, and
   // the ones that do not still record that the reset happened, scoped to the

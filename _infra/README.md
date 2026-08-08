@@ -195,6 +195,44 @@ If you set `DOCS_DOMAIN` in `terraform.tfvars`, Terraform will:
 
 Deploy workflows use those variables to publish `apps/docs-site` to `docs.chronote.gg`.
 
+## Analytics proxy (PostHog)
+
+The portal sends analytics to a first-party subdomain rather than to PostHog's
+ingestion host, because ad blockers filter the latter and every metric comes out
+skewed low. PostHog runs the proxy itself, so the only infrastructure here is one
+CNAME in `_infra/analytics.tf`. There is no CloudFront behavior and no origin.
+
+Three variables control it, all blank by default:
+
+| Variable                       | Purpose                                                                                                                            |
+| ------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------- |
+| `POSTHOG_KEY`                  | Public ingestion token for server-side capture. Blank disables capture entirely. Not a credential, so `TFVAR_POSTHOG_KEY` is fine. |
+| `ANALYTICS_PROXY_DOMAIN`       | The subdomain to serve ingestion from, e.g. `e.chronote.gg`.                                                                       |
+| `ANALYTICS_PROXY_CNAME_TARGET` | The CNAME target PostHog issues when the domain is registered.                                                                     |
+
+Leave the proxy pair blank in any non-production workspace. Both must be set
+before the record is created, so a workspace with only one of them configured
+simply gets no record rather than a broken one.
+
+**Rollout order matters, and getting it wrong is not self-healing.** Setting the
+frontend host before the proxy certificate is valid stops the portal sending
+analytics until another frontend deploy goes out.
+
+1. Register the domain in PostHog's organization proxy settings. It returns a
+   CNAME target and sits in `waiting`.
+2. Set `ANALYTICS_PROXY_DOMAIN` and `ANALYTICS_PROXY_CNAME_TARGET`, then apply.
+   Remember that a Terraform apply alone does not move a running ECS service:
+   a backend deploy has to follow, as described under the plan and apply
+   workflows below.
+3. Wait for the PostHog record to report `valid`. It verifies automatically once
+   DNS resolves and then issues the certificate.
+4. Only then set the `VITE_POSTHOG_HOST` Actions variable to
+   `https://<ANALYTICS_PROXY_DOMAIN>`. The next frontend deploy picks it up.
+
+To roll back, clear `VITE_POSTHOG_HOST` and deploy the frontend. The portal
+returns to sending directly to PostHog, losing the ad-blocker coverage but
+nothing else.
+
 ## Environments (production, sandbox, staging)
 
 Terraform now supports environment-specific resource naming via `environment`
