@@ -1,0 +1,74 @@
+name: Sync frontend to S3
+description: >-
+  Uploads a built frontend to its S3 bucket with per-file cache policy, and
+  invalidates CloudFront. Shared by the production and sandbox deploys so the
+  two cannot drift; an earlier copy-paste left sandbox serving the homepage
+  document for every route while production served per-route metadata.
+
+inputs:
+  bucket:
+    description: S3 bucket name, without the s3:// scheme.
+    required: true
+  distribution-id:
+    description: CloudFront distribution to invalidate after upload.
+    required: true
+  build-dir:
+    description: Directory holding the Vite build output.
+    required: false
+    default: build/frontend
+  routes-dir:
+    description: >-
+      Directory holding per-route HTML documents, one file per route, named
+      after the S3 key it is uploaded to. Optional; skipped when absent.
+    required: false
+    default: build/frontend-routes
+
+runs:
+  using: composite
+  steps:
+    - name: Upload to S3
+      shell: bash
+      env:
+        BUCKET: ${{ inputs.bucket }}
+        BUILD_DIR: ${{ inputs.build-dir }}
+        ROUTES_DIR: ${{ inputs.routes-dir }}
+      run: |
+        set -euo pipefail
+        if [ -z "$BUCKET" ]; then
+          echo "::error::Frontend bucket is not set for this environment."
+          exit 1
+        fi
+
+        # Everything Vite fingerprints can be cached forever. Files served under
+        # a stable name are rewritten in place by each deploy, so they get a
+        # short TTL instead and are re-uploaded below.
+        aws s3 sync "$BUILD_DIR" "s3://$BUCKET" --delete --exclude "index.html" --cache-control "public,max-age=31536000,immutable"
+        aws s3 cp "$BUILD_DIR/index.html" "s3://$BUCKET/index.html" --cache-control "public,max-age=600"
+        for stable in manifest.json sitemap.xml robots.txt; do
+          if [ -f "$BUILD_DIR/$stable" ]; then
+            aws s3 cp "$BUILD_DIR/$stable" "s3://$BUCKET/$stable" --cache-control "public,max-age=600"
+          fi
+        done
+
+        # Extensionless keys, so CloudFront serves /join from its own document
+        # instead of falling back to index.html and its homepage metadata.
+        # Uploaded after the sync because --delete would otherwise remove them.
+        if [ -d "$ROUTES_DIR" ]; then
+          for route in "$ROUTES_DIR"/*.html; do
+            [ -f "$route" ] || continue
+            key="$(basename "$route" .html)"
+            aws s3 cp "$route" "s3://$BUCKET/$key" --content-type "text/html; charset=utf-8" --cache-control "public,max-age=600"
+          done
+        fi
+
+    - name: Invalidate CloudFront
+      shell: bash
+      env:
+        DISTRIBUTION_ID: ${{ inputs.distribution-id }}
+      run: |
+        set -euo pipefail
+        if [ -z "$DISTRIBUTION_ID" ]; then
+          echo "::error::Frontend distribution id is not set for this environment."
+          exit 1
+        fi
+        aws cloudfront create-invalidation --distribution-id "$DISTRIBUTION_ID" --paths "/*"

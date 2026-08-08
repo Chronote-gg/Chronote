@@ -1,6 +1,6 @@
 {
   "origin": "https://chronote.gg",
-  "comment": "Public, indexable routes. Single source for the generated sitemap and for the per-route HTML that gives each page its own canonical URL and link preview. Anything behind sign-in does not belong here. `key` is the extensionless S3 key deploy.yml uploads the HTML to, so it has to match the path. Consumed by scripts/build-route-html.mjs.",
+  "comment": "Public, indexable routes. Single source for the generated sitemap and for the per-route HTML that gives each page its own canonical URL and link preview. Anything behind sign-in does not belong here. `key` is the extensionless S3 key the deploy uploads the HTML to, so it has to match the path. Optional `ogImage` (an origin-relative path) overrides the shared share card, and is worth setting only when the image would carry route-specific information. Consumed by scripts/build-route-html.mjs.",
   "routes": [
     {
       "path": "/",
