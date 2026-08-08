@@ -548,7 +548,6 @@ export async function initializeMeeting(
       properties: {
         trigger: meeting.startReason,
         is_auto_recording: meeting.isAutoRecording,
-        channel_id: meeting.voiceChannel.id,
       },
     });
   }

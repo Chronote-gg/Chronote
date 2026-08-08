@@ -112,6 +112,10 @@ async function resolveMonthlyMessageLimit(meeting: MeetingData) {
     : resolved.limits;
   return {
     limit: limits.maxChatTtsMessagesMonthly,
+    // The tier actually in force, which is what usage should be segmented by.
+    // compedTier below is only set for manually comped servers, so reporting
+    // that instead leaves the tier blank for nearly all real usage.
+    effectiveTier: meeting.subscriptionTier ?? resolved.subscription.tier,
     compedTier:
       resolved.subscription.billingSource === "manual_comp"
         ? resolved.subscription.grantTier
@@ -191,7 +195,10 @@ export async function maybeSpeakChatMessage(
     userId: message.author.id,
     guildId: meeting.guildId,
     // Message text is user content and stays out of the event.
-    properties: { tier: monthlyLimit.compedTier ?? undefined },
+    properties: {
+      tier: monthlyLimit.effectiveTier,
+      comped: monthlyLimit.compedTier !== null,
+    },
   });
   entry.source = "chat_tts";
   await sendFinalMonthlyLimitNoticeIfNeeded(

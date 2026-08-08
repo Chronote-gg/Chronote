@@ -11,6 +11,13 @@ import { config } from "./configService";
  * Properties must describe the *shape* of an action (counts, lengths, enums)
  * and never its content. Meeting notes, context prompts, and dictionary terms
  * are user data and must not leave the system as event properties.
+ *
+ * Two identifiers are sent deliberately, and they are the only two: the guild,
+ * because server-level analysis is the point of this at all, and the acting
+ * Discord user as the distinct id, so portal and bot activity resolve to one
+ * person. Anything finer grained, a channel or message id for instance, is a
+ * stable identifier wearing a property's clothes. Add one only with a question
+ * that needs it and a matching line in the privacy policy.
  */
 
 type AnalyticsProperties = Record<
