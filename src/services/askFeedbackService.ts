@@ -1,4 +1,5 @@
 import { getFeedbackRepository } from "../repositories/feedbackRepository";
+import { captureEvent } from "./analyticsService";
 import type {
   FeedbackRating,
   FeedbackRecord,
@@ -64,6 +65,17 @@ export async function submitAskFeedback(params: {
   };
 
   await getFeedbackRepository().write(record);
+
+  captureEvent("feedback_submitted", {
+    userId: params.userId,
+    guildId: params.guildId,
+    properties: {
+      target: "ask_answer",
+      rating: params.rating,
+      surface: record.source,
+      has_comment: Boolean(comment),
+    },
+  });
 
   return {
     ok: true as const,

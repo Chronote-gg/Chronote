@@ -211,6 +211,10 @@ export async function ensureStripeCustomer(
     metadata: {
       discord_id: user.id,
       discord_username: user.username ?? "",
+      // Lets PostHog revenue analytics join this Stripe customer to the
+      // PostHog person. Must match the distinct id used by the portal and the
+      // bot, which is the Discord user id.
+      posthog_person_distinct_id: user.id,
     },
   });
   return created.id;

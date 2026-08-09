@@ -2,6 +2,7 @@ import { getConfigOverridesRepository } from "../repositories/configOverridesRep
 import type { ConfigOverrideRecord } from "../types/db";
 import type { ConfigScope } from "../config/types";
 import { nowIso } from "../utils/time";
+import { captureEvent } from "./analyticsService";
 
 export type ConfigOverrideScopeContext = {
   scope: ConfigScope;
@@ -78,6 +79,15 @@ export async function setConfigOverrideForScope(
   userId: string,
 ): Promise<void> {
   const scopeId = buildScopeId(context);
+  const repository = getConfigOverridesRepository();
+  // saveAutoRecordSetting rewrites the enabled value and any supplied channel
+  // or tags on every save, so reopening a rule and saving it unchanged would
+  // otherwise count as a settings change and inflate the totals. Mirrors the
+  // existence check on the reset path below.
+  const existing = await repository.get(scopeId, configKey);
+  const unchanged =
+    existing !== undefined &&
+    JSON.stringify(existing.value) === JSON.stringify(value);
   const record: ConfigOverrideRecord = {
     scopeId,
     configKey,
@@ -85,13 +95,43 @@ export async function setConfigOverrideForScope(
     updatedAt: nowIso(),
     updatedBy: userId,
   };
-  await getConfigOverridesRepository().write(record);
+  await repository.write(record);
+  if (unchanged) return;
+
+  // Setting a value and resetting to default are the two ways config changes,
+  // and both flow through this pair: the settings UI, channel overrides, and
+  // autorecord all use them. The key and scope describe what was configured;
+  // the value is deliberately omitted because context prompts and note
+  // templates are user content.
+  captureEvent("setting_changed", {
+    userId,
+    guildId: context.guildId,
+    properties: { key: configKey, scope: context.scope, action: "set" },
+  });
 }
 
 export async function clearConfigOverrideForScope(
   context: ConfigOverrideScopeContext,
   configKey: string,
+  userId?: string,
 ): Promise<void> {
   const scopeId = buildScopeId(context);
-  await getConfigOverridesRepository().remove(scopeId, configKey);
+  const repository = getConfigOverridesRepository();
+  // The removal is idempotent, and callers clear keys that were never set:
+  // saveAutoRecordSetting clears the optional channel and tag keys on every
+  // save, including for a channel being configured for the first time. Only an
+  // override that actually existed is a reset worth reporting.
+  const existing = await repository.get(scopeId, configKey);
+  await repository.remove(scopeId, configKey);
+  if (!existing) return;
+
+  // Optional actor: callers that know who reset the value should pass it, and
+  // the ones that do not still record that the reset happened, scoped to the
+  // guild. Omitting resets entirely would make "setting_changed" read as if
+  // every override were permanent.
+  captureEvent("setting_changed", {
+    userId,
+    guildId: context.guildId,
+    properties: { key: configKey, scope: context.scope, action: "reset" },
+  });
 }

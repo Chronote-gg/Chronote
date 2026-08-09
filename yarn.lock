@@ -5268,10 +5268,22 @@
   dependencies:
     "@posthog/types" "^1.399.0"
 
+"@posthog/core@^1.46.8":
+  version "1.46.8"
+  resolved "https://registry.yarnpkg.com/@posthog/core/-/core-1.46.8.tgz#e2afb03ee9012edabbbf47af1ebb187e485bf5ee"
+  integrity sha512-WQTSwlFhsWk09xngTimHiTyhFU8QZHFZEGSm+6brY3acwYdvTLcTxpIhgl/qOCgn/XoqlCFTZqU1ldWLxNntfA==
+  dependencies:
+    "@posthog/types" "^1.401.1"
+
 "@posthog/types@^1.399.0":
   version "1.399.0"
   resolved "https://registry.yarnpkg.com/@posthog/types/-/types-1.399.0.tgz#96248f0822fa3a1c38b1882d04a77bf5349c08fe"
   integrity sha512-/WDwBzqIPko8VJ1B+0rlso2XQEz9+2sqtsY9Tqy3p1GhgTqsFakcz/PmMpAnA321LTEZVRcO6x5hAwABV4yrDw==
+
+"@posthog/types@^1.401.1":
+  version "1.402.1"
+  resolved "https://registry.yarnpkg.com/@posthog/types/-/types-1.402.1.tgz#f2d3af9b53b3ed699185d815e51eb28cb4618641"
+  integrity sha512-4PZ9wMYI8m8AqJuZ9YR1IAHGVtSnYbBVBgTevrKpzZbcSe/OUwhEV2Ks//rJh/L8eMTU8R5DrD4D/hlrOwaAiQ==
 
 "@protobufjs/aspromise@^1.1.1", "@protobufjs/aspromise@^1.1.2":
   version "1.1.2"
@@ -15100,6 +15112,13 @@ posthog-js@^1.408.3:
     preact "^10.29.3"
     query-selector-shadow-dom "^1.0.1"
     web-vitals "^5.3.0"
+
+posthog-node@^5.48.0:
+  version "5.48.0"
+  resolved "https://registry.yarnpkg.com/posthog-node/-/posthog-node-5.48.0.tgz#d93c4d6644782e509fe52c4697f9350562a6eddc"
+  integrity sha512-YIH82XV24aa1nnVph1ndiW/vBN2QDIKlrHNEJcmAYutMGeoGC4WeEefg7O5aD3dDcO5dzociy8sVwXq4tNDYsQ==
+  dependencies:
+    "@posthog/core" "^1.46.8"
 
 preact@^10.29.3:
   version "10.29.7"

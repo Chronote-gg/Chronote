@@ -4,6 +4,7 @@ import {
   ChannelType,
   Client,
   GatewayIntentBits,
+  Guild,
   ModalSubmitInteraction,
   Partials,
   RepliableInteraction,
@@ -123,6 +124,7 @@ import {
   onboardCommand,
 } from "./commands/onboard";
 import { fetchGuildInstaller } from "./services/guildInstallerService";
+import { captureEvent, shutdownAnalytics } from "./services/analyticsService";
 import { setDiscordClient } from "./services/discordClientAccessor";
 import { startMeetingControlCommandWorker } from "./services/meetingControlWorkerService";
 import { autoRecordJoinSuppressionService } from "./services/autoRecordJoinSuppressionService";
@@ -203,6 +205,16 @@ const invalidateBotGuildCache = async (label: string) => {
     console.warn(`${label} cache invalidation failed`, error);
   }
 };
+
+/**
+ * A guild that has just been joined has a joinedTimestamp of roughly now; one
+ * that is merely becoming available again after an outage carries its original
+ * join date. Anything inside the window counts as a real install.
+ */
+const FRESH_GUILD_JOIN_WINDOW_MS = 60_000;
+
+const isFreshGuildJoin = (guild: Guild): boolean =>
+  Date.now() - guild.joinedTimestamp < FRESH_GUILD_JOIN_WINDOW_MS;
 
 const commandHandlers: Record<
   string,
@@ -468,6 +480,18 @@ export async function setupBot() {
   client.on("guildCreate", async (guild) => {
     await invalidateBotGuildCache("guildCreate");
     await invalidateGuildCache(guild.id, "guildCreate");
+
+    // guildCreate also fires when an existing guild becomes available again
+    // after an outage, not only on a real join, so joinedTimestamp is what
+    // separates the two. Without this an outage recovery reads as a burst of
+    // installs and the cumulative count drifts upward permanently.
+    if (isFreshGuildJoin(guild)) {
+      captureEvent("server_installed", {
+        guildId: guild.id,
+        properties: { guild_count: client.guilds.cache.size },
+      });
+    }
+
     if (!config.server.onboardingEnabled) {
       return;
     }
@@ -498,6 +522,12 @@ export async function setupBot() {
   client.on("guildDelete", async (guild) => {
     await invalidateBotGuildCache("guildDelete");
     await invalidateGuildCache(guild.id, "guildDelete");
+    // Safe to trust: the gateway flags outages with `unavailable` and
+    // discord.js routes those to guildUnavailable instead of here.
+    captureEvent("server_removed", {
+      guildId: guild.id,
+      properties: { guild_count: client.guilds.cache.size },
+    });
   });
 
   client.on("guildUpdate", async (_oldGuild, newGuild) => {
@@ -1417,6 +1447,12 @@ process.on("SIGTERM", async () => {
 
   // Wait for ongoing meetings to finish
   await completeOngoingMeetings();
+
+  // Flush buffered analytics before the task goes away. posthog-node batches,
+  // so anything still in the buffer is lost otherwise, and a dropped event is
+  // never reconstructed. This handler is registered at module scope, so it
+  // covers the api-only runtime too.
+  await shutdownAnalytics();
 
   // Shut down the bot gracefully
   console.log("Shutting down...");

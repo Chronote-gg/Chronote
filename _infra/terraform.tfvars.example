@@ -119,6 +119,18 @@ grafana_service_account_id=""                # numeric SA ID from: aws grafana l
 grafana_token_rotation_days=25               # 1-25; rotation_days + 5 must stay within 30-day AMG max
 aws_region="us-east-1"
 grafana_suffix_seed=""                       # optional; change to force a new workspace name suffix
+
+# Product analytics. All three are optional: left blank, server-side capture is
+# disabled and no analytics proxy DNS record is created, which is what a
+# non-production workspace wants so its traffic stays out of the real project.
+# POSTHOG_KEY is the public ingestion token, already shipped in the frontend
+# bundle, so it is not a credential and is fine to set via TFVAR_POSTHOG_KEY.
+# Read the analytics proxy rollout section in _infra/README.md before setting
+# the proxy values: the ordering matters and getting it wrong takes portal
+# analytics down until the next frontend deploy.
+POSTHOG_KEY=""
+ANALYTICS_PROXY_DOMAIN=""                    # e.g. e.example.com; register in PostHog first
+ANALYTICS_PROXY_CNAME_TARGET=""              # CNAME target PostHog issues for that domain
 # Secrets (managed in AWS Secrets Manager)
 # After apply, set secret values for:
 # - ${project_name}-${environment}/discord-bot-token
