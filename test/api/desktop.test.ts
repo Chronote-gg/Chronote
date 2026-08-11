@@ -6,7 +6,7 @@ import express from "express";
 import http from "node:http";
 import type { AddressInfo } from "node:net";
 import { registerDesktopRoutes } from "../../src/api/desktop";
-import { PERSONAL_RECORDING_MAX_TOTAL_MILLIS } from "../../src/constants";
+import { MAXIMUM_MEETING_DURATION } from "../../src/constants";
 import { registerMockStorageRoutes } from "../../src/api/mockStorage";
 import { resetDesktopAuthMemoryRepository } from "../../src/repositories/desktopAuthRepository";
 import { resetMockStore } from "../../src/repositories/mockStore";
@@ -455,7 +455,7 @@ describe("desktop API", () => {
     }
   });
 
-  test("rejects a recording segment past the maximum recording length", async () => {
+  test("rejects a recording segment past the maximum length for one source", async () => {
     const { server, baseUrl } = createServer();
     Object.defineProperty(config.mcp, "publicBaseUrl", {
       get: () => baseUrl,
@@ -498,11 +498,9 @@ describe("desktop API", () => {
             contentType: "audio/wav",
             fileSize: body.byteLength,
             checksumSha256: checksumSha256(body),
-            durationMillis: PERSONAL_RECORDING_MAX_TOTAL_MILLIS + 1,
+            durationMillis: MAXIMUM_MEETING_DURATION + 1,
             startedAt: new Date(0).toISOString(),
-            endedAt: new Date(
-              PERSONAL_RECORDING_MAX_TOTAL_MILLIS + 1,
-            ).toISOString(),
+            endedAt: new Date(MAXIMUM_MEETING_DURATION + 1).toISOString(),
           }),
         },
       );
