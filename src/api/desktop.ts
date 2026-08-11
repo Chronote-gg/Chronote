@@ -19,7 +19,6 @@ import {
   hasDesktopScopes,
   issueDesktopAuthorizationCode,
   isDesktopRedirectUriAllowed,
-  isDesktopUserAllowed,
   parseDesktopScopes,
   refreshDesktopAccessToken,
   revokeDesktopToken,
@@ -209,13 +208,6 @@ const requireDesktopAuth =
     }
     if (!hasDesktopScopes(auth.scopes, requiredScopes)) {
       res.status(403).json({ error: "insufficient_scope" });
-      return;
-    }
-    if (!isDesktopUserAllowed(auth.userId)) {
-      res.status(403).json({
-        error: "access_denied",
-        message: "Desktop beta is not enabled for this account.",
-      });
       return;
     }
     req.desktopAuth = auth;

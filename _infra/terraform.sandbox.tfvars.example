@@ -13,7 +13,6 @@ github_repository="Chronote"
 # OAuth / URLs
 ENABLE_OAUTH="true"
 ENABLE_MCP="true"
-DESKTOP_ALLOWED_USER_IDS=""
 API_DOMAIN="api.sandbox.chronote.gg"
 DISCORD_CALLBACK_URL="https://api.sandbox.chronote.gg/auth/discord/callback"
 FRONTEND_DOMAIN="sandbox.chronote.gg"

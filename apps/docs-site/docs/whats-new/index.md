@@ -7,6 +7,11 @@ Notable product changes for Chronote users. For the full changelog, see the [Git
 
 ## 2026
 
+### Chronote Desktop is open to every account
+
+- Chronote Desktop no longer requires desktop access to be enabled on your account. Any Chronote account can sign in and upload a recording.
+- It remains a Windows-only beta, and beta builds may be unsigned.
+
 ### Analytics now cover what you do in Discord
 
 - Product analytics now record actions taken through Chronote in Discord, not only on the website and web portal. They capture that an action happened and its shape, never its content.

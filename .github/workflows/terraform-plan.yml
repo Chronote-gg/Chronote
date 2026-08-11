@@ -134,7 +134,6 @@ jobs:
 
           required = ["GITHUB_TOKEN", "AWS_TOKEN_KEY", "DISCORD_CLIENT_ID"]
           string_fields = required + [
-              "DESKTOP_ALLOWED_USER_IDS",
               "SUPER_ADMIN_USER_IDS",
               "grafana_api_key",
               "grafana_url",

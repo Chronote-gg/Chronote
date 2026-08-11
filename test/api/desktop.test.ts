@@ -8,7 +8,6 @@ import type { AddressInfo } from "node:net";
 import { registerDesktopRoutes } from "../../src/api/desktop";
 import { registerMockStorageRoutes } from "../../src/api/mockStorage";
 import { resetDesktopAuthMemoryRepository } from "../../src/repositories/desktopAuthRepository";
-import { isDesktopUserAllowed } from "../../src/services/desktopAuthService";
 import { resetMockStore } from "../../src/repositories/mockStore";
 import { config } from "../../src/services/configService";
 
@@ -74,11 +73,6 @@ const originalPublicBaseUrl = Object.getOwnPropertyDescriptor(
   config.mcp,
   "publicBaseUrl",
 );
-const originalDesktopAllowedUserIds = Object.getOwnPropertyDescriptor(
-  config.desktop,
-  "allowedUserIds",
-);
-
 const mockDesktopUser = {
   id: "desktop-user-1",
   username: "Desktop Tester",
@@ -218,10 +212,6 @@ describe("desktop API", () => {
       get: () => true,
       configurable: true,
     });
-    Object.defineProperty(config.desktop, "allowedUserIds", {
-      get: () => [mockDesktopUser.id],
-      configurable: true,
-    });
   });
 
   afterEach(() => {
@@ -232,47 +222,6 @@ describe("desktop API", () => {
     }
     if (originalPublicBaseUrl) {
       Object.defineProperty(config.mcp, "publicBaseUrl", originalPublicBaseUrl);
-    }
-    if (originalDesktopAllowedUserIds) {
-      Object.defineProperty(
-        config.desktop,
-        "allowedUserIds",
-        originalDesktopAllowedUserIds,
-      );
-    }
-  });
-
-  test("denies every account when no allowlist is configured", () => {
-    Object.defineProperty(config.mock, "enabled", {
-      get: () => false,
-      configurable: true,
-    });
-    Object.defineProperty(config.desktop, "allowedUserIds", {
-      get: () => [],
-      configurable: true,
-    });
-
-    expect(isDesktopUserAllowed(mockDesktopUser.id)).toBe(false);
-  });
-
-  test("denies desktop authorization outside the beta allowlist", async () => {
-    Object.defineProperty(config.desktop, "allowedUserIds", {
-      get: () => ["other-user"],
-      configurable: true,
-    });
-    const { server, baseUrl } = createServer();
-
-    try {
-      const redirectUri = "http://127.0.0.1:49152/auth/callback";
-      const { authorizeUrl } = buildAuthorizeUrl(baseUrl, redirectUri);
-      const response = await fetch(authorizeUrl, { redirect: "manual" });
-      expect(response.status).toBe(302);
-      const callbackUrl = new URL(response.headers.get("location") ?? "");
-      expect(callbackUrl.origin + callbackUrl.pathname).toBe(redirectUri);
-      expect(callbackUrl.searchParams.get("error")).toBe("access_denied");
-      expect(callbackUrl.searchParams.get("code")).toBeNull();
-    } finally {
-      await closeServer(server);
     }
   });
 
@@ -294,27 +243,17 @@ describe("desktop API", () => {
     }
   });
 
-  test("denies recording upload after a user is removed from the beta allowlist", async () => {
+  test("rejects a recording upload without a valid desktop token", async () => {
     const { server, baseUrl } = createServer();
-    Object.defineProperty(config.mcp, "publicBaseUrl", {
-      get: () => baseUrl,
-      configurable: true,
-    });
 
     try {
-      const token = await authorizeDesktopToken(baseUrl);
-      Object.defineProperty(config.desktop, "allowedUserIds", {
-        get: () => ["other-user"],
-        configurable: true,
-      });
-
       const response = await fetch(
         `${baseUrl}/api/desktop/recordings/session`,
         {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
-            Authorization: `Bearer ${token.access_token}`,
+            Authorization: "Bearer desktop_at_not-a-real-token",
           },
           body: JSON.stringify({
             sources: [
@@ -327,9 +266,9 @@ describe("desktop API", () => {
           }),
         },
       );
-      expect(response.status).toBe(403);
+      expect(response.status).toBe(401);
       await expect(readJson<{ error: string }>(response)).resolves.toEqual(
-        expect.objectContaining({ error: "access_denied" }),
+        expect.objectContaining({ error: "invalid_token" }),
       );
     } finally {
       await closeServer(server);

@@ -7,7 +7,7 @@ Tracking issue: [#249](https://github.com/Chronote-gg/Chronote/issues/249)
 ## Current Release Posture
 
 - Windows is the first supported desktop target.
-- Desktop API access is gated by `DESKTOP_ALLOWED_USER_IDS`, falling back to `SUPER_ADMIN_USER_IDS`.
+- Desktop API access is open to any signed-in account, gated by desktop OAuth token scopes.
 - Production desktop builds must not include OpenAI credentials.
 - Beta artifacts may be unsigned while the Windows Authenticode provider is deferred.
 - Stable releases are blocked until Authenticode signing is configured and verified.
@@ -53,11 +53,9 @@ The signed path uses GitHub OIDC through `azure/login`, signs built `.exe` and `
 
 ### Production Desktop API Enablement
 
-Production Terraform plans and applies hydrate most variables from the protected environment's `TERRAFORM_TFVARS_JSON` secret. Desktop access is one input, set as a GitHub environment variable so it can be read and changed without rewriting that secret:
+There is no desktop enablement input. The routes are always mounted and any signed-in account can complete the desktop OAuth flow, so a beta window is now a product decision (what the app advertises and who is handed a build) rather than a Terraform variable.
 
-- `TFVAR_DESKTOP_ALLOWED_USER_IDS`: comma-separated Discord user IDs for beta access.
-
-The routes themselves are always mounted. With that variable and `SUPER_ADMIN_USER_IDS` both blank, every account gets a 403, so widening the beta means editing one list rather than an enable flag plus a list.
+The access boundary is the desktop token and its scopes. Anything narrower, per-user quotas for instance, belongs in the personal upload path shared with the portal, not in a desktop-only gate.
 
 ## Local Commands
 
@@ -132,7 +130,7 @@ Purpose: verify the installer lifecycle and real-device recorder path before bro
 Prerequisites:
 
 - A Windows test machine that has not already installed the same Chronote Desktop build, or a machine where the previous build was removed first.
-- A Chronote account listed in `DESKTOP_ALLOWED_USER_IDS` or `SUPER_ADMIN_USER_IDS`.
+- Any Chronote account that can sign in with Discord.
 - A working microphone and a local audio source, such as a browser tab playing a short test clip.
 - The release MSI or NSIS artifact plus `SHA256SUMS.txt` from the draft GitHub Release.
 

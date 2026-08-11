@@ -201,13 +201,6 @@ class ConfigService {
     posthogHost: process.env.POSTHOG_HOST || "https://us.i.posthog.com",
   };
 
-  readonly desktop = {
-    allowedUserIds: (() => {
-      const ids = parseCsv(process.env.DESKTOP_ALLOWED_USER_IDS);
-      return ids.length > 0 ? ids : this.admin.superAdminUserIds;
-    })(),
-  };
-
   // Contact feedback configuration
   readonly contactFeedback = {
     notificationChannelId: process.env.FEEDBACK_NOTIFICATION_CHANNEL_ID || "",
