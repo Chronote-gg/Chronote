@@ -10,6 +10,7 @@ Notable product changes for Chronote users. For the full changelog, see the [Git
 ### Chronote Desktop is open to every account
 
 - Chronote Desktop no longer requires desktop access to be enabled on your account. Any Chronote account can sign in and upload a recording.
+- Desktop sign-in now asks you to approve the connection in your browser and lists what the app will be able to do. Approve it only when you started the sign-in yourself.
 - It remains a Windows-only beta, and beta builds may be unsigned.
 
 ### Analytics now cover what you do in Discord

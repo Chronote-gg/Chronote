@@ -50,7 +50,7 @@ export class DesktopAuthError extends Error {
 const epochSeconds = (date = new Date()) => Math.floor(date.getTime() / 1000);
 const nowIso = () => new Date().toISOString();
 
-const getDesktopAuthSecret = () =>
+export const getDesktopAuthSecret = () =>
   config.server.oauthSecret || config.server.sessionSecret;
 
 const hashDesktopToken = (token: string) =>

@@ -1,3 +1,4 @@
+import crypto from "node:crypto";
 import type { Express, Request, Response } from "express";
 import { z } from "zod";
 import type { Profile } from "passport-discord";
@@ -16,6 +17,7 @@ import {
 import {
   DesktopAuthError,
   exchangeDesktopAuthorizationCode,
+  getDesktopAuthSecret,
   hasDesktopScopes,
   issueDesktopAuthorizationCode,
   isDesktopRedirectUriAllowed,
@@ -29,9 +31,18 @@ import {
   PERSONAL_RECORDING_MAX_SOURCES,
   PERSONAL_RECORDING_SEGMENT_MAX_BYTES,
 } from "../constants";
+import { readConsentToken, signConsentToken } from "../utils/consentToken";
+import { htmlEscape } from "../utils/html";
 
 const DESKTOP_RATE_LIMIT_WINDOW_MS = 60_000;
 const DESKTOP_RATE_LIMIT_MAX = 60;
+const DESKTOP_CONSENT_PATH = "/api/desktop/auth/authorize/consent";
+const DESKTOP_CONSENT_TTL_MS = 5 * 60 * 1000;
+const DESKTOP_SCOPE_DESCRIPTIONS: Record<DesktopAuthScope, string> = {
+  "profile:read": "See your Chronote account name and avatar",
+  "personal_uploads:write": "Upload recordings to your personal meetings",
+  "meetings:read": "Read your meetings, including transcripts and notes",
+};
 const REQUIRED_UPLOAD_SCOPES: DesktopAuthScope[] = ["personal_uploads:write"];
 const REQUIRED_PROFILE_SCOPES: DesktopAuthScope[] = ["profile:read"];
 
@@ -194,6 +205,104 @@ const stashAuthorizeRedirect = (req: Request, redirect: string) => {
   session.oauthRedirect = redirect;
 };
 
+type DesktopConsentSession = Request["session"] & {
+  desktopConsentNonce?: string;
+};
+
+const stashConsentNonce = (req: Request, nonce: string) => {
+  const session = req.session as DesktopConsentSession | undefined;
+  if (!session) return false;
+  session.desktopConsentNonce = nonce;
+  return true;
+};
+
+// Single use: an approval must not be replayable, and the desktop flow has no
+// client identity, so this nonce is the only thing tying a submitted consent
+// form back to the browser session that was shown it.
+const consumeConsentNonce = (req: Request) => {
+  const session = req.session as DesktopConsentSession | undefined;
+  if (!session?.desktopConsentNonce) return undefined;
+  const nonce = session.desktopConsentNonce;
+  session.desktopConsentNonce = undefined;
+  return nonce;
+};
+
+type DesktopConsentRequest = {
+  nonce: string;
+  userId: string;
+  redirectUri: string;
+  scope?: string;
+  state?: string;
+  codeChallenge: string;
+  codeChallengeMethod: string;
+  expiresAt: number;
+};
+
+const isDesktopConsentRequest = (
+  value: unknown,
+): value is DesktopConsentRequest => {
+  if (!value || typeof value !== "object") return false;
+  const request = value as Partial<DesktopConsentRequest>;
+  return (
+    typeof request.nonce === "string" &&
+    typeof request.userId === "string" &&
+    typeof request.redirectUri === "string" &&
+    typeof request.codeChallenge === "string" &&
+    typeof request.codeChallengeMethod === "string" &&
+    typeof request.expiresAt === "number" &&
+    (request.scope === undefined || typeof request.scope === "string") &&
+    (request.state === undefined || typeof request.state === "string")
+  );
+};
+
+const renderDesktopConsentPage = (params: {
+  scopes: DesktopAuthScope[];
+  redirectUri: string;
+  consentToken: string;
+}) => `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Connect Chronote Desktop</title>
+    <style>
+      body { font-family: system-ui, sans-serif; margin: 0; background: #0f172a; color: #e2e8f0; }
+      main { max-width: 560px; margin: 12vh auto; padding: 32px; background: #111827; border: 1px solid #334155; border-radius: 18px; }
+      h1 { margin-top: 0; font-size: 1.4rem; }
+      ul { padding-left: 20px; }
+      li { margin-bottom: 6px; }
+      code { word-break: break-all; color: #bfdbfe; }
+      .note { color: #94a3b8; font-size: 0.9rem; }
+      .actions { display: flex; gap: 12px; margin-top: 24px; }
+      button { border: 0; border-radius: 999px; padding: 10px 16px; font-weight: 700; cursor: pointer; }
+      .approve { background: #93c5fd; color: #0f172a; }
+      .deny { background: #334155; color: #e2e8f0; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Connect Chronote Desktop</h1>
+      <p>An application on this computer is asking to connect to your Chronote account and would be able to:</p>
+      <ul>
+        ${params.scopes
+          .map(
+            (scope) =>
+              `<li>${htmlEscape(DESKTOP_SCOPE_DESCRIPTIONS[scope])}</li>`,
+          )
+          .join("\n        ")}
+      </ul>
+      <p class="note">It will send you back to <code>${htmlEscape(params.redirectUri)}</code>. Chronote cannot verify which application started this, so only continue if you just opened Chronote Desktop yourself.</p>
+      <form method="post" action="${DESKTOP_CONSENT_PATH}">
+        <input type="hidden" name="consent_token" value="${htmlEscape(params.consentToken)}" />
+        <div class="actions">
+          <button class="approve" type="submit" name="decision" value="approve">Connect</button>
+          <button class="deny" type="submit" name="decision" value="deny">Cancel</button>
+        </div>
+      </form>
+    </main>
+  </body>
+</html>`;
+
 const getBearerToken = (req: Request) => {
   const header = req.headers.authorization;
   if (!header?.startsWith("Bearer ")) return undefined;
@@ -254,7 +363,7 @@ export function registerDesktopRoutes(app: Express) {
     }
 
     try {
-      parseDesktopScopes(input.scope);
+      const scopes = parseDesktopScopes(input.scope);
       if (!req.isAuthenticated?.()) {
         stashAuthorizeRedirect(req, buildAuthorizeUrl(req));
         req.session.save((error) => {
@@ -267,17 +376,43 @@ export function registerDesktopRoutes(app: Express) {
         return;
       }
 
-      const code = await issueDesktopAuthorizationCode({
-        user: req.user as Pick<Profile, "id" | "username" | "avatar">,
-        redirectUri: input.redirect_uri,
-        scope: input.scope,
-        codeChallenge: input.code_challenge,
-        codeChallengeMethod: input.code_challenge_method,
-      });
-      redirectWithCode(res, {
-        redirectUri: input.redirect_uri,
-        code,
-        state: input.state,
+      // A signed-in session is not consent. This flow has no client identity,
+      // so any local process can start it, and only the person at the browser
+      // can say whether they meant to.
+      const user = req.user as Pick<Profile, "id" | "username" | "avatar">;
+      const nonce = crypto.randomBytes(16).toString("base64url");
+      if (!stashConsentNonce(req, nonce)) {
+        throw new DesktopAuthError(
+          "server_error",
+          "Unable to start desktop consent.",
+          500,
+        );
+      }
+      const consentToken = signConsentToken<DesktopConsentRequest>(
+        {
+          nonce,
+          userId: user.id,
+          redirectUri: input.redirect_uri,
+          scope: input.scope,
+          state: input.state,
+          codeChallenge: input.code_challenge,
+          codeChallengeMethod: input.code_challenge_method,
+          expiresAt: Date.now() + DESKTOP_CONSENT_TTL_MS,
+        },
+        getDesktopAuthSecret(),
+      );
+      req.session.save((error) => {
+        if (error) {
+          sendOAuthError(res, error);
+          return;
+        }
+        res.type("html").send(
+          renderDesktopConsentPage({
+            scopes,
+            redirectUri: input.redirect_uri,
+            consentToken,
+          }),
+        );
       });
     } catch (error) {
       const desktopError =
@@ -287,6 +422,63 @@ export function registerDesktopRoutes(app: Express) {
         error: desktopError?.code ?? "server_error",
         description: desktopError?.message,
         state: input.state,
+      });
+    }
+  });
+
+  app.post(DESKTOP_CONSENT_PATH, rateLimiter, async (req, res) => {
+    const token =
+      typeof req.body?.consent_token === "string"
+        ? req.body.consent_token
+        : undefined;
+    const consent = token
+      ? readConsentToken(token, getDesktopAuthSecret(), isDesktopConsentRequest)
+      : undefined;
+    const sessionNonce = consumeConsentNonce(req);
+    const user = req.user as Pick<Profile, "id" | "username" | "avatar">;
+    if (
+      !req.isAuthenticated?.() ||
+      !user ||
+      !consent ||
+      !sessionNonce ||
+      sessionNonce !== consent.nonce ||
+      user.id !== consent.userId
+    ) {
+      res.status(400).json({ error: "invalid_request" });
+      return;
+    }
+
+    if (req.body?.decision !== "approve") {
+      redirectWithError(res, {
+        redirectUri: consent.redirectUri,
+        error: "access_denied",
+        description: "Desktop authorization was cancelled.",
+        state: consent.state,
+      });
+      return;
+    }
+
+    try {
+      const code = await issueDesktopAuthorizationCode({
+        user,
+        redirectUri: consent.redirectUri,
+        scope: consent.scope,
+        codeChallenge: consent.codeChallenge,
+        codeChallengeMethod: consent.codeChallengeMethod,
+      });
+      redirectWithCode(res, {
+        redirectUri: consent.redirectUri,
+        code,
+        state: consent.state,
+      });
+    } catch (error) {
+      const desktopError =
+        error instanceof DesktopAuthError ? error : undefined;
+      redirectWithError(res, {
+        redirectUri: consent.redirectUri,
+        error: desktopError?.code ?? "server_error",
+        description: desktopError?.message,
+        state: consent.state,
       });
     }
   });

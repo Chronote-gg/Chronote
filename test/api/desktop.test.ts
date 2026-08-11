@@ -90,6 +90,7 @@ const createServer = (options: { authenticated?: boolean } = {}) => {
   };
   const app = express();
   app.use(express.json());
+  app.use(express.urlencoded({ extended: false }));
   app.use((req, _res, next) => {
     const request = req as typeof req & {
       session?: typeof session;
@@ -150,16 +151,51 @@ const buildAuthorizeUrl = (baseUrl: string, redirectUri: string) => {
   return { authorizeUrl, codeVerifier };
 };
 
-const authorizeDesktopToken = async (baseUrl: string) => {
-  const redirectUri = "http://127.0.0.1:49152/auth/callback";
+const CONSENT_PATH = "/api/desktop/auth/authorize/consent";
+
+const extractConsentToken = (html: string) => {
+  const match = html.match(/name="consent_token" value="([^"]+)"/);
+  if (!match) throw new Error("Consent page did not contain a consent token.");
+  return match[1];
+};
+
+const requestDesktopConsent = async (baseUrl: string, redirectUri: string) => {
   const { authorizeUrl, codeVerifier } = buildAuthorizeUrl(
     baseUrl,
     redirectUri,
   );
+  const response = await fetch(authorizeUrl, { redirect: "manual" });
+  await expectSuccess(response);
+  return {
+    consentToken: extractConsentToken(await response.text()),
+    codeVerifier,
+  };
+};
 
-  const authorizeResponse = await fetch(authorizeUrl, {
+const submitDesktopConsent = async (
+  baseUrl: string,
+  consentToken: string,
+  decision: string,
+) =>
+  fetch(`${baseUrl}${CONSENT_PATH}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({ consent_token: consentToken, decision }),
     redirect: "manual",
   });
+
+const authorizeDesktopToken = async (baseUrl: string) => {
+  const redirectUri = "http://127.0.0.1:49152/auth/callback";
+  const { consentToken, codeVerifier } = await requestDesktopConsent(
+    baseUrl,
+    redirectUri,
+  );
+
+  const authorizeResponse = await submitDesktopConsent(
+    baseUrl,
+    consentToken,
+    "approve",
+  );
   expect(authorizeResponse.status).toBe(302);
   const callbackUrl = new URL(authorizeResponse.headers.get("location") ?? "");
   expect(callbackUrl.origin + callbackUrl.pathname).toBe(redirectUri);
@@ -239,6 +275,81 @@ describe("desktop API", () => {
         `${authorizeUrl.pathname}${authorizeUrl.search}`,
       );
       expect(session.oauthRedirect).not.toContain(baseUrl);
+    } finally {
+      await closeServer(server);
+    }
+  });
+
+  test("asks for consent instead of issuing a code straight away", async () => {
+    const { server, baseUrl } = createServer();
+
+    try {
+      const redirectUri = "http://127.0.0.1:49152/auth/callback";
+      const { authorizeUrl } = buildAuthorizeUrl(baseUrl, redirectUri);
+      const response = await fetch(authorizeUrl, { redirect: "manual" });
+
+      expect(response.status).toBe(200);
+      const html = await response.text();
+      expect(html).toContain("Connect Chronote Desktop");
+      expect(html).toContain(
+        "Read your meetings, including transcripts and notes",
+      );
+      expect(html).toContain(redirectUri);
+    } finally {
+      await closeServer(server);
+    }
+  });
+
+  test("returns access_denied when consent is cancelled", async () => {
+    const { server, baseUrl } = createServer();
+
+    try {
+      const redirectUri = "http://127.0.0.1:49152/auth/callback";
+      const { consentToken } = await requestDesktopConsent(
+        baseUrl,
+        redirectUri,
+      );
+      const response = await submitDesktopConsent(
+        baseUrl,
+        consentToken,
+        "deny",
+      );
+
+      expect(response.status).toBe(302);
+      const callbackUrl = new URL(response.headers.get("location") ?? "");
+      expect(callbackUrl.origin + callbackUrl.pathname).toBe(redirectUri);
+      expect(callbackUrl.searchParams.get("error")).toBe("access_denied");
+      expect(callbackUrl.searchParams.get("code")).toBeNull();
+    } finally {
+      await closeServer(server);
+    }
+  });
+
+  test("refuses to replay a consent approval", async () => {
+    const { server, baseUrl } = createServer();
+
+    try {
+      const redirectUri = "http://127.0.0.1:49152/auth/callback";
+      const { consentToken } = await requestDesktopConsent(
+        baseUrl,
+        redirectUri,
+      );
+      const first = await submitDesktopConsent(
+        baseUrl,
+        consentToken,
+        "approve",
+      );
+      expect(first.status).toBe(302);
+
+      const replay = await submitDesktopConsent(
+        baseUrl,
+        consentToken,
+        "approve",
+      );
+      expect(replay.status).toBe(400);
+      await expect(readJson<{ error: string }>(replay)).resolves.toEqual(
+        expect.objectContaining({ error: "invalid_request" }),
+      );
     } finally {
       await closeServer(server);
     }
