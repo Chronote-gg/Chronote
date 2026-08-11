@@ -40,7 +40,6 @@ ECS_DESIRED_COUNT=1                           # 0 parks the environment
 NOTES_MODEL="gpt-5.2"                         # optional; model for notes and summaries
 APP_CONFIG_ENABLED="true"                     # optional; enable AppConfig for unified config
 SUPER_ADMIN_USER_IDS=""                       # comma-separated Discord user IDs
-ENABLE_DESKTOP_API="false"                    # enable hosted desktop recorder API routes
 DESKTOP_ALLOWED_USER_IDS=""                   # comma-separated beta user IDs; falls back to SUPER_ADMIN_USER_IDS
 LANGFUSE_BASE_URL=""                          # blank defaults to https://us.cloud.langfuse.com; set for EU or self-hosted
 LANGFUSE_PUBLIC_KEY=""                        # required for Langfuse prompts

@@ -14,11 +14,6 @@ const parseCsv = (value?: string) =>
     .map((item) => item.trim())
     .filter((item) => item.length > 0);
 
-const parseBoolean = (value: string | undefined, fallback: boolean) => {
-  if (value === undefined) return fallback;
-  return value === "true";
-};
-
 const parseOptionalNonNegativeInteger = (value: string | undefined) => {
   if (value === undefined || value.trim() === "") return undefined;
   const parsed = parseInt(value, 10);
@@ -207,7 +202,6 @@ class ConfigService {
   };
 
   readonly desktop = {
-    enabled: parseBoolean(process.env.ENABLE_DESKTOP_API, this.mock.enabled),
     allowedUserIds: (() => {
       const ids = parseCsv(process.env.DESKTOP_ALLOWED_USER_IDS);
       return ids.length > 0 ? ids : this.admin.superAdminUserIds;

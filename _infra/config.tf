@@ -10,12 +10,6 @@ variable "SUPER_ADMIN_USER_IDS" {
   default     = ""
 }
 
-variable "ENABLE_DESKTOP_API" {
-  description = "Enable the desktop recorder API routes"
-  type        = string
-  default     = "false"
-}
-
 variable "DESKTOP_ALLOWED_USER_IDS" {
   description = "Comma-separated Discord user IDs allowed to use the desktop recorder beta; defaults to SUPER_ADMIN_USER_IDS when blank"
   type        = string

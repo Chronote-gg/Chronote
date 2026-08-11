@@ -5,9 +5,10 @@ import crypto from "node:crypto";
 import express from "express";
 import http from "node:http";
 import type { AddressInfo } from "node:net";
-import { registerDesktopRoutesIfEnabled } from "../../src/api/desktop";
+import { registerDesktopRoutes } from "../../src/api/desktop";
 import { registerMockStorageRoutes } from "../../src/api/mockStorage";
 import { resetDesktopAuthMemoryRepository } from "../../src/repositories/desktopAuthRepository";
+import { isDesktopUserAllowed } from "../../src/services/desktopAuthService";
 import { resetMockStore } from "../../src/repositories/mockStore";
 import { config } from "../../src/services/configService";
 
@@ -73,10 +74,6 @@ const originalPublicBaseUrl = Object.getOwnPropertyDescriptor(
   config.mcp,
   "publicBaseUrl",
 );
-const originalDesktopEnabled = Object.getOwnPropertyDescriptor(
-  config.desktop,
-  "enabled",
-);
 const originalDesktopAllowedUserIds = Object.getOwnPropertyDescriptor(
   config.desktop,
   "allowedUserIds",
@@ -109,7 +106,7 @@ const createServer = (options: { authenticated?: boolean } = {}) => {
     request.isAuthenticated = () => authenticated;
     next();
   });
-  registerDesktopRoutesIfEnabled(app);
+  registerDesktopRoutes(app);
   registerMockStorageRoutes(app);
   const server = app.listen(0);
   const { port } = server.address() as AddressInfo;
@@ -221,10 +218,6 @@ describe("desktop API", () => {
       get: () => true,
       configurable: true,
     });
-    Object.defineProperty(config.desktop, "enabled", {
-      get: () => true,
-      configurable: true,
-    });
     Object.defineProperty(config.desktop, "allowedUserIds", {
       get: () => [mockDesktopUser.id],
       configurable: true,
@@ -240,9 +233,6 @@ describe("desktop API", () => {
     if (originalPublicBaseUrl) {
       Object.defineProperty(config.mcp, "publicBaseUrl", originalPublicBaseUrl);
     }
-    if (originalDesktopEnabled) {
-      Object.defineProperty(config.desktop, "enabled", originalDesktopEnabled);
-    }
     if (originalDesktopAllowedUserIds) {
       Object.defineProperty(
         config.desktop,
@@ -252,19 +242,17 @@ describe("desktop API", () => {
     }
   });
 
-  test("does not register desktop routes when the desktop API is disabled", async () => {
-    Object.defineProperty(config.desktop, "enabled", {
+  test("denies every account when no allowlist is configured", () => {
+    Object.defineProperty(config.mock, "enabled", {
       get: () => false,
       configurable: true,
     });
-    const { server, baseUrl } = createServer();
+    Object.defineProperty(config.desktop, "allowedUserIds", {
+      get: () => [],
+      configurable: true,
+    });
 
-    try {
-      const response = await fetch(`${baseUrl}/api/desktop/auth/scopes`);
-      expect(response.status).toBe(404);
-    } finally {
-      await closeServer(server);
-    }
+    expect(isDesktopUserAllowed(mockDesktopUser.id)).toBe(false);
   });
 
   test("denies desktop authorization outside the beta allowlist", async () => {

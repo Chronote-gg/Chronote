@@ -7,7 +7,7 @@ Tracking issue: [#249](https://github.com/Chronote-gg/Chronote/issues/249)
 ## Current Release Posture
 
 - Windows is the first supported desktop target.
-- Desktop API access remains gated by `ENABLE_DESKTOP_API` and `DESKTOP_ALLOWED_USER_IDS` or `SUPER_ADMIN_USER_IDS`.
+- Desktop API access is gated by `DESKTOP_ALLOWED_USER_IDS`, falling back to `SUPER_ADMIN_USER_IDS`.
 - Production desktop builds must not include OpenAI credentials.
 - Beta artifacts may be unsigned while the Windows Authenticode provider is deferred.
 - Stable releases are blocked until Authenticode signing is configured and verified.
@@ -53,12 +53,11 @@ The signed path uses GitHub OIDC through `azure/login`, signs built `.exe` and `
 
 ### Production Desktop API Enablement
 
-Production Terraform plans and applies hydrate most variables from the protected environment's `TERRAFORM_TFVARS_JSON` secret. Desktop canary rollout has dedicated GitHub environment variable overlays so future applies do not silently turn the hosted desktop API off again:
+Production Terraform plans and applies hydrate most variables from the protected environment's `TERRAFORM_TFVARS_JSON` secret. Desktop access is one input, set as a GitHub environment variable so it can be read and changed without rewriting that secret:
 
-- `ENABLE_DESKTOP_API`: set to `true` for the beta/canary window.
-- `DESKTOP_ALLOWED_USER_IDS`: comma-separated Discord user IDs for beta access.
+- `TFVAR_DESKTOP_ALLOWED_USER_IDS`: comma-separated Discord user IDs for beta access.
 
-If `ENABLE_DESKTOP_API=true`, the Terraform workflows fail unless either `DESKTOP_ALLOWED_USER_IDS` or `SUPER_ADMIN_USER_IDS` is configured. This keeps hosted desktop routes gated even when the API is intentionally enabled.
+The routes themselves are always mounted. With that variable and `SUPER_ADMIN_USER_IDS` both blank, every account gets a 403, so widening the beta means editing one list rather than an enable flag plus a list.
 
 ## Local Commands
 
