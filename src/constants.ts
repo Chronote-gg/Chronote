@@ -77,6 +77,14 @@ export const CONTACT_FEEDBACK_UPLOAD_URL_EXPIRY_SECONDS = 300; // 5 minutes
 export const PERSONAL_MEDIA_UPLOAD_S3_PREFIX = "personal-media-uploads/";
 export const PERSONAL_MEDIA_UPLOAD_MAX_BYTES = 500 * 1024 * 1024; // 500 MB
 export const PERSONAL_RECORDING_SEGMENT_MAX_BYTES = 64 * 1024 * 1024; // 64 MB
+export const PERSONAL_RECORDING_MAX_SOURCES = 4;
+// A desktop recording gets one meeting's worth of audio per registered source.
+// The per-segment size cap alone leaves the job unbounded, because nothing caps
+// how many segments a session may add. Bounding declared duration rather than
+// segment count keeps this independent of the client's segment cadence, and
+// bounds transcription work, which scales with audio minutes.
+export const PERSONAL_RECORDING_MAX_TOTAL_MILLIS =
+  MAXIMUM_MEETING_DURATION * PERSONAL_RECORDING_MAX_SOURCES;
 export const PERSONAL_MEDIA_UPLOAD_URL_EXPIRY_SECONDS = 900; // 15 minutes
 export const PERSONAL_MEDIA_UPLOAD_RATE_LIMIT_WINDOW_MS = 60_000; // 1 minute
 export const PERSONAL_MEDIA_UPLOAD_RATE_LIMIT_MAX = 20;

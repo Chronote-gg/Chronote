@@ -11,6 +11,7 @@ import {
   PERSONAL_MEDIA_UPLOAD_MAX_BYTES,
   PERSONAL_MEDIA_UPLOAD_S3_PREFIX,
   PERSONAL_MEDIA_UPLOAD_URL_EXPIRY_SECONDS,
+  PERSONAL_RECORDING_MAX_TOTAL_MILLIS,
   PERSONAL_RECORDING_SEGMENT_MAX_BYTES,
 } from "../constants";
 import { getPersonalRecordingSegmentRepository } from "../repositories/personalRecordingSegmentRepository";
@@ -384,6 +385,29 @@ export async function createPersonalRecordingUploadSession(options: {
   return { uploadId, mediaKind: "audio", sources };
 }
 
+const assertRecordingLengthWithinCap = async (
+  repository: ReturnType<typeof getPersonalRecordingSegmentRepository>,
+  input: PersonalRecordingSegmentUploadInput,
+  segmentKey: string,
+) => {
+  const segments = await repository.listByUpload(input.uploadId);
+  const recordedMillis = segments
+    .filter(
+      (segment) =>
+        segment.status !== "failed" && segment.segmentKey !== segmentKey,
+    )
+    .reduce((sum, segment) => sum + segment.durationMillis, 0);
+  if (
+    recordedMillis + input.durationMillis >
+    PERSONAL_RECORDING_MAX_TOTAL_MILLIS
+  ) {
+    throw new PersonalMediaUploadError(
+      "Recording is longer than the maximum supported length.",
+      "too_large",
+    );
+  }
+};
+
 export async function createPersonalRecordingSegmentUploadIntent(
   input: PersonalRecordingSegmentUploadInput,
 ): Promise<PersonalRecordingSegmentUploadIntent> {
@@ -422,6 +446,7 @@ export async function createPersonalRecordingSegmentUploadIntent(
 
   const segmentKey = buildPersonalRecordingSegmentSortKey(input);
   const repository = getPersonalRecordingSegmentRepository();
+  await assertRecordingLengthWithinCap(repository, input, segmentKey);
   const existing = await repository.get(input.uploadId, segmentKey);
   if (existing) {
     assertMatchingSegment(existing, input);

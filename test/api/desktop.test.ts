@@ -6,6 +6,7 @@ import express from "express";
 import http from "node:http";
 import type { AddressInfo } from "node:net";
 import { registerDesktopRoutes } from "../../src/api/desktop";
+import { PERSONAL_RECORDING_MAX_TOTAL_MILLIS } from "../../src/constants";
 import { registerMockStorageRoutes } from "../../src/api/mockStorage";
 import { resetDesktopAuthMemoryRepository } from "../../src/repositories/desktopAuthRepository";
 import { resetMockStore } from "../../src/repositories/mockStore";
@@ -449,6 +450,66 @@ describe("desktop API", () => {
       const status = await readJson<RecordingJobResponse>(statusResponse);
       expect(status.job.status).toBe("queued");
       expect(status.job.sourceManifest).toHaveLength(2);
+    } finally {
+      await closeServer(server);
+    }
+  });
+
+  test("rejects a recording segment past the maximum recording length", async () => {
+    const { server, baseUrl } = createServer();
+    Object.defineProperty(config.mcp, "publicBaseUrl", {
+      get: () => baseUrl,
+      configurable: true,
+    });
+
+    try {
+      const token = await authorizeDesktopToken(baseUrl);
+      const sessionResponse = await fetch(
+        `${baseUrl}/api/desktop/recordings/session`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token.access_token}`,
+          },
+          body: JSON.stringify({
+            sources: [
+              { sourceId: "owner_mic", kind: "owner_mic", label: "Me" },
+            ],
+          }),
+        },
+      );
+      await expectSuccess(sessionResponse);
+      const session = await readJson<RecordingSessionResponse>(sessionResponse);
+
+      const body = Buffer.from([0, 1, 2, 3]);
+      const response = await fetch(
+        `${baseUrl}/api/desktop/recordings/segment-intent`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token.access_token}`,
+          },
+          body: JSON.stringify({
+            uploadId: session.uploadId,
+            sourceId: "owner_mic",
+            sequence: 0,
+            contentType: "audio/wav",
+            fileSize: body.byteLength,
+            checksumSha256: checksumSha256(body),
+            durationMillis: PERSONAL_RECORDING_MAX_TOTAL_MILLIS + 1,
+            startedAt: new Date(0).toISOString(),
+            endedAt: new Date(
+              PERSONAL_RECORDING_MAX_TOTAL_MILLIS + 1,
+            ).toISOString(),
+          }),
+        },
+      );
+      expect(response.status).toBe(400);
+      await expect(readJson<{ error: string }>(response)).resolves.toEqual(
+        expect.objectContaining({ error: "too_large" }),
+      );
     } finally {
       await closeServer(server);
     }

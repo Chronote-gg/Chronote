@@ -55,7 +55,7 @@ The signed path uses GitHub OIDC through `azure/login`, signs built `.exe` and `
 
 There is no desktop enablement input. The routes are always mounted and any signed-in account can complete the desktop OAuth flow, so a beta window is now a product decision (what the app advertises and who is handed a build) rather than a Terraform variable.
 
-The access boundary is the desktop token and its scopes. Anything narrower, per-user quotas for instance, belongs in the personal upload path shared with the portal, not in a desktop-only gate.
+The access boundary is the desktop token and its scopes. A single recording job is bounded by `PERSONAL_RECORDING_MAX_TOTAL_MILLIS`, one meeting length per registered source. Anything narrower, per-user quotas for instance, belongs in the personal upload path shared with the portal, not in a desktop-only gate.
 
 ## Local Commands
 

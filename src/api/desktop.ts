@@ -25,7 +25,10 @@ import {
   validateDesktopAccessToken,
 } from "../services/desktopAuthService";
 import { createAuthRateLimiter } from "../services/authRateLimitService";
-import { PERSONAL_RECORDING_SEGMENT_MAX_BYTES } from "../constants";
+import {
+  PERSONAL_RECORDING_MAX_SOURCES,
+  PERSONAL_RECORDING_SEGMENT_MAX_BYTES,
+} from "../constants";
 
 const DESKTOP_RATE_LIMIT_WINDOW_MS = 60_000;
 const DESKTOP_RATE_LIMIT_MAX = 60;
@@ -75,7 +78,7 @@ const recordingSessionSchema = z.object({
   sources: z
     .array(recordingSourceSchema)
     .min(1)
-    .max(4)
+    .max(PERSONAL_RECORDING_MAX_SOURCES)
     .refine(hasUniqueSourceIds, {
       message: "sourceId values must be unique.",
     }),
