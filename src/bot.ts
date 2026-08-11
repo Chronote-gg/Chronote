@@ -207,9 +207,16 @@ const invalidateBotGuildCache = async (label: string) => {
 };
 
 /**
- * A guild that has just been joined has a joinedTimestamp of roughly now; one
- * that is merely becoming available again after an outage carries its original
- * join date. Anything inside the window counts as a real install.
+ * A guild joined moments ago carries a joinedTimestamp of roughly now, so
+ * anything inside the window is treated as a real install.
+ *
+ * Availability after an outage never reaches this handler: discord.js emits
+ * `guildCreate` only for a guild that is not already cached, and a cached
+ * guild returning emits `guildAvailable` instead. What the window filters is
+ * a create re-emitted for a guild joined longer ago than it. A re-emission
+ * inside the window would still be counted, so this narrows double counting
+ * rather than preventing it; real idempotency would need the install to be
+ * recorded somewhere durable.
  */
 const FRESH_GUILD_JOIN_WINDOW_MS = 60_000;
 
@@ -481,10 +488,8 @@ export async function setupBot() {
     await invalidateBotGuildCache("guildCreate");
     await invalidateGuildCache(guild.id, "guildCreate");
 
-    // guildCreate also fires when an existing guild becomes available again
-    // after an outage, not only on a real join, so joinedTimestamp is what
-    // separates the two. Without this an outage recovery reads as a burst of
-    // installs and the cumulative count drifts upward permanently.
+    // Narrowed to recent joins, which drops a create re-emitted for a guild
+    // joined longer ago. See isFreshGuildJoin for the limits of that.
     if (isFreshGuildJoin(guild)) {
       captureEvent("server_installed", {
         guildId: guild.id,
