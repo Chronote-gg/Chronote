@@ -160,8 +160,6 @@ jobs:
           TERRAFORM_TFVARS_JSON: ${{ secrets.TERRAFORM_TFVARS_JSON }}
           REDIS_AUTH_TOKEN: ${{ secrets.REDIS_AUTH_TOKEN }}
           REDIS_URL: ${{ secrets.REDIS_URL }}
-          ENABLE_DESKTOP_API: ${{ vars.ENABLE_DESKTOP_API }}
-          DESKTOP_ALLOWED_USER_IDS: ${{ vars.DESKTOP_ALLOWED_USER_IDS }}
           GITHUB_VARS_JSON: ${{ toJSON(vars) }}
         run: |
           set -euo pipefail
@@ -186,11 +184,6 @@ jobs:
               data["AWS_TOKEN_KEY"] = aws_access_key_id
 
           for name in ["REDIS_AUTH_TOKEN", "REDIS_URL"]:
-              value = os.environ.get(name, "").strip()
-              if value:
-                  data[name] = value
-
-          for name in ["ENABLE_DESKTOP_API", "DESKTOP_ALLOWED_USER_IDS"]:
               value = os.environ.get(name, "").strip()
               if value:
                   data[name] = value
@@ -227,7 +220,6 @@ jobs:
 
           required = ["GITHUB_TOKEN", "AWS_TOKEN_KEY", "DISCORD_CLIENT_ID"]
           string_fields = required + [
-              "ENABLE_DESKTOP_API",
               "DESKTOP_ALLOWED_USER_IDS",
               "SUPER_ADMIN_USER_IDS",
               "grafana_api_key",
@@ -276,14 +268,6 @@ jobs:
               raise SystemExit(
                   "grafana_service_account_id is required when grafana_url is configured."
               )
-
-          if data.get("ENABLE_DESKTOP_API", "").strip().lower() == "true":
-              has_allowed_ids = data.get("DESKTOP_ALLOWED_USER_IDS", "").strip()
-              has_super_admin_ids = data.get("SUPER_ADMIN_USER_IDS", "").strip()
-              if not has_allowed_ids and not has_super_admin_ids:
-                  raise SystemExit(
-                      "ENABLE_DESKTOP_API=true requires DESKTOP_ALLOWED_USER_IDS or SUPER_ADMIN_USER_IDS."
-                  )
           PY
 
       - name: Terraform init

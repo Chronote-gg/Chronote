@@ -27,7 +27,6 @@ import {
 } from "../services/desktopAuthService";
 import { createAuthRateLimiter } from "../services/authRateLimitService";
 import { PERSONAL_RECORDING_SEGMENT_MAX_BYTES } from "../constants";
-import { config } from "../services/configService";
 
 const DESKTOP_RATE_LIMIT_WINDOW_MS = 60_000;
 const DESKTOP_RATE_LIMIT_MAX = 60;
@@ -444,9 +443,4 @@ export function registerDesktopRoutes(app: Express) {
       }
     },
   );
-}
-
-export function registerDesktopRoutesIfEnabled(app: Express) {
-  if (!config.desktop.enabled) return;
-  registerDesktopRoutes(app);
 }
