@@ -206,25 +206,37 @@ const stashAuthorizeRedirect = (req: Request, redirect: string) => {
 };
 
 type DesktopConsentSession = Request["session"] & {
-  desktopConsentNonce?: string;
+  desktopConsentNonces?: string[];
 };
+
+// Two desktop instances can legitimately have a consent page open at once, each
+// with its own loopback listener, so a single nonce slot would make whichever
+// page was opened first fail on approval. Bounded so a program that opens
+// authorize repeatedly cannot grow the session record without limit; the oldest
+// pending consent is dropped instead.
+const MAX_PENDING_CONSENTS = 5;
 
 const stashConsentNonce = (req: Request, nonce: string) => {
   const session = req.session as DesktopConsentSession | undefined;
   if (!session) return false;
-  session.desktopConsentNonce = nonce;
+  const pending = session.desktopConsentNonces ?? [];
+  session.desktopConsentNonces = [...pending, nonce].slice(
+    -MAX_PENDING_CONSENTS,
+  );
   return true;
 };
 
 // Single use: an approval must not be replayable, and the desktop flow has no
 // client identity, so this nonce is the only thing tying a submitted consent
 // form back to the browser session that was shown it.
-const consumeConsentNonce = (req: Request) => {
+const consumeConsentNonce = (req: Request, nonce: string) => {
   const session = req.session as DesktopConsentSession | undefined;
-  if (!session?.desktopConsentNonce) return undefined;
-  const nonce = session.desktopConsentNonce;
-  session.desktopConsentNonce = undefined;
-  return nonce;
+  const pending = session?.desktopConsentNonces;
+  if (!session || !pending?.includes(nonce)) return false;
+  session.desktopConsentNonces = pending.filter(
+    (candidate) => candidate !== nonce,
+  );
+  return true;
 };
 
 type DesktopConsentRequest = {
@@ -253,6 +265,17 @@ const isDesktopConsentRequest = (
     (request.scope === undefined || typeof request.scope === "string") &&
     (request.state === undefined || typeof request.state === "string")
   );
+};
+
+// The session cookie is SameSite=None in production, so this authenticated page
+// would otherwise render inside a frame on any origin. The local program this
+// consent step exists to constrain is well placed to open such a page, hide it
+// behind its own UI, and clickjack the approval. Nothing else in the app sets
+// these headers, so they are set here rather than assumed.
+const sendConsentPage = (res: Response, html: string) => {
+  res.setHeader("Content-Security-Policy", "frame-ancestors 'none'");
+  res.setHeader("X-Frame-Options", "DENY");
+  res.type("html").send(html);
 };
 
 const renderDesktopConsentPage = (params: {
@@ -339,6 +362,16 @@ export function registerDesktopRoutes(app: Express) {
     windowMs: DESKTOP_RATE_LIMIT_WINDOW_MS,
     limit: DESKTOP_RATE_LIMIT_MAX,
   });
+  // Routes past this point already carry a validated token, so they are keyed
+  // by it. The client polls upload status every two seconds, which on an IP key
+  // means two clients sharing an office or VPN address exhaust the allowance on
+  // polling alone and start 429ing each other's uploads.
+  const tokenRateLimiter = createAuthRateLimiter({
+    enabled: true,
+    windowMs: DESKTOP_RATE_LIMIT_WINDOW_MS,
+    limit: DESKTOP_RATE_LIMIT_MAX,
+    perBearerToken: true,
+  });
 
   app.get("/api/desktop/auth/scopes", (_req, res) => {
     res.json({ scopes_supported: DESKTOP_AUTH_SCOPES });
@@ -406,7 +439,8 @@ export function registerDesktopRoutes(app: Express) {
           sendOAuthError(res, error);
           return;
         }
-        res.type("html").send(
+        sendConsentPage(
+          res,
           renderDesktopConsentPage({
             scopes,
             redirectUri: input.redirect_uri,
@@ -434,14 +468,15 @@ export function registerDesktopRoutes(app: Express) {
     const consent = token
       ? readConsentToken(token, getDesktopAuthSecret(), isDesktopConsentRequest)
       : undefined;
-    const sessionNonce = consumeConsentNonce(req);
+    const nonceMatched = consent
+      ? consumeConsentNonce(req, consent.nonce)
+      : false;
     const user = req.user as Pick<Profile, "id" | "username" | "avatar">;
     if (
       !req.isAuthenticated?.() ||
       !user ||
       !consent ||
-      !sessionNonce ||
-      sessionNonce !== consent.nonce ||
+      !nonceMatched ||
       user.id !== consent.userId
     ) {
       res.status(400).json({ error: "invalid_request" });
@@ -516,7 +551,7 @@ export function registerDesktopRoutes(app: Express) {
 
   app.get(
     "/api/desktop/me",
-    rateLimiter,
+    tokenRateLimiter,
     requireDesktopAuth(REQUIRED_PROFILE_SCOPES),
     (req: DesktopRequest, res) => {
       const user = getDesktopUser(req);
@@ -531,7 +566,7 @@ export function registerDesktopRoutes(app: Express) {
 
   app.post(
     "/api/desktop/recordings/session",
-    rateLimiter,
+    tokenRateLimiter,
     requireDesktopAuth(REQUIRED_UPLOAD_SCOPES),
     async (req: DesktopRequest, res) => {
       try {
@@ -551,7 +586,7 @@ export function registerDesktopRoutes(app: Express) {
 
   app.post(
     "/api/desktop/recordings/segment-intent",
-    rateLimiter,
+    tokenRateLimiter,
     requireDesktopAuth(REQUIRED_UPLOAD_SCOPES),
     async (req: DesktopRequest, res) => {
       try {
@@ -571,7 +606,7 @@ export function registerDesktopRoutes(app: Express) {
 
   app.post(
     "/api/desktop/recordings/segment-complete",
-    rateLimiter,
+    tokenRateLimiter,
     requireDesktopAuth(REQUIRED_UPLOAD_SCOPES),
     async (req: DesktopRequest, res) => {
       try {
@@ -591,7 +626,7 @@ export function registerDesktopRoutes(app: Express) {
 
   app.post(
     "/api/desktop/recordings/submit",
-    rateLimiter,
+    tokenRateLimiter,
     requireDesktopAuth(REQUIRED_UPLOAD_SCOPES),
     async (req: DesktopRequest, res) => {
       try {
@@ -613,7 +648,7 @@ export function registerDesktopRoutes(app: Express) {
 
   app.get(
     "/api/desktop/recordings/:uploadId",
-    rateLimiter,
+    tokenRateLimiter,
     requireDesktopAuth(REQUIRED_UPLOAD_SCOPES),
     async (req: DesktopRequest, res) => {
       try {

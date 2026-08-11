@@ -300,6 +300,51 @@ describe("desktop API", () => {
     }
   });
 
+  test("refuses to let the consent page be framed", async () => {
+    const { server, baseUrl } = createServer();
+
+    try {
+      const redirectUri = "http://127.0.0.1:49152/auth/callback";
+      const { authorizeUrl } = buildAuthorizeUrl(baseUrl, redirectUri);
+      const response = await fetch(authorizeUrl, { redirect: "manual" });
+
+      expect(response.status).toBe(200);
+      expect(response.headers.get("content-security-policy")).toContain(
+        "frame-ancestors 'none'",
+      );
+      expect(response.headers.get("x-frame-options")).toBe("DENY");
+    } finally {
+      await closeServer(server);
+    }
+  });
+
+  test("keeps parallel consent pages independently approvable", async () => {
+    const { server, baseUrl } = createServer();
+
+    try {
+      const redirectUri = "http://127.0.0.1:49152/auth/callback";
+      const first = await requestDesktopConsent(baseUrl, redirectUri);
+      const second = await requestDesktopConsent(baseUrl, redirectUri);
+
+      // The second page opening must not invalidate the first one.
+      const firstResponse = await submitDesktopConsent(
+        baseUrl,
+        first.consentToken,
+        "approve",
+      );
+      expect(firstResponse.status).toBe(302);
+
+      const secondResponse = await submitDesktopConsent(
+        baseUrl,
+        second.consentToken,
+        "approve",
+      );
+      expect(secondResponse.status).toBe(302);
+    } finally {
+      await closeServer(server);
+    }
+  });
+
   test("returns access_denied when consent is cancelled", async () => {
     const { server, baseUrl } = createServer();
 
