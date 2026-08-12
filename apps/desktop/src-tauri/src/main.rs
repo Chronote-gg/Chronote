@@ -33,6 +33,13 @@ const TOKEN_REFRESH_SKEW_SECONDS: u64 = 60;
 const LOGIN_TIMEOUT_SECONDS: u64 = 300;
 const DESKTOP_SCOPES: &str = "profile:read personal_uploads:write meetings:read";
 const RECORDING_SOURCE_SIGNAL_EVENT: &str = "recording-source-signal";
+const RECORDING_LIMIT_REACHED_EVENT: &str = "recording-limit-reached";
+// Mirrors MAXIMUM_MEETING_DURATION on the server, which caps each registered
+// source of a recording at one meeting's worth of audio. The server rejects the
+// segment that would exceed it, and that rejection aborts the whole upload
+// without submitting anything, so the recorder has to stop itself before
+// getting there rather than discovering the limit by hitting it.
+const RECORDING_SOURCE_MAX_MILLIS: u64 = 2 * 60 * 60 * 1000;
 const WAV_HEADER_BYTES: u64 = 44;
 const RETAINED_RECORDING_MANIFEST_FILE: &str = "recording.json";
 const RETAINED_RECORDING_MANIFEST_VERSION: u32 = 2;
@@ -125,6 +132,13 @@ struct TokenUser {
 struct RecordingStatus {
     is_recording: bool,
     started_at: Option<String>,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RecordingLimitReached {
+    source_id: String,
+    limit_millis: u64,
 }
 
 #[derive(Clone, Serialize)]
@@ -1274,6 +1288,7 @@ fn spawn_segment_upload_worker(
     mut session: Option<DesktopSession>,
 ) -> tauri::async_runtime::JoinHandle<()> {
     tauri::async_runtime::spawn(async move {
+        let mut limit_announced = false;
         while let Some(event) = segment_rx.recv().await {
             let upload_file = match segment_upload_file_from_event(&directory, event).await {
                 Ok(upload_file) => upload_file,
@@ -1282,9 +1297,27 @@ fn spawn_segment_upload_worker(
                     continue;
                 }
             };
-            if let Err(error) = record_segment_sealed(&directory, &manifest, &upload_file) {
-                eprintln!("Failed to update recording manifest: {error}");
-                continue;
+            match record_segment_sealed(&directory, &manifest, &upload_file) {
+                Ok(reached_limit) => {
+                    if reached_limit && !limit_announced {
+                        limit_announced = true;
+                        // Announce rather than stop here. The frontend owns the
+                        // one stop-and-upload path, and having it drive this
+                        // keeps a single teardown sequence instead of a second
+                        // one racing it for the same handles.
+                        let _ = app.emit(
+                            RECORDING_LIMIT_REACHED_EVENT,
+                            RecordingLimitReached {
+                                source_id: upload_file.source_id.clone(),
+                                limit_millis: RECORDING_SOURCE_MAX_MILLIS,
+                            },
+                        );
+                    }
+                }
+                Err(error) => {
+                    eprintln!("Failed to update recording manifest: {error}");
+                    continue;
+                }
             }
             if let Err(error) = upload_segment_file(
                 Some(&app),
@@ -1563,11 +1596,24 @@ fn mark_recording_manifest_failed(
     write_shared_recording_manifest(directory, manifest)
 }
 
+// Sums what one source has sealed so far. Sealed rather than uploaded on
+// purpose: the limit is about how much audio exists, not how much has made it
+// to the server yet, and an upload that is retrying must not read as headroom.
+fn sealed_millis_for_source(manifest: &RetainedRecordingManifest, source_id: &str) -> u64 {
+    manifest
+        .segments
+        .iter()
+        .filter(|segment| segment.source_id == source_id)
+        .map(|segment| segment.duration_millis)
+        .sum()
+}
+
 fn record_segment_sealed(
     directory: &Path,
     manifest: &SharedRecordingManifest,
     segment: &SegmentUploadFile,
-) -> Result<(), String> {
+) -> Result<bool, String> {
+    let reached_limit;
     {
         let mut manifest = manifest.lock().map_err(lock_error)?;
         upsert_manifest_segment(
@@ -1587,8 +1633,11 @@ fn record_segment_sealed(
                 error_message: None,
             },
         );
+        reached_limit =
+            sealed_millis_for_source(&manifest, &segment.source_id) >= RECORDING_SOURCE_MAX_MILLIS;
     }
-    write_shared_recording_manifest(directory, manifest)
+    write_shared_recording_manifest(directory, manifest)?;
+    Ok(reached_limit)
 }
 
 fn update_segment_status(
@@ -2252,6 +2301,72 @@ fn lock_error<T>(error: std::sync::PoisonError<T>) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn segment_for(
+        source_id: &str,
+        sequence: u32,
+        duration_millis: u64,
+    ) -> RetainedRecordingSegment {
+        RetainedRecordingSegment {
+            source_id: source_id.to_string(),
+            sequence,
+            content_type: "audio/wav".to_string(),
+            file_name: format!("{source_id}-{sequence:06}.wav"),
+            file_size: WAV_HEADER_BYTES,
+            checksum_sha256: "0".repeat(64),
+            duration_millis,
+            started_at: "2026-06-15T00:00:00.000Z".to_string(),
+            ended_at: "2026-06-15T00:01:00.000Z".to_string(),
+            status: RECORDING_SEGMENT_STATUS_SEALED.to_string(),
+            source_s3_key: None,
+            error_message: None,
+        }
+    }
+
+    fn manifest_with(segments: Vec<RetainedRecordingSegment>) -> RetainedRecordingManifest {
+        RetainedRecordingManifest {
+            version: RETAINED_RECORDING_MANIFEST_VERSION,
+            recording_id: "recording-1".to_string(),
+            started_at: "2026-06-15T00:00:00.000Z".to_string(),
+            stopped_at: "2026-06-15T00:00:00.000Z".to_string(),
+            retained_at: "2026-06-15T00:00:00.000Z".to_string(),
+            title: None,
+            tags: Vec::new(),
+            upload_id: None,
+            status: RETAINED_RECORDING_STATUS_RECORDING.to_string(),
+            error_message: None,
+            sources: Vec::new(),
+            segments,
+        }
+    }
+
+    #[test]
+    fn sealed_millis_are_counted_per_source() {
+        let manifest = manifest_with(vec![
+            segment_for("owner_mic", 0, 60_000),
+            segment_for("system_output", 0, 60_000),
+            segment_for("owner_mic", 1, 45_000),
+        ]);
+
+        // Each source gets its own allowance, so a second source recording
+        // alongside the first must not bring the recording to its limit sooner.
+        assert_eq!(sealed_millis_for_source(&manifest, "owner_mic"), 105_000);
+        assert_eq!(sealed_millis_for_source(&manifest, "system_output"), 60_000);
+        assert_eq!(sealed_millis_for_source(&manifest, "absent"), 0);
+    }
+
+    #[test]
+    fn source_limit_is_reached_only_at_the_cap() {
+        let one_short = RECORDING_SOURCE_MAX_MILLIS - 1;
+        let under = manifest_with(vec![segment_for("owner_mic", 0, one_short)]);
+        let at = manifest_with(vec![
+            segment_for("owner_mic", 0, one_short),
+            segment_for("owner_mic", 1, 1),
+        ]);
+
+        assert!(sealed_millis_for_source(&under, "owner_mic") < RECORDING_SOURCE_MAX_MILLIS);
+        assert!(sealed_millis_for_source(&at, "owner_mic") >= RECORDING_SOURCE_MAX_MILLIS);
+    }
 
     #[test]
     fn repair_retained_manifest_recovers_sealed_segments() {

@@ -1,4 +1,4 @@
-import { type MouseEvent, useEffect, useState } from "react";
+import { type MouseEvent, useEffect, useRef, useState } from "react";
 import chronoteIconSrc from "../src-tauri/icons/64x64.png";
 import { RecorderPanel, type SourceSignal } from "./RecorderPanel";
 
@@ -29,6 +29,11 @@ type RecordingSourceSignal = {
   rmsLevel: number;
   sampleCount: number;
   updatedAtEpochMs: number;
+};
+
+type RecordingLimitReached = {
+  sourceId: string;
+  limitMillis: number;
 };
 
 type LoginResult = {
@@ -90,6 +95,7 @@ const SILENCE_RMS_THRESHOLD = 0.01;
 const UPLOAD_STATUS_POLL_MS = 2000;
 const COMPLETE_WITHOUT_LINK_POLL_TIMEOUT_MS = 30_000;
 const RECORDING_SIGNAL_EVENT = "recording-source-signal";
+const RECORDING_LIMIT_EVENT = "recording-limit-reached";
 const INTERACTIVE_SELECTOR = "button, input, select, textarea, a";
 
 const invoke = <T,>(command: string, args?: Record<string, unknown>) => {
@@ -108,6 +114,12 @@ const parseTags = (value: string) =>
     .map((tag) => tag.trim())
     .filter(Boolean)
     .slice(0, 20);
+
+const formatLimitHours = (limitMillis: number) => {
+  const hours = limitMillis / (60 * 60 * 1000);
+  const rounded = Number.isInteger(hours) ? hours : Math.round(hours * 10) / 10;
+  return `${rounded} hour${rounded === 1 ? "" : "s"}`;
+};
 
 const formatError = (err: unknown, fallback: string) => {
   if (err instanceof Error) return err.message;
@@ -375,6 +387,42 @@ export default function App() {
     return () => {
       cancelled = true;
       setRecordingSignals({});
+      unlisten?.();
+    };
+  }, [recording.isRecording]);
+
+  // The recorder announces the per-source limit rather than tearing itself
+  // down, so the same stop-and-upload path runs whether the limit or the user
+  // ended the recording. Held in a ref because the listener outlives the render
+  // that registered it, and a stale closure would submit the title and tags as
+  // they were when recording started.
+  const stopAndUploadRef = useRef<(() => Promise<void>) | undefined>(undefined);
+  stopAndUploadRef.current = stopAndUpload;
+
+  useEffect(() => {
+    if (!recording.isRecording) return;
+
+    let cancelled = false;
+    let unlisten: (() => void) | undefined;
+    void window.__TAURI__?.event
+      ?.listen<RecordingLimitReached>(RECORDING_LIMIT_EVENT, (event) => {
+        if (cancelled) return;
+        setMessage(
+          `Reached the ${formatLimitHours(event.payload.limitMillis)} recording limit. Uploading what was captured...`,
+        );
+        void stopAndUploadRef.current?.();
+      })
+      .then((nextUnlisten) => {
+        if (cancelled) {
+          nextUnlisten();
+          return;
+        }
+        unlisten = nextUnlisten;
+      })
+      .catch(() => undefined);
+
+    return () => {
+      cancelled = true;
       unlisten?.();
     };
   }, [recording.isRecording]);
