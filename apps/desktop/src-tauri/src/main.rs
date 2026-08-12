@@ -1633,11 +1633,23 @@ fn record_segment_sealed(
                 error_message: None,
             },
         );
-        reached_limit =
-            sealed_millis_for_source(&manifest, &segment.source_id) >= RECORDING_SOURCE_MAX_MILLIS;
+        reached_limit = source_should_stop(
+            sealed_millis_for_source(&manifest, &segment.source_id),
+            recording_segment_duration_millis(),
+        );
     }
     write_shared_recording_manifest(directory, manifest)?;
     Ok(reached_limit)
+}
+
+// Announcing at the cap is too late. By the time a segment is sealed the writer
+// has already opened the next one, and the stop that follows finalises it, so
+// the recording would land just over the cap and be rejected as a whole. One
+// segment of headroom is therefore reserved: stopping with a full segment still
+// to seal keeps the total at or under the limit, which is the boundary the
+// server accepts.
+fn source_should_stop(sealed_millis: u64, segment_millis: u64) -> bool {
+    sealed_millis.saturating_add(segment_millis) >= RECORDING_SOURCE_MAX_MILLIS
 }
 
 fn update_segment_status(
@@ -1911,6 +1923,10 @@ fn stop_recording_sources(sources: Vec<RecordingSourceHandle>) -> Result<(), Str
         }
     }
     first_error.map_or(Ok(()), Err)
+}
+
+fn recording_segment_duration_millis() -> u64 {
+    recording_segment_duration().as_millis() as u64
 }
 
 fn recording_segment_duration() -> Duration {
@@ -2356,16 +2372,41 @@ mod tests {
     }
 
     #[test]
-    fn source_limit_is_reached_only_at_the_cap() {
-        let one_short = RECORDING_SOURCE_MAX_MILLIS - 1;
-        let under = manifest_with(vec![segment_for("owner_mic", 0, one_short)]);
-        let at = manifest_with(vec![
-            segment_for("owner_mic", 0, one_short),
-            segment_for("owner_mic", 1, 1),
-        ]);
+    fn stopping_reserves_room_for_the_segment_still_recording() {
+        let segment_millis = 60_000;
+        let full_segments = RECORDING_SOURCE_MAX_MILLIS / segment_millis;
 
-        assert!(sealed_millis_for_source(&under, "owner_mic") < RECORDING_SOURCE_MAX_MILLIS);
-        assert!(sealed_millis_for_source(&at, "owner_mic") >= RECORDING_SOURCE_MAX_MILLIS);
+        // One segment short of the reserve, so recording continues.
+        assert!(!source_should_stop(
+            (full_segments - 2) * segment_millis,
+            segment_millis
+        ));
+        // The segment now being written is the last that fits, so stop here.
+        assert!(source_should_stop(
+            (full_segments - 1) * segment_millis,
+            segment_millis
+        ));
+
+        // Sealing the announced segment must leave the source at or under the
+        // cap, because anything over it is rejected and takes the whole
+        // recording with it.
+        let sealed_after_stop = (full_segments - 1) * segment_millis + segment_millis;
+        assert!(sealed_after_stop <= RECORDING_SOURCE_MAX_MILLIS);
+    }
+
+    #[test]
+    fn stopping_tracks_a_shortened_segment_cadence() {
+        // The cadence is overridable, so the reserve has to follow it rather
+        // than assume the default.
+        let segment_millis = 10_000;
+        assert!(!source_should_stop(
+            RECORDING_SOURCE_MAX_MILLIS - segment_millis - 1,
+            segment_millis
+        ));
+        assert!(source_should_stop(
+            RECORDING_SOURCE_MAX_MILLIS - segment_millis,
+            segment_millis
+        ));
     }
 
     #[test]

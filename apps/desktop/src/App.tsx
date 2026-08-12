@@ -241,6 +241,9 @@ export default function App() {
   const [completeMissingLinkStartedAt, setCompleteMissingLinkStartedAt] =
     useState<number | null>(null);
   const [busy, setBusy] = useState(false);
+  // A ref rather than state: the guard has to be true for the next caller
+  // synchronously, and a state update would not land until the next render.
+  const stoppingRef = useRef(false);
   const [showSettings, setShowSettings] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -495,6 +498,12 @@ export default function App() {
   }
 
   async function stopAndUpload() {
+    // The limit event and the Stop button reach the same teardown, and only one
+    // of them can win: the backend hands out the active recording once, so the
+    // loser would report "No recording is in progress" as an upload failure and
+    // clear busy while the real upload was still running.
+    if (stoppingRef.current) return;
+    stoppingRef.current = true;
     setBusy(true);
     setError(null);
     setMessage("Stopping and uploading recording...");
@@ -520,6 +529,7 @@ export default function App() {
         .catch(() => undefined);
       await refreshRetainedRecordings();
       setBusy(false);
+      stoppingRef.current = false;
     }
   }
 
