@@ -6,9 +6,9 @@ import express from "express";
 import http from "node:http";
 import type { AddressInfo } from "node:net";
 import { registerDesktopRoutes } from "../../src/api/desktop";
+import { MAXIMUM_MEETING_DURATION } from "../../src/constants";
 import { registerMockStorageRoutes } from "../../src/api/mockStorage";
 import { resetDesktopAuthMemoryRepository } from "../../src/repositories/desktopAuthRepository";
-import { isDesktopUserAllowed } from "../../src/services/desktopAuthService";
 import { resetMockStore } from "../../src/repositories/mockStore";
 import { config } from "../../src/services/configService";
 
@@ -74,11 +74,6 @@ const originalPublicBaseUrl = Object.getOwnPropertyDescriptor(
   config.mcp,
   "publicBaseUrl",
 );
-const originalDesktopAllowedUserIds = Object.getOwnPropertyDescriptor(
-  config.desktop,
-  "allowedUserIds",
-);
-
 const mockDesktopUser = {
   id: "desktop-user-1",
   username: "Desktop Tester",
@@ -95,6 +90,7 @@ const createServer = (options: { authenticated?: boolean } = {}) => {
   };
   const app = express();
   app.use(express.json());
+  app.use(express.urlencoded({ extended: false }));
   app.use((req, _res, next) => {
     const request = req as typeof req & {
       session?: typeof session;
@@ -155,16 +151,51 @@ const buildAuthorizeUrl = (baseUrl: string, redirectUri: string) => {
   return { authorizeUrl, codeVerifier };
 };
 
-const authorizeDesktopToken = async (baseUrl: string) => {
-  const redirectUri = "http://127.0.0.1:49152/auth/callback";
+const CONSENT_PATH = "/api/desktop/auth/authorize/consent";
+
+const extractConsentToken = (html: string) => {
+  const match = html.match(/name="consent_token" value="([^"]+)"/);
+  if (!match) throw new Error("Consent page did not contain a consent token.");
+  return match[1];
+};
+
+const requestDesktopConsent = async (baseUrl: string, redirectUri: string) => {
   const { authorizeUrl, codeVerifier } = buildAuthorizeUrl(
     baseUrl,
     redirectUri,
   );
+  const response = await fetch(authorizeUrl, { redirect: "manual" });
+  await expectSuccess(response);
+  return {
+    consentToken: extractConsentToken(await response.text()),
+    codeVerifier,
+  };
+};
 
-  const authorizeResponse = await fetch(authorizeUrl, {
+const submitDesktopConsent = async (
+  baseUrl: string,
+  consentToken: string,
+  decision: string,
+) =>
+  fetch(`${baseUrl}${CONSENT_PATH}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({ consent_token: consentToken, decision }),
     redirect: "manual",
   });
+
+const authorizeDesktopToken = async (baseUrl: string) => {
+  const redirectUri = "http://127.0.0.1:49152/auth/callback";
+  const { consentToken, codeVerifier } = await requestDesktopConsent(
+    baseUrl,
+    redirectUri,
+  );
+
+  const authorizeResponse = await submitDesktopConsent(
+    baseUrl,
+    consentToken,
+    "approve",
+  );
   expect(authorizeResponse.status).toBe(302);
   const callbackUrl = new URL(authorizeResponse.headers.get("location") ?? "");
   expect(callbackUrl.origin + callbackUrl.pathname).toBe(redirectUri);
@@ -218,10 +249,6 @@ describe("desktop API", () => {
       get: () => true,
       configurable: true,
     });
-    Object.defineProperty(config.desktop, "allowedUserIds", {
-      get: () => [mockDesktopUser.id],
-      configurable: true,
-    });
   });
 
   afterEach(() => {
@@ -232,47 +259,6 @@ describe("desktop API", () => {
     }
     if (originalPublicBaseUrl) {
       Object.defineProperty(config.mcp, "publicBaseUrl", originalPublicBaseUrl);
-    }
-    if (originalDesktopAllowedUserIds) {
-      Object.defineProperty(
-        config.desktop,
-        "allowedUserIds",
-        originalDesktopAllowedUserIds,
-      );
-    }
-  });
-
-  test("denies every account when no allowlist is configured", () => {
-    Object.defineProperty(config.mock, "enabled", {
-      get: () => false,
-      configurable: true,
-    });
-    Object.defineProperty(config.desktop, "allowedUserIds", {
-      get: () => [],
-      configurable: true,
-    });
-
-    expect(isDesktopUserAllowed(mockDesktopUser.id)).toBe(false);
-  });
-
-  test("denies desktop authorization outside the beta allowlist", async () => {
-    Object.defineProperty(config.desktop, "allowedUserIds", {
-      get: () => ["other-user"],
-      configurable: true,
-    });
-    const { server, baseUrl } = createServer();
-
-    try {
-      const redirectUri = "http://127.0.0.1:49152/auth/callback";
-      const { authorizeUrl } = buildAuthorizeUrl(baseUrl, redirectUri);
-      const response = await fetch(authorizeUrl, { redirect: "manual" });
-      expect(response.status).toBe(302);
-      const callbackUrl = new URL(response.headers.get("location") ?? "");
-      expect(callbackUrl.origin + callbackUrl.pathname).toBe(redirectUri);
-      expect(callbackUrl.searchParams.get("error")).toBe("access_denied");
-      expect(callbackUrl.searchParams.get("code")).toBeNull();
-    } finally {
-      await closeServer(server);
     }
   });
 
@@ -294,27 +280,158 @@ describe("desktop API", () => {
     }
   });
 
-  test("denies recording upload after a user is removed from the beta allowlist", async () => {
+  test("asks for consent instead of issuing a code straight away", async () => {
     const { server, baseUrl } = createServer();
-    Object.defineProperty(config.mcp, "publicBaseUrl", {
-      get: () => baseUrl,
-      configurable: true,
-    });
 
     try {
-      const token = await authorizeDesktopToken(baseUrl);
-      Object.defineProperty(config.desktop, "allowedUserIds", {
-        get: () => ["other-user"],
-        configurable: true,
-      });
+      const redirectUri = "http://127.0.0.1:49152/auth/callback";
+      const { authorizeUrl } = buildAuthorizeUrl(baseUrl, redirectUri);
+      const response = await fetch(authorizeUrl, { redirect: "manual" });
 
+      expect(response.status).toBe(200);
+      const html = await response.text();
+      expect(html).toContain("Connect Chronote Desktop");
+      expect(html).toContain(
+        "Read your meetings, including transcripts and notes",
+      );
+      expect(html).toContain(redirectUri);
+    } finally {
+      await closeServer(server);
+    }
+  });
+
+  test("refuses to let the consent page be framed", async () => {
+    const { server, baseUrl } = createServer();
+
+    try {
+      const redirectUri = "http://127.0.0.1:49152/auth/callback";
+      const { authorizeUrl } = buildAuthorizeUrl(baseUrl, redirectUri);
+      const response = await fetch(authorizeUrl, { redirect: "manual" });
+
+      expect(response.status).toBe(200);
+      expect(response.headers.get("content-security-policy")).toContain(
+        "frame-ancestors 'none'",
+      );
+      expect(response.headers.get("x-frame-options")).toBe("DENY");
+    } finally {
+      await closeServer(server);
+    }
+  });
+
+  test("keeps parallel consent pages independently approvable", async () => {
+    const { server, baseUrl } = createServer();
+
+    try {
+      const redirectUri = "http://127.0.0.1:49152/auth/callback";
+      const first = await requestDesktopConsent(baseUrl, redirectUri);
+      const second = await requestDesktopConsent(baseUrl, redirectUri);
+
+      // The second page opening must not invalidate the first one.
+      const firstResponse = await submitDesktopConsent(
+        baseUrl,
+        first.consentToken,
+        "approve",
+      );
+      expect(firstResponse.status).toBe(302);
+
+      const secondResponse = await submitDesktopConsent(
+        baseUrl,
+        second.consentToken,
+        "approve",
+      );
+      expect(secondResponse.status).toBe(302);
+    } finally {
+      await closeServer(server);
+    }
+  });
+
+  test("returns access_denied when consent is cancelled", async () => {
+    const { server, baseUrl } = createServer();
+
+    try {
+      const redirectUri = "http://127.0.0.1:49152/auth/callback";
+      const { consentToken } = await requestDesktopConsent(
+        baseUrl,
+        redirectUri,
+      );
+      const response = await submitDesktopConsent(
+        baseUrl,
+        consentToken,
+        "deny",
+      );
+
+      expect(response.status).toBe(302);
+      const callbackUrl = new URL(response.headers.get("location") ?? "");
+      expect(callbackUrl.origin + callbackUrl.pathname).toBe(redirectUri);
+      expect(callbackUrl.searchParams.get("error")).toBe("access_denied");
+      expect(callbackUrl.searchParams.get("code")).toBeNull();
+    } finally {
+      await closeServer(server);
+    }
+  });
+
+  test("refuses to replay a consent approval", async () => {
+    const { server, baseUrl } = createServer();
+
+    try {
+      const redirectUri = "http://127.0.0.1:49152/auth/callback";
+      const { consentToken } = await requestDesktopConsent(
+        baseUrl,
+        redirectUri,
+      );
+      const first = await submitDesktopConsent(
+        baseUrl,
+        consentToken,
+        "approve",
+      );
+      expect(first.status).toBe(302);
+
+      const replay = await submitDesktopConsent(
+        baseUrl,
+        consentToken,
+        "approve",
+      );
+      expect(replay.status).toBe(400);
+      await expect(readJson<{ error: string }>(replay)).resolves.toEqual(
+        expect.objectContaining({ error: "invalid_request" }),
+      );
+    } finally {
+      await closeServer(server);
+    }
+  });
+
+  test("rate limits invalid tokens even when the caller rotates them", async () => {
+    const { server, baseUrl } = createServer();
+
+    try {
+      let limited = false;
+      // One more attempt than the per-window allowance. Each carries a
+      // different bearer value, which would mint its own bucket if the limiter
+      // keyed on the token before checking it.
+      for (let attempt = 0; attempt <= 61 && !limited; attempt += 1) {
+        const response = await fetch(`${baseUrl}/api/desktop/me`, {
+          headers: { Authorization: `Bearer desktop_at_rotated-${attempt}` },
+        });
+        limited = response.status === 429;
+      }
+
+      expect(limited).toBe(true);
+    } finally {
+      await closeServer(server);
+    }
+  });
+
+  test("rejects a recording upload without a valid desktop token", async () => {
+    const { server, baseUrl } = createServer();
+
+    try {
       const response = await fetch(
         `${baseUrl}/api/desktop/recordings/session`,
         {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
-            Authorization: `Bearer ${token.access_token}`,
+            Authorization: "Bearer desktop_at_not-a-real-token",
           },
           body: JSON.stringify({
             sources: [
@@ -327,9 +444,9 @@ describe("desktop API", () => {
           }),
         },
       );
-      expect(response.status).toBe(403);
+      expect(response.status).toBe(401);
       await expect(readJson<{ error: string }>(response)).resolves.toEqual(
-        expect.objectContaining({ error: "access_denied" }),
+        expect.objectContaining({ error: "invalid_token" }),
       );
     } finally {
       await closeServer(server);
@@ -510,6 +627,64 @@ describe("desktop API", () => {
       const status = await readJson<RecordingJobResponse>(statusResponse);
       expect(status.job.status).toBe("queued");
       expect(status.job.sourceManifest).toHaveLength(2);
+    } finally {
+      await closeServer(server);
+    }
+  });
+
+  test("rejects a recording segment past the maximum length for one source", async () => {
+    const { server, baseUrl } = createServer();
+    Object.defineProperty(config.mcp, "publicBaseUrl", {
+      get: () => baseUrl,
+      configurable: true,
+    });
+
+    try {
+      const token = await authorizeDesktopToken(baseUrl);
+      const sessionResponse = await fetch(
+        `${baseUrl}/api/desktop/recordings/session`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token.access_token}`,
+          },
+          body: JSON.stringify({
+            sources: [
+              { sourceId: "owner_mic", kind: "owner_mic", label: "Me" },
+            ],
+          }),
+        },
+      );
+      await expectSuccess(sessionResponse);
+      const session = await readJson<RecordingSessionResponse>(sessionResponse);
+
+      const body = Buffer.from([0, 1, 2, 3]);
+      const response = await fetch(
+        `${baseUrl}/api/desktop/recordings/segment-intent`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token.access_token}`,
+          },
+          body: JSON.stringify({
+            uploadId: session.uploadId,
+            sourceId: "owner_mic",
+            sequence: 0,
+            contentType: "audio/wav",
+            fileSize: body.byteLength,
+            checksumSha256: checksumSha256(body),
+            durationMillis: MAXIMUM_MEETING_DURATION + 1,
+            startedAt: new Date(0).toISOString(),
+            endedAt: new Date(MAXIMUM_MEETING_DURATION + 1).toISOString(),
+          }),
+        },
+      );
+      expect(response.status).toBe(400);
+      await expect(readJson<{ error: string }>(response)).resolves.toEqual(
+        expect.objectContaining({ error: "too_large" }),
+      );
     } finally {
       await closeServer(server);
     }

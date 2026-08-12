@@ -7,6 +7,7 @@ import type {
   PersonalRecordingSegmentRecord,
 } from "../types/db";
 import {
+  MAXIMUM_MEETING_DURATION,
   PERSONAL_MEDIA_UPLOAD_ALLOWED_CONTENT_TYPES,
   PERSONAL_MEDIA_UPLOAD_MAX_BYTES,
   PERSONAL_MEDIA_UPLOAD_S3_PREFIX,
@@ -384,6 +385,34 @@ export async function createPersonalRecordingUploadSession(options: {
   return { uploadId, mediaKind: "audio", sources };
 }
 
+// Each registered source may contribute at most one meeting's worth of audio.
+// This is a sanity bound on a single job, not an abuse control: it is a
+// read-then-write check, so concurrent intents for the same source can both
+// observe the same total and overshoot it, and nothing here limits how many
+// jobs an account creates. Per-account limits belong in the personal upload
+// path shared with the portal.
+const assertSourceLengthWithinCap = async (
+  repository: ReturnType<typeof getPersonalRecordingSegmentRepository>,
+  input: PersonalRecordingSegmentUploadInput,
+  segmentKey: string,
+) => {
+  const segments = await repository.listByUpload(input.uploadId);
+  const recordedMillis = segments
+    .filter(
+      (segment) =>
+        segment.sourceId === input.sourceId &&
+        segment.status !== "failed" &&
+        segment.segmentKey !== segmentKey,
+    )
+    .reduce((sum, segment) => sum + segment.durationMillis, 0);
+  if (recordedMillis + input.durationMillis > MAXIMUM_MEETING_DURATION) {
+    throw new PersonalMediaUploadError(
+      "Recording source is longer than the maximum supported length.",
+      "too_large",
+    );
+  }
+};
+
 export async function createPersonalRecordingSegmentUploadIntent(
   input: PersonalRecordingSegmentUploadInput,
 ): Promise<PersonalRecordingSegmentUploadIntent> {
@@ -422,6 +451,7 @@ export async function createPersonalRecordingSegmentUploadIntent(
 
   const segmentKey = buildPersonalRecordingSegmentSortKey(input);
   const repository = getPersonalRecordingSegmentRepository();
+  await assertSourceLengthWithinCap(repository, input, segmentKey);
   const existing = await repository.get(input.uploadId, segmentKey);
   if (existing) {
     assertMatchingSegment(existing, input);

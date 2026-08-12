@@ -1691,10 +1691,6 @@ resource "aws_ecs_task_definition" "app_task" {
           value = var.ENABLE_ONBOARDING
         },
         {
-          name  = "DESKTOP_ALLOWED_USER_IDS"
-          value = var.DESKTOP_ALLOWED_USER_IDS
-        },
-        {
           name  = "FRONTEND_ALLOWED_ORIGINS"
           value = var.FRONTEND_ALLOWED_ORIGINS
         },

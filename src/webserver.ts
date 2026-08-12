@@ -190,6 +190,9 @@ export function setupWebServer() {
       blocklist: [
         "/api/billing/webhook",
         "/oauth/authorize/consent",
+        // Consent posts carry a signed request plus a single use session nonce
+        // instead of a CSRF token, the same way the MCP consent form does.
+        "/api/desktop/auth/authorize/consent",
         "/api/desktop/auth/token",
         "/api/desktop/auth/revoke",
         "/api/desktop/recordings/session",
