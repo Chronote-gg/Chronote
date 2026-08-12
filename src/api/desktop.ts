@@ -332,20 +332,34 @@ const getBearerToken = (req: Request) => {
   return header.slice("Bearer ".length).trim() || undefined;
 };
 
-const requireDesktopAuth =
+// Split from the scope check on purpose. Identifying the caller is what lets
+// the rate limiters tell an unknown token apart from a known one, so it has to
+// happen before any later rejection: a scope failure raised while the request
+// still looked anonymous would be charged to the caller's IP and spend an
+// allowance shared with everybody at that address.
+const requireDesktopToken = async (
+  req: DesktopRequest,
+  res: Response,
+  next: () => void,
+) => {
+  const token = getBearerToken(req);
+  const auth = token ? await validateDesktopAccessToken(token) : undefined;
+  if (!auth) {
+    res.status(401).json({ error: "invalid_token" });
+    return;
+  }
+  req.desktopAuth = auth;
+  next();
+};
+
+const requireDesktopScopes =
   (requiredScopes: DesktopAuthScope[] = []) =>
-  async (req: DesktopRequest, res: Response, next: () => void) => {
-    const token = getBearerToken(req);
-    const auth = token ? await validateDesktopAccessToken(token) : undefined;
-    if (!auth) {
-      res.status(401).json({ error: "invalid_token" });
-      return;
-    }
-    if (!hasDesktopScopes(auth.scopes, requiredScopes)) {
+  (req: DesktopRequest, res: Response, next: () => void) => {
+    const auth = req.desktopAuth;
+    if (!auth || !hasDesktopScopes(auth.scopes, requiredScopes)) {
       res.status(403).json({ error: "insufficient_scope" });
       return;
     }
-    req.desktopAuth = auth;
     next();
   };
 
@@ -379,6 +393,10 @@ export function registerDesktopRoutes(app: Express) {
     windowMs: DESKTOP_RATE_LIMIT_WINDOW_MS,
     limit: DESKTOP_RATE_LIMIT_MAX,
     countFailuresOnly: true,
+    // requireDesktopToken sets desktopAuth as soon as a token checks out, so
+    // anything rejected after that point (wrong scope, bad payload) belongs to
+    // an identified caller and is left to their own token bucket.
+    wasAuthenticated: (req) => Boolean((req as DesktopRequest).desktopAuth),
   });
   const tokenRateLimiter = createAuthRateLimiter({
     enabled: true,
@@ -566,8 +584,9 @@ export function registerDesktopRoutes(app: Express) {
   app.get(
     "/api/desktop/me",
     rejectedRateLimiter,
-    requireDesktopAuth(REQUIRED_PROFILE_SCOPES),
+    requireDesktopToken,
     tokenRateLimiter,
+    requireDesktopScopes(REQUIRED_PROFILE_SCOPES),
     (req: DesktopRequest, res) => {
       const user = getDesktopUser(req);
       res.json({
@@ -582,8 +601,9 @@ export function registerDesktopRoutes(app: Express) {
   app.post(
     "/api/desktop/recordings/session",
     rejectedRateLimiter,
-    requireDesktopAuth(REQUIRED_UPLOAD_SCOPES),
+    requireDesktopToken,
     tokenRateLimiter,
+    requireDesktopScopes(REQUIRED_UPLOAD_SCOPES),
     async (req: DesktopRequest, res) => {
       try {
         const input = recordingSessionSchema.parse(req.body);
@@ -603,8 +623,9 @@ export function registerDesktopRoutes(app: Express) {
   app.post(
     "/api/desktop/recordings/segment-intent",
     rejectedRateLimiter,
-    requireDesktopAuth(REQUIRED_UPLOAD_SCOPES),
+    requireDesktopToken,
     tokenRateLimiter,
+    requireDesktopScopes(REQUIRED_UPLOAD_SCOPES),
     async (req: DesktopRequest, res) => {
       try {
         const input = recordingSegmentIntentSchema.parse(req.body);
@@ -624,8 +645,9 @@ export function registerDesktopRoutes(app: Express) {
   app.post(
     "/api/desktop/recordings/segment-complete",
     rejectedRateLimiter,
-    requireDesktopAuth(REQUIRED_UPLOAD_SCOPES),
+    requireDesktopToken,
     tokenRateLimiter,
+    requireDesktopScopes(REQUIRED_UPLOAD_SCOPES),
     async (req: DesktopRequest, res) => {
       try {
         const input = recordingSegmentCompleteSchema.parse(req.body);
@@ -645,8 +667,9 @@ export function registerDesktopRoutes(app: Express) {
   app.post(
     "/api/desktop/recordings/submit",
     rejectedRateLimiter,
-    requireDesktopAuth(REQUIRED_UPLOAD_SCOPES),
+    requireDesktopToken,
     tokenRateLimiter,
+    requireDesktopScopes(REQUIRED_UPLOAD_SCOPES),
     async (req: DesktopRequest, res) => {
       try {
         const input = recordingSubmitSchema.parse(req.body);
@@ -668,8 +691,9 @@ export function registerDesktopRoutes(app: Express) {
   app.get(
     "/api/desktop/recordings/:uploadId",
     rejectedRateLimiter,
-    requireDesktopAuth(REQUIRED_UPLOAD_SCOPES),
+    requireDesktopToken,
     tokenRateLimiter,
+    requireDesktopScopes(REQUIRED_UPLOAD_SCOPES),
     async (req: DesktopRequest, res) => {
       try {
         const user = getDesktopUser(req);
