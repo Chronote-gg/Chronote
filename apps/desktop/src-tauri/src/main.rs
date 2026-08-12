@@ -33,6 +33,13 @@ const TOKEN_REFRESH_SKEW_SECONDS: u64 = 60;
 const LOGIN_TIMEOUT_SECONDS: u64 = 300;
 const DESKTOP_SCOPES: &str = "profile:read personal_uploads:write meetings:read";
 const RECORDING_SOURCE_SIGNAL_EVENT: &str = "recording-source-signal";
+const RECORDING_LIMIT_REACHED_EVENT: &str = "recording-limit-reached";
+// Mirrors MAXIMUM_MEETING_DURATION on the server, which caps each registered
+// source of a recording at one meeting's worth of audio. The server rejects the
+// segment that would exceed it, and that rejection aborts the whole upload
+// without submitting anything, so the recorder has to stop itself before
+// getting there rather than discovering the limit by hitting it.
+const RECORDING_SOURCE_MAX_MILLIS: u64 = 2 * 60 * 60 * 1000;
 const WAV_HEADER_BYTES: u64 = 44;
 const RETAINED_RECORDING_MANIFEST_FILE: &str = "recording.json";
 const RETAINED_RECORDING_MANIFEST_VERSION: u32 = 2;
@@ -125,6 +132,13 @@ struct TokenUser {
 struct RecordingStatus {
     is_recording: bool,
     started_at: Option<String>,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RecordingLimitReached {
+    source_id: String,
+    limit_millis: u64,
 }
 
 #[derive(Clone, Serialize)]
@@ -1282,9 +1296,12 @@ fn spawn_segment_upload_worker(
                     continue;
                 }
             };
-            if let Err(error) = record_segment_sealed(&directory, &manifest, &upload_file) {
-                eprintln!("Failed to update recording manifest: {error}");
-                continue;
+            match record_segment_sealed(&directory, &manifest, &upload_file) {
+                Ok(()) => {}
+                Err(error) => {
+                    eprintln!("Failed to update recording manifest: {error}");
+                    continue;
+                }
             }
             if let Err(error) = upload_segment_file(
                 Some(&app),
@@ -1591,6 +1608,20 @@ fn record_segment_sealed(
     write_shared_recording_manifest(directory, manifest)
 }
 
+// Announcing at the cap is too late. By the time a segment is sealed the writer
+// has already opened the next one, and the stop that follows finalises it, so
+// the recording would land over the cap and be rejected as a whole.
+//
+// The decision can only be taken at a segment boundary, so it has to look two
+// segments ahead rather than one: stop at the last boundary from which the
+// segment still being written is guaranteed to fit. Reserving a single segment
+// is enough only when the cadence divides the cap. It does not have to, since
+// CHRONOTE_DESKTOP_SEGMENT_SECONDS can set anything, and at 61s the single
+// reserve left two seconds of headroom for a stop that takes longer than that.
+fn source_should_stop(sealed_millis: u64, segment_millis: u64) -> bool {
+    sealed_millis.saturating_add(segment_millis.saturating_mul(2)) > RECORDING_SOURCE_MAX_MILLIS
+}
+
 fn update_segment_status(
     directory: &Path,
     manifest: &SharedRecordingManifest,
@@ -1764,7 +1795,7 @@ fn start_source_capture(
     let (signal_tx, signal_rx) = mpsc::channel();
     let (capture_segment_tx, capture_segment_rx) = mpsc::channel();
     let signal_relay = spawn_signal_relay(app, source_id, kind, label, signal_rx)?;
-    let segment_relay = spawn_segment_relay(source_id, segment_tx, capture_segment_rx)?;
+    let segment_relay = spawn_segment_relay(app, source_id, segment_tx, capture_segment_rx)?;
     let capture = match audio::start_capture(
         direction,
         device_id,
@@ -1820,21 +1851,43 @@ fn spawn_signal_relay(
         .map_err(|error| error.to_string())
 }
 
+// The limit is accounted here rather than in the upload worker. That worker
+// awaits each upload before taking the next sealed segment, so on a slow or
+// dropped connection its view of how much has been recorded falls arbitrarily
+// far behind capture, and the stop would arrive after the source was already
+// over the cap. This relay sees every segment the moment it seals, and each
+// relay owns exactly one source, so a local running total is that source's.
 fn spawn_segment_relay(
+    app: &tauri::AppHandle,
     source_id: &str,
     segment_tx: async_mpsc::UnboundedSender<SealedSegmentEvent>,
     segment_rx: mpsc::Receiver<CaptureSegment>,
 ) -> Result<JoinHandle<()>, String> {
     let source_id = source_id.to_string();
+    let app = app.clone();
+    let segment_millis = recording_segment_duration_millis();
     thread::Builder::new()
         .name(format!("chronote-{source_id}-segment-relay"))
         .spawn(move || {
+            let mut sealed_millis: u64 = 0;
+            let mut announced = false;
             for segment in segment_rx {
+                sealed_millis = sealed_millis.saturating_add(segment.duration_millis);
                 let _ = segment_tx.send(SealedSegmentEvent {
                     source_id: source_id.clone(),
                     path: segment.path.clone(),
                     segment,
                 });
+                if !announced && source_should_stop(sealed_millis, segment_millis) {
+                    announced = true;
+                    let _ = app.emit(
+                        RECORDING_LIMIT_REACHED_EVENT,
+                        RecordingLimitReached {
+                            source_id: source_id.clone(),
+                            limit_millis: RECORDING_SOURCE_MAX_MILLIS,
+                        },
+                    );
+                }
             }
         })
         .map_err(|error| error.to_string())
@@ -1862,6 +1915,10 @@ fn stop_recording_sources(sources: Vec<RecordingSourceHandle>) -> Result<(), Str
         }
     }
     first_error.map_or(Ok(()), Err)
+}
+
+fn recording_segment_duration_millis() -> u64 {
+    recording_segment_duration().as_millis() as u64
 }
 
 fn recording_segment_duration() -> Duration {
@@ -2252,6 +2309,43 @@ fn lock_error<T>(error: std::sync::PoisonError<T>) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn stopping_leaves_room_for_the_segment_still_being_written() {
+        // CHRONOTE_DESKTOP_SEGMENT_SECONDS takes any number of seconds, so the
+        // cadence need not divide the cap. Non-divisors are where reserving a
+        // single segment was not enough: at 61s it left two seconds of headroom
+        // for a stop that takes longer than that.
+        for segment_millis in [60_000_u64, 61_000, 10_000, 7_000, 90_000] {
+            let mut sealed = 0_u64;
+            let mut stopped_at = None;
+            // Bounded so a predicate that never fires fails the test rather
+            // than hanging it.
+            for _ in 0..10_000 {
+                sealed += segment_millis;
+                if source_should_stop(sealed, segment_millis) {
+                    stopped_at = Some(sealed);
+                    break;
+                }
+            }
+            let stopped_at = stopped_at
+                .unwrap_or_else(|| panic!("never stopped at a {segment_millis}ms cadence"));
+
+            // The segment in flight when the stop is announced still has to fit
+            // under the cap, because anything over it is rejected and takes the
+            // whole recording with it.
+            assert!(
+                stopped_at + segment_millis <= RECORDING_SOURCE_MAX_MILLIS,
+                "{segment_millis}ms cadence overruns the cap: {stopped_at} + {segment_millis}"
+            );
+            // And it must not stop a whole segment early, which would throw
+            // away recording time that fits.
+            assert!(
+                stopped_at + segment_millis * 2 > RECORDING_SOURCE_MAX_MILLIS,
+                "{segment_millis}ms cadence stops a segment too early at {stopped_at}"
+            );
+        }
+    }
 
     #[test]
     fn repair_retained_manifest_recovers_sealed_segments() {
