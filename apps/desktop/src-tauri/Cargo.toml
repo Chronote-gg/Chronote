@@ -19,7 +19,12 @@ base64 = "0.22"
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 directories = "6"
 hound = "3.5"
-keyring = "3"
+# keyring 3 made the platform credential stores opt-in. Without a store feature
+# the crate falls back to an in-process one, so sessions were never written to
+# Windows Credential Manager and sign-in reported that it could not save the
+# session. Windows is the only desktop target today; add the matching feature
+# when another platform ships.
+keyring = { version = "3", features = ["windows-native"] }
 open = "5"
 rand = "0.8"
 reqwest = { version = "0.12", default-features = false, features = ["json", "multipart", "rustls-tls", "stream"] }

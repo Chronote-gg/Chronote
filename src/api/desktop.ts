@@ -314,7 +314,7 @@ const renderDesktopConsentPage = (params: {
           )
           .join("\n        ")}
       </ul>
-      <p class="note">It will send you back to <code>${htmlEscape(params.redirectUri)}</code>. Chronote cannot verify which application started this, so only continue if you just opened Chronote Desktop yourself.</p>
+      <p class="note">It will send you back to <code>${htmlEscape(params.redirectUri)}</code>.</p>
       <form method="post" action="${DESKTOP_CONSENT_PATH}">
         <input type="hidden" name="consent_token" value="${htmlEscape(params.consentToken)}" />
         <div class="actions">
