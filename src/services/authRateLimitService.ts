@@ -1,5 +1,5 @@
 import crypto from "node:crypto";
-import type { RequestHandler } from "express";
+import type { Request, RequestHandler } from "express";
 import { ipKeyGenerator, rateLimit } from "express-rate-limit";
 
 type AuthRateLimitConfig = {
@@ -17,6 +17,12 @@ type AuthRateLimitConfig = {
   // an auth check: rejected calls are charged to the caller's address, while
   // authenticated traffic passes through to be counted per token instead.
   countFailuresOnly?: boolean;
+  // Narrows countFailuresOnly to failures that never got past authentication.
+  // A failure raised further along (wrong scope, bad payload) belongs to an
+  // identified caller and must not land on a shared IP bucket, or one signed-in
+  // account can spend the whole allowance for everyone behind an office, school
+  // or VPN address just by sending requests its token cannot satisfy.
+  wasAuthenticated?: (req: Request) => boolean;
 };
 
 const bearerTokenKey = (authorization?: string) => {
@@ -36,6 +42,7 @@ export const createAuthRateLimiter = ({
   limit,
   perBearerToken = false,
   countFailuresOnly = false,
+  wasAuthenticated,
 }: AuthRateLimitConfig): RequestHandler => {
   if (!enabled) {
     return passThrough;
@@ -48,6 +55,12 @@ export const createAuthRateLimiter = ({
     legacyHeaders: false,
     message: "Too many authentication attempts, please try again later.",
     skipSuccessfulRequests: countFailuresOnly,
+    ...(countFailuresOnly && wasAuthenticated
+      ? {
+          requestWasSuccessful: (req, res) =>
+            res.statusCode < 400 || wasAuthenticated(req),
+        }
+      : {}),
     ...(perBearerToken
       ? {
           keyGenerator: (req) =>

@@ -379,6 +379,10 @@ export function registerDesktopRoutes(app: Express) {
     windowMs: DESKTOP_RATE_LIMIT_WINDOW_MS,
     limit: DESKTOP_RATE_LIMIT_MAX,
     countFailuresOnly: true,
+    // requireDesktopAuth sets desktopAuth once a token checks out, so anything
+    // that failed later (wrong scope, bad payload) is an identified caller's
+    // problem and is left to their own token bucket.
+    wasAuthenticated: (req) => Boolean((req as DesktopRequest).desktopAuth),
   });
   const tokenRateLimiter = createAuthRateLimiter({
     enabled: true,
