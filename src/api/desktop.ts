@@ -362,10 +362,24 @@ export function registerDesktopRoutes(app: Express) {
     windowMs: DESKTOP_RATE_LIMIT_WINDOW_MS,
     limit: DESKTOP_RATE_LIMIT_MAX,
   });
-  // Routes past this point already carry a validated token, so they are keyed
-  // by it. The client polls upload status every two seconds, which on an IP key
-  // means two clients sharing an office or VPN address exhaust the allowance on
-  // polling alone and start 429ing each other's uploads.
+  // Protected routes take two limiters, and the order matters.
+  //
+  // The first is keyed by IP but counts only rejected requests. A caller with
+  // no valid token cannot escape it by rotating bearer values, which a token
+  // key alone would allow: every made-up token would mint its own bucket while
+  // still costing a token lookup. Authenticated traffic passes through it
+  // uncounted, so clients sharing an office or VPN address do not collide.
+  //
+  // The second runs after the token is validated and is keyed by that token,
+  // which is the limit that actually applies in normal use. The client polls
+  // upload status every two seconds, so a shared IP bucket would have two users
+  // 429ing each other on polling alone.
+  const rejectedRateLimiter = createAuthRateLimiter({
+    enabled: true,
+    windowMs: DESKTOP_RATE_LIMIT_WINDOW_MS,
+    limit: DESKTOP_RATE_LIMIT_MAX,
+    countFailuresOnly: true,
+  });
   const tokenRateLimiter = createAuthRateLimiter({
     enabled: true,
     windowMs: DESKTOP_RATE_LIMIT_WINDOW_MS,
@@ -551,8 +565,9 @@ export function registerDesktopRoutes(app: Express) {
 
   app.get(
     "/api/desktop/me",
-    tokenRateLimiter,
+    rejectedRateLimiter,
     requireDesktopAuth(REQUIRED_PROFILE_SCOPES),
+    tokenRateLimiter,
     (req: DesktopRequest, res) => {
       const user = getDesktopUser(req);
       res.json({
@@ -566,8 +581,9 @@ export function registerDesktopRoutes(app: Express) {
 
   app.post(
     "/api/desktop/recordings/session",
-    tokenRateLimiter,
+    rejectedRateLimiter,
     requireDesktopAuth(REQUIRED_UPLOAD_SCOPES),
+    tokenRateLimiter,
     async (req: DesktopRequest, res) => {
       try {
         const input = recordingSessionSchema.parse(req.body);
@@ -586,8 +602,9 @@ export function registerDesktopRoutes(app: Express) {
 
   app.post(
     "/api/desktop/recordings/segment-intent",
-    tokenRateLimiter,
+    rejectedRateLimiter,
     requireDesktopAuth(REQUIRED_UPLOAD_SCOPES),
+    tokenRateLimiter,
     async (req: DesktopRequest, res) => {
       try {
         const input = recordingSegmentIntentSchema.parse(req.body);
@@ -606,8 +623,9 @@ export function registerDesktopRoutes(app: Express) {
 
   app.post(
     "/api/desktop/recordings/segment-complete",
-    tokenRateLimiter,
+    rejectedRateLimiter,
     requireDesktopAuth(REQUIRED_UPLOAD_SCOPES),
+    tokenRateLimiter,
     async (req: DesktopRequest, res) => {
       try {
         const input = recordingSegmentCompleteSchema.parse(req.body);
@@ -626,8 +644,9 @@ export function registerDesktopRoutes(app: Express) {
 
   app.post(
     "/api/desktop/recordings/submit",
-    tokenRateLimiter,
+    rejectedRateLimiter,
     requireDesktopAuth(REQUIRED_UPLOAD_SCOPES),
+    tokenRateLimiter,
     async (req: DesktopRequest, res) => {
       try {
         const input = recordingSubmitSchema.parse(req.body);
@@ -648,8 +667,9 @@ export function registerDesktopRoutes(app: Express) {
 
   app.get(
     "/api/desktop/recordings/:uploadId",
-    tokenRateLimiter,
+    rejectedRateLimiter,
     requireDesktopAuth(REQUIRED_UPLOAD_SCOPES),
+    tokenRateLimiter,
     async (req: DesktopRequest, res) => {
       try {
         const user = getDesktopUser(req);

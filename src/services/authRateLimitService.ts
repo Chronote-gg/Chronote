@@ -13,6 +13,10 @@ type AuthRateLimitConfig = {
   // Unauthenticated routes must stay on the IP key, since that is what limits
   // guessing at tokens in the first place.
   perBearerToken?: boolean;
+  // Only count requests that failed (4xx/5xx). Pairs with an IP key in front of
+  // an auth check: rejected calls are charged to the caller's address, while
+  // authenticated traffic passes through to be counted per token instead.
+  countFailuresOnly?: boolean;
 };
 
 const bearerTokenKey = (authorization?: string) => {
@@ -31,6 +35,7 @@ export const createAuthRateLimiter = ({
   windowMs,
   limit,
   perBearerToken = false,
+  countFailuresOnly = false,
 }: AuthRateLimitConfig): RequestHandler => {
   if (!enabled) {
     return passThrough;
@@ -42,6 +47,7 @@ export const createAuthRateLimiter = ({
     standardHeaders: "draft-7",
     legacyHeaders: false,
     message: "Too many authentication attempts, please try again later.",
+    skipSuccessfulRequests: countFailuresOnly,
     ...(perBearerToken
       ? {
           keyGenerator: (req) =>

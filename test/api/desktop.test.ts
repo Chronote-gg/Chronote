@@ -400,6 +400,27 @@ describe("desktop API", () => {
     }
   });
 
+  test("rate limits invalid tokens even when the caller rotates them", async () => {
+    const { server, baseUrl } = createServer();
+
+    try {
+      let limited = false;
+      // One more attempt than the per-window allowance. Each carries a
+      // different bearer value, which would mint its own bucket if the limiter
+      // keyed on the token before checking it.
+      for (let attempt = 0; attempt <= 61 && !limited; attempt += 1) {
+        const response = await fetch(`${baseUrl}/api/desktop/me`, {
+          headers: { Authorization: `Bearer desktop_at_rotated-${attempt}` },
+        });
+        limited = response.status === 429;
+      }
+
+      expect(limited).toBe(true);
+    } finally {
+      await closeServer(server);
+    }
+  });
+
   test("rejects a recording upload without a valid desktop token", async () => {
     const { server, baseUrl } = createServer();
 
