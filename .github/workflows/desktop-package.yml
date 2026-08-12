@@ -60,11 +60,17 @@ jobs:
       - name: Run desktop API coverage
         run: yarn test:desktop:coverage
 
-      # The bundler fetches the WiX toolset and the NSIS tooling from GitHub on
-      # first use, after the Rust build has already succeeded. Those downloads
-      # have failed twice with `io: Peer disconnected`, throwing away a green
-      # compile each time, so they are cached here. A stale hit is still useful,
-      # hence the restore-keys: the tools change only when Tauri does.
+      # The bundler fetches the WiX toolset and the NSIS tooling from GitHub the
+      # first time it runs, after the Rust build has already succeeded, and that
+      # download has failed three times running with `io: Peer disconnected`,
+      # discarding a green compile each time.
+      #
+      # The cache and the retry below are both needed, and neither works alone.
+      # actions/cache only writes in its post step when the job succeeds, so
+      # while the download keeps failing the directory is never populated and
+      # the cache is never saved: every run stays a miss. The retry is what gets
+      # one run over the line; the cache is what stops the download from being
+      # attempted again afterwards.
       - name: Cache Tauri bundler tools
         uses: actions/cache@v6
         with:
@@ -74,7 +80,17 @@ jobs:
             tauri-bundler-tools-${{ runner.os }}-
 
       - name: Build unsigned desktop package
-        run: yarn desktop:package
+        shell: bash
+        run: |
+          for attempt in 1 2 3; do
+            if yarn desktop:package; then
+              exit 0
+            fi
+            echo "::warning::Desktop bundling failed on attempt ${attempt}. Retrying; the bundler downloads WiX and NSIS at this point and that fetch is unreliable."
+            sleep 15
+          done
+          echo "::error::Desktop bundling failed three times."
+          exit 1
 
       - name: Validate desktop artifacts
         run: yarn desktop:artifacts --write
