@@ -133,7 +133,13 @@ const expectSuccess = async (response: Response) => {
 const createPkceChallenge = (codeVerifier: string) =>
   crypto.createHash("sha256").update(codeVerifier).digest("base64url");
 
-const buildAuthorizeUrl = (baseUrl: string, redirectUri: string) => {
+const ALL_DESKTOP_SCOPES = "profile:read personal_uploads:write meetings:read";
+
+const buildAuthorizeUrl = (
+  baseUrl: string,
+  redirectUri: string,
+  scope = ALL_DESKTOP_SCOPES,
+) => {
   const codeVerifier = "A".repeat(64);
   const authorizeUrl = new URL(`${baseUrl}/api/desktop/auth/authorize`);
   authorizeUrl.searchParams.set("response_type", "code");
@@ -143,10 +149,7 @@ const buildAuthorizeUrl = (baseUrl: string, redirectUri: string) => {
     createPkceChallenge(codeVerifier),
   );
   authorizeUrl.searchParams.set("code_challenge_method", "S256");
-  authorizeUrl.searchParams.set(
-    "scope",
-    "profile:read personal_uploads:write meetings:read",
-  );
+  authorizeUrl.searchParams.set("scope", scope);
   authorizeUrl.searchParams.set("state", "desktop-state");
   return { authorizeUrl, codeVerifier };
 };
@@ -159,10 +162,15 @@ const extractConsentToken = (html: string) => {
   return match[1];
 };
 
-const requestDesktopConsent = async (baseUrl: string, redirectUri: string) => {
+const requestDesktopConsent = async (
+  baseUrl: string,
+  redirectUri: string,
+  scope?: string,
+) => {
   const { authorizeUrl, codeVerifier } = buildAuthorizeUrl(
     baseUrl,
     redirectUri,
+    scope,
   );
   const response = await fetch(authorizeUrl, { redirect: "manual" });
   await expectSuccess(response);
@@ -184,11 +192,12 @@ const submitDesktopConsent = async (
     redirect: "manual",
   });
 
-const authorizeDesktopToken = async (baseUrl: string) => {
+const authorizeDesktopToken = async (baseUrl: string, scope?: string) => {
   const redirectUri = "http://127.0.0.1:49152/auth/callback";
   const { consentToken, codeVerifier } = await requestDesktopConsent(
     baseUrl,
     redirectUri,
+    scope,
   );
 
   const authorizeResponse = await submitDesktopConsent(
@@ -416,6 +425,36 @@ describe("desktop API", () => {
       }
 
       expect(limited).toBe(true);
+    } finally {
+      await closeServer(server);
+    }
+  });
+
+  test("rejects an upload whose token lacks the scope", async () => {
+    const { server, baseUrl } = createServer();
+
+    try {
+      const token = await authorizeDesktopToken(baseUrl, "profile:read");
+      const response = await fetch(
+        `${baseUrl}/api/desktop/recordings/session`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token.access_token}`,
+          },
+          body: JSON.stringify({
+            sources: [
+              { sourceId: "owner_mic", kind: "owner_mic", label: "Me" },
+            ],
+          }),
+        },
+      );
+
+      expect(response.status).toBe(403);
+      await expect(readJson<{ error: string }>(response)).resolves.toEqual(
+        expect.objectContaining({ error: "insufficient_scope" }),
+      );
     } finally {
       await closeServer(server);
     }
