@@ -1610,12 +1610,16 @@ fn record_segment_sealed(
 
 // Announcing at the cap is too late. By the time a segment is sealed the writer
 // has already opened the next one, and the stop that follows finalises it, so
-// the recording would land just over the cap and be rejected as a whole. One
-// segment of headroom is therefore reserved: stopping with a full segment still
-// to seal keeps the total at or under the limit, which is the boundary the
-// server accepts.
+// the recording would land over the cap and be rejected as a whole.
+//
+// The decision can only be taken at a segment boundary, so it has to look two
+// segments ahead rather than one: stop at the last boundary from which the
+// segment still being written is guaranteed to fit. Reserving a single segment
+// is enough only when the cadence divides the cap. It does not have to, since
+// CHRONOTE_DESKTOP_SEGMENT_SECONDS can set anything, and at 61s the single
+// reserve left two seconds of headroom for a stop that takes longer than that.
 fn source_should_stop(sealed_millis: u64, segment_millis: u64) -> bool {
-    sealed_millis.saturating_add(segment_millis) >= RECORDING_SOURCE_MAX_MILLIS
+    sealed_millis.saturating_add(segment_millis.saturating_mul(2)) > RECORDING_SOURCE_MAX_MILLIS
 }
 
 fn update_segment_status(
@@ -2307,41 +2311,40 @@ mod tests {
     use super::*;
 
     #[test]
-    fn stopping_reserves_room_for_the_segment_still_recording() {
-        let segment_millis = 60_000;
-        let full_segments = RECORDING_SOURCE_MAX_MILLIS / segment_millis;
+    fn stopping_leaves_room_for_the_segment_still_being_written() {
+        // CHRONOTE_DESKTOP_SEGMENT_SECONDS takes any number of seconds, so the
+        // cadence need not divide the cap. Non-divisors are where reserving a
+        // single segment was not enough: at 61s it left two seconds of headroom
+        // for a stop that takes longer than that.
+        for segment_millis in [60_000_u64, 61_000, 10_000, 7_000, 90_000] {
+            let mut sealed = 0_u64;
+            let mut stopped_at = None;
+            // Bounded so a predicate that never fires fails the test rather
+            // than hanging it.
+            for _ in 0..10_000 {
+                sealed += segment_millis;
+                if source_should_stop(sealed, segment_millis) {
+                    stopped_at = Some(sealed);
+                    break;
+                }
+            }
+            let stopped_at = stopped_at
+                .unwrap_or_else(|| panic!("never stopped at a {segment_millis}ms cadence"));
 
-        // One segment short of the reserve, so recording continues.
-        assert!(!source_should_stop(
-            (full_segments - 2) * segment_millis,
-            segment_millis
-        ));
-        // The segment now being written is the last that fits, so stop here.
-        assert!(source_should_stop(
-            (full_segments - 1) * segment_millis,
-            segment_millis
-        ));
-
-        // Sealing the announced segment must leave the source at or under the
-        // cap, because anything over it is rejected and takes the whole
-        // recording with it.
-        let sealed_after_stop = (full_segments - 1) * segment_millis + segment_millis;
-        assert!(sealed_after_stop <= RECORDING_SOURCE_MAX_MILLIS);
-    }
-
-    #[test]
-    fn stopping_tracks_a_shortened_segment_cadence() {
-        // The cadence is overridable, so the reserve has to follow it rather
-        // than assume the default.
-        let segment_millis = 10_000;
-        assert!(!source_should_stop(
-            RECORDING_SOURCE_MAX_MILLIS - segment_millis - 1,
-            segment_millis
-        ));
-        assert!(source_should_stop(
-            RECORDING_SOURCE_MAX_MILLIS - segment_millis,
-            segment_millis
-        ));
+            // The segment in flight when the stop is announced still has to fit
+            // under the cap, because anything over it is rejected and takes the
+            // whole recording with it.
+            assert!(
+                stopped_at + segment_millis <= RECORDING_SOURCE_MAX_MILLIS,
+                "{segment_millis}ms cadence overruns the cap: {stopped_at} + {segment_millis}"
+            );
+            // And it must not stop a whole segment early, which would throw
+            // away recording time that fits.
+            assert!(
+                stopped_at + segment_millis * 2 > RECORDING_SOURCE_MAX_MILLIS,
+                "{segment_millis}ms cadence stops a segment too early at {stopped_at}"
+            );
+        }
     }
 
     #[test]
