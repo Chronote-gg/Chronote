@@ -60,6 +60,19 @@ jobs:
       - name: Run desktop API coverage
         run: yarn test:desktop:coverage
 
+      # The bundler fetches the WiX toolset and the NSIS tooling from GitHub on
+      # first use, after the Rust build has already succeeded. Those downloads
+      # have failed twice with `io: Peer disconnected`, throwing away a green
+      # compile each time, so they are cached here. A stale hit is still useful,
+      # hence the restore-keys: the tools change only when Tauri does.
+      - name: Cache Tauri bundler tools
+        uses: actions/cache@v6
+        with:
+          path: ~\AppData\Local\tauri
+          key: tauri-bundler-tools-${{ runner.os }}-${{ hashFiles('apps/desktop/src-tauri/Cargo.lock') }}
+          restore-keys: |
+            tauri-bundler-tools-${{ runner.os }}-
+
       - name: Build unsigned desktop package
         run: yarn desktop:package
 
