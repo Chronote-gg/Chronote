@@ -2310,6 +2310,42 @@ fn lock_error<T>(error: std::sync::PoisonError<T>) -> String {
 mod tests {
     use super::*;
 
+    // Proves the keyring feature flag is still doing its job. An in-process
+    // round trip would pass either way, because the fallback store keeps
+    // passwords in memory for the life of the process, so this asks Windows
+    // whether the credential actually exists. Without a platform store feature
+    // the session is written nowhere and sign-in reports that it could not be
+    // saved, which is how this was found.
+    #[cfg(windows)]
+    #[test]
+    fn stored_sessions_reach_the_windows_credential_store() {
+        let service = format!("Chronote Desktop Test {}", Uuid::new_v4());
+        let entry = keyring::Entry::new(&service, KEYRING_ACCOUNT).unwrap();
+        entry.set_password("chronote-session-probe").unwrap();
+
+        // A fresh handle, because that is what persist_session does: it stores
+        // through one Entry and reads back through another. The fallback store
+        // keeps nothing between handles, which is why sign-in reported failure
+        // rather than silently forgetting the session at restart.
+        let reread = keyring::Entry::new(&service, KEYRING_ACCOUNT).unwrap();
+        let stored = reread.get_password();
+
+        let listed = std::process::Command::new("cmdkey")
+            .arg("/list")
+            .output()
+            .expect("cmdkey should be available on Windows");
+        let listed = String::from_utf8_lossy(&listed.stdout).into_owned();
+
+        entry.delete_credential().unwrap();
+
+        assert_eq!(stored.unwrap(), "chronote-session-probe");
+
+        assert!(
+            listed.contains(&service),
+            "credential was not registered with Windows: {service}"
+        );
+    }
+
     #[test]
     fn stopping_leaves_room_for_the_segment_still_being_written() {
         // CHRONOTE_DESKTOP_SEGMENT_SECONDS takes any number of seconds, so the
