@@ -2,7 +2,7 @@ name: Claude Review
 
 on:
   pull_request:
-    types: [opened, reopened, ready_for_review, synchronize]
+    types: [opened, reopened, ready_for_review, synchronize, unlabeled]
 
 permissions:
   contents: read
@@ -16,10 +16,10 @@ jobs:
     name: Prepare Claude review comment
     if: >-
       !github.event.pull_request.draft &&
+      (github.event.action != 'unlabeled' || github.event.label.name == 'skip-claude-review') &&
       !github.event.pull_request.head.repo.fork &&
       github.event.pull_request.head.repo.full_name == github.event.pull_request.base.repo.full_name &&
       !endsWith(github.event.pull_request.user.login, '[bot]') &&
-      !endsWith(github.actor, '[bot]') &&
       !contains(github.event.pull_request.labels.*.name, 'skip-claude-review')
     runs-on: ubuntu-latest
     permissions:
@@ -29,6 +29,7 @@ jobs:
     outputs:
       available: ${{ steps.sticky_comment.outputs.comment_id != '' }}
       comment_id: ${{ steps.sticky_comment.outputs.comment_id }}
+      previous_review_b64: ${{ steps.sticky_comment.outputs.previous_review_b64 }}
 
     steps:
       - name: Upsert Claude review sticky comment
@@ -44,6 +45,8 @@ jobs:
 
           body_file="${RUNNER_TEMP}/claude-review-comment.md"
           json_file="${RUNNER_TEMP}/claude-review-comment.json"
+          previous_body_file="${RUNNER_TEMP}/claude-review-previous.md"
+          : > "$previous_body_file"
 
           cat > "$body_file" <<EOF
           ${STICKY_MARKER}
@@ -69,6 +72,12 @@ jobs:
 
           if [ -n "$comment_id" ]; then
             echo "Reusing Claude review sticky comment ${comment_id}."
+            if ! gh api \
+              "repos/${GITHUB_REPOSITORY}/issues/comments/${comment_id}" \
+              --jq '.body' > "$previous_body_file"; then
+              echo "::notice::The previous Claude review could not be loaded as follow-up context."
+              : > "$previous_body_file"
+            fi
             if ! gh api --method PATCH \
               "repos/${GITHUB_REPOSITORY}/issues/comments/${comment_id}" \
               --input "$json_file" > /dev/null; then
@@ -94,6 +103,34 @@ jobs:
             exit 0
           fi
 
+          node - "$previous_body_file" <<'NODE'
+          const fs = require("node:fs");
+
+          const [, , previousBodyFile] = process.argv;
+          const previousBody = fs.readFileSync(previousBodyFile, "utf8");
+          const maxBytes = 45_000;
+
+          if (Buffer.byteLength(previousBody, "utf8") > maxBytes) {
+            let bounded = "";
+            let bytes = 0;
+            for (const codePoint of previousBody) {
+              const codePointBytes = Buffer.byteLength(codePoint, "utf8");
+              if (bytes + codePointBytes > maxBytes) {
+                break;
+              }
+              bounded += codePoint;
+              bytes += codePointBytes;
+            }
+            fs.writeFileSync(previousBodyFile, `${bounded}\n\n_Previous review context truncated._\n`);
+          }
+          NODE
+
+          {
+            echo "previous_review_b64<<EOF"
+            base64 -w0 "$previous_body_file"
+            echo
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
           echo "comment_id=${comment_id}" >> "$GITHUB_OUTPUT"
 
   review:
@@ -126,6 +163,7 @@ jobs:
           PR_BODY: ${{ github.event.pull_request.body }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           PR_TITLE: ${{ github.event.pull_request.title }}
+          PREVIOUS_REVIEW_B64: ${{ needs.prepare-comment.outputs.previous_review_b64 }}
         shell: bash
         run: |
           set -euo pipefail
@@ -152,6 +190,12 @@ jobs:
 
           git diff --find-renames --find-copies --stat "${BASE_SHA}...${HEAD_SHA}" > .claude-review/pr-stat.txt
           git diff --find-renames --find-copies --no-ext-diff "${BASE_SHA}...${HEAD_SHA}" > .claude-review/pr-diff.patch
+
+          if [ -n "${PREVIOUS_REVIEW_B64}" ]; then
+            printf '%s' "${PREVIOUS_REVIEW_B64}" | base64 -d > .claude-review/previous-review.md
+          else
+            : > .claude-review/previous-review.md
+          fi
 
       - name: Assume the shared Claude review role
         id: aws_credentials
@@ -219,6 +263,7 @@ jobs:
             - .claude-review/pr-context.md
             - .claude-review/pr-stat.txt
             - .claude-review/pr-diff.patch
+            - .claude-review/previous-review.md (the prior sticky review, when present)
             Keep the review bounded: start from REVIEW.md and the generated
             PR diff, and only open source files when a changed hunk needs more
             local context.
@@ -235,6 +280,7 @@ jobs:
             findings were found.
           settings: |
             {
+              "disableAllHooks": true,
               "permissions": {
                 "deny": [
                   "Bash",
@@ -255,6 +301,7 @@ jobs:
             }
           claude_args: |
             --max-turns 100
+            --setting-sources user
             --tools "Read"
       - name: Extract Claude review Markdown
         id: extract_review
@@ -333,7 +380,24 @@ jobs:
             fail("Claude did not return a Markdown review body.");
           }
 
-          fs.writeFileSync(reviewFile, `${markdown}\n`);
+          const maxReviewBytes = 59_000;
+          let boundedMarkdown = markdown;
+
+          if (Buffer.byteLength(markdown, "utf8") > maxReviewBytes) {
+            boundedMarkdown = "";
+            let bytes = 0;
+            for (const codePoint of markdown) {
+              const codePointBytes = Buffer.byteLength(codePoint, "utf8");
+              if (bytes + codePointBytes > maxReviewBytes) {
+                break;
+              }
+              boundedMarkdown += codePoint;
+              bytes += codePointBytes;
+            }
+            boundedMarkdown += "\n\n_Claude review truncated to fit GitHub's comment limit._";
+          }
+
+          fs.writeFileSync(reviewFile, `${boundedMarkdown}\n`);
           NODE
 
           {
@@ -407,6 +471,6 @@ jobs:
           if ! gh api --method PATCH \
             "repos/${GITHUB_REPOSITORY}/issues/comments/${COMMENT_ID}" \
             --input "$json_file" > /dev/null; then
-            echo "::notice::Claude review completed, but the workflow token could not update the sticky review comment."
-            exit 0
+            echo "::error::Claude review completed, but the workflow token could not update the sticky review comment."
+            exit 1
           fi
