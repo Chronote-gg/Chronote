@@ -23,7 +23,7 @@ jobs:
           cache: "yarn"
 
       - name: Install dependencies
-        run: yarn install --frozen-lockfile
+        run: bash scripts/ci-install-dependencies.sh
 
       - name: Run ESLint
         run: yarn lint:check
@@ -42,7 +42,7 @@ jobs:
           cache: "yarn"
 
       - name: Install dependencies
-        run: yarn install --frozen-lockfile
+        run: bash scripts/ci-install-dependencies.sh
 
       - name: Run Prettier
         run: yarn prettier:check
@@ -61,7 +61,7 @@ jobs:
           cache: "yarn"
 
       - name: Install dependencies
-        run: yarn install --frozen-lockfile
+        run: bash scripts/ci-install-dependencies.sh
 
       - name: Run markdownlint
         run: yarn markdownlint:check
@@ -80,7 +80,7 @@ jobs:
           cache: "yarn"
 
       - name: Install dependencies
-        run: yarn install --frozen-lockfile
+        run: bash scripts/ci-install-dependencies.sh
 
       - name: Run Langfuse prompt check
         env:
@@ -109,7 +109,7 @@ jobs:
           cache: "yarn"
 
       - name: Install dependencies
-        run: yarn install --frozen-lockfile
+        run: bash scripts/ci-install-dependencies.sh
 
       - name: Run Langfuse LLM connection check
         env:
@@ -138,7 +138,7 @@ jobs:
           cache: "yarn"
 
       - name: Install dependencies
-        run: yarn install --frozen-lockfile
+        run: bash scripts/ci-install-dependencies.sh
 
       - name: Run Jest
         run: yarn test
@@ -157,7 +157,7 @@ jobs:
           cache: "yarn"
 
       - name: Install dependencies
-        run: yarn install --frozen-lockfile
+        run: bash scripts/ci-install-dependencies.sh
 
       - name: Build backend and frontend
         run: yarn build:all
@@ -198,7 +198,7 @@ jobs:
           cache: "yarn"
 
       - name: Install dependencies
-        run: yarn install --frozen-lockfile
+        run: bash scripts/ci-install-dependencies.sh
 
       - name: Build and validate docs
         run: yarn docs:check
@@ -217,7 +217,7 @@ jobs:
           cache: "yarn"
 
       - name: Install dependencies
-        run: yarn install --frozen-lockfile
+        run: bash scripts/ci-install-dependencies.sh
 
       # UI changes are expected to ship Storybook screenshots, so the build has
       # to stay green. A build is sufficient: a preview-level transform failure
@@ -254,7 +254,7 @@ jobs:
           cache: "yarn"
 
       - name: Install dependencies
-        run: yarn install --frozen-lockfile
+        run: bash scripts/ci-install-dependencies.sh
 
       - name: Get Playwright version
         id: pw-version
@@ -302,7 +302,7 @@ jobs:
           cache: "yarn"
 
       - name: Install dependencies
-        run: yarn install --frozen-lockfile --ignore-scripts
+        run: bash scripts/ci-install-dependencies.sh --ignore-scripts
 
       - name: Get Playwright version
         id: pw-version-visual

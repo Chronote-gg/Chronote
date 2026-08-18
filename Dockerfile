@@ -18,8 +18,14 @@ COPY package*.json ./
 COPY yarn.lock ./
 COPY patches ./patches
 
-# Install dependencies
-RUN npx yarn install --frozen-lockfile
+# Install dependencies. Package registries can return brief 5xx responses, so
+# keep image builds resilient without hiding persistent failures.
+RUN for attempt in 1 2 3; do \
+      npx yarn install --frozen-lockfile --network-timeout 600000 && exit 0; \
+      if [ "$attempt" -eq 3 ]; then exit 1; fi; \
+      echo "Dependency installation failed on attempt $attempt. Retrying in 15 seconds."; \
+      sleep 15; \
+    done
 
 # Copy the rest of the application code
 COPY . .

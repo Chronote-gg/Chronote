@@ -28,7 +28,7 @@ jobs:
           cache-dependency-path: "yarn.lock"
 
       - name: Install dependencies
-        run: yarn install --frozen-lockfile
+        run: bash scripts/ci-install-dependencies.sh
 
       - name: Run linter
         run: yarn lint
@@ -48,7 +48,7 @@ jobs:
           cache-dependency-path: "yarn.lock"
 
       - name: Install dependencies
-        run: yarn install --frozen-lockfile
+        run: bash scripts/ci-install-dependencies.sh
 
       - name: Run markdownlint
         run: yarn markdownlint:check
@@ -68,7 +68,7 @@ jobs:
           cache-dependency-path: "yarn.lock"
 
       - name: Install dependencies
-        run: yarn install --frozen-lockfile
+        run: bash scripts/ci-install-dependencies.sh
 
       - name: Run tests
         id: run-tests
@@ -134,7 +134,7 @@ jobs:
           cache-dependency-path: "yarn.lock"
 
       - name: Install dependencies
-        run: yarn install --frozen-lockfile
+        run: bash scripts/ci-install-dependencies.sh
 
       - name: Build TypeScript
         run: yarn build
@@ -188,7 +188,7 @@ jobs:
           cache-dependency-path: "yarn.lock"
 
       - name: Install dependencies
-        run: yarn install --frozen-lockfile
+        run: bash scripts/ci-install-dependencies.sh
 
       - name: Build and validate docs
         run: yarn docs:check
@@ -210,7 +210,7 @@ jobs:
           cache-dependency-path: "yarn.lock"
 
       - name: Install dependencies
-        run: yarn install --frozen-lockfile
+        run: bash scripts/ci-install-dependencies.sh
 
       - name: Get Playwright version
         id: pw-version
@@ -625,7 +625,7 @@ jobs:
           cache-dependency-path: "yarn.lock"
 
       - name: Install dependencies
-        run: yarn install --frozen-lockfile
+        run: bash scripts/ci-install-dependencies.sh
 
       - name: Build frontend (Vite)
         run: yarn build:web
@@ -677,7 +677,7 @@ jobs:
 
       - name: Install dependencies
         if: steps.docs-config.outputs.enabled == 'true'
-        run: yarn install --frozen-lockfile
+        run: bash scripts/ci-install-dependencies.sh
 
       - name: Build docs site
         if: steps.docs-config.outputs.enabled == 'true'
