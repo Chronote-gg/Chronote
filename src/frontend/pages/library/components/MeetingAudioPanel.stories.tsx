@@ -20,3 +20,10 @@ export const WithAudio: Story = {
     audioUrl: "/audio/sample.mp3",
   },
 };
+
+export const AccessDisabled: Story = {
+  args: {
+    accessEnabled: false,
+    audioUrl: "/audio/sample.mp3",
+  },
+};

@@ -7,6 +7,12 @@ Notable product changes for Chronote users. For the full changelog, see the [Git
 
 ## 2026
 
+### Server controls for transcript and recording access
+
+- Server admins with **Manage Server** can independently block new transcript and audio recording access while keeping meeting summaries and notes visible.
+- The controls apply to existing and future server meetings, including transcript sharing, live transcript access, portal exports, and Remote MCP.
+- These settings control access only. Chronote still records, transcribes, summarizes, and stores meeting artifacts unless the meeting is deleted.
+
 ### Chronote Desktop is open to every account
 
 - Chronote Desktop no longer requires desktop access to be enabled on your account. Any Chronote account can sign in and upload a recording.

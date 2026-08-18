@@ -110,6 +110,10 @@ import {
   resolveConfigSnapshot,
 } from "../../services/unifiedConfigService";
 import { authedProcedure, guildMemberProcedure, router } from "../trpc";
+import {
+  resolveMeetingArtifactAccess,
+  resolveServerMeetingArtifactAccess,
+} from "../../services/meetingArtifactAccessService";
 
 const resolveParticipantLabel = (participant: Participant) =>
   participant.serverNickname ||
@@ -943,6 +947,9 @@ const list = guildMemberProcedure
     const roleNamesByGuildId = new Map([
       [input.serverId, await resolveGuildRoleNames(input.serverId)],
     ]);
+    const artifactAccess = await resolveServerMeetingArtifactAccess(
+      input.serverId,
+    );
 
     return {
       meetings: allowedMeetings.map((meeting) => {
@@ -976,8 +983,11 @@ const list = guildMemberProcedure
           notesMessageId: resolveMeetingListNotesMessageId(
             meeting.notesMessageIds,
           ),
-          audioAvailable: Boolean(meeting.audioS3Key),
-          transcriptAvailable: Boolean(meeting.transcriptS3Key),
+          audioAvailable:
+            artifactAccess.audioAccessEnabled && Boolean(meeting.audioS3Key),
+          transcriptAvailable:
+            artifactAccess.transcriptAccessEnabled &&
+            Boolean(meeting.transcriptS3Key),
           archivedAt: meeting.archivedAt,
           archivedByUserId: meeting.archivedByUserId,
         };
@@ -1091,9 +1101,11 @@ const detail = authedProcedure
       }
     }
 
-    const transcriptPayload = history.transcriptS3Key
-      ? await fetchJsonFromS3<TranscriptPayload>(history.transcriptS3Key)
-      : undefined;
+    const artifactAccess = await resolveMeetingArtifactAccess(history);
+    const transcriptPayload =
+      artifactAccess.transcriptAccessEnabled && history.transcriptS3Key
+        ? await fetchJsonFromS3<TranscriptPayload>(history.transcriptS3Key)
+        : undefined;
     const resolveMentions = await createMeetingMentionReplacer(history);
     const transcript = resolveMentions.toText(transcriptPayload?.text ?? "");
     const notes = resolveMentions.toMarkdown(history.notes ?? "");
@@ -1107,21 +1119,24 @@ const detail = authedProcedure
       : history.summarySentence;
 
     let chatEntries: ChatEntry[] | undefined;
-    if (history.chatS3Key) {
+    if (artifactAccess.transcriptAccessEnabled && history.chatS3Key) {
       chatEntries = await fetchJsonFromS3<ChatEntry[]>(history.chatS3Key);
     }
-    const events: MeetingEvent[] = resolveMentionsInTimelineEvents(
-      buildMeetingTimelineEventsFromHistory({
-        history,
-        transcriptPayload,
-        chatEntries,
-      }),
-      resolveMentions.toText,
-    );
+    const events: MeetingEvent[] = artifactAccess.transcriptAccessEnabled
+      ? resolveMentionsInTimelineEvents(
+          buildMeetingTimelineEventsFromHistory({
+            history,
+            transcriptPayload,
+            chatEntries,
+          }),
+          resolveMentions.toText,
+        )
+      : [];
 
-    const audioUrl = history.audioS3Key
-      ? await getSignedObjectUrl(history.audioS3Key)
-      : undefined;
+    const audioUrl =
+      artifactAccess.audioAccessEnabled && history.audioS3Key
+        ? await getSignedObjectUrl(history.audioS3Key)
+        : undefined;
 
     const summaryFeedback = ctx.user
       ? await getMeetingSummaryFeedback({
@@ -1165,7 +1180,9 @@ const detail = authedProcedure
         notesChannelId: history.notesChannelId,
         notesMessageId: history.notesMessageIds?.[0],
         transcript,
+        transcriptAccessEnabled: artifactAccess.transcriptAccessEnabled,
         audioUrl,
+        audioAccessEnabled: artifactAccess.audioAccessEnabled,
         archivedAt: history.archivedAt,
         archivedByUserId: history.archivedByUserId,
         summaryFeedback: summaryFeedback?.rating,

@@ -41,6 +41,7 @@ import {
 import { canGuildMemberEndMeeting } from "../utils/meetingPermissions";
 import type { ActiveMeetingLease } from "../types/db";
 import type { MeetingData } from "../types/meeting-data";
+import { resolveServerMeetingArtifactAccess } from "./meetingArtifactAccessService";
 
 const DEFAULT_TRANSCRIPT_EVENT_LIMIT = 50;
 const MAX_TRANSCRIPT_EVENT_LIMIT = 200;
@@ -442,6 +443,12 @@ const executeGetLiveTranscript = async (
   input: LiveMeetingCommandInput,
 ): Promise<MeetingControlCommandResult> => {
   const live = await resolveLiveMeeting(client, userId, input);
+  const artifactAccess = await resolveServerMeetingArtifactAccess(live.guildId);
+  if (!artifactAccess.transcriptAccessEnabled) {
+    throw new MeetingControlExecutionError(
+      "Transcript access is disabled for this server.",
+    );
+  }
   if (!("meeting" in live)) {
     throw new MeetingControlExecutionError(
       "Live transcript is only available on the meeting owner runtime.",

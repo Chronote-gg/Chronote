@@ -27,11 +27,11 @@ Remote MCP requires Discord OAuth and `OAUTH_SECRET` to be configured. Set `MCP_
 - `list_meetings`: Lists recent meetings in a server, with optional channel, date, tag, and archived filters.
 - `list_my_meetings`: Lists meetings across servers for the authenticated user. It defaults to meetings the user attended in the past 7 days and can also list meetings the user can access. Use `all`, `today`, or `past_7_days` without `startDate` or `endDate`. Use `range: "custom"` when you need explicit date bounds. If the response includes `nextCursor`, pass it as `cursor` to fetch the next page.
 - `get_meeting_summary`: Returns notes and metadata for one accessible meeting.
-- `get_meeting_transcript`: Returns transcript text for one accessible meeting. Use `offset` and `maxChars` to page through long transcripts.
+- `get_meeting_transcript`: Returns transcript text for one accessible meeting when that server allows transcript access. Use `offset` and `maxChars` to page through long transcripts.
 - `start_meeting`: Starts a Chronote recording from the authenticated user's current Discord voice channel. Optionally pass `serverId`, `voiceChannelId`, `textChannelId`, `context`, and `tags`.
 - `stop_meeting`: Stops the active Chronote meeting, either by `serverId` or by inferring the server from the authenticated user's current voice channel. Pass `meetingId` to guard against stopping the wrong meeting.
 - `get_live_meeting_status`: Returns status for an active meeting.
-- `get_live_meeting_transcript`: Returns currently available live transcript events. Pass `serverId` so the request reaches the bot runtime that owns the meeting, and use `afterEventId` to page from the last event you saw.
+- `get_live_meeting_transcript`: Returns currently available live transcript events when that server allows transcript access. Pass `serverId` so the request reaches the bot runtime that owns the meeting, and use `afterEventId` to page from the last event you saw.
 - `get_meeting_control_request`: Checks a queued start, stop, or live meeting request by `requestId`.
 
 For follow-up fetch tools, use the list item's `id` field. Do not pass the UUID-style `meetingId` field.
@@ -94,6 +94,7 @@ Chronote only returns meeting data if the authenticated Discord user can access 
 - Users who participated can access their indexed meetings when attendee access is enabled.
 - Other users need access to the voice channel and notes channel history.
 - Transcript access requires explicit transcript scope consent.
+- A server's Transcript access setting can still make completed and live transcripts unavailable, even when the token has `transcripts:read`.
 - Starting a live meeting requires the authenticated Discord user to already be in the target voice channel.
 - Stopping a meeting requires creator or meeting-management permissions.
 

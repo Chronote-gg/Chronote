@@ -10,6 +10,7 @@ import {
   type StartMeetingCommandInput,
   type StopMeetingCommandInput,
 } from "../types/meetingControl";
+import { resolveServerMeetingArtifactAccess } from "./meetingArtifactAccessService";
 
 export class McpMeetingControlError extends Error {
   constructor(
@@ -76,6 +77,15 @@ export async function getMcpLiveMeetingTranscript(input: {
     throw new McpMeetingControlError(
       "failed",
       "serverId is required for live transcript requests.",
+    );
+  }
+  const artifactAccess = await resolveServerMeetingArtifactAccess(
+    input.request.serverId,
+  );
+  if (!artifactAccess.transcriptAccessEnabled) {
+    throw new McpMeetingControlError(
+      "failed",
+      "Transcript access is disabled for this server.",
     );
   }
   return queueForGuildOwner(

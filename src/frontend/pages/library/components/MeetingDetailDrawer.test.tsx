@@ -267,6 +267,8 @@ const buildMeeting = (overrides?: Partial<MeetingDetails>): MeetingDetails => ({
   tags: [],
   channel: "#general",
   audioUrl: null,
+  audioAccessEnabled: true,
+  transcriptAccessEnabled: true,
   archivedAt: null,
   attendees: [],
   decisions: [],
@@ -293,7 +295,9 @@ const buildDetail = (
   notesChannelId: null,
   notesMessageId: null,
   transcript: "",
+  transcriptAccessEnabled: true,
   audioUrl: null,
+  audioAccessEnabled: true,
   archivedAt: null,
   attendees: [],
   events: [],
@@ -411,6 +415,36 @@ describe("MeetingDetailDrawer summary copy", () => {
     const copyButton = screen.getByLabelText("Copy summary as Markdown");
     expect(copyButton).toBeDisabled();
   });
+
+  it("shows server access notices instead of transcript and audio", () => {
+    useMeetingDetailMock.mockReturnValue(
+      buildUseMeetingDetailResult({
+        detail: buildDetail({
+          transcript: "Hidden transcript",
+          transcriptAccessEnabled: false,
+          audioUrl: "https://example.com/recording.mp3",
+          audioAccessEnabled: false,
+        }),
+        meeting: buildMeeting({
+          transcriptAccessEnabled: false,
+          audioAccessEnabled: false,
+          audioUrl: "https://example.com/recording.mp3",
+        }),
+      }),
+    );
+
+    renderDrawer();
+
+    expect(
+      screen.getByText("Transcript access is disabled for this server."),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("Audio recording access is disabled for this server."),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("Hidden transcript")).not.toBeInTheDocument();
+    expect(document.querySelector("audio")).toBeNull();
+  });
+
   it("disables share button when sharing permission is denied", () => {
     mockShareStateQuery.error = { data: { code: "FORBIDDEN" } };
 

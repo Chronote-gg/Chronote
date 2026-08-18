@@ -45,6 +45,7 @@ type PublicMeeting = {
   tags: string[];
   notes: string;
   transcript: string;
+  transcriptAccessEnabled?: boolean;
   archivedAt?: string;
   attendees: string[];
   events: MeetingEvent[];
@@ -172,27 +173,29 @@ export function PublicMeetingView({
         </Stack>
       </Surface>
 
-      <Surface p="lg">
-        <Stack gap="xs">
-          <Text fw={600}>Transcript</Text>
-          <MeetingTimeline
-            events={meeting.events}
-            activeFilters={activeFilters}
-            onToggleFilter={(value) =>
-              setActiveFilters((current: MeetingEventType[]) =>
-                current.includes(value)
-                  ? current.filter(
-                      (filter: MeetingEventType) => filter !== value,
-                    )
-                  : [...current, value],
-              )
-            }
-            height={520}
-            title="Timeline"
-            emptyLabel="Transcript is empty."
-          />
-        </Stack>
-      </Surface>
+      {meeting.transcriptAccessEnabled !== false ? (
+        <Surface p="lg">
+          <Stack gap="xs">
+            <Text fw={600}>Transcript</Text>
+            <MeetingTimeline
+              events={meeting.events}
+              activeFilters={activeFilters}
+              onToggleFilter={(value) =>
+                setActiveFilters((current: MeetingEventType[]) =>
+                  current.includes(value)
+                    ? current.filter(
+                        (filter: MeetingEventType) => filter !== value,
+                      )
+                    : [...current, value],
+                )
+              }
+              height={520}
+              title="Timeline"
+              emptyLabel="Transcript is empty."
+            />
+          </Stack>
+        </Surface>
+      ) : null}
 
       <Surface p="lg">
         <Stack gap="xs">

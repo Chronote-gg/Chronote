@@ -41,6 +41,7 @@ import MeetingDetailHeader from "./MeetingDetailHeader";
 import MeetingDetailModals from "./MeetingDetailModals";
 import MeetingAudioPanel from "./MeetingAudioPanel";
 import { MeetingSummaryPanel } from "./MeetingSummaryPanel";
+import MeetingTranscriptUnavailablePanel from "./MeetingTranscriptUnavailablePanel";
 import MeetingNotesEditorModal, {
   type QuillDeltaPayload,
 } from "./MeetingNotesEditorModal";
@@ -880,7 +881,10 @@ export default function MeetingDetailDrawer({
   };
 
   const audioSection = meeting ? (
-    <MeetingAudioPanel audioUrl={meeting.audioUrl} />
+    <MeetingAudioPanel
+      audioUrl={meeting.audioUrl}
+      accessEnabled={meeting.audioAccessEnabled}
+    />
   ) : null;
 
   const notionConfigured = notionStatusQuery.data?.configured ?? false;
@@ -979,24 +983,30 @@ export default function MeetingDetailDrawer({
     </Surface>
   ) : null;
 
-  const fullScreenCallout = (
-    <Surface p="md" tone="soft">
-      <Stack gap="xs">
-        <Text fw={600}>Full transcript</Text>
-        <Text size="sm" c="dimmed">
-          View the speaker timeline and transcript events in fullscreen.
-        </Text>
-        <Button
-          size="xs"
-          variant="light"
-          leftSection={<IconFilter size={14} />}
-          onClick={() => setFullScreen(true)}
-        >
-          Open fullscreen
-        </Button>
-      </Stack>
-    </Surface>
-  );
+  const transcriptUnavailableSection = <MeetingTranscriptUnavailablePanel />;
+
+  const fullScreenCallout = meeting ? (
+    meeting.transcriptAccessEnabled ? (
+      <Surface p="md" tone="soft">
+        <Stack gap="xs">
+          <Text fw={600}>Full transcript</Text>
+          <Text size="sm" c="dimmed">
+            View the speaker timeline and transcript events in fullscreen.
+          </Text>
+          <Button
+            size="xs"
+            variant="light"
+            leftSection={<IconFilter size={14} />}
+            onClick={() => setFullScreen(true)}
+          >
+            Open fullscreen
+          </Button>
+        </Stack>
+      </Surface>
+    ) : (
+      transcriptUnavailableSection
+    )
+  ) : null;
 
   return (
     <Drawer
@@ -1179,40 +1189,47 @@ export default function MeetingDetailDrawer({
                       </ScrollArea>
                     }
                     right={
-                      <Stack gap="sm" style={{ flex: 1, minHeight: 0 }}>
-                        {liveStreamEnabled && liveStream.status === "error" ? (
-                          <Text size="sm" c="dimmed">
-                            Unable to connect to the live transcript. Try
-                            refreshing.
-                          </Text>
-                        ) : null}
-                        <Surface
-                          p="md"
-                          style={{
-                            flex: 1,
-                            minHeight: 0,
-                            display: "flex",
-                            flexDirection: "column",
-                            overflow: "hidden",
-                          }}
-                        >
-                          <MeetingTimeline
-                            events={displayEvents}
-                            activeFilters={activeFilters}
-                            onToggleFilter={(value) =>
-                              setActiveFilters((current) =>
-                                current.includes(value)
-                                  ? current.filter((filter) => filter !== value)
-                                  : [...current, value],
-                              )
-                            }
-                            height="100%"
-                            title="Transcript"
-                            emptyLabel={timelineEmptyLabel}
-                            viewportProps={timelineViewportProps}
-                          />
-                        </Surface>
-                      </Stack>
+                      meeting.transcriptAccessEnabled ? (
+                        <Stack gap="sm" style={{ flex: 1, minHeight: 0 }}>
+                          {liveStreamEnabled &&
+                          liveStream.status === "error" ? (
+                            <Text size="sm" c="dimmed">
+                              Unable to connect to the live transcript. Try
+                              refreshing.
+                            </Text>
+                          ) : null}
+                          <Surface
+                            p="md"
+                            style={{
+                              flex: 1,
+                              minHeight: 0,
+                              display: "flex",
+                              flexDirection: "column",
+                              overflow: "hidden",
+                            }}
+                          >
+                            <MeetingTimeline
+                              events={displayEvents}
+                              activeFilters={activeFilters}
+                              onToggleFilter={(value) =>
+                                setActiveFilters((current) =>
+                                  current.includes(value)
+                                    ? current.filter(
+                                        (filter) => filter !== value,
+                                      )
+                                    : [...current, value],
+                                )
+                              }
+                              height="100%"
+                              title="Transcript"
+                              emptyLabel={timelineEmptyLabel}
+                              viewportProps={timelineViewportProps}
+                            />
+                          </Surface>
+                        </Stack>
+                      ) : (
+                        transcriptUnavailableSection
+                      )
                     }
                   />
                 ) : (

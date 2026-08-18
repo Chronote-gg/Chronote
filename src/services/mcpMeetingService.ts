@@ -36,6 +36,11 @@ import {
   PERSONAL_MEETING_SERVER_NAME,
 } from "../utils/meetingOwnership";
 import { buildPortalMeetingUrl } from "../utils/portalLinks";
+import {
+  resolveMeetingArtifactAccess,
+  resolveServerMeetingArtifactAccess,
+  type MeetingArtifactAccess,
+} from "./meetingArtifactAccessService";
 
 const MIN_TIMESTAMP_ISO = "1970-01-01T00:00:00.000Z";
 const MAX_TIMESTAMP_ISO = "9999-12-31T23:59:59.999Z";
@@ -124,7 +129,12 @@ type ResolvedMyMeetingsFilters = {
 export class McpMeetingAccessError extends Error {
   constructor(
     message: string,
-    readonly code: "forbidden" | "not_found" | "rate_limited" | "bad_request",
+    readonly code:
+      | "forbidden"
+      | "not_found"
+      | "rate_limited"
+      | "bad_request"
+      | "artifact_unavailable",
   ) {
     super(message);
   }
@@ -326,6 +336,7 @@ const resolveChannelMap = async (guildId: string) => {
 const summarizeMeeting = (
   meeting: MeetingHistory,
   channelMap: Map<string, string>,
+  artifactAccess: MeetingArtifactAccess,
   resolveMentions: (text: string) => string = (text) => text,
 ) => {
   const channelId = resolveMeetingChannelId(meeting);
@@ -349,8 +360,11 @@ const summarizeMeeting = (
       : meeting.summarySentence,
     summaryLabel: meeting.summaryLabel,
     notesAvailable: Boolean(meeting.notes),
-    transcriptAvailable: Boolean(meeting.transcriptS3Key),
-    audioAvailable: Boolean(meeting.audioS3Key),
+    transcriptAvailable:
+      artifactAccess.transcriptAccessEnabled &&
+      Boolean(meeting.transcriptS3Key),
+    audioAvailable:
+      artifactAccess.audioAccessEnabled && Boolean(meeting.audioS3Key),
     archivedAt: meeting.archivedAt,
     portalUrl: buildPortalMeetingUrl({
       baseUrl: config.frontend.siteUrl,
@@ -867,11 +881,15 @@ export async function listMcpMeetings(input: ListMcpMeetingsInput) {
   const roleNamesByGuildId = new Map([
     [input.guildId, await resolveGuildRoleNames(input.guildId)],
   ]);
+  const artifactAccess = await resolveServerMeetingArtifactAccess(
+    input.guildId,
+  );
   return {
     meetings: allowedMeetings.map((meeting) =>
       summarizeMeeting(
         meeting,
         channelMap,
+        artifactAccess,
         buildMeetingMentionReplacer(meeting, roleNamesByGuildId).toText,
       ),
     ),
@@ -959,13 +977,16 @@ const summarizeUserMeetings = async (
       guildId,
       channelMap: await resolveChannelMap(guildId),
       roleNames: await resolveGuildRoleNames(guildId),
+      artifactAccess: await resolveServerMeetingArtifactAccess(guildId),
     }),
   );
   const channelMaps = new Map<string, Map<string, string>>();
   const roleNamesByGuildId = new Map<string, Map<string, string>>();
+  const artifactAccessByGuildId = new Map<string, MeetingArtifactAccess>();
   guildEntries.forEach((entry) => {
     channelMaps.set(entry.guildId, entry.channelMap);
     roleNamesByGuildId.set(entry.guildId, entry.roleNames);
+    artifactAccessByGuildId.set(entry.guildId, entry.artifactAccess);
   });
 
   return meetings.map((meeting) => {
@@ -974,6 +995,12 @@ const summarizeUserMeetings = async (
       ...summarizeMeeting(
         meeting,
         channelMaps.get(meeting.guildId) ?? new Map<string, string>(),
+        isPersonalMeeting(meeting)
+          ? { transcriptAccessEnabled: true, audioAccessEnabled: true }
+          : (artifactAccessByGuildId.get(meeting.guildId) ?? {
+              transcriptAccessEnabled: false,
+              audioAccessEnabled: false,
+            }),
         buildMeetingMentionReplacer(meeting, roleNamesByGuildId).toText,
       ),
       serverId: meeting.guildId,
@@ -1097,9 +1124,15 @@ export async function getMcpMeetingSummary(input: {
     ? new Map<string, string>()
     : await resolveChannelMap(input.guildId);
   const resolveMentions = await createMeetingMentionReplacer(meeting);
+  const artifactAccess = await resolveMeetingArtifactAccess(meeting);
   return {
     meeting: {
-      ...summarizeMeeting(meeting, channelMap, resolveMentions.toText),
+      ...summarizeMeeting(
+        meeting,
+        channelMap,
+        artifactAccess,
+        resolveMentions.toText,
+      ),
       notes: resolveMentions.toText(meeting.notes ?? ""),
       notesVersion: meeting.notesVersion ?? 1,
       attendees: resolveMeetingAttendees(meeting),
@@ -1185,6 +1218,13 @@ export async function getMcpMeetingTranscript(input: {
     userId: input.userId,
     restricted: Boolean(input.restriction),
   });
+  const artifactAccess = await resolveMeetingArtifactAccess(meeting);
+  if (!artifactAccess.transcriptAccessEnabled) {
+    throw new McpMeetingAccessError(
+      "Transcript access is disabled for this server.",
+      "artifact_unavailable",
+    );
+  }
   const transcriptPayload = meeting.transcriptS3Key
     ? await fetchJsonFromS3<TranscriptPayload>(meeting.transcriptS3Key)
     : undefined;

@@ -55,6 +55,9 @@ const resolveLiveStreamEnabled = (
   if (!meeting || selectedGuildId == null) {
     return false;
   }
+  if (!meeting.transcriptAccessEnabled) {
+    return false;
+  }
   if (meeting.status === MEETING_STATUS.IN_PROGRESS) {
     return true;
   }

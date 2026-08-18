@@ -21,6 +21,7 @@ export type SharedMeeting = {
   tags: string[];
   notes: string;
   transcript: string;
+  transcriptAccessEnabled?: boolean;
   archivedAt?: string;
   attendees: string[];
   events: MeetingEvent[];

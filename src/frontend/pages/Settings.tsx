@@ -663,6 +663,11 @@ export default function Settings() {
                 trpcUtils.channelContexts.list.invalidate({
                   serverId: selectedGuildId,
                 }),
+                trpcUtils.meetings.list.invalidate({
+                  serverId: selectedGuildId,
+                }),
+                trpcUtils.meetings.myList.invalidate(),
+                trpcUtils.meetings.detail.invalidate(),
               ])
             : Promise.resolve()
         }

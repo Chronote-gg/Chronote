@@ -3,7 +3,10 @@ import type {
   MeetingDetailInput,
   MeetingDetails,
 } from "../../src/frontend/utils/meetingLibrary";
-import { downloadMeetingExport } from "../../src/frontend/pages/library/components/meetingExport";
+import {
+  buildMeetingExport,
+  downloadMeetingExport,
+} from "../../src/frontend/pages/library/components/meetingExport";
 
 const baseDetail: MeetingDetailInput = {
   id: "detail-1",
@@ -29,6 +32,8 @@ const baseMeeting: MeetingDetails = {
   tags: ["planning"],
   channel: "#general",
   audioUrl: null,
+  audioAccessEnabled: true,
+  transcriptAccessEnabled: true,
   archivedAt: null,
   attendees: ["Participant A"],
   decisions: [],
@@ -38,6 +43,31 @@ const baseMeeting: MeetingDetails = {
 };
 
 describe("downloadMeetingExport", () => {
+  it("omits disabled artifacts from exported meeting data", () => {
+    const payload = buildMeetingExport(
+      {
+        ...baseDetail,
+        transcriptAccessEnabled: false,
+        audioAccessEnabled: false,
+        audioUrl: "https://example.com/recording.mp3",
+        events: [
+          {
+            id: "voice-1",
+            type: "voice",
+            time: "0:01",
+            text: "Transcript-derived event",
+          },
+        ],
+      },
+      baseMeeting,
+    );
+
+    expect(payload.meeting).not.toHaveProperty("transcript");
+    expect(payload.meeting).not.toHaveProperty("audioUrl");
+    expect(payload.meeting.events).toEqual([]);
+    expect(payload.meeting.notes).toBe("Summary notes.");
+  });
+
   it("creates a downloadable JSON file with a safe filename", () => {
     const originalCreateObjectURL = URL.createObjectURL;
     const originalRevokeObjectURL = URL.revokeObjectURL;

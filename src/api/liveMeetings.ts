@@ -31,6 +31,7 @@ import {
   MEETING_STATUS,
   resolveMeetingStatus,
 } from "../types/meetingLifecycle";
+import { resolveServerMeetingArtifactAccess } from "../services/meetingArtifactAccessService";
 
 type SessionGuildCache = {
   guildIds?: string[];
@@ -248,6 +249,14 @@ export function registerLiveMeetingRoutes(app: express.Express) {
       }
       if (!canConnect) {
         res.status(403).json({ error: "Channel access required" });
+        return;
+      }
+      const artifactAccess = await resolveServerMeetingArtifactAccess(guildId);
+      if (!artifactAccess.transcriptAccessEnabled) {
+        res.status(403).json({
+          error: "Transcript access is disabled for this server.",
+          code: "transcript_access_disabled",
+        });
         return;
       }
 
