@@ -1,0 +1,22 @@
+name: Claude Review Control
+
+on:
+  pull_request:
+    types: [labeled]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.event.label.name == 'skip-claude-review' && format('claude-review-{0}', github.event.pull_request.number) || format('claude-review-control-noop-{0}', github.run_id) }}
+  cancel-in-progress: ${{ github.event.label.name == 'skip-claude-review' }}
+
+jobs:
+  cancel-on-skip-label:
+    name: Cancel Claude review on skip label
+    if: github.event.label.name == 'skip-claude-review'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Record skip label cancellation
+        run: |
+          echo "skip-claude-review was added; this control run cancels queued or in-flight Claude review work for PR #${{ github.event.pull_request.number }}."
