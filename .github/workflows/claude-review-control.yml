@@ -14,9 +14,53 @@ concurrency:
 jobs:
   cancel-on-skip-label:
     name: Cancel Claude review on skip label
-    if: github.event.label.name == 'skip-claude-review'
+    if: >-
+      github.event.label.name == 'skip-claude-review' &&
+      !github.event.pull_request.head.repo.fork &&
+      github.event.pull_request.head.repo.full_name == github.event.pull_request.base.repo.full_name
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: write
     steps:
-      - name: Record skip label cancellation
+      - name: Mark Claude review skipped
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          STICKY_MARKER: "<!-- claude-pr-review -->"
+        shell: bash
         run: |
-          echo "skip-claude-review was added; this control run cancels queued or in-flight Claude review work for PR #${{ github.event.pull_request.number }}."
+          set -euo pipefail
+
+          body_file="${RUNNER_TEMP}/claude-review-comment.md"
+          json_file="${RUNNER_TEMP}/claude-review-comment.json"
+
+          cat > "$body_file" <<EOF
+          ${STICKY_MARKER}
+          [AGENT]
+
+          ## Claude Review
+
+          Claude review was skipped for commit \`${PR_HEAD_SHA}\` because the \`skip-claude-review\` label is applied.
+          EOF
+
+          jq -n --rawfile body "$body_file" '{body: $body}' > "$json_file"
+
+          comment_id="$(
+            gh api --paginate \
+              "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" \
+              --jq '.[] | select(.user.login == "github-actions[bot]" and (.body | contains("<!-- claude-pr-review -->"))) | .id' |
+              tail -n 1
+          )"
+
+          if [ -n "$comment_id" ]; then
+            gh api --method PATCH \
+              "repos/${GITHUB_REPOSITORY}/issues/comments/${comment_id}" \
+              --input "$json_file" > /dev/null
+          else
+            gh api --method POST \
+              "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" \
+              --input "$json_file" > /dev/null
+          fi

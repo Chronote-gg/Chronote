@@ -69,6 +69,13 @@ jobs:
 
           if [ -n "$comment_id" ]; then
             echo "Reusing Claude review sticky comment ${comment_id}."
+            if ! gh api --method PATCH \
+              "repos/${GITHUB_REPOSITORY}/issues/comments/${comment_id}" \
+              --input "$json_file" > /dev/null; then
+              echo "::notice::Skipping Claude review because the workflow token cannot reset the sticky review comment for the current head."
+              echo "comment_id=" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
           else
             response_file="${RUNNER_TEMP}/claude-review-comment-response.json"
             if ! gh api --method POST \
@@ -271,15 +278,9 @@ jobs:
           const messages = JSON.parse(fs.readFileSync(executionFile, "utf8"));
           const result = messages.findLast((message) => message.type === "result");
 
-          // The action prints its own result summary with the SDK's `result` string
-          // stripped ("full output hidden for security"), so a failure here used to say
-          // only that it failed. Repeat the structured fields next to the error and add
-          // the two the action never prints, `stop_reason` and `api_error_status`, plus a
-          // bounded prefix of the result text: for a usage-limit or auth rejection that
-          // text is the whole diagnosis. The text is model free-form, so it is truncated
-          // and JSON-encoded to a single line, which also means no PR-controlled string
-          // can start a line with "::" and forge a workflow command.
-          const RESULT_TEXT_LIMIT = 500;
+          // Repeat structured failure fields that the action omits, but never print the
+          // model's free-form result. It may contain repository content or secrets, and
+          // Actions logs can remain public after the source commit is removed.
 
           const fail = (reason) => {
             if (!result) {
@@ -296,7 +297,6 @@ jobs:
               `stop_reason=${result.stop_reason}`,
               `api_error_status=${result.api_error_status ?? "none"}`,
               `result_len=${text.length}`,
-              `result=${JSON.stringify(text.slice(0, RESULT_TEXT_LIMIT))}`,
             ].join(" ");
             console.log(`::error::${reason} ${fields}`);
             process.exit(1);
