@@ -65,6 +65,19 @@ Or enable it for every voice channel:
 
 Auto-record starts when any user joins a configured voice channel. It ends when the channel empties. If the recording produces too little content, it is cancelled automatically instead of generating empty notes.
 
+### 5. Choose which meeting artifacts viewers can access
+
+In **Server Settings** -> **Meetings**, server admins (members with **Manage Server**) can control two independent settings:
+
+- **Transcript access** controls completed transcripts, transcript timelines, shared meeting transcripts, live transcript links, and transcript retrieval through Remote MCP.
+- **Audio recording access** controls the current viewer-facing audio delivery surfaces: recording playback and audio URLs in portal exports.
+
+Both settings apply server-wide to past and future server meetings. Turning one off blocks future retrieval of that artifact, but leaves the meeting summary and notes available. It cannot recall downloaded copies, an audio URL remains usable for up to 15 minutes after it was issued, and an already-open live transcript stream stays connected until the meeting ends or the viewer disconnects. The settings do not stop recording, transcription, summary generation, or storage, and a server admin can turn access back on later.
+
+Chronote's automated notes generation and correction workflows can still use the stored transcript. The correction workflow does not return the transcript as an artifact, but its proposed notes change and diff can include details or wording from the transcript.
+
+These controls do not apply to personal meetings and uploads, which remain controlled by the account owner. To request removal of stored audio or transcript data instead of limiting access, follow the meeting deletion process in the [privacy policy](/legal/privacy#how-long-we-keep-things).
+
 ## Permissions model
 
 ### Bot permissions
@@ -102,6 +115,8 @@ Chronote needs these Discord permissions:
 ### Web portal access
 
 The web portal uses Discord OAuth. Users land on **My Meetings** first, then can open direct meeting links or use **View servers** to browse Server Library for one server at a time. Users see meetings from channels they have access to in Discord. Attendees of a meeting can always view it regardless of current channel permissions.
+
+Server artifact settings are checked after meeting access. A user may be allowed to open a meeting while its transcript, audio recording, or both are unavailable.
 
 ## Operational recommendations
 

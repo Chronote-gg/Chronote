@@ -4,10 +4,23 @@ import {
   sanitizeMeetingEventsForShare,
 } from "../../src/services/meetingSharePayloadService";
 import { getMockStore, resetMockStore } from "../../src/repositories/mockStore";
+import { resolveMeetingArtifactAccess } from "../../src/services/meetingArtifactAccessService";
+
+jest.mock("../../src/services/meetingArtifactAccessService", () => ({
+  resolveMeetingArtifactAccess: jest.fn(),
+}));
+
+const mockedResolveMeetingArtifactAccess = jest.mocked(
+  resolveMeetingArtifactAccess,
+);
 
 describe("meetingSharePayloadService", () => {
   beforeEach(() => {
     resetMockStore();
+    mockedResolveMeetingArtifactAccess.mockResolvedValue({
+      transcriptAccessEnabled: true,
+      audioAccessEnabled: true,
+    });
   });
 
   it("resolves a title from meetingName/summaryLabel/summarySentence", () => {
@@ -77,5 +90,24 @@ describe("meetingSharePayloadService", () => {
     expect(
       payload.meeting.events.every((event) => event.id.startsWith("evt:")),
     ).toBe(true);
+  });
+
+  it("withholds transcript surfaces while leaving shared notes available", async () => {
+    const store = getMockStore();
+    const guildId = store.userGuilds[0].id;
+    const history = store.meetingHistoryByGuild.get(guildId)?.[0];
+    expect(history).toBeDefined();
+    if (!history) return;
+    mockedResolveMeetingArtifactAccess.mockResolvedValue({
+      transcriptAccessEnabled: false,
+      audioAccessEnabled: true,
+    });
+
+    const payload = await buildSharedMeetingPayloadService(history);
+
+    expect(payload.meeting.notes).toBeTruthy();
+    expect(payload.meeting.transcript).toBe("");
+    expect(payload.meeting.events).toEqual([]);
+    expect(payload.meeting.transcriptAccessEnabled).toBe(false);
   });
 });

@@ -45,6 +45,7 @@ type PublicMeeting = {
   tags: string[];
   notes: string;
   transcript: string;
+  transcriptAccessEnabled?: boolean;
   archivedAt?: string;
   attendees: string[];
   events: MeetingEvent[];
@@ -109,50 +110,55 @@ const formatDuration = (seconds: number) => {
   return `${minutes}m`;
 };
 
-export function PublicMeetingView({
+const toggleMeetingEventFilter = (
+  current: MeetingEventType[],
+  value: MeetingEventType,
+) =>
+  current.includes(value)
+    ? current.filter((filter) => filter !== value)
+    : [...current, value];
+
+function PublicMeetingBody({
   meeting,
   share,
   isLoading,
   hasError,
   needsAuthHint,
 }: PublicMeetingViewProps) {
-  const theme = useMantineTheme();
-  const colorScheme = useComputedColorScheme("dark");
-  const isDark = colorScheme === "dark";
-  const visualMode = useVisualMode();
-
-  useSharePageMeta();
-
   const [activeFilters, setActiveFilters] = useState<MeetingEventType[]>(
     MEETING_TIMELINE_FILTERS.map((filter) => filter.value),
   );
-
-  const headerStyles = buildHeaderStyles(theme, isDark, visualMode);
-  const mainStyles = buildMainStyles(theme, isDark, visualMode);
-  const pageTitle = meeting?.title ?? "Shared meeting";
 
   useEffect(() => {
     // Always show all filters on load.
     setActiveFilters(MEETING_TIMELINE_FILTERS.map((filter) => filter.value));
   }, [meeting?.title]);
 
-  const body = isLoading ? (
-    <Text size="sm" c="dimmed">
-      Loading shared meeting...
-    </Text>
-  ) : hasError || !meeting ? (
-    <Stack gap="sm">
+  if (isLoading) {
+    return (
       <Text size="sm" c="dimmed">
-        This shared meeting is unavailable.
+        Loading shared meeting...
       </Text>
-      {needsAuthHint ? (
-        <AuthBanner message="Connect Discord to view this meeting if it is shared server-only." />
-      ) : null}
-    </Stack>
-  ) : (
+    );
+  }
+
+  if (hasError || !meeting) {
+    return (
+      <Stack gap="sm">
+        <Text size="sm" c="dimmed">
+          This shared meeting is unavailable.
+        </Text>
+        {needsAuthHint ? (
+          <AuthBanner message="Connect Discord to view this meeting if it is shared server-only." />
+        ) : null}
+      </Stack>
+    );
+  }
+
+  return (
     <Stack gap="lg">
       <PageHeader
-        title={pageTitle}
+        title={meeting.title}
         description={`${new Date(meeting.timestamp).toLocaleString()} | ${formatDuration(
           meeting.duration,
         )}`}
@@ -172,27 +178,25 @@ export function PublicMeetingView({
         </Stack>
       </Surface>
 
-      <Surface p="lg">
-        <Stack gap="xs">
-          <Text fw={600}>Transcript</Text>
-          <MeetingTimeline
-            events={meeting.events}
-            activeFilters={activeFilters}
-            onToggleFilter={(value) =>
-              setActiveFilters((current: MeetingEventType[]) =>
-                current.includes(value)
-                  ? current.filter(
-                      (filter: MeetingEventType) => filter !== value,
-                    )
-                  : [...current, value],
-              )
-            }
-            height={520}
-            title="Timeline"
-            emptyLabel="Transcript is empty."
-          />
-        </Stack>
-      </Surface>
+      {meeting.transcriptAccessEnabled !== false ? (
+        <Surface p="lg">
+          <Stack gap="xs">
+            <Text fw={600}>Transcript</Text>
+            <MeetingTimeline
+              events={meeting.events}
+              activeFilters={activeFilters}
+              onToggleFilter={(value) =>
+                setActiveFilters((current) =>
+                  toggleMeetingEventFilter(current, value),
+                )
+              }
+              height={520}
+              title="Timeline"
+              emptyLabel="Transcript is empty."
+            />
+          </Stack>
+        </Surface>
+      ) : null}
 
       <Surface p="lg">
         <Stack gap="xs">
@@ -204,6 +208,24 @@ export function PublicMeetingView({
       </Surface>
     </Stack>
   );
+}
+
+export function PublicMeetingView({
+  meeting,
+  share,
+  isLoading,
+  hasError,
+  needsAuthHint,
+}: PublicMeetingViewProps) {
+  const theme = useMantineTheme();
+  const colorScheme = useComputedColorScheme("dark");
+  const isDark = colorScheme === "dark";
+  const visualMode = useVisualMode();
+
+  useSharePageMeta();
+
+  const headerStyles = buildHeaderStyles(theme, isDark, visualMode);
+  const mainStyles = buildMainStyles(theme, isDark, visualMode);
 
   return (
     <AppShell
@@ -242,7 +264,13 @@ export function PublicMeetingView({
                 overlayProps={uiOverlays.loading}
                 loaderProps={{ size: "md" }}
               />
-              {body}
+              <PublicMeetingBody
+                meeting={meeting}
+                share={share}
+                isLoading={isLoading}
+                hasError={hasError}
+                needsAuthHint={needsAuthHint}
+              />
             </Surface>
           </Container>
           <SiteFooter />

@@ -11,6 +11,7 @@ import {
   resolveMentionsInTimelineEvents,
 } from "./meetingMentionService";
 import { buildMeetingTimelineEventsFromHistory } from "./meetingTimelineService";
+import { resolveMeetingArtifactAccess } from "./meetingArtifactAccessService";
 
 export type SharedMeetingPayload = {
   meeting: {
@@ -23,6 +24,7 @@ export type SharedMeetingPayload = {
     tags: string[];
     notes: string;
     transcript: string;
+    transcriptAccessEnabled: boolean;
     archivedAt?: string;
     attendees: string[];
     events: MeetingEvent[];
@@ -79,12 +81,15 @@ export const resolveSharedMeetingTitle = (history: {
 export async function buildSharedMeetingPayloadService(
   history: MeetingHistory,
 ): Promise<SharedMeetingPayload> {
-  const transcriptPayload = history.transcriptS3Key
-    ? await fetchJsonFromS3<TranscriptPayload>(history.transcriptS3Key)
-    : undefined;
-  const chatEntries = history.chatS3Key
-    ? await fetchJsonFromS3<ChatEntry[]>(history.chatS3Key)
-    : undefined;
+  const artifactAccess = await resolveMeetingArtifactAccess(history);
+  const transcriptPayload =
+    artifactAccess.transcriptAccessEnabled && history.transcriptS3Key
+      ? await fetchJsonFromS3<TranscriptPayload>(history.transcriptS3Key)
+      : undefined;
+  const chatEntries =
+    artifactAccess.transcriptAccessEnabled && history.chatS3Key
+      ? await fetchJsonFromS3<ChatEntry[]>(history.chatS3Key)
+      : undefined;
   const resolveMentions = await createMeetingMentionReplacer(history);
   const transcript = resolveMentions.toText(transcriptPayload?.text ?? "");
   const notes = resolveMentions.toMarkdown(history.notes ?? "");
@@ -94,14 +99,16 @@ export async function buildSharedMeetingPayloadService(
   // Titles can fall back to the summary sentence, so resolve mentions before
   // deriving one or a raw id leaks into the shared page title.
   const title = resolveSharedMeetingTitle({ ...history, summarySentence });
-  const events = resolveMentionsInTimelineEvents(
-    buildMeetingTimelineEventsFromHistory({
-      history,
-      transcriptPayload,
-      chatEntries,
-    }),
-    resolveMentions.toText,
-  );
+  const events = artifactAccess.transcriptAccessEnabled
+    ? resolveMentionsInTimelineEvents(
+        buildMeetingTimelineEventsFromHistory({
+          history,
+          transcriptPayload,
+          chatEntries,
+        }),
+        resolveMentions.toText,
+      )
+    : [];
 
   return {
     meeting: {
@@ -114,6 +121,7 @@ export async function buildSharedMeetingPayloadService(
       tags: history.tags ?? [],
       notes,
       transcript,
+      transcriptAccessEnabled: artifactAccess.transcriptAccessEnabled,
       archivedAt: history.archivedAt,
       attendees: resolveMeetingAttendees(history),
       events: sanitizeMeetingEventsForShare(events),

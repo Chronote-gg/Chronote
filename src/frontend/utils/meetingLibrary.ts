@@ -26,6 +26,8 @@ export type MeetingDetails = {
   tags: string[];
   channel: string;
   audioUrl?: string | null;
+  audioAccessEnabled: boolean;
+  transcriptAccessEnabled: boolean;
   archivedAt?: string | null;
   attendees: string[];
   decisions: string[];
@@ -48,6 +50,7 @@ export type MeetingDetailInput = {
   notesChannelId?: string | null;
   notesMessageId?: string | null;
   transcript?: string | null;
+  transcriptAccessEnabled?: boolean;
   ownershipScope?: "guild" | "personal";
   ownerUserId?: string | null;
   personalShareManageable?: boolean;
@@ -56,6 +59,7 @@ export type MeetingDetailInput = {
   summaryLabel?: string | null;
   summaryFeedback?: "up" | "down" | null;
   audioUrl?: string | null;
+  audioAccessEnabled?: boolean;
   archivedAt?: string | null;
   attendees?: string[];
   events?: MeetingEvent[];
@@ -288,6 +292,8 @@ export const buildMeetingDetails = (
     tags: resolveTags(detail.tags),
     channel: channelLabel,
     audioUrl: detail.audioUrl ?? null,
+    audioAccessEnabled: detail.audioAccessEnabled !== false,
+    transcriptAccessEnabled: detail.transcriptAccessEnabled !== false,
     archivedAt: detail.archivedAt ?? null,
     attendees: resolveAttendees(detail.attendees),
     decisions: [],

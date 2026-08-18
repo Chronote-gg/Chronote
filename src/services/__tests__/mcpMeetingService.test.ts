@@ -19,7 +19,10 @@ import {
   listMcpMyMeetings,
   listMcpServersForUser,
 } from "../mcpMeetingService";
-import { resolveConfigSnapshot } from "../unifiedConfigService";
+import {
+  getSnapshotBoolean,
+  resolveConfigSnapshot,
+} from "../unifiedConfigService";
 import { fetchJsonFromS3 } from "../storageService";
 import type { MeetingHistory } from "../../types/db";
 import { MEETING_STATUS } from "../../types/meetingLifecycle";
@@ -79,6 +82,7 @@ const createMeeting = (
 describe("mcpMeetingService", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    jest.mocked(getSnapshotBoolean).mockReturnValue(true);
     jest.mocked(getGuildMemberCached).mockResolvedValue({ roles: [] });
     jest.mocked(listBotGuildsCached).mockResolvedValue([]);
     jest
@@ -199,7 +203,9 @@ describe("mcpMeetingService", () => {
     });
 
     expect(getGuildMemberCached).toHaveBeenCalledTimes(1);
-    expect(resolveConfigSnapshot).toHaveBeenCalledTimes(1);
+    // One guild-scoped read resolves attendee access, and one resolves the two
+    // artifact controls. Neither scales with the number of meeting rows.
+    expect(resolveConfigSnapshot).toHaveBeenCalledTimes(2);
     expect(checkUserMeetingAccess).toHaveBeenCalledTimes(2);
   });
 
@@ -1061,6 +1067,7 @@ describe("mcpMeetingService service account channel allowlist", () => {
 describe("mcpMeetingService transcripts", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    jest.mocked(getSnapshotBoolean).mockReturnValue(true);
     jest.mocked(getGuildMemberCached).mockResolvedValue({ roles: [] });
     jest.mocked(listBotGuildsCached).mockResolvedValue([]);
     jest
@@ -1099,6 +1106,32 @@ describe("mcpMeetingService transcripts", () => {
       truncated: false,
       offset: 0,
     });
+  });
+
+  it("rejects transcript retrieval when server transcript access is disabled", async () => {
+    const meeting = createMeeting("meeting-1", {
+      guildId: "guild-1",
+      channelId_timestamp: "channel-1#2026-01-02T00:00:00.000Z",
+      transcriptS3Key: "transcripts/meeting-1.json",
+    });
+    jest.mocked(getMeetingHistoryService).mockResolvedValue(meeting);
+    jest.mocked(checkUserMeetingAccess).mockResolvedValue({
+      allowed: true,
+      via: "attendee",
+    });
+    jest.mocked(getSnapshotBoolean).mockReturnValue(false);
+
+    await expect(
+      getMcpMeetingTranscript({
+        userId: "user-1",
+        guildId: "guild-1",
+        id: meeting.channelId_timestamp,
+      }),
+    ).rejects.toMatchObject({
+      code: "artifact_unavailable",
+      message: "Transcript access is disabled for this server.",
+    });
+    expect(fetchJsonFromS3).not.toHaveBeenCalled();
   });
 
   it("returns a paged transcript slice when maxChars is provided", async () => {

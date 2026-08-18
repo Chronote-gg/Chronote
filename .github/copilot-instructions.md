@@ -108,6 +108,7 @@ This file provides Copilot review context. AGENTS.md remains the source of truth
 - Diff output is intentionally minimal (line diff, capped length); LLM output is stripped of code fences to avoid code-block embeds.
 - Meeting duration capped at 2h (`MAXIMUM_MEETING_DURATION`).
 - Auto-record will end meeting if channel empties.
+- Server meeting transcript and audio access controls are enforced at read-time delivery boundaries. They apply retroactively to guild meetings, do not alter storage or internal notes processing, and do not apply to personal meetings.
 - Prompt fragments live in `prompts/_fragments` and are composed via `extends` in front matter. `prompts:pull` skips prompts that use `extends` unless `--force` is passed.
 - Transcription guardrails include a loudness gate (noise gate metrics, hard silence threshold, syllable rate, and logprobs), a prompt echo gate using similarity checks, and a low-confidence prompt/no-prompt vote fallback on slow snippets.
 - **Current outbound network rules (ECS service SG)**: temporarily allowing all egress (UDP/TCP any port) for Discord voice debugging. Previously it was limited to TCP 443 and DNS (53) only. Remember to tighten this once voice is stable and update this note.

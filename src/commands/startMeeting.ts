@@ -57,6 +57,7 @@ import {
 } from "../services/activeMeetingLeaseService";
 import { fetchGuildMember } from "../utils/guildMembers";
 import type { ChatTtsSpeakerPrefixMode } from "../utils/ttsText";
+import { resolveServerMeetingArtifactAccess } from "../services/meetingArtifactAccessService";
 
 type GuildLimits = Awaited<ReturnType<typeof getGuildLimits>>["limits"];
 
@@ -438,11 +439,14 @@ export async function startManualMeetingFromChannels({
   }
   startMeetingLeaseHeartbeat(meeting);
   void saveMeetingStartToDatabase(meeting);
+  const artifactAccess = await resolveServerMeetingArtifactAccess(guildId);
 
   return {
     ok: true,
     meeting,
-    liveMeetingUrl: buildLiveMeetingUrl(meeting.guildId, meeting.meetingId),
+    liveMeetingUrl: artifactAccess.transcriptAccessEnabled
+      ? buildLiveMeetingUrl(meeting.guildId, meeting.meetingId)
+      : null,
   };
 }
 
@@ -754,10 +758,10 @@ export async function handleAutoStartMeeting(
     .setLabel("Edit Tags")
     .setStyle(ButtonStyle.Secondary);
 
-  const liveMeetingUrl = buildLiveMeetingUrl(
-    meeting.guildId,
-    meeting.meetingId,
-  );
+  const artifactAccess = await resolveServerMeetingArtifactAccess(guildId);
+  const liveMeetingUrl = artifactAccess.transcriptAccessEnabled
+    ? buildLiveMeetingUrl(meeting.guildId, meeting.meetingId)
+    : null;
   const liveMeetingButton = liveMeetingUrl
     ? new ButtonBuilder()
         .setLabel("Live transcript")

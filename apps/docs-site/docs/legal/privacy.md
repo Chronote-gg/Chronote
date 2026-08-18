@@ -74,6 +74,8 @@ We keep meetings until you ask us to remove them. Plan limits control how far ba
 
 Archiving a meeting hides it from your library views. It does not erase the recording, transcript, or notes from storage. If you want a meeting removed entirely, email us and we will remove it, including the audio and transcript, within 30 days. Self-service deletion is not available yet.
 
+Server admins (members with the Discord **Manage Server** permission) can also turn off viewer access to transcripts or audio recordings. That is an access setting, not deletion: Chronote continues to store and process those artifacts, and access can be restored later. Chronote's automated notes generation and correction workflows can still use the stored transcript. The correction workflow does not return the transcript as an artifact, but its proposed notes change and diff can include details or wording from the transcript.
+
 Server and application logs held in Amazon CloudWatch expire after 365 days. Access records stored in our database do not expire on their own and are kept until we remove them.
 
 ## Analytics
@@ -98,17 +100,19 @@ To opt out of both, email us and we will exclude your account. We do not yet hav
 
 ## Who can see a meeting
 
-- **Server meetings** are visible to members of that Discord server through the web portal, subject to the server's access rules.
+- **Server meetings** are visible through the web portal only after Chronote checks the viewer's current Discord access to the meeting's voice and notes channels, or an attendee exception enabled by the server. Server membership alone does not grant access to every meeting.
+- **Transcript and audio access** can be disabled independently by a server admin for all past and future server meetings. A meeting's summary and notes can remain visible while one or both source artifacts are unavailable.
 - **Personal meetings**, including uploads, are visible only to the account that owns them, plus anyone that account grants access to.
-- **Shared links** are visible to whoever you give them to. A link set to "server" requires the viewer to sign in and belong to that server. A link set to "public" can be opened by anyone who has the URL, so treat it as published. You can turn sharing off again at any time.
+- **Shared links** can be forwarded by anyone who receives them. A link set to "server" requires the viewer to sign in, belong to that server, and have access to the meeting's voice channel. A link set to "public" can be opened by anyone who has the URL, so treat it as published. Turning sharing off blocks future access through the link, but cannot recall content someone already copied or downloaded.
 
 ## Your choices
 
 - **See your data.** Sign in to the web portal to read any meeting you have access to.
-- **Take it with you.** Export audio, transcripts, and notes from the portal.
+- **Take it with you.** Export the meeting data available to you from the portal. A server admin may make audio recordings or transcripts unavailable for server meetings.
 - **Archive it.** Archive any meeting you own so it drops out of your library views, and unarchive it later if you change your mind.
 - **Have it removed.** Email us to have a meeting and its recording removed from storage entirely.
 - **Turn recording off.** Server admins can disable auto-record per channel or entirely, and can remove Chronote from the server at any time, which stops all recording.
+- **Limit artifact access.** Server admins with **Manage Server** can block future retrieval of transcripts, audio recordings, or both while leaving summaries and notes available. This does not delete the artifacts, recall existing copies, or stop the automated notes workflows described above. An issued audio URL remains usable for up to 15 minutes, and an already-open live transcript stream stays connected until the meeting ends or the viewer disconnects.
 - **Correct the record.** Notes can be corrected through the correction and approval flow, so the stored record reflects what actually happened.
 - **Opt out of analytics.** Turn on Do Not Track in your browser and the website and portal will not send analytics events. Do Not Track cannot cover what you do in Discord, because the bot never sees your browser, so email us to opt out of that as well.
 - **Ask us.** Email [basic@basicbit.net](mailto:basic@basicbit.net) with a data access or deletion request. We respond within 30 days.

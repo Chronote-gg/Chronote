@@ -37,6 +37,7 @@ import {
 } from "../../src/services/discordPermissionsService";
 import { ensureUserCanAccessMeeting } from "../../src/services/meetingAccessService";
 import { checkUserMeetingAccess } from "../../src/services/meetingAccessService";
+import { resolveMeetingArtifactAccess } from "../../src/services/meetingArtifactAccessService";
 import {
   listBotGuildsCached,
   listGuildChannelsCached,
@@ -109,6 +110,11 @@ jest.mock("../../src/services/meetingAccessService", () => ({
   resolvePersonalMeetingSharedGuildIds: jest.fn(async () => undefined),
 }));
 
+jest.mock("../../src/services/meetingArtifactAccessService", () => ({
+  resolveMeetingArtifactAccess: jest.fn(),
+  resolveServerMeetingArtifactAccess: jest.fn(),
+}));
+
 jest.mock("../../src/services/discordCacheService", () => ({
   listBotGuildsCached: jest.fn(),
   listGuildChannelsCached: jest.fn(),
@@ -134,6 +140,9 @@ describe("meetings router detail", () => {
   const mockedEnsureMeetingAccess = jest.mocked(ensureUserCanAccessMeeting);
   const mockedCheckMeetingAccess = jest.mocked(checkUserMeetingAccess);
   const mockedListGuildChannels = jest.mocked(listGuildChannelsCached);
+  const mockedResolveMeetingArtifactAccess = jest.mocked(
+    resolveMeetingArtifactAccess,
+  );
 
   beforeEach(() => {
     jest.resetAllMocks();
@@ -150,6 +159,10 @@ describe("meetings router detail", () => {
     mockedListGuildChannels.mockResolvedValue([
       { id: "channel-1", name: "voice", type: 2 },
     ]);
+    mockedResolveMeetingArtifactAccess.mockResolvedValue({
+      transcriptAccessEnabled: true,
+      audioAccessEnabled: true,
+    });
   });
 
   test("returns transcript, audio url, and summary feedback", async () => {
@@ -212,6 +225,45 @@ describe("meetings router detail", () => {
       channelIdTimestamp: meetingId,
       userId: getMockUser().id,
     });
+  });
+
+  test("withholds transcript and audio when server artifact access is disabled", async () => {
+    const meetingId = "channel-1#2025-01-01T00:00:00.000Z";
+    mockedGetMeetingHistory.mockResolvedValue({
+      guildId: "guild-1",
+      channelId_timestamp: meetingId,
+      meetingId: "meeting-1",
+      channelId: "channel-1",
+      timestamp: "2025-01-01T00:00:00.000Z",
+      participants: [],
+      duration: 1800,
+      transcribeMeeting: true,
+      generateNotes: true,
+      notes: "Summary remains available",
+      transcriptS3Key: "transcripts/meeting-1.json",
+      audioS3Key: "audio/meeting-1.mp3",
+    });
+    mockedResolveMeetingArtifactAccess.mockResolvedValue({
+      transcriptAccessEnabled: false,
+      audioAccessEnabled: false,
+    });
+
+    const result = await buildCaller().meetings.detail({
+      serverId: "guild-1",
+      meetingId,
+    });
+
+    expect(result.meeting).toMatchObject({
+      notes: "Summary remains available",
+      transcript: "",
+      transcriptAccessEnabled: false,
+      audioUrl: undefined,
+      audioAccessEnabled: false,
+      events: [],
+    });
+    expect(mockedFetchJsonFromS3).not.toHaveBeenCalled();
+    expect(mockedGetSignedObjectUrl).not.toHaveBeenCalled();
+    expect(mockedBuildTimeline).not.toHaveBeenCalled();
   });
 
   test("throws NOT_FOUND when meeting history is missing", async () => {

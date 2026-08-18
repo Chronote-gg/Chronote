@@ -1,4 +1,4 @@
-import { afterEach, expect, jest, test } from "@jest/globals";
+import { afterEach, beforeEach, expect, jest, test } from "@jest/globals";
 import express from "express";
 import http from "node:http";
 import type { AddressInfo } from "node:net";
@@ -14,6 +14,7 @@ import {
   resolveLiveMeetingAttendees,
 } from "../../src/services/liveMeetingService";
 import { buildLiveMeetingTimelineEvents } from "../../src/services/meetingTimelineService";
+import { resolveServerMeetingArtifactAccess } from "../../src/services/meetingArtifactAccessService";
 import type { LiveMeetingMeta } from "../../src/types/liveMeeting";
 import type { MeetingEvent } from "../../src/types/meetingTimeline";
 import type { MeetingData } from "../../src/types/meeting-data";
@@ -50,6 +51,9 @@ jest.mock("../../src/services/activeMeetingLeaseService", () => ({
   isLeaseActive: jest.fn(),
   requestMeetingEndViaLease: jest.fn(),
 }));
+jest.mock("../../src/services/meetingArtifactAccessService", () => ({
+  resolveServerMeetingArtifactAccess: jest.fn(),
+}));
 
 const mockedGetMeeting = getMeeting as jest.MockedFunction<typeof getMeeting>;
 const mockedEnsureUserInGuild = ensureUserInGuild as jest.MockedFunction<
@@ -84,6 +88,10 @@ const mockedIsLeaseActive = isLeaseActive as jest.MockedFunction<
 const mockedRequestMeetingEndViaLease =
   requestMeetingEndViaLease as jest.MockedFunction<
     typeof requestMeetingEndViaLease
+  >;
+const mockedResolveServerMeetingArtifactAccess =
+  resolveServerMeetingArtifactAccess as jest.MockedFunction<
+    typeof resolveServerMeetingArtifactAccess
   >;
 
 const makeMeeting = (overrides?: Partial<MeetingData>): MeetingData =>
@@ -253,6 +261,37 @@ const requestSseUntil = async (url: string, contains: string) =>
 
 afterEach(() => {
   jest.resetAllMocks();
+});
+
+beforeEach(() => {
+  mockedResolveServerMeetingArtifactAccess.mockResolvedValue({
+    transcriptAccessEnabled: true,
+    audioAccessEnabled: true,
+  });
+});
+
+test("rejects new live transcript streams when transcript access is disabled", async () => {
+  mockedGetMeeting.mockReturnValue(makeMeeting());
+  mockedEnsureUserInGuild.mockResolvedValue(true);
+  mockedEnsureUserCanConnectChannel.mockResolvedValue(true);
+  mockedResolveServerMeetingArtifactAccess.mockResolvedValue({
+    transcriptAccessEnabled: false,
+    audioAccessEnabled: true,
+  });
+
+  const { server, baseUrl } = createServer(true);
+  try {
+    const response = await requestJson(
+      `${baseUrl}/api/live/guild-1/meeting-1/stream`,
+    );
+    expect(response.statusCode).toBe(403);
+    expect(JSON.parse(response.body)).toEqual({
+      error: "Transcript access is disabled for this server.",
+      code: "transcript_access_disabled",
+    });
+  } finally {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
 });
 
 test("streams fallback init payload with leased channel name", async () => {

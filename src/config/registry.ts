@@ -750,6 +750,34 @@ export const CONFIG_REGISTRY: ConfigEntry[] = [
     ui: { type: "segmented", options: ["off", "server", "public"] },
   },
   {
+    key: "meetings.artifacts.transcriptAccess.enabled",
+    label: "Transcript access",
+    description:
+      "Let viewers retrieve completed and live transcripts through the portal, shared links, exports, and MCP. Turning this off does not stop transcription, processing, or storage.",
+    category: "Meetings",
+    group: "Recommended",
+    valueType: "boolean",
+    defaultValue: true,
+    scopes: {
+      server: scope(true, false, "admin", "toggle"),
+    },
+    ui: { type: "toggle" },
+  },
+  {
+    key: "meetings.artifacts.audioAccess.enabled",
+    label: "Audio recording access",
+    description:
+      "Let viewers play and export stored meeting audio. Turning this off does not stop recording, processing, or storage.",
+    category: "Meetings",
+    group: "Recommended",
+    valueType: "boolean",
+    defaultValue: true,
+    scopes: {
+      server: scope(true, false, "admin", "toggle"),
+    },
+    ui: { type: "toggle" },
+  },
+  {
     key: "visionCaptions.enabled",
     label: "Vision captions",
     description:

@@ -15,7 +15,7 @@ export type MeetingExport = {
     notes: string;
     notesChannelId?: string;
     notesMessageId?: string;
-    transcript: string;
+    transcript?: string;
     audioUrl?: string;
     archivedAt?: string;
     attendees: string[];
@@ -35,7 +35,7 @@ const normalizeOptionalString = (
   value: string | null | undefined,
 ): string | undefined => (value == null ? undefined : value);
 
-const buildMeetingExport = (
+export const buildMeetingExport = (
   detail: MeetingDetailInput,
   meeting: MeetingDetails,
 ): MeetingExport => ({
@@ -49,11 +49,16 @@ const buildMeetingExport = (
     notes: detail.notes ?? "",
     notesChannelId: normalizeOptionalString(detail.notesChannelId),
     notesMessageId: normalizeOptionalString(detail.notesMessageId),
-    transcript: detail.transcript ?? "",
-    audioUrl: normalizeOptionalString(detail.audioUrl),
+    ...(detail.transcriptAccessEnabled !== false
+      ? { transcript: detail.transcript ?? "" }
+      : {}),
+    ...(detail.audioAccessEnabled !== false
+      ? { audioUrl: normalizeOptionalString(detail.audioUrl) }
+      : {}),
     archivedAt: normalizeOptionalString(detail.archivedAt),
     attendees: detail.attendees ?? [],
-    events: detail.events ?? [],
+    events:
+      detail.transcriptAccessEnabled !== false ? (detail.events ?? []) : [],
     title: meeting.title,
     meetingName: meeting.meetingName,
     summary: meeting.summary,

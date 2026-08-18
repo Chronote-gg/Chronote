@@ -18,7 +18,7 @@ Starts a recorded meeting in the voice channel you are currently in. You can als
 
 **Requirements**: You must be in a voice channel. The bot needs Connect and Speak permissions in that voice channel, and View Channel, Send Messages, and Read Message History in the text channel. No other meeting can be active in the server.
 
-**Output**: A "Meeting Started" embed with End Meeting and Edit Tags buttons, plus a Live transcript button when the Chronote portal is configured.
+**Output**: A "Meeting Started" embed with End Meeting and Edit Tags buttons, plus a Live transcript button when the Chronote portal is configured and the server allows transcript access.
 
 ### `/autorecord`
 
@@ -184,7 +184,15 @@ Accepted corrections:
 
 Each correction uses the transcript as ground truth, so the AI cannot fabricate content that was not actually discussed.
 
+If a server has disabled transcript access, Chronote's automated correction workflow still uses the stored transcript for this check. It does not return the transcript as an artifact, but the proposed notes change and diff can include details or wording from the transcript.
+
 Corrections can also assign work to a member or a role. Asking for something like "assign this to the moderators" produces a role mention, the same way generated notes do. Existing mentions in the notes are preserved, and a correction can only mention members who attended and roles that exist in your server, so it cannot invent one.
+
+## Server artifact access
+
+Server admins with **Manage Server** can independently disable viewer access to meeting transcripts and audio recordings from **Server Settings** -> **Meetings**. The controls apply to past and future server meetings, including shared pages and Remote MCP transcript retrieval. Summaries and notes remain available.
+
+These are access controls, not recording or deletion controls. Chronote still records and transcribes meetings, generates summaries, stores the artifacts, and can make them available again if a server admin re-enables access. Disabling access blocks future retrieval through Chronote, but cannot recall downloaded copies. An issued audio URL remains usable for up to 15 minutes, and an already-open live transcript stream stays connected until the meeting ends or the viewer disconnects. Personal meetings and uploads remain controlled by their owner.
 
 ## Importing external notes
 

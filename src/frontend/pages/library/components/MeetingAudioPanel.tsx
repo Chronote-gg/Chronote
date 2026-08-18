@@ -4,9 +4,13 @@ import Surface from "../../../components/Surface";
 
 type MeetingAudioPanelProps = {
   audioUrl?: string | null;
+  accessEnabled?: boolean;
 };
 
-export function MeetingAudioPanel({ audioUrl }: MeetingAudioPanelProps) {
+export function MeetingAudioPanel({
+  audioUrl,
+  accessEnabled = true,
+}: MeetingAudioPanelProps) {
   return (
     <Surface p="md" tone="soft">
       <Group gap="sm" align="center" wrap="wrap">
@@ -21,7 +25,11 @@ export function MeetingAudioPanel({ audioUrl }: MeetingAudioPanelProps) {
         </Stack>
       </Group>
       <Divider my="sm" />
-      {audioUrl ? (
+      {!accessEnabled ? (
+        <Text size="sm" c="dimmed">
+          Audio recording access is disabled for this server.
+        </Text>
+      ) : audioUrl ? (
         <audio
           controls
           preload="metadata"

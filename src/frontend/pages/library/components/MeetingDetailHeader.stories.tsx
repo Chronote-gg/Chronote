@@ -14,6 +14,8 @@ const meeting: MeetingDetails = {
   tags: ["desktop"],
   channel: "#Uploaded media",
   audioUrl: null,
+  audioAccessEnabled: true,
+  transcriptAccessEnabled: true,
   archivedAt: null,
   attendees: ["Me"],
   decisions: [],
