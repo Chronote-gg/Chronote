@@ -44,20 +44,10 @@ jobs:
           set -euo pipefail
 
           body_file="${RUNNER_TEMP}/claude-review-comment.md"
+          current_body_file="${RUNNER_TEMP}/claude-review-current.md"
           json_file="${RUNNER_TEMP}/claude-review-comment.json"
           previous_body_file="${RUNNER_TEMP}/claude-review-previous.md"
           : > "$previous_body_file"
-
-          cat > "$body_file" <<EOF
-          ${STICKY_MARKER}
-          [AGENT]
-
-          ## Claude Review
-
-          Claude review is queued for commit \`${PR_HEAD_SHA}\`.
-          EOF
-
-          jq -n --rawfile body "$body_file" '{body: $body}' > "$json_file"
 
           if ! comment_id="$(
             gh api --paginate \
@@ -74,10 +64,62 @@ jobs:
             echo "Reusing Claude review sticky comment ${comment_id}."
             if ! gh api \
               "repos/${GITHUB_REPOSITORY}/issues/comments/${comment_id}" \
-              --jq '.body' > "$previous_body_file"; then
+              --jq '.body' > "$current_body_file"; then
               echo "::notice::The previous Claude review could not be loaded as follow-up context."
-              : > "$previous_body_file"
+            elif grep -qF '<!-- claude-reviewed-sha:' "$current_body_file"; then
+              cp "$current_body_file" "$previous_body_file"
+            else
+              previous_body_b64="$(
+                sed -n 's/^<!-- claude-previous-review-b64:\(.*\) -->$/\1/p' "$current_body_file" |
+                  tail -n 1
+              )"
+              if [ -n "$previous_body_b64" ] && ! printf '%s' "$previous_body_b64" | base64 -d > "$previous_body_file"; then
+                echo "::notice::The preserved Claude review context could not be decoded."
+                : > "$previous_body_file"
+              fi
             fi
+          fi
+
+          node - "$previous_body_file" <<'NODE'
+          const fs = require("node:fs");
+
+          const [, , previousBodyFile] = process.argv;
+          const previousBody = fs.readFileSync(previousBodyFile, "utf8");
+          const maxBytes = 45_000;
+
+          if (Buffer.byteLength(previousBody, "utf8") > maxBytes) {
+            let bounded = "";
+            let bytes = 0;
+            for (const codePoint of previousBody) {
+              const codePointBytes = Buffer.byteLength(codePoint, "utf8");
+              if (bytes + codePointBytes > maxBytes) {
+                break;
+              }
+              bounded += codePoint;
+              bytes += codePointBytes;
+            }
+            fs.writeFileSync(previousBodyFile, `${bounded}\n\n_Previous review context truncated._\n`);
+          }
+          NODE
+
+          previous_review_b64="$(base64 -w0 "$previous_body_file")"
+
+          cat > "$body_file" <<EOF
+          ${STICKY_MARKER}
+          [AGENT]
+
+          ## Claude Review
+
+          Claude review is queued for commit \`${PR_HEAD_SHA}\`.
+          EOF
+
+          if [ -n "$previous_review_b64" ]; then
+            printf '\n<!-- claude-previous-review-b64:%s -->\n' "$previous_review_b64" >> "$body_file"
+          fi
+
+          jq -n --rawfile body "$body_file" '{body: $body}' > "$json_file"
+
+          if [ -n "$comment_id" ]; then
             if ! gh api --method PATCH \
               "repos/${GITHUB_REPOSITORY}/issues/comments/${comment_id}" \
               --input "$json_file" > /dev/null; then
@@ -103,32 +145,9 @@ jobs:
             exit 0
           fi
 
-          node - "$previous_body_file" <<'NODE'
-          const fs = require("node:fs");
-
-          const [, , previousBodyFile] = process.argv;
-          const previousBody = fs.readFileSync(previousBodyFile, "utf8");
-          const maxBytes = 45_000;
-
-          if (Buffer.byteLength(previousBody, "utf8") > maxBytes) {
-            let bounded = "";
-            let bytes = 0;
-            for (const codePoint of previousBody) {
-              const codePointBytes = Buffer.byteLength(codePoint, "utf8");
-              if (bytes + codePointBytes > maxBytes) {
-                break;
-              }
-              bounded += codePoint;
-              bytes += codePointBytes;
-            }
-            fs.writeFileSync(previousBodyFile, `${bounded}\n\n_Previous review context truncated._\n`);
-          }
-          NODE
-
           {
             echo "previous_review_b64<<EOF"
-            base64 -w0 "$previous_body_file"
-            echo
+            echo "$previous_review_b64"
             echo "EOF"
           } >> "$GITHUB_OUTPUT"
           echo "comment_id=${comment_id}" >> "$GITHUB_OUTPUT"
@@ -427,6 +446,7 @@ jobs:
           REVIEW_RESULT: ${{ needs.review.result }}
           STICKY_MARKER: "<!-- claude-pr-review -->"
           REVIEW_MARKDOWN_B64: ${{ needs.review.outputs.review_markdown_b64 }}
+          PREVIOUS_REVIEW_B64: ${{ needs.prepare-comment.outputs.previous_review_b64 }}
         shell: bash
         run: |
           set -euo pipefail
@@ -464,6 +484,9 @@ jobs:
 
           Workflow result: \`${REVIEW_RESULT}\`. Check the Claude PR review job logs before treating this PR as Claude-reviewed.
           EOF
+            if [ -n "${PREVIOUS_REVIEW_B64}" ]; then
+              printf '\n<!-- claude-previous-review-b64:%s -->\n' "${PREVIOUS_REVIEW_B64}" >> "$body_file"
+            fi
           fi
 
           jq -n --rawfile body "$body_file" '{body: $body}' > "$json_file"
