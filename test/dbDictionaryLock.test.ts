@@ -88,6 +88,63 @@ describe("dictionary write lock", () => {
     ).toBe(false);
   });
 
+  test("reconciles an ambiguous revision response after persisting an entry", async () => {
+    sendMock
+      .mockResolvedValueOnce({})
+      .mockResolvedValueOnce({
+        Item: marshall({ sid: "dictionaryRevision#guild-1", revision: 0 }),
+      })
+      .mockResolvedValueOnce({})
+      .mockResolvedValueOnce({})
+      .mockRejectedValueOnce(new Error("response lost"))
+      .mockResolvedValueOnce({
+        Item: marshall({ sid: "dictionaryRevision#guild-1", revision: 1 }),
+      })
+      .mockResolvedValueOnce({});
+    const { writeDictionaryEntry } = await import("../src/db");
+
+    await expect(writeDictionaryEntry(entry, null, 0)).resolves.toBe(true);
+
+    expect(
+      sendMock.mock.calls.map(([command]) => command.constructor.name),
+    ).toContain("PutItemCommand");
+  });
+
+  test("clears a populated dictionary under one lock and revision advance", async () => {
+    sendMock
+      .mockResolvedValueOnce({})
+      .mockResolvedValueOnce({
+        Item: marshall({ sid: "dictionaryRevision#guild-1", revision: 2 }),
+      })
+      .mockResolvedValueOnce({})
+      .mockResolvedValueOnce({
+        Items: [
+          marshall(entry),
+          marshall({ ...entry, termKey: "ares", term: "Ares" }),
+        ],
+      })
+      .mockResolvedValueOnce({})
+      .mockResolvedValueOnce({})
+      .mockResolvedValueOnce({})
+      .mockResolvedValueOnce({});
+    const { clearDictionaryEntries } = await import("../src/db");
+
+    await expect(clearDictionaryEntries("guild-1")).resolves.toBeUndefined();
+
+    const commandNames = sendMock.mock.calls.map(
+      ([command]) => command.constructor.name,
+    );
+    expect(
+      commandNames.filter((name) => name === "DeleteItemCommand"),
+    ).toHaveLength(2);
+    expect(
+      sendMock.mock.calls.filter(
+        ([command]) =>
+          command.input.UpdateExpression === "SET #revision = :nextRevision",
+      ),
+    ).toHaveLength(1);
+  });
+
   test("treats release failures as best effort", async () => {
     sendMock.mockRejectedValueOnce(new Error("temporary network failure"));
     const warning = jest.spyOn(console, "warn").mockImplementation();

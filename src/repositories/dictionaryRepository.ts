@@ -1,6 +1,7 @@
 import { config } from "../services/configService";
 import {
   acquireDictionaryLock,
+  clearDictionaryEntries,
   deleteDictionaryEntry,
   getDictionaryRevision,
   getDictionaryEntry,
@@ -28,6 +29,7 @@ export type DictionaryRepository = {
     revision: number;
   }>;
   remove: (guildId: string, termKey: string) => Promise<void>;
+  clear: (guildId: string) => Promise<void>;
 };
 
 const realRepository: DictionaryRepository = {
@@ -51,6 +53,7 @@ const realRepository: DictionaryRepository = {
     }
   },
   remove: deleteDictionaryEntry,
+  clear: clearDictionaryEntries,
 };
 
 const mockRepository: DictionaryRepository = {
@@ -102,6 +105,15 @@ const mockRepository: DictionaryRepository = {
     );
     const currentRevision = store.dictionaryRevisionByGuild.get(guildId) ?? 0;
     store.dictionaryRevisionByGuild.set(guildId, currentRevision + 1);
+  },
+  async clear(guildId) {
+    const store = getMockStore();
+    const entries = store.dictionaryEntriesByGuild.get(guildId) ?? [];
+    store.dictionaryEntriesByGuild.set(guildId, []);
+    if (entries.length > 0) {
+      const currentRevision = store.dictionaryRevisionByGuild.get(guildId) ?? 0;
+      store.dictionaryRevisionByGuild.set(guildId, currentRevision + 1);
+    }
   },
 };
 

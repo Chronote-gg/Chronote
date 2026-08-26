@@ -363,7 +363,7 @@ export async function generateDictionaryTeachingDrafts(
     messages,
     ...chatParams,
     response_format: { type: "json_object" },
-    max_completion_tokens: 1_200,
+    max_completion_tokens: 8_000,
   });
   const raw = completion.choices[0]?.message?.content;
   if (!raw?.trim()) {

@@ -974,6 +974,7 @@ const DICTIONARY_LOCK_TTL_SECONDS = 30;
 const DICTIONARY_COMMIT_TTL_SECONDS = 300;
 const DICTIONARY_LOCK_ATTEMPTS = 10;
 const DICTIONARY_LOCK_RETRY_MS = 25;
+const DICTIONARY_REVISION_RECONCILE_ATTEMPTS = 3;
 
 export async function acquireDictionaryLock(
   guildId: string,
@@ -1115,6 +1116,47 @@ async function advanceDictionaryRevision(
   }
 }
 
+async function reconcileDictionaryRevision(
+  guildId: string,
+  lockToken: string,
+  currentRevision: number,
+): Promise<boolean> {
+  let lastError: unknown;
+  for (
+    let attempt = 0;
+    attempt < DICTIONARY_REVISION_RECONCILE_ATTEMPTS;
+    attempt += 1
+  ) {
+    try {
+      if (
+        await advanceDictionaryRevision(guildId, lockToken, currentRevision)
+      ) {
+        return true;
+      }
+    } catch (error) {
+      lastError = error;
+    }
+    try {
+      const observedRevision = await getDictionaryRevision(guildId);
+      if (observedRevision === currentRevision + 1) return true;
+      if (observedRevision !== currentRevision) return false;
+      if (
+        !(await renewDictionaryLock(
+          guildId,
+          lockToken,
+          DICTIONARY_COMMIT_TTL_SECONDS,
+        ))
+      ) {
+        return false;
+      }
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  if (lastError) throw lastError;
+  return false;
+}
+
 export async function writeDictionaryEntry(
   entry: DictionaryEntry,
   expectedUpdatedAt?: string | null,
@@ -1165,7 +1207,11 @@ export async function writeDictionaryEntry(
         ...entryCondition,
       }),
     );
-    return advanceDictionaryRevision(entry.guildId, lockToken, currentRevision);
+    return reconcileDictionaryRevision(
+      entry.guildId,
+      lockToken,
+      currentRevision,
+    );
   } catch (error) {
     if (isConditionalCheckFailed(error)) return false;
     throw error;
@@ -1235,10 +1281,52 @@ export async function deleteDictionaryEntry(
       }),
     );
     if (
-      !(await advanceDictionaryRevision(guildId, lockToken, currentRevision))
+      !(await reconcileDictionaryRevision(guildId, lockToken, currentRevision))
     ) {
       throw new Error("Dictionary changed while deleting an entry.");
     }
+  } finally {
+    await releaseDictionaryLock(guildId, lockToken);
+  }
+}
+
+export async function clearDictionaryEntries(guildId: string): Promise<void> {
+  const lockToken = await acquireDictionaryLock(guildId);
+  if (!lockToken) throw new Error("Dictionary is busy. Try again.");
+  let deletedAny = false;
+  try {
+    const currentRevision = await getDictionaryRevision(guildId);
+    if (
+      !(await renewDictionaryLock(
+        guildId,
+        lockToken,
+        DICTIONARY_COMMIT_TTL_SECONDS,
+      ))
+    ) {
+      throw new Error("Dictionary changed while clearing entries.");
+    }
+    const entries = await listDictionaryEntries(guildId, true);
+    let deleteError: unknown;
+    try {
+      for (const entry of entries) {
+        await dynamoDbClient.send(
+          new DeleteItemCommand({
+            TableName: tableName("DictionaryTable"),
+            Key: marshall({ guildId, termKey: entry.termKey }),
+          }),
+        );
+        deletedAny = true;
+      }
+    } catch (error) {
+      deleteError = error;
+    }
+    if (
+      deletedAny &&
+      !(await reconcileDictionaryRevision(guildId, lockToken, currentRevision))
+    ) {
+      throw new Error("Dictionary changed while clearing entries.");
+    }
+    if (deleteError) throw deleteError;
   } finally {
     await releaseDictionaryLock(guildId, lockToken);
   }

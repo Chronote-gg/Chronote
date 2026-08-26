@@ -169,9 +169,5 @@ export async function removeDictionaryEntryService(params: {
 export async function clearDictionaryEntriesService(
   guildId: string,
 ): Promise<void> {
-  const repository = getDictionaryRepository();
-  const entries = await repository.listByGuild(guildId);
-  for (const entry of entries) {
-    await repository.remove(guildId, entry.termKey);
-  }
+  await getDictionaryRepository().clear(guildId);
 }
