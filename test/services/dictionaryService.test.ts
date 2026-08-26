@@ -13,6 +13,7 @@ import {
   upsertDictionaryEntryService,
 } from "../../src/services/dictionaryService";
 import { getMockStore, resetMockStore } from "../../src/repositories/mockStore";
+import { getDictionaryRepository } from "../../src/repositories/dictionaryRepository";
 import type { DictionaryEntry } from "../../src/types/db";
 import {
   DICTIONARY_DEFINITION_MAX_LENGTH,
@@ -236,6 +237,53 @@ describe("dictionaryService", () => {
     expect(updated.observedForms).toEqual(["John Smith", "Jon Smith"]);
     expect(updated.lastTeaching).toEqual(lastTeaching);
     expect(updated.definition).toBe("Apollo account manager");
+  });
+
+  test("rejects a stale manual edit instead of erasing concurrent teaching data", async () => {
+    const original: DictionaryEntry = {
+      guildId: "guild-1",
+      termKey: "jon smythe",
+      term: "Jon Smythe",
+      definition: "Apollo contact",
+      observedForms: ["John Smith"],
+      createdAt: "2025-01-01T00:00:00.000Z",
+      createdBy: "user-1",
+      updatedAt: "2025-01-01T00:00:00.000Z",
+      updatedBy: "user-1",
+    };
+    const concurrent: DictionaryEntry = {
+      ...original,
+      observedForms: ["John Smith", "John Smyth"],
+      updatedAt: "2025-01-01T00:00:01.000Z",
+      lastTeaching: {
+        method: "llm_assisted",
+        source: "settings",
+        model: "gpt-5-mini",
+        promptName: "chronote-dictionary-teaching-chat",
+        approvedBy: "other-admin",
+        approvedAt: "2025-01-01T00:00:01.000Z",
+      },
+    };
+    const store = getMockStore();
+    store.dictionaryEntriesByGuild.set("guild-1", [original]);
+    store.dictionaryRevisionByGuild.set("guild-1", 1);
+    const repository = getDictionaryRepository();
+    const write = repository.write;
+    jest.spyOn(repository, "write").mockImplementationOnce(async (...args) => {
+      store.dictionaryEntriesByGuild.set("guild-1", [concurrent]);
+      store.dictionaryRevisionByGuild.set("guild-1", 2);
+      return write(...args);
+    });
+
+    await expect(
+      upsertDictionaryEntryService({
+        guildId: "guild-1",
+        term: "Jon Smythe",
+        definition: "Edited manually",
+        userId: "user-2",
+      }),
+    ).rejects.toThrow("changed after the proposal was reviewed");
+    expect(store.dictionaryEntriesByGuild.get("guild-1")).toEqual([concurrent]);
   });
 
   test("upsertDictionaryEntryService validates term and definition length", async () => {

@@ -59,7 +59,7 @@ export async function resolveServerAttendeeAccessEnabled(
       guildId,
       error,
     });
-    return true;
+    return false;
   }
 }
 

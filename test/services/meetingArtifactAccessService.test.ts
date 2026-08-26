@@ -1,5 +1,6 @@
 import {
   resolveMeetingArtifactAccess,
+  resolveServerAttendeeAccessEnabled,
   resolveServerMeetingArtifactAccess,
 } from "../../src/services/meetingArtifactAccessService";
 import {
@@ -65,5 +66,13 @@ describe("meetingArtifactAccessService", () => {
       transcriptAccessEnabled: false,
       audioAccessEnabled: false,
     });
+  });
+
+  test("fails closed when attendee access cannot be resolved", async () => {
+    mockedResolveConfigSnapshot.mockRejectedValueOnce(new Error("offline"));
+
+    await expect(resolveServerAttendeeAccessEnabled("guild-1")).resolves.toBe(
+      false,
+    );
   });
 });

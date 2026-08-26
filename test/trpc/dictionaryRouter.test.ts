@@ -3,7 +3,10 @@ import type { MeetingHistory } from "../../src/types/db";
 import { getMockUser, resetMockStore } from "../../src/repositories/mockStore";
 import { ensureManageGuildWithUserToken } from "../../src/services/guildAccessService";
 import { generateDictionaryTeachingDrafts } from "../../src/services/dictionaryTeachingService";
-import { upsertDictionaryEntryService } from "../../src/services/dictionaryService";
+import {
+  listDictionaryEntriesService,
+  upsertDictionaryEntryService,
+} from "../../src/services/dictionaryService";
 import * as dictionaryService from "../../src/services/dictionaryService";
 import { captureEvent } from "../../src/services/analyticsService";
 import {
@@ -12,6 +15,7 @@ import {
 } from "../../src/services/meetingArtifactAccessService";
 import { getMeetingHistoryService } from "../../src/services/meetingHistoryService";
 import { checkUserMeetingAccess } from "../../src/services/meetingAccessService";
+import { createMeetingMentionReplacer } from "../../src/services/meetingMentionService";
 
 const drafts = new Map<string, unknown>();
 const contexts = new Map<string, unknown>();
@@ -62,6 +66,10 @@ jest.mock("../../src/services/meetingHistoryService", () => ({
 jest.mock("../../src/services/meetingAccessService", () => ({
   ...jest.requireActual("../../src/services/meetingAccessService"),
   checkUserMeetingAccess: jest.fn(),
+}));
+
+jest.mock("../../src/services/meetingMentionService", () => ({
+  createMeetingMentionReplacer: jest.fn(),
 }));
 
 jest.mock("../../src/services/dictionaryTeachingTokenStore", () => ({
@@ -117,6 +125,11 @@ describe("dictionary teaching router", () => {
     jest.mocked(checkUserMeetingAccess).mockResolvedValue({
       allowed: true,
       via: "channel_permissions",
+    });
+    jest.mocked(createMeetingMentionReplacer).mockResolvedValue({
+      toText: (text) =>
+        text.replaceAll("<@123>", "@Alice").replaceAll("<@&456>", "@Leads"),
+      toMarkdown: (text) => text,
     });
     jest.mocked(generateDictionaryTeachingDrafts).mockResolvedValue({
       drafts: [
@@ -290,6 +303,36 @@ describe("dictionary teaching router", () => {
         context: expect.objectContaining({
           notesDiff: "+ Jon Smythe",
           transcriptExcerpt: undefined,
+        }),
+      }),
+    );
+  });
+
+  test("resolves mentions before correction evidence reaches the model", async () => {
+    const token = "20000000-0000-4000-8000-000000000005";
+    contexts.set(token, {
+      guildId: "guild-1",
+      requesterId: getMockUser().id,
+      expiresAtMs: Date.now() + 60_000,
+      context: {
+        source: "notes_correction",
+        meetingId: "meeting-1",
+        notesDiff: "+ <@123> asked <@&456>",
+        transcriptExcerpt: "<@123> owns the rollout.",
+      },
+    });
+
+    await buildCaller().dictionary.previewTeaching({
+      serverId: "guild-1",
+      instruction: "The exact name is Jon Smythe.",
+      correctionContextToken: token,
+    });
+
+    expect(generateDictionaryTeachingDrafts).toHaveBeenCalledWith(
+      expect.objectContaining({
+        context: expect.objectContaining({
+          notesDiff: "+ @Alice asked @Leads",
+          transcriptExcerpt: "@Alice owns the rollout.",
         }),
       }),
     );
@@ -1112,7 +1155,7 @@ describe("dictionary teaching router", () => {
     });
   });
 
-  test("retains newly approved observed forms when an entry is at capacity", async () => {
+  test("rejects a new observed form when an entry is at capacity", async () => {
     const existing = await upsertDictionaryEntryService({
       guildId: "guild-1",
       term: "Apollo",
@@ -1165,17 +1208,11 @@ describe("dictionary teaching router", () => {
     });
 
     expect(result.results[0]).toMatchObject({
-      ok: true,
-      entry: {
-        term: "Apollo",
-        observedForms: [
-          "New form",
-          "Old one",
-          "Old two",
-          "Old three",
-          "Old four",
-        ],
-      },
+      ok: false,
+      error: expect.stringContaining("maximum 5 observed forms"),
     });
+    expect(
+      (await listDictionaryEntriesService("guild-1"))[0].observedForms,
+    ).toEqual(["Old one", "Old two", "Old three", "Old four", "Old five"]);
   });
 });

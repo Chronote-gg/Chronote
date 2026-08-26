@@ -44,6 +44,7 @@ import {
 } from "../../services/meetingArtifactAccessService";
 import { getMeetingHistoryService } from "../../services/meetingHistoryService";
 import { checkUserMeetingAccess } from "../../services/meetingAccessService";
+import { createMeetingMentionReplacer } from "../../services/meetingMentionService";
 
 const serverSchema = z.object({
   serverId: z.string().min(1),
@@ -141,14 +142,26 @@ const normalizeTeachingEntry = (
 ) => ({
   preferredTerm: normalizeDictionaryTerm(submitted.preferredTerm),
   observedForms: normalizeDictionaryObservedForms([
-    ...(submitted.observedForms ?? []),
     ...(current?.observedForms ?? []),
+    ...(submitted.observedForms ?? []),
   ]),
   description:
     submitted.description === undefined
       ? current?.definition
       : normalizeDictionaryDefinition(submitted.description),
 });
+
+const dropsSubmittedObservedForm = (
+  submitted: DictionaryTeachingCommitEntry,
+  normalized: ReturnType<typeof normalizeTeachingEntry>,
+) => {
+  const retainedKeys = new Set(
+    (normalized.observedForms ?? []).map(buildDictionaryTermKey),
+  );
+  return (normalizeDictionaryObservedForms(submitted.observedForms) ?? []).some(
+    (form) => !retainedKeys.has(buildDictionaryTermKey(form)),
+  );
+};
 
 const teachingDraftWasEdited = (
   draft: DictionaryTeachingDraft,
@@ -335,12 +348,14 @@ const prepareTeachingEntrySave = (params: {
   const normalized = normalizeTeachingEntry(params.submitted, params.current);
   return {
     edited: teachingDraftWasEdited(params.draft, params.submitted),
-    conflictError: findTeachingEntryConflict({
-      draft: params.draft,
-      current: params.current,
-      currentEntries: params.currentEntries,
-      normalized,
-    }),
+    conflictError: dropsSubmittedObservedForm(params.submitted, normalized)
+      ? `This entry already has the maximum ${DICTIONARY_OBSERVED_FORM_MAX_COUNT} observed forms. Remove one before approving another.`
+      : findTeachingEntryConflict({
+          draft: params.draft,
+          current: params.current,
+          currentEntries: params.currentEntries,
+          normalized,
+        }),
     expectedUpdatedAt: params.current?.updatedAt ?? null,
     normalized,
     submitted: params.submitted,
@@ -391,12 +406,22 @@ const resolveTeachingContext = async (params: {
           attendeeOverrideEnabled,
         })
       : null;
-    if (access?.allowed !== true) {
+    if (!meeting || access?.allowed !== true) {
       throw new TRPCError({
         code: "FORBIDDEN",
         message: "You no longer have access to this correction context.",
       });
     }
+    const resolveMentions = await createMeetingMentionReplacer(meeting);
+    context = {
+      ...context,
+      notesDiff: context.notesDiff
+        ? resolveMentions.toText(context.notesDiff)
+        : undefined,
+      transcriptExcerpt: context.transcriptExcerpt
+        ? resolveMentions.toText(context.transcriptExcerpt)
+        : undefined,
+    };
   }
   if (context?.transcriptExcerpt) {
     const access = await resolveServerMeetingArtifactAccess(params.serverId);

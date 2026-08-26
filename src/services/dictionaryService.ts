@@ -71,7 +71,14 @@ export async function upsertDictionaryEntryService(params: {
 
   const repository = getDictionaryRepository();
   const termKey = buildDictionaryTermKey(term);
-  const existing = await repository.get(params.guildId, termKey);
+  const preservesStoredTeachingData =
+    params.observedForms === undefined || params.lastTeaching === undefined;
+  const preservationSnapshot = preservesStoredTeachingData
+    ? await repository.listSnapshotByGuild(params.guildId)
+    : undefined;
+  const existing = preservationSnapshot
+    ? preservationSnapshot.entries.find((entry) => entry.termKey === termKey)
+    : await repository.get(params.guildId, termKey);
   const now = new Date().toISOString();
   const observedForms =
     params.observedForms === undefined
@@ -93,7 +100,7 @@ export async function upsertDictionaryEntryService(params: {
   const written = await repository.write(
     entry,
     params.expectedUpdatedAt,
-    params.expectedRevision,
+    params.expectedRevision ?? preservationSnapshot?.revision,
   );
   if (!written) {
     throw new Error(DICTIONARY_REVIEW_CONFLICT_MESSAGE);
