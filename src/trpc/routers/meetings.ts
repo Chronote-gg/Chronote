@@ -1777,17 +1777,25 @@ const applyNotesCorrection = authedProcedure
 
     let dictionaryTeachingContextToken: string | undefined;
     let dictionaryTeachingContextExpiresAtMs: number | undefined;
-    const canTeachDictionary = await ensureManageGuildWithUserToken(
-      ctx.user.accessToken,
-      input.serverId,
-      {
+    const [canTeachDictionary, artifactAccess] = await Promise.all([
+      ensureManageGuildWithUserToken(ctx.user.accessToken, input.serverId, {
         session: ctx.req.session,
         userId: ctx.user.id,
-      },
-    );
+      }),
+      resolveMeetingArtifactAccess(history).catch((error) => {
+        console.warn(
+          "Failed resolving transcript access for dictionary teaching context",
+          error,
+        );
+        return null;
+      }),
+    ]);
+    const teachingTranscriptExcerpt = artifactAccess?.transcriptAccessEnabled
+      ? pending.transcriptExcerpt
+      : undefined;
     if (
       canTeachDictionary === true &&
-      (pending.notesDiff || pending.transcriptExcerpt)
+      (pending.notesDiff || teachingTranscriptExcerpt)
     ) {
       try {
         dictionaryTeachingContextToken = uuidv4();
@@ -1804,7 +1812,7 @@ const applyNotesCorrection = authedProcedure
               meetingId: input.meetingId,
               correctionId,
               notesDiff: pending.notesDiff,
-              transcriptExcerpt: pending.transcriptExcerpt,
+              transcriptExcerpt: teachingTranscriptExcerpt,
             },
           },
         );

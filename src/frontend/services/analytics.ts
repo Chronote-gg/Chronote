@@ -19,6 +19,10 @@ function resolveInjectedValue(raw: string | undefined): string {
 
 const readGlobals = () => globalThis as AnalyticsGlobal;
 
+export function isDoNotTrackEnabled(): boolean {
+  return globalThis.navigator?.doNotTrack === "1";
+}
+
 const resolveKey = () => resolveInjectedValue(readGlobals().__POSTHOG_KEY__);
 
 /**

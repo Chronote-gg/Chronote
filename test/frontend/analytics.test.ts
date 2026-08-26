@@ -2,6 +2,7 @@ import { afterEach, describe, expect, jest, test } from "@jest/globals";
 import posthog from "posthog-js";
 import {
   initAnalytics,
+  isDoNotTrackEnabled,
   redactDeep,
   redactShareIds,
   track,
@@ -30,6 +31,18 @@ afterEach(() => {
 });
 
 describe("analytics", () => {
+  test("reads the browser Do Not Track preference", () => {
+    Object.defineProperty(navigator, "doNotTrack", {
+      value: "1",
+      configurable: true,
+    });
+    expect(isDoNotTrackEnabled()).toBe(true);
+    Object.defineProperty(navigator, "doNotTrack", {
+      value: null,
+      configurable: true,
+    });
+  });
+
   test("stays disabled when no key is injected", () => {
     setKey(undefined);
     initAnalytics();

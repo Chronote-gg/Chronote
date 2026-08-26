@@ -66,9 +66,9 @@ jest.mock("uuid", () => {
 
 import { appRouter } from "../../src/trpc/router";
 
-const buildCaller = (user = getMockUser()) =>
+const buildCaller = (user = getMockUser(), headers: Request["headers"] = {}) =>
   appRouter.createCaller({
-    req: { session: {} } as Request,
+    req: { session: {}, headers } as Request,
     res: { setHeader: jest.fn() } as unknown as Response,
     user,
   });
@@ -136,6 +136,45 @@ describe("dictionary teaching router", () => {
       source: "settings",
     });
   });
+
+  test.each([
+    { headers: { dnt: "1" }, doNotTrack: false },
+    { headers: {}, doNotTrack: true },
+  ])(
+    "does not capture teaching analytics when browser DNT is enabled",
+    async ({ headers, doNotTrack }) => {
+      jest.mocked(captureEvent).mockClear();
+      const caller = buildCaller(getMockUser(), headers);
+      const preview = await caller.dictionary.previewTeaching({
+        serverId: "guild-1",
+        instruction: "The exact name is Jon Smythe, not John Smith.",
+        doNotTrack,
+      });
+
+      await caller.dictionary.commitTeaching({
+        serverId: "guild-1",
+        token: preview.token,
+        doNotTrack,
+        entries: [
+          {
+            draftId: preview.drafts[0].draftId,
+            preferredTerm: preview.drafts[0].preferredTerm,
+            observedForms: preview.drafts[0].observedForms,
+            description: preview.drafts[0].description ?? undefined,
+          },
+        ],
+      });
+
+      expect(captureEvent).not.toHaveBeenCalledWith(
+        "dictionary_teaching_previewed",
+        expect.anything(),
+      );
+      expect(captureEvent).not.toHaveBeenCalledWith(
+        "dictionary_teaching_committed",
+        expect.anything(),
+      );
+    },
+  );
 
   test("rejects a correction context owned by another user", async () => {
     const token = "20000000-0000-4000-8000-000000000001";
@@ -522,6 +561,61 @@ describe("dictionary teaching router", () => {
     const list = await buildCaller().dictionary.list({ serverId: "guild-1" });
     expect(list.entries).toEqual([existing.entry]);
     expect(tokenStore.deleteDraft).not.toHaveBeenCalled();
+  });
+
+  test("allows a conflict draft to be corrected to unused exact spelling", async () => {
+    const existing = await upsertDictionaryEntryService({
+      guildId: "guild-1",
+      term: "Jonathan Smythe",
+      observedForms: ["Jon Smythe"],
+      userId: getMockUser().id,
+    });
+    const token = "82600000-0000-4000-8000-000000000001";
+    const draftId = "82600000-0000-4000-8000-000000000002";
+    drafts.set(token, {
+      guildId: "guild-1",
+      requesterId: getMockUser().id,
+      expiresAtMs: Date.now() + 60_000,
+      source: "settings",
+      drafts: [
+        {
+          draftId,
+          preferredTerm: "Jon Smythe",
+          observedForms: [],
+          description: "Apollo contact",
+          ambiguity: "This spelling conflicts with an existing entry.",
+          evidence: [],
+          action: "conflict",
+          existingEntry: existing,
+        },
+      ],
+      model: {
+        model: "gpt-5-mini",
+        promptName: "chronote-dictionary-teaching-chat",
+      },
+    });
+
+    const result = await buildCaller().dictionary.commitTeaching({
+      serverId: "guild-1",
+      token,
+      entries: [
+        {
+          draftId,
+          preferredTerm: "Jon Smythe Jr",
+          description: "Apollo contact",
+        },
+      ],
+    });
+
+    expect(result.results[0]).toMatchObject({
+      ok: true,
+      entry: { term: "Jon Smythe Jr" },
+    });
+    const list = await buildCaller().dictionary.list({ serverId: "guild-1" });
+    expect(list.entries.map((entry) => entry.term)).toEqual([
+      "Jon Smythe Jr",
+      "Jonathan Smythe",
+    ]);
   });
 
   test("rejects observed-form conflicts within one approval batch", async () => {

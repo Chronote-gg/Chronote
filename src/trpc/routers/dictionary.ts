@@ -43,6 +43,13 @@ const dictionaryTeachingTokenStore = createDictionaryTeachingTokenStore({
   maxPending: 200,
 });
 
+const analyticsDisabledForRequest = (
+  request: {
+    headers?: Record<string, string | string[] | undefined>;
+  },
+  clientDoNotTrack: boolean,
+) => clientDoNotTrack || request.headers?.dnt === "1";
+
 const teachingEntrySchema = z.object({
   draftId: z.string().uuid(),
   preferredTerm: z.string().min(1).max(DICTIONARY_TERM_MAX_LENGTH),
@@ -231,6 +238,7 @@ const prepareTeachingEntrySave = (params: {
 }) => {
   const normalized = normalizeTeachingEntry(params.submitted, params.current);
   const reviewedEntryRenamed =
+    params.draft.action === "update" &&
     params.draft.existingEntry !== undefined &&
     buildDictionaryTermKey(normalized.preferredTerm) !==
       params.draft.existingEntry.termKey;
@@ -271,6 +279,7 @@ const prepareTeachingEntrySave = (params: {
 const commitDictionaryTeaching = async (
   input: TeachingCommitInput,
   userId: string,
+  captureAnalytics: boolean,
 ) => {
   const record = assertTeachingDraftScope(
     await dictionaryTeachingTokenStore.getDraft(input.token),
@@ -329,17 +338,19 @@ const commitDictionaryTeaching = async (
       );
     }
   }
-  captureEvent("dictionary_teaching_committed", {
-    userId,
-    guildId: input.serverId,
-    properties: {
-      source: record.source,
-      submitted_count: input.entries.length,
-      saved_count: input.entries.length - failedCount,
-      failed_count: failedCount,
-      edited_draft_count: pending.filter(({ edited }) => edited).length,
-    },
-  });
+  if (captureAnalytics) {
+    captureEvent("dictionary_teaching_committed", {
+      userId,
+      guildId: input.serverId,
+      properties: {
+        source: record.source,
+        submitted_count: input.entries.length,
+        saved_count: input.entries.length - failedCount,
+        failed_count: failedCount,
+        edited_draft_count: pending.filter(({ edited }) => edited).length,
+      },
+    });
+  }
   return { results };
 };
 
@@ -392,6 +403,7 @@ export const dictionaryRouter = router({
           .min(1)
           .max(DICTIONARY_TEACHING_INPUT_MAX_LENGTH),
         correctionContextToken: z.string().uuid().optional(),
+        doNotTrack: z.boolean().optional().default(false),
       }),
     )
     .mutation(async ({ ctx, input }) => {
@@ -457,21 +469,23 @@ export const dictionaryRouter = router({
         meetingId: contextRecord?.context.meetingId,
         correctionId: contextRecord?.context.correctionId,
       });
-      captureEvent("dictionary_teaching_previewed", {
-        userId: ctx.user!.id,
-        guildId: input.serverId,
-        properties: {
-          source: contextRecord?.context.source ?? "settings",
-          instruction_length: input.instruction.length,
-          draft_count: generated.drafts.length,
-          ambiguous_count: generated.drafts.filter(
-            (draft) => draft.action === "needs_input",
-          ).length,
-          conflict_count: generated.drafts.filter(
-            (draft) => draft.action === "conflict",
-          ).length,
-        },
-      });
+      if (!analyticsDisabledForRequest(ctx.req, input.doNotTrack)) {
+        captureEvent("dictionary_teaching_previewed", {
+          userId: ctx.user!.id,
+          guildId: input.serverId,
+          properties: {
+            source: contextRecord?.context.source ?? "settings",
+            instruction_length: input.instruction.length,
+            draft_count: generated.drafts.length,
+            ambiguous_count: generated.drafts.filter(
+              (draft) => draft.action === "needs_input",
+            ).length,
+            conflict_count: generated.drafts.filter(
+              (draft) => draft.action === "conflict",
+            ).length,
+          },
+        });
+      }
       return { token, expiresAtMs, drafts: generated.drafts };
     }),
   commitTeaching: manageGuildProcedure
@@ -482,9 +496,14 @@ export const dictionaryRouter = router({
           .array(teachingEntrySchema)
           .min(1)
           .max(DICTIONARY_TEACHING_MAX_DRAFTS),
+        doNotTrack: z.boolean().optional().default(false),
       }),
     )
     .mutation(({ ctx, input }) =>
-      commitDictionaryTeaching(input, ctx.user!.id),
+      commitDictionaryTeaching(
+        input,
+        ctx.user!.id,
+        !analyticsDisabledForRequest(ctx.req, input.doNotTrack),
+      ),
     ),
 });

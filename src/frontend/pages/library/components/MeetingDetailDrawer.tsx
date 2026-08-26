@@ -340,6 +340,7 @@ export default function MeetingDetailDrawer({
     setNotesCorrectionToken(null);
     setNotesCorrectionChanged(null);
     setNotesCorrectionModalOpen(false);
+    notifications.hide("notes-correction-teaching-offer");
     setDictionaryTeachingModalOpen(false);
     setDictionaryTeachingInstruction("");
     setDictionaryTeachingContextToken(undefined);
@@ -578,6 +579,10 @@ export default function MeetingDetailDrawer({
     setNotesEditorModalOpen(false);
     setNotesImportModalOpen(false);
     closeNotesCorrectionModal();
+    notifications.hide("notes-correction-teaching-offer");
+    setDictionaryTeachingModalOpen(false);
+    setDictionaryTeachingInstruction("");
+    setDictionaryTeachingContextToken(undefined);
     setShareModalOpen(false);
     setShareError(null);
     setPersonalShareModalOpen(false);

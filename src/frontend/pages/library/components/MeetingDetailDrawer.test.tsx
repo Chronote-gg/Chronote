@@ -710,6 +710,39 @@ describe("MeetingDetailDrawer summary copy", () => {
     ).toBeInTheDocument();
   });
 
+  it("dismisses a correction teaching offer when the selected meeting changes", async () => {
+    jest.mocked(notifications.show).mockClear();
+    const view = renderDrawer({ canManageSelectedGuild: true });
+
+    await applyCorrection();
+    jest.mocked(notifications.hide).mockClear();
+    useMeetingDetailMock.mockReturnValue(
+      buildUseMeetingDetailResult({
+        detail: buildDetail({ id: "m2", meetingId: "meeting-2" }),
+        meeting: buildMeeting({ id: "m2", meetingId: "meeting-2" }),
+      }),
+    );
+    view.rerender(
+      <MantineProvider>
+        <MeetingDetailDrawer
+          opened
+          selectedMeetingId="m2"
+          selectedGuildId="g1"
+          canManageSelectedGuild
+          channelNameMap={new Map([["c1", "general"]])}
+          invalidateMeetingLists={jest.fn(async () => {})}
+          onClose={jest.fn()}
+        />
+      </MantineProvider>,
+    );
+
+    await waitFor(() =>
+      expect(notifications.hide).toHaveBeenCalledWith(
+        "notes-correction-teaching-offer",
+      ),
+    );
+  });
+
   it("falls back to instruction-only teaching after correction context expires", async () => {
     const expiresAtMs = Date.now() + 1_000;
     mockApplyNotesCorrection.mockResolvedValueOnce({
@@ -743,6 +776,7 @@ describe("MeetingDetailDrawer summary copy", () => {
         serverId: "g1",
         instruction: "It wrote John Smith, but his name is Jon Smythe.",
         correctionContextToken: undefined,
+        doNotTrack: false,
       }),
     );
     nowSpy.mockRestore();

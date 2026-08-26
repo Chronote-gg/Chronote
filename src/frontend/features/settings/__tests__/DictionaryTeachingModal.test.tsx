@@ -125,6 +125,7 @@ describe("DictionaryTeachingModal", () => {
         instruction:
           "It wrote John Smith, but his name is Jon Smythe. He works on Apollo.",
         correctionContextToken: "33333333-3333-4333-8333-333333333333",
+        doNotTrack: false,
       }),
     );
     expect(await screen.findByDisplayValue("Jon Smythe")).toBeInTheDocument();
@@ -145,6 +146,7 @@ describe("DictionaryTeachingModal", () => {
       expect(mockCommitTeaching).toHaveBeenCalledWith({
         serverId: "guild-1",
         token: "11111111-1111-4111-8111-111111111111",
+        doNotTrack: false,
         entries: [
           {
             draftId: "22222222-2222-4222-8222-222222222222",

@@ -27,6 +27,7 @@ import {
 } from "../../../utils/dictionary";
 import { DICTIONARY_TEACHING_INPUT_MAX_LENGTH } from "../../../types/dictionaryTeaching";
 import { trpc } from "../../services/trpc";
+import { isDoNotTrackEnabled } from "../../services/analytics";
 import Surface from "../../components/Surface";
 import { uiOverlays } from "../../uiTokens";
 
@@ -104,6 +105,7 @@ export default function DictionaryTeachingModal({
         serverId,
         instruction: trimmed,
         correctionContextToken,
+        doNotTrack: isDoNotTrackEnabled(),
       });
       setToken(result.token);
       setDrafts(
@@ -132,6 +134,7 @@ export default function DictionaryTeachingModal({
       const result = await commitMutation.mutateAsync({
         serverId,
         token,
+        doNotTrack: isDoNotTrackEnabled(),
         entries: selectedDrafts.map((draft) => ({
           draftId: draft.draftId,
           preferredTerm: draft.preferredTermInput.trim(),

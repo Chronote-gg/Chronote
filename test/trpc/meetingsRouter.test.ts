@@ -38,6 +38,7 @@ import {
 import { ensureUserCanAccessMeeting } from "../../src/services/meetingAccessService";
 import { checkUserMeetingAccess } from "../../src/services/meetingAccessService";
 import { resolveMeetingArtifactAccess } from "../../src/services/meetingArtifactAccessService";
+import { createDictionaryTeachingTokenStore } from "../../src/services/dictionaryTeachingTokenStore";
 import {
   listBotGuildsCached,
   listGuildChannelsCached,
@@ -368,6 +369,9 @@ describe("meetings notes correction mutations", () => {
   const mockedCheckMeetingAccess = jest.mocked(checkUserMeetingAccess);
   const mockedListBotGuilds = jest.mocked(listBotGuildsCached);
   const mockedListGuildChannels = jest.mocked(listGuildChannelsCached);
+  const mockedResolveMeetingArtifactAccess = jest.mocked(
+    resolveMeetingArtifactAccess,
+  );
 
   const mockedUpdateMeetingNotesService = jest.mocked(
     updateMeetingNotesService,
@@ -391,6 +395,10 @@ describe("meetings notes correction mutations", () => {
       { id: "channel-1", name: "voice", type: 2 },
       { id: "text-1", name: "notes", type: 0 },
     ]);
+    mockedResolveMeetingArtifactAccess.mockResolvedValue({
+      transcriptAccessEnabled: true,
+      audioAccessEnabled: true,
+    });
     mockedGetLangfuseChatPrompt.mockResolvedValue({
       messages: [{ role: "user", content: "prompt" }],
       langfusePrompt: undefined,
@@ -700,6 +708,48 @@ describe("meetings notes correction mutations", () => {
         }),
       }),
     );
+  });
+
+  test("omits transcript excerpts from teaching context when transcript access is disabled", async () => {
+    const meetingId = "channel-1#2025-01-01T00:00:00.000Z";
+    mockedGetMeetingHistory.mockResolvedValue({
+      guildId: "guild-1",
+      channelId_timestamp: meetingId,
+      meetingId: "meeting-1",
+      channelId: "channel-1",
+      timestamp: "2025-01-01T00:00:00.000Z",
+      duration: 1800,
+      transcribeMeeting: true,
+      generateNotes: true,
+      notes: "John Smith owns the Apollo rollout.",
+      transcriptS3Key: "transcripts/meeting-1.json",
+      notesVersion: 3,
+    } as unknown as MeetingHistory);
+    mockedFetchJsonFromS3.mockResolvedValueOnce({
+      text: "Jon Smythe from Apollo owns the rollout.",
+    });
+    mockedResolveMeetingArtifactAccess.mockResolvedValue({
+      transcriptAccessEnabled: false,
+      audioAccessEnabled: true,
+    });
+    mockedUpdateMeetingNotesService.mockResolvedValueOnce(true);
+
+    const suggestion = await buildCaller().meetings.suggestNotesCorrection({
+      serverId: "guild-1",
+      meetingId,
+      suggestion: "John Smith should be Jon Smythe.",
+    });
+    const result = await buildCaller().meetings.applyNotesCorrection({
+      serverId: "guild-1",
+      meetingId,
+      token: suggestion.token,
+    });
+
+    const context = await createDictionaryTeachingTokenStore({
+      maxPending: 200,
+    }).getContext(result.dictionaryTeachingContextToken!);
+    expect(context?.context.notesDiff).toBeTruthy();
+    expect(context?.context.transcriptExcerpt).toBeUndefined();
   });
 
   test("does not retain dictionary teaching context for a correction requester without Manage Server", async () => {
