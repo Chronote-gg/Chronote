@@ -12,11 +12,11 @@ No production configuration has been changed or deployed by this work.
 
 | Workload role                                                 | Effective baseline | Target override | Endpoint and contract                                                                                                       | Effective reasoning and role                                                         |
 | ------------------------------------------------------------- | ------------------ | --------------- | --------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
-| Meeting notes, personal-upload notes, notes eval              | `gpt-5.2`          | `gpt-5.6-sol`   | Chat Completions; Markdown text, mention allowlist sanitization, continuation on `length`                                   | Temperature mode forced reasoning `none`; flagship quality path                      |
-| Meeting summary                                               | `gpt-5.2`          | `gpt-5.6-sol`   | Chat Completions; JSON object parsed into bounded sentence and label fields; errors return an empty summary                 | Temperature `0`, reasoning `none`; quality-sensitive user-facing summary             |
-| Notes correction, Discord and web                             | `gpt-5.2`          | `gpt-5.6-sol`   | Chat Completions; corrected Markdown, code-fence stripping, mention allowlist sanitization; failure preserves current notes | Temperature `0`, reasoning `none`; fidelity is more important than throughput        |
-| Transcription cleanup                                         | `gpt-5.2`          | `gpt-5.6-sol`   | Chat Completions; cleaned transcript text with the shared continuation behavior                                             | Temperature `0`, reasoning `none`; transcription-adjacent quality path               |
-| Image prompt generation                                       | `gpt-5.2`          | `gpt-5.6-sol`   | Chat Completions; plain image prompt consumed by the unchanged DALL-E request                                               | Temperature `0.5`, reasoning `none`; creative quality path                           |
+| Meeting notes, personal-upload notes, notes eval              | `gpt-5.2`          | `gpt-5.6-sol`   | Chat Completions; Markdown text, mention allowlist sanitization, continuation on `length`                                   | Explicit `low`; flagship quality path                                                |
+| Meeting summary                                               | `gpt-5.2`          | `gpt-5.6-sol`   | Chat Completions; JSON object parsed into bounded sentence and label fields; errors return an empty summary                 | Explicit `low`; quality-sensitive user-facing summary                                |
+| Notes correction, Discord and web                             | `gpt-5.2`          | `gpt-5.6-sol`   | Chat Completions; corrected Markdown, code-fence stripping, mention allowlist sanitization; failure preserves current notes | Explicit `low`; fidelity is more important than throughput                           |
+| Transcription cleanup                                         | `gpt-5.2`          | `gpt-5.6-sol`   | Chat Completions; cleaned transcript text with the shared continuation behavior                                             | Explicit `low`; transcription-adjacent quality path                                  |
+| Image prompt generation                                       | `gpt-5.2`          | `gpt-5.6-sol`   | Chat Completions; plain image prompt consumed by the unchanged DALL-E request                                               | Explicit `low`; creative quality path                                                |
 | Meeting Q&A                                                   | `gpt-4o-mini`      | `gpt-5.6-terra` | Chat Completions; answer text plus deterministic meeting citations                                                          | Temperature `1`, reasoning `none`; balanced interactive path                         |
 | Live voice responder                                          | `gpt-4o-mini`      | `gpt-5.6-terra` | Chat Completions; text capped at 200 completion tokens; failures produce no spoken reply                                    | Temperature `1`, reasoning `none`; balanced latency and response quality             |
 | Live voice gate and command confirmation                      | `gpt-5-mini`       | `gpt-5.6-luna`  | Chat Completions; bounded JSON action/decision; invalid, empty, or failed output becomes no action                          | Explicit `low`; latency-sensitive, high-volume classifier                            |
@@ -46,10 +46,11 @@ that exercise the legacy compatibility paths are also retained.
   outputs, and image input. Chronote's calls are one-shot and tool-free, so an
   endpoint migration would add parser and continuation risk without being
   required for this model change.
-- **Reasoning:** GPT-5.6 defaults to `medium` when omitted. The model capability
-  resolver therefore explicitly emits `none` for every temperature-driven
-  request and preserves `low` for the existing reasoning-driven classifiers.
-  `max` is recognized for configured experiments but is not a default.
+- **Reasoning:** GPT-5.6 defaults to `medium` when omitted. Legacy
+  temperature-driven routes therefore continue to emit explicit `none`, while
+  every staged Sol activation pairs its model override with reasoning mode and
+  explicit `low`. Existing reasoning-driven classifiers remain `low`. `max` is
+  recognized for configured experiments but is not a default.
 - **Structured output:** Existing `json_object` requests and their validation,
   parse, and fail-closed behavior remain unchanged. No schema was weakened.
 - **Tools:** No migrated Chat Completions request supplies function tools, so
@@ -90,14 +91,16 @@ GPT-5.6-specific prompt regression is available yet.
    Confirm every role still resolves to its legacy baseline; deploying this
    code without a new override must remain a no-op for model routing.
 3. Test in the isolated sandbox only after explicit authorization. Set the
-   target `models.<role>` overrides there, verify account access and rate limits
-   for all three exact model IDs, and run meeting-notes, meeting-summary,
-   transcription, correction, gate, responder, Q&A, and image-caption cases
-   against the same inputs.
-4. Compare the preserved effort first. For `low` Luna classifiers, also test
-   `none`; for `none` Sol/Terra routes, test `low` only where reasoning could
-   improve the task. Do not promote a lower effort unless contract success and
-   quality remain acceptable.
+   target `models.<role>` overrides there. Pair every Sol override with
+   `modelParams.<role>.samplingMode=reasoning` and
+   `modelParams.<role>.reasoningEffort=low`; do not activate Sol with only the
+   model key. Verify account access and rate limits for all three exact model
+   IDs, and run meeting-notes, meeting-summary, transcription, correction,
+   gate, responder, Q&A, and image-caption cases against the same inputs.
+4. For every Sol workload, compare the `low` target with the preserved `none`
+   latency baseline on identical representative inputs. For `low` Luna
+   classifiers, also test `none`. Do not promote a configuration unless
+   contract success and quality remain acceptable.
 5. Roll production roles independently through AppConfig: Luna classifiers and
    coalescing first, Terra interactive text next, then Sol notes/corrections.
    Hold each stage long enough to compare success, latency, and cost with its
