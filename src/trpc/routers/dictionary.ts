@@ -26,7 +26,10 @@ import {
   normalizeDictionaryObservedForms,
   normalizeDictionaryTerm,
 } from "../../utils/dictionary";
-import { generateDictionaryTeachingDrafts } from "../../services/dictionaryTeachingService";
+import {
+  findDictionaryObservedConflict,
+  generateDictionaryTeachingDrafts,
+} from "../../services/dictionaryTeachingService";
 import { createDictionaryTeachingTokenStore } from "../../services/dictionaryTeachingTokenStore";
 import { resolveModelParamsForContext } from "../../services/openaiModelParams";
 import { resolveModelChoicesForContext } from "../../services/modelChoiceService";
@@ -114,8 +117,8 @@ const normalizeTeachingEntry = (
 ) => ({
   preferredTerm: normalizeDictionaryTerm(submitted.preferredTerm),
   observedForms: normalizeDictionaryObservedForms([
-    ...(current?.observedForms ?? []),
     ...(submitted.observedForms ?? []),
+    ...(current?.observedForms ?? []),
   ]),
   description:
     submitted.description === undefined
@@ -185,18 +188,33 @@ const prepareTeachingEntrySave = (params: {
   submitted: DictionaryTeachingCommitEntry;
   draft: DictionaryTeachingDraft;
   current?: DictionaryEntry;
+  currentEntries: DictionaryEntry[];
   record: DictionaryTeachingDraftRecord;
 }) => {
   const normalized = normalizeTeachingEntry(params.submitted, params.current);
   const targetsUnreviewedEntry =
     params.current !== undefined &&
     params.draft.existingEntry?.termKey !== params.current.termKey;
-  const save = targetsUnreviewedEntry
+  const observedConflict = findDictionaryObservedConflict(
+    params.currentEntries,
+    normalized.preferredTerm,
+    normalizeDictionaryObservedForms(
+      params.submitted.observedForms ?? params.draft.observedForms,
+    ) ?? [],
+  );
+  const targetsUnreviewedObservedConflict =
+    observedConflict !== undefined &&
+    params.draft.existingEntry?.termKey !== observedConflict.termKey;
+  const conflictError = targetsUnreviewedEntry
+    ? "This exact spelling now matches an existing entry. Revise and analyze the request again before updating it."
+    : targetsUnreviewedObservedConflict
+      ? "This spelling or one of its observed forms now conflicts with another entry. Revise and analyze the request again before saving it."
+      : undefined;
+  const save = conflictError
     ? Promise.resolve<TeachingCommitResult>({
         draftId: params.submitted.draftId,
         ok: false,
-        error:
-          "This exact spelling now matches an existing entry. Revise and analyze the request again before updating it.",
+        error: conflictError,
       })
     : saveTeachingEntry({
         serverId: params.serverId,
@@ -235,6 +253,7 @@ const commitDictionaryTeaching = async (
       submitted,
       draft: draftsById.get(submitted.draftId)!,
       current: currentByKey.get(key),
+      currentEntries,
       record,
     });
   });

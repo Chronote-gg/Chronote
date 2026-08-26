@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useSearch } from "@tanstack/react-router";
 import type { HTMLAttributes } from "react";
 import {
@@ -182,6 +182,7 @@ export default function MeetingDetailDrawer({
     useState("");
   const [dictionaryTeachingContextToken, setDictionaryTeachingContextToken] =
     useState<string | undefined>();
+  const initializedMeetingIdRef = useRef<string | null>(null);
 
   const [shareModalOpen, setShareModalOpen] = useState(false);
   const [shareError, setShareError] = useState<string | null>(null);
@@ -319,6 +320,8 @@ export default function MeetingDetailDrawer({
 
   useEffect(() => {
     if (!meeting) return;
+    if (initializedMeetingIdRef.current === meeting.id) return;
+    initializedMeetingIdRef.current = meeting.id;
     setRenameDraft(resolveRenameDraft(meeting));
     setRenameError(null);
     setSummaryFeedback(meeting.summaryFeedback ?? null);

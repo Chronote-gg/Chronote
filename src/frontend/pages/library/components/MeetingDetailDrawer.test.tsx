@@ -648,6 +648,57 @@ describe("MeetingDetailDrawer summary copy", () => {
     );
   });
 
+  it("preserves correction teaching context across a detail refresh", async () => {
+    jest.mocked(notifications.show).mockClear();
+    const view = renderDrawer({ canManageSelectedGuild: true });
+
+    await applyCorrection();
+    useMeetingDetailMock.mockReturnValue(
+      buildUseMeetingDetailResult({
+        detail: buildDetail({
+          notes: "- Decision: Ship it\n- Contact: Jon Smythe",
+          notesVersion: 2,
+        }),
+        meeting: buildMeeting({
+          notes: "- Decision: Ship it\n- Contact: Jon Smythe",
+        }),
+      }),
+    );
+    view.rerender(
+      <MantineProvider>
+        <MeetingDetailDrawer
+          opened
+          selectedMeetingId="m1"
+          selectedGuildId="g1"
+          canManageSelectedGuild
+          channelNameMap={new Map([["c1", "general"]])}
+          invalidateMeetingLists={jest.fn(async () => {})}
+          onClose={jest.fn()}
+        />
+      </MantineProvider>,
+    );
+
+    const offer = jest
+      .mocked(notifications.show)
+      .mock.calls.map(([options]) => options)
+      .find((options) => options.id === "notes-correction-teaching-offer");
+    render(<MantineProvider>{offer?.message}</MantineProvider>);
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "Teach Chronote from this correction",
+      }),
+    );
+
+    expect(
+      await screen.findByRole("dialog", { name: "Teach Chronote" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByDisplayValue(
+        "It wrote John Smith, but his name is Jon Smythe.",
+      ),
+    ).toBeInTheDocument();
+  });
+
   it("does not offer dictionary teaching to a member without Manage Server", async () => {
     jest.mocked(notifications.show).mockClear();
     renderDrawer({ canManageSelectedGuild: false });

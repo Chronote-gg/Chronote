@@ -104,7 +104,7 @@ const findExistingEntry = (entries: DictionaryEntry[], term: string) => {
   return entries.find((entry) => entry.termKey === termKey);
 };
 
-const findObservedConflict = (
+export const findDictionaryObservedConflict = (
   entries: DictionaryEntry[],
   preferredTerm: string,
   observedForms: string[],
@@ -194,7 +194,11 @@ const toDictionaryTeachingDraft = (
     ? findExistingEntry(params.existingEntries, preferredTerm)
     : undefined;
   const conflictEntry = preferredTerm
-    ? findObservedConflict(params.existingEntries, preferredTerm, observedForms)
+    ? findDictionaryObservedConflict(
+        params.existingEntries,
+        preferredTerm,
+        observedForms,
+      )
     : undefined;
   return {
     draftId: uuidv4(),

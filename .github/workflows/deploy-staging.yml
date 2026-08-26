@@ -115,37 +115,9 @@ jobs:
   # They describe external Langfuse state rather than code quality, ci.yml
   # already enforces them, and while they gated this workflow an unpromoted
   # prompt or a brief Langfuse outage would skip every deploy job. Sandbox
-  # also does not promote the full prompt set: this workflow is manual dispatch
-  # and shares the Langfuse project, so pushing every prompt from here could
-  # overwrite production prompts. Full promotion happens only in deploy.yml,
-  # after Deploy Backend. The one new prompt required at application startup is
-  # bootstrapped separately below because its initial revision is compatible
-  # with both the old and new backend.
-
-  bootstrap-dictionary-teaching-prompt:
-    name: Bootstrap Dictionary Teaching Prompt
-    runs-on: blacksmith-4vcpu-ubuntu-2404
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v7
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v7
-        with:
-          node-version: "24.15.0"
-          cache: "yarn"
-          cache-dependency-path: "yarn.lock"
-
-      - name: Install dependencies
-        run: bash scripts/ci-install-dependencies.sh
-
-      - name: Bootstrap required prompt
-        env:
-          LANGFUSE_PUBLIC_KEY: ${{ secrets.LANGFUSE_PUBLIC_KEY }}
-          LANGFUSE_SECRET_KEY: ${{ secrets.LANGFUSE_SECRET_KEY }}
-          LANGFUSE_BASE_URL: ${{ vars.LANGFUSE_BASE_URL }}
-          LANGFUSE_PROMPT_LABEL: ${{ vars.LANGFUSE_PROMPT_LABEL }}
-        run: yarn prompts:push --name chronote-dictionary-teaching-chat
+  # also does not promote prompts: this workflow is manual dispatch and shares
+  # the Langfuse project, so pushing from here could overwrite production
+  # prompts. Promotion happens only in deploy.yml, after Deploy Backend.
 
   build:
     name: Build
@@ -353,7 +325,7 @@ jobs:
   # target variables do not need to be passed through job outputs.
   deploybackend:
     name: Deploy Backend (Sandbox)
-    needs: [deploy-target-preflight, bootstrap-dictionary-teaching-prompt]
+    needs: [deploy-target-preflight]
     runs-on: blacksmith-4vcpu-ubuntu-2404
     environment: sandbox
     env:

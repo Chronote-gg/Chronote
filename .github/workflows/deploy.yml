@@ -260,35 +260,6 @@ jobs:
       - name: Run Playwright tests (mock mode)
         run: yarn test:e2e
 
-  # This prompt is required during application startup. Bootstrap only this
-  # new, old-code-compatible prompt before replacing the backend, while the
-  # normal prompt promotion remains after deployment for prompt revisions that
-  # depend on new variables supplied by the backend.
-  bootstrap-dictionary-teaching-prompt:
-    name: Bootstrap Dictionary Teaching Prompt
-    runs-on: blacksmith-4vcpu-ubuntu-2404
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v7
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v7
-        with:
-          node-version: "24.15.0"
-          cache: "yarn"
-          cache-dependency-path: "yarn.lock"
-
-      - name: Install dependencies
-        run: bash scripts/ci-install-dependencies.sh
-
-      - name: Bootstrap required prompt
-        env:
-          LANGFUSE_PUBLIC_KEY: ${{ secrets.LANGFUSE_PUBLIC_KEY }}
-          LANGFUSE_SECRET_KEY: ${{ secrets.LANGFUSE_SECRET_KEY }}
-          LANGFUSE_BASE_URL: ${{ vars.LANGFUSE_BASE_URL }}
-          LANGFUSE_PROMPT_LABEL: ${{ vars.LANGFUSE_PROMPT_LABEL }}
-        run: yarn prompts:push --name chronote-dictionary-teaching-chat
-
   deploybackend:
     name: Deploy Backend
     needs:
@@ -303,7 +274,6 @@ jobs:
         code-stats,
         checkov,
         e2e-tests,
-        bootstrap-dictionary-teaching-prompt,
       ]
     runs-on: blacksmith-4vcpu-ubuntu-2404
     environment: production
