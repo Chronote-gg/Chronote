@@ -24,6 +24,54 @@ const sortEntries = (entries: DictionaryEntry[]) =>
 export const DICTIONARY_REVIEW_CONFLICT_MESSAGE =
   "This dictionary entry changed after the proposal was reviewed. Analyze it again before saving.";
 
+const normalizeAndValidateDictionaryTerm = (value: string) => {
+  const term = normalizeDictionaryTerm(value);
+  if (!term) {
+    throw new Error("Dictionary term cannot be empty.");
+  }
+  if (term.length > DICTIONARY_TERM_MAX_LENGTH) {
+    throw new Error(
+      `Dictionary term must be ${DICTIONARY_TERM_MAX_LENGTH} characters or less.`,
+    );
+  }
+  return term;
+};
+
+const normalizeAndValidateDictionaryDefinition = (value?: string | null) => {
+  const definition = normalizeDictionaryDefinition(value);
+  if (definition && definition.length > DICTIONARY_DEFINITION_MAX_LENGTH) {
+    throw new Error(
+      `Dictionary definition must be ${DICTIONARY_DEFINITION_MAX_LENGTH} characters or less.`,
+    );
+  }
+  return definition;
+};
+
+const loadEntryForUpsert = async (params: {
+  guildId: string;
+  termKey: string;
+  preserveObservedForms: boolean;
+  preserveLastTeaching: boolean;
+}) => {
+  const repository = getDictionaryRepository();
+  const preservesStoredTeachingData =
+    params.preserveObservedForms || params.preserveLastTeaching;
+  if (!preservesStoredTeachingData) {
+    return {
+      existing: await repository.get(params.guildId, params.termKey),
+      repository,
+    };
+  }
+  const snapshot = await repository.listSnapshotByGuild(params.guildId);
+  return {
+    existing: snapshot.entries.find(
+      (entry) => entry.termKey === params.termKey,
+    ),
+    preservationRevision: snapshot.revision,
+    repository,
+  };
+};
+
 export async function listDictionaryEntriesService(
   guildId: string,
 ): Promise<DictionaryEntry[]> {
@@ -53,32 +101,18 @@ export async function upsertDictionaryEntryService(params: {
   expectedUpdatedAt?: string | null;
   expectedRevision?: number;
 }): Promise<DictionaryEntry> {
-  const term = normalizeDictionaryTerm(params.term);
-  if (!term) {
-    throw new Error("Dictionary term cannot be empty.");
-  }
-  if (term.length > DICTIONARY_TERM_MAX_LENGTH) {
-    throw new Error(
-      `Dictionary term must be ${DICTIONARY_TERM_MAX_LENGTH} characters or less.`,
-    );
-  }
-  const definition = normalizeDictionaryDefinition(params.definition);
-  if (definition && definition.length > DICTIONARY_DEFINITION_MAX_LENGTH) {
-    throw new Error(
-      `Dictionary definition must be ${DICTIONARY_DEFINITION_MAX_LENGTH} characters or less.`,
-    );
-  }
-
-  const repository = getDictionaryRepository();
+  const term = normalizeAndValidateDictionaryTerm(params.term);
+  const definition = normalizeAndValidateDictionaryDefinition(
+    params.definition,
+  );
   const termKey = buildDictionaryTermKey(term);
-  const preservesStoredTeachingData =
-    params.observedForms === undefined || params.lastTeaching === undefined;
-  const preservationSnapshot = preservesStoredTeachingData
-    ? await repository.listSnapshotByGuild(params.guildId)
-    : undefined;
-  const existing = preservationSnapshot
-    ? preservationSnapshot.entries.find((entry) => entry.termKey === termKey)
-    : await repository.get(params.guildId, termKey);
+  const { existing, preservationRevision, repository } =
+    await loadEntryForUpsert({
+      guildId: params.guildId,
+      termKey,
+      preserveObservedForms: params.observedForms === undefined,
+      preserveLastTeaching: params.lastTeaching === undefined,
+    });
   const now = new Date().toISOString();
   const observedForms =
     params.observedForms === undefined
@@ -100,7 +134,7 @@ export async function upsertDictionaryEntryService(params: {
   const written = await repository.write(
     entry,
     params.expectedUpdatedAt,
-    params.expectedRevision ?? preservationSnapshot?.revision,
+    params.expectedRevision ?? preservationRevision,
   );
   if (!written) {
     throw new Error(DICTIONARY_REVIEW_CONFLICT_MESSAGE);
