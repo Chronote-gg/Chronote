@@ -40,6 +40,7 @@ import {
 import { ChannelOverridesCard } from "../features/settings/ChannelOverridesCard";
 import { ServerConfigCard } from "../features/settings/ServerConfigCard";
 import { DictionaryCard } from "../features/settings/DictionaryCard";
+import DictionaryTeachingModal from "../features/settings/DictionaryTeachingModal";
 import { NotionIntegrationCard } from "../features/settings/NotionIntegrationCard";
 import {
   ServiceAccountsCard,
@@ -118,6 +119,7 @@ export default function Settings() {
   const dictionaryUpsertMutation = trpc.dictionary.upsert.useMutation();
   const dictionaryRemoveMutation = trpc.dictionary.remove.useMutation();
   const dictionaryClearMutation = trpc.dictionary.clear.useMutation();
+  const [dictionaryTeachingOpen, setDictionaryTeachingOpen] = useState(false);
   const saveNotionAutomationMutation =
     trpc.notion.saveAutomationConfig.useMutation();
   const disableNotionAutomationMutation =
@@ -707,6 +709,20 @@ export default function Settings() {
             serverId: selectedGuildId,
           });
         }}
+        onTeach={() => setDictionaryTeachingOpen(true)}
+      />
+
+      <DictionaryTeachingModal
+        opened={dictionaryTeachingOpen}
+        serverId={selectedGuildId ?? ""}
+        onClose={() => setDictionaryTeachingOpen(false)}
+        onSaved={() =>
+          selectedGuildId
+            ? trpcUtils.dictionary.list.invalidate({
+                serverId: selectedGuildId,
+              })
+            : Promise.resolve()
+        }
       />
 
       <NotionIntegrationCard

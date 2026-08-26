@@ -18,7 +18,12 @@ import {
   useMantineTheme,
 } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
-import { IconFilter, IconPencil, IconUsers } from "@tabler/icons-react";
+import {
+  IconFilter,
+  IconPencil,
+  IconSparkles,
+  IconUsers,
+} from "@tabler/icons-react";
 import MeetingTimeline, {
   MEETING_TIMELINE_FILTERS,
 } from "../../../components/MeetingTimeline";
@@ -56,6 +61,7 @@ import {
 } from "../../../features/meetingShares/MeetingShareModal";
 import PersonalMeetingShareModal from "../../../features/meetingShares/PersonalMeetingShareModal";
 import { buildMeetingShareUrl } from "../../../utils/meetingShareLinks";
+import DictionaryTeachingModal from "../../../features/settings/DictionaryTeachingModal";
 
 const resolveRenameDraft = (meeting: {
   meetingName?: string;
@@ -170,6 +176,12 @@ export default function MeetingDetailDrawer({
   const [notesCorrectionChanged, setNotesCorrectionChanged] = useState<
     boolean | null
   >(null);
+  const [dictionaryTeachingModalOpen, setDictionaryTeachingModalOpen] =
+    useState(false);
+  const [dictionaryTeachingInstruction, setDictionaryTeachingInstruction] =
+    useState("");
+  const [dictionaryTeachingContextToken, setDictionaryTeachingContextToken] =
+    useState<string | undefined>();
 
   const [shareModalOpen, setShareModalOpen] = useState(false);
   const [shareError, setShareError] = useState<string | null>(null);
@@ -325,6 +337,9 @@ export default function MeetingDetailDrawer({
     setNotesCorrectionToken(null);
     setNotesCorrectionChanged(null);
     setNotesCorrectionModalOpen(false);
+    setDictionaryTeachingModalOpen(false);
+    setDictionaryTeachingInstruction("");
+    setDictionaryTeachingContextToken(undefined);
   }, [meeting]);
 
   const openNotesCorrectionModal = () => {
@@ -388,13 +403,47 @@ export default function MeetingDetailDrawer({
   const handleNotesCorrectionApply = async () => {
     if (!selectedGuildId || !selectedMeetingId || !notesCorrectionToken) return;
     try {
-      await applyNotesCorrectionMutation.mutateAsync({
+      const result = await applyNotesCorrectionMutation.mutateAsync({
         serverId: selectedGuildId,
         meetingId: selectedMeetingId,
         token: notesCorrectionToken,
       });
-      notifications.show({ message: "Notes updated." });
       closeNotesCorrectionModal();
+      if (
+        canManageSelectedGuild &&
+        result.dictionaryTeachingContextToken &&
+        result.dictionaryTeachingInstruction
+      ) {
+        setDictionaryTeachingContextToken(
+          result.dictionaryTeachingContextToken,
+        );
+        setDictionaryTeachingInstruction(result.dictionaryTeachingInstruction);
+        notifications.show({
+          id: "notes-correction-teaching-offer",
+          title: "Notes updated",
+          autoClose: false,
+          message: (
+            <Stack gap="xs">
+              <Text size="sm">
+                Want Chronote to recognize this correction in future meetings?
+              </Text>
+              <Button
+                size="compact-sm"
+                variant="light"
+                leftSection={<IconSparkles size={14} />}
+                onClick={() => {
+                  notifications.hide("notes-correction-teaching-offer");
+                  setDictionaryTeachingModalOpen(true);
+                }}
+              >
+                Teach Chronote from this correction
+              </Button>
+            </Stack>
+          ),
+        });
+      } else {
+        notifications.show({ message: "Notes updated." });
+      }
       await Promise.all([
         trpcUtils.meetings.detail.invalidate(),
         trpcUtils.notion.exportStatus.invalidate(),
@@ -1098,6 +1147,24 @@ export default function MeetingDetailDrawer({
                 onRenameSave={handleRenameSave}
                 renamePending={renameMutation.isPending}
               />
+              {selectedGuildId ? (
+                <DictionaryTeachingModal
+                  opened={dictionaryTeachingModalOpen}
+                  serverId={selectedGuildId}
+                  initialInstruction={dictionaryTeachingInstruction}
+                  correctionContextToken={dictionaryTeachingContextToken}
+                  onClose={() => {
+                    setDictionaryTeachingModalOpen(false);
+                    setDictionaryTeachingInstruction("");
+                    setDictionaryTeachingContextToken(undefined);
+                  }}
+                  onSaved={() =>
+                    trpcUtils.dictionary.list.invalidate({
+                      serverId: selectedGuildId,
+                    })
+                  }
+                />
+              ) : null}
               <MeetingNotesEditorModal
                 opened={notesEditorModalOpen}
                 initialMarkdown={detail?.notes ?? ""}

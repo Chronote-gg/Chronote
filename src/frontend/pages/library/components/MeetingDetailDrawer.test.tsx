@@ -50,6 +50,19 @@ const mockSetPersonalShareGrants = jest.fn().mockResolvedValue({
   accessGrants: [],
 });
 
+const mockSuggestNotesCorrection = jest.fn().mockResolvedValue({
+  token: "mock-token",
+  diff: "+ mock diff",
+  changed: true,
+});
+
+const mockApplyNotesCorrection = jest.fn().mockResolvedValue({
+  ok: true,
+  dictionaryTeachingContextToken: "11111111-1111-4111-8111-111111111111",
+  dictionaryTeachingInstruction:
+    "It wrote John Smith, but his name is Jon Smythe.",
+});
+
 const mockNotionStatusQuery = {
   data: { configured: true, connected: false },
   isLoading: false,
@@ -91,6 +104,11 @@ jest.mock("../../../services/trpc", () => ({
       },
       notion: {
         exportStatus: {
+          invalidate: jest.fn(),
+        },
+      },
+      dictionary: {
+        list: {
           invalidate: jest.fn(),
         },
       },
@@ -188,18 +206,14 @@ jest.mock("../../../services/trpc", () => ({
       },
       suggestNotesCorrection: {
         useMutation: () => ({
-          mutateAsync: jest.fn().mockResolvedValue({
-            token: "mock-token",
-            diff: "+ mock diff",
-            changed: true,
-          }),
+          mutateAsync: mockSuggestNotesCorrection,
           isPending: false,
           error: undefined,
         }),
       },
       applyNotesCorrection: {
         useMutation: () => ({
-          mutateAsync: jest.fn().mockResolvedValue({ ok: true }),
+          mutateAsync: mockApplyNotesCorrection,
           isPending: false,
           error: undefined,
         }),
@@ -229,6 +243,24 @@ jest.mock("../../../services/trpc", () => ({
         }),
       },
     },
+    dictionary: {
+      previewTeaching: {
+        useMutation: () => ({
+          mutateAsync: jest.fn().mockResolvedValue({
+            token: "22222222-2222-4222-8222-222222222222",
+            expiresAtMs: Date.now() + 15 * 60 * 1_000,
+            drafts: [],
+          }),
+          isPending: false,
+        }),
+      },
+      commitTeaching: {
+        useMutation: () => ({
+          mutateAsync: jest.fn().mockResolvedValue({ results: [] }),
+          isPending: false,
+        }),
+      },
+    },
     feedback: {
       submitSummary: {
         useMutation: () => ({
@@ -248,6 +280,7 @@ jest.mock("../hooks/useMeetingDetail", () => ({
 jest.mock("@mantine/notifications", () => ({
   notifications: {
     show: jest.fn(),
+    hide: jest.fn(),
   },
 }));
 
@@ -365,6 +398,8 @@ describe("MeetingDetailDrawer summary copy", () => {
     mockPersonalShareStateQuery.error = null;
     mockPersonalShareStateQuery.refetch.mockClear();
     mockSetPersonalShareGrants.mockClear();
+    mockSuggestNotesCorrection.mockClear();
+    mockApplyNotesCorrection.mockClear();
     mockNotionStatusQuery.data = { configured: true, connected: false };
     mockNotionExportStatusQuery.data = {
       exported: false,
@@ -582,5 +617,48 @@ describe("MeetingDetailDrawer summary copy", () => {
     fireEvent.click(screen.getByLabelText("Notes actions"));
 
     expect(await screen.findByText("Retry Notion automation")).toBeEnabled();
+  });
+
+  const applyCorrection = async () => {
+    fireEvent.click(screen.getByLabelText("Notes actions"));
+    fireEvent.click(await screen.findByText("Suggest correction (AI)"));
+    fireEvent.change(await screen.findByLabelText("Suggestion"), {
+      target: {
+        value: "It wrote John Smith, but his name is Jon Smythe.",
+      },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Generate proposal" }));
+    await screen.findByText("+ mock diff");
+    fireEvent.click(screen.getByRole("button", { name: "Apply update" }));
+    await waitFor(() => expect(mockApplyNotesCorrection).toHaveBeenCalled());
+  };
+
+  it("offers an explicit dictionary-teaching step after a manager applies a correction", async () => {
+    jest.mocked(notifications.show).mockClear();
+    renderDrawer({ canManageSelectedGuild: true });
+
+    await applyCorrection();
+
+    expect(notifications.show).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: "notes-correction-teaching-offer",
+        title: "Notes updated",
+        autoClose: false,
+      }),
+    );
+  });
+
+  it("does not offer dictionary teaching to a member without Manage Server", async () => {
+    jest.mocked(notifications.show).mockClear();
+    renderDrawer({ canManageSelectedGuild: false });
+
+    await applyCorrection();
+
+    expect(notifications.show).toHaveBeenCalledWith({
+      message: "Notes updated.",
+    });
+    expect(notifications.show).not.toHaveBeenCalledWith(
+      expect.objectContaining({ id: "notes-correction-teaching-offer" }),
+    );
   });
 });

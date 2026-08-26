@@ -121,6 +121,37 @@ describe("dictionaryService", () => {
     expect(entry.definition).toBe("New definition");
   });
 
+  test("stores approved observed forms and preserves them during manual edits", async () => {
+    const lastTeaching = {
+      method: "llm_assisted" as const,
+      source: "settings" as const,
+      model: "gpt-5-mini",
+      promptName: "chronote-dictionary-teaching-chat",
+      promptVersion: 1,
+      approvedBy: "user-1",
+      approvedAt: "2025-01-01T00:00:00.000Z",
+    };
+    await upsertDictionaryEntryService({
+      guildId: "guild-1",
+      term: "Jon Smythe",
+      definition: "Apollo contact",
+      observedForms: [" John Smith ", "John Smith", "Jon Smith"],
+      lastTeaching,
+      userId: "user-1",
+    });
+
+    const updated = await upsertDictionaryEntryService({
+      guildId: "guild-1",
+      term: "Jon Smythe",
+      definition: "Apollo account manager",
+      userId: "user-2",
+    });
+
+    expect(updated.observedForms).toEqual(["John Smith", "Jon Smith"]);
+    expect(updated.lastTeaching).toEqual(lastTeaching);
+    expect(updated.definition).toBe("Apollo account manager");
+  });
+
   test("upsertDictionaryEntryService validates term and definition length", async () => {
     await expect(
       upsertDictionaryEntryService({

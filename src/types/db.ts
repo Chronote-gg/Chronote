@@ -123,11 +123,15 @@ export interface RecordingTranscript {
 }
 
 export interface SuggestionHistoryEntry {
+  correctionId?: string;
   userId: string;
   userTag?: string;
   displayName?: string;
   text: string;
   createdAt: string; // ISO timestamp
+  source?: "discord" | "web";
+  baseNotesVersion?: number;
+  resultingNotesVersion?: number;
 }
 
 export interface NotesHistoryEntry {
@@ -140,7 +144,7 @@ export interface NotesHistoryEntry {
 
 export type NotesEditSource =
   | { type: "web_editor" }
-  | { type: "notes_correction" }
+  | { type: "notes_correction"; correctionId?: string }
   | {
       type: "manual_import";
       importMode: "replace" | "append";
@@ -343,11 +347,25 @@ export interface ChatTtsMonthlyUsage {
   expiresAt: number; // Dynamo TTL epoch seconds
 }
 
+export interface DictionaryTeachingProvenance {
+  method: "manual" | "llm_assisted";
+  source: "settings" | "notes_correction";
+  meetingId?: string;
+  correctionId?: string;
+  model?: string;
+  promptName?: string;
+  promptVersion?: number;
+  approvedBy: string;
+  approvedAt: string;
+}
+
 export interface DictionaryEntry {
   guildId: string; // Partition key
   termKey: string; // Sort key, normalized term
   term: string; // Display term
   definition?: string;
+  observedForms?: string[];
+  lastTeaching?: DictionaryTeachingProvenance;
   createdAt: string; // ISO timestamp
   createdBy: string; // User ID who created
   updatedAt: string; // ISO timestamp

@@ -43,6 +43,8 @@ jest.mock("../../services/trpc", () => {
         upsert: { useMutation: jest.fn(() => buildMutation()) },
         remove: { useMutation: jest.fn(() => buildMutation()) },
         clear: { useMutation: jest.fn(() => buildMutation()) },
+        previewTeaching: { useMutation: jest.fn(() => buildMutation()) },
+        commitTeaching: { useMutation: jest.fn(() => buildMutation()) },
       },
       notion: {
         automationStatus: { useQuery: jest.fn(() => buildQuery()) },
@@ -110,6 +112,8 @@ const trpcMock = trpc as unknown as {
     upsert: { useMutation: jest.Mock };
     remove: { useMutation: jest.Mock };
     clear: { useMutation: jest.Mock };
+    previewTeaching: { useMutation: jest.Mock };
+    commitTeaching: { useMutation: jest.Mock };
   };
   notion: {
     automationStatus: { useQuery: jest.Mock };
@@ -174,6 +178,12 @@ describe("Settings page", () => {
       buildMutationResult(),
     );
     trpcMock.dictionary.clear.useMutation.mockReturnValue(
+      buildMutationResult(),
+    );
+    trpcMock.dictionary.previewTeaching.useMutation.mockReturnValue(
+      buildMutationResult(),
+    );
+    trpcMock.dictionary.commitTeaching.useMutation.mockReturnValue(
       buildMutationResult(),
     );
     trpcMock.notion.saveAutomationConfig.useMutation.mockReturnValue(

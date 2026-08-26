@@ -1,10 +1,14 @@
-import type { DictionaryEntry } from "../types/db";
+import type {
+  DictionaryEntry,
+  DictionaryTeachingProvenance,
+} from "../types/db";
 import { getDictionaryRepository } from "../repositories/dictionaryRepository";
 import {
   buildDictionaryTermKey,
   DICTIONARY_DEFINITION_MAX_LENGTH,
   DICTIONARY_TERM_MAX_LENGTH,
   normalizeDictionaryDefinition,
+  normalizeDictionaryObservedForms,
   normalizeDictionaryTerm,
 } from "../utils/dictionary";
 import { captureEvent } from "./analyticsService";
@@ -28,6 +32,8 @@ export async function upsertDictionaryEntryService(params: {
   guildId: string;
   term: string;
   definition?: string | null;
+  observedForms?: string[];
+  lastTeaching?: DictionaryTeachingProvenance;
   userId: string;
 }): Promise<DictionaryEntry> {
   const term = normalizeDictionaryTerm(params.term);
@@ -50,11 +56,17 @@ export async function upsertDictionaryEntryService(params: {
   const termKey = buildDictionaryTermKey(term);
   const existing = await repository.get(params.guildId, termKey);
   const now = new Date().toISOString();
+  const observedForms =
+    params.observedForms === undefined
+      ? existing?.observedForms
+      : normalizeDictionaryObservedForms(params.observedForms);
   const entry: DictionaryEntry = {
     guildId: params.guildId,
     termKey,
     term,
     definition,
+    observedForms,
+    lastTeaching: params.lastTeaching ?? existing?.lastTeaching,
     createdAt: existing?.createdAt ?? now,
     createdBy: existing?.createdBy ?? params.userId,
     updatedAt: now,

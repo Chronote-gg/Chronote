@@ -634,6 +634,112 @@ describe("meetings notes correction mutations", () => {
     ).rejects.toMatchObject({ code: "NOT_FOUND" });
   });
 
+  test("applyNotesCorrection records provenance and offers bounded teaching context", async () => {
+    const meetingId = "channel-1#2025-01-01T00:00:00.000Z";
+    mockedGetMeetingHistory.mockResolvedValue({
+      guildId: "guild-1",
+      channelId_timestamp: meetingId,
+      meetingId: "meeting-1",
+      channelId: "channel-1",
+      timestamp: "2025-01-01T00:00:00.000Z",
+      duration: 1800,
+      transcribeMeeting: true,
+      generateNotes: true,
+      notes: "John Smith owns the Apollo rollout.",
+      transcriptS3Key: "transcripts/meeting-1.json",
+      notesVersion: 3,
+      summarySentence: "Previous summary",
+      summaryLabel: "Apollo rollout",
+    } as unknown as MeetingHistory);
+    mockedFetchJsonFromS3.mockResolvedValueOnce({
+      text: "Jon Smythe from Apollo owns the rollout.",
+    });
+    const createCompletion = jest.fn(async () => ({
+      choices: [
+        {
+          message: { content: "Jon Smythe owns the Apollo rollout." },
+        },
+      ],
+    }));
+    mockedCreateOpenAIClient.mockReturnValue({
+      chat: { completions: { create: createCompletion } },
+    } as unknown as ReturnType<typeof createOpenAIClient>);
+
+    const suggestion = await buildCaller().meetings.suggestNotesCorrection({
+      serverId: "guild-1",
+      meetingId,
+      suggestion: "John Smith should be Jon Smythe.",
+    });
+    mockedUpdateMeetingNotesService.mockResolvedValueOnce(true);
+
+    const result = await buildCaller().meetings.applyNotesCorrection({
+      serverId: "guild-1",
+      meetingId,
+      token: suggestion.token,
+    });
+
+    expect(result.dictionaryTeachingContextToken).toEqual(expect.any(String));
+    expect(result.dictionaryTeachingInstruction).toBe(
+      "John Smith should be Jon Smythe.",
+    );
+    expect(mockedUpdateMeetingNotesService).toHaveBeenCalledWith(
+      expect.objectContaining({
+        notesVersion: 4,
+        source: {
+          type: "notes_correction",
+          correctionId: expect.any(String),
+        },
+        suggestion: expect.objectContaining({
+          correctionId: expect.any(String),
+          source: "web",
+          baseNotesVersion: 3,
+          resultingNotesVersion: 4,
+        }),
+      }),
+    );
+  });
+
+  test("does not retain dictionary teaching context for a correction requester without Manage Server", async () => {
+    const meetingId = "channel-1#2025-01-01T00:00:00.000Z";
+    const user = getMockUser();
+    mockedGetMeetingHistory.mockResolvedValue({
+      guildId: "guild-1",
+      channelId_timestamp: meetingId,
+      meetingId: "meeting-1",
+      channelId: "channel-1",
+      timestamp: "2025-01-01T00:00:00.000Z",
+      duration: 1800,
+      transcribeMeeting: true,
+      generateNotes: true,
+      notes: "John Smith owns the Apollo rollout.",
+      transcriptS3Key: "transcripts/meeting-1.json",
+      notesVersion: 1,
+      meetingCreatorId: user.id,
+    } as unknown as MeetingHistory);
+    mockedFetchJsonFromS3.mockResolvedValueOnce({
+      text: "Jon Smythe owns the Apollo rollout.",
+    });
+    mockedUpdateMeetingNotesService.mockResolvedValueOnce(true);
+    mockedEnsureManageGuild.mockResolvedValue(false);
+
+    const suggestion = await buildCaller(user).meetings.suggestNotesCorrection({
+      serverId: "guild-1",
+      meetingId,
+      suggestion: "John Smith should be Jon Smythe.",
+    });
+    const result = await buildCaller(user).meetings.applyNotesCorrection({
+      serverId: "guild-1",
+      meetingId,
+      token: suggestion.token,
+    });
+
+    expect(result).toEqual({
+      ok: true,
+      dictionaryTeachingContextToken: undefined,
+      dictionaryTeachingInstruction: "John Smith should be Jon Smythe.",
+    });
+  });
+
   test("applyNotesCorrection rejects applying someone else's token", async () => {
     const meetingId = "channel-1#2025-01-01T00:00:00.000Z";
     mockedGetMeetingHistory.mockResolvedValue({

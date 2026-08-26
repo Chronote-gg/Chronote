@@ -66,7 +66,11 @@ Manages a glossary of terms that are injected into prompts. Requires **Manage Ch
 
 All responses are ephemeral (visible only to you).
 
-Dictionary terms are injected into the transcription prompt so the AI spells them correctly. Definitions are included in the notes prompt (but not the transcription prompt) to give the AI additional context without bloating the transcription input.
+Dictionary terms are injected into the transcription prompt to help the AI spell them correctly. Definitions are included in the notes prompt (but not the transcription prompt) to give the AI additional context without bloating the transcription input.
+
+Members with **Manage Server** can also open **Server Settings** -> **Teach Chronote** and describe the vocabulary in ordinary language. Chronote creates temporary proposed entries and short descriptions, but no entry is added to the server dictionary until the member reviews the batch and approves that entry. Possible conflicts and proposals without an exact spelling start unchecked.
+
+After a member with **Manage Server** applies a notes correction in the web portal, Chronote offers an optional **Teach Chronote from this correction** step. Clicking **Review terms** sends the member's instruction, up to 2,000 characters of the notes diff, and up to 2,000 characters from lexically matching transcript segments to OpenAI. Applying the notes correction alone never changes the dictionary.
 
 **Examples of useful dictionary entries:**
 
@@ -135,7 +139,7 @@ Manage your server's Chronote subscription. Opens the Stripe billing portal for 
 
 ### `/onboard`
 
-Launches a guided setup wizard for new servers. Requires **Manage Server** permission. Walks through selecting a notes channel, setting context, and adding dictionary terms.
+Launches a guided setup wizard for new servers. Requires **Manage Server** permission. Walks through selecting a notes channel and setting context. Dictionary terms can be taught afterward in Server Settings or managed with `/dictionary`.
 
 Can be disabled server-wide after initial setup.
 
@@ -181,8 +185,9 @@ Accepted corrections:
 - Replace the notes embeds with updated content.
 - Increment the notes version (shown in the footer as "v2", "v3", etc.).
 - Record the editor and suggestion in the history.
+- In the web portal, offer an optional dictionary-teaching step to server admins. It is never automatic, and every proposed term still requires approval.
 
-Each correction uses the transcript as ground truth, so the AI cannot fabricate content that was not actually discussed.
+Each correction is instructed to use the transcript as ground truth and keep edits minimal. Review the proposed diff before applying it; model output is not treated as guaranteed fact.
 
 If a server has disabled transcript access, Chronote's automated correction workflow still uses the stored transcript for this check. It does not return the transcript as an artifact, but the proposed notes change and diff can include details or wording from the transcript.
 

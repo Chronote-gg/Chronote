@@ -29,6 +29,7 @@ const defaultModels: Record<ModelRole, ModelChoice> = {
   notes: { provider: "openai", model: config.notes.model },
   meetingSummary: { provider: "openai", model: config.notes.model },
   notesCorrection: { provider: "openai", model: config.notes.model },
+  dictionaryTeaching: { provider: "openai", model: "gpt-5-mini" },
   transcription: { provider: "openai", model: "gpt-4o-transcribe" },
   transcriptionCleanup: { provider: "openai", model: config.notes.model },
   transcriptionCoalesce: { provider: "openai", model: "gpt-5-mini" },

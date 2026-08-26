@@ -34,13 +34,19 @@ Use this page to diagnose and fix common Chronote issues. Each section describes
 
 **Causes and fixes**:
 
-1. **Missing dictionary terms.** Add frequently used names, acronyms, and jargon with `/dictionary add`. This is the single most effective way to improve transcription accuracy.
+1. **Missing dictionary terms.** In Server Settings, use **Teach Chronote** to describe frequently used names, acronyms, and jargon, then review the proposed spellings. You can also add one exact term with `/dictionary add`. This is the single most effective way to improve transcription accuracy.
 2. **No context set.** Run `/context set-server` and `/context set-channel` to give the AI background on your team and meeting purpose.
 3. **Poor audio quality.** Ask participants to use headsets, reduce background noise, and speak clearly. Very quiet audio may be filtered by Chronote's noise gate before it reaches transcription.
 4. **Low speaking volume.** The noise gate suppresses audio below a threshold. Participants who are very quiet may have their speech skipped.
 5. **Overlapping speakers.** The transcription model handles overlapping speech with limited accuracy. Encouraging turn-taking improves results.
 
-**After improving settings**, use the **Suggest correction** button to fix notes on past meetings. Future meetings will benefit from the updated dictionary and context.
+**After improving settings**, use the **Suggest correction** button to fix notes on past meetings. Applying a correction does not train Chronote automatically. A server admin using the web portal can choose **Teach Chronote from this correction**, review the proposed entries, and explicitly save only the useful terms.
+
+## Teach Chronote proposed the wrong term
+
+**Symptoms**: A proposal has the wrong spelling, describes a generic word, or conflicts with an existing entry.
+
+**Fix**: Leave that proposal unchecked, or edit the exact spelling and description before saving. Conflict and missing-spelling proposals start unchecked. The model's proposal is a draft, not an authoritative correction or shared global vocabulary.
 
 ## Transcription shows "[Transcription failed]"
 

@@ -11,7 +11,12 @@ import {
   Textarea,
   ThemeIcon,
 } from "@mantine/core";
-import { IconBook, IconPencil, IconPlus, IconTrash } from "@tabler/icons-react";
+import {
+  IconBook,
+  IconPencil,
+  IconSparkles,
+  IconTrash,
+} from "@tabler/icons-react";
 import Surface from "../../components/Surface";
 import { uiOverlays } from "../../uiTokens";
 import type { DictionaryEntry } from "../../../types/db";
@@ -29,6 +34,7 @@ type DictionaryCardProps = {
   onUpsert: (term: string, definition?: string) => Promise<void>;
   onRemove: (term: string) => Promise<void>;
   onClear: () => Promise<void>;
+  onTeach: () => void;
 };
 
 export function DictionaryCard({
@@ -38,9 +44,9 @@ export function DictionaryCard({
   onUpsert,
   onRemove,
   onClear,
+  onTeach,
 }: DictionaryCardProps) {
   const [modalOpen, setModalOpen] = useState(false);
-  const [editingTermKey, setEditingTermKey] = useState<string | null>(null);
   const [term, setTerm] = useState("");
   const [definition, setDefinition] = useState("");
   const [showDefinition, setShowDefinition] = useState(false);
@@ -50,16 +56,7 @@ export function DictionaryCard({
     [entries, budgets],
   );
 
-  const openAdd = () => {
-    setEditingTermKey(null);
-    setTerm("");
-    setDefinition("");
-    setShowDefinition(false);
-    setModalOpen(true);
-  };
-
   const openEdit = (entry: DictionaryEntry) => {
-    setEditingTermKey(entry.termKey);
     setTerm(entry.term);
     setDefinition(entry.definition ?? "");
     setShowDefinition(Boolean(entry.definition));
@@ -102,7 +99,7 @@ export function DictionaryCard({
             <ThemeIcon variant="light" color="brand">
               <IconBook size={18} />
             </ThemeIcon>
-            <Text fw={600}>Dictionary</Text>
+            <Text fw={600}>Teach Chronote</Text>
           </Group>
           <Group gap="sm">
             {entries.length > 0 ? (
@@ -116,11 +113,11 @@ export function DictionaryCard({
               </Button>
             ) : null}
             <Button
-              leftSection={<IconPlus size={16} />}
-              onClick={openAdd}
+              leftSection={<IconSparkles size={16} />}
+              onClick={onTeach}
               disabled={busy}
             >
-              Add term
+              Teach Chronote
             </Button>
           </Group>
         </Group>
@@ -143,8 +140,8 @@ export function DictionaryCard({
         {entries.length === 0 ? (
           <Surface tone="soft" p="md">
             <Text c="dimmed" size="sm">
-              No dictionary entries yet. Add terms to improve transcription
-              quality.
+              Describe the names, acronyms, and specialized terms Chronote
+              should recognize. You will review every term before it is saved.
             </Text>
           </Surface>
         ) : (
@@ -185,9 +182,7 @@ export function DictionaryCard({
       <Modal
         opened={modalOpen}
         onClose={closeModal}
-        title={
-          editingTermKey ? "Edit dictionary entry" : "Add dictionary entry"
-        }
+        title="Edit dictionary entry"
         overlayProps={uiOverlays.modal}
         data-testid="dictionary-modal"
       >
@@ -202,7 +197,7 @@ export function DictionaryCard({
           {showDefinition ? (
             <Stack gap={4}>
               <Textarea
-                label="Definition (optional)"
+                label="Description (optional)"
                 minRows={3}
                 placeholder="Add a short definition"
                 value={definition}

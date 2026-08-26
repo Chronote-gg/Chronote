@@ -1,5 +1,6 @@
 import { CONFIG_KEYS } from "../config/keys";
 import type { ConfigTier } from "../config/types";
+import { DICTIONARY_OBSERVED_FORM_MAX_COUNT } from "../types/dictionaryTeaching";
 
 export const DICTIONARY_TERM_MAX_LENGTH = 80;
 export const DICTIONARY_DEFINITION_MAX_LENGTH = 400;
@@ -127,6 +128,22 @@ export const normalizeDictionaryDefinition = (
   if (!value) return undefined;
   const trimmed = normalizeWhitespace(value);
   return trimmed.length > 0 ? trimmed : undefined;
+};
+
+export const normalizeDictionaryObservedForms = (values?: string[]) => {
+  if (!values) return undefined;
+  const seen = new Set<string>();
+  const normalized: string[] = [];
+  for (const value of values) {
+    const form = normalizeDictionaryTerm(value);
+    if (!form || form.length > DICTIONARY_TERM_MAX_LENGTH) continue;
+    const key = buildDictionaryTermKey(form);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    normalized.push(form);
+    if (normalized.length >= DICTIONARY_OBSERVED_FORM_MAX_COUNT) break;
+  }
+  return normalized.length > 0 ? normalized : undefined;
 };
 
 export const buildDictionaryTermKey = (term: string) =>

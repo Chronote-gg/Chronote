@@ -86,6 +86,9 @@ class ConfigService {
     notesCorrectionPromptName:
       process.env.LANGFUSE_PROMPT_NOTES_CORRECTION ||
       "chronote-notes-correction-chat",
+    dictionaryTeachingPromptName:
+      process.env.LANGFUSE_PROMPT_DICTIONARY_TEACHING ||
+      "chronote-dictionary-teaching-chat",
     liveVoiceGatePromptName:
       process.env.LANGFUSE_PROMPT_LIVE_VOICE_GATE ||
       "chronote-live-voice-gate-chat",

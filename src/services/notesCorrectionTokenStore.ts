@@ -11,11 +11,14 @@ import type { SuggestionHistoryEntry } from "../types/db";
 export type NotesCorrectionTokenRecord = {
   guildId: string;
   meetingId: string;
+  correctionId?: string;
   expiresAtMs: number;
   notesVersion: number;
   requesterId: string;
   newNotes: string;
   suggestion: SuggestionHistoryEntry;
+  notesDiff?: string;
+  transcriptExcerpt?: string;
 };
 
 export interface NotesCorrectionTokenStore {

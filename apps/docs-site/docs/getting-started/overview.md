@@ -26,7 +26,6 @@ Type `/onboard` in any text channel. The wizard walks you through:
 
 - Selecting a default notes channel (where meeting summaries are posted).
 - Setting initial server context (a short description of your team or project).
-- Adding dictionary terms for names, acronyms, or jargon your team uses.
 
 The onboarding wizard requires **Manage Server** permission. You can skip it and configure these settings individually later.
 
@@ -55,12 +54,12 @@ Chronote processes the recording:
 
 ## What to set up next
 
-| Task                       | Command                 | Details                                 |
-| -------------------------- | ----------------------- | --------------------------------------- |
-| Add domain terms           | `/dictionary add`       | [Features](/features/)                  |
-| Set server/channel context | `/context set-server`   | [Admin Guide](/admin/setup-and-access/) |
-| Enable auto-recording      | `/autorecord enable`    | [Admin Guide](/admin/setup-and-access/) |
-| Explore the web portal     | Link in meeting summary | Browse past meetings and share notes    |
+| Task                         | Command                              | Details                                 |
+| ---------------------------- | ------------------------------------ | --------------------------------------- |
+| Teach names and domain terms | Server Settings or `/dictionary add` | [Features](/features/)                  |
+| Set server/channel context   | `/context set-server`                | [Admin Guide](/admin/setup-and-access/) |
+| Enable auto-recording        | `/autorecord enable`                 | [Admin Guide](/admin/setup-and-access/) |
+| Explore the web portal       | Link in meeting summary              | Browse past meetings and share notes    |
 
 ## Permissions summary
 
