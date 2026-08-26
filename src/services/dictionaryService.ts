@@ -36,6 +36,7 @@ export async function upsertDictionaryEntryService(params: {
   lastTeaching?: DictionaryTeachingProvenance;
   userId: string;
   captureAnalytics?: boolean;
+  expectedUpdatedAt?: string | null;
 }): Promise<DictionaryEntry> {
   const term = normalizeDictionaryTerm(params.term);
   if (!term) {
@@ -74,7 +75,12 @@ export async function upsertDictionaryEntryService(params: {
     updatedBy: params.userId,
   };
 
-  await repository.write(entry);
+  const written = await repository.write(entry, params.expectedUpdatedAt);
+  if (!written) {
+    throw new Error(
+      "This dictionary entry changed after the proposal was reviewed. Analyze it again before saving.",
+    );
+  }
   if (params.captureAnalytics !== false) {
     // The term itself is user content, so only its shape is reported.
     captureEvent("dictionary_updated", {

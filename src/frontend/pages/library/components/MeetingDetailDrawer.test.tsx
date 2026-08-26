@@ -450,6 +450,69 @@ describe("MeetingDetailDrawer summary copy", () => {
     });
   });
 
+  it("reinitializes the same meeting after the drawer closes", async () => {
+    useMeetingDetailMock.mockReturnValue(
+      buildUseMeetingDetailResult({
+        detail: buildDetail({ meetingName: "Original name" }),
+        meeting: buildMeeting({ meetingName: "Original name" }),
+      }),
+    );
+    const view = renderDrawer({ canManageSelectedGuild: true });
+
+    fireEvent.click(screen.getByLabelText("Rename meeting"));
+    expect(await screen.findByTestId("meeting-rename-input")).toHaveValue(
+      "Original name",
+    );
+    fireEvent.change(screen.getByTestId("meeting-rename-input"), {
+      target: { value: "Stale local draft" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+
+    useMeetingDetailMock.mockReturnValue({
+      ...buildUseMeetingDetailResult(),
+      detail: null,
+      meeting: null,
+    });
+    view.rerender(
+      <MantineProvider>
+        <MeetingDetailDrawer
+          opened={false}
+          selectedMeetingId={null}
+          selectedGuildId="g1"
+          canManageSelectedGuild
+          channelNameMap={new Map([["c1", "general"]])}
+          invalidateMeetingLists={jest.fn(async () => {})}
+          onClose={jest.fn()}
+        />
+      </MantineProvider>,
+    );
+
+    useMeetingDetailMock.mockReturnValue(
+      buildUseMeetingDetailResult({
+        detail: buildDetail({ meetingName: "Updated elsewhere" }),
+        meeting: buildMeeting({ meetingName: "Updated elsewhere" }),
+      }),
+    );
+    view.rerender(
+      <MantineProvider>
+        <MeetingDetailDrawer
+          opened
+          selectedMeetingId="m1"
+          selectedGuildId="g1"
+          canManageSelectedGuild
+          channelNameMap={new Map([["c1", "general"]])}
+          invalidateMeetingLists={jest.fn(async () => {})}
+          onClose={jest.fn()}
+        />
+      </MantineProvider>,
+    );
+
+    fireEvent.click(screen.getByLabelText("Rename meeting"));
+    expect(await screen.findByTestId("meeting-rename-input")).toHaveValue(
+      "Updated elsewhere",
+    );
+  });
+
   it("disables copy when no notes are available", () => {
     useMeetingDetailMock.mockReturnValue(
       buildUseMeetingDetailResult({

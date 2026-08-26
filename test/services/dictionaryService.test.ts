@@ -13,6 +13,7 @@ import {
   upsertDictionaryEntryService,
 } from "../../src/services/dictionaryService";
 import { getMockStore, resetMockStore } from "../../src/repositories/mockStore";
+import type { DictionaryEntry } from "../../src/types/db";
 import {
   DICTIONARY_DEFINITION_MAX_LENGTH,
   DICTIONARY_TERM_MAX_LENGTH,
@@ -119,6 +120,59 @@ describe("dictionaryService", () => {
     expect(entry.updatedAt).toBe("2025-01-02T00:00:00.000Z");
     expect(entry.updatedBy).toBe("user-2");
     expect(entry.definition).toBe("New definition");
+  });
+
+  test("rejects a conditional update when the reviewed version changed", async () => {
+    const current: DictionaryEntry = {
+      guildId: "guild-1",
+      termKey: "apollo",
+      term: "Apollo",
+      definition: "Changed by another administrator",
+      createdAt: "2024-01-01T00:00:00.000Z",
+      createdBy: "user-1",
+      updatedAt: "2025-01-01T00:00:00.000Z",
+      updatedBy: "other-admin",
+    };
+    getMockStore().dictionaryEntriesByGuild.set("guild-1", [current]);
+
+    await expect(
+      upsertDictionaryEntryService({
+        guildId: "guild-1",
+        term: "Apollo",
+        definition: "Reviewed older description",
+        userId: "user-2",
+        expectedUpdatedAt: "2024-12-31T23:59:59.000Z",
+      }),
+    ).rejects.toThrow("changed after the proposal was reviewed");
+    expect(getMockStore().dictionaryEntriesByGuild.get("guild-1")).toEqual([
+      current,
+    ]);
+  });
+
+  test("rejects a conditional create when the spelling now exists", async () => {
+    const current: DictionaryEntry = {
+      guildId: "guild-1",
+      termKey: "apollo",
+      term: "Apollo",
+      createdAt: "2024-01-01T00:00:00.000Z",
+      createdBy: "other-admin",
+      updatedAt: "2025-01-01T00:00:00.000Z",
+      updatedBy: "other-admin",
+    };
+    getMockStore().dictionaryEntriesByGuild.set("guild-1", [current]);
+
+    await expect(
+      upsertDictionaryEntryService({
+        guildId: "guild-1",
+        term: "Apollo",
+        definition: "Reviewed as a new term",
+        userId: "user-2",
+        expectedUpdatedAt: null,
+      }),
+    ).rejects.toThrow("changed after the proposal was reviewed");
+    expect(getMockStore().dictionaryEntriesByGuild.get("guild-1")).toEqual([
+      current,
+    ]);
   });
 
   test("stores approved observed forms and preserves them during manual edits", async () => {

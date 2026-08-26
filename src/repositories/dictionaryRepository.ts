@@ -14,7 +14,10 @@ export type DictionaryRepository = {
     guildId: string,
     termKey: string,
   ) => Promise<DictionaryEntry | undefined>;
-  write: (entry: DictionaryEntry) => Promise<void>;
+  write: (
+    entry: DictionaryEntry,
+    expectedUpdatedAt?: string | null,
+  ) => Promise<boolean>;
   remove: (guildId: string, termKey: string) => Promise<void>;
 };
 
@@ -33,16 +36,25 @@ const mockRepository: DictionaryRepository = {
     const entries = getMockStore().dictionaryEntriesByGuild.get(guildId) ?? [];
     return entries.find((entry) => entry.termKey === termKey);
   },
-  async write(entry) {
+  async write(entry, expectedUpdatedAt) {
     const store = getMockStore();
     const entries = store.dictionaryEntriesByGuild.get(entry.guildId) ?? [];
     const index = entries.findIndex((item) => item.termKey === entry.termKey);
+    const existing = index >= 0 ? entries[index] : undefined;
+    if (
+      (expectedUpdatedAt === null && existing) ||
+      (typeof expectedUpdatedAt === "string" &&
+        existing?.updatedAt !== expectedUpdatedAt)
+    ) {
+      return false;
+    }
     if (index >= 0) {
       entries[index] = entry;
     } else {
       entries.push(entry);
     }
     store.dictionaryEntriesByGuild.set(entry.guildId, entries);
+    return true;
   },
   async remove(guildId, termKey) {
     const store = getMockStore();

@@ -319,7 +319,10 @@ export default function MeetingDetailDrawer({
   );
 
   useEffect(() => {
-    if (!meeting) return;
+    if (!meeting) {
+      initializedMeetingIdRef.current = null;
+      return;
+    }
     if (initializedMeetingIdRef.current === meeting.id) return;
     initializedMeetingIdRef.current = meeting.id;
     setRenameDraft(resolveRenameDraft(meeting));

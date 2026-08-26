@@ -175,5 +175,8 @@ describe("dictionaryTeachingTokenStore DynamoDB parsing", () => {
       drafts: record.drafts,
       model: record.model,
     });
+    expect(sendMock.mock.calls[0][0].input).toMatchObject({
+      ConsistentRead: true,
+    });
   });
 });

@@ -168,6 +168,7 @@ class DynamoDictionaryTeachingTokenStore implements DictionaryTeachingTokenStore
       new GetItemCommand({
         TableName: SESSION_TABLE_NAME,
         Key: marshall({ sid }),
+        ConsistentRead: true,
       }),
     );
     if (!result.Item) return null;

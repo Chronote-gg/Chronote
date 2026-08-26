@@ -969,13 +969,34 @@ export async function releaseChatTtsMonthlyUsageReservation(
 // Dictionary operations
 export async function writeDictionaryEntry(
   entry: DictionaryEntry,
-): Promise<void> {
-  const params = {
+  expectedUpdatedAt?: string | null,
+): Promise<boolean> {
+  const params: PutItemCommand["input"] = {
     TableName: tableName("DictionaryTable"),
     Item: marshall(entry, { removeUndefinedValues: true }),
   };
+  if (expectedUpdatedAt !== undefined) {
+    params.ExpressionAttributeNames =
+      expectedUpdatedAt === null
+        ? { "#termKey": "termKey" }
+        : { "#updatedAt": "updatedAt" };
+    if (expectedUpdatedAt === null) {
+      params.ConditionExpression = "attribute_not_exists(#termKey)";
+    } else {
+      params.ConditionExpression = "#updatedAt = :expectedUpdatedAt";
+      params.ExpressionAttributeValues = marshall({
+        ":expectedUpdatedAt": expectedUpdatedAt,
+      });
+    }
+  }
   const command = new PutItemCommand(params);
-  await dynamoDbClient.send(command);
+  try {
+    await dynamoDbClient.send(command);
+    return true;
+  } catch (error) {
+    if (isConditionalCheckFailed(error)) return false;
+    throw error;
+  }
 }
 
 export async function getDictionaryEntry(

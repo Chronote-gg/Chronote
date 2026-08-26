@@ -202,6 +202,7 @@ const saveTeachingEntry = async (params: {
   normalized: ReturnType<typeof normalizeTeachingEntry>;
   record: DictionaryTeachingDraftRecord;
   captureAnalytics: boolean;
+  expectedUpdatedAt: string | null;
 }): Promise<TeachingCommitResult> => {
   try {
     const entry = await upsertDictionaryEntryService({
@@ -222,6 +223,7 @@ const saveTeachingEntry = async (params: {
       },
       userId: params.userId,
       captureAnalytics: params.captureAnalytics,
+      expectedUpdatedAt: params.expectedUpdatedAt,
     });
     return { draftId: params.submitted.draftId, ok: true, entry };
   } catch (error) {
@@ -272,6 +274,7 @@ const prepareTeachingEntrySave = (params: {
   return {
     edited: teachingDraftWasEdited(params.draft, params.submitted),
     conflictError,
+    expectedUpdatedAt: params.current?.updatedAt ?? null,
     normalized,
     submitted: params.submitted,
   };
@@ -307,27 +310,30 @@ const commitDictionaryTeaching = async (
     pending.filter(({ conflictError }) => conflictError === undefined),
   );
   const results = await Promise.all(
-    pending.map(({ conflictError, normalized, submitted }) => {
-      const error =
-        conflictError ??
-        (batchConflictDraftIds.has(submitted.draftId)
-          ? "This spelling conflicts with another entry in the same approval batch. Revise the request before saving it."
-          : undefined);
-      return error
-        ? Promise.resolve<TeachingCommitResult>({
-            draftId: submitted.draftId,
-            ok: false,
-            error,
-          })
-        : saveTeachingEntry({
-            serverId: input.serverId,
-            userId,
-            submitted,
-            normalized,
-            record,
-            captureAnalytics,
-          });
-    }),
+    pending.map(
+      ({ conflictError, expectedUpdatedAt, normalized, submitted }) => {
+        const error =
+          conflictError ??
+          (batchConflictDraftIds.has(submitted.draftId)
+            ? "This spelling conflicts with another entry in the same approval batch. Revise the request before saving it."
+            : undefined);
+        return error
+          ? Promise.resolve<TeachingCommitResult>({
+              draftId: submitted.draftId,
+              ok: false,
+              error,
+            })
+          : saveTeachingEntry({
+              serverId: input.serverId,
+              userId,
+              submitted,
+              normalized,
+              record,
+              captureAnalytics,
+              expectedUpdatedAt,
+            });
+      },
+    ),
   );
   const failedCount = results.filter((result) => !result.ok).length;
   if (failedCount === 0) {
