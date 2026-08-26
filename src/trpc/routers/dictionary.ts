@@ -13,7 +13,11 @@ import {
   DICTIONARY_TEACHING_INPUT_MAX_LENGTH,
   DICTIONARY_TEACHING_MAX_DRAFTS,
   DICTIONARY_TEACHING_TOKEN_TTL_MS,
+  type DictionaryTeachingCommitEntry,
+  type DictionaryTeachingDraft,
+  type DictionaryTeachingDraftRecord,
 } from "../../types/dictionaryTeaching";
+import type { DictionaryEntry } from "../../types/db";
 import {
   DICTIONARY_DEFINITION_MAX_LENGTH,
   DICTIONARY_TERM_MAX_LENGTH,
@@ -45,6 +49,176 @@ const teachingEntrySchema = z.object({
     .optional(),
   description: z.string().max(DICTIONARY_DEFINITION_MAX_LENGTH).optional(),
 });
+
+interface TeachingCommitInput {
+  serverId: string;
+  token: string;
+  entries: DictionaryTeachingCommitEntry[];
+}
+
+interface TeachingCommitResult {
+  draftId: string;
+  ok: boolean;
+  entry?: DictionaryEntry;
+  error?: string;
+}
+
+const assertTeachingDraftScope = (
+  record: DictionaryTeachingDraftRecord | null,
+  serverId: string,
+  userId: string,
+): DictionaryTeachingDraftRecord => {
+  if (!record) {
+    throw new TRPCError({
+      code: "NOT_FOUND",
+      message: "This teaching draft has expired. Analyze it again.",
+    });
+  }
+  if (record.guildId !== serverId || record.requesterId !== userId) {
+    throw new TRPCError({
+      code: "FORBIDDEN",
+      message: "This teaching draft belongs to another request.",
+    });
+  }
+  return record;
+};
+
+const indexAndValidateTeachingDrafts = (
+  record: DictionaryTeachingDraftRecord,
+  entries: DictionaryTeachingCommitEntry[],
+) => {
+  const draftsById = new Map(
+    record.drafts.map((draft) => [draft.draftId, draft]),
+  );
+  if (entries.some((entry) => !draftsById.has(entry.draftId))) {
+    throw new TRPCError({
+      code: "BAD_REQUEST",
+      message: "A submitted term was not part of this teaching draft.",
+    });
+  }
+  const submittedTermKeys = entries.map((entry) =>
+    buildDictionaryTermKey(normalizeDictionaryTerm(entry.preferredTerm)),
+  );
+  if (new Set(submittedTermKeys).size !== submittedTermKeys.length) {
+    throw new TRPCError({
+      code: "BAD_REQUEST",
+      message: "Each approved entry needs unique exact spelling.",
+    });
+  }
+  return draftsById;
+};
+
+const normalizeTeachingEntry = (
+  submitted: DictionaryTeachingCommitEntry,
+  current?: DictionaryEntry,
+) => ({
+  preferredTerm: normalizeDictionaryTerm(submitted.preferredTerm),
+  observedForms: normalizeDictionaryObservedForms([
+    ...(current?.observedForms ?? []),
+    ...(submitted.observedForms ?? []),
+  ]),
+  description:
+    submitted.description === undefined
+      ? current?.definition
+      : normalizeDictionaryDefinition(submitted.description),
+});
+
+const teachingDraftWasEdited = (
+  draft: DictionaryTeachingDraft,
+  normalized: ReturnType<typeof normalizeTeachingEntry>,
+) =>
+  draft.preferredTerm !== normalized.preferredTerm ||
+  (draft.description ?? undefined) !== normalized.description ||
+  JSON.stringify(draft.observedForms) !==
+    JSON.stringify(normalized.observedForms ?? []);
+
+const saveTeachingEntry = async (params: {
+  serverId: string;
+  userId: string;
+  submitted: DictionaryTeachingCommitEntry;
+  normalized: ReturnType<typeof normalizeTeachingEntry>;
+  record: DictionaryTeachingDraftRecord;
+}): Promise<TeachingCommitResult> => {
+  try {
+    const entry = await upsertDictionaryEntryService({
+      guildId: params.serverId,
+      term: params.normalized.preferredTerm,
+      definition: params.normalized.description,
+      observedForms: params.normalized.observedForms,
+      lastTeaching: {
+        method: "llm_assisted",
+        source: params.record.source,
+        meetingId: params.record.meetingId,
+        correctionId: params.record.correctionId,
+        model: params.record.model.model,
+        promptName: params.record.model.promptName,
+        promptVersion: params.record.model.promptVersion,
+        approvedBy: params.userId,
+        approvedAt: new Date().toISOString(),
+      },
+      userId: params.userId,
+    });
+    return { draftId: params.submitted.draftId, ok: true, entry };
+  } catch (error) {
+    return {
+      draftId: params.submitted.draftId,
+      ok: false,
+      error: error instanceof Error ? error.message : "Save failed.",
+    };
+  }
+};
+
+const commitDictionaryTeaching = async (
+  input: TeachingCommitInput,
+  userId: string,
+) => {
+  const record = assertTeachingDraftScope(
+    await dictionaryTeachingTokenStore.getDraft(input.token),
+    input.serverId,
+    userId,
+  );
+  const draftsById = indexAndValidateTeachingDrafts(record, input.entries);
+  const currentEntries = await listDictionaryEntriesService(input.serverId);
+  const currentByKey = new Map(
+    currentEntries.map((entry) => [entry.termKey, entry]),
+  );
+  const pending = input.entries.map((submitted) => {
+    const key = buildDictionaryTermKey(
+      normalizeDictionaryTerm(submitted.preferredTerm),
+    );
+    const normalized = normalizeTeachingEntry(submitted, currentByKey.get(key));
+    return {
+      edited: teachingDraftWasEdited(
+        draftsById.get(submitted.draftId)!,
+        normalized,
+      ),
+      save: saveTeachingEntry({
+        serverId: input.serverId,
+        userId,
+        submitted,
+        normalized,
+        record,
+      }),
+    };
+  });
+  const results = await Promise.all(pending.map(({ save }) => save));
+  const failedCount = results.filter((result) => !result.ok).length;
+  if (failedCount === 0) {
+    await dictionaryTeachingTokenStore.deleteDraft(input.token);
+  }
+  captureEvent("dictionary_teaching_committed", {
+    userId,
+    guildId: input.serverId,
+    properties: {
+      source: record.source,
+      submitted_count: input.entries.length,
+      saved_count: input.entries.length - failedCount,
+      failed_count: failedCount,
+      edited_draft_count: pending.filter(({ edited }) => edited).length,
+    },
+  });
+  return { results };
+};
 
 export const dictionaryRouter = router({
   list: manageGuildProcedure.input(serverSchema).query(async ({ input }) => {
@@ -192,122 +366,7 @@ export const dictionaryRouter = router({
           .max(DICTIONARY_TEACHING_MAX_DRAFTS),
       }),
     )
-    .mutation(async ({ ctx, input }) => {
-      const record = await dictionaryTeachingTokenStore.getDraft(input.token);
-      if (!record) {
-        throw new TRPCError({
-          code: "NOT_FOUND",
-          message: "This teaching draft has expired. Analyze it again.",
-        });
-      }
-      if (
-        record.guildId !== input.serverId ||
-        record.requesterId !== ctx.user!.id
-      ) {
-        throw new TRPCError({
-          code: "FORBIDDEN",
-          message: "This teaching draft belongs to another request.",
-        });
-      }
-      const draftsById = new Map(
-        record.drafts.map((draft) => [draft.draftId, draft]),
-      );
-      for (const entry of input.entries) {
-        if (!draftsById.has(entry.draftId)) {
-          throw new TRPCError({
-            code: "BAD_REQUEST",
-            message: "A submitted term was not part of this teaching draft.",
-          });
-        }
-      }
-      const submittedTermKeys = input.entries.map((entry) =>
-        buildDictionaryTermKey(normalizeDictionaryTerm(entry.preferredTerm)),
-      );
-      if (new Set(submittedTermKeys).size !== submittedTermKeys.length) {
-        throw new TRPCError({
-          code: "BAD_REQUEST",
-          message: "Each approved entry needs unique exact spelling.",
-        });
-      }
-
-      const currentEntries = await listDictionaryEntriesService(input.serverId);
-      const currentByKey = new Map(
-        currentEntries.map((entry) => [entry.termKey, entry]),
-      );
-      const results: Array<{
-        draftId: string;
-        ok: boolean;
-        entry?: (typeof currentEntries)[number];
-        error?: string;
-      }> = [];
-      let editedFieldCount = 0;
-
-      for (const submitted of input.entries) {
-        const draft = draftsById.get(submitted.draftId)!;
-        const preferredTerm = normalizeDictionaryTerm(submitted.preferredTerm);
-        const current = currentByKey.get(buildDictionaryTermKey(preferredTerm));
-        const observedForms = normalizeDictionaryObservedForms([
-          ...(current?.observedForms ?? []),
-          ...(submitted.observedForms ?? []),
-        ]);
-        const description =
-          submitted.description === undefined
-            ? current?.definition
-            : normalizeDictionaryDefinition(submitted.description);
-        if (
-          draft.preferredTerm !== preferredTerm ||
-          (draft.description ?? undefined) !== description ||
-          JSON.stringify(draft.observedForms) !==
-            JSON.stringify(observedForms ?? [])
-        ) {
-          editedFieldCount += 1;
-        }
-
-        try {
-          const entry = await upsertDictionaryEntryService({
-            guildId: input.serverId,
-            term: preferredTerm,
-            definition: description,
-            observedForms,
-            lastTeaching: {
-              method: "llm_assisted",
-              source: record.source,
-              meetingId: record.meetingId,
-              correctionId: record.correctionId,
-              model: record.model.model,
-              promptName: record.model.promptName,
-              promptVersion: record.model.promptVersion,
-              approvedBy: ctx.user!.id,
-              approvedAt: new Date().toISOString(),
-            },
-            userId: ctx.user!.id,
-          });
-          currentByKey.set(entry.termKey, entry);
-          results.push({ draftId: submitted.draftId, ok: true, entry });
-        } catch (error) {
-          results.push({
-            draftId: submitted.draftId,
-            ok: false,
-            error: error instanceof Error ? error.message : "Save failed.",
-          });
-        }
-      }
-
-      const failedCount = results.filter((result) => !result.ok).length;
-      if (failedCount === 0) {
-        await dictionaryTeachingTokenStore.deleteDraft(input.token);
-      }
-      captureEvent("dictionary_teaching_committed", {
-        userId: ctx.user!.id,
-        guildId: input.serverId,
-        properties: {
-          source: record.source,
-          submitted_count: input.entries.length,
-          saved_count: input.entries.length - failedCount,
-          failed_count: failedCount,
-          edited_draft_count: editedFieldCount,
-        },
-      });
-      return { results };
-    }),
+    .mutation(({ ctx, input }) =>
+      commitDictionaryTeaching(input, ctx.user!.id),
+    ),
 });
