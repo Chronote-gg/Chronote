@@ -4,8 +4,12 @@ import { getMockUser, resetMockStore } from "../../src/repositories/mockStore";
 import { ensureManageGuildWithUserToken } from "../../src/services/guildAccessService";
 import { generateDictionaryTeachingDrafts } from "../../src/services/dictionaryTeachingService";
 import { upsertDictionaryEntryService } from "../../src/services/dictionaryService";
+import * as dictionaryService from "../../src/services/dictionaryService";
 import { captureEvent } from "../../src/services/analyticsService";
-import { resolveServerMeetingArtifactAccess } from "../../src/services/meetingArtifactAccessService";
+import {
+  resolveServerAttendeeAccessEnabled,
+  resolveServerMeetingArtifactAccess,
+} from "../../src/services/meetingArtifactAccessService";
 import { getMeetingHistoryService } from "../../src/services/meetingHistoryService";
 import { checkUserMeetingAccess } from "../../src/services/meetingAccessService";
 
@@ -46,6 +50,7 @@ jest.mock("../../src/services/analyticsService", () => ({
 
 jest.mock("../../src/services/meetingArtifactAccessService", () => ({
   ...jest.requireActual("../../src/services/meetingArtifactAccessService"),
+  resolveServerAttendeeAccessEnabled: jest.fn(),
   resolveServerMeetingArtifactAccess: jest.fn(),
 }));
 
@@ -103,6 +108,7 @@ describe("dictionary teaching router", () => {
       transcriptAccessEnabled: true,
       audioAccessEnabled: true,
     });
+    jest.mocked(resolveServerAttendeeAccessEnabled).mockResolvedValue(true);
     jest.mocked(getMeetingHistoryService).mockResolvedValue({
       guildId: "guild-1",
       channelId_timestamp: "meeting-1",
@@ -305,6 +311,7 @@ describe("dictionary teaching router", () => {
       allowed: false,
       missing: ["voice_connect"],
     });
+    jest.mocked(resolveServerAttendeeAccessEnabled).mockResolvedValue(false);
 
     await expect(
       buildCaller().dictionary.previewTeaching({
@@ -313,6 +320,9 @@ describe("dictionary teaching router", () => {
         correctionContextToken: token,
       }),
     ).rejects.toMatchObject({ code: "FORBIDDEN" });
+    expect(checkUserMeetingAccess).toHaveBeenCalledWith(
+      expect.objectContaining({ attendeeOverrideEnabled: false }),
+    );
     expect(generateDictionaryTeachingDrafts).not.toHaveBeenCalled();
   });
 
@@ -714,6 +724,106 @@ describe("dictionary teaching router", () => {
       "Jon Smythe Jr",
       "Jonathan Smythe",
     ]);
+  });
+
+  test("rejects an unchanged conflict draft that still claims an observed form", async () => {
+    const existing = await upsertDictionaryEntryService({
+      guildId: "guild-1",
+      term: "Jonathan Smythe",
+      observedForms: ["Jon Smythe"],
+      userId: getMockUser().id,
+    });
+    const token = "82600000-0000-4000-8000-000000000011";
+    const draftId = "82600000-0000-4000-8000-000000000012";
+    drafts.set(token, {
+      guildId: "guild-1",
+      requesterId: getMockUser().id,
+      expiresAtMs: Date.now() + 60_000,
+      source: "settings",
+      drafts: [
+        {
+          draftId,
+          preferredTerm: "Jon Smythe",
+          observedForms: [],
+          description: "Apollo contact",
+          ambiguity: "This spelling conflicts with an existing entry.",
+          evidence: [],
+          action: "conflict",
+          existingEntry: existing,
+        },
+      ],
+      model: {
+        model: "gpt-5-mini",
+        promptName: "chronote-dictionary-teaching-chat",
+      },
+    });
+
+    const result = await buildCaller().dictionary.commitTeaching({
+      serverId: "guild-1",
+      token,
+      entries: [{ draftId, preferredTerm: "Jon Smythe" }],
+    });
+
+    expect(result.results[0]).toMatchObject({
+      ok: false,
+      error: expect.stringContaining("conflicts with another entry"),
+    });
+    const list = await buildCaller().dictionary.list({ serverId: "guild-1" });
+    expect(list.entries).toEqual([existing]);
+  });
+
+  test("sanitizes unexpected dictionary save errors", async () => {
+    const token = "82600000-0000-4000-8000-000000000021";
+    const draftId = "82600000-0000-4000-8000-000000000022";
+    drafts.set(token, {
+      guildId: "guild-1",
+      requesterId: getMockUser().id,
+      expiresAtMs: Date.now() + 60_000,
+      source: "settings",
+      drafts: [
+        {
+          draftId,
+          preferredTerm: "Jon Smythe",
+          observedForms: [],
+          description: null,
+          ambiguity: null,
+          evidence: [],
+          action: "create",
+        },
+      ],
+      model: {
+        model: "gpt-5-mini",
+        promptName: "chronote-dictionary-teaching-chat",
+      },
+    });
+    jest
+      .spyOn(dictionaryService, "upsertDictionaryEntryService")
+      .mockRejectedValueOnce(
+        new Error(
+          "AccessDenied for arn:aws:dynamodb:us-east-1:123456789012:table/private",
+        ),
+      );
+    const errorLog = jest.spyOn(console, "error").mockImplementation();
+
+    const result = await buildCaller().dictionary.commitTeaching({
+      serverId: "guild-1",
+      token,
+      entries: [{ draftId, preferredTerm: "Jon Smythe" }],
+    });
+
+    expect(result.results[0]).toEqual({
+      draftId,
+      ok: false,
+      error: "This dictionary entry could not be saved. Try again.",
+    });
+    expect(errorLog).toHaveBeenCalledWith(
+      "Failed saving dictionary teaching entry",
+      expect.objectContaining({
+        guildId: "guild-1",
+        draftId,
+        error: expect.any(Error),
+      }),
+    );
   });
 
   test("rejects observed-form conflicts within one approval batch", async () => {

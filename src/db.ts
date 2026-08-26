@@ -1,4 +1,5 @@
 import { config } from "./services/configService";
+import { randomUUID } from "node:crypto";
 import {
   AttributeValue,
   DynamoDBClient,
@@ -7,7 +8,6 @@ import {
   DeleteItemCommand,
   QueryCommand,
   ScanCommand,
-  TransactWriteItemsCommand,
   UpdateItemCommand,
 } from "@aws-sdk/client-dynamodb";
 import { marshall, unmarshall } from "@aws-sdk/util-dynamodb";
@@ -70,18 +70,6 @@ const tablePrefix = config.database.tablePrefix ?? "";
 const tableName = (name: string) => `${tablePrefix}${name}`;
 const isConditionalCheckFailed = (error: unknown) =>
   (error as { name?: string }).name === "ConditionalCheckFailedException";
-const isConditionalTransactionFailed = (error: unknown) =>
-  (
-    error as {
-      name?: string;
-      CancellationReasons?: Array<{ Code?: string }>;
-    }
-  ).name === "TransactionCanceledException" &&
-  (
-    error as { CancellationReasons?: Array<{ Code?: string }> }
-  ).CancellationReasons?.some(
-    (reason) => reason.Code === "ConditionalCheckFailed",
-  );
 
 // Guild Subscription Table
 export async function writeGuildSubscription(
@@ -982,6 +970,69 @@ export async function releaseChatTtsMonthlyUsageReservation(
 // Dictionary operations
 const dictionaryRevisionSid = (guildId: string) =>
   `dictionaryRevision#${guildId}`;
+const DICTIONARY_LOCK_TTL_SECONDS = 30;
+const DICTIONARY_LOCK_ATTEMPTS = 10;
+const DICTIONARY_LOCK_RETRY_MS = 25;
+
+export async function acquireDictionaryLock(
+  guildId: string,
+): Promise<string | undefined> {
+  const token = randomUUID();
+  for (let attempt = 0; attempt < DICTIONARY_LOCK_ATTEMPTS; attempt += 1) {
+    const now = Math.floor(Date.now() / 1000);
+    const command = new UpdateItemCommand({
+      TableName: tableName("SessionTable"),
+      Key: marshall({ sid: dictionaryRevisionSid(guildId) }),
+      UpdateExpression:
+        "SET #lockToken = :lockToken, #lockExpiresAt = :lockExpiresAt",
+      ConditionExpression:
+        "attribute_not_exists(#lockToken) OR attribute_not_exists(#lockExpiresAt) OR #lockExpiresAt < :now",
+      ExpressionAttributeNames: {
+        "#lockToken": "lockToken",
+        "#lockExpiresAt": "lockExpiresAt",
+      },
+      ExpressionAttributeValues: marshall({
+        ":lockToken": token,
+        ":lockExpiresAt": now + DICTIONARY_LOCK_TTL_SECONDS,
+        ":now": now,
+      }),
+    });
+    try {
+      await dynamoDbClient.send(command);
+      return token;
+    } catch (error) {
+      if (!isConditionalCheckFailed(error)) throw error;
+      if (attempt + 1 < DICTIONARY_LOCK_ATTEMPTS) {
+        await new Promise((resolve) =>
+          setTimeout(resolve, DICTIONARY_LOCK_RETRY_MS),
+        );
+      }
+    }
+  }
+  return undefined;
+}
+
+export async function releaseDictionaryLock(
+  guildId: string,
+  token: string,
+): Promise<void> {
+  const command = new UpdateItemCommand({
+    TableName: tableName("SessionTable"),
+    Key: marshall({ sid: dictionaryRevisionSid(guildId) }),
+    UpdateExpression: "REMOVE #lockToken, #lockExpiresAt",
+    ConditionExpression: "#lockToken = :lockToken",
+    ExpressionAttributeNames: {
+      "#lockToken": "lockToken",
+      "#lockExpiresAt": "lockExpiresAt",
+    },
+    ExpressionAttributeValues: marshall({ ":lockToken": token }),
+  });
+  try {
+    await dynamoDbClient.send(command);
+  } catch (error) {
+    if (!isConditionalCheckFailed(error)) throw error;
+  }
+}
 
 export async function getDictionaryRevision(guildId: string): Promise<number> {
   const command = new GetItemCommand({
@@ -1000,6 +1051,8 @@ export async function writeDictionaryEntry(
   expectedUpdatedAt?: string | null,
   expectedRevision?: number,
 ): Promise<boolean> {
+  const lockToken = await acquireDictionaryLock(entry.guildId);
+  if (!lockToken) return false;
   const entryCondition: {
     ConditionExpression?: string;
     ExpressionAttributeNames?: Record<string, string>;
@@ -1019,51 +1072,36 @@ export async function writeDictionaryEntry(
               ":expectedUpdatedAt": expectedUpdatedAt,
             }),
           };
-  const revisionUpdate =
-    expectedRevision === undefined
-      ? {
-          UpdateExpression: "ADD #revision :one",
-          ExpressionAttributeNames: { "#revision": "revision" },
-          ExpressionAttributeValues: marshall({ ":one": 1 }),
-        }
-      : {
-          UpdateExpression: "SET #revision = :nextRevision",
-          ConditionExpression:
-            expectedRevision === 0
-              ? "attribute_not_exists(#revision)"
-              : "#revision = :expectedRevision",
-          ExpressionAttributeNames: { "#revision": "revision" },
-          ExpressionAttributeValues: marshall({
-            ":nextRevision": expectedRevision + 1,
-            ...(expectedRevision === 0
-              ? {}
-              : { ":expectedRevision": expectedRevision }),
-          }),
-        };
-  const command = new TransactWriteItemsCommand({
-    TransactItems: [
-      {
-        Put: {
-          TableName: tableName("DictionaryTable"),
-          Item: marshall(entry, { removeUndefinedValues: true }),
-          ...entryCondition,
-        },
-      },
-      {
-        Update: {
-          TableName: tableName("SessionTable"),
-          Key: marshall({ sid: dictionaryRevisionSid(entry.guildId) }),
-          ...revisionUpdate,
-        },
-      },
-    ],
-  });
   try {
-    await dynamoDbClient.send(command);
+    const currentRevision = await getDictionaryRevision(entry.guildId);
+    if (
+      expectedRevision !== undefined &&
+      expectedRevision !== currentRevision
+    ) {
+      return false;
+    }
+    await dynamoDbClient.send(
+      new UpdateItemCommand({
+        TableName: tableName("SessionTable"),
+        Key: marshall({ sid: dictionaryRevisionSid(entry.guildId) }),
+        UpdateExpression: "ADD #revision :one",
+        ExpressionAttributeNames: { "#revision": "revision" },
+        ExpressionAttributeValues: marshall({ ":one": 1 }),
+      }),
+    );
+    await dynamoDbClient.send(
+      new PutItemCommand({
+        TableName: tableName("DictionaryTable"),
+        Item: marshall(entry, { removeUndefinedValues: true }),
+        ...entryCondition,
+      }),
+    );
     return true;
   } catch (error) {
-    if (isConditionalTransactionFailed(error)) return false;
+    if (isConditionalCheckFailed(error)) return false;
     throw error;
+  } finally {
+    await releaseDictionaryLock(entry.guildId, lockToken);
   }
 }
 
@@ -1108,26 +1146,27 @@ export async function deleteDictionaryEntry(
   guildId: string,
   termKey: string,
 ): Promise<void> {
-  const command = new TransactWriteItemsCommand({
-    TransactItems: [
-      {
-        Delete: {
-          TableName: tableName("DictionaryTable"),
-          Key: marshall({ guildId, termKey }),
-        },
-      },
-      {
-        Update: {
-          TableName: tableName("SessionTable"),
-          Key: marshall({ sid: dictionaryRevisionSid(guildId) }),
-          UpdateExpression: "ADD #revision :one",
-          ExpressionAttributeNames: { "#revision": "revision" },
-          ExpressionAttributeValues: marshall({ ":one": 1 }),
-        },
-      },
-    ],
-  });
-  await dynamoDbClient.send(command);
+  const lockToken = await acquireDictionaryLock(guildId);
+  if (!lockToken) throw new Error("Dictionary is busy. Try again.");
+  try {
+    await dynamoDbClient.send(
+      new UpdateItemCommand({
+        TableName: tableName("SessionTable"),
+        Key: marshall({ sid: dictionaryRevisionSid(guildId) }),
+        UpdateExpression: "ADD #revision :one",
+        ExpressionAttributeNames: { "#revision": "revision" },
+        ExpressionAttributeValues: marshall({ ":one": 1 }),
+      }),
+    );
+    await dynamoDbClient.send(
+      new DeleteItemCommand({
+        TableName: tableName("DictionaryTable"),
+        Key: marshall({ guildId, termKey }),
+      }),
+    );
+  } finally {
+    await releaseDictionaryLock(guildId, lockToken);
+  }
 }
 
 // Config Overrides operations

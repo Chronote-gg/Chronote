@@ -1396,7 +1396,6 @@ resource "aws_iam_policy" "dynamodb_access_policy" {
           "dynamodb:PutItem",
           "dynamodb:UpdateItem",
           "dynamodb:DeleteItem",
-          "dynamodb:TransactWriteItems",
           "dynamodb:Query",
           "dynamodb:Scan"
         ],

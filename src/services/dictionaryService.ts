@@ -21,6 +21,9 @@ const sortEntries = (entries: DictionaryEntry[]) =>
     return a.term.localeCompare(b.term);
   });
 
+export const DICTIONARY_REVIEW_CONFLICT_MESSAGE =
+  "This dictionary entry changed after the proposal was reviewed. Analyze it again before saving.";
+
 export async function listDictionaryEntriesService(
   guildId: string,
 ): Promise<DictionaryEntry[]> {
@@ -93,9 +96,7 @@ export async function upsertDictionaryEntryService(params: {
     params.expectedRevision,
   );
   if (!written) {
-    throw new Error(
-      "This dictionary entry changed after the proposal was reviewed. Analyze it again before saving.",
-    );
+    throw new Error(DICTIONARY_REVIEW_CONFLICT_MESSAGE);
   }
   if (params.captureAnalytics !== false) {
     // The term itself is user content, so only its shape is reported.
@@ -129,7 +130,7 @@ export async function clearDictionaryEntriesService(
 ): Promise<void> {
   const repository = getDictionaryRepository();
   const entries = await repository.listByGuild(guildId);
-  await Promise.all(
-    entries.map((entry) => repository.remove(guildId, entry.termKey)),
-  );
+  for (const entry of entries) {
+    await repository.remove(guildId, entry.termKey);
+  }
 }

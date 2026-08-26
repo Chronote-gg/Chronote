@@ -1,9 +1,11 @@
 import { config } from "../services/configService";
 import {
+  acquireDictionaryLock,
   deleteDictionaryEntry,
   getDictionaryRevision,
   getDictionaryEntry,
   listDictionaryEntries,
+  releaseDictionaryLock,
   writeDictionaryEntry,
 } from "../db";
 import type { DictionaryEntry } from "../types/db";
@@ -32,15 +34,17 @@ const realRepository: DictionaryRepository = {
   get: getDictionaryEntry,
   write: writeDictionaryEntry,
   async listSnapshotByGuild(guildId) {
-    for (let attempt = 0; attempt < 3; attempt += 1) {
-      const revisionBefore = await getDictionaryRevision(guildId);
-      const entries = await listDictionaryEntries(guildId, true);
-      const revisionAfter = await getDictionaryRevision(guildId);
-      if (revisionBefore === revisionAfter) {
-        return { entries, revision: revisionAfter };
-      }
+    const lockToken = await acquireDictionaryLock(guildId);
+    if (!lockToken) {
+      throw new Error("Dictionary changed while creating a review snapshot.");
     }
-    throw new Error("Dictionary changed while creating a review snapshot.");
+    try {
+      const entries = await listDictionaryEntries(guildId, true);
+      const revision = await getDictionaryRevision(guildId);
+      return { entries, revision };
+    } finally {
+      await releaseDictionaryLock(guildId, lockToken);
+    }
   },
   remove: deleteDictionaryEntry,
 };

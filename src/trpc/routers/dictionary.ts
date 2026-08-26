@@ -4,6 +4,7 @@ import { z } from "zod";
 import { router, manageGuildProcedure } from "../trpc";
 import {
   clearDictionaryEntriesService,
+  DICTIONARY_REVIEW_CONFLICT_MESSAGE,
   getDictionarySnapshotService,
   listDictionaryEntriesService,
   removeDictionaryEntryService,
@@ -35,7 +36,10 @@ import { createDictionaryTeachingTokenStore } from "../../services/dictionaryTea
 import { resolveModelParamsForContext } from "../../services/openaiModelParams";
 import { resolveModelChoicesForContext } from "../../services/modelChoiceService";
 import { captureEvent } from "../../services/analyticsService";
-import { resolveServerMeetingArtifactAccess } from "../../services/meetingArtifactAccessService";
+import {
+  resolveServerAttendeeAccessEnabled,
+  resolveServerMeetingArtifactAccess,
+} from "../../services/meetingArtifactAccessService";
 import { getMeetingHistoryService } from "../../services/meetingHistoryService";
 import { checkUserMeetingAccess } from "../../services/meetingAccessService";
 
@@ -232,10 +236,19 @@ const saveTeachingEntry = async (params: {
     });
     return { draftId: params.submitted.draftId, ok: true, entry };
   } catch (error) {
+    console.error("Failed saving dictionary teaching entry", {
+      guildId: params.serverId,
+      draftId: params.submitted.draftId,
+      error,
+    });
     return {
       draftId: params.submitted.draftId,
       ok: false,
-      error: error instanceof Error ? error.message : "Save failed.",
+      error:
+        error instanceof Error &&
+        error.message === DICTIONARY_REVIEW_CONFLICT_MESSAGE
+          ? error.message
+          : "This dictionary entry could not be saved. Try again.",
     };
   }
 };
@@ -264,9 +277,16 @@ const prepareTeachingEntrySave = (params: {
     normalized.preferredTerm,
     normalized.observedForms ?? [],
   );
+  const updatesReviewedEntry =
+    params.draft.action === "update" &&
+    params.current !== undefined &&
+    params.current.termKey === params.draft.existingEntry?.termKey;
   const targetsUnreviewedObservedConflict =
     observedConflict !== undefined &&
-    params.draft.existingEntry?.termKey !== observedConflict.termKey;
+    !(
+      updatesReviewedEntry &&
+      observedConflict.termKey === params.current?.termKey
+    );
   const conflictError = reviewedEntryRenamed
     ? "The exact spelling changed from the reviewed existing entry. Revise and analyze the request again before updating it."
     : targetsUnreviewedEntry
@@ -317,6 +337,7 @@ const commitDictionaryTeaching = async (
   );
   const results: TeachingCommitResult[] = [];
   let expectedRevision = snapshot.revision;
+  let snapshotInvalidated = false;
   for (const {
     conflictError,
     expectedUpdatedAt,
@@ -327,7 +348,9 @@ const commitDictionaryTeaching = async (
       conflictError ??
       (batchConflictDraftIds.has(submitted.draftId)
         ? "This spelling conflicts with another entry in the same approval batch. Revise the request before saving it."
-        : undefined);
+        : snapshotInvalidated
+          ? DICTIONARY_REVIEW_CONFLICT_MESSAGE
+          : undefined);
     const result = error
       ? { draftId: submitted.draftId, ok: false, error }
       : await saveTeachingEntry({
@@ -341,7 +364,11 @@ const commitDictionaryTeaching = async (
           expectedRevision,
         });
     results.push(result);
-    if (result.ok) expectedRevision += 1;
+    if (result.ok) {
+      expectedRevision += 1;
+    } else if (error === undefined) {
+      snapshotInvalidated = true;
+    }
   }
   const failedCount = results.filter((result) => !result.ok).length;
   if (failedCount === 0) {
@@ -447,15 +474,16 @@ export const dictionaryRouter = router({
 
       let teachingContext = contextRecord?.context;
       if (teachingContext?.meetingId) {
-        const meeting = await getMeetingHistoryService(
-          input.serverId,
-          teachingContext.meetingId,
-        );
+        const [meeting, attendeeOverrideEnabled] = await Promise.all([
+          getMeetingHistoryService(input.serverId, teachingContext.meetingId),
+          resolveServerAttendeeAccessEnabled(input.serverId),
+        ]);
         const access = meeting
           ? await checkUserMeetingAccess({
               guildId: input.serverId,
               meeting,
               userId: ctx.user!.id,
+              attendeeOverrideEnabled,
             })
           : null;
         if (access?.allowed !== true) {
