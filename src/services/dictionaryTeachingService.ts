@@ -55,8 +55,17 @@ interface DictionaryTeachingGenerationParams {
 const normalizeComparable = (value: string) =>
   value.replace(/\s+/g, " ").trim().toLocaleLowerCase();
 
-const containsComparable = (source: string, candidate: string) =>
-  normalizeComparable(source).includes(normalizeComparable(candidate));
+const escapeRegExp = (value: string) =>
+  value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+const containsComparable = (source: string, candidate: string) => {
+  const normalizedCandidate = normalizeComparable(candidate);
+  if (!normalizedCandidate) return false;
+  return new RegExp(
+    `(?<![\\p{L}\\p{N}])${escapeRegExp(normalizedCandidate)}(?![\\p{L}\\p{N}])`,
+    "u",
+  ).test(normalizeComparable(source));
+};
 
 const sourceText = (
   source: DictionaryTeachingEvidenceSource,

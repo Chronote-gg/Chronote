@@ -102,6 +102,10 @@ describe("dictionary teaching router", () => {
     });
   });
 
+  afterEach(() => {
+    jest.restoreAllMocks();
+  });
+
   test("requires Manage Server permission", async () => {
     jest.mocked(ensureManageGuildWithUserToken).mockResolvedValue(false);
 
@@ -267,6 +271,51 @@ describe("dictionary teaching router", () => {
       },
     });
     expect(tokenStore.deleteDraft).toHaveBeenCalledWith(token);
+  });
+
+  test("returns successful writes when completed-draft cleanup fails", async () => {
+    const token = "41000000-0000-4000-8000-000000000001";
+    const draftId = "41000000-0000-4000-8000-000000000002";
+    drafts.set(token, {
+      guildId: "guild-1",
+      requesterId: getMockUser().id,
+      expiresAtMs: Date.now() + 60_000,
+      source: "settings",
+      drafts: [
+        {
+          draftId,
+          preferredTerm: "Jon Smythe",
+          observedForms: [],
+          description: null,
+          ambiguity: null,
+          evidence: [],
+          action: "create",
+        },
+      ],
+      model: {
+        model: "gpt-5-mini",
+        promptName: "chronote-dictionary-teaching-chat",
+      },
+    });
+    tokenStore.deleteDraft.mockRejectedValueOnce(
+      new Error("temporary cleanup failure"),
+    );
+    const warn = jest.spyOn(console, "warn").mockImplementation();
+
+    const result = await buildCaller().dictionary.commitTeaching({
+      serverId: "guild-1",
+      token,
+      entries: [{ draftId, preferredTerm: "Jon Smythe" }],
+    });
+
+    expect(result.results[0]).toMatchObject({
+      ok: true,
+      entry: { term: "Jon Smythe" },
+    });
+    expect(warn).toHaveBeenCalledWith(
+      "Failed deleting completed dictionary teaching draft",
+      expect.any(Error),
+    );
   });
 
   test("rejects duplicate exact spellings in one approval batch", async () => {

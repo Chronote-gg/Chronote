@@ -320,7 +320,14 @@ const commitDictionaryTeaching = async (
   );
   const failedCount = results.filter((result) => !result.ok).length;
   if (failedCount === 0) {
-    await dictionaryTeachingTokenStore.deleteDraft(input.token);
+    try {
+      await dictionaryTeachingTokenStore.deleteDraft(input.token);
+    } catch (error) {
+      console.warn(
+        "Failed deleting completed dictionary teaching draft",
+        error,
+      );
+    }
   }
   captureEvent("dictionary_teaching_committed", {
     userId,

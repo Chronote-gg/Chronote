@@ -48,6 +48,33 @@ const renderModal = (props?: {
     </MantineProvider>,
   );
 
+const mockExistingUpdatePreview = () =>
+  mockPreviewTeaching.mockResolvedValue({
+    token: "11111111-1111-4111-8111-111111111111",
+    expiresAtMs: Date.now() + 15 * 60 * 1_000,
+    drafts: [
+      {
+        draftId: "22222222-2222-4222-8222-222222222222",
+        preferredTerm: "Jon Smythe",
+        observedForms: [],
+        description: null,
+        ambiguity: null,
+        evidence: [],
+        action: "update",
+        existingEntry: {
+          guildId: "guild-1",
+          termKey: "jon smythe",
+          term: "Jon Smythe",
+          definition: "Existing Apollo contact",
+          createdAt: "2026-01-01T00:00:00.000Z",
+          createdBy: "user-1",
+          updatedAt: "2026-01-01T00:00:00.000Z",
+          updatedBy: "user-1",
+        },
+      },
+    ],
+  });
+
 describe("DictionaryTeachingModal", () => {
   beforeEach(() => {
     jest.clearAllMocks();
@@ -159,9 +186,11 @@ describe("DictionaryTeachingModal", () => {
   });
 
   it("submits an empty description so an existing description can be cleared", async () => {
+    mockExistingUpdatePreview();
     renderModal({ initialInstruction: "Update Jon Smythe." });
     fireEvent.click(screen.getByRole("button", { name: "Review terms" }));
     const description = await screen.findByLabelText("Description (optional)");
+    expect(description).toHaveValue("Existing Apollo contact");
     fireEvent.change(description, { target: { value: "" } });
     fireEvent.click(screen.getByRole("button", { name: "Teach Chronote" }));
 
@@ -169,6 +198,29 @@ describe("DictionaryTeachingModal", () => {
       expect(mockCommitTeaching).toHaveBeenCalledWith(
         expect.objectContaining({
           entries: [expect.objectContaining({ description: "" })],
+        }),
+      ),
+    );
+  });
+
+  it("preserves an existing description when an update proposal omits it", async () => {
+    mockExistingUpdatePreview();
+    renderModal({ initialInstruction: "Update Jon Smythe." });
+    fireEvent.click(screen.getByRole("button", { name: "Review terms" }));
+
+    expect(
+      await screen.findByDisplayValue("Existing Apollo contact"),
+    ).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Teach Chronote" }));
+
+    await waitFor(() =>
+      expect(mockCommitTeaching).toHaveBeenCalledWith(
+        expect.objectContaining({
+          entries: [
+            expect.objectContaining({
+              description: "Existing Apollo contact",
+            }),
+          ],
         }),
       ),
     );

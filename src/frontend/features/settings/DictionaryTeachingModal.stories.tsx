@@ -14,7 +14,7 @@ const previewResult = {
       draftId: "22222222-2222-4222-8222-222222222222",
       preferredTerm: "Jon Smythe",
       observedForms: ["John Smith"],
-      description: "Apollo project collaborator",
+      description: null,
       ambiguity: null,
       evidence: [
         {
@@ -22,7 +22,17 @@ const previewResult = {
           quote: "his name is Jon Smythe",
         },
       ],
-      action: "create" as const,
+      action: "update" as const,
+      existingEntry: {
+        guildId: "server-1",
+        termKey: "jon smythe",
+        term: "Jon Smythe",
+        definition: "Existing Apollo contact",
+        createdAt: "2026-01-01T00:00:00.000Z",
+        createdBy: "user-1",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+        updatedBy: "user-1",
+      },
     },
     {
       draftId: "33333333-3333-4333-8333-333333333333",
@@ -126,5 +136,8 @@ export const Review: Story = {
       await page.findByRole("button", { name: "Review terms" }),
     );
     await expect(await page.findByDisplayValue("Jon Smythe")).toBeVisible();
+    await expect(
+      await page.findByDisplayValue("Existing Apollo contact"),
+    ).toBeVisible();
   },
 };

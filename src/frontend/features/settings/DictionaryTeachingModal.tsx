@@ -112,7 +112,8 @@ export default function DictionaryTeachingModal({
           included:
             draft.action !== "conflict" && draft.action !== "needs_input",
           preferredTermInput: draft.preferredTerm ?? "",
-          descriptionInput: draft.description ?? "",
+          descriptionInput:
+            draft.description ?? draft.existingEntry?.definition ?? "",
         })),
       );
     } catch (error) {

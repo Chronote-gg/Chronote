@@ -80,6 +80,30 @@ describe("dictionaryTeachingService", () => {
     });
   });
 
+  test("does not ground a short spelling inside an unrelated word", () => {
+    const result = parseDictionaryTeachingResponse({
+      raw: JSON.stringify({
+        drafts: [
+          {
+            preferredTerm: "Ann",
+            observedForms: [],
+            description: null,
+            ambiguity: null,
+            evidence: [],
+          },
+        ],
+      }),
+      instruction: "Planning starts after lunch.",
+      existingEntries: [],
+    });
+
+    expect(result[0]).toMatchObject({
+      preferredTerm: null,
+      action: "needs_input",
+      ambiguity: "Confirm the exact spelling Chronote should use.",
+    });
+  });
+
   test("flags an observed form that is already another exact entry", () => {
     const existing = entry("John Smith", "A different person");
     const result = parseDictionaryTeachingResponse({
