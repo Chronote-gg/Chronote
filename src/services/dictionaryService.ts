@@ -74,6 +74,25 @@ const loadEntryForUpsert = async (params: {
   };
 };
 
+const assertNoObservedFormConflict = (params: {
+  entries?: DictionaryEntry[];
+  term: string;
+  observedForms?: string[];
+}) => {
+  if (
+    params.entries &&
+    findDictionaryObservedConflict(
+      params.entries,
+      params.term,
+      params.observedForms ?? [],
+    )
+  ) {
+    throw new Error(
+      "This spelling conflicts with another dictionary entry or observed form.",
+    );
+  }
+};
+
 export async function listDictionaryEntriesService(
   guildId: string,
 ): Promise<DictionaryEntry[]> {
@@ -120,14 +139,11 @@ export async function upsertDictionaryEntryService(params: {
     params.observedForms === undefined
       ? existing?.observedForms
       : normalizeDictionaryObservedForms(params.observedForms);
-  if (
-    snapshotEntries &&
-    findDictionaryObservedConflict(snapshotEntries, term, observedForms ?? [])
-  ) {
-    throw new Error(
-      "This spelling conflicts with another dictionary entry or observed form.",
-    );
-  }
+  assertNoObservedFormConflict({
+    entries: snapshotEntries,
+    term,
+    observedForms,
+  });
   const entry: DictionaryEntry = {
     guildId: params.guildId,
     termKey,
