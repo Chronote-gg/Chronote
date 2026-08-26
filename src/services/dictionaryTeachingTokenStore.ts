@@ -135,6 +135,8 @@ class InMemoryDictionaryTeachingTokenStore implements DictionaryTeachingTokenSto
   }
 }
 
+let sharedInMemoryStore: DictionaryTeachingTokenStore | undefined;
+
 type StoredKind = "dictionaryTeachingDraft" | "dictionaryTeachingContext";
 
 type DynamoTokenItem = {
@@ -267,7 +269,9 @@ class DynamoDictionaryTeachingTokenStore implements DictionaryTeachingTokenStore
 export function createDictionaryTeachingTokenStore(options: {
   maxPending: number;
 }): DictionaryTeachingTokenStore {
-  return config.mock.enabled
-    ? new InMemoryDictionaryTeachingTokenStore(options.maxPending)
-    : new DynamoDictionaryTeachingTokenStore();
+  if (!config.mock.enabled) return new DynamoDictionaryTeachingTokenStore();
+  sharedInMemoryStore ??= new InMemoryDictionaryTeachingTokenStore(
+    options.maxPending,
+  );
+  return sharedInMemoryStore;
 }

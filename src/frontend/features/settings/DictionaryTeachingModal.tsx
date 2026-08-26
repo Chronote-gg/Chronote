@@ -135,14 +135,16 @@ export default function DictionaryTeachingModal({
           draftId: draft.draftId,
           preferredTerm: draft.preferredTermInput.trim(),
           observedForms: draft.observedForms,
-          description: draft.descriptionInput.trim() || undefined,
+          description: draft.descriptionInput.trim(),
         })),
       });
       const failures = result.results.filter((item) => !item.ok);
       if (failures.length > 0) {
         notifications.show({
           color: "red",
-          message: `${failures.length} term${failures.length === 1 ? "" : "s"} could not be saved. Review and try again.`,
+          message:
+            failures[0].error ??
+            `${failures.length} term${failures.length === 1 ? "" : "s"} could not be saved. Review and try again.`,
         });
         return;
       }
@@ -300,7 +302,7 @@ export default function DictionaryTeachingModal({
                         <Text size="xs" c="dimmed">
                           Existing entry: {draft.existingEntry.term}
                           {draft.existingEntry.definition
-                            ? ` — ${draft.existingEntry.definition}`
+                            ? `: ${draft.existingEntry.definition}`
                             : ""}
                         </Text>
                       ) : null}

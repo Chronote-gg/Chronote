@@ -67,11 +67,13 @@ function TrpcStoryProvider({ children }: { children: ReactNode }) {
           url: "/trpc",
           fetch: async () =>
             new Response(
-              JSON.stringify({
-                result: {
-                  data: previewResult,
+              JSON.stringify([
+                {
+                  result: {
+                    data: previewResult,
+                  },
                 },
-              }),
+              ]),
               {
                 status: 200,
                 headers: { "Content-Type": "application/json" },

@@ -168,6 +168,38 @@ const saveTeachingEntry = async (params: {
   }
 };
 
+const prepareTeachingEntrySave = (params: {
+  serverId: string;
+  userId: string;
+  submitted: DictionaryTeachingCommitEntry;
+  draft: DictionaryTeachingDraft;
+  current?: DictionaryEntry;
+  record: DictionaryTeachingDraftRecord;
+}) => {
+  const normalized = normalizeTeachingEntry(params.submitted, params.current);
+  const targetsUnreviewedEntry =
+    params.current !== undefined &&
+    params.draft.existingEntry?.termKey !== params.current.termKey;
+  const save = targetsUnreviewedEntry
+    ? Promise.resolve<TeachingCommitResult>({
+        draftId: params.submitted.draftId,
+        ok: false,
+        error:
+          "This exact spelling now matches an existing entry. Revise and analyze the request again before updating it.",
+      })
+    : saveTeachingEntry({
+        serverId: params.serverId,
+        userId: params.userId,
+        submitted: params.submitted,
+        normalized,
+        record: params.record,
+      });
+  return {
+    edited: teachingDraftWasEdited(params.draft, normalized),
+    save,
+  };
+};
+
 const commitDictionaryTeaching = async (
   input: TeachingCommitInput,
   userId: string,
@@ -186,20 +218,14 @@ const commitDictionaryTeaching = async (
     const key = buildDictionaryTermKey(
       normalizeDictionaryTerm(submitted.preferredTerm),
     );
-    const normalized = normalizeTeachingEntry(submitted, currentByKey.get(key));
-    return {
-      edited: teachingDraftWasEdited(
-        draftsById.get(submitted.draftId)!,
-        normalized,
-      ),
-      save: saveTeachingEntry({
-        serverId: input.serverId,
-        userId,
-        submitted,
-        normalized,
-        record,
-      }),
-    };
+    return prepareTeachingEntrySave({
+      serverId: input.serverId,
+      userId,
+      submitted,
+      draft: draftsById.get(submitted.draftId)!,
+      current: currentByKey.get(key),
+      record,
+    });
   });
   const results = await Promise.all(pending.map(({ save }) => save));
   const failedCount = results.filter((result) => !result.ok).length;
@@ -334,11 +360,6 @@ export const dictionaryRouter = router({
         meetingId: contextRecord?.context.meetingId,
         correctionId: contextRecord?.context.correctionId,
       });
-      if (input.correctionContextToken) {
-        await dictionaryTeachingTokenStore.deleteContext(
-          input.correctionContextToken,
-        );
-      }
       captureEvent("dictionary_teaching_previewed", {
         userId: ctx.user!.id,
         guildId: input.serverId,

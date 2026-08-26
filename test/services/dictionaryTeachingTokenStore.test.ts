@@ -53,6 +53,33 @@ describe("dictionaryTeachingTokenStore DynamoDB parsing", () => {
     process.env.MOCK_MODE = originalMockMode;
   });
 
+  test("shares correction context between mock-mode router stores", async () => {
+    jest.resetModules();
+    process.env.MOCK_MODE = "true";
+    const { createDictionaryTeachingTokenStore } =
+      await import("../../src/services/dictionaryTeachingTokenStore");
+    const meetingsStore = createDictionaryTeachingTokenStore({
+      maxPending: 200,
+    });
+    const dictionaryStore = createDictionaryTeachingTokenStore({
+      maxPending: 200,
+    });
+    const token = "shared-context-token";
+    const record = {
+      guildId: "guild-1",
+      requesterId: "user-1",
+      expiresAtMs: Date.now() + 60_000,
+      context: {
+        source: "notes_correction" as const,
+        notesDiff: "+ Jon Smythe",
+      },
+    };
+
+    await meetingsStore.setContext(token, record);
+
+    await expect(dictionaryStore.getContext(token)).resolves.toEqual(record);
+  });
+
   test("corrupt draft JSON returns null and deletes the item", async () => {
     const store = await loadStore();
     const token = "token-1";

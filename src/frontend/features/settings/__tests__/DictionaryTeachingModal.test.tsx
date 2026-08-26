@@ -154,4 +154,20 @@ describe("DictionaryTeachingModal", () => {
       screen.getByRole("button", { name: "Teach Chronote" }),
     ).toBeDisabled();
   });
+
+  it("submits an empty description so an existing description can be cleared", async () => {
+    renderModal({ initialInstruction: "Update Jon Smythe." });
+    fireEvent.click(screen.getByRole("button", { name: "Review terms" }));
+    const description = await screen.findByLabelText("Description (optional)");
+    fireEvent.change(description, { target: { value: "" } });
+    fireEvent.click(screen.getByRole("button", { name: "Teach Chronote" }));
+
+    await waitFor(() =>
+      expect(mockCommitTeaching).toHaveBeenCalledWith(
+        expect.objectContaining({
+          entries: [expect.objectContaining({ description: "" })],
+        }),
+      ),
+    );
+  });
 });
