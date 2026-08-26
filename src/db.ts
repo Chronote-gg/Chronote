@@ -1,5 +1,6 @@
 import { config } from "./services/configService";
 import { randomUUID } from "node:crypto";
+import { isDeepStrictEqual } from "node:util";
 import {
   AttributeValue,
   DynamoDBClient,
@@ -1157,6 +1158,20 @@ async function reconcileDictionaryRevision(
   return false;
 }
 
+async function dictionaryEntryWasPersisted(
+  entry: DictionaryEntry,
+): Promise<boolean> {
+  try {
+    const persisted = await getDictionaryEntry(entry.guildId, entry.termKey);
+    const normalizedEntry = unmarshall(
+      marshall(entry, { removeUndefinedValues: true }),
+    ) as DictionaryEntry;
+    return isDeepStrictEqual(persisted, normalizedEntry);
+  } catch {
+    return false;
+  }
+}
+
 export async function writeDictionaryEntry(
   entry: DictionaryEntry,
   expectedUpdatedAt?: string | null,
@@ -1200,13 +1215,22 @@ export async function writeDictionaryEntry(
     ) {
       return false;
     }
-    await dynamoDbClient.send(
-      new PutItemCommand({
-        TableName: tableName("DictionaryTable"),
-        Item: marshall(entry, { removeUndefinedValues: true }),
-        ...entryCondition,
-      }),
-    );
+    try {
+      await dynamoDbClient.send(
+        new PutItemCommand({
+          TableName: tableName("DictionaryTable"),
+          Item: marshall(entry, { removeUndefinedValues: true }),
+          ...entryCondition,
+        }),
+      );
+    } catch (error) {
+      if (
+        isConditionalCheckFailed(error) ||
+        !(await dictionaryEntryWasPersisted(entry))
+      ) {
+        throw error;
+      }
+    }
     return reconcileDictionaryRevision(
       entry.guildId,
       lockToken,

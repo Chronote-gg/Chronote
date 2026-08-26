@@ -110,6 +110,52 @@ describe("dictionary write lock", () => {
     ).toContain("PutItemCommand");
   });
 
+  test("reconciles an ambiguous put response when the entry was persisted", async () => {
+    sendMock
+      .mockResolvedValueOnce({})
+      .mockResolvedValueOnce({
+        Item: marshall({ sid: "dictionaryRevision#guild-1", revision: 0 }),
+      })
+      .mockResolvedValueOnce({})
+      .mockRejectedValueOnce(new Error("put response lost"))
+      .mockResolvedValueOnce({ Item: marshall(entry) })
+      .mockResolvedValueOnce({})
+      .mockResolvedValueOnce({});
+    const { writeDictionaryEntry } = await import("../src/db");
+
+    await expect(writeDictionaryEntry(entry, null, 0)).resolves.toBe(true);
+
+    expect(
+      sendMock.mock.calls.filter(
+        ([command]) =>
+          command.input.UpdateExpression === "SET #revision = :nextRevision",
+      ),
+    ).toHaveLength(1);
+  });
+
+  test("does not advance the revision when an ambiguous put did not land", async () => {
+    const putError = new Error("put failed before commit");
+    sendMock
+      .mockResolvedValueOnce({})
+      .mockResolvedValueOnce({
+        Item: marshall({ sid: "dictionaryRevision#guild-1", revision: 0 }),
+      })
+      .mockResolvedValueOnce({})
+      .mockRejectedValueOnce(putError)
+      .mockResolvedValueOnce({})
+      .mockResolvedValueOnce({});
+    const { writeDictionaryEntry } = await import("../src/db");
+
+    await expect(writeDictionaryEntry(entry, null, 0)).rejects.toBe(putError);
+
+    expect(
+      sendMock.mock.calls.some(
+        ([command]) =>
+          command.input.UpdateExpression === "SET #revision = :nextRevision",
+      ),
+    ).toBe(false);
+  });
+
   test("clears a populated dictionary under one lock and revision advance", async () => {
     sendMock
       .mockResolvedValueOnce({})
