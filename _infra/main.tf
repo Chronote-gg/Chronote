@@ -156,7 +156,7 @@ variable "LANGFUSE_PROMPT_CACHE_TTL_MS" {
 variable "NOTES_MODEL" {
   description = "OpenAI model for notes and summaries"
   type        = string
-  default     = "gpt-5.6-sol"
+  default     = "gpt-5.2"
 }
 
 variable "TRANSCRIPTS_BUCKET" {
@@ -319,13 +319,13 @@ variable "LIVE_VOICE_MODE" {
 variable "LIVE_VOICE_GATE_MODEL" {
   description = "Live voice gate model"
   type        = string
-  default     = "gpt-5.6-luna"
+  default     = "gpt-5-mini"
 }
 
 variable "LIVE_VOICE_RESPONDER_MODEL" {
   description = "Live voice responder model"
   type        = string
-  default     = "gpt-5.6-terra"
+  default     = "gpt-4o-mini"
 }
 
 variable "LIVE_VOICE_TTS_MODEL" {

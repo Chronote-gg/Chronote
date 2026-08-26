@@ -21,7 +21,7 @@ The Meeting Notes Discord Bot is a Node.js application built with TypeScript. It
 - **Transcription & AI Processing (`src/services/transcriptionService.ts`, `src/services/notesService.ts`, `src/services/imageService.ts`):**
   - Interfaces with OpenAI API (`openai` library) for:
     - Audio transcription (gpt-4o-transcribe model).
-    - Generating summaries, to-do lists, meeting notes, classifications, and image prompts (GPT-5.6 Sol, Terra, Luna, and DALL-E 3 models).
+    - Generating summaries, to-do lists, meeting notes, and image prompts (GPT-5.1, gpt-5-mini, DALL-E 3 models).
   - Manages temporary files for audio snippets (PCM to WAV conversion for transcription).
   - Includes policies for retries, circuit breaking, and rate limiting (using `cockatiel` and `bottleneck`) for OpenAI API calls.
   - Constructs dynamic prompts for AI models based on meeting context (server name, attendees, etc.).

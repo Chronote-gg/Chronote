@@ -8,14 +8,14 @@ This file provides Copilot review context. AGENTS.md remains the source of truth
 
 ## What this project is
 
-- Discord bot that records voice meetings, transcribes them with OpenAI (gpt-4o-transcribe), generates notes with GPT-5.6 Sol, and posts results back to Discord.
+- Discord bot that records voice meetings, transcribes them with OpenAI (gpt-4o-transcribe), generates notes with GPT-5.1, and posts results back to Discord.
 - Supports auto-recording, meeting history in DynamoDB, context injection (server/channel/meeting), dictionary terms for prompt context, and a user-driven notes correction flow using LLMs.
 
 ## Tech stack
 
 - Runtime: Node.js 24.15.0, TypeScript.
 - Discord: discord.js v14, discord-api-types, @discordjs/voice for audio capture, @discordjs/opus, prism-media.
-- AI: openai SDK; gpt-4o-transcribe for transcription; GPT-5.6 Sol for cleanup/notes/corrections; GPT-5.6 Terra for Q&A/live responses; GPT-5.6 Luna for gates, coalescing, and image captions; DALL-E 3 for images.
+- AI: openai SDK; gpt-4o-transcribe for transcription; gpt-5.1 for cleanup/notes/corrections; gpt-5-mini for live gate; DALL-E 3 for images.
 - Observability and prompt management: Langfuse for tracing, prompt versioning, and prompt sync scripts.
 - Storage: AWS DynamoDB (tables include MeetingHistory, MeetingUserIndex, PersonalMediaUploadJob, PersonalRecordingSegment, SessionTable, McpOAuthTable, NotionIntegrationTable), S3 for transcripts/audio.
 - Infra: Terraform -> AWS ECS Fargate, ECR, CloudWatch logs; static frontend on S3 + CloudFront with OAC; local Dynamo via docker-compose.

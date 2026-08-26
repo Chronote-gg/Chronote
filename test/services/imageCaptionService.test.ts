@@ -119,6 +119,7 @@ describe("imageCaptionService", () => {
       },
     ];
     const meeting = buildMeeting(chatLog);
+    meeting.runtimeConfig!.modelChoices.imageCaption = "gpt-5.6-luna";
 
     const result = await module.captionMeetingImages(meeting);
 

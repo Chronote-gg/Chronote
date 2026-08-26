@@ -1,27 +1,28 @@
 # GPT-5.6 text-model migration
 
-This migration changes Chronote's text and vision-to-text defaults without
-changing audio, transcription, text-to-speech, or image-generation providers.
-It follows the current [OpenAI GPT-5.6 model guidance](https://developers.openai.com/api/docs/guides/latest-model)
+This migration prepares Chronote's text and vision-to-text roles for staged
+GPT-5.6 routing while keeping every legacy model as the effective default. It
+does not change audio, transcription, text-to-speech, or image-generation
+providers. It follows the current [OpenAI GPT-5.6 model guidance](https://developers.openai.com/api/docs/guides/latest-model)
 and preserves the existing Chat Completions request and output contracts.
 
 No production configuration has been changed or deployed by this work.
 
 ## Current usage inventory and target mapping
 
-| Workload role                                                 | Previous default | Target          | Endpoint and contract                                                                                                       | Effective reasoning and role                                                         |
-| ------------------------------------------------------------- | ---------------- | --------------- | --------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
-| Meeting notes, personal-upload notes, notes eval              | `gpt-5.2`        | `gpt-5.6-sol`   | Chat Completions; Markdown text, mention allowlist sanitization, continuation on `length`                                   | Temperature mode forced reasoning `none`; flagship quality path                      |
-| Meeting summary                                               | `gpt-5.2`        | `gpt-5.6-sol`   | Chat Completions; JSON object parsed into bounded sentence and label fields; errors return an empty summary                 | Temperature `0`, reasoning `none`; quality-sensitive user-facing summary             |
-| Notes correction, Discord and web                             | `gpt-5.2`        | `gpt-5.6-sol`   | Chat Completions; corrected Markdown, code-fence stripping, mention allowlist sanitization; failure preserves current notes | Temperature `0`, reasoning `none`; fidelity is more important than throughput        |
-| Transcription cleanup                                         | `gpt-5.2`        | `gpt-5.6-sol`   | Chat Completions; cleaned transcript text with the shared continuation behavior                                             | Temperature `0`, reasoning `none`; transcription-adjacent quality path               |
-| Image prompt generation                                       | `gpt-5.2`        | `gpt-5.6-sol`   | Chat Completions; plain image prompt consumed by the unchanged DALL-E request                                               | Temperature `0.5`, reasoning `none`; creative quality path                           |
-| Meeting Q&A                                                   | `gpt-4o-mini`    | `gpt-5.6-terra` | Chat Completions; answer text plus deterministic meeting citations                                                          | Temperature `1`, reasoning `none`; balanced interactive path                         |
-| Live voice responder                                          | `gpt-4o-mini`    | `gpt-5.6-terra` | Chat Completions; text capped at 200 completion tokens; failures produce no spoken reply                                    | Temperature `1`, reasoning `none`; balanced latency and response quality             |
-| Live voice gate and command confirmation                      | `gpt-5-mini`     | `gpt-5.6-luna`  | Chat Completions; bounded JSON action/decision; invalid, empty, or failed output becomes no action                          | Explicit `low`; latency-sensitive, high-volume classifier                            |
-| Auto-record cancellation                                      | `gpt-5-mini`     | `gpt-5.6-luna`  | Chat Completions; JSON `{cancel, reason}`; invalid or failed output keeps the meeting                                       | Explicit `low`; low-cost classifier with a safe false fallback                       |
-| Fast/slow transcript coalescing and final-pass reconciliation | `gpt-5-mini`     | `gpt-5.6-luna`  | Chat Completions; coalesced text or prompt-defined reconciliation JSON consumed by existing parsers                         | Explicit `low`; high-volume transcription-adjacent extraction                        |
-| Meeting image captions                                        | `gpt-4o-mini`    | `gpt-5.6-luna`  | Chat Completions with low-detail image input; JSON `{caption, visibleText}`; failures skip the image                        | Temperature `0`, reasoning `none`; bounded, cost-sensitive vision-to-text extraction |
+| Workload role                                                 | Effective baseline | Target override | Endpoint and contract                                                                                                       | Effective reasoning and role                                                         |
+| ------------------------------------------------------------- | ------------------ | --------------- | --------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
+| Meeting notes, personal-upload notes, notes eval              | `gpt-5.2`          | `gpt-5.6-sol`   | Chat Completions; Markdown text, mention allowlist sanitization, continuation on `length`                                   | Temperature mode forced reasoning `none`; flagship quality path                      |
+| Meeting summary                                               | `gpt-5.2`          | `gpt-5.6-sol`   | Chat Completions; JSON object parsed into bounded sentence and label fields; errors return an empty summary                 | Temperature `0`, reasoning `none`; quality-sensitive user-facing summary             |
+| Notes correction, Discord and web                             | `gpt-5.2`          | `gpt-5.6-sol`   | Chat Completions; corrected Markdown, code-fence stripping, mention allowlist sanitization; failure preserves current notes | Temperature `0`, reasoning `none`; fidelity is more important than throughput        |
+| Transcription cleanup                                         | `gpt-5.2`          | `gpt-5.6-sol`   | Chat Completions; cleaned transcript text with the shared continuation behavior                                             | Temperature `0`, reasoning `none`; transcription-adjacent quality path               |
+| Image prompt generation                                       | `gpt-5.2`          | `gpt-5.6-sol`   | Chat Completions; plain image prompt consumed by the unchanged DALL-E request                                               | Temperature `0.5`, reasoning `none`; creative quality path                           |
+| Meeting Q&A                                                   | `gpt-4o-mini`      | `gpt-5.6-terra` | Chat Completions; answer text plus deterministic meeting citations                                                          | Temperature `1`, reasoning `none`; balanced interactive path                         |
+| Live voice responder                                          | `gpt-4o-mini`      | `gpt-5.6-terra` | Chat Completions; text capped at 200 completion tokens; failures produce no spoken reply                                    | Temperature `1`, reasoning `none`; balanced latency and response quality             |
+| Live voice gate and command confirmation                      | `gpt-5-mini`       | `gpt-5.6-luna`  | Chat Completions; bounded JSON action/decision; invalid, empty, or failed output becomes no action                          | Explicit `low`; latency-sensitive, high-volume classifier                            |
+| Auto-record cancellation                                      | `gpt-5-mini`       | `gpt-5.6-luna`  | Chat Completions; JSON `{cancel, reason}`; invalid or failed output keeps the meeting                                       | Explicit `low`; low-cost classifier with a safe false fallback                       |
+| Fast/slow transcript coalescing and final-pass reconciliation | `gpt-5-mini`       | `gpt-5.6-luna`  | Chat Completions; coalesced text or prompt-defined reconciliation JSON consumed by existing parsers                         | Explicit `low`; high-volume transcription-adjacent extraction                        |
+| Meeting image captions                                        | `gpt-4o-mini`      | `gpt-5.6-luna`  | Chat Completions with low-detail image input; JSON `{caption, visibleText}`; failures skip the image                        | Temperature `0`, reasoning `none`; bounded, cost-sensitive vision-to-text extraction |
 
 The following specialized models remain intentionally unchanged:
 
@@ -29,13 +30,15 @@ The following specialized models remain intentionally unchanged:
   log probabilities, prompt/no-prompt voting, and the finalized-audio pass.
 - `gpt-4o-mini-tts` uses `audio.speech.create` with PCM output. Its model,
   voice, queue, playback, and recording behavior are unchanged.
-- `dall-e-3` uses `images.generate`; only the upstream text prompt model moves.
+- `dall-e-3` uses `images.generate`; only the upstream text prompt role is a
+  staged migration target.
 - No Realtime API, Responses API, embeddings, Batch API, or OpenAI tool-calling
   path exists in the current repository.
 
-Legacy GPT-5.2, GPT-5 mini/nano, and GPT-4o mini choices remain in the model
-registry as explicit rollback targets. Historical test fixtures that exercise
-those compatibility paths are also retained.
+Legacy GPT-5.2, GPT-5 mini/nano, and GPT-4o mini choices remain the effective
+defaults and explicit rollback targets. GPT-5.6 targets are selectable only
+through the existing per-role configuration controls. Historical test fixtures
+that exercise the legacy compatibility paths are also retained.
 
 ## Compatibility decisions
 
@@ -84,13 +87,13 @@ GPT-5.6-specific prompt regression is available yet.
    successful task. Sanitize user content in any exported comparison set.
 2. Before any production code deployment, read the effective ECS environment
    and AppConfig values. Production model overrides are currently unknown.
-   Configure explicit legacy values for every `models.<role>` key, especially
-   `transcriptionCoalesce` and `imageCaption`, so deploying the code alone is a
-   no-op for model routing.
-3. Deploy and test in the isolated sandbox only after explicit authorization.
-   Verify account access and rate limits for all three exact model IDs. Run the
-   meeting-notes, meeting-summary, transcription, correction, gate, responder,
-   Q&A, and image-caption cases against the same inputs.
+   Confirm every role still resolves to its legacy baseline; deploying this
+   code without a new override must remain a no-op for model routing.
+3. Test in the isolated sandbox only after explicit authorization. Set the
+   target `models.<role>` overrides there, verify account access and rate limits
+   for all three exact model IDs, and run meeting-notes, meeting-summary,
+   transcription, correction, gate, responder, Q&A, and image-caption cases
+   against the same inputs.
 4. Compare the preserved effort first. For `low` Luna classifiers, also test
    `none`; for `none` Sol/Terra routes, test `low` only where reasoning could
    improve the task. Do not promote a lower effort unless contract success and
@@ -104,9 +107,10 @@ GPT-5.6-specific prompt regression is available yet.
    fallback remains available through `NOTES_MODEL`,
    `LIVE_VOICE_GATE_MODEL`, and `LIVE_VOICE_RESPONDER_MODEL`, but per-role
    AppConfig rollback is safer and does not disturb unrelated workloads.
-7. If Terraform-managed environment defaults are adopted, use a reviewed plan
-   and manual apply. A later backend deploy is still required to move ECS to
-   the new task-definition revision. Neither action is part of this change.
+7. Adopting GPT-5.6 as a Terraform-managed environment default is a separate
+   future change after the staged rollout proves safe. It requires a reviewed
+   plan and manual apply; a later backend deploy is still required to move ECS
+   to the new task-definition revision. Neither action is part of this change.
 
 ## Production verification gates
 

@@ -37,7 +37,7 @@ REDIS_AUTH_TOKEN="change-me-redis-auth-token" # only used when ENABLE_ELASTICACH
 ENABLE_API_ALB=true                           # false for a bot-only environment
 ENABLE_API_ALB_DELETION_PROTECTION=true       # must be false before the ALB can be destroyed
 ECS_DESIRED_COUNT=1                           # 0 parks the environment
-NOTES_MODEL="gpt-5.6-sol"                     # optional; model for notes and summaries
+NOTES_MODEL="gpt-5.2"                         # optional; model for notes and summaries
 APP_CONFIG_ENABLED="true"                     # optional; enable AppConfig for unified config
 SUPER_ADMIN_USER_IDS=""                       # comma-separated Discord user IDs
 LANGFUSE_BASE_URL=""                          # blank defaults to https://us.cloud.langfuse.com; set for EU or self-hosted
@@ -80,8 +80,8 @@ NOTION_REDIRECT_URI=""                        # optional; defaults to API /api/n
 
 # Live voice (optional)
 LIVE_VOICE_MODE="off"                         # off | tts_gate
-LIVE_VOICE_GATE_MODEL="gpt-5.6-luna"
-LIVE_VOICE_RESPONDER_MODEL="gpt-5.6-terra"
+LIVE_VOICE_GATE_MODEL="gpt-5-mini"
+LIVE_VOICE_RESPONDER_MODEL="gpt-4o-mini"
 LIVE_VOICE_TTS_MODEL="gpt-4o-mini-tts"
 LIVE_VOICE_TTS_VOICE="alloy"
 LIVE_VOICE_WINDOW_SECONDS="90"

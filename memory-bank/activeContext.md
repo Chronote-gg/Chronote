@@ -2,7 +2,7 @@
 
 ## What we’re focused on right now
 
-- **Live voice agent**: gate (GPT-5.6 Luna) decides when to speak; GPT-5.6 Terra generates the line; TTS streams into Discord and is mixed into recordings; thinking cue loops while replying.
+- **Live voice agent**: gate (gpt-5-mini) decides when to speak; responder generates the line; TTS streams into Discord and is mixed into recordings; thinking cue loops while replying.
 - **Meeting tagging & recall**: freeform tags, edit buttons during/after, tags shown on meeting summary. `/ask` uses recent meetings (guild default, channel optional) with tag suggestions from history.
 - **Billing & auth**: Stripe checkout + billing portal; webhook writes GuildSubscription/PaymentTransaction and handles payment_failed + subscription_deleted; sessions in SessionTable; Discord OAuth optional. API routes live under `src/api/` (billing, guilds) with one app-level Stripe raw parser.
 - **Frontend**: Vite + React 19 + Mantine 8 UI; billing/status page at `/billing`; deployed to S3 + CloudFront.
