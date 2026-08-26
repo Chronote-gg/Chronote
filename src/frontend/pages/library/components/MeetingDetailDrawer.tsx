@@ -412,9 +412,11 @@ export default function MeetingDetailDrawer({
         token: notesCorrectionToken,
       });
       closeNotesCorrectionModal();
+      const contextExpiresAtMs = result.dictionaryTeachingContextExpiresAtMs;
       if (
         canManageSelectedGuild &&
         result.dictionaryTeachingContextToken &&
+        contextExpiresAtMs &&
         result.dictionaryTeachingInstruction
       ) {
         setDictionaryTeachingContextToken(
@@ -424,7 +426,7 @@ export default function MeetingDetailDrawer({
         notifications.show({
           id: "notes-correction-teaching-offer",
           title: "Notes updated",
-          autoClose: false,
+          autoClose: Math.max(1, contextExpiresAtMs - Date.now()),
           message: (
             <Stack gap="xs">
               <Text size="sm">
@@ -436,6 +438,9 @@ export default function MeetingDetailDrawer({
                 leftSection={<IconSparkles size={14} />}
                 onClick={() => {
                   notifications.hide("notes-correction-teaching-offer");
+                  if (Date.now() >= contextExpiresAtMs) {
+                    setDictionaryTeachingContextToken(undefined);
+                  }
                   setDictionaryTeachingModalOpen(true);
                 }}
               >

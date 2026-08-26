@@ -423,6 +423,65 @@ describe("dictionary teaching router", () => {
     expect(tokenStore.deleteDraft).not.toHaveBeenCalled();
   });
 
+  test("rejects an update when the reviewed entry changed after preview", async () => {
+    const reviewed = await upsertDictionaryEntryService({
+      guildId: "guild-1",
+      term: "Apollo",
+      definition: "Reviewed description",
+      userId: getMockUser().id,
+    });
+    const current = await upsertDictionaryEntryService({
+      guildId: "guild-1",
+      term: "Apollo",
+      definition: "Concurrent admin edit",
+      userId: "other-admin",
+    });
+    const token = "83000000-0000-4000-8000-000000000001";
+    const draftId = "83000000-0000-4000-8000-000000000002";
+    drafts.set(token, {
+      guildId: "guild-1",
+      requesterId: getMockUser().id,
+      expiresAtMs: Date.now() + 60_000,
+      source: "settings",
+      drafts: [
+        {
+          draftId,
+          preferredTerm: "Apollo",
+          observedForms: [],
+          description: "Reviewed description",
+          ambiguity: null,
+          evidence: [],
+          action: "update",
+          existingEntry: { ...reviewed, updatedAt: "2000-01-01T00:00:00.000Z" },
+        },
+      ],
+      model: {
+        model: "gpt-5-mini",
+        promptName: "chronote-dictionary-teaching-chat",
+      },
+    });
+
+    const result = await buildCaller().dictionary.commitTeaching({
+      serverId: "guild-1",
+      token,
+      entries: [
+        {
+          draftId,
+          preferredTerm: "Apollo",
+          description: "Stale reviewer overwrite",
+        },
+      ],
+    });
+
+    expect(result.results[0]).toMatchObject({
+      ok: false,
+      error: expect.stringContaining("changed after the proposal"),
+    });
+    const list = await buildCaller().dictionary.list({ serverId: "guild-1" });
+    expect(list.entries).toEqual([current]);
+    expect(tokenStore.deleteDraft).not.toHaveBeenCalled();
+  });
+
   test("clears an existing description when the reviewer submits an empty value", async () => {
     const existing = await buildCaller().dictionary.upsert({
       serverId: "guild-1",

@@ -31,6 +31,22 @@ describe("dictionaryTeachingContextService", () => {
     ).toBe("");
   });
 
+  test("matches short correction terms on token boundaries", () => {
+    const excerpt = selectDictionaryTeachingTranscriptExcerpt({
+      transcript: [
+        "Alice: Planning starts after lunch.",
+        "Bob: An artifact owns the launch checklist.",
+        "Alice: Ann owns the final review.",
+      ].join("\n"),
+      instruction: "Ann",
+      notesDiff: "+ Ann",
+    });
+
+    expect(excerpt).toContain("Ann owns the final review");
+    expect(excerpt).not.toContain("Planning");
+    expect(excerpt).not.toContain("artifact");
+  });
+
   test("bounds notes correction context", () => {
     const result = boundDictionaryTeachingNotesDiff("x".repeat(200), 50);
     expect(result.length).toBeLessThanOrEqual(50);

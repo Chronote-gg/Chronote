@@ -40,6 +40,14 @@ const tokensFor = (value: string) =>
     ),
   ).slice(0, 30);
 
+const tokenSetFor = (value: string) =>
+  new Set(
+    value
+      .toLocaleLowerCase()
+      .split(/[^\p{L}\p{N}]+/u)
+      .filter(Boolean),
+  );
+
 const splitTranscript = (transcript: string) => {
   const lines = transcript
     .split(/\r?\n+/)
@@ -71,15 +79,17 @@ export function selectDictionaryTeachingTranscriptExcerpt(params: {
   const tokens = tokensFor(`${params.instruction}\n${params.notesDiff}`);
   if (tokens.length === 0) return "";
   const ranked = splitTranscript(params.transcript)
-    .map((text, index) => ({
-      index,
-      text,
-      score: tokens.reduce(
-        (score, token) =>
-          score + (text.toLocaleLowerCase().includes(token) ? 1 : 0),
-        0,
-      ),
-    }))
+    .map((text, index) => {
+      const transcriptTokens = tokenSetFor(text);
+      return {
+        index,
+        text,
+        score: tokens.reduce(
+          (score, token) => score + (transcriptTokens.has(token) ? 1 : 0),
+          0,
+        ),
+      };
+    })
     .filter((candidate) => candidate.score > 0)
     .sort((a, b) => b.score - a.score || a.index - b.index)
     .slice(0, 6)

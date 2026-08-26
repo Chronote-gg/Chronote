@@ -1776,6 +1776,7 @@ const applyNotesCorrection = authedProcedure
     }
 
     let dictionaryTeachingContextToken: string | undefined;
+    let dictionaryTeachingContextExpiresAtMs: number | undefined;
     const canTeachDictionary = await ensureManageGuildWithUserToken(
       ctx.user.accessToken,
       input.serverId,
@@ -1790,12 +1791,14 @@ const applyNotesCorrection = authedProcedure
     ) {
       try {
         dictionaryTeachingContextToken = uuidv4();
+        dictionaryTeachingContextExpiresAtMs =
+          Date.now() + DICTIONARY_TEACHING_TOKEN_TTL_MS;
         await dictionaryTeachingTokenStore.setContext(
           dictionaryTeachingContextToken,
           {
             guildId: input.serverId,
             requesterId: ctx.user.id,
-            expiresAtMs: Date.now() + DICTIONARY_TEACHING_TOKEN_TTL_MS,
+            expiresAtMs: dictionaryTeachingContextExpiresAtMs,
             context: {
               source: "notes_correction",
               meetingId: input.meetingId,
@@ -1807,6 +1810,7 @@ const applyNotesCorrection = authedProcedure
         );
       } catch (error) {
         dictionaryTeachingContextToken = undefined;
+        dictionaryTeachingContextExpiresAtMs = undefined;
         console.warn(
           "Failed creating dictionary teaching context after correction",
           error,
@@ -1850,6 +1854,7 @@ const applyNotesCorrection = authedProcedure
         return {
           ok: true,
           dictionaryTeachingContextToken,
+          dictionaryTeachingContextExpiresAtMs,
           dictionaryTeachingInstruction: appliedSuggestion.text,
         };
       }
@@ -1911,6 +1916,7 @@ const applyNotesCorrection = authedProcedure
     return {
       ok: true,
       dictionaryTeachingContextToken,
+      dictionaryTeachingContextExpiresAtMs,
       dictionaryTeachingInstruction: appliedSuggestion.text,
     };
   });

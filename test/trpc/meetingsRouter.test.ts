@@ -679,6 +679,9 @@ describe("meetings notes correction mutations", () => {
     });
 
     expect(result.dictionaryTeachingContextToken).toEqual(expect.any(String));
+    expect(result.dictionaryTeachingContextExpiresAtMs).toEqual(
+      expect.any(Number),
+    );
     expect(result.dictionaryTeachingInstruction).toBe(
       "John Smith should be Jon Smythe.",
     );
@@ -736,6 +739,7 @@ describe("meetings notes correction mutations", () => {
     expect(result).toEqual({
       ok: true,
       dictionaryTeachingContextToken: undefined,
+      dictionaryTeachingContextExpiresAtMs: undefined,
       dictionaryTeachingInstruction: "John Smith should be Jon Smythe.",
     });
   });

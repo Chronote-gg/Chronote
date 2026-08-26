@@ -195,6 +195,10 @@ const prepareTeachingEntrySave = (params: {
   const targetsUnreviewedEntry =
     params.current !== undefined &&
     params.draft.existingEntry?.termKey !== params.current.termKey;
+  const reviewedEntryChanged =
+    params.current !== undefined &&
+    params.draft.existingEntry?.termKey === params.current.termKey &&
+    params.draft.existingEntry.updatedAt !== params.current.updatedAt;
   const observedConflict = findDictionaryObservedConflict(
     params.currentEntries,
     normalized.preferredTerm,
@@ -207,9 +211,11 @@ const prepareTeachingEntrySave = (params: {
     params.draft.existingEntry?.termKey !== observedConflict.termKey;
   const conflictError = targetsUnreviewedEntry
     ? "This exact spelling now matches an existing entry. Revise and analyze the request again before updating it."
-    : targetsUnreviewedObservedConflict
-      ? "This spelling or one of its observed forms now conflicts with another entry. Revise and analyze the request again before saving it."
-      : undefined;
+    : reviewedEntryChanged
+      ? "This dictionary entry changed after the proposal was generated. Revise and analyze the request again before updating it."
+      : targetsUnreviewedObservedConflict
+        ? "This spelling or one of its observed forms now conflicts with another entry. Revise and analyze the request again before saving it."
+        : undefined;
   const save = conflictError
     ? Promise.resolve<TeachingCommitResult>({
         draftId: params.submitted.draftId,

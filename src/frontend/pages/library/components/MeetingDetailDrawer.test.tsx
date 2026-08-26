@@ -59,8 +59,15 @@ const mockSuggestNotesCorrection = jest.fn().mockResolvedValue({
 const mockApplyNotesCorrection = jest.fn().mockResolvedValue({
   ok: true,
   dictionaryTeachingContextToken: "11111111-1111-4111-8111-111111111111",
+  dictionaryTeachingContextExpiresAtMs: Date.now() + 15 * 60 * 1_000,
   dictionaryTeachingInstruction:
     "It wrote John Smith, but his name is Jon Smythe.",
+});
+
+const mockPreviewTeaching = jest.fn().mockResolvedValue({
+  token: "22222222-2222-4222-8222-222222222222",
+  expiresAtMs: Date.now() + 15 * 60 * 1_000,
+  drafts: [],
 });
 
 const mockNotionStatusQuery = {
@@ -246,11 +253,7 @@ jest.mock("../../../services/trpc", () => ({
     dictionary: {
       previewTeaching: {
         useMutation: () => ({
-          mutateAsync: jest.fn().mockResolvedValue({
-            token: "22222222-2222-4222-8222-222222222222",
-            expiresAtMs: Date.now() + 15 * 60 * 1_000,
-            drafts: [],
-          }),
+          mutateAsync: mockPreviewTeaching,
           isPending: false,
         }),
       },
@@ -400,6 +403,14 @@ describe("MeetingDetailDrawer summary copy", () => {
     mockSetPersonalShareGrants.mockClear();
     mockSuggestNotesCorrection.mockClear();
     mockApplyNotesCorrection.mockClear();
+    mockApplyNotesCorrection.mockResolvedValue({
+      ok: true,
+      dictionaryTeachingContextToken: "11111111-1111-4111-8111-111111111111",
+      dictionaryTeachingContextExpiresAtMs: Date.now() + 15 * 60 * 1_000,
+      dictionaryTeachingInstruction:
+        "It wrote John Smith, but his name is Jon Smythe.",
+    });
+    mockPreviewTeaching.mockClear();
     mockNotionStatusQuery.data = { configured: true, connected: false };
     mockNotionExportStatusQuery.data = {
       exported: false,
@@ -643,7 +654,7 @@ describe("MeetingDetailDrawer summary copy", () => {
       expect.objectContaining({
         id: "notes-correction-teaching-offer",
         title: "Notes updated",
-        autoClose: false,
+        autoClose: expect.any(Number),
       }),
     );
   });
@@ -697,6 +708,44 @@ describe("MeetingDetailDrawer summary copy", () => {
         "It wrote John Smith, but his name is Jon Smythe.",
       ),
     ).toBeInTheDocument();
+  });
+
+  it("falls back to instruction-only teaching after correction context expires", async () => {
+    const expiresAtMs = Date.now() + 1_000;
+    mockApplyNotesCorrection.mockResolvedValueOnce({
+      ok: true,
+      dictionaryTeachingContextToken: "11111111-1111-4111-8111-111111111111",
+      dictionaryTeachingContextExpiresAtMs: expiresAtMs,
+      dictionaryTeachingInstruction:
+        "It wrote John Smith, but his name is Jon Smythe.",
+    });
+    jest.mocked(notifications.show).mockClear();
+    renderDrawer({ canManageSelectedGuild: true });
+
+    await applyCorrection();
+    const offer = jest
+      .mocked(notifications.show)
+      .mock.calls.map(([options]) => options)
+      .find((options) => options.id === "notes-correction-teaching-offer");
+    render(<MantineProvider>{offer?.message}</MantineProvider>);
+    const nowSpy = jest.spyOn(Date, "now").mockReturnValue(expiresAtMs);
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "Teach Chronote from this correction",
+      }),
+    );
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Review terms" }),
+    );
+
+    await waitFor(() =>
+      expect(mockPreviewTeaching).toHaveBeenCalledWith({
+        serverId: "g1",
+        instruction: "It wrote John Smith, but his name is Jon Smythe.",
+        correctionContextToken: undefined,
+      }),
+    );
+    nowSpy.mockRestore();
   });
 
   it("does not offer dictionary teaching to a member without Manage Server", async () => {
