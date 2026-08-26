@@ -2,6 +2,8 @@ import type { Request, Response } from "express";
 import { getMockUser, resetMockStore } from "../../src/repositories/mockStore";
 import { ensureManageGuildWithUserToken } from "../../src/services/guildAccessService";
 import { generateDictionaryTeachingDrafts } from "../../src/services/dictionaryTeachingService";
+import { upsertDictionaryEntryService } from "../../src/services/dictionaryService";
+import { captureEvent } from "../../src/services/analyticsService";
 
 const drafts = new Map<string, unknown>();
 const contexts = new Map<string, unknown>();
@@ -30,6 +32,11 @@ jest.mock("../../src/services/guildAccessService", () => ({
 
 jest.mock("../../src/services/dictionaryTeachingService", () => ({
   generateDictionaryTeachingDrafts: jest.fn(),
+}));
+
+jest.mock("../../src/services/analyticsService", () => ({
+  captureEvent: jest.fn(),
+  shutdownAnalytics: jest.fn(),
 }));
 
 jest.mock("../../src/services/dictionaryTeachingTokenStore", () => ({
@@ -410,5 +417,60 @@ describe("dictionary teaching router", () => {
       ok: true,
       entry: { term: "Apollo", definition: undefined },
     });
+  });
+
+  test("does not count preserved stored observed forms as reviewer edits", async () => {
+    const existing = await upsertDictionaryEntryService({
+      guildId: "guild-1",
+      term: "Apollo",
+      definition: "Existing project",
+      observedForms: ["A polo"],
+      userId: getMockUser().id,
+    });
+    jest.mocked(captureEvent).mockClear();
+    const token = "91000000-0000-4000-8000-000000000001";
+    const draftId = "91000000-0000-4000-8000-000000000002";
+    drafts.set(token, {
+      guildId: "guild-1",
+      requesterId: getMockUser().id,
+      expiresAtMs: Date.now() + 60_000,
+      source: "settings",
+      drafts: [
+        {
+          draftId,
+          preferredTerm: "Apollo",
+          observedForms: [],
+          description: "Existing project",
+          ambiguity: null,
+          evidence: [],
+          action: "update",
+          existingEntry: existing,
+        },
+      ],
+      model: {
+        model: "gpt-5-mini",
+        promptName: "chronote-dictionary-teaching-chat",
+      },
+    });
+
+    await buildCaller().dictionary.commitTeaching({
+      serverId: "guild-1",
+      token,
+      entries: [
+        {
+          draftId,
+          preferredTerm: "Apollo",
+          observedForms: [],
+          description: "Existing project",
+        },
+      ],
+    });
+
+    expect(captureEvent).toHaveBeenCalledWith(
+      "dictionary_teaching_committed",
+      expect.objectContaining({
+        properties: expect.objectContaining({ edited_draft_count: 0 }),
+      }),
+    );
   });
 });

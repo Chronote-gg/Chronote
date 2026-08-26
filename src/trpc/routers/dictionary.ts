@@ -125,12 +125,23 @@ const normalizeTeachingEntry = (
 
 const teachingDraftWasEdited = (
   draft: DictionaryTeachingDraft,
-  normalized: ReturnType<typeof normalizeTeachingEntry>,
-) =>
-  draft.preferredTerm !== normalized.preferredTerm ||
-  (draft.description ?? undefined) !== normalized.description ||
-  JSON.stringify(draft.observedForms) !==
-    JSON.stringify(normalized.observedForms ?? []);
+  submitted: DictionaryTeachingCommitEntry,
+) => {
+  const submittedObservedForms =
+    submitted.observedForms === undefined
+      ? draft.observedForms
+      : normalizeDictionaryObservedForms(submitted.observedForms);
+  const submittedDescription =
+    submitted.description === undefined
+      ? draft.description
+      : normalizeDictionaryDefinition(submitted.description);
+  return (
+    draft.preferredTerm !== normalizeDictionaryTerm(submitted.preferredTerm) ||
+    draft.description !== (submittedDescription ?? null) ||
+    JSON.stringify(draft.observedForms) !==
+      JSON.stringify(submittedObservedForms ?? [])
+  );
+};
 
 const saveTeachingEntry = async (params: {
   serverId: string;
@@ -195,7 +206,7 @@ const prepareTeachingEntrySave = (params: {
         record: params.record,
       });
   return {
-    edited: teachingDraftWasEdited(params.draft, normalized),
+    edited: teachingDraftWasEdited(params.draft, params.submitted),
     save,
   };
 };

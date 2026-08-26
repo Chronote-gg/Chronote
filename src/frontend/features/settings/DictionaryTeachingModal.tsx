@@ -138,8 +138,15 @@ export default function DictionaryTeachingModal({
           description: draft.descriptionInput.trim(),
         })),
       });
+      const successfulDraftIds = new Set(
+        result.results.filter((item) => item.ok).map((item) => item.draftId),
+      );
       const failures = result.results.filter((item) => !item.ok);
+      if (successfulDraftIds.size > 0) await onSaved?.();
       if (failures.length > 0) {
+        setDrafts((current) =>
+          current.filter((draft) => !successfulDraftIds.has(draft.draftId)),
+        );
         notifications.show({
           color: "red",
           message:
@@ -148,7 +155,6 @@ export default function DictionaryTeachingModal({
         });
         return;
       }
-      await onSaved?.();
       notifications.show({
         message: `Chronote learned ${result.results.length} term${result.results.length === 1 ? "" : "s"}.`,
       });
@@ -281,6 +287,7 @@ export default function DictionaryTeachingModal({
                             {draft.observedForms.map((form) => (
                               <Button
                                 key={form}
+                                className="ph-no-capture"
                                 variant="light"
                                 size="compact-xs"
                                 rightSection={<IconX size={12} />}

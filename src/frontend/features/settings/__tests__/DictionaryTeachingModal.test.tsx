@@ -105,6 +105,9 @@ describe("DictionaryTeachingModal", () => {
       screen.getByDisplayValue("Apollo project collaborator"),
     ).toBeInTheDocument();
     expect(screen.getByText("John Smith")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "John Smith" })).toHaveClass(
+      "ph-no-capture",
+    );
 
     fireEvent.change(screen.getByLabelText("Description (optional)"), {
       target: { value: "Apollo deployment partner" },
@@ -169,5 +172,56 @@ describe("DictionaryTeachingModal", () => {
         }),
       ),
     );
+  });
+
+  it("removes successful drafts before retrying a partial save", async () => {
+    const onSaved = jest.fn();
+    mockPreviewTeaching.mockResolvedValue({
+      token: "11111111-1111-4111-8111-111111111111",
+      expiresAtMs: Date.now() + 15 * 60 * 1_000,
+      drafts: [
+        {
+          draftId: "22222222-2222-4222-8222-222222222222",
+          preferredTerm: "Jon Smythe",
+          observedForms: [],
+          description: null,
+          ambiguity: null,
+          evidence: [],
+          action: "create",
+        },
+        {
+          draftId: "33333333-3333-4333-8333-333333333333",
+          preferredTerm: "Apollo",
+          observedForms: [],
+          description: null,
+          ambiguity: null,
+          evidence: [],
+          action: "create",
+        },
+      ],
+    });
+    mockCommitTeaching.mockResolvedValue({
+      results: [
+        {
+          draftId: "22222222-2222-4222-8222-222222222222",
+          ok: true,
+        },
+        {
+          draftId: "33333333-3333-4333-8333-333333333333",
+          ok: false,
+          error: "Save failed.",
+        },
+      ],
+    });
+    renderModal({ initialInstruction: "Teach both names.", onSaved });
+    fireEvent.click(screen.getByRole("button", { name: "Review terms" }));
+    expect(await screen.findByDisplayValue("Jon Smythe")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Teach Chronote" }));
+
+    await waitFor(() =>
+      expect(screen.queryByDisplayValue("Jon Smythe")).not.toBeInTheDocument(),
+    );
+    expect(screen.getByDisplayValue("Apollo")).toBeInTheDocument();
+    expect(onSaved).toHaveBeenCalledTimes(1);
   });
 });
