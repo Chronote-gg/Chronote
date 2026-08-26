@@ -26,14 +26,12 @@ import {
   DICTIONARY_DEFINITION_MAX_LENGTH,
   DICTIONARY_TERM_MAX_LENGTH,
   buildDictionaryTermKey,
+  findDictionaryObservedConflict,
   normalizeDictionaryDefinition,
   normalizeDictionaryObservedForms,
   normalizeDictionaryTerm,
 } from "../../utils/dictionary";
-import {
-  findDictionaryObservedConflict,
-  generateDictionaryTeachingDrafts,
-} from "../../services/dictionaryTeachingService";
+import { generateDictionaryTeachingDrafts } from "../../services/dictionaryTeachingService";
 import { createDictionaryTeachingTokenStore } from "../../services/dictionaryTeachingTokenStore";
 import { resolveModelParamsForContext } from "../../services/openaiModelParams";
 import { resolveModelChoicesForContext } from "../../services/modelChoiceService";
@@ -122,6 +120,13 @@ const indexAndValidateTeachingDrafts = (
     throw new TRPCError({
       code: "BAD_REQUEST",
       message: "A submitted term was not part of this teaching draft.",
+    });
+  }
+  const submittedDraftIds = entries.map((entry) => entry.draftId);
+  if (new Set(submittedDraftIds).size !== submittedDraftIds.length) {
+    throw new TRPCError({
+      code: "BAD_REQUEST",
+      message: "Each teaching draft can be approved only once.",
     });
   }
   const submittedTermKeys = entries.map((entry) =>
@@ -297,6 +302,14 @@ const reviewedEntryWasChanged = (
   draft.existingEntry?.termKey === current.termKey &&
   draft.existingEntry.updatedAt !== current.updatedAt;
 
+const reviewedEntryWasDeleted = (
+  draft: DictionaryTeachingDraft,
+  current?: DictionaryEntry,
+) =>
+  draft.action === "update" &&
+  draft.existingEntry !== undefined &&
+  current === undefined;
+
 const targetsUnreviewedObservedConflict = (params: {
   draft: DictionaryTeachingDraft;
   current?: DictionaryEntry;
@@ -326,6 +339,9 @@ const findTeachingEntryConflict = (params: {
 }): string | undefined => {
   if (reviewedEntryWasRenamed(params.draft, params.normalized)) {
     return "The exact spelling changed from the reviewed existing entry. Revise and analyze the request again before updating it.";
+  }
+  if (reviewedEntryWasDeleted(params.draft, params.current)) {
+    return "This dictionary entry was deleted after the proposal was generated. Revise and analyze the request again before updating it.";
   }
   if (targetsUnreviewedEntry(params.draft, params.current)) {
     return "This exact spelling now matches an existing entry. Revise and analyze the request again before updating it.";

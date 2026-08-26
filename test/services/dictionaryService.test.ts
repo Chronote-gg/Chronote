@@ -239,6 +239,28 @@ describe("dictionaryService", () => {
     expect(updated.definition).toBe("Apollo account manager");
   });
 
+  test("rejects a manual term that matches another entry's observed form", async () => {
+    await upsertDictionaryEntryService({
+      guildId: "guild-1",
+      term: "Jonathan",
+      observedForms: ["Jon"],
+      userId: "user-1",
+    });
+
+    await expect(
+      upsertDictionaryEntryService({
+        guildId: "guild-1",
+        term: "Jon",
+        userId: "user-2",
+      }),
+    ).rejects.toThrow("conflicts with another dictionary entry");
+    expect(
+      (await listDictionaryEntriesService("guild-1")).map(
+        (entry) => entry.term,
+      ),
+    ).toEqual(["Jonathan"]);
+  });
+
   test("rejects a stale manual edit instead of erasing concurrent teaching data", async () => {
     const original: DictionaryEntry = {
       guildId: "guild-1",

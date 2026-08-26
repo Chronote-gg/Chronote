@@ -14,6 +14,7 @@ import {
   DICTIONARY_DEFINITION_MAX_LENGTH,
   DICTIONARY_TERM_MAX_LENGTH,
   buildDictionaryTermKey,
+  findDictionaryObservedConflict,
   normalizeDictionaryDefinition,
   normalizeDictionaryTerm,
 } from "../utils/dictionary";
@@ -111,26 +112,6 @@ const normalizeObservedForms = (values: string[], availableText: string) => {
 const findExistingEntry = (entries: DictionaryEntry[], term: string) => {
   const termKey = buildDictionaryTermKey(term);
   return entries.find((entry) => entry.termKey === termKey);
-};
-
-export const findDictionaryObservedConflict = (
-  entries: DictionaryEntry[],
-  preferredTerm: string,
-  observedForms: string[],
-) => {
-  const preferredKey = buildDictionaryTermKey(preferredTerm);
-  const observedKeys = new Set(observedForms.map(buildDictionaryTermKey));
-  return entries.find((entry) => {
-    if (entry.termKey === preferredKey) return false;
-    const existingObservedKeys = new Set(
-      (entry.observedForms ?? []).map(buildDictionaryTermKey),
-    );
-    return (
-      observedKeys.has(entry.termKey) ||
-      existingObservedKeys.has(preferredKey) ||
-      [...observedKeys].some((key) => existingObservedKeys.has(key))
-    );
-  });
 };
 
 const normalizePreferredTerm = (

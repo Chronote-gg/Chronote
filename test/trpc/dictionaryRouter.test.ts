@@ -1,6 +1,10 @@
 import type { Request, Response } from "express";
 import type { MeetingHistory } from "../../src/types/db";
-import { getMockUser, resetMockStore } from "../../src/repositories/mockStore";
+import {
+  getMockStore,
+  getMockUser,
+  resetMockStore,
+} from "../../src/repositories/mockStore";
 import { ensureManageGuildWithUserToken } from "../../src/services/guildAccessService";
 import { generateDictionaryTeachingDrafts } from "../../src/services/dictionaryTeachingService";
 import {
@@ -405,6 +409,47 @@ describe("dictionary teaching router", () => {
         ],
       }),
     ).rejects.toMatchObject({ code: "BAD_REQUEST" });
+  });
+
+  test("rejects the same teaching draft submitted more than once", async () => {
+    const token = "31000000-0000-4000-8000-000000000001";
+    const draftId = "11000000-0000-4000-8000-000000000001";
+    drafts.set(token, {
+      guildId: "guild-1",
+      requesterId: getMockUser().id,
+      expiresAtMs: Date.now() + 60_000,
+      source: "settings",
+      drafts: [
+        {
+          draftId,
+          preferredTerm: "Jon Smythe",
+          observedForms: [],
+          description: null,
+          ambiguity: null,
+          evidence: [],
+          action: "create",
+        },
+      ],
+      model: {
+        model: "gpt-5-mini",
+        promptName: "chronote-dictionary-teaching-chat",
+      },
+    });
+
+    await expect(
+      buildCaller().dictionary.commitTeaching({
+        serverId: "guild-1",
+        token,
+        entries: [
+          { draftId, preferredTerm: "Jon Smythe" },
+          { draftId, preferredTerm: "Jane Smythe" },
+        ],
+      }),
+    ).rejects.toMatchObject({
+      code: "BAD_REQUEST",
+      message: "Each teaching draft can be approved only once.",
+    });
+    expect(await listDictionaryEntriesService("guild-1")).toEqual([]);
   });
 
   test("commits approved edits with scoped provenance", async () => {
@@ -1000,6 +1045,62 @@ describe("dictionary teaching router", () => {
     expect(tokenStore.deleteDraft).not.toHaveBeenCalled();
   });
 
+  test("rejects an update when the reviewed entry was deleted", async () => {
+    const reviewed = await upsertDictionaryEntryService({
+      guildId: "guild-1",
+      term: "Apollo",
+      definition: "Reviewed description",
+      userId: getMockUser().id,
+    });
+    await buildCaller().dictionary.remove({
+      serverId: "guild-1",
+      term: "Apollo",
+    });
+    const token = "84000000-0000-4000-8000-000000000001";
+    const draftId = "84000000-0000-4000-8000-000000000002";
+    drafts.set(token, {
+      guildId: "guild-1",
+      requesterId: getMockUser().id,
+      expiresAtMs: Date.now() + 60_000,
+      source: "settings",
+      drafts: [
+        {
+          draftId,
+          preferredTerm: "Apollo",
+          observedForms: [],
+          description: reviewed.definition,
+          ambiguity: null,
+          evidence: [],
+          action: "update",
+          existingEntry: reviewed,
+        },
+      ],
+      model: {
+        model: "gpt-5-mini",
+        promptName: "chronote-dictionary-teaching-chat",
+      },
+    });
+
+    const result = await buildCaller().dictionary.commitTeaching({
+      serverId: "guild-1",
+      token,
+      entries: [
+        {
+          draftId,
+          preferredTerm: "Apollo",
+          description: "Would recreate the deleted entry",
+        },
+      ],
+    });
+
+    expect(result.results[0]).toMatchObject({
+      ok: false,
+      error: expect.stringContaining("was deleted after the proposal"),
+    });
+    expect(await listDictionaryEntriesService("guild-1")).toEqual([]);
+    expect(tokenStore.deleteDraft).not.toHaveBeenCalled();
+  });
+
   test("clears an existing description when the reviewer submits an empty value", async () => {
     const existing = await buildCaller().dictionary.upsert({
       serverId: "guild-1",
@@ -1130,11 +1231,23 @@ describe("dictionary teaching router", () => {
         promptName: "chronote-dictionary-teaching-chat",
       },
     });
-    await upsertDictionaryEntryService({
-      guildId: "guild-1",
-      term: "A polo",
-      userId: "other-admin",
-    });
+    const store = getMockStore();
+    store.dictionaryEntriesByGuild.set("guild-1", [
+      existing,
+      {
+        guildId: "guild-1",
+        termKey: "a polo",
+        term: "A polo",
+        createdAt: "2025-01-01T00:00:00.000Z",
+        createdBy: "other-admin",
+        updatedAt: "2025-01-01T00:00:00.000Z",
+        updatedBy: "other-admin",
+      },
+    ]);
+    store.dictionaryRevisionByGuild.set(
+      "guild-1",
+      (store.dictionaryRevisionByGuild.get("guild-1") ?? 0) + 1,
+    );
 
     const result = await buildCaller().dictionary.commitTeaching({
       serverId: "guild-1",

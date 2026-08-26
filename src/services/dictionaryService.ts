@@ -7,6 +7,7 @@ import {
   buildDictionaryTermKey,
   DICTIONARY_DEFINITION_MAX_LENGTH,
   DICTIONARY_TERM_MAX_LENGTH,
+  findDictionaryObservedConflict,
   normalizeDictionaryDefinition,
   normalizeDictionaryObservedForms,
   normalizeDictionaryTerm,
@@ -67,6 +68,7 @@ const loadEntryForUpsert = async (params: {
     existing: snapshot.entries.find(
       (entry) => entry.termKey === params.termKey,
     ),
+    snapshotEntries: snapshot.entries,
     preservationRevision: snapshot.revision,
     repository,
   };
@@ -106,7 +108,7 @@ export async function upsertDictionaryEntryService(params: {
     params.definition,
   );
   const termKey = buildDictionaryTermKey(term);
-  const { existing, preservationRevision, repository } =
+  const { existing, preservationRevision, repository, snapshotEntries } =
     await loadEntryForUpsert({
       guildId: params.guildId,
       termKey,
@@ -118,6 +120,14 @@ export async function upsertDictionaryEntryService(params: {
     params.observedForms === undefined
       ? existing?.observedForms
       : normalizeDictionaryObservedForms(params.observedForms);
+  if (
+    snapshotEntries &&
+    findDictionaryObservedConflict(snapshotEntries, term, observedForms ?? [])
+  ) {
+    throw new Error(
+      "This spelling conflicts with another dictionary entry or observed form.",
+    );
+  }
   const entry: DictionaryEntry = {
     guildId: params.guildId,
     termKey,

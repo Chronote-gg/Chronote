@@ -1,5 +1,6 @@
 import { CONFIG_KEYS } from "../config/keys";
 import type { ConfigTier } from "../config/types";
+import type { DictionaryEntry } from "../types/db";
 import { DICTIONARY_OBSERVED_FORM_MAX_COUNT } from "../types/dictionaryTeaching";
 
 export const DICTIONARY_TERM_MAX_LENGTH = 80;
@@ -148,6 +149,26 @@ export const normalizeDictionaryObservedForms = (values?: string[]) => {
 
 export const buildDictionaryTermKey = (term: string) =>
   normalizeDictionaryTerm(term).toLowerCase();
+
+export const findDictionaryObservedConflict = (
+  entries: DictionaryEntry[],
+  preferredTerm: string,
+  observedForms: string[],
+) => {
+  const preferredKey = buildDictionaryTermKey(preferredTerm);
+  const observedKeys = new Set(observedForms.map(buildDictionaryTermKey));
+  return entries.find((entry) => {
+    if (entry.termKey === preferredKey) return false;
+    const existingObservedKeys = new Set(
+      (entry.observedForms ?? []).map(buildDictionaryTermKey),
+    );
+    return (
+      observedKeys.has(entry.termKey) ||
+      existingObservedKeys.has(preferredKey) ||
+      [...observedKeys].some((key) => existingObservedKeys.has(key))
+    );
+  });
+};
 
 type NormalizedEntry = {
   term: string;
