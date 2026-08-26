@@ -1,7 +1,10 @@
 import type OpenAI from "openai";
 import type { SpanContext } from "@opentelemetry/api";
 import type { MeetingData } from "../types/meeting-data";
-import { createOpenAIClient } from "./openaiClient";
+import {
+  buildOpenAISafetyIdentifier,
+  createOpenAIClient,
+} from "./openaiClient";
 import { getModelChoice } from "./modelFactory";
 import { resolveChatParamsForRole } from "./openaiModelParams";
 import type { ModelParamRole } from "../config/types";
@@ -10,7 +13,12 @@ import { getMeetingModelOverrides } from "./meetingModelOverrides";
 
 type ChatInput = Omit<
   OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming,
-  "model" | "user" | "temperature" | "reasoning_effort" | "verbosity"
+  | "model"
+  | "user"
+  | "safety_identifier"
+  | "temperature"
+  | "reasoning_effort"
+  | "verbosity"
 >;
 
 type ChatOptions = {
@@ -75,7 +83,7 @@ const runChatLoop = async (input: ChatLoopInput): Promise<ChatLoopResult> => {
   for (;;) {
     const response = await input.openAIClient.chat.completions.create({
       model: input.model,
-      user: input.userId,
+      safety_identifier: buildOpenAISafetyIdentifier(input.userId),
       ...input.body,
       ...input.modelParams,
     });

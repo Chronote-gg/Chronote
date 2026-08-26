@@ -8,6 +8,7 @@ export type ModelRole =
   | "transcription"
   | "transcriptionCleanup"
   | "transcriptionCoalesce"
+  | "imageCaption"
   | "image"
   | "imagePrompt"
   | "ask"
@@ -21,7 +22,7 @@ export type ModelParamRole = Exclude<
 >;
 export type ModelSamplingMode = "reasoning" | "temperature";
 export type ModelReasoningEffort =
-  "none" | "minimal" | "low" | "medium" | "high" | "xhigh";
+  "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 export type ModelVerbosity = "default" | "low" | "medium" | "high";
 export type ModelParamConfig = {
   samplingMode: ModelSamplingMode;

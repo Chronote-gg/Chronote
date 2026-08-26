@@ -32,6 +32,7 @@ const defaultModels: Record<ModelRole, ModelChoice> = {
   transcription: { provider: "openai", model: "gpt-4o-transcribe" },
   transcriptionCleanup: { provider: "openai", model: config.notes.model },
   transcriptionCoalesce: { provider: "openai", model: "gpt-5-mini" },
+  imageCaption: { provider: "openai", model: "gpt-4o-mini" },
   image: { provider: "openai", model: "dall-e-3" },
   imagePrompt: { provider: "openai", model: config.notes.model },
   ask: { provider: "openai", model: config.liveVoice.responderModel },

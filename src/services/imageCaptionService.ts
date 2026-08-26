@@ -2,8 +2,9 @@ import type OpenAI from "openai";
 import type { MeetingData } from "../types/meeting-data";
 import type { ChatAttachment, ChatEntry } from "../types/chat";
 import { createOpenAIClient } from "./openaiClient";
+import { buildModelOverrides, getModelChoice } from "./modelFactory";
+import { resolveChatParamsForRole } from "./openaiModelParams";
 
-const DEFAULT_IMAGE_CAPTION_MODEL = "gpt-4o-mini";
 const DEFAULT_MAX_IMAGES = 10;
 const DEFAULT_MAX_TOTAL_CHARS = 3000;
 
@@ -33,6 +34,7 @@ type CollectCaptionCandidatesOptions = {
 type CreateCaptionOptions = {
   openAIClient: OpenAI;
   model: string;
+  modelParams: ReturnType<typeof resolveChatParamsForRole>;
   url: string;
   name: string;
   timeoutMs: number;
@@ -181,9 +183,9 @@ const createCaption = async (
     const response = await options.openAIClient.chat.completions.create(
       {
         model: options.model,
-        temperature: 0,
         max_completion_tokens: 300,
         response_format: { type: "json_object" },
+        ...options.modelParams,
         messages: [
           {
             role: "system",
@@ -265,7 +267,16 @@ export async function captionMeetingImages(meeting: MeetingData): Promise<{
   });
 
   const startedAt = Date.now();
-  const model = DEFAULT_IMAGE_CAPTION_MODEL;
+  const modelChoice = getModelChoice(
+    "imageCaption",
+    buildModelOverrides(meeting.runtimeConfig?.modelChoices),
+  );
+  const model = modelChoice.model;
+  const modelParams = resolveChatParamsForRole({
+    role: "imageCaption",
+    model,
+    config: meeting.runtimeConfig?.modelParams?.imageCaption,
+  });
   let remainingChars = maxTotalChars;
   let captioned = 0;
   let skipped = 0;
@@ -290,6 +301,7 @@ export async function captionMeetingImages(meeting: MeetingData): Promise<{
       const output = await createCaption({
         openAIClient,
         model,
+        modelParams,
         url: attachment.url,
         name: attachment.name?.trim() || "image",
         timeoutMs,

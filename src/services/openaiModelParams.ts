@@ -42,6 +42,7 @@ const REASONING_ORDER: ModelReasoningEffort[] = [
   "medium",
   "high",
   "xhigh",
+  "max",
 ];
 
 const clampTemperature = (value?: number) => {
@@ -119,6 +120,28 @@ const resolveModelCapabilities = (model: string): ModelCapabilities => {
     temperatureRequiresReasoningNone: false,
     supportedReasoningEfforts: [],
   };
+
+  if (
+    normalized === "gpt-5.6" ||
+    normalized.startsWith("gpt-5.6-sol") ||
+    normalized.startsWith("gpt-5.6-terra") ||
+    normalized.startsWith("gpt-5.6-luna")
+  ) {
+    return {
+      supportsReasoning: true,
+      supportsTemperature: true,
+      supportsVerbosity: true,
+      temperatureRequiresReasoningNone: true,
+      supportedReasoningEfforts: [
+        "none",
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max",
+      ],
+    };
+  }
 
   if (normalized.startsWith("gpt-5.2-pro")) {
     return {
