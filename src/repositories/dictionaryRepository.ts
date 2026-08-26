@@ -6,6 +6,7 @@ import {
   getDictionaryEntry,
   listDictionaryEntries,
   releaseDictionaryLock,
+  renewDictionaryLock,
   writeDictionaryEntry,
 } from "../db";
 import type { DictionaryEntry } from "../types/db";
@@ -40,6 +41,9 @@ const realRepository: DictionaryRepository = {
     }
     try {
       const entries = await listDictionaryEntries(guildId, true);
+      if (!(await renewDictionaryLock(guildId, lockToken))) {
+        throw new Error("Dictionary changed while creating a review snapshot.");
+      }
       const revision = await getDictionaryRevision(guildId);
       return { entries, revision };
     } finally {

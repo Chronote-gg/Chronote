@@ -16,6 +16,8 @@ import {
   DICTIONARY_TEACHING_MAX_DRAFTS,
   DICTIONARY_TEACHING_TOKEN_TTL_MS,
   type DictionaryTeachingCommitEntry,
+  type DictionaryTeachingContext,
+  type DictionaryTeachingContextRecord,
   type DictionaryTeachingDraft,
   type DictionaryTeachingDraftRecord,
 } from "../../types/dictionaryTeaching";
@@ -72,6 +74,13 @@ interface TeachingCommitInput {
   serverId: string;
   token: string;
   entries: DictionaryTeachingCommitEntry[];
+}
+
+interface TeachingPreviewInput {
+  serverId: string;
+  instruction: string;
+  correctionContextToken?: string;
+  doNotTrack: boolean;
 }
 
 interface TeachingCommitResult {
@@ -253,6 +262,70 @@ const saveTeachingEntry = async (params: {
   }
 };
 
+const reviewedEntryWasRenamed = (
+  draft: DictionaryTeachingDraft,
+  normalized: ReturnType<typeof normalizeTeachingEntry>,
+) =>
+  draft.action === "update" &&
+  draft.existingEntry !== undefined &&
+  buildDictionaryTermKey(normalized.preferredTerm) !==
+    draft.existingEntry.termKey;
+
+const targetsUnreviewedEntry = (
+  draft: DictionaryTeachingDraft,
+  current?: DictionaryEntry,
+) => current !== undefined && draft.existingEntry?.termKey !== current.termKey;
+
+const reviewedEntryWasChanged = (
+  draft: DictionaryTeachingDraft,
+  current?: DictionaryEntry,
+) =>
+  current !== undefined &&
+  draft.existingEntry?.termKey === current.termKey &&
+  draft.existingEntry.updatedAt !== current.updatedAt;
+
+const targetsUnreviewedObservedConflict = (params: {
+  draft: DictionaryTeachingDraft;
+  current?: DictionaryEntry;
+  currentEntries: DictionaryEntry[];
+  normalized: ReturnType<typeof normalizeTeachingEntry>;
+}) => {
+  const observedConflict = findDictionaryObservedConflict(
+    params.currentEntries,
+    params.normalized.preferredTerm,
+    params.normalized.observedForms ?? [],
+  );
+  if (!observedConflict) return false;
+  const updatesReviewedEntry =
+    params.draft.action === "update" &&
+    params.current !== undefined &&
+    params.current.termKey === params.draft.existingEntry?.termKey;
+  return !(
+    updatesReviewedEntry && observedConflict.termKey === params.current?.termKey
+  );
+};
+
+const findTeachingEntryConflict = (params: {
+  draft: DictionaryTeachingDraft;
+  current?: DictionaryEntry;
+  currentEntries: DictionaryEntry[];
+  normalized: ReturnType<typeof normalizeTeachingEntry>;
+}): string | undefined => {
+  if (reviewedEntryWasRenamed(params.draft, params.normalized)) {
+    return "The exact spelling changed from the reviewed existing entry. Revise and analyze the request again before updating it.";
+  }
+  if (targetsUnreviewedEntry(params.draft, params.current)) {
+    return "This exact spelling now matches an existing entry. Revise and analyze the request again before updating it.";
+  }
+  if (reviewedEntryWasChanged(params.draft, params.current)) {
+    return "This dictionary entry changed after the proposal was generated. Revise and analyze the request again before updating it.";
+  }
+  if (targetsUnreviewedObservedConflict(params)) {
+    return "This spelling or one of its observed forms now conflicts with another entry. Revise and analyze the request again before saving it.";
+  }
+  return undefined;
+};
+
 const prepareTeachingEntrySave = (params: {
   submitted: DictionaryTeachingCommitEntry;
   draft: DictionaryTeachingDraft;
@@ -260,49 +333,154 @@ const prepareTeachingEntrySave = (params: {
   currentEntries: DictionaryEntry[];
 }) => {
   const normalized = normalizeTeachingEntry(params.submitted, params.current);
-  const reviewedEntryRenamed =
-    params.draft.action === "update" &&
-    params.draft.existingEntry !== undefined &&
-    buildDictionaryTermKey(normalized.preferredTerm) !==
-      params.draft.existingEntry.termKey;
-  const targetsUnreviewedEntry =
-    params.current !== undefined &&
-    params.draft.existingEntry?.termKey !== params.current.termKey;
-  const reviewedEntryChanged =
-    params.current !== undefined &&
-    params.draft.existingEntry?.termKey === params.current.termKey &&
-    params.draft.existingEntry.updatedAt !== params.current.updatedAt;
-  const observedConflict = findDictionaryObservedConflict(
-    params.currentEntries,
-    normalized.preferredTerm,
-    normalized.observedForms ?? [],
-  );
-  const updatesReviewedEntry =
-    params.draft.action === "update" &&
-    params.current !== undefined &&
-    params.current.termKey === params.draft.existingEntry?.termKey;
-  const targetsUnreviewedObservedConflict =
-    observedConflict !== undefined &&
-    !(
-      updatesReviewedEntry &&
-      observedConflict.termKey === params.current?.termKey
-    );
-  const conflictError = reviewedEntryRenamed
-    ? "The exact spelling changed from the reviewed existing entry. Revise and analyze the request again before updating it."
-    : targetsUnreviewedEntry
-      ? "This exact spelling now matches an existing entry. Revise and analyze the request again before updating it."
-      : reviewedEntryChanged
-        ? "This dictionary entry changed after the proposal was generated. Revise and analyze the request again before updating it."
-        : targetsUnreviewedObservedConflict
-          ? "This spelling or one of its observed forms now conflicts with another entry. Revise and analyze the request again before saving it."
-          : undefined;
   return {
     edited: teachingDraftWasEdited(params.draft, params.submitted),
-    conflictError,
+    conflictError: findTeachingEntryConflict({
+      draft: params.draft,
+      current: params.current,
+      currentEntries: params.currentEntries,
+      normalized,
+    }),
     expectedUpdatedAt: params.current?.updatedAt ?? null,
     normalized,
     submitted: params.submitted,
   };
+};
+
+const loadTeachingContextRecord = async (params: {
+  token?: string;
+  serverId: string;
+  userId: string;
+}): Promise<DictionaryTeachingContextRecord | null> => {
+  if (!params.token) return null;
+  const record = await dictionaryTeachingTokenStore.getContext(params.token);
+  if (!record) {
+    throw new TRPCError({
+      code: "NOT_FOUND",
+      message: "This correction context has expired.",
+    });
+  }
+  if (
+    record.guildId !== params.serverId ||
+    record.requesterId !== params.userId
+  ) {
+    throw new TRPCError({
+      code: "FORBIDDEN",
+      message: "This correction context belongs to another request.",
+    });
+  }
+  return record;
+};
+
+const resolveTeachingContext = async (params: {
+  record: DictionaryTeachingContextRecord | null;
+  serverId: string;
+  userId: string;
+}): Promise<DictionaryTeachingContext | undefined> => {
+  let context = params.record?.context;
+  if (context?.meetingId) {
+    const [meeting, attendeeOverrideEnabled] = await Promise.all([
+      getMeetingHistoryService(params.serverId, context.meetingId),
+      resolveServerAttendeeAccessEnabled(params.serverId),
+    ]);
+    const access = meeting
+      ? await checkUserMeetingAccess({
+          guildId: params.serverId,
+          meeting,
+          userId: params.userId,
+          attendeeOverrideEnabled,
+        })
+      : null;
+    if (access?.allowed !== true) {
+      throw new TRPCError({
+        code: "FORBIDDEN",
+        message: "You no longer have access to this correction context.",
+      });
+    }
+  }
+  if (context?.transcriptExcerpt) {
+    const access = await resolveServerMeetingArtifactAccess(params.serverId);
+    if (!access.transcriptAccessEnabled) {
+      context = { ...context, transcriptExcerpt: undefined };
+    }
+  }
+  return context;
+};
+
+const previewDictionaryTeaching = async (params: {
+  input: TeachingPreviewInput;
+  userId: string;
+  request: { headers?: Record<string, string | string[] | undefined> };
+}) => {
+  const contextRecord = await loadTeachingContextRecord({
+    token: params.input.correctionContextToken,
+    serverId: params.input.serverId,
+    userId: params.userId,
+  });
+  const context = await resolveTeachingContext({
+    record: contextRecord,
+    serverId: params.input.serverId,
+    userId: params.userId,
+  });
+  const [entries, modelParams, modelChoices] = await Promise.all([
+    listDictionaryEntriesService(params.input.serverId),
+    resolveModelParamsForContext({
+      guildId: params.input.serverId,
+      userId: params.userId,
+    }),
+    resolveModelChoicesForContext({
+      guildId: params.input.serverId,
+      userId: params.userId,
+    }),
+  ]);
+  const generated = await generateDictionaryTeachingDrafts({
+    guildId: params.input.serverId,
+    userId: params.userId,
+    instruction: params.input.instruction,
+    context,
+    existingEntries: entries,
+    modelParams: modelParams.dictionaryTeaching,
+    modelOverride: modelChoices.dictionaryTeaching,
+  });
+  if (generated.drafts.length === 0) {
+    throw new TRPCError({
+      code: "BAD_REQUEST",
+      message:
+        "Chronote could not identify an exact term. Try stating what it wrote and the exact spelling it should use.",
+    });
+  }
+
+  const token = uuidv4();
+  const expiresAtMs = Date.now() + DICTIONARY_TEACHING_TOKEN_TTL_MS;
+  const source = contextRecord?.context.source ?? "settings";
+  await dictionaryTeachingTokenStore.setDraft(token, {
+    guildId: params.input.serverId,
+    requesterId: params.userId,
+    expiresAtMs,
+    source,
+    drafts: generated.drafts,
+    model: generated.model,
+    meetingId: contextRecord?.context.meetingId,
+    correctionId: contextRecord?.context.correctionId,
+  });
+  if (!analyticsDisabledForRequest(params.request, params.input.doNotTrack)) {
+    captureEvent("dictionary_teaching_previewed", {
+      userId: params.userId,
+      guildId: params.input.serverId,
+      properties: {
+        source,
+        instruction_length: params.input.instruction.length,
+        draft_count: generated.drafts.length,
+        ambiguous_count: generated.drafts.filter(
+          (draft) => draft.action === "needs_input",
+        ).length,
+        conflict_count: generated.drafts.filter(
+          (draft) => draft.action === "conflict",
+        ).length,
+      },
+    });
+  }
+  return { token, expiresAtMs, drafts: generated.drafts };
 };
 
 const commitDictionaryTeaching = async (
@@ -449,121 +627,13 @@ export const dictionaryRouter = router({
         doNotTrack: z.boolean().optional().default(false),
       }),
     )
-    .mutation(async ({ ctx, input }) => {
-      let contextRecord = null;
-      if (input.correctionContextToken) {
-        contextRecord = await dictionaryTeachingTokenStore.getContext(
-          input.correctionContextToken,
-        );
-        if (!contextRecord) {
-          throw new TRPCError({
-            code: "NOT_FOUND",
-            message: "This correction context has expired.",
-          });
-        }
-        if (
-          contextRecord.guildId !== input.serverId ||
-          contextRecord.requesterId !== ctx.user!.id
-        ) {
-          throw new TRPCError({
-            code: "FORBIDDEN",
-            message: "This correction context belongs to another request.",
-          });
-        }
-      }
-
-      let teachingContext = contextRecord?.context;
-      if (teachingContext?.meetingId) {
-        const [meeting, attendeeOverrideEnabled] = await Promise.all([
-          getMeetingHistoryService(input.serverId, teachingContext.meetingId),
-          resolveServerAttendeeAccessEnabled(input.serverId),
-        ]);
-        const access = meeting
-          ? await checkUserMeetingAccess({
-              guildId: input.serverId,
-              meeting,
-              userId: ctx.user!.id,
-              attendeeOverrideEnabled,
-            })
-          : null;
-        if (access?.allowed !== true) {
-          throw new TRPCError({
-            code: "FORBIDDEN",
-            message: "You no longer have access to this correction context.",
-          });
-        }
-      }
-      if (teachingContext?.transcriptExcerpt) {
-        const artifactAccess = await resolveServerMeetingArtifactAccess(
-          input.serverId,
-        );
-        if (!artifactAccess.transcriptAccessEnabled) {
-          teachingContext = {
-            ...teachingContext,
-            transcriptExcerpt: undefined,
-          };
-        }
-      }
-
-      const [entries, modelParams, modelChoices] = await Promise.all([
-        listDictionaryEntriesService(input.serverId),
-        resolveModelParamsForContext({
-          guildId: input.serverId,
-          userId: ctx.user!.id,
-        }),
-        resolveModelChoicesForContext({
-          guildId: input.serverId,
-          userId: ctx.user!.id,
-        }),
-      ]);
-      const generated = await generateDictionaryTeachingDrafts({
-        guildId: input.serverId,
+    .mutation(({ ctx, input }) =>
+      previewDictionaryTeaching({
+        input,
         userId: ctx.user!.id,
-        instruction: input.instruction,
-        context: teachingContext,
-        existingEntries: entries,
-        modelParams: modelParams.dictionaryTeaching,
-        modelOverride: modelChoices.dictionaryTeaching,
-      });
-      if (generated.drafts.length === 0) {
-        throw new TRPCError({
-          code: "BAD_REQUEST",
-          message:
-            "Chronote could not identify an exact term. Try stating what it wrote and the exact spelling it should use.",
-        });
-      }
-
-      const token = uuidv4();
-      const expiresAtMs = Date.now() + DICTIONARY_TEACHING_TOKEN_TTL_MS;
-      await dictionaryTeachingTokenStore.setDraft(token, {
-        guildId: input.serverId,
-        requesterId: ctx.user!.id,
-        expiresAtMs,
-        source: contextRecord?.context.source ?? "settings",
-        drafts: generated.drafts,
-        model: generated.model,
-        meetingId: contextRecord?.context.meetingId,
-        correctionId: contextRecord?.context.correctionId,
-      });
-      if (!analyticsDisabledForRequest(ctx.req, input.doNotTrack)) {
-        captureEvent("dictionary_teaching_previewed", {
-          userId: ctx.user!.id,
-          guildId: input.serverId,
-          properties: {
-            source: contextRecord?.context.source ?? "settings",
-            instruction_length: input.instruction.length,
-            draft_count: generated.drafts.length,
-            ambiguous_count: generated.drafts.filter(
-              (draft) => draft.action === "needs_input",
-            ).length,
-            conflict_count: generated.drafts.filter(
-              (draft) => draft.action === "conflict",
-            ).length,
-          },
-        });
-      }
-      return { token, expiresAtMs, drafts: generated.drafts };
-    }),
+        request: ctx.req,
+      }),
+    ),
   commitTeaching: manageGuildProcedure
     .input(
       serverSchema.extend({

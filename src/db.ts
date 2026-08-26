@@ -971,6 +971,7 @@ export async function releaseChatTtsMonthlyUsageReservation(
 const dictionaryRevisionSid = (guildId: string) =>
   `dictionaryRevision#${guildId}`;
 const DICTIONARY_LOCK_TTL_SECONDS = 30;
+const DICTIONARY_COMMIT_TTL_SECONDS = 300;
 const DICTIONARY_LOCK_ATTEMPTS = 10;
 const DICTIONARY_LOCK_RETRY_MS = 25;
 
@@ -1030,7 +1031,42 @@ export async function releaseDictionaryLock(
   try {
     await dynamoDbClient.send(command);
   } catch (error) {
-    if (!isConditionalCheckFailed(error)) throw error;
+    if (!isConditionalCheckFailed(error)) {
+      console.warn("Failed releasing dictionary lock; lease will expire", {
+        guildId,
+        error,
+      });
+    }
+  }
+}
+
+export async function renewDictionaryLock(
+  guildId: string,
+  token: string,
+  ttlSeconds = DICTIONARY_LOCK_TTL_SECONDS,
+): Promise<boolean> {
+  const now = Math.floor(Date.now() / 1000);
+  const command = new UpdateItemCommand({
+    TableName: tableName("SessionTable"),
+    Key: marshall({ sid: dictionaryRevisionSid(guildId) }),
+    UpdateExpression: "SET #lockExpiresAt = :lockExpiresAt",
+    ConditionExpression: "#lockToken = :lockToken AND #lockExpiresAt >= :now",
+    ExpressionAttributeNames: {
+      "#lockToken": "lockToken",
+      "#lockExpiresAt": "lockExpiresAt",
+    },
+    ExpressionAttributeValues: marshall({
+      ":lockToken": token,
+      ":lockExpiresAt": now + ttlSeconds,
+      ":now": now,
+    }),
+  });
+  try {
+    await dynamoDbClient.send(command);
+    return true;
+  } catch (error) {
+    if (isConditionalCheckFailed(error)) return false;
+    throw error;
   }
 }
 
@@ -1080,6 +1116,15 @@ export async function writeDictionaryEntry(
     ) {
       return false;
     }
+    if (
+      !(await renewDictionaryLock(
+        entry.guildId,
+        lockToken,
+        DICTIONARY_COMMIT_TTL_SECONDS,
+      ))
+    ) {
+      return false;
+    }
     await dynamoDbClient.send(
       new UpdateItemCommand({
         TableName: tableName("SessionTable"),
@@ -1089,6 +1134,15 @@ export async function writeDictionaryEntry(
         ExpressionAttributeValues: marshall({ ":one": 1 }),
       }),
     );
+    if (
+      !(await renewDictionaryLock(
+        entry.guildId,
+        lockToken,
+        DICTIONARY_COMMIT_TTL_SECONDS,
+      ))
+    ) {
+      return false;
+    }
     await dynamoDbClient.send(
       new PutItemCommand({
         TableName: tableName("DictionaryTable"),
@@ -1149,6 +1203,15 @@ export async function deleteDictionaryEntry(
   const lockToken = await acquireDictionaryLock(guildId);
   if (!lockToken) throw new Error("Dictionary is busy. Try again.");
   try {
+    if (
+      !(await renewDictionaryLock(
+        guildId,
+        lockToken,
+        DICTIONARY_COMMIT_TTL_SECONDS,
+      ))
+    ) {
+      throw new Error("Dictionary changed while deleting an entry.");
+    }
     await dynamoDbClient.send(
       new UpdateItemCommand({
         TableName: tableName("SessionTable"),
@@ -1158,6 +1221,15 @@ export async function deleteDictionaryEntry(
         ExpressionAttributeValues: marshall({ ":one": 1 }),
       }),
     );
+    if (
+      !(await renewDictionaryLock(
+        guildId,
+        lockToken,
+        DICTIONARY_COMMIT_TTL_SECONDS,
+      ))
+    ) {
+      throw new Error("Dictionary changed while deleting an entry.");
+    }
     await dynamoDbClient.send(
       new DeleteItemCommand({
         TableName: tableName("DictionaryTable"),
