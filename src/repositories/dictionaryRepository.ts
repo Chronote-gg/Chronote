@@ -1,6 +1,7 @@
 import { config } from "../services/configService";
 import {
   deleteDictionaryEntry,
+  getDictionaryRevision,
   getDictionaryEntry,
   listDictionaryEntries,
   writeDictionaryEntry,
@@ -17,7 +18,12 @@ export type DictionaryRepository = {
   write: (
     entry: DictionaryEntry,
     expectedUpdatedAt?: string | null,
+    expectedRevision?: number,
   ) => Promise<boolean>;
+  listSnapshotByGuild: (guildId: string) => Promise<{
+    entries: DictionaryEntry[];
+    revision: number;
+  }>;
   remove: (guildId: string, termKey: string) => Promise<void>;
 };
 
@@ -25,6 +31,17 @@ const realRepository: DictionaryRepository = {
   listByGuild: listDictionaryEntries,
   get: getDictionaryEntry,
   write: writeDictionaryEntry,
+  async listSnapshotByGuild(guildId) {
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const revisionBefore = await getDictionaryRevision(guildId);
+      const entries = await listDictionaryEntries(guildId, true);
+      const revisionAfter = await getDictionaryRevision(guildId);
+      if (revisionBefore === revisionAfter) {
+        return { entries, revision: revisionAfter };
+      }
+    }
+    throw new Error("Dictionary changed while creating a review snapshot.");
+  },
   remove: deleteDictionaryEntry,
 };
 
@@ -36,12 +53,16 @@ const mockRepository: DictionaryRepository = {
     const entries = getMockStore().dictionaryEntriesByGuild.get(guildId) ?? [];
     return entries.find((entry) => entry.termKey === termKey);
   },
-  async write(entry, expectedUpdatedAt) {
+  async write(entry, expectedUpdatedAt, expectedRevision) {
     const store = getMockStore();
     const entries = store.dictionaryEntriesByGuild.get(entry.guildId) ?? [];
     const index = entries.findIndex((item) => item.termKey === entry.termKey);
     const existing = index >= 0 ? entries[index] : undefined;
+    const currentRevision =
+      store.dictionaryRevisionByGuild.get(entry.guildId) ?? 0;
     if (
+      (expectedRevision !== undefined &&
+        expectedRevision !== currentRevision) ||
       (expectedUpdatedAt === null && existing) ||
       (typeof expectedUpdatedAt === "string" &&
         existing?.updatedAt !== expectedUpdatedAt)
@@ -54,7 +75,15 @@ const mockRepository: DictionaryRepository = {
       entries.push(entry);
     }
     store.dictionaryEntriesByGuild.set(entry.guildId, entries);
+    store.dictionaryRevisionByGuild.set(entry.guildId, currentRevision + 1);
     return true;
+  },
+  async listSnapshotByGuild(guildId) {
+    const store = getMockStore();
+    return {
+      entries: store.dictionaryEntriesByGuild.get(guildId) ?? [],
+      revision: store.dictionaryRevisionByGuild.get(guildId) ?? 0,
+    };
   },
   async remove(guildId, termKey) {
     const store = getMockStore();
@@ -63,6 +92,8 @@ const mockRepository: DictionaryRepository = {
       guildId,
       entries.filter((entry) => entry.termKey !== termKey),
     );
+    const currentRevision = store.dictionaryRevisionByGuild.get(guildId) ?? 0;
+    store.dictionaryRevisionByGuild.set(guildId, currentRevision + 1);
   },
 };
 

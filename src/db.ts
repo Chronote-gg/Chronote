@@ -7,6 +7,7 @@ import {
   DeleteItemCommand,
   QueryCommand,
   ScanCommand,
+  TransactWriteItemsCommand,
   UpdateItemCommand,
 } from "@aws-sdk/client-dynamodb";
 import { marshall, unmarshall } from "@aws-sdk/util-dynamodb";
@@ -69,6 +70,18 @@ const tablePrefix = config.database.tablePrefix ?? "";
 const tableName = (name: string) => `${tablePrefix}${name}`;
 const isConditionalCheckFailed = (error: unknown) =>
   (error as { name?: string }).name === "ConditionalCheckFailedException";
+const isConditionalTransactionFailed = (error: unknown) =>
+  (
+    error as {
+      name?: string;
+      CancellationReasons?: Array<{ Code?: string }>;
+    }
+  ).name === "TransactionCanceledException" &&
+  (
+    error as { CancellationReasons?: Array<{ Code?: string }> }
+  ).CancellationReasons?.some(
+    (reason) => reason.Code === "ConditionalCheckFailed",
+  );
 
 // Guild Subscription Table
 export async function writeGuildSubscription(
@@ -967,34 +980,89 @@ export async function releaseChatTtsMonthlyUsageReservation(
 }
 
 // Dictionary operations
+const dictionaryRevisionSid = (guildId: string) =>
+  `dictionaryRevision#${guildId}`;
+
+export async function getDictionaryRevision(guildId: string): Promise<number> {
+  const command = new GetItemCommand({
+    TableName: tableName("SessionTable"),
+    Key: marshall({ sid: dictionaryRevisionSid(guildId) }),
+    ConsistentRead: true,
+  });
+  const result = await dynamoDbClient.send(command);
+  if (!result.Item) return 0;
+  const revision = unmarshall(result.Item).revision;
+  return typeof revision === "number" ? revision : 0;
+}
+
 export async function writeDictionaryEntry(
   entry: DictionaryEntry,
   expectedUpdatedAt?: string | null,
+  expectedRevision?: number,
 ): Promise<boolean> {
-  const params: PutItemCommand["input"] = {
-    TableName: tableName("DictionaryTable"),
-    Item: marshall(entry, { removeUndefinedValues: true }),
-  };
-  if (expectedUpdatedAt !== undefined) {
-    params.ExpressionAttributeNames =
-      expectedUpdatedAt === null
-        ? { "#termKey": "termKey" }
-        : { "#updatedAt": "updatedAt" };
-    if (expectedUpdatedAt === null) {
-      params.ConditionExpression = "attribute_not_exists(#termKey)";
-    } else {
-      params.ConditionExpression = "#updatedAt = :expectedUpdatedAt";
-      params.ExpressionAttributeValues = marshall({
-        ":expectedUpdatedAt": expectedUpdatedAt,
-      });
-    }
-  }
-  const command = new PutItemCommand(params);
+  const entryCondition: {
+    ConditionExpression?: string;
+    ExpressionAttributeNames?: Record<string, string>;
+    ExpressionAttributeValues?: Record<string, AttributeValue>;
+  } =
+    expectedUpdatedAt === undefined
+      ? {}
+      : expectedUpdatedAt === null
+        ? {
+            ConditionExpression: "attribute_not_exists(#termKey)",
+            ExpressionAttributeNames: { "#termKey": "termKey" },
+          }
+        : {
+            ConditionExpression: "#updatedAt = :expectedUpdatedAt",
+            ExpressionAttributeNames: { "#updatedAt": "updatedAt" },
+            ExpressionAttributeValues: marshall({
+              ":expectedUpdatedAt": expectedUpdatedAt,
+            }),
+          };
+  const revisionUpdate =
+    expectedRevision === undefined
+      ? {
+          UpdateExpression: "ADD #revision :one",
+          ExpressionAttributeNames: { "#revision": "revision" },
+          ExpressionAttributeValues: marshall({ ":one": 1 }),
+        }
+      : {
+          UpdateExpression: "SET #revision = :nextRevision",
+          ConditionExpression:
+            expectedRevision === 0
+              ? "attribute_not_exists(#revision)"
+              : "#revision = :expectedRevision",
+          ExpressionAttributeNames: { "#revision": "revision" },
+          ExpressionAttributeValues: marshall({
+            ":nextRevision": expectedRevision + 1,
+            ...(expectedRevision === 0
+              ? {}
+              : { ":expectedRevision": expectedRevision }),
+          }),
+        };
+  const command = new TransactWriteItemsCommand({
+    TransactItems: [
+      {
+        Put: {
+          TableName: tableName("DictionaryTable"),
+          Item: marshall(entry, { removeUndefinedValues: true }),
+          ...entryCondition,
+        },
+      },
+      {
+        Update: {
+          TableName: tableName("SessionTable"),
+          Key: marshall({ sid: dictionaryRevisionSid(entry.guildId) }),
+          ...revisionUpdate,
+        },
+      },
+    ],
+  });
   try {
     await dynamoDbClient.send(command);
     return true;
   } catch (error) {
-    if (isConditionalCheckFailed(error)) return false;
+    if (isConditionalTransactionFailed(error)) return false;
     throw error;
   }
 }
@@ -1006,6 +1074,7 @@ export async function getDictionaryEntry(
   const params = {
     TableName: tableName("DictionaryTable"),
     Key: marshall({ guildId, termKey }),
+    ConsistentRead: true,
   };
   const command = new GetItemCommand(params);
   const result = await dynamoDbClient.send(command);
@@ -1017,6 +1086,7 @@ export async function getDictionaryEntry(
 
 export async function listDictionaryEntries(
   guildId: string,
+  consistentRead = false,
 ): Promise<DictionaryEntry[]> {
   const params = {
     TableName: tableName("DictionaryTable"),
@@ -1024,6 +1094,7 @@ export async function listDictionaryEntries(
     ExpressionAttributeValues: marshall({
       ":guildId": guildId,
     }),
+    ConsistentRead: consistentRead,
   };
   const command = new QueryCommand(params);
   const result = await dynamoDbClient.send(command);
@@ -1037,11 +1108,25 @@ export async function deleteDictionaryEntry(
   guildId: string,
   termKey: string,
 ): Promise<void> {
-  const params = {
-    TableName: tableName("DictionaryTable"),
-    Key: marshall({ guildId, termKey }),
-  };
-  const command = new DeleteItemCommand(params);
+  const command = new TransactWriteItemsCommand({
+    TransactItems: [
+      {
+        Delete: {
+          TableName: tableName("DictionaryTable"),
+          Key: marshall({ guildId, termKey }),
+        },
+      },
+      {
+        Update: {
+          TableName: tableName("SessionTable"),
+          Key: marshall({ sid: dictionaryRevisionSid(guildId) }),
+          UpdateExpression: "ADD #revision :one",
+          ExpressionAttributeNames: { "#revision": "revision" },
+          ExpressionAttributeValues: marshall({ ":one": 1 }),
+        },
+      },
+    ],
+  });
   await dynamoDbClient.send(command);
 }
 

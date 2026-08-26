@@ -175,6 +175,38 @@ describe("dictionaryService", () => {
     ]);
   });
 
+  test("rejects a teaching write after another dictionary key changes", async () => {
+    const reviewed = await upsertDictionaryEntryService({
+      guildId: "guild-1",
+      term: "Apollo",
+      observedForms: ["A polo"],
+      userId: "user-1",
+    });
+    const reviewedRevision =
+      getMockStore().dictionaryRevisionByGuild.get("guild-1")!;
+    await upsertDictionaryEntryService({
+      guildId: "guild-1",
+      term: "Ares",
+      userId: "other-admin",
+    });
+
+    await expect(
+      upsertDictionaryEntryService({
+        guildId: "guild-1",
+        term: "Apollo",
+        observedForms: ["A polo"],
+        userId: "user-1",
+        expectedUpdatedAt: reviewed.updatedAt,
+        expectedRevision: reviewedRevision,
+      }),
+    ).rejects.toThrow("changed after the proposal was reviewed");
+    expect(
+      getMockStore()
+        .dictionaryEntriesByGuild.get("guild-1")
+        ?.map((entry) => entry.term),
+    ).toEqual(["Apollo", "Ares"]);
+  });
+
   test("stores approved observed forms and preserves them during manual edits", async () => {
     const lastTeaching = {
       method: "llm_assisted" as const,

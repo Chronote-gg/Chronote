@@ -28,6 +28,17 @@ export async function listDictionaryEntriesService(
   return sortEntries(entries);
 }
 
+export async function getDictionarySnapshotService(guildId: string): Promise<{
+  entries: DictionaryEntry[];
+  revision: number;
+}> {
+  const snapshot = await getDictionaryRepository().listSnapshotByGuild(guildId);
+  return {
+    entries: sortEntries(snapshot.entries),
+    revision: snapshot.revision,
+  };
+}
+
 export async function upsertDictionaryEntryService(params: {
   guildId: string;
   term: string;
@@ -37,6 +48,7 @@ export async function upsertDictionaryEntryService(params: {
   userId: string;
   captureAnalytics?: boolean;
   expectedUpdatedAt?: string | null;
+  expectedRevision?: number;
 }): Promise<DictionaryEntry> {
   const term = normalizeDictionaryTerm(params.term);
   if (!term) {
@@ -75,7 +87,11 @@ export async function upsertDictionaryEntryService(params: {
     updatedBy: params.userId,
   };
 
-  const written = await repository.write(entry, params.expectedUpdatedAt);
+  const written = await repository.write(
+    entry,
+    params.expectedUpdatedAt,
+    params.expectedRevision,
+  );
   if (!written) {
     throw new Error(
       "This dictionary entry changed after the proposal was reviewed. Analyze it again before saving.",

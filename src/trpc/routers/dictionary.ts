@@ -4,6 +4,7 @@ import { z } from "zod";
 import { router, manageGuildProcedure } from "../trpc";
 import {
   clearDictionaryEntriesService,
+  getDictionarySnapshotService,
   listDictionaryEntriesService,
   removeDictionaryEntryService,
   upsertDictionaryEntryService,
@@ -35,6 +36,8 @@ import { resolveModelParamsForContext } from "../../services/openaiModelParams";
 import { resolveModelChoicesForContext } from "../../services/modelChoiceService";
 import { captureEvent } from "../../services/analyticsService";
 import { resolveServerMeetingArtifactAccess } from "../../services/meetingArtifactAccessService";
+import { getMeetingHistoryService } from "../../services/meetingHistoryService";
+import { checkUserMeetingAccess } from "../../services/meetingAccessService";
 
 const serverSchema = z.object({
   serverId: z.string().min(1),
@@ -203,6 +206,7 @@ const saveTeachingEntry = async (params: {
   record: DictionaryTeachingDraftRecord;
   captureAnalytics: boolean;
   expectedUpdatedAt: string | null;
+  expectedRevision: number;
 }): Promise<TeachingCommitResult> => {
   try {
     const entry = await upsertDictionaryEntryService({
@@ -224,6 +228,7 @@ const saveTeachingEntry = async (params: {
       userId: params.userId,
       captureAnalytics: params.captureAnalytics,
       expectedUpdatedAt: params.expectedUpdatedAt,
+      expectedRevision: params.expectedRevision,
     });
     return { draftId: params.submitted.draftId, ok: true, entry };
   } catch (error) {
@@ -291,7 +296,8 @@ const commitDictionaryTeaching = async (
     userId,
   );
   const draftsById = indexAndValidateTeachingDrafts(record, input.entries);
-  const currentEntries = await listDictionaryEntriesService(input.serverId);
+  const snapshot = await getDictionarySnapshotService(input.serverId);
+  const currentEntries = snapshot.entries;
   const currentByKey = new Map(
     currentEntries.map((entry) => [entry.termKey, entry]),
   );
@@ -309,32 +315,34 @@ const commitDictionaryTeaching = async (
   const batchConflictDraftIds = findTeachingBatchConflictDraftIds(
     pending.filter(({ conflictError }) => conflictError === undefined),
   );
-  const results = await Promise.all(
-    pending.map(
-      ({ conflictError, expectedUpdatedAt, normalized, submitted }) => {
-        const error =
-          conflictError ??
-          (batchConflictDraftIds.has(submitted.draftId)
-            ? "This spelling conflicts with another entry in the same approval batch. Revise the request before saving it."
-            : undefined);
-        return error
-          ? Promise.resolve<TeachingCommitResult>({
-              draftId: submitted.draftId,
-              ok: false,
-              error,
-            })
-          : saveTeachingEntry({
-              serverId: input.serverId,
-              userId,
-              submitted,
-              normalized,
-              record,
-              captureAnalytics,
-              expectedUpdatedAt,
-            });
-      },
-    ),
-  );
+  const results: TeachingCommitResult[] = [];
+  let expectedRevision = snapshot.revision;
+  for (const {
+    conflictError,
+    expectedUpdatedAt,
+    normalized,
+    submitted,
+  } of pending) {
+    const error =
+      conflictError ??
+      (batchConflictDraftIds.has(submitted.draftId)
+        ? "This spelling conflicts with another entry in the same approval batch. Revise the request before saving it."
+        : undefined);
+    const result = error
+      ? { draftId: submitted.draftId, ok: false, error }
+      : await saveTeachingEntry({
+          serverId: input.serverId,
+          userId,
+          submitted,
+          normalized,
+          record,
+          captureAnalytics,
+          expectedUpdatedAt,
+          expectedRevision,
+        });
+    results.push(result);
+    if (result.ok) expectedRevision += 1;
+  }
   const failedCount = results.filter((result) => !result.ok).length;
   if (failedCount === 0) {
     try {
@@ -438,6 +446,25 @@ export const dictionaryRouter = router({
       }
 
       let teachingContext = contextRecord?.context;
+      if (teachingContext?.meetingId) {
+        const meeting = await getMeetingHistoryService(
+          input.serverId,
+          teachingContext.meetingId,
+        );
+        const access = meeting
+          ? await checkUserMeetingAccess({
+              guildId: input.serverId,
+              meeting,
+              userId: ctx.user!.id,
+            })
+          : null;
+        if (access?.allowed !== true) {
+          throw new TRPCError({
+            code: "FORBIDDEN",
+            message: "You no longer have access to this correction context.",
+          });
+        }
+      }
       if (teachingContext?.transcriptExcerpt) {
         const artifactAccess = await resolveServerMeetingArtifactAccess(
           input.serverId,
