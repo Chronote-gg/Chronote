@@ -56,8 +56,6 @@ describe("dictionary write lock", () => {
       .mockResolvedValueOnce({
         Item: marshall({ sid: "dictionaryRevision#guild-1", revision: 0 }),
       })
-      .mockResolvedValueOnce({})
-      .mockResolvedValueOnce({})
       .mockRejectedValueOnce(conditionalFailure())
       .mockResolvedValueOnce({});
     const { writeDictionaryEntry } = await import("../src/db");
@@ -67,6 +65,27 @@ describe("dictionary write lock", () => {
     expect(
       sendMock.mock.calls.map(([command]) => command.constructor.name),
     ).not.toContain("PutItemCommand");
+  });
+
+  test("does not advance the revision when a conditional put is rejected", async () => {
+    sendMock
+      .mockResolvedValueOnce({})
+      .mockResolvedValueOnce({
+        Item: marshall({ sid: "dictionaryRevision#guild-1", revision: 4 }),
+      })
+      .mockResolvedValueOnce({})
+      .mockRejectedValueOnce(conditionalFailure())
+      .mockResolvedValueOnce({});
+    const { writeDictionaryEntry } = await import("../src/db");
+
+    await expect(writeDictionaryEntry(entry, null, 4)).resolves.toBe(false);
+
+    expect(
+      sendMock.mock.calls.some(
+        ([command]) =>
+          command.input.UpdateExpression === "SET #revision = :nextRevision",
+      ),
+    ).toBe(false);
   });
 
   test("treats release failures as best effort", async () => {
