@@ -200,6 +200,7 @@ const saveTeachingEntry = async (params: {
   submitted: DictionaryTeachingCommitEntry;
   normalized: ReturnType<typeof normalizeTeachingEntry>;
   record: DictionaryTeachingDraftRecord;
+  captureAnalytics: boolean;
 }): Promise<TeachingCommitResult> => {
   try {
     const entry = await upsertDictionaryEntryService({
@@ -219,6 +220,7 @@ const saveTeachingEntry = async (params: {
         approvedAt: new Date().toISOString(),
       },
       userId: params.userId,
+      captureAnalytics: params.captureAnalytics,
     });
     return { draftId: params.submitted.draftId, ok: true, entry };
   } catch (error) {
@@ -324,6 +326,7 @@ const commitDictionaryTeaching = async (
             submitted,
             normalized,
             record,
+            captureAnalytics,
           });
     }),
   );

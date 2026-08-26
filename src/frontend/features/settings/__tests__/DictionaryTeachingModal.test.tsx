@@ -160,6 +160,33 @@ describe("DictionaryTeachingModal", () => {
     expect(onSaved).toHaveBeenCalled();
   });
 
+  it("retries without an expired correction context", async () => {
+    mockPreviewTeaching.mockRejectedValueOnce({
+      data: { code: "NOT_FOUND" },
+    });
+    renderModal({
+      initialInstruction: "The exact name is Jon Smythe.",
+      correctionContextToken: "33333333-3333-4333-8333-333333333333",
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Review terms" }));
+
+    await waitFor(() => expect(mockPreviewTeaching).toHaveBeenCalledTimes(2));
+    expect(mockPreviewTeaching).toHaveBeenNthCalledWith(1, {
+      serverId: "guild-1",
+      instruction: "The exact name is Jon Smythe.",
+      correctionContextToken: "33333333-3333-4333-8333-333333333333",
+      doNotTrack: false,
+    });
+    expect(mockPreviewTeaching).toHaveBeenNthCalledWith(2, {
+      serverId: "guild-1",
+      instruction: "The exact name is Jon Smythe.",
+      correctionContextToken: undefined,
+      doNotTrack: false,
+    });
+    expect(await screen.findByDisplayValue("Jon Smythe")).toBeInTheDocument();
+  });
+
   it("does not preselect ambiguous terms without exact spelling", async () => {
     mockPreviewTeaching.mockResolvedValue({
       token: "11111111-1111-4111-8111-111111111111",

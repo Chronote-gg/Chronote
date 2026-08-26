@@ -173,6 +173,10 @@ describe("dictionary teaching router", () => {
         "dictionary_teaching_committed",
         expect.anything(),
       );
+      expect(captureEvent).not.toHaveBeenCalledWith(
+        "dictionary_updated",
+        expect.anything(),
+      );
     },
   );
 

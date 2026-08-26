@@ -60,6 +60,11 @@ const actionLabel = (draft: EditableDraft) => {
   return { label: "New term", color: "green" };
 };
 
+const isTrpcErrorWithCode = (
+  error: unknown,
+): error is { data?: { code?: string } } =>
+  Boolean(error && typeof error === "object" && "data" in error);
+
 export default function DictionaryTeachingModal({
   opened,
   serverId,
@@ -71,6 +76,8 @@ export default function DictionaryTeachingModal({
   const [instruction, setInstruction] = useState(initialInstruction);
   const [token, setToken] = useState<string | null>(null);
   const [drafts, setDrafts] = useState<EditableDraft[]>([]);
+  const [activeCorrectionContextToken, setActiveCorrectionContextToken] =
+    useState(correctionContextToken);
   const previewMutation = trpc.dictionary.previewTeaching.useMutation();
   const commitMutation = trpc.dictionary.commitTeaching.useMutation();
 
@@ -79,7 +86,8 @@ export default function DictionaryTeachingModal({
     setInstruction(initialInstruction);
     setToken(null);
     setDrafts([]);
-  }, [initialInstruction, opened]);
+    setActiveCorrectionContextToken(correctionContextToken);
+  }, [correctionContextToken, initialInstruction, opened]);
 
   const selectedDrafts = useMemo(
     () =>
@@ -101,12 +109,27 @@ export default function DictionaryTeachingModal({
     const trimmed = instruction.trim();
     if (!trimmed) return;
     try {
-      const result = await previewMutation.mutateAsync({
-        serverId,
-        instruction: trimmed,
-        correctionContextToken,
-        doNotTrack: isDoNotTrackEnabled(),
-      });
+      const preview = (contextToken?: string) =>
+        previewMutation.mutateAsync({
+          serverId,
+          instruction: trimmed,
+          correctionContextToken: contextToken,
+          doNotTrack: isDoNotTrackEnabled(),
+        });
+      let result;
+      try {
+        result = await preview(activeCorrectionContextToken);
+      } catch (error) {
+        if (
+          !activeCorrectionContextToken ||
+          !isTrpcErrorWithCode(error) ||
+          error.data?.code !== "NOT_FOUND"
+        ) {
+          throw error;
+        }
+        setActiveCorrectionContextToken(undefined);
+        result = await preview();
+      }
       setToken(result.token);
       setDrafts(
         result.drafts.map((draft) => ({

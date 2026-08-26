@@ -35,6 +35,7 @@ export async function upsertDictionaryEntryService(params: {
   observedForms?: string[];
   lastTeaching?: DictionaryTeachingProvenance;
   userId: string;
+  captureAnalytics?: boolean;
 }): Promise<DictionaryEntry> {
   const term = normalizeDictionaryTerm(params.term);
   if (!term) {
@@ -74,16 +75,18 @@ export async function upsertDictionaryEntryService(params: {
   };
 
   await repository.write(entry);
-  // The term itself is user content, so only its shape is reported.
-  captureEvent("dictionary_updated", {
-    userId: params.userId,
-    guildId: params.guildId,
-    properties: {
-      action: existing ? "updated" : "added",
-      has_definition: Boolean(definition),
-      term_length: term.length,
-    },
-  });
+  if (params.captureAnalytics !== false) {
+    // The term itself is user content, so only its shape is reported.
+    captureEvent("dictionary_updated", {
+      userId: params.userId,
+      guildId: params.guildId,
+      properties: {
+        action: existing ? "updated" : "added",
+        has_definition: Boolean(definition),
+        term_length: term.length,
+      },
+    });
+  }
   return entry;
 }
 
