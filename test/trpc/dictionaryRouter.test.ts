@@ -4,6 +4,7 @@ import { ensureManageGuildWithUserToken } from "../../src/services/guildAccessSe
 import { generateDictionaryTeachingDrafts } from "../../src/services/dictionaryTeachingService";
 import { upsertDictionaryEntryService } from "../../src/services/dictionaryService";
 import { captureEvent } from "../../src/services/analyticsService";
+import { resolveServerMeetingArtifactAccess } from "../../src/services/meetingArtifactAccessService";
 
 const drafts = new Map<string, unknown>();
 const contexts = new Map<string, unknown>();
@@ -38,6 +39,11 @@ jest.mock("../../src/services/dictionaryTeachingService", () => ({
 jest.mock("../../src/services/analyticsService", () => ({
   captureEvent: jest.fn(),
   shutdownAnalytics: jest.fn(),
+}));
+
+jest.mock("../../src/services/meetingArtifactAccessService", () => ({
+  ...jest.requireActual("../../src/services/meetingArtifactAccessService"),
+  resolveServerMeetingArtifactAccess: jest.fn(),
 }));
 
 jest.mock("../../src/services/dictionaryTeachingTokenStore", () => ({
@@ -80,6 +86,10 @@ describe("dictionary teaching router", () => {
     contexts.clear();
     resetMockStore();
     jest.mocked(ensureManageGuildWithUserToken).mockResolvedValue(true);
+    jest.mocked(resolveServerMeetingArtifactAccess).mockResolvedValue({
+      transcriptAccessEnabled: true,
+      audioAccessEnabled: true,
+    });
     jest.mocked(generateDictionaryTeachingDrafts).mockResolvedValue({
       drafts: [
         {
@@ -220,6 +230,41 @@ describe("dictionary teaching router", () => {
 
     expect(tokenStore.deleteContext).not.toHaveBeenCalled();
     expect(generateDictionaryTeachingDrafts).toHaveBeenCalledTimes(2);
+  });
+
+  test("strips stored transcript context when access is disabled before preview", async () => {
+    const token = "20000000-0000-4000-8000-000000000003";
+    contexts.set(token, {
+      guildId: "guild-1",
+      requesterId: getMockUser().id,
+      expiresAtMs: Date.now() + 60_000,
+      context: {
+        source: "notes_correction",
+        meetingId: "meeting-1",
+        notesDiff: "+ Jon Smythe",
+        transcriptExcerpt: "Jon Smythe from Apollo owns the rollout.",
+      },
+    });
+    jest.mocked(resolveServerMeetingArtifactAccess).mockResolvedValue({
+      transcriptAccessEnabled: false,
+      audioAccessEnabled: true,
+    });
+
+    await buildCaller().dictionary.previewTeaching({
+      serverId: "guild-1",
+      instruction: "The exact name is Jon Smythe.",
+      correctionContextToken: token,
+    });
+
+    expect(resolveServerMeetingArtifactAccess).toHaveBeenCalledWith("guild-1");
+    expect(generateDictionaryTeachingDrafts).toHaveBeenCalledWith(
+      expect.objectContaining({
+        context: expect.objectContaining({
+          notesDiff: "+ Jon Smythe",
+          transcriptExcerpt: undefined,
+        }),
+      }),
+    );
   });
 
   test("rejects commit entries that were not in the draft", async () => {
@@ -849,6 +894,63 @@ describe("dictionary teaching router", () => {
         properties: expect.objectContaining({ edited_draft_count: 0 }),
       }),
     );
+  });
+
+  test("rechecks preserved observed forms against concurrent entries", async () => {
+    const existing = await upsertDictionaryEntryService({
+      guildId: "guild-1",
+      term: "Apollo",
+      definition: "Existing project",
+      observedForms: ["A polo"],
+      userId: getMockUser().id,
+    });
+    const token = "91500000-0000-4000-8000-000000000001";
+    const draftId = "91500000-0000-4000-8000-000000000002";
+    drafts.set(token, {
+      guildId: "guild-1",
+      requesterId: getMockUser().id,
+      expiresAtMs: Date.now() + 60_000,
+      source: "settings",
+      drafts: [
+        {
+          draftId,
+          preferredTerm: "Apollo",
+          observedForms: [],
+          description: "Existing project",
+          ambiguity: null,
+          evidence: [],
+          action: "update",
+          existingEntry: existing,
+        },
+      ],
+      model: {
+        model: "gpt-5-mini",
+        promptName: "chronote-dictionary-teaching-chat",
+      },
+    });
+    await upsertDictionaryEntryService({
+      guildId: "guild-1",
+      term: "A polo",
+      userId: "other-admin",
+    });
+
+    const result = await buildCaller().dictionary.commitTeaching({
+      serverId: "guild-1",
+      token,
+      entries: [
+        {
+          draftId,
+          preferredTerm: "Apollo",
+          observedForms: [],
+          description: "Existing project",
+        },
+      ],
+    });
+
+    expect(result.results[0]).toMatchObject({
+      ok: false,
+      error: expect.stringContaining("conflicts with another entry"),
+    });
   });
 
   test("retains newly approved observed forms when an entry is at capacity", async () => {

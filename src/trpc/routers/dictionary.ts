@@ -34,6 +34,7 @@ import { createDictionaryTeachingTokenStore } from "../../services/dictionaryTea
 import { resolveModelParamsForContext } from "../../services/openaiModelParams";
 import { resolveModelChoicesForContext } from "../../services/modelChoiceService";
 import { captureEvent } from "../../services/analyticsService";
+import { resolveServerMeetingArtifactAccess } from "../../services/meetingArtifactAccessService";
 
 const serverSchema = z.object({
   serverId: z.string().min(1),
@@ -254,9 +255,7 @@ const prepareTeachingEntrySave = (params: {
   const observedConflict = findDictionaryObservedConflict(
     params.currentEntries,
     normalized.preferredTerm,
-    normalizeDictionaryObservedForms(
-      params.submitted.observedForms ?? params.draft.observedForms,
-    ) ?? [],
+    normalized.observedForms ?? [],
   );
   const targetsUnreviewedObservedConflict =
     observedConflict !== undefined &&
@@ -432,6 +431,19 @@ export const dictionaryRouter = router({
         }
       }
 
+      let teachingContext = contextRecord?.context;
+      if (teachingContext?.transcriptExcerpt) {
+        const artifactAccess = await resolveServerMeetingArtifactAccess(
+          input.serverId,
+        );
+        if (!artifactAccess.transcriptAccessEnabled) {
+          teachingContext = {
+            ...teachingContext,
+            transcriptExcerpt: undefined,
+          };
+        }
+      }
+
       const [entries, modelParams, modelChoices] = await Promise.all([
         listDictionaryEntriesService(input.serverId),
         resolveModelParamsForContext({
@@ -447,7 +459,7 @@ export const dictionaryRouter = router({
         guildId: input.serverId,
         userId: ctx.user!.id,
         instruction: input.instruction,
-        context: contextRecord?.context,
+        context: teachingContext,
         existingEntries: entries,
         modelParams: modelParams.dictionaryTeaching,
         modelOverride: modelChoices.dictionaryTeaching,

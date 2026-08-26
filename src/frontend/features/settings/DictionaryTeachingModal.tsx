@@ -188,6 +188,17 @@ export default function DictionaryTeachingModal({
       onClose();
     } catch (error) {
       console.error("Failed to save dictionary teaching drafts", error);
+      if (isTrpcErrorWithCode(error) && error.data?.code === "NOT_FOUND") {
+        setToken(null);
+        setDrafts([]);
+        setActiveCorrectionContextToken(undefined);
+        notifications.show({
+          color: "yellow",
+          message:
+            "That review expired. Review the request again to create a fresh proposal.",
+        });
+        return;
+      }
       notifications.show({
         color: "red",
         message: "Those terms could not be saved. Review them and try again.",

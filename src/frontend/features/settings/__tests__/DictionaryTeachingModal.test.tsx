@@ -1,5 +1,6 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MantineProvider } from "@mantine/core";
+import { notifications } from "@mantine/notifications";
 import DictionaryTeachingModal from "../DictionaryTeachingModal";
 
 const mockPreviewTeaching = jest.fn();
@@ -185,6 +186,37 @@ describe("DictionaryTeachingModal", () => {
       doNotTrack: false,
     });
     expect(await screen.findByDisplayValue("Jon Smythe")).toBeInTheDocument();
+  });
+
+  it("returns to analysis when the proposal expires before saving", async () => {
+    mockCommitTeaching.mockRejectedValueOnce({
+      data: { code: "NOT_FOUND" },
+    });
+    renderModal({
+      initialInstruction: "The exact name is Jon Smythe.",
+      correctionContextToken: "33333333-3333-4333-8333-333333333333",
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Review terms" }));
+    expect(await screen.findByDisplayValue("Jon Smythe")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Teach Chronote" }));
+
+    expect(
+      await screen.findByRole("button", { name: "Review terms" }),
+    ).toBeInTheDocument();
+    expect(notifications.show).toHaveBeenCalledWith({
+      color: "yellow",
+      message:
+        "That review expired. Review the request again to create a fresh proposal.",
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Review terms" }));
+    await waitFor(() => expect(mockPreviewTeaching).toHaveBeenCalledTimes(2));
+    expect(mockPreviewTeaching).toHaveBeenLastCalledWith({
+      serverId: "guild-1",
+      instruction: "The exact name is Jon Smythe.",
+      correctionContextToken: undefined,
+      doNotTrack: false,
+    });
   });
 
   it("does not preselect ambiguous terms without exact spelling", async () => {
