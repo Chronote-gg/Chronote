@@ -146,6 +146,47 @@ const teachingDraftWasEdited = (
   );
 };
 
+const findTeachingBatchConflictDraftIds = (
+  entries: Array<{
+    submitted: DictionaryTeachingCommitEntry;
+    normalized: ReturnType<typeof normalizeTeachingEntry>;
+  }>,
+) => {
+  const conflictDraftIds = new Set<string>();
+  for (let leftIndex = 0; leftIndex < entries.length; leftIndex += 1) {
+    const left = entries[leftIndex];
+    const leftPreferredKey = buildDictionaryTermKey(
+      left.normalized.preferredTerm,
+    );
+    const leftObservedKeys = new Set(
+      (left.normalized.observedForms ?? []).map(buildDictionaryTermKey),
+    );
+    for (
+      let rightIndex = leftIndex + 1;
+      rightIndex < entries.length;
+      rightIndex += 1
+    ) {
+      const right = entries[rightIndex];
+      const rightPreferredKey = buildDictionaryTermKey(
+        right.normalized.preferredTerm,
+      );
+      const rightObservedKeys = new Set(
+        (right.normalized.observedForms ?? []).map(buildDictionaryTermKey),
+      );
+      const conflicts =
+        leftPreferredKey === rightPreferredKey ||
+        leftObservedKeys.has(rightPreferredKey) ||
+        rightObservedKeys.has(leftPreferredKey) ||
+        [...leftObservedKeys].some((key) => rightObservedKeys.has(key));
+      if (conflicts) {
+        conflictDraftIds.add(left.submitted.draftId);
+        conflictDraftIds.add(right.submitted.draftId);
+      }
+    }
+  }
+  return conflictDraftIds;
+};
+
 const saveTeachingEntry = async (params: {
   serverId: string;
   userId: string;
@@ -183,15 +224,16 @@ const saveTeachingEntry = async (params: {
 };
 
 const prepareTeachingEntrySave = (params: {
-  serverId: string;
-  userId: string;
   submitted: DictionaryTeachingCommitEntry;
   draft: DictionaryTeachingDraft;
   current?: DictionaryEntry;
   currentEntries: DictionaryEntry[];
-  record: DictionaryTeachingDraftRecord;
 }) => {
   const normalized = normalizeTeachingEntry(params.submitted, params.current);
+  const reviewedEntryRenamed =
+    params.draft.existingEntry !== undefined &&
+    buildDictionaryTermKey(normalized.preferredTerm) !==
+      params.draft.existingEntry.termKey;
   const targetsUnreviewedEntry =
     params.current !== undefined &&
     params.draft.existingEntry?.termKey !== params.current.termKey;
@@ -209,29 +251,20 @@ const prepareTeachingEntrySave = (params: {
   const targetsUnreviewedObservedConflict =
     observedConflict !== undefined &&
     params.draft.existingEntry?.termKey !== observedConflict.termKey;
-  const conflictError = targetsUnreviewedEntry
-    ? "This exact spelling now matches an existing entry. Revise and analyze the request again before updating it."
-    : reviewedEntryChanged
-      ? "This dictionary entry changed after the proposal was generated. Revise and analyze the request again before updating it."
-      : targetsUnreviewedObservedConflict
-        ? "This spelling or one of its observed forms now conflicts with another entry. Revise and analyze the request again before saving it."
-        : undefined;
-  const save = conflictError
-    ? Promise.resolve<TeachingCommitResult>({
-        draftId: params.submitted.draftId,
-        ok: false,
-        error: conflictError,
-      })
-    : saveTeachingEntry({
-        serverId: params.serverId,
-        userId: params.userId,
-        submitted: params.submitted,
-        normalized,
-        record: params.record,
-      });
+  const conflictError = reviewedEntryRenamed
+    ? "The exact spelling changed from the reviewed existing entry. Revise and analyze the request again before updating it."
+    : targetsUnreviewedEntry
+      ? "This exact spelling now matches an existing entry. Revise and analyze the request again before updating it."
+      : reviewedEntryChanged
+        ? "This dictionary entry changed after the proposal was generated. Revise and analyze the request again before updating it."
+        : targetsUnreviewedObservedConflict
+          ? "This spelling or one of its observed forms now conflicts with another entry. Revise and analyze the request again before saving it."
+          : undefined;
   return {
     edited: teachingDraftWasEdited(params.draft, params.submitted),
-    save,
+    conflictError,
+    normalized,
+    submitted: params.submitted,
   };
 };
 
@@ -254,16 +287,37 @@ const commitDictionaryTeaching = async (
       normalizeDictionaryTerm(submitted.preferredTerm),
     );
     return prepareTeachingEntrySave({
-      serverId: input.serverId,
-      userId,
       submitted,
       draft: draftsById.get(submitted.draftId)!,
       current: currentByKey.get(key),
       currentEntries,
-      record,
     });
   });
-  const results = await Promise.all(pending.map(({ save }) => save));
+  const batchConflictDraftIds = findTeachingBatchConflictDraftIds(
+    pending.filter(({ conflictError }) => conflictError === undefined),
+  );
+  const results = await Promise.all(
+    pending.map(({ conflictError, normalized, submitted }) => {
+      const error =
+        conflictError ??
+        (batchConflictDraftIds.has(submitted.draftId)
+          ? "This spelling conflicts with another entry in the same approval batch. Revise the request before saving it."
+          : undefined);
+      return error
+        ? Promise.resolve<TeachingCommitResult>({
+            draftId: submitted.draftId,
+            ok: false,
+            error,
+          })
+        : saveTeachingEntry({
+            serverId: input.serverId,
+            userId,
+            submitted,
+            normalized,
+            record,
+          });
+    }),
+  );
   const failedCount = results.filter((result) => !result.ok).length;
   if (failedCount === 0) {
     await dictionaryTeachingTokenStore.deleteDraft(input.token);

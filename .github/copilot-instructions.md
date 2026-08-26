@@ -65,7 +65,7 @@ This file provides Copilot review context. AGENTS.md remains the source of truth
 - Production OAuth should use the API domain callback (e.g., `https://api.chronote.gg/auth/discord/callback`). The backend sits behind an ALB unless `ENABLE_API_ALB=false`; `API_DOMAIN` selects its hostname and is independent of whether the ALB exists. The frontend build uses `VITE_API_BASE_URL` from GitHub Actions env vars.
 - Remote MCP: `ENABLE_MCP` defaults true only when Discord OAuth is enabled, requires `OAUTH_SECRET`, and exposes `/mcp` on the API server. Use `MCP_PUBLIC_BASE_URL` for the external API origin so OAuth tokens are resource-bound to the public MCP endpoint.
 - OpenAI org/project IDs are optional (defaults empty).
-- Langfuse prompt sync uses `LANGFUSE_PUBLIC_KEY` and `LANGFUSE_SECRET_KEY`. Optional: `LANGFUSE_BASE_URL`, `LANGFUSE_PROMPT_LABEL`, `LANGFUSE_PROMPT_TRANSCRIPTION`.
+- Langfuse prompt sync uses `LANGFUSE_PUBLIC_KEY` and `LANGFUSE_SECRET_KEY`. Optional: `LANGFUSE_BASE_URL`, `LANGFUSE_PROMPT_LABEL`, `LANGFUSE_PROMPT_TRANSCRIPTION`, `LANGFUSE_PROMPT_DICTIONARY_TEACHING`.
 - Optional Langfuse prompt override for the finalized audio pass: `LANGFUSE_PROMPT_TRANSCRIPTION_FINAL_PASS`.
 - Langfuse MCP tooling uses `node scripts/setup-langfuse-mcp-auth.js` to write `.opencode/langfuse.mcp.auth`, `.opencode/langfuse.public`, and `.opencode/langfuse.secret` for OpenCode. Codex and Claude Code still expect `LANGFUSE_MCP_AUTH` in the environment.
 - Other env defaults: `PORT` (3001), `NODE_ENV`, Dynamo local toggles via `USE_LOCAL_DYNAMODB`.

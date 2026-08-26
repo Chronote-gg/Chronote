@@ -423,6 +423,130 @@ describe("dictionary teaching router", () => {
     expect(tokenStore.deleteDraft).not.toHaveBeenCalled();
   });
 
+  test("rejects renaming a reviewed update to an unused exact spelling", async () => {
+    const existing = await buildCaller().dictionary.upsert({
+      serverId: "guild-1",
+      term: "Apollo",
+      definition: "Existing project",
+    });
+    const token = "82500000-0000-4000-8000-000000000001";
+    const draftId = "82500000-0000-4000-8000-000000000002";
+    drafts.set(token, {
+      guildId: "guild-1",
+      requesterId: getMockUser().id,
+      expiresAtMs: Date.now() + 60_000,
+      source: "settings",
+      drafts: [
+        {
+          draftId,
+          preferredTerm: "Apollo",
+          observedForms: [],
+          description: "Existing project",
+          ambiguity: null,
+          evidence: [],
+          action: "update",
+          existingEntry: existing.entry,
+        },
+      ],
+      model: {
+        model: "gpt-5-mini",
+        promptName: "chronote-dictionary-teaching-chat",
+      },
+    });
+
+    const result = await buildCaller().dictionary.commitTeaching({
+      serverId: "guild-1",
+      token,
+      entries: [
+        {
+          draftId,
+          preferredTerm: "Artemis",
+          description: "Renamed project",
+        },
+      ],
+    });
+
+    expect(result.results[0]).toMatchObject({
+      ok: false,
+      error: expect.stringContaining("changed from the reviewed"),
+    });
+    const list = await buildCaller().dictionary.list({ serverId: "guild-1" });
+    expect(list.entries).toEqual([existing.entry]);
+    expect(tokenStore.deleteDraft).not.toHaveBeenCalled();
+  });
+
+  test("rejects observed-form conflicts within one approval batch", async () => {
+    const token = "82700000-0000-4000-8000-000000000001";
+    const firstDraftId = "82700000-0000-4000-8000-000000000002";
+    const secondDraftId = "82700000-0000-4000-8000-000000000003";
+    drafts.set(token, {
+      guildId: "guild-1",
+      requesterId: getMockUser().id,
+      expiresAtMs: Date.now() + 60_000,
+      source: "settings",
+      drafts: [
+        {
+          draftId: firstDraftId,
+          preferredTerm: "Apollo",
+          observedForms: ["A polo"],
+          description: null,
+          ambiguity: null,
+          evidence: [],
+          action: "create",
+        },
+        {
+          draftId: secondDraftId,
+          preferredTerm: "A polo",
+          observedForms: [],
+          description: null,
+          ambiguity: null,
+          evidence: [],
+          action: "create",
+        },
+      ],
+      model: {
+        model: "gpt-5-mini",
+        promptName: "chronote-dictionary-teaching-chat",
+      },
+    });
+
+    const result = await buildCaller().dictionary.commitTeaching({
+      serverId: "guild-1",
+      token,
+      entries: [
+        {
+          draftId: firstDraftId,
+          preferredTerm: "Apollo",
+          observedForms: ["A polo"],
+        },
+        {
+          draftId: secondDraftId,
+          preferredTerm: "A polo",
+          observedForms: [],
+        },
+      ],
+    });
+
+    expect(result.results).toHaveLength(2);
+    expect(result.results).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          draftId: firstDraftId,
+          ok: false,
+          error: expect.stringContaining("same approval batch"),
+        }),
+        expect.objectContaining({
+          draftId: secondDraftId,
+          ok: false,
+          error: expect.stringContaining("same approval batch"),
+        }),
+      ]),
+    );
+    const list = await buildCaller().dictionary.list({ serverId: "guild-1" });
+    expect(list.entries).toEqual([]);
+    expect(tokenStore.deleteDraft).not.toHaveBeenCalled();
+  });
+
   test("rejects an update when the reviewed entry changed after preview", async () => {
     const reviewed = await upsertDictionaryEntryService({
       guildId: "guild-1",
