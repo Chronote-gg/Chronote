@@ -40,6 +40,18 @@ const modelResponseSchema = z.object({
   drafts: z.array(modelDraftSchema),
 });
 
+type ModelDictionaryTeachingDraft = z.infer<typeof modelDraftSchema>;
+
+interface DictionaryTeachingGenerationParams {
+  guildId: string;
+  userId: string;
+  instruction: string;
+  context?: DictionaryTeachingContext;
+  existingEntries: DictionaryEntry[];
+  modelParams?: ModelParamConfig;
+  modelOverride?: string;
+}
+
 const normalizeComparable = (value: string) =>
   value.replace(/\s+/g, " ").trim().toLocaleLowerCase();
 
@@ -112,6 +124,98 @@ const findObservedConflict = (
   });
 };
 
+const normalizePreferredTerm = (
+  candidate: ModelDictionaryTeachingDraft,
+  availableText: string,
+) => {
+  if (!candidate.preferredTerm) return null;
+  const term = normalizeDictionaryTerm(candidate.preferredTerm);
+  if (!term || term.length > DICTIONARY_TERM_MAX_LENGTH) return null;
+  return containsComparable(availableText, term) ? term : null;
+};
+
+const normalizeTeachingDescription = (
+  candidate: ModelDictionaryTeachingDraft,
+) => {
+  const description = normalizeDictionaryDefinition(candidate.description);
+  if (!description || description.length > DICTIONARY_DEFINITION_MAX_LENGTH) {
+    return null;
+  }
+  return description;
+};
+
+const normalizeTeachingEvidence = (
+  candidate: ModelDictionaryTeachingDraft,
+  instruction: string,
+  context?: DictionaryTeachingContext,
+) =>
+  (candidate.evidence ?? [])
+    .map((item) => ({ ...item, quote: item.quote.trim() }))
+    .filter(
+      (item) =>
+        item.quote.length > 0 &&
+        containsComparable(
+          sourceText(item.source, instruction, context),
+          item.quote,
+        ),
+    )
+    .slice(0, 6);
+
+const resolveDraftAction = (
+  preferredTerm: string | null,
+  conflictEntry?: DictionaryEntry,
+  exactEntry?: DictionaryEntry,
+): DictionaryTeachingDraft["action"] => {
+  if (!preferredTerm) return "needs_input";
+  if (conflictEntry) return "conflict";
+  if (exactEntry) return "update";
+  return "create";
+};
+
+const toDictionaryTeachingDraft = (
+  candidate: ModelDictionaryTeachingDraft,
+  params: {
+    availableText: string;
+    instruction: string;
+    context?: DictionaryTeachingContext;
+    existingEntries: DictionaryEntry[];
+  },
+): DictionaryTeachingDraft => {
+  const preferredTerm = normalizePreferredTerm(candidate, params.availableText);
+  const observedForms = normalizeObservedForms(
+    candidate.observedForms ?? [],
+    params.availableText,
+  ).filter(
+    (form) =>
+      !preferredTerm ||
+      buildDictionaryTermKey(form) !== buildDictionaryTermKey(preferredTerm),
+  );
+  const exactEntry = preferredTerm
+    ? findExistingEntry(params.existingEntries, preferredTerm)
+    : undefined;
+  const conflictEntry = preferredTerm
+    ? findObservedConflict(params.existingEntries, preferredTerm, observedForms)
+    : undefined;
+  return {
+    draftId: uuidv4(),
+    preferredTerm,
+    observedForms,
+    description: normalizeTeachingDescription(candidate),
+    ambiguity:
+      candidate.ambiguity?.trim() ||
+      (!preferredTerm
+        ? "Confirm the exact spelling Chronote should use."
+        : null),
+    evidence: normalizeTeachingEvidence(
+      candidate,
+      params.instruction,
+      params.context,
+    ),
+    action: resolveDraftAction(preferredTerm, conflictEntry, exactEntry),
+    existingEntry: conflictEntry ?? exactEntry,
+  };
+};
+
 export function parseDictionaryTeachingResponse(params: {
   raw: string;
   instruction: string;
@@ -123,81 +227,14 @@ export function parseDictionaryTeachingResponse(params: {
 
   const drafts = parsed.drafts
     .slice(0, DICTIONARY_TEACHING_MAX_DRAFTS)
-    .map((candidate): DictionaryTeachingDraft => {
-      const rawPreferredTerm = candidate.preferredTerm
-        ? normalizeDictionaryTerm(candidate.preferredTerm)
-        : "";
-      const preferredTerm =
-        rawPreferredTerm &&
-        rawPreferredTerm.length <= DICTIONARY_TERM_MAX_LENGTH &&
-        containsComparable(availableText, rawPreferredTerm)
-          ? rawPreferredTerm
-          : null;
-      const observedForms = normalizeObservedForms(
-        candidate.observedForms ?? [],
+    .map((candidate) =>
+      toDictionaryTeachingDraft(candidate, {
         availableText,
-      ).filter(
-        (form) =>
-          !preferredTerm ||
-          buildDictionaryTermKey(form) !==
-            buildDictionaryTermKey(preferredTerm),
-      );
-      const normalizedDescription = normalizeDictionaryDefinition(
-        candidate.description,
-      );
-      const description =
-        normalizedDescription &&
-        normalizedDescription.length <= DICTIONARY_DEFINITION_MAX_LENGTH
-          ? normalizedDescription
-          : null;
-      const evidence = (candidate.evidence ?? [])
-        .filter((item) => {
-          const quote = item.quote.trim();
-          return (
-            quote.length > 0 &&
-            containsComparable(
-              sourceText(item.source, params.instruction, params.context),
-              quote,
-            )
-          );
-        })
-        .slice(0, 6)
-        .map((item) => ({ ...item, quote: item.quote.trim() }));
-
-      const exactEntry = preferredTerm
-        ? findExistingEntry(params.existingEntries, preferredTerm)
-        : undefined;
-      const conflictEntry = preferredTerm
-        ? findObservedConflict(
-            params.existingEntries,
-            preferredTerm,
-            observedForms,
-          )
-        : undefined;
-      const ambiguity =
-        candidate.ambiguity?.trim() ||
-        (!preferredTerm
-          ? "Confirm the exact spelling Chronote should use."
-          : null);
-      const action = !preferredTerm
-        ? "needs_input"
-        : conflictEntry
-          ? "conflict"
-          : exactEntry
-            ? "update"
-            : "create";
-
-      return {
-        draftId: uuidv4(),
-        preferredTerm,
-        observedForms,
-        description,
-        ambiguity,
-        evidence,
-        action,
-        existingEntry: conflictEntry ?? exactEntry,
-      };
-    });
+        instruction: params.instruction,
+        context: params.context,
+        existingEntries: params.existingEntries,
+      }),
+    );
 
   const seenPreferredTerms = new Set<string>();
   return drafts.filter((draft) => {
@@ -239,48 +276,61 @@ export function selectDictionaryTeachingConflicts(
     .map(({ entry }) => entry);
 }
 
-export async function generateDictionaryTeachingDrafts(params: {
-  guildId: string;
-  userId: string;
-  instruction: string;
-  context?: DictionaryTeachingContext;
-  existingEntries: DictionaryEntry[];
-  modelParams?: ModelParamConfig;
-  modelOverride?: string;
-}): Promise<{
+const formatExistingEntriesForPrompt = (entries: DictionaryEntry[]) => {
+  if (entries.length === 0) return "None.";
+  return entries
+    .map((entry) => {
+      if (!entry.definition) return `- ${entry.term}`;
+      return `- ${entry.term}: ${entry.definition}`;
+    })
+    .join("\n");
+};
+
+const buildDictionaryTeachingPromptVariables = (
+  params: DictionaryTeachingGenerationParams,
+) => ({
+  instruction: params.instruction,
+  notesDiff: params.context?.notesDiff ?? "",
+  transcriptExcerpt: params.context?.transcriptExcerpt ?? "",
+  existingEntries: formatExistingEntriesForPrompt(
+    selectDictionaryTeachingConflicts(
+      params.existingEntries,
+      params.instruction,
+      params.context,
+    ),
+  ),
+});
+
+const resolveDictionaryTeachingModelChoice = (modelOverride?: string) =>
+  getModelChoice(
+    "dictionaryTeaching",
+    buildModelOverrides(
+      modelOverride ? { dictionaryTeaching: modelOverride } : undefined,
+    ),
+  );
+
+const buildDictionaryTeachingTraceMetadata = (
+  params: DictionaryTeachingGenerationParams,
+) => ({
+  guildId: params.guildId,
+  source: params.context?.source ?? "settings",
+  instructionLength: params.instruction.length,
+  notesDiffLength: params.context?.notesDiff?.length ?? 0,
+  transcriptExcerptLength: params.context?.transcriptExcerpt?.length ?? 0,
+});
+
+export async function generateDictionaryTeachingDrafts(
+  params: DictionaryTeachingGenerationParams,
+): Promise<{
   drafts: DictionaryTeachingDraft[];
   model: DictionaryTeachingModelMetadata;
 }> {
-  const nearbyEntries = selectDictionaryTeachingConflicts(
-    params.existingEntries,
-    params.instruction,
-    params.context,
-  );
   const { messages, langfusePrompt } = await getLangfuseChatPrompt({
     name: config.langfuse.dictionaryTeachingPromptName,
-    variables: {
-      instruction: params.instruction,
-      notesDiff: params.context?.notesDiff ?? "",
-      transcriptExcerpt: params.context?.transcriptExcerpt ?? "",
-      existingEntries:
-        nearbyEntries.length > 0
-          ? nearbyEntries
-              .map((entry) =>
-                entry.definition
-                  ? `- ${entry.term}: ${entry.definition}`
-                  : `- ${entry.term}`,
-              )
-              .join("\n")
-          : "None.",
-    },
+    variables: buildDictionaryTeachingPromptVariables(params),
   });
-  const modelChoice = getModelChoice(
-    "dictionaryTeaching",
-    buildModelOverrides(
-      params.modelOverride
-        ? { dictionaryTeaching: params.modelOverride }
-        : undefined,
-    ),
+  const modelChoice = resolveDictionaryTeachingModelChoice(
+    params.modelOverride,
   );
   const chatParams = resolveChatParamsForRole({
     role: "dictionaryTeaching",
@@ -292,13 +342,7 @@ export async function generateDictionaryTeachingDrafts(params: {
     generationName: "dictionary-teaching",
     userId: params.userId,
     tags: ["feature:dictionary_teaching"],
-    metadata: {
-      guildId: params.guildId,
-      source: params.context?.source ?? "settings",
-      instructionLength: params.instruction.length,
-      notesDiffLength: params.context?.notesDiff?.length ?? 0,
-      transcriptExcerptLength: params.context?.transcriptExcerpt?.length ?? 0,
-    },
+    metadata: buildDictionaryTeachingTraceMetadata(params),
     langfusePrompt,
   });
   const completion = await openAIClient.chat.completions.create({
