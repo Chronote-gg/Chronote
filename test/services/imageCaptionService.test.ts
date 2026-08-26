@@ -76,7 +76,6 @@ const loadModule = async (responseContent: string) => {
   }));
 
   jest.doMock("../../src/services/openaiClient", () => ({
-    buildOpenAISafetyIdentifier: jest.fn(() => "safety-id"),
     createOpenAIClient,
   }));
 
@@ -130,7 +129,6 @@ describe("imageCaptionService", () => {
         model: "gpt-5.6-luna",
         temperature: 0,
         reasoning_effort: "none",
-        safety_identifier: "safety-id",
         max_completion_tokens: 300,
         response_format: { type: "json_object" },
       }),

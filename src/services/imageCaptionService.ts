@@ -1,10 +1,7 @@
 import type OpenAI from "openai";
 import type { MeetingData } from "../types/meeting-data";
 import type { ChatAttachment, ChatEntry } from "../types/chat";
-import {
-  buildOpenAISafetyIdentifier,
-  createOpenAIClient,
-} from "./openaiClient";
+import { createOpenAIClient } from "./openaiClient";
 import { buildModelOverrides, getModelChoice } from "./modelFactory";
 import { resolveChatParamsForRole } from "./openaiModelParams";
 
@@ -38,7 +35,6 @@ type CreateCaptionOptions = {
   openAIClient: OpenAI;
   model: string;
   modelParams: ReturnType<typeof resolveChatParamsForRole>;
-  safetyIdentifier?: string;
   url: string;
   name: string;
   timeoutMs: number;
@@ -187,7 +183,6 @@ const createCaption = async (
     const response = await options.openAIClient.chat.completions.create(
       {
         model: options.model,
-        safety_identifier: options.safetyIdentifier,
         max_completion_tokens: 300,
         response_format: { type: "json_object" },
         ...options.modelParams,
@@ -282,7 +277,6 @@ export async function captionMeetingImages(meeting: MeetingData): Promise<{
     model,
     config: meeting.runtimeConfig?.modelParams?.imageCaption,
   });
-  const safetyIdentifier = buildOpenAISafetyIdentifier(meeting.creator.id);
   let remainingChars = maxTotalChars;
   let captioned = 0;
   let skipped = 0;
@@ -308,7 +302,6 @@ export async function captionMeetingImages(meeting: MeetingData): Promise<{
         openAIClient,
         model,
         modelParams,
-        safetyIdentifier,
         url: attachment.url,
         name: attachment.name?.trim() || "image",
         timeoutMs,

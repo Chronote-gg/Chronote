@@ -136,7 +136,6 @@ jest.mock("../tempFileService", () => ({
 }));
 
 jest.mock("../openaiClient", () => ({
-  buildOpenAISafetyIdentifier: jest.fn(() => "safety-id"),
   createOpenAIClient: jest.fn(() => ({
     audio: { transcriptions: { create: mockTranscribe } },
     chat: { completions: { create: mockChatComplete } },

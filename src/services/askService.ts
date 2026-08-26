@@ -6,10 +6,7 @@ import { normalizeTags, parseTags } from "../utils/tags";
 import { buildUpgradeTextOnly } from "../utils/upgradePrompt";
 import { ensureUserCanAccessMeeting } from "./meetingAccessService";
 import { CONFIG_KEYS } from "../config/keys";
-import {
-  buildOpenAISafetyIdentifier,
-  createOpenAIClient,
-} from "./openaiClient";
+import { createOpenAIClient } from "./openaiClient";
 import { buildModelOverrides, getModelChoice } from "./modelFactory";
 import { getLangfuseChatPrompt } from "./langfusePromptService";
 import { resolveModelChoicesForContext } from "./modelChoiceService";
@@ -338,7 +335,6 @@ export async function answerQuestionService(
   });
   const completion = await openAIClient.chat.completions.create({
     model: modelChoice.model,
-    safety_identifier: buildOpenAISafetyIdentifier(req.viewerUserId),
     messages,
     max_completion_tokens: ASK_MAX_COMPLETION_TOKENS,
     ...chatParams,

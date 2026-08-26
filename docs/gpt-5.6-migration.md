@@ -63,10 +63,11 @@ those compatibility paths are also retained.
   `previous_response_id` or reasoning-item replay. Persisted reasoning, Pro
   mode, Programmatic Tool Calling, and multi-agent mode are not enabled.
 - **Safety identifiers:** The installed OpenAI SDK exposes
-  `safety_identifier` on Chat Completions. User-facing requests now send a
-  stable SHA-256 digest of the acting Discord user ID and no longer send the
-  raw ID through the deprecated Chat Completions `user` field. Offline evals
-  omit the field because no end user exists.
+  `safety_identifier` on Chat Completions. The shared notes/chat path already
+  sent the meeting creator's raw Discord ID through the deprecated `user`
+  field; it now sends a namespaced HMAC-SHA-256 pseudonym keyed by Chronote's
+  session secret instead. Calls that previously had no OpenAI user identifier
+  remain untagged, and offline evals omit the field.
 - **Long context:** The family supports Chronote's current prompt sizes, but
   production rollout must still measure actual input tokens and flag requests
   approaching the current long-context pricing threshold.

@@ -52,10 +52,7 @@ import {
   updateDiscordMessageEmbeds,
 } from "../../services/discordMessageService";
 import { generateMeetingSummaries } from "../../services/meetingSummaryService";
-import {
-  buildOpenAISafetyIdentifier,
-  createOpenAIClient,
-} from "../../services/openaiClient";
+import { createOpenAIClient } from "../../services/openaiClient";
 import { getLangfuseChatPrompt } from "../../services/langfusePromptService";
 import {
   buildModelOverrides,
@@ -530,7 +527,6 @@ async function generateCorrectedNotes(options: {
   currentNotes: string;
   transcript: string;
   suggestion: string;
-  requesterUserId: string;
   requesterTag: string;
   /** Supplies the rosters, so a correction can add a mention rather than a bare name. */
   meeting: Pick<MeetingHistory, "guildId" | "ownershipScope" | "participants">;
@@ -580,7 +576,6 @@ async function generateCorrectedNotes(options: {
     });
     const completion = await openAIClient.chat.completions.create({
       model: modelChoice.model,
-      safety_identifier: buildOpenAISafetyIdentifier(options.requesterUserId),
       messages,
       ...chatParams,
     });
@@ -1587,7 +1582,6 @@ const suggestNotesCorrection = authedProcedure
       currentNotes: history.notes,
       transcript,
       suggestion: input.suggestion,
-      requesterUserId: ctx.user.id,
       requesterTag,
       meeting: history,
       previousSuggestions: history.suggestionsHistory,
@@ -1717,7 +1711,6 @@ const applyNotesCorrection = authedProcedure
       tags: history.tags,
       now: meetingDate,
       meetingId: history.meetingId,
-      userId: ctx.user.id,
       previousSummarySentence: history.summarySentence,
       previousSummaryLabel: history.summaryLabel,
       modelParams: summaryModelParams.meetingSummary,

@@ -2,10 +2,7 @@ import { config } from "./configService";
 import type { SpanContext } from "@opentelemetry/api";
 import { formatLongDate } from "../utils/time";
 import { getLangfuseChatPrompt } from "./langfusePromptService";
-import {
-  buildOpenAISafetyIdentifier,
-  createOpenAIClient,
-} from "./openaiClient";
+import { createOpenAIClient } from "./openaiClient";
 import { getModelChoice } from "./modelFactory";
 import { resolveChatParamsForRole } from "./openaiModelParams";
 import type { ModelParamConfig } from "../config/types";
@@ -18,7 +15,6 @@ export type MeetingSummaries = {
 
 type MeetingSummaryInput = {
   guildId?: string;
-  userId?: string;
   notes: string;
   serverName: string;
   channelName: string;
@@ -142,7 +138,6 @@ export async function generateMeetingSummaries(
     });
     const completion = await openAIClient.chat.completions.create({
       model: modelChoice.model,
-      safety_identifier: buildOpenAISafetyIdentifier(input.userId),
       messages,
       ...chatParams,
       response_format: { type: "json_object" },
