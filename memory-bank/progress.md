@@ -3,8 +3,8 @@
 ## What works
 
 - **Core bot**: join/leave, record/mix audio, chat log capture, meeting lifecycle with tier-based duration cap.
-- **Transcription & notes**: gpt-4o-transcribe for ASR; gpt-5.1 for cleanup/notes; image gen via DALL-E 3; resilience via cockatiel/bottleneck.
-- **Live voice**: gate (gpt-5-mini) decides to speak; responder generates text; TTS plays into voice channel and is mixed into saved recording; thinking cue loops while generating; bot utterances appended on successful playback.
+- **Transcription & notes**: gpt-4o-transcribe for ASR; GPT-5.6 Sol for cleanup/notes; image gen via DALL-E 3; resilience via cockatiel/bottleneck.
+- **Live voice**: GPT-5.6 Luna gate decides to speak; GPT-5.6 Terra responder generates text; TTS plays into voice channel and is mixed into saved recording; thinking cue loops while generating; bot utterances appended on successful playback.
 - **Tagging**: freeform tags on meetings; edit buttons on start/summary embeds; tags displayed on summary; tag suggestions from history.
 - **Recall**: `/ask` uses recent meetings (guild default, optional channel) with configurable meeting count.
 - **Billing**: Stripe checkout + billing portal; webhook writes GuildSubscription/PaymentTransaction; handles payment_failed and subscription_deleted; guild-scoped billing only; sessions in Dynamo-backed Express sessions; single app-level raw middleware for the webhook.

@@ -78,6 +78,7 @@ jest.mock("../../src/services/meetingSummaryService", () => ({
 }));
 
 jest.mock("../../src/services/openaiClient", () => ({
+  buildOpenAISafetyIdentifier: jest.fn(() => "safety-id"),
   createOpenAIClient: jest.fn(),
 }));
 

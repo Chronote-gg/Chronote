@@ -1,6 +1,9 @@
 import { MeetingData } from "./types/meeting-data";
 import { config } from "./services/configService";
-import { createOpenAIClient } from "./services/openaiClient";
+import {
+  buildOpenAISafetyIdentifier,
+  createOpenAIClient,
+} from "./services/openaiClient";
 import { buildModelOverrides, getModelChoice } from "./services/modelFactory";
 import { resolveChatParamsForRole } from "./services/openaiModelParams";
 import { getLangfuseChatPrompt } from "./services/langfusePromptService";
@@ -125,6 +128,7 @@ async function shouldAct(
     });
     const completion = await openAIClient.chat.completions.create({
       model: modelChoice.model,
+      safety_identifier: buildOpenAISafetyIdentifier(segment.userId),
       messages,
       max_completion_tokens: config.liveVoice.gateMaxOutputTokens,
       response_format: { type: "json_object" },
@@ -203,6 +207,7 @@ async function generateReply(
     });
     const completion = await openAIClient.chat.completions.create({
       model: modelChoice.model,
+      safety_identifier: buildOpenAISafetyIdentifier(segment.userId),
       messages,
       max_completion_tokens: 200,
       ...modelParams,
@@ -307,6 +312,7 @@ async function classifyConfirmation(
     });
     const completion = await openAIClient.chat.completions.create({
       model: modelChoice.model,
+      safety_identifier: buildOpenAISafetyIdentifier(segment.userId),
       messages,
       max_completion_tokens: config.liveVoice.gateMaxOutputTokens,
       response_format: { type: "json_object" },

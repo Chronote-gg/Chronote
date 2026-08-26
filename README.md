@@ -193,7 +193,7 @@ Coverage update rule:
 - Transcription flow and tuning: `docs/audio-transcription.md`.
 - Slow transcription now includes a default low-confidence prompt/no-prompt vote fallback to reduce hallucinated prompt echoes.
 - Feature toggle evaluation checklist: `docs/feature-toggles.md`.
-- OpenAI: gpt-4o-transcribe for ASR, gpt-5.1 for notes/corrections, gpt-5-mini for live gate, DALL-E 3 for images.
+- OpenAI: gpt-4o-transcribe for ASR, GPT-5.6 Sol for notes/corrections, GPT-5.6 Terra for conversational text, GPT-5.6 Luna for low-latency classification/coalescing, and DALL-E 3 for images.
 - Transcription can run a finalized audio verification pass at meeting end to auto-apply high-confidence hallucination fixes before notes are generated.
 - Prompt management and tracing: Langfuse for prompt versioning, tracing, and prompt sync scripts.
 - Langfuse transcription traces attach compressed MP3 snippets (mono 16 kHz VBR, 8 MB cap) for observability.

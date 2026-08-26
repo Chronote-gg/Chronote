@@ -48,6 +48,7 @@ export async function ensureMeetingSummaries(
     tags: meeting.tags,
     now: meeting.startTime ?? new Date(),
     meetingId: meeting.meetingId,
+    userId: meeting.creator.id,
     parentSpanContext: meeting.langfuseParentSpanContext,
     modelParams: meeting.runtimeConfig?.modelParams?.meetingSummary,
     modelOverride: meeting.runtimeConfig?.modelChoices?.meetingSummary,

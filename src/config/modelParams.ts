@@ -14,6 +14,7 @@ export const MODEL_REASONING_EFFORTS = [
   "medium",
   "high",
   "xhigh",
+  "max",
 ] as const;
 export const MODEL_VERBOSITY_OPTIONS = [
   "default",
@@ -28,6 +29,7 @@ export const MODEL_PARAM_ROLES: ModelParamRole[] = [
   "notesCorrection",
   "transcriptionCleanup",
   "transcriptionCoalesce",
+  "imageCaption",
   "ask",
   "liveVoiceGate",
   "liveVoiceResponder",
@@ -55,6 +57,7 @@ export const MODEL_PARAM_ROLE_LABELS: Record<ModelParamRole, string> = {
   notesCorrection: "Notes correction",
   transcriptionCleanup: "Transcription cleanup",
   transcriptionCoalesce: "Transcription coalesce",
+  imageCaption: "Image caption",
   ask: "Q&A",
   liveVoiceGate: "Live voice gate",
   liveVoiceResponder: "Live voice responder",
@@ -81,6 +84,7 @@ export const MODEL_PARAM_DEFAULTS: Record<ModelParamRole, ModelParamConfig> = {
   notesCorrection: buildDefaults("temperature", 0),
   transcriptionCleanup: buildDefaults("temperature", 0),
   transcriptionCoalesce: buildDefaults("reasoning", 0),
+  imageCaption: buildDefaults("temperature", 0),
   ask: buildDefaults("temperature", 1),
   liveVoiceGate: buildDefaults("reasoning", 0),
   liveVoiceResponder: buildDefaults("temperature", 1),

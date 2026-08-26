@@ -37,7 +37,10 @@ import {
 } from "../services/meetingNameService";
 import { buildMeetingNotesEmbeds } from "../utils/meetingNotes";
 import { MEETING_RENAME_PREFIX } from "./meetingName";
-import { createOpenAIClient } from "../services/openaiClient";
+import {
+  buildOpenAISafetyIdentifier,
+  createOpenAIClient,
+} from "../services/openaiClient";
 import { buildModelOverrides, getModelChoice } from "../services/modelFactory";
 import { config } from "../services/configService";
 import { getLangfuseChatPrompt } from "../services/langfusePromptService";
@@ -147,6 +150,7 @@ interface CorrectionInput {
   currentNotes: string;
   transcript: string;
   suggestion: string;
+  requesterUserId: string;
   requesterTag: string;
   /** Supplies the rosters, so a correction can add a mention rather than a bare name. */
   meeting: Pick<MeetingHistory, "guildId" | "ownershipScope" | "participants">;
@@ -174,6 +178,7 @@ async function generateCorrectedNotes({
   currentNotes,
   transcript,
   suggestion,
+  requesterUserId,
   requesterTag,
   meeting,
   previousSuggestions,
@@ -218,6 +223,7 @@ async function generateCorrectedNotes({
     });
     const completion = await openAIClient.chat.completions.create({
       model: modelChoice.model,
+      safety_identifier: buildOpenAISafetyIdentifier(requesterUserId),
       messages,
       ...chatParams,
     });
@@ -370,6 +376,7 @@ export async function handleNotesCorrectionModal(
       currentNotes: history.notes,
       transcript,
       suggestion,
+      requesterUserId: interaction.user.id,
       requesterTag: interaction.user.tag,
       meeting: history,
       previousSuggestions: history.suggestionsHistory,
@@ -549,6 +556,7 @@ async function buildCorrectionSummaries(
     tags: pending.tags,
     now: meetingDate,
     meetingId: pending.meetingId,
+    userId: interaction.user.id,
     previousSummarySentence: pending.summarySentence,
     previousSummaryLabel: pending.summaryLabel,
     modelParams: modelParams.meetingSummary,

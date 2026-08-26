@@ -1,4 +1,5 @@
 import OpenAI from "openai";
+import { createHash } from "node:crypto";
 import { observeOpenAI } from "@langfuse/openai";
 import type { SpanContext } from "@opentelemetry/api";
 import { config } from "./configService";
@@ -24,6 +25,12 @@ function buildBaseOpenAIClient() {
     project: config.openai.projectId,
   });
 }
+
+export const buildOpenAISafetyIdentifier = (userId?: string) => {
+  const normalized = userId?.trim();
+  if (!normalized) return undefined;
+  return createHash("sha256").update(normalized).digest("hex");
+};
 
 export function createOpenAIClient(
   options: LangfuseOpenAiOptions = {},

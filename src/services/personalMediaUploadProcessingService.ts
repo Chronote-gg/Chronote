@@ -24,7 +24,10 @@ import {
   uploadObjectToS3,
 } from "./storageService";
 import { ensureTempBaseDir } from "./tempFileService";
-import { createOpenAIClient } from "./openaiClient";
+import {
+  buildOpenAISafetyIdentifier,
+  createOpenAIClient,
+} from "./openaiClient";
 import { getModelChoice } from "./modelFactory";
 import { resolveChatParamsForRole } from "./openaiModelParams";
 import { getLangfuseChatPrompt } from "./langfusePromptService";
@@ -247,7 +250,11 @@ const generateNotesForTranscript = async (
   transcript: string,
 ) => {
   if (!transcript.trim()) return "";
-  return generatePersonalUploadNotes({ transcript, title: job.title });
+  return generatePersonalUploadNotes({
+    transcript,
+    title: job.title,
+    ownerUserId: job.ownerUserId,
+  });
 };
 
 const generateSummariesForNotes = async (
@@ -263,6 +270,7 @@ const generateSummariesForNotes = async (
     tags: job.tags,
     now: new Date(job.createdAt),
     meetingId: job.meetingId,
+    userId: job.ownerUserId,
   });
 };
 
@@ -722,6 +730,7 @@ const processPersonalMediaContent = async (
 const generatePersonalUploadNotes = async (input: {
   transcript: string;
   title?: string;
+  ownerUserId: string;
 }) => {
   const { messages, langfusePrompt } = await getLangfuseChatPrompt({
     name: config.langfuse.notesPromptName,
@@ -759,6 +768,7 @@ const generatePersonalUploadNotes = async (input: {
   });
   const completion = await openAIClient.chat.completions.create({
     model: modelChoice.model,
+    safety_identifier: buildOpenAISafetyIdentifier(input.ownerUserId),
     messages: messages as ChatCompletionMessageParam[],
     ...chatParams,
   });

@@ -30,6 +30,35 @@ test("uses temperature with reasoning none for gpt-5.2", () => {
   expect(params.reasoning_effort).toBe("none");
 });
 
+test.each(["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"])(
+  "preserves temperature mode with explicit reasoning none for %s",
+  (model) => {
+    const params = resolveChatParamsForRole({
+      role: "notes",
+      model,
+      config: { ...baseConfig, temperature: 0.2 },
+    });
+
+    expect(params.temperature).toBe(0.2);
+    expect(params.reasoning_effort).toBe("none");
+  },
+);
+
+test("supports explicit max reasoning for GPT-5.6", () => {
+  const params = resolveChatParamsForRole({
+    role: "notes",
+    model: "gpt-5.6-sol",
+    config: {
+      ...baseConfig,
+      samplingMode: "reasoning",
+      reasoningEffort: "max",
+    },
+  });
+
+  expect(params.temperature).toBeUndefined();
+  expect(params.reasoning_effort).toBe("max");
+});
+
 test("clamps reasoning effort for gpt-5.2-pro", () => {
   const params = resolveChatParamsForRole({
     role: "liveVoiceGate",

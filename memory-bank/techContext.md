@@ -5,7 +5,7 @@
 - **Language/Runtime**: TypeScript on Node.js 24.15.0; yarn 1.22.
 - **Discord**: discord.js 14.16; discord-api-types; @discordjs/voice 0.18; @discordjs/opus; prism-media.
 - **Audio**: fluent-ffmpeg with system ffmpeg; libsodium-wrappers; PCM/Opus handling; silence detection; MP3 splitting for Discord limits.
-- **AI**: openai 5.x; gpt-4o-transcribe for ASR; gpt-5.1 for notes/corrections; gpt-5-mini for live gate; responder model configurable; DALL-E 3 for images; TTS via `gpt-4o-mini-tts`.
+- **AI**: openai 7.x; gpt-4o-transcribe for ASR; GPT-5.6 Sol for notes/corrections; GPT-5.6 Terra for Q&A/live responses; GPT-5.6 Luna for gates, coalescing, and image captions; DALL-E 3 for images; TTS via `gpt-4o-mini-tts`.
 - **Backend web**: Express 5; express-session (Dynamo SessionTable); passport + passport-discord (optional OAuth).
 - **Billing**: Stripe 14.24; checkout + billing portal; webhook verifies signature and now handles payment_failed + subscription_deleted; stores GuildSubscription/PaymentTransaction in Dynamo.
 - **Storage/Data**: DynamoDB tables (GuildSubscription, PaymentTransaction, AccessLogs, RecordingTranscript, AutoRecordSettings, ServerContext, ChannelContext, MeetingHistory, SessionTable with TTL on `expiresAt`, InstallerTable, OnboardingStateTable, ConfigOverridesTable); S3 bucket for transcripts/audio.
@@ -26,7 +26,7 @@
 
 - Central config via `src/services/configService.ts`; avoid exporting secrets from `constants.ts`.
 - Express routes expect `Promise<void>` handlers; return after responses.
-- Live voice gate returns only a boolean; no fallback; temperature/max_tokens not supported on gpt-5-mini.
+- Live voice gate returns only a bounded JSON decision; no fallback; GPT-5.6 Luna runs with explicit low reasoning effort.
 - Short-lived session and in-memory caches reduce Discord API calls for guild lists, channels, roles, and members. Discord API requests use `cockatiel` retries with exponential backoff (max 3 attempts).
 - Shared helpers belong in `src/utils`; use `src/utils/time.ts` for ISO conversion, duration formatting, and long date labels, and add unit tests when utilities are reused.
 - Thinking cue loops until TTS playback begins; interval configurable (`LIVE_VOICE_THINKING_CUE_INTERVAL_MS`).

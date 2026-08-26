@@ -76,6 +76,7 @@ const loadModule = async (responseContent: string) => {
   }));
 
   jest.doMock("../../src/services/openaiClient", () => ({
+    buildOpenAISafetyIdentifier: jest.fn(() => "safety-id"),
     createOpenAIClient,
   }));
 
@@ -126,7 +127,10 @@ describe("imageCaptionService", () => {
     expect(result.captioned).toBe(1);
     expect(completionCreate).toHaveBeenCalledWith(
       expect.objectContaining({
-        model: "gpt-4o-mini",
+        model: "gpt-5.6-luna",
+        temperature: 0,
+        reasoning_effort: "none",
+        safety_identifier: "safety-id",
         max_completion_tokens: 300,
         response_format: { type: "json_object" },
       }),
@@ -140,7 +144,7 @@ describe("imageCaptionService", () => {
     );
     expect(meeting.chatLog[0].attachments?.[0].aiCaptionedAt).toMatch(/Z$/);
     expect(meeting.chatLog[0].attachments?.[0].aiCaptionModel).toBe(
-      "gpt-4o-mini",
+      "gpt-5.6-luna",
     );
     expect(meeting.chatLog[0].attachments?.[1].aiCaption).toBeUndefined();
   });

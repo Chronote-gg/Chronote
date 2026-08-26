@@ -46,6 +46,7 @@ const loadModule = async (options: LoadOptions = {}) => {
   jest.doMock("../../src/services/configService", () => ({ config }));
   jest.doMock("../../src/audio", () => ({ waitForFinishProcessing }));
   jest.doMock("../../src/services/openaiClient", () => ({
+    buildOpenAISafetyIdentifier: jest.fn(() => "safety-id"),
     createOpenAIClient,
   }));
   jest.doMock("../../src/services/modelFactory", () => ({

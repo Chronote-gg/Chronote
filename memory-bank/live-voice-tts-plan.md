@@ -2,8 +2,8 @@
 
 ## Current behavior
 
-- Gate model (`gpt-5-mini` by default) returns **{ respond: boolean }** only. No fallback model.
-- Responder model (configurable; currently gpt-5.1 class) generates the reply text.
+- Gate model (`gpt-5.6-luna` by default) returns **{ respond: boolean }** only. No fallback model.
+- Responder model (`gpt-5.6-terra` by default, configurable) generates the reply text.
 - Thinking cue: soft multi-drop sound, looped while the responder is running; default interval 500ms between bursts.
 - TTS (`gpt-4o-mini-tts`, voice `alloy` by default) streams into Discord voice; audio is mixed into the saved recording and appended to the transcript only after successful playback.
 - Silence threshold for triggering the gate: 2s (constant for now). Bot is allowed to talk over others (no gate for “someone else is speaking”).
@@ -11,9 +11,9 @@
 ## Env knobs
 
 - `LIVE_VOICE_MODE`: off | tts_gate
-- `LIVE_VOICE_GATE_MODEL`: default gpt-5-mini
+- `LIVE_VOICE_GATE_MODEL`: default gpt-5.6-luna
 - `LIVE_VOICE_GATE_MAX_OUTPUT_TOKENS`: default 256
-- `LIVE_VOICE_RESPONDER_MODEL`: default gpt-5.1-derived (configurable)
+- `LIVE_VOICE_RESPONDER_MODEL`: default gpt-5.6-terra (configurable)
 - `LIVE_VOICE_TTS_MODEL`: gpt-4o-mini-tts
 - `LIVE_VOICE_TTS_VOICE`: alloy
 - `LIVE_VOICE_THINKING_CUE`: true|false

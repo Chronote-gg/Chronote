@@ -1,6 +1,9 @@
 import { waitForFinishProcessing } from "../audio";
 import type { MeetingData } from "../types/meeting-data";
-import { createOpenAIClient } from "./openaiClient";
+import {
+  buildOpenAISafetyIdentifier,
+  createOpenAIClient,
+} from "./openaiClient";
 import { buildModelOverrides, getModelChoice } from "./modelFactory";
 import { config } from "./configService";
 import { resolveChatParamsForRole } from "./openaiModelParams";
@@ -133,6 +136,7 @@ export async function evaluateAutoRecordCancellation(
     });
     const completion = await openAIClient.chat.completions.create({
       model: modelChoice.model,
+      safety_identifier: buildOpenAISafetyIdentifier(meeting.creator.id),
       messages: [
         { role: "system", content: systemPrompt },
         { role: "user", content: userPrompt },

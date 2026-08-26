@@ -8,6 +8,7 @@ export const MODEL_SELECTION_ROLES: ModelRole[] = [
   "transcription",
   "transcriptionCleanup",
   "transcriptionCoalesce",
+  "imageCaption",
   "image",
   "imagePrompt",
   "ask",
@@ -24,6 +25,7 @@ export const MODEL_SELECTION_ROLE_LABELS: Record<ModelRole, string> = {
   transcription: "Transcription",
   transcriptionCleanup: "Transcription cleanup",
   transcriptionCoalesce: "Transcription coalesce",
+  imageCaption: "Image caption",
   image: "Image generation",
   imagePrompt: "Image prompt",
   ask: "Q&A",
@@ -34,6 +36,9 @@ export const MODEL_SELECTION_ROLE_LABELS: Record<ModelRole, string> = {
 };
 
 const CHAT_MODEL_OPTIONS = [
+  "gpt-5.6-sol",
+  "gpt-5.6-terra",
+  "gpt-5.6-luna",
   "gpt-5.2",
   "gpt-5.2-pro",
   "gpt-5-mini",
@@ -42,6 +47,9 @@ const CHAT_MODEL_OPTIONS = [
 ];
 
 const COALESCE_MODEL_OPTIONS = [
+  "gpt-5.6-luna",
+  "gpt-5.6-terra",
+  "gpt-5.6-sol",
   "gpt-5-nano",
   "gpt-5-mini",
   "gpt-5.2",
@@ -59,6 +67,7 @@ export const MODEL_SELECTION_OPTIONS: Record<ModelRole, string[]> = {
   transcription: TRANSCRIPTION_MODEL_OPTIONS,
   transcriptionCleanup: CHAT_MODEL_OPTIONS,
   transcriptionCoalesce: COALESCE_MODEL_OPTIONS,
+  imageCaption: CHAT_MODEL_OPTIONS,
   image: IMAGE_MODEL_OPTIONS,
   imagePrompt: CHAT_MODEL_OPTIONS,
   ask: CHAT_MODEL_OPTIONS,
@@ -74,7 +83,8 @@ export const MODEL_SELECTION_DEFAULTS: Record<ModelRole, string> = {
   notesCorrection: config.notes.model,
   transcription: "gpt-4o-transcribe",
   transcriptionCleanup: config.notes.model,
-  transcriptionCoalesce: "gpt-5-mini",
+  transcriptionCoalesce: "gpt-5.6-luna",
+  imageCaption: "gpt-5.6-luna",
   image: "dall-e-3",
   imagePrompt: config.notes.model,
   ask: config.liveVoice.responderModel,

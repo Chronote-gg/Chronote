@@ -37,6 +37,7 @@ const loadModule = async (
   const resolveChatParamsForRole = jest.fn(() => ({}));
 
   jest.doMock("../../src/services/openaiClient", () => ({
+    buildOpenAISafetyIdentifier: jest.fn(() => "safety-id"),
     createOpenAIClient,
   }));
   jest.doMock("../../src/services/modelFactory", () => ({ getModelChoice }));
@@ -76,6 +77,9 @@ describe("openaiChatService", () => {
 
     expect(output).toBe("hello world");
     expect(completionCreate).toHaveBeenCalledTimes(2);
+    const firstRequest = completionCreate.mock.calls[0][0];
+    expect(firstRequest.safety_identifier).toBe("safety-id");
+    expect(firstRequest).not.toHaveProperty("user");
   });
 
   test("chat stops when content is empty", async () => {
