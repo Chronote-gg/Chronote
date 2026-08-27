@@ -1246,12 +1246,7 @@ export async function writeDictionaryEntry(
         }),
       );
     } catch (error) {
-      if (
-        isConditionalCheckFailed(error) ||
-        !(await dictionaryEntryWasPersisted(entry))
-      ) {
-        throw error;
-      }
+      if (!(await dictionaryEntryWasPersisted(entry))) throw error;
     }
     return reconcileDictionaryRevision(
       entry.guildId,

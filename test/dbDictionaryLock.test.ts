@@ -75,6 +75,7 @@ describe("dictionary write lock", () => {
       })
       .mockResolvedValueOnce({})
       .mockRejectedValueOnce(conditionalFailure())
+      .mockResolvedValueOnce({})
       .mockResolvedValueOnce({});
     const { writeDictionaryEntry } = await import("../src/db");
 
@@ -118,6 +119,29 @@ describe("dictionary write lock", () => {
       })
       .mockResolvedValueOnce({})
       .mockRejectedValueOnce(new Error("put response lost"))
+      .mockResolvedValueOnce({ Item: marshall(entry) })
+      .mockResolvedValueOnce({})
+      .mockResolvedValueOnce({});
+    const { writeDictionaryEntry } = await import("../src/db");
+
+    await expect(writeDictionaryEntry(entry, null, 0)).resolves.toBe(true);
+
+    expect(
+      sendMock.mock.calls.filter(
+        ([command]) =>
+          command.input.UpdateExpression === "SET #revision = :nextRevision",
+      ),
+    ).toHaveLength(1);
+  });
+
+  test("reconciles a conditional retry failure when the first put persisted", async () => {
+    sendMock
+      .mockResolvedValueOnce({})
+      .mockResolvedValueOnce({
+        Item: marshall({ sid: "dictionaryRevision#guild-1", revision: 0 }),
+      })
+      .mockResolvedValueOnce({})
+      .mockRejectedValueOnce(conditionalFailure())
       .mockResolvedValueOnce({ Item: marshall(entry) })
       .mockResolvedValueOnce({})
       .mockResolvedValueOnce({});
