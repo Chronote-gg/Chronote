@@ -976,6 +976,7 @@ const DICTIONARY_COMMIT_TTL_SECONDS = 300;
 const DICTIONARY_LOCK_ATTEMPTS = 10;
 const DICTIONARY_LOCK_RETRY_MS = 25;
 const DICTIONARY_REVISION_RECONCILE_ATTEMPTS = 3;
+const DICTIONARY_AMBIGUOUS_READ_ATTEMPTS = 3;
 
 export async function acquireDictionaryLock(
   guildId: string,
@@ -1158,24 +1159,51 @@ async function reconcileDictionaryRevision(
   return false;
 }
 
+type DictionaryEntryReadback =
+  { verified: true; entry?: DictionaryEntry } | { verified: false };
+type DictionaryDeleteOutcome =
+  { verified: true } | { verified: false; error: unknown };
+
+async function readDictionaryEntryAfterAmbiguousMutation(
+  guildId: string,
+  termKey: string,
+): Promise<DictionaryEntryReadback> {
+  for (
+    let attempt = 0;
+    attempt < DICTIONARY_AMBIGUOUS_READ_ATTEMPTS;
+    attempt += 1
+  ) {
+    try {
+      return {
+        verified: true,
+        entry: await getDictionaryEntry(guildId, termKey),
+      };
+    } catch {
+      // Each GetItem call already uses the SDK retry policy. A new call gives a
+      // transiently failed read another independent chance while the lock holds.
+    }
+  }
+  return { verified: false };
+}
+
 async function dictionaryEntryWasPersisted(
   entry: DictionaryEntry,
-): Promise<boolean> {
-  try {
-    const persisted = await getDictionaryEntry(entry.guildId, entry.termKey);
-    const normalizedEntry = unmarshall(
-      marshall(entry, { removeUndefinedValues: true }),
-    ) as DictionaryEntry;
-    return isDeepStrictEqual(persisted, normalizedEntry);
-  } catch {
-    return false;
-  }
+): Promise<boolean | undefined> {
+  const readback = await readDictionaryEntryAfterAmbiguousMutation(
+    entry.guildId,
+    entry.termKey,
+  );
+  if (!readback.verified) return undefined;
+  const normalizedEntry = unmarshall(
+    marshall(entry, { removeUndefinedValues: true }),
+  ) as DictionaryEntry;
+  return isDeepStrictEqual(readback.entry, normalizedEntry);
 }
 
 async function deleteDictionaryEntryRecord(
   guildId: string,
   termKey: string,
-): Promise<void> {
+): Promise<DictionaryDeleteOutcome> {
   try {
     await dynamoDbClient.send(
       new DeleteItemCommand({
@@ -1183,14 +1211,15 @@ async function deleteDictionaryEntryRecord(
         Key: marshall({ guildId, termKey }),
       }),
     );
+    return { verified: true };
   } catch (error) {
-    let persisted: DictionaryEntry | undefined;
-    try {
-      persisted = await getDictionaryEntry(guildId, termKey);
-    } catch {
-      throw error;
-    }
-    if (persisted) throw error;
+    const readback = await readDictionaryEntryAfterAmbiguousMutation(
+      guildId,
+      termKey,
+    );
+    if (!readback.verified) return { verified: false, error };
+    if (readback.entry) throw error;
+    return { verified: true };
   }
 }
 
@@ -1220,6 +1249,8 @@ export async function writeDictionaryEntry(
               ":expectedUpdatedAt": expectedUpdatedAt,
             }),
           };
+  let ambiguousPutError: unknown;
+  let putOutcomeUnknown = false;
   try {
     const currentRevision = await getDictionaryRevision(entry.guildId);
     if (
@@ -1246,13 +1277,20 @@ export async function writeDictionaryEntry(
         }),
       );
     } catch (error) {
-      if (!(await dictionaryEntryWasPersisted(entry))) throw error;
+      const persisted = await dictionaryEntryWasPersisted(entry);
+      if (persisted === false) throw error;
+      if (persisted === undefined) {
+        ambiguousPutError = error;
+        putOutcomeUnknown = true;
+      }
     }
-    return reconcileDictionaryRevision(
+    const reconciled = await reconcileDictionaryRevision(
       entry.guildId,
       lockToken,
       currentRevision,
     );
+    if (putOutcomeUnknown) throw ambiguousPutError;
+    return reconciled;
   } catch (error) {
     if (isConditionalCheckFailed(error)) return false;
     throw error;
@@ -1315,12 +1353,13 @@ export async function deleteDictionaryEntry(
     ) {
       throw new Error("Dictionary changed while deleting an entry.");
     }
-    await deleteDictionaryEntryRecord(guildId, termKey);
+    const deleteOutcome = await deleteDictionaryEntryRecord(guildId, termKey);
     if (
       !(await reconcileDictionaryRevision(guildId, lockToken, currentRevision))
     ) {
       throw new Error("Dictionary changed while deleting an entry.");
     }
+    if (!deleteOutcome.verified) throw deleteOutcome.error;
   } finally {
     await releaseDictionaryLock(guildId, lockToken);
   }
@@ -1345,8 +1384,15 @@ export async function clearDictionaryEntries(guildId: string): Promise<void> {
     let deleteError: unknown;
     try {
       for (const entry of entries) {
-        await deleteDictionaryEntryRecord(guildId, entry.termKey);
+        const deleteOutcome = await deleteDictionaryEntryRecord(
+          guildId,
+          entry.termKey,
+        );
         deletedAny = true;
+        if (!deleteOutcome.verified) {
+          deleteError = deleteOutcome.error;
+          break;
+        }
       }
     } catch (error) {
       deleteError = error;

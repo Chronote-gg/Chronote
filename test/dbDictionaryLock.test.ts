@@ -157,6 +157,55 @@ describe("dictionary write lock", () => {
     ).toHaveLength(1);
   });
 
+  test("retries a transient ambiguous put readback before reconciling", async () => {
+    sendMock
+      .mockResolvedValueOnce({})
+      .mockResolvedValueOnce({
+        Item: marshall({ sid: "dictionaryRevision#guild-1", revision: 0 }),
+      })
+      .mockResolvedValueOnce({})
+      .mockRejectedValueOnce(conditionalFailure())
+      .mockRejectedValueOnce(new Error("read temporarily unavailable"))
+      .mockResolvedValueOnce({ Item: marshall(entry) })
+      .mockResolvedValueOnce({})
+      .mockResolvedValueOnce({});
+    const { writeDictionaryEntry } = await import("../src/db");
+
+    await expect(writeDictionaryEntry(entry, null, 0)).resolves.toBe(true);
+
+    expect(
+      sendMock.mock.calls.filter(
+        ([command]) => command.constructor.name === "GetItemCommand",
+      ),
+    ).toHaveLength(3);
+  });
+
+  test("advances the revision when every ambiguous put readback fails", async () => {
+    const putError = new Error("put outcome unknown");
+    sendMock
+      .mockResolvedValueOnce({})
+      .mockResolvedValueOnce({
+        Item: marshall({ sid: "dictionaryRevision#guild-1", revision: 0 }),
+      })
+      .mockResolvedValueOnce({})
+      .mockRejectedValueOnce(putError)
+      .mockRejectedValueOnce(new Error("read 1 failed"))
+      .mockRejectedValueOnce(new Error("read 2 failed"))
+      .mockRejectedValueOnce(new Error("read 3 failed"))
+      .mockResolvedValueOnce({})
+      .mockResolvedValueOnce({});
+    const { writeDictionaryEntry } = await import("../src/db");
+
+    await expect(writeDictionaryEntry(entry, null, 0)).rejects.toBe(putError);
+
+    expect(
+      sendMock.mock.calls.filter(
+        ([command]) =>
+          command.input.UpdateExpression === "SET #revision = :nextRevision",
+      ),
+    ).toHaveLength(1);
+  });
+
   test("does not advance the revision when an ambiguous put did not land", async () => {
     const putError = new Error("put failed before commit");
     sendMock
@@ -196,6 +245,59 @@ describe("dictionary write lock", () => {
     await expect(
       deleteDictionaryEntry("guild-1", entry.termKey),
     ).resolves.toBeUndefined();
+
+    expect(
+      sendMock.mock.calls.filter(
+        ([command]) =>
+          command.input.UpdateExpression === "SET #revision = :nextRevision",
+      ),
+    ).toHaveLength(1);
+  });
+
+  test("retries a transient ambiguous delete readback before reconciling", async () => {
+    sendMock
+      .mockResolvedValueOnce({})
+      .mockResolvedValueOnce({
+        Item: marshall({ sid: "dictionaryRevision#guild-1", revision: 0 }),
+      })
+      .mockResolvedValueOnce({})
+      .mockRejectedValueOnce(new Error("delete response lost"))
+      .mockRejectedValueOnce(new Error("read temporarily unavailable"))
+      .mockResolvedValueOnce({})
+      .mockResolvedValueOnce({})
+      .mockResolvedValueOnce({});
+    const { deleteDictionaryEntry } = await import("../src/db");
+
+    await expect(
+      deleteDictionaryEntry("guild-1", entry.termKey),
+    ).resolves.toBeUndefined();
+
+    expect(
+      sendMock.mock.calls.filter(
+        ([command]) => command.constructor.name === "GetItemCommand",
+      ),
+    ).toHaveLength(3);
+  });
+
+  test("advances the revision when every ambiguous delete readback fails", async () => {
+    const deleteError = new Error("delete outcome unknown");
+    sendMock
+      .mockResolvedValueOnce({})
+      .mockResolvedValueOnce({
+        Item: marshall({ sid: "dictionaryRevision#guild-1", revision: 0 }),
+      })
+      .mockResolvedValueOnce({})
+      .mockRejectedValueOnce(deleteError)
+      .mockRejectedValueOnce(new Error("read 1 failed"))
+      .mockRejectedValueOnce(new Error("read 2 failed"))
+      .mockRejectedValueOnce(new Error("read 3 failed"))
+      .mockResolvedValueOnce({})
+      .mockResolvedValueOnce({});
+    const { deleteDictionaryEntry } = await import("../src/db");
+
+    await expect(deleteDictionaryEntry("guild-1", entry.termKey)).rejects.toBe(
+      deleteError,
+    );
 
     expect(
       sendMock.mock.calls.filter(
