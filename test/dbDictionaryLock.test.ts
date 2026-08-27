@@ -156,6 +156,56 @@ describe("dictionary write lock", () => {
     ).toBe(false);
   });
 
+  test("reconciles an ambiguous delete response when the entry was removed", async () => {
+    sendMock
+      .mockResolvedValueOnce({})
+      .mockResolvedValueOnce({
+        Item: marshall({ sid: "dictionaryRevision#guild-1", revision: 0 }),
+      })
+      .mockResolvedValueOnce({})
+      .mockRejectedValueOnce(new Error("delete response lost"))
+      .mockResolvedValueOnce({})
+      .mockResolvedValueOnce({})
+      .mockResolvedValueOnce({});
+    const { deleteDictionaryEntry } = await import("../src/db");
+
+    await expect(
+      deleteDictionaryEntry("guild-1", entry.termKey),
+    ).resolves.toBeUndefined();
+
+    expect(
+      sendMock.mock.calls.filter(
+        ([command]) =>
+          command.input.UpdateExpression === "SET #revision = :nextRevision",
+      ),
+    ).toHaveLength(1);
+  });
+
+  test("does not advance the revision when an ambiguous delete did not land", async () => {
+    const deleteError = new Error("delete failed before commit");
+    sendMock
+      .mockResolvedValueOnce({})
+      .mockResolvedValueOnce({
+        Item: marshall({ sid: "dictionaryRevision#guild-1", revision: 0 }),
+      })
+      .mockResolvedValueOnce({})
+      .mockRejectedValueOnce(deleteError)
+      .mockResolvedValueOnce({ Item: marshall(entry) })
+      .mockResolvedValueOnce({});
+    const { deleteDictionaryEntry } = await import("../src/db");
+
+    await expect(deleteDictionaryEntry("guild-1", entry.termKey)).rejects.toBe(
+      deleteError,
+    );
+
+    expect(
+      sendMock.mock.calls.some(
+        ([command]) =>
+          command.input.UpdateExpression === "SET #revision = :nextRevision",
+      ),
+    ).toBe(false);
+  });
+
   test("clears a populated dictionary under one lock and revision advance", async () => {
     sendMock
       .mockResolvedValueOnce({})
@@ -183,6 +233,30 @@ describe("dictionary write lock", () => {
     expect(
       commandNames.filter((name) => name === "DeleteItemCommand"),
     ).toHaveLength(2);
+    expect(
+      sendMock.mock.calls.filter(
+        ([command]) =>
+          command.input.UpdateExpression === "SET #revision = :nextRevision",
+      ),
+    ).toHaveLength(1);
+  });
+
+  test("reconciles an ambiguous first delete while clearing entries", async () => {
+    sendMock
+      .mockResolvedValueOnce({})
+      .mockResolvedValueOnce({
+        Item: marshall({ sid: "dictionaryRevision#guild-1", revision: 2 }),
+      })
+      .mockResolvedValueOnce({})
+      .mockResolvedValueOnce({ Items: [marshall(entry)] })
+      .mockRejectedValueOnce(new Error("delete response lost"))
+      .mockResolvedValueOnce({})
+      .mockResolvedValueOnce({})
+      .mockResolvedValueOnce({});
+    const { clearDictionaryEntries } = await import("../src/db");
+
+    await expect(clearDictionaryEntries("guild-1")).resolves.toBeUndefined();
+
     expect(
       sendMock.mock.calls.filter(
         ([command]) =>

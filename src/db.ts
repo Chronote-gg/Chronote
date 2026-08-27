@@ -1172,6 +1172,28 @@ async function dictionaryEntryWasPersisted(
   }
 }
 
+async function deleteDictionaryEntryRecord(
+  guildId: string,
+  termKey: string,
+): Promise<void> {
+  try {
+    await dynamoDbClient.send(
+      new DeleteItemCommand({
+        TableName: tableName("DictionaryTable"),
+        Key: marshall({ guildId, termKey }),
+      }),
+    );
+  } catch (error) {
+    let persisted: DictionaryEntry | undefined;
+    try {
+      persisted = await getDictionaryEntry(guildId, termKey);
+    } catch {
+      throw error;
+    }
+    if (persisted) throw error;
+  }
+}
+
 export async function writeDictionaryEntry(
   entry: DictionaryEntry,
   expectedUpdatedAt?: string | null,
@@ -1298,12 +1320,7 @@ export async function deleteDictionaryEntry(
     ) {
       throw new Error("Dictionary changed while deleting an entry.");
     }
-    await dynamoDbClient.send(
-      new DeleteItemCommand({
-        TableName: tableName("DictionaryTable"),
-        Key: marshall({ guildId, termKey }),
-      }),
-    );
+    await deleteDictionaryEntryRecord(guildId, termKey);
     if (
       !(await reconcileDictionaryRevision(guildId, lockToken, currentRevision))
     ) {
@@ -1333,12 +1350,7 @@ export async function clearDictionaryEntries(guildId: string): Promise<void> {
     let deleteError: unknown;
     try {
       for (const entry of entries) {
-        await dynamoDbClient.send(
-          new DeleteItemCommand({
-            TableName: tableName("DictionaryTable"),
-            Key: marshall({ guildId, termKey: entry.termKey }),
-          }),
-        );
+        await deleteDictionaryEntryRecord(guildId, entry.termKey);
         deletedAny = true;
       }
     } catch (error) {
