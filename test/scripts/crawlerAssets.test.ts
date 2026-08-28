@@ -27,8 +27,20 @@ describe("crawler assets", () => {
     );
 
     expect(action).toContain(
-      "for stable in manifest.json sitemap.xml robots.txt llms.txt; do",
+      "for stable in manifest.json sitemap.xml robots.txt llms.txt 404.html; do",
     );
+  });
+
+  it("ships a noindex document for CloudFront's S3 error remap", () => {
+    const notFound = fs.readFileSync(
+      path.join(repoRoot, "public", "404.html"),
+      "utf8",
+    );
+
+    expect(notFound).toContain(
+      '<meta name="robots" content="noindex, nofollow"',
+    );
+    expect(notFound).not.toContain("window.__API_BASE_URL__");
   });
 
   it("publishes valid software application structured data", () => {

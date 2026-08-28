@@ -1172,6 +1172,7 @@ resource "aws_cloudfront_distribution" "frontend" {
     error_caching_min_ttl = 0
     error_code            = 403
     response_code         = 404
+    response_page_path    = "/404.html"
   }
 
   ordered_cache_behavior {
@@ -1198,12 +1199,6 @@ resource "aws_cloudfront_distribution" "frontend" {
     min_ttl     = 0
     default_ttl = 600
     max_ttl     = 3600
-  }
-
-  custom_error_response {
-    error_caching_min_ttl = 0
-    error_code            = 404
-    response_code         = 404
   }
 
   viewer_certificate {

@@ -37,7 +37,7 @@ A transcript preserves what was said; useful meeting notes make that conversatio
 - Use server context and a managed dictionary for project names and specialized terms.
 - Include text chat and attendance alongside the spoken conversation.
 - Let attendees suggest corrections, with an authorized person approving the change.
-- Export audio, transcripts, notes, and current notes to Notion.
+- Download audio and transcripts from the portal, or export current notes to Notion.
 - Auto-record only the channels an administrator chooses.
 
 The [Features reference](/features/) lists the current commands, permissions, and output for each capability.
