@@ -515,6 +515,33 @@ export const dictionaryClearMutation = buildMutationState<
   [unknown],
   { ok: true }
 >({ ok: true });
+export const dictionaryPreviewTeachingMutation = buildMutationState<
+  [unknown],
+  {
+    token: string;
+    expiresAtMs: number;
+    drafts: Array<{
+      draftId: string;
+      preferredTerm: string | null;
+      observedForms: string[];
+      description: string | null;
+      ambiguity: string | null;
+      evidence: Array<{
+        source: "instruction" | "notes_diff" | "transcript_excerpt";
+        quote: string;
+      }>;
+      action: "create" | "update" | "conflict" | "needs_input";
+    }>;
+  }
+>({
+  token: "11111111-1111-4111-8111-111111111111",
+  expiresAtMs: Date.now() + 15 * 60 * 1_000,
+  drafts: [],
+});
+export const dictionaryCommitTeachingMutation = buildMutationState<
+  [unknown],
+  { results: Array<{ draftId: string; ok: boolean }> }
+>({ results: [] });
 export const configSetServerMutation = buildMutationState<[unknown], void>(
   undefined,
 );
@@ -774,6 +801,12 @@ export const resetTrpcMocks = () => {
   resetMutationState(dictionaryUpsertMutation, { entry: { term: "Example" } });
   resetMutationState(dictionaryRemoveMutation, { ok: true });
   resetMutationState(dictionaryClearMutation, { ok: true });
+  resetMutationState(dictionaryPreviewTeachingMutation, {
+    token: "11111111-1111-4111-8111-111111111111",
+    expiresAtMs: Date.now() + 15 * 60 * 1_000,
+    drafts: [],
+  });
+  resetMutationState(dictionaryCommitTeachingMutation, { results: [] });
   resetMutationState(configSetServerMutation, undefined);
   resetMutationState(configClearServerMutation, undefined);
   resetMutationState(configPublishGlobalMutation, undefined);
@@ -1063,6 +1096,12 @@ jest.mock("../../../src/frontend/services/trpc", () => ({
       upsert: { useMutation: () => dictionaryUpsertMutation },
       remove: { useMutation: () => dictionaryRemoveMutation },
       clear: { useMutation: () => dictionaryClearMutation },
+      previewTeaching: {
+        useMutation: () => dictionaryPreviewTeachingMutation,
+      },
+      commitTeaching: {
+        useMutation: () => dictionaryCommitTeachingMutation,
+      },
     },
     config: {
       server: { useQuery: () => configServerQuery },

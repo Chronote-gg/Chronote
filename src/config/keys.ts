@@ -35,6 +35,7 @@ export const CONFIG_KEYS = {
     notes: "models.notes",
     meetingSummary: "models.meetingSummary",
     notesCorrection: "models.notesCorrection",
+    dictionaryTeaching: "models.dictionaryTeaching",
     transcription: "models.transcription",
     transcriptionCleanup: "models.transcriptionCleanup",
     transcriptionCoalesce: "models.transcriptionCoalesce",

@@ -176,6 +176,7 @@ const buildPromptVerificationList = () => {
     config.langfuse.transcriptionCoalescePromptName,
     config.langfuse.imagePromptName,
     config.langfuse.notesCorrectionPromptName,
+    config.langfuse.dictionaryTeachingPromptName,
   ]);
 
   if (config.notes.longStoryTestMode) {

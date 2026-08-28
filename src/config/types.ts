@@ -5,6 +5,7 @@ export type ModelRole =
   | "notes"
   | "meetingSummary"
   | "notesCorrection"
+  | "dictionaryTeaching"
   | "transcription"
   | "transcriptionCleanup"
   | "transcriptionCoalesce"

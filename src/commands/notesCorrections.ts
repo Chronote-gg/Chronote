@@ -346,12 +346,17 @@ export async function handleNotesCorrectionModal(
       interaction.user.globalName ||
       interaction.user.username;
 
+    const correctionId = uuidv4();
+    const baseNotesVersion = history.notesVersion ?? 1;
     const suggestionEntry: SuggestionHistoryEntry = {
+      correctionId,
       userId: interaction.user.id,
       userTag: interaction.user.tag,
       displayName: memberDisplayName,
       text: suggestion,
       createdAt: new Date().toISOString(),
+      source: "discord",
+      baseNotesVersion,
     };
 
     const transcript = await resolveTranscript(history);
@@ -396,7 +401,7 @@ export async function handleNotesCorrectionModal(
       summaryLabel: history.summaryLabel,
       originalNotes: history.notes,
       newNotes,
-      notesVersion: history.notesVersion ?? 1,
+      notesVersion: baseNotesVersion,
       requesterId: interaction.user.id,
       suggestion: suggestionEntry,
     });
@@ -681,6 +686,7 @@ async function persistCorrectionUpdate(params: {
   };
 }): Promise<boolean> {
   const { pending, newVersion, editedBy, summaries } = params;
+  const correctionId = pending.suggestion.correctionId ?? uuidv4();
   return updateMeetingNotesService({
     guildId: pending.guildId,
     channelId_timestamp: pending.channelIdTimestamp,
@@ -691,7 +697,14 @@ async function persistCorrectionUpdate(params: {
     summarySentence: summaries.summarySentence,
     summaryLabel: summaries.summaryLabel,
     meetingName: summaries.meetingName,
-    suggestion: pending.suggestion,
+    suggestion: {
+      ...pending.suggestion,
+      correctionId,
+      source: "discord",
+      baseNotesVersion: pending.notesVersion,
+      resultingNotesVersion: newVersion,
+    },
+    source: { type: "notes_correction", correctionId },
     expectedPreviousVersion: pending.notesVersion,
   });
 }

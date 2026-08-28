@@ -70,6 +70,7 @@ type MockStore = {
   chatTtsMonthlyUsage: Map<string, ChatTtsMonthlyUsage>;
   configOverrides: Map<string, ConfigOverrideRecord>;
   dictionaryEntriesByGuild: Map<string, DictionaryEntry[]>;
+  dictionaryRevisionByGuild: Map<string, number>;
 };
 
 const MANAGE_GUILD = 1 << 5;
@@ -236,6 +237,7 @@ function buildDefaultStore(): MockStore {
   const chatTtsMonthlyUsage = new Map<string, ChatTtsMonthlyUsage>();
   const configOverrides = new Map<string, ConfigOverrideRecord>();
   const dictionaryEntriesByGuild = new Map<string, DictionaryEntry[]>();
+  const dictionaryRevisionByGuild = new Map<string, number>();
   const feedbackByTarget = new Map<string, FeedbackRecord[]>();
 
   const addOverride = (record: ConfigOverrideRecord) => {
@@ -955,6 +957,7 @@ function buildDefaultStore(): MockStore {
     chatTtsMonthlyUsage,
     configOverrides,
     dictionaryEntriesByGuild,
+    dictionaryRevisionByGuild,
   };
 }
 

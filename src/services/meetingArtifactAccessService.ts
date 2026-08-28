@@ -45,6 +45,24 @@ export async function resolveServerMeetingArtifactAccess(
   }
 }
 
+export async function resolveServerAttendeeAccessEnabled(
+  guildId: string,
+): Promise<boolean> {
+  try {
+    const snapshot = await resolveConfigSnapshot({ guildId });
+    return getSnapshotBoolean(
+      snapshot,
+      CONFIG_KEYS.meetings.attendeeAccessEnabled,
+    );
+  } catch (error) {
+    console.warn("Failed to resolve attendee access setting", {
+      guildId,
+      error,
+    });
+    return false;
+  }
+}
+
 export async function resolveMeetingArtifactAccess(
   meeting: Pick<
     MeetingHistory,

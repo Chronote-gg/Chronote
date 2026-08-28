@@ -7,6 +7,13 @@ Notable product changes for Chronote users. For the full changelog, see the [Git
 
 ## 2026
 
+### Teach Chronote in natural language
+
+- Members with **Manage Server** can describe names, acronyms, and specialized vocabulary in Server Settings instead of formatting each term first.
+- Chronote uses AI to propose exact spellings and concise descriptions, but each entry remains an editable draft until the member reviews the batch and approves it.
+- After applying a notes correction in the web portal, a member with **Manage Server** can optionally review proposals based on a short-lived excerpt limited to 2,000 characters of the notes diff and 2,000 characters from matching transcript segments. Applying the correction itself never teaches the dictionary.
+- PostHog usage analytics contain counts and categories, never the instruction, terms, notes, or transcript content. Separate engineering traces can include content as described in the updated [privacy policy](/legal/privacy).
+
 ### Server controls for transcript and recording access
 
 - Server admins with **Manage Server** can independently block new transcript and audio recording access while keeping meeting summaries and notes visible.

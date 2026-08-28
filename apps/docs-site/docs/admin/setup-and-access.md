@@ -35,7 +35,9 @@ Channel context is combined with server context, so avoid repeating information.
 
 ### 3. Build a dictionary
 
-Add terms that the AI might misspell or misunderstand:
+In **Server Settings**, choose **Teach Chronote** and describe the exact names, acronyms, or jargon it should recognize. You can write naturally, for example: "It wrote John Smith, but his name is Jon Smythe. He works with us on Apollo." Chronote proposes structured entries for you to edit and approve. It does not save a proposal automatically.
+
+You can also manage one exact term at a time from Discord:
 
 ```text
 /dictionary add term: Kubernetes
@@ -44,7 +46,9 @@ Add terms that the AI might misspell or misunderstand:
 /dictionary add term: Priya Patel definition: VP of Engineering
 ```
 
-Terms are injected into the transcription prompt to improve spelling accuracy. Definitions are included in the notes prompt to give the AI more context.
+Terms are injected into the transcription prompt to help improve spelling accuracy. Definitions are included in the notes prompt to give the AI more context.
+
+Only members with **Manage Server** can use the portal teaching flow. `/dictionary` retains its **Manage Channels** permission for existing Discord workflows. Both paths update the same server dictionary; the portal flow adds AI proposals and a separate human approval step.
 
 ### 4. Configure auto-recording
 
@@ -105,6 +109,8 @@ Chronote needs these Discord permissions:
 | `/say`          | None                | Must be in an active meeting    |
 | `/billing`      | None                | Shows subscription status       |
 | `/onboard`      | Manage Server       | Can be disabled server-wide     |
+
+The portal's **Teach Chronote** workflow requires **Manage Server**. It can propose terms from natural-language guidance and, when explicitly opened after a web notes correction, from up to 2,000 characters of the notes diff plus up to 2,000 characters from lexically matching transcript segments. Every entry requires human approval.
 
 ### Notes correction permissions
 

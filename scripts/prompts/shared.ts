@@ -1,6 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import matter from "gray-matter";
+import { parse as parseYaml } from "yaml";
 
 export type PromptType = "text" | "chat";
 export type ChatMessage = {
@@ -206,7 +207,9 @@ export async function readPromptFileResolved(
 
 export async function readPromptFile(filePath: string): Promise<PromptFile> {
   const raw = await fs.readFile(filePath, "utf8");
-  const parsed = matter(raw);
+  const parsed = matter(raw, {
+    engines: { yaml: (input) => parseYaml(input) as object },
+  });
   const data = parsed.data as PromptFrontMatter;
   const content = normalizeLineEndings(parsed.content).trimEnd();
 

@@ -13,6 +13,8 @@ import {
   upsertDictionaryEntryService,
 } from "../../src/services/dictionaryService";
 import { getMockStore, resetMockStore } from "../../src/repositories/mockStore";
+import { getDictionaryRepository } from "../../src/repositories/dictionaryRepository";
+import type { DictionaryEntry } from "../../src/types/db";
 import {
   DICTIONARY_DEFINITION_MAX_LENGTH,
   DICTIONARY_TERM_MAX_LENGTH,
@@ -119,6 +121,191 @@ describe("dictionaryService", () => {
     expect(entry.updatedAt).toBe("2025-01-02T00:00:00.000Z");
     expect(entry.updatedBy).toBe("user-2");
     expect(entry.definition).toBe("New definition");
+  });
+
+  test("rejects a conditional update when the reviewed version changed", async () => {
+    const current: DictionaryEntry = {
+      guildId: "guild-1",
+      termKey: "apollo",
+      term: "Apollo",
+      definition: "Changed by another administrator",
+      createdAt: "2024-01-01T00:00:00.000Z",
+      createdBy: "user-1",
+      updatedAt: "2025-01-01T00:00:00.000Z",
+      updatedBy: "other-admin",
+    };
+    getMockStore().dictionaryEntriesByGuild.set("guild-1", [current]);
+
+    await expect(
+      upsertDictionaryEntryService({
+        guildId: "guild-1",
+        term: "Apollo",
+        definition: "Reviewed older description",
+        userId: "user-2",
+        expectedUpdatedAt: "2024-12-31T23:59:59.000Z",
+      }),
+    ).rejects.toThrow("changed after the proposal was reviewed");
+    expect(getMockStore().dictionaryEntriesByGuild.get("guild-1")).toEqual([
+      current,
+    ]);
+  });
+
+  test("rejects a conditional create when the spelling now exists", async () => {
+    const current: DictionaryEntry = {
+      guildId: "guild-1",
+      termKey: "apollo",
+      term: "Apollo",
+      createdAt: "2024-01-01T00:00:00.000Z",
+      createdBy: "other-admin",
+      updatedAt: "2025-01-01T00:00:00.000Z",
+      updatedBy: "other-admin",
+    };
+    getMockStore().dictionaryEntriesByGuild.set("guild-1", [current]);
+
+    await expect(
+      upsertDictionaryEntryService({
+        guildId: "guild-1",
+        term: "Apollo",
+        definition: "Reviewed as a new term",
+        userId: "user-2",
+        expectedUpdatedAt: null,
+      }),
+    ).rejects.toThrow("changed after the proposal was reviewed");
+    expect(getMockStore().dictionaryEntriesByGuild.get("guild-1")).toEqual([
+      current,
+    ]);
+  });
+
+  test("rejects a teaching write after another dictionary key changes", async () => {
+    const reviewed = await upsertDictionaryEntryService({
+      guildId: "guild-1",
+      term: "Apollo",
+      observedForms: ["A polo"],
+      userId: "user-1",
+    });
+    const reviewedRevision =
+      getMockStore().dictionaryRevisionByGuild.get("guild-1")!;
+    await upsertDictionaryEntryService({
+      guildId: "guild-1",
+      term: "Ares",
+      userId: "other-admin",
+    });
+
+    await expect(
+      upsertDictionaryEntryService({
+        guildId: "guild-1",
+        term: "Apollo",
+        observedForms: ["A polo"],
+        userId: "user-1",
+        expectedUpdatedAt: reviewed.updatedAt,
+        expectedRevision: reviewedRevision,
+      }),
+    ).rejects.toThrow("changed after the proposal was reviewed");
+    expect(
+      getMockStore()
+        .dictionaryEntriesByGuild.get("guild-1")
+        ?.map((entry) => entry.term),
+    ).toEqual(["Apollo", "Ares"]);
+  });
+
+  test("stores approved observed forms and preserves them during manual edits", async () => {
+    const lastTeaching = {
+      method: "llm_assisted" as const,
+      source: "settings" as const,
+      model: "gpt-5-mini",
+      promptName: "chronote-dictionary-teaching-chat",
+      promptVersion: 1,
+      approvedBy: "user-1",
+      approvedAt: "2025-01-01T00:00:00.000Z",
+    };
+    await upsertDictionaryEntryService({
+      guildId: "guild-1",
+      term: "Jon Smythe",
+      definition: "Apollo contact",
+      observedForms: [" John Smith ", "John Smith", "Jon Smith"],
+      lastTeaching,
+      userId: "user-1",
+    });
+
+    const updated = await upsertDictionaryEntryService({
+      guildId: "guild-1",
+      term: "Jon Smythe",
+      definition: "Apollo account manager",
+      userId: "user-2",
+    });
+
+    expect(updated.observedForms).toEqual(["John Smith", "Jon Smith"]);
+    expect(updated.lastTeaching).toEqual(lastTeaching);
+    expect(updated.definition).toBe("Apollo account manager");
+  });
+
+  test("rejects a manual term that matches another entry's observed form", async () => {
+    await upsertDictionaryEntryService({
+      guildId: "guild-1",
+      term: "Jonathan",
+      observedForms: ["Jon"],
+      userId: "user-1",
+    });
+
+    await expect(
+      upsertDictionaryEntryService({
+        guildId: "guild-1",
+        term: "Jon",
+        userId: "user-2",
+      }),
+    ).rejects.toThrow("conflicts with another dictionary entry");
+    expect(
+      (await listDictionaryEntriesService("guild-1")).map(
+        (entry) => entry.term,
+      ),
+    ).toEqual(["Jonathan"]);
+  });
+
+  test("rejects a stale manual edit instead of erasing concurrent teaching data", async () => {
+    const original: DictionaryEntry = {
+      guildId: "guild-1",
+      termKey: "jon smythe",
+      term: "Jon Smythe",
+      definition: "Apollo contact",
+      observedForms: ["John Smith"],
+      createdAt: "2025-01-01T00:00:00.000Z",
+      createdBy: "user-1",
+      updatedAt: "2025-01-01T00:00:00.000Z",
+      updatedBy: "user-1",
+    };
+    const concurrent: DictionaryEntry = {
+      ...original,
+      observedForms: ["John Smith", "John Smyth"],
+      updatedAt: "2025-01-01T00:00:01.000Z",
+      lastTeaching: {
+        method: "llm_assisted",
+        source: "settings",
+        model: "gpt-5-mini",
+        promptName: "chronote-dictionary-teaching-chat",
+        approvedBy: "other-admin",
+        approvedAt: "2025-01-01T00:00:01.000Z",
+      },
+    };
+    const store = getMockStore();
+    store.dictionaryEntriesByGuild.set("guild-1", [original]);
+    store.dictionaryRevisionByGuild.set("guild-1", 1);
+    const repository = getDictionaryRepository();
+    const write = repository.write;
+    jest.spyOn(repository, "write").mockImplementationOnce(async (...args) => {
+      store.dictionaryEntriesByGuild.set("guild-1", [concurrent]);
+      store.dictionaryRevisionByGuild.set("guild-1", 2);
+      return write(...args);
+    });
+
+    await expect(
+      upsertDictionaryEntryService({
+        guildId: "guild-1",
+        term: "Jon Smythe",
+        definition: "Edited manually",
+        userId: "user-2",
+      }),
+    ).rejects.toThrow("changed after the proposal was reviewed");
+    expect(store.dictionaryEntriesByGuild.get("guild-1")).toEqual([concurrent]);
   });
 
   test("upsertDictionaryEntryService validates term and definition length", async () => {

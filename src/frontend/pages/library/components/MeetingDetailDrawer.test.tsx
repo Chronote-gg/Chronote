@@ -50,6 +50,26 @@ const mockSetPersonalShareGrants = jest.fn().mockResolvedValue({
   accessGrants: [],
 });
 
+const mockSuggestNotesCorrection = jest.fn().mockResolvedValue({
+  token: "mock-token",
+  diff: "+ mock diff",
+  changed: true,
+});
+
+const mockApplyNotesCorrection = jest.fn().mockResolvedValue({
+  ok: true,
+  dictionaryTeachingContextToken: "11111111-1111-4111-8111-111111111111",
+  dictionaryTeachingContextExpiresAtMs: Date.now() + 15 * 60 * 1_000,
+  dictionaryTeachingInstruction:
+    "It wrote John Smith, but his name is Jon Smythe.",
+});
+
+const mockPreviewTeaching = jest.fn().mockResolvedValue({
+  token: "22222222-2222-4222-8222-222222222222",
+  expiresAtMs: Date.now() + 15 * 60 * 1_000,
+  drafts: [],
+});
+
 const mockNotionStatusQuery = {
   data: { configured: true, connected: false },
   isLoading: false,
@@ -91,6 +111,11 @@ jest.mock("../../../services/trpc", () => ({
       },
       notion: {
         exportStatus: {
+          invalidate: jest.fn(),
+        },
+      },
+      dictionary: {
+        list: {
           invalidate: jest.fn(),
         },
       },
@@ -188,18 +213,14 @@ jest.mock("../../../services/trpc", () => ({
       },
       suggestNotesCorrection: {
         useMutation: () => ({
-          mutateAsync: jest.fn().mockResolvedValue({
-            token: "mock-token",
-            diff: "+ mock diff",
-            changed: true,
-          }),
+          mutateAsync: mockSuggestNotesCorrection,
           isPending: false,
           error: undefined,
         }),
       },
       applyNotesCorrection: {
         useMutation: () => ({
-          mutateAsync: jest.fn().mockResolvedValue({ ok: true }),
+          mutateAsync: mockApplyNotesCorrection,
           isPending: false,
           error: undefined,
         }),
@@ -229,6 +250,20 @@ jest.mock("../../../services/trpc", () => ({
         }),
       },
     },
+    dictionary: {
+      previewTeaching: {
+        useMutation: () => ({
+          mutateAsync: mockPreviewTeaching,
+          isPending: false,
+        }),
+      },
+      commitTeaching: {
+        useMutation: () => ({
+          mutateAsync: jest.fn().mockResolvedValue({ results: [] }),
+          isPending: false,
+        }),
+      },
+    },
     feedback: {
       submitSummary: {
         useMutation: () => ({
@@ -248,6 +283,7 @@ jest.mock("../hooks/useMeetingDetail", () => ({
 jest.mock("@mantine/notifications", () => ({
   notifications: {
     show: jest.fn(),
+    hide: jest.fn(),
   },
 }));
 
@@ -365,6 +401,16 @@ describe("MeetingDetailDrawer summary copy", () => {
     mockPersonalShareStateQuery.error = null;
     mockPersonalShareStateQuery.refetch.mockClear();
     mockSetPersonalShareGrants.mockClear();
+    mockSuggestNotesCorrection.mockClear();
+    mockApplyNotesCorrection.mockClear();
+    mockApplyNotesCorrection.mockResolvedValue({
+      ok: true,
+      dictionaryTeachingContextToken: "11111111-1111-4111-8111-111111111111",
+      dictionaryTeachingContextExpiresAtMs: Date.now() + 15 * 60 * 1_000,
+      dictionaryTeachingInstruction:
+        "It wrote John Smith, but his name is Jon Smythe.",
+    });
+    mockPreviewTeaching.mockClear();
     mockNotionStatusQuery.data = { configured: true, connected: false };
     mockNotionExportStatusQuery.data = {
       exported: false,
@@ -402,6 +448,69 @@ describe("MeetingDetailDrawer summary copy", () => {
       color: "green",
       message: "Summary copied to clipboard.",
     });
+  });
+
+  it("reinitializes the same meeting after the drawer closes", async () => {
+    useMeetingDetailMock.mockReturnValue(
+      buildUseMeetingDetailResult({
+        detail: buildDetail({ meetingName: "Original name" }),
+        meeting: buildMeeting({ meetingName: "Original name" }),
+      }),
+    );
+    const view = renderDrawer({ canManageSelectedGuild: true });
+
+    fireEvent.click(screen.getByLabelText("Rename meeting"));
+    expect(await screen.findByTestId("meeting-rename-input")).toHaveValue(
+      "Original name",
+    );
+    fireEvent.change(screen.getByTestId("meeting-rename-input"), {
+      target: { value: "Stale local draft" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+
+    useMeetingDetailMock.mockReturnValue({
+      ...buildUseMeetingDetailResult(),
+      detail: null,
+      meeting: null,
+    });
+    view.rerender(
+      <MantineProvider>
+        <MeetingDetailDrawer
+          opened={false}
+          selectedMeetingId={null}
+          selectedGuildId="g1"
+          canManageSelectedGuild
+          channelNameMap={new Map([["c1", "general"]])}
+          invalidateMeetingLists={jest.fn(async () => {})}
+          onClose={jest.fn()}
+        />
+      </MantineProvider>,
+    );
+
+    useMeetingDetailMock.mockReturnValue(
+      buildUseMeetingDetailResult({
+        detail: buildDetail({ meetingName: "Updated elsewhere" }),
+        meeting: buildMeeting({ meetingName: "Updated elsewhere" }),
+      }),
+    );
+    view.rerender(
+      <MantineProvider>
+        <MeetingDetailDrawer
+          opened
+          selectedMeetingId="m1"
+          selectedGuildId="g1"
+          canManageSelectedGuild
+          channelNameMap={new Map([["c1", "general"]])}
+          invalidateMeetingLists={jest.fn(async () => {})}
+          onClose={jest.fn()}
+        />
+      </MantineProvider>,
+    );
+
+    fireEvent.click(screen.getByLabelText("Rename meeting"));
+    expect(await screen.findByTestId("meeting-rename-input")).toHaveValue(
+      "Updated elsewhere",
+    );
   });
 
   it("disables copy when no notes are available", () => {
@@ -582,5 +691,171 @@ describe("MeetingDetailDrawer summary copy", () => {
     fireEvent.click(screen.getByLabelText("Notes actions"));
 
     expect(await screen.findByText("Retry Notion automation")).toBeEnabled();
+  });
+
+  const applyCorrection = async () => {
+    fireEvent.click(screen.getByLabelText("Notes actions"));
+    fireEvent.click(await screen.findByText("Suggest correction (AI)"));
+    fireEvent.change(await screen.findByLabelText("Suggestion"), {
+      target: {
+        value: "It wrote John Smith, but his name is Jon Smythe.",
+      },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Generate proposal" }));
+    await screen.findByText("+ mock diff");
+    fireEvent.click(screen.getByRole("button", { name: "Apply update" }));
+    await waitFor(() => expect(mockApplyNotesCorrection).toHaveBeenCalled());
+  };
+
+  it("offers an explicit dictionary-teaching step after a manager applies a correction", async () => {
+    jest.mocked(notifications.show).mockClear();
+    renderDrawer({ canManageSelectedGuild: true });
+
+    await applyCorrection();
+
+    expect(notifications.show).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: "notes-correction-teaching-offer",
+        title: "Notes updated",
+        autoClose: expect.any(Number),
+      }),
+    );
+  });
+
+  it("preserves correction teaching context across a detail refresh", async () => {
+    jest.mocked(notifications.show).mockClear();
+    const view = renderDrawer({ canManageSelectedGuild: true });
+
+    await applyCorrection();
+    useMeetingDetailMock.mockReturnValue(
+      buildUseMeetingDetailResult({
+        detail: buildDetail({
+          notes: "- Decision: Ship it\n- Contact: Jon Smythe",
+          notesVersion: 2,
+        }),
+        meeting: buildMeeting({
+          notes: "- Decision: Ship it\n- Contact: Jon Smythe",
+        }),
+      }),
+    );
+    view.rerender(
+      <MantineProvider>
+        <MeetingDetailDrawer
+          opened
+          selectedMeetingId="m1"
+          selectedGuildId="g1"
+          canManageSelectedGuild
+          channelNameMap={new Map([["c1", "general"]])}
+          invalidateMeetingLists={jest.fn(async () => {})}
+          onClose={jest.fn()}
+        />
+      </MantineProvider>,
+    );
+
+    const offer = jest
+      .mocked(notifications.show)
+      .mock.calls.map(([options]) => options)
+      .find((options) => options.id === "notes-correction-teaching-offer");
+    render(<MantineProvider>{offer?.message}</MantineProvider>);
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "Teach Chronote from this correction",
+      }),
+    );
+
+    expect(
+      await screen.findByRole("dialog", { name: "Teach Chronote" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByDisplayValue(
+        "It wrote John Smith, but his name is Jon Smythe.",
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("dismisses a correction teaching offer when the selected meeting changes", async () => {
+    jest.mocked(notifications.show).mockClear();
+    const view = renderDrawer({ canManageSelectedGuild: true });
+
+    await applyCorrection();
+    jest.mocked(notifications.hide).mockClear();
+    useMeetingDetailMock.mockReturnValue(
+      buildUseMeetingDetailResult({
+        detail: buildDetail({ id: "m2", meetingId: "meeting-2" }),
+        meeting: buildMeeting({ id: "m2", meetingId: "meeting-2" }),
+      }),
+    );
+    view.rerender(
+      <MantineProvider>
+        <MeetingDetailDrawer
+          opened
+          selectedMeetingId="m2"
+          selectedGuildId="g1"
+          canManageSelectedGuild
+          channelNameMap={new Map([["c1", "general"]])}
+          invalidateMeetingLists={jest.fn(async () => {})}
+          onClose={jest.fn()}
+        />
+      </MantineProvider>,
+    );
+
+    await waitFor(() =>
+      expect(notifications.hide).toHaveBeenCalledWith(
+        "notes-correction-teaching-offer",
+      ),
+    );
+  });
+
+  it("falls back to instruction-only teaching after correction context expires", async () => {
+    const expiresAtMs = Date.now() + 1_000;
+    mockApplyNotesCorrection.mockResolvedValueOnce({
+      ok: true,
+      dictionaryTeachingContextToken: "11111111-1111-4111-8111-111111111111",
+      dictionaryTeachingContextExpiresAtMs: expiresAtMs,
+      dictionaryTeachingInstruction:
+        "It wrote John Smith, but his name is Jon Smythe.",
+    });
+    jest.mocked(notifications.show).mockClear();
+    renderDrawer({ canManageSelectedGuild: true });
+
+    await applyCorrection();
+    const offer = jest
+      .mocked(notifications.show)
+      .mock.calls.map(([options]) => options)
+      .find((options) => options.id === "notes-correction-teaching-offer");
+    render(<MantineProvider>{offer?.message}</MantineProvider>);
+    const nowSpy = jest.spyOn(Date, "now").mockReturnValue(expiresAtMs);
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "Teach Chronote from this correction",
+      }),
+    );
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Review terms" }),
+    );
+
+    await waitFor(() =>
+      expect(mockPreviewTeaching).toHaveBeenCalledWith({
+        serverId: "g1",
+        instruction: "It wrote John Smith, but his name is Jon Smythe.",
+        correctionContextToken: undefined,
+        doNotTrack: false,
+      }),
+    );
+    nowSpy.mockRestore();
+  });
+
+  it("does not offer dictionary teaching to a member without Manage Server", async () => {
+    jest.mocked(notifications.show).mockClear();
+    renderDrawer({ canManageSelectedGuild: false });
+
+    await applyCorrection();
+
+    expect(notifications.show).toHaveBeenCalledWith({
+      message: "Notes updated.",
+    });
+    expect(notifications.show).not.toHaveBeenCalledWith(
+      expect.objectContaining({ id: "notes-correction-teaching-offer" }),
+    );
   });
 });

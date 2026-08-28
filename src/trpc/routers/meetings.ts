@@ -26,6 +26,12 @@ import {
   createNotesCorrectionTokenStore,
   type NotesCorrectionTokenRecord,
 } from "../../services/notesCorrectionTokenStore";
+import { createDictionaryTeachingTokenStore } from "../../services/dictionaryTeachingTokenStore";
+import {
+  boundDictionaryTeachingNotesDiff,
+  selectDictionaryTeachingTranscriptExcerpt,
+} from "../../services/dictionaryTeachingContextService";
+import { DICTIONARY_TEACHING_TOKEN_TTL_MS } from "../../types/dictionaryTeaching";
 import { buildMeetingTimelineEventsFromHistory } from "../../services/meetingTimelineService";
 import {
   fetchJsonFromS3,
@@ -221,6 +227,9 @@ const NOTES_CORRECTION_TOKEN_TTL_MS = 15 * 60 * 1000;
 const NOTES_CORRECTION_MAX_PENDING = 200;
 
 const notesCorrectionTokenStore = createNotesCorrectionTokenStore({
+  maxPending: NOTES_CORRECTION_MAX_PENDING,
+});
+const dictionaryTeachingTokenStore = createDictionaryTeachingTokenStore({
   maxPending: NOTES_CORRECTION_MAX_PENDING,
 });
 
@@ -1559,12 +1568,17 @@ const suggestNotesCorrection = authedProcedure
     const transcript = transcriptPayload?.text ?? "";
 
     const requesterTag = buildRequesterTag(ctx.user);
+    const correctionId = uuidv4();
+    const baseNotesVersion = history.notesVersion ?? 1;
     const suggestionEntry: SuggestionHistoryEntry = {
+      correctionId,
       userId: ctx.user.id,
       userTag: requesterTag,
       displayName: ctx.user.username ?? requesterTag,
       text: input.suggestion,
       createdAt: new Date().toISOString(),
+      source: "web",
+      baseNotesVersion,
     };
 
     const modelParams = await resolveModelParamsForContext({
@@ -1591,16 +1605,25 @@ const suggestNotesCorrection = authedProcedure
 
     cleanupExpiredPendingNotesCorrections();
     const diff = buildUnifiedDiffForUi(history.notes, newNotes);
+    const notesDiff = boundDictionaryTeachingNotesDiff(diff);
+    const transcriptExcerpt = selectDictionaryTeachingTranscriptExcerpt({
+      transcript,
+      instruction: input.suggestion,
+      notesDiff,
+    });
     const token = uuidv4();
     const expiresAtMs = Date.now() + NOTES_CORRECTION_TOKEN_TTL_MS;
     const record: NotesCorrectionTokenRecord = {
       guildId: input.serverId,
       meetingId: input.meetingId,
+      correctionId,
       expiresAtMs,
-      notesVersion: history.notesVersion ?? 1,
+      notesVersion: baseNotesVersion,
       requesterId: ctx.user.id,
       newNotes,
       suggestion: suggestionEntry,
+      notesDiff,
+      transcriptExcerpt,
     };
     await notesCorrectionTokenStore.set(token, record);
 
@@ -1681,6 +1704,14 @@ const applyNotesCorrection = authedProcedure
     }
 
     const newVersion = (pending.notesVersion ?? 1) + 1;
+    const correctionId = pending.correctionId ?? uuidv4();
+    const appliedSuggestion: SuggestionHistoryEntry = {
+      ...pending.suggestion,
+      correctionId,
+      source: "web",
+      baseNotesVersion: pending.notesVersion,
+      resultingNotesVersion: newVersion,
+    };
     const editorLabel = buildRequesterTag(ctx.user);
     const footerText = `v${newVersion} • Edited by ${editorLabel}`;
 
@@ -1730,8 +1761,8 @@ const applyNotesCorrection = authedProcedure
       editedBy: ctx.user.id,
       summarySentence,
       summaryLabel,
-      suggestion: pending.suggestion,
-      source: { type: "notes_correction" },
+      suggestion: appliedSuggestion,
+      source: { type: "notes_correction", correctionId },
       expectedPreviousVersion: pending.notesVersion,
     });
 
@@ -1742,6 +1773,57 @@ const applyNotesCorrection = authedProcedure
         message:
           "Could not apply this correction because the notes were updated elsewhere. Please regenerate the correction and try again.",
       });
+    }
+
+    let dictionaryTeachingContextToken: string | undefined;
+    let dictionaryTeachingContextExpiresAtMs: number | undefined;
+    const [canTeachDictionary, artifactAccess] = await Promise.all([
+      ensureManageGuildWithUserToken(ctx.user.accessToken, input.serverId, {
+        session: ctx.req.session,
+        userId: ctx.user.id,
+      }),
+      resolveMeetingArtifactAccess(history).catch((error) => {
+        console.warn(
+          "Failed resolving transcript access for dictionary teaching context",
+          error,
+        );
+        return null;
+      }),
+    ]);
+    const teachingTranscriptExcerpt = artifactAccess?.transcriptAccessEnabled
+      ? pending.transcriptExcerpt
+      : undefined;
+    if (
+      canTeachDictionary === true &&
+      (pending.notesDiff || teachingTranscriptExcerpt)
+    ) {
+      try {
+        dictionaryTeachingContextToken = uuidv4();
+        dictionaryTeachingContextExpiresAtMs =
+          Date.now() + DICTIONARY_TEACHING_TOKEN_TTL_MS;
+        await dictionaryTeachingTokenStore.setContext(
+          dictionaryTeachingContextToken,
+          {
+            guildId: input.serverId,
+            requesterId: ctx.user.id,
+            expiresAtMs: dictionaryTeachingContextExpiresAtMs,
+            context: {
+              source: "notes_correction",
+              meetingId: input.meetingId,
+              correctionId,
+              notesDiff: pending.notesDiff,
+              transcriptExcerpt: teachingTranscriptExcerpt,
+            },
+          },
+        );
+      } catch (error) {
+        dictionaryTeachingContextToken = undefined;
+        dictionaryTeachingContextExpiresAtMs = undefined;
+        console.warn(
+          "Failed creating dictionary teaching context after correction",
+          error,
+        );
+      }
     }
 
     // Notes persisted; now update Discord embeds
@@ -1777,7 +1859,12 @@ const applyNotesCorrection = authedProcedure
           messageIds: embedResult.messageIds,
         });
         await notesCorrectionTokenStore.delete(input.token);
-        return { ok: true };
+        return {
+          ok: true,
+          dictionaryTeachingContextToken,
+          dictionaryTeachingContextExpiresAtMs,
+          dictionaryTeachingInstruction: appliedSuggestion.text,
+        };
       }
     }
 
@@ -1834,7 +1921,12 @@ const applyNotesCorrection = authedProcedure
     }
 
     await notesCorrectionTokenStore.delete(input.token);
-    return { ok: true };
+    return {
+      ok: true,
+      dictionaryTeachingContextToken,
+      dictionaryTeachingContextExpiresAtMs,
+      dictionaryTeachingInstruction: appliedSuggestion.text,
+    };
   });
 
 const personalShareState = authedProcedure

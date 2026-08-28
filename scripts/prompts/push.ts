@@ -186,6 +186,7 @@ async function main() {
   const dir = parseFlagValue("--dir") ?? "prompts";
   const labelOverride = parseFlagValue("--label");
   const commitOverride = parseFlagValue("--commit");
+  const nameFilter = parseFlagValue("--name");
   const dryRun = hasFlag("--dry-run");
   const debugDiff = hasFlag("--debug-diff");
 
@@ -195,12 +196,15 @@ async function main() {
     return;
   }
 
+  let matchedPromptCount = 0;
   for (const filePath of files) {
     const prompt = await readPromptFileResolved(filePath, dir);
     if (prompt.fragment) {
       console.log(`Skip ${prompt.name}, marked as fragment.`);
       continue;
     }
+    if (nameFilter && prompt.name !== nameFilter) continue;
+    matchedPromptCount += 1;
     const labels = resolveLabels(prompt, labelOverride);
     const tags = prompt.tags;
     const config = prompt.config ?? {};
@@ -256,6 +260,10 @@ async function main() {
     console.log(
       `Pushed ${created.name} v${created.version ?? "?"} (${created.type}).`,
     );
+  }
+
+  if (nameFilter && matchedPromptCount === 0) {
+    throw new Error(`Prompt ${nameFilter} was not found in ${dir}.`);
   }
 }
 

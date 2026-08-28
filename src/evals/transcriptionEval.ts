@@ -4,6 +4,7 @@ import path from "node:path";
 import { Readable } from "node:stream";
 import { z } from "zod";
 import matter from "gray-matter";
+import { parse as parseYaml } from "yaml";
 import { distance as levenshteinDistance } from "fastest-levenshtein";
 import {
   BedrockDataAutomationRuntimeClient,
@@ -248,7 +249,9 @@ async function readPromptFileContent(
   if (!trimmed.startsWith("---")) {
     return raw.trim();
   }
-  const parsed = matter(raw);
+  const parsed = matter(raw, {
+    engines: { yaml: (input) => parseYaml(input) as object },
+  });
   const data = parsed.data as PromptFrontMatter;
   if (data.type === "chat") {
     const messages = data.messages ?? data.prompt;
