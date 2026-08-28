@@ -1,69 +1,70 @@
-import {
-  DISCORD_BOT_INVITE_URL,
-  buildInviteUrl,
-  JOIN_PAGE_INVITE_URL,
-} from "../discordInvite";
+import { buildInstallUrl } from "../discordInvite";
 
-describe("discordInvite", () => {
-  describe("DISCORD_BOT_INVITE_URL", () => {
-    it("contains the correct client ID", () => {
-      expect(DISCORD_BOT_INVITE_URL).toContain("client_id=1278729036528619633");
+describe("buildInstallUrl", () => {
+  it("routes installs through the API with direct attribution", () => {
+    const url = buildInstallUrl({
+      ctaLocation: "hero",
+      currentUrl: "https://chronote.gg/",
+      doNotTrack: false,
     });
 
-    it("requests bot and applications.commands scopes", () => {
-      expect(DISCORD_BOT_INVITE_URL).toContain(
-        "scope=bot%20applications.commands",
-      );
-    });
-
-    it("points to Discord OAuth2 authorize endpoint", () => {
-      expect(DISCORD_BOT_INVITE_URL).toMatch(
-        /^https:\/\/discord\.com\/oauth2\/authorize/,
-      );
-    });
+    expect(url).toBe(
+      "/auth/discord/install?source=direct&medium=web&landing_path=%2F&cta_location=hero",
+    );
   });
 
-  describe("buildInviteUrl", () => {
-    it("returns the base URL when no UTM params are provided", () => {
-      expect(buildInviteUrl()).toBe(DISCORD_BOT_INVITE_URL);
+  it("carries campaign parameters and only the referrer hostname", () => {
+    const url = buildInstallUrl({
+      ctaLocation: "footer-cta",
+      currentUrl:
+        "https://chronote.gg/?utm_source=newsletter&utm_medium=email&utm_campaign=launch",
+      referrer: "https://www.example.com/private/path?person=someone",
+      doNotTrack: false,
     });
 
-    it("appends UTM parameters when provided", () => {
-      const url = buildInviteUrl({
-        source: "test_source",
-        medium: "test_medium",
-        campaign: "test_campaign",
-      });
-
-      expect(url).toContain(DISCORD_BOT_INVITE_URL);
-      expect(url).toContain("utm_source=test_source");
-      expect(url).toContain("utm_medium=test_medium");
-      expect(url).toContain("utm_campaign=test_campaign");
-    });
-
-    it("URL-encodes special characters in UTM values", () => {
-      const url = buildInviteUrl({
-        source: "my source",
-        medium: "web",
-        campaign: "test&campaign",
-      });
-
-      expect(url).toContain("utm_source=my+source");
-      expect(url).toContain("utm_campaign=test%26campaign");
-    });
+    expect(url).toContain("source=newsletter");
+    expect(url).toContain("medium=email");
+    expect(url).toContain("campaign=launch");
+    expect(url).toContain("referrer_domain=example.com");
+    expect(url).not.toContain("private");
+    expect(url).not.toContain("person");
   });
 
-  describe("JOIN_PAGE_INVITE_URL", () => {
-    it("includes join page UTM parameters", () => {
-      expect(JOIN_PAGE_INVITE_URL).toContain("utm_source=chronote");
-      expect(JOIN_PAGE_INVITE_URL).toContain("utm_medium=web");
-      expect(JOIN_PAGE_INVITE_URL).toContain("utm_campaign=join_page");
+  it("uses the referrer as the source when no campaign source exists", () => {
+    const url = buildInstallUrl({
+      ctaLocation: "join",
+      currentUrl: "https://chronote.gg/join",
+      referrer: "https://chatgpt.com/c/secret-conversation",
+      doNotTrack: false,
     });
 
-    it("starts with the base invite URL", () => {
-      expect(JOIN_PAGE_INVITE_URL.startsWith(DISCORD_BOT_INVITE_URL)).toBe(
-        true,
-      );
+    expect(url).toContain("source=chatgpt.com");
+    expect(url).toContain("medium=referral");
+    expect(url).toContain("landing_path=%2Fjoin");
+    expect(url).not.toContain("secret-conversation");
+  });
+
+  it("does not send attribution when Do Not Track is enabled", () => {
+    expect(
+      buildInstallUrl({
+        ctaLocation: "hero",
+        currentUrl: "https://chronote.gg/?utm_source=private-campaign",
+        doNotTrack: true,
+      }),
+    ).toBe("/auth/discord/install?dnt=1");
+  });
+
+  it("removes content-like campaign values and private route ids before navigation", () => {
+    const url = buildInstallUrl({
+      ctaLocation: "site-footer",
+      currentUrl:
+        "https://chronote.gg/share/meeting/server-secret/share-secret?utm_campaign=person@example.com",
+      doNotTrack: false,
     });
+
+    expect(url).toContain("landing_path=other");
+    expect(url).not.toContain("server-secret");
+    expect(url).not.toContain("share-secret");
+    expect(url).not.toContain("person%40example.com");
   });
 });

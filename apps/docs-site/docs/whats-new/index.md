@@ -7,6 +7,12 @@ Notable product changes for Chronote users. For the full changelog, see the [Git
 
 ## 2026
 
+### Installation source reporting
+
+- Add to Discord links on the Chronote website now preserve a limited acquisition source through Discord authorization, so we can understand which public pages and referrals lead to a real server installation.
+- The record contains source, medium, campaign, a coarse landing-page category, referring domain, and button location. It does not contain the full referring URL or query, a browser or session identifier, or a share-link id.
+- Do Not Track disables this attribution as well as our other website analytics. Installs started directly in Discord or another directory remain unattributed.
+
 ### Teach Chronote in natural language
 
 - Members with **Manage Server** can describe names, acronyms, and specialized vocabulary in Server Settings instead of formatting each term first.
