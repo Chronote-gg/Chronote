@@ -1,16 +1,62 @@
 name: CI
 permissions:
   contents: read
-  pull-requests: write
 
 on:
   pull_request:
-  push:
-    branches: [master]
+  workflow_call:
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  lint:
-    name: Lint
+  pr-changes:
+    name: Detect Windows-relevant changes
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      desktop: ${{ steps.filter.outputs.desktop }}
+      visual: ${{ steps.filter.outputs.visual }}
+    steps:
+      - name: Detect changed paths
+        id: filter
+        uses: dorny/paths-filter@v4
+        with:
+          filters: |
+            desktop:
+              - '.github/workflows/ci.yml'
+              - 'apps/desktop/**'
+              - 'jest.desktop-coverage.config.ts'
+              - 'package.json'
+              - 'scripts/desktop-*.js'
+              - 'scripts/desktop-*.mjs'
+              - 'yarn.lock'
+            visual:
+              - '.github/workflows/ci.yml'
+              - 'apps/desktop/**'
+              - 'package.json'
+              - 'playwright.config.ts'
+              - 'public/**'
+              - 'scripts/ci-install-dependencies.sh'
+              - 'scripts/run-visual-tests.js'
+              - 'scripts/visual/**'
+              - 'src/config/**'
+              - 'src/constants.ts'
+              - 'src/frontend/**'
+              - 'src/trpc/**'
+              - 'src/types/**'
+              - 'src/utils/**'
+              - 'test/e2e/**'
+              - 'tsconfig.frontend.json'
+              - 'vite.config.mts'
+              - 'yarn.lock'
+
+  code-quality:
+    name: Code Quality (Lint, Format, Markdown)
     runs-on: blacksmith-4vcpu-ubuntu-2404
     steps:
       - name: Checkout
@@ -28,40 +74,8 @@ jobs:
       - name: Run ESLint
         run: yarn lint:check
 
-  prettier:
-    name: Prettier
-    runs-on: blacksmith-4vcpu-ubuntu-2404
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v7
-
-      - name: Set up Node
-        uses: actions/setup-node@v7
-        with:
-          node-version: "24.15.0"
-          cache: "yarn"
-
-      - name: Install dependencies
-        run: bash scripts/ci-install-dependencies.sh
-
       - name: Run Prettier
         run: yarn prettier:check
-
-  markdownlint:
-    name: Markdown Lint
-    runs-on: blacksmith-4vcpu-ubuntu-2404
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v7
-
-      - name: Set up Node
-        uses: actions/setup-node@v7
-        with:
-          node-version: "24.15.0"
-          cache: "yarn"
-
-      - name: Install dependencies
-        run: bash scripts/ci-install-dependencies.sh
 
       - name: Run markdownlint
         run: yarn markdownlint:check
@@ -162,8 +176,18 @@ jobs:
       - name: Build backend and frontend
         run: yarn build:all
 
+      - name: Verify backend build artifact
+        shell: bash
+        run: |
+          test -f dist/index.js || {
+            echo "ERROR: dist/index.js not found after build"
+            exit 1
+          }
+
   desktop-check:
     name: Desktop Check
+    needs: [pr-changes]
+    if: ${{ always() && (github.event_name != 'pull_request' || needs.pr-changes.result != 'success' || needs.pr-changes.outputs.desktop == 'true') }}
     runs-on: blacksmith-4vcpu-windows-2025
     steps:
       - name: Checkout
@@ -241,6 +265,7 @@ jobs:
   e2e:
     name: E2E Tests
     runs-on: blacksmith-4vcpu-ubuntu-2404
+    timeout-minutes: 20
     env:
       FRONTEND_SITE_URL: http://127.0.0.1:5173
     steps:
@@ -277,7 +302,8 @@ jobs:
 
   visual-regression:
     name: Visual Regression
-    if: github.event_name == 'pull_request'
+    needs: [pr-changes]
+    if: ${{ always() && github.event_name == 'pull_request' && (needs.pr-changes.result != 'success' || needs.pr-changes.outputs.visual == 'true') }}
     runs-on: blacksmith-4vcpu-windows-2025
     continue-on-error: true
     permissions:
