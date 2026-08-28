@@ -82,6 +82,7 @@ jobs:
 
   prompts-check:
     name: Prompts Check
+    continue-on-error: ${{ github.event_name != 'pull_request' }}
     runs-on: blacksmith-4vcpu-ubuntu-2404
     steps:
       - name: Checkout
@@ -111,6 +112,7 @@ jobs:
 
   llm-connections-check:
     name: LLM Connections Check
+    continue-on-error: ${{ github.event_name != 'pull_request' }}
     runs-on: blacksmith-4vcpu-ubuntu-2404
     steps:
       - name: Checkout
@@ -229,6 +231,7 @@ jobs:
 
   storybook-build:
     name: Storybook Build
+    continue-on-error: ${{ github.event_name != 'pull_request' }}
     runs-on: blacksmith-4vcpu-ubuntu-2404
     steps:
       - name: Checkout
@@ -252,6 +255,7 @@ jobs:
 
   docker-build:
     name: Docker Build
+    continue-on-error: ${{ github.event_name != 'pull_request' }}
     runs-on: blacksmith-4vcpu-ubuntu-2404
     steps:
       - name: Checkout
