@@ -1,0 +1,4 @@
+interface:
+  display_name: "Langfuse Metrics"
+  short_description: "Query aggregate Langfuse Metrics API v2 efficiently"
+  default_prompt: "Use Langfuse Metrics API v2 to answer this aggregate telemetry question with the fewest requests."

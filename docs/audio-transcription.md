@@ -37,17 +37,26 @@ When Langfuse tracing is enabled, each transcription snippet uploads an audio at
 
 ## Langfuse usage and cost
 
-Transcription traces report duration-based usage so Langfuse can calculate costs without audio token math.
+Transcription traces report the exact token usage returned by OpenAI so
+Langfuse can calculate costs using the provider's input and output rates.
 
-- Usage details include `input_audio_seconds`, rounded to three decimals.
-- Configure Langfuse model pricing to charge per second using `input_audio_seconds`.
-- We do not derive audio token counts for transcription, we keep it duration-based.
+- Usage details use Langfuse's `input`, `output`, and `total` keys.
+- When the prompt/no-prompt vote makes two requests, usage includes both billed
+  requests.
+- Each trace records whether accounting is `priced`, `partial`, or `unpriced`
+  and the corresponding request counts.
+- If OpenAI omits token usage, `input_audio_seconds` remains available as a
+  rounded operational fallback. Do not treat that fallback as attributed cost.
 
 Pricing checklist:
 
-- Add custom model definitions for `gpt-4o-transcribe` and `gpt-4o-transcribe-diarize` in Langfuse.
-- Set pricing to use the `input_audio_seconds` usage key with a per-second rate.
-- Set output token pricing to 0 if the model does not bill output tokens.
+- Match the deployed `gpt-4o-transcribe` model definition against that exact
+  model name.
+- Set `input` and `output` per-token prices to the current OpenAI rates.
+- Keep the usage keys and model definition aligned; Langfuse price keys must
+  exactly match the generation's usage-detail keys.
+- Verify new production observations show both token usage and non-null cost
+  before treating cost coverage as complete.
 
 ## Config keys
 
