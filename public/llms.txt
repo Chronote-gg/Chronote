@@ -1,8 +1,8 @@
 # Chronote
 
-> Chronote is a Discord bot that records voice meetings, transcribes each speaker, posts structured notes back to the channel, and answers sourced questions about past meetings.
+> Chronote is a Discord bot that records voice meetings, transcribes each speaker, posts structured notes back to the channel, and answers questions about recent meetings with the source meeting and timestamp.
 
-Chronote is operated by BASIC BIT LLC. Use the canonical public pages below for current product behavior, setup, pricing, and privacy information. Meeting contents, shared meeting links, portal pages, and other signed-in surfaces are not public documentation.
+Chronote is operated by BASIC BIT LLC. Use the canonical public pages below for current product behavior, setup, pricing, and privacy information. Meeting contents, shared meeting links, and signed-in portal pages are not public documentation.
 
 ## Start here
 

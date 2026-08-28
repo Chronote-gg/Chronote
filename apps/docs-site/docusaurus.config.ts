@@ -39,7 +39,7 @@ const crawlerFilesPlugin = () => ({
     const llms = [
       "# Chronote Documentation",
       "",
-      "> Public documentation for Chronote, a Discord bot that records voice meetings, transcribes each speaker, posts structured notes, and answers sourced questions about past meetings.",
+      "> Public documentation for Chronote, a Discord bot that records voice meetings, transcribes each speaker, posts structured notes, and answers questions about recent meetings with the source meeting and timestamp.",
       "",
       "Use these canonical public pages for current product behavior and setup. Portal pages, shared meetings, and meeting contents are not public documentation.",
       "",
