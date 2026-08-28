@@ -112,42 +112,21 @@ PR CI workflow
 
 ```mermaid
 flowchart LR
-  A["PR CI (.github/workflows/ci.yml)"] --> B["lint job"]
-  A --> C["prettier job"]
-  A --> D["test job"]
-  A --> E["build job"]
-  A --> F["docs-check job"]
-  A --> G["e2e job"]
-  A --> H["checkov job"]
-  A --> I["code-stats job"]
-  A --> P["prompts-check job"]
-  A --> Q["llm-connections-check job"]
+  A["PR CI (.github/workflows/ci.yml)"] --> B["code-quality: lint + Prettier + Markdown"]
+  A --> C["core: test, build, docs, E2E, Checkov, code stats"]
+  A --> D["supplemental: prompts, LLM, Storybook, Docker"]
+  A --> E["path-filtered Windows: desktop + visual"]
 ```
 
 Deploy workflow (prod)
 
 ```mermaid
 flowchart LR
-  A["Deploy (.github/workflows/deploy.yml)"] --> B["lint job"]
-  A --> C["prettier job"]
-  A --> D["test job"]
-  A --> E["build job"]
-  A --> F["docs-check job"]
-  A --> G["e2e job"]
-  A --> H["checkov job"]
-  A --> I["code-stats job"]
-  A --> P["prompts-check job"]
-  A --> Q["llm-connections-check job"]
-  B --> Z["checks complete"]
-  C --> Z
+  A["Deploy (.github/workflows/deploy.yml)"] --> B["Reusable CI (.github/workflows/ci.yml)"]
+  B --> C["Core checks + full desktop check (blocking)"]
+  B --> D["Prompts, LLM, Storybook, Docker (advisory)"]
+  C --> Z["CI complete"]
   D --> Z
-  E --> Z
-  F --> Z
-  G --> Z
-  H --> Z
-  I --> Z
-  P --> Z
-  Q --> Z
   Z --> L["deploy backend"]
   Z --> J["deploy frontend"]
   Z --> K["deploy docs"]
