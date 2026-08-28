@@ -47,6 +47,7 @@ jobs:
               - 'src/**'
               - 'test/e2e/**'
               - 'tsconfig.frontend.json'
+              - 'tsconfig.json'
               - 'vite.config.mts'
               - 'yarn.lock'
 
