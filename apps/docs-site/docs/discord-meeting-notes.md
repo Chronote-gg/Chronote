@@ -4,7 +4,7 @@ slug: /discord-meeting-notes
 description: Record Discord voice calls, create structured meeting notes, and retrieve past decisions with Chronote.
 ---
 
-Chronote records a Discord voice call, writes the meeting notes, and posts them back to the channel—without asking anyone to leave Discord. It transcribes each speaker separately and keeps the meeting available for later questions and corrections.
+Chronote records a Discord voice call, writes the meeting notes, and posts them back to the channel, all without asking anyone to leave Discord. It transcribes each speaker separately and keeps the meeting available for later questions and corrections.
 
 ## When Chronote fits
 
