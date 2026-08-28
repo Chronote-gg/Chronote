@@ -81,7 +81,7 @@ describe("Langfuse Metrics v2 cost report", () => {
       const output = JSON.parse(stdout);
       expect(output.report).toMatchObject({
         totalAttributedCost: 1.5,
-        billableObservationCount: 5,
+        modelObservationCount: 5,
         observationsInPricedGroups: 3,
         observationsInUnpricedGroups: 2,
         pricedGroupObservationRatio: 0.6,

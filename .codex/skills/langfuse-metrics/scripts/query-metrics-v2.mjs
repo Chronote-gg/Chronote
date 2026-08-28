@@ -135,7 +135,7 @@ const buildCostReport = (rows, options) => {
     (total, row) => total + Number(row.sum_totalCost || 0),
     0,
   );
-  const billableObservationCount = modelRows.reduce(
+  const modelObservationCount = modelRows.reduce(
     (total, row) => total + Number(row.count_count || 0),
     0,
   );
@@ -177,13 +177,13 @@ const buildCostReport = (rows, options) => {
       toTimestamp: options.to,
     },
     totalAttributedCost: totalCost,
-    billableObservationCount,
+    modelObservationCount,
     observationsInPricedGroups,
     observationsInUnpricedGroups,
     pricedGroupObservationRatio:
-      billableObservationCount === 0
+      modelObservationCount === 0
         ? null
-        : observationsInPricedGroups / billableObservationCount,
+        : observationsInPricedGroups / modelObservationCount,
     unitCosts: {
       ...(completedMeetings !== undefined
         ? {
