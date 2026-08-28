@@ -91,6 +91,26 @@ const loadQuery = (options) => {
   return parsed;
 };
 
+const applyModelPrefix = (query, options) => {
+  const prefix = options["model-prefix"];
+  if (!prefix) return query;
+  if (query.view !== "observations") {
+    fail("--model-prefix requires an observations query");
+  }
+  return {
+    ...query,
+    filters: [
+      ...(query.filters || []),
+      {
+        column: "providedModelName",
+        operator: "starts with",
+        value: prefix,
+        type: "string",
+      },
+    ],
+  };
+};
+
 const normalizeNumbers = (row) =>
   Object.fromEntries(
     Object.entries(row).map(([key, value]) => {
@@ -241,7 +261,7 @@ const requestMetrics = async ({ baseUrl, auth, query }, attempt = 0) => {
 };
 
 const options = parseArgs(process.argv.slice(2));
-const query = loadQuery(options);
+const query = applyModelPrefix(loadQuery(options), options);
 
 options.from = query.fromTimestamp;
 options.to = query.toTimestamp;
@@ -266,12 +286,6 @@ const payload = await requestMetrics({ baseUrl, auth, query });
 let data = Array.isArray(payload.data)
   ? payload.data.map(normalizeNumbers)
   : [];
-
-if (options["model-prefix"]) {
-  data = data.filter((row) =>
-    String(row.providedModelName || "").startsWith(options["model-prefix"]),
-  );
-}
 
 const output =
   options.command === "cost-report"

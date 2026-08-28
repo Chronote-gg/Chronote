@@ -21,7 +21,8 @@ The helper reads `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`, and optional
 `LANGFUSE_BASE_URL` (Chronote defaults to the US cloud host). `summary` makes a
 single request grouped by provided model and observation name, returning count,
 total cost, average latency, and p95 latency. Use `--dry-run` to inspect the
-query without sending it.
+query without sending it. `--model-prefix` is sent as a Metrics v2 `starts
+with` filter so matching happens before the server's 1,000-row limit.
 
 `cost-report` uses that same single aggregate query to return attributed cost,
 cost by model and feature, known fully-unpriced model groups, and group-based
