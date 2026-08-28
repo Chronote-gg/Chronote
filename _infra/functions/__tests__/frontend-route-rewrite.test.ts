@@ -62,6 +62,19 @@ describe("frontend route rewrite", () => {
     }
   });
 
+  it("preserves common trailing slash variants of known SPA routes", () => {
+    for (const uri of [
+      "/promo/summer/",
+      "/upgrade/select-server/",
+      "/upgrade/success/",
+      "/live/123/meeting-1/",
+      "/share/ask/123/conversation-1/",
+      "/share/meeting/123/share-1/",
+    ]) {
+      expect(invoke(uri)).toEqual({ uri: "/index.html" });
+    }
+  });
+
   it("returns a real noindex 404 for unknown extensionless paths", () => {
     for (const uri of [
       "/definitely-not-real",

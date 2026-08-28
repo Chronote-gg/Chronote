@@ -31,12 +31,11 @@ function isSpaRoute(uri) {
     uri.indexOf("/admin/") === 0 ||
     uri === "/portal" ||
     uri.indexOf("/portal/") === 0 ||
-    uri === "/upgrade/select-server" ||
-    uri === "/upgrade/success" ||
-    /^\/promo\/[^/]+$/.test(uri) ||
-    /^\/live\/[^/]+\/[^/]+$/.test(uri) ||
-    /^\/share\/ask\/[^/]+\/[^/]+$/.test(uri) ||
-    /^\/share\/meeting\/[^/]+\/[^/]+$/.test(uri)
+    /^\/upgrade\/(?:select-server|success)\/?$/.test(uri) ||
+    /^\/promo\/[^/]+\/?$/.test(uri) ||
+    /^\/live\/[^/]+\/[^/]+\/?$/.test(uri) ||
+    /^\/share\/ask\/[^/]+\/[^/]+\/?$/.test(uri) ||
+    /^\/share\/meeting\/[^/]+\/[^/]+\/?$/.test(uri)
   );
 }
 
