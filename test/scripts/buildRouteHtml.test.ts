@@ -90,6 +90,16 @@ describe("build-route-html", () => {
     expect(readRoute("join")).toContain("/index.tsx");
   });
 
+  it("keeps homepage-only application schema off unrelated public routes", () => {
+    run(indexHtml);
+
+    for (const route of config.routes.filter((entry) => entry.emitHtml)) {
+      const html = readRoute(route.key);
+      expect(html).not.toContain('id="chronote-structured-data"');
+      expect(html).not.toContain('"price": "0"');
+    }
+  });
+
   it("advertises exactly the configured routes in the sitemap", () => {
     run(indexHtml);
     const sitemap = readFileSync(

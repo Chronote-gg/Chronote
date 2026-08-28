@@ -1,0 +1,28 @@
+# Chronote
+
+> Chronote is a Discord bot that records voice meetings, transcribes each speaker, posts structured notes back to the channel, and answers sourced questions about past meetings.
+
+Chronote is operated by BASIC BIT LLC. Use the canonical public pages below for current product behavior, setup, pricing, and privacy information. Meeting contents, shared meeting links, portal pages, and other signed-in surfaces are not public documentation.
+
+## Start here
+
+- [Chronote](https://chronote.gg/): Product overview, example output, current plans, and Add to Discord action.
+- [Discord meeting notes guide](https://docs.chronote.gg/discord-meeting-notes/): What the bot does, how a meeting works, and when it is a good fit.
+- [Getting started](https://docs.chronote.gg/getting-started/): Installation, permissions, onboarding, and the first meeting.
+- [Features](https://docs.chronote.gg/features/): Commands and product capabilities.
+
+## Product documentation
+
+- [Meeting lifecycle](https://docs.chronote.gg/core-concepts/meeting-lifecycle/): Recording, processing, publishing, and revision stages.
+- [Integrations](https://docs.chronote.gg/integrations/): Web portal, Notion, Discord, and Remote MCP integrations.
+- [Troubleshooting](https://docs.chronote.gg/troubleshooting/common-issues/): Common setup and recording problems.
+- [What's New](https://docs.chronote.gg/whats-new/): Recent public product changes.
+
+## Trust and policies
+
+- [Privacy Policy](https://docs.chronote.gg/legal/privacy/): What Chronote records, stores, and sends to service providers.
+- [Terms of Service](https://docs.chronote.gg/legal/terms/): Terms governing use of Chronote.
+
+## Optional
+
+- [Source code](https://github.com/Chronote-gg/Chronote): Public Chronote repository.

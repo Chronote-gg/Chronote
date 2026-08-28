@@ -41,6 +41,41 @@
       content="Saves the whole call, takes the notes so you don't have to, and finds the quote when you ask. Free tier on every server."
     />
     <meta name="twitter:image" content="https://chronote.gg/og-image.png" />
+    <script id="chronote-structured-data" type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@graph": [
+          {
+            "@type": ["SoftwareApplication", "WebApplication"],
+            "@id": "https://chronote.gg/#application",
+            "name": "Chronote",
+            "url": "https://chronote.gg/",
+            "description": "Chronote records Discord voice calls, posts meeting notes back to the channel, and lets members ask what was said later.",
+            "applicationCategory": "CommunicationApplication",
+            "offers": {
+              "@type": "Offer",
+              "price": "0",
+              "priceCurrency": "USD"
+            },
+            "publisher": {
+              "@id": "https://chronote.gg/#organization"
+            }
+          },
+          {
+            "@type": "Organization",
+            "@id": "https://chronote.gg/#organization",
+            "name": "BASIC BIT LLC",
+            "alternateName": "Chronote",
+            "url": "https://chronote.gg/",
+            "logo": "https://chronote.gg/meeting_notes_original_logo.png",
+            "sameAs": [
+              "https://basicbit.net/",
+              "https://github.com/Chronote-gg/Chronote"
+            ]
+          }
+        ]
+      }
+    </script>
     <script>
       window.__API_BASE_URL__ = "%VITE_API_BASE_URL%";
       window.__MOCK_FIXED_NOW__ = "%VITE_MOCK_FIXED_NOW%";
@@ -50,7 +85,7 @@
     </script>
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
     <link rel="manifest" href="/manifest.json" />
-    <title>Chronote</title>
+    <title>Chronote - AI meeting notes for Discord voice calls</title>
   </head>
   <body>
     <div id="root"></div>

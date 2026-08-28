@@ -2,6 +2,10 @@
 User-agent: *
 Allow: /
 
+# Public product content is intentionally available to ordinary search engines,
+# OAI-SearchBot, GPTBot, and user-triggered assistants. Search discovery and
+# model-training access are separate policy choices; both remain allowed here.
+
 # Sign-in only, nothing to index. No trailing slashes: robots.txt matches on
 # prefix, so "/portal/" would miss the bare "/portal" route.
 Disallow: /portal

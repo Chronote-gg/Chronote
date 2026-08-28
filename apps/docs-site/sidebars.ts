@@ -3,6 +3,7 @@ import type { SidebarsConfig } from "@docusaurus/plugin-content-docs";
 const sidebars: SidebarsConfig = {
   docs: [
     "index",
+    "discord-meeting-notes",
     "getting-started/overview",
     {
       type: "category",

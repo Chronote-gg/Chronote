@@ -1069,6 +1069,36 @@ resource "aws_cloudfront_origin_access_control" "docs_oac" {
   signing_protocol                  = "sigv4"
 }
 
+resource "aws_cloudfront_function" "frontend_route_rewrite" {
+  name    = "${local.name_prefix}-frontend-route-rewrite"
+  runtime = "cloudfront-js-2.0"
+  comment = "Routes known frontend paths to the SPA while preserving real 404 responses"
+  publish = true
+  code    = file("${path.module}/functions/frontend-route-rewrite.js")
+}
+
+resource "aws_cloudfront_response_headers_policy" "crawler_noindex" {
+  name    = "${local.name_prefix}-crawler-noindex"
+  comment = "Keeps private share pages and utility search pages out of indexes"
+
+  security_headers_config {
+    strict_transport_security {
+      access_control_max_age_sec = 31536000
+      include_subdomains         = true
+      override                   = true
+      preload                    = true
+    }
+  }
+
+  custom_headers_config {
+    items {
+      header   = "X-Robots-Tag"
+      value    = "noindex, nofollow"
+      override = true
+    }
+  }
+}
+
 resource "aws_cloudfront_distribution" "frontend" {
   #checkov:skip=CKV_AWS_86 reason: Access logging not enabled yet; will add if/when audit requirements demand it.
   #checkov:skip=CKV_AWS_310 reason: Origin failover not configured; single-origin setup is acceptable for now.
@@ -1091,6 +1121,11 @@ resource "aws_cloudfront_distribution" "frontend" {
     viewer_protocol_policy = "redirect-to-https"
     allowed_methods        = ["GET", "HEAD"]
     cached_methods         = ["GET", "HEAD"]
+
+    function_association {
+      event_type   = "viewer-request"
+      function_arn = aws_cloudfront_function.frontend_route_rewrite.arn
+    }
 
     forwarded_values {
       query_string = false
@@ -1136,15 +1171,39 @@ resource "aws_cloudfront_distribution" "frontend" {
   custom_error_response {
     error_caching_min_ttl = 0
     error_code            = 403
-    response_code         = 200
-    response_page_path    = "/index.html"
+    response_code         = 404
+  }
+
+  ordered_cache_behavior {
+    path_pattern               = "/share/*"
+    target_origin_id           = "frontend-s3"
+    viewer_protocol_policy     = "redirect-to-https"
+    allowed_methods            = ["GET", "HEAD"]
+    cached_methods             = ["GET", "HEAD"]
+    response_headers_policy_id = aws_cloudfront_response_headers_policy.crawler_noindex.id
+
+    function_association {
+      event_type   = "viewer-request"
+      function_arn = aws_cloudfront_function.frontend_route_rewrite.arn
+    }
+
+    forwarded_values {
+      query_string = false
+      cookies {
+        forward = "none"
+      }
+    }
+
+    compress    = true
+    min_ttl     = 0
+    default_ttl = 600
+    max_ttl     = 3600
   }
 
   custom_error_response {
     error_caching_min_ttl = 0
     error_code            = 404
-    response_code         = 200
-    response_page_path    = "/index.html"
+    response_code         = 404
   }
 
   viewer_certificate {
@@ -1226,6 +1285,32 @@ resource "aws_cloudfront_distribution" "docs" {
     min_ttl     = 3600
     default_ttl = 86400
     max_ttl     = 31536000
+  }
+
+  ordered_cache_behavior {
+    path_pattern               = "/search*"
+    target_origin_id           = "docs-s3"
+    viewer_protocol_policy     = "redirect-to-https"
+    allowed_methods            = ["GET", "HEAD"]
+    cached_methods             = ["GET", "HEAD"]
+    response_headers_policy_id = aws_cloudfront_response_headers_policy.crawler_noindex.id
+
+    function_association {
+      event_type   = "viewer-request"
+      function_arn = aws_cloudfront_function.docs_index_rewrite.arn
+    }
+
+    forwarded_values {
+      query_string = false
+      cookies {
+        forward = "none"
+      }
+    }
+
+    compress    = true
+    min_ttl     = 0
+    default_ttl = 600
+    max_ttl     = 3600
   }
 
   price_class = "PriceClass_100"
