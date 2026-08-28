@@ -22,7 +22,7 @@ import {
 import { config } from "./services/configService";
 import { DynamoSessionStore } from "./services/sessionStore";
 import { getStripeClient } from "./services/stripeClient";
-import { saveGuildInstaller } from "./services/guildInstallerService";
+import { saveGuildInstallerIfAbsent } from "./services/guildInstallerService";
 import { passThrough } from "./middleware/passThrough";
 import { metricsMiddleware, metricsRegistry } from "./metrics";
 import { appRouter } from "./trpc/router";
@@ -422,14 +422,14 @@ export function setupWebServer() {
         const mcpRedirect = readMcpAuthorizeRedirect(req);
         const sessionRedirect = readOauthRedirectFromRequest(req);
         if (guildId) {
-          saveGuildInstaller({
+          saveGuildInstallerIfAbsent({
             guildId,
             installerId: profile.id,
             installedAt: new Date().toISOString(),
             ...(acquisition ? { acquisition } : {}),
           })
-            .then(() => {
-              if (!acquisition) return;
+            .then((created) => {
+              if (!created || !acquisition) return;
               captureEvent("server_install_attributed", {
                 userId: profile.id,
                 guildId,

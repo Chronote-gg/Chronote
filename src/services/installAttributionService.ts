@@ -7,6 +7,38 @@ const DISCORD_SNOWFLAKE = /^\d{17,20}$/;
 const ATTRIBUTION_TOKEN = /^[a-z0-9][a-z0-9._-]*$/;
 const CTA_LOCATIONS = new Set(["hero", "footer-cta", "site-footer", "join"]);
 const PUBLIC_LANDING_PATHS = new Set(["/", "/join", "/upgrade", "/feedback"]);
+const ACQUISITION_SOURCES = new Set([
+  "direct",
+  "newsletter",
+  "discord",
+  "github",
+  "google",
+  "bing",
+  "reddit",
+  "producthunt",
+  "facebook",
+  "instagram",
+  "linkedin",
+  "twitter",
+  "x",
+]);
+const ACQUISITION_MEDIUMS = new Set([
+  "web",
+  "referral",
+  "email",
+  "organic",
+  "social",
+  "paid",
+  "partner",
+]);
+const ACQUISITION_CAMPAIGNS = new Set([
+  "launch",
+  "readme",
+  "homepage",
+  "join_page",
+  "app_directory",
+  "docs",
+]);
 
 export const DISCORD_INSTALL_SCOPES = [
   "identify",
@@ -55,10 +87,34 @@ function sanitizeDomain(value: unknown): string | undefined {
   try {
     const hostname = new URL(`https://${normalized}`).hostname;
     if (hostname !== normalized || !hostname.includes(".")) return undefined;
+    if (hostname === "chronote.gg" || hostname.endsWith(".chronote.gg")) {
+      return undefined;
+    }
     return hostname;
   } catch {
     return undefined;
   }
+}
+
+function sanitizeSource(value: unknown): string | undefined {
+  const source = sanitizeToken(value);
+  if (!source) return undefined;
+  return ACQUISITION_SOURCES.has(source) ? source : sanitizeDomain(source);
+}
+
+function sanitizeCategory(
+  value: unknown,
+  allowedValues: ReadonlySet<string>,
+): string | undefined {
+  const category = sanitizeToken(value);
+  return category && allowedValues.has(category) ? category : undefined;
+}
+
+function includesValue(value: unknown, expected: string): boolean {
+  return (
+    value === expected ||
+    (Array.isArray(value) && value.some((item) => item === expected))
+  );
 }
 
 function sanitizeLandingPath(value: unknown): string {
@@ -75,12 +131,12 @@ export function parseInstallAttribution(
   query: QueryValues,
   capturedAt = new Date().toISOString(),
 ): InstallAttribution | undefined {
-  if (query.dnt === "1") return undefined;
-  const campaign = sanitizeToken(query.campaign);
+  if (includesValue(query.dnt, "1")) return undefined;
+  const campaign = sanitizeCategory(query.campaign, ACQUISITION_CAMPAIGNS);
   const referrerDomain = sanitizeDomain(query.referrer_domain);
   return {
-    source: sanitizeToken(query.source) ?? "direct",
-    medium: sanitizeToken(query.medium) ?? "web",
+    source: sanitizeSource(query.source) ?? "direct",
+    medium: sanitizeCategory(query.medium, ACQUISITION_MEDIUMS) ?? "web",
     landingPath: sanitizeLandingPath(query.landing_path),
     ctaLocation: sanitizeCtaLocation(query.cta_location),
     capturedAt,

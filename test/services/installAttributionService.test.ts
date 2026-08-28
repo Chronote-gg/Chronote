@@ -16,7 +16,7 @@ describe("installAttributionService", () => {
         {
           source: "ChatGPT.com",
           medium: "Referral",
-          campaign: "discord-launch_2026",
+          campaign: "launch",
           landing_path: "/join",
           referrer_domain: "www.ChatGPT.com",
           cta_location: "hero",
@@ -26,7 +26,7 @@ describe("installAttributionService", () => {
     ).toEqual({
       source: "chatgpt.com",
       medium: "referral",
-      campaign: "discord-launch_2026",
+      campaign: "launch",
       landingPath: "/join",
       referrerDomain: "chatgpt.com",
       ctaLocation: "hero",
@@ -57,6 +57,25 @@ describe("installAttributionService", () => {
     expect(
       parseInstallAttribution({ dnt: "1", source: "chatgpt.com" }),
     ).toBeUndefined();
+    expect(
+      parseInstallAttribution({
+        dnt: ["0", "1"],
+        source: "chatgpt.com",
+      }),
+    ).toBeUndefined();
+  });
+
+  test("rejects identifier-like tokens and first-party referrers", () => {
+    const attribution = parseInstallAttribution({
+      source: "1249723747896918109",
+      medium: "person_name",
+      campaign: "john_doe",
+      referrer_domain: "api.chronote.gg",
+    });
+
+    expect(attribution).toMatchObject({ source: "direct", medium: "web" });
+    expect(attribution).not.toHaveProperty("campaign");
+    expect(attribution).not.toHaveProperty("referrerDomain");
   });
 
   test("clears stale attribution when Do Not Track is set", () => {

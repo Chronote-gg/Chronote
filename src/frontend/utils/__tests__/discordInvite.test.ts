@@ -80,4 +80,19 @@ describe("buildInstallUrl", () => {
     expect(url).not.toContain("api.chronote.gg");
     expect(url).not.toContain("secret");
   });
+
+  it("rejects identifier-like UTM values before navigation", () => {
+    const url = buildInstallUrl({
+      ctaLocation: "hero",
+      currentUrl:
+        "https://chronote.gg/?utm_source=1249723747896918109&utm_medium=person_name&utm_campaign=john_doe",
+      doNotTrack: false,
+    });
+
+    expect(url).toContain("source=direct");
+    expect(url).toContain("medium=web");
+    expect(url).not.toContain("1249723747896918109");
+    expect(url).not.toContain("person_name");
+    expect(url).not.toContain("john_doe");
+  });
 });
