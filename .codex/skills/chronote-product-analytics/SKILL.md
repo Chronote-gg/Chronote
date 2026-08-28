@@ -20,6 +20,11 @@ visitors, authenticated product users, guilds, and AI generations distinct.
   of aggregate completion, not a proven one-to-one pairing.
 - Use the `langfuse-metrics` skill for aggregate model volume, cost, and
   latency. Do not treat healthy telemetry as output-quality evidence.
+- For the daily operating view, run its `cost-report` command over the same UTC
+  window as PostHog. Supply completed meetings and transcribed minutes as
+  denominators, and report fully-unpriced model groups alongside attributed
+  cost. This is operational cost accounting, not an OpenAI invoice
+  reconciliation.
 - Do not retrieve questions, answers, notes, transcripts, or identities when
   aggregate evidence answers the request.
 

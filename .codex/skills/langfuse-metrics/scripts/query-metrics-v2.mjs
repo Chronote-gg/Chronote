@@ -30,14 +30,23 @@ const parseArgs = (argv) => {
 
 const parseTimestamp = (value, label) => {
   const parsed = new Date(value);
-  if (!value || Number.isNaN(parsed.getTime())) fail(`Invalid ${label}: ${value}`);
+  if (!value || Number.isNaN(parsed.getTime()))
+    fail(`Invalid ${label}: ${value}`);
   return parsed.toISOString();
 };
 
 const buildSummaryQuery = (options) => {
-  const toTimestamp = parseTimestamp(options.to || new Date().toISOString(), "--to");
-  const defaultFrom = new Date(new Date(toTimestamp).getTime() - 24 * 60 * 60 * 1000);
-  const fromTimestamp = parseTimestamp(options.from || defaultFrom.toISOString(), "--from");
+  const toTimestamp = parseTimestamp(
+    options.to || new Date().toISOString(),
+    "--to",
+  );
+  const defaultFrom = new Date(
+    new Date(toTimestamp).getTime() - 24 * 60 * 60 * 1000,
+  );
+  const fromTimestamp = parseTimestamp(
+    options.from || defaultFrom.toISOString(),
+    "--from",
+  );
   if (new Date(fromTimestamp) >= new Date(toTimestamp)) {
     fail("--from must be earlier than --to");
   }
@@ -50,10 +59,7 @@ const buildSummaryQuery = (options) => {
       { measure: "latency", aggregation: "avg" },
       { measure: "latency", aggregation: "p95" },
     ],
-    dimensions: [
-      { field: "providedModelName" },
-      { field: "name" },
-    ],
+    dimensions: [{ field: "providedModelName" }, { field: "name" }],
     filters: [],
     fromTimestamp,
     toTimestamp,
@@ -71,8 +77,12 @@ const buildSummaryQuery = (options) => {
 };
 
 const loadQuery = (options) => {
-  if (options.command === "summary") return buildSummaryQuery(options);
-  if (options.command !== "query") fail("Command must be summary or query");
+  if (["summary", "cost-report"].includes(options.command)) {
+    return buildSummaryQuery(options);
+  }
+  if (options.command !== "query") {
+    fail("Command must be summary, cost-report, or query");
+  }
   if (!options.file) fail("query requires --file <path>");
   const parsed = JSON.parse(fs.readFileSync(options.file, "utf8"));
   if (!parsed.fromTimestamp || !parsed.toTimestamp) {
@@ -84,13 +94,117 @@ const loadQuery = (options) => {
 const normalizeNumbers = (row) =>
   Object.fromEntries(
     Object.entries(row).map(([key, value]) => {
-      if (/^(count|sum|avg|p\d+|min|max)_/.test(key) && value !== null && value !== "") {
+      if (
+        /^(count|sum|avg|p\d+|min|max)_/.test(key) &&
+        value !== null &&
+        value !== ""
+      ) {
         const number = Number(value);
         if (Number.isFinite(number)) return [key, number];
       }
       return [key, value];
     }),
   );
+
+const nonnegativeNumberOption = (value, label) => {
+  if (value === undefined) return undefined;
+  const number = Number(value);
+  if (!Number.isFinite(number) || number < 0) {
+    fail(`${label} must be a nonnegative number`);
+  }
+  return number;
+};
+
+const sumBy = (rows, key) => {
+  const totals = new Map();
+  for (const row of rows) {
+    const label = String(row[key] || "unknown");
+    totals.set(
+      label,
+      (totals.get(label) || 0) + Number(row.sum_totalCost || 0),
+    );
+  }
+  return [...totals.entries()]
+    .map(([label, totalCost]) => ({ [key]: label, totalCost }))
+    .sort((left, right) => right.totalCost - left.totalCost);
+};
+
+const buildCostReport = (rows, options) => {
+  const modelRows = rows.filter((row) => Boolean(row.providedModelName));
+  const totalCost = modelRows.reduce(
+    (total, row) => total + Number(row.sum_totalCost || 0),
+    0,
+  );
+  const billableObservationCount = modelRows.reduce(
+    (total, row) => total + Number(row.count_count || 0),
+    0,
+  );
+  const pricedGroupRows = modelRows.filter(
+    (row) => Number(row.sum_totalCost || 0) > 0,
+  );
+  const observationsInPricedGroups = pricedGroupRows.reduce(
+    (total, row) => total + Number(row.count_count || 0),
+    0,
+  );
+  const unpricedGroups = modelRows
+    .filter(
+      (row) =>
+        Number(row.count_count || 0) > 0 &&
+        Number(row.sum_totalCost || 0) === 0,
+    )
+    .map((row) => ({
+      providedModelName: row.providedModelName,
+      name: row.name,
+      observationCount: Number(row.count_count || 0),
+    }))
+    .sort((left, right) => right.observationCount - left.observationCount);
+  const observationsInUnpricedGroups = unpricedGroups.reduce(
+    (total, row) => total + row.observationCount,
+    0,
+  );
+  const completedMeetings = nonnegativeNumberOption(
+    options["completed-meetings"],
+    "--completed-meetings",
+  );
+  const transcribedMinutes = nonnegativeNumberOption(
+    options["transcribed-minutes"],
+    "--transcribed-minutes",
+  );
+
+  return {
+    window: {
+      fromTimestamp: options.from,
+      toTimestamp: options.to,
+    },
+    totalAttributedCost: totalCost,
+    billableObservationCount,
+    observationsInPricedGroups,
+    observationsInUnpricedGroups,
+    pricedGroupObservationRatio:
+      billableObservationCount === 0
+        ? null
+        : observationsInPricedGroups / billableObservationCount,
+    unitCosts: {
+      ...(completedMeetings !== undefined
+        ? {
+            costPerCompletedMeeting:
+              completedMeetings === 0 ? null : totalCost / completedMeetings,
+          }
+        : {}),
+      ...(transcribedMinutes !== undefined
+        ? {
+            costPerTranscribedMinute:
+              transcribedMinutes === 0 ? null : totalCost / transcribedMinutes,
+          }
+        : {}),
+    },
+    costByModel: sumBy(modelRows, "providedModelName"),
+    costByFeature: sumBy(modelRows, "name"),
+    unpricedGroups,
+    coverageNote:
+      "Coverage is group-based: a priced aggregate can still contain individual unpriced observations.",
+  };
+};
 
 const sleep = (milliseconds) =>
   new Promise((resolve) => setTimeout(resolve, milliseconds));
@@ -105,7 +219,11 @@ const requestMetrics = async ({ baseUrl, auth, query }, attempt = 0) => {
 
   if (response.status === 429) {
     const retryAfter = Number(response.headers.get("retry-after"));
-    if (attempt === 0 && Number.isFinite(retryAfter) && retryAfter <= MAX_RETRY_AFTER_SECONDS) {
+    if (
+      attempt === 0 &&
+      Number.isFinite(retryAfter) &&
+      retryAfter <= MAX_RETRY_AFTER_SECONDS
+    ) {
       console.error(`Rate limited; retrying once after ${retryAfter}s.`);
       await sleep(retryAfter * 1000);
       return requestMetrics({ baseUrl, auth, query }, 1);
@@ -125,6 +243,9 @@ const requestMetrics = async ({ baseUrl, auth, query }, attempt = 0) => {
 const options = parseArgs(process.argv.slice(2));
 const query = loadQuery(options);
 
+options.from = query.fromTimestamp;
+options.to = query.toTimestamp;
+
 if (options["dry-run"]) {
   console.log(JSON.stringify(query, null, options.compact ? 0 : 2));
   process.exit(0);
@@ -136,10 +257,15 @@ if (!publicKey || !secretKey) {
   fail("LANGFUSE_PUBLIC_KEY and LANGFUSE_SECRET_KEY are required");
 }
 
-const baseUrl = (process.env.LANGFUSE_BASE_URL || DEFAULT_BASE_URL).replace(/\/$/, "");
+const baseUrl = (process.env.LANGFUSE_BASE_URL || DEFAULT_BASE_URL).replace(
+  /\/$/,
+  "",
+);
 const auth = Buffer.from(`${publicKey}:${secretKey}`).toString("base64");
 const payload = await requestMetrics({ baseUrl, auth, query });
-let data = Array.isArray(payload.data) ? payload.data.map(normalizeNumbers) : [];
+let data = Array.isArray(payload.data)
+  ? payload.data.map(normalizeNumbers)
+  : [];
 
 if (options["model-prefix"]) {
   data = data.filter((row) =>
@@ -147,10 +273,9 @@ if (options["model-prefix"]) {
   );
 }
 
-console.log(
-  JSON.stringify(
-    { query, rowCount: data.length, data },
-    null,
-    options.compact ? 0 : 2,
-  ),
-);
+const output =
+  options.command === "cost-report"
+    ? { query, report: buildCostReport(data, options) }
+    : { query, rowCount: data.length, data };
+
+console.log(JSON.stringify(output, null, options.compact ? 0 : 2));

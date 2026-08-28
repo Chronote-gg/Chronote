@@ -13,6 +13,7 @@ Use [`scripts/query-metrics-v2.mjs`](scripts/query-metrics-v2.mjs):
 
 ```text
 node .codex/skills/langfuse-metrics/scripts/query-metrics-v2.mjs summary --from 2026-08-26T00:00:00Z --model-prefix gpt-5.6-
+node .codex/skills/langfuse-metrics/scripts/query-metrics-v2.mjs cost-report --from 2026-08-26T00:00:00Z --to 2026-08-27T00:00:00Z --completed-meetings 12 --transcribed-minutes 347
 node .codex/skills/langfuse-metrics/scripts/query-metrics-v2.mjs query --file query.json
 ```
 
@@ -21,6 +22,14 @@ The helper reads `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`, and optional
 single request grouped by provided model and observation name, returning count,
 total cost, average latency, and p95 latency. Use `--dry-run` to inspect the
 query without sending it.
+
+`cost-report` uses that same single aggregate query to return attributed cost,
+cost by model and feature, known fully-unpriced model groups, and group-based
+cost coverage. Pass PostHog's completed-meeting count and the application's
+transcribed-minute denominator when available to add unit costs. Do not call
+the coverage ratio exact: a group with some cost may still contain individual
+unpriced observations. Keep any unpriced TTS, image, or provider activity
+visible rather than estimating dollars from unrelated units.
 
 Keep queries bounded with explicit UTC `fromTimestamp` and `toTimestamp`.
 Start with the dimensions and metrics needed to answer the question; do not add

@@ -1,5 +1,8 @@
 import type OpenAI from "openai";
-import type { TranscriptionCreateParamsNonStreaming } from "openai/resources/audio";
+import type {
+  Transcription,
+  TranscriptionCreateParamsNonStreaming,
+} from "openai/resources/audio";
 import {
   createReadStream,
   existsSync,
@@ -64,7 +67,7 @@ import {
   updateActiveObservation,
 } from "@langfuse/tracing";
 import { buildLangfuseTranscriptionAudioAttachment } from "../observability/langfuseAudioAttachment";
-import { buildLangfuseTranscriptionUsageDetails } from "../observability/langfuseUsageDetails";
+import { buildLangfuseTranscriptionAccounting } from "../observability/langfuseUsageDetails";
 import { toLangfuseAttributeMetadata } from "../observability/langfuseMetadata";
 import { ensureMeetingTempDirSync } from "./tempFileService";
 import { evaluateNoiseGate } from "../utils/audioNoiseGate";
@@ -282,6 +285,7 @@ async function transcribeInternal(
     return {
       text: transcription.text ?? "",
       logprobs: transcription.logprobs ?? [],
+      usage: transcription.usage,
     };
   };
 
@@ -300,6 +304,7 @@ async function transcribeInternal(
     rateMinWords: number;
     rateMinSyllables: number;
     maxSyllablesPerSecond: number;
+    usage?: Transcription["usage"];
   };
 
   const toLogSafeTextQuality = (
@@ -317,6 +322,7 @@ async function transcribeInternal(
     raw: {
       text: string;
       logprobs?: { logprob?: number }[];
+      usage?: Transcription["usage"];
     },
     candidate: {
       id: "prompt" | "no_prompt";
@@ -403,6 +409,7 @@ async function transcribeInternal(
       rateMinWords: guardConfig.rateMinWords,
       rateMinSyllables: guardConfig.rateMinSyllables,
       maxSyllablesPerSecond: guardConfig.maxSyllablesPerSecond,
+      usage: raw.usage,
     };
   };
 
@@ -577,14 +584,35 @@ async function transcribeInternal(
             maxSyllablesPerSecond,
           } = selection.selected;
 
-          const usageDetails = buildLangfuseTranscriptionUsageDetails(
+          const accounting = buildLangfuseTranscriptionAccounting(
+            [
+              selection.promptCandidate.usage,
+              ...(selection.noPromptCandidate
+                ? [selection.noPromptCandidate.usage]
+                : []),
+            ],
             context?.audioSeconds,
           );
+          if (accounting.unpricedRequestCount > 0) {
+            console.warn("Transcription cost accounting is incomplete.", {
+              ...traceMetadata,
+              transcriptionCostAccountingStatus: accounting.status,
+              transcriptionRequestCount: accounting.requestCount,
+              transcriptionPricedRequestCount: accounting.pricedRequestCount,
+              transcriptionUnpricedRequestCount:
+                accounting.unpricedRequestCount,
+            });
+          }
           updateActiveObservation(
             {
               output: guardResult.text,
-              usageDetails,
+              usageDetails: accounting.usageDetails,
               metadata: {
+                transcriptionCostAccountingStatus: accounting.status,
+                transcriptionRequestCount: accounting.requestCount,
+                transcriptionPricedRequestCount: accounting.pricedRequestCount,
+                transcriptionUnpricedRequestCount:
+                  accounting.unpricedRequestCount,
                 transcriptionFlags: guardResult.flags,
                 transcriptionCandidate: selection.selected.candidateId,
                 quietAudio: guardResult.quietAudio,
