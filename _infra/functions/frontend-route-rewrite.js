@@ -79,6 +79,5 @@ function handler(event) {
       "content-type": { value: "text/plain; charset=utf-8" },
       "x-robots-tag": { value: "noindex, nofollow" },
     },
-    body: "Not Found",
   };
 }

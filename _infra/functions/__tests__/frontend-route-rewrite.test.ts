@@ -85,7 +85,6 @@ describe("frontend route rewrite", () => {
       expect(invoke(uri)).toMatchObject({
         statusCode: 404,
         headers: { "x-robots-tag": { value: "noindex, nofollow" } },
-        body: "Not Found",
       });
     }
   });
