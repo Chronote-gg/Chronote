@@ -41,7 +41,12 @@ export function buildInstallUrl({
   if (doNotTrack) return `${buildApiUrl("/auth/discord/install")}?dnt=1`;
   const page = readUrl(currentUrl);
   const referringPage = readUrl(referrer);
-  const referrerDomain = referringPage?.hostname.replace(/^www\./, "");
+  const referringHostname = referringPage?.hostname.replace(/^www\./, "");
+  const referrerDomain =
+    referringHostname === "chronote.gg" ||
+    referringHostname?.endsWith(".chronote.gg")
+      ? undefined
+      : referringHostname;
   const source =
     sanitizeToken(page?.searchParams.get("utm_source")) ||
     referrerDomain ||

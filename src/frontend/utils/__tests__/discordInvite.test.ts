@@ -67,4 +67,17 @@ describe("buildInstallUrl", () => {
     expect(url).not.toContain("share-secret");
     expect(url).not.toContain("person%40example.com");
   });
+
+  it("does not count Chronote navigation as an acquisition source", () => {
+    const url = buildInstallUrl({
+      ctaLocation: "join",
+      currentUrl: "https://chronote.gg/join",
+      referrer: "https://api.chronote.gg/auth/discord/callback?code=secret",
+      doNotTrack: false,
+    });
+
+    expect(url).toContain("source=direct");
+    expect(url).not.toContain("api.chronote.gg");
+    expect(url).not.toContain("secret");
+  });
 });
