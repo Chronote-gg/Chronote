@@ -86,10 +86,12 @@ const buildRouteHtml = (indexHtml, route) => {
       setTagValue(current, matcher, attribute, value),
     indexHtml,
   );
-  return html.replace(
-    /<title>[^<]*<\/title>/i,
-    `<title>${escapeHtml(route.title)}</title>`,
-  );
+  return html
+    .replace(/\s*<script id="chronote-structured-data"[\s\S]*?<\/script>/i, "")
+    .replace(
+      /<title>[^<]*<\/title>/i,
+      `<title>${escapeHtml(route.title)}</title>`,
+    );
 };
 
 const buildSitemap = () =>

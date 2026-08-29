@@ -44,7 +44,7 @@ runs:
         # short TTL instead and are re-uploaded below.
         aws s3 sync "$BUILD_DIR" "s3://$BUCKET" --delete --exclude "index.html" --cache-control "public,max-age=31536000,immutable"
         aws s3 cp "$BUILD_DIR/index.html" "s3://$BUCKET/index.html" --cache-control "public,max-age=600"
-        for stable in manifest.json sitemap.xml robots.txt; do
+        for stable in manifest.json sitemap.xml robots.txt llms.txt 404.html; do
           if [ -f "$BUILD_DIR/$stable" ]; then
             aws s3 cp "$BUILD_DIR/$stable" "s3://$BUCKET/$stable" --cache-control "public,max-age=600"
           fi

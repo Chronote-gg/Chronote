@@ -15,8 +15,8 @@ const forceLocalSearch = process.env.DOCS_SEARCH_PROVIDER === "local";
 const useLocalSearch = forceLocalSearch || !hasAlgoliaConfig;
 const useAlgolia = hasAlgoliaConfig && !forceLocalSearch;
 
-const robotsTxtPlugin = () => ({
-  name: "chronote-robots-txt",
+const crawlerFilesPlugin = () => ({
+  name: "chronote-crawler-files",
   // Written at build time rather than kept in static/, so sandbox and staging
   // advertise their own sitemap instead of the production one. Docusaurus
   // copies static/ verbatim and would hardcode whichever host was committed.
@@ -26,10 +26,44 @@ const robotsTxtPlugin = () => ({
       "User-agent: *",
       "Allow: /",
       "",
+      "# Public docs are intentionally available to ordinary search engines,",
+      "# OAI-SearchBot, GPTBot, and user-triggered assistants.",
+      "",
       `Sitemap: ${new URL("sitemap.xml", siteConfig.url).toString()}`,
       "",
     ].join("\n");
     await writeFile(path.join(outDir, "robots.txt"), body, "utf8");
+
+    const docsUrl = (pathname: string) =>
+      new URL(pathname, `${siteConfig.url}/`).toString();
+    const llms = [
+      "# Chronote Documentation",
+      "",
+      "> Public documentation for Chronote, a Discord bot that records voice meetings, transcribes each speaker, posts structured notes, and answers questions about recent meetings with the source meeting and timestamp.",
+      "",
+      "Use these canonical public pages for current product behavior and setup. Portal pages, shared meetings, and meeting contents are not public documentation.",
+      "",
+      "## Start here",
+      "",
+      `- [Chronote](${docsUrl("/")}): Documentation home and product overview.`,
+      `- [Discord meeting notes guide](${docsUrl("/discord-meeting-notes/")}): What the bot does and how the workflow fits a Discord server.`,
+      `- [Getting started](${docsUrl("/getting-started/")}): Installation, permissions, onboarding, and the first meeting.`,
+      `- [Features](${docsUrl("/features/")}): Commands and product capabilities.`,
+      "",
+      "## Product documentation",
+      "",
+      `- [Meeting lifecycle](${docsUrl("/core-concepts/meeting-lifecycle/")}): Recording, processing, publishing, and revision stages.`,
+      `- [Integrations](${docsUrl("/integrations/")}): Web portal, Notion, Discord, and Remote MCP integrations.`,
+      `- [Troubleshooting](${docsUrl("/troubleshooting/common-issues/")}): Common setup and recording problems.`,
+      `- [What's New](${docsUrl("/whats-new/")}): Recent public product changes.`,
+      "",
+      "## Trust and policies",
+      "",
+      `- [Privacy Policy](${docsUrl("/legal/privacy/")}): What Chronote records, stores, and sends to service providers.`,
+      `- [Terms of Service](${docsUrl("/legal/terms/")}): Terms governing use of Chronote.`,
+      "",
+    ].join("\n");
+    await writeFile(path.join(outDir, "llms.txt"), llms, "utf8");
   },
 });
 
@@ -68,6 +102,11 @@ const config: Config = {
           editUrl:
             "https://github.com/Chronote-gg/Chronote/tree/master/apps/docs-site/",
         },
+        sitemap: {
+          ignorePatterns: ["/search/", "/search/**"],
+          changefreq: null,
+          priority: null,
+        },
         blog: false,
         pages: false,
         theme: {
@@ -89,9 +128,9 @@ const config: Config = {
             hashed: true,
           },
         ],
-        robotsTxtPlugin,
+        crawlerFilesPlugin,
       ]
-    : [robotsTxtPlugin],
+    : [crawlerFilesPlugin],
 
   themeConfig: {
     image: "img/chronote-social-card.png",
