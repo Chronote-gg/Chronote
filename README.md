@@ -74,7 +74,7 @@ These checks run before PR merge and deployment. Use `yarn run check` for the fu
 - IaC scan (Checkov via uvx) catches Terraform misconfigurations. Command: `yarn checkov`. Docs: https://www.checkov.io/2.Basics/CLI%20Command%20Reference.html and https://docs.astral.sh/uv/concepts/tools/
 - Terraform drift visibility and reconciliation are manual through `.github/workflows/terraform-plan.yml` and `.github/workflows/terraform-apply.yml`. Apply uses a reviewed saved plan artifact and GitHub environment approval.
 
-CI runs the same set as `yarn run check:ci` (see `.github/workflows/ci.yml`).
+CI runs the same set as `yarn run check:ci` (see `.github/workflows/ci.yml` and `.github/workflows/ci-core.yml`).
 
 ### Check dependencies (Mermaid)
 
@@ -112,17 +112,19 @@ PR CI workflow
 
 ```mermaid
 flowchart LR
-  A["PR CI (.github/workflows/ci.yml)"] --> B["code-quality: lint + Prettier + Markdown"]
-  A --> C["core: test, build, docs, E2E, Checkov, code stats"]
-  A --> D["supplemental: prompts, LLM, Storybook, Docker"]
-  A --> E["path-filtered Windows: desktop + visual"]
+  A["PR CI (.github/workflows/ci.yml)"] --> B["Path detection"]
+  B --> C["Reusable core CI (.github/workflows/ci-core.yml)"]
+  C --> D["Code quality, tests, build, docs, E2E, Checkov, code stats"]
+  C --> E["Prompts, LLM, Storybook, Docker"]
+  B --> F["Path-filtered Windows desktop check"]
+  B --> G["PR-only visual regression publishing"]
 ```
 
 Deploy workflow (prod)
 
 ```mermaid
 flowchart LR
-  A["Deploy (.github/workflows/deploy.yml)"] --> B["Reusable CI (.github/workflows/ci.yml)"]
+  A["Deploy (.github/workflows/deploy.yml)"] --> B["Reusable core CI (.github/workflows/ci-core.yml)"]
   B --> C["Core checks + full desktop check (blocking)"]
   B --> D["Prompts, LLM, Storybook, Docker (advisory)"]
   C --> Z["CI complete"]
