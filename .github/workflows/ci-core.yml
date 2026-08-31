@@ -1,0 +1,313 @@
+name: Core CI
+permissions:
+  contents: read
+
+on:
+  workflow_call:
+    inputs:
+      run_desktop:
+        description: Run the Windows desktop validation job
+        required: false
+        type: boolean
+        default: true
+
+jobs:
+  code-quality:
+    name: Code Quality (Lint, Format, Markdown)
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: "24.15.0"
+          cache: "yarn"
+
+      - name: Install dependencies
+        run: bash scripts/ci-install-dependencies.sh
+
+      - name: Run ESLint
+        run: yarn lint:check
+
+      - name: Run Prettier
+        run: yarn prettier:check
+
+      - name: Run markdownlint
+        run: yarn markdownlint:check
+
+  prompts-check:
+    name: Prompts Check
+    continue-on-error: ${{ github.event_name != 'pull_request' }}
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: "24.15.0"
+          cache: "yarn"
+
+      - name: Install dependencies
+        run: bash scripts/ci-install-dependencies.sh
+
+      - name: Run Langfuse prompt check
+        env:
+          LANGFUSE_PUBLIC_KEY: ${{ secrets.LANGFUSE_PUBLIC_KEY }}
+          LANGFUSE_SECRET_KEY: ${{ secrets.LANGFUSE_SECRET_KEY }}
+          LANGFUSE_BASE_URL: ${{ vars.LANGFUSE_BASE_URL }}
+          LANGFUSE_PROMPT_LABEL: ${{ vars.LANGFUSE_PROMPT_LABEL }}
+        run: |
+          if [ "${GITHUB_EVENT_NAME}" = "pull_request" ] && [ -z "${LANGFUSE_PUBLIC_KEY:-}" ]; then
+            echo "Skipping Langfuse prompt check (Langfuse secrets not available in this PR context)."
+            exit 0
+          fi
+          yarn prompts:check
+
+  llm-connections-check:
+    name: LLM Connections Check
+    continue-on-error: ${{ github.event_name != 'pull_request' }}
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: "24.15.0"
+          cache: "yarn"
+
+      - name: Install dependencies
+        run: bash scripts/ci-install-dependencies.sh
+
+      - name: Run Langfuse LLM connection check
+        env:
+          LANGFUSE_PUBLIC_KEY: ${{ secrets.LANGFUSE_PUBLIC_KEY }}
+          LANGFUSE_SECRET_KEY: ${{ secrets.LANGFUSE_SECRET_KEY }}
+          LANGFUSE_BASE_URL: ${{ vars.LANGFUSE_BASE_URL }}
+          LLM_CONNECTIONS_ENV: ${{ vars.LLM_CONNECTIONS_ENV }}
+        run: |
+          if [ "${GITHUB_EVENT_NAME}" = "pull_request" ] && [ -z "${LANGFUSE_PUBLIC_KEY:-}" ]; then
+            echo "Skipping Langfuse LLM connection check (Langfuse secrets not available in this PR context)."
+            exit 0
+          fi
+          yarn llm-connections:check
+
+  test:
+    name: Unit Tests
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: "24.15.0"
+          cache: "yarn"
+
+      - name: Install dependencies
+        run: bash scripts/ci-install-dependencies.sh
+
+      - name: Run Jest
+        run: yarn test
+
+  build:
+    name: Build
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: "24.15.0"
+          cache: "yarn"
+
+      - name: Install dependencies
+        run: bash scripts/ci-install-dependencies.sh
+
+      - name: Build backend and frontend
+        run: yarn build:all
+
+      - name: Verify backend build artifact
+        shell: bash
+        run: |
+          test -f dist/index.js || {
+            echo "ERROR: dist/index.js not found after build"
+            exit 1
+          }
+
+  desktop-check:
+    name: Desktop Check
+    if: ${{ inputs.run_desktop }}
+    runs-on: blacksmith-4vcpu-windows-2025
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: "24.15.0"
+          cache: "yarn"
+          cache-dependency-path: |
+            yarn.lock
+            apps/desktop/yarn.lock
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Validate desktop app
+        run: yarn desktop:ci
+
+  docs-check:
+    name: Docs Check
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: "24.15.0"
+          cache: "yarn"
+
+      - name: Install dependencies
+        run: bash scripts/ci-install-dependencies.sh
+
+      - name: Build and validate docs
+        run: yarn docs:check
+
+  storybook-build:
+    name: Storybook Build
+    continue-on-error: ${{ github.event_name != 'pull_request' }}
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: "24.15.0"
+          cache: "yarn"
+
+      - name: Install dependencies
+        run: bash scripts/ci-install-dependencies.sh
+
+      # UI changes are expected to ship Storybook screenshots, so the build has
+      # to stay green. A build is sufficient: a preview-level transform failure
+      # takes every story down at once and exits non-zero here, without the
+      # cost of running the browser test runner in CI.
+      - name: Build Storybook
+        run: yarn build-storybook --quiet
+
+  docker-build:
+    name: Docker Build
+    continue-on-error: ${{ github.event_name != 'pull_request' }}
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Build Docker image
+        run: |
+          docker build -t meeting-notes-bot-ci .
+          docker run --rm meeting-notes-bot-ci ls -la dist/index.js
+
+  e2e:
+    name: E2E Tests
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    timeout-minutes: 20
+    env:
+      FRONTEND_SITE_URL: http://127.0.0.1:5173
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: "24.15.0"
+          cache: "yarn"
+
+      - name: Install dependencies
+        run: bash scripts/ci-install-dependencies.sh
+
+      - name: Get Playwright version
+        id: pw-version
+        run: |
+          pw_version=$(node -p 'require("@playwright/test/package.json").version')
+          echo "version=$pw_version" >> $GITHUB_OUTPUT
+
+      - name: Cache Playwright browsers
+        id: pw-cache
+        uses: actions/cache@v6
+        with:
+          path: ~/.cache/ms-playwright
+          key: ${{ runner.os }}-playwright-${{ steps.pw-version.outputs.version }}
+
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps
+
+      - name: Run Playwright tests
+        run: yarn test:e2e
+
+  code-stats:
+    name: Code Stats
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Get Python version
+        id: py-version
+        run: |
+          python_version=$(python3 -c 'import sys; print("{}.{}".format(sys.version_info.major, sys.version_info.minor))')
+          echo "version=$python_version" >> $GITHUB_OUTPUT
+
+      - name: Cache pip (lizard)
+        id: pip-cache
+        uses: actions/cache@v6
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ steps.py-version.outputs.version }}-lizard
+
+      - name: Code stats (scc + lizard)
+        env:
+          WORKSPACE: ${{ github.workspace }}
+        run: |
+          docker run --rm -v "$WORKSPACE:/pwd" ghcr.io/boyter/scc:master \
+            scc --ci /pwd
+          docker run --rm -v "$WORKSPACE:/pwd" ghcr.io/boyter/scc:master \
+            scc --ci --by-file --sort lines /pwd
+          python3 -m pip install --quiet lizard
+          lizard -W whitelizard.txt -l ts -l tsx -l js -l jsx src test
+
+  checkov:
+    name: Checkov (Terraform)
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: "24.15.0"
+          cache: "yarn"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+
+      - name: Run Checkov
+        run: yarn checkov
