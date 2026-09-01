@@ -8,3 +8,7 @@ export async function fetchGuildInstaller(guildId: string) {
 export async function saveGuildInstaller(installer: GuildInstaller) {
   return getGuildInstallerRepository().write(installer);
 }
+
+export async function saveGuildInstallerIfAbsent(installer: GuildInstaller) {
+  return getGuildInstallerRepository().writeIfAbsent(installer);
+}

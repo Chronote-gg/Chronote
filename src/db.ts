@@ -1584,6 +1584,23 @@ export async function writeGuildInstaller(
   await dynamoDbClient.send(command);
 }
 
+export async function writeGuildInstallerIfAbsent(
+  installer: GuildInstaller,
+): Promise<boolean> {
+  const command = new PutItemCommand({
+    TableName: tableName("InstallerTable"),
+    Item: marshall(installer),
+    ConditionExpression: "attribute_not_exists(guildId)",
+  });
+  try {
+    await dynamoDbClient.send(command);
+    return true;
+  } catch (error) {
+    if (isConditionalCheckFailed(error)) return false;
+    throw error;
+  }
+}
+
 export async function getGuildInstaller(
   guildId: string,
 ): Promise<GuildInstaller | undefined> {

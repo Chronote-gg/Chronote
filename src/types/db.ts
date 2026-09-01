@@ -384,6 +384,17 @@ export interface GuildInstaller {
   guildId: string; // Partition key
   installerId: string;
   installedAt: string; // ISO timestamp
+  acquisition?: InstallAttribution;
+}
+
+export interface InstallAttribution {
+  source: string;
+  medium: string;
+  campaign?: string;
+  landingPath: string;
+  referrerDomain?: string;
+  ctaLocation: string;
+  capturedAt: string; // ISO timestamp
 }
 
 export type OnboardingStep =

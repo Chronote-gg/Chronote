@@ -28,6 +28,32 @@ visitors, authenticated product users, guilds, and AI generations distinct.
 - Do not retrieve questions, answers, notes, transcripts, or identities when
   aggregate evidence answers the request.
 
+## Acquisition attribution
+
+Prefer an explicit `server_install_attributed` event when it exists. Report
+only the sanitized source, medium, campaign, landing path, referrer domain, and
+CTA location; never expose a browser/session id, Discord user id, full URL or
+query string, raw user agent, or precise geography.
+
+Older `server_installed` events are keyed to a guild while website activity is
+keyed to a browser or signed-in user, so they cannot be joined deterministically.
+For those installs, a bounded timestamp correlation can produce an inference:
+
+1. Read the guild's `server_installed` timestamp.
+2. In a short lookback before that timestamp, group `$pageview` and
+   `add_to_discord_clicked` by landing path, referrer domain, UTM source, and CTA
+   location.
+3. Call the source a strong inference only when there is one coherent path, no
+   competing click path, and the final install click is within a few minutes of
+   the install. Otherwise report acquisition as `UNKNOWN`.
+4. Use guild-scoped onboarding events only to validate subsequent activation;
+   do not retrieve or report the acting person's identity.
+
+Always label timestamp correlation as inferred rather than deterministic. A
+tight sequence such as one referral landing, one CTA path, an installation
+seconds later, completed onboarding, and immediate meeting usage is useful
+product evidence, but it is not a cryptographic join.
+
 ## Resolve active guild names
 
 PostHog intentionally stores `guild_id`, not the mutable guild name. Group the
