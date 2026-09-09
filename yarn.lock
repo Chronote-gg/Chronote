@@ -14649,10 +14649,10 @@ open@^8.4.0:
     is-docker "^2.1.1"
     is-wsl "^2.2.0"
 
-openai@^7.8.0:
-  version "7.8.0"
-  resolved "https://registry.yarnpkg.com/openai/-/openai-7.8.0.tgz#ee5be9e90702d75b3e24ec0d4ca8aaf9300eaaea"
-  integrity sha512-/2g9JzdnXNcjX1W/UlSNu+OdSFDAaAVt0n9Onom0kPenH54o59G2WrX/xjTnr26UHNSh6hxcAf58doGYRme2rw==
+openai@7.3.0:
+  version "7.3.0"
+  resolved "https://registry.yarnpkg.com/openai/-/openai-7.3.0.tgz#97a6b514396b20ef01ad0afbcbd86d512bfa1d20"
+  integrity sha512-FLnIAkDEP3grs+BSDpqxEWVR37yG97/hs95lajF8SnHuA5nqtssh0uJVXbPhODNEoZqar+nEd+fIeGJgwoLUmg==
 
 opener@^1.5.2:
   version "1.5.2"
@@ -17614,10 +17614,10 @@ strip-json-comments@~2.0.1:
   resolved "https://registry.yarnpkg.com/strip-json-comments/-/strip-json-comments-2.0.1.tgz#3c531942e908c2697c0ec344858c286c7ca0a60a"
   integrity sha512-4gB8na07fecVVkOI6Rs4e7T6NOTki5EmL7TUduTs6bu3EdnSycntVJ4re8kgZA+wx9IueI2Y11bfbgwtzuE0KQ==
 
-stripe@22.6.0:
-  version "22.6.0"
-  resolved "https://registry.yarnpkg.com/stripe/-/stripe-22.6.0.tgz#4a4b31587ca41d4ba60f1fc34ff6bdc900dc7b2d"
-  integrity sha512-Ezk+WYEEwX2DLxFrKfb6coznlCMZvCaCYMNPXNHFSZkBIEzF5Hgm7RLb38q/0h9Ol5jsUJGJRorvhzAvckgfhw==
+stripe@22.4.0:
+  version "22.4.0"
+  resolved "https://registry.yarnpkg.com/stripe/-/stripe-22.4.0.tgz#f82873c14743927f2b70fcc30f548a9eaacb843f"
+  integrity sha512-LVJ+tcSYeqOSnXr3i+Kz2tZ7y0crLLdP2uwD/4wccrmEVyn0g/Heo0pF7as7rxS/sOjJzrb1lxgZY0Y0Dx1pSA==
 
 strnum@^2.4.1:
   version "2.4.1"
