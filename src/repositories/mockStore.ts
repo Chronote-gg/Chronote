@@ -1,3 +1,4 @@
+import type { PurchaseAttempt, PurchaseIncident } from "../types/purchase";
 import type { AuthedProfile } from "../trpc/context";
 import type {
   AutoRecordSettings,
@@ -37,6 +38,8 @@ import type {
 } from "./types";
 
 type MockStore = {
+  purchaseAttempts: Map<string, PurchaseAttempt>;
+  purchaseIncidents: Map<string, PurchaseIncident>;
   user: AuthedProfile;
   userGuilds: DiscordGuild[];
   botGuilds: DiscordGuild[];
@@ -919,6 +922,8 @@ function buildDefaultStore(): MockStore {
     subscriptions,
     paymentTransactions,
     stripeWebhookEvents,
+    purchaseAttempts: new Map(),
+    purchaseIncidents: new Map(),
     onboardingStates,
     meetingHistoryByGuild,
     personalMediaUploadsById: new Map<string, PersonalMediaUploadJobRecord>(),

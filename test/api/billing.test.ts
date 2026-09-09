@@ -630,7 +630,7 @@ describe("billing webhook routes", () => {
       ]);
 
       expect(responses.map((response) => response.statusCode)).toEqual([
-        200, 200,
+        200, 503,
       ]);
       expect(retrieve).toHaveBeenCalledTimes(1);
       expect(
@@ -663,6 +663,192 @@ describe("billing webhook routes", () => {
       ).toBeUndefined();
     } finally {
       consoleError.mockRestore();
+      await closeServer(server);
+    }
+  });
+});
+
+describe("initial purchase webhook recovery", () => {
+  beforeEach(() => {
+    resetMockStore();
+    clearGuildSubscriptionCache();
+    config.stripe.secretKey = "sk_test_billing";
+    config.stripe.webhookSecret = "whsec_test_billing";
+  });
+  afterAll(() => Object.assign(config.stripe, originalStripeConfig));
+  test("a processing claim left by a crashed worker is retried after lease expiry", async () => {
+    const event = subscriptionEvent("active", "evt_crashed");
+    await getStripeWebhookRepository().tryCreate({
+      eventId: event.id,
+      receivedAt: new Date().toISOString(),
+      expiresAt: Math.floor(Date.now() / 1000) + 86400,
+      ...{
+        state: "processing",
+        leaseToken: "dead-worker",
+        leaseUntil: Date.now() - 1,
+      },
+    });
+    const { server, baseUrl } = createServer(createStripe(event));
+    try {
+      expect((await postWebhook(baseUrl)).statusCode).toBe(200);
+      expect(
+        (await getSubscriptionRepository().get(guildId))?.stripeSubscriptionId,
+      ).toBe("sub_basic");
+    } finally {
+      await closeServer(server);
+    }
+  });
+
+  test("records competing nonterminal subscriptions durably without replacing the accepted pointer", async () => {
+    const current = {
+      ...activeStripeSubscription,
+      id: "sub_accepted",
+      created: 100,
+    };
+    await getSubscriptionRepository().write({
+      guildId,
+      tier: "basic",
+      status: "active",
+      subscriptionType: "stripe",
+      startDate: "2026-01-01",
+      stripeSubscriptionId: current.id,
+    });
+    const incoming = {
+      ...activeStripeSubscription,
+      id: "sub_duplicate",
+      created: 101,
+    };
+    const event = {
+      ...subscriptionEvent("active", "evt_duplicate_durable"),
+      data: { object: incoming },
+    } as unknown as StripeEvent;
+    const retrieve = jest.fn(async (id: string) =>
+      id === current.id ? current : incoming,
+    );
+    const { server, baseUrl } = createServer(createStripe(event, retrieve));
+    try {
+      expect((await postWebhook(baseUrl)).statusCode).toBe(200);
+      expect(
+        (await getSubscriptionRepository().get(guildId))?.stripeSubscriptionId,
+      ).toBe(current.id);
+      const { getMockStore } = await import("../../src/repositories/mockStore");
+      expect(getMockStore().purchaseIncidents.size).toBe(1);
+    } finally {
+      await closeServer(server);
+    }
+  });
+
+  test("an expired webhook releases only its matching provider-confirmed attempt", async () => {
+    const { getMockStore } = await import("../../src/repositories/mockStore");
+    const attempt = {
+      guildId,
+      attemptId: "attempt_expire",
+      revision: "r1",
+      payerId: "payer",
+      mode: "test" as const,
+      fingerprint: "fp",
+      createdAt: Date.now(),
+      state: "open" as const,
+      checkout: {},
+      customerId: "cus_first",
+      sessionId: "cs_first",
+    };
+    getMockStore().purchaseAttempts.set(guildId, attempt);
+    const session = {
+      id: "cs_first",
+      status: "expired",
+      subscription: null,
+      customer: "cus_first",
+      livemode: false,
+      metadata: { guild_id: guildId, purchase_attempt_id: "attempt_expire" },
+    };
+    const event = {
+      id: "evt_expired",
+      type: "checkout.session.expired",
+      data: { object: session },
+    } as unknown as StripeEvent;
+    const client = createStripe(event);
+    Object.assign(client, {
+      checkout: { sessions: { retrieve: jest.fn(async () => session) } },
+    });
+    const { server, baseUrl } = createServer(client);
+    try {
+      expect((await postWebhook(baseUrl)).statusCode).toBe(200);
+      expect(getMockStore().purchaseAttempts.get(guildId)?.state).toBe(
+        "expired",
+      );
+    } finally {
+      await closeServer(server);
+    }
+  });
+
+  test("invoice-first duplicate survives a crash after incident persistence without losing payment evidence", async () => {
+    const { getMockStore } = await import("../../src/repositories/mockStore");
+    const accepted = { ...activeStripeSubscription, id: "sub_canonical" };
+    const duplicate = { ...activeStripeSubscription, id: "sub_duplicate_paid" };
+    await getSubscriptionRepository().write({
+      guildId,
+      tier: "basic",
+      status: "active",
+      subscriptionType: "stripe",
+      startDate: "2026-01-01",
+      stripeSubscriptionId: accepted.id,
+    });
+    const event = {
+      id: "evt_invoice_first",
+      type: "invoice.payment_succeeded",
+      data: {
+        object: {
+          id: "in_paid_duplicate",
+          amount_paid: 500,
+          currency: "usd",
+          status: "paid",
+          created: 100,
+          customer: "cus_duplicate",
+          metadata: { guild_id: guildId },
+          parent: {
+            subscription_details: {
+              subscription: duplicate.id,
+              metadata: { guild_id: guildId },
+            },
+          },
+        },
+      },
+    } as unknown as StripeEvent;
+    const client = createStripe(
+      event,
+      jest.fn(async (id: string) =>
+        id === accepted.id ? accepted : duplicate,
+      ),
+    );
+    const { server, baseUrl } = createServer(client);
+    try {
+      expect((await postWebhook(baseUrl)).statusCode).toBe(200);
+      expect(getMockStore().purchaseIncidents.size).toBe(1);
+      expect(
+        getMockStore().paymentTransactions.get("in_paid_duplicate")
+          ?.subscriptionID,
+      ).toBe(duplicate.id);
+      const receipt = getMockStore().stripeWebhookEvents.get(event.id)!;
+      getMockStore().stripeWebhookEvents.set(event.id, {
+        ...receipt,
+        state: "processing",
+        leaseToken: "crashed_after_effects",
+        leaseUntil: Date.now() - 1,
+      });
+      expect((await postWebhook(baseUrl)).statusCode).toBe(200);
+      expect(getMockStore().purchaseIncidents.size).toBe(1);
+      expect(getMockStore().paymentTransactions.size).toBe(1);
+      expect(
+        (await getSubscriptionRepository().get(guildId))?.stripeSubscriptionId,
+      ).toBe(accepted.id);
+      expect(getMockStore().purchaseAttempts.get(guildId)?.state).toBe(
+        "needs_review",
+      );
+      expect((await getStripeWebhookRepository().get(event.id))?.state).toBe(
+        "completed",
+      );
+    } finally {
       await closeServer(server);
     }
   });

@@ -68,6 +68,9 @@ export interface PaymentTransaction {
 }
 
 export interface StripeWebhookEvent {
+  state?: "processing" | "completed";
+  leaseToken?: string;
+  leaseUntil?: number;
   eventId: string;
   receivedAt: string;
   expiresAt: number;
