@@ -13,6 +13,7 @@ import {
 import {
   updateMeetingProcessingMessage,
   updateMeetingSummaryMessage,
+  updateMeetingMessage,
 } from "../embed";
 import { deleteIfExists } from "../util";
 import { MeetingData } from "../types/meeting-data";
@@ -718,23 +719,11 @@ async function updateAutoRecordCancelledMessage(meeting: MeetingData) {
     .setColor(0x6c757d)
     .setTimestamp();
 
-  if (meeting.startMessageId) {
-    try {
-      const message = await meeting.textChannel.messages.fetch(
-        meeting.startMessageId,
-      );
-      await message.edit({ embeds: [embed], components: [] });
-      return;
-    } catch (error) {
-      console.warn("Failed to update auto-record start message", error);
-    }
-  }
-
-  try {
-    await meeting.textChannel.send({ embeds: [embed] });
-  } catch (error) {
-    console.warn("Failed to send auto-record cancellation message", error);
-  }
+  await updateMeetingMessage(
+    meeting,
+    { embeds: [embed], components: [] },
+    "cancellation",
+  );
 }
 
 async function markMeetingProcessing(meeting: MeetingData) {

@@ -55,9 +55,11 @@ export async function withMeetingEndTrace(
             { asType: "chain" },
           );
 
+          let finalizationFailed = false;
           try {
             await run();
           } catch (error) {
+            finalizationFailed = true;
             updateActiveObservation(
               {
                 level: "ERROR",
@@ -67,8 +69,19 @@ export async function withMeetingEndTrace(
             );
             throw error;
           } finally {
+            const deliveryDegraded = Object.values(meeting.delivery ?? {}).some(
+              (result) =>
+                result.outcome === "failed" || result.outcome === "partial",
+            );
             updateActiveObservation(
               {
+                metadata: { delivery: meeting.delivery },
+                ...(deliveryDegraded && !finalizationFailed
+                  ? {
+                      level: "ERROR" as const,
+                      statusMessage: "Discord delivery degraded",
+                    }
+                  : {}),
                 output: {
                   finishedAt: meeting.endTime?.toISOString(),
                   transcriptLength: meeting.finalTranscript?.length ?? 0,

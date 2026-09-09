@@ -12,7 +12,6 @@ import {
   TextInput,
   ThemeIcon,
   Title,
-  useComputedColorScheme,
 } from "@mantine/core";
 import {
   IconAlertTriangle,
@@ -33,8 +32,9 @@ import { useAuth } from "../contexts/AuthContext";
 import { useGuildContext } from "../contexts/GuildContext";
 import { buildApiUrl } from "../services/apiClient";
 import { trpc } from "../services/trpc";
+import { showBillingError } from "../utils/billingErrorNotification";
 import { usePortalStore } from "../stores/portalStore";
-import { heroBackground, uiBorders, uiColors, uiTypography } from "../uiTokens";
+import { uiBorders, uiColors, uiTypography } from "../uiTokens";
 import type { BillingInterval, PaidTier } from "../../types/pricing";
 import {
   annualSavingsLabel,
@@ -45,17 +45,16 @@ import {
 } from "../utils/pricing";
 
 const BASIC_FEATURES = [
-  "Up to 20 hours per week",
+  "20 recording hours per rolling week",
   "Up to 2 hours per meeting",
-  "Ask across longer history",
+  "Ask across up to 25 meetings",
   "Live voice mode",
 ];
 
 const PRO_FEATURES = [
-  "Unlimited retention",
-  "Unlimited recording time",
-  "Ask across full retention",
-  "Up to 2 hours per meeting (8 hours coming soon)",
+  "No weekly recording limit",
+  "Ask across up to 100 meetings",
+  "Up to 2 hours per meeting",
   "Priority features and support",
 ];
 
@@ -77,8 +76,6 @@ const buildUpgradeQuery = (options: {
 };
 
 export default function UpgradeServerSelect() {
-  const scheme = useComputedColorScheme("dark");
-  const isDark = scheme === "dark";
   const navigate = useNavigate({ from: "/upgrade/select-server" });
   const search = useSearch({ strict: false }) as {
     promo?: string;
@@ -101,7 +98,7 @@ export default function UpgradeServerSelect() {
     search.interval ?? "month",
   );
   const [selectedPlan, setSelectedPlan] = useState<PaidTier>(
-    search.plan ?? "pro",
+    search.plan ?? "basic",
   );
   const [selectedServerId, setSelectedServerId] = useState<string | null>(
     search.serverId ?? selectedGuildId ?? null,
@@ -226,15 +223,7 @@ export default function UpgradeServerSelect() {
       window.location.href = body.url;
     } catch (err) {
       console.error(err);
-      const rawMessage = String(err ?? "");
-      const errorMessage = rawMessage.includes("promotion")
-        ? rawMessage
-        : "Could not start checkout. Please try again.";
-      notifications.show({
-        color: "red",
-        title: "Checkout failed",
-        message: errorMessage,
-      });
+      showBillingError(err, "checkout");
     }
   };
 
@@ -247,29 +236,20 @@ export default function UpgradeServerSelect() {
       window.location.href = body.url;
     } catch (err) {
       console.error(err);
-      notifications.show({
-        color: "red",
-        title: "Billing portal failed",
-        message: "Could not open billing portal. Please try again.",
-      });
+      showBillingError(err, "portal");
     }
   };
 
   return (
     <Stack gap="xl">
-      <Surface
-        p={{ base: "lg", md: "xl" }}
-        tone="raised"
-        style={{ backgroundImage: heroBackground(isDark) }}
-      >
+      <Surface p={{ base: "lg", md: "xl" }} tone="raised">
         <Stack gap="md">
           <Text size="xs" c="dimmed" style={uiTypography.heroKicker}>
             Upgrade flow
           </Text>
           <Title order={2}>Choose the server to upgrade.</Title>
           <Text c="dimmed" size="sm">
-            Pick a server and plan, we will take you straight to Stripe to
-            confirm the upgrade.
+            Pick a server and review the plan that fits your meetings.
           </Text>
           {promoCode ? (
             <Group gap="xs">
@@ -298,7 +278,7 @@ export default function UpgradeServerSelect() {
       </Surface>
 
       {authState === "unauthenticated" ? (
-        <Surface p="xl" tone="soft">
+        <Surface p="xl">
           <Stack gap="sm">
             <Text fw={600}>Connect Discord to continue</Text>
             <Text size="sm" c="dimmed">
@@ -322,7 +302,7 @@ export default function UpgradeServerSelect() {
               description="Only servers you manage are eligible for upgrades."
             />
             {guildError ? (
-              <Surface p="lg" tone="soft">
+              <Surface p="lg">
                 <Text size="sm" c="dimmed">
                   {guildError === "auth"
                     ? "Please reconnect to Discord to view your servers."
@@ -349,10 +329,10 @@ export default function UpgradeServerSelect() {
           <Stack gap="lg">
             <PageHeader
               title="Choose a plan"
-              description="Upgrade instantly, keep your existing data and history."
+              description="Compare recording time and Ask limits for your server."
             />
             {!selectedServerId ? (
-              <Surface p="xl" tone="soft">
+              <Surface p="xl">
                 <Stack gap="xs">
                   <Text fw={600}>Pick a server to continue</Text>
                   <Text size="sm" c="dimmed">
@@ -361,7 +341,7 @@ export default function UpgradeServerSelect() {
                 </Stack>
               </Surface>
             ) : billingQuery.isLoading ? (
-              <Surface p="xl" tone="soft">
+              <Surface p="xl">
                 <Group gap="sm">
                   <ThemeIcon color="brand" variant="light">
                     <IconSparkles size={18} />
@@ -376,7 +356,7 @@ export default function UpgradeServerSelect() {
                 Billing is not enabled in this environment.
               </Alert>
             ) : isAlreadyPro ? (
-              <Surface p="xl" tone="soft">
+              <Surface p="xl">
                 <Stack gap="sm">
                   <Group gap="sm" align="center">
                     <ThemeIcon color="brand" variant="light">
@@ -389,8 +369,7 @@ export default function UpgradeServerSelect() {
                   </Text>
                   <Group gap="sm">
                     <Button
-                      variant="gradient"
-                      gradient={{ from: "brand", to: "violet" }}
+                      variant="filled"
                       onClick={handlePortal}
                       loading={portalMutation.isPending}
                     >
@@ -412,7 +391,7 @@ export default function UpgradeServerSelect() {
               </Surface>
             ) : (
               <Stack gap="lg">
-                <Surface p="lg" tone="soft">
+                <Surface p="lg">
                   <Stack gap="sm">
                     <Group gap="sm" align="center" justify="space-between">
                       <Group gap="sm" align="center">
@@ -454,7 +433,7 @@ export default function UpgradeServerSelect() {
                 <SimpleGrid cols={{ base: 1, md: 2 }} spacing="md">
                   <Surface
                     p="lg"
-                    tone="soft"
+                    tone="default"
                     h="100%"
                     style={{
                       borderWidth:
@@ -475,11 +454,18 @@ export default function UpgradeServerSelect() {
                           </ThemeIcon>
                           <Title order={4}>Basic</Title>
                         </Group>
-                        {selectedPlan === "basic" ? (
-                          <Badge color="brand" variant="light" size="sm">
-                            Selected
-                          </Badge>
-                        ) : null}
+                        <Group gap="xs">
+                          {currentTier === "free" ? (
+                            <Badge color="brand" variant="light" size="sm">
+                              Recommended
+                            </Badge>
+                          ) : null}
+                          {selectedPlan === "basic" ? (
+                            <Badge color="brand" variant="light" size="sm">
+                              Selected
+                            </Badge>
+                          ) : null}
+                        </Group>
                       </Group>
                       <Text size="sm" c="dimmed">
                         Unlock longer sessions and deeper recall.
@@ -543,13 +529,6 @@ export default function UpgradeServerSelect() {
                           <Title order={4}>Pro</Title>
                         </Group>
                         <Group gap="xs">
-                          <Badge
-                            variant="gradient"
-                            gradient={{ from: "brand", to: "violet" }}
-                            size="sm"
-                          >
-                            Recommended
-                          </Badge>
                           {selectedPlan === "pro" ? (
                             <Badge color="brand" variant="light" size="sm">
                               Selected
@@ -558,7 +537,7 @@ export default function UpgradeServerSelect() {
                         </Group>
                       </Group>
                       <Text size="sm" c="dimmed">
-                        Unlimited retention with priority features.
+                        More recording time and a wider Ask history.
                       </Text>
                       <Text fw={700} size="xl">
                         {formatPlanPrice(proPlan, interval)}
@@ -582,10 +561,7 @@ export default function UpgradeServerSelect() {
                       </List>
                       <Button
                         mt="auto"
-                        variant={
-                          selectedPlan === "pro" ? "gradient" : "outline"
-                        }
-                        gradient={{ from: "brand", to: "violet" }}
+                        variant={selectedPlan === "pro" ? "light" : "outline"}
                         onClick={() => handlePlanChange("pro")}
                         disabled={!proPlan}
                         rightSection={<IconSparkles size={16} />}
@@ -607,14 +583,17 @@ export default function UpgradeServerSelect() {
                       <Text fw={600}>Ready to continue</Text>
                     </Group>
                     <Text size="sm" c="dimmed">
-                      Stripe confirms your discount and the prorated upgrade
-                      before you pay.
+                      Review your selected plan. Any available billing changes
+                      and discounts are confirmed before payment.
                     </Text>
                     <Button
                       size="lg"
+                      h="auto"
+                      mih={50}
+                      py="sm"
+                      styles={{ label: { whiteSpace: "normal" } }}
                       fullWidth
-                      variant="gradient"
-                      gradient={{ from: "brand", to: "violet" }}
+                      variant="filled"
                       rightSection={<IconArrowRight size={18} />}
                       onClick={handleCheckout}
                       disabled={isAlreadyPro}

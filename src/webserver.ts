@@ -1,3 +1,8 @@
+import { discordInstallStateStore } from "./services/discordInstallStateStore";
+import {
+  discordCallbackAuthentication,
+  resolveDiscordCallbackRedirect,
+} from "./services/discordInstallAuth";
 import cors from "cors";
 import cookieParser from "cookie-parser";
 import express from "express";
@@ -22,19 +27,23 @@ import {
 import { config } from "./services/configService";
 import { DynamoSessionStore } from "./services/sessionStore";
 import { getStripeClient } from "./services/stripeClient";
-import { saveGuildInstaller } from "./services/guildInstallerService";
+import { saveGuildInstallerForCurrentMembership } from "./services/guildInstallerService";
 import { passThrough } from "./middleware/passThrough";
 import { metricsMiddleware, metricsRegistry } from "./metrics";
 import { appRouter } from "./trpc/router";
 import { AuthedProfile, createContext } from "./trpc/context";
 import { getMockUser } from "./repositories/mockStore";
 import { resolveRedirectTarget } from "./services/oauthRedirectService";
-import { readMcpAuthorizeRedirect } from "./services/mcpOAuthSession";
-import {
-  readOauthRedirectFromRequest,
-  stashOauthRedirectFromSession,
-} from "./services/oauthRedirectSession";
 import { createAuthRateLimiter } from "./services/authRateLimitService";
+import { captureEvent } from "./services/analyticsService";
+import {
+  buildDirectDiscordInstallUrl,
+  DISCORD_INSTALL_SCOPES,
+  isDiscordGuildId,
+  parseInstallAttribution,
+  readInstallAttributionFromRequest,
+  setInstallAttributionOnRequest,
+} from "./services/installAttributionService";
 import {
   buildDiscordAuthProfile,
   ensureDiscordAccessToken,
@@ -269,6 +278,23 @@ export function setupWebServer() {
       ),
     );
 
+    passport.use(
+      "discord-install",
+      new DiscordStrategy(
+        {
+          clientID: config.discord.clientId,
+          clientSecret: config.discord.clientSecret,
+          callbackURL: config.discord.callbackUrl,
+          scope: DISCORD_INSTALL_SCOPES,
+          state: true,
+          store: discordInstallStateStore,
+        },
+        (_accessToken, _refreshToken, profile, done) => {
+          done(null, { id: profile.id });
+        },
+      ),
+    );
+
     // Serialize and deserialize user
     passport.serializeUser((user, done) => {
       done(null, user);
@@ -363,31 +389,57 @@ export function setupWebServer() {
     );
 
     app.get(
-      "/auth/discord/callback",
+      "/auth/discord/install",
       authRateLimiter,
       (req, _res, next) => {
-        stashOauthRedirectFromSession(req);
+        const attribution = parseInstallAttribution(req.query);
+        setInstallAttributionOnRequest(req, attribution);
         next();
       },
-      passport.authenticate("discord", {
-        failureRedirect: "/",
-      }),
-      (req, res) => {
-        const guildId = req.query.guild_id as string | undefined;
-        const profile = req.user as Profile;
-        const mcpRedirect = readMcpAuthorizeRedirect(req);
-        const sessionRedirect = readOauthRedirectFromRequest(req);
+      passport.authenticate("discord-install", { session: false }),
+    );
+
+    app.get(
+      "/auth/discord/callback",
+      authRateLimiter,
+      discordCallbackAuthentication(passport, config.frontend.siteUrl),
+      async (req, res) => {
+        const guildId = isDiscordGuildId(req.query.guild_id)
+          ? req.query.guild_id
+          : undefined;
+        const installerId: string =
+          res.locals.discordInstallerId ?? (req.user as Profile).id;
+        const acquisition = readInstallAttributionFromRequest(req);
         if (guildId) {
-          saveGuildInstaller({
+          await saveGuildInstallerForCurrentMembership({
             guildId,
-            installerId: profile.id,
+            installerId,
             installedAt: new Date().toISOString(),
-          }).catch((err) =>
-            console.error("Failed to persist installer mapping", err),
-          );
+            ...(acquisition ? { acquisition } : {}),
+          })
+            .then((created) => {
+              if (!created || !acquisition) return;
+              captureEvent("server_install_attributed", {
+                userId: installerId,
+                guildId,
+                properties: {
+                  attribution_method: "oauth_callback",
+                  source: acquisition.source,
+                  medium: acquisition.medium,
+                  campaign: acquisition.campaign,
+                  landing_path: acquisition.landingPath,
+                  referrer_domain: acquisition.referrerDomain,
+                  cta_location: acquisition.ctaLocation,
+                },
+              });
+            })
+            .catch((err) =>
+              console.error("Failed to persist installer mapping", err),
+            );
         }
-        const fallback = getFrontendFallback();
-        res.redirect(mcpRedirect || sessionRedirect || fallback);
+        res.redirect(
+          resolveDiscordCallbackRedirect(req, res, config.frontend.siteUrl),
+        );
       },
     );
   } else {
@@ -400,6 +452,9 @@ export function setupWebServer() {
       const redirectParam = resolveRedirectParam(req);
       const fallback = getFrontendFallback();
       res.redirect(redirectParam || fallback);
+    });
+    app.get("/auth/discord/install", authRateLimiter, (_req, res) => {
+      res.redirect(buildDirectDiscordInstallUrl(config.discord.clientId));
     });
   }
 

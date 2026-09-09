@@ -1,8 +1,7 @@
 import express from "express";
-import {
-  recordPaymentTransaction,
-  saveGuildSubscription,
-} from "../services/billingService";
+import { randomUUID } from "node:crypto";
+import type { GuildSubscription } from "../types/db";
+import { recordPaymentTransaction } from "../services/billingService";
 import { getSubscriptionRepository } from "../repositories/subscriptionRepository";
 import { config } from "../services/configService";
 import { autoRevokeCoveredCompGrants } from "../services/entitlementService";
@@ -25,13 +24,6 @@ type WebhookHandler = (options: {
   stripe: StripeClient;
   event: StripeEvent;
 }) => Promise<void>;
-
-const normalizeTier = (tier?: string | null): KnownTier | null => {
-  if (tier === "free" || tier === "basic" || tier === "pro") {
-    return tier;
-  }
-  return null;
-};
 
 const readMetadataValue = (
   metadata: Record<string, string> | null | undefined,
@@ -59,15 +51,6 @@ const resolveSubscriptionPeriodEnd = (
   const items = subscription.items?.data ?? [];
   if (!items.length) return undefined;
   return Math.max(...items.map((item) => item.current_period_end));
-};
-
-const resolveInvoicePriceInfo = (
-  invoice: StripeInvoice,
-): { priceId?: string; lookupKey?: string } => {
-  const lineItem = invoice.lines?.data?.find(
-    (item) => item.pricing?.price_details?.price,
-  );
-  return resolvePriceInfo(lineItem?.pricing?.price_details?.price);
 };
 
 const resolveInvoiceSubscription = (
@@ -102,16 +85,6 @@ const resolveTierFromSubscription = (
       lookupKey,
     }) ?? null;
   return tier ?? "basic";
-};
-
-const resolveTierFromInvoice = (invoice: StripeInvoice): KnownTier | null => {
-  const { priceId, lookupKey } = resolveInvoicePriceInfo(invoice);
-  const tier =
-    resolveTierFromPrice({
-      priceId,
-      lookupKey,
-    }) ?? null;
-  return tier;
 };
 
 const toIso = (seconds?: number | null): string | undefined =>
@@ -158,7 +131,7 @@ const buildSubscriptionPayload = (params: {
   updatedBy?: string;
   priceId?: string;
   mode: "live" | "test";
-}): Parameters<typeof saveGuildSubscription>[0] => ({
+}): GuildSubscription => ({
   guildId: params.guildId,
   status: params.status,
   tier: params.tier,
@@ -193,18 +166,105 @@ const maybeAutoRevokeCoveredCompGrants = async (params: {
   clearGuildSubscriptionCache(params.guildId);
 };
 
+const isTerminalSubscription = (subscription: StripeSubscription) =>
+  subscription.status === "canceled" ||
+  subscription.status === "incomplete_expired";
+
+// Read the row before fetching Stripe. If another webhook commits during the
+// fetch, retry both reads so an older response cannot undo its newer state.
+const reconcileSubscription = async (
+  stripe: StripeClient,
+  guildId: string,
+  subscriptionId: string,
+) => {
+  const repo = getSubscriptionRepository();
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const existing = await repo.get(guildId);
+    const subscription = await stripe.subscriptions.retrieve(subscriptionId);
+    if (readMetadataValue(subscription.metadata, "guild_id") !== guildId) {
+      throw new Error("Stripe subscription guild metadata does not match");
+    }
+    if (
+      existing?.stripeSubscriptionId &&
+      existing.stripeSubscriptionId !== subscription.id
+    ) {
+      // Old terminal events cannot adopt a guild that now points elsewhere.
+      if (isTerminalSubscription(subscription)) return;
+      const previous = await stripe.subscriptions.retrieve(
+        existing.stripeSubscriptionId,
+      );
+      if (readMetadataValue(previous.metadata, "guild_id") !== guildId) {
+        throw new Error(
+          "Stored Stripe subscription guild metadata does not match",
+        );
+      }
+      // A new purchase can replace a canceled subscription, but historical
+      // duplicates must not resurrect themselves after the newer one ends.
+      if (
+        !isTerminalSubscription(previous) ||
+        subscription.created <= previous.created
+      )
+        return;
+    }
+    const tier = isTerminalSubscription(subscription)
+      ? "free"
+      : resolveTierFromSubscription(subscription);
+    const updatedBy =
+      readMetadataValue(subscription.metadata, "discord_id") || undefined;
+    const accepted = await repo.compareAndWrite(
+      {
+        ...buildSubscriptionPayload({
+          guildId,
+          status: subscription.status,
+          tier,
+          startDate: toIso(subscription.start_date),
+          endDate: toIso(subscription.ended_at),
+          nextBillingDate: toIso(resolveSubscriptionPeriodEnd(subscription)),
+          paymentMethod: subscription.default_payment_method
+            ? "card"
+            : "unknown",
+          stripeCustomerId:
+            typeof subscription.customer === "string"
+              ? subscription.customer
+              : subscription.customer.id,
+          stripeSubscriptionId: subscription.id,
+          updatedBy,
+          priceId: subscription.items.data[0]?.price.id,
+          mode: subscription.livemode ? "live" : "test",
+        }),
+        stripeSyncRevision: randomUUID(),
+      },
+      existing,
+    );
+    if (!accepted) continue;
+    clearGuildSubscriptionCache(guildId);
+    await maybeAutoRevokeCoveredCompGrants({
+      guildId,
+      tier,
+      status: subscription.status,
+      stripeSubscriptionId: subscription.id,
+      updatedBy,
+    });
+    return;
+  }
+  throw new Error("Stripe subscription changed concurrently; retry webhook");
+};
+
 const handleCheckoutSessionCompleted: WebhookHandler = async ({
   stripe,
   event,
 }) => {
   const session = event.data.object as StripeCheckoutSession;
   if (!session.subscription) return;
-  const sub = await stripe.subscriptions.retrieve(
-    session.subscription as string,
-  );
-  const guildId =
-    readMetadataValue(session.metadata, "guild_id") ||
-    readMetadataValue(sub.metadata, "guild_id");
+  const subscriptionId =
+    typeof session.subscription === "string"
+      ? session.subscription
+      : session.subscription.id;
+  let guildId = readMetadataValue(session.metadata, "guild_id");
+  if (!guildId) {
+    const subscription = await stripe.subscriptions.retrieve(subscriptionId);
+    guildId = readMetadataValue(subscription.metadata, "guild_id");
+  }
   if (!guildId) {
     console.warn(
       "Stripe checkout session missing guild_id metadata",
@@ -212,40 +272,7 @@ const handleCheckoutSessionCompleted: WebhookHandler = async ({
     );
     return;
   }
-  const tier = resolveTierFromSubscription(sub);
-  const stripeSubscriptionId =
-    typeof session.subscription === "string" ? session.subscription : undefined;
-  const updatedBy =
-    readMetadataValue(session.metadata, "discord_id") ||
-    readMetadataValue(sub.metadata, "discord_id") ||
-    undefined;
-  await saveGuildSubscription(
-    buildSubscriptionPayload({
-      guildId,
-      status: sub.status,
-      tier,
-      startDate: toIso(sub.start_date),
-      endDate: toIso(sub.ended_at),
-      nextBillingDate: toIso(resolveSubscriptionPeriodEnd(sub)),
-      paymentMethod: session.payment_method_types?.[0],
-      stripeCustomerId:
-        typeof session.customer === "string" ? session.customer : undefined,
-      stripeSubscriptionId,
-      updatedBy,
-      priceId:
-        typeof sub.items?.data?.[0]?.price?.id === "string"
-          ? sub.items?.data?.[0]?.price?.id
-          : undefined,
-      mode: sub.livemode ? "live" : "test",
-    }),
-  );
-  await maybeAutoRevokeCoveredCompGrants({
-    guildId,
-    tier,
-    status: sub.status,
-    stripeSubscriptionId,
-    updatedBy,
-  });
+  await reconcileSubscription(stripe, guildId, subscriptionId);
 };
 
 const handleInvoicePaymentFailed: WebhookHandler = async ({
@@ -254,43 +281,16 @@ const handleInvoicePaymentFailed: WebhookHandler = async ({
 }) => {
   const invoice = event.data.object as StripeInvoice;
   const guildId = await resolveGuildIdFromInvoice(stripe, invoice);
-  if (!guildId) {
-    console.warn("Stripe invoice missing guild_id metadata", invoice.id);
-    return;
-  }
-  const invoiceSubscription = resolveInvoiceSubscription(invoice);
-  const existing = await getSubscriptionRepository().get(guildId);
-  const existingTier = normalizeTier(existing?.tier);
-  const tierFromInvoice = resolveTierFromInvoice(invoice);
-  const priceInfo = resolveInvoicePriceInfo(invoice);
-  const stripeSubscriptionId =
-    typeof invoiceSubscription === "string"
-      ? invoiceSubscription
-      : invoiceSubscription?.id;
-  const tier =
-    tierFromInvoice ??
-    (existingTier && existingTier !== "free" ? existingTier : "basic");
-  await saveGuildSubscription(
-    buildSubscriptionPayload({
-      guildId,
-      status: "past_due",
-      tier,
-      startDate:
-        existing?.startDate ?? new Date(invoice.created * 1000).toISOString(),
-      nextBillingDate: invoice.next_payment_attempt
-        ? toIso(invoice.next_payment_attempt)
-        : existing?.nextBillingDate,
-      paymentMethod: invoice.default_payment_method ? "card" : "unknown",
-      stripeCustomerId:
-        typeof invoice.customer === "string" ? invoice.customer : undefined,
-      stripeSubscriptionId,
-      priceId: priceInfo.priceId ?? existing?.priceId,
-      mode: invoice.livemode ? "live" : "test",
-    }),
+  const subscription = resolveInvoiceSubscription(invoice);
+  if (!guildId || !subscription) return;
+  await reconcileSubscription(
+    stripe,
+    guildId,
+    typeof subscription === "string" ? subscription : subscription.id,
   );
 };
 
-const handleSubscriptionUpsert: WebhookHandler = async ({ event }) => {
+const handleSubscriptionUpsert: WebhookHandler = async ({ stripe, event }) => {
   const subscription = event.data.object as StripeSubscription;
   const guildId = readMetadataValue(subscription.metadata, "guild_id");
   if (!guildId) {
@@ -300,60 +300,7 @@ const handleSubscriptionUpsert: WebhookHandler = async ({ event }) => {
     );
     return;
   }
-  const tier = resolveTierFromSubscription(subscription);
-  const updatedBy =
-    readMetadataValue(subscription.metadata, "discord_id") || undefined;
-  await saveGuildSubscription(
-    buildSubscriptionPayload({
-      guildId,
-      status: subscription.status,
-      tier,
-      startDate: toIso(subscription.start_date),
-      endDate: toIso(subscription.ended_at),
-      nextBillingDate: toIso(resolveSubscriptionPeriodEnd(subscription)),
-      paymentMethod: subscription.default_payment_method ? "card" : "unknown",
-      stripeCustomerId:
-        typeof subscription.customer === "string"
-          ? subscription.customer
-          : undefined,
-      stripeSubscriptionId: subscription.id,
-      updatedBy,
-      priceId:
-        typeof subscription.items?.data?.[0]?.price?.id === "string"
-          ? subscription.items?.data?.[0]?.price?.id
-          : undefined,
-      mode: subscription.livemode ? "live" : "test",
-    }),
-  );
-  await maybeAutoRevokeCoveredCompGrants({
-    guildId,
-    tier,
-    status: subscription.status,
-    stripeSubscriptionId: subscription.id,
-    updatedBy,
-  });
-};
-
-const handleSubscriptionDeleted: WebhookHandler = async ({ event }) => {
-  const subscription = event.data.object as StripeSubscription;
-  const guildId = readMetadataValue(subscription.metadata, "guild_id");
-  if (!guildId) return;
-  await saveGuildSubscription(
-    buildSubscriptionPayload({
-      guildId,
-      status: "canceled",
-      tier: "free",
-      startDate: toIso(subscription.start_date),
-      endDate: toIso(subscription.ended_at) ?? new Date().toISOString(),
-      paymentMethod: undefined,
-      stripeCustomerId:
-        typeof subscription.customer === "string"
-          ? subscription.customer
-          : undefined,
-      stripeSubscriptionId: subscription.id,
-      mode: subscription.livemode ? "live" : "test",
-    }),
-  );
+  await reconcileSubscription(stripe, guildId, subscription.id);
 };
 
 const handleInvoicePaymentSucceeded: WebhookHandler = async ({
@@ -392,7 +339,7 @@ const handlersByEvent: Record<string, WebhookHandler> = {
   "invoice.payment_succeeded": handleInvoicePaymentSucceeded,
   "customer.subscription.created": handleSubscriptionUpsert,
   "customer.subscription.updated": handleSubscriptionUpsert,
-  "customer.subscription.deleted": handleSubscriptionDeleted,
+  "customer.subscription.deleted": handleSubscriptionUpsert,
 };
 
 export function registerBillingRoutes(

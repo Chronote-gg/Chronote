@@ -25,3 +25,7 @@ export async function listGuildRoles(guildId: string) {
 export async function getGuildMember(guildId: string, userId: string) {
   return getDiscordRepository().getGuildMember(guildId, userId);
 }
+
+export async function getGuild(guildId: string) {
+  return getDiscordRepository().getGuild(guildId);
+}

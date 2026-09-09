@@ -73,3 +73,30 @@ describe("oauthRedirectService", () => {
     );
   });
 });
+
+test.each([
+  "/\\evil.com/portal",
+  "/\\\\evil.com/portal",
+  "/\t/evil.com/portal",
+])("rejects relative paths that normalize to another origin: %s", (path) => {
+  expect(
+    resolveRedirectTarget(path, "https://app.example.com"),
+  ).toBeUndefined();
+});
+
+test("preserves the validated origin for absolute URLs with double-slash paths", () => {
+  const target = "https://app.example.com//evil.com/portal";
+  expect(resolveRedirectTarget(target, "https://app.example.com")).toBe(target);
+});
+
+test.each([
+  "https://app.example.com.evil.test",
+  "https://app.example.com@evil.test",
+  "\\\\evil.test",
+  "///evil.test",
+  "/\r/evil.test",
+])("rejects deceptive host spelling %s", (target) => {
+  expect(
+    resolveRedirectTarget(target, "https://app.example.com"),
+  ).toBeUndefined();
+});

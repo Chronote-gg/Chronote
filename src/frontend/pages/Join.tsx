@@ -12,7 +12,7 @@ import { Link } from "@tanstack/react-router";
 import type { ReactNode } from "react";
 import { useAuth } from "../contexts/AuthContext";
 import { track } from "../services/analytics";
-import { JOIN_PAGE_INVITE_URL } from "../utils/discordInvite";
+import { buildInstallUrl } from "../utils/discordInvite";
 
 const STEPS: ReactNode[] = [
   "Join a voice channel in your server.",
@@ -95,7 +95,7 @@ export default function Join() {
               size="md"
               variant="subtle"
               component="a"
-              href={JOIN_PAGE_INVITE_URL}
+              href={buildInstallUrl({ ctaLocation: "join" })}
               data-testid="join-cta-discord"
               onClick={() =>
                 track("add_to_discord_clicked", { location: "join" })

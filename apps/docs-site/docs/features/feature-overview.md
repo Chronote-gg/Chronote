@@ -5,6 +5,23 @@ slug: /features
 
 This page is a reference for every Chronote command and feature. Each section describes what the feature does, how to use it, and what to expect.
 
+## Server plans
+
+Basic is the recommended starting point when upgrading a Free server. You can
+still select Pro directly. Compare plans in your server's Billing page or on the
+[upgrade page](https://chronote.gg/upgrade).
+
+| Limit                             | Free       | Basic    | Pro             |
+| --------------------------------- | ---------- | -------- | --------------- |
+| Recording time per rolling 7 days | 4 hours    | 20 hours | No weekly limit |
+| Maximum meeting length            | 90 minutes | 2 hours  | 2 hours         |
+| Meetings included in Ask scope    | Up to 5    | Up to 25 | Up to 100       |
+
+Ask scope is the number of meetings available to a question, not a storage
+retention period. Pro's lack of a weekly recording limit does not remove the
+two-hour limit on each meeting. Review available billing changes before
+confirming payment.
+
 ## Slash commands
 
 ### `/startmeeting`

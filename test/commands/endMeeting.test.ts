@@ -41,6 +41,8 @@ jest.mock("../../src/audio", () => ({
   waitForFinishProcessing: jest.fn(),
 }));
 jest.mock("../../src/embed", () => ({
+  updateMeetingMessage:
+    jest.requireActual("../../src/embed").updateMeetingMessage,
   updateMeetingProcessingMessage: jest.fn(),
   updateMeetingSummaryMessage: jest.fn(),
 }));
@@ -593,7 +595,7 @@ describe("handleEndMeetingOther", () => {
     expect(mockedDeleteMeeting).toHaveBeenCalledWith("guild-1");
   });
 
-  it("uploads partial artifacts before saving cancelled auto-record history", async () => {
+  it("preserves cancelled artifacts, history and cleanup when cancellation delivery fails", async () => {
     mockedWithMeetingEndTrace.mockImplementation(async (_meeting, fn) => fn());
     mockedWaitForAudioOnlyFinishProcessing.mockResolvedValue(undefined);
     mockedCloseOutputFile.mockResolvedValue(undefined);
@@ -616,7 +618,7 @@ describe("handleEndMeetingOther", () => {
         members: new Collection(),
       },
       textChannel: {
-        send: jest.fn().mockResolvedValue(undefined),
+        send: jest.fn().mockRejectedValue(new Error("send denied")),
         messages: { fetch: jest.fn() },
       },
       connection: {
@@ -655,6 +657,13 @@ describe("handleEndMeetingOther", () => {
       transcriptText: "Transcript without cues",
     });
     expect(mockedSaveMeetingHistoryToDatabase).toHaveBeenCalledWith(meeting);
+    expect(meeting.delivery?.cancellation).toMatchObject({
+      outcome: "failed",
+      intended: 1,
+      sent: 0,
+    });
+    expect(meeting.finished).toBe(true);
+    expect(mockedCleanupSpeakerTracks).toHaveBeenCalledWith(meeting);
     expect(
       mockedUploadMeetingArtifacts.mock.invocationCallOrder[0],
     ).toBeLessThan(

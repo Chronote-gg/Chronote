@@ -8,6 +8,7 @@ import {
   VoiceBasedChannel,
 } from "discord.js";
 import type { SpanContext } from "@opentelemetry/api";
+import type { MeetingDelivery } from "./meetingDelivery";
 import { AudioData } from "./audio";
 import { ChatEntry } from "./chat";
 import { Participant } from "./participants";
@@ -115,6 +116,7 @@ export interface MeetingData {
   dictionaryEntries?: DictionaryEntry[];
   startMessageId?: string;
   summaryMessageId?: string;
+  delivery?: MeetingDelivery;
   messagesToDelete?: string[];
   leaseOwnerInstanceId?: string;
   leaseHeartbeatTimer?: ReturnType<typeof setInterval>;

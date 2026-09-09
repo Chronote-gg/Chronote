@@ -1,6 +1,7 @@
 import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 import {
+  BillingActionError,
   buildBillingDisabledSnapshot,
   createCheckoutSession,
   createPortalSession,
@@ -105,6 +106,9 @@ const checkout = manageGuildProcedure
       });
       return { url };
     } catch (err) {
+      if (err instanceof BillingActionError) {
+        throw new TRPCError({ code: err.code, message: err.message });
+      }
       if (err instanceof TRPCError) {
         throw err;
       }
@@ -141,6 +145,9 @@ const portal = manageGuildProcedure
       });
       return { url };
     } catch (err) {
+      if (err instanceof BillingActionError) {
+        throw new TRPCError({ code: err.code, message: err.message });
+      }
       console.error("Stripe portal error", err);
       throw new TRPCError({
         code: "INTERNAL_SERVER_ERROR",

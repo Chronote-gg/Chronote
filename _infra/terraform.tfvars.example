@@ -94,6 +94,7 @@ LIVE_VOICE_THINKING_CUE_INTERVAL_MS="500"
 
 # Stripe (non-secret config; secrets are in AWS Secrets Manager)
 STRIPE_MODE="test"
+STRIPE_SUBSCRIPTION_TRANSITIONS_ENABLED=false # enable only after hosted billing validation
 STRIPE_PRICE_BASIC=""                         # optional legacy fallback
 STRIPE_PRICE_LOOKUP_BASIC_MONTHLY="chronote_basic_monthly"
 STRIPE_PRICE_LOOKUP_BASIC_ANNUAL="chronote_basic_annual"

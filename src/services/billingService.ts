@@ -11,8 +11,18 @@ import { getRollingUsageForGuild } from "./meetingUsageService";
 import { nowIso } from "../utils/time";
 import type { BillingInterval, PaidTier } from "../types/pricing";
 import type { GuildSubscription, PaymentTransaction } from "../types/db";
-import type { StripeClient } from "../types/stripe";
+import type { StripeClient, StripeSubscription } from "../types/stripe";
 import type { PublicEntitlementGrant } from "./entitlementService";
+
+export class BillingActionError extends Error {
+  constructor(
+    public readonly code: "FORBIDDEN" | "BAD_REQUEST",
+    message: string,
+  ) {
+    super(message);
+    this.name = "BillingActionError";
+  }
+}
 
 export type BillingSnapshot = {
   billingEnabled: boolean;
@@ -200,11 +210,19 @@ export async function ensureStripeCustomer(
 ): Promise<string> {
   const searchEmail = user.email;
   if (searchEmail) {
-    const found = await stripe.customers.list({
-      email: searchEmail,
-      limit: 1,
-    });
-    if (found.data.length) return found.data[0].id;
+    let startingAfter: string | undefined;
+    do {
+      const found = await stripe.customers.list({
+        email: searchEmail,
+        limit: 100,
+        ...(startingAfter ? { starting_after: startingAfter } : {}),
+      });
+      const owned = found.data.find(
+        (customer) => customer.metadata.discord_id === user.id,
+      );
+      if (owned) return owned.id;
+      startingAfter = found.has_more ? found.data.at(-1)?.id : undefined;
+    } while (startingAfter);
   }
   const created = await stripe.customers.create({
     ...(searchEmail ? { email: searchEmail } : {}),
@@ -283,7 +301,6 @@ export async function createCheckoutSession(params: {
   if (!checkoutPriceId?.startsWith("price_")) {
     throw new Error("Stripe price not configured");
   }
-  const customerId = await ensureStripeCustomer(stripe, user);
   const promoValue = promotionCode?.trim();
   const successUrl = appendQueryParams(config.stripe.successUrl, {
     promo: promoValue || undefined,
@@ -297,6 +314,17 @@ export async function createCheckoutSession(params: {
     plan: tier,
     interval,
   });
+  const confirmationUrl = await createExistingSubscriptionConfirmation({
+    stripe,
+    user,
+    guildId,
+    checkoutPriceId,
+    promotionCodeId,
+    successUrl,
+    cancelUrl,
+  });
+  if (confirmationUrl) return confirmationUrl;
+  const customerId = await ensureStripeCustomer(stripe, user);
   const metadata = {
     discord_id: user.id,
     discord_username: user.username ?? "",
@@ -327,6 +355,121 @@ export async function createCheckoutSession(params: {
   return session.url;
 }
 
+function assertUpdatableSubscription(subscription: StripeSubscription): void {
+  if (
+    !["active", "trialing"].includes(subscription.status) ||
+    subscription.items.data.length !== 1 ||
+    subscription.schedule ||
+    subscription.pending_update ||
+    subscription.pause_collection ||
+    subscription.cancel_at_period_end ||
+    subscription.cancel_at
+  ) {
+    throw new BillingActionError(
+      "BAD_REQUEST",
+      "Resolve the existing subscription in billing management before changing plans",
+    );
+  }
+}
+
+async function createExistingSubscriptionConfirmation(params: {
+  stripe: StripeClient;
+  user: StripeUser;
+  guildId: string;
+  checkoutPriceId: string;
+  promotionCodeId?: string | null;
+  successUrl: string;
+  cancelUrl: string;
+}): Promise<string | null> {
+  const {
+    stripe,
+    user,
+    guildId,
+    checkoutPriceId,
+    promotionCodeId,
+    successUrl,
+    cancelUrl,
+  } = params;
+  const existing = await getSubscriptionRepository().get(guildId);
+  if (existing?.stripeSubscriptionId) {
+    if (!config.stripe.subscriptionTransitionsEnabled) {
+      throw new BillingActionError(
+        "BAD_REQUEST",
+        "Plan changes are not available yet. Your current subscription is unchanged; contact support for help.",
+      );
+    }
+    const subscription = await stripe.subscriptions.retrieve(
+      existing.stripeSubscriptionId,
+    );
+    const customerId =
+      typeof subscription.customer === "string"
+        ? subscription.customer
+        : subscription.customer.id;
+    if (
+      subscription.metadata.guild_id !== guildId ||
+      (existing.stripeCustomerId && existing.stripeCustomerId !== customerId)
+    ) {
+      throw new BillingActionError(
+        "BAD_REQUEST",
+        "Server billing information does not match Stripe; contact support",
+      );
+    }
+    // Only provider-confirmed terminal subscriptions can start a new purchase.
+    // A failed read or unsupported state must never fall through to Checkout.
+    if (
+      subscription.status !== "canceled" &&
+      subscription.status !== "incomplete_expired"
+    ) {
+      await assertStripePayer(stripe, customerId, user.id);
+      assertUpdatableSubscription(subscription);
+      const item = subscription.items.data[0];
+      const portal = await stripe.billingPortal.sessions.create({
+        customer: customerId,
+        return_url: cancelUrl,
+        flow_data: {
+          type: "subscription_update_confirm",
+          subscription_update_confirm: {
+            subscription: subscription.id,
+            items: [
+              { id: item.id, price: checkoutPriceId, quantity: item.quantity },
+            ],
+            ...(promotionCodeId
+              ? { discounts: [{ promotion_code: promotionCodeId }] }
+              : {}),
+          },
+          after_completion: {
+            type: "redirect",
+            redirect: { return_url: successUrl },
+          },
+        },
+      });
+      if (!portal.url)
+        throw new Error("Stripe did not return a confirmation URL");
+      return portal.url;
+    }
+  } else if (existing?.stripeCustomerId) {
+    throw new BillingActionError(
+      "BAD_REQUEST",
+      "Server subscription information is missing; contact support before purchasing again",
+    );
+  }
+  return null;
+}
+
+async function assertStripePayer(
+  stripe: StripeClient,
+  customerId: string,
+  userId: string,
+): Promise<void> {
+  const customer = await stripe.customers.retrieve(customerId);
+  if (customer.deleted || customer.metadata.discord_id !== userId) {
+    throw new BillingActionError(
+      "FORBIDDEN",
+      "Only the original payer can manage this server's Stripe billing",
+    );
+  }
+}
+
 export async function createPortalSession(params: {
   stripe: StripeClient;
   user: StripeUser;
@@ -337,7 +480,7 @@ export async function createPortalSession(params: {
   if (!subscription?.stripeCustomerId && !subscription?.stripeSubscriptionId) {
     throw new Error("No Stripe billing found for guild");
   }
-  let customerId =
+  const customerId =
     subscription?.stripeCustomerId ||
     (typeof subscription?.stripeSubscriptionId === "string"
       ? (
@@ -345,11 +488,9 @@ export async function createPortalSession(params: {
         ).customer?.toString()
       : undefined);
   if (!customerId) {
-    customerId = await ensureStripeCustomer(stripe, user);
-  }
-  if (!customerId) {
     throw new Error("No Stripe customer found for guild");
   }
+  await assertStripePayer(stripe, customerId, user.id);
   const portal = await stripe.billingPortal.sessions.create({
     customer: customerId,
     return_url: config.stripe.portalReturnUrl || config.stripe.successUrl,

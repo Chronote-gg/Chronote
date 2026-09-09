@@ -7,7 +7,7 @@ import {
   Stack,
   Text,
 } from "@mantine/core";
-import { DISCORD_BOT_INVITE_URL } from "../utils/discordInvite";
+import { buildInstallUrl } from "../utils/discordInvite";
 
 const DOCS_URL = "https://docs.chronote.gg";
 
@@ -18,7 +18,6 @@ type FooterLink = {
 };
 
 const FOOTER_LINKS: FooterLink[] = [
-  { label: "Add to Discord", href: DISCORD_BOT_INVITE_URL },
   {
     label: "GitHub",
     href: "https://github.com/Chronote-gg/chronote",
@@ -34,9 +33,16 @@ type SiteFooterProps = {
 };
 
 function FooterLinks() {
+  const footerLinks: FooterLink[] = [
+    {
+      label: "Add to Discord",
+      href: buildInstallUrl({ ctaLocation: "site-footer" }),
+    },
+    ...FOOTER_LINKS,
+  ];
   return (
     <>
-      {FOOTER_LINKS.map((link) => (
+      {footerLinks.map((link) => (
         <Anchor
           key={link.label}
           href={link.href}

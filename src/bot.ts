@@ -1,3 +1,4 @@
+import { waitForGuildInstaller } from "./services/guildInstallerOnboardingService";
 import {
   ButtonInteraction,
   ChatInputCommandInteraction,
@@ -123,7 +124,7 @@ import {
   isOnboardModal,
   onboardCommand,
 } from "./commands/onboard";
-import { fetchGuildInstaller } from "./services/guildInstallerService";
+import { removeGuildInstaller } from "./services/guildInstallerService";
 import { captureEvent, shutdownAnalytics } from "./services/analyticsService";
 import { setDiscordClient } from "./services/discordClientAccessor";
 import { startMeetingControlCommandWorker } from "./services/meetingControlWorkerService";
@@ -501,7 +502,10 @@ export async function setupBot() {
       return;
     }
     try {
-      const installer = await fetchGuildInstaller(guild.id);
+      const installer = await waitForGuildInstaller(
+        guild.id,
+        guild.joinedTimestamp,
+      );
       const dmTarget =
         installer?.installerId &&
         (await client.users.fetch(installer.installerId).catch(() => null));
@@ -525,6 +529,12 @@ export async function setupBot() {
   });
 
   client.on("guildDelete", async (guild) => {
+    const removedAt = new Date().toISOString();
+    try {
+      await removeGuildInstaller(guild.id, removedAt);
+    } catch (error) {
+      console.warn("Could not clear installer on guild removal", error);
+    }
     await invalidateBotGuildCache("guildDelete");
     await invalidateGuildCache(guild.id, "guildDelete");
     // Safe to trust: the gateway flags outages with `unavailable` and

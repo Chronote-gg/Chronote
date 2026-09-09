@@ -17,7 +17,6 @@ import {
   TextInput,
   ThemeIcon,
   Title,
-  useComputedColorScheme,
 } from "@mantine/core";
 import { IconCheck, IconCreditCard } from "@tabler/icons-react";
 import { notifications } from "@mantine/notifications";
@@ -27,7 +26,8 @@ import PageHeader from "../components/PageHeader";
 import Surface from "../components/Surface";
 import PricingCard from "../components/PricingCard";
 import { trpc } from "../services/trpc";
-import { uiBorders, uiColors, uiGradients } from "../uiTokens";
+import { showBillingError } from "../utils/billingErrorNotification";
+import { uiBorders, uiColors } from "../uiTokens";
 import type { inferRouterOutputs } from "@trpc/server";
 import type { BillingInterval, PaidTier } from "../../types/pricing";
 import type { AppRouter } from "../../trpc/router";
@@ -59,7 +59,6 @@ type BillingShellProps = {
 type BillingBaseProps = {
   serverName: string;
   usage?: BillingUsage | null;
-  isDark: boolean;
 };
 
 type BillingPaidProps = BillingBaseProps & {
@@ -90,27 +89,23 @@ const DEFAULT_DESCRIPTION = "Manage subscriptions for the current server.";
 
 const BENEFITS: Benefit[] = [
   {
-    label: "Recording time per week",
-    values: { free: "4 hours", basic: "20 hours", pro: "Unlimited" },
+    label: "Recording time per rolling week",
+    values: { free: "4 hours", basic: "20 hours", pro: "No weekly limit" },
   },
   {
     label: "Max meeting length",
     values: {
       free: "90 minutes",
       basic: "2 hours",
-      pro: "2 hours (8 hours coming soon)",
+      pro: "2 hours",
     },
-  },
-  {
-    label: "Retention window",
-    values: { free: "30 days", basic: "Extended", pro: "Unlimited" },
   },
   {
     label: "Ask history",
     values: {
-      free: "Recent meetings",
-      basic: "Longer history",
-      pro: "Full retention",
+      free: "Up to 5 meetings",
+      basic: "Up to 25 meetings",
+      pro: "Up to 100 meetings",
     },
   },
   {
@@ -219,12 +214,8 @@ const BillingUsageMeter = ({ usage }: { usage?: BillingUsage | null }) => {
   );
 };
 
-const BillingFreePanel = ({ serverName, usage, isDark }: BillingBaseProps) => (
-  <Surface
-    p="xl"
-    style={{ backgroundImage: uiGradients.billingPanel(isDark) }}
-    data-testid="billing-current-plan"
-  >
+const BillingFreePanel = ({ serverName, usage }: BillingBaseProps) => (
+  <Surface p="xl" data-testid="billing-current-plan">
     <Stack gap="sm">
       <Group gap="sm">
         <ThemeIcon color="brand" variant="light">
@@ -233,8 +224,8 @@ const BillingFreePanel = ({ serverName, usage, isDark }: BillingBaseProps) => (
         <Text fw={600}>You&apos;re on the Free plan</Text>
       </Group>
       <Text c="dimmed" size="sm">
-        Unlock deeper recall, longer sessions, and higher retention by upgrading
-        below.
+        Get more recording time and ask questions across more meetings by
+        upgrading below.
       </Text>
       <Text size="sm" c="dimmed">
         Server: {serverName}
@@ -253,13 +244,8 @@ const BillingPaidPanel = ({
   isPortalPending,
   canManage,
   onPortal,
-  isDark,
 }: BillingPaidProps) => (
-  <Surface
-    p="xl"
-    style={{ backgroundImage: uiGradients.billingPanel(isDark) }}
-    data-testid="billing-current-plan"
-  >
+  <Surface p="xl" data-testid="billing-current-plan">
     {(() => {
       const isComped = data.billingSource === "manual_comp";
       const planName = data.tier === "pro" ? "Pro" : "Basic";
@@ -317,8 +303,7 @@ const BillingPaidPanel = ({
               {data.canManageBillingPortal ? (
                 <Group gap="sm" wrap="wrap">
                   <Button
-                    variant="gradient"
-                    gradient={{ from: "brand", to: "violet" }}
+                    variant="filled"
                     disabled={!canManage}
                     loading={isPortalPending}
                     onClick={onPortal}
@@ -331,7 +316,7 @@ const BillingPaidPanel = ({
               <Text size="xs" c="dimmed">
                 {isComped
                   ? "Use the plans below to start paying or upgrade when you're ready."
-                  : "Changes apply immediately."}
+                  : "Review available changes in the billing portal."}
               </Text>
             </Stack>
           </Stack>
@@ -398,7 +383,7 @@ const BillingPlansSection = ({
   return (
     <Surface
       p="lg"
-      tone={plansExpanded ? "default" : "soft"}
+      tone="default"
       onClick={!plansExpanded ? onExpandPlans : undefined}
       style={{
         width: "100%",
@@ -478,9 +463,9 @@ const BillingPlansSection = ({
               price="$0"
               description="Lightweight coverage for smaller servers."
               features={[
-                "Up to 4 hours per week",
+                "4 recording hours per rolling week",
                 "Up to 90 minutes per meeting",
-                "Ask across recent meetings",
+                "Ask across up to 5 meetings",
                 "Notes, tags, and summaries",
               ]}
               cta={data.tier === "free" ? "Current plan" : "Available"}
@@ -497,9 +482,9 @@ const BillingPlansSection = ({
               price={formatPlanPrice(basicPlan, interval)}
               description="Unlock longer sessions and deeper recall."
               features={[
-                "Up to 20 hours per week",
+                "20 recording hours per rolling week",
                 "Up to 2 hours per meeting",
-                "Ask across longer history",
+                "Ask across up to 25 meetings",
                 "Live voice mode",
               ]}
               cta={basicCta}
@@ -509,7 +494,7 @@ const BillingPlansSection = ({
                   ? { variant: "light" }
                   : basicDisabled
                     ? { variant: "light" }
-                    : { onClick: () => onCheckout("basic") }
+                    : { variant: "filled", onClick: () => onCheckout("basic") }
               }
               highlighted
               badge={data.tier === "basic" ? "Current plan" : "Best value"}
@@ -521,12 +506,11 @@ const BillingPlansSection = ({
             <PricingCard
               name="Pro"
               price={formatPlanPrice(proPlan, interval)}
-              description="Unlimited retention and deep server memory."
+              description="More recording time and a wider Ask history."
               features={[
-                "Unlimited retention",
-                "Unlimited recording time",
-                "Ask across full retention",
-                "Up to 2 hours per meeting (8 hours coming soon)",
+                "No weekly recording limit",
+                "Ask across up to 100 meetings",
+                "Up to 2 hours per meeting",
                 "Priority features + support",
               ]}
               cta={proCta}
@@ -539,9 +523,9 @@ const BillingPlansSection = ({
                     : { onClick: () => onCheckout("pro") }
               }
               badge={
-                data.tier === "pro" ? "Current plan" : "Unlimited meetings"
+                data.tier === "pro" ? "Current plan" : "More recording time"
               }
-              tone="soft"
+              tone="default"
               borderColor={uiColors.accentBorder}
               borderWidth={uiBorders.accentWidth}
               billingLabel={`${billingLabelForInterval(interval)}${
@@ -571,8 +555,6 @@ export function Billing() {
   });
   const checkoutMutation = trpc.billing.checkout.useMutation();
   const portalMutation = trpc.billing.portal.useMutation();
-  const scheme = useComputedColorScheme("dark");
-  const isDark = scheme === "dark";
 
   const serverName = useMemo(
     () =>
@@ -618,15 +600,7 @@ export function Billing() {
       window.location.href = body.url;
     } catch (err) {
       console.error(err);
-      const errorMessage =
-        err instanceof Error && err.message.includes("promotion")
-          ? err.message
-          : "Could not start checkout. Please try again.";
-      notifications.show({
-        color: "red",
-        title: "Checkout failed",
-        message: errorMessage,
-      });
+      showBillingError(err, "checkout");
     }
   };
 
@@ -639,11 +613,7 @@ export function Billing() {
       window.location.href = body.url;
     } catch (err) {
       console.error(err);
-      notifications.show({
-        color: "red",
-        title: "Billing portal failed",
-        message: "Could not open billing portal. Please try again.",
-      });
+      showBillingError(err, "portal");
     }
   };
 
@@ -669,11 +639,7 @@ export function Billing() {
   return (
     <BillingShell>
       {isFreeTier ? (
-        <BillingFreePanel
-          serverName={serverName}
-          usage={data.usage}
-          isDark={isDark}
-        />
+        <BillingFreePanel serverName={serverName} usage={data.usage} />
       ) : (
         <BillingPaidPanel
           data={data}
@@ -684,7 +650,6 @@ export function Billing() {
           isPortalPending={isPortalPending}
           canManage={Boolean(selectedGuildId) && data.canManageBillingPortal}
           onPortal={handlePortal}
-          isDark={isDark}
         />
       )}
       <BillingPlansSection

@@ -148,6 +148,7 @@ function buildDefaultStore(): MockStore {
   userGuilds.forEach((guild) => {
     membersByGuild.set(`${guild.id}#${botUserId}`, {
       user: { id: botUserId },
+      joined_at: "2026-01-01T00:00:00.000Z",
       roles: [`role-${guild.id}-bot`],
       permissions: adminPermissions,
     });

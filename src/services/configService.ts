@@ -359,6 +359,8 @@ class ConfigService {
   };
 
   readonly stripe = {
+    subscriptionTransitionsEnabled:
+      process.env.STRIPE_SUBSCRIPTION_TRANSITIONS_ENABLED === "true",
     secretKey: process.env.STRIPE_SECRET_KEY || "",
     webhookSecret: process.env.STRIPE_WEBHOOK_SECRET || "",
     priceBasic: process.env.STRIPE_PRICE_BASIC || "",

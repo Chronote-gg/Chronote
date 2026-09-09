@@ -125,6 +125,7 @@ export async function saveMeetingHistoryToDatabase(meeting: MeetingData) {
         summaryMessageId:
           meeting.summaryMessageId ?? meeting.startMessageId ?? undefined,
         notesMessageIds: meeting.notesMessageIds,
+        delivery: meeting.delivery,
         notesChannelId: meeting.notesChannelId,
         transcriptS3Key: meeting.transcriptS3Key,
         audioS3Key: meeting.audioS3Key,
@@ -172,6 +173,7 @@ export async function saveMeetingHistoryToDatabase(meeting: MeetingData) {
       summaryMessageId:
         meeting.summaryMessageId ?? meeting.startMessageId ?? undefined,
       notesMessageIds: meeting.notesMessageIds,
+      delivery: meeting.delivery,
       notesChannelId: meeting.notesChannelId,
       notesVersion,
       notesLastEditedBy,

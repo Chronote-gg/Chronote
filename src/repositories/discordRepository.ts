@@ -42,6 +42,7 @@ export const assertDiscordSnowflake = (value: string, label: string) => {
 };
 
 export type DiscordRepository = {
+  getGuild: (guildId: string) => Promise<DiscordGuild>;
   listUserGuilds: (accessToken: string) => Promise<DiscordGuild[]>;
   listBotGuilds: () => Promise<DiscordGuild[]>;
   listGuildChannels: (guildId: string) => Promise<DiscordChannel[]>;
@@ -53,6 +54,21 @@ export type DiscordRepository = {
 };
 
 const realRepository: DiscordRepository = {
+  async getGuild(guildId) {
+    const validGuildId = assertDiscordSnowflake(guildId, "guild id");
+    return withDiscordRetry(async () => {
+      const resp = await fetch(
+        `https://discord.com/api/guilds/${validGuildId}`,
+        {
+          headers: { Authorization: `Bot ${config.discord.botToken}` },
+        },
+      );
+      if (!resp.ok) {
+        throw new DiscordApiError(resp.status, "Unable to fetch guild");
+      }
+      return (await resp.json()) as DiscordGuild;
+    });
+  },
   async listUserGuilds(accessToken: string) {
     return withDiscordRetry(async () => {
       const resp = await fetch("https://discord.com/api/users/@me/guilds", {
@@ -127,6 +143,13 @@ const realRepository: DiscordRepository = {
 };
 
 const mockRepository: DiscordRepository = {
+  async getGuild(guildId) {
+    const store = getMockStore();
+    const guild = store.botGuilds.find((item) => item.id === guildId);
+    if (!guild) throw new DiscordApiError(404, "Unable to fetch guild");
+    const owner = store.userGuilds.find((item) => item.id === guildId)?.owner;
+    return { ...guild, owner_id: owner ? store.user.id : undefined };
+  },
   async listUserGuilds() {
     return getMockStore().userGuilds;
   },

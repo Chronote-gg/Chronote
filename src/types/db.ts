@@ -1,4 +1,5 @@
 import { Participant } from "./participants";
+import type { MeetingDelivery } from "./meetingDelivery";
 import type {
   AutoRecordRule,
   MeetingEndReason,
@@ -17,6 +18,7 @@ export interface GuildSubscription {
   subscriptionType: string;
   stripeCustomerId?: string;
   stripeSubscriptionId?: string;
+  stripeSyncRevision?: string;
   priceId?: string;
   updatedAt?: string;
   updatedBy?: string;
@@ -384,6 +386,17 @@ export interface GuildInstaller {
   guildId: string; // Partition key
   installerId: string;
   installedAt: string; // ISO timestamp
+  acquisition?: InstallAttribution;
+}
+
+export interface InstallAttribution {
+  source: string;
+  medium: string;
+  campaign?: string;
+  landingPath: string;
+  referrerDomain?: string;
+  ctaLocation: string;
+  capturedAt: string; // ISO timestamp
 }
 
 export type OnboardingStep =
@@ -435,6 +448,7 @@ export interface MeetingHistory {
   endTriggeredByUserId?: string;
   cancellationReason?: string;
   summaryMessageId?: string; // Message id for the summary embed
+  delivery?: MeetingDelivery; // Acknowledged delivery outcomes, not generation flags
   notesMessageIds?: string[]; // All message ids when notes span multiple messages
   notesChannelId?: string; // Channel id where notes were posted
   notesVersion?: number; // Incremented on corrections

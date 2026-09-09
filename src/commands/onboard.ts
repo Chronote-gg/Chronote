@@ -25,8 +25,8 @@ import { AutoRecordSettings } from "../types/db";
 import { config } from "../services/configService";
 import { CONFIG_KEYS } from "../config/keys";
 import {
-  fetchGuildInstaller,
-  saveGuildInstaller,
+  fetchGuildInstallerForMembership,
+  saveGuildInstallerForMembership,
 } from "../services/guildInstallerService";
 import { setConfigOverrideForScope } from "../services/configOverridesService";
 import { saveAutoRecordSetting } from "../services/autorecordService";
@@ -230,7 +230,10 @@ export async function handleOnboardCommand(
   const hasManageGuild =
     interaction.memberPermissions?.has(PermissionFlagsBits.ManageGuild) ??
     false;
-  const installer = await fetchGuildInstaller(guild.id);
+  const installer = await fetchGuildInstallerForMembership(
+    guild.id,
+    guild.joinedTimestamp,
+  );
   const isInstaller = installer?.installerId === interaction.user.id;
 
   if (!hasManageGuild && !isInstaller) {
@@ -242,11 +245,14 @@ export async function handleOnboardCommand(
   }
 
   if (!installer) {
-    await saveGuildInstaller({
-      guildId: guild.id,
-      installerId: interaction.user.id,
-      installedAt: nowIso(),
-    });
+    await saveGuildInstallerForMembership(
+      {
+        guildId: guild.id,
+        installerId: interaction.user.id,
+        installedAt: nowIso(),
+      },
+      guild.joinedTimestamp,
+    );
   }
 
   const state = await fetchOnboardingState(guild.id, interaction.user.id);

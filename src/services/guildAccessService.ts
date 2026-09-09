@@ -1,4 +1,9 @@
-import { isDiscordApiError } from "./discordService";
+import {
+  getGuild,
+  getGuildMember,
+  listGuildRoles,
+  isDiscordApiError,
+} from "./discordService";
 import {
   getGuildMemberCached,
   listBotGuildsCached,
@@ -164,6 +169,24 @@ const computePermissionsFromRoles = (
   return permissions;
 };
 
+// Installer callbacks carry an unsigned guild hint. Check fresh bot REST data,
+// without depending on the user's OAuth guilds scope or permission caches.
+export async function ensureManageGuildWithBotFresh(
+  guildId: string,
+  userId: string,
+) {
+  const [guild, roles, member] = await Promise.all([
+    getGuild(guildId),
+    listGuildRoles(guildId),
+    getGuildMember(guildId, userId),
+  ]);
+  return (
+    guild.owner_id === userId ||
+    hasManageGuildPermissions(
+      computePermissionsFromRoles(roles, member, guildId),
+    )
+  );
+}
 const checkManageGuildWithBot = async (
   guildId: string,
   userId: string,

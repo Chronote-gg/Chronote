@@ -4,6 +4,7 @@ export type DiscordGuild = {
   icon?: string | null;
   permissions?: string;
   owner?: boolean;
+  owner_id?: string;
 };
 
 export type DiscordPermissionOverwrite = {
@@ -20,6 +21,7 @@ export type DiscordRole = {
 };
 
 export type DiscordGuildMember = {
+  joined_at?: string;
   user?: { id: string; bot?: boolean };
   roles: string[];
   permissions?: string;

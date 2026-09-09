@@ -90,6 +90,7 @@ export async function getGuildSubscription(
   const params = {
     TableName: tableName("GuildSubscriptionTable"),
     Key: marshall({ guildId }),
+    ConsistentRead: true,
   };
   const command = new GetItemCommand(params);
   const result = await dynamoDbClient.send(command);
@@ -97,6 +98,45 @@ export async function getGuildSubscription(
     return unmarshall(result.Item) as GuildSubscription;
   }
   return undefined;
+}
+
+export async function compareAndWriteGuildSubscription(
+  subscription: GuildSubscription,
+  expected: GuildSubscription | undefined,
+): Promise<boolean> {
+  const names: Record<string, string> = { "#guildId": "guildId" };
+  const values: Record<string, string> = {};
+  const conditions = [
+    expected ? "attribute_exists(#guildId)" : "attribute_not_exists(#guildId)",
+  ];
+  if (expected) {
+    for (const key of ["stripeSubscriptionId", "stripeSyncRevision"] as const) {
+      names[`#${key}`] = key;
+      if (expected[key] !== undefined) {
+        values[`:${key}`] = expected[key];
+        conditions.push(`#${key} = :${key}`);
+      } else {
+        conditions.push(`attribute_not_exists(#${key})`);
+      }
+    }
+  }
+  try {
+    await dynamoDbClient.send(
+      new PutItemCommand({
+        TableName: tableName("GuildSubscriptionTable"),
+        Item: marshall(subscription, { removeUndefinedValues: true }),
+        ConditionExpression: conditions.join(" AND "),
+        ExpressionAttributeNames: names,
+        ...(Object.keys(values).length
+          ? { ExpressionAttributeValues: marshall(values) }
+          : {}),
+      }),
+    );
+    return true;
+  } catch (error) {
+    if (isConditionalCheckFailed(error)) return false;
+    throw error;
+  }
 }
 
 // Entitlement Grant Table
@@ -1584,6 +1624,61 @@ export async function writeGuildInstaller(
   await dynamoDbClient.send(command);
 }
 
+export async function writeGuildInstallerIfAbsent(
+  installer: GuildInstaller,
+): Promise<boolean> {
+  const command = new PutItemCommand({
+    TableName: tableName("InstallerTable"),
+    Item: marshall(installer),
+    ConditionExpression: "attribute_not_exists(guildId)",
+  });
+  try {
+    await dynamoDbClient.send(command);
+    return true;
+  } catch (error) {
+    if (isConditionalCheckFailed(error)) return false;
+    throw error;
+  }
+}
+
+export async function writeGuildInstallerForMembership(
+  installer: GuildInstaller,
+  joinedAt: string,
+): Promise<boolean> {
+  const command = new PutItemCommand({
+    TableName: tableName("InstallerTable"),
+    Item: marshall(installer),
+    // Compare atomically so an old membership callback cannot replace a newer one.
+    ConditionExpression:
+      "attribute_not_exists(guildId) OR installedAt < :joinedAt",
+    ExpressionAttributeValues: marshall({ ":joinedAt": joinedAt }),
+  });
+  try {
+    await dynamoDbClient.send(command);
+    return true;
+  } catch (error) {
+    if (isConditionalCheckFailed(error)) return false;
+    throw error;
+  }
+}
+export async function deleteGuildInstaller(
+  guildId: string,
+  removedAt: string,
+): Promise<void> {
+  const command = new DeleteItemCommand({
+    TableName: tableName("InstallerTable"),
+    Key: marshall({ guildId }),
+    // A delayed removal must not erase a subsequent installation.
+    ConditionExpression: "installedAt <= :removedAt",
+    ExpressionAttributeValues: marshall({ ":removedAt": removedAt }),
+  });
+  try {
+    await dynamoDbClient.send(command);
+  } catch (error) {
+    if (isConditionalCheckFailed(error)) return;
+    throw error;
+  }
+}
 export async function getGuildInstaller(
   guildId: string,
 ): Promise<GuildInstaller | undefined> {

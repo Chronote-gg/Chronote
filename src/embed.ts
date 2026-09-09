@@ -10,6 +10,8 @@ import { config } from "./services/configService";
 import { buildPortalMeetingUrl } from "./utils/portalLinks";
 import { buildSummaryFeedbackButtonIds } from "./commands/summaryFeedback";
 import { MEETING_RENAME_PREFIX } from "./commands/meetingName";
+import { deliveryError, recordDelivery } from "./observability/meetingDelivery";
+import type { DeliveryPhase, DeliveryResult } from "./types/meetingDelivery";
 
 const PROCESSING_COLOR = 0x3498db;
 const SUMMARY_COLOR = 0x00ae86;
@@ -224,58 +226,87 @@ function buildSummaryComponents(
   }
   return rows;
 }
-async function updateMeetingMessage(
+export async function updateMeetingMessage(
   meeting: MeetingData,
   payload: MeetingMessagePayload,
-): Promise<{ message?: Message; source: "edited" | "sent" | "none" }> {
+  phase: Exclude<DeliveryPhase, "notes">,
+): Promise<{ message?: Message; delivery: DeliveryResult }> {
   const channel = meeting.textChannel;
+  const errors: DeliveryResult["errors"] = [];
   if (meeting.startMessageId) {
     try {
       const message = await channel.messages.fetch(meeting.startMessageId);
       await message.edit(payload);
-      return { message, source: "edited" };
+      return {
+        message,
+        delivery: recordDelivery(meeting, phase, {
+          outcome: "edited_existing",
+          intended: 1,
+          sent: 1,
+          errors,
+        }),
+      };
     } catch (error) {
-      console.warn("Failed to update meeting start message", error);
+      errors.push(deliveryError(error));
     }
   }
 
   try {
     const message = await channel.send(payload);
     meeting.startMessageId = message.id;
-    return { message, source: "sent" };
+    return {
+      message,
+      delivery: recordDelivery(meeting, phase, {
+        outcome: "sent_fallback",
+        intended: 1,
+        sent: 1,
+        errors,
+      }),
+    };
   } catch (error) {
-    console.warn("Failed to send meeting status message", error);
-    return { source: "none" };
+    errors.push(deliveryError(error));
+    return {
+      delivery: recordDelivery(meeting, phase, {
+        outcome: "failed",
+        intended: 1,
+        sent: 0,
+        errors,
+      }),
+    };
   }
 }
 
 export async function updateMeetingProcessingMessage(
   meeting: MeetingData,
-): Promise<void> {
-  await updateMeetingMessage(meeting, {
-    embeds: [buildProcessingEmbed(meeting)],
-    components: [],
-  });
+): Promise<DeliveryResult> {
+  const { delivery } = await updateMeetingMessage(
+    meeting,
+    {
+      embeds: [buildProcessingEmbed(meeting)],
+      components: [],
+    },
+    "processing",
+  );
+  return delivery;
 }
 
 export async function updateMeetingSummaryMessage(
   meeting: MeetingData,
-): Promise<void> {
+): Promise<{ summary: DeliveryResult; notes: DeliveryResult }> {
   const portalUrl = buildMeetingPortalUrl(meeting);
   const summaryPayload: MeetingMessagePayload = {
     embeds: [buildSummaryEmbed(meeting)],
     components: buildSummaryComponents(meeting, portalUrl),
   };
-  const { message: summaryMessage } = await updateMeetingMessage(
-    meeting,
-    summaryPayload,
-  );
+  const { message: summaryMessage, delivery: summary } =
+    await updateMeetingMessage(meeting, summaryPayload, "summary");
   if (summaryMessage) {
     meeting.summaryMessageId = summaryMessage.id;
   }
 
   const noteEmbeds = buildNotesEmbeds(meeting);
   const noteMessages: Message[] = [];
+  const errors: DeliveryResult["errors"] = [];
   for (let i = 0; i < noteEmbeds.length; i += MAX_EMBEDS_PER_MESSAGE) {
     const payload: MeetingMessagePayload = {
       embeds: noteEmbeds.slice(i, i + MAX_EMBEDS_PER_MESSAGE),
@@ -285,7 +316,7 @@ export async function updateMeetingSummaryMessage(
       const message = await meeting.textChannel.send(payload);
       noteMessages.push(message);
     } catch (error) {
-      console.warn("Failed to send meeting notes embed", error);
+      errors.push(deliveryError(error));
     }
   }
 
@@ -296,4 +327,20 @@ export async function updateMeetingSummaryMessage(
     meeting.notesMessageIds = undefined;
     meeting.notesChannelId = undefined;
   }
+  const intended = Math.ceil(noteEmbeds.length / MAX_EMBEDS_PER_MESSAGE);
+  const sent = noteMessages.length;
+  const notes = recordDelivery(meeting, "notes", {
+    outcome:
+      intended === 0
+        ? "not_applicable"
+        : sent === intended
+          ? "complete"
+          : sent > 0
+            ? "partial"
+            : "failed",
+    intended,
+    sent,
+    errors,
+  });
+  return { summary, notes };
 }

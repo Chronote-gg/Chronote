@@ -7,7 +7,6 @@ import {
   Text,
   ThemeIcon,
   Title,
-  useComputedColorScheme,
 } from "@mantine/core";
 import {
   IconAlertTriangle,
@@ -23,14 +22,14 @@ import { useNavigate, useSearch } from "@tanstack/react-router";
 import Surface from "../components/Surface";
 import { useAuth } from "../contexts/AuthContext";
 import { buildApiUrl } from "../services/apiClient";
-import { heroBackground, uiTypography } from "../uiTokens";
+import { uiTypography } from "../uiTokens";
 
 const BENEFITS = [
   {
     icon: IconClock,
     title: "Longer, deeper sessions",
     description:
-      "Record more meeting time with higher weekly limits and full retention.",
+      "Record more each week, with up to two hours per meeting on Basic and Pro.",
   },
   {
     icon: IconBolt,
@@ -46,8 +45,6 @@ const BENEFITS = [
 ];
 
 export default function Upgrade() {
-  const scheme = useComputedColorScheme("dark");
-  const isDark = scheme === "dark";
   const { state: authState, loading: authLoading } = useAuth();
   const search = useSearch({ strict: false }) as {
     promo?: string;
@@ -90,19 +87,14 @@ export default function Upgrade() {
 
   return (
     <Stack gap="xl">
-      <Surface
-        p={{ base: "lg", md: "xl" }}
-        tone="raised"
-        style={{ backgroundImage: heroBackground(isDark) }}
-      >
+      <Surface p={{ base: "lg", md: "xl" }} tone="raised">
         <Stack gap="md">
           <Text size="xs" c="dimmed" style={uiTypography.heroKicker}>
             Upgrade today
           </Text>
           <Title order={2}>Make every meeting unforgettable.</Title>
           <Text c="dimmed" size="sm">
-            Unlock longer recordings, unlimited retention, and priority features
-            for your team.
+            Get more recording time and ask questions across more meetings.
           </Text>
           {promoCode || wasCanceled ? (
             <Stack gap="xs">
@@ -163,7 +155,7 @@ export default function Upgrade() {
 
       <SimpleGrid cols={{ base: 1, md: 3 }} spacing="lg">
         {BENEFITS.map((benefit) => (
-          <Surface key={benefit.title} p="lg" tone="soft">
+          <Surface key={benefit.title} p="lg">
             <Stack gap="sm">
               <ThemeIcon color="brand" variant="light">
                 <benefit.icon size={18} />
@@ -177,7 +169,7 @@ export default function Upgrade() {
         ))}
       </SimpleGrid>
 
-      <Surface p="lg" tone="soft">
+      <Surface p="lg">
         <Group gap="sm" align="center" wrap="wrap">
           <ThemeIcon color="brand" variant="light">
             <IconRocket size={18} />
@@ -185,8 +177,7 @@ export default function Upgrade() {
           <Box>
             <Text fw={600}>Ready to upgrade</Text>
             <Text size="sm" c="dimmed">
-              Choose the server, confirm the plan, and Stripe will finalize the
-              prorated upgrade.
+              Choose your server and compare plans before continuing to billing.
             </Text>
           </Box>
         </Group>

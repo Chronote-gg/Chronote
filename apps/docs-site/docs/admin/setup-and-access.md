@@ -158,12 +158,21 @@ Each plan tier includes a weekly meeting minutes allowance. Monitor usage by wat
 
 ## Billing
 
-Use `/billing` to manage your server's subscription. This opens the Stripe billing portal where you can:
+Open your server's Billing page in the portal to review its plan and usage. The
+original payer must also have Manage Server permission to manage an existing
+Stripe subscription. Other server managers cannot open the payer's Stripe account.
 
-- View your current plan and usage.
-- Upgrade or downgrade your plan.
-- Update payment methods.
-- View invoice history.
+Existing plan changes are currently unavailable while hosted billing validation
+is completed. Your current subscription stays unchanged; contact support for help.
+When plan changes are enabled, Stripe shows a confirmation for that subscription,
+including the price and any prorations, before applying the change. Returning to
+Chronote does not itself confirm payment; the plan updates after Stripe reports
+the change. A failed confirmation does not create a second subscription.
+
+Use billing management to update payment methods or view invoice history. If a
+subscription has an unpaid invoice, a pending change, or a scheduled cancellation,
+resolve that state before changing plans. Contact support if the original payer
+cannot access billing or the server's billing information needs repair.
 
 Plan tiers affect weekly meeting minutes, the number of meetings searchable by `/ask`, and access to features like image generation.
 

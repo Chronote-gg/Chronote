@@ -388,6 +388,12 @@ variable "STRIPE_MODE" {
   default     = "test"
 }
 
+variable "STRIPE_SUBSCRIPTION_TRANSITIONS_ENABLED" {
+  description = "Enable hosted subscription transitions only after billing validation"
+  type        = bool
+  default     = false
+}
+
 variable "STRIPE_PRICE_BASIC" {
   description = "Optional fallback Stripe price ID for basic plan"
   type        = string
@@ -1837,6 +1843,10 @@ resource "aws_ecs_task_definition" "app_task" {
         {
           name  = "STRIPE_MODE"
           value = var.STRIPE_MODE
+        },
+        {
+          name  = "STRIPE_SUBSCRIPTION_TRANSITIONS_ENABLED"
+          value = tostring(var.STRIPE_SUBSCRIPTION_TRANSITIONS_ENABLED)
         },
         {
           name  = "STRIPE_PRICE_BASIC"
