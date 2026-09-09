@@ -14649,10 +14649,10 @@ open@^8.4.0:
     is-docker "^2.1.1"
     is-wsl "^2.2.0"
 
-openai@7.3.0:
-  version "7.3.0"
-  resolved "https://registry.yarnpkg.com/openai/-/openai-7.3.0.tgz#97a6b514396b20ef01ad0afbcbd86d512bfa1d20"
-  integrity sha512-FLnIAkDEP3grs+BSDpqxEWVR37yG97/hs95lajF8SnHuA5nqtssh0uJVXbPhODNEoZqar+nEd+fIeGJgwoLUmg==
+openai@7.4.0:
+  version "7.4.0"
+  resolved "https://registry.yarnpkg.com/openai/-/openai-7.4.0.tgz#68a91d333c388cffaa6b276b160acaf81b342a9f"
+  integrity sha512-+C9Muit5x8j9R8ej8ZzVgKcrVDtqFqTy9gxFdov0EItLgU68zrJtF9ZeT0cyqJQW9S3PCJkdFgADtRGquRBtew==
 
 opener@^1.5.2:
   version "1.5.2"
