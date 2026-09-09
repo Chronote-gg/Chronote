@@ -157,7 +157,7 @@
     "lru-cache": "^11.5.2",
     "lusca": "^1.7.0",
     "nodemon": "^3.1.14",
-    "openai": "7.3.0",
+    "openai": "^7.3.0",
     "opusscript": "^0.1.1",
     "passport": "^0.7.0",
     "passport-discord": "^0.1.4",
