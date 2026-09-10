@@ -46,7 +46,7 @@ concurrency:
 jobs:
   apply:
     name: Terraform Apply
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: ubuntu-latest
     environment: ${{ inputs.github_environment }}
     env:
       TF_IN_AUTOMATION: "true"

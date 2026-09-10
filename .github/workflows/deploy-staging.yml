@@ -15,7 +15,7 @@ concurrency:
 jobs:
   lint:
     name: Lint
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -35,7 +35,7 @@ jobs:
 
   markdownlint:
     name: Markdown Lint
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -55,7 +55,7 @@ jobs:
 
   test:
     name: Unit Tests (Non-blocking)
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -82,7 +82,7 @@ jobs:
 
   code-stats:
     name: Code Stats
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -121,7 +121,7 @@ jobs:
 
   build:
     name: Build
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -175,7 +175,7 @@ jobs:
 
   docs-check:
     name: Docs Check
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -244,7 +244,7 @@ jobs:
         docs-check,
         e2e-tests,
       ]
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: ubuntu-latest
     environment: sandbox
     env:
       DEPLOY_ENVIRONMENT: sandbox
@@ -326,7 +326,7 @@ jobs:
   deploybackend:
     name: Deploy Backend (Sandbox)
     needs: [deploy-target-preflight]
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: ubuntu-latest
     environment: sandbox
     env:
       ECS_CLUSTER: ${{ vars.ECS_CLUSTER }}
@@ -600,7 +600,7 @@ jobs:
   deploy-frontend:
     name: Deploy Frontend (Sandbox)
     needs: [deploy-target-preflight]
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: ubuntu-latest
     environment: sandbox
     env:
       VITE_API_BASE_URL: ${{ vars.VITE_API_BASE_URL }}
@@ -639,7 +639,7 @@ jobs:
   deploy-docs:
     name: Deploy Docs (Sandbox)
     needs: [deploy-target-preflight]
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: ubuntu-latest
     environment: sandbox
     steps:
       - name: Checkout
