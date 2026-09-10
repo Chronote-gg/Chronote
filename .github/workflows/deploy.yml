@@ -23,7 +23,7 @@ jobs:
   deploybackend:
     name: Deploy Backend
     needs: [ci]
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: ubuntu-latest
     environment: production
     env:
       ECS_CLUSTER: ${{ vars.ECS_CLUSTER }}
@@ -322,7 +322,7 @@ jobs:
   deploy-frontend:
     name: Deploy Frontend
     needs: [ci]
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: ubuntu-latest
     environment: production
     env:
       VITE_API_BASE_URL: ${{ vars.VITE_API_BASE_URL }}
@@ -361,7 +361,7 @@ jobs:
   deploy-docs:
     name: Deploy Docs
     needs: [ci]
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: ubuntu-latest
     environment: production
     steps:
       - name: Checkout
@@ -451,7 +451,7 @@ jobs:
   promote-prompts:
     name: Promote Prompts
     needs: [deploybackend]
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v7

@@ -14,7 +14,7 @@ on:
 jobs:
   code-quality:
     name: Code Quality (Lint, Format, Markdown)
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -40,7 +40,7 @@ jobs:
   prompts-check:
     name: Prompts Check
     continue-on-error: ${{ github.event_name != 'pull_request' }}
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -70,7 +70,7 @@ jobs:
   llm-connections-check:
     name: LLM Connections Check
     continue-on-error: ${{ github.event_name != 'pull_request' }}
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -99,7 +99,7 @@ jobs:
 
   test:
     name: Unit Tests
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -118,7 +118,7 @@ jobs:
 
   build:
     name: Build
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -168,7 +168,7 @@ jobs:
 
   docs-check:
     name: Docs Check
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -188,7 +188,7 @@ jobs:
   storybook-build:
     name: Storybook Build
     continue-on-error: ${{ github.event_name != 'pull_request' }}
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -212,7 +212,7 @@ jobs:
   docker-build:
     name: Docker Build
     continue-on-error: ${{ github.event_name != 'pull_request' }}
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -262,7 +262,7 @@ jobs:
 
   code-stats:
     name: Code Stats
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -293,7 +293,7 @@ jobs:
 
   checkov:
     name: Checkov (Terraform)
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v7
