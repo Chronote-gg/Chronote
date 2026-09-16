@@ -1,6 +1,6 @@
 # Recording processing outcomes
 
-Status: product behavior approved in the September 16 task conversation. This document records that agreement and the implementation boundaries. Implementation has not started.
+Status: implemented and verified locally. This document records the approved behavior and implementation boundaries. No deployment is claimed.
 
 ## Goal
 
