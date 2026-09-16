@@ -3,10 +3,14 @@ import type {
   PersonalMediaUploadJobRecord,
   PersonalRecordingSegmentRecord,
 } from "../../types/db";
-import { writeMeetingHistoryService } from "../meetingHistoryService";
+import {
+  getMeetingHistoryService,
+  writeMeetingHistoryService,
+} from "../meetingHistoryService";
 import {
   listPersonalRecordingUploadSegments,
   markPersonalRecordingUploadSegmentProcessed,
+  markPersonalRecordingUploadSegmentFailed,
   markPersonalRecordingUploadSegmentProcessing,
   updateClaimedPersonalMediaUploadJobProgress,
   updateClaimedPersonalMediaUploadJobRecord,
@@ -93,6 +97,7 @@ jest.mock("fluent-ffmpeg", () => {
 });
 
 jest.mock("../meetingHistoryService", () => ({
+  getMeetingHistoryService: jest.fn(async () => undefined),
   writeMeetingHistoryService: jest.fn(async () => undefined),
 }));
 
@@ -233,6 +238,7 @@ describe("personalMediaUploadProcessingService", () => {
     mockUploadedObjects.clear();
     recordingSegments = [];
     mockTranscribe.mockResolvedValue({ text: "segment transcript" });
+    jest.mocked(getMeetingHistoryService).mockResolvedValue(undefined);
     jest
       .mocked(listPersonalRecordingUploadSegments)
       .mockImplementation(async () => recordingSegments);
@@ -248,6 +254,15 @@ describe("personalMediaUploadProcessingService", () => {
           ...segment,
           status: "processed",
           transcriptS3Key: options?.transcriptS3Key,
+        }),
+      );
+    jest
+      .mocked(markPersonalRecordingUploadSegmentFailed)
+      .mockImplementation(async (segment, error) =>
+        replaceSegment({
+          ...segment,
+          status: "failed",
+          errorMessage: error instanceof Error ? error.message : "failed",
         }),
       );
     jest
@@ -399,6 +414,233 @@ describe("personalMediaUploadProcessingService", () => {
       "personal/user-1/upload-1/transcript.json",
       expect.stringContaining("cached transcript"),
       "application/json",
+    );
+  });
+
+  it("records an empty desktop recording without generating notes", async () => {
+    recordingSegments = [buildSegment(0)];
+    mockTranscribe.mockResolvedValue({ text: "   " });
+
+    await processPersonalMediaUpload(buildDesktopJob(), "instance-1");
+
+    expect(mockChatComplete).not.toHaveBeenCalled();
+    expect(writeMeetingHistoryService).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        notes: "",
+        processing: {
+          transcription: "empty",
+          notes: "skipped",
+          summary: "skipped",
+        },
+      }),
+    );
+  });
+
+  it("records an empty ordinary upload without generating notes", async () => {
+    mockTranscribe.mockResolvedValue({ text: "   " });
+
+    await processPersonalMediaUpload(buildJob(), "instance-1");
+
+    expect(mockChatComplete).not.toHaveBeenCalled();
+    expect(writeMeetingHistoryService).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        notes: "",
+        processing: {
+          transcription: "empty",
+          notes: "skipped",
+          summary: "skipped",
+        },
+      }),
+    );
+  });
+
+  it("salvages cached text on the last attempt and leaves the failed segment failed", async () => {
+    const cached = {
+      ...buildSegment(0, "processed"),
+      transcriptS3Key: "cached.json",
+    };
+    recordingSegments = [cached, buildSegment(1)];
+    mockUploadedObjects.set(
+      "cached.json",
+      JSON.stringify({
+        segment: {
+          userId: "user-1",
+          username: "Me",
+          displayName: "Me",
+          startedAt: cached.startedAt,
+          text: "cached transcript",
+          source: "desktop_recording",
+        },
+      }),
+    );
+    mockTranscribe.mockRejectedValue(new Error("provider failed"));
+
+    await processPersonalMediaUpload(
+      { ...buildDesktopJob(), attempts: 3 },
+      "instance-1",
+    );
+
+    expect(mockTranscribe).toHaveBeenCalledTimes(1);
+    expect(recordingSegments).toEqual([
+      expect.objectContaining({ status: "processed" }),
+      expect.objectContaining({ status: "failed" }),
+    ]);
+    expect(writeMeetingHistoryService).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        notes: "Generated notes",
+        processing: {
+          transcription: "partial",
+          notes: "generated",
+          summary: "generated",
+        },
+      }),
+    );
+    expect(updateClaimedPersonalMediaUploadJobRecord).toHaveBeenLastCalledWith(
+      expect.objectContaining({ processedSegmentCount: 1, status: "complete" }),
+      "instance-1",
+    );
+  });
+
+  it("requeues a provider failure before the last attempt", async () => {
+    recordingSegments = [buildSegment(0)];
+    mockTranscribe.mockRejectedValue(new Error("provider failed"));
+
+    await processPersonalMediaUpload(
+      { ...buildDesktopJob(), attempts: 2 },
+      "instance-1",
+    );
+
+    expect(writeMeetingHistoryService).not.toHaveBeenCalled();
+    expect(updateClaimedPersonalMediaUploadJobRecord).toHaveBeenLastCalledWith(
+      expect.objectContaining({ status: "queued", retryable: true }),
+      "instance-1",
+    );
+  });
+
+  it("records terminal failure when every final-attempt chunk fails", async () => {
+    recordingSegments = [buildSegment(0)];
+    mockTranscribe.mockRejectedValue(new Error("provider failed"));
+
+    await processPersonalMediaUpload(
+      { ...buildDesktopJob(), attempts: 3 },
+      "instance-1",
+    );
+
+    expect(writeMeetingHistoryService).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        status: "complete",
+        processing: {
+          transcription: "failed",
+          notes: "skipped",
+          summary: "skipped",
+        },
+      }),
+    );
+    expect(updateClaimedPersonalMediaUploadJobRecord).toHaveBeenLastCalledWith(
+      expect.objectContaining({ status: "failed", retryable: false }),
+      "instance-1",
+    );
+  });
+
+  it("treats mixed empty and failed chunks as terminal failure", async () => {
+    recordingSegments = [buildSegment(0), buildSegment(1)];
+    mockTranscribe
+      .mockResolvedValueOnce({ text: "   " })
+      .mockRejectedValueOnce(new Error("provider failed"));
+
+    await processPersonalMediaUpload(
+      { ...buildDesktopJob(), attempts: 3 },
+      "instance-1",
+    );
+
+    expect(writeMeetingHistoryService).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        processing: expect.objectContaining({ transcription: "failed" }),
+      }),
+    );
+    expect(recordingSegments).toEqual([
+      expect.objectContaining({ status: "processed" }),
+      expect.objectContaining({ status: "failed" }),
+    ]);
+  });
+
+  it("does not convert an ordinary final-attempt provider failure to empty", async () => {
+    mockTranscribe.mockRejectedValue(new Error("provider failed"));
+
+    await processPersonalMediaUpload(
+      { ...buildJob(), attempts: 3 },
+      "instance-1",
+    );
+
+    expect(writeMeetingHistoryService).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        processing: expect.objectContaining({ transcription: "failed" }),
+      }),
+    );
+    expect(mockChatComplete).not.toHaveBeenCalled();
+  });
+
+  it("keeps an S3 artifact failure as a failed job", async () => {
+    jest
+      .mocked(uploadObjectToS3)
+      .mockRejectedValueOnce(new Error("S3 unavailable"));
+
+    await processPersonalMediaUpload(
+      { ...buildJob(), attempts: 3 },
+      "instance-1",
+    );
+
+    expect(updateClaimedPersonalMediaUploadJobRecord).toHaveBeenLastCalledWith(
+      expect.objectContaining({ status: "failed", retryable: false }),
+      "instance-1",
+    );
+    expect(writeMeetingHistoryService).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        processing: {
+          transcription: "ready",
+          notes: "generated",
+          summary: "generated",
+        },
+      }),
+    );
+  });
+
+  it("preserves a valid completed history when the job completion write fails", async () => {
+    recordingSegments = [buildSegment(0)];
+    jest
+      .mocked(updateClaimedPersonalMediaUploadJobRecord)
+      .mockRejectedValueOnce(new Error("job metadata failed"))
+      .mockResolvedValueOnce(true);
+    jest.mocked(getMeetingHistoryService).mockResolvedValue({
+      guildId: "personal:user-1",
+      channelId_timestamp: "personal#2026-01-06T18:00:00.000Z",
+      meetingId: "upload-1",
+      channelId: "personal",
+      timestamp: "2026-01-06T18:00:00.000Z",
+      notes: "Generated notes",
+      participants: [],
+      duration: 1,
+      transcribeMeeting: true,
+      generateNotes: true,
+      status: "complete",
+      processing: {
+        transcription: "ready",
+        notes: "generated",
+        summary: "generated",
+      },
+    });
+
+    await processPersonalMediaUpload(
+      { ...buildDesktopJob(), attempts: 3 },
+      "instance-1",
+    );
+
+    expect(writeMeetingHistoryService).toHaveBeenCalledTimes(1);
+    expect(writeMeetingHistoryService).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        notes: "Generated notes",
+        processing: expect.objectContaining({ transcription: "ready" }),
+      }),
     );
   });
 });
