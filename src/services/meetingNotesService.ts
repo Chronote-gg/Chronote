@@ -97,11 +97,15 @@ export async function ensureMeetingSummaries(
     meeting.summaryLabel = summaries.summaryLabel;
     meeting.processing = { ...meeting.processing, summary: "generated" };
     if (!meeting.meetingName) {
-      meeting.meetingName = await resolveMeetingNameFromSummary({
-        guildId: meeting.guildId,
-        meetingId: meeting.meetingId,
-        summaryLabel: summaries.summaryLabel,
-      });
+      try {
+        meeting.meetingName = await resolveMeetingNameFromSummary({
+          guildId: meeting.guildId,
+          meetingId: meeting.meetingId,
+          summaryLabel: summaries.summaryLabel,
+        });
+      } catch (error) {
+        console.error("Error resolving meeting name:", error);
+      }
     }
     return summaries;
   } catch (error) {

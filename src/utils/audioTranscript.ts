@@ -17,9 +17,7 @@ export function resolveAudioFileText(file: AudioFileData): string {
 export function getAudioTranscriptionFacts(
   audio: AudioData,
 ): TranscriptionFacts {
-  const files = audio.audioFiles.filter(
-    (file) => !file.source || file.source === "voice",
-  );
+  const files = audio.audioFiles.filter((file) => file.source !== "bot");
   return {
     usableSegments: files.filter((file) => Boolean(resolveAudioFileText(file)))
       .length,

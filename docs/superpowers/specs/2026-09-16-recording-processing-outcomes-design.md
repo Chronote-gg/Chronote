@@ -25,6 +25,7 @@ Do not infer physical silence from an empty capture. Do not auto-cancel an empty
 - An optional `processing` object on the in-memory meeting and persisted history carries transcription, notes and summary outcomes. Absence means unclassified, not empty.
 - Transcription is `ready`, `empty`, `partial` or `failed`. Notes and summary are `generated`, `skipped` or `failed` after their work resolves. No new framework or background job is needed.
 - Classify unformatted selected segment text, excluding whitespace and the historical failure placeholder. Speaker labels, headers, chat cues and artifact-object presence cannot establish speech.
+- User-authored chat actually spoken through TTS remains usable transcript content. Bot-authored speech does not establish usable meeting content.
 - Empty means transcription work completed without usable text and without an unrecovered failure or known capture gap. Captured bytes and suppression counts are internal diagnostics, not user-facing subcategories.
 - An exhausted required transcription/conversion failure or known lost capture is failed if no usable text remains, otherwise partial.
 - Retried provider work that succeeds is not an unrecovered failure. A stale fast revision must not overwrite a later successful slow result. Successful fast coverage that replaces the slow pass is valid.
@@ -41,7 +42,7 @@ Personal uploads retain their existing job-attempt limit and processed-segment r
 
 A desktop segment with failed transcription must not be marked processed merely to finish its parent job. Partial job completion may retain failed segments and honest processed counts. Failed transcript segments do not remove their successfully normalized audio from the audio artifact. Cached successful segments remain reusable.
 
-On terminal failure, history must stop appearing actively processing and carry a failed processing outcome. Use existing lifecycle `complete` to indicate that processing has ended and retain upload job `failed`; there is no existing meeting lifecycle `failed` value. Do not overwrite a valid completed history record when a later metadata write fails.
+On terminal failure, history must stop appearing actively processing and preserve known processing outcomes. Unknown stages remain unset rather than blaming transcription for unrelated infrastructure errors. Use existing lifecycle `complete` to indicate that processing has ended and retain upload job `failed`; there is no existing meeting lifecycle `failed` value. Do not overwrite a valid completed history record when a later metadata write fails.
 
 ## Presentation and compatibility
 

@@ -14,6 +14,24 @@ const file = (overrides: Partial<AudioFileData> = {}): AudioFileData => ({
 });
 
 describe("audio transcript selection", () => {
+  test.each([false, true])(
+    "counts spoken user chat with captureIncomplete=%s",
+    (captureIncomplete) => {
+      const audio = {
+        currentSnippets: new Map(),
+        audioFiles: [
+          file({ transcript: "User contribution", source: "chat_tts" }),
+          file({ transcript: "Bot response", source: "bot" }),
+        ],
+        captureIncomplete,
+      } as AudioData;
+      expect(getAudioTranscriptionFacts(audio)).toEqual({
+        usableSegments: 1,
+        failedSegments: 0,
+        captureIncomplete,
+      });
+    },
+  );
   test("an authoritative empty final pass suppresses older text", () => {
     expect(
       resolveAudioFileText(

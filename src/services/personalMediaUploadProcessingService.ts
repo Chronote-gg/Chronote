@@ -353,7 +353,7 @@ const getSummaryOutcome = (
   summaries: MeetingSummaries,
 ): MeetingProcessingOutcome["summary"] => {
   if (!notes) return "skipped";
-  return summaries.summarySentence?.trim() && summaries.summaryLabel?.trim()
+  return summaries.summarySentence?.trim() || summaries.summaryLabel?.trim()
     ? "generated"
     : "failed";
 };
@@ -1142,7 +1142,6 @@ const writeTerminalFailureMeeting = async (
     error instanceof PersonalUploadProcessingError
       ? error.processing
       : ({
-          transcription: "failed",
           notes: "skipped",
           summary: "skipped",
         } as const);
@@ -1258,7 +1257,6 @@ export async function processPersonalMediaUpload(
             resolvedError instanceof PersonalUploadProcessingError
               ? resolvedError.processing
               : {
-                  transcription: "failed",
                   notes: "skipped",
                   summary: "skipped",
                 },

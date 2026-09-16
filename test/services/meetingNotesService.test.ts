@@ -6,6 +6,7 @@ import {
 import { getNotes } from "../../src/services/notesService";
 import { generateMeetingSummaries } from "../../src/services/meetingSummaryService";
 import { PARTIAL_TRANSCRIPT_NOTICE } from "../../src/utils/meetingProcessing";
+import { resolveMeetingNameFromSummary } from "../../src/services/meetingNameService";
 
 jest.mock("../../src/services/notesService", () => ({ getNotes: jest.fn() }));
 jest.mock("../../src/services/meetingSummaryService", () => ({
@@ -117,4 +118,24 @@ test("leaves generation outcomes unset when notes are disabled", async () => {
   await ensureMeetingSummaries(value, undefined);
 
   expect(value.processing).toEqual({ transcription: "empty" });
+});
+
+test("preserves generated summaries when naming fails", async () => {
+  const value = meeting();
+  const summaries = { summarySentence: "Summary", summaryLabel: "Label" };
+  mockedGenerateMeetingSummaries.mockResolvedValue(summaries);
+  jest
+    .mocked(resolveMeetingNameFromSummary)
+    .mockRejectedValueOnce(new Error("name lookup failed"));
+  const errorSpy = jest.spyOn(console, "error").mockImplementation();
+
+  expect(await ensureMeetingSummaries(value, "Useful notes")).toEqual(
+    summaries,
+  );
+  expect(await ensureMeetingSummaries(value, "Useful notes")).toEqual(
+    summaries,
+  );
+  expect(value.processing?.summary).toBe("generated");
+  expect(mockedGenerateMeetingSummaries).toHaveBeenCalledTimes(1);
+  errorSpy.mockRestore();
 });

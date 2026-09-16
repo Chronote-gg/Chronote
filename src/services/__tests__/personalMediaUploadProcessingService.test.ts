@@ -20,7 +20,11 @@ import {
   createPersonalMediaProcessingMeeting,
   processPersonalMediaUpload,
 } from "../personalMediaUploadProcessingService";
-import { fetchJsonFromS3, uploadObjectToS3 } from "../storageService";
+import {
+  downloadObjectToFile,
+  fetchJsonFromS3,
+  uploadObjectToS3,
+} from "../storageService";
 import { TRANSCRIPTION_FAILURE_PLACEHOLDER } from "../../constants";
 import type { MeetingSummaries } from "../meetingSummaryService";
 import { resolveMeetingNameFromSummary } from "../meetingNameService";
@@ -307,6 +311,50 @@ describe("personalMediaUploadProcessingService", () => {
   describe.each(["ordinary", "desktop"])("%s finalization", (origin) => {
     const jobForOrigin = () =>
       origin === "desktop" ? buildDesktopJob() : buildJob();
+    it.each([{ summarySentence: "Summary" }, { summaryLabel: "Label" }])(
+      "accepts a one-field summary: %j",
+      async (summaries) => {
+        recordingSegments = [buildSegment(0)];
+        mockGenerateSummaries.mockResolvedValueOnce(summaries);
+        await processPersonalMediaUpload(
+          { ...jobForOrigin(), attempts: 3 },
+          "instance-1",
+        );
+        expect(writeMeetingHistoryService).toHaveBeenLastCalledWith(
+          expect.objectContaining({
+            processing: {
+              transcription: "ready",
+              notes: "generated",
+              summary: "generated",
+            },
+          }),
+        );
+      },
+    );
+
+    it("does not blame transcription for a source download failure", async () => {
+      recordingSegments = [buildSegment(0)];
+      jest
+        .mocked(downloadObjectToFile)
+        .mockRejectedValueOnce(new Error("download failed"));
+      await processPersonalMediaUpload(
+        { ...jobForOrigin(), attempts: 3 },
+        "instance-1",
+      );
+      expect(mockTranscribe).not.toHaveBeenCalled();
+      expect(writeMeetingHistoryService).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          processing: { notes: "skipped", summary: "skipped" },
+        }),
+      );
+      expect(recordPersonalUploadTerminal).toHaveBeenLastCalledWith(
+        "upload-1",
+        expect.objectContaining({
+          jobStatus: "failed",
+          processing: { notes: "skipped", summary: "skipped" },
+        }),
+      );
+    });
     beforeEach(() => {
       recordingSegments = [buildSegment(0)];
     });
