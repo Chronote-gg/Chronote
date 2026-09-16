@@ -29,6 +29,11 @@ it.each([false, true])(
       creator: { id: "creator" },
       transcribeMeeting: true,
       generateNotes: true,
+      processing: {
+        transcription: "partial",
+        notes: "generated",
+        summary: "failed",
+      },
       transcriptS3Key: "transcript",
       audioS3Key: "audio",
       cancelled,
@@ -45,6 +50,15 @@ it.each([false, true])(
     expect(writeMeetingHistoryService).toHaveBeenLastCalledWith(
       expect.objectContaining({
         generateNotes: true,
+        ...(cancelled
+          ? {}
+          : {
+              processing: {
+                transcription: "partial",
+                notes: "generated",
+                summary: "failed",
+              },
+            }),
         transcriptS3Key: "transcript",
         audioS3Key: "audio",
         delivery: {
