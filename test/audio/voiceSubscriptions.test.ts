@@ -1,6 +1,10 @@
 import { PassThrough } from "node:stream";
 import { VoiceConnectionStatus } from "@discordjs/voice";
-import { subscribeToUserVoice } from "../../src/audio";
+import {
+  subscribeToUserVoice,
+  userStartTalking,
+  userStopTalking,
+} from "../../src/audio";
 import type { MeetingData } from "../../src/types/meeting-data";
 
 jest.mock("prism-media", () => {
@@ -73,7 +77,14 @@ describe("voice subscriptions", () => {
 
     expect(receiver.subscribe).toHaveBeenCalledTimes(1);
     streams[0].emit("error", new Error("corrupt"));
+    expect(meeting.audioData.captureIncomplete).toBe(true);
     jest.runOnlyPendingTimers();
     expect(receiver.subscribe).toHaveBeenCalledTimes(2);
+
+    meeting.audioData.captureIncomplete = false;
+    userStartTalking(meeting, "user-1");
+    jest.advanceTimersByTime(800);
+    userStopTalking(meeting, "user-1");
+    expect(meeting.audioData.captureIncomplete).toBe(true);
   });
 });

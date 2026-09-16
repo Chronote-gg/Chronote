@@ -31,6 +31,7 @@ import {
   isLowInformationTranscriptionText,
   isTrivialTranscriptionText,
 } from "../utils/transcriptionText";
+import { resolveAudioFileText } from "../utils/audioTranscript";
 
 type ChunkLogprobEntry = {
   logprob?: number;
@@ -139,14 +140,6 @@ export type TranscriptionFinalPassResult = {
   fallbackApplied: boolean;
   fallbackReason?: string;
 };
-
-const resolveAudioFileText = (fileData: AudioFileData): string =>
-  fileData.coalescedTranscript ??
-  fileData.slowTranscript ??
-  fileData.transcript ??
-  (fileData.fastTranscripts && fileData.fastTranscripts.length > 0
-    ? fileData.fastTranscripts[fileData.fastTranscripts.length - 1].text
-    : "");
 
 const resolveSpeakerLabel = (meeting: MeetingData, userId: string): string => {
   const participant = meeting.participants.get(userId);
