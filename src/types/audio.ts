@@ -26,6 +26,13 @@ export type CoalesceMeta = {
   createdAt: string;
 };
 
+export type SnippetTranscriptionResult =
+  | { status: "succeeded"; text: string }
+  | {
+      status: "failed";
+      reason: "transcription_error" | "conversion_error";
+    };
+
 export type AudioSegmentSource = "voice" | "chat_tts" | "bot";
 export interface AudioCueEvent {
   userId: string;
@@ -49,6 +56,7 @@ export interface AudioFileData {
   slowTranscript?: string;
   coalescedTranscript?: string;
   coalesceMeta?: CoalesceMeta;
+  transcriptionFailed?: boolean;
   source?: AudioSegmentSource;
   messageId?: string;
   processing: boolean;
@@ -79,4 +87,5 @@ export interface AudioData {
   speakerTracks?: Map<string, SpeakerTrackFile>;
   speakerTrackDir?: string;
   missingStartWarnings?: Set<string>;
+  captureIncomplete?: boolean;
 }

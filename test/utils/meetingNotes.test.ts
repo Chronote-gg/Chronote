@@ -35,6 +35,7 @@ g.Request = g.Request || Request;
 g.Response = g.Response || Response;
 
 const {
+  batchMeetingNotesEmbeds,
   buildMeetingNotesEmbeds,
   formatNotesEmbedTitle,
   resolveNotesEmbedBaseTitle,
@@ -72,5 +73,62 @@ describe("meetingNotes utils", () => {
     expect(embeds).toHaveLength(1);
     const json = embeds[0].toJSON();
     expect(json.title).toBe("Meeting Notes");
+  });
+
+  test("keeps partial notes unchanged and adds the warning to every footer", () => {
+    const notesBody = "A".repeat(5000);
+    const embeds = buildMeetingNotesEmbeds({
+      notesBody,
+      footerText: "v2",
+      processing: { transcription: "partial", notes: "generated" },
+    });
+
+    expect(embeds).toHaveLength(2);
+    expect(embeds.map((embed) => embed.toJSON().description).join("")).toBe(
+      notesBody,
+    );
+    for (const embed of embeds) {
+      expect(embed.toJSON().footer?.text).toBe(
+        "v2 • Some audio could not be transcribed. These notes may be incomplete.",
+      );
+    }
+  });
+
+  test("uses processing explanations outside stored note content", () => {
+    const embeds = buildMeetingNotesEmbeds({
+      notesBody: "",
+      processing: { transcription: "empty", notes: "skipped" },
+    });
+
+    expect(embeds[0].toJSON().description).toBe(
+      "No usable speech was found, so no notes were generated.",
+    );
+  });
+
+  test("fits and batches a 5900-character partial payload with a long footer", () => {
+    const embeds = buildMeetingNotesEmbeds({
+      notesBody: "A".repeat(5900),
+      meetingName: "Meeting notes",
+      footerText: "F".repeat(2048),
+      processing: { transcription: "partial", notes: "generated" },
+    });
+    const payloads = batchMeetingNotesEmbeds(embeds);
+
+    expect(payloads).toHaveLength(2);
+    for (const payload of payloads) {
+      const totalText = payload.reduce((total, embed) => {
+        const json = embed.toJSON();
+        expect(json.footer?.text).toContain(
+          "Some audio could not be transcribed. These notes may be incomplete.",
+        );
+        return (
+          total +
+          (json.title?.length ?? 0) +
+          (json.description?.length ?? 0) +
+          (json.footer?.text.length ?? 0)
+        );
+      }, 0);
+      expect(totalText).toBeLessThanOrEqual(6000);
+    }
   });
 });

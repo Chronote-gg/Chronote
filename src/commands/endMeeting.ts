@@ -65,6 +65,8 @@ import {
 } from "../services/tempFileService";
 import { releaseMeetingLeaseForMeeting } from "../services/activeMeetingLeaseService";
 import { runTranscriptionFinalPass } from "../services/transcriptionFinalPassService";
+import { getAudioTranscriptionFacts } from "../utils/audioTranscript";
+import { classifyTranscription } from "../utils/meetingProcessing";
 
 type EndMeetingFlowOptions = {
   client: Client;
@@ -459,6 +461,23 @@ async function runEndMeetingFlow(options: EndMeetingFlowOptions) {
         () => compileTranscriptions(client, meeting),
       );
       meeting.finalTranscript = transcriptions;
+      const transcriptionStillPending = meeting.audioData.audioFiles.some(
+        (file) => file.processing,
+      );
+      if (transcriptionStillPending) {
+        console.error(
+          "Cannot classify meeting transcription while required work is pending",
+          { meetingId: meeting.meetingId },
+        );
+      }
+      meeting.processing = {
+        ...meeting.processing,
+        transcription: transcriptionStillPending
+          ? "failed"
+          : classifyTranscription(
+              getAudioTranscriptionFacts(meeting.audioData),
+            ),
+      };
 
       if (meeting.generateNotes) {
         await runMeetingEndStep(
@@ -536,6 +555,11 @@ async function runEndMeetingFlow(options: EndMeetingFlowOptions) {
 
     meeting.setFinished();
     meeting.finished = true;
+    console.info("Meeting processing completed", {
+      meetingId: meeting.meetingId,
+      processing: meeting.processing,
+      ...getAudioTranscriptionFacts(meeting.audioData),
+    });
     captureMeetingCompleted(meeting);
     deleteMeeting(meeting.guildId);
   } finally {

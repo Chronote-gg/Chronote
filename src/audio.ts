@@ -15,7 +15,6 @@ import {
   RECORD_SAMPLE_RATE,
   SILENCE_THRESHOLD,
   TRANSCRIPTION_CLEANUP_LINES_DIFFERENCE_ISSUE,
-  TRANSCRIPTION_FAILURE_PLACEHOLDER,
 } from "./constants";
 import {
   AudioFileData,
@@ -32,6 +31,7 @@ import {
   coalesceTranscription,
   transcribeSnippet,
 } from "./services/transcriptionService";
+import { resolveAudioFileText } from "./utils/audioTranscript";
 import { buildModelOverrides, getModelChoice } from "./services/modelFactory";
 import { formatParticipantLabel } from "./utils/participants";
 import ffmpeg from "fluent-ffmpeg";
@@ -222,6 +222,13 @@ function scheduleResubscribe(
   if (existing) {
     existing.resubscribeTimer = timer;
   }
+}
+
+function isCaptureActive(meeting: MeetingData): boolean {
+  return (
+    !meeting.finishing &&
+    meeting.connection.state.status !== VoiceConnectionStatus.Destroyed
+  );
 }
 
 function markSpeakerStart(meeting: MeetingData, userId: string) {
@@ -506,12 +513,13 @@ function runFastTranscription(meeting: MeetingData, snippet: AudioSnippet) {
     tempSuffix: `fast-${revision}`,
     noiseGateMode: "fast",
   })
-    .then((transcription) => {
+    .then((result) => {
       if (snippet.fastRevision !== revision) return;
-      if (
-        !transcription.trim() ||
-        transcription === TRANSCRIPTION_FAILURE_PLACEHOLDER
-      ) {
+      if (result.status === "failed") {
+        return;
+      }
+      const transcription = result.text;
+      if (!transcription.trim()) {
         return;
       }
       const entry = {
@@ -610,6 +618,7 @@ export function startProcessingSnippet(
     console.log(
       `Fast transcript covers snippet, skipping slow transcription: guildId=${meeting.guildId} channelId=${meeting.channelId} meetingId=${meeting.meetingId} userId=${snippet.userId} speaker=${speakerLabel} duration=${duration.toFixed(2)}s bytes=${getAudioBytes(snippet)}`,
     );
+    audioFileData.transcriptionFailed = false;
     audioFileData.transcript = latestFastText;
   } else if (
     hasAudio &&
@@ -627,7 +636,13 @@ export function startProcessingSnippet(
             ? false
             : undefined,
         })
-          .then(async (transcription) => {
+          .then(async (result) => {
+            if (result.status === "failed") {
+              audioFileData.transcriptionFailed = true;
+              return;
+            }
+            const transcription = result.text;
+            audioFileData.transcriptionFailed = false;
             audioFileData.slowTranscript = transcription;
             audioFileData.transcript = transcription;
             if (!options.skipLiveVoice) {
@@ -834,6 +849,9 @@ export async function subscribeToUserVoice(
   // Prevent decoder errors (often caused by malformed or partial packets) from crashing the process.
   opusDecoder.on("error", (err: Error) => {
     if (subscriptionState.suppressResubscribe) return;
+    if (isCaptureActive(meeting)) {
+      meeting.audioData.captureIncomplete = true;
+    }
     subscriptionState.decoderErrorCount += 1;
     console.warn(
       `Opus decoder error: ${logPrefix} message=${err.message} errors=${subscriptionState.decoderErrorCount}`,
@@ -844,6 +862,9 @@ export async function subscribeToUserVoice(
   // Prism's Opus stream can also emit errors; guard those too.
   opusStream.on("error", (err: Error) => {
     if (subscriptionState.suppressResubscribe) return;
+    if (isCaptureActive(meeting)) {
+      meeting.audioData.captureIncomplete = true;
+    }
     console.warn(`Opus stream error: ${logPrefix} message=${err.message}`);
     scheduleResubscribe(meeting, userId, "opus-stream-error");
   });
@@ -853,6 +874,9 @@ export async function subscribeToUserVoice(
 
   decodedStream.on("error", (err: Error) => {
     if (subscriptionState.suppressResubscribe) return;
+    if (isCaptureActive(meeting)) {
+      meeting.audioData.captureIncomplete = true;
+    }
     console.warn(`Decoded stream error: ${logPrefix} message=${err.message}`);
     scheduleResubscribe(meeting, userId, "decoded-stream-error");
   });
@@ -919,6 +943,9 @@ export function userStopTalking(meeting: MeetingData, userId: string) {
       state?.lastStartMs && state.lastEndMs
         ? Math.max(0, state.lastEndMs - state.lastStartMs)
         : 0;
+    if (durationMs >= NO_PCM_MIN_DURATION_MS && isCaptureActive(meeting)) {
+      meeting.audioData.captureIncomplete = true;
+    }
     const subscription = getVoiceSubscriptions(meeting).get(userId);
     const now = Date.now();
     const lastPcmAgoMs = subscription?.lastPcmAt
@@ -977,24 +1004,11 @@ export async function compileTranscriptions(
   meeting: MeetingData,
   options: { includeCues?: boolean } = {},
 ): Promise<string> {
-  const resolveTranscriptText = (fileData: AudioFileData) => {
-    if (fileData.finalPassTranscript !== undefined) {
-      return fileData.finalPassTranscript;
-    }
-    if (fileData.coalescedTranscript) return fileData.coalescedTranscript;
-    if (fileData.slowTranscript) return fileData.slowTranscript;
-    if (fileData.transcript) return fileData.transcript;
-    if (fileData.fastTranscripts && fileData.fastTranscripts.length > 0) {
-      return fileData.fastTranscripts[fileData.fastTranscripts.length - 1].text;
-    }
-    return "";
-  };
-
   const segments = meeting.audioData.audioFiles
     .map((fileData) => ({
       userId: fileData.userId,
       timestamp: fileData.timestamp,
-      text: resolveTranscriptText(fileData),
+      text: resolveAudioFileText(fileData),
     }))
     .filter((segment) => segment.text && segment.text.length > 0);
 

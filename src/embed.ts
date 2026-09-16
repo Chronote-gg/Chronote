@@ -12,15 +12,15 @@ import { buildSummaryFeedbackButtonIds } from "./commands/summaryFeedback";
 import { MEETING_RENAME_PREFIX } from "./commands/meetingName";
 import { deliveryError, recordDelivery } from "./observability/meetingDelivery";
 import type { DeliveryPhase, DeliveryResult } from "./types/meetingDelivery";
+import {
+  batchMeetingNotesEmbeds,
+  buildMeetingNotesEmbeds,
+} from "./utils/meetingNotes";
 
 const PROCESSING_COLOR = 0x3498db;
 const SUMMARY_COLOR = 0x00ae86;
 const DEFAULT_TITLE = "Meeting Summary";
 const MAX_FIELD_VALUE = 1024;
-const MAX_EMBED_DESCRIPTION = 4000;
-const MAX_EMBEDS_PER_MESSAGE = 10;
-// Prefer newline breaks only when a meaningful portion of the chunk is filled.
-const NEWLINE_CUT_FRACTION = 0.6;
 
 type MeetingMessagePayload = {
   embeds: EmbedBuilder[];
@@ -112,55 +112,15 @@ function buildSummaryEmbed(meeting: MeetingData): EmbedBuilder {
     .setTimestamp();
 }
 
-function chunkText(text: string, maxLength: number): string[] {
-  const trimmed = text.trim();
-  if (!trimmed) return [];
-  const chunks: string[] = [];
-  let remaining = trimmed;
-  while (remaining.length > maxLength) {
-    const slice = remaining.slice(0, maxLength);
-    const lastNewline = slice.lastIndexOf("\n");
-    const minPreferred = Math.floor(maxLength * NEWLINE_CUT_FRACTION);
-    const cutIndex =
-      lastNewline >= minPreferred && lastNewline !== -1
-        ? lastNewline
-        : maxLength;
-    const chunk = remaining.slice(0, cutIndex).trimEnd();
-    if (chunk) {
-      chunks.push(chunk);
-    }
-    remaining = remaining.slice(cutIndex).trimStart();
-  }
-  if (remaining.length) {
-    chunks.push(remaining);
-  }
-  return chunks;
-}
-
 function buildNotesEmbeds(meeting: MeetingData): EmbedBuilder[] {
   if (!meeting.generateNotes) return [];
   const notes = meeting.notesText?.trim();
-  if (!notes) {
-    return [
-      new EmbedBuilder()
-        .setTitle("Meeting Notes")
-        .setColor(SUMMARY_COLOR)
-        .setDescription("Notes unavailable.")
-        .setTimestamp(),
-    ];
-  }
-  const chunks = chunkText(notes, MAX_EMBED_DESCRIPTION);
-  return chunks.map((chunk, index) =>
-    new EmbedBuilder()
-      .setTitle(
-        chunks.length > 1
-          ? `Meeting Notes (${index + 1}/${chunks.length})`
-          : "Meeting Notes",
-      )
-      .setColor(SUMMARY_COLOR)
-      .setDescription(chunk)
-      .setTimestamp(),
-  );
+  const notesBody = notes || (meeting.processing ? "" : "Notes unavailable.");
+  return buildMeetingNotesEmbeds({
+    notesBody,
+    color: SUMMARY_COLOR,
+    processing: meeting.processing,
+  }).map((embed) => embed.setTimestamp());
 }
 
 function buildMeetingPortalUrl(meeting: MeetingData): string {
@@ -305,11 +265,12 @@ export async function updateMeetingSummaryMessage(
   }
 
   const noteEmbeds = buildNotesEmbeds(meeting);
+  const noteEmbedBatches = batchMeetingNotesEmbeds(noteEmbeds);
   const noteMessages: Message[] = [];
   const errors: DeliveryResult["errors"] = [];
-  for (let i = 0; i < noteEmbeds.length; i += MAX_EMBEDS_PER_MESSAGE) {
+  for (const embeds of noteEmbedBatches) {
     const payload: MeetingMessagePayload = {
-      embeds: noteEmbeds.slice(i, i + MAX_EMBEDS_PER_MESSAGE),
+      embeds,
       components: [],
     };
     try {
@@ -327,7 +288,7 @@ export async function updateMeetingSummaryMessage(
     meeting.notesMessageIds = undefined;
     meeting.notesChannelId = undefined;
   }
-  const intended = Math.ceil(noteEmbeds.length / MAX_EMBEDS_PER_MESSAGE);
+  const intended = noteEmbedBatches.length;
   const sent = noteMessages.length;
   const notes = recordDelivery(meeting, "notes", {
     outcome:

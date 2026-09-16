@@ -76,10 +76,14 @@ import type {
   SuggestionHistoryEntry,
 } from "../../types/db";
 import type { MeetingEvent } from "../../types/meetingTimeline";
+import type { MeetingProcessingOutcome } from "../../types/meetingProcessing";
 import type { Participant } from "../../types/participants";
 import type { TranscriptPayload } from "../../types/transcript";
 import { MEETING_STATUS } from "../../types/meetingLifecycle";
-import { buildMeetingNotesEmbeds } from "../../utils/meetingNotes";
+import {
+  batchMeetingNotesEmbeds,
+  buildMeetingNotesEmbeds,
+} from "../../utils/meetingNotes";
 import { stripCodeFences } from "../../utils/text";
 import {
   collectMentionIds,
@@ -163,7 +167,6 @@ const resolveMeetingAttendees = (history: {
 
 const NOTES_CORRECTION_DIFF_LINE_LIMIT = 600;
 const NOTES_CORRECTION_DIFF_CHAR_LIMIT = 12_000;
-const NOTES_CORRECTION_MAX_EMBEDS_PER_MESSAGE = 10;
 
 // DynamoDB item size is capped at 400KB. Notes are also versioned in MeetingHistory,
 // so we keep portal-edited notes bounded to avoid update failures.
@@ -623,24 +626,26 @@ async function sendNotesEmbedsToDiscord(params: {
   meetingName?: string;
   footerText?: string;
   color?: number;
+  processing?: MeetingProcessingOutcome;
 }): Promise<string[]> {
-  const embeds = buildMeetingNotesEmbeds({
-    notesBody: params.notesBody,
-    meetingName: params.meetingName,
-    footerText: params.footerText,
-    color: params.color,
-  }).map((embed) => embed.toJSON() as unknown as Record<string, unknown>);
+  const embedBatches = batchMeetingNotesEmbeds(
+    buildMeetingNotesEmbeds({
+      notesBody: params.notesBody,
+      meetingName: params.meetingName,
+      footerText: params.footerText,
+      color: params.color,
+      processing: params.processing,
+    }),
+  );
 
   const messageIds: string[] = [];
 
   try {
-    for (
-      let i = 0;
-      i < embeds.length;
-      i += NOTES_CORRECTION_MAX_EMBEDS_PER_MESSAGE
-    ) {
+    for (const embeds of embedBatches) {
       const msg = await createDiscordMessage(params.channelId, {
-        embeds: embeds.slice(i, i + NOTES_CORRECTION_MAX_EMBEDS_PER_MESSAGE),
+        embeds: embeds.map(
+          (embed) => embed.toJSON() as unknown as Record<string, unknown>,
+        ),
         components: [],
       });
       messageIds.push(msg.id);
@@ -716,6 +721,7 @@ async function editOrReplaceNotesEmbeds(params: {
   meetingName?: string;
   footerText?: string;
   color?: number;
+  processing?: MeetingProcessingOutcome;
   summaryMessageId?: string;
 }): Promise<NotesEmbedUpdateResult> {
   const embeds = buildMeetingNotesEmbeds({
@@ -723,6 +729,7 @@ async function editOrReplaceNotesEmbeds(params: {
     meetingName: params.meetingName,
     footerText: params.footerText,
     color: params.color,
+    processing: params.processing,
   }).map((embed) => embed.toJSON() as unknown as Record<string, unknown>);
 
   if (
@@ -746,6 +753,7 @@ async function editOrReplaceNotesEmbeds(params: {
     meetingName: params.meetingName,
     footerText: params.footerText,
     color: params.color,
+    processing: params.processing,
   });
   return { messageIds, strategy: "replaced" };
 }
@@ -771,6 +779,7 @@ async function syncNotesEmbedsAfterWebEdit(params: {
       notesBody: params.notesBody,
       meetingName: params.history.meetingName,
       footerText: params.footerText,
+      processing: params.history.processing,
       summaryMessageId: params.history.summaryMessageId,
     });
   } catch (error) {
@@ -1181,6 +1190,7 @@ const detail = authedProcedure
             : history.duration,
         tags: history.tags ?? [],
         notes,
+        processing: history.processing,
         notesDelta: history.notesDelta,
         notesVersion: history.notesVersion ?? 1,
         meetingName: history.meetingName,
@@ -1836,6 +1846,7 @@ const applyNotesCorrection = authedProcedure
           notesBody: pending.newNotes,
           meetingName: history.meetingName,
           footerText,
+          processing: history.processing,
           summaryMessageId: history.summaryMessageId,
         });
       } catch (error) {

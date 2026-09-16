@@ -21,7 +21,11 @@ import {
   wrap,
 } from "cockatiel";
 import Bottleneck from "bottleneck";
-import type { AudioSnippet, TranscriptVariant } from "../types/audio";
+import type {
+  AudioSnippet,
+  SnippetTranscriptionResult,
+  TranscriptVariant,
+} from "../types/audio";
 import type { MeetingData } from "../types/meeting-data";
 import {
   BYTES_PER_SAMPLE,
@@ -46,7 +50,6 @@ import {
   TRANSCRIPTION_MAX_CONCURRENT,
   TRANSCRIPTION_MAX_QUEUE,
   TRANSCRIPTION_MAX_RETRIES,
-  TRANSCRIPTION_FAILURE_PLACEHOLDER,
   TRANSCRIPTION_RATE_MIN_TIME,
   TRANSCRIBE_SAMPLE_RATE,
 } from "../constants";
@@ -807,11 +810,15 @@ const convertPcmToWav = (inputFile: string, outputFile: string) =>
   });
 
 const cleanupTempFile = (filePath: string, label: string) => {
-  if (existsSync(filePath)) {
-    unlinkSync(filePath);
-    return;
+  try {
+    if (existsSync(filePath)) {
+      unlinkSync(filePath);
+      return;
+    }
+    console.log(`failed cleaning up temp ${label} file, continuing`);
+  } catch {
+    console.warn(`Failed cleaning up temp ${label} file, continuing.`);
   }
-  console.log(`failed cleaning up temp ${label} file, continuing`);
 };
 
 const cleanupTempFiles = (files: TempSnippetFiles) => {
@@ -828,7 +835,7 @@ export async function transcribeSnippet(
     noiseGateEnabledOverride?: boolean;
     suppressionEnabledOverride?: boolean;
   } = {},
-): Promise<string> {
+): Promise<SnippetTranscriptionResult> {
   const suffix = options.tempSuffix ? `_${options.tempSuffix}` : "";
   const tempFiles = buildSnippetTempFiles(meeting, snippet, suffix);
   const buffer = Buffer.concat(snippet.chunks);
@@ -846,11 +853,12 @@ export async function transcribeSnippet(
     noiseGateEnabledOverride: options.noiseGateEnabledOverride,
   });
 
-  writeFileSync(tempFiles.pcmFile, buffer);
-  await convertPcmToWav(tempFiles.pcmFile, tempFiles.wavFile);
-
+  let stage: "conversion" | "transcription" = "conversion";
   try {
-    return await transcribe(meeting, tempFiles.wavFile, {
+    writeFileSync(tempFiles.pcmFile, buffer);
+    await convertPcmToWav(tempFiles.pcmFile, tempFiles.wavFile);
+    stage = "transcription";
+    const text = await transcribe(meeting, tempFiles.wavFile, {
       userId: snippet.userId,
       timestamp: snippet.timestamp,
       audioSeconds,
@@ -860,12 +868,28 @@ export async function transcribeSnippet(
       noiseGateMetrics,
       suppressionEnabledOverride: options.suppressionEnabledOverride,
     });
+    return { status: "succeeded", text };
   } catch (error) {
+    const providerError = error as { status?: unknown; code?: unknown };
+    const failureLabel = stage === "conversion" ? "convert" : "transcribe";
     console.error(
-      `Failed to transcribe snippet for user ${snippet.userId}:`,
-      error,
+      `Failed to ${failureLabel} snippet for user ${snippet.userId}.`,
+      {
+        status:
+          typeof providerError.status === "number"
+            ? providerError.status
+            : undefined,
+        code:
+          typeof providerError.code === "number"
+            ? providerError.code
+            : undefined,
+      },
     );
-    return TRANSCRIPTION_FAILURE_PLACEHOLDER;
+    return {
+      status: "failed",
+      reason:
+        stage === "conversion" ? "conversion_error" : "transcription_error",
+    };
   } finally {
     cleanupTempFiles(tempFiles);
   }

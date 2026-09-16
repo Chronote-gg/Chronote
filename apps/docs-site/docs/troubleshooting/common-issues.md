@@ -54,7 +54,15 @@ Use this page to diagnose and fix common Chronote issues. Each section describes
 
 **Causes**: This happens when the transcription API returns an error for a specific audio segment. Common reasons include network issues, API rate limits, or corrupted audio data.
 
-**What to do**: This is usually transient. If it happens consistently, check that participants have stable connections and functioning microphones. The rest of the transcript and notes are generated from the segments that succeeded.
+**What to do**: This is usually transient. If it happens consistently, check that participants have stable connections and functioning microphones. Chronote may generate notes from the parts it could transcribe and warn that those notes may be incomplete.
+
+### Recording finished without notes
+
+"No usable speech was found, so no notes were generated" means Chronote finished processing but had no usable speech to summarize. Check that the intended audio source was available and that participants were audible.
+
+If you see "Some audio could not be transcribed. These notes may be incomplete," Chronote generated notes from the text it could recover. Review them for missing discussion before relying on them.
+
+A processing-failure message is different from an empty recording. Any existing upload retries run before Chronote reports a terminal upload failure.
 
 ## Notes correction was rejected with "version conflict"
 

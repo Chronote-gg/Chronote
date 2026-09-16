@@ -10,7 +10,7 @@ describe("crawler assets", () => {
       "utf8",
     );
 
-    expect(llms).toMatch(/^# Chronote\n/);
+    expect(llms).toMatch(/^# Chronote\r?\n/);
     expect(llms).toContain("https://chronote.gg/");
     expect(llms).toContain("https://docs.chronote.gg/getting-started/");
     expect(llms).toContain("https://docs.chronote.gg/legal/privacy/");

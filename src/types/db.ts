@@ -1,5 +1,6 @@
 import { Participant } from "./participants";
 import type { MeetingDelivery } from "./meetingDelivery";
+import type { MeetingProcessingOutcome } from "./meetingProcessing";
 import type {
   AutoRecordRule,
   MeetingEndReason,
@@ -449,6 +450,7 @@ export interface MeetingHistory {
   cancellationReason?: string;
   summaryMessageId?: string; // Message id for the summary embed
   delivery?: MeetingDelivery; // Acknowledged delivery outcomes, not generation flags
+  processing?: MeetingProcessingOutcome;
   notesMessageIds?: string[]; // All message ids when notes span multiple messages
   notesChannelId?: string; // Channel id where notes were posted
   notesVersion?: number; // Incremented on corrections

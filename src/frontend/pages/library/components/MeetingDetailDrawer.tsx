@@ -1016,6 +1016,7 @@ export default function MeetingDetailDrawer({
     <MeetingSummaryPanel
       summary={meeting.summary}
       notes={meeting.notes}
+      processing={meeting.processing}
       summaryFeedback={summaryFeedback}
       feedbackPending={feedbackMutation.isPending}
       copyDisabled={!canCopySummary}
