@@ -16,6 +16,7 @@ import type { MeetingProcessingOutcome } from "../types/meetingProcessing";
 import { classifyTranscription } from "../utils/meetingProcessing";
 import {
   PERSONAL_MEDIA_UPLOAD_MAX_PROCESSING_ATTEMPTS,
+  TRANSCRIPTION_FAILURE_PLACEHOLDER,
   TRANSCRIPTION_FINAL_PASS_CHUNK_SECONDS,
   TRANSCRIPTION_FINAL_PASS_MAX_REQUEST_BYTES,
 } from "../constants";
@@ -53,6 +54,11 @@ import {
   updatePersonalMediaUploadJobRecord,
 } from "./personalMediaUploadService";
 import { buildPersonalMeetingGuildId } from "../utils/meetingOwnership";
+import {
+  recordPersonalUploadTerminal,
+  withPersonalUploadProcessingTrace,
+  type PersonalUploadTerminalFacts,
+} from "../observability/personalUploadTrace";
 
 const PERSONAL_UPLOAD_CHANNEL_ID = "personal";
 const PERSONAL_UPLOAD_CHANNEL_NAME = "Uploaded media";
@@ -95,12 +101,42 @@ class PersonalUploadProcessingError extends Error {
   constructor(
     cause: unknown,
     readonly processing: MeetingProcessingOutcome,
+    readonly failedChunks = 0,
   ) {
     super(cause instanceof Error ? cause.message : "Processing failed.", {
       cause,
     });
   }
 }
+
+const normalizeTranscriptionText = (text: string) => {
+  const trimmed = text.trim();
+  return trimmed === TRANSCRIPTION_FAILURE_PLACEHOLDER ? "" : trimmed;
+};
+
+const buildProviderFailureObservation = (error: unknown) => {
+  if (!error || typeof error !== "object") return {};
+  const providerError = error as {
+    name?: unknown;
+    code?: unknown;
+    status?: unknown;
+  };
+  return {
+    errorClass:
+      typeof providerError.name === "string"
+        ? providerError.name.slice(0, 80)
+        : undefined,
+    code:
+      typeof providerError.code === "string" ||
+      typeof providerError.code === "number"
+        ? providerError.code
+        : undefined,
+    status:
+      typeof providerError.status === "number"
+        ? providerError.status
+        : undefined,
+  };
+};
 
 type PersonalRecordingSegmentTranscriptArtifact = {
   generatedAt: string;
@@ -255,12 +291,14 @@ const transcribeAudioFiles = async (
     } catch (error) {
       if (!acceptPartial) throw error;
       failedChunks += 1;
-      console.error("Personal upload transcription provider failed", {
-        error: error instanceof Error ? error.message : "Transcription failed.",
-      });
+      console.error(
+        "Personal upload transcription provider failed",
+        buildProviderFailureObservation(error),
+      );
       continue;
     }
-    if (transcript.trim()) chunks.push(transcript.trim());
+    const usableText = normalizeTranscriptionText(transcript);
+    if (usableText) chunks.push(usableText);
   }
   return { text: chunks.join("\n\n"), failedChunks };
 };
@@ -305,6 +343,16 @@ const generateSummariesForNotes = async (
     now: new Date(job.createdAt),
     meetingId: job.meetingId,
   });
+};
+
+const getSummaryOutcome = (
+  notes: string,
+  summaries: MeetingSummaries,
+): MeetingProcessingOutcome["summary"] => {
+  if (!notes) return "skipped";
+  return summaries.summarySentence?.trim() && summaries.summaryLabel?.trim()
+    ? "generated"
+    : "failed";
 };
 
 const resolvePersonalUploadMeetingName = async (
@@ -385,7 +433,12 @@ const loadProcessedRecordingSegmentTranscript = async (
     await fetchJsonFromS3<PersonalRecordingSegmentTranscriptArtifact>(
       segment.transcriptS3Key,
     );
-  return artifact?.segment;
+  return artifact?.segment
+    ? {
+        ...artifact.segment,
+        text: normalizeTranscriptionText(artifact.segment.text ?? ""),
+      }
+    : undefined;
 };
 
 const sortTranscriptSegments = (segments: TranscriptSegment[]) =>
@@ -744,7 +797,11 @@ const processPersonalRecordingContent = async (
     captureIncomplete: false,
   });
   if (transcription === "failed") {
-    throw new Error("All transcription attempts failed.");
+    throw new PersonalUploadProcessingError(
+      new Error("All transcription attempts failed."),
+      { transcription: "failed", notes: "skipped", summary: "skipped" },
+      failedChunks,
+    );
   }
   let notes: string;
   try {
@@ -778,7 +835,7 @@ const processPersonalRecordingContent = async (
     throw new PersonalUploadProcessingError(error, {
       transcription,
       notes: notes ? "generated" : "skipped",
-      summary: notes ? "generated" : "skipped",
+      summary: getSummaryOutcome(notes, summaries),
     });
   }
 
@@ -794,7 +851,7 @@ const processPersonalRecordingContent = async (
     processing: {
       transcription,
       notes: notes ? "generated" : "skipped",
-      summary: notes ? "generated" : "skipped",
+      summary: getSummaryOutcome(notes, summaries),
     },
     ...summarizeRecordingSegmentProgress(
       await listPersonalRecordingUploadSegments(job.uploadId),
@@ -830,7 +887,11 @@ const processPersonalMediaContent = async (
     captureIncomplete: false,
   });
   if (transcription === "failed") {
-    throw new Error("All transcription attempts failed.");
+    throw new PersonalUploadProcessingError(
+      new Error("All transcription attempts failed."),
+      { transcription: "failed", notes: "skipped", summary: "skipped" },
+      transcriptionResult.failedChunks,
+    );
   }
   const transcriptArtifact = buildSingleSourceTranscriptArtifact(
     job,
@@ -868,7 +929,7 @@ const processPersonalMediaContent = async (
     throw new PersonalUploadProcessingError(error, {
       transcription,
       notes: notes ? "generated" : "skipped",
-      summary: notes ? "generated" : "skipped",
+      summary: getSummaryOutcome(notes, summaries),
     });
   }
 
@@ -881,7 +942,7 @@ const processPersonalMediaContent = async (
     processing: {
       transcription,
       notes: notes ? "generated" : "skipped",
-      summary: notes ? "generated" : "skipped",
+      summary: getSummaryOutcome(notes, summaries),
     },
     summaries,
   };
@@ -1130,63 +1191,100 @@ const writeTerminalFailureMeeting = async (
     status: MEETING_STATUS.COMPLETE,
     processing,
   });
-  console.error("Personal upload processing reached a terminal outcome", {
-    uploadId: job.uploadId,
-    processing,
-  });
 };
 
 export async function processPersonalMediaUpload(
   job: PersonalMediaUploadJobRecord,
   instanceId: string,
 ) {
-  const tempRoot = await ensureTempBaseDir();
-  const workDir = path.join(tempRoot, "personal-upload", job.uploadId);
-  await fs.mkdir(workDir, { recursive: true });
-  try {
-    const result = await processPersonalMediaContent(job, workDir, instanceId);
-    const identity = buildJobMeetingKey(job);
-    const completedAt = new Date().toISOString();
-    const meetingHistory = buildCompletedMeetingHistory(
-      job,
-      identity,
-      result,
-      completedAt,
-    );
-    await writeMeetingHistoryService(meetingHistory);
-    await maybeAutoExportCompletedMeeting(meetingHistory);
-    await markPersonalMediaUploadComplete(
-      job,
-      identity,
-      result,
-      completedAt,
-      instanceId,
-    );
-    console.log("Personal upload processing reached a terminal outcome", {
-      uploadId: job.uploadId,
-      processing: result.processing,
-      failedChunks: result.failedChunks,
-      processedSegmentCount: result.processedSegmentCount ?? 0,
-      segmentCount: result.segmentCount ?? 0,
-    });
-  } catch (error) {
-    if (job.uploadOrigin === "desktop_recording") {
-      await markPersonalRecordingUploadSegmentsFailed(job.uploadId, error);
-    }
+  await withPersonalUploadProcessingTrace(job, async () => {
+    const tempRoot = await ensureTempBaseDir();
+    const workDir = path.join(tempRoot, "personal-upload", job.uploadId);
+    await fs.mkdir(workDir, { recursive: true });
+    let terminalFacts: PersonalUploadTerminalFacts | undefined;
+    let result: PersonalUploadProcessingResult | undefined;
     try {
-      await writeTerminalFailureMeeting(job, error);
-    } catch (historyError) {
-      console.error("Failed to finalize personal upload meeting history", {
+      result = await processPersonalMediaContent(job, workDir, instanceId);
+      const identity = buildJobMeetingKey(job);
+      const completedAt = new Date().toISOString();
+      const meetingHistory = buildCompletedMeetingHistory(
+        job,
+        identity,
+        result,
+        completedAt,
+      );
+      await writeMeetingHistoryService(meetingHistory);
+      await maybeAutoExportCompletedMeeting(meetingHistory);
+      await markPersonalMediaUploadComplete(
+        job,
+        identity,
+        result,
+        completedAt,
+        instanceId,
+      );
+      terminalFacts = {
+        processing: result.processing,
+        failedChunks: result.failedChunks,
+        processedSegmentCount: result.processedSegmentCount ?? 0,
+        segmentCount: result.segmentCount ?? 0,
+        jobStatus: "complete",
+      };
+    } catch (error) {
+      if (job.uploadOrigin === "desktop_recording") {
+        await markPersonalRecordingUploadSegmentsFailed(job.uploadId, error);
+      }
+      const resolvedError = result
+        ? new PersonalUploadProcessingError(
+            error,
+            result.processing,
+            result.failedChunks,
+          )
+        : error;
+      try {
+        await writeTerminalFailureMeeting(job, resolvedError);
+      } catch (historyError) {
+        console.error("Failed to finalize personal upload meeting history", {
+          uploadId: job.uploadId,
+          error: buildProviderFailureObservation(historyError),
+        });
+      }
+      await markPersonalMediaUploadFailed(job, error, instanceId);
+      console.error("Failed to process personal media upload", {
         uploadId: job.uploadId,
-        error: historyError,
+        error: buildProviderFailureObservation(error),
       });
+      if (
+        (job.attempts ?? 1) >= PERSONAL_MEDIA_UPLOAD_MAX_PROCESSING_ATTEMPTS
+      ) {
+        const segments =
+          job.uploadOrigin === "desktop_recording"
+            ? await listPersonalRecordingUploadSegments(job.uploadId)
+            : [];
+        const progress = summarizeRecordingSegmentProgress(segments);
+        terminalFacts = {
+          processing:
+            resolvedError instanceof PersonalUploadProcessingError
+              ? resolvedError.processing
+              : {
+                  transcription: "failed",
+                  notes: "skipped",
+                  summary: "skipped",
+                },
+          failedChunks:
+            resolvedError instanceof PersonalUploadProcessingError
+              ? resolvedError.failedChunks
+              : 0,
+          processedSegmentCount:
+            result?.processedSegmentCount ?? progress.processedSegmentCount,
+          segmentCount: result?.segmentCount ?? progress.segmentCount,
+          jobStatus: "failed",
+        };
+      }
+    } finally {
+      if (terminalFacts) {
+        recordPersonalUploadTerminal(job.uploadId, terminalFacts);
+      }
+      await fs.rm(workDir, { recursive: true, force: true });
     }
-    await markPersonalMediaUploadFailed(job, error, instanceId);
-    console.error("Failed to process personal media upload", {
-      uploadId: job.uploadId,
-      error,
-    });
-  } finally {
-    await fs.rm(workDir, { recursive: true, force: true });
-  }
+  });
 }

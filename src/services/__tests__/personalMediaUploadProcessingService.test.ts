@@ -21,12 +21,30 @@ import {
   processPersonalMediaUpload,
 } from "../personalMediaUploadProcessingService";
 import { fetchJsonFromS3, uploadObjectToS3 } from "../storageService";
+import { TRANSCRIPTION_FAILURE_PLACEHOLDER } from "../../constants";
+import type { MeetingSummaries } from "../meetingSummaryService";
+import { recordPersonalUploadTerminal } from "../../observability/personalUploadTrace";
+
+jest.mock("../../observability/personalUploadTrace", () => ({
+  withPersonalUploadProcessingTrace: (
+    _job: unknown,
+    run: () => Promise<void>,
+  ) => run(),
+  recordPersonalUploadTerminal: jest.fn(),
+}));
 
 const mockUploadedObjects = new Map<string, string | Buffer>();
+const mockConcatLists: string[] = [];
 const mockTranscribe = jest.fn(async () => ({ text: "segment transcript" }));
 const mockChatComplete = jest.fn(async () => ({
   choices: [{ message: { content: "Generated notes" } }],
 }));
+const mockGenerateSummaries = jest.fn<() => Promise<MeetingSummaries>>(
+  async () => ({
+    summarySentence: "Summary",
+    summaryLabel: "Label",
+  }),
+);
 
 jest.mock("fluent-ffmpeg", () => {
   const fs = jest.requireActual<typeof import("node:fs")>("node:fs");
@@ -34,6 +52,7 @@ jest.mock("fluent-ffmpeg", () => {
 
   const ffmpeg = jest.fn(() => {
     const command = {
+      inputPath: "",
       outputPath: "",
       endHandler: undefined as undefined | (() => void),
       noVideo() {
@@ -51,7 +70,8 @@ jest.mock("fluent-ffmpeg", () => {
       audioFrequency() {
         return this;
       },
-      input() {
+      input(inputPath: string) {
+        this.inputPath = inputPath;
         return this;
       },
       inputOptions() {
@@ -72,6 +92,9 @@ jest.mock("fluent-ffmpeg", () => {
         return this;
       },
       run() {
+        if (this.inputPath.endsWith(".txt")) {
+          mockConcatLists.push(fs.readFileSync(this.inputPath, "utf8"));
+        }
         if (this.outputPath) {
           fs.mkdirSync(path.dirname(this.outputPath), { recursive: true });
           fs.writeFileSync(this.outputPath, Buffer.from("audio"));
@@ -163,10 +186,7 @@ jest.mock("../langfusePromptService", () => ({
 }));
 
 jest.mock("../meetingSummaryService", () => ({
-  generateMeetingSummaries: jest.fn(async () => ({
-    summarySentence: "Summary",
-    summaryLabel: "Label",
-  })),
+  generateMeetingSummaries: () => mockGenerateSummaries(),
 }));
 
 jest.mock("../meetingNameService", () => ({
@@ -236,8 +256,13 @@ describe("personalMediaUploadProcessingService", () => {
   beforeEach(() => {
     jest.clearAllMocks();
     mockUploadedObjects.clear();
+    mockConcatLists.length = 0;
     recordingSegments = [];
     mockTranscribe.mockResolvedValue({ text: "segment transcript" });
+    mockGenerateSummaries.mockResolvedValue({
+      summarySentence: "Summary",
+      summaryLabel: "Label",
+    });
     jest.mocked(getMeetingHistoryService).mockResolvedValue(undefined);
     jest
       .mocked(listPersonalRecordingUploadSegments)
@@ -562,6 +587,16 @@ describe("personalMediaUploadProcessingService", () => {
       expect.objectContaining({ status: "processed" }),
       expect.objectContaining({ status: "failed" }),
     ]);
+    expect(recordPersonalUploadTerminal).toHaveBeenLastCalledWith(
+      "upload-1",
+      expect.objectContaining({
+        failedChunks: 1,
+        processedSegmentCount: 1,
+        segmentCount: 2,
+        jobStatus: "failed",
+        processing: expect.objectContaining({ transcription: "failed" }),
+      }),
+    );
   });
 
   it("does not convert an ordinary final-attempt provider failure to empty", async () => {
@@ -605,6 +640,127 @@ describe("personalMediaUploadProcessingService", () => {
     );
   });
 
+  it("records an empty summary helper result as failed", async () => {
+    mockGenerateSummaries.mockResolvedValue({});
+
+    await processPersonalMediaUpload(buildJob(), "instance-1");
+
+    expect(writeMeetingHistoryService).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        processing: {
+          transcription: "ready",
+          notes: "generated",
+          summary: "failed",
+        },
+      }),
+    );
+  });
+
+  it("retains resolved outcomes when the first final history write fails", async () => {
+    jest
+      .mocked(writeMeetingHistoryService)
+      .mockRejectedValueOnce(new Error("history unavailable"))
+      .mockResolvedValueOnce(undefined);
+
+    await processPersonalMediaUpload(
+      { ...buildJob(), attempts: 3 },
+      "instance-1",
+    );
+
+    expect(writeMeetingHistoryService).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        status: "complete",
+        processing: {
+          transcription: "ready",
+          notes: "generated",
+          summary: "generated",
+        },
+      }),
+    );
+    expect(updateClaimedPersonalMediaUploadJobRecord).toHaveBeenLastCalledWith(
+      expect.objectContaining({ status: "failed" }),
+      "instance-1",
+    );
+  });
+
+  it("excludes the failure placeholder from an ordinary upload", async () => {
+    mockTranscribe.mockResolvedValue({
+      text: TRANSCRIPTION_FAILURE_PLACEHOLDER,
+    });
+
+    await processPersonalMediaUpload(buildJob(), "instance-1");
+
+    expect(mockChatComplete).not.toHaveBeenCalled();
+    expect(writeMeetingHistoryService).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        notes: "",
+        processing: expect.objectContaining({ transcription: "empty" }),
+      }),
+    );
+  });
+
+  it("excludes a cached failure placeholder and keeps failed audio in the artifact", async () => {
+    const cached = {
+      ...buildSegment(0, "processed"),
+      transcriptS3Key: "cached-placeholder.json",
+    };
+    recordingSegments = [cached, buildSegment(1)];
+    mockUploadedObjects.set(
+      cached.transcriptS3Key,
+      JSON.stringify({
+        segment: {
+          userId: "user-1",
+          username: "Me",
+          displayName: "Me",
+          startedAt: cached.startedAt,
+          text: TRANSCRIPTION_FAILURE_PLACEHOLDER,
+          source: "desktop_recording",
+        },
+      }),
+    );
+    mockTranscribe.mockRejectedValue(new Error("private request body"));
+
+    await processPersonalMediaUpload(
+      { ...buildDesktopJob(), attempts: 3 },
+      "instance-1",
+    );
+
+    expect(mockChatComplete).not.toHaveBeenCalled();
+    expect(uploadObjectToS3).not.toHaveBeenCalledWith(
+      expect.stringContaining("owner_mic-000001.transcript.json"),
+      expect.anything(),
+      expect.anything(),
+    );
+    expect(recordingSegments[1]).toEqual(
+      expect.objectContaining({ status: "failed" }),
+    );
+    expect(mockConcatLists.join("\n")).toContain("segment-000000");
+    expect(mockConcatLists.join("\n")).toContain("segment-000001");
+  });
+
+  it("sanitizes caught provider observations", async () => {
+    const providerError = Object.assign(new Error("private request body"), {
+      code: "rate_limit",
+      status: 429,
+    });
+    const errorSpy = jest.spyOn(console, "error").mockImplementation(() => {});
+    mockTranscribe.mockRejectedValue(providerError);
+
+    await processPersonalMediaUpload(
+      { ...buildJob(), attempts: 3 },
+      "instance-1",
+    );
+
+    expect(errorSpy).toHaveBeenCalledWith(
+      "Personal upload transcription provider failed",
+      { errorClass: "Error", code: "rate_limit", status: 429 },
+    );
+    expect(errorSpy.mock.calls.flat().join(" ")).not.toContain(
+      "private request body",
+    );
+    errorSpy.mockRestore();
+  });
+
   it("preserves a valid completed history when the job completion write fails", async () => {
     recordingSegments = [buildSegment(0)];
     jest
@@ -640,6 +796,17 @@ describe("personalMediaUploadProcessingService", () => {
       expect.objectContaining({
         notes: "Generated notes",
         processing: expect.objectContaining({ transcription: "ready" }),
+      }),
+    );
+    expect(recordPersonalUploadTerminal).toHaveBeenLastCalledWith(
+      "upload-1",
+      expect.objectContaining({
+        jobStatus: "failed",
+        processing: {
+          transcription: "ready",
+          notes: "generated",
+          summary: "generated",
+        },
       }),
     );
   });
