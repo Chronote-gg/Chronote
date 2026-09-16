@@ -1,7 +1,10 @@
 import type { MeetingData } from "../../src/types/meeting-data";
 import type { AudioFileData, AudioSnippet } from "../../src/types/audio";
 import { startProcessingSnippet, userStopTalking } from "../../src/audio";
-import { transcribeSnippet } from "../../src/services/transcriptionService";
+import {
+  coalesceTranscription,
+  transcribeSnippet,
+} from "../../src/services/transcriptionService";
 
 jest.mock("../../src/liveVoice", () => ({
   maybeRespondLive: jest.fn(),
@@ -288,5 +291,45 @@ describe("startProcessingSnippet", () => {
 
     expect(audioFileData.transcript).toBe("usable prefix");
     expect(audioFileData.transcriptionFailed).toBe(true);
+  });
+
+  it("retains successful slow text when optional coalescing fails", async () => {
+    const snippet: AudioSnippet = {
+      userId: "user-1",
+      timestamp: new Date("2025-01-01T00:00:01.000Z").getTime(),
+      chunks: [Buffer.alloc(60_000)],
+      audioBytes: 60_000,
+    };
+    const audioFileData: AudioFileData = {
+      userId: snippet.userId,
+      timestamp: snippet.timestamp,
+      source: "voice",
+      processing: true,
+      audioOnlyProcessing: false,
+      fastTranscripts: [
+        {
+          revision: 1,
+          text: "fast draft",
+          createdAt: new Date().toISOString(),
+        },
+      ],
+    };
+    snippet.audioFileData = audioFileData;
+    const meeting = buildMeeting(snippet, audioFileData);
+    meeting.runtimeConfig!.premiumTranscription.enabled = true;
+    (transcribeSnippet as jest.Mock).mockResolvedValue({
+      status: "succeeded",
+      text: "slow baseline",
+    });
+    (coalesceTranscription as jest.Mock).mockRejectedValue(
+      new Error("optional refinement failed"),
+    );
+
+    startProcessingSnippet(meeting, snippet.userId);
+    await waitForSnippetWork(meeting, audioFileData);
+
+    expect(audioFileData.transcript).toBe("slow baseline");
+    expect(audioFileData.transcriptionFailed).toBe(false);
+    expect(audioFileData.coalescedTranscript).toBeUndefined();
   });
 });

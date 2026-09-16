@@ -30,6 +30,7 @@ async function loadModule(options: {
   providerError?: { status?: number; code?: number; secret?: string };
   providerErrorOnce?: { status?: number; code?: number; secret?: string };
   conversionError?: Error;
+  unlinkError?: Error;
 }) {
   jest.resetModules();
   const success = {
@@ -48,11 +49,19 @@ async function loadModule(options: {
   }
   const handlers = new Map<string, (...args: unknown[]) => void>();
 
+  const unlinkSync = options.unlinkError
+    ? jest
+        .fn()
+        .mockImplementationOnce(() => {
+          throw options.unlinkError;
+        })
+        .mockImplementation(() => undefined)
+    : jest.fn();
   jest.doMock("node:fs", () => ({
     ...jest.requireActual<typeof import("node:fs")>("node:fs"),
     createReadStream: jest.fn(() => ({})),
     existsSync: jest.fn(() => true),
-    unlinkSync: jest.fn(),
+    unlinkSync,
     writeFileSync: jest.fn(),
   }));
   jest.doMock("fluent-ffmpeg", () => ({
@@ -125,12 +134,15 @@ async function loadModule(options: {
     handleAll: {},
   }));
 
-  return await import("../../src/services/transcriptionService");
+  return {
+    service: await import("../../src/services/transcriptionService"),
+    unlinkSync,
+  };
 }
 
 describe("transcribeSnippet terminal result", () => {
   test("returns successful empty text as a completed transcription", async () => {
-    const service = await loadModule({ providerResult: "" });
+    const { service } = await loadModule({ providerResult: "" });
     await expect(service.transcribeSnippet(meeting, snippet)).resolves.toEqual({
       status: "succeeded",
       text: "",
@@ -138,7 +150,7 @@ describe("transcribeSnippet terminal result", () => {
   });
 
   test("returns a terminal provider failure without placeholder content", async () => {
-    const service = await loadModule({
+    const { service } = await loadModule({
       providerError: { status: 503, secret: "request body" },
     });
     await expect(service.transcribeSnippet(meeting, snippet)).resolves.toEqual({
@@ -148,7 +160,7 @@ describe("transcribeSnippet terminal result", () => {
   });
 
   test("returns success when a provider retry recovers", async () => {
-    const service = await loadModule({
+    const { service } = await loadModule({
       providerErrorOnce: { status: 503 },
       providerResult: "recovered",
     });
@@ -159,10 +171,38 @@ describe("transcribeSnippet terminal result", () => {
   });
 
   test("distinguishes conversion failure from provider failure", async () => {
-    const service = await loadModule({ conversionError: new Error("bad pcm") });
+    const { service } = await loadModule({
+      conversionError: new Error("bad pcm"),
+    });
     await expect(service.transcribeSnippet(meeting, snippet)).resolves.toEqual({
       status: "failed",
       reason: "conversion_error",
     });
+  });
+
+  test("preserves success and attempts both cleanups when one unlink fails", async () => {
+    const { service, unlinkSync } = await loadModule({
+      providerResult: "kept",
+      unlinkError: new Error("locked"),
+    });
+
+    await expect(service.transcribeSnippet(meeting, snippet)).resolves.toEqual({
+      status: "succeeded",
+      text: "kept",
+    });
+    expect(unlinkSync).toHaveBeenCalledTimes(2);
+  });
+
+  test("preserves terminal failure and attempts both cleanups when one unlink fails", async () => {
+    const { service, unlinkSync } = await loadModule({
+      providerError: { status: 503 },
+      unlinkError: new Error("locked"),
+    });
+
+    await expect(service.transcribeSnippet(meeting, snippet)).resolves.toEqual({
+      status: "failed",
+      reason: "transcription_error",
+    });
+    expect(unlinkSync).toHaveBeenCalledTimes(2);
   });
 });

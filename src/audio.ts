@@ -224,6 +224,13 @@ function scheduleResubscribe(
   }
 }
 
+function isCaptureActive(meeting: MeetingData): boolean {
+  return (
+    !meeting.finishing &&
+    meeting.connection.state.status !== VoiceConnectionStatus.Destroyed
+  );
+}
+
 function markSpeakerStart(meeting: MeetingData, userId: string) {
   const states = getSpeakerStates(meeting);
   const existing = states.get(userId) ?? { active: false };
@@ -842,7 +849,9 @@ export async function subscribeToUserVoice(
   // Prevent decoder errors (often caused by malformed or partial packets) from crashing the process.
   opusDecoder.on("error", (err: Error) => {
     if (subscriptionState.suppressResubscribe) return;
-    meeting.audioData.captureIncomplete = true;
+    if (isCaptureActive(meeting)) {
+      meeting.audioData.captureIncomplete = true;
+    }
     subscriptionState.decoderErrorCount += 1;
     console.warn(
       `Opus decoder error: ${logPrefix} message=${err.message} errors=${subscriptionState.decoderErrorCount}`,
@@ -853,7 +862,9 @@ export async function subscribeToUserVoice(
   // Prism's Opus stream can also emit errors; guard those too.
   opusStream.on("error", (err: Error) => {
     if (subscriptionState.suppressResubscribe) return;
-    meeting.audioData.captureIncomplete = true;
+    if (isCaptureActive(meeting)) {
+      meeting.audioData.captureIncomplete = true;
+    }
     console.warn(`Opus stream error: ${logPrefix} message=${err.message}`);
     scheduleResubscribe(meeting, userId, "opus-stream-error");
   });
@@ -863,7 +874,9 @@ export async function subscribeToUserVoice(
 
   decodedStream.on("error", (err: Error) => {
     if (subscriptionState.suppressResubscribe) return;
-    meeting.audioData.captureIncomplete = true;
+    if (isCaptureActive(meeting)) {
+      meeting.audioData.captureIncomplete = true;
+    }
     console.warn(`Decoded stream error: ${logPrefix} message=${err.message}`);
     scheduleResubscribe(meeting, userId, "decoded-stream-error");
   });
@@ -930,7 +943,7 @@ export function userStopTalking(meeting: MeetingData, userId: string) {
       state?.lastStartMs && state.lastEndMs
         ? Math.max(0, state.lastEndMs - state.lastStartMs)
         : 0;
-    if (durationMs >= NO_PCM_MIN_DURATION_MS) {
+    if (durationMs >= NO_PCM_MIN_DURATION_MS && isCaptureActive(meeting)) {
       meeting.audioData.captureIncomplete = true;
     }
     const subscription = getVoiceSubscriptions(meeting).get(userId);

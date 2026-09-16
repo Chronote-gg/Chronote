@@ -810,11 +810,15 @@ const convertPcmToWav = (inputFile: string, outputFile: string) =>
   });
 
 const cleanupTempFile = (filePath: string, label: string) => {
-  if (existsSync(filePath)) {
-    unlinkSync(filePath);
-    return;
+  try {
+    if (existsSync(filePath)) {
+      unlinkSync(filePath);
+      return;
+    }
+    console.log(`failed cleaning up temp ${label} file, continuing`);
+  } catch {
+    console.warn(`Failed cleaning up temp ${label} file, continuing.`);
   }
-  console.log(`failed cleaning up temp ${label} file, continuing`);
 };
 
 const cleanupTempFiles = (files: TempSnippetFiles) => {

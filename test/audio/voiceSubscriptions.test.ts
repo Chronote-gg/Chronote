@@ -86,5 +86,29 @@ describe("voice subscriptions", () => {
     jest.advanceTimersByTime(800);
     userStopTalking(meeting, "user-1");
     expect(meeting.audioData.captureIncomplete).toBe(true);
+
+    meeting.audioData.captureIncomplete = false;
+    meeting.finishing = true;
+    streams[1].emit("error", new Error("finishing"));
+    expect(meeting.audioData.captureIncomplete).toBe(false);
+
+    meeting.finishing = false;
+    meeting.connection.state.status = VoiceConnectionStatus.Destroyed;
+    streams[1].emit("error", new Error("destroyed"));
+    expect(meeting.audioData.captureIncomplete).toBe(false);
+
+    meeting.finishing = true;
+    meeting.connection.state.status = VoiceConnectionStatus.Ready;
+    userStartTalking(meeting, "user-1");
+    jest.advanceTimersByTime(800);
+    userStopTalking(meeting, "user-1");
+    expect(meeting.audioData.captureIncomplete).toBe(false);
+
+    meeting.finishing = false;
+    meeting.connection.state.status = VoiceConnectionStatus.Destroyed;
+    userStartTalking(meeting, "user-1");
+    jest.advanceTimersByTime(800);
+    userStopTalking(meeting, "user-1");
+    expect(meeting.audioData.captureIncomplete).toBe(false);
   });
 });
