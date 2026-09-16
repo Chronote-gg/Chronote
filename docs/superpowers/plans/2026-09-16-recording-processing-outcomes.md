@@ -33,14 +33,14 @@
 
 ## Task 1: Define the shared result and notice policy
 
-**Files**
+### Task 1 files
 
 - Create `src/types/meetingProcessing.ts`.
 - Create `src/utils/meetingProcessing.ts`.
 - Create `test/utils/meetingProcessing.test.ts`.
 - Modify `src/types/meeting-data.ts` and `src/types/db.ts` to add `processing?: MeetingProcessingOutcome`.
 
-**Interfaces produced**
+### Task 1 interfaces produced
 
 ```ts
 export type TranscriptionOutcome = "ready" | "empty" | "partial" | "failed";
@@ -165,7 +165,7 @@ Import the types using `import type`. Keep public copy in this one browser-safe 
 
 ## Task 2: Preserve terminal Discord transcription results
 
-**Files**
+### Task 2 files
 
 - Modify `src/services/transcriptionService.ts`, `src/types/audio.ts`, `src/audio.ts`.
 - Modify `src/services/transcriptionFinalPassService.ts` only to reuse safe segment-text selection and avoid placeholder text.
@@ -173,7 +173,7 @@ Import the types using `import type`. Keep public copy in this one browser-safe 
 - Modify `test/audio/startProcessingSnippet.test.ts`, `test/audio/voiceSubscriptions.test.ts`, and `test/services/transcriptionService.test.ts`.
 - Create `test/services/transcriptionSnippetResult.test.ts` for the actual retry/conversion boundary if the existing service suite's mocks bypass it.
 
-**Interfaces**
+### Task 2 interfaces
 
 Consumes Task 1 types. Add to `src/types/audio.ts`:
 
@@ -259,13 +259,13 @@ Use `isTrivialTranscriptionText` from `src/utils/transcriptionText.ts`. Both com
 
 ## Task 3: Resolve generation once and persist accurate outcomes
 
-**Files**
+### Task 3 files
 
 - Modify `src/commands/endMeeting.ts`, `src/commands/saveMeetingHistory.ts`, `src/services/meetingNotesService.ts`, `src/observability/meetingTrace.ts`.
 - Create `test/services/meetingNotesService.test.ts` and `test/observability/meetingProcessing.test.ts`.
 - Modify `test/commands/endMeeting.test.ts`, `test/commands/saveMeetingDelivery.test.ts`.
 
-**Interfaces**
+### Task 3 interfaces
 
 Keep `ensureMeetingNotes(meeting): Promise<string | undefined>` and `ensureMeetingSummaries(meeting, notes): Promise<MeetingSummaries>`. Their result metadata lives on `meeting.processing`. Consume `classifyTranscription` and `getAudioTranscriptionFacts` after required work and final-pass completion.
 
@@ -331,13 +331,13 @@ Do not emit that log from each ensure call or label the existing `notes_generate
 
 ## Task 4: Apply the same policy to personal uploads without losing retries
 
-**Files**
+### Task 4 files
 
 - Modify `src/services/personalMediaUploadProcessingService.ts`.
 - Modify `src/services/__tests__/personalMediaUploadProcessingService.test.ts`.
 - Modify `src/services/personalMediaUploadService.ts` only if a narrow outcome-preserving segment write helper is needed; do not change claim, authorization or retry-limit policy.
 
-**Interfaces**
+### Task 4 interfaces
 
 Within the processing module define:
 
@@ -405,14 +405,14 @@ Keep a sanitized error observation for each caught provider failure. Do not put 
 
 ## Task 5: Present notices without changing note content
 
-**Files**
+### Task 5 files
 
 - Modify `src/embed.ts`, `src/utils/meetingNotes.ts`, `src/commands/notesCorrections.ts`, `src/trpc/routers/meetings.ts`.
 - Modify `src/frontend/utils/meetingLibrary.ts`, `src/frontend/pages/library/components/MeetingDetailDrawer.tsx`, `src/frontend/pages/library/components/MeetingSummaryPanel.tsx`.
 - Modify `src/frontend/pages/library/components/MeetingSummaryPanel.stories.tsx` and its `.test.tsx` file.
 - Modify `test/embed.test.ts`, `test/utils/meetingNotes.test.ts`, `test/trpc/meetingsRouter.test.ts`, `src/frontend/utils/__tests__/meetingLibrary.test.ts`, and relevant `MeetingDetailDrawer.test.tsx` assertions.
 
-**Interfaces**
+### Task 5 interfaces
 
 The authenticated detail response and `MeetingDetailInput`/`MeetingDetails` get `processing?: MeetingProcessingOutcome`. `MeetingSummaryPanelProps` gets the same optional field. `buildMeetingNotesEmbeds` gets `processing?: MeetingProcessingOutcome`. All use the Task 1 notice helper, not duplicate strings.
 
@@ -496,7 +496,7 @@ export const PartialTranscript: Story = {
 
 ## Task 6: Document and verify the complete flow
 
-**Files**
+### Task 6 files
 
 - Modify `apps/docs-site/docs/troubleshooting/common-issues.md` and `apps/docs-site/docs/core-concepts/meeting-lifecycle.md`.
 - Review `test/e2e/visual.spec.ts-snapshots` and `test/e2e/meetingDetailScroll.spec.ts`.
