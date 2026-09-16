@@ -525,6 +525,28 @@ describe("MeetingDetailDrawer summary copy", () => {
     expect(copyButton).toBeDisabled();
   });
 
+  it("passes the processing outcome to the summary panel", () => {
+    useMeetingDetailMock.mockReturnValue(
+      buildUseMeetingDetailResult({
+        detail: buildDetail({
+          notes: "",
+          processing: { transcription: "empty", notes: "skipped" },
+        }),
+        meeting: buildMeeting({
+          notes: "",
+          processing: { transcription: "empty", notes: "skipped" },
+        }),
+      }),
+    );
+
+    renderDrawer();
+    expect(
+      screen.getByText(
+        "No usable speech was found, so no notes were generated.",
+      ),
+    ).toBeVisible();
+  });
+
   it("shows server access notices instead of transcript and audio", () => {
     useMeetingDetailMock.mockReturnValue(
       buildUseMeetingDetailResult({

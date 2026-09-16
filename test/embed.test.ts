@@ -264,6 +264,36 @@ describe("updateMeetingSummaryMessage", () => {
     expect(notesEmbed?.description).toContain("Notes unavailable.");
   });
 
+  it("posts classified empty and partial notices outside notes text", async () => {
+    const empty = fixture();
+    empty.notesText = "";
+    Object.assign(empty, {
+      processing: { transcription: "empty", notes: "skipped" },
+    });
+    empty.textChannel.send.mockResolvedValue({ id: "empty-notes" });
+    await updateMeetingSummaryMessage(empty as unknown as MeetingData);
+    const emptyEmbed =
+      empty.textChannel.send.mock.calls[0][0].embeds[0].toJSON();
+    expect(emptyEmbed.description).toBe(
+      "No usable speech was found, so no notes were generated.",
+    );
+
+    const partial = fixture();
+    partial.notesText = "Stored notes stay unchanged.";
+    Object.assign(partial, {
+      processing: { transcription: "partial", notes: "generated" },
+    });
+    partial.textChannel.send.mockResolvedValue({ id: "partial-notes" });
+    await updateMeetingSummaryMessage(partial as unknown as MeetingData);
+    const partialEmbed =
+      partial.textChannel.send.mock.calls[0][0].embeds[0].toJSON();
+    expect(partialEmbed.description).toBe("Stored notes stay unchanged.");
+    expect(partialEmbed.footer?.text).toBe(
+      "Some audio could not be transcribed. These notes may be incomplete.",
+    );
+    expect(partial.notesText).toBe("Stored notes stay unchanged.");
+  });
+
   it("chunks long notes across multiple embeds", async () => {
     const message = {
       id: "start-message",

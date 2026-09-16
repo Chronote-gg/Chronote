@@ -4,6 +4,7 @@ import {
   MEETING_STATUS,
   type MeetingStatus,
 } from "../../types/meetingLifecycle";
+import type { MeetingProcessingOutcome } from "../../types/meetingProcessing";
 
 const MS_PER_DAY = 1000 * 60 * 60 * 24;
 const MS_PER_HOUR = 1000 * 60 * 60;
@@ -34,6 +35,7 @@ export type MeetingDetails = {
   actions: string[];
   events: MeetingEvent[];
   status?: MeetingStatus;
+  processing?: MeetingProcessingOutcome;
 };
 
 export type MeetingDetailInput = {
@@ -64,6 +66,7 @@ export type MeetingDetailInput = {
   attendees?: string[];
   events?: MeetingEvent[];
   status?: MeetingStatus;
+  processing?: MeetingProcessingOutcome;
 };
 
 export type MeetingFilterItem = {
@@ -282,10 +285,13 @@ export const buildMeetingDetails = (
     meetingId: detail.meetingId,
     title,
     meetingName: detail.meetingName ?? undefined,
-    summary: deriveSummary(rawNotes, detail.summarySentence),
+    summary:
+      detail.processing && !rawNotes.trim() && !detail.summarySentence?.trim()
+        ? ""
+        : deriveSummary(rawNotes, detail.summarySentence),
     summaryLabel: resolveSummaryLabel(detail.summaryLabel),
     summaryFeedback: detail.summaryFeedback ?? null,
-    notes: resolveNotes(detail.notes),
+    notes: detail.processing ? rawNotes : resolveNotes(detail.notes),
     dateLabel: formatDateLabel(detail.timestamp),
     recencyLabel: formatRelativeRecencyLabel(detail.timestamp),
     durationLabel: formatDurationLabel(detail.duration),
@@ -300,5 +306,6 @@ export const buildMeetingDetails = (
     actions: [],
     events: resolveEvents(detail.events),
     status: resolveStatus(detail.status),
+    processing: detail.processing,
   };
 };

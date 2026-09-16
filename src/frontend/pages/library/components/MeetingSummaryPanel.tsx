@@ -25,6 +25,8 @@ import {
 import MarkdownBody from "../../../components/MarkdownBody";
 import Surface from "../../../components/Surface";
 import { uiSpacing } from "../../../uiTokens";
+import type { MeetingProcessingOutcome } from "../../../../types/meetingProcessing";
+import { getMeetingProcessingNotice } from "../../../../utils/meetingProcessing";
 
 type SummaryFeedback = "up" | "down" | null;
 
@@ -55,6 +57,7 @@ type MeetingSummaryPanelProps = {
   onOpenNotionPage?: () => void;
   onSuggestCorrection?: () => void;
   style?: CSSProperties;
+  processing?: MeetingProcessingOutcome;
 };
 
 export function MeetingSummaryPanel({
@@ -76,7 +79,11 @@ export function MeetingSummaryPanel({
   onOpenNotionPage,
   onSuggestCorrection,
   style,
+  processing,
 }: MeetingSummaryPanelProps) {
+  const hasNotes = Boolean(notes.trim());
+  const notice = getMeetingProcessingNotice(processing, hasNotes);
+  const generatedNoteActionsDisabled = Boolean(processing && !hasNotes);
   const panelStyle: CSSProperties = scrollable
     ? {
         display: "flex",
@@ -87,6 +94,20 @@ export function MeetingSummaryPanel({
     : {};
   const summaryBody = (
     <>
+      {notice ? (
+        <Text
+          role={notice.tone === "neutral" ? "status" : "alert"}
+          c={
+            notice.tone === "error"
+              ? "red"
+              : notice.tone === "warning"
+                ? "yellow"
+                : "dimmed"
+          }
+        >
+          {notice.text}
+        </Text>
+      ) : null}
       <MarkdownBody content={summary} compact dimmed />
       <Box style={{ position: "relative" }}>
         <Divider my="sm" />
@@ -104,7 +125,7 @@ export function MeetingSummaryPanel({
               variant="subtle"
               color="gray"
               onClick={onCopySummary}
-              disabled={copyDisabled}
+              disabled={copyDisabled || generatedNoteActionsDisabled}
               aria-label="Copy summary as Markdown"
               size="sm"
             >
@@ -147,7 +168,7 @@ export function MeetingSummaryPanel({
             variant={summaryFeedback === "up" ? "light" : "subtle"}
             color={summaryFeedback === "up" ? "teal" : "gray"}
             onClick={onFeedbackUp}
-            disabled={feedbackPending}
+            disabled={feedbackPending || generatedNoteActionsDisabled}
             aria-label="Mark summary helpful"
           >
             <IconThumbUp size={14} />
@@ -156,7 +177,7 @@ export function MeetingSummaryPanel({
             variant={summaryFeedback === "down" ? "light" : "subtle"}
             color={summaryFeedback === "down" ? "red" : "gray"}
             onClick={onFeedbackDown}
-            disabled={feedbackPending}
+            disabled={feedbackPending || generatedNoteActionsDisabled}
             aria-label="Mark summary needs work"
           >
             <IconThumbDown size={14} />
@@ -191,7 +212,11 @@ export function MeetingSummaryPanel({
                 <Menu.Item
                   leftSection={<IconUpload size={14} />}
                   onClick={onNotionAction}
-                  disabled={!onNotionAction || notionActionPending}
+                  disabled={
+                    !onNotionAction ||
+                    notionActionPending ||
+                    generatedNoteActionsDisabled
+                  }
                 >
                   {notionActionLabel}
                 </Menu.Item>
@@ -200,7 +225,7 @@ export function MeetingSummaryPanel({
                 <Menu.Item
                   leftSection={<IconExternalLink size={14} />}
                   onClick={onOpenNotionPage}
-                  disabled={!onOpenNotionPage}
+                  disabled={!onOpenNotionPage || generatedNoteActionsDisabled}
                 >
                   Open Notion page
                 </Menu.Item>
@@ -208,7 +233,7 @@ export function MeetingSummaryPanel({
               <Menu.Item
                 leftSection={<IconSparkles size={14} />}
                 onClick={onSuggestCorrection}
-                disabled={!onSuggestCorrection}
+                disabled={!onSuggestCorrection || generatedNoteActionsDisabled}
               >
                 Suggest correction (AI)
               </Menu.Item>

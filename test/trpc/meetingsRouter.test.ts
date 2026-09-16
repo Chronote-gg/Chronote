@@ -228,6 +228,33 @@ describe("meetings router detail", () => {
     });
   });
 
+  test("returns persisted processing after access checks", async () => {
+    const meetingId = "channel-1#2025-01-01T00:00:00.000Z";
+    const history: MeetingHistory = {
+      guildId: "guild-1",
+      channelId_timestamp: meetingId,
+      meetingId: "meeting-1",
+      channelId: "channel-1",
+      timestamp: "2025-01-01T00:00:00.000Z",
+      participants: [],
+      duration: 60,
+      transcribeMeeting: true,
+      generateNotes: true,
+      notes: "",
+      processing: { transcription: "empty", notes: "skipped" },
+    };
+    mockedGetMeetingHistory.mockResolvedValue(history);
+
+    const result = await buildCaller().meetings.detail({
+      serverId: "guild-1",
+      meetingId,
+    });
+
+    expect(result.meeting.processing).toEqual(history.processing);
+    expect(result.meeting.notes).toBe("");
+    expect(mockedCheckMeetingAccess).toHaveBeenCalled();
+  });
+
   test("withholds transcript and audio when server artifact access is disabled", async () => {
     const meetingId = "channel-1#2025-01-01T00:00:00.000Z";
     mockedGetMeetingHistory.mockResolvedValue({

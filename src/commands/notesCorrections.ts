@@ -48,6 +48,7 @@ import {
 } from "../services/openaiModelParams";
 import { resolveModelChoicesForContext } from "../services/modelChoiceService";
 import type { ModelParamConfig } from "../config/types";
+import type { MeetingProcessingOutcome } from "../types/meetingProcessing";
 
 type PendingCorrection = {
   guildId: string;
@@ -55,6 +56,7 @@ type PendingCorrection = {
   meetingId?: string;
   channelId?: string;
   notesMessageIds?: string[];
+  processing?: MeetingProcessingOutcome;
   notesChannelId?: string;
   summaryMessageId?: string;
   meetingCreatorId?: string;
@@ -391,6 +393,7 @@ export async function handleNotesCorrectionModal(
       meetingId: history.meetingId,
       channelId: history.channelId,
       notesMessageIds: history.notesMessageIds,
+      processing: history.processing,
       notesChannelId: history.notesChannelId,
       summaryMessageId: history.summaryMessageId,
       meetingCreatorId: history.meetingCreatorId,
@@ -656,6 +659,7 @@ async function updateNotesEmbedsForCorrection(
     interaction.user.tag,
     color,
     meetingName,
+    pending.processing,
   );
 
   if (existingIds.length > 0 && embeds.length <= existingIds.length) {
@@ -748,6 +752,7 @@ function buildUpdatedEmbeds(
   editedByTag?: string,
   color?: number | null,
   meetingName?: string,
+  processing?: MeetingProcessingOutcome,
 ) {
   const footerText = editedByTag
     ? `v${version} • Edited by ${editedByTag}`
@@ -758,6 +763,7 @@ function buildUpdatedEmbeds(
     meetingName,
     footerText,
     color: color ?? undefined,
+    processing,
   });
 }
 

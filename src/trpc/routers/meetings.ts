@@ -76,6 +76,7 @@ import type {
   SuggestionHistoryEntry,
 } from "../../types/db";
 import type { MeetingEvent } from "../../types/meetingTimeline";
+import type { MeetingProcessingOutcome } from "../../types/meetingProcessing";
 import type { Participant } from "../../types/participants";
 import type { TranscriptPayload } from "../../types/transcript";
 import { MEETING_STATUS } from "../../types/meetingLifecycle";
@@ -623,12 +624,14 @@ async function sendNotesEmbedsToDiscord(params: {
   meetingName?: string;
   footerText?: string;
   color?: number;
+  processing?: MeetingProcessingOutcome;
 }): Promise<string[]> {
   const embeds = buildMeetingNotesEmbeds({
     notesBody: params.notesBody,
     meetingName: params.meetingName,
     footerText: params.footerText,
     color: params.color,
+    processing: params.processing,
   }).map((embed) => embed.toJSON() as unknown as Record<string, unknown>);
 
   const messageIds: string[] = [];
@@ -716,6 +719,7 @@ async function editOrReplaceNotesEmbeds(params: {
   meetingName?: string;
   footerText?: string;
   color?: number;
+  processing?: MeetingProcessingOutcome;
   summaryMessageId?: string;
 }): Promise<NotesEmbedUpdateResult> {
   const embeds = buildMeetingNotesEmbeds({
@@ -723,6 +727,7 @@ async function editOrReplaceNotesEmbeds(params: {
     meetingName: params.meetingName,
     footerText: params.footerText,
     color: params.color,
+    processing: params.processing,
   }).map((embed) => embed.toJSON() as unknown as Record<string, unknown>);
 
   if (
@@ -746,6 +751,7 @@ async function editOrReplaceNotesEmbeds(params: {
     meetingName: params.meetingName,
     footerText: params.footerText,
     color: params.color,
+    processing: params.processing,
   });
   return { messageIds, strategy: "replaced" };
 }
@@ -771,6 +777,7 @@ async function syncNotesEmbedsAfterWebEdit(params: {
       notesBody: params.notesBody,
       meetingName: params.history.meetingName,
       footerText: params.footerText,
+      processing: params.history.processing,
       summaryMessageId: params.history.summaryMessageId,
     });
   } catch (error) {
@@ -1181,6 +1188,7 @@ const detail = authedProcedure
             : history.duration,
         tags: history.tags ?? [],
         notes,
+        processing: history.processing,
         notesDelta: history.notesDelta,
         notesVersion: history.notesVersion ?? 1,
         meetingName: history.meetingName,
@@ -1836,6 +1844,7 @@ const applyNotesCorrection = authedProcedure
           notesBody: pending.newNotes,
           meetingName: history.meetingName,
           footerText,
+          processing: history.processing,
           summaryMessageId: history.summaryMessageId,
         });
       } catch (error) {
