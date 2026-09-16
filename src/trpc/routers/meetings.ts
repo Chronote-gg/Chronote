@@ -80,7 +80,10 @@ import type { MeetingProcessingOutcome } from "../../types/meetingProcessing";
 import type { Participant } from "../../types/participants";
 import type { TranscriptPayload } from "../../types/transcript";
 import { MEETING_STATUS } from "../../types/meetingLifecycle";
-import { buildMeetingNotesEmbeds } from "../../utils/meetingNotes";
+import {
+  batchMeetingNotesEmbeds,
+  buildMeetingNotesEmbeds,
+} from "../../utils/meetingNotes";
 import { stripCodeFences } from "../../utils/text";
 import {
   collectMentionIds,
@@ -164,7 +167,6 @@ const resolveMeetingAttendees = (history: {
 
 const NOTES_CORRECTION_DIFF_LINE_LIMIT = 600;
 const NOTES_CORRECTION_DIFF_CHAR_LIMIT = 12_000;
-const NOTES_CORRECTION_MAX_EMBEDS_PER_MESSAGE = 10;
 
 // DynamoDB item size is capped at 400KB. Notes are also versioned in MeetingHistory,
 // so we keep portal-edited notes bounded to avoid update failures.
@@ -626,24 +628,24 @@ async function sendNotesEmbedsToDiscord(params: {
   color?: number;
   processing?: MeetingProcessingOutcome;
 }): Promise<string[]> {
-  const embeds = buildMeetingNotesEmbeds({
-    notesBody: params.notesBody,
-    meetingName: params.meetingName,
-    footerText: params.footerText,
-    color: params.color,
-    processing: params.processing,
-  }).map((embed) => embed.toJSON() as unknown as Record<string, unknown>);
+  const embedBatches = batchMeetingNotesEmbeds(
+    buildMeetingNotesEmbeds({
+      notesBody: params.notesBody,
+      meetingName: params.meetingName,
+      footerText: params.footerText,
+      color: params.color,
+      processing: params.processing,
+    }),
+  );
 
   const messageIds: string[] = [];
 
   try {
-    for (
-      let i = 0;
-      i < embeds.length;
-      i += NOTES_CORRECTION_MAX_EMBEDS_PER_MESSAGE
-    ) {
+    for (const embeds of embedBatches) {
       const msg = await createDiscordMessage(params.channelId, {
-        embeds: embeds.slice(i, i + NOTES_CORRECTION_MAX_EMBEDS_PER_MESSAGE),
+        embeds: embeds.map(
+          (embed) => embed.toJSON() as unknown as Record<string, unknown>,
+        ),
         components: [],
       });
       messageIds.push(msg.id);

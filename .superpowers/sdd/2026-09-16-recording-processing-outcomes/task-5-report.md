@@ -38,3 +38,21 @@ Command:
 - Portal copy, feedback, correction, and notes-only export actions are disabled for classified no-notes results. Edit, import, transcript access, and audio access remain available.
 - Scroll-area application styles were not changed.
 - No production, configuration, dependency, infrastructure, push, or PR changes were made.
+
+## Review fix round 1
+
+Fixed Discord's 6,000-character aggregate embed-text limit. `batchMeetingNotesEmbeds` now groups generated notes embeds by both the 10-embed count cap and the aggregate text cap. Initial delivery and web edit/import/correction replacement delivery use the same helper. Existing one-embed-per-message correction updates remain within the limit.
+
+Footer construction now budgets against both the 2,048-character footer limit and the text already used by each embed. It truncates only the existing footer prefix and retains the full partial-transcript warning on every embed.
+
+Red evidence:
+
+- A 5,900-character partial transcript was sent as one message whose two embeds exceeded 6,000 aggregate characters.
+- A maximum-size description, title, and existing footer produced 6,400 embed text characters.
+
+Green evidence:
+
+- `test/embed.test.ts`, `test/utils/meetingNotes.test.ts`, and `test/trpc/meetingsRouter.test.ts`: 3 suites passed, 41 tests passed.
+- The payload regression combines 5,900 note characters, a 2,048-character existing footer, and the partial warning. Every resulting message payload stays at or below 6,000 aggregate characters and every embed retains the warning.
+- TypeScript build passed.
+- Vite build and route HTML generation passed.

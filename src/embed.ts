@@ -12,13 +12,15 @@ import { buildSummaryFeedbackButtonIds } from "./commands/summaryFeedback";
 import { MEETING_RENAME_PREFIX } from "./commands/meetingName";
 import { deliveryError, recordDelivery } from "./observability/meetingDelivery";
 import type { DeliveryPhase, DeliveryResult } from "./types/meetingDelivery";
-import { buildMeetingNotesEmbeds } from "./utils/meetingNotes";
+import {
+  batchMeetingNotesEmbeds,
+  buildMeetingNotesEmbeds,
+} from "./utils/meetingNotes";
 
 const PROCESSING_COLOR = 0x3498db;
 const SUMMARY_COLOR = 0x00ae86;
 const DEFAULT_TITLE = "Meeting Summary";
 const MAX_FIELD_VALUE = 1024;
-const MAX_EMBEDS_PER_MESSAGE = 10;
 
 type MeetingMessagePayload = {
   embeds: EmbedBuilder[];
@@ -263,11 +265,12 @@ export async function updateMeetingSummaryMessage(
   }
 
   const noteEmbeds = buildNotesEmbeds(meeting);
+  const noteEmbedBatches = batchMeetingNotesEmbeds(noteEmbeds);
   const noteMessages: Message[] = [];
   const errors: DeliveryResult["errors"] = [];
-  for (let i = 0; i < noteEmbeds.length; i += MAX_EMBEDS_PER_MESSAGE) {
+  for (const embeds of noteEmbedBatches) {
     const payload: MeetingMessagePayload = {
-      embeds: noteEmbeds.slice(i, i + MAX_EMBEDS_PER_MESSAGE),
+      embeds,
       components: [],
     };
     try {
@@ -285,7 +288,7 @@ export async function updateMeetingSummaryMessage(
     meeting.notesMessageIds = undefined;
     meeting.notesChannelId = undefined;
   }
-  const intended = Math.ceil(noteEmbeds.length / MAX_EMBEDS_PER_MESSAGE);
+  const intended = noteEmbedBatches.length;
   const sent = noteMessages.length;
   const notes = recordDelivery(meeting, "notes", {
     outcome:

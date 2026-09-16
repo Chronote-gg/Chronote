@@ -23,7 +23,11 @@ jest.mock("../src/services/langfuseClient", () => ({
 }));
 import type { MeetingData } from "../src/types/meeting-data";
 
-type EmbedPayload = { description?: string };
+type EmbedPayload = {
+  title?: string;
+  description?: string;
+  footer?: { text: string };
+};
 type EmbedLike = { toJSON?: () => EmbedPayload; data?: EmbedPayload };
 
 describe("updateMeetingSummaryMessage", () => {
@@ -92,11 +96,11 @@ describe("updateMeetingSummaryMessage", () => {
     value.notesText = "A".repeat(44000);
     value.textChannel.send
       .mockResolvedValueOnce({ id: "notes-1" })
-      .mockRejectedValueOnce(denied());
+      .mockRejectedValue(denied());
     const meeting = value as unknown as MeetingData;
     const result = await updateMeetingSummaryMessage(meeting);
     expect(result).toMatchObject({
-      notes: { outcome: "partial", intended: 2, sent: 1 },
+      notes: { outcome: "partial", intended: 11, sent: 1 },
     });
     expect(meeting.notesMessageIds).toEqual(["notes-1"]);
   });
@@ -294,6 +298,38 @@ describe("updateMeetingSummaryMessage", () => {
     expect(partial.notesText).toBe("Stored notes stay unchanged.");
   });
 
+  it("batches partial notes within Discord's aggregate embed text limit", async () => {
+    const partial = fixture();
+    partial.notesText = "A".repeat(5900);
+    Object.assign(partial, {
+      processing: { transcription: "partial", notes: "generated" },
+    });
+    partial.textChannel.send
+      .mockResolvedValueOnce({ id: "partial-1" })
+      .mockResolvedValueOnce({ id: "partial-2" });
+
+    await updateMeetingSummaryMessage(partial as unknown as MeetingData);
+
+    expect(partial.textChannel.send).toHaveBeenCalledTimes(2);
+    for (const [payload] of partial.textChannel.send.mock.calls) {
+      const embeds = payload.embeds.map((embed: EmbedLike) =>
+        embed.toJSON ? embed.toJSON() : embed.data,
+      );
+      const totalText = embeds.reduce(
+        (total: number, embed: EmbedPayload) =>
+          total +
+          (embed.title?.length ?? 0) +
+          (embed.description?.length ?? 0) +
+          (embed.footer?.text.length ?? 0),
+        0,
+      );
+      expect(totalText).toBeLessThanOrEqual(6000);
+      expect(embeds[0].footer?.text).toContain(
+        "Some audio could not be transcribed. These notes may be incomplete.",
+      );
+    }
+  });
+
   it("chunks long notes across multiple embeds", async () => {
     const message = {
       id: "start-message",
@@ -324,12 +360,13 @@ describe("updateMeetingSummaryMessage", () => {
 
     await updateMeetingSummaryMessage(meeting);
 
-    const sendPayload = textChannel.send.mock.calls[0][0];
-    expect(sendPayload.embeds.length).toBeGreaterThan(1);
-    const descriptions = (sendPayload.embeds as EmbedLike[]).map((embed) => {
-      const payload = embed.toJSON?.() ?? embed.data;
-      return payload?.description ?? "";
-    });
+    expect(textChannel.send).toHaveBeenCalledTimes(2);
+    const descriptions = textChannel.send.mock.calls.flatMap(([payload]) =>
+      (payload.embeds as EmbedLike[]).map((embed) => {
+        const data = embed.toJSON?.() ?? embed.data;
+        return data?.description ?? "";
+      }),
+    );
     expect(descriptions.join("").length).toBe(longNotes.length);
   });
 });
