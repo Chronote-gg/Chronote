@@ -127,10 +127,7 @@ const buildProviderFailureObservation = (error: unknown) => {
         ? providerError.name.slice(0, 80)
         : undefined,
     code:
-      typeof providerError.code === "string" ||
-      typeof providerError.code === "number"
-        ? providerError.code
-        : undefined,
+      typeof providerError.code === "number" ? providerError.code : undefined,
     status:
       typeof providerError.status === "number"
         ? providerError.status
@@ -807,21 +804,29 @@ const processPersonalRecordingContent = async (
   try {
     notes = await generateNotesForTranscript(job, transcriptArtifact.text);
   } catch (error) {
-    throw new PersonalUploadProcessingError(error, {
-      transcription,
-      notes: "failed",
-      summary: "skipped",
-    });
+    throw new PersonalUploadProcessingError(
+      error,
+      {
+        transcription,
+        notes: "failed",
+        summary: "skipped",
+      },
+      failedChunks,
+    );
   }
   let summaries: MeetingSummaries;
   try {
     summaries = await generateSummariesForNotes(job, notes);
   } catch (error) {
-    throw new PersonalUploadProcessingError(error, {
-      transcription,
-      notes: notes ? "generated" : "skipped",
-      summary: "failed",
-    });
+    throw new PersonalUploadProcessingError(
+      error,
+      {
+        transcription,
+        notes: notes ? "generated" : "skipped",
+        summary: "failed",
+      },
+      failedChunks,
+    );
   }
   const meetingName = await resolvePersonalUploadMeetingName(job, summaries);
   let artifacts: Awaited<ReturnType<typeof uploadPersonalUploadArtifacts>>;
@@ -832,11 +837,15 @@ const processPersonalRecordingContent = async (
       transcriptArtifact,
     );
   } catch (error) {
-    throw new PersonalUploadProcessingError(error, {
-      transcription,
-      notes: notes ? "generated" : "skipped",
-      summary: getSummaryOutcome(notes, summaries),
-    });
+    throw new PersonalUploadProcessingError(
+      error,
+      {
+        transcription,
+        notes: notes ? "generated" : "skipped",
+        summary: getSummaryOutcome(notes, summaries),
+      },
+      failedChunks,
+    );
   }
 
   return {
@@ -901,21 +910,29 @@ const processPersonalMediaContent = async (
   try {
     notes = await generateNotesForTranscript(job, transcriptArtifact.text);
   } catch (error) {
-    throw new PersonalUploadProcessingError(error, {
-      transcription,
-      notes: "failed",
-      summary: "skipped",
-    });
+    throw new PersonalUploadProcessingError(
+      error,
+      {
+        transcription,
+        notes: "failed",
+        summary: "skipped",
+      },
+      transcriptionResult.failedChunks,
+    );
   }
   let summaries: MeetingSummaries;
   try {
     summaries = await generateSummariesForNotes(job, notes);
   } catch (error) {
-    throw new PersonalUploadProcessingError(error, {
-      transcription,
-      notes: notes ? "generated" : "skipped",
-      summary: "failed",
-    });
+    throw new PersonalUploadProcessingError(
+      error,
+      {
+        transcription,
+        notes: notes ? "generated" : "skipped",
+        summary: "failed",
+      },
+      transcriptionResult.failedChunks,
+    );
   }
   const meetingName = await resolvePersonalUploadMeetingName(job, summaries);
   let artifacts: Awaited<ReturnType<typeof uploadPersonalUploadArtifacts>>;
@@ -926,11 +943,15 @@ const processPersonalMediaContent = async (
       transcriptArtifact,
     );
   } catch (error) {
-    throw new PersonalUploadProcessingError(error, {
-      transcription,
-      notes: notes ? "generated" : "skipped",
-      summary: getSummaryOutcome(notes, summaries),
-    });
+    throw new PersonalUploadProcessingError(
+      error,
+      {
+        transcription,
+        notes: notes ? "generated" : "skipped",
+        summary: getSummaryOutcome(notes, summaries),
+      },
+      transcriptionResult.failedChunks,
+    );
   }
 
   return {

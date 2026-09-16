@@ -740,7 +740,7 @@ describe("personalMediaUploadProcessingService", () => {
 
   it("sanitizes caught provider observations", async () => {
     const providerError = Object.assign(new Error("private request body"), {
-      code: "rate_limit",
+      code: "private provider code content",
       status: 429,
     });
     const errorSpy = jest.spyOn(console, "error").mockImplementation(() => {});
@@ -753,12 +753,53 @@ describe("personalMediaUploadProcessingService", () => {
 
     expect(errorSpy).toHaveBeenCalledWith(
       "Personal upload transcription provider failed",
-      { errorClass: "Error", code: "rate_limit", status: 429 },
+      { errorClass: "Error", code: undefined, status: 429 },
     );
     expect(errorSpy.mock.calls.flat().join(" ")).not.toContain(
       "private request body",
     );
     errorSpy.mockRestore();
+  });
+
+  it("retains partial failed chunk counts when notes generation later fails", async () => {
+    const cached = {
+      ...buildSegment(0, "processed"),
+      transcriptS3Key: "cached-partial.json",
+    };
+    recordingSegments = [cached, buildSegment(1)];
+    mockUploadedObjects.set(
+      cached.transcriptS3Key,
+      JSON.stringify({
+        segment: {
+          userId: "user-1",
+          username: "Me",
+          displayName: "Me",
+          startedAt: cached.startedAt,
+          text: "cached transcript",
+          source: "desktop_recording",
+        },
+      }),
+    );
+    mockTranscribe.mockRejectedValue(new Error("provider failed"));
+    mockChatComplete.mockRejectedValueOnce(new Error("notes failed"));
+
+    await processPersonalMediaUpload(
+      { ...buildDesktopJob(), attempts: 3 },
+      "instance-1",
+    );
+
+    expect(recordPersonalUploadTerminal).toHaveBeenLastCalledWith(
+      "upload-1",
+      expect.objectContaining({
+        failedChunks: 1,
+        jobStatus: "failed",
+        processing: {
+          transcription: "partial",
+          notes: "failed",
+          summary: "skipped",
+        },
+      }),
+    );
   });
 
   it("preserves a valid completed history when the job completion write fails", async () => {
