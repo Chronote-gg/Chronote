@@ -60,6 +60,49 @@ type MeetingSummaryPanelProps = {
   processing?: MeetingProcessingOutcome;
 };
 
+type ProcessingNoticeProps = Pick<
+  MeetingSummaryPanelProps,
+  "processing" | "notes"
+>;
+
+const ProcessingNotice = ({ processing, notes }: ProcessingNoticeProps) => {
+  const notice = getMeetingProcessingNotice(processing, Boolean(notes.trim()));
+  if (!notice) return null;
+  const colors = { error: "red", warning: "yellow", neutral: "dimmed" };
+  return (
+    <Text
+      role={notice.tone === "neutral" ? "status" : "alert"}
+      c={colors[notice.tone]}
+    >
+      {notice.text}
+    </Text>
+  );
+};
+
+type ActionStateProps = Pick<
+  MeetingSummaryPanelProps,
+  | "processing"
+  | "notes"
+  | "copyDisabled"
+  | "feedbackPending"
+  | "onNotionAction"
+  | "notionActionPending"
+  | "onOpenNotionPage"
+  | "onSuggestCorrection"
+>;
+
+const getDisabledActions = (props: ActionStateProps) => {
+  const noGeneratedNotes = Boolean(props.processing && !props.notes.trim());
+  return {
+    copy: props.copyDisabled || noGeneratedNotes,
+    feedback: props.feedbackPending || noGeneratedNotes,
+    notion:
+      !props.onNotionAction || props.notionActionPending || noGeneratedNotes,
+    openNotion: !props.onOpenNotionPage || noGeneratedNotes,
+    correction: !props.onSuggestCorrection || noGeneratedNotes,
+  };
+};
+
 export function MeetingSummaryPanel({
   summary,
   notes,
@@ -81,9 +124,16 @@ export function MeetingSummaryPanel({
   style,
   processing,
 }: MeetingSummaryPanelProps) {
-  const hasNotes = Boolean(notes.trim());
-  const notice = getMeetingProcessingNotice(processing, hasNotes);
-  const generatedNoteActionsDisabled = Boolean(processing && !hasNotes);
+  const disabled = getDisabledActions({
+    processing,
+    notes,
+    copyDisabled,
+    feedbackPending,
+    onNotionAction,
+    notionActionPending,
+    onOpenNotionPage,
+    onSuggestCorrection,
+  });
   const panelStyle: CSSProperties = scrollable
     ? {
         display: "flex",
@@ -94,20 +144,7 @@ export function MeetingSummaryPanel({
     : {};
   const summaryBody = (
     <>
-      {notice ? (
-        <Text
-          role={notice.tone === "neutral" ? "status" : "alert"}
-          c={
-            notice.tone === "error"
-              ? "red"
-              : notice.tone === "warning"
-                ? "yellow"
-                : "dimmed"
-          }
-        >
-          {notice.text}
-        </Text>
-      ) : null}
+      <ProcessingNotice processing={processing} notes={notes} />
       <MarkdownBody content={summary} compact dimmed />
       <Box style={{ position: "relative" }}>
         <Divider my="sm" />
@@ -125,7 +162,7 @@ export function MeetingSummaryPanel({
               variant="subtle"
               color="gray"
               onClick={onCopySummary}
-              disabled={copyDisabled || generatedNoteActionsDisabled}
+              disabled={disabled.copy}
               aria-label="Copy summary as Markdown"
               size="sm"
             >
@@ -168,7 +205,7 @@ export function MeetingSummaryPanel({
             variant={summaryFeedback === "up" ? "light" : "subtle"}
             color={summaryFeedback === "up" ? "teal" : "gray"}
             onClick={onFeedbackUp}
-            disabled={feedbackPending || generatedNoteActionsDisabled}
+            disabled={disabled.feedback}
             aria-label="Mark summary helpful"
           >
             <IconThumbUp size={14} />
@@ -177,7 +214,7 @@ export function MeetingSummaryPanel({
             variant={summaryFeedback === "down" ? "light" : "subtle"}
             color={summaryFeedback === "down" ? "red" : "gray"}
             onClick={onFeedbackDown}
-            disabled={feedbackPending || generatedNoteActionsDisabled}
+            disabled={disabled.feedback}
             aria-label="Mark summary needs work"
           >
             <IconThumbDown size={14} />
@@ -212,11 +249,7 @@ export function MeetingSummaryPanel({
                 <Menu.Item
                   leftSection={<IconUpload size={14} />}
                   onClick={onNotionAction}
-                  disabled={
-                    !onNotionAction ||
-                    notionActionPending ||
-                    generatedNoteActionsDisabled
-                  }
+                  disabled={disabled.notion}
                 >
                   {notionActionLabel}
                 </Menu.Item>
@@ -225,7 +258,7 @@ export function MeetingSummaryPanel({
                 <Menu.Item
                   leftSection={<IconExternalLink size={14} />}
                   onClick={onOpenNotionPage}
-                  disabled={!onOpenNotionPage || generatedNoteActionsDisabled}
+                  disabled={disabled.openNotion}
                 >
                   Open Notion page
                 </Menu.Item>
@@ -233,7 +266,7 @@ export function MeetingSummaryPanel({
               <Menu.Item
                 leftSection={<IconSparkles size={14} />}
                 onClick={onSuggestCorrection}
-                disabled={!onSuggestCorrection || generatedNoteActionsDisabled}
+                disabled={disabled.correction}
               >
                 Suggest correction (AI)
               </Menu.Item>

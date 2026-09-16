@@ -263,6 +263,17 @@ const resolveEvents = (events?: MeetingEvent[]) => events ?? [];
 const resolveStatus = (status?: MeetingDetails["status"]) =>
   status ?? MEETING_STATUS.COMPLETE;
 
+const resolveDisplayContent = (detail: MeetingDetailInput) => {
+  const rawNotes = detail.notes ?? "";
+  return {
+    summary:
+      detail.processing && !rawNotes.trim() && !detail.summarySentence?.trim()
+        ? ""
+        : deriveSummary(rawNotes, detail.summarySentence),
+    notes: detail.processing ? rawNotes : resolveNotes(detail.notes),
+  };
+};
+
 export const buildMeetingDetails = (
   detail: MeetingDetailInput,
   channelNameMap: Map<string, string>,
@@ -271,7 +282,6 @@ export const buildMeetingDetails = (
     channelNameMap.get(detail.channelId) ?? detail.channelName ?? undefined,
     detail.channelId,
   );
-  const rawNotes = detail.notes ?? "";
 
   const title = resolveMeetingTitle({
     meetingName: detail.meetingName,
@@ -285,13 +295,9 @@ export const buildMeetingDetails = (
     meetingId: detail.meetingId,
     title,
     meetingName: detail.meetingName ?? undefined,
-    summary:
-      detail.processing && !rawNotes.trim() && !detail.summarySentence?.trim()
-        ? ""
-        : deriveSummary(rawNotes, detail.summarySentence),
+    ...resolveDisplayContent(detail),
     summaryLabel: resolveSummaryLabel(detail.summaryLabel),
     summaryFeedback: detail.summaryFeedback ?? null,
-    notes: detail.processing ? rawNotes : resolveNotes(detail.notes),
     dateLabel: formatDateLabel(detail.timestamp),
     recencyLabel: formatRelativeRecencyLabel(detail.timestamp),
     durationLabel: formatDurationLabel(detail.duration),

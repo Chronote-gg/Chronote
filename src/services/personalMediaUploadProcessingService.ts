@@ -323,7 +323,13 @@ const generateNotesForTranscript = async (
   transcript: string,
 ) => {
   if (!transcript.trim()) return "";
-  return generatePersonalUploadNotes({ transcript, title: job.title });
+  const notes = await generatePersonalUploadNotes({
+    transcript,
+    title: job.title,
+  });
+  if (!notes.trim())
+    throw new Error("Notes generation returned no usable content.");
+  return notes;
 };
 
 const generateSummariesForNotes = async (
@@ -586,6 +592,7 @@ const updatePersonalRecordingProcessingProgress = async (
   instanceId: string,
 ) => {
   const segments = await listPersonalRecordingUploadSegments(job.uploadId);
+  Object.assign(job, summarizeRecordingSegmentProgress(segments));
   await updateClaimedPersonalMediaUploadJobProgress({
     uploadId: job.uploadId,
     instanceId,
@@ -734,6 +741,53 @@ const processPersonalRecordingSegmentSource = async (
   };
 };
 
+const finalizePersonalUploadContent = async (
+  job: PersonalMediaUploadJobRecord,
+  audioPath: string,
+  transcriptArtifact: PersonalUploadTranscriptArtifact,
+  transcription: MeetingProcessingOutcome["transcription"],
+  failedChunks: number,
+  includeSegmentProgress: boolean,
+): Promise<Omit<PersonalUploadProcessingResult, "durationSeconds">> => {
+  const processing: MeetingProcessingOutcome = {
+    transcription,
+    notes: "failed",
+    summary: "skipped",
+  };
+  try {
+    const notes = await generateNotesForTranscript(
+      job,
+      transcriptArtifact.text,
+    );
+    processing.notes = notes ? "generated" : "skipped";
+    processing.summary = notes ? "failed" : "skipped";
+    const summaries = await generateSummariesForNotes(job, notes);
+    processing.summary = getSummaryOutcome(notes, summaries);
+    const meetingName = await resolvePersonalUploadMeetingName(job, summaries);
+    const artifacts = await uploadPersonalUploadArtifacts(
+      job,
+      audioPath,
+      transcriptArtifact,
+    );
+    const progress = includeSegmentProgress
+      ? summarizeRecordingSegmentProgress(
+          await listPersonalRecordingUploadSegments(job.uploadId),
+        )
+      : {};
+    return {
+      ...artifacts,
+      ...progress,
+      failedChunks,
+      meetingName,
+      notes,
+      processing,
+      summaries,
+    };
+  } catch (error) {
+    throw new PersonalUploadProcessingError(error, processing, failedChunks);
+  }
+};
+
 const processPersonalRecordingContent = async (
   job: PersonalMediaUploadJobRecord,
   workDir: string,
@@ -746,6 +800,7 @@ const processPersonalRecordingContent = async (
 
   const processedSources: ProcessedPersonalRecordingSource[] = [];
   const segments = await listPersonalRecordingUploadSegments(job.uploadId);
+  Object.assign(job, summarizeRecordingSegmentProgress(segments));
   const submittedSegments = segments.filter((segment) =>
     ["submitted", "processing", "processed", "failed"].includes(segment.status),
   );
@@ -800,72 +855,19 @@ const processPersonalRecordingContent = async (
       failedChunks,
     );
   }
-  let notes: string;
-  try {
-    notes = await generateNotesForTranscript(job, transcriptArtifact.text);
-  } catch (error) {
-    throw new PersonalUploadProcessingError(
-      error,
-      {
-        transcription,
-        notes: "failed",
-        summary: "skipped",
-      },
-      failedChunks,
-    );
-  }
-  let summaries: MeetingSummaries;
-  try {
-    summaries = await generateSummariesForNotes(job, notes);
-  } catch (error) {
-    throw new PersonalUploadProcessingError(
-      error,
-      {
-        transcription,
-        notes: notes ? "generated" : "skipped",
-        summary: "failed",
-      },
-      failedChunks,
-    );
-  }
-  const meetingName = await resolvePersonalUploadMeetingName(job, summaries);
-  let artifacts: Awaited<ReturnType<typeof uploadPersonalUploadArtifacts>>;
-  try {
-    artifacts = await uploadPersonalUploadArtifacts(
+  return {
+    ...(await finalizePersonalUploadContent(
       job,
       audioPath,
       transcriptArtifact,
-    );
-  } catch (error) {
-    throw new PersonalUploadProcessingError(
-      error,
-      {
-        transcription,
-        notes: notes ? "generated" : "skipped",
-        summary: getSummaryOutcome(notes, summaries),
-      },
+      transcription,
       failedChunks,
-    );
-  }
-
-  return {
-    ...artifacts,
+      true,
+    )),
     durationSeconds: Math.max(
       0,
       ...processedSources.map((source) => source.durationSeconds),
     ),
-    failedChunks,
-    meetingName,
-    notes,
-    processing: {
-      transcription,
-      notes: notes ? "generated" : "skipped",
-      summary: getSummaryOutcome(notes, summaries),
-    },
-    ...summarizeRecordingSegmentProgress(
-      await listPersonalRecordingUploadSegments(job.uploadId),
-    ),
-    summaries,
   };
 };
 
@@ -906,66 +908,16 @@ const processPersonalMediaContent = async (
     job,
     transcriptionResult.text,
   );
-  let notes: string;
-  try {
-    notes = await generateNotesForTranscript(job, transcriptArtifact.text);
-  } catch (error) {
-    throw new PersonalUploadProcessingError(
-      error,
-      {
-        transcription,
-        notes: "failed",
-        summary: "skipped",
-      },
-      transcriptionResult.failedChunks,
-    );
-  }
-  let summaries: MeetingSummaries;
-  try {
-    summaries = await generateSummariesForNotes(job, notes);
-  } catch (error) {
-    throw new PersonalUploadProcessingError(
-      error,
-      {
-        transcription,
-        notes: notes ? "generated" : "skipped",
-        summary: "failed",
-      },
-      transcriptionResult.failedChunks,
-    );
-  }
-  const meetingName = await resolvePersonalUploadMeetingName(job, summaries);
-  let artifacts: Awaited<ReturnType<typeof uploadPersonalUploadArtifacts>>;
-  try {
-    artifacts = await uploadPersonalUploadArtifacts(
+  return {
+    ...(await finalizePersonalUploadContent(
       job,
       audioPath,
       transcriptArtifact,
-    );
-  } catch (error) {
-    throw new PersonalUploadProcessingError(
-      error,
-      {
-        transcription,
-        notes: notes ? "generated" : "skipped",
-        summary: getSummaryOutcome(notes, summaries),
-      },
-      transcriptionResult.failedChunks,
-    );
-  }
-
-  return {
-    ...artifacts,
-    durationSeconds,
-    failedChunks: transcriptionResult.failedChunks,
-    meetingName,
-    notes,
-    processing: {
       transcription,
-      notes: notes ? "generated" : "skipped",
-      summary: getSummaryOutcome(notes, summaries),
-    },
-    summaries,
+      transcriptionResult.failedChunks,
+      false,
+    )),
+    durationSeconds,
   };
 };
 
@@ -1214,10 +1166,33 @@ const writeTerminalFailureMeeting = async (
   });
 };
 
+const readTerminalSegmentCounts = async (job: PersonalMediaUploadJobRecord) => {
+  if (job.uploadOrigin !== "desktop_recording") {
+    return { processedSegmentCount: 0, segmentCount: 0 };
+  }
+  try {
+    return summarizeRecordingSegmentProgress(
+      await listPersonalRecordingUploadSegments(job.uploadId),
+    );
+  } catch (error) {
+    console.error("Failed to read terminal personal upload segment progress", {
+      uploadId: job.uploadId,
+      error: buildProviderFailureObservation(error),
+    });
+    // Keep the last observed counts. Null explicitly means no count was available.
+    return {
+      processedSegmentCount: job.processedSegmentCount ?? null,
+      segmentCount: job.segmentCount ?? null,
+    };
+  }
+};
+
 export async function processPersonalMediaUpload(
   job: PersonalMediaUploadJobRecord,
   instanceId: string,
 ) {
+  // Progress observations belong to this attempt, not the caller's job object.
+  job = { ...job };
   await withPersonalUploadProcessingTrace(job, async () => {
     const tempRoot = await ensureTempBaseDir();
     const workDir = path.join(tempRoot, "personal-upload", job.uploadId);
@@ -1277,11 +1252,7 @@ export async function processPersonalMediaUpload(
       if (
         (job.attempts ?? 1) >= PERSONAL_MEDIA_UPLOAD_MAX_PROCESSING_ATTEMPTS
       ) {
-        const segments =
-          job.uploadOrigin === "desktop_recording"
-            ? await listPersonalRecordingUploadSegments(job.uploadId)
-            : [];
-        const progress = summarizeRecordingSegmentProgress(segments);
+        const progress = await readTerminalSegmentCounts(job);
         terminalFacts = {
           processing:
             resolvedError instanceof PersonalUploadProcessingError

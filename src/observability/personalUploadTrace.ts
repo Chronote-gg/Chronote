@@ -11,8 +11,8 @@ import { toLangfuseAttributeMetadata } from "./langfuseMetadata";
 export type PersonalUploadTerminalFacts = {
   processing: MeetingProcessingOutcome;
   failedChunks: number;
-  processedSegmentCount: number;
-  segmentCount: number;
+  processedSegmentCount: number | null;
+  segmentCount: number | null;
   jobStatus: "complete" | "failed";
 };
 
