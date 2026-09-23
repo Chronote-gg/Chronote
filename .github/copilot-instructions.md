@@ -55,6 +55,7 @@ This file provides Copilot review context. AGENTS.md remains the source of truth
   - Fetches saved notes + transcript from DB, calls GPT-4o with a "minimal edits, do not copy transcript" prompt, shows a compact line diff, requires approval (meeting creator or ManageChannels if auto-record), updates embed + MeetingHistory and bumps version/last editor.
 - Context management: `commands/context.ts` writes/reads ServerContext and ChannelContext.
 - Meeting history persistence: `commands/saveMeetingHistory.ts`, `db.ts` helpers.
+  - Optional `processing` metadata records transcription, notes, and summary outcomes independently of lifecycle status. Missing outcomes are unknown. Never infer transcription failure from an unrelated upload error or insert processing notices into stored notes.
 - Web server: `webserver.ts` (health check, optional Discord OAuth scaffolding).
 
 ## Configuration & env

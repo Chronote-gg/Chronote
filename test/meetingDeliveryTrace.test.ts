@@ -49,6 +49,11 @@ it("marks the parent trace degraded after a caught delivery failure while lettin
     voiceChannel: { id: "voice", name: "Voice" },
     startTime: new Date(),
     finished: false,
+    processing: {
+      transcription: "ready",
+      notes: "generated",
+      summary: "generated",
+    },
   } as unknown as MeetingData;
   await withMeetingEndTrace(meeting, async () => {
     recordDelivery(meeting, "notes", {
@@ -63,7 +68,7 @@ it("marks the parent trace degraded after a caught delivery failure while lettin
   expect(updateActiveObservation).toHaveBeenLastCalledWith(
     expect.objectContaining({
       level: "ERROR",
-      metadata: {
+      metadata: expect.objectContaining({
         delivery: {
           notes: {
             outcome: "failed",
@@ -72,7 +77,15 @@ it("marks the parent trace degraded after a caught delivery failure while lettin
             errors: [{ code: 50013 }],
           },
         },
-      },
+        processing: {
+          transcription: "ready",
+          notes: "generated",
+          summary: "generated",
+        },
+        usableSegments: 0,
+        failedSegments: 0,
+        captureIncomplete: false,
+      }),
     }),
     { asType: "chain" },
   );

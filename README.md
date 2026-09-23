@@ -13,6 +13,12 @@ A Discord bot that records voice meetings, transcribes them with OpenAI, generat
 - `/ask`: Ask questions over recent meeting history (guild scope by default).
 - `/onboard`: Guided setup (context, auto-record, feature tour, upgrade CTA).
 
+## Recording outcomes
+
+Recordings with no usable speech skip notes generation. Incomplete transcripts
+still produce notes with a separate warning. Processing outcomes are independent
+of meeting completion; see [meeting lifecycle](apps/docs-site/docs/core-concepts/meeting-lifecycle.md).
+
 ## Permissions
 
 - Discord summary/notes messages follow Discord channel permissions.

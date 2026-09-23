@@ -484,7 +484,7 @@ describe("handleEndMeetingOther", () => {
       },
       chatLog: [],
       audioData: {
-        audioFiles: [],
+        audioFiles: [{ processing: false, transcript: "transcript text" }],
         currentSnippets: new Map(),
         outputFileName: "recording.mp3",
       },
@@ -511,6 +511,7 @@ describe("handleEndMeetingOther", () => {
     expect(mockedRunTranscriptionFinalPass).toHaveBeenCalledWith(meeting, {
       audioFilePath: "recording.mp3",
     });
+    expect(meeting.processing).toEqual({ transcription: "ready" });
   });
 
   it("retains local artifacts when completed meeting audio upload is not durable", async () => {

@@ -7,6 +7,13 @@ import {
 import type { MeetingData } from "../types/meeting-data";
 import { isLangfuseTracingEnabled } from "../services/langfuseClient";
 import { toLangfuseAttributeMetadata } from "./langfuseMetadata";
+import { getAudioTranscriptionFacts } from "../utils/audioTranscript";
+
+function getStageOutcome(meeting: MeetingData, name: string) {
+  if (name === "generate-notes") return meeting.processing?.notes;
+  if (name === "generate-summary") return meeting.processing?.summary;
+  return undefined;
+}
 
 export async function withMeetingEndTrace(
   meeting: MeetingData,
@@ -73,15 +80,40 @@ export async function withMeetingEndTrace(
               (result) =>
                 result.outcome === "failed" || result.outcome === "partial",
             );
+            const facts = meeting.audioData
+              ? getAudioTranscriptionFacts(meeting.audioData)
+              : {
+                  usableSegments: 0,
+                  failedSegments: 0,
+                  captureIncomplete: false,
+                };
+            const processingFailed =
+              meeting.processing?.transcription === "failed" ||
+              meeting.processing?.notes === "failed" ||
+              meeting.processing?.summary === "failed";
+            const processingPartial =
+              meeting.processing?.transcription === "partial";
             updateActiveObservation(
               {
-                metadata: { delivery: meeting.delivery },
-                ...(deliveryDegraded && !finalizationFailed
+                metadata: {
+                  delivery: meeting.delivery,
+                  processing: meeting.processing,
+                  ...facts,
+                },
+                ...((deliveryDegraded || processingFailed) &&
+                !finalizationFailed
                   ? {
                       level: "ERROR" as const,
-                      statusMessage: "Discord delivery degraded",
+                      statusMessage: deliveryDegraded
+                        ? "Discord delivery degraded"
+                        : "Meeting processing failed",
                     }
-                  : {}),
+                  : processingPartial && !finalizationFailed
+                    ? {
+                        level: "WARNING" as const,
+                        statusMessage: "Meeting transcription partial",
+                      }
+                    : {}),
                 output: {
                   finishedAt: meeting.endTime?.toISOString(),
                   transcriptLength: meeting.finalTranscript?.length ?? 0,
@@ -130,7 +162,20 @@ export async function withMeetingEndStep<T>(
 
       const startedAt = Date.now();
       try {
-        return await run();
+        const result = await run();
+        const stageOutcome = getStageOutcome(meeting, name);
+        if (stageOutcome) {
+          updateActiveObservation(
+            {
+              metadata: { stageOutcome },
+              ...(stageOutcome === "failed"
+                ? { level: "ERROR" as const }
+                : { level: "DEFAULT" as const }),
+            },
+            { asType: "chain" },
+          );
+        }
+        return result;
       } catch (error) {
         updateActiveObservation(
           {

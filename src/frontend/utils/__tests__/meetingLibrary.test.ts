@@ -4,6 +4,41 @@ import {
 } from "../meetingLibrary";
 
 describe("buildMeetingDetails", () => {
+  it("keeps classified empty notes empty and passes processing through", () => {
+    const result = buildMeetingDetails(
+      {
+        id: "channel#2026-09-16T00:00:00Z",
+        meetingId: "meeting-1",
+        channelId: "channel",
+        timestamp: "2026-09-16T00:00:00Z",
+        duration: 60,
+        notes: "",
+        processing: { transcription: "empty", notes: "skipped" },
+      },
+      new Map(),
+    );
+
+    expect(result.notes).toBe("");
+    expect(result.summary).toBe("");
+    expect(result.processing?.transcription).toBe("empty");
+  });
+
+  it("retains the legacy unavailable fallback", () => {
+    const result = buildMeetingDetails(
+      {
+        id: "channel#2026-09-16T00:00:00Z",
+        meetingId: "meeting-1",
+        channelId: "channel",
+        timestamp: "2026-09-16T00:00:00Z",
+        duration: 60,
+        notes: "",
+      },
+      new Map(),
+    );
+
+    expect(result.notes).toBe("No notes recorded.");
+    expect(result.processing).toBeUndefined();
+  });
   const channelMap = new Map([["voice-1", "General"]]);
 
   it("preserves summary feedback from detail payload", () => {

@@ -15,9 +15,17 @@ jest.mock("../../src/services/meetingNotesService", () => ({
     .mockResolvedValue({ summarySentence: "Summary", summaryLabel: "Label" }),
 }));
 
-it.each([false, true])(
-  "persists delivery failure separately from generated artifacts (cancelled=%s)",
-  async (cancelled) => {
+beforeEach(() => {
+  jest.clearAllMocks();
+});
+
+it.each([
+  { cancelled: false, generationEnabled: true, deliveryFailed: true },
+  { cancelled: true, generationEnabled: true, deliveryFailed: true },
+  { cancelled: false, generationEnabled: false, deliveryFailed: false },
+])(
+  "persists processing independently ($cancelled, $generationEnabled, $deliveryFailed)",
+  async ({ cancelled, generationEnabled, deliveryFailed }) => {
     const meeting = {
       guildId: "guild",
       meetingId: "meeting",
@@ -28,33 +36,51 @@ it.each([false, true])(
       participants: new Map(),
       creator: { id: "creator" },
       transcribeMeeting: true,
-      generateNotes: true,
+      generateNotes: generationEnabled,
+      processing: {
+        transcription: "partial",
+        notes: "generated",
+        summary: "failed",
+      },
       transcriptS3Key: "transcript",
       audioS3Key: "audio",
       cancelled,
-      delivery: {
-        notes: {
-          outcome: "failed",
-          intended: 1,
-          sent: 0,
-          errors: [{ code: 50013, status: 403 }],
-        },
-      },
+      delivery: deliveryFailed
+        ? {
+            notes: {
+              outcome: "failed",
+              intended: 1,
+              sent: 0,
+              errors: [{ code: 50013, status: 403 }],
+            },
+          }
+        : undefined,
     } as unknown as MeetingData;
     await saveMeetingHistoryToDatabase(meeting);
     expect(writeMeetingHistoryService).toHaveBeenLastCalledWith(
       expect.objectContaining({
-        generateNotes: true,
+        generateNotes: generationEnabled,
+        ...(cancelled
+          ? {}
+          : {
+              processing: {
+                transcription: "partial",
+                notes: "generated",
+                summary: "failed",
+              },
+            }),
         transcriptS3Key: "transcript",
         audioS3Key: "audio",
-        delivery: {
-          notes: {
-            outcome: "failed",
-            intended: 1,
-            sent: 0,
-            errors: [{ code: 50013, status: 403 }],
-          },
-        },
+        delivery: deliveryFailed
+          ? {
+              notes: {
+                outcome: "failed",
+                intended: 1,
+                sent: 0,
+                errors: [{ code: 50013, status: 403 }],
+              },
+            }
+          : undefined,
       }),
     );
   },

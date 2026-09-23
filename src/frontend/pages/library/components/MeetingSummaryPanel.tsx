@@ -25,6 +25,8 @@ import {
 import MarkdownBody from "../../../components/MarkdownBody";
 import Surface from "../../../components/Surface";
 import { uiSpacing } from "../../../uiTokens";
+import type { MeetingProcessingOutcome } from "../../../../types/meetingProcessing";
+import { getMeetingProcessingNotice } from "../../../../utils/meetingProcessing";
 
 type SummaryFeedback = "up" | "down" | null;
 
@@ -55,6 +57,50 @@ type MeetingSummaryPanelProps = {
   onOpenNotionPage?: () => void;
   onSuggestCorrection?: () => void;
   style?: CSSProperties;
+  processing?: MeetingProcessingOutcome;
+};
+
+type ProcessingNoticeProps = Pick<
+  MeetingSummaryPanelProps,
+  "processing" | "notes"
+>;
+
+const ProcessingNotice = ({ processing, notes }: ProcessingNoticeProps) => {
+  const notice = getMeetingProcessingNotice(processing, Boolean(notes.trim()));
+  if (!notice) return null;
+  const colors = { error: "red", warning: "yellow", neutral: "dimmed" };
+  return (
+    <Text
+      role={notice.tone === "neutral" ? "status" : "alert"}
+      c={colors[notice.tone]}
+    >
+      {notice.text}
+    </Text>
+  );
+};
+
+type ActionStateProps = Pick<
+  MeetingSummaryPanelProps,
+  | "processing"
+  | "notes"
+  | "copyDisabled"
+  | "feedbackPending"
+  | "onNotionAction"
+  | "notionActionPending"
+  | "onOpenNotionPage"
+  | "onSuggestCorrection"
+>;
+
+const getDisabledActions = (props: ActionStateProps) => {
+  const noGeneratedNotes = Boolean(props.processing && !props.notes.trim());
+  return {
+    copy: props.copyDisabled || noGeneratedNotes,
+    feedback: props.feedbackPending || noGeneratedNotes,
+    notion:
+      !props.onNotionAction || props.notionActionPending || noGeneratedNotes,
+    openNotion: !props.onOpenNotionPage || noGeneratedNotes,
+    correction: !props.onSuggestCorrection || noGeneratedNotes,
+  };
 };
 
 export function MeetingSummaryPanel({
@@ -76,7 +122,18 @@ export function MeetingSummaryPanel({
   onOpenNotionPage,
   onSuggestCorrection,
   style,
+  processing,
 }: MeetingSummaryPanelProps) {
+  const disabled = getDisabledActions({
+    processing,
+    notes,
+    copyDisabled,
+    feedbackPending,
+    onNotionAction,
+    notionActionPending,
+    onOpenNotionPage,
+    onSuggestCorrection,
+  });
   const panelStyle: CSSProperties = scrollable
     ? {
         display: "flex",
@@ -87,6 +144,7 @@ export function MeetingSummaryPanel({
     : {};
   const summaryBody = (
     <>
+      <ProcessingNotice processing={processing} notes={notes} />
       <MarkdownBody content={summary} compact dimmed />
       <Box style={{ position: "relative" }}>
         <Divider my="sm" />
@@ -104,7 +162,7 @@ export function MeetingSummaryPanel({
               variant="subtle"
               color="gray"
               onClick={onCopySummary}
-              disabled={copyDisabled}
+              disabled={disabled.copy}
               aria-label="Copy summary as Markdown"
               size="sm"
             >
@@ -147,7 +205,7 @@ export function MeetingSummaryPanel({
             variant={summaryFeedback === "up" ? "light" : "subtle"}
             color={summaryFeedback === "up" ? "teal" : "gray"}
             onClick={onFeedbackUp}
-            disabled={feedbackPending}
+            disabled={disabled.feedback}
             aria-label="Mark summary helpful"
           >
             <IconThumbUp size={14} />
@@ -156,7 +214,7 @@ export function MeetingSummaryPanel({
             variant={summaryFeedback === "down" ? "light" : "subtle"}
             color={summaryFeedback === "down" ? "red" : "gray"}
             onClick={onFeedbackDown}
-            disabled={feedbackPending}
+            disabled={disabled.feedback}
             aria-label="Mark summary needs work"
           >
             <IconThumbDown size={14} />
@@ -191,7 +249,7 @@ export function MeetingSummaryPanel({
                 <Menu.Item
                   leftSection={<IconUpload size={14} />}
                   onClick={onNotionAction}
-                  disabled={!onNotionAction || notionActionPending}
+                  disabled={disabled.notion}
                 >
                   {notionActionLabel}
                 </Menu.Item>
@@ -200,7 +258,7 @@ export function MeetingSummaryPanel({
                 <Menu.Item
                   leftSection={<IconExternalLink size={14} />}
                   onClick={onOpenNotionPage}
-                  disabled={!onOpenNotionPage}
+                  disabled={disabled.openNotion}
                 >
                   Open Notion page
                 </Menu.Item>
@@ -208,7 +266,7 @@ export function MeetingSummaryPanel({
               <Menu.Item
                 leftSection={<IconSparkles size={14} />}
                 onClick={onSuggestCorrection}
-                disabled={!onSuggestCorrection}
+                disabled={disabled.correction}
               >
                 Suggest correction (AI)
               </Menu.Item>

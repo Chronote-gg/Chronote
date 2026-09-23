@@ -44,13 +44,15 @@ The processing step typically takes 1-3 minutes depending on meeting length.
 
 ## Stage 4: Publish
 
-Once processing completes, Chronote posts results to Discord:
+Once processing ends, Chronote posts the available results to Discord:
 
 - A **Meeting Summary** embed with: meeting name, one-sentence summary, start/end times, duration, attendees, voice channel, and tags.
 - One or more **Meeting Notes** embeds containing the full generated notes (paginated if long).
 - Action buttons: **Open in Chronote** (web portal link), **Helpful** / **Needs work** (feedback), **Suggest correction**, **Rename meeting**, **Edit Tags**.
 
 The meeting is also saved to your meeting history in the database, accessible through the web portal and the `/ask` command.
+
+A completed meeting means that processing ended. It does not guarantee that Chronote generated notes or produced a complete transcript. If a Discord or personal recording contains no usable speech, Chronote finishes without generating notes and explains why. If some audio could not be transcribed but usable text remains, Chronote generates notes from that text and warns that the notes may be incomplete. A processing failure remains separate from both outcomes.
 
 If Notion automation is enabled, Chronote exports completed meeting notes after they are saved. Server automation uses the server manager's configured destination. Personal automation uses the personal meeting owner's Notion destination.
 

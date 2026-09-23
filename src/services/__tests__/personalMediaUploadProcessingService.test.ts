@@ -3,10 +3,14 @@ import type {
   PersonalMediaUploadJobRecord,
   PersonalRecordingSegmentRecord,
 } from "../../types/db";
-import { writeMeetingHistoryService } from "../meetingHistoryService";
+import {
+  getMeetingHistoryService,
+  writeMeetingHistoryService,
+} from "../meetingHistoryService";
 import {
   listPersonalRecordingUploadSegments,
   markPersonalRecordingUploadSegmentProcessed,
+  markPersonalRecordingUploadSegmentFailed,
   markPersonalRecordingUploadSegmentProcessing,
   updateClaimedPersonalMediaUploadJobProgress,
   updateClaimedPersonalMediaUploadJobRecord,
@@ -16,13 +20,38 @@ import {
   createPersonalMediaProcessingMeeting,
   processPersonalMediaUpload,
 } from "../personalMediaUploadProcessingService";
-import { fetchJsonFromS3, uploadObjectToS3 } from "../storageService";
+import {
+  downloadObjectToFile,
+  fetchJsonFromS3,
+  uploadObjectToS3,
+} from "../storageService";
+import { TRANSCRIPTION_FAILURE_PLACEHOLDER } from "../../constants";
+import type { MeetingSummaries } from "../meetingSummaryService";
+import { resolveMeetingNameFromSummary } from "../meetingNameService";
+import { recordPersonalUploadTerminal } from "../../observability/personalUploadTrace";
+
+jest.mock("../../observability/personalUploadTrace", () => ({
+  withPersonalUploadProcessingTrace: (
+    _job: unknown,
+    run: () => Promise<void>,
+  ) => run(),
+  recordPersonalUploadTerminal: jest.fn(),
+}));
 
 const mockUploadedObjects = new Map<string, string | Buffer>();
+const mockConcatLists: string[] = [];
 const mockTranscribe = jest.fn(async () => ({ text: "segment transcript" }));
-const mockChatComplete = jest.fn(async () => ({
+const mockChatComplete = jest.fn<
+  () => Promise<{ choices: { message: { content: string | null } }[] }>
+>(async () => ({
   choices: [{ message: { content: "Generated notes" } }],
 }));
+const mockGenerateSummaries = jest.fn<() => Promise<MeetingSummaries>>(
+  async () => ({
+    summarySentence: "Summary",
+    summaryLabel: "Label",
+  }),
+);
 
 jest.mock("fluent-ffmpeg", () => {
   const fs = jest.requireActual<typeof import("node:fs")>("node:fs");
@@ -30,6 +59,7 @@ jest.mock("fluent-ffmpeg", () => {
 
   const ffmpeg = jest.fn(() => {
     const command = {
+      inputPath: "",
       outputPath: "",
       endHandler: undefined as undefined | (() => void),
       noVideo() {
@@ -47,7 +77,8 @@ jest.mock("fluent-ffmpeg", () => {
       audioFrequency() {
         return this;
       },
-      input() {
+      input(inputPath: string) {
+        this.inputPath = inputPath;
         return this;
       },
       inputOptions() {
@@ -68,6 +99,9 @@ jest.mock("fluent-ffmpeg", () => {
         return this;
       },
       run() {
+        if (this.inputPath.endsWith(".txt")) {
+          mockConcatLists.push(fs.readFileSync(this.inputPath, "utf8"));
+        }
         if (this.outputPath) {
           fs.mkdirSync(path.dirname(this.outputPath), { recursive: true });
           fs.writeFileSync(this.outputPath, Buffer.from("audio"));
@@ -93,6 +127,7 @@ jest.mock("fluent-ffmpeg", () => {
 });
 
 jest.mock("../meetingHistoryService", () => ({
+  getMeetingHistoryService: jest.fn(async () => undefined),
   writeMeetingHistoryService: jest.fn(async () => undefined),
 }));
 
@@ -158,10 +193,7 @@ jest.mock("../langfusePromptService", () => ({
 }));
 
 jest.mock("../meetingSummaryService", () => ({
-  generateMeetingSummaries: jest.fn(async () => ({
-    summarySentence: "Summary",
-    summaryLabel: "Label",
-  })),
+  generateMeetingSummaries: () => mockGenerateSummaries(),
 }));
 
 jest.mock("../meetingNameService", () => ({
@@ -231,8 +263,17 @@ describe("personalMediaUploadProcessingService", () => {
   beforeEach(() => {
     jest.clearAllMocks();
     mockUploadedObjects.clear();
+    mockConcatLists.length = 0;
     recordingSegments = [];
     mockTranscribe.mockResolvedValue({ text: "segment transcript" });
+    mockChatComplete.mockResolvedValue({
+      choices: [{ message: { content: "Generated notes" } }],
+    });
+    mockGenerateSummaries.mockResolvedValue({
+      summarySentence: "Summary",
+      summaryLabel: "Label",
+    });
+    jest.mocked(getMeetingHistoryService).mockResolvedValue(undefined);
     jest
       .mocked(listPersonalRecordingUploadSegments)
       .mockImplementation(async () => recordingSegments);
@@ -251,12 +292,266 @@ describe("personalMediaUploadProcessingService", () => {
         }),
       );
     jest
+      .mocked(markPersonalRecordingUploadSegmentFailed)
+      .mockImplementation(async (segment, error) =>
+        replaceSegment({
+          ...segment,
+          status: "failed",
+          errorMessage: error instanceof Error ? error.message : "failed",
+        }),
+      );
+    jest
       .mocked(updateClaimedPersonalMediaUploadJobProgress)
       .mockResolvedValue(true);
     jest
       .mocked(updateClaimedPersonalMediaUploadJobRecord)
       .mockResolvedValue(true);
   });
+
+  describe.each(["ordinary", "desktop"])("%s finalization", (origin) => {
+    const jobForOrigin = () =>
+      origin === "desktop" ? buildDesktopJob() : buildJob();
+    it.each([{ summarySentence: "Summary" }, { summaryLabel: "Label" }])(
+      "accepts a one-field summary: %j",
+      async (summaries) => {
+        recordingSegments = [buildSegment(0)];
+        mockGenerateSummaries.mockResolvedValueOnce(summaries);
+        await processPersonalMediaUpload(
+          { ...jobForOrigin(), attempts: 3 },
+          "instance-1",
+        );
+        expect(writeMeetingHistoryService).toHaveBeenLastCalledWith(
+          expect.objectContaining({
+            processing: {
+              transcription: "ready",
+              notes: "generated",
+              summary: "generated",
+            },
+          }),
+        );
+      },
+    );
+
+    it("does not blame transcription for a source download failure", async () => {
+      recordingSegments = [buildSegment(0)];
+      jest
+        .mocked(downloadObjectToFile)
+        .mockRejectedValueOnce(new Error("download failed"));
+      await processPersonalMediaUpload(
+        { ...jobForOrigin(), attempts: 3 },
+        "instance-1",
+      );
+      expect(mockTranscribe).not.toHaveBeenCalled();
+      expect(writeMeetingHistoryService).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          processing: { notes: "skipped", summary: "skipped" },
+        }),
+      );
+      expect(recordPersonalUploadTerminal).toHaveBeenLastCalledWith(
+        "upload-1",
+        expect.objectContaining({
+          jobStatus: "failed",
+          processing: { notes: "skipped", summary: "skipped" },
+        }),
+      );
+    });
+    beforeEach(() => {
+      recordingSegments = [buildSegment(0)];
+    });
+
+    it.each(["   ", null, "<@123456789012345678>"])(
+      "requeues then fails blank sanitized notes (%s)",
+      async (content) => {
+        mockChatComplete.mockResolvedValue({
+          choices: [{ message: { content } }],
+        });
+        await processPersonalMediaUpload(
+          { ...jobForOrigin(), attempts: 2 },
+          "instance-1",
+        );
+        expect(
+          updateClaimedPersonalMediaUploadJobRecord,
+        ).toHaveBeenLastCalledWith(
+          expect.objectContaining({ status: "queued", retryable: true }),
+          "instance-1",
+        );
+        expect(writeMeetingHistoryService).not.toHaveBeenCalled();
+        expect(recordPersonalUploadTerminal).not.toHaveBeenCalled();
+        await processPersonalMediaUpload(
+          { ...jobForOrigin(), attempts: 3 },
+          "instance-1",
+        );
+        const processing = {
+          transcription: "ready",
+          notes: "failed",
+          summary: "skipped",
+        };
+        expect(writeMeetingHistoryService).toHaveBeenLastCalledWith(
+          expect.objectContaining({ status: "complete", processing }),
+        );
+        expect(
+          updateClaimedPersonalMediaUploadJobRecord,
+        ).toHaveBeenLastCalledWith(
+          expect.objectContaining({ status: "failed", retryable: false }),
+          "instance-1",
+        );
+        expect(recordPersonalUploadTerminal).toHaveBeenLastCalledWith(
+          "upload-1",
+          expect.objectContaining({
+            processing,
+            failedChunks: 0,
+            jobStatus: "failed",
+          }),
+        );
+        expect(mockGenerateSummaries).not.toHaveBeenCalled();
+      },
+    );
+
+    it.each([2, 3])(
+      "preserves generated outcomes when naming fails on attempt %s",
+      async (attempts) => {
+        jest
+          .mocked(resolveMeetingNameFromSummary)
+          .mockRejectedValueOnce(new Error("database unavailable"));
+        await processPersonalMediaUpload(
+          { ...jobForOrigin(), attempts },
+          "instance-1",
+        );
+        expect(
+          updateClaimedPersonalMediaUploadJobRecord,
+        ).toHaveBeenLastCalledWith(
+          expect.objectContaining({
+            status: attempts === 3 ? "failed" : "queued",
+            retryable: attempts < 3,
+          }),
+          "instance-1",
+        );
+        if (attempts < 3) {
+          expect(writeMeetingHistoryService).not.toHaveBeenCalled();
+          expect(recordPersonalUploadTerminal).not.toHaveBeenCalled();
+        } else {
+          const processing = {
+            transcription: "ready",
+            notes: "generated",
+            summary: "generated",
+          };
+          expect(writeMeetingHistoryService).toHaveBeenLastCalledWith(
+            expect.objectContaining({ status: "complete", processing }),
+          );
+          expect(recordPersonalUploadTerminal).toHaveBeenLastCalledWith(
+            "upload-1",
+            expect.objectContaining({
+              processing,
+              failedChunks: 0,
+              jobStatus: "failed",
+            }),
+          );
+        }
+      },
+    );
+  });
+
+  it("reports unavailable segment counts when every progress read fails", async () => {
+    jest
+      .mocked(listPersonalRecordingUploadSegments)
+      .mockRejectedValue(new Error("database unavailable"));
+    await processPersonalMediaUpload(
+      { ...buildDesktopJob(), attempts: 3 },
+      "instance-1",
+    );
+    expect(updateClaimedPersonalMediaUploadJobRecord).toHaveBeenLastCalledWith(
+      expect.objectContaining({ status: "failed" }),
+      "instance-1",
+    );
+    expect(recordPersonalUploadTerminal).toHaveBeenLastCalledWith(
+      "upload-1",
+      expect.objectContaining({
+        processedSegmentCount: null,
+        segmentCount: null,
+        jobStatus: "failed",
+      }),
+    );
+  });
+
+  it("requeues a final progress read failure before the last attempt", async () => {
+    recordingSegments = [buildSegment(0)];
+    jest
+      .mocked(listPersonalRecordingUploadSegments)
+      .mockImplementation(async () => {
+        if (mockUploadedObjects.has("personal/user-1/upload-1/transcript.json"))
+          throw new Error("progress unavailable");
+        return recordingSegments;
+      });
+    await processPersonalMediaUpload(
+      { ...buildDesktopJob(), attempts: 2 },
+      "instance-1",
+    );
+    expect(updateClaimedPersonalMediaUploadJobRecord).toHaveBeenLastCalledWith(
+      expect.objectContaining({ status: "queued", retryable: true }),
+      "instance-1",
+    );
+    expect(writeMeetingHistoryService).not.toHaveBeenCalled();
+    expect(recordPersonalUploadTerminal).not.toHaveBeenCalled();
+  });
+
+  it.each(["naming", "progress", "persistent progress"])(
+    "retains partial outcomes and counts after final %s failure",
+    async (boundary) => {
+      recordingSegments = [buildSegment(0), buildSegment(1)];
+      mockTranscribe
+        .mockResolvedValueOnce({ text: "usable transcript" })
+        .mockRejectedValueOnce(new Error("provider unavailable"));
+      if (boundary === "naming") {
+        jest
+          .mocked(resolveMeetingNameFromSummary)
+          .mockRejectedValueOnce(new Error("database unavailable"));
+      } else {
+        let rejected = false;
+        jest
+          .mocked(listPersonalRecordingUploadSegments)
+          .mockImplementation(async () => {
+            if (
+              (!rejected || boundary === "persistent progress") &&
+              mockUploadedObjects.has(
+                "personal/user-1/upload-1/transcript.json",
+              )
+            ) {
+              rejected = true;
+              throw new Error("progress unavailable");
+            }
+            return recordingSegments;
+          });
+      }
+      await processPersonalMediaUpload(
+        { ...buildDesktopJob(), attempts: 3 },
+        "instance-1",
+      );
+      const processing = {
+        transcription: "partial",
+        notes: "generated",
+        summary: "generated",
+      };
+      expect(writeMeetingHistoryService).toHaveBeenLastCalledWith(
+        expect.objectContaining({ status: "complete", processing }),
+      );
+      expect(
+        updateClaimedPersonalMediaUploadJobRecord,
+      ).toHaveBeenLastCalledWith(
+        expect.objectContaining({ status: "failed", retryable: false }),
+        "instance-1",
+      );
+      expect(recordPersonalUploadTerminal).toHaveBeenLastCalledWith(
+        "upload-1",
+        expect.objectContaining({
+          processing,
+          failedChunks: 1,
+          processedSegmentCount: 1,
+          segmentCount: 2,
+          jobStatus: "failed",
+        }),
+      );
+    },
+  );
 
   it("persists a personal attendee participant before processing", async () => {
     await createPersonalMediaProcessingMeeting(buildJob());
@@ -399,6 +694,416 @@ describe("personalMediaUploadProcessingService", () => {
       "personal/user-1/upload-1/transcript.json",
       expect.stringContaining("cached transcript"),
       "application/json",
+    );
+  });
+
+  it("records an empty desktop recording without generating notes", async () => {
+    recordingSegments = [buildSegment(0)];
+    mockTranscribe.mockResolvedValue({ text: "   " });
+
+    await processPersonalMediaUpload(buildDesktopJob(), "instance-1");
+
+    expect(mockChatComplete).not.toHaveBeenCalled();
+    expect(writeMeetingHistoryService).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        notes: "",
+        processing: {
+          transcription: "empty",
+          notes: "skipped",
+          summary: "skipped",
+        },
+      }),
+    );
+  });
+
+  it("records an empty ordinary upload without generating notes", async () => {
+    mockTranscribe.mockResolvedValue({ text: "   " });
+
+    await processPersonalMediaUpload(buildJob(), "instance-1");
+
+    expect(mockChatComplete).not.toHaveBeenCalled();
+    expect(writeMeetingHistoryService).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        notes: "",
+        processing: {
+          transcription: "empty",
+          notes: "skipped",
+          summary: "skipped",
+        },
+      }),
+    );
+  });
+
+  it("salvages cached text on the last attempt and leaves the failed segment failed", async () => {
+    const cached = {
+      ...buildSegment(0, "processed"),
+      transcriptS3Key: "cached.json",
+    };
+    recordingSegments = [cached, buildSegment(1)];
+    mockUploadedObjects.set(
+      "cached.json",
+      JSON.stringify({
+        segment: {
+          userId: "user-1",
+          username: "Me",
+          displayName: "Me",
+          startedAt: cached.startedAt,
+          text: "cached transcript",
+          source: "desktop_recording",
+        },
+      }),
+    );
+    mockTranscribe.mockRejectedValue(new Error("provider failed"));
+
+    await processPersonalMediaUpload(
+      { ...buildDesktopJob(), attempts: 3 },
+      "instance-1",
+    );
+
+    expect(mockTranscribe).toHaveBeenCalledTimes(1);
+    expect(recordingSegments).toEqual([
+      expect.objectContaining({ status: "processed" }),
+      expect.objectContaining({ status: "failed" }),
+    ]);
+    expect(writeMeetingHistoryService).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        notes: "Generated notes",
+        processing: {
+          transcription: "partial",
+          notes: "generated",
+          summary: "generated",
+        },
+      }),
+    );
+    expect(updateClaimedPersonalMediaUploadJobRecord).toHaveBeenLastCalledWith(
+      expect.objectContaining({ processedSegmentCount: 1, status: "complete" }),
+      "instance-1",
+    );
+  });
+
+  it("requeues a provider failure before the last attempt", async () => {
+    recordingSegments = [buildSegment(0)];
+    mockTranscribe.mockRejectedValue(new Error("provider failed"));
+
+    await processPersonalMediaUpload(
+      { ...buildDesktopJob(), attempts: 2 },
+      "instance-1",
+    );
+
+    expect(writeMeetingHistoryService).not.toHaveBeenCalled();
+    expect(updateClaimedPersonalMediaUploadJobRecord).toHaveBeenLastCalledWith(
+      expect.objectContaining({ status: "queued", retryable: true }),
+      "instance-1",
+    );
+  });
+
+  it("records terminal failure when every final-attempt chunk fails", async () => {
+    recordingSegments = [buildSegment(0)];
+    mockTranscribe.mockRejectedValue(new Error("provider failed"));
+
+    await processPersonalMediaUpload(
+      { ...buildDesktopJob(), attempts: 3 },
+      "instance-1",
+    );
+
+    expect(writeMeetingHistoryService).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        status: "complete",
+        processing: {
+          transcription: "failed",
+          notes: "skipped",
+          summary: "skipped",
+        },
+      }),
+    );
+    expect(updateClaimedPersonalMediaUploadJobRecord).toHaveBeenLastCalledWith(
+      expect.objectContaining({ status: "failed", retryable: false }),
+      "instance-1",
+    );
+  });
+
+  it("treats mixed empty and failed chunks as terminal failure", async () => {
+    recordingSegments = [buildSegment(0), buildSegment(1)];
+    mockTranscribe
+      .mockResolvedValueOnce({ text: "   " })
+      .mockRejectedValueOnce(new Error("provider failed"));
+
+    await processPersonalMediaUpload(
+      { ...buildDesktopJob(), attempts: 3 },
+      "instance-1",
+    );
+
+    expect(writeMeetingHistoryService).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        processing: expect.objectContaining({ transcription: "failed" }),
+      }),
+    );
+    expect(recordingSegments).toEqual([
+      expect.objectContaining({ status: "processed" }),
+      expect.objectContaining({ status: "failed" }),
+    ]);
+    expect(recordPersonalUploadTerminal).toHaveBeenLastCalledWith(
+      "upload-1",
+      expect.objectContaining({
+        failedChunks: 1,
+        processedSegmentCount: 1,
+        segmentCount: 2,
+        jobStatus: "failed",
+        processing: expect.objectContaining({ transcription: "failed" }),
+      }),
+    );
+  });
+
+  it("does not convert an ordinary final-attempt provider failure to empty", async () => {
+    mockTranscribe.mockRejectedValue(new Error("provider failed"));
+
+    await processPersonalMediaUpload(
+      { ...buildJob(), attempts: 3 },
+      "instance-1",
+    );
+
+    expect(writeMeetingHistoryService).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        processing: expect.objectContaining({ transcription: "failed" }),
+      }),
+    );
+    expect(mockChatComplete).not.toHaveBeenCalled();
+  });
+
+  it("keeps an S3 artifact failure as a failed job", async () => {
+    jest
+      .mocked(uploadObjectToS3)
+      .mockRejectedValueOnce(new Error("S3 unavailable"));
+
+    await processPersonalMediaUpload(
+      { ...buildJob(), attempts: 3 },
+      "instance-1",
+    );
+
+    expect(updateClaimedPersonalMediaUploadJobRecord).toHaveBeenLastCalledWith(
+      expect.objectContaining({ status: "failed", retryable: false }),
+      "instance-1",
+    );
+    expect(writeMeetingHistoryService).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        processing: {
+          transcription: "ready",
+          notes: "generated",
+          summary: "generated",
+        },
+      }),
+    );
+  });
+
+  it("records an empty summary helper result as failed", async () => {
+    mockGenerateSummaries.mockResolvedValue({});
+
+    await processPersonalMediaUpload(buildJob(), "instance-1");
+
+    expect(writeMeetingHistoryService).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        processing: {
+          transcription: "ready",
+          notes: "generated",
+          summary: "failed",
+        },
+      }),
+    );
+  });
+
+  it("retains resolved outcomes when the first final history write fails", async () => {
+    jest
+      .mocked(writeMeetingHistoryService)
+      .mockRejectedValueOnce(new Error("history unavailable"))
+      .mockResolvedValueOnce(undefined);
+
+    await processPersonalMediaUpload(
+      { ...buildJob(), attempts: 3 },
+      "instance-1",
+    );
+
+    expect(writeMeetingHistoryService).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        status: "complete",
+        processing: {
+          transcription: "ready",
+          notes: "generated",
+          summary: "generated",
+        },
+      }),
+    );
+    expect(updateClaimedPersonalMediaUploadJobRecord).toHaveBeenLastCalledWith(
+      expect.objectContaining({ status: "failed" }),
+      "instance-1",
+    );
+  });
+
+  it("excludes the failure placeholder from an ordinary upload", async () => {
+    mockTranscribe.mockResolvedValue({
+      text: TRANSCRIPTION_FAILURE_PLACEHOLDER,
+    });
+
+    await processPersonalMediaUpload(buildJob(), "instance-1");
+
+    expect(mockChatComplete).not.toHaveBeenCalled();
+    expect(writeMeetingHistoryService).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        notes: "",
+        processing: expect.objectContaining({ transcription: "empty" }),
+      }),
+    );
+  });
+
+  it("excludes a cached failure placeholder and keeps failed audio in the artifact", async () => {
+    const cached = {
+      ...buildSegment(0, "processed"),
+      transcriptS3Key: "cached-placeholder.json",
+    };
+    recordingSegments = [cached, buildSegment(1)];
+    mockUploadedObjects.set(
+      cached.transcriptS3Key,
+      JSON.stringify({
+        segment: {
+          userId: "user-1",
+          username: "Me",
+          displayName: "Me",
+          startedAt: cached.startedAt,
+          text: TRANSCRIPTION_FAILURE_PLACEHOLDER,
+          source: "desktop_recording",
+        },
+      }),
+    );
+    mockTranscribe.mockRejectedValue(new Error("private request body"));
+
+    await processPersonalMediaUpload(
+      { ...buildDesktopJob(), attempts: 3 },
+      "instance-1",
+    );
+
+    expect(mockChatComplete).not.toHaveBeenCalled();
+    expect(uploadObjectToS3).not.toHaveBeenCalledWith(
+      expect.stringContaining("owner_mic-000001.transcript.json"),
+      expect.anything(),
+      expect.anything(),
+    );
+    expect(recordingSegments[1]).toEqual(
+      expect.objectContaining({ status: "failed" }),
+    );
+    expect(mockConcatLists.join("\n")).toContain("segment-000000");
+    expect(mockConcatLists.join("\n")).toContain("segment-000001");
+  });
+
+  it("sanitizes caught provider observations", async () => {
+    const providerError = Object.assign(new Error("private request body"), {
+      code: "private provider code content",
+      status: 429,
+    });
+    const errorSpy = jest.spyOn(console, "error").mockImplementation(() => {});
+    mockTranscribe.mockRejectedValue(providerError);
+
+    await processPersonalMediaUpload(
+      { ...buildJob(), attempts: 3 },
+      "instance-1",
+    );
+
+    expect(errorSpy).toHaveBeenCalledWith(
+      "Personal upload transcription provider failed",
+      { errorClass: "Error", code: undefined, status: 429 },
+    );
+    expect(errorSpy.mock.calls.flat().join(" ")).not.toContain(
+      "private request body",
+    );
+    errorSpy.mockRestore();
+  });
+
+  it("retains partial failed chunk counts when notes generation later fails", async () => {
+    const cached = {
+      ...buildSegment(0, "processed"),
+      transcriptS3Key: "cached-partial.json",
+    };
+    recordingSegments = [cached, buildSegment(1)];
+    mockUploadedObjects.set(
+      cached.transcriptS3Key,
+      JSON.stringify({
+        segment: {
+          userId: "user-1",
+          username: "Me",
+          displayName: "Me",
+          startedAt: cached.startedAt,
+          text: "cached transcript",
+          source: "desktop_recording",
+        },
+      }),
+    );
+    mockTranscribe.mockRejectedValue(new Error("provider failed"));
+    mockChatComplete.mockRejectedValueOnce(new Error("notes failed"));
+
+    await processPersonalMediaUpload(
+      { ...buildDesktopJob(), attempts: 3 },
+      "instance-1",
+    );
+
+    expect(recordPersonalUploadTerminal).toHaveBeenLastCalledWith(
+      "upload-1",
+      expect.objectContaining({
+        failedChunks: 1,
+        jobStatus: "failed",
+        processing: {
+          transcription: "partial",
+          notes: "failed",
+          summary: "skipped",
+        },
+      }),
+    );
+  });
+
+  it("preserves a valid completed history when the job completion write fails", async () => {
+    recordingSegments = [buildSegment(0)];
+    jest
+      .mocked(updateClaimedPersonalMediaUploadJobRecord)
+      .mockRejectedValueOnce(new Error("job metadata failed"))
+      .mockResolvedValueOnce(true);
+    jest.mocked(getMeetingHistoryService).mockResolvedValue({
+      guildId: "personal:user-1",
+      channelId_timestamp: "personal#2026-01-06T18:00:00.000Z",
+      meetingId: "upload-1",
+      channelId: "personal",
+      timestamp: "2026-01-06T18:00:00.000Z",
+      notes: "Generated notes",
+      participants: [],
+      duration: 1,
+      transcribeMeeting: true,
+      generateNotes: true,
+      status: "complete",
+      processing: {
+        transcription: "ready",
+        notes: "generated",
+        summary: "generated",
+      },
+    });
+
+    await processPersonalMediaUpload(
+      { ...buildDesktopJob(), attempts: 3 },
+      "instance-1",
+    );
+
+    expect(writeMeetingHistoryService).toHaveBeenCalledTimes(1);
+    expect(writeMeetingHistoryService).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        notes: "Generated notes",
+        processing: expect.objectContaining({ transcription: "ready" }),
+      }),
+    );
+    expect(recordPersonalUploadTerminal).toHaveBeenLastCalledWith(
+      "upload-1",
+      expect.objectContaining({
+        jobStatus: "failed",
+        processing: {
+          transcription: "ready",
+          notes: "generated",
+          summary: "generated",
+        },
+      }),
     );
   });
 });

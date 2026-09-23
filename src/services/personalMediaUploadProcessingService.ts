@@ -12,12 +12,18 @@ import type {
 import type { Participant } from "../types/participants";
 import type { TranscriptSegment } from "../types/transcript";
 import { MEETING_STATUS } from "../types/meetingLifecycle";
+import type { MeetingProcessingOutcome } from "../types/meetingProcessing";
+import { classifyTranscription } from "../utils/meetingProcessing";
 import {
   PERSONAL_MEDIA_UPLOAD_MAX_PROCESSING_ATTEMPTS,
+  TRANSCRIPTION_FAILURE_PLACEHOLDER,
   TRANSCRIPTION_FINAL_PASS_CHUNK_SECONDS,
   TRANSCRIPTION_FINAL_PASS_MAX_REQUEST_BYTES,
 } from "../constants";
-import { writeMeetingHistoryService } from "./meetingHistoryService";
+import {
+  getMeetingHistoryService,
+  writeMeetingHistoryService,
+} from "./meetingHistoryService";
 import {
   downloadObjectToFile,
   fetchJsonFromS3,
@@ -48,6 +54,11 @@ import {
   updatePersonalMediaUploadJobRecord,
 } from "./personalMediaUploadService";
 import { buildPersonalMeetingGuildId } from "../utils/meetingOwnership";
+import {
+  recordPersonalUploadTerminal,
+  withPersonalUploadProcessingTrace,
+  type PersonalUploadTerminalFacts,
+} from "../observability/personalUploadTrace";
 
 const PERSONAL_UPLOAD_CHANNEL_ID = "personal";
 const PERSONAL_UPLOAD_CHANNEL_NAME = "Uploaded media";
@@ -58,8 +69,10 @@ type PersonalUploadMeetingIdentity = ReturnType<typeof buildJobMeetingKey>;
 type PersonalUploadProcessingResult = {
   audioS3Key?: string;
   durationSeconds: number;
+  failedChunks: number;
   meetingName?: string;
   notes: string;
+  processing: MeetingProcessingOutcome;
   processedSegmentCount?: number;
   segmentCount?: number;
   summaries: MeetingSummaries;
@@ -75,7 +88,51 @@ type PersonalUploadTranscriptArtifact = {
 type ProcessedPersonalRecordingSource = {
   audioPath: string;
   durationSeconds: number;
+  failedChunks: number;
   segments: TranscriptSegment[];
+};
+
+type PersonalTranscriptionResult = {
+  text: string;
+  failedChunks: number;
+};
+
+class PersonalUploadProcessingError extends Error {
+  constructor(
+    cause: unknown,
+    readonly processing: MeetingProcessingOutcome,
+    readonly failedChunks = 0,
+  ) {
+    super(cause instanceof Error ? cause.message : "Processing failed.", {
+      cause,
+    });
+  }
+}
+
+const normalizeTranscriptionText = (text: string) => {
+  const trimmed = text.trim();
+  return trimmed === TRANSCRIPTION_FAILURE_PLACEHOLDER ? "" : trimmed;
+};
+
+const buildProviderFailureObservation = (error: unknown) => {
+  if (!error || typeof error !== "object") return {};
+  const providerError = error as {
+    name?: unknown;
+    code?: unknown;
+    status?: unknown;
+  };
+  return {
+    errorClass:
+      typeof providerError.name === "string"
+        ? providerError.name.slice(0, 80)
+        : undefined,
+    code:
+      typeof providerError.code === "number" ? providerError.code : undefined,
+    status:
+      typeof providerError.status === "number"
+        ? providerError.status
+        : undefined,
+  };
 };
 
 type PersonalRecordingSegmentTranscriptArtifact = {
@@ -218,14 +275,33 @@ const transcribeAudioFile = async (filePath: string) => {
   return transcription.text ?? "";
 };
 
-const transcribeAudioFiles = async (filePaths: string[]) => {
+const transcribeAudioFiles = async (
+  filePaths: string[],
+  acceptPartial: boolean,
+): Promise<PersonalTranscriptionResult> => {
   const chunks: string[] = [];
+  let failedChunks = 0;
   for (const filePath of filePaths) {
-    const transcript = await transcribeAudioFile(filePath);
-    if (transcript.trim()) chunks.push(transcript.trim());
+    let transcript: string;
+    try {
+      transcript = await transcribeAudioFile(filePath);
+    } catch (error) {
+      if (!acceptPartial) throw error;
+      failedChunks += 1;
+      console.error(
+        "Personal upload transcription provider failed",
+        buildProviderFailureObservation(error),
+      );
+      continue;
+    }
+    const usableText = normalizeTranscriptionText(transcript);
+    if (usableText) chunks.push(usableText);
   }
-  return chunks.join("\n\n");
+  return { text: chunks.join("\n\n"), failedChunks };
 };
+
+const acceptsPartialTranscription = (job: PersonalMediaUploadJobRecord) =>
+  (job.attempts ?? 1) >= PERSONAL_MEDIA_UPLOAD_MAX_PROCESSING_ATTEMPTS;
 
 const formatTranscriptLine = (segment: TranscriptSegment) =>
   `[${segment.displayName ?? segment.username ?? segment.userId} @ ${new Date(
@@ -247,7 +323,13 @@ const generateNotesForTranscript = async (
   transcript: string,
 ) => {
   if (!transcript.trim()) return "";
-  return generatePersonalUploadNotes({ transcript, title: job.title });
+  const notes = await generatePersonalUploadNotes({
+    transcript,
+    title: job.title,
+  });
+  if (!notes.trim())
+    throw new Error("Notes generation returned no usable content.");
+  return notes;
 };
 
 const generateSummariesForNotes = async (
@@ -264,6 +346,16 @@ const generateSummariesForNotes = async (
     now: new Date(job.createdAt),
     meetingId: job.meetingId,
   });
+};
+
+const getSummaryOutcome = (
+  notes: string,
+  summaries: MeetingSummaries,
+): MeetingProcessingOutcome["summary"] => {
+  if (!notes) return "skipped";
+  return summaries.summarySentence?.trim() || summaries.summaryLabel?.trim()
+    ? "generated"
+    : "failed";
 };
 
 const resolvePersonalUploadMeetingName = async (
@@ -344,7 +436,12 @@ const loadProcessedRecordingSegmentTranscript = async (
     await fetchJsonFromS3<PersonalRecordingSegmentTranscriptArtifact>(
       segment.transcriptS3Key,
     );
-  return artifact?.segment;
+  return artifact?.segment
+    ? {
+        ...artifact.segment,
+        text: normalizeTranscriptionText(artifact.segment.text ?? ""),
+      }
+    : undefined;
 };
 
 const sortTranscriptSegments = (segments: TranscriptSegment[]) =>
@@ -495,6 +592,7 @@ const updatePersonalRecordingProcessingProgress = async (
   instanceId: string,
 ) => {
   const segments = await listPersonalRecordingUploadSegments(job.uploadId);
+  Object.assign(job, summarizeRecordingSegmentProgress(segments));
   await updateClaimedPersonalMediaUploadJobProgress({
     uploadId: job.uploadId,
     instanceId,
@@ -515,11 +613,17 @@ const processPersonalRecordingSource = async (
     audioPath,
     path.dirname(audioPath),
   );
-  const transcript = await transcribeAudioFiles(transcriptionInputs);
+  const transcription = await transcribeAudioFiles(
+    transcriptionInputs,
+    acceptsPartialTranscription(job),
+  );
   return {
     audioPath,
     durationSeconds,
-    segments: [buildRecordingSegment({ job, source, transcript })],
+    failedChunks: transcription.failedChunks,
+    segments: [
+      buildRecordingSegment({ job, source, transcript: transcription.text }),
+    ],
   };
 };
 
@@ -534,7 +638,12 @@ const processPersonalRecordingSegment = async (
   const cachedTranscript =
     await loadProcessedRecordingSegmentTranscript(segment);
   if (cachedTranscript) {
-    return { audioPath, durationSeconds, segment: cachedTranscript };
+    return {
+      audioPath,
+      durationSeconds,
+      failedChunks: 0,
+      segment: cachedTranscript,
+    };
   }
 
   let processingSegment = segment;
@@ -545,13 +654,28 @@ const processPersonalRecordingSegment = async (
       audioPath,
       path.dirname(audioPath),
     );
-    const transcript = await transcribeAudioFiles(transcriptionInputs);
+    const transcription = await transcribeAudioFiles(
+      transcriptionInputs,
+      acceptsPartialTranscription(job),
+    );
     const transcriptSegment = buildRecordingSegment({
       job,
       source,
-      transcript,
+      transcript: transcription.text,
       startedAt: segment.startedAt,
     });
+    if (transcription.failedChunks > 0) {
+      await markPersonalRecordingUploadSegmentFailed(
+        processingSegment,
+        new Error("One or more transcription chunks failed."),
+      );
+      return {
+        audioPath,
+        durationSeconds,
+        failedChunks: transcription.failedChunks,
+        segment: transcriptSegment,
+      };
+    }
     const transcriptArtifact = buildRecordingSegmentTranscriptArtifact(
       job,
       segment,
@@ -565,7 +689,12 @@ const processPersonalRecordingSegment = async (
     await markPersonalRecordingUploadSegmentProcessed(processingSegment, {
       transcriptS3Key,
     });
-    return { audioPath, durationSeconds, segment: transcriptSegment };
+    return {
+      audioPath,
+      durationSeconds,
+      failedChunks: 0,
+      segment: transcriptSegment,
+    };
   } catch (error) {
     await markPersonalRecordingUploadSegmentFailed(processingSegment, error);
     throw error;
@@ -584,6 +713,7 @@ const processPersonalRecordingSegmentSource = async (
   const processedSegments: Array<{
     audioPath: string;
     durationSeconds: number;
+    failedChunks: number;
     segment: TranscriptSegment;
   }> = [];
   for (const segment of segments) {
@@ -603,8 +733,59 @@ const processPersonalRecordingSegmentSource = async (
       (sum, segment) => sum + segment.durationSeconds,
       0,
     ),
+    failedChunks: processedSegments.reduce(
+      (sum, segment) => sum + segment.failedChunks,
+      0,
+    ),
     segments: processedSegments.map((segment) => segment.segment),
   };
+};
+
+const finalizePersonalUploadContent = async (
+  job: PersonalMediaUploadJobRecord,
+  audioPath: string,
+  transcriptArtifact: PersonalUploadTranscriptArtifact,
+  transcription: MeetingProcessingOutcome["transcription"],
+  failedChunks: number,
+  includeSegmentProgress: boolean,
+): Promise<Omit<PersonalUploadProcessingResult, "durationSeconds">> => {
+  const processing: MeetingProcessingOutcome = {
+    transcription,
+    notes: "failed",
+    summary: "skipped",
+  };
+  try {
+    const notes = await generateNotesForTranscript(
+      job,
+      transcriptArtifact.text,
+    );
+    processing.notes = notes ? "generated" : "skipped";
+    processing.summary = notes ? "failed" : "skipped";
+    const summaries = await generateSummariesForNotes(job, notes);
+    processing.summary = getSummaryOutcome(notes, summaries);
+    const meetingName = await resolvePersonalUploadMeetingName(job, summaries);
+    const artifacts = await uploadPersonalUploadArtifacts(
+      job,
+      audioPath,
+      transcriptArtifact,
+    );
+    const progress = includeSegmentProgress
+      ? summarizeRecordingSegmentProgress(
+          await listPersonalRecordingUploadSegments(job.uploadId),
+        )
+      : {};
+    return {
+      ...artifacts,
+      ...progress,
+      failedChunks,
+      meetingName,
+      notes,
+      processing,
+      summaries,
+    };
+  } catch (error) {
+    throw new PersonalUploadProcessingError(error, processing, failedChunks);
+  }
 };
 
 const processPersonalRecordingContent = async (
@@ -619,6 +800,7 @@ const processPersonalRecordingContent = async (
 
   const processedSources: ProcessedPersonalRecordingSource[] = [];
   const segments = await listPersonalRecordingUploadSegments(job.uploadId);
+  Object.assign(job, summarizeRecordingSegmentProgress(segments));
   const submittedSegments = segments.filter((segment) =>
     ["submitted", "processing", "processed", "failed"].includes(segment.status),
   );
@@ -655,27 +837,37 @@ const processPersonalRecordingContent = async (
       processedSources.flatMap((source) => source.segments),
     ),
   );
-  const notes = await generateNotesForTranscript(job, transcriptArtifact.text);
-  const summaries = await generateSummariesForNotes(job, notes);
-  const meetingName = await resolvePersonalUploadMeetingName(job, summaries);
-  const artifacts = await uploadPersonalUploadArtifacts(
-    job,
-    audioPath,
-    transcriptArtifact,
+  const failedChunks = processedSources.reduce(
+    (sum, source) => sum + source.failedChunks,
+    0,
   );
-
+  const transcription = classifyTranscription({
+    usableSegments: transcriptArtifact.segments.filter((segment) =>
+      Boolean(segment.text?.trim()),
+    ).length,
+    failedSegments: failedChunks,
+    captureIncomplete: false,
+  });
+  if (transcription === "failed") {
+    throw new PersonalUploadProcessingError(
+      new Error("All transcription attempts failed."),
+      { transcription: "failed", notes: "skipped", summary: "skipped" },
+      failedChunks,
+    );
+  }
   return {
-    ...artifacts,
+    ...(await finalizePersonalUploadContent(
+      job,
+      audioPath,
+      transcriptArtifact,
+      transcription,
+      failedChunks,
+      true,
+    )),
     durationSeconds: Math.max(
       0,
       ...processedSources.map((source) => source.durationSeconds),
     ),
-    meetingName,
-    notes,
-    ...summarizeRecordingSegmentProgress(
-      await listPersonalRecordingUploadSegments(job.uploadId),
-    ),
-    summaries,
   };
 };
 
@@ -696,26 +888,36 @@ const processPersonalMediaContent = async (
     audioPath,
     workDir,
   );
-  const transcript = await transcribeAudioFiles(transcriptionInputs);
+  const transcriptionResult = await transcribeAudioFiles(
+    transcriptionInputs,
+    acceptsPartialTranscription(job),
+  );
+  const transcription = classifyTranscription({
+    usableSegments: transcriptionResult.text.trim() ? 1 : 0,
+    failedSegments: transcriptionResult.failedChunks,
+    captureIncomplete: false,
+  });
+  if (transcription === "failed") {
+    throw new PersonalUploadProcessingError(
+      new Error("All transcription attempts failed."),
+      { transcription: "failed", notes: "skipped", summary: "skipped" },
+      transcriptionResult.failedChunks,
+    );
+  }
   const transcriptArtifact = buildSingleSourceTranscriptArtifact(
     job,
-    transcript,
+    transcriptionResult.text,
   );
-  const notes = await generateNotesForTranscript(job, transcriptArtifact.text);
-  const summaries = await generateSummariesForNotes(job, notes);
-  const meetingName = await resolvePersonalUploadMeetingName(job, summaries);
-  const artifacts = await uploadPersonalUploadArtifacts(
-    job,
-    audioPath,
-    transcriptArtifact,
-  );
-
   return {
-    ...artifacts,
+    ...(await finalizePersonalUploadContent(
+      job,
+      audioPath,
+      transcriptArtifact,
+      transcription,
+      transcriptionResult.failedChunks,
+      false,
+    )),
     durationSeconds,
-    meetingName,
-    notes,
-    summaries,
   };
 };
 
@@ -860,6 +1062,7 @@ const buildCompletedMeetingHistory = (
   notesHistory: buildNotesHistory(result.notes, job.ownerUserId, completedAt),
   transcriptS3Key: result.transcriptS3Key,
   audioS3Key: result.audioS3Key,
+  processing: result.processing,
 });
 
 const markPersonalMediaUploadComplete = async (
@@ -916,42 +1119,162 @@ const markPersonalMediaUploadFailed = async (
   );
 };
 
+const writeTerminalFailureMeeting = async (
+  job: PersonalMediaUploadJobRecord,
+  error: unknown,
+) => {
+  const attempts = job.attempts ?? 1;
+  if (attempts < PERSONAL_MEDIA_UPLOAD_MAX_PROCESSING_ATTEMPTS) return;
+
+  const identity = buildJobMeetingKey(job);
+  const existing = await getMeetingHistoryService(
+    identity.guildId,
+    identity.channelIdTimestamp,
+  );
+  if (
+    existing?.status === MEETING_STATUS.COMPLETE &&
+    existing.processing?.transcription &&
+    existing.processing.transcription !== "failed"
+  ) {
+    return;
+  }
+  const processing =
+    error instanceof PersonalUploadProcessingError
+      ? error.processing
+      : ({
+          notes: "skipped",
+          summary: "skipped",
+        } as const);
+  await writeMeetingHistoryService({
+    ...(existing ?? {
+      guildId: identity.guildId,
+      channelId_timestamp: identity.channelIdTimestamp,
+      meetingId: identity.meetingId,
+      channelId: PERSONAL_UPLOAD_CHANNEL_ID,
+      timestamp: identity.timestamp,
+      participants: buildPersonalUploadParticipants(job),
+      duration: job.durationSeconds ?? 0,
+      transcribeMeeting: true,
+      generateNotes: true,
+      ownershipScope: "personal" as const,
+      ownerUserId: job.ownerUserId,
+      meetingCreatorId: job.ownerUserId,
+    }),
+    status: MEETING_STATUS.COMPLETE,
+    processing,
+  });
+};
+
+const readTerminalSegmentCounts = async (job: PersonalMediaUploadJobRecord) => {
+  if (job.uploadOrigin !== "desktop_recording") {
+    return { processedSegmentCount: 0, segmentCount: 0 };
+  }
+  try {
+    return summarizeRecordingSegmentProgress(
+      await listPersonalRecordingUploadSegments(job.uploadId),
+    );
+  } catch (error) {
+    console.error("Failed to read terminal personal upload segment progress", {
+      uploadId: job.uploadId,
+      error: buildProviderFailureObservation(error),
+    });
+    // Keep the last observed counts. Null explicitly means no count was available.
+    return {
+      processedSegmentCount: job.processedSegmentCount ?? null,
+      segmentCount: job.segmentCount ?? null,
+    };
+  }
+};
+
 export async function processPersonalMediaUpload(
   job: PersonalMediaUploadJobRecord,
   instanceId: string,
 ) {
-  const tempRoot = await ensureTempBaseDir();
-  const workDir = path.join(tempRoot, "personal-upload", job.uploadId);
-  await fs.mkdir(workDir, { recursive: true });
-  try {
-    const result = await processPersonalMediaContent(job, workDir, instanceId);
-    const identity = buildJobMeetingKey(job);
-    const completedAt = new Date().toISOString();
-    const meetingHistory = buildCompletedMeetingHistory(
-      job,
-      identity,
-      result,
-      completedAt,
-    );
-    await writeMeetingHistoryService(meetingHistory);
-    await maybeAutoExportCompletedMeeting(meetingHistory);
-    await markPersonalMediaUploadComplete(
-      job,
-      identity,
-      result,
-      completedAt,
-      instanceId,
-    );
-  } catch (error) {
-    if (job.uploadOrigin === "desktop_recording") {
-      await markPersonalRecordingUploadSegmentsFailed(job.uploadId, error);
+  // Progress observations belong to this attempt, not the caller's job object.
+  job = { ...job };
+  await withPersonalUploadProcessingTrace(job, async () => {
+    const tempRoot = await ensureTempBaseDir();
+    const workDir = path.join(tempRoot, "personal-upload", job.uploadId);
+    await fs.mkdir(workDir, { recursive: true });
+    let terminalFacts: PersonalUploadTerminalFacts | undefined;
+    let result: PersonalUploadProcessingResult | undefined;
+    try {
+      result = await processPersonalMediaContent(job, workDir, instanceId);
+      const identity = buildJobMeetingKey(job);
+      const completedAt = new Date().toISOString();
+      const meetingHistory = buildCompletedMeetingHistory(
+        job,
+        identity,
+        result,
+        completedAt,
+      );
+      await writeMeetingHistoryService(meetingHistory);
+      await maybeAutoExportCompletedMeeting(meetingHistory);
+      await markPersonalMediaUploadComplete(
+        job,
+        identity,
+        result,
+        completedAt,
+        instanceId,
+      );
+      terminalFacts = {
+        processing: result.processing,
+        failedChunks: result.failedChunks,
+        processedSegmentCount: result.processedSegmentCount ?? 0,
+        segmentCount: result.segmentCount ?? 0,
+        jobStatus: "complete",
+      };
+    } catch (error) {
+      if (job.uploadOrigin === "desktop_recording") {
+        await markPersonalRecordingUploadSegmentsFailed(job.uploadId, error);
+      }
+      const resolvedError = result
+        ? new PersonalUploadProcessingError(
+            error,
+            result.processing,
+            result.failedChunks,
+          )
+        : error;
+      try {
+        await writeTerminalFailureMeeting(job, resolvedError);
+      } catch (historyError) {
+        console.error("Failed to finalize personal upload meeting history", {
+          uploadId: job.uploadId,
+          error: buildProviderFailureObservation(historyError),
+        });
+      }
+      await markPersonalMediaUploadFailed(job, error, instanceId);
+      console.error("Failed to process personal media upload", {
+        uploadId: job.uploadId,
+        error: buildProviderFailureObservation(error),
+      });
+      if (
+        (job.attempts ?? 1) >= PERSONAL_MEDIA_UPLOAD_MAX_PROCESSING_ATTEMPTS
+      ) {
+        const progress = await readTerminalSegmentCounts(job);
+        terminalFacts = {
+          processing:
+            resolvedError instanceof PersonalUploadProcessingError
+              ? resolvedError.processing
+              : {
+                  notes: "skipped",
+                  summary: "skipped",
+                },
+          failedChunks:
+            resolvedError instanceof PersonalUploadProcessingError
+              ? resolvedError.failedChunks
+              : 0,
+          processedSegmentCount:
+            result?.processedSegmentCount ?? progress.processedSegmentCount,
+          segmentCount: result?.segmentCount ?? progress.segmentCount,
+          jobStatus: "failed",
+        };
+      }
+    } finally {
+      if (terminalFacts) {
+        recordPersonalUploadTerminal(job.uploadId, terminalFacts);
+      }
+      await fs.rm(workDir, { recursive: true, force: true });
     }
-    await markPersonalMediaUploadFailed(job, error, instanceId);
-    console.error("Failed to process personal media upload", {
-      uploadId: job.uploadId,
-      error,
-    });
-  } finally {
-    await fs.rm(workDir, { recursive: true, force: true });
-  }
+  });
 }

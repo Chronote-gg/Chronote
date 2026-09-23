@@ -9,6 +9,7 @@ import {
 } from "discord.js";
 import type { SpanContext } from "@opentelemetry/api";
 import type { MeetingDelivery } from "./meetingDelivery";
+import type { MeetingProcessingOutcome } from "./meetingProcessing";
 import { AudioData } from "./audio";
 import { ChatEntry } from "./chat";
 import { Participant } from "./participants";
@@ -117,6 +118,7 @@ export interface MeetingData {
   startMessageId?: string;
   summaryMessageId?: string;
   delivery?: MeetingDelivery;
+  processing?: MeetingProcessingOutcome;
   messagesToDelete?: string[];
   leaseOwnerInstanceId?: string;
   leaseHeartbeatTimer?: ReturnType<typeof setInterval>;

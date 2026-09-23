@@ -14,7 +14,7 @@ const buildMeeting = (): MeetingData =>
     },
   }) as MeetingData;
 
-const loadModule = async () => {
+const loadModule = async (options: { chatError?: Error } = {}) => {
   jest.resetModules();
   const getTranscriptionCleanupPrompt = jest.fn().mockResolvedValue({
     messages: [{ role: "system", content: "cleanup" }],
@@ -24,7 +24,9 @@ const loadModule = async () => {
     messages: [{ role: "system", content: "coalesce" }],
     langfusePrompt: { name: "coalesce", version: 1, isFallback: false },
   });
-  const chat = jest.fn().mockResolvedValue("cleaned");
+  const chat = options.chatError
+    ? jest.fn().mockRejectedValue(options.chatError as never)
+    : jest.fn().mockResolvedValue("cleaned" as never);
   const getModelChoice = jest.fn(() => ({ model: "gpt-5.1" }));
 
   jest.doMock("../../src/services/transcriptionPromptService", () => ({
@@ -124,5 +126,26 @@ describe("transcriptionService", () => {
         modelParamRole: "transcriptionCoalesce",
       }),
     );
+  });
+
+  test("cleanupTranscription exposes a rejected optional cleanup request", async () => {
+    const error = new Error("cleanup failed");
+    const { module } = await loadModule({ chatError: error });
+
+    await expect(
+      module.cleanupTranscription(buildMeeting(), "raw transcript"),
+    ).rejects.toBe(error);
+  });
+
+  test("coalesceTranscription exposes a rejected optional coalesce request", async () => {
+    const error = new Error("coalesce failed");
+    const { module } = await loadModule({ chatError: error });
+
+    await expect(
+      module.coalesceTranscription(buildMeeting(), {
+        slowTranscript: "slow baseline",
+        fastTranscripts: [],
+      }),
+    ).rejects.toBe(error);
   });
 });
