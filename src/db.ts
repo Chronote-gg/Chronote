@@ -1,9 +1,11 @@
+import type { PurchaseAttempt, PurchaseIncident } from "./types/purchase";
 import { config } from "./services/configService";
 import { randomUUID } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 import {
   AttributeValue,
   DynamoDBClient,
+  TransactWriteItemsCommand,
   GetItemCommand,
   PutItemCommand,
   DeleteItemCommand,
@@ -3023,4 +3025,191 @@ export async function updateMeetingAccessGrants(params: {
     if (isConditionalCheckFailed(error)) return false;
     throw error;
   }
+}
+
+// Purchase control records deliberately use a non-guild namespace and never enter
+// SubscriptionRepository. No TTL: an unknown provider outcome must remain blocked.
+const purchaseRecordKey = (guildId: string) => {
+  if (!/^\d{17,20}$/.test(guildId))
+    throw new Error("Invalid purchase guild ID");
+  return `PURCHASE#${guildId}`;
+};
+export async function readPurchaseAttempt(
+  guildId: string,
+): Promise<PurchaseAttempt | undefined> {
+  const result = await dynamoDbClient.send(
+    new GetItemCommand({
+      TableName: tableName("GuildSubscriptionTable"),
+      Key: marshall({ guildId: purchaseRecordKey(guildId) }),
+      ConsistentRead: true,
+    }),
+  );
+  if (!result.Item) return undefined;
+  const record = unmarshall(result.Item);
+  return { ...record, guildId } as PurchaseAttempt;
+}
+export async function compareAndWritePurchaseAttempt(
+  next: PurchaseAttempt,
+  expected: PurchaseAttempt | undefined,
+  pointer: GuildSubscription | undefined,
+  incident?: PurchaseIncident,
+): Promise<boolean> {
+  const names: Record<string, string> = { "#guildId": "guildId" };
+  const values: Record<string, string> = {};
+  const conditions = [
+    pointer ? "attribute_exists(#guildId)" : "attribute_not_exists(#guildId)",
+  ];
+  if (pointer)
+    for (const key of ["stripeSubscriptionId", "stripeSyncRevision"] as const) {
+      names[`#${key}`] = key;
+      if (pointer[key] === undefined)
+        conditions.push(`attribute_not_exists(#${key})`);
+      else {
+        conditions.push(`#${key} = :${key}`);
+        values[`:${key}`] = pointer[key];
+      }
+    }
+  try {
+    await dynamoDbClient.send(
+      new TransactWriteItemsCommand({
+        TransactItems: [
+          {
+            ConditionCheck: {
+              TableName: tableName("GuildSubscriptionTable"),
+              Key: marshall({ guildId: next.guildId }),
+              ConditionExpression: conditions.join(" AND "),
+              ExpressionAttributeNames: names,
+              ...(Object.keys(values).length
+                ? { ExpressionAttributeValues: marshall(values) }
+                : {}),
+            },
+          },
+          {
+            Put: {
+              TableName: tableName("GuildSubscriptionTable"),
+              Item: marshall(
+                { ...next, guildId: purchaseRecordKey(next.guildId) },
+                { removeUndefinedValues: true },
+              ),
+              ConditionExpression: expected
+                ? "#revision = :revision"
+                : "attribute_not_exists(#guildId)",
+              ExpressionAttributeNames: expected
+                ? { "#revision": "revision" }
+                : { "#guildId": "guildId" },
+              ...(expected
+                ? {
+                    ExpressionAttributeValues: marshall({
+                      ":revision": expected.revision,
+                    }),
+                  }
+                : {}),
+            },
+          },
+          ...(incident
+            ? [
+                {
+                  Update: purchaseIncidentUpdate(incident),
+                },
+              ]
+            : []),
+        ],
+      }),
+    );
+    return true;
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      error.name === "TransactionCanceledException" &&
+      "CancellationReasons" in error &&
+      Array.isArray(error.CancellationReasons) &&
+      error.CancellationReasons.some(
+        (reason) => reason.Code === "ConditionalCheckFailed",
+      )
+    )
+      return false;
+    throw error;
+  }
+}
+
+export async function claimStripeWebhookEvent(
+  event: StripeWebhookEvent,
+): Promise<boolean> {
+  try {
+    await dynamoDbClient.send(
+      new PutItemCommand({
+        TableName: tableName("StripeWebhookEventTable"),
+        Item: marshall(event),
+        ConditionExpression:
+          "attribute_not_exists(eventId) OR (#state = :processing AND leaseUntil <= :now)",
+        ExpressionAttributeNames: { "#state": "state" },
+        ExpressionAttributeValues: marshall({
+          ":processing": "processing",
+          ":now": Date.now(),
+        }),
+      }),
+    );
+    return true;
+  } catch (error) {
+    if (isConditionalCheckFailed(error)) return false;
+    throw error;
+  }
+}
+export async function finishStripeWebhookEvent(
+  eventId: string,
+  leaseToken: string,
+  release: boolean,
+): Promise<boolean> {
+  const base = {
+    TableName: tableName("StripeWebhookEventTable"),
+    Key: marshall({ eventId }),
+    ConditionExpression:
+      "#state = :processing AND leaseToken = :token AND leaseUntil > :now",
+    ExpressionAttributeNames: { "#state": "state" },
+    ExpressionAttributeValues: marshall({
+      ":processing": "processing",
+      ":token": leaseToken,
+      ":now": Date.now(),
+      ...(release ? {} : { ":completed": "completed" }),
+    }),
+  };
+  try {
+    await dynamoDbClient.send(
+      release
+        ? new DeleteItemCommand(base)
+        : new UpdateItemCommand({
+            ...base,
+            UpdateExpression:
+              "SET #state = :completed REMOVE leaseToken, leaseUntil",
+          }),
+    );
+    return true;
+  } catch (error) {
+    if (isConditionalCheckFailed(error)) return false;
+    throw error;
+  }
+}
+
+function purchaseIncidentUpdate(incident: PurchaseIncident) {
+  const { guildId: originalGuildId, key, ...fields } = incident;
+  const names: Record<string, string> = {};
+  const values: Record<string, string> = {};
+  const expressions: string[] = [];
+  for (const [name, value] of Object.entries({ ...fields, originalGuildId })) {
+    if (value === undefined) continue;
+    names[`#${name}`] = name;
+    values[`:${name}`] = value;
+    expressions.push(
+      ["firstObservedAt", "incomingAttemptId"].includes(name)
+        ? `#${name} = if_not_exists(#${name}, :${name})`
+        : `#${name} = :${name}`,
+    );
+  }
+  return {
+    TableName: tableName("GuildSubscriptionTable"),
+    Key: marshall({ guildId: key }),
+    UpdateExpression: `SET ${expressions.join(", ")}`,
+    ExpressionAttributeNames: names,
+    ExpressionAttributeValues: marshall(values),
+  };
 }
