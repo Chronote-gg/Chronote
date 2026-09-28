@@ -142,12 +142,15 @@ describe("voice subscriptions", () => {
       await subscribeToUserVoice(meeting, "user-1");
       streams[0].write(packet);
       mockDecoders[0].emit("error", new Error("decoder failed"));
-      expect(warn).toHaveBeenCalledWith(
-        expect.stringContaining(
-          `opusPacketBytes=${packet.length} daveFooterCandidate=${candidate} daveTransitionAgoMs=none`,
+      expect(
+        warn.mock.calls.filter(([message]) =>
+          String(message).startsWith("Opus decoder error:"),
         ),
-      );
-      expect(warn.mock.calls.join(" ")).not.toContain(packet.toString("hex"));
+      ).toEqual([
+        [
+          `Opus decoder error: guildId=guild-1 channelId=channel-1 meetingId=meeting-1 userId=user-1 speaker=user-1 message=decoder failed errors=1 opusPacketBytes=${packet.length} daveFooterCandidate=${candidate} daveTransitionAgoMs=none`,
+        ],
+      ]);
       expect(meeting.audioData.captureIncomplete).toBe(true);
       jest.runOnlyPendingTimers();
       expect(receiver.subscribe).toHaveBeenCalledTimes(2);
