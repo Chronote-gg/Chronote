@@ -181,6 +181,10 @@ describe("initializeMeeting", () => {
     );
     const connection = jest.mocked(joinVoiceChannel).mock.results[0].value;
     expect(connection.receiver.speaking.on).not.toHaveBeenCalled();
+    expect(connection.on).not.toHaveBeenCalledWith(
+      "transitioned",
+      expect.any(Function),
+    );
 
     deleteMeeting(meeting.guildId);
   });
@@ -345,6 +349,18 @@ describe("initializeMeeting", () => {
     expect(connection.receiver.speaking.on).toHaveBeenCalledWith(
       "end",
       expect.any(Function),
+    );
+    const transitionListener = connection.on.mock.calls.find(
+      ([event]: [string]) => event === "transitioned",
+    )?.[1] as (() => void) | undefined;
+    expect(transitionListener).toBeDefined();
+    const beforeTransition = Date.now();
+    transitionListener?.();
+    expect(meeting.audioData.lastDaveTransitionAtMs).toBeGreaterThanOrEqual(
+      beforeTransition,
+    );
+    expect(meeting.audioData.lastDaveTransitionAtMs).toBeLessThanOrEqual(
+      Date.now(),
     );
 
     deleteMeeting(meeting.guildId);

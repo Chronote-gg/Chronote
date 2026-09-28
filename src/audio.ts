@@ -89,6 +89,8 @@ type VoiceSubscriptionState = {
   decodedStream: Readable;
   lastPcmAt?: number;
   decoderErrorCount: number;
+  lastOpusPacketBytes?: number;
+  lastOpusPacketDaveFooterCandidate?: boolean;
   consecutiveNoPcmEvents: number;
   lastNoPcmAt?: number;
   resubscribeTimer?: ReturnType<typeof setTimeout>;
@@ -854,9 +856,20 @@ export async function subscribeToUserVoice(
     }
     subscriptionState.decoderErrorCount += 1;
     console.warn(
-      `Opus decoder error: ${logPrefix} message=${err.message} errors=${subscriptionState.decoderErrorCount}`,
+      `Opus decoder error: ${logPrefix} message=${err.message} errors=${subscriptionState.decoderErrorCount} opusPacketBytes=${subscriptionState.lastOpusPacketBytes ?? "none"} daveFooterCandidate=${subscriptionState.lastOpusPacketDaveFooterCandidate ?? "none"} daveTransitionAgoMs=${meeting.audioData.lastDaveTransitionAtMs === undefined ? "none" : Math.max(0, Date.now() - meeting.audioData.lastDaveTransitionAtMs)}`,
     );
     scheduleResubscribe(meeting, userId, "decoder-error");
+  });
+
+  opusStream.on("data", (packet: Buffer) => {
+    subscriptionState.lastOpusPacketBytes = packet.length;
+    // The footer only suggests DAVE; this does not validate encrypted media.
+    subscriptionState.lastOpusPacketDaveFooterCandidate =
+      packet.length >= 13 &&
+      packet[packet.length - 2] === 0xfa &&
+      packet[packet.length - 1] === 0xfa &&
+      packet[packet.length - 3] >= 12 &&
+      packet[packet.length - 3] < packet.length;
   });
 
   // Prism's Opus stream can also emit errors; guard those too.

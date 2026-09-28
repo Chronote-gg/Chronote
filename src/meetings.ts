@@ -438,6 +438,12 @@ export async function initializeMeeting(
     leaseOwnerInstanceId,
   };
 
+  if (meeting.captureAudio) {
+    connection.on("transitioned", () => {
+      meeting.audioData.lastDaveTransitionAtMs = Date.now();
+    });
+  }
+
   if (meeting.sessionMode === "tts_only") {
     meeting.resetTtsOnlyIdleTimer = () => resetTtsOnlyIdleTimeout(meeting);
   }
