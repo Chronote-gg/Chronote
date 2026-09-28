@@ -88,4 +88,5 @@ export interface AudioData {
   speakerTrackDir?: string;
   missingStartWarnings?: Set<string>;
   captureIncomplete?: boolean;
+  lastDaveTransitionAtMs?: number;
 }
