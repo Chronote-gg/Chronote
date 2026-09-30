@@ -12,6 +12,27 @@ and how we recover when mixing fails.
 3. At meeting end we attempt to produce a mixed MP3 from the speaker tracks.
 4. If mixing fails or no usable speaker tracks exist, we fall back to the combined MP3.
 
+## DAVE decryption during voice resume
+
+We patch `@discordjs/voice` 0.19.2 with the existing `patch-package` postinstall.
+During a voice WebSocket resume, its connection becomes `Connecting` while the
+networking state is `Resuming` and retains the UDP socket and DAVE session. The
+unpatched receiver only invokes DAVE decryption when the connection is `Ready`,
+so encrypted media can reach the Opus decoder during this interval.
+
+The patch permits decryption in `Connecting` as well as `Ready`, still requiring
+the networking state to be `Ready` or `Resuming`. It covers both CommonJS and ESM
+entry points. The synthetic regression in `test/audio/daveResume.test.js` exercises
+the installed receiver and state machine with fake sockets and a stub DAVE
+decryptor, then checks that plaintext reaches a real Opus decoder before, during,
+and after resume. It does not test DAVE cryptography or establish the cause of
+production incidents. Keep the failure-only probe until production evidence can
+confirm the effect, and remove this patch when a verified upstream release fixes
+the same path.
+
+Run the focused regression with
+`yarn test --runInBand --runTestsByPath test/audio/daveResume.test.js --coverage=false`.
+
 ## File types and naming
 
 All files live under `tmp/meetings/m/<meetingId>/`.
