@@ -1,0 +1,26 @@
+diff --git a/node_modules/@discordjs/voice/dist/index.js b/node_modules/@discordjs/voice/dist/index.js
+--- a/node_modules/@discordjs/voice/dist/index.js
++++ b/node_modules/@discordjs/voice/dist/index.js
+@@ -2104,7 +2104,8 @@
+       const headerExtensionLength = buffer.subarray(14).readUInt16BE();
+       packet = packet.subarray(4 * headerExtensionLength);
+     }
+-    if (this.voiceConnection.state.status === "ready" /* Ready */ && (this.voiceConnection.state.networking.state.code === 4 /* Ready */ || this.voiceConnection.state.networking.state.code === 5 /* Resuming */)) {
++    // VoiceConnection becomes Connecting while UDP and DAVE remain active during resume.
++    if ((this.voiceConnection.state.status === "ready" /* Ready */ || this.voiceConnection.state.status === "connecting" /* Connecting */) && (this.voiceConnection.state.networking.state.code === 4 /* Ready */ || this.voiceConnection.state.networking.state.code === 5 /* Resuming */)) {
+       const daveSession = this.voiceConnection.state.networking.state.dave;
+       if (daveSession) packet = daveSession.decrypt(packet, userId);
+     }
+diff --git a/node_modules/@discordjs/voice/dist/index.mjs b/node_modules/@discordjs/voice/dist/index.mjs
+--- a/node_modules/@discordjs/voice/dist/index.mjs
++++ b/node_modules/@discordjs/voice/dist/index.mjs
+@@ -2044,7 +2044,8 @@
+       const headerExtensionLength = buffer.subarray(14).readUInt16BE();
+       packet = packet.subarray(4 * headerExtensionLength);
+     }
+-    if (this.voiceConnection.state.status === "ready" /* Ready */ && (this.voiceConnection.state.networking.state.code === 4 /* Ready */ || this.voiceConnection.state.networking.state.code === 5 /* Resuming */)) {
++    // VoiceConnection becomes Connecting while UDP and DAVE remain active during resume.
++    if ((this.voiceConnection.state.status === "ready" /* Ready */ || this.voiceConnection.state.status === "connecting" /* Connecting */) && (this.voiceConnection.state.networking.state.code === 4 /* Ready */ || this.voiceConnection.state.networking.state.code === 5 /* Resuming */)) {
+       const daveSession = this.voiceConnection.state.networking.state.dave;
+       if (daveSession) packet = daveSession.decrypt(packet, userId);
+     }
