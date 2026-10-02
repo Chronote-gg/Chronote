@@ -1,4 +1,5 @@
 import {
+  defaultParseSearch,
   lazyRouteComponent,
   Navigate,
   Outlet,
@@ -376,7 +377,21 @@ const routeTree = rootRoute.addChildren([
   ]),
 ]);
 
-export const router = new Router({ routeTree });
+export const router = new Router({
+  routeTree,
+  parseSearch: (searchString) => {
+    const search = defaultParseSearch(searchString) as Record<string, unknown>;
+    const params = new URLSearchParams(searchString);
+    // Discord identifiers exceed safe integer precision when JSON-parsed.
+    for (const key of ["serverId", "meetingId", "eventId"]) {
+      const values = params.getAll(key);
+      if (values.length === 1 && /^\d+$/.test(values[0])) {
+        search[key] = values[0];
+      }
+    }
+    return search;
+  },
+});
 
 declare module "@tanstack/react-router" {
   interface Register {
