@@ -342,7 +342,10 @@ export async function writePaymentTransaction(
 ): Promise<void> {
   const params = {
     TableName: tableName("PaymentTransactionTable"),
-    Item: marshall(transaction),
+    Item: marshall(
+      { ...transaction, TransactionID: transaction.transactionID },
+      { removeUndefinedValues: true },
+    ),
   };
   const command = new PutItemCommand(params);
   await dynamoDbClient.send(command);
