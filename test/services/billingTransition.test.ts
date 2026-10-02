@@ -51,6 +51,15 @@ function fixture() {
     checkout: {
       sessions: {
         create: jest.fn(async () => ({
+          metadata: {
+            guild_id: guildId,
+            purchase_attempt_id:
+              getMockStore().purchaseAttempts.get(guildId)?.attemptId,
+          },
+          customer: "cus_new",
+          livemode: false,
+          id: "cs_new",
+          status: "open",
           url: "https://checkout.stripe.com/new",
         })),
       },

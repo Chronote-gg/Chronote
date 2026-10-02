@@ -14,16 +14,9 @@ import type { GuildSubscription, PaymentTransaction } from "../types/db";
 import type { StripeClient, StripeSubscription } from "../types/stripe";
 import type { PublicEntitlementGrant } from "./entitlementService";
 
-export class BillingActionError extends Error {
-  constructor(
-    public readonly code: "FORBIDDEN" | "BAD_REQUEST",
-    message: string,
-  ) {
-    super(message);
-    this.name = "BillingActionError";
-  }
-}
-
+import { BillingActionError } from "./billingActionError";
+export { BillingActionError } from "./billingActionError";
+import { createInitialPurchase } from "./initialPurchaseService";
 export type BillingSnapshot = {
   billingEnabled: boolean;
   stripeMode: string;
@@ -314,6 +307,7 @@ export async function createCheckoutSession(params: {
     plan: tier,
     interval,
   });
+  const expected = await getSubscriptionRepository().get(guildId);
   const confirmationUrl = await createExistingSubscriptionConfirmation({
     stripe,
     user,
@@ -324,35 +318,38 @@ export async function createCheckoutSession(params: {
     cancelUrl,
   });
   if (confirmationUrl) return confirmationUrl;
-  const customerId = await ensureStripeCustomer(stripe, user);
+
   const metadata = {
     discord_id: user.id,
     discord_username: user.username ?? "",
     guild_id: guildId,
     ...(promoValue ? { promo_code: promoValue } : {}),
   };
-  const session = await stripe.checkout.sessions.create({
-    mode: "subscription",
-    line_items: [{ price: checkoutPriceId, quantity: 1 }],
-    success_url: successUrl,
-    cancel_url: cancelUrl,
-    customer: customerId,
-    client_reference_id: user.id,
-    allow_promotion_codes: promotionCodeId
-      ? undefined
-      : (allowPromotionCodes ?? true),
-    discounts: promotionCodeId
-      ? [{ promotion_code: promotionCodeId }]
-      : undefined,
-    subscription_data: {
+  return createInitialPurchase({
+    stripe,
+    user,
+    guildId,
+    expected,
+    mode: config.subscription.stripeMode === "live" ? "live" : "test",
+    checkout: {
+      mode: "subscription",
+      line_items: [{ price: checkoutPriceId, quantity: 1 }],
+      success_url: successUrl,
+      cancel_url: cancelUrl,
+
+      client_reference_id: user.id,
+      allow_promotion_codes: promotionCodeId
+        ? undefined
+        : (allowPromotionCodes ?? true),
+      discounts: promotionCodeId
+        ? [{ promotion_code: promotionCodeId }]
+        : undefined,
+      subscription_data: {
+        metadata,
+      },
       metadata,
     },
-    metadata,
   });
-  if (!session.url) {
-    throw new Error("Stripe did not return a checkout URL");
-  }
-  return session.url;
 }
 
 function assertUpdatableSubscription(subscription: StripeSubscription): void {
@@ -425,6 +422,7 @@ async function createExistingSubscriptionConfirmation(params: {
       const item = subscription.items.data[0];
       const portal = await stripe.billingPortal.sessions.create({
         customer: customerId,
+
         return_url: cancelUrl,
         flow_data: {
           type: "subscription_update_confirm",
@@ -493,6 +491,7 @@ export async function createPortalSession(params: {
   await assertStripePayer(stripe, customerId, user.id);
   const portal = await stripe.billingPortal.sessions.create({
     customer: customerId,
+
     return_url: config.stripe.portalReturnUrl || config.stripe.successUrl,
   });
   if (!portal.url) {
