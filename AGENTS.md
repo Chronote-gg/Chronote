@@ -1,5 +1,13 @@
 # AGENT ORIENTATION
 
+## Private business and operations context
+
+- Product code, tests, public documentation and deployment workflows belong in this repository.
+- Business initiatives, customer/outreach research, detailed operational evidence and private runbooks belong in [Chronote-gg/chronote-ops](https://github.com/Chronote-gg/chronote-ops), with local checkout `D:/bench/chronote-ops`.
+- For operational work, read that private repository's `AGENTS.md`, `README.md` and the relevant owner note. Keep public issues, PRs, Actions logs and summaries limited to sanitized status when private provider or customer context is involved.
+- Dev and Sandbox name the same test environment. Its identity, deployment authority, credential storage route and dated acceptance evidence are owned in chronote-ops. If private evidence is unavailable, report that limit instead of guessing operational state.
+- Personal portfolio priorities and time allocation stay in basic-life; keep pointers there without duplicating Chronote initiatives. Internal engineering architecture and test instructions may stay in `docs/` here.
+
 ## What this project is
 
 - Discord bot that records voice meetings, transcribes them with OpenAI (gpt-4o-transcribe), generates notes with GPT-5.1, and posts results back to Discord.
