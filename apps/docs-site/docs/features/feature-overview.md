@@ -23,8 +23,10 @@ two-hour limit on each meeting. Review available billing changes before
 confirming payment.
 
 After a successful meeting, eligible Free servers may see an **Upgrade** button
-beside **Open in Chronote**, with a reminder about more recording time and deeper
-search across past meetings. It opens plans with that server and Basic selected;
+beside **Open in Chronote** and below the final notes embed. The reminder shows
+recorded time across saved meetings and invites you to get more recording time,
+search more past meetings, and help keep Chronote running. Totals display in
+minutes through 60 minutes, then in hours. It opens plans with that server and Basic selected;
 sign in with an account that can manage the server to buy. These reminders appear
 no more than once every seven days per server. Paid and complimentary servers,
 unsuccessful meetings, and servers using the separate billing-change flow do not

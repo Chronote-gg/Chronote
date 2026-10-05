@@ -11,15 +11,16 @@ jest.mock("../src/commands/meetingName", () => ({
   MEETING_RENAME_PREFIX: "rename_meeting",
 }));
 jest.mock("../src/services/summaryUpgradeService", () => ({
-  claimSummaryUpgradeUrl: jest.fn().mockResolvedValue(undefined),
+  claimSummaryUpgrade: jest.fn().mockResolvedValue(undefined),
 }));
-import { claimSummaryUpgradeUrl } from "../src/services/summaryUpgradeService";
+import { claimSummaryUpgrade } from "../src/services/summaryUpgradeService";
+import { buildSummaryUpgradeBody } from "../src/utils/summaryUpgrade";
 
 import {
   updateMeetingProcessingMessage,
   updateMeetingSummaryMessage,
 } from "../src/embed";
-import { DiscordAPIError } from "discord.js";
+import { DiscordAPIError, EmbedBuilder } from "discord.js";
 import { updateActiveObservation } from "@langfuse/tracing";
 jest.mock("@langfuse/tracing", () => ({ updateActiveObservation: jest.fn() }));
 jest.mock("../src/services/langfuseClient", () => ({
@@ -37,7 +38,7 @@ type EmbedLike = { toJSON?: () => EmbedPayload; data?: EmbedPayload };
 describe("updateMeetingSummaryMessage", () => {
   afterEach(() => {
     jest.restoreAllMocks();
-    jest.mocked(claimSummaryUpgradeUrl).mockResolvedValue(undefined);
+    jest.mocked(claimSummaryUpgrade).mockResolvedValue(undefined);
   });
   const fixture = () => ({
     meetingId: "meeting-1",
@@ -75,20 +76,79 @@ describe("updateMeetingSummaryMessage", () => {
     const value = fixture();
     const url =
       "https://chronote.test/upgrade/select-server?serverId=guild-1&plan=basic";
-    jest.mocked(claimSummaryUpgradeUrl).mockResolvedValueOnce(url);
+    jest
+      .mocked(claimSummaryUpgrade)
+      .mockResolvedValueOnce({ url, recordedSeconds: 5400 });
     value.textChannel.send.mockResolvedValue({ id: "notes" });
     await updateMeetingSummaryMessage(value as unknown as MeetingData);
     const message = await value.textChannel.messages.fetch("start");
     const payload = message.edit.mock.calls[0][0];
     expect(payload.embeds[0].toJSON().fields).toContainEqual({
       name: "Need more recording time?",
-      value:
-        "Upgrade for more recording time and deeper search across past meetings.",
+      value: buildSummaryUpgradeBody(5400),
     });
     expect(payload.components[0].toJSON().components).toEqual([
       expect.objectContaining({ label: "Open in Chronote" }),
       expect.objectContaining({ label: "Upgrade", url, style: 5 }),
     ]);
+    const notes = value.textChannel.send.mock.calls[0][0];
+    expect(notes.embeds[0].toJSON().fields).toContainEqual({
+      name: "Need more recording time?",
+      value: buildSummaryUpgradeBody(5400),
+    });
+    expect(notes.components[0].toJSON().components).toEqual([
+      expect.objectContaining({ label: "Upgrade", url, style: 5 }),
+    ]);
+    expect(value.notesText).toBe("Notes");
+  });
+
+  it("adds the offer only to the final notes chunk while respecting Discord text limits", async () => {
+    const value = fixture();
+    value.notesText = "A".repeat(11800);
+    const url =
+      "https://chronote.test/upgrade/select-server?serverId=guild-1&plan=basic";
+    jest
+      .mocked(claimSummaryUpgrade)
+      .mockResolvedValueOnce({ url, recordedSeconds: 3600 });
+    value.textChannel.send.mockResolvedValue({ id: "notes" });
+    await updateMeetingSummaryMessage(value as unknown as MeetingData);
+    const payloads = value.textChannel.send.mock.calls.map(
+      ([payload]) => payload,
+    );
+    expect(payloads.length).toBeGreaterThan(1);
+    for (const payload of payloads) {
+      const embeds = (payload.embeds as EmbedBuilder[]).map((embed) =>
+        embed.toJSON(),
+      );
+      const length = embeds.reduce(
+        (total, embed) =>
+          total +
+          (embed.title?.length ?? 0) +
+          (embed.description?.length ?? 0) +
+          (embed.fields?.reduce(
+            (count, field) => count + field.name.length + field.value.length,
+            0,
+          ) ?? 0),
+        0,
+      );
+      expect(length).toBeLessThanOrEqual(6000);
+    }
+    expect(
+      payloads
+        .slice(0, -1)
+        .every(
+          (payload) =>
+            payload.components.length === 0 &&
+            (payload.embeds as EmbedBuilder[]).every(
+              (embed) => !embed.toJSON().fields?.length,
+            ),
+        ),
+    ).toBe(true);
+    expect(payloads.at(-1).embeds.at(-1).toJSON().fields[0].value).toBe(
+      buildSummaryUpgradeBody(3600),
+    );
+    expect(payloads.at(-1).components[0].toJSON().components[0].url).toBe(url);
+    expect(value.notesText).toBe("A".repeat(11800));
   });
 
   it("reports failed notes independently of successful summary editing without leaking error bodies", async () => {

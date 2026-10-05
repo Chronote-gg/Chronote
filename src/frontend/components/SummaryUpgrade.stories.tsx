@@ -1,10 +1,13 @@
 import { Button, Group, Stack, Text } from "@mantine/core";
 import type { Meta, StoryObj } from "@storybook/react";
 import { expect, within } from "storybook/test";
-import { SUMMARY_UPGRADE } from "../../utils/summaryUpgrade";
+import {
+  buildSummaryUpgradeBody,
+  SUMMARY_UPGRADE,
+} from "../../utils/summaryUpgrade";
 
 // Discord owns the rendering. This story previews the posted copy and link row.
-function SummaryUpgradePreview() {
+function SummaryUpgradePreview({ recordedSeconds = 5400, notes = false }) {
   return (
     <Stack p="lg" maw={560} style={{ background: "#313338", color: "#DBDEE1" }}>
       <Stack
@@ -12,23 +15,29 @@ function SummaryUpgradePreview() {
         gap="sm"
         style={{ background: "#2B2D31", borderLeft: "4px solid #00ae86" }}
       >
-        <Text fw={700}>Weekly team meeting</Text>
-        <Text>The team agreed on the launch date and assigned follow-ups.</Text>
-        <Text size="sm">Duration: 30 minutes</Text>
+        <Text fw={700}>{notes ? "Meeting Notes" : "Weekly team meeting"}</Text>
+        <Text>
+          {notes
+            ? "Decisions: launch next Friday. Follow-ups: confirm the schedule and prepare the announcement."
+            : "The team agreed on the launch date and assigned follow-ups."}
+        </Text>
+        {!notes && <Text size="sm">Duration: 30 minutes</Text>}
         <Stack gap={4}>
           <Text fw={700}>{SUMMARY_UPGRADE.heading}</Text>
-          <Text size="sm">{SUMMARY_UPGRADE.body}</Text>
+          <Text size="sm">{buildSummaryUpgradeBody(recordedSeconds)}</Text>
         </Stack>
       </Stack>
       <Group gap="sm">
-        <Button
-          component="a"
-          href="https://chronote.test/portal/meetings/example/meeting"
-          color="gray"
-          style={{ backgroundColor: "#4e5058", color: "#f2f3f5" }}
-        >
-          Open in Chronote
-        </Button>
+        {!notes && (
+          <Button
+            component="a"
+            href="https://chronote.test/portal/meetings/example/meeting"
+            color="gray"
+            style={{ backgroundColor: "#4e5058", color: "#f2f3f5" }}
+          >
+            Open in Chronote
+          </Button>
+        )}
         <Button
           component="a"
           href="https://chronote.test/upgrade/select-server?serverId=example&plan=basic"
@@ -58,6 +67,19 @@ export const FreeServer: Story = {
       "href",
       "https://chronote.test/upgrade/select-server?serverId=example&plan=basic",
     );
-    await expect(canvas.getByText(SUMMARY_UPGRADE.body)).toBeVisible();
+    await expect(canvas.getByText(buildSummaryUpgradeBody(5400))).toBeVisible();
+  },
+};
+export const NotesAtSixtyMinutes: Story = {
+  args: { recordedSeconds: 3600, notes: true },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    await expect(canvas.getByText(buildSummaryUpgradeBody(3600))).toBeVisible();
+    await expect(
+      canvas.getByRole("link", { name: "Upgrade", exact: true }),
+    ).toBeVisible();
+    await expect(
+      canvas.queryByRole("link", { name: "Open in Chronote" }),
+    ).not.toBeInTheDocument();
   },
 };

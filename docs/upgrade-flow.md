@@ -6,11 +6,11 @@
 - The dedicated server picker and plan selection live at `/upgrade/select-server`.
 - Stripe Checkout handles payment and returns to `/upgrade/success`.
 - The success page highlights the upgraded server when a server id is available and routes users back into the portal.
-- Eligible Free-server meeting summaries include a secondary Upgrade link with the server and Basic plan preselected. The copy focuses on recording time and deeper meeting search.
+- Eligible Free-server meeting summaries and the final notes embed include an Upgrade link with the server and Basic plan preselected. The copy shows recorded time across saved meetings, describes more recording time and deeper meeting search, and invites people to help keep Chronote running. Minutes display through 60 minutes; longer totals display hours only, rounded down to one decimal place.
 
 ```mermaid
 flowchart LR
-  Summary["Discord summary: Upgrade"] --> SignIn["Sign in if needed, keeping server and Basic"]
+  Summary["Discord summary or final notes: Upgrade"] --> SignIn["Sign in if needed, keeping server and Basic"]
   Direct["Homepage or direct upgrade link"] --> SignIn
   SignIn --> Plans["Server and plans, with manager permission checks"]
   Plans --> Checkout["Stripe Checkout"]
@@ -24,6 +24,7 @@ flowchart LR
 - Promo codes can be prefilled from the promo landing page and are applied at checkout.
 - The upgrade flow is designed to fast-track intent, so it bypasses the portal billing page and goes straight from server selection to Stripe.
 - Summary nudges use an atomic guild-scoped receipt in the existing InteractionReceipt table, with a seven-day TTL. A failed delivery or delayed TTL deletion may extend the suppression period. Billing or receipt lookup errors omit the optional CTA and do not block meeting delivery. Paid, complimentary and forced tiers, unsuccessful meetings and existing billing pointers are excluded.
+- Recorded time includes retained, non-canceled recorded meetings, including archived meetings, plus the completed current meeting once. It is not a lifetime counter and does not include deleted history. History lookup failures omit the offer; no estimated customer costs are quoted.
 
 ## Planned enhancements
 
