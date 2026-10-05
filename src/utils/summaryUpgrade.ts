@@ -6,7 +6,10 @@ export const SUMMARY_UPGRADE = {
 
 export function buildSummaryUpgradeBody(recordedSeconds: number): string {
   const minutes = Math.floor(recordedSeconds / 60);
-  const hours = Math.floor(recordedSeconds / 360) / 10;
+  const hours =
+    recordedSeconds > 10 * 3600
+      ? Math.floor(recordedSeconds / 3600)
+      : Math.floor(recordedSeconds / 360) / 10;
   const duration =
     recordedSeconds < 60
       ? "less than a minute"

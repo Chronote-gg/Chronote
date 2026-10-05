@@ -83,3 +83,13 @@ export const NotesAtSixtyMinutes: Story = {
     ).not.toBeInTheDocument();
   },
 };
+export const NotesAboveTenHours: Story = {
+  args: { recordedSeconds: 37800, notes: true },
+  play: async ({ canvasElement }) => {
+    await expect(
+      within(canvasElement).getByText(
+        /Your server has recorded 10 hours across/,
+      ),
+    ).toBeVisible();
+  },
+};

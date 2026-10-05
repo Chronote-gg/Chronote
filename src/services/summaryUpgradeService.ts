@@ -7,6 +7,16 @@ import { resolveGuildSubscription } from "./subscriptionService";
 
 const UPGRADE_COOLDOWN_SECONDS = 7 * 24 * 60 * 60;
 
+function hasReadyRecordedNotes(meeting: MeetingData): boolean {
+  return (
+    meeting.transcribeMeeting &&
+    meeting.generateNotes &&
+    Boolean(meeting.notesText?.trim()) &&
+    meeting.processing?.notes === "generated" &&
+    meeting.processing.transcription === "ready"
+  );
+}
+
 async function getSummaryRecordedSeconds(meeting: MeetingData, endTime: Date) {
   // Summary delivery precedes the final history write. Replace any earlier
   // snapshot of this meeting with its completed duration, exactly once.
@@ -35,11 +45,7 @@ export async function claimSummaryUpgrade(
 ): Promise<{ url: string; recordedSeconds: number } | undefined> {
   if (
     meeting.cancelled ||
-    !meeting.transcribeMeeting ||
-    !meeting.generateNotes ||
-    !meeting.notesText?.trim() ||
-    meeting.processing?.notes !== "generated" ||
-    meeting.processing?.transcription !== "ready" ||
+    !hasReadyRecordedNotes(meeting) ||
     !meeting.endTime ||
     !config.stripe.secretKey ||
     config.subscription.stripeMode === "disabled"

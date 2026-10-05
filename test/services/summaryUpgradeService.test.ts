@@ -171,6 +171,10 @@ test.each([
   [3601, "1 hour"],
   [5400, "1.5 hours"],
   [7200, "2 hours"],
+  [34200, "9.5 hours"],
+  [36000, "10 hours"],
+  [37800, "10 hours"],
+  [75240, "20 hours"],
 ])(
   "formats %s seconds without minutes after the first hour",
   (seconds, duration) => {

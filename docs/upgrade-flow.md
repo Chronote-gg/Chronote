@@ -6,7 +6,7 @@
 - The dedicated server picker and plan selection live at `/upgrade/select-server`.
 - Stripe Checkout handles payment and returns to `/upgrade/success`.
 - The success page highlights the upgraded server when a server id is available and routes users back into the portal.
-- Eligible Free-server meeting summaries and the final notes embed include an Upgrade link with the server and Basic plan preselected. The copy shows recorded time across saved meetings, describes more recording time and deeper meeting search, and invites people to help keep Chronote running. Minutes display through 60 minutes; longer totals display hours only, rounded down to one decimal place.
+- Eligible Free-server meeting summaries and the final notes embed include an Upgrade link with the server and Basic plan preselected. The copy shows recorded time across saved meetings, describes more recording time and deeper meeting search, and invites people to help keep Chronote running. Minutes display through 60 minutes; longer totals display hours only, rounded down to one decimal place through 10 hours and whole hours above 10.
 
 ```mermaid
 flowchart LR
