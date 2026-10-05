@@ -6,13 +6,25 @@
 - The dedicated server picker and plan selection live at `/upgrade/select-server`.
 - Stripe Checkout handles payment and returns to `/upgrade/success`.
 - The success page highlights the upgraded server when a server id is available and routes users back into the portal.
+- Eligible Free-server meeting summaries include a secondary Upgrade link with the server and Basic plan preselected. The copy focuses on recording time and deeper meeting search.
+
+```mermaid
+flowchart LR
+  Summary["Discord summary: Upgrade"] --> SignIn["Sign in if needed, keeping server and Basic"]
+  Direct["Homepage or direct upgrade link"] --> SignIn
+  SignIn --> Plans["Server and plans, with manager permission checks"]
+  Plans --> Checkout["Stripe Checkout"]
+  Checkout --> Success["Success: saved paid plan"]
+  Success --> Portal["Return to server workspace"]
+  Checkout -->|Cancel| Plans
+```
 
 ## Operational notes
 
 - Promo codes can be prefilled from the promo landing page and are applied at checkout.
 - The upgrade flow is designed to fast-track intent, so it bypasses the portal billing page and goes straight from server selection to Stripe.
+- Summary nudges use an atomic guild-scoped receipt in the existing InteractionReceipt table, with a seven-day TTL. A failed delivery or delayed TTL deletion may extend the suppression period. Billing or receipt lookup errors omit the optional CTA and do not block meeting delivery. Paid, complimentary and forced tiers, unsuccessful meetings and existing billing pointers are excluded.
 
 ## Planned enhancements
 
 - Short upgrade links stored in DynamoDB. These would map a short token to promo codes, suggested plans, and optional server defaults without exposing those details in the URL.
-- Preselected server and plan hints in the upgrade flow, for marketing campaigns and in-bot upgrade nudges.

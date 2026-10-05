@@ -159,6 +159,7 @@ Coverage update rule:
   - `/portal/select-server`
   - `/portal/server/:serverId/{library|ask|billing|settings}`
 - Upgrade flow entry points live under `/upgrade`, `/promo/:code`, and `/upgrade/select-server` with a success page at `/upgrade/success`. See `docs/upgrade-flow.md` for details and planned short-link support.
+- Successful Free-server meeting summaries can include a weekly Upgrade reminder for more recording time and deeper meeting search, preserving the server and Basic plan selection.
 - Deployed via GitHub Actions to S3 + CloudFront (see `_infra/` and `.github/workflows/deploy.yml`).
 - Static hosting variables (frontend): `FRONTEND_BUCKET`, `FRONTEND_DOMAIN` (optional), `FRONTEND_CERT_ARN` (when custom domain is set).
 - Static hosting variables (docs): `DOCS_BUCKET`, `DOCS_DOMAIN` (optional), `DOCS_CERT_ARN` (when custom domain is set).

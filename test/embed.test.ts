@@ -10,6 +10,10 @@ jest.mock("../src/commands/summaryFeedback", () => ({
 jest.mock("../src/commands/meetingName", () => ({
   MEETING_RENAME_PREFIX: "rename_meeting",
 }));
+jest.mock("../src/services/summaryUpgradeService", () => ({
+  claimSummaryUpgradeUrl: jest.fn().mockResolvedValue(undefined),
+}));
+import { claimSummaryUpgradeUrl } from "../src/services/summaryUpgradeService";
 
 import {
   updateMeetingProcessingMessage,
@@ -31,7 +35,10 @@ type EmbedPayload = {
 type EmbedLike = { toJSON?: () => EmbedPayload; data?: EmbedPayload };
 
 describe("updateMeetingSummaryMessage", () => {
-  afterEach(() => jest.restoreAllMocks());
+  afterEach(() => {
+    jest.restoreAllMocks();
+    jest.mocked(claimSummaryUpgradeUrl).mockResolvedValue(undefined);
+  });
   const fixture = () => ({
     meetingId: "meeting-1",
     guildId: "guild-1",
@@ -63,6 +70,26 @@ describe("updateMeetingSummaryMessage", () => {
       "https://discord.test/secret",
       { json: { secret: "PRIVATE REQUEST" }, files: [] },
     );
+
+  it("adds the value proposition and Upgrade beside Open in Chronote", async () => {
+    const value = fixture();
+    const url =
+      "https://chronote.test/upgrade/select-server?serverId=guild-1&plan=basic";
+    jest.mocked(claimSummaryUpgradeUrl).mockResolvedValueOnce(url);
+    value.textChannel.send.mockResolvedValue({ id: "notes" });
+    await updateMeetingSummaryMessage(value as unknown as MeetingData);
+    const message = await value.textChannel.messages.fetch("start");
+    const payload = message.edit.mock.calls[0][0];
+    expect(payload.embeds[0].toJSON().fields).toContainEqual({
+      name: "Need more recording time?",
+      value:
+        "Upgrade for more recording time and deeper search across past meetings.",
+    });
+    expect(payload.components[0].toJSON().components).toEqual([
+      expect.objectContaining({ label: "Open in Chronote" }),
+      expect.objectContaining({ label: "Upgrade", url, style: 5 }),
+    ]);
+  });
 
   it("reports failed notes independently of successful summary editing without leaking error bodies", async () => {
     const value = fixture();
