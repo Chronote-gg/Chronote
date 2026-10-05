@@ -1,6 +1,10 @@
-import { DynamoDBClient, PutItemCommand } from "@aws-sdk/client-dynamodb";
+import {
+  DynamoDBClient,
+  GetItemCommand,
+  PutItemCommand,
+} from "@aws-sdk/client-dynamodb";
 import { marshall } from "@aws-sdk/util-dynamodb";
-import { tryCreateInteractionReceipt } from "../src/db";
+import { getInteractionReceipt, tryCreateInteractionReceipt } from "../src/db";
 
 const send = jest.spyOn(DynamoDBClient.prototype, "send");
 beforeEach(() => send.mockReset());
@@ -13,6 +17,21 @@ const receipt = {
   createdAt: "2026-10-05T12:00:00Z",
   expiresAt: 1791806400,
 };
+
+test("reads an existing cooldown by its key, or returns absent", async () => {
+  send.mockResolvedValueOnce({ Item: marshall(receipt) } as never);
+  await expect(getInteractionReceipt(receipt.interactionId)).resolves.toEqual(
+    receipt,
+  );
+  expect(send.mock.calls[0][0]).toBeInstanceOf(GetItemCommand);
+  expect((send.mock.calls[0][0] as GetItemCommand).input.Key).toEqual(
+    marshall({ interactionId: receipt.interactionId }),
+  );
+  send.mockResolvedValueOnce({} as never);
+  await expect(
+    getInteractionReceipt(receipt.interactionId),
+  ).resolves.toBeUndefined();
+});
 
 test("ordinary interaction receipts remain insert-only after expiry", async () => {
   send.mockResolvedValueOnce({} as never);

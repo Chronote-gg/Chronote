@@ -1,4 +1,4 @@
-import { tryCreateInteractionReceipt } from "../db";
+import { getInteractionReceipt, tryCreateInteractionReceipt } from "../db";
 import { getSubscriptionRepository } from "../repositories/subscriptionRepository";
 import type { MeetingData } from "../types/meeting-data";
 import { config } from "./configService";
@@ -18,7 +18,11 @@ function hasReadyRecordedNotes(meeting: MeetingData): boolean {
   );
 }
 
-async function getSummaryRecordedSeconds(meeting: MeetingData, endTime: Date) {
+async function getSummaryRecordedSeconds(
+  meeting: MeetingData,
+  endTime: Date,
+  signal: AbortSignal,
+) {
   // Summary delivery precedes the final history write. Replace any earlier
   // snapshot of this meeting with its completed duration, exactly once.
   const currentSeconds = Math.floor(
@@ -26,9 +30,9 @@ async function getSummaryRecordedSeconds(meeting: MeetingData, endTime: Date) {
   );
   if (!Number.isFinite(currentSeconds) || currentSeconds < 0)
     throw new Error("Invalid completed meeting duration");
-  // ponytail: total retained history at most once per week; use a stored
-  // aggregate if large server histories make this query expensive.
-  const history = await listAllMeetingsForGuildService(meeting.guildId);
+  // ponytail: scan retained history only outside the active cooldown; use a
+  // stored aggregate if large server histories make this query expensive.
+  const history = await listAllMeetingsForGuildService(meeting.guildId, signal);
   return history.reduce(
     (total, saved) =>
       saved.meetingId !== meeting.meetingId &&
@@ -68,6 +72,18 @@ async function prepareSummaryUpgrade(
       return undefined;
     }
 
+    const interactionId = `summary-upgrade:${meeting.guildId}`;
+    const receipt = await getInteractionReceipt(interactionId);
+    signal.throwIfAborted();
+    if (receipt && receipt.expiresAt > Math.floor(Date.now() / 1000))
+      return undefined;
+    const recordedSeconds = await getSummaryRecordedSeconds(
+      meeting,
+      meeting.endTime,
+      signal,
+    );
+    signal.throwIfAborted();
+
     const url = new URL("/upgrade/select-server", config.frontend.siteUrl);
     url.searchParams.set("serverId", meeting.guildId);
     url.searchParams.set("plan", "basic");
@@ -76,7 +92,7 @@ async function prepareSummaryUpgrade(
     // reminder. Prefer that to duplicate promotion.
     const claimed = await tryCreateInteractionReceipt(
       {
-        interactionId: `summary-upgrade:${meeting.guildId}`,
+        interactionId,
         interactionKind: "summary_upgrade",
         guildId: meeting.guildId,
         createdAt: new Date(now).toISOString(),
@@ -86,13 +102,7 @@ async function prepareSummaryUpgrade(
     );
     signal.throwIfAborted();
     if (!claimed) return undefined;
-    return {
-      url: url.toString(),
-      recordedSeconds: await getSummaryRecordedSeconds(
-        meeting,
-        meeting.endTime,
-      ),
-    };
+    return { url: url.toString(), recordedSeconds };
   } catch (error) {
     if (!signal.aborted)
       console.warn("Could not prepare meeting summary upgrade", error);

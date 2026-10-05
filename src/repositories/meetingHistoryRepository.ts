@@ -39,6 +39,7 @@ export type MeetingHistoryRepository = {
     startTimestamp: string,
     endTimestamp: string,
     limit?: number,
+    signal?: AbortSignal,
   ) => Promise<MeetingHistory[]>;
   listRecentByChannel: (
     guildId: string,
@@ -124,12 +125,14 @@ const realRepository: MeetingHistoryRepository = {
     startTimestamp,
     endTimestamp,
     limit,
+    signal,
   ) => {
     const meetings = await getMeetingsForGuildInRange(
       guildId,
       startTimestamp,
       endTimestamp,
       limit,
+      signal,
     );
     return meetings.filter(
       (meeting) => meeting.status !== MEETING_STATUS.CANCELLED,

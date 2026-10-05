@@ -1,4 +1,7 @@
-jest.mock("../../src/db", () => ({ tryCreateInteractionReceipt: jest.fn() }));
+jest.mock("../../src/db", () => ({
+  getInteractionReceipt: jest.fn(),
+  tryCreateInteractionReceipt: jest.fn(),
+}));
 jest.mock("../../src/services/configService", () => ({
   config: {
     stripe: { secretKey: "test-only" },
@@ -16,7 +19,10 @@ jest.mock("../../src/services/meetingHistoryService", () => ({
   listAllMeetingsForGuildService: jest.fn(),
 }));
 
-import { tryCreateInteractionReceipt } from "../../src/db";
+import {
+  getInteractionReceipt,
+  tryCreateInteractionReceipt,
+} from "../../src/db";
 import { config } from "../../src/services/configService";
 import { resolveGuildSubscription } from "../../src/services/subscriptionService";
 import { claimSummaryUpgrade } from "../../src/services/summaryUpgradeService";
@@ -27,6 +33,7 @@ import { buildSummaryUpgradeBody } from "../../src/utils/summaryUpgrade";
 
 const mockGetSubscription = jest.fn();
 const claim = jest.mocked(tryCreateInteractionReceipt);
+const readReceipt = jest.mocked(getInteractionReceipt);
 const resolve = jest.mocked(resolveGuildSubscription);
 const history = jest.mocked(listAllMeetingsForGuildService);
 const meeting = () =>
@@ -56,6 +63,7 @@ beforeEach(() => {
   });
   mockGetSubscription.mockResolvedValue(undefined);
   claim.mockResolvedValue(true);
+  readReceipt.mockResolvedValue(undefined);
   history.mockResolvedValue([]);
 });
 
@@ -76,9 +84,10 @@ test("preserves the server and Basic plan with a durable seven-day claim", async
     },
     Math.floor(now / 1000),
   );
-  claim.mockResolvedValue(false);
+  readReceipt.mockResolvedValue(claim.mock.calls[0][0]);
   expect(await claimSummaryUpgrade(meeting())).toBeUndefined();
   expect(history).toHaveBeenCalledTimes(1);
+  expect(claim).toHaveBeenCalledTimes(1);
   jest.restoreAllMocks();
 });
 
@@ -156,17 +165,18 @@ test("totals retained recorded meetings and includes the current meeting exactly
     url: expect.any(String),
     recordedSeconds: 7200,
   });
-  expect(history).toHaveBeenCalledWith("123456789");
+  expect(history).toHaveBeenCalledWith("123456789", expect.any(AbortSignal));
 });
 
 test("history failures omit the optional offer without failing meeting delivery", async () => {
   history.mockRejectedValueOnce(new Error("unavailable"));
   const warn = jest.spyOn(console, "warn").mockImplementation(() => {});
   expect(await claimSummaryUpgrade(meeting())).toBeUndefined();
+  expect(claim).not.toHaveBeenCalled();
   warn.mockRestore();
 });
 
-test.each(["subscription", "billing", "receipt", "history"])(
+test.each(["subscription", "billing", "cooldown", "receipt", "history"])(
   "omits the optional offer within one second when %s stalls",
   async (stage) => {
     jest.useFakeTimers();
@@ -174,6 +184,7 @@ test.each(["subscription", "billing", "receipt", "history"])(
     const slowLookup = {
       subscription: resolve,
       billing: mockGetSubscription,
+      cooldown: readReceipt,
       receipt: claim,
       history,
     }[stage];
@@ -183,11 +194,51 @@ test.each(["subscription", "billing", "receipt", "history"])(
       await jest.advanceTimersByTimeAsync(1000);
       await expect(offer).resolves.toBeUndefined();
       expect(jest.getTimerCount()).toBe(0);
+      if (stage === "history") expect(claim).not.toHaveBeenCalled();
     } finally {
       jest.useRealTimers();
     }
   },
 );
+
+test("a late history response does not consume a cooldown and the next meeting can retry", async () => {
+  let finish!: () => void;
+  history.mockReturnValueOnce(
+    new Promise((complete) => {
+      finish = () => complete([]);
+    }),
+  );
+  jest.useFakeTimers();
+  try {
+    const offer = claimSummaryUpgrade(meeting());
+    await jest.advanceTimersByTimeAsync(1000);
+    await expect(offer).resolves.toBeUndefined();
+    finish();
+    await jest.advanceTimersByTimeAsync(0);
+    expect(claim).not.toHaveBeenCalled();
+    expect(history.mock.calls[0][1]?.aborted).toBe(true);
+    await expect(claimSummaryUpgrade(meeting())).resolves.toEqual({
+      url: expect.any(String),
+      recordedSeconds: 1800,
+    });
+    expect(claim).toHaveBeenCalledTimes(1);
+  } finally {
+    jest.useRealTimers();
+  }
+});
+
+test("expired cooldowns are eligible but a competing atomic claim still suppresses the offer", async () => {
+  readReceipt.mockResolvedValue({
+    interactionId: "summary-upgrade:123456789",
+    interactionKind: "summary_upgrade",
+    createdAt: new Date(0).toISOString(),
+    expiresAt: 0,
+  });
+  claim.mockResolvedValue(false);
+  expect(await claimSummaryUpgrade(meeting())).toBeUndefined();
+  expect(history).toHaveBeenCalledTimes(1);
+  expect(claim).toHaveBeenCalledTimes(1);
+});
 
 test("a late subscription response cannot start billing reads or consume a receipt", async () => {
   const subscription = await resolve("123456789");

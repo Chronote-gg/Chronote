@@ -394,6 +394,20 @@ export async function getStripeWebhookEvent(
   return undefined;
 }
 
+export async function getInteractionReceipt(
+  interactionId: string,
+): Promise<InteractionReceipt | undefined> {
+  const result = await dynamoDbClient.send(
+    new GetItemCommand({
+      TableName: tableName("InteractionReceiptTable"),
+      Key: marshall({ interactionId }),
+    }),
+  );
+  return result.Item
+    ? (unmarshall(result.Item) as InteractionReceipt)
+    : undefined;
+}
+
 export async function tryCreateInteractionReceipt(
   receipt: InteractionReceipt,
   replaceExpiredBefore?: number,
@@ -1809,6 +1823,7 @@ export async function getMeetingsForGuildInRange(
   startTimestamp: string,
   endTimestamp: string,
   limit?: number,
+  signal?: AbortSignal,
 ): Promise<MeetingHistory[]> {
   if (limit !== undefined && limit <= 0) return [];
 
@@ -1816,6 +1831,7 @@ export async function getMeetingsForGuildInRange(
   let lastKey: Record<string, AttributeValue> | undefined;
 
   do {
+    signal?.throwIfAborted();
     const remaining = limit === undefined ? undefined : limit - items.length;
     const params = {
       TableName: tableName("MeetingHistoryTable"),
@@ -1833,7 +1849,8 @@ export async function getMeetingsForGuildInRange(
       ...(remaining !== undefined && remaining > 0 ? { Limit: remaining } : {}),
     };
     const command = new QueryCommand(params);
-    const result = await dynamoDbClient.send(command);
+    const result = await dynamoDbClient.send(command, { abortSignal: signal });
+    signal?.throwIfAborted();
     if (result.Items) {
       items.push(
         ...result.Items.map((item) => unmarshall(item) as MeetingHistory),
