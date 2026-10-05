@@ -396,11 +396,20 @@ export async function getStripeWebhookEvent(
 
 export async function tryCreateInteractionReceipt(
   receipt: InteractionReceipt,
+  replaceExpiredBefore?: number,
 ): Promise<boolean> {
   const params = {
     TableName: tableName("InteractionReceiptTable"),
     Item: marshall(receipt, { removeUndefinedValues: true }),
-    ConditionExpression: "attribute_not_exists(interactionId)",
+    ConditionExpression:
+      replaceExpiredBefore === undefined
+        ? "attribute_not_exists(interactionId)"
+        : "attribute_not_exists(interactionId) OR expiresAt <= :now",
+    ...(replaceExpiredBefore === undefined
+      ? {}
+      : {
+          ExpressionAttributeValues: marshall({ ":now": replaceExpiredBefore }),
+        }),
   };
   const command = new PutItemCommand(params);
   try {

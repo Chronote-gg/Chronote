@@ -66,13 +66,16 @@ test("preserves the server and Basic plan with a durable seven-day claim", async
     url: "https://chronote.test/upgrade/select-server?serverId=123456789&plan=basic",
     recordedSeconds: 1800,
   });
-  expect(claim).toHaveBeenCalledWith({
-    interactionId: "summary-upgrade:123456789",
-    interactionKind: "summary_upgrade",
-    guildId: "123456789",
-    createdAt: new Date(now).toISOString(),
-    expiresAt: Math.floor(now / 1000) + 7 * 24 * 60 * 60,
-  });
+  expect(claim).toHaveBeenCalledWith(
+    {
+      interactionId: "summary-upgrade:123456789",
+      interactionKind: "summary_upgrade",
+      guildId: "123456789",
+      createdAt: new Date(now).toISOString(),
+      expiresAt: Math.floor(now / 1000) + 7 * 24 * 60 * 60,
+    },
+    Math.floor(now / 1000),
+  );
   claim.mockResolvedValue(false);
   expect(await claimSummaryUpgrade(meeting())).toBeUndefined();
   expect(history).toHaveBeenCalledTimes(1);
@@ -161,6 +164,52 @@ test("history failures omit the optional offer without failing meeting delivery"
   const warn = jest.spyOn(console, "warn").mockImplementation(() => {});
   expect(await claimSummaryUpgrade(meeting())).toBeUndefined();
   warn.mockRestore();
+});
+
+test.each(["subscription", "billing", "receipt", "history"])(
+  "omits the optional offer within one second when %s stalls",
+  async (stage) => {
+    jest.useFakeTimers();
+    const stalled = () => new Promise<never>(() => {});
+    const slowLookup = {
+      subscription: resolve,
+      billing: mockGetSubscription,
+      receipt: claim,
+      history,
+    }[stage];
+    slowLookup.mockImplementationOnce(stalled);
+    try {
+      const offer = claimSummaryUpgrade(meeting());
+      await jest.advanceTimersByTimeAsync(1000);
+      await expect(offer).resolves.toBeUndefined();
+      expect(jest.getTimerCount()).toBe(0);
+    } finally {
+      jest.useRealTimers();
+    }
+  },
+);
+
+test("a late subscription response cannot start billing reads or consume a receipt", async () => {
+  const subscription = await resolve("123456789");
+  let finish!: () => void;
+  resolve.mockReturnValueOnce(
+    new Promise((complete) => {
+      finish = () => complete(subscription);
+    }),
+  );
+  jest.useFakeTimers();
+  try {
+    const offer = claimSummaryUpgrade(meeting());
+    await jest.advanceTimersByTimeAsync(1000);
+    await expect(offer).resolves.toBeUndefined();
+    finish();
+    await jest.advanceTimersByTimeAsync(0);
+    expect(mockGetSubscription).not.toHaveBeenCalled();
+    expect(claim).not.toHaveBeenCalled();
+    expect(history).not.toHaveBeenCalled();
+  } finally {
+    jest.useRealTimers();
+  }
 });
 
 test.each([

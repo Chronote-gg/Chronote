@@ -23,7 +23,7 @@ flowchart LR
 
 - Promo codes can be prefilled from the promo landing page and are applied at checkout.
 - The upgrade flow is designed to fast-track intent, so it bypasses the portal billing page and goes straight from server selection to Stripe.
-- Summary nudges use an atomic guild-scoped receipt in the existing InteractionReceipt table, with a seven-day TTL. A failed delivery or delayed TTL deletion may extend the suppression period. Billing or receipt lookup errors omit the optional CTA and do not block meeting delivery. Paid, complimentary and forced tiers, unsuccessful meetings and existing billing pointers are excluded.
+- Summary nudges use an atomic guild-scoped receipt in the existing InteractionReceipt table, with a seven-day expiry. The next claim can atomically replace an expired receipt, independent of TTL cleanup, including in local DynamoDB. A failed delivery consumes that week's reminder. The entire optional lookup has a one-second budget; slow or failed billing/history/receipt lookups omit the CTA and let meeting delivery continue. Requests already in flight may finish, but no further lookup stages start after the deadline. Paid, complimentary and forced tiers, unsuccessful meetings and existing billing pointers are excluded.
 - Recorded time includes retained, non-canceled recorded meetings, including archived meetings, plus the completed current meeting once. It is not a lifetime counter and does not include deleted history. History lookup failures omit the offer; no estimated customer costs are quoted.
 
 ## Planned enhancements

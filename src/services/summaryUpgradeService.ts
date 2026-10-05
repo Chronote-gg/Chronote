@@ -6,6 +6,7 @@ import { listAllMeetingsForGuildService } from "./meetingHistoryService";
 import { resolveGuildSubscription } from "./subscriptionService";
 
 const UPGRADE_COOLDOWN_SECONDS = 7 * 24 * 60 * 60;
+const UPGRADE_LOOKUP_BUDGET_MS = 1000;
 
 function hasReadyRecordedNotes(meeting: MeetingData): boolean {
   return (
@@ -40,8 +41,9 @@ async function getSummaryRecordedSeconds(meeting: MeetingData, endTime: Date) {
   );
 }
 
-export async function claimSummaryUpgrade(
+async function prepareSummaryUpgrade(
   meeting: MeetingData,
+  signal: AbortSignal,
 ): Promise<{ url: string; recordedSeconds: number } | undefined> {
   if (
     meeting.cancelled ||
@@ -55,10 +57,12 @@ export async function claimSummaryUpgrade(
 
   try {
     const subscription = await resolveGuildSubscription(meeting.guildId);
+    signal.throwIfAborted();
     if (subscription.tier !== "free" || subscription.source === "forced") {
       return undefined;
     }
     const stored = await getSubscriptionRepository().get(meeting.guildId);
+    signal.throwIfAborted();
     // Existing billing pointers take the separately guarded transition path.
     if (stored?.stripeSubscriptionId || stored?.stripeCustomerId) {
       return undefined;
@@ -68,15 +72,19 @@ export async function claimSummaryUpgrade(
     url.searchParams.set("serverId", meeting.guildId);
     url.searchParams.set("plan", "basic");
     const now = Date.now();
-    // ponytail: reserve before delivery; failures and delayed TTL cleanup may
-    // suppress a nudge longer than a week. Prefer that to duplicate promotion.
-    const claimed = await tryCreateInteractionReceipt({
-      interactionId: `summary-upgrade:${meeting.guildId}`,
-      interactionKind: "summary_upgrade",
-      guildId: meeting.guildId,
-      createdAt: new Date(now).toISOString(),
-      expiresAt: Math.floor(now / 1000) + UPGRADE_COOLDOWN_SECONDS,
-    });
+    // ponytail: reserve before delivery; failed delivery consumes this week's
+    // reminder. Prefer that to duplicate promotion.
+    const claimed = await tryCreateInteractionReceipt(
+      {
+        interactionId: `summary-upgrade:${meeting.guildId}`,
+        interactionKind: "summary_upgrade",
+        guildId: meeting.guildId,
+        createdAt: new Date(now).toISOString(),
+        expiresAt: Math.floor(now / 1000) + UPGRADE_COOLDOWN_SECONDS,
+      },
+      Math.floor(now / 1000),
+    );
+    signal.throwIfAborted();
     if (!claimed) return undefined;
     return {
       url: url.toString(),
@@ -86,7 +94,27 @@ export async function claimSummaryUpgrade(
       ),
     };
   } catch (error) {
-    console.warn("Could not prepare meeting summary upgrade", error);
+    if (!signal.aborted)
+      console.warn("Could not prepare meeting summary upgrade", error);
     return undefined;
+  }
+}
+
+export async function claimSummaryUpgrade(meeting: MeetingData) {
+  const controller = new AbortController();
+  let timer: NodeJS.Timeout | undefined;
+  const deadline = new Promise<undefined>((resolve) => {
+    timer = setTimeout(() => {
+      controller.abort();
+      resolve(undefined);
+    }, UPGRADE_LOOKUP_BUDGET_MS);
+  });
+  try {
+    return await Promise.race([
+      prepareSummaryUpgrade(meeting, controller.signal),
+      deadline,
+    ]);
+  } finally {
+    clearTimeout(timer);
   }
 }
