@@ -73,7 +73,7 @@ These checks run before PR merge and deployment. Use `yarn run check` for the fu
 - Build (TypeScript + Vite) validates type safety and production bundles. Commands: `yarn build` (tsc), `yarn build:web` (vite build), and `yarn build:all` (both). Docs: https://www.typescriptlang.org/docs/handbook/compiler-options.html and https://vite.dev/guide/
 - Docs build (Docusaurus) validates docs compilation and links. Command: `yarn docs:check`.
 - E2E tests (Playwright) validate critical user flows. Command: `yarn test:e2e`. Docs: https://playwright.dev/docs/running-tests
-- Visual regression (Playwright screenshots) flags UI changes. Commands: `yarn test:visual` and `yarn test:visual:update`. Details: `docs/visual-regression.md`.
+- Visual regression (Playwright screenshots) fails its PR check on visual test failures. Upgrade and post-install welcome pages include desktop, phone and wide-screen baselines. Review screenshots before updating them. Commands: `yarn test:visual` and `yarn test:visual:update`. Details: `docs/visual-regression.md`.
 - Code stats and complexity (scc + lizard) keep size and complexity visible. Command: `yarn code:stats`. Use `.sccignore` to exclude paths from scc output. `whitelizard.txt` can suppress known complexity offenders. Docs: https://github.com/boyter/scc and https://github.com/terryyin/lizard
 - Prompt sync (Langfuse) keeps repo prompt files aligned with Langfuse. Command: `yarn prompts:check`.
 - LLM connection sync (Langfuse) keeps LLM connection YAML aligned with Langfuse. Command: `yarn llm-connections:check`.

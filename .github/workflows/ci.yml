@@ -68,7 +68,6 @@ jobs:
     needs: [pr-changes]
     if: ${{ always() && github.event_name == 'pull_request' && (needs.pr-changes.result != 'success' || needs.pr-changes.outputs.visual == 'true') }}
     runs-on: blacksmith-4vcpu-windows-2025
-    continue-on-error: true
     permissions:
       contents: write
       pull-requests: write
@@ -244,6 +243,6 @@ jobs:
         run: |
           gh pr comment "$PR_NUMBER" --body-file visual-summary.md
 
-      - name: Fail on visual diffs
-        if: steps.visual-diff.outputs.has_diffs == 'true'
+      - name: Fail on visual test failures
+        if: always() && steps.visual-tests.outcome != 'success'
         run: exit 1

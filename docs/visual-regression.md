@@ -5,8 +5,10 @@ against baselines to detect unintended UI changes.
 The visual suite captures two snapshots for each view. Component-level crops
 should live in Storybook instead.
 The viewport snapshot shows the exact first-load view at the Playwright
-viewport size with no layout overrides. The full snapshot enables visual mode
-so headers, footers, and scroll areas expand to show all content.
+viewport size with no layout overrides. Most full snapshots enable visual mode
+so headers, footers, and scroll areas expand to show all content. The new mobile
+and wide marketing snapshots use the normal page layout for both captures,
+with `fullPage` enabled for the full image.
 Visual mode is toggled with query parameters. Use `?visual=1` (or `?screenshot=1`)
 to enable it and `?visual=0` to disable it.
 
@@ -17,6 +19,12 @@ to enable it and `?visual=0` to disable it.
 
 The visual tests run in mock mode, use fixed mock timestamps, and disable
 animations for stable snapshots.
+
+The post-install welcome (`/join`) and Free-server upgrade comparison
+(`/upgrade/select-server`) are covered at 1280x720, 390x844 and 1920x1080.
+Their checks also assert key content, upgrade selection and no horizontal
+document overflow. These baselines record the current UI; passing a pixel
+comparison does not establish that its design is good.
 
 ## Handling nondeterministic UI
 
@@ -36,7 +44,11 @@ filenames and diffs.
 
 ## CI behavior
 
-- PRs run the Visual Regression job.
+- PRs with visual-relevant changes run the Visual Regression job.
+- Pixel differences and any visual test failure fail the check, including
+  missing baselines and runs that never reach screenshot comparison. Reports
+  and previews are still attempted after a failure. Requiring this check for
+  merging is a separate repository branch-protection setting.
 - The job checks out base branch snapshots, runs visual tests on the PR, and
   uploads artifacts:
   - `playwright-report` HTML report
@@ -52,5 +64,7 @@ filenames and diffs.
 
 - Add a new `@visual` test in `test/e2e/visual.spec.ts`.
 - Run `yarn test:visual:update`.
+- Inspect each new or changed screenshot before accepting it. Baseline updates
+  are deliberate review decisions, not an automatic response to a failing check.
 - Commit the new snapshots in `test/e2e/visual.spec.ts-snapshots`.
 - Expect two snapshots per view, with `-viewport` and `-full` suffixes.

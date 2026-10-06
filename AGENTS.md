@@ -225,6 +225,7 @@ Optional Windows helper (prints loaded env, supports `-Mock` / `-SkipDocker`):
 - CI runs the same set as `check:ci` (see `.github/workflows/ci.yml` and `.github/workflows/ci-core.yml`).
 - When running checks locally, avoid docker builds unless explicitly requested.
 - Visual regression baselines: update with `yarn test:visual:update`.
+- Review baseline changes before committing. The PR Visual Regression check fails on visual test failures; upgrade and post-install welcome snapshots cover desktop, mobile and wide screens. Branch protection separately controls whether that check is required for merge.
 
 ### Why each check exists
 

@@ -162,6 +162,7 @@ This file provides Copilot review context. AGENTS.md remains the source of truth
 - CI runs the same set as `check:ci` (see `.github/workflows/ci.yml`).
 - When running checks locally, avoid docker builds unless explicitly requested.
 - Visual regression baselines: update with `yarn test:visual:update`.
+- Review screenshot changes before accepting baselines. Visual test failures fail the PR Visual Regression check; screenshot coverage includes desktop, mobile and wide upgrade/welcome pages.
 
 Why each check exists:
 
