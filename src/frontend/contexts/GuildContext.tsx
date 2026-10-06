@@ -154,7 +154,9 @@ export function GuildProvider({ children }: { children: React.ReactNode }) {
         if (
           id &&
           (authState !== "authenticated" ||
-            !guilds.some((guild) => guild.id === id))
+            (!error &&
+              guilds.length > 0 &&
+              !guilds.some((guild) => guild.id === id)))
         ) {
           return;
         }
