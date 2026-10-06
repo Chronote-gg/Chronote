@@ -39,15 +39,17 @@ describe("upgrade pages", () => {
     });
   });
 
-  test("upgrade forwards directly to purchase", () => {
+  test("upgrade renders purchase content on its indexable route", () => {
     authState.state = "unauthenticated";
     setRouteSearch({ promo: "SAVE20", canceled: true });
     renderWithMantine(<Upgrade />);
 
-    expect(screen.getByTestId("navigate")).toHaveAttribute(
-      "data-to",
-      "/upgrade/select-server",
-    );
+    expect(
+      screen.getByText("More time for your meetings."),
+    ).toBeInTheDocument();
+    expect(screen.queryByTestId("navigate")).toBeNull();
+    const login = screen.getByRole("link", { name: "Connect Discord" });
+    expect(login.getAttribute("href")).toContain("promo%3DSAVE20");
   });
 
   test("upgrade success shows back to homepage for signed-out users", () => {

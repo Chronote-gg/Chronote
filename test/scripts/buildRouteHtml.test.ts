@@ -90,6 +90,16 @@ describe("build-route-html", () => {
     expect(readRoute("join")).toContain("/index.tsx");
   });
 
+  it("gives both purchase entry routes their own metadata", () => {
+    expect(run(indexHtml).status).toBe(0);
+    for (const key of ["upgrade", "upgrade/select-server"]) {
+      expect(readRoute(key)).toContain(
+        `<link rel="canonical" href="${config.origin}/${key}" />`,
+      );
+      expect(readRoute(key)).toContain("More time for your meetings.");
+    }
+  });
+
   it("keeps homepage-only application schema off unrelated public routes", () => {
     run(indexHtml);
 

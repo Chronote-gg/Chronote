@@ -201,5 +201,8 @@ export function buildChatTtsMonthlyLimitTextOnly(
     compedTier?: "basic" | "pro" | null;
   } = {},
 ): string {
-  return buildUpgradeTextOnly(buildChatTtsMonthlyLimitMessage(status, options));
+  return buildUpgradeTextOnly(
+    buildChatTtsMonthlyLimitMessage(status, options),
+    "discord_limit",
+  );
 }

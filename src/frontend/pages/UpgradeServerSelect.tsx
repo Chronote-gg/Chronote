@@ -52,8 +52,12 @@ const FEATURES = {
   ],
 };
 
-export default function UpgradeServerSelect() {
-  const navigate = useNavigate({ from: "/upgrade/select-server" });
+export default function UpgradeServerSelect({
+  from = "/upgrade/select-server",
+}: {
+  from?: "/upgrade" | "/upgrade/select-server";
+}) {
+  const navigate = useNavigate({ from });
   const search = useSearch({ strict: false });
   const { state: authState, loading: authLoading } = useAuth();
   const {

@@ -364,12 +364,7 @@ async function capturePaidInvoiceOutcome(
     reconciled.tier === "free"
   )
     return;
-  const effective = await resolveGuildSubscription(guildId);
-  if (effective.billingSource !== "stripe" || effective.status !== "active")
-    return;
   const { subscription, tier } = reconciled;
-  if (readMetadataValue(subscription.metadata, "analytics_opt_out") === "true")
-    return;
   await capturePaidInvoiceOnce(invoice, guildId, subscription, tier);
 }
 
@@ -387,6 +382,14 @@ async function capturePaidInvoiceOnce(
   const billingKind = billingKinds[invoice.billing_reason ?? ""] ?? "unknown";
   const interval = subscription.items.data[0]?.price.recurring?.interval;
   try {
+    // Qualification is analytics-only; a lookup outage must not retry paid billing.
+    const effective = await resolveGuildSubscription(guildId);
+    if (effective.billingSource !== "stripe" || effective.status !== "active")
+      return;
+    if (
+      readMetadataValue(subscription.metadata, "analytics_opt_out") === "true"
+    )
+      return;
     // Reuse webhook receipts for one canonical outcome per invoice, including
     // retries delivered under a different Stripe event id (30-day retention).
     const now = Date.now();

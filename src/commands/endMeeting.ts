@@ -817,6 +817,7 @@ async function maybeSendMinutesLimitNotice(meeting: MeetingData) {
     await meeting.textChannel.send(
       buildUpgradeTextOnly(
         `You've reached the weekly minutes limit for this plan. ${nextLabel}`,
+        "discord_limit",
       ),
     );
     return;
@@ -826,6 +827,7 @@ async function maybeSendMinutesLimitNotice(meeting: MeetingData) {
     await meeting.textChannel.send(
       buildUpgradeTextOnly(
         `Heads up: about ${remainingMinutes} minute(s) left in the weekly free-tier window.`,
+        "discord_limit",
       ),
     );
   }

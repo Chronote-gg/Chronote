@@ -18,6 +18,7 @@ import { getSubscriptionRepository } from "../../src/repositories/subscriptionRe
 import { resetMockStore } from "../../src/repositories/mockStore";
 import { config } from "../../src/services/configService";
 import { createManualEntitlementGrant } from "../../src/services/entitlementService";
+import * as entitlementService from "../../src/services/entitlementService";
 import { clearGuildSubscriptionCache } from "../../src/services/subscriptionService";
 import type { StripeClient, StripeEvent } from "../../src/types/stripe";
 import { captureEvent } from "../../src/services/analyticsService";
@@ -291,6 +292,50 @@ describe("billing webhook routes", () => {
       }
     },
   );
+
+  test("acknowledges saved paid access when analytics qualification fails", async () => {
+    const event = {
+      ...failedInvoiceEvent,
+      id: "evt_paid_qualification_failure",
+      type: "invoice.payment_succeeded",
+      data: {
+        object: {
+          ...failedInvoiceEvent.data.object,
+          id: "in_paid_qualification_failure",
+          status: "paid",
+          amount_paid: 1000,
+        },
+      },
+    } as unknown as StripeEvent;
+    const qualification = jest
+      .spyOn(entitlementService, "getBestActiveEntitlementGrantForGuild")
+      .mockRejectedValueOnce(new Error("analytics qualification unavailable"));
+    const { server, baseUrl } = createServer(
+      createStripe(
+        event,
+        jest.fn(async () => activeStripeSubscription),
+      ),
+    );
+    try {
+      expect((await postWebhook(baseUrl)).statusCode).toBe(200);
+      expect(await getSubscriptionRepository().get(guildId)).toMatchObject({
+        status: "active",
+        tier: "basic",
+      });
+      expect(await getStripeWebhookRepository().get(event.id)).toBeDefined();
+      expect(
+        await getStripeWebhookRepository().get(
+          "paid_invoice:in_paid_qualification_failure",
+        ),
+      ).toBeUndefined();
+      expect(captureEvent).not.toHaveBeenCalled();
+      expect((await postWebhook(baseUrl)).statusCode).toBe(200);
+      expect(captureEvent).not.toHaveBeenCalled();
+    } finally {
+      qualification.mockRestore();
+      await closeServer(server);
+    }
+  });
 
   test.each(["trialing", "past_due", "zero", "write_failed", "opt_out"])(
     "does not claim paid access for %s",

@@ -21,6 +21,7 @@ import {
   releaseChatTtsMessageUsageReservation,
   reserveChatTtsMessageUsage,
 } from "../chatTtsUsageService";
+import { buildUpgradeTextOnly } from "../../utils/upgradePrompt";
 
 describe("chatTtsUsageService", () => {
   beforeEach(() => {
@@ -140,7 +141,10 @@ describe("chatTtsUsageService", () => {
     expect(text).toContain(
       "This server has spoken 1,000 chat-to-speech messages out loud with Chronote this month.",
     );
-    expect(text).toContain("Upgrade: https://chronote.gg/upgrade");
+    expect(buildUpgradeTextOnly).toHaveBeenCalledWith(
+      expect.stringContaining("1,000 chat-to-speech messages"),
+      "discord_limit",
+    );
   });
 
   it("formats final accepted message counts as ordinals", () => {

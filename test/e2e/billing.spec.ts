@@ -98,6 +98,51 @@ for (const tier of ["basic", "pro"] as const) {
   });
 }
 
+test("indexable purchase route keeps checkout pending during search updates", async ({
+  page,
+}) => {
+  await useFreeBilling(page);
+  let requests = 0;
+  let release!: () => void;
+  const pending = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  await page.route("**/trpc/billing.checkout*", async (route) => {
+    requests++;
+    await pending;
+    await route.fulfill({
+      json: [
+        {
+          result: {
+            data: {
+              url: `/upgrade/success?serverId=${mockGuilds.ddm.id}&plan=basic&interval=month`,
+            },
+          },
+        },
+      ],
+    });
+  });
+  await page.goto(`/upgrade?serverId=${mockGuilds.ddm.id}&plan=pro`);
+  const basic = page.getByRole("button", { name: "Continue with Basic" });
+  await expect(basic).toBeEnabled();
+  try {
+    await basic.click();
+    await expect.poll(() => requests).toBe(1);
+    await expect
+      .poll(() => defaultParseSearch(new URL(page.url()).search).plan)
+      .toBe("basic");
+    expect(new URL(page.url()).pathname).toBe("/upgrade");
+    await expect(basic).toBeDisabled();
+    await expect(
+      page.getByRole("button", { name: "Continue with Pro" }),
+    ).toBeDisabled();
+  } finally {
+    release();
+  }
+  await expect(page).toHaveURL(/\/upgrade\/success/);
+  expect(requests).toBe(1);
+});
+
 test("purchase recovers unavailable server without dropping intent", async ({
   page,
 }) => {
@@ -105,7 +150,7 @@ test("purchase recovers unavailable server without dropping intent", async ({
   await page.goto(
     "/upgrade?serverId=unavailable&plan=pro&interval=year&promo=SAVE20&canceled=true",
   );
-  await expect(page).toHaveURL(/\/upgrade\/select-server/);
+  expect(new URL(page.url()).pathname).toBe("/upgrade");
   await expect(page.getByText("That server is unavailable")).toBeVisible();
   await expect(
     page.getByRole("button", { name: "Continue with Pro" }),
