@@ -9,6 +9,11 @@ const visualModes = ["viewport", "full"] as const;
 type VisualMode = (typeof visualModes)[number];
 const TARGET_SCREENSHOT_MAX_DIFF_PIXELS = 200;
 const PAGE_SCREENSHOT_MAX_DIFF_PIXELS = 2_000;
+const marketingViewports = [
+  { name: "desktop", width: 1280, height: 720 },
+  { name: "mobile", width: 390, height: 844 },
+  { name: "wide", width: 1920, height: 1080 },
+] as const;
 
 const withVisualMode = (path: string, mode: VisualMode): string => {
   const url = new URL(path, "http://localhost");
@@ -188,13 +193,31 @@ test.describe("visual regression", () => {
     }
   });
 
-  test("join page @visual", async ({ joinPage, page }) => {
-    for (const mode of visualModes) {
-      await page.goto(withVisualMode("/join", mode));
-      await expect(joinPage.hero()).toBeVisible();
-      await expectVisualScreenshot(page, "join", mode);
-    }
-  });
+  for (const viewport of marketingViewports) {
+    test(`join page ${viewport.name} @visual`, async ({ joinPage, page }) => {
+      await page.setViewportSize(viewport);
+      for (const mode of visualModes) {
+        // Capture new responsive baselines with the customer-facing layout.
+        const layoutMode = viewport.name === "desktop" ? mode : "viewport";
+        await page.goto(withVisualMode("/join", layoutMode));
+        await expect(joinPage.hero()).toBeVisible();
+        await expect(joinPage.ctaDiscord()).toBeVisible();
+        await expect(
+          page.getByText("/startmeeting", { exact: true }),
+        ).toBeVisible();
+        expect(
+          await page.evaluate(
+            () => document.documentElement.scrollWidth <= window.innerWidth,
+          ),
+        ).toBe(true);
+        await expectVisualScreenshot(
+          page,
+          viewport.name === "desktop" ? "join" : `join-${viewport.name}`,
+          mode,
+        );
+      }
+    });
+  }
 
   test("server select @visual", async ({ serverSelectPage, page }) => {
     for (const mode of visualModes) {
@@ -402,84 +425,114 @@ test.describe("visual regression", () => {
     }
   });
 
-  test("upgrade plan selection (free tier) @visual", async ({ page }) => {
-    // The Playwright mock backend sets FORCE_TIER=pro, which routes the
-    // upgrade page to the "already on Pro" surface and hides the plan
-    // picker. Intercept billing.me here so billing data reports the free
-    // tier, exercising the Basic/Pro plan cards and the Continue-to-Stripe
-    // CTA. This is the state most users actually see on /upgrade/select-server.
-    await page.route("**/trpc/**", async (route) => {
-      const url = new URL(route.request().url());
-      const marker = "/trpc/";
-      const markerIndex = url.pathname.indexOf(marker);
-      if (markerIndex === -1) {
-        await route.continue();
-        return;
-      }
+  for (const viewport of marketingViewports) {
+    test(`upgrade plan selection (free tier) ${viewport.name} @visual`, async ({
+      page,
+    }) => {
+      await page.setViewportSize(viewport);
+      // The Playwright mock backend sets FORCE_TIER=pro, which routes the
+      // upgrade page to the "already on Pro" surface and hides the plan
+      // picker. Intercept billing.me here so billing data reports the free
+      // tier, exercising the Basic/Pro plan cards and the Continue-to-Stripe
+      // CTA. This is the state most users actually see on /upgrade/select-server.
+      await page.route("**/trpc/**", async (route) => {
+        const url = new URL(route.request().url());
+        const marker = "/trpc/";
+        const markerIndex = url.pathname.indexOf(marker);
+        if (markerIndex === -1) {
+          await route.continue();
+          return;
+        }
 
-      const paths = decodeURIComponent(
-        url.pathname.slice(markerIndex + marker.length),
-      ).split(",");
-      if (!paths.some((path) => path.startsWith("billing.me"))) {
-        await route.continue();
-        return;
-      }
+        const paths = decodeURIComponent(
+          url.pathname.slice(markerIndex + marker.length),
+        ).split(",");
+        if (!paths.some((path) => path.startsWith("billing.me"))) {
+          await route.continue();
+          return;
+        }
 
-      const response = await route.fetch();
-      const contentType = response.headers()["content-type"] ?? "";
-      if (!contentType.includes("application/json")) {
-        await route.fulfill({ response });
-        return;
-      }
+        const response = await route.fetch();
+        const contentType = response.headers()["content-type"] ?? "";
+        if (!contentType.includes("application/json")) {
+          await route.fulfill({ response });
+          return;
+        }
 
-      const body: unknown = await response.json();
-      const entries = Array.isArray(body) ? body : [body];
-      const nextEntries = entries.map((entry, index) => {
-        if (!paths[index]?.startsWith("billing.me")) return entry;
-        return replaceTrpcData(entry, {
-          billingEnabled: true,
-          tier: "free",
-          status: "free",
-          nextBillingDate: null,
-          usage: null,
+        const body: unknown = await response.json();
+        const entries = Array.isArray(body) ? body : [body];
+        const nextEntries = entries.map((entry, index) => {
+          if (!paths[index]?.startsWith("billing.me")) return entry;
+          return replaceTrpcData(entry, {
+            billingEnabled: true,
+            tier: "free",
+            status: "free",
+            nextBillingDate: null,
+            usage: null,
+          });
+        });
+        const headers = {
+          ...response.headers(),
+          "content-type": "application/json",
+        };
+        delete headers["content-length"];
+
+        await route.fulfill({
+          status: 200,
+          headers,
+          body: JSON.stringify(
+            Array.isArray(body) ? nextEntries : nextEntries[0],
+          ),
         });
       });
-      const headers = {
-        ...response.headers(),
-        "content-type": "application/json",
-      };
-      delete headers["content-length"];
 
-      await route.fulfill({
-        status: 200,
-        headers,
-        body: JSON.stringify(
-          Array.isArray(body) ? nextEntries : nextEntries[0],
-        ),
-      });
+      for (const mode of visualModes) {
+        const layoutMode = viewport.name === "desktop" ? mode : "viewport";
+        await page.goto(
+          withVisualMode("/upgrade/select-server?promo=SAVE20", layoutMode),
+        );
+        const main = page.locator("main");
+        await expect(main).toBeVisible();
+        // Select a managed server before comparing its upgrade plans.
+        await page
+          .getByTestId("upgrade-server-card")
+          .filter({ hasText: mockGuilds.ddm.name })
+          .getByTestId("upgrade-server-open")
+          .click();
+        // Wait for the Free server's Basic/Pro comparison to finish loading.
+        await expect(page.getByText("Recommended")).toBeVisible();
+        await expect(
+          page.getByRole("heading", { name: "Basic", exact: true }),
+        ).toBeVisible();
+        await expect(
+          page.getByRole("heading", { name: "Pro", exact: true }),
+        ).toBeVisible();
+        await expect(
+          page.getByRole("button", {
+            name: "Continue to Stripe (Basic)",
+            exact: true,
+          }),
+        ).toBeEnabled();
+        await expect(
+          page
+            .getByTestId("upgrade-server-card")
+            .filter({ hasText: mockGuilds.ddm.name }),
+        ).toHaveAttribute("data-selected", "true");
+        expect(
+          await page.evaluate(
+            () => document.documentElement.scrollWidth <= window.innerWidth,
+          ),
+        ).toBe(true);
+        await expectVisualScreenshot(
+          page,
+          viewport.name === "desktop"
+            ? "upgrade-select-free"
+            : `upgrade-select-free-${viewport.name}`,
+          mode,
+        );
+      }
     });
-
-    for (const mode of visualModes) {
-      await page.goto(
-        withVisualMode("/upgrade/select-server?promo=SAVE20", mode),
-      );
-      const main = page.locator("main");
-      await expect(main).toBeVisible();
-      // Pick the DDM server through the UI so URL state and GuildContext
-      // converge naturally (passing serverId in the URL while another guild
-      // is selected in context causes a sync loop on this page).
-      await page
-        .getByTestId("upgrade-server-card")
-        .filter({ hasText: mockGuilds.ddm.name })
-        .getByTestId("upgrade-server-open")
-        .click();
-      // Wait for the plan cards to render so the snapshot is deterministic.
-      // Recommended is always shown on the Pro card when the plan picker is
-      // visible, regardless of which tier is selected.
-      await expect(page.getByText("Recommended")).toBeVisible();
-      await expectVisualScreenshot(page, "upgrade-select-free", mode);
-    }
-  });
+  }
 
   test("settings page @visual", async ({
     serverSelectPage,

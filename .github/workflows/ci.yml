@@ -68,7 +68,6 @@ jobs:
     needs: [pr-changes]
     if: ${{ always() && github.event_name == 'pull_request' && (needs.pr-changes.result != 'success' || needs.pr-changes.outputs.visual == 'true') }}
     runs-on: blacksmith-4vcpu-windows-2025
-    continue-on-error: true
     permissions:
       contents: write
       pull-requests: write
@@ -156,6 +155,7 @@ jobs:
 
       - name: Publish visual previews
         id: visual-preview
+        continue-on-error: true
         if: always() && github.event.pull_request.head.repo.fork == false && steps.visual-diff.outputs.has_diffs == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
@@ -218,11 +218,11 @@ jobs:
           node scripts/visual/summarize.js --results test-results --output visual-summary.md --run-url "$RUN_URL" --snapshot-changes snapshot-changes.txt --preview-base-url "$VISUAL_PREVIEW_BASE_URL" --head-image-base-url "$HEAD_IMAGE_BASE_URL"
 
       - name: Append visual failure note
-        if: always() && steps.visual-tests.outcome != 'success' && steps.visual-diff.outputs.has_diffs != 'true' && steps.snapshot-changes.outputs.has_snapshot_changes != 'true'
+        if: always() && steps.visual-tests.outcome != 'success'
         run: |
           cat >> visual-summary.md <<'EOF'
 
-          Visual run failed before completion. No diff results were produced; see workflow logs.
+          Visual tests failed or did not run. Review any diffs above and the workflow logs for failures.
           EOF
 
       - name: Upload visual artifacts
@@ -236,7 +236,7 @@ jobs:
             visual-summary.md
 
       - name: Comment on PR
-        if: always() && github.event.pull_request.head.repo.fork == false && (steps.visual-tests.outcome == 'success' || steps.visual-diff.outputs.has_diffs == 'true' || steps.snapshot-changes.outputs.has_snapshot_changes == 'true')
+        if: always() && github.event.pull_request.head.repo.fork == false
         continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
@@ -244,6 +244,6 @@ jobs:
         run: |
           gh pr comment "$PR_NUMBER" --body-file visual-summary.md
 
-      - name: Fail on visual diffs
-        if: steps.visual-diff.outputs.has_diffs == 'true'
+      - name: Fail on visual test failures
+        if: always() && steps.visual-tests.outcome != 'success'
         run: exit 1
