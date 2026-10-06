@@ -49,6 +49,9 @@ filenames and diffs.
   missing baselines and runs that never reach screenshot comparison. Reports
   and previews are still attempted after a failure. Requiring this check for
   merging is a separate repository branch-protection setting.
+- Preview publishing is optional, so a shared preview-branch push conflict
+  does not fail a passing screenshot run. Failed runs are identified in the
+  report even when the PR also contains committed baseline updates.
 - The job checks out base branch snapshots, runs visual tests on the PR, and
   uploads artifacts:
   - `playwright-report` HTML report
