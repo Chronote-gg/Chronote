@@ -151,6 +151,13 @@ export function GuildProvider({ children }: { children: React.ReactNode }) {
       guilds,
       selectedGuildId,
       setSelectedGuildId: (id: string | null) => {
+        if (
+          id &&
+          (authState !== "authenticated" ||
+            !guilds.some((guild) => guild.id === id))
+        ) {
+          return;
+        }
         setSelectedGuildId(id);
         storeGuild(id);
       },
@@ -160,7 +167,7 @@ export function GuildProvider({ children }: { children: React.ReactNode }) {
         await guildQuery.refetch();
       },
     }),
-    [guilds, selectedGuildId, loading, error, guildQuery],
+    [authState, guilds, selectedGuildId, loading, error, guildQuery],
   );
 
   return (

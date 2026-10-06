@@ -23,10 +23,12 @@ function UpgradePreview({
   path = "/upgrade/select-server?serverId=example",
   tier = "free",
   colorScheme = "dark",
+  signedIn = true,
 }: {
   path?: string;
   tier?: "free" | "basic" | "pro";
   colorScheme?: "light" | "dark";
+  signedIn?: boolean;
 }) {
   const { setColorScheme } = useMantineColorScheme();
   useEffect(() => setColorScheme(colorScheme), [colorScheme, setColorScheme]);
@@ -46,11 +48,13 @@ function UpgradePreview({
           url: "/trpc",
           fetch: async (url) => {
             const data: Record<string, unknown> = {
-              "auth.me": {
-                id: "story-user",
-                username: "Preview",
-                avatar: null,
-              },
+              "auth.me": signedIn
+                ? {
+                    id: "story-user",
+                    username: "Preview",
+                    avatar: null,
+                  }
+                : null,
               "servers.listEligible": {
                 guilds: [
                   { id: "example", name: "Engineering HQ", canManage: true },
@@ -197,6 +201,36 @@ export const NewBuyer: Story = {
 export const NewBuyerLight: Story = {
   ...NewBuyer,
   args: { colorScheme: "light" },
+};
+export const SignedOutUpgradeLink: Story = {
+  args: {
+    signedIn: false,
+    path: "/upgrade/select-server?serverId=example&plan=basic",
+  },
+  play: async ({ canvasElement }) => {
+    const connect = await within(canvasElement).findByRole("link", {
+      name: "Connect Discord",
+    });
+    await expect(connect).toBeVisible();
+    const redirect = new URL(
+      connect.getAttribute("href")!,
+      window.location.origin,
+    ).searchParams.get("redirect");
+    const returnUrl = new URL(redirect!);
+    await expect(returnUrl.pathname).toBe("/upgrade/select-server");
+    await expect(returnUrl.searchParams.get("serverId")).toBe("example");
+    await expect(returnUrl.searchParams.get("plan")).toBe("basic");
+  },
+};
+export const UnavailableServerUpgradeLink: Story = {
+  args: { path: "/upgrade/select-server?serverId=unavailable&plan=basic" },
+  play: async ({ canvasElement }) => {
+    await expect(
+      await within(canvasElement).findByRole("button", {
+        name: "Select server",
+      }),
+    ).toBeVisible();
+  },
 };
 export const NewBuyerNarrow: Story = {
   play: async ({ canvasElement }) => {
