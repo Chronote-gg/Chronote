@@ -1,26 +1,184 @@
 diff --git a/node_modules/@discordjs/voice/dist/index.js b/node_modules/@discordjs/voice/dist/index.js
 --- a/node_modules/@discordjs/voice/dist/index.js
 +++ b/node_modules/@discordjs/voice/dist/index.js
-@@ -2104,7 +2104,8 @@
+@@ -945,12 +945,16 @@
+    * @param userId - The user id that sent the packet
+    * @returns The decrypted packet, or `null` if the decryption failed but should be ignored
+    */
+-  decrypt(packet, userId) {
++  decrypt(packet, userId, diagnostics) {
+     const canDecrypt = this.session?.ready && (this.protocolVersion !== 0 || this.session?.canPassthrough(userId));
+-    if (packet.equals(SILENCE_FRAME) || !canDecrypt || !this.session) return packet;
++    if (packet.equals(SILENCE_FRAME) || !canDecrypt || !this.session) {
++      if (diagnostics) diagnostics.daveDecryptDecision = packet.equals(SILENCE_FRAME) ? "silence" : !this.session?.ready ? "not-ready" : "protocol-passthrough";
++      return packet;
++    }
+     try {
+       const buffer = this.session.decrypt(userId, import_davey.default.MediaType.AUDIO, packet);
+       this.consecutiveFailures = 0;
++      if (diagnostics) diagnostics.daveDecryptDecision = buffer.equals(packet) ? "native-decrypt-unchanged" : "native-decrypt-returned";
+       return buffer;
+     } catch (error) {
+       if (!this.reinitializing && this.pendingTransitions.size === 0) {
+@@ -966,6 +970,7 @@
+         this.emit("debug", `Failed to decrypt a packet (${this.pendingTransitions.size} pending transition[s])`);
+       }
+     }
++    if (diagnostics) diagnostics.daveDecryptDecision = "dropped";
+     return null;
+   }
+   /**
+@@ -2027,6 +2032,10 @@
+   speaking;
+   constructor(voiceConnection) {
+     this.voiceConnection = voiceConnection;
++    // Metadata follows the output Buffer through readable and decoder queues.
++    this.packetDiagnostics = new WeakMap();
++    this.lastDaveTransitionAtMs = null;
++    voiceConnection.on("transitioned", () => { this.lastDaveTransitionAtMs = Date.now(); });
+     this.ssrcMap = new SSRCMap();
+     this.speaking = new SpeakingMap();
+     this.subscriptions = /* @__PURE__ */ new Map();
+@@ -2104,10 +2113,25 @@
        const headerExtensionLength = buffer.subarray(14).readUInt16BE();
        packet = packet.subarray(4 * headerExtensionLength);
      }
 -    if (this.voiceConnection.state.status === "ready" /* Ready */ && (this.voiceConnection.state.networking.state.code === 4 /* Ready */ || this.voiceConnection.state.networking.state.code === 5 /* Resuming */)) {
+-      const daveSession = this.voiceConnection.state.networking.state.dave;
+-      if (daveSession) packet = daveSession.decrypt(packet, userId);
+-    }
++    const connectionState = this.voiceConnection.state;
++    const networkState = connectionState.networking?.state;
++    const daveSession = networkState?.dave;
++    const diagnostics = {
++      connectionStatus: connectionState.status,
++      networkingCode: networkState?.code ?? null,
++      daveSessionPresent: Boolean(daveSession),
++      daveNativeSessionPresent: Boolean(daveSession?.session),
++      daveReady: daveSession?.session?.ready ?? null,
++      daveProtocolVersion: daveSession?.protocolVersion ?? null,
++      daveDecryptDecision: "receiver-bypass",
++      daveTransitionAgoMs: this.lastDaveTransitionAtMs === null ? null : Math.max(0, Date.now() - this.lastDaveTransitionAtMs)
++    };
 +    // VoiceConnection becomes Connecting while UDP and DAVE remain active during resume.
 +    if ((this.voiceConnection.state.status === "ready" /* Ready */ || this.voiceConnection.state.status === "connecting" /* Connecting */) && (this.voiceConnection.state.networking.state.code === 4 /* Ready */ || this.voiceConnection.state.networking.state.code === 5 /* Resuming */)) {
-       const daveSession = this.voiceConnection.state.networking.state.dave;
-       if (daveSession) packet = daveSession.decrypt(packet, userId);
-     }
++      diagnostics.daveDecryptDecision = "no-session";
++      if (daveSession) packet = daveSession.decrypt(packet, userId, diagnostics);
++    }
++    if (packet) this.packetDiagnostics.set(packet, Object.freeze(diagnostics));
+     return packet;
+   }
+   /**
 diff --git a/node_modules/@discordjs/voice/dist/index.mjs b/node_modules/@discordjs/voice/dist/index.mjs
 --- a/node_modules/@discordjs/voice/dist/index.mjs
 +++ b/node_modules/@discordjs/voice/dist/index.mjs
-@@ -2044,7 +2044,8 @@
+@@ -885,12 +885,16 @@
+    * @param userId - The user id that sent the packet
+    * @returns The decrypted packet, or `null` if the decryption failed but should be ignored
+    */
+-  decrypt(packet, userId) {
++  decrypt(packet, userId, diagnostics) {
+     const canDecrypt = this.session?.ready && (this.protocolVersion !== 0 || this.session?.canPassthrough(userId));
+-    if (packet.equals(SILENCE_FRAME) || !canDecrypt || !this.session) return packet;
++    if (packet.equals(SILENCE_FRAME) || !canDecrypt || !this.session) {
++      if (diagnostics) diagnostics.daveDecryptDecision = packet.equals(SILENCE_FRAME) ? "silence" : !this.session?.ready ? "not-ready" : "protocol-passthrough";
++      return packet;
++    }
+     try {
+       const buffer = this.session.decrypt(userId, Davey.MediaType.AUDIO, packet);
+       this.consecutiveFailures = 0;
++      if (diagnostics) diagnostics.daveDecryptDecision = buffer.equals(packet) ? "native-decrypt-unchanged" : "native-decrypt-returned";
+       return buffer;
+     } catch (error) {
+       if (!this.reinitializing && this.pendingTransitions.size === 0) {
+@@ -906,6 +910,7 @@
+         this.emit("debug", `Failed to decrypt a packet (${this.pendingTransitions.size} pending transition[s])`);
+       }
+     }
++    if (diagnostics) diagnostics.daveDecryptDecision = "dropped";
+     return null;
+   }
+   /**
+@@ -1967,6 +1972,10 @@
+   speaking;
+   constructor(voiceConnection) {
+     this.voiceConnection = voiceConnection;
++    // Metadata follows the output Buffer through readable and decoder queues.
++    this.packetDiagnostics = new WeakMap();
++    this.lastDaveTransitionAtMs = null;
++    voiceConnection.on("transitioned", () => { this.lastDaveTransitionAtMs = Date.now(); });
+     this.ssrcMap = new SSRCMap();
+     this.speaking = new SpeakingMap();
+     this.subscriptions = /* @__PURE__ */ new Map();
+@@ -2044,10 +2053,25 @@
        const headerExtensionLength = buffer.subarray(14).readUInt16BE();
        packet = packet.subarray(4 * headerExtensionLength);
      }
 -    if (this.voiceConnection.state.status === "ready" /* Ready */ && (this.voiceConnection.state.networking.state.code === 4 /* Ready */ || this.voiceConnection.state.networking.state.code === 5 /* Resuming */)) {
+-      const daveSession = this.voiceConnection.state.networking.state.dave;
+-      if (daveSession) packet = daveSession.decrypt(packet, userId);
+-    }
++    const connectionState = this.voiceConnection.state;
++    const networkState = connectionState.networking?.state;
++    const daveSession = networkState?.dave;
++    const diagnostics = {
++      connectionStatus: connectionState.status,
++      networkingCode: networkState?.code ?? null,
++      daveSessionPresent: Boolean(daveSession),
++      daveNativeSessionPresent: Boolean(daveSession?.session),
++      daveReady: daveSession?.session?.ready ?? null,
++      daveProtocolVersion: daveSession?.protocolVersion ?? null,
++      daveDecryptDecision: "receiver-bypass",
++      daveTransitionAgoMs: this.lastDaveTransitionAtMs === null ? null : Math.max(0, Date.now() - this.lastDaveTransitionAtMs)
++    };
 +    // VoiceConnection becomes Connecting while UDP and DAVE remain active during resume.
 +    if ((this.voiceConnection.state.status === "ready" /* Ready */ || this.voiceConnection.state.status === "connecting" /* Connecting */) && (this.voiceConnection.state.networking.state.code === 4 /* Ready */ || this.voiceConnection.state.networking.state.code === 5 /* Resuming */)) {
-       const daveSession = this.voiceConnection.state.networking.state.dave;
-       if (daveSession) packet = daveSession.decrypt(packet, userId);
-     }
++      diagnostics.daveDecryptDecision = "no-session";
++      if (daveSession) packet = daveSession.decrypt(packet, userId, diagnostics);
++    }
++    if (packet) this.packetDiagnostics.set(packet, Object.freeze(diagnostics));
+     return packet;
+   }
+   /**
+diff --git a/node_modules/@discordjs/voice/dist/index.d.ts b/node_modules/@discordjs/voice/dist/index.d.ts
+--- a/node_modules/@discordjs/voice/dist/index.d.ts
++++ b/node_modules/@discordjs/voice/dist/index.d.ts
+@@ -1343,6 +1343,17 @@
+  * @beta
+  */
+ declare class VoiceReceiver {
++    /** Content-free receiver decisions, keyed by the exact decoder input. */
++    readonly packetDiagnostics: WeakMap<Buffer, Readonly<{
++        connectionStatus: string;
++        networkingCode: number | null;
++        daveSessionPresent: boolean;
++        daveNativeSessionPresent: boolean;
++        daveReady: boolean | null;
++        daveProtocolVersion: number | null;
++        daveDecryptDecision: "receiver-bypass" | "no-session" | "silence" | "not-ready" | "protocol-passthrough" | "native-decrypt-returned" | "native-decrypt-unchanged" | "dropped";
++        daveTransitionAgoMs: number | null;
++    }>>;
+     /**
+      * The attached connection of this receiver.
+      */
+diff --git a/node_modules/@discordjs/voice/dist/index.d.mts b/node_modules/@discordjs/voice/dist/index.d.mts
+--- a/node_modules/@discordjs/voice/dist/index.d.mts
++++ b/node_modules/@discordjs/voice/dist/index.d.mts
+@@ -1343,6 +1343,17 @@
+  * @beta
+  */
+ declare class VoiceReceiver {
++    /** Content-free receiver decisions, keyed by the exact decoder input. */
++    readonly packetDiagnostics: WeakMap<Buffer, Readonly<{
++        connectionStatus: string;
++        networkingCode: number | null;
++        daveSessionPresent: boolean;
++        daveNativeSessionPresent: boolean;
++        daveReady: boolean | null;
++        daveProtocolVersion: number | null;
++        daveDecryptDecision: "receiver-bypass" | "no-session" | "silence" | "not-ready" | "protocol-passthrough" | "native-decrypt-returned" | "native-decrypt-unchanged" | "dropped";
++        daveTransitionAgoMs: number | null;
++    }>>;
+     /**
+      * The attached connection of this receiver.
+      */

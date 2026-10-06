@@ -24,7 +24,7 @@ import {
 } from "./types/audio";
 import { MeetingData } from "./types/meeting-data";
 import { EndBehaviorType, VoiceConnectionStatus } from "@discordjs/voice";
-import prism from "prism-media";
+import { OpusDiagnosticDecoder } from "./utils/opusDiagnosticDecoder";
 import { PassThrough, Readable } from "node:stream";
 import {
   cleanupTranscription,
@@ -81,7 +81,7 @@ type SnippetTimers = {
   slow?: NodeJS.Timeout;
 };
 
-type OpusDecoder = InstanceType<typeof prism.opus.Decoder>;
+type OpusDecoder = OpusDiagnosticDecoder;
 
 type VoiceSubscriptionState = {
   opusStream: Readable;
@@ -89,8 +89,6 @@ type VoiceSubscriptionState = {
   decodedStream: Readable;
   lastPcmAt?: number;
   decoderErrorCount: number;
-  lastOpusPacketBytes?: number;
-  lastOpusPacketDaveFooterCandidate?: boolean;
   consecutiveNoPcmEvents: number;
   lastNoPcmAt?: number;
   resubscribeTimer?: ReturnType<typeof setTimeout>;
@@ -204,9 +202,8 @@ function scheduleResubscribe(
     return;
   }
 
-  const speakerLabel = resolveSpeakerLabel(meeting, userId);
   console.log(
-    `Scheduling voice resubscribe: guildId=${meeting.guildId} channelId=${meeting.channelId} meetingId=${meeting.meetingId} userId=${userId} speaker=${speakerLabel} reason=${reason}`,
+    `Scheduling voice resubscribe: meetingId=${meeting.meetingId} reason=${reason}`,
   );
 
   const timer = setTimeout(() => {
@@ -828,7 +825,7 @@ export async function subscribeToUserVoice(
     },
   });
 
-  const opusDecoder = new prism.opus.Decoder({
+  const opusDecoder = new OpusDiagnosticDecoder(meeting.connection.receiver, {
     rate: RECORD_SAMPLE_RATE,
     channels: CHANNELS,
     frameSize: FRAME_SIZE,
@@ -845,9 +842,6 @@ export async function subscribeToUserVoice(
 
   subscriptions.set(userId, subscriptionState);
 
-  const speakerLabel = resolveSpeakerLabel(meeting, userId);
-  const logPrefix = `guildId=${meeting.guildId} channelId=${meeting.channelId} meetingId=${meeting.meetingId} userId=${userId} speaker=${speakerLabel}`;
-
   // Prevent decoder errors (often caused by malformed or partial packets) from crashing the process.
   opusDecoder.on("error", (err: Error) => {
     if (subscriptionState.suppressResubscribe) return;
@@ -856,20 +850,9 @@ export async function subscribeToUserVoice(
     }
     subscriptionState.decoderErrorCount += 1;
     console.warn(
-      `Opus decoder error: ${logPrefix} message=${err.message} errors=${subscriptionState.decoderErrorCount} opusPacketBytes=${subscriptionState.lastOpusPacketBytes ?? "none"} daveFooterCandidate=${subscriptionState.lastOpusPacketDaveFooterCandidate ?? "none"} daveTransitionAgoMs=${meeting.audioData.lastDaveTransitionAtMs === undefined ? "none" : Math.max(0, Date.now() - meeting.audioData.lastDaveTransitionAtMs)}`,
+      `Opus decoder error: meetingId=${meeting.meetingId} message=${err.message} errors=${subscriptionState.decoderErrorCount} ${opusDecoder.formatFailureDiagnostics()}`,
     );
     scheduleResubscribe(meeting, userId, "decoder-error");
-  });
-
-  opusStream.on("data", (packet: Buffer) => {
-    subscriptionState.lastOpusPacketBytes = packet.length;
-    // The footer only suggests DAVE; this does not validate encrypted media.
-    subscriptionState.lastOpusPacketDaveFooterCandidate =
-      packet.length >= 13 &&
-      packet[packet.length - 2] === 0xfa &&
-      packet[packet.length - 1] === 0xfa &&
-      packet[packet.length - 3] >= 12 &&
-      packet[packet.length - 3] < packet.length;
   });
 
   // Prism's Opus stream can also emit errors; guard those too.
@@ -878,7 +861,9 @@ export async function subscribeToUserVoice(
     if (isCaptureActive(meeting)) {
       meeting.audioData.captureIncomplete = true;
     }
-    console.warn(`Opus stream error: ${logPrefix} message=${err.message}`);
+    console.warn(
+      `Opus stream error: meetingId=${meeting.meetingId} message=${err.message}`,
+    );
     scheduleResubscribe(meeting, userId, "opus-stream-error");
   });
 
@@ -890,7 +875,9 @@ export async function subscribeToUserVoice(
     if (isCaptureActive(meeting)) {
       meeting.audioData.captureIncomplete = true;
     }
-    console.warn(`Decoded stream error: ${logPrefix} message=${err.message}`);
+    console.warn(
+      `Decoded stream error: meetingId=${meeting.meetingId} message=${err.message}`,
+    );
     scheduleResubscribe(meeting, userId, "decoded-stream-error");
   });
 
