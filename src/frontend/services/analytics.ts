@@ -61,8 +61,9 @@ export function redactShareIds(value: string, depth = 0): string {
           return sanitized === decoded
             ? match
             : `${separator}${key}=${encodeURIComponent(sanitized)}`;
-        } catch {
-          return match;
+      } catch {
+        // Malformed encoding must not expose a nested bearer or promotion value.
+        return `${separator}${key}=[redacted]`;
         }
       },
     )
