@@ -61,11 +61,16 @@ export async function listMeetingsForGuildInRangeService(
 const MIN_TIMESTAMP_ISO = "1970-01-01T00:00:00.000Z";
 const MAX_TIMESTAMP_ISO = "9999-12-31T23:59:59.999Z";
 
-export async function listAllMeetingsForGuildService(guildId: string) {
-  return listMeetingsForGuildInRangeService(
+export async function listAllMeetingsForGuildService(
+  guildId: string,
+  signal?: AbortSignal,
+) {
+  return getMeetingHistoryRepository().listByGuildTimestampRange(
     guildId,
     MIN_TIMESTAMP_ISO,
     MAX_TIMESTAMP_ISO,
+    undefined,
+    signal,
   );
 }
 

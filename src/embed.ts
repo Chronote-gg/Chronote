@@ -16,6 +16,11 @@ import {
   batchMeetingNotesEmbeds,
   buildMeetingNotesEmbeds,
 } from "./utils/meetingNotes";
+import { claimSummaryUpgrade } from "./services/summaryUpgradeService";
+import {
+  buildSummaryUpgradeBody,
+  SUMMARY_UPGRADE,
+} from "./utils/summaryUpgrade";
 
 const PROCESSING_COLOR = 0x3498db;
 const SUMMARY_COLOR = 0x00ae86;
@@ -136,6 +141,7 @@ function buildMeetingPortalUrl(meeting: MeetingData): string {
 function buildSummaryComponents(
   meeting: MeetingData,
   portalUrl: string,
+  upgradeUrl?: string,
 ): ActionRowBuilder<ButtonBuilder>[] {
   const channelIdTimestamp = buildMeetingHistoryKey(meeting);
   const encodedKey = Buffer.from(channelIdTimestamp).toString("base64");
@@ -174,6 +180,14 @@ function buildSummaryComponents(
         .setURL(portalUrl),
     ),
   );
+  if (upgradeUrl) {
+    rows[0].addComponents(
+      new ButtonBuilder()
+        .setLabel(SUMMARY_UPGRADE.button)
+        .setStyle(ButtonStyle.Link)
+        .setURL(upgradeUrl),
+    );
+  }
   if (actionButtons.length > 0) {
     const firstRow = actionButtons.slice(0, 3);
     const secondRow = actionButtons.slice(3);
@@ -254,9 +268,18 @@ export async function updateMeetingSummaryMessage(
   meeting: MeetingData,
 ): Promise<{ summary: DeliveryResult; notes: DeliveryResult }> {
   const portalUrl = buildMeetingPortalUrl(meeting);
+  const upgrade = await claimSummaryUpgrade(meeting);
+  const upgradeField = upgrade
+    ? {
+        name: SUMMARY_UPGRADE.heading,
+        value: buildSummaryUpgradeBody(upgrade.recordedSeconds),
+      }
+    : undefined;
+  const summaryEmbed = buildSummaryEmbed(meeting);
+  if (upgradeField) summaryEmbed.addFields(upgradeField);
   const summaryPayload: MeetingMessagePayload = {
-    embeds: [buildSummaryEmbed(meeting)],
-    components: buildSummaryComponents(meeting, portalUrl),
+    embeds: [summaryEmbed],
+    components: buildSummaryComponents(meeting, portalUrl, upgrade?.url),
   };
   const { message: summaryMessage, delivery: summary } =
     await updateMeetingMessage(meeting, summaryPayload, "summary");
@@ -265,13 +288,24 @@ export async function updateMeetingSummaryMessage(
   }
 
   const noteEmbeds = buildNotesEmbeds(meeting);
+  if (upgradeField) noteEmbeds.at(-1)?.addFields(upgradeField);
   const noteEmbedBatches = batchMeetingNotesEmbeds(noteEmbeds);
   const noteMessages: Message[] = [];
   const errors: DeliveryResult["errors"] = [];
   for (const embeds of noteEmbedBatches) {
     const payload: MeetingMessagePayload = {
       embeds,
-      components: [],
+      components:
+        upgrade && embeds === noteEmbedBatches.at(-1)
+          ? [
+              new ActionRowBuilder<ButtonBuilder>().addComponents(
+                new ButtonBuilder()
+                  .setLabel(SUMMARY_UPGRADE.button)
+                  .setStyle(ButtonStyle.Link)
+                  .setURL(upgrade.url),
+              ),
+            ]
+          : [],
     };
     try {
       const message = await meeting.textChannel.send(payload);

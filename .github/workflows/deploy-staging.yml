@@ -108,7 +108,8 @@ jobs:
             scc --ci /pwd
           docker run --rm -v "$WORKSPACE:/pwd" ghcr.io/boyter/scc:master \
             scc --ci --by-file --sort lines /pwd
-          python3 -m pip install --quiet lizard
+          lizard_version=$(python3 -c 'import tomllib; lock = tomllib.load(open("uv.lock", "rb")); print(next(package["version"] for package in lock["package"] if package["name"] == "lizard"))')
+          python3 -m pip install --quiet "lizard==$lizard_version"
           lizard -W whitelizard.txt -l ts -l tsx -l js -l jsx src test
 
   # Prompts Check and LLM Connections Check are intentionally absent here.
