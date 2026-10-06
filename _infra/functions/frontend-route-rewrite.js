@@ -9,7 +9,7 @@
 
 // Keep this list aligned with scripts/public-routes.json. The function test
 // reads that registry and fails if a public route is missing here.
-var publicRoutes = ["/join", "/upgrade", "/feedback"];
+var publicRoutes = ["/join", "/upgrade", "/upgrade/select-server", "/feedback"];
 
 function isPublicRoute(uri) {
   for (var i = 0; i < publicRoutes.length; i += 1) {
@@ -31,7 +31,7 @@ function isSpaRoute(uri) {
     uri.indexOf("/admin/") === 0 ||
     uri === "/portal" ||
     uri.indexOf("/portal/") === 0 ||
-    /^\/upgrade\/(?:select-server|success)\/?$/.test(uri) ||
+    /^\/upgrade\/success\/?$/.test(uri) ||
     /^\/promo\/[^/]+\/?$/.test(uri) ||
     /^\/live\/[^/]+\/[^/]+\/?$/.test(uri) ||
     /^\/share\/ask\/[^/]+\/[^/]+\/?$/.test(uri) ||
