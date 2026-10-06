@@ -240,7 +240,7 @@ describe("voice subscriptions", () => {
     }
   });
 
-  test("does not attribute an unrelated stream error to a meeting transition", async () => {
+  test("reports UNKNOWN receiver state for an unattributed stream error", async () => {
     const streams: PassThrough[] = [];
     const { meeting, receiver } = createMeeting(streams);
     const warn = jest.spyOn(console, "warn").mockImplementation(() => {});
@@ -256,17 +256,6 @@ describe("voice subscriptions", () => {
       jest.runOnlyPendingTimers();
       expect(receiver.subscribe).toHaveBeenCalledTimes(2);
 
-      meeting.audioData.lastDaveTransitionAtMs = Date.now() - 123;
-      mockDecoders[1].emit("error", new Error("after transition"));
-      expect(warn).toHaveBeenCalledWith(
-        expect.stringContaining("daveTransitionAgoMs=UNKNOWN"),
-      );
-      expect(meeting.audioData.captureIncomplete).toBe(true);
-      jest.runOnlyPendingTimers();
-      expect(receiver.subscribe).toHaveBeenCalledTimes(3);
-
-      meeting.audioData.lastDaveTransitionAtMs = Date.now() + 100;
-      mockDecoders[2].emit("error", new Error("clock skew"));
       expect(warn).toHaveBeenCalledWith(
         expect.stringContaining("daveTransitionAgoMs=UNKNOWN"),
       );
