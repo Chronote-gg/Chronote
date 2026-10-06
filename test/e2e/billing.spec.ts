@@ -151,6 +151,14 @@ for (const width of [320, 768, 993, 1199, 1201, 1280]) {
     await expect(
       page.getByRole("button", { name: "Continue with Basic" }),
     ).toBeEnabled();
+    await expect(
+      page.getByText("Your subscription helps keep Chronote running.", {
+        exact: true,
+      }),
+    ).toBeVisible();
+    await expect(page.getByText(/running for communities on Free/)).toHaveCount(
+      0,
+    );
     const cards = await page
       .getByTestId("upgrade-plans")
       .locator(".mantine-Paper-root")
