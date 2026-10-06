@@ -179,12 +179,10 @@ describe("updateMeetingSummaryMessage", () => {
 
   it("reports failed notes independently of successful summary editing without leaking error bodies", async () => {
     const value = fixture();
-    jest
-      .mocked(claimSummaryUpgrade)
-      .mockResolvedValueOnce({
-        url: "https://chronote.test/upgrade",
-        recordedSeconds: 3600,
-      });
+    jest.mocked(claimSummaryUpgrade).mockResolvedValueOnce({
+      url: "https://chronote.test/upgrade",
+      recordedSeconds: 3600,
+    });
     value.textChannel.send.mockRejectedValue(denied());
     const warn = jest
       .spyOn(console, "warn")

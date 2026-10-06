@@ -336,6 +336,15 @@ const handleInvoicePaymentSucceeded: WebhookHandler = async ({
     customerId:
       typeof invoice.customer === "string" ? invoice.customer : undefined,
   });
+  await capturePaidInvoiceOutcome(stripe, guildId, invoice);
+};
+
+async function capturePaidInvoiceOutcome(
+  stripe: StripeClient,
+  guildId: string,
+  invoice: StripeInvoice,
+) {
+  const invoiceSubscription = resolveInvoiceSubscription(invoice);
   if (
     invoice.status !== "paid" ||
     invoice.amount_paid <= 0 ||
@@ -361,14 +370,22 @@ const handleInvoicePaymentSucceeded: WebhookHandler = async ({
   const { subscription, tier } = reconciled;
   if (readMetadataValue(subscription.metadata, "analytics_opt_out") === "true")
     return;
-  const billingKind =
-    invoice.billing_reason === "subscription_create"
-      ? "initial_purchase"
-      : invoice.billing_reason === "subscription_cycle"
-        ? "renewal"
-        : invoice.billing_reason === "subscription_update"
-          ? "plan_change"
-          : "unknown";
+  await capturePaidInvoiceOnce(invoice, guildId, subscription, tier);
+}
+
+async function capturePaidInvoiceOnce(
+  invoice: StripeInvoice,
+  guildId: string,
+  subscription: StripeSubscription,
+  tier: "basic" | "pro",
+) {
+  const billingKinds: Record<string, string> = {
+    subscription_create: "initial_purchase",
+    subscription_cycle: "renewal",
+    subscription_update: "plan_change",
+  };
+  const billingKind = billingKinds[invoice.billing_reason ?? ""] ?? "unknown";
+  const interval = subscription.items.data[0]?.price.recurring?.interval;
   try {
     // Reuse webhook receipts for one canonical outcome per invoice, including
     // retries delivered under a different Stripe event id (30-day retention).
@@ -394,12 +411,9 @@ const handleInvoicePaymentSucceeded: WebhookHandler = async ({
           readMetadataValue(subscription.metadata, "purchase_source") ||
             "unknown",
         ),
-        interval:
-          subscription.items.data[0]?.price.recurring?.interval === "year"
-            ? "year"
-            : subscription.items.data[0]?.price.recurring?.interval === "month"
-              ? "month"
-              : "unknown",
+        interval: ["month", "year"].includes(interval ?? "")
+          ? interval
+          : "unknown",
         promo_present: Boolean(
           readMetadataValue(subscription.metadata, "promo_code"),
         ),
@@ -408,7 +422,7 @@ const handleInvoicePaymentSucceeded: WebhookHandler = async ({
   } catch {
     console.warn("Paid outcome analytics unavailable");
   }
-};
+}
 
 const handlersByEvent: Record<string, WebhookHandler> = {
   "checkout.session.completed": handleCheckoutSessionCompleted,

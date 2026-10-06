@@ -19,6 +19,34 @@ import Upgrade from "./Upgrade";
 import UpgradeServerSelect from "./UpgradeServerSelect";
 import Billing from "./Billing";
 import Join from "./Join";
+import PromoLanding from "./PromoLanding";
+
+function previewBilling(
+  tier: "free" | "basic" | "pro",
+  billingSource?: "free" | "stripe" | "manual_comp" | "forced",
+) {
+  return {
+    tier,
+    status: tier === "free" ? "free" : "active",
+    billingSource: billingSource ?? (tier === "free" ? "free" : "stripe"),
+    stripeTier: tier === "free" ? null : tier,
+    grantTier: null,
+    activeGrant: null,
+    nextBillingDate: null,
+    stripeCustomerId: null,
+    hasStripeBilling: tier !== "free",
+    canManageBillingPortal: tier !== "free",
+    upgradeUrl: null,
+    portalUrl: null,
+    billingEnabled: true,
+    stripeMode: "test",
+    usage: {
+      usedMinutes: 45,
+      limitMinutes: tier === "pro" ? null : tier === "basic" ? 1200 : 240,
+      remainingMinutes: tier === "pro" ? null : tier === "basic" ? 1155 : 195,
+    },
+  };
+}
 
 export function UpgradePreview({
   path = "/upgrade/select-server?serverId=example",
@@ -97,30 +125,7 @@ export function UpgradePreview({
                   },
                 ],
               },
-              "billing.me": {
-                tier,
-                status: tier === "free" ? "free" : "active",
-                billingSource:
-                  billingSource ?? (tier === "free" ? "free" : "stripe"),
-                stripeTier: tier === "free" ? null : tier,
-                grantTier: null,
-                activeGrant: null,
-                nextBillingDate: null,
-                stripeCustomerId: null,
-                hasStripeBilling: tier !== "free",
-                canManageBillingPortal: tier !== "free",
-                upgradeUrl: null,
-                portalUrl: null,
-                billingEnabled: true,
-                stripeMode: "test",
-                usage: {
-                  usedMinutes: 45,
-                  limitMinutes:
-                    tier === "pro" ? null : tier === "basic" ? 1200 : 240,
-                  remainingMinutes:
-                    tier === "pro" ? null : tier === "basic" ? 1155 : 195,
-                },
-              },
+              "billing.me": previewBilling(tier, billingSource),
             };
             const paths = new URL(String(url), window.location.origin).pathname
               .split("/")
@@ -146,6 +151,11 @@ export function UpgradePreview({
     localStorage.setItem("mn-selected-guild", "example");
     const root = createRootRoute({ component: Outlet });
     const routes = [
+      createRoute({
+        getParentRoute: () => root,
+        path: "/promo/$code",
+        component: PromoLanding,
+      }),
       createRoute({
         getParentRoute: () => root,
         path: "/join",
@@ -204,6 +214,13 @@ const meta = {
 } satisfies Meta<typeof UpgradePreview>;
 export default meta;
 type Story = StoryObj<typeof meta>;
+export const PromoPrivacy: Story = {
+  args: { path: "/promo/SAVE20" },
+  play: async ({ canvasElement }) => {
+    const code = await within(canvasElement).findByText("SAVE20");
+    await expect(code).toHaveClass("ph-no-capture", "ph-mask");
+  },
+};
 export const NewBuyer: Story = {
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);

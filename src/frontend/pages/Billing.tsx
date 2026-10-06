@@ -431,6 +431,7 @@ const BillingPlansSection = ({
             <TextInput
               label="Promo code"
               placeholder="Enter code"
+              className="ph-no-capture"
               value={promoCode}
               onChange={(event) => onPromoCodeChange(event.currentTarget.value)}
               style={{ flex: "1 1 220px" }}

@@ -114,6 +114,17 @@ function shouldReleaseLeaseDuringErrorCleanup(meeting: MeetingData): boolean {
  * emitting meeting_started with no completion, so ordinary cancellation would
  * read as funnel abandonment.
  */
+function hasUsableMeetingNotes(meeting: MeetingData): boolean {
+  return (
+    !meeting.cancelled &&
+    meeting.processing?.transcription === "ready" &&
+    meeting.processing?.notes === "generated" &&
+    Boolean(meeting.notesText?.trim()) &&
+    meeting.historySaved === true &&
+    meeting.delivery?.notes?.outcome === "complete"
+  );
+}
+
 function captureMeetingCompleted(meeting: MeetingData): void {
   try {
     const endTime = meeting.endTime ?? new Date();
@@ -139,13 +150,7 @@ function captureMeetingCompleted(meeting: MeetingData): void {
               ? "saved"
               : "not_saved",
         notes_delivery: meeting.delivery?.notes?.outcome ?? "unknown",
-        usable_notes:
-          !meeting.cancelled &&
-          meeting.processing?.transcription === "ready" &&
-          meeting.processing?.notes === "generated" &&
-          Boolean(meeting.notesText?.trim()) &&
-          meeting.historySaved === true &&
-          meeting.delivery?.notes?.outcome === "complete",
+        usable_notes: hasUsableMeetingNotes(meeting),
       },
     });
   } catch (error) {

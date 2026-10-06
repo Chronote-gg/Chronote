@@ -293,6 +293,25 @@ export default function UpgradeServerSelect() {
     }
   };
 
+  const currentPlanLabel = currentTier
+    ? `Current plan: ${{ free: "Free", basic: "Basic", pro: "Pro" }[currentTier]}${isComped ? " (complimentary)" : isForced ? " (environment override)" : ""}`
+    : "Checking current plan...";
+  const serverIcon = selectedServer?.icon
+    ? `https://cdn.discordapp.com/icons/${selectedServer.id}/${selectedServer.icon}.png`
+    : undefined;
+  const pickerTitle = guildLoading
+    ? "Loading your servers..."
+    : selectedServerId && !selectedServer
+      ? "That server is unavailable"
+      : "Choose your server";
+  const pickerDescription =
+    selectedServerId && !selectedServer && !guildLoading
+      ? "It may belong to another account, or you may not have Manage Server permission. Choose a server below or switch your Discord account."
+      : "Only servers you manage can be upgraded.";
+  const billingDisabled = billing && !billing.billingEnabled;
+  const showBillingManagement =
+    billing && (billing.canManageBillingPortal || managementOnly);
+
   return (
     <Container size={1040} py={{ base: "md", md: "xl" }} px={0}>
       <Stack gap="xl" data-testid="upgrade-purchase">
@@ -333,14 +352,7 @@ export default function UpgradeServerSelect() {
               {serverReady && (
                 <Group justify="space-between">
                   <Group wrap="nowrap" style={{ minWidth: 0 }}>
-                    <Avatar
-                      src={
-                        selectedServer?.icon
-                          ? `https://cdn.discordapp.com/icons/${selectedServer.id}/${selectedServer.icon}.png`
-                          : undefined
-                      }
-                      radius="md"
-                    >
+                    <Avatar src={serverIcon} radius="md">
                       {selectedServer?.name.slice(0, 1)}
                     </Avatar>
                     <Stack gap={2} style={{ minWidth: 0 }}>
@@ -348,9 +360,7 @@ export default function UpgradeServerSelect() {
                         {selectedServer?.name}
                       </Text>
                       <Text size="sm" c="dimmed">
-                        {currentTier
-                          ? `Current plan: ${currentTier === "free" ? "Free" : currentTier === "basic" ? "Basic" : "Pro"}${isComped ? " (complimentary)" : isForced ? " (environment override)" : ""}`
-                          : "Checking current plan..."}
+                        {currentPlanLabel}
                       </Text>
                     </Stack>
                   </Group>
@@ -394,17 +404,9 @@ export default function UpgradeServerSelect() {
               ) : (
                 (!serverReady || changingServer) && (
                   <>
-                    <Text fw={600}>
-                      {guildLoading
-                        ? "Loading your servers..."
-                        : selectedServerId && !selectedServer
-                          ? "That server is unavailable"
-                          : "Choose your server"}
-                    </Text>
+                    <Text fw={600}>{pickerTitle}</Text>
                     <Text size="sm" c="dimmed">
-                      {selectedServerId && !selectedServer && !guildLoading
-                        ? "It may belong to another account, or you may not have Manage Server permission. Choose a server below or switch your Discord account."
-                        : "Only servers you manage can be upgraded."}
+                      {pickerDescription}
                     </Text>
                     <ServerPicker
                       guilds={eligibleGuilds}
@@ -438,44 +440,43 @@ export default function UpgradeServerSelect() {
                   </Stack>
                 </Alert>
               )}
-              {billing && !billing.billingEnabled && (
+              {billingDisabled && (
                 <Alert color="yellow" title="Billing disabled">
                   Billing is not enabled in this environment.
                 </Alert>
               )}
-              {billing &&
-                (billing.canManageBillingPortal || managementOnly) && (
-                  <Stack gap="sm">
-                    <Text size="sm">
-                      {managementOnly
-                        ? "Review this server’s existing plan in its billing settings."
-                        : "Existing subscription changes remain subject to billing confirmation."}
-                    </Text>
-                    <Group>
-                      {billing.canManageBillingPortal && (
-                        <Button
-                          variant="light"
-                          onClick={handlePortal}
-                          loading={portalMutation.isPending}
-                          disabled={busy}
-                        >
-                          Manage billing
-                        </Button>
-                      )}
+              {showBillingManagement && (
+                <Stack gap="sm">
+                  <Text size="sm">
+                    {managementOnly
+                      ? "Review this server’s existing plan in its billing settings."
+                      : "Existing subscription changes remain subject to billing confirmation."}
+                  </Text>
+                  <Group>
+                    {billing.canManageBillingPortal && (
                       <Button
-                        variant="subtle"
-                        onClick={() =>
-                          navigate({
-                            to: "/portal/server/$serverId/billing",
-                            params: { serverId: selectedServerId! },
-                          })
-                        }
+                        variant="light"
+                        onClick={handlePortal}
+                        loading={portalMutation.isPending}
+                        disabled={busy}
                       >
-                        Open server billing
+                        Manage billing
                       </Button>
-                    </Group>
-                  </Stack>
-                )}
+                    )}
+                    <Button
+                      variant="subtle"
+                      onClick={() =>
+                        navigate({
+                          to: "/portal/server/$serverId/billing",
+                          params: { serverId: selectedServerId! },
+                        })
+                      }
+                    >
+                      Open server billing
+                    </Button>
+                  </Group>
+                </Stack>
+              )}
             </Stack>
           </Surface>
         )}

@@ -142,7 +142,7 @@ export function UpgradeSuccessHero({
         ) : null}
         {promoCode ? (
           <Text size="sm" c="dimmed">
-            Promo {promoCode} applied.
+            Promotion applied.
           </Text>
         ) : null}
       </Stack>
