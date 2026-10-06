@@ -13,6 +13,11 @@ import type { BillingInterval, PaidTier } from "../types/pricing";
 import type { GuildSubscription, PaymentTransaction } from "../types/db";
 import type { StripeClient, StripeSubscription } from "../types/stripe";
 import type { PublicEntitlementGrant } from "./entitlementService";
+import { captureEvent } from "./analyticsService";
+import {
+  resolvePurchaseSource,
+  type PurchaseSource,
+} from "../utils/purchaseAnalytics";
 
 export class BillingActionError extends Error {
   constructor(
@@ -285,6 +290,8 @@ export async function createCheckoutSession(params: {
   allowPromotionCodes?: boolean;
   tier?: PaidTier;
   interval?: BillingInterval;
+  source?: PurchaseSource;
+  analyticsAllowed?: boolean;
 }): Promise<string> {
   const {
     stripe,
@@ -296,7 +303,10 @@ export async function createCheckoutSession(params: {
     allowPromotionCodes,
     tier,
     interval,
+    source: sourceInput,
+    analyticsAllowed = true,
   } = params;
+  const source = resolvePurchaseSource(sourceInput);
   const checkoutPriceId = priceId || config.stripe.priceBasic;
   if (!checkoutPriceId?.startsWith("price_")) {
     throw new Error("Stripe price not configured");
@@ -307,12 +317,14 @@ export async function createCheckoutSession(params: {
     serverId: guildId,
     plan: tier,
     interval,
+    source,
   });
   const cancelUrl = appendQueryParams(config.stripe.cancelUrl, {
     promo: promoValue || undefined,
     serverId: guildId,
     plan: tier,
     interval,
+    source,
   });
   const confirmationUrl = await createExistingSubscriptionConfirmation({
     stripe,
@@ -329,6 +341,10 @@ export async function createCheckoutSession(params: {
     discord_id: user.id,
     discord_username: user.username ?? "",
     guild_id: guildId,
+    purchase_source: source,
+    ...(analyticsAllowed ? {} : { analytics_opt_out: "true" }),
+    ...(tier ? { purchase_tier: tier } : {}),
+    ...(interval ? { purchase_interval: interval } : {}),
     ...(promoValue ? { promo_code: promoValue } : {}),
   };
   const session = await stripe.checkout.sessions.create({
@@ -352,6 +368,20 @@ export async function createCheckoutSession(params: {
   if (!session.url) {
     throw new Error("Stripe did not return a checkout URL");
   }
+  if (analyticsAllowed)
+    captureEvent("billing_checkout_created", {
+      userId: user.id,
+      guildId,
+      properties: {
+        tier,
+        interval,
+        source,
+        promo_present: Boolean(promoValue),
+        surface: "billing",
+        event_version: 1,
+        billing_kind: "new_subscription",
+      },
+    });
   return session.url;
 }
 

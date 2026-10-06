@@ -6,7 +6,12 @@ import { getSubscriptionRepository } from "../repositories/subscriptionRepositor
 import { config } from "../services/configService";
 import { autoRevokeCoveredCompGrants } from "../services/entitlementService";
 import { resolveTierFromPrice } from "../services/pricingService";
-import { clearGuildSubscriptionCache } from "../services/subscriptionService";
+import {
+  clearGuildSubscriptionCache,
+  resolveGuildSubscription,
+} from "../services/subscriptionService";
+import { captureEvent } from "../services/analyticsService";
+import { resolvePurchaseSource } from "../utils/purchaseAnalytics";
 import { getStripeWebhookRepository } from "../repositories/stripeWebhookRepository";
 import type {
   StripeCheckoutSession,
@@ -245,7 +250,7 @@ const reconcileSubscription = async (
       stripeSubscriptionId: subscription.id,
       updatedBy,
     });
-    return;
+    return { subscription, tier };
   }
   throw new Error("Stripe subscription changed concurrently; retry webhook");
 };
@@ -331,6 +336,78 @@ const handleInvoicePaymentSucceeded: WebhookHandler = async ({
     customerId:
       typeof invoice.customer === "string" ? invoice.customer : undefined,
   });
+  if (
+    invoice.status !== "paid" ||
+    invoice.amount_paid <= 0 ||
+    !invoiceSubscription
+  )
+    return;
+  const reconciled = await reconcileSubscription(
+    stripe,
+    guildId,
+    typeof invoiceSubscription === "string"
+      ? invoiceSubscription
+      : invoiceSubscription.id,
+  );
+  if (
+    !reconciled ||
+    reconciled.subscription.status !== "active" ||
+    reconciled.tier === "free"
+  )
+    return;
+  const effective = await resolveGuildSubscription(guildId);
+  if (effective.billingSource !== "stripe" || effective.status !== "active")
+    return;
+  const { subscription, tier } = reconciled;
+  if (readMetadataValue(subscription.metadata, "analytics_opt_out") === "true")
+    return;
+  const billingKind =
+    invoice.billing_reason === "subscription_create"
+      ? "initial_purchase"
+      : invoice.billing_reason === "subscription_cycle"
+        ? "renewal"
+        : invoice.billing_reason === "subscription_update"
+          ? "plan_change"
+          : "unknown";
+  try {
+    // Reuse webhook receipts for one canonical outcome per invoice, including
+    // retries delivered under a different Stripe event id (30-day retention).
+    const now = Date.now();
+    if (
+      !(await getStripeWebhookRepository().tryCreate({
+        eventId: `paid_invoice:${invoice.id}`,
+        receivedAt: new Date(now).toISOString(),
+        expiresAt: Math.floor(now / 1000) + 60 * 60 * 24 * 30,
+      }))
+    )
+      return;
+    captureEvent("billing_entitlement_saved", {
+      userId:
+        readMetadataValue(subscription.metadata, "discord_id") || undefined,
+      guildId,
+      properties: {
+        surface: "stripe_webhook",
+        event_version: 1,
+        tier,
+        billing_kind: billingKind,
+        source: resolvePurchaseSource(
+          readMetadataValue(subscription.metadata, "purchase_source") ||
+            "unknown",
+        ),
+        interval:
+          subscription.items.data[0]?.price.recurring?.interval === "year"
+            ? "year"
+            : subscription.items.data[0]?.price.recurring?.interval === "month"
+              ? "month"
+              : "unknown",
+        promo_present: Boolean(
+          readMetadataValue(subscription.metadata, "promo_code"),
+        ),
+      },
+    });
+  } catch {
+    console.warn("Paid outcome analytics unavailable");
+  }
 };
 
 const handlersByEvent: Record<string, WebhookHandler> = {

@@ -20,6 +20,10 @@ import { config } from "../../src/services/configService";
 import { createManualEntitlementGrant } from "../../src/services/entitlementService";
 import { clearGuildSubscriptionCache } from "../../src/services/subscriptionService";
 import type { StripeClient, StripeEvent } from "../../src/types/stripe";
+import { captureEvent } from "../../src/services/analyticsService";
+jest.mock("../../src/services/analyticsService", () => ({
+  captureEvent: jest.fn(),
+}));
 
 const guildId = "111111111111111111";
 const basicPrice = { id: "price_basic", lookup_key: "chronote_basic_monthly" };
@@ -201,6 +205,7 @@ const activeStripeSubscription = {
 
 describe("billing webhook routes", () => {
   beforeEach(() => {
+    jest.clearAllMocks();
     resetMockStore();
     clearGuildSubscriptionCache();
     config.stripe.secretKey = "sk_test_billing";
@@ -210,6 +215,137 @@ describe("billing webhook routes", () => {
   afterAll(() => {
     Object.assign(config.stripe, originalStripeConfig);
   });
+
+  test.each([
+    ["subscription_create", "initial_purchase"],
+    ["subscription_cycle", "renewal"],
+    ["subscription_update", "plan_change"],
+  ])(
+    "records %s only after paid invoice and saved active access",
+    async (billingReason, kind) => {
+      const event = {
+        id: `evt_paid_${billingReason}`,
+        type: "invoice.payment_succeeded",
+        data: {
+          object: {
+            id: "in_paid",
+            status: "paid",
+            amount_paid: 1000,
+            currency: "usd",
+            created: 1767225600,
+            billing_reason: billingReason,
+            customer: "cus_basic",
+            parent: {
+              subscription_details: {
+                subscription: "sub_basic",
+                metadata: { guild_id: guildId },
+              },
+            },
+          },
+        },
+      } as unknown as StripeEvent;
+      const subscription = {
+        ...activeStripeSubscription,
+        metadata: {
+          guild_id: guildId,
+          discord_id: "payer-1",
+          purchase_source: "discord_notes",
+          promo_code: "PRIVATE",
+        },
+      };
+      const { server, baseUrl } = createServer(
+        createStripe(
+          event,
+          jest.fn(async () => subscription),
+        ),
+      );
+      try {
+        expect((await postWebhook(baseUrl)).statusCode).toBe(200);
+        expect(await getSubscriptionRepository().get(guildId)).toMatchObject({
+          status: "active",
+          tier: "basic",
+        });
+        expect(captureEvent).toHaveBeenCalledTimes(1);
+        expect(captureEvent).toHaveBeenCalledWith(
+          "billing_entitlement_saved",
+          expect.objectContaining({
+            userId: "payer-1",
+            guildId,
+            properties: expect.objectContaining({
+              billing_kind: kind,
+              source: "discord_notes",
+              tier: "basic",
+              promo_present: true,
+            }),
+          }),
+        );
+        expect(
+          JSON.stringify(jest.mocked(captureEvent).mock.calls),
+        ).not.toMatch(/in_paid|sub_basic|cus_basic|PRIVATE/);
+        expect((await postWebhook(baseUrl)).statusCode).toBe(200);
+        event.id = "evt_second_notification_for_same_invoice";
+        expect((await postWebhook(baseUrl)).statusCode).toBe(200);
+        expect(captureEvent).toHaveBeenCalledTimes(1);
+      } finally {
+        await closeServer(server);
+      }
+    },
+  );
+
+  test.each(["trialing", "past_due", "zero", "write_failed", "opt_out"])(
+    "does not claim paid access for %s",
+    async (state) => {
+      const event = {
+        id: "evt_not_paid",
+        type: "invoice.payment_succeeded",
+        data: {
+          object: {
+            id: "in_not_paid",
+            status: "paid",
+            amount_paid: state === "zero" ? 0 : 1000,
+            currency: "usd",
+            created: 1767225600,
+            billing_reason: "subscription_create",
+            parent: {
+              subscription_details: {
+                subscription: "sub_basic",
+                metadata: { guild_id: guildId },
+              },
+            },
+          },
+        },
+      } as unknown as StripeEvent;
+      const spy =
+        state === "write_failed"
+          ? jest
+              .spyOn(getSubscriptionRepository(), "compareAndWrite")
+              .mockRejectedValueOnce(new Error("write failed"))
+          : undefined;
+      const { server, baseUrl } = createServer(
+        createStripe(
+          event,
+          jest.fn(async () => ({
+            ...activeStripeSubscription,
+            status:
+              state === "trialing" || state === "past_due" ? state : "active",
+            metadata: {
+              guild_id: guildId,
+              ...(state === "opt_out" ? { analytics_opt_out: "true" } : {}),
+            },
+          })),
+        ),
+      );
+      try {
+        expect((await postWebhook(baseUrl)).statusCode).toBe(
+          state === "write_failed" ? 500 : 200,
+        );
+        expect(captureEvent).not.toHaveBeenCalled();
+      } finally {
+        spy?.mockRestore();
+        await closeServer(server);
+      }
+    },
+  );
 
   test("reconciles a delayed Basic update to the current Pro subscription", async () => {
     const current = {
@@ -239,6 +375,7 @@ describe("billing webhook routes", () => {
         status: "active",
         stripeSubscriptionId: "sub_basic",
       });
+      expect(captureEvent).not.toHaveBeenCalled();
     } finally {
       await closeServer(server);
     }

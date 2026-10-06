@@ -71,7 +71,7 @@ test("preserves the server and Basic plan with a durable seven-day claim", async
   const now = Date.now();
   jest.spyOn(Date, "now").mockReturnValue(now);
   expect(await claimSummaryUpgrade(meeting())).toEqual({
-    url: "https://chronote.test/upgrade/select-server?serverId=123456789&plan=basic",
+    url: "https://chronote.test/upgrade/select-server?serverId=123456789&plan=basic&source=discord_summary",
     recordedSeconds: 1800,
   });
   expect(claim).toHaveBeenCalledWith(

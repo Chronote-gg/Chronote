@@ -198,7 +198,7 @@ describe("frontend components", () => {
     expect(screen.getByTestId("theme-toggle")).toBeInTheDocument();
   });
 
-  test("renders SiteHeader portal variants and navbar toggle states", () => {
+  test("renders SiteHeader portal variants and navbar toggle states", async () => {
     authState.state = "authenticated";
     authState.user = { username: "TestUser" };
     computedScheme = "light";
@@ -212,7 +212,8 @@ describe("frontend components", () => {
         context="portal-server"
       />,
     );
-    expect(screen.getByText("Switch server")).toBeInTheDocument();
+    fireEvent.click(screen.getByLabelText("Open account menu"));
+    expect(await screen.findByText("Switch server")).toBeInTheDocument();
     expect(screen.getByTestId("portal-cta")).toHaveAttribute(
       "to",
       "/portal/select-server",
@@ -220,7 +221,7 @@ describe("frontend components", () => {
     expect(screen.getByLabelText("Close navigation")).toBeInTheDocument();
     const logoutButton = screen.getByTestId("logout-cta");
     expect(logoutButton).toHaveAttribute("href", authState.logoutUrl);
-    expect(screen.getByLabelText("Switch account")).toBeInTheDocument();
+    expect(screen.getByText("Switch account")).toBeInTheDocument();
     unmount();
 
     const personalHeader = renderWithMantine(
@@ -231,7 +232,8 @@ describe("frontend components", () => {
         context="portal-personal"
       />,
     );
-    expect(screen.getByText("Servers")).toBeInTheDocument();
+    fireEvent.click(screen.getByLabelText("Open account menu"));
+    expect(await screen.findByText("Servers")).toBeInTheDocument();
     expect(screen.getByTestId("portal-cta")).toHaveAttribute(
       "to",
       "/portal/select-server",
@@ -246,6 +248,8 @@ describe("frontend components", () => {
         context="portal-select"
       />,
     );
+    fireEvent.click(screen.getByLabelText("Open account menu"));
+    expect(await screen.findByTestId("logout-cta")).toBeInTheDocument();
     expect(screen.queryByTestId("portal-cta")).toBeNull();
     expect(screen.getByLabelText("Open navigation")).toBeInTheDocument();
     expect(screen.getByTestId("logout-cta")).toBeInTheDocument();

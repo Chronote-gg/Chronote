@@ -11,24 +11,29 @@ import {
   Outlet,
   RouterProvider,
 } from "@tanstack/react-router";
-import { expect, within } from "storybook/test";
+import { expect, waitFor, within } from "storybook/test";
 import { trpc } from "../services/trpc";
 import { AuthProvider } from "../contexts/AuthContext";
 import { GuildProvider } from "../contexts/GuildContext";
 import Upgrade from "./Upgrade";
 import UpgradeServerSelect from "./UpgradeServerSelect";
 import Billing from "./Billing";
+import Join from "./Join";
 
-function UpgradePreview({
+export function UpgradePreview({
   path = "/upgrade/select-server?serverId=example",
   tier = "free",
   colorScheme = "dark",
   signedIn = true,
+  errorFor,
+  billingSource,
 }: {
   path?: string;
   tier?: "free" | "basic" | "pro";
   colorScheme?: "light" | "dark";
   signedIn?: boolean;
+  errorFor?: "billing.me" | "pricing.plans" | "servers.listEligible";
+  billingSource?: "free" | "stripe" | "manual_comp" | "forced";
 }) {
   const { setColorScheme } = useMantineColorScheme();
   useEffect(() => setColorScheme(colorScheme), [colorScheme, setColorScheme]);
@@ -95,7 +100,8 @@ function UpgradePreview({
               "billing.me": {
                 tier,
                 status: tier === "free" ? "free" : "active",
-                billingSource: tier === "free" ? "default" : "stripe",
+                billingSource:
+                  billingSource ?? (tier === "free" ? "free" : "stripe"),
                 stripeTier: tier === "free" ? null : tier,
                 grantTier: null,
                 activeGrant: null,
@@ -120,6 +126,8 @@ function UpgradePreview({
               .split("/")
               .at(-1)!
               .split(",");
+            if (errorFor && paths.includes(errorFor))
+              throw new Error("Preview request failed");
             // Story requests never reach a server, and purchase actions are deliberately refused.
             if (paths.some((name) => !(name in data)))
               throw new Error("Preview only: billing actions are disabled");
@@ -138,6 +146,11 @@ function UpgradePreview({
     localStorage.setItem("mn-selected-guild", "example");
     const root = createRootRoute({ component: Outlet });
     const routes = [
+      createRoute({
+        getParentRoute: () => root,
+        path: "/join",
+        component: Join,
+      }),
       createRoute({
         getParentRoute: () => root,
         path: "/upgrade",
@@ -168,7 +181,9 @@ function UpgradePreview({
           <GuildProvider>
             <div
               style={{
-                padding: 24,
+                padding: 16,
+                maxWidth: 1100,
+                marginInline: "auto",
                 background: "var(--mantine-color-body)",
                 minHeight: "100vh",
               }}
@@ -192,9 +207,11 @@ type Story = StoryObj<typeof meta>;
 export const NewBuyer: Story = {
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
-    await expect(
-      await canvas.findByRole("button", { name: "Continue to Stripe (Basic)" }),
-    ).toBeEnabled();
+    await waitFor(() =>
+      expect(
+        canvas.getByRole("button", { name: "Continue with Basic" }),
+      ).toBeEnabled(),
+    );
     await expect(canvas.getByText("Recommended")).toBeVisible();
   },
 };
@@ -235,7 +252,7 @@ export const UnavailableServerUpgradeLink: Story = {
 export const NewBuyerNarrow: Story = {
   play: async ({ canvasElement }) => {
     const button = await within(canvasElement).findByRole("button", {
-      name: "Continue to Stripe (Basic)",
+      name: "Continue with Basic",
     });
     // Exercise the mobile-sized CTA without pretending a narrow container
     // changes viewport-based grid breakpoints.
@@ -251,6 +268,16 @@ export const ExplicitProAnnual: Story = {
 };
 export const ExistingBasic: Story = { args: { tier: "basic" } };
 export const ExistingPro: Story = { args: { tier: "pro" } };
+export const Complimentary: Story = {
+  args: { tier: "basic", billingSource: "manual_comp" },
+};
+export const BillingUnavailable: Story = { args: { errorFor: "billing.me" } };
+export const PricingUnavailable: Story = {
+  args: { errorFor: "pricing.plans" },
+};
+export const DiscoveryUnavailable: Story = {
+  args: { errorFor: "servers.listEligible" },
+};
 export const Landing: Story = { args: { path: "/upgrade" } };
 export const BillingFree: Story = {
   args: { path: "/portal/server/example/billing" },

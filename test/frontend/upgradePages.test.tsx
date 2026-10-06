@@ -39,24 +39,14 @@ describe("upgrade pages", () => {
     });
   });
 
-  test("upgrade page shows promo and canceled notices", () => {
+  test("upgrade forwards directly to purchase", () => {
     authState.state = "unauthenticated";
     setRouteSearch({ promo: "SAVE20", canceled: true });
     renderWithMantine(<Upgrade />);
 
-    expect(screen.getByText(/promo unlocked/i)).toBeInTheDocument();
-    expect(screen.getByText(/checkout canceled/i)).toBeInTheDocument();
-
-    const login = screen.getByRole("link", {
-      name: /connect discord to continue/i,
-    });
-    expect(login).toHaveAttribute(
-      "href",
-      expect.stringContaining("/auth/discord"),
-    );
-    expect(login).toHaveAttribute(
-      "href",
-      expect.stringContaining("promo%3DSAVE20"),
+    expect(screen.getByTestId("navigate")).toHaveAttribute(
+      "data-to",
+      "/upgrade/select-server",
     );
   });
 
@@ -84,14 +74,12 @@ describe("upgrade pages", () => {
     expect(navigateSpy).toHaveBeenCalled();
     const [call] = navigateSpy.mock.calls;
     const options = call?.[0];
-    if (options && typeof options.search === "function") {
-      expect(options.search({ promo: "SAVE20" })).toEqual({
-        promo: "SAVE20",
-        serverId: "g1",
-      });
-    } else {
-      throw new Error("Expected navigate search updater");
-    }
+    expect(options.search).toEqual({
+      promo: "SAVE20",
+      serverId: "g1",
+      interval: "month",
+      source: "direct",
+    });
   });
 });
 

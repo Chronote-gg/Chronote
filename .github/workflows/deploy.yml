@@ -22,7 +22,8 @@ jobs:
 
   deploybackend:
     name: Deploy Backend
-    needs: [ci]
+    # Publish privacy/What's New notices before expanded capture goes live.
+    needs: [ci, deploy-docs]
     runs-on: ubuntu-latest
     environment: production
     env:
@@ -321,7 +322,7 @@ jobs:
 
   deploy-frontend:
     name: Deploy Frontend
-    needs: [ci]
+    needs: [ci, deploy-docs]
     runs-on: ubuntu-latest
     environment: production
     env:
@@ -375,8 +376,8 @@ jobs:
         run: |
           if [ -z "$DOCS_BUCKET" ] || [ -z "$DOCS_DISTRIBUTION_ID" ]; then
             echo "enabled=false" >> "$GITHUB_OUTPUT"
-            echo "Docs deployment skipped because DOCS_BUCKET or DOCS_DISTRIBUTION_ID is not configured." >> "$GITHUB_STEP_SUMMARY"
-            exit 0
+            echo "Docs deployment is required before the product deploy, including privacy notices." >> "$GITHUB_STEP_SUMMARY"
+            exit 1
           fi
 
           echo "enabled=true" >> "$GITHUB_OUTPUT"
@@ -440,7 +441,8 @@ jobs:
             exit 1
           fi
 
-          aws cloudfront create-invalidation --distribution-id "$DOCS_DISTRIBUTION_ID" --paths "/*"
+          INVALIDATION_ID=$(aws cloudfront create-invalidation --distribution-id "$DOCS_DISTRIBUTION_ID" --paths "/*" --query 'Invalidation.Id' --output text)
+          aws cloudfront wait invalidation-completed --distribution-id "$DOCS_DISTRIBUTION_ID" --id "$INVALIDATION_ID"
 
   # Promotes prompts only after the backend that supplies their variables is
   # live. A prompt is safe to run against newer code (unused variables are

@@ -4,6 +4,7 @@ import {
   Button,
   Container,
   Group,
+  Menu,
   Tooltip,
   useComputedColorScheme,
   useMantineColorScheme,
@@ -204,6 +205,71 @@ function HeaderActions({
   isDark,
   onToggleTheme,
 }: HeaderActionsProps) {
+  if (isMobile) {
+    return (
+      <Menu position="bottom-end" withinPortal>
+        <Menu.Target>
+          <ActionIcon
+            variant="outline"
+            size="lg"
+            aria-label="Open account menu"
+            data-testid="header-menu"
+          >
+            <IconMenu2 size={18} />
+          </ActionIcon>
+        </Menu.Target>
+        <Menu.Dropdown>
+          {showPortalCta &&
+            (authState === "authenticated" ? (
+              <Menu.Item
+                component={Link}
+                to={portalPath}
+                data-testid="portal-cta"
+              >
+                {portalLabel}
+              </Menu.Item>
+            ) : (
+              <Menu.Item
+                component="a"
+                href={loginUrl}
+                disabled={loading}
+                data-testid="portal-cta"
+              >
+                {portalLabel}
+              </Menu.Item>
+            ))}
+          {isSuperAdmin && (
+            <Menu.Item component={Link} to="/admin" data-testid="admin-cta">
+              Admin
+            </Menu.Item>
+          )}
+          {authState === "authenticated" && (
+            <Menu.Item
+              component="a"
+              href={logoutUrl}
+              onClick={() => resetAnalyticsIdentity()}
+              data-testid="logout-cta"
+            >
+              Switch account
+            </Menu.Item>
+          )}
+          {showGithubLink && (
+            <Menu.Item
+              component="a"
+              href="https://github.com/Chronote-gg/chronote"
+              target="_blank"
+              rel="noreferrer"
+            >
+              GitHub repository
+            </Menu.Item>
+          )}
+          <Menu.Item onClick={onToggleTheme} data-testid="theme-toggle">
+            {isDark ? "Switch to light mode" : "Switch to dark mode"}
+          </Menu.Item>
+        </Menu.Dropdown>
+      </Menu>
+    );
+  }
   return (
     <Group gap="sm" align="center" wrap="nowrap">
       <AdminCta isSuperAdmin={isSuperAdmin} isMobile={isMobile} />
@@ -224,6 +290,7 @@ function HeaderActions({
 }
 
 type PortalHeaderShellProps = {
+  isMobile: boolean;
   showNavbarToggle: boolean;
   navbarOpened: boolean;
   onNavbarToggle: () => void;
@@ -233,6 +300,7 @@ type PortalHeaderShellProps = {
 };
 
 function PortalHeaderShell({
+  isMobile,
   showNavbarToggle,
   navbarOpened,
   onNavbarToggle,
@@ -245,7 +313,9 @@ function PortalHeaderShell({
       h="100%"
       style={{
         display: "grid",
-        gridTemplateColumns: "minmax(0, 1fr) auto minmax(0, 1fr)",
+        gridTemplateColumns: isMobile
+          ? "auto minmax(0, 1fr) auto"
+          : "minmax(0, 1fr) auto minmax(0, 1fr)",
         alignItems: "center",
       }}
     >
@@ -325,6 +395,7 @@ export function SiteHeader({
   if (isPortalLayout) {
     return (
       <PortalHeaderShell
+        isMobile={isMobile}
         showNavbarToggle={showNavbarToggle}
         navbarOpened={navbarOpened}
         onNavbarToggle={onNavbarToggle}

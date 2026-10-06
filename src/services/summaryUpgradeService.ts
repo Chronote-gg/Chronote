@@ -87,6 +87,7 @@ async function prepareSummaryUpgrade(
     const url = new URL("/upgrade/select-server", config.frontend.siteUrl);
     url.searchParams.set("serverId", meeting.guildId);
     url.searchParams.set("plan", "basic");
+    url.searchParams.set("source", "discord_summary");
     const now = Date.now();
     // ponytail: reserve before delivery; failed delivery consumes this week's
     // reminder. Prefer that to duplicate promotion.

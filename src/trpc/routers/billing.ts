@@ -16,6 +16,8 @@ import { config } from "../../services/configService";
 import { requireManageGuild } from "../permissions";
 import { authedProcedure, manageGuildProcedure, router } from "../trpc";
 import type { BillingInterval, PaidTier } from "../../types/pricing";
+import { PURCHASE_SOURCES } from "../../utils/purchaseAnalytics";
+import { captureEvent } from "../../services/analyticsService";
 
 const me = authedProcedure
   .input(z.object({ serverId: z.string().optional() }))
@@ -49,20 +51,36 @@ const checkout = manageGuildProcedure
       tier: z.enum(["basic", "pro"]),
       interval: z.enum(["month", "year"]).default("month"),
       promotionCode: z.string().optional(),
+      source: z.enum(PURCHASE_SOURCES).catch("unknown").default("direct"),
+      analyticsDisabled: z.boolean().optional(),
     }),
   )
   .mutation(async ({ ctx, input }) => {
+    const analyticsAllowed =
+      !input.analyticsDisabled && ctx.req.headers.dnt !== "1";
     if (config.mock.enabled) {
       await seedMockSubscription(input.serverId);
       return { url: `/portal/server/${input.serverId}/billing?mock=checkout` };
     }
     const stripe = getStripeClient();
     if (!stripe) {
+      if (analyticsAllowed)
+        captureEvent("billing_checkout_rejected", {
+          userId: ctx.user.id,
+          guildId: input.serverId,
+          properties: {
+            reason: "billing_disabled",
+            surface: "billing",
+            source: input.source,
+            event_version: 1,
+          },
+        });
       throw new TRPCError({
         code: "INTERNAL_SERVER_ERROR",
         message: "Stripe not configured",
       });
     }
+    let reason = "provider_failed";
     try {
       let priceId =
         (await resolvePaidPlanPriceId({
@@ -70,10 +88,16 @@ const checkout = manageGuildProcedure
           tier: input.tier as PaidTier,
           interval: input.interval as BillingInterval,
         })) || null;
-      if (!priceId && input.tier === "basic" && config.stripe.priceBasic) {
+      if (
+        !priceId &&
+        input.tier === "basic" &&
+        input.interval === "month" &&
+        config.stripe.priceBasic
+      ) {
         priceId = config.stripe.priceBasic;
       }
       if (!priceId) {
+        reason = "price_missing";
         throw new TRPCError({
           code: "BAD_REQUEST",
           message: "Pricing unavailable for selected plan",
@@ -84,6 +108,7 @@ const checkout = manageGuildProcedure
       if (promotionCode) {
         promotionCodeId = await resolvePromotionCodeId(stripe, promotionCode);
         if (!promotionCodeId) {
+          reason = "promotion_invalid";
           throw new TRPCError({
             code: "BAD_REQUEST",
             message: "Invalid promotion code",
@@ -103,9 +128,25 @@ const checkout = manageGuildProcedure
         promotionCode,
         tier: input.tier as PaidTier,
         interval: input.interval as BillingInterval,
+        source: input.source,
+        analyticsAllowed,
       });
       return { url };
     } catch (err) {
+      if (analyticsAllowed)
+        captureEvent("billing_checkout_rejected", {
+          userId: ctx.user.id,
+          guildId: input.serverId,
+          properties: {
+            reason:
+              err instanceof BillingActionError ? "transition_guarded" : reason,
+            surface: "billing",
+            source: input.source,
+            tier: input.tier,
+            interval: input.interval,
+            event_version: 1,
+          },
+        });
       if (err instanceof BillingActionError) {
         throw new TRPCError({ code: err.code, message: err.message });
       }

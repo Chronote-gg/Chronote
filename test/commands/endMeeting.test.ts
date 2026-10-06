@@ -30,6 +30,12 @@ import { describeAutoRecordRule } from "../../src/utils/meetingLifecycle";
 import { MEETING_END_REASONS } from "../../src/types/meetingLifecycle";
 import { releaseMeetingLeaseForMeeting } from "../../src/services/activeMeetingLeaseService";
 import { runTranscriptionFinalPass } from "../../src/services/transcriptionFinalPassService";
+import { captureEvent } from "../../src/services/analyticsService";
+import { ensureMeetingNotes } from "../../src/services/meetingNotesService";
+import { updateMeetingSummaryMessage } from "../../src/embed";
+jest.mock("../../src/services/analyticsService", () => ({
+  captureEvent: jest.fn(),
+}));
 
 jest.mock("../../src/audio", () => ({
   buildMixedAudio: jest.fn(),
@@ -103,6 +109,7 @@ jest.mock("../../src/metrics", () => ({
   meetingsCancelled: { inc: jest.fn() },
 }));
 jest.mock("../../src/utils/meetingLifecycle", () => ({
+  ...jest.requireActual("../../src/utils/meetingLifecycle"),
   describeAutoRecordRule: jest.fn(),
 }));
 jest.mock("../../src/meetings", () => ({
@@ -204,6 +211,8 @@ const successfulArtifactUpload = {
 describe("handleEndMeetingOther", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    jest.mocked(ensureMeetingNotes).mockReset();
+    jest.mocked(updateMeetingSummaryMessage).mockReset();
     mockedCleanupSpeakerTracks.mockResolvedValue(undefined);
     mockedUploadMeetingArtifacts.mockResolvedValue(successfulArtifactUpload);
     mockedRetainMeetingTempDir.mockResolvedValue(
@@ -453,66 +462,115 @@ describe("handleEndMeetingOther", () => {
     expect(meeting.cancellationReason).toBeUndefined();
   });
 
-  it("runs final transcription pass when transcription is enabled", async () => {
-    const { compileTranscriptions } = jest.requireMock("../../src/audio") as {
-      compileTranscriptions: jest.Mock;
-    };
+  it.each(["complete", "partial", "history_failed", "empty", "notes_failed"])(
+    "runs final transcription and counts useful notes only for accepted %s outcome",
+    async (state) => {
+      const { compileTranscriptions } = jest.requireMock("../../src/audio") as {
+        compileTranscriptions: jest.Mock;
+      };
 
-    mockedWithMeetingEndTrace.mockImplementation(async (_meeting, fn) => fn());
-    mockedEvaluateAutoRecordCancellation.mockResolvedValue({ cancel: false });
-    mockedBuildMixedAudio.mockResolvedValue(undefined);
-    mockedCloseOutputFile.mockResolvedValue(undefined);
-    mockedWaitForAudioOnlyFinishProcessing.mockResolvedValue(undefined);
-    mockedSaveMeetingHistoryToDatabase.mockResolvedValue(undefined);
-    mockedGetGuildLimits.mockResolvedValue({ limits: {} } as never);
-    mockedUpdateMeetingStatusService.mockResolvedValue(undefined);
-    compileTranscriptions.mockResolvedValue("transcript text");
+      mockedWithMeetingEndTrace.mockImplementation(async (_meeting, fn) =>
+        fn(),
+      );
+      mockedEvaluateAutoRecordCancellation.mockResolvedValue({ cancel: false });
+      mockedBuildMixedAudio.mockResolvedValue(undefined);
+      mockedCloseOutputFile.mockResolvedValue(undefined);
+      mockedWaitForAudioOnlyFinishProcessing.mockResolvedValue(undefined);
+      mockedSaveMeetingHistoryToDatabase.mockImplementation(async (meeting) => {
+        meeting.historySaved = state !== "history_failed";
+      });
+      jest.mocked(ensureMeetingNotes).mockImplementation(async (meeting) => {
+        meeting.notesText = state === "empty" ? "" : "Private notes";
+        meeting.processing = {
+          ...meeting.processing,
+          notes: state === "notes_failed" ? "failed" : "generated",
+        };
+        return meeting.notesText;
+      });
+      jest
+        .mocked(updateMeetingSummaryMessage)
+        .mockImplementation(async (meeting) => {
+          const delivery = {
+            outcome:
+              state === "partial"
+                ? ("partial" as const)
+                : ("complete" as const),
+            sent: 1,
+            intended: state === "partial" ? 2 : 1,
+            errors: [],
+          };
+          meeting.delivery = { notes: delivery };
+          return { summary: delivery, notes: delivery };
+        });
+      mockedGetGuildLimits.mockResolvedValue({ limits: {} } as never);
+      mockedUpdateMeetingStatusService.mockResolvedValue(undefined);
+      compileTranscriptions.mockResolvedValue("transcript text");
 
-    const meeting = {
-      guildId: "guild-1",
-      channelId: "text-1",
-      meetingId: "meeting-1",
-      voiceChannel: { id: "voice-1", name: "Voice", members: new Collection() },
-      textChannel: {
-        id: "text-1",
-        send: jest.fn().mockResolvedValue(undefined),
-        messages: { fetch: jest.fn() },
-      },
-      connection: {
-        disconnect: jest.fn(),
-        destroy: jest.fn(),
-      },
-      chatLog: [],
-      audioData: {
-        audioFiles: [{ processing: false, transcript: "transcript text" }],
-        currentSnippets: new Map(),
-        outputFileName: "recording.mp3",
-      },
-      startTime: new Date("2025-01-01T00:00:00.000Z"),
-      endTime: undefined,
-      finishing: false,
-      finished: false,
-      transcribeMeeting: true,
-      generateNotes: false,
-      isAutoRecording: false,
-      creator: { id: "user-1" },
-      guild: { id: "guild-1", name: "Guild", members: { cache: new Map() } },
-      ttsQueue: { stopAndClear: jest.fn() },
-      runtimeConfig: {
-        transcription: {
-          finalPassEnabled: true,
+      const meeting = {
+        guildId: "guild-1",
+        channelId: "text-1",
+        meetingId: "meeting-1",
+        voiceChannel: {
+          id: "voice-1",
+          name: "Voice",
+          members: new Collection(),
         },
-      },
-      setFinished: jest.fn(),
-    } as unknown as MeetingData;
+        textChannel: {
+          id: "text-1",
+          send: jest.fn().mockResolvedValue(undefined),
+          messages: { fetch: jest.fn() },
+        },
+        connection: {
+          disconnect: jest.fn(),
+          destroy: jest.fn(),
+        },
+        chatLog: [],
+        audioData: {
+          audioFiles: [{ processing: false, transcript: "transcript text" }],
+          currentSnippets: new Map(),
+          outputFileName: "recording.mp3",
+        },
+        startTime: new Date("2025-01-01T00:00:00.000Z"),
+        endTime: undefined,
+        finishing: false,
+        finished: false,
+        transcribeMeeting: true,
+        generateNotes: true,
+        isAutoRecording: false,
+        creator: { id: "user-1" },
+        guild: { id: "guild-1", name: "Guild", members: { cache: new Map() } },
+        ttsQueue: { stopAndClear: jest.fn() },
+        runtimeConfig: {
+          transcription: {
+            finalPassEnabled: true,
+          },
+        },
+        setFinished: jest.fn(),
+      } as unknown as MeetingData;
 
-    await handleEndMeetingOther({} as Client, meeting);
+      meeting.attendance = new Set(["user-1"]);
+      await handleEndMeetingOther({} as Client, meeting);
 
-    expect(mockedRunTranscriptionFinalPass).toHaveBeenCalledWith(meeting, {
-      audioFilePath: "recording.mp3",
-    });
-    expect(meeting.processing).toEqual({ transcription: "ready" });
-  });
+      expect(mockedRunTranscriptionFinalPass).toHaveBeenCalledWith(meeting, {
+        audioFilePath: "recording.mp3",
+      });
+      expect(meeting.processing).toMatchObject({ transcription: "ready" });
+      expect(captureEvent).toHaveBeenCalledWith(
+        "meeting_completed",
+        expect.objectContaining({
+          guildId: "guild-1",
+          userId: "user-1",
+          properties: expect.objectContaining({
+            usable_notes: state === "complete",
+            event_version: 2,
+          }),
+        }),
+      );
+      expect(
+        JSON.stringify(jest.mocked(captureEvent).mock.calls),
+      ).not.toContain("Private notes");
+    },
+  );
 
   it("retains local artifacts when completed meeting audio upload is not durable", async () => {
     mockedWithMeetingEndTrace.mockImplementation(async (_meeting, fn) => fn());

@@ -20,24 +20,17 @@ Use the invite link from [chronote.gg](https://chronote.gg) to add the bot. Disc
 
 After the bot joins, it sends a DM to the installer (or server owner) with a link to the onboarding wizard.
 
-## Step 2: Run the onboarding wizard
+After authorization, the first-recording guide offers **Open Discord** and an example of the notes. Use the server where you added Chronote. You do not need to sign into the web portal to start a recording.
 
-Type `/onboard` in any text channel. The wizard walks you through:
-
-- Selecting a default notes channel (where meeting summaries are posted).
-- Setting initial server context (a short description of your team or project).
-
-The onboarding wizard requires **Manage Server** permission. You can skip it and configure these settings individually later.
-
-## Step 3: Start your first meeting
+## Step 2: Start your first meeting
 
 1. Join a voice channel.
-2. Run `/startmeeting` in a text channel, or right-click yourself, Chronote, or someone in your voice channel and select **Apps** -> **Start meeting**.
+2. Tell participants you are recording. Run `/startmeeting` in a text channel, or right-click yourself, Chronote, or someone in your voice channel and select **Apps** -> **Start meeting**.
 3. If you use `/startmeeting`, optionally add a `context` parameter (e.g., "Weekly standup for backend team") and `tags` (e.g., "standup, backend").
 
 Chronote joins the voice channel and begins recording. You will see a "Meeting Started" embed with an **End Meeting** button.
 
-## Step 4: End the meeting
+## Step 3: End the meeting
 
 End the meeting in any of these ways:
 
@@ -53,6 +46,10 @@ Chronote processes the recording:
 4. Everything is saved to your meeting history.
 
 ## What to set up next
+
+Optional setup can wait until after your first recording. Type `/onboard` to choose a default notes channel and set initial server context. The wizard requires **Manage Server** permission; you can also configure those settings individually.
+
+Open the meeting library from the guide or a meeting summary to browse your notes and transcripts. The portal asks you to sign in with Discord if needed.
 
 | Task                         | Command                              | Details                                 |
 | ---------------------------- | ------------------------------------ | --------------------------------------- |

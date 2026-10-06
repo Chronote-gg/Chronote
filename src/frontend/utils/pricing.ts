@@ -20,7 +20,8 @@ export const formatCurrency = (amountCents: number, currency: string) => {
   return new Intl.NumberFormat("en-US", {
     style: "currency",
     currency: normalized,
-    maximumFractionDigits: 0,
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 2,
   }).format(amountCents / 100);
 };
 
@@ -36,10 +37,8 @@ export const formatPlanPrice = (
 export const billingLabelForInterval = (interval: BillingInterval) =>
   interval === "month" ? "Billed monthly" : "Billed yearly";
 
-export const annualSavingsLabel = "2 months free";
-
 export const resolvePaidPlan = (
   lookup: PaidPlanLookup,
   tier: PaidTier,
   interval: BillingInterval,
-): PaidPlan | null => lookup[tier]?.[interval] ?? lookup[tier]?.month ?? null;
+): PaidPlan | null => lookup[tier]?.[interval] ?? null;

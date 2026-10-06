@@ -14,6 +14,10 @@ jest.mock("../src/services/summaryUpgradeService", () => ({
   claimSummaryUpgrade: jest.fn().mockResolvedValue(undefined),
 }));
 import { claimSummaryUpgrade } from "../src/services/summaryUpgradeService";
+import { captureEvent } from "../src/services/analyticsService";
+jest.mock("../src/services/analyticsService", () => ({
+  captureEvent: jest.fn(),
+}));
 import { buildSummaryUpgradeBody } from "../src/utils/summaryUpgrade";
 
 import {
@@ -38,11 +42,13 @@ type EmbedLike = { toJSON?: () => EmbedPayload; data?: EmbedPayload };
 describe("updateMeetingSummaryMessage", () => {
   afterEach(() => {
     jest.restoreAllMocks();
+    jest.clearAllMocks();
     jest.mocked(claimSummaryUpgrade).mockResolvedValue(undefined);
   });
   const fixture = () => ({
     meetingId: "meeting-1",
     guildId: "guild-1",
+    creator: { id: "user-1" },
     startMessageId: "start",
     startTime: new Date("2025-01-01T00:00:00Z"),
     endTime: new Date("2025-01-01T01:00:00Z"),
@@ -97,8 +103,26 @@ describe("updateMeetingSummaryMessage", () => {
       value: buildSummaryUpgradeBody(5400),
     });
     expect(notes.components[0].toJSON().components).toEqual([
-      expect.objectContaining({ label: "Upgrade", url, style: 5 }),
+      expect.objectContaining({
+        label: "Upgrade",
+        url: `${url}&source=discord_notes`,
+        style: 5,
+      }),
     ]);
+    expect(captureEvent).toHaveBeenCalledWith(
+      "upgrade_offer_delivered",
+      expect.objectContaining({
+        guildId: "guild-1",
+        properties: { surface: "discord_summary", event_version: 1 },
+      }),
+    );
+    expect(captureEvent).toHaveBeenCalledWith(
+      "upgrade_offer_delivered",
+      expect.objectContaining({
+        guildId: "guild-1",
+        properties: { surface: "discord_notes", event_version: 1 },
+      }),
+    );
     expect(value.notesText).toBe("Notes");
   });
 
@@ -147,12 +171,20 @@ describe("updateMeetingSummaryMessage", () => {
     expect(payloads.at(-1).embeds.at(-1).toJSON().fields[0].value).toBe(
       buildSummaryUpgradeBody(3600),
     );
-    expect(payloads.at(-1).components[0].toJSON().components[0].url).toBe(url);
+    expect(payloads.at(-1).components[0].toJSON().components[0].url).toBe(
+      `${url}&source=discord_notes`,
+    );
     expect(value.notesText).toBe("A".repeat(11800));
   });
 
   it("reports failed notes independently of successful summary editing without leaking error bodies", async () => {
     const value = fixture();
+    jest
+      .mocked(claimSummaryUpgrade)
+      .mockResolvedValueOnce({
+        url: "https://chronote.test/upgrade",
+        recordedSeconds: 3600,
+      });
     value.textChannel.send.mockRejectedValue(denied());
     const warn = jest
       .spyOn(console, "warn")
@@ -170,6 +202,11 @@ describe("updateMeetingSummaryMessage", () => {
       },
     });
     expect(value.generateNotes).toBe(true);
+    expect(
+      jest
+        .mocked(captureEvent)
+        .mock.calls.map(([, args]) => args?.properties?.surface),
+    ).toEqual(["discord_summary"]);
     expect(updateActiveObservation).toHaveBeenCalledWith(
       expect.objectContaining({ level: "ERROR" }),
       { asType: "chain" },

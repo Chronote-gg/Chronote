@@ -1,4 +1,5 @@
 import posthog from "posthog-js";
+import { resolveAnalyticsEnvironment } from "../../utils/purchaseAnalytics";
 
 type AnalyticsGlobal = {
   __POSTHOG_KEY__?: string;
@@ -32,8 +33,45 @@ const resolveKey = () => resolveInjectedValue(readGlobals().__POSTHOG_KEY__);
  */
 const SHARE_ID_PATTERN = /\/share\/(meeting|ask)\/[^/?#]+\/[^/?#]+/g;
 
-export function redactShareIds(value: string): string {
-  return value.replace(SHARE_ID_PATTERN, "/share/$1/:serverId/:shareId");
+function isPrivateQueryKey(key: string): boolean {
+  try {
+    // Encoded return URLs add a second encoding layer to query keys.
+    return ["promo", "promotioncode", "source"].includes(
+      decodeURIComponent(decodeURIComponent(key)).toLowerCase(),
+    );
+  } catch {
+    return false;
+  }
+}
+
+export function redactShareIds(value: string, depth = 0): string {
+  // Bound nested return URLs and discard deeper values rather than leaking them.
+  if (depth > 8) return "[redacted]";
+  return value
+    .replace(SHARE_ID_PATTERN, "/share/$1/:serverId/:shareId")
+    .replace(/\/promo\/[^/?#]+/gi, "/promo/:code")
+    .replace(/%2fpromo%2f(?:(?!%2f|%3f|%23|%26).)+/gi, "%2Fpromo%2F%3Acode")
+    .replace(
+      /([?&])([^=&#]+)=([^&#]*)/g,
+      (match, separator, key, queryValue) => {
+        if (isPrivateQueryKey(key)) return `${separator}${key}=[redacted]`;
+        try {
+          const decoded = decodeURIComponent(queryValue);
+          if (decoded === queryValue) return match;
+          const sanitized = redactShareIds(decoded, depth + 1);
+          return sanitized === decoded
+            ? match
+            : `${separator}${key}=${encodeURIComponent(sanitized)}`;
+        } catch {
+          return match;
+        }
+      },
+    )
+    .replace(
+      /(%3f|%26)((?:(?!%3d|%26|%23).)+)%3d.*?(?=%26|%23|$)/gi,
+      (match, separator, key) =>
+        isPrivateQueryKey(key) ? `${separator}${key}%3D%5Bredacted%5D` : match,
+    );
 }
 
 /**
@@ -64,7 +102,7 @@ function sanitizeProperties(properties: Record<string, unknown>) {
  */
 export function initAnalytics() {
   const key = resolveKey();
-  if (!key) return;
+  if (!key || isDoNotTrackEnabled()) return;
   posthog.init(key, {
     api_host:
       resolveInjectedValue(readGlobals().__POSTHOG_HOST__) ||
@@ -88,7 +126,7 @@ export function initAnalytics() {
  * than two anonymous ones.
  */
 export function identifyUser(userId: string) {
-  if (!resolveKey()) return;
+  if (!resolveKey() || isDoNotTrackEnabled()) return;
   posthog.identify(userId);
 }
 
@@ -99,6 +137,14 @@ export function resetAnalyticsIdentity() {
 }
 
 export function track(event: string, properties?: Record<string, unknown>) {
-  if (!resolveKey()) return;
-  posthog.capture(event, properties);
+  if (!resolveKey() || isDoNotTrackEnabled()) return;
+  try {
+    posthog.capture(event, {
+      ...properties,
+      environment: resolveAnalyticsEnvironment(window.location.origin),
+      surface: properties?.surface ?? "web",
+    });
+  } catch {
+    // Analytics must not interrupt authentication, navigation or checkout.
+  }
 }

@@ -26,13 +26,13 @@ import PageHeader from "../components/PageHeader";
 import Surface from "../components/Surface";
 import PricingCard from "../components/PricingCard";
 import { trpc } from "../services/trpc";
+import { track, isDoNotTrackEnabled } from "../services/analytics";
 import { showBillingError } from "../utils/billingErrorNotification";
 import { uiBorders, uiColors } from "../uiTokens";
 import type { inferRouterOutputs } from "@trpc/server";
 import type { BillingInterval, PaidTier } from "../../types/pricing";
 import type { AppRouter } from "../../trpc/router";
 import {
-  annualSavingsLabel,
   billingLabelForInterval,
   buildPaidPlanLookup,
   formatPlanPrice,
@@ -407,7 +407,7 @@ const BillingPlansSection = ({
             data={[
               { label: "Monthly", value: "month" },
               {
-                label: "Annual (best value)",
+                label: "Annual",
                 value: "year",
                 disabled: !hasAnnualPlans,
               },
@@ -498,9 +498,7 @@ const BillingPlansSection = ({
               }
               highlighted
               badge={data.tier === "basic" ? "Current plan" : "Best value"}
-              billingLabel={`${billingLabelForInterval(interval)}${
-                interval === "year" ? ` - ${annualSavingsLabel}` : ""
-              }`}
+              billingLabel={billingLabelForInterval(interval)}
               testId="billing-plan-basic"
             />
             <PricingCard
@@ -528,9 +526,7 @@ const BillingPlansSection = ({
               tone="default"
               borderColor={uiColors.accentBorder}
               borderWidth={uiBorders.accentWidth}
-              billingLabel={`${billingLabelForInterval(interval)}${
-                interval === "year" ? ` - ${annualSavingsLabel}` : ""
-              }`}
+              billingLabel={billingLabelForInterval(interval)}
               testId="billing-plan-pro"
             />
           </SimpleGrid>
@@ -591,11 +587,21 @@ export function Billing() {
         return;
       }
       const promotionCode = promoCode.trim();
+      track("upgrade_plan_clicked", {
+        guild_id: selectedGuildId,
+        tier,
+        interval,
+        source: "portal_billing",
+        promo_present: Boolean(promotionCode),
+        event_version: 1,
+      });
       const body = await checkoutMutation.mutateAsync({
         serverId: selectedGuildId,
         tier,
         interval,
         promotionCode: promotionCode.length ? promotionCode : undefined,
+        source: "portal_billing",
+        ...(isDoNotTrackEnabled() ? { analyticsDisabled: true } : {}),
       });
       window.location.href = body.url;
     } catch (err) {

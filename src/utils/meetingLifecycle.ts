@@ -7,6 +7,14 @@ import {
 } from "../types/meetingLifecycle";
 import type { MeetingData } from "../types/meeting-data";
 
+/** Auto-record's creator is the bot; attribute only to a known triggering member. */
+export function resolveMeetingActorId(
+  meeting: MeetingData,
+): string | undefined {
+  if (meeting.startTriggeredByUserId) return meeting.startTriggeredByUserId;
+  return meeting.isAutoRecording ? undefined : meeting.creator.id;
+}
+
 export const MEETING_START_REASON_LABELS: Record<MeetingStartReason, string> = {
   [MEETING_START_REASONS.MANUAL_COMMAND]: "Started via /startmeeting",
   [MEETING_START_REASONS.MCP]: "Started via MCP",

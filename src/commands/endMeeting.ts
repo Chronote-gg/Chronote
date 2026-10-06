@@ -42,13 +42,15 @@ import { evaluateAutoRecordCancellation } from "../services/autoRecordCancellati
 import { autoRecordJoinSuppressionService } from "../services/autoRecordJoinSuppressionService";
 import { meetingsCancelled } from "../metrics";
 import { captureEvent } from "../services/analyticsService";
-import { describeAutoRecordRule } from "../utils/meetingLifecycle";
+import {
+  describeAutoRecordRule,
+  resolveMeetingActorId,
+} from "../utils/meetingLifecycle";
 import {
   deleteMeeting,
   endTtsOnlySession,
   getMeeting,
   hasMeeting,
-  resolveMeetingActorId,
   restoreVoiceSessionNickname,
 } from "../meetings";
 import { MEETING_END_REASONS, MEETING_STATUS } from "../types/meetingLifecycle";
@@ -126,6 +128,24 @@ function captureMeetingCompleted(meeting: MeetingData): void {
         transcribed: meeting.transcribeMeeting,
         notes_generated: meeting.generateNotes,
         cancelled: Boolean(meeting.cancelled),
+        event_version: 2,
+        surface: "discord",
+        transcription_outcome: meeting.processing?.transcription ?? "unknown",
+        notes_outcome: meeting.processing?.notes ?? "unknown",
+        history_persistence:
+          meeting.historySaved === undefined
+            ? "unknown"
+            : meeting.historySaved
+              ? "saved"
+              : "not_saved",
+        notes_delivery: meeting.delivery?.notes?.outcome ?? "unknown",
+        usable_notes:
+          !meeting.cancelled &&
+          meeting.processing?.transcription === "ready" &&
+          meeting.processing?.notes === "generated" &&
+          Boolean(meeting.notesText?.trim()) &&
+          meeting.historySaved === true &&
+          meeting.delivery?.notes?.outcome === "complete",
       },
     });
   } catch (error) {
