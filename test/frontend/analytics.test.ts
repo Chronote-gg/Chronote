@@ -137,6 +137,8 @@ describe("analytics", () => {
     "https://chronote.gg/promo/PRIVATE?interval=year",
     "https://chronote.gg/upgrade?%70romo=PRIVATE&tier=pro",
     "https://chronote.gg/upgrade?promotionCode=PRIVATE",
+    "https://api.chronote.gg/auth?redirect=https://chronote.gg/upgrade?promo=PRIVATE",
+    "https://api.chronote.gg/auth?redirect=/upgrade?promo=PRIVATE",
   ])("redacts promotion paths and decoded query keys: %s", (url) => {
     expect(redactShareIds(url)).not.toContain("PRIVATE");
     expect(

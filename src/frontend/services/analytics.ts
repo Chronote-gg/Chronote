@@ -57,7 +57,6 @@ export function redactShareIds(value: string, depth = 0): string {
         if (isPrivateQueryKey(key)) return `${separator}${key}=[redacted]`;
         try {
           const decoded = decodeURIComponent(queryValue);
-          if (decoded === queryValue) return match;
           const sanitized = redactShareIds(decoded, depth + 1);
           return sanitized === decoded
             ? match
