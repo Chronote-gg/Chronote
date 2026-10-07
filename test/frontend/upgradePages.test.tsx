@@ -2,7 +2,8 @@ import "./mocks/mockFrontendContexts";
 import "./mocks/mockRouter";
 import "./mocks/trpc";
 import React from "react";
-import { beforeEach, describe, expect, test } from "@jest/globals";
+import { MantineProvider } from "@mantine/core";
+import { beforeEach, describe, expect, jest, test } from "@jest/globals";
 import { fireEvent, screen } from "@testing-library/react";
 import PromoLanding from "../../src/frontend/pages/PromoLanding";
 import Upgrade from "../../src/frontend/pages/Upgrade";
@@ -18,11 +19,69 @@ import {
   setRouteParams,
   setRouteSearch,
 } from "./testUtils";
-import { setBillingQuery } from "./mocks/trpc";
+import { setBillingQuery, setPricingQuery } from "./mocks/trpc";
+import { track } from "../../src/frontend/services/analytics";
+
+jest.mock("../../src/frontend/services/analytics", () => ({
+  track: jest.fn(),
+  isDoNotTrackEnabled: () => false,
+}));
 
 describe("upgrade pages", () => {
   beforeEach(() => {
     resetFrontendMocks();
+    jest.mocked(track).mockClear();
+  });
+
+  test("a Basic subscriber arriving without a plan is ready to upgrade to Pro", () => {
+    authState.state = "authenticated";
+    guildState.selectedGuildId = "g1";
+    guildState.guilds = [{ id: "g1", name: "Guild One", canManage: true }];
+    setBillingQuery({
+      data: {
+        billingEnabled: true,
+        tier: "basic",
+        status: "active",
+        billingSource: "stripe",
+        hasStripeBilling: true,
+      },
+    });
+    setPricingQuery({
+      data: {
+        plans: [
+          {
+            tier: "pro",
+            interval: "month",
+            priceId: "price_pro",
+            unitAmount: 2400,
+            currency: "usd",
+          },
+        ],
+      },
+    });
+    const view = renderWithMantine(<Upgrade />);
+
+    expect(
+      screen.getByRole("button", { name: "Continue with Pro" }),
+    ).toBeEnabled();
+    expect(track).toHaveBeenCalledWith(
+      "upgrade_ready",
+      expect.objectContaining({ guild_id: "g1", tier: "pro" }),
+    );
+    expect(track).not.toHaveBeenCalledWith(
+      "upgrade_blocked",
+      expect.objectContaining({ reason: "current_plan" }),
+    );
+    view.rerender(
+      <MantineProvider>
+        <Upgrade />
+      </MantineProvider>,
+    );
+    expect(
+      jest
+        .mocked(track)
+        .mock.calls.filter(([event]) => event === "upgrade_ready"),
+    ).toHaveLength(1);
   });
 
   test("promo landing navigates to upgrade server select with promo", () => {

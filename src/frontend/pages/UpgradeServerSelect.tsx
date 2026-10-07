@@ -124,7 +124,8 @@ export default function UpgradeServerSelect({
   const arrived = useRef(false);
   const readyStates = useRef(new Set<string>());
   const lastBlocked = useRef<string | undefined>(undefined);
-  const requestedPlan = search.plan ?? "basic";
+  const requestedPlan =
+    search.plan ?? (currentTier === "basic" && !isComped ? "pro" : "basic");
   const requestedPrice = resolvePaidPlan(planLookup, requestedPlan, interval);
   const requestedTierEligible =
     requestedPlan === "pro" ||
