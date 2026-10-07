@@ -11,7 +11,7 @@ import {
   Outlet,
   RouterProvider,
 } from "@tanstack/react-router";
-import { expect, waitFor, within } from "storybook/test";
+import { expect, userEvent, waitFor, within } from "storybook/test";
 import { trpc } from "../services/trpc";
 import { AuthProvider } from "../contexts/AuthContext";
 import { GuildProvider } from "../contexts/GuildContext";
@@ -230,6 +230,8 @@ export const NewBuyer: Story = {
       ).toBeEnabled(),
     );
     await expect(canvas.getByText("Recommended")).toBeVisible();
+    await expect(canvas.getByRole("radio", { name: "Monthly" })).toBeChecked();
+    await expect(canvas.getByText("2 months free")).toBeVisible();
   },
 };
 export const NewBuyerLight: Story = {
@@ -281,6 +283,17 @@ export const NewBuyerNarrow: Story = {
 export const ExplicitProAnnual: Story = {
   args: {
     path: "/upgrade/select-server?serverId=example&plan=pro&interval=year&promo=SAVE20",
+  },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    await expect(await canvas.findByText("$100 / yr")).toBeVisible();
+    await expect(
+      canvas.getByText("Billed yearly · Save $20 a year"),
+    ).toBeVisible();
+    await userEvent.click(canvas.getByRole("radio", { name: "Monthly" }));
+    await expect(await canvas.findByText("$10 / mo")).toBeVisible();
+    await userEvent.click(canvas.getByRole("radio", { name: /Annual/ }));
+    await expect(await canvas.findByText("$100 / yr")).toBeVisible();
   },
 };
 export const ExistingBasic: Story = { args: { tier: "basic" } };

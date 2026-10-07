@@ -96,7 +96,7 @@ describe("build-route-html", () => {
       expect(readRoute(key)).toContain(
         `<link rel="canonical" href="${config.origin}/${key}" />`,
       );
-      expect(readRoute(key)).toContain("More time for your meetings.");
+      expect(readRoute(key)).toContain("Record longer meetings.");
     }
   });
 

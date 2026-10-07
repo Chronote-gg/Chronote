@@ -5,6 +5,7 @@ import {
   buildPaidPlanLookup,
   formatCurrency,
   formatPlanPrice,
+  getAnnualSavings,
   resolvePaidPlan,
 } from "../../src/frontend/utils/pricing";
 
@@ -61,5 +62,44 @@ describe("pricing utils", () => {
   test("billing labels stay consistent", () => {
     expect(billingLabelForInterval("month")).toBe("Billed monthly");
     expect(billingLabelForInterval("year")).toBe("Billed yearly");
+  });
+
+  test("annual savings compare a full year in the same currency", () => {
+    expect(getAnnualSavings(buildPaidPlanLookup(plans), "basic")).toEqual({
+      amount: 1000,
+      currency: "usd",
+      months: 2,
+    });
+  });
+
+  test.each([
+    { label: "missing annual", prices: [plans[0]] },
+    { label: "missing monthly", prices: [plans[1]] },
+    {
+      label: "different currencies",
+      prices: [plans[0], { ...plans[1], currency: "eur" }],
+    },
+    {
+      label: "same cost",
+      prices: [plans[0], { ...plans[1], unitAmount: 6000 }],
+    },
+    {
+      label: "annual costs more",
+      prices: [plans[0], { ...plans[1], unitAmount: 7000 }],
+    },
+    {
+      label: "zero monthly",
+      prices: [{ ...plans[0], unitAmount: 0 }, plans[1]],
+    },
+    {
+      label: "negative annual",
+      prices: [plans[0], { ...plans[1], unitAmount: -100 }],
+    },
+    {
+      label: "nonfinite amount",
+      prices: [plans[0], { ...plans[1], unitAmount: NaN }],
+    },
+  ])("does not advertise savings for $label", ({ prices }) => {
+    expect(getAnnualSavings(buildPaidPlanLookup(prices), "basic")).toBeNull();
   });
 });

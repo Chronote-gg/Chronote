@@ -25,7 +25,7 @@
       "changefreq": "monthly",
       "priority": "0.6",
       "title": "Upgrade Chronote",
-      "description": "More time for your meetings. Compare Free, Basic and Pro for your Discord server."
+      "description": "Record longer meetings. Compare Free, Basic and Pro for your Discord server."
     },
     {
       "path": "/upgrade/select-server",
@@ -34,7 +34,7 @@
       "changefreq": "monthly",
       "priority": "0.6",
       "title": "Upgrade Chronote",
-      "description": "More time for your meetings. Compare Free, Basic and Pro for your Discord server."
+      "description": "Record longer meetings. Compare Free, Basic and Pro for your Discord server."
     },
     {
       "path": "/feedback",

@@ -110,9 +110,7 @@ describe("upgrade pages", () => {
     setRouteSearch({ promo: "SAVE20", canceled: true });
     renderWithMantine(<Upgrade />);
 
-    expect(
-      screen.getByText("More time for your meetings."),
-    ).toBeInTheDocument();
+    expect(screen.getByText("Record longer meetings.")).toBeInTheDocument();
     expect(screen.queryByTestId("navigate")).toBeNull();
     const login = screen.getByRole("link", { name: "Connect Discord" });
     expect(login.getAttribute("href")).toContain("promo%3DSAVE20");

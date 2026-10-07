@@ -1,0 +1,43 @@
+.billingPeriod {
+  width: 100%;
+  max-width: 420px;
+  margin-inline: auto;
+  padding: 6px;
+  gap: 4px;
+  border: 1px solid var(--mantine-color-default-border);
+  border-radius: 18px;
+}
+
+.control {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+}
+
+.control:last-of-type {
+  flex: 1.2;
+}
+
+.label {
+  flex: 1;
+  min-height: 70px;
+  padding: 14px 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 600;
+}
+
+.annualLabel {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+}
+
+@media (max-width: 410px) {
+  .annualLabel {
+    flex-direction: column;
+    gap: 4px;
+  }
+}

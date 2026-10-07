@@ -16,12 +16,16 @@ flowchart LR
   Discord["Useful notes in Discord"] --> Offer["Offer delivered"]
   Offer -. "native click unknown" .-> Arrival["Upgrade arrival"]
   Home["Homepage pricing"] --> Arrival
-  Arrival --> Auth["Sign in if needed"] --> Ready["Server, billing and exact price ready"]
-  Ready --> Click["Direct plan action"] --> Checkout["Checkout URL created"]
+  Arrival --> Auth["Sign in if needed"] --> Ready["Server, billing and selected-period price ready"]
+  Ready --> Click["Direct plan action (Monthly or Annual)"] --> Checkout["Checkout URL created"]
   Billing["Portal billing"] --> Click
   Checkout --> Paid["Paid invoice and active entitlement saved"] --> Return["Return to server"]
   Checkout --> Cancel["Cancel/recover"] --> Arrival
 ```
+
+The purchase page defaults to Monthly unless the arrival link requests Annual.
+Its billing selector changes prices on the same page, without adding a checkout
+step. Savings use the configured monthly/yearly pair in the same currency.
 
 | Event                       | Boundary                                                                       | Safe properties beyond environment/surface/identity                                                                                 |
 | --------------------------- | ------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------- |

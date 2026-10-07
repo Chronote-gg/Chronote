@@ -567,6 +567,23 @@ test.describe("visual regression", () => {
             : `upgrade-select-free-${viewport.name}`,
           mode,
         );
+        await page
+          .getByTestId("upgrade-billing-period")
+          .getByText("Annual", { exact: true })
+          .click();
+        await expect(page.getByTestId("upgrade-plan-basic")).toContainText(
+          "$120 / yr",
+        );
+        await expect(page.getByTestId("upgrade-plan-pro")).toContainText(
+          "$290 / yr",
+        );
+        await expectVisualScreenshot(
+          page,
+          viewport.name === "desktop"
+            ? "upgrade-select-free-annual"
+            : `upgrade-select-free-annual-${viewport.name}`,
+          mode,
+        );
       }
     });
   }

@@ -1,6 +1,7 @@
 import {
   Alert,
   Avatar,
+  Badge,
   Box,
   Button,
   Container,
@@ -30,9 +31,12 @@ import type { PaidTier } from "../../types/pricing";
 import {
   billingLabelForInterval,
   buildPaidPlanLookup,
+  formatCurrency,
   formatPlanPrice,
+  getAnnualSavings,
   resolvePaidPlan,
 } from "../utils/pricing";
+import classes from "./UpgradeServerSelect.module.css";
 
 const FEATURES = {
   free: [
@@ -102,6 +106,26 @@ export default function UpgradeServerSelect({
   );
   const basicPlan = resolvePaidPlan(planLookup, "basic", interval);
   const proPlan = resolvePaidPlan(planLookup, "pro", interval);
+  const basicSavings = getAnnualSavings(planLookup, "basic");
+  const proSavings = getAnnualSavings(planLookup, "pro");
+  const sharedSavingsMonths =
+    basicSavings?.months === proSavings?.months
+      ? basicSavings?.months
+      : undefined;
+  const savingsBadge =
+    sharedSavingsMonths && Number.isInteger(sharedSavingsMonths)
+      ? `${sharedSavingsMonths} ${sharedSavingsMonths === 1 ? "month" : "months"} free`
+      : basicSavings || proSavings
+        ? "Annual savings"
+        : undefined;
+  const savingsDescription = [
+    basicSavings &&
+      `Basic saves ${formatCurrency(basicSavings.amount, basicSavings.currency)} a year`,
+    proSavings &&
+      `Pro saves ${formatCurrency(proSavings.amount, proSavings.currency)} a year`,
+  ]
+    .filter(Boolean)
+    .join(" · ");
   const billing =
     serverReady && !billingQuery.isError ? billingQuery.data : undefined;
   const currentTier = billing?.tier;
@@ -322,7 +346,7 @@ export default function UpgradeServerSelect({
           lh={1.15}
           style={{ letterSpacing: "-0.025em", textWrap: "balance" }}
         >
-          More time for your meetings.
+          Record longer meetings.
         </Title>
         {search.canceled && (
           <Alert color="gray" title="Checkout canceled">
@@ -482,12 +506,19 @@ export default function UpgradeServerSelect({
           </Surface>
         )}
         <Stack gap="md">
-          <Group justify="space-between" align="center">
-            <Text size="sm" c="dimmed">
-              Per server, not per member.
-            </Text>
+          <Stack gap="xs" align="center">
             <SegmentedControl
               aria-label="Billing period"
+              data-testid="upgrade-billing-period"
+              classNames={{
+                root: classes.billingPeriod,
+                control: classes.control,
+                label: classes.label,
+              }}
+              size="lg"
+              radius="lg"
+              color="brand"
+              withItemsBorders={false}
               value={interval}
               onChange={(value) =>
                 navigate({
@@ -500,14 +531,39 @@ export default function UpgradeServerSelect({
               data={[
                 { label: "Monthly", value: "month" },
                 {
-                  label: "Annual",
+                  label: (
+                    <Box component="span" className={classes.annualLabel}>
+                      <span>Annual</span>
+                      {savingsBadge && (
+                        <Badge
+                          color="green"
+                          variant="light"
+                          size="lg"
+                          radius="xl"
+                          px={7}
+                          tt="none"
+                          data-testid="upgrade-annual-savings"
+                        >
+                          {savingsBadge}
+                        </Badge>
+                      )}
+                    </Box>
+                  ),
                   value: "year",
                   disabled: !planLookup.basic.year && !planLookup.pro.year,
                 },
               ]}
               disabled={busy}
             />
-          </Group>
+            <Text size="sm" c="dimmed" ta="center">
+              {savingsDescription || "Per server, not per member."}
+            </Text>
+            {savingsDescription && (
+              <Text size="xs" c="dimmed" ta="center">
+                Per server, not per member.
+              </Text>
+            )}
+          </Stack>
           {pricingQuery.isError && (
             <Alert color="red" title="Pricing unavailable">
               <Stack gap="sm">
@@ -548,7 +604,11 @@ export default function UpgradeServerSelect({
               features={FEATURES.basic}
               highlighted
               badge={currentTier === "basic" ? "Current plan" : "Recommended"}
-              billingLabel={billingLabelForInterval(interval)}
+              billingLabel={
+                interval === "year" && basicSavings
+                  ? `Billed yearly · Save ${formatCurrency(basicSavings.amount, basicSavings.currency)} a year`
+                  : billingLabelForInterval(interval)
+              }
               cta={
                 currentTier === "basic" && !isComped
                   ? "Current plan"
@@ -568,7 +628,11 @@ export default function UpgradeServerSelect({
               description="For busy servers."
               features={FEATURES.pro}
               badge={currentTier === "pro" ? "Current plan" : undefined}
-              billingLabel={billingLabelForInterval(interval)}
+              billingLabel={
+                interval === "year" && proSavings
+                  ? `Billed yearly · Save ${formatCurrency(proSavings.amount, proSavings.currency)} a year`
+                  : billingLabelForInterval(interval)
+              }
               cta="Continue with Pro"
               ctaDisabled={!purchaseReady || !proPlan}
               ctaProps={{

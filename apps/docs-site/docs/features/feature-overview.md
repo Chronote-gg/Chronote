@@ -11,6 +11,11 @@ Basic is the recommended starting point when upgrading a Free server. You can
 still select Pro directly. Compare plans in your server's Billing page or on the
 [upgrade page](https://chronote.gg/upgrade).
 
+Monthly billing is selected by default. Switch to Annual to see the full yearly
+charge and any savings compared with twelve monthly payments. Savings labels
+reflect the available prices. Choose **Continue with Basic** or **Continue with
+Pro** to open checkout for that plan. One subscription covers the server.
+
 | Limit                             | Free       | Basic    | Pro             |
 | --------------------------------- | ---------- | -------- | --------------- |
 | Recording time per rolling 7 days | 4 hours    | 20 hours | No weekly limit |

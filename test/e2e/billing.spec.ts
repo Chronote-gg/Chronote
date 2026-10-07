@@ -3,6 +3,38 @@ import { defaultParseSearch } from "@tanstack/react-router";
 import { expect, test } from "./fixtures";
 import { mockBilling, mockGuilds } from "./mockData";
 
+test("purchase billing selector defaults monthly and changes totals in both directions", async ({
+  page,
+}) => {
+  await useFreeBilling(page);
+  await page.goto(
+    `/upgrade/select-server?serverId=${mockGuilds.ddm.id}&promo=SAVE20&source=discord_notes`,
+  );
+  const period = page.getByRole("radiogroup", { name: "Billing period" });
+  await expect(period.getByRole("radio", { name: "Monthly" })).toBeChecked();
+  await expect(period.getByText("2 months free")).toBeVisible();
+  await period.getByText("Annual", { exact: true }).click();
+  await expect(page.getByTestId("upgrade-plan-basic")).toContainText(
+    "$120 / yr",
+  );
+  await expect(page.getByTestId("upgrade-plan-basic")).toContainText(
+    "Save $24 a year",
+  );
+  let search = defaultParseSearch(new URL(page.url()).search);
+  expect(search).toMatchObject({
+    serverId: mockGuilds.ddm.id,
+    promo: "SAVE20",
+    source: "discord_notes",
+    interval: "year",
+  });
+  await period.getByText("Monthly", { exact: true }).click();
+  await expect(page.getByTestId("upgrade-plan-basic")).toContainText(
+    "$12 / mo",
+  );
+  search = defaultParseSearch(new URL(page.url()).search);
+  expect(search.interval).toBe("month");
+});
+
 test("checkout return preserves the full Discord server ID and billing destination", async ({
   page,
 }) => {
@@ -196,6 +228,44 @@ for (const width of [320, 768, 993, 1199, 1201, 1280]) {
     await expect(
       page.getByRole("button", { name: "Continue with Basic" }),
     ).toBeEnabled();
+    const period = page.getByTestId("upgrade-billing-period");
+    const centered = await period.evaluate((element) => {
+      const control = element.getBoundingClientRect();
+      const purchase = element
+        .closest('[data-testid="upgrade-purchase"]')!
+        .getBoundingClientRect();
+      return Math.abs(
+        control.x + control.width / 2 - purchase.x - purchase.width / 2,
+      );
+    });
+    expect(centered).toBeLessThan(2);
+    const labelHeights = await period
+      .locator("label")
+      .evaluateAll((labels) =>
+        labels.map((label) => label.getBoundingClientRect().height),
+      );
+    expect(Math.max(...labelHeights) - Math.min(...labelHeights)).toBeLessThan(
+      2,
+    );
+    for (const label of await period.locator("label").all()) {
+      const box = await label.boundingBox();
+      expect(box!.height).toBeGreaterThanOrEqual(44);
+      expect(
+        await label.evaluate(
+          (element) => element.scrollWidth <= element.clientWidth,
+        ),
+      ).toBe(true);
+    }
+    await period.getByText("Annual", { exact: true }).click();
+    await expect(page.getByTestId("upgrade-plan-basic")).toContainText(
+      "$120 / yr",
+    );
+    expect(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth <= innerWidth,
+      ),
+    ).toBe(true);
+    await period.getByText("Monthly", { exact: true }).click();
     await expect(
       page.getByText("Your subscription helps keep Chronote running.", {
         exact: true,

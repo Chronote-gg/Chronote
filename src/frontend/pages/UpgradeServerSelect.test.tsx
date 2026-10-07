@@ -243,6 +243,80 @@ it("preserves annual intent and refuses a missing annual Basic price", async () 
   expect(screen.queryByText(/2 months free/)).not.toBeInTheDocument();
 });
 
+it("defaults to Monthly and switches to accurate annual totals without losing intent", async () => {
+  mockSearch.mockReturnValue({
+    serverId: "s1",
+    promo: "SAVE20",
+    source: "discord_notes",
+  });
+  mockPricingQuery.mockReturnValue({
+    data: {
+      plans: [
+        ...plans,
+        {
+          ...plans[0],
+          interval: "year",
+          unitAmount: 10000,
+          priceId: "basic-year",
+        },
+      ],
+    },
+    isError: false,
+  });
+  const view = renderSelector();
+  expect(screen.getByRole("radio", { name: "Monthly" })).toBeChecked();
+  expect(screen.getByText("2 months free")).toBeVisible();
+  await userEvent.click(screen.getByRole("radio", { name: /Annual/ }));
+  expect(mockNavigate).toHaveBeenCalledWith({
+    search: expect.objectContaining({
+      serverId: "s1",
+      promo: "SAVE20",
+      source: "discord_notes",
+      interval: "year",
+    }),
+  });
+  mockSearch.mockReturnValue({
+    serverId: "s1",
+    promo: "SAVE20",
+    source: "discord_notes",
+    interval: "year",
+  });
+  view.rerender(
+    <MantineProvider>
+      <UpgradeServerSelect />
+    </MantineProvider>,
+  );
+  expect(screen.getByText("$100 / yr")).toBeVisible();
+  expect(screen.getByText("Billed yearly · Save $20 a year")).toBeVisible();
+  await userEvent.click(button("Basic"));
+  expect(mockCheckout).toHaveBeenCalledWith(
+    expect.objectContaining({
+      interval: "year",
+      tier: "basic",
+      promotionCode: "SAVE20",
+    }),
+  );
+});
+
+it("omits the savings badge when annual plans have no discount", () => {
+  mockPricingQuery.mockReturnValue({
+    data: {
+      plans: [
+        plans[0],
+        plans[1],
+        { ...plans[0], interval: "year", unitAmount: 12000 },
+        { ...plans[2], unitAmount: 25000 },
+      ],
+    },
+    isError: false,
+  });
+  renderSelector();
+  expect(screen.queryByText("2 months free")).not.toBeInTheDocument();
+  expect(
+    screen.queryByTestId("upgrade-annual-savings"),
+  ).not.toBeInTheDocument();
+});
+
 it.each(["unavailable", "s3"])(
   "keeps unavailable/unmanageable server %s intent and offers recovery",
   (serverId) => {
