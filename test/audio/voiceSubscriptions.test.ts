@@ -1,4 +1,4 @@
-import { PassThrough } from "node:stream";
+import { PassThrough, TransformCallback } from "node:stream";
 import { VoiceConnectionStatus } from "@discordjs/voice";
 import {
   subscribeToUserVoice,
@@ -8,6 +8,8 @@ import {
 import type { MeetingData } from "../../src/types/meeting-data";
 
 const mockDecoders: PassThrough[] = [];
+let mockBlockDecode = false;
+const mockDecodeCallbacks: TransformCallback[] = [];
 
 jest.mock("prism-media", () => {
   const { PassThrough: MockPassThrough } =
@@ -19,6 +21,14 @@ jest.mock("prism-media", () => {
           super();
           mockDecoders.push(this);
         }
+        _transform(
+          chunk: Buffer,
+          _encoding: BufferEncoding,
+          done: TransformCallback,
+        ) {
+          if (mockBlockDecode) mockDecodeCallbacks.push(done);
+          else done(null, chunk);
+        }
       },
     },
   };
@@ -26,9 +36,10 @@ jest.mock("prism-media", () => {
 
 function createMeeting(streams: PassThrough[]) {
   const receiver = {
+    packetDiagnostics: new WeakMap(),
     subscriptions: new Map<string, PassThrough>(),
     subscribe: jest.fn((userId: string) => {
-      const stream = new PassThrough();
+      const stream = new PassThrough({ objectMode: true });
       streams.push(stream);
       receiver.subscriptions.set(userId, stream);
       return stream;
@@ -68,10 +79,69 @@ describe("voice subscriptions", () => {
   beforeEach(() => {
     jest.useFakeTimers();
     mockDecoders.length = 0;
+    mockBlockDecode = false;
+    mockDecodeCallbacks.length = 0;
   });
 
   afterEach(() => {
     jest.useRealTimers();
+  });
+
+  test("reports the failing queued input, not the most recently received packet", async () => {
+    const streams: PassThrough[] = [];
+    const { meeting, receiver } = createMeeting(streams);
+    const warn = jest.spyOn(console, "warn").mockImplementation(() => {});
+    const log = jest.spyOn(console, "log").mockImplementation(() => {});
+    mockBlockDecode = true;
+    try {
+      await subscribeToUserVoice(meeting, "user-1");
+      const first = Buffer.from([0xf8, 0xff, 0xfe]);
+      const failing = Buffer.from([
+        1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 12, 0xfa, 0xfa,
+      ]);
+      const later = Buffer.from([0xf8, 0xff, 0xfe]);
+      receiver.packetDiagnostics.set(failing, {
+        connectionStatus: "connecting",
+        networkingCode: 5,
+        daveSessionPresent: true,
+        daveNativeSessionPresent: true,
+        daveReady: false,
+        daveProtocolVersion: 1,
+        daveDecryptDecision: "not-ready",
+        daveTransitionAgoMs: 164,
+      });
+      streams[0].write(first);
+      streams[0].write(failing);
+      streams[0].write(later);
+      mockDecodeCallbacks.shift()!();
+      mockDecodeCallbacks.shift()!(new Error("decoder failed"));
+      await jest.advanceTimersByTimeAsync(0);
+      const warning = warn.mock.calls.find(([message]) =>
+        String(message).startsWith("Opus decoder error:"),
+      )?.[0];
+      expect(warning).toEqual(
+        expect.stringContaining("opusPacketBytes=15 daveFooterCandidate=true"),
+      );
+      expect(warning).toEqual(
+        expect.stringContaining("connectionStatus=connecting networkingCode=5"),
+      );
+      expect(warning).toEqual(
+        expect.stringContaining(
+          "daveReady=false daveProtocolVersion=1 daveDecryptDecision=not-ready daveTransitionAgoMs=164",
+        ),
+      );
+      expect(meeting.audioData.captureIncomplete).toBe(true);
+      expect(
+        [...warn.mock.calls, ...log.mock.calls].every(
+          ([message]) =>
+            !String(message).includes("user-1") &&
+            !String(message).includes("speaker="),
+        ),
+      ).toBe(true);
+    } finally {
+      warn.mockRestore();
+      log.mockRestore();
+    }
   });
 
   test("resubscribes after opus stream error", async () => {
@@ -140,17 +210,28 @@ describe("voice subscriptions", () => {
     const warn = jest.spyOn(console, "warn").mockImplementation(() => {});
     try {
       await subscribeToUserVoice(meeting, "user-1");
+      mockBlockDecode = true;
       streams[0].write(packet);
-      mockDecoders[0].emit("error", new Error("decoder failed"));
-      expect(
-        warn.mock.calls.filter(([message]) =>
-          String(message).startsWith("Opus decoder error:"),
+      mockDecodeCallbacks.shift()!(new Error("decoder failed"));
+      await jest.advanceTimersByTimeAsync(0);
+      const warning = warn.mock.calls.find(([message]) =>
+        String(message).startsWith("Opus decoder error:"),
+      )?.[0];
+      expect(warning).toEqual(
+        expect.stringContaining(
+          `opusPacketBytes=${packet.length} daveFooterCandidate=${candidate}`,
         ),
-      ).toEqual([
-        [
-          `Opus decoder error: guildId=guild-1 channelId=channel-1 meetingId=meeting-1 userId=user-1 speaker=user-1 message=decoder failed errors=1 opusPacketBytes=${packet.length} daveFooterCandidate=${candidate} daveTransitionAgoMs=none`,
-        ],
-      ]);
+      );
+      expect(warning).toEqual(
+        expect.stringContaining("daveDecryptDecision=UNKNOWN"),
+      );
+      expect(warning).not.toEqual(expect.stringContaining("user-1"));
+      expect(warning).not.toEqual(expect.stringContaining("speaker="));
+      expect(
+        warn.mock.calls.every(
+          ([message]) => !String(message).includes("user-1"),
+        ),
+      ).toBe(true);
       expect(meeting.audioData.captureIncomplete).toBe(true);
       jest.runOnlyPendingTimers();
       expect(receiver.subscribe).toHaveBeenCalledTimes(2);
@@ -159,7 +240,7 @@ describe("voice subscriptions", () => {
     }
   });
 
-  test("logs missing packet and elapsed transition time without changing recovery", async () => {
+  test("reports UNKNOWN receiver state for an unattributed stream error", async () => {
     const streams: PassThrough[] = [];
     const { meeting, receiver } = createMeeting(streams);
     const warn = jest.spyOn(console, "warn").mockImplementation(() => {});
@@ -168,28 +249,15 @@ describe("voice subscriptions", () => {
       mockDecoders[0].emit("error", new Error("before packet"));
       expect(warn).toHaveBeenCalledWith(
         expect.stringContaining(
-          "opusPacketBytes=none daveFooterCandidate=none daveTransitionAgoMs=none",
+          "opusPacketBytes=none daveFooterCandidate=none",
         ),
       );
       expect(meeting.audioData.captureIncomplete).toBe(true);
       jest.runOnlyPendingTimers();
       expect(receiver.subscribe).toHaveBeenCalledTimes(2);
 
-      meeting.audioData.lastDaveTransitionAtMs = Date.now() - 123;
-      mockDecoders[1].emit("error", new Error("after transition"));
       expect(warn).toHaveBeenCalledWith(
-        expect.stringContaining(
-          "opusPacketBytes=none daveFooterCandidate=none daveTransitionAgoMs=123",
-        ),
-      );
-      expect(meeting.audioData.captureIncomplete).toBe(true);
-      jest.runOnlyPendingTimers();
-      expect(receiver.subscribe).toHaveBeenCalledTimes(3);
-
-      meeting.audioData.lastDaveTransitionAtMs = Date.now() + 100;
-      mockDecoders[2].emit("error", new Error("clock skew"));
-      expect(warn).toHaveBeenCalledWith(
-        expect.stringContaining("daveTransitionAgoMs=0"),
+        expect.stringContaining("daveTransitionAgoMs=UNKNOWN"),
       );
     } finally {
       warn.mockRestore();
