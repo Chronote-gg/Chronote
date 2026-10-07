@@ -9,6 +9,7 @@ import { config } from "../services/configService";
 import { resolveGuildSubscription } from "../services/subscriptionService";
 import { captureEvent } from "../services/analyticsService";
 import { resolvePurchaseSource } from "../utils/purchaseAnalytics";
+import { resolveTierFromPrice } from "../services/pricingService";
 import { getStripeWebhookRepository } from "../repositories/stripeWebhookRepository";
 import type {
   StripeCheckoutSession,
@@ -183,7 +184,7 @@ const handleInvoicePaymentSucceeded: WebhookHandler = async ({
       invoice,
       guildId,
       reconciled.subscription,
-      reconciled.tier,
+      stripe,
     );
 };
 
@@ -191,7 +192,7 @@ async function capturePaidInvoiceOnce(
   invoice: StripeInvoice,
   guildId: string,
   subscription: StripeSubscription,
-  tier: "basic" | "pro",
+  stripe: StripeClient,
 ) {
   const billingKinds: Record<string, string> = {
     subscription_create: "initial_purchase",
@@ -199,8 +200,21 @@ async function capturePaidInvoiceOnce(
     subscription_update: "plan_change",
   };
   const billingKind = billingKinds[invoice.billing_reason ?? ""] ?? "unknown";
-  const interval = subscription.items.data[0]?.price.recurring?.interval;
   try {
+    const invoicePrice = invoice.lines?.data.find(
+      (line) => line.amount > 0 && line.pricing?.price_details?.price,
+    )?.pricing?.price_details?.price;
+    const price =
+      typeof invoicePrice === "string"
+        ? await stripe.prices.retrieve(invoicePrice)
+        : invoicePrice;
+    const tier = price
+      ? (resolveTierFromPrice({
+          priceId: price.id,
+          lookupKey: price.lookup_key,
+        }) ?? undefined)
+      : undefined;
+    const interval = price?.recurring?.interval;
     // Qualification is analytics-only; a lookup outage must not retry paid billing.
     const effective = await resolveGuildSubscription(guildId);
     if (effective.billingSource !== "stripe" || effective.status !== "active")

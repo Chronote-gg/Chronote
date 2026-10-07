@@ -127,7 +127,7 @@ def create_dataset_item(
             continue
         if response.status_code in (200, 201):
             return
-        if response.status_code in (400, 409):
+        if response.status_code == 409:
             return
         response.raise_for_status()
     raise RuntimeError("rate_limited dataset-items")

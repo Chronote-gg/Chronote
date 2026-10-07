@@ -32,6 +32,12 @@ const originalStripeConfig = { ...config.stripe };
 
 const createStripe = (event: StripeEvent, retrieve?: jest.Mock) =>
   ({
+    prices: {
+      retrieve: jest.fn(async () => ({
+        ...basicPrice,
+        recurring: { interval: "month" },
+      })),
+    },
     webhooks: {
       constructEvent: jest.fn(() => event),
     },
@@ -235,6 +241,21 @@ describe("billing webhook routes", () => {
             currency: "usd",
             created: 1767225600,
             billing_reason: billingReason,
+            lines: {
+              data: [
+                {
+                  amount: 1000,
+                  pricing: {
+                    price_details: {
+                      price:
+                        billingReason === "subscription_cycle"
+                          ? "price_basic"
+                          : { ...basicPrice, recurring: { interval: "month" } },
+                    },
+                  },
+                },
+              ],
+            },
             customer: "cus_basic",
             parent: {
               subscription_details: {
@@ -247,6 +268,17 @@ describe("billing webhook routes", () => {
       } as unknown as StripeEvent;
       const subscription = {
         ...activeStripeSubscription,
+        items: {
+          data: [
+            {
+              price: {
+                id: "price_pro",
+                lookup_key: "chronote_pro_annual",
+                recurring: { interval: "year" },
+              },
+            },
+          ],
+        },
         metadata: {
           guild_id: guildId,
           discord_id: "payer-1",
@@ -264,7 +296,7 @@ describe("billing webhook routes", () => {
         expect((await postWebhook(baseUrl)).statusCode).toBe(200);
         expect(await getSubscriptionRepository().get(guildId)).toMatchObject({
           status: "active",
-          tier: "basic",
+          tier: "pro",
         });
         expect(captureEvent).toHaveBeenCalledTimes(1);
         expect(captureEvent).toHaveBeenCalledWith(
@@ -276,6 +308,7 @@ describe("billing webhook routes", () => {
               billing_kind: kind,
               source: "discord_notes",
               tier: "basic",
+              interval: "month",
               promo_present: true,
             }),
           }),

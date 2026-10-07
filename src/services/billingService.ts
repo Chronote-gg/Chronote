@@ -13,7 +13,6 @@ import type { BillingInterval, PaidTier } from "../types/pricing";
 import type { GuildSubscription, PaymentTransaction } from "../types/db";
 import type { StripeClient, StripeSubscription } from "../types/stripe";
 import type { PublicEntitlementGrant } from "./entitlementService";
-import { captureEvent } from "./analyticsService";
 import {
   resolvePurchaseSource,
   type PurchaseSource,

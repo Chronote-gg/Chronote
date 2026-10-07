@@ -358,7 +358,17 @@ def main() -> None:
         raw_path = out_dir / f"raw_traces_{window_key}.json"
         raw_path.write_text(json.dumps(traces, indent=2), encoding="utf-8")
 
-    chosen_window = max(window_results.keys(), key=lambda k: len(window_results[k]))
+    requested_meeting = args.meeting_id.strip()
+    matching_windows = {
+        key: traces for key, traces in window_results.items()
+        if not requested_meeting or any(
+            (trace.get("metadata") or {}).get("meetingId") == requested_meeting
+            for trace in traces
+        )
+    }
+    if not matching_windows:
+        raise SystemExit("Requested meeting was not found in the fetched windows.")
+    chosen_window = max(matching_windows, key=lambda k: len(matching_windows[k]))
     traces = window_results[chosen_window]
     if not traces:
         raise SystemExit("No traces found in the specified window(s).")
@@ -377,6 +387,13 @@ def main() -> None:
     filtered = [
         t for t in traces if (t.get("metadata") or {}).get("meetingId") == meeting_id
     ]
+    if requested_meeting:
+        filtered = list({
+            trace["id"]: trace
+            for window in matching_windows.values()
+            for trace in window
+            if (trace.get("metadata") or {}).get("meetingId") == requested_meeting
+        }.values())
 
     records: List[Dict[str, Any]] = []
     for trace in filtered:

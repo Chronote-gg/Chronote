@@ -29,8 +29,9 @@ def load_env(path: Path) -> None:
 
 def segment_audio(input_path: Path, segment_dir: Path, seconds: int) -> List[Path]:
     segment_dir.mkdir(parents=True, exist_ok=True)
-    if list(segment_dir.glob("segment_*.mp3")):
-        return sorted(segment_dir.glob("segment_*.mp3"))
+    # Segmentation is local and cheap; regenerate to avoid stale audio or chunk sizes.
+    for segment in segment_dir.glob("segment_*.mp3"):
+        segment.unlink()
     subprocess.run(
         [
             "ffmpeg",

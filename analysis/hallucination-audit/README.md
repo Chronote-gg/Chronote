@@ -19,7 +19,8 @@ Scripts
 Notes
 
 - Raw meeting artifacts are intentionally not stored in this branch.
-- Keep large audio files and raw trace dumps in dedicated audit branches or local workspace storage.
+- Keep audio files and raw trace dumps in approved private storage, outside Git.
 - Default trace and meeting output directories are ignored by Git. Keep any
   custom output location outside the public repository. Provider calls require
   the applicable access and billing authorization.
+- Offline correctness checks: `python -m unittest discover -s analysis/hallucination-audit`.
