@@ -188,6 +188,28 @@ const handleInvoicePaymentSucceeded: WebhookHandler = async ({
     );
 };
 
+async function resolveInvoicePlan(
+  stripe: StripeClient,
+  invoice: StripeInvoice,
+) {
+  const invoicePrice = invoice.lines?.data.find(
+    (line) => line.amount > 0 && line.pricing?.price_details?.price,
+  )?.pricing?.price_details?.price;
+  const price =
+    typeof invoicePrice === "string"
+      ? await stripe.prices.retrieve(invoicePrice)
+      : invoicePrice;
+  return {
+    tier: price
+      ? (resolveTierFromPrice({
+          priceId: price.id,
+          lookupKey: price.lookup_key,
+        }) ?? undefined)
+      : undefined,
+    interval: price?.recurring?.interval,
+  };
+}
+
 async function capturePaidInvoiceOnce(
   invoice: StripeInvoice,
   guildId: string,
@@ -201,20 +223,7 @@ async function capturePaidInvoiceOnce(
   };
   const billingKind = billingKinds[invoice.billing_reason ?? ""] ?? "unknown";
   try {
-    const invoicePrice = invoice.lines?.data.find(
-      (line) => line.amount > 0 && line.pricing?.price_details?.price,
-    )?.pricing?.price_details?.price;
-    const price =
-      typeof invoicePrice === "string"
-        ? await stripe.prices.retrieve(invoicePrice)
-        : invoicePrice;
-    const tier = price
-      ? (resolveTierFromPrice({
-          priceId: price.id,
-          lookupKey: price.lookup_key,
-        }) ?? undefined)
-      : undefined;
-    const interval = price?.recurring?.interval;
+    const { tier, interval } = await resolveInvoicePlan(stripe, invoice);
     // Qualification is analytics-only; a lookup outage must not retry paid billing.
     const effective = await resolveGuildSubscription(guildId);
     if (effective.billingSource !== "stripe" || effective.status !== "active")

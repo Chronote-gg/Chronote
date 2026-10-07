@@ -230,10 +230,12 @@ export async function createInitialPurchase(
     !sameSubscriptionPointer(latestPointer, input.expected)
   )
     return currentOutcome(attempt);
-  if (
-    createsCheckout &&
-    input.checkout.metadata?.analytics_opt_out !== "true"
-  ) {
+  if (createsCheckout) captureNewCheckout(input);
+  return session.url;
+}
+
+function captureNewCheckout(input: PurchaseInput) {
+  if (input.checkout.metadata?.analytics_opt_out !== "true") {
     const metadata = input.checkout.metadata;
     const tier = metadata?.purchase_tier;
     const interval = metadata?.purchase_interval;
@@ -254,7 +256,6 @@ export async function createInitialPurchase(
       },
     });
   }
-  return session.url;
 }
 
 async function refreshAttempt(
