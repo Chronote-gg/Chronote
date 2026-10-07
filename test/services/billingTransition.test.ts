@@ -55,6 +55,15 @@ function fixture() {
     checkout: {
       sessions: {
         create: jest.fn(async () => ({
+          metadata: {
+            guild_id: guildId,
+            purchase_attempt_id:
+              getMockStore().purchaseAttempts.get(guildId)?.attemptId,
+          },
+          customer: "cus_new",
+          livemode: false,
+          id: "cs_new",
+          status: "open",
           url: "https://checkout.stripe.com/new",
         })),
       },
@@ -149,6 +158,7 @@ describe("existing server subscription checkout", () => {
         success_url: expect.stringContaining("source=discord_summary"),
         cancel_url: expect.stringContaining("source=discord_summary"),
       }),
+      expect.objectContaining({ idempotencyKey: expect.any(String) }),
     );
   });
 
@@ -169,13 +179,25 @@ describe("existing server subscription checkout", () => {
           metadata: expect.objectContaining({ analytics_opt_out: "true" }),
         },
       }),
+      expect.objectContaining({ idempotencyKey: expect.any(String) }),
     );
   });
 
   it("does not count a checkout when the provider returns no URL", async () => {
     getMockStore().subscriptions.delete(guildId);
     const { stripe, client } = fixture();
-    stripe.checkout.sessions.create.mockResolvedValue({ url: "" });
+    stripe.checkout.sessions.create.mockImplementation(async () => ({
+      metadata: {
+        guild_id: guildId,
+        purchase_attempt_id:
+          getMockStore().purchaseAttempts.get(guildId)?.attemptId,
+      },
+      customer: "cus_new",
+      livemode: false,
+      id: "cs_new",
+      status: "open",
+      url: "",
+    }));
     await expect(
       createCheckoutSession({
         stripe: client,
@@ -183,8 +205,22 @@ describe("existing server subscription checkout", () => {
         guildId,
         priceId: "price_basic",
       }),
-    ).rejects.toThrow("checkout URL");
+    ).rejects.toMatchObject({ code: "BAD_REQUEST" });
     expect(captureEvent).not.toHaveBeenCalled();
+  });
+
+  it("does not count a resumed Checkout URL as another created checkout", async () => {
+    getMockStore().subscriptions.delete(guildId);
+    const { stripe, client } = fixture();
+    const request = { stripe: client, user, guildId, priceId: "price_basic" };
+    await createCheckoutSession(request);
+    const session = await stripe.checkout.sessions.create.mock.results[0].value;
+    Object.assign(stripe.checkout.sessions, {
+      retrieve: jest.fn(async () => session),
+    });
+    await expect(createCheckoutSession(request)).resolves.toBe(session.url);
+    expect(stripe.checkout.sessions.create).toHaveBeenCalledTimes(1);
+    expect(captureEvent).toHaveBeenCalledTimes(1);
   });
 
   it("retains payer-checked general management while transitions are disabled", async () => {

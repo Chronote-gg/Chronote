@@ -1476,6 +1476,11 @@ resource "aws_iam_policy" "dynamodb_access_policy" {
     Version = "2012-10-17",
     Statement = [
       {
+        Effect   = "Allow",
+        Action   = ["dynamodb:ConditionCheckItem"],
+        Resource = [aws_dynamodb_table.guild_subscription_table.arn]
+      },
+      {
         Effect = "Allow",
         Action = [
           "dynamodb:GetItem",

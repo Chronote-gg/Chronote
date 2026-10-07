@@ -169,6 +169,13 @@ including the price and any prorations, before applying the change. Returning to
 Chronote does not itself confirm payment; the plan updates after Stripe reports
 the change. A failed confirmation does not create a second subscription.
 
+Only one initial checkout can be in progress for a server. If another server
+manager has already started a purchase, wait for them to finish or for that
+checkout to expire. The original payer can retry the same selection to resume it.
+Closing Checkout or returning to Chronote does not immediately end the pending
+purchase. If billing says the purchase needs review, contact support before
+trying to purchase again.
+
 Use billing management to update payment methods or view invoice history. If a
 subscription has an unpaid invoice, a pending change, or a scheduled cancellation,
 resolve that state before changing plans. Contact support if the original payer
