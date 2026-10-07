@@ -36,8 +36,9 @@ flowchart LR
 | `upgrade_offer_delivered`   | Successful CTA-bearing summary or final-notes message                          | surface=discord_summary or discord_notes, event_version=1                                                                           |
 | `meeting_completed`         | Existing finalization and cancellation paths                                   | existing flags/counts plus transcription_outcome, notes_outcome, history_persistence, notes_delivery, usable_notes, event_version=2 |
 
-Without an explicit plan in the link, readiness defaults to Pro for a paid Basic
-subscriber and Basic otherwise. Explicit plan intent remains unchanged.
+Without an explicit plan in the link, readiness defaults to Basic when its action
+is eligible and its exact price is available, or Pro otherwise. Explicit plan
+intent remains unchanged. Shared purchase guards still block ineligible access.
 
 `usable_notes` requires non-cancellation, ready transcription, generated non-empty
 notes, successful history storage and complete notes delivery. It is a technical

@@ -107,6 +107,8 @@ export default function UpgradeServerSelect({
   const currentTier = billing?.tier;
   const isComped = billing?.billingSource === "manual_comp";
   const isForced = billing?.billingSource === "forced";
+  const basicTierEligible =
+    currentTier !== "pro" && (currentTier !== "basic" || isComped);
   const managementOnly =
     isForced ||
     (billing?.hasStripeBilling && currentTier === "free") ||
@@ -125,11 +127,9 @@ export default function UpgradeServerSelect({
   const readyStates = useRef(new Set<string>());
   const lastBlocked = useRef<string | undefined>(undefined);
   const requestedPlan =
-    search.plan ?? (currentTier === "basic" && !isComped ? "pro" : "basic");
+    search.plan ?? (basicTierEligible && basicPlan ? "basic" : "pro");
   const requestedPrice = resolvePaidPlan(planLookup, requestedPlan, interval);
-  const requestedTierEligible =
-    requestedPlan === "pro" ||
-    (currentTier !== "pro" && (currentTier !== "basic" || isComped));
+  const requestedTierEligible = requestedPlan === "pro" || basicTierEligible;
   const blockedReason = authLoading
     ? undefined
     : authState !== "authenticated"
@@ -254,11 +254,7 @@ export default function UpgradeServerSelect({
       !resolvePaidPlan(planLookup, tier, interval)
     )
       return;
-    if (
-      tier === "basic" &&
-      (currentTier === "pro" || (currentTier === "basic" && !isComped))
-    )
-      return;
+    if (tier === "basic" && !basicTierEligible) return;
     // The clicked tier travels with the request, never through a state update.
     navigate({
       replace: true,
@@ -558,12 +554,7 @@ export default function UpgradeServerSelect({
                   ? "Current plan"
                   : "Continue with Basic"
               }
-              ctaDisabled={
-                !purchaseReady ||
-                !basicPlan ||
-                currentTier === "pro" ||
-                (currentTier === "basic" && !isComped)
-              }
+              ctaDisabled={!purchaseReady || !basicPlan || !basicTierEligible}
               ctaProps={{
                 variant: "filled",
                 onClick: () => void handleCheckout("basic"),

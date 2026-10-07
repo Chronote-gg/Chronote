@@ -33,56 +33,63 @@ describe("upgrade pages", () => {
     jest.mocked(track).mockClear();
   });
 
-  test("a Basic subscriber arriving without a plan is ready to upgrade to Pro", () => {
-    authState.state = "authenticated";
-    guildState.selectedGuildId = "g1";
-    guildState.guilds = [{ id: "g1", name: "Guild One", canManage: true }];
-    setBillingQuery({
-      data: {
-        billingEnabled: true,
-        tier: "basic",
-        status: "active",
-        billingSource: "stripe",
-        hasStripeBilling: true,
-      },
-    });
-    setPricingQuery({
-      data: {
-        plans: [
-          {
-            tier: "pro",
-            interval: "month",
-            priceId: "price_pro",
-            unitAmount: 2400,
-            currency: "usd",
-          },
-        ],
-      },
-    });
-    const view = renderWithMantine(<Upgrade />);
+  test.each([
+    { label: "paid Basic", tier: "basic", billingSource: "stripe" },
+    { label: "complimentary Pro", tier: "pro", billingSource: "manual_comp" },
+    { label: "Free with no Basic price", tier: "free", billingSource: "free" },
+  ] as const)(
+    "$label without a requested plan is ready to buy Pro",
+    ({ tier, billingSource }) => {
+      authState.state = "authenticated";
+      guildState.selectedGuildId = "g1";
+      guildState.guilds = [{ id: "g1", name: "Guild One", canManage: true }];
+      setBillingQuery({
+        data: {
+          billingEnabled: true,
+          tier,
+          status: "active",
+          billingSource,
+          hasStripeBilling: billingSource === "stripe",
+        },
+      });
+      setPricingQuery({
+        data: {
+          plans: [
+            {
+              tier: "pro",
+              interval: "month",
+              priceId: "price_pro",
+              unitAmount: 2400,
+              currency: "usd",
+            },
+          ],
+        },
+      });
+      const view = renderWithMantine(<Upgrade />);
 
-    expect(
-      screen.getByRole("button", { name: "Continue with Pro" }),
-    ).toBeEnabled();
-    expect(track).toHaveBeenCalledWith(
-      "upgrade_ready",
-      expect.objectContaining({ guild_id: "g1", tier: "pro" }),
-    );
-    expect(track).not.toHaveBeenCalledWith(
-      "upgrade_blocked",
-      expect.objectContaining({ reason: "current_plan" }),
-    );
-    view.rerender(
-      <MantineProvider>
-        <Upgrade />
-      </MantineProvider>,
-    );
-    expect(
-      jest
-        .mocked(track)
-        .mock.calls.filter(([event]) => event === "upgrade_ready"),
-    ).toHaveLength(1);
-  });
+      expect(
+        screen.getByRole("button", { name: "Continue with Pro" }),
+      ).toBeEnabled();
+      expect(track).toHaveBeenCalledWith(
+        "upgrade_ready",
+        expect.objectContaining({ guild_id: "g1", tier: "pro" }),
+      );
+      expect(track).not.toHaveBeenCalledWith(
+        "upgrade_blocked",
+        expect.objectContaining({ reason: "current_plan" }),
+      );
+      view.rerender(
+        <MantineProvider>
+          <Upgrade />
+        </MantineProvider>,
+      );
+      expect(
+        jest
+          .mocked(track)
+          .mock.calls.filter(([event]) => event === "upgrade_ready"),
+      ).toHaveLength(1);
+    },
+  );
 
   test("promo landing navigates to upgrade server select with promo", () => {
     authState.state = "authenticated";
