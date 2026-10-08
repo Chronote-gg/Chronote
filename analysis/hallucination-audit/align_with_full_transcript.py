@@ -75,17 +75,28 @@ def best_match(
     if not candidates:
         return None, "no_candidates", None
 
-    window_size = max(8, min(len(full_words), len(snippet_words) + 6))
+    # shortcut: allow two token edits around indexed anchors; widen for noisier references.
+    starts = set()
+    for word in candidates:
+        offsets = [offset for offset, token in enumerate(snippet_words) if token == word]
+        for pos in index.get(word, [])[:100]:
+            for offset in offsets:
+                for shift in range(-2, 3):
+                    start = pos - offset + shift
+                    if 0 <= start < len(full_words):
+                        starts.add(start)
+    window_sizes = range(
+        max(1, len(snippet_words) - 2),
+        min(len(full_words), len(snippet_words) + 2) + 1,
+    )
     snippet_word_set = set(snippet_words)
     best_score: Optional[float] = None
     best_window: Optional[Tuple[int, int]] = None
-    for word in candidates:
-        positions = index.get(word, [])
-        if len(positions) > 100:
-            positions = positions[:100]
-        for pos in positions:
-            start = max(0, pos - 3)
-            end = min(len(full_words), start + window_size)
+    for start in sorted(starts):
+        for window_size in window_sizes:
+            end = start + window_size
+            if end > len(full_words):
+                continue
             window_text = " ".join(full_words[start:end])
             if not window_text:
                 continue

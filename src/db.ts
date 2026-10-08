@@ -6,6 +6,7 @@ import {
   AttributeValue,
   DynamoDBClient,
   TransactWriteItemsCommand,
+  type TransactionCanceledException,
   GetItemCommand,
   PutItemCommand,
   DeleteItemCommand,
@@ -3147,16 +3148,27 @@ export async function compareAndWritePurchaseAttempt(
     );
     return true;
   } catch (error) {
+    const cancellation = error as TransactionCanceledException;
     if (
-      error instanceof Error &&
-      error.name === "TransactionCanceledException" &&
-      "CancellationReasons" in error &&
-      Array.isArray(error.CancellationReasons) &&
-      error.CancellationReasons.some(
-        (reason) => reason.Code === "ConditionalCheckFailed",
+      cancellation.name === "TransactionCanceledException" &&
+      cancellation.CancellationReasons?.some(
+        (reason) =>
+          reason.Code === "ConditionalCheckFailed" ||
+          reason.Code === "TransactionConflict",
+      ) &&
+      cancellation.CancellationReasons.every(
+        (reason) =>
+          !reason.Code ||
+          ["None", "ConditionalCheckFailed", "TransactionConflict"].includes(
+            reason.Code,
+          ),
       )
-    )
+    ) {
+      await new Promise((resolve) =>
+        setTimeout(resolve, 25 + Math.floor(Math.random() * 50)),
+      );
       return false;
+    }
     throw error;
   }
 }

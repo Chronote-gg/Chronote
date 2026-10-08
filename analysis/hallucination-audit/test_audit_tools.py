@@ -37,6 +37,30 @@ class AuditToolsTests(unittest.TestCase):
         self.assertNotEqual(align.best_match("he", ["he"], "the cat", ["the", "cat"], {})[0], 1.0)
         self.assertEqual(align.best_match("cat", ["cat"], "the cat", ["the", "cat"], {})[0], 1.0)
 
+    def test_fuzzy_alignment_uses_snippet_length_and_anchor_offset(self):
+        align = load("align_with_full_transcript")
+        examples = [
+            ("we should launch product", "we should launch products"),
+            ("we can all take a quick break then launch", "we can all take a quick break then launches"),
+            ("we should schedule the product launch for friday", "we should schedule the next product launch for friday"),
+            ("we should schedule the next product launch for friday", "we should schedule the product launch for friday"),
+        ]
+        for snippet, reference in examples:
+            with self.subTest(snippet=snippet):
+                full = f"yesterday {reference} tomorrow"
+                words = full.split()
+                score, method, window = align.best_match(snippet, snippet.split(), full, words, align.build_index(words))
+                self.assertGreaterEqual(score, 0.85)
+                self.assertEqual(method, "fuzzy")
+                self.assertEqual(" ".join(words[window[0]:window[1]]), reference)
+
+    def test_fuzzy_alignment_does_not_claim_unrelated_speech(self):
+        align = load("align_with_full_transcript")
+        full = "the launch failed and everything must be postponed"
+        words = full.split()
+        score, _, _ = align.best_match("we should launch product", "we should launch product".split(), full, words, align.build_index(words))
+        self.assertTrue(score is None or score < 0.85)
+
     def test_failed_segment_cannot_publish_partial_reference(self):
         audio = load("transcribe_full_audio")
         with tempfile.TemporaryDirectory() as directory:

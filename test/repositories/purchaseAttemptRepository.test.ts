@@ -2,6 +2,7 @@
 import {
   DynamoDBClient,
   TransactWriteItemsCommand,
+  TransactionCanceledException,
   GetItemCommand,
   PutItemCommand,
   UpdateItemCommand,
@@ -40,6 +41,70 @@ describe("purchase Dynamo commands", () => {
     send.mockResolvedValue({} as never);
   });
   afterAll(() => send.mockRestore());
+  test.each([
+    ["ConditionalCheckFailed", "None"],
+    ["None", "TransactionConflict"],
+    ["TransactionConflict", "ConditionalCheckFailed"],
+  ])("returns retryable concurrency after backoff for %p", async (...codes) => {
+    jest.useFakeTimers();
+    const random = jest.spyOn(Math, "random").mockReturnValue(0);
+    send.mockRejectedValueOnce(
+      new TransactionCanceledException({
+        $metadata: {},
+        message: "Concurrent purchase",
+        CancellationReasons: codes.map((Code) => ({ Code })),
+      }),
+    );
+    try {
+      const result = compareAndWritePurchaseAttempt(
+        attempt,
+        undefined,
+        undefined,
+      );
+      let settled = false;
+      void result.then(() => {
+        settled = true;
+      });
+      await jest.advanceTimersByTimeAsync(24);
+      expect(settled).toBe(false);
+      await jest.advanceTimersByTimeAsync(1);
+      await expect(result).resolves.toBe(false);
+      expect(send).toHaveBeenCalledTimes(1);
+    } finally {
+      random.mockRestore();
+      jest.useRealTimers();
+    }
+  });
+  test.each([
+    ["ConditionalCheckFailed", "ValidationError"],
+    ["TransactionConflict", "ProvisionedThroughputExceeded"],
+    ["None", "None"],
+    [],
+  ])("does not hide a non-concurrency cancellation %p", async (...codes) => {
+    const error = new TransactionCanceledException({
+      $metadata: {},
+      message: "Failed transaction",
+      CancellationReasons: codes.map((Code) => ({ Code })),
+    });
+    send.mockRejectedValueOnce(error);
+    await expect(
+      compareAndWritePurchaseAttempt(attempt, undefined, undefined),
+    ).rejects.toBe(error);
+  });
+  test("does not hide missing cancellation reasons or authorization failures", async () => {
+    for (const error of [
+      new TransactionCanceledException({
+        $metadata: {},
+        message: "Unknown failure",
+      }),
+      Object.assign(new Error("Denied"), { name: "AccessDeniedException" }),
+    ]) {
+      send.mockRejectedValueOnce(error);
+      await expect(
+        compareAndWritePurchaseAttempt(attempt, undefined, undefined),
+      ).rejects.toBe(error);
+    }
+  });
   test("reserves in a namespaced row atomically guarded by the original subscription revision", async () => {
     const pointer = {
       guildId,

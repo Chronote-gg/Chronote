@@ -59,6 +59,43 @@ beforeEach(() => {
   resetMockStore();
   jest.clearAllMocks();
 });
+test.each([2, 3])(
+  "reservation handles %s conflicts before provider work",
+  async (conflicts) => {
+    const { stripe, client } = fixture();
+    const repositoryModule =
+      await import("../../src/repositories/purchaseAttemptRepository");
+    const real = repositoryModule.getPurchaseRepository();
+    const compare = jest.fn(real.compareAndWrite);
+    for (let i = 0; i < conflicts; i++) compare.mockResolvedValueOnce(false);
+    const spy = jest
+      .spyOn(repositoryModule, "getPurchaseRepository")
+      .mockReturnValue({
+        ...real,
+        compareAndWrite: compare,
+      });
+    try {
+      const result = createCheckoutSession({
+        stripe: client,
+        user: { id: "payer" },
+        guildId,
+        priceId: "price_basic",
+      });
+      if (conflicts === 2) {
+        await expect(result).resolves.toContain("checkout.stripe.com");
+        expect(stripe.customers.create).toHaveBeenCalledTimes(1);
+        expect(stripe.checkout.sessions.create).toHaveBeenCalledTimes(1);
+      } else {
+        await expect(result).rejects.toMatchObject({ code: "BAD_REQUEST" });
+        expect(compare).toHaveBeenCalledTimes(3);
+        expect(stripe.customers.create).not.toHaveBeenCalled();
+        expect(stripe.checkout.sessions.create).not.toHaveBeenCalled();
+      }
+    } finally {
+      spy.mockRestore();
+    }
+  },
+);
 test("two different payers cannot obtain simultaneous first-purchase sessions", async () => {
   const { stripe, client } = fixture();
   const results = await Promise.allSettled(

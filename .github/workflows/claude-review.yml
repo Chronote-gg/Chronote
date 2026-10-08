@@ -216,6 +216,17 @@ jobs:
             : > .claude-review/previous-review.md
           fi
 
+          previous_sha="$(sed -n 's/^<!-- claude-reviewed-sha:\([0-9a-f]\{40\}\) -->$/\1/p' .claude-review/previous-review.md | head -n 1)"
+          if [ -n "$previous_sha" ] && git merge-base --is-ancestor "$previous_sha" "$HEAD_SHA" 2>/dev/null; then
+            git diff --find-renames --find-copies --stat "${previous_sha}..${HEAD_SHA}" > .claude-review/follow-up-stat.txt
+            git diff --find-renames --find-copies --no-ext-diff "${previous_sha}..${HEAD_SHA}" > .claude-review/follow-up-diff.patch
+            printf '\n## Follow-up scope\n\nChanges since reviewed head `%s` through current head `%s`.\n' "$previous_sha" "$HEAD_SHA" >> .claude-review/pr-context.md
+          else
+            cp .claude-review/pr-stat.txt .claude-review/follow-up-stat.txt
+            cp .claude-review/pr-diff.patch .claude-review/follow-up-diff.patch
+            printf '\n## Follow-up scope\n\nNo usable ancestor review; review the full PR diff.\n' >> .claude-review/pr-context.md
+          fi
+
       - name: Assume the shared Claude review role
         id: aws_credentials
         # The role trust must admit repo:Chronote-gg/Chronote:pull_request.
@@ -252,7 +263,7 @@ jobs:
 
       - name: Review with Claude
         id: claude_review
-        # Pinned from anthropics/claude-code-action v1.0.200. Update deliberately.
+        # Pinned from anthropics/claude-code-action v1.0.223. Update deliberately.
         uses: anthropics/claude-code-action@9cdae7f0d995e3ba7c33f226087fdf82a59cd520
         with:
           claude_code_oauth_token: ${{ steps.claude_auth.outputs.token }}
@@ -282,10 +293,15 @@ jobs:
             - .claude-review/pr-context.md
             - .claude-review/pr-stat.txt
             - .claude-review/pr-diff.patch
+            - .claude-review/follow-up-stat.txt
+            - .claude-review/follow-up-diff.patch (changes since the last reviewed ancestor, otherwise the full PR)
             - .claude-review/previous-review.md (the prior sticky review, when present)
-            Keep the review bounded: start from REVIEW.md and the generated
-            PR diff, and only open source files when a changed hunk needs more
-            local context.
+            Start from REVIEW.md, pr-context.md and the follow-up diff. Use the
+            full PR diff to recheck carried findings. The current source and
+            generated diffs are authoritative; prior review prose is context,
+            not evidence of which commit changed a file. Check newly changed
+            recovery documentation before carrying a documentation finding.
+            Only open source files when a changed hunk needs more local context.
 
             Do not modify files, create commits, push branches, call GitHub
             comment tools, call GitHub MCP write tools, call gh, call shell, or
