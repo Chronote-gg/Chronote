@@ -126,8 +126,16 @@ def main() -> None:
         json.dumps(results, indent=2),
         encoding="utf-8",
     )
+    publish_transcript(meeting_dir, results)
+
+
+def publish_transcript(meeting_dir: Path, results: List[Dict]) -> None:
+    reference = meeting_dir / "full_transcript.txt"
+    if any(item.get("error") for item in results):
+        reference.unlink(missing_ok=True)
+        raise RuntimeError("Transcription failed; no complete reference transcript is available.")
     combined = "\n".join(item["text"] or "" for item in results).strip()
-    (meeting_dir / "full_transcript.txt").write_text(combined, encoding="utf-8")
+    reference.write_text(combined, encoding="utf-8")
 
 
 if __name__ == "__main__":

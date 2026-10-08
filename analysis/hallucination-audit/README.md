@@ -23,4 +23,6 @@ Notes
 - Default trace and meeting output directories are ignored by Git. Keep any
   custom output location outside the public repository. Provider calls require
   the applicable access and billing authorization.
-- Offline correctness checks: `python -m unittest discover -s analysis/hallucination-audit`.
+- Install the locked Python environment with `uv sync --frozen`. Audio tools also
+  require `ffmpeg` and `ffprobe` on PATH.
+- Offline correctness checks: `uv run --frozen python -m unittest discover -s analysis/hallucination-audit`.

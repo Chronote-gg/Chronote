@@ -17,7 +17,7 @@ DEFAULT_TZ_OFFSET = "-05:00"
 DEFAULT_NAME = "transcription"
 DEFAULT_FIELDS = "core,io"
 DEFAULT_LIMIT = 100
-DEFAULT_BASE_URL = "https://cloud.langfuse.com"
+DEFAULT_BASE_URL = "https://us.cloud.langfuse.com"
 
 
 def load_env(path: Path) -> None:

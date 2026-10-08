@@ -12,7 +12,7 @@ import requests
 
 
 ENV_PATH = Path(__file__).resolve().parents[2] / ".env"
-DEFAULT_BASE_URL = "https://cloud.langfuse.com"
+DEFAULT_BASE_URL = "https://us.cloud.langfuse.com"
 
 
 def load_env(path: Path) -> None:
@@ -106,7 +106,7 @@ def compute_volume(
         ],
         capture_output=True,
         text=True,
-        check=False,
+        check=True,
     )
     return parse_volume(result.stderr)
 

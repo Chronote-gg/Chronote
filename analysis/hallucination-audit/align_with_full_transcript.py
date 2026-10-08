@@ -66,8 +66,9 @@ def best_match(
 ) -> Tuple[Optional[float], str, Optional[Tuple[int, int]]]:
     if not snippet_text:
         return None, "empty", None
-    if snippet_text in full_text:
-        return 1.0, "substring", find_subsequence_window(snippet_words, full_words)
+    exact_window = find_subsequence_window(snippet_words, full_words)
+    if exact_window is not None:
+        return 1.0, "substring", exact_window
 
     unique_words = sorted(set(snippet_words), key=len, reverse=True)
     candidates = [word for word in unique_words if len(word) >= 4][:3]

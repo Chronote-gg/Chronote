@@ -10,7 +10,7 @@ import requests
 
 
 ENV_PATH = Path(__file__).resolve().parents[2] / ".env"
-DEFAULT_BASE_URL = "https://cloud.langfuse.com"
+DEFAULT_BASE_URL = "https://us.cloud.langfuse.com"
 DEFAULT_COUNT_WEIGHTS = {
     "hallucinated": 0.4,
     "unknown": 0.4,

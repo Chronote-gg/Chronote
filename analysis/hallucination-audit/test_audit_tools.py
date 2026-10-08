@@ -15,6 +15,37 @@ def load(name):
 
 
 class AuditToolsTests(unittest.TestCase):
+    def test_langfuse_defaults_to_us(self):
+        for name in ["run_audit", "compute_audio_volume", "create_langfuse_dataset_sample"]:
+            self.assertEqual(load(name).DEFAULT_BASE_URL, "https://us.cloud.langfuse.com")
+
+    def test_exact_alignment_requires_whole_tokens(self):
+        align = load("align_with_full_transcript")
+        self.assertNotEqual(align.best_match("he", ["he"], "the cat", ["the", "cat"], {})[0], 1.0)
+        self.assertEqual(align.best_match("cat", ["cat"], "the cat", ["the", "cat"], {})[0], 1.0)
+
+    def test_failed_segment_cannot_publish_partial_reference(self):
+        audio = load("transcribe_full_audio")
+        with tempfile.TemporaryDirectory() as directory:
+            reference = Path(directory) / "full_transcript.txt"
+            reference.write_text("previous run", encoding="utf-8")
+            with self.assertRaises(RuntimeError):
+                audio.publish_transcript(Path(directory), [{"text": "synthetic"}, {"error": "failed"}])
+            self.assertFalse(reference.exists())
+            audio.publish_transcript(Path(directory), [{"text": "synthetic"}])
+            self.assertEqual(reference.read_text(encoding="utf-8"), "synthetic")
+
+    def test_ffmpeg_failure_is_not_a_measurement(self):
+        volume = load("compute_audio_volume")
+        import subprocess
+        def fail_command(*args, **kwargs):
+            if kwargs.get("check"):
+                raise subprocess.CalledProcessError(1, args[0])
+            return Mock(returncode=1, stderr="invalid audio")
+        with patch.object(volume.subprocess, "run", side_effect=fail_command):
+            with self.assertRaises(subprocess.CalledProcessError):
+                volume.compute_volume(Path("invalid.mp3"))
+
     def test_requested_meeting_in_less_populated_window(self):
         audit = load("run_audit")
         with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, {
