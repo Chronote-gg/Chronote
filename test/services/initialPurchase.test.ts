@@ -566,3 +566,78 @@ test("duplicate replay preserves first observation and attempt provenance", asyn
     jest.useRealTimers();
   }
 });
+
+test.each([28, 29, 35, 59])(
+  "lost Checkout response recovery at %i minutes respects Stripe's minimum expiry",
+  async (minutes) => {
+    jest.useFakeTimers();
+    try {
+      jest.setSystemTime(new Date("2026-10-08T00:00:00Z"));
+      const { stripe, client } = fixture();
+      stripe.checkout.sessions.create.mockRejectedValueOnce(
+        new Error("lost response"),
+      );
+      const request = {
+        stripe: client,
+        user: { id: "payer" },
+        guildId,
+        priceId: "price_basic",
+      };
+      await expect(createCheckoutSession(request)).rejects.toThrow(
+        "lost response",
+      );
+      const attempt = getMockStore().purchaseAttempts.get(guildId)!;
+      expect(attempt.checkout.expires_at).toBe(
+        Math.floor(Date.now() / 1000) + 3600,
+      );
+      jest.setSystemTime(new Date(Date.now() + minutes * 60 * 1000));
+      if (minutes < 29) {
+        await expect(createCheckoutSession(request)).resolves.toContain(
+          "checkout.stripe.com",
+        );
+        expect(stripe.checkout.sessions.create.mock.calls[1]).toEqual(
+          stripe.checkout.sessions.create.mock.calls[0],
+        );
+        expect(
+          attempt.checkout.expires_at! - Math.floor(Date.now() / 1000),
+        ).toBeGreaterThan(30 * 60);
+      } else {
+        await expect(createCheckoutSession(request)).rejects.toThrow(
+          "needs review",
+        );
+        expect(stripe.checkout.sessions.create).toHaveBeenCalledTimes(1);
+        expect(getMockStore().purchaseAttempts.get(guildId)?.state).toBe(
+          "needs_review",
+        );
+      }
+    } finally {
+      jest.useRealTimers();
+    }
+  },
+);
+
+test("customer lookup cannot carry a frozen Checkout past its replay deadline", async () => {
+  jest.useFakeTimers();
+  try {
+    jest.setSystemTime(new Date("2026-10-08T00:00:00Z"));
+    const { stripe, client } = fixture();
+    stripe.customers.create.mockImplementationOnce(async () => {
+      jest.setSystemTime(new Date(Date.now() + 29 * 60 * 1000));
+      return { id: "cus_first" };
+    });
+    await expect(
+      createCheckoutSession({
+        stripe: client,
+        user: { id: "payer" },
+        guildId,
+        priceId: "price_basic",
+      }),
+    ).rejects.toThrow("needs review");
+    expect(stripe.checkout.sessions.create).not.toHaveBeenCalled();
+    expect(getMockStore().purchaseAttempts.get(guildId)?.state).toBe(
+      "needs_review",
+    );
+  } finally {
+    jest.useRealTimers();
+  }
+});

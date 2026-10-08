@@ -191,6 +191,7 @@ def main() -> None:
         if args.retry_errors:
             status = metrics[media_id].get("audio_volume_status") or ""
             if isinstance(status, str) and status.startswith("error:"):
+                (cache_dir / f"{media_id}.mp3").unlink(missing_ok=True)
                 remaining.append(media_id)
     if remaining:
         with ThreadPoolExecutor(max_workers=args.workers) as executor:
@@ -236,7 +237,7 @@ def main() -> None:
     output_json.write_text(json.dumps(records, indent=2), encoding="utf-8")
 
     output_csv = meeting_dir / "transcriptions_classified_with_audio.csv"
-    fields = list(records[0].keys()) if records else []
+    fields = list(dict.fromkeys(key for record in records for key in record))
     if records:
         with output_csv.open("w", encoding="utf-8", newline="") as handle:
             handle.write(",".join(fields) + "\n")

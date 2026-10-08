@@ -180,7 +180,8 @@ def main() -> None:
         trace_id = record.get("trace_id")
         if not trace_id:
             continue
-        dataset_item_id = f"{args.meeting_id}-{trace_id}"
+        observation_id = record.get("observation_id") or observation_map.get(trace_id)
+        dataset_item_id = f"{args.meeting_id}-{record.get('observation_id') or trace_id}"
         payload = {
             "datasetName": args.dataset_name,
             "input": {
@@ -201,7 +202,7 @@ def main() -> None:
                 "audioMaxVolumeDb": record.get("audio_max_volume_db"),
             },
             "sourceTraceId": trace_id,
-            "sourceObservationId": observation_map.get(trace_id),
+            "sourceObservationId": observation_id,
             "id": dataset_item_id,
             "status": "ACTIVE",
         }

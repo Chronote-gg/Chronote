@@ -182,16 +182,13 @@ export async function createInitialPurchase(
 ): Promise<string> {
   let attempt = await reserve(input);
   if (attempt.state === "completed") return currentOutcome(attempt);
-  // A fixed request is no longer replayed once its safe recovery window ends.
-  if (!attempt.sessionId && Date.now() - attempt.createdAt >= 60 * 60 * 1000) {
-    await save(attempt, { state: "needs_review" }, input.expected);
-    throw review();
-  }
+  await checkCheckoutReplayWindow(input, attempt);
   attempt = await customer(input, attempt);
   const pointer = await getSubscriptionRepository().get(input.guildId);
   if (!sameSubscriptionPointer(pointer, input.expected))
     return currentOutcome(attempt);
   const createsCheckout = !attempt.sessionId;
+  await checkCheckoutReplayWindow(input, attempt);
   const session = attempt.sessionId
     ? await input.stripe.checkout.sessions.retrieve(attempt.sessionId)
     : await input.stripe.checkout.sessions.create(attempt.checkout, {
@@ -232,6 +229,17 @@ export async function createInitialPurchase(
     return currentOutcome(attempt);
   if (createsCheckout) captureNewCheckout(input);
   return session.url;
+}
+
+async function checkCheckoutReplayWindow(
+  input: PurchaseInput,
+  attempt: PurchaseAttempt,
+) {
+  // Stripe requires 30 minutes remaining; leave one minute for the request.
+  if (!attempt.sessionId && Date.now() - attempt.createdAt >= 29 * 60 * 1000) {
+    await save(attempt, { state: "needs_review" }, input.expected);
+    throw review();
+  }
 }
 
 function captureNewCheckout(input: PurchaseInput) {

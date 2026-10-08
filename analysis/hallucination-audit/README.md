@@ -26,3 +26,10 @@ Notes
 - Install the locked Python environment with `uv sync --frozen`. Audio tools also
   require `ffmpeg` and `ffprobe` on PATH.
 - Offline correctness checks: `uv run --frozen python -m unittest discover -s analysis/hallucination-audit`.
+
+The audit reads transcription observations through Langfuse Observations API v2,
+using bounded start times and cursor pagination. `--name` matches the observation
+name. JSON I/O is decoded locally and guardrail metadata is requested untruncated.
+Exports retain both trace and observation IDs; duplicate grouping and dataset item
+IDs use observations so snippets sharing a trace stay separate. Existing raw dump
+filenames are retained. Dataset creation also supports historical trace exports.

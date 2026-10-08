@@ -125,7 +125,7 @@ function hasUsableMeetingNotes(meeting: MeetingData): boolean {
   );
 }
 
-function captureMeetingCompleted(meeting: MeetingData): void {
+function captureMeetingCompleted(meeting: MeetingData, failed = false): void {
   try {
     const endTime = meeting.endTime ?? new Date();
     captureEvent("meeting_completed", {
@@ -141,11 +141,15 @@ function captureMeetingCompleted(meeting: MeetingData): void {
         cancelled: Boolean(meeting.cancelled),
         event_version: 2,
         surface: "discord",
-        transcription_outcome: meeting.processing?.transcription ?? "unknown",
+        transcription_outcome:
+          meeting.processing?.transcription ??
+          (failed && meeting.transcribeMeeting ? "failed" : "unknown"),
         notes_outcome: meeting.processing?.notes ?? "unknown",
         history_persistence:
           meeting.historySaved === undefined
-            ? "unknown"
+            ? failed
+              ? "not_saved"
+              : "unknown"
             : meeting.historySaved
               ? "saved"
               : "not_saved",
@@ -270,6 +274,7 @@ export async function handleEndMeetingButton(
       }
       meeting.setFinished();
       meeting.finished = true;
+      captureMeetingCompleted(meeting, true);
       deleteMeeting(meeting.guildId);
     }
     if (meeting) {
@@ -306,6 +311,7 @@ export async function handleEndMeetingOther(
       }
       meeting.setFinished();
       meeting.finished = true;
+      captureMeetingCompleted(meeting, true);
       deleteMeeting(meeting.guildId);
     }
     await cleanupMeetingTempDir(meeting);

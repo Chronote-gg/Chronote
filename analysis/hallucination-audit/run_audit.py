@@ -15,7 +15,7 @@ ENV_PATH = Path(__file__).resolve().parents[2] / ".env"
 DEFAULT_WINDOW = "19:00-20:00"
 DEFAULT_TZ_OFFSET = "-05:00"
 DEFAULT_NAME = "transcription"
-DEFAULT_FIELDS = "core,io"
+DEFAULT_FIELDS = "core,basic,io,metadata"
 DEFAULT_LIMIT = 100
 DEFAULT_BASE_URL = "https://us.cloud.langfuse.com"
 
@@ -114,7 +114,7 @@ def build_duplicate_groups(records: List[Dict[str, Any]]) -> Dict[str, int]:
         if len(indices) < 2:
             continue
         for idx in indices:
-            groups[records[idx]["trace_id"]] = group_id
+            groups[records[idx]["observation_id"]] = group_id
         group_id += 1
     return groups
 
@@ -125,7 +125,7 @@ def build_near_duplicate_groups(records: List[Dict[str, Any]]) -> Dict[str, int]
         norm = record.get("normalized_text")
         if not norm or len(norm) < 12:
             continue
-        candidates.append((record["trace_id"], norm))
+        candidates.append((record["observation_id"], norm))
     if not candidates:
         return {}
 
@@ -278,7 +278,7 @@ def classify_record(record: Dict[str, Any]) -> Tuple[str, List[str]]:
     return "unknown", ["mixed_signals"]
 
 
-def list_traces(
+def list_observations(
     base_url: str,
     public_key: str,
     secret_key: str,
@@ -286,33 +286,40 @@ def list_traces(
     limit: int,
 ) -> List[Dict[str, Any]]:
     results: List[Dict[str, Any]] = []
-    page = 1
+    cursor = None
     while True:
         query = dict(params)
-        query["page"] = page
+        if cursor:
+            query["cursor"] = cursor
         query["limit"] = limit
         response = requests.get(
-            f"{base_url.rstrip('/')}/api/public/traces",
+            f"{base_url.rstrip('/')}/api/public/v2/observations",
             params=query,
             auth=(public_key, secret_key),
             timeout=60,
         )
         response.raise_for_status()
         payload = response.json()
-        data = payload.get("data") if isinstance(payload, dict) else payload
-        if not data:
+        results.extend(payload["data"])
+        cursor = payload.get("meta", {}).get("cursor")
+        if not cursor:
             break
-        results.extend(data)
-        if len(data) < limit:
-            break
-        page += 1
         time.sleep(0.2)
     return results
 
 
+def decode_io(value: Any) -> Any:
+    if isinstance(value, str):
+        try:
+            return json.loads(value)
+        except json.JSONDecodeError:
+            return value
+    return value
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Audit Langfuse transcription traces for hallucinations.",
+        description="Audit Langfuse transcription observations for hallucinations.",
     )
     parser.add_argument("--date", help="Date in YYYY-MM-DD (EST).")
     parser.add_argument("--window", default=DEFAULT_WINDOW)
@@ -347,12 +354,12 @@ def main() -> None:
         from_ts, to_ts = window_to_range(date_str, args.window, args.tz_offset)
         params = {
             "name": args.name,
-            "fromTimestamp": from_ts,
-            "toTimestamp": to_ts,
+            "fromStartTime": from_ts,
+            "toStartTime": to_ts,
             "fields": DEFAULT_FIELDS,
-            "orderBy": "timestamp.asc",
+            "expandMetadata": "transcriptionFlags,logprobMetrics,promptEchoMetrics,noiseGateMetrics",
         }
-        traces = list_traces(base_url, public_key, secret_key, params, args.limit)
+        traces = list_observations(base_url, public_key, secret_key, params, args.limit)
         window_key = f"{date_str}_{args.window.replace(':', '')}"
         window_results[window_key] = traces
         raw_path = out_dir / f"raw_traces_{window_key}.json"
@@ -398,8 +405,8 @@ def main() -> None:
     records: List[Dict[str, Any]] = []
     for trace in filtered:
         metadata = trace.get("metadata") or {}
-        input_data = trace.get("input") or {}
-        output = trace.get("output")
+        input_data = decode_io(trace.get("input")) or {}
+        output = decode_io(trace.get("output"))
         output_text = (
             output
             if isinstance(output, str)
@@ -409,8 +416,9 @@ def main() -> None:
         )
         audio_id = parse_audio_media_id(input_data.get("audio"))
         record = {
-            "trace_id": trace.get("id"),
-            "trace_timestamp": trace.get("timestamp"),
+            "observation_id": trace["id"],
+            "trace_id": trace["traceId"],
+            "trace_timestamp": trace.get("startTime"),
             "meeting_id": metadata.get("meetingId"),
             "guild_id": metadata.get("guildId"),
             "channel_id": metadata.get("channelId"),
@@ -440,7 +448,7 @@ def main() -> None:
             "words_per_second": metadata.get("wordsPerSecond"),
             "syllables_per_second": metadata.get("syllablesPerSecond"),
             "noise_gate_metrics": metadata.get("noiseGateMetrics"),
-            "trace_url_path": trace.get("htmlPath"),
+            "trace_url_path": f"/project/{trace['projectId']}/traces/{trace['traceId']}",
         }
         classification, reasons = classify_record(record)
         record["classification"] = classification
@@ -450,9 +458,9 @@ def main() -> None:
     duplicate_groups = build_duplicate_groups(records)
     near_duplicate_groups = build_near_duplicate_groups(records)
     for record in records:
-        record["duplicate_group_id"] = duplicate_groups.get(record["trace_id"])
+        record["duplicate_group_id"] = duplicate_groups.get(record["observation_id"])
         record["near_duplicate_group_id"] = near_duplicate_groups.get(
-            record["trace_id"]
+            record["observation_id"]
         )
 
     meeting_dir = out_dir / meeting_id
@@ -468,11 +476,11 @@ def main() -> None:
 
     summary_lines = [
         f"Meeting ID: {meeting_id}",
-        f"Trace window: {chosen_window}",
+        f"Observation window: {chosen_window}",
         f"Base URL: {base_url}",
         "",
         "Counts:",
-        f"- Total traces: {len(records)}",
+        f"- Total observations: {len(records)}",
         f"- Hallucinated: {counts['hallucinated']}",
         f"- Legit: {counts['legit']}",
         f"- Unknown: {counts['unknown']}",

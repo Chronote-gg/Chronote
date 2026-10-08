@@ -20,8 +20,9 @@ its URL. Responses never grant entitlement.
 Checkout expires after one hour. A cancel redirect, closed browser or local clock
 expiry does not release the reservation. A known session is retrieved from Stripe;
 only confirmed expiration without a subscription permits replacement. Unknown
-creation results remain reserved and become review-required after the bounded
-replay window. An old idempotency key is never retried indefinitely. Completed
+creation results remain reserved and become review-required after 29 minutes.
+This leaves Stripe its required 30-minute minimum before the frozen expiry, plus
+one minute for the request. The window is checked again after customer lookup. An old idempotency key is never retried indefinitely. Completed
 sessions reconcile current provider subscription state, including when webhook
 processing precedes the request's response. The caller receives billing navigation
 or an actionable pending/review error instead of a stale payable URL.

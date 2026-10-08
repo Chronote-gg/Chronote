@@ -462,7 +462,17 @@ describe("handleEndMeetingOther", () => {
     expect(meeting.cancellationReason).toBeUndefined();
   });
 
-  it.each(["complete", "partial", "history_failed", "empty", "notes_failed"])(
+  it.each([
+    "complete",
+    "partial",
+    "history_failed",
+    "empty",
+    "notes_failed",
+    "transcription_error",
+    "upload_error",
+    "history_error",
+    "cleanup_error",
+  ])(
     "runs final transcription and counts useful notes only for accepted %s outcome",
     async (state) => {
       const { compileTranscriptions } = jest.requireMock("../../src/audio") as {
@@ -477,7 +487,9 @@ describe("handleEndMeetingOther", () => {
       mockedCloseOutputFile.mockResolvedValue(undefined);
       mockedWaitForAudioOnlyFinishProcessing.mockResolvedValue(undefined);
       mockedSaveMeetingHistoryToDatabase.mockImplementation(async (meeting) => {
-        meeting.historySaved = state !== "history_failed";
+        meeting.historySaved =
+          state !== "history_failed" && state !== "history_error";
+        if (state === "history_error") throw new Error("history unavailable");
       });
       jest.mocked(ensureMeetingNotes).mockImplementation(async (meeting) => {
         meeting.notesText = state === "empty" ? "" : "Private notes";
@@ -505,6 +517,23 @@ describe("handleEndMeetingOther", () => {
       mockedGetGuildLimits.mockResolvedValue({ limits: {} } as never);
       mockedUpdateMeetingStatusService.mockResolvedValue(undefined);
       compileTranscriptions.mockResolvedValue("transcript text");
+      if (state === "transcription_error")
+        compileTranscriptions.mockRejectedValueOnce(
+          new Error("transcription unavailable"),
+        );
+      if (state === "upload_error")
+        mockedUploadMeetingArtifacts.mockRejectedValueOnce(
+          new Error("upload unavailable"),
+        );
+      if (state === "cleanup_error")
+        mockedCleanupMeetingTempDir.mockRejectedValueOnce(
+          new Error("cleanup unavailable"),
+        );
+      let active = true;
+      mockedHasMeeting.mockImplementation(() => active);
+      mockedDeleteMeeting.mockImplementation(() => {
+        active = false;
+      });
 
       const meeting = {
         guildId: "guild-1",
@@ -554,18 +583,39 @@ describe("handleEndMeetingOther", () => {
       expect(mockedRunTranscriptionFinalPass).toHaveBeenCalledWith(meeting, {
         audioFilePath: "recording.mp3",
       });
-      expect(meeting.processing).toMatchObject({ transcription: "ready" });
+      if (state !== "transcription_error")
+        expect(meeting.processing).toMatchObject({ transcription: "ready" });
+      expect(captureEvent).toHaveBeenCalledTimes(1);
       expect(captureEvent).toHaveBeenCalledWith(
         "meeting_completed",
         expect.objectContaining({
           guildId: "guild-1",
           userId: "user-1",
           properties: expect.objectContaining({
-            usable_notes: state === "complete",
+            usable_notes: state === "complete" || state === "cleanup_error",
             event_version: 2,
           }),
         }),
       );
+      if (state === "transcription_error")
+        expect(captureEvent).toHaveBeenCalledWith(
+          "meeting_completed",
+          expect.objectContaining({
+            properties: expect.objectContaining({
+              transcription_outcome: "failed",
+              history_persistence: "not_saved",
+            }),
+          }),
+        );
+      if (state === "history_error" || state === "upload_error")
+        expect(captureEvent).toHaveBeenCalledWith(
+          "meeting_completed",
+          expect.objectContaining({
+            properties: expect.objectContaining({
+              history_persistence: "not_saved",
+            }),
+          }),
+        );
       expect(
         JSON.stringify(jest.mocked(captureEvent).mock.calls),
       ).not.toContain("Private notes");
@@ -878,6 +928,45 @@ describe("handleEndMeetingOther", () => {
 describe("handleEndMeetingButton", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+  });
+
+  it("captures failed button finalization once before deleting the meeting", async () => {
+    mockedWithMeetingEndTrace.mockRejectedValueOnce(
+      new Error("transcription unavailable"),
+    );
+    mockedHasMeeting.mockReturnValue(true);
+    const meeting = {
+      guildId: "guild-1",
+      meetingId: "meeting-1",
+      creator: { id: "user-1" },
+      startTime: new Date(),
+      attendance: new Set(["user-1"]),
+      transcribeMeeting: true,
+      setFinished: jest.fn(),
+    } as unknown as MeetingData;
+    mockedGetMeeting.mockReturnValue(meeting);
+    const interaction = {
+      guildId: "guild-1",
+      user: { id: "user-1" },
+      deferUpdate: jest.fn(),
+      reply: jest.fn(),
+    } as unknown as ButtonInteraction;
+    await handleEndMeetingButton({} as Client, interaction);
+    expect(captureEvent).toHaveBeenCalledTimes(1);
+    expect(captureEvent).toHaveBeenCalledWith(
+      "meeting_completed",
+      expect.objectContaining({
+        properties: expect.objectContaining({
+          transcription_outcome: "failed",
+          history_persistence: "not_saved",
+          usable_notes: false,
+        }),
+      }),
+    );
+    expect(mockedDeleteMeeting).toHaveBeenCalledWith("guild-1");
+    expect(jest.mocked(captureEvent).mock.invocationCallOrder[0]).toBeLessThan(
+      mockedDeleteMeeting.mock.invocationCallOrder[0],
+    );
   });
 
   it("acknowledges the end meeting button when auto-recording is cancelled", async () => {
