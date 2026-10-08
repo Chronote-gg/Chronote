@@ -267,6 +267,14 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
 
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+
+      - name: Test audit tools offline
+        run: uv run --frozen python -m unittest discover -s analysis/hallucination-audit
+
       - name: Get Python version
         id: py-version
         run: |
