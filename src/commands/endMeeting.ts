@@ -125,7 +125,7 @@ function hasUsableMeetingNotes(meeting: MeetingData): boolean {
   );
 }
 
-function captureMeetingCompleted(meeting: MeetingData, failed = false): void {
+function captureMeetingCompleted(meeting: MeetingData): void {
   try {
     const endTime = meeting.endTime ?? new Date();
     captureEvent("meeting_completed", {
@@ -141,15 +141,11 @@ function captureMeetingCompleted(meeting: MeetingData, failed = false): void {
         cancelled: Boolean(meeting.cancelled),
         event_version: 2,
         surface: "discord",
-        transcription_outcome:
-          meeting.processing?.transcription ??
-          (failed && meeting.transcribeMeeting ? "failed" : "unknown"),
+        transcription_outcome: meeting.processing?.transcription ?? "unknown",
         notes_outcome: meeting.processing?.notes ?? "unknown",
         history_persistence:
           meeting.historySaved === undefined
-            ? failed
-              ? "not_saved"
-              : "unknown"
+            ? "unknown"
             : meeting.historySaved
               ? "saved"
               : "not_saved",
@@ -163,6 +159,14 @@ function captureMeetingCompleted(meeting: MeetingData, failed = false): void {
       error,
     });
   }
+}
+
+function captureFailedMeetingCompleted(meeting: MeetingData): void {
+  if (meeting.transcribeMeeting && !meeting.processing?.transcription) {
+    meeting.processing = { ...meeting.processing, transcription: "failed" };
+  }
+  meeting.historySaved ??= false;
+  captureMeetingCompleted(meeting);
 }
 
 function shouldFinalizeDismissedAutoRecording(meeting: MeetingData): boolean {
@@ -274,7 +278,7 @@ export async function handleEndMeetingButton(
       }
       meeting.setFinished();
       meeting.finished = true;
-      captureMeetingCompleted(meeting, true);
+      captureFailedMeetingCompleted(meeting);
       deleteMeeting(meeting.guildId);
     }
     if (meeting) {
@@ -311,7 +315,7 @@ export async function handleEndMeetingOther(
       }
       meeting.setFinished();
       meeting.finished = true;
-      captureMeetingCompleted(meeting, true);
+      captureFailedMeetingCompleted(meeting);
       deleteMeeting(meeting.guildId);
     }
     await cleanupMeetingTempDir(meeting);
