@@ -40,7 +40,7 @@ test.each(["full", "purchase-permission"])(
       expect(args).toContain("-out=tfplan");
       expect(args.filter((arg) => arg.startsWith("-target="))).toEqual(
         scope === "purchase-permission"
-          ? ["-target=aws_iam_policy.dynamodb_access_policy"]
+          ? ["-target=aws_iam_role_policy.initial_purchase_condition"]
           : [],
       );
     } finally {

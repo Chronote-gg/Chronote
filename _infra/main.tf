@@ -1468,6 +1468,21 @@ resource "aws_iam_role" "ecs_task_app_role" {
 }
 
 # Create IAM policy for DynamoDB access
+resource "aws_iam_role_policy" "initial_purchase_condition" {
+  name = "${local.name_prefix}-initial-purchase-condition"
+  role = aws_iam_role.ecs_task_app_role.id
+
+  # Keep this release prerequisite independent of table encryption and CDN changes.
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect   = "Allow"
+      Action   = ["dynamodb:ConditionCheckItem"]
+      Resource = ["arn:aws:dynamodb:${var.aws_region}:${data.aws_caller_identity.current.account_id}:table/${local.name_prefix}-GuildSubscriptionTable"]
+    }]
+  })
+}
+
 resource "aws_iam_policy" "dynamodb_access_policy" {
   name        = "${local.name_prefix}-bot-dynamodb-policy"
   description = "Policy for Meeting Notes Bot to access DynamoDB tables"
@@ -1475,11 +1490,6 @@ resource "aws_iam_policy" "dynamodb_access_policy" {
   policy = jsonencode({
     Version = "2012-10-17",
     Statement = [
-      {
-        Effect   = "Allow",
-        Action   = ["dynamodb:ConditionCheckItem"],
-        Resource = [aws_dynamodb_table.guild_subscription_table.arn]
-      },
       {
         Effect = "Allow",
         Action = [

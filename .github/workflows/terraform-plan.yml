@@ -211,7 +211,7 @@ jobs:
         run: |
           plan_args=()
           if [ "$PLAN_SCOPE" = "purchase-permission" ]; then
-            plan_args=(-target=aws_iam_policy.dynamodb_access_policy)
+            plan_args=(-target=aws_iam_role_policy.initial_purchase_condition)
           fi
           set +e
           terraform -chdir=_infra plan -no-color -input=false -detailed-exitcode -out=tfplan "${plan_args[@]}" | tee _infra/terraform-plan.txt
