@@ -6,6 +6,7 @@ export type PurchaseAttempt = {
   payerId: string;
   mode: "live" | "test";
   fingerprint: string;
+  analyticsOptOut?: boolean;
   createdAt: number;
   state: "preparing" | "open" | "completed" | "expired" | "needs_review";
   checkout: Stripe.Checkout.SessionCreateParams;

@@ -77,14 +77,32 @@ event totals. Mock checkout does not produce provider-success events.
 Browser DNT, identity reset and share redaction remain supported. The checkout
 request carries the browser opt-out and also checks the DNT header. It suppresses
 synchronous server capture and stores an opt-out in new subscription metadata,
-so later paid outcomes for that subscription are also suppressed. Existing
-subscriptions and Discord actions do not inherit a browser setting retroactively.
+so later paid outcomes for that subscription are also suppressed. An opt-out
+received while recovering an initial purchase is retained on its attempt even if
+the provider request was already frozen. Turning tracking back on does not clear
+that attempt's opt-out. Checkout and paid events retain the original attempt's
+source. Existing subscriptions and Discord actions do not inherit a browser
+setting retroactively.
 Promotion and source values are redacted in raw and encoded return URLs; explicit
 source events use the bounded enum. The purchase promo input
 opts out of autocapture. Discord cannot receive browser DNT.
 The public privacy and What's New notice must ship before new production capture.
 Production product deploys depend on a successful docs publish and completed
 CloudFront invalidation. Missing docs deployment configuration blocks the release.
+
+A docs failure prevents both product deploy jobs from starting; the running backend
+and published frontend stay at their existing versions. Backend incident recovery
+can restore a previously deployed, known-good task definition directly through ECS,
+independently of docs publishing. That route still requires separate production
+approval, the deploy workflow's consistent-read, paginated active-meeting lease
+check before replacing tasks, and verification of ECS stability and meeting
+delivery. Use the recorded known-good task-definition ARN, rather than resolving
+the latest revision by family. The existing
+[guarded backend rollback requirement](superpowers/plans/2026-09-27-voice-decoder-diagnostics.md#release-and-readout)
+also applies when docs are unavailable. Restore an already released version; new
+versions with expanded capture remain subject to the notice gate. The workflow's
+failure rollback after a service update is separate from this manual recovery
+route. This documentation does not authorize a production rollback.
 
 Use actor funnels with guild held constant for buying friction, and ordered guild
 cohorts for Discord adoption. Count different organizers and payers separately.

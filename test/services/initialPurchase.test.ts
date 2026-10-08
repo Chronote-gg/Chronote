@@ -4,6 +4,10 @@ import { getMockStore } from "../../src/repositories/mockStore";
 import { createCheckoutSession } from "../../src/services/billingService";
 import { resetMockStore } from "../../src/repositories/mockStore";
 import type { StripeClient } from "../../src/types/stripe";
+import { captureEvent } from "../../src/services/analyticsService";
+jest.mock("../../src/services/analyticsService", () => ({
+  captureEvent: jest.fn(),
+}));
 
 const guildId = "111111111111111111";
 function sessionFields() {
@@ -51,7 +55,10 @@ function fixture() {
   };
   return { stripe, client: stripe as unknown as StripeClient };
 }
-beforeEach(() => resetMockStore());
+beforeEach(() => {
+  resetMockStore();
+  jest.clearAllMocks();
+});
 test("two different payers cannot obtain simultaneous first-purchase sessions", async () => {
   const { stripe, client } = fixture();
   const results = await Promise.allSettled(
@@ -640,4 +647,116 @@ test("customer lookup cannot carry a frozen Checkout past its replay deadline", 
   } finally {
     jest.useRealTimers();
   }
+});
+
+test.each(["open", "lost_response"])(
+  "source and username changes recover an %s purchase with its original metadata",
+  async (state) => {
+    const { stripe, client } = fixture();
+    const request = {
+      stripe: client,
+      user: { id: "payer", username: "original" },
+      guildId,
+      priceId: "price_basic",
+      source: "discord_notes" as const,
+    };
+    if (state === "lost_response") {
+      stripe.checkout.sessions.create.mockRejectedValueOnce(
+        new Error("lost response"),
+      );
+      await expect(createCheckoutSession(request)).rejects.toThrow(
+        "lost response",
+      );
+    } else {
+      await createCheckoutSession(request);
+    }
+    const frozen = structuredClone(
+      getMockStore().purchaseAttempts.get(guildId)!.checkout,
+    );
+    await expect(
+      createCheckoutSession({
+        ...request,
+        user: { id: "payer", username: "renamed" },
+        source: "homepage_pricing",
+      }),
+    ).resolves.toContain("checkout.stripe.com");
+    expect(getMockStore().purchaseAttempts.get(guildId)!.checkout).toEqual(
+      frozen,
+    );
+    expect(frozen.metadata).toMatchObject({
+      discord_username: "original",
+      purchase_source: "discord_notes",
+    });
+    if (state === "lost_response")
+      expect(stripe.checkout.sessions.create.mock.calls[1]).toEqual(
+        stripe.checkout.sessions.create.mock.calls[0],
+      );
+    else expect(stripe.checkout.sessions.create).toHaveBeenCalledTimes(1);
+    expect(captureEvent).toHaveBeenCalledTimes(1);
+    expect(captureEvent).toHaveBeenCalledWith(
+      "billing_checkout_created",
+      expect.objectContaining({
+        properties: expect.objectContaining({ source: "discord_notes" }),
+      }),
+    );
+  },
+);
+
+test.each([true, false])(
+  "changing analyticsAllowed from %s does not block recovery or clear an opt-out",
+  async (originalAllowed) => {
+    const { stripe, client } = fixture();
+    stripe.checkout.sessions.create.mockRejectedValueOnce(
+      new Error("lost response"),
+    );
+    const request = {
+      stripe: client,
+      user: { id: "payer" },
+      guildId,
+      priceId: "price_basic",
+      analyticsAllowed: originalAllowed,
+    };
+    await expect(createCheckoutSession(request)).rejects.toThrow(
+      "lost response",
+    );
+    const frozen = structuredClone(
+      getMockStore().purchaseAttempts.get(guildId)!.checkout,
+    );
+    await expect(
+      createCheckoutSession({ ...request, analyticsAllowed: !originalAllowed }),
+    ).resolves.toContain("checkout.stripe.com");
+    expect(stripe.checkout.sessions.create.mock.calls[1]).toEqual(
+      stripe.checkout.sessions.create.mock.calls[0],
+    );
+    expect(getMockStore().purchaseAttempts.get(guildId)).toMatchObject({
+      checkout: frozen,
+      analyticsOptOut: true,
+    });
+    await expect(
+      createCheckoutSession({ ...request, analyticsAllowed: true }),
+    ).resolves.toContain("checkout.stripe.com");
+    expect(getMockStore().purchaseAttempts.get(guildId)!.analyticsOptOut).toBe(
+      true,
+    );
+    expect(captureEvent).not.toHaveBeenCalled();
+  },
+);
+
+test.each([
+  { priceId: "price_pro" },
+  { promotionCodeId: "promo_changed" },
+  { allowPromotionCodes: false },
+])("a change to payment terms %p still blocks reuse", async (change) => {
+  const { stripe, client } = fixture();
+  const request = {
+    stripe: client,
+    user: { id: "payer" },
+    guildId,
+    priceId: "price_basic",
+  };
+  await createCheckoutSession(request);
+  await expect(
+    createCheckoutSession({ ...request, ...change }),
+  ).rejects.toThrow("already in progress");
+  expect(stripe.checkout.sessions.create).toHaveBeenCalledTimes(1);
 });

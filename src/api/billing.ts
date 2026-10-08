@@ -1,4 +1,7 @@
-import { expirePurchaseAttempt } from "../services/purchaseReconciliation";
+import {
+  expirePurchaseAttempt,
+  isPurchaseAnalyticsOptedOut,
+} from "../services/purchaseReconciliation";
 import { reconcileSubscription } from "../services/subscriptionReconciliation";
 import express from "express";
 import { randomUUID } from "node:crypto";
@@ -228,10 +231,7 @@ async function capturePaidInvoiceOnce(
     const effective = await resolveGuildSubscription(guildId);
     if (effective.billingSource !== "stripe" || effective.status !== "active")
       return;
-    if (
-      readMetadataValue(subscription.metadata, "analytics_opt_out") === "true"
-    )
-      return;
+    if (await isPurchaseAnalyticsOptedOut(guildId, subscription)) return;
     // Reuse webhook receipts for one canonical outcome per invoice, including
     // retries delivered under a different Stripe event id (30-day retention).
     const now = Date.now();

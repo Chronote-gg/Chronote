@@ -65,7 +65,18 @@ async function mayRetire(input: PurchaseInput, attempt: PurchaseAttempt) {
 async function reserve(input: PurchaseInput) {
   const repo = getPurchaseRepository();
   const fingerprint = createHash("sha256")
-    .update(JSON.stringify(input.checkout))
+    .update(
+      JSON.stringify({
+        ...input.checkout,
+        metadata: undefined,
+        success_url: undefined,
+        cancel_url: undefined,
+        subscription_data: {
+          ...input.checkout.subscription_data,
+          metadata: undefined,
+        },
+      }),
+    )
     .digest("hex");
   for (let i = 0; i < 3; i++) {
     const current = await refreshAttempt(input, await repo.get(input.guildId));
@@ -76,6 +87,11 @@ async function reserve(input: PurchaseInput) {
         current.fingerprint !== fingerprint
       )
         throw pending();
+      if (
+        input.checkout.metadata?.analytics_opt_out === "true" &&
+        !current.analyticsOptOut
+      )
+        return save(current, { analyticsOptOut: true }, input.expected);
       return current;
     }
     const attemptId = randomUUID();
@@ -86,6 +102,7 @@ async function reserve(input: PurchaseInput) {
       payerId: input.user.id,
       mode: input.mode,
       fingerprint,
+      analyticsOptOut: input.checkout.metadata?.analytics_opt_out === "true",
       createdAt: Date.now(),
       state: "preparing",
       checkout: {
@@ -227,7 +244,7 @@ export async function createInitialPurchase(
     !sameSubscriptionPointer(latestPointer, input.expected)
   )
     return currentOutcome(attempt);
-  if (createsCheckout) captureNewCheckout(input);
+  if (createsCheckout) captureNewCheckout(input, attempt);
   return session.url;
 }
 
@@ -242,9 +259,12 @@ async function checkCheckoutReplayWindow(
   }
 }
 
-function captureNewCheckout(input: PurchaseInput) {
-  if (input.checkout.metadata?.analytics_opt_out !== "true") {
-    const metadata = input.checkout.metadata;
+function captureNewCheckout(input: PurchaseInput, attempt: PurchaseAttempt) {
+  if (
+    input.checkout.metadata?.analytics_opt_out !== "true" &&
+    !attempt.analyticsOptOut
+  ) {
+    const metadata = attempt.checkout.metadata;
     const tier = metadata?.purchase_tier;
     const interval = metadata?.purchase_interval;
     captureEvent("billing_checkout_created", {

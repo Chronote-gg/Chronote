@@ -15,10 +15,11 @@ import { registerBillingRoutes } from "../../src/api/billing";
 import { getEntitlementGrantRepository } from "../../src/repositories/entitlementGrantRepository";
 import { getStripeWebhookRepository } from "../../src/repositories/stripeWebhookRepository";
 import { getSubscriptionRepository } from "../../src/repositories/subscriptionRepository";
-import { resetMockStore } from "../../src/repositories/mockStore";
+import { getMockStore, resetMockStore } from "../../src/repositories/mockStore";
 import { config } from "../../src/services/configService";
 import { createManualEntitlementGrant } from "../../src/services/entitlementService";
 import * as entitlementService from "../../src/services/entitlementService";
+import * as purchaseReconciliation from "../../src/services/purchaseReconciliation";
 import { clearGuildSubscriptionCache } from "../../src/services/subscriptionService";
 import type { StripeClient, StripeEvent } from "../../src/types/stripe";
 import { captureEvent } from "../../src/services/analyticsService";
@@ -370,60 +371,102 @@ describe("billing webhook routes", () => {
     }
   });
 
-  test.each(["trialing", "past_due", "zero", "write_failed", "opt_out"])(
-    "does not claim paid access for %s",
-    async (state) => {
-      const event = {
-        id: "evt_not_paid",
-        type: "invoice.payment_succeeded",
-        data: {
-          object: {
-            id: "in_not_paid",
-            status: "paid",
-            amount_paid: state === "zero" ? 0 : 1000,
-            currency: "usd",
-            created: 1767225600,
-            billing_reason: "subscription_create",
-            parent: {
-              subscription_details: {
-                subscription: "sub_basic",
-                metadata: { guild_id: guildId },
-              },
+  test.each([
+    "trialing",
+    "past_due",
+    "zero",
+    "write_failed",
+    "opt_out",
+    "attempt_opt_out",
+    "analytics_lookup_failed",
+  ])("does not capture a paid outcome for %s", async (state) => {
+    const event = {
+      id: "evt_not_paid",
+      type: "invoice.payment_succeeded",
+      data: {
+        object: {
+          id: "in_not_paid",
+          status: "paid",
+          amount_paid: state === "zero" ? 0 : 1000,
+          currency: "usd",
+          created: 1767225600,
+          billing_reason: "subscription_create",
+          parent: {
+            subscription_details: {
+              subscription: "sub_basic",
+              metadata: { guild_id: guildId },
             },
           },
         },
-      } as unknown as StripeEvent;
-      const spy =
-        state === "write_failed"
+      },
+    } as unknown as StripeEvent;
+    const spy =
+      state === "write_failed"
+        ? jest
+            .spyOn(getSubscriptionRepository(), "compareAndWrite")
+            .mockRejectedValueOnce(new Error("write failed"))
+        : state === "analytics_lookup_failed"
           ? jest
-              .spyOn(getSubscriptionRepository(), "compareAndWrite")
-              .mockRejectedValueOnce(new Error("write failed"))
+              .spyOn(purchaseReconciliation, "isPurchaseAnalyticsOptedOut")
+              .mockRejectedValueOnce(new Error("analytics lookup failed"))
           : undefined;
-      const { server, baseUrl } = createServer(
-        createStripe(
-          event,
-          jest.fn(async () => ({
-            ...activeStripeSubscription,
-            status:
-              state === "trialing" || state === "past_due" ? state : "active",
-            metadata: {
-              guild_id: guildId,
-              ...(state === "opt_out" ? { analytics_opt_out: "true" } : {}),
-            },
-          })),
-        ),
+    if (state === "attempt_opt_out")
+      getMockStore().purchaseAttempts.set(guildId, {
+        guildId,
+        attemptId: "attempt_opt_out",
+        revision: "revision",
+        payerId: "payer",
+        mode: "test",
+        fingerprint: "synthetic",
+        createdAt: Date.now(),
+        state: "completed",
+        checkout: {},
+        customerId: "cus_basic",
+        subscriptionId: "sub_basic",
+        analyticsOptOut: true,
+      });
+    const { server, baseUrl } = createServer(
+      createStripe(
+        event,
+        jest.fn(async () => ({
+          ...activeStripeSubscription,
+          status:
+            state === "trialing" || state === "past_due" ? state : "active",
+          metadata: {
+            guild_id: guildId,
+            ...(state === "opt_out" ? { analytics_opt_out: "true" } : {}),
+            ...(state === "attempt_opt_out"
+              ? { discord_id: "payer", purchase_attempt_id: "attempt_opt_out" }
+              : {}),
+          },
+        })),
+      ),
+    );
+    try {
+      expect((await postWebhook(baseUrl)).statusCode).toBe(
+        state === "write_failed" ? 500 : 200,
       );
-      try {
-        expect((await postWebhook(baseUrl)).statusCode).toBe(
-          state === "write_failed" ? 500 : 200,
-        );
-        expect(captureEvent).not.toHaveBeenCalled();
-      } finally {
-        spy?.mockRestore();
-        await closeServer(server);
+      expect(captureEvent).not.toHaveBeenCalled();
+      if (state === "attempt_opt_out") {
+        expect(getMockStore().purchaseAttempts.get(guildId)).toMatchObject({
+          analyticsOptOut: true,
+          state: "completed",
+        });
       }
-    },
-  );
+      if (state === "attempt_opt_out" || state === "analytics_lookup_failed") {
+        expect(await getSubscriptionRepository().get(guildId)).toMatchObject({
+          status: "active",
+          stripeSubscriptionId: "sub_basic",
+        });
+        expect(
+          getMockStore().stripeWebhookEvents.has("paid_invoice:in_not_paid"),
+        ).toBe(false);
+      }
+    } finally {
+      spy?.mockRestore();
+      await closeServer(server);
+    }
+  });
 
   test("reconciles a delayed Basic update to the current Pro subscription", async () => {
     const current = {

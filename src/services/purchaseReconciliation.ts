@@ -154,3 +154,14 @@ export async function expirePurchaseAttempt(
   )
     throw new Error("Purchase expiration changed concurrently; retry");
 }
+
+export async function isPurchaseAnalyticsOptedOut(
+  guildId: string,
+  subscription: StripeSubscription,
+): Promise<boolean> {
+  if (subscription.metadata.analytics_opt_out === "true") return true;
+  const attemptId = subscription.metadata.purchase_attempt_id;
+  if (!attemptId) return false;
+  const attempt = await getPurchaseRepository().get(guildId);
+  return attempt?.attemptId === attemptId && Boolean(attempt?.analyticsOptOut);
+}

@@ -12,8 +12,12 @@ table, TTL unlock, sweeper, history UI or provider cancellation is introduced.
 
 The attempt freezes customer selection or creation before making its provider
 call, then freezes the Checkout request. Separate opaque idempotency keys identify
-these operations. Concurrent different payers or requests receive an in-progress
-error; another payer never receives the first payer's hosted Checkout URL. The
+these operations. The fingerprint compares payment terms, excluding metadata and
+return URLs. Source and username changes can recover the same frozen Checkout;
+price, discount and payer changes still receive an in-progress error. An analytics
+opt-out received during recovery is retained on the attempt without changing the
+provider request, and suppresses later outcomes for that attempt's subscription.
+Another payer never receives the first payer's hosted Checkout URL. The
 session's guild, attempt, customer and provider mode must match before returning
 its URL. Responses never grant entitlement.
 
