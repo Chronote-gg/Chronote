@@ -2,7 +2,8 @@ import "./mocks/mockFrontendContexts";
 import "./mocks/mockRouter";
 import "./mocks/trpc";
 import React from "react";
-import { beforeEach, describe, expect, test } from "@jest/globals";
+import { MantineProvider } from "@mantine/core";
+import { beforeEach, describe, expect, jest, test } from "@jest/globals";
 import { fireEvent, screen } from "@testing-library/react";
 import PromoLanding from "../../src/frontend/pages/PromoLanding";
 import Upgrade from "../../src/frontend/pages/Upgrade";
@@ -18,12 +19,77 @@ import {
   setRouteParams,
   setRouteSearch,
 } from "./testUtils";
-import { setBillingQuery } from "./mocks/trpc";
+import { setBillingQuery, setPricingQuery } from "./mocks/trpc";
+import { track } from "../../src/frontend/services/analytics";
+
+jest.mock("../../src/frontend/services/analytics", () => ({
+  track: jest.fn(),
+  isDoNotTrackEnabled: () => false,
+}));
 
 describe("upgrade pages", () => {
   beforeEach(() => {
     resetFrontendMocks();
+    jest.mocked(track).mockClear();
   });
+
+  test.each([
+    { label: "paid Basic", tier: "basic", billingSource: "stripe" },
+    { label: "complimentary Pro", tier: "pro", billingSource: "manual_comp" },
+    { label: "Free with no Basic price", tier: "free", billingSource: "free" },
+  ] as const)(
+    "$label without a requested plan is ready to buy Pro",
+    ({ tier, billingSource }) => {
+      authState.state = "authenticated";
+      guildState.selectedGuildId = "g1";
+      guildState.guilds = [{ id: "g1", name: "Guild One", canManage: true }];
+      setBillingQuery({
+        data: {
+          billingEnabled: true,
+          tier,
+          status: "active",
+          billingSource,
+          hasStripeBilling: billingSource === "stripe",
+        },
+      });
+      setPricingQuery({
+        data: {
+          plans: [
+            {
+              tier: "pro",
+              interval: "month",
+              priceId: "price_pro",
+              unitAmount: 2400,
+              currency: "usd",
+            },
+          ],
+        },
+      });
+      const view = renderWithMantine(<Upgrade />);
+
+      expect(
+        screen.getByRole("button", { name: "Continue with Pro" }),
+      ).toBeEnabled();
+      expect(track).toHaveBeenCalledWith(
+        "upgrade_ready",
+        expect.objectContaining({ guild_id: "g1", tier: "pro" }),
+      );
+      expect(track).not.toHaveBeenCalledWith(
+        "upgrade_blocked",
+        expect.objectContaining({ reason: "current_plan" }),
+      );
+      view.rerender(
+        <MantineProvider>
+          <Upgrade />
+        </MantineProvider>,
+      );
+      expect(
+        jest
+          .mocked(track)
+          .mock.calls.filter(([event]) => event === "upgrade_ready"),
+      ).toHaveLength(1);
+    },
+  );
 
   test("promo landing navigates to upgrade server select with promo", () => {
     authState.state = "authenticated";
@@ -39,25 +105,15 @@ describe("upgrade pages", () => {
     });
   });
 
-  test("upgrade page shows promo and canceled notices", () => {
+  test("upgrade renders purchase content on its indexable route", () => {
     authState.state = "unauthenticated";
     setRouteSearch({ promo: "SAVE20", canceled: true });
     renderWithMantine(<Upgrade />);
 
-    expect(screen.getByText(/promo unlocked/i)).toBeInTheDocument();
-    expect(screen.getByText(/checkout canceled/i)).toBeInTheDocument();
-
-    const login = screen.getByRole("link", {
-      name: /connect discord to continue/i,
-    });
-    expect(login).toHaveAttribute(
-      "href",
-      expect.stringContaining("/auth/discord"),
-    );
-    expect(login).toHaveAttribute(
-      "href",
-      expect.stringContaining("promo%3DSAVE20"),
-    );
+    expect(screen.getByText("Record longer meetings.")).toBeInTheDocument();
+    expect(screen.queryByTestId("navigate")).toBeNull();
+    const login = screen.getByRole("link", { name: "Connect Discord" });
+    expect(login.getAttribute("href")).toContain("promo%3DSAVE20");
   });
 
   test("upgrade success shows back to homepage for signed-out users", () => {
@@ -84,14 +140,12 @@ describe("upgrade pages", () => {
     expect(navigateSpy).toHaveBeenCalled();
     const [call] = navigateSpy.mock.calls;
     const options = call?.[0];
-    if (options && typeof options.search === "function") {
-      expect(options.search({ promo: "SAVE20" })).toEqual({
-        promo: "SAVE20",
-        serverId: "g1",
-      });
-    } else {
-      throw new Error("Expected navigate search updater");
-    }
+    expect(options.search).toEqual({
+      promo: "SAVE20",
+      serverId: "g1",
+      interval: "month",
+      source: "direct",
+    });
   });
 });
 

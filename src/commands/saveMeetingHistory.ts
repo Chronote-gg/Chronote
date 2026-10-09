@@ -87,6 +87,7 @@ function buildNotesHistory(options: {
 }
 
 export async function saveMeetingHistoryToDatabase(meeting: MeetingData) {
+  meeting.historySaved = false;
   if (!meeting.transcribeMeeting) {
     return;
   }
@@ -132,6 +133,7 @@ export async function saveMeetingHistoryToDatabase(meeting: MeetingData) {
         chatS3Key: meeting.chatS3Key,
       };
       await writeMeetingHistoryService(history);
+      meeting.historySaved = true;
       console.log(
         `Cancelled meeting history saved for guild ${meeting.guildId}, channel ${meeting.voiceChannel.id}`,
       );
@@ -186,6 +188,7 @@ export async function saveMeetingHistoryToDatabase(meeting: MeetingData) {
     };
 
     await writeMeetingHistoryService(history);
+    meeting.historySaved = true;
     await maybeAutoExportCompletedMeeting(history);
     console.log(
       `Meeting history saved for guild ${meeting.guildId}, channel ${meeting.voiceChannel.id}`,

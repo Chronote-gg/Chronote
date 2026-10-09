@@ -67,9 +67,14 @@ describe("analytics", () => {
       "phc_test_key",
       expect.objectContaining({ capture_pageview: "history_change" }),
     );
-    expect(posthog.capture).toHaveBeenCalledWith("pricing_cta_clicked", {
-      plan: "basic",
-    });
+    expect(posthog.capture).toHaveBeenCalledWith(
+      "pricing_cta_clicked",
+      expect.objectContaining({
+        plan: "basic",
+        surface: "web",
+        environment: "local",
+      }),
+    );
   });
 
   test("redacts share ids, which are bearer credentials", () => {
@@ -107,6 +112,66 @@ describe("analytics", () => {
     expect(redactShareIds("https://chronote.gg/portal/meetings")).toBe(
       "https://chronote.gg/portal/meetings",
     );
+  });
+
+  test("redacts promotion values in URLs and encoded sign-in returns", () => {
+    const url =
+      "https://chronote.gg/upgrade?promo=PRIVATE&source=discord_notes";
+    expect(redactShareIds(url)).toBe(
+      "https://chronote.gg/upgrade?promo=[redacted]&source=[redacted]",
+    );
+    expect(
+      redactShareIds(
+        `https://api.chronote.gg/auth?redirect=${encodeURIComponent(url)}`,
+      ),
+    ).not.toContain("PRIVATE");
+    const returnUrl = `https://api.chronote.gg/auth?redirect=${encodeURIComponent(url)}`;
+    expect(
+      redactShareIds(
+        `https://api.chronote.gg/auth?redirect=${encodeURIComponent(returnUrl)}`,
+      ),
+    ).not.toContain("PRIVATE");
+  });
+
+  test.each([
+    "https://chronote.gg/promo/PRIVATE?interval=year",
+    "https://chronote.gg/upgrade?%70romo=PRIVATE&tier=pro",
+    "https://chronote.gg/upgrade?promotionCode=PRIVATE",
+    "https://api.chronote.gg/auth?redirect=https://chronote.gg/upgrade?promo=PRIVATE",
+    "https://api.chronote.gg/auth?redirect=/upgrade?promo=PRIVATE",
+    "https://api.chronote.gg/auth?redirect=https%3A%2F%2Fchronote.gg%2Fshare%2Fmeeting%2Fguild%2FPRIVATE%3Ffoo%3D%ZZ",
+    "https://api.chronote.gg/auth?redirect=https%253A%252F%252Fchronote.gg%252Fpromo%252FPRIVATE%253Ffoo%253D%25ZZ",
+  ])("redacts promotion paths and decoded query keys: %s", (url) => {
+    expect(redactShareIds(url)).not.toContain("PRIVATE");
+    expect(
+      redactShareIds(
+        `https://api.chronote.gg/auth?redirect=${encodeURIComponent(url)}`,
+      ),
+    ).not.toContain("PRIVATE");
+  });
+
+  test("Do Not Track suppresses initialization and custom events", () => {
+    setKey("phc_test_key");
+    Object.defineProperty(navigator, "doNotTrack", {
+      value: "1",
+      configurable: true,
+    });
+    initAnalytics();
+    track("upgrade_arrived");
+    expect(posthog.init).not.toHaveBeenCalled();
+    expect(posthog.capture).not.toHaveBeenCalled();
+    Object.defineProperty(navigator, "doNotTrack", {
+      value: null,
+      configurable: true,
+    });
+  });
+
+  test("a capture failure cannot interrupt a purchase action", () => {
+    setKey("phc_test_key");
+    jest.mocked(posthog.capture).mockImplementationOnce(() => {
+      throw new Error("analytics unavailable");
+    });
+    expect(() => track("upgrade_plan_clicked", { tier: "pro" })).not.toThrow();
   });
 
   test("falls back to the default host when none is injected", () => {

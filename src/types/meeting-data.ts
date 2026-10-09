@@ -119,6 +119,7 @@ export interface MeetingData {
   summaryMessageId?: string;
   delivery?: MeetingDelivery;
   processing?: MeetingProcessingOutcome;
+  historySaved?: boolean;
   messagesToDelete?: string[];
   leaseOwnerInstanceId?: string;
   leaseHeartbeatTimer?: ReturnType<typeof setInterval>;

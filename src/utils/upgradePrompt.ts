@@ -5,16 +5,26 @@ import {
   InteractionReplyOptions,
 } from "discord.js";
 import { config } from "../services/configService";
+import type { PurchaseSource } from "./purchaseAnalytics";
+
+function upgradeLink(source?: PurchaseSource): string {
+  const link = config.stripe.billingLandingUrl;
+  if (!link || !source) return link;
+  const url = new URL(link);
+  url.searchParams.set("source", source);
+  return url.toString();
+}
 
 export function buildUpgradePrompt(
   content: string,
 ): InteractionReplyOptions & { ephemeral?: boolean } {
+  const link = upgradeLink("discord_limit");
   const upgradeBtn =
-    config.stripe.billingLandingUrl &&
+    link &&
     new ButtonBuilder()
       .setStyle(ButtonStyle.Link)
       .setLabel("Upgrade")
-      .setURL(config.stripe.billingLandingUrl);
+      .setURL(link);
 
   return {
     content,
@@ -25,8 +35,11 @@ export function buildUpgradePrompt(
   };
 }
 
-export function buildUpgradeTextOnly(content: string): string {
-  const link = config.stripe.billingLandingUrl;
+export function buildUpgradeTextOnly(
+  content: string,
+  source?: PurchaseSource,
+): string {
+  const link = upgradeLink(source);
   if (!link) return content;
   return `${content}\nUpgrade: ${link}`;
 }

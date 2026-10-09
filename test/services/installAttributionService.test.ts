@@ -9,6 +9,13 @@ import {
 } from "../../src/services/installAttributionService";
 
 describe("installAttributionService", () => {
+  test("retains the public purchase route without its query values", () => {
+    expect(
+      parseInstallAttribution({ landing_path: "/upgrade/select-server" }),
+    ).toMatchObject({
+      landingPath: "/upgrade/select-server",
+    });
+  });
   test("keeps only bounded acquisition shape", () => {
     expect(
       parseInstallAttribution(

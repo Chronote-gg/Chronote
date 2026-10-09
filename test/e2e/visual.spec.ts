@@ -12,6 +12,7 @@ const PAGE_SCREENSHOT_MAX_DIFF_PIXELS = 2_000;
 const marketingViewports = [
   { name: "desktop", width: 1280, height: 720 },
   { name: "mobile", width: 390, height: 844 },
+  { name: "intermediate", width: 768, height: 900 },
   { name: "wide", width: 1920, height: 1080 },
 ] as const;
 
@@ -489,16 +490,13 @@ test.describe("visual regression", () => {
       for (const mode of visualModes) {
         const layoutMode = viewport.name === "desktop" ? mode : "viewport";
         await page.goto(
-          withVisualMode("/upgrade/select-server?promo=SAVE20", layoutMode),
+          withVisualMode(
+            `/upgrade/select-server?serverId=${mockGuilds.ddm.id}&promo=SAVE20`,
+            layoutMode,
+          ),
         );
         const main = page.locator("main");
         await expect(main).toBeVisible();
-        // Select a managed server before comparing its upgrade plans.
-        await page
-          .getByTestId("upgrade-server-card")
-          .filter({ hasText: mockGuilds.ddm.name })
-          .getByTestId("upgrade-server-open")
-          .click();
         // Wait for the Free server's Basic/Pro comparison to finish loading.
         await expect(page.getByText("Recommended")).toBeVisible();
         await expect(
@@ -509,15 +507,54 @@ test.describe("visual regression", () => {
         ).toBeVisible();
         await expect(
           page.getByRole("button", {
-            name: "Continue to Stripe (Basic)",
+            name: "Continue with Basic",
             exact: true,
           }),
         ).toBeEnabled();
         await expect(
-          page
-            .getByTestId("upgrade-server-card")
-            .filter({ hasText: mockGuilds.ddm.name }),
-        ).toHaveAttribute("data-selected", "true");
+          page.getByText(mockGuilds.ddm.name, { exact: true }),
+        ).toBeVisible();
+        await expect(page.getByTestId("upgrade-plan-free")).toBeVisible();
+        const boxes = await page
+          .getByTestId("upgrade-plans")
+          .locator(".mantine-Paper-root")
+          .evaluateAll((cards) =>
+            cards.map((card) => {
+              const { x, y, width, height } = card.getBoundingClientRect();
+              return { x, y, width, height };
+            }),
+          );
+        expect(boxes).toHaveLength(3);
+        expect(
+          Math.max(...boxes.map((box) => box.width)) -
+            Math.min(...boxes.map((box) => box.width)),
+        ).toBeLessThan(2);
+        if (viewport.width < 1200) {
+          expect(boxes[1].y).toBeGreaterThanOrEqual(
+            boxes[0].y + boxes[0].height,
+          );
+          expect(boxes[2].y).toBeGreaterThanOrEqual(
+            boxes[1].y + boxes[1].height,
+          );
+        } else {
+          expect(
+            Math.max(...boxes.map((box) => box.y)) -
+              Math.min(...boxes.map((box) => box.y)),
+          ).toBeLessThan(2);
+        }
+        const bullets = await page
+          .getByTestId("upgrade-plan-free")
+          .getByRole("listitem")
+          .evaluateAll((items) =>
+            items.map((item) => {
+              const { top, bottom } = item.getBoundingClientRect();
+              return { top, bottom };
+            }),
+          );
+        for (let index = 1; index < bullets.length; index++)
+          expect(bullets[index].top).toBeGreaterThanOrEqual(
+            bullets[index - 1].bottom,
+          );
         expect(
           await page.evaluate(
             () => document.documentElement.scrollWidth <= window.innerWidth,
@@ -528,6 +565,23 @@ test.describe("visual regression", () => {
           viewport.name === "desktop"
             ? "upgrade-select-free"
             : `upgrade-select-free-${viewport.name}`,
+          mode,
+        );
+        await page
+          .getByTestId("upgrade-billing-period")
+          .getByText("Annual", { exact: true })
+          .click();
+        await expect(page.getByTestId("upgrade-plan-basic")).toContainText(
+          "$120 / yr",
+        );
+        await expect(page.getByTestId("upgrade-plan-pro")).toContainText(
+          "$290 / yr",
+        );
+        await expectVisualScreenshot(
+          page,
+          viewport.name === "desktop"
+            ? "upgrade-select-free-annual"
+            : `upgrade-select-free-annual-${viewport.name}`,
           mode,
         );
       }

@@ -14,9 +14,8 @@ describe("Join page", () => {
 
     renderWithMantine(<Join />);
 
-    expect(screen.getByText("Open portal").closest("a")).toHaveAttribute(
-      "to",
-      "/portal",
-    );
+    expect(
+      screen.getByText("Open meeting library").closest("a"),
+    ).toHaveAttribute("to", "/portal");
   });
 });

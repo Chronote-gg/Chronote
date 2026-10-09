@@ -8,6 +8,7 @@ import {
   Router,
 } from "@tanstack/react-router";
 import { z } from "zod";
+import { PURCHASE_SOURCES } from "../utils/purchaseAnalytics";
 import MarketingLayout from "./layouts/MarketingLayout";
 
 const PortalLayout = lazyRouteComponent(() => import("./layouts/PortalLayout"));
@@ -117,6 +118,7 @@ const upgradeRoute = new Route({
   path: "upgrade",
   component: Upgrade,
   validateSearch: z.object({
+    source: z.enum(PURCHASE_SOURCES).catch("unknown").optional(),
     promo: z.string().optional(),
     serverId: optionalStringParam,
     plan: z.enum(["basic", "pro"]).optional(),
@@ -136,6 +138,7 @@ const upgradeSelectRoute = new Route({
   path: "upgrade/select-server",
   component: UpgradeServerSelect,
   validateSearch: z.object({
+    source: z.enum(PURCHASE_SOURCES).catch("unknown").optional(),
     promo: z.string().optional(),
     serverId: optionalStringParam,
     plan: z.enum(["basic", "pro"]).optional(),
@@ -155,6 +158,7 @@ const upgradeSuccessRoute = new Route({
   path: "upgrade/success",
   component: UpgradeSuccess,
   validateSearch: z.object({
+    source: z.enum(PURCHASE_SOURCES).catch("unknown").optional(),
     promo: z.string().optional(),
     serverId: optionalStringParam,
     plan: z.enum(["basic", "pro"]).optional(),

@@ -1,12 +1,18 @@
+import {
+  expirePurchaseAttempt,
+  isPurchaseAnalyticsOptedOut,
+} from "../services/purchaseReconciliation";
+import { reconcileSubscription } from "../services/subscriptionReconciliation";
 import express from "express";
 import { randomUUID } from "node:crypto";
-import type { GuildSubscription } from "../types/db";
+
 import { recordPaymentTransaction } from "../services/billingService";
-import { getSubscriptionRepository } from "../repositories/subscriptionRepository";
+
 import { config } from "../services/configService";
-import { autoRevokeCoveredCompGrants } from "../services/entitlementService";
+import { resolveGuildSubscription } from "../services/subscriptionService";
+import { captureEvent } from "../services/analyticsService";
+import { resolvePurchaseSource } from "../utils/purchaseAnalytics";
 import { resolveTierFromPrice } from "../services/pricingService";
-import { clearGuildSubscriptionCache } from "../services/subscriptionService";
 import { getStripeWebhookRepository } from "../repositories/stripeWebhookRepository";
 import type {
   StripeCheckoutSession,
@@ -14,11 +20,10 @@ import type {
   StripeEvent,
   StripeInvoice,
   StripeMetadata,
-  StripePrice,
   StripeSubscription,
 } from "../types/stripe";
 
-type KnownTier = "free" | "basic" | "pro";
+const WEBHOOK_PROCESSING_LEASE_MS = 60_000;
 
 type WebhookHandler = (options: {
   stripe: StripeClient;
@@ -31,26 +36,6 @@ const readMetadataValue = (
 ): string => {
   const value = metadata?.[key];
   return typeof value === "string" ? value : "";
-};
-
-const resolvePriceInfo = (
-  price: string | StripePrice | null | undefined,
-): { priceId?: string; lookupKey?: string } => {
-  if (!price) {
-    return {};
-  }
-  if (typeof price === "string") {
-    return { priceId: price };
-  }
-  return { priceId: price.id, lookupKey: price.lookup_key ?? undefined };
-};
-
-const resolveSubscriptionPeriodEnd = (
-  subscription: StripeSubscription,
-): number | undefined => {
-  const items = subscription.items?.data ?? [];
-  if (!items.length) return undefined;
-  return Math.max(...items.map((item) => item.current_period_end));
 };
 
 const resolveInvoiceSubscription = (
@@ -73,22 +58,6 @@ const resolveInvoiceDiscountCode = (
   if (!coupon) return undefined;
   return typeof coupon === "string" ? coupon : coupon.id;
 };
-
-const resolveTierFromSubscription = (
-  subscription: StripeSubscription,
-): KnownTier => {
-  const price = subscription.items?.data?.[0]?.price;
-  const { priceId, lookupKey } = resolvePriceInfo(price);
-  const tier =
-    resolveTierFromPrice({
-      priceId,
-      lookupKey,
-    }) ?? null;
-  return tier ?? "basic";
-};
-
-const toIso = (seconds?: number | null): string | undefined =>
-  seconds ? new Date(seconds * 1000).toISOString() : undefined;
 
 const resolveGuildIdFromInvoice = async (
   stripe: StripeClient,
@@ -116,138 +85,6 @@ const resolveGuildIdFromInvoice = async (
   }
 
   return "";
-};
-
-const buildSubscriptionPayload = (params: {
-  guildId: string;
-  status: string;
-  tier: KnownTier;
-  startDate?: string;
-  endDate?: string;
-  nextBillingDate?: string;
-  paymentMethod?: string;
-  stripeCustomerId?: string;
-  stripeSubscriptionId?: string;
-  updatedBy?: string;
-  priceId?: string;
-  mode: "live" | "test";
-}): GuildSubscription => ({
-  guildId: params.guildId,
-  status: params.status,
-  tier: params.tier,
-  startDate: params.startDate ?? new Date().toISOString(),
-  endDate: params.endDate,
-  nextBillingDate: params.nextBillingDate,
-  paymentMethod: params.paymentMethod,
-  subscriptionType: "stripe",
-  stripeCustomerId: params.stripeCustomerId,
-  stripeSubscriptionId: params.stripeSubscriptionId,
-  updatedAt: new Date().toISOString(),
-  updatedBy: params.updatedBy,
-  priceId: params.priceId,
-  mode: params.mode,
-});
-
-const maybeAutoRevokeCoveredCompGrants = async (params: {
-  guildId: string;
-  tier: KnownTier;
-  status: string;
-  stripeSubscriptionId?: string;
-  updatedBy?: string;
-}) => {
-  if (params.tier !== "basic" && params.tier !== "pro") return;
-  if (params.status !== "active" && params.status !== "trialing") return;
-  await autoRevokeCoveredCompGrants({
-    guildId: params.guildId,
-    paidTier: params.tier,
-    stripeSubscriptionId: params.stripeSubscriptionId,
-    revokedBy: params.updatedBy ?? "stripe",
-  });
-  clearGuildSubscriptionCache(params.guildId);
-};
-
-const isTerminalSubscription = (subscription: StripeSubscription) =>
-  subscription.status === "canceled" ||
-  subscription.status === "incomplete_expired";
-
-// Read the row before fetching Stripe. If another webhook commits during the
-// fetch, retry both reads so an older response cannot undo its newer state.
-const reconcileSubscription = async (
-  stripe: StripeClient,
-  guildId: string,
-  subscriptionId: string,
-) => {
-  const repo = getSubscriptionRepository();
-  for (let attempt = 0; attempt < 3; attempt += 1) {
-    const existing = await repo.get(guildId);
-    const subscription = await stripe.subscriptions.retrieve(subscriptionId);
-    if (readMetadataValue(subscription.metadata, "guild_id") !== guildId) {
-      throw new Error("Stripe subscription guild metadata does not match");
-    }
-    if (
-      existing?.stripeSubscriptionId &&
-      existing.stripeSubscriptionId !== subscription.id
-    ) {
-      // Old terminal events cannot adopt a guild that now points elsewhere.
-      if (isTerminalSubscription(subscription)) return;
-      const previous = await stripe.subscriptions.retrieve(
-        existing.stripeSubscriptionId,
-      );
-      if (readMetadataValue(previous.metadata, "guild_id") !== guildId) {
-        throw new Error(
-          "Stored Stripe subscription guild metadata does not match",
-        );
-      }
-      // A new purchase can replace a canceled subscription, but historical
-      // duplicates must not resurrect themselves after the newer one ends.
-      if (
-        !isTerminalSubscription(previous) ||
-        subscription.created <= previous.created
-      )
-        return;
-    }
-    const tier = isTerminalSubscription(subscription)
-      ? "free"
-      : resolveTierFromSubscription(subscription);
-    const updatedBy =
-      readMetadataValue(subscription.metadata, "discord_id") || undefined;
-    const accepted = await repo.compareAndWrite(
-      {
-        ...buildSubscriptionPayload({
-          guildId,
-          status: subscription.status,
-          tier,
-          startDate: toIso(subscription.start_date),
-          endDate: toIso(subscription.ended_at),
-          nextBillingDate: toIso(resolveSubscriptionPeriodEnd(subscription)),
-          paymentMethod: subscription.default_payment_method
-            ? "card"
-            : "unknown",
-          stripeCustomerId:
-            typeof subscription.customer === "string"
-              ? subscription.customer
-              : subscription.customer.id,
-          stripeSubscriptionId: subscription.id,
-          updatedBy,
-          priceId: subscription.items.data[0]?.price.id,
-          mode: subscription.livemode ? "live" : "test",
-        }),
-        stripeSyncRevision: randomUUID(),
-      },
-      existing,
-    );
-    if (!accepted) continue;
-    clearGuildSubscriptionCache(guildId);
-    await maybeAutoRevokeCoveredCompGrants({
-      guildId,
-      tier,
-      status: subscription.status,
-      stripeSubscriptionId: subscription.id,
-      updatedBy,
-    });
-    return;
-  }
-  throw new Error("Stripe subscription changed concurrently; retry webhook");
 };
 
 const handleCheckoutSessionCompleted: WebhookHandler = async ({
@@ -331,9 +168,110 @@ const handleInvoicePaymentSucceeded: WebhookHandler = async ({
     customerId:
       typeof invoice.customer === "string" ? invoice.customer : undefined,
   });
+  const reconciled = invoiceSubscription
+    ? await reconcileSubscription(
+        stripe,
+        guildId,
+        typeof invoiceSubscription === "string"
+          ? invoiceSubscription
+          : invoiceSubscription.id,
+      )
+    : undefined;
+  if (
+    invoice.status === "paid" &&
+    invoice.amount_paid > 0 &&
+    reconciled?.subscription.status === "active" &&
+    reconciled.tier !== "free"
+  )
+    await capturePaidInvoiceOnce(
+      invoice,
+      guildId,
+      reconciled.subscription,
+      stripe,
+    );
 };
 
+async function resolveInvoicePlan(
+  stripe: StripeClient,
+  invoice: StripeInvoice,
+) {
+  const invoicePrice = invoice.lines?.data.find(
+    (line) => line.amount > 0 && line.pricing?.price_details?.price,
+  )?.pricing?.price_details?.price;
+  const price =
+    typeof invoicePrice === "string"
+      ? await stripe.prices.retrieve(invoicePrice)
+      : invoicePrice;
+  return {
+    tier: price
+      ? (resolveTierFromPrice({
+          priceId: price.id,
+          lookupKey: price.lookup_key,
+        }) ?? undefined)
+      : undefined,
+    interval: price?.recurring?.interval,
+  };
+}
+
+async function capturePaidInvoiceOnce(
+  invoice: StripeInvoice,
+  guildId: string,
+  subscription: StripeSubscription,
+  stripe: StripeClient,
+) {
+  const billingKinds: Record<string, string> = {
+    subscription_create: "initial_purchase",
+    subscription_cycle: "renewal",
+    subscription_update: "plan_change",
+  };
+  const billingKind = billingKinds[invoice.billing_reason ?? ""] ?? "unknown";
+  try {
+    const { tier, interval } = await resolveInvoicePlan(stripe, invoice);
+    // Qualification is analytics-only; a lookup outage must not retry paid billing.
+    const effective = await resolveGuildSubscription(guildId);
+    if (effective.billingSource !== "stripe" || effective.status !== "active")
+      return;
+    if (await isPurchaseAnalyticsOptedOut(guildId, subscription)) return;
+    // Reuse webhook receipts for one canonical outcome per invoice, including
+    // retries delivered under a different Stripe event id (30-day retention).
+    const now = Date.now();
+    if (
+      !(await getStripeWebhookRepository().tryCreate({
+        eventId: `paid_invoice:${invoice.id}`,
+        receivedAt: new Date(now).toISOString(),
+        expiresAt: Math.floor(now / 1000) + 60 * 60 * 24 * 30,
+      }))
+    )
+      return;
+    captureEvent("billing_entitlement_saved", {
+      userId:
+        readMetadataValue(subscription.metadata, "discord_id") || undefined,
+      guildId,
+      properties: {
+        surface: "stripe_webhook",
+        event_version: 1,
+        tier,
+        billing_kind: billingKind,
+        source: resolvePurchaseSource(
+          readMetadataValue(subscription.metadata, "purchase_source") ||
+            "unknown",
+        ),
+        interval: ["month", "year"].includes(interval ?? "")
+          ? interval
+          : "unknown",
+        promo_present: Boolean(
+          readMetadataValue(subscription.metadata, "promo_code"),
+        ),
+      },
+    });
+  } catch {
+    console.warn("Paid outcome analytics unavailable");
+  }
+}
+
 const handlersByEvent: Record<string, WebhookHandler> = {
+  "checkout.session.expired": async ({ stripe, event }) =>
+    expirePurchaseAttempt(stripe, event.data.object as StripeCheckoutSession),
   "checkout.session.completed": handleCheckoutSessionCompleted,
   "invoice.payment_failed": handleInvoicePaymentFailed,
   "invoice.payment_succeeded": handleInvoicePaymentSucceeded,
@@ -368,12 +306,21 @@ export function registerBillingRoutes(
     try {
       const webhookRepo = getStripeWebhookRepository();
       const ttlSeconds = 60 * 60 * 24 * 30;
-      const claimed = await webhookRepo.tryCreate({
+      const leaseToken = randomUUID();
+      const claimed = await webhookRepo.claim({
+        state: "processing",
+        leaseToken,
+        leaseUntil: Date.now() + WEBHOOK_PROCESSING_LEASE_MS,
         eventId: event.id,
         receivedAt: new Date().toISOString(),
         expiresAt: Math.floor(Date.now() / 1000) + ttlSeconds,
       });
       if (!claimed) {
+        const receipt = await webhookRepo.get(event.id);
+        if (!receipt || receipt.state === "processing") {
+          res.status(503).send("Webhook processing; retry");
+          return;
+        }
         res.json({ received: true });
         return;
       }
@@ -384,8 +331,12 @@ export function registerBillingRoutes(
           await handler({ stripe, event });
         }
       } catch (handlerError) {
-        await webhookRepo.delete(event.id);
+        await webhookRepo.finish(event.id, leaseToken, true);
         throw handlerError;
+      }
+      if (!(await webhookRepo.finish(event.id, leaseToken))) {
+        res.status(503).send("Webhook lease lost; retry");
+        return;
       }
       res.json({ received: true });
     } catch (err) {

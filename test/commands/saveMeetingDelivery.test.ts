@@ -57,6 +57,7 @@ it.each([
         : undefined,
     } as unknown as MeetingData;
     await saveMeetingHistoryToDatabase(meeting);
+    expect(meeting.historySaved).toBe(true);
     expect(writeMeetingHistoryService).toHaveBeenLastCalledWith(
       expect.objectContaining({
         generateNotes: generationEnabled,

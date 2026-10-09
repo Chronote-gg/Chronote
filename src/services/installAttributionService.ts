@@ -6,7 +6,13 @@ const TOKEN_MAX_LENGTH = 64;
 const DISCORD_SNOWFLAKE = /^\d{17,20}$/;
 const ATTRIBUTION_TOKEN = /^[a-z0-9][a-z0-9._-]*$/;
 const CTA_LOCATIONS = new Set(["hero", "footer-cta", "site-footer", "join"]);
-const PUBLIC_LANDING_PATHS = new Set(["/", "/join", "/upgrade", "/feedback"]);
+const PUBLIC_LANDING_PATHS = new Set([
+  "/",
+  "/join",
+  "/upgrade",
+  "/upgrade/select-server",
+  "/feedback",
+]);
 const ACQUISITION_SOURCES = new Set([
   "direct",
   "newsletter",

@@ -778,6 +778,19 @@ fn close_window(window: tauri::Window) -> Result<(), String> {
 }
 
 fn main() {
+    let context = tauri::generate_context!();
+    #[cfg(all(windows, feature = "test-hooks"))]
+    let context = {
+        let mut context = context;
+        // Elevated WebView2 150+ ignores driver env vars; pass them through its API in test builds.
+        for window in &mut context.config_mut().app.windows {
+            window.additional_browser_args =
+                std::env::var("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS").ok();
+            window.data_directory =
+                std::env::var_os("WEBVIEW2_USER_DATA_FOLDER").map(PathBuf::from);
+        }
+        context
+    };
     tauri::Builder::default()
         .manage(initial_app_state())
         .invoke_handler(tauri::generate_handler![
@@ -799,7 +812,7 @@ fn main() {
             toggle_maximize_window,
             close_window,
         ])
-        .run(tauri::generate_context!())
+        .run(context)
         .expect("error while running Chronote Desktop");
 }
 

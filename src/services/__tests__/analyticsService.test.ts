@@ -16,6 +16,8 @@ const analyticsConfig = { posthogKey: "", posthogHost: "https://example.test" };
 
 jest.mock("../configService", () => ({
   config: {
+    mock: { enabled: false },
+    frontend: { siteUrl: "https://sandbox.chronote.gg" },
     get analytics() {
       return analyticsConfig;
     },
@@ -52,7 +54,12 @@ describe("analyticsService", () => {
     expect(capture).toHaveBeenCalledWith({
       distinctId: "user-1",
       event: "meeting_started",
-      properties: { trigger: "manual_command", guild_id: "guild-1" },
+      properties: {
+        trigger: "manual_command",
+        guild_id: "guild-1",
+        environment: "sandbox",
+        surface: "server",
+      },
     });
   });
 

@@ -34,7 +34,7 @@ type PricingCardProps = {
   price: string;
   description: string;
   features: string[];
-  cta: string;
+  cta?: string;
   ctaProps?: PricingCtaProps;
   ctaDisabled?: boolean;
   highlighted?: boolean;
@@ -143,6 +143,7 @@ export function PricingCard({
         <List
           spacing="xs"
           size="sm"
+          styles={{ item: { display: "block" } }}
           icon={
             <ThemeIcon color={highlighted ? "brand" : "gray"} size={20}>
               <IconCheck size={12} />
@@ -154,15 +155,19 @@ export function PricingCard({
           ))}
         </List>
         <Box mt="auto">
-          <Button
-            variant={buttonVariant}
-            gradient={buttonVariant === "gradient" ? buttonGradient : undefined}
-            fullWidth
-            {...ctaProps}
-            disabled={buttonDisabled}
-          >
-            {cta}
-          </Button>
+          {cta ? (
+            <Button
+              variant={buttonVariant}
+              gradient={
+                buttonVariant === "gradient" ? buttonGradient : undefined
+              }
+              fullWidth
+              {...ctaProps}
+              disabled={buttonDisabled}
+            >
+              {cta}
+            </Button>
+          ) : null}
           {note ? (
             <Text size="xs" c="dimmed" mt="xs">
               {note}

@@ -54,11 +54,11 @@ runs:
         # instead of falling back to index.html and its homepage metadata.
         # Uploaded after the sync because --delete would otherwise remove them.
         if [ -d "$ROUTES_DIR" ]; then
-          for route in "$ROUTES_DIR"/*.html; do
-            [ -f "$route" ] || continue
-            key="$(basename "$route" .html)"
+          while IFS= read -r -d '' route; do
+            relative="${route#"$ROUTES_DIR"/}"
+            key="${relative%.html}"
             aws s3 cp "$route" "s3://$BUCKET/$key" --content-type "text/html; charset=utf-8" --cache-control "public,max-age=600"
-          done
+          done < <(find "$ROUTES_DIR" -type f -name '*.html' -print0)
         fi
 
     - name: Invalidate CloudFront

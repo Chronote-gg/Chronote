@@ -42,13 +42,15 @@ import { evaluateAutoRecordCancellation } from "../services/autoRecordCancellati
 import { autoRecordJoinSuppressionService } from "../services/autoRecordJoinSuppressionService";
 import { meetingsCancelled } from "../metrics";
 import { captureEvent } from "../services/analyticsService";
-import { describeAutoRecordRule } from "../utils/meetingLifecycle";
+import {
+  describeAutoRecordRule,
+  resolveMeetingActorId,
+} from "../utils/meetingLifecycle";
 import {
   deleteMeeting,
   endTtsOnlySession,
   getMeeting,
   hasMeeting,
-  resolveMeetingActorId,
   restoreVoiceSessionNickname,
 } from "../meetings";
 import { MEETING_END_REASONS, MEETING_STATUS } from "../types/meetingLifecycle";
@@ -112,6 +114,17 @@ function shouldReleaseLeaseDuringErrorCleanup(meeting: MeetingData): boolean {
  * emitting meeting_started with no completion, so ordinary cancellation would
  * read as funnel abandonment.
  */
+function hasUsableMeetingNotes(meeting: MeetingData): boolean {
+  return (
+    !meeting.cancelled &&
+    meeting.processing?.transcription === "ready" &&
+    meeting.processing?.notes === "generated" &&
+    Boolean(meeting.notesText?.trim()) &&
+    meeting.historySaved === true &&
+    meeting.delivery?.notes?.outcome === "complete"
+  );
+}
+
 function captureMeetingCompleted(meeting: MeetingData): void {
   try {
     const endTime = meeting.endTime ?? new Date();
@@ -126,6 +139,18 @@ function captureMeetingCompleted(meeting: MeetingData): void {
         transcribed: meeting.transcribeMeeting,
         notes_generated: meeting.generateNotes,
         cancelled: Boolean(meeting.cancelled),
+        event_version: 2,
+        surface: "discord",
+        transcription_outcome: meeting.processing?.transcription ?? "unknown",
+        notes_outcome: meeting.processing?.notes ?? "unknown",
+        history_persistence:
+          meeting.historySaved === undefined
+            ? "unknown"
+            : meeting.historySaved
+              ? "saved"
+              : "not_saved",
+        notes_delivery: meeting.delivery?.notes?.outcome ?? "unknown",
+        usable_notes: hasUsableMeetingNotes(meeting),
       },
     });
   } catch (error) {
@@ -134,6 +159,14 @@ function captureMeetingCompleted(meeting: MeetingData): void {
       error,
     });
   }
+}
+
+function captureFailedMeetingCompleted(meeting: MeetingData): void {
+  if (meeting.transcribeMeeting && !meeting.processing?.transcription) {
+    meeting.processing = { ...meeting.processing, transcription: "failed" };
+  }
+  meeting.historySaved ??= false;
+  captureMeetingCompleted(meeting);
 }
 
 function shouldFinalizeDismissedAutoRecording(meeting: MeetingData): boolean {
@@ -245,6 +278,7 @@ export async function handleEndMeetingButton(
       }
       meeting.setFinished();
       meeting.finished = true;
+      captureFailedMeetingCompleted(meeting);
       deleteMeeting(meeting.guildId);
     }
     if (meeting) {
@@ -281,6 +315,7 @@ export async function handleEndMeetingOther(
       }
       meeting.setFinished();
       meeting.finished = true;
+      captureFailedMeetingCompleted(meeting);
       deleteMeeting(meeting.guildId);
     }
     await cleanupMeetingTempDir(meeting);
@@ -792,6 +827,7 @@ async function maybeSendMinutesLimitNotice(meeting: MeetingData) {
     await meeting.textChannel.send(
       buildUpgradeTextOnly(
         `You've reached the weekly minutes limit for this plan. ${nextLabel}`,
+        "discord_limit",
       ),
     );
     return;
@@ -801,6 +837,7 @@ async function maybeSendMinutesLimitNotice(meeting: MeetingData) {
     await meeting.textChannel.send(
       buildUpgradeTextOnly(
         `Heads up: about ${remainingMinutes} minute(s) left in the weekly free-tier window.`,
+        "discord_limit",
       ),
     );
   }

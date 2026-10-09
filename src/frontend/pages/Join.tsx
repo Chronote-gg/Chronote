@@ -1,98 +1,151 @@
 import {
+  Box,
   Button,
   Code,
   Container,
   Group,
   Paper,
+  SimpleGrid,
   Stack,
   Text,
   Title,
 } from "@mantine/core";
 import { Link } from "@tanstack/react-router";
-import type { ReactNode } from "react";
+import { IconArrowRight, IconBrandDiscord } from "@tabler/icons-react";
 import { useAuth } from "../contexts/AuthContext";
+import SampleSummary from "../components/SampleSummary";
 import { track } from "../services/analytics";
 import { buildInstallUrl } from "../utils/discordInvite";
 
-const STEPS: ReactNode[] = [
-  "Join a voice channel in your server.",
-  <>
-    Run the <Code>/startmeeting</Code> command.
-  </>,
-  "Talk. The notes post back to the channel when the meeting ends.",
+const STEPS = [
+  {
+    title: "Join a voice channel",
+    detail: "Use the server where you added Chronote.",
+  },
+  {
+    title: "Start recording",
+    detail: (
+      <>
+        Let everyone know you’re recording, then run <Code>/startmeeting</Code>{" "}
+        in a text channel.
+      </>
+    ),
+  },
+  {
+    title: "Talk, then end the meeting",
+    detail: (
+      <>
+        Press <strong>End Meeting</strong> in Chronote’s recording message. Your
+        notes will appear in the text channel.
+      </>
+    ),
+  },
 ];
 
 export default function Join() {
   const { state: authState, loginUrl, loading } = useAuth();
-
   return (
-    <Container size={720} pt={{ base: 28, md: 48 }} pb={{ base: 48, md: 96 }}>
-      <Stack gap={64}>
-        <Stack gap="md" data-testid="join-hero" align="flex-start">
+    <Container
+      size={1040}
+      pt={{ base: 24, md: 48 }}
+      pb={{ base: 48, md: 80 }}
+      px={0}
+    >
+      <Stack gap="xl">
+        <Stack gap="md" align="flex-start" data-testid="join-hero">
           <Title
             order={1}
             fw={600}
-            fz={{ base: 30, md: 40 }}
+            fz={{ base: 30, md: 42 }}
             lh={1.15}
-            style={{ letterSpacing: "-0.02em", textWrap: "balance" }}
+            style={{ letterSpacing: "-0.025em", textWrap: "balance" }}
           >
-            Chronote is now in your server!
+            Record your first meeting.
           </Title>
-          <Text size="lg" c="dimmed" maw={560}>
-            Here is how to get your first set of notes.
+          <Text size="lg" c="dimmed">
+            A voice call in, notes out. Start in Discord.
           </Text>
+          <Button
+            component="a"
+            href="https://discord.com/channels/@me"
+            size="md"
+            leftSection={<IconBrandDiscord size={20} />}
+            rightSection={<IconArrowRight size={18} />}
+            data-testid="join-open-discord"
+          >
+            Open Discord
+          </Button>
         </Stack>
-
-        <Paper withBorder radius="md" p={{ base: "md", sm: "xl" }}>
+        <SimpleGrid cols={{ base: 1, md: 2 }} spacing="xl">
           <Stack gap="lg">
-            {STEPS.map((step, index) => (
-              <Group key={index} gap="md" wrap="nowrap" align="baseline">
-                <Text ff="monospace" fz={18} fw={600} c="brand.4" w={20}>
-                  {index + 1}
-                </Text>
-                <Text fz="md">{step}</Text>
-              </Group>
-            ))}
+            <Paper withBorder radius="md" p="lg">
+              <Stack gap="xl">
+                {STEPS.map((step, index) => (
+                  <Group
+                    key={step.title}
+                    gap="md"
+                    wrap="nowrap"
+                    align="flex-start"
+                  >
+                    <Text fw={700} c="brand" size="lg">
+                      {index + 1}
+                    </Text>
+                    <Stack gap={6}>
+                      <Text fw={600}>{step.title}</Text>
+                      <Text size="sm" c="dimmed" lh={1.6}>
+                        {step.detail}
+                      </Text>
+                    </Stack>
+                  </Group>
+                ))}
+              </Stack>
+            </Paper>
+            <Box component="details">
+              <Text
+                component="summary"
+                size="sm"
+                fw={600}
+                style={{ cursor: "pointer" }}
+              >
+                Want recordings to start automatically?
+              </Text>
+              <Text size="sm" c="dimmed" mt="sm">
+                Run <Code>/autorecord</Code> to choose voice channels Chronote
+                should record automatically. Tell participants before enabling
+                it.
+              </Text>
+            </Box>
           </Stack>
-        </Paper>
-
-        <Stack gap="md">
-          <Title order={2} fz={22} fw={600}>
-            Hands free
+          <Stack gap="sm">
+            <Text size="sm" c="dimmed">
+              Example notes · Fictional meeting
+            </Text>
+            <SampleSummary />
+          </Stack>
+        </SimpleGrid>
+        <Stack gap="sm" align="flex-start">
+          <Title order={2} fz={22}>
+            Come back to what was decided.
           </Title>
-          <Text c="dimmed">
-            Run <Code>/autorecord</Code> and Chronote joins the voice channels
-            you pick on its own, so nobody has to remember the command.
+          <Text size="sm" c="dimmed">
+            Your meeting library keeps notes and transcripts together.
           </Text>
-        </Stack>
-
-        <Stack gap="md">
-          <Title order={2} fz={22} fw={600}>
-            Your meeting library
-          </Title>
-          <Text c="dimmed">
-            Every recorded meeting is kept on the web, where you can read the
-            transcript, correct the notes, and ask questions about past
-            meetings.
-          </Text>
-          <Group gap="sm" wrap="wrap">
+          <Group>
             {authState === "authenticated" ? (
-              <Button component={Link} to="/portal" size="md" radius="md">
-                Open portal
+              <Button component={Link} to="/portal" variant="light">
+                Open meeting library
               </Button>
             ) : (
               <Button
                 component="a"
                 href={loginUrl}
                 loading={loading}
-                size="md"
-                radius="md"
+                variant="light"
               >
-                Open portal
+                Open meeting library
               </Button>
             )}
             <Button
-              size="md"
               variant="subtle"
               component="a"
               href={buildInstallUrl({ ctaLocation: "join" })}

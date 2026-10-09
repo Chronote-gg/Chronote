@@ -350,19 +350,6 @@ describe("initializeMeeting", () => {
       "end",
       expect.any(Function),
     );
-    const transitionListener = connection.on.mock.calls.find(
-      ([event]: [string]) => event === "transitioned",
-    )?.[1] as (() => void) | undefined;
-    expect(transitionListener).toBeDefined();
-    const beforeTransition = Date.now();
-    transitionListener?.();
-    expect(meeting.audioData.lastDaveTransitionAtMs).toBeGreaterThanOrEqual(
-      beforeTransition,
-    );
-    expect(meeting.audioData.lastDaveTransitionAtMs).toBeLessThanOrEqual(
-      Date.now(),
-    );
-
     deleteMeeting(meeting.guildId);
   });
 });

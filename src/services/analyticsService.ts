@@ -1,5 +1,6 @@
 import { PostHog } from "posthog-node";
 import { config } from "./configService";
+import { resolveAnalyticsEnvironment } from "../utils/purchaseAnalytics";
 
 /**
  * Server-side product analytics.
@@ -75,7 +76,14 @@ export function captureEvent(
     posthog.capture({
       distinctId,
       event,
-      properties: { ...properties, guild_id: guildId },
+      properties: {
+        ...properties,
+        guild_id: guildId,
+        environment: config.mock.enabled
+          ? "local"
+          : resolveAnalyticsEnvironment(config.frontend.siteUrl),
+        surface: properties?.surface ?? "server",
+      },
     });
   } catch (error) {
     console.warn("Analytics capture failed", { event, error });

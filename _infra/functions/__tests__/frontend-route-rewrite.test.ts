@@ -48,7 +48,6 @@ describe("frontend route rewrite", () => {
   it("rewrites the frontend's dynamic and authenticated routes", () => {
     for (const uri of [
       "/promo/summer",
-      "/upgrade/select-server",
       "/upgrade/success",
       "/live/123/meeting-1",
       "/admin",
@@ -65,7 +64,6 @@ describe("frontend route rewrite", () => {
   it("preserves common trailing slash variants of known SPA routes", () => {
     for (const uri of [
       "/promo/summer/",
-      "/upgrade/select-server/",
       "/upgrade/success/",
       "/live/123/meeting-1/",
       "/share/ask/123/conversation-1/",

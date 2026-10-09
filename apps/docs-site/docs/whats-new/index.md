@@ -7,6 +7,18 @@ Notable product changes for Chronote users. For the full changelog, see the [Git
 
 ## 2026
 
+### A clearer upgrade and first-recording flow
+
+- Compare Free, Basic and Pro on the upgrade page. **Continue with Basic** or **Continue with Pro** takes the chosen plan directly to billing confirmation for the named server.
+- Monthly and annual prices show the selected billing period. Optional promotion codes are checked at checkout.
+- The first-recording guide starts with **Open Discord**, includes how to end the meeting and shows an example of the notes. Auto-record setup and the meeting library remain available below the first steps.
+
+### Recording and purchase analytics notice (October 6)
+
+- We are adding content-free delivery and purchase outcomes to understand first use, buying difficulties and repeat use across Discord and the website. A delivered upgrade offer, a checkout and confirmed paid server access are recorded separately.
+- These events use server/account identifiers, approved source categories, plans, billing periods, fixed blocking reasons and outcome flags. They exclude meeting content, channel/message/meeting and payment-provider identifiers, raw errors and promotion-code values. Promotion values in analytics page URLs are redacted.
+- Browser Do Not Track suppresses website and synchronous checkout analytics. New subscriptions started with it also suppress later billing-outcome events; existing subscriptions do not inherit the setting retroactively. It cannot reach the bot; email us to request account exclusion. See the updated [Privacy Policy](/legal/privacy/).
+
 ### Installation source reporting
 
 - Add to Discord links on the Chronote website now preserve a limited acquisition source through Discord authorization, so we can understand which public pages and referrals lead to a real server installation.

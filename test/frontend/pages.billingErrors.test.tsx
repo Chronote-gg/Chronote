@@ -119,7 +119,7 @@ describe.each([
                 ? /manage billing/i
                 : Page === Billing
                   ? /upgrade to pro/i
-                  : /continue to stripe/i,
+                  : /continue with basic/i,
           }),
         );
         const message =

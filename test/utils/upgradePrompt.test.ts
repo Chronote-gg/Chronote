@@ -14,6 +14,7 @@ describe("upgrade prompt helpers", () => {
     const reply = buildUpgradePrompt("Upgrade now");
     expect(reply.components).toHaveLength(1);
     expect(reply.ephemeral).toBe(true);
+    expect(JSON.stringify(reply.components)).toContain("source=discord_limit");
   });
 
   test("buildUpgradePrompt returns no components when billing URL is empty", async () => {
@@ -28,6 +29,15 @@ describe("upgrade prompt helpers", () => {
     );
     expect(buildUpgradeTextOnly("Upgrade now")).toBe(
       "Upgrade now\nUpgrade: https://example.com/bill",
+    );
+  });
+
+  test("tags Discord limit notices while preserving existing URL intent", async () => {
+    const { buildUpgradeTextOnly } = await loadModule(
+      "https://example.com/upgrade?promo=SAVE20#plans",
+    );
+    expect(buildUpgradeTextOnly("Limit reached", "discord_limit")).toBe(
+      "Limit reached\nUpgrade: https://example.com/upgrade?promo=SAVE20&source=discord_limit#plans",
     );
   });
 });

@@ -1,0 +1,13 @@
+diff --git a/node_modules/storybook/dist/_node-chunks/chunk-5G6TGQDE.js b/node_modules/storybook/dist/_node-chunks/chunk-5G6TGQDE.js
+index 04ddd65..42f4d4a 100644
+--- a/node_modules/storybook/dist/_node-chunks/chunk-5G6TGQDE.js
++++ b/node_modules/storybook/dist/_node-chunks/chunk-5G6TGQDE.js
+@@ -732,7 +732,7 @@ var importMetaResolve = (...args) => typeof import.meta.resolve != "function" &&
+ async function importModule(path2, { skipCache = !1 } = {}) {
+   if (!isTypescriptLoaderRegistered) {
+     let typescriptLoaderUrl = importMetaResolve("storybook/internal/bin/loader");
+-    register(typescriptLoaderUrl, import.meta.url), isTypescriptLoaderRegistered = !0;
++    try { register(typescriptLoaderUrl, import.meta.url); } catch (error) { if (!error.message.startsWith("module.register() is not supported in Jest")) throw error; } isTypescriptLoaderRegistered = !0;
+   }
+   let mod;
+   try {

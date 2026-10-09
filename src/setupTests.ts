@@ -86,3 +86,10 @@ if (typeof globalThis.ReadableStream === "undefined") {
   globalThis.ReadableStream =
     ReadableStream as unknown as typeof globalThis.ReadableStream;
 }
+
+// jsdom omits Node's fetch classes, which the OpenAI SDK reads at import time.
+if (typeof globalThis.Response === "undefined") {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const { Response, Request, Headers } = require("undici");
+  Object.assign(globalThis, { Response, Request, Headers });
+}

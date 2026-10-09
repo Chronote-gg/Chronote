@@ -21,7 +21,6 @@ import { trpc } from "../services/trpc";
 import { track } from "../services/analytics";
 import type { BillingInterval, PaidTier } from "../../types/pricing";
 import {
-  annualSavingsLabel,
   buildPaidPlanLookup,
   formatPlanPrice,
   resolvePaidPlan,
@@ -101,9 +100,7 @@ export default function Home() {
     [pricingQuery.data],
   );
   const planLookup = useMemo(() => buildPaidPlanLookup(paidPlans), [paidPlans]);
-  // Every paid tier needs an annual price before the toggle is offered.
-  // Otherwise resolvePaidPlan quietly falls back to the monthly amount and
-  // renders it as a yearly one.
+  // Offer annual billing only when every paid tier has an annual price.
   const hasAnnualPlans = (["basic", "pro"] as const).every((tier) =>
     Boolean(planLookup[tier]?.year),
   );
@@ -114,7 +111,7 @@ export default function Home() {
     track("pricing_cta_clicked", { plan, interval: billingInterval });
     navigate({
       to: "/upgrade/select-server",
-      search: { plan, interval: billingInterval },
+      search: { plan, interval: billingInterval, source: "homepage_pricing" },
     });
   };
 
@@ -189,7 +186,6 @@ export default function Home() {
           </Group>
           <Text size="sm" c="dimmed">
             Per server, not per member.
-            {billingInterval === "year" ? ` ${annualSavingsLabel}.` : ""}
           </Text>
           <Paper withBorder radius="md" p={{ base: "sm", sm: "lg" }}>
             <Table.ScrollContainer minWidth={PRICING_TABLE_MIN_WIDTH}>

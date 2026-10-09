@@ -118,6 +118,7 @@ fs.mkdirSync(routesOutDir, { recursive: true });
 
 for (const route of config.routes.filter((entry) => entry.emitHtml)) {
   const dest = path.join(routesOutDir, `${route.key}.html`);
+  fs.mkdirSync(path.dirname(dest), { recursive: true });
   fs.writeFileSync(dest, buildRouteHtml(indexHtml, route), "utf8");
   console.log(`route html: ${route.path} -> ${path.relative(repoRoot, dest)}`);
 }

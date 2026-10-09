@@ -86,6 +86,12 @@ describe("UpgradeSuccess", () => {
     ).toBeInTheDocument();
   });
 
+  it("confirms promotion presence without rendering its value", () => {
+    renderUpgradeSuccess();
+    expect(screen.getByText("Promotion applied.")).toBeInTheDocument();
+    expect(screen.queryByText(/SAVE20/)).toBeNull();
+  });
+
   it("falls back to a generic confirmation when Stripe omits the plan", () => {
     mockUseSearch.mockReturnValue({ serverId: "s1" });
 

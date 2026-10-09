@@ -17,6 +17,8 @@ import {
   buildMeetingNotesEmbeds,
 } from "./utils/meetingNotes";
 import { claimSummaryUpgrade } from "./services/summaryUpgradeService";
+import { captureEvent } from "./services/analyticsService";
+import { resolveMeetingActorId } from "./utils/meetingLifecycle";
 import {
   buildSummaryUpgradeBody,
   SUMMARY_UPGRADE,
@@ -269,6 +271,8 @@ export async function updateMeetingSummaryMessage(
 ): Promise<{ summary: DeliveryResult; notes: DeliveryResult }> {
   const portalUrl = buildMeetingPortalUrl(meeting);
   const upgrade = await claimSummaryUpgrade(meeting);
+  const notesUpgradeUrl = upgrade ? new URL(upgrade.url) : undefined;
+  notesUpgradeUrl?.searchParams.set("source", "discord_notes");
   const upgradeField = upgrade
     ? {
         name: SUMMARY_UPGRADE.heading,
@@ -286,9 +290,29 @@ export async function updateMeetingSummaryMessage(
   if (summaryMessage) {
     meeting.summaryMessageId = summaryMessage.id;
   }
+  if (
+    upgrade &&
+    (summary.outcome === "edited_existing" ||
+      summary.outcome === "sent_fallback")
+  ) {
+    captureEvent("upgrade_offer_delivered", {
+      userId: resolveMeetingActorId(meeting),
+      guildId: meeting.guildId,
+      properties: { surface: "discord_summary", event_version: 1 },
+    });
+  }
 
   const noteEmbeds = buildNotesEmbeds(meeting);
   if (upgradeField) noteEmbeds.at(-1)?.addFields(upgradeField);
+  const notes = await sendMeetingNotes(meeting, noteEmbeds, notesUpgradeUrl);
+  return { summary, notes };
+}
+
+async function sendMeetingNotes(
+  meeting: MeetingData,
+  noteEmbeds: EmbedBuilder[],
+  upgradeUrl: URL | undefined,
+): Promise<DeliveryResult> {
   const noteEmbedBatches = batchMeetingNotesEmbeds(noteEmbeds);
   const noteMessages: Message[] = [];
   const errors: DeliveryResult["errors"] = [];
@@ -296,13 +320,13 @@ export async function updateMeetingSummaryMessage(
     const payload: MeetingMessagePayload = {
       embeds,
       components:
-        upgrade && embeds === noteEmbedBatches.at(-1)
+        upgradeUrl && embeds === noteEmbedBatches.at(-1)
           ? [
               new ActionRowBuilder<ButtonBuilder>().addComponents(
                 new ButtonBuilder()
                   .setLabel(SUMMARY_UPGRADE.button)
                   .setStyle(ButtonStyle.Link)
-                  .setURL(upgrade.url),
+                  .setURL(upgradeUrl.toString()),
               ),
             ]
           : [],
@@ -310,6 +334,13 @@ export async function updateMeetingSummaryMessage(
     try {
       const message = await meeting.textChannel.send(payload);
       noteMessages.push(message);
+      if (upgradeUrl && embeds === noteEmbedBatches.at(-1)) {
+        captureEvent("upgrade_offer_delivered", {
+          userId: resolveMeetingActorId(meeting),
+          guildId: meeting.guildId,
+          properties: { surface: "discord_notes", event_version: 1 },
+        });
+      }
     } catch (error) {
       errors.push(deliveryError(error));
     }
@@ -324,7 +355,7 @@ export async function updateMeetingSummaryMessage(
   }
   const intended = noteEmbedBatches.length;
   const sent = noteMessages.length;
-  const notes = recordDelivery(meeting, "notes", {
+  return recordDelivery(meeting, "notes", {
     outcome:
       intended === 0
         ? "not_applicable"
@@ -337,5 +368,4 @@ export async function updateMeetingSummaryMessage(
     sent,
     errors,
   });
-  return { summary, notes };
 }

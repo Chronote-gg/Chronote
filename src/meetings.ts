@@ -53,23 +53,7 @@ import { captureEvent } from "./services/analyticsService";
 import type { ConfigTier } from "./config/types";
 import type { ChatTtsSpeakerPrefixMode } from "./utils/ttsText";
 import { DEFAULT_CHAT_TTS_SPEAKER_PREFIX_MODE as DEFAULT_PREFIX_MODE } from "./utils/ttsText";
-
-/**
- * Who to attribute a meeting's analytics to.
- *
- * Auto-recorded meetings are constructed with `creator: client.user`, so using
- * the creator would file every auto-record meeting under the bot's own account
- * and collapse all of that usage onto one profile. The member whose voice join
- * triggered the recording is the real actor; when there is none, returning
- * undefined lets the event fall back to a guild-scoped identity rather than
- * inventing a person.
- */
-export function resolveMeetingActorId(
-  meeting: MeetingData,
-): string | undefined {
-  if (meeting.startTriggeredByUserId) return meeting.startTriggeredByUserId;
-  return meeting.isAutoRecording ? undefined : meeting.creator.id;
-}
+import { resolveMeetingActorId } from "./utils/meetingLifecycle";
 
 const meetings = new Map<string, MeetingData>();
 
@@ -438,12 +422,6 @@ export async function initializeMeeting(
     leaseOwnerInstanceId,
   };
 
-  if (meeting.captureAudio) {
-    connection.on("transitioned", () => {
-      meeting.audioData.lastDaveTransitionAtMs = Date.now();
-    });
-  }
-
   if (meeting.sessionMode === "tts_only") {
     meeting.resetTtsOnlyIdleTimer = () => resetTtsOnlyIdleTimeout(meeting);
   }
@@ -553,6 +531,7 @@ export async function initializeMeeting(
       guildId: meeting.guildId,
       properties: {
         trigger: meeting.startReason,
+        surface: "discord",
         is_auto_recording: meeting.isAutoRecording,
       },
     });

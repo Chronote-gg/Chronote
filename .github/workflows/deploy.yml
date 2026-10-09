@@ -22,7 +22,8 @@ jobs:
 
   deploybackend:
     name: Deploy Backend
-    needs: [ci]
+    # Publish privacy/What's New notices before expanded capture goes live.
+    needs: [ci, deploy-docs]
     runs-on: ubuntu-latest
     environment: production
     env:
@@ -321,7 +322,7 @@ jobs:
 
   deploy-frontend:
     name: Deploy Frontend
-    needs: [ci]
+    needs: [ci, deploy-docs]
     runs-on: ubuntu-latest
     environment: production
     env:
@@ -375,8 +376,8 @@ jobs:
         run: |
           if [ -z "$DOCS_BUCKET" ] || [ -z "$DOCS_DISTRIBUTION_ID" ]; then
             echo "enabled=false" >> "$GITHUB_OUTPUT"
-            echo "Docs deployment skipped because DOCS_BUCKET or DOCS_DISTRIBUTION_ID is not configured." >> "$GITHUB_STEP_SUMMARY"
-            exit 0
+            echo "Docs deployment is required before the product deploy, including privacy notices." >> "$GITHUB_STEP_SUMMARY"
+            exit 1
           fi
 
           echo "enabled=true" >> "$GITHUB_OUTPUT"
@@ -388,6 +389,34 @@ jobs:
           aws-access-key-id: ${{ vars.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Preflight docs publish targets
+        if: steps.docs-config.outputs.enabled == 'true'
+        env:
+          DOCS_BUCKET: ${{ vars.DOCS_BUCKET }}
+          DOCS_DISTRIBUTION_ID: ${{ vars.DOCS_DISTRIBUTION_ID }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "$DOCS_BUCKET" ]; then
+            echo "ERROR: DOCS_BUCKET is not set in the GitHub Actions environment."
+            exit 1
+          fi
+
+          if [ -z "$DOCS_DISTRIBUTION_ID" ]; then
+            echo "ERROR: DOCS_DISTRIBUTION_ID is not set in the GitHub Actions environment."
+            exit 1
+          fi
+
+          if ! aws s3api head-bucket --bucket "$DOCS_BUCKET" >/dev/null 2>&1; then
+            echo "ERROR: DOCS_BUCKET '$DOCS_BUCKET' is not accessible with the configured AWS credentials."
+            exit 1
+          fi
+
+          if ! aws cloudfront get-distribution --id "$DOCS_DISTRIBUTION_ID" >/dev/null 2>&1; then
+            echo "ERROR: DOCS_DISTRIBUTION_ID '$DOCS_DISTRIBUTION_ID' is not accessible with the configured AWS credentials."
+            exit 1
+          fi
 
       - name: Setup Node.js
         if: steps.docs-config.outputs.enabled == 'true'
@@ -427,7 +456,7 @@ jobs:
           aws s3 sync build/docs-site s3://$DOCS_BUCKET --delete --exclude "assets/*" --cache-control "public,max-age=600"
 
           if [ -d build/docs-site/assets ]; then
-            aws s3 sync build/docs-site/assets s3://$DOCS_BUCKET/assets --cache-control "public,max-age=31536000,immutable"
+            aws s3 sync build/docs-site/assets s3://$DOCS_BUCKET/assets --delete --cache-control "public,max-age=31536000,immutable"
           fi
 
       - name: Invalidate docs CloudFront
@@ -440,7 +469,8 @@ jobs:
             exit 1
           fi
 
-          aws cloudfront create-invalidation --distribution-id "$DOCS_DISTRIBUTION_ID" --paths "/*"
+          INVALIDATION_ID=$(aws cloudfront create-invalidation --distribution-id "$DOCS_DISTRIBUTION_ID" --paths "/*" --query 'Invalidation.Id' --output text)
+          aws cloudfront wait invalidation-completed --distribution-id "$DOCS_DISTRIBUTION_ID" --id "$INVALIDATION_ID"
 
   # Promotes prompts only after the backend that supplies their variables is
   # live. A prompt is safe to run against newer code (unused variables are

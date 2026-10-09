@@ -18,6 +18,14 @@ on:
         required: true
         type: string
         default: sandbox
+      plan_scope:
+        description: Full infrastructure or only the purchase-coordination permission prerequisite
+        required: true
+        type: choice
+        default: full
+        options:
+          - full
+          - purchase-permission
 
 permissions:
   contents: read
@@ -198,9 +206,15 @@ jobs:
 
       - name: Terraform plan
         id: plan
+        env:
+          PLAN_SCOPE: ${{ inputs.plan_scope }}
         run: |
+          plan_args=()
+          if [ "$PLAN_SCOPE" = "purchase-permission" ]; then
+            plan_args=(-target=aws_iam_role_policy.initial_purchase_condition)
+          fi
           set +e
-          terraform -chdir=_infra plan -no-color -input=false -detailed-exitcode -out=tfplan | tee _infra/terraform-plan.txt
+          terraform -chdir=_infra plan -no-color -input=false -detailed-exitcode -out=tfplan "${plan_args[@]}" | tee _infra/terraform-plan.txt
           exit_code=${PIPESTATUS[0]}
           set -e
 

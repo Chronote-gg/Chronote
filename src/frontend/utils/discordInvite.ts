@@ -10,7 +10,13 @@ type InstallLinkOptions = {
 };
 
 const ATTRIBUTION_TOKEN = /^[a-z0-9][a-z0-9._-]*$/;
-const PUBLIC_LANDING_PATHS = new Set(["/", "/join", "/upgrade", "/feedback"]);
+const PUBLIC_LANDING_PATHS = new Set([
+  "/",
+  "/join",
+  "/upgrade",
+  "/upgrade/select-server",
+  "/feedback",
+]);
 const ACQUISITION_SOURCES = new Set([
   "direct",
   "newsletter",

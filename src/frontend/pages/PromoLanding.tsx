@@ -42,7 +42,7 @@ export default function PromoLanding() {
           </Group>
           <Group gap="sm" align="center">
             <Text fw={600}>Use code</Text>
-            <Code>{promoCode}</Code>
+            <Code className="ph-no-capture ph-mask">{promoCode}</Code>
           </Group>
           <Text c="dimmed" size="sm">
             Choose a server to apply this code at checkout. You can review plans

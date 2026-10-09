@@ -9,7 +9,10 @@ export function getStripeClient(): StripeClient | null {
     return stripeClient;
   }
   stripeClient = config.stripe.secretKey
-    ? new Stripe(config.stripe.secretKey, { apiVersion: "2026-07-29.dahlia" })
+    ? new Stripe(config.stripe.secretKey, {
+        // SDK updates must not silently change our Stripe API contract.
+        apiVersion: "2026-07-29.dahlia" as Stripe.LatestApiVersion,
+      })
     : null;
   return stripeClient;
 }
