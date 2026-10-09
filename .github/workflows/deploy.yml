@@ -3,6 +3,7 @@ name: Meeting Notes Bot Deploy
 run-name: Meeting Notes Bot Deploy ${{ github.actor }}
 
 on:
+  workflow_dispatch:
   push:
     branches:
       - master
@@ -16,6 +17,7 @@ concurrency:
 
 jobs:
   ci:
+    if: github.ref == 'refs/heads/master'
     name: CI
     uses: ./.github/workflows/ci-core.yml
     secrets: inherit
