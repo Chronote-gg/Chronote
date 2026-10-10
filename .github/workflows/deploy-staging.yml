@@ -73,7 +73,7 @@ jobs:
       - name: Run tests
         id: run-tests
         run: |
-          yarn test --passWithNoTests --testPathIgnorePatterns="src/frontend" || echo "test_failed=true" >> $GITHUB_OUTPUT
+          yarn test --passWithNoTests || echo "test_failed=true" >> $GITHUB_OUTPUT
 
       - name: Report test results
         if: steps.run-tests.outputs.test_failed == 'true'
