@@ -232,3 +232,25 @@ test("shutdown observes the actual held protection response before settling", as
   await expect(service.confirm()).rejects.toThrow();
   expect(request).toHaveBeenCalledTimes(2);
 });
+
+test("accepts the same task returned in AWS short ARN form", async () => {
+  const service = createRuntimeProtectionService({
+    identity,
+    agentUri: "http://agent",
+    request: jest.fn(async () =>
+      Response.json({
+        protection: {
+          TaskArn: "arn:aws:ecs:us-east-1:123456789012:task/abc",
+          ProtectionEnabled: true,
+          ExpirationDate: new Date(Date.now() + 600_000).toISOString(),
+        },
+      }),
+    ),
+    now,
+    onUnsafe: jest.fn(),
+  });
+  await service.start();
+  expect(service.getConfirmation()?.identity).toEqual(identity);
+  expect(service.isSafe()).toBe(true);
+  await service.shutdown();
+});

@@ -585,3 +585,61 @@ test("native protection is queried only for running tasks during retirement", as
     taskInventoryComplete: false,
   });
 });
+
+test("a superseded bootstrap settles only with its linked completed repair and replacement", async () => {
+  const f = observationFixture();
+  const original = {
+    pk: "ENV",
+    sk: "BOOTSTRAP#old",
+    operationId: "old",
+    stage: "superseded",
+    supersededBy: "new",
+  };
+  const replacement = {
+    pk: "ENV",
+    sk: "BOOTSTRAP#new",
+    operationId: "new",
+    stage: "complete",
+  };
+  const repair = {
+    pk: "ENV",
+    sk: "REPAIR#new",
+    operationId: "new",
+    previousOperationId: "old",
+    stage: "complete",
+  };
+  f.data.runtimes = [original, replacement, repair];
+  expect((await f.collect()).runtime.deploymentIncomplete).toBe(false);
+  repair.previousOperationId = "foreign";
+  expect((await f.collect()).runtime.deploymentIncomplete).toBe(true);
+  repair.previousOperationId = "old";
+  f.data.runtimes = [original, replacement];
+  expect((await f.collect()).runtime.deploymentIncomplete).toBe(true);
+  f.data.runtimes = [original, repair];
+  expect((await f.collect()).runtime.deploymentIncomplete).toBe(true);
+  expect(f.projections.join(" ")).toContain('"supersededBy"');
+  expect(f.projections.join(" ")).toContain('"previousOperationId"');
+});
+
+test.each([
+  "reserved",
+  "stop_submitted",
+  "stop_acknowledged",
+  "initialized",
+  "complete",
+])("repair receipt stage %s remains visible", async (stage) => {
+  const f = observationFixture();
+  f.data.runtimes = [{ pk: "ENV", sk: "REPAIR#new", stage }];
+  expect((await f.collect()).runtime.deploymentIncomplete).toBe(
+    stage !== "complete",
+  );
+});
+
+test("a non-complete introduction remains incomplete after bootstrap promotion", async () => {
+  const f = observationFixture();
+  f.data.runtimes = [
+    { pk: "ENV", sk: "BOOTSTRAP#new", stage: "complete" },
+    { pk: "ENV", sk: "INTRODUCTION", stage: "routing_acknowledged" },
+  ];
+  expect((await f.collect()).runtime.deploymentIncomplete).toBe(true);
+});

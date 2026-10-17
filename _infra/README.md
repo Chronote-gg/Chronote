@@ -603,3 +603,39 @@ Run the mocked policy checks with `terraform -chdir=_infra init -backend=false` 
 `terraform -chdir=_infra test`. Live introduction still requires a reviewed full saved
 plan, the existing Apply gate, the identity canary and the guarded bootstrap described
 in [sandbox-bootstrap.md](../docs/sandbox-bootstrap.md).
+
+### First Sandbox activation
+
+The manual Sandbox Deployment Identity workflow still defaults to a read-only
+identity check. Optional bootstrap phases are explicit:
+
+- `prepare` publishes a source-pinned image and registers a candidate definition
+  using the scoped Sandbox role. It does not replace the running service.
+- `activate` requires the reviewed manifest in the Sandbox environment secret
+  `SANDBOX_BOOTSTRAP_MANIFEST`, its checksum, and the same operation UUID. The
+  manifest source must match the workflow source. Its exact STS session is
+  `chronote-sandbox-<decimal value of the UUID without hyphens>-1`.
+  The job refuses reruns and verifies the actual identity before writes.
+- `repair` requires a new prepared candidate UUID and the reviewed old/new manifest
+  envelope in `SANDBOX_BOOTSTRAP_MANIFEST`. Supply the checksum of the entire
+  parsed envelope. It accepts only the exact acknowledged, unserved first
+  activation after its coordinator lease expires. See the linked bootstrap
+  runbook for settlement, conditional supersession, and no-replay requirements.
+- `probe_without_environment` runs a separate read-only trust probe with no
+  GitHub environment. Its job should fail at assumption. Verify AWS AccessDenied
+  after OIDC token retrieval; configuration failures or timeouts are not trust
+  evidence. A dispatch from a tag can separately verify the disallowed-ref case.
+
+Preparation, activation, and repair are serialized with normal Sandbox deployments. A
+durable INTRODUCTION receipt fences the one-time stop and listener writes.
+Initialization accepts only its exact acknowledged operation, principal and
+manifest checksum. Unknown provider acknowledgments stop the operation; do not
+rerun it or clear the receipt. Candidate readiness, native protection and a fresh
+serving heartbeat remain required.
+
+This first-activation route conservatively requires empty lease, command and
+personal-job tables and terminal complete/cancelled history status. These checks
+do not establish maintenance input isolation. Record that proof separately in
+the private activation packet before creating the executable manifest. Never
+derive it from a quiet scan. Keep manifest contents and provider receipts out of
+public logs and artifacts. Normal compatible deployments use the coordinator.

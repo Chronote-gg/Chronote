@@ -284,7 +284,13 @@ describe("activeMeetingLeaseService", () => {
     ).toHaveBeenCalledTimes(1);
   });
 
-  test("remoteStopKeepsRenewingBeyondLease", async () => {
+  test.each([
+    "remote_stop",
+    "status_read_failure",
+    "status_read_timeout",
+    "ownership_lost",
+    "renewal_error",
+  ])("reservation handles %s without weakening ownership", async (scenario) => {
     const { reservation } = await recordingReservation();
     let finish!: () => void;
     const end = new Promise<void>((resolve) => {
@@ -302,14 +308,48 @@ describe("activeMeetingLeaseService", () => {
       }),
     } as unknown as MeetingData;
     attachMeetingReservation(meeting, reservation);
-    mockedGetActiveMeetingLease.mockResolvedValue({
-      endRequestedAt: "now",
-      endRequestedByUserId: "operator",
-    } as never);
+    const ownershipUnconfirmed =
+      scenario === "ownership_lost" || scenario === "renewal_error";
+    if (scenario === "ownership_lost") {
+      mockedRenewActiveMeetingLease.mockResolvedValueOnce(false);
+    } else if (scenario === "renewal_error") {
+      mockedRenewActiveMeetingLease.mockRejectedValueOnce(
+        new Error("fixture renewal unavailable"),
+      );
+    } else if (scenario === "status_read_timeout") {
+      jest.spyOn(AbortSignal, "timeout").mockImplementation((delay) => {
+        const controller = new AbortController();
+        setTimeout(() => controller.abort(), delay);
+        return controller.signal;
+      });
+      mockedGetActiveMeetingLease.mockImplementationOnce(
+        async (_guildId, signal) =>
+          new Promise((_resolve, reject) => {
+            signal?.addEventListener("abort", () => reject(signal.reason), {
+              once: true,
+            });
+          }),
+      );
+      mockedGetActiveMeetingLease.mockResolvedValue(undefined);
+    } else if (scenario === "status_read_failure") {
+      mockedGetActiveMeetingLease
+        .mockRejectedValueOnce(new Error("fixture status read unavailable"))
+        .mockResolvedValue(undefined);
+    } else {
+      mockedGetActiveMeetingLease.mockResolvedValue({
+        endRequestedAt: "now",
+        endRequestedByUserId: "operator",
+      } as never);
+    }
     const before = mockedRenewActiveMeetingLease.mock.calls.length;
     await jest.advanceTimersByTimeAsync(50_000);
-    expect(mockedRenewActiveMeetingLease.mock.calls.length - before).toBe(5);
-    expect(meeting.onEndMeeting).toHaveBeenCalledTimes(1);
+    expect(mockedRenewActiveMeetingLease.mock.calls.length - before).toBe(
+      ownershipUnconfirmed ? 1 : 5,
+    );
+    expect(meeting.onEndMeeting).toHaveBeenCalledTimes(
+      scenario.startsWith("status_read_") ? 0 : 1,
+    );
+    expect(meeting.ownershipSignal?.aborted).toBe(ownershipUnconfirmed);
     finish();
     await releaseSessionReservation(reservation);
   });

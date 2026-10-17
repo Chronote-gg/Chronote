@@ -1557,6 +1557,12 @@ export function ensureRecordingCheckpointCapture(meeting: MeetingData): void {
       );
     },
     stopCapture: (reason) => {
+      console.warn("Recording checkpoint capture interrupted", {
+        meetingId: meeting.meetingId,
+        reason,
+        checkpointRevision: meeting.recordingCheckpoint?.revision,
+        ...meeting.recordingCapture?.snapshot(),
+      });
       stopRecordingCapture(meeting, "interrupted");
       const state = meeting.recordingCaptureState;
       const stoppedAt =

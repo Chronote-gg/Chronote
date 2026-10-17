@@ -1,3 +1,4 @@
+import { sameEcsTaskArn } from "../utils/ecsTaskArn";
 import { z } from "zod";
 import { setTimeout as delay } from "node:timers/promises";
 import type {
@@ -105,7 +106,7 @@ export function createRuntimeProtectionService(options: {
     if (
       blocked.success &&
       identity.kind === "ecs" &&
-      blocked.data.failure.Arn === identity.taskArn
+      sameEcsTaskArn(blocked.data.failure.Arn, identity.taskArn)
     )
       throw new InitialProtectionBlocked(
         "Initial task protection blocked by deployment",
@@ -123,7 +124,7 @@ export function createRuntimeProtectionService(options: {
     );
     if (
       enabled &&
-      protection.TaskArn === identity.taskArn &&
+      sameEcsTaskArn(protection.TaskArn, identity.taskArn) &&
       (!protection.ProtectionEnabled ||
         !Number.isFinite(expiresAt) ||
         expiresAt <= now() + RUNTIME_PROTECTION_MARGIN_SECONDS)
@@ -134,7 +135,7 @@ export function createRuntimeProtectionService(options: {
       throw new Error("Exact task protection disabled or unsafe");
     }
     if (
-      protection.TaskArn !== identity.taskArn ||
+      !sameEcsTaskArn(protection.TaskArn, identity.taskArn) ||
       protection.ProtectionEnabled !== enabled
     )
       throw new Error("ECS protection identity or state mismatch");

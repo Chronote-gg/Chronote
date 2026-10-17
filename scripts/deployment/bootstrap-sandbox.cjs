@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 "use strict";
+const { sameEcsTaskArn } = require("../../src/utils/ecsTaskArn.js");
 const { isDeepStrictEqual: same } = require("node:util");
 const { randomUUID } = require("node:crypto");
 const { marshall, unmarshall } = require("@aws-sdk/util-dynamodb");
@@ -8,6 +9,85 @@ const {
   awsCaller,
   readArguments,
 } = require("./sandbox-manifest.cjs");
+function assertPreparedCandidate(m, d) {
+  const container = d.containerDefinitions.find(
+    (v) => v.name === m.containerName,
+  );
+  const commands = {
+    all: ["node", "dist/index.js"],
+    bot: ["node", "dist/apps/bot/main.js"],
+    api: ["node", "dist/apps/api/main.js"],
+  };
+  if (
+    d.taskDefinitionArn !== m.taskDefinition ||
+    d.status !== "ACTIVE" ||
+    !container ||
+    !container.image.endsWith("@" + m.imageDigest) ||
+    container.stopTimeout !== 120 ||
+    container.environment.filter((v) => v.name === "TRANSCRIPTS_BUCKET")
+      .length !== 1 ||
+    container.environment.find((v) => v.name === "TRANSCRIPTS_BUCKET")
+      ?.value !== m.bucket ||
+    container.secrets?.some((v) =>
+      [
+        "TRANSCRIPTS_BUCKET",
+        "DDB_TABLE_PREFIX",
+        "DEPLOYMENT_CANDIDATE_ID",
+      ].includes(v.name),
+    ) ||
+    container.entryPoint?.length ||
+    !same(container.command, commands[m.runtimeMode]) ||
+    container.environment.filter((v) => v.name === "DDB_TABLE_PREFIX")
+      .length !== 1 ||
+    container.environment.find((v) => v.name === "DDB_TABLE_PREFIX")?.value !==
+      m.tablePrefix ||
+    container.environment.filter((v) => v.name === "DEPLOYMENT_CANDIDATE_ID")
+      .length !== 1 ||
+    container.environment.find((v) => v.name === "DEPLOYMENT_CANDIDATE_ID")
+      ?.value !== m.operationId
+  )
+    throw new Error("Prepared candidate definition mismatch");
+}
+async function assertTargetGroups(
+  m,
+  aws,
+  listener,
+  beforeIntroduction = false,
+) {
+  const groups = await aws("elbv2", "describe-target-groups", {
+    TargetGroupArns: [m.targetGroupA, m.targetGroupB],
+  });
+  if (
+    groups.TargetGroups.length !== 2 ||
+    new Set(groups.TargetGroups.map((g) => g.TargetGroupArn)).size !== 2
+  )
+    throw new Error("Group identities incomplete");
+  let vpc;
+  for (const g of groups.TargetGroups) {
+    if (
+      ![m.targetGroupA, m.targetGroupB].includes(g.TargetGroupArn) ||
+      g.TargetType !== "ip" ||
+      g.Protocol !== "HTTP" ||
+      g.Port !== m.containerPort ||
+      g.HealthCheckPath !== "/health" ||
+      (beforeIntroduction && g.TargetGroupArn === m.targetGroupB
+        ? g.LoadBalancerArns?.length !== 0
+        : !g.LoadBalancerArns?.includes(listener.LoadBalancerArn)) ||
+      !g.VpcId ||
+      (vpc && vpc !== g.VpcId)
+    )
+      throw new Error("Group configuration mismatch");
+    vpc = g.VpcId;
+    const attrs = await aws("elbv2", "describe-target-group-attributes", {
+      TargetGroupArn: g.TargetGroupArn,
+    });
+    if (
+      attrs.Attributes.find((a) => a.Key === "stickiness.enabled")?.Value !==
+      "false"
+    )
+      throw new Error("Sticky target group");
+  }
+}
 function createBootstrap(options) {
   const m = parseManifest(options.manifest, options.expectedSha256);
   const aws = options.aws ?? awsCaller(m.region);
@@ -154,41 +234,13 @@ function createBootstrap(options) {
       !rules.Rules[0].IsDefault
     )
       fail("Foreign listener rules");
-    const groups = await aws("elbv2", "describe-target-groups", {
-      TargetGroupArns: [m.targetGroupA, m.targetGroupB],
-    });
-    if (
-      groups.TargetGroups.length !== 2 ||
-      new Set(groups.TargetGroups.map((g) => g.TargetGroupArn)).size !== 2
-    )
-      fail("Group identities incomplete");
-    let vpc;
-    for (const g of groups.TargetGroups) {
-      if (
-        ![m.targetGroupA, m.targetGroupB].includes(g.TargetGroupArn) ||
-        g.TargetType !== "ip" ||
-        g.Protocol !== "HTTP" ||
-        g.Port !== m.containerPort ||
-        g.HealthCheckPath !== "/health" ||
-        !g.LoadBalancerArns?.includes(listener.LoadBalancerArn) ||
-        !g.VpcId ||
-        (vpc && vpc !== g.VpcId)
-      )
-        fail("Group configuration mismatch");
-      vpc = g.VpcId;
-      const attrs = await aws("elbv2", "describe-target-group-attributes", {
-        TargetGroupArn: g.TargetGroupArn,
-      });
-      if (
-        attrs.Attributes.find((a) => a.Key === "stickiness.enabled")?.Value !==
-        "false"
-      )
-        fail("Sticky target group");
+    await assertTargetGroups(m, aws, listener);
+    for (const group of [m.targetGroupA, m.targetGroupB]) {
       const health = await aws("elbv2", "describe-target-health", {
-        TargetGroupArn: g.TargetGroupArn,
+        TargetGroupArn: group,
       });
       if (
-        (requireEmpty || g.TargetGroupArn === m.targetGroupB) &&
+        (requireEmpty || group === m.targetGroupB) &&
         health.TargetHealthDescriptions.length
       )
         fail("Occupied target group");
@@ -317,8 +369,24 @@ function createBootstrap(options) {
       )
     )
       fail("Unsettled lease remains");
-    if ((await scan(table, "pk, sk")).length)
-      fail("Control table has existing ownership");
+    const existing = await scan(table, "pk, sk");
+    let introduction;
+    if (existing.length) {
+      if (
+        existing.length !== 1 ||
+        existing[0].pk !== "ENV" ||
+        existing[0].sk !== "INTRODUCTION"
+      )
+        fail("Control table has existing ownership");
+      introduction = await read("INTRODUCTION");
+      if (
+        introduction.operationId !== m.operationId ||
+        introduction.manifestSha256 !== options.expectedSha256 ||
+        introduction.principalArn !== m.principalArn ||
+        introduction.stage !== "routing_acknowledged"
+      )
+        fail("Introduction ownership is unconfirmed");
+    }
     await topology(true);
     const ctl = types.controlRecordSchema.parse(initialControl());
     const receipt = {
@@ -329,13 +397,34 @@ function createBootstrap(options) {
       stage: "initialized",
     };
     await write(
-      [ctl, receipt].map((row) => ({
-        Put: {
-          TableName: table,
-          Item: marshall(row),
-          ConditionExpression: "attribute_not_exists(pk)",
-        },
-      })),
+      [
+        ...[ctl, receipt].map((row) => ({
+          Put: {
+            TableName: table,
+            Item: marshall(row),
+            ConditionExpression: "attribute_not_exists(pk)",
+          },
+        })),
+        ...(introduction
+          ? [
+              {
+                ConditionCheck: {
+                  TableName: table,
+                  Key: key("INTRODUCTION"),
+                  ConditionExpression:
+                    "operationId = :op AND manifestSha256 = :hash AND principalArn = :principal AND #stage = :stage",
+                  ExpressionAttributeNames: { "#stage": "stage" },
+                  ExpressionAttributeValues: marshall({
+                    ":op": m.operationId,
+                    ":hash": options.expectedSha256,
+                    ":principal": m.principalArn,
+                    ":stage": "routing_acknowledged",
+                  }),
+                },
+              },
+            ]
+          : []),
+      ],
       async () => {
         const [c, r] = await state();
         return same(c, ctl) && same(r, receipt);
@@ -364,43 +453,7 @@ function createBootstrap(options) {
         taskDefinition: m.taskDefinition,
       })
     ).taskDefinition;
-    const container = d.containerDefinitions.find(
-      (v) => v.name === m.containerName,
-    );
-    const commands = {
-      all: ["node", "dist/index.js"],
-      bot: ["node", "dist/apps/bot/main.js"],
-      api: ["node", "dist/apps/api/main.js"],
-    };
-    if (
-      d.taskDefinitionArn !== m.taskDefinition ||
-      d.status !== "ACTIVE" ||
-      !container ||
-      !container.image.endsWith("@" + m.imageDigest) ||
-      container.stopTimeout !== 120 ||
-      container.environment.filter((v) => v.name === "TRANSCRIPTS_BUCKET")
-        .length !== 1 ||
-      container.environment.find((v) => v.name === "TRANSCRIPTS_BUCKET")
-        ?.value !== m.bucket ||
-      container.secrets?.some((v) =>
-        [
-          "TRANSCRIPTS_BUCKET",
-          "DDB_TABLE_PREFIX",
-          "DEPLOYMENT_CANDIDATE_ID",
-        ].includes(v.name),
-      ) ||
-      container.entryPoint?.length ||
-      !same(container.command, commands[m.runtimeMode]) ||
-      container.environment.filter((v) => v.name === "DDB_TABLE_PREFIX")
-        .length !== 1 ||
-      container.environment.find((v) => v.name === "DDB_TABLE_PREFIX")
-        ?.value !== m.tablePrefix ||
-      container.environment.filter((v) => v.name === "DEPLOYMENT_CANDIDATE_ID")
-        .length !== 1 ||
-      container.environment.find((v) => v.name === "DEPLOYMENT_CANDIDATE_ID")
-        ?.value !== m.operationId
-    )
-      fail("Prepared candidate definition mismatch");
+    assertPreparedCandidate(m, d);
     const launchAttemptId = randomUUID();
     await write(
       [
@@ -449,18 +502,12 @@ function createBootstrap(options) {
     );
     return { kind: "launched" };
   }
-  async function promote() {
-    await identity();
-    const [c, r] = await state();
-    if (
-      owned(c, r) &&
-      r.stage === "complete" &&
-      c.servingGeneration === 1 &&
-      same(c.servingMembers, { [r.candidate.instanceId]: r.candidate })
-    )
-      return { kind: "complete", receipt: "previously_confirmed" };
-    live(c, r);
-    if (r.stage !== "launched") fail("Acknowledged launch required");
+  function notReady(message) {
+    const error = new Error(message);
+    error.code = "candidate_not_ready";
+    throw error;
+  }
+  async function readyCandidate() {
     const svc = await service(),
       running = await tasks();
     if (
@@ -472,7 +519,7 @@ function createBootstrap(options) {
       running[0].taskDefinitionArn !== m.taskDefinition ||
       running[0].lastStatus !== "RUNNING"
     )
-      fail("Exact candidate task unavailable");
+      notReady("Exact candidate task unavailable");
     const task = running[0],
       container = task.containers.find((v) => v.name === m.containerName);
     if (
@@ -491,12 +538,12 @@ function createBootstrap(options) {
       health.TargetHealthDescriptions[0].Target.Port !== m.containerPort ||
       health.TargetHealthDescriptions[0].TargetHealth.State !== "healthy"
     )
-      fail("Candidate target not healthy");
+      notReady("Candidate target not healthy");
     const rows = await scan(table, "pk, sk, recordType, identity");
     const candidates = rows.filter(
       (v) => v.recordType === "runtime" && v.identity?.taskArn === task.taskArn,
     );
-    if (candidates.length !== 1) fail("Candidate registration ambiguous");
+    if (candidates.length !== 1) notReady("Candidate registration ambiguous");
     const row = types.runtimeRecordSchema.parse(await read(candidates[0].sk));
     if (
       row.identity.kind !== "ecs" ||
@@ -518,7 +565,7 @@ function createBootstrap(options) {
       row.protection.provenAt > now() ||
       row.protection.expiresAt <= now() + 120
     )
-      fail("Candidate readiness is stale");
+      notReady("Candidate readiness is stale");
     const protection = await aws("ecs", "get-task-protection", {
       cluster: m.cluster,
       tasks: [task.taskArn],
@@ -527,11 +574,39 @@ function createBootstrap(options) {
     if (
       protection.failures?.length ||
       protection.protectedTasks?.length !== 1 ||
-      proof.taskArn !== task.taskArn ||
+      !sameEcsTaskArn(proof.taskArn, task.taskArn) ||
       !proof.protectionEnabled ||
       Date.parse(proof.expirationDate) / 1000 <= now() + 120
     )
-      fail("Native protection unconfirmed");
+      notReady("Native protection unconfirmed");
+    return row;
+  }
+  async function readiness() {
+    await identity();
+    const [c, r] = await state();
+    live(c, r);
+    if (r.stage !== "launched") fail("Acknowledged launch required");
+    try {
+      await readyCandidate();
+      return { kind: "ready" };
+    } catch (error) {
+      if (error.code === "candidate_not_ready") return { kind: "waiting" };
+      throw error;
+    }
+  }
+  async function promote(notAfter = Infinity) {
+    await identity();
+    const [c, r] = await state();
+    if (
+      owned(c, r) &&
+      r.stage === "complete" &&
+      c.servingGeneration === 1 &&
+      same(c.servingMembers, { [r.candidate.instanceId]: r.candidate })
+    )
+      return { kind: "complete", receipt: "previously_confirmed" };
+    live(c, r);
+    if (r.stage !== "launched") fail("Acknowledged launch required");
+    const row = await readyCandidate();
     const transaction = builders.buildPromotionTransaction({
       tables: { deploymentControl: table },
       coordinatorToken: m.operationId,
@@ -549,6 +624,7 @@ function createBootstrap(options) {
     transaction.TransactItems.push(
       receiptUpdate("launched", "complete", { candidate: row.identity }),
     );
+    if (now() >= notAfter) fail("Candidate warmup deadline expired");
     await write(transaction.TransactItems, async () => {
       const [ctl, receipt] = await state(),
         current = await read(row.sk);
@@ -565,7 +641,7 @@ function createBootstrap(options) {
     });
     return { kind: "complete", generation: 1 };
   }
-  return { initialize, launch, promote };
+  return { initialize, launch, readiness, promote };
 }
 async function runCli(args = process.argv.slice(2), output = console) {
   try {
@@ -598,7 +674,12 @@ async function runCli(args = process.argv.slice(2), output = console) {
     return 1;
   }
 }
-module.exports = { createBootstrap, runCli };
+module.exports = {
+  createBootstrap,
+  assertPreparedCandidate,
+  assertTargetGroups,
+  runCli,
+};
 if (require.main === module)
   runCli().then((code) => {
     process.exitCode = code;

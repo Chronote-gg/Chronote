@@ -59,6 +59,36 @@ function outcomeCounts(rows, read, allowed) {
   return counts;
 }
 
+function receiptIncomplete(row, rows) {
+  if (row.pk !== "ENV") return false;
+  if (row.sk === "INTRODUCTION" || row.sk?.startsWith("REPAIR#"))
+    return row.stage !== "complete";
+  if (!row.sk?.startsWith("BOOTSTRAP#") || row.stage === "complete")
+    return false;
+  if (
+    row.stage !== "superseded" ||
+    !row.supersededBy ||
+    row.sk !== "BOOTSTRAP#" + row.operationId
+  )
+    return true;
+  const replacement = rows.some(
+    (r) =>
+      r.pk === "ENV" &&
+      r.sk === "BOOTSTRAP#" + row.supersededBy &&
+      r.operationId === row.supersededBy &&
+      r.stage === "complete",
+  );
+  const repair = rows.some(
+    (r) =>
+      r.pk === "ENV" &&
+      r.sk === "REPAIR#" + row.supersededBy &&
+      r.operationId === row.supersededBy &&
+      r.previousOperationId === row.operationId &&
+      r.stage === "complete",
+  );
+  return !replacement || !repair;
+}
+
 async function inspectRunningTasks(aws, m, service, now) {
   const arns = new Set();
   let nextToken;
@@ -201,6 +231,9 @@ async function collectSandboxObservation(options) {
     "workCounts.ancillary_delivery",
     "deployment.phase",
     "stage",
+    "operationId",
+    "supersededBy",
+    "previousOperationId",
   ]);
   const controls = await scan("MeetingControlCommandTable", [
     "queueStatus",
@@ -374,9 +407,7 @@ async function collectSandboxObservation(options) {
       deploymentIncomplete: runtimes.some(
         (r) =>
           (r.deployment && r.deployment.phase !== "complete") ||
-          (r.pk === "ENV" &&
-            r.sk?.startsWith("BOOTSTRAP#") &&
-            r.stage !== "complete"),
+          receiptIncomplete(r, runtimes),
       ),
       unexpiredQueuedControls: controls.filter(
         (r) => r.queueStatus === "pending" && r.expiresAt >= now / 1000,

@@ -230,9 +230,9 @@ test.each([
         operation === "get-task-protection" &&
         (input as GetTaskProtectionCommandInput).tasks?.includes(
           failure === "old_protection"
-            ? "task:old"
+            ? "arn:aws:ecs:us-east-1:123456789012:task/fixture/old"
             : failure === "candidate_protection"
-              ? "task:new"
+              ? "arn:aws:ecs:us-east-1:123456789012:task/fixture/new"
               : "none",
         )
       )

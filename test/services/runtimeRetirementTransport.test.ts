@@ -11,7 +11,7 @@ import type {
 const identity: RuntimeIdentity = {
   kind: "ecs",
   instanceId: "old",
-  taskArn: "arn:fixture:old",
+  taskArn: "arn:aws:ecs:us-east-1:123456789012:task/test/old",
   imageDigest: "sha256:old",
   candidateId: "old",
   protocolVersion: 1,

@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 "use strict";
+const { sameEcsTaskArn } = require("../../src/utils/ecsTaskArn.js");
 const { execFile } = require("node:child_process");
 const { promisify, isDeepStrictEqual } = require("node:util");
 const { marshall, unmarshall } = require("@aws-sdk/util-dynamodb");
@@ -26,7 +27,7 @@ async function awsCli(service, operation, input) {
       validating ? "update-service" : operation,
       "--cli-input-json",
       JSON.stringify(input),
-      ...(validating ? ["--generate-cli-skeleton", "output"] : []),
+      ...(validating ? ["--generate-cli-skeleton", "input"] : []),
       "--output",
       "json",
       "--no-cli-pager",
@@ -39,7 +40,21 @@ async function awsCli(service, operation, input) {
         : {}),
     },
   );
-  return stdout.trim() ? JSON.parse(stdout) : {};
+  const response = stdout.trim() ? JSON.parse(stdout) : {};
+  if (validating) {
+    // Output skeletons can fail on invalid dummy responses in supported CLI models.
+    const criteria = response.deploymentConfiguration?.earlySuccessCriteria;
+    if (
+      !criteria ||
+      !["enable", "healthyPercent", "sourceServiceRevisionCleanup"].every(
+        (field) => Object.hasOwn(criteria, field),
+      )
+    )
+      throw new Error(
+        "AWS CLI lacks deferred service revision cleanup support",
+      );
+  }
+  return response;
 }
 function configuration(env) {
   const required = (key) => {
@@ -445,8 +460,8 @@ function createCoordinator(options = {}) {
       tasks: [identity.taskArn],
     });
     diagnostic.operation = "verify_native_protection";
-    const proof = result.protectedTasks?.find(
-      (task) => task.taskArn === identity.taskArn,
+    const proof = result.protectedTasks?.find((task) =>
+      sameEcsTaskArn(task.taskArn, identity.taskArn),
     );
     if (
       result.failures?.length ||

@@ -346,3 +346,25 @@ test("both workflows use the shared coordinator without lease scans or unconditi
     expect(workflow).toContain("cancel-in-progress: false");
   }
 });
+
+test("native protection accepts AWS short task ARN responses", async () => {
+  const f = fixture();
+  const original = f.aws.getMockImplementation()!;
+  f.aws.mockImplementation(async (service, operation, input) => {
+    const result = await original(service, operation, input);
+    if (operation === "get-task-protection") {
+      result.protectedTasks = result.protectedTasks.map(
+        (proof: { taskArn: string }) => ({
+          ...proof,
+          taskArn: proof.taskArn.replace("task/fixture/", "task/"),
+        }),
+      );
+    }
+    return result;
+  });
+  const output = { ...console, log: jest.fn(), error: jest.fn() };
+  expect(await runCli("prepare", f.options, output)).toBe(0);
+  expect(f.calls.some((call) => call.operation === "update-service")).toBe(
+    true,
+  );
+});

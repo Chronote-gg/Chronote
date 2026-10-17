@@ -16,7 +16,7 @@ import { createCoordinator } from "../../../scripts/deployment/coordinator.cjs";
 export const oldIdentity: Extract<types.RuntimeIdentity, { kind: "ecs" }> = {
   kind: "ecs",
   instanceId: "old",
-  taskArn: "task:old",
+  taskArn: "arn:aws:ecs:us-east-1:123456789012:task/fixture/old",
   imageDigest: `sha256:${"b".repeat(64)}`,
   candidateId: "previous",
   protocolVersion: 1,
@@ -27,7 +27,7 @@ export const candidateIdentity: Extract<
 > = {
   kind: "ecs",
   instanceId: "new",
-  taskArn: "task:new",
+  taskArn: "arn:aws:ecs:us-east-1:123456789012:task/fixture/new",
   imageDigest: `sha256:${"a".repeat(64)}`,
   candidateId: "run-2",
   protocolVersion: 1,
@@ -248,19 +248,26 @@ export function fixture() {
         };
       case "list-tasks":
         return {
-          taskArns: state.launched ? ["task:old", "task:new"] : ["task:old"],
+          taskArns: state.launched
+            ? [
+                "arn:aws:ecs:us-east-1:123456789012:task/fixture/old",
+                "arn:aws:ecs:us-east-1:123456789012:task/fixture/new",
+              ]
+            : ["arn:aws:ecs:us-east-1:123456789012:task/fixture/old"],
         };
       case "describe-tasks":
         return {
           tasks: input.tasks!.map((arn: string) => ({
             taskArn: arn,
             taskDefinitionArn:
-              arn === "task:old" ? "definition:old" : "definition:new",
+              arn === "arn:aws:ecs:us-east-1:123456789012:task/fixture/old"
+                ? "definition:old"
+                : "definition:new",
             lastStatus: "RUNNING",
             containers: [
               {
                 imageDigest:
-                  arn === "task:old"
+                  arn === "arn:aws:ecs:us-east-1:123456789012:task/fixture/old"
                     ? oldIdentity.imageDigest
                     : candidateIdentity.imageDigest,
               },

@@ -58,7 +58,7 @@ test("healthOnlyListenerRejectsEveryApplicationPathUntilNativeConfirmation", asy
     kind: "ecs" as const,
     instanceId: "health-test",
     protocolVersion: 1 as const,
-    taskArn: "task:health",
+    taskArn: "arn:aws:ecs:us-east-1:123456789012:task/test/health",
     imageDigest: "digest",
     candidateId: "health",
   };
