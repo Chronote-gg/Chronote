@@ -142,7 +142,8 @@ async function continueSandbox(options = {}) {
     if (
       firstControlRead &&
       service === "dynamodb" &&
-      operation === "get-item"
+      operation === "get-item" &&
+      unmarshall(input.Key).sk === "CONTROL"
     ) {
       firstControlRead = false;
       const snapshot = types.controlRecordSchema.parse(

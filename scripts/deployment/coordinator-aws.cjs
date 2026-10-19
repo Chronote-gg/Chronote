@@ -11,7 +11,7 @@ class CoordinatorFailure extends Error {
   }
 }
 
-async function awsCli(service, operation, input) {
+async function awsCli(service, operation, input, options = {}) {
   const validating = operation === "validate-update-service";
   const { stdout } = await exec(
     "aws",
@@ -21,6 +21,8 @@ async function awsCli(service, operation, input) {
       "--cli-input-json",
       JSON.stringify(input),
       ...(validating ? ["--generate-cli-skeleton", "input"] : []),
+      ...(options.query ? ["--query", options.query] : []),
+      ...(options.region ? ["--region", options.region] : []),
       "--output",
       "json",
       "--no-cli-pager",
@@ -28,7 +30,8 @@ async function awsCli(service, operation, input) {
     {
       maxBuffer: 4 * 1024 * 1024,
       // A hidden retry can outlive this call and invalidate the submitted fence.
-      ...(service === "elbv2" && operation === "modify-listener"
+      ...((service === "elbv2" && operation === "modify-listener") ||
+      options.maxAttempts === 1
         ? { env: { ...process.env, AWS_MAX_ATTEMPTS: "1" } }
         : {}),
     },
@@ -55,7 +58,8 @@ function createAwsCaller(executeAws, diagnostic) {
     diagnostic.operation = name;
     try {
       return await executeAws(service, operation, input);
-    } catch {
+    } catch (error) {
+      if (error instanceof CoordinatorFailure) throw error;
       const categories = {
         "ecs.validate-update-service": "cli_capability_unsupported",
         "ecs.get-task-protection": "native_protection_unconfirmed",

@@ -33,6 +33,7 @@ function authorityFor(binding) {
       taskDefinition: m.runtime.continuationDefinition,
       imageDigest: m.runtime.continuationDigest,
     },
+    ...(m.failedUnserved ? { failedUnserved: m.failedUnserved } : {}),
     actions: Object.fromEntries(
       m.actions.map((a) => [
         a.actionId,

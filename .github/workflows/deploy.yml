@@ -28,7 +28,14 @@ jobs:
     needs: [ci, deploy-docs]
     runs-on: ubuntu-latest
     environment: production
+    permissions:
+      contents: read
+      id-token: write
     env:
+      DEPLOYMENT_ENVIRONMENT: production
+      DEPLOYMENT_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
+      DEPLOYMENT_CONTROL_TABLE: ${{ vars.DEPLOYMENT_CONTROL_TABLE }}
+      DEPLOYMENT_GUARD_ROLE_ARN: ${{ vars.PRODUCTION_DEPLOY_ROLE_ARN }}
       ECS_CLUSTER: ${{ vars.ECS_CLUSTER }}
       ECS_SERVICE: ${{ vars.ECS_SERVICE }}
       ECS_TASK_FAMILY: ${{ vars.ECS_TASK_FAMILY }}
@@ -42,12 +49,29 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
 
+      - name: Setup coordinator Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: "24.15.0"
+          cache: "yarn"
+          cache-dependency-path: "yarn.lock"
+
+      - name: Install coordinator dependencies
+        run: bash scripts/ci-install-dependencies.sh
+
+      - name: Build backend protocol builders
+        run: yarn build
+
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v6
         with:
-          aws-access-key-id: ${{ vars.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          role-to-assume: ${{ vars.PRODUCTION_DEPLOY_ROLE_ARN }}
+          role-session-name: deploy-${{ github.run_id }}-${{ github.run_attempt }}
           aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Refuse held production deployment
+        id: hold-guard
+        run: node scripts/deployment/production-writer-guard.cjs
 
       - name: Preflight Secrets Manager values
         env:
@@ -127,21 +151,9 @@ jobs:
             exit 1
           }
 
+          node scripts/deployment/production-writer-guard.cjs
           docker push "$IMAGE"
           echo "image=$IMAGE" >> $GITHUB_OUTPUT
-
-      - name: Setup coordinator Node.js
-        uses: actions/setup-node@v7
-        with:
-          node-version: "24.15.0"
-          cache: "yarn"
-          cache-dependency-path: "yarn.lock"
-
-      - name: Install coordinator dependencies
-        run: bash scripts/ci-install-dependencies.sh
-
-      - name: Build backend protocol builders
-        run: yarn build
 
       - name: Pin candidate image and deployment identity
         env:
@@ -167,7 +179,7 @@ jobs:
         run: node scripts/deployment/coordinator.cjs retire
 
       - name: Reconcile failed deployment without terminating work
-        if: failure() && steps.prepare.outcome != 'skipped'
+        if: failure() && steps.hold-guard.outcome == 'success' && steps.prepare.outcome == 'success'
         run: node scripts/deployment/coordinator.cjs reconcile
 
       - name: Create deployment summary
@@ -356,6 +368,16 @@ jobs:
     name: Promote Prompts
     needs: [deploybackend]
     runs-on: ubuntu-latest
+    environment: production
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      DEPLOYMENT_ENVIRONMENT: production
+      DEPLOYMENT_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
+      DEPLOYMENT_CONTROL_TABLE: ${{ vars.DEPLOYMENT_CONTROL_TABLE }}
+      DEPLOYMENT_GUARD_ROLE_ARN: ${{ vars.PRODUCTION_PROMPT_GUARD_ROLE_ARN }}
+      AWS_REGION: ${{ vars.AWS_REGION }}
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -369,6 +391,19 @@ jobs:
 
       - name: Install dependencies
         run: bash scripts/ci-install-dependencies.sh
+
+      - name: Build hold schema
+        run: yarn build
+
+      - name: Configure read-only production hold identity
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ vars.PRODUCTION_PROMPT_GUARD_ROLE_ARN }}
+          role-session-name: prompt-${{ github.run_id }}-${{ github.run_attempt }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Check production hold
+        run: node scripts/deployment/production-writer-guard.cjs
 
       - name: Show pending prompt changes
         env:
@@ -384,7 +419,9 @@ jobs:
           LANGFUSE_SECRET_KEY: ${{ secrets.LANGFUSE_SECRET_KEY }}
           LANGFUSE_BASE_URL: ${{ vars.LANGFUSE_BASE_URL }}
           LANGFUSE_PROMPT_LABEL: ${{ vars.LANGFUSE_PROMPT_LABEL }}
-        run: yarn prompts:push
+        run: |
+          node scripts/deployment/production-writer-guard.cjs
+          yarn prompts:push
 
       - name: Verify repo and Langfuse agree
         env:

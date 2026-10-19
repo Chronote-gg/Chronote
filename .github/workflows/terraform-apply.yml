@@ -38,9 +38,10 @@ on:
 permissions:
   actions: read
   contents: read
+  id-token: write
 
 concurrency:
-  group: terraform-apply-${{ inputs.github_environment }}-${{ inputs.terraform_workspace }}
+  group: ${{ inputs.github_environment == 'production' && 'chronote-deploy-production' || format('terraform-apply-{0}-{1}', inputs.github_environment, inputs.terraform_workspace) }}
   cancel-in-progress: false
 
 jobs:
@@ -49,12 +50,29 @@ jobs:
     runs-on: ubuntu-latest
     environment: ${{ inputs.github_environment }}
     env:
+      DEPLOYMENT_ENVIRONMENT: ${{ inputs.github_environment }}
+      DEPLOYMENT_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
+      DEPLOYMENT_CONTROL_TABLE: ${{ vars.DEPLOYMENT_CONTROL_TABLE }}
+      DEPLOYMENT_GUARD_ROLE_ARN: ${{ vars.PRODUCTION_APPLY_ROLE_ARN }}
+      PLAN_RUN_ID: ${{ inputs.plan_run_id }}
+      ARTIFACT_NAME: ${{ inputs.artifact_name }}
+      EXPECTED_SHA256: ${{ inputs.plan_sha256 }}
       TF_IN_AUTOMATION: "true"
       TF_INPUT: "false"
       AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
     steps:
       - name: Checkout
         uses: actions/checkout@v7
+
+      - name: Setup hold guard Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: "24.15.0"
+
+      - name: Install and build hold guard
+        run: |
+          bash scripts/ci-install-dependencies.sh
+          yarn build
 
       - name: Check confirmation
         env:
@@ -68,11 +86,24 @@ jobs:
           fi
 
       - name: Configure AWS credentials
+        if: inputs.github_environment != 'production'
         uses: aws-actions/configure-aws-credentials@v6
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
+
+      - name: Configure reviewed production Apply identity
+        if: inputs.github_environment == 'production'
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ vars.PRODUCTION_APPLY_ROLE_ARN }}
+          role-session-name: apply-${{ github.run_id }}-${{ github.run_attempt }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Inspect production hold before plan preparation
+        if: inputs.github_environment == 'production'
+        run: node scripts/deployment/production-writer-guard.cjs --inspect
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v4
@@ -121,6 +152,8 @@ jobs:
             exit 1
           fi
 
+          test -f _infra/plan-artifact/plan-provenance.json
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$PLAN_RUN_ID" > _infra/plan-run.json
           cp _infra/plan-artifact/tfplan _infra/tfplan
 
           if [ ! -f _infra/plan-artifact/lambda-zips.sha256 ]; then
@@ -280,11 +313,25 @@ jobs:
       - name: Terraform validate
         run: terraform -chdir=_infra validate -no-color
 
-      - name: Show reviewed plan
-        run: terraform -chdir=_infra show -no-color tfplan
+      - name: Validate production hold and reviewed prerequisite plan
+        if: inputs.github_environment == 'production'
+        env:
+          PREREQUISITE_PLAN_JSON: _infra/reviewed-plan.json
+        run: |
+          set -euo pipefail
+          umask 077
+          terraform -chdir=_infra show -json tfplan > _infra/reviewed-plan.json
+          node scripts/deployment/production-writer-guard.cjs
 
       - name: Terraform apply reviewed plan
-        run: terraform -chdir=_infra apply -no-color -input=false tfplan
+        env:
+          PREREQUISITE_PLAN_JSON: _infra/reviewed-plan.json
+        run: |
+          set -euo pipefail
+          if [ "$DEPLOYMENT_ENVIRONMENT" = production ]; then
+            node scripts/deployment/production-writer-guard.cjs
+          fi
+          terraform -chdir=_infra apply -no-color -input=false tfplan
 
       - name: Write summary
         if: always()
@@ -307,4 +354,4 @@ jobs:
 
       - name: Remove generated files
         if: always()
-        run: rm -rf _infra/terraform.auto.tfvars.json _infra/tfplan _infra/plan-artifact _infra/*.zip
+        run: rm -rf _infra/terraform.auto.tfvars.json _infra/tfplan _infra/plan-artifact _infra/reviewed-plan.json _infra/plan-run.json _infra/*.zip

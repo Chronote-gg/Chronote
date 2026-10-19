@@ -9,8 +9,7 @@ const targets = new Set([
   "aws_iam_policy.deployment_routing[0]",
 ]);
 
-try {
-  const plan = JSON.parse(readFileSync(0, "utf8"));
+function validatePrerequisitePlan(plan) {
   assert.ok(plan && Array.isArray(plan.resource_changes));
   let keyUnchanged = false;
   const changes = [];
@@ -41,13 +40,19 @@ try {
     changes.push({ address: resource.address, action });
   }
   assert.ok(keyUnchanged);
-  process.stdout.write(
-    JSON.stringify({ result: "accepted", existingKey: "no-op", changes }) +
-      "\n",
-  );
-} catch {
-  process.stderr.write(
-    "Deployment prerequisite plan rejected: invalid action evidence or changes outside the four-target scope.\n",
-  );
-  process.exitCode = 1;
+  return { result: "accepted", existingKey: "no-op", changes };
 }
+module.exports = { validatePrerequisitePlan };
+if (require.main === module)
+  try {
+    process.stdout.write(
+      JSON.stringify(
+        validatePrerequisitePlan(JSON.parse(readFileSync(0, "utf8"))),
+      ) + "\n",
+    );
+  } catch {
+    process.stderr.write(
+      "Deployment prerequisite plan rejected: invalid action evidence or changes outside the four-target scope.\n",
+    );
+    process.exitCode = 1;
+  }

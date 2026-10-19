@@ -59,6 +59,7 @@ function classifyTask({ m, task, binding, block }) {
       m.runtime.legacyDefinition,
       m.runtime.candidateDefinition,
       m.runtime.continuationDefinition,
+      ...(m.failedUnserved ? [m.failedUnserved.taskDefinition] : []),
     ].includes(task.taskDefinitionArn)
       ? "related"
       : "unknown";
@@ -71,7 +72,12 @@ function classifyTask({ m, task, binding, block }) {
     block("foreign_task");
   if (task.lastStatus !== "STOPPED" || task.desiredStatus !== "STOPPED")
     block("process_present");
-  if (task.group !== `service:${m.runtime.serviceArn.split("/").at(-1)}`)
+  if (
+    task.group !== `service:${m.runtime.serviceArn.split("/").at(-1)}` &&
+    !m.actions.some(
+      (a) => a.kind === "stop_legacy" && a.taskArn === task.taskArn,
+    )
+  )
     block("standalone_task");
   if (task.protectionEnabled) block("unexpected_protection");
 }
@@ -93,7 +99,28 @@ async function inspectTaskBindings({ m, read, base, result, block }) {
     classifyTask({ m, task, binding, block });
   }
 }
-async function collectLaunchInventory({ scope, read, now }) {
+function inspectDeclaredRoutes(m, result, declaredRoutes, block) {
+  for (const route of m.launcherRoutes) {
+    result.coverage.push({
+      operation: "declaredRoute",
+      scope: { kind: route.kind, id: route.id },
+      status: require("./production-source-routes.cjs").declaredRoutesVerified(
+        declaredRoutes,
+        result.scopeHash,
+      )
+        ? "verified"
+        : "unsupported",
+    });
+    if (
+      !require("./production-source-routes.cjs").declaredRoutesVerified(
+        declaredRoutes,
+        result.scopeHash,
+      )
+    )
+      block("declared_route_unverified");
+  }
+}
+async function collectLaunchInventory({ scope, read, now, declaredRoutes }) {
   const m = parseExecution(scope, canonicalHash(scope));
   const result = {
     scopeHash: canonicalHash(m),
@@ -268,16 +295,33 @@ async function collectLaunchInventory({ scope, read, now }) {
   }
   // Launcher payloads are deliberately unavailable. A present launcher needs a typed hold/restore adapter.
   if (result.launchers.length) block("launcher_recipe_unsupported");
-  for (const route of m.launcherRoutes) {
-    result.coverage.push({
-      operation: "declaredRoute",
-      scope: { kind: route.kind, id: route.id },
-      status: "unsupported",
-    });
-    block("declared_route_unverified");
-  }
+  inspectDeclaredRoutes(m, result, declaredRoutes, block);
   result.blockers = [...new Set(result.blockers)];
   return result;
+}
+function stopAcknowledged(before, after, arn, acknowledgment) {
+  const task = before.tasks.find((t) => t.taskArn === arn);
+  if (!task) return false;
+  const ids = acknowledgment.acknowledgment?.resourceIds;
+  if (!task.group.startsWith("service:"))
+    return (
+      acknowledgment.kind === "stop_legacy" && isDeepStrictEqual(ids, [arn])
+    );
+  const service = before.services.find(
+    (s) => task.group === `service:${s.serviceArn.split("/").at(-1)}`,
+  );
+  return (
+    acknowledgment.kind === "stop_service" &&
+    service?.desiredCount > 0 &&
+    isDeepStrictEqual(ids, [service.serviceArn, task.taskDefinitionArn]) &&
+    after.services.some(
+      (s) =>
+        s.serviceArn === service.serviceArn &&
+        s.desiredCount === 0 &&
+        s.runningCount === 0 &&
+        s.pendingCount === 0,
+    )
+  );
 }
 function compareProcessExclusion({
   before,
@@ -316,11 +360,9 @@ function compareProcessExclusion({
     if (
       !acknowledgments.some(
         (a) =>
-          a.kind === "stop_legacy" &&
           a.manifestHash === after.scopeHash &&
           ["acknowledged", "observed"].includes(a.phase) &&
-          a.acknowledgment?.resourceIds.length === 1 &&
-          a.acknowledgment.resourceIds[0] === arn,
+          stopAcknowledged(before, after, arn, a),
       )
     )
       blockers.push("stop_acknowledgment_missing");

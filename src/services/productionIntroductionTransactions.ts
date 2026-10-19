@@ -13,6 +13,10 @@ const hash = z.string().regex(/^[a-f0-9]{64}$/);
 const seconds = z.number().int().nonnegative();
 export const introductionActionKindSchema = z.enum([
   "stop_legacy",
+  "stop_service",
+  "coordinator_write",
+  "introduction_write",
+  "stop_failed",
   "route_maintenance",
   "route_candidate",
   "launch_candidate",
@@ -50,6 +54,17 @@ export const introductionAuthoritySchema = z
     validFrom: seconds,
     validUntil: seconds,
     handoff: handoffSchema,
+    failedUnserved: z
+      .object({
+        candidateId: id,
+        taskDefinition: id,
+        imageDigest: id,
+        runToken: id,
+        expectedEpoch: z.literal(1),
+        epoch: z.literal(2),
+      })
+      .strict()
+      .optional(),
     actions: z.record(
       id,
       z
@@ -402,7 +417,7 @@ function assertInitializationLineage(
   authority: IntroductionAuthority,
 ) {
   const stops = Object.entries(authority.actions)
-    .filter(([, a]) => a.kind === "stop_legacy")
+    .filter(([, a]) => ["stop_legacy", "stop_service"].includes(a.kind))
     .map(([id]) => id);
   if (
     !stops.length ||
@@ -415,9 +430,12 @@ function assertInitializationLineage(
     introductionActionSchema.parse(row);
     if (
       row.phase !== "observed" ||
-      !["stop_legacy", "route_maintenance", "hold_launcher"].includes(
-        row.kind,
-      ) ||
+      ![
+        "stop_legacy",
+        "stop_service",
+        "route_maintenance",
+        "hold_launcher",
+      ].includes(row.kind) ||
       row.manifestHash !== hold.manifestHash ||
       row.operationId !== authority.operationId ||
       row.intentHash !== authority.actions[row.actionId]?.intentHash
@@ -478,15 +496,16 @@ export function buildIntroductionPromotion({
   tables: Parameters<typeof buildPromotionTransaction>[0]["tables"];
 }): TransactWriteItemsCommandInput {
   validateAuthority(hold, authority);
+  const bootstrap = bootstrapAuthority(authority, promotion.coordinatorEpoch);
   if (
     promotion.expectedServingGeneration !== 0 ||
     promotion.expectedServingMembers.length ||
     promotion.proposedGeneration !== 1 ||
-    promotion.coordinatorToken !== authority.runToken ||
-    promotion.coordinatorEpoch !== authority.handoff.priorEpoch ||
+    promotion.coordinatorToken !== bootstrap.runToken ||
+    promotion.coordinatorEpoch !== bootstrap.epoch ||
     promotion.candidate.kind !== "ecs" ||
-    promotion.candidate.candidateId !== authority.handoff.priorCandidateId ||
-    promotion.candidate.imageDigest !== authority.handoff.priorDigest
+    promotion.candidate.candidateId !== bootstrap.candidateId ||
+    promotion.candidate.imageDigest !== bootstrap.imageDigest
   )
     throw new Error("introduction_refused");
   const transaction = buildPromotionTransaction({ ...promotion, tables });
@@ -519,7 +538,7 @@ export function buildAuthorizeFixtureCoordinator({
   validateAuthority(hold, authority);
   controlRecordSchema.parse(expectedControl);
   fixtureCoordinatorAuthoritySchema.parse(operation);
-  const h = authority.handoff;
+  const h = effectiveHandoff(authority, expectedControl.coordinatorEpoch);
   if (
     expectedControl.coordinatorExpiresAt !== 0 ||
     expectedControl.deployment ||
@@ -561,3 +580,219 @@ export function buildAuthorizeFixtureCoordinator({
 }
 
 export { introductionHoldSchema, controlRecordSchema };
+
+export function introductionChecks(
+  hold: IntroductionHold,
+  authority: IntroductionAuthority,
+  table: string,
+): TransactWriteItem[] {
+  validateAuthority(hold, authority);
+  return [
+    holdCheck(hold, table),
+    { ConditionCheck: exactCheck(table, authority) },
+  ];
+}
+
+export function bootstrapAuthority(
+  authority: IntroductionAuthority,
+  epoch: number,
+) {
+  if (epoch === authority.handoff.priorEpoch)
+    return {
+      runToken: authority.runToken,
+      epoch,
+      candidateId: authority.handoff.priorCandidateId,
+      imageDigest: authority.handoff.priorDigest,
+    };
+  const replacement = authority.failedUnserved;
+  if (!replacement || replacement.epoch !== epoch)
+    throw new Error("introduction_refused");
+  return replacement;
+}
+export function effectiveHandoff(
+  authority: IntroductionAuthority,
+  priorEpoch: number,
+) {
+  const prior = bootstrapAuthority(authority, priorEpoch);
+  return {
+    ...authority.handoff,
+    priorRunToken: prior.runToken,
+    priorEpoch: prior.epoch,
+    priorCandidateId: prior.candidateId,
+    priorDigest: prior.imageDigest,
+  };
+}
+export function buildReplaceUnservedControl({
+  hold,
+  authority,
+  previous,
+  launch,
+  now,
+  tables,
+}: {
+  hold: IntroductionHold;
+  authority: IntroductionAuthority;
+  previous: ControlRecord;
+  launch: IntroductionAction;
+  now: number;
+  tables: Tables;
+}): TransactWriteItemsCommandInput {
+  validateAuthority(hold, authority);
+  assertInitialControl(previous, hold, authority);
+  introductionActionSchema.parse(launch);
+  const replacement = authority.failedUnserved;
+  if (
+    !replacement ||
+    previous.coordinatorExpiresAt > now ||
+    previous.coordinatorEpoch !== replacement.expectedEpoch ||
+    launch.kind !== "launch_candidate" ||
+    launch.phase !== "observed" ||
+    launch.manifestHash !== hold.manifestHash ||
+    launch.operationId !== authority.operationId ||
+    launch.intentHash !== authority.actions[launch.actionId]?.intentHash ||
+    now < authority.validFrom ||
+    now + 180 >= authority.validUntil
+  )
+    throw new Error("introduction_refused");
+  const condition = exactCheck(tables.deploymentControl, previous);
+  return {
+    TransactItems: [
+      ...introductionChecks(hold, authority, tables.deploymentControl),
+      { ConditionCheck: exactCheck(tables.deploymentControl, launch) },
+      {
+        Update: {
+          ...condition,
+          UpdateExpression:
+            "SET coordinatorToken = :replacementToken, coordinatorEpoch = :replacementEpoch, coordinatorExpiresAt = :replacementExpiry",
+          ExpressionAttributeValues: {
+            ...condition.ExpressionAttributeValues,
+            ...marshall({
+              ":replacementToken": replacement.runToken,
+              ":replacementEpoch": replacement.epoch,
+              ":replacementExpiry": now + 180,
+            }),
+          },
+        },
+      },
+    ],
+  };
+}
+import { buildRuntimeRetirementRequest } from "./deploymentControlTransactions";
+import {
+  runtimeRecordSchema,
+  type RuntimeRecord,
+} from "../types/deploymentControl";
+export function buildIntroductionRenew({
+  hold,
+  authority,
+  previous,
+  now,
+  tables,
+}: {
+  hold: IntroductionHold;
+  authority: IntroductionAuthority;
+  previous: ControlRecord;
+  now: number;
+  tables: Tables;
+}): TransactWriteItemsCommandInput {
+  validateAuthority(hold, authority);
+  controlRecordSchema.parse(previous);
+  const owner = bootstrapAuthority(authority, previous.coordinatorEpoch);
+  if (
+    previous.coordinatorToken !== owner.runToken ||
+    previous.coordinatorExpiresAt <= now ||
+    now + 180 >= authority.validUntil ||
+    previous.servingGeneration !== 0 ||
+    Object.keys(previous.servingMembers).length ||
+    previous.deployment ||
+    previous.compatibleReplacement ||
+    !isDeepStrictEqual(previous.maintenance, pointer(hold))
+  )
+    throw Error("introduction_refused");
+  const condition = exactCheck(tables.deploymentControl, previous);
+  return {
+    TransactItems: [
+      ...introductionChecks(hold, authority, tables.deploymentControl),
+      {
+        Update: {
+          ...condition,
+          UpdateExpression: "SET coordinatorExpiresAt = :renewExpiry",
+          ExpressionAttributeValues: {
+            ...condition.ExpressionAttributeValues,
+            ...marshall({ ":renewExpiry": now + 180 }),
+          },
+        },
+      },
+    ],
+  };
+}
+function assertFailedCandidateRuntime(
+  runtime: RuntimeRecord,
+  authority: IntroductionAuthority,
+) {
+  if (
+    runtime.identity.kind !== "ecs" ||
+    runtime.identity.candidateId !== authority.handoff.priorCandidateId ||
+    runtime.identity.imageDigest !== authority.handoff.priorDigest ||
+    runtime.role !== "candidate" ||
+    runtime.authorizedGeneration !== 0 ||
+    runtime.retirementRequest ||
+    runtime.retirementAcknowledgment ||
+    !runtime.workCounts ||
+    Object.values(runtime.workCounts).some((v) => v !== 0)
+  )
+    throw Error("introduction_refused");
+}
+export function buildFailedCandidateRetirement({
+  hold,
+  authority,
+  control,
+  runtime,
+  now,
+  tables,
+}: {
+  hold: IntroductionHold;
+  authority: IntroductionAuthority;
+  control: ControlRecord;
+  runtime: RuntimeRecord;
+  now: number;
+  tables: Tables & { meetingHistory: string };
+}): TransactWriteItemsCommandInput {
+  validateAuthority(hold, authority);
+  controlRecordSchema.parse(control);
+  runtimeRecordSchema.parse(runtime);
+  const replacement = authority.failedUnserved;
+  if (
+    !replacement ||
+    control.coordinatorToken !== replacement.runToken ||
+    control.coordinatorEpoch !== replacement.epoch ||
+    control.coordinatorExpiresAt <= now ||
+    control.servingGeneration !== 0 ||
+    Object.keys(control.servingMembers).length ||
+    control.deployment ||
+    control.compatibleReplacement ||
+    !isDeepStrictEqual(control.maintenance, pointer(hold))
+  )
+    throw Error("introduction_refused");
+  assertFailedCandidateRuntime(runtime, authority);
+  const transaction = buildRuntimeRetirementRequest(
+    {
+      record: runtime,
+      request: {
+        identity: runtime.identity,
+        authorizedGeneration: 0,
+        coordinatorToken: control.coordinatorToken,
+        coordinatorEpoch: control.coordinatorEpoch,
+      },
+      now,
+    },
+    tables,
+  );
+  transaction.TransactItems![0] = {
+    ConditionCheck: exactCheck(tables.deploymentControl, control),
+  };
+  transaction.TransactItems!.push(
+    ...introductionChecks(hold, authority, tables.deploymentControl),
+  );
+  return transaction;
+}

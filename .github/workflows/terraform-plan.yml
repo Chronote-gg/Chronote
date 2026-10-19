@@ -49,6 +49,14 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
 
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version-file: .nvmrc
+          cache: yarn
+      - name: Install provenance dependencies
+        run: yarn install --frozen-lockfile
+
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v6
         with:
@@ -260,9 +268,14 @@ jobs:
       - name: Record plan artifact metadata
         id: artifact
         if: steps.plan.outputs.changes == 'true'
+        env:
+          PLAN_ENVIRONMENT: ${{ inputs.github_environment }}
+          PLAN_WORKSPACE: ${{ inputs.terraform_workspace }}
+          PLAN_SCOPE: ${{ inputs.plan_scope }}
         run: |
           set -euo pipefail
 
+          node scripts/deployment/plan-provenance.cjs
           sha256sum _infra/tfplan | awk '{print $1}' > _infra/tfplan.sha256
           find _infra -maxdepth 1 -type f -name "*.zip" -print0 \
             | sort -z \
@@ -283,6 +296,7 @@ jobs:
           path: |
             _infra/tfplan
             _infra/tfplan.sha256
+            _infra/plan-provenance.json
             _infra/lambda-zips.sha256
             _infra/terraform-plan.txt
             _infra/*.zip

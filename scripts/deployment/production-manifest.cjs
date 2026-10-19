@@ -4,11 +4,12 @@ const { isDeepStrictEqual } = require("node:util");
 const { z } = require("zod");
 const id = z.string().min(1).max(1024);
 const hash = z.string().regex(/^[a-f0-9]{64}$/);
-const unique = (schema) =>
+const { MAXIMUM_ACTIONS } = require("./production-capacity.cjs");
+const unique = (schema, maximum = 100) =>
   z
     .array(schema)
     .min(1)
-    .max(100)
+    .max(maximum)
     .refine((v) => new Set(v.map((x) => JSON.stringify(x))).size === v.length);
 const seconds = z.number().int().nonnegative();
 const identitySchema = z
@@ -27,7 +28,69 @@ const identitySchema = z
   })
   .strict();
 const actionBase = { actionId: id, predecessor: id.nullable() };
+const coordinatorActionSchema = z
+  .object({
+    ...actionBase,
+    kind: z.literal("coordinator_write"),
+    path: z.enum(["normal", "replacement"]).optional(),
+    sequence: z.number().int().nonnegative(),
+    purpose: z.enum([
+      "acquire",
+      "renew",
+      "phase",
+      "promote",
+      "retirement",
+      "launch",
+      "route",
+    ]),
+    fromPhase: z.enum([
+      "none",
+      "preparing",
+      "warming",
+      "promoting",
+      "promoted",
+      "retiring",
+      "complete",
+    ]),
+    toPhase: z.enum([
+      "preparing",
+      "warming",
+      "promoting",
+      "promoted",
+      "retiring",
+      "complete",
+    ]),
+    epoch: z.number().int().positive(),
+    generation: z.number().int().positive(),
+  })
+  .strict();
 const actionSchema = z.discriminatedUnion("kind", [
+  coordinatorActionSchema,
+  z
+    .object({
+      ...actionBase,
+      kind: z.literal("introduction_write"),
+      purpose: z.enum([
+        "initialize",
+        "replace_control",
+        "renew",
+        "retire_failed",
+        "promote",
+        "authorize_fixture",
+        "enqueue_fixture",
+      ]),
+      slot: z.enum(["bootstrap", "replacement"]),
+      grantIndex: z.number().int().min(0).max(1).optional(),
+    })
+    .strict(),
+  z
+    .object({
+      ...actionBase,
+      kind: z.literal("stop_failed"),
+      launchActionId: id,
+    })
+    .strict(),
+  z.object({ ...actionBase, kind: z.literal("stop_service") }).strict(),
   z
     .object({ ...actionBase, kind: z.literal("stop_legacy"), taskArn: id })
     .strict(),
@@ -50,7 +113,7 @@ const actionSchema = z.discriminatedUnion("kind", [
     .object({
       ...actionBase,
       kind: z.literal("launch_candidate"),
-      slot: z.enum(["bootstrap", "handoff"]),
+      slot: z.enum(["bootstrap", "handoff", "replacement"]),
     })
     .strict(),
   z
@@ -153,6 +216,17 @@ const executionSchema = z
         grants: z.array(grantSchema).length(2),
       })
       .strict(),
+    failedUnserved: z
+      .object({
+        candidateId: id,
+        taskDefinition: id,
+        imageDigest: z.string().regex(/^sha256:[a-f0-9]{64}$/),
+        runToken: id,
+        expectedEpoch: z.literal(1),
+        epoch: z.literal(2),
+      })
+      .strict()
+      .optional(),
     prerequisites: z
       .object(
         Object.fromEntries(
@@ -176,7 +250,7 @@ const executionSchema = z
         })
         .strict(),
     ),
-    actions: unique(actionSchema),
+    actions: unique(actionSchema, MAXIMUM_ACTIONS),
   })
   .strict();
 const setPaths = new Set([
@@ -225,6 +299,7 @@ function assertRuntimeResources(m) {
       r.legacyDefinition,
       r.candidateDefinition,
       r.continuationDefinition,
+      ...(m.failedUnserved ? [m.failedUnserved.taskDefinition] : []),
     ].every(
       (v) =>
         v.startsWith(ecs + `task-definition/${r.family}:`) && /:\d+$/.test(v),
@@ -253,6 +328,22 @@ function assertResources(m) {
 }
 function assertHandoff(m) {
   if (
+    m.failedUnserved &&
+    (m.handoff.priorEpoch !== 1 ||
+      [m.runtime.candidateId, m.handoff.candidateId].includes(
+        m.failedUnserved.candidateId,
+      ) ||
+      [
+        m.runtime.candidateDefinition,
+        m.runtime.continuationDefinition,
+        m.runtime.legacyDefinition,
+      ].includes(m.failedUnserved.taskDefinition) ||
+      [m.handoff.priorRunToken, m.handoff.runToken].includes(
+        m.failedUnserved.runToken,
+      ))
+  )
+    refuse();
+  if (
     m.handoff.runToken === m.handoff.priorRunToken ||
     m.handoff.priorCandidateId !== m.runtime.candidateId ||
     m.handoff.candidateId === m.runtime.candidateId ||
@@ -272,28 +363,44 @@ function assertHandoff(m) {
   )
     refuse();
 }
+function assertFailedStop(a, seen) {
+  if (
+    seen.get(a.launchActionId)?.kind !== "launch_candidate" ||
+    seen.get(a.launchActionId)?.slot !== "bootstrap" ||
+    seen.get(a.predecessor)?.kind !== "introduction_write" ||
+    seen.get(a.predecessor)?.purpose !== "retire_failed"
+  )
+    refuse();
+}
+function assertActionReference(m, a, seen) {
+  if (a.kind === "stop_legacy" && !m.runtime.legacyTaskArns.includes(a.taskArn))
+    refuse();
+  if (
+    a.kind === "route_candidate" &&
+    seen.get(a.launchActionId)?.kind !== "launch_candidate"
+  )
+    refuse();
+  if (
+    a.kind === "restore_launcher" &&
+    (seen.get(a.holdActionId)?.kind !== "hold_launcher" ||
+      seen.get(a.holdActionId).launcherId !== a.launcherId)
+  )
+    refuse();
+  if (a.kind === "stop_failed") assertFailedStop(a, seen);
+}
 function assertActions(m) {
   const seen = new Map();
+  const coordinatorSequence = { normal: 0, replacement: 0 };
   for (const a of m.actions) {
     if (
       seen.has(a.actionId) ||
       (a.predecessor !== null && !seen.has(a.predecessor))
     )
       refuse();
+    assertActionReference(m, a, seen);
     if (
-      a.kind === "stop_legacy" &&
-      !m.runtime.legacyTaskArns.includes(a.taskArn)
-    )
-      refuse();
-    if (
-      a.kind === "route_candidate" &&
-      seen.get(a.launchActionId)?.kind !== "launch_candidate"
-    )
-      refuse();
-    if (
-      a.kind === "restore_launcher" &&
-      (seen.get(a.holdActionId)?.kind !== "hold_launcher" ||
-        seen.get(a.holdActionId).launcherId !== a.launcherId)
+      a.kind === "coordinator_write" &&
+      a.sequence !== coordinatorSequence[a.path ?? "normal"]++
     )
       refuse();
     seen.set(a.actionId, a);

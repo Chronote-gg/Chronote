@@ -40,7 +40,7 @@ function canonical(actions) {
     a.TargetGroupArn.localeCompare(b.TargetGroupArn),
   );
 }
-function createRouting({ aws, config, env, failure }) {
+function createRouting({ aws, config, env, failure, production }) {
   const fail = (message) => {
     throw failure("routing_unconfirmed", message);
   };
@@ -325,6 +325,13 @@ function createRouting({ aws, config, env, failure }) {
     if (!r) return ctl;
     const submitted = candidate ? "forward_submitted" : "rollback_submitted";
     const acknowledged = candidate ? "candidate" : "rolled_back";
+    if (production && !candidate)
+      fail("Production inverse routing is not authorized");
+    if (production && r.state === "forward_submitted") {
+      await production.assertAcknowledged("route");
+      await assertAction(r, true);
+      return persist(ctl, { ...r, state: "candidate" });
+    }
     if (r.state.endsWith("_submitted"))
       fail(
         "Routing request settlement is unknown; separate reconciliation is required",
@@ -340,10 +347,12 @@ function createRouting({ aws, config, env, failure }) {
     // The durable submitted marker survives failure, timeout and process death.
     // A GET showing intended weights must never clear it or permit an opposite write.
     await assertAuthority(ctl);
-    await aws("elbv2", "modify-listener", {
-      ListenerArn: r.listenerArn,
-      DefaultActions: action(r, candidate),
-    });
+    if (production) await production.route(ctl);
+    else
+      await aws("elbv2", "modify-listener", {
+        ListenerArn: r.listenerArn,
+        DefaultActions: action(r, candidate),
+      });
     await assertAction(r, candidate);
     return persist(ctl, { ...r, state: acknowledged });
   }

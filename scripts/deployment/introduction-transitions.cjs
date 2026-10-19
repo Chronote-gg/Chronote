@@ -13,6 +13,26 @@ function requestFor(m, a) {
   const r = m.runtime,
     s = m.resources;
   switch (a.kind) {
+    case "stop_failed":
+      return {
+        operation: "updateService",
+        input: {
+          cluster: r.clusterArn,
+          service: r.serviceArn,
+          taskDefinition: r.candidateDefinition,
+          desiredCount: 0,
+        },
+      };
+    case "stop_service":
+      return {
+        operation: "updateService",
+        input: {
+          cluster: r.clusterArn,
+          service: r.serviceArn,
+          taskDefinition: r.legacyDefinition,
+          desiredCount: 0,
+        },
+      };
     case "stop_legacy":
       return {
         operation: "stopTask",
@@ -22,8 +42,18 @@ function requestFor(m, a) {
           reason: "approved production introduction",
         },
       };
-    case "route_maintenance":
     case "route_candidate":
+      return {
+        operation: "modifyListener",
+        input: {
+          ListenerArn: s.listenerArn,
+          DefaultActions: require("./routing.cjs").action(
+            { sourceGroup: s.targetGroupA, candidateGroup: s.targetGroupB },
+            a.targetGroup === "b",
+          ),
+        },
+      };
+    case "route_maintenance":
       return {
         operation: "modifyListener",
         input: {
@@ -46,7 +76,9 @@ function requestFor(m, a) {
           taskDefinition:
             a.slot === "bootstrap"
               ? r.candidateDefinition
-              : r.continuationDefinition,
+              : a.slot === "replacement"
+                ? m.failedUnserved.taskDefinition
+                : r.continuationDefinition,
           desiredCount: 1,
         },
       };
@@ -56,7 +88,19 @@ function requestFor(m, a) {
 }
 function acknowledgedListener(m, a, response) {
   const expected = requestFor(m, a).input;
-  const target = z.literal(expected.DefaultActions[0].TargetGroupArn);
+  const target = z.literal(
+    a.targetGroup === "a" ? m.resources.targetGroupA : m.resources.targetGroupB,
+  );
+  if (
+    a.kind === "route_candidate" &&
+    response?.Listeners?.length === 1 &&
+    response.Listeners[0].ListenerArn === expected.ListenerArn &&
+    require("node:util").isDeepStrictEqual(
+      require("./routing.cjs").canonical(response.Listeners[0].DefaultActions),
+      require("./routing.cjs").canonical(expected.DefaultActions),
+    )
+  )
+    return expected;
   // Match routing.cjs semantics while accepting the provider's single-target form.
   const forward = z
     .object({
@@ -98,6 +142,16 @@ function acknowledgedListener(m, a, response) {
     refuse();
   return expected;
 }
+function acknowledgedService(m, a, response) {
+  const expected = requestFor(m, a).input;
+  if (
+    response?.service?.serviceArn !== expected.service ||
+    response.service.taskDefinition !== expected.taskDefinition ||
+    response.service.desiredCount !== expected.desiredCount
+  )
+    refuse();
+  return [expected.service, expected.taskDefinition];
+}
 function acknowledgmentFor(m, a, response) {
   let resourceIds;
   switch (a.kind) {
@@ -114,19 +168,16 @@ function acknowledgmentFor(m, a, response) {
       const expected = acknowledgedListener(m, a, response);
       resourceIds = [
         expected.ListenerArn,
-        expected.DefaultActions[0].TargetGroupArn,
+        a.targetGroup === "a"
+          ? m.resources.targetGroupA
+          : m.resources.targetGroupB,
       ];
       break;
     }
+    case "stop_service":
+    case "stop_failed":
     case "launch_candidate": {
-      const expected = requestFor(m, a).input;
-      if (
-        response?.service?.serviceArn !== expected.service ||
-        response.service.taskDefinition !== expected.taskDefinition ||
-        response.service.desiredCount !== 1
-      )
-        refuse();
-      resourceIds = [expected.service, expected.taskDefinition];
+      resourceIds = acknowledgedService(m, a, response);
       break;
     }
     default:
@@ -145,6 +196,39 @@ function observationFor(m, a, input) {
   const id = z.string().min(1);
   let observation;
   switch (a.kind) {
+    case "stop_failed":
+      observation = z
+        .object({
+          serviceArn: z.literal(m.runtime.serviceArn),
+          taskDefinition: z.literal(m.runtime.candidateDefinition),
+          desiredCount: z.literal(0),
+          runningCount: z.literal(0),
+          pendingCount: z.literal(0),
+          taskArn: id,
+          lastStatus: z.literal("STOPPED"),
+        })
+        .strict()
+        .parse(input);
+      break;
+    case "stop_service":
+      observation = z
+        .object({
+          serviceArn: z.literal(m.runtime.serviceArn),
+          taskDefinition: z.literal(m.runtime.legacyDefinition),
+          desiredCount: z.literal(0),
+          runningCount: z.literal(0),
+          pendingCount: z.literal(0),
+          stoppedTaskArns: z
+            .array(id)
+            .refine(
+              (v) =>
+                canonicalHash([...v].sort()) ===
+                canonicalHash([...m.runtime.legacyTaskArns].sort()),
+            ),
+        })
+        .strict()
+        .parse(input);
+      break;
     case "stop_legacy":
       observation = z
         .object({
@@ -177,10 +261,16 @@ function observationFor(m, a, input) {
           taskDefinition: z.literal(
             a.slot === "bootstrap"
               ? r.candidateDefinition
-              : r.continuationDefinition,
+              : a.slot === "replacement"
+                ? m.failedUnserved.taskDefinition
+                : r.continuationDefinition,
           ),
           imageDigest: z.literal(
-            a.slot === "bootstrap" ? r.candidateDigest : r.continuationDigest,
+            a.slot === "bootstrap"
+              ? r.candidateDigest
+              : a.slot === "replacement"
+                ? m.failedUnserved.imageDigest
+                : r.continuationDigest,
           ),
           lastStatus: z.literal("RUNNING"),
         })
@@ -199,11 +289,13 @@ function observationFor(m, a, input) {
       return refuse();
   }
   return {
-    resourceIds: Object.values(observation).filter((v) => v.startsWith("arn:")),
+    resourceIds: Object.values(observation)
+      .flat()
+      .filter((v) => typeof v === "string" && v.startsWith("arn:")),
     evidenceHash: canonicalHash(observation),
   };
 }
-function createIntroductionJournal(options) {
+function createJournal(options, recipes) {
   const builders = modules(options),
     { binding, hold, authority, table, read, write, now, invoke } = options;
   const m = binding.manifest,
@@ -226,7 +318,13 @@ function createIntroductionJournal(options) {
       action.manifestHash !== binding.manifestHash ||
       action.operationId !== authority.operationId ||
       action.actor !== binding.actor ||
-      action.intentHash !== authority.actions[id]?.intentHash
+      action.intentHash !== authority.actions[id]?.intentHash ||
+      action.actionId !== id ||
+      action.holdId !== hold.holdId ||
+      action.introductionId !== hold.introductionId ||
+      action.revision !== hold.revision ||
+      action.runToken !== authority.runToken ||
+      action.kind !== actionFor(id).kind
     )
       refuse();
     return action;
@@ -252,10 +350,10 @@ function createIntroductionJournal(options) {
   return {
     readAction,
     acknowledge,
-    async reserveAction(id) {
+    async reserveAction(id, context) {
       assertBoundExecution(binding, now());
       const a = actionFor(id),
-        request = requestFor(m, a);
+        request = recipes.request(m, a, context);
       let predecessor = null;
       if (a.predecessor) {
         const previous = await readAction(a.predecessor);
@@ -301,11 +399,11 @@ function createIntroductionJournal(options) {
       );
       return action;
     },
-    async submitOnce(id) {
+    async submitOnce(id, context) {
       assertBoundExecution(binding, now());
       const a = actionFor(id),
         previous = await readAction(id),
-        request = requestFor(m, a);
+        request = recipes.request(m, a, context);
       if (
         previous.phase !== "reserved" ||
         previous.requestHash !== canonicalHash(request)
@@ -322,10 +420,11 @@ function createIntroductionJournal(options) {
       await transition(previous, submitted);
       let receipt;
       try {
-        receipt = acknowledgmentFor(
+        receipt = recipes.acknowledgment(
           m,
           a,
           await invoke(request.operation, request.input, { maxAttempts: 1 }),
+          context,
         );
       } catch {
         return refuse();
@@ -349,7 +448,7 @@ function createIntroductionJournal(options) {
         ...previous,
         phase: "observed",
         version: 4,
-        observation: observationFor(m, actionFor(id), input),
+        observation: recipes.observation(m, actionFor(id), input),
         observedAt: now(),
       };
       await transition(previous, next);
@@ -357,7 +456,30 @@ function createIntroductionJournal(options) {
     },
   };
 }
+function createIntroductionJournal(options) {
+  return createJournal(options, {
+    request: requestFor,
+    acknowledgment: acknowledgmentFor,
+    observation: observationFor,
+  });
+}
+function createProductionIntroductionJournal(options) {
+  return createJournal(
+    options,
+    require("./production-introduction-recipes.cjs").introductionRecipes(
+      options,
+    ),
+  );
+}
+function createCoordinatorJournal(options) {
+  return createJournal(
+    options,
+    require("./coordinator-recipes.cjs").coordinatorRecipes(options),
+  );
+}
 module.exports = {
+  createCoordinatorJournal,
+  createProductionIntroductionJournal,
   createIntroductionJournal,
   requestFor,
   acknowledgmentFor,
