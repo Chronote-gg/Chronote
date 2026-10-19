@@ -5,6 +5,9 @@ import {
   stopRenewalRecoveryWorker,
   runRenewalRecoveryPoll,
 } from "../../src/services/renewalRecoveryWorkerService";
+import { reconcileBillingChangeForWebhook } from "../../src/services/billingChangeService";
+import { pendingFundingChange } from "../fixtures/pendingFundingChange";
+import { response } from "../fixtures/renewalStripeClient";
 import * as recovery from "../../src/services/renewalRecoveryService";
 import * as repository from "../../src/repositories/renewalRecoveryRepository";
 import { getMockStore, resetMockStore } from "../../src/repositories/mockStore";
@@ -164,43 +167,57 @@ test("two polls cannot process one locally owned cycle concurrently", async () =
   release();
   await first;
 });
-test("shutdown awaits issued provider I/O and refuses its next mutation", async () => {
-  jest.useFakeTimers();
-  jest.setSystemTime(200000);
-  seed();
-  let release!: () => void;
-  let entered!: () => void;
-  const enteredPromise = new Promise<void>((done) => {
-    entered = done;
-  });
-  const nextWrite = jest.fn(async () => undefined);
-  jest
-    .mocked(recovery.reconcileRenewalRecovery)
-    .mockImplementation(async (input) => {
-      if (!input.effect) throw new Error("Missing provider effect ownership");
-      await input.effect(async () => {
-        entered();
-        await new Promise<void>((done) => {
-          release = done;
-        });
-      });
-      await input.effect(nextWrite);
+test.each([true, false])(
+  "worker stop refuses nested effects with runtime fence=%s",
+  async (fenceRuntime) => {
+    jest.useFakeTimers();
+    jest.setSystemTime(200000);
+    const record = seed();
+    const { client, operation } = pendingFundingChange(record.guildId);
+    let release!: () => void;
+    let entered!: () => void;
+    const enteredPromise = new Promise<void>((done) => {
+      entered = done;
     });
-  jest.spyOn(console, "warn").mockImplementation(() => undefined);
-  startRenewalRecoveryWorker(stripe);
-  await enteredPromise;
-  let stopped = false;
-  const stopping = stopRenewalRecoveryWorker().then(() => {
-    stopped = true;
-  });
-  fenceRuntimeWorkAdmissions();
-  await Promise.resolve();
-  expect(stopped).toBe(false);
-  release();
-  await stopping;
-  expect(nextWrite).not.toHaveBeenCalled();
-  expect(getRuntimeWorkAdmissionCheckpoints()).toHaveLength(0);
-});
+    const nextWrite = jest
+      .spyOn(client.stripe.invoices, "create")
+      .mockRejectedValue(new Error("Unexpected new invoice"));
+    client.retrieve.mockImplementationOnce(async () => {
+      entered();
+      await new Promise<void>((done) => {
+        release = done;
+      });
+      return response(client.provider);
+    });
+    jest
+      .mocked(recovery.reconcileRenewalRecovery)
+      .mockImplementation(async (input) => {
+        await input.stripe.subscriptions.retrieve(
+          operation.source.subscriptionId,
+        );
+        await reconcileBillingChangeForWebhook(
+          input.stripe,
+          record.guildId,
+          operation.createdAt,
+          input.owner,
+        );
+      });
+    jest.spyOn(console, "warn").mockImplementation(() => undefined);
+    startRenewalRecoveryWorker(client.stripe);
+    await enteredPromise;
+    let stopped = false;
+    const stopping = stopRenewalRecoveryWorker().then(() => {
+      stopped = true;
+    });
+    if (fenceRuntime) fenceRuntimeWorkAdmissions();
+    await Promise.resolve();
+    expect(stopped).toBe(false);
+    release();
+    await stopping;
+    expect(nextWrite).not.toHaveBeenCalled();
+    expect(getRuntimeWorkAdmissionCheckpoints()).toHaveLength(0);
+  },
+);
 test("stale index keys are harmless and do not reconcile another current cycle", async () => {
   const record = seed();
   const actual = repository.getRenewalRecoveryRepository();

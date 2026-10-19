@@ -1,8 +1,15 @@
 /** @jest-environment node */
+jest.mock("../../src/db", () => ({
+  ...jest.requireActual("../../src/db"),
+  getDeploymentControlRepository: () => ({
+    checkAdmission: async () => ({ kind: "admitted" }),
+  }),
+}));
 import { beforeEach, describe, expect, test, jest } from "@jest/globals";
 import * as unifiedConfig from "../../src/services/unifiedConfigService";
 import "../deployment/coldNetworkGuard.cjs";
 import { config } from "../../src/services/configService";
+import { verifyCorrectionDisconnect } from "../fixtures/correctionDisconnect";
 import {
   updateDiscordMessage,
   createDiscordMessage,
@@ -15,8 +22,6 @@ jest.mock("../../src/services/discordMessageService", () => ({
   fetchDiscordMessage: jest.fn(),
   updateDiscordMessageEmbeds: jest.fn(),
 }));
-import { createServer } from "node:http";
-import { createHTTPHandler } from "@trpc/server/adapters/standalone";
 import {
   fenceRuntimeWorkAdmissions,
   getRuntimeWorkAdmissionCheckpoints,
@@ -43,6 +48,7 @@ import {
 import {
   getMeetingHistoryService,
   updateMeetingNotesService,
+  updateMeetingNotesMessageMetadataService,
 } from "../../src/services/meetingHistoryService";
 import { buildMeetingTimelineEventsFromHistory } from "../../src/services/meetingTimelineService";
 import { getMeetingSummaryFeedback } from "../../src/services/summaryFeedbackService";
@@ -182,6 +188,9 @@ describe("meetings router detail", () => {
     // The real builder always returns an array, and the detail route maps over
     // it to resolve mentions in event text.
     mockedBuildTimeline.mockReturnValue([]);
+    jest
+      .mocked(updateMeetingNotesMessageMetadataService)
+      .mockResolvedValue(true);
     mockedEnsureManageGuild.mockResolvedValue(true);
     mockedEnsureUserInGuild.mockResolvedValue(true);
     mockedEnsureMeetingAccess.mockResolvedValue(true);
@@ -438,6 +447,9 @@ describe("meetings notes correction mutations", () => {
 
   beforeEach(() => {
     jest.resetAllMocks();
+    jest
+      .mocked(updateMeetingNotesMessageMetadataService)
+      .mockResolvedValue(true);
     mockedEnsureManageGuild.mockResolvedValue(true);
     mockedEnsureUserInGuild.mockResolvedValue(true);
     mockedEnsureUserCanViewChannel.mockResolvedValue(true);
@@ -526,61 +538,12 @@ describe("meetings notes correction mutations", () => {
         },
       },
     } as unknown as ReturnType<typeof createOpenAIClient>);
-    const server = createServer(
-      createHTTPHandler({
-        router: appRouter,
-        createContext: ({ req, res }) => ({
-          req: Object.assign(req, { session: {} }) as unknown as Request,
-          res: res as unknown as Response,
-          user: getMockUser(),
-        }),
-      }),
-    );
-    await new Promise<void>((resolve) =>
-      server.listen(0, "127.0.0.1", resolve),
-    );
-    const address = server.address() as { port: number };
-    const abort = new AbortController();
-    const response = fetch(
-      `http://127.0.0.1:${address.port}/meetings.suggestNotesCorrection`,
-      {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          serverId: "guild-1",
-          meetingId: "channel-1#2025-01-01",
-          suggestion: "Fix",
-        }),
-        signal: abort.signal,
-      },
-    ).catch(() => undefined);
-    try {
-      await started;
-      abort.abort();
-      await response;
-      server.closeAllConnections();
-      server.close();
-      expect(
-        getRuntimeWorkAdmissionCheckpoints().filter(
-          (entry) => entry.domain === "api_correction",
-        ),
-      ).toHaveLength(1);
-      fenceRuntimeWorkAdmissions();
-      expect(mockApiSettled).not.toHaveBeenCalled();
-      const checkpoints = getRuntimeWorkAdmissionCheckpoints();
-      release({ choices: [{ message: { content: "Late correction" } }] });
-      await Promise.allSettled(checkpoints.map((entry) => entry.ownedPromise));
-      expect(mockApiSettled).toHaveBeenCalledTimes(1);
-      expect(
-        getRuntimeWorkAdmissionCheckpoints().filter(
-          (entry) => entry.domain === "api_correction",
-        ),
-      ).toHaveLength(0);
-    } finally {
-      release({ choices: [] });
-      server.closeAllConnections();
-      server.close();
-    }
+    await verifyCorrectionDisconnect({
+      router: appRouter,
+      started,
+      settled: mockApiSettled,
+      release,
+    });
   });
   test("warm correction router rejects before history/provider dispatch", async () => {
     mockApiEligible = false;
@@ -598,9 +561,13 @@ describe("meetings notes correction mutations", () => {
       mockApiEligible = true;
     }
   });
-  test.each([true, false])(
-    "actual correction embed ACK=%s retains full helper ownership and stops later sends",
-    async (acknowledged) => {
+  test.each([
+    { acknowledged: true, create: false },
+    { acknowledged: false, create: false },
+    { acknowledged: true, create: true },
+  ])(
+    "actual correction embed $create ACK=$acknowledged retains full helper ownership and stops later sends",
+    async ({ acknowledged, create }) => {
       const snapshot = jest
         .spyOn(unifiedConfig, "resolveConfigSnapshot")
         .mockResolvedValue({} as never);
@@ -617,7 +584,7 @@ describe("meetings notes correction mutations", () => {
         notes: "Original",
         notesVersion: 1,
         notesChannelId: "synthetic-text",
-        notesMessageIds: ["synthetic-old"],
+        notesMessageIds: create ? [] : ["synthetic-old"],
       } as MeetingHistory);
       mockedUpdateMeetingNotesService.mockResolvedValue(true);
       const token = await buildCaller().meetings.suggestNotesCorrection({
@@ -638,6 +605,13 @@ describe("meetings notes correction mutations", () => {
           reject = fail;
         });
       });
+      if (create)
+        jest.mocked(createDiscordMessage).mockImplementationOnce(() => {
+          entered();
+          return new Promise((resolve) => {
+            release = () => resolve({ id: "synthetic-created" });
+          });
+        });
       const previous = new Set(
         getRuntimeWorkAdmissionCheckpoints().map((entry) => entry.id),
       );
@@ -653,7 +627,9 @@ describe("meetings notes correction mutations", () => {
         const claim = getRuntimeWorkAdmissionCheckpoints().find(
           (entry) => !previous.has(entry.id),
         )!;
-        expect(updateDiscordMessage).toHaveBeenCalledTimes(1);
+        expect(
+          create ? createDiscordMessage : updateDiscordMessage,
+        ).toHaveBeenCalledTimes(1);
         expect(claim.effects.length).toBeGreaterThan(0);
         fenceRuntimeWorkAdmissions();
         if (acknowledged) release(true);
@@ -666,7 +642,13 @@ describe("meetings notes correction mutations", () => {
             ),
           ),
         ).toBe(!acknowledged);
-        expect(createDiscordMessage).not.toHaveBeenCalled();
+        expect(createDiscordMessage).toHaveBeenCalledTimes(create ? 1 : 0);
+        if (acknowledged)
+          expect(updateMeetingNotesMessageMetadataService).toHaveBeenCalledWith(
+            expect.objectContaining({
+              notesMessageIds: [create ? "synthetic-created" : "synthetic-old"],
+            }),
+          );
         expect(deleteDiscordMessage).not.toHaveBeenCalled();
       } finally {
         release(true);

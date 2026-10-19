@@ -1,3 +1,4 @@
+import { publishCorrectionMessages } from "../../services/correctionMessageDeliveryService";
 import type { RuntimeApiOperation } from "../../services/runtimeApiOperationService";
 import {
   projectMeetingCapture,
@@ -1930,54 +1931,28 @@ const applyNotesCorrection = correctionProcedure
     let embedResult: NotesEmbedUpdateResult | undefined;
     if (!config.mock.enabled && history.notesChannelId) {
       try {
-        embedResult = await editOrReplaceNotesEmbeds({
+        embedResult = await publishCorrectionMessages({
           operation: ctx.operation,
+          guildId: input.serverId,
+          historyKey: input.meetingId,
           channelId: history.notesChannelId,
-          existingMessageIds: history.notesMessageIds ?? [],
-          notesBody: pending.newNotes,
-          meetingName: history.meetingName,
-          footerText,
-          processing: history.processing,
-          captureNoticeInput: history,
-          summaryMessageId: history.summaryMessageId,
+          notesVersion: newVersion,
+          publish: () =>
+            editOrReplaceNotesEmbeds({
+              operation: ctx.operation,
+              channelId: history.notesChannelId!,
+              existingMessageIds: history.notesMessageIds ?? [],
+              notesBody: pending.newNotes,
+              meetingName: history.meetingName,
+              footerText,
+              processing: history.processing,
+              captureNoticeInput: history,
+              summaryMessageId: history.summaryMessageId,
+            }),
         });
       } catch (error) {
         ctx.operation.signal.throwIfAborted();
         console.warn("Failed updating notes embeds after correction", error);
-      }
-    }
-
-    // Persist message metadata separately
-    if (embedResult && history.notesChannelId) {
-      const metadataOk = await ctx.operation.read(() =>
-        updateMeetingNotesMessageMetadataService(
-          {
-            guildId: input.serverId,
-            channelId_timestamp: input.meetingId,
-            notesMessageIds: embedResult!.messageIds,
-            notesChannelId: history.notesChannelId!,
-            expectedNotesVersion: newVersion,
-          },
-          ctx.operation.signal,
-          ctx.operation,
-        ),
-      );
-
-      if (!metadataOk && embedResult.strategy === "replaced") {
-        await deleteDiscordMessagesSafely({
-          operation: ctx.operation,
-          channelId: history.notesChannelId,
-          messageIds: embedResult.messageIds,
-        });
-        await ctx.operation.mutate(() =>
-          notesCorrectionTokenStore.delete(input.token),
-        );
-        return {
-          ok: true,
-          dictionaryTeachingContextToken,
-          dictionaryTeachingContextExpiresAtMs,
-          dictionaryTeachingInstruction: appliedSuggestion.text,
-        };
       }
     }
 

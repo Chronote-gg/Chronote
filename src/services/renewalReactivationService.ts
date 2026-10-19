@@ -1,5 +1,6 @@
 import {
   runBillingOperation,
+  persistBillingAcknowledgment,
   type RuntimeBillingOwner,
 } from "./runtimeBillingOperationService";
 import {
@@ -397,6 +398,7 @@ class RenewalRecovery {
       this.operation.state === "needs_review"
     )
       return { kind: "result", result: this.processing() };
+    let acknowledged = false;
     try {
       await this.context.owner.effect(() =>
         clearPendingCancellation({
@@ -404,14 +406,17 @@ class RenewalRecovery {
           operation: this.operation,
         }),
       );
+      acknowledged = true;
     } catch (error) {
       assertBillingDispatchOutcomeKnown(error);
       // A definite rejection may be reconciled against existing provider state.
     }
     if (this.operation.state === "applying") {
       const verifying = this.next({ state: "verifying" });
-      if (!(await this.save(verifying)))
-        return { kind: "result", result: this.processing() };
+      const saved = acknowledged
+        ? await persistBillingAcknowledgment(() => this.save(verifying))
+        : await this.save(verifying);
+      if (!saved) return { kind: "result", result: this.processing() };
       this.operation = verifying;
     }
     const current = await this.readSource();

@@ -1,5 +1,6 @@
 import {
   runBillingOperation,
+  persistBillingAcknowledgment,
   type RuntimeBillingOwner,
 } from "./runtimeBillingOperationService";
 import { randomUUID } from "node:crypto";
@@ -84,6 +85,8 @@ async function persist(
     );
   return parsed;
 }
+const persistReceipt = (...args: Parameters<typeof persist>) =>
+  persistBillingAcknowledgment(() => persist(...args));
 async function owned(context: Context, operationId?: string) {
   const control = await repo().getControl(context.guildId);
   const id = operationId ?? control?.operationId;
@@ -455,7 +458,7 @@ async function prepareInvoice(
       operation,
       subscription: source.subscription,
     });
-    return persist(
+    return persistReceipt(
       { ...operation, revision: randomUUID(), draftInvoiceId },
       operation,
     );
@@ -466,7 +469,7 @@ async function prepareInvoice(
     operation,
     subscription: source.subscription,
   });
-  return persist(
+  return persistReceipt(
     {
       ...billingChangeBase(operation),
       revision: randomUUID(),
@@ -525,7 +528,7 @@ async function afterAcceptance(
       operation,
       async (providerScheduleId) => {
         if (latest.providerScheduleId === providerScheduleId) return;
-        const saved = await persist(
+        const saved = await persistReceipt(
           { ...latest, revision: randomUUID(), providerScheduleId },
           latest,
         );
@@ -534,7 +537,7 @@ async function afterAcceptance(
       },
       context.effect,
     );
-    return persist(
+    return persistReceipt(
       {
         ...billingChangeBase(operation),
         revision: randomUUID(),
@@ -613,7 +616,7 @@ async function applyPayment(
       periodEnd: result.subscription.items.data[0].current_period_end,
     },
   });
-  const completed = await persist(
+  const completed = await persistReceipt(
     next,
     operation,
     await settleChangeOffer(next, invoice, at(context)),
@@ -663,7 +666,7 @@ async function settleScheduled(
     result.kind === "paid"
       ? await settleChangeOffer(next, result.invoice, at(context))
       : undefined;
-  const completed = await persist(next, operation, usage);
+  const completed = await persistReceipt(next, operation, usage);
   return finishReconciliation(context, completed);
 }
 function scheduledServiceReceipt(
@@ -712,7 +715,7 @@ async function finishCancellation(
     operation,
     onProgress: async (receipt) => {
       if (latest.state !== "canceling") throw changeUnavailable();
-      latest = await persist(
+      latest = await persistReceipt(
         { ...latest, revision: randomUUID(), recovery: receipt },
         latest,
       );
@@ -730,7 +733,7 @@ async function finishCancellation(
     operation.draftInvoiceId ?? operation.scheduleId ?? operation.operationId,
     at(context),
   );
-  const completed = await persist(next, latest, usage);
+  const completed = await persistReceipt(next, latest, usage);
   return finishReconciliation(context, completed);
 }
 async function finishReconciliation(

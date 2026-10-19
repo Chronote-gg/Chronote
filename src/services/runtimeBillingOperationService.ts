@@ -22,6 +22,19 @@ export class UnresolvedBillingMutation extends Error {
     );
   }
 }
+/** Receipt failure after a provider ACK is uncertainty, even when a domain CAS reports BAD_REQUEST. */
+export async function persistBillingAcknowledgment<T>(
+  write: () => Promise<T>,
+): Promise<T> {
+  try {
+    const result = await write();
+    if (result === false)
+      throw new Error("Billing acknowledgment receipt was not persisted");
+    return result;
+  } catch (error) {
+    throw new UnresolvedBillingMutation(error);
+  }
+}
 function knownRejection(error: unknown): boolean {
   return (
     error instanceof BillingActionError ||
@@ -49,6 +62,7 @@ async function lifetime<T>(
         throw new RuntimeAdmissionUnavailable(
           "Billing owner is no longer active",
         );
+      signal.throwIfAborted();
       const task = track(async () => {
         try {
           return { kind: "acknowledged" as const, value: await effect() };
