@@ -1,4 +1,12 @@
 import {
+  mockMaintenanceAllows,
+  consumeMockFixture,
+} from "../services/deploymentFixtureAdmission";
+import {
+  newWorkScopeSchema,
+  type NewWorkScope,
+} from "../types/productionIntroduction";
+import {
   createDynamoRecoveryRepository,
   createMockRecoveryRepository,
 } from "./meetingRecoveryRepository";
@@ -18,7 +26,10 @@ import {
   UpdateItemCommand,
 } from "@aws-sdk/client-dynamodb";
 import { marshall, unmarshall } from "@aws-sdk/util-dynamodb";
-import { z } from "zod";
+import {
+  classifyDeploymentTransactionError,
+  sessionReservationFailure,
+} from "./deploymentControlTransactionError";
 import { isDeepStrictEqual } from "node:util";
 import { planLocalBootstrap } from "../services/runtimeLocalBootstrapPlan";
 import type { ActiveMeetingLease, MeetingHistory } from "../types/db";
@@ -72,37 +83,7 @@ export type ExpectedVoiceState = Pick<
   VoiceRecord,
   "attemptId" | "state" | "ownerInstanceId" | "meetingId"
 >;
-const errorSchema = z.object({
-  name: z.string().optional(),
-  CancellationReasons: z
-    .array(z.object({ Code: z.string().optional() }))
-    .optional(),
-});
-export function classifyDeploymentTransactionError(
-  error: unknown,
-): "stale" | "conflict" | "unavailable" {
-  const parsed = errorSchema.safeParse(error);
-  if (!parsed.success) return "unavailable";
-  const { name, CancellationReasons: reasons } = parsed.data;
-  if (name === "ConditionalCheckFailedException") return "stale";
-  if (name === "TransactionConflictException") return "conflict";
-  if (name !== "TransactionCanceledException" || !reasons?.length)
-    return "unavailable";
-  if (
-    reasons.some(
-      (reason) =>
-        !["None", "ConditionalCheckFailed", "TransactionConflict"].includes(
-          reason.Code ?? "",
-        ),
-    )
-  )
-    return "unavailable";
-  if (reasons.some((reason) => reason.Code === "TransactionConflict"))
-    return "conflict";
-  return reasons.some((reason) => reason.Code === "ConditionalCheckFailed")
-    ? "stale"
-    : "unavailable";
-}
+export { classifyDeploymentTransactionError } from "./deploymentControlTransactionError";
 export class DeploymentControlError extends Error {
   constructor(
     public readonly kind: "conflict" | "unavailable",
@@ -154,7 +135,10 @@ export type DeploymentControlRepository = RecoveryRepository & {
     expected?: ExpectedVoiceState,
   ): Promise<ConditionalResult>;
   /** Diagnostic only. Work claims must include buildRuntimeAdmissionChecks in their own transaction. */
-  checkAdmission(context: AdmissionContext): Promise<AdmissionCheckResult>;
+  checkAdmission(
+    context: AdmissionContext,
+    scope?: NewWorkScope,
+  ): Promise<AdmissionCheckResult>;
   promote(input: PromotionInput): Promise<ConditionalResult>;
   createInitialMeetingHistory(
     history: MeetingHistory,
@@ -211,28 +195,7 @@ export function createDynamoDeploymentControlRepository(
         await client.send(new TransactWriteItemsCommand(transaction));
         return { kind: "admitted" };
       } catch (error) {
-        const parsed = errorSchema.safeParse(error);
-        if (
-          !parsed.success ||
-          classifyDeploymentTransactionError(error) !== "stale"
-        )
-          return { kind: "blocked", reason: "unavailable" };
-        const reasons = parsed.data.CancellationReasons ?? [];
-        const failed = (index: number) =>
-          reasons[index]?.Code === "ConditionalCheckFailed";
-        return {
-          kind: "blocked",
-          reason:
-            failed(0) || failed(1)
-              ? "not_serving"
-              : failed(3)
-                ? "voice_uncertain"
-                : failed(2) || (input.history && failed(4))
-                  ? "active_session"
-                  : input.suppression && failed(input.history ? 5 : 4)
-                    ? "suppressed"
-                    : "unavailable",
-        };
+        return sessionReservationFailure(error, input);
       }
     },
     supportsLocalBootstrap,
@@ -382,11 +345,11 @@ export function createDynamoDeploymentControlRepository(
         ),
       );
     },
-    async checkAdmission(context) {
+    async checkAdmission(context, scope) {
       const result = await conditional(() =>
         client.send(
           new TransactWriteItemsCommand({
-            TransactItems: buildRuntimeAdmissionChecks(context, tables),
+            TransactItems: buildRuntimeAdmissionChecks(context, tables, scope),
           }),
         ),
       );
@@ -493,6 +456,7 @@ export function mockWorkAdmissionAllowed(
   authority: WorkAdmissionAuthority,
   records: Map<string, DeploymentControlRecord>,
   leases: Map<string, ActiveMeetingLease>,
+  scope: NewWorkScope = { kind: "ordinary" },
 ): boolean {
   if (authority.kind === "session") {
     const owner = authority.ownership;
@@ -508,12 +472,23 @@ export function mockWorkAdmissionAllowed(
   }
   const { context } = authority;
   admissionContextSchema.parse(context);
+  newWorkScopeSchema.parse(scope);
   const control = records.get(JSON.stringify(["ENV", "CONTROL"]));
   const row = records.get(
     JSON.stringify(["ENV", `RUNTIME#${context.instanceId}`]),
   );
   if (control?.recordType !== "control" || row?.recordType !== "runtime")
     return false;
+  return (
+    mockMaintenanceAllows(control, scope, records) &&
+    mockServingAdmissionAllowed(control, row, context)
+  );
+}
+function mockServingAdmissionAllowed(
+  control: ControlRecord,
+  row: RuntimeRecord,
+  context: AdmissionContext,
+) {
   const selected = control.servingMembers[context.instanceId];
   return Boolean(
     selected &&
@@ -529,7 +504,7 @@ function repeatedReservationResult(
   previous: SessionReservationInput,
   input: SessionReservationInput,
 ): SessionReservationWriteResult {
-  return isDeepStrictEqual(previous, input)
+  return isDeepStrictEqual(previous, structuredClone(input))
     ? { kind: "admitted" }
     : { kind: "blocked", reason: "unavailable" };
 }
@@ -612,20 +587,7 @@ export function createMockDeploymentControlRepository(
     records.set(recordKey(record.pk, record.sk), structuredClone(record));
     return "applied";
   };
-  const canReserve = (context: AdmissionContext) => {
-    const control = getControl();
-    const runtime = getRuntime(context.instanceId);
-    const selected = control?.servingMembers[context.instanceId];
-    if (!control || !runtime || !selected) return false;
-    return (
-      sameRuntimeIdentity(selected, context.identity) &&
-      sameRuntimeIdentity(runtime.identity, context.identity) &&
-      control.servingGeneration === context.authorizedGeneration &&
-      runtime.role === "serving" &&
-      runtime.authorizedGeneration === context.authorizedGeneration &&
-      proofReady(runtime, undefined, context.authorizedGeneration, context.now)
-    );
-  };
+
   return {
     ...createMockRecoveryRepository(records, histories, leases, (context) =>
       mockWorkAdmissionAllowed({ kind: "serving", context }, records, leases),
@@ -639,7 +601,14 @@ export function createMockDeploymentControlRepository(
       const previous = requests.get(input.requestToken);
       if (previous) return repeatedReservationResult(previous, input);
       const { context, lease, voice, history, suppression } = input;
-      if (!canReserve(context))
+      if (
+        !mockWorkAdmissionAllowed(
+          { kind: "serving", context },
+          records,
+          leases,
+          input.scope,
+        )
+      )
         return { kind: "blocked", reason: "not_serving" };
       const existingVoice = records.get(recordKey(voice.pk, voice.sk));
       if (
@@ -667,6 +636,7 @@ export function createMockDeploymentControlRepository(
         );
         if (!allowed) return { kind: "blocked", reason: "suppressed" };
       }
+      consumeMockFixture(input, records);
       leases.set(lease.guildId, structuredClone(lease));
       store(voice);
       if (history)
@@ -734,7 +704,9 @@ export function createMockDeploymentControlRepository(
     },
     async getRecord(pk, sk) {
       const row = records.get(recordKey(pk, sk));
-      return row ? structuredClone(row) : undefined;
+      if (!row) return undefined;
+      parseDeploymentControlRecord(row);
+      return structuredClone(row);
     },
     async initializeControl(record) {
       controlRecordSchema.parse(record);
@@ -837,28 +809,13 @@ export function createMockDeploymentControlRepository(
         return "stale";
       return store(record);
     },
-    async checkAdmission(context) {
-      admissionContextSchema.parse(context);
-      const control = getControl();
-      const runtime = getRuntime(context.instanceId);
-      return control &&
-        runtime &&
-        control.protocolVersion === context.protocolVersion &&
-        control.servingMembers[context.instanceId] &&
-        sameRuntimeIdentity(
-          control.servingMembers[context.instanceId],
-          context.identity,
-        ) &&
-        sameRuntimeIdentity(runtime.identity, context.identity) &&
-        control.servingGeneration === context.authorizedGeneration &&
-        runtime.role === "serving" &&
-        runtime.authorizedGeneration === context.authorizedGeneration &&
-        proofReady(
-          runtime,
-          undefined,
-          context.authorizedGeneration,
-          context.now,
-        )
+    async checkAdmission(context, scope) {
+      return mockWorkAdmissionAllowed(
+        { kind: "serving", context },
+        records,
+        leases,
+        scope,
+      )
         ? { kind: "admitted" }
         : { kind: "blocked", reason: "not_serving" };
     },

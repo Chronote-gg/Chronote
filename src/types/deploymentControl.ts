@@ -1,3 +1,9 @@
+import {
+  maintenanceHoldSchema,
+  fixtureGrantSchema,
+  introductionHoldSchema,
+  type NewWorkScope,
+} from "./productionIntroduction";
 import { notesDeliveryTimingSchema } from "./meetingNotesTiming";
 import { completionPolicySchema } from "./meetingCompletionPolicy";
 import {
@@ -169,6 +175,7 @@ export const controlRecordSchema = z
       .object({ guildId: id, channelId_timestamp: id })
       .strict()
       .optional(),
+    maintenance: maintenanceHoldSchema.optional(),
     deployment: deploymentPhaseSchema.optional(),
     compatibleReplacement: z
       .object({
@@ -333,6 +340,8 @@ export const deploymentControlRecordSchema = z.union([
   runtimeRecordSchema,
   voiceRecordSchema,
   suppressionRecordSchema,
+  fixtureGrantSchema,
+  introductionHoldSchema,
 ]);
 export type DeploymentControlRecord = z.infer<
   typeof deploymentControlRecordSchema
@@ -382,6 +391,7 @@ export type ControlTableNames = {
   activeMeeting?: string;
 };
 export type SessionReservationInput = {
+  scope?: NewWorkScope;
   context: AdmissionContext;
   lease: ActiveMeetingLease & {
     executionVersion: number;

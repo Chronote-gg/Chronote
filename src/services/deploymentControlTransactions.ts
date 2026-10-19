@@ -1,3 +1,11 @@
+import {
+  fixtureGrantCondition,
+  fixtureReservationOwnership,
+} from "./deploymentFixtureAdmission";
+import {
+  newWorkScopeSchema,
+  type NewWorkScope,
+} from "../types/productionIntroduction";
 import { planCompatibleReplacement } from "./runtimeCompatibleReplacementService";
 import type {
   TransactWriteItem,
@@ -214,7 +222,7 @@ export function buildSessionReservationTransaction(
   if (!tables.activeMeeting)
     throw new Error("Active meeting table is required");
   const items: TransactWriteItem[] = [
-    ...buildRuntimeAdmissionChecks(context, tables),
+    ...buildRuntimeAdmissionChecks(context, tables, input.scope),
     {
       Put: {
         TableName: tables.activeMeeting,
@@ -234,6 +242,22 @@ export function buildSessionReservationTransaction(
       },
     },
   ];
+  if (input.scope?.kind === "fixture") {
+    const grant = fixtureGrantCondition(input.scope, tables.deploymentControl);
+    items[2] = {
+      Update: {
+        ...grant,
+        UpdateExpression: "SET #state = :consumed, ownership = :ownership",
+        ExpressionAttributeValues: {
+          ...grant.ExpressionAttributeValues,
+          ...marshall({
+            ":consumed": "consumed",
+            ":ownership": fixtureReservationOwnership(input),
+          }),
+        },
+      },
+    };
+  }
   if (history)
     items.push({ Put: buildInitialMeetingHistoryPut(history, tables) });
   if (suppression)
@@ -279,7 +303,12 @@ function snapshotCondition(record: ControlRecord | RuntimeRecord) {
             "retirementRequest",
             "retirementAcknowledgment",
           ]
-        : ["deployment", "compatibleReplacement", "recoveryScanCursor"]),
+        : [
+            "deployment",
+            "compatibleReplacement",
+            "recoveryScanCursor",
+            "maintenance",
+          ]),
     ]),
   ].filter((key) => key !== "pk" && key !== "sk");
   const conditions = fields.map((field, index) => {
@@ -356,20 +385,28 @@ const runtimeProofCondition = [
 export function buildRuntimeAdmissionChecks(
   context: AdmissionContext,
   tables: ControlTableNames,
+  scope: NewWorkScope = { kind: "ordinary" },
 ): TransactWriteItem[] {
   admissionContextSchema.parse(context);
+  newWorkScopeSchema.parse(scope);
   return [
     {
       ConditionCheck: {
         TableName: tables.deploymentControl,
         Key: marshall({ pk: "ENV", sk: "CONTROL" }),
-        ConditionExpression:
-          "protocolVersion = :protocol AND servingGeneration = :generation AND servingMembers.#instance = :identity",
+        ConditionExpression: `protocolVersion = :protocol AND servingGeneration = :generation AND servingMembers.#instance = :identity AND ${scope.kind === "ordinary" ? "attribute_not_exists(maintenance)" : "maintenance.holdId = :holdId AND maintenance.introductionId = :introductionId AND maintenance.revision = :revision"}`,
         ExpressionAttributeNames: { "#instance": context.instanceId },
         ExpressionAttributeValues: marshall({
           ":protocol": context.protocolVersion,
           ":generation": context.authorizedGeneration,
           ":identity": context.identity,
+          ...(scope.kind === "fixture"
+            ? {
+                ":holdId": scope.reference.holdId,
+                ":introductionId": scope.reference.introductionId,
+                ":revision": scope.reference.revision,
+              }
+            : {}),
         }),
       },
     },
@@ -390,6 +427,16 @@ export function buildRuntimeAdmissionChecks(
         }),
       },
     },
+    ...(scope.kind === "fixture"
+      ? [
+          {
+            ConditionCheck: fixtureGrantCondition(
+              scope,
+              tables.deploymentControl,
+            ),
+          },
+        ]
+      : []),
   ];
 }
 
