@@ -56,13 +56,44 @@ function requestFor(m, a) {
 }
 function acknowledgedListener(m, a, response) {
   const expected = requestFor(m, a).input;
+  const target = z.literal(expected.DefaultActions[0].TargetGroupArn);
+  // Match routing.cjs semantics while accepting the provider's single-target form.
+  const forward = z
+    .object({
+      Type: z.literal("forward"),
+      Order: z.literal(1).optional(),
+      TargetGroupArn: target.optional(),
+      ForwardConfig: z
+        .object({
+          TargetGroups: z
+            .array(
+              z
+                .object({
+                  TargetGroupArn: target,
+                  Weight: z.number().int().min(1).max(999).optional(),
+                })
+                .strict(),
+            )
+            .length(1),
+          TargetGroupStickinessConfig: z
+            .object({
+              Enabled: z.literal(false),
+              DurationSeconds: z.number().int().min(1).max(604800).optional(),
+            })
+            .strict()
+            .optional(),
+        })
+        .strict()
+        .optional(),
+    })
+    .strict()
+    .refine((value) => value.TargetGroupArn || value.ForwardConfig);
   const listeners = response?.Listeners;
   if (
     !Array.isArray(listeners) ||
     listeners.length !== 1 ||
     listeners[0].ListenerArn !== expected.ListenerArn ||
-    canonicalHash(listeners[0].DefaultActions) !==
-      canonicalHash(expected.DefaultActions)
+    !z.array(forward).length(1).safeParse(listeners[0].DefaultActions).success
   )
     refuse();
   return expected;

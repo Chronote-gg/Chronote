@@ -2,6 +2,18 @@
 const { unmarshall } = require("@aws-sdk/util-dynamodb");
 const { z } = require("zod");
 const { canonicalHash } = require("./production-manifest.cjs");
+const {
+  billingProjections,
+  futureReviewSchema,
+  bindFutureReview,
+  billingCategory,
+} = require("./retained-billing.cjs");
+const safeCategories = [
+  "safe_terminal",
+  "preserved_configuration",
+  "preserved_nonadoptable_legacy",
+  "preserved_compatible_future",
+];
 const keys = {
   activeMeeting: ["guildId"],
   meetingHistory: ["guildId", "channelId_timestamp"],
@@ -127,25 +139,7 @@ const projections = {
     "receivedAt",
     "expiresAt",
   ],
-  guildSubscription: [
-    "guildId",
-    "operationId",
-    "revision",
-    "state",
-    "reconciled",
-    "completedAt",
-    "appliedAt",
-    "nextCheckAt",
-    "projection.state",
-    "projection.nextCheckAt",
-    "receipts.canceled",
-    "receipts.collectionRestored",
-    "receipts.collectionToRestore",
-    "receipts.creditNoteId",
-    "receipts.refundIds",
-    "key",
-    "blocking",
-  ],
+  guildSubscription: billingProjections,
 };
 function projectionExpression(fields) {
   const names = {},
@@ -248,6 +242,7 @@ const dispositionSchema = z
     schemaVersion: z.literal(1),
     predicate: z.literal("missing-owner-or-version-v1"),
     sourceCommit: z.string().regex(/^[a-f0-9]{40}$/),
+    compatibleFuture: futureReviewSchema.optional(),
     records: z.array(
       z
         .object({
@@ -264,14 +259,20 @@ function reviewedLegacy(entry, snapshot, review) {
   // isRecordingRecoveryCandidate refuses any history without an owner or execution version.
   if (r.ownerInstanceId && r.executionVersion) return false;
   if (r.recovery || r.recoveryExport || r.delivery) return false;
-  const linked = snapshot.records.some(
-    (other) =>
-      other !== entry &&
-      other.table !== "meetingHistory" &&
-      (other.metadata.guildId === r.guildId ||
-        other.metadata.meetingGuildId === r.guildId ||
-        other.metadata.input?.serverId === r.guildId),
-  );
+  const linked = snapshot.records.some((other) => {
+    if (other === entry || other.table === "meetingHistory") return false;
+    const m = other.metadata;
+    const guild = m.guildId ?? m.meetingGuildId ?? m.input?.serverId;
+    if (guild !== r.guildId) return false;
+    const meeting = m.meetingId ?? m.input?.meetingId;
+    if (meeting && r.meetingId && meeting !== r.meetingId) return false;
+    if (
+      m.channelId_timestamp &&
+      m.channelId_timestamp !== r.channelId_timestamp
+    )
+      return false;
+    return !safeCategories.includes(categoryFor(other, snapshot, review));
+  });
   return (
     !linked &&
     Boolean(
@@ -314,39 +315,13 @@ function historyCategory(entry, snapshot, review) {
     ? "compatible_work_requires_review"
     : "unknown_metadata";
 }
-function recoveryBillingCategory(r) {
-  if (
-    r.state === "ended" ||
-    (["paid", "superseded"].includes(r.state) &&
-      r.projection?.state === "complete")
-  )
-    return "safe_terminal";
-  if (
-    r.state === "canceled" &&
-    r.receipts?.canceled === true &&
-    r.receipts?.collectionRestored === true &&
-    Array.isArray(r.receipts.collectionToRestore)
-  )
-    return "safe_terminal";
-  return "uncertain_external_effect";
-}
-function billingCategory(r) {
-  if (r.guildId.startsWith("CHANGE_OP#"))
-    return ["succeeded", "canceled"].includes(r.state) && r.reconciled === true
-      ? "safe_terminal"
-      : "uncertain_external_effect";
-  if (r.guildId.startsWith("RENEWAL_OP#"))
-    return ["succeeded", "rejected"].includes(r.state)
-      ? "safe_terminal"
-      : "uncertain_external_effect";
-  if (r.guildId.startsWith("RENEWAL_RECOVERY#"))
-    return recoveryBillingCategory(r);
-  return /^\d{17,20}$/.test(r.guildId)
-    ? "preserved_configuration"
-    : "unknown_metadata";
-}
 function personalJobCategory(r) {
-  if (r.status === "complete" && r.completedAt && !r.processingClaimId)
+  if (
+    r.status === "complete" &&
+    r.completedAt &&
+    r.processingOwnerInstanceId === undefined &&
+    r.claimExpiresAt === undefined
+  )
     return "safe_terminal";
   return r.status === "pending_upload"
     ? "late_upload_exposure"
@@ -382,15 +357,23 @@ const classifiers = {
         ? "uncertain_external_effect"
         : "unknown_metadata",
   notion: notionCategory,
-  guildSubscription: billingCategory,
 };
-function categoryFor(entry, snapshot, review) {
+function categoryFor(entry, snapshot, review, futureReview) {
+  if (entry.table === "guildSubscription")
+    return billingCategory(entry, snapshot, futureReview);
   if (entry.table === "meetingHistory")
     return historyCategory(entry, snapshot, review);
   return classifiers[entry.table]?.(entry.metadata) ?? "unknown_metadata";
 }
-function classifyRetainedWork(snapshot, reviewedDisposition) {
+function classifyRetainedWork(
+  snapshot,
+  reviewedDisposition,
+  compatibilityBinding,
+) {
   const review = dispositionSchema.safeParse(reviewedDisposition);
+  const futureReview = review.success
+    ? bindFutureReview(review.data, compatibilityBinding)
+    : undefined;
   const records = snapshot.records.map((entry) => ({
     table: entry.table,
     key: entry.key,
@@ -398,6 +381,7 @@ function classifyRetainedWork(snapshot, reviewedDisposition) {
       entry,
       snapshot,
       review.success ? review.data : undefined,
+      futureReview,
     ),
     metadataHash: canonicalHash(entry.metadata),
   }));
@@ -412,13 +396,7 @@ function classifyRetainedWork(snapshot, reviewedDisposition) {
   )
     reopeningBlockers.push("metadata_incomplete");
   for (const record of records)
-    if (
-      ![
-        "safe_terminal",
-        "preserved_configuration",
-        "preserved_nonadoptable_legacy",
-      ].includes(record.category)
-    )
+    if (!safeCategories.includes(record.category))
       reopeningBlockers.push(record.category);
   return {
     preservesData: true,
