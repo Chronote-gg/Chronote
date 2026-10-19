@@ -10,7 +10,9 @@ const screenshotsDir = resolve(rootDir, "test", "storybook", "screenshots");
 const screenshotViewport = (id: string) =>
   id.endsWith("-mobile")
     ? { width: 390, height: 844 }
-    : { width: 1280, height: 720 };
+    : id.endsWith("-tablet")
+      ? { width: 768, height: 900 }
+      : { width: 1280, height: 720 };
 const config: TestRunnerConfig = {
   async preVisit(page, context) {
     await page.setViewportSize(screenshotViewport(context.id));
@@ -44,7 +46,7 @@ const config: TestRunnerConfig = {
     await mkdir(screenshotsDir, { recursive: true });
     await page.screenshot({
       path: resolve(screenshotsDir, `${context.id}.png`),
-      fullPage: true,
+      fullPage: !context.id.startsWith("settings-notesdestination--"),
     });
   },
 };

@@ -1,6 +1,9 @@
 import { render, screen } from "@testing-library/react";
 import { MantineProvider } from "@mantine/core";
 import Settings from "../Settings";
+import { ServerConfigCard } from "../../features/settings/ServerConfigCard";
+import { getConfigEntry } from "../../../config/registry";
+import { CONFIG_KEYS } from "../../../config/keys";
 import { useGuildContext } from "../../contexts/GuildContext";
 import { trpc } from "../../services/trpc";
 
@@ -206,4 +209,51 @@ describe("Settings page", () => {
       screen.queryByText("No server configuration entries available."),
     ).not.toBeInTheDocument();
   });
+});
+
+it("explains unconfigured manual starts in the active server notes picker", () => {
+  const entry = getConfigEntry(CONFIG_KEYS.notes.channelId);
+  if (!entry) throw new Error("Notes config entry missing");
+  render(
+    <MantineProvider>
+      <ServerConfigCard
+        busy={false}
+        registry={[entry]}
+        snapshot={{
+          values: {
+            [CONFIG_KEYS.notes.channelId]: {
+              key: CONFIG_KEYS.notes.channelId,
+              value: "",
+              source: "default",
+            },
+          },
+          experimentalEnabled: false,
+          tier: "free",
+          missingRequired: [],
+        }}
+        overrides={[]}
+        onSet={jest.fn()}
+        onClear={jest.fn()}
+        uiContext={{
+          textChannels: [
+            {
+              value: "notes",
+              label: "#notes",
+              botAccess: true,
+              missingPermissions: [],
+            },
+          ],
+        }}
+      />
+    </MantineProvider>,
+  );
+  expect(screen.getByText("Default notes channel")).toBeInTheDocument();
+  expect(
+    screen.getByRole("combobox", { name: CONFIG_KEYS.notes.channelId }),
+  ).toBeEnabled();
+  expect(
+    screen.getByText(
+      "Manually started meetings use the channel where the command was run.",
+    ),
+  ).toBeInTheDocument();
 });

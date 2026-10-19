@@ -37,6 +37,7 @@ import {
   type ChannelOption,
   type ChannelOverride,
 } from "../utils/settingsChannels";
+import { ChannelNotesDestinationSelect } from "../features/settings/ChannelNotesDestinationSelect";
 import { ChannelOverridesCard } from "../features/settings/ChannelOverridesCard";
 import { ServerConfigCard } from "../features/settings/ServerConfigCard";
 import { DictionaryCard } from "../features/settings/DictionaryCard";
@@ -138,7 +139,8 @@ export default function Settings() {
   const [channelVoiceChannelId, setChannelVoiceChannelId] = useState<
     string | null
   >(null);
-  const [channelAutoRecord, setChannelAutoRecord] = useState(true);
+  const [channelAutoRecord, setChannelAutoRecord] = useState(false);
+  const [channelSaveError, setChannelSaveError] = useState<string | null>(null);
   const [channelTextChannelId, setChannelTextChannelId] = useState<
     string | null
   >(null);
@@ -156,10 +158,11 @@ export default function Settings() {
     "inherit" | "on" | "off"
   >("inherit");
 
-  useEffect(() => {
+  const resetChannelDraft = () => {
     setEditingChannelId(null);
     setChannelVoiceChannelId(null);
-    setChannelAutoRecord(true);
+    setChannelAutoRecord(false);
+    setChannelSaveError(null);
     setChannelTextChannelId(null);
     setChannelTags("");
     setChannelContext("");
@@ -167,6 +170,10 @@ export default function Settings() {
     setChannelLiveVoiceCommandsMode("inherit");
     setChannelChatTtsMode("inherit");
     setChannelChatTtsTtsOnlyMode("inherit");
+  };
+
+  useEffect(() => {
+    resetChannelDraft();
     channelModal.close();
   }, [selectedGuildId]);
 
@@ -227,7 +234,12 @@ export default function Settings() {
   );
   const textChannelMap = useMemo(
     () =>
-      new Map(textChannels.map((channel) => [channel.value, channel.label])),
+      new Map(
+        textChannels.map((channel) => [
+          channel.value,
+          formatChannelLabel(channel),
+        ]),
+      ),
     [textChannels],
   );
   const voiceChannelAccess = useMemo(
@@ -323,20 +335,12 @@ export default function Settings() {
     dictionaryQuery.isLoading;
 
   const openAddChannel = () => {
-    setEditingChannelId(null);
-    setChannelVoiceChannelId(null);
-    setChannelAutoRecord(true);
-    setChannelTextChannelId(null);
-    setChannelTags("");
-    setChannelContext("");
-    setChannelLiveVoiceMode("inherit");
-    setChannelLiveVoiceCommandsMode("inherit");
-    setChannelChatTtsMode("inherit");
-    setChannelChatTtsTtsOnlyMode("inherit");
+    resetChannelDraft();
     channelModal.open();
   };
 
   const openEditChannel = (override: ChannelOverride) => {
+    setChannelSaveError(null);
     setEditingChannelId(override.channelId);
     setChannelVoiceChannelId(override.channelId);
     setChannelAutoRecord(override.autoRecordEnabled);
@@ -372,9 +376,7 @@ export default function Settings() {
   const channelNeedsStatusChannel =
     channelAutoRecord ||
     (effectiveChannelChatTtsEnabled && effectiveChannelTtsOnlyEnabled);
-  const resolvedTextChannelId = channelNeedsStatusChannel
-    ? (channelTextChannelId ?? defaultNotesChannelId ?? null)
-    : null;
+  const resolvedTextChannelId = channelTextChannelId ?? defaultNotesChannelId;
   const selectedTextChannel = resolvedTextChannelId
     ? textChannelAccess.get(resolvedTextChannelId)
     : undefined;
@@ -391,8 +393,11 @@ export default function Settings() {
     !selectedGuildId ||
     !channelVoiceChannelId ||
     voiceMissingPermissions.length > 0 ||
-    (channelNeedsStatusChannel &&
-      (!resolvedTextChannelId || textMissingPermissions.length > 0));
+    (channelNeedsStatusChannel && !resolvedTextChannelId) ||
+    Boolean(
+      resolvedTextChannelId &&
+      (!selectedTextChannel || !selectedTextChannel.botAccess),
+    );
 
   const handleSaveChannel = async () => {
     if (!selectedGuildId || !channelVoiceChannelId) return;
@@ -401,8 +406,6 @@ export default function Settings() {
       (override) => override.channelId === channelVoiceChannelId,
     );
     const trimmedContext = channelContext.trim();
-    const autoRecordTasks: Promise<unknown>[] = [];
-    const contextTasks: Promise<unknown>[] = [];
     const liveVoiceOverride =
       channelLiveVoiceMode === "inherit" ? null : channelLiveVoiceMode === "on";
     const liveVoiceCommandsOverride =
@@ -415,63 +418,31 @@ export default function Settings() {
       channelChatTtsTtsOnlyMode === "inherit"
         ? null
         : channelChatTtsTtsOnlyMode === "on";
-    const shouldManageContextTextChannel =
-      !channelAutoRecord &&
-      (channelNeedsStatusChannel ||
-        existingOverride?.textChannelId !== undefined);
-    const shouldUpdateContext =
-      trimmedContext.length > 0 ||
-      existingOverride?.context ||
-      shouldManageContextTextChannel ||
-      liveVoiceOverride !== null ||
-      existingOverride?.liveVoiceEnabled !== undefined ||
-      liveVoiceCommandsOverride !== null ||
-      existingOverride?.liveVoiceCommandsEnabled !== undefined ||
-      chatTtsOverride !== null ||
-      existingOverride?.chatTtsEnabled !== undefined ||
-      chatTtsTtsOnlyOverride !== null ||
-      existingOverride?.chatTtsTtsOnlyEnabled !== undefined;
-    if (shouldUpdateContext) {
-      contextTasks.push(
-        setChannelContextMutation.mutateAsync({
-          serverId: selectedGuildId,
-          channelId: channelVoiceChannelId,
-          context: trimmedContext.length > 0 ? trimmedContext : undefined,
-          defaultNotesChannelId: shouldManageContextTextChannel
-            ? channelNeedsStatusChannel
-              ? channelTextChannelId
-              : null
-            : undefined,
-          liveVoiceEnabled: liveVoiceOverride,
-          liveVoiceCommandsEnabled: liveVoiceCommandsOverride,
-          chatTtsEnabled: chatTtsOverride,
-          chatTtsTtsOnlyEnabled: chatTtsTtsOnlyOverride,
-        }),
-      );
-    }
-
-    if (channelAutoRecord) {
-      autoRecordTasks.push(
-        addRuleMutation.mutateAsync({
+    setChannelSaveError(null);
+    try {
+      await setChannelContextMutation.mutateAsync({
+        serverId: selectedGuildId,
+        channelId: channelVoiceChannelId,
+        context: trimmedContext.length > 0 ? trimmedContext : undefined,
+        defaultNotesChannelId: channelTextChannelId,
+        liveVoiceEnabled: liveVoiceOverride,
+        liveVoiceCommandsEnabled: liveVoiceCommandsOverride,
+        chatTtsEnabled: chatTtsOverride,
+        chatTtsTtsOnlyEnabled: chatTtsTtsOnlyOverride,
+      });
+      if (channelAutoRecord) {
+        await addRuleMutation.mutateAsync({
           serverId: selectedGuildId,
           mode: "one",
           voiceChannelId: channelVoiceChannelId,
-          textChannelId: channelTextChannelId ?? null,
           tags: parseTags(channelTags),
-        }),
-      );
-    } else if (existingOverride?.autoRecordEnabled) {
-      autoRecordTasks.push(
-        removeRuleMutation.mutateAsync({
+        });
+      } else if (existingOverride?.autoRecordEnabled) {
+        await removeRuleMutation.mutateAsync({
           serverId: selectedGuildId,
           channelId: channelVoiceChannelId,
-        }),
-      );
-    }
-
-    try {
-      await Promise.all(autoRecordTasks);
-      await Promise.all(contextTasks);
+        });
+      }
       await Promise.all([
         trpcUtils.autorecord.list.invalidate({ serverId: selectedGuildId }),
         trpcUtils.channelContexts.list.invalidate({
@@ -481,6 +452,7 @@ export default function Settings() {
       closeChannelModal();
     } catch (error) {
       console.error("Failed to save channel settings", error);
+      setChannelSaveError("Could not save channel settings. Try again.");
     }
   };
 
@@ -759,13 +731,23 @@ export default function Settings() {
       <ChannelOverridesCard
         busy={channelBusy}
         refreshing={channelsRefreshing}
+        recordAllEnabled={recordAllEnabled}
         overrides={overrides}
         availableVoiceChannels={availableVoiceChannels}
+        voiceChannels={voiceChannels}
+        defaultNotesChannelId={defaultNotesChannelId}
+        defaultNotesLabel={defaultNotesLabel}
         onRefresh={() => channelsQuery.refetch()}
         onAdd={openAddChannel}
         onSelect={(id) => {
           const found = overrides.find((o) => o.channelId === id);
-          if (found) openEditChannel(found);
+          openEditChannel(
+            found ?? {
+              channelId: id,
+              voiceLabel: voiceChannelMap.get(id) ?? "Unknown channel",
+              autoRecordEnabled: false,
+            },
+          );
         }}
         onRemove={handleRemoveOverride}
       />
@@ -837,45 +819,26 @@ export default function Settings() {
               back to the global setting.
             </Alert>
           ) : null}
-          {channelNeedsStatusChannel ? (
-            <FormSelect
-              label={channelAutoRecord ? "Notes channel" : "Status channel"}
-              placeholder={
-                channelsQuery.isLoading ? "Loading..." : "Select channel"
-              }
-              data={[
-                ...(defaultNotesChannelId
-                  ? [
-                      {
-                        value: "__default",
-                        label: `Use default (${defaultNotesLabel ?? "Default notes channel"})`,
-                      },
-                    ]
-                  : []),
-                ...textChannels.map((channel) => ({
-                  value: channel.value,
-                  label: formatChannelLabel(channel),
-                })),
-              ]}
-              value={
-                channelTextChannelId ??
-                (defaultNotesChannelId ? "__default" : null)
-              }
-              onChange={(value) => {
-                if (value === "__default") {
-                  setChannelTextChannelId(null);
-                } else {
-                  setChannelTextChannelId(value);
-                }
-              }}
-            />
+          <ChannelNotesDestinationSelect
+            value={channelTextChannelId}
+            onChange={setChannelTextChannelId}
+            defaultChannelId={defaultNotesChannelId}
+            defaultLabel={defaultNotesLabel}
+            channels={textChannels}
+            loading={channelsQuery.isLoading}
+          />
+          {resolvedTextChannelId && !selectedTextChannel ? (
+            <Text size="sm" c="red">
+              Unavailable notes channel. Choose an available channel or reset to
+              the server default.
+            </Text>
           ) : null}
           {channelNeedsStatusChannel && !resolvedTextChannelId ? (
             <Text size="sm" c="red">
-              Select a status channel or set a default notes channel first.
+              Select a notes channel or set a default notes channel first.
             </Text>
           ) : null}
-          {channelNeedsStatusChannel && textMissingPermissions.length > 0 ? (
+          {textMissingPermissions.length > 0 ? (
             <Alert
               icon={<IconAlertTriangle size={16} />}
               color="red"
@@ -983,6 +946,9 @@ export default function Settings() {
             value={channelContext}
             onChange={(event) => setChannelContext(event.currentTarget.value)}
           />
+          {channelSaveError ? (
+            <Alert color="red">{channelSaveError}</Alert>
+          ) : null}
           <Group justify="space-between" align="center">
             {voiceMissingPermissions.length > 0 ||
             textMissingPermissions.length > 0 ? (
@@ -1006,6 +972,7 @@ export default function Settings() {
               <Button
                 onClick={handleSaveChannel}
                 disabled={channelSaveDisabled}
+                loading={channelBusy}
                 data-testid="settings-save-channel"
               >
                 Save channel

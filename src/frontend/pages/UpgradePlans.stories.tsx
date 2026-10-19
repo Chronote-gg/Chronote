@@ -9,7 +9,7 @@ import { useEffect, useState } from "react";
 import type { Meta, StoryObj } from "@storybook/react";
 import { useMantineColorScheme } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { QueryClient } from "@tanstack/react-query";
 import { httpBatchLink } from "@trpc/client";
 import {
   createMemoryHistory,
@@ -21,8 +21,7 @@ import {
 } from "@tanstack/react-router";
 import { expect, userEvent, waitFor, within } from "storybook/test";
 import { trpc } from "../services/trpc";
-import { AuthProvider } from "../contexts/AuthContext";
-import { GuildProvider } from "../contexts/GuildContext";
+import { AuthenticatedPreviewProviders } from "../storybook/AuthenticatedPreviewProviders";
 import Upgrade from "./Upgrade";
 import UpgradeServerSelect from "./UpgradeServerSelect";
 import Billing from "./Billing";
@@ -423,25 +422,19 @@ export function UpgradePreview({
     });
   });
   return (
-    <trpc.Provider client={client} queryClient={queryClient}>
-      <QueryClientProvider client={queryClient}>
-        <AuthProvider>
-          <GuildProvider>
-            <div
-              style={{
-                padding: 16,
-                maxWidth: width ?? 1100,
-                marginInline: "auto",
-                background: "var(--mantine-color-body)",
-                minHeight: "100vh",
-              }}
-            >
-              <RouterProvider router={router} />
-            </div>
-          </GuildProvider>
-        </AuthProvider>
-      </QueryClientProvider>
-    </trpc.Provider>
+    <AuthenticatedPreviewProviders client={client} queryClient={queryClient}>
+      <div
+        style={{
+          padding: 16,
+          maxWidth: width ?? 1100,
+          marginInline: "auto",
+          background: "var(--mantine-color-body)",
+          minHeight: "100vh",
+        }}
+      >
+        <RouterProvider router={router} />
+      </div>
+    </AuthenticatedPreviewProviders>
   );
 }
 

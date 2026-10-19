@@ -15,6 +15,15 @@ on:
         description: Reviewed checksum, manifest for activate or entire old/new manifest envelope for repair
         type: string
         default: ""
+      continuation_action:
+        description: Inspect a frozen compatible deployment or explicitly continue its existing candidate
+        type: choice
+        default: none
+        options: [none, inspect, continue]
+      continuation_binding_sha256:
+        description: Reviewed private operation-binding checksum, required only for continue
+        type: string
+        default: ""
       probe_without_environment:
         description: Expect the separate job without a Sandbox environment to be denied
         type: boolean
@@ -40,6 +49,31 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: "24.15.0"
+      - name: Validate exclusive operation inputs
+        env:
+          CONTINUATION_ACTION: ${{ inputs.continuation_action }}
+          CONTINUATION_BINDING_SHA256: ${{ inputs.continuation_binding_sha256 }}
+          BOOTSTRAP_PHASE: ${{ inputs.bootstrap_phase }}
+          BOOTSTRAP_OPERATION_ID: ${{ inputs.bootstrap_operation_id }}
+          BOOTSTRAP_MANIFEST_SHA256: ${{ inputs.bootstrap_manifest_sha256 }}
+          PROBE_WITHOUT_ENVIRONMENT: ${{ inputs.probe_without_environment }}
+        run: |
+          node <<'NODE'
+          const assert = require("node:assert/strict");
+          const e = process.env;
+          const action = e.CONTINUATION_ACTION || "none";
+          assert.ok(["none", "inspect", "continue"].includes(action));
+          if (action === "none") assert.equal(e.CONTINUATION_BINDING_SHA256 || "", "");
+          else {
+            assert.equal(e.GITHUB_RUN_ATTEMPT, "1");
+            assert.equal(e.BOOTSTRAP_PHASE || "none", "none");
+            assert.equal(e.BOOTSTRAP_OPERATION_ID || "", "");
+            assert.equal(e.BOOTSTRAP_MANIFEST_SHA256 || "", "");
+            assert.notEqual(e.PROBE_WITHOUT_ENVIRONMENT, "true");
+            if (action === "continue") assert.match(e.CONTINUATION_BINDING_SHA256 || "", /^[a-f0-9]{64}$/);
+            else assert.equal(e.CONTINUATION_BINDING_SHA256 || "", "");
+          }
+          NODE
       - name: Assume Sandbox role with a read-only session
         uses: aws-actions/configure-aws-credentials@v6
         with:
@@ -219,3 +253,55 @@ jobs:
       - name: Remove the private manifest
         if: always()
         run: rm -f bootstrap-manifest.json
+
+  continuation:
+    if: ${{ inputs.continuation_action && inputs.continuation_action != 'none' }}
+    needs: identity
+    runs-on: ubuntu-latest
+    environment: sandbox
+    timeout-minutes: 180
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      CONTINUATION_ENVIRONMENT: sandbox
+      CONTINUATION_ACTION: ${{ inputs.continuation_action }}
+      CONTINUATION_BINDING_SHA256: ${{ inputs.continuation_binding_sha256 }}
+      AWS_REGION: ${{ vars.AWS_REGION }}
+      AWS_IGNORE_CONFIGURED_ENDPOINT_URLS: "true"
+      ECS_CLUSTER: ${{ vars.ECS_CLUSTER }}
+      ECS_SERVICE: ${{ vars.ECS_SERVICE }}
+      ECS_TASK_FAMILY: ${{ vars.ECS_TASK_FAMILY }}
+      SECRETS_PREFIX: ${{ vars.SECRETS_PREFIX }}
+      DEPLOYMENT_LISTENER_ARN: ${{ vars.DEPLOYMENT_LISTENER_ARN }}
+      DEPLOYMENT_TARGET_GROUP_A: ${{ vars.DEPLOYMENT_TARGET_GROUP_A }}
+      DEPLOYMENT_TARGET_GROUP_B: ${{ vars.DEPLOYMENT_TARGET_GROUP_B }}
+      EXPECTED_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
+      EXPECTED_ROLE_ARN: ${{ vars.SANDBOX_BACKEND_DEPLOY_ROLE_ARN }}
+      EXPECTED_SESSION_NAME: chronote-sandbox-${{ github.run_id }}-${{ github.run_attempt }}
+    steps:
+      - uses: actions/checkout@v7
+      - name: Assume the scoped Sandbox continuation role
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ vars.SANDBOX_BACKEND_DEPLOY_ROLE_ARN }}
+          allowed-account-ids: ${{ vars.AWS_ACCOUNT_ID }}
+          role-session-name: chronote-sandbox-${{ github.run_id }}-${{ github.run_attempt }}
+          role-duration-seconds: 10800
+          aws-region: ${{ vars.AWS_REGION }}
+          unset-current-credentials: true
+          mask-aws-account-id: true
+      - name: Verify exact Sandbox role session
+        run: |
+          set -euo pipefail
+          aws sts get-caller-identity --output json | node scripts/deployment/assert-sandbox-identity.cjs
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24.15.0"
+          cache: yarn
+      - name: Install dependencies
+        run: bash scripts/ci-install-dependencies.sh
+      - name: Compile protocol helpers
+        run: yarn build
+      - name: Execute only the selected continuation action
+        run: node scripts/deployment/continue-sandbox.cjs "$CONTINUATION_ACTION"

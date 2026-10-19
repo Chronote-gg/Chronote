@@ -26,9 +26,11 @@ After authorization, the first-recording guide offers **Open Discord** and an ex
 
 1. Join a voice channel.
 2. Tell participants you are recording. Run `/startmeeting` in a text channel, or right-click yourself, Chronote, or someone in your voice channel and select **Apps** -> **Start meeting**.
-3. If you use `/startmeeting`, optionally add a `context` parameter (e.g., "Weekly standup for backend team") and `tags` (e.g., "standup, backend").
+3. If you use `/startmeeting`, optionally add a `context` parameter (e.g., "Weekly standup for backend team"), `tags` (e.g., "standup, backend") and `notes-channel` to choose an accessible text channel for this meeting.
 
-Chronote joins the voice channel and begins recording. You will see a "Meeting Started" embed with an **End Meeting** button.
+Chronote joins the voice channel and begins recording. The private **View recording** link opens the published recording message with its **End Meeting** button, including when it is in the same channel where you ran the command.
+
+Controls and notes go to your one-meeting choice, then the voice-channel override, then the server default. If none is configured, they go to the text channel where you ran the command. A deleted or inaccessible destination blocks the start without fallback. Changing a default during recording affects the next meeting.
 
 ## Step 3: End the meeting
 
@@ -42,7 +44,7 @@ Chronote processes the recording:
 
 1. Audio is transcribed per speaker.
 2. Notes are generated from the transcript, context, and dictionary.
-3. A summary embed and full notes are posted to the text channel.
+3. A summary embed and full notes are posted to the same destination as the recording controls.
 4. Everything is saved to your meeting history.
 
 ## What to set up next

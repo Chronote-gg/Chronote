@@ -9,6 +9,8 @@ import type { Locator } from "@playwright/test";
 import { expect, test } from "./fixtures";
 import { mockGuilds, mockLibrary, mockSettings } from "./mockData";
 import { applyVisualDefaults, waitForVisualReady } from "./visualUtils";
+import { registerNotesRoutingVisualTests } from "./notesRoutingVisuals";
+import { assertPageCanScroll } from "./scrollAssertions";
 
 const runVisual = process.env.PW_VISUAL === "true";
 const visualModes = ["viewport", "full"] as const;
@@ -138,37 +140,6 @@ const installNotionVisualState = async (
     });
   });
 };
-
-async function assertPageCanScroll(page: Page): Promise<void> {
-  const scroll = await page.evaluate(() => {
-    const elements = [
-      document.scrollingElement,
-      ...document.querySelectorAll<HTMLElement>("*"),
-    ];
-    const element = elements.find(
-      (candidate) =>
-        candidate &&
-        candidate.scrollHeight > candidate.clientHeight + 10 &&
-        (candidate === document.scrollingElement ||
-          ["auto", "scroll"].includes(getComputedStyle(candidate).overflowY)),
-    );
-    if (!element) return null;
-    element.scrollTop = 0;
-    const before = element.scrollTop;
-    element.scrollTop = 100;
-    const result = {
-      height: element.scrollHeight,
-      client: element.clientHeight,
-      before,
-      after: element.scrollTop,
-    };
-    element.scrollTop = 0;
-    return result;
-  });
-  expect(scroll).not.toBeNull();
-  expect(scroll!.height).toBeGreaterThan(scroll!.client);
-  expect(scroll!.after).toBeGreaterThan(scroll!.before);
-}
 
 test.describe("visual regression", () => {
   test.skip(!runVisual, "Visual regression disabled");
@@ -1043,6 +1014,8 @@ test.describe("visual regression", () => {
       }
     });
   }
+
+  registerNotesRoutingVisualTests(expectVisualScreenshot);
 
   test("settings page @visual", async ({
     serverSelectPage,

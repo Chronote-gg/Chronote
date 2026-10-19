@@ -105,7 +105,8 @@ const NotesChannelSelect: CustomRenderer = ({
   if (textChannels.length === 0) {
     return (
       <Text size="sm" c="dimmed">
-        No text channels available.
+        No text channels available. Manually started meetings use the channel
+        where the command was run when no default is selected.
       </Text>
     );
   }
@@ -131,6 +132,15 @@ const NotesChannelSelect: CustomRenderer = ({
         disabled={disabled}
         placeholder="Select a text channel"
       />
+      {!value ? (
+        <Text size="xs" c="dimmed">
+          Manually started meetings use the channel where the command was run.
+        </Text>
+      ) : !selected ? (
+        <Text size="xs" c="red">
+          Unavailable notes channel. Choose an available channel.
+        </Text>
+      ) : null}
       {selected && !selected.botAccess ? (
         <Text size="xs" c="red">
           Grant bot access to {selected.label} for notes posting.

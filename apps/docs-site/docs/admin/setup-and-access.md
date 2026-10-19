@@ -50,7 +50,17 @@ Terms are injected into the transcription prompt to help improve spelling accura
 
 Only members with **Manage Server** can use the portal teaching flow. `/dictionary` retains its **Manage Channels** permission for existing Discord workflows. Both paths update the same server dictionary; the portal flow adds AI proposals and a separate human approval step.
 
-### 4. Configure auto-recording
+### 4. Choose where controls and notes appear
+
+In the portal's **Server settings**, set **Default notes channel** and save. Members with **Manage Server** can edit these saved settings. For a voice-channel exception, choose **Edit** beside that voice channel and select its **Notes channel**. The row shows the effective destination and whether it comes from the server default or a voice-channel override.
+
+The notes picker remains available with auto-recording off. Choosing a notes channel never enables recording. **Reset to server default** removes a voice-channel override. Inherited channels follow later server-default changes; an explicit override stays put even when it currently equals the default.
+
+For manual starts, Chronote uses the one-meeting `notes-channel` choice first, then the voice-channel override, then the server default. With none configured, it uses the text channel where the command was run. Auto-recording has no invocation-channel fallback and requires a configured destination.
+
+The destination must be accessible to the starter, and Chronote must have permission to post there. A deleted or inaccessible destination blocks the start without falling back to another channel. Changing settings during a recording affects the next meeting. Its controls, processing updates and final notes stay in the destination selected at start.
+
+### 5. Configure auto-recording
 
 Set up auto-recording so meetings are captured without anyone running `/startmeeting`:
 
@@ -69,7 +79,7 @@ Or enable it for every voice channel:
 
 Auto-record starts when any user joins a configured voice channel. It ends when the channel empties. If the recording produces too little content, it is cancelled automatically instead of generating empty notes.
 
-### 5. Choose which meeting artifacts viewers can access
+### 6. Choose which meeting artifacts viewers can access
 
 In **Server Settings** -> **Meetings**, server admins (members with **Manage Server**) can control two independent settings:
 

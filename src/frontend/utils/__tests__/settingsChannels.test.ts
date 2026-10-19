@@ -121,3 +121,34 @@ describe("settingsChannels utils", () => {
     ).toBe("rule");
   });
 });
+
+it("keeps an unavailable explicit route distinct from the server default", () => {
+  const [override] = buildChannelOverrides({
+    channelRules: [],
+    channelContexts: [
+      {
+        guildId: "g",
+        channelId: "v",
+        defaultNotesChannelId: "deleted",
+        updatedAt: "now",
+        updatedBy: "admin",
+      },
+    ],
+    voiceChannelMap: new Map([["v", "Voice"]]),
+    textChannelMap: new Map([["default", "#notes"]]),
+    defaultNotesChannelId: "default",
+  });
+  expect(override.textChannelId).toBe("deleted");
+  expect(override.textLabel).toBe("Unavailable notes channel");
+});
+it("does not create saved overrides for inherited voice channels", () => {
+  expect(
+    buildChannelOverrides({
+      channelRules: [],
+      channelContexts: [],
+      voiceChannelMap: new Map([["v", "Voice"]]),
+      textChannelMap: new Map([["default", "#notes"]]),
+      defaultNotesChannelId: "default",
+    }),
+  ).toEqual([]);
+});

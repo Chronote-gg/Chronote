@@ -34,7 +34,7 @@ const add = manageGuildProcedure
     const rule = await saveAutoRecordSetting({
       guildId: input.serverId,
       channelId: input.mode === "all" ? "ALL" : input.voiceChannelId!,
-      textChannelId: input.textChannelId ?? undefined,
+      textChannelId: input.textChannelId,
       enabled: true,
       recordAll: input.mode === "all",
       createdBy: ctx.user.id,

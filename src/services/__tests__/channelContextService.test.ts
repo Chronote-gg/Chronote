@@ -1,6 +1,7 @@
 import { jest } from "@jest/globals";
 import { CONFIG_KEYS } from "../../config/keys";
 import {
+  setChannelContext,
   clearChannelContext,
   clearChannelContextSettings,
 } from "../channelContextService";
@@ -45,4 +46,16 @@ describe("channelContextService", () => {
       CONFIG_KEYS.chatTts.ttsOnlyEnabled,
     );
   });
+});
+
+it("resets only the notes route when other settings are omitted", async () => {
+  jest.clearAllMocks();
+  await setChannelContext("guild-1", "voice-1", "admin", {
+    defaultNotesChannelId: null,
+  });
+  expect(clearConfigOverrideForScope).toHaveBeenCalledTimes(1);
+  expect(clearConfigOverrideForScope).toHaveBeenCalledWith(
+    { scope: "channel", guildId: "guild-1", channelId: "voice-1" },
+    CONFIG_KEYS.notes.channelId,
+  );
 });

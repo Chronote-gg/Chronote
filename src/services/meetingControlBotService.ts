@@ -1,3 +1,4 @@
+import { interruptOwnedMeeting } from "./ownedMeetingInterruption";
 import { initiatingStopInterruption } from "./meetingStopInterruption";
 import {
   PermissionFlagsBits,
@@ -11,7 +12,7 @@ import {
 import { persistExplicitMeetingStop } from "../commands/endMeeting";
 import { getMeeting } from "../meetings";
 import {
-  buildManualMeetingStartedMessage,
+  publishManualMeetingStartedMessage,
   startManualMeetingFromChannels,
 } from "../commands/startMeeting";
 import {
@@ -19,12 +20,7 @@ import {
   isLeaseActive,
   requestMeetingEndViaLease,
 } from "./activeMeetingLeaseService";
-import { getGuildLimits } from "./subscriptionService";
-import {
-  getSnapshotString,
-  resolveConfigSnapshot,
-} from "./unifiedConfigService";
-import { CONFIG_KEYS } from "../config/keys";
+import { resolveMeetingNotesChannel } from "./meetingNotesDestinationService";
 import { buildLiveMeetingTimelineEvents } from "./meetingTimelineService";
 import {
   MEETING_CONTROL_COMMAND_TYPES,
@@ -132,31 +128,6 @@ const fetchTextChannel = async (guild: Guild, textChannelId: string) => {
   return channel as TextChannel;
 };
 
-const resolveDefaultTextChannelId = async (guild: Guild) => {
-  const { subscription } = await getGuildLimits(guild.id);
-  const snapshot = await resolveConfigSnapshot({
-    guildId: guild.id,
-    tier: subscription.tier,
-  });
-  return getSnapshotString(snapshot, CONFIG_KEYS.notes.channelId, {
-    trim: true,
-  });
-};
-
-const resolveTextChannel = async (
-  guild: Guild,
-  input: StartMeetingCommandInput,
-) => {
-  const textChannelId =
-    input.textChannelId ?? (await resolveDefaultTextChannelId(guild));
-  if (!textChannelId) {
-    throw new MeetingControlExecutionError(
-      "Set a default notes channel or pass textChannelId.",
-    );
-  }
-  return fetchTextChannel(guild, textChannelId);
-};
-
 const fetchMember = async (guild: Guild, userId: string) =>
   guild.members.cache.get(userId) ??
   (await guild.members.fetch(userId).catch(() => null));
@@ -234,7 +205,13 @@ const executeStartMeeting = async (
   }
   assertSameVoiceChannel(state, voiceChannel);
 
-  const textChannel = await resolveTextChannel(guild, input);
+  const textChannel =
+    input.textChannelId !== undefined
+      ? await fetchTextChannel(guild, input.textChannelId)
+      : await resolveMeetingNotesChannel({
+          guild,
+          voiceChannelId: voiceChannel.id,
+        });
   const member = await fetchMember(guild, userId);
   assertMemberCanUseTextChannel(member, textChannel);
   const creator = await client.users.fetch(userId);
@@ -256,14 +233,19 @@ const executeStartMeeting = async (
     throw new MeetingControlExecutionError(startResult.error);
   }
 
-  await assertOwned();
-  const message = await textChannel.send(
-    buildManualMeetingStartedMessage(
-      startResult.meeting,
-      startResult.liveMeetingUrl,
-    ),
+  try {
+    await assertOwned();
+  } catch (error) {
+    await interruptOwnedMeeting(startResult.meeting, {
+      reason: "processing_failure",
+      deadline: Date.now() + 100_000,
+    });
+    throw error;
+  }
+  await publishManualMeetingStartedMessage(
+    startResult.meeting,
+    startResult.liveMeetingUrl,
   );
-  startResult.meeting.startMessageId = message.id;
 
   return {
     status: "started",

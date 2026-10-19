@@ -14,7 +14,11 @@ A meeting starts in three ways:
 - **TTS-only**: A user runs `/say`, or joins a channel with automatic chat-to-speech enabled. Chronote joins only to play TTS and does not create a recorded meeting.
 - **Personal upload**: A user uploads an existing audio or video file from the web portal. Chronote creates a personal meeting owned by that user.
 
-At this point, Chronote joins the voice channel and begins capturing audio from each participant separately. A meeting embed appears in the text channel with controls.
+At this point, Chronote joins the voice channel and begins capturing audio from each participant separately. A recording message appears in the resolved notes channel with controls. For manual starts, the destination order is an optional `notes-channel` choice, the voice-channel override, the server default, then the invocation text channel only when nothing is configured. Context-menu starts use the saved defaults too. Auto-recording requires a configured destination and has no invocation-channel fallback.
+
+The `/startmeeting` response is private, even when the recording is posted in the same channel. After Chronote publishes the recording message, **View recording** opens that exact message. The one-meeting choice accepts ordinary server text channels and does not change saved settings or grant channel access.
+
+An unavailable or inaccessible configured destination blocks the start without fallback. Chronote fixes the destination when recording starts: its controls, processing updates and final notes stay there even if an administrator changes settings during capture.
 
 **Constraints**: Only one meeting can be active per server at a time. The user who starts the meeting must be in a voice channel. The server must have available meeting minutes on its plan.
 

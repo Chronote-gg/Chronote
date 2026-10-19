@@ -1,27 +1,5 @@
-jest.mock("../../src/meetings", () => ({
-  hasMeeting: jest.fn(() => false),
-  getMeeting: jest.fn(),
-  deleteMeeting: jest.fn(),
-  initializeMeeting: jest.fn(),
-}));
-jest.mock("../../src/commands/endMeeting", () => ({
-  handleEndMeetingOther: jest.fn(),
-}));
-jest.mock("../../src/services/meetingVoiceSettingsService", () => ({
-  resolveMeetingVoiceSettings: jest.fn(async () => ({})),
-}));
-jest.mock("../../src/services/meetingArtifactAccessService", () => ({
-  resolveServerMeetingArtifactAccess: jest.fn(async () => ({
-    transcriptAccessEnabled: false,
-  })),
-}));
-jest.mock("../../src/services/activeMeetingLeaseService", () => ({
-  getActiveMeetingLeaseForGuild: jest.fn(async () => undefined),
-}));
-jest.mock("../../src/services/subscriptionService", () => ({
-  ...jest.requireActual("../../src/services/subscriptionService"),
-  getGuildLimits: jest.fn(),
-}));
+import { mockFreeGuildLimits } from "../fixtures/meetingStart";
+import { createUpgradeRecordingLimitNotice } from "../fixtures/recordingLimitNotice";
 jest.mock("../../src/services/meetingUsageService", () => ({
   getRollingUsageForGuild: jest.fn(async () => ({
     usedSeconds: 240 * 60,
@@ -36,10 +14,6 @@ jest.mock("../../src/services/recordingLimitService", () => ({
   encounterRecordingLimit: jest.fn(),
   notifyRecordingLimit: jest.fn(),
 }));
-jest.mock("../../src/utils/permissions", () => ({
-  checkBotPermissions: jest.fn(() => ({ success: true })),
-  canBotSendMessages: jest.fn(() => true),
-}));
 import {
   startManualMeetingFromChannels,
   handleAutoStartMeeting,
@@ -48,10 +22,7 @@ import {
   encounterRecordingLimit,
   notifyRecordingLimit,
 } from "../../src/services/recordingLimitService";
-import {
-  getGuildLimits,
-  getLimitsForTier,
-} from "../../src/services/subscriptionService";
+import { getGuildLimits } from "../../src/services/subscriptionService";
 import { initializeMeeting } from "../../src/meetings";
 import type {
   Client,
@@ -71,32 +42,12 @@ const client = { user: { id: "bot-1" } } as Client;
 const creator = { id: "actor-1" } as User;
 beforeEach(() => {
   jest.clearAllMocks();
-  jest.mocked(getGuildLimits).mockResolvedValue({
-    limits: getLimitsForTier("free"),
-    subscription: {
-      tier: "free",
-      status: "active",
-      source: "default",
-      billingSource: "free",
-      stripeTier: null,
-      grantTier: null,
-      activeGrant: null,
-    },
-  });
-  jest.mocked(encounterRecordingLimit).mockImplementation(async (input) => ({
-    input,
-    currentTier: "free",
-    action: {
-      kind: "upgrade",
-      label: "View Basic",
-      url: "https://chronote.test/upgrade",
-      purchasePath: "initial_purchase",
-      eligibility: "higher_allowance",
-      targetTier: "basic",
-      benefit: "More time",
-    },
-    payload: { content: input.message, allowedMentions: { parse: [] } },
-  }));
+  mockFreeGuildLimits();
+  jest
+    .mocked(encounterRecordingLimit)
+    .mockImplementation(async (input) =>
+      createUpgradeRecordingLimitNotice(input),
+    );
 });
 test.each(["manual_command", "mcp"] as const)(
   "%s refusal captures the shared encounter without starting a recording",

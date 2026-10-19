@@ -5,6 +5,7 @@ import { parseTags } from "../utils/tags";
 import {
   buildScopePrefix,
   clearConfigOverrideForScope,
+  getConfigOverrideForScope,
   listConfigOverridesForScope,
   listConfigOverridesForScopePrefix,
   setConfigOverrideForScope,
@@ -166,46 +167,24 @@ export async function saveAutoRecordSetting(params: {
   createdBy: string;
   tags?: string[];
 }): Promise<AutoRecordSettings> {
-  if (params.recordAll || params.channelId === "ALL") {
-    const scope = { scope: "server", guildId: params.guildId } as const;
-    await setConfigOverrideForScope(
-      scope,
-      CONFIG_KEYS.autorecord.enabled,
-      params.enabled,
-      params.createdBy,
-    );
-    if (params.textChannelId) {
-      await setConfigOverrideForScope(
-        scope,
-        CONFIG_KEYS.notes.channelId,
-        params.textChannelId,
-        params.createdBy,
-      );
-    }
-    if (params.tags) {
-      await setConfigOverrideForScope(
-        scope,
-        CONFIG_KEYS.notes.tags,
-        params.tags.join(", "),
-        params.createdBy,
-      );
-    }
+  const recordAll = params.recordAll || params.channelId === "ALL";
+  const scope = recordAll
+    ? ({ scope: "server", guildId: params.guildId } as const)
+    : ({
+        scope: "channel",
+        guildId: params.guildId,
+        channelId: params.channelId,
+      } as const);
+  const preservesDestination = recordAll
+    ? params.textChannelId == null
+    : params.textChannelId === undefined;
+  const textChannelId = preservesDestination
+    ? coerceString(
+        (await getConfigOverrideForScope(scope, CONFIG_KEYS.notes.channelId))
+          ?.value,
+      )
+    : (params.textChannelId ?? undefined);
 
-    return buildSetting({
-      guildId: params.guildId,
-      channelId: "ALL",
-      recordAll: true,
-      enabled: params.enabled,
-      textChannelId: params.textChannelId ?? undefined,
-      tags: params.tags,
-    });
-  }
-
-  const scope = {
-    scope: "channel",
-    guildId: params.guildId,
-    channelId: params.channelId,
-  } as const;
   await setConfigOverrideForScope(
     scope,
     CONFIG_KEYS.autorecord.enabled,
@@ -219,7 +198,7 @@ export async function saveAutoRecordSetting(params: {
       params.textChannelId,
       params.createdBy,
     );
-  } else {
+  } else if (!recordAll && params.textChannelId === null) {
     await clearConfigOverrideForScope(scope, CONFIG_KEYS.notes.channelId);
   }
   if (params.tags) {
@@ -229,20 +208,19 @@ export async function saveAutoRecordSetting(params: {
       params.tags.join(", "),
       params.createdBy,
     );
-  } else {
+  } else if (!recordAll) {
     await clearConfigOverrideForScope(scope, CONFIG_KEYS.notes.tags);
   }
 
   return buildSetting({
     guildId: params.guildId,
-    channelId: params.channelId,
-    recordAll: false,
+    channelId: recordAll ? "ALL" : params.channelId,
+    recordAll,
     enabled: params.enabled,
-    textChannelId: params.textChannelId ?? undefined,
+    textChannelId,
     tags: params.tags,
   });
 }
-
 export async function removeAutoRecordSetting(
   guildId: string,
   channelId: string,
@@ -261,7 +239,6 @@ export async function removeAutoRecordSetting(
   const scope = { scope: "channel", guildId, channelId } as const;
   await Promise.all([
     clearConfigOverrideForScope(scope, CONFIG_KEYS.autorecord.enabled),
-    clearConfigOverrideForScope(scope, CONFIG_KEYS.notes.channelId),
     clearConfigOverrideForScope(scope, CONFIG_KEYS.notes.tags),
   ]);
 }

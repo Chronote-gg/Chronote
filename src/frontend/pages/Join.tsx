@@ -27,7 +27,8 @@ const STEPS = [
     detail: (
       <>
         Let everyone know you’re recording, then run <Code>/startmeeting</Code>{" "}
-        in a text channel.
+        in a text channel. Use the private <strong>View recording</strong> link
+        to find your recording controls.
       </>
     ),
   },
@@ -36,7 +37,8 @@ const STEPS = [
     detail: (
       <>
         Press <strong>End Meeting</strong> in Chronote’s recording message. Your
-        notes will appear in the text channel.
+        notes will appear in that same channel, using your chosen notes channel
+        or the server’s configured destination.
       </>
     ),
   },

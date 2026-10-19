@@ -1,5 +1,10 @@
 import {
   finalizationFixture,
+  finalizationCaptureState,
+  autoRecordFinalizationFixture,
+  acknowledgedEndMeetingButton,
+  recordingLimitMeeting,
+  recordingOnlyFinalizationState,
   successfulArtifactUpload,
 } from "../fixtures/endMeeting";
 /** @jest-environment node */
@@ -163,6 +168,12 @@ describe("handleEndMeetingOther", () => {
 
   it.each([
     { used: 240, outcome: "exhausted_after_meeting", fails: false },
+    {
+      used: 240,
+      outcome: "exhausted_after_meeting",
+      fails: false,
+      routed: true,
+    },
     { used: 200, outcome: "near_limit", fails: false },
     { used: 240, outcome: "exhausted_after_meeting", fails: true },
     {
@@ -173,7 +184,7 @@ describe("handleEndMeetingOther", () => {
     },
   ])(
     "flushes and saves despite a $outcome notice (failure=$fails)",
-    async ({ used, outcome, fails, pending }) => {
+    async ({ used, outcome, fails, pending, routed }) => {
       const events: string[] = [];
       jest.mocked(settleOwnedVoiceSession).mockImplementationOnce(async () => {
         events.push("voice-settled");
@@ -193,69 +204,7 @@ describe("handleEndMeetingOther", () => {
       mockedGetGuildLimits.mockResolvedValue({ limits: {} } as never);
       mockedUpdateMeetingStatusService.mockResolvedValue(undefined);
 
-      const connection = {
-        disconnect: jest.fn(() => {
-          events.push("disconnect");
-        }),
-        destroy: jest.fn(() => {
-          events.push("destroy");
-        }),
-      };
-
-      const meeting = {
-        attendance: new Set<string>(),
-        reservation: {
-          guildId: "guild-1",
-          meetingId: "meeting-1",
-          sessionMode: "meeting",
-          ownerInstanceId: "fixture",
-          executionVersion: 1,
-          voiceOperationAttemptId: "attempt",
-          reservedAt: 100,
-          historyKey: {
-            guildId: "guild-1",
-            channelId_timestamp: "voice-1#fixture",
-          },
-          workHandle: { settle: jest.fn(), transition: jest.fn() },
-        },
-        guildId: "guild-1",
-        channelId: "text-1",
-        meetingId: "meeting-1",
-        voiceChannel: { id: "voice-1", name: "Voice" },
-        textChannel: {
-          send: jest.fn(),
-          messages: { fetch: jest.fn() },
-        },
-        connection,
-        chatLog: [],
-        audioData: {
-          audioFiles: [],
-          currentSnippets: new Map([
-            [
-              "user-1",
-              {
-                userId: "user-1",
-                timestamp: Date.now(),
-                chunks: [Buffer.from("test")],
-                fastRevision: 0,
-                fastTranscribed: false,
-              },
-            ],
-          ]),
-          outputFileName: "recording.mp3",
-        },
-        startTime: new Date("2025-01-01T00:00:00.000Z"),
-        endTime: undefined,
-        finishing: false,
-        finished: false,
-        transcribeMeeting: false,
-        generateNotes: false,
-        isAutoRecording: false,
-        creator: { id: "user-1" },
-        guild: { id: "guild-1", name: "Guild", members: { cache: new Map() } },
-        ttsQueue: { stopAndClear: jest.fn() },
-        setFinished: jest.fn(),
-      } as unknown as MeetingData;
+      const { meeting, connection } = recordingLimitMeeting(events);
 
       mockedGetGuildLimits.mockResolvedValue({
         limits: { maxMeetingMinutesRolling: 240 },
@@ -280,7 +229,22 @@ describe("handleEndMeetingOther", () => {
           .mocked(notifyRecordingLimit)
           .mockRejectedValueOnce(new Error("test notice failure"));
       else jest.mocked(notifyRecordingLimit).mockResolvedValueOnce(undefined);
-      const ending = handleEndMeetingOther({} as Client, meeting);
+      const button = {
+        guildId: meeting.guildId,
+        message: { id: "published-recording" },
+        user: { id: "user-1" },
+        deferred: false,
+        replied: false,
+        deferUpdate: jest.fn(),
+        reply: jest.fn(),
+        followUp: jest.fn(),
+      } as unknown as ButtonInteraction;
+      if (routed) {
+        mockedGetMeeting.mockReturnValueOnce(meeting);
+      }
+      const ending = routed
+        ? handleEndMeetingButton({} as Client, button)
+        : handleEndMeetingOther({} as Client, meeting);
       if (pending) {
         await new Promise((resolve) => setTimeout(resolve, 0));
         expect(meeting.setFinished).not.toHaveBeenCalled();
@@ -289,6 +253,15 @@ describe("handleEndMeetingOther", () => {
       }
       await ending;
 
+      if (routed) {
+        expect(button.deferUpdate).toHaveBeenCalled();
+        expect(button.followUp).not.toHaveBeenCalled();
+        expect(meeting.textChannel.id).toBe("original-notes");
+        expect(updateMeetingProcessingMessage).toHaveBeenCalledWith(meeting);
+        expect(updateMeetingSummaryMessage).toHaveBeenCalledWith(meeting, {
+          finalization: true,
+        });
+      }
       expect(notifyRecordingLimit).toHaveBeenCalledWith(
         expect.objectContaining({
           outcome,
@@ -652,27 +625,8 @@ describe("handleEndMeetingOther", () => {
         send: jest.fn().mockResolvedValue(undefined),
         messages: { fetch: jest.fn() },
       },
-      connection: {
-        disconnect: jest.fn(),
-        destroy: jest.fn(),
-      },
-      chatLog: [],
-      audioData: {
-        audioFiles: [],
-        currentSnippets: new Map(),
-        outputFileName: "recording.mp3",
-      },
-      startTime: new Date("2025-01-01T00:00:00.000Z"),
-      endTime: undefined,
-      finishing: false,
-      finished: false,
-      transcribeMeeting: false,
-      generateNotes: false,
-      isAutoRecording: false,
-      creator: { id: "user-1" },
-      guild: { id: "guild-1", name: "Guild", members: { cache: new Map() } },
-      ttsQueue: { stopAndClear: jest.fn() },
-      setFinished: jest.fn(),
+      ...finalizationCaptureState(),
+      ...recordingOnlyFinalizationState(),
     } as unknown as MeetingData;
 
     await handleEndMeetingOther({} as Client, meeting);
@@ -804,43 +758,11 @@ describe("handleEndMeetingOther", () => {
     mockedSaveMeetingHistoryToDatabase.mockResolvedValue(undefined);
 
     const meeting = {
-      attendance: new Set<string>(),
-      guildId: "guild-1",
-      channelId: "text-1",
-      meetingId: "meeting-1",
-      voiceChannel: {
-        id: "voice-1",
-        name: "Voice",
-        members: new Collection(),
-      },
-      textChannel: {
-        send: jest.fn().mockResolvedValue(undefined),
-        messages: { fetch: jest.fn() },
-      },
-      connection: {
-        disconnect: jest.fn(),
-        destroy: jest.fn(),
-      },
-      chatLog: [],
-      audioData: {
-        audioFiles: [],
-        currentSnippets: new Map(),
-        outputFileName: "recording.mp3",
-      },
-      startTime: new Date("2025-01-01T00:00:00.000Z"),
-      endTime: undefined,
-      finishing: false,
-      finished: false,
-      transcribeMeeting: false,
-      generateNotes: false,
-      isAutoRecording: true,
+      ...autoRecordFinalizationFixture(),
       cancelled: true,
       cancellationReason: "Stopped by user",
       endReason: MEETING_END_REASONS.AUTO_CANCELLED,
       creator: { id: "bot-1" },
-      guild: { id: "guild-1", members: { cache: new Map() } },
-      ttsQueue: { stopAndClear: jest.fn() },
-      setFinished: jest.fn(),
       participants: new Map(),
     } as unknown as MeetingData;
 
@@ -864,45 +786,15 @@ describe("handleEndMeetingOther", () => {
       "Auto-record rule: test-channel",
     );
 
-    const send = jest.fn().mockResolvedValue(undefined);
+    const fixture = autoRecordFinalizationFixture();
+    const send = fixture.textChannel.send;
     const meeting = {
-      attendance: new Set<string>(),
-      guildId: "guild-1",
-      channelId: "text-1",
-      meetingId: "meeting-1",
-      voiceChannel: {
-        id: "voice-1",
-        name: "Voice",
-        members: new Collection(),
-      },
-      textChannel: {
-        send,
-        messages: { fetch: jest.fn() },
-      },
-      connection: {
-        disconnect: jest.fn(),
-        destroy: jest.fn(),
-      },
-      chatLog: [],
-      audioData: {
-        audioFiles: [],
-        currentSnippets: new Map(),
-        outputFileName: "recording.mp3",
-      },
+      ...fixture,
       startTime: new Date(Date.now() - 2 * 60 * 1000),
-      endTime: undefined,
-      finishing: false,
-      finished: false,
-      transcribeMeeting: false,
-      generateNotes: false,
-      isAutoRecording: true,
       cancelled: true,
       cancellationReason: "Stopped by user",
       endReason: MEETING_END_REASONS.DISMISSED,
       creator: { id: "bot-1" },
-      guild: { id: "guild-1", members: { cache: new Map() } },
-      ttsQueue: { stopAndClear: jest.fn() },
-      setFinished: jest.fn(),
       participants: new Map(),
     } as unknown as MeetingData;
 
@@ -1098,56 +990,19 @@ describe("handleEndMeetingButton", () => {
       "Auto-record rule: test-channel",
     );
 
+    const fixture = autoRecordFinalizationFixture();
+    fixture.textChannel.messages.fetch.mockResolvedValue({
+      id: "start-message",
+      edit: jest.fn().mockResolvedValue(undefined),
+    });
     const meeting = {
+      ...fixture,
       startMessageId: "start-message",
-      attendance: new Set<string>(),
-      guildId: "guild-1",
-      channelId: "text-1",
-      meetingId: "meeting-1",
-      voiceChannel: { id: "voice-1", name: "Voice" },
-      textChannel: {
-        send: jest.fn().mockResolvedValue(undefined),
-        messages: {
-          fetch: jest.fn().mockResolvedValue({
-            id: "start-message",
-            edit: jest.fn().mockResolvedValue(undefined),
-          }),
-        },
-      },
-      connection: {
-        disconnect: jest.fn(),
-        destroy: jest.fn(),
-      },
-      chatLog: [],
-      audioData: {
-        audioFiles: [],
-        currentSnippets: new Map(),
-        outputFileName: "recording.mp3",
-      },
-      startTime: new Date("2025-01-01T00:00:00.000Z"),
-      endTime: undefined,
-      finishing: false,
-      finished: false,
-      transcribeMeeting: false,
-      generateNotes: false,
-      isAutoRecording: true,
-      creator: { id: "user-1" },
-      guild: { id: "guild-1", members: { cache: new Map() } },
-      ttsQueue: { stopAndClear: jest.fn() },
-      setFinished: jest.fn(),
     } as unknown as MeetingData;
 
     mockedGetMeeting.mockReturnValue(meeting);
 
-    const interaction = {
-      message: { id: "start-message" },
-      guildId: "guild-1",
-      user: { id: "user-1" },
-      deferred: false,
-      replied: false,
-      deferUpdate: jest.fn().mockResolvedValue(undefined),
-      reply: jest.fn().mockResolvedValue(undefined),
-    } as unknown as ButtonInteraction;
+    const interaction = acknowledgedEndMeetingButton();
 
     await handleEndMeetingButton({} as Client, interaction);
 
@@ -1182,54 +1037,14 @@ describe("handleEndMeetingButton", () => {
     ]);
 
     const meeting = {
+      ...autoRecordFinalizationFixture(),
       startMessageId: "start-message",
-      attendance: new Set<string>(),
-      guildId: "guild-1",
-      channelId: "text-1",
-      meetingId: "meeting-1",
-      voiceChannel: {
-        id: "voice-1",
-        name: "Voice",
-        members,
-      },
-      textChannel: {
-        send: jest.fn().mockResolvedValue(undefined),
-        messages: { fetch: jest.fn() },
-      },
-      connection: {
-        disconnect: jest.fn(),
-        destroy: jest.fn(),
-      },
-      chatLog: [],
-      audioData: {
-        audioFiles: [],
-        currentSnippets: new Map(),
-        outputFileName: "recording.mp3",
-      },
-      startTime: new Date("2025-01-01T00:00:00.000Z"),
-      endTime: undefined,
-      finishing: false,
-      finished: false,
-      transcribeMeeting: false,
-      generateNotes: false,
-      isAutoRecording: true,
-      creator: { id: "user-1" },
-      guild: { id: "guild-1", members: { cache: new Map() } },
-      ttsQueue: { stopAndClear: jest.fn() },
-      setFinished: jest.fn(),
+      voiceChannel: { id: "voice-1", name: "Voice", members },
     } as unknown as MeetingData;
 
     mockedGetMeeting.mockReturnValue(meeting);
 
-    const interaction = {
-      message: { id: "start-message" },
-      guildId: "guild-1",
-      user: { id: "user-1" },
-      deferred: false,
-      replied: false,
-      deferUpdate: jest.fn().mockResolvedValue(undefined),
-      reply: jest.fn().mockResolvedValue(undefined),
-    } as unknown as ButtonInteraction;
+    const interaction = acknowledgedEndMeetingButton();
 
     await handleEndMeetingButton({} as Client, interaction);
 

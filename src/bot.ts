@@ -30,6 +30,7 @@ import {
 import { Routes } from "discord-api-types/v10";
 import { CONFIG_KEYS } from "./config/keys";
 import { endTtsOnlySession, getMeeting, initializeMeeting } from "./meetings";
+import { resolveMeetingNotesChannel } from "./services/meetingNotesDestinationService";
 import {
   handleRequestStartMeeting,
   handleAutoStartMeeting,
@@ -1137,7 +1138,6 @@ async function handleUserJoin(newState: VoiceState, admitted = false) {
 
       // If auto-record is enabled, start recording
       if (autoRecordSetting && autoRecordSetting.enabled) {
-        let defaultNotesChannelId: string | undefined;
         let defaultTags: string[] | undefined;
         const { subscription, limits } = await getGuildLimits(
           newState.guild.id,
@@ -1147,11 +1147,6 @@ async function handleUserJoin(newState: VoiceState, admitted = false) {
             guildId: newState.guild.id,
             tier: subscription.tier,
           });
-          defaultNotesChannelId = getSnapshotString(
-            snapshot,
-            CONFIG_KEYS.notes.channelId,
-            { trim: true },
-          );
           const notesTagsValue = getSnapshotString(
             snapshot,
             CONFIG_KEYS.notes.tags,
@@ -1163,62 +1158,48 @@ async function handleUserJoin(newState: VoiceState, admitted = false) {
         } catch (error) {
           console.error("Failed to resolve server config defaults", error);
         }
-        const resolvedTextChannelId =
-          autoRecordSetting.textChannelId ?? defaultNotesChannelId;
-        if (!resolvedTextChannelId) {
-          console.error(
-            `No default notes channel configured for auto-record in guild ${newState.guild.id}`,
-          );
-          return;
-        }
-        const textChannel = newState.guild.channels.cache.get(
-          resolvedTextChannelId,
-        ) as TextChannel;
-
-        if (textChannel && newState.channel) {
-          console.log(
-            `Auto-starting recording in ${newState.channel.name} due to auto-record settings`,
-          );
-          const {
-            liveVoiceEnabled,
-            liveVoiceCommandsEnabled,
-            liveVoiceTtsVoice,
-            chatTtsEnabled,
-            chatTtsVoice,
-            chatTtsSpeakerPrefixMode,
-          } = await resolveMeetingVoiceSettings(
-            newState.guild.id,
-            newState.channelId!,
-            limits,
-          );
-          const tags = autoRecordSetting.tags ?? defaultTags;
-          const startReason = autoRecordSetting.recordAll
-            ? MEETING_START_REASONS.AUTO_RECORD_ALL
-            : MEETING_START_REASONS.AUTO_RECORD_CHANNEL;
-          const startTriggeredByUserId = newState.member.user.id;
-          const autoRecordRule: AutoRecordRule = {
-            mode: autoRecordSetting.recordAll ? "all" : "channel",
-            channelId: autoRecordSetting.channelId,
-          };
-          await handleAutoStartMeeting(client, newState.channel, textChannel, {
-            assertAdmission: assertServingBotAdmission,
-            tags,
-            liveVoiceEnabled,
-            liveVoiceCommandsEnabled,
-            liveVoiceTtsVoice,
-            chatTtsEnabled,
-            chatTtsVoice,
-            chatTtsSpeakerPrefixMode,
-            startReason,
-            startTriggeredByUserId,
-            autoRecordRule,
-          });
-          return;
-        } else {
-          console.error(
-            `Could not find text channel ${resolvedTextChannelId} for auto-recording`,
-          );
-        }
+        const textChannel = await resolveMeetingNotesChannel({
+          guild: newState.guild,
+          voiceChannelId: newState.channel.id,
+        });
+        console.log(
+          `Auto-starting recording in ${newState.channel.name} due to auto-record settings`,
+        );
+        const {
+          liveVoiceEnabled,
+          liveVoiceCommandsEnabled,
+          liveVoiceTtsVoice,
+          chatTtsEnabled,
+          chatTtsVoice,
+          chatTtsSpeakerPrefixMode,
+        } = await resolveMeetingVoiceSettings(
+          newState.guild.id,
+          newState.channelId!,
+          limits,
+        );
+        const tags = autoRecordSetting.tags ?? defaultTags;
+        const startReason = autoRecordSetting.recordAll
+          ? MEETING_START_REASONS.AUTO_RECORD_ALL
+          : MEETING_START_REASONS.AUTO_RECORD_CHANNEL;
+        const startTriggeredByUserId = newState.member.user.id;
+        const autoRecordRule: AutoRecordRule = {
+          mode: autoRecordSetting.recordAll ? "all" : "channel",
+          channelId: autoRecordSetting.channelId,
+        };
+        await handleAutoStartMeeting(client, newState.channel, textChannel, {
+          assertAdmission: assertServingBotAdmission,
+          tags,
+          liveVoiceEnabled,
+          liveVoiceCommandsEnabled,
+          liveVoiceTtsVoice,
+          chatTtsEnabled,
+          chatTtsVoice,
+          chatTtsSpeakerPrefixMode,
+          startReason,
+          startTriggeredByUserId,
+          autoRecordRule,
+        });
+        return;
       }
 
       await maybeStartAutoTtsOnly(newState);
@@ -1301,6 +1282,15 @@ async function setupApplicationCommands() {
           .setDescription("Optional comma-separated tags for this meeting")
           .setRequired(false)
           .setMaxLength(500),
+      )
+      .addChannelOption((option) =>
+        option
+          .setName("notes-channel")
+          .setDescription(
+            "Text channel for this recording's controls and notes",
+          )
+          .addChannelTypes(ChannelType.GuildText)
+          .setRequired(false),
       ),
     new SlashCommandBuilder()
       .setName("autorecord")

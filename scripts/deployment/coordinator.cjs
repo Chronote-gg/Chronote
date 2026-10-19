@@ -1,6 +1,5 @@
 #!/usr/bin/env node
 "use strict";
-const { sameEcsTaskArn } = require("../../src/utils/ecsTaskArn.js");
 const { isDeepStrictEqual } = require("node:util");
 const { marshall, unmarshall } = require("@aws-sdk/util-dynamodb");
 const {
@@ -10,7 +9,6 @@ const {
 } = require("./coordinator-aws.cjs");
 const WARMUP_SECONDS = 900;
 const RETIREMENT_SECONDS = 7500;
-const PROTECTION_MARGIN_SECONDS = 120;
 const CLI_PHASES = ["prepare", "promote", "retire", "reconcile"];
 
 function configuration(env) {
@@ -144,6 +142,14 @@ function createCoordinator(options = {}) {
     activeMeeting: `${config.tablePrefix}ActiveMeetingTable`,
   };
   const same = types.sameRuntimeIdentity;
+  const { ready, protectedTask } =
+    require("./runtime-proof.cjs").createRuntimeProof({
+      aws,
+      config,
+      types,
+      now,
+      diagnostic,
+    });
   const routing = require("./routing.cjs").createRouting({
     aws,
     config,
@@ -359,55 +365,6 @@ function createCoordinator(options = {}) {
         "Task identity lookup incomplete",
       );
     return result.tasks;
-  }
-  function freshProof(proof, margin = 0) {
-    return proof.provenAt <= now() && proof.expiresAt > now() + margin;
-  }
-  function ready(row, ctl, identity, mode) {
-    const r = row?.readiness;
-    return (
-      row?.recordType === "runtime" &&
-      row.expiresAt === undefined &&
-      same(row.identity, identity) &&
-      same(r.identity, identity) &&
-      same(row.protection.identity, identity) &&
-      r.runtimeMode === mode &&
-      r.observedEpoch === ctl.coordinatorEpoch &&
-      r.observedGeneration === ctl.servingGeneration &&
-      r.dependenciesReady &&
-      r.cacheReady &&
-      (mode === "api" || r.gatewayReady) &&
-      freshProof(r) &&
-      freshProof(row.protection, PROTECTION_MARGIN_SECONDS)
-    );
-  }
-  async function protectedTask(identity) {
-    diagnostic.nativeProtection = "unconfirmed";
-    if (identity.kind !== "ecs")
-      throw new CoordinatorFailure(
-        "identity_unconfirmed",
-        "ECS identity required",
-      );
-    const result = await aws("ecs", "get-task-protection", {
-      cluster: config.cluster,
-      tasks: [identity.taskArn],
-    });
-    diagnostic.operation = "verify_native_protection";
-    const proof = result.protectedTasks?.find((task) =>
-      sameEcsTaskArn(task.taskArn, identity.taskArn),
-    );
-    if (
-      result.failures?.length ||
-      !proof?.protectionEnabled ||
-      !Number.isFinite(Date.parse(proof.expirationDate)) ||
-      Date.parse(proof.expirationDate) / 1000 <=
-        now() + PROTECTION_MARGIN_SECONDS
-    )
-      throw new CoordinatorFailure(
-        "native_protection_unconfirmed",
-        "Native task protection unconfirmed; preserve work and investigate capacity/DEPLOYMENT_BLOCKED",
-      );
-    diagnostic.nativeProtection = "last_check_confirmed";
   }
   async function runtime(identity) {
     const row = await read(`RUNTIME#${identity.instanceId}`);
@@ -683,6 +640,16 @@ function createCoordinator(options = {}) {
       );
     return observed;
   }
+  function assertExpectedCandidate(warm) {
+    if (
+      options.expectedCandidate &&
+      !same(warm.identity, options.expectedCandidate)
+    )
+      throw new CoordinatorFailure(
+        "continuation_refused",
+        "Reviewed candidate changed",
+      );
+  }
   async function promote() {
     const deadline = now() + WARMUP_SECONDS;
     while (now() <= deadline) {
@@ -720,6 +687,7 @@ function createCoordinator(options = {}) {
       }
       const warm = await candidate(ctl);
       if (warm) {
+        assertExpectedCandidate(warm);
         await protectedTask(d.outgoing);
         await protectedTask(warm.identity);
         const revision = await routing.validate(ctl, svc, warm.identity);
@@ -950,7 +918,23 @@ function createCoordinator(options = {}) {
     return completeRollback(ctl);
   }
 
-  return { prepare, promote, retire, reconcile };
+  return {
+    prepare,
+    promote,
+    retire,
+    reconcile,
+    inspectContinuation: () =>
+      require("./continuation-inspection.cjs").inspectContinuation({
+        control,
+        own,
+        service,
+        candidate,
+        runtime,
+        ready,
+        protectedTask,
+        routing,
+      }),
+  };
 }
 async function runCli(requestedPhase, options = {}, output = console) {
   const diagnostic = {

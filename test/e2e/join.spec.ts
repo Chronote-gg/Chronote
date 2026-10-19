@@ -19,6 +19,12 @@ for (const width of [390, 768, 1280]) {
       page.getByRole("link", { name: "Open Discord" }),
     ).toHaveAttribute("href", "https://discord.com/channels/@me");
     await expect(page.getByTestId("sample-summary")).toBeVisible();
+    await expect(page.getByText(/Use the private/)).toContainText(
+      "View recording",
+    );
+    await expect(
+      page.getByText(/notes will appear in that same channel/),
+    ).toBeVisible();
     expect(await page.locator("details").getAttribute("open")).toBeNull();
     expect(
       await page.evaluate(

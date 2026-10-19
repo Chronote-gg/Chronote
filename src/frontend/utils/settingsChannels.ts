@@ -64,12 +64,11 @@ export const resolveOverrideTextLabel = (options: {
   textChannelMap: Map<string, string>;
   defaultNotesChannelId: string | null;
 }) => {
-  const { rule, resolvedTextChannelId, textChannelMap, defaultNotesChannelId } =
-    options;
-  if (!rule && !resolvedTextChannelId) return undefined;
+  const { resolvedTextChannelId, textChannelMap } = options;
+  if (!resolvedTextChannelId) return undefined;
   const label = textChannelMap.get(resolvedTextChannelId ?? "");
   if (label) return label;
-  return defaultNotesChannelId ? "Default notes channel" : "Unknown channel";
+  return "Unavailable notes channel";
 };
 
 const toChannelOverride = (options: {

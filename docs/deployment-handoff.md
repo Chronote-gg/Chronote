@@ -50,6 +50,50 @@ Rollback to the exact prior serving identities is allowed only before any retire
 
 A same-compatible-image replacement can enter serving through exact completed-deployment lineage or the durable compatible-replacement receipt. Incomplete, rolled-back, newer or absent lineage refuses it. The old runtime becomes draining, with its counts and voice guard retained. This is not a general restart or legacy bootstrap policy.
 
+## Continuing an existing Sandbox candidate
+
+The existing `sandbox-identity.yml` workflow supports an explicit continuation
+of a compatible deployment that remains in `warming` with source routing.
+Its default still performs the read-only identity check. Select
+`continuation_action: inspect` to validate the current operation without writes
+and print its canonical binding checksum. Select `continue` only after reviewing
+the private binding receipt, supplying that checksum as
+`continuation_binding_sha256`. Bootstrap inputs and the denial probe cannot be
+combined with either continuation action. A repeated workflow attempt refuses;
+refresh and review state before any later dispatch.
+
+The private binding is `continuationBinding(control, candidateIdentity)` from
+`scripts/deployment/continue-sandbox.cjs`. Hash it with the exported `bindingHash`.
+Keep the full object with the private execution evidence. It binds the original
+token, epoch, serving generation and identities, candidate task identity, pinned
+image, task definitions, runtime mode and routing topology. Renewable expiration
+and update timestamps are excluded from the checksum and checked independently.
+The CLI prints only the checksum and outcome. It does not print the binding or
+provider error bodies. A checksum proves matching metadata, not execution approval
+or successful promotion.
+
+Continuation retains the Sandbox environment gate, scoped OIDC role, exact STS
+identity verification and shared deployment concurrency group. The new role
+session identifies the continuation workflow's actual run and attempt. The
+coordinator token comes from the verified original Control record. These are
+separate identities. Dispatch from the reviewed source on an allowed existing
+`master` or `codex/*` ref. This extends an already registered workflow and does not
+require a new workflow registration or IAM permission expansion.
+
+Before its first coordinator write, continuation revalidates the frozen binding,
+original serving membership, exact ready candidate, settled service, native
+protection, healthy owned targets, revision bindings and source listener action.
+It runs the existing `promote` then `retire` phases without building an image,
+registering a definition, invoking `prepare` or forcing deployment. Original work
+continues to govern retirement. Changed phase, candidate or membership, stale
+proof, pending tasks, a stopped outgoing task, missing source targets and uncertain
+routing refuse continuation. Any later failure
+preserves state and receipts for review; there is no automatic rollback or retry
+of a listener submission. Do not report success until fresh native readback proves
+the exact serving runtime, acknowledged routing, runtime-owned retirement and
+complete service convergence. Production and billing flag changes remain outside
+this entry point.
+
 ## Ownership, preservation and delivery
 
 Seven actual producers contribute to retirement: pending admission, recording, finalization, personal processing, recovery processing, voice operation and ancillary delivery. Registration precedes awaits. An admitted reservation stays counted through initialization; finalization transitions the same handle. Existing owner controls have a separately counted child plus exact lease/attempt proof. Personal and recovery workers own their real claim, provider, renewal and ancillary promises.
