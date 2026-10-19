@@ -8,6 +8,7 @@ const {
   bindFutureReview,
   billingCategory,
 } = require("./retained-billing.cjs");
+const { receiptProjections } = require("./retained-receipts.cjs");
 const safeCategories = [
   "safe_terminal",
   "preserved_configuration",
@@ -131,14 +132,7 @@ const projections = {
     "notionPageId",
     "exportedNotesVersion",
   ],
-  stripeWebhook: [
-    "eventId",
-    "state",
-    "leaseToken",
-    "leaseUntil",
-    "receivedAt",
-    "expiresAt",
-  ],
+  stripeWebhook: receiptProjections,
   guildSubscription: billingProjections,
 };
 function projectionExpression(fields) {
@@ -168,6 +162,8 @@ function metadataOnly(record, fields) {
     let value = record;
     for (const part of parts) value = value?.[part];
     if (value === undefined) continue;
+    // Admission presence alone blocks the future-only receipt class, even if malformed.
+    if (path === "firstAdmission" || path === "admission") value = true;
     z.union([
       z.string().max(1024),
       z.number().finite(),

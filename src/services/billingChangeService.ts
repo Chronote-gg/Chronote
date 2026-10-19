@@ -66,7 +66,7 @@ type Context = {
 };
 const at = (context: Context) => context.now ?? Math.floor(Date.now() / 1000);
 const repo = () => getBillingChangeRepository();
-async function persist(
+async function writeChange(
   next: BillingChangeOperation,
   previous: BillingChangeOperation,
   usage?: BillingChangeWrite["usage"],
@@ -85,8 +85,12 @@ async function persist(
     );
   return parsed;
 }
-const persistReceipt = (...args: Parameters<typeof persist>) =>
-  persistBillingAcknowledgment(() => persist(...args));
+const persist = (context: Context, ...args: Parameters<typeof writeChange>) =>
+  context.owner!.effect(() => writeChange(...args));
+const persistReceipt = (
+  context: Context,
+  ...args: Parameters<typeof writeChange>
+) => persistBillingAcknowledgment(context.owner!, () => writeChange(...args));
 async function owned(context: Context, operationId?: string) {
   const control = await repo().getControl(context.guildId);
   const id = operationId ?? control?.operationId;
@@ -222,11 +226,13 @@ async function prepareBillingChangeOwned(
   });
   const usage = await reserveChangeOffer(operation);
   if (
-    !(await repo().claim({
-      operation,
-      expectedSubscription: source.saved,
-      usage,
-    }))
+    !(await context.owner!.effect(() =>
+      repo().claim({
+        operation,
+        expectedSubscription: source.saved,
+        usage,
+      }),
+    ))
   ) {
     const winner = await owned(context);
     if (!winner) throw changeUnavailable();
@@ -280,6 +286,7 @@ async function confirmBillingChangeOwned(
       await resume(context, await beginCancel(context, operation)),
     );
   const accepted = await persist(
+    context,
     {
       ...billingChangeBase(operation),
       revision: randomUUID(),
@@ -355,6 +362,7 @@ async function beginCancel(
         ? (stripeId(subscription.schedule) ?? null)
         : null;
   return persist(
+    context,
     {
       ...billingChangeBase(operation),
       revision: randomUUID(),
@@ -443,6 +451,7 @@ async function prepareInvoice(
     return beginCancel(context, operation);
   if (operation.timing === "renewal")
     return persist(
+      context,
       {
         ...billingChangeBase(operation),
         revision: randomUUID(),
@@ -459,6 +468,7 @@ async function prepareInvoice(
       subscription: source.subscription,
     });
     return persistReceipt(
+      context,
       { ...operation, revision: randomUUID(), draftInvoiceId },
       operation,
     );
@@ -470,6 +480,7 @@ async function prepareInvoice(
     subscription: source.subscription,
   });
   return persistReceipt(
+    context,
     {
       ...billingChangeBase(operation),
       revision: randomUUID(),
@@ -502,6 +513,7 @@ async function ensureScheduledRenewalWatch(
         subscriptionId: operation.source.subscriptionId,
         invoiceId,
         now: at(context),
+        owner: context.owner,
       });
     }
   }
@@ -529,6 +541,7 @@ async function afterAcceptance(
       async (providerScheduleId) => {
         if (latest.providerScheduleId === providerScheduleId) return;
         const saved = await persistReceipt(
+          context,
           { ...latest, revision: randomUUID(), providerScheduleId },
           latest,
         );
@@ -538,6 +551,7 @@ async function afterAcceptance(
       context.effect,
     );
     return persistReceipt(
+      context,
       {
         ...billingChangeBase(operation),
         revision: randomUUID(),
@@ -569,6 +583,7 @@ async function afterAcceptance(
   if (!verifyChangeFunding(invoice, operation, operation.funding))
     throw changeUnavailable();
   return persist(
+    context,
     {
       ...billingChangeBase(operation),
       revision: randomUUID(),
@@ -617,6 +632,7 @@ async function applyPayment(
     },
   });
   const completed = await persistReceipt(
+    context,
     next,
     operation,
     await settleChangeOffer(next, invoice, at(context)),
@@ -666,7 +682,7 @@ async function settleScheduled(
     result.kind === "paid"
       ? await settleChangeOffer(next, result.invoice, at(context))
       : undefined;
-  const completed = await persistReceipt(next, operation, usage);
+  const completed = await persistReceipt(context, next, operation, usage);
   return finishReconciliation(context, completed);
 }
 function scheduledServiceReceipt(
@@ -716,6 +732,7 @@ async function finishCancellation(
     onProgress: async (receipt) => {
       if (latest.state !== "canceling") throw changeUnavailable();
       latest = await persistReceipt(
+        context,
         { ...latest, revision: randomUUID(), recovery: receipt },
         latest,
       );
@@ -733,7 +750,7 @@ async function finishCancellation(
     operation.draftInvoiceId ?? operation.scheduleId ?? operation.operationId,
     at(context),
   );
-  const completed = await persistReceipt(next, latest, usage);
+  const completed = await persistReceipt(context, next, latest, usage);
   return finishReconciliation(context, completed);
 }
 async function finishReconciliation(
@@ -747,8 +764,12 @@ async function finishReconciliation(
     context.stripe,
     operation.guildId,
     operation.source.subscriptionId,
+    undefined,
+    undefined,
+    context.owner,
   );
   return persist(
+    context,
     { ...operation, revision: randomUUID(), reconciled: true },
     operation,
   );
@@ -759,11 +780,11 @@ export async function reconcileBillingChangeForWebhook(
   effect?: StripeEffect,
   owner?: RuntimeBillingOwner,
 ) {
-  const control = await repo().getControl(guildId);
-  if (!control) return;
-  const operation = await repo().getOperation(guildId, control.operationId);
-  if (!operation) throw changeUnavailable();
   await runBillingOperation(owner, async (admitted) => {
+    const control = await repo().getControl(guildId);
+    if (!control) return;
+    const operation = await repo().getOperation(guildId, control.operationId);
+    if (!operation) throw changeUnavailable();
     await resume(
       {
         stripe,

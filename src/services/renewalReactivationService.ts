@@ -300,7 +300,11 @@ class RenewalRecovery {
     });
   }
 
-  private async save(next: RenewalOperation) {
+  private save(next: RenewalOperation) {
+    return this.context.owner.effect(() => this.write(next));
+  }
+
+  private async write(next: RenewalOperation) {
     const accepted = await this.repo.compareAndWrite({
       next,
       expectedRevision: this.operation.revision,
@@ -414,7 +418,9 @@ class RenewalRecovery {
     if (this.operation.state === "applying") {
       const verifying = this.next({ state: "verifying" });
       const saved = acknowledged
-        ? await persistBillingAcknowledgment(() => this.save(verifying))
+        ? await persistBillingAcknowledgment(this.context.owner, () =>
+            this.write(verifying),
+          )
         : await this.save(verifying);
       if (!saved) return { kind: "result", result: this.processing() };
       this.operation = verifying;
@@ -432,6 +438,7 @@ class RenewalRecovery {
       this.operation.subscriptionId,
       undefined,
       { userId: payerId, analyticsOptOut: this.privacySuppressed },
+      this.context.owner,
     );
     const persisted = await getSubscriptionRepository().get(guildId);
     const confirmed = await this.readSource();
@@ -521,10 +528,12 @@ async function restorePriorRenewal(
       revision: randomUUID(),
     };
     if (
-      !(await repo.compareAndWrite({
-        next: optedOut,
-        expectedRevision: prior.revision,
-      }))
+      !(await context.owner.effect(() =>
+        repo.compareAndWrite({
+          next: optedOut,
+          expectedRevision: prior.revision,
+        }),
+      ))
     )
       return { kind: "processing", operationId: prior.operationId };
     prior = optedOut;
@@ -583,7 +592,11 @@ async function startRenewal(
     revision: randomUUID(),
     state: "applying",
   };
-  if (!(await repo.claim({ operation, expectedSubscription: saved })))
+  if (
+    !(await context.owner.effect(() =>
+      repo.claim({ operation, expectedSubscription: saved }),
+    ))
+  )
     return { kind: "changed" };
   await captureRenewalOperationEvent({ operation, phase: "requested" });
   return recover(context, operation);

@@ -45,6 +45,7 @@ type Checkpoint = {
   apiOutcomeKnown?: boolean;
   recoveryPollAcknowledged?: boolean;
   billingMutationStarted?: boolean;
+  billingOutcomeUnknown?: boolean;
   billingRecoveryAcknowledged?: boolean;
   interactionReceiptAcknowledged?: boolean;
   interactionDeferAcknowledged?: boolean;
@@ -261,6 +262,12 @@ export function beginRuntimeWorkClaim(
         () => checkpoint.controller.signal.throwIfAborted(),
       );
     },
+    markBillingOutcomeUnknown() {
+      checkpoint.apiOutcomeKnown = false;
+      checkpoint.billingOutcomeUnknown = true;
+      checkpoint.stage = "unresolved";
+      checkpoint.controller.abort();
+    },
     acknowledgeDurableBillingRecovery(key: string) {
       if (checkpoint.domain !== "billing" || checkpoint.id !== key)
         throw new Error(
@@ -397,8 +404,9 @@ function sameClaim(left: ClaimCheckpoint, right: ClaimCheckpoint): boolean {
 function acknowledgedWithoutClaim(entry: Checkpoint) {
   if (entry.domain === "billing")
     return (
-      entry.billingRecoveryAcknowledged ||
-      (!entry.billingMutationStarted && entry.recoveryPollAcknowledged)
+      !entry.billingOutcomeUnknown &&
+      (entry.billingRecoveryAcknowledged ||
+        (!entry.billingMutationStarted && entry.recoveryPollAcknowledged))
     );
   if (entry.domain === "api_correction") return entry.apiOutcomeKnown;
   if (entry.domain === "interaction") return entry.interactionStopAcknowledged;

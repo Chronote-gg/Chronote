@@ -7,6 +7,7 @@ export function runTestApiOperation<T>(
   const signal = new AbortController().signal;
   return run({
     signal,
+    unresolved: () => undefined,
     read: (effect) => effect(),
     mutate: (effect) => effect(),
   });

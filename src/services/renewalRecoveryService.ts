@@ -1,5 +1,6 @@
 import {
   runBillingOperation,
+  persistBillingAcknowledgment,
   type RuntimeBillingOwner,
 } from "./runtimeBillingOperationService";
 import { readRenewalCoverageCandidate } from "./renewalRecoveryCoverageEvidence";
@@ -45,7 +46,7 @@ type Context = {
   effect?: StripeEffect;
   owner?: RuntimeBillingOwner;
 };
-export async function trackPaidRenewalPeriod(
+async function trackPaidRenewalPeriodOwned(
   input: Context & { subscriptionId: string; invoiceId: string },
 ): Promise<void> {
   for (let attempt = 0; attempt < 3; attempt += 1) {
@@ -106,10 +107,12 @@ async function registerPaidRenewalPeriod(
     state: "watching",
     nextCheckAt: paid.periodEnd,
   });
-  return getRenewalRecoveryRepository().register({
-    record,
-    expectedSubscription: saved,
-  });
+  return input.owner!.effect(() =>
+    getRenewalRecoveryRepository().register({
+      record,
+      expectedSubscription: saved,
+    }),
+  );
 }
 
 async function catchUpPaidWatch(
@@ -130,19 +133,21 @@ async function catchUpPaidWatch(
   }
   if (!candidate || candidate.paid.periodEnd <= record.paid.periodEnd)
     return false;
-  const registered = await getRenewalRecoveryRepository().register({
-    record: {
-      ...candidate,
-      writerVersion: record.writerVersion,
-      writerRuntime: record.writerRuntime,
-    },
-    expectedSubscription: pointer,
-  });
+  const registered = await input.owner!.effect(() =>
+    getRenewalRecoveryRepository().register({
+      record: {
+        ...candidate,
+        writerVersion: record.writerVersion,
+        writerRuntime: record.writerRuntime,
+      },
+      expectedSubscription: pointer,
+    }),
+  );
   if (!registered) throw changeUnavailable();
   clearGuildSubscriptionCache(record.guildId);
   return true;
 }
-async function saveRecovery(
+async function writeRecovery(
   next: RenewalRecovery,
   previous: RenewalRecovery,
   pointer: GuildSubscription,
@@ -159,12 +164,20 @@ async function saveRecovery(
   clearGuildSubscriptionCache(next.guildId);
   return next;
 }
+function saveRecovery(
+  owner: RuntimeBillingOwner | undefined,
+  ...args: Parameters<typeof writeRecovery>
+) {
+  return runBillingOperation(owner, (admitted) =>
+    admitted.effect(() => writeRecovery(...args)),
+  );
+}
 function isRefreshableRecovery(
   record: RenewalRecovery | undefined,
 ): record is Extract<RenewalRecovery, { state: "watching" | "grace" }> {
   return record?.state === "watching" || record?.state === "grace";
 }
-export async function refreshRenewalRecovery(
+async function refreshRenewalRecoveryOwned(
   input: Context,
 ): Promise<RenewalRecovery | undefined> {
   const record = await getRenewalRecoveryRepository().getCurrent(input.guildId);
@@ -192,6 +205,7 @@ export async function refreshRenewalRecovery(
       const { nextCheckAt, ...base } = record;
       void nextCheckAt;
       return saveRecovery(
+        input.owner,
         renewalRecoverySchema.parse({
           ...base,
           state: "ended",
@@ -230,6 +244,7 @@ async function observeRenewalInvoice(
     const { nextCheckAt, ...base } = record;
     void nextCheckAt;
     return saveRecovery(
+      input.owner,
       renewalRecoverySchema.parse({
         ...base,
         ...bound,
@@ -247,6 +262,7 @@ async function observeRenewalInvoice(
     if (!config.stripe.renewalGraceEnabled)
       return postpone(input, record, pointer);
     return saveRecovery(
+      input.owner,
       {
         ...record,
         enforcementAccepted: true,
@@ -264,6 +280,7 @@ async function observeRenewalInvoice(
   )
     return postpone(input, record, pointer);
   return saveRecovery(
+    input.owner,
     renewalRecoverySchema.parse({
       ...record,
       ...bound,
@@ -284,17 +301,19 @@ function postpone(
 ): Promise<RenewalRecovery> {
   if (!("nextCheckAt" in record)) return Promise.resolve(record);
   return saveRecovery(
+    input.owner,
     { ...record, revision: randomUUID(), nextCheckAt: input.now + 60 },
     record,
     pointer,
   );
 }
 
-export async function completeRenewalPaidProjection(
+async function completeRenewalPaidProjectionOwned(
   guildId: string,
   subscription: StripeSubscription,
   saved: GuildSubscription,
-  stripe?: StripeClient,
+  stripe: StripeClient | undefined,
+  owner: RuntimeBillingOwner,
 ): Promise<void> {
   const record = await getRenewalRecoveryRepository().getCurrent(guildId);
   if (
@@ -330,6 +349,7 @@ export async function completeRenewalPaidProjection(
   )
     throw changeUnavailable();
   await saveRecovery(
+    owner,
     { ...record, revision: randomUUID(), projection: { state: "complete" } },
     record,
     saved,
@@ -362,6 +382,7 @@ async function beginRenewalCancellation(
   if (!pointer || pointer.stripeSubscriptionId !== record.subscriptionId)
     throw changeUnavailable();
   return saveRecovery(
+    input.owner,
     renewalRecoverySchema.parse({
       ...record,
       state: "canceling",
@@ -436,6 +457,9 @@ async function repairRenewalPaidAccess(
     input.stripe,
     input.guildId,
     record.subscriptionId,
+    undefined,
+    undefined,
+    input.owner,
   );
   const saved = await getSubscriptionRepository().get(input.guildId);
   if (!saved || saved.stripeSubscriptionId !== record.subscriptionId) return;
@@ -447,6 +471,7 @@ async function repairRenewalPaidAccess(
     subscription,
     saved,
     input.stripe,
+    input.owner,
   );
   if (subscription.status === "active")
     await trackPaidRenewalPeriod({
@@ -462,14 +487,16 @@ async function repairRenewalPaidAccess(
     });
     if (!candidate) throw changeUnavailable();
     if (
-      !(await getRenewalRecoveryRepository().register({
-        record: {
-          ...candidate,
-          writerVersion: record.writerVersion,
-          writerRuntime: record.writerRuntime,
-        },
-        expectedSubscription: saved,
-      }))
+      !(await input.owner!.effect(() =>
+        getRenewalRecoveryRepository().register({
+          record: {
+            ...candidate,
+            writerVersion: record.writerVersion,
+            writerRuntime: record.writerRuntime,
+          },
+          expectedSubscription: saved,
+        }),
+      ))
     )
       throw changeUnavailable();
     await reconcileRenewalRecovery(input);
@@ -487,7 +514,9 @@ async function finishRenewalCancellation(
       if (next.state !== "canceling") throw changeUnavailable();
       const pointer = await getSubscriptionRepository().get(input.guildId);
       if (!pointer) throw changeUnavailable();
-      await saveRecovery(next, record, pointer);
+      await persistBillingAcknowledgment(input.owner!, () =>
+        writeRecovery(next, record, pointer),
+      );
       record = next;
     },
   });
@@ -505,7 +534,7 @@ async function finishRenewalCancellation(
     });
     const pointer = await getSubscriptionRepository().get(input.guildId);
     if (!pointer) throw changeUnavailable();
-    await saveRecovery(next, record, pointer);
+    await saveRecovery(input.owner, next, record, pointer);
     if (next.state !== "superseded") throw changeUnavailable();
     return repairRenewalPaidAccess(input, next);
   }
@@ -522,7 +551,7 @@ async function finishRenewalCancellation(
     });
     const pointer = await getSubscriptionRepository().get(input.guildId);
     if (!pointer) throw changeUnavailable();
-    await saveRecovery(next, record, pointer);
+    await saveRecovery(input.owner, next, record, pointer);
     if (next.state !== "paid") throw changeUnavailable();
     return repairRenewalPaidAccess(input, next);
   }
@@ -536,6 +565,9 @@ async function finishRenewalCancellation(
     input.stripe,
     input.guildId,
     record.subscriptionId,
+    undefined,
+    undefined,
+    input.owner,
   );
   const pointer = await getSubscriptionRepository().get(input.guildId);
   if (
@@ -547,6 +579,7 @@ async function finishRenewalCancellation(
   const { nextCheckAt, ...base } = record;
   void nextCheckAt;
   await saveRecovery(
+    input.owner,
     renewalRecoverySchema.parse({
       ...base,
       state: "canceled",
@@ -612,5 +645,37 @@ export function reconcileRenewalRecovery(input: Context): Promise<void> {
       effect: owner.effect,
       signal: owner.signal,
     }),
+  );
+}
+
+export function refreshRenewalRecovery(
+  input: Context,
+): Promise<RenewalRecovery | undefined> {
+  return runBillingOperation(input.owner, (owner) =>
+    refreshRenewalRecoveryOwned({ ...input, owner, effect: owner.effect }),
+  );
+}
+export function trackPaidRenewalPeriod(
+  input: Context & { subscriptionId: string; invoiceId: string },
+): Promise<void> {
+  return runBillingOperation(input.owner, (owner) =>
+    trackPaidRenewalPeriodOwned({ ...input, owner, effect: owner.effect }),
+  );
+}
+export function completeRenewalPaidProjection(
+  guildId: string,
+  subscription: StripeSubscription,
+  saved: GuildSubscription,
+  stripe?: StripeClient,
+  owner?: RuntimeBillingOwner,
+): Promise<void> {
+  return runBillingOperation(owner, (admitted) =>
+    completeRenewalPaidProjectionOwned(
+      guildId,
+      subscription,
+      saved,
+      stripe,
+      admitted,
+    ),
   );
 }

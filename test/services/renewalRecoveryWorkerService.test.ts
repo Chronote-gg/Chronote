@@ -198,7 +198,7 @@ test.each([true, false])(
         await reconcileBillingChangeForWebhook(
           input.stripe,
           record.guildId,
-          operation.createdAt,
+          input.effect,
           input.owner,
         );
       });
@@ -284,3 +284,34 @@ test("maintenance refusal preserves due recovery and prevents its active lifetim
   });
   expect(recovery.reconcileRenewalRecovery).not.toHaveBeenCalled();
 });
+
+test.each(["read failure", "domain ACK then failure", "domain ACK lost"])(
+  "worker %s preserves actual mutation knowledge",
+  async (stage) => {
+    seed(
+      ["read failure", "domain ACK then failure", "domain ACK lost"].indexOf(
+        stage,
+      ) + 10,
+    );
+    const before = getRuntimeWorkAdmissionCheckpoints().length;
+    jest.spyOn(console, "warn").mockImplementation(() => undefined);
+    jest
+      .mocked(recovery.reconcileRenewalRecovery)
+      .mockImplementationOnce(async (input) => {
+        if (stage !== "read failure")
+          await input.owner!.effect(async () => {
+            if (stage === "domain ACK lost")
+              throw new Error("domain response lost");
+          });
+        throw new Error("provider read unavailable");
+      });
+    await runRenewalRecoveryPoll({
+      stripe,
+      now: 200,
+      signal: new AbortController().signal,
+    });
+    expect(getRuntimeWorkAdmissionCheckpoints()).toHaveLength(
+      before + (stage === "read failure" ? 0 : 1),
+    );
+  },
+);

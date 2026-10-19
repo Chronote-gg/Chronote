@@ -184,3 +184,17 @@ Whole-branch review, published exact-head checks, clean mergeability and the pos
 ## First Sandbox bootstrap tooling
 
 For the separately reviewed one-time introduction from an incompatible runtime, see [Sandbox bootstrap tooling](sandbox-bootstrap.md). Normal deployments still use the existing coordinator. The bootstrap and read-only observation commands do not apply infrastructure, stop legacy work, register an image, alter the listener or start a monitor automatically.
+
+## Stripe receipt admission and retention
+
+Authenticated callbacks persist an event ID and lease even when runtime proof is unavailable. No event payload is stored. A genuinely new proved receipt records immutable `birth` provenance under `stripe-receipt-admission-v1`. A lease retry updates only `leaseToken` and `leaseUntil` and removes unresolved TTL. It never replaces birth or first-admission history.
+
+Every recognized callback must atomically record its continuation admission with the existing Control and runtime admission conditions before invoking its handler. Admission binds the unexpired receipt token, attempt ID, exact runtime and serving generation. A lost transaction response prevents handler invocation. A legacy or unproven processing receipt remains retained and returns a retryable failure. A running prior admission cannot replay after lease expiry. Only a failed attempt that performed no mutation can receive fresh admission while preserving its first admission.
+
+The registered billing owner covers the complete handler, nested domain and provider writes, and final receipt persistence. Reads and pure computation do not start mutation tracking. A read failure before any mutation can release its attempt. A lost mutation acknowledgment, a failure after an acknowledged domain or provider write, or a failed final receipt write leaves unresolved ownership. Matching later reads do not create acknowledgment. Successful completed duplicates retain their existing acknowledgment behavior.
+
+New and reclaimed unresolved receipts have no TTL. Successful completion restores 30-day retention. Untouched legacy rows retain any existing TTL until separately inventoried. The change does not migrate them. Longer unresolved metadata retention can increase storage cost, which has not been priced. Analytics deduplication markers retain their existing retention periods and event properties.
+
+`scripts/deployment/retained-receipts.cjs` exports the versioned safe projection and `preservedUnadmittedReceipt` predicate. The projection represents any admission or first-admission object as a presence Boolean, so malformed empty history still blocks classification. A matching predicate returns `preserved_unadmitted_receipt`, meaning future work that has never crossed this admission boundary. It does not mean a payment is settled. The ordinary retained-work classifier continues to block those receipts.
+
+Task7 must obtain authenticated, complete inventory of every serving and draining callback receiver, exact reviewed source and image bindings, acknowledged legacy retirement and routing evidence, and the current exact hold. It must bind that evidence to the reviewed disposition and source through the existing compatibility contract before introducing an opaque authorizing closure. The Task6 schema checks shape and compatibility only. Caller-supplied objects, source hashes or a nonauthorizing predicate result cannot release a hold. Unknown or omitted receivers block reopening.

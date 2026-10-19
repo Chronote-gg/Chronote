@@ -5,6 +5,7 @@ import { getMockStore, resetMockStore } from "../../src/repositories/mockStore";
 import { context, control, runtime } from "../deployment/controlFixtures";
 import { getRuntimeWorkAdmissionCheckpoints } from "../../src/services/runtimeWorkAdmissionService";
 import { readBillingChange } from "../../src/services/billingChangeService";
+import * as subscriptionRepository from "../../src/repositories/subscriptionRepository";
 import * as changeRepository from "../../src/repositories/billingChangeRepository";
 import * as renewalRepository from "../../src/repositories/renewalReactivationRepository";
 import {
@@ -140,3 +141,63 @@ test.each(["throw", "false"])(
     expect(getRuntimeWorkAdmissionCheckpoints()).toHaveLength(prior + 1);
   },
 );
+
+test("readback-only funding receipt ACK retains a later projection read failure", async () => {
+  const { client: f, operation, store, key } = pendingFundingChange();
+  store.billingChangeOperations.set(key, {
+    ...operation,
+    draftInvoiceId: "in_observed",
+  });
+  f.invoice.mockResolvedValue(
+    response({
+      ...fundedInvoice,
+      id: "in_observed",
+      status: "open",
+      customer: operation.source.customerId,
+      auto_advance: false,
+      parent: null,
+      currency: operation.target.currency,
+      subtotal: 900,
+      discounts: [],
+      metadata: {
+        guild_id: operation.guildId,
+        chronote_change_operation: operation.operationId,
+        chronote_invoice_role: "funding",
+      },
+      lines: {
+        ...fundedInvoice.lines,
+        has_more: false,
+        data: [
+          { role: "target-service", amount: 1200 },
+          { role: "unused-service", amount: -300 },
+        ].map(({ role, amount }) => ({
+          ...fundedInvoice.lines.data[0],
+          amount,
+          currency: operation.target.currency,
+          discount_amounts: [],
+          metadata: { chronote_change_part: role },
+        })),
+      },
+    }),
+  );
+  const repository = subscriptionRepository.getSubscriptionRepository();
+  jest
+    .spyOn(subscriptionRepository, "getSubscriptionRepository")
+    .mockReturnValue(repository);
+  const error = new Error("projection GET failed after receipt");
+  jest.spyOn(repository, "get").mockRejectedValue(error);
+  const providerWrite = jest.spyOn(f.stripe.invoices, "finalizeInvoice");
+  const prior = getRuntimeWorkAdmissionCheckpoints().length;
+  await expect(
+    readBillingChange({
+      stripe: f.stripe,
+      guildId: operation.guildId,
+      payerId: operation.payerId,
+      now: operation.createdAt,
+    }),
+  ).rejects.toMatchObject({ cause: error });
+  expect(f.invoice).toHaveBeenCalledTimes(1);
+  expect(providerWrite).not.toHaveBeenCalled();
+  expect(store.billingChangeOperations.get(key)?.state).toBe("review");
+  expect(getRuntimeWorkAdmissionCheckpoints()).toHaveLength(prior + 1);
+});

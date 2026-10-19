@@ -33,11 +33,17 @@ import type {
   StripeSubscription,
 } from "../types/stripe";
 
+import {
+  receiptBirth,
+  continueStripeReceipt,
+} from "../services/stripeWebhookReceiptService";
+import type { RuntimeBillingOwner } from "../services/runtimeBillingOperationService";
 const WEBHOOK_PROCESSING_LEASE_MS = 60_000;
 
 type WebhookHandler = (options: {
   stripe: StripeClient;
   event: StripeEvent;
+  owner: RuntimeBillingOwner;
 }) => Promise<void>;
 
 const readMetadataValue = (
@@ -100,6 +106,7 @@ const resolveGuildIdFromInvoice = async (
 const handleCheckoutSessionCompleted: WebhookHandler = async ({
   stripe,
   event,
+  owner,
 }) => {
   const session = event.data.object as StripeCheckoutSession;
   if (!session.subscription) return;
@@ -124,12 +131,15 @@ const handleCheckoutSessionCompleted: WebhookHandler = async ({
     guildId,
     subscriptionId,
     checkoutInvoiceHint(session),
+    undefined,
+    owner,
   );
 };
 
 const handleInvoicePaymentFailed: WebhookHandler = async ({
   stripe,
   event,
+  owner,
 }) => {
   const invoice = event.data.object as StripeInvoice;
   const guildId = await resolveGuildIdFromInvoice(stripe, invoice);
@@ -139,18 +149,31 @@ const handleInvoicePaymentFailed: WebhookHandler = async ({
     stripe,
     guildId,
     now: Math.floor(Date.now() / 1000),
+    owner,
   });
-  await reconcileBillingChangeForWebhook(stripe, guildId);
+  await reconcileBillingChangeForWebhook(stripe, guildId, owner.effect, owner);
   if (!subscription) return;
   await reconcileSubscription(
     stripe,
     guildId,
     typeof subscription === "string" ? subscription : subscription.id,
+    undefined,
+    undefined,
+    owner,
   );
-  await captureBillingInvoiceOutcome({ stripe, invoice, outcome: "failed" });
+  await captureBillingInvoiceOutcome({
+    stripe,
+    invoice,
+    outcome: "failed",
+    owner,
+  });
 };
 
-const handleSubscriptionUpsert: WebhookHandler = async ({ stripe, event }) => {
+const handleSubscriptionUpsert: WebhookHandler = async ({
+  stripe,
+  event,
+  owner,
+}) => {
   const subscription = event.data.object as StripeSubscription;
   const guildId = readMetadataValue(subscription.metadata, "guild_id");
   if (!guildId) {
@@ -160,16 +183,24 @@ const handleSubscriptionUpsert: WebhookHandler = async ({ stripe, event }) => {
     );
     return;
   }
-  await reconcileBillingChangeForWebhook(stripe, guildId);
-  await reconcileSubscription(stripe, guildId, subscription.id);
+  await reconcileBillingChangeForWebhook(stripe, guildId, owner.effect, owner);
+  await reconcileSubscription(
+    stripe,
+    guildId,
+    subscription.id,
+    undefined,
+    undefined,
+    owner,
+  );
   // A deletion may have ended an unexpired review. Recover after persisting it
   // so a replacement purchase never waits for a browser visit or quote expiry.
-  await reconcileBillingChangeForWebhook(stripe, guildId);
+  await reconcileBillingChangeForWebhook(stripe, guildId, owner.effect, owner);
 };
 
 const handleInvoicePaymentSucceeded: WebhookHandler = async ({
   stripe,
   event,
+  owner,
 }) => {
   const invoice = event.data.object as StripeInvoice;
   const guildId = await resolveGuildIdFromInvoice(stripe, invoice);
@@ -178,24 +209,27 @@ const handleInvoicePaymentSucceeded: WebhookHandler = async ({
     return;
   }
   const invoiceSubscription = resolveInvoiceSubscription(invoice);
-  await recordPaymentTransaction({
-    transactionID: invoice.id,
-    userID: guildId,
-    amount: (invoice.amount_paid || 0) / 100,
-    currency: invoice.currency,
-    status: invoice.status || "paid",
-    paymentDate: new Date(invoice.created * 1000).toISOString(),
-    paymentMethod: invoice.default_payment_method ? "card" : "unknown",
-    discountCode: resolveInvoiceDiscountCode(invoice),
-    subscriptionID: invoiceSubscription
-      ? typeof invoiceSubscription === "string"
-        ? invoiceSubscription
-        : invoiceSubscription.id
-      : "",
-    customerId:
-      typeof invoice.customer === "string" ? invoice.customer : undefined,
-  });
-  await reconcileBillingChangeForWebhook(stripe, guildId);
+  await recordPaymentTransaction(
+    {
+      transactionID: invoice.id,
+      userID: guildId,
+      amount: (invoice.amount_paid || 0) / 100,
+      currency: invoice.currency,
+      status: invoice.status || "paid",
+      paymentDate: new Date(invoice.created * 1000).toISOString(),
+      paymentMethod: invoice.default_payment_method ? "card" : "unknown",
+      discountCode: resolveInvoiceDiscountCode(invoice),
+      subscriptionID: invoiceSubscription
+        ? typeof invoiceSubscription === "string"
+          ? invoiceSubscription
+          : invoiceSubscription.id
+        : "",
+      customerId:
+        typeof invoice.customer === "string" ? invoice.customer : undefined,
+    },
+    owner,
+  );
+  await reconcileBillingChangeForWebhook(stripe, guildId, owner.effect, owner);
   if (invoice.metadata?.chronote_invoice_role === "funding") return;
   const reconciled = invoiceSubscription
     ? await reconcileSubscription(
@@ -205,9 +239,16 @@ const handleInvoicePaymentSucceeded: WebhookHandler = async ({
           ? invoiceSubscription
           : invoiceSubscription.id,
         { invoiceId: invoice.id },
+        undefined,
+        owner,
       )
     : undefined;
-  await captureBillingInvoiceOutcome({ stripe, invoice, outcome: "settled" });
+  await captureBillingInvoiceOutcome({
+    stripe,
+    invoice,
+    outcome: "settled",
+    owner,
+  });
   if (
     invoice.status === "paid" &&
     invoice.amount_paid > 0 &&
@@ -219,6 +260,7 @@ const handleInvoicePaymentSucceeded: WebhookHandler = async ({
       guildId,
       reconciled.subscription,
       stripe,
+      owner,
     );
 };
 
@@ -250,6 +292,7 @@ async function capturePaidInvoiceOnce(
   guildId: string,
   subscription: StripeSubscription,
   stripe: StripeClient,
+  owner: RuntimeBillingOwner,
 ) {
   const billingKinds: Record<string, string> = {
     subscription_create: "initial_purchase",
@@ -274,11 +317,13 @@ async function capturePaidInvoiceOnce(
     // retries delivered under a different Stripe event id (30-day retention).
     const now = Date.now();
     if (
-      !(await getStripeWebhookRepository().tryCreate({
-        eventId: `paid_invoice:${invoice.id}`,
-        receivedAt: new Date(now).toISOString(),
-        expiresAt: Math.floor(now / 1000) + 60 * 60 * 24 * 30,
-      }))
+      !(await owner.effect(() =>
+        getStripeWebhookRepository().tryCreate({
+          eventId: `paid_invoice:${invoice.id}`,
+          receivedAt: new Date(now).toISOString(),
+          expiresAt: Math.floor(now / 1000) + 60 * 60 * 24 * 30,
+        }),
+      ))
     )
       return;
     captureEvent("billing_entitlement_saved", {
@@ -563,8 +608,12 @@ async function classifyInvoicePrice({
 }
 
 const handlersByEvent: Record<string, WebhookHandler> = {
-  "checkout.session.expired": async ({ stripe, event }) =>
-    expirePurchaseAttempt(stripe, event.data.object as StripeCheckoutSession),
+  "checkout.session.expired": async ({ stripe, event, owner }) =>
+    expirePurchaseAttempt(
+      stripe,
+      event.data.object as StripeCheckoutSession,
+      owner,
+    ),
   "checkout.session.completed": handleCheckoutSessionCompleted,
   "invoice.payment_failed": handleInvoicePaymentFailed,
   "invoice.payment_succeeded": handleInvoicePaymentSucceeded,
@@ -599,15 +648,15 @@ export function registerBillingRoutes(
 
     try {
       const webhookRepo = getStripeWebhookRepository();
-      const ttlSeconds = 60 * 60 * 24 * 30;
       const leaseToken = randomUUID();
+      const birth = await receiptBirth();
       const claimed = await webhookRepo.claim({
+        ...(birth ? { birth, continuation: "not_admitted" as const } : {}),
         state: "processing",
         leaseToken,
         leaseUntil: Date.now() + WEBHOOK_PROCESSING_LEASE_MS,
         eventId: event.id,
         receivedAt: new Date().toISOString(),
-        expiresAt: Math.floor(Date.now() / 1000) + ttlSeconds,
       });
       if (!claimed) {
         const receipt = await webhookRepo.get(event.id);
@@ -619,24 +668,22 @@ export function registerBillingRoutes(
         return;
       }
 
+      const handler = handlersByEvent[event.type];
       try {
-        const handler = handlersByEvent[event.type];
-        if (handler) {
-          await handler({ stripe, event });
-        }
-      } catch (handlerError) {
-        if (handlerError instanceof RuntimeAdmissionUnavailable) {
+        if (handler)
+          await continueStripeReceipt(event.id, leaseToken, (owner) =>
+            handler({ stripe, event, owner }),
+          );
+        else if (!(await webhookRepo.finish(event.id, leaseToken)))
+          throw new RuntimeAdmissionUnavailable("Webhook lease lost");
+      } catch (error) {
+        if (error instanceof RuntimeAdmissionUnavailable) {
           res
             .status(503)
             .send("Billing continuation is temporarily unavailable");
           return;
         }
-        await webhookRepo.finish(event.id, leaseToken, true);
-        throw handlerError;
-      }
-      if (!(await webhookRepo.finish(event.id, leaseToken))) {
-        res.status(503).send("Webhook lease lost; retry");
-        return;
+        throw error;
       }
       res.json({ received: true });
     } catch (err) {

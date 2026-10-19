@@ -76,14 +76,7 @@ export interface PaymentTransaction {
   customerId?: string;
 }
 
-export interface StripeWebhookEvent {
-  state?: "processing" | "completed";
-  leaseToken?: string;
-  leaseUntil?: number;
-  eventId: string;
-  receivedAt: string;
-  expiresAt: number;
-}
+export type { StripeWebhookEvent } from "./stripeWebhookReceipt";
 
 export interface InteractionReceipt {
   interactionId: string;

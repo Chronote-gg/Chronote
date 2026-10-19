@@ -1,4 +1,5 @@
 /** @jest-environment node */
+import { seedBillingRuntime } from "../fixtures/billingRuntime";
 import { beforeEach, afterEach, it, expect, jest } from "@jest/globals";
 import { config } from "../../src/services/configService";
 import { getMockStore, resetMockStore } from "../../src/repositories/mockStore";
@@ -36,6 +37,7 @@ beforeEach(() => {
   config.mock.enabled = true;
   config.analytics.billingLifecycleEnabled = true;
   resetMockStore();
+  seedBillingRuntime();
   captured.mockClear();
 });
 afterEach(() => {

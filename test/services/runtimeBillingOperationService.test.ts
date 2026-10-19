@@ -60,9 +60,11 @@ test.each([true, false])(
         })
       : new Error("response lost");
     await expect(
-      runBillingOperation(undefined, async () => {
-        throw error;
-      }),
+      runBillingOperation(undefined, async (owner) =>
+        owner.effect(async () => {
+          throw error;
+        }),
+      ),
     ).rejects.toThrow();
     expect(getRuntimeWorkAdmissionCheckpoints()).toHaveLength(
       before + (known ? 0 : 1),
@@ -182,4 +184,143 @@ test.each([
   } finally {
     config.mock.enabled = previous;
   }
+});
+
+test("a read failure before the first mutation settles normally", async () => {
+  const before = getRuntimeWorkAdmissionCheckpoints().length;
+  await expect(
+    runBillingOperation(undefined, async () => {
+      throw new Error("provider GET unavailable");
+    }),
+  ).rejects.toThrow("provider GET");
+  expect(getRuntimeWorkAdmissionCheckpoints()).toHaveLength(before);
+  expect(mockSettled).toHaveBeenCalledTimes(1);
+});
+test("a receipt failure after acknowledged mutation remains unresolved", async () => {
+  const before = getRuntimeWorkAdmissionCheckpoints().length;
+  await expect(
+    runBillingOperation(undefined, async (owner) => {
+      await owner.effect(async () => "ack");
+      throw new Error("receipt lost");
+    }),
+  ).rejects.toThrow("receipt lost");
+  expect(getRuntimeWorkAdmissionCheckpoints()).toHaveLength(before + 1);
+  expect(mockSettled).not.toHaveBeenCalled();
+});
+
+test.each(["false", "known rejection"])(
+  "%s without an earlier write remains a known outcome",
+  async (kind) => {
+    const { BillingActionError } =
+      await import("../../src/services/billingActionError");
+    const before = getRuntimeWorkAdmissionCheckpoints().length;
+    await expect(
+      runBillingOperation(undefined, async (owner) => {
+        await owner.effect(async () => {
+          if (kind === "known rejection")
+            throw new BillingActionError("BAD_REQUEST", "rejected");
+          return false;
+        });
+        expect(owner.mutationStarted()).toBe(false);
+        throw new BillingActionError("BAD_REQUEST", "rejected");
+      }),
+    ).rejects.toMatchObject({ code: "BAD_REQUEST" });
+    expect(getRuntimeWorkAdmissionCheckpoints()).toHaveLength(before);
+  },
+);
+test("an earlier acknowledged write survives a later no-write rejection", async () => {
+  const { BillingActionError } =
+    await import("../../src/services/billingActionError");
+  const before = getRuntimeWorkAdmissionCheckpoints().length;
+  await expect(
+    runBillingOperation(undefined, async (owner) => {
+      await owner.effect(async () => undefined);
+      await owner.effect(async () => false);
+      throw new BillingActionError("BAD_REQUEST", "later CAS rejected");
+    }),
+  ).rejects.toMatchObject({ cause: { code: "BAD_REQUEST" } });
+  expect(getRuntimeWorkAdmissionCheckpoints()).toHaveLength(before + 1);
+});
+test.each(["acknowledged", "unknown"])(
+  "a detached %s mutation tail cannot be lost on callback failure",
+  async (outcome) => {
+    const before = getRuntimeWorkAdmissionCheckpoints().length;
+    await expect(
+      runBillingOperation(undefined, async (owner) => {
+        void owner
+          .effect(async () => {
+            await Promise.resolve();
+            if (outcome === "unknown") throw new Error("tail response lost");
+          })
+          .catch(() => undefined);
+        throw new Error("callback failed");
+      }),
+    ).rejects.toThrow();
+    expect(getRuntimeWorkAdmissionCheckpoints()).toHaveLength(before + 1);
+  },
+);
+test.each(["api", "worker"])(
+  "%s owner persists an ACK after cancellation but refuses the next dispatch",
+  async (kind) => {
+    const { persistBillingAcknowledgment, runBillingWorkerOperation } =
+      await import("../../src/services/runtimeBillingOperationService");
+    const { beginRuntimeWorkClaim } =
+      await import("../../src/services/runtimeWorkAdmissionService");
+    const controller = new AbortController();
+    const persisted = jest.fn(async () => true);
+    const provider = jest.fn(async () => undefined);
+    const run = async (owner: RuntimeBillingOwner) => {
+      await owner.effect(async () => {
+        controller.abort();
+        if (kind === "api") fenceRuntimeWorkAdmissions();
+      });
+      await persistBillingAcknowledgment(owner, persisted);
+      await expect(owner.effect(provider)).rejects.toThrow();
+    };
+    if (kind === "api") await runBillingOperation(undefined, run);
+    else {
+      const work = beginRuntimeWorkClaim("billing", "post-ack-worker");
+      await work.trackPromise(async () => {
+        await runBillingWorkerOperation(work, controller.signal, run);
+        work.acknowledgeDurableBillingRecovery("post-ack-worker");
+        await work.settle();
+      });
+    }
+    expect(persisted).toHaveBeenCalledTimes(1);
+    expect(provider).not.toHaveBeenCalled();
+  },
+);
+test("forged and settled owners cannot persist receipts", async () => {
+  const { persistBillingAcknowledgment } =
+    await import("../../src/services/runtimeBillingOperationService");
+  let settled!: RuntimeBillingOwner;
+  const write = jest.fn();
+  await runBillingOperation(undefined, async (owner) => {
+    settled = owner;
+    await expect(
+      persistBillingAcknowledgment({ ...owner }, write),
+    ).rejects.toThrow("registered");
+  });
+  await expect(persistBillingAcknowledgment(settled, write)).rejects.toThrow(
+    "registered",
+  );
+  expect(write).not.toHaveBeenCalled();
+});
+
+test("a raw domain receipt ACK without a provider write retains a later failure", async () => {
+  const { persistBillingAcknowledgment } =
+    await import("../../src/services/runtimeBillingOperationService");
+  const before = getRuntimeWorkAdmissionCheckpoints().length;
+  const saved: string[] = [];
+  await expect(
+    runBillingOperation(undefined, async (owner) => {
+      await persistBillingAcknowledgment(owner, async () => {
+        saved.push("receipt");
+      });
+      expect(owner.mutationStarted()).toBe(true);
+      throw new Error("read after receipt failed");
+    }),
+  ).rejects.toThrow("read after receipt failed");
+  expect(saved).toEqual(["receipt"]);
+  expect(getRuntimeWorkAdmissionCheckpoints()).toHaveLength(before + 1);
 });

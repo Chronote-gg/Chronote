@@ -277,8 +277,11 @@ export async function saveGuildSubscription(subscription: GuildSubscription) {
 
 export async function recordPaymentTransaction(
   transaction: PaymentTransaction,
+  owner?: RuntimeBillingOwner,
 ) {
-  await getPaymentTransactionRepository().write(transaction);
+  await runBillingOperation(owner, (admitted) =>
+    admitted.effect(() => getPaymentTransactionRepository().write(transaction)),
+  );
 }
 
 export async function resolvePromotionCodeId(
@@ -450,6 +453,7 @@ async function createCheckoutSessionOwned(
   );
   const expected = await getSubscriptionRepository().get(guildId);
   const confirmationUrl = await createExistingSubscriptionConfirmation({
+    owner: params.owner,
     stripe,
     user,
     guildId,
@@ -503,6 +507,7 @@ async function createCheckoutSessionOwned(
 }
 
 async function createExistingSubscriptionConfirmation(params: {
+  owner: RuntimeBillingOwner;
   stripe: StripeClient;
   user: StripeUser;
   guildId: string;
@@ -537,6 +542,7 @@ async function createExistingSubscriptionConfirmation(params: {
       guildId,
       payerId: user.id,
       subscription,
+      owner: params.owner,
     });
     if (recovered) return recovered;
     // Only provider-confirmed terminal subscriptions can start a new purchase.

@@ -702,20 +702,7 @@ it("a definite renewal rejection retains the existing processing outcome", async
       statusCode: 400,
     }),
   );
-  expect(
-    await restoreRenewal({
-      stripe: f.stripe,
-      guildId,
-      payerId,
-      request,
-      analyticsOptOut: false,
-      now,
-    }),
-  ).toMatchObject({ kind: "processing" });
-  expect([...getMockStore().renewalOperations.values()][0].state).toBe(
-    "verifying",
-  );
-  expect(f.update).toHaveBeenCalledTimes(1);
+  await expectVerifyingRenewal(f, request);
 });
 
 it("a directly acknowledged renewal persists its result when cancellation arrives with the response", async () => {
@@ -726,6 +713,7 @@ it("a directly acknowledged renewal persists its result when cancellation arrive
     .mockImplementationOnce(async (_id, run) =>
       run({
         signal: controller.signal,
+        unresolved: jest.fn(),
         read: (effect) => effect(),
         mutate: (effect) => {
           controller.signal.throwIfAborted();
@@ -741,20 +729,7 @@ it("a directly acknowledged renewal persists its result when cancellation arrive
     return response(f.provider);
   });
   try {
-    expect(
-      await restoreRenewal({
-        stripe: f.stripe,
-        guildId,
-        payerId,
-        request,
-        analyticsOptOut: false,
-        now,
-      }),
-    ).toMatchObject({ kind: "confirmed" });
-    expect([...getMockStore().renewalOperations.values()][0].state).toBe(
-      "succeeded",
-    );
-    expect(f.update).toHaveBeenCalledTimes(1);
+    await expectVerifyingRenewal(f, request);
   } finally {
     admitted.mockImplementation(
       jest.requireActual<typeof import("../fixtures/runtimeApiOperation")>(
@@ -797,4 +772,24 @@ async function withRenewalAnalytics(run: () => Promise<void>) {
   } finally {
     config.analytics.billingLifecycleEnabled = gate;
   }
+}
+
+async function expectVerifyingRenewal(
+  f: ReturnType<typeof fixture>,
+  request: RenewalRequest,
+) {
+  expect(
+    await restoreRenewal({
+      stripe: f.stripe,
+      guildId,
+      payerId,
+      request,
+      analyticsOptOut: false,
+      now,
+    }),
+  ).toMatchObject({ kind: "processing" });
+  expect([...getMockStore().renewalOperations.values()][0].state).toBe(
+    "verifying",
+  );
+  expect(f.update).toHaveBeenCalledTimes(1);
 }

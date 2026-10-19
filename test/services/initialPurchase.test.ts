@@ -292,7 +292,7 @@ test("unknown create outcome becomes review-required after safe replay window", 
   getMockStore().purchaseAttempts.get(guildId)!.createdAt =
     Date.now() - 25 * 60 * 60 * 1000;
   await expect(createCheckoutSession(request)).rejects.toMatchObject({
-    code: "BAD_REQUEST",
+    cause: { code: "BAD_REQUEST" },
   });
   expect(stripe.checkout.sessions.create).toHaveBeenCalledTimes(1);
   expect(getMockStore().purchaseAttempts.get(guildId)?.state).toBe(
@@ -548,8 +548,7 @@ test("a returned Checkout from another guild cannot be exposed as this purchase"
       priceId: "price_basic",
     }),
   ).rejects.toMatchObject({
-    code: "BAD_REQUEST",
-    reason: "purchase_needs_review",
+    cause: { code: "BAD_REQUEST", reason: "purchase_needs_review" },
   });
 });
 
@@ -585,7 +584,9 @@ test.each([false, true])(
           guildId,
           priceId: "price_basic",
         }),
-      ).rejects.toMatchObject({ code: "BAD_REQUEST" });
+      ).rejects.toMatchObject({
+        cause: { code: "BAD_REQUEST", reason: "purchase_needs_review" },
+      });
       expect(stripe.customers.create).not.toHaveBeenCalled();
       expect(stripe.checkout.sessions.create).not.toHaveBeenCalled();
     } finally {

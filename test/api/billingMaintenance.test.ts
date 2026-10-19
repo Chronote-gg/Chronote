@@ -1,4 +1,5 @@
 /** @jest-environment node */
+import { seedBillingRuntime } from "../fixtures/billingRuntime";
 import {
   createServer,
   postWebhook,
@@ -20,6 +21,7 @@ function createStripe(event: StripeEvent): StripeClient {
 describe("maintenance billing continuation receipts", () => {
   beforeEach(() => {
     resetMockStore();
+    seedBillingRuntime();
     clearGuildSubscriptionCache();
     Object.assign(config.stripe, {
       secretKey: "sk_test_billing",
@@ -27,7 +29,7 @@ describe("maintenance billing continuation receipts", () => {
     });
   });
   afterAll(() => Object.assign(config.stripe, originalStripeConfig));
-  test("503 retains the exact receipt and payment projection until lease expiry and same-event retry", async () => {
+  test("partial payment projection remains unresolved after lease expiry and same-event retry", async () => {
     const { RuntimeAdmissionUnavailable } =
       await import("../../src/services/runtimeAdmissionError");
     const changes = await import("../../src/services/billingChangeService");
@@ -53,11 +55,14 @@ describe("maintenance billing continuation receipts", () => {
     const { server, baseUrl } = createServer(createStripe(event));
     const finish = jest.spyOn(getStripeWebhookRepository(), "finish");
     try {
-      expect((await postWebhook(baseUrl)).statusCode).toBe(503);
+      expect((await postWebhook(baseUrl)).statusCode).toBe(500);
       const receipt = structuredClone(
         await getStripeWebhookRepository().get(event.id),
       );
-      expect(receipt).toMatchObject({ state: "processing" });
+      expect(receipt).toMatchObject({
+        state: "processing",
+        admission: { status: "running" },
+      });
       expect(finish).not.toHaveBeenCalled();
       const payment = structuredClone(getMockStore().paymentTransactions);
       expect(payment.size).toBe(1);
@@ -70,12 +75,16 @@ describe("maintenance billing continuation receipts", () => {
         .spyOn(Date, "now")
         .mockReturnValue(receipt!.leaseUntil! + 1);
       try {
-        expect((await postWebhook(baseUrl)).statusCode).toBe(200);
+        expect((await postWebhook(baseUrl)).statusCode).toBe(503);
         expect((await getStripeWebhookRepository().get(event.id))?.state).toBe(
-          "completed",
+          "processing",
         );
-        expect(finish).toHaveBeenCalledTimes(1);
-        expect(finish.mock.calls[0][2]).not.toBe(true);
+        expect(finish).not.toHaveBeenCalled();
+        expect(resume).toHaveBeenCalledTimes(1);
+        expect(getMockStore().paymentTransactions).toEqual(payment);
+        expect(
+          (await getStripeWebhookRepository().get(event.id))?.firstAdmission,
+        ).toEqual(receipt?.firstAdmission);
       } finally {
         now.mockRestore();
       }

@@ -1,3 +1,4 @@
+import { createStripeWebhookDynamoRepository } from "./repositories/stripeWebhookDynamoRepository";
 import { transactPersonalAdmission } from "./services/personalAdmissionTransaction";
 import {
   billingChangeControlKey,
@@ -3643,63 +3644,31 @@ export async function compareAndWritePurchaseAttempt(
   }
 }
 
-export async function claimStripeWebhookEvent(
-  event: StripeWebhookEvent,
-): Promise<boolean> {
-  try {
-    await dynamoDbClient.send(
-      new PutItemCommand({
-        TableName: tableName("StripeWebhookEventTable"),
-        Item: marshall(event),
-        ConditionExpression:
-          "attribute_not_exists(eventId) OR (#state = :processing AND leaseUntil <= :now)",
-        ExpressionAttributeNames: { "#state": "state" },
-        ExpressionAttributeValues: marshall({
-          ":processing": "processing",
-          ":now": Date.now(),
-        }),
-      }),
-    );
-    return true;
-  } catch (error) {
-    if (isConditionalCheckFailed(error)) return false;
-    throw error;
-  }
+function stripeWebhookDynamoRepository() {
+  return createStripeWebhookDynamoRepository(
+    dynamoDbClient,
+    tableName("StripeWebhookEventTable"),
+    {
+      deploymentControl: tableName("DeploymentControlTable"),
+      meetingHistory: tableName("MeetingHistoryTable"),
+    },
+  );
 }
-export async function finishStripeWebhookEvent(
+export const claimStripeWebhookEvent = (event: StripeWebhookEvent) =>
+  stripeWebhookDynamoRepository().claim(event);
+export const finishStripeWebhookEvent = (
   eventId: string,
-  leaseToken: string,
+  token: string,
   release: boolean,
-): Promise<boolean> {
-  const base = {
-    TableName: tableName("StripeWebhookEventTable"),
-    Key: marshall({ eventId }),
-    ConditionExpression:
-      "#state = :processing AND leaseToken = :token AND leaseUntil > :now",
-    ExpressionAttributeNames: { "#state": "state" },
-    ExpressionAttributeValues: marshall({
-      ":processing": "processing",
-      ":token": leaseToken,
-      ":now": Date.now(),
-      ...(release ? {} : { ":completed": "completed" }),
-    }),
-  };
-  try {
-    await dynamoDbClient.send(
-      release
-        ? new DeleteItemCommand(base)
-        : new UpdateItemCommand({
-            ...base,
-            UpdateExpression:
-              "SET #state = :completed REMOVE leaseToken, leaseUntil",
-          }),
-    );
-    return true;
-  } catch (error) {
-    if (isConditionalCheckFailed(error)) return false;
-    throw error;
-  }
-}
+) => stripeWebhookDynamoRepository().finish(eventId, token, release);
+export const admitStripeWebhookEvent = (
+  eventId: string,
+  token: string,
+  attemptId: string,
+  context: AdmissionContext,
+) => stripeWebhookDynamoRepository().admit(eventId, token, attemptId, context);
+export const failStripeWebhookEvent = (eventId: string, token: string) =>
+  stripeWebhookDynamoRepository().fail(eventId, token);
 
 function purchaseIncidentUpdate(incident: PurchaseIncident) {
   const { guildId: originalGuildId, key, ...fields } = incident;

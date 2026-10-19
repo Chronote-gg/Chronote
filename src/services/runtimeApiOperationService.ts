@@ -1,9 +1,11 @@
+import type { AdmissionContext } from "../types/deploymentControl";
 import { getDeploymentControlRepository } from "../db";
 import { RuntimeAdmissionUnavailable } from "./runtimeAdmissionError";
 import { registerNotionMutationTracker } from "./notionOperationLifetime";
 import { beginRuntimeWorkClaim } from "./runtimeWorkAdmissionService";
 export type RuntimeApiOperation = {
   signal: AbortSignal;
+  unresolved(): void;
   read<T>(run: () => Promise<T>): Promise<T>;
   mutate<T>(run: () => Promise<T>): Promise<T>;
 };
@@ -11,10 +13,12 @@ export type RuntimeApiOperation = {
 export async function runRuntimeApiOperation<T>(
   id: string,
   run: (operation: RuntimeApiOperation) => Promise<T>,
+  admit?: (context: AdmissionContext) => Promise<boolean>,
 ): Promise<T> {
   const work = beginRuntimeWorkClaim("api_correction", id);
   const operation: RuntimeApiOperation = {
     signal: work.signal,
+    unresolved: work.markBillingOutcomeUnknown,
     async read(effect) {
       const result = await work.trackEffect(effect);
       work.signal.throwIfAborted();
@@ -35,10 +39,14 @@ export async function runRuntimeApiOperation<T>(
         throw new RuntimeAdmissionUnavailable(
           "API operation requires serving authority",
         );
-      const admission = await getDeploymentControlRepository().checkAdmission(
-        authority.context,
-      );
-      if (admission.kind !== "admitted")
+      const admitted = admit
+        ? await work.trackApiMutation(() => admit(authority.context))
+        : (
+            await getDeploymentControlRepository().checkAdmission(
+              authority.context,
+            )
+          ).kind === "admitted";
+      if (!admitted)
         throw new RuntimeAdmissionUnavailable("Runtime is not accepting work");
       work.claimed();
       return await run(operation);
