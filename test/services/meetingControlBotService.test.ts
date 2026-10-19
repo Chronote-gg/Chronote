@@ -173,3 +173,74 @@ test("remote artifact lookup failure never initializes", async () => {
   expect(initializeMeeting).not.toHaveBeenCalled();
   expect(send).not.toHaveBeenCalled();
 });
+
+const fixtureScope = {
+  kind: "fixture" as const,
+  reference: {
+    holdId: "hold",
+    introductionId: "intro",
+    revision: 1,
+    grantId: "fixture:11111111-1111-4111-8111-111111111111",
+  },
+  commandId: "fixture:11111111-1111-4111-8111-111111111111",
+  meetingId: "preassigned-fixture",
+  guildId: "guild-1",
+  voiceChannelId: "voice-1",
+  textChannelId: "voice-notes",
+  actorUserId: "user-1",
+  sessionMode: "meeting" as const,
+};
+const fixtureCommand = (): MeetingControlCommand => ({
+  ...command("voice-notes"),
+  requestId: "fixture:11111111-1111-4111-8111-111111111111",
+  input: {
+    serverId: "guild-1",
+    voiceChannelId: "voice-1",
+    textChannelId: "voice-notes",
+  },
+});
+test("trusted remote fixture preserves its preassigned meeting and exact reservation scope", async () => {
+  fetchChannel.mockReset();
+  fetchChannel.mockImplementation(async (id: string) =>
+    id === "voice-1" ? fixture.voice : fixture.notes,
+  );
+  await executeMeetingControlCommand(
+    fixture.client,
+    fixtureCommand(),
+    undefined,
+    undefined,
+    fixtureScope,
+  );
+  expect(initializeMeeting).toHaveBeenCalledWith(
+    expect.objectContaining({
+      meetingId: "preassigned-fixture",
+      scope: fixtureScope,
+    }),
+  );
+});
+test("a changed final notes destination refuses the fixture before initialization or publication", async () => {
+  const changed = { ...fixtureScope, textChannelId: "previous-notes" };
+  await expect(
+    executeMeetingControlCommand(
+      fixture.client,
+      fixtureCommand(),
+      undefined,
+      undefined,
+      changed,
+    ),
+  ).rejects.toThrow();
+  expect(initializeMeeting).not.toHaveBeenCalled();
+  expect(send).not.toHaveBeenCalled();
+});
+test("a copied fixture command refuses before initialization", async () => {
+  await expect(
+    executeMeetingControlCommand(
+      fixture.client,
+      { ...fixtureCommand(), requestId: "copied" },
+      undefined,
+      undefined,
+      fixtureScope,
+    ),
+  ).rejects.toThrow();
+  expect(initializeMeeting).not.toHaveBeenCalled();
+});

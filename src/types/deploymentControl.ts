@@ -378,6 +378,7 @@ export const admissionContextSchema = z
     observedEpoch: generation,
     protocolVersion: z.literal(1),
     now: epochSecond,
+    maintenance: maintenanceHoldSchema.optional(),
   })
   .strict()
   .refine(

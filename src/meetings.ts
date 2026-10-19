@@ -1,3 +1,4 @@
+import type { NewWorkScope } from "./types/productionIntroduction";
 import {
   reservationTimingReceipt,
   freezeCompletionPolicy,
@@ -145,6 +146,7 @@ export function deleteMeetingSetup(key: string) {
 }
 
 export interface MeetingInitOptions {
+  scope?: NewWorkScope;
   meetingId?: string;
   reservedAt?: number;
   suppressionCheck?: { channelId: string; expectedVersion?: number };
@@ -422,6 +424,7 @@ async function initializeNewMeeting(
   const meetingId = options.meetingId;
   const timestamp = new Date(reservedAt).toISOString();
   const shared = {
+    scope: options.scope,
     assertStartAllowed: options.assertStartAllowed,
     startSignal: options.startSignal,
     guildId: options.guild.id,

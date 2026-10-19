@@ -1,4 +1,4 @@
-import { startMeetingRecoveryWorker } from "./services/meetingRecoveryWorkerService";
+import { registerServingBotStartup } from "./services/botStartupService";
 import { InitiatingStopInterruption } from "./services/meetingStopInterruption";
 import { waitForGuildInstaller } from "./services/guildInstallerOnboardingService";
 import { randomUUID } from "node:crypto";
@@ -135,11 +135,9 @@ import {
 import { removeGuildInstaller } from "./services/guildInstallerService";
 import { captureEvent } from "./services/analyticsService";
 import { setDiscordClient } from "./services/discordClientAccessor";
-import { startMeetingControlCommandWorker } from "./services/meetingControlWorkerService";
 import {
   isRuntimeWarm,
   getRuntimeAdmissionContext,
-  whenRuntimeServing,
 } from "./services/runtimeLifecycleService";
 import { autoRecordJoinSuppressionService } from "./services/autoRecordJoinSuppressionService";
 import {
@@ -519,9 +517,7 @@ export async function setupBot() {
   client.once(Events.ClientReady, () => {
     console.log(`Logged in as ${client.user?.tag}!`);
     setDiscordClient(client);
-    whenRuntimeServing(() => {
-      startMeetingControlCommandWorker(client);
-      startMeetingRecoveryWorker();
+    registerServingBotStartup(client, () => {
       void runServingBotWork(async () => {
         await setupApplicationCommands();
         await reevaluateOccupiedVoiceChannels();

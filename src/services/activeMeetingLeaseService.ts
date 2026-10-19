@@ -1,3 +1,4 @@
+import type { NewWorkScope } from "../types/productionIntroduction";
 import { areMeetingNoticesSettled } from "./meetingProcessingLifetime";
 import { isDeepStrictEqual } from "node:util";
 import type { RecordingCheckpoint } from "../types/recordingCheckpoint";
@@ -39,6 +40,7 @@ const ACTIVE_MEETING_HEARTBEAT_MS = 10_000;
 const ACTIVE_MEETING_TTL_GRACE_SECONDS = 120;
 
 export type AcquireMeetingLeaseInput = {
+  scope?: NewWorkScope;
   assertStartAllowed?: () => Promise<void>;
   startSignal?: AbortSignal;
   guildId: string;
@@ -237,6 +239,7 @@ async function acquireReservation(
       }
     : undefined;
   const request = {
+    scope: input.scope,
     context: { ...context, now: nowEpochSeconds },
     lease: leaseRecord,
     voice: {

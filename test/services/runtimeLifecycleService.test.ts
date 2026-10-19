@@ -659,3 +659,37 @@ test("all seven real work handles share one deadline and pending recovery cannot
     lifecycle.stop();
   }
 });
+
+test("maintenance keeps serving listeners separate and retries ordinary initialization after release", async () => {
+  const { lifecycle, repository } = await fixture();
+  await promote(repository);
+  const stored = await repository.getRecord("ENV", "CONTROL");
+  if (stored?.recordType !== "control") throw new Error("missing control");
+  const held: typeof stored = {
+    ...stored,
+    maintenance: { holdId: "hold", introductionId: "intro", revision: 1 },
+  };
+  const getRecord = repository.getRecord;
+  jest.spyOn(repository, "getRecord").mockImplementation(async (pk, sk) => {
+    if (pk === "ENV" && sk === "CONTROL") return held;
+    return getRecord(pk, sk);
+  });
+  const serving = jest.fn();
+  const ordinary = jest.fn();
+  lifecycle.whenServing(serving);
+  lifecycle.whenOrdinaryAdmissionOpen(ordinary);
+  await lifecycle.refreshRuntimeReadiness();
+  expect(serving).toHaveBeenCalledTimes(1);
+  expect(ordinary).not.toHaveBeenCalled();
+  expect(await lifecycle.getRuntimeAdmissionContext()).toMatchObject({
+    maintenance: held.maintenance,
+  });
+  await lifecycle.refreshRuntimeReadiness();
+  expect(ordinary).not.toHaveBeenCalled();
+  delete held.maintenance;
+  await lifecycle.refreshRuntimeReadiness();
+  expect(ordinary).toHaveBeenCalledTimes(1);
+  await lifecycle.refreshRuntimeReadiness();
+  expect(ordinary).toHaveBeenCalledTimes(1);
+  lifecycle.stop();
+});

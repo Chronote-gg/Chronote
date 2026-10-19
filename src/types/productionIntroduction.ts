@@ -92,6 +92,14 @@ export const introductionHoldSchema = z
     holdId: id,
     introductionId: id,
     manifestHash: id,
+    fixtureGrantIds: z
+      .array(id)
+      .max(2)
+      .refine(
+        (ids) => new Set(ids).size === ids.length,
+        "Fixture grant ids must be unique",
+      )
+      .optional(),
     revision,
     admission: z.discriminatedUnion("state", [
       z.object({ state: z.literal("held") }).strict(),

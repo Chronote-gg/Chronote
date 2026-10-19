@@ -1,3 +1,5 @@
+import { assertFixtureCommandMatches } from "./productionFixtureCommandService";
+import type { NewWorkScope } from "../types/productionIntroduction";
 import { interruptOwnedMeeting } from "./ownedMeetingInterruption";
 import { initiatingStopInterruption } from "./meetingStopInterruption";
 import {
@@ -194,6 +196,7 @@ const executeStartMeeting = async (
   input: StartMeetingCommandInput,
   assertOwned: () => Promise<void>,
   signal?: AbortSignal,
+  scope?: NewWorkScope,
 ): Promise<MeetingControlCommandResult> => {
   const state = await resolveUserVoiceState(client, userId, input);
   const guild = state.guild;
@@ -212,11 +215,19 @@ const executeStartMeeting = async (
           guild,
           voiceChannelId: voiceChannel.id,
         });
+  if (
+    scope?.kind === "fixture" &&
+    (scope.guildId !== guild.id ||
+      scope.voiceChannelId !== voiceChannel.id ||
+      scope.textChannelId !== textChannel.id)
+  )
+    throw new MeetingControlExecutionError("Fixture destination changed");
   const member = await fetchMember(guild, userId);
   assertMemberCanUseTextChannel(member, textChannel);
   const creator = await client.users.fetch(userId);
   await assertOwned();
   const startResult = await startManualMeetingFromChannels({
+    scope,
     assertStartAllowed: assertOwned,
     startSignal: signal,
     client,
@@ -509,16 +520,20 @@ export async function executeMeetingControlCommand(
   command: MeetingControlCommand,
   assertOwned: () => Promise<void> = async () => undefined,
   signal?: AbortSignal,
+  scope?: NewWorkScope,
 ): Promise<MeetingControlCommandResult> {
   await assertOwned();
   switch (command.commandType) {
     case MEETING_CONTROL_COMMAND_TYPES.START_MEETING:
+      if (scope?.kind === "fixture")
+        assertFixtureCommandMatches(command, scope);
       return executeStartMeeting(
         client,
         command.userId,
         command.input as StartMeetingCommandInput,
         assertOwned,
         signal,
+        scope,
       );
     case MEETING_CONTROL_COMMAND_TYPES.STOP_MEETING:
       return executeStopMeeting(

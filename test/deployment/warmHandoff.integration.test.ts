@@ -1,32 +1,23 @@
+import {
+  generatedRuntimeProtection,
+  completeGeneratedHistory,
+} from "./fixtures/runtimeFixtureHelpers";
 jest.mock("../../src/services/meetingControlBotService", () => ({
   executeMeetingControlCommand: jest.fn(),
 }));
 // The only SDK substitution binds every real command to the explicit local fixture.
-jest.mock("@aws-sdk/client-dynamodb", () => {
-  const actual = jest.requireActual("@aws-sdk/client-dynamodb");
-  return {
-    ...actual,
-    DynamoDBClient: class extends actual.DynamoDBClient {
-      constructor() {
-        super({
-          endpoint: process.env.DEPLOYMENT_TEST_DYNAMODB_ENDPOINT,
-          region: "local",
-          credentials: { accessKeyId: "dummy", secretAccessKey: "dummy" },
-          maxAttempts: 1,
-        });
-      }
-    },
-  };
-});
+jest.mock("@aws-sdk/client-dynamodb", () =>
+  jest
+    .requireActual("./fixtures/loopbackDynamoMock")
+    .createLoopbackDynamoMock(),
+);
 jest.mock("../../src/services/configService", () => {
   process.env.DDB_TABLE_PREFIX = `warm-handoff-${jest.requireActual("node:crypto").randomUUID()}-`;
   return jest.requireActual("../../src/services/configService");
 });
-jest.mock("../../src/services/runtimeLifecycleService", () => ({
-  ...jest.requireActual("../../src/services/runtimeLifecycleService"),
-  beginRuntimeWork: jest.fn(),
-  getRuntimeAdmissionContext: jest.fn(),
-}));
+jest.mock("../../src/services/runtimeLifecycleService", () =>
+  jest.requireActual("./fixtures/runtimeModuleMock").createRuntimeModuleMock(),
+);
 jest.mock("../../src/services/runtimeInstanceService", () => ({
   getRuntimeInstanceId: jest.fn(() => "old"),
 }));
@@ -39,7 +30,6 @@ jest.mock("../../src/services/personalMediaUploadProcessingService", () => ({
   processPersonalMediaUpload: jest.fn(),
 }));
 import {
-  CreateTableCommand,
   DeleteTableCommand,
   DeleteItemCommand,
   TransactWriteItemsCommand,
@@ -66,7 +56,6 @@ import {
   beginRuntimeWork,
   getRuntimeAdmissionContext,
 } from "../../src/services/runtimeLifecycleService";
-import { createRuntimeProtectionService } from "../../src/services/runtimeProtectionService";
 import { getRuntimeInstanceId } from "../../src/services/runtimeInstanceService";
 import { beginRuntimeWorkClaim } from "../../src/services/runtimeWorkAdmissionService";
 import { createMeetingRecoveryWorker } from "../../src/services/meetingRecoveryWorkerService";
@@ -100,27 +89,11 @@ const lifecycles: ReturnType<typeof createRuntimeLifecycle>[] = [];
 const now = () => Math.floor(Date.now() / 1000);
 beforeAll(async () => {
   await db.start();
-  await db.client.send(
-    new CreateTableCommand({
-      TableName: commandTable,
-      BillingMode: "PAY_PER_REQUEST",
-      KeySchema: [{ AttributeName: "requestId", KeyType: "HASH" }],
-      AttributeDefinitions: [
-        { AttributeName: "requestId", AttributeType: "S" },
-      ],
-    }),
-  );
+  await db.createTable(commandTable, ["requestId"]);
   jest
     .spyOn(database, "getDeploymentControlRepository")
     .mockReturnValue(db.repository);
-  await db.client.send(
-    new CreateTableCommand({
-      TableName: uploadTable,
-      BillingMode: "PAY_PER_REQUEST",
-      KeySchema: [{ AttributeName: "uploadId", KeyType: "HASH" }],
-      AttributeDefinitions: [{ AttributeName: "uploadId", AttributeType: "S" }],
-    }),
-  );
+  await db.createTable(uploadTable, ["uploadId"]);
 });
 afterAll(async () => {
   for (const lifecycle of lifecycles) lifecycle.stop();
@@ -132,25 +105,7 @@ async function startRuntime(id: string, ready = true) {
   const identity = runtime(id).identity;
   if (identity.kind !== "ecs")
     throw new Error("Generated ECS identity required");
-  let enabled = false;
-  const protection = createRuntimeProtectionService({
-    identity,
-    now,
-    onUnsafe: () => {},
-    agentUri: "http://generated.invalid",
-    request: async (_url, init) => {
-      if (init?.body) enabled = JSON.parse(String(init.body)).ProtectionEnabled;
-      return new Response(
-        JSON.stringify({
-          protection: {
-            TaskArn: identity.taskArn,
-            ProtectionEnabled: enabled,
-            ExpirationDate: new Date((now() + 600) * 1000).toISOString(),
-          },
-        }),
-      );
-    },
-  });
+  const protection = generatedRuntimeProtection(identity, now);
   const lifecycle = createRuntimeLifecycle({
     identity,
     repository: db.repository,
@@ -242,24 +197,11 @@ async function finalizeHistory(reservation: SessionReservation) {
     expectedOwnerInstanceId: reservation.ownerInstanceId,
     expectedExecutionVersion: reservation.executionVersion,
   };
-  expect(
-    await db.repository.transitionMeetingHistory({
-      ...proof,
-      expectedStatus: "starting",
-      patch: { status: "processing" },
-    }),
-  ).toBe("applied");
-  expect(
-    await db.repository.transitionMeetingHistory({
-      ...proof,
-      expectedStatus: "processing",
-      patch: {
-        status: "complete",
-        notes: "Generated fixture outcome",
-        processing: { notes: "generated" },
-      },
-    }),
-  ).toBe("applied");
+  await completeGeneratedHistory(db.repository, proof, {
+    status: "complete",
+    notes: "Generated fixture outcome",
+    processing: { notes: "generated" },
+  });
 }
 async function finish(meeting: MeetingData) {
   const reservation = meeting.reservation!;
@@ -675,20 +617,9 @@ test("generated checkpoint publication and orphan upload are both covered by sta
       expectedOwnerInstanceId: "old",
       expectedExecutionVersion: 1,
     };
-    expect(
-      await db.repository.transitionMeetingHistory({
-        ...proof,
-        expectedStatus: "starting",
-        patch: { status: "processing" },
-      }),
-    ).toBe("applied");
-    expect(
-      await db.repository.transitionMeetingHistory({
-        ...proof,
-        expectedStatus: "processing",
-        patch: { status: "complete" },
-      }),
-    ).toBe("applied");
+    await completeGeneratedHistory(db.repository, proof, {
+      status: "complete",
+    });
     const saved = await f.readHistory();
     const owner = {
       meetingId: saved.meetingId,

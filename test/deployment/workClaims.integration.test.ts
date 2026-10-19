@@ -378,16 +378,24 @@ test("old owner claims and renews a targeted stop after promotion, while new sta
     }),
   ).toBe(false);
   const nextId = randomUUID();
-  await commands.writeCommand({
-    requestId: nextId,
-    queueStatus: "pending",
-    commandType: "start_meeting",
-    userId: "synthetic-user",
-    input: {},
-    createdAt: "now",
-    updatedAt: "now",
-    expiresAt: 200,
-  });
+  await commands.writeCommand(
+    {
+      requestId: nextId,
+      queueStatus: "pending",
+      commandType: "start_meeting",
+      userId: "synthetic-user",
+      input: {},
+      createdAt: "now",
+      updatedAt: "now",
+      expiresAt: 200,
+    },
+    {
+      ...context,
+      instanceId: "new",
+      identity: runtime("new").identity,
+      authorizedGeneration: 8,
+    },
+  );
   expect(
     await commands.claimCommand({
       ...input,

@@ -1,4 +1,5 @@
 /** @jest-environment node */
+import { introductionFixture } from "../fixtures/productionIntroduction";
 import { createMockDeploymentControlRepository } from "../../src/repositories/deploymentControlRepository";
 import { controlRecordSchema } from "../../src/types/deploymentControl";
 import { context, control, runtime, promotion } from "./controlFixtures";
@@ -63,7 +64,6 @@ import {
   introductionHoldSchema,
   newWorkScopeSchema,
   type FixtureGrant,
-  type IntroductionHold,
   type NewWorkScope,
 } from "../../src/types/productionIntroduction";
 import { history } from "./controlFixtures";
@@ -101,16 +101,7 @@ const grant: FixtureGrant = {
   sessionMode: "meeting",
   state: "issued",
 };
-const hold: IntroductionHold = {
-  pk: "ENV",
-  sk: "INTRODUCTION",
-  recordType: "production_introduction",
-  protocolVersion: 1,
-  ...maintenance,
-  manifestHash: "manifest",
-  admission: { state: "held" },
-  deployment: { state: "held" },
-};
+const hold = introductionFixture(maintenance);
 const tables = {
   deploymentControl: "control",
   activeMeeting: "leases",
