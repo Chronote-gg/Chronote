@@ -83,3 +83,29 @@ test("only the action pool has a 200-entry ceiling and a 201st exact action refu
   });
   expect(() => bound(m)).toThrow();
 });
+
+test("reordered mandatory launch/acquire authority refuses even with contiguous sequence", () => {
+  const m = completeManifest();
+  const branch = m.actions.filter(
+    (a) => a.kind === "coordinator_write" && a.path === "normal",
+  );
+  const acquire = m.actions.indexOf(branch[0]),
+    launch = m.actions.findIndex((a) => a.actionId === "bootstrap-c4");
+  [m.actions[acquire], m.actions[launch]] = [
+    m.actions[launch],
+    m.actions[acquire],
+  ];
+  m.actions
+    .filter((a) => a.kind === "coordinator_write" && a.path === "normal")
+    .forEach((a, i) => {
+      a.sequence = i;
+    });
+  expect(() => assertProductionPreflight(bound(m))).toThrow();
+});
+
+test("mandatory introduction predecessor cannot skip the acknowledged launch", () => {
+  const m = completeManifest();
+  m.actions.find((a) => a.actionId === "bootstrap-promote").predecessor =
+    "initialize";
+  expect(() => assertProductionPreflight(bound(m))).toThrow();
+});

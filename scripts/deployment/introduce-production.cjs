@@ -13,14 +13,15 @@ const { createProductionHandoff } = require("./production-handoff.cjs");
 const { verifyDeclaredRoutes } = require("./production-source-routes.cjs");
 const { awsCli } = require("./coordinator-aws.cjs");
 const { assertTargetGroups } = require("./bootstrap-sandbox.cjs");
-function assertServiceTopology(svc, m) {
+function assertServiceTopology(svc, m, warming) {
   if (
     svc.serviceArn !== m.runtime.serviceArn ||
     svc.deploymentController?.type !== "ECS" ||
     (svc.deploymentConfiguration?.strategy &&
       svc.deploymentConfiguration.strategy !== "ROLLING") ||
     svc.loadBalancers?.length !== 1 ||
-    svc.loadBalancers[0].targetGroupArn !== m.resources.targetGroupA ||
+    svc.loadBalancers[0].targetGroupArn !==
+      (warming ? m.resources.targetGroupB : m.resources.targetGroupA) ||
     svc.loadBalancers[0].containerName !== m.runtime.container ||
     svc.loadBalancers[0].containerPort !== 3001
   )
@@ -42,7 +43,7 @@ async function preflight(options, mode = "introduce") {
     container.portMappings[0].containerPort !== 3001
   )
     throw Error("topology_prerequisite");
-  assertServiceTopology(await candidate.service(), m);
+  assertServiceTopology(await candidate.service(), m, mode === "warming");
   const listener = await aws("elbv2", "describe-listeners", {
       ListenerArns: [m.resources.listenerArn],
     }),
@@ -68,11 +69,31 @@ async function preflight(options, mode = "introduce") {
     mode === "introduce",
   );
 }
+async function continuationMode(options) {
+  const ctl = await options.read({ pk: "ENV", sk: "CONTROL" });
+  if (
+    ctl?.servingGeneration === 0 &&
+    !ctl.deployment &&
+    Object.keys(ctl.servingMembers).length === 0
+  )
+    return "replace";
+  else if (
+    ctl?.servingGeneration === 1 &&
+    ctl.deployment?.phase === "warming" &&
+    ctl.deployment.routing?.state === "source"
+  )
+    return "warming";
+  else throw Error("continuation_scope_refused");
+}
 async function introduceProduction(options, mode) {
   if (!["introduce", "continue"].includes(mode))
     throw Error("introduction_mode_refused");
-  await preflight(options, mode);
+  const continuation =
+    mode === "continue" ? await continuationMode(options) : undefined;
+  await preflight(options, continuation === "warming" ? "warming" : mode);
   const bootstrap = createProductionBootstrap(options);
+  if (continuation === "warming")
+    return createProductionHandoff(options, bootstrap).resume();
   const slot = mode === "introduce" ? "bootstrap" : "replacement";
   if (mode === "introduce") await bootstrap.initialize();
   else await bootstrap.replace();

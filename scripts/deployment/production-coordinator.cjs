@@ -126,9 +126,11 @@ function createProductionCoordinator(options) {
   async function selectAction(purpose, context) {
     let selected;
     const reserved = [];
+    const observed = new Set();
     for (const a of m.actions) {
       const raw = await read(actionKey(a.actionId));
       const row = raw ? await journal.readAction(a.actionId) : undefined;
+      if (row?.phase === "observed") observed.add(a.actionId);
       if (row?.phase === "reserved") reserved.push(a.actionId);
       if (row && ["submitted", "acknowledged"].includes(row.phase)) refuse();
       if (
@@ -139,9 +141,18 @@ function createProductionCoordinator(options) {
       )
         selected = { action: a, row };
     }
+    assertPrecedingActions(selected, observed, reserved);
+    return selected;
+  }
+  function assertPrecedingActions(selected, observed, reserved) {
     if (!selected || reserved.some((id) => id !== selected.action.actionId))
       refuse();
-    return selected;
+    if (
+      sequence
+        .slice(0, sequence.indexOf(selected.action))
+        .some((a) => a.purpose !== "renew" && !observed.has(a.actionId))
+    )
+      refuse();
   }
   async function submit(purpose, context) {
     if (!journal) refuse();

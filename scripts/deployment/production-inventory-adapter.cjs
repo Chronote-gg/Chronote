@@ -8,8 +8,32 @@ const envNames = [
     /name\s*=\s*"([A-Z][A-Z0-9_]+)"/g,
   ),
 ].map((v) => v[1]);
-const safeEnv = [...new Set([...envNames, "DEPLOYMENT_CANDIDATE_ID"])].filter(
-  (name) => !/(KEY|SECRET|TOKEN|PASSWORD|PROMPT|REDIS_URL)/.test(name),
+// Explicit non-content prompt selection/configuration, never arbitrary PROMPT values.
+const promptConfiguration = new Set([
+  "LANGFUSE_PROMPT_LABEL",
+  "LANGFUSE_PROMPT_MEETING_SUMMARY",
+  "LANGFUSE_PROMPT_CACHE_TTL_MS",
+  "LANGFUSE_PROMPT_NOTES",
+  "LANGFUSE_PROMPT_NOTES_LONG_STORY",
+  "LANGFUSE_PROMPT_NOTES_CONTEXT_TEST",
+  "LANGFUSE_PROMPT_TRANSCRIPTION_CLEANUP",
+  "LANGFUSE_PROMPT_TRANSCRIPTION_COALESCE",
+  "LANGFUSE_PROMPT_TRANSCRIPTION_FINAL_PASS",
+  "LANGFUSE_PROMPT_TRANSCRIPTION",
+  "LANGFUSE_PROMPT_IMAGE",
+  "LANGFUSE_PROMPT_ASK",
+  "LANGFUSE_PROMPT_NOTES_CORRECTION",
+  "LANGFUSE_PROMPT_DICTIONARY_TEACHING",
+  "LANGFUSE_PROMPT_LIVE_VOICE_GATE",
+  "LANGFUSE_PROMPT_LIVE_VOICE_CONFIRM",
+  "LANGFUSE_PROMPT_LIVE_VOICE_RESPONDER",
+]);
+const safeEnv = [
+  ...new Set([...envNames, ...promptConfiguration, "DEPLOYMENT_CANDIDATE_ID"]),
+].filter(
+  (name) =>
+    promptConfiguration.has(name) ||
+    !/(KEY|SECRET|TOKEN|PASSWORD|PROMPT|REDIS_URL)/.test(name),
 );
 function definitionQuery() {
   return `{taskDefinition:taskDefinition.{taskDefinitionArn:taskDefinitionArn,family:family,status:status,cpu:cpu,memory:memory,networkMode:networkMode,taskRoleArn:taskRoleArn,executionRoleArn:executionRoleArn,requiresCompatibilities:requiresCompatibilities,runtimePlatform:runtimePlatform,volumes:volumes,containerDefinitions:containerDefinitions[].{name:name,image:image,essential:essential,cpu:cpu,memory:memory,memoryReservation:memoryReservation,command:command,entryPoint:entryPoint,stopTimeout:stopTimeout,portMappings:portMappings,healthCheck:healthCheck,logConfiguration:logConfiguration,mountPoints:mountPoints,linuxParameters:linuxParameters,secrets:secrets,environment:environment[?contains(\`${JSON.stringify(safeEnv)}\`,name)],environmentNames:environment[].name}}}`;

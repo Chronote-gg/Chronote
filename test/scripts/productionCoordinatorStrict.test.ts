@@ -330,3 +330,18 @@ test("reserved exact action can resume, but prevents a different later action an
   await api.save(ctl, next);
   expect(f.rows.get("ACTION#c4")).toMatchObject({ phase: "observed" });
 });
+
+test("missing earlier mandatory receipt refuses later phase despite matching current Control", async () => {
+  const f = strictFixture();
+  await f.coordinator().prepare();
+  f.rows.delete("ACTION#c1");
+  const api = createProductionCoordinator(f.productionOptions);
+  await api.guard(f.state.ctl, configuration(f.env));
+  await expect(
+    api.save(f.state.ctl, {
+      ...f.state.ctl,
+      deployment: { ...f.state.ctl.deployment, phase: "promoting" },
+    }),
+  ).rejects.toThrow();
+  expect(f.rows.has("ACTION#c5")).toBe(false);
+});

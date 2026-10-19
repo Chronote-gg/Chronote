@@ -944,17 +944,23 @@ function createCoordinator(options = {}) {
     promote,
     retire,
     reconcile,
-    inspectContinuation: () =>
-      require("./continuation-inspection.cjs").inspectContinuation({
-        control,
-        own,
-        service,
-        candidate,
-        runtime,
-        ready,
-        protectedTask,
-        routing,
-      }),
+    inspectContinuation: async () => {
+      if (production) await assertWriter();
+      const inspected =
+        await require("./continuation-inspection.cjs").inspectContinuation({
+          control,
+          own,
+          service,
+          candidate,
+          runtime,
+          ready,
+          protectedTask,
+          routing,
+        });
+      if (production)
+        await production.validateCurrent(inspected.control, config);
+      return inspected;
+    },
   };
 }
 module.exports = {

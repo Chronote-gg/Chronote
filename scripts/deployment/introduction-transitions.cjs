@@ -418,13 +418,21 @@ function createJournal(options, recipes) {
       };
       // Ambiguous persistence never grants dispatch permission, even when a subsequent read matches.
       await transition(previous, submitted);
+      const assertDispatchTime =
+        await require("./production-dispatch.cjs").prepareDispatch(
+          options,
+          a,
+          context,
+        );
       let receipt;
       try {
+        assertDispatchTime();
         receipt = recipes.acknowledgment(
           m,
           a,
           await invoke(request.operation, request.input, { maxAttempts: 1 }),
           context,
+          request,
         );
       } catch {
         return refuse();

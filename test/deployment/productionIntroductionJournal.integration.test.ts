@@ -61,7 +61,13 @@ afterAll(async () => {
 test("acquires one durable hold before CONTROL exists and refuses reacquisition", async () => {
   const manifest = fixture();
   manifest.resources.tables.deploymentControl = table;
-  for (const actionId of ["ambiguous", "ack_retry", "invalid_response"])
+  for (const actionId of [
+    "ambiguous",
+    "ack_retry",
+    "invalid_response",
+    "dispatch_expired",
+    "late_ack",
+  ])
     manifest.actions.push({
       actionId,
       kind: "route_maintenance",
@@ -476,5 +482,98 @@ test("provider zero-success equivalent without exact identity leaves outcome unr
   expect((await journal.readAction("invalid_response")).phase).toBe(
     "submitted",
   );
+  expect(calls).toBe(1);
+});
+
+test("authority expiring while submitted persistence awaits prevents actual provider dispatch", async () => {
+  let time = 150,
+    calls = 0;
+  const options = {
+    builders,
+    binding,
+    hold,
+    authority,
+    table,
+    read,
+    now: () => time,
+    write: async (input: TransactWriteItemsCommandInput) => {
+      const response = await write(input);
+      if (
+        input.TransactItems?.some(
+          (item) => item.Put?.Item.phase?.S === "submitted",
+        )
+      )
+        time = binding.manifest.validUntil;
+      return response;
+    },
+    invoke: async () => {
+      calls++;
+      return {
+        Listeners: [
+          {
+            ListenerArn: binding.manifest.resources.listenerArn,
+            DefaultActions: [
+              {
+                Type: "forward",
+                TargetGroupArn: binding.manifest.resources.targetGroupB,
+              },
+            ],
+          },
+        ],
+      };
+    },
+  };
+  const journal = createIntroductionJournal(options);
+  await journal.reserveAction("dispatch_expired");
+  await expect(journal.submitOnce("dispatch_expired")).rejects.toThrow();
+  expect(calls).toBe(0);
+  expect((await journal.readAction("dispatch_expired")).phase).toBe(
+    "submitted",
+  );
+  await expect(
+    createIntroductionJournal({ ...options, now: () => 150, write }).submitOnce(
+      "dispatch_expired",
+    ),
+  ).rejects.toThrow();
+  expect(calls).toBe(0);
+});
+test("late direct acknowledgment and read-only observation persist after authority expiry without replay", async () => {
+  let time = 150,
+    calls = 0;
+  const journal = createIntroductionJournal({
+    builders,
+    binding,
+    hold,
+    authority,
+    table,
+    read,
+    write,
+    now: () => time,
+    invoke: async () => {
+      calls++;
+      time = binding.manifest.validUntil;
+      return {
+        Listeners: [
+          {
+            ListenerArn: binding.manifest.resources.listenerArn,
+            DefaultActions: [
+              {
+                Type: "forward",
+                TargetGroupArn: binding.manifest.resources.targetGroupB,
+              },
+            ],
+          },
+        ],
+      };
+    },
+  });
+  await journal.reserveAction("late_ack");
+  await journal.submitOnce("late_ack");
+  expect((await journal.readAction("late_ack")).phase).toBe("acknowledged");
+  await journal.observe("late_ack", {
+    listenerArn: binding.manifest.resources.listenerArn,
+    targetGroupArn: binding.manifest.resources.targetGroupB,
+  });
+  expect((await journal.readAction("late_ack")).phase).toBe("observed");
   expect(calls).toBe(1);
 });

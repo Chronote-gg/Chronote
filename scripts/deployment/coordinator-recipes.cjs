@@ -128,8 +128,7 @@ function coordinatorRecipes(options) {
       },
     };
   }
-  function acknowledgment(m, a, response, context) {
-    const wire = request(m, a, context);
+  function acknowledgment(m, a, response, context, wire) {
     const validators = {
       updateService() {
         if (

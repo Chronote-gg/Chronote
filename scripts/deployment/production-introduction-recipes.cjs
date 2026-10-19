@@ -160,13 +160,13 @@ function introductionRecipes(options) {
   }
   return {
     request,
-    acknowledgment(m, a, response, c) {
+    acknowledgment(m, a, response, c, wire) {
       if (!response || response.UnprocessedItems)
         throw Error("introduction_ack_missing");
       return {
         resourceIds: [table],
         evidenceHash: canonicalHash({
-          request: request(m, a, c),
+          request: wire,
           directAcknowledgment: true,
         }),
       };

@@ -53,6 +53,14 @@ export async function productionOrchestrationFixture() {
     lose: undefined,
     failReady: false,
     timed: false,
+    pauseWarming: false,
+    expireOnSubmitted: undefined,
+    expireAfterControlRead: undefined,
+    expireAfterDirectAck: undefined,
+    delayFailedRetirement: 0,
+    failedRetirementAt: undefined,
+    delayReplacementLaunch: 0,
+    replacementVisibleAt: undefined,
     recordings: [],
     writeTimes: [],
     attachedB: false,
@@ -137,7 +145,18 @@ export async function productionOrchestrationFixture() {
     }),
   }));
   const binding = bound(m),
-    read = (key) => readIntroductionDocument(table, key),
+    read = async (key) => {
+      const row = await readIntroductionDocument(table, key);
+      if (key.sk === "CONTROL" && state.expireAfterControlRead) {
+        const action = await readIntroductionDocument(table, {
+          pk: `INTRODUCTION#${m.introductionId}`,
+          sk: `ACTION#${state.expireAfterControlRead}`,
+        });
+        if (action?.phase === "submitted")
+          state.time = row.coordinatorExpiresAt;
+      }
+      return row;
+    },
     put = (value) => putIntroductionDocument(table, value);
   const task = (slot, index) => {
     const s =
@@ -206,6 +225,29 @@ export async function productionOrchestrationFixture() {
       },
     });
   }
+  function retireRuntime(r, t, ctl) {
+    const recording = state.recordings.find((x) => x.instanceId === t.slot);
+    if (r.retirementRequest && ctl.servingGeneration === 0)
+      state.failedRetirementAt ??= state.time + state.delayFailedRetirement;
+    if (
+      (ctl.servingGeneration !== 0 || state.time >= state.failedRetirementAt) &&
+      r.retirementRequest &&
+      (!recording || state.time >= recording.endsAt)
+    ) {
+      r.role = "retired";
+      r.workCounts = counts();
+      r.retirementAcknowledgment ??= {
+        request: r.retirementRequest,
+        retiredAt: state.time,
+      };
+      if (
+        (t.slot !== "bootstrap" || ctl.servingGeneration > 0) &&
+        (!recording || state.time >= r.retirementAcknowledgment.retiredAt + 300)
+      ) {
+        t.lastStatus = t.desiredStatus = "STOPPED";
+      }
+    }
+  }
   async function refreshRuntime() {
     const ctl = await read({ pk: "ENV", sk: "CONTROL" });
     if (!ctl) return;
@@ -222,25 +264,7 @@ export async function productionOrchestrationFixture() {
         provenAt: state.time,
         expiresAt: state.time + 600,
       });
-      const recording = state.recordings.find((x) => x.instanceId === t.slot);
-      if (
-        r.retirementRequest &&
-        (!recording || state.time >= recording.endsAt)
-      ) {
-        r.role = "retired";
-        r.workCounts = counts();
-        r.retirementAcknowledgment ??= {
-          request: r.retirementRequest,
-          retiredAt: state.time,
-        };
-        if (
-          (t.slot !== "bootstrap" || ctl.servingGeneration > 0) &&
-          (!recording ||
-            state.time >= r.retirementAcknowledgment.retiredAt + 300)
-        ) {
-          t.lastStatus = t.desiredStatus = "STOPPED";
-        }
-      }
+      retireRuntime(r, t, ctl);
       await put(r);
     }
     service.runningCount = state.tasks.filter(
@@ -249,6 +273,17 @@ export async function productionOrchestrationFixture() {
   }
   async function write(input) {
     const response = await writeIntroduction(input);
+    if (
+      input.TransactItems.some(
+        (item) =>
+          item.Put?.Item.phase?.S === "submitted" &&
+          item.Put.Item.actionId?.S === state.expireOnSubmitted,
+      )
+    ) {
+      state.time = (
+        await read({ pk: "ENV", sk: "CONTROL" })
+      ).coordinatorExpiresAt;
+    }
     await refreshRuntime();
     return response;
   }
@@ -300,10 +335,26 @@ export async function productionOrchestrationFixture() {
         TargetHealth: { State: "healthy" },
       }));
   }
+  async function serviceState() {
+    const ctl = await read({ pk: "ENV", sk: "CONTROL" });
+    const launched = await read({
+      pk: `INTRODUCTION#${m.introductionId}`,
+      sk: "ACTION#bootstrap-c4",
+    });
+    if (
+      state.pauseWarming &&
+      ctl?.deployment?.phase === "warming" &&
+      launched?.phase === "observed"
+    ) {
+      state.pauseWarming = false;
+      throw Error("known warming interruption");
+    }
+    return { services: [service], failures: [] };
+  }
   async function ecs(operation, input) {
     switch (operation) {
       case "describe-services":
-        return { services: [service], failures: [] };
+        return serviceState();
       case "describe-task-definition":
         return { taskDefinition: definitions.get(input.taskDefinition) };
       case "validate-update-service":
@@ -499,6 +550,9 @@ export async function productionOrchestrationFixture() {
           ),
           t = task(slot, state.tasks.length + 1);
         state.tasks.push(t);
+        if (slot === "replacement")
+          state.replacementVisibleAt =
+            state.time + state.delayReplacementLaunch;
         await registerRuntime(t);
         service.runningCount = state.tasks.filter(
           (t) => t.lastStatus === "RUNNING",
@@ -511,6 +565,10 @@ export async function productionOrchestrationFixture() {
       }
       response = { service };
     } else throw Error(`unexpected invoke ${operation}`);
+    if (state.expireAfterDirectAck === pending?.actionId)
+      state.time = (
+        await read({ pk: "ENV", sk: "CONTROL" })
+      ).coordinatorExpiresAt;
     if (state.lose === pending?.actionId)
       throw Error("ACK lost after provider committed");
     return response;
@@ -550,6 +608,8 @@ export async function productionOrchestrationFixture() {
   });
   const inspect = options.candidate.inspect;
   options.candidate.inspect = async (slot, settings) => {
+    if (slot === "replacement" && state.time < state.replacementVisibleAt)
+      throw Error("candidate_waiting");
     if (state.failReady && settings?.ready)
       throw Error("known readiness failure");
     return inspect(slot, settings);

@@ -285,3 +285,19 @@ test("complete reviewed 199-action package fits pinned file bound and loads both
   const continuation = await loadProductionPackage(f.env, f.aws, "continue");
   expect(continuation.binding.manifestHash).toBe(initial.binding.manifestHash);
 });
+
+test.each(["introduce", "continue"])(
+  "%s refuses later attempt despite stale allowed approval and successful current gate",
+  async (mode) => {
+    const f = hostedFixture(completeManifest());
+    f.env.GITHUB_JOB = mode;
+    f.env.GITHUB_RUN_ATTEMPT = "2";
+    f.run.run_attempt = 2;
+    f.aws.mockResolvedValue({
+      Account: f.pkg.manifest.identity.accountId,
+      Arn: `arn:aws:sts::${f.pkg.manifest.identity.accountId}:assumed-role/deploy/introduction-10-2`,
+    });
+    await expect(loadProductionPackage(f.env, f.aws, mode)).rejects.toThrow();
+    expect(f.aws).not.toHaveBeenCalled();
+  },
+);

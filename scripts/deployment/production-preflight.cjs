@@ -15,6 +15,48 @@ function assertCoordinatorCapacity(m, slot, authorize) {
     (a) => a.kind === "coordinator_write" && (a.path ?? "normal") === path,
   );
   if (actions.some((a) => a.predecessor !== authorize.actionId)) refuse();
+  const mandatory = [
+    ["acquire", "none", "preparing", prior, 1],
+    ["phase", "preparing", "preparing", epoch, 1],
+    ["phase", "preparing", "warming", epoch, 1],
+    ["launch", "warming", "warming", epoch, 1],
+    ["phase", "warming", "promoting", epoch, 1],
+    ["promote", "promoting", "promoting", epoch, 1],
+    ["phase", "promoting", "promoting", epoch, 2],
+    ["route", "promoting", "promoting", epoch, 2],
+    ["phase", "promoting", "promoting", epoch, 2],
+    ["phase", "promoting", "promoted", epoch, 2],
+    ["phase", "promoted", "retiring", epoch, 2],
+    ["retirement", "retiring", "retiring", epoch, 2],
+    ["phase", "retiring", "complete", epoch, 2],
+  ];
+  const recipe = (a) => [
+    a.purpose,
+    a.fromPhase,
+    a.toPhase,
+    a.epoch,
+    a.generation,
+  ];
+  if (
+    JSON.stringify(actions.filter((a) => a.purpose !== "renew").map(recipe)) !==
+    JSON.stringify(mandatory)
+  )
+    refuse();
+  let current = ["none", prior, 1];
+  for (const a of actions) {
+    if (
+      a.purpose === "renew" &&
+      (a.fromPhase !== a.toPhase ||
+        JSON.stringify([a.fromPhase, a.epoch, a.generation]) !==
+          JSON.stringify(current))
+    )
+      refuse();
+    current = [
+      a.toPhase,
+      a.epoch + (a.purpose === "acquire" ? 1 : 0),
+      a.generation + (a.purpose === "promote" ? 1 : 0),
+    ];
+  }
   const required = [
     ["acquire", "none", "preparing", prior, 1, 1],
     ["phase", "preparing", "preparing", epoch, 1, 1],
@@ -51,6 +93,55 @@ function assertCoordinatorCapacity(m, slot, authorize) {
       ).length < count
     )
       refuse();
+}
+function assertIntroductionPredecessors(m, one) {
+  const intro = (purpose, slot) =>
+    one("introduction_write", (a) => a.purpose === purpose && a.slot === slot);
+  const expect = (action, predecessor) => {
+    if (action.predecessor !== (predecessor?.actionId ?? null)) refuse();
+  };
+  const stop = one("stop_service"),
+    maintenance = one("route_maintenance"),
+    initial = intro("initialize", "bootstrap"),
+    repair = intro("replace_control", "replacement"),
+    retirement = intro("retire_failed", "replacement"),
+    failedStop = one("stop_failed");
+  expect(stop, null);
+  expect(maintenance, stop);
+  expect(initial, maintenance);
+  expect(
+    repair,
+    one("launch_candidate", (a) => a.slot === "bootstrap"),
+  );
+  expect(retirement, repair);
+  expect(failedStop, retirement);
+  for (const slot of ["bootstrap", "replacement"]) {
+    const launch = one("launch_candidate", (a) => a.slot === slot),
+      promotion = intro("promote", slot),
+      route = one(
+        "route_candidate",
+        (a) => a.launchActionId === launch.actionId,
+      ),
+      authorize = intro("authorize_fixture", slot),
+      complete = one(
+        "coordinator_write",
+        (a) =>
+          (a.path ?? "normal") ===
+            (slot === "bootstrap" ? "normal" : "replacement") &&
+          a.toPhase === "complete",
+      );
+    expect(launch, slot === "bootstrap" ? initial : failedStop);
+    expect(promotion, launch);
+    expect(route, promotion);
+    expect(authorize, route);
+    for (const action of m.actions.filter(
+      (a) => a.kind === "introduction_write" && a.slot === slot,
+    )) {
+      if (action.purpose === "renew") expect(action, launch);
+      if (action.purpose === "enqueue_fixture")
+        expect(action, action.grantIndex === 0 ? authorize : complete);
+    }
+  }
 }
 function assertProductionPreflight(binding, now = binding.manifest.validFrom) {
   const m = assertBoundExecution(binding, now);
@@ -112,6 +203,7 @@ function assertProductionPreflight(binding, now = binding.manifest.validFrom) {
       refuse();
     assertCoordinatorCapacity(m, slot, authorize);
   }
+  assertIntroductionPredecessors(m, one);
   return m;
 }
 module.exports = { assertProductionPreflight };

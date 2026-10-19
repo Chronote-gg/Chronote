@@ -60,6 +60,8 @@ async function privateFile(env, name) {
 }
 function assertRunContext(env, run) {
   if (
+    run.run_attempt !== 1 ||
+    env.GITHUB_RUN_ATTEMPT !== "1" ||
     env.GITHUB_REPOSITORY !== product ||
     env.GITHUB_REF !== "refs/heads/master" ||
     env.GITHUB_WORKFLOW_REF !==
