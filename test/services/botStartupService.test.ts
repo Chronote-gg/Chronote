@@ -25,6 +25,7 @@ test("serving starts fixture workers while ordinary startup waits for the releas
   expect(startMeetingControlCommandWorker).toHaveBeenCalledWith(client);
   expect(startMeetingRecoveryWorker).toHaveBeenCalledTimes(1);
   expect(initialize).not.toHaveBeenCalled();
-  jest.mocked(whenOrdinaryAdmissionOpen).mock.calls[0][0]();
-  expect(initialize).toHaveBeenCalledTimes(1);
+  const acknowledgeAdmission = jest.fn();
+  jest.mocked(whenOrdinaryAdmissionOpen).mock.calls[0][0](acknowledgeAdmission);
+  expect(initialize).toHaveBeenCalledWith(acknowledgeAdmission);
 });

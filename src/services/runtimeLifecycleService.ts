@@ -31,12 +31,36 @@ export type RuntimeWorkRegistration = RuntimeWorkHandle & {
   beginOwnedControl(): RuntimeWorkHandle;
 };
 export type RuntimeLifecycle = ReturnType<typeof createRuntimeLifecycle>;
+export type OrdinaryAdmissionListener = (
+  acknowledgeAdmission: () => void,
+) => Promise<void>;
 
 function notifyRuntimeListeners(listeners: Set<() => void>, ready: boolean) {
   if (!ready) return;
   for (const listener of listeners) {
     listeners.delete(listener);
     listener();
+  }
+}
+
+function notifyOrdinaryListeners(
+  listeners: Map<OrdinaryAdmissionListener, boolean>,
+  ready: boolean,
+) {
+  if (!ready) return;
+  for (const [listener, running] of listeners) {
+    if (running) continue;
+    listeners.set(listener, true);
+    void Promise.resolve()
+      .then(() =>
+        listener(() => {
+          listeners.delete(listener);
+        }),
+      )
+      .catch(() => undefined)
+      .finally(() => {
+        if (listeners.has(listener)) listeners.set(listener, false);
+      });
   }
 }
 
@@ -59,7 +83,7 @@ export function createRuntimeLifecycle(options: {
   let started = false;
   let safetyHandler = options.checkpointAndFence;
   let maintenance: MaintenanceHold | undefined;
-  const ordinaryListeners = new Set<() => void>();
+  const ordinaryListeners = new Map<OrdinaryAdmissionListener, boolean>();
   const servingListeners = new Set<() => void>();
   const counts: Record<RuntimeWorkKind, number> = {
     pending_admission: 0,
@@ -202,7 +226,7 @@ export function createRuntimeLifecycle(options: {
     maintenance = control.maintenance;
     allowed = canAcceptWork(control, row);
     notifyRuntimeListeners(servingListeners, allowed);
-    notifyRuntimeListeners(ordinaryListeners, allowed && !maintenance);
+    notifyOrdinaryListeners(ordinaryListeners, allowed && !maintenance);
     return structuredClone(readiness);
   }
   function refreshRuntimeReadiness() {
@@ -461,9 +485,10 @@ export function createRuntimeLifecycle(options: {
       Boolean(row && row.readiness.expiresAt > now()),
     getReadiness: () => (row ? structuredClone(row.readiness) : undefined),
     getRole: () => row?.role,
-    whenOrdinaryAdmissionOpen(listener: () => void) {
-      if (allowed && !maintenance) listener();
-      else ordinaryListeners.add(listener);
+    whenOrdinaryAdmissionOpen(listener: OrdinaryAdmissionListener) {
+      if (!ordinaryListeners.has(listener))
+        ordinaryListeners.set(listener, false);
+      notifyOrdinaryListeners(ordinaryListeners, allowed && !maintenance);
     },
     whenServing(listener: () => void) {
       if (allowed) listener();
@@ -495,7 +520,7 @@ export function createRuntimeLifecycle(options: {
 }
 
 let runtime: RuntimeLifecycle | undefined;
-const pendingOrdinaryListeners: Array<() => void> = [];
+const pendingOrdinaryListeners: OrdinaryAdmissionListener[] = [];
 const pendingServingListeners: Array<() => void> = [];
 export function installRuntimeLifecycle(value: RuntimeLifecycle) {
   if (runtime) throw new Error("Runtime lifecycle already installed");
@@ -529,7 +554,9 @@ export const whenRuntimeServing = (listener: () => void) =>
   runtime
     ? runtime.whenServing(listener)
     : pendingServingListeners.push(listener);
-export const whenOrdinaryAdmissionOpen = (listener: () => void) =>
+export const whenOrdinaryAdmissionOpen = (
+  listener: OrdinaryAdmissionListener,
+) =>
   runtime
     ? runtime.whenOrdinaryAdmissionOpen(listener)
     : pendingOrdinaryListeners.push(listener);

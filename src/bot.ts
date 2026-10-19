@@ -517,14 +517,15 @@ export async function setupBot() {
   client.once(Events.ClientReady, () => {
     console.log(`Logged in as ${client.user?.tag}!`);
     setDiscordClient(client);
-    registerServingBotStartup(client, () => {
-      void runServingBotWork(async () => {
+    registerServingBotStartup(client, (acknowledgeAdmission) =>
+      runServingBotWork(async () => {
+        acknowledgeAdmission();
         await setupApplicationCommands();
         await reevaluateOccupiedVoiceChannels();
       }).catch((error) =>
         console.error("Serving bot initialization failed", error),
-      );
-    });
+      ),
+    );
 
     client.on("voiceStateUpdate", (oldState, newState) => {
       void handleVoiceStateUpdate(oldState, newState).catch(() => {
