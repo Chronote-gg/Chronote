@@ -220,7 +220,7 @@ Optional Windows helper (prints loaded env, supports `-Mock` / `-SkipDocker`):
 
 ## Checks
 
-- Run `yarn check:quality` before committing and `yarn test:quality` after checker changes. Include tests, fixtures, mocks, stories, and module variants.
+- Set up the pinned shared tool through `QUALITY_RATCHET_HOME`, then run `yarn check:quality` before committing and `yarn test:quality` after consumer workflow or launcher changes. Keep engine changes in BASIC-BIT/quality-ratchet. Include tests, fixtures, mocks, stories, and module variants.
 - PR exceptions require `quality-exception` plus a reason under `## Quality exception`. The label persists across pushes and never waives operational failures. Agents must obtain explicit user authorization before applying it. Local checks remain strict. See `docs/engineering/code-quality.md`.
 
 - Local full gate: `yarn run check` (lint --fix, prettier --write, then in parallel test, build:all, docs:check, code:stats, prompts:check).
@@ -239,7 +239,7 @@ Optional Windows helper (prints loaded env, supports `-Mock` / `-SkipDocker`):
 - Build (TypeScript + Vite) validates type safety and ensures the frontend bundles. Docs: https://www.typescriptlang.org/docs/handbook/compiler-options.html and https://vite.dev/guide/
 - Docs build (Docusaurus) validates docs compile and link integrity. Command: `yarn docs:check`. Docs: https://docusaurus.io/docs
 - E2E (Playwright) validates core user flows against the UI. Docs: https://playwright.dev/docs/running-tests
-- Code quality: run `yarn check:quality` before committing. Git-relative duplication, complexity, and file-size checks include tests. `yarn code:stats` reports scc and Lizard diagnostics without suppressions. See `docs/engineering/code-quality.md`.
+- Code quality: configure a clean, pinned shared tool checkout through `QUALITY_RATCHET_HOME`, then run `yarn check:quality` before committing. Git-relative duplication, complexity, and file-size checks include tests. `yarn code:stats` reports scc and Lizard diagnostics without suppressions. See `docs/engineering/code-quality.md`.
   - **A clean local `code:stats` does not prove the `Code Stats` job green, and a red one does not prove it red.** Lizard's TS/TSX parsing differs between the local install and the one CI pip-installs, and the two disagree about where a function ends, so they score the same code differently. Both directions have been seen on one branch: CI flagged `callTool` in `src/api/mcp.ts` at CCN 16 while local scored it under the threshold, and local flagged `PersonalSettings` at CCN 20 while CI scored the same function at 7. When the job fails, read the warning table out of the CI log rather than trying to reproduce the number locally, and fix the function CI names.
 - Markdown lint (markdownlint-cli2) enforces consistent Markdown style across all repo `.md` files. Config in `.markdownlint-cli2.jsonc`. Command: `yarn markdownlint:check` (or `yarn markdownlint:fix` to auto-fix). Docs: https://github.com/DavidAnson/markdownlint-cli2 and https://github.com/DavidAnson/markdownlint/blob/main/doc/Rules.md
 - IaC scan (Checkov via uvx) catches Terraform misconfigurations. Docs: https://www.checkov.io/2.Basics/CLI%20Command%20Reference.html and https://docs.astral.sh/uv/concepts/tools/

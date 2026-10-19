@@ -254,7 +254,7 @@ Terraform uses a GitHub provider to manage the Actions environment and variables
 
 ## Code quality checks
 
-Run `yarn check:quality` before committing. It prevents new duplication, complex functions, and oversized files relative to Git history, including tests. See the [policy and PR exception process](docs/engineering/code-quality.md).
+Set up the pinned shared tool checkout with `QUALITY_RATCHET_HOME`, then run `yarn check:quality` before committing. The pinned BASIC-BIT/quality-ratchet action and local CLI use Chronote's `quality-ratchet.json` to prevent new duplication, complex functions, and oversized files relative to Git history, including tests. See the [policy and PR exception process](docs/engineering/code-quality.md).
 
 ### Diagnostic statistics with scc and lizard
 

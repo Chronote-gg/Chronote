@@ -172,7 +172,7 @@ Why each check exists:
 - Build (TypeScript + Vite) validates type safety and ensures the frontend bundles. Docs: https://www.typescriptlang.org/docs/handbook/compiler-options.html and https://vite.dev/guide/
 - Docs build (Docusaurus) validates docs compile and link integrity. Command: `yarn docs:check`. Docs: https://docusaurus.io/docs
 - E2E (Playwright) validates core user flows against the UI. Docs: https://playwright.dev/docs/running-tests
-- Code quality: run `yarn check:quality` before committing. Git-relative duplication, complexity, and file-size checks include tests. `yarn code:stats` reports scc and Lizard diagnostics without suppressions. See `docs/engineering/code-quality.md`.
+- Code quality: configure a clean, pinned shared tool checkout through `QUALITY_RATCHET_HOME`, then run `yarn check:quality` before committing. Git-relative duplication, complexity, and file-size checks include tests. `yarn code:stats` reports scc and Lizard diagnostics without suppressions. See `docs/engineering/code-quality.md`.
 - Markdown lint (markdownlint-cli2) enforces consistent Markdown style across all repo `.md` files. Config in `.markdownlint-cli2.jsonc`. Command: `yarn markdownlint:check` (or `yarn markdownlint:fix` to auto-fix). Docs: https://github.com/DavidAnson/markdownlint-cli2 and https://github.com/DavidAnson/markdownlint/blob/main/doc/Rules.md
 - IaC scan (Checkov via uvx) catches Terraform misconfigurations. Docs: https://www.checkov.io/2.Basics/CLI%20Command%20Reference.html and https://docs.astral.sh/uv/concepts/tools/
 - Prompt sync (Langfuse) keeps repo prompt files aligned with Langfuse. Command: `yarn prompts:check`.

@@ -28,6 +28,9 @@ jobs:
       - name: Install dependencies
         run: bash scripts/ci-install-dependencies.sh
 
+      - name: Test consumer quality contracts
+        run: yarn test:quality
+
       - name: Run ESLint
         run: yarn lint:check
 
