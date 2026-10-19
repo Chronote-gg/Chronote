@@ -7,6 +7,7 @@ import type {
   SessionReservationInput,
 } from "../types/deploymentControl";
 import {
+  fixtureGrantSchema,
   fixtureSessionOwnershipSchema,
   type FixtureGrant,
   type MaintenanceHold,
@@ -129,5 +130,79 @@ export function consumeMockFixture(
     ...structuredClone(grant),
     state: "consumed",
     ownership: fixtureReservationOwnership(input),
+    historyKey: fixtureReservationHistoryKey(input),
   });
+}
+
+export function fixtureReservationHistoryKey(input: SessionReservationInput) {
+  const { history, lease } = input;
+  if (
+    !history ||
+    history.guildId !== lease.guildId ||
+    history.meetingId !== lease.meetingId ||
+    history.channelId !== lease.voiceChannelId
+  )
+    throw new Error("Fixture reservation requires its original history");
+  return {
+    guildId: history.guildId,
+    channelId_timestamp: history.channelId_timestamp,
+  };
+}
+export type ConsumedFixtureGrant = Extract<FixtureGrant, { state: "consumed" }>;
+export function fixtureScopeForGrant(grant: FixtureGrant): FixtureScope {
+  fixtureGrantSchema.parse(grant);
+  return {
+    kind: "fixture",
+    reference: {
+      holdId: grant.holdId,
+      introductionId: grant.introductionId,
+      revision: grant.revision,
+      grantId: grant.grantId,
+    },
+    commandId: grant.commandId,
+    meetingId: grant.meetingId,
+    guildId: grant.guildId,
+    voiceChannelId: grant.voiceChannelId,
+    textChannelId: grant.textChannelId,
+    actorUserId: grant.actorUserId,
+    sessionMode: grant.sessionMode,
+  };
+}
+export function consumedFixtureGrantCondition(
+  grant: ConsumedFixtureGrant,
+  table: string,
+): ConditionCheck {
+  const condition = fixtureGrantCondition(fixtureScopeForGrant(grant), table);
+  const values = { ...condition.ExpressionAttributeValues };
+  delete values[":issued"];
+  return {
+    ...condition,
+    ConditionExpression: condition.ConditionExpression!.replace(
+      "#state = :issued",
+      "#state = :consumed AND ownership = :ownership AND historyKey = :historyKey",
+    ),
+    ExpressionAttributeValues: {
+      ...values,
+      ...marshall({
+        ":consumed": "consumed",
+        ":ownership": grant.ownership,
+        ":historyKey": grant.historyKey,
+      }),
+    },
+  };
+}
+export function consumedFixtureMatches(
+  hold: MaintenanceHold | undefined,
+  stored: DeploymentControlRecord | undefined,
+  grant: ConsumedFixtureGrant,
+): boolean {
+  return Boolean(
+    hold &&
+    stored?.recordType === "fixture_grant" &&
+    stored.state === "consumed" &&
+    hold.holdId === grant.holdId &&
+    hold.introductionId === grant.introductionId &&
+    hold.revision === grant.revision &&
+    isDeepStrictEqual(structuredClone(stored), structuredClone(grant)),
+  );
 }

@@ -1,6 +1,10 @@
 import {
   fixtureGrantCondition,
   fixtureReservationOwnership,
+  fixtureReservationHistoryKey,
+  fixtureScopeForGrant,
+  consumedFixtureGrantCondition,
+  type ConsumedFixtureGrant,
 } from "./deploymentFixtureAdmission";
 import {
   newWorkScopeSchema,
@@ -247,12 +251,14 @@ export function buildSessionReservationTransaction(
     items[2] = {
       Update: {
         ...grant,
-        UpdateExpression: "SET #state = :consumed, ownership = :ownership",
+        UpdateExpression:
+          "SET #state = :consumed, ownership = :ownership, historyKey = :historyKey",
         ExpressionAttributeValues: {
           ...grant.ExpressionAttributeValues,
           ...marshall({
             ":consumed": "consumed",
             ":ownership": fixtureReservationOwnership(input),
+            ":historyKey": fixtureReservationHistoryKey(input),
           }),
         },
       },
@@ -876,4 +882,26 @@ export function buildCompatibleReplacementTransaction(
       })),
     ],
   };
+}
+
+export function buildRecordingRecoveryAdmissionChecks(
+  context: AdmissionContext,
+  tables: ControlTableNames,
+  fixtureGrant?: ConsumedFixtureGrant,
+): TransactWriteItem[] {
+  if (!fixtureGrant) return buildRuntimeAdmissionChecks(context, tables);
+  const checks = buildRuntimeAdmissionChecks(
+    context,
+    tables,
+    fixtureScopeForGrant(fixtureGrant),
+  );
+  return [
+    ...checks.slice(0, 2),
+    {
+      ConditionCheck: consumedFixtureGrantCondition(
+        fixtureGrant,
+        tables.deploymentControl,
+      ),
+    },
+  ];
 }

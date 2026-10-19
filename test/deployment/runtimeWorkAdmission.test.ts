@@ -57,25 +57,36 @@ test("mock signed segment intake preserves the same pending-job and observed-sta
     createdAt: "now",
     updatedAt: "now",
   };
-  await uploads.write({
-    ...job,
-    uploadId: segment.uploadId,
-    status: "pending_upload",
-  });
-  expect(await segments.prepare(segment, undefined)).toBe(true);
-  expect(await segments.prepare(segment, undefined)).toBe(false);
-  expect(await segments.prepare(segment, "pending_upload")).toBe(true);
-  await segments.update({ ...segment, status: "processing" });
-  expect(await segments.prepare(segment, "pending_upload")).toBe(false);
-  await segments.update(segment);
-  await uploads.write({
+  await uploads.write(
+    {
+      ...job,
+      uploadId: segment.uploadId,
+      status: "pending_upload",
+    },
+    context,
+  );
+  expect(await segments.prepare(segment, undefined, context)).toBe(true);
+  expect(await segments.prepare(segment, undefined, context)).toBe(false);
+  expect(await segments.prepare(segment, "pending_upload", context)).toBe(true);
+  getMockStore()
+    .personalRecordingSegmentsByUploadId.get(segment.uploadId)!
+    .set(segment.segmentKey, { ...segment, status: "processing" });
+  expect(await segments.prepare(segment, "pending_upload", context)).toBe(
+    false,
+  );
+  getMockStore()
+    .personalRecordingSegmentsByUploadId.get(segment.uploadId)!
+    .set(segment.segmentKey, segment);
+  getMockStore().personalMediaUploadsById.set(segment.uploadId, {
     ...job,
     uploadId: segment.uploadId,
     status: "processing",
     attempts: 2,
     processingClaimId: "held-claim",
   });
-  expect(await segments.prepare(segment, "pending_upload")).toBe(false);
+  expect(await segments.prepare(segment, "pending_upload", context)).toBe(
+    false,
+  );
   expect(await uploads.get(segment.uploadId)).toMatchObject({
     status: "processing",
     attempts: 2,
@@ -85,7 +96,7 @@ test("mock signed segment intake preserves the same pending-job and observed-sta
 
 test("no personal claim after retiring acknowledgment", async () => {
   const repository = getPersonalMediaUploadRepository();
-  await repository.write(job);
+  await repository.write(job, context);
   const row = { ...runtime("old"), role: "retired" as const };
   getMockStore().deploymentControlRecords.set(
     JSON.stringify([row.pk, row.sk]),
@@ -107,14 +118,17 @@ test("no personal claim after retiring acknowledgment", async () => {
 });
 test("a delayed duplicate intake cannot reset a processing claim", async () => {
   const repository = getPersonalMediaUploadRepository();
-  await repository.write({
-    ...job,
-    status: "processing",
-    attempts: 2,
-    processingOwnerInstanceId: "old",
-    claimExpiresAt: 160,
-  });
-  expect(await repository.submit({ ...job })).toBe(false);
+  await repository.write(
+    {
+      ...job,
+      status: "processing",
+      attempts: 2,
+      processingOwnerInstanceId: "old",
+      claimExpiresAt: 160,
+    },
+    context,
+  );
+  expect(await repository.submit({ ...job }, context)).toBe(false);
   expect(await repository.get(job.uploadId)).toMatchObject({
     status: "processing",
     attempts: 2,
@@ -139,7 +153,7 @@ const claimOptions = (
 });
 test("retry artifacts are bounded, preserve prior keys, and fence stale canonical writes", async () => {
   const repository = getPersonalMediaUploadRepository();
-  await repository.write(job);
+  await repository.write(job, context);
   const first = await repository.claim(claimOptions("first"));
   expect(first).toBeDefined();
   const oldClaim = personalMediaClaimForJob(first!, "old");
@@ -188,7 +202,9 @@ test("retry artifacts are bounded, preserve prior keys, and fence stale canonica
       updatedAt: "now",
     }),
   ).toBe(false);
-  expect(await repository.submit({ ...job, status: "queued" })).toBe(false);
+  expect(await repository.submit({ ...job, status: "queued" }, context)).toBe(
+    false,
+  );
   expect(await repository.claim(claimOptions("third", 2, 142))).toMatchObject({
     attempts: 3,
   });
@@ -223,7 +239,7 @@ test("warmRuntimeDoesNotConsumeOwnerInteractionReceipt", async () => {
 });
 test("API mode receives the same claim checks without gateway readiness", async () => {
   const repository = getPersonalMediaUploadRepository();
-  await repository.write(job);
+  await repository.write(job, context);
   const row = runtime("old");
   row.readiness.runtimeMode = "api";
   row.readiness.gatewayReady = false;
@@ -234,4 +250,19 @@ test("API mode receives the same claim checks without gateway readiness", async 
   expect(await repository.claim(claimOptions("api-claim"))).toMatchObject({
     attempts: 1,
   });
+});
+
+test("maintenance preserves pending upload state and refuses new intake", async () => {
+  const store = getMockStore();
+  store.deploymentControlRecords.set(JSON.stringify(["ENV", "CONTROL"]), {
+    ...control,
+    maintenance: { holdId: "hold", introductionId: "intro", revision: 1 },
+  });
+  await expect(
+    getPersonalMediaUploadRepository().write(
+      { ...job, status: "pending_upload" },
+      context,
+    ),
+  ).rejects.toThrow();
+  expect(store.personalMediaUploadsById.has(job.uploadId)).toBe(false);
 });

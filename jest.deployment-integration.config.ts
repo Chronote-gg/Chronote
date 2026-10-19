@@ -13,6 +13,10 @@ if (
     "Deployment integration tests require an explicit loopback HTTP endpoint",
   );
 
+// Pin incidental SDK clients to the same validated loopback service endpoint.
+process.env.AWS_ENDPOINT_URL_DYNAMODB = endpoint;
+process.env.AWS_IGNORE_CONFIGURED_ENDPOINT_URLS = "false";
+
 // Never inherit real credentials, even when the host has an AWS profile.
 process.env.AWS_ACCESS_KEY_ID = "dummy";
 process.env.AWS_SECRET_ACCESS_KEY = "dummy";

@@ -1,3 +1,4 @@
+import { fixtureScopeForGrant } from "./deploymentFixtureAdmission";
 import { z } from "zod";
 import { marshall } from "@aws-sdk/util-dynamodb";
 import type { TransactWriteItemsCommandInput } from "@aws-sdk/client-dynamodb";
@@ -55,24 +56,6 @@ export function assertFixtureCommandMatches(
   )
     throw new Error("Fixture command identity mismatch");
 }
-function scopeForGrant(grant: FixtureGrant): FixtureScope {
-  return {
-    kind: "fixture",
-    reference: {
-      holdId: grant.holdId,
-      introductionId: grant.introductionId,
-      grantId: grant.grantId,
-      revision: grant.revision,
-    },
-    commandId: grant.commandId,
-    meetingId: grant.meetingId,
-    guildId: grant.guildId,
-    voiceChannelId: grant.voiceChannelId,
-    textChannelId: grant.textChannelId,
-    actorUserId: grant.actorUserId,
-    sessionMode: grant.sessionMode,
-  };
-}
 export function buildFixtureStartTransaction({
   hold: rawHold,
   grant: rawGrant,
@@ -87,7 +70,7 @@ export function buildFixtureStartTransaction({
   fixtureCommandSchema.parse(command);
   const hold = introductionHoldSchema.parse(rawHold);
   const grant = fixtureGrantSchema.parse(rawGrant);
-  const scope = scopeForGrant(grant);
+  const scope = fixtureScopeForGrant(grant);
   assertFixtureCommandMatches(command, scope);
   const maintenance = {
     holdId: hold.holdId,
@@ -176,7 +159,7 @@ export async function resolveFixtureStartScope(
   const grant = fixtureGrantSchema.parse(
     await repository.getRecord(`FIXTURE#${command.requestId}`, "AUTHORITY"),
   );
-  const scope = scopeForGrant(grant);
+  const scope = fixtureScopeForGrant(grant);
   if (!fixtureGrantMatches(maintenance, grant, scope))
     throw new Error("Fixture authority unavailable");
   assertFixtureCommandMatches(command, scope);

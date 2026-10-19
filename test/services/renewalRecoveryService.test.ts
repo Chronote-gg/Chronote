@@ -1,4 +1,5 @@
 /** @jest-environment node */
+import "../fixtures/admittedApi";
 import { resolveRenewalAccess } from "../../src/services/renewalRecoveryAccess";
 import { reconcileSubscription } from "../../src/services/subscriptionReconciliation";
 import { getRenewalRecoveryView } from "../../src/services/renewalRecoveryView";
@@ -28,7 +29,6 @@ import {
 } from "../fixtures/renewalStripe";
 import { renewalSubscription } from "../fixtures/renewal";
 import { stripeTransport } from "../fixtures/stripeTransport";
-
 const original = {
   mock: config.mock.enabled,
   enabled: config.stripe.renewalGraceEnabled,

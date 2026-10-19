@@ -1,3 +1,4 @@
+import { registerRuntimeNotionOwner } from "./services/notionOperationLifetime";
 import { registerServingBotStartup } from "./services/botStartupService";
 import { InitiatingStopInterruption } from "./services/meetingStopInterruption";
 import { waitForGuildInstaller } from "./services/guildInstallerOnboardingService";
@@ -687,7 +688,6 @@ export async function setupBot() {
 
   await client.login(TOKEN);
 }
-
 async function executeInteractionWork(
   interaction: RepliableInteraction,
   ownerControl: boolean,
@@ -695,6 +695,7 @@ async function executeInteractionWork(
   work: RuntimeWorkClaim,
 ) {
   let receiptAttempted = false;
+  let unregister = () => {};
   try {
     if (interaction.isRepliable()) {
       if (await isForeignOwnedInteraction(interaction, ownerControl, local))
@@ -713,6 +714,7 @@ async function executeInteractionWork(
       }
       work.acknowledgeInteractionReceipt();
       work.claimed();
+      unregister = registerRuntimeNotionOwner(work);
       await handleInteractionCreate(interaction, work.signal, work);
     }
   } catch (e) {
@@ -742,6 +744,7 @@ async function executeInteractionWork(
     }
   } finally {
     await work.settle();
+    unregister();
   }
 }
 

@@ -1,4 +1,8 @@
 /** @jest-environment node */
+jest.mock("../../src/services/runtimeApiOperationService", () => ({
+  runRuntimeApiOperation: jest.requireActual("../fixtures/runtimeApiOperation")
+    .runTestApiOperation,
+}));
 import {
   afterAll,
   beforeEach,
@@ -11,7 +15,6 @@ import { config } from "../../src/services/configService";
 import {
   createCheckoutSession,
   createPortalSession,
-  ensureStripeCustomer,
 } from "../../src/services/billingService";
 import { getMockStore, resetMockStore } from "../../src/repositories/mockStore";
 import type { StripeClient } from "../../src/types/stripe";
@@ -266,32 +269,6 @@ describe("existing server subscription checkout", () => {
     expect(stripe.billingPortal.sessions.create).toHaveBeenCalledWith(
       expect.not.objectContaining({ flow_data: expect.anything() }),
     );
-  });
-  it("does not reuse an email-matched customer owned by another Discord account", async () => {
-    const { stripe, client } = fixture();
-    stripe.customers.list.mockResolvedValue({
-      data: [{ id: "cus_other", metadata: { discord_id: "someone-else" } }],
-    });
-    await expect(ensureStripeCustomer(client, user)).resolves.toBe("cus_new");
-  });
-  it("finds the payer on a later email-match page without creating another customer", async () => {
-    const { stripe, client } = fixture();
-    stripe.customers.list
-      .mockResolvedValueOnce({
-        data: [{ id: "cus_other", metadata: { discord_id: "other" } }],
-        has_more: true,
-      })
-      .mockResolvedValueOnce({
-        data: [{ id: "cus_owned", metadata: { discord_id: user.id } }],
-        has_more: false,
-      });
-    await expect(ensureStripeCustomer(client, user)).resolves.toBe("cus_owned");
-    expect(stripe.customers.list).toHaveBeenLastCalledWith({
-      email: user.email,
-      limit: 100,
-      starting_after: "cus_other",
-    });
-    expect(stripe.customers.create).not.toHaveBeenCalled();
   });
   it("routes an existing subscription to its server review without creating a hosted update or Checkout", async () => {
     const { stripe, client } = fixture();

@@ -1,3 +1,9 @@
+const { context } = jest.requireActual<{
+  context: import("../../types/deploymentControl").AdmissionContext;
+}>("../../../test/deployment/controlFixtures");
+jest.mock("../runtimeLifecycleService", () => ({
+  getRuntimeAdmissionContext: async () => context,
+}));
 import { jest } from "@jest/globals";
 import { PERSONAL_MEDIA_UPLOAD_MAX_BYTES } from "../../constants";
 import {
@@ -57,9 +63,6 @@ const uploadRepository = {
       return undefined;
     },
   ),
-  update: jest.fn(async (job: PersonalMediaUploadJobRecord) => {
-    void job;
-  }),
   listClaimable: jest.fn(async () => []),
   claim: jest.fn(async () => undefined),
   renewClaim: jest.fn(async () => false),
@@ -100,12 +103,6 @@ const segmentRepository = {
       return true;
     },
   ),
-  write: jest.fn(async (segment: PersonalRecordingSegmentRecord) => {
-    segmentStore.set(
-      segmentStoreKey(segment.uploadId, segment.segmentKey),
-      segment,
-    );
-  }),
   get: jest.fn(async (uploadId: string, segmentKey: string) =>
     segmentStore.get(segmentStoreKey(uploadId, segmentKey)),
   ),
@@ -114,12 +111,6 @@ const segmentRepository = {
       .filter((segment) => segment.uploadId === uploadId)
       .sort((left, right) => left.segmentKey.localeCompare(right.segmentKey)),
   ),
-  update: jest.fn(async (segment: PersonalRecordingSegmentRecord) => {
-    segmentStore.set(
-      segmentStoreKey(segment.uploadId, segment.segmentKey),
-      segment,
-    );
-  }),
 } satisfies jest.Mocked<PersonalRecordingSegmentRepository>;
 
 const segmentInput = (options: {
@@ -244,6 +235,7 @@ describe("personalMediaUploadService", () => {
         status: "pending_upload",
         sourceS3Key: intent.key,
       }),
+      context,
     );
   });
 
@@ -296,6 +288,7 @@ describe("personalMediaUploadService", () => {
         ],
         fileSize: 0,
       }),
+      context,
     );
   });
 
@@ -424,7 +417,7 @@ describe("personalMediaUploadService", () => {
       title: "Planning session",
       tags: ["planning"],
     });
-    expect(uploadRepository.submit).toHaveBeenCalledWith(completed);
+    expect(uploadRepository.submit).toHaveBeenCalledWith(completed, context);
     expect(uploadRepository.claim).not.toHaveBeenCalled();
   });
 
@@ -470,7 +463,6 @@ describe("personalMediaUploadService", () => {
     uploadRepository.submit.mockResolvedValueOnce(false);
     resume();
     expect(await submission).toEqual(claimed);
-    expect(uploadRepository.update).not.toHaveBeenCalled();
     expect(uploadRepository.claim).not.toHaveBeenCalled();
   });
 
@@ -586,7 +578,7 @@ describe("personalMediaUploadService", () => {
         expect.objectContaining({ sourceId: "system_output" }),
       ],
     });
-    expect(uploadRepository.submit).toHaveBeenCalledWith(completed);
+    expect(uploadRepository.submit).toHaveBeenCalledWith(completed, context);
     await expect(
       segmentRepository.listByUpload(session.uploadId),
     ).resolves.toEqual(
@@ -708,7 +700,7 @@ describe("personalMediaUploadService", () => {
         segmentCount: 1,
         uploadedSegmentCount: 1,
       });
-      expect(uploadRepository.submit).toHaveBeenCalledWith(completed);
+      expect(uploadRepository.submit).toHaveBeenCalledWith(completed, context);
       await expect(
         segmentRepository.listByUpload(session.uploadId),
       ).resolves.toEqual(

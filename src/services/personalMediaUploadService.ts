@@ -1,3 +1,4 @@
+import { getRuntimeAdmissionContext } from "./runtimeLifecycleService";
 import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
 import { getPersonalMediaUploadRepository } from "../repositories/personalMediaUploadRepository";
 import type {
@@ -254,18 +255,21 @@ export async function createPersonalMediaUploadIntent(options: {
     expiresAt,
   });
   const now = new Date().toISOString();
-  await getPersonalMediaUploadRepository().write({
-    uploadId,
-    ownerUserId: options.userId,
-    status: "pending_upload",
-    mediaKind,
-    sourceS3Key: key,
-    contentType: options.contentType,
-    fileSize: options.fileSize,
-    createdAt: now,
-    updatedAt: now,
-    expiresAt: Math.floor(expiresAt / 1000),
-  });
+  await getPersonalMediaUploadRepository().write(
+    {
+      uploadId,
+      ownerUserId: options.userId,
+      status: "pending_upload",
+      mediaKind,
+      sourceS3Key: key,
+      contentType: options.contentType,
+      fileSize: options.fileSize,
+      createdAt: now,
+      updatedAt: now,
+      expiresAt: Math.floor(expiresAt / 1000),
+    },
+    await getRuntimeAdmissionContext(),
+  );
 
   return {
     uploadId,
@@ -369,22 +373,25 @@ export async function createPersonalRecordingUploadSession(options: {
   );
 
   const now = new Date().toISOString();
-  await getPersonalMediaUploadRepository().write({
-    uploadId,
-    ownerUserId: options.userId,
-    status: "pending_upload",
-    mediaKind: "audio",
-    uploadOrigin: "desktop_recording",
-    sourceS3Key: buildPersonalRecordingSessionPrefix({
-      userId: options.userId,
+  await getPersonalMediaUploadRepository().write(
+    {
       uploadId,
-    }),
-    sourceManifest: sources,
-    contentType: "audio/wav",
-    fileSize: 0,
-    createdAt: now,
-    updatedAt: now,
-  });
+      ownerUserId: options.userId,
+      status: "pending_upload",
+      mediaKind: "audio",
+      uploadOrigin: "desktop_recording",
+      sourceS3Key: buildPersonalRecordingSessionPrefix({
+        userId: options.userId,
+        uploadId,
+      }),
+      sourceManifest: sources,
+      contentType: "audio/wav",
+      fileSize: 0,
+      createdAt: now,
+      updatedAt: now,
+    },
+    await getRuntimeAdmissionContext(),
+  );
 
   return { uploadId, mediaKind: "audio", sources };
 }
@@ -432,7 +439,14 @@ async function prepareRecordingSegment(
       expectedStatus !== "failed"
     )
       return current;
-    if (await repository.prepare(segment, expectedStatus)) return undefined;
+    if (
+      await repository.prepare(
+        segment,
+        expectedStatus,
+        await getRuntimeAdmissionContext(),
+      )
+    )
+      return undefined;
     current = await repository.get(input.uploadId, segment.segmentKey);
     if (current) assertMatchingSegment(current, input);
   }
@@ -568,7 +582,8 @@ async function submitUploadJob(
   next: PersonalMediaUploadJobRecord,
 ): Promise<PersonalMediaUploadJobRecord> {
   const repository = getPersonalMediaUploadRepository();
-  if (await repository.submit(next)) return next;
+  if (await repository.submit(next, await getRuntimeAdmissionContext()))
+    return next;
   const current = await repository.get(next.uploadId);
   if (
     !current ||
@@ -740,7 +755,14 @@ export async function markPersonalRecordingSegmentUploadComplete(options: {
     uploadedAt: now,
     updatedAt: now,
   };
-  if (await repository.transition(next, "pending_upload")) return next;
+  if (
+    await repository.transition(
+      next,
+      "pending_upload",
+      await getRuntimeAdmissionContext(),
+    )
+  )
+    return next;
   const current = await repository.get(segment.uploadId, segment.segmentKey);
   if (
     !current ||
@@ -795,6 +817,7 @@ export async function submitPersonalRecordingUpload(options: {
         updatedAt: now,
       },
       "uploaded",
+      await getRuntimeAdmissionContext(),
     );
     if (!submitted) {
       const current = await repository.get(
@@ -926,12 +949,6 @@ export async function markPersonalRecordingUploadSegmentsFailed(
           }),
       ),
   );
-}
-
-export async function updatePersonalMediaUploadJobRecord(
-  job: PersonalMediaUploadJobRecord,
-) {
-  await getPersonalMediaUploadRepository().update(job);
 }
 
 export async function updateClaimedPersonalMediaUploadJobRecord(

@@ -323,7 +323,7 @@ test("fixture transaction uses one grant action with exact binding and owner, ne
   expect(grantActions).toHaveLength(1);
   const update = grantActions?.[0].Update;
   expect(update?.UpdateExpression).toBe(
-    "SET #state = :consumed, ownership = :ownership",
+    "SET #state = :consumed, ownership = :ownership, historyKey = :historyKey",
   );
   expect(unmarshall(update?.ExpressionAttributeValues ?? {})).toMatchObject({
     ":issued": "issued",
@@ -388,4 +388,18 @@ test.each([grant, hold])(
 
 test("omitted new-work scope defaults to ordinary", () => {
   expect(newWorkScopeSchema.parse(undefined)).toEqual({ kind: "ordinary" });
+});
+
+test("consumption binds the original history key for exact restart recovery", async () => {
+  const { repository } = seeded();
+  expect(await repository.reserveSession(request())).toEqual({
+    kind: "admitted",
+  });
+  expect(await repository.getRecord(grant.pk, grant.sk)).toMatchObject({
+    state: "consumed",
+    historyKey: {
+      guildId: history.guildId,
+      channelId_timestamp: history.channelId_timestamp,
+    },
+  });
 });

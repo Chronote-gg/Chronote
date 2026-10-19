@@ -582,3 +582,72 @@ test.each(["retained", "active"] as const)(
     });
   },
 );
+
+test("held recovery poll never scans ordinary histories or advances its cursor", async () => {
+  await jest.isolateModulesAsync(async () => {
+    const { f, lifecycle } = await readyWorkerFixture("held-fixture");
+    const { beginRuntimeWorkClaim: begin } =
+      await import("../../src/services/runtimeWorkAdmissionService");
+    const current = f.records.get(JSON.stringify(["ENV", "CONTROL"]));
+    f.records.set(JSON.stringify(["ENV", "CONTROL"]), {
+      ...current,
+      maintenance: { holdId: "held", introductionId: "intro", revision: 1 },
+    });
+    const scan = jest.spyOn(f.repository, "discoverRecordingRecoveries");
+    const cursor = jest.spyOn(f.repository, "saveRecoveryCursor");
+    const reads = jest.spyOn(f.repository, "getRecord");
+    const worker = scanWorker(f, undefined, begin);
+    try {
+      await worker.poll();
+      expect(reads).toHaveBeenCalledWith("ENV", "INTRODUCTION");
+      expect(scan).not.toHaveBeenCalled();
+      expect(cursor).not.toHaveBeenCalled();
+    } finally {
+      await worker.stop();
+      await lifecycle.stop();
+    }
+  });
+});
+
+test("held recovery discovers only the bounded consumed grant history after compatible restart", async () => {
+  await jest.isolateModulesAsync(async () => {
+    const { f, lifecycle } = await readyWorkerFixture("held-consumed");
+    const { consumedFixtureForHistory, introductionFixture } =
+      await import("../fixtures/productionIntroduction");
+    const { beginRuntimeWorkClaim: begin } =
+      await import("../../src/services/runtimeWorkAdmissionService");
+    const hold = { holdId: "held", introductionId: "intro", revision: 1 };
+    const row = f.histories.get("held-consumed")![0];
+    const grant = consumedFixtureForHistory(row, hold);
+    const current = f.records.get(JSON.stringify(["ENV", "CONTROL"]));
+    f.records.set(JSON.stringify(["ENV", "CONTROL"]), {
+      ...current,
+      maintenance: hold,
+    });
+    f.records.set(JSON.stringify(["ENV", "INTRODUCTION"]), {
+      ...introductionFixture(hold),
+      fixtureGrantIds: [grant.grantId],
+    });
+    f.records.set(JSON.stringify([grant.pk, grant.sk]), grant);
+    const scan = jest.spyOn(f.repository, "discoverRecordingRecoveries");
+    const cursor = jest.spyOn(f.repository, "saveRecoveryCursor");
+    const claims = jest.spyOn(f.repository, "claimRecordingRecovery");
+    const worker = scanWorker(f, undefined, begin);
+    try {
+      await worker.poll();
+      expect(scan).not.toHaveBeenCalled();
+      expect(cursor).not.toHaveBeenCalled();
+      expect(claims).toHaveBeenCalledTimes(1);
+      expect(claims.mock.calls[0][0]).toMatchObject({
+        fixtureGrant: grant,
+        history: {
+          guildId: row.guildId,
+          channelId_timestamp: row.channelId_timestamp,
+        },
+      });
+    } finally {
+      await worker.stop();
+      await lifecycle.stop();
+    }
+  });
+});

@@ -63,6 +63,7 @@ export const fixtureGrantSchema = z
         ...grantFields,
         state: z.literal("consumed"),
         ownership: fixtureSessionOwnershipSchema,
+        historyKey: z.object({ guildId: id, channelId_timestamp: id }).strict(),
       })
       .strict(),
   ])
@@ -74,7 +75,8 @@ export const fixtureGrantSchema = z
       });
     if (
       record.state === "consumed" &&
-      (record.ownership.guildId !== record.guildId ||
+      (record.historyKey.guildId !== record.guildId ||
+        record.ownership.guildId !== record.guildId ||
         record.ownership.meetingId !== record.meetingId)
     )
       ctx.addIssue({

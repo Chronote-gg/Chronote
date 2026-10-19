@@ -1,3 +1,5 @@
+import { getDeploymentControlRepository } from "../db";
+import { RuntimeAdmissionUnavailable } from "./runtimeAdmissionError";
 import { registerNotionMutationTracker } from "./notionOperationLifetime";
 import { beginRuntimeWorkClaim } from "./runtimeWorkAdmissionService";
 export type RuntimeApiOperation = {
@@ -19,10 +21,8 @@ export async function runRuntimeApiOperation<T>(
       return result;
     },
     async mutate(effect) {
-      const result = await work.trackApiMutation(effect);
-      // A known SDK acknowledgment remains known if shutdown happened during the request.
-      work.signal.throwIfAborted();
-      return result;
+      // The owner persists the acknowledged receipt before observing cancellation.
+      return work.trackApiMutation(effect);
     },
   };
   const unregister = registerNotionMutationTracker(work.signal, (effect) =>
@@ -30,7 +30,16 @@ export async function runRuntimeApiOperation<T>(
   );
   return work.trackPromise(async () => {
     try {
-      await work.authority();
+      const authority = await work.authority();
+      if (authority.kind !== "serving")
+        throw new RuntimeAdmissionUnavailable(
+          "API operation requires serving authority",
+        );
+      const admission = await getDeploymentControlRepository().checkAdmission(
+        authority.context,
+      );
+      if (admission.kind !== "admitted")
+        throw new RuntimeAdmissionUnavailable("Runtime is not accepting work");
       work.claimed();
       return await run(operation);
     } finally {

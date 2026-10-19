@@ -1,4 +1,8 @@
-import { getMeetingProcessingSignal } from "../services/meetingProcessingLifetime";
+import { registerNotionMutationTracker } from "../services/notionOperationLifetime";
+import {
+  getMeetingProcessingSignal,
+  runMeetingProcessingEffect,
+} from "../services/meetingProcessingLifetime";
 import { assertNotionOutcomeKnown } from "../services/notionOperationLifetime";
 import { assertMeetingProcessingSucceeded } from "../utils/meetingProcessing";
 import { notesDeliveryTimingSchema } from "../types/meetingNotesTiming";
@@ -199,17 +203,20 @@ export async function saveMeetingHistoryToDatabase(meeting: MeetingData) {
 
     await saveOwnedMeetingHistoryService(meeting, history);
     meeting.historySaved = true;
+    const signal = getMeetingProcessingSignal(meeting);
+    const unregister = registerNotionMutationTracker(signal, (run) =>
+      runMeetingProcessingEffect(meeting, run),
+    );
     try {
-      await maybeAutoExportCompletedMeeting(
-        history,
-        getMeetingProcessingSignal(meeting),
-      );
+      await maybeAutoExportCompletedMeeting(history, signal);
     } catch (error) {
-      assertNotionOutcomeKnown(error, getMeetingProcessingSignal(meeting));
+      assertNotionOutcomeKnown(error, signal);
       console.warn("Completed meeting Notion export failed", {
         meetingId: meeting.meetingId,
         error,
       });
+    } finally {
+      unregister();
     }
     console.log(
       `Meeting history saved for guild ${meeting.guildId}, channel ${meeting.voiceChannel.id}`,

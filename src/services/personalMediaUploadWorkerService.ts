@@ -1,3 +1,4 @@
+import { registerRuntimeNotionOwner } from "./notionOperationLifetime";
 import {
   PERSONAL_MEDIA_UPLOAD_MAX_PROCESSING_ATTEMPTS,
   PERSONAL_MEDIA_UPLOAD_WORKER_BATCH_SIZE,
@@ -75,22 +76,17 @@ async function runUploadJob(
       claimId,
       expectedAttempts: job.attempts ?? 0,
     });
-  } catch {
-    work.fence();
-    await work.settle();
-    return;
-  }
-  if (!claimed) {
-    await work.settle();
-    return;
-  }
-  try {
+    if (!claimed) {
+      await work.settle();
+      return;
+    }
     work.claimed();
   } catch {
     work.fence();
     await work.settle();
     return;
   }
+  const unregister = registerRuntimeNotionOwner(work);
   let durable = false;
   const renewalTimer = setInterval(() => {
     void work
@@ -145,6 +141,7 @@ async function runUploadJob(
   } finally {
     clearInterval(renewalTimer);
     await work.settle();
+    unregister();
   }
 }
 function pollPersonalMediaUploadJobs(): Promise<void> {

@@ -14,7 +14,7 @@ import {
   renewalRecoverySchema,
 } from "../../src/types/renewalRecovery";
 import { stripeTransport } from "../fixtures/stripeTransport";
-import { context } from "../deployment/controlFixtures";
+import { context, control, runtime } from "../deployment/controlFixtures";
 import { getRuntimeAdmissionContext } from "../../src/services/runtimeLifecycleService";
 import {
   fenceRuntimeWorkAdmissions,
@@ -66,6 +66,11 @@ beforeEach(() => {
   config.mock.enabled = true;
   config.subscription.stripeMode = "test";
   resetMockStore();
+  for (const record of [control, runtime("old")])
+    getMockStore().deploymentControlRecords.set(
+      JSON.stringify([record.pk, record.sk]),
+      structuredClone(record),
+    );
   jest.spyOn(recovery, "reconcileRenewalRecovery").mockResolvedValue();
   jest.mocked(getRuntimeAdmissionContext).mockResolvedValue(context);
 });
@@ -243,4 +248,22 @@ test("enforcement readiness verifies provider mode and usable due index before s
   } finally {
     config.stripe.renewalGraceEnabled = enabled;
   }
+});
+
+test("maintenance refusal preserves due recovery and prevents its active lifetime", async () => {
+  seed();
+  const db = await import("../../src/db");
+  jest.spyOn(db, "getDeploymentControlRepository").mockReturnValue({
+    ...db.getDeploymentControlRepository(),
+    checkAdmission: jest.fn(async () => ({
+      kind: "blocked" as const,
+      reason: "not_serving" as const,
+    })),
+  });
+  await runRenewalRecoveryPoll({
+    stripe,
+    now: 200,
+    signal: new AbortController().signal,
+  });
+  expect(recovery.reconcileRenewalRecovery).not.toHaveBeenCalled();
 });

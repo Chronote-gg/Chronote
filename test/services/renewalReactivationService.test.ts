@@ -1,1 +1,800 @@
-/** @jest-environment node */import { captureEvent } from "../../src/services/analyticsService";jest.mock("../../src/services/analyticsService", () => ({  captureEvent: jest.fn(),}));import {  renewalStripeClientFixture as fixture,  response,} from "../fixtures/renewalStripeClient";import { afterEach, beforeEach, expect, it, jest } from "@jest/globals";import { config } from "../../src/services/configService";import { getMockStore, resetMockStore } from "../../src/repositories/mockStore";import {  readRenewalState,  restoreRenewal,} from "../../src/services/renewalReactivationService";import { sourceSubscription, fundedInvoice } from "../fixtures/renewalStripe";import {  renewalGuildId as guildId,  renewalPayerId as payerId,  renewalSubscription,} from "../fixtures/renewal";import { offerUsageSchema, offerUsageKey } from "../../src/types/offerUsage";import type { RenewalRequest } from "../../src/types/renewal";const original = {  gate: config.stripe.renewalReactivationEnabled,  mock: config.mock.enabled,};const now = sourceSubscription.created * 1000 + 60000;beforeEach(() => {  config.mock.enabled = true;  config.stripe.renewalReactivationEnabled = true;  resetMockStore();  for (const offerId of [    "basic_intro_v1",    "basic_annual_intro_v1",  ] satisfies Array<"basic_intro_v1" | "basic_annual_intro_v1">) {    const yearly = offerId === "basic_annual_intro_v1";    getMockStore().offerUsages.set(      offerUsageKey(guildId, offerId, "test"),      offerUsageSchema.parse({        guildId,        mode: "test",        offerId,        revision: "used-revision",        state: "used",        operationId: "original-purchase",        reservedAt: 1,        usedAt: 2,        terms: {          priceId: "price_original",          couponId: "coupon_original",          currency: "usd",          interval: yearly ? "year" : "month",          regularUnitAmount: yearly ? 10000 : 1000,          discountedUnitAmount: yearly ? 6000 : 600,          durationMonths: yearly ? 12 : 3,        },        settlement: {          customerId: "cus_renewal",          subscriptionId: "sub_renewal",          subscriptionItemId: "si_renewal",          invoiceId: "in_original",          priceId: "price_original",          status: "paid",          amountPaid: yearly ? 6000 : 600,          amountRemaining: 0,          settledAt: 2,        },      }),    );  }  getMockStore().subscriptions.set(guildId, {    ...renewalSubscription,    stripeCustomerId: "cus_renewal",  });});afterEach(() => {  config.mock.enabled = original.mock;  config.stripe.renewalReactivationEnabled = original.gate;});async function consent(f: ReturnType<typeof fixture>): Promise<RenewalRequest> {  const view = await readRenewalState({    stripe: f.stripe,    guildId,    payerId,    now,  });  if (view.state.kind !== "off" || view.state.action.kind !== "ready")    throw new Error("Expected eligible consent: " + JSON.stringify(view));  return { kind: "confirm", quoteToken: view.state.action.quoteToken };}it.each(["classic", "flexible"])(  "%s undo preserves the same contract and never creates checkout",  async (mode) => {    const f = fixture();    if (mode === "flexible")      f.provider = {        ...f.provider,        billing_mode: {          type: "flexible",          flexible: { proration_discounts: "included" },        },        cancel_at_period_end: false,      };    const request = await consent(f);    const offers = structuredClone(getMockStore().offerUsages);    const result = await restoreRenewal({      stripe: f.stripe,      guildId,      payerId,      request,      analyticsOptOut: true,      now,    });    expect(result.kind).toBe("confirmed");    expect(f.update).toHaveBeenCalledTimes(1);    expect(f.update.mock.calls[0][1]).toEqual(      mode === "classic"        ? { cancel_at_period_end: false, proration_behavior: "none" }        : { cancel_at: "", proration_behavior: "none" },    );    expect(f.checkout).not.toHaveBeenCalled();    expect(f.resume).not.toHaveBeenCalled();    expect(getMockStore().offerUsages).toEqual(offers);    expect(      getMockStore().subscriptions.get(guildId)?.cancellationAt,    ).toBeUndefined();  },);it("denies a manager who is not the payer and never issues their writable quote", async () => {  const f = fixture();  const view = await readRenewalState({    stripe: f.stripe,    guildId,    payerId: "333333333333333333",    now,  });  expect(view.canManageBilling).toBe(false);  expect(view.state).toMatchObject({    kind: "off",    action: { kind: "payer_required" },  });  expect(f.update).not.toHaveBeenCalled();});it("expired new consent cannot create an operation or payment", async () => {  const f = fixture();  const request = await consent(f);  expect(    await restoreRenewal({      stripe: f.stripe,      guildId,      payerId,      request,      analyticsOptOut: false,      now: now + 300000,    }),  ).toEqual({ kind: "changed" });  expect(f.update).not.toHaveBeenCalled();  expect(getMockStore().renewalOperations.size).toBe(0);});it("custom shortened item period cannot impersonate the independent paid boundary", async () => {  const f = fixture();  const item = f.provider.items.data[0];  const shortened = item.current_period_end - 86400;  f.provider = {    ...f.provider,    cancel_at: shortened,    items: {      ...f.provider.items,      data: [{ ...item, current_period_end: shortened }],    },  };  const view = await readRenewalState({    stripe: f.stripe,    guildId,    payerId,    now,  });  expect(view.state).toMatchObject({    kind: "off",    action: { kind: "review_in_stripe" },  });  expect(f.update).not.toHaveBeenCalled();});it("inclusive price is never relabeled before tax", async () => {  const f = fixture();  const item = f.provider.items.data[0];  f.provider = {    ...f.provider,    items: {      ...f.provider.items,      data: [{ ...item, price: { ...item.price, tax_behavior: "inclusive" } }],    },  };  const view = await readRenewalState({    stripe: f.stripe,    guildId,    payerId,    now,  });  expect(view.state).toMatchObject({    kind: "off",    action: { kind: "ready", terms: { taxBehavior: "inclusive" } },  });});it.each(["schedule", "payment", "identity", "mode", "preview"])(  "routes %s problems to review without a write",  async (reason) => {    const f = fixture();    if (reason === "schedule")      f.provider = { ...f.provider, schedule: "sub_sched_fixture" };    if (reason === "payment")      f.provider = { ...f.provider, status: "past_due" };    if (reason === "identity")      f.provider = {        ...f.provider,        metadata: { guild_id: "333333333333333333" },      };    if (reason === "mode") f.provider = { ...f.provider, livemode: true };    if (reason === "preview")      f.preview.mockRejectedValueOnce(new Error("provider unavailable"));    const view = await readRenewalState({      stripe: f.stripe,      guildId,      payerId,      now,    });    expect(      view.state.kind === "off" && view.state.action.kind === "ready",    ).toBe(false);    expect(f.update).not.toHaveBeenCalled();  },);it("disabled gate blocks new writes while preserving a known end date", async () => {  const f = fixture();  const request = await consent(f);  config.stripe.renewalReactivationEnabled = false;  const view = await readRenewalState({    stripe: f.stripe,    guildId,    payerId,    now,  });  expect(view.state).toMatchObject({    kind: "off",    action: { kind: "review_in_stripe", reason: "direct_unavailable" },  });  expect(    await restoreRenewal({      stripe: f.stripe,      guildId,      payerId,      request,      analyticsOptOut: false,      now,    }),  ).toEqual({ kind: "changed" });  expect(f.update).not.toHaveBeenCalled();});it("terminal subscriptions never call the update endpoint", async () => {  const f = fixture();  f.provider = {    ...f.provider,    status: "canceled",    ended_at: sourceSubscription.created,  };  expect(    (await readRenewalState({ stripe: f.stripe, guildId, payerId, now })).state      .kind,  ).toBe("terminal");  expect(f.update).not.toHaveBeenCalled();});it("a lost update response recovers through native readback without another write", async () => {  const f = fixture();  const request = await consent(f);  f.update.mockImplementationOnce(async () => {    f.provider = {      ...f.provider,      cancel_at: null,      cancel_at_period_end: false,      canceled_at: null,    };    throw new Error("lost response");  });  expect(    (      await restoreRenewal({        stripe: f.stripe,        guildId,        payerId,        request,        analyticsOptOut: true,        now,      })    ).kind,  ).toBe("confirmed");  expect(f.update).toHaveBeenCalledTimes(1);});it("an expired submitted quote recovers the same operation after a read outage", async () => {  const f = fixture();  const request = await consent(f);  f.update.mockImplementationOnce(async () => {    throw new Error("transport uncertain");  });  expect(    (      await restoreRenewal({        stripe: f.stripe,        guildId,        payerId,        request,        analyticsOptOut: true,        now,      })    ).kind,  ).toBe("processing");  f.provider = {    ...f.provider,    cancel_at: null,    cancel_at_period_end: false,    canceled_at: null,  };  config.stripe.renewalReactivationEnabled = false;  expect(    (      await restoreRenewal({        stripe: f.stripe,        guildId,        payerId,        request,        analyticsOptOut: true,        now: now + 400000,      })    ).kind,  ).toBe("confirmed");  expect(f.update).toHaveBeenCalledTimes(1);  expect(getMockStore().renewalOperations.size).toBe(1);});it("a completed old request never undoes a later cancellation", async () => {  const f = fixture();  const request = await consent(f);  expect(    (      await restoreRenewal({        stripe: f.stripe,        guildId,        payerId,        request,        analyticsOptOut: false,        now,      })    ).kind,  ).toBe("confirmed");  f.provider = {    ...f.provider,    cancel_at: sourceSubscription.cancel_at,    cancel_at_period_end: true,  };  expect(    (      await restoreRenewal({        stripe: f.stripe,        guildId,        payerId,        request,        analyticsOptOut: false,        now: now + 5000,      })    ).kind,  ).toBe("changed");  expect(f.update).toHaveBeenCalledTimes(1);});it("post-write price drift becomes review without rollback or recancellation", async () => {  const f = fixture();  const request = await consent(f);  const item = f.provider.items.data[0];  f.update.mockImplementationOnce(async () => {    f.provider = {      ...f.provider,      cancel_at: null,      cancel_at_period_end: false,      canceled_at: null,      items: {        ...f.provider.items,        data: [{ ...item, price: { ...item.price, unit_amount: 2400 } }],      },    };    return response(f.provider);  });  expect(    (      await restoreRenewal({        stripe: f.stripe,        guildId,        payerId,        request,        analyticsOptOut: false,        now,      })    ).kind,  ).toBe("needs_review");  expect(f.update).toHaveBeenCalledTimes(1);  expect(getMockStore().renewalControls.size).toBe(1);});it("reviewed operations can confirm after native terms return to the approved contract", async () => {  const f = fixture();  const request = await consent(f);  const originalProvider = f.provider;  f.update.mockImplementationOnce(async () => {    const item = f.provider.items.data[0];    f.provider = {      ...f.provider,      cancel_at: null,      cancel_at_period_end: false,      canceled_at: null,      items: {        ...f.provider.items,        data: [{ ...item, price: { ...item.price, unit_amount: 2400 } }],      },    };    return response(f.provider);  });  const first = await restoreRenewal({    stripe: f.stripe,    guildId,    payerId,    request,    analyticsOptOut: false,    now,  });  expect(first.kind).toBe("needs_review");  f.provider = {    ...originalProvider,    cancel_at: null,    cancel_at_period_end: false,    canceled_at: null,  };  config.stripe.renewalReactivationEnabled = false;  expect(    (      await restoreRenewal({        stripe: f.stripe,        guildId,        payerId,        request,        analyticsOptOut: false,        now: now + 400000,      })    ).kind,  ).toBe("confirmed");  expect(f.update).toHaveBeenCalledTimes(1);});it("unapplied operations past the retry window remain held without another update", async () => {  const f = fixture();  const request = await consent(f);  f.update.mockRejectedValueOnce(new Error("uncertain transport"));  expect(    (      await restoreRenewal({        stripe: f.stripe,        guildId,        payerId,        request,        analyticsOptOut: false,        now,      })    ).kind,  ).toBe("processing");  expect(    (      await restoreRenewal({        stripe: f.stripe,        guildId,        payerId,        request,        analyticsOptOut: false,        now: now + 23 * 60 * 60 * 1000,      })    ).kind,  ).toBe("needs_review");  expect(f.update).toHaveBeenCalledTimes(1);  expect(getMockStore().renewalControls.size).toBe(1);});it("changed terms before consent application create no operation or update", async () => {  const f = fixture();  const request = await consent(f);  const item = f.provider.items.data[0];  f.provider = {    ...f.provider,    items: {      ...f.provider.items,      data: [{ ...item, price: { ...item.price, unit_amount: 2400 } }],    },  };  expect(    (      await restoreRenewal({        stripe: f.stripe,        guildId,        payerId,        request,        analyticsOptOut: false,        now,      })    ).kind,  ).toBe("changed");  expect(f.update).not.toHaveBeenCalled();  expect(getMockStore().renewalOperations.size).toBe(0);});it("unfunded or credited-back invoice periods cannot qualify as funded renewal sources", async () => {  const f = fixture();  f.invoice.mockResolvedValue(    response({ ...fundedInvoice, post_payment_credit_notes_amount: 1000 }),  );  const view = await readRenewalState({    stripe: f.stripe,    guildId,    payerId,    now,  });  expect(view.state.kind === "off" && view.state.action.kind === "ready").toBe(    false,  );});it("unsupported currency precision never yields a guessed display rate", async () => {  const f = fixture();  const item = f.provider.items.data[0];  f.provider = {    ...f.provider,    currency: "jpy",    items: {      ...f.provider.items,      data: [{ ...item, price: { ...item.price, currency: "jpy" } }],    },  };  const view = await readRenewalState({    stripe: f.stripe,    guildId,    payerId,    now,  });  expect(view.state.kind === "off" && view.state.action.kind === "ready").toBe(    false,  );});it("stored analytics opt-out stays attached to the new operation", async () => {  const f = fixture();  f.provider = {    ...f.provider,    metadata: { ...f.provider.metadata, analytics_opt_out: "true" },  };  const request = await consent(f);  await restoreRenewal({    stripe: f.stripe,    guildId,    payerId,    request,    analyticsOptOut: false,    now,  });  expect(    [...getMockStore().renewalOperations.values()][0].analyticsOptOut,  ).toBe(true);});it("keeps the original claimant's operation check available during a provider read outage", async () => {  const f = fixture();  const request = await consent(f);  f.update.mockRejectedValueOnce(new Error("uncertain transport"));  await restoreRenewal({    stripe: f.stripe,    guildId,    payerId,    request,    analyticsOptOut: false,    now,  });  f.retrieve.mockRejectedValueOnce(new Error("read outage"));  const view = await readRenewalState({    stripe: f.stripe,    guildId,    payerId,    now,  });  expect(view.state.kind).toBe("processing");  expect(view.canManageBilling).toBe(false);  f.retrieve.mockRejectedValueOnce(new Error("read outage"));  const other = await readRenewalState({    stripe: f.stripe,    guildId,    payerId: "333333333333333333",    now,  });  expect(other.state.kind).toBe("unavailable");});it("moves a known provider identity drift to review without retrying the update", async () => {  const f = fixture();  const request = await consent(f);  f.update.mockImplementationOnce(async () => {    f.provider = { ...f.provider, customer: "cus_changed" };    return response(f.provider);  });  const result = await restoreRenewal({    stripe: f.stripe,    guildId,    payerId,    request,    analyticsOptOut: false,    now,  });  expect(result.kind).toBe("needs_review");  expect([...getMockStore().renewalOperations.values()][0].state).toBe(    "needs_review",  );  expect(f.update).toHaveBeenCalledTimes(1);});it("keeps verified payer management available when the invoice preview is unavailable", async () => {  const f = fixture();  f.preview.mockRejectedValueOnce(Error("preview outage"));  const view = await readRenewalState({    stripe: f.stripe,    guildId,    payerId,    now,  });  expect(view.canManageBilling).toBe(true);  expect(view.state).toMatchObject({    kind: "off",    action: { kind: "review_in_stripe" },  });  expect(f.update).not.toHaveBeenCalled();});it("retains a later browser opt-out on an unresolved renewal operation", async () => {  const f = fixture();  const request = await consent(f);  f.update.mockRejectedValueOnce(Error("lost response"));  await restoreRenewal({    stripe: f.stripe,    guildId,    payerId,    request,    analyticsOptOut: false,    now,  });  await restoreRenewal({    stripe: f.stripe,    guildId,    payerId,    request,    analyticsOptOut: true,    now: now + 1000,  });  expect(    [...getMockStore().renewalOperations.values()][0].analyticsOptOut,  ).toBe(true);});it("suppresses a pending operation outcome when DNT arrives during recovery", async () => {  const gate = config.analytics.billingLifecycleEnabled;  config.analytics.billingLifecycleEnabled = true;  jest.mocked(captureEvent).mockClear();  try {    const f = fixture();    const request = await consent(f);    f.update.mockRejectedValueOnce(Error("uncertain transport"));    await restoreRenewal({      stripe: f.stripe,      guildId,      payerId,      request,      analyticsOptOut: false,      now,    });    await restoreRenewal({      stripe: f.stripe,      guildId,      payerId,      request,      analyticsOptOut: true,      now: now + 1000,    });    expect(jest.mocked(captureEvent).mock.calls.map(([name]) => name)).toEqual([      "billing_renewal_reactivation_requested",    ]);  } finally {    config.analytics.billingLifecycleEnabled = gate;  }});it("publishes only the first persisted review result, even when a later check confirms restoration", async () => {  const gate = config.analytics.billingLifecycleEnabled;  config.analytics.billingLifecycleEnabled = true;  jest.mocked(captureEvent).mockClear();  try {    const f = fixture();    const request = await consent(f);    f.update.mockImplementationOnce(async () => {      f.provider = {        ...f.provider,        cancel_at: null,        cancel_at_period_end: false,        items: {          ...f.provider.items,          data: [{ ...f.provider.items.data[0], quantity: 2 }],        },      };      return response(f.provider);    });    await restoreRenewal({      stripe: f.stripe,      guildId,      payerId,      request,      analyticsOptOut: false,      now,    });    f.provider = {      ...structuredClone(sourceSubscription),      cancel_at: null,      cancel_at_period_end: false,      canceled_at: null,    };    expect(      (        await restoreRenewal({          stripe: f.stripe,          guildId,          payerId,          request,          analyticsOptOut: false,          now: now + 1000,        })      ).kind,    ).toBe("confirmed");    expect(      jest        .mocked(captureEvent)        .mock.calls.filter(          ([name]) => name === "billing_renewal_reactivation_result",        ),    ).toHaveLength(1);  } finally {    config.analytics.billingLifecycleEnabled = gate;  }});it("does not expose browser lifecycle capture for a stored subscription opt-out", async () => {  const gate = config.analytics.billingLifecycleEnabled;  config.analytics.billingLifecycleEnabled = true;  try {    const f = fixture();    f.provider = {      ...f.provider,      metadata: { ...f.provider.metadata, analytics_opt_out: "true" },    };    expect(      (await readRenewalState({ stripe: f.stripe, guildId, payerId, now }))        .lifecycleAnalyticsEnabled,    ).toBe(false);    delete f.provider.metadata.analytics_opt_out;    expect(      (await readRenewalState({ stripe: f.stripe, guildId, payerId, now }))        .lifecycleAnalyticsEnabled,    ).toBe(true);  } finally {    config.analytics.billingLifecycleEnabled = gate;  }});it.each(["past_due", "unpaid"] as const)(  "keeps the known %s payment problem visible while renewal is on",  async (status) => {    const f = fixture();    f.provider = {      ...f.provider,      status,      cancel_at: null,      cancel_at_period_end: false,    };    const view = await readRenewalState({      stripe: f.stripe,      guildId,      payerId,      now,    });    expect(view.state.kind).toBe("payment_problem");    expect(view.canManageBilling).toBe(true);    expect(f.update).not.toHaveBeenCalled();  },);it("retains a newly stored subscription opt-out before recording the recovery result", async () => {  const gate = config.analytics.billingLifecycleEnabled;  config.analytics.billingLifecycleEnabled = true;  jest.mocked(captureEvent).mockClear();  try {    const f = fixture();    const request = await consent(f);    f.update.mockRejectedValueOnce(Error("uncertain transport"));    await restoreRenewal({      stripe: f.stripe,      guildId,      payerId,      request,      analyticsOptOut: false,      now,    });    f.provider = {      ...f.provider,      metadata: { ...f.provider.metadata, analytics_opt_out: "true" },    };    expect(      (        await restoreRenewal({          stripe: f.stripe,          guildId,          payerId,          request,          analyticsOptOut: false,          now: now + 1000,        })      ).kind,    ).toBe("confirmed");    expect(      [...getMockStore().renewalOperations.values()][0].analyticsOptOut,    ).toBe(true);    expect(jest.mocked(captureEvent).mock.calls.map(([name]) => name)).toEqual([      "billing_renewal_reactivation_requested",    ]);  } finally {    config.analytics.billingLifecycleEnabled = gate;  }});
+/** @jest-environment node */
+jest.mock("../../src/services/runtimeApiOperationService", () => ({
+  runRuntimeApiOperation: jest.fn(
+    jest.requireActual("../fixtures/runtimeApiOperation").runTestApiOperation,
+  ),
+}));
+import { captureEvent } from "../../src/services/analyticsService";
+jest.mock("../../src/services/analyticsService", () => ({
+  captureEvent: jest.fn(),
+}));
+import {
+  renewalStripeClientFixture as fixture,
+  response,
+} from "../fixtures/renewalStripeClient";
+import { afterEach, beforeEach, expect, it, jest } from "@jest/globals";
+import { config } from "../../src/services/configService";
+import { getMockStore, resetMockStore } from "../../src/repositories/mockStore";
+import {
+  readRenewalState,
+  restoreRenewal,
+} from "../../src/services/renewalReactivationService";
+import { sourceSubscription, fundedInvoice } from "../fixtures/renewalStripe";
+import {
+  renewalGuildId as guildId,
+  renewalPayerId as payerId,
+  renewalSubscription,
+} from "../fixtures/renewal";
+import { offerUsageSchema, offerUsageKey } from "../../src/types/offerUsage";
+import type { RenewalRequest } from "../../src/types/renewal";
+const original = {
+  gate: config.stripe.renewalReactivationEnabled,
+  mock: config.mock.enabled,
+};
+const now = sourceSubscription.created * 1000 + 60000;
+beforeEach(() => {
+  config.mock.enabled = true;
+  config.stripe.renewalReactivationEnabled = true;
+  resetMockStore();
+  for (const offerId of [
+    "basic_intro_v1",
+    "basic_annual_intro_v1",
+  ] satisfies Array<"basic_intro_v1" | "basic_annual_intro_v1">) {
+    const yearly = offerId === "basic_annual_intro_v1";
+    getMockStore().offerUsages.set(
+      offerUsageKey(guildId, offerId, "test"),
+      offerUsageSchema.parse({
+        guildId,
+        mode: "test",
+        offerId,
+        revision: "used-revision",
+        state: "used",
+        operationId: "original-purchase",
+        reservedAt: 1,
+        usedAt: 2,
+        terms: {
+          priceId: "price_original",
+          couponId: "coupon_original",
+          currency: "usd",
+          interval: yearly ? "year" : "month",
+          regularUnitAmount: yearly ? 10000 : 1000,
+          discountedUnitAmount: yearly ? 6000 : 600,
+          durationMonths: yearly ? 12 : 3,
+        },
+        settlement: {
+          customerId: "cus_renewal",
+          subscriptionId: "sub_renewal",
+          subscriptionItemId: "si_renewal",
+          invoiceId: "in_original",
+          priceId: "price_original",
+          status: "paid",
+          amountPaid: yearly ? 6000 : 600,
+          amountRemaining: 0,
+          settledAt: 2,
+        },
+      }),
+    );
+  }
+  getMockStore().subscriptions.set(guildId, {
+    ...renewalSubscription,
+    stripeCustomerId: "cus_renewal",
+  });
+});
+afterEach(() => {
+  config.mock.enabled = original.mock;
+  config.stripe.renewalReactivationEnabled = original.gate;
+});
+async function consent(f: ReturnType<typeof fixture>): Promise<RenewalRequest> {
+  const view = await readFixtureState(f);
+  if (view.state.kind !== "off" || view.state.action.kind !== "ready")
+    throw new Error("Expected eligible consent: " + JSON.stringify(view));
+  return { kind: "confirm", quoteToken: view.state.action.quoteToken };
+}
+it.each(["classic", "flexible"])(
+  "%s undo preserves the same contract and never creates checkout",
+  async (mode) => {
+    const f = fixture();
+    if (mode === "flexible")
+      f.provider = {
+        ...f.provider,
+        billing_mode: {
+          type: "flexible",
+          flexible: { proration_discounts: "included" },
+        },
+        cancel_at_period_end: false,
+      };
+    const request = await consent(f);
+    const offers = structuredClone(getMockStore().offerUsages);
+    const result = await restoreRenewal({
+      stripe: f.stripe,
+      guildId,
+      payerId,
+      request,
+      analyticsOptOut: true,
+      now,
+    });
+    expect(result.kind).toBe("confirmed");
+    expect(f.update).toHaveBeenCalledTimes(1);
+    expect(f.update.mock.calls[0][1]).toEqual(
+      mode === "classic"
+        ? { cancel_at_period_end: false, proration_behavior: "none" }
+        : { cancel_at: "", proration_behavior: "none" },
+    );
+    expect(f.checkout).not.toHaveBeenCalled();
+    expect(f.resume).not.toHaveBeenCalled();
+    expect(getMockStore().offerUsages).toEqual(offers);
+    expect(
+      getMockStore().subscriptions.get(guildId)?.cancellationAt,
+    ).toBeUndefined();
+  },
+);
+it("denies a manager who is not the payer and never issues their writable quote", async () => {
+  const f = fixture();
+  const view = await readRenewalState({
+    stripe: f.stripe,
+    guildId,
+    payerId: "333333333333333333",
+    now,
+  });
+  expect(view.canManageBilling).toBe(false);
+  expect(view.state).toMatchObject({
+    kind: "off",
+    action: { kind: "payer_required" },
+  });
+  expect(f.update).not.toHaveBeenCalled();
+});
+it("expired new consent cannot create an operation or payment", async () => {
+  const f = fixture();
+  const request = await consent(f);
+  expect(
+    await restoreRenewal({
+      stripe: f.stripe,
+      guildId,
+      payerId,
+      request,
+      analyticsOptOut: false,
+      now: now + 300000,
+    }),
+  ).toEqual({ kind: "changed" });
+  expect(f.update).not.toHaveBeenCalled();
+  expect(getMockStore().renewalOperations.size).toBe(0);
+});
+it("custom shortened item period cannot impersonate the independent paid boundary", async () => {
+  const f = fixture();
+  const item = f.provider.items.data[0];
+  const shortened = item.current_period_end - 86400;
+  f.provider = {
+    ...f.provider,
+    cancel_at: shortened,
+    items: {
+      ...f.provider.items,
+      data: [{ ...item, current_period_end: shortened }],
+    },
+  };
+  const view = await readFixtureState(f);
+  expect(view.state).toMatchObject({
+    kind: "off",
+    action: { kind: "review_in_stripe" },
+  });
+  expect(f.update).not.toHaveBeenCalled();
+});
+it("inclusive price is never relabeled before tax", async () => {
+  const f = fixture();
+  patchFixturePrice(f, { tax_behavior: "inclusive" });
+  const view = await readFixtureState(f);
+  expect(view.state).toMatchObject({
+    kind: "off",
+    action: { kind: "ready", terms: { taxBehavior: "inclusive" } },
+  });
+});
+it.each(["schedule", "payment", "identity", "mode", "preview"])(
+  "routes %s problems to review without a write",
+  async (reason) => {
+    const f = fixture();
+    if (reason === "schedule")
+      f.provider = { ...f.provider, schedule: "sub_sched_fixture" };
+    if (reason === "payment")
+      f.provider = { ...f.provider, status: "past_due" };
+    if (reason === "identity")
+      f.provider = {
+        ...f.provider,
+        metadata: { guild_id: "333333333333333333" },
+      };
+    if (reason === "mode") f.provider = { ...f.provider, livemode: true };
+    if (reason === "preview")
+      f.preview.mockRejectedValueOnce(new Error("provider unavailable"));
+    const view = await readFixtureState(f);
+    expect(
+      view.state.kind === "off" && view.state.action.kind === "ready",
+    ).toBe(false);
+    expect(f.update).not.toHaveBeenCalled();
+  },
+);
+it("disabled gate blocks new writes while preserving a known end date", async () => {
+  const f = fixture();
+  const request = await consent(f);
+  config.stripe.renewalReactivationEnabled = false;
+  const view = await readFixtureState(f);
+  expect(view.state).toMatchObject({
+    kind: "off",
+    action: { kind: "review_in_stripe", reason: "direct_unavailable" },
+  });
+  expect(
+    await restoreRenewal({
+      stripe: f.stripe,
+      guildId,
+      payerId,
+      request,
+      analyticsOptOut: false,
+      now,
+    }),
+  ).toEqual({ kind: "changed" });
+  expect(f.update).not.toHaveBeenCalled();
+});
+it("terminal subscriptions never call the update endpoint", async () => {
+  const f = fixture();
+  f.provider = {
+    ...f.provider,
+    status: "canceled",
+    ended_at: sourceSubscription.created,
+  };
+  expect(
+    (await readRenewalState({ stripe: f.stripe, guildId, payerId, now })).state
+      .kind,
+  ).toBe("terminal");
+  expect(f.update).not.toHaveBeenCalled();
+});
+it("a lost update response stays unknown despite matching provider readback", async () => {
+  const f = fixture();
+  const request = await consent(f);
+  f.update.mockImplementationOnce(async () => {
+    turnFixtureRenewalOn(f);
+    throw new Error("lost response");
+  });
+  await submitUnknown(f, request, true);
+  expect(f.update).toHaveBeenCalledTimes(1);
+});
+it("an expired submitted quote recovers the same operation after a read outage", async () => {
+  const f = fixture();
+  const request = await consent(f);
+  f.update.mockImplementationOnce(async () => {
+    throw new Error("transport uncertain");
+  });
+  await submitUnknown(f, request, true);
+  turnFixtureRenewalOn(f);
+  config.stripe.renewalReactivationEnabled = false;
+  expect(
+    (
+      await restoreRenewal({
+        stripe: f.stripe,
+        guildId,
+        payerId,
+        request,
+        analyticsOptOut: true,
+        now: now + 400000,
+      })
+    ).kind,
+  ).toBe("confirmed");
+  expect(f.update).toHaveBeenCalledTimes(1);
+  expect(getMockStore().renewalOperations.size).toBe(1);
+});
+it("a completed old request never undoes a later cancellation", async () => {
+  const f = fixture();
+  const request = await consent(f);
+  expect(
+    (
+      await restoreRenewal({
+        stripe: f.stripe,
+        guildId,
+        payerId,
+        request,
+        analyticsOptOut: false,
+        now,
+      })
+    ).kind,
+  ).toBe("confirmed");
+  f.provider = {
+    ...f.provider,
+    cancel_at: sourceSubscription.cancel_at,
+    cancel_at_period_end: true,
+  };
+  expect(
+    (
+      await restoreRenewal({
+        stripe: f.stripe,
+        guildId,
+        payerId,
+        request,
+        analyticsOptOut: false,
+        now: now + 5000,
+      })
+    ).kind,
+  ).toBe("changed");
+  expect(f.update).toHaveBeenCalledTimes(1);
+});
+it("post-write price drift becomes review without rollback or recancellation", async () => {
+  const f = fixture();
+  const request = await consent(f);
+  f.update.mockImplementationOnce(async () => {
+    turnFixtureRenewalOn(f);
+    patchFixturePrice(f, { unit_amount: 2400 });
+    return response(f.provider);
+  });
+  expect(
+    (
+      await restoreRenewal({
+        stripe: f.stripe,
+        guildId,
+        payerId,
+        request,
+        analyticsOptOut: false,
+        now,
+      })
+    ).kind,
+  ).toBe("needs_review");
+  expect(f.update).toHaveBeenCalledTimes(1);
+  expect(getMockStore().renewalControls.size).toBe(1);
+});
+
+it("reviewed operations can confirm after native terms return to the approved contract", async () => {
+  const f = fixture();
+  const request = await consent(f);
+  const originalProvider = f.provider;
+  f.update.mockImplementationOnce(async () => {
+    turnFixtureRenewalOn(f);
+    patchFixturePrice(f, { unit_amount: 2400 });
+    return response(f.provider);
+  });
+  const first = await restoreRenewal({
+    stripe: f.stripe,
+    guildId,
+    payerId,
+    request,
+    analyticsOptOut: false,
+    now,
+  });
+  expect(first.kind).toBe("needs_review");
+  f.provider = {
+    ...originalProvider,
+    cancel_at: null,
+    cancel_at_period_end: false,
+    canceled_at: null,
+  };
+  config.stripe.renewalReactivationEnabled = false;
+  expect(
+    (
+      await restoreRenewal({
+        stripe: f.stripe,
+        guildId,
+        payerId,
+        request,
+        analyticsOptOut: false,
+        now: now + 400000,
+      })
+    ).kind,
+  ).toBe("confirmed");
+  expect(f.update).toHaveBeenCalledTimes(1);
+});
+it("unapplied operations past the retry window remain held without another update", async () => {
+  const f = fixture();
+  const request = await consent(f);
+  f.update.mockRejectedValueOnce(new Error("uncertain transport"));
+  await submitUnknown(f, request, false);
+  expect(
+    (
+      await restoreRenewal({
+        stripe: f.stripe,
+        guildId,
+        payerId,
+        request,
+        analyticsOptOut: false,
+        now: now + 23 * 60 * 60 * 1000,
+      })
+    ).kind,
+  ).toBe("needs_review");
+  expect(f.update).toHaveBeenCalledTimes(1);
+  expect(getMockStore().renewalControls.size).toBe(1);
+});
+it("changed terms before consent application create no operation or update", async () => {
+  const f = fixture();
+  const request = await consent(f);
+  const item = f.provider.items.data[0];
+  f.provider = {
+    ...f.provider,
+    items: {
+      ...f.provider.items,
+      data: [{ ...item, price: { ...item.price, unit_amount: 2400 } }],
+    },
+  };
+  expect(
+    (
+      await restoreRenewal({
+        stripe: f.stripe,
+        guildId,
+        payerId,
+        request,
+        analyticsOptOut: false,
+        now,
+      })
+    ).kind,
+  ).toBe("changed");
+  expect(f.update).not.toHaveBeenCalled();
+  expect(getMockStore().renewalOperations.size).toBe(0);
+});
+it("unfunded or credited-back invoice periods cannot qualify as funded renewal sources", async () => {
+  const f = fixture();
+  f.invoice.mockResolvedValue(
+    response({ ...fundedInvoice, post_payment_credit_notes_amount: 1000 }),
+  );
+  const view = await readFixtureState(f);
+  expect(view.state.kind === "off" && view.state.action.kind === "ready").toBe(
+    false,
+  );
+});
+it("unsupported currency precision never yields a guessed display rate", async () => {
+  const f = fixture();
+  const item = f.provider.items.data[0];
+  f.provider = {
+    ...f.provider,
+    currency: "jpy",
+    items: {
+      ...f.provider.items,
+      data: [{ ...item, price: { ...item.price, currency: "jpy" } }],
+    },
+  };
+  const view = await readFixtureState(f);
+  expect(view.state.kind === "off" && view.state.action.kind === "ready").toBe(
+    false,
+  );
+});
+it("stored analytics opt-out stays attached to the new operation", async () => {
+  const f = fixture();
+  f.provider = {
+    ...f.provider,
+    metadata: { ...f.provider.metadata, analytics_opt_out: "true" },
+  };
+  const request = await consent(f);
+  await restoreRenewal({
+    stripe: f.stripe,
+    guildId,
+    payerId,
+    request,
+    analyticsOptOut: false,
+    now,
+  });
+  expect(
+    [...getMockStore().renewalOperations.values()][0].analyticsOptOut,
+  ).toBe(true);
+});
+it("keeps the original claimant's operation check available during a provider read outage", async () => {
+  const f = fixture();
+  const request = await consent(f);
+  f.update.mockRejectedValueOnce(new Error("uncertain transport"));
+  await submitUnknown(f, request, false);
+  f.retrieve.mockRejectedValueOnce(new Error("read outage"));
+  const view = await readFixtureState(f);
+  expect(view.state.kind).toBe("processing");
+  expect(view.canManageBilling).toBe(false);
+  f.retrieve.mockRejectedValueOnce(new Error("read outage"));
+  const other = await readRenewalState({
+    stripe: f.stripe,
+    guildId,
+    payerId: "333333333333333333",
+    now,
+  });
+  expect(other.state.kind).toBe("unavailable");
+});
+it("moves a known provider identity drift to review without retrying the update", async () => {
+  const f = fixture();
+  const request = await consent(f);
+  f.update.mockImplementationOnce(async () => {
+    f.provider = { ...f.provider, customer: "cus_changed" };
+    return response(f.provider);
+  });
+  const result = await restoreRenewal({
+    stripe: f.stripe,
+    guildId,
+    payerId,
+    request,
+    analyticsOptOut: false,
+    now,
+  });
+  expect(result.kind).toBe("needs_review");
+  expect([...getMockStore().renewalOperations.values()][0].state).toBe(
+    "needs_review",
+  );
+  expect(f.update).toHaveBeenCalledTimes(1);
+});
+it("keeps verified payer management available when the invoice preview is unavailable", async () => {
+  const f = fixture();
+  f.preview.mockRejectedValueOnce(Error("preview outage"));
+  const view = await readFixtureState(f);
+  expect(view.canManageBilling).toBe(true);
+  expect(view.state).toMatchObject({
+    kind: "off",
+    action: { kind: "review_in_stripe" },
+  });
+  expect(f.update).not.toHaveBeenCalled();
+});
+it("retains a later browser opt-out on an unresolved renewal operation", async () => {
+  const f = fixture();
+  const request = await consent(f);
+  f.update.mockRejectedValueOnce(Error("lost response"));
+  await submitUnknown(f, request, false);
+  await restoreRenewal({
+    stripe: f.stripe,
+    guildId,
+    payerId,
+    request,
+    analyticsOptOut: true,
+    now: now + 1000,
+  });
+  expect(
+    [...getMockStore().renewalOperations.values()][0].analyticsOptOut,
+  ).toBe(true);
+});
+it("suppresses a pending operation outcome when DNT arrives during recovery", async () => {
+  await withRenewalAnalytics(async () => {
+    const f = fixture();
+    const request = await consent(f);
+    f.update.mockRejectedValueOnce(Error("uncertain transport"));
+    await submitUnknown(f, request, false);
+    await restoreRenewal({
+      stripe: f.stripe,
+      guildId,
+      payerId,
+      request,
+      analyticsOptOut: true,
+      now: now + 1000,
+    });
+    expect(jest.mocked(captureEvent).mock.calls.map(([name]) => name)).toEqual([
+      "billing_renewal_reactivation_requested",
+    ]);
+  });
+});
+it("publishes only the first persisted review result, even when a later check confirms restoration", async () => {
+  await withRenewalAnalytics(async () => {
+    const f = fixture();
+    const request = await consent(f);
+    f.update.mockImplementationOnce(async () => {
+      f.provider = {
+        ...f.provider,
+        cancel_at: null,
+        cancel_at_period_end: false,
+        items: {
+          ...f.provider.items,
+          data: [{ ...f.provider.items.data[0], quantity: 2 }],
+        },
+      };
+      return response(f.provider);
+    });
+    await restoreRenewal({
+      stripe: f.stripe,
+      guildId,
+      payerId,
+      request,
+      analyticsOptOut: false,
+      now,
+    });
+    f.provider = {
+      ...structuredClone(sourceSubscription),
+      cancel_at: null,
+      cancel_at_period_end: false,
+      canceled_at: null,
+    };
+    expect(
+      (
+        await restoreRenewal({
+          stripe: f.stripe,
+          guildId,
+          payerId,
+          request,
+          analyticsOptOut: false,
+          now: now + 1000,
+        })
+      ).kind,
+    ).toBe("confirmed");
+    expect(
+      jest
+        .mocked(captureEvent)
+        .mock.calls.filter(
+          ([name]) => name === "billing_renewal_reactivation_result",
+        ),
+    ).toHaveLength(1);
+  });
+});
+it("does not expose browser lifecycle capture for a stored subscription opt-out", async () => {
+  const gate = config.analytics.billingLifecycleEnabled;
+  config.analytics.billingLifecycleEnabled = true;
+  try {
+    const f = fixture();
+    f.provider = {
+      ...f.provider,
+      metadata: { ...f.provider.metadata, analytics_opt_out: "true" },
+    };
+    expect(
+      (await readRenewalState({ stripe: f.stripe, guildId, payerId, now }))
+        .lifecycleAnalyticsEnabled,
+    ).toBe(false);
+    delete f.provider.metadata.analytics_opt_out;
+    expect(
+      (await readRenewalState({ stripe: f.stripe, guildId, payerId, now }))
+        .lifecycleAnalyticsEnabled,
+    ).toBe(true);
+  } finally {
+    config.analytics.billingLifecycleEnabled = gate;
+  }
+});
+it.each(["past_due", "unpaid"] as const)(
+  "keeps the known %s payment problem visible while renewal is on",
+  async (status) => {
+    const f = fixture();
+    f.provider = {
+      ...f.provider,
+      status,
+      cancel_at: null,
+      cancel_at_period_end: false,
+    };
+    const view = await readFixtureState(f);
+    expect(view.state.kind).toBe("payment_problem");
+    expect(view.canManageBilling).toBe(true);
+    expect(f.update).not.toHaveBeenCalled();
+  },
+);
+it("retains a newly stored subscription opt-out before recording the recovery result", async () => {
+  await withRenewalAnalytics(async () => {
+    const f = fixture();
+    const request = await consent(f);
+    f.update.mockRejectedValueOnce(Error("uncertain transport"));
+    await submitUnknown(f, request, false);
+    f.provider = {
+      ...f.provider,
+      metadata: { ...f.provider.metadata, analytics_opt_out: "true" },
+    };
+    expect(
+      (
+        await restoreRenewal({
+          stripe: f.stripe,
+          guildId,
+          payerId,
+          request,
+          analyticsOptOut: false,
+          now: now + 1000,
+        })
+      ).kind,
+    ).toBe("confirmed");
+    expect(
+      [...getMockStore().renewalOperations.values()][0].analyticsOptOut,
+    ).toBe(true);
+    expect(jest.mocked(captureEvent).mock.calls.map(([name]) => name)).toEqual([
+      "billing_renewal_reactivation_requested",
+    ]);
+  });
+});
+
+async function submitUnknown(
+  f: ReturnType<typeof fixture>,
+  request: RenewalRequest,
+  analyticsOptOut: boolean,
+) {
+  await expect(
+    restoreRenewal({
+      stripe: f.stripe,
+      guildId,
+      payerId,
+      request,
+      analyticsOptOut,
+      now,
+    }),
+  ).rejects.toThrow();
+  expect([...getMockStore().renewalOperations.values()][0].state).toBe(
+    "applying",
+  );
+}
+
+it("a definite renewal rejection retains the existing processing outcome", async () => {
+  const Stripe = (await import("stripe")).default;
+  const f = fixture();
+  const request = await consent(f);
+  f.update.mockRejectedValueOnce(
+    new Stripe.errors.StripeInvalidRequestError({
+      message: "definite rejection",
+      statusCode: 400,
+    }),
+  );
+  expect(
+    await restoreRenewal({
+      stripe: f.stripe,
+      guildId,
+      payerId,
+      request,
+      analyticsOptOut: false,
+      now,
+    }),
+  ).toMatchObject({ kind: "processing" });
+  expect([...getMockStore().renewalOperations.values()][0].state).toBe(
+    "verifying",
+  );
+  expect(f.update).toHaveBeenCalledTimes(1);
+});
+
+it("a directly acknowledged renewal persists its result when cancellation arrives with the response", async () => {
+  const api = await import("../../src/services/runtimeApiOperationService");
+  const controller = new AbortController();
+  const admitted = jest
+    .mocked(api.runRuntimeApiOperation)
+    .mockImplementationOnce(async (_id, run) =>
+      run({
+        signal: controller.signal,
+        read: (effect) => effect(),
+        mutate: (effect) => {
+          controller.signal.throwIfAborted();
+          return effect();
+        },
+      }),
+    );
+  const f = fixture();
+  const request = await consent(f);
+  f.update.mockImplementationOnce(async () => {
+    turnFixtureRenewalOn(f);
+    controller.abort();
+    return response(f.provider);
+  });
+  try {
+    expect(
+      await restoreRenewal({
+        stripe: f.stripe,
+        guildId,
+        payerId,
+        request,
+        analyticsOptOut: false,
+        now,
+      }),
+    ).toMatchObject({ kind: "confirmed" });
+    expect([...getMockStore().renewalOperations.values()][0].state).toBe(
+      "succeeded",
+    );
+    expect(f.update).toHaveBeenCalledTimes(1);
+  } finally {
+    admitted.mockImplementation(
+      jest.requireActual<typeof import("../fixtures/runtimeApiOperation")>(
+        "../fixtures/runtimeApiOperation",
+      ).runTestApiOperation,
+    );
+  }
+});
+
+function readFixtureState(f: ReturnType<typeof fixture>) {
+  return readRenewalState({ stripe: f.stripe, guildId, payerId, now });
+}
+function turnFixtureRenewalOn(f: ReturnType<typeof fixture>) {
+  f.provider = {
+    ...f.provider,
+    cancel_at: null,
+    cancel_at_period_end: false,
+    canceled_at: null,
+  };
+}
+function patchFixturePrice(
+  f: ReturnType<typeof fixture>,
+  patch: Partial<(typeof sourceSubscription.items.data)[number]["price"]>,
+) {
+  const item = f.provider.items.data[0];
+  f.provider = {
+    ...f.provider,
+    items: {
+      ...f.provider.items,
+      data: [{ ...item, price: { ...item.price, ...patch } }],
+    },
+  };
+}
+async function withRenewalAnalytics(run: () => Promise<void>) {
+  const gate = config.analytics.billingLifecycleEnabled;
+  config.analytics.billingLifecycleEnabled = true;
+  jest.mocked(captureEvent).mockClear();
+  try {
+    await run();
+  } finally {
+    config.analytics.billingLifecycleEnabled = gate;
+  }
+}

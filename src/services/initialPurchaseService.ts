@@ -1,3 +1,9 @@
+import type { StripeEffect } from "../types/stripe";
+import {
+  runBillingOperation,
+  type RuntimeBillingOwner,
+} from "./runtimeBillingOperationService";
+import { UnresolvedBillingMutation } from "./runtimeBillingOperationService";
 import { prepareInitialOfferSettlement } from "./offerUsageSettlement";
 import type { OfferUsageMutation } from "../types/offerUsage";
 import {
@@ -46,6 +52,7 @@ const terminal = (status: string) =>
 const billingUrl = (guildId: string) => `/portal/server/${guildId}/billing`;
 
 type PurchaseInput = {
+  effect?: StripeEffect;
   stripe: StripeClient;
   user: { id: string; email?: string; username?: string };
   guildId: string;
@@ -251,6 +258,7 @@ async function customer(
   initial: PurchaseAttempt,
 ): Promise<PurchaseAttempt> {
   const attempt = await freezeCustomerOperation(input, initial);
+  const write: StripeEffect = input.effect ?? ((run) => run());
   if (attempt.incidentKey || attempt.state === "needs_review") throw review();
   if (attempt.customerId) return attempt;
   if (attempt.state !== "preparing") throw pending();
@@ -263,9 +271,11 @@ async function customer(
       throw review();
     customerId = owned.id;
   } else {
-    const created = await input.stripe.customers.create(operation.params, {
-      idempotencyKey: `purchase-customer-${attempt.attemptId}`,
-    });
+    const created = await write(() =>
+      input.stripe.customers.create(operation.params, {
+        idempotencyKey: `purchase-customer-${attempt.attemptId}`,
+      }),
+    );
     customerId = created.id;
   }
   return save(
@@ -336,59 +346,29 @@ export async function recoverAcceptedPurchase(input: {
   return currentOutcome(attempt);
 }
 export async function createInitialPurchase(
-  input: PurchaseInput,
+  input: PurchaseInput & { owner?: RuntimeBillingOwner },
 ): Promise<string> {
-  let attempt = await reserve(input);
-  if (attempt.state === "completed") return currentOutcome(attempt);
-  await checkCheckoutReplayWindow(input, attempt);
-  attempt = await customer(input, attempt);
-  const pointer = await getSubscriptionRepository().get(input.guildId);
-  if (!sameSubscriptionPointer(pointer, input.expected))
-    return currentOutcome(attempt);
-  const createsCheckout = !attempt.sessionId;
-  await checkCheckoutReplayWindow(input, attempt);
-  const session = attempt.sessionId
-    ? await input.stripe.checkout.sessions.retrieve(attempt.sessionId)
-    : await input.stripe.checkout.sessions.create(attempt.checkout, {
-        idempotencyKey: `purchase-checkout-${attempt.attemptId}`,
-      });
-  assertSessionAssociation(attempt, session);
-  if (session.status === "expired") {
-    if (session.subscription) throw review();
-    await save(
-      attempt,
-      { sessionId: session.id, state: "expired" },
-      input.expected,
-      await prepareExpiredOfferRelease(attempt, session),
-    );
-    throw new BillingActionError(
-      "BAD_REQUEST",
-      "The checkout expired. Retry to start a new purchase.",
-      "purchase_expired",
-    );
-  }
-  if (session.status === "complete") {
-    return completedSessionOutcome(input, attempt, session);
-  }
-  if (session.status !== "open" || !session.url) throw pending();
-  try {
-    attempt = await save(
-      attempt,
-      { sessionId: session.id, state: "open" },
-      input.expected,
-    );
-  } catch {
-    return currentOutcome(attempt);
-  }
-  const current = await getPurchaseRepository().get(input.guildId);
-  const latestPointer = await getSubscriptionRepository().get(input.guildId);
-  if (
-    current?.revision !== attempt.revision ||
-    !sameSubscriptionPointer(latestPointer, input.expected)
-  )
-    return currentOutcome(attempt);
-  if (createsCheckout) captureNewCheckout(input, attempt);
-  return session.url;
+  return runBillingOperation(input.owner, async (owner) => {
+    input = { ...input, effect: owner.effect };
+    let attempt = await reserve(input);
+    const write: StripeEffect = input.effect ?? ((run) => run());
+    if (attempt.state === "completed") return currentOutcome(attempt);
+    await checkCheckoutReplayWindow(input, attempt);
+    attempt = await customer(input, attempt);
+    const pointer = await getSubscriptionRepository().get(input.guildId);
+    if (!sameSubscriptionPointer(pointer, input.expected))
+      return currentOutcome(attempt);
+    const createsCheckout = !attempt.sessionId;
+    await checkCheckoutReplayWindow(input, attempt);
+    const session = attempt.sessionId
+      ? await input.stripe.checkout.sessions.retrieve(attempt.sessionId)
+      : await write(() =>
+          input.stripe.checkout.sessions.create(attempt.checkout, {
+            idempotencyKey: `purchase-checkout-${attempt.attemptId}`,
+          }),
+        );
+    return finishCheckoutSession(input, attempt, session, createsCheckout);
+  });
 }
 
 async function checkCheckoutReplayWindow(
@@ -548,4 +528,57 @@ function sameSubscriptionPointer(
     left?.stripeSubscriptionId === right?.stripeSubscriptionId &&
     left?.stripeSyncRevision === right?.stripeSyncRevision
   );
+}
+
+async function finishCheckoutSession(
+  input: PurchaseInput,
+  attempt: PurchaseAttempt,
+  session: Stripe.Checkout.Session,
+  createsCheckout: boolean,
+): Promise<string> {
+  assertSessionAssociation(attempt, session);
+  if (session.status === "expired") {
+    if (session.subscription) throw review();
+    await save(
+      attempt,
+      { sessionId: session.id, state: "expired" },
+      input.expected,
+      await prepareExpiredOfferRelease(attempt, session),
+    );
+    throw new BillingActionError(
+      "BAD_REQUEST",
+      "The checkout expired. Retry to start a new purchase.",
+      "purchase_expired",
+    );
+  }
+  if (session.status === "complete") {
+    return completedSessionOutcome(input, attempt, session);
+  }
+  if (session.status !== "open" || !session.url) throw pending();
+  try {
+    attempt = await save(
+      attempt,
+      { sessionId: session.id, state: "open" },
+      input.expected,
+    );
+  } catch (error) {
+    // A concurrent webhook may already have persisted this purchase's receipt.
+    if (error instanceof BillingActionError) {
+      try {
+        return await currentOutcome(attempt);
+      } catch {
+        /* Retain the unresolved receipt below. */
+      }
+    }
+    throw new UnresolvedBillingMutation(error);
+  }
+  const current = await getPurchaseRepository().get(input.guildId);
+  const latestPointer = await getSubscriptionRepository().get(input.guildId);
+  if (
+    current?.revision !== attempt.revision ||
+    !sameSubscriptionPointer(latestPointer, input.expected)
+  )
+    return currentOutcome(attempt);
+  if (createsCheckout) captureNewCheckout(input, attempt);
+  return session.url;
 }

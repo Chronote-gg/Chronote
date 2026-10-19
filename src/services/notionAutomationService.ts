@@ -1,3 +1,5 @@
+import { randomUUID } from "node:crypto";
+import { runRuntimeApiOperation } from "./runtimeApiOperationService";
 import {
   runNotionMutation,
   assertNotionOutcomeKnown,
@@ -357,7 +359,11 @@ export const autoExportRecoveredMeeting = async (
 };
 
 export const retryNotionAutomationExport = async (meeting: MeetingHistory) => {
-  const exported = await runAutoExport({ meeting, force: true });
+  const exported = await runRuntimeApiOperation(
+    `notion-retry:${randomUUID()}`,
+    (operation) =>
+      runAutoExport({ meeting, force: true, signal: operation.signal }),
+  );
   if (!exported) {
     throw new NotionApiError(
       409,

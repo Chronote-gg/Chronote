@@ -1,4 +1,8 @@
 /** @jest-environment node */
+jest.mock("../../src/services/runtimeApiOperationService", () => ({
+  runRuntimeApiOperation: jest.requireActual("../fixtures/runtimeApiOperation")
+    .runTestApiOperation,
+}));
 import * as fundingRecovery from "../../src/services/billingChangeRecovery";
 import * as reconciliation from "../../src/services/subscriptionReconciliation";
 import { changeSourceFingerprint } from "../../src/services/billingChangeProvider";

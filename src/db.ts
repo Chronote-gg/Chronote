@@ -1,3 +1,4 @@
+import { transactPersonalAdmission } from "./services/personalAdmissionTransaction";
 import {
   billingChangeControlKey,
   billingChangeOperationKey,
@@ -2250,13 +2251,20 @@ export async function getMeetingUserIndexRecordsForUserInRange(
 
 export async function writePersonalMediaUploadJob(
   job: PersonalMediaUploadJobRecord,
+  context: AdmissionContext,
 ): Promise<void> {
-  await dynamoDbClient.send(
-    new PutItemCommand({
-      TableName: tableName("PersonalMediaUploadJobTable"),
-      Item: marshall(job, { removeUndefinedValues: true }),
-    }),
-  );
+  if (
+    !(await transactPersonalAdmission(dynamoDbClient, context, tablePrefix, [
+      {
+        Put: {
+          TableName: tableName("PersonalMediaUploadJobTable"),
+          Item: marshall(job, { removeUndefinedValues: true }),
+          ConditionExpression: "attribute_not_exists(uploadId)",
+        },
+      },
+    ]))
+  )
+    throw new Error("Personal upload already exists");
 }
 
 export async function getPersonalMediaUploadJob(
@@ -2274,18 +2282,13 @@ export async function getPersonalMediaUploadJob(
     : undefined;
 }
 
-export async function updatePersonalMediaUploadJob(
-  job: PersonalMediaUploadJobRecord,
-): Promise<void> {
-  await writePersonalMediaUploadJob(job);
-}
-
 export async function submitPersonalMediaUploadJob(
   job: PersonalMediaUploadJobRecord,
+  context: AdmissionContext,
 ): Promise<boolean> {
-  try {
-    await dynamoDbClient.send(
-      new PutItemCommand({
+  return transactPersonalAdmission(dynamoDbClient, context, tablePrefix, [
+    {
+      Put: {
         TableName: tableName("PersonalMediaUploadJobTable"),
         Item: marshall(job, { removeUndefinedValues: true }),
         ConditionExpression:
@@ -2295,13 +2298,9 @@ export async function submitPersonalMediaUploadJob(
           ":pending": "pending_upload",
           ":owner": job.ownerUserId,
         }),
-      }),
-    );
-    return true;
-  } catch (error) {
-    if (isConditionalCheckFailed(error)) return false;
-    throw error;
-  }
+      },
+    },
+  ]);
 }
 
 export function personalMediaClaimForJob(
@@ -2432,17 +2431,6 @@ export async function writePersonalSegmentUnderClaim(
   }
 }
 
-export async function writePersonalRecordingSegment(
-  segment: PersonalRecordingSegmentRecord,
-): Promise<void> {
-  await dynamoDbClient.send(
-    new PutItemCommand({
-      TableName: tableName("PersonalRecordingSegmentTable"),
-      Item: marshall(segment, { removeUndefinedValues: true }),
-    }),
-  );
-}
-
 export async function getPersonalRecordingSegment(
   uploadId: string,
   segmentKey: string,
@@ -2484,39 +2472,27 @@ export async function listPersonalRecordingSegments(
   return segments;
 }
 
-export async function updatePersonalRecordingSegment(
-  segment: PersonalRecordingSegmentRecord,
-): Promise<void> {
-  await writePersonalRecordingSegment(segment);
-}
-
 export async function preparePersonalRecordingSegment(
   segment: PersonalRecordingSegmentRecord,
   expectedStatus: "pending_upload" | "failed" | undefined,
+  context: AdmissionContext,
 ): Promise<boolean> {
-  try {
-    await dynamoDbClient.send(
-      new TransactWriteItemsCommand(
-        buildPendingSegmentTransaction(segment, expectedStatus, {
-          personalMediaUpload: tableName("PersonalMediaUploadJobTable"),
-          personalRecordingSegment: tableName("PersonalRecordingSegmentTable"),
-        }),
-      ),
-    );
-    return true;
-  } catch (error) {
-    if (classifyDeploymentTransactionError(error) === "stale") return false;
-    throw error;
-  }
+  return transactPersonalAdmission(dynamoDbClient, context, tablePrefix, [
+    ...buildPendingSegmentTransaction(segment, expectedStatus, {
+      personalMediaUpload: tableName("PersonalMediaUploadJobTable"),
+      personalRecordingSegment: tableName("PersonalRecordingSegmentTable"),
+    }).TransactItems!,
+  ]);
 }
 
 export async function transitionPersonalRecordingSegment(
   segment: PersonalRecordingSegmentRecord,
   expectedStatus: PersonalRecordingSegmentRecord["status"],
+  context: AdmissionContext,
 ): Promise<boolean> {
-  try {
-    await dynamoDbClient.send(
-      new PutItemCommand({
+  return transactPersonalAdmission(dynamoDbClient, context, tablePrefix, [
+    {
+      Put: {
         TableName: tableName("PersonalRecordingSegmentTable"),
         Item: marshall(segment, { removeUndefinedValues: true }),
         ConditionExpression: "#status = :expected AND ownerUserId = :owner",
@@ -2525,13 +2501,9 @@ export async function transitionPersonalRecordingSegment(
           ":expected": expectedStatus,
           ":owner": segment.ownerUserId,
         }),
-      }),
-    );
-    return true;
-  } catch (error) {
-    if (isConditionalCheckFailed(error)) return false;
-    throw error;
-  }
+      },
+    },
+  ]);
 }
 
 export async function listClaimablePersonalMediaUploadJobs(options: {

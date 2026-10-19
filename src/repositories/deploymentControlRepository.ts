@@ -1,4 +1,5 @@
 import {
+  consumedFixtureMatches,
   mockMaintenanceAllows,
   consumeMockFixture,
 } from "../services/deploymentFixtureAdmission";
@@ -589,8 +590,30 @@ export function createMockDeploymentControlRepository(
   };
 
   return {
-    ...createMockRecoveryRepository(records, histories, leases, (context) =>
-      mockWorkAdmissionAllowed({ kind: "serving", context }, records, leases),
+    ...createMockRecoveryRepository(
+      records,
+      histories,
+      leases,
+      (context, grant) => {
+        if (!grant)
+          return mockWorkAdmissionAllowed(
+            { kind: "serving", context },
+            records,
+            leases,
+          );
+        const control = getControl();
+        const runtime = getRuntime(context.instanceId);
+        return Boolean(
+          control &&
+          runtime &&
+          mockServingAdmissionAllowed(control, runtime, context) &&
+          consumedFixtureMatches(
+            control.maintenance,
+            records.get(recordKey(grant.pk, grant.sk)),
+            grant,
+          ),
+        );
+      },
     ),
     async reserveSession(input) {
       buildSessionReservationTransaction(input, {

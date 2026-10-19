@@ -1,4 +1,9 @@
 /** @jest-environment node */
+import { UnresolvedBillingMutation } from "../../src/services/runtimeBillingOperationService";
+jest.mock("../../src/services/runtimeApiOperationService", () => ({
+  runRuntimeApiOperation: jest.requireActual("../fixtures/runtimeApiOperation")
+    .runTestApiOperation,
+}));
 import * as renewalCoverage from "../../src/services/renewalRecoveryService";
 import { sourceSubscription, fundedInvoice } from "../fixtures/renewalStripe";
 import { getMockStore } from "../../src/repositories/mockStore";
@@ -356,7 +361,7 @@ test("a same-pointer revision change during provider creation prevents returning
       guildId,
       priceId: "price_basic",
     }),
-  ).rejects.toMatchObject({ code: "BAD_REQUEST" });
+  ).rejects.toBeInstanceOf(UnresolvedBillingMutation);
 });
 
 test("webhook acceptance before Checkout response returns billing instead of a stale URL", async () => {

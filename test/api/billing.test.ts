@@ -1,4 +1,9 @@
 /** @jest-environment node */
+import {
+  createServer,
+  postWebhook,
+  closeServer,
+} from "../fixtures/billingWebhook";
 
 import {
   afterAll,
@@ -9,11 +14,7 @@ import {
   jest,
   test,
 } from "@jest/globals";
-import express from "express";
-import http from "node:http";
-import type { AddressInfo } from "node:net";
 import * as renewalRecoveryService from "../../src/services/renewalRecoveryService";
-import { registerBillingRoutes } from "../../src/api/billing";
 import { getEntitlementGrantRepository } from "../../src/repositories/entitlementGrantRepository";
 import { getStripeWebhookRepository } from "../../src/repositories/stripeWebhookRepository";
 import { getSubscriptionRepository } from "../../src/repositories/subscriptionRepository";
@@ -62,53 +63,6 @@ const createStripe = (event: StripeEvent, retrieve?: jest.Mock) =>
         ),
     },
   }) as unknown as StripeClient;
-
-const createServer = (stripe: StripeClient) => {
-  const app = express();
-  app.use("/api/billing/webhook", express.raw({ type: "*/*" }));
-  registerBillingRoutes(app, stripe);
-  const server = app.listen(0);
-  const { port } = server.address() as AddressInfo;
-  return { server, baseUrl: `http://127.0.0.1:${port}` };
-};
-
-const postWebhook = async (baseUrl: string) =>
-  new Promise<{ statusCode: number; body: string }>((resolve, reject) => {
-    const req = http.request(
-      `${baseUrl}/api/billing/webhook`,
-      {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-          "stripe-signature": "sig_test",
-        },
-      },
-      (res) => {
-        let body = "";
-        res.setEncoding("utf8");
-        res.on("data", (chunk) => {
-          body += chunk;
-        });
-        res.on("end", () => {
-          resolve({ statusCode: res.statusCode ?? 0, body });
-        });
-      },
-    );
-    req.on("error", reject);
-    req.write("{}");
-    req.end();
-  });
-
-const closeServer = async (server: http.Server) =>
-  new Promise<void>((resolve, reject) => {
-    server.close((error) => {
-      if (error) {
-        reject(error);
-        return;
-      }
-      resolve();
-    });
-  });
 
 const subscriptionEvent = (status: string, eventId: string) =>
   ({

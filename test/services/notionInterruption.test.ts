@@ -1,4 +1,6 @@
 /** @jest-environment node */
+import * as db from "../../src/db";
+import { registerNotionMutationTracker } from "../../src/services/notionOperationLifetime";
 import { runRuntimeApiOperation } from "../../src/services/runtimeApiOperationService";
 import {
   fenceRuntimeWorkAdmission,
@@ -41,6 +43,10 @@ const meeting = {
   generateNotes: true,
 } satisfies MeetingHistory;
 async function fixture() {
+  jest.spyOn(db, "getDeploymentControlRepository").mockReturnValue({
+    ...db.getDeploymentControlRepository(),
+    checkAdmission: jest.fn(async () => ({ kind: "admitted" as const })),
+  });
   resetNotionIntegrationMemoryRepository();
   jest.spyOn(config.notion, "enabled", "get").mockReturnValue(true);
   const fetch = jest.fn().mockResolvedValueOnce(
@@ -96,6 +102,7 @@ test("unknown submitted create retains the permanent reservation and prevents au
     });
   });
   const controller = new AbortController();
+  registerNotionMutationTracker(controller.signal, (run) => run());
   const operation = maybeAutoExportCompletedMeeting(meeting, controller.signal);
   const outcome = operation.catch((error: unknown) => error);
   await started;
@@ -103,7 +110,7 @@ test("unknown submitted create retains the permanent reservation and prevents au
   reject(new Error("synthetic lost response"));
   expect(await outcome).toBeInstanceOf(UnresolvedNotionMutation);
   expect(await f.repository.getAutomationMeetingExport(f.key)).toBeUndefined();
-  await maybeAutoExportCompletedMeeting(meeting, new AbortController().signal);
+  await maybeAutoExportCompletedMeeting(meeting, ownedSignal());
   expect(f.fetch).toHaveBeenCalledTimes(2);
   expect(
     await f.repository.getAutomationConfig(meeting.guildId),
@@ -128,6 +135,7 @@ test("pre-dispatch cancellation after held connection lookup never sends a page 
       return original(id);
     });
   const controller = new AbortController();
+  registerNotionMutationTracker(controller.signal, (run) => run());
   const operation = maybeAutoExportCompletedMeeting(meeting, controller.signal);
   const outcome = operation.catch((error: unknown) => error);
   await started;
@@ -152,7 +160,7 @@ test("unknown fixed-page update preserves the acknowledged export row", async ()
   await f.repository.writeAutomationMeetingExport(existing);
   f.fetch.mockRejectedValueOnce(new Error("synthetic lost update response"));
   await expect(
-    maybeAutoSyncMeetingNotes(meeting, new AbortController().signal),
+    maybeAutoSyncMeetingNotes(meeting, ownedSignal()),
   ).rejects.toBeInstanceOf(UnresolvedNotionMutation);
   expect(await f.repository.getAutomationMeetingExport(f.key)).toEqual(
     existing,
@@ -275,7 +283,7 @@ test.each(["5xx", "body_loss", "known_ack"])(
     expect(
       (await f.repository.getAutomationMeetingExport(f.key))
         ?.exportedNotesVersion,
-    ).toBe(1);
+    ).toBe(outcome === "known_ack" ? 2 : 1);
   },
 );
 
@@ -338,7 +346,15 @@ test.each(["5xx", "body_loss", "schema_loss", "known_ack"])(
     expect(mockApiSettled).toHaveBeenCalledTimes(
       outcome === "known_ack" ? 1 : 0,
     );
-    expect(writeConnection).not.toHaveBeenCalled();
+    expect(writeConnection).toHaveBeenCalledTimes(
+      outcome === "known_ack" ? 1 : 0,
+    );
     expect(f.fetch).toHaveBeenCalledTimes(3);
   },
 );
+
+function ownedSignal() {
+  const signal = new AbortController().signal;
+  registerNotionMutationTracker(signal, (run) => run());
+  return signal;
+}

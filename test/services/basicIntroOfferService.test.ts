@@ -1,4 +1,5 @@
 /** @jest-environment node */
+import "../fixtures/admittedApi";
 import {
   seedUnusedOfferCoverage,
   testWriterImageDigest,
@@ -19,7 +20,6 @@ import { captureEvent } from "../../src/services/analyticsService";
 jest.mock("../../src/services/analyticsService", () => ({
   captureEvent: jest.fn(),
 }));
-
 it("keeps the introductory offer inactive with no environment configuration", () => {
   expect(config.stripe).toMatchObject({
     basicIntroOffer: {

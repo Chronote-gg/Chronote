@@ -1,3 +1,7 @@
+import {
+  consumedFixtureMatches,
+  type ConsumedFixtureGrant,
+} from "./deploymentFixtureAdmission";
 import { recoveryHistoryKey } from "../types/meetingRecovery";
 import { randomUUID } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
@@ -66,6 +70,7 @@ export function createMeetingRecoveryWorker(deps: WorkerDependencies) {
     key: HistoryKey,
     work: RuntimeWorkClaim,
     submitted: () => void,
+    fixtureGrant?: ConsumedFixtureGrant,
   ) {
     const authority = await work.authority();
     if (authority.kind !== "serving")
@@ -82,6 +87,7 @@ export function createMeetingRecoveryWorker(deps: WorkerDependencies) {
       lease,
       context: { ...authority.context, now: deps.now() },
       attemptId: randomUUID(),
+      fixtureGrant,
     };
     const expected = prepareRecoveryClaim(input);
     if (!expected) return;
@@ -150,7 +156,7 @@ export function createMeetingRecoveryWorker(deps: WorkerDependencies) {
       })
     );
   }
-  function process(key: HistoryKey) {
+  function process(key: HistoryKey, fixtureGrant?: ConsumedFixtureGrant) {
     key = recoveryHistoryKey(key);
     if (stopped) return Promise.resolve(false);
     const id = `recovery:${key.guildId}:${key.channelId_timestamp}`;
@@ -168,9 +174,14 @@ export function createMeetingRecoveryWorker(deps: WorkerDependencies) {
       let submitted = false;
       try {
         if (stopped) return false;
-        const claim = await claimKey(key, work, () => {
-          submitted = true;
-        });
+        const claim = await claimKey(
+          key,
+          work,
+          () => {
+            submitted = true;
+          },
+          fixtureGrant,
+        );
         if (!claim) return true;
         register(claim, work);
         work.claimed();
@@ -265,6 +276,30 @@ export function createMeetingRecoveryWorker(deps: WorkerDependencies) {
     }
     return !stopped;
   }
+  async function visitHeldFixtures(
+    work: RuntimeWorkClaim,
+    control: ControlRecord,
+    deadline: number,
+  ) {
+    const hold = control.maintenance;
+    if (!hold) return;
+    const introduction = await work.trackEffect(() =>
+      deps.repository.getRecord("ENV", "INTRODUCTION"),
+    );
+    if (!isHeldIntroduction(introduction, hold)) return;
+    for (const id of introduction.fixtureGrantIds ?? []) {
+      if (stopped || deps.now() >= deadline) return;
+      const grant = await work.trackEffect(() =>
+        deps.repository.getRecord(`FIXTURE#${id}`, "AUTHORITY"),
+      );
+      if (
+        grant?.recordType === "fixture_grant" &&
+        grant.state === "consumed" &&
+        consumedFixtureMatches(hold, grant, grant)
+      )
+        await process(grant.historyKey, grant);
+    }
+  }
   async function scanPage(
     work: RuntimeWorkClaim,
     id: string,
@@ -276,6 +311,10 @@ export function createMeetingRecoveryWorker(deps: WorkerDependencies) {
       deps.repository.getRecord("ENV", "CONTROL"),
     );
     if (control?.recordType !== "control" || stopped) return "end";
+    if (control.maintenance) {
+      await visitHeldFixtures(work, control, deadline);
+      return "end";
+    }
     if (unresolvedCursor && sameControl(control, unresolvedCursor.expected)) {
       unresolvedCursor.work.acknowledgeReadOnlyRecoveryPoll();
       releaseAcknowledgedRuntimeWork(unresolvedCursor.id);
@@ -387,4 +426,18 @@ export function startMeetingRecoveryWorker() {
 export function stopMeetingRecoveryWorker(): Promise<void> {
   sealed = true;
   return worker?.stop() ?? Promise.resolve();
+}
+
+function isHeldIntroduction(
+  record:
+    import("../types/deploymentControl").DeploymentControlRecord | undefined,
+  hold: import("../types/productionIntroduction").MaintenanceHold,
+): record is import("../types/productionIntroduction").IntroductionHold {
+  return (
+    record?.recordType === "production_introduction" &&
+    record.admission.state === "held" &&
+    record.holdId === hold.holdId &&
+    record.introductionId === hold.introductionId &&
+    record.revision === hold.revision
+  );
 }

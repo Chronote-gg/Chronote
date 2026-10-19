@@ -385,3 +385,95 @@ test("actual Dynamo discovery includes export receipts and never selects submitt
     expect(found).toBe(state !== "submitted");
   }
 });
+
+test.each([
+  "original",
+  "advanced_owner",
+  "missing_checkpoint",
+  "copied_checkpoint",
+  "wrong_history",
+  "issued",
+  "wrong_hold",
+])(
+  "native consumed fixture recovery validates %s lineage",
+  async (scenario) => {
+    const { consumedFixtureForHistory } =
+      await import("../fixtures/productionIntroduction");
+    const row = await fixture();
+    row.executionVersion = 2;
+    row.recovery!.executionVersion = 2;
+    row.checkpoint = {
+      artifactFolder: "synthetic",
+      schemaVersion: 1,
+      revision: 1,
+      capture: {
+        guildId: row.guildId,
+        channelId: row.channelId,
+        channelId_timestamp: row.channelId_timestamp,
+        meetingId: row.meetingId,
+        ownerInstanceId: "old",
+        executionVersion: 1,
+        reservedAt: row.timestamp,
+        captureStartedAt: row.timestamp,
+        requested: { transcribeMeeting: true, generateNotes: true },
+      },
+      manifest: {
+        key: "synthetic/manifest",
+        checksumSha256: "a".repeat(64),
+        byteLength: 1,
+      },
+    };
+    const maintenance = {
+      holdId: "hold",
+      introductionId: "intro",
+      revision: 1,
+    };
+    const grant = consumedFixtureForHistory(row, maintenance);
+    if (scenario === "original") {
+      row.ownerInstanceId = "old";
+      row.executionVersion = 1;
+      row.recovery.executionVersion = 1;
+    }
+    if (scenario === "missing_checkpoint") delete row.checkpoint;
+    if (scenario === "copied_checkpoint")
+      row.checkpoint!.capture.ownerInstanceId = "foreign";
+    if (scenario === "wrong_history") row.channelId_timestamp = "copied-key";
+    await put(tables.deploymentControl, { ...control, maintenance });
+    await put(tables.deploymentControl, runtime("old"));
+    let stored: object = grant;
+    if (scenario === "issued") {
+      const { ownership, historyKey, ...issued } = grant;
+      void ownership;
+      void historyKey;
+      stored = { ...issued, state: "issued" };
+    }
+    if (scenario === "wrong_hold") stored = { ...grant, holdId: "other" };
+    await put(tables.deploymentControl, stored);
+    await put(tables.meetingHistory, row);
+    expect(
+      await repository.claimRecordingRecovery({
+        history: row,
+        lease: undefined,
+        context,
+        attemptId: randomUUID(),
+      }),
+    ).toBeUndefined();
+    const claimed = await repository.claimRecordingRecovery({
+      history: row,
+      lease: undefined,
+      context,
+      attemptId: randomUUID(),
+      fixtureGrant: grant,
+    });
+    const admitted = ["original", "advanced_owner"].includes(scenario);
+    expect(Boolean(claimed)).toBe(admitted);
+    if (claimed) {
+      expect(claimed.history.checkpoint).toEqual(row.checkpoint);
+      expect(claimed.lease.executionVersion).toBe(row.executionVersion! + 1);
+      expect(
+        await repository.renewRecordingRecovery(claimed, 101),
+      ).toBeDefined();
+    }
+    expect(await repository.getRecord(grant.pk, grant.sk)).toEqual(stored);
+  },
+);

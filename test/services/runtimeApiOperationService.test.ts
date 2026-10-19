@@ -29,6 +29,7 @@ function held<T>() {
 beforeEach(() => {
   jest.clearAllMocks();
   mockEligible = true;
+  mockCheckAdmission.mockResolvedValue({ kind: "admitted" });
 });
 test("warm API admission rejects before dispatch", async () => {
   mockEligible = false;
@@ -123,4 +124,22 @@ test("local settlement cannot release before the complete registered handler lif
     await task;
   }
   expect(mockSettled).toHaveBeenCalledTimes(1);
+});
+
+const mockCheckAdmission = jest.fn();
+jest.mock("../../src/db", () => ({
+  getDeploymentControlRepository: () => ({
+    checkAdmission: mockCheckAdmission,
+  }),
+}));
+test("maintenance winning admission prevents the API handler and its effects", async () => {
+  mockCheckAdmission.mockResolvedValueOnce({
+    kind: "blocked",
+    reason: "not_serving",
+  });
+  const handler = jest.fn();
+  await expect(
+    runRuntimeApiOperation("maintenance-blocked", handler),
+  ).rejects.toThrow();
+  expect(handler).not.toHaveBeenCalled();
 });

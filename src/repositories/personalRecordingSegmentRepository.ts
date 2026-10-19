@@ -1,9 +1,9 @@
+import type { AdmissionContext } from "../types/deploymentControl";
+import { assertMockPersonalAdmission } from "./personalMediaUploadRepository";
 import { config } from "../services/configService";
 import {
   getPersonalRecordingSegment,
   listPersonalRecordingSegments,
-  updatePersonalRecordingSegment,
-  writePersonalRecordingSegment,
   transitionPersonalRecordingSegment,
   preparePersonalRecordingSegment,
 } from "../db";
@@ -14,27 +14,25 @@ export type PersonalRecordingSegmentRepository = {
   prepare: (
     segment: PersonalRecordingSegmentRecord,
     expectedStatus: "pending_upload" | "failed" | undefined,
+    context: AdmissionContext,
   ) => Promise<boolean>;
   transition: (
     segment: PersonalRecordingSegmentRecord,
     expectedStatus: PersonalRecordingSegmentRecord["status"],
+    context: AdmissionContext,
   ) => Promise<boolean>;
-  write: (segment: PersonalRecordingSegmentRecord) => Promise<void>;
   get: (
     uploadId: string,
     segmentKey: string,
   ) => Promise<PersonalRecordingSegmentRecord | undefined>;
   listByUpload: (uploadId: string) => Promise<PersonalRecordingSegmentRecord[]>;
-  update: (segment: PersonalRecordingSegmentRecord) => Promise<void>;
 };
 
 const realRepository: PersonalRecordingSegmentRepository = {
   prepare: preparePersonalRecordingSegment,
   transition: transitionPersonalRecordingSegment,
-  write: writePersonalRecordingSegment,
   get: getPersonalRecordingSegment,
   listByUpload: listPersonalRecordingSegments,
-  update: updatePersonalRecordingSegment,
 };
 
 const segmentMapForUpload = (uploadId: string) => {
@@ -48,7 +46,8 @@ const segmentMapForUpload = (uploadId: string) => {
 };
 
 const mockRepository: PersonalRecordingSegmentRepository = {
-  async prepare(segment, expectedStatus) {
+  async prepare(segment, expectedStatus, context) {
+    assertMockPersonalAdmission(context);
     const job = getMockStore().personalMediaUploadsById.get(segment.uploadId);
     const current = segmentMapForUpload(segment.uploadId).get(
       segment.segmentKey,
@@ -72,7 +71,8 @@ const mockRepository: PersonalRecordingSegmentRepository = {
     );
     return true;
   },
-  async transition(segment, expectedStatus) {
+  async transition(segment, expectedStatus, context) {
+    assertMockPersonalAdmission(context);
     const current = segmentMapForUpload(segment.uploadId).get(
       segment.segmentKey,
     );
@@ -87,9 +87,6 @@ const mockRepository: PersonalRecordingSegmentRepository = {
     );
     return true;
   },
-  async write(segment) {
-    segmentMapForUpload(segment.uploadId).set(segment.segmentKey, segment);
-  },
   async get(uploadId, segmentKey) {
     return getMockStore()
       .personalRecordingSegmentsByUploadId.get(uploadId)
@@ -101,9 +98,6 @@ const mockRepository: PersonalRecordingSegmentRepository = {
         .personalRecordingSegmentsByUploadId.get(uploadId)
         ?.values() ?? []),
     ].sort((left, right) => left.segmentKey.localeCompare(right.segmentKey));
-  },
-  async update(segment) {
-    segmentMapForUpload(segment.uploadId).set(segment.segmentKey, segment);
   },
 };
 

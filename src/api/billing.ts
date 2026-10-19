@@ -1,3 +1,4 @@
+import { RuntimeAdmissionUnavailable } from "../services/runtimeAdmissionError";
 import { reconcileBillingChangeForWebhook } from "../services/billingChangeService";
 import { refreshRenewalRecovery } from "../services/renewalRecoveryService";
 import { captureBillingInvoiceOutcome } from "../services/billingLifecycleAnalytics";
@@ -624,6 +625,12 @@ export function registerBillingRoutes(
           await handler({ stripe, event });
         }
       } catch (handlerError) {
+        if (handlerError instanceof RuntimeAdmissionUnavailable) {
+          res
+            .status(503)
+            .send("Billing continuation is temporarily unavailable");
+          return;
+        }
         await webhookRepo.finish(event.id, leaseToken, true);
         throw handlerError;
       }

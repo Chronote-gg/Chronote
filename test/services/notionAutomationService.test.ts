@@ -1,4 +1,9 @@
 /** @jest-environment node */
+jest.mock("../../src/services/runtimeApiOperationService", () => ({
+  runRuntimeApiOperation: jest.requireActual("../fixtures/notionOwner")
+    .runTestNotionOperation,
+}));
+import { withTestNotionOwner } from "../fixtures/notionOwner";
 import { jest } from "@jest/globals";
 import type { MeetingHistory } from "../../src/types/db";
 import type {
@@ -55,9 +60,9 @@ import {
   syncMeetingToNotionAutomation,
 } from "../../src/services/notionService";
 import {
-  autoExportRecoveredMeeting,
-  maybeAutoExportCompletedMeeting,
-  maybeAutoSyncMeetingNotes,
+  autoExportRecoveredMeeting as actual_autoExportRecoveredMeeting,
+  maybeAutoExportCompletedMeeting as actual_maybeAutoExportCompletedMeeting,
+  maybeAutoSyncMeetingNotes as actual_maybeAutoSyncMeetingNotes,
   retryNotionAutomationExport,
 } from "../../src/services/notionAutomationService";
 
@@ -149,6 +154,7 @@ describe("notionAutomationService", () => {
       userId: automationConfig.ownerUserId,
       meeting,
       existing: existingExport,
+      signal: expect.any(AbortSignal),
     });
     expect(exportMeetingToNotionAutomation).not.toHaveBeenCalled();
   });
@@ -203,6 +209,7 @@ describe("notionAutomationService", () => {
       meeting: personalMeeting,
       destinationPageId: personalAutomationConfig.destinationPageId,
       attemptCount: 1,
+      signal: expect.any(AbortSignal),
     });
   });
 
@@ -434,3 +441,33 @@ describe("ordinary Notion callers during recovery", () => {
     expect(unknown).toEqual(before);
   });
 });
+
+function maybeAutoExportCompletedMeeting(
+  meeting: MeetingHistory,
+  signal?: AbortSignal,
+) {
+  return withTestNotionOwner(
+    (owned) => actual_maybeAutoExportCompletedMeeting(meeting, owned),
+    signal,
+  );
+}
+
+function maybeAutoSyncMeetingNotes(
+  meeting: MeetingHistory,
+  signal?: AbortSignal,
+) {
+  return withTestNotionOwner(
+    (owned) => actual_maybeAutoSyncMeetingNotes(meeting, owned),
+    signal,
+  );
+}
+
+function autoExportRecoveredMeeting(
+  meeting: MeetingHistory,
+  signal?: AbortSignal,
+) {
+  return withTestNotionOwner(
+    (owned) => actual_autoExportRecoveredMeeting(meeting, owned),
+    signal,
+  );
+}

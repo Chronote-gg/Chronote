@@ -1,3 +1,7 @@
+import {
+  runBillingOperation,
+  type RuntimeBillingOwner,
+} from "./runtimeBillingOperationService";
 import { randomUUID } from "node:crypto";
 import type { StripeClient, StripeEffect } from "../types/stripe";
 import {
@@ -57,6 +61,7 @@ type Context = {
   payerId: string;
   now?: number;
   effect?: StripeEffect;
+  owner?: RuntimeBillingOwner;
 };
 const at = (context: Context) => context.now ?? Math.floor(Date.now() / 1000);
 const repo = () => getBillingChangeRepository();
@@ -137,7 +142,7 @@ async function present(
     paymentUrl,
   };
 }
-export async function prepareBillingChange(
+async function prepareBillingChangeOwned(
   context: Context & { selection: BillingChangeSelection },
 ): Promise<BillingChangeView> {
   const existing = await owned(context);
@@ -235,9 +240,12 @@ export async function readBillingChange(
       kind: "none",
       enabled: config.stripe.subscriptionTransitionsEnabled,
     };
-  return present(context, await resume(context, operation));
+  return runBillingOperation(context.owner, async (owner) => {
+    const ownedContext = { ...context, owner, effect: owner.effect };
+    return present(ownedContext, await resume(ownedContext, operation));
+  });
 }
-export async function confirmBillingChange(
+async function confirmBillingChangeOwned(
   context: Context & { operationId: string; revision: string },
 ): Promise<BillingChangeView> {
   const operation = await owned(context, context.operationId);
@@ -280,7 +288,7 @@ export async function confirmBillingChange(
   );
   return present(context, await resume(context, accepted));
 }
-export async function cancelBillingChange(
+async function cancelBillingChangeOwned(
   context: Context & { operationId: string },
 ): Promise<BillingChangeView> {
   let operation = await owned(context, context.operationId);
@@ -442,6 +450,7 @@ async function prepareInvoice(
     );
   if (!operation.draftInvoiceId) {
     const draftInvoiceId = await createChangeFundingDraft({
+      effect: context.effect,
       stripe: context.stripe,
       operation,
       subscription: source.subscription,
@@ -452,6 +461,7 @@ async function prepareInvoice(
     );
   }
   const prepared = await finalizeChangeFunding({
+    effect: context.effect,
     stripe: context.stripe,
     operation,
     subscription: source.subscription,
@@ -522,6 +532,7 @@ async function afterAcceptance(
         if (saved.state !== "accepted") throw changeUnavailable();
         latest = saved;
       },
+      context.effect,
     );
     return persist(
       {
@@ -578,6 +589,7 @@ async function applyPayment(
   )
     throw changeUnavailable();
   const result = await applyFundedBillingChange({
+    effect: context.effect,
     stripe: context.stripe,
     operation,
     now: at(context),
@@ -688,12 +700,14 @@ async function finishCancellation(
         context.stripe,
         operation,
         operation.scheduleId,
+        context.effect,
       ))
     )
       return operation;
   }
   let latest: BillingChangeOperation = operation;
   const recovery = await compensateChangeFunding({
+    effect: context.effect,
     stripe: context.stripe,
     operation,
     onProgress: async (receipt) => {
@@ -740,13 +754,47 @@ export async function reconcileBillingChangeForWebhook(
   stripe: StripeClient,
   guildId: string,
   effect?: StripeEffect,
+  owner?: RuntimeBillingOwner,
 ) {
   const control = await repo().getControl(guildId);
   if (!control) return;
   const operation = await repo().getOperation(guildId, control.operationId);
   if (!operation) throw changeUnavailable();
-  await resume(
-    { stripe, guildId, payerId: operation.payerId, effect },
-    operation,
+  await runBillingOperation(owner, async (admitted) => {
+    await resume(
+      {
+        stripe,
+        guildId,
+        payerId: operation.payerId,
+        effect: admitted.effect,
+        owner: admitted,
+      },
+      operation,
+    );
+  });
+  void effect;
+}
+
+export function prepareBillingChange(
+  context: Context & { selection: BillingChangeSelection },
+): Promise<BillingChangeView> {
+  return runBillingOperation(context.owner, (owner) =>
+    prepareBillingChangeOwned({ ...context, owner, effect: owner.effect }),
+  );
+}
+
+export function confirmBillingChange(
+  context: Context & { operationId: string; revision: string },
+): Promise<BillingChangeView> {
+  return runBillingOperation(context.owner, (owner) =>
+    confirmBillingChangeOwned({ ...context, owner, effect: owner.effect }),
+  );
+}
+
+export function cancelBillingChange(
+  context: Context & { operationId: string },
+): Promise<BillingChangeView> {
+  return runBillingOperation(context.owner, (owner) =>
+    cancelBillingChangeOwned({ ...context, owner, effect: owner.effect }),
   );
 }

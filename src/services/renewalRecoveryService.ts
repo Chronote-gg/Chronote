@@ -1,3 +1,7 @@
+import {
+  runBillingOperation,
+  type RuntimeBillingOwner,
+} from "./runtimeBillingOperationService";
 import { readRenewalCoverageCandidate } from "./renewalRecoveryCoverageEvidence";
 import { isDeepStrictEqual } from "node:util";
 import { readLedgerWriterRuntime } from "./ledgerWriterRuntime";
@@ -39,6 +43,7 @@ type Context = {
   now: number;
   signal?: AbortSignal;
   effect?: StripeEffect;
+  owner?: RuntimeBillingOwner;
 };
 export async function trackPaidRenewalPeriod(
   input: Context & { subscriptionId: string; invoiceId: string },
@@ -375,12 +380,12 @@ async function beginRenewalCancellation(
     pointer,
   );
 }
-export async function cancelRenewalRecovery(
+async function cancelRenewalRecoveryOwned(
   input: Context & { payerId: string },
 ): Promise<void> {
   return cancelOwnedRecovery(input, null);
 }
-export async function cancelScheduledRenewalRecovery(
+async function cancelScheduledRenewalRecoveryOwned(
   input: Context & { payerId: string; operationId: string },
 ): Promise<void> {
   return cancelOwnedRecovery(input, input.operationId);
@@ -425,6 +430,7 @@ async function repairRenewalPaidAccess(
     input.stripe,
     input.guildId,
     input.effect,
+    input.owner,
   );
   await reconcileSubscription(
     input.stripe,
@@ -524,6 +530,7 @@ async function finishRenewalCancellation(
     input.stripe,
     input.guildId,
     input.effect,
+    input.owner,
   );
   await reconcileSubscription(
     input.stripe,
@@ -549,7 +556,7 @@ async function finishRenewalCancellation(
     pointer,
   );
 }
-export async function reconcileRenewalRecovery(
+async function reconcileRenewalRecoveryOwned(
   input: Context & { signal?: AbortSignal },
 ): Promise<void> {
   input.signal?.throwIfAborted();
@@ -569,4 +576,41 @@ export async function reconcileRenewalRecovery(
   if (record.state !== "canceling") return;
   input.signal?.throwIfAborted();
   await finishRenewalCancellation(input, record);
+}
+
+export function cancelRenewalRecovery(
+  input: Context & { payerId: string },
+): Promise<void> {
+  return runBillingOperation(input.owner, (owner) =>
+    cancelRenewalRecoveryOwned({
+      ...input,
+      owner,
+      effect: owner.effect,
+      signal: owner.signal,
+    }),
+  );
+}
+
+export function cancelScheduledRenewalRecovery(
+  input: Context & { payerId: string; operationId: string },
+): Promise<void> {
+  return runBillingOperation(input.owner, (owner) =>
+    cancelScheduledRenewalRecoveryOwned({
+      ...input,
+      owner,
+      effect: owner.effect,
+      signal: owner.signal,
+    }),
+  );
+}
+
+export function reconcileRenewalRecovery(input: Context): Promise<void> {
+  return runBillingOperation(input.owner, (owner) =>
+    reconcileRenewalRecoveryOwned({
+      ...input,
+      owner,
+      effect: owner.effect,
+      signal: owner.signal,
+    }),
+  );
 }
