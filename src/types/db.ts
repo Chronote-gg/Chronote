@@ -451,6 +451,9 @@ export interface OnboardingState {
 
 // Meeting History Type
 export interface MeetingHistory {
+  fixtureInput?: import("./fixtureEvidence").FixtureInputEvidence;
+  fixtureGeneration?: import("./fixtureEvidence").FixtureGenerationEvidence;
+  fixtureTranscript?: import("./fixtureEvidence").FixtureTranscriptEvidence;
   completionPolicy?: import("./meetingCompletionPolicy").CompletionPolicy;
   recoveryExport?: import("./recordingCheckpoint").RecoveryExport;
   recoveryTranscript?: {

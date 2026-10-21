@@ -1,4 +1,5 @@
 /** @jest-environment node */
+import { frozenFixtureDefinitions } from "../../scripts/deployment/production-fixture-definitions.cjs";
 import { jest, afterEach, test, expect } from "@jest/globals";
 import { Buffer } from "node:buffer";
 import process from "node:process";
@@ -77,6 +78,7 @@ function hostedFixture(manifest = fixture()) {
       { fixture: name },
     ]),
   );
+  evidence.fixtureChecklist = frozenFixtureDefinitions();
   evidence.executionApproval = {
     ...policy("production"),
     continuationGate: {

@@ -1,9 +1,7 @@
+import { liveTranscriptionInput } from "./liveTranscriptionInput";
 import { resolveChatParamsForRole } from "./openaiModelParams";
 import { withTranscriptionInput } from "./transcriptionInput";
-import {
-  getMeetingProcessingSignal,
-  runMeetingProcessingEffect,
-} from "./meetingProcessingLifetime";
+
 import type OpenAI from "openai";
 import type {
   Transcription,
@@ -86,6 +84,7 @@ import { getMeetingModelOverrides } from "./meetingModelOverrides";
 import { getTranscriptionTextQuality } from "../utils/transcriptionText";
 
 export type TranscriptionContentInput = {
+  observeGeneration?: import("../types/fixtureEvidence").GenerationObserver;
   meetingId: string;
   creator: { id: string };
   guild: { id: string };
@@ -297,11 +296,17 @@ async function transcribeInternal(
         include: ["logprobs"],
         ...(promptText ? { prompt: promptText } : {}),
       };
+      const acknowledge = meeting.observeGeneration?.(
+        `transcription-audio-${passMode}`,
+        modelChoice.model,
+        promptText ? langfusePrompt : null,
+      );
       const transcription = await openAIClient.audio.transcriptions.create(
         request,
         { signal },
       );
       signal.throwIfAborted();
+      acknowledge?.(null);
       return {
         text: transcription.text ?? "",
         logprobs: transcription.logprobs ?? [],
@@ -944,16 +949,7 @@ export function transcribeSnippet(
   options: Parameters<typeof transcribeContentSnippet>[2] = {},
 ) {
   return transcribeContentSnippet(
-    {
-      meetingId: meeting.meetingId,
-      creator: { id: meeting.creator.id },
-      guild: { id: meeting.guild.id },
-      voiceChannel: { id: meeting.voiceChannel.id },
-      signal: getMeetingProcessingSignal(meeting),
-      runtimeConfig: meeting.runtimeConfig,
-      prompt: () => getTranscriptionPrompt(meeting),
-      effect: (run) => runMeetingProcessingEffect(meeting, run),
-    },
+    liveTranscriptionInput(meeting),
     snippet,
     options,
   );

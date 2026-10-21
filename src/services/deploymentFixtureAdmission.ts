@@ -27,6 +27,9 @@ function fixtureBindings(scope: FixtureScope) {
     voiceChannelId: scope.voiceChannelId,
     textChannelId: scope.textChannelId,
     actorUserId: scope.actorUserId,
+    inputProfile: scope.inputProfile,
+    scriptSha256: scope.scriptSha256,
+    checklistSha256: scope.checklistSha256,
     sessionMode: scope.sessionMode,
   };
 }
@@ -165,6 +168,9 @@ export function fixtureScopeForGrant(grant: FixtureGrant): FixtureScope {
     voiceChannelId: grant.voiceChannelId,
     textChannelId: grant.textChannelId,
     actorUserId: grant.actorUserId,
+    inputProfile: grant.inputProfile,
+    scriptSha256: grant.scriptSha256,
+    checklistSha256: grant.checklistSha256,
     sessionMode: grant.sessionMode,
   };
 }

@@ -1,3 +1,4 @@
+import { rejectFixtureTts } from "./services/fixtureInputService";
 import type { PcmSpan } from "./types/transcriptCorrespondence";
 import { appendPcmSpan } from "./utils/transcriptCorrespondence";
 import {
@@ -226,6 +227,7 @@ async function playTtsItem(
         ? undefined
         : createCheckpointPlaybackTap({
             push: (chunk, observedAt) => {
+              if (rejectFixtureTts(meeting)) return false;
               if (
                 meeting.recordBotAudio === false ||
                 meeting.ownershipSignal?.aborted
@@ -394,6 +396,7 @@ export function createTtsQueue(
   };
 
   const enqueue = (item: TtsQueueItem) => {
+    if (rejectFixtureTts(meeting)) return false;
     if (getMeetingProcessingSignal(meeting).aborted) return false;
     if (queue.length >= config.chatTts.queueLimit) {
       if (item.priority === "high") {
@@ -411,6 +414,7 @@ export function createTtsQueue(
   };
 
   const playCueIfIdle = (item: TtsQueueSfxItem) => {
+    if (rejectFixtureTts(meeting)) return false;
     if (getMeetingProcessingSignal(meeting).aborted) return false;
     if (playing || queue.length > 0) return false;
     if (player.state.status !== AudioPlayerStatus.Idle) return false;

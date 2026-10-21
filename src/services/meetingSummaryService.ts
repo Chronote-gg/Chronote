@@ -16,6 +16,8 @@ export type MeetingSummaries = {
 };
 
 type MeetingSummaryInput = {
+  observeGeneration?: import("../types/fixtureEvidence").GenerationObserver;
+  recentMeetingNames?: string;
   savedPrompt?: MeetingNotesInput["savedSummary"];
   frozenModel?: NonNullable<
     MeetingNotesInput["frozenModels"]
@@ -94,6 +96,7 @@ async function prepareSummaryPrompt(input: MeetingSummaryInput) {
   const previousSentence = input.previousSummarySentence?.trim();
   const previousLabel = input.previousSummaryLabel?.trim();
   const recentMeetingNames =
+    input.recentMeetingNames ??
     input.savedPrompt?.recentMeetingNames ??
     (await listRecentMeetingNamesForPrompt({
       guildId: input.guildId,
@@ -162,6 +165,11 @@ export async function generateMeetingSummaries(
       parentSpanContext: input.parentSpanContext,
     });
     input.signal?.throwIfAborted();
+    const acknowledge = input.observeGeneration?.(
+      "summary",
+      modelChoice.model,
+      langfusePrompt,
+    );
     const completion = await openAIClient.chat.completions.create(
       {
         model: modelChoice.model,
@@ -173,11 +181,18 @@ export async function generateMeetingSummaries(
       input.signal ? { signal: input.signal } : undefined,
     );
     input.signal?.throwIfAborted();
-    const content = completion.choices[0]?.message?.content ?? "";
-    return parseMeetingSummaryResponse(content) ?? {};
+    acknowledge?.(completion.model ?? null);
+    return summariesFromCompletion(completion);
   } catch (error) {
     input.signal?.throwIfAborted();
     console.error("Failed to generate meeting summaries:", error);
     return {};
   }
+}
+
+function summariesFromCompletion(completion: {
+  choices: Array<{ message: { content: string | null } }>;
+}): MeetingSummaries {
+  const content = completion.choices[0]?.message?.content ?? "";
+  return parseMeetingSummaryResponse(content) ?? {};
 }

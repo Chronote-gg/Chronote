@@ -1,3 +1,5 @@
+import { recordingPromptLabels } from "./recordingMetadataService";
+import { isFixture, fixtureParticipants } from "./fixtureInputService";
 import type { ChatAttachment, ChatEntry } from "../types/chat";
 import type { MeetingData, MeetingNotesInput } from "../types/meeting-data";
 import type { Participant } from "../types/participants";
@@ -14,7 +16,6 @@ import {
 } from "./contextService";
 import { config } from "./configService";
 import { getLangfuseChatPrompt } from "./langfusePromptService";
-import { resolveMeetingAttendees } from "../utils/meetingAttendees";
 
 const MAX_CHAT_LOG_PROMPT_LENGTH = 20000;
 const MAX_ROLES_IN_PROMPT = 100;
@@ -348,10 +349,19 @@ export async function prepareLiveNotesPrompt(meeting: MeetingData) {
   const contextData = await buildMeetingContext(meeting, isMemoryEnabled());
   const formattedContext = formatContextForPrompt(contextData, "notes");
 
-  const serverName = meeting.guild.name;
-  const serverDescription = meeting.guild.description ?? "";
-  const mentionableRoles = resolveMentionableRoles(meeting);
-  const participants = Array.from(meeting.participants.values());
+  const fixture = isFixture(meeting);
+  const {
+    serverName,
+    serverDescription,
+    events,
+    channelNames,
+    botDisplayName,
+    voiceChannelName,
+    attendees,
+  } = recordingPromptLabels(meeting);
+  const mentionableRoles = fixture ? [] : resolveMentionableRoles(meeting);
+  const participants =
+    fixtureParticipants(meeting) ?? Array.from(meeting.participants.values());
   // Captured here, from the same selection the roster is rendered from. The
   // guild role cache can change while the model call is in flight, so
   // recomputing this afterwards could strip a mention the model was given.
@@ -360,22 +370,7 @@ export async function prepareLiveNotesPrompt(meeting: MeetingData) {
     participants,
   ).map((role) => role.id);
   const roles = formatRoleRoster(mentionableRoles, participants);
-  const events = meeting.guild.scheduledEvents
-    .valueOf()
-    .map((event) => event.name)
-    .join(", ");
-  const channelNames = meeting.guild.channels
-    .valueOf()
-    .map((channel) => channel.name)
-    .join(", ");
-
-  const botDisplayName =
-    meeting.guild.members.me?.displayName ||
-    meeting.guild.members.me?.nickname ||
-    meeting.guild.members.me?.user.username ||
-    "Meeting Notes Bot";
-
-  const chatContext = formatChatLogForPrompt(meeting);
+  const chatContext = fixture ? "" : formatChatLogForPrompt(meeting);
   const participantRoster = formatParticipantRoster(
     participants,
     new Map(mentionableRoles.map((role) => [role.id, role.name])),
@@ -403,8 +398,8 @@ export async function prepareLiveNotesPrompt(meeting: MeetingData) {
       participantRoster: participantRoster ?? "No participant roster captured.",
       serverName,
       serverDescription,
-      voiceChannelName: meeting.voiceChannel.name,
-      attendees: resolveMeetingAttendees(meeting).join(", "),
+      voiceChannelName,
+      attendees,
       roles,
       events,
       channelNames,

@@ -1,3 +1,4 @@
+import { fixtureInputBinding } from "../../scripts/deployment/production-fixture-definitions.cjs";
 import {
   parseExecution,
   bindExecution,
@@ -85,6 +86,7 @@ function fixture() {
           voiceChannelId: "voice",
           textChannelId: "text",
           actorUserId: "actor",
+          ...fixtureInputBinding("across_handoff"),
           sessionMode: "meeting",
         },
         {
@@ -95,6 +97,7 @@ function fixture() {
           voiceChannelId: "voice",
           textChannelId: "text",
           actorUserId: "actor",
+          ...fixtureInputBinding("after_handoff"),
           sessionMode: "meeting",
         },
       ],

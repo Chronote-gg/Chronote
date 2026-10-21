@@ -338,6 +338,9 @@ function fixtureRequest() {
     voiceChannelId: request.lease.voiceChannelId,
     textChannelId: request.lease.textChannelId,
     actorUserId: "actor",
+    inputProfile: "manual_script_v1",
+    scriptSha256: "a".repeat(64),
+    checklistSha256: "b".repeat(64),
     sessionMode: "meeting" as const,
   };
   const scope = { kind: "fixture" as const, reference, ...bindings };

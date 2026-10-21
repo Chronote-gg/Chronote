@@ -1,5 +1,8 @@
 /** @jest-environment node */
-import { introductionFixture } from "../fixtures/productionIntroduction";
+import {
+  introductionFixture,
+  fixtureGrantInput,
+} from "../fixtures/productionIntroduction";
 import { marshall, unmarshall } from "@aws-sdk/util-dynamodb";
 import {
   buildFixtureStartTransaction,
@@ -27,12 +30,7 @@ const grant: FixtureGrant = {
   grantId: "fixture:11111111-1111-4111-8111-111111111111",
   ...maintenance,
   commandId: "fixture:11111111-1111-4111-8111-111111111111",
-  meetingId: "meeting",
-  guildId: "guild",
-  voiceChannelId: "voice",
-  textChannelId: "text",
-  actorUserId: "actor",
-  sessionMode: "meeting",
+  ...fixtureGrantInput,
   state: "issued",
 };
 const tables = {
@@ -46,12 +44,7 @@ const scope = {
     grantId: "fixture:11111111-1111-4111-8111-111111111111",
   },
   commandId: "fixture:11111111-1111-4111-8111-111111111111",
-  meetingId: "meeting",
-  guildId: "guild",
-  voiceChannelId: "voice",
-  textChannelId: "text",
-  actorUserId: "actor",
-  sessionMode: "meeting",
+  ...fixtureGrantInput,
 };
 test("private construction atomically binds an issued grant and queued command to the held introduction", () => {
   const tx = buildFixtureStartTransaction({ hold, grant, command, tables });

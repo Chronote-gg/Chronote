@@ -41,6 +41,29 @@ const originalMockEnabled = Object.getOwnPropertyDescriptor(
 );
 
 describe("storageService upload POST signing", () => {
+  test("returns only a direct upload acknowledgment and never repairs a lost acknowledgment with a read", async () => {
+    useRemoteStorage();
+    const acknowledgment = jest.fn();
+    const options = { onAcknowledged: acknowledgment };
+    const send = jest
+      .spyOn(S3Client.prototype, "send")
+      .mockImplementation(async () => ({ VersionId: "version-7" }));
+    expect(
+      await uploadObjectToS3("transcript", "abc", "application/json", options),
+    ).toBe("transcript");
+    expect(acknowledgment).toHaveBeenCalledWith({
+      key: "transcript",
+      versionId: "version-7",
+    });
+    acknowledgment.mockClear();
+    send.mockRejectedValueOnce(new Error("ACK lost") as never);
+    expect(
+      await uploadObjectToS3("transcript", "abc", "application/json", options),
+    ).toBeUndefined();
+    expect(acknowledgment).not.toHaveBeenCalled();
+    expect(send).toHaveBeenCalledTimes(2);
+  });
+
   afterEach(() => {
     jest.restoreAllMocks();
     resetMockStore();
@@ -58,14 +81,7 @@ describe("storageService upload POST signing", () => {
   });
 
   test("adds content type and content length constraints to presigned POST policy", async () => {
-    Object.defineProperty(config.mock, "enabled", {
-      get: () => false,
-      configurable: true,
-    });
-    Object.defineProperty(config.storage, "transcriptBucket", {
-      get: () => "test-bucket",
-      configurable: true,
-    });
+    useRemoteStorage();
 
     const result = await getSignedUploadPost(
       "contact-feedback/test.png",
@@ -169,14 +185,7 @@ describe("storageService upload POST signing", () => {
     ).toBe("ordinary");
   });
   test("checkpoint upload uses existing SDK immutable condition and actual AbortSignal", async () => {
-    Object.defineProperty(config.mock, "enabled", {
-      get: () => false,
-      configurable: true,
-    });
-    Object.defineProperty(config.storage, "transcriptBucket", {
-      get: () => "test-bucket",
-      configurable: true,
-    });
+    useRemoteStorage();
     const send = jest
       .spyOn(S3Client.prototype, "send")
       .mockImplementation(async () => ({}));
@@ -200,14 +209,7 @@ describe("storageService upload POST signing", () => {
     expect(send).toHaveBeenCalledTimes(1);
   });
   test("storage read passes actual signal and ordinary upload failures still return undefined", async () => {
-    Object.defineProperty(config.mock, "enabled", {
-      get: () => false,
-      configurable: true,
-    });
-    Object.defineProperty(config.storage, "transcriptBucket", {
-      get: () => "test-bucket",
-      configurable: true,
-    });
+    useRemoteStorage();
     const send = jest
       .spyOn(S3Client.prototype, "send")
       .mockImplementation(async () => ({
@@ -275,3 +277,14 @@ describe("storageService upload POST signing", () => {
     expect(write).not.toHaveBeenCalled();
   });
 });
+
+function useRemoteStorage() {
+  Object.defineProperty(config.mock, "enabled", {
+    get: () => false,
+    configurable: true,
+  });
+  Object.defineProperty(config.storage, "transcriptBucket", {
+    get: () => "test-bucket",
+    configurable: true,
+  });
+}

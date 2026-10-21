@@ -1,3 +1,4 @@
+import { fixtureGenerationObserver } from "./fixtureInputService";
 import { getMeetingProcessingSignal } from "./meetingProcessingLifetime";
 import type OpenAI from "openai";
 import type { SpanContext } from "@opentelemetry/api";
@@ -36,6 +37,8 @@ type ChatOptions = {
 };
 
 type ChatLoopInput = {
+  observeGeneration?: import("../types/fixtureEvidence").GenerationObserver;
+  langfusePrompt?: LangfusePromptMeta;
   signal?: AbortSignal;
   openAIClient: ReturnType<typeof createOpenAIClient>;
   body: ChatInput;
@@ -86,6 +89,11 @@ const runChatLoop = async (input: ChatLoopInput): Promise<ChatLoopResult> => {
 
   for (;;) {
     input.signal?.throwIfAborted();
+    const acknowledge = input.observeGeneration?.(
+      input.traceName,
+      input.model,
+      input.langfusePrompt,
+    );
     const response = await input.openAIClient.chat.completions.create(
       {
         model: input.model,
@@ -96,6 +104,7 @@ const runChatLoop = async (input: ChatLoopInput): Promise<ChatLoopResult> => {
       input.signal ? { signal: input.signal } : undefined,
     );
     input.signal?.throwIfAborted();
+    acknowledge?.(response.model ?? null);
     const choice = response.choices[0];
     logFinishReason(input.traceName, input.model, choice.finish_reason);
     count += 1;
@@ -121,9 +130,10 @@ const runChatLoop = async (input: ChatLoopInput): Promise<ChatLoopResult> => {
 
 export type ChatMeetingInput = Pick<
   MeetingData,
-  "meetingId" | "ownershipSignal" | "finalization"
+  "meetingId" | "ownershipSignal" | "finalization" | "reservation"
 > &
   Pick<MeetingNotesInput, "runtimeConfig"> & {
+    observeGeneration?: import("../types/fixtureEvidence").GenerationObserver;
     creator: { id: string };
     guild: { id: string };
     voiceChannel: { id: string };
@@ -172,6 +182,9 @@ export async function chat(
     parentSpanContext: options.parentSpanContext,
   });
   const { output, count, truncated } = await runChatLoop({
+    observeGeneration:
+      meeting.observeGeneration ?? fixtureGenerationObserver(meeting),
+    langfusePrompt: options.langfusePrompt,
     signal: AbortSignal.any([
       meeting.signal ?? getMeetingProcessingSignal(meeting),
       ...(options.signal ? [options.signal] : []),

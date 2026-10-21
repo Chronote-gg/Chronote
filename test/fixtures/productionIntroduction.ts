@@ -38,6 +38,9 @@ export function consumedFixtureForHistory(
     voiceChannelId: history.channelId,
     textChannelId: "text",
     actorUserId: "actor",
+    inputProfile: "manual_script_v1",
+    scriptSha256: "a".repeat(64),
+    checklistSha256: "b".repeat(64),
     sessionMode: "meeting",
     state: "consumed",
     historyKey: {
@@ -54,3 +57,26 @@ export function consumedFixtureForHistory(
     },
   };
 }
+
+export const fixtureGrantIdentity = {
+  pk: "FIXTURE#grant",
+  sk: "AUTHORITY",
+  recordType: "fixture_grant",
+  protocolVersion: 1,
+  grantId: "grant",
+  holdId: "hold",
+  introductionId: "intro",
+  revision: 1,
+  commandId: "command",
+} as const;
+export const fixtureGrantInput = {
+  meetingId: "meeting",
+  guildId: "guild",
+  voiceChannelId: "voice",
+  textChannelId: "text",
+  actorUserId: "actor",
+  inputProfile: "manual_script_v1",
+  scriptSha256: "a".repeat(64),
+  checklistSha256: "b".repeat(64),
+  sessionMode: "meeting",
+} as const;

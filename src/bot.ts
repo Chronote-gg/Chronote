@@ -1,3 +1,5 @@
+import { recordMeetingParticipantEvent } from "./services/recordingParticipantService";
+
 import { registerRuntimeNotionOwner } from "./services/notionOperationLifetime";
 import { registerServingBotStartup } from "./services/botStartupService";
 import { InitiatingStopInterruption } from "./services/meetingStopInterruption";
@@ -45,11 +47,7 @@ import {
   resolveConfigSnapshot,
 } from "./services/unifiedConfigService";
 import { getGuildLimits } from "./services/subscriptionService";
-import {
-  formatParticipantLabel,
-  formatUserMention,
-  fromMember,
-} from "./utils/participants";
+
 import { parseTags } from "./utils/tags";
 import {
   handleEndMeetingButton,
@@ -1066,22 +1064,7 @@ async function handleUserJoin(newState: VoiceState, admitted = false) {
     newState.member.user.id !== client.user!.id &&
     meeting.voiceChannel.id === newState.channelId
   ) {
-    const participant = fromMember(newState.member);
-    const userLabel = formatParticipantLabel(participant, {
-      includeUsername: false,
-      fallbackName: newState.member.user.username,
-    });
-    console.log(`${userLabel} joined the voice channel.`);
-    meeting.participants.set(participant.id, participant);
-    if (meeting.storeChatLog !== false) {
-      meeting.attendance.add(formatUserMention(participant.id));
-      meeting.chatLog.push({
-        type: "join",
-        user: participant,
-        channelId: newState.channelId!,
-        timestamp: new Date().toISOString(),
-      });
-    }
+    if (!recordMeetingParticipantEvent(meeting, newState, "join")) return;
 
     if (meeting.captureAudio !== false) {
       await subscribeToUserVoice(meeting, newState.member!.user.id);
@@ -1217,21 +1200,7 @@ async function handleUserLeave(oldState: VoiceState) {
     oldState.member.user.id !== client.user!.id &&
     meeting.voiceChannel.id === oldState.channelId
   ) {
-    const participant = fromMember(oldState.member);
-    const userLabel = formatParticipantLabel(participant, {
-      includeUsername: false,
-      fallbackName: oldState.member.user.username,
-    });
-    console.log(`${userLabel} left the voice channel.`);
-    meeting.participants.set(participant.id, participant);
-    if (meeting.storeChatLog !== false) {
-      meeting.chatLog.push({
-        type: "leave",
-        user: participant,
-        channelId: oldState.channelId!,
-        timestamp: new Date().toISOString(),
-      });
-    }
+    if (!recordMeetingParticipantEvent(meeting, oldState, "leave")) return;
 
     if (meeting.captureAudio !== false) {
       unsubscribeToVoiceUponLeaving(meeting, oldState.member!.user.id);

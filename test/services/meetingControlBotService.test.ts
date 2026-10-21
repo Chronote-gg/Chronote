@@ -188,6 +188,9 @@ const fixtureScope = {
   voiceChannelId: "voice-1",
   textChannelId: "voice-notes",
   actorUserId: "user-1",
+  inputProfile: "manual_script_v1",
+  scriptSha256: "a".repeat(64),
+  checklistSha256: "b".repeat(64),
   sessionMode: "meeting" as const,
 };
 const fixtureCommand = (): MeetingControlCommand => ({

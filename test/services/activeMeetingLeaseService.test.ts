@@ -24,6 +24,7 @@ import {
   reconcilePreservedTtsReservation,
   attachMeetingReservation,
   isReservationControlEligible,
+  originalFixtureScope,
 } from "../../src/services/activeMeetingLeaseService";
 import {
   getActiveMeetingLease,
@@ -98,7 +99,9 @@ describe("activeMeetingLeaseService", () => {
     jest.restoreAllMocks();
   });
 
-  async function recordingReservation() {
+  async function recordingReservation(
+    scope?: Parameters<typeof tryAcquireMeetingLease>[0]["scope"],
+  ) {
     const id = randomUUID();
     const getMeetingHistory =
       jest.fn<
@@ -118,6 +121,7 @@ describe("activeMeetingLeaseService", () => {
       isAutoRecording: false,
       sessionMode: "meeting",
       reservedAt: Date.now(),
+      scope,
       history: {
         guildId: id,
         meetingId: id,
@@ -135,6 +139,32 @@ describe("activeMeetingLeaseService", () => {
     return { reservation: admitted.reservation, getMeetingHistory };
   }
 
+  test("fixture scope is retained only by the original admitted reservation", async () => {
+    const scope = {
+      kind: "fixture",
+      reference: {
+        grantId: "grant",
+        holdId: "hold",
+        introductionId: "intro",
+        revision: 1,
+      },
+      commandId: "command",
+      guildId: "guild",
+      voiceChannelId: "voice",
+      textChannelId: "text",
+      meetingId: "meeting",
+      actorUserId: "actor",
+      sessionMode: "meeting",
+      inputProfile: "manual_script_v1",
+      scriptSha256: "a".repeat(64),
+      checklistSha256: "b".repeat(64),
+    } as const;
+    const { reservation } = await recordingReservation(scope);
+    expect(originalFixtureScope(reservation)).toEqual(scope);
+    expect(originalFixtureScope({ ...reservation })).toBeUndefined();
+    await releaseSessionReservation(reservation);
+    expect(originalFixtureScope(reservation)).toBeUndefined();
+  });
   test.each(["absent", "newer", "initialization_unknown"] as const)(
     "TTS reconciliation requires original lease and actual cleanup: %s",
     async (remote) => {

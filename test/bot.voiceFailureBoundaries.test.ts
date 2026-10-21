@@ -1,4 +1,10 @@
 /** @jest-environment node */
+import {
+  allowFixtureActor,
+  fixtureParticipant,
+} from "../src/services/fixtureInputService";
+import { Collection } from "discord.js";
+import { recordMeetingParticipantEvent } from "../src/services/recordingParticipantService";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { EventEmitter } from "node:events";
@@ -50,6 +56,9 @@ function loadVoiceBoundary(rejectSubscription: () => Promise<void>) {
     recordSuppressionVoiceState: jest.fn(),
     getMeeting: () => meeting,
     isMeetingCollectingEvents: () => true,
+    recordMeetingParticipantEvent,
+    allowFixtureActor,
+    fixtureParticipant,
     fromMember: () => ({ id: "synthetic-user" }),
     formatParticipantLabel: () => "Synthetic",
     formatUserMention: () => "Synthetic",
@@ -86,7 +95,11 @@ test("the registered voice-state boundary consumes a subscription rejection once
     guild: oldState.guild,
     channel: {},
     channelId: "synthetic-voice",
-    member: { user: { id: "synthetic-user", username: "private name" } },
+    member: {
+      guild: { id: "synthetic-guild" },
+      roles: { cache: new Collection() },
+      user: { id: "synthetic-user", username: "private name" },
+    },
   };
   client.emit("voiceStateUpdate", oldState, newState);
   await new Promise((resolve) => setImmediate(resolve));
@@ -110,7 +123,11 @@ test("the registered voice-state boundary keeps a successful subscription silent
     ...oldState,
     channel: {},
     channelId: "synthetic-voice",
-    member: { user: { id: "synthetic-user" } },
+    member: {
+      guild: { id: "synthetic-guild" },
+      roles: { cache: new Collection() },
+      user: { id: "synthetic-user" },
+    },
   });
   await new Promise((resolve) => setImmediate(resolve));
   expect(warn).not.toHaveBeenCalled();

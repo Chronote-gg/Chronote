@@ -87,6 +87,8 @@ export async function ensureMeetingSummaries(
       modelOverride: meeting.runtimeConfig?.modelChoices?.meetingSummary,
       signal: meeting.signal,
       savedPrompt: meeting.savedSummary,
+      recentMeetingNames: meeting.recentMeetingNames,
+      observeGeneration: meeting.observeGeneration,
       frozenModel: meeting.frozenModels?.meetingSummary,
       captureNotice: meeting.captureNotice,
     });
@@ -100,21 +102,34 @@ export async function ensureMeetingSummaries(
     meeting.summarySentence = summaries.summarySentence;
     meeting.summaryLabel = summaries.summaryLabel;
     meeting.processing = { ...meeting.processing, summary: "generated" };
-    if (!meeting.meetingName && !meeting.recovered) {
-      try {
-        meeting.meetingName = await resolveMeetingNameFromSummary({
-          guildId: meeting.guildId,
-          meetingId: meeting.meetingId,
-          summaryLabel: summaries.summaryLabel,
-        });
-      } catch (error) {
-        console.error("Error resolving meeting name:", error);
-      }
-    }
+    await assignMeetingName(meeting, summaries);
     return summaries;
   } catch (error) {
     meeting.processing = { ...meeting.processing, summary: "failed" };
     console.error("Error generating meeting summaries:", error);
     return {};
+  }
+}
+
+async function assignMeetingName(
+  meeting: MeetingNotesInput,
+  summaries: MeetingSummaries,
+) {
+  if (!meeting.meetingName && meeting.observeGeneration)
+    meeting.meetingName = summaries.summaryLabel;
+  if (
+    !meeting.meetingName &&
+    !meeting.recovered &&
+    !meeting.observeGeneration
+  ) {
+    try {
+      meeting.meetingName = await resolveMeetingNameFromSummary({
+        guildId: meeting.guildId,
+        meetingId: meeting.meetingId,
+        summaryLabel: summaries.summaryLabel,
+      });
+    } catch (error) {
+      console.error("Error resolving meeting name:", error);
+    }
   }
 }

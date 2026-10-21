@@ -189,6 +189,10 @@ async function loadProductionPackage(env, aws, mode = "introduce") {
     if (canonicalHash(evidence[name]) !== input.manifest.prerequisites[name])
       refuse();
   }
+  require("./production-fixture-definitions.cjs").assertFrozenFixtureChecklist(
+    evidence.fixtureChecklist,
+    input.manifest.handoff.grants,
+  );
   const base = `repos/${product}`;
   const run = await githubJson(
     `${base}/actions/runs/${env.GITHUB_RUN_ID}`,

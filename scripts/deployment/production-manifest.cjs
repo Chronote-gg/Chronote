@@ -136,6 +136,9 @@ const actionSchema = z.discriminatedUnion("kind", [
 ]);
 const grantSchema = z
   .object({
+    inputProfile: z.literal("manual_script_v1"),
+    scriptSha256: hash,
+    checklistSha256: hash,
     grantId: id,
     commandId: id,
     meetingId: id,
@@ -354,6 +357,9 @@ function assertHandoff(m) {
     !m.identity.workflow.endsWith("@" + m.identity.ref)
   )
     refuse();
+  require("./production-fixture-definitions.cjs").assertFrozenFixtureBindings(
+    m.handoff.grants,
+  );
   for (const field of ["grantId", "commandId", "meetingId"])
     if (new Set(m.handoff.grants.map((g) => g[field])).size !== 2) refuse();
   if (

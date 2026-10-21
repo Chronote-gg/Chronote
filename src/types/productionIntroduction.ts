@@ -12,7 +12,15 @@ export const fixtureAdmissionReferenceSchema = z
 export type FixtureAdmissionReference = z.infer<
   typeof fixtureAdmissionReferenceSchema
 >;
+export const fixtureInputBindingSchema = z
+  .object({
+    inputProfile: z.literal("manual_script_v1"),
+    scriptSha256: z.string().regex(/^[a-f0-9]{64}$/),
+    checklistSha256: z.string().regex(/^[a-f0-9]{64}$/),
+  })
+  .strict();
 const fixtureBindings = {
+  ...fixtureInputBindingSchema.shape,
   commandId: id,
   meetingId: id,
   guildId: id,

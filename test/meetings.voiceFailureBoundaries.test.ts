@@ -1,4 +1,14 @@
 /** @jest-environment node */
+import {
+  verifyFixtureReservation,
+  isFixture,
+  fixtureParticipant,
+  allowFixtureActor,
+} from "../src/services/fixtureInputService";
+import {
+  observeFixtureChannel,
+  observeFixtureConnection,
+} from "../src/services/fixtureObservationService";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { EventEmitter } from "node:events";
@@ -103,6 +113,12 @@ test("initial meeting setup still awaits and rejects a failed subscription", asy
   const connection = Object.assign(new EventEmitter(), { receiver: {} });
   const signal = new AbortController().signal;
   const context = vm.createContext({
+    verifyFixtureReservation,
+    isFixture,
+    fixtureParticipant,
+    allowFixtureActor,
+    observeFixtureChannel,
+    observeFixtureConnection,
     joinOwnedVoiceSession: async () => connection,
     getReservationSignal: () => signal,
     attachMeetingReservation: jest.fn(),
@@ -135,10 +151,18 @@ test("initial meeting setup still awaits and rejects a failed subscription", asy
       initialization: { cleanup: [] },
     },
   });
+  const features = source.statements.find(
+    (node) =>
+      ts.isFunctionDeclaration(node) &&
+      node.name?.text === "resolveVoiceFeatures",
+  )!;
   vm.runInContext(
-    ts.transpileModule(declaration.getText(source), {
-      compilerOptions: { target: ts.ScriptTarget.ES2022 },
-    }).outputText,
+    ts.transpileModule(
+      features.getText(source) + "\n" + declaration.getText(source),
+      {
+        compilerOptions: { target: ts.ScriptTarget.ES2022 },
+      },
+    ).outputText,
     context,
   );
   await expect(

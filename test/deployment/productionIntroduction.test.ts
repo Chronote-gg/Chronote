@@ -1,5 +1,8 @@
 /** @jest-environment node */
-import { introductionFixture } from "../fixtures/productionIntroduction";
+import {
+  introductionFixture,
+  fixtureGrantInput,
+} from "../fixtures/productionIntroduction";
 import { createMockDeploymentControlRepository } from "../../src/repositories/deploymentControlRepository";
 import { controlRecordSchema } from "../../src/types/deploymentControl";
 import { context, control, runtime, promotion } from "./controlFixtures";
@@ -78,12 +81,8 @@ const scope: Extract<NewWorkScope, { kind: "fixture" }> = {
     revision: 1,
   },
   commandId: "command",
-  meetingId: "meeting",
-  guildId: "guild",
+  ...fixtureGrantInput,
   voiceChannelId: "channel",
-  textChannelId: "text",
-  actorUserId: "actor",
-  sessionMode: "meeting",
 };
 const grant: FixtureGrant = {
   pk: "FIXTURE#grant",
@@ -93,12 +92,8 @@ const grant: FixtureGrant = {
   grantId: "grant",
   ...maintenance,
   commandId: "command",
-  meetingId: "meeting",
-  guildId: "guild",
+  ...fixtureGrantInput,
   voiceChannelId: "channel",
-  textChannelId: "text",
-  actorUserId: "actor",
-  sessionMode: "meeting",
   state: "issued",
 };
 const hold = introductionFixture(maintenance);
@@ -402,4 +397,13 @@ test("consumption binds the original history key for exact restart recovery", as
       channelId_timestamp: history.channelId_timestamp,
     },
   });
+});
+
+test("fixture admission refuses a grant without the frozen manual input binding", () => {
+  expect(
+    fixtureGrantSchema.safeParse({ ...grant, inputProfile: undefined }).success,
+  ).toBe(false);
+  expect(
+    newWorkScopeSchema.safeParse({ ...scope, scriptSha256: undefined }).success,
+  ).toBe(false);
 });

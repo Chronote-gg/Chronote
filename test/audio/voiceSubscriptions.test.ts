@@ -2,6 +2,16 @@
 jest.mock("../../src/services/ownedMeetingInterruption", () => ({
   interruptOwnedMeeting: jest.fn(async () => ({ kind: "unresolved" })),
 }));
+import { fixtureGrantIdentity } from "../fixtures/productionIntroduction";
+import * as leases from "../../src/services/activeMeetingLeaseService";
+import * as db from "../../src/db";
+import { fixtureScopeForGrant } from "../../src/services/deploymentFixtureAdmission";
+import {
+  verifyFixtureReservation,
+  armFixtureObservation,
+  fixtureInputSnapshot,
+} from "../../src/services/fixtureInputService";
+import type { FixtureGrant } from "../../src/types/productionIntroduction";
 import { interruptOwnedMeeting } from "../../src/services/ownedMeetingInterruption";
 jest.mock("dotenv", () => ({ config: () => ({ parsed: {} }) }));
 import { mkdtempSync, rmSync, existsSync } from "node:fs";
@@ -837,4 +847,93 @@ test("failed decoder construction retains its partial receiver until actual clos
     mockFailDecoderConstruction = false;
     jest.restoreAllMocks();
   }
+});
+
+async function bindManualFixture(meeting: MeetingData) {
+  const ownership = {
+    guildId: meeting.guildId,
+    meetingId: meeting.meetingId,
+    ownerInstanceId: "owner",
+    executionVersion: 1,
+    voiceOperationAttemptId: "attempt",
+    sessionMode: "meeting",
+  } as const;
+  const historyKey = {
+    guildId: meeting.guildId,
+    channelId_timestamp: "voice#start",
+  };
+  const grant: FixtureGrant = {
+    ...fixtureGrantIdentity,
+    state: "consumed",
+    meetingId: meeting.meetingId,
+    guildId: meeting.guildId,
+    voiceChannelId: "voice",
+    textChannelId: "text",
+    actorUserId: "user-1",
+    sessionMode: "meeting",
+    inputProfile: "manual_script_v1",
+    scriptSha256: "a".repeat(64),
+    checklistSha256: "b".repeat(64),
+    ownership,
+    historyKey,
+  };
+  meeting.reservation = {
+    ...ownership,
+    historyKey,
+    reservedAt: Date.now(),
+    workHandle: { settle: jest.fn(), transition: jest.fn() },
+  } as never;
+  jest
+    .spyOn(leases, "originalFixtureScope")
+    .mockImplementation((value) =>
+      value === meeting.reservation ? fixtureScopeForGrant(grant) : undefined,
+    );
+  jest
+    .spyOn(db, "getDeploymentControlRepository")
+    .mockReturnValue({ getRecord: async () => grant } as never);
+  await verifyFixtureReservation(meeting.reservation!);
+  armFixtureObservation(meeting, () => {});
+  meeting.recordingCapture = { push: jest.fn(() => true) } as never;
+}
+
+describe("manual fixture receiver boundaries", () => {
+  afterEach(() => {
+    jest.restoreAllMocks();
+    jest.useRealTimers();
+  });
+  test("manual silence segmentation keeps observation while foreign subscriptions are rejected", async () => {
+    jest.useFakeTimers();
+    const streams: PassThrough[] = [];
+    const { meeting, receiver } = createMeeting(streams);
+    await bindManualFixture(meeting);
+    await subscribeToUserVoice(meeting, "user-1");
+    expect(receiver.subscribe.mock.calls[0]).toEqual([
+      "user-1",
+      { end: { behavior: 0 } },
+    ]);
+    userStopTalking(meeting, "user-1");
+    await jest.advanceTimersByTimeAsync(1000);
+    expect(fixtureInputSnapshot(meeting)?.state).toBe("observing");
+    expect(receiver.subscribe).toHaveBeenCalledTimes(1);
+    await subscribeToUserVoice(meeting, "foreign");
+    expect(receiver.subscribe).toHaveBeenCalledTimes(1);
+    stopRecordingCapture(meeting);
+    expect(fixtureInputSnapshot(meeting)).toMatchObject({
+      state: "contaminated",
+      unexpectedSourceAttempts: 1,
+    });
+  });
+  test("explicit stream end remains incomplete after actual receiver closure", async () => {
+    jest.useFakeTimers();
+    const streams: PassThrough[] = [];
+    const { meeting } = createMeeting(streams);
+    await bindManualFixture(meeting);
+    await subscribeToUserVoice(meeting, "user-1");
+    streams[0].emit("end");
+    stopRecordingCapture(meeting);
+    expect(fixtureInputSnapshot(meeting)).toMatchObject({
+      state: "incomplete",
+      failureReasons: ["observer_gap"],
+    });
+  });
 });
