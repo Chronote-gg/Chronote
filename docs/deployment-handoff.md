@@ -198,3 +198,9 @@ New and reclaimed unresolved receipts have no TTL. Successful completion restore
 `scripts/deployment/retained-receipts.cjs` exports the versioned safe projection and `preservedUnadmittedReceipt` predicate. The projection represents any admission or first-admission object as a presence Boolean, so malformed empty history still blocks classification. A matching predicate returns `preserved_unadmitted_receipt`, meaning future work that has never crossed this admission boundary. It does not mean a payment is settled. The ordinary retained-work classifier continues to block those receipts.
 
 Task7 must obtain authenticated, complete inventory of every serving and draining callback receiver, exact reviewed source and image bindings, acknowledged legacy retirement and routing evidence, and the current exact hold. It must bind that evidence to the reviewed disposition and source through the existing compatibility contract before introducing an opaque authorizing closure. The Task6 schema checks shape and compatibility only. Caller-supplied objects, source hashes or a nonauthorizing predicate result cannot release a hold. Unknown or omitted receivers block reopening.
+
+## Standalone renewal coverage audit
+
+`scripts/billing-renewal-recovery.ts` supports read-only coverage audit, bounded pagination and resume, provider identity checks, and existing index/deployed-writer coverage evidence. Standalone `--apply` is disabled and fails before any domain or provider write. The audit cannot register or refresh renewal recovery records. Existing admitted renewal workers retain their current behavior.
+
+Restoring standalone writes requires a separately reviewed admitted executor. Do not initialize an arbitrary runtime, bypass billing admission, or treat an audit report as write authority. Historical apply reports remain readable, but they cannot resume in apply mode.
