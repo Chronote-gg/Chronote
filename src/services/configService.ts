@@ -1,6 +1,9 @@
 import dotenv from "dotenv";
 import path from "node:path";
-import { resolveLangfuseBaseUrl } from "./langfuseDefaults";
+import {
+  resolveLangfuseBaseUrl,
+  DEFAULT_TRANSCRIPTION_PROMPT_NAME,
+} from "./langfuseDefaults";
 
 // Load environment variables once
 dotenv.config();
@@ -89,7 +92,7 @@ class ConfigService {
       "chronote-transcription-final-pass-chat",
     transcriptionPromptName:
       process.env.LANGFUSE_PROMPT_TRANSCRIPTION ||
-      "chronote-transcription-prompt",
+      DEFAULT_TRANSCRIPTION_PROMPT_NAME,
     imagePromptName:
       process.env.LANGFUSE_PROMPT_IMAGE || "chronote-image-prompt-chat",
     askPromptName:

@@ -2,7 +2,7 @@
 const serviceFields =
   "serviceArn:serviceArn,taskDefinition:taskDefinition,desiredCount:desiredCount,runningCount:runningCount,pendingCount:pendingCount,deploymentController:deploymentController,deploymentConfiguration:deploymentConfiguration,loadBalancers:loadBalancers,deployments:deployments[].{taskDefinition:taskDefinition,rolloutState:rolloutState,status:status}";
 const taskFields =
-  "taskArn:taskArn,taskDefinitionArn:taskDefinitionArn,group:group,lastStatus:lastStatus,desiredStatus:desiredStatus,containers:containers[].{name:name,imageDigest:imageDigest,networkInterfaces:networkInterfaces[].{privateIpv4Address:privateIpv4Address}}";
+  "taskArn:taskArn,taskDefinitionArn:taskDefinitionArn,group:group,lastStatus:lastStatus,desiredStatus:desiredStatus,overrides:overrides.containerOverrides[].{name:name,environmentNames:environment[].name,environmentFiles:environmentFiles,commandLength:length(command || `[]`)},containers:containers[].{name:name,imageDigest:imageDigest,networkInterfaces:networkInterfaces[].{privateIpv4Address:privateIpv4Address}}";
 const projections = {
   "ecs.describe-services": `{services:services[].{${serviceFields}},failures:failures[].{arn:arn,reason:reason}}`,
   "ecs.describe-tasks": `{tasks:tasks[].{${taskFields}},failures:failures[].{arn:arn,reason:reason}}`,

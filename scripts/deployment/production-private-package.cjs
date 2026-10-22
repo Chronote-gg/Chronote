@@ -2,7 +2,10 @@
 const { execFile } = require("node:child_process");
 const { promisify } = require("node:util");
 const { z } = require("zod");
-const { materializePackage } = require("./production-package.cjs");
+const {
+  materializeIdentitySlots,
+  materializePackage,
+} = require("./production-package.cjs");
 const { canonicalHash } = require("./production-manifest.cjs");
 const exec = promisify(execFile);
 const sha = z.string().regex(/^[a-f0-9]{40}$/),
@@ -10,6 +13,19 @@ const sha = z.string().regex(/^[a-f0-9]{40}$/),
 const packageId = z.string().regex(/^[a-z0-9][a-z0-9-]{0,63}$/);
 const product = "Chronote-gg/Chronote",
   operations = "Chronote-gg/chronote-ops";
+const collectionBindings = new WeakMap();
+function readCollectionBinding(token) {
+  const binding = collectionBindings.get(token),
+    now = Math.floor(Date.now() / 1000);
+  if (
+    !binding ||
+    now < binding.manifest.validFrom ||
+    now >= binding.manifest.acceptance.prepareDeadline ||
+    now >= binding.manifest.validUntil
+  )
+    refuse();
+  return structuredClone(binding);
+}
 function refuse() {
   throw new Error("private_package_prerequisite");
 }
@@ -167,11 +183,21 @@ function assertContinuationJobs(jobs, source) {
     refuse();
 }
 async function loadProductionPackage(env, aws, mode = "introduce") {
-  if (
-    !["introduce", "continue"].includes(mode) ||
-    env.GITHUB_JOB !== (mode === "introduce" ? "introduce" : "continue")
-  )
-    refuse();
+  if (!["introduce", "continue"].includes(mode)) refuse();
+  return loadOriginalPackage(env, aws, mode);
+}
+async function loadAcceptancePackage() {
+  const env = process.env,
+    mode = env.GITHUB_JOB;
+  if (!["prepare-acceptance", "accept"].includes(mode)) refuse();
+  return loadOriginalPackage(
+    env,
+    require("./coordinator-aws.cjs").awsCli,
+    mode,
+  );
+}
+async function loadOriginalPackage(env, aws, mode) {
+  if (env.GITHUB_JOB !== mode) refuse();
   digest.parse(env.INTRODUCTION_INTENT_HASH);
   if (
     !env.PRODUCTION_INTRODUCTION_ROLE_ARN ||
@@ -183,6 +209,13 @@ async function loadProductionPackage(env, aws, mode = "introduce") {
   )
     refuse();
   const input = await privateFile(env, "execution.json");
+  const acceptance = input.manifest.acceptance;
+  if (
+    !acceptance ||
+    acceptance.supplementPath !==
+      `production-introductions/${env.INTRODUCTION_PACKAGE_ID}/acceptance.json`
+  )
+    refuse();
   const evidence = {};
   for (const name of Object.keys(input.manifest.prerequisites)) {
     evidence[name] = await privateFile(env, `${name}.json`);
@@ -227,6 +260,26 @@ async function loadProductionPackage(env, aws, mode = "introduce") {
   // Validate the future protected gate before any legacy stop.
   const gatePolicy = evidence.executionApproval.continuationGate;
   assertEnvironmentPolicy(gateEnvironment, gateBranches, gatePolicy, gateName);
+  const acceptanceEnvironment = await readEnvironment(
+    "production-acceptance",
+    env.GH_TOKEN,
+  );
+  assertEnvironmentPolicy(
+    acceptanceEnvironment.environment,
+    acceptanceEnvironment.branches,
+    acceptance.gatePolicy,
+    "production-acceptance",
+  );
+  const acceptanceContext = await loadAcceptanceContext({
+    mode,
+    env,
+    base,
+    run,
+    approvals,
+    acceptance,
+    acceptanceEnvironment,
+    input,
+  });
   if (mode === "continue") {
     assertHostedContext({
       env,
@@ -262,13 +315,101 @@ async function loadProductionPackage(env, aws, mode = "introduce") {
     repositoryId: String(run.repositoryId),
     repositoryOwnerId: String(run.repositoryOwnerId),
   };
+  if (mode === "prepare-acceptance")
+    return bindCollector(
+      input,
+      env,
+      context,
+      caller,
+      evidence,
+      acceptanceContext,
+    );
+
   return {
     ...materializePackage(input, env.INTRODUCTION_INTENT_HASH, context, {
       accountId: caller.Account,
       arn: caller.Arn,
     }),
     evidence,
+    ...(acceptanceContext ? { acceptanceContext } : {}),
   };
+}
+function bindCollector(
+  input,
+  env,
+  context,
+  caller,
+  evidence,
+  acceptanceContext,
+) {
+  const manifest = materializeIdentitySlots(
+    input,
+    env.INTRODUCTION_INTENT_HASH,
+    context,
+  );
+  const collectorArn = `arn:aws:sts::${manifest.identity.accountId}:assumed-role/${manifest.acceptance.collectorRoleArn.split(":role/")[1]}/introduction-read-${manifest.identity.runId}-${manifest.identity.runAttempt}`;
+  if (
+    caller.Account !== manifest.identity.accountId ||
+    caller.Arn !== collectorArn ||
+    context.now >= manifest.acceptance.prepareDeadline ||
+    context.now < manifest.validFrom
+  )
+    refuse();
+  const collection = Object.freeze({});
+  collectionBindings.set(collection, {
+    manifest,
+    manifestHash: canonicalHash(manifest),
+    actor: caller.Arn,
+  });
+  return { collection, evidence, acceptanceContext };
+}
+async function loadAcceptanceContext({
+  mode,
+  env,
+  base,
+  run,
+  approvals,
+  acceptance,
+  acceptanceEnvironment,
+  input,
+}) {
+  if (!["prepare-acceptance", "accept"].includes(mode)) return undefined;
+  const jobs = await githubJson(
+    `${base}/actions/runs/${env.GITHUB_RUN_ID}/attempts/${env.GITHUB_RUN_ATTEMPT}/jobs?per_page=100`,
+    "{total_count,jobs:[.jobs[]|{name,head_sha,status,conclusion,started_at,completed_at}]}",
+    env.GH_TOKEN,
+  );
+  const acceptanceContext =
+    require("./production-acceptance-package.cjs").assertAcceptanceJobs(
+      jobs,
+      env.GITHUB_SHA,
+      mode,
+      Math.floor(Date.now() / 1000),
+      input.manifest,
+    );
+  if (mode === "accept") {
+    assertHostedContext({
+      env,
+      run,
+      ...acceptanceEnvironment,
+      approvals,
+      approvalPolicy: acceptance.gatePolicy,
+      environmentName: "production-acceptance",
+    });
+    acceptanceContext.approvedReviewerIds = approvals
+      .filter(
+        (a) =>
+          a.state === "approved" &&
+          a.environments.some(
+            (e) =>
+              e.id === acceptanceEnvironment.environment.id &&
+              e.name === "production-acceptance",
+          ) &&
+          acceptance.manualReviewerIds.includes(String(a.userId)),
+      )
+      .map((a) => String(a.userId));
+  }
+  return acceptanceContext;
 }
 async function verifyOwnershipEvidence(binding, evidence, token) {
   const source = binding.manifest.identity.sourceCommit;
@@ -323,6 +464,8 @@ async function verifyOwnershipEvidence(binding, evidence, token) {
   };
 }
 module.exports = {
+  loadAcceptancePackage,
+  readCollectionBinding,
   assertContinuationJobs,
   privateFile,
   githubJson,

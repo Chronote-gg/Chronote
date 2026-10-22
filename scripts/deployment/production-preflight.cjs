@@ -144,7 +144,9 @@ function assertIntroductionPredecessors(m, one) {
   }
 }
 function assertProductionPreflight(binding, now = binding.manifest.validFrom) {
+  if (!binding.manifest.acceptance) refuse();
   const m = assertBoundExecution(binding, now);
+  require("./production-content-policy.cjs").contentPreflight(m);
   const one = (kind, predicate = () => true) => {
     const entries = m.actions.filter((a) => a.kind === kind && predicate(a));
     if (entries.length !== 1) refuse();

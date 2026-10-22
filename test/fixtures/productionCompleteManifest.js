@@ -1,11 +1,16 @@
 import { fixture } from "./productionManifest.js";
 import {
+  acceptanceDeclaration,
+  closingActions,
+} from "./productionAcceptance.js";
+import {
   coordinatorRenewals,
   introductionRenewals,
 } from "../../scripts/deployment/production-capacity.cjs";
 export function completeManifest() {
   const m = fixture();
   m.validUntil = 15000;
+  m.acceptance = acceptanceDeclaration();
   m.failedUnserved = {
     candidateId: "repair",
     taskDefinition: m.runtime.candidateDefinition.replace(":2", ":4"),
@@ -67,7 +72,7 @@ export function completeManifest() {
     ];
     let sequence = 0;
     steps.forEach(([purpose, fromPhase, toPhase, at, generation], index) => {
-      if (index === 16) return; // Repeated empty retiring phases validate, never write.
+      if (index === 1 || index === 16) return; // Closing actions use the two optional preparing renewal slots.
       const capacity =
         purpose === "renew" ? (coordinatorRenewals[fromPhase] ?? 1) : 1;
       for (let i = 0; i < capacity; i++)
@@ -106,6 +111,6 @@ export function completeManifest() {
     launchActionId: "bootstrap-launch",
   });
   branch("replacement", "stop-failed", 2);
-  m.actions = actions;
+  m.actions = [...actions, ...closingActions()];
   return m;
 }

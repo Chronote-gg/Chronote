@@ -32,7 +32,7 @@ function packageIntentHash(input) {
   for (const slot of slots) delete p.manifest.identity[slot];
   return canonicalHash(p);
 }
-function materializePackage(input, approvedHash, context, caller) {
+function materializeIdentitySlots(input, approvedHash, context) {
   const p = reviewedPackage(input);
   if (
     packageIntentHash(p) !== approvedHash ||
@@ -42,10 +42,24 @@ function materializePackage(input, approvedHash, context, caller) {
     throw new Error("package_refused");
   const manifest = structuredClone(p.manifest);
   for (const slot of slots) manifest.identity[slot] = context[slot];
+  if (
+    Object.entries(manifest.identity).some(
+      ([key, value]) => context[key] !== value,
+    )
+  )
+    throw new Error("package_refused");
+  return parseExecution(manifest, canonicalHash(manifest));
+}
+function materializePackage(input, approvedHash, context, caller) {
+  const manifest = materializeIdentitySlots(input, approvedHash, context);
   const { repositoryId, repositoryOwnerId, ...job } = context;
   return {
     packageIntentHash: approvedHash,
     binding: bindExecution(manifest, job, caller),
   };
 }
-module.exports = { materializePackage, packageIntentHash };
+module.exports = {
+  materializeIdentitySlots,
+  materializePackage,
+  packageIntentHash,
+};

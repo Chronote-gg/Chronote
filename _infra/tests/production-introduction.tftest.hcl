@@ -1,5 +1,6 @@
 mock_provider "aws" {
   override_during = plan
+  mock_resource "aws_s3_bucket" { defaults = { arn = "arn:aws:s3:::test-artifacts", bucket = "test-artifacts" } }
   mock_resource "aws_dynamodb_table" { defaults = { arn = "arn:aws:dynamodb:us-east-1:123456789012:table/test" } }
   mock_resource "aws_ecs_service" { defaults = { id = "arn:aws:ecs:us-east-1:123456789012:service/chronote-prod-bot-cluster/chronote-prod-bot-service" } }
   mock_resource "aws_ecs_cluster" { defaults = { arn = "arn:aws:ecs:us-east-1:123456789012:cluster/chronote-prod-bot-cluster" } }
@@ -109,5 +110,76 @@ run "exact_production_authority" {
   assert {
     condition     = alltrue([for s in jsondecode(aws_iam_role_policy.production_introduction[0].policy).Statement : !contains(s.Action, "ecs:StopTask")])
     error_message = "Empty standalone approval grants no StopTask."
+  }
+}
+
+run "acceptance_disabled_by_default" {
+  command = plan
+  plan_options { target = [aws_iam_role.production_acceptance_collector] }
+  variables {
+    environment                              = "prod"
+    enable_production_introduction_roles     = true
+    production_introduction_task_definitions = ["arn:aws:ecs:us-east-1:123456789012:task-definition/chronote-prod-bot-task:1", "arn:aws:ecs:us-east-1:123456789012:task-definition/chronote-prod-bot-task:2", "arn:aws:ecs:us-east-1:123456789012:task-definition/chronote-prod-bot-task:3", "arn:aws:ecs:us-east-1:123456789012:task-definition/chronote-prod-bot-task:4"]
+  }
+  assert {
+    condition     = length(aws_iam_role.production_acceptance_collector) == 0
+    error_message = "The read collector must remain separately disabled by default."
+  }
+}
+run "acceptance_effective_policy" {
+  command = plan
+  plan_options { target = [aws_iam_role_policy.production_acceptance_collector, aws_iam_role_policy.production_introduction_fixture_reads] }
+  variables {
+    TRANSCRIPTS_PREFIX                     = "recordings/"
+    environment                            = "prod"
+    github_environment                     = "production"
+    enable_production_introduction_roles   = true
+    enable_production_acceptance_collector = true
+    production_acceptance_fixtures = [
+      { guild_id = "guild", voice_channel_id = "voice", meeting_id = "first" },
+      { guild_id = "guild", voice_channel_id = "voice", meeting_id = "second" }
+    ]
+    production_introduction_task_definitions = ["arn:aws:ecs:us-east-1:123456789012:task-definition/chronote-prod-bot-task:1", "arn:aws:ecs:us-east-1:123456789012:task-definition/chronote-prod-bot-task:2", "arn:aws:ecs:us-east-1:123456789012:task-definition/chronote-prod-bot-task:3", "arn:aws:ecs:us-east-1:123456789012:task-definition/chronote-prod-bot-task:4"]
+  }
+  assert {
+    condition = alltrue([for s in jsondecode(aws_iam_role_policy.production_acceptance_collector[0].policy).Statement :
+      s.Effect != "Allow" || !contains(s.Action, "kms:Decrypt") || try(
+        s.Condition.StringEquals["kms:CallerAccount"] == "123456789012" &&
+    contains(["s3.us-east-1.amazonaws.com", "dynamodb.us-east-1.amazonaws.com"], s.Condition.StringEquals["kms:ViaService"]), false)])
+    error_message = "Every base KMS allow must retain ViaService and CallerAccount."
+  }
+  assert {
+    condition = alltrue([for s in jsondecode(aws_iam_role_policy.production_acceptance_collector[0].policy).Statement :
+    alltrue([for a in s.Action : !contains(["s3:ListBucket", "s3:PutObject", "kms:GenerateDataKey", "dynamodb:Scan", "dynamodb:PutItem", "dynamodb:TransactWriteItems"], a)])])
+    error_message = "The collector may not list or write content, scan history, or gain mutation authority."
+  }
+  assert {
+    condition = length(local.production_acceptance_objects) == 6 && length(local.production_acceptance_excluded_objects) == 4 && alltrue([
+      for s in jsondecode(aws_iam_role_policy.production_acceptance_collector[0].policy).Statement :
+      s.Sid != "GeneratedFixtureObjects" || (toset(s.Action) == toset(["s3:GetObject", "s3:GetObjectVersion"]) && toset(s.Resource) == toset(local.production_acceptance_objects))
+    ])
+    error_message = "Only three required content classes under two fixed fixture roots may be allowed."
+  }
+  assert {
+    condition = alltrue([for s in jsondecode(aws_iam_role_policy.production_acceptance_collector[0].policy).Statement :
+      !contains(["NoCheckpointTextInputs", "NoCheckpointTextKey"], s.Sid) || (s.Effect == "Deny" &&
+    (s.Sid == "NoCheckpointTextInputs" ? toset(s.Resource) == toset(local.production_acceptance_excluded_objects) : toset(s.Condition.StringLike["kms:EncryptionContext:aws:s3:arn"]) == toset(local.production_acceptance_excluded_objects)))])
+    error_message = "Explicit context and transcription denials must override wildcard allows in both S3 and KMS."
+  }
+  assert {
+    condition     = alltrue([for s in jsondecode(aws_iam_role_policy.production_introduction_fixture_reads[0].policy).Statement : contains(["ExactFixtureGuildHistory", "ReadControlHistoryKeys", "NarrowFixtureSessions"], s.Sid)])
+    error_message = "The final mutation role must use a narrowed session for all S3 content."
+  }
+  assert {
+    condition     = toset(jsondecode(aws_iam_role.production_acceptance_collector[0].assume_role_policy).Statement[1].Condition.StringLike["sts:RoleSessionName"]) == toset(["introduction-content-*-1-0", "introduction-content-*-1-1"])
+    error_message = "Only original-attempt fixture session names may assume the collector."
+  }
+  assert {
+    condition = alltrue([for s in jsondecode(aws_iam_role_policy.production_acceptance_collector[0].policy).Statement : s.Sid != "ExactFixtureGuildHistory" || (
+      toset(s.Action) == toset(["dynamodb:GetItem"]) && s.Resource == aws_dynamodb_table.meeting_history_table.arn &&
+      toset(s.Condition["ForAllValues:StringEquals"]["dynamodb:LeadingKeys"]) == toset(["guild"]) &&
+      toset(s.Condition["ForAllValues:StringEquals"]["dynamodb:Attributes"]) == toset(local.production_acceptance_history_attributes) &&
+    s.Condition.Null["dynamodb:Attributes"] == "false")])
+    error_message = "History IAM must stay partition/attribute restricted and GetItem-only; exact sort keys are enforced by the authenticated reader."
   }
 }

@@ -69,6 +69,17 @@ const actionSchema = z.discriminatedUnion("kind", [
   z
     .object({
       ...actionBase,
+      kind: z.literal("acceptance_write"),
+      purpose: z.enum([
+        "persist_acceptance",
+        "reopen_admission",
+        "release_deployment",
+      ]),
+    })
+    .strict(),
+  z
+    .object({
+      ...actionBase,
       kind: z.literal("introduction_write"),
       purpose: z.enum([
         "initialize",
@@ -157,6 +168,33 @@ const executionSchema = z
     introductionId: id,
     holdId: id,
     operationId: id,
+    acceptance: z
+      .object({
+        supplementRepository: z.literal("Chronote-gg/chronote-ops"),
+        supplementPath: z
+          .string()
+          .regex(
+            /^production-introductions\/[a-z0-9][a-z0-9-]{0,63}\/acceptance\.json$/,
+          ),
+        selectorRef: z
+          .string()
+          .regex(/^refs\/heads\/[a-z0-9][a-z0-9-]{0,127}$/),
+        schemaVersion: z.literal(1),
+        manualReviewerIds: unique(z.string().regex(/^\d+$/)),
+        gatePolicy: z
+          .object({
+            environmentId: z.string().regex(/^\d+$/),
+            environmentHash: hash,
+            branchPolicyHash: hash,
+            reviewerIds: unique(z.string().regex(/^\d+$/)),
+          })
+          .strict(),
+        collectorRoleArn: id,
+        storageKeyArn: id,
+        prepareDeadline: seconds,
+      })
+      .strict()
+      .optional(),
     validFrom: seconds,
     validUntil: seconds,
     identity: identitySchema,
@@ -411,6 +449,40 @@ function assertActions(m) {
       refuse();
     seen.set(a.actionId, a);
   }
+  assertAcceptanceActions(m);
+}
+function assertAcceptanceActions(m) {
+  const closing = m.actions.filter((a) => a.kind === "acceptance_write");
+  if (!m.acceptance) {
+    if (closing.length) refuse();
+    return;
+  }
+  const acceptance = m.acceptance;
+  if (
+    acceptance.prepareDeadline <= m.validFrom ||
+    acceptance.prepareDeadline > m.validUntil ||
+    !acceptance.collectorRoleArn.startsWith(
+      `arn:aws:iam::${m.identity.accountId}:role/`,
+    ) ||
+    [
+      m.identity.roleArn,
+      m.resources.taskRoleArn,
+      m.resources.executionRoleArn,
+    ].includes(acceptance.collectorRoleArn) ||
+    !isDeepStrictEqual(
+      [...acceptance.manualReviewerIds].sort(),
+      [...acceptance.gatePolicy.reviewerIds].sort(),
+    ) ||
+    closing.length !== 3 ||
+    closing.some(
+      (a, i) =>
+        a.purpose !==
+          ["persist_acceptance", "reopen_admission", "release_deployment"][i] ||
+        a.predecessor !== (i === 0 ? null : closing[i - 1].actionId) ||
+        a !== m.actions.at(i - 3),
+    )
+  )
+    refuse();
 }
 function parsePreparation(input) {
   return z

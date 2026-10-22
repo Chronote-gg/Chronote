@@ -1,0 +1,89 @@
+/** @jest-environment node */
+import { jest, test, expect, beforeEach } from "@jest/globals";
+import { createHash } from "node:crypto";
+import { canonicalHash } from "../../scripts/deployment/production-manifest.cjs";
+import {
+  verifyDeclaredRoutes,
+  readVerifiedFallbackTemplates,
+  declaredRoutesVerified,
+} from "../../scripts/deployment/production-source-routes.cjs";
+const mockGit = jest.fn(),
+  mockFile = jest.fn();
+jest.mock("node:child_process", () => ({
+  execFileSync: (...args) => mockGit(...args),
+}));
+jest.mock("node:fs", () => ({ readFileSync: (...args) => mockFile(...args) }));
+const commit = "a".repeat(40),
+  scope = "b".repeat(64),
+  template = "reviewed source template bytes";
+const path = "src/services/transcriptionPromptService.ts";
+function binding() {
+  return {
+    manifestHash: scope,
+    manifest: {
+      identity: { sourceCommit: commit },
+      launcherRoutes: [
+        ["workflow", ".github/workflows/deploy.yml"],
+        ["workflow", ".github/workflows/terraform-apply.yml"],
+        ["manual", "scripts/force-deployment.ps1"],
+      ].map(([kind, id]) => ({
+        kind,
+        id,
+        evidenceHash: canonicalHash({
+          sourceCommit: commit,
+          path: id,
+          contents: "route",
+        }),
+      })),
+    },
+  };
+}
+beforeEach(() => {
+  mockGit
+    .mockReset()
+    .mockImplementation((_command, args) =>
+      args[0] === "rev-parse" ? commit : "",
+    );
+  mockFile
+    .mockReset()
+    .mockImplementation((file) =>
+      file.replaceAll("\\", "/").endsWith(path) ? template : "route",
+    );
+});
+test("fallback template identity comes from the authenticated clean source receipt", () => {
+  const token = verifyDeclaredRoutes(binding());
+  expect(declaredRoutesVerified(token, scope)).toBe(true);
+  expect(readVerifiedFallbackTemplates(token, scope, [path])).toEqual([
+    {
+      sourceCommit: commit,
+      path,
+      sourceSha256: createHash("sha256").update(template).digest("hex"),
+    },
+  ]);
+  for (const copy of [{}, { ...token }, JSON.parse(JSON.stringify(token))])
+    expect(() => readVerifiedFallbackTemplates(copy, scope, [path])).toThrow();
+  expect(() =>
+    readVerifiedFallbackTemplates(token, "c".repeat(64), [path]),
+  ).toThrow();
+  expect(() =>
+    readVerifiedFallbackTemplates(token, scope, ["other-template"]),
+  ).toThrow();
+});
+test("wrong source, dirty source and unavailable template never bind a fallback", () => {
+  mockGit.mockReturnValue("wrong-source");
+  expect(() => verifyDeclaredRoutes(binding())).toThrow();
+  mockGit.mockImplementation((_command, args) => {
+    if (args[0] === "diff") throw Error("dirty");
+    return commit;
+  });
+  expect(() => verifyDeclaredRoutes(binding())).toThrow();
+  mockGit.mockImplementation((_command, args) =>
+    args[0] === "rev-parse" ? commit : "",
+  );
+  mockFile.mockImplementation((file) => {
+    if (file.replaceAll("\\", "/").endsWith(path))
+      throw Error("missing-template");
+    return "route";
+  });
+  expect(() => verifyDeclaredRoutes(binding())).toThrow();
+});

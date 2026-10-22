@@ -1,4 +1,5 @@
 "use strict";
+const { createHash } = require("node:crypto");
 const { readFileSync } = require("node:fs");
 const { execFileSync } = require("node:child_process");
 const { resolve } = require("node:path");
@@ -41,10 +42,32 @@ function verifyDeclaredRoutes(binding) {
   )
     throw Error("source_route_prerequisite");
   const receipt = {};
-  receipts.set(receipt, binding.manifestHash);
+  const path = "src/services/transcriptionPromptService.ts";
+  const template = {
+    path,
+    sourceCommit: binding.manifest.identity.sourceCommit,
+    sourceSha256: createHash("sha256")
+      .update(readFileSync(resolve(root, path), "utf8").replace(/\r\n/g, "\n"))
+      .digest("hex"),
+  };
+  receipts.set(receipt, { scopeHash: binding.manifestHash, template });
   return receipt;
 }
 function declaredRoutesVerified(receipt, scopeHash) {
-  return receipts.get(receipt) === scopeHash;
+  return receipts.get(receipt)?.scopeHash === scopeHash;
 }
-module.exports = { verifyDeclaredRoutes, declaredRoutesVerified };
+function readVerifiedFallbackTemplates(receipt, scopeHash, paths) {
+  const verified = receipts.get(receipt);
+  if (
+    !verified ||
+    verified.scopeHash !== scopeHash ||
+    paths.some((path) => path !== verified.template.path)
+  )
+    throw Error("fallback_source_prerequisite");
+  return paths.map(() => ({ ...verified.template }));
+}
+module.exports = {
+  verifyDeclaredRoutes,
+  declaredRoutesVerified,
+  readVerifiedFallbackTemplates,
+};

@@ -16,6 +16,7 @@ export const introductionActionKindSchema = z.enum([
   "stop_service",
   "coordinator_write",
   "introduction_write",
+  "acceptance_write",
   "stop_failed",
   "route_maintenance",
   "route_candidate",

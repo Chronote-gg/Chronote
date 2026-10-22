@@ -1,10 +1,19 @@
 /** @jest-environment node */
+import {
+  createAcceptanceReadAws,
+  createProductionAws,
+} from "../../scripts/deployment/production-aws.cjs";
+import { assertBoundExecution } from "../../scripts/deployment/production-manifest.cjs";
 import { frozenFixtureDefinitions } from "../../scripts/deployment/production-fixture-definitions.cjs";
 import { jest, afterEach, test, expect } from "@jest/globals";
 import { Buffer } from "node:buffer";
 import process from "node:process";
 import { fixture } from "../fixtures/productionManifest.js";
 import { completeManifest } from "../fixtures/productionCompleteManifest.js";
+import {
+  acceptanceDeclaration,
+  closingActions,
+} from "../fixtures/productionAcceptance.js";
 import { assertProductionPreflight } from "../../scripts/deployment/production-preflight.cjs";
 import { canonicalHash } from "../../scripts/deployment/production-manifest.cjs";
 import { packageIntentHash } from "../../scripts/deployment/production-package.cjs";
@@ -12,8 +21,14 @@ import {
   loadProductionPackage,
   assertContinuationJobs,
   privateFile,
+  loadAcceptancePackage,
+  readCollectionBinding,
 } from "../../scripts/deployment/production-private-package.cjs";
 const mockGithub = jest.fn();
+const mockAws = jest.fn();
+jest.mock("../../scripts/deployment/coordinator-aws.cjs", () => ({
+  awsCli: (...args) => mockAws(...args),
+}));
 jest.mock("node:child_process", () => {
   const actual = jest.requireActual("node:child_process");
   const execFile = () => undefined;
@@ -24,6 +39,7 @@ jest.mock("node:child_process", () => {
 afterEach(() => {
   jest.restoreAllMocks();
   mockGithub.mockReset();
+  mockAws.mockReset();
 });
 function hostedFixture(manifest = fixture()) {
   manifest.validUntil = 15000;
@@ -53,7 +69,8 @@ function hostedFixture(manifest = fixture()) {
     PRODUCTION_INTRODUCTION_ROLE_ARN: manifest.identity.roleArn,
   };
   const environment = (name) => ({
-      id: name === "production" ? 1 : 2,
+      id:
+        name === "production" ? 1 : name === "production-continuation" ? 2 : 3,
       name,
       can_admins_bypass: false,
       protection_rules: [
@@ -86,6 +103,12 @@ function hostedFixture(manifest = fixture()) {
       jobName: "Approve failed-unserved continuation",
     },
   };
+  manifest.acceptance = {
+    ...acceptanceDeclaration(),
+    gatePolicy: { ...policy("production-acceptance"), environmentId: "3" },
+  };
+  if (!manifest.actions.some((a) => a.kind === "acceptance_write"))
+    manifest.actions.push(...closingActions());
   for (const name of Object.keys(evidence))
     manifest.prerequisites[name] = canonicalHash(evidence[name]);
   const pkg = {
@@ -178,6 +201,54 @@ function hostedFixture(manifest = fixture()) {
   }));
   return { env, aws, calls, approvals, jobs, run, pkg };
 }
+
+test("preparation authenticates its distinct read-only identity without minting mutation binding", async () => {
+  const f = hostedFixture();
+  f.env.GITHUB_JOB = "prepare-acceptance";
+  f.jobs.jobs[2].status = "completed";
+  f.jobs.jobs[2].conclusion = "success";
+  f.jobs.jobs[2].completed_at = "1970-01-01T00:02:04Z";
+  f.jobs.jobs[0].started_at = "1970-01-01T00:01:40Z";
+  f.jobs.jobs[0].completed_at = "1970-01-01T00:01:50Z";
+  f.jobs.jobs[1].started_at = "1970-01-01T00:01:51Z";
+  f.jobs.jobs[1].completed_at = "1970-01-01T00:01:52Z";
+  f.jobs.jobs[2].started_at = "1970-01-01T00:01:53Z";
+  f.jobs.jobs.push({
+    name: "Prepare production acceptance",
+    head_sha: f.env.GITHUB_SHA,
+    status: "in_progress",
+    conclusion: null,
+    started_at: "1970-01-01T00:02:05Z",
+    completed_at: null,
+  });
+  f.jobs.total_count++;
+  jest.replaceProperty(process, "env", f.env);
+  mockAws.mockResolvedValue({
+    Account: f.env.AWS_ACCOUNT_ID,
+    Arn: `arn:aws:sts::${f.env.AWS_ACCOUNT_ID}:assumed-role/acceptance-reader/introduction-read-10-1`,
+  });
+  const loaded = await loadAcceptancePackage();
+  const collection = readCollectionBinding(loaded.collection);
+  const reader = createAcceptanceReadAws(loaded.collection);
+  expect(Object.keys(reader).sort()).toEqual(["aws", "read"]);
+  expect(collection.manifest.identity.roleArn).toBe(
+    f.env.PRODUCTION_INTRODUCTION_ROLE_ARN,
+  );
+  expect(collection.actor).toContain("assumed-role/acceptance-reader/");
+  expect(() =>
+    readCollectionBinding(structuredClone(loaded.collection)),
+  ).toThrow();
+  expect(() => readCollectionBinding({})).toThrow();
+  expect(() => assertBoundExecution(collection, 150)).toThrow();
+  expect(() => createProductionAws(loaded.collection)).toThrow();
+  mockAws.mockResolvedValue({
+    Account: f.env.AWS_ACCOUNT_ID,
+    Arn: `arn:aws:sts::${f.env.AWS_ACCOUNT_ID}:assumed-role/deploy/introduction-10-1`,
+  });
+  await expect(loadAcceptancePackage()).rejects.toThrow();
+  jest.spyOn(Date, "now").mockReturnValue(15000000);
+  expect(() => readCollectionBinding(loaded.collection)).toThrow();
+});
 test("private exact file route materializes same immutable hold identity in current continuation attempt", async () => {
   const f = hostedFixture(),
     initial = await loadProductionPackage(f.env, f.aws);
@@ -277,12 +348,12 @@ test("actual introduction CLI sanitizes malformed private payload and captures p
   );
 });
 
-test("complete reviewed 199-action package fits pinned file bound and loads both branches", async () => {
+test("complete reviewed 200-action package fits pinned file bound and loads both branches", async () => {
   const f = hostedFixture(completeManifest());
   const bytes = Buffer.byteLength(JSON.stringify(f.pkg));
   expect(bytes).toBeLessThanOrEqual(262144);
   const initial = await loadProductionPackage(f.env, f.aws);
-  expect(assertProductionPreflight(initial.binding).actions).toHaveLength(199);
+  expect(assertProductionPreflight(initial.binding).actions).toHaveLength(200);
   f.env.GITHUB_JOB = "continue";
   const continuation = await loadProductionPackage(f.env, f.aws, "continue");
   expect(continuation.binding.manifestHash).toBe(initial.binding.manifestHash);

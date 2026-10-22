@@ -21,10 +21,10 @@ const introductionRenewals = Object.freeze({
   ),
   replacement: renewals(WARMUP_SECONDS),
 });
-// 13 non-renew coordinator writes per branch; 18 other closed actions overall.
+// 13 non-renew coordinator writes per branch; 18 introduction and three closing actions.
 const MINIMUM_ACTIONS =
   2 * (13 + Object.values(coordinatorRenewals).reduce((a, b) => a + b, 0)) +
-  18 +
+  21 +
   Object.values(introductionRenewals).reduce((a, b) => a + b, 0);
 const MAXIMUM_ACTIONS = 200;
 module.exports = {

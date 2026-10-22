@@ -64,6 +64,15 @@ function assertCandidateTask(m, s, svc, running) {
   const task = running[0],
     container = task.containers?.find((c) => c.name === m.runtime.container);
   if (
+    task.overrides?.some(
+      (override) =>
+        override.environmentNames?.includes("BOT_INSTANCE_ID") ||
+        override.environmentFiles?.length ||
+        override.commandLength > 0,
+    )
+  )
+    throw Error("candidate_identity_prerequisite");
+  if (
     task.taskDefinitionArn !== s.definition ||
     task.lastStatus !== "RUNNING" ||
     container?.imageDigest !== s.digest
@@ -73,6 +82,18 @@ function assertCandidateTask(m, s, svc, running) {
 }
 function definitionContainer(m, s, d) {
   const c = d.containerDefinitions.find((v) => v.name === m.runtime.container);
+  if (
+    d.containerDefinitions.some(
+      (container) =>
+        container.environmentNames?.includes("BOT_INSTANCE_ID") ||
+        container.environment?.some(
+          (entry) => entry.name === "BOT_INSTANCE_ID",
+        ) ||
+        container.secrets?.some((entry) => entry.name === "BOT_INSTANCE_ID") ||
+        container.environmentFiles?.length,
+    )
+  )
+    throw Error("candidate_identity_prerequisite");
   if (
     d.family !== m.runtime.family ||
     d.cpu !== "512" ||

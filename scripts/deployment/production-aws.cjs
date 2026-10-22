@@ -9,13 +9,8 @@ const {
 const { marshall, unmarshall } = require("@aws-sdk/util-dynamodb");
 const { awsCli } = require("./coordinator-aws.cjs");
 const { assertBoundExecution } = require("./production-manifest.cjs");
-function createProductionAws(binding) {
-  const m = assertBoundExecution(binding, Math.floor(Date.now() / 1000));
+function createReaders(m) {
   const readClient = new DynamoDBClient({ region: m.identity.region });
-  const writeClient = new DynamoDBClient({
-    region: m.identity.region,
-    maxAttempts: 1,
-  });
   const table = m.resources.tables.deploymentControl;
   const read = async (key) => {
     const r = await readClient.send(
@@ -26,21 +21,6 @@ function createProductionAws(binding) {
       }),
     );
     return r.Item ? unmarshall(r.Item) : undefined;
-  };
-  const write = async (input) => {
-    if (
-      input.ClientRequestToken ||
-      !input.TransactItems?.length ||
-      input.TransactItems.some(
-        (item) =>
-          item.Delete ||
-          ![table, m.resources.tables.meetingControl].includes(
-            (item.Put ?? item.Update ?? item.ConditionCheck)?.TableName,
-          ),
-      )
-    )
-      throw new Error("production_write_refused");
-    return writeClient.send(new TransactWriteItemsCommand(input));
   };
   const scan = async (operation, input) => {
     if (
@@ -79,6 +59,55 @@ function createProductionAws(binding) {
       }),
     );
   };
+  return { read, scan, aws };
+}
+function createAcceptanceReadAws(collection) {
+  const { manifest } =
+    require("./production-private-package.cjs").readCollectionBinding(
+      collection,
+    );
+  const { read, aws } = createReaders(manifest);
+  const readers = { read, aws };
+  return Object.fromEntries(
+    Object.entries(readers).map(([name, read]) => [
+      name,
+      async (...args) => {
+        require("./production-private-package.cjs").readCollectionBinding(
+          collection,
+        );
+        const result = await read(...args);
+        require("./production-private-package.cjs").readCollectionBinding(
+          collection,
+        );
+        return result;
+      },
+    ]),
+  );
+}
+function createProductionAws(binding) {
+  const m = assertBoundExecution(binding, Math.floor(Date.now() / 1000));
+  const readers = createReaders(m),
+    table = m.resources.tables.deploymentControl;
+  const writeClient = new DynamoDBClient({
+    region: m.identity.region,
+    maxAttempts: 1,
+  });
+  const write = async (input) => {
+    // Dispatch checks expiry; journal persistence must retain a direct ACK after expiry.
+    if (
+      input.ClientRequestToken ||
+      !input.TransactItems?.length ||
+      input.TransactItems.some(
+        (item) =>
+          item.Delete ||
+          ![table, m.resources.tables.meetingControl].includes(
+            (item.Put ?? item.Update ?? item.ConditionCheck)?.TableName,
+          ),
+      )
+    )
+      throw new Error("production_write_refused");
+    return writeClient.send(new TransactWriteItemsCommand(input));
+  };
   const invoke = async (operation, input, settings) => {
     if (settings.maxAttempts !== 1) throw new Error("production_write_refused");
     if (operation === "transactWriteItems") return write(input);
@@ -97,6 +126,6 @@ function createProductionAws(binding) {
       }),
     );
   };
-  return { aws, read, write, scan, invoke };
+  return { ...readers, write, invoke };
 }
-module.exports = { createProductionAws };
+module.exports = { createProductionAws, createAcceptanceReadAws };

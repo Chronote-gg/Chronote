@@ -3,6 +3,7 @@ import { test, expect } from "@jest/globals";
 import { fixture } from "../fixtures/productionManifest.js";
 import {
   materializePackage,
+  materializeIdentitySlots,
   packageIntentHash,
 } from "../../scripts/deployment/production-package.cjs";
 function packageFixture() {
@@ -39,6 +40,35 @@ test("materializes only closed current identity slots, preserving approved whole
   p.manifest.resources.bucket = "other";
   expect(() => materializePackage(p, hash, context, caller)).toThrow();
 });
+
+test.each([
+  "sourceCommit",
+  "ref",
+  "accountId",
+  "region",
+  "workflow",
+  "roleArn",
+  "githubEnvironment",
+])(
+  "read-only materialization binds actual hosted %s without a mutation caller",
+  (key) => {
+    const p = packageFixture();
+    const context = {
+      ...fixture().identity,
+      now: 150,
+      endpointOverrides: [],
+      repositoryId: "1234",
+      repositoryOwnerId: "4321",
+    };
+    expect(materializeIdentitySlots(p, packageIntentHash(p), context)).toEqual(
+      fixture(),
+    );
+    context[key] = "foreign";
+    expect(() =>
+      materializeIdentitySlots(p, packageIntentHash(p), context),
+    ).toThrow("package_refused");
+  },
+);
 test("rejects nonidentity slots and foreign current source/repository identity", () => {
   const p = packageFixture();
   const context = {
