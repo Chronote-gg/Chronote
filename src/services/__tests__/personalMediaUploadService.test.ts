@@ -38,7 +38,12 @@ const uploadRepository = {
       return true;
     },
   ),
-  writeHistory: jest.fn(async () => true),
+  writeHistory: jest.fn(
+    async (history: import("../../types/db").MeetingHistory) => ({
+      kind: "committed" as const,
+      history,
+    }),
+  ),
   writeSegment: jest.fn(async (segment: PersonalRecordingSegmentRecord) => {
     segmentStore.set(
       segmentStoreKey(segment.uploadId, segment.segmentKey),

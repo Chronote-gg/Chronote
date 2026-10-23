@@ -3,6 +3,11 @@ import { UnresolvedNotionMutation } from "../notionOperationLifetime";
 import { maybeAutoExportCompletedMeeting } from "../notionAutomationService";
 import { jest } from "@jest/globals";
 import { completedTextResponse } from "../../testSupport/openaiResponse";
+import {
+  buildJob,
+  buildDesktopJob,
+  buildSegment,
+} from "../../testSupport/personalMediaUploadFixtures";
 import type {
   PersonalMediaUploadJobRecord,
   PersonalRecordingSegmentRecord,
@@ -47,6 +52,7 @@ import type { PersonalMediaUploadRepository } from "../../repositories/personalM
 import { getMockStore } from "../../repositories/mockStore";
 
 let mockWorkerJob: PersonalMediaUploadJobRecord | undefined;
+let mockCanonicalCompletion = false;
 const mockWorkerClaim = jest.fn<PersonalMediaUploadRepository["claim"]>();
 const mockWorkerRenew = jest.fn<PersonalMediaUploadRepository["renewClaim"]>(
   async () => mockWorkerJob?.status === "processing",
@@ -177,12 +183,37 @@ jest.mock("../../repositories/personalMediaUploadRepository", () => ({
       await writeMeetingHistoryService(history);
       if (terminal) {
         if (mockWorkerJob) mockWorkerJob = terminal;
-        return updateClaimedPersonalMediaUploadJobRecord(
+        const saved = await updateClaimedPersonalMediaUploadJobRecord(
           terminal,
           claim.instanceId,
         );
+        if (!saved) return { kind: "stale" as const };
       }
-      return true;
+      return {
+        kind: "committed" as const,
+        history:
+          mockCanonicalCompletion && terminal?.status === "complete"
+            ? {
+                ...history,
+                notes: "Manual canonical notes",
+                notesVersion: 2,
+                notesLastEditedBy: "synthetic-editor",
+                notesHistory: [
+                  {
+                    version: 2,
+                    notes: "Manual canonical notes",
+                    editedBy: "synthetic-editor",
+                    editedAt: history.timestamp,
+                  },
+                ],
+                recovery: {
+                  disposition: "needs_reconciliation",
+                  stage: "delivery",
+                  reason: "delivery_uncertain",
+                },
+              }
+            : history,
+      };
     },
   }),
 }));
@@ -260,69 +291,6 @@ jest.mock("../notionAutomationService", () => ({
   maybeAutoExportCompletedMeeting: jest.fn(async () => undefined),
 }));
 
-const buildJob = (): PersonalMediaUploadJobRecord => ({
-  uploadId: "upload-1",
-  ownerUserId: "user-1",
-  status: "queued",
-  attempts: 1,
-  processingClaimId: "synthetic-claim",
-  processingOwnerInstanceId: "instance-1",
-  claimExpiresAt: 2_000_000_000,
-  artifactAttempts: Object.fromEntries(
-    [1, 2, 3].map((attempt) => {
-      const prefix = `personal/user-1/upload-1/attempt-${attempt}/`;
-      return [
-        String(attempt),
-        {
-          prefix,
-          audioS3Key: `${prefix}audio.mp3`,
-          transcriptS3Key: `${prefix}transcript.json`,
-        },
-      ];
-    }),
-  ),
-  mediaKind: "audio",
-  sourceS3Key: "personal-media-uploads/user-1/upload-1/source.mp3",
-  contentType: "audio/mpeg",
-  fileSize: 1234,
-  createdAt: "2026-01-06T18:00:00.000Z",
-  updatedAt: "2026-01-06T18:00:00.000Z",
-});
-
-const buildDesktopJob = (): PersonalMediaUploadJobRecord => ({
-  ...buildJob(),
-  uploadOrigin: "desktop_recording",
-  sourceS3Key: "personal-media-uploads/user-1/upload-1/segments/",
-  sourceManifest: [{ sourceId: "owner_mic", kind: "owner_mic", label: "Me" }],
-  contentType: "audio/wav",
-  fileSize: 2000,
-  status: "processing",
-  processingOwnerInstanceId: "instance-1",
-});
-
-const buildSegment = (
-  sequence: number,
-  status: PersonalRecordingSegmentRecord["status"] = "submitted",
-): PersonalRecordingSegmentRecord => ({
-  uploadId: "upload-1",
-  segmentKey: `owner_mic#${String(sequence).padStart(6, "0")}`,
-  ownerUserId: "user-1",
-  sourceId: "owner_mic",
-  sequence,
-  kind: "owner_mic",
-  label: "Me",
-  sourceS3Key: `personal-media-uploads/user-1/upload-1/segments/owner_mic-${String(sequence).padStart(6, "0")}.wav`,
-  contentType: "audio/wav",
-  fileSize: 1000,
-  checksumSha256: "a".repeat(64),
-  durationMillis: 1000,
-  startedAt: `2026-01-06T18:00:0${sequence}.000Z`,
-  endedAt: `2026-01-06T18:00:0${sequence + 1}.000Z`,
-  status,
-  createdAt: "2026-01-06T18:00:00.000Z",
-  updatedAt: "2026-01-06T18:00:00.000Z",
-});
-
 let recordingSegments: PersonalRecordingSegmentRecord[] = [];
 
 const replaceSegment = (next: PersonalRecordingSegmentRecord) => {
@@ -372,6 +340,7 @@ describe("personalMediaUploadProcessingService", () => {
     mockConcatLists.length = 0;
     recordingSegments = [];
     mockWorkerJob = undefined;
+    mockCanonicalCompletion = false;
     mockTranscribe.mockResolvedValue({ text: "segment transcript" });
     mockCreateResponse.mockResolvedValue(
       completedTextResponse("Generated notes"),
@@ -413,6 +382,26 @@ describe("personalMediaUploadProcessingService", () => {
     jest
       .mocked(updateClaimedPersonalMediaUploadJobRecord)
       .mockResolvedValue(true);
+  });
+
+  it("first personal export consumes acknowledged canonical content and original completion authority", async () => {
+    mockCanonicalCompletion = true;
+    await processPersonalMediaUpload(buildJob(), "instance-1");
+    expect(maybeAutoExportCompletedMeeting).toHaveBeenCalledTimes(1);
+    const exported = jest.mocked(maybeAutoExportCompletedMeeting).mock
+      .calls[0][0];
+    expect(exported).toMatchObject({
+      notes: "Manual canonical notes",
+      notesVersion: 2,
+      notesLastEditedBy: "synthetic-editor",
+      notesHistory: [
+        expect.objectContaining({
+          version: 2,
+          notes: "Manual canonical notes",
+        }),
+      ],
+    });
+    expect(exported.recovery).toBeUndefined();
   });
 
   describe.each(["ordinary", "desktop"])("%s finalization", (origin) => {

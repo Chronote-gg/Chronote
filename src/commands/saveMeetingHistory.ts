@@ -197,11 +197,11 @@ export async function saveMeetingHistoryToDatabase(meeting: MeetingData) {
       chatS3Key: meeting.chatS3Key,
     };
 
-    await saveOwnedMeetingHistoryService(meeting, history);
+    const committed = await saveOwnedMeetingHistoryService(meeting, history);
     meeting.historySaved = true;
     try {
       await maybeAutoExportCompletedMeeting(
-        history,
+        committed,
         getMeetingProcessingSignal(meeting),
       );
     } catch (error) {

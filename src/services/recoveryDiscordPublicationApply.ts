@@ -1,3 +1,4 @@
+import type { RepairPublicationOwner } from "../types/meetingPublication";
 import { randomUUID } from "node:crypto";
 import {
   DiscordMessageHttpError,
@@ -317,7 +318,9 @@ async function assertOwner(
   preview: ReadyPreview,
   claim: SavedClaim,
   deps: PublicationDependencies,
+  owner: RepairPublicationOwner,
 ) {
+  await deps.publication.assertOwner(owner);
   const saved = await deps.storage.readClaim(preview.binding.claimKey);
   if (
     !saved ||
@@ -415,7 +418,7 @@ async function patchTarget(
   index: number,
   receipt: PublicationReceipt,
   deps: PublicationDependencies,
-): Promise<boolean> {
+): Promise<{ proceed: boolean; settled: boolean }> {
   const target = preview.targets[index];
   const message = receipt.messages[index];
   let ambiguous = false;
@@ -434,7 +437,7 @@ async function patchTarget(
         "Discord rejected the edit: message missing",
         deps,
       );
-      return false;
+      return { proceed: false, settled: true };
     }
   } catch (error) {
     if (
@@ -448,7 +451,7 @@ async function patchTarget(
         `Discord rejected the edit (${error.status})`,
         deps,
       );
-      return false;
+      return { proceed: false, settled: true };
     }
     ambiguous = true;
   }
@@ -463,7 +466,7 @@ async function patchTarget(
       : "Edit outcome is uncertain; never resubmit this request automatically",
     deps,
   );
-  return matched && !ambiguous;
+  return { proceed: matched && !ambiguous, settled: !ambiguous };
 }
 
 async function editRemaining(
@@ -472,8 +475,10 @@ async function editRemaining(
   claim: SavedClaim,
   initialEtag: string,
   deps: PublicationDependencies,
+  owner: RepairPublicationOwner,
 ) {
   let etag = initialEtag;
+  let settled = true;
   for (let index = 0; index < preview.targets.length; index++) {
     if (!(await checkHistory(preview, receipt, deps))) break;
     const target = preview.targets[index];
@@ -493,15 +498,16 @@ async function editRemaining(
       );
       break;
     }
-    await assertOwner(preview, claim, deps);
+    await assertOwner(preview, claim, deps, owner);
     updateMessage(message, "submitted", observed, null, deps);
     etag = await saveReceipt(preview, receipt, etag, deps);
-    await assertOwner(preview, claim, deps);
-    const proceed = await patchTarget(preview, index, receipt, deps);
+    await assertOwner(preview, claim, deps, owner);
+    const result = await patchTarget(preview, index, receipt, deps);
+    settled = settled && result.settled;
     etag = await saveReceipt(preview, receipt, etag, deps);
-    if (!proceed) break;
+    if (!result.proceed) break;
   }
-  return etag;
+  return { etag, settled };
 }
 
 export async function applyRecoveryDiscordPublication(
@@ -525,11 +531,25 @@ export async function applyRecoveryDiscordPublication(
   }
   await deps.storage.savePreview(preview);
   const claim = await acquire(preview, receipt, deps);
+  const owner = await deps.publication.acquire({
+    binding: preview.binding,
+    previewDigest: preview.previewDigest,
+    runId: receipt.runId,
+    receiptKey: receiptKey(preview),
+    reconcile: false,
+  });
   let etag = await saveReceipt(preview, receipt, null, deps);
-  etag = await editRemaining(preview, receipt, claim, etag, deps);
+  const remaining = await editRemaining(
+    preview,
+    receipt,
+    claim,
+    etag,
+    deps,
+    owner,
+  );
+  etag = remaining.etag;
   await finish(preview, receipt, deps);
   await saveReceipt(preview, receipt, etag, deps);
-  await assertOwner(preview, claim, deps);
   await saveClaim(
     preview,
     {
@@ -540,6 +560,12 @@ export async function applyRecoveryDiscordPublication(
     claim.etag,
     deps,
   );
+  if (remaining.settled && unresolved(receipt).length === 0)
+    await deps.publication.settle({
+      owner,
+      evidence: { kind: "known_settled" },
+      adoptVerified: receipt.status === "verified",
+    });
   return receipt;
 }
 
@@ -550,6 +576,7 @@ async function loadReconciliation(
   receipt: PublicationReceipt;
   saved: SavedReceipt | null;
   claim: SavedClaim;
+  owner: RepairPublicationOwner;
 }> {
   const claim = await deps.storage.readClaim(preview.binding.claimKey);
   if (
@@ -567,14 +594,24 @@ async function loadReconciliation(
     : newReceipt(preview, deps, claim.value.runId);
   if (receipt.runId !== claim.value.runId)
     throw new Error("Claim and receipt owners differ");
-  return { receipt, saved, claim };
+  const owner = await deps.publication.acquire({
+    binding: preview.binding,
+    previewDigest: preview.previewDigest,
+    runId: receipt.runId,
+    receiptKey: receiptKey(preview),
+    reconcile: true,
+  });
+  return { receipt, saved, claim, owner };
 }
 
 async function verifyRerun(
   preview: ReadyPreview,
   deps: PublicationDependencies,
 ) {
-  const { receipt, saved, claim } = await loadReconciliation(preview, deps);
+  const { receipt, saved, claim, owner } = await loadReconciliation(
+    preview,
+    deps,
+  );
   if (
     !saved ||
     receipt.status !== "verified" ||
@@ -584,7 +621,7 @@ async function verifyRerun(
       "Verified receipt and resolved claim evidence do not agree; reconcile the prior run",
     );
   await verifyReadOnly(preview, receipt, deps);
-  reportRunningClaim(receipt, claim.value, {});
+  reportRunningClaim(receipt, claim.value, {}, owner.kind === "running");
   return receipt;
 }
 
@@ -621,9 +658,10 @@ function reportRunningClaim(
   receipt: PublicationReceipt,
   claim: PublicationClaim,
   options: PublicationReconcileOptions,
+  databaseRunning = false,
 ) {
   if (
-    claim.state === "running" &&
+    (claim.state === "running" || databaseRunning) &&
     options.confirmRunStopped === undefined &&
     unresolved(receipt).length === 0
   ) {
@@ -639,7 +677,10 @@ export async function reconcileRecoveryDiscordPublication(
   options: PublicationReconcileOptions = {},
 ): Promise<PublicationReceipt> {
   const preview = await validatePreview(input, deps, false);
-  const { receipt, saved, claim } = await loadReconciliation(preview, deps);
+  const { receipt, saved, claim, owner } = await loadReconciliation(
+    preview,
+    deps,
+  );
   if (
     options.confirmRunStopped !== undefined &&
     options.confirmRunStopped !== receipt.runId
@@ -647,11 +688,15 @@ export async function reconcileRecoveryDiscordPublication(
     throw new Error(
       "Stopped-run assertion must identify the exact claim owner",
     );
-  if (receipt.status === "verified" && claim.value.state === "terminal")
+  if (
+    receipt.status === "verified" &&
+    claim.value.state === "terminal" &&
+    owner.kind === "settled"
+  )
     return verifyReadOnly(preview, receipt, deps);
   await reconcileMessages(preview, receipt, deps);
   await finish(preview, receipt, deps);
-  reportRunningClaim(receipt, claim.value, options);
+  reportRunningClaim(receipt, claim.value, options, owner.kind === "running");
   await saveReceipt(preview, receipt, saved?.etag ?? null, deps);
   const canClose =
     options.confirmRunStopped === receipt.runId &&
@@ -666,5 +711,11 @@ export async function reconcileRecoveryDiscordPublication(
     claim.etag,
     deps,
   );
+  if (canClose)
+    await deps.publication.settle({
+      owner,
+      evidence: { kind: "confirmed_stopped", runId: receipt.runId },
+      adoptVerified: receipt.status === "verified",
+    });
   return receipt;
 }

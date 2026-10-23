@@ -1,3 +1,4 @@
+import { writeRecoveredArtifactHistory } from "./recoveredMeetingArtifactWrite";
 import { promises as fs } from "node:fs";
 import {
   DynamoDBClient,
@@ -613,22 +614,6 @@ async function putObject(s3: S3Client, bucket: string, upload: PlannedUpload) {
   );
 }
 
-async function writeHistory(
-  client: DynamoDBClient,
-  tableName: string,
-  history: MeetingHistoryRecord,
-) {
-  await client.send(
-    new PutItemCommand({
-      TableName: tableName,
-      Item: marshall(history, { removeUndefinedValues: true }),
-      ConditionExpression: "#meetingId = :meetingId",
-      ExpressionAttributeNames: { "#meetingId": "meetingId" },
-      ExpressionAttributeValues: marshall({ ":meetingId": history.meetingId }),
-    }),
-  );
-}
-
 async function writeIndexRecords(
   client: DynamoDBClient,
   tableName: string,
@@ -696,7 +681,7 @@ function printPlan(options: {
   }
   console.log("Planned DynamoDB updates:");
   console.log(
-    "  put merged MeetingHistory record with recovered artifact keys",
+    "  conditionally update recovered artifact fields on MeetingHistory",
   );
   if (!options.options.skipIndex) {
     console.log("  put MeetingUserIndex records for indexed meeting users");
@@ -797,8 +782,7 @@ async function main() {
     });
   }
 
-  const updatedHistory: MeetingHistoryRecord = {
-    ...existingHistory,
+  const artifactFields: MeetingHistoryRecord = {
     channelId,
     duration: durationSeconds,
     endReason: existingHistory.endReason ?? options.endReason,
@@ -806,6 +790,10 @@ async function main() {
     status: options.keepStatus ? existingHistory.status : "complete",
     transcriptS3Key,
     ...(chatEntries.length > 0 ? { chatS3Key } : {}),
+  };
+  const updatedHistory: MeetingHistoryRecord = {
+    ...existingHistory,
+    ...artifactFields,
   };
   const indexRecords = buildIndexRecords(updatedHistory);
   const activeLease = options.releaseActiveLease
@@ -839,7 +827,12 @@ async function main() {
   for (const upload of uploads) {
     await putObject(s3, options.bucket, upload);
   }
-  await writeHistory(dynamo, options.meetingHistoryTable, updatedHistory);
+  await writeRecoveredArtifactHistory({
+    client: dynamo,
+    table: options.meetingHistoryTable,
+    before: existingHistory,
+    fields: artifactFields,
+  });
   if (!options.skipIndex) {
     await writeIndexRecords(
       dynamo,

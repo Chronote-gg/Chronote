@@ -1,3 +1,4 @@
+import { publicationSnapshot } from "../types/meetingPublication";
 import { isDeepStrictEqual } from "node:util";
 import { getDeploymentControlRepository } from "../db";
 import type { MeetingData } from "../types/meeting-data";
@@ -82,6 +83,7 @@ async function write(
   try {
     delivery.signal.throwIfAborted();
     const transition: HistoryTransition = {
+      expectedPublication: publicationSnapshot(row),
       key: delivery.original.historyKey,
       expectedMeetingId: delivery.original.meetingId,
       expectedOwnerInstanceId: delivery.original.ownerInstanceId,
@@ -147,7 +149,12 @@ export async function beginRecordingDelivery(
   };
   deliveries.set(meeting, delivery);
   const row = await readOwned(delivery);
-  if (row.status !== "processing" || row.recovery?.stage === "delivery")
+  if (
+    row.publicationRepair?.kind === "running" ||
+    (row.updateDelivery && "attempt" in row.updateDelivery.progress) ||
+    row.status !== "processing" ||
+    row.recovery?.stage === "delivery"
+  )
     throw new Error("Recording delivery cannot be replayed");
   await write(delivery, row, "intent", { recovery: marker(delivery.original) });
   delivery.intentAcknowledged = true;

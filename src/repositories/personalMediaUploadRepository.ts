@@ -1,3 +1,4 @@
+import type { PersonalHistoryWriteResult } from "../types/personalHistoryWrite";
 import { config } from "../services/configService";
 import {
   claimPersonalMediaUploadJob,
@@ -30,7 +31,7 @@ export type PersonalMediaUploadRepository = {
     history: MeetingHistory,
     claim: PersonalMediaClaim,
     terminalJob?: PersonalMediaUploadJobRecord,
-  ) => Promise<boolean>;
+  ) => Promise<PersonalHistoryWriteResult>;
   writeSegment: (
     segment: PersonalRecordingSegmentRecord,
     claim: PersonalMediaClaim,
@@ -123,7 +124,7 @@ const mockRepository: PersonalMediaUploadRepository = {
     return true;
   },
   async writeHistory(history, claim, terminalJob) {
-    if (!mockClaimOwned(claim)) return false;
+    if (!mockClaimOwned(claim)) return { kind: "stale" };
     const histories =
       getMockStore().meetingHistoryByGuild.get(history.guildId) ?? [];
     const index = histories.findIndex(
@@ -137,17 +138,16 @@ const mockRepository: PersonalMediaUploadRepository = {
         previous.ownershipScope !== "personal" ||
         previous.status !== "processing")
     )
-      return false;
+      return { kind: "stale" };
     const next = structuredClone(previous ?? history);
     if (!previous) {
       delete next.accessGrants;
       delete next.archivedAt;
       delete next.archivedByUserId;
     }
-    Object.assign(
-      next,
-      Object.fromEntries(personalProcessingHistoryFields(history)),
-    );
+    const fields = personalProcessingHistoryFields(history, previous);
+    if (!fields) return { kind: "stale" };
+    Object.assign(next, Object.fromEntries(fields));
     if (index < 0) histories.push(next);
     else histories[index] = next;
     getMockStore().meetingHistoryByGuild.set(history.guildId, histories);
@@ -156,7 +156,7 @@ const mockRepository: PersonalMediaUploadRepository = {
         claim.uploadId,
         structuredClone(terminalJob),
       );
-    return true;
+    return { kind: "committed", history: structuredClone(next) };
   },
   async writeSegment(segment, claim) {
     if (segment.uploadId !== claim.uploadId || !mockClaimOwned(claim))

@@ -1,3 +1,9 @@
+import { repairPublicationOwnerSchema } from "../types/meetingPublication";
+import { matchesPublicationSnapshot } from "../types/meetingPublication";
+import {
+  nextCanonicalFieldRevisions,
+  validateCanonicalFieldRevisions,
+} from "../types/meetingCanonicalContent";
 import { createHash } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 import { z } from "zod";
@@ -50,6 +56,14 @@ export function parseMeetingUpdateHistory(
   raw: Record<string, unknown>,
 ): MeetingHistory {
   rowBoundary.parse(raw);
+  validateCanonicalFieldRevisions(raw);
+  if (raw.publicationRepair !== undefined)
+    raw = {
+      ...raw,
+      publicationRepair: repairPublicationOwnerSchema.parse(
+        raw.publicationRepair,
+      ),
+    };
   readMeetingUpdateRevisions(raw);
   if (raw.updateDelivery !== undefined)
     raw = {
@@ -76,7 +90,7 @@ export function withDelivery(
   const due = meetingUpdateDeliveryNextCheck(next.updateDelivery);
   delete next.updateDeliveryQueue;
   delete next.updateDeliveryDueAt;
-  if (due !== undefined) {
+  if (due !== undefined && history.publicationRepair?.kind !== "running") {
     next.updateDeliveryQueue = MEETING_UPDATE_DELIVERY_QUEUE;
     next.updateDeliveryDueAt = due;
   }
@@ -109,6 +123,8 @@ export function canCompareContentWrite(
   return Boolean(
     row &&
     contentMatches(row, input) &&
+    (!input.expectedPublication ||
+      matchesPublicationSnapshot(row, input.expectedPublication)) &&
     (!input.notesEdit ||
       readMeetingUpdateRevisions(row).notesVersion ===
         input.notesEdit.expectedNotesVersion),
@@ -153,6 +169,11 @@ export function prepareContentWrite(
       contentMutation: {
         id: input.mutationId,
         fingerprint: mutationFingerprint(input),
+        ...nextCanonicalFieldRevisions(
+          history,
+          changes,
+          input.expectedContentRevision + 1,
+        ),
       },
     },
     requested,

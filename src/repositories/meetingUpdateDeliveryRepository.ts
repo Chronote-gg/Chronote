@@ -1,3 +1,9 @@
+import {
+  publicationMutationExcluded,
+  publicationSnapshot,
+  publicationSnapshotCondition,
+  type MeetingPublicationSnapshot,
+} from "../types/meetingPublication";
 import { randomUUID } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 import {
@@ -54,6 +60,7 @@ import {
 } from "./meetingUpdateDeliveryState";
 
 export type MeetingContentWrite = {
+  expectedPublication?: MeetingPublicationSnapshot;
   key: MeetingUpdateKey;
   expectedContentRevision: number;
   expectedDeliveryRevision: string | null;
@@ -138,7 +145,11 @@ export function claimDelivery(
   row: MeetingHistory,
   input: MeetingClaim,
 ): MeetingUpdateDelivery | undefined {
-  if (!claimAuthorityMatches(row, input.authority)) return undefined;
+  if (
+    !claimAuthorityMatches(row, input.authority) ||
+    publicationMutationExcluded(publicationSnapshot(row))
+  )
+    return undefined;
   if (!contentMatches(row, input) || !row.updateDelivery) return undefined;
   const before = meetingUpdateDeliverySchema.parse(row.updateDelivery);
   const attempt = preparedMeetingUpdateAttemptSchema.parse(input.attempt);
@@ -359,6 +370,10 @@ function conditionalUpdate(
       values[":old" + field] = before[field];
     }
   }
+  const publication = publicationSnapshotCondition(publicationSnapshot(before));
+  Object.assign(names, publication.names);
+  Object.assign(values, publication.values);
+  conditions.push(publication.condition);
   const set: string[] = [],
     remove: string[] = [];
   changedFields.forEach((field, index) => {
@@ -427,7 +442,7 @@ const ackError = z.object({
 const ambiguousServiceWrite = z.object({
   $metadata: z.object({ httpStatusCode: z.literal(500) }),
 });
-function mayHaveCommitted(error: unknown): boolean {
+export function mayHaveCommitted(error: unknown): boolean {
   // DynamoDB HTTP 500 writes may have committed despite the service error.
   return (
     ackError.safeParse(error).success ||

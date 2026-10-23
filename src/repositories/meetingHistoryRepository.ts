@@ -9,23 +9,15 @@ import {
   getMeetingsForGuildInRange,
   getRecentMeetingsForChannel,
   getRecentMeetingsForGuild,
-  updateMeetingNotes,
-  updateMeetingNotesMessageMetadata,
-  updateMeetingName,
   updateMeetingArchive,
   updateMeetingAccessGrants,
   updateMeetingStatus,
   updateMeetingTags,
   writeMeetingHistory,
 } from "../db";
-import type {
-  MeetingHistory,
-  MeetingAccessGrant,
-  NotesEditSource,
-  SuggestionHistoryEntry,
-} from "../types/db";
+import type { MeetingHistory, MeetingAccessGrant } from "../types/db";
 import { MEETING_STATUS, type MeetingStatus } from "../types/meetingLifecycle";
-import { trimNotesForHistory } from "../utils/notesHistory";
+
 import { getMockStore } from "./mockStore";
 
 import type { HistoryTransition } from "../types/deploymentControl";
@@ -69,33 +61,6 @@ export type MeetingHistoryRepository = Pick<
       signal?: AbortSignal;
     },
   ) => Promise<MeetingHistory[]>;
-  updateNotes: (params: {
-    guildId: string;
-    channelId_timestamp: string;
-    notes: string;
-    notesDelta?: unknown | null;
-    notesVersion: number;
-    editedBy: string;
-    summarySentence?: string;
-    summaryLabel?: string;
-    meetingName?: string;
-    suggestion?: SuggestionHistoryEntry;
-    source?: NotesEditSource;
-    expectedPreviousVersion?: number;
-    metadata?: { notesMessageIds?: string[]; notesChannelId?: string };
-  }) => Promise<boolean>;
-  updateNotesMessageMetadata: (params: {
-    guildId: string;
-    channelId_timestamp: string;
-    notesMessageIds: string[];
-    notesChannelId: string;
-    expectedNotesVersion: number;
-  }) => Promise<boolean>;
-  updateMeetingName: (
-    guildId: string,
-    channelIdTimestamp: string,
-    meetingName: string,
-  ) => Promise<boolean>;
   updateStatus: (
     guildId: string,
     channelIdTimestamp: string,
@@ -191,31 +156,6 @@ const realRepository: MeetingHistoryRepository = {
     );
     return filterArchivedMeetings(active, options);
   },
-  updateNotes: (params) =>
-    updateMeetingNotes(
-      params.guildId,
-      params.channelId_timestamp,
-      params.notes,
-      params.notesVersion,
-      params.editedBy,
-      params.summarySentence,
-      params.summaryLabel,
-      params.meetingName,
-      params.suggestion,
-      params.source,
-      params.expectedPreviousVersion,
-      params.metadata,
-      params.notesDelta,
-    ),
-  updateNotesMessageMetadata: (params) =>
-    updateMeetingNotesMessageMetadata(
-      params.guildId,
-      params.channelId_timestamp,
-      params.notesMessageIds,
-      params.notesChannelId,
-      params.expectedNotesVersion,
-    ),
-  updateMeetingName: updateMeetingName,
   updateStatus: updateMeetingStatus,
   updateArchive: updateMeetingArchive,
   updateTags: updateMeetingTags,
@@ -280,92 +220,6 @@ const mockRepository: MeetingHistoryRepository = {
       })
       .sort((a, b) => b.timestamp.localeCompare(a.timestamp))
       .slice(0, limit);
-  },
-  async updateNotes(params) {
-    const items =
-      getMockStore().meetingHistoryByGuild.get(params.guildId) ?? [];
-    const idx = items.findIndex(
-      (item) => item.channelId_timestamp === params.channelId_timestamp,
-    );
-    if (idx === -1) return false;
-    const now = new Date().toISOString();
-    const existing = items[idx];
-    const existingVersion = existing.notesVersion ?? 1;
-    if (
-      params.expectedPreviousVersion !== undefined &&
-      params.expectedPreviousVersion !== existingVersion
-    ) {
-      return false;
-    }
-    const notesHistoryEntry = {
-      version: params.notesVersion,
-      notes: trimNotesForHistory(params.notes),
-      editedBy: params.editedBy,
-      editedAt: now,
-      source: params.source,
-    };
-    items[idx] = {
-      ...existing,
-      notes: params.notes,
-      notesDelta:
-        params.notesDelta === null
-          ? undefined
-          : params.notesDelta !== undefined
-            ? params.notesDelta
-            : existing.notesDelta,
-      summarySentence: params.summarySentence ?? existing.summarySentence,
-      summaryLabel: params.summaryLabel ?? existing.summaryLabel,
-      meetingName: params.meetingName ?? existing.meetingName,
-      notesVersion: params.notesVersion,
-      notesLastEditedBy: params.editedBy,
-      notesLastEditedAt: now,
-      updatedAt: now,
-      notesMessageIds:
-        params.metadata?.notesMessageIds ?? existing.notesMessageIds,
-      notesChannelId:
-        params.metadata?.notesChannelId ?? existing.notesChannelId,
-      notesHistory: [...(existing.notesHistory ?? []), notesHistoryEntry],
-      suggestionsHistory: params.suggestion
-        ? [...(existing.suggestionsHistory ?? []), params.suggestion]
-        : existing.suggestionsHistory,
-    };
-    getMockStore().meetingHistoryByGuild.set(params.guildId, items);
-    return true;
-  },
-  async updateNotesMessageMetadata(params) {
-    const items =
-      getMockStore().meetingHistoryByGuild.get(params.guildId) ?? [];
-    const idx = items.findIndex(
-      (item) => item.channelId_timestamp === params.channelId_timestamp,
-    );
-    if (idx === -1) return false;
-    if ((items[idx].notesVersion ?? 1) !== params.expectedNotesVersion) {
-      return false;
-    }
-    const now = new Date().toISOString();
-    items[idx] = {
-      ...items[idx],
-      notesMessageIds: params.notesMessageIds,
-      notesChannelId: params.notesChannelId,
-      updatedAt: now,
-    };
-    getMockStore().meetingHistoryByGuild.set(params.guildId, items);
-    return true;
-  },
-  async updateMeetingName(guildId, channelIdTimestamp, meetingName) {
-    const items = getMockStore().meetingHistoryByGuild.get(guildId) ?? [];
-    const idx = items.findIndex(
-      (item) => item.channelId_timestamp === channelIdTimestamp,
-    );
-    if (idx === -1) return false;
-    const now = new Date().toISOString();
-    items[idx] = {
-      ...items[idx],
-      meetingName,
-      updatedAt: now,
-    };
-    getMockStore().meetingHistoryByGuild.set(guildId, items);
-    return true;
   },
   async updateTags(guildId, channelIdTimestamp, tags) {
     const items = getMockStore().meetingHistoryByGuild.get(guildId) ?? [];
