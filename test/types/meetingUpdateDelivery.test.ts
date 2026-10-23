@@ -332,7 +332,7 @@ test("synced and blocked progress have no due work", () => {
 test("due cursor round trips exact keys and epoch seconds", () => {
   const cursor = {
     ...key,
-    updateDeliveryQueue: "meeting-update:v1",
+    updateDeliveryQueue: "meeting-update:v1" as const,
     updateDeliveryDueAt: now,
   };
   expect(readMeetingUpdateDeliveryCursor()).toBeUndefined();

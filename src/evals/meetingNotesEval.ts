@@ -7,7 +7,7 @@ import {
 } from "../services/langfuseClient";
 import { getModelChoice } from "../services/modelFactory";
 import {
-  generateOpenAIText,
+  generateOpenAINotes,
   MEETING_TEXT_MAX_REQUESTS,
 } from "../services/openaiTextService";
 import { resolveChatParamsForRole } from "../services/openaiModelParams";
@@ -73,7 +73,7 @@ const generateNotesForEval = async (input: EvalInput): Promise<string> => {
 
   const { model } = getModelChoice("notes");
   const modelParams = resolveChatParamsForRole({ role: "notes", model });
-  return generateOpenAIText({
+  return generateOpenAINotes({
     model,
     input: messages,
     modelParams,

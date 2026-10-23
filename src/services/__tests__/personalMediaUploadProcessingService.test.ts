@@ -3,6 +3,7 @@ import { UnresolvedNotionMutation } from "../notionOperationLifetime";
 import { maybeAutoExportCompletedMeeting } from "../notionAutomationService";
 import { jest } from "@jest/globals";
 import { completedTextResponse } from "../../testSupport/openaiResponse";
+import { getModelChoice } from "../modelFactory";
 import {
   buildJob,
   buildDesktopJob,
@@ -336,6 +337,10 @@ function expectEmptyUploadWithoutNotes() {
 describe("personalMediaUploadProcessingService", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    jest.mocked(getModelChoice).mockReturnValue({
+      provider: "openai",
+      model: "mock-model",
+    });
     mockUploadedObjects.clear();
     mockConcatLists.length = 0;
     recordingSegments = [];
@@ -427,6 +432,30 @@ describe("personalMediaUploadProcessingService", () => {
         );
       },
     );
+
+    it("avoids caching unique personal recording inputs on capable notes models", async () => {
+      recordingSegments = [buildSegment(0)];
+      jest.mocked(getModelChoice).mockReturnValue({
+        provider: "openai",
+        model: "gpt-6.1-sol",
+      });
+
+      const controller = new AbortController();
+      await processPersonalMediaUpload(
+        { ...jobForOrigin(), attempts: 3 },
+        "instance-1",
+        controller.signal,
+      );
+
+      expect(mockCreateResponse).toHaveBeenCalledWith(
+        expect.objectContaining({
+          model: "gpt-6.1-sol",
+          input: [{ role: "user", content: "notes" }],
+          prompt_cache_options: { mode: "explicit", ttl: "30m" },
+        }),
+        { signal: controller.signal },
+      );
+    });
 
     it("does not blame transcription for a source download failure", async () => {
       recordingSegments = [buildSegment(0)];

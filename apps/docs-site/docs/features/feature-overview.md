@@ -230,6 +230,15 @@ These buttons appear on meeting embeds:
 | Rename meeting     | After meeting ends    | Opens a modal to rename the meeting                  |
 | Generate Image     | After meeting ends    | Creates a DALL-E image from the meeting (plan-gated) |
 
+## Action items
+
+Chronote aims to capture explicit assignments and volunteered follow-ups with
+stated owners and deadlines. Suggestions and conditional plans should retain
+their qualifiers, and completed work should remain marked complete.
+
+Review the notes and use [Suggest correction](#notes-correction-flow) when a task
+is missing or inaccurate.
+
 ## Mentions in notes
 
 Chronote writes notes that refer to people and groups using Discord mentions, so an assignment reads as the actual person or team rather than a guessed name.

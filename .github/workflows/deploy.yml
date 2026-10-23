@@ -393,3 +393,101 @@ jobs:
           LANGFUSE_BASE_URL: ${{ vars.LANGFUSE_BASE_URL }}
           LANGFUSE_PROMPT_LABEL: ${{ vars.LANGFUSE_PROMPT_LABEL }}
         run: yarn prompts:check
+
+  # Only production may update the shared Langfuse OpenAI connection.
+  sync-openai-connection:
+    name: Sync OpenAI LLM Connection
+    needs: [deploybackend]
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: "24.15.0"
+          cache: "yarn"
+          cache-dependency-path: "yarn.lock"
+
+      - name: Install dependencies
+        run: bash scripts/ci-install-dependencies.sh
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          aws-access-key-id: ${{ vars.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Sync serving OpenAI connection
+        env:
+          ECS_CLUSTER: ${{ vars.ECS_CLUSTER }}
+          ECS_SERVICE: ${{ vars.ECS_SERVICE }}
+          ECS_TASK_FAMILY: ${{ vars.ECS_TASK_FAMILY }}
+          SECRETS_PREFIX: ${{ vars.SECRETS_PREFIX }}
+          LANGFUSE_PUBLIC_KEY: ${{ secrets.LANGFUSE_PUBLIC_KEY }}
+          LANGFUSE_SECRET_KEY: ${{ secrets.LANGFUSE_SECRET_KEY }}
+          LANGFUSE_BASE_URL: ${{ vars.LANGFUSE_BASE_URL }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${ECS_CLUSTER:-}" ] || [ -z "${ECS_SERVICE:-}" ]; then
+            echo "ERROR: ECS_CLUSTER and ECS_SERVICE are required for the serving OpenAI connection."
+            exit 1
+          fi
+          SECRETS_PREFIX="${SECRETS_PREFIX:-}"
+          if [ -z "$SECRETS_PREFIX" ] && [ -n "${ECS_TASK_FAMILY:-}" ]; then
+            SECRETS_PREFIX="${ECS_TASK_FAMILY%-bot-task}"
+          fi
+          if [ -z "$SECRETS_PREFIX" ]; then
+            echo "ERROR: SECRETS_PREFIX is not set and could not be derived."
+            exit 1
+          fi
+
+          # Read the service pointer, never the latest task-family revision.
+          if ! task_definition_arn=$(aws ecs describe-services \
+            --cluster "$ECS_CLUSTER" --services "$ECS_SERVICE" \
+            --query "services[?status=='ACTIVE'].taskDefinition | [0]" --output text 2>/dev/null) \
+            || [ -z "$task_definition_arn" ] || [ "$task_definition_arn" = "None" ]; then
+            echo "ERROR: Could not resolve the serving ECS service task definition."
+            exit 1
+          fi
+          # Match the app container exactly as the deployment coordinator does.
+          if ! OPENAI_PROJECT_ID=$(aws ecs describe-task-definition \
+            --task-definition "$task_definition_arn" --output json 2>/dev/null | node -e '
+              const { readFileSync } = require("node:fs");
+              const { taskDefinition } = JSON.parse(readFileSync(0, "utf8"));
+              const apps = taskDefinition.containerDefinitions.filter((container) =>
+                container.environment?.some((entry) => entry.name === "DDB_TABLE_PREFIX"),
+              );
+              if (apps.length !== 1) process.exit(1);
+              const projects = apps[0].environment.filter(
+                (entry) => entry.name === "OPENAI_PROJECT_ID",
+              );
+              if (projects.length !== 1 || typeof projects[0].value !== "string"
+                || !projects[0].value.trim()) process.exit(1);
+              process.stdout.write(projects[0].value);
+            ' 2>/dev/null); then
+            echo "ERROR: Serving task definition must have one app container with a nonempty OPENAI_PROJECT_ID."
+            exit 1
+          fi
+          echo "::add-mask::$OPENAI_PROJECT_ID"
+          if ! OPENAI_API_KEY=$(aws secretsmanager get-secret-value \
+            --secret-id "${SECRETS_PREFIX}/openai-api-key" --version-stage AWSCURRENT \
+            --query SecretString --output text 2>/dev/null) \
+            || [ -z "${OPENAI_API_KEY//[[:space:]]/}" ] || [ "$OPENAI_API_KEY" = "None" ]; then
+            echo "ERROR: Could not retrieve a nonempty OPENAI_API_KEY from Secrets Manager."
+            exit 1
+          fi
+          echo "::add-mask::$OPENAI_API_KEY"
+          export OPENAI_API_KEY OPENAI_PROJECT_ID
+
+          connections_dir=$(mktemp -d)
+          trap 'rm -rf "$connections_dir"' EXIT
+          cp langfuse/llm-connections/openai.yml "$connections_dir/openai.yml"
+          yarn llm-connections:push --dir "$connections_dir" --dry-run
+          yarn llm-connections:push --dir "$connections_dir"
+          yarn llm-connections:check --dir "$connections_dir"

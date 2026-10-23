@@ -14,6 +14,10 @@ A Discord bot that records voice meetings, transcribes them with OpenAI, generat
 
 ## Recording outcomes
 
+Notes guidance covers explicit assignments and volunteered follow-ups with stated
+owners and deadlines, preserving tentative plans and completed status. See
+[action items](apps/docs-site/docs/features/feature-overview.md#action-items).
+
 Recordings with no usable speech skip notes generation. Incomplete transcripts
 still produce notes with a separate warning. Processing outcomes are independent
 of meeting completion; see [meeting lifecycle](apps/docs-site/docs/core-concepts/meeting-lifecycle.md).
@@ -60,6 +64,7 @@ of meeting completion; see [meeting lifecycle](apps/docs-site/docs/core-concepts
 - `yarn llm-connections:push` upserts local connections to Langfuse.
 - `yarn llm-connections:pull` pulls connections from Langfuse into YAML files.
 - `yarn llm-connections:check` compares local YAML with Langfuse (keys only, no secrets). It runs inside `yarn run check` and CI.
+- Production automatically syncs only the OpenAI connection after backend deployment. Staging shares Langfuse and checks drift without pushing; other providers remain explicitly managed.
 - Details and schema: `docs/langfuse-llm-connections.md`.
 
 ## Checks
@@ -180,7 +185,7 @@ Coverage update rule:
 - Transcription flow and tuning: `docs/audio-transcription.md`.
 - Slow transcription now includes a default low-confidence prompt/no-prompt vote fallback to reduce hallucinated prompt echoes.
 - Feature toggle evaluation checklist: `docs/feature-toggles.md`.
-- OpenAI: gpt-4o-transcribe for ASR, gpt-5.2 for notes/corrections, gpt-5-mini for live gate, DALL-E 3 for images.
+- OpenAI: gpt-4o-transcribe for ASR, gpt-6.1-sol for notes, gpt-5.2 for summaries, cleanup, corrections and image prompts, gpt-5-mini for live gate, DALL-E 3 for images. `NOTES_MODEL` overrides notes generation only; other roles use their existing per-role settings.
 - Transcription can run a finalized audio verification pass at meeting end to auto-apply high-confidence hallucination fixes before notes are generated.
 - Text generation uses OpenAI's Responses API through one shared service for notes, corrections, Ask, live-voice text decisions, captions and dictionary suggestions. See the [Responses and model evaluation design](docs/superpowers/specs/2026-10-21-responses-meeting-evaluation-design.md) for request contracts and model comparisons.
 - Prompt management and tracing: Langfuse for prompt versioning, tracing, and prompt sync scripts.

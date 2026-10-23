@@ -56,7 +56,7 @@ function resolveMeetingChatModel(
       model,
       config: meeting.runtimeConfig?.modelParams?.[modelParamRole],
     });
-  return { model, modelParams };
+  return { model, modelParams, modelParamRole };
 }
 export async function chat(
   meeting: ChatMeetingInput,
@@ -64,11 +64,15 @@ export async function chat(
   options: ChatOptions = {},
 ): Promise<string> {
   const traceName = options.traceName ?? "notes";
-  const { model, modelParams } = resolveMeetingChatModel(meeting, options);
+  const { model, modelParams, modelParamRole } = resolveMeetingChatModel(
+    meeting,
+    options,
+  );
   return generateOpenAIText({
     model,
     input: body.messages,
     modelParams,
+    modelParamRole,
     continuation: { maxRequests: MEETING_TEXT_MAX_REQUESTS },
     signal: AbortSignal.any([
       meeting.signal ?? getMeetingProcessingSignal(meeting),

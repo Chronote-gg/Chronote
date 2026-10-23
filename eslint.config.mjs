@@ -15,6 +15,7 @@ export default [
       "scripts/**/*.{js,mjs,cjs}",
       "test/deployment/**/*.cjs",
       "test/audio/fixtures/voiceCaptureExit.cjs",
+      "test/observability/fixtures/langfuseOpenaiCacheUsage.cjs",
     ],
     languageOptions: { globals: globals.node },
     rules: {

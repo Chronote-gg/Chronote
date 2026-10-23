@@ -10,14 +10,14 @@
 
 ## What this project is
 
-- Discord bot that records voice meetings, transcribes them with OpenAI (gpt-4o-transcribe), generates notes with GPT-5.2, and posts results back to Discord.
+- Discord bot that records voice meetings, transcribes them with OpenAI (gpt-4o-transcribe), generates notes with GPT-6.1 Sol, and posts results back to Discord.
 - Supports auto-recording, meeting history in DynamoDB, context injection (server/channel/meeting), dictionary terms for prompt context, and a user-driven notes correction flow using LLMs.
 
 ## Tech stack
 
 - Runtime: Node.js 24.15.0, TypeScript.
 - Discord: discord.js v14, discord-api-types, @discordjs/voice for audio capture, @discordjs/opus, prism-media.
-- AI: openai SDK; gpt-4o-transcribe for transcription; gpt-5.2 for cleanup/notes/corrections; gpt-5-mini for live gate; DALL-E 3 for images.
+- AI: openai SDK; gpt-4o-transcribe for transcription; gpt-6.1-sol for notes; gpt-5.2 for summaries, cleanup, corrections and image prompts; gpt-5-mini for live gate; DALL-E 3 for images.
 - Observability and prompt management: Langfuse for tracing, prompt versioning, and prompt sync scripts. AMG (Grafana) service account token is auto-rotated via EventBridge + Lambda (see `_infra/grafana.tf` and `_infra/README.md`). Critical alerts (ECS down, ALB 5xx, unhealthy hosts, rotation failures) are sent via SNS email and optionally to a Discord channel via a separate Node.js Lambda (see `_infra/notifications.tf` and `_infra/README.md`).
 - Storage: AWS DynamoDB (tables: GuildSubscription, PaymentTransaction, StripeWebhookEvent, InteractionReceipt, ActiveMeeting, MeetingControlCommand, AccessLogs, RecordingTranscript, AutoRecordSettings, ServerContext, ChannelContext, DictionaryTable, MeetingHistory, MeetingUserIndex, PersonalMediaUploadJob, PersonalRecordingSegment, SessionTable, McpOAuthTable, NotionIntegrationTable), S3 for transcripts/audio.
 - Infra: Terraform -> AWS ECS Fargate, ECR, CloudWatch logs; static frontend on S3 + CloudFront with OAC; local Dynamo via docker-compose.
@@ -50,12 +50,12 @@
 - Transcription prompt is Langfuse-managed (`chronote-transcription-prompt`). Guardrails include a loudness gate (noise gate metrics, hard silence threshold, syllable rate, and logprobs), a prompt echo gate, and a low-confidence prompt/no-prompt vote fallback on slow snippets.
   - Snippet ASR attempts belong to `services/transcriptionRequest.ts`, with at most four attempts per candidate. Keep successful prompted work when a no-prompt vote retries; use attempt-aware accounting and operation-local exhausted-error provenance for the breaker. See `docs/audio-transcription.md`.
   - A finalized audio verification pass can run at meeting end (`transcription.finalPass.enabled`) to auto-apply high-confidence hallucination fixes before notes generation.
-  - GPT prompts tuned for cleanup, notes, and optional image generation.
+  - GPT prompts tuned for cleanup, notes, and optional image generation. Notes guidance covers explicit assignments and volunteered follow-ups, stated owners and deadlines, and qualified or completed status. The prompt instructs a silent completeness check within the same generation call.
 - Dictionary management: `commands/dictionary.ts`, `services/dictionaryService.ts`
   - Terms are injected into transcription and context prompts, definitions are used outside transcription to reduce prompt bloat.
 - Notes correction flow: `commands/notesCorrections.ts`
   - “Suggest correction” button → modal (single textarea).
-  - Fetches saved notes + transcript from DB, calls GPT-4o with a “minimal edits, do not copy transcript” prompt, shows a compact line diff, requires approval (meeting creator or ManageChannels if auto-record), updates embed + MeetingHistory and bumps version/last editor.
+  - Fetches saved notes + transcript from DB, uses the notes-correction model with a “minimal edits, do not copy transcript” prompt, shows a compact line diff, requires approval (meeting creator or ManageChannels if auto-record), updates embed + MeetingHistory and bumps version/last editor.
   - Web UI uses `meetings.suggestNotesCorrection` and `meetings.applyNotesCorrection` to generate a diff and apply changes, mirroring the Discord flow.
 - Context management: `commands/context.ts` writes/reads ServerContext and ChannelContext.
 - Meeting history persistence: `commands/saveMeetingHistory.ts`, `db.ts` helpers.
@@ -72,6 +72,13 @@
 - Notion export (optional): set `NOTION_CLIENT_ID`, `NOTION_CLIENT_SECRET`, and `NOTION_REDIRECT_URI` to enable user OAuth, one-way export, manual sync, server automation, and personal automation from Chronote notes to Notion pages. Notion tokens are encrypted with `NOTION_TOKEN_ENCRYPTION_SECRET` when set, otherwise `OAUTH_SECRET`/`SESSION_SECRET`.
 - OpenAI org/project IDs are optional (defaults empty).
 - Text generation uses the Responses API through `services/openaiTextService.ts`; keep one request path and remove superseded transports when migrating callers. Audio transcription, speech and image generation use their dedicated endpoints. Preserve saved model/parameter/prompt snapshots, cancellation, mention guards and per-caller fallbacks. See `docs/superpowers/specs/2026-10-21-responses-meeting-evaluation-design.md`.
+- `NOTES_MODEL` defaults to `gpt-6.1-sol` and controls notes generation only. `models.notes` can override it. Meeting summary, notes correction, transcription cleanup and image prompt roles keep independent `gpt-5.2` defaults through their existing `models.*` settings. Frozen DynamoDB v1 model, parameter and prompt snapshots remain authoritative for saved recordings.
+- Notes default to low reasoning without temperature; honor compatible explicit
+  `modelParams.notes.*` overrides. Notes requests using supported model profiles,
+  including GPT-6.1 Sol, request explicit 30-minute cache control without
+  breakpoints, including continuations. Older overrides omit unsupported cache
+  fields. Preserve prompt and input ordering; static-prefix optimization needs a
+  separate design. See `docs/adr-20261022-sol-notes-caching.md`.
 - Langfuse prompt sync uses `LANGFUSE_PUBLIC_KEY` and `LANGFUSE_SECRET_KEY`. Optional: `LANGFUSE_BASE_URL`, `LANGFUSE_PROMPT_LABEL`, `LANGFUSE_PROMPT_TRANSCRIPTION`, `LANGFUSE_PROMPT_DICTIONARY_TEACHING`. `LANGFUSE_BASE_URL` defaults to `https://us.cloud.langfuse.com` (`services/langfuseDefaults.ts`), shared by the app and the scripts so they cannot resolve to different hosts. An EU or self-hosted project must set it, or its keys reach the US host and every call returns 401.
 - Optional Langfuse prompt override for the finalized audio pass: `LANGFUSE_PROMPT_TRANSCRIPTION_FINAL_PASS`.
 - Langfuse MCP tooling: run `node scripts/setup-langfuse-mcp-auth.js` to write `.opencode/langfuse.mcp.auth` plus `.opencode/langfuse.public` and `.opencode/langfuse.secret` for OpenCode. The `langfuse_obs` OpenCode MCP uses uvx and reads those files; Codex and Claude Code still expect `LANGFUSE_MCP_AUTH` in the environment.
@@ -229,6 +236,7 @@ Optional Windows helper (prints loaded env, supports `-Mock` / `-SkipDocker`):
 - CI-parity local gate: `yarn run check:ci` (lint:check, prettier:check, markdownlint:check, test, build:all, docs:check, test:e2e, checkov, code:stats, prompts:check, docker:build). Avoid `yarn check` (built-in Yarn integrity command).
 - CI runs the same set as `check:ci` (see `.github/workflows/ci.yml` and `.github/workflows/ci-core.yml`).
 - When running checks locally, avoid docker builds unless explicitly requested.
+- Windows Visual Regression must use Node.js 24.16.0 or later within 24.x for the [confirmed upstream Windows TCP crash](https://github.com/nodejs/node/issues/63620). Do not repin this job to 24.15.0.
 - Visual regression baselines: update with `yarn test:visual:update`.
 - Upgrade billing defaults to Monthly unless the arrival link requests Annual. Annual savings use matching monthly/yearly prices in the same currency; never hardcode a discount or substitute a monthly price for an unavailable annual plan. Screenshot coverage includes both selected billing periods.
 - Review baseline changes before committing. The PR Visual Regression check fails on visual test failures; upgrade and post-install welcome snapshots cover desktop, mobile and wide screens. Branch protection separately controls whether that check is required for merge.
@@ -249,6 +257,8 @@ Optional Windows helper (prints loaded env, supports `-Mock` / `-SkipDocker`):
 - **Prompt promotion is automatic on merge, and agents should not do it by hand.** The `Promote Prompts` job in `deploy.yml` runs after `Deploy Backend` succeeds and does the dry run, the push, and a verifying check. Two properties matter and are easy to break if this is ever changed:
   - **Order.** Code deploys first, prompts second. A prompt is safe against newer code, which simply ignores variables it does not reference, but not against older code. Promoting first is how a role-mention prompt once went live against code that did not supply its roster, producing plain-text role names that looked like a feature bug.
   - **Revision.** CI pushes from the merged commit, so it cannot revert a prompt that someone else promoted. `prompts:push` versions every local prompt that differs from the remote, so pushing from a stale checkout is genuinely dangerous. That is the main reason to leave this to CI.
+- OpenAI LLM connection sync is automatic after a successful production backend deploy. `Sync OpenAI LLM Connection` uses only the merged revision's `openai.yml`, runs dry-run/push/check, and reads the existing provider key from Secrets Manager plus the project ID from the serving ECS service's exact task definition. Both values are required because the upsert replaces credentials and the `OpenAI-Project` header. Do not manually sync before merge or add live pushes to PR/staging workflows. Staging shares the Langfuse project; other providers remain explicitly managed. See `docs/langfuse-llm-connections.md`.
+- LLM connection checks compare YAML with external Langfuse state without reading secret values. Connection YAML changes can leave `LLM Connections Check` red on a PR until the merged revision is synced. Document expected drift in the PR; keep the check and quality gates intact.
 - Deploy jobs deliberately do **not** gate on `Prompts Check` or `LLM Connections Check`. Both describe external Langfuse state rather than whether the code is good, both are already enforced by core CI on PRs and production deploys, and while they gated deploys a single Langfuse outage or an unpromoted prompt would silently skip every deploy job while the run still looked handled. Keep code-quality gates on the deploy path; keep external-state checks off it.
 - If a prompt ever needs promoting outside a deploy, check out and pull the merged `master` first, run `yarn prompts:push --dry-run`, and confirm the "would push" list contains exactly the prompts you expect. Any extra name means the checkout is behind: re-sync instead of pushing.
 

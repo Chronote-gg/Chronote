@@ -94,6 +94,20 @@ model is involved:
 - `expected_role_recall` / `expected_user_recall`: fraction of the ids a case
   expects that actually appeared. Omitted when a case declares no expectations.
 
+## Action-item semantic review
+
+The mention grades do not establish whether notes captured every task, the right
+owner or deadline, or the status of conditional and completed work. Synthetic
+action-item fixtures support manual semantic review, not automated proof of
+output quality.
+
+For an action-item prompt change, manually compare generated notes with the
+synthetic transcript. Check explicit assignments, volunteered follow-ups, stated
+deadlines, tentative plans and completed work. Keep this review separate from
+request-contract checks, which verify model selection, parameters, cache policy
+and frozen snapshot behavior. The prompt instructs a silent completeness check
+within the notes generation call and does not add a separate model request.
+
 ## Harvesting cases from downvoted meetings
 
 ```bash
