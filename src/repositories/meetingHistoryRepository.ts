@@ -1,4 +1,8 @@
-import { getDeploymentControlRepository } from "../db";
+import {
+  getDeploymentControlRepository,
+  getMeetingUpdateDeliveryRepository,
+} from "../db";
+import type { MeetingUpdateDeliveryRepository } from "./meetingUpdateDeliveryRepository";
 import { config } from "../services/configService";
 import {
   getMeetingHistory as getMeetingHistoryRecord,
@@ -26,7 +30,10 @@ import { getMockStore } from "./mockStore";
 
 import type { HistoryTransition } from "../types/deploymentControl";
 
-export type MeetingHistoryRepository = {
+export type MeetingHistoryRepository = Pick<
+  MeetingUpdateDeliveryRepository,
+  "getStrong" | "updateContentAndDelivery"
+> & {
   transitionOwned: (input: HistoryTransition) => Promise<"applied" | "stale">;
   getOwned: (
     key: HistoryTransition["key"],
@@ -126,6 +133,14 @@ const filterArchivedMeetings = (
 };
 
 const ownedOperations = {
+  getStrong: (
+    ...args: Parameters<MeetingUpdateDeliveryRepository["getStrong"]>
+  ) => getMeetingUpdateDeliveryRepository().getStrong(...args),
+  updateContentAndDelivery: (
+    ...args: Parameters<
+      MeetingUpdateDeliveryRepository["updateContentAndDelivery"]
+    >
+  ) => getMeetingUpdateDeliveryRepository().updateContentAndDelivery(...args),
   transitionOwned: (input: HistoryTransition) =>
     getDeploymentControlRepository().transitionMeetingHistory(input),
   getOwned: (key: HistoryTransition["key"]) =>

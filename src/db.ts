@@ -1,3 +1,8 @@
+import { readDynamoIndexStatus } from "./repositories/dynamoIndexStatus";
+import {
+  bindDeploymentControlRepository,
+  bindMeetingUpdateDeliveryRepository,
+} from "./repositories/deploymentRepositoryBindings";
 import {
   billingChangeControlKey,
   billingChangeOperationKey,
@@ -55,7 +60,6 @@ import {
   DeleteItemCommand,
   QueryCommand,
   ScanCommand,
-  DescribeTableCommand,
   UpdateItemCommand,
 } from "@aws-sdk/client-dynamodb";
 import { marshall, unmarshall } from "@aws-sdk/util-dynamodb";
@@ -99,8 +103,6 @@ import {
 import type { MeetingStatus } from "./types/meetingLifecycle";
 import { trimNotesForHistory } from "./utils/notesHistory";
 import {
-  createDynamoDeploymentControlRepository,
-  createMockDeploymentControlRepository,
   classifyDeploymentTransactionError,
   mockWorkAdmissionAllowed,
 } from "./repositories/deploymentControlRepository";
@@ -147,19 +149,16 @@ const dynamoDbClient = new DynamoDBClient(
 
 const tablePrefix = config.database.tablePrefix ?? "";
 const tableName = (name: string) => `${tablePrefix}${name}`;
-export async function getRenewalRecoveryIndexStatus(): Promise<
-  string | undefined
-> {
-  if (config.mock.enabled) return "ACTIVE";
-  const result = await dynamoDbClient.send(
-    new DescribeTableCommand({
-      TableName: tableName("GuildSubscriptionTable"),
-    }),
-  );
-  return result.Table?.GlobalSecondaryIndexes?.find(
-    (index) => index.IndexName === "RenewalRecoveryDueIndex",
-  )?.IndexStatus;
-}
+const indexStatus = (table: string, indexName: string) =>
+  readDynamoIndexStatus(dynamoDbClient, {
+    mock: config.mock.enabled,
+    tableName: tableName(table),
+    indexName,
+  });
+export const getMeetingUpdateDeliveryIndexStatus = () =>
+  indexStatus("MeetingHistoryTable", "UpdateDeliveryDueIndex");
+export const getRenewalRecoveryIndexStatus = () =>
+  indexStatus("GuildSubscriptionTable", "RenewalRecoveryDueIndex");
 export async function scanGuildSubscriptionPage(
   cursor?: string,
 ): Promise<{ guildIds: string[]; cursor?: string }> {
@@ -194,23 +193,20 @@ export async function scanGuildSubscriptionPage(
       : undefined,
   };
 }
+function controlTableNames() {
+  return {
+    deploymentControl: tableName("DeploymentControlTable"),
+    meetingHistory: tableName("MeetingHistoryTable"),
+    activeMeeting: tableName("ActiveMeetingTable"),
+  };
+}
 export function getDeploymentControlRepository() {
-  if (config.mock.enabled) {
-    const store = getMockStore();
-    return createMockDeploymentControlRepository(
-      store.deploymentControlRecords,
-      store.meetingHistoryByGuild,
-      store.activeMeetingLeases,
-    );
-  }
-  return createDynamoDeploymentControlRepository(
+  return bindDeploymentControlRepository(dynamoDbClient, controlTableNames());
+}
+export function getMeetingUpdateDeliveryRepository() {
+  return bindMeetingUpdateDeliveryRepository(
     dynamoDbClient,
-    {
-      deploymentControl: tableName("DeploymentControlTable"),
-      meetingHistory: tableName("MeetingHistoryTable"),
-      activeMeeting: tableName("ActiveMeetingTable"),
-    },
-    { localBootstrap: config.database.useLocalDynamoDB && !config.runtime.ecs },
+    controlTableNames(),
   );
 }
 

@@ -458,6 +458,11 @@ export interface OnboardingState {
 
 // Meeting History Type
 export interface MeetingHistory {
+  contentMutation?: { id: string; fingerprint: string };
+  contentRevision?: number;
+  updateDelivery?: import("./meetingUpdateDelivery").MeetingUpdateDelivery;
+  updateDeliveryQueue?: typeof import("./meetingUpdateDelivery").MEETING_UPDATE_DELIVERY_QUEUE;
+  updateDeliveryDueAt?: number;
   completionPolicy?: import("./meetingCompletionPolicy").CompletionPolicy;
   recoveryExport?: import("./recordingCheckpoint").RecoveryExport;
   recoveryTranscript?: {
