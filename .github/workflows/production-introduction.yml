@@ -1,0 +1,114 @@
+name: Production Introduction (source staged, execution unavailable)
+on:
+  workflow_dispatch:
+    inputs:
+      phase:
+        description: One reviewed phase only
+        type: choice
+        required: true
+        default: inspect
+        options: [inspect, fence, drain, activate, abort, reconcile, complete]
+      operation_id:
+        description: Reviewed operation UUID
+        type: string
+        required: true
+      manifest_sha256:
+        description: Reviewed private manifest SHA256
+        type: string
+        required: true
+permissions:
+  contents: read
+concurrency:
+  group: chronote-deploy-production
+  cancel-in-progress: false
+env:
+  INTRODUCTION_PHASE: ${{ inputs.phase }}
+  INTRODUCTION_OPERATION_ID: ${{ inputs.operation_id }}
+  INTRODUCTION_MANIFEST_SHA256: ${{ inputs.manifest_sha256 }}
+  AWS_MAX_ATTEMPTS: "1"
+jobs:
+  bind:
+    if: github.ref == 'refs/heads/master' && github.run_attempt == 1
+    runs-on: ubuntu-latest
+    environment: production
+    permissions:
+      contents: read
+      id-token: write
+    outputs:
+      sha256: ${{ steps.bind.outputs.sha256 }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24.15.0"
+          cache: yarn
+      - name: Install dependencies
+        run: bash scripts/ci-install-dependencies.sh
+      - name: Configure read-only production identity
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          aws-region: ${{ vars.AWS_REGION }}
+          role-to-assume: ${{ vars.PRODUCTION_BACKEND_DEPLOY_ROLE_ARN }}
+          allowed-account-ids: ${{ vars.AWS_ACCOUNT_ID }}
+          role-session-name: chronote-production-${{ github.run_id }}-1
+          unset-current-credentials: true
+          inline-session-policy: >-
+            {"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":["sts:GetCallerIdentity","dynamodb:GetItem","ecs:DescribeServices","ecs:ListTasks","ecs:DescribeTasks"],"Resource":"*"},{"Effect":"Allow","Action":"kms:Decrypt","Resource":"*","Condition":{"StringEquals":{"kms:ViaService":"dynamodb.${{ vars.AWS_REGION }}.amazonaws.com","kms:CallerAccount":"${{ vars.AWS_ACCOUNT_ID }}"}}}]}
+      - name: Inspect privately or bind completed proposal
+        id: bind
+        env:
+          EXPECTED_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
+          EXPECTED_ROLE_ARN: ${{ vars.PRODUCTION_BACKEND_DEPLOY_ROLE_ARN }}
+          PRODUCTION_INTRODUCTION_MANIFEST: ${{ secrets.PRODUCTION_INTRODUCTION_MANIFEST }}
+        run: |
+          set -euo pipefail
+          umask 077
+          if [ "$INTRODUCTION_PHASE" = "inspect" ]; then
+            node scripts/deployment/production-workflow.cjs inspect
+          else
+            node scripts/deployment/production-workflow.cjs bind
+          fi
+  execute:
+    needs: [bind]
+    if: inputs.phase != 'inspect' && github.ref == 'refs/heads/master' && github.run_attempt == 1
+    runs-on: ubuntu-latest
+    # An environment name or the preliminary bind approval is not post-bind authority.
+    # Source refuses execution until separately reviewed gate and private delivery acceptance.
+    environment: production
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24.15.0"
+          cache: yarn
+      - name: Install dependencies
+        run: bash scripts/ci-install-dependencies.sh
+      - name: Configure read-only validation identity
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          aws-region: ${{ vars.AWS_REGION }}
+          role-to-assume: ${{ vars.PRODUCTION_BACKEND_DEPLOY_ROLE_ARN }}
+          allowed-account-ids: ${{ vars.AWS_ACCOUNT_ID }}
+          role-session-name: chronote-production-${{ github.run_id }}-1
+          unset-current-credentials: true
+          inline-session-policy: >-
+            {"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":["sts:GetCallerIdentity","dynamodb:GetItem","ecs:DescribeServices","ecs:ListTasks","ecs:DescribeTasks"],"Resource":"*"},{"Effect":"Allow","Action":"kms:Decrypt","Resource":"*","Condition":{"StringEquals":{"kms:ViaService":"dynamodb.${{ vars.AWS_REGION }}.amazonaws.com","kms:CallerAccount":"${{ vars.AWS_ACCOUNT_ID }}"}}}]}
+      - name: Validate protected late delivery and refuse unavailable authority
+        env:
+          EXPECTED_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
+          EXPECTED_ROLE_ARN: ${{ vars.PRODUCTION_BACKEND_DEPLOY_ROLE_ARN }}
+          PRODUCTION_INTRODUCTION_MANIFEST: ${{ secrets.PRODUCTION_INTRODUCTION_MANIFEST }}
+          PRODUCTION_PHASE_ENVELOPE: ${{ secrets.PRODUCTION_PHASE_ENVELOPE }}
+          PRODUCTION_PHASE_EXPECTED_SHA256: ${{ secrets.PRODUCTION_PHASE_EXPECTED_SHA256 }}
+          BIND_SHA256: ${{ needs.bind.outputs.sha256 }}
+        run: |
+          set -euo pipefail
+          umask 077
+          node scripts/deployment/production-workflow.cjs execute

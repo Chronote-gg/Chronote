@@ -24,6 +24,10 @@ jobs:
 
   deploybackend:
     name: Deploy Backend
+    timeout-minutes: 180
+    permissions:
+      contents: read
+      id-token: write
     # Publish privacy/What's New notices before expanded capture goes live.
     needs: [ci, deploy-docs]
     runs-on: ubuntu-latest
@@ -42,12 +46,31 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
 
+      - name: Setup coordinator Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: "24.15.0"
+          cache: "yarn"
+          cache-dependency-path: "yarn.lock"
+
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v6
         with:
-          aws-access-key-id: ${{ vars.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          role-to-assume: ${{ vars.PRODUCTION_BACKEND_DEPLOY_ROLE_ARN }}
+          allowed-account-ids: ${{ vars.AWS_ACCOUNT_ID }}
+          role-session-name: chronote-production-${{ github.run_id }}-${{ github.run_attempt }}
+          role-duration-seconds: 10800
+          unset-current-credentials: true
           aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Verify exact production role session
+        env:
+          EXPECTED_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
+          EXPECTED_ROLE_ARN: ${{ vars.PRODUCTION_BACKEND_DEPLOY_ROLE_ARN }}
+          EXPECTED_SESSION_NAME: chronote-production-${{ github.run_id }}-${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+          aws sts get-caller-identity --output json 2>/dev/null | node scripts/deployment/assert-production-identity.cjs
 
       - name: Preflight Secrets Manager values
         env:
@@ -130,13 +153,6 @@ jobs:
           docker push "$IMAGE"
           echo "image=$IMAGE" >> $GITHUB_OUTPUT
 
-      - name: Setup coordinator Node.js
-        uses: actions/setup-node@v7
-        with:
-          node-version: "24.15.0"
-          cache: "yarn"
-          cache-dependency-path: "yarn.lock"
-
       - name: Install coordinator dependencies
         run: bash scripts/ci-install-dependencies.sh
 
@@ -196,7 +212,7 @@ jobs:
 
   deploy-frontend:
     name: Deploy Frontend
-    needs: [ci, deploy-docs]
+    needs: [ci, deploy-docs, deploybackend]
     runs-on: ubuntu-latest
     environment: production
     env:

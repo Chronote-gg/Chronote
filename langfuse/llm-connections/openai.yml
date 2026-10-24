@@ -12,3 +12,5 @@ customModels:
   - gpt-4o-transcribe-diarize
 extraHeadersEnv:
   OpenAI-Project: OPENAI_PROJECT_ID
+config:
+  useResponsesApi: false

@@ -141,12 +141,14 @@ flowchart LR
   B --> D["Prompts, LLM, Storybook, Docker (advisory)"]
   C --> Z["CI complete"]
   D --> Z
-  Z --> L["deploy backend"]
-  Z --> J["deploy frontend"]
-  Z --> K["deploy docs"]
+  Z --> K["deploy-docs: publish docs"]
+  K --> L["deploybackend: prepare, promote, retire"]
+  L --> J["deploy-frontend: publish frontend"]
 ```
 
-Staging deploy is similar but skips Checkov and allows unit test failures to continue. Prompt and LLM connection checks still run.
+Production backend deployment waits for CI and docs publication. Frontend publication waits for backend success; docs publication can finish even if the backend later fails. Normal backend deployments protect the serving runtime, warm and promote a compatible candidate, then wait for runtime-owned retirement. See [recording handoff and recovery](docs/deployment-handoff.md). The separate [first production introduction](docs/production-introduction.md) is source-staged and remains operationally blocked.
+
+Sandbox deployment uses its own preflight, skips Checkov and allows unit test failures to continue. Its frontend, docs and backend jobs depend on that preflight, without the production backend-before-frontend dependency. Prompt and LLM connection checks still run. Sandbox bootstrap and approval rules remain separate.
 
 Coverage update rule:
 
