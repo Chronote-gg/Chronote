@@ -55,7 +55,7 @@
   - Terms are injected into transcription and context prompts, definitions are used outside transcription to reduce prompt bloat.
 - Notes correction flow: `commands/notesCorrections.ts`
   - “Suggest correction” button → modal (single textarea).
-  - Fetches saved notes + transcript from DB, uses the notes-correction model with a “minimal edits, do not copy transcript” prompt, shows a compact line diff, requires approval (meeting creator or ManageChannels if auto-record), updates embed + MeetingHistory and bumps version/last editor.
+  - Fetches saved notes + transcript from DB, uses the notes-correction model with a “minimal edits, do not copy transcript” prompt, shows a compact line diff, requires approval (meeting creator or ManageChannels if auto-record), saves canonical MeetingHistory plus durable update intent through the shared action and bumps version/last editor. The worker verifies later Discord delivery separately, preserving existing approval and Notion rules.
   - Web UI uses `meetings.suggestNotesCorrection` and `meetings.applyNotesCorrection` to generate a diff and apply changes, mirroring the Discord flow.
 - Context management: `commands/context.ts` writes/reads ServerContext and ChannelContext.
 - Meeting history persistence: `commands/saveMeetingHistory.ts`, `db.ts` helpers.

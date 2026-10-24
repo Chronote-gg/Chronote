@@ -1,4 +1,5 @@
 /** @jest-environment node */
+import { registerMeetingUpdateDeliveryDetailTests } from "./meetingUpdateDeliveryDetail.tests";
 jest.mock("../../src/services/meetingUpdateService", () => ({
   updateMeeting: jest.fn(),
 }));
@@ -191,6 +192,10 @@ describe("meetings router detail", () => {
       transcriptAccessEnabled: true,
       audioAccessEnabled: true,
     });
+  });
+
+  registerMeetingUpdateDeliveryDetailTests((row) => {
+    mockedGetMeetingHistory.mockResolvedValue(row);
   });
 
   test("returns transcript, audio url, and summary feedback", async () => {
@@ -395,13 +400,7 @@ describe("meetings router detail", () => {
 
 describe("meetings notes correction mutations", () => {
   const mockedEnsureManageGuild = jest.mocked(ensureManageGuildWithUserToken);
-  const mockedEnsureUserInGuild = jest.mocked(
-    (
-      jest.requireMock("../../src/services/guildAccessService") as {
-        ensureUserInGuild: typeof import("../../src/services/guildAccessService").ensureUserInGuild;
-      }
-    ).ensureUserInGuild,
-  );
+  const mockedEnsureUserInGuild = jest.mocked(ensureUserInGuild);
   const mockedGetMeetingHistory = jest.mocked(getMeetingHistoryService);
   const mockedFetchJsonFromS3 = jest.mocked(fetchJsonFromS3);
   const mockedGenerateMeetingSummaries = jest.mocked(generateMeetingSummaries);

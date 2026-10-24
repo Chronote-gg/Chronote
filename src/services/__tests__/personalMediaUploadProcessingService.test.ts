@@ -89,78 +89,17 @@ const mockGenerateSummaries = jest.fn<() => Promise<MeetingSummaries>>(
 );
 
 jest.mock("fluent-ffmpeg", () => {
-  const fs = jest.requireActual<typeof import("node:fs")>("node:fs");
-  const path = jest.requireActual<typeof import("node:path")>("node:path");
-
-  const ffmpeg = jest.fn(() => {
-    const command = {
-      inputPath: "",
-      outputPath: "",
-      endHandler: undefined as undefined | (() => void),
-      noVideo() {
-        return this;
-      },
-      audioCodec() {
-        return this;
-      },
-      audioBitrate() {
-        return this;
-      },
-      audioChannels() {
-        return this;
-      },
-      audioFrequency() {
-        return this;
-      },
-      input(inputPath: string) {
-        this.inputPath = inputPath;
-        return this;
-      },
-      inputOptions() {
-        return this;
-      },
-      outputOptions() {
-        return this;
-      },
-      complexFilter() {
-        return this;
-      },
-      output(outputPath: string) {
-        this.outputPath = outputPath;
-        return this;
-      },
-      on(event: string, handler: () => void) {
-        if (event === "end") this.endHandler = handler;
-        return this;
-      },
-      kill: mockConversionKill,
-      run() {
-        if (this.inputPath.endsWith(".txt")) {
-          mockConcatLists.push(fs.readFileSync(this.inputPath, "utf8"));
-        }
-        if (this.outputPath) {
-          fs.mkdirSync(path.dirname(this.outputPath), { recursive: true });
-          fs.writeFileSync(this.outputPath, Buffer.from("audio"));
-        }
-        if (mockHoldConversion) mockConversionEnd = this.endHandler;
-        else this.endHandler?.();
-        return this;
-      },
-    };
-    return command;
+  const { createPersonalUploadFfmpegFake } = jest.requireActual<
+    typeof import("./personalMediaUploadFfmpeg.fixture")
+  >("./personalMediaUploadFfmpeg.fixture");
+  return createPersonalUploadFfmpegFake({
+    getConcatLists: () => mockConcatLists,
+    isHeld: () => mockHoldConversion,
+    captureEnd: (handler) => {
+      mockConversionEnd = handler;
+    },
+    getKill: () => mockConversionKill,
   });
-  Object.assign(ffmpeg, {
-    ffprobe: jest.fn(
-      (
-        _filePath: string,
-        callback: (
-          error: null,
-          metadata: { format: { duration: number } },
-        ) => void,
-      ) => callback(null, { format: { duration: 1 } }),
-    ),
-  });
-  return ffmpeg;
 });
 
 jest.mock("../meetingHistoryService", () => ({

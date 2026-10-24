@@ -4,6 +4,8 @@ A Discord bot that records voice meetings, transcribes them with OpenAI, generat
 
 [Add the bot to your server](https://discord.com/oauth2/authorize?client_id=1278729036528619633)
 
+Supported meeting edits, imports, approved corrections and renames save the meeting record before updating existing Discord posts. The portal shows separate save and delivery status. See [delivery behavior](docs/discord-delivery-outcomes.md#later-intentional-updates) for holds, retry limits and index-first rollout.
+
 ## Commands
 
 - `/startmeeting`: Begin recording the meeting (audio + chat logs). You can also right-click yourself, Chronote, or someone in your voice channel and choose **Apps** -> **Start meeting**.

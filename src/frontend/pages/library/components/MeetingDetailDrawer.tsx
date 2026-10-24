@@ -1,3 +1,4 @@
+import { MeetingUpdateDeliveryRow } from "./MeetingUpdateDeliveryRow";
 import { useEffect, useRef, useState } from "react";
 import { withMeetingCaptureNotice } from "../../../../utils/meetingCaptureNotice";
 import { useSearch } from "@tanstack/react-router";
@@ -22,8 +23,8 @@ import { notifications } from "@mantine/notifications";
 import {
   IconFilter,
   IconPencil,
-  IconSparkles,
   IconUsers,
+  IconSparkles,
 } from "@tabler/icons-react";
 import MeetingTimeline, {
   MEETING_TIMELINE_FILTERS,
@@ -41,18 +42,16 @@ import type { LiveMeetingStatus } from "../../../../types/liveMeeting";
 import { MeetingDetailStreamNotice } from "./MeetingDetailStreamNotice";
 import type { MeetingEventType } from "../../../../types/meetingTimeline";
 import { useMeetingDetail } from "../hooks/useMeetingDetail";
+import { useMeetingUpdateFeedback } from "../hooks/useMeetingUpdateFeedback";
+import { useMeetingNotesSaves } from "../hooks/useMeetingNotesSaves";
 import { resolveDetailErrorMessage } from "../../../utils/meetingLibrary";
 import MeetingDetailHeader from "./MeetingDetailHeader";
 import MeetingDetailModals from "./MeetingDetailModals";
 import MeetingAudioPanel from "./MeetingAudioPanel";
 import { MeetingSummaryPanel } from "./MeetingSummaryPanel";
 import MeetingTranscriptUnavailablePanel from "./MeetingTranscriptUnavailablePanel";
-import MeetingNotesEditorModal, {
-  type QuillDeltaPayload,
-} from "./MeetingNotesEditorModal";
-import MeetingNotesImportModal, {
-  type ImportNotesPayload,
-} from "./MeetingNotesImportModal";
+import MeetingNotesEditorModal from "./MeetingNotesEditorModal";
+import MeetingNotesImportModal from "./MeetingNotesImportModal";
 import MeetingFullScreenLayout from "./MeetingFullScreenLayout";
 import { downloadMeetingExport } from "./meetingExport";
 import {
@@ -61,6 +60,7 @@ import {
 } from "../../../features/meetingShares/MeetingShareModal";
 import PersonalMeetingShareModal from "../../../features/meetingShares/PersonalMeetingShareModal";
 import { buildMeetingShareUrl } from "../../../utils/meetingShareLinks";
+import { meetingUpdateSaveCopy } from "./MeetingUpdateDeliveryStatus";
 import DictionaryTeachingModal from "../../../features/settings/DictionaryTeachingModal";
 
 const resolveRenameDraft = (meeting: {
@@ -215,6 +215,19 @@ export default function MeetingDetailDrawer({
     null,
   );
 
+  const deliveryFeedback = useMeetingUpdateFeedback({
+    opened,
+    selectedGuildId,
+    selectedMeetingId,
+    invalidateMeetingLists,
+  });
+  const {
+    selectionKey,
+    acknowledgeSave,
+    isCurrentSelection,
+    refreshSavedMeeting,
+    resetDeliveryFeedback,
+  } = deliveryFeedback;
   const {
     detail,
     meeting,
@@ -227,6 +240,8 @@ export default function MeetingDetailDrawer({
     displayEvents,
     timelineEmptyLabel,
   } = useMeetingDetail({
+    opened,
+    acknowledgedDelivery: deliveryFeedback.acknowledgedDelivery,
     selectedGuildId,
     selectedMeetingId,
     channelNameMap,
@@ -240,8 +255,19 @@ export default function MeetingDetailDrawer({
     trpc.meetings.suggestNotesCorrection.useMutation();
   const applyNotesCorrectionMutation =
     trpc.meetings.applyNotesCorrection.useMutation();
-  const updateNotesMutation = trpc.meetings.updateNotes.useMutation();
-  const importNotesMutation = trpc.meetings.importNotes.useMutation();
+  const {
+    updateNotesMutation,
+    importNotesMutation,
+    handleNotesEditorSave,
+    handleNotesImport,
+  } = useMeetingNotesSaves({
+    selectedGuildId,
+    selectedMeetingId,
+    detail,
+    feedback: deliveryFeedback,
+    onEditorSaved: () => setNotesEditorModalOpen(false),
+    onImported: () => setNotesImportModalOpen(false),
+  });
 
   const shareStateQuery = trpc.meetingShares.getShareState.useQuery(
     {
@@ -355,6 +381,7 @@ export default function MeetingDetailDrawer({
     }
     if (initializedMeetingIdRef.current === meeting.id) return;
     initializedMeetingIdRef.current = meeting.id;
+    resetDeliveryFeedback();
     setRenameDraft(resolveRenameDraft(meeting));
     setRenameError(null);
     setSummaryFeedback(meeting.summaryFeedback ?? null);
@@ -439,12 +466,14 @@ export default function MeetingDetailDrawer({
 
   const handleNotesCorrectionApply = async () => {
     if (!selectedGuildId || !selectedMeetingId || !notesCorrectionToken) return;
+    const savedSelectionKey = selectionKey;
     try {
       const result = await applyNotesCorrectionMutation.mutateAsync({
         serverId: selectedGuildId,
         meetingId: selectedMeetingId,
         token: notesCorrectionToken,
       });
+      if (!acknowledgeSave(result.delivery, savedSelectionKey)) return;
       closeNotesCorrectionModal();
       const contextExpiresAtMs = result.dictionaryTeachingContextExpiresAtMs;
       if (
@@ -459,7 +488,7 @@ export default function MeetingDetailDrawer({
         setDictionaryTeachingInstruction(result.dictionaryTeachingInstruction);
         notifications.show({
           id: "notes-correction-teaching-offer",
-          title: "Notes updated",
+          title: meetingUpdateSaveCopy(result.delivery),
           autoClose: Math.max(1, contextExpiresAtMs - Date.now()),
           message: (
             <Stack gap="xs">
@@ -484,14 +513,11 @@ export default function MeetingDetailDrawer({
           ),
         });
       } else {
-        notifications.show({ message: "Notes updated." });
+        notifications.show({ message: meetingUpdateSaveCopy(result.delivery) });
       }
-      await Promise.all([
-        trpcUtils.meetings.detail.invalidate(),
-        trpcUtils.notion.exportStatus.invalidate(),
-        invalidateMeetingLists(),
-      ]);
+      await refreshSavedMeeting();
     } catch (error) {
+      if (!isCurrentSelection(savedSelectionKey)) return;
       console.error("Failed applying notes correction", error);
       notifications.show({
         color: "red",
@@ -516,83 +542,6 @@ export default function MeetingDetailDrawer({
     setNotesImportModalOpen(false);
   };
 
-  const handleNotesEditorSave = async (delta: QuillDeltaPayload) => {
-    if (!selectedGuildId || !selectedMeetingId) return;
-    const expectedPreviousVersion = detail?.notesVersion;
-    if (expectedPreviousVersion == null) {
-      notifications.show({
-        color: "red",
-        message: "Unable to save notes right now. Refresh and try again.",
-      });
-      return;
-    }
-    try {
-      await updateNotesMutation.mutateAsync({
-        serverId: selectedGuildId,
-        meetingId: selectedMeetingId,
-        delta,
-        expectedPreviousVersion,
-      });
-      notifications.show({ message: "Notes saved." });
-      closeNotesEditorModal();
-      await Promise.all([
-        trpcUtils.meetings.detail.invalidate(),
-        trpcUtils.notion.exportStatus.invalidate(),
-        invalidateMeetingLists(),
-      ]);
-    } catch (error) {
-      console.error("Failed saving notes", error);
-      const message =
-        error instanceof Error && error.message
-          ? error.message
-          : "Unable to save notes right now.";
-      notifications.show({
-        color: "red",
-        message,
-      });
-    }
-  };
-
-  const handleNotesImport = async (payload: ImportNotesPayload) => {
-    if (!selectedGuildId || !selectedMeetingId) return;
-    const expectedPreviousVersion = detail?.notesVersion;
-    if (expectedPreviousVersion == null) {
-      notifications.show({
-        color: "red",
-        message: "Unable to import notes right now. Refresh and try again.",
-      });
-      return;
-    }
-    try {
-      await importNotesMutation.mutateAsync({
-        serverId: selectedGuildId,
-        meetingId: selectedMeetingId,
-        notes: payload.notes,
-        mode: payload.mode,
-        sourceName: payload.sourceName,
-        sourceUrl: payload.sourceUrl,
-        expectedPreviousVersion,
-      });
-      notifications.show({ message: "Notes imported." });
-      closeNotesImportModal();
-      await Promise.all([
-        trpcUtils.meetings.detail.invalidate(),
-        trpcUtils.notion.exportStatus.invalidate(),
-        invalidateMeetingLists(),
-      ]);
-    } catch (error) {
-      console.error("Failed importing notes", error);
-      const message =
-        error instanceof Error && error.message
-          ? error.message
-          : "Unable to import notes right now.";
-      notifications.show({
-        color: "red",
-        message,
-      });
-    }
-  };
-
   useEffect(() => {
     if (!selectedMeetingId) {
       setFullScreen(false);
@@ -602,6 +551,7 @@ export default function MeetingDetailDrawer({
   }, [selectedMeetingId, fullScreenFromSearch]);
 
   const resetDrawerState = () => {
+    resetDeliveryFeedback();
     setFullScreen(false);
     setEndMeetingModalOpen(false);
     setArchiveModalOpen(false);
@@ -727,23 +677,23 @@ export default function MeetingDetailDrawer({
       return;
     }
     setRenameError(null);
+    const savedSelectionKey = selectionKey;
     try {
       const result = await renameMutation.mutateAsync({
         serverId: selectedGuildId,
         meetingId: meeting.id,
         meetingName: trimmed,
       });
+      if (!acknowledgeSave(result.delivery, savedSelectionKey)) return;
       notifications.show({
         color: "green",
-        message: `Meeting renamed to ${result.meetingName}.`,
+        message: meetingUpdateSaveCopy(result.delivery),
       });
       setRenameModalOpen(false);
       setRenameDraft(result.meetingName);
-      await Promise.all([
-        invalidateMeetingLists(),
-        trpcUtils.meetings.detail.invalidate(),
-      ]);
+      await refreshSavedMeeting();
     } catch {
+      if (!isCurrentSelection(savedSelectionKey)) return;
       setRenameError(
         renameMutation.error?.message ?? "Unable to rename meeting.",
       );
@@ -1168,6 +1118,10 @@ export default function MeetingDetailDrawer({
             </Center>
           ) : meeting ? (
             <>
+              <MeetingUpdateDeliveryRow
+                meeting={meeting}
+                resolveDelivery={deliveryFeedback.resolveDelivery}
+              />
               <MeetingDetailModals
                 notesCorrectionModalOpen={notesCorrectionModalOpen}
                 notesCorrectionDraft={notesCorrectionDraft}
