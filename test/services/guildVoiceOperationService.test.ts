@@ -81,6 +81,26 @@ async function flush() {
 }
 afterEach(() => {
   jest.useRealTimers();
+  jest.restoreAllMocks();
+});
+
+test("logs only aggregate DAVE readiness summaries from the owned connection", async () => {
+  const f = fixture();
+  const log = jest.spyOn(console, "info").mockImplementation(() => {});
+  const connection = await f.joinOwnedVoiceSession(f.reservation, f.options);
+  const summary = [
+    {
+      reason: "initial",
+      outcome: "ready",
+      ageBucket: "under-100ms",
+      count: 2,
+    },
+  ];
+  connection.emit("daveResetSummary", summary);
+  expect(log.mock.calls).toEqual([
+    ["DAVE reset readiness summary:", JSON.stringify(summary)],
+  ]);
+  connection.destroy(false);
 });
 
 test("settles only after known matching gateway leave and closes the actual SDK connection", async () => {
