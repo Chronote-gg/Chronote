@@ -27,14 +27,17 @@ test("private capture uses conditional one-attempt creation and exact version or
     f.calls.every((c) => c.input.ExpectedBucketOwner === f.binding.accountId),
   ).toBe(true);
 });
-test("private capture readiness accepts native S3 metadata blocking SSE-C", async () => {
+test.each([
+  ["native SSE-C block", { EncryptionType: ["SSE-C"] }],
+  ["undefined optional block", undefined],
+])("private capture readiness accepts %s", async (_, blockedEncryptionTypes) => {
   const f = fixture(),
     send = f.client.send;
   f.client.send = async (command) => {
     const result = await send(command);
     if (command.constructor.name === "GetBucketEncryptionCommand")
       result.ServerSideEncryptionConfiguration.Rules[0].BlockedEncryptionTypes =
-        { EncryptionType: ["SSE-C"] };
+        blockedEncryptionTypes;
     return result;
   };
   const store = createPrivateCapture(f.options);
