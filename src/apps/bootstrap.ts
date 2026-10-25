@@ -26,6 +26,7 @@ import { createRuntimeShutdown } from "../services/runtimeShutdownService";
 import { whenRuntimeServing } from "../services/runtimeLifecycleService";
 import {
   startMeetingUpdateDeliveryWorker,
+  prepareMeetingUpdateDeliveryWorker,
   verifyMeetingUpdateDeliveryReadiness,
 } from "../services/meetingUpdateDeliveryWorkerService";
 
@@ -62,6 +63,7 @@ export function bootstrapApp(mode: AppBootstrapMode): Promise<void> {
       await cleanupTempBaseDir();
       owner.startupSignal.throwIfAborted();
       await verifyMeetingUpdateDeliveryReadiness();
+      await prepareMeetingUpdateDeliveryWorker();
       owner.startupSignal.throwIfAborted();
       if (mode !== "api" && !config.mock.enabled) await setupBot();
       owner.startupSignal.throwIfAborted();

@@ -1,6 +1,7 @@
 /** @jest-environment node */
 import {
   verifyMeetingUpdateDeliveryReadiness,
+  prepareMeetingUpdateDeliveryWorker,
   startMeetingUpdateDeliveryWorker,
 } from "../../src/services/meetingUpdateDeliveryWorkerService";
 import { stripeTransport } from "../fixtures/stripeTransport";
@@ -11,6 +12,7 @@ import {
 } from "../../src/services/renewalRecoveryWorkerService";
 jest.mock("../../src/services/meetingUpdateDeliveryWorkerService", () => ({
   startMeetingUpdateDeliveryWorker: jest.fn(),
+  prepareMeetingUpdateDeliveryWorker: jest.fn(async () => {}),
   verifyMeetingUpdateDeliveryReadiness: jest.fn(async () => {}),
 }));
 jest.mock("../../src/services/runtimeLifecycleService", () => ({
@@ -317,3 +319,18 @@ function readyHealth() {
     close: jest.fn(async () => {}),
   };
 }
+
+test("delivery preparation failure cannot publish a ready runtime", async () => {
+  const ready = jest.fn();
+  const failed = jest.fn();
+  jest.mocked(initializeRuntimeLifecycle).mockResolvedValue({ ready, failed });
+  jest
+    .mocked(prepareMeetingUpdateDeliveryWorker)
+    .mockRejectedValueOnce(new Error("delivery repository unavailable"));
+  await expect(bootstrapApp("api")).rejects.toThrow(
+    "delivery repository unavailable",
+  );
+  expect(ready).not.toHaveBeenCalled();
+  expect(startMeetingUpdateDeliveryWorker).not.toHaveBeenCalled();
+  expect(failed).toHaveBeenCalledTimes(1);
+});

@@ -1315,7 +1315,8 @@ export default function MeetingDetailDrawer({
                 ) : (
                   <Stack
                     gap="md"
-                    style={{ flex: 1, minHeight: 0, overflow: "hidden" }}
+                    style={{ flex: 1, minHeight: 0, overflowY: "auto" }}
+                    data-testid="meeting-detail-compact-scroll"
                   >
                     {audioSection}
                     {summarySection}

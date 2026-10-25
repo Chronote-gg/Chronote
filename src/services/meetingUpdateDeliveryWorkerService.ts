@@ -225,8 +225,9 @@ export async function verifyMeetingUpdateDeliveryReadiness(
       "Meeting update delivery requires an ACTIVE UpdateDeliveryDueIndex",
     );
 }
-export function startMeetingUpdateDeliveryWorker(): void {
-  if (sealed || starting || worker) return;
+export async function prepareMeetingUpdateDeliveryWorker(): Promise<void> {
+  if (sealed || worker) return;
+  if (starting) return starting;
   starting = Promise.all([
     import("../db"),
     import("./meetingUpdateDeliveryService"),
@@ -240,11 +241,17 @@ export function startMeetingUpdateDeliveryWorker(): void {
         reconcile: service.reconcileMeetingUpdate,
         now: () => Date.now() / 1000,
       });
-      worker.start();
     })
     .finally(() => {
       starting = undefined;
     });
+  return starting;
+}
+export function startMeetingUpdateDeliveryWorker(): void {
+  if (sealed) return;
+  if (!worker)
+    throw new Error("Meeting update delivery worker is not prepared");
+  worker.start();
 }
 export async function stopMeetingUpdateDeliveryWorker(): Promise<void> {
   sealed = true;
