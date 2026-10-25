@@ -1,3 +1,7 @@
+import {
+  canonicalWriterAllowsEdit,
+  canonicalWriterSchema,
+} from "../types/meetingCanonicalWriter";
 import { repairPublicationOwnerSchema } from "../types/meetingPublication";
 import { matchesPublicationSnapshot } from "../types/meetingPublication";
 import {
@@ -57,6 +61,11 @@ export function parseMeetingUpdateHistory(
 ): MeetingHistory {
   rowBoundary.parse(raw);
   validateCanonicalFieldRevisions(raw);
+  if (raw.canonicalWriter !== undefined)
+    raw = {
+      ...raw,
+      canonicalWriter: canonicalWriterSchema.parse(raw.canonicalWriter),
+    };
   if (raw.publicationRepair !== undefined)
     raw = {
       ...raw,
@@ -122,6 +131,7 @@ export function canCompareContentWrite(
 ): row is MeetingHistory {
   return Boolean(
     row &&
+    canonicalWriterAllowsEdit(row) &&
     contentMatches(row, input) &&
     (!input.expectedPublication ||
       matchesPublicationSnapshot(row, input.expectedPublication)) &&

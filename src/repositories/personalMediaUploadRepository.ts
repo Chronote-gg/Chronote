@@ -1,3 +1,7 @@
+import {
+  personalCanonicalWriter,
+  personalClaimMatches,
+} from "../types/meetingCanonicalWriter";
 import type { PersonalHistoryWriteResult } from "../types/personalHistoryWrite";
 import { config } from "../services/configService";
 import {
@@ -98,14 +102,7 @@ const realRepository: PersonalMediaUploadRepository = {
 
 function mockClaimOwned(claim: PersonalMediaClaim): boolean {
   const job = getMockStore().personalMediaUploadsById.get(claim.uploadId);
-  return Boolean(
-    job &&
-    job.status === "processing" &&
-    job.processingOwnerInstanceId === claim.instanceId &&
-    job.processingClaimId === claim.claimId &&
-    job.attempts === claim.attempt &&
-    (job.claimExpiresAt ?? 0) >= claim.nowEpochSeconds,
-  );
+  return personalClaimMatches(job, claim);
 }
 const mockRepository: PersonalMediaUploadRepository = {
   async submit(job) {
@@ -125,6 +122,7 @@ const mockRepository: PersonalMediaUploadRepository = {
   },
   async writeHistory(history, claim, terminalJob) {
     if (!mockClaimOwned(claim)) return { kind: "stale" };
+    history = { ...history, canonicalWriter: personalCanonicalWriter(claim) };
     const histories =
       getMockStore().meetingHistoryByGuild.get(history.guildId) ?? [];
     const index = histories.findIndex(

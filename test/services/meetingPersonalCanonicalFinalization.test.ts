@@ -1,4 +1,5 @@
 /** @jest-environment node */
+import { createMockCanonicalUpdateService } from "./meetingCanonicalPeers.fixture";
 jest.mock("../../src/services/notionAutomationService", () => ({
   maybeAutoSyncMeetingNotes: jest.fn(async () => {}),
 }));
@@ -7,8 +8,6 @@ jest.mock("../../src/services/meetingUpdateDeliveryWorkerService", () => ({
 }));
 import { getMockStore, resetMockStore } from "../../src/repositories/mockStore";
 import { getPersonalMediaUploadRepository } from "../../src/repositories/personalMediaUploadRepository";
-import { createMockMeetingUpdateDeliveryRepository } from "../../src/repositories/mockMeetingUpdateDeliveryRepository";
-import { createMeetingUpdateService } from "../../src/services/meetingUpdateService";
 import type {
   MeetingHistory,
   PersonalMediaUploadJobRecord,
@@ -93,18 +92,23 @@ test.each([
     const store = getMockStore();
     store.meetingHistoryByGuild.set(row.guildId, [row]);
     store.personalMediaUploadsById.set(job.uploadId, job);
+    const initialized = await getPersonalMediaUploadRepository().writeHistory(
+      row,
+      claim,
+    );
+    if (initialized.kind !== "committed")
+      throw new Error("Feature personal execution was not acquired");
+    expect(initialized.history.canonicalWriter).toMatchObject({
+      kind: "personal",
+      claimId: claim.claimId,
+    });
+    Object.assign(row, initialized.history);
+    store.meetingHistoryByGuild.set(row.guildId, [row]);
     const key = {
       guildId: row.guildId,
       channelId_timestamp: row.channelId_timestamp,
     };
-    const action = createMeetingUpdateService({
-      repository: createMockMeetingUpdateDeliveryRepository(
-        store.meetingHistoryByGuild,
-        () => true,
-      ),
-      ready: async () => {},
-      syncNotes: jest.fn(async () => {}),
-    });
+    const action = createMockCanonicalUpdateService(store);
     if (sequence === "untracked") {
       row.contentRevision = 1;
       row.contentMutation = { id: "legacy-edit", fingerprint: "a".repeat(64) };

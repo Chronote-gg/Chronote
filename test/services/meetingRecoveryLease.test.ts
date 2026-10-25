@@ -50,6 +50,13 @@ test("twoRecoverersProduceOneAttempt and oldFinalizerCannotOverwriteRecovery", a
     ),
   );
   expect(results.filter((row) => row !== undefined)).toHaveLength(1);
+  expect(
+    results.find((row) => row !== undefined)?.history.canonicalWriter,
+  ).toEqual({
+    kind: "recording",
+    ownerInstanceId: context.instanceId,
+    executionVersion: 2,
+  });
   expect(f.leases.get("guild")).toMatchObject({
     sessionMode: "recovery",
     executionVersion: 2,
@@ -260,7 +267,9 @@ test.each(["absent", "malformed"] as const)(
       region: "us-east-1",
       credentials: { accessKeyId: "fixture", secretAccessKey: "fixture" },
     });
-    const send = jest.spyOn(client, "send").mockResolvedValue({});
+    const send = jest
+      .spyOn(client, "send")
+      .mockImplementation(async () => ({ $metadata: {} }));
     const repository = createDynamoRecoveryRepository(client, {
       deploymentControl: "control",
       meetingHistory: "history",

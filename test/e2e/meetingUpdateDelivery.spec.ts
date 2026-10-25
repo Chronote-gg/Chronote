@@ -7,7 +7,7 @@ for (const width of [1280, 390]) {
   test(`one saved import stays visible while Discord updates at ${width}px`, async ({
     page,
     libraryPage,
-  }) => {
+  }, testInfo) => {
     await page.setViewportSize({ width, height: width === 390 ? 844 : 720 });
     const row = {
       id: "synthetic#2026-01-01",
@@ -139,13 +139,13 @@ for (const width of [1280, 390]) {
       editor.getByRole("button", { name: "Cancel", exact: true }),
     ).toBeInViewport();
     await page.screenshot({
-      path: `/vercel/chronote-review/task7-editor-${width}.png`,
+      path: testInfo.outputPath(`editor-${width}.png`),
     });
     await editor.getByRole("button", { name: "Cancel", exact: true }).click();
     await expect(editor).toBeHidden();
     expect(saves).toBe(1);
     await page.screenshot({
-      path: `/vercel/chronote-review/task7-drawer-${width}.png`,
+      path: testInfo.outputPath(`drawer-${width}.png`),
     });
   });
 }

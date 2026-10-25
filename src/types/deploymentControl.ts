@@ -214,6 +214,7 @@ export const runtimeRecordSchema = z
     ]),
     authorizedGeneration: generation,
     heartbeatAt: epochSecond,
+    canonicalContentWriter: z.literal(1).optional(),
     readiness: runtimeReadinessSchema,
     protection: protectionConfirmationSchema,
     workCounts: z
@@ -380,6 +381,7 @@ export type ControlTableNames = {
   deploymentControl: string;
   meetingHistory: string;
   activeMeeting?: string;
+  personalMediaUpload?: string;
 };
 export type SessionReservationInput = {
   context: AdmissionContext;

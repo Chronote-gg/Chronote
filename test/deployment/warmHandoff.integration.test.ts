@@ -767,9 +767,12 @@ test.each([
   async (sequence) => {
     const uploadId = randomUUID(),
       stamp = new Date().toISOString();
+    await seedControl();
+    const owner = await startRuntime("canonical-personal-" + uploadId);
+    expect(await promote(owner)).toBe("applied");
     const claim = {
       uploadId,
-      instanceId: "synthetic-personal-owner",
+      instanceId: owner.identity.instanceId,
       attempt: 1,
       claimId: randomUUID(),
       nowEpochSeconds: now(),

@@ -1,4 +1,9 @@
 import {
+  canonicalPersonalClaim,
+  canonicalWriterRequiresAdmission,
+} from "../types/meetingCanonicalWriter";
+import { readCanonicalWriterChecks } from "./meetingCanonicalWriterAdmission";
+import {
   publicationMutationExcluded,
   publicationSnapshot,
   publicationSnapshotCondition,
@@ -13,11 +18,13 @@ import {
   TransactWriteItemsCommand,
   UpdateItemCommand,
   type UpdateItemCommandInput,
+  type TransactWriteItem,
 } from "@aws-sdk/client-dynamodb";
 import { marshall, unmarshall } from "@aws-sdk/util-dynamodb";
 import { z } from "zod";
 import type {
   MeetingHistory,
+  PersonalMediaClaim,
   NotesEditSource,
   SuggestionHistoryEntry,
 } from "../types/db";
@@ -44,7 +51,10 @@ import {
   type MeetingUpdateDeliveryTransition,
   type NotesPointers,
 } from "../types/meetingUpdateDelivery";
-import { buildWorkAdmissionChecks } from "../services/deploymentControlTransactions";
+import {
+  buildPersonalClaimCheck,
+  buildWorkAdmissionChecks,
+} from "../services/deploymentControlTransactions";
 import { classifyDeploymentTransactionError } from "./deploymentControlRepository";
 import {
   applyDeliveryChange,
@@ -307,6 +317,8 @@ const changedFields = [
   "notesMessageIds",
 ] as const;
 type WriteOptions = {
+  canonicalChecks?: TransactWriteItem[];
+  personalClaim?: PersonalMediaClaim;
   authority?: WorkAdmissionAuthority;
   registerPointers?: boolean;
 };
@@ -494,13 +506,25 @@ export function createDynamoMeetingUpdateDeliveryRepository(
       options.registerPointers ?? false,
     );
     const authority = options.authority;
-    if (authority) {
+    const personalClaim = options.personalClaim;
+    if (personalClaim && !tables.personalMediaUpload)
+      throw new Error("Personal canonical edits require the upload job table");
+    if (authority || personalClaim || options.canonicalChecks?.length) {
       const { ReturnValues, ...transactionUpdate } = update;
       void ReturnValues;
       await client.send(
         new TransactWriteItemsCommand({
           TransactItems: [
-            ...buildWorkAdmissionChecks(authority, tables),
+            ...(options.canonicalChecks ?? []),
+            ...(authority ? buildWorkAdmissionChecks(authority, tables) : []),
+            ...(personalClaim && tables.personalMediaUpload
+              ? [
+                  buildPersonalClaimCheck(
+                    personalClaim,
+                    tables.personalMediaUpload,
+                  ),
+                ]
+              : []),
             { Update: transactionUpdate },
           ],
         }),
@@ -550,9 +574,25 @@ export function createDynamoMeetingUpdateDeliveryRepository(
       if (isExactContentMutation(row, input))
         return { kind: "committed", history: row };
       if (!canCompareContentWrite(row, input)) return { kind: "conflict" };
+      const personalClaim = canonicalPersonalClaim(
+        row,
+        Math.floor(Date.now() / 1000),
+      );
+      const canonicalChecks = canonicalWriterRequiresAdmission(row)
+        ? await readCanonicalWriterChecks(
+            client,
+            tables.deploymentControl,
+            personalClaim ? 2 : 1,
+            signal,
+          )
+        : [];
+      if (!canonicalChecks) return { kind: "conflict" };
       const next = prepareContentWrite(row, input);
       try {
-        const saved = await persist(row, next, signal);
+        const saved = await persist(row, next, signal, {
+          personalClaim,
+          canonicalChecks,
+        });
         return { kind: "committed", history: saved };
       } catch (error) {
         const kind = classifyDeploymentTransactionError(error);

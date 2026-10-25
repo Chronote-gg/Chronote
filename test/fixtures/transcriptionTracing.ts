@@ -366,6 +366,7 @@ export async function buildTracingFixture(options: FixtureOptions = {}) {
   const preparePrompt = jest.fn(async () => ({
     prompt: "  Project Orion delivery terminology.  ",
     langfusePrompt: undefined,
+    source: "fallback" as const,
   }));
   const input: TranscriptionContentInput = {
     meetingId: "tracing-meeting",

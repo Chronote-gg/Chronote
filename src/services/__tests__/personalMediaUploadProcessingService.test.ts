@@ -90,8 +90,8 @@ const mockGenerateSummaries = jest.fn<() => Promise<MeetingSummaries>>(
 
 jest.mock("fluent-ffmpeg", () => {
   const { createPersonalUploadFfmpegFake } = jest.requireActual<
-    typeof import("./personalMediaUploadFfmpeg.fixture")
-  >("./personalMediaUploadFfmpeg.fixture");
+    typeof import("../testFixtures/personalMediaUploadFfmpeg.fixture")
+  >("../testFixtures/personalMediaUploadFfmpeg.fixture");
   return createPersonalUploadFfmpegFake({
     getConcatLists: () => mockConcatLists,
     isHeld: () => mockHoldConversion,

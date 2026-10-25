@@ -1,6 +1,8 @@
+import "@testing-library/jest-dom";
+import type {} from "../../src/frontend/router";
 import { MantineProvider } from "@mantine/core";
 import React from "react";
-import { beforeEach, describe, expect, test } from "@jest/globals";
+import { beforeEach, describe, test } from "@jest/globals";
 import { fireEvent, screen, waitFor } from "@testing-library/react";
 import { renderWithMantine, resetFrontendMocks } from "./testUtils";
 import { guildState } from "./testUtils";
@@ -28,6 +30,60 @@ function expectFilteredLibrary(view: ReturnType<typeof renderWithMantine>) {
     </MantineProvider>,
   );
   expect(screen.queryByText("Your first meeting goes here.")).toBeNull();
+}
+
+async function renderSelectedMeeting() {
+  const meetingTimestamp = buildRecentTimestamp();
+  setMeetingsListQuery({
+    data: {
+      meetings: [
+        {
+          id: "row-1",
+          meetingId: "m1",
+          channelId: "c1",
+          channelName: "General",
+          timestamp: meetingTimestamp,
+          duration: 3600,
+          tags: ["alpha"],
+          notes: "Summary: Weekly sync",
+          summarySentence: "Weekly sync summary",
+          summaryLabel: "Highlights",
+          audioAvailable: false,
+          transcriptAvailable: true,
+        },
+      ],
+    },
+  });
+  setMeetingsDetailQuery({
+    data: {
+      meeting: {
+        id: "row-1",
+        meetingId: "m1",
+        channelId: "c1",
+        timestamp: meetingTimestamp,
+        duration: 3600,
+        tags: ["alpha"],
+        notes: "Summary: Weekly sync",
+        summarySentence: null,
+        summaryLabel: null,
+        audioUrl: null,
+        attendees: [],
+        events: [],
+      },
+    },
+  });
+  renderWithMantine(
+    <>
+      <PortalServerLayout />
+      <Library />
+    </>,
+  );
+
+  fireEvent.click(screen.getByTestId("library-meeting-row"));
+
+  await waitFor(() => {
+    expect(screen.getByText(/Audio isn/i)).toBeInTheDocument();
+  });
 }
 
 describe("Library page", () => {
@@ -143,57 +199,7 @@ describe("Library page", () => {
   });
 
   test("renders meeting details for a selected row", async () => {
-    const meetingTimestamp = buildRecentTimestamp();
-    setMeetingsListQuery({
-      data: {
-        meetings: [
-          {
-            id: "row-1",
-            meetingId: "m1",
-            channelId: "c1",
-            channelName: "General",
-            timestamp: meetingTimestamp,
-            duration: 3600,
-            tags: ["alpha"],
-            notes: "Summary: Weekly sync",
-            summarySentence: "Weekly sync summary",
-            summaryLabel: "Highlights",
-            audioAvailable: false,
-            transcriptAvailable: true,
-          },
-        ],
-      },
-    });
-    setMeetingsDetailQuery({
-      data: {
-        meeting: {
-          id: "detail-1",
-          meetingId: "m1",
-          channelId: "c1",
-          timestamp: meetingTimestamp,
-          duration: 3600,
-          tags: ["alpha"],
-          notes: "Summary: Weekly sync",
-          summarySentence: null,
-          summaryLabel: null,
-          audioUrl: null,
-          attendees: [],
-          events: [],
-        },
-      },
-    });
-    renderWithMantine(
-      <>
-        <PortalServerLayout />
-        <Library />
-      </>,
-    );
-
-    fireEvent.click(screen.getByTestId("library-meeting-row"));
-
-    await waitFor(() => {
-      expect(screen.getByText(/Audio isn/i)).toBeInTheDocument();
-    });
+    await renderSelectedMeeting();
     expect(screen.getByText(/Full transcript/i)).toBeInTheDocument();
     expect(screen.getByText(/Was this summary helpful/i)).toBeInTheDocument();
     expect(screen.getByLabelText(/Mark summary helpful/i)).toBeInTheDocument();
@@ -203,57 +209,7 @@ describe("Library page", () => {
   });
 
   test("submits summary feedback from the meeting drawer", async () => {
-    const meetingTimestamp = buildRecentTimestamp();
-    setMeetingsListQuery({
-      data: {
-        meetings: [
-          {
-            id: "row-1",
-            meetingId: "m1",
-            channelId: "c1",
-            channelName: "General",
-            timestamp: meetingTimestamp,
-            duration: 3600,
-            tags: ["alpha"],
-            notes: "Summary: Weekly sync",
-            summarySentence: "Weekly sync summary",
-            summaryLabel: "Highlights",
-            audioAvailable: false,
-            transcriptAvailable: true,
-          },
-        ],
-      },
-    });
-    setMeetingsDetailQuery({
-      data: {
-        meeting: {
-          id: "detail-1",
-          meetingId: "m1",
-          channelId: "c1",
-          timestamp: meetingTimestamp,
-          duration: 3600,
-          tags: ["alpha"],
-          notes: "Summary: Weekly sync",
-          summarySentence: null,
-          summaryLabel: null,
-          audioUrl: null,
-          attendees: [],
-          events: [],
-        },
-      },
-    });
-    renderWithMantine(
-      <>
-        <PortalServerLayout />
-        <Library />
-      </>,
-    );
-
-    fireEvent.click(screen.getByTestId("library-meeting-row"));
-
-    await waitFor(() => {
-      expect(screen.getByText(/Audio isn/i)).toBeInTheDocument();
-    });
+    await renderSelectedMeeting();
 
     fireEvent.click(screen.getByLabelText(/Mark summary needs work/i));
 
@@ -269,7 +225,7 @@ describe("Library page", () => {
     await waitFor(() => {
       expect(feedbackSubmitSummaryMutation.mutateAsync).toHaveBeenCalledWith({
         serverId: "g1",
-        meetingId: "detail-1",
+        meetingId: "row-1",
         rating: "down",
         comment: "Add a few more decision details.",
       });

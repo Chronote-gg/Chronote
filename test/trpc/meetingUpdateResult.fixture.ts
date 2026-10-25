@@ -5,7 +5,16 @@ export const savedUpdate = (): Extract<
   { kind: "saved" }
 > => ({
   kind: "saved",
-  history: syntheticHistory(),
+  history: {
+    ...syntheticHistory(),
+    canonicalWriter: {
+      kind: "personal" as const,
+      uploadId: "private-canonical-upload",
+      instanceId: "private-canonical-owner",
+      attempt: 1,
+      claimId: "private-canonical-claim",
+    },
+  },
   delivery: {
     status: "pending",
     reason: null,
@@ -15,3 +24,15 @@ export const savedUpdate = (): Extract<
     lastSuccess: null,
   },
 });
+
+export function expectSavedUpdateAcknowledgment(result: unknown) {
+  expect(result).not.toHaveProperty("history");
+  expect(JSON.stringify(result)).not.toMatch(
+    /canonicalWriter|private-canonical-(owner|claim|upload)/,
+  );
+  expect(result).toMatchObject({
+    ok: true,
+    kind: "saved",
+    delivery: { status: "pending" },
+  });
+}

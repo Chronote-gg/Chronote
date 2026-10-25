@@ -311,23 +311,39 @@ test("real bulkhead admits two active and one hundred queued jobs", async () => 
 });
 
 test("real limiter spaces logical starts and records queue wait", async () => {
+  jest.useFakeTimers({ doNotFake: ["nextTick", "setImmediate"] });
   const starts: number[] = [];
-  const provider = providerTransport(async () => {
-    starts.push(performance.now());
-    return Response.json(validResponse);
-  });
-  await withTracingFixture(
-    { realPolicies: true, transport: provider.fetch },
-    async (f) => {
-      f.attachment.resolve();
-      await Promise.all([f.transcribe(), f.transcribe()]);
-      expect(starts).toHaveLength(2);
-      expect(starts[1] - starts[0]).toBeGreaterThanOrEqual(780);
-      expect(f.state.metadata?.transcriptionQueueWaitMs).toBeGreaterThanOrEqual(
-        700,
-      );
-    },
-  );
+  const provider = providerTransport(async () => Response.json(validResponse));
+  try {
+    await withTracingFixture(
+      { realPolicies: true, transport: provider.fetch },
+      async (f) => {
+        f.attachment.resolve();
+        f.preparePrompt.mockImplementation(async () => {
+          // Admission precedes prompt and SDK preparation, which may delay dispatch.
+          starts.push(performance.now());
+          if (starts.length === 1) {
+            await new Promise<void>((resolve) => setTimeout(resolve, 100));
+          }
+          return {
+            prompt: "Project Orion delivery terminology.",
+            langfusePrompt: undefined,
+            source: "fallback" as const,
+          };
+        });
+        const tasks = [f.transcribe(), f.transcribe()];
+        await jest.advanceTimersByTimeAsync(1_000);
+        await Promise.all(tasks);
+        expect(starts).toHaveLength(2);
+        expect(starts[1] - starts[0]).toBeGreaterThanOrEqual(780);
+        expect(
+          f.state.metadata?.transcriptionQueueWaitMs,
+        ).toBeGreaterThanOrEqual(700);
+      },
+    );
+  } finally {
+    jest.useRealTimers();
+  }
 });
 
 test("accounting failure preserves the vote error and attempts retained prompt usage", async () => {

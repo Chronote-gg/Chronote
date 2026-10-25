@@ -233,6 +233,11 @@ async function acquireReservation(
         ...input.history,
         ownerInstanceId: context.instanceId,
         executionVersion: 1,
+        canonicalWriter: {
+          kind: "recording" as const,
+          ownerInstanceId: context.instanceId,
+          executionVersion: 1,
+        },
         status: MEETING_STATUS.STARTING,
       }
     : undefined;

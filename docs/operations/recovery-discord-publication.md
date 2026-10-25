@@ -73,3 +73,29 @@ There is no automatic rollback. Before-images support a separate reviewed rollba
 ## Routine later edits
 
 Use the supported canonical action for intentional notes edits, imports, approved corrections and renames. These save durable update intent without requiring this exceptional recovery preview. Raw database changes do not automatically publish. A stored-only recovery hold stays held until an explicitly authorized publication action establishes eligibility. See [later intentional updates](../discord-delivery-outcomes.md#later-intentional-updates) for retry limits and index-before-code rollout.
+
+## Mixed runtime canonical writer admission
+
+Processing edits require a positive capability bound to the current recording
+execution or personal processing claim. Feature-aware runtimes advertise
+canonical writer capability version 1. Before acknowledging an edit, the
+producer verifies that every current serving member advertises that capability
+for its exact runtime identity. One transaction checks the serving generation
+and complete membership, each runtime capability, the history ownership snapshot,
+and the exact personal job claim when applicable, while saving content and
+delivery intent together.
+
+A retained pre-feature serving peer blocks processing edits until the rolling
+upgrade replaces it. Missing, unknown, mismatched, or oversized capability
+evidence returns the existing save conflict, so the user can retry after the
+upgrade. Completed legacy rows remain editable when no original canonical
+writer can still finalize them. Original owner and delivery holds remain in
+place while work settles.
+
+These rules qualify any generic old-image rollback advice. Once canonical
+feature work has been admitted, use a feature-aware rollback target. Promoting a
+pre-feature image is an incompatible downgrade and is not covered by the normal
+compatible rollout guarantee. It requires separately verified safe quiescence
+and ownership resolution, including cleanup of any owned acceptance fixtures
+and fresh recording/job guards proving no feature work is at risk. Otherwise,
+hold the rollback and preserve the workers and their outstanding work.

@@ -445,7 +445,19 @@ test.each(["acknowledged", "unknown"])(
           resumedClaim,
           terminalJob,
         ),
-      ).toEqual({ kind: "committed", history: resumedHistory });
+      ).toEqual({
+        kind: "committed",
+        history: {
+          ...resumedHistory,
+          canonicalWriter: {
+            kind: "personal",
+            uploadId: resumedClaim.uploadId,
+            instanceId: resumedClaim.instanceId,
+            attempt: resumedClaim.attempt,
+            claimId: resumedClaim.claimId,
+          },
+        },
+      });
       expect(
         await repository.writeHistory(
           resumedHistory,

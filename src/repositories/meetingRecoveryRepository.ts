@@ -183,6 +183,11 @@ export function prepareRecoveryClaim(
       ...history,
       ownerInstanceId: context.instanceId,
       executionVersion: version,
+      canonicalWriter: {
+        kind: "recording",
+        ownerInstanceId: context.instanceId,
+        executionVersion: version,
+      },
       recovery,
       updatedAt: now,
     },
@@ -454,6 +459,7 @@ export function createDynamoRecoveryRepository(
                   {
                     ownerInstanceId: next.history.ownerInstanceId,
                     executionVersion: next.history.executionVersion,
+                    canonicalWriter: next.history.canonicalWriter,
                     recovery: next.history.recovery,
                     updatedAt: next.history.updatedAt,
                   },

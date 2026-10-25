@@ -1,4 +1,11 @@
-import type { MeetingHistory } from "../types/db";
+import {
+  canonicalPersonalClaim,
+  personalClaimMatches,
+  canonicalWriterRequiresAdmission,
+} from "../types/meetingCanonicalWriter";
+import { mockCanonicalWritersAllowEdit } from "./meetingCanonicalWriterAdmission";
+import type { DeploymentControlRecord } from "../types/deploymentControl";
+import type { PersonalMediaUploadJobRecord, MeetingHistory } from "../types/db";
 import type { WorkAdmissionAuthority } from "../types/deploymentControl";
 import {
   MEETING_UPDATE_DELIVERY_QUEUE,
@@ -25,6 +32,8 @@ import {
 export function createMockMeetingUpdateDeliveryRepository(
   histories: Map<string, MeetingHistory[]>,
   admit: (authority: WorkAdmissionAuthority) => boolean,
+  personalJobs: ReadonlyMap<string, PersonalMediaUploadJobRecord> = new Map(),
+  controlRecords: ReadonlyMap<string, DeploymentControlRecord> = new Map(),
 ): MeetingUpdateDeliveryRepository {
   function read(key: MeetingUpdateKey, signal?: AbortSignal) {
     signal?.throwIfAborted();
@@ -55,6 +64,17 @@ export function createMockMeetingUpdateDeliveryRepository(
       if (isExactContentMutation(row, input))
         return { kind: "committed", history: row };
       if (!canCompareContentWrite(row, input)) return { kind: "conflict" };
+      const claim = canonicalPersonalClaim(row, Math.floor(Date.now() / 1000));
+      if (
+        claim &&
+        !personalClaimMatches(personalJobs.get(claim.uploadId), claim)
+      )
+        return { kind: "conflict" };
+      if (
+        canonicalWriterRequiresAdmission(row) &&
+        !mockCanonicalWritersAllowEdit(controlRecords, claim ? 2 : 1)
+      )
+        return { kind: "conflict" };
       const next = prepareContentWrite(row, input);
       save(next);
       return { kind: "committed", history: structuredClone(next) };

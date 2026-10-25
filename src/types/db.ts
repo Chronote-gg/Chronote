@@ -458,6 +458,7 @@ export interface OnboardingState {
 
 // Meeting History Type
 export interface MeetingHistory {
+  canonicalWriter?: import("./meetingCanonicalWriter").CanonicalWriter;
   publicationRepair?: import("./meetingPublication").RepairPublicationOwner;
   operatorRecovery?: unknown;
   contentMutation?: {

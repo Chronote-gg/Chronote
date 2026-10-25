@@ -219,6 +219,7 @@ export const useMeetingDetail = (
     )
       return;
     let active = true;
+    // Each fresh pending episode gets a bounded budget, including a later save.
     let remaining = MAX_UPDATE_DELIVERY_REFRESH_READS;
     let timer: ReturnType<typeof setTimeout>;
     const refresh = async () => {

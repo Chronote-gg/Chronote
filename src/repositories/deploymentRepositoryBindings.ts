@@ -40,5 +40,7 @@ export function bindMeetingUpdateDeliveryRepository(
         store.deploymentControlRecords,
         store.activeMeetingLeases,
       ),
+    store.personalMediaUploadsById,
+    store.deploymentControlRecords,
   );
 }

@@ -4,7 +4,10 @@ jest.mock("../../src/services/meetingUpdateService", () => ({
   updateMeeting: jest.fn(),
 }));
 import { updateMeeting } from "../../src/services/meetingUpdateService";
-import { savedUpdate } from "./meetingUpdateResult.fixture";
+import {
+  savedUpdate,
+  expectSavedUpdateAcknowledgment,
+} from "./meetingUpdateResult.fixture";
 import { beforeEach, describe, expect, test, jest } from "@jest/globals";
 import { completedTextResponse } from "../../src/testSupport/openaiResponse";
 
@@ -1081,11 +1084,7 @@ describe("meetings updateNotes mutation", () => {
       expectedPreviousVersion: 3,
     });
 
-    expect(result).toMatchObject({
-      ok: true,
-      kind: "saved",
-      delivery: { status: "pending" },
-    });
+    expectSavedUpdateAcknowledgment(result);
     expect(updateMeeting).toHaveBeenCalled();
     expect(mockedUpdateMeeting).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -1181,11 +1180,7 @@ describe("meetings updateNotes mutation", () => {
       expectedPreviousVersion: 1,
     });
 
-    expect(result).toMatchObject({
-      ok: true,
-      kind: "saved",
-      delivery: { status: "pending" },
-    });
+    expectSavedUpdateAcknowledgment(result);
     expect(mockedEnsureUserCanManageChannel).toHaveBeenCalled();
   });
 
@@ -1296,11 +1291,7 @@ describe("meetings importNotes mutation", () => {
       expectedPreviousVersion: 3,
     });
 
-    expect(result).toMatchObject({
-      ok: true,
-      kind: "saved",
-      delivery: { status: "pending" },
-    });
+    expectSavedUpdateAcknowledgment(result);
     expect(mockedUpdateMeeting).toHaveBeenCalledWith(
       expect.objectContaining({
         key: { guildId: "guild-1", channelId_timestamp: meetingId },

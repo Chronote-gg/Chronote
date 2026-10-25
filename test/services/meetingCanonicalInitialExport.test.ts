@@ -1,4 +1,5 @@
 /** @jest-environment node */
+import { createMockCanonicalUpdateService } from "./meetingCanonicalPeers.fixture";
 jest.mock("../../src/services/notionAutomationService", () => ({
   maybeAutoSyncMeetingNotes: jest.fn(async () => {}),
   maybeAutoExportCompletedMeeting: jest.fn(async () => {}),
@@ -14,8 +15,6 @@ import { saveMeetingHistoryToDatabase } from "../../src/commands/saveMeetingHist
 import { ensureLiveMeetingSummaries } from "../../src/services/liveMeetingNotesService";
 import { maybeAutoExportCompletedMeeting } from "../../src/services/notionAutomationService";
 import { getMockStore, resetMockStore } from "../../src/repositories/mockStore";
-import { createMeetingUpdateService } from "../../src/services/meetingUpdateService";
-import { createMockMeetingUpdateDeliveryRepository } from "../../src/repositories/mockMeetingUpdateDeliveryRepository";
 import type { MeetingData } from "../../src/types/meeting-data";
 import type { MeetingHistory } from "../../src/types/db";
 import { history, key } from "../types/meetingUpdateDelivery.fixture";
@@ -31,6 +30,11 @@ test("recording first export consumes committed canonical notes and original com
     status: "processing",
     ownerInstanceId: "synthetic-original",
     executionVersion: 1,
+    canonicalWriter: {
+      kind: "recording",
+      ownerInstanceId: "synthetic-original",
+      executionVersion: 1,
+    },
     recovery: {
       disposition: "needs_reconciliation",
       reason: "delivery_uncertain",
@@ -62,14 +66,7 @@ test("recording first export consumes committed canonical notes and original com
       executionVersion: row.executionVersion,
     },
   } as unknown as MeetingData;
-  const action = createMeetingUpdateService({
-    repository: createMockMeetingUpdateDeliveryRepository(
-      store.meetingHistoryByGuild,
-      () => true,
-    ),
-    ready: async () => {},
-    syncNotes: jest.fn(async () => {}),
-  });
+  const action = createMockCanonicalUpdateService(store);
   jest.mocked(ensureLiveMeetingSummaries).mockImplementationOnce(async () => {
     expect(
       (

@@ -1,4 +1,5 @@
 /** @jest-environment node */
+import { featureCanonicalRecords } from "../services/meetingCanonicalPeers.fixture";
 import { publicationHttpFixture } from "./meetingPublicationHttp.fixture";
 import type { MeetingData } from "../../src/types/meeting-data";
 import type { MeetingHistory } from "../../src/types/db";
@@ -38,6 +39,8 @@ jest.mock("../../src/services/notionAutomationService", () => ({
 
 beforeEach(async () => {
   mockFixture = await publicationDynamoFixture();
+  for (const row of featureCanonicalRecords().values())
+    await mockFixture.put(mockFixture.tables.deploymentControl, row);
   http = await publicationHttpFixture({
     botId: "910001",
     guildId: key.guildId,
@@ -71,6 +74,11 @@ async function initialPublication(initiallyEmpty = false) {
     status: "processing",
     ownerInstanceId: original.ownerInstanceId,
     executionVersion: 1,
+    canonicalWriter: {
+      kind: "recording",
+      ownerInstanceId: original.ownerInstanceId,
+      executionVersion: 1,
+    },
     checkpoint: { revision: 3 } as MeetingHistory["checkpoint"],
     notesVersion: 1,
     meetingName: "Generated name",

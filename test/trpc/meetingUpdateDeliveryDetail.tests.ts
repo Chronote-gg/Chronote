@@ -53,7 +53,18 @@ export function registerMeetingUpdateDeliveryDetailTests(
             }
           : {}),
       });
-      const row = { ...syntheticHistory(), contentRevision: 1, updateDelivery };
+      const row = {
+        ...syntheticHistory(),
+        contentRevision: 1,
+        canonicalWriter: {
+          kind: "personal" as const,
+          uploadId: "private-canonical-upload",
+          instanceId: "private-canonical-owner",
+          attempt: 1,
+          claimId: "private-canonical-claim",
+        },
+        updateDelivery,
+      };
       setHistory(row);
       const caller = buildCaller();
       const result = await caller.meetings.detail({
@@ -61,6 +72,10 @@ export function registerMeetingUpdateDeliveryDetailTests(
         meetingId: row.channelId_timestamp,
       });
       expect(result.meeting.notes).toBe("Original synthetic notes");
+      expect(result.meeting).not.toHaveProperty("canonicalWriter");
+      expect(JSON.stringify(result.meeting)).not.toMatch(
+        /private-canonical-(owner|claim|upload)/,
+      );
       expect(result.meeting.updateDelivery).toMatchObject({
         status,
         desiredRevision: 1,

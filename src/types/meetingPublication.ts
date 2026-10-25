@@ -24,6 +24,7 @@ export const PUBLICATION_SNAPSHOT_FIELDS = [
   "meetingId",
   "ownerInstanceId",
   "executionVersion",
+  "canonicalWriter",
   "status",
   "checkpoint",
   "recovery",

@@ -1,3 +1,4 @@
+import { personalCanonicalWriter } from "./types/meetingCanonicalWriter";
 import { canonicalFieldsSupersededAfter } from "./types/meetingCanonicalContent";
 import type { PersonalHistoryWriteResult } from "./types/personalHistoryWrite";
 import {
@@ -202,6 +203,7 @@ function controlTableNames() {
     deploymentControl: tableName("DeploymentControlTable"),
     meetingHistory: tableName("MeetingHistoryTable"),
     activeMeeting: tableName("ActiveMeetingTable"),
+    personalMediaUpload: tableName("PersonalMediaUploadJobTable"),
   };
 }
 export function getDeploymentControlRepository() {
@@ -2352,6 +2354,7 @@ export async function writePersonalHistoryUnderClaim(
   claim: PersonalMediaClaim,
   terminalJob?: PersonalMediaUploadJobRecord,
 ): Promise<PersonalHistoryWriteResult> {
+  history = { ...history, canonicalWriter: personalCanonicalWriter(claim) };
   const observed = await dynamoDbClient.send(
     new GetItemCommand({
       TableName: tableName("MeetingHistoryTable"),
