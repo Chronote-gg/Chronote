@@ -57,20 +57,21 @@ async function checkStore(send, b, now) {
   );
   const policy = (await send("GetBucketPolicy")).Policy;
   assert.equal(digest(policy), b.policySha256, "UNKNOWN: policy binding");
-  assert.deepEqual(
-    (await send("GetBucketEncryption")).ServerSideEncryptionConfiguration
-      ?.Rules,
-    [
-      {
-        ApplyServerSideEncryptionByDefault: {
-          SSEAlgorithm: "aws:kms",
-          KMSMasterKeyID: b.kmsKeyArn,
-        },
-        BucketKeyEnabled: false,
+  const encryption = await send("GetBucketEncryption");
+  const rules = encryption.ServerSideEncryptionConfiguration?.Rules,
+    expectedRule = {
+      ApplyServerSideEncryptionByDefault: {
+        SSEAlgorithm: "aws:kms",
+        KMSMasterKeyID: b.kmsKeyArn,
       },
-    ],
-    "UNKNOWN: encryption",
-  );
+      BucketKeyEnabled: false,
+    };
+  if (Object.hasOwn(rules?.[0] ?? {}, "BlockedEncryptionTypes"))
+    expectedRule.BlockedEncryptionTypes =
+      rules[0].BlockedEncryptionTypes === undefined
+        ? undefined
+        : { EncryptionType: ["SSE-C"] };
+  assert.deepEqual(rules, [expectedRule], "UNKNOWN: encryption");
   let lifecycle;
   try {
     lifecycle = (await send("GetBucketLifecycleConfiguration")).Rules;
