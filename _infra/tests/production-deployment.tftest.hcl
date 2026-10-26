@@ -222,3 +222,18 @@ run "production_refuses_foreign_github_environment" {
   }
   expect_failures = [aws_iam_role.production_deploy]
 }
+
+run "release_images_are_never_selected_for_expiration" {
+  command = plan
+  plan_options {
+    target = [aws_ecr_lifecycle_policy.app_ecr_repo_lifecycle_policy]
+  }
+  variables {
+    environment        = "prod"
+    github_environment = "production"
+  }
+  assert {
+    condition     = alltrue([for rule in jsondecode(aws_ecr_lifecycle_policy.app_ecr_repo_lifecycle_policy.policy).rules : rule.selection.tagStatus == "untagged"])
+    error_message = "ECR lifecycle rules must never select tagged release images for expiration."
+  }
+}

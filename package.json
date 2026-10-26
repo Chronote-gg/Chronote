@@ -101,7 +101,7 @@
     "markdownlint:fix": "markdownlint-cli2 --fix \"**/*.md\"",
     "postinstall": "patch-package",
     "check:quality": "node scripts/run-shared-quality.mjs",
-    "test:quality": "node --test scripts/quality-workflow.test.mjs scripts/shared-quality.test.mjs"
+    "test:quality": "node --test scripts/quality-workflow.test.mjs scripts/shared-quality.test.mjs scripts/lint-staged-win.test.cjs"
   },
   "engines": {
     "node": ">=24.15.0 <25"
