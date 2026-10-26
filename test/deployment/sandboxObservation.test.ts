@@ -643,3 +643,51 @@ test("a non-complete introduction remains incomplete after bootstrap promotion",
   ];
   expect((await f.collect()).runtime.deploymentIncomplete).toBe(true);
 });
+
+test("historical carryforward does not hide pending source settlement", async () => {
+  const f = observationFixture();
+  f.data.runtimes.push({
+    pk: "SOURCELOSS#run",
+    sk: "RECOVERY",
+    recordType: "source_loss_recovery",
+    stage: "availability_restored",
+    settlement: "lost_owner_settlement_pending",
+  });
+  f.data.runtimes.push({
+    pk: "CARRYFORWARD#approved",
+    sk: "ARCHIVE",
+    recordType: "historical_deployment_carryforward",
+    version: 1,
+    settlement: "lost_owner_settlement_pending",
+  });
+  const result = await f.collect();
+  expect(result.runtime.sourceLoss).toMatchObject({
+    availabilityRestored: 1,
+    settlementPending: 1,
+    historicalCarryforwards: 1,
+  });
+  expect(result.runtime.deploymentIncomplete).toBe(true);
+});
+
+test("observer labels retained terminal evidence without claiming current native STOPPED", async () => {
+  const f = observationFixture();
+  f.data.runtimes.push({
+    pk: "SOURCELOSS#run",
+    sk: "RECOVERY",
+    recordType: "source_loss_recovery",
+    version: 2,
+    stage: "availability_restored",
+    settlement: "lost_owner_settlement_pending",
+    terminalProof: {
+      kind: "operator_retained_ecs_stop",
+      nativeObservation: "MISSING",
+    },
+  });
+  const result = await f.collect();
+  expect(result.runtime.sourceLoss).toMatchObject({
+    retainedTerminalProofs: 1,
+    sourceMissingAtAdmission: 1,
+    settlementPending: 1,
+  });
+  expect(result.runtime.deploymentIncomplete).toBe(true);
+});

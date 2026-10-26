@@ -19,9 +19,34 @@ on:
         description: Inspect a frozen compatible deployment or explicitly continue its existing candidate
         type: choice
         default: none
-        options: [none, inspect, continue]
+        options:
+          [
+            none,
+            inspect,
+            continue,
+            inspect-source-loss,
+            recover-source-loss,
+            inspect-retained-source-loss,
+            recover-retained-source-loss,
+            inspect-carryforward,
+            carryforward,
+            inspect-preparing,
+            recover-preparing,
+          ]
       continuation_binding_sha256:
-        description: Reviewed private operation-binding checksum, required only for continue
+        description: Reviewed private operation-binding checksum for continue or recover-source-loss
+        type: string
+        default: ""
+      source_loss_terminal_proof_sha256:
+        description: Reviewed canonical private terminal-packet checksum, only for retained-source-loss actions
+        type: string
+        default: ""
+      carryforward_manifest_sha256:
+        description: Reviewed private historical-carryforward manifest checksum, only for carryforward actions
+        type: string
+        default: ""
+      preparing_recovery_proof_sha256:
+        description: Reviewed private preparing-recovery proof checksum, only for preparing actions
         type: string
         default: ""
       probe_without_environment:
@@ -53,6 +78,9 @@ jobs:
         env:
           CONTINUATION_ACTION: ${{ inputs.continuation_action }}
           CONTINUATION_BINDING_SHA256: ${{ inputs.continuation_binding_sha256 }}
+          SOURCE_LOSS_TERMINAL_PROOF_SHA256: ${{ inputs.source_loss_terminal_proof_sha256 }}
+          CARRYFORWARD_MANIFEST_SHA256: ${{ inputs.carryforward_manifest_sha256 }}
+          PREPARING_RECOVERY_PROOF_SHA256: ${{ inputs.preparing_recovery_proof_sha256 }}
           BOOTSTRAP_PHASE: ${{ inputs.bootstrap_phase }}
           BOOTSTRAP_OPERATION_ID: ${{ inputs.bootstrap_operation_id }}
           BOOTSTRAP_MANIFEST_SHA256: ${{ inputs.bootstrap_manifest_sha256 }}
@@ -62,7 +90,16 @@ jobs:
           const assert = require("node:assert/strict");
           const e = process.env;
           const action = e.CONTINUATION_ACTION || "none";
-          assert.ok(["none", "inspect", "continue"].includes(action));
+          assert.ok(["none", "inspect", "continue", "inspect-source-loss", "recover-source-loss", "inspect-retained-source-loss", "recover-retained-source-loss", "inspect-carryforward", "carryforward", "inspect-preparing", "recover-preparing"].includes(action));
+          const preparing = ["inspect-preparing", "recover-preparing"].includes(action);
+          if (preparing) assert.match(e.PREPARING_RECOVERY_PROOF_SHA256 || "", /^[a-f0-9]{64}$/);
+          else assert.equal(e.PREPARING_RECOVERY_PROOF_SHA256 || "", "");
+          const carryforward = ["inspect-carryforward", "carryforward", "inspect-preparing", "recover-preparing"].includes(action);
+          if (carryforward) assert.match(e.CARRYFORWARD_MANIFEST_SHA256 || "", /^[a-f0-9]{64}$/);
+          else assert.equal(e.CARRYFORWARD_MANIFEST_SHA256 || "", "");
+          const retained = ["inspect-retained-source-loss", "recover-retained-source-loss"].includes(action);
+          if (retained) assert.match(e.SOURCE_LOSS_TERMINAL_PROOF_SHA256 || "", /^[a-f0-9]{64}$/);
+          else assert.equal(e.SOURCE_LOSS_TERMINAL_PROOF_SHA256 || "", "");
           if (action === "none") assert.equal(e.CONTINUATION_BINDING_SHA256 || "", "");
           else {
             assert.equal(e.GITHUB_RUN_ATTEMPT, "1");
@@ -70,7 +107,7 @@ jobs:
             assert.equal(e.BOOTSTRAP_OPERATION_ID || "", "");
             assert.equal(e.BOOTSTRAP_MANIFEST_SHA256 || "", "");
             assert.notEqual(e.PROBE_WITHOUT_ENVIRONMENT, "true");
-            if (action === "continue") assert.match(e.CONTINUATION_BINDING_SHA256 || "", /^[a-f0-9]{64}$/);
+            if (["continue", "recover-source-loss", "recover-retained-source-loss", "carryforward", "recover-preparing"].includes(action)) assert.match(e.CONTINUATION_BINDING_SHA256 || "", /^[a-f0-9]{64}$/);
             else assert.equal(e.CONTINUATION_BINDING_SHA256 || "", "");
           }
           NODE
@@ -263,10 +300,16 @@ jobs:
     permissions:
       contents: read
       id-token: write
+      actions: read
     env:
       CONTINUATION_ENVIRONMENT: sandbox
       CONTINUATION_ACTION: ${{ inputs.continuation_action }}
       CONTINUATION_BINDING_SHA256: ${{ inputs.continuation_binding_sha256 }}
+      SOURCE_LOSS_BINDING_SHA256: ${{ inputs.continuation_binding_sha256 }}
+      SOURCE_LOSS_TERMINAL_PROOF_SHA256: ${{ inputs.source_loss_terminal_proof_sha256 }}
+      CARRYFORWARD_MANIFEST_SHA256: ${{ inputs.carryforward_manifest_sha256 }}
+      CARRYFORWARD_BINDING_SHA256: ${{ inputs.continuation_binding_sha256 }}
+      PREPARING_RECOVERY_PROOF_SHA256: ${{ inputs.preparing_recovery_proof_sha256 }}
       AWS_REGION: ${{ vars.AWS_REGION }}
       AWS_IGNORE_CONFIGURED_ENDPOINT_URLS: "true"
       ECS_CLUSTER: ${{ vars.ECS_CLUSTER }}
@@ -304,4 +347,21 @@ jobs:
       - name: Compile protocol helpers
         run: yarn build
       - name: Execute only the selected continuation action
-        run: node scripts/deployment/continue-sandbox.cjs "$CONTINUATION_ACTION"
+        env:
+          SOURCE_LOSS_TERMINAL_PROOF_JSON: ${{ (inputs.continuation_action == 'inspect-retained-source-loss' || inputs.continuation_action == 'recover-retained-source-loss') && secrets.SANDBOX_SOURCE_LOSS_TERMINAL_PROOF || '' }}
+          CARRYFORWARD_MANIFEST_JSON: ${{ (inputs.continuation_action == 'inspect-carryforward' || inputs.continuation_action == 'carryforward' || inputs.continuation_action == 'inspect-preparing' || inputs.continuation_action == 'recover-preparing') && secrets.SANDBOX_CARRYFORWARD_MANIFEST || '' }}
+          PREPARING_RECOVERY_PROOF_JSON: ${{ (inputs.continuation_action == 'inspect-preparing' || inputs.continuation_action == 'recover-preparing') && secrets.SANDBOX_PREPARING_RECOVERY_PROOF || '' }}
+          GITHUB_TOKEN: ${{ (inputs.continuation_action == 'inspect-carryforward' || inputs.continuation_action == 'carryforward' || inputs.continuation_action == 'inspect-preparing' || inputs.continuation_action == 'recover-preparing') && github.token || '' }}
+        run: |
+          case "$CONTINUATION_ACTION" in
+            inspect|continue) node scripts/deployment/continue-sandbox.cjs "$CONTINUATION_ACTION" ;;
+            inspect-source-loss) node scripts/deployment/recover-sandbox.cjs inspect ;;
+            recover-source-loss) node scripts/deployment/recover-sandbox.cjs recover ;;
+            inspect-retained-source-loss) node scripts/deployment/recover-retained-sandbox.cjs inspect ;;
+            recover-retained-source-loss) node scripts/deployment/recover-retained-sandbox.cjs recover ;;
+            inspect-carryforward) AWS_MAX_ATTEMPTS=1 node scripts/deployment/carryforward-sandbox.cjs inspect ;;
+            carryforward) AWS_MAX_ATTEMPTS=1 node scripts/deployment/carryforward-sandbox.cjs carryforward ;;
+            inspect-preparing) AWS_MAX_ATTEMPTS=1 node scripts/deployment/recover-preparing-sandbox.cjs inspect ;;
+            recover-preparing) AWS_MAX_ATTEMPTS=1 node scripts/deployment/recover-preparing-sandbox.cjs recover ;;
+            *) exit 1 ;;
+          esac
