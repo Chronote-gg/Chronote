@@ -171,7 +171,10 @@ test("retry artifacts are bounded, preserve prior keys, and fence stale canonica
     ownerUserId: job.ownerUserId,
     status: "processing" as const,
   };
-  expect(await repository.writeHistory(history, oldClaim)).toBe(true);
+  expect(await repository.writeHistory(history, oldClaim)).toMatchObject({
+    kind: "committed",
+    history,
+  });
   getMockStore().meetingHistoryByGuild.get(history.guildId)![0].archivedAt =
     "2026-01-01T00:01:00Z";
   expect(
@@ -179,7 +182,10 @@ test("retry artifacts are bounded, preserve prior keys, and fence stale canonica
       { ...history, archivedAt: undefined },
       oldClaim,
     ),
-  ).toBe(true);
+  ).toMatchObject({
+    kind: "committed",
+    history: { ...history, archivedAt: "2026-01-01T00:01:00Z" },
+  });
   expect(
     getMockStore().meetingHistoryByGuild.get(history.guildId)![0].archivedAt,
   ).toBe("2026-01-01T00:01:00Z");
@@ -193,7 +199,7 @@ test("retry artifacts are bounded, preserve prior keys, and fence stale canonica
       { ...history, status: "complete", notes: "stale synthetic output" },
       oldClaim,
     ),
-  ).toBe(false);
+  ).toEqual({ kind: "stale" });
   expect(
     await repository.renewClaim({
       ...oldClaim,

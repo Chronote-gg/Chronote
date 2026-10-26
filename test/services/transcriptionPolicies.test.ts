@@ -328,6 +328,7 @@ test("real limiter spaces logical starts and records queue wait", async () => {
           return {
             prompt: "Project Orion delivery terminology.",
             langfusePrompt: undefined,
+            source: "fallback" as const,
           };
         });
         const tasks = [f.transcribe(), f.transcribe()];

@@ -226,6 +226,7 @@ export const runtimeRecordSchema = z
     ]),
     authorizedGeneration: generation,
     heartbeatAt: epochSecond,
+    canonicalContentWriter: z.literal(1).optional(),
     readiness: runtimeReadinessSchema,
     protection: protectionConfirmationSchema,
     workCounts: z
@@ -592,6 +593,7 @@ export type RecordingDeliveryProof = {
   previous: Pick<MeetingHistory, (typeof RECORDING_DELIVERY_FIELDS)[number]>;
 };
 export type HistoryTransition = {
+  expectedPublication?: import("./meetingPublication").MeetingPublicationSnapshot;
   completionPolicyProof?: {
     kind: "completion_policy";
     ownership: CheckpointPublication["ownership"];

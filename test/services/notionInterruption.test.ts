@@ -7,7 +7,7 @@ import {
   getRuntimeWorkAdmissionCheckpoints,
 } from "../../src/services/runtimeWorkAdmissionService";
 import { updateMeetingNotesService } from "../../src/services/meetingHistoryService";
-import { getMeetingHistoryRepository } from "../../src/repositories/meetingHistoryRepository";
+import { getMockStore } from "../../src/repositories/mockStore";
 const mockApiSettled = jest.fn();
 jest.mock("../../src/services/runtimeLifecycleService", () => ({
   beginRuntimeWork: () => ({ transition: () => {}, settle: mockApiSettled }),
@@ -183,9 +183,9 @@ async function correctionFixture() {
     attemptCount: 1,
     lastAttemptAt: "previous",
   });
-  const historyRepository = getMeetingHistoryRepository();
-  jest.spyOn(historyRepository, "updateNotes").mockResolvedValue(true);
-  jest.spyOn(historyRepository, "get").mockResolvedValue(meeting);
+  getMockStore().meetingHistoryByGuild.set(meeting.guildId, [
+    { ...meeting, notesVersion: 1 },
+  ]);
   return f;
 }
 function correct(id: string) {

@@ -1,3 +1,4 @@
+import { meetingUpdateIndexMetadata } from "../../fixtures/productionMeetingUpdateIndex.js";
 import { randomUUID } from "node:crypto";
 import { jest } from "@jest/globals";
 import { reviewedRoutes } from "../../fixtures/productionReviewedSource.js";
@@ -460,14 +461,22 @@ export async function productionOrchestrationFixture(settings = {}) {
         throw Error(`unexpected elb ${operation}`);
     }
   }
+  function dynamoMetadata(operation, input, query) {
+    if (operation === "describe-table") {
+      if (input.TableName !== m.resources.tables.meetingHistory || query)
+        throw Error("unexpected history index metadata request");
+      return meetingUpdateIndexMetadata(m);
+    }
+    return client.send(
+      operation === "get-item"
+        ? new GetItemCommand(input)
+        : new QueryCommand(input),
+    );
+  }
   async function aws(serviceName, operation, input, query) {
     let response;
     if (serviceName === "dynamodb")
-      return client.send(
-        operation === "get-item"
-          ? new GetItemCommand(input)
-          : new QueryCommand(input),
-      );
+      return dynamoMetadata(operation, input, query);
     if (serviceName === "ecs") response = await ecs(operation, input);
     else if (serviceName === "elbv2") response = elb(operation, input);
     else if (serviceName === "ecr")

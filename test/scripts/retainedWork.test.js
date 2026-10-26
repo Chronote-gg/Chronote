@@ -11,6 +11,11 @@ import { fixture } from "../fixtures/productionManifest.js";
 import { changeOperation } from "../fixtures/billingChange";
 import { billingChangeOperationSchema } from "../../src/types/billingChange";
 import { renewalRecoverySchema } from "../../src/types/renewalRecovery";
+import {
+  pending,
+  running,
+  parts,
+} from "../types/meetingUpdateDelivery.fixture";
 async function snapshot(records = {}, override) {
   const tables = fixture().resources.tables;
   return readRetainedMetadata({
@@ -27,6 +32,84 @@ async function snapshot(records = {}, override) {
       })),
   });
 }
+
+test.each([
+  { updateDelivery: pending() },
+  { updateDelivery: running() },
+  { updateDelivery: running("verified") },
+  {
+    updateDelivery: {
+      ...pending(),
+      policy: { kind: "held", reason: "explicit_hold" },
+    },
+  },
+  {
+    updateDelivery: {
+      ...pending(),
+      progress: { kind: "synced", syncedAt: 150 },
+      parts: parts(),
+    },
+  },
+  { publicationRepair: { kind: "running", runId: "repair" } },
+  { publicationRepair: { kind: "settled", runId: "repair" } },
+  { contentRevision: 1 },
+  { contentMutation: { id: "mutation", fingerprint: "a".repeat(64) } },
+  { updateDeliveryQueue: "meeting-update:v1" },
+  { updateDeliveryDueAt: 1 },
+])(
+  "new publication metadata never becomes A acknowledgment: %j",
+  async (addition) => {
+    for (const terminal of [false, true]) {
+      const row = {
+        guildId: "g",
+        channelId_timestamp: "c#t",
+        meetingId: "m",
+        status: "complete",
+        ...(terminal
+          ? {
+              checkpoint: { schemaVersion: 1 },
+              recovery: { disposition: "done" },
+            }
+          : {}),
+        ...addition,
+      };
+      const s = await snapshot({ meetingHistory: [row] });
+      const review = {
+        schemaVersion: 1,
+        predicate: "missing-owner-or-version-v1",
+        sourceCommit: "a".repeat(40),
+        records: [
+          {
+            keyHash: canonicalHash(s.records[0].key),
+            metadataHash: canonicalHash(s.records[0].metadata),
+            disposition: "preserve_nonadoptable_legacy",
+          },
+        ],
+      };
+      expect(classifyRetainedWork(s, review).reopeningBlockers).not.toEqual([]);
+    }
+  },
+);
+
+test.each([undefined, 0])(
+  "untouched completed history keeps initial content revision %s",
+  async (contentRevision) => {
+    const s = await snapshot({
+      meetingHistory: [
+        {
+          guildId: "g",
+          channelId_timestamp: "c#t",
+          meetingId: "m",
+          status: "complete",
+          checkpoint: { schemaVersion: 1 },
+          recovery: { disposition: "done" },
+          ...(contentRevision === undefined ? {} : { contentRevision }),
+        },
+      ],
+    });
+    expect(classifyRetainedWork(s).reopeningBlockers).toEqual([]);
+  },
+);
 test("uses only safe leaf projections and exhausts pages with consistent reads", async () => {
   const calls = [];
   const s = await snapshot({}, async (operation, input) => {

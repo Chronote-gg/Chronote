@@ -1,4 +1,9 @@
 import { RuntimeAdmissionUnavailable } from "../services/runtimeAdmissionError";
+import {
+  personalCanonicalWriter,
+  personalClaimMatches,
+} from "../types/meetingCanonicalWriter";
+import type { PersonalHistoryWriteResult } from "../types/personalHistoryWrite";
 import { config } from "../services/configService";
 import {
   claimPersonalMediaUploadJob,
@@ -38,7 +43,7 @@ export type PersonalMediaUploadRepository = {
     history: MeetingHistory,
     claim: PersonalMediaClaim,
     terminalJob?: PersonalMediaUploadJobRecord,
-  ) => Promise<boolean>;
+  ) => Promise<PersonalHistoryWriteResult>;
   writeSegment: (
     segment: PersonalRecordingSegmentRecord,
     claim: PersonalMediaClaim,
@@ -106,14 +111,7 @@ const realRepository: PersonalMediaUploadRepository = {
 
 function mockClaimOwned(claim: PersonalMediaClaim): boolean {
   const job = getMockStore().personalMediaUploadsById.get(claim.uploadId);
-  return Boolean(
-    job &&
-    job.status === "processing" &&
-    job.processingOwnerInstanceId === claim.instanceId &&
-    job.processingClaimId === claim.claimId &&
-    job.attempts === claim.attempt &&
-    (job.claimExpiresAt ?? 0) >= claim.nowEpochSeconds,
-  );
+  return personalClaimMatches(job, claim);
 }
 function mockJobClaimable(
   job: PersonalMediaUploadJobRecord,
@@ -146,7 +144,8 @@ const mockRepository: PersonalMediaUploadRepository = {
     return true;
   },
   async writeHistory(history, claim, terminalJob) {
-    if (!mockClaimOwned(claim)) return false;
+    if (!mockClaimOwned(claim)) return { kind: "stale" };
+    history = { ...history, canonicalWriter: personalCanonicalWriter(claim) };
     const histories =
       getMockStore().meetingHistoryByGuild.get(history.guildId) ?? [];
     const index = histories.findIndex(
@@ -160,17 +159,16 @@ const mockRepository: PersonalMediaUploadRepository = {
         previous.ownershipScope !== "personal" ||
         previous.status !== "processing")
     )
-      return false;
+      return { kind: "stale" };
     const next = structuredClone(previous ?? history);
     if (!previous) {
       delete next.accessGrants;
       delete next.archivedAt;
       delete next.archivedByUserId;
     }
-    Object.assign(
-      next,
-      Object.fromEntries(personalProcessingHistoryFields(history)),
-    );
+    const fields = personalProcessingHistoryFields(history, previous);
+    if (!fields) return { kind: "stale" };
+    Object.assign(next, Object.fromEntries(fields));
     if (index < 0) histories.push(next);
     else histories[index] = next;
     getMockStore().meetingHistoryByGuild.set(history.guildId, histories);
@@ -179,7 +177,7 @@ const mockRepository: PersonalMediaUploadRepository = {
         claim.uploadId,
         structuredClone(terminalJob),
       );
-    return true;
+    return { kind: "committed", history: structuredClone(next) };
   },
   async writeSegment(segment, claim) {
     if (segment.uploadId !== claim.uploadId || !mockClaimOwned(claim))

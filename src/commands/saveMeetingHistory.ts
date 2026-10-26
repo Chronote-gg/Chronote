@@ -193,14 +193,14 @@ export async function saveMeetingHistoryToDatabase(meeting: MeetingData) {
       chatS3Key: meeting.chatS3Key,
     };
 
-    await saveOwnedMeetingHistoryService(meeting, history);
+    const committed = await saveOwnedMeetingHistoryService(meeting, history);
     meeting.historySaved = true;
     const signal = getMeetingProcessingSignal(meeting);
     const unregister = registerNotionMutationTracker(signal, (run) =>
       runMeetingProcessingEffect(meeting, run),
     );
     try {
-      await maybeAutoExportCompletedMeeting(history, signal);
+      await maybeAutoExportCompletedMeeting(committed, signal);
     } catch (error) {
       assertNotionOutcomeKnown(error, signal);
       console.warn("Completed meeting Notion export failed", {

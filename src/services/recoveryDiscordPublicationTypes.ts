@@ -1,3 +1,6 @@
+import { stableJson as stablePublicationJson } from "../utils/stableJson";
+export { stableJson as stablePublicationJson } from "../utils/stableJson";
+import { repairPublicationOwnerSchema } from "../types/meetingPublication";
 import { createHash } from "node:crypto";
 import { z } from "zod";
 import type { MeetingHistory } from "../types/db";
@@ -146,19 +149,6 @@ export const editableEmbedSchema = z.object({
 export function normalizePublicationEmbeds(embeds: unknown[]) {
   return embeds.map((embed) => editableEmbedSchema.parse(embed));
 }
-function canonical(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(canonical);
-  if (value !== null && typeof value === "object")
-    return Object.fromEntries(
-      Object.entries(value)
-        .sort(([a], [b]) => a.localeCompare(b))
-        .map(([name, child]) => [name, canonical(child)]),
-    );
-  return value;
-}
-export function stablePublicationJson(value: unknown): string {
-  return JSON.stringify(canonical(value));
-}
 export function publicationDigest(value: unknown): string {
   const parsed = object.parse(value);
   const { previewDigest: _digest, ...data } = parsed;
@@ -296,6 +286,40 @@ const conditionSchema = z.discriminatedUnion("kind", [
 ]);
 const targetInput = z.object({ channelId: id, messageId: id });
 export const publicationDependenciesSchema = z.object({
+  publication: z.object({
+    acquire: z.function({
+      input: [
+        z.object({
+          binding: bindingSchema,
+          previewDigest: hash,
+          runId: z.string().min(1),
+          receiptKey: key,
+          reconcile: z.boolean(),
+        }),
+      ],
+      output: z.promise(repairPublicationOwnerSchema),
+    }),
+    assertOwner: z.function({
+      input: [repairPublicationOwnerSchema],
+      output: z.promise(z.void()),
+    }),
+    settle: z.function({
+      input: [
+        z.object({
+          owner: repairPublicationOwnerSchema,
+          evidence: z.discriminatedUnion("kind", [
+            z.object({ kind: z.literal("known_settled") }),
+            z.object({
+              kind: z.literal("confirmed_stopped"),
+              runId: z.string().min(1),
+            }),
+          ]),
+          adoptVerified: z.boolean(),
+        }),
+      ],
+      output: z.promise(z.void()),
+    }),
+  }),
   readHistory: z.function({
     input: [publicationScopeSchema],
     output: z.promise(z.unknown()),

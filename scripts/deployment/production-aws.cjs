@@ -9,7 +9,7 @@ const {
 const { marshall, unmarshall } = require("@aws-sdk/util-dynamodb");
 const { awsCli } = require("./coordinator-aws.cjs");
 const { assertBoundExecution } = require("./production-manifest.cjs");
-function createReaders(m) {
+function createReaders(m, introduction = false) {
   const readClient = new DynamoDBClient({ region: m.identity.region });
   const table = m.resources.tables.deploymentControl;
   const read = async (key) => {
@@ -34,6 +34,15 @@ function createReaders(m) {
   };
   const aws = async (service, operation, input, query) => {
     if (service === "dynamodb") {
+      if (operation === "describe-table") {
+        if (!introduction) throw new Error("metadata_read_refused");
+        return require("./production-index-preflight.cjs").readMeetingUpdateIndex(
+          readClient,
+          m,
+          input,
+          query,
+        );
+      }
       if (input.TableName !== table) throw new Error("metadata_read_refused");
       if (operation === "get-item")
         return readClient.send(new GetItemCommand(input));
@@ -98,7 +107,7 @@ function createAcceptanceReadAws(collection) {
 }
 function createProductionAws(binding) {
   const m = assertBoundExecution(binding, Math.floor(Date.now() / 1000));
-  const readers = createReaders(m),
+  const readers = createReaders(m, true),
     table = m.resources.tables.deploymentControl;
   const writeClient = new DynamoDBClient({
     region: m.identity.region,

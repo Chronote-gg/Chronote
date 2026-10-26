@@ -2,6 +2,8 @@
 import { jest, test, expect, afterEach } from "@jest/globals";
 import { bound } from "../fixtures/productionManifest.js";
 import { createProductionAws } from "../../scripts/deployment/production-aws.cjs";
+import { DescribeTableCommand } from "@aws-sdk/client-dynamodb";
+import { meetingUpdateIndexMetadata } from "../fixtures/productionMeetingUpdateIndex.js";
 const mockClients = [],
   mockExec = jest.fn();
 jest.mock("@aws-sdk/client-dynamodb", () => {
@@ -28,6 +30,87 @@ afterEach(() => {
   jest.restoreAllMocks();
   mockClients.splice(0);
   mockExec.mockReset();
+});
+
+test("history index uses an exact regional SDK metadata read and returns only its bounded projection", async () => {
+  jest.spyOn(Date, "now").mockReturnValue(150000);
+  const binding = bound(),
+    provider = createProductionAws(binding);
+  const metadata = meetingUpdateIndexMetadata(binding.manifest);
+  const raw = structuredClone(metadata);
+  raw.Table.ItemCount = 999;
+  raw.Table.TableSizeBytes = 999;
+  raw.Table.AttributeDefinitions.push({
+    AttributeName: "unrelated",
+    AttributeType: "S",
+  });
+  raw.Table.GlobalSecondaryIndexes.push({
+    IndexName: "Unrelated",
+    ItemCount: 5,
+  });
+  raw.Table.GlobalSecondaryIndexes[0].ProvisionedThroughput = {
+    ReadCapacityUnits: 5,
+  };
+  mockClients[0].send.mockResolvedValue(raw);
+  const input = { TableName: binding.manifest.resources.tables.meetingHistory };
+  await expect(
+    provider.aws("dynamodb", "describe-table", input),
+  ).resolves.toEqual(metadata);
+  expect(mockClients[0].config.region).toBe(binding.manifest.identity.region);
+  expect(mockClients[0].send).toHaveBeenCalledTimes(1);
+  const command = mockClients[0].send.mock.calls[0][0];
+  expect(command).toBeInstanceOf(DescribeTableCommand);
+  expect(command.input).toEqual(input);
+  expect(mockClients[1].send).not.toHaveBeenCalled();
+  expect(mockExec).not.toHaveBeenCalled();
+});
+
+test.each(["foreign", "control", "extra", "query", "missing"])(
+  "history index adapter refuses %s selectors before transport",
+  async (kind) => {
+    jest.spyOn(Date, "now").mockReturnValue(150000);
+    const binding = bound(),
+      provider = createProductionAws(binding);
+    const input = {
+      TableName: binding.manifest.resources.tables.meetingHistory,
+    };
+    if (kind === "foreign") input.TableName = "other-history";
+    if (kind === "control")
+      input.TableName = binding.manifest.resources.tables.deploymentControl;
+    if (kind === "extra") input.ProjectionExpression = "anything";
+    if (kind === "missing") delete input.TableName;
+    await expect(
+      provider.aws(
+        "dynamodb",
+        "describe-table",
+        input,
+        kind === "query" ? "Table" : undefined,
+      ),
+    ).rejects.toThrow("metadata_read_refused");
+    expect(mockClients[0].send).not.toHaveBeenCalled();
+    expect(mockClients[1].send).not.toHaveBeenCalled();
+    expect(mockExec).not.toHaveBeenCalled();
+  },
+);
+
+test("missing metadata and transport denial never fall back to a row read", async () => {
+  jest.spyOn(Date, "now").mockReturnValue(150000);
+  const binding = bound(),
+    provider = createProductionAws(binding);
+  const input = { TableName: binding.manifest.resources.tables.meetingHistory };
+  await expect(
+    provider.aws("dynamodb", "describe-table", input),
+  ).rejects.toThrow("meeting_update_index_prerequisite");
+  mockClients[0].send.mockRejectedValue(new Error("synthetic denied"));
+  await expect(
+    provider.aws("dynamodb", "describe-table", input),
+  ).rejects.toThrow("synthetic denied");
+  expect(
+    mockClients[0].send.mock.calls.every(
+      ([command]) => command instanceof DescribeTableCommand,
+    ),
+  ).toBe(true);
+  expect(mockClients[1].send).not.toHaveBeenCalled();
 });
 test("actual SDK/CLI adapter disables mutation retries and retains default read retry configuration", async () => {
   jest.spyOn(Date, "now").mockReturnValue(150000);

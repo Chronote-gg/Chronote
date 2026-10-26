@@ -21,7 +21,8 @@ type Domain =
   | "interaction"
   | "ancillary"
   | "api_correction"
-  | "billing";
+  | "billing"
+  | "meeting_update_delivery";
 type ClaimCheckpoint = {
   claimId: string;
   instanceId: string;
@@ -44,6 +45,7 @@ type Checkpoint = {
   terminalAcknowledgedDomain?: Domain;
   apiOutcomeKnown?: boolean;
   recoveryPollAcknowledged?: boolean;
+  meetingUpdateAcknowledged?: boolean;
   billingMutationStarted?: boolean;
   billingOutcomeUnknown?: boolean;
   billingRecoveryAcknowledged?: boolean;
@@ -149,7 +151,10 @@ export function beginRuntimeWorkClaim(
       (checkpoint.ownedPromise && !checkpoint.ownedSettled)
     )
       return;
-    if (checkpoint.controller.signal.aborted) {
+    if (
+      checkpoint.controller.signal.aborted ||
+      checkpoint.domain === "meeting_update_delivery"
+    ) {
       releaseAcknowledgedRuntimeWork(id);
       return;
     }
@@ -285,6 +290,35 @@ export function beginRuntimeWorkClaim(
         throw new Error("Recovery poll cannot acknowledge a processing claim");
       checkpoint.recoveryPollAcknowledged = true;
     },
+    acknowledgeMeetingUpdateDelivery(outcome: {
+      noClaim?: { kind: "never_admitted" };
+      durable?: { deliveryRevision: string; claim: ClaimCheckpoint | null };
+    }): boolean {
+      if (
+        checkpoint.domain !== "meeting_update_delivery" ||
+        !localLifetimeSettled(checkpoint)
+      )
+        return false;
+      const proof = outcome.durable;
+      if (checkpoint.claim) {
+        if (
+          !proof?.deliveryRevision ||
+          !proof.claim ||
+          !sameClaim(checkpoint.claim, proof.claim)
+        )
+          return false;
+        checkpoint.terminalAcknowledged = { ...proof.claim };
+        checkpoint.terminalAcknowledgedDomain = checkpoint.domain;
+      } else {
+        if (!(
+          outcome.noClaim?.kind === "never_admitted" ||
+          (proof?.deliveryRevision && proof.claim === null)
+        ))
+          return false;
+        checkpoint.meetingUpdateAcknowledged = true;
+      }
+      return releaseAcknowledgedRuntimeWork(id);
+    },
     acknowledgeTerminal() {
       if (!checkpoint.claim)
         throw new Error("Terminal acknowledgment requires the original claim");
@@ -402,6 +436,8 @@ function sameClaim(left: ClaimCheckpoint, right: ClaimCheckpoint): boolean {
   );
 }
 function acknowledgedWithoutClaim(entry: Checkpoint) {
+  if (entry.domain === "meeting_update_delivery")
+    return !entry.claim && entry.meetingUpdateAcknowledged;
   if (entry.domain === "billing")
     return (
       !entry.billingOutcomeUnknown &&

@@ -35,6 +35,10 @@ async function preflight(options, mode = "introduce") {
   await require("./production-acceptance-capacity.cjs").screenInitialAcceptanceCapacity(
     options,
   );
+  await require("./production-index-preflight.cjs").assertMeetingUpdateIndex(
+    m,
+    aws,
+  );
   await candidate.definitions();
   const definition = await inventory.definition(m.runtime.candidateDefinition),
     container = definition.containerDefinitions.find(

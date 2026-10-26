@@ -1,4 +1,11 @@
 import { randomUUID } from "node:crypto";
+import { ScanCommand } from "@aws-sdk/client-dynamodb";
+import {
+  readRetainedMetadata,
+  classifyRetainedWork,
+  retainedGuardFields,
+  projections,
+} from "../../scripts/deployment/retained-work.cjs";
 import {
   buildFinalAcceptanceTransaction,
   finalState,
@@ -10,7 +17,104 @@ import {
   putIntroductionDocument as put,
   readIntroductionDocument as read,
   writeIntroduction as write,
+  introductionClient,
 } from "./fixtures/introductionStore";
+
+test.each([
+  { updateDelivery: "malformed" },
+  { updateDelivery: {} },
+  { updateDelivery: { unexpected: true } },
+  { publicationRepair: {} },
+  { contentMutation: {} },
+  { contentRevision: 1 },
+  { updateDeliveryQueue: "meeting-update:v1" },
+  { updateDeliveryDueAt: 1 },
+])(
+  "native final acceptance refuses newly introduced publication metadata %j",
+  async (addition) => {
+    const table = "acceptance-" + randomUUID();
+    const historyTable = "history-" + randomUUID();
+    await createIntroductionTable(table);
+    await createIntroductionTable(historyTable, [
+      "guildId",
+      "channelId_timestamp",
+    ]);
+    const row = {
+      guildId: "g",
+      channelId_timestamp: "synthetic",
+      meetingId: "m",
+      status: "complete",
+      checkpoint: { schemaVersion: 1 },
+      recovery: { disposition: "done" },
+      contentRevision: 0,
+    };
+    await put(historyTable, row);
+    const snapshot = await readRetainedMetadata({
+      tables: Object.fromEntries(
+        Object.keys(projections).map((category) => [
+          category,
+          category === "meetingHistory" ? historyTable : category,
+        ]),
+      ),
+      now: 150,
+      read: async (_operation, request) =>
+        request.TableName === historyTable
+          ? introductionClient.send(new ScanCommand(request))
+          : { Items: [] },
+    });
+    expect(classifyRetainedWork(snapshot).reopeningBlockers).toEqual([]);
+    const input = finalFixture("reopen_admission", table);
+    await seed(input);
+    input.guards.push({
+      table: historyTable,
+      key: snapshot.records[0].key,
+      row: snapshot.records[0].metadata,
+      fields: retainedGuardFields("meetingHistory"),
+      maximumItemBytes: 400 * 1024,
+    });
+    await put(historyTable, { ...row, ...addition });
+    await expect(
+      write(buildFinalAcceptanceTransaction(input)),
+    ).rejects.toThrow();
+    expect(
+      (await read(table, { pk: "ENV", sk: "CONTROL" }))?.maintenance,
+    ).toBeDefined();
+  },
+);
+
+test.each(["updateDelivery", "publicationRepair", "contentMutation"])(
+  "malformed %s is hidden by leaf projection but cannot pass final native absence",
+  async (field) => {
+    const table = "acceptance-" + randomUUID();
+    const input = finalFixture("reopen_admission", table);
+    await createIntroductionTable(table);
+    await seed(input);
+    const row = { pk: "retained", sk: field, status: "complete", [field]: {} };
+    await put(table, row);
+    const projection = await introductionClient.send(
+      new ScanCommand({
+        TableName: table,
+        FilterExpression: "pk = :pk",
+        ExpressionAttributeValues: { ":pk": { S: "retained" } },
+        ProjectionExpression: "pk, sk, #parent.#leaf",
+        ExpressionAttributeNames: { "#parent": field, "#leaf": "kind" },
+      }),
+    );
+    expect(projection.Items).toEqual([
+      { pk: { S: "retained" }, sk: { S: field } },
+    ]);
+    input.guards.push({
+      table,
+      key: { pk: row.pk, sk: row.sk },
+      row: { pk: row.pk, sk: row.sk },
+      fields: [field],
+      maximumItemBytes: 400 * 1024,
+    });
+    await expect(
+      write(buildFinalAcceptanceTransaction(input)),
+    ).rejects.toThrow();
+  },
+);
 async function seed(input: FinalAcceptanceInput) {
   for (const row of [
     input.hold,

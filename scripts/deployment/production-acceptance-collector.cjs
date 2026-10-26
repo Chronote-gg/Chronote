@@ -333,7 +333,7 @@ function transactionInputs(token, submitted) {
       table: m.resources.tables[entry.table],
       key: entry.key,
       row: entry.metadata,
-      fields: require("./retained-work.cjs").projections[entry.table],
+      fields: require("./retained-work.cjs").retainedGuardFields(entry.table),
       presentFields:
         entry.table === "stripeWebhook"
           ? ["firstAdmission", "admission"].filter(

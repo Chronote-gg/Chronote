@@ -60,6 +60,7 @@ import { getRuntimeInstanceId } from "../../src/services/runtimeInstanceService"
 import { beginRuntimeWorkClaim } from "../../src/services/runtimeWorkAdmissionService";
 import { createMeetingRecoveryWorker } from "../../src/services/meetingRecoveryWorkerService";
 import { recoverMeeting } from "../../src/services/meetingRecoveryService";
+import { createMeetingUpdateService } from "../../src/services/meetingUpdateService";
 import { getPersonalMediaUploadRepository } from "../../src/repositories/personalMediaUploadRepository";
 import { processPersonalMediaUploadJob } from "../../src/services/personalMediaUploadWorkerService";
 import { processPersonalMediaUpload } from "../../src/services/personalMediaUploadProcessingService";
@@ -461,7 +462,7 @@ async function startWorkers(
             personalMediaClaimForJob(claimed, instanceId),
             { ...claimed, status: "complete" },
           ),
-        ).toBe(true);
+        ).toMatchObject({ kind: "committed", history: personal });
         acknowledged?.();
         ancillaryEntered.release();
         await ancillaryGate.promise;
@@ -685,3 +686,142 @@ test("generated checkpoint publication and orphan upload are both covered by sta
     config.storage.transcriptPrefix = previousPrefix;
   }
 });
+
+test.each([
+  "rename",
+  "notes",
+  "warning",
+  "rename_then_notes",
+  "notes_then_rename",
+] as const)(
+  "personal terminal transaction preserves selective canonical edits: %s",
+  async (sequence) => {
+    const uploadId = randomUUID(),
+      stamp = new Date().toISOString();
+    await seedControl();
+    const owner = await startRuntime("canonical-personal-" + uploadId);
+    expect(await promote(owner)).toBe("applied");
+    const claim = {
+      uploadId,
+      instanceId: owner.identity.instanceId,
+      attempt: 1,
+      claimId: randomUUID(),
+      nowEpochSeconds: now(),
+    };
+    const job: import("../../src/types/db").PersonalMediaUploadJobRecord = {
+      uploadId,
+      ownerUserId: "synthetic-personal-user",
+      status: "processing",
+      attempts: 1,
+      processingOwnerInstanceId: claim.instanceId,
+      processingClaimId: claim.claimId,
+      claimExpiresAt: now() + 600,
+      sourceS3Key: "synthetic/source.wav",
+      mediaKind: "audio",
+      contentType: "audio/wav",
+      fileSize: 1,
+      createdAt: stamp,
+      updatedAt: stamp,
+    };
+    await getPersonalMediaUploadRepository().write(
+      job,
+      await owner.lifecycle.getRuntimeAdmissionContext(),
+    );
+    const original: import("../../src/types/db").MeetingHistory = {
+      guildId: "personal:" + job.ownerUserId,
+      channelId_timestamp: "personal#" + uploadId,
+      meetingId: uploadId,
+      channelId: "personal",
+      timestamp: stamp,
+      participants: [],
+      duration: 0,
+      transcribeMeeting: true,
+      generateNotes: true,
+      ownershipScope: "personal",
+      ownerUserId: job.ownerUserId,
+      status: "processing",
+    };
+    const key = {
+      guildId: original.guildId,
+      channelId_timestamp: original.channelId_timestamp,
+    };
+    expect(
+      (await getPersonalMediaUploadRepository().writeHistory(original, claim))
+        .kind,
+    ).toBe("committed");
+    const generated = {
+      ...original,
+      status: "complete" as const,
+      notes: "Personal generated notes",
+      notesVersion: 1,
+      notesLastEditedBy: job.ownerUserId,
+      notesLastEditedAt: stamp,
+      notesHistory: [
+        {
+          notes: "Personal generated notes",
+          version: 1,
+          editedBy: job.ownerUserId,
+          editedAt: stamp,
+        },
+      ],
+      meetingName: "Personal generated name",
+      summarySentence: "Personal generated summary",
+      summaryLabel: "Personal generated label",
+    };
+    const action = createMeetingUpdateService({
+      repository: database.getMeetingUpdateDeliveryRepository(),
+      ready: async () => {},
+      syncNotes: jest.fn(async () => {}),
+    });
+    for (const step of sequence.split("_then_")) {
+      expect(
+        (
+          await action({
+            key,
+            actor: { editedBy: "synthetic-personal-editor" },
+            mutation:
+              step === "rename"
+                ? { kind: "rename", meetingName: "Personal manual name" }
+                : step === "notes"
+                  ? {
+                      kind: "notes",
+                      notes: "Personal manual notes",
+                      notesDelta: null,
+                    }
+                  : { kind: "warning", target: "both" },
+            notesEdit:
+              step === "notes"
+                ? { expectedNotesVersion: 1, source: { type: "web_editor" } }
+                : undefined,
+          })
+        ).kind,
+      ).toBe("saved");
+    }
+    const result = await getPersonalMediaUploadRepository().writeHistory(
+      generated,
+      claim,
+      { ...job, status: "complete" },
+    );
+    expect(result.kind).toBe("committed");
+    const committed = await database
+      .getMeetingUpdateDeliveryRepository()
+      .getStrong(key);
+    expect(committed).toMatchObject({
+      status: "complete",
+      contentRevision: sequence.split("_then_").length,
+      notes: sequence.includes("notes")
+        ? "Personal manual notes"
+        : generated.notes,
+      notesVersion: sequence.includes("notes") ? 2 : 1,
+      meetingName: sequence.includes("rename")
+        ? "Personal manual name"
+        : generated.meetingName,
+      summarySentence: generated.summarySentence,
+      summaryLabel: generated.summaryLabel,
+    });
+    expect(committed?.notesHistory?.at(-1)?.notes).toBe(committed?.notes);
+    expect(
+      await getPersonalMediaUploadRepository().get(uploadId),
+    ).toMatchObject({ status: "complete" });
+  },
+);

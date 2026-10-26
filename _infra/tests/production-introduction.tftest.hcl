@@ -96,6 +96,17 @@ run "exact_production_authority" {
     enable_production_introduction_roles     = true
     production_introduction_task_definitions = ["arn:aws:ecs:us-east-1:123456789012:task-definition/chronote-prod-bot-task:1", "arn:aws:ecs:us-east-1:123456789012:task-definition/chronote-prod-bot-task:2", "arn:aws:ecs:us-east-1:123456789012:task-definition/chronote-prod-bot-task:3", "arn:aws:ecs:us-east-1:123456789012:task-definition/chronote-prod-bot-task:4"]
   }
+  override_resource {
+    target          = aws_dynamodb_table.meeting_history_table
+    values          = { arn = "arn:aws:dynamodb:us-east-1:123456789012:table/exact-history" }
+    override_during = plan
+  }
+  assert {
+    condition = try(one([for s in jsondecode(aws_iam_role_policy.production_introduction[0].policy).Statement : s if contains(s.Action, "dynamodb:DescribeTable")]) == {
+      Sid = "MeetingUpdateIndexMetadata", Effect = "Allow", Action = ["dynamodb:DescribeTable"], Resource = "arn:aws:dynamodb:us-east-1:123456789012:table/exact-history"
+    }, false)
+    error_message = "Index preflight must have only DescribeTable on the exact history table, without item-key conditions or broader metadata access."
+  }
   assert {
     condition = try(one([for s in jsondecode(aws_iam_role_policy.production_introduction[0].policy).Statement : s if contains(s.Action, "ecs:DescribeTaskDefinition")]) == {
       Sid = "RegionalDefinitionMetadata", Effect = "Allow", Action = ["ecs:DescribeTaskDefinition"], Resource = "*", Condition = { StringEquals = { "aws:RequestedRegion" = var.aws_region } }
@@ -181,7 +192,7 @@ run "acceptance_effective_policy" {
   }
   assert {
     condition = alltrue([for s in jsondecode(aws_iam_role_policy.production_acceptance_collector[0].policy).Statement :
-    alltrue([for a in s.Action : !contains(["s3:ListBucket", "s3:PutObject", "kms:GenerateDataKey", "dynamodb:Scan", "dynamodb:PutItem", "dynamodb:TransactWriteItems"], a)])])
+    alltrue([for a in s.Action : !contains(["s3:ListBucket", "s3:PutObject", "kms:GenerateDataKey", "dynamodb:Scan", "dynamodb:PutItem", "dynamodb:TransactWriteItems", "dynamodb:DescribeTable"], a)])])
     error_message = "The collector may not list or write content, scan history, or gain mutation authority."
   }
   assert {

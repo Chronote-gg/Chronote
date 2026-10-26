@@ -9,6 +9,7 @@ import { marshall, unmarshall } from "@aws-sdk/util-dynamodb";
 import { history as historyFixture } from "./controlFixtures";
 import { fixture, client, readStored } from "./fixtures/productionIntroduction";
 import { loadLegacyDatabase } from "../fixtures/maintenance/legacyRuntime.js";
+import { requireLegacyDatabase } from "../fixtures/maintenance/legacyDatabase";
 import { buildMaintenancePolicy } from "../../scripts/deployment/maintenance-fence.cjs";
 import { metadataDigest } from "../../scripts/deployment/production-work.cjs";
 import {
@@ -84,45 +85,48 @@ test.each(["acknowledged", "unknown"])(
     const send: DynamoDBClient["send"] = client.send.bind(client);
     const policy = buildMaintenancePolicy(f.m.binding);
     const requests: string[] = [];
-    const legacy = loadLegacyDatabase(
-      {
-        send: async (command: PutItemCommand | UpdateItemCommand) => {
-          const input = command.input;
-          const action =
-            "dynamodb:" + command.constructor.name.replace("Command", "");
-          const arn = [...f.physical].find(
-            ([, name]) => name === input.TableName,
-          )?.[0];
-          const attributes = Object.values(
-            input.ExpressionAttributeNames ?? {},
-          );
-          const denied =
-            f.isOwned() &&
-            policy.Statement.some(
-              (statement: {
-                Action: string;
-                Resource: string;
-                Condition?: Record<string, Record<string, string>>;
-              }) =>
-                statement.Action === action &&
-                statement.Resource === arn &&
-                (!statement.Condition ||
-                  attributes.includes(
-                    statement.Condition["ForAnyValue:StringEquals"][
-                      "dynamodb:Attributes"
-                    ],
-                  )),
+    const legacy = requireLegacyDatabase(
+      loadLegacyDatabase(
+        {
+          send: async (command: PutItemCommand | UpdateItemCommand) => {
+            const input = command.input;
+            const action =
+              "dynamodb:" + command.constructor.name.replace("Command", "");
+            const arn = [...f.physical].find(
+              ([, name]) => name === input.TableName,
+            )?.[0];
+            const attributes = Object.values(
+              input.ExpressionAttributeNames ?? {},
             );
-          requests.push(action);
-          if (denied)
-            throw Object.assign(
-              new Error("Simulated policy deny, not native IAM proof"),
-              { name: "AccessDeniedException" },
-            );
-          return send(command);
+            const denied =
+              f.isOwned() &&
+              policy.Statement.some(
+                (statement: {
+                  Action: string;
+                  Resource: string;
+                  Condition?: Record<string, Record<string, string>>;
+                }) =>
+                  statement.Action === action &&
+                  statement.Resource === arn &&
+                  (!statement.Condition ||
+                    attributes.includes(
+                      statement.Condition["ForAnyValue:StringEquals"][
+                        "dynamodb:Attributes"
+                      ],
+                    )),
+              );
+            requests.push(action);
+            if (denied)
+              throw Object.assign(
+                new Error("Simulated policy deny, not native IAM proof"),
+                { name: "AccessDeniedException" },
+              );
+            if (command instanceof PutItemCommand) return send(command);
+            return send(command);
+          },
         },
-      },
-      tableName,
+        tableName,
+      ),
     );
     const lease = {
       guildId: "local-guild",
@@ -186,7 +190,7 @@ test.each(["acknowledged", "unknown"])(
         result.compatibility.uploads = snapshot.tables.uploads
           .filter((row) => row.uploadId === retained.uploadId)
           .map((row) => ({
-            uploadId: row.uploadId,
+            uploadId: String(row.uploadId),
             rowDigest: metadataDigest(row),
             sourceInput: "verified",
             token: "verified",
@@ -209,6 +213,7 @@ test.each(["acknowledged", "unknown"])(
       await put("PersonalMediaUploadJobTable", inProgress);
       await put("PersonalMediaUploadJobTable", retained);
       const active = await claimLegacy(inProgress.uploadId);
+      if (!active) throw new Error("Legacy upload claim was not acknowledged");
       expect(active.status).toBe("processing");
       const retainedBefore = await read("PersonalMediaUploadJobTable", {
         uploadId: retained.uploadId,
@@ -440,14 +445,26 @@ test.each(["acknowledged", "unknown"])(
           resumedClaim,
           terminalJob,
         ),
-      ).toBe(true);
+      ).toEqual({
+        kind: "committed",
+        history: {
+          ...resumedHistory,
+          canonicalWriter: {
+            kind: "personal",
+            uploadId: resumedClaim.uploadId,
+            instanceId: resumedClaim.instanceId,
+            attempt: resumedClaim.attempt,
+            claimId: resumedClaim.claimId,
+          },
+        },
+      });
       expect(
         await repository.writeHistory(
           resumedHistory,
           resumedClaim,
           terminalJob,
         ),
-      ).toBe(false);
+      ).toEqual({ kind: "stale" });
       expect(await repository.get(retained.uploadId)).toMatchObject({
         status: "complete",
         attempts: 1,

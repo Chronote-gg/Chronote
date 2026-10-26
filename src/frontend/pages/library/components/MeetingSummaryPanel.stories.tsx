@@ -1,3 +1,6 @@
+import { Stack, Text } from "@mantine/core";
+import Surface from "../../../components/Surface";
+import { MeetingUpdateDeliveryStatus } from "./MeetingUpdateDeliveryStatus";
 import type { Meta, StoryObj } from "@storybook/react";
 import { expect, within } from "storybook/test";
 import { MeetingSummaryPanel } from "./MeetingSummaryPanel";
@@ -186,5 +189,71 @@ export const LegacyUnavailable: Story = {
     summary: "Notes will appear after the meeting is processed.",
     notes: "No notes recorded.",
     copyDisabled: true,
+  },
+};
+
+export const ConstrainedDrawerWithDeliveryStatus: Story = {
+  tags: ["meeting-update-constrained-drawer"],
+  args: {
+    notes: Array.from(
+      { length: 24 },
+      (_, index) => `- Canonical meeting decision ${index + 1}.`,
+    ).join("\n"),
+  },
+  render: (args) => (
+    <div
+      style={{
+        display: "flex",
+        flexDirection: "column",
+        height: 540,
+        maxWidth: 500,
+      }}
+    >
+      <MeetingUpdateDeliveryStatus
+        delivery={{
+          status: "held",
+          reason: "initial_publication_unsettled",
+          pollable: false,
+          desiredRevision: 1,
+          syncedRevision: null,
+          lastSuccess: null,
+        }}
+      />
+      <Stack
+        gap="md"
+        style={{ flex: 1, minHeight: 0, overflowY: "auto" }}
+        data-testid="constrained-drawer-scroll"
+      >
+        <Surface p="md">
+          <Text fw={600}>Audio recording</Text>
+          <div style={{ height: 80 }} />
+        </Surface>
+        <MeetingSummaryPanel {...args} />
+        <Surface p="md">
+          <Text fw={600}>Attendees</Text>
+          <Text>Speaker A, Speaker B</Text>
+        </Surface>
+        <Surface p="md">
+          <Text fw={600}>Full transcript</Text>
+          <Text>
+            View the speaker timeline and transcript events in fullscreen.
+          </Text>
+        </Surface>
+      </Stack>
+    </div>
+  ),
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    const summary = canvas.getByTestId("meeting-summary-scroll-viewport");
+    await expect(summary.clientHeight).toBeGreaterThan(64);
+    await expect(summary.scrollHeight).toBeGreaterThan(summary.clientHeight);
+    summary.scrollTop = 60;
+    await expect(summary.scrollTop).toBeGreaterThan(0);
+    summary.scrollTop = 0;
+    const body = canvas.getByTestId("constrained-drawer-scroll");
+    await expect(body.scrollHeight).toBeGreaterThan(body.clientHeight);
+    body.scrollTop = 60;
+    await expect(body.scrollTop).toBeGreaterThan(0);
+    body.scrollTop = 0;
   },
 };

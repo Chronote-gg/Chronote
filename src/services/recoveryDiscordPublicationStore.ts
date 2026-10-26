@@ -1,3 +1,5 @@
+import { createDynamoMeetingPublicationRepository } from "../repositories/meetingPublicationRepository";
+import { createRecoveryPublicationBarrier } from "./recoveryDiscordPublicationBarrier";
 import { DynamoDBClient, GetItemCommand } from "@aws-sdk/client-dynamodb";
 import {
   S3Client,
@@ -78,7 +80,10 @@ async function verifyClients({ dynamo, s3, sts, scope }: StoreOptions) {
 export async function createRecoveryDiscordPublicationStore(
   options: StoreOptions,
 ): Promise<
-  Pick<PublicationDependencies, "readHistory" | "readManifest" | "storage">
+  Pick<
+    PublicationDependencies,
+    "readHistory" | "readManifest" | "storage" | "publication"
+  >
 > {
   const scope = publicationScopeSchema.parse(options.scope);
   await verifyClients({ ...options, scope });
@@ -283,5 +288,20 @@ export async function createRecoveryDiscordPublicationStore(
       return put(key, stablePublicationJson(value), condition);
     },
   };
-  return { readHistory, readManifest, storage };
+  const publication = createRecoveryPublicationBarrier({
+    repository: createDynamoMeetingPublicationRepository(dynamo, scope.table),
+    key: { guildId: scope.guildId, channelId_timestamp: scope.meetingKey },
+    async validate(history, selected) {
+      return (
+        stablePublicationJson(
+          bindRecoveryPublication(
+            scope,
+            publicationHistorySchema.parse(history),
+            recoveryPublicationManifestSchema.parse(await readManifest(scope)),
+          ),
+        ) === stablePublicationJson(selected)
+      );
+    },
+  });
+  return { readHistory, readManifest, storage, publication };
 }

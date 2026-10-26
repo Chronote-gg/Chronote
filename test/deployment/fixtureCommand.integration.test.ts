@@ -290,6 +290,14 @@ test("private worker resolves and consumes exact authority before voice and reta
         expectedExecutionVersion: 1,
       };
       await completeGeneratedHistory(db.repository, proof);
+      const completed = await db.repository.getMeetingHistory(proof.key);
+      expect(completed?.contentRevision ?? 0).toBe(0);
+      for (const field of [
+        "updateDelivery",
+        "publicationRepair",
+        "contentMutation",
+      ] as const)
+        expect(completed?.[field]).toBeUndefined();
       if (!owned.finalization) throw new Error("missing finalization");
       owned.finalization.disposition = "durable";
       expect(await releaseSessionReservation(owned.reservation)).toBe(true);

@@ -1,3 +1,9 @@
+import { publicationHistoryAfterPatch } from "./meetingHistoryTransitionState";
+import {
+  publicationSnapshot,
+  publicationSnapshotCondition,
+  settledLifecycleDelivery,
+} from "../types/meetingPublication";
 import {
   DynamoDBClient,
   GetItemCommand,
@@ -115,17 +121,26 @@ function exportAcknowledged(row: MeetingHistory) {
 function reconcilesWithoutAnotherAttempt(row: MeetingHistory) {
   return row.recovery?.stage === "delivery" || exportAcknowledged(row);
 }
+function publicationOwnerRetained(row: MeetingHistory): boolean {
+  return (
+    row.publicationRepair?.kind === "running" ||
+    Boolean(row.updateDelivery && "attempt" in row.updateDelivery.progress)
+  );
+}
+function hasEligibleOriginalOwner(row: MeetingHistory): boolean {
+  return Boolean(
+    row.ownerInstanceId &&
+    row.executionVersion &&
+    row.status !== "cancelled" &&
+    row.completionPolicy?.decision !== "cancel" &&
+    !publicationOwnerRetained(row),
+  );
+}
 export function isRecordingRecoveryCandidate(
   row: MeetingHistory,
   now: number,
 ): boolean {
-  if (
-    !row.ownerInstanceId ||
-    !row.executionVersion ||
-    row.status === "cancelled" ||
-    row.completionPolicy?.decision === "cancel"
-  )
-    return false;
+  if (!hasEligibleOriginalOwner(row)) return false;
   const recovery = row.recovery;
   if (recovery?.disposition === "needs_reconciliation")
     return recovery.reason === "delivery_uncertain" || exportAcknowledged(row);
@@ -171,6 +186,11 @@ export function prepareRecoveryClaim(
       ...history,
       ownerInstanceId: context.instanceId,
       executionVersion: version,
+      canonicalWriter: {
+        kind: "recording",
+        ownerInstanceId: context.instanceId,
+        executionVersion: version,
+      },
       recovery,
       updatedAt: now,
     },
@@ -212,6 +232,27 @@ function updateHistory(
   tables: RecoveryTables,
 ) {
   const snapshot = fieldsSnapshot(history, OBSERVED_FIELDS);
+  const publication = publicationSnapshotCondition(
+    publicationSnapshot(history),
+  );
+  snapshot.ConditionExpression += " AND " + publication.condition;
+  Object.assign(snapshot.ExpressionAttributeNames, publication.names);
+  snapshot.ExpressionAttributeValues = {
+    ...snapshot.ExpressionAttributeValues,
+    ...marshall(publication.values, { removeUndefinedValues: true }),
+  };
+  const settled = settledLifecycleDelivery(publicationSnapshot(history), patch);
+  if (settled)
+    patch = {
+      ...patch,
+      updateDelivery: settled.delivery,
+      ...(settled.dueAt === undefined
+        ? {}
+        : {
+            updateDeliveryQueue: "meeting-update:v1",
+            updateDeliveryDueAt: settled.dueAt,
+          }),
+    };
   const names = snapshot.ExpressionAttributeNames;
   const values = snapshot.ExpressionAttributeValues ?? {};
   const changes = Object.entries(patch)
@@ -425,6 +466,7 @@ export function createDynamoRecoveryRepository(
                   {
                     ownerInstanceId: next.history.ownerInstanceId,
                     executionVersion: next.history.executionVersion,
+                    canonicalWriter: next.history.canonicalWriter,
                     recovery: next.history.recovery,
                     updatedAt: next.history.updatedAt,
                   },
@@ -484,7 +526,8 @@ export function createDynamoRecoveryRepository(
           }),
         ),
       );
-      return success ? { ...claim.history, ...patch } : undefined;
+      if (!success) return undefined;
+      return publicationHistoryAfterPatch(claim.history, patch);
     },
     async releaseRecordingRecovery(claim, now) {
       return conditionally(() =>
@@ -630,7 +673,7 @@ export function createMockRecoveryRepository(
       if (!owned(claim, now) || !same(get(claim.history), claim.history))
         return undefined;
       validateRecoveryPatch(claim, patch);
-      const next = { ...claim.history, ...patch };
+      const next = publicationHistoryAfterPatch(claim.history, patch);
       Object.assign(get(claim.history)!, structuredClone(next));
       return structuredClone(next);
     },

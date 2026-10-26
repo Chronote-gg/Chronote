@@ -52,6 +52,7 @@ import {
 } from "../../src/services/langfusePromptService";
 import { liveMeetingNotesInput } from "../../src/services/liveMeetingNotesService";
 import { validateFixtureCapture } from "../../src/services/fixtureEvidenceValidation";
+import { requestMeetingUpdateDelivery } from "../../src/types/meetingUpdateDelivery";
 
 jest.mock("../../src/services/langfusePromptService", () => ({
   getLangfuseChatPrompt: jest.fn(async (input) => ({
@@ -542,10 +543,11 @@ test.each(["acknowledged", "lost", "wrong-key"])(
         checkpoint: { capture: captured },
       };
       const transitionOwned = jest.fn(async () => "applied");
+      const getOwned = jest.fn(async () => owned);
       const repository = jest
         .spyOn(historyRepository, "getMeetingHistoryRepository")
         .mockReturnValue({
-          getOwned: jest.fn(async () => owned),
+          getOwned,
           transitionOwned,
         } as never);
       const index = jest
@@ -567,8 +569,62 @@ test.each(["acknowledged", "lost", "wrong-key"])(
           ),
         ).rejects.toThrow();
         expect(transitionOwned).not.toHaveBeenCalled();
-        await actual.saveOwnedMeetingHistoryService(meeting, row);
+        const saved = await actual.saveOwnedMeetingHistoryService(meeting, row);
         expect(transitionOwned).toHaveBeenCalledTimes(1);
+        for (const field of [
+          "updateDelivery",
+          "publicationRepair",
+          "contentMutation",
+        ] as const)
+          expect(saved[field]).toBeUndefined();
+        expect(saved.contentRevision ?? 0).toBe(0);
+        const edited = {
+          ...owned,
+          contentRevision: 1,
+          contentMutation: {
+            id: "edit",
+            fingerprint: "a".repeat(64),
+            fieldRevisions: { meetingName: 1 },
+          },
+          meetingName: "Synthetic edit",
+          updateDelivery: requestMeetingUpdateDelivery({
+            history: owned,
+            mutation: { kind: "rename", meetingName: "Synthetic edit" },
+            revision: "edit-delivery",
+            now: 100,
+            policy: { kind: "held", reason: "initial_publication_unsettled" },
+          }),
+        };
+        for (const forged of [false, true]) {
+          getOwned
+            .mockReset()
+            .mockResolvedValueOnce(owned)
+            .mockResolvedValueOnce({
+              ...edited,
+              ...(forged
+                ? {
+                    fixtureInput: {
+                      ...edited.fixtureInput!,
+                      scriptSha256: "b".repeat(64),
+                    },
+                  }
+                : {}),
+            });
+          transitionOwned.mockClear().mockResolvedValueOnce("stale");
+          const retried = actual.saveOwnedMeetingHistoryService(meeting, row);
+          if (forged) {
+            await expect(retried).rejects.toThrow(
+              "Fixture identity cannot change",
+            );
+            expect(transitionOwned).toHaveBeenCalledTimes(1);
+          } else {
+            await expect(retried).resolves.toMatchObject({
+              meetingName: "Synthetic edit",
+              fixtureInput: row.fixtureInput,
+            });
+            expect(transitionOwned).toHaveBeenCalledTimes(2);
+          }
+        }
       } finally {
         repository.mockRestore();
         index.mockRestore();

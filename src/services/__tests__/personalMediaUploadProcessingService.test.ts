@@ -53,6 +53,7 @@ import type { PersonalMediaUploadRepository } from "../../repositories/personalM
 import { getMockStore } from "../../repositories/mockStore";
 
 let mockWorkerJob: PersonalMediaUploadJobRecord | undefined;
+let mockCanonicalCompletion = false;
 const mockWorkerClaim = jest.fn<PersonalMediaUploadRepository["claim"]>();
 const mockWorkerRenew = jest.fn<PersonalMediaUploadRepository["renewClaim"]>(
   async () => mockWorkerJob?.status === "processing",
@@ -88,78 +89,17 @@ const mockGenerateSummaries = jest.fn<() => Promise<MeetingSummaries>>(
 );
 
 jest.mock("fluent-ffmpeg", () => {
-  const fs = jest.requireActual<typeof import("node:fs")>("node:fs");
-  const path = jest.requireActual<typeof import("node:path")>("node:path");
-
-  const ffmpeg = jest.fn(() => {
-    const command = {
-      inputPath: "",
-      outputPath: "",
-      endHandler: undefined as undefined | (() => void),
-      noVideo() {
-        return this;
-      },
-      audioCodec() {
-        return this;
-      },
-      audioBitrate() {
-        return this;
-      },
-      audioChannels() {
-        return this;
-      },
-      audioFrequency() {
-        return this;
-      },
-      input(inputPath: string) {
-        this.inputPath = inputPath;
-        return this;
-      },
-      inputOptions() {
-        return this;
-      },
-      outputOptions() {
-        return this;
-      },
-      complexFilter() {
-        return this;
-      },
-      output(outputPath: string) {
-        this.outputPath = outputPath;
-        return this;
-      },
-      on(event: string, handler: () => void) {
-        if (event === "end") this.endHandler = handler;
-        return this;
-      },
-      kill: mockConversionKill,
-      run() {
-        if (this.inputPath.endsWith(".txt")) {
-          mockConcatLists.push(fs.readFileSync(this.inputPath, "utf8"));
-        }
-        if (this.outputPath) {
-          fs.mkdirSync(path.dirname(this.outputPath), { recursive: true });
-          fs.writeFileSync(this.outputPath, Buffer.from("audio"));
-        }
-        if (mockHoldConversion) mockConversionEnd = this.endHandler;
-        else this.endHandler?.();
-        return this;
-      },
-    };
-    return command;
+  const { createPersonalUploadFfmpegFake } = jest.requireActual<
+    typeof import("../testFixtures/personalMediaUploadFfmpeg.fixture")
+  >("../testFixtures/personalMediaUploadFfmpeg.fixture");
+  return createPersonalUploadFfmpegFake({
+    getConcatLists: () => mockConcatLists,
+    isHeld: () => mockHoldConversion,
+    captureEnd: (handler) => {
+      mockConversionEnd = handler;
+    },
+    getKill: () => mockConversionKill,
   });
-  Object.assign(ffmpeg, {
-    ffprobe: jest.fn(
-      (
-        _filePath: string,
-        callback: (
-          error: null,
-          metadata: { format: { duration: number } },
-        ) => void,
-      ) => callback(null, { format: { duration: 1 } }),
-    ),
-  });
-  return ffmpeg;
 });
 
 jest.mock("../meetingHistoryService", () => ({
@@ -183,12 +123,37 @@ jest.mock("../../repositories/personalMediaUploadRepository", () => ({
       await writeMeetingHistoryService(history);
       if (terminal) {
         if (mockWorkerJob) mockWorkerJob = terminal;
-        return updateClaimedPersonalMediaUploadJobRecord(
+        const saved = await updateClaimedPersonalMediaUploadJobRecord(
           terminal,
           claim.instanceId,
         );
+        if (!saved) return { kind: "stale" as const };
       }
-      return true;
+      return {
+        kind: "committed" as const,
+        history:
+          mockCanonicalCompletion && terminal?.status === "complete"
+            ? {
+                ...history,
+                notes: "Manual canonical notes",
+                notesVersion: 2,
+                notesLastEditedBy: "synthetic-editor",
+                notesHistory: [
+                  {
+                    version: 2,
+                    notes: "Manual canonical notes",
+                    editedBy: "synthetic-editor",
+                    editedAt: history.timestamp,
+                  },
+                ],
+                recovery: {
+                  disposition: "needs_reconciliation",
+                  stage: "delivery",
+                  reason: "delivery_uncertain",
+                },
+              }
+            : history,
+      };
     },
   }),
 }));
@@ -318,6 +283,7 @@ describe("personalMediaUploadProcessingService", () => {
     mockConcatLists.length = 0;
     recordingSegments = [];
     mockWorkerJob = undefined;
+    mockCanonicalCompletion = false;
     mockTranscribe.mockResolvedValue({ text: "segment transcript" });
     mockCreateResponse.mockResolvedValue(
       completedTextResponse("Generated notes"),
@@ -359,6 +325,26 @@ describe("personalMediaUploadProcessingService", () => {
     jest
       .mocked(updateClaimedPersonalMediaUploadJobRecord)
       .mockResolvedValue(true);
+  });
+
+  it("first personal export consumes acknowledged canonical content and original completion authority", async () => {
+    mockCanonicalCompletion = true;
+    await processPersonalMediaUpload(buildJob(), "instance-1");
+    expect(maybeAutoExportCompletedMeeting).toHaveBeenCalledTimes(1);
+    const exported = jest.mocked(maybeAutoExportCompletedMeeting).mock
+      .calls[0][0];
+    expect(exported).toMatchObject({
+      notes: "Manual canonical notes",
+      notesVersion: 2,
+      notesLastEditedBy: "synthetic-editor",
+      notesHistory: [
+        expect.objectContaining({
+          version: 2,
+          notes: "Manual canonical notes",
+        }),
+      ],
+    });
+    expect(exported.recovery).toBeUndefined();
   });
 
   describe.each(["ordinary", "desktop"])("%s finalization", (origin) => {

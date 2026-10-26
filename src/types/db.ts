@@ -454,6 +454,18 @@ export interface MeetingHistory {
   fixtureInput?: import("./fixtureEvidence").FixtureInputEvidence;
   fixtureGeneration?: import("./fixtureEvidence").FixtureGenerationEvidence;
   fixtureTranscript?: import("./fixtureEvidence").FixtureTranscriptEvidence;
+  canonicalWriter?: import("./meetingCanonicalWriter").CanonicalWriter;
+  publicationRepair?: import("./meetingPublication").RepairPublicationOwner;
+  operatorRecovery?: unknown;
+  contentMutation?: {
+    id: string;
+    fingerprint: string;
+    fieldRevisions?: import("./meetingCanonicalContent").CanonicalFieldRevisions;
+  };
+  contentRevision?: number;
+  updateDelivery?: import("./meetingUpdateDelivery").MeetingUpdateDelivery;
+  updateDeliveryQueue?: typeof import("./meetingUpdateDelivery").MEETING_UPDATE_DELIVERY_QUEUE;
+  updateDeliveryDueAt?: number;
   completionPolicy?: import("./meetingCompletionPolicy").CompletionPolicy;
   recoveryExport?: import("./recordingCheckpoint").RecoveryExport;
   recoveryTranscript?: {

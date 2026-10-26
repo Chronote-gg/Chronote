@@ -1,4 +1,9 @@
 /** @jest-environment node */
+jest.mock("../../src/services/meetingUpdateService", () => ({
+  updateMeeting: jest.fn(async () => ({ kind: "saved" })),
+}));
+import { z } from "zod";
+import { updateMeeting } from "../../src/services/meetingUpdateService";
 import type { ModalSubmitInteraction, ButtonInteraction } from "discord.js";
 import { completedTextResponse } from "../../src/testSupport/openaiResponse";
 
@@ -68,7 +73,6 @@ import {
   handleNotesCorrectionAccept,
 } from "../../src/commands/notesCorrections";
 import { generateMeetingSummaries } from "../../src/services/meetingSummaryService";
-import { updateMeetingNotesService } from "../../src/services/meetingHistoryService";
 function modal() {
   return {
     customId: `notes_correction_modal:${Buffer.from("voice#2026-01-01").toString("base64")}`,
@@ -107,11 +111,17 @@ test("held correction summary cannot initiate canonical update after interaction
   const proposal = modal();
   await handleNotesCorrectionModal(proposal);
   const payload = jest.mocked(proposal.editReply).mock.calls[0][0];
-  const token = (
-    payload as {
-      components: Array<{ components: Array<{ data: { custom_id: string } }> }>;
-    }
-  ).components[0].components[0].data.custom_id;
+  const token = z
+    .object({
+      components: z.array(
+        z.object({
+          components: z.array(
+            z.object({ data: z.object({ custom_id: z.string() }) }),
+          ),
+        }),
+      ),
+    })
+    .parse(payload).components[0].components[0].data.custom_id;
   const interaction = {
     customId: token,
     user: { id: "owner" },
@@ -133,6 +143,6 @@ test("held correction summary cannot initiate canonical update after interaction
   controller.abort();
   provider.resolve({});
   await run.catch(() => {});
-  expect(updateMeetingNotesService).not.toHaveBeenCalled();
+  expect(updateMeeting).not.toHaveBeenCalled();
   expect(interaction.editReply).toHaveBeenCalledTimes(priorReplies);
 });

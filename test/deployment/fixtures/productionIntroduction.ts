@@ -1,5 +1,6 @@
 import { cleanupOwnedTables } from "./ownedDynamoTables";
 import { randomUUID } from "node:crypto";
+import type { Service } from "@aws-sdk/client-ecs";
 import {
   DynamoDBClient,
   CreateTableCommand,
@@ -7,6 +8,7 @@ import {
   PutItemCommand,
   ScanCommand,
   TransactWriteItemsCommand,
+  type GetItemCommandInput,
 } from "@aws-sdk/client-dynamodb";
 import { marshall, unmarshall } from "@aws-sdk/util-dynamodb";
 import * as builders from "../../../src/services/deploymentControlTransactions";
@@ -19,6 +21,50 @@ import { createProductionIntroduction } from "../../../scripts/deployment/staged
 import { stateDigest } from "../../../scripts/deployment/production-evidence.cjs";
 import { manifestHash } from "../../../scripts/deployment/sandbox-manifest.cjs";
 import { runtime } from "../controlFixtures";
+type FixtureAuthorization = Omit<
+  ReturnType<typeof phaseAuthorization>,
+  "envelope"
+> & {
+  envelope: Omit<
+    ReturnType<typeof phaseAuthorization>["envelope"],
+    "recovery"
+  > & {
+    recovery: null | {
+      submittedReceiptSha256: string;
+      evidenceSha256: string;
+      target: "fallback" | "inspect";
+    };
+  };
+};
+
+type NativeFixture = ReturnType<typeof introductionFixture>;
+type NativeProbeResult = Awaited<ReturnType<NativeFixture["options"]["probe"]>>;
+type ProbeResult = Omit<
+  NativeProbeResult,
+  "probes" | "settlements" | "compatibility"
+> & {
+  probes: NativeProbeResult["probes"] | null;
+  settlements: {
+    table: string;
+    rowDigest: string;
+    effects: "acknowledged";
+    evidenceId: string;
+  }[];
+  compatibility: Omit<NativeProbeResult["compatibility"], "uploads"> & {
+    uploads: {
+      uploadId: string;
+      rowDigest: string;
+      sourceInput: "verified";
+      token: "verified";
+      schema: "verified";
+      ownership: "verified";
+      claimProtocol: "verified";
+      evidenceId: string;
+      validUntil: number;
+    }[];
+  };
+};
+
 export const client = new DynamoDBClient({
   endpoint: process.env.DEPLOYMENT_TEST_DYNAMODB_ENDPOINT,
   region: "local",
@@ -29,7 +75,7 @@ const created: string[] = [];
 afterAll(() => cleanupOwnedTables(client, created));
 export async function readStored(
   TableName: string,
-  Key: ReturnType<typeof marshall>,
+  Key: NonNullable<GetItemCommandInput["Key"]>,
 ) {
   const result = await client.send(
     new GetItemCommand({ TableName, Key, ConsistentRead: true }),
@@ -51,7 +97,8 @@ export async function fixture(
     controlTable: string,
   ) => Promise<void>,
 ) {
-  const f = introductionFixture(marshall, unmarshall, stateDigest),
+  const f: NativeFixture & { svc: Pick<Service, "deployments"> } =
+      introductionFixture(marshall, unmarshall, stateDigest),
     m = f.m;
   if (sameDefinition) {
     m.fallbackTaskDefinition = m.taskDefinition;
@@ -100,6 +147,7 @@ export async function fixture(
   const row = runtime("candidate", "candidate");
   row.identity = {
     ...row.identity,
+    kind: "ecs",
     taskArn: candidateArn,
     imageDigest: m.binding.candidateDigest,
     candidateId: m.binding.operationId,
@@ -136,7 +184,7 @@ export async function fixture(
   const native = f.options.aws,
     originalProbe = f.options.probe;
   const probe = async (request: Parameters<typeof originalProbe>[0]) => {
-    const result = await originalProbe(request);
+    const result: ProbeResult = await originalProbe(request);
     if (candidate) {
       result.tasks = [
         {
@@ -216,8 +264,10 @@ export async function fixture(
       activeArn = candidateArn.slice(0, -32) + "b".repeat(32);
       row.identity = {
         ...row.identity,
+        kind: "ecs",
         taskArn: activeArn,
         imageDigest: m.fallbackDigest,
+        candidateId: m.binding.operationId,
       };
       row.readiness.identity = row.identity;
       row.protection.identity = row.identity;
@@ -380,7 +430,13 @@ export async function fixture(
       throw new Error("Lost removal acknowledgment");
     return result;
   }
-  const options = { ...f.options, aws, probe, builders, types };
+  const options: Omit<typeof f.options, "aws" | "probe"> & {
+    aws: typeof aws;
+    probe: typeof probe;
+    builders: typeof builders;
+    types: typeof types;
+    authorization?: FixtureAuthorization;
+  } = { ...f.options, aws, probe, builders, types };
   async function head() {
     const result = await client.send(
       new GetItemCommand({

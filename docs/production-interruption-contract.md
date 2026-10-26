@@ -24,6 +24,12 @@ The initial metadata scan refuses personal rows that the existing classifier can
 
 Preparation does not prove complete retained-work classification. Final acceptance recollects retained work before each closing action. Persisting acceptance, reopening admission and releasing deployment each use a separate atomic transaction, current mutable guards and original expiry. Expiry stops dispatch but does not erase a directly received late acknowledgment.
 
+Shared meeting updates use the same admission boundary. Maintenance blocks new delivery claims and takeover attempts, while the exact existing owner may renew and finish. A refuses histories with update-delivery, publication-repair or canonical-mutation metadata, nonzero content revision, or delivery queue state. Domain `synced` and repair `settled` can follow readback and do not prove direct acknowledgment for A. Initial fixture completion creates none of that metadata and retains an absent or zero content revision. Fixture validation runs again before every owned-history retry after a canonical conflict.
+
+The retained collector reads bounded scalar metadata leaves, not publication snapshots or meeting content. Leaf projection may hide a malformed parent, such as an empty map or scalar `updateDelivery`, so it cannot diagnose every blocker before interruption. Each final transaction separately requires absence of the complete `updateDelivery`, `publicationRepair` and `contentMutation` parents, and preserves exact revision and queue conditions. Those checks refuse hidden or newly inserted state before reopening. This conservative contract does not adopt or repair retained publication work.
+
+The update worker requires an `ACTIVE` `UpdateDeliveryDueIndex` and uses its due-key query without a Scan fallback. Its source declaration and local tests do not establish that the production index or permissions exist. Runtime records advertise the optional `canonicalContentWriter: 1` capability, and canonical edits still require the exact serving roster to support it.
+
 ## Finite capacity and source evidence
 
 The original package remains limited to 200 actions and 262,144 bytes. No supplemental file can add omitted original identity, launcher or policy slots. The early capacity screen occurs before interruption and is non-atomic. The final transaction also checks the 100-target, 4 MB transaction and 400 KB item limits before reservation or submission. History growth may make the final package too large and extend maintenance.
@@ -61,6 +67,8 @@ The original launcher declaration also binds and freshly rereads the consumed `S
 The tradeoff is exposure of that one OpenAI key and regional task-definition metadata to other trusted prompt-guard consumers. No new role, token, job or static fallback is added. Actual provisioning, retirement of old credentials and effective permissions remain separate execution prerequisites.
 
 ## Release prerequisites and evidence limits
+
+Before acquiring the hold or stopping legacy work, introduction preflight checks the original manifest's exact history table and its `UpdateDeliveryDueIndex`. It requires the bound account/region/table identity, active table and index, exact queue/due key names and scalar types, and `KEYS_ONLY` projection. Missing, unreadable or changed metadata refuses before interruption. The check follows the initial personal-work screen and also runs on continuation. Its disabled introduction-role declaration grants only `DescribeTable` on that table; collector permissions do not expand. The later candidate readiness check remains required, because an early metadata read cannot prevent subsequent infrastructure drift. These source checks do not establish actual index readiness or effective role permissions.
 
 The legacy production restoration changed the available deployment baseline. Private owner evidence must refresh the working rollback image, immutable image availability, existing TTL and storage-cost implications, exact role/settings compatibility, capacity and retained effects before any attended window. No historical task revision or completed deployment status proves availability.
 

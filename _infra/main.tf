@@ -1555,7 +1555,8 @@ resource "aws_iam_policy" "dynamodb_access_policy" {
           "dynamodb:DescribeTable"
         ]
         Resource = [
-          aws_dynamodb_table.guild_subscription_table.arn
+          aws_dynamodb_table.guild_subscription_table.arn,
+          aws_dynamodb_table.meeting_history_table.arn
         ]
       },
       {
@@ -2933,6 +2934,23 @@ resource "aws_dynamodb_table" "meeting_history_table" {
   attribute {
     name = "timestamp"
     type = "S"
+  }
+
+  attribute {
+    name = "updateDeliveryQueue"
+    type = "S"
+  }
+
+  attribute {
+    name = "updateDeliveryDueAt"
+    type = "N"
+  }
+
+  global_secondary_index {
+    name            = "UpdateDeliveryDueIndex"
+    hash_key        = "updateDeliveryQueue"
+    range_key       = "updateDeliveryDueAt"
+    projection_type = "KEYS_ONLY"
   }
 
   # GSI for querying all meetings in a guild by time

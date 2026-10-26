@@ -5,11 +5,19 @@ jest.mock("../../src/db", () => ({
     checkAdmission: async () => ({ kind: "admitted" }),
   }),
 }));
+import { registerMeetingUpdateDeliveryDetailTests } from "./meetingUpdateDeliveryDetail.tests";
+jest.mock("../../src/services/meetingUpdateService", () => ({
+  updateMeeting: jest.fn(),
+}));
+import { updateMeeting } from "../../src/services/meetingUpdateService";
+import {
+  savedUpdate,
+  expectSavedUpdateAcknowledgment,
+} from "./meetingUpdateResult.fixture";
 import { beforeEach, describe, expect, test, jest } from "@jest/globals";
 import { completedTextResponse } from "../../src/testSupport/openaiResponse";
-import * as unifiedConfig from "../../src/services/unifiedConfigService";
+
 import "../deployment/coldNetworkGuard.cjs";
-import { config } from "../../src/services/configService";
 import { verifyCorrectionDisconnect } from "../fixtures/correctionDisconnect";
 import {
   updateDiscordMessage,
@@ -45,11 +53,7 @@ import {
   ensureManageGuildWithUserToken,
   ensureUserInGuild,
 } from "../../src/services/guildAccessService";
-import {
-  getMeetingHistoryService,
-  updateMeetingNotesService,
-  updateMeetingNotesMessageMetadataService,
-} from "../../src/services/meetingHistoryService";
+import { getMeetingHistoryService } from "../../src/services/meetingHistoryService";
 import { buildMeetingTimelineEventsFromHistory } from "../../src/services/meetingTimelineService";
 import { getMeetingSummaryFeedback } from "../../src/services/summaryFeedbackService";
 import { generateMeetingSummaries } from "../../src/services/meetingSummaryService";
@@ -90,10 +94,7 @@ jest.mock("../../src/services/guildAccessService", () => ({
 jest.mock("../../src/services/meetingHistoryService", () => ({
   getMeetingHistoryService: jest.fn(),
   listRecentMeetingsForGuildService: jest.fn(),
-  updateMeetingNotesService: jest.fn(),
-  updateMeetingNotesMessageMetadataService: jest.fn(),
   updateMeetingArchiveService: jest.fn(),
-  updateMeetingNameService: jest.fn(),
 }));
 
 jest.mock("../../src/services/storageService", () => ({
@@ -183,9 +184,6 @@ describe("meetings router detail", () => {
     // The real builder always returns an array, and the detail route maps over
     // it to resolve mentions in event text.
     mockedBuildTimeline.mockReturnValue([]);
-    jest
-      .mocked(updateMeetingNotesMessageMetadataService)
-      .mockResolvedValue(true);
     mockedEnsureManageGuild.mockResolvedValue(true);
     mockedEnsureUserInGuild.mockResolvedValue(true);
     mockedEnsureMeetingAccess.mockResolvedValue(true);
@@ -200,6 +198,10 @@ describe("meetings router detail", () => {
       transcriptAccessEnabled: true,
       audioAccessEnabled: true,
     });
+  });
+
+  registerMeetingUpdateDeliveryDetailTests((row) => {
+    mockedGetMeetingHistory.mockResolvedValue(row);
   });
 
   test("returns transcript, audio url, and summary feedback", async () => {
@@ -404,13 +406,7 @@ describe("meetings router detail", () => {
 
 describe("meetings notes correction mutations", () => {
   const mockedEnsureManageGuild = jest.mocked(ensureManageGuildWithUserToken);
-  const mockedEnsureUserInGuild = jest.mocked(
-    (
-      jest.requireMock("../../src/services/guildAccessService") as {
-        ensureUserInGuild: typeof import("../../src/services/guildAccessService").ensureUserInGuild;
-      }
-    ).ensureUserInGuild,
-  );
+  const mockedEnsureUserInGuild = jest.mocked(ensureUserInGuild);
   const mockedGetMeetingHistory = jest.mocked(getMeetingHistoryService);
   const mockedFetchJsonFromS3 = jest.mocked(fetchJsonFromS3);
   const mockedGenerateMeetingSummaries = jest.mocked(generateMeetingSummaries);
@@ -436,15 +432,10 @@ describe("meetings notes correction mutations", () => {
     resolveMeetingArtifactAccess,
   );
 
-  const mockedUpdateMeetingNotesService = jest.mocked(
-    updateMeetingNotesService,
-  );
+  const mockedUpdateMeeting = jest.mocked(updateMeeting);
 
   beforeEach(() => {
     jest.resetAllMocks();
-    jest
-      .mocked(updateMeetingNotesMessageMetadataService)
-      .mockResolvedValue(true);
     mockedEnsureManageGuild.mockResolvedValue(true);
     mockedEnsureUserInGuild.mockResolvedValue(true);
     mockedEnsureUserCanViewChannel.mockResolvedValue(true);
@@ -546,20 +537,9 @@ describe("meetings notes correction mutations", () => {
       mockApiEligible = true;
     }
   });
-  test.each([
-    { acknowledged: true, create: false },
-    { acknowledged: false, create: false },
-    { acknowledged: true, create: true },
-  ])(
-    "actual correction embed $create ACK=$acknowledged retains full helper ownership and stops later sends",
-    async ({ acknowledged, create }) => {
-      const snapshot = jest
-        .spyOn(unifiedConfig, "resolveConfigSnapshot")
-        .mockResolvedValue({} as never);
-      const boolean = jest
-        .spyOn(unifiedConfig, "getSnapshotBoolean")
-        .mockReturnValue(true);
-      const enabled = jest.replaceProperty(config.mock, "enabled", false);
+  test.each([true, false])(
+    "actual canonical action ACK=%s retains request ownership without caller Discord mutations",
+    async (acknowledged) => {
       const meetingId = "channel-1#2025-01-01";
       mockedGetMeetingHistory.mockResolvedValue({
         guildId: "guild-1",
@@ -569,34 +549,32 @@ describe("meetings notes correction mutations", () => {
         notes: "Original",
         notesVersion: 1,
         notesChannelId: "synthetic-text",
-        notesMessageIds: create ? [] : ["synthetic-old"],
+        notesMessageIds: ["synthetic-old"],
       } as MeetingHistory);
-      mockedUpdateMeetingNotesService.mockResolvedValue(true);
       const token = await buildCaller().meetings.suggestNotesCorrection({
         serverId: "guild-1",
         meetingId,
         suggestion: "Fix",
       });
-      let release!: (value: boolean) => void;
-      let reject!: (error: Error) => void;
-      let entered!: () => void;
+      let release!: () => void,
+        reject!: (error: Error) => void,
+        entered!: () => void;
       const started = new Promise<void>((resolve) => {
         entered = resolve;
       });
-      jest.mocked(updateDiscordMessage).mockImplementationOnce(() => {
-        entered();
-        return new Promise<boolean>((resolve, fail) => {
-          release = resolve;
-          reject = fail;
+      mockedUpdateMeeting.mockImplementationOnce((input) => {
+        if (!input.operation)
+          throw new Error("Correction action requires runtime operation");
+        return input.operation.mutate(() => {
+          entered();
+          return new Promise<ReturnType<typeof savedUpdate>>(
+            (resolve, fail) => {
+              release = () => resolve(savedUpdate());
+              reject = fail;
+            },
+          );
         });
       });
-      if (create)
-        jest.mocked(createDiscordMessage).mockImplementationOnce(() => {
-          entered();
-          return new Promise((resolve) => {
-            release = () => resolve({ id: "synthetic-created" });
-          });
-        });
       const previous = new Set(
         getRuntimeWorkAdmissionCheckpoints().map((entry) => entry.id),
       );
@@ -611,36 +589,23 @@ describe("meetings notes correction mutations", () => {
         await started;
         const claim = getRuntimeWorkAdmissionCheckpoints().find(
           (entry) => !previous.has(entry.id),
-        )!;
-        expect(
-          create ? createDiscordMessage : updateDiscordMessage,
-        ).toHaveBeenCalledTimes(1);
-        expect(claim.effects.length).toBeGreaterThan(0);
+        );
+        expect(claim?.effects.length).toBeGreaterThan(0);
         fenceRuntimeWorkAdmissions();
-        if (acknowledged) release(true);
-        else reject(new Error("Synthetic lost Discord ACK"));
+        if (acknowledged) release();
+        else reject(new Error("Synthetic lost canonical ACK"));
         await task;
         expect(
-          Boolean(
-            getRuntimeWorkAdmissionCheckpoints().find(
-              (entry) => entry.id === claim.id,
-            ),
+          getRuntimeWorkAdmissionCheckpoints().some(
+            (entry) => entry.id === claim?.id,
           ),
         ).toBe(!acknowledged);
-        expect(createDiscordMessage).toHaveBeenCalledTimes(create ? 1 : 0);
-        if (acknowledged)
-          expect(updateMeetingNotesMessageMetadataService).toHaveBeenCalledWith(
-            expect.objectContaining({
-              notesMessageIds: [create ? "synthetic-created" : "synthetic-old"],
-            }),
-          );
+        expect(updateDiscordMessage).not.toHaveBeenCalled();
+        expect(createDiscordMessage).not.toHaveBeenCalled();
         expect(deleteDiscordMessage).not.toHaveBeenCalled();
       } finally {
-        release(true);
+        release();
         await task;
-        enabled.restore();
-        snapshot.mockRestore();
-        boolean.mockRestore();
       }
     },
   );
@@ -807,7 +772,7 @@ describe("meetings notes correction mutations", () => {
       suggestion: "Fix it",
     });
 
-    mockedUpdateMeetingNotesService.mockResolvedValueOnce(false);
+    mockedUpdateMeeting.mockResolvedValueOnce({ kind: "conflict" });
     await expect(
       buildCaller().meetings.applyNotesCorrection({
         serverId: "guild-1",
@@ -857,7 +822,7 @@ describe("meetings notes correction mutations", () => {
       meetingId,
       suggestion: "John Smith should be Jon Smythe.",
     });
-    mockedUpdateMeetingNotesService.mockResolvedValueOnce(true);
+    mockedUpdateMeeting.mockResolvedValueOnce(savedUpdate());
 
     const result = await buildCaller().meetings.applyNotesCorrection({
       serverId: "guild-1",
@@ -872,22 +837,25 @@ describe("meetings notes correction mutations", () => {
     expect(result.dictionaryTeachingInstruction).toBe(
       "John Smith should be Jon Smythe.",
     );
-    expect(mockedUpdateMeetingNotesService).toHaveBeenCalledWith(
+    expect(mockedUpdateMeeting).toHaveBeenCalledWith(
       expect.objectContaining({
-        notesVersion: 4,
-        source: {
-          type: "notes_correction",
-          correctionId: expect.any(String),
-        },
-        suggestion: expect.objectContaining({
-          correctionId: expect.any(String),
-          source: "web",
-          baseNotesVersion: 3,
-          resultingNotesVersion: 4,
+        mutation: expect.objectContaining({ kind: "correction" }),
+        notesEdit: expect.objectContaining({
+          expectedNotesVersion: 3,
+          source: {
+            type: "notes_correction",
+            correctionId: expect.any(String),
+          },
+          suggestion: expect.objectContaining({
+            correctionId: expect.any(String),
+            source: "web",
+            baseNotesVersion: 3,
+            resultingNotesVersion: 4,
+          }),
         }),
+        signal: expect.any(AbortSignal),
+        operation: expect.objectContaining({ signal: expect.any(AbortSignal) }),
       }),
-      expect.any(AbortSignal),
-      expect.objectContaining({ signal: expect.any(AbortSignal) }),
     );
   });
 
@@ -913,7 +881,7 @@ describe("meetings notes correction mutations", () => {
       transcriptAccessEnabled: false,
       audioAccessEnabled: true,
     });
-    mockedUpdateMeetingNotesService.mockResolvedValueOnce(true);
+    mockedUpdateMeeting.mockResolvedValueOnce(savedUpdate());
 
     const suggestion = await buildCaller().meetings.suggestNotesCorrection({
       serverId: "guild-1",
@@ -953,7 +921,7 @@ describe("meetings notes correction mutations", () => {
     mockedFetchJsonFromS3.mockResolvedValueOnce({
       text: "Jon Smythe owns the Apollo rollout.",
     });
-    mockedUpdateMeetingNotesService.mockResolvedValueOnce(true);
+    mockedUpdateMeeting.mockResolvedValueOnce(savedUpdate());
     mockedEnsureManageGuild.mockResolvedValue(false);
 
     const suggestion = await buildCaller(user).meetings.suggestNotesCorrection({
@@ -969,6 +937,8 @@ describe("meetings notes correction mutations", () => {
 
     expect(result).toEqual({
       ok: true,
+      kind: "saved",
+      delivery: savedUpdate().delivery,
       dictionaryTeachingContextToken: undefined,
       dictionaryTeachingContextExpiresAtMs: undefined,
       dictionaryTeachingInstruction: "John Smith should be Jon Smythe.",
@@ -1028,9 +998,7 @@ describe("meetings updateNotes mutation", () => {
     ensureUserCanManageChannel,
   );
   const mockedCheckMeetingAccess = jest.mocked(checkUserMeetingAccess);
-  const mockedUpdateMeetingNotesService = jest.mocked(
-    updateMeetingNotesService,
-  );
+  const mockedUpdateMeeting = jest.mocked(updateMeeting);
 
   beforeEach(() => {
     jest.resetAllMocks();
@@ -1041,7 +1009,7 @@ describe("meetings updateNotes mutation", () => {
       allowed: true,
       via: "channel_permissions",
     });
-    mockedUpdateMeetingNotesService.mockResolvedValue(true);
+    mockedUpdateMeeting.mockResolvedValue(savedUpdate());
   });
 
   test("saves notes for the meeting starter", async () => {
@@ -1070,16 +1038,14 @@ describe("meetings updateNotes mutation", () => {
       expectedPreviousVersion: 3,
     });
 
-    expect(result).toEqual({ ok: true });
-    expect(mockedUpdateMeetingNotesService).toHaveBeenCalledWith(
+    expectSavedUpdateAcknowledgment(result);
+    expect(updateMeeting).toHaveBeenCalled();
+    expect(mockedUpdateMeeting).toHaveBeenCalledWith(
       expect.objectContaining({
-        guildId: "guild-1",
-        channelId_timestamp: meetingId,
-        notes: "Hello",
-        notesDelta: delta,
-        notesVersion: 4,
-        editedBy: user.id,
-        expectedPreviousVersion: 3,
+        key: { guildId: "guild-1", channelId_timestamp: meetingId },
+        mutation: { kind: "notes", notes: "Hello", notesDelta: delta },
+        actor: { editedBy: user.id },
+        notesEdit: { expectedNotesVersion: 3, source: { type: "web_editor" } },
       }),
     );
   });
@@ -1111,7 +1077,7 @@ describe("meetings updateNotes mutation", () => {
       }),
     ).rejects.toMatchObject({ code: "CONFLICT" });
 
-    expect(mockedUpdateMeetingNotesService).not.toHaveBeenCalled();
+    expect(mockedUpdateMeeting).not.toHaveBeenCalled();
   });
 
   test("forbids non-owner edits when not auto-recorded", async () => {
@@ -1168,7 +1134,7 @@ describe("meetings updateNotes mutation", () => {
       expectedPreviousVersion: 1,
     });
 
-    expect(result).toEqual({ ok: true });
+    expectSavedUpdateAcknowledgment(result);
     expect(mockedEnsureUserCanManageChannel).toHaveBeenCalled();
   });
 
@@ -1239,9 +1205,7 @@ describe("meetings importNotes mutation", () => {
   );
   const mockedGetMeetingHistory = jest.mocked(getMeetingHistoryService);
   const mockedCheckMeetingAccess = jest.mocked(checkUserMeetingAccess);
-  const mockedUpdateMeetingNotesService = jest.mocked(
-    updateMeetingNotesService,
-  );
+  const mockedUpdateMeeting = jest.mocked(updateMeeting);
 
   beforeEach(() => {
     jest.resetAllMocks();
@@ -1250,7 +1214,7 @@ describe("meetings importNotes mutation", () => {
       allowed: true,
       via: "channel_permissions",
     });
-    mockedUpdateMeetingNotesService.mockResolvedValue(true);
+    mockedUpdateMeeting.mockResolvedValue(savedUpdate());
   });
 
   test("saves imported notes with HTTP source metadata", async () => {
@@ -1281,21 +1245,20 @@ describe("meetings importNotes mutation", () => {
       expectedPreviousVersion: 3,
     });
 
-    expect(result).toEqual({ ok: true });
-    expect(mockedUpdateMeetingNotesService).toHaveBeenCalledWith(
+    expectSavedUpdateAcknowledgment(result);
+    expect(mockedUpdateMeeting).toHaveBeenCalledWith(
       expect.objectContaining({
-        guildId: "guild-1",
-        channelId_timestamp: meetingId,
-        notes: "Imported notes",
-        notesDelta: null,
-        notesVersion: 4,
-        editedBy: user.id,
-        expectedPreviousVersion: 3,
-        source: {
-          type: "manual_import",
-          importMode: "replace",
-          sourceName: "External notes",
-          sourceUrl: "https://example.com/notes",
+        key: { guildId: "guild-1", channelId_timestamp: meetingId },
+        mutation: { kind: "notes", notes: "Imported notes", notesDelta: null },
+        actor: { editedBy: user.id },
+        notesEdit: {
+          expectedNotesVersion: 3,
+          source: {
+            type: "manual_import",
+            importMode: "replace",
+            sourceName: "External notes",
+            sourceUrl: "https://example.com/notes",
+          },
         },
       }),
     );
@@ -1314,6 +1277,6 @@ describe("meetings importNotes mutation", () => {
     ).rejects.toMatchObject({ code: "BAD_REQUEST" });
 
     expect(mockedGetMeetingHistory).not.toHaveBeenCalled();
-    expect(mockedUpdateMeetingNotesService).not.toHaveBeenCalled();
+    expect(mockedUpdateMeeting).not.toHaveBeenCalled();
   });
 });

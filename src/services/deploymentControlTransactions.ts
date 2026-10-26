@@ -1,3 +1,4 @@
+import { buildUnpausedDesktopDraftCheck } from "./personalUploadTransactions";
 import {
   fixtureGrantCondition,
   fixtureReservationOwnership,
@@ -10,6 +11,10 @@ import {
   newWorkScopeSchema,
   type NewWorkScope,
 } from "../types/productionIntroduction";
+import {
+  publicationSnapshotCondition,
+  settledLifecycleDelivery,
+} from "../types/meetingPublication";
 import { planCompatibleReplacement } from "./runtimeCompatibleReplacementService";
 import type {
   TransactWriteItem,
@@ -23,7 +28,6 @@ import type {
   MeetingHistory,
   PersonalMediaUploadJobRecord,
   PersonalMediaClaim,
-  PersonalRecordingSegmentRecord,
 } from "../types/db";
 import {
   RECORDING_DELIVERY_FIELDS,
@@ -46,120 +50,7 @@ import {
   type RuntimeRetirementRequestInput,
   retirementRequestSchema,
   sameRuntimeIdentity,
-  pausedDesktopDraftKey,
 } from "../types/deploymentControl";
-
-export function buildUnpausedDesktopDraftCheck(
-  uploadId: string,
-  table: string,
-): TransactWriteItem {
-  return {
-    ConditionCheck: {
-      TableName: table,
-      Key: marshall(pausedDesktopDraftKey(uploadId)),
-      ConditionExpression: "attribute_not_exists(pk)",
-    },
-  };
-}
-export function buildPersonalUploadSubmissionTransaction(
-  job: PersonalMediaUploadJobRecord,
-  tables: { deploymentControl: string; personalMediaUpload: string },
-): TransactWriteItemsCommandInput {
-  return {
-    TransactItems: [
-      buildUnpausedDesktopDraftCheck(job.uploadId, tables.deploymentControl),
-      {
-        Put: {
-          TableName: tables.personalMediaUpload,
-          Item: marshall(job, { removeUndefinedValues: true }),
-          ConditionExpression:
-            "#status = :pending AND ownerUserId = :owner AND attribute_not_exists(processingClaimId)",
-          ExpressionAttributeNames: { "#status": "status" },
-          ExpressionAttributeValues: marshall({
-            ":pending": "pending_upload",
-            ":owner": job.ownerUserId,
-          }),
-        },
-      },
-    ],
-  };
-}
-export function buildPersonalSegmentTransitionTransaction(
-  segment: PersonalRecordingSegmentRecord,
-  expectedStatus: PersonalRecordingSegmentRecord["status"],
-  tables: { deploymentControl: string; personalRecordingSegment: string },
-): TransactWriteItemsCommandInput {
-  return {
-    TransactItems: [
-      buildUnpausedDesktopDraftCheck(
-        segment.uploadId,
-        tables.deploymentControl,
-      ),
-      {
-        Put: {
-          TableName: tables.personalRecordingSegment,
-          Item: marshall(segment, { removeUndefinedValues: true }),
-          ConditionExpression: "#status = :expected AND ownerUserId = :owner",
-          ExpressionAttributeNames: { "#status": "status" },
-          ExpressionAttributeValues: marshall({
-            ":expected": expectedStatus,
-            ":owner": segment.ownerUserId,
-          }),
-        },
-      },
-    ],
-  };
-}
-
-export function buildPendingSegmentTransaction(
-  segment: PersonalRecordingSegmentRecord,
-  expectedStatus: "pending_upload" | "failed" | undefined,
-  tables: {
-    personalMediaUpload: string;
-    personalRecordingSegment: string;
-    deploymentControl: string;
-  },
-): TransactWriteItemsCommandInput {
-  return {
-    TransactItems: [
-      buildUnpausedDesktopDraftCheck(
-        segment.uploadId,
-        tables.deploymentControl,
-      ),
-      {
-        ConditionCheck: {
-          TableName: tables.personalMediaUpload,
-          Key: marshall({ uploadId: segment.uploadId }),
-          ConditionExpression:
-            "#status = :pending AND ownerUserId = :owner AND attribute_not_exists(processingClaimId)",
-          ExpressionAttributeNames: { "#status": "status" },
-          ExpressionAttributeValues: marshall({
-            ":pending": "pending_upload",
-            ":owner": segment.ownerUserId,
-          }),
-        },
-      },
-      {
-        Put: {
-          TableName: tables.personalRecordingSegment,
-          Item: marshall(segment, { removeUndefinedValues: true }),
-          ConditionExpression: expectedStatus
-            ? "#status = :expected AND ownerUserId = :owner"
-            : "attribute_not_exists(uploadId)",
-          ...(expectedStatus
-            ? {
-                ExpressionAttributeNames: { "#status": "status" },
-                ExpressionAttributeValues: marshall({
-                  ":expected": expectedStatus,
-                  ":owner": segment.ownerUserId,
-                }),
-              }
-            : {}),
-        },
-      },
-    ],
-  };
-}
 
 export function buildWorkAdmissionChecks(
   authority: WorkAdmissionAuthority,
@@ -858,6 +749,40 @@ export function buildHistoryTransition(
     );
     updates.push(`#field${index} = :value${index}`);
   });
+  let publicationCondition = "";
+  if (input.expectedPublication) {
+    const proof = publicationSnapshotCondition(input.expectedPublication);
+    Object.assign(names, proof.names);
+    Object.assign(
+      values,
+      marshall(proof.values, { removeUndefinedValues: true }),
+    );
+    publicationCondition = " AND " + proof.condition;
+    const settled = settledLifecycleDelivery(
+      input.expectedPublication,
+      input.patch,
+    );
+    if (settled) {
+      names["#settledDelivery"] = "updateDelivery";
+      updates.push("#settledDelivery = :settledDelivery");
+      Object.assign(values, marshall({ ":settledDelivery": settled.delivery }));
+      if (settled.dueAt !== undefined) {
+        names["#settledQueue"] = "updateDeliveryQueue";
+        names["#settledDue"] = "updateDeliveryDueAt";
+        updates.push(
+          "#settledQueue = :settledQueue",
+          "#settledDue = :settledDue",
+        );
+        Object.assign(
+          values,
+          marshall({
+            ":settledQueue": "meeting-update:v1",
+            ":settledDue": settled.dueAt,
+          }),
+        );
+      }
+    }
+  }
   let checkpointCondition = "";
   if (input.expectedCheckpointRevision !== undefined) {
     names["#checkpoint"] = "checkpoint";
@@ -878,6 +803,7 @@ export function buildHistoryTransition(
     ConditionExpression:
       "meetingId = :meeting AND ownerInstanceId = :owner AND executionVersion = :version AND #status = :prior" +
       checkpointCondition +
+      publicationCondition +
       recordingDeliveryCondition(input, names, values),
     UpdateExpression: `SET ${updates.join(", ")}`,
     ExpressionAttributeNames: names,

@@ -15,6 +15,11 @@ const safeCategories = [
   "preserved_nonadoptable_legacy",
   "preserved_compatible_future",
 ];
+const publicationParents = [
+  "updateDelivery",
+  "publicationRepair",
+  "contentMutation",
+];
 const keys = {
   activeMeeting: ["guildId"],
   meetingHistory: ["guildId", "channelId_timestamp"],
@@ -44,6 +49,31 @@ const projections = {
     "ownerInstanceId",
     "executionVersion",
     "status",
+    "contentRevision",
+    "contentMutation.id",
+    "contentMutation.fingerprint",
+    "contentMutation.fieldRevisions.notes",
+    "contentMutation.fieldRevisions.meetingName",
+    "contentMutation.fieldRevisions.summarySentence",
+    "contentMutation.fieldRevisions.summaryLabel",
+    "canonicalWriter.kind",
+    "canonicalWriter.ownerInstanceId",
+    "canonicalWriter.executionVersion",
+    "canonicalWriter.uploadId",
+    "canonicalWriter.instanceId",
+    "canonicalWriter.attempt",
+    "canonicalWriter.claimId",
+    "updateDelivery.revision",
+    "updateDelivery.policy.kind",
+    "updateDelivery.policy.reason",
+    "updateDelivery.progress.kind",
+    "updateDeliveryQueue",
+    "updateDeliveryDueAt",
+    "publicationRepair.kind",
+    "publicationRepair.runId",
+    "publicationRepair.previewDigest",
+    "publicationRepair.receiptKey",
+    "publicationRepair.snapshot",
     "checkpoint.schemaVersion",
     "checkpoint.revision",
     "checkpoint.manifest.checksumSha256",
@@ -280,8 +310,18 @@ function reviewedLegacy(entry, snapshot, review) {
     )
   );
 }
+function hasPublicationHistory(r) {
+  // Domain completion can follow readback; it cannot establish A acknowledgment.
+  return (
+    publicationParents.some((field) => r[field] !== undefined) ||
+    r.updateDeliveryQueue !== undefined ||
+    r.updateDeliveryDueAt !== undefined ||
+    (r.contentRevision !== undefined && r.contentRevision !== 0)
+  );
+}
 function historyCategory(entry, snapshot, review) {
   const r = entry.metadata;
+  if (hasPublicationHistory(r)) return "uncertain_external_effect";
   if (
     r.recoveryExport?.state === "submitted" ||
     r.recovery?.disposition === "needs_reconciliation"
@@ -310,6 +350,16 @@ function historyCategory(entry, snapshot, review) {
   return r.checkpoint.schemaVersion === 1
     ? "compatible_work_requires_review"
     : "unknown_metadata";
+}
+function retainedGuardFields(category) {
+  if (category !== "meetingHistory") return projections[category];
+  // Leaf projections cannot diagnose malformed parents; final absence must still hold.
+  return [
+    ...projections.meetingHistory.filter(
+      (path) => !publicationParents.includes(path.split(".")[0]),
+    ),
+    ...publicationParents,
+  ];
 }
 function personalJobCategory(r) {
   if (
@@ -416,5 +466,6 @@ module.exports = {
   readRetainedMetadata,
   classifyRetainedWork,
   projections,
+  retainedGuardFields,
   assertInitialPersonalFeasibility,
 };
