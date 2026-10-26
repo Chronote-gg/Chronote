@@ -207,7 +207,6 @@ jest.mock("../personalMediaUploadService", () => ({
   markPersonalRecordingUploadSegmentsFailed: jest.fn(async () => undefined),
   updateClaimedPersonalMediaUploadJobProgress: jest.fn(async () => false),
   updateClaimedPersonalMediaUploadJobRecord: jest.fn(async () => false),
-  updatePersonalMediaUploadJobRecord: jest.fn(async () => undefined),
 }));
 
 jest.mock("../storageService", () => ({

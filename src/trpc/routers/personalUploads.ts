@@ -53,6 +53,12 @@ const createUploadIntent = authedProcedure
   });
 
 const mapUploadError = (error: PersonalMediaUploadError): TRPCError => {
+  if (error.code === "paused")
+    return new TRPCError({
+      code: "CONFLICT",
+      message: error.message,
+      cause: error,
+    });
   if (error.code === "not_found" || error.code === "forbidden") {
     return new TRPCError({ code: "NOT_FOUND", message: "Upload not found." });
   }

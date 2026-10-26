@@ -1,11 +1,11 @@
 import { config } from "../services/configService";
 import {
   claimPersonalMediaUploadJob,
+  getDeploymentControlRepository,
   getPersonalMediaUploadJob,
   listClaimablePersonalMediaUploadJobs,
   renewPersonalMediaUploadJobClaim,
   updateClaimedPersonalMediaUploadJobProgress,
-  updatePersonalMediaUploadJob,
   writeClaimedPersonalMediaUploadJob,
   writePersonalMediaUploadJob,
   submitPersonalMediaUploadJob,
@@ -23,6 +23,10 @@ import type {
 import type { AdmissionContext } from "../types/deploymentControl";
 import { mockWorkAdmissionAllowed } from "./deploymentControlRepository";
 import { getMockStore } from "./mockStore";
+import {
+  getPausedDesktopDraft,
+  mockDesktopDraftPaused,
+} from "./pausedDesktopDraft";
 
 export type PersonalMediaUploadRepository = {
   submit: (job: PersonalMediaUploadJobRecord) => Promise<boolean>;
@@ -37,7 +41,6 @@ export type PersonalMediaUploadRepository = {
   ) => Promise<boolean>;
   write: (job: PersonalMediaUploadJobRecord) => Promise<void>;
   get: (uploadId: string) => Promise<PersonalMediaUploadJobRecord | undefined>;
-  update: (job: PersonalMediaUploadJobRecord) => Promise<void>;
   listClaimable: (options: {
     instanceId: string;
     nowEpochSeconds: number;
@@ -87,7 +90,6 @@ const realRepository: PersonalMediaUploadRepository = {
   writeSegment: writePersonalSegmentUnderClaim,
   write: writePersonalMediaUploadJob,
   get: getPersonalMediaUploadJob,
-  update: updatePersonalMediaUploadJob,
   listClaimable: listClaimablePersonalMediaUploadJobs,
   claim: claimPersonalMediaUploadJob,
   renewClaim: renewPersonalMediaUploadJobClaim,
@@ -106,8 +108,21 @@ function mockClaimOwned(claim: PersonalMediaClaim): boolean {
     (job.claimExpiresAt ?? 0) >= claim.nowEpochSeconds,
   );
 }
+function mockJobClaimable(
+  job: PersonalMediaUploadJobRecord,
+  nowEpochSeconds: number,
+  maxAttempts: number,
+): boolean {
+  const claimExpired = (job.claimExpiresAt ?? 0) < nowEpochSeconds;
+  return (
+    (job.attempts ?? 0) < maxAttempts &&
+    (job.status === "queued" || (job.status === "processing" && claimExpired))
+  );
+}
+
 const mockRepository: PersonalMediaUploadRepository = {
   async submit(job) {
+    if (mockDesktopDraftPaused(job.uploadId)) return false;
     const current = getMockStore().personalMediaUploadsById.get(job.uploadId);
     if (
       !current ||
@@ -175,11 +190,10 @@ const mockRepository: PersonalMediaUploadRepository = {
   async get(uploadId) {
     return getMockStore().personalMediaUploadsById.get(uploadId);
   },
-  async update(job) {
-    getMockStore().personalMediaUploadsById.set(job.uploadId, job);
-  },
   async listClaimable({ instanceId, nowEpochSeconds, maxAttempts, limit }) {
-    return Array.from(getMockStore().personalMediaUploadsById.values())
+    const candidates = Array.from(
+      getMockStore().personalMediaUploadsById.values(),
+    )
       .filter(
         (job) =>
           (job.status === "queued" || job.status === "processing") &&
@@ -187,8 +201,14 @@ const mockRepository: PersonalMediaUploadRepository = {
           ((job.claimExpiresAt ?? 0) < nowEpochSeconds ||
             job.processingOwnerInstanceId === instanceId),
       )
-      .sort((left, right) => left.updatedAt.localeCompare(right.updatedAt))
-      .slice(0, limit);
+      .sort((left, right) => left.updatedAt.localeCompare(right.updatedAt));
+    const jobs: PersonalMediaUploadJobRecord[] = [];
+    for (const job of candidates) {
+      if (jobs.length >= limit) break;
+      if (!(await getPausedDesktopDraft(getDeploymentControlRepository(), job)))
+        jobs.push(job);
+    }
+    return jobs;
   },
   async claim({
     uploadId,
@@ -201,6 +221,7 @@ const mockRepository: PersonalMediaUploadRepository = {
     claimId,
     expectedAttempts,
   }) {
+    if (mockDesktopDraftPaused(uploadId)) return undefined;
     const job = getMockStore().personalMediaUploadsById.get(uploadId);
     if (!job) return undefined;
     if (
@@ -222,13 +243,8 @@ const mockRepository: PersonalMediaUploadRepository = {
       (job.attempts ?? 0) !== expectedAttempts
     )
       return undefined;
-    const claimExpired = (job.claimExpiresAt ?? 0) < nowEpochSeconds;
     const attempts = job.attempts ?? 0;
-    const claimable =
-      attempts < maxAttempts &&
-      (job.status === "queued" ||
-        (job.status === "processing" && claimExpired));
-    if (!claimable) return undefined;
+    if (!mockJobClaimable(job, nowEpochSeconds, maxAttempts)) return undefined;
     const next: PersonalMediaUploadJobRecord = {
       ...job,
       status: "processing",

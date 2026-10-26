@@ -30,7 +30,8 @@ type DesktopMockState = {
   };
   job: {
     uploadId: string;
-    status: "queued" | "processing" | "complete";
+    status: "queued" | "processing" | "complete" | "paused";
+    errorMessage?: string;
     meetingGuildId?: string;
     channelIdTimestamp?: string;
   } | null;
@@ -50,8 +51,11 @@ const expectDesktopScreenshot = async (
   });
 };
 
-const installDesktopMock = async (page: Page): Promise<void> => {
-  await page.addInitScript(() => {
+const installDesktopMock = async (
+  page: Page,
+  options = { paused: false, pausedOnPoll: false },
+): Promise<void> => {
+  await page.addInitScript((options) => {
     const state = {
       user: null,
       recording: { isRecording: false },
@@ -124,6 +128,71 @@ const installDesktopMock = async (page: Page): Promise<void> => {
       window.setTimeout(emitSignals, 0);
     };
 
+    const getUploadStatus = () => {
+      state.uploadStatusChecks += 1;
+      window.localStorage.setItem(
+        "uploadStatusChecks",
+        String(state.uploadStatusChecks),
+      );
+      if (options.pausedOnPoll) {
+        state.job = {
+          uploadId: "00000000-0000-4000-8000-000000000001",
+          status: "paused",
+          meetingGuildId: "personal:user-visual",
+          channelIdTimestamp: "personal#2025-01-01T12:00:00.000Z",
+          errorMessage:
+            "This draft is preserved and paused. Recovery is not available yet.",
+        };
+        return { job: state.job };
+      }
+      state.job = {
+        uploadId: "00000000-0000-4000-8000-000000000001",
+        status: state.uploadStatusChecks >= 3 ? "complete" : "processing",
+        meetingGuildId:
+          state.uploadStatusChecks >= 2 ? "personal:user-visual" : undefined,
+        channelIdTimestamp:
+          state.uploadStatusChecks >= 2
+            ? "personal#2025-01-01T12:00:00.000Z"
+            : undefined,
+      };
+      return { job: state.job };
+    };
+
+    const getRetainedRecordings = () =>
+      options.paused
+        ? [
+            {
+              recordingId: "original-recording",
+              title: "Saved planning call",
+              startedAt: "2025-01-01T12:00:00.000Z",
+              stoppedAt: "2025-01-01T12:10:00.000Z",
+              retainedAt: "2025-01-01T12:10:00.000Z",
+              tags: ["planning"],
+              status: "paused",
+              errorMessage:
+                "This draft is preserved and paused. Recovery is not available yet.",
+              localPath: "C:\\Recordings\\original-recording",
+              sources: [
+                {
+                  sourceId: "owner_mic",
+                  kind: "owner_mic",
+                  label: "Me",
+                  fileSize: 1048576,
+                  segmentCount: 10,
+                  uploadedSegmentCount: 8,
+                },
+              ],
+            },
+          ]
+        : [];
+
+    const retainedAction = (command: string) => {
+      window.localStorage.setItem("retainedAction", command);
+      if (command === "retry_retained_recording")
+        throw new Error("Paused drafts must not retry");
+      return null;
+    };
+
     const desktopWindow = window as unknown as {
       __TAURI__: {
         core: {
@@ -141,6 +210,12 @@ const installDesktopMock = async (page: Page): Promise<void> => {
     desktopWindow.__TAURI__ = {
       core: {
         async invoke(command: string) {
+          if (
+            command === "retry_retained_recording" ||
+            command === "open_retained_recording"
+          ) {
+            return retainedAction(command);
+          }
           if (command === "get_session") return state.user;
           if (command === "get_recording_status") return state.recording;
           if (command === "list_audio_devices") return devices;
@@ -155,9 +230,8 @@ const installDesktopMock = async (page: Page): Promise<void> => {
             state.user = null;
             return null;
           }
-          if (command === "list_retained_recordings") {
-            return [];
-          }
+          if (command === "list_retained_recordings")
+            return getRetainedRecordings();
           if (command === "start_recording") {
             state.recording = {
               isRecording: true,
@@ -195,26 +269,14 @@ const installDesktopMock = async (page: Page): Promise<void> => {
             stopSignals();
             state.job = {
               uploadId: "00000000-0000-4000-8000-000000000001",
-              status: "queued",
+              status: options.paused ? "paused" : "queued",
+              errorMessage: options.paused
+                ? "This draft is preserved and paused. Recovery is not available yet."
+                : undefined,
             };
             return { job: state.job };
           }
-          if (command === "get_upload_status") {
-            state.uploadStatusChecks += 1;
-            state.job = {
-              uploadId: "00000000-0000-4000-8000-000000000001",
-              status: state.uploadStatusChecks >= 3 ? "complete" : "processing",
-              meetingGuildId:
-                state.uploadStatusChecks >= 2
-                  ? "personal:user-visual"
-                  : undefined,
-              channelIdTimestamp:
-                state.uploadStatusChecks >= 2
-                  ? "personal#2025-01-01T12:00:00.000Z"
-                  : undefined,
-            };
-            return { job: state.job };
-          }
+          if (command === "get_upload_status") return getUploadStatus();
           throw new Error(`Unhandled desktop command: ${command}`);
         },
       },
@@ -228,7 +290,7 @@ const installDesktopMock = async (page: Page): Promise<void> => {
         },
       },
     };
-  });
+  }, options);
 };
 
 test.describe("desktop visual regression", () => {
@@ -323,5 +385,69 @@ test.describe("desktop visual regression", () => {
     await page.getByRole("button", { name: "Sign in with Chronote" }).click();
     await expect(page.getByText("Signed in as Visual Tester")).toBeVisible();
     await expectDesktopScreenshot(page, "desktop-mobile-ready");
+  });
+
+  test("desktop retained paused draft @visual", async ({ page }) => {
+    await installDesktopMock(page, { paused: true, pausedOnPoll: false });
+    await page.goto(desktopUrl);
+    await page.getByRole("button", { name: "Sign in with Chronote" }).click();
+    await expect(
+      page.getByText(
+        "This draft is preserved and paused. Recovery is not available yet.",
+      ),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("button", { name: "Retry upload" }),
+    ).toBeDisabled();
+    await expect(
+      page.getByRole("button", { name: "Open folder" }),
+    ).toBeEnabled();
+    await expect(
+      page.getByRole("button", { name: "Delete", exact: true }),
+    ).toBeEnabled();
+    await page.getByRole("button", { name: "Open folder" }).click();
+    await expect
+      .poll(() => page.evaluate(() => localStorage.getItem("retainedAction")))
+      .toBe("open_retained_recording");
+    await expectDesktopScreenshot(page, "desktop-retained-paused");
+    await page.getByRole("button", { name: "Record", exact: true }).click();
+    await expect(
+      page.getByRole("button", { name: "Stop and upload" }),
+    ).toBeEnabled();
+    await page.getByRole("button", { name: "Stop and upload" }).click();
+    await expect(page.getByText("Draft paused.")).toBeVisible();
+    await expect(page.getByText("Upload received.")).toHaveCount(0);
+    await page.waitForTimeout(2300);
+    expect(
+      await page.evaluate(() => localStorage.getItem("uploadStatusChecks")),
+    ).toBeNull();
+    await expect(
+      page.getByRole("button", { name: "Record", exact: true }),
+    ).toBeEnabled();
+  });
+
+  test("desktop paused status stops polling @visual", async ({ page }) => {
+    await installDesktopMock(page, { paused: false, pausedOnPoll: true });
+    await page.goto(desktopUrl);
+    await page.getByRole("button", { name: "Sign in with Chronote" }).click();
+    await page.getByRole("button", { name: "Record", exact: true }).click();
+    await page.getByRole("button", { name: "Stop and upload" }).click();
+    await expect(page.getByText("Draft paused.")).toBeVisible();
+    await expect(page.getByText("Upload received.")).toHaveCount(0);
+    await expect(
+      page.getByRole("link", { name: "Open created meeting" }),
+    ).toHaveCount(0);
+    await expect(
+      page.getByText(
+        "This draft is preserved and paused. Recovery is not available yet.",
+      ),
+    ).toBeVisible();
+    await page.waitForTimeout(2300);
+    expect(
+      await page.evaluate(() => localStorage.getItem("uploadStatusChecks")),
+    ).toBe("1");
+    await expect(
+      page.getByRole("button", { name: "Record", exact: true }),
+    ).toBeEnabled();
   });
 });
