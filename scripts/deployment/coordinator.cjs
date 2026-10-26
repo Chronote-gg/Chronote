@@ -2,10 +2,19 @@
 "use strict";
 const { isDeepStrictEqual } = require("node:util");
 const { marshall, unmarshall } = require("@aws-sdk/util-dynamodb");
+const { bindingHash } = require("./binding-hash.cjs");
+const {
+  taskContainer,
+  runtimeMode,
+  taskDefinitionInput,
+  candidateDefinition,
+  assertPreparedTaskDefinition,
+} = require("./task-definition.cjs");
 const {
   CoordinatorFailure,
   awsCli,
   createAwsCaller,
+  listServiceTaskArns,
 } = require("./coordinator-aws.cjs");
 const {
   WARMUP_SECONDS,
@@ -15,12 +24,7 @@ const {
 } = require("./production-capacity.cjs");
 const { runCli } = require("./coordinator-cli.cjs");
 
-const {
-  configuration,
-  taskContainer,
-  runtimeMode,
-  candidateDefinition,
-} = require("./coordinator-definition.cjs");
+const { configuration } = require("./coordinator-definition.cjs");
 function protocolModules(options) {
   const builders =
     options.builders ??
@@ -299,24 +303,8 @@ function createCoordinator(options = {}) {
     ).taskDefinition;
   }
   async function tasks() {
-    const arns = [];
-    let nextToken;
-    do {
-      const page = await aws("ecs", "list-tasks", {
-        cluster: config.cluster,
-        serviceName: config.service,
-        desiredStatus: "RUNNING",
-        ...(nextToken ? { nextToken } : {}),
-      });
-      arns.push(...page.taskArns);
-      nextToken = page.nextToken;
-    } while (nextToken);
+    const arns = await listServiceTaskArns(aws, config);
     if (!arns.length) return [];
-    if (arns.length > 100)
-      throw new CoordinatorFailure(
-        "identity_unconfirmed",
-        "Unexpected task count",
-      );
     const result = await aws("ecs", "describe-tasks", {
       cluster: config.cluster,
       tasks: arns,
@@ -359,7 +347,7 @@ function createCoordinator(options = {}) {
     const latest = await definition(
       production
         ? production.binding.manifest.runtime.continuationDefinition
-        : config.family,
+        : (options.taskTemplate?.arn ?? config.family),
     );
     if (latest.family !== config.family)
       throw new CoordinatorFailure(
@@ -383,8 +371,9 @@ function createCoordinator(options = {}) {
         "application_not_ready",
         "Existing runtime is not a ready compatible serving owner",
       );
-    await protectedTask(outgoing[0]);
-    return { outgoing: outgoing[0], mode };
+    const nativeProtectionExpiresAt =
+      Date.parse((await protectedTask(outgoing[0])).expirationDate) / 1000;
+    return { outgoing: outgoing[0], mode, nativeProtectionExpiresAt };
   }
   async function findRegistered() {
     const matches = [];
@@ -419,36 +408,39 @@ function createCoordinator(options = {}) {
       );
     return matches[0];
   }
-  async function register(ctl) {
-    if (production) {
-      const m = production.binding.manifest;
-      const pinned = await definition(m.runtime.continuationDefinition);
-      const actual = taskContainer(pinned, config.tablePrefix);
-      const expected = candidateDefinition(
-        await definition(m.runtime.candidateDefinition),
-        config,
+  async function registerProduction(ctl) {
+    const m = production.binding.manifest;
+    const pinned = await definition(m.runtime.continuationDefinition);
+    const actual = taskContainer(pinned, config.tablePrefix);
+    const expected = candidateDefinition(
+      await definition(m.runtime.candidateDefinition),
+      config,
+    );
+    if (
+      pinned.taskDefinitionArn !== m.runtime.continuationDefinition ||
+      actual.image !== config.image ||
+      actual.stopTimeout !== 120 ||
+      actual.environment.filter((v) => v.name === "DEPLOYMENT_CANDIDATE_ID")
+        .length !== 1 ||
+      actual.environment.find((v) => v.name === "DEPLOYMENT_CANDIDATE_ID")
+        .value !== config.candidateId ||
+      !isDeepStrictEqual(candidateDefinition(pinned, config), expected)
+    )
+      throw new CoordinatorFailure(
+        "configuration_invalid",
+        "Pinned candidate configuration differs",
       );
-      if (
-        pinned.taskDefinitionArn !== m.runtime.continuationDefinition ||
-        actual.image !== config.image ||
-        actual.stopTimeout !== 120 ||
-        actual.environment.filter((v) => v.name === "DEPLOYMENT_CANDIDATE_ID")
-          .length !== 1 ||
-        actual.environment.find((v) => v.name === "DEPLOYMENT_CANDIDATE_ID")
-          .value !== config.candidateId ||
-        !isDeepStrictEqual(candidateDefinition(pinned, config), expected)
-      )
-        throw new CoordinatorFailure(
-          "configuration_invalid",
-          "Pinned candidate configuration differs",
-        );
-      return phase(ctl, "preparing", {
-        taskDefinition: pinned.taskDefinitionArn,
-      });
-    }
+    return phase(ctl, "preparing", {
+      taskDefinition: pinned.taskDefinitionArn,
+    });
+  }
+  async function register(ctl) {
+    if (production) return registerProduction(ctl);
     let arn = ctl.deployment.taskDefinition ?? (await findRegistered());
     if (!arn) {
-      const latest = await definition(config.family);
+      const latest = await definition(
+        options.taskTemplate?.arn ?? config.family,
+      );
       if (
         runtimeMode(taskContainer(latest, config.tablePrefix)) !==
         ctl.deployment.runtimeMode
@@ -457,19 +449,29 @@ function createCoordinator(options = {}) {
           "configuration_invalid",
           "Task command changed during prepare",
         );
+      const prepared = candidateDefinition(latest, config);
+      if (
+        options.taskTemplate &&
+        bindingHash(prepared) !== options.taskTemplate.preparedSha256
+      )
+        throw new CoordinatorFailure(
+          "configuration_invalid",
+          "Reviewed task template changed",
+        );
       try {
-        arn = (
-          await aws(
-            "ecs",
-            "register-task-definition",
-            candidateDefinition(latest, config),
-          )
-        ).taskDefinition.taskDefinitionArn;
+        arn = (await aws("ecs", "register-task-definition", prepared))
+          .taskDefinition.taskDefinitionArn;
       } catch (error) {
         arn = await findRegistered();
         if (!arn) throw error;
       }
     }
+    if (options.taskTemplate)
+      assertPreparedTaskDefinition(
+        taskDefinitionInput(await definition(arn)),
+        candidateDefinition(await definition(options.taskTemplate.arn), config),
+        options.taskTemplate.preparedSha256,
+      );
     return phase(ctl, "preparing", { taskDefinition: arn });
   }
   async function launchCandidate(ctl, svc, deploymentConfiguration) {
@@ -944,6 +946,20 @@ function createCoordinator(options = {}) {
     promote,
     retire,
     reconcile,
+    inspectServing: async () => {
+      const ctl = await control();
+      const svc = await service();
+      const previous = await original(ctl, svc);
+      return {
+        control: ctl,
+        source: previous.outgoing,
+        runtimeMode: previous.mode,
+        routing: await routing.prepare(svc, previous.outgoing),
+        serviceDefinition: svc.taskDefinition,
+        service: svc,
+        nativeProtectionExpiresAt: previous.nativeProtectionExpiresAt,
+      };
+    },
     inspectContinuation: async () => {
       if (production) await assertWriter();
       const inspected =
@@ -967,6 +983,8 @@ module.exports = {
   createCoordinator,
   configuration,
   candidateDefinition,
+  taskDefinitionInput,
+  taskContainer,
   runtimeMode,
   awsCli,
   runCli,

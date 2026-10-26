@@ -64,7 +64,7 @@ resource "aws_iam_role_policy" "production_acceptance_collector" {
   role  = aws_iam_role.production_acceptance_collector[0].id
   name  = "bounded-fixture-collection"
   policy = jsonencode({ Version = "2012-10-17", Statement = concat([
-    for statement in jsondecode(aws_iam_role_policy.production_introduction[0].policy).Statement : statement if contains(["BoundService", "TaskMetadata", "PinnedDefinitions", "ClusterInventory", "ServiceRevisionMetadata", "TopologyMetadata", "SourceImageMetadata", "LauncherMetadata"], statement.Sid)
+    for statement in jsondecode(aws_iam_role_policy.production_introduction[0].policy).Statement : statement if contains(["BoundService", "TaskMetadata", "RegionalDefinitionMetadata", "ClusterInventory", "ServiceRevisionMetadata", "TopologyMetadata", "SourceImageMetadata", "LauncherMetadata"], statement.Sid)
     ], [
     { Sid = "ReadOriginalControl", Effect = "Allow", Action = ["dynamodb:GetItem", "dynamodb:Query"], Resource = aws_dynamodb_table.deployment_control_table.arn, Condition = { "ForAllValues:StringLike" = { "dynamodb:LeadingKeys" = ["ENV", "INTRODUCTION#*", "FIXTURE#*"] } } },
     { Sid = "ExactFixtureGuildHistory", Effect = "Allow", Action = ["dynamodb:GetItem"], Resource = aws_dynamodb_table.meeting_history_table.arn, Condition = { "ForAllValues:StringEquals" = { "dynamodb:LeadingKeys" = distinct([for fixture in var.production_acceptance_fixtures : fixture.guild_id]), "dynamodb:Attributes" = local.production_acceptance_history_attributes }, Null = { "dynamodb:Attributes" = "false" } } },

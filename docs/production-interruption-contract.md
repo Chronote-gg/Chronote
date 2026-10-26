@@ -44,6 +44,8 @@ The privileged recovery-publication CLI remains outside application runtime admi
 
 Plan and Apply retain private captures, native producer identity, complete bundle verification, lockfile and Terraform version checks, approval chronology and unknown-command or capture-acknowledgment refusals. Public output remains sanitized. The real dispatcher reaches the normal hold inspection before production preparation and a fresh guard at the actual saved-plan Apply boundary.
 
+Production private Apply requires the native reviewer rule plus the exact master-only branch-policy profile. Its authenticated complete branch list is compared at every approval recheck; missing or changed proof refuses, and a change after Apply leaves the result unknown. Sandbox retains its separate reviewer-only profile. These source checks do not establish current environment settings or resolve the static-credential activation limit.
+
 Only the authenticated private `deployment-prerequisites` bundle can provide a process-local exception for a genuinely missing Control table. Its restored plan bytes must match the reviewed bundle, and its private JSON projection must pass the four-target validator. The targets remain the Control table, spare target group, deployment-control policy and deployment-routing policy. The existing KMS key must be unchanged. Replacements, moves, imports, deletions, unrelated managed changes and backend-role provisioning are refused.
 
 Ordinary full plans, denied reads, caller Booleans, hashes and copied objects cannot supply this exception. Standalone renewal coverage Apply remains disabled. The audit is read-only and cannot install or refresh recovery records. Restoring writes needs a separately reviewed admitted executor.

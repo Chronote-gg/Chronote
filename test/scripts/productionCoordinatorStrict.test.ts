@@ -229,10 +229,14 @@ function strictFixture(
       },
     }),
   };
-  const coordinator = () =>
+  const coordinator = (taskTemplate?: {
+    arn: string;
+    preparedSha256: string;
+  }) =>
     createCoordinator({
       ...f.options,
       env,
+      taskTemplate,
       production: createProductionCoordinator(productionOptions),
     });
   return { ...f, rows, coordinator, productionOptions, env };
@@ -336,4 +340,48 @@ test("missing earlier mandatory receipt refuses later phase despite matching cur
     }),
   ).rejects.toThrow();
   expect(f.rows.has("ACTION#c5")).toBe(false);
+});
+
+test("A manifest pins ignore an unrelated Sandbox task template and retain structured promotion facts", async () => {
+  const f = strictFixture();
+  const coordinator = f.coordinator({
+    arn: "foreign-template",
+    preparedSha256: "f".repeat(64),
+  });
+  await expect(coordinator.prepare()).resolves.toEqual({ kind: "warming" });
+  await coordinator.promote();
+  expect(
+    f.aws.mock.calls.some(
+      ([, operation, input]) =>
+        operation === "describe-task-definition" &&
+        (input as DescribeTaskDefinitionCommandInput).taskDefinition ===
+          "foreign-template",
+    ),
+  ).toBe(false);
+  expect(
+    f.calls.some((call) => call.operation === "register-task-definition"),
+  ).toBe(false);
+  expect(f.rows.get("ACTION#c6")).toMatchObject({
+    acknowledgment: {
+      facts: {
+        kind: "promotion",
+        nativeProtection: [
+          {
+            taskArn: oldIdentity.taskArn,
+            protectionEnabled: true,
+            expirationDate: new Date(
+              (f.options.now() + 600) * 1000,
+            ).toISOString(),
+          },
+          {
+            taskArn: candidateIdentity.taskArn,
+            protectionEnabled: true,
+            expirationDate: new Date(
+              (f.options.now() + 600) * 1000,
+            ).toISOString(),
+          },
+        ],
+      },
+    },
+  });
 });

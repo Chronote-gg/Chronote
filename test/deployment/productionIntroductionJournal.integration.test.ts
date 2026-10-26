@@ -1,10 +1,10 @@
 import { runtime } from "./controlFixtures";
+import { createLocalControlTable } from "./fixtures/localControlTable";
 import { controlRecordSchema } from "../../src/types/deploymentControl";
 import { assertMutationAllowed } from "../../scripts/deployment/introduction-hold.cjs";
 import { randomUUID } from "node:crypto";
 import {
   DynamoDBClient,
-  CreateTableCommand,
   DeleteTableCommand,
   GetItemCommand,
   TransactWriteItemsCommand,
@@ -39,20 +39,7 @@ let binding: ReturnType<typeof bound>;
 let hold: import("../../src/types/productionIntroduction").IntroductionHold;
 let authority: builders.IntroductionAuthority;
 beforeAll(async () => {
-  await client.send(
-    new CreateTableCommand({
-      TableName: table,
-      BillingMode: "PAY_PER_REQUEST",
-      KeySchema: ["pk", "sk"].map((AttributeName, index) => ({
-        AttributeName,
-        KeyType: index === 0 ? "HASH" : "RANGE",
-      })),
-      AttributeDefinitions: ["pk", "sk"].map((AttributeName) => ({
-        AttributeName,
-        AttributeType: "S",
-      })),
-    }),
-  );
+  await createLocalControlTable(client, table);
 });
 afterAll(async () => {
   await client.send(new DeleteTableCommand({ TableName: table }));

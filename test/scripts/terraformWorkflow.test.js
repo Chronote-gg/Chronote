@@ -355,3 +355,36 @@ test.each(["full", "deployment-prerequisites"])(
     }
   },
 );
+
+test.each(["missing-type", "before-apply", "after-apply"])(
+  "actual private workflow retains branch proof and refuses drift: %s",
+  async (fault) => {
+    const f = fixture();
+    f.controls.branchPolicyFault = fault === "missing-type";
+    f.controls.branchPolicyDrift = fault;
+    let bundleReads;
+    try {
+      const { apply } = await planAndApply(f, {}, "full", async (options) => {
+        const before = f.storage.calls.length;
+        const result = await runTerraform(options);
+        bundleReads = f.storage.calls
+          .slice(before)
+          .filter(
+            (c) =>
+              c.constructor.name === "GetObjectCommand" &&
+              c.input.Key === options.reference.key,
+          );
+        return result;
+      });
+      expect(apply.status).toBe(
+        fault === "after-apply" ? "unknown" : "refused",
+      );
+      expect(f.commands.filter((c) => c.args[1] === "apply")).toHaveLength(
+        fault === "after-apply" ? 1 : 0,
+      );
+      expect(bundleReads).toHaveLength(fault === "missing-type" ? 0 : 1);
+    } finally {
+      rmSync(f.directory, { recursive: true, force: true });
+    }
+  },
+);

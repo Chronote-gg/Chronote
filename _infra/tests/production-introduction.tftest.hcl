@@ -97,6 +97,12 @@ run "exact_production_authority" {
     production_introduction_task_definitions = ["arn:aws:ecs:us-east-1:123456789012:task-definition/chronote-prod-bot-task:1", "arn:aws:ecs:us-east-1:123456789012:task-definition/chronote-prod-bot-task:2", "arn:aws:ecs:us-east-1:123456789012:task-definition/chronote-prod-bot-task:3", "arn:aws:ecs:us-east-1:123456789012:task-definition/chronote-prod-bot-task:4"]
   }
   assert {
+    condition = try(one([for s in jsondecode(aws_iam_role_policy.production_introduction[0].policy).Statement : s if contains(s.Action, "ecs:DescribeTaskDefinition")]) == {
+      Sid = "RegionalDefinitionMetadata", Effect = "Allow", Action = ["ecs:DescribeTaskDefinition"], Resource = "*", Condition = { StringEquals = { "aws:RequestedRegion" = var.aws_region } }
+    }, false)
+    error_message = "Introduction task-definition metadata must use its own region-only wildcard statement; exact reviewed ARNs remain a source validation boundary."
+  }
+  assert {
     condition     = jsondecode(aws_iam_role.production_introduction["introduction"].assume_role_policy).Statement[0].Condition.StringEquals["token.actions.githubusercontent.com:environment"] == "production" && jsondecode(aws_iam_role.production_introduction["introduction"].assume_role_policy).Statement[0].Condition.StringEquals["token.actions.githubusercontent.com:ref"] == "refs/heads/master" && jsondecode(aws_iam_role.production_introduction["introduction"].assume_role_policy).Statement[0].Condition.StringEquals["token.actions.githubusercontent.com:repository_id"] == "12345"
     error_message = "Trust must pin production, master and immutable repository identity."
   }
@@ -159,6 +165,12 @@ run "acceptance_effective_policy" {
       { guild_id = "guild", voice_channel_id = "voice", meeting_id = "second" }
     ]
     production_introduction_task_definitions = ["arn:aws:ecs:us-east-1:123456789012:task-definition/chronote-prod-bot-task:1", "arn:aws:ecs:us-east-1:123456789012:task-definition/chronote-prod-bot-task:2", "arn:aws:ecs:us-east-1:123456789012:task-definition/chronote-prod-bot-task:3", "arn:aws:ecs:us-east-1:123456789012:task-definition/chronote-prod-bot-task:4"]
+  }
+  assert {
+    condition = try(one([for s in jsondecode(aws_iam_role_policy.production_acceptance_collector[0].policy).Statement : s if contains(s.Action, "ecs:DescribeTaskDefinition")]) == {
+      Sid = "RegionalDefinitionMetadata", Effect = "Allow", Action = ["ecs:DescribeTaskDefinition"], Resource = "*", Condition = { StringEquals = { "aws:RequestedRegion" = var.aws_region } }
+    }, false)
+    error_message = "The effective collector policy must inherit the separate regional definition metadata statement without list, mutation or secret permissions."
   }
   assert {
     condition = alltrue([for s in jsondecode(aws_iam_role_policy.production_acceptance_collector[0].policy).Statement :

@@ -728,6 +728,8 @@ Observation scans only the eight existing maintenance tables. Runtime managed-po
 readback covers the six existing application-role attachments. Unexpected policies
 or unreadable state must block preservation checks.
 
+The introduction role and acceptance collector allow `ecs:DescribeTaskDefinition` through a separate `RegionalDefinitionMetadata` statement with `Resource = "*"` and the configured `aws:RequestedRegion`. The [ECS authorization reference](https://docs.aws.amazon.com/service-authorization/latest/reference/list_ecs.html) does not support resource-level authorization for that operation. This permits regional task-definition metadata reads beyond the reviewed families. The source still validates exact reviewed definition ARNs, account, region and family; IAM does not enforce that narrower selection. The collector inherits this statement explicitly. No list, mutation or secret permission is added, and the four-target prerequisite plan cannot provision these roles. Effective permissions and any provisioning require separate execution approval.
+
 The role can put and delete inline policies only on the existing application role.
 AWS does not offer a condition for the inline policy name or its document. These
 permissions therefore can change other inline policies on that role. Task 5's

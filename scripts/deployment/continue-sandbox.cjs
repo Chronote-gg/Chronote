@@ -1,6 +1,6 @@
 "use strict";
 const assert = require("node:assert/strict");
-const { createHash } = require("node:crypto");
+const { bindingHash } = require("./binding-hash.cjs");
 const { marshall, unmarshall } = require("@aws-sdk/util-dynamodb");
 const { createCoordinator, awsCli } = require("./coordinator.cjs");
 const { assertSandboxIdentity } = require("./assert-sandbox-identity.cjs");
@@ -35,22 +35,6 @@ function continuationBinding(control, candidateIdentity) {
     },
     candidateIdentity,
   };
-}
-function bindingHash(binding) {
-  // Canonicalize object keys too, so Dynamo map serialization order is irrelevant.
-  const canonical = (value) => {
-    if (Array.isArray(value)) return value.map(canonical);
-    if (value && typeof value === "object")
-      return Object.fromEntries(
-        Object.keys(value)
-          .sort()
-          .map((key) => [key, canonical(value[key])]),
-      );
-    return value;
-  };
-  return createHash("sha256")
-    .update(JSON.stringify(canonical(binding)))
-    .digest("hex");
 }
 function assertSandboxScope(env, control) {
   assert.equal(env.CONTINUATION_ENVIRONMENT, "sandbox");

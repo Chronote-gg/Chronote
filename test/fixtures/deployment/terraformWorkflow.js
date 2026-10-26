@@ -53,6 +53,8 @@ export function fixture() {
       applyTitle: "",
       planTitle: "Terraform Plan production/default/full",
       envChange: false,
+      branchPolicyFault: false,
+      branchPolicyDrift: "",
       producerAfter: false,
       producerSha: "a".repeat(40),
       plan: {
@@ -114,7 +116,17 @@ export function fixture() {
       ];
     else if (url.endsWith("/deployment_protection_rules"))
       value = { total_count: 0, custom_deployment_protection_rules: [] };
-    else if (url.includes("/environments/"))
+    else if (url.includes("/deployment-branch-policies?")) {
+      value = nativeBranchPolicies();
+      if (controls.branchPolicyFault) delete value.branch_policies[0].type;
+      if (
+        (controls.branchPolicyDrift === "before-apply" &&
+          commands.filter((c) => c.args[1] === "validate").length >= 2) ||
+        (controls.branchPolicyDrift === "after-apply" &&
+          commands.some((c) => c.args[1] === "apply"))
+      )
+        value.branch_policies[0].id = 12;
+    } else if (url.includes("/environments/"))
       value = nativeEnvironment(
         invocation.environment,
         controls.envChange &&
@@ -181,6 +193,7 @@ function nativeRun(controls, commands, plan) {
     repository: { full_name: invocation.repository },
     head_repository: { full_name: invocation.repository },
     head_sha: plan ? controls.producerSha : invocation.sourceSha,
+    head_branch: "master",
     path: plan
       ? invocation.workflowPath
       : ".github/workflows/terraform-apply.yml",
@@ -213,7 +226,18 @@ export function nativeEnvironment(
         prevent_self_review: true,
         reviewers: [{ type: "User", reviewer: { id: 2, type: "User" } }],
       },
+      ...(name === "production" ? [{ id: 10, type: "branch_policy" }] : []),
     ],
-    deployment_branch_policy: null,
+    deployment_branch_policy:
+      name === "production"
+        ? { protected_branches: false, custom_branch_policies: true }
+        : null,
+  };
+}
+
+export function nativeBranchPolicies() {
+  return {
+    total_count: 1,
+    branch_policies: [{ id: 11, name: "master", type: "branch" }],
   };
 }
