@@ -370,3 +370,15 @@ jobs:
           terraform -chdir=_infra/production-bootstrap test -no-color -json -verbose -filter=tests/guard-plan.tftest.hcl > "$RUNNER_TEMP/bootstrap-mock-raw.jsonl"
           node _infra/production-bootstrap/compact-mock-plan.cjs "$RUNNER_TEMP/bootstrap-mock-raw.jsonl" > "$BOOTSTRAP_MOCK_PLAN_JSONL"
           node --test _infra/production-bootstrap/verify-plan.test.cjs
+
+      - name: Test Sandbox bootstrap with mocked providers
+        env:
+          SANDBOX_BOOTSTRAP_MOCK_PLAN_JSONL: ${{ runner.temp }}/sandbox-bootstrap-mock-plans.jsonl
+        run: |
+          terraform -chdir=_infra/sandbox-bootstrap init -backend=false -input=false -lockfile=readonly
+          terraform -chdir=_infra/sandbox-bootstrap fmt -check -recursive
+          terraform -chdir=_infra/sandbox-bootstrap validate -no-color
+          terraform -chdir=_infra/sandbox-bootstrap test -no-color -filter=tests/bootstrap.tftest.hcl
+          terraform -chdir=_infra/sandbox-bootstrap test -no-color -json -verbose -filter=tests/guard-plan.tftest.hcl > "$RUNNER_TEMP/sandbox-bootstrap-mock-raw.jsonl"
+          node _infra/sandbox-bootstrap/compact-mock-plan.cjs "$RUNNER_TEMP/sandbox-bootstrap-mock-raw.jsonl" > "$SANDBOX_BOOTSTRAP_MOCK_PLAN_JSONL"
+          node --test _infra/sandbox-bootstrap/verify-plan.test.cjs

@@ -27,6 +27,7 @@ function parseDispatch(env, event) {
     plan_scope: z.enum([
       "full",
       "purchase-permission",
+      "meeting-update-delivery",
       "deployment-prerequisites",
     ]),
   };

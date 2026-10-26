@@ -2,6 +2,7 @@
 import { Buffer } from "node:buffer";
 import { test, expect } from "@jest/globals";
 import {
+  runTitle,
   nativeGitHub,
   verifyApproval,
   verifyRun,
@@ -345,6 +346,22 @@ test.each([
   ).rejects.toThrow();
 });
 
+test("native titles accept delivery only for Sandbox", () => {
+  expect(
+    runTitle(
+      {
+        ...invocation,
+        environment: "sandbox",
+        workspace: "sandbox",
+        scope: "meeting-update-delivery",
+      },
+      reviewInputs,
+    ),
+  ).toContain("sandbox/sandbox/meeting-update-delivery");
+  expect(() =>
+    runTitle({ ...invocation, scope: "meeting-update-delivery" }, reviewInputs),
+  ).toThrow();
+});
 test("production approval retains the complete authenticated exact-master branch proof", async () => {
   const f = fixture();
   f.data.environment.protection_rules.reverse();

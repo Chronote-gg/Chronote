@@ -23,7 +23,12 @@ const invocationSchema = z
     runAttempt: z.literal(1),
     environment: z.enum(["production", "sandbox"]),
     workspace: z.enum(["default", "sandbox"]),
-    scope: z.enum(["full", "purchase-permission", "deployment-prerequisites"]),
+    scope: z.enum([
+      "full",
+      "purchase-permission",
+      "deployment-prerequisites",
+      "meeting-update-delivery",
+    ]),
   })
   .strict();
 const zipNames = ["discord_alert.zip", "grafana_token_rotation.zip"];
@@ -57,6 +62,8 @@ function parseInvocation(value) {
     parsed.workspace,
     parsed.environment === "production" ? "default" : "sandbox",
   );
+  if (parsed.scope === "meeting-update-delivery")
+    assert.equal(parsed.environment, "sandbox");
   return parsed;
 }
 function encodedFile(name, bytes) {

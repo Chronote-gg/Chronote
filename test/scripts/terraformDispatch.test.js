@@ -1,4 +1,5 @@
 /** @jest-environment node */
+import { Buffer } from "node:buffer";
 import { executeTerraformDispatch } from "../fixtures/deployment/terraformDispatchVm.js";
 import process from "node:process";
 import { test, expect } from "@jest/globals";
@@ -178,3 +179,107 @@ test("unexpected delegated failure stays unknown without raw errors or retry", a
   expect(result.invocations).toBe(1);
   expect(result.exitCode).toBe(1);
 });
+
+test("delivery scope is Sandbox-only and retains every upstream scope", () => {
+  for (const scope of [
+    "full",
+    "purchase-permission",
+    "deployment-prerequisites",
+    "meeting-update-delivery",
+  ])
+    for (const environment of scope === "meeting-update-delivery"
+      ? ["sandbox"]
+      : ["production", "sandbox"])
+      expect(
+        parseDispatch(env, {
+          ...event,
+          inputs: {
+            github_environment: environment,
+            terraform_workspace:
+              environment === "production" ? "default" : "sandbox",
+            plan_scope: scope,
+          },
+        }).invocation.scope,
+      ).toBe(scope);
+  expect(() =>
+    parseDispatch(env, {
+      ...event,
+      inputs: { ...event.inputs, plan_scope: "meeting-update-delivery" },
+    }),
+  ).toThrow();
+});
+
+test.each(["plan", "apply"])(
+  "%s Sandbox uses OIDC with a bounded session and no static fallback",
+  (mode) => {
+    const workflow = parse(
+      readFileSync(`.github/workflows/terraform-${mode}.yml`, "utf8"),
+    );
+    expect(workflow.permissions["id-token"]).toBe("write");
+    expect(workflow.on.workflow_dispatch.inputs.plan_scope.options).toContain(
+      "meeting-update-delivery",
+    );
+    expect(workflow.on.workflow_dispatch.inputs.plan_scope.options).toContain(
+      "deployment-prerequisites",
+    );
+    const steps = workflow.jobs[mode].steps;
+    const staticStep = steps.find((s) => s.with?.["aws-access-key-id"]);
+    if (mode === "plan")
+      expect(staticStep.if).toBe(
+        "${{ inputs.github_environment == 'production' }}",
+      );
+    else {
+      expect(staticStep).toBeUndefined();
+      const production = steps.find(
+        (s) =>
+          s.with?.["role-to-assume"] ===
+          "${{ vars.PRODUCTION_APPLY_ROLE_ARN }}",
+      );
+      expect(production.if).toBe("inputs.github_environment == 'production'");
+    }
+    const oidc = steps.find(
+      (s) =>
+        s.with?.["role-to-assume"] === "${{ vars.TERRAFORM_AWS_ROLE_ARN }}",
+    );
+    expect(oidc.if).toBe("${{ inputs.github_environment == 'sandbox' }}");
+    expect(oidc.with["role-to-assume"]).toBe(
+      "${{ vars.TERRAFORM_AWS_ROLE_ARN }}",
+    );
+    expect(oidc.with["allowed-account-ids"]).toBe("${{ vars.AWS_ACCOUNT_ID }}");
+    expect(oidc.with["role-session-name"]).toContain("github.run_id");
+    expect(oidc.with["role-duration-seconds"]).toBe(3600);
+    if (mode === "plan") {
+      const policy = JSON.parse(oidc.with["inline-session-policy"]);
+      expect(
+        policy.Statement.flatMap((statement) => statement.Action).join(" "),
+      ).not.toMatch(
+        /cloudfront:|acm:|route53:|s3:GetReplicationConfiguration|s3:GetAccelerateConfiguration/,
+      );
+      expect(
+        policy.Statement.find((s) => s.Action.includes("s3:GetObject"))
+          .Resource,
+      ).toBe(
+        "arn:aws:s3:::*/meeting-notes-terraform/sandbox/meeting-notes-terraform/state",
+      );
+      expect(
+        Buffer.byteLength(oidc.with["inline-session-policy"]),
+      ).toBeLessThanOrEqual(2048);
+      expect(
+        policy.Statement.some(
+          (s) =>
+            s.Action.includes("s3:PutObject") &&
+            s.Resource === "arn:aws:s3:::*/terraform/sandbox/*",
+        ),
+      ).toBe(true);
+      for (const s of policy.Statement) {
+        expect(s.Effect).toBe("Allow");
+        expect(s.Action).not.toContain("*");
+        expect(s.Action.join(" ")).not.toMatch(
+          /UpdateTable|CreatePolicyVersion|DeletePolicy|PassRole/,
+        );
+        if (s.Action.includes("s3:PutObject"))
+          expect(s.Resource).toBe("arn:aws:s3:::*/terraform/sandbox/*");
+      }
+    }
+  },
+);

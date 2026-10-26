@@ -11,6 +11,7 @@ const {
 } = require("./terraform-bundle.cjs");
 const { verifyRun, verifyApproval } = require("./terraform-native.cjs");
 const { runPrivateCommand } = require("./terraform-process.cjs");
+const { verifyMeetingUpdatePlan } = require("./terraform-meeting-update.cjs");
 const { digest } = require("./collector-payload.cjs");
 const {
   targets,
@@ -131,11 +132,22 @@ async function version(executionState) {
   assert.match(value, /^\d+\.\d+\.\d+$/);
   return value;
 }
+async function verifyDelivery(e, options, invocation) {
+  if (invocation.scope !== "meeting-update-delivery") return;
+  const shown = await e.terraform(["show", "-json", "tfplan"]);
+  verifyMeetingUpdatePlan(
+    JSON.parse(Buffer.from(shown.stdout, "base64").toString()),
+    {
+      accountId: options.binding.accountId,
+      region: options.binding.region,
+    },
+  );
+}
 async function plan(options, invocation, e) {
   await verifyRun(options.get, invocation, false);
   await e.retain({ kind: "terraform-plan-intent-v1", invocation });
   const terraformVersion = await version(e);
-  await prepare(e, options, true);
+  await prepare(e, options, invocation.environment === "production");
   const args = [
     "plan",
     "-no-color",
@@ -145,6 +157,11 @@ async function plan(options, invocation, e) {
   ];
   if (invocation.scope === "purchase-permission")
     args.push("-target=aws_iam_role_policy.initial_purchase_condition");
+  if (invocation.scope === "meeting-update-delivery")
+    args.push(
+      "-target=aws_dynamodb_table.meeting_history_table",
+      "-target=aws_iam_policy.dynamodb_access_policy",
+    );
   if (invocation.scope === "deployment-prerequisites")
     args.push(...[...targets].map((target) => `-target=${target}`));
   const planned = await e.terraform(args, [0, 2]);
@@ -155,6 +172,7 @@ async function plan(options, invocation, e) {
     );
   }
   const shown = await e.terraform(["show", "-no-color", "tfplan"]);
+  await verifyDelivery(e, options, invocation);
   const bundle = createBundle({
     invocation,
     terraformVersion,
@@ -259,6 +277,11 @@ async function apply(options, invocation, e, startApply) {
     }
     await runGuard(options.env, false, prerequisite);
   }
+  await verifyDelivery(e, options, invocation);
+  assert.equal(
+    digest(readFileSync(join(options.directory, "_infra/tfplan"))),
+    options.planSha256,
+  );
   options.signal.throwIfAborted();
   startApply();
   await e.terraform(["apply", "-no-color", "-input=false", "tfplan"]);

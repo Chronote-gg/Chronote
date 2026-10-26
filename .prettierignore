@@ -11,3 +11,6 @@ prompts/*.md
 
 # Ignored execution briefs and logs
 .superpowers
+
+# Terraform provider installation for the separate Sandbox bootstrap
+_infra/sandbox-bootstrap/.terraform
