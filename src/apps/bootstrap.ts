@@ -23,6 +23,13 @@ import {
 } from "../services/renewalRecoveryWorkerService";
 import { createRuntimeShutdown } from "../services/runtimeShutdownService";
 
+import { whenRuntimeServing } from "../services/runtimeLifecycleService";
+import {
+  startMeetingUpdateDeliveryWorker,
+  prepareMeetingUpdateDeliveryWorker,
+  verifyMeetingUpdateDeliveryReadiness,
+} from "../services/meetingUpdateDeliveryWorkerService";
+
 export type AppBootstrapMode = "all" | "bot" | "api";
 
 export function bootstrapApp(mode: AppBootstrapMode): Promise<void> {
@@ -55,6 +62,9 @@ export function bootstrapApp(mode: AppBootstrapMode): Promise<void> {
       owner.startupSignal.throwIfAborted();
       await cleanupTempBaseDir();
       owner.startupSignal.throwIfAborted();
+      await verifyMeetingUpdateDeliveryReadiness();
+      await prepareMeetingUpdateDeliveryWorker();
+      owner.startupSignal.throwIfAborted();
       if (mode !== "api" && !config.mock.enabled) await setupBot();
       owner.startupSignal.throwIfAborted();
       if (mode !== "bot") await setupWebServer(healthServer);
@@ -62,6 +72,8 @@ export function bootstrapApp(mode: AppBootstrapMode): Promise<void> {
       const stripe = mode !== "bot" ? getStripeClient() : null;
       if (stripe) await verifyRenewalRecoveryReadiness(stripe);
       await runtime.ready();
+      owner.startupSignal.throwIfAborted();
+      whenRuntimeServing(startMeetingUpdateDeliveryWorker);
       if (stripe) startRenewalRecoveryWorker(stripe);
     } catch (error) {
       void owner.request("startup_failure");

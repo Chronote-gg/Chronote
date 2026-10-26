@@ -273,6 +273,23 @@ If a server has disabled transcript access, Chronote's automated correction work
 
 Corrections can also assign work to a member or a role. Asking for something like "assign this to the moderators" produces a role mention, the same way generated notes do. Existing mentions in the notes are preserved, and a correction can only mention members who attended and roles that exist in your server, so it cannot invent one.
 
+## Saved notes and Discord updates
+
+Saving an edit, importing notes, approving a correction, or renaming a published meeting saves the current meeting record first. Chronote then updates its recorded Discord posts automatically. Keep your saved notes open while the status refreshes:
+
+- **Saved. Updating Discord.** Your changes are saved and Discord delivery is pending.
+- **Saved. Discord is up to date.** Discord has acknowledged and verified the current update.
+- **Saved. Discord update needs attention.** Your changes remain saved, but delivery needs review.
+- **Saved. Publication is on hold.** Your changes remain saved behind an existing publication hold.
+
+A personal meeting without a Discord destination shows **Saved.** It does not claim a Discord update.
+
+Use the existing meeting editing permissions. A conflict means another edit won; refresh the meeting and review the current notes before saving again. An acknowledged correction does not need to be generated or approved again while Discord is pending.
+
+Chronote waits when Discord requests a delay and retries known failures within a bounded limit. An uncertain delivery or a missing recorded post needs review; Chronote does not automatically recreate missing posts. Ask a server manager to check destination access when needed. Editing a held meeting does not release its publication hold.
+
+The revision shown is the saved meeting revision. A last verified captured update can describe older work while newer changes are pending. Notion export and its controls have their own status.
+
 ## Server artifact access
 
 Server admins with **Manage Server** can independently disable viewer access to meeting transcripts and audio recordings from **Server Settings** -> **Meetings**. The controls apply to past and future server meetings, including shared pages and Remote MCP transcript retrieval. Summaries and notes remain available.
@@ -289,7 +306,7 @@ Imported notes can:
 - Append under an **Imported notes** section.
 - Include an optional source name and URL for traceability.
 
-Imports are saved as a new notes version and update the posted Discord notes when possible.
+Imports are saved as a new notes version. The meeting shows the separate [Discord update status](#saved-notes-and-discord-updates).
 
 ## Exporting notes to Notion
 

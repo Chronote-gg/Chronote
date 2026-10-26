@@ -288,7 +288,16 @@ test("foreign STS principal refuses before any coordinator operation", async () 
   expect(changes(f)).toEqual([]);
 });
 
-test.each(["continue", "inspect"])(
+test.each([
+  "continue",
+  "inspect",
+  "inspect-source-loss",
+  "recover-source-loss",
+  "inspect-retained-source-loss",
+  "recover-retained-source-loss",
+  "inspect-carryforward",
+  "carryforward",
+])(
   "workflow rejects mixed bootstrap and %s input before authentication",
   (action) => {
     const workflow = parse(
@@ -306,7 +315,20 @@ test.each(["continue", "inspect"])(
     const env = {
       ...process.env,
       CONTINUATION_ACTION: action,
-      CONTINUATION_BINDING_SHA256: action === "continue" ? "a".repeat(64) : "",
+      CONTINUATION_BINDING_SHA256: [
+        "continue",
+        "recover-source-loss",
+        "recover-retained-source-loss",
+        "carryforward",
+      ].includes(action)
+        ? "a".repeat(64)
+        : "",
+      SOURCE_LOSS_TERMINAL_PROOF_SHA256: action.includes("retained")
+        ? "b".repeat(64)
+        : "",
+      CARRYFORWARD_MANIFEST_SHA256: action.includes("carryforward")
+        ? "c".repeat(64)
+        : "",
       GITHUB_RUN_ATTEMPT: "1",
       BOOTSTRAP_PHASE: "none",
     };
@@ -316,6 +338,16 @@ test.each(["continue", "inspect"])(
       { PROBE_WITHOUT_ENVIRONMENT: "true" },
       { GITHUB_RUN_ATTEMPT: "2" },
       { BOOTSTRAP_OPERATION_ID: "other" },
+      {
+        CARRYFORWARD_MANIFEST_SHA256: action.includes("carryforward")
+          ? ""
+          : "d".repeat(64),
+      },
+      {
+        SOURCE_LOSS_TERMINAL_PROOF_SHA256: action.includes("retained")
+          ? ""
+          : "c".repeat(64),
+      },
     ]) {
       expect(
         spawnSync(process.execPath, ["-e", script], {
@@ -326,7 +358,7 @@ test.each(["continue", "inspect"])(
   },
 );
 
-test("workflow preserves the existing environment and has no image or preparation path", () => {
+test("workflow preserves environment, gives carryforward metadata read permission and separates its private packet", () => {
   const workflow = parse(
     readFileSync(".github/workflows/sandbox-identity.yml", "utf8"),
   );
@@ -340,6 +372,9 @@ test("workflow preserves the existing environment and has no image or preparatio
   expect(source).toContain("SANDBOX_BACKEND_DEPLOY_ROLE_ARN");
   expect(source).toContain("assert-sandbox-identity.cjs");
   expect(source).toContain("continue-sandbox.cjs");
+  expect(job.permissions.actions).toBe("read");
+  expect(source).toContain("SANDBOX_CARRYFORWARD_MANIFEST");
+  expect(source).toContain("carryforward-sandbox.cjs");
   expect(source).not.toMatch(
     /docker build|docker push|force-new-deployment|coordinator\.cjs prepare/,
   );

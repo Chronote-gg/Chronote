@@ -1,3 +1,4 @@
+/** @jest-environment node */
 jest.mock("../src/services/recordingDeliveryService", () => ({
   beginRecordingDelivery: jest.fn(async () => {}),
   acknowledgeRecordingDeliveryMessage: jest.fn(async () => {}),
@@ -25,6 +26,12 @@ import { captureEvent } from "../src/services/analyticsService";
 jest.mock("../src/services/analyticsService", () => ({
   captureEvent: jest.fn(),
 }));
+import {
+  fixture as updateFixture,
+  message as updateMessage,
+} from "./services/meetingUpdatePlan.fixture";
+import { planMeetingUpdate } from "../src/services/meetingUpdatePlan";
+import { ActionRowBuilder, ButtonBuilder } from "discord.js";
 import { buildSummaryUpgradeBody } from "../src/utils/summaryUpgrade";
 
 import {
@@ -82,7 +89,7 @@ describe("updateMeetingSummaryMessage", () => {
       403,
       "POST",
       "https://discord.test/secret",
-      { json: { secret: "PRIVATE REQUEST" }, files: [] },
+      { body: { secret: "PRIVATE REQUEST" }, files: [] },
     );
 
   it("finalization does not resend after an unknown existing-message edit", async () => {
@@ -191,6 +198,88 @@ describe("updateMeetingSummaryMessage", () => {
     );
     expect(captureEvent).not.toHaveBeenCalled();
   });
+
+  it.each([1, 2])(
+    "shrinks actual Upgrade notes to %i pages while retaining final controls",
+    async (pages) => {
+      const value = fixture();
+      value.notesText = "A".repeat(11800);
+      jest.mocked(claimSummaryUpgrade).mockResolvedValueOnce({
+        url: "https://chronote.test/upgrade",
+        recordedSeconds: 5400,
+      });
+      let sequence = 100;
+      value.textChannel.send.mockImplementation(async () => ({
+        id: String(sequence++),
+      }));
+      await updateMeetingSummaryMessage(value as unknown as MeetingData);
+      const input = updateFixture(
+        "Old",
+        pages === 1 ? "Short" : "B".repeat(4500),
+      );
+      const posts = value.textChannel.send.mock.calls.map(
+        ([payload], index) => {
+          const embeds: EmbedBuilder[] = payload.embeds;
+          const rows: ActionRowBuilder<ButtonBuilder>[] = payload.components;
+          return {
+            ...updateMessage(
+              String(100 + index),
+              embeds.map((embed) => ({ ...embed.toJSON() })),
+            ),
+            components: rows.map((row) => ({ ...row.toJSON() })),
+          };
+        },
+      );
+      expect(posts).toHaveLength(3);
+      input.history.notesMessageIds = posts.map((post) => post.id);
+      input.messages = [...posts, input.messages.at(-1)!];
+      const result = planMeetingUpdate(input);
+      expect(result.kind).toBe("ready");
+      if (result.kind !== "ready")
+        throw new Error("Actual live notes must be editable");
+      const surviving = result.targets.filter((target) =>
+        posts.some((post) => post.id === target.messageId),
+      );
+      expect(surviving.map((target) => target.messageId)).toEqual(
+        pages === 1 ? ["102"] : ["100", "102"],
+      );
+      expect(surviving.at(-1)?.after.components).toEqual(posts[2].components);
+      const fields = surviving.flatMap((target) =>
+        target.after.embeds.flatMap((embed) => embed.fields ?? []),
+      );
+      expect(fields).toEqual([
+        {
+          name: "Need more recording time?",
+          value: buildSummaryUpgradeBody(5400),
+        },
+      ]);
+      expect(surviving.at(-1)?.after.embeds.at(-1)).toHaveProperty(
+        "fields",
+        fields,
+      );
+      expect(
+        result.attempt.operations.map((operation) => operation.kind),
+      ).toEqual(
+        pages === 1
+          ? ["patch", "register", "delete", "delete"]
+          : ["patch", "patch", "register", "delete"],
+      );
+      expect(
+        result.attempt.operations.find(
+          (operation) => operation.kind === "register",
+        ),
+      ).toMatchObject({
+        expectedPointers: { notesMessageIds: ["100", "101", "102"] },
+        slots: (pages === 1 ? ["102"] : ["100", "102"]).map((messageId) => ({
+          kind: "existing",
+          messageId,
+        })),
+      });
+      expect(
+        result.payloads.every((entry) => !("components" in entry.payload)),
+      ).toBe(true);
+    },
+  );
 
   it("adds the value proposition and Upgrade beside Open meeting", async () => {
     const value = fixture();

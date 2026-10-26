@@ -73,4 +73,30 @@ function createAwsCaller(executeAws, diagnostic) {
     }
   };
 }
-module.exports = { CoordinatorFailure, awsCli, createAwsCaller };
+async function listServiceTaskArns(aws, config) {
+  const arns = [];
+  let nextToken;
+  let pages = 0;
+  do {
+    const result = await aws("ecs", "list-tasks", {
+      cluster: config.cluster,
+      serviceName: config.service,
+      desiredStatus: "RUNNING",
+      ...(nextToken ? { nextToken } : {}),
+    });
+    arns.push(...result.taskArns);
+    if (arns.length > 100 || ++pages > 100)
+      throw new CoordinatorFailure(
+        "identity_unconfirmed",
+        "Unexpected or incomplete task inventory",
+      );
+    nextToken = result.nextToken;
+  } while (nextToken);
+  return arns;
+}
+module.exports = {
+  CoordinatorFailure,
+  awsCli,
+  createAwsCaller,
+  listServiceTaskArns,
+};

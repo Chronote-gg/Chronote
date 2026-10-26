@@ -318,6 +318,23 @@ function createRouting({ aws, config, env, failure }) {
     );
     return revision(d.taskDefinition, binding(r, true), r.candidateRevision);
   }
+  async function validateSourceLoss(ctl, svc, candidate) {
+    const d = ctl.deployment;
+    const r = d.routing;
+    assertInputs(r);
+    if (!r) fail("Source-loss recovery requires owned routing");
+    assertBinding(svc, r, true);
+    await groups(r);
+    await revision(
+      d.previousTaskDefinition,
+      binding(r, false),
+      r.sourceRevision,
+    );
+    if ((await targets(r.sourceGroup)).length)
+      fail("Stopped source target group must be empty");
+    await target(r, r.candidateGroup, candidate, d.taskDefinition);
+    return revision(d.taskDefinition, binding(r, true), r.candidateRevision);
+  }
   const validateRollback = (ctl, svc) =>
     validate(ctl, svc, ctl.deployment.candidate, false);
   async function switchTraffic(ctl, candidate, persist, assertAuthority) {
@@ -373,6 +390,7 @@ function createRouting({ aws, config, env, failure }) {
     assertInputs,
     validate,
     validateRollback,
+    validateSourceLoss,
     binding,
     assertBinding,
     assertAction,

@@ -91,6 +91,15 @@ const buildNotionVisualData = (path: string, state: NotionVisualState) => {
   return undefined;
 };
 
+const jsonResponseHeaders = (source: Record<string, string>) => {
+  const headers: Record<string, string> = {
+    ...source,
+    "content-type": "application/json",
+  };
+  delete headers["content-length"];
+  return headers;
+};
+
 const installNotionVisualState = async (
   page: Page,
   getState: () => NotionVisualState,
@@ -127,15 +136,9 @@ const installNotionVisualState = async (
         ? entry
         : replaceTrpcData(entry, visualData);
     });
-    const headers = {
-      ...response.headers(),
-      "content-type": "application/json",
-    };
-    delete headers["content-length"];
-
     await route.fulfill({
       status: 200,
-      headers,
+      headers: jsonResponseHeaders(response.headers()),
       body: JSON.stringify(Array.isArray(body) ? nextEntries : nextEntries[0]),
     });
   });
@@ -169,13 +172,13 @@ test.describe("visual regression", () => {
 
     const screenshotName = buildScreenshotName(name, mode);
     if (options?.target) {
-      await expect(options.target).toHaveScreenshot(screenshotName, {
+      await expect.soft(options.target).toHaveScreenshot(screenshotName, {
         maxDiffPixels: TARGET_SCREENSHOT_MAX_DIFF_PIXELS,
       });
       return;
     }
 
-    await expect(page).toHaveScreenshot(screenshotName, {
+    await expect.soft(page).toHaveScreenshot(screenshotName, {
       fullPage: mode === "full",
       maxDiffPixels: PAGE_SCREENSHOT_MAX_DIFF_PIXELS,
     });
@@ -899,15 +902,9 @@ test.describe("visual regression", () => {
             usage: null,
           });
         });
-        const headers = {
-          ...response.headers(),
-          "content-type": "application/json",
-        };
-        delete headers["content-length"];
-
         await route.fulfill({
           status: 200,
-          headers,
+          headers: jsonResponseHeaders(response.headers()),
           body: JSON.stringify(
             Array.isArray(body) ? nextEntries : nextEntries[0],
           ),

@@ -1,3 +1,4 @@
+import { stopMeetingUpdateDeliveryWorker } from "./meetingUpdateDeliveryWorkerService";
 import { stopRenewalRecoveryWorker } from "./renewalRecoveryWorkerService";
 import { stopMeetingRecoveryWorker } from "./meetingRecoveryWorkerService";
 import { getAllMeetings, stopMeetingInitializations } from "../meetings";
@@ -88,6 +89,7 @@ export function createRuntimeShutdown(resources: {
       const personalPoll = stopPersonalMediaUploadWorker();
       const recoveryPoll = stopMeetingRecoveryWorker();
       const billingPoll = stopRenewalRecoveryWorker();
+      const meetingUpdatePoll = stopMeetingUpdateDeliveryWorker();
       fenceRuntimeWorkAdmissions();
       const claims = settleClaims();
       const sessions = interruptSessions(budget);
@@ -104,6 +106,7 @@ export function createRuntimeShutdown(resources: {
           personalPoll,
           recoveryPoll,
           billingPoll,
+          meetingUpdatePoll,
           claims,
           sessions,
           server,

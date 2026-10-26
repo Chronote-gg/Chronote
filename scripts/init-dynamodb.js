@@ -230,8 +230,18 @@ const tables = [
       { AttributeName: "guildId", AttributeType: "S" },
       { AttributeName: "channelId_timestamp", AttributeType: "S" },
       { AttributeName: "timestamp", AttributeType: "S" },
+      { AttributeName: "updateDeliveryQueue", AttributeType: "S" },
+      { AttributeName: "updateDeliveryDueAt", AttributeType: "N" },
     ],
     GlobalSecondaryIndexes: [
+      {
+        IndexName: "UpdateDeliveryDueIndex",
+        KeySchema: [
+          { AttributeName: "updateDeliveryQueue", KeyType: "HASH" },
+          { AttributeName: "updateDeliveryDueAt", KeyType: "RANGE" },
+        ],
+        Projection: { ProjectionType: "KEYS_ONLY" },
+      },
       {
         IndexName: "GuildTimestampIndex",
         KeySchema: [
@@ -479,6 +489,7 @@ async function createTables() {
   }
 
   await ensureRenewalRecoveryIndexExists();
+  await ensureMeetingUpdateDeliveryIndexExists();
   await ensureTableTtlEnabled("MeetingControlCommandTable");
   await ensureTableTtlEnabled("DeploymentControlTable");
   await ensureTableTtlEnabled("ChatTtsUsageTable");
@@ -527,6 +538,36 @@ async function ensureTableTtlEnabled(tableBaseName) {
   } catch (error) {
     console.error(`Error enabling TTL on ${commandTableName}:`, error.message);
   }
+}
+
+async function ensureMeetingUpdateDeliveryIndexExists() {
+  const history = tables.find(
+    (table) => table.TableName === "MeetingHistoryTable",
+  );
+  const name = tableName(history.TableName);
+  const index = history.GlobalSecondaryIndexes.find(
+    (index) => index.IndexName === "UpdateDeliveryDueIndex",
+  );
+  const current = await client.send(
+    new DescribeTableCommand({ TableName: name }),
+  );
+  if (
+    current.Table?.GlobalSecondaryIndexes?.some(
+      (existing) => existing.IndexName === index.IndexName,
+    )
+  )
+    return;
+  await client.send(
+    new UpdateTableCommand({
+      TableName: name,
+      AttributeDefinitions: history.AttributeDefinitions.filter((attribute) =>
+        ["updateDeliveryQueue", "updateDeliveryDueAt"].includes(
+          attribute.AttributeName,
+        ),
+      ),
+      GlobalSecondaryIndexUpdates: [{ Create: index }],
+    }),
+  );
 }
 
 async function ensureRenewalRecoveryIndexExists() {

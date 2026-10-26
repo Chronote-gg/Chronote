@@ -59,7 +59,15 @@ function outcomeCounts(rows, read, allowed) {
   return counts;
 }
 
+function sourceLossIncomplete(row) {
+  return (
+    row.sk !== "RECOVERY" ||
+    row.stage !== "availability_restored" ||
+    row.settlement !== "source_loss_settled"
+  );
+}
 function receiptIncomplete(row, rows) {
+  if (row.pk?.startsWith("SOURCELOSS#")) return sourceLossIncomplete(row);
   if (row.pk !== "ENV") return false;
   if (row.sk === "INTRODUCTION" || row.sk?.startsWith("REPAIR#"))
     return row.stage !== "complete";
@@ -234,6 +242,10 @@ async function collectSandboxObservation(options) {
     "operationId",
     "supersededBy",
     "previousOperationId",
+    "settlement",
+    "version",
+    "terminalProof.kind",
+    "terminalProof.nativeObservation",
   ]);
   const controls = await scan("MeetingControlCommandTable", [
     "queueStatus",
@@ -404,6 +416,36 @@ async function collectSandboxObservation(options) {
           r.role === "serving" &&
           r.readiness?.expiresAt <= now / 1000,
       ).length,
+      sourceLoss: {
+        historicalCarryforwards: runtimes.filter(
+          (r) =>
+            r.recordType === "historical_deployment_carryforward" &&
+            r.version === 1 &&
+            r.settlement === "lost_owner_settlement_pending",
+        ).length,
+        retainedTerminalProofs: runtimes.filter(
+          (r) =>
+            r.recordType === "source_loss_recovery" &&
+            r.version === 2 &&
+            r.terminalProof?.kind === "operator_retained_ecs_stop",
+        ).length,
+        sourceMissingAtAdmission: runtimes.filter(
+          (r) =>
+            r.recordType === "source_loss_recovery" &&
+            r.version === 2 &&
+            r.terminalProof?.nativeObservation === "MISSING",
+        ).length,
+        availabilityRestored: runtimes.filter(
+          (r) =>
+            r.recordType === "source_loss_recovery" &&
+            r.stage === "availability_restored",
+        ).length,
+        settlementPending: runtimes.filter(
+          (r) =>
+            r.recordType === "source_loss_recovery" &&
+            r.settlement === "lost_owner_settlement_pending",
+        ).length,
+      },
       deploymentIncomplete: runtimes.some(
         (r) =>
           (r.deployment && r.deployment.phase !== "complete") ||

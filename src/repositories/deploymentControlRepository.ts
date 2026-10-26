@@ -1,4 +1,9 @@
 import {
+  matchesOwnedHistoryTransition,
+  applyMockOwnedHistoryTransition,
+} from "./meetingHistoryTransitionState";
+
+import {
   conditional,
   sessionReservationFailure,
   type ConditionalResult,
@@ -46,7 +51,6 @@ import {
   retirementSnapshotCondition,
 } from "../services/deploymentControlTransactions";
 import {
-  RECORDING_DELIVERY_FIELDS,
   admissionContextSchema,
   controlRecordSchema,
   parseDeploymentControlRecord,
@@ -923,26 +927,8 @@ export function createMockDeploymentControlRepository(
       });
       const row = getHistory(input.key);
       if (!checkpointLeaseAllowed(input, records, leases)) return "stale";
-      const { recordingDelivery } = input;
-      if (
-        (recordingDelivery &&
-          !RECORDING_DELIVERY_FIELDS.every(
-            (field) =>
-              JSON.stringify(row?.[field]) ===
-              JSON.stringify(recordingDelivery.previous[field]),
-          )) ||
-        !row ||
-        row.meetingId !== input.expectedMeetingId ||
-        row.ownerInstanceId !== input.expectedOwnerInstanceId ||
-        row.executionVersion !== input.expectedExecutionVersion ||
-        row.status !== input.expectedStatus ||
-        (input.expectedCheckpointRevision !== undefined &&
-          (row.checkpoint?.revision ?? 0) !== input.expectedCheckpointRevision)
-      )
-        return "stale";
-      for (const [field, value] of Object.entries(input.patch))
-        if (value !== undefined)
-          Object.assign(row, { [field]: structuredClone(value) });
+      if (!matchesOwnedHistoryTransition(row, input)) return "stale";
+      applyMockOwnedHistoryTransition(row, input);
       return "applied";
     },
     async listPendingRecordingRecoveries(guildId) {

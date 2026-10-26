@@ -8,6 +8,7 @@ import {
   formatDurationLabel,
   resolveMeetingTitle,
 } from "../../src/frontend/utils/meetingLibrary";
+import type { MeetingUpdatePublicDelivery } from "../../src/services/meetingUpdateStatus";
 import { MEETING_STATUS } from "../../src/types/meetingLifecycle";
 
 describe("meeting library utils", () => {
@@ -129,5 +130,37 @@ describe("meeting library utils", () => {
     expect(built.notes).toBe("No notes recorded.");
     expect(built.attendees).toEqual(["Unknown"]);
     expect(built.status).toBe(MEETING_STATUS.COMPLETE);
+  });
+});
+
+test("current update delivery survives normalization without initial-delivery inference", () => {
+  const updateDelivery: MeetingUpdatePublicDelivery = {
+    status: "pending",
+    reason: null,
+    pollable: true,
+    desiredRevision: 3,
+    syncedRevision: null,
+    lastSuccess: { at: 1767225600, contentRevision: 2 },
+  };
+  const built = buildMeetingDetails(
+    {
+      id: "synthetic#2026",
+      meetingId: "synthetic",
+      channelId: "synthetic",
+      timestamp: "2026-01-01T00:00:00Z",
+      duration: 60,
+      notes: "Saved canonical notes",
+      updateDelivery,
+    },
+    new Map(),
+  );
+  expect(built).toMatchObject({
+    notes: "Saved canonical notes",
+    updateDelivery: {
+      status: "pending",
+      desiredRevision: 3,
+      syncedRevision: null,
+      lastSuccess: { at: 1767225600, contentRevision: 2 },
+    },
   });
 });

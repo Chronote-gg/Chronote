@@ -2,10 +2,19 @@
 "use strict";
 const { isDeepStrictEqual } = require("node:util");
 const { marshall, unmarshall } = require("@aws-sdk/util-dynamodb");
+const { bindingHash } = require("./binding-hash.cjs");
+const {
+  taskContainer,
+  runtimeMode,
+  taskDefinitionInput,
+  candidateDefinition,
+  assertPreparedTaskDefinition,
+} = require("./task-definition.cjs");
 const {
   CoordinatorFailure,
   awsCli,
   createAwsCaller,
+  listServiceTaskArns,
 } = require("./coordinator-aws.cjs");
 const WARMUP_SECONDS = 900;
 const RETIREMENT_SECONDS = 7500;
@@ -44,80 +53,6 @@ function configuration(env) {
     image,
     tablePrefix,
   };
-}
-function taskContainer(definition, tablePrefix) {
-  const matches = definition.containerDefinitions.filter((container) =>
-    container.environment?.some((entry) => entry.name === "DDB_TABLE_PREFIX"),
-  );
-  if (matches.length !== 1)
-    throw new CoordinatorFailure(
-      "configuration_invalid",
-      "Expected one protocol container with an explicit table route",
-    );
-  const container = matches[0];
-  const route = container.environment.filter(
-    (entry) => entry.name === "DDB_TABLE_PREFIX",
-  );
-  if (route.length !== 1 || route[0].value !== tablePrefix)
-    throw new CoordinatorFailure(
-      "configuration_invalid",
-      "Task table route mismatch",
-    );
-  return container;
-}
-function runtimeMode(container) {
-  const command = JSON.stringify(container.command ?? ["npx", "yarn", "serve"]);
-  const modes = {
-    all: [
-      ["npx", "yarn", "serve"],
-      ["node", "dist/index.js"],
-    ],
-    bot: [
-      ["npx", "yarn", "serve:bot"],
-      ["node", "dist/apps/bot/main.js"],
-    ],
-    api: [
-      ["npx", "yarn", "serve:api"],
-      ["node", "dist/apps/api/main.js"],
-    ],
-  };
-  if (container.entryPoint?.length)
-    throw new CoordinatorFailure(
-      "configuration_invalid",
-      "Unreviewed task entry point",
-    );
-  for (const [mode, commands] of Object.entries(modes))
-    if (commands.some((value) => JSON.stringify(value) === command))
-      return mode;
-  throw new CoordinatorFailure(
-    "configuration_invalid",
-    "Unreviewed task runtime command",
-  );
-}
-function candidateDefinition(definition, config) {
-  const next = structuredClone(definition);
-  for (const field of [
-    "taskDefinitionArn",
-    "revision",
-    "status",
-    "requiresAttributes",
-    "compatibilities",
-    "registeredAt",
-    "registeredBy",
-    "deregisteredAt",
-  ])
-    delete next[field];
-  const container = taskContainer(next, config.tablePrefix);
-  container.image = config.image;
-  container.stopTimeout = 120;
-  container.environment = container.environment.filter(
-    (entry) => entry.name !== "DEPLOYMENT_CANDIDATE_ID",
-  );
-  container.environment.push({
-    name: "DEPLOYMENT_CANDIDATE_ID",
-    value: config.candidateId,
-  });
-  return next;
 }
 function protocolModules(options) {
   const builders =
@@ -337,24 +272,8 @@ function createCoordinator(options = {}) {
     ).taskDefinition;
   }
   async function tasks() {
-    const arns = [];
-    let nextToken;
-    do {
-      const page = await aws("ecs", "list-tasks", {
-        cluster: config.cluster,
-        serviceName: config.service,
-        desiredStatus: "RUNNING",
-        ...(nextToken ? { nextToken } : {}),
-      });
-      arns.push(...page.taskArns);
-      nextToken = page.nextToken;
-    } while (nextToken);
+    const arns = await listServiceTaskArns(aws, config);
     if (!arns.length) return [];
-    if (arns.length > 100)
-      throw new CoordinatorFailure(
-        "identity_unconfirmed",
-        "Unexpected task count",
-      );
     const result = await aws("ecs", "describe-tasks", {
       cluster: config.cluster,
       tasks: arns,
@@ -394,7 +313,7 @@ function createCoordinator(options = {}) {
         "Existing deployment is not an unambiguous compatible serving task",
       );
     const oldDefinition = await definition(svc.taskDefinition);
-    const latest = await definition(config.family);
+    const latest = await definition(options.taskTemplate?.arn ?? config.family);
     if (latest.family !== config.family)
       throw new CoordinatorFailure(
         "configuration_invalid",
@@ -417,8 +336,8 @@ function createCoordinator(options = {}) {
         "application_not_ready",
         "Existing runtime is not a ready compatible serving owner",
       );
-    await protectedTask(outgoing[0]);
-    return { outgoing: outgoing[0], mode };
+    const nativeProtectionExpiresAt = await protectedTask(outgoing[0]);
+    return { outgoing: outgoing[0], mode, nativeProtectionExpiresAt };
   }
   async function findRegistered() {
     const matches = [];
@@ -456,7 +375,9 @@ function createCoordinator(options = {}) {
   async function register(ctl) {
     let arn = ctl.deployment.taskDefinition ?? (await findRegistered());
     if (!arn) {
-      const latest = await definition(config.family);
+      const latest = await definition(
+        options.taskTemplate?.arn ?? config.family,
+      );
       if (
         runtimeMode(taskContainer(latest, config.tablePrefix)) !==
         ctl.deployment.runtimeMode
@@ -465,19 +386,29 @@ function createCoordinator(options = {}) {
           "configuration_invalid",
           "Task command changed during prepare",
         );
+      const prepared = candidateDefinition(latest, config);
+      if (
+        options.taskTemplate &&
+        bindingHash(prepared) !== options.taskTemplate.preparedSha256
+      )
+        throw new CoordinatorFailure(
+          "configuration_invalid",
+          "Reviewed task template changed",
+        );
       try {
-        arn = (
-          await aws(
-            "ecs",
-            "register-task-definition",
-            candidateDefinition(latest, config),
-          )
-        ).taskDefinition.taskDefinitionArn;
+        arn = (await aws("ecs", "register-task-definition", prepared))
+          .taskDefinition.taskDefinitionArn;
       } catch (error) {
         arn = await findRegistered();
         if (!arn) throw error;
       }
     }
+    if (options.taskTemplate)
+      assertPreparedTaskDefinition(
+        taskDefinitionInput(await definition(arn)),
+        candidateDefinition(await definition(options.taskTemplate.arn), config),
+        options.taskTemplate.preparedSha256,
+      );
     return phase(ctl, "preparing", { taskDefinition: arn });
   }
   async function prepare() {
@@ -923,6 +854,20 @@ function createCoordinator(options = {}) {
     promote,
     retire,
     reconcile,
+    inspectServing: async () => {
+      const ctl = await control();
+      const svc = await service();
+      const previous = await original(ctl, svc);
+      return {
+        control: ctl,
+        source: previous.outgoing,
+        runtimeMode: previous.mode,
+        routing: await routing.prepare(svc, previous.outgoing),
+        serviceDefinition: svc.taskDefinition,
+        service: svc,
+        nativeProtectionExpiresAt: previous.nativeProtectionExpiresAt,
+      };
+    },
     inspectContinuation: () =>
       require("./continuation-inspection.cjs").inspectContinuation({
         control,
@@ -981,6 +926,8 @@ module.exports = {
   createCoordinator,
   configuration,
   candidateDefinition,
+  taskDefinitionInput,
+  taskContainer,
   runtimeMode,
   awsCli,
   runCli,

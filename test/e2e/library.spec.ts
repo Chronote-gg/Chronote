@@ -63,6 +63,30 @@ test("library page shows meetings and drawer details (mock)", async ({
     summaryScroll.clientHeight,
   );
 
+  expect(summaryScroll.clientHeight).toBeGreaterThan(64);
+  const summaryViewport = libraryPage.drawerSummaryViewport();
+  await summaryViewport.evaluate((node) => {
+    node.scrollTop = 60;
+  });
+  await expect
+    .poll(() => summaryViewport.evaluate((node) => node.scrollTop))
+    .toBeGreaterThan(0);
+  const compactBody = page.getByTestId("meeting-detail-compact-scroll");
+  const compactMetrics = await compactBody.evaluate((node) => ({
+    height: node.clientHeight,
+    content: node.scrollHeight,
+  }));
+  expect(compactMetrics.content).toBeGreaterThan(compactMetrics.height);
+  await compactBody.evaluate((node) => {
+    node.scrollTop = 60;
+  });
+  await expect
+    .poll(() => compactBody.evaluate((node) => node.scrollTop))
+    .toBeGreaterThan(0);
+  await compactBody.evaluate((node) => {
+    node.scrollTop = 0;
+  });
+
   await libraryPage.drawerFullscreenToggle().click();
   await expect(libraryPage.drawerTimelineViewport()).toBeVisible();
   await expect(libraryPage.drawerTimelineEvents().first()).toBeVisible();

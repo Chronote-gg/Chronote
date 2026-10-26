@@ -30,7 +30,7 @@ ERROR, but does not prevent remaining sends, artifact/history persistence, or
 cleanup. Trace output and the terminal lifecycle event are not user quality scores.
 
 For Discord 50013, inspect effective channel permissions and overwrites before
-considering recovery. Do not blindly retry or broaden permissions. This repair
+considering recovery. Do not blindly retry or broaden permissions. Initial delivery outcome recording
 adds neither automatic retries nor live resends. It does not change PostHog
 instrumentation, public UI, production permissions, or the daily-report job.
 
@@ -45,3 +45,21 @@ permission changes. Existing production messages are not replayed by deployment.
 This is the delivery-outcome slice of issue #140, not its broader logging,
 metrics-platform, or voice-disconnect work. Reverting the source commit restores
 prior behavior; additive stored metadata requires no data migration or deletion.
+
+## Later intentional updates
+
+The initial `delivery` record retains the meaning above. Later editor saves, imports, approved corrections, renames and other supported canonical actions atomically persist content and `updateDelivery` intent on the same meeting row. Arbitrary manual database writes do not publish automatically. No Streams were added.
+
+The sparse `UpdateDeliveryDueIndex` is durable discovery, followed by a strong base-row read and conditional ownership. The worker polls immediately and every five seconds without overlap, admits at most 25 rows and ten seconds of admission work per poll, and runs at most two claimed meetings concurrently. Updates preserve unrelated fields and initial publication ownership.
+
+Known failed logical attempts count once across claims and restarts, not once per HTTP call. After eight consecutive known failed attempts the update becomes visibly blocked with reason `retry_exhausted`, retaining desired work and target evidence. Honor definite 429 retry timing; other known failures use jittered backoff starting at five seconds and capped at five minutes. Submitted unknown outcomes use GET-only reconciliation. Lease expiry never authorizes replay. Missing recorded posts are blocked rather than automatically recreated.
+
+A publication hold retains new desired edits and never releases itself during an ordinary save. Notification holds are separate. Discord retry execution makes no LLM, Notion, notification or new-export calls. Existing opted-in Notion behavior remains at the successful notes-action boundary.
+
+The safe detail field `updateDelivery` reports desired revision, nullable current synced revision, sanitized state/reason and last verified captured attempt. A last-success timestamp alone cannot establish current convergence. Completed pending meetings refresh without hiding canonical content, for at most 60 sequential reads per open selection; close, switch and terminal states stop refresh.
+
+### Rollout
+
+Deploy the sparse index through the reviewed infrastructure workflow and require ACTIVE readiness before deploying writers and worker. Missing readiness fails visibly. There is no Scan fallback, historical backfill or blanket replay. Keep initial publication, personal creation and exceptional recovery ownership intact. Supported routine edits need no operator preview; exceptional repair retains its exact-preview approval and common per-meeting publication barrier.
+
+Hosted synthetic Sandbox acceptance needs separate authorized rollout and provider evidence. Code checks do not establish hosted acceptance or authorize production deployment or release of a live hold.

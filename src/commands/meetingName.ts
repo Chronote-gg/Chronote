@@ -1,3 +1,4 @@
+import { updateMeeting } from "../services/meetingUpdateService";
 import {
   ActionRowBuilder,
   ButtonInteraction,
@@ -6,19 +7,12 @@ import {
   TextInputBuilder,
   TextInputStyle,
 } from "discord.js";
-import {
-  getMeetingHistoryService,
-  updateMeetingNameService,
-} from "../services/meetingHistoryService";
+import { getMeetingHistoryService } from "../services/meetingHistoryService";
 import {
   MEETING_NAME_REQUIREMENTS,
   normalizeMeetingName,
   resolveUniqueMeetingName,
 } from "../services/meetingNameService";
-import {
-  formatNotesEmbedTitle,
-  resolveNotesEmbedBaseTitle,
-} from "../utils/meetingNotes";
 
 const MEETING_NAME_INPUT_ID = "meeting_name_input";
 const MEETING_NAME_MAX_LENGTH = 60;
@@ -84,41 +78,6 @@ export async function handleRenameMeetingButton(
   await interaction.showModal(modal);
 }
 
-async function updateNotesEmbedTitles(params: {
-  interaction: ButtonInteraction | ModalSubmitInteraction;
-  notesChannelId?: string;
-  notesMessageIds?: string[];
-  meetingName: string;
-}) {
-  const { interaction, notesChannelId, notesMessageIds, meetingName } = params;
-  if (!notesChannelId || !notesMessageIds?.length) return;
-  const channel = await interaction.client.channels.fetch(notesChannelId);
-  if (!channel?.isSendable()) return;
-
-  const baseTitle = resolveNotesEmbedBaseTitle(meetingName);
-  const total = notesMessageIds.length;
-
-  for (let index = 0; index < notesMessageIds.length; index += 1) {
-    const messageId = notesMessageIds[index];
-    try {
-      const message = await channel.messages.fetch(messageId);
-      const existing = message.embeds[0];
-      if (!existing) continue;
-      const title = formatNotesEmbedTitle(baseTitle, index, total);
-      await message.edit({
-        embeds: [
-          {
-            ...existing.data,
-            title,
-          },
-        ],
-      });
-    } catch (error) {
-      console.warn("Failed to update meeting name on notes embed", error);
-    }
-  }
-}
-
 export async function handleRenameMeetingModal(
   interaction: ModalSubmitInteraction,
 ) {
@@ -161,25 +120,21 @@ export async function handleRenameMeetingModal(
     excludeMeetingId: history.meetingId,
   });
 
-  const ok = await updateMeetingNameService({
-    guildId: interaction.guildId!,
-    channelId_timestamp: channelIdTimestamp,
-    meetingName,
+  const saved = await updateMeeting({
+    key: {
+      guildId: interaction.guildId!,
+      channelId_timestamp: channelIdTimestamp,
+    },
+    mutation: { kind: "rename", meetingName },
+    actor: { editedBy: interaction.user.id },
   });
-  if (!ok) {
+  if (saved.kind === "conflict") {
     await interaction.reply({
       content: "Unable to update this meeting name.",
       ephemeral: true,
     });
     return;
   }
-
-  await updateNotesEmbedTitles({
-    interaction,
-    notesChannelId: history.notesChannelId,
-    notesMessageIds: history.notesMessageIds,
-    meetingName,
-  });
 
   await interaction.reply({
     content: `Meeting name updated to **${meetingName}**.`,

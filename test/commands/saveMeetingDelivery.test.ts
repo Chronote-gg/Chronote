@@ -17,6 +17,9 @@ jest.mock("../../src/services/meetingNotesService", () => ({
 
 beforeEach(() => {
   jest.clearAllMocks();
+  jest
+    .mocked(saveOwnedMeetingHistoryService)
+    .mockImplementation(async (_meeting, history) => history);
 });
 
 it.each([

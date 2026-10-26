@@ -195,6 +195,12 @@ Whole-branch review, published exact-head checks, clean mergeability and the pos
 
 For the separately reviewed one-time introduction from an incompatible runtime, see [Sandbox bootstrap tooling](sandbox-bootstrap.md). Normal deployments still use the existing coordinator. The bootstrap and read-only observation commands do not apply infrastructure, stop legacy work, register an image, alter the listener or start a monitor automatically.
 
+## Sandbox source-loss recovery
+
+A separately approved stopped-source operation uses [Sandbox source-loss recovery](sandbox-source-loss.md). It restores the existing candidate's admission and routing while preserving pending settlement. Healthy-source continuation and normal retirement still require their original evidence.
+
+The separately approved [historical carryforward contract](sandbox-carryforward.md) can archive an availability-restored incident without settling it and hand Control to a new normal protected deployment. Ordinary preparation retains its refusal of unrelated unfinished operations.
+
 ## Production introduction workflow status
 
 The manual `production-introduction.yml` is source-staged and operationally blocked. It defaults to inspection, binds one exact proposal with read-only identity evidence, and validates the late private envelope before refusing at `Post-bind human authority unavailable; preserve state`. It shares uncancelled production deployment concurrency. A collector alone cannot unlock execution.

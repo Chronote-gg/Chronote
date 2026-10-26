@@ -6,10 +6,9 @@ import {
   publicationDigest,
   publicationMessageFingerprint,
   digest,
-  type PublicationClaim,
-  type PublicationReceipt,
   type PublicationDependencies,
 } from "../../src/services/recoveryDiscordPublication";
+import { publicationStorageFixture } from "./recoveryDiscordPublicationStorage.fixture";
 import { DiscordMessageHttpError } from "../../src/services/discordMessageEditor";
 import { fixture, input } from "./recoveryDiscordPublication.fixture";
 
@@ -25,54 +24,7 @@ function setup(two = false) {
       embeds: [{ ...first.embeds[0], title: "Meeting Notes (part 2/2)" }],
     });
   }
-  let revision = 0;
-  const receipts = new Map<
-    string,
-    { value: PublicationReceipt; etag: string }
-  >();
-  const claims = new Map<string, { value: PublicationClaim; etag: string }>();
-  const events: string[] = [];
-  const storage = {
-    savePreview: jest.fn(async () => {}),
-    readReceipt: jest.fn(async (key: string) =>
-      structuredClone(receipts.get(key) ?? null),
-    ),
-    readClaim: jest.fn(async (key: string) =>
-      structuredClone(claims.get(key) ?? null),
-    ),
-    saveReceipt: jest.fn(
-      async ({
-        key,
-        receipt,
-        condition,
-      }: Parameters<PublicationDependencies["storage"]["saveReceipt"]>[0]) => {
-        const old = receipts.get(key);
-        if (condition.kind === "absent" ? old : old?.etag !== condition.etag)
-          throw new Error("precondition");
-        const etag = String(++revision);
-        receipts.set(key, { value: structuredClone(receipt), etag });
-        events.push(
-          `receipt:${receipt.messages.map((m) => m.state).join(",")}`,
-        );
-        return etag;
-      },
-    ),
-    writeClaim: jest.fn(
-      async ({
-        key,
-        claim,
-        condition,
-      }: Parameters<PublicationDependencies["storage"]["writeClaim"]>[0]) => {
-        const old = claims.get(key);
-        if (condition.kind === "absent" ? old : old?.etag !== condition.etag)
-          throw new Error("precondition");
-        const etag = String(++revision);
-        claims.set(key, { value: structuredClone(claim), etag });
-        events.push(`claim:${claim.state}`);
-        return etag;
-      },
-    ),
-  } satisfies PublicationDependencies["storage"];
+  const { storage, receipts, claims, events } = publicationStorageFixture();
   const editEmbeds = jest.fn(
     async ({
       messageId,
@@ -549,3 +501,16 @@ test.each(["missing", "unreadable", "otherRun", "otherPreview", "unresolved"])(
     expect(f.deps.discord.editEmbeds).toHaveBeenCalledTimes(1);
   },
 );
+
+test("common database exclusion is required before any repair provider mutation", async () => {
+  const f = setup();
+  const preview = await f.preview();
+  const acquire = jest.fn(async () => {
+    throw new Error("Synthetic update owner already holds the common row");
+  });
+  Object.assign(f.deps, {
+    publication: { acquire, assertOwner: jest.fn(), settle: jest.fn() },
+  });
+  await expect(apply(preview, f.deps)).rejects.toThrow("common row");
+  expect(f.deps.discord.editEmbeds).not.toHaveBeenCalled();
+});

@@ -1,10 +1,23 @@
 /** @jest-environment node */
+import {
+  verifyMeetingUpdateDeliveryReadiness,
+  prepareMeetingUpdateDeliveryWorker,
+  startMeetingUpdateDeliveryWorker,
+} from "../../src/services/meetingUpdateDeliveryWorkerService";
 import { stripeTransport } from "../fixtures/stripeTransport";
 import { getStripeClient } from "../../src/services/stripeClient";
 import {
   startRenewalRecoveryWorker,
   verifyRenewalRecoveryReadiness,
 } from "../../src/services/renewalRecoveryWorkerService";
+jest.mock("../../src/services/meetingUpdateDeliveryWorkerService", () => ({
+  startMeetingUpdateDeliveryWorker: jest.fn(),
+  prepareMeetingUpdateDeliveryWorker: jest.fn(async () => {}),
+  verifyMeetingUpdateDeliveryReadiness: jest.fn(async () => {}),
+}));
+jest.mock("../../src/services/runtimeLifecycleService", () => ({
+  whenRuntimeServing: (listener: () => void) => listener(),
+}));
 jest.mock("../../src/services/stripeClient", () => ({
   getStripeClient: jest.fn(),
 }));
@@ -121,6 +134,12 @@ test.each(["all", "bot", "api"] as const)(
     finish({ ready, failed: jest.fn() });
     await boot;
     expect(ready).toHaveBeenCalledTimes(1);
+    expect(verifyMeetingUpdateDeliveryReadiness).toHaveBeenCalledTimes(1);
+    expect(startMeetingUpdateDeliveryWorker).toHaveBeenCalledTimes(1);
+    expect(
+      jest.mocked(verifyMeetingUpdateDeliveryReadiness).mock
+        .invocationCallOrder[0],
+    ).toBeLessThan(ready.mock.invocationCallOrder[0]);
     if (mode !== "bot") {
       expect(verifyRenewalRecoveryReadiness).toHaveBeenCalledTimes(1);
       expect(
@@ -258,4 +277,60 @@ test("startup failure starts the budget before a held server close can finish", 
   }
   await mockOwners[0].request("startup_failure");
   expect(mockExit).toHaveBeenCalledWith(1);
+});
+
+test("meeting delivery index failure blocks every runtime before application activation", async () => {
+  const ready = jest.fn(),
+    failed = jest.fn();
+  jest.mocked(startRuntimeHealthServer).mockResolvedValue(readyHealth());
+  jest.mocked(initializeRuntimeLifecycle).mockResolvedValue({ ready, failed });
+  jest
+    .mocked(verifyMeetingUpdateDeliveryReadiness)
+    .mockRejectedValueOnce(Error("Index not ACTIVE"));
+  await expect(bootstrapApp("api")).rejects.toThrow("Index not ACTIVE");
+  expect(setupWebServer).not.toHaveBeenCalled();
+  expect(ready).not.toHaveBeenCalled();
+  expect(startMeetingUpdateDeliveryWorker).not.toHaveBeenCalled();
+});
+
+test.each(["all", "bot", "api"] as const)(
+  "meeting delivery starts in %s without billing",
+  async (mode) => {
+    const ready = jest.fn();
+    jest.mocked(getStripeClient).mockReturnValue(null);
+    jest
+      .mocked(initializeRuntimeLifecycle)
+      .mockResolvedValue({ ready, failed: jest.fn() });
+    jest.mocked(startRuntimeHealthServer).mockResolvedValue(readyHealth());
+    jest.mocked(setupBot).mockResolvedValue(undefined);
+    await bootstrapApp(mode);
+    expect(verifyMeetingUpdateDeliveryReadiness).toHaveBeenCalledTimes(1);
+    expect(startMeetingUpdateDeliveryWorker).toHaveBeenCalledTimes(1);
+    expect(startRenewalRecoveryWorker).not.toHaveBeenCalled();
+  },
+);
+
+function readyHealth() {
+  return {
+    server: {} as Awaited<
+      ReturnType<typeof startRuntimeHealthServer>
+    >["server"],
+    activate: jest.fn(),
+    close: jest.fn(async () => {}),
+  };
+}
+
+test("delivery preparation failure cannot publish a ready runtime", async () => {
+  const ready = jest.fn();
+  const failed = jest.fn();
+  jest.mocked(initializeRuntimeLifecycle).mockResolvedValue({ ready, failed });
+  jest
+    .mocked(prepareMeetingUpdateDeliveryWorker)
+    .mockRejectedValueOnce(new Error("delivery repository unavailable"));
+  await expect(bootstrapApp("api")).rejects.toThrow(
+    "delivery repository unavailable",
+  );
+  expect(ready).not.toHaveBeenCalled();
+  expect(startMeetingUpdateDeliveryWorker).not.toHaveBeenCalled();
+  expect(failed).toHaveBeenCalledTimes(1);
 });

@@ -6,6 +6,8 @@ export function localProtection(
   now: () => number,
   expiresAt: number,
 ) {
+  if (identity.kind !== "ecs")
+    throw new Error("Protection fixture requires ECS identity");
   return createRuntimeProtectionService({
     identity,
     now,

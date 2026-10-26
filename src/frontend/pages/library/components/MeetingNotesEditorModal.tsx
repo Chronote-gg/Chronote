@@ -87,8 +87,9 @@ export default function MeetingNotesEditorModal({
     >
       <Stack gap="md">
         <Text size="sm" c="dimmed">
-          These edits will be saved as rich text and sent to Discord as
-          Markdown.
+          Save rich text here. Discord publication updates separately when a
+          destination is available. Check the meeting delivery status after
+          saving.
         </Text>
 
         <ReactQuill

@@ -1,3 +1,8 @@
+import {
+  canonicalContentAdvanced,
+  MAX_RECORDING_CANONICAL_TRANSITION_ATTEMPTS,
+} from "./recordingCanonicalConflict";
+import { publicationSnapshot } from "../types/meetingPublication";
 import { isDeepStrictEqual } from "node:util";
 import { getDeploymentControlRepository } from "../db";
 import type { MeetingData } from "../types/meeting-data";
@@ -70,6 +75,60 @@ function snapshot(row: MeetingHistory): RecordingDeliveryProof["previous"] {
     notesDeliveryTiming: row.notesDeliveryTiming,
   };
 }
+async function commitMetadata(
+  delivery: Delivery,
+  row: MeetingHistory,
+  phase: RecordingDeliveryProof["phase"],
+  patch: HistoryTransition["patch"],
+) {
+  delivery.signal.throwIfAborted();
+  const transition: HistoryTransition = {
+    expectedPublication: publicationSnapshot(row),
+    key: delivery.original.historyKey,
+    expectedMeetingId: delivery.original.meetingId,
+    expectedOwnerInstanceId: delivery.original.ownerInstanceId,
+    expectedExecutionVersion: delivery.original.executionVersion,
+    expectedStatus: row.status!,
+    expectedCheckpointRevision: row.checkpoint!.revision,
+    recordingDelivery: {
+      kind: "recording_delivery",
+      phase,
+      ownership: delivery.original,
+      now: Math.floor(Date.now() / 1000),
+      previous: snapshot(row),
+    },
+    patch,
+    signal: delivery.signal,
+  };
+  let committed;
+  try {
+    committed =
+      await getDeploymentControlRepository().transitionMeetingHistory(
+        transition,
+      );
+  } catch (error) {
+    // An uncertain intent acknowledgment must never initiate a remote mutation.
+    if (phase === "intent") throw error;
+    const readback = await readOwned(delivery);
+    if (
+      readback.status !== row.status ||
+      readback.checkpoint?.revision !== row.checkpoint?.revision ||
+      !RECORDING_DELIVERY_FIELDS.every(
+        (field) =>
+          patch[field] === undefined ||
+          isDeepStrictEqual(
+            JSON.parse(JSON.stringify(readback[field] ?? null)),
+            JSON.parse(JSON.stringify(patch[field])),
+          ),
+      )
+    )
+      throw error;
+    committed = "applied";
+  }
+  delivery.signal.throwIfAborted();
+
+  return committed;
+}
 async function write(
   delivery: Delivery,
   row: MeetingHistory,
@@ -79,53 +138,31 @@ async function write(
   if (delivery.writing)
     throw new Error("Recording delivery metadata write already owned");
   delivery.writing = true;
+  const originalPatch = { ...patch, updatedAt: new Date().toISOString() };
   try {
-    delivery.signal.throwIfAborted();
-    const transition: HistoryTransition = {
-      key: delivery.original.historyKey,
-      expectedMeetingId: delivery.original.meetingId,
-      expectedOwnerInstanceId: delivery.original.ownerInstanceId,
-      expectedExecutionVersion: delivery.original.executionVersion,
-      expectedStatus: row.status!,
-      expectedCheckpointRevision: row.checkpoint!.revision,
-      recordingDelivery: {
-        kind: "recording_delivery",
+    let current = row;
+    for (
+      let attempt = 0;
+      attempt < MAX_RECORDING_CANONICAL_TRANSITION_ATTEMPTS;
+      attempt++
+    ) {
+      const result = await commitMetadata(
+        delivery,
+        current,
         phase,
-        ownership: delivery.original,
-        now: Math.floor(Date.now() / 1000),
-        previous: snapshot(row),
-      },
-      patch: { ...patch, updatedAt: new Date().toISOString() },
-      signal: delivery.signal,
-    };
-    let committed;
-    try {
-      committed =
-        await getDeploymentControlRepository().transitionMeetingHistory(
-          transition,
-        );
-    } catch (error) {
-      // An uncertain intent acknowledgment must never initiate a remote mutation.
-      if (phase === "intent") throw error;
-      const readback = await readOwned(delivery);
+        originalPatch,
+      );
+      if (result === "applied") return;
       if (
-        readback.status !== row.status ||
-        readback.checkpoint?.revision !== row.checkpoint?.revision ||
-        !RECORDING_DELIVERY_FIELDS.every(
-          (field) =>
-            patch[field] === undefined ||
-            isDeepStrictEqual(
-              JSON.parse(JSON.stringify(readback[field] ?? null)),
-              JSON.parse(JSON.stringify(patch[field])),
-            ),
-        )
+        result !== "stale" ||
+        attempt + 1 === MAX_RECORDING_CANONICAL_TRANSITION_ATTEMPTS
       )
-        throw error;
-      committed = "applied";
+        break;
+      const next = await readOwned(delivery);
+      if (!canonicalContentAdvanced(current, next)) break;
+      current = next;
     }
-    delivery.signal.throwIfAborted();
-    if (committed !== "applied")
-      throw new Error("Recording delivery metadata was fenced");
+    throw new Error("Recording delivery metadata was fenced");
   } finally {
     delivery.writing = false;
   }
@@ -147,7 +184,12 @@ export async function beginRecordingDelivery(
   };
   deliveries.set(meeting, delivery);
   const row = await readOwned(delivery);
-  if (row.status !== "processing" || row.recovery?.stage === "delivery")
+  if (
+    row.publicationRepair?.kind === "running" ||
+    (row.updateDelivery && "attempt" in row.updateDelivery.progress) ||
+    row.status !== "processing" ||
+    row.recovery?.stage === "delivery"
+  )
     throw new Error("Recording delivery cannot be replayed");
   await write(delivery, row, "intent", { recovery: marker(delivery.original) });
   delivery.intentAcknowledged = true;

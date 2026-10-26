@@ -173,6 +173,7 @@ export function createRuntimeLifecycle(options: {
       pk: "ENV",
       sk: `RUNTIME#${identity.instanceId}`,
       recordType: "runtime",
+      canonicalContentWriter: 1,
       identity,
       role: stored?.role ?? "candidate",
       authorizedGeneration:

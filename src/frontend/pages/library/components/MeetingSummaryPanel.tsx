@@ -149,7 +149,7 @@ export function MeetingSummaryPanel({
         display: "flex",
         flexDirection: "column",
         flex: 1,
-        minHeight: 0,
+        minHeight: "12rem",
       }
     : {};
   const summaryBody = (
@@ -303,7 +303,6 @@ export function MeetingSummaryPanel({
           offsetScrollbars
           type="always"
           scrollbarSize={10}
-          data-visual-scroll
           data-testid="meeting-summary-scroll"
           viewportProps={summaryViewportProps}
           styles={{
