@@ -30,7 +30,7 @@
     "test:visual": "node scripts/run-visual-tests.js",
     "test:visual:update": "node scripts/run-visual-tests.js --update-snapshots",
     "lint": "eslint --fix src test",
-    "lint:check": "eslint src test scripts/quality-workflow.test.mjs scripts/shared-quality.test.mjs scripts/run-shared-quality.mjs",
+    "lint:check": "eslint src test _infra/production-bootstrap scripts/quality-workflow.test.mjs scripts/shared-quality.test.mjs scripts/run-shared-quality.mjs",
     "prettier": "prettier . --write",
     "prettier:check": "prettier . --check",
     "frontend:dev": "vite",
