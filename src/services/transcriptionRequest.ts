@@ -28,6 +28,8 @@ const nativeFetch = globalThis.fetch;
 const failureScopes = new AsyncLocalStorage<WeakSet<Error>>();
 
 type RequestInput = {
+  observeGeneration?: import("../types/fixtureEvidence").GenerationObserver;
+  generationOperation?: string;
   candidate: TranscriptionCandidateId;
   file: string;
   signal: AbortSignal;
@@ -135,12 +137,18 @@ async function runAttempt(input: RequestInput): Promise<Transcription> {
     const result = await withTranscriptionInput(input.file, async (file) => {
       signal.throwIfAborted();
       attempt.markSdkInvocation();
+      const acknowledge = input.observeGeneration?.(
+        input.generationOperation ?? "transcription",
+        input.request.model,
+        input.request.prompt ? input.clientOptions?.langfusePrompt : null,
+      );
       const response = await client.audio.transcriptions.create(
         { ...input.request, file },
         { signal, maxRetries: 0 },
       );
       attempt.recordReturnedUsage(response.usage);
       signal.throwIfAborted();
+      acknowledge?.(null);
       return response;
     });
     signal.throwIfAborted();

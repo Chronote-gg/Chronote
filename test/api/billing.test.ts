@@ -1,4 +1,5 @@
 /** @jest-environment node */
+import { seedBillingRuntime } from "../fixtures/billingRuntime";
 
 import {
   afterAll,
@@ -19,7 +20,7 @@ import { createManualEntitlementGrant } from "../../src/services/entitlementServ
 import * as entitlementService from "../../src/services/entitlementService";
 import * as purchaseReconciliation from "../../src/services/purchaseReconciliation";
 import { clearGuildSubscriptionCache } from "../../src/services/subscriptionService";
-import type { StripeClient, StripeEvent } from "../../src/types/stripe";
+import type { StripeEvent } from "../../src/types/stripe";
 import { captureEvent } from "../../src/services/analyticsService";
 jest.mock("../../src/services/analyticsService", () => ({
   captureEvent: jest.fn(),
@@ -37,6 +38,7 @@ import {
   createServer,
   postWebhook,
   closeServer,
+  createWebhookStripe as createStripe,
   subscriptionEvent,
   guildId,
   basicPrice,
@@ -44,28 +46,6 @@ import {
 } from "../fixtures/billingWebhook";
 
 const originalStripeConfig = { ...config.stripe };
-
-const createStripe = (event: StripeEvent, retrieve?: jest.Mock) =>
-  ({
-    prices: {
-      retrieve: jest.fn(async () => ({
-        ...basicPrice,
-        recurring: { interval: "month" },
-      })),
-    },
-    webhooks: {
-      constructEvent: jest.fn(() => event),
-    },
-    subscriptions: {
-      retrieve:
-        retrieve ??
-        jest.fn(async () =>
-          event.type.startsWith("customer.subscription.")
-            ? event.data.object
-            : { ...activeStripeSubscription, status: "past_due" },
-        ),
-    },
-  }) as unknown as StripeClient;
 
 const failedInvoiceEvent = {
   id: "evt_invoice_failed",
@@ -405,6 +385,7 @@ describe("billing webhook routes", () => {
   beforeEach(() => {
     jest.clearAllMocks();
     resetMockStore();
+    seedBillingRuntime();
     clearGuildSubscriptionCache();
     config.stripe.secretKey = "sk_test_billing";
     config.stripe.webhookSecret = "whsec_test_billing";
@@ -1046,7 +1027,10 @@ describe("billing webhook routes", () => {
       ).toBe("active");
       expect(
         await getStripeWebhookRepository().get("evt_conflict"),
-      ).toBeUndefined();
+      ).toMatchObject({
+        state: "processing",
+        admission: { status: "failed" },
+      });
     } finally {
       compareAndWrite.mockRestore();
       log.mockRestore();
@@ -1074,7 +1058,7 @@ describe("billing webhook routes", () => {
       ).toBeUndefined();
       expect(
         await getStripeWebhookRepository().get("evt_wrong_guild"),
-      ).toBeUndefined();
+      ).toMatchObject({ state: "processing", admission: { status: "failed" } });
     } finally {
       log.mockRestore();
       await closeServer(server);
@@ -1195,7 +1179,7 @@ describe("billing webhook routes", () => {
       expect(response.statusCode).toBe(500);
       expect(
         await getStripeWebhookRepository().get("evt_checkout_failed"),
-      ).toBeUndefined();
+      ).toMatchObject({ state: "processing", admission: { status: "failed" } });
     } finally {
       consoleError.mockRestore();
       await closeServer(server);
@@ -1206,12 +1190,13 @@ describe("billing webhook routes", () => {
 describe("initial purchase webhook recovery", () => {
   beforeEach(() => {
     resetMockStore();
+    seedBillingRuntime();
     clearGuildSubscriptionCache();
     config.stripe.secretKey = "sk_test_billing";
     config.stripe.webhookSecret = "whsec_test_billing";
   });
   afterAll(() => Object.assign(config.stripe, originalStripeConfig));
-  test("a processing claim left by a crashed worker is retried after lease expiry", async () => {
+  test("a legacy processing claim stays unproven after lease expiry", async () => {
     const event = subscriptionEvent("active", "evt_crashed");
     await getStripeWebhookRepository().tryCreate({
       eventId: event.id,
@@ -1225,10 +1210,19 @@ describe("initial purchase webhook recovery", () => {
     });
     const { server, baseUrl } = createServer(createStripe(event));
     try {
-      expect((await postWebhook(baseUrl)).statusCode).toBe(200);
+      expect((await postWebhook(baseUrl)).statusCode).toBe(503);
       expect(
         (await getSubscriptionRepository().get(guildId))?.stripeSubscriptionId,
-      ).toBe("sub_basic");
+      ).toBeUndefined();
+      expect(await getStripeWebhookRepository().get(event.id)).toMatchObject({
+        state: "processing",
+      });
+      expect(
+        (await getStripeWebhookRepository().get(event.id))?.birth,
+      ).toBeUndefined();
+      expect(
+        (await getStripeWebhookRepository().get(event.id))?.expiresAt,
+      ).toBeUndefined();
     } finally {
       await closeServer(server);
     }
@@ -1371,7 +1365,7 @@ describe("initial purchase webhook recovery", () => {
         leaseToken: "crashed_after_effects",
         leaseUntil: Date.now() - 1,
       });
-      expect((await postWebhook(baseUrl)).statusCode).toBe(200);
+      expect((await postWebhook(baseUrl)).statusCode).toBe(503);
       expect(getMockStore().purchaseIncidents.size).toBe(1);
       expect(getMockStore().paymentTransactions.size).toBe(1);
       expect(
@@ -1381,7 +1375,7 @@ describe("initial purchase webhook recovery", () => {
         "needs_review",
       );
       expect((await getStripeWebhookRepository().get(event.id))?.state).toBe(
-        "completed",
+        "processing",
       );
     } finally {
       await closeServer(server);
@@ -1398,6 +1392,7 @@ test("does not acknowledge a failed renewal webhook when durable recovery cannot
   config.stripe.renewalGraceEnabled = true;
   config.stripe.webhookSecret = "whsec_test";
   resetMockStore();
+  seedBillingRuntime();
   const refresh = jest
     .spyOn(renewalRecoveryService, "refreshRenewalRecovery")
     .mockRejectedValue(new Error("Recovery storage unavailable"));
@@ -1419,6 +1414,7 @@ test("does not acknowledge a failed renewal webhook when durable recovery cannot
 
 test("normal paid webhook acknowledgement waits for durable renewal coverage", async () => {
   resetMockStore();
+  seedBillingRuntime();
   config.mock.enabled = true;
   config.stripe.webhookSecret = "whsec_test";
   const event = subscriptionEvent("active", "evt_paid_coverage_failure");

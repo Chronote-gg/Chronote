@@ -2,6 +2,12 @@
 import { readFileSync } from "node:fs";
 import { runDynamoInitialization } from "./dynamoInitScript.fixture";
 import * as dynamo from "@aws-sdk/client-dynamodb";
+import { MEETING_UPDATE_DELIVERY_DUE_INDEX } from "../../src/types/meetingUpdateDelivery";
+import { INDEX } from "../../scripts/deployment/production-index-preflight.cjs";
+
+test("introduction preflight and runtime require the same delivery index", () => {
+  expect(INDEX).toBe(MEETING_UPDATE_DELIVERY_DUE_INDEX);
+});
 
 async function initialize(exists: boolean, status = "ACTIVE", fail = false) {
   const send = jest.fn(async (command: object) => {

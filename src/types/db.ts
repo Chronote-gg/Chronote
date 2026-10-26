@@ -76,14 +76,7 @@ export interface PaymentTransaction {
   customerId?: string;
 }
 
-export interface StripeWebhookEvent {
-  state?: "processing" | "completed";
-  leaseToken?: string;
-  leaseUntil?: number;
-  eventId: string;
-  receivedAt: string;
-  expiresAt: number;
-}
+export type { StripeWebhookEvent } from "./stripeWebhookReceipt";
 
 export interface InteractionReceipt {
   interactionId: string;
@@ -458,6 +451,9 @@ export interface OnboardingState {
 
 // Meeting History Type
 export interface MeetingHistory {
+  fixtureInput?: import("./fixtureEvidence").FixtureInputEvidence;
+  fixtureGeneration?: import("./fixtureEvidence").FixtureGenerationEvidence;
+  fixtureTranscript?: import("./fixtureEvidence").FixtureTranscriptEvidence;
   canonicalWriter?: import("./meetingCanonicalWriter").CanonicalWriter;
   publicationRepair?: import("./meetingPublication").RepairPublicationOwner;
   operatorRecovery?: unknown;

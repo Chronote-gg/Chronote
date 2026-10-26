@@ -1,5 +1,11 @@
 /** @jest-environment node */
 import Stripe from "stripe";
+import { getDeploymentControlRepository } from "../../src/db";
+import { getRuntimeAdmissionContext } from "../../src/services/runtimeLifecycleService";
+import {
+  seedServingRuntime,
+  stopServingRuntime,
+} from "../fixtures/servingRuntime";
 import * as renewalRecoveryService from "../../src/services/renewalRecoveryService";
 import { config } from "../../src/services/configService";
 import { getMockStore, resetMockStore } from "../../src/repositories/mockStore";
@@ -26,11 +32,12 @@ const stripe = new Stripe("sk_test_local_no_provider_calls", {
   maxNetworkRetries: 0,
 });
 let available = true;
-beforeEach(() => {
+beforeEach(async () => {
   providerTransport.mockClear();
   resetMockStore();
   clearGuildSubscriptionCache();
   config.mock.enabled = true;
+  await seedServingRuntime();
   Object.assign(config.stripe, {
     secretKey: "sk_test_local",
     webhookSecret: secret,
@@ -66,7 +73,8 @@ afterEach(() => {
   expect(providerTransport).not.toHaveBeenCalled();
   jest.restoreAllMocks();
 });
-afterAll(() => {
+afterAll(async () => {
+  await stopServingRuntime();
   Object.assign(config.stripe, previous);
   config.mock.enabled = previousMock;
 });
@@ -144,26 +152,54 @@ test("real SDK signature rejects a changed body before any durable effect", asyn
     await closeServer(server);
   }
 });
-test("same signed delivery recovers once, duplicates and old failures preserve its original transaction and entitlement", async () => {
+test("post-write failure retains its admitted owner and refuses duplicate replay", async () => {
   const { server, baseUrl } = createServer(stripe);
-  const request = signed(invoiceEvent("evt_recovery"));
-  const errors = jest
-    .spyOn(console, "error")
-    .mockImplementation(() => undefined);
+  const request = signed(invoiceEvent("evt_unknown"));
+  jest.spyOn(console, "error").mockImplementation(() => undefined);
   try {
     available = false;
     expect(
       (await postWebhook(baseUrl, request.payload, request.signature))
         .statusCode,
     ).toBe(500);
-    expect(
-      getMockStore().stripeWebhookEvents.get("evt_recovery"),
-    ).toBeUndefined();
-    expect(getMockStore().paymentTransactions.size).toBe(1);
-    const originalTransaction = {
-      ...getMockStore().paymentTransactions.get("in_recovery"),
-    };
+    const receipt = structuredClone(
+      getMockStore().stripeWebhookEvents.get("evt_unknown"),
+    );
+    expect(receipt).toMatchObject({
+      state: "processing",
+      continuation: "admitted",
+      admission: { status: "running" },
+    });
+    const transactions = structuredClone(getMockStore().paymentTransactions);
+    expect(transactions.size).toBe(1);
     available = true;
+    expect(receipt?.leaseUntil).toBeGreaterThan(Date.now());
+    expect(
+      await getDeploymentControlRepository().checkAdmission(
+        await getRuntimeAdmissionContext(),
+      ),
+    ).toMatchObject({ kind: "admitted" });
+    expect(
+      (await postWebhook(baseUrl, request.payload, request.signature))
+        .statusCode,
+    ).toBe(503);
+    expect(getMockStore().stripeWebhookEvents.get("evt_unknown")).toEqual(
+      receipt,
+    );
+    expect(getMockStore().paymentTransactions).toEqual(transactions);
+    expect(getMockStore().subscriptions.size).toBe(0);
+  } finally {
+    await closeServer(server);
+  }
+});
+
+test("successful signed delivery, duplicates and old failures preserve its original transaction and entitlement", async () => {
+  const { server, baseUrl } = createServer(stripe);
+  const request = signed(invoiceEvent("evt_recovery"));
+  const errors = jest
+    .spyOn(console, "error")
+    .mockImplementation(() => undefined);
+  try {
     const recovered = await postWebhook(
       baseUrl,
       request.payload,
@@ -173,7 +209,6 @@ test("same signed delivery recovers once, duplicates and old failures preserve i
     const transaction = {
       ...getMockStore().paymentTransactions.get("in_recovery"),
     };
-    expect(transaction).toEqual(originalTransaction);
     expect(transaction).toMatchObject({
       subscriptionID: "sub_basic",
       amount: 10,

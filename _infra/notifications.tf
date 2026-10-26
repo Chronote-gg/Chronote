@@ -22,6 +22,7 @@ locals {
 # --- SNS topic ---
 
 resource "aws_sns_topic" "critical_alerts" {
+  depends_on        = [aws_kms_key_policy.app_general]
   count             = local.alerts_enabled ? 1 : 0
   name              = "${local.name_prefix}-critical-alerts"
   kms_master_key_id = aws_kms_key.app_general.arn
@@ -289,6 +290,7 @@ resource "aws_lambda_function" "discord_alert" {
 }
 
 resource "aws_cloudwatch_log_group" "discord_alert" {
+  depends_on        = [aws_kms_key_policy.app_general]
   count             = local.discord_alerts_enabled ? 1 : 0
   name              = "/aws/lambda/${aws_lambda_function.discord_alert[0].function_name}"
   retention_in_days = 365

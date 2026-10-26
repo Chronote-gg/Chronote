@@ -6,9 +6,11 @@ const {
   parseProductionManifest,
   parsePhaseAuthorization,
   phases,
-} = require("./production-manifest.cjs");
+} = require("./staged-production-manifest.cjs");
 const { manifestHash, awsCaller } = require("./sandbox-manifest.cjs");
-const { createProductionIntroduction } = require("./introduce-production.cjs");
+const {
+  createProductionIntroduction,
+} = require("./staged-introduce-production.cjs");
 const {
   assertProductionIdentity,
 } = require("./assert-production-identity.cjs");

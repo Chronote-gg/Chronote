@@ -8,7 +8,6 @@ import {
 import { getSubscriptionRepository } from "../repositories/subscriptionRepository";
 import { getRenewalRecoveryRepository } from "../repositories/renewalRecoveryRepository";
 import { config } from "./configService";
-import { refreshRenewalRecovery } from "./renewalRecoveryService";
 import { readRenewalCoverageCandidate } from "./renewalRecoveryCoverageEvidence";
 import {
   verifyLedgerWriterDeployment,
@@ -18,6 +17,8 @@ import {
   RENEWAL_RECOVERY_WRITER_VERSION,
   type RenewalRecovery,
 } from "../types/renewalRecovery";
+export const STANDALONE_COVERAGE_APPLY_REFUSAL =
+  "Standalone renewal coverage apply is disabled. Use read-only audit; restoring apply requires a separately reviewed admitted executor.";
 const outcomeSchema = z
   .object({
     guildId: z.string().regex(/^\d{17,20}$/),
@@ -93,12 +94,6 @@ async function inspectGuild(
     current.mode === candidate.mode &&
     current.paid.periodEnd === candidate.paid.periodEnd
   ) {
-    if (input.apply)
-      await refreshRenewalRecovery({
-        stripe: input.stripe,
-        guildId,
-        now: input.now,
-      });
     witnesses.push(current);
     return { guildId, state: "covered" };
   }
@@ -108,20 +103,7 @@ async function inspectGuild(
       state: "unresolved",
       reason: "existing_cycle_requires_reconciliation",
     };
-  if (!input.apply) return { guildId, state: "would_register" };
-  if (
-    !(await repository.register({
-      record: candidate,
-      expectedSubscription: saved,
-    }))
-  )
-    return { guildId, state: "unresolved", reason: "source_changed" };
-  await refreshRenewalRecovery({
-    stripe: input.stripe,
-    guildId,
-    now: input.now,
-  });
-  return { guildId, state: "covered" };
+  return { guildId, state: "would_register" };
 }
 async function verifyWriter(
   input: Input,
@@ -197,8 +179,7 @@ export async function auditRenewalCoverage(
   input: Input,
 ): Promise<RenewalCoverageReport> {
   z.number().int().min(1).max(1000).parse(input.maxPages);
-  if (input.apply && config.stripe.renewalGraceEnabled)
-    throw new Error("Disable enforcement before applying coverage");
+  if (input.apply) throw new Error(STANDALONE_COVERAGE_APPLY_REFUSAL);
   if (input.mode !== config.subscription.stripeMode)
     throw new Error("Configured provider mode mismatch");
   const report = initialReport(input);

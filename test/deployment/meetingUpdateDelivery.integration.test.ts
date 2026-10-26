@@ -50,6 +50,99 @@ beforeAll(async () => {
   );
   await createTestTable(tables.deploymentControl, ["pk", "sk"]);
 });
+
+it.each([false, true])(
+  "maintenance blocks actual new delivery claim including retained takeover=%s",
+  async (takeover) => {
+    const delivery = takeover ? running() : pending();
+    const row = {
+      ...history(),
+      ...pointers,
+      contentRevision: 1,
+      updateDelivery: delivery,
+    };
+    await put(tables.meetingHistory, row);
+    const proof = runtime("old");
+    await put(tables.deploymentControl, {
+      ...proof,
+      heartbeatAt: now,
+      readiness: {
+        ...proof.readiness,
+        provenAt: now - 1,
+        expiresAt: now + 200,
+      },
+      protection: {
+        ...proof.protection!,
+        provenAt: now - 1,
+        expiresAt: now + 200,
+      },
+    });
+    await put(tables.deploymentControl, {
+      ...control,
+      maintenance: { holdId: "hold", introductionId: "intro", revision: 1 },
+    });
+    expect(
+      await repository.claim({
+        key,
+        expectedContentRevision: 1,
+        expectedDeliveryRevision: delivery.revision,
+        attempt: attempt(),
+        authority,
+      }),
+    ).toBe("stale");
+    expect(await read()).toEqual(row);
+  },
+);
+
+it("maintenance permits exact owned renewal and completion while foreign ownership remains fenced", async () => {
+  const delivery = running("verified");
+  if (delivery.progress.kind !== "running")
+    throw new Error("Expected running fixture");
+  await put(tables.meetingHistory, {
+    ...history(),
+    ...pointers,
+    contentRevision: 1,
+    updateDelivery: delivery,
+  });
+  await put(tables.deploymentControl, {
+    ...control,
+    maintenance: { holdId: "hold", introductionId: "intro", revision: 1 },
+  });
+  const renewal = {
+    key,
+    expectedDeliveryRevision: delivery.revision,
+    attemptId: "attempt-1",
+    ownerInstanceId: "synthetic-owner",
+    change: {
+      kind: "progress" as const,
+      revision: "held-renewal",
+      progress: {
+        ...delivery.progress,
+        claim: { ...delivery.progress.claim, leaseExpiresAt: now + 100 },
+        nextCheckAt: now + 100,
+      },
+    },
+  };
+  expect(
+    await repository.transition({ ...renewal, ownerInstanceId: "foreign" }),
+  ).toBe("stale");
+  expect(await repository.transition(renewal)).toBe("applied");
+  expect(
+    await repository.transition({
+      key,
+      expectedDeliveryRevision: "held-renewal",
+      attemptId: "attempt-1",
+      ownerInstanceId: "synthetic-owner",
+      change: {
+        kind: "complete",
+        revision: "held-complete",
+        attemptId: "attempt-1",
+        completedAt: now + 1,
+      },
+    }),
+  ).toBe("applied");
+  expect((await read())?.updateDelivery?.progress.kind).toBe("synced");
+});
 afterAll(async () => {
   jest.restoreAllMocks();
   await dispose();

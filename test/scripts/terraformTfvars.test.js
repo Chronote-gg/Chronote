@@ -1,15 +1,21 @@
 /** @jest-environment node */
 import process from "node:process";
 import { test, expect } from "@jest/globals";
-import { execFileSync } from "node:child_process";
-import { mkdtempSync, mkdirSync, readFileSync, rmSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import {
+  mkdtempSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  existsSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-function run(values, vars = {}, secrets = {}) {
+function render(values, vars = {}, secrets = {}) {
   const directory = mkdtempSync(join(tmpdir(), "terraform-tfvars-"));
   mkdirSync(join(directory, "_infra"));
   try {
-    execFileSync(
+    const result = spawnSync(
       "python",
       [resolve("scripts/deployment/terraform-tfvars.py")],
       {
@@ -19,20 +25,30 @@ function run(values, vars = {}, secrets = {}) {
           PATH: process.env.PATH,
           SystemRoot: process.env.SystemRoot,
           TERRAFORM_TFVARS_JSON: JSON.stringify(values),
-          GITHUB_VARS_JSON: JSON.stringify(vars),
+          GITHUB_VARS_JSON:
+            typeof vars === "string" ? vars : JSON.stringify(vars),
           ...secrets,
         },
       },
     );
-    return JSON.parse(
-      readFileSync(
-        join(directory, "_infra/terraform.auto.tfvars.json"),
-        "utf8",
-      ),
-    );
+    const output = join(directory, "_infra/terraform.auto.tfvars.json");
+    return {
+      status: result.status,
+      stdout: String(result.stdout),
+      stderr: String(result.stderr),
+      exists: existsSync(output),
+      values: existsSync(output)
+        ? JSON.parse(readFileSync(output, "utf8"))
+        : null,
+    };
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }
+}
+function run(values, vars = {}, secrets = {}) {
+  const result = render(values, vars, secrets);
+  if (result.status !== 0) throw new Error("Renderer refused");
+  return result.values;
 }
 const valid = {
   GITHUB_TOKEN: "fake",
@@ -81,4 +97,95 @@ test.each([
   { grafana_service_account_id: "" },
 ])("tfvars rejects invalid required, type or Grafana values %s", (patch) => {
   expect(() => run({ ...valid, ...patch })).toThrow();
+});
+
+const collections = {
+  production_introduction_task_definitions: [
+    "definition-one",
+    "definition-two",
+  ],
+  production_introduction_standalone_tasks: ["task-one"],
+  production_acceptance_fixtures: [
+    { guild_id: "guild", voice_channel_id: "voice", meeting_id: "meeting" },
+  ],
+};
+test.each([false, true])(
+  "declared collection variables retain JSON types with uppercase aliases %s",
+  (upper) => {
+    const vars = Object.fromEntries(
+      Object.entries(collections).map(([key, value]) => [
+        "TFVAR_" + (upper ? key.toUpperCase() : key),
+        JSON.stringify(value),
+      ]),
+    );
+    vars[
+      "TFVAR_" +
+        (upper
+          ? "ENABLE_PRODUCTION_INTRODUCTION_ROLES"
+          : "enable_production_introduction_roles")
+    ] = "true";
+    vars.TFVAR_ENABLE_PRODUCTION_ACCEPTANCE_COLLECTOR = "false";
+    expect(run(valid, vars)).toMatchObject({
+      ...collections,
+      enable_production_introduction_roles: "true",
+      enable_production_acceptance_collector: "false",
+    });
+  },
+);
+test("unselected scalar variables keep their exact suffix and string behavior", () => {
+  expect(
+    run(valid, { TFVAR_other_input: '["literal"]', TFVAR_OTHER_INPUT: "TRUE" }),
+  ).toMatchObject({ other_input: '["literal"]', OTHER_INPUT: "TRUE" });
+});
+test.each([
+  ["production_introduction_task_definitions", "null"],
+  ["production_introduction_standalone_tasks", '"PRIVATE_SENTINEL"'],
+  ["production_introduction_task_definitions", '["PRIVATE_SENTINEL",1]'],
+  ["production_introduction_task_definitions", '["PRIVATE_SENTINEL"'],
+  ["production_acceptance_fixtures", '["PRIVATE_SENTINEL"]'],
+  [
+    "production_acceptance_fixtures",
+    '[{"guild_id":"PRIVATE_SENTINEL","voice_channel_id":"v"}]',
+  ],
+  [
+    "production_acceptance_fixtures",
+    '[{"guild_id":"PRIVATE_SENTINEL","voice_channel_id":"v","meeting_id":1}]',
+  ],
+  [
+    "production_acceptance_fixtures",
+    '[{"guild_id":"PRIVATE_SENTINEL","voice_channel_id":"v","meeting_id":"m","extra":"x"}]',
+  ],
+  [
+    "production_acceptance_fixtures",
+    '[{"guild_id":"PRIVATE_SENTINEL","guild_id":"other","voice_channel_id":"v","meeting_id":"m"}]',
+  ],
+])(
+  "invalid declared collection %s refuses before output without payload disclosure",
+  (key, value) => {
+    const result = render(valid, { ["TFVAR_" + key]: value });
+    expect(result.status).not.toBe(0);
+    expect(result.exists).toBe(false);
+    expect(result.stdout + result.stderr).not.toContain("PRIVATE_SENTINEL");
+  },
+);
+test.each([
+  '{"TFVAR_PRODUCTION_INTRODUCTION_TASK_DEFINITIONS":"[]","TFVAR_production_introduction_task_definitions":"[]"}',
+  '{"TFVAR_ENABLE_PRODUCTION_INTRODUCTION_ROLES":"true","TFVAR_enable_production_introduction_roles":"false"}',
+  '{"TFVAR_production_acceptance_fixtures":"[]","TFVAR_production_acceptance_fixtures":"[]"}',
+])("ambiguous declared input refuses before writing", (vars) => {
+  const result = render(valid, vars);
+  expect(result.status).not.toBe(0);
+  expect(result.exists).toBe(false);
+});
+test("credential refusal precedes collection decoding and does not disclose either value", () => {
+  const result = render(valid, {
+    TFVAR_PRODUCTION_ACCEPTANCE_FIXTURES: "[PRIVATE_SENTINEL",
+    TFVAR_GITHUB_TOKEN: "CREDENTIAL_SENTINEL",
+  });
+  expect(result.status).not.toBe(0);
+  expect(result.exists).toBe(false);
+  expect(result.stderr).toContain("credential");
+  expect(result.stdout + result.stderr).not.toMatch(
+    /CREDENTIAL_SENTINEL|PRIVATE_SENTINEL/,
+  );
 });

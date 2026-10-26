@@ -6,6 +6,7 @@ import { z } from "zod";
 import { getStripeClient } from "../src/services/stripeClient";
 import {
   auditRenewalCoverage,
+  STANDALONE_COVERAGE_APPLY_REFUSAL,
   renewalCoverageReportSchema,
   type RenewalCoverageReport,
 } from "../src/services/renewalRecoveryCoverage";
@@ -112,7 +113,9 @@ async function main() {
 if (require.main === module)
   main().catch(() => {
     console.error(
-      "Renewal coverage failed. Enforcement was not enabled. Inspect the private report before retrying.",
+      "Renewal coverage failed. " +
+        STANDALONE_COVERAGE_APPLY_REFUSAL +
+        " Enforcement was not enabled. Inspect the private report before retrying.",
     );
     process.exitCode = 1;
   });

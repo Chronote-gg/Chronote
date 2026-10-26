@@ -1,7 +1,17 @@
+jest.mock("../runtimeApiOperationService", () => ({
+  runRuntimeApiOperation: jest.requireActual(
+    "../../../test/fixtures/notionOwner",
+  ).runTestNotionOperation,
+}));
+const { withTestNotionOwner } = jest.requireActual<{
+  withTestNotionOwner: <T>(
+    run: (signal: AbortSignal) => Promise<T>,
+  ) => Promise<T>;
+}>("../../../test/fixtures/notionOwner");
 import type { MeetingHistory } from "../../types/db";
 import {
   buildMeetingNotionMarkdown,
-  exportMeetingToNotionAutomation,
+  exportMeetingToNotionAutomation as actualExportAutomation,
   exportMeetingToNotion,
   getEffectiveMeetingNotionExportStatus,
   listNotionDestinationPages,
@@ -337,3 +347,11 @@ describe("notionService", () => {
     });
   });
 });
+
+function exportMeetingToNotionAutomation(
+  params: Parameters<typeof actualExportAutomation>[0],
+) {
+  return withTestNotionOwner((signal) =>
+    actualExportAutomation({ ...params, signal }),
+  );
+}

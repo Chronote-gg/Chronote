@@ -1,15 +1,27 @@
 /** @jest-environment node */
 import { Buffer } from "node:buffer";
 import { test, expect } from "@jest/globals";
-import { readFileSync, rmSync, readdirSync, mkdirSync } from "node:fs";
+import {
+  readFileSync,
+  rmSync,
+  readdirSync,
+  mkdirSync,
+  existsSync,
+} from "node:fs";
 import { join } from "node:path";
 import { runTerraform } from "../../scripts/deployment/terraform-workflow.cjs";
 import {
   fixture,
   invocation,
 } from "../fixtures/deployment/terraformWorkflow.js";
-async function planAndApply(f, patch = {}) {
-  const planOptions = f.options(),
+import { dispatchTerraform } from "../fixtures/deployment/terraformDispatch.js";
+async function planAndApply(
+  f,
+  patch = {},
+  scope = "full",
+  execute = runTerraform,
+) {
+  const planOptions = f.options({ ...invocation, scope }),
     plan = await runTerraform(planOptions);
   expect({
     status: plan.status,
@@ -30,15 +42,16 @@ async function planAndApply(f, patch = {}) {
   for (const name of readdirSync(join(f.directory, "_infra")))
     if (name !== ".terraform.lock.hcl" && name !== "terraform.auto.tfvars.json")
       rmSync(join(f.directory, "_infra", name));
-  f.controls.applyTitle = `Terraform Apply production/default/full plan=10 plan-sha=${plan.planSha256} bundle-sha=${plan.bundleSha256}`;
+  f.controls.applyTitle = `Terraform Apply production/default/${scope} plan=10 plan-sha=${plan.planSha256} bundle-sha=${plan.bundleSha256}`;
   const applyOptions = f.options({
     ...invocation,
+    scope,
     workflowPath: ".github/workflows/terraform-apply.yml",
     runId: "20",
   });
   return {
     plan,
-    apply: await runTerraform({
+    apply: await execute({
       ...applyOptions,
       producerRunId: "10",
       artifactName: "terraform-plan-production-default-10",
@@ -49,6 +62,32 @@ async function planAndApply(f, patch = {}) {
     }),
   };
 }
+test.each([false, true])(
+  "actual prerequisite dispatcher requires acknowledged show before bundle reference (show failure %s)",
+  async (failShow) => {
+    const f = fixture();
+    f.controls.fail = failShow ? "show" : "";
+    const options = f.options({
+      ...invocation,
+      scope: "deployment-prerequisites",
+    });
+    try {
+      const result = await dispatchTerraform(options);
+      expect(result.status).toBe(failShow ? "failed" : "planned-changes");
+      expect(f.commands.some((command) => command.args[1] === "show")).toBe(
+        true,
+      );
+      expect(
+        existsSync(
+          join(f.directory, "chronote-terraform-10-1", "bundle-reference.json"),
+        ),
+      ).toBe(!failShow);
+      expect(JSON.stringify(result)).not.toMatch(/SECRET|PRIVATE_REVIEW/);
+    } finally {
+      rmSync(f.directory, { recursive: true, force: true });
+    }
+  },
+);
 test.each([0, 2, 1])(
   "private plan captures exit %s without public secret bytes",
   async (exitCode) => {
@@ -119,7 +158,8 @@ test.each([
     if (fault === "producer-source") {
       f.controls.producerSha = invocation.sourceSha;
       f.options = (current) => {
-        if (current) f.controls.producerSha = "b".repeat(40);
+        if (current?.workflowPath.endsWith("terraform-apply.yml"))
+          f.controls.producerSha = "b".repeat(40);
         return originalCommand(current);
       };
     }
@@ -265,3 +305,86 @@ test("local failure-detail error before execution preserves refusal", async () =
     rmSync(f.directory, { recursive: true, force: true });
   }
 });
+
+test.each(["full", "deployment-prerequisites"])(
+  "private %s Apply checks the real hold guard and missing-Control exception",
+  async (scope) => {
+    const f = fixture();
+    f.guard.failure = "ResourceNotFoundException";
+    try {
+      const { apply } = await planAndApply(f, {}, scope);
+      expect(apply.status).toBe(
+        scope === "deployment-prerequisites" ? "applied" : "refused",
+      );
+      expect(f.guard.reads).toBeGreaterThanOrEqual(2);
+      expect(f.commands.filter((c) => c.args[1] === "apply")).toHaveLength(
+        scope === "deployment-prerequisites" ? 1 : 0,
+      );
+    } finally {
+      rmSync(f.directory, { recursive: true, force: true });
+    }
+  },
+);
+
+test("even an authenticated prerequisite bundle cannot bypass a denied Control read", async () => {
+  const f = fixture();
+  f.guard.failure = "AccessDeniedException";
+  try {
+    const { apply } = await planAndApply(f, {}, "deployment-prerequisites");
+    expect(apply.status).toBe("refused");
+    expect(f.commands.filter((c) => c.args[1] === "apply")).toHaveLength(0);
+  } finally {
+    rmSync(f.directory, { recursive: true, force: true });
+  }
+});
+
+test.each(["full", "deployment-prerequisites"])(
+  "actual dispatcher carries %s to the real Apply guard",
+  async (scope) => {
+    const f = fixture();
+    f.guard.failure = "ResourceNotFoundException";
+    try {
+      const { apply } = await planAndApply(f, {}, scope, dispatchTerraform);
+      expect(apply.status).toBe(scope === "full" ? "refused" : "applied");
+      expect(f.guard.reads).toBeGreaterThanOrEqual(2);
+      expect(
+        f.commands.filter((command) => command.args[1] === "apply"),
+      ).toHaveLength(scope === "full" ? 0 : 1);
+    } finally {
+      rmSync(f.directory, { recursive: true, force: true });
+    }
+  },
+);
+
+test.each(["missing-type", "before-apply", "after-apply"])(
+  "actual private workflow retains branch proof and refuses drift: %s",
+  async (fault) => {
+    const f = fixture();
+    f.controls.branchPolicyFault = fault === "missing-type";
+    f.controls.branchPolicyDrift = fault;
+    let bundleReads;
+    try {
+      const { apply } = await planAndApply(f, {}, "full", async (options) => {
+        const before = f.storage.calls.length;
+        const result = await runTerraform(options);
+        bundleReads = f.storage.calls
+          .slice(before)
+          .filter(
+            (c) =>
+              c.constructor.name === "GetObjectCommand" &&
+              c.input.Key === options.reference.key,
+          );
+        return result;
+      });
+      expect(apply.status).toBe(
+        fault === "after-apply" ? "unknown" : "refused",
+      );
+      expect(f.commands.filter((c) => c.args[1] === "apply")).toHaveLength(
+        fault === "after-apply" ? 1 : 0,
+      );
+      expect(bundleReads).toHaveLength(fault === "missing-type" ? 0 : 1);
+    } finally {
+      rmSync(f.directory, { recursive: true, force: true });
+    }
+  },
+);

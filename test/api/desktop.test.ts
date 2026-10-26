@@ -1,4 +1,8 @@
 /** @jest-environment node */
+import {
+  seedServingRuntime,
+  stopServingRuntime,
+} from "../fixtures/servingRuntime";
 import { buildPausedDesktopDraftMarker } from "../../src/testSupport/personalMediaUploadFixtures";
 
 import { afterEach, beforeEach, describe, expect, test } from "@jest/globals";
@@ -288,13 +292,14 @@ const checksumSha256 = (body: Buffer) =>
   crypto.createHash("sha256").update(body).digest("hex");
 
 describe("desktop API", () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     resetMockStore();
     resetDesktopAuthMemoryRepository();
     Object.defineProperty(config.mock, "enabled", {
       get: () => true,
       configurable: true,
     });
+    await seedServingRuntime();
   });
 
   afterEach(() => {
@@ -827,83 +832,83 @@ describe("desktop API", () => {
       await closeServer(server);
     }
   });
-});
-
-test("desktop mutations return stable paused conflicts and status preserves the raw original", async () => {
-  const { server, baseUrl } = createDesktopServer();
-  try {
-    const { token, session } = await authorizeRecordingSession(baseUrl, [
-      { sourceId: "mic", kind: "owner_mic" },
-    ]);
-    const headers = {
-      Authorization: "Bearer " + token.access_token,
-      "Content-Type": "application/json",
-    };
-    const original = structuredClone(
-      getMockStore().personalMediaUploadsById.get(session.uploadId),
-    );
-    const marker = buildPausedDesktopDraftMarker(
-      { uploadId: session.uploadId, ownerUserId: mockDesktopUser.id },
-      { operationId: "private-operation" },
-    );
-    getMockStore().deploymentControlRecords.set(
-      JSON.stringify([marker.pk, marker.sk]),
-      marker,
-    );
-    const segmentInput = {
-      uploadId: session.uploadId,
-      sourceId: "mic",
-      sequence: 0,
-      contentType: "audio/wav",
-      fileSize: 10,
-      checksumSha256: "a".repeat(64),
-      durationMillis: 1000,
-      startedAt: "2026-01-01T00:00:00.000Z",
-      endedAt: "2026-01-01T00:00:01.000Z",
-    };
-    for (const [route, body] of [
-      ["segment-intent", segmentInput],
-      [
-        "segment-complete",
-        {
-          uploadId: session.uploadId,
-          sourceId: "mic",
-          sequence: 0,
-          key: "synthetic/key",
-          uploadToken: "synthetic-token",
-        },
-      ],
-      ["submit", { uploadId: session.uploadId }],
-    ] as const) {
-      const response = await fetch(
-        baseUrl + "/api/desktop/recordings/" + route,
-        { method: "POST", headers, body: JSON.stringify(body) },
+  test("desktop mutations return stable paused conflicts and status preserves the raw original", async () => {
+    const { server, baseUrl } = createDesktopServer();
+    try {
+      const { token, session } = await authorizeRecordingSession(baseUrl, [
+        { sourceId: "mic", kind: "owner_mic" },
+      ]);
+      const headers = {
+        Authorization: "Bearer " + token.access_token,
+        "Content-Type": "application/json",
+      };
+      const original = structuredClone(
+        getMockStore().personalMediaUploadsById.get(session.uploadId),
       );
-      expect(response.status).toBe(409);
-      expect(await response.json()).toEqual({
-        error: "paused",
-        message:
-          "This draft is preserved and paused. Recovery is not available yet.",
+      const marker = buildPausedDesktopDraftMarker(
+        { uploadId: session.uploadId, ownerUserId: mockDesktopUser.id },
+        { operationId: "private-operation" },
+      );
+      getMockStore().deploymentControlRecords.set(
+        JSON.stringify([marker.pk, marker.sk]),
+        marker,
+      );
+      const segmentInput = {
+        uploadId: session.uploadId,
+        sourceId: "mic",
+        sequence: 0,
+        contentType: "audio/wav",
+        fileSize: 10,
+        checksumSha256: "a".repeat(64),
+        durationMillis: 1000,
+        startedAt: "2026-01-01T00:00:00.000Z",
+        endedAt: "2026-01-01T00:00:01.000Z",
+      };
+      for (const [route, body] of [
+        ["segment-intent", segmentInput],
+        [
+          "segment-complete",
+          {
+            uploadId: session.uploadId,
+            sourceId: "mic",
+            sequence: 0,
+            key: "synthetic/key",
+            uploadToken: "synthetic-token",
+          },
+        ],
+        ["submit", { uploadId: session.uploadId }],
+      ] as const) {
+        const response = await fetch(
+          baseUrl + "/api/desktop/recordings/" + route,
+          { method: "POST", headers, body: JSON.stringify(body) },
+        );
+        expect(response.status).toBe(409);
+        expect(await response.json()).toEqual({
+          error: "paused",
+          message:
+            "This draft is preserved and paused. Recovery is not available yet.",
+        });
+      }
+      const status = await fetch(
+        baseUrl + "/api/desktop/recordings/" + session.uploadId,
+        { headers },
+      );
+      expect(status.status).toBe(200);
+      expect(await status.json()).toEqual({
+        job: {
+          ...original,
+          status: "paused",
+          retryable: false,
+          errorMessage:
+            "This draft is preserved and paused. Recovery is not available yet.",
+        },
       });
+      expect(
+        getMockStore().personalMediaUploadsById.get(session.uploadId),
+      ).toEqual(original);
+    } finally {
+      await closeServer(server);
     }
-    const status = await fetch(
-      baseUrl + "/api/desktop/recordings/" + session.uploadId,
-      { headers },
-    );
-    expect(status.status).toBe(200);
-    expect(await status.json()).toEqual({
-      job: {
-        ...original,
-        status: "paused",
-        retryable: false,
-        errorMessage:
-          "This draft is preserved and paused. Recovery is not available yet.",
-      },
-    });
-    expect(
-      getMockStore().personalMediaUploadsById.get(session.uploadId),
-    ).toEqual(original);
-  } finally {
-    await closeServer(server);
-  }
+  });
 });
+afterAll(stopServingRuntime);

@@ -1,8 +1,6 @@
 /** @jest-environment node */
+import { executeTerraformDispatch } from "../fixtures/deployment/terraformDispatchVm.js";
 import process from "node:process";
-import { createRequire } from "node:module";
-import { runInNewContext } from "node:vm";
-import { join } from "node:path";
 import { test, expect } from "@jest/globals";
 import { readFileSync } from "node:fs";
 import { parse } from "yaml";
@@ -83,7 +81,12 @@ test.each(["plan", "apply"])(
     ).toBe(false);
     const commands = steps.filter((step) => step.run).map((step) => step.run);
     expect(commands).toEqual([
-      "bash scripts/ci-install-dependencies.sh",
+      ...(mode === "plan"
+        ? ["bash scripts/ci-install-dependencies.sh"]
+        : [
+            "bash scripts/ci-install-dependencies.sh\nyarn build\n",
+            "node scripts/deployment/production-writer-guard.cjs --inspect",
+          ]),
       "set +x\nnode scripts/deployment/terraform-dispatch.cjs\n",
     ]);
     const inputs =
@@ -122,10 +125,6 @@ test.each(["plan", "apply"])(
 );
 
 async function executeDispatchBoundary(status, summaryFails = true) {
-  const realRequire = createRequire(
-    join(process.cwd(), "scripts/deployment/terraform-dispatch.cjs"),
-  );
-  const messages = [];
   let invocations = 0;
   const fakeProcess = {
     env: {
@@ -160,19 +159,7 @@ async function executeDispatchBoundary(status, summaryFails = true) {
       },
     },
   };
-  await runInNewContext(
-    readFileSync("scripts/deployment/terraform-dispatch.cjs", "utf8") +
-      "\nmain();",
-    {
-      require: (name) => modules[name] ?? realRequire(name),
-      module: { exports: {} },
-      process: fakeProcess,
-      console: { log: (value) => messages.push(value) },
-      AbortController,
-      setTimeout,
-      clearTimeout,
-    },
-  );
+  const messages = await executeTerraformDispatch(modules, fakeProcess);
   return { messages, invocations, exitCode: fakeProcess.exitCode };
 }
 

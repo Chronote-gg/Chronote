@@ -1,3 +1,4 @@
+import { capture as captureFixture } from "../fixtures/recordingCheckpoint";
 import { createHash, randomUUID } from "node:crypto";
 import {
   CreateTableCommand,
@@ -39,17 +40,7 @@ const service = createRecordingCheckpointService({
     read: async (key) => objects.get(key),
   },
 });
-const capture = {
-  guildId: history.guildId,
-  channelId: history.channelId,
-  channelId_timestamp: history.channelId_timestamp,
-  meetingId: history.meetingId,
-  ownerInstanceId: "old",
-  executionVersion: 1,
-  reservedAt: history.timestamp,
-  requested: { transcribeMeeting: true, generateNotes: true },
-  captureStartedAt: null,
-};
+const capture = { ...captureFixture, captureStartedAt: null };
 const input = {
   capture,
   expectedStatus: "starting" as const,

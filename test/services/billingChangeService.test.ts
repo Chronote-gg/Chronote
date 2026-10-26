@@ -1,7 +1,12 @@
 /** @jest-environment node */
+jest.mock("../../src/services/runtimeApiOperationService", () => ({
+  runRuntimeApiOperation: jest.requireActual("../fixtures/runtimeApiOperation")
+    .runTestApiOperation,
+}));
 import * as fundingRecovery from "../../src/services/billingChangeRecovery";
 import * as reconciliation from "../../src/services/subscriptionReconciliation";
 import { changeSourceFingerprint } from "../../src/services/billingChangeProvider";
+import * as renewalRecovery from "../../src/services/renewalRecoveryService";
 import * as scheduling from "../../src/services/billingChangeSchedule";
 import {
   readBillingChange,
@@ -400,6 +405,7 @@ it("keeps Basic through review and incomplete payment, then applies one settled 
 });
 
 it("finishes accepted schedule creation before cancellation releases control", async () => {
+  const watch = jest.spyOn(renewalRecovery, "trackPaidRenewalPeriod");
   const review = seedReview();
   const operation = {
     ...billingChangeBase(review),
@@ -452,6 +458,8 @@ it("finishes accepted schedule creation before cancellation releases control", a
     now: operation.createdAt,
   });
   await creationStarted;
+  expect(watch.mock.calls[0][0].owner?.effect).toBe(creation.mock.calls[0][3]);
+  expect(watch.mock.calls[0][0].owner).toBeDefined();
   await expect(
     cancelBillingChange({
       stripe: f.stripe,
@@ -478,6 +486,7 @@ it("finishes accepted schedule creation before cancellation releases control", a
   expect(creation).toHaveBeenCalledTimes(2);
   settlement.mockRestore();
   creation.mockRestore();
+  watch.mockRestore();
 });
 
 it("releases an unexpired review after its subscription has become terminal", async () => {

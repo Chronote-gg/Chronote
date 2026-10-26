@@ -1,3 +1,4 @@
+import { getRuntimeAdmissionContext } from "./runtimeLifecycleService";
 import crypto from "node:crypto";
 import {
   getActiveMeetingLeaseForGuild,
@@ -72,7 +73,12 @@ export async function enqueueMeetingControlCommand(
     updatedAt: createdAt,
     expiresAt: epochSeconds() + COMMAND_TTL_SECONDS,
   };
-  await getMeetingControlCommandRepository().writeCommand(command);
+  await getMeetingControlCommandRepository().writeCommand(
+    command,
+    command.commandType === "start_meeting"
+      ? await getRuntimeAdmissionContext()
+      : undefined,
+  );
   return command;
 }
 

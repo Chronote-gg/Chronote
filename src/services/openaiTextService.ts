@@ -25,6 +25,8 @@ export type OpenAITextFormat =
   | { kind: "json_schema"; name: string; schema: Record<string, unknown> };
 
 type TextGenerationOptions = {
+  observeGeneration?: import("../types/fixtureEvidence").GenerationObserver;
+  generationOperation?: string;
   model: string;
   modelParamRole?: ModelParamRole;
   input: readonly ResponseInputItem[];
@@ -88,31 +90,45 @@ function canContinue(response: Response, format: OpenAITextFormat): boolean {
   );
 }
 
+async function requestTextResponse(
+  request: TextRequest,
+  input: ResponseInputItem[],
+): Promise<Response> {
+  request.signal?.throwIfAborted();
+  const acknowledge = request.observeGeneration?.(
+    request.generationOperation ?? request.tracing?.generationName ?? "text",
+    request.model,
+    request.tracing?.langfusePrompt,
+  );
+  const response = await request.client.responses.create(
+    {
+      model: request.model,
+      input,
+      store: false,
+      include: ["reasoning.encrypted_content"],
+      reasoning: request.modelParams.reasoning_effort
+        ? { effort: request.modelParams.reasoning_effort }
+        : undefined,
+      temperature: request.modelParams.temperature,
+      text: responseText(request),
+      max_output_tokens: request.maxOutputTokens,
+      safety_identifier: request.safetyIdentifier,
+      ...request.promptCacheParams,
+    },
+    request.signal ? { signal: request.signal } : undefined,
+  );
+  request.signal?.throwIfAborted();
+  acknowledge?.(response.model ?? null);
+  return response;
+}
+
 async function generateResponsesText(request: TextRequest): Promise<string> {
   const input = [...request.input];
   const maxRequests = request.continuation?.maxRequests ?? 1;
   let output = "";
   let previousText = "";
   for (let attempt = 0; attempt < maxRequests; attempt += 1) {
-    request.signal?.throwIfAborted();
-    const response = await request.client.responses.create(
-      {
-        model: request.model,
-        input,
-        store: false,
-        include: ["reasoning.encrypted_content"],
-        reasoning: request.modelParams.reasoning_effort
-          ? { effort: request.modelParams.reasoning_effort }
-          : undefined,
-        temperature: request.modelParams.temperature,
-        text: responseText(request),
-        max_output_tokens: request.maxOutputTokens,
-        safety_identifier: request.safetyIdentifier,
-        ...request.promptCacheParams,
-      },
-      request.signal ? { signal: request.signal } : undefined,
-    );
-    request.signal?.throwIfAborted();
+    const response = await requestTextResponse(request, input);
     assertResponseOutput(response, previousText);
     const text = response.output_text;
     if (response.status === "completed") return output + text;

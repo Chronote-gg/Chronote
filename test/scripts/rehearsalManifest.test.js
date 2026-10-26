@@ -21,7 +21,7 @@ import { parseRehearsalAuthorization } from "../../scripts/deployment/rehearsal-
 import {
   parseProductionManifest,
   parsePhaseAuthorization,
-} from "../../scripts/deployment/production-manifest.cjs";
+} from "../../scripts/deployment/staged-production-manifest.cjs";
 import { parseManifest } from "../../scripts/deployment/sandbox-manifest.cjs";
 import {
   createRehearsalIntroduction,

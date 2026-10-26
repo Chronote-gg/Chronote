@@ -1,11 +1,8 @@
+import { liveFinalPassInput } from "./liveTranscriptionInput";
 import { finalPassSettingsSchema } from "../types/recordingContent";
-import { resolveChatParamsForRole } from "./openaiModelParams";
-import { liveFinalPassSettings } from "./transcriptionProcessingSettings";
+
 import type { FinalPassSettings } from "../types/recordingContent";
-import {
-  getMeetingProcessingSignal,
-  runMeetingProcessingEffect,
-} from "./meetingProcessingLifetime";
+
 import { withTranscriptionInput } from "./transcriptionInput";
 import { promises as fs } from "node:fs";
 import path from "node:path";
@@ -16,8 +13,7 @@ import type { AudioFileData } from "../types/audio";
 import type { MeetingData } from "../types/meeting-data";
 import { chat, type ChatMeetingInput } from "./openaiChatService";
 import { createOpenAIClient } from "./openaiClient";
-import { getMeetingModelOverrides } from "./meetingModelOverrides";
-import { getModelChoice } from "./modelFactory";
+
 import {
   type FinalPassSegmentInput,
   getTranscriptionFinalPassPrompt,
@@ -819,6 +815,11 @@ const defaultDependencies: FinalPassDependencies = {
       ...(combinedPrompt ? { prompt: combinedPrompt } : {}),
     };
 
+    const acknowledge = input.meeting.observeGeneration?.(
+      "transcription-audio-final-pass",
+      modelChoice.model,
+      combinedPrompt ? langfusePrompt : null,
+    );
     const result = await withTranscriptionInput(input.chunkFilePath, (file) =>
       openAIClient.audio.transcriptions.create(
         { ...request, file },
@@ -826,6 +827,7 @@ const defaultDependencies: FinalPassDependencies = {
       ),
     );
     signal.throwIfAborted();
+    acknowledge?.(null);
     return {
       text: result.text ?? "",
       logprobs: result.logprobs ?? [],
@@ -886,41 +888,8 @@ export function runTranscriptionFinalPass(
   options: { audioFilePath: string },
   dependencyOverrides: Partial<FinalPassDependencies> = {},
 ) {
-  const choice = getModelChoice(
-    "transcriptionCoalesce",
-    getMeetingModelOverrides(meeting),
-  );
-  const content: FinalPassContent = {
-    meetingId: meeting.meetingId,
-    creator: { id: meeting.creator.id },
-    guild: { id: meeting.guild.id },
-    voiceChannel: { id: meeting.voiceChannel.id },
-    startTime: meeting.startTime,
-    endTime: meeting.endTime,
-    participants: meeting.participants,
-    audioData: { audioFiles: meeting.audioData.audioFiles },
-    langfuseParentSpanContext: meeting.langfuseParentSpanContext,
-    enabled: meeting.runtimeConfig?.transcription.finalPassEnabled ?? true,
-    settings: liveFinalPassSettings,
-    signal: getMeetingProcessingSignal(meeting),
-    transcriptionModel: getModelChoice(
-      "transcription",
-      getMeetingModelOverrides(meeting),
-    ).model,
-    reconcileModel: {
-      ...choice,
-      params: resolveChatParamsForRole({
-        role: "transcriptionCoalesce",
-        model: choice.model,
-        config: meeting.runtimeConfig?.modelParams?.transcriptionCoalesce,
-      }),
-    },
-    prompt: () => getTranscriptionPrompt(meeting),
-    finalPassPrompt: (input) => getTranscriptionFinalPassPrompt(meeting, input),
-    effect: (run) => runMeetingProcessingEffect(meeting, run),
-  };
   return runContentTranscriptionFinalPass(
-    content,
+    liveFinalPassInput(meeting),
     options,
     dependencyOverrides,
   );

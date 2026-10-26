@@ -23,7 +23,7 @@ import {
 const prefix = `carryforward-${randomUUID()}-`;
 Object.assign(process.env, {
   NODE_ENV: "development",
-  USE_LOCAL_DYNAMODB: "true",
+  USE_LOCAL_DYNAMODB: "false",
   DDB_TABLE_PREFIX: prefix,
 });
 const names = {
@@ -39,7 +39,7 @@ const names = {
 };
 const client = new DynamoDBClient({
   endpoint: process.env.DEPLOYMENT_TEST_DYNAMODB_ENDPOINT,
-  region: "local",
+  region: "us-east-1",
   credentials: { accessKeyId: "dummy", secretAccessKey: "dummy" },
 });
 let repository: ReturnType<
@@ -331,8 +331,18 @@ test.each(["pending_upload", "queued"] as const)(
     if (status === "pending_upload") {
       expect(await repository.claim(claim(job))).toBeUndefined();
       expect(await readBytes(job.uploadId)).toEqual(before);
-      expect(await repository.submit({ ...job, status: "queued" })).toBe(true);
-      expect(await repository.submit({ ...job, status: "queued" })).toBe(false);
+      expect(
+        await repository.submit(
+          { ...job, status: "queued" },
+          claim(job).context,
+        ),
+      ).toBe(true);
+      expect(
+        await repository.submit(
+          { ...job, status: "queued" },
+          claim(job).context,
+        ),
+      ).toBe(false);
     }
     const requests = [claim(job), claim(job)];
     const results = await Promise.all(

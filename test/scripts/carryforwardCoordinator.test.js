@@ -48,6 +48,7 @@ test("serving inspection shares native source and routing guards without writing
   expect(result.source).toEqual(f.oldIdentity);
   expect(result.routing.state).toBe("source");
   expect(result.runtimeMode).toBe("all");
+  expect(result.nativeProtectionExpiresAt).toBe(f.options.now() + 600);
   expect(
     f.calls.some((call) =>
       [
@@ -100,3 +101,38 @@ test("actual registered image drift cannot be normalized away by candidateDefini
     false,
   );
 });
+
+test.each([120, 121])(
+  "serving inspection preserves the strict native protection margin at %s seconds",
+  async (remaining) => {
+    const f = routingFixture();
+    const original = f.aws.getMockImplementation();
+    f.aws.mockImplementation(async (service, operation, input) => {
+      const response = await original(service, operation, input);
+      if (operation === "get-task-protection")
+        for (const proof of response.protectedTasks)
+          proof.expirationDate = new Date(
+            (f.options.now() + remaining) * 1000,
+          ).toISOString();
+      return response;
+    });
+    if (remaining === 120)
+      await expect(f.coordinator.inspectServing()).rejects.toThrow(
+        "Native task protection unconfirmed",
+      );
+    else
+      await expect(f.coordinator.inspectServing()).resolves.toMatchObject({
+        nativeProtectionExpiresAt: f.options.now() + remaining,
+      });
+    expect(
+      f.calls.some((call) =>
+        [
+          "update-item",
+          "transact-write-items",
+          "update-service",
+          "modify-listener",
+        ].includes(call.operation),
+      ),
+    ).toBe(false);
+  },
+);

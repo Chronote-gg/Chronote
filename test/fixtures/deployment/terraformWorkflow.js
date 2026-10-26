@@ -1,6 +1,26 @@
 import process from "node:process";
 import { Buffer } from "node:buffer";
-import { expect } from "@jest/globals";
+import { expect, jest } from "@jest/globals";
+const mockGuardState = { failure: "", reads: 0 };
+jest.mock("../../../scripts/deployment/coordinator-aws.cjs", () => ({
+  awsCli: async () => ({
+    Account: "123456789012",
+    Arn: "arn:aws:sts::123456789012:assumed-role/guard/run",
+  }),
+}));
+jest.mock("@aws-sdk/client-dynamodb", () => {
+  const actual = jest.requireActual("@aws-sdk/client-dynamodb");
+  return {
+    ...actual,
+    DynamoDBClient: class {
+      async send() {
+        mockGuardState.reads++;
+        if (mockGuardState.failure) throw { name: mockGuardState.failure };
+        return {};
+      }
+    },
+  };
+});
 import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -18,6 +38,8 @@ export const invocation = {
   scope: "full",
 };
 export function fixture() {
+  mockGuardState.failure = "";
+  mockGuardState.reads = 0;
   const directory = mkdtempSync(join(tmpdir(), "terraform-workflow-"));
   mkdirSync(join(directory, "_infra"));
   writeFileSync(join(directory, "_infra/.terraform.lock.hcl"), "reviewed-lock");
@@ -31,13 +53,32 @@ export function fixture() {
       applyTitle: "",
       planTitle: "Terraform Plan production/default/full",
       envChange: false,
+      branchPolicyFault: false,
+      branchPolicyDrift: "",
       producerAfter: false,
       producerSha: "a".repeat(40),
+      plan: {
+        resource_changes: [
+          {
+            address: "aws_kms_key.app_general",
+            mode: "managed",
+            change: { actions: ["no-op"] },
+          },
+          {
+            address: "aws_dynamodb_table.deployment_control_table",
+            mode: "managed",
+            change: {
+              actions: ["create"],
+              after: { name: "app-DeploymentControlTable" },
+            },
+          },
+        ],
+      },
     };
   const script = join(directory, "fake-terraform.cjs");
   writeFileSync(
     script,
-    `const fs=require('node:fs'); const a=process.argv.slice(2), op=a[1]; process.stderr.write('SECRET_STDERR'); if(op==='version') process.stdout.write(JSON.stringify({terraform_version:'1.14.0'})); else if(op==='show') process.stdout.write('PRIVATE_REVIEW'); else process.stdout.write('SECRET_STDOUT'); if(op==='plan') {fs.writeFileSync('_infra/tfplan',Buffer.from([0,255,13,10]));fs.writeFileSync('_infra/discord_alert.zip',Buffer.from([80,75,255]));} process.exitCode=op===process.env.FAIL ? 1 : op==='plan' ? Number(process.env.PLAN_EXIT) : 0;`,
+    `const fs=require('node:fs'); const a=process.argv.slice(2), op=a[1]; process.stderr.write('SECRET_STDERR'); if(op==='version') process.stdout.write(JSON.stringify({terraform_version:'1.14.0'})); else if(op==='show') process.stdout.write(a.includes('-json') ? process.env.PLAN_JSON : 'PRIVATE_REVIEW'); else process.stdout.write('SECRET_STDOUT'); if(op==='plan') {fs.writeFileSync('_infra/tfplan',Buffer.from([0,255,13,10]));fs.writeFileSync('_infra/discord_alert.zip',Buffer.from([80,75,255]));} process.exitCode=op===process.env.FAIL ? 1 : op==='plan' ? Number(process.env.PLAN_EXIT) : 0;`,
   );
   const command = async (file, args, options) => {
     commands.push({ file, args });
@@ -53,6 +94,7 @@ export function fixture() {
       env: {
         ...options.env,
         PLAN_EXIT: String(controls.exitCode),
+        PLAN_JSON: JSON.stringify(controls.plan),
         FAIL: controls.fail,
       },
     });
@@ -74,7 +116,17 @@ export function fixture() {
       ];
     else if (url.endsWith("/deployment_protection_rules"))
       value = { total_count: 0, custom_deployment_protection_rules: [] };
-    else if (url.includes("/environments/"))
+    else if (url.includes("/deployment-branch-policies?")) {
+      value = nativeBranchPolicies();
+      if (controls.branchPolicyFault) delete value.branch_policies[0].type;
+      if (
+        (controls.branchPolicyDrift === "before-apply" &&
+          commands.filter((c) => c.args[1] === "validate").length >= 2) ||
+        (controls.branchPolicyDrift === "after-apply" &&
+          commands.some((c) => c.args[1] === "apply"))
+      )
+        value.branch_policies[0].id = 12;
+    } else if (url.includes("/environments/"))
       value = nativeEnvironment(
         invocation.environment,
         controls.envChange &&
@@ -93,6 +145,11 @@ export function fixture() {
     };
   });
   const env = {
+    DEPLOYMENT_ENVIRONMENT: "production",
+    DEPLOYMENT_ACCOUNT_ID: "123456789012",
+    DEPLOYMENT_CONTROL_TABLE: "app-DeploymentControlTable",
+    DEPLOYMENT_GUARD_ROLE_ARN: "arn:aws:iam::123456789012:role/guard",
+    AWS_REGION: "us-east-1",
     PATH: process.env.PATH,
     SystemRoot: process.env.SystemRoot,
     TERRAFORM_TFVARS_JSON: JSON.stringify({
@@ -119,7 +176,14 @@ export function fixture() {
       signal: new AbortController().signal,
     };
   }
-  return { directory, storage, commands, controls, options };
+  return {
+    directory,
+    storage,
+    commands,
+    controls,
+    options,
+    guard: mockGuardState,
+  };
 }
 
 function nativeRun(controls, commands, plan) {
@@ -129,6 +193,7 @@ function nativeRun(controls, commands, plan) {
     repository: { full_name: invocation.repository },
     head_repository: { full_name: invocation.repository },
     head_sha: plan ? controls.producerSha : invocation.sourceSha,
+    head_branch: "master",
     path: plan
       ? invocation.workflowPath
       : ".github/workflows/terraform-apply.yml",
@@ -161,7 +226,18 @@ export function nativeEnvironment(
         prevent_self_review: true,
         reviewers: [{ type: "User", reviewer: { id: 2, type: "User" } }],
       },
+      ...(name === "production" ? [{ id: 10, type: "branch_policy" }] : []),
     ],
-    deployment_branch_policy: null,
+    deployment_branch_policy:
+      name === "production"
+        ? { protected_branches: false, custom_branch_policies: true }
+        : null,
+  };
+}
+
+export function nativeBranchPolicies() {
+  return {
+    total_count: 1,
+    branch_policies: [{ id: 11, name: "master", type: "branch" }],
   };
 }

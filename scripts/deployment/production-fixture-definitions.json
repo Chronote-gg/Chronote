@@ -1,0 +1,69 @@
+{
+  "schemaVersion": 1,
+  "fixtures": [
+    {
+      "role": "across_handoff",
+      "script": "This is a synthetic planning meeting for the fictional Lantern demonstration. I am the single speaker reading all of these statements. Alex, Jordan, and Sam are fictional task owners mentioned in this script, not additional people speaking in the channel. The purpose is to preserve a small set of decisions accurately while leaving open questions open. There are no real customers, accounts, or confidential project details in this exercise.\n\nThe demonstration is scheduled for Thursday at 14:00. The rehearsal is scheduled for Wednesday at 11:00. These are the agreed times for this fictional plan. The rehearsal gives the team a chance to walk through the same sequence that the demonstration will use. It is a practice session, not a second launch or a separate public event. We are describing the sequence now so that the summary can distinguish preparation from presentation.\n\nThe approved demonstration scope contains calendar and search. Calendar shows how a fictional attendee can find a scheduled activity. Search shows how that attendee can find the same activity using a simple query. Those two capabilities make up the complete approved scope. Mobile payments are deferred. They are not part of the demonstration, and nobody should describe the deferral as approval to build or release them. The presentation should remain focused enough that the audience can follow the two approved capabilities without a long detour.\n\nThe synthetic budget ceiling is 240 dollars. There is also a separate 60 dollar contingency, and that contingency is unused. Mentioning the contingency does not authorize spending it. There is no purchase request in this meeting. The summary should preserve the distinction between the ceiling and the unused contingency instead of combining them into a new approved amount. This budget is fictional and is included only to check that numbers and spending decisions survive transcription and summarization accurately.\n\nAlex prepares the demonstration by Tuesday at 17:00. Jordan checks accessibility by Wednesday at 10:00. Sam owns the runbook by Wednesday at 16:00. These are three separate assignments with separate deadlines. Alex's preparation supports the demonstration sequence. Jordan's check concerns accessibility of that sequence. Sam's runbook records the operating steps for the fictional presentation. Naming these owners does not mean that they spoke today. I remain the only speaker, reporting their assignments for this synthetic exercise.\n\nThe release date for CSV export is unresolved. No CSV export date was decided. This is an open question, and the notes should say so without inventing a date or adding it to the approved demonstration scope. We have no additional decision about CSV export in this script. A tidy summary is useful only if it preserves uncertainty where the meeting actually left uncertainty.\n\nTo recap, the Thursday demonstration and Wednesday rehearsal have distinct times. Calendar and search are approved, mobile payments are deferred, and the contingency remains unused. The three named owners have the deadlines stated above. CSV export still has no decided date. The surrounding explanation provides context for those facts without introducing another commitment. This concludes the fictional Lantern planning script. The resulting notes should capture the decisions and assignments, identify the open question, and avoid adding purchases, release promises, additional speakers, or other facts that were never stated.",
+      "checklist": [
+        {
+          "category": "fact",
+          "expected": "Demo Thursday 14:00; rehearsal Wednesday 11:00."
+        },
+        {
+          "category": "decision",
+          "expected": "Calendar and search approved; mobile payments deferred."
+        },
+        {
+          "category": "fact",
+          "expected": "Synthetic budget ceiling $240; separate $60 contingency unused."
+        },
+        {
+          "category": "action",
+          "expected": "Alex prepares demo by Tuesday 17:00; Jordan checks accessibility by Wednesday 10:00; Sam owns runbook by Wednesday 16:00."
+        },
+        {
+          "category": "attribution",
+          "expected": "One trusted speaker narrates fictional owners; do not attribute separate speech to Alex, Jordan, or Sam."
+        },
+        {
+          "category": "omission",
+          "expected": "Preserve all stated facts, decisions, owners and deadlines, including unresolved CSV export date."
+        },
+        {
+          "category": "invention",
+          "expected": "No invented CSV release date, spending approval, purchases, scope or speakers."
+        }
+      ]
+    },
+    {
+      "role": "after_handoff",
+      "script": "This is the second synthetic Lantern meeting, read by one speaker. The rehearsal has completed. Today's small agenda is a search issue discovered during that rehearsal. Jordan owns the search issue and will address it by Friday at 12:00. This is a new assignment, distinct from the earlier accessibility check. Calendar and search remain the approved demonstration scope. Mobile payments remain deferred. The CSV export date is still undecided, and this meeting makes no release promise for it. There is no additional spend, and the separate 60 dollar contingency remains unused. Alex, Jordan, and Sam are fictional owners, not additional speakers. Please preserve the new search assignment and the unresolved CSV question without inventing a purchase or a new deadline.",
+      "checklist": [
+        {
+          "category": "fact",
+          "expected": "Rehearsal completed."
+        },
+        {
+          "category": "decision",
+          "expected": "Calendar and search remain approved; mobile payments deferred; no additional spend; $60 contingency unused."
+        },
+        {
+          "category": "action",
+          "expected": "Jordan owns search issue by Friday 12:00, distinct from earlier accessibility check."
+        },
+        {
+          "category": "attribution",
+          "expected": "One trusted speaker; fictional task owners are not additional speakers."
+        },
+        {
+          "category": "omission",
+          "expected": "Keep new search assignment and unresolved CSV date."
+        },
+        {
+          "category": "invention",
+          "expected": "No invented CSV date, purchase, speaker or additional deadline."
+        }
+      ]
+    }
+  ]
+}

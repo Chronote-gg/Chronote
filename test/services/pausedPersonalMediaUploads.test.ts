@@ -1,16 +1,20 @@
 /** @jest-environment node */
-import { buildPausedDesktopDraftMarker } from "../../testSupport/personalMediaUploadFixtures";
+import { buildPausedDesktopDraftMarker } from "../../src/testSupport/personalMediaUploadFixtures";
+import {
+  seedServingRuntime,
+  stopServingRuntime,
+} from "../fixtures/servingRuntime";
 import crypto from "node:crypto";
-import * as db from "../../db";
-import { getMockStore, resetMockStore } from "../../repositories/mockStore";
-import { getPersonalMediaUploadRepository } from "../../repositories/personalMediaUploadRepository";
-import { getPersonalRecordingSegmentRepository } from "../../repositories/personalRecordingSegmentRepository";
-import { config } from "../configService";
-import type { PausedDesktopDraftRecord } from "../../types/deploymentControl";
+import * as db from "../../src/db";
+import { getMockStore, resetMockStore } from "../../src/repositories/mockStore";
+import { getPersonalMediaUploadRepository } from "../../src/repositories/personalMediaUploadRepository";
+import { getPersonalRecordingSegmentRepository } from "../../src/repositories/personalRecordingSegmentRepository";
+import { config } from "../../src/services/configService";
+import type { PausedDesktopDraftRecord } from "../../src/types/deploymentControl";
 import type {
   PersonalMediaUploadJobRecord,
   PersonalRecordingSegmentRecord,
-} from "../../types/db";
+} from "../../src/types/db";
 import {
   getPersonalMediaUploadJobForUser,
   createPersonalMediaUploadIntent,
@@ -18,13 +22,13 @@ import {
   markPersonalMediaUploadComplete,
   markPersonalRecordingSegmentUploadComplete,
   submitPersonalRecordingUpload,
-} from "../personalMediaUploadService";
+} from "../../src/services/personalMediaUploadService";
 import {
   getSignedUploadPost,
   getStoredObjectMetadata,
-} from "../storageService";
+} from "../../src/services/storageService";
 
-jest.mock("../storageService", () => ({
+jest.mock("../../src/services/storageService", () => ({
   getSignedUploadPost: jest.fn(),
   getStoredObjectMetadata: jest.fn(),
 }));
@@ -128,9 +132,10 @@ async function expectPausedSegmentCompletion(
   ).rejects.toMatchObject(pausedError);
 }
 
-beforeEach(() => {
+beforeEach(async () => {
   resetMockStore();
   config.mock.enabled = true;
+  await seedServingRuntime();
   jest
     .mocked(getSignedUploadPost)
     .mockResolvedValue({ url: "https://synthetic.invalid", fields: {} });
@@ -449,3 +454,5 @@ test("pause during concurrent segment read refuses a successful uploaded result"
     });
   await expectPausedSegmentCompletion(intent);
 });
+
+afterAll(stopServingRuntime);

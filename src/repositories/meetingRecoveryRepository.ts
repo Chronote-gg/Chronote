@@ -26,8 +26,12 @@ import type {
   DeploymentControlRecord,
   HistoryKey,
 } from "../types/deploymentControl";
-import { buildRuntimeAdmissionChecks } from "../services/deploymentControlTransactions";
 import {
+  buildRuntimeAdmissionChecks,
+  buildRecordingRecoveryAdmissionChecks,
+} from "../services/deploymentControlTransactions";
+import {
+  recordingCheckpointSchema,
   recoveryDispositionSchema,
   recoveryExportSchema,
   captureCoverageSummarySchema,
@@ -154,8 +158,7 @@ export function prepareRecoveryClaim(
   input: RecoveryClaimInput,
 ): RecoveryClaim | undefined {
   const { history, lease, context, attemptId } = input;
-  if (!attemptId || !isRecordingRecoveryCandidate(history, context.now))
-    return undefined;
+  if (!recoverableClaimInput(input)) return undefined;
   if (
     lease &&
     (lease.leaseExpiresAt >= context.now ||
@@ -445,7 +448,11 @@ export function createDynamoRecoveryRepository(
           new TransactWriteItemsCommand({
             ClientRequestToken: input.attemptId,
             TransactItems: [
-              ...buildRuntimeAdmissionChecks(input.context, tables),
+              ...buildRecordingRecoveryAdmissionChecks(
+                input.context,
+                tables,
+                input.fixtureGrant,
+              ),
               {
                 Put: {
                   TableName: tables.activeMeeting,
@@ -575,7 +582,7 @@ export function createDynamoRecoveryRepository(
                     : "REMOVE recoveryScanCursor",
                 },
               },
-              checks[1],
+              ...checks.slice(1),
             ],
           }),
         ),
@@ -587,7 +594,10 @@ export function createMockRecoveryRepository(
   records: Map<string, DeploymentControlRecord>,
   histories: Map<string, MeetingHistory[]>,
   leases: Map<string, ActiveMeetingLease>,
-  admitted: (input: RecoveryClaimInput["context"]) => boolean,
+  admitted: (
+    input: RecoveryClaimInput["context"],
+    grant?: RecoveryClaimInput["fixtureGrant"],
+  ) => boolean,
 ): RecoveryRepository {
   const get = (row: HistoryKey) =>
     histories
@@ -639,7 +649,7 @@ export function createMockRecoveryRepository(
       const next = prepareRecoveryClaim(input);
       if (
         !next ||
-        !admitted(input.context) ||
+        !admitted(input.context, input.fixtureGrant) ||
         !same(get(input.history), input.history) ||
         !same(leases.get(input.history.guildId), input.lease)
       )
@@ -689,4 +699,36 @@ export function createMockRecoveryRepository(
       return true;
     },
   };
+}
+
+function fixtureRecoveryHistoryMatches({
+  history,
+  fixtureGrant,
+}: RecoveryClaimInput): boolean {
+  if (!fixtureGrant) return true;
+  const checkpoint = recordingCheckpointSchema.safeParse(history.checkpoint);
+  if (!checkpoint.success) return false;
+  const capture = checkpoint.data.capture;
+  return (
+    history.guildId === fixtureGrant.historyKey.guildId &&
+    history.channelId_timestamp ===
+      fixtureGrant.historyKey.channelId_timestamp &&
+    history.meetingId === fixtureGrant.meetingId &&
+    history.channelId === fixtureGrant.voiceChannelId &&
+    capture.guildId === fixtureGrant.guildId &&
+    capture.meetingId === fixtureGrant.meetingId &&
+    capture.channelId_timestamp ===
+      fixtureGrant.historyKey.channelId_timestamp &&
+    capture.channelId === fixtureGrant.voiceChannelId &&
+    capture.ownerInstanceId === fixtureGrant.ownership.ownerInstanceId &&
+    capture.executionVersion === fixtureGrant.ownership.executionVersion
+  );
+}
+
+function recoverableClaimInput(input: RecoveryClaimInput): boolean {
+  return (
+    Boolean(input.attemptId) &&
+    isRecordingRecoveryCandidate(input.history, input.context.now) &&
+    fixtureRecoveryHistoryMatches(input)
+  );
 }

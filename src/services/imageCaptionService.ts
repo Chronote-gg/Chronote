@@ -1,3 +1,4 @@
+import { isFixture, assertFixtureFinalization } from "./fixtureInputService";
 import {
   getMeetingProcessingSignal,
   runMeetingProcessingEffect,
@@ -222,7 +223,11 @@ const createCaption = async (
   }
 };
 
-export function captionMeetingImages(meeting: MeetingData) {
+export async function captionMeetingImages(meeting: MeetingData) {
+  if (isFixture(meeting)) {
+    assertFixtureFinalization(meeting);
+    return { candidates: 0, captioned: 0, skipped: 0, truncatedChars: 0 };
+  }
   return runMeetingProcessingEffect(meeting, () =>
     captionOwnedMeetingImages(meeting),
   );

@@ -9,7 +9,7 @@ import {
   executeProposal,
   runCli,
 } from "../../scripts/deployment/production-workflow.cjs";
-import { createProductionIntroduction } from "../../scripts/deployment/introduce-production.cjs";
+import { createProductionIntroduction } from "../../scripts/deployment/staged-introduce-production.cjs";
 import { assertProductionIdentity } from "../../scripts/deployment/assert-production-identity.cjs";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";

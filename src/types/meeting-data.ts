@@ -188,6 +188,8 @@ export type MeetingNotesInput = Pick<
   | "attendance"
   | "langfuseParentSpanContext"
 > & {
+  observeGeneration?: import("./fixtureEvidence").GenerationObserver;
+  recentMeetingNames?: string;
   creator: Pick<User, "id">;
   guild: Pick<Guild, "id" | "name" | "description">;
   voiceChannel: Pick<VoiceBasedChannel, "id" | "name">;

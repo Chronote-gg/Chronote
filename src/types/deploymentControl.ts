@@ -1,3 +1,14 @@
+import {
+  fixtureInputEvidenceSchema,
+  fixtureGenerationSchema,
+  fixtureTranscriptSchema,
+} from "./fixtureEvidence";
+import {
+  maintenanceHoldSchema,
+  fixtureGrantSchema,
+  introductionHoldSchema,
+  type NewWorkScope,
+} from "./productionIntroduction";
 import { notesDeliveryTimingSchema } from "./meetingNotesTiming";
 import { completionPolicySchema } from "./meetingCompletionPolicy";
 import {
@@ -169,6 +180,7 @@ export const controlRecordSchema = z
       .object({ guildId: id, channelId_timestamp: id })
       .strict()
       .optional(),
+    maintenance: maintenanceHoldSchema.optional(),
     deployment: deploymentPhaseSchema.optional(),
     compatibleReplacement: z
       .object({
@@ -359,6 +371,8 @@ export const deploymentControlRecordSchema = z.union([
   runtimeRecordSchema,
   voiceRecordSchema,
   suppressionRecordSchema,
+  fixtureGrantSchema,
+  introductionHoldSchema,
   pausedDesktopDraftRecordSchema,
 ]);
 export type DeploymentControlRecord = z.infer<
@@ -396,6 +410,7 @@ export const admissionContextSchema = z
     observedEpoch: generation,
     protocolVersion: z.literal(1),
     now: epochSecond,
+    maintenance: maintenanceHoldSchema.optional(),
   })
   .strict()
   .refine(
@@ -426,6 +441,7 @@ export type PausedDesktopDraftInstallation = {
   ];
 };
 export type SessionReservationInput = {
+  scope?: NewWorkScope;
   context: AdmissionContext;
   lease: ActiveMeetingLease & {
     executionVersion: number;
@@ -512,6 +528,9 @@ export type HistoryKey = Pick<
   "guildId" | "channelId_timestamp"
 >;
 export const HISTORY_TRANSITION_FIELDS = [
+  "fixtureInput",
+  "fixtureGeneration",
+  "fixtureTranscript",
   "completionPolicy",
   "checkpoint",
   "capture",
@@ -604,6 +623,30 @@ const legalTransitions: Record<MeetingStatus, readonly MeetingStatus[]> = {
   complete: [],
   cancelled: ["cancelled"],
 };
+function validateFixtureHistoryTransition(input: HistoryTransition): void {
+  if (
+    input.patch.fixtureInput ||
+    input.patch.fixtureGeneration ||
+    input.patch.fixtureTranscript
+  ) {
+    const fixture = fixtureInputEvidenceSchema.parse(input.patch.fixtureInput);
+    if (
+      input.expectedStatus !== "processing" ||
+      input.patch.status !== "complete" ||
+      fixture.historyKey.guildId !== input.key.guildId ||
+      fixture.historyKey.channelId_timestamp !==
+        input.key.channelId_timestamp ||
+      fixture.ownership.meetingId !== input.expectedMeetingId ||
+      fixture.ownership.ownerInstanceId !== input.expectedOwnerInstanceId ||
+      fixture.ownership.executionVersion !== input.expectedExecutionVersion
+    )
+      throw new Error("Fixture history requires its original completion");
+    fixtureGenerationSchema.parse(input.patch.fixtureGeneration);
+    if (input.patch.fixtureTranscript)
+      fixtureTranscriptSchema.parse(input.patch.fixtureTranscript);
+  }
+}
+
 export function validateHistoryTransition(input: HistoryTransition): void {
   id.parse(input.key.guildId);
   id.parse(input.key.channelId_timestamp);
@@ -617,6 +660,7 @@ export function validateHistoryTransition(input: HistoryTransition): void {
   }
   if (!Object.values(input.patch).some((value) => value !== undefined))
     throw new Error("History transition patch is empty");
+  validateFixtureHistoryTransition(input);
   validateCompletionPolicyTransition(input);
   validateCheckpointTransition(input);
   if (input.patch.capture)

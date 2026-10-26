@@ -1,3 +1,4 @@
+import type { StripeEffect } from "../types/stripe";
 import Stripe from "stripe";
 import { assertOfferServiceLine } from "./firstOfferInvoiceEvidence";
 import type {
@@ -121,6 +122,7 @@ export function inspectChangeApplication(
 }
 export async function applyFundedBillingChange(input: {
   stripe: StripeClient;
+  effect?: StripeEffect;
   operation: Applying;
   now?: number;
 }): Promise<
@@ -133,6 +135,7 @@ export async function applyFundedBillingChange(input: {
     }
 > {
   const { stripe, operation } = input;
+  const write: StripeEffect = input.effect ?? ((run) => run());
   const funding = await stripe.invoices.retrieve(operation.funding.invoiceId);
   if (!verifyChangeFunding(funding, operation, operation.funding))
     return "unknown";
@@ -156,7 +159,7 @@ export async function applyFundedBillingChange(input: {
       (input.now ?? Math.floor(Date.now() / 1000)) >= operation.source.periodEnd
     )
       return "unknown";
-    const submitted = await submitChangeApplication(stripe, operation);
+    const submitted = await submitChangeApplication(stripe, operation, write);
     if (submitted.kind !== "updated") return submitted.kind;
     subscription = submitted.subscription;
   }
@@ -167,10 +170,12 @@ export async function applyFundedBillingChange(input: {
   });
   let result = inspectChangeApplication(subscription, invoice, operation);
   if (result === "residual_balance") {
-    await stripe.invoices.voidInvoice(
-      invoice.id,
-      {},
-      changeIdempotency(operation, "void-application-balance"),
+    await write(() =>
+      stripe.invoices.voidInvoice(
+        invoice.id,
+        {},
+        changeIdempotency(operation, "void-application-balance"),
+      ),
     );
     subscription = await stripe.subscriptions.retrieve(subscription.id, {
       expand: ["discounts.source.coupon"],
@@ -279,6 +284,7 @@ function residualApplicationBalance(invoice: StripeInvoice) {
 async function submitChangeApplication(
   stripe: StripeClient,
   operation: Applying,
+  write: StripeEffect = (run) => run(),
 ): Promise<
   | { kind: "updated"; subscription: StripeSubscription }
   | { kind: "unknown" | "rejected" }
@@ -286,10 +292,12 @@ async function submitChangeApplication(
   try {
     return {
       kind: "updated",
-      subscription: await stripe.subscriptions.update(
-        operation.source.subscriptionId,
-        buildChangeApplicationRequest(operation),
-        changeIdempotency(operation, "apply"),
+      subscription: await write(() =>
+        stripe.subscriptions.update(
+          operation.source.subscriptionId,
+          buildChangeApplicationRequest(operation),
+          changeIdempotency(operation, "apply"),
+        ),
       ),
     };
   } catch (error) {

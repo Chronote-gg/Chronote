@@ -1,3 +1,6 @@
+import { validateFixtureCapture } from "./fixtureEvidenceValidation";
+import { fixtureOutputSnapshot } from "./fixtureInputService";
+import { isDeepStrictEqual } from "node:util";
 import {
   canonicalContentAdvanced,
   MAX_RECORDING_CANONICAL_TRANSITION_ATTEMPTS,
@@ -240,6 +243,31 @@ export async function updateMeetingAccessGrantsService(params: {
   return true;
 }
 
+function validateLiveFixtureHistory(
+  meeting: MeetingData,
+  patch: HistoryTransition["patch"],
+  row: MeetingHistory,
+) {
+  if (patch.fixtureInput) {
+    const actual = fixtureOutputSnapshot(meeting);
+    if (
+      !row.checkpoint ||
+      !isDeepStrictEqual(actual, {
+        fixtureInput: patch.fixtureInput,
+        fixtureGeneration: patch.fixtureGeneration,
+        ...(patch.fixtureTranscript
+          ? { fixtureTranscript: patch.fixtureTranscript }
+          : {}),
+      })
+    )
+      throw new Error("Fixture completion requires live original evidence");
+    validateFixtureCapture(
+      row.checkpoint.capture,
+      patch.fixtureInput,
+      row.fixtureInput,
+    );
+  }
+}
 import {
   canonicalFieldsSupersededAfter,
   originalCompletionExportView,
@@ -301,6 +329,7 @@ async function commitOwnedMeetingHistory(
     assertOwnedHistoryNotAborted(meeting);
     if (!hasRecordingHistoryOwnership(row, reservation, allowedStatuses))
       throw new Error("Recording history ownership or status changed");
+    validateLiveFixtureHistory(meeting, patch, row);
     if (previous && !canonicalContentAdvanced(previous, row))
       throw new Error("Recording history transition was fenced");
     const nextPatch = {

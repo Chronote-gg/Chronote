@@ -1,8 +1,14 @@
 /** @jest-environment node */
 import { ECSClient } from "@aws-sdk/client-ecs";
 import * as deploymentProof from "../../src/services/ledgerWriterDeployment";
-import * as writerRuntime from "../../src/services/ledgerWriterRuntime";
-import { trackPaidRenewalPeriod } from "../../src/services/renewalRecoveryService";
+import * as renewalRecoveryService from "../../src/services/renewalRecoveryService";
+import { readRenewalCoverageCandidate } from "../../src/services/renewalRecoveryCoverageEvidence";
+import {
+  renewalRecoveryKey,
+  renewalRecoverySchema,
+  RENEWAL_RECOVERY_WRITER_VERSION,
+} from "../../src/types/renewalRecovery";
+import * as recoveryRepository from "../../src/repositories/renewalRecoveryRepository";
 import {
   parseBillingRenewalRecoveryArgs,
   renewalCoverageExitCode,
@@ -108,6 +114,64 @@ function fixture(paidHistory = true) {
     },
   };
 }
+async function seedCoverage(f: ReturnType<typeof fixture>) {
+  const saved = getMockStore().subscriptions.get(renewalSubscription.guildId);
+  if (!saved) throw new Error("Missing source fixture");
+  const record = await readRenewalCoverageCandidate({
+    stripe: f.stripe,
+    saved,
+    mode: "test",
+  });
+  if (!record) throw new Error("Missing paid coverage fixture");
+  getMockStore().renewalRecoveryRecords.set(renewalRecoveryKey(record), record);
+  getMockStore().renewalRecoveryPointers.set(record.guildId, {
+    key: renewalRecoveryKey(record),
+    revision: record.revision,
+    blocking: false,
+  });
+  return record;
+}
+
+test.each(["new", "matching", "enforced"] as const)(
+  "standalone apply refuses %s coverage before registration, refresh or provider requests",
+  async (state) => {
+    const f = fixture();
+    if (state !== "new") {
+      const record = await seedCoverage(f);
+      record.enforcementAccepted = state === "enforced";
+    }
+    const store = getMockStore();
+    const before = structuredClone({
+      records: [...store.renewalRecoveryRecords],
+      pointers: [...store.renewalRecoveryPointers],
+      subscriptions: [...store.subscriptions],
+    });
+    f.requests.length = 0;
+    const repository = getRenewalRecoveryRepository();
+    jest
+      .spyOn(recoveryRepository, "getRenewalRecoveryRepository")
+      .mockReturnValue(repository);
+    const register = jest.spyOn(repository, "register");
+    const refresh = jest.spyOn(
+      renewalRecoveryService,
+      "refreshRenewalRecovery",
+    );
+    const scan = jest.spyOn(db, "scanGuildSubscriptionPage");
+    await expect(
+      auditRenewalCoverage({ ...f.input, apply: true }),
+    ).rejects.toThrow("Standalone renewal coverage apply is disabled");
+    expect(register).not.toHaveBeenCalled();
+    expect(refresh).not.toHaveBeenCalled();
+    expect(scan).not.toHaveBeenCalled();
+    expect(f.requests).toEqual([]);
+    expect({
+      records: [...store.renewalRecoveryRecords],
+      pointers: [...store.renewalRecoveryPointers],
+      subscriptions: [...store.subscriptions],
+    }).toEqual(before);
+  },
+);
+
 test("requires explicit account, mode, private report and page bound; defaults to audit", () => {
   expect(
     parseBillingRenewalRecoveryArgs([
@@ -128,20 +192,30 @@ test("requires explicit account, mode, private report and page bound; defaults t
   ])
     expect(() => parseBillingRenewalRecoveryArgs(args)).toThrow();
 });
-test("audit never writes coverage or provider resources and cannot claim activation readiness", async () => {
-  const f = fixture();
-  const report = await auditRenewalCoverage(f.input);
-  expect(report).toMatchObject({
-    enumeration: "complete",
-    coverageReady: false,
-    phase: 2,
-  });
-  expect(report.outcomes).toEqual([
-    expect.objectContaining({ state: "would_register" }),
-  ]);
-  expect(getMockStore().renewalRecoveryRecords.size).toBe(0);
-  expect(f.requests.some((request) => request.method !== "GET")).toBe(false);
-});
+test.each(["current", "unpaid debt"] as const)(
+  "audit never writes %s coverage or provider resources and cannot claim activation readiness",
+  async (state) => {
+    const f = fixture();
+    if (state === "unpaid debt") {
+      f.native.status = "past_due";
+      f.native.latest_invoice = f.renewal.id;
+      f.native.items.data[0].current_period_start = paidEndsAt;
+      f.native.items.data[0].current_period_end = paidEndsAt + 2592000;
+      f.input.now = paidEndsAt + 1000000;
+    }
+    const report = await auditRenewalCoverage(f.input);
+    expect(report).toMatchObject({
+      enumeration: "complete",
+      coverageReady: false,
+      phase: 2,
+    });
+    expect(report.outcomes).toEqual([
+      expect.objectContaining({ state: "would_register" }),
+    ]);
+    expect(getMockStore().renewalRecoveryRecords.size).toBe(0);
+    expect(f.requests.some((request) => request.method !== "GET")).toBe(false);
+  },
+);
 test.each(["none", "zero", "paid_history"] as const)(
   "handles a trial with %s payment evidence without accepting a first-payment grace period",
   async (evidence) => {
@@ -174,9 +248,10 @@ test.each(["none", "zero", "paid_history"] as const)(
   },
 );
 
-test("an applied coverage audit fails until index and deployed writer readiness are proved", async () => {
+test("historical apply reports still require complete index and deployed writer proof for success", async () => {
   const f = fixture();
-  const report = await auditRenewalCoverage({ ...f.input, apply: true });
+  await seedCoverage(f);
+  const report = { ...(await auditRenewalCoverage(f.input)), apply: true };
   expect(report.enumeration).toBe("complete");
   expect(report.outcomes.every((outcome) => outcome.state === "covered")).toBe(
     true,
@@ -201,21 +276,10 @@ test("an applied coverage audit fails until index and deployed writer readiness 
   ).toBe(0);
 });
 
-test("apply is idempotent and writes only owned coverage", async () => {
-  const f = fixture();
-  const report = await auditRenewalCoverage({ ...f.input, apply: true });
-  expect(report.outcomes).toEqual([
-    expect.objectContaining({ state: "covered" }),
-  ]);
-  await auditRenewalCoverage({ ...f.input, apply: true });
-  expect(getMockStore().renewalRecoveryRecords.size).toBe(1);
-  expect(f.requests.some((request) => request.method !== "GET")).toBe(false);
-});
 test("a capped traversal resumes but never presents the first pass as complete catch-up", async () => {
   const f = fixture();
   const first = await auditRenewalCoverage({
     ...f.input,
-    apply: true,
     maxPages: 1,
   });
   expect(first).toMatchObject({
@@ -225,7 +289,6 @@ test("a capped traversal resumes but never presents the first pass as complete c
   });
   const resumed = await auditRenewalCoverage({
     ...f.input,
-    apply: true,
     resume: first,
   });
   expect(resumed.enumeration).toBe("complete");
@@ -236,12 +299,12 @@ test("the catch-up pass includes a paid row missed by the first traversal", asyn
     .spyOn(db, "scanGuildSubscriptionPage")
     .mockResolvedValueOnce({ guildIds: [] })
     .mockResolvedValueOnce({ guildIds: [renewalSubscription.guildId] });
-  const result = await auditRenewalCoverage({ ...f.input, apply: true });
+  const result = await auditRenewalCoverage(f.input);
   expect(scan).toHaveBeenCalledTimes(2);
   expect(result.outcomes).toEqual([
     expect.objectContaining({
       guildId: renewalSubscription.guildId,
-      state: "covered",
+      state: "would_register",
     }),
   ]);
 });
@@ -254,48 +317,23 @@ test("failure on a final page preserves a resumable incomplete report", async ()
       cursor: "continuation",
     })
     .mockRejectedValueOnce(new Error("Scan unavailable"));
-  const result = await auditRenewalCoverage({ ...f.input, apply: true });
+  const result = await auditRenewalCoverage(f.input);
   expect(result).toMatchObject({
     enumeration: "incomplete",
     coverageReady: false,
     cursor: "continuation",
   });
 });
-test("old unpaid debt keeps its original provider deadline while enforcement stays off", async () => {
+test("provider account and configured mode mismatch prevent scanning", async () => {
   const f = fixture();
-  f.native.status = "past_due";
-  f.native.latest_invoice = f.renewal.id;
-  f.native.items.data[0].current_period_start = paidEndsAt;
-  f.native.items.data[0].current_period_end = paidEndsAt + 2592000;
-  await auditRenewalCoverage({
-    ...f.input,
-    apply: true,
-    now: paidEndsAt + 1000000,
-  });
-  expect(
-    await getRenewalRecoveryRepository().getCurrent(
-      renewalSubscription.guildId,
-    ),
-  ).toMatchObject({
-    state: "grace",
-    enforcementAccepted: false,
-    endsAt: paidEndsAt + 3600 + 172800,
-  });
-  expect(f.requests.some((request) => request.method !== "GET")).toBe(false);
-});
-test("provider identity mismatch and enabled enforcement prevent coverage writes", async () => {
-  const f = fixture();
+  const scan = jest.spyOn(db, "scanGuildSubscriptionPage");
   await expect(
-    auditRenewalCoverage({
-      ...f.input,
-      accountId: "acct_foreign",
-      apply: true,
-    }),
-  ).rejects.toThrow();
-  config.stripe.renewalGraceEnabled = true;
+    auditRenewalCoverage({ ...f.input, accountId: "acct_foreign" }),
+  ).rejects.toThrow("Coverage provider identity mismatch");
   await expect(
-    auditRenewalCoverage({ ...f.input, apply: true }),
-  ).rejects.toThrow();
+    auditRenewalCoverage({ ...f.input, mode: "live" }),
+  ).rejects.toThrow("Configured provider mode mismatch");
+  expect(scan).not.toHaveBeenCalled();
   expect(getMockStore().renewalRecoveryRecords.size).toBe(0);
 });
 
@@ -305,15 +343,11 @@ test("only complete catch-up, ACTIVE index and an exact normal-writer deployment
     taskArn: "arn:aws:ecs:us-east-1:123456789012:task/test/current",
     imageDigest: "sha256:" + "a".repeat(64),
   };
-  jest
-    .spyOn(writerRuntime, "readLedgerWriterRuntime")
-    .mockResolvedValue(runtime);
-  await trackPaidRenewalPeriod({
-    stripe: f.stripe,
-    guildId: renewalSubscription.guildId,
-    subscriptionId: f.native.id,
-    invoiceId: fundedInvoice.id,
-    now: f.input.now,
+  const watch = await seedCoverage(f);
+  getMockStore().renewalRecoveryRecords.set(renewalRecoveryKey(watch), {
+    ...watch,
+    writerVersion: RENEWAL_RECOVERY_WRITER_VERSION,
+    writerRuntime: runtime,
   });
   const target = {
     clusterArn: "cluster",
@@ -330,7 +364,6 @@ test("only complete catch-up, ACTIVE index and an exact normal-writer deployment
     });
   const input = {
     ...f.input,
-    apply: true,
     deployment: { ecs: new ECSClient({ region: "us-east-1" }), target },
   };
   const capped = await auditRenewalCoverage({ ...input, maxPages: 1 });
@@ -347,8 +380,6 @@ test("only complete catch-up, ACTIVE index and an exact normal-writer deployment
   });
 });
 test("uses a current deployed writer even when an older same-image witness is encountered first", async () => {
-  const { renewalRecoverySchema, renewalRecoveryKey } =
-    await import("../../src/types/renewalRecovery");
   const f = fixture();
   const digest = "sha256:" + "a".repeat(64);
   const oldRuntime = {
@@ -359,22 +390,11 @@ test("uses a current deployed writer even when an older same-image witness is en
     taskArn: "arn:aws:ecs:us-east-1:123456789012:task/test/current",
     imageDigest: digest,
   };
-  jest
-    .spyOn(writerRuntime, "readLedgerWriterRuntime")
-    .mockResolvedValue(oldRuntime);
-  await trackPaidRenewalPeriod({
-    stripe: f.stripe,
-    guildId: renewalSubscription.guildId,
-    subscriptionId: f.native.id,
-    invoiceId: fundedInvoice.id,
-    now: f.input.now,
-  });
-  const watch = await getRenewalRecoveryRepository().getCurrent(
-    renewalSubscription.guildId,
-  );
-  if (!watch) throw new Error("Missing writer fixture");
+  const watch = await seedCoverage(f);
   const first = renewalRecoverySchema.parse({
     ...watch,
+    writerVersion: RENEWAL_RECOVERY_WRITER_VERSION,
+    writerRuntime: oldRuntime,
     state: "grace",
     enforcementAccepted: true,
     invoice: {
@@ -430,7 +450,6 @@ test("uses a current deployed writer even when an older same-image witness is en
     });
   const result = await auditRenewalCoverage({
     ...f.input,
-    apply: true,
     deployment: { ecs: new ECSClient({ region: "us-east-1" }), target },
   });
   expect(result).toMatchObject({

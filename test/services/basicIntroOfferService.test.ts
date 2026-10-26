@@ -1,4 +1,5 @@
 /** @jest-environment node */
+import "../fixtures/admittedApi";
 import {
   seedUnusedOfferCoverage,
   testWriterImageDigest,
@@ -19,7 +20,6 @@ import { captureEvent } from "../../src/services/analyticsService";
 jest.mock("../../src/services/analyticsService", () => ({
   captureEvent: jest.fn(),
 }));
-
 it("keeps the introductory offer inactive with no environment configuration", () => {
   expect(config.stripe).toMatchObject({
     basicIntroOffer: {
@@ -431,7 +431,7 @@ describe("authoritative initial-purchase offer", () => {
     jest.setSystemTime(new Date(Date.now() + 35 * 60000));
     await expect(
       createCheckoutSession({ ...request, expectedOffer: "none" }),
-    ).rejects.toMatchObject({ reason: "purchase_needs_review" });
+    ).rejects.toMatchObject({ cause: { reason: "purchase_needs_review" } });
     expect(
       await getOfferUsageRepository().get(
         request.guildId,
@@ -490,7 +490,7 @@ describe("authoritative initial-purchase offer", () => {
         tier: "basic",
         interval: "month",
       }),
-    ).rejects.toMatchObject({ reason: "purchase_expired" });
+    ).rejects.toMatchObject({ cause: { reason: "purchase_expired" } });
     expect(
       await getOfferUsageRepository().get(
         request.guildId,
@@ -593,7 +593,7 @@ describe("authoritative initial-purchase offer", () => {
       await expect(
         createCheckoutSession({ ...request, expectedOffer: "none" }),
       ).rejects.toMatchObject({
-        reason: "purchase_needs_review",
+        cause: { reason: "purchase_needs_review" },
         message: expect.stringContaining("needs review"),
       });
       expect(getMockStore().purchaseAttempts.get(request.guildId)?.state).toBe(

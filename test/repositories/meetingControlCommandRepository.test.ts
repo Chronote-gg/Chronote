@@ -32,15 +32,27 @@ describe("meetingControlCommandRepository", () => {
         structuredClone(row),
       );
   });
+  test("ordinary start enqueue refuses a held Control before persisting the command", async () => {
+    const store = getMockStore();
+    store.deploymentControlRecords.set(JSON.stringify(["ENV", "CONTROL"]), {
+      ...control,
+      maintenance: { holdId: "hold", introductionId: "intro", revision: 1 },
+    });
+    const repository = getMeetingControlCommandRepository();
+    await expect(
+      repository.writeCommand(makeCommand(), context),
+    ).rejects.toThrow();
+    expect(await repository.getCommand("request-1")).toBeUndefined();
+  });
   test("noClaimAfterRetiringAcknowledgment", async () => {
+    const repository = getMeetingControlCommandRepository();
+    await repository.writeCommand(makeCommand(), context);
     const records = getMockStore().deploymentControlRecords;
     for (const row of [
       control,
       { ...runtime("old"), role: "retired" as const },
     ])
       records.set(JSON.stringify([row.pk, row.sk]), row);
-    const repository = getMeetingControlCommandRepository();
-    await repository.writeCommand(makeCommand());
     expect(
       await repository.claimCommand({
         requestId: "request-1",
@@ -59,7 +71,7 @@ describe("meetingControlCommandRepository", () => {
 
   test("lists and claims unowned pending commands", async () => {
     const repository = getMeetingControlCommandRepository();
-    await repository.writeCommand(makeCommand());
+    await repository.writeCommand(makeCommand(), context);
 
     await expect(
       repository.listClaimablePendingCommands({
@@ -90,9 +102,11 @@ describe("meetingControlCommandRepository", () => {
     const repository = getMeetingControlCommandRepository();
     await repository.writeCommand(
       makeCommand({ requestId: "request-1", targetOwnerInstanceId: "owner-1" }),
+      context,
     );
     await repository.writeCommand(
       makeCommand({ requestId: "request-2", targetOwnerInstanceId: "owner-2" }),
+      context,
     );
 
     await expect(
@@ -108,6 +122,7 @@ describe("meetingControlCommandRepository", () => {
     const repository = getMeetingControlCommandRepository();
     await repository.writeCommand(
       makeCommand({ requestId: "request-1", targetOwnerInstanceId: "owner-1" }),
+      context,
     );
 
     await expect(
@@ -127,6 +142,7 @@ describe("meetingControlCommandRepository", () => {
     const repository = getMeetingControlCommandRepository();
     await repository.writeCommand(
       makeCommand({ requestId: "request-1", expiresAt: 100 }),
+      context,
     );
 
     await expect(
@@ -152,7 +168,7 @@ describe("meetingControlCommandRepository", () => {
 
   test("completes commands claimed by the same worker", async () => {
     const repository = getMeetingControlCommandRepository();
-    await repository.writeCommand(makeCommand());
+    await repository.writeCommand(makeCommand(), context);
     await repository.claimCommand({
       requestId: "request-1",
       instanceId: "old",

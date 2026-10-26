@@ -9,28 +9,48 @@ if (fault === "fatal-startup") {
   Promise.resolve();
 } else {
   const root = path.resolve(__dirname, "../../..");
-  const audioPath = path.join(root, "src/audio.ts");
-  const source = ts.createSourceFile(
-    audioPath,
-    fs.readFileSync(audioPath, "utf8"),
-    ts.ScriptTarget.Latest,
-    true,
-  );
-  const names = new Set([
-    "getVoiceSubscriptions",
-    "clearVoiceSubscription",
-    "scheduleResubscribe",
-    "subscribeToUserVoice",
-    "isCaptureActive",
-    "isCaptureIntakeStopped",
-    "closeCaptureStream",
-    "ensureRecordingCheckpointCapture",
-  ]);
-  const declarations = source.statements.filter(
-    (node) => ts.isFunctionDeclaration(node) && names.has(node.name?.text),
-  );
-  if (declarations.length !== names.size)
-    throw new Error("Missing production teardown functions");
+  const productionFunctions = (file, names) => {
+    const sourcePath = path.join(root, file);
+    const source = ts.createSourceFile(
+      sourcePath,
+      fs.readFileSync(sourcePath, "utf8"),
+      ts.ScriptTarget.Latest,
+      true,
+    );
+    const declarations = source.statements.filter(
+      (node) =>
+        ts.isFunctionDeclaration(node) && names.includes(node.name?.text),
+    );
+    if (declarations.length !== names.length)
+      throw new Error("Missing production teardown functions: " + file);
+    return declarations
+      .map((node) => node.getText(source).replace(/^export /, ""))
+      .join("\n");
+  };
+  const declarations = [
+    productionFunctions("src/audio.ts", [
+      "getVoiceSubscriptions",
+      "clearVoiceSubscription",
+      "scheduleResubscribe",
+      "subscribeToUserVoice",
+      "isCaptureActive",
+      "isCaptureIntakeStopped",
+      "ensureRecordingCheckpointCapture",
+      "acceptVoicePcm",
+    ]),
+    productionFunctions("src/services/captureStreamSettlementService.ts", [
+      "closeCaptureStream",
+    ]),
+    productionFunctions("src/services/fixtureInputService.ts", [
+      "stateFor",
+      "increment",
+      "fail",
+      "failFixture",
+      "allowFixtureActor",
+      "startFixtureCapture",
+      "acceptedFixturePcm",
+    ]),
+  ].join("\n");
   const transpile = (code) =>
     ts.transpileModule(code, {
       compilerOptions: {
@@ -61,15 +81,17 @@ if (fault === "fatal-startup") {
   const api = new Function(
     "voiceSubscriptions",
     "captureStreamClosures",
+    "fixtures",
     "runMeetingProcessingEffect",
     "getMeetingProcessingSignal",
     "disposeVoiceStream",
     "OpusDiagnosticDecoder",
     "VoiceConnectionStatus",
     "EndBehaviorType",
-    `${transpile("const RESUBSCRIBE_DELAY_MS = 250, RECORD_SAMPLE_RATE = 48000, CHANNELS = 2, FRAME_SIZE = 960;\n" + declarations.map((node) => node.getText(source).replace(/^export /, "")).join("\n"))}\nreturn { clearVoiceSubscription, subscribeToUserVoice };`,
+    `${transpile("const RESUBSCRIBE_DELAY_MS = 250, RECORD_SAMPLE_RATE = 48000, CHANNELS = 2, FRAME_SIZE = 960;\n" + declarations)}\nreturn { clearVoiceSubscription, subscribeToUserVoice };`,
   )(
     voiceSubscriptions,
+    new WeakMap(),
     new WeakMap(),
     lifetimeModule.exports.runMeetingProcessingEffect,
     lifetimeModule.exports.getMeetingProcessingSignal,

@@ -56,21 +56,53 @@ export async function conditional(
   }
 }
 
+/** Only a complete atomic cancellation proves that no transaction item was written. */
+export function completeConditionalCancellation(
+  error: unknown,
+  itemCount: number,
+) {
+  const parsed = errorSchema.safeParse(error);
+  if (!parsed.success || parsed.data.name !== "TransactionCanceledException")
+    return undefined;
+  const reasons = parsed.data.CancellationReasons;
+  if (
+    !reasons ||
+    reasons.length !== itemCount ||
+    reasons.some(
+      (reason) =>
+        reason.Code !== "None" && reason.Code !== "ConditionalCheckFailed",
+    ) ||
+    !reasons.some((reason) => reason.Code === "ConditionalCheckFailed")
+  )
+    return undefined;
+  return reasons;
+}
+
 export function sessionReservationFailure(
   error: unknown,
   input: SessionReservationInput,
 ): SessionReservationWriteResult {
-  const parsed = errorSchema.safeParse(error);
-  if (!parsed.success || classifyDeploymentTransactionError(error) !== "stale")
-    return { kind: "blocked", reason: "unavailable" };
-  const reasons = parsed.data.CancellationReasons ?? [];
+  const count = input.scope?.kind === "fixture" ? 3 : 2;
+  const reasons = completeConditionalCancellation(
+    error,
+    count +
+      2 +
+      Number(Boolean(input.history)) +
+      Number(Boolean(input.suppression)),
+  );
+  if (!reasons) return { kind: "blocked", reason: "unavailable" };
   const failed = (index: number) =>
     reasons[index]?.Code === "ConditionalCheckFailed";
-  if (failed(0) || failed(1)) return { kind: "blocked", reason: "not_serving" };
-  if (failed(3)) return { kind: "blocked", reason: "voice_uncertain" };
-  if (failed(2) || (input.history && failed(4)))
+  if (
+    reasons
+      .slice(0, count)
+      .some((reason) => reason.Code === "ConditionalCheckFailed")
+  )
+    return { kind: "blocked", reason: "not_serving" };
+  if (failed(count + 1)) return { kind: "blocked", reason: "voice_uncertain" };
+  if (failed(count) || (input.history && failed(count + 2)))
     return { kind: "blocked", reason: "active_session" };
-  if (input.suppression && failed(input.history ? 5 : 4))
+  if (input.suppression && failed(count + (input.history ? 3 : 2)))
     return { kind: "blocked", reason: "suppressed" };
   return { kind: "blocked", reason: "unavailable" };
 }

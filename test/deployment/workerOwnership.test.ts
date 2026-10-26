@@ -112,7 +112,7 @@ test("pending claims count synchronously and claimed work renews after polling s
     proposedGeneration: 1,
     now: 100,
   });
-  await lifecycle.getRuntimeAdmissionContext();
+  const context = await lifecycle.getRuntimeAdmissionContext();
   const uploads = getPersonalMediaUploadRepository();
   const job: PersonalMediaUploadJobRecord = {
     uploadId: "held-upload",
@@ -125,7 +125,7 @@ test("pending claims count synchronously and claimed work renews after polling s
     createdAt: "now",
     updatedAt: "now",
   };
-  await uploads.write(job);
+  await uploads.write(job, context);
   const claimGate = barrier();
   const providerGate = barrier();
   const providerStarted = barrier();

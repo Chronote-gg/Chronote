@@ -1,4 +1,5 @@
 /** @jest-environment node */
+import "../fixtures/admittedApi";
 import { resolveRenewalAccess } from "../../src/services/renewalRecoveryAccess";
 import { reconcileSubscription } from "../../src/services/subscriptionReconciliation";
 import { getRenewalRecoveryView } from "../../src/services/renewalRecoveryView";
@@ -25,28 +26,13 @@ import {
   paidEndsAt,
 } from "../fixtures/renewalStripe";
 import { renewalSubscription } from "../fixtures/renewal";
-import { renewalRecoveryFixture as fixture } from "../fixtures/renewalRecoveryService";
+import {
+  renewalRecoveryFixture as fixture,
+  installRenewalRecoveryTestState,
+} from "../fixtures/renewalRecoveryService";
 
-const original = {
-  mock: config.mock.enabled,
-  enabled: config.stripe.renewalGraceEnabled,
-  mode: config.subscription.stripeMode,
-};
-beforeEach(() => {
-  config.mock.enabled = true;
-  config.subscription.stripeMode = "test";
-  config.stripe.renewalGraceEnabled = true;
-  resetMockStore();
-  getMockStore().subscriptions.set(
-    renewalSubscription.guildId,
-    structuredClone(renewalSubscription),
-  );
-});
-afterEach(() => {
-  config.mock.enabled = original.mock;
-  config.stripe.renewalGraceEnabled = original.enabled;
-  config.subscription.stripeMode = original.mode;
-});
+installRenewalRecoveryTestState();
+
 test("discovers failed renewal from the saved paid boundary when webhooks are dropped", async () => {
   const f = fixture();
   await f.track();

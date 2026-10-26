@@ -1,4 +1,14 @@
 /** @jest-environment node */
+import {
+  verifyFixtureReservation,
+  isFixture,
+  fixtureParticipant,
+  allowFixtureActor,
+} from "../src/services/fixtureInputService";
+import {
+  observeFixtureChannel,
+  observeFixtureConnection,
+} from "../src/services/fixtureObservationService";
 import { readFileSync } from "node:fs";
 import { EventEmitter } from "node:events";
 import { randomUUID } from "node:crypto";
@@ -76,26 +86,13 @@ function startFailedInitialization(
   mode: "meeting" | "tts_only",
   audioCloses = Promise.resolve(true),
 ) {
-  const file = path.join(__dirname, "../src/meetings.ts");
-  const source = ts.createSourceFile(
-    file,
-    readFileSync(file, "utf8"),
-    ts.ScriptTarget.Latest,
-    true,
-  );
-  const names = new Set([
+  const source = parseMeetingsSource();
+  const functions = selectMeetingFunctions(source, [
     "initializeMeeting",
     "initializeNewMeeting",
     "initializeReservedMeeting",
     "disposeFailedInitialization",
-    "getMeeting",
-    "deleteMeeting",
   ]);
-  const functions = source.statements.filter(
-    (node) =>
-      ts.isFunctionDeclaration(node) && names.has(node.name?.text ?? ""),
-  );
-  expect(functions).toHaveLength(names.size);
   const connection = new EventEmitter();
   Object.assign(connection, { receiver: {} });
   const notification = held<void>();
@@ -127,6 +124,12 @@ function startFailedInitialization(
       attachMeetingReservation(meeting, reservation);
       currentMeeting = meeting;
     },
+    verifyFixtureReservation,
+    isFixture,
+    fixtureParticipant,
+    allowFixtureActor,
+    observeFixtureChannel,
+    observeFixtureConnection,
     joinOwnedVoiceSession: async () => connection,
     resolveMeetingRuntimeConfig: async () => undefined,
     freezeCompletionPolicy: jest.fn(),
@@ -328,25 +331,12 @@ async function startTtsStop() {
   const notice = held<void>();
   const send = jest.fn(() => notice.promise);
   const connection = new EventEmitter();
-  const file = path.join(__dirname, "../src/meetings.ts");
-  const source = ts.createSourceFile(
-    file,
-    readFileSync(file, "utf8"),
-    ts.ScriptTarget.Latest,
-    true,
-  );
-  const names = new Set([
+  const source = parseMeetingsSource();
+  const functions = selectMeetingFunctions(source, [
     "endTtsOnlySession",
     "finalizeTtsOnlySession",
     "clearTtsOnlyIdleTimeout",
-    "getMeeting",
-    "deleteMeeting",
   ]);
-  const functions = source.statements.filter(
-    (node) =>
-      ts.isFunctionDeclaration(node) && names.has(node.name?.text ?? ""),
-  );
-  expect(functions).toHaveLength(names.size);
   const registrations: ts.CallExpression[] = [];
   const visit = (node: ts.Node) => {
     if (
@@ -448,3 +438,32 @@ test.each([
     }
   },
 );
+
+function parseMeetingsSource() {
+  const file = path.join(__dirname, "../src/meetings.ts");
+  const source = ts.createSourceFile(
+    file,
+    readFileSync(file, "utf8"),
+    ts.ScriptTarget.Latest,
+    true,
+  );
+  return source;
+}
+
+function selectMeetingFunctions(source: ts.SourceFile, selected: string[]) {
+  const names = new Set([
+    ...selected,
+    "assertFixtureStartOptions",
+    "assertVerifiedFixture",
+    "resolveVoiceFeatures",
+    "shouldLoadMeetingDictionary",
+    "getMeeting",
+    "deleteMeeting",
+  ]);
+  const functions = source.statements.filter(
+    (node) =>
+      ts.isFunctionDeclaration(node) && names.has(node.name?.text ?? ""),
+  );
+  expect(functions).toHaveLength(names.size);
+  return functions;
+}

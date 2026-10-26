@@ -1,3 +1,4 @@
+import type { ConsumedFixtureGrant } from "../services/deploymentFixtureAdmission";
 import type {
   AdmissionContext,
   ControlTableNames,
@@ -14,6 +15,7 @@ export type RecoveryClaimInput = {
   lease: ActiveMeetingLease | undefined;
   context: AdmissionContext;
   attemptId: string;
+  fixtureGrant?: ConsumedFixtureGrant;
 };
 export type RecoveryTables = ControlTableNames & { activeMeeting: string };
 export type RecoveryPage = { keys: HistoryKey[]; cursor?: HistoryKey };

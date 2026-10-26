@@ -1,3 +1,7 @@
+import {
+  runBillingOperation,
+  type RuntimeBillingOwner,
+} from "./runtimeBillingOperationService";
 import { prepareNormalPurchaseWriterWitness } from "./normalPurchaseWriterWitness";
 import type { SettlementInvoice } from "./offerUsageSettlement";
 import { prepareInitialOfferSettlement } from "./offerUsageSettlement";
@@ -17,10 +21,11 @@ import type {
 } from "../types/stripe";
 import type { PurchaseAttempt } from "../types/purchase";
 
-export async function recordDuplicatePurchase(
+async function recordDuplicatePurchaseOwned(
   guildId: string,
   previous: StripeSubscription,
   incoming: StripeSubscription,
+  owner: RuntimeBillingOwner,
 ) {
   const repo = getPurchaseRepository();
   const mode = incoming.livemode ? "live" : "test";
@@ -47,28 +52,31 @@ export async function recordDuplicatePurchase(
           checkout: {},
         };
     if (
-      await repo.compareAndWrite(blocked, current, pointer, {
-        guildId,
-        key,
-        acceptedId: previous.id,
-        incomingId: incoming.id,
-        acceptedStatus: previous.status,
-        incomingStatus: incoming.status,
-        firstObservedAt: new Date().toISOString(),
-        lastObservedAt: new Date().toISOString(),
-        reason: "competing_nonterminal_subscription",
-        incomingAttemptId: incoming.metadata.purchase_attempt_id,
-      })
+      await owner.effect(() =>
+        repo.compareAndWrite(blocked, current, pointer, {
+          guildId,
+          key,
+          acceptedId: previous.id,
+          incomingId: incoming.id,
+          acceptedStatus: previous.status,
+          incomingStatus: incoming.status,
+          firstObservedAt: new Date().toISOString(),
+          lastObservedAt: new Date().toISOString(),
+          reason: "competing_nonterminal_subscription",
+          incomingAttemptId: incoming.metadata.purchase_attempt_id,
+        }),
+      )
     )
       return;
   }
   throw new Error("Purchase incident changed concurrently; retry");
 }
-export async function acceptPurchaseSubscription(
+async function acceptPurchaseSubscriptionOwned(
   guildId: string,
   subscription: StripeSubscription,
   stripe: StripeClient,
-  settlement?: SettlementInvoice,
+  settlement: SettlementInvoice | undefined,
+  owner: RuntimeBillingOwner,
 ) {
   const repo = getPurchaseRepository();
   for (let i = 0; i < 3; i++) {
@@ -79,16 +87,7 @@ export async function acceptPurchaseSubscription(
     )
       return;
     if (current.incidentKey || current.state === "needs_review") return;
-    const customerId =
-      typeof subscription.customer === "string"
-        ? subscription.customer
-        : subscription.customer.id;
-    if (
-      current.mode !== (subscription.livemode ? "live" : "test") ||
-      current.payerId !== subscription.metadata.discord_id ||
-      current.customerId !== customerId
-    )
-      throw new Error("Purchase subscription association mismatch");
+    assertPurchaseSubscriptionOwner(current, subscription);
     if (retiredPurchase(current, subscription)) return;
     const pointer = await getSubscriptionRepository().get(guildId);
     if (pointer?.stripeSubscriptionId !== subscription.id)
@@ -109,20 +108,22 @@ export async function acceptPurchaseSubscription(
             settlement,
           );
     if (
-      await repo.compareAndWrite(
-        advanceAttempt(current, {
-          ...(writerWitness ? { writerWitness } : {}),
-          state: preparedPurchaseState(prepared),
-          subscriptionId: subscription.id,
-          initialInvoiceId: preparedInvoiceId(
-            prepared,
-            current.initialInvoiceId,
-          ),
-        }),
-        current,
-        pointer,
-        undefined,
-        preparedUsage(prepared),
+      await owner.effect(() =>
+        repo.compareAndWrite(
+          advanceAttempt(current, {
+            ...(writerWitness ? { writerWitness } : {}),
+            state: preparedPurchaseState(prepared),
+            subscriptionId: subscription.id,
+            initialInvoiceId: preparedInvoiceId(
+              prepared,
+              current.initialInvoiceId,
+            ),
+          }),
+          current,
+          pointer,
+          undefined,
+          preparedUsage(prepared),
+        ),
       )
     )
       return;
@@ -130,16 +131,10 @@ export async function acceptPurchaseSubscription(
   throw new Error("Purchase attempt changed concurrently; retry");
 }
 
-export async function validatePurchaseSubscription(
-  guildId: string,
+function assertPurchaseSubscriptionOwner(
+  current: PurchaseAttempt,
   subscription: StripeSubscription,
 ) {
-  const current = await getPurchaseRepository().get(guildId);
-  if (
-    !current ||
-    current.attemptId !== subscription.metadata.purchase_attempt_id
-  )
-    return;
   const customerId =
     typeof subscription.customer === "string"
       ? subscription.customer
@@ -152,9 +147,23 @@ export async function validatePurchaseSubscription(
     throw new Error("Purchase subscription association mismatch");
 }
 
-export async function expirePurchaseAttempt(
+export async function validatePurchaseSubscription(
+  guildId: string,
+  subscription: StripeSubscription,
+) {
+  const current = await getPurchaseRepository().get(guildId);
+  if (
+    !current ||
+    current.attemptId !== subscription.metadata.purchase_attempt_id
+  )
+    return;
+  assertPurchaseSubscriptionOwner(current, subscription);
+}
+
+async function expirePurchaseAttemptOwned(
   stripe: StripeClient,
   eventSession: StripeCheckoutSession,
+  owner: RuntimeBillingOwner,
 ) {
   const guildId = eventSession.metadata?.guild_id;
   const attemptId = eventSession.metadata?.purchase_attempt_id;
@@ -174,13 +183,16 @@ export async function expirePurchaseAttempt(
   if (session.id !== eventSession.id)
     throw new Error("Purchase session mismatch");
   if (session.status !== "expired" || session.subscription) return;
+  const usage = await prepareExpiredOfferRelease(attempt, session);
   if (
-    !(await repo.compareAndWrite(
-      advanceAttempt(attempt, { state: "expired", sessionId: session.id }),
-      attempt,
-      pointer,
-      undefined,
-      await prepareExpiredOfferRelease(attempt, session),
+    !(await owner.effect(() =>
+      repo.compareAndWrite(
+        advanceAttempt(attempt, { state: "expired", sessionId: session.id }),
+        attempt,
+        pointer,
+        undefined,
+        usage,
+      ),
     ))
   )
     throw new Error("Purchase expiration changed concurrently; retry");
@@ -232,4 +244,41 @@ function preparedUsage(
   return prepared.kind === "settled" || prepared.kind === "voided"
     ? prepared.usage
     : undefined;
+}
+
+export function recordDuplicatePurchase(
+  guildId: string,
+  previous: StripeSubscription,
+  incoming: StripeSubscription,
+  owner?: RuntimeBillingOwner,
+) {
+  return runBillingOperation(owner, (admitted) =>
+    recordDuplicatePurchaseOwned(guildId, previous, incoming, admitted),
+  );
+}
+export function acceptPurchaseSubscription(
+  guildId: string,
+  subscription: StripeSubscription,
+  stripe: StripeClient,
+  settlement?: SettlementInvoice,
+  owner?: RuntimeBillingOwner,
+) {
+  return runBillingOperation(owner, (admitted) =>
+    acceptPurchaseSubscriptionOwned(
+      guildId,
+      subscription,
+      stripe,
+      settlement,
+      admitted,
+    ),
+  );
+}
+export function expirePurchaseAttempt(
+  stripe: StripeClient,
+  eventSession: StripeCheckoutSession,
+  owner?: RuntimeBillingOwner,
+) {
+  return runBillingOperation(owner, (admitted) =>
+    expirePurchaseAttemptOwned(stripe, eventSession, admitted),
+  );
 }

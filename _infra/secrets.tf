@@ -123,14 +123,14 @@ resource "aws_iam_role_policy_attachment" "ecs_task_exec_secrets_policy" {
 output "secrets_manager_arns" {
   description = "Secrets Manager ARNs for application secrets"
   value = {
-    discord_bot_token      = aws_secretsmanager_secret.discord_bot_token.arn
-    discord_client_secret  = aws_secretsmanager_secret.discord_client_secret.arn
-    oauth_secret           = aws_secretsmanager_secret.oauth_secret.arn
-    notion_client_secret   = aws_secretsmanager_secret.notion_client_secret.arn
-    openai_api_key         = aws_secretsmanager_secret.openai_api_key.arn
-    langfuse_public_key    = aws_secretsmanager_secret.langfuse_public_key.arn
-    langfuse_secret_key    = aws_secretsmanager_secret.langfuse_secret_key.arn
-    stripe_secret_key      = aws_secretsmanager_secret.stripe_secret_key.arn
-    stripe_webhook_secret  = aws_secretsmanager_secret.stripe_webhook_secret.arn
+    discord_bot_token     = aws_secretsmanager_secret.discord_bot_token.arn
+    discord_client_secret = aws_secretsmanager_secret.discord_client_secret.arn
+    oauth_secret          = aws_secretsmanager_secret.oauth_secret.arn
+    notion_client_secret  = aws_secretsmanager_secret.notion_client_secret.arn
+    openai_api_key        = aws_secretsmanager_secret.openai_api_key.arn
+    langfuse_public_key   = aws_secretsmanager_secret.langfuse_public_key.arn
+    langfuse_secret_key   = aws_secretsmanager_secret.langfuse_secret_key.arn
+    stripe_secret_key     = aws_secretsmanager_secret.stripe_secret_key.arn
+    stripe_webhook_secret = aws_secretsmanager_secret.stripe_webhook_secret.arn
   }
 }

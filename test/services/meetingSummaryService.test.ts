@@ -96,13 +96,12 @@ test("parseMeetingSummaryResponse keeps valid sentence when label is invalid", a
 });
 
 test("generateMeetingSummaries builds prompts and parses response", async () => {
-  const mockCreate = jest
-    .fn()
-    .mockResolvedValue(
-      completedTextResponse(
-        '{"summarySentence":"One sentence.","summaryLabel":"Weekly sync"}',
-      ),
-    );
+  const mockCreate = jest.fn().mockResolvedValue({
+    ...completedTextResponse(
+      '{"summarySentence":"One sentence.","summaryLabel":"Weekly sync"}',
+    ),
+    model: "returned-summary-version",
+  });
   const mockGetLangfuseChatPrompt = jest
     .fn()
     .mockImplementation(({ variables }) => ({
@@ -156,7 +155,10 @@ test("generateMeetingSummaries builds prompts and parses response", async () => 
     month: "long",
     day: "numeric",
   });
+  const acknowledged = jest.fn();
+  const observeGeneration = jest.fn(() => acknowledged);
   const result = await generateMeetingSummaries({
+    observeGeneration,
     notes: "These are the notes.",
     serverName: "Chronote HQ",
     channelName: "general",
@@ -170,6 +172,12 @@ test("generateMeetingSummaries builds prompts and parses response", async () => 
     summarySentence: "One sentence.",
     summaryLabel: "Weekly sync",
   });
+  expect(observeGeneration).toHaveBeenCalledWith(
+    "summary",
+    MODEL_SELECTION_DEFAULTS.meetingSummary,
+    { name: "chronote-meeting-summary-chat", version: 1, isFallback: true },
+  );
+  expect(acknowledged).toHaveBeenCalledWith("returned-summary-version");
   expect(mockCreate).toHaveBeenCalledTimes(1);
   const call = mockCreate.mock.calls[0][0];
   expect(call.model).toBe(MODEL_SELECTION_DEFAULTS.meetingSummary);

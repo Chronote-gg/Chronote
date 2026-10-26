@@ -1,3 +1,9 @@
+import { recordingPromptLabels } from "./recordingMetadataService";
+import {
+  isFixture,
+  fixtureLabels,
+  fixtureParticipants,
+} from "./fixtureInputService";
 import type { AudioFileData } from "../types/audio";
 import type { TranscriptCorrespondence } from "../types/transcriptCorrespondence";
 import {
@@ -36,7 +42,7 @@ import {
   isMentionableRole,
   selectRolesForPrompt,
 } from "./notesPromptService";
-import { resolveMeetingAttendees } from "../utils/meetingAttendees";
+
 import { formatParticipantLabel } from "../utils/participants";
 import { getBotNameVariants } from "../utils/botNames";
 import { resolveAudioFileTranscript } from "../utils/audioTranscript";
@@ -135,7 +141,10 @@ function snapshotDynamic(
   meeting: MeetingData,
   frozen: Frozen,
 ): GenerationContextCheckpoint {
-  const participants = Array.from(meeting.participants.values(), (p) => ({
+  const fixture = isFixture(meeting);
+  const selected =
+    fixtureParticipants(meeting) ?? Array.from(meeting.participants.values());
+  const participants = Array.from(selected, (p) => ({
     id: p.id,
     username: p.username,
     displayName: p.displayName,
@@ -143,10 +152,12 @@ function snapshotDynamic(
     tag: p.tag,
     roleIds: p.roleIds,
   }));
-  const roles = meeting.guild.roles
-    .valueOf()
-    .filter((role) => isMentionableRole(role, meeting.guildId))
-    .map((role) => ({ id: role.id, name: role.name }));
+  const roles = fixture
+    ? []
+    : meeting.guild.roles
+        .valueOf()
+        .filter((role) => isMentionableRole(role, meeting.guildId))
+        .map((role) => ({ id: role.id, name: role.name }));
   return generationContextSchema.parse({
     schemaVersion: 1,
     kind: "generation_context",
@@ -155,27 +166,11 @@ function snapshotDynamic(
     completion: completionSnapshot(meeting),
     captureIncomplete: meeting.audioData.captureIncomplete,
     creatorId: meeting.creator.id,
-    serverName: meeting.guild.name,
-    serverDescription: meeting.guild.description ?? "",
-    voiceChannelName: meeting.voiceChannel.name,
-    events: meeting.guild.scheduledEvents
-      .valueOf()
-      .map((event) => event.name)
-      .join(", "),
-    channelNames: meeting.guild.channels
-      .valueOf()
-      .map((channel) => channel.name)
-      .join(", "),
-    botDisplayName:
-      meeting.guild.members.me?.displayName ||
-      meeting.guild.members.me?.nickname ||
-      meeting.guild.members.me?.user.username ||
-      "Meeting Notes Bot",
-    botNames: getBotNameVariants(
-      meeting.guild.members.me,
-      meeting.guild.client.user,
-    ),
-    tags: [...(meeting.tags ?? [])],
+    ...recordingPromptLabels(meeting),
+    botNames: fixture
+      ? [fixtureLabels.botDisplayName]
+      : getBotNameVariants(meeting.guild.members.me, meeting.guild.client.user),
+    tags: fixture ? [] : [...(meeting.tags ?? [])],
     participants,
     attendance: [...meeting.attendance],
     mentionableRoles: roles,
@@ -188,22 +183,19 @@ function snapshotDynamic(
         new Map(roles.map((role) => [role.id, role.name])),
       ) ?? "No participant roster captured.",
     roleRoster: formatRoleRoster(roles, participants),
-    cleanupRoleNames: meeting.guild.roles
-      .valueOf()
-      .map((role) => role.name)
-      .join(", "),
-    attendees: resolveMeetingAttendees(meeting).join(", "),
-    chatContext:
-      formatChatLogForPrompt({
-        chatLog: meeting.chatLog,
-        runtimeConfig:
-          frozen.settings.availability === "available" && meeting.runtimeConfig
-            ? {
-                ...meeting.runtimeConfig,
-                visionCaptions: frozen.settings.value.visionCaptions,
-              }
-            : undefined,
-      }) ?? "",
+    chatContext: fixture
+      ? ""
+      : (formatChatLogForPrompt({
+          chatLog: meeting.chatLog,
+          runtimeConfig:
+            frozen.settings.availability === "available" &&
+            meeting.runtimeConfig
+              ? {
+                  ...meeting.runtimeConfig,
+                  visionCaptions: frozen.settings.value.visionCaptions,
+                }
+              : undefined,
+        }) ?? ""),
     settings: frozen.settings,
     context: frozen.context,
     prompts: frozen.prompts,
@@ -460,11 +452,13 @@ async function captureContext(
     try {
       frozen.recentMeetingNames = {
         availability: "available",
-        value: await listRecentMeetingNamesForPrompt({
-          guildId: meeting.guildId,
-          excludeMeetingId: meeting.meetingId,
-          signal,
-        }),
+        value: isFixture(meeting)
+          ? ""
+          : await listRecentMeetingNamesForPrompt({
+              guildId: meeting.guildId,
+              excludeMeetingId: meeting.meetingId,
+              signal,
+            }),
       };
     } catch {
       frozen.recentMeetingNames = { availability: "unavailable" };
@@ -472,6 +466,9 @@ async function captureContext(
   }
 }
 /** The actual bounded lookup promise is exposed to R3; capture never awaits it. */
+function initialContextValue(meeting: MeetingData) {
+  return isFixture(meeting) ? undefined : meeting.meetingContext;
+}
 export function startRecordingContentCheckpoint(meeting: MeetingData): void {
   if (
     snapshots.has(meeting) ||
@@ -488,7 +485,7 @@ export function startRecordingContentCheckpoint(meeting: MeetingData): void {
     recentMeetingNames: { availability: "unavailable" },
     context: {
       availability: "unavailable",
-      meetingContext: meeting.meetingContext,
+      meetingContext: initialContextValue(meeting),
       recentMeetings: [],
       dictionaryEntries: [],
       formattedContext: "",
