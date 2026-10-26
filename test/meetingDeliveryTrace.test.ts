@@ -33,13 +33,9 @@ it("retains the primary finalization exception when a delivery also failed", asy
 jest.mock("../src/services/langfuseClient", () => ({
   isLangfuseTracingEnabled: () => true,
 }));
-jest.mock("@langfuse/tracing", () => ({
-  propagateAttributes: (_attributes: unknown, run: () => unknown) => run(),
-  startActiveObservation: (_name: string, run: (span: unknown) => unknown) =>
-    run({ otelSpan: { spanContext: () => ({}) } }),
-  setActiveTraceIO: jest.fn(),
-  updateActiveObservation: jest.fn(),
-}));
+jest.mock("@langfuse/tracing", () =>
+  jest.requireActual("./fixtures/langfuseTracing"),
+);
 
 it("marks the parent trace degraded after a caught delivery failure while letting finalization finish", async () => {
   const meeting = {

@@ -228,6 +228,14 @@ Optional Windows helper (prints loaded env, supports `-Mock` / `-SkipDocker`):
 - Create a dedicated Discord text channel and voice channel for the branch, then use those for testing.
 - If `.env` changes on main, re-run the script or copy `.env` into the worktree.
 
+## Dependency maintenance
+
+- The weekly maintenance job covers Chronote and chronote-ops, consolidates dependency PRs, checks compatible upgrades and leaves merging to a human.
+- Stripe 23 uses API `2026-09-30.endive`; billing-cycle anchor requests use `{ type: "now" }`. Langfuse 6 records trace input/output on the root observation.
+
+- Dependabot proposes one cross-ecosystem version-update PR each Monday at 09:00 UTC, including desktop npm and Rust dependencies. Security updates are grouped within each ecosystem and may arrive outside that schedule.
+- Consolidate outstanding dependency PRs on current master, retain intentional compatibility ignores and security resolutions, run the normal quality gates, and close superseded PRs only after the replacement is published with their links.
+
 ## Checks
 
 - Set up the pinned shared tool through `QUALITY_RATCHET_HOME`, then run `yarn check:quality` before committing and `yarn test:quality` after consumer workflow or launcher changes. Keep engine changes in BASIC-BIT/quality-ratchet. Include tests, fixtures, mocks, stories, and module variants.

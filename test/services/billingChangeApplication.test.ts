@@ -1,4 +1,5 @@
 import Stripe from "stripe";
+import { stripeTransport } from "../fixtures/stripeTransport";
 import { changeSourceFingerprint } from "../../src/services/billingChangeProvider";
 /** @jest-environment node */
 import {
@@ -56,7 +57,7 @@ it.each(["classic", "flexible"] as const)(
     });
   },
 );
-it("starts a full new year without recalculating the approved unused source credit", () => {
+it("starts a full new year without recalculating the approved unused source credit", async () => {
   const request = buildChangeApplicationRequest({
     ...operation,
     target: {
@@ -65,11 +66,17 @@ it("starts a full new year without recalculating the approved unused source cred
     },
   });
   expect(request).toMatchObject({
-    billing_cycle_anchor: "now",
+    billing_cycle_anchor: { type: "now" },
     proration_behavior: "none",
   });
   expect(request).not.toHaveProperty("proration_date");
   expect(request.add_invoice_items?.[0].price_data?.unit_amount).toBe(-1200);
+  const transport = stripeTransport(() => ({ id: "sub_fixture" }));
+  await transport.stripe.subscriptions.update("sub_fixture", request);
+  expect(transport.requests[0].fields.get("billing_cycle_anchor[type]")).toBe(
+    "now",
+  );
+  expect(transport.requests[0].fields.has("billing_cycle_anchor")).toBe(false);
 });
 it("never accepts an application invoice as an extra payment", () => {
   const subscription = {
