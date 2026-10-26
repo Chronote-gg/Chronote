@@ -8,6 +8,13 @@ encrypted with a dedicated KMS key, and has S3 public access blocking enabled.
 
 Apply this bootstrap stack before initializing the main infrastructure backend.
 
+## Container image retention
+
+The ECR lifecycle policy keeps the last two untagged images and retains tagged
+release images until a separately reviewed retirement. Tagged releases accumulate,
+so storage use can grow. Merging this source change does not update ECR. The policy
+takes effect only after a separate reviewed Terraform apply.
+
 ## Observability (AMP + AMG)
 
 This stack provisions:
