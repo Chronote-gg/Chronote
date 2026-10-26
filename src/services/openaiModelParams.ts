@@ -33,6 +33,9 @@ type ModelCapabilities = {
   supportsVerbosity: boolean;
   temperatureRequiresReasoningNone: boolean;
   supportedReasoningEfforts: ModelReasoningEffort[];
+  reasoningEffortFallbacks?: Partial<
+    Record<ModelReasoningEffort, ModelReasoningEffort>
+  >;
 };
 
 const REASONING_ORDER: ModelReasoningEffort[] = [
@@ -111,8 +114,32 @@ const applyReasoningMode = (params: {
   }
 };
 
+const resolveGpt6Capabilities = (
+  normalized: string,
+): ModelCapabilities | undefined => {
+  const required = ["gpt-6.1-sol", "gpt-6-astra"].some((prefix) =>
+    normalized.startsWith(prefix),
+  );
+  const optional = ["gpt-6-sol", "gpt-6-luna"].some((prefix) =>
+    normalized.startsWith(prefix),
+  );
+  if (!required && !optional) return undefined;
+  return {
+    supportsReasoning: true,
+    supportsTemperature: optional,
+    supportsVerbosity: true,
+    temperatureRequiresReasoningNone: optional,
+    supportedReasoningEfforts: required
+      ? ["low", "medium", "high", "xhigh", "max"]
+      : ["none", "low", "medium", "high", "xhigh", "max"],
+    reasoningEffortFallbacks: { minimal: "low" },
+  };
+};
+
 const resolveModelCapabilities = (model: string): ModelCapabilities => {
   const normalized = model.trim().toLowerCase();
+  const current = resolveGpt6Capabilities(normalized);
+  if (current) return current;
   const base: ModelCapabilities = {
     supportsReasoning: false,
     supportsTemperature: true,
@@ -277,7 +304,8 @@ export const resolveChatParamsForRole = (options: {
   const capabilities = resolveModelCapabilities(options.model);
   const temperature = clampTemperature(config.temperature);
   const reasoningEffort = pickReasoningEffort(
-    config.reasoningEffort,
+    capabilities.reasoningEffortFallbacks?.[config.reasoningEffort] ??
+      config.reasoningEffort,
     capabilities.supportedReasoningEfforts,
   );
 

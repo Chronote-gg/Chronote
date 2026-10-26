@@ -15,7 +15,7 @@ describe("modelChoiceService", () => {
     const resolved = resolveModelChoicesByRole(snapshot);
     expect(resolved.notes).toBe(MODEL_SELECTION_DEFAULTS.notes);
     expect(resolved.transcription).toBe(MODEL_SELECTION_DEFAULTS.transcription);
-    expect(resolved.notes).toBe("gpt-5.2");
+    expect(resolved.notes).toBe("gpt-6.1-sol");
     expect(resolved.ask).toBe("gpt-4o-mini");
     expect(resolved.liveVoiceGate).toBe("gpt-5-mini");
     expect(resolved.imageCaption).toBe("gpt-4o-mini");

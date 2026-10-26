@@ -1,10 +1,13 @@
 import { getMeetingProcessingSignal } from "./services/meetingProcessingLifetime";
 import { MeetingData } from "./types/meeting-data";
 import { config } from "./services/configService";
-import { createOpenAIClient } from "./services/openaiClient";
+import { generateOpenAIText } from "./services/openaiTextService";
 import { buildModelOverrides, getModelChoice } from "./services/modelFactory";
 import { resolveChatParamsForRole } from "./services/openaiModelParams";
-import { getLangfuseChatPrompt } from "./services/langfusePromptService";
+import {
+  getLangfuseChatPrompt,
+  type ChatMessage,
+} from "./services/langfusePromptService";
 import {
   buildLiveResponderContext,
   LatestUtterance,
@@ -75,6 +78,36 @@ function isAddressed(text: string, meeting: MeetingData): boolean {
   return botNames.some((name) => name && lower.includes(name));
 }
 
+async function generateGateJson({
+  meeting,
+  input,
+  tracing,
+}: {
+  meeting: MeetingData;
+  input: ChatMessage[];
+  tracing: NonNullable<Parameters<typeof generateOpenAIText>[0]["tracing"]>;
+}) {
+  const { model } = getModelChoice(
+    "liveVoiceGate",
+    buildModelOverrides(meeting.runtimeConfig?.modelChoices),
+  );
+  const modelParams = resolveChatParamsForRole({
+    role: "liveVoiceGate",
+    model,
+    config: meeting.runtimeConfig?.modelParams?.liveVoiceGate,
+  });
+  const content = await generateOpenAIText({
+    model,
+    input,
+    modelParams,
+    format: { kind: "json_object" },
+    maxOutputTokens: config.liveVoice.gateMaxOutputTokens,
+    signal: getMeetingProcessingSignal(meeting),
+    tracing,
+  });
+  return { content, model };
+}
+
 async function shouldAct(
   meeting: MeetingData,
   segment: LiveSegment,
@@ -103,51 +136,27 @@ async function shouldAct(
   });
 
   try {
-    const modelChoice = getModelChoice(
-      "liveVoiceGate",
-      buildModelOverrides(meeting.runtimeConfig?.modelChoices),
-    );
-    const modelParams = resolveChatParamsForRole({
-      role: "liveVoiceGate",
-      model: modelChoice.model,
-      config: meeting.runtimeConfig?.modelParams?.liveVoiceGate,
-    });
-    const openAIClient = createOpenAIClient({
-      traceName: "live-voice-gate",
-      generationName: "live-voice-gate",
-      userId: segment.userId,
-      sessionId: meeting.meetingId,
-      tags: ["feature:live_voice_gate"],
-      metadata: {
-        guildId: meeting.guild.id,
-        channelId: meeting.voiceChannel.id,
-      },
-      langfusePrompt,
-    });
     const signal = getMeetingProcessingSignal(meeting);
     signal.throwIfAborted();
-    const completion = await openAIClient.chat.completions.create(
-      {
-        model: modelChoice.model,
-        messages,
-        max_completion_tokens: config.liveVoice.gateMaxOutputTokens,
-        response_format: { type: "json_object" },
-        ...modelParams,
+    const { content, model } = await generateGateJson({
+      meeting,
+      input: messages,
+      tracing: {
+        traceName: "live-voice-gate",
+        generationName: "live-voice-gate",
+        userId: segment.userId,
+        sessionId: meeting.meetingId,
+        tags: ["feature:live_voice_gate"],
+        metadata: {
+          guildId: meeting.guild.id,
+          channelId: meeting.voiceChannel.id,
+        },
+        langfusePrompt,
       },
-      { signal },
-    );
+    });
     signal.throwIfAborted();
 
-    const content = completion.choices[0].message.content ?? "";
-    const finish = completion.choices[0].finish_reason;
-    console.log(
-      `[live-voice][gate] model=${modelChoice.model} finish=${finish} raw=${content}`,
-    );
-
-    if (!content.trim()) {
-      console.warn("[live-voice][gate] empty content from gate model");
-      return { action: "none" };
-    }
+    console.log(`[live-voice][gate] model=${model} raw=${content}`);
 
     const parsed = JSON.parse(content) as GateDecision;
     if (
@@ -197,39 +206,35 @@ async function generateReply(
       model: modelChoice.model,
       config: meeting.runtimeConfig?.modelParams?.liveVoiceResponder,
     });
-    const openAIClient = createOpenAIClient({
-      traceName: "live-voice-responder",
-      generationName: "live-voice-responder",
-      userId: segment.userId,
-      sessionId: meeting.meetingId,
-      tags: ["feature:live_voice_responder"],
-      metadata: {
-        guildId: meeting.guild.id,
-        channelId: meeting.voiceChannel.id,
-      },
-      langfusePrompt,
-    });
     const signal = getMeetingProcessingSignal(meeting);
     signal.throwIfAborted();
-    const completion = await openAIClient.chat.completions.create(
-      {
-        model: modelChoice.model,
-        messages,
-        max_completion_tokens: 200,
-        ...modelParams,
+    const content = await generateOpenAIText({
+      model: modelChoice.model,
+      input: messages,
+      modelParams,
+      maxOutputTokens: 200,
+      signal,
+      tracing: {
+        traceName: "live-voice-responder",
+        generationName: "live-voice-responder",
+        userId: segment.userId,
+        sessionId: meeting.meetingId,
+        tags: ["feature:live_voice_responder"],
+        metadata: {
+          guildId: meeting.guild.id,
+          channelId: meeting.voiceChannel.id,
+        },
+        langfusePrompt,
       },
-      { signal },
-    );
+    });
     signal.throwIfAborted();
 
-    const content = completion.choices[0].message.content ?? "";
     console.log(
       `[live-voice][responder] model=${modelChoice.model} ` +
         `windowLines=${debug.windowLines} pastMeetings=${
           debug.pastMeetings.map((m) => m.meetingId).join(",") || "none"
         }`,
     );
-    if (!content.trim()) return undefined;
     return content.trim();
   } catch (error) {
     getMeetingProcessingSignal(meeting).throwIfAborted();
@@ -299,51 +304,27 @@ async function classifyConfirmation(
   });
 
   try {
-    const modelChoice = getModelChoice(
-      "liveVoiceGate",
-      buildModelOverrides(meeting.runtimeConfig?.modelChoices),
-    );
-    const modelParams = resolveChatParamsForRole({
-      role: "liveVoiceGate",
-      model: modelChoice.model,
-      config: meeting.runtimeConfig?.modelParams?.liveVoiceGate,
-    });
-    const openAIClient = createOpenAIClient({
-      traceName: "live-voice-confirm",
-      generationName: "live-voice-confirm",
-      userId: segment.userId,
-      sessionId: meeting.meetingId,
-      tags: ["feature:live_voice_confirm"],
-      metadata: {
-        guildId: meeting.guild.id,
-        channelId: meeting.voiceChannel.id,
-      },
-      langfusePrompt,
-    });
     const signal = getMeetingProcessingSignal(meeting);
     signal.throwIfAborted();
-    const completion = await openAIClient.chat.completions.create(
-      {
-        model: modelChoice.model,
-        messages,
-        max_completion_tokens: config.liveVoice.gateMaxOutputTokens,
-        response_format: { type: "json_object" },
-        ...modelParams,
+    const { content, model } = await generateGateJson({
+      meeting,
+      input: messages,
+      tracing: {
+        traceName: "live-voice-confirm",
+        generationName: "live-voice-confirm",
+        userId: segment.userId,
+        sessionId: meeting.meetingId,
+        tags: ["feature:live_voice_confirm"],
+        metadata: {
+          guildId: meeting.guild.id,
+          channelId: meeting.voiceChannel.id,
+        },
+        langfusePrompt,
       },
-      { signal },
-    );
+    });
     signal.throwIfAborted();
 
-    const content = completion.choices[0].message.content ?? "";
-    const finish = completion.choices[0].finish_reason;
-    console.log(
-      `[live-voice][confirm] model=${modelChoice.model} finish=${finish} raw=${content}`,
-    );
-
-    if (!content.trim()) {
-      console.warn("[live-voice][confirm] empty content from gate model");
-      return { decision: "unclear" };
-    }
+    console.log(`[live-voice][confirm] model=${model} raw=${content}`);
 
     const parsed = JSON.parse(content) as ConfirmationDecision;
     if (

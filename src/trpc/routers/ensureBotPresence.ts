@@ -21,6 +21,14 @@ export async function ensureBotPresence(ctx: TrpcContext, serverId: string) {
     }
     return;
   }
+  await requireBotInGuild(serverId);
+  sessionData.botGuildIds = Array.from(
+    new Set([...(sessionData.botGuildIds ?? []), serverId]),
+  );
+  sessionData.botGuildIdsFetchedAt = Date.now();
+}
+
+export async function requireBotInGuild(serverId: string): Promise<void> {
   const botCheck = await ensureBotInGuild(serverId);
   if (botCheck === null) {
     throw new TRPCError({
@@ -34,8 +42,4 @@ export async function ensureBotPresence(ctx: TrpcContext, serverId: string) {
       message: "Bot is not in that guild",
     });
   }
-  sessionData.botGuildIds = Array.from(
-    new Set([...(sessionData.botGuildIds ?? []), serverId]),
-  );
-  sessionData.botGuildIdsFetchedAt = Date.now();
 }

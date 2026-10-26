@@ -68,11 +68,13 @@ const buildParticipant = (): Participant => ({
 
 const loadModule = async (responseContent: string) => {
   jest.resetModules();
-  const completionCreate = jest.fn().mockResolvedValue({
-    choices: [{ message: { content: responseContent } }],
+  const responsesCreate = jest.fn().mockResolvedValue({
+    status: "completed",
+    output_text: responseContent,
+    output: [],
   });
   const createOpenAIClient = jest.fn(() => ({
-    chat: { completions: { create: completionCreate } },
+    responses: { create: responsesCreate },
   }));
 
   jest.doMock("../../src/services/openaiClient", () => ({
@@ -80,12 +82,12 @@ const loadModule = async (responseContent: string) => {
   }));
 
   const module = await import("../../src/services/imageCaptionService");
-  return { module, completionCreate };
+  return { module, responsesCreate };
 };
 
 describe("imageCaptionService", () => {
   test("captionMeetingImages captions image attachments and writes fields", async () => {
-    const { module, completionCreate } = await loadModule(
+    const { module, responsesCreate } = await loadModule(
       JSON.stringify({
         caption: "A diagram of the system.",
         visibleText: "Build -> Test -> Deploy",
@@ -125,13 +127,32 @@ describe("imageCaptionService", () => {
 
     expect(result.candidates).toBe(1);
     expect(result.captioned).toBe(1);
-    expect(completionCreate).toHaveBeenCalledWith(
+    expect(responsesCreate).toHaveBeenCalledWith(
       expect.objectContaining({
         model: "gpt-5.6-luna",
         temperature: 0,
-        reasoning_effort: "none",
-        max_completion_tokens: 300,
-        response_format: { type: "json_object" },
+        reasoning: { effort: "none" },
+        max_output_tokens: 300,
+        text: { format: { type: "json_object" } },
+        store: false,
+        input: [
+          expect.objectContaining({ role: "system" }),
+          {
+            role: "user",
+            content: [
+              {
+                type: "input_text",
+                text: "Caption this image and extract visible text. Filename: diagram.png",
+              },
+              {
+                type: "input_image",
+                image_url:
+                  "https://cdn.discordapp.com/attachments/mock/diagram.png",
+                detail: "low",
+              },
+            ],
+          },
+        ],
       }),
       expect.objectContaining({
         signal: expect.any(Object),
@@ -227,7 +248,7 @@ describe("imageCaptionService", () => {
 });
 
 test("interruption holds actual caption SDK and fences late attachment writes", async () => {
-  const { module, completionCreate } = await loadModule("{}");
+  const { module, responsesCreate } = await loadModule("{}");
   const { stopMeetingProcessing } =
     await import("../../src/services/meetingProcessingLifetime");
   const attachment = {
@@ -249,7 +270,7 @@ test("interruption holds actual caption SDK and fences late attachment writes", 
     },
   ]);
   let release!: (value: unknown) => void;
-  completionCreate.mockReturnValueOnce(
+  responsesCreate.mockReturnValueOnce(
     new Promise((done) => {
       release = done;
     }),
@@ -265,15 +286,11 @@ test("interruption holds actual caption SDK and fences late attachment writes", 
   });
   await Promise.resolve();
   const heldBeforeRelease = !drained;
-  const signal = completionCreate.mock.calls[0][1].signal as AbortSignal;
+  const signal = responsesCreate.mock.calls[0][1].signal as AbortSignal;
   release({
-    choices: [
-      {
-        message: {
-          content: JSON.stringify({ caption: "late", visibleText: "" }),
-        },
-      },
-    ],
+    status: "completed",
+    output_text: JSON.stringify({ caption: "late", visibleText: "" }),
+    output: [],
   });
   await drain;
   expect(await outcome).toBe("cancelled");

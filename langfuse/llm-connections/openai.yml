@@ -4,6 +4,7 @@ secretKeyEnv: OPENAI_API_KEY
 baseUrl: https://api.openai.com/v1
 withDefaultModels: true
 customModels:
+  - gpt-6.1-sol
   - gpt-5.2
   - gpt-5.1
   - gpt-5-mini
@@ -11,3 +12,5 @@ customModels:
   - gpt-4o-transcribe-diarize
 extraHeadersEnv:
   OpenAI-Project: OPENAI_PROJECT_ID
+config:
+  useResponsesApi: false

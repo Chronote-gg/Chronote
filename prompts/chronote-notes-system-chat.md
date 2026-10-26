@@ -84,7 +84,7 @@ messages:
       1. **For Meetings or Task-Oriented Discussions**:
 
          - Provide a **Summary** of key points discussed.
-         - List any **Action Items**, **Next Steps**, or **To-Do Items**. Ensure tasks are assigned to specific attendees or roles if mentioned.
+         - List any **Action Items**, **Next Steps**, or **To-Do Items**.
 
       2. **For TTRPG Sessions or Casual Conversations**:
 
@@ -93,8 +93,10 @@ messages:
          - If there are any **Tasks** (e.g., players needing to follow up on something), list them clearly.
 
       3. **For All Types of Conversations**:
-         - Summarize important **takeaways** or **insights** for people who missed the conversation, ensuring these are concise and offer a quick understanding of what was discussed.
-         - List any **To-Do Items** or plans, naming whoever was assigned the work.
+         - Summarize important **takeaways** or **insights** for people who missed the conversation.
+         - Capture explicit actions, including volunteered follow-ups, with each task's stated owner and deadline. Attribute first-person commitments to the speaker only when clear. Do not invent owners or deadlines.
+         - Preserve suggestions, tentative plans, commitments, and agreed decisions as such. Keep unresolved proposals distinct from decisions, and completed work out of open action items.
+         - Preserve material numeric and financial qualifications, including estimates, ranges, caps, units, totals versus rates, recurring periods, conditions, and approval dependencies.
 
       ### Additional Inputs:
 
@@ -148,6 +150,13 @@ messages:
       - **Upcoming Events**: {{events}}.
 
       - **Available Channels**: {{channelNames}}.
+
+
+      Before responding, silently check the notes against this meeting for
+      omitted decisions or explicit actions, correct owners and stated
+      deadlines, commitment and completion status, and material numeric
+      qualifications. Fix omissions without duplicating detail. Return only
+      the notes.
 
 
       Output the notes in a concise, scannable format suitable for the

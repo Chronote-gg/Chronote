@@ -194,3 +194,40 @@ test("redacts recording-limit URL values before automatic capture", () => {
   expect(decodeURIComponent(redacted)).not.toContain("untrusted-value");
   expect(decodeURIComponent(redacted)).not.toContain("also-untrusted");
 });
+
+test("redacts first-meeting targets in URLs, referrers, links and nested sign-in returns", () => {
+  const historyId = "333333333333333333#2026-10-19T12:00:00.000Z";
+  const serverId = "111111111111111111";
+  const guide = `https://chronote.gg/join?serverId=${serverId}&historyId=${encodeURIComponent(historyId)}`;
+  const meeting = `https://chronote.gg/portal/meetings/${serverId}/${encodeURIComponent(historyId)}`;
+  const payload = {
+    $current_url: guide,
+    $referrer: meeting,
+    elements: [{ attr__href: meeting }],
+    nested: `/auth/discord?redirect=${encodeURIComponent(guide)}`,
+    deeplyEncoded: `/auth/discord?redirect=${encodeURIComponent(`/auth/discord?redirect=${encodeURIComponent(meeting)}`)}`,
+  };
+  const redacted = JSON.stringify(redactDeep(payload));
+  expect(redacted).not.toContain(serverId);
+  expect(redacted).not.toContain("333333333333333333");
+  expect(redacted).toContain("/join");
+  expect(payload.$current_url).toBe(guide);
+});
+
+test.each([
+  "https://discord.com/channels/111111111111111111/444444444444444444/555555555555555555",
+  "https://discord.com/channels/111111111111111111/444444444444444444",
+  "https://discord.com/channels/111111111111111111",
+  "/auth?redirect=https%3A%2F%2Fdiscord.com%2Fchannels%2F111111111111111111%2F444444444444444444%2F555555555555555555",
+  "/auth?redirect=%2Fauth%3Fredirect%3Dhttps%253A%252F%252Fdiscord.com%252Fchannels%252F111111111111111111%252F444444444444444444",
+])(
+  "removes Discord destination identifiers from analytics copies: %s",
+  (href) => {
+    const payload = { elements: [{ nested: { attr__href: href } }] };
+    const sanitized = JSON.stringify(redactDeep(payload));
+    expect(sanitized).not.toContain("111111111111111111");
+    expect(sanitized).not.toContain("444444444444444444");
+    expect(sanitized).not.toContain("555555555555555555");
+    expect(payload.elements[0].nested.attr__href).toBe(href);
+  },
+);

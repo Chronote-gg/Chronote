@@ -368,3 +368,17 @@ test("native protection accepts AWS short task ARN responses", async () => {
     true,
   );
 });
+
+test("ordinary prepare refuses missing legacy Control before any provider mutation", async () => {
+  const f = fixture();
+  f.aws.mockResolvedValueOnce({});
+  await expect(f.coordinator.prepare()).rejects.toThrow(
+    "Compatible ECS control required",
+  );
+  expect(f.aws).toHaveBeenCalledTimes(1);
+  expect(f.aws).toHaveBeenCalledWith(
+    "dynamodb",
+    "get-item",
+    expect.objectContaining({ ConsistentRead: true }),
+  );
+});

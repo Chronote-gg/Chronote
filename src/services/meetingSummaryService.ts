@@ -4,7 +4,7 @@ import { config } from "./configService";
 import type { SpanContext } from "@opentelemetry/api";
 import { formatLongDate } from "../utils/time";
 import { getLangfuseChatPrompt } from "./langfusePromptService";
-import { createOpenAIClient } from "./openaiClient";
+import { generateOpenAIText } from "./openaiTextService";
 import { getModelChoice } from "./modelFactory";
 import { resolveChatParamsForRole } from "./openaiModelParams";
 import type { ModelParamConfig } from "../config/types";
@@ -150,30 +150,27 @@ export async function generateMeetingSummaries(
         model: modelChoice.model,
         config: input.modelParams,
       });
-    const openAIClient = createOpenAIClient({
-      traceName: "meeting-summary",
-      generationName: "meeting-summary",
-      tags: ["feature:meeting_summary"],
-      metadata: {
-        serverName: input.serverName,
-        channelName: input.channelName,
+    input.signal?.throwIfAborted();
+    const content = await generateOpenAIText({
+      model: modelChoice.model,
+      input: messages,
+      modelParams: chatParams,
+      format: { kind: "json_object" },
+      maxOutputTokens: 160,
+      signal: input.signal,
+      tracing: {
+        traceName: "meeting-summary",
+        generationName: "meeting-summary",
+        tags: ["feature:meeting_summary"],
+        metadata: {
+          serverName: input.serverName,
+          channelName: input.channelName,
+        },
+        langfusePrompt,
+        parentSpanContext: input.parentSpanContext,
       },
-      langfusePrompt,
-      parentSpanContext: input.parentSpanContext,
     });
     input.signal?.throwIfAborted();
-    const completion = await openAIClient.chat.completions.create(
-      {
-        model: modelChoice.model,
-        messages,
-        ...chatParams,
-        response_format: { type: "json_object" },
-        max_completion_tokens: 160,
-      },
-      input.signal ? { signal: input.signal } : undefined,
-    );
-    input.signal?.throwIfAborted();
-    const content = completion.choices[0]?.message?.content ?? "";
     return parseMeetingSummaryResponse(content) ?? {};
   } catch (error) {
     input.signal?.throwIfAborted();

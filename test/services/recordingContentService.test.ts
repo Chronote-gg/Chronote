@@ -36,7 +36,6 @@ jest.mock("../../src/services/transcriptionService", () => ({
     status: "succeeded",
     text: "Recovered true tail",
   })),
-  cleanupTranscription: jest.fn(),
 }));
 import {
   subscribeToUserVoice,
@@ -44,14 +43,24 @@ import {
   userStopTalking,
   clearSnippetTimer,
   startProcessingSnippet,
-  compileTranscriptions,
   stopRecordingCapture,
   waitForCaptureStreamSettlement,
 } from "../../src/audio";
+import { compileTranscriptions } from "../../src/services/transcriptCompilationService";
+import { cleanupContentTranscription } from "../../src/services/transcriptionCleanupService";
+jest.mock("../../src/services/transcriptionCleanupService", () => ({
+  ...jest.requireActual("../../src/services/transcriptionCleanupService"),
+  cleanupContentTranscription: jest.fn(),
+}));
+jest.mock("../../src/services/transcriptionPromptService", () => ({
+  ...jest.requireActual("../../src/services/transcriptionPromptService"),
+  getTranscriptionCleanupPrompt: jest.fn(async () => ({
+    messages: [{ role: "system", content: "Synthetic cleanup prompt" }],
+  })),
+}));
 import {
   transcribeSnippet,
   transcribeContentSnippet,
-  cleanupTranscription,
 } from "../../src/services/transcriptionService";
 import { recoverTranscript } from "../../src/services/meetingRecoveryContent";
 import { recoveryFixture } from "./meetingRecoveryFixtures";
@@ -734,16 +743,22 @@ test("actual compile freezes selected membership before asynchronous cleanup", a
     cleanupEnabled: true,
   });
   let complete!: (text: string) => void;
-  jest.mocked(cleanupTranscription).mockReturnValueOnce(
-    new Promise((resolve) => {
+  let executionEntered!: () => void;
+  const entered = new Promise<void>((resolve) => {
+    executionEntered = resolve;
+  });
+  jest.mocked(cleanupContentTranscription).mockImplementationOnce(() => {
+    executionEntered();
+    return new Promise((resolve) => {
       complete = resolve;
-    }),
-  );
+    });
+  });
   guardRecordingFinalization(meeting);
   const compiled = compileTranscriptions(
     { users: { cache: new Map() } } as never,
     meeting,
   );
+  await entered;
   meeting.audioData.audioFiles.push({
     userId: "speaker",
     timestamp: 3000,

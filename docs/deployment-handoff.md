@@ -2,7 +2,7 @@
 
 This change lets a healthy replacement accept new work while the previous runtime finishes its recordings. It also preserves verified recording material for offline recovery after an interruption. The approved scope is implementation and review in one product PR. Deployment and hosted acceptance require a separate instruction for this task.
 
-Local tests and generated native fixtures provide different evidence. Neither establishes the current Sandbox or production runtime. First activation remains blocked until an approved introduction procedure can prevent legacy admission races and preserve a compatible rollback route.
+Local tests and generated native fixtures provide different evidence. Neither establishes the current Sandbox or production runtime. The one-time [production introduction procedure](production-introduction.md) defines the legacy admission fence, compatible fallback and preservation requirements. Its source is staged, but activation remains blocked on the post-bind human gate, private durable delivery, trusted collector/store and separate operational approval.
 
 ## What a participant experiences
 
@@ -42,7 +42,7 @@ Recovery never rejoins voice. Successful notes do not make interrupted capture c
 
 An ECS control cannot be bootstrapped by a local identity. Local bootstrap is restricted to explicit mock storage or opted-in loopback DynamoDB with local/dummy credentials. It preserves existing leases, histories and unresolved voice guards, retains fresh disjoint bot/API members and refuses overlapping fresh owners.
 
-Both workflows use the same coordinator. It requests minimum healthy percent 100, maximum percent 200, unchanged desired count and stopTimeout 120. ECS early success uses healthyPercent 100 with sourceServiceRevisionCleanup `DEFERRED`. That result is not application readiness, promotion or retirement. A health-only listener starts before bounded exact-task protection retries; full application readiness remains unqualified until protection and boot complete. Early health does not grant user traffic; the routing contract below keeps warming candidates at zero weight.
+For normal compatible deployments, both workflows use the same coordinator. The one-time [production introduction](production-introduction.md) is separate and cannot be inferred from a successful build or image publication. The normal coordinator requests minimum healthy percent 100, maximum percent 200, unchanged desired count and stopTimeout 120. ECS early success uses healthyPercent 100 with sourceServiceRevisionCleanup `DEFERRED`. That result is not application readiness, promotion or retirement. A health-only listener starts before bounded exact-task protection retries; full application readiness remains unqualified until protection and boot complete. Early health does not grant user traffic; the routing contract below keeps warming candidates at zero weight.
 
 After promotion, existing work renews and finishes under its original claim. Runtime retirement moves through `draining`, `releasing`, then `retired`. The releasing state is durable before the native disable call. Unknown disable outcomes retain uncertainty. A coordinator never uses a missing task, lease expiry or zero cached counters to release protection.
 
@@ -108,7 +108,7 @@ Before final summary or notes mutations, ordinary finalization persists coarse d
 
 ## Candidate traffic and routing ownership
 
-Ordinary portal, OAuth, desktop, webhook and MCP requests stay on the old application while the candidate acquires native protection and finishes booting. The existing rolling service uses two ALB target groups, with one group bound to each service revision. The listener assigns the serving group weight 100 and the candidate group weight 0, with stickiness disabled. Both groups remain associated for early `/health` checks. This keeps the DEFERRED/100 protection convergence path without sending ordinary traffic to an unavailable application.
+During normal compatible handoff, ordinary portal, OAuth, desktop, webhook and MCP requests stay on the old application while the candidate acquires native protection and finishes booting. The separate [legacy production introduction](production-introduction.md#what-users-may-experience) includes approved maintenance downtime. The existing rolling service uses two ALB target groups, with one group bound to each service revision. The listener assigns the serving group weight 100 and the candidate group weight 0, with stickiness disabled. Both groups remain associated for early `/health` checks. This keeps the DEFERRED/100 protection convergence path without sending ordinary traffic to an unavailable application.
 
 ### When does a request move to the replacement?
 
@@ -134,23 +134,31 @@ Before retirement starts, rollback validates both protected identities and the o
 
 ### Infrastructure introduction and permissions
 
-Terraform owns group and listener identities, health settings and the create-time weighted action. After introduction, the coordinator owns `aws_ecs_service.app_service.load_balancer` and `aws_lb_listener.api_https.default_action`; Terraform explicitly ignores those attributes and its existing task-definition drift. Applying Terraform to an existing simple-forward listener does not rewrite the ignored action. A separately approved introduction must associate both groups and set the exact old100/spare0 action before the coordinator can run. No merge, runtime default or missing input activates this topology.
+Terraform owns group and listener identities, health settings and the create-time weighted action. After introduction, the coordinator owns `aws_ecs_service.app_service.load_balancer` and `aws_lb_listener.api_https.default_action`; Terraform explicitly ignores those attributes and its existing task-definition drift. Applying Terraform to an existing simple-forward listener does not rewrite the ignored action. The separately approved [production introduction](production-introduction.md) must establish the exact dual-group action and compatible Control before normal coordinator use. The Sandbox introduction follows its own [bootstrap contract](sandbox-bootstrap.md). No merge, runtime default or missing input activates this topology.
 
 Set the existing GitHub environment variables `DEPLOYMENT_LISTENER_ARN`, `DEPLOYMENT_TARGET_GROUP_A` and `DEPLOYMENT_TARGET_GROUP_B` to the exact reviewed Terraform `deployment_routing` output. An ALB-backed service with missing inputs refuses deployment. Bot-only services without a load-balancer binding omit all three. Do not change desired count, rolling strategy, min100/max200 or DEFERRED/100.
 
-The generated `deployment_routing_policy_arn` is an unattached policy for the existing deployment principal. Its new write permission is `elasticloadbalancing:ModifyListener` on the exact listener. ELB describe operations use their required wildcard resource scope; ECS revision/deployment reads are scoped to this service. Introduction must attach and verify the policy through the existing credential authority. Runtime roles receive no routing permission. The coordinator has no target registration, task stop or forced-unprotection operation. Serialize other authorized listener writers with this coordinator; ELB offers no conditional compare-and-swap.
+Terraform source attaches the generated `deployment_routing_policy_arn` to the scoped production and Sandbox backend deployment roles. Its write permission is `elasticloadbalancing:ModifyListener` on the exact listener. ELB describe operations use their required wildcard resource scope; ECS revision/deployment reads are scoped to this service. Source attachment is not verified live authority. The [production identity requirements](../_infra/README.md#production-backend-deployment-identity) still require reviewed application, exact identity and permission acceptance. Runtime roles receive no routing permission. The coordinator has no target registration, task stop or forced-unprotection operation. Serialize other authorized listener writers with this coordinator; ELB offers no conditional compare-and-swap.
 
 AWS documents [revision-specific immutable configuration](https://docs.aws.amazon.com/AmazonECS/latest/developerguide/service-revision.html), [load-balancer update behavior](https://docs.aws.amazon.com/AmazonECS/latest/APIReference/API_UpdateService.html), [deferred source cleanup](https://docs.aws.amazon.com/AmazonECS/latest/developerguide/early-success-criteria.html), and [weighted target groups](https://docs.aws.amazon.com/elasticloadbalancing/latest/application/rule-action-types.html). Generated local tests compose actual HTTP listeners, protection retries, persisted Dynamo admission and routing decisions. They do not prove hosted ALB propagation or protected source registration retention. Those facts, first activation and the legacy admission bridge remain separate acceptance requirements.
 
 ## Evidence and remaining acceptance
 
-| Evidence               | What it establishes                                                                                                                  | Limit                                                  |
-| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------ |
-| H7 combined test       | Actual producers, real local Dynamo transactions, failed warmup, promotion, old controls, persisted results, retirement and rollback | Generated external responses; no hosted provider proof |
-| R6 native fixtures     | Node 24.15 PID 1, native Opus/ffmpeg, real signals and generated storage acknowledgments                                             | Network disabled; no ECS/S3/Discord acceptance         |
-| R6 timing receipt      | Segment closure about 30.014 seconds and cutoff about 60.005 seconds with four short PCM sources                                     | Not representative load or a loss guarantee            |
-| Shutdown composition   | Earliest shared 100-second budget and retained actual tails                                                                          | No real 100-second provider outage measured            |
-| Sandbox and production | UNKNOWN                                                                                                                              | No hosted operation authorized in this task            |
+The H7/R6 rows below are historical evidence carried into the October 15, 2026 handoff merge. They have not been rerun as acceptance of the production introduction. The table separates those observations from the October 22 source-stage status.
+
+| Evidence                                  | What it establishes                                                                                                                  | Limit                                                                 |
+| ----------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------- |
+| H7 combined test                          | Actual producers, real local Dynamo transactions, failed warmup, promotion, old controls, persisted results, retirement and rollback | Generated external responses; no hosted provider proof                |
+| R6 native fixtures                        | Node 24.15 PID 1, native Opus/ffmpeg, real signals and generated storage acknowledgments                                             | Network disabled; no ECS/S3/Discord acceptance                        |
+| R6 timing receipt                         | Segment closure about 30.014 seconds and cutoff about 60.005 seconds with four short PCM sources                                     | Not representative load or a loss guarantee                           |
+| Shutdown composition                      | Earliest shared 100-second budget and retained actual tails                                                                          | No real 100-second provider outage measured                           |
+| Sandbox and production                    | UNKNOWN                                                                                                                              | No hosted operation authorized in this task                           |
+| Production introduction source            | Engine and non-operational workflow accepted in task review on October 22                                                            | Final branch validation and operational wiring remain pending         |
+| Local production introduction             | Scoped lifecycle/carryforward, strict binding/refusal, HTTP and signed synthetic-webhook checks passed                               | Generated provider ports, no hosted acceptance                        |
+| CI at final combined head                 | UNKNOWN                                                                                                                              | Published exact-head checks and final feedback audit remain pending   |
+| Production introduction Sandbox rehearsal | UNKNOWN                                                                                                                              | Separate rehearsal and literal Sandbox bootstrap rules apply          |
+| Actual production runtime                 | UNKNOWN                                                                                                                              | No actual-task, live routing, restoration or retained-work acceptance |
+| Financial/provider acceptance             | UNKNOWN                                                                                                                              | No authorized live acceptance or fixture-preservation proof           |
 
 The 64 MiB bound is additional PCM accounting, not total process RSS. The native RSS observation is one sample, not a peak bound. Host audio verification is unavailable because the host Opus binding is missing. Use the retained native receipt and current runtime-source correspondence, then fresh exact-head hosted CI for merged code. Do not infer acceptance from an image tag or a green workflow alone.
 
@@ -172,6 +180,8 @@ An authorized operational deletion procedure, with current ownership revalidatio
 
 ## Engineering references
 
+- [Production introduction procedure](production-introduction.md)
+- [Production legacy-introduction decision](adr-20261020-production-legacy-introduction.md)
 - [Approved design](superpowers/specs/2026-10-12-deployment-drain-and-interruption-design.md)
 - [Handoff implementation plan](superpowers/plans/2026-10-12-deployment-handoff-plan.md)
 - [Recovery implementation plan](superpowers/plans/2026-10-12-interrupted-recording-recovery-plan.md)
@@ -179,7 +189,7 @@ An authorized operational deletion procedure, with current ownership revalidatio
 - Fault and compatible-replacement acceptance: `test/deployment/recordingRecoveryFaults.integration.test.ts`.
 - Generated cleanup refusal and dry-run validation: `test/deployment/sandboxHandoffRunner.test.ts`.
 
-Whole-branch review, published exact-head checks, clean mergeability and the post-30-minute feedback audit remain the PR readiness gate. Sandbox acceptance, first production activation and historical repair are separate outcomes.
+Whole-branch review, published exact-head checks, clean mergeability and the post-30-minute feedback audit remain the PR readiness gate. Sandbox acceptance, first [production activation](production-introduction.md) and historical repair are separate outcomes.
 
 ## First Sandbox bootstrap tooling
 
@@ -190,3 +200,9 @@ For the separately reviewed one-time introduction from an incompatible runtime, 
 A separately approved stopped-source operation uses [Sandbox source-loss recovery](sandbox-source-loss.md). It restores the existing candidate's admission and routing while preserving pending settlement. Healthy-source continuation and normal retirement still require their original evidence.
 
 The separately approved [historical carryforward contract](sandbox-carryforward.md) can archive an availability-restored incident without settling it and hand Control to a new normal protected deployment. Ordinary preparation retains its refusal of unrelated unfinished operations.
+
+## Production introduction workflow status
+
+The manual `production-introduction.yml` is source-staged and operationally blocked. It defaults to inspection, binds one exact proposal with read-only identity evidence, and validates the late private envelope before refusing at `Post-bind human authority unavailable; preserve state`. It shares uncancelled production deployment concurrency. A collector alone cannot unlock execution.
+
+The [production introduction procedure](production-introduction.md) explains the accepted eventual phase contract, current missing human gate and private delivery/collector/store, exact-run authority, recovery limits, Terraform confidentiality and acceptance status. No exact private execution packet is available yet. Ordinary frontend publication waits for backend success; docs publication precedes the backend and is independent of its result.

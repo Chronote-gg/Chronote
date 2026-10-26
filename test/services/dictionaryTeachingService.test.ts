@@ -181,3 +181,89 @@ describe("dictionaryTeachingService", () => {
     expect(result.map(({ term }) => term)).not.toContain("Rekordbox");
   });
 });
+
+const loadGeneration = async (response: object) => {
+  jest.resetModules();
+  const responsesCreate = jest.fn().mockResolvedValue(response);
+  const createOpenAIClient = jest.fn(() => ({
+    responses: { create: responsesCreate },
+  }));
+  jest.doMock("../../src/services/openaiClient", () => ({
+    createOpenAIClient,
+  }));
+  jest.doMock("../../src/services/langfusePromptService", () => ({
+    getLangfuseChatPrompt: jest.fn(async () => ({
+      messages: [{ role: "user", content: "Teach the corrected spelling." }],
+      langfusePrompt: {
+        name: "dictionary-teaching",
+        version: 7,
+        isFallback: false,
+      },
+    })),
+  }));
+  const { generateDictionaryTeachingDrafts } =
+    await import("../../src/services/dictionaryTeachingService");
+  return { generateDictionaryTeachingDrafts, responsesCreate };
+};
+
+test("generates grounded dictionary drafts through Responses", async () => {
+  const { generateDictionaryTeachingDrafts, responsesCreate } =
+    await loadGeneration({
+      status: "completed",
+      output_text: JSON.stringify({
+        drafts: [
+          {
+            preferredTerm: "Jon Smythe",
+            observedForms: ["John Smith"],
+          },
+        ],
+      }),
+      output: [],
+    });
+  const result = await generateDictionaryTeachingDrafts({
+    guildId: "guild-1",
+    userId: "user-1",
+    instruction: "John Smith should be Jon Smythe.",
+    existingEntries: [],
+  });
+
+  expect(result.drafts).toHaveLength(1);
+  expect(result.drafts[0]).toMatchObject({
+    preferredTerm: "Jon Smythe",
+    observedForms: ["John Smith"],
+    action: "create",
+  });
+  expect(result.model).toMatchObject({
+    model: "gpt-5-mini",
+    promptVersion: 7,
+  });
+  expect(responsesCreate).toHaveBeenCalledWith(
+    expect.objectContaining({
+      model: "gpt-5-mini",
+      input: [{ role: "user", content: "Teach the corrected spelling." }],
+      reasoning: { effort: "low" },
+      text: { format: { type: "json_object" } },
+      max_output_tokens: 8_000,
+      store: false,
+    }),
+    undefined,
+  );
+});
+
+test("rejects incomplete dictionary drafts before parsing partial JSON", async () => {
+  const { generateDictionaryTeachingDrafts } = await loadGeneration({
+    status: "incomplete",
+    incomplete_details: { reason: "max_output_tokens" },
+    output_text: '{"drafts":[',
+    output: [],
+  });
+
+  await expect(
+    generateDictionaryTeachingDrafts({
+      guildId: "guild-1",
+      userId: "user-1",
+      instruction: "John Smith should be Jon Smythe.",
+      existingEntries: [],
+    }),
+  ).rejects.toThrow(/incomplete/i);
+});

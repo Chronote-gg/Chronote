@@ -122,6 +122,7 @@ import {
   invalidateDiscordGuildCache,
   invalidateDiscordUserCache,
 } from "./services/discordCacheService";
+import { buildFirstMeetingInstallerMessage } from "./utils/firstMeetingGuide";
 import {
   handleOnboardButtonInteraction,
   handleOnboardChannelSelect,
@@ -130,7 +131,6 @@ import {
   isOnboardButton,
   isOnboardChannelSelect,
   isOnboardModal,
-  onboardCommand,
 } from "./commands/onboard";
 import { removeGuildInstaller } from "./services/guildInstallerService";
 import { captureEvent } from "./services/analyticsService";
@@ -189,13 +189,6 @@ const client: Client = new Client({
   ],
   partials: [Partials.Channel, Partials.User],
 });
-
-const replyOnboardingDisabled = async (interaction: RepliableInteraction) => {
-  await interaction.reply({
-    content: "Onboarding is currently disabled for this bot.",
-    ephemeral: true,
-  });
-};
 
 const invalidateGuildCache = async (guildId: string, label: string) => {
   try {
@@ -269,10 +262,6 @@ const handleCommandInteraction = async (
     return;
   }
   if (commandName === "onboard") {
-    if (!config.server.onboardingEnabled) {
-      await replyOnboardingDisabled(interaction);
-      return;
-    }
     await handleOnboardCommand(interaction);
     return;
   }
@@ -288,7 +277,6 @@ const modalHandlers: Array<{
     interaction: ModalSubmitInteraction,
     signal?: AbortSignal,
   ) => Promise<void>;
-  onboarding?: boolean;
 }> = [
   {
     matches: isAskFeedbackModal,
@@ -321,7 +309,6 @@ const modalHandlers: Array<{
   {
     matches: isOnboardModal,
     handle: handleOnboardModalSubmit,
-    onboarding: true,
   },
 ];
 
@@ -332,10 +319,6 @@ const handleModalInteraction = async (
   signal?.throwIfAborted();
   for (const entry of modalHandlers) {
     if (!entry.matches(interaction.customId)) continue;
-    if (entry.onboarding && !config.server.onboardingEnabled) {
-      await replyOnboardingDisabled(interaction);
-      return;
-    }
     await entry.handle(interaction, signal);
     return;
   }
@@ -347,7 +330,6 @@ const buttonHandlers: Array<{
     interaction: ButtonInteraction,
     signal?: AbortSignal,
   ) => Promise<void>;
-  onboarding?: boolean;
 }> = [
   {
     matches: isAskFeedbackUp,
@@ -392,7 +374,6 @@ const buttonHandlers: Array<{
   {
     matches: isOnboardButton,
     handle: handleOnboardButtonInteraction,
-    onboarding: true,
   },
 ];
 
@@ -404,10 +385,6 @@ const handleButtonInteraction = async (
   signal?.throwIfAborted();
   for (const entry of buttonHandlers) {
     if (!entry.matches(interaction.customId)) continue;
-    if (entry.onboarding && !config.server.onboardingEnabled) {
-      await replyOnboardingDisabled(interaction);
-      return;
-    }
     await entry.handle(interaction, signal);
     return;
   }
@@ -425,10 +402,6 @@ const handleChannelSelectInteraction = async (
   interaction: ChannelSelectMenuInteraction,
 ) => {
   if (!isOnboardChannelSelect(interaction.customId)) return;
-  if (!config.server.onboardingEnabled) {
-    await replyOnboardingDisabled(interaction);
-    return;
-  }
   await handleOnboardChannelSelect(interaction);
 };
 
@@ -571,15 +544,12 @@ export async function setupBot() {
         if (recipient) {
           await assertServing();
           const targetUser = "user" in recipient ? recipient.user : recipient;
-          const setupUrl = `${config.frontend.siteUrl.replace(/\/$/, "")}/join`;
           await targetUser.send(
-            [
-              "Thanks for adding Chronote.",
-              "",
-              "To record your first meeting, join a voice channel and run `/startmeeting`. The notes post back to the channel when the meeting ends.",
-              "",
-              `Setup walkthrough: run \`/onboard\` (needs Manage Guild), or see ${setupUrl}`,
-            ].join("\n"),
+            buildFirstMeetingInstallerMessage({
+              guildId: guild.id,
+              serverName: guild.name,
+              siteUrl: config.frontend.siteUrl,
+            }),
           );
         }
       } catch (err) {
@@ -1651,10 +1621,6 @@ async function setupApplicationCommands() {
       .setName("feedback")
       .setDescription("Send feedback, report a bug, or suggest a feature"),
   ];
-
-  if (config.server.onboardingEnabled) {
-    commands.push(onboardCommand);
-  }
 
   const commandPayload = commands.map((command) => command.toJSON());
 

@@ -9,6 +9,7 @@ import {
 } from "../db";
 import type { PersonalRecordingSegmentRecord } from "../types/db";
 import { getMockStore } from "./mockStore";
+import { mockDesktopDraftPaused } from "./pausedDesktopDraft";
 
 export type PersonalRecordingSegmentRepository = {
   prepare: (
@@ -49,6 +50,7 @@ const segmentMapForUpload = (uploadId: string) => {
 
 const mockRepository: PersonalRecordingSegmentRepository = {
   async prepare(segment, expectedStatus) {
+    if (mockDesktopDraftPaused(segment.uploadId)) return false;
     const job = getMockStore().personalMediaUploadsById.get(segment.uploadId);
     const current = segmentMapForUpload(segment.uploadId).get(
       segment.segmentKey,
@@ -73,6 +75,7 @@ const mockRepository: PersonalRecordingSegmentRepository = {
     return true;
   },
   async transition(segment, expectedStatus) {
+    if (mockDesktopDraftPaused(segment.uploadId)) return false;
     const current = segmentMapForUpload(segment.uploadId).get(
       segment.segmentKey,
     );

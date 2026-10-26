@@ -28,119 +28,26 @@ jobs:
     timeout-minutes: 20
     steps:
       - name: Checkout exact PR head
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Set up Node
-        uses: actions/setup-node@v7
+      - name: Check shared quality policy
+        id: quality
+        uses: BASIC-BIT/quality-ratchet@0873869f6b8fd80150d24689849ec0aebd94e9dd # v1.0.1
         with:
-          node-version: "24.15.0"
+          github-token: ${{ github.token }}
+          repository-path: ${{ github.workspace }}
 
-      - name: Prepare merge with live target
-        id: prepare
+      - name: Print quality summary
+        if: ${{ failure() && !cancelled() && steps.quality.outputs.report-directory != '' }}
         shell: bash
         env:
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-          BASE_REF: ${{ github.event.pull_request.base.ref }}
-          GIT_TERMINAL_PROMPT: "0"
+          QUALITY_REPORT_DIRECTORY: ${{ steps.quality.outputs.report-directory }}
         run: |
-          set -euo pipefail
-          test "$(git rev-parse HEAD)" = "$HEAD_SHA"
-          git fetch --no-tags origin "+refs/heads/$BASE_REF:refs/remotes/origin/quality-base"
-          base_sha=$(git rev-parse refs/remotes/origin/quality-base)
-          git -c user.name=chronote-ci -c user.email=chronote-ci@users.noreply.github.com merge --no-commit --no-ff "$base_sha"
-          tree_sha=$(git write-tree)
-          echo "base_sha=$base_sha" >> "$GITHUB_OUTPUT"
-          echo "tree_sha=$tree_sha" >> "$GITHUB_OUTPUT"
-          node --input-type=module -e 'import {writeFileSync} from "node:fs"; const [headSha,baseRef,baseSha,treeSha]=process.argv.slice(1); writeFileSync("quality-evidence.json",JSON.stringify({scanned:{headSha,baseRef,baseSha,treeSha}},null,2));' "$HEAD_SHA" "$BASE_REF" "$base_sha" "$tree_sha"
-
-      - name: Install dependencies
-        id: install
-        run: bash scripts/ci-install-dependencies.sh
-
-      - name: Test checker behavior
-        id: checker-tests
-        continue-on-error: true
-        run: yarn test:quality
-
-      - name: Collect all scanner outcomes
-        id: scan
-        if: ${{ !cancelled() && steps.prepare.outcome == 'success' && steps.install.outcome == 'success' }}
-        shell: bash
-        env:
-          BASE_SHA: ${{ steps.prepare.outputs.base_sha }}
-          TREE_SHA: ${{ steps.prepare.outputs.tree_sha }}
-        run: |
-          verify_prepared_tree() {
-            if ! git diff --quiet --no-ext-diff --no-textconv "$TREE_SHA" --; then
-              echo "::error::Tracked files changed after merge preparation."
-              return 2
-            fi
-          }
-          verify_prepared_tree || exit 2
-          if node scripts/check-quality.mjs --base "$BASE_SHA" --json > quality-results.json; then
-            echo "exit_code=0" >> "$GITHUB_OUTPUT"
-          else
-            echo "exit_code=$?" >> "$GITHUB_OUTPUT"
-          fi
-          verify_prepared_tree || exit 2
-
-      - name: Apply current PR exception policy
-        id: policy
-        if: ${{ always() && !cancelled() }}
-        uses: actions/github-script@v9
-        env:
-          PREPARED: ${{ steps.prepare.outcome }}
-          INSTALLED: ${{ steps.install.outcome }}
-          CHECKER_TESTS: ${{ steps.checker-tests.outcome }}
-          SCAN_EXIT: ${{ steps.scan.outputs.exit_code }}
-          SCANNED: ${{ steps.scan.outcome }}
-        with:
-          script: |
-            const fs = require("node:fs");
-            const path = require("node:path");
-            const { pathToFileURL } = require("node:url");
-            const root = process.env.GITHUB_WORKSPACE;
-            let evidence = {}, report = null, current = null, versions = {};
-            let result = { exitCode: 2, outcome: "error", rationale: null, message: "Quality workflow did not complete." };
-            try {
-              if (process.env.PREPARED !== "success" || process.env.INSTALLED !== "success" || process.env.SCANNED !== "success") {
-                throw new Error("Merge preparation, dependency installation, or scanner step failed.");
-              }
-              evidence = JSON.parse(fs.readFileSync(path.join(root, "quality-evidence.json"), "utf8"));
-              report = JSON.parse(fs.readFileSync(path.join(root, "quality-results.json"), "utf8"));
-              if (![0, 1, 2].includes(Number(process.env.SCAN_EXIT)) || String(report.strictExitCode) !== process.env.SCAN_EXIT) {
-                throw new Error("Scanner process and report outcomes disagree.");
-              }
-              const { data: pr } = await github.rest.pulls.get({ ...context.repo, pull_number: context.issue.number });
-              const { data: branch } = await github.rest.repos.getBranch({ ...context.repo, branch: pr.base.ref });
-              current = { headSha: pr.head.sha, baseRef: pr.base.ref, baseSha: branch.commit.sha, labels: pr.labels.map(label => label.name), body: pr.body ?? "" };
-              const { evaluatePolicy } = await import(pathToFileURL(path.join(root, "scripts/quality-policy.mjs")).href);
-              result = evaluatePolicy({ report, scanned: evidence.scanned, current, checkerTestsPassed: process.env.CHECKER_TESTS === "success" });
-              for (const name of ["jscpd", "@jscpd/tokenizer", "eslint", "eslint-plugin-sonarjs", "typescript-eslint", "typescript"]) {
-                versions[name] = JSON.parse(fs.readFileSync(path.join(root, "node_modules", name, "package.json"), "utf8")).version;
-              }
-            } catch (error) {
-              result = { exitCode: 2, outcome: "error", rationale: null, message: error.message };
-            }
-            const revision = current ? { headSha: current.headSha, baseRef: current.baseRef, baseSha: current.baseSha } : null;
-            fs.writeFileSync(path.join(root, "quality-evidence.json"), JSON.stringify({ ...evidence, current: revision, versions, checkerTestsPassed: process.env.CHECKER_TESTS === "success", result }, null, 2));
-            const escapeHtml = value => String(value).replace(/[&<>]/g, char => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" })[char]);
-            core.summary.addHeading("Code quality ratchet").addCodeBlock(escapeHtml(result.message), "text");
-            if (report) core.summary.addDetails("Current scanner findings", "<pre>" + escapeHtml(JSON.stringify(report, null, 2)) + "</pre>");
-            if (result.rationale) core.summary.addHeading("Exception rationale").addCodeBlock(escapeHtml(result.rationale), "text");
-            await core.summary.write();
-            if (result.exitCode !== 0) core.setFailed(result.message);
-
-      - name: Upload quality reports
-        if: ${{ always() && !cancelled() }}
-        uses: actions/upload-artifact@v7
-        with:
-          name: code-quality-${{ github.event.pull_request.number }}-${{ github.run_id }}
-          path: |
-            quality-results.json
-            quality-evidence.json
-          retention-days: 7
+          summary_token="$(node -e 'process.stdout.write(require("node:crypto").randomUUID())')"
+          printf '::stop-commands::%s\n' "$summary_token"
+          cat -- "$QUALITY_REPORT_DIRECTORY/summary.md"
+          printf '::%s::\n' "$summary_token"

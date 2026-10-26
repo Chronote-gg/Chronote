@@ -30,7 +30,7 @@
     "test:visual": "node scripts/run-visual-tests.js",
     "test:visual:update": "node scripts/run-visual-tests.js --update-snapshots",
     "lint": "eslint --fix src test",
-    "lint:check": "eslint src test scripts/quality-*.mjs scripts/*-gate*.mjs scripts/ratchet-*.mjs scripts/check-quality*.mjs",
+    "lint:check": "eslint src test scripts/quality-workflow.test.mjs scripts/shared-quality.test.mjs scripts/run-shared-quality.mjs",
     "prettier": "prettier . --write",
     "prettier:check": "prettier . --check",
     "frontend:dev": "vite",
@@ -100,14 +100,8 @@
     "markdownlint:check": "markdownlint-cli2 \"**/*.md\"",
     "markdownlint:fix": "markdownlint-cli2 --fix \"**/*.md\"",
     "postinstall": "patch-package",
-    "check:duplication": "node scripts/dup-gate.mjs",
-    "check:complexity": "node scripts/complexity-gate.mjs",
-    "check:file-size": "node scripts/file-size-gate.mjs",
-    "check:quality": "node scripts/check-quality.mjs",
-    "test:quality": "node --test scripts/quality-git.test.mjs scripts/dup-gate.test.mjs scripts/dup-gate.integration.test.mjs scripts/complexity-gate.test.mjs scripts/file-size-gate.test.mjs scripts/check-quality.test.mjs scripts/quality-policy.test.mjs scripts/quality-workflow.test.mjs",
-    "test:dup-gate": "node --test scripts/quality-git.test.mjs scripts/dup-gate.test.mjs scripts/dup-gate.integration.test.mjs",
-    "test:complexity-gate": "node --test scripts/complexity-gate.test.mjs",
-    "test:file-size-gate": "node --test scripts/file-size-gate.test.mjs"
+    "check:quality": "node scripts/run-shared-quality.mjs",
+    "test:quality": "node --test scripts/quality-workflow.test.mjs scripts/shared-quality.test.mjs"
   },
   "engines": {
     "node": ">=24.15.0 <25"
@@ -121,6 +115,7 @@
     "@aws-sdk/client-dynamodb": "^3.1149.0",
     "@aws-sdk/client-ecs": "3.1131.0",
     "@aws-sdk/client-s3": "3.1149.0",
+    "@aws-sdk/client-sts": "3.1149.0",
     "@aws-sdk/s3-presigned-post": "3.1149.0",
     "@aws-sdk/s3-request-presigner": "3.1149.0",
     "@aws-sdk/util-dynamodb": "^3.996.9",
@@ -286,10 +281,7 @@
     "vite": "^8.3.4",
     "vite-tsconfig-paths": "^6.1.1",
     "yaml": "^2.9.1",
-    "yarn": "^1.22.22",
-    "jscpd": "5.0.12",
-    "@jscpd/tokenizer": "4.2.5",
-    "eslint-plugin-sonarjs": "4.2.0"
+    "yarn": "^1.22.22"
   },
   "funding": "https://ko-fi.com/basicbit",
   "packageManager": "yarn@1.22.22+sha512.a6b2f7906b721bba3d67d4aff083df04dad64c399707841b7acf00f6b133b7ac24255f2652fa22ae3534329dc6180534e98d17432037ff6fd140556e2bb3137e"

@@ -134,3 +134,35 @@ describe("personalUploadsRouter", () => {
     ).rejects.toMatchObject({ code: "BAD_REQUEST" });
   });
 });
+
+test("paused completion maps to a conflict with the shared typed cause", async () => {
+  const error = new PersonalMediaUploadError(
+    "This draft is preserved and paused. Recovery is not available yet.",
+    "paused",
+  );
+  jest.mocked(markPersonalMediaUploadComplete).mockRejectedValueOnce(error);
+  await expect(
+    createCaller().completeUpload({
+      uploadId: job.uploadId,
+      key: job.sourceS3Key,
+      uploadToken: "token",
+    }),
+  ).rejects.toMatchObject({
+    code: "CONFLICT",
+    message: error.message,
+    cause: error,
+  });
+});
+test("status passes through the shared paused DTO", async () => {
+  const paused = {
+    ...job,
+    status: "paused" as const,
+    retryable: false,
+    errorMessage:
+      "This draft is preserved and paused. Recovery is not available yet.",
+  };
+  jest.mocked(getPersonalMediaUploadJobForUser).mockResolvedValueOnce(paused);
+  await expect(
+    createCaller().getStatus({ uploadId: job.uploadId }),
+  ).resolves.toEqual({ job: paused });
+});

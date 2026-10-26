@@ -1,0 +1,104 @@
+diff --git a/node_modules/@langfuse/openai/dist/index.cjs b/node_modules/@langfuse/openai/dist/index.cjs
+--- a/node_modules/@langfuse/openai/dist/index.cjs
++++ b/node_modules/@langfuse/openai/dist/index.cjs
+@@ -135,17 +135,28 @@
+       input_tokens_details,
+       output_tokens_details
+     } = completionUsage;
++    // Nested cache write details repeat the aggregate cache_write_tokens count.
++    const numericInputDetails = Object.fromEntries(
++      Object.entries(input_tokens_details != null ? input_tokens_details : {}).filter(
++        ([, value]) => typeof value === "number" && Number.isFinite(value)
++      )
++    );
++    const numericOutputDetails = Object.fromEntries(
++      Object.entries(output_tokens_details != null ? output_tokens_details : {}).filter(
++        ([, value]) => typeof value === "number" && Number.isFinite(value)
++      )
++    );
+     let finalInputTokens = input_tokens;
+-    Object.keys(input_tokens_details != null ? input_tokens_details : {}).forEach((key) => {
++    Object.values(numericInputDetails).forEach((value) => {
+       finalInputTokens = Math.max(
+-        finalInputTokens - input_tokens_details[key],
++        finalInputTokens - value,
+         0
+       );
+     });
+     let finalOutputTokens = output_tokens;
+-    Object.keys(output_tokens_details != null ? output_tokens_details : {}).forEach((key) => {
++    Object.values(numericOutputDetails).forEach((value) => {
+       finalOutputTokens = Math.max(
+-        finalOutputTokens - output_tokens_details[key],
++        finalOutputTokens - value,
+         0
+       );
+     });
+@@ -154,13 +165,13 @@
+       output: finalOutputTokens,
+       total: total_tokens,
+       ...Object.fromEntries(
+-        Object.entries(input_tokens_details != null ? input_tokens_details : {}).map(([key, value]) => [
++        Object.entries(numericInputDetails).map(([key, value]) => [
+           `input_${key}`,
+           value
+         ])
+       ),
+       ...Object.fromEntries(
+-        Object.entries(output_tokens_details != null ? output_tokens_details : {}).map(([key, value]) => [
++        Object.entries(numericOutputDetails).map(([key, value]) => [
+           `output_${key}`,
+           value
+         ])
+diff --git a/node_modules/@langfuse/openai/dist/index.mjs b/node_modules/@langfuse/openai/dist/index.mjs
+--- a/node_modules/@langfuse/openai/dist/index.mjs
++++ b/node_modules/@langfuse/openai/dist/index.mjs
+@@ -112,17 +112,28 @@
+       input_tokens_details,
+       output_tokens_details
+     } = completionUsage;
++    // Nested cache write details repeat the aggregate cache_write_tokens count.
++    const numericInputDetails = Object.fromEntries(
++      Object.entries(input_tokens_details != null ? input_tokens_details : {}).filter(
++        ([, value]) => typeof value === "number" && Number.isFinite(value)
++      )
++    );
++    const numericOutputDetails = Object.fromEntries(
++      Object.entries(output_tokens_details != null ? output_tokens_details : {}).filter(
++        ([, value]) => typeof value === "number" && Number.isFinite(value)
++      )
++    );
+     let finalInputTokens = input_tokens;
+-    Object.keys(input_tokens_details != null ? input_tokens_details : {}).forEach((key) => {
++    Object.values(numericInputDetails).forEach((value) => {
+       finalInputTokens = Math.max(
+-        finalInputTokens - input_tokens_details[key],
++        finalInputTokens - value,
+         0
+       );
+     });
+     let finalOutputTokens = output_tokens;
+-    Object.keys(output_tokens_details != null ? output_tokens_details : {}).forEach((key) => {
++    Object.values(numericOutputDetails).forEach((value) => {
+       finalOutputTokens = Math.max(
+-        finalOutputTokens - output_tokens_details[key],
++        finalOutputTokens - value,
+         0
+       );
+     });
+@@ -131,13 +142,13 @@
+       output: finalOutputTokens,
+       total: total_tokens,
+       ...Object.fromEntries(
+-        Object.entries(input_tokens_details != null ? input_tokens_details : {}).map(([key, value]) => [
++        Object.entries(numericInputDetails).map(([key, value]) => [
+           `input_${key}`,
+           value
+         ])
+       ),
+       ...Object.fromEntries(
+-        Object.entries(output_tokens_details != null ? output_tokens_details : {}).map(([key, value]) => [
++        Object.entries(numericOutputDetails).map(([key, value]) => [
+           `output_${key}`,
+           value
+         ])

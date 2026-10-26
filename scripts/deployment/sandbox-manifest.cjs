@@ -1,10 +1,8 @@
 "use strict";
 const { readFileSync } = require("node:fs");
 const { createHash } = require("node:crypto");
-const { execFile } = require("node:child_process");
-const { promisify } = require("node:util");
 const { z } = require("zod");
-const execute = promisify(execFile);
+const { executeChild } = require("./owned-child.cjs");
 const hash = z.string().regex(/^[a-f0-9]{64}$/);
 const sandbox = z.string().regex(/^[a-z0-9-]*sandbox[a-z0-9-]*$/);
 const schema = z
@@ -78,8 +76,8 @@ function awsCaller(region) {
     )
   )
     throw new Error("Custom AWS endpoints are not supported");
-  return async (service, operation, input) => {
-    const { stdout } = await execute(
+  return async (service, operation, input, { signal } = {}) => {
+    const { stdout } = await executeChild(
       "aws",
       [
         service,
@@ -95,6 +93,8 @@ function awsCaller(region) {
       ],
       {
         maxBuffer: 8 * 1024 * 1024,
+        signal,
+        killSignal: "SIGKILL",
         windowsHide: true,
         env: {
           ...process.env,

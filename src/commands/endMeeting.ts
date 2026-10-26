@@ -16,6 +16,10 @@ import {
   guardRecordingFinalization,
 } from "../services/recordingContentService";
 import { stopRecordingCapture } from "../audio";
+import {
+  compileTranscriptions,
+  createMeetingTranscriptCompiler,
+} from "../services/transcriptCompilationService";
 import { ButtonInteraction, Client, EmbedBuilder } from "discord.js";
 import { randomUUID } from "node:crypto";
 import { beginRuntimeWorkClaim } from "../services/runtimeWorkAdmissionService";
@@ -27,7 +31,6 @@ import {
   cleanupSpeakerTracks,
   closeOutputFile,
   closeFailedInitializationOutput,
-  compileTranscriptions,
   startProcessingSnippet,
   waitForAudioOnlyFinishProcessing,
   waitForFinishProcessing,
@@ -508,6 +511,7 @@ async function finalizeRecording(
     );
 
     if (meeting.transcribeMeeting) {
+      const compile = createMeetingTranscriptCompiler(client, meeting);
       if (!transcriptionsReady) {
         const pending = meeting.audioData.audioFiles.filter(
           (file) => file.processing,
@@ -555,7 +559,7 @@ async function finalizeRecording(
         meeting,
         "compile-transcriptions",
         () =>
-          compileTranscriptions(client, meeting, {
+          compile({
             cleanupAcknowledged: (outcome) => {
               cleanupAcknowledged = outcome;
             },
@@ -621,7 +625,7 @@ async function finalizeRecording(
         meeting,
         "compile-transcriptions-upload",
         () =>
-          compileTranscriptions(client, meeting, {
+          compile({
             includeCues: true,
           }),
       );

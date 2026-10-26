@@ -1,4 +1,10 @@
 import type { Transcription } from "openai/resources/audio";
+import { updateActiveObservation } from "@langfuse/tracing";
+import {
+  hasPricedTranscriptionUsage,
+  transcriptionAttemptMetadata,
+  type TranscriptionAttemptSnapshot,
+} from "./transcriptionAttempts";
 
 export const LANGFUSE_AUDIO_SECONDS_USAGE_KEY = "input_audio_seconds";
 
@@ -30,9 +36,27 @@ const roundedPositiveSeconds = (audioSeconds?: number) => {
   return rounded;
 };
 
+function accountingStatus(
+  requestCount: number,
+  pricedRequestCount: number,
+  attempts?: TranscriptionAttemptSnapshot,
+): TranscriptionCostAccountingStatus {
+  if (pricedRequestCount === 0) return "unpriced";
+  if (pricedRequestCount !== requestCount) return "partial";
+  if (
+    attempts &&
+    (attempts.httpDispatchAttemptCount > pricedRequestCount ||
+      attempts.unknownUsageAttemptCount > 0)
+  ) {
+    return "partial";
+  }
+  return "priced";
+}
+
 export function buildLangfuseTranscriptionAccounting(
   usages: Array<Transcription["usage"]>,
   fallbackAudioSeconds?: number,
+  attempts?: TranscriptionAttemptSnapshot,
 ): LangfuseTranscriptionAccounting {
   let input = 0;
   let output = 0;
@@ -40,11 +64,7 @@ export function buildLangfuseTranscriptionAccounting(
   let providerAudioSeconds = 0;
 
   for (const usage of usages) {
-    if (
-      usage?.type === "tokens" &&
-      isValidUsageNumber(usage.input_tokens) &&
-      isValidUsageNumber(usage.output_tokens)
-    ) {
+    if (hasPricedTranscriptionUsage(usage)) {
       pricedRequestCount += 1;
       input += usage.input_tokens;
       output += usage.output_tokens;
@@ -58,12 +78,7 @@ export function buildLangfuseTranscriptionAccounting(
 
   const requestCount = usages.length;
   const unpricedRequestCount = requestCount - pricedRequestCount;
-  const status: TranscriptionCostAccountingStatus =
-    pricedRequestCount === requestCount && requestCount > 0
-      ? "priced"
-      : pricedRequestCount > 0
-        ? "partial"
-        : "unpriced";
+  const status = accountingStatus(requestCount, pricedRequestCount, attempts);
 
   if (pricedRequestCount > 0) {
     return {
@@ -76,7 +91,11 @@ export function buildLangfuseTranscriptionAccounting(
   }
 
   const audioSeconds = roundedPositiveSeconds(
-    providerAudioSeconds > 0 ? providerAudioSeconds : fallbackAudioSeconds,
+    providerAudioSeconds > 0
+      ? providerAudioSeconds
+      : attempts
+        ? undefined
+        : fallbackAudioSeconds,
   );
   return {
     usageDetails:
@@ -88,4 +107,32 @@ export function buildLangfuseTranscriptionAccounting(
     pricedRequestCount,
     unpricedRequestCount,
   };
+}
+
+export function recordLangfuseTranscriptionAccounting(
+  attempts: TranscriptionAttemptSnapshot,
+  audioSeconds?: number,
+) {
+  try {
+    const accounting = buildLangfuseTranscriptionAccounting(
+      attempts.returnedUsages,
+      audioSeconds,
+      attempts,
+    );
+    updateActiveObservation(
+      {
+        usageDetails: accounting.usageDetails,
+        metadata: {
+          ...transcriptionAttemptMetadata(attempts),
+          transcriptionCostAccountingStatus: accounting.status,
+          transcriptionRequestCount: accounting.requestCount,
+          transcriptionPricedRequestCount: accounting.pricedRequestCount,
+          transcriptionUnpricedRequestCount: accounting.unpricedRequestCount,
+        },
+      },
+      { asType: "generation" },
+    );
+  } catch {
+    // Diagnostics must preserve the provider result and rejection identity.
+  }
 }

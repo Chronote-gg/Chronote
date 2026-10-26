@@ -16,6 +16,7 @@ secretKeyEnv: OPENAI_API_KEY
 baseUrl: https://api.openai.com/v1
 withDefaultModels: true
 customModels:
+  - gpt-6.1-sol
   - gpt-5.2
   - gpt-5.1
   - gpt-5-mini
@@ -70,4 +71,38 @@ Flags:
 
 ## CI behavior
 
-`yarn llm-connections:check` runs in CI using `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`, and `LANGFUSE_BASE_URL`. It compares local YAML with Langfuse without reading secrets.
+`yarn llm-connections:check` runs in CI using `LANGFUSE_PUBLIC_KEY`,
+`LANGFUSE_SECRET_KEY`, and `LANGFUSE_BASE_URL`. It compares local YAML with
+Langfuse without reading secrets or comparing their values. A PR that changes
+connection YAML can report expected drift until the merged revision is synced.
+Keep that failure visible in the PR description; do not change checks or push
+live connections from a PR to clear it.
+
+After a successful production backend deployment, `Sync OpenAI LLM Connection`
+in `.github/workflows/deploy.yml` automatically syncs only
+`langfuse/llm-connections/openai.yml` from the event revision. It copies that file
+to a temporary directory, runs a dry run, pushes, and checks the result. The
+directory is removed when the step exits. Prompt promotion remains a separate
+job after the backend deployment.
+
+The OpenAI upsert replaces the provider key and extra headers as well as the
+model list. The job uses the existing production AWS identity to read
+`AWSCURRENT` from Secrets Manager at `${SECRETS_PREFIX}/openai-api-key`.
+If `SECRETS_PREFIX` is empty, it derives the prefix by removing `-bot-task` from
+`ECS_TASK_FAMILY`, matching backend preflight. It resolves the current task
+definition through `ECS_CLUSTER` and `ECS_SERVICE`, then reads `OPENAI_PROJECT_ID`
+from the app container environment. It never selects the latest task-family
+revision. The app container is the one with `DDB_TABLE_PREFIX`, matching the
+deployment coordinator.
+
+Both the key and project ID must be nonempty. Missing runtime configuration
+fails the job before any push; the required `OpenAI-Project` header is never
+dropped. Values are masked and exported only within that step, without
+persisting them to Actions environment files, outputs, or artifacts. Langfuse
+credentials and base URL use the same bindings as prompt promotion. No new
+GitHub secrets or Terraform apply are needed.
+
+Other providers, including Bedrock, remain explicitly managed with the existing
+commands and provider credentials. The automatic job never includes their YAML.
+Staging shares the Langfuse project with production and must not automatically
+push connections. PR and staging workflows continue to check drift only.

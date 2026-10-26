@@ -1,4 +1,5 @@
 import { describe, expect, test, jest } from "@jest/globals";
+import { completedTextResponse } from "../../src/testSupport/openaiResponse";
 import type { ChatEntry } from "../../src/types/chat";
 import type { MeetingRuntimeConfig } from "../../src/config/types";
 import type { MeetingData } from "../../src/types/meeting-data";
@@ -32,13 +33,11 @@ const loadModule = async (options: LoadOptions = {}) => {
   const waitForFinishProcessing = jest
     .fn<() => Promise<void>>()
     .mockResolvedValue(undefined);
-  const completionCreate = jest
-    .fn<() => Promise<{ choices: { message: { content: string } }[] }>>()
-    .mockResolvedValue({
-      choices: [{ message: { content: options.responseContent ?? "" } }],
-    });
+  const responsesCreate = jest
+    .fn<() => Promise<ReturnType<typeof completedTextResponse>>>()
+    .mockResolvedValue(completedTextResponse(options.responseContent ?? ""));
   const createOpenAIClient = jest.fn(() => ({
-    chat: { completions: { create: completionCreate } },
+    responses: { create: responsesCreate },
   }));
   const getModelChoice = jest.fn(() => ({ model: "gpt-4o-mini" }));
   const buildModelOverrides = jest.fn(() => undefined);
@@ -58,7 +57,7 @@ const loadModule = async (options: LoadOptions = {}) => {
   return {
     ...module,
     waitForFinishProcessing,
-    completionCreate,
+    responsesCreate,
     createOpenAIClient,
   };
 };
@@ -173,22 +172,38 @@ const buildMeeting = (overrides: Partial<MeetingData> = {}): MeetingData =>
     ...overrides,
   }) as MeetingData;
 
+const buildSparseMeeting = (): MeetingData =>
+  buildMeeting({
+    audioData: {
+      currentSnippets: new Map(),
+      audioFiles: [
+        {
+          userId: "user-1",
+          timestamp: Date.parse("2025-01-01T00:00:05.000Z"),
+          transcript: "hello",
+          processing: false,
+          audioOnlyProcessing: false,
+        },
+      ],
+    },
+  });
+
 describe("autoRecordCancellationService", () => {
   test("returns false when meeting is not auto-recorded", async () => {
     const {
       evaluateAutoRecordCancellation,
       waitForFinishProcessing,
-      completionCreate,
+      responsesCreate,
     } = await loadModule();
     const meeting = buildMeeting({ isAutoRecording: false });
     const result = await evaluateAutoRecordCancellation(meeting);
     expect(result).toEqual({ cancel: false });
     expect(waitForFinishProcessing).not.toHaveBeenCalled();
-    expect(completionCreate).not.toHaveBeenCalled();
+    expect(responsesCreate).not.toHaveBeenCalled();
   });
 
   test("returns false when auto-cancel is disabled in config", async () => {
-    const { evaluateAutoRecordCancellation, completionCreate } =
+    const { evaluateAutoRecordCancellation, responsesCreate } =
       await loadModule();
     const meeting = buildMeeting({
       runtimeConfig: buildRuntimeConfig({
@@ -197,24 +212,24 @@ describe("autoRecordCancellationService", () => {
     });
     const result = await evaluateAutoRecordCancellation(meeting);
     expect(result).toEqual({ cancel: false });
-    expect(completionCreate).not.toHaveBeenCalled();
+    expect(responsesCreate).not.toHaveBeenCalled();
   });
 
   test("returns false when duration exceeds heuristic threshold", async () => {
-    const { evaluateAutoRecordCancellation, completionCreate } =
+    const { evaluateAutoRecordCancellation, responsesCreate } =
       await loadModule();
     const meeting = buildMeeting({
       endTime: new Date("2025-01-01T00:03:00.000Z"),
     });
     const result = await evaluateAutoRecordCancellation(meeting);
     expect(result).toEqual({ cancel: false });
-    expect(completionCreate).not.toHaveBeenCalled();
+    expect(responsesCreate).not.toHaveBeenCalled();
   });
 
   test("returns cancel decision with default reason when model omits reason", async () => {
     const {
       evaluateAutoRecordCancellation,
-      completionCreate,
+      responsesCreate,
       waitForFinishProcessing,
     } = await loadModule({
       responseContent: JSON.stringify({ cancel: true }),
@@ -238,15 +253,40 @@ describe("autoRecordCancellationService", () => {
     const result = await evaluateAutoRecordCancellation(meeting);
 
     expect(waitForFinishProcessing).toHaveBeenCalled();
-    expect(completionCreate).toHaveBeenCalled();
+    expect(responsesCreate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        max_output_tokens: 120,
+        text: { format: { type: "json_object" } },
+        store: false,
+        input: [
+          expect.objectContaining({ role: "system" }),
+          expect.objectContaining({ role: "user" }),
+        ],
+      }),
+      undefined,
+    );
     expect(result).toEqual({
       cancel: true,
       reason: "Not enough content detected.",
     });
   });
 
+  test.each(["", " \n\t "])(
+    "keeps the meeting when completed Responses output is blank: %j",
+    async (responseContent) => {
+      const { evaluateAutoRecordCancellation, responsesCreate } =
+        await loadModule({ responseContent });
+      const meeting = buildSparseMeeting();
+
+      await expect(evaluateAutoRecordCancellation(meeting)).resolves.toEqual({
+        cancel: false,
+      });
+      expect(responsesCreate).toHaveBeenCalledTimes(1);
+    },
+  );
+
   test("returns false when model rejects cancellation", async () => {
-    const { evaluateAutoRecordCancellation, completionCreate } =
+    const { evaluateAutoRecordCancellation, responsesCreate } =
       await loadModule({
         responseContent: JSON.stringify({
           cancel: false,
@@ -270,15 +310,15 @@ describe("autoRecordCancellationService", () => {
 
     const result = await evaluateAutoRecordCancellation(meeting);
 
-    expect(completionCreate).toHaveBeenCalled();
+    expect(responsesCreate).toHaveBeenCalled();
     expect(result).toEqual({ cancel: false });
   });
 });
 
 test("failed sparse transcription is excluded before the actual cancellation provider", async () => {
-  const { evaluateAutoRecordCancellation, completionCreate } = await loadModule(
-    { responseContent: '{"cancel":true}' },
-  );
+  const { evaluateAutoRecordCancellation, responsesCreate } = await loadModule({
+    responseContent: '{"cancel":true}',
+  });
   const meeting = buildMeeting();
   meeting.audioData.audioFiles = [
     { transcriptionFailed: true, processing: false, transcript: "" },
@@ -286,18 +326,18 @@ test("failed sparse transcription is excluded before the actual cancellation pro
   await expect(evaluateAutoRecordCancellation(meeting)).rejects.toThrow(
     "processing",
   );
-  expect(completionCreate).not.toHaveBeenCalled();
+  expect(responsesCreate).not.toHaveBeenCalled();
 });
 
 test("actual automatic cancellation provider failure is propagated for durable failure", async () => {
-  const { evaluateAutoRecordCancellation, completionCreate } =
+  const { evaluateAutoRecordCancellation, responsesCreate } =
     await loadModule();
   const meeting = buildMeeting();
   meeting.audioData.audioFiles = [
     { transcript: "Hello", processing: false },
   ] as never;
   const failure = new Error("fixture cancellation provider unavailable");
-  completionCreate.mockRejectedValueOnce(failure);
+  responsesCreate.mockRejectedValueOnce(failure);
   const errorOutput = jest
     .spyOn(console, "error")
     .mockImplementation(() => undefined);
@@ -307,6 +347,22 @@ test("actual automatic cancellation provider failure is propagated for durable f
       "Auto-record cancellation check failed:",
       failure,
     );
+  } finally {
+    errorOutput.mockRestore();
+  }
+});
+
+test("an ordinary empty-output error still propagates as a provider failure", async () => {
+  const { evaluateAutoRecordCancellation, responsesCreate } =
+    await loadModule();
+  const meeting = buildSparseMeeting();
+  const failure = new Error("OpenAI Responses output empty.");
+  responsesCreate.mockRejectedValueOnce(failure);
+  const errorOutput = jest
+    .spyOn(console, "error")
+    .mockImplementation(() => undefined);
+  try {
+    await expect(evaluateAutoRecordCancellation(meeting)).rejects.toBe(failure);
   } finally {
     errorOutput.mockRestore();
   }

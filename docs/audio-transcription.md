@@ -21,9 +21,35 @@ Chronote records voice audio, builds per speaker snippets, and runs transcriptio
 - Noise gate checks peak levels in short windows and skips snippets that are very quiet and lack speech-like peaks.
 - Transcription prompt is Langfuse-managed (`chronote-transcription-prompt`) and can be adjusted for experiments, including removing the prompt entirely.
 - Guardrails include a loudness gate (noise gate metrics plus token logprobs), a syllable rate gate for short snippets, and a prompt echo gate to suppress prompt repetition.
-- Vote fallback runs a no-prompt retry for low-confidence slow snippets and picks the better result with a deterministic arbiter (suppression flags, prompt echo, logprobs, repetition checks, and a hard reject for punctuation-only outputs like `.`).
+- Vote fallback runs a no-prompt candidate for low-confidence slow snippets and picks the better result with a deterministic arbiter (suppression flags, prompt echo, logprobs, repetition checks, and a hard reject for punctuation-only outputs like `.`).
 - The finalized audio pass rejects trivial replacement text, so punctuation-only edits do not overwrite an existing snippet transcript.
 - The finalized audio pass also drops repeated low-information snippets from the same speaker when they recur in a short window, which helps clean up bursts of greeting-style hallucinations.
+
+## Snippet ASR retries
+
+Each prompt or no-prompt candidate owns at most four ASR attempts, including
+the first. Only connection failures, timeouts and HTTP 408, 409, 429 or 5xx
+responses can retry. Cancellation, local input failures, other 4xx responses,
+quota exhaustion and an explicit `x-should-retry: false` are terminal.
+Prompt preparation, guards and attachment failures do not retry ASR.
+
+Each attempt opens and closes a fresh upload stream and disables SDK retries
+for that snippet request. A successful prompted candidate is retained when
+the no-prompt vote retries. Both candidates exhausting their budgets permit
+up to eight ASR attempts. This can change recovery opportunity and worst-case
+work compared with a single whole-workflow budget; it does not guarantee
+lower cost or latency on every path.
+
+Retries use Cockatiel's decorrelated exponential backoff, starting at 128 ms
+with exponent 2 and a 30,000 ms cap. Valid Retry-After values from 0 through
+60,000 ms take precedence. Cancellation interrupts backoff and prevents new
+dispatches; issued requests and streams still settle before cleanup.
+
+The shared bulkhead holds two complete logical transcriptions with up to
+100 queued jobs. Logical starts remain spaced by 800 ms. The breaker counts
+five exhausted transient ASR operations before opening for 10,000 ms;
+unrelated prompt or guard errors cannot trip it. Text Responses, finalized
+audio verification and personal upload retry policies are unchanged.
 
 ## Langfuse audio attachments
 
@@ -32,8 +58,15 @@ When Langfuse tracing is enabled, each transcription snippet uploads an audio at
 - The attachment is always an MP3 generated from the snippet WAV file.
 - Encoding is VBR quality 6, mono, 16 kHz to keep size down while staying intelligible.
 - Attachments are skipped if the MP3 exceeds 8 MB.
-- The MP3 file is temporary and is deleted after upload.
+- The MP3 file is temporary and is deleted after its bytes are prepared for the attachment.
 - The compressed MP3 is for observability only and does not affect transcription quality.
+
+Attachment preparation and ASR run concurrently inside the same transcription
+generation. The generation and snippet WAV remain owned until attachment work
+and its trace update have settled, including when ASR fails. A cancellation
+check after this drain prevents a late abort from publishing a successful
+snippet. Queued attachment work skips encoding after cancellation; running
+ffmpeg encoding still cannot be cancelled and must finish before cleanup.
 
 ## Langfuse usage and cost
 
@@ -41,12 +74,30 @@ Transcription traces report the exact token usage returned by OpenAI so
 Langfuse can calculate costs using the provider's input and output rates.
 
 - Usage details use Langfuse's `input`, `output`, and `total` keys.
-- When the prompt/no-prompt vote makes two requests, usage includes both billed
-  requests.
-- Each trace records whether accounting is `priced`, `partial`, or `unpriced`
-  and the corresponding request counts.
-- If OpenAI omits token usage, `input_audio_seconds` remains available as a
-  rounded operational fallback. Do not treat that fallback as attributed cost.
+- Returned usage is retained even if a later vote, guard or cancellation fails.
+- Each trace records whether accounting is `priced`, `partial`, or `unpriced`.
+  Existing request counts describe returned responses. A transient failure
+  followed by one priced response has one returned request but partial cost.
+- Attempt counters distinguish logical candidates, SDK invocations, actual
+  fetch entries and extra invocations. A fetch entry is not proof of provider
+  receipt or billing; a lost response has unknown usage.
+- Attempt usage coverage is `not_attempted`, `complete`, `partial` or
+  `unknown`. Valid duration usage is known but does not establish token
+  pricing. Complete pricing requires priced usage for every dispatch.
+- Snippet `input_audio_seconds` comes only from reported duration usage.
+  `transcriptionEstimatedAttemptAudioSeconds` is a separate estimate when
+  local audio duration is known. Missing responses never imply zero billing.
+- `transcriptionQueueWaitMs` measures bulkhead and logical-start limiter wait.
+  Aggregate accounting is attempted inside the existing generation on success,
+  failure and cancellation, before attachment drainage. Diagnostic failures
+  cannot replace the provider result.
+
+Attempt metadata uses the `transcription` prefix for
+`LogicalCandidateCount`, `SdkInvocationCount`, `HttpDispatchAttemptCount`,
+`RetryCount`, `KnownUsageAttemptCount`, `UnknownUsageAttemptCount` and
+`AttemptUsageCoverage`. These diagnostics add no content or identifiers.
+Existing two-argument accounting callers retain their legacy operational
+duration fallback; that fallback is not attributed token cost.
 
 Pricing checklist:
 
@@ -113,3 +164,16 @@ The noise gate is a lightweight, peak-based check to skip clips that are very qu
 ## Cleanup behavior
 
 Transcription cleanup runs on the compiled transcript text. The structured transcript JSON stores per snippet text without cleanup. This keeps cleanup optional and limits the risk of rewriting per speaker segments during the capture phase.
+
+During one normal finalization, the notes and upload compilations reuse a
+settled cleanup result only when the existing retention rule accepts it and
+the formatted transcript, rendered prompt and provenance, effective model,
+parameters and retention ratio match. Nonempty cues, including whitespace,
+change that request and require cleanup again. Failed or rejected cleanup
+leaves the upload compilation its retry opportunity.
+
+Reuse belongs to that finalization's compiler and is never persisted or
+shared across meetings. Cancellation artifact compilation has a fresh
+lifetime. Recovery independently uses its saved v1 prompt/settings and durable
+processed-text checkpoints. Selected transcript membership is captured before
+asynchronous cleanup, so files arriving later remain supplemental evidence.

@@ -40,12 +40,20 @@ async function loadModule(options: {
     text: options.providerResult ?? "hello",
     logprobs: [],
   };
+  const { default: OpenAI } = await import("openai");
+  const providerError = (details: { status?: number }) =>
+    new OpenAI.APIError(
+      details.status,
+      { message: "synthetic provider failure" },
+      "synthetic provider failure",
+      new Headers({ "retry-after-ms": "0" }),
+    );
   const create = jest.fn();
   if (options.providerError) {
-    create.mockRejectedValue(options.providerError as never);
+    create.mockRejectedValue(providerError(options.providerError) as never);
   } else if (options.providerErrorOnce) {
     create
-      .mockRejectedValueOnce(options.providerErrorOnce as never)
+      .mockRejectedValueOnce(providerError(options.providerErrorOnce) as never)
       .mockResolvedValue(success as never);
   } else {
     create.mockResolvedValue(success as never);
@@ -127,21 +135,9 @@ async function loadModule(options: {
     },
   }));
   jest.doMock("cockatiel", () => ({
-    bulkhead: jest.fn(() => ({})),
-    circuitBreaker: jest.fn(() => ({})),
-    retry: jest.fn(() => ({})),
-    wrap: jest.fn(() => ({
-      execute: async (fn: () => Promise<unknown>) => {
-        try {
-          return await fn();
-        } catch {
-          return await fn();
-        }
-      },
-    })),
-    ConsecutiveBreaker: jest.fn(),
-    ExponentialBackoff: jest.fn(),
-    handleAll: {},
+    ...jest.requireActual<typeof import("cockatiel")>("cockatiel"),
+    bulkhead: () => ({ execute: (run: () => Promise<unknown>) => run() }),
+    wrap: () => ({ execute: (run: () => Promise<unknown>) => run() }),
   }));
 
   return {

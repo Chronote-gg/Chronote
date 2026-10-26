@@ -110,10 +110,28 @@ const homeRoute = new Route({
   component: Home,
 });
 
+const joinSearchSchema = z.object({
+  serverId: z
+    .string()
+    .regex(/^\d{17,20}$/)
+    .optional(),
+  historyId: z
+    .string()
+    .regex(/^\d{17,20}#.+$/)
+    .max(512)
+    .optional(),
+});
+
 const joinRoute = new Route({
   getParentRoute: () => marketingRoute,
   path: "join",
   component: Join,
+  validateSearch: (search): z.infer<typeof joinSearchSchema> => {
+    const parsed = joinSearchSchema.safeParse(search);
+    return parsed.success
+      ? parsed.data
+      : { serverId: undefined, historyId: undefined };
+  },
 });
 
 const promoRoute = new Route({

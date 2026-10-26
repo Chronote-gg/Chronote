@@ -154,9 +154,9 @@ variable "LANGFUSE_PROMPT_CACHE_TTL_MS" {
 }
 
 variable "NOTES_MODEL" {
-  description = "OpenAI model for notes and summaries"
+  description = "OpenAI model for notes generation only"
   type        = string
-  default     = "gpt-5.2"
+  default     = "gpt-6.1-sol"
 }
 
 variable "TRANSCRIPTS_BUCKET" {
@@ -568,9 +568,9 @@ resource "aws_ecr_lifecycle_policy" "app_ecr_repo_lifecycle_policy" {
     "rules": [
         {
             "rulePriority": 1,
-            "description": "Keep last two images",
+            "description": "Keep last two untagged images; retain tagged releases",
             "selection": {
-                "tagStatus": "any",
+                "tagStatus": "untagged",
                 "countType": "imageCountMoreThan",
                 "countNumber": 2
             },

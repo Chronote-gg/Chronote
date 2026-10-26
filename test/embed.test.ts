@@ -112,7 +112,87 @@ describe("updateMeetingSummaryMessage", () => {
     );
   });
 
-  it("adds the value proposition and Upgrade beside Open in Chronote", async () => {
+  it("notes_actions_preserve_delivery on the summary and final multipart batch without a new capture", async () => {
+    const value = fixture();
+    value.notesText = "A".repeat(11800);
+    value.textChannel.send
+      .mockResolvedValueOnce({ id: "notes-1" })
+      .mockResolvedValueOnce({ id: "notes-2" })
+      .mockResolvedValueOnce({ id: "notes-3" });
+    const meeting = value as unknown as MeetingData;
+    const result = await updateMeetingSummaryMessage(meeting, {
+      finalization: true,
+    });
+    const message = await value.textChannel.messages.fetch("start");
+    const summary = message.edit.mock.calls[0][0];
+    const notes = value.textChannel.send.mock.calls.map(([payload]) => payload);
+    const expectedActions = [
+      expect.objectContaining({
+        label: "Open meeting",
+        style: 5,
+        url: "https://chronote.test/portal/meetings/guild-1/voice%232025-01-01T00%3A00%3A00.000Z?fullScreen=true",
+      }),
+      expect.objectContaining({
+        label: "Optional setup",
+        style: 5,
+        url: "https://chronote.test/join?serverId=guild-1#optional-setup",
+      }),
+    ];
+    expect(summary.components[0].toJSON().components).toEqual(expectedActions);
+    expect(notes.at(-1).components[0].toJSON().components).toEqual(
+      expectedActions,
+    );
+    expect(
+      notes.slice(0, -1).every((payload) => payload.components.length === 0),
+    ).toBe(true);
+    expect(
+      summary.components.flatMap(
+        (row: { toJSON: () => { components: { label: string }[] } }) =>
+          row.toJSON().components.map((button) => button.label),
+      ),
+    ).toEqual([
+      "Open meeting",
+      "Optional setup",
+      "Helpful",
+      "Needs work",
+      "Suggest correction",
+      "Rename meeting",
+      "Edit tags",
+    ]);
+    for (const payload of [summary, ...notes]) {
+      expect(payload.components.length).toBeLessThanOrEqual(5);
+      for (const row of payload.components)
+        expect(row.toJSON().components.length).toBeLessThanOrEqual(5);
+    }
+    expect(result).toMatchObject({
+      summary: { outcome: "edited_existing", intended: 1, sent: 1 },
+      notes: { outcome: "complete", intended: 3, sent: 3 },
+    });
+    expect(acknowledgeRecordingDeliveryMessage).toHaveBeenCalledTimes(4);
+    expect(
+      jest
+        .mocked(acknowledgeRecordingDeliveryMessage)
+        .mock.calls.map(([, phase, id]) => [phase, id]),
+    ).toEqual([
+      ["summary", "start"],
+      ["notes", "notes-1"],
+      ["notes", "notes-2"],
+      ["notes", "notes-3"],
+    ]);
+    expect(acknowledgeRecordingDeliveryMessage).toHaveBeenLastCalledWith(
+      meeting,
+      "notes",
+      "notes-3",
+      expect.objectContaining({
+        kind: "complete",
+        completeAcknowledgedAt: expect.any(String),
+        path: "live",
+      }),
+    );
+    expect(captureEvent).not.toHaveBeenCalled();
+  });
+
+  it("adds the value proposition and Upgrade beside Open meeting", async () => {
     const value = fixture();
     const url =
       "https://chronote.test/upgrade/select-server?serverId=guild-1&plan=basic";
@@ -128,7 +208,12 @@ describe("updateMeetingSummaryMessage", () => {
       value: buildSummaryUpgradeBody(5400),
     });
     expect(payload.components[0].toJSON().components).toEqual([
-      expect.objectContaining({ label: "Open in Chronote" }),
+      expect.objectContaining({ label: "Open meeting" }),
+      expect.objectContaining({
+        label: "Optional setup",
+        url: "https://chronote.test/join?serverId=guild-1#optional-setup",
+        style: 5,
+      }),
       expect.objectContaining({ label: "Upgrade", url, style: 5 }),
     ]);
     const notes = value.textChannel.send.mock.calls[0][0];
@@ -137,6 +222,8 @@ describe("updateMeetingSummaryMessage", () => {
       value: buildSummaryUpgradeBody(5400),
     });
     expect(notes.components[0].toJSON().components).toEqual([
+      expect.objectContaining({ label: "Open meeting", style: 5 }),
+      expect.objectContaining({ label: "Optional setup", style: 5 }),
       expect.objectContaining({
         label: "Upgrade",
         url: `${url}&source=discord_notes`,
@@ -205,8 +292,11 @@ describe("updateMeetingSummaryMessage", () => {
     expect(payloads.at(-1).embeds.at(-1).toJSON().fields[0].value).toBe(
       buildSummaryUpgradeBody(3600),
     );
-    expect(payloads.at(-1).components[0].toJSON().components[0].url).toBe(
-      `${url}&source=discord_notes`,
+    expect(payloads.at(-1).components[0].toJSON().components).toContainEqual(
+      expect.objectContaining({
+        label: "Upgrade",
+        url: `${url}&source=discord_notes`,
+      }),
     );
     expect(value.notesText).toBe("A".repeat(11800));
   });

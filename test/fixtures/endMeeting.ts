@@ -42,13 +42,23 @@ jest.mock("../../src/services/analyticsService", () => ({
   captureEvent: jest.fn(),
 }));
 
+jest.mock("../../src/services/transcriptCompilationService", () => {
+  const compileTranscriptions = jest.fn();
+  return {
+    compileTranscriptions,
+    createMeetingTranscriptCompiler: jest.fn(
+      (client: unknown, meeting: unknown) => (options: unknown) =>
+        compileTranscriptions(client, meeting, options),
+    ),
+  };
+});
+
 jest.mock("../../src/audio", () => ({
   stopRecordingCapture: jest.fn(),
   buildMixedAudio: jest.fn(),
   cleanupSpeakerTracks: jest.fn(),
   closeOutputFile: jest.fn(),
   closeFailedInitializationOutput: jest.fn(async () => true),
-  compileTranscriptions: jest.fn(),
   startProcessingSnippet: jest.fn(),
   waitForAudioOnlyFinishProcessing: jest.fn(),
   waitForFinishProcessing: jest.fn(),
@@ -323,3 +333,18 @@ export function acknowledgedEndMeetingButton(): ButtonInteraction {
     reply: jest.fn().mockResolvedValue(undefined),
   } as unknown as ButtonInteraction;
 }
+
+export const successfulFinalPassResult = {
+  enabled: true,
+  applied: false,
+  processedChunks: 0,
+  totalChunks: 0,
+  totalSegments: 0,
+  candidateEdits: 0,
+  acceptedEdits: 0,
+  replacedSegments: 0,
+  droppedSegments: 0,
+  rejectedTrivialEdits: 0,
+  repetitionFilteredSegments: 0,
+  fallbackApplied: false,
+};

@@ -210,11 +210,9 @@ For TTS-only sessions, `/leave` makes Chronote leave immediately after the norma
 
 Manage your server's Chronote subscription. Opens the Stripe billing portal for plan management.
 
-### `/onboard`
+### First-meeting guidance
 
-Launches a guided setup wizard for new servers. Requires **Manage Server** permission. Walks through selecting a notes channel and setting context. Dictionary terms can be taught afterward in Server Settings or managed with `/dictionary`.
-
-Can be disabled server-wide after initial setup.
+The installer DM, empty server library and [first-meeting guide](https://chronote.gg/join) explain how to record and find your notes. `/onboard` is retired. Old wizard controls open the portal without changing settings. Context, dictionary and auto-recording setup remain available through their existing commands and Server Settings.
 
 ## Button interactions
 
@@ -225,12 +223,21 @@ These buttons appear on meeting embeds:
 | End Meeting        | During active meeting | Stops recording and begins processing                |
 | Edit Tags          | During and after      | Opens a modal to edit meeting tags                   |
 | Live Transcript    | During active meeting | Links to the real-time transcript on the web portal  |
-| Open in Chronote   | After meeting ends    | Links to the meeting in the web portal               |
+| Open meeting       | After meeting ends    | Links to the saved meeting in the web portal         |
 | Helpful            | After meeting ends    | Positive feedback on notes quality                   |
 | Needs work         | After meeting ends    | Negative feedback on notes quality                   |
 | Suggest correction | After meeting ends    | Opens the notes correction flow (see below)          |
 | Rename meeting     | After meeting ends    | Opens a modal to rename the meeting                  |
 | Generate Image     | After meeting ends    | Creates a DALL-E image from the meeting (plan-gated) |
+
+## Action items
+
+Chronote aims to capture explicit assignments and volunteered follow-ups with
+stated owners and deadlines. Suggestions and conditional plans should retain
+their qualifiers, and completed work should remain marked complete.
+
+Review the notes and use [Suggest correction](#notes-correction-flow) when a task
+is missing or inaccurate.
 
 ## Mentions in notes
 

@@ -86,7 +86,9 @@ jobs:
       - name: Set up Node
         uses: actions/setup-node@v7
         with:
-          node-version: "24.15.0"
+          # Includes the Windows loopback TCP crash fix.
+          # https://github.com/nodejs/node/issues/63620
+          node-version: "24.16.0"
           cache: "yarn"
 
       - name: Install dependencies
