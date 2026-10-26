@@ -229,7 +229,7 @@ test("missing original history cannot create a skeletal publication row", async 
   expect(http.writes).toEqual([]);
 });
 
-test("canonical action winning after terminal read fences stale save then exact reread preserves it", async () => {
+test("canonical action winning after terminal read completes through one owned save", async () => {
   const { meeting, terminal } = await initialPublication();
   const read = mockFixture.original.getMeetingHistory.bind(
     mockFixture.original,
@@ -241,19 +241,28 @@ test("canonical action winning after terminal read fences stale save then exact 
       await correction();
       return row;
     });
-  await expect(
-    saveOwnedMeetingHistoryService(meeting, terminal),
-  ).rejects.toThrow("fenced");
-  expect(await mockFixture.read()).toMatchObject({
-    status: "processing",
+  const saved = await saveOwnedMeetingHistoryService(meeting, terminal);
+  expect(saved).toMatchObject({
+    status: "complete",
     notes: "Newer edited notes",
     notesVersion: 2,
-    contentRevision: 1,
+    meetingName: "Newer manual name",
+    summarySentence: "Newer summary",
+    summaryLabel: "Newer label",
+    notesLastEditedBy: "synthetic-editor",
   });
-  await expect(acknowledgeRecordingDeliveryHistory(meeting)).rejects.toThrow(
-    "terminal history",
-  );
-  await saveOwnedMeetingHistoryService(meeting, terminal);
+  expect(saved.notesHistory).toHaveLength(1);
+  expect(saved.notesHistory?.[0].source).toEqual({
+    type: "notes_correction",
+    correctionId: "synthetic-approved",
+  });
+  const before = await mockFixture.read();
+  expect(projectMeetingUpdateDelivery(before!)).toMatchObject({
+    status: "held",
+    reason: "initial_publication_unsettled",
+    pollable: false,
+  });
+  expect(before?.updateDeliveryDueAt).toBeUndefined();
   await acknowledgeRecordingDeliveryHistory(meeting);
   expect(await mockFixture.read()).toMatchObject({
     status: "complete",
@@ -262,6 +271,11 @@ test("canonical action winning after terminal read fences stale save then exact 
     contentRevision: 1,
     recovery: { disposition: "done" },
   });
+  const after = await mockFixture.read();
+  expect(after?.updateDelivery?.policy.kind).toBe("active");
+  expect(after?.updateDeliveryDueAt).toEqual(expect.any(Number));
+  expect(after?.updateDelivery?.parts.notesBody.desired).toBe(1);
+  expect(http.writes.map(({ method }) => method)).toEqual(["POST", "POST"]);
 });
 
 test.each([

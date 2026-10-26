@@ -1,4 +1,14 @@
-import { publicationSnapshot } from "../types/meetingPublication";
+import { stableJson } from "../utils/stableJson";
+import {
+  meetingUpdateDeliverySchema,
+  presentationPartSchema,
+} from "../types/meetingUpdateDelivery";
+import { isDeepStrictEqual } from "node:util";
+import {
+  publicationSnapshot,
+  initialMeetingUpdatePolicy,
+  PUBLICATION_SNAPSHOT_FIELDS,
+} from "../types/meetingPublication";
 import type { RuntimeApiOperation } from "./runtimeApiOperationService";
 import type { MeetingData } from "../types/meeting-data";
 import {
@@ -271,6 +281,70 @@ function hasRecordingHistoryOwnership(
   );
 }
 
+const MAX_OWNED_HISTORY_TRANSITION_ATTEMPTS = 3;
+
+function assertOwnedHistoryNotAborted(meeting: MeetingData): void {
+  meeting.ownershipSignal?.throwIfAborted();
+  meeting.finalization?.controller.signal.throwIfAborted();
+}
+
+function canonicalDeliveryAdvanced(
+  previous: MeetingHistory,
+  current: MeetingHistory,
+): boolean {
+  const before = previous.updateDelivery;
+  const after = current.updateDelivery;
+  if (!after) return !before;
+  const expected =
+    before ??
+    meetingUpdateDeliverySchema.parse({
+      revision: after.revision,
+      policy: initialMeetingUpdatePolicy(previous),
+      parts: after.parts,
+      progress: {
+        kind: "pending",
+        nextCheckAt:
+          "nextCheckAt" in after.progress ? after.progress.nextCheckAt : 0,
+      },
+    });
+  // Content requests may advance desired parts, never publication authority or receipts.
+  return (
+    stableJson({
+      ...expected,
+      revision: after.revision,
+      parts: after.parts,
+    }) === stableJson(after) &&
+    presentationPartSchema.options.every(
+      (part) =>
+        after.parts[part].acknowledged ===
+          (before?.parts[part].acknowledged ?? 0) &&
+        after.parts[part].desired >= (before?.parts[part].desired ?? 0) &&
+        after.parts[part].desired <= (current.contentRevision ?? 0),
+    )
+  );
+}
+
+function canonicalContentAdvanced(
+  previous: MeetingHistory,
+  current: MeetingHistory,
+): boolean {
+  const baseline = previous.contentRevision ?? 0;
+  if ((current.contentRevision ?? 0) <= baseline) return false;
+  const changed = canonicalFieldsSupersededAfter(current, baseline);
+  if (!changed || !canonicalDeliveryAdvanced(previous, current)) return false;
+  const canonicalFields = new Set([
+    ...changed,
+    "contentRevision",
+    "contentMutation",
+    "updateDelivery",
+  ]);
+  return PUBLICATION_SNAPSHOT_FIELDS.every(
+    (field) =>
+      canonicalFields.has(field) ||
+      isDeepStrictEqual(previous[field], current[field]),
+  );
+}
+
 async function commitOwnedMeetingHistory(
   meeting: MeetingData,
   patch: HistoryTransition["patch"],
@@ -281,31 +355,37 @@ async function commitOwnedMeetingHistory(
   if (!reservation || reservation.sessionMode !== "meeting")
     throw new Error("Recording history requires its owned reservation");
   const repository = getMeetingHistoryRepository();
-  meeting.ownershipSignal?.throwIfAborted();
-  meeting.finalization?.controller.signal.throwIfAborted();
-  const row = await repository.getOwned(reservation.historyKey);
-  meeting.ownershipSignal?.throwIfAborted();
-  meeting.finalization?.controller.signal.throwIfAborted();
-  if (!hasRecordingHistoryOwnership(row, reservation, allowedStatuses))
-    throw new Error("Recording history ownership or status changed");
-  patch = {
-    ...preserveCanonicalHistory({ row, patch, canonicalBaseline }),
-    updatedAt: new Date().toISOString(),
-  };
-  const result = await repository.transitionOwned({
-    expectedPublication: publicationSnapshot(row),
-    key: reservation.historyKey,
-    expectedMeetingId: reservation.meetingId,
-    expectedOwnerInstanceId: reservation.ownerInstanceId,
-    expectedExecutionVersion: reservation.executionVersion,
-    expectedStatus: row.status,
-    patch,
-  });
-  meeting.ownershipSignal?.throwIfAborted();
-  meeting.finalization?.controller.signal.throwIfAborted();
-  if (result !== "applied")
-    throw new Error("Recording history transition was fenced");
-  return { ...row, ...patch };
+  let previous: MeetingHistory | undefined;
+  for (
+    let attempt = 0;
+    attempt < MAX_OWNED_HISTORY_TRANSITION_ATTEMPTS;
+    attempt++
+  ) {
+    assertOwnedHistoryNotAborted(meeting);
+    const row = await repository.getOwned(reservation.historyKey);
+    assertOwnedHistoryNotAborted(meeting);
+    if (!hasRecordingHistoryOwnership(row, reservation, allowedStatuses))
+      throw new Error("Recording history ownership or status changed");
+    if (previous && !canonicalContentAdvanced(previous, row))
+      throw new Error("Recording history transition was fenced");
+    const nextPatch = {
+      ...preserveCanonicalHistory({ row, patch, canonicalBaseline }),
+      updatedAt: new Date().toISOString(),
+    };
+    const result = await repository.transitionOwned({
+      expectedPublication: publicationSnapshot(row),
+      key: reservation.historyKey,
+      expectedMeetingId: reservation.meetingId,
+      expectedOwnerInstanceId: reservation.ownerInstanceId,
+      expectedExecutionVersion: reservation.executionVersion,
+      expectedStatus: row.status,
+      patch: nextPatch,
+    });
+    assertOwnedHistoryNotAborted(meeting);
+    if (result === "applied") return { ...row, ...nextPatch };
+    previous = row;
+  }
+  throw new Error("Recording history transition was fenced");
 }
 
 export async function transitionOwnedMeetingHistoryService(
