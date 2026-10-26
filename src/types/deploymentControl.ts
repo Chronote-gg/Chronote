@@ -329,11 +329,37 @@ export const suppressionRecordSchema = z
     "Suppression key does not match scope",
   );
 export type SuppressionRecord = z.infer<typeof suppressionRecordSchema>;
+export const pausedDesktopDraftKey = (uploadId: string) => ({
+  pk: `UPLOAD#${id.parse(uploadId)}`,
+  sk: "PAUSED_DRAFT",
+});
+export const pausedDesktopDraftRecordSchema = z
+  .object({
+    pk: id,
+    sk: z.literal("PAUSED_DRAFT"),
+    recordType: z.literal("paused_desktop_draft"),
+    protocolVersion: z.literal(1),
+    uploadId: id,
+    ownerUserId: id,
+    operationId: id,
+    manifestSha256: z.string().regex(/^[a-f0-9]{64}$/),
+    preservedCaptureSha256: z.string().regex(/^[a-f0-9]{64}$/),
+    createdAt: epochSecond,
+  })
+  .strict()
+  .refine(
+    (row) => row.pk === pausedDesktopDraftKey(row.uploadId).pk,
+    "Paused draft key does not match upload",
+  );
+export type PausedDesktopDraftRecord = z.infer<
+  typeof pausedDesktopDraftRecordSchema
+>;
 export const deploymentControlRecordSchema = z.union([
   controlRecordSchema,
   runtimeRecordSchema,
   voiceRecordSchema,
   suppressionRecordSchema,
+  pausedDesktopDraftRecordSchema,
 ]);
 export type DeploymentControlRecord = z.infer<
   typeof deploymentControlRecordSchema
@@ -382,6 +408,22 @@ export type ControlTableNames = {
   meetingHistory: string;
   activeMeeting?: string;
   personalMediaUpload?: string;
+};
+export type PausedDesktopDraftInstallation = {
+  control: ControlRecord;
+  coordinatorToken: string;
+  coordinatorEpoch: number;
+  now: number;
+  pairs: readonly [
+    {
+      record: PausedDesktopDraftRecord;
+      expectedParent: import("./db").PersonalMediaUploadJobRecord;
+    },
+    {
+      record: PausedDesktopDraftRecord;
+      expectedParent: import("./db").PersonalMediaUploadJobRecord;
+    },
+  ];
 };
 export type SessionReservationInput = {
   context: AdmissionContext;

@@ -23,6 +23,7 @@ export function bindDeploymentControlRepository(
     store.deploymentControlRecords,
     store.meetingHistoryByGuild,
     store.activeMeetingLeases,
+    store.personalMediaUploadsById,
   );
 }
 export function bindMeetingUpdateDeliveryRepository(

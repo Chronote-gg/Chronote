@@ -1,3 +1,13 @@
+import {
+  PersonalMediaUploadError,
+  getUnpausedPersonalMediaUploadJobForUser,
+  requireUnpausedPersonalMediaUpload,
+} from "./personalMediaUploadStatusService";
+export {
+  PersonalMediaUploadError,
+  getPersonalMediaUploadJobForUser,
+  type PersonalMediaUploadStatus,
+} from "./personalMediaUploadStatusService";
 import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
 import { getPersonalMediaUploadRepository } from "../repositories/personalMediaUploadRepository";
 import type {
@@ -70,25 +80,6 @@ export type PersonalMediaUploadIntent = {
   expiresAt: number;
   upload: SignedUploadPost;
 };
-
-export class PersonalMediaUploadError extends Error {
-  constructor(
-    message: string,
-    readonly code:
-      | "unsupported_type"
-      | "too_large"
-      | "signing_failed"
-      | "not_found"
-      | "forbidden"
-      | "expired"
-      | "invalid_token"
-      | "missing_object"
-      | "storage_unavailable"
-      | "invalid_state",
-  ) {
-    super(message);
-  }
-}
 
 const CONTENT_TYPE_EXTENSIONS: Record<string, string> = {
   "audio/mpeg": "mp3",
@@ -433,6 +424,10 @@ async function prepareRecordingSegment(
     )
       return current;
     if (await repository.prepare(segment, expectedStatus)) return undefined;
+    await requireUnpausedPersonalMediaUpload({
+      uploadId: input.uploadId,
+      ownerUserId: input.userId,
+    });
     current = await repository.get(input.uploadId, segment.segmentKey);
     if (current) assertMatchingSegment(current, input);
   }
@@ -447,7 +442,7 @@ async function prepareRecordingSegment(
 export async function createPersonalRecordingSegmentUploadIntent(
   input: PersonalRecordingSegmentUploadInput,
 ): Promise<PersonalRecordingSegmentUploadIntent> {
-  const job = await getPersonalMediaUploadJobForUser({
+  const job = await getUnpausedPersonalMediaUploadJobForUser({
     uploadId: input.uploadId,
     userId: input.userId,
   });
@@ -484,6 +479,7 @@ export async function createPersonalRecordingSegmentUploadIntent(
   const repository = getPersonalRecordingSegmentRepository();
   await assertSourceLengthWithinCap(repository, input, segmentKey);
   const existing = await repository.get(input.uploadId, segmentKey);
+  await requireUnpausedPersonalMediaUpload(job);
   if (existing) {
     assertMatchingSegment(existing, input);
     if (!["pending_upload", "failed"].includes(existing.status)) {
@@ -540,6 +536,7 @@ export async function createPersonalRecordingSegmentUploadIntent(
     existing,
     input,
   );
+  await requireUnpausedPersonalMediaUpload(job);
   if (concurrent) return { segment: concurrent, uploadRequired: false };
   const { expiresAt, uploadToken } = createSegmentUploadToken({
     userId: input.userId,
@@ -550,26 +547,13 @@ export async function createPersonalRecordingSegmentUploadIntent(
   return { segment, uploadRequired: true, uploadToken, expiresAt, upload };
 }
 
-export async function getPersonalMediaUploadJobForUser(options: {
-  uploadId: string;
-  userId: string;
-}): Promise<PersonalMediaUploadJobRecord> {
-  const job = await getPersonalMediaUploadRepository().get(options.uploadId);
-  if (!job) {
-    throw new PersonalMediaUploadError("Upload not found.", "not_found");
-  }
-  if (job.ownerUserId !== options.userId) {
-    throw new PersonalMediaUploadError("Upload not found.", "forbidden");
-  }
-  return job;
-}
-
 async function submitUploadJob(
   next: PersonalMediaUploadJobRecord,
 ): Promise<PersonalMediaUploadJobRecord> {
   const repository = getPersonalMediaUploadRepository();
   if (await repository.submit(next)) return next;
   const current = await repository.get(next.uploadId);
+  await requireUnpausedPersonalMediaUpload(next);
   if (
     !current ||
     current.ownerUserId !== next.ownerUserId ||
@@ -591,7 +575,7 @@ export async function markPersonalMediaUploadComplete(options: {
   title?: string;
   tags?: string[];
 }): Promise<PersonalMediaUploadJobRecord> {
-  const job = await getPersonalMediaUploadJobForUser(options);
+  const job = await getUnpausedPersonalMediaUploadJobForUser(options);
   if (job.status !== "pending_upload") {
     throw new PersonalMediaUploadError(
       "Upload has already been submitted.",
@@ -664,7 +648,7 @@ export async function markPersonalRecordingSegmentUploadComplete(options: {
   key: string;
   uploadToken: string;
 }): Promise<PersonalRecordingSegmentRecord> {
-  const job = await getPersonalMediaUploadJobForUser({
+  const job = await getUnpausedPersonalMediaUploadJobForUser({
     uploadId: options.uploadId,
     userId: options.userId,
   });
@@ -678,6 +662,7 @@ export async function markPersonalRecordingSegmentUploadComplete(options: {
       "not_found",
     );
   }
+  await requireUnpausedPersonalMediaUpload(job);
   if (segment.sourceS3Key !== options.key) {
     throw new PersonalMediaUploadError("Invalid upload key.", "invalid_token");
   }
@@ -742,6 +727,7 @@ export async function markPersonalRecordingSegmentUploadComplete(options: {
   };
   if (await repository.transition(next, "pending_upload")) return next;
   const current = await repository.get(segment.uploadId, segment.segmentKey);
+  await requireUnpausedPersonalMediaUpload(job);
   if (
     !current ||
     current.ownerUserId !== segment.ownerUserId ||
@@ -760,7 +746,7 @@ export async function submitPersonalRecordingUpload(options: {
   title?: string;
   tags?: string[];
 }): Promise<PersonalMediaUploadJobRecord> {
-  const job = await getPersonalMediaUploadJobForUser(options);
+  const job = await getUnpausedPersonalMediaUploadJobForUser(options);
   assertRecordingJobForOwner(job, options.userId);
   if (job.status !== "pending_upload") {
     return job;
@@ -797,6 +783,7 @@ export async function submitPersonalRecordingUpload(options: {
       "uploaded",
     );
     if (!submitted) {
+      await requireUnpausedPersonalMediaUpload(job);
       const current = await repository.get(
         segment.uploadId,
         segment.segmentKey,
@@ -926,12 +913,6 @@ export async function markPersonalRecordingUploadSegmentsFailed(
           }),
       ),
   );
-}
-
-export async function updatePersonalMediaUploadJobRecord(
-  job: PersonalMediaUploadJobRecord,
-) {
-  await getPersonalMediaUploadRepository().update(job);
 }
 
 export async function updateClaimedPersonalMediaUploadJobRecord(

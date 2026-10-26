@@ -249,6 +249,9 @@ export function createGuildVoiceOperationService(
       });
       // This is the sole permitted leave after sealing, consumed synchronously by destroy().
       const connection = operation.connection;
+      connection.on("daveResetSummary", (summary) => {
+        console.info("DAVE reset readiness summary:", JSON.stringify(summary));
+      });
       const close = () => {
         leavePermitted = true;
         if (connection.state.status !== VoiceConnectionStatus.Destroyed)

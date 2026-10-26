@@ -27,6 +27,110 @@ test("private capture uses conditional one-attempt creation and exact version or
     f.calls.every((c) => c.input.ExpectedBucketOwner === f.binding.accountId),
   ).toBe(true);
 });
+test.each([
+  ["native SSE-C block", { EncryptionType: ["SSE-C"] }],
+  ["undefined optional block", undefined],
+])(
+  "private capture readiness accepts %s",
+  async (_, blockedEncryptionTypes) => {
+    const f = fixture(),
+      send = f.client.send;
+    f.client.send = async (command) => {
+      const result = await send(command);
+      if (command.constructor.name === "GetBucketEncryptionCommand")
+        result.ServerSideEncryptionConfiguration.Rules[0].BlockedEncryptionTypes =
+          blockedEncryptionTypes;
+      return result;
+    };
+    const store = createPrivateCapture(f.options);
+    await expect(store.checkReady()).resolves.toBeUndefined();
+    expect(f.calls.some((c) => c.constructor.name === "PutObjectCommand")).toBe(
+      false,
+    );
+  },
+);
+
+test.each([
+  [
+    "wrong algorithm",
+    (rules) => {
+      rules[0].ApplyServerSideEncryptionByDefault.SSEAlgorithm = "AES256";
+    },
+  ],
+  [
+    "wrong KMS key",
+    (rules) => {
+      rules[0].ApplyServerSideEncryptionByDefault.KMSMasterKeyID = "wrong-key";
+    },
+  ],
+  [
+    "enabled bucket keys",
+    (rules) => {
+      rules[0].BucketKeyEnabled = true;
+    },
+  ],
+  [
+    "multiple rules",
+    (rules) => {
+      rules.push({ ...rules[0] });
+    },
+  ],
+  [
+    "unknown rule field",
+    (rules) => {
+      rules[0].Unsupported = true;
+    },
+  ],
+  [
+    "null blocked encryption",
+    (rules) => {
+      rules[0].BlockedEncryptionTypes = null;
+    },
+  ],
+  [
+    "empty blocked encryption",
+    (rules) => {
+      rules[0].BlockedEncryptionTypes = { EncryptionType: [] };
+    },
+  ],
+  [
+    "unsupported blocked encryption",
+    (rules) => {
+      rules[0].BlockedEncryptionTypes = { EncryptionType: ["aws:kms"] };
+    },
+  ],
+  [
+    "malformed blocked encryption",
+    (rules) => {
+      rules[0].BlockedEncryptionTypes = { EncryptionType: "SSE-C" };
+    },
+  ],
+  [
+    "unknown blocked encryption field",
+    (rules) => {
+      rules[0].BlockedEncryptionTypes = {
+        EncryptionType: ["SSE-C"],
+        Unsupported: true,
+      };
+    },
+  ],
+])("private capture readiness refuses %s before writes", async (_, mutate) => {
+  const f = fixture(),
+    send = f.client.send;
+  f.client.send = async (command) => {
+    const result = await send(command);
+    if (command.constructor.name === "GetBucketEncryptionCommand")
+      mutate(result.ServerSideEncryptionConfiguration.Rules);
+    return result;
+  };
+  await expect(createPrivateCapture(f.options).checkReady()).rejects.toThrow(
+    "UNKNOWN: encryption",
+  );
+  expect(f.calls.some((c) => c.constructor.name === "PutObjectCommand")).toBe(
+    false,
+  );
+});
+
 test("missing configuration refuses before any transport", () => {
   const f = fixture();
   expect(() =>

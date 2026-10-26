@@ -1,4 +1,11 @@
 import { writeClaimedPersonalHistory } from "./personalMediaClaimedHistory";
+import { buildPersonalMeetingGuildId } from "../utils/meetingOwnership";
+import { requireUnpausedPersonalMediaUpload } from "./personalMediaUploadStatusService";
+import {
+  buildJobMeetingKey,
+  buildPersonalUploadParticipants,
+  PERSONAL_UPLOAD_CHANNEL_ID,
+} from "./personalUploadMeetingIdentity";
 import { runFfmpegCommand } from "../audio/ffmpegLifecycle";
 import { withTranscriptionInput } from "./transcriptionInput";
 import { assertNotionOutcomeKnown } from "./notionOperationLifetime";
@@ -12,7 +19,6 @@ import type {
   PersonalRecordingSourceRecord,
   PersonalRecordingSegmentRecord,
 } from "../types/db";
-import type { Participant } from "../types/participants";
 import type { TranscriptSegment } from "../types/transcript";
 import { MEETING_STATUS } from "../types/meetingLifecycle";
 import type { MeetingProcessingOutcome } from "../types/meetingProcessing";
@@ -54,14 +60,12 @@ import {
   updateClaimedPersonalMediaUploadJobProgress,
   updateClaimedPersonalMediaUploadJobRecord,
 } from "./personalMediaUploadService";
-import { buildPersonalMeetingGuildId } from "../utils/meetingOwnership";
 import {
   recordPersonalUploadTerminal,
   withPersonalUploadProcessingTrace,
   type PersonalUploadTerminalFacts,
 } from "../observability/personalUploadTrace";
 
-const PERSONAL_UPLOAD_CHANNEL_ID = "personal";
 const PERSONAL_UPLOAD_CHANNEL_NAME = "Uploaded media";
 const PERSONAL_UPLOAD_SERVER_NAME = "Personal";
 const processingSignals = new WeakMap<
@@ -151,26 +155,6 @@ type PersonalRecordingSegmentTranscriptArtifact = {
   segment: TranscriptSegment;
   text: string;
 };
-
-const buildJobMeetingKey = (job: PersonalMediaUploadJobRecord) => {
-  const timestamp = job.createdAt;
-  return {
-    guildId: buildPersonalMeetingGuildId(job.ownerUserId),
-    channelIdTimestamp: `${PERSONAL_UPLOAD_CHANNEL_ID}#${timestamp}`,
-    meetingId: job.meetingId ?? job.uploadId,
-    timestamp,
-  };
-};
-
-const buildPersonalUploadParticipants = (
-  job: PersonalMediaUploadJobRecord,
-): Participant[] => [
-  {
-    id: job.ownerUserId,
-    username: "Me",
-    displayName: "Me",
-  },
-];
 
 const runFfmpeg = (
   inputPath: string,
@@ -1134,6 +1118,7 @@ export async function createPersonalMediaProcessingMeeting(
   instanceId: string,
   signal?: AbortSignal,
 ) {
+  await requireUnpausedPersonalMediaUpload(job);
   job = { ...job };
   if (signal) processingSignals.set(job, signal);
   const identity = await writeProcessingMeeting(job, instanceId);
@@ -1364,6 +1349,7 @@ export async function processPersonalMediaUpload(
   signal?: AbortSignal,
   onDurable?: () => void,
 ) {
+  await requireUnpausedPersonalMediaUpload(job);
   // Progress observations belong to this attempt, not the caller's job object.
   job = { ...job };
   if (signal) processingSignals.set(job, signal);

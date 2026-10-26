@@ -11,6 +11,7 @@ import {
   bindDeploymentControlRepository,
   bindMeetingUpdateDeliveryRepository,
 } from "./repositories/deploymentRepositoryBindings";
+import { listUnpausedPersonalMediaUploadJobs } from "./repositories/personalMediaUploadQueue";
 import {
   billingChangeControlKey,
   billingChangeOperationKey,
@@ -112,6 +113,7 @@ import {
   mockWorkAdmissionAllowed,
 } from "./repositories/deploymentControlRepository";
 import { getMockStore } from "./repositories/mockStore";
+import { requireUnpausedDesktopDraft } from "./repositories/pausedDesktopDraft";
 import type {
   AdmissionContext,
   HistoryTransition,
@@ -122,6 +124,8 @@ import {
   buildPersonalMediaClaimTransaction,
   buildPersonalClaimCheck,
   buildPendingSegmentTransaction,
+  buildPersonalUploadSubmissionTransaction,
+  buildPersonalSegmentTransitionTransaction,
 } from "./services/deploymentControlTransactions";
 
 import {
@@ -2276,32 +2280,21 @@ export async function getPersonalMediaUploadJob(
     : undefined;
 }
 
-export async function updatePersonalMediaUploadJob(
-  job: PersonalMediaUploadJobRecord,
-): Promise<void> {
-  await writePersonalMediaUploadJob(job);
-}
-
 export async function submitPersonalMediaUploadJob(
   job: PersonalMediaUploadJobRecord,
 ): Promise<boolean> {
   try {
     await dynamoDbClient.send(
-      new PutItemCommand({
-        TableName: tableName("PersonalMediaUploadJobTable"),
-        Item: marshall(job, { removeUndefinedValues: true }),
-        ConditionExpression:
-          "#status = :pending AND ownerUserId = :owner AND attribute_not_exists(processingClaimId)",
-        ExpressionAttributeNames: { "#status": "status" },
-        ExpressionAttributeValues: marshall({
-          ":pending": "pending_upload",
-          ":owner": job.ownerUserId,
+      new TransactWriteItemsCommand(
+        buildPersonalUploadSubmissionTransaction(job, {
+          deploymentControl: tableName("DeploymentControlTable"),
+          personalMediaUpload: tableName("PersonalMediaUploadJobTable"),
         }),
-      }),
+      ),
     );
     return true;
   } catch (error) {
-    if (isConditionalCheckFailed(error)) return false;
+    if (classifyDeploymentTransactionError(error) === "stale") return false;
     throw error;
   }
 }
@@ -2568,6 +2561,7 @@ export async function preparePersonalRecordingSegment(
     await dynamoDbClient.send(
       new TransactWriteItemsCommand(
         buildPendingSegmentTransaction(segment, expectedStatus, {
+          deploymentControl: tableName("DeploymentControlTable"),
           personalMediaUpload: tableName("PersonalMediaUploadJobTable"),
           personalRecordingSegment: tableName("PersonalRecordingSegmentTable"),
         }),
@@ -2586,20 +2580,16 @@ export async function transitionPersonalRecordingSegment(
 ): Promise<boolean> {
   try {
     await dynamoDbClient.send(
-      new PutItemCommand({
-        TableName: tableName("PersonalRecordingSegmentTable"),
-        Item: marshall(segment, { removeUndefinedValues: true }),
-        ConditionExpression: "#status = :expected AND ownerUserId = :owner",
-        ExpressionAttributeNames: { "#status": "status" },
-        ExpressionAttributeValues: marshall({
-          ":expected": expectedStatus,
-          ":owner": segment.ownerUserId,
+      new TransactWriteItemsCommand(
+        buildPersonalSegmentTransitionTransaction(segment, expectedStatus, {
+          deploymentControl: tableName("DeploymentControlTable"),
+          personalRecordingSegment: tableName("PersonalRecordingSegmentTable"),
         }),
-      }),
+      ),
     );
     return true;
   } catch (error) {
-    if (isConditionalCheckFailed(error)) return false;
+    if (classifyDeploymentTransactionError(error) === "stale") return false;
     throw error;
   }
 }
@@ -2610,52 +2600,15 @@ export async function listClaimablePersonalMediaUploadJobs(options: {
   maxAttempts: number;
   limit: number;
 }): Promise<PersonalMediaUploadJobRecord[]> {
-  const jobs: PersonalMediaUploadJobRecord[] = [];
-  const statuses: PersonalMediaUploadJobRecord["status"][] = [
-    "queued",
-    "processing",
-  ];
-
-  for (const status of statuses) {
-    if (jobs.length >= options.limit) break;
-    const isProcessing = status === "processing";
-    const filterExpression = isProcessing
-      ? "(attribute_not_exists(#claimExpiresAt) OR #claimExpiresAt < :nowEpochSeconds OR #processingOwnerInstanceId = :instanceId) AND (attribute_not_exists(#attempts) OR #attempts < :maxAttempts)"
-      : "(attribute_not_exists(#claimExpiresAt) OR #claimExpiresAt < :nowEpochSeconds) AND (attribute_not_exists(#attempts) OR #attempts < :maxAttempts)";
-    const expressionAttributeNames = {
-      "#status": "status",
-      "#claimExpiresAt": "claimExpiresAt",
-      "#attempts": "attempts",
-      ...(isProcessing
-        ? { "#processingOwnerInstanceId": "processingOwnerInstanceId" }
-        : {}),
-    };
-    const expressionAttributeValues = {
-      ":status": status,
-      ":nowEpochSeconds": options.nowEpochSeconds,
-      ":maxAttempts": options.maxAttempts,
-      ...(isProcessing ? { ":instanceId": options.instanceId } : {}),
-    };
-    const result = await dynamoDbClient.send(
-      new QueryCommand({
-        TableName: tableName("PersonalMediaUploadJobTable"),
-        IndexName: PERSONAL_MEDIA_UPLOAD_STATUS_UPDATED_AT_INDEX,
-        KeyConditionExpression: "#status = :status",
-        FilterExpression: filterExpression,
-        ExpressionAttributeNames: expressionAttributeNames,
-        ExpressionAttributeValues: marshall(expressionAttributeValues),
-        ScanIndexForward: true,
-        Limit: options.limit,
-      }),
-    );
-    jobs.push(
-      ...(result.Items ?? []).map(
-        (item) => unmarshall(item) as PersonalMediaUploadJobRecord,
-      ),
-    );
-  }
-
-  return jobs.slice(0, options.limit);
+  return listUnpausedPersonalMediaUploadJobs(
+    dynamoDbClient,
+    {
+      uploadTable: tableName("PersonalMediaUploadJobTable"),
+      statusIndex: PERSONAL_MEDIA_UPLOAD_STATUS_UPDATED_AT_INDEX,
+      control: getDeploymentControlRepository(),
+    },
+    options,
+  );
 }
 
 export async function claimPersonalMediaUploadJob(options: {
@@ -2671,6 +2624,7 @@ export async function claimPersonalMediaUploadJob(options: {
 }): Promise<PersonalMediaUploadJobRecord | undefined> {
   const previous = await getPersonalMediaUploadJob(options.uploadId);
   if (!previous) return undefined;
+  await requireUnpausedDesktopDraft(getDeploymentControlRepository(), previous);
   if (
     previous.processingClaimId === options.claimId &&
     previous.processingOwnerInstanceId === options.instanceId &&
