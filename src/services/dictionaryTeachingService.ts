@@ -19,7 +19,7 @@ import {
   normalizeDictionaryTerm,
 } from "../utils/dictionary";
 import { config } from "./configService";
-import { createOpenAIClient } from "./openaiClient";
+import { generateOpenAIText } from "./openaiTextService";
 import { getLangfuseChatPrompt } from "./langfusePromptService";
 import { buildModelOverrides, getModelChoice } from "./modelFactory";
 import { resolveChatParamsForRole } from "./openaiModelParams";
@@ -331,22 +331,21 @@ export async function generateDictionaryTeachingDrafts(
     model: modelChoice.model,
     config: params.modelParams,
   });
-  const openAIClient = createOpenAIClient({
-    traceName: "dictionary-teaching",
-    generationName: "dictionary-teaching",
-    userId: params.userId,
-    tags: ["feature:dictionary_teaching"],
-    metadata: buildDictionaryTeachingTraceMetadata(params),
-    langfusePrompt,
-  });
-  const completion = await openAIClient.chat.completions.create({
+  const raw = await generateOpenAIText({
     model: modelChoice.model,
-    messages,
-    ...chatParams,
-    response_format: { type: "json_object" },
-    max_completion_tokens: 8_000,
+    input: messages,
+    modelParams: chatParams,
+    format: { kind: "json_object" },
+    maxOutputTokens: 8_000,
+    tracing: {
+      traceName: "dictionary-teaching",
+      generationName: "dictionary-teaching",
+      userId: params.userId,
+      tags: ["feature:dictionary_teaching"],
+      metadata: buildDictionaryTeachingTraceMetadata(params),
+      langfusePrompt,
+    },
   });
-  const raw = completion.choices[0]?.message?.content;
   if (!raw?.trim()) {
     throw new Error("Dictionary teaching returned no drafts.");
   }

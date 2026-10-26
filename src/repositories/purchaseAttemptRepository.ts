@@ -1,3 +1,11 @@
+import { billingChangeControlKey } from "../types/billingChange";
+import { matchesMockOfferAuthority } from "./offerUsageRepository";
+import { assertPurchaseInvoiceBinding } from "../types/purchase";
+import {
+  parseOfferUsageChange,
+  offerUsageKey,
+  type OfferUsageMutation,
+} from "../types/offerUsage";
 import { randomUUID } from "node:crypto";
 import { config } from "../services/configService";
 import { getMockStore } from "./mockStore";
@@ -18,6 +26,32 @@ export function incidentKey(
 ): string {
   return `${purchaseKey(guildId)}#DUPLICATE#${mode}#${[a, b].sort().join("#")}`;
 }
+function isBlockedNewPurchase(
+  next: PurchaseAttempt,
+  expected: PurchaseAttempt | undefined,
+) {
+  return (
+    next.state === "preparing" &&
+    next.attemptId !== expected?.attemptId &&
+    (getMockStore().renewalRecoveryPointers.get(next.guildId)?.blocking ||
+      getMockStore().billingChangeControls.has(
+        billingChangeControlKey(next.guildId),
+      ))
+  );
+}
+function recordMockIncident(incident: PurchaseIncident | undefined) {
+  if (!incident) return;
+  const store = getMockStore();
+  const prior = store.purchaseIncidents.get(incident.key);
+  store.purchaseIncidents.set(
+    incident.key,
+    structuredClone({
+      ...incident,
+      firstObservedAt: prior?.firstObservedAt ?? incident.firstObservedAt,
+      incomingAttemptId: prior?.incomingAttemptId ?? incident.incomingAttemptId,
+    }),
+  );
+}
 export const getPurchaseRepository = () => ({
   async get(guildId: string): Promise<PurchaseAttempt | undefined> {
     purchaseKey(guildId);
@@ -30,13 +64,25 @@ export const getPurchaseRepository = () => ({
     expected: PurchaseAttempt | undefined,
     pointer: GuildSubscription | undefined,
     incident?: PurchaseIncident,
+    offerUsage?: OfferUsageMutation,
   ): Promise<boolean> {
     purchaseKey(next.guildId);
+    assertPurchaseInvoiceBinding(next, expected);
+    const usage =
+      offerUsage &&
+      parseOfferUsageChange({ ...offerUsage, pointer, operation: next });
     if (!config.mock.enabled)
-      return compareAndWritePurchaseAttempt(next, expected, pointer, incident);
+      return compareAndWritePurchaseAttempt(
+        next,
+        expected,
+        pointer,
+        incident,
+        offerUsage,
+      );
     const store = getMockStore();
     const current = store.purchaseAttempts.get(next.guildId);
     const subscription = store.subscriptions.get(next.guildId);
+    if (isBlockedNewPurchase(next, expected)) return false;
     if (
       current?.revision !== expected?.revision ||
       Boolean(subscription) !== Boolean(pointer) ||
@@ -44,19 +90,9 @@ export const getPurchaseRepository = () => ({
       subscription?.stripeSyncRevision !== pointer?.stripeSyncRevision
     )
       return false;
+    if (usage && !writeMockUsage(usage)) return false;
     store.purchaseAttempts.set(next.guildId, structuredClone(next));
-    if (incident) {
-      const prior = store.purchaseIncidents.get(incident.key);
-      store.purchaseIncidents.set(
-        incident.key,
-        structuredClone({
-          ...incident,
-          firstObservedAt: prior?.firstObservedAt ?? incident.firstObservedAt,
-          incomingAttemptId:
-            prior?.incomingAttemptId ?? incident.incomingAttemptId,
-        }),
-      );
-    }
+    recordMockIncident(incident);
     return true;
   },
 });
@@ -65,4 +101,21 @@ export function advanceAttempt(
   change: Partial<PurchaseAttempt>,
 ): PurchaseAttempt {
   return { ...attempt, ...change, revision: randomUUID() };
+}
+
+function writeMockUsage(
+  usage: ReturnType<typeof parseOfferUsageChange>,
+): boolean {
+  if (usage.authority && !matchesMockOfferAuthority(usage.authority))
+    return false;
+  const store = getMockStore();
+  const key = offerUsageKey(
+    usage.next.guildId,
+    usage.next.offerId,
+    usage.next.mode,
+  );
+  if (store.offerUsages.get(key)?.revision !== usage.expected?.revision)
+    return false;
+  store.offerUsages.set(key, structuredClone(usage.next));
+  return true;
 }

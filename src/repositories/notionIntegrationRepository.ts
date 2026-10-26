@@ -50,12 +50,22 @@ type NotionIntegrationItem =
     } & NotionAutomationMeetingExport);
 
 export type NotionIntegrationRepository = {
-  writeConnection: (connection: NotionConnection) => Promise<void>;
-  getConnection: (userId: string) => Promise<NotionConnection | undefined>;
+  writeConnection: (
+    connection: NotionConnection,
+    signal?: AbortSignal,
+  ) => Promise<void>;
+  getConnection: (
+    userId: string,
+    signal?: AbortSignal,
+  ) => Promise<NotionConnection | undefined>;
   deleteConnection: (userId: string) => Promise<void>;
-  writeAutomationConfig: (config: NotionAutomationConfig) => Promise<void>;
+  writeAutomationConfig: (
+    config: NotionAutomationConfig,
+    signal?: AbortSignal,
+  ) => Promise<void>;
   getAutomationConfig: (
     guildId: string,
+    signal?: AbortSignal,
   ) => Promise<NotionAutomationConfig | undefined>;
   reserveMeetingExport: (params: {
     userId: string;
@@ -73,21 +83,28 @@ export type NotionIntegrationRepository = {
     guildId: string;
     meetingId: string;
   }) => Promise<NotionMeetingExport | undefined>;
-  reserveAutomationMeetingExport: (params: {
-    guildId: string;
-    meetingId: string;
-  }) => Promise<boolean>;
+  reserveAutomationMeetingExport: (
+    params: {
+      guildId: string;
+      meetingId: string;
+    },
+    signal?: AbortSignal,
+  ) => Promise<boolean>;
   writeAutomationMeetingExport: (
     meetingExport: NotionAutomationMeetingExport,
+    signal?: AbortSignal,
   ) => Promise<void>;
   deleteAutomationMeetingExport: (params: {
     guildId: string;
     meetingId: string;
   }) => Promise<void>;
-  getAutomationMeetingExport: (params: {
-    guildId: string;
-    meetingId: string;
-  }) => Promise<NotionAutomationMeetingExport | undefined>;
+  getAutomationMeetingExport: (
+    params: {
+      guildId: string;
+      meetingId: string;
+    },
+    signal?: AbortSignal,
+  ) => Promise<NotionAutomationMeetingExport | undefined>;
 };
 
 const tableName = `${config.database.tablePrefix ?? ""}NotionIntegrationTable`;
@@ -132,16 +149,22 @@ const automationMeetingExportKey = (params: {
   sk: `EXPORT#${params.meetingId}`,
 });
 
-const writeItem = async (item: NotionIntegrationItem) => {
+const writeItem = async (item: NotionIntegrationItem, signal?: AbortSignal) => {
+  signal?.throwIfAborted();
   await dynamoDbClient.send(
     new PutItemCommand({
       TableName: tableName,
       Item: marshall(item, { removeUndefinedValues: true }),
     }),
+    { abortSignal: signal },
   );
 };
 
-const reserveItem = async (item: NotionIntegrationItem) => {
+const reserveItem = async (
+  item: NotionIntegrationItem,
+  signal?: AbortSignal,
+) => {
+  signal?.throwIfAborted();
   try {
     await dynamoDbClient.send(
       new PutItemCommand({
@@ -150,6 +173,7 @@ const reserveItem = async (item: NotionIntegrationItem) => {
         ConditionExpression:
           "attribute_not_exists(pk) AND attribute_not_exists(sk)",
       }),
+      { abortSignal: signal },
     );
     return true;
   } catch (err) {
@@ -160,7 +184,11 @@ const reserveItem = async (item: NotionIntegrationItem) => {
   }
 };
 
-const getItem = async <T>(key: { pk: string; sk: string }) => {
+const getItem = async <T>(
+  key: { pk: string; sk: string },
+  signal?: AbortSignal,
+) => {
+  signal?.throwIfAborted();
   const result = await dynamoDbClient.send(
     new GetItemCommand({ TableName: tableName, Key: marshall(key) }),
   );
@@ -174,26 +202,36 @@ const deleteItem = async (key: { pk: string; sk: string }) => {
 };
 
 const realRepository: NotionIntegrationRepository = {
-  writeConnection: (connection) =>
-    writeItem({
-      ...connectionKey(connection.userId),
-      recordType: "connection",
-      ...connection,
-    }),
-  async getConnection(userId) {
-    const item = await getItem<NotionIntegrationItem>(connectionKey(userId));
+  writeConnection: (connection, signal) =>
+    writeItem(
+      {
+        ...connectionKey(connection.userId),
+        recordType: "connection",
+        ...connection,
+      },
+      signal,
+    ),
+  async getConnection(userId, signal) {
+    const item = await getItem<NotionIntegrationItem>(
+      connectionKey(userId),
+      signal,
+    );
     return item?.recordType === "connection" ? item : undefined;
   },
   deleteConnection: (userId) => deleteItem(connectionKey(userId)),
-  writeAutomationConfig: (automationConfig) =>
-    writeItem({
-      ...automationConfigKey(automationConfig.guildId),
-      recordType: "automation_config",
-      ...automationConfig,
-    }),
-  async getAutomationConfig(guildId) {
+  writeAutomationConfig: (automationConfig, signal) =>
+    writeItem(
+      {
+        ...automationConfigKey(automationConfig.guildId),
+        recordType: "automation_config",
+        ...automationConfig,
+      },
+      signal,
+    ),
+  async getAutomationConfig(guildId, signal) {
     const item = await getItem<NotionIntegrationItem>(
       automationConfigKey(guildId),
+      signal,
     );
     return item?.recordType === "automation_config" ? item : undefined;
   },
@@ -221,28 +259,35 @@ const realRepository: NotionIntegrationRepository = {
     const item = await getItem<NotionIntegrationItem>(meetingExportKey(params));
     return item?.recordType === "meeting_export" ? item : undefined;
   },
-  reserveAutomationMeetingExport: (params) =>
-    reserveItem({
-      ...automationMeetingExportKey(params),
-      recordType: "automation_export_reservation",
-      guildId: params.guildId,
-      channelId_timestamp: params.meetingId,
-      createdAt: new Date().toISOString(),
-    }),
-  writeAutomationMeetingExport: (meetingExport) =>
-    writeItem({
-      ...automationMeetingExportKey({
-        guildId: meetingExport.guildId,
-        meetingId: meetingExport.channelId_timestamp,
-      }),
-      recordType: "automation_export",
-      ...meetingExport,
-    }),
+  reserveAutomationMeetingExport: (params, signal) =>
+    reserveItem(
+      {
+        ...automationMeetingExportKey(params),
+        recordType: "automation_export_reservation",
+        guildId: params.guildId,
+        channelId_timestamp: params.meetingId,
+        createdAt: new Date().toISOString(),
+      },
+      signal,
+    ),
+  writeAutomationMeetingExport: (meetingExport, signal) =>
+    writeItem(
+      {
+        ...automationMeetingExportKey({
+          guildId: meetingExport.guildId,
+          meetingId: meetingExport.channelId_timestamp,
+        }),
+        recordType: "automation_export",
+        ...meetingExport,
+      },
+      signal,
+    ),
   deleteAutomationMeetingExport: (params) =>
     deleteItem(automationMeetingExportKey(params)),
-  async getAutomationMeetingExport(params) {
+  async getAutomationMeetingExport(params, signal) {
     const item = await getItem<NotionIntegrationItem>(
       automationMeetingExportKey(params),
+      signal,
     );
     return item?.recordType === "automation_export" ? item : undefined;
   },

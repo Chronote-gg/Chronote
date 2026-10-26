@@ -17,7 +17,11 @@ export class SettingsPage {
   }
 
   firstOverride(): Locator {
-    return this.page.getByTestId(testIds.settings.override).first();
+    return this.overrides()
+      .filter({
+        has: this.page.getByRole("button", { name: /remove override/i }),
+      })
+      .first();
   }
 
   overrides(): Locator {
@@ -71,11 +75,13 @@ export class SettingsPage {
   }
 
   async openFirstOverrideEdit(): Promise<void> {
-    await this.firstOverride().click();
+    await this.firstOverride()
+      .getByRole("button", { name: /^Edit / })
+      .click();
   }
 
   modal(): Locator {
-    return this.page.getByTestId(testIds.settings.modal);
+    return this.page.getByTestId(testIds.settings.modal).getByRole("dialog");
   }
 
   modalTitle(): Locator {

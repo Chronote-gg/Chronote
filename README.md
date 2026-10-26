@@ -11,9 +11,12 @@ A Discord bot that records voice meetings, transcribes them with OpenAI, generat
 - `/context`: Manage prompt context.
 - `/dictionary`: Manage dictionary terms used in prompts.
 - `/ask`: Ask questions over recent meeting history (guild scope by default).
-- `/onboard`: Guided setup (context, auto-record, feature tour, upgrade CTA).
 
 ## Recording outcomes
+
+Notes guidance covers explicit assignments and volunteered follow-ups with stated
+owners and deadlines, preserving tentative plans and completed status. See
+[action items](apps/docs-site/docs/features/feature-overview.md#action-items).
 
 Recordings with no usable speech skip notes generation. Incomplete transcripts
 still produce notes with a separate warning. Processing outcomes are independent
@@ -61,6 +64,7 @@ of meeting completion; see [meeting lifecycle](apps/docs-site/docs/core-concepts
 - `yarn llm-connections:push` upserts local connections to Langfuse.
 - `yarn llm-connections:pull` pulls connections from Langfuse into YAML files.
 - `yarn llm-connections:check` compares local YAML with Langfuse (keys only, no secrets). It runs inside `yarn run check` and CI.
+- Production automatically syncs only the OpenAI connection after backend deployment. Staging shares Langfuse and checks drift without pushing; other providers remain explicitly managed.
 - Details and schema: `docs/langfuse-llm-connections.md`.
 
 ## Checks
@@ -74,13 +78,13 @@ These checks run before PR merge and deployment. Use `yarn run check` for the fu
 - Docs build (Docusaurus) validates docs compilation and links. Command: `yarn docs:check`.
 - E2E tests (Playwright) validate critical user flows. Command: `yarn test:e2e`. Docs: https://playwright.dev/docs/running-tests
 - Visual regression (Playwright screenshots) fails its PR check on visual test failures. Upgrade and post-install welcome pages include desktop, phone and wide-screen baselines. Review screenshots before updating them. Commands: `yarn test:visual` and `yarn test:visual:update`. Details: `docs/visual-regression.md`.
-- Code stats and complexity (scc + lizard) keep size and complexity visible. Command: `yarn code:stats`. Use `.sccignore` to exclude paths from scc output. `whitelizard.txt` can suppress known complexity offenders. Docs: https://github.com/boyter/scc and https://github.com/terryyin/lizard
+- Code stats and complexity (scc + lizard) keep size and complexity visible. Command: `yarn code:stats`. Use `.sccignore` to exclude paths from scc output. Lizard reports all warnings without suppressing or blocking on legacy debt. Use `yarn check:quality` for enforced limits. Docs: https://github.com/boyter/scc and https://github.com/terryyin/lizard
 - Prompt sync (Langfuse) keeps repo prompt files aligned with Langfuse. Command: `yarn prompts:check`.
 - LLM connection sync (Langfuse) keeps LLM connection YAML aligned with Langfuse. Command: `yarn llm-connections:check`.
 - IaC scan (Checkov via uvx) catches Terraform misconfigurations. Command: `yarn checkov`. Docs: https://www.checkov.io/2.Basics/CLI%20Command%20Reference.html and https://docs.astral.sh/uv/concepts/tools/
 - Terraform drift visibility and reconciliation are manual through `.github/workflows/terraform-plan.yml` and `.github/workflows/terraform-apply.yml`. Apply uses a reviewed saved plan artifact and GitHub environment approval.
 
-CI runs the same set as `yarn run check:ci` (see `.github/workflows/ci.yml` and `.github/workflows/ci-core.yml`).
+CI covers the local checks in `yarn run check:ci`. The separate PR quality workflow may accept an explicitly reviewed exception; local quality commands remain strict. See [code quality checks](docs/engineering/code-quality.md).
 
 ### Check dependencies (Mermaid)
 
@@ -135,12 +139,14 @@ flowchart LR
   B --> D["Prompts, LLM, Storybook, Docker (advisory)"]
   C --> Z["CI complete"]
   D --> Z
-  Z --> L["deploy backend"]
-  Z --> J["deploy frontend"]
-  Z --> K["deploy docs"]
+  Z --> K["deploy-docs: publish docs"]
+  K --> L["deploybackend: prepare, promote, retire"]
+  L --> J["deploy-frontend: publish frontend"]
 ```
 
-Staging deploy is similar but skips Checkov and allows unit test failures to continue. Prompt and LLM connection checks still run.
+Production backend deployment waits for CI and docs publication. Frontend publication waits for backend success; docs publication can finish even if the backend later fails. Normal backend deployments protect the serving runtime, warm and promote a compatible candidate, then wait for runtime-owned retirement. See [recording handoff and recovery](docs/deployment-handoff.md). The separate [first production introduction](docs/production-introduction.md) is source-staged and remains operationally blocked.
+
+Sandbox deployment uses its own preflight, skips Checkov and allows unit test failures to continue. Its frontend, docs and backend jobs depend on that preflight, without the production backend-before-frontend dependency. Prompt and LLM connection checks still run. Sandbox bootstrap and approval rules remain separate.
 
 Coverage update rule:
 
@@ -181,8 +187,9 @@ Coverage update rule:
 - Transcription flow and tuning: `docs/audio-transcription.md`.
 - Slow transcription now includes a default low-confidence prompt/no-prompt vote fallback to reduce hallucinated prompt echoes.
 - Feature toggle evaluation checklist: `docs/feature-toggles.md`.
-- OpenAI: gpt-4o-transcribe for ASR, gpt-5.1 for notes/corrections, gpt-5-mini for live gate, DALL-E 3 for images.
+- OpenAI: gpt-4o-transcribe for ASR, gpt-6.1-sol for notes, gpt-5.2 for summaries, cleanup, corrections and image prompts, gpt-5-mini for live gate, DALL-E 3 for images. `NOTES_MODEL` overrides notes generation only; other roles use their existing per-role settings.
 - Transcription can run a finalized audio verification pass at meeting end to auto-apply high-confidence hallucination fixes before notes are generated.
+- Text generation uses OpenAI's Responses API through one shared service for notes, corrections, Ask, live-voice text decisions, captions and dictionary suggestions. See the [Responses and model evaluation design](docs/superpowers/specs/2026-10-21-responses-meeting-evaluation-design.md) for request contracts and model comparisons.
 - Prompt management and tracing: Langfuse for prompt versioning, tracing, and prompt sync scripts.
 - Langfuse transcription traces attach compressed MP3 snippets (mono 16 kHz VBR, 8 MB cap) for observability.
 - Billing: Stripe Checkout + Billing Portal; webhook handler persists GuildSubscription and PaymentTransaction in DynamoDB and handles payment_failed / subscription_deleted to downgrade appropriately (guild-scoped billing only).
@@ -252,7 +259,11 @@ Terraform uses a GitHub provider to manage the Actions environment and variables
 - `yarn observability:up` → starts local Prometheus (scrapes `host.docker.internal:3001/metrics`) and Grafana on :3000 with a pre-provisioned Prom datasource.
 - `yarn observability:down` to stop.
 
-## Code complexity with scc and lizard
+## Code quality checks
+
+Set up the pinned shared tool checkout with `QUALITY_RATCHET_HOME`, then run `yarn check:quality` before committing. The pinned BASIC-BIT/quality-ratchet action and local CLI use Chronote's `quality-ratchet.json` to prevent new duplication, complex functions, and oversized files relative to Git history, including tests. See the [policy and PR exception process](docs/engineering/code-quality.md).
+
+### Diagnostic statistics with scc and lizard
 
 Setup:
 

@@ -20,5 +20,14 @@ export function assertSessionAssociation(
     throw new BillingActionError(
       "BAD_REQUEST",
       "Server purchase needs review. Contact support before purchasing again.",
+      "purchase_needs_review",
     );
+}
+
+export function checkoutInvoiceHint(
+  session: Stripe.Checkout.Session,
+): { invoiceId: string } | undefined {
+  const invoiceId =
+    typeof session.invoice === "string" ? session.invoice : session.invoice?.id;
+  return invoiceId ? { invoiceId } : undefined;
 }

@@ -86,6 +86,52 @@ describe("imageService", () => {
         model: "dall-e-3",
         prompt: "image prompt",
       }),
+      undefined,
     );
+  });
+});
+
+describe("image interruption", () => {
+  test("a held prompt cannot initiate image generation after cancellation", async () => {
+    const { module, chat, imagesGenerate } = await loadModule();
+    const controller = new AbortController();
+    let finish!: (value: string) => void;
+    let entered!: () => void;
+    const started = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    chat.mockImplementationOnce(() => {
+      entered();
+      return new Promise<string>((resolve) => {
+        finish = resolve;
+      });
+    });
+    const run = module.getImage(buildMeeting(), controller.signal);
+    await started;
+    controller.abort(new Error("stopped"));
+    finish("late image prompt");
+    await expect(run).rejects.toThrow("stopped");
+    expect(imagesGenerate).not.toHaveBeenCalled();
+  });
+
+  test("a held image cannot return a deliverable after cancellation", async () => {
+    const { module, imagesGenerate } = await loadModule();
+    const controller = new AbortController();
+    let finish!: (value: { data: Array<{ url: string }> }) => void;
+    let entered!: () => void;
+    const started = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    imagesGenerate.mockImplementationOnce(() => {
+      entered();
+      return new Promise((resolve) => {
+        finish = resolve;
+      });
+    });
+    const run = module.getImage(buildMeeting(), controller.signal);
+    await started;
+    controller.abort(new Error("stopped"));
+    finish({ data: [{ url: "https://example.invalid/late.png" }] });
+    await expect(run).rejects.toThrow("stopped");
   });
 });

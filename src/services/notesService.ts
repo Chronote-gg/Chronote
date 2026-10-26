@@ -1,9 +1,9 @@
-import type { MeetingData } from "../types/meeting-data";
+import type { MeetingNotesInput } from "../types/meeting-data";
 import { stripUnknownMentions } from "../utils/mentionSanitizer";
 import { chat } from "./openaiChatService";
 import { getNotesPrompt } from "./notesPromptService";
 
-export async function getNotes(meeting: MeetingData): Promise<string> {
+export async function getNotes(meeting: MeetingNotesInput): Promise<string> {
   const { messages, langfusePrompt, promptVisibleRoleIds } =
     await getNotesPrompt(meeting);
   const notes = await chat(

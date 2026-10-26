@@ -13,7 +13,7 @@ export const routeParams: {
   conversationId?: string;
   code?: string;
 } = {};
-let routeSearch: {
+type RouteSearch = {
   meetingId?: string;
   eventId?: string;
   fullScreen?: boolean | string;
@@ -21,12 +21,14 @@ let routeSearch: {
   conversationId?: string;
   messageId?: string;
   promo?: string;
+  historyId?: string;
   serverId?: string;
   plan?: string;
   interval?: string;
   canceled?: boolean | string;
   session_id?: string;
-} = {};
+};
+let routeSearch: RouteSearch = {};
 
 export const getRouteSearch = () => routeSearch;
 
@@ -71,20 +73,7 @@ export const setRouteParams = (params: {
   routeParams.code = params.code;
 };
 
-export const setRouteSearch = (search: {
-  meetingId?: string;
-  eventId?: string;
-  fullScreen?: boolean | string;
-  list?: string;
-  conversationId?: string;
-  messageId?: string;
-  promo?: string;
-  serverId?: string;
-  plan?: string;
-  interval?: string;
-  canceled?: boolean | string;
-  session_id?: string;
-}) => {
+export const setRouteSearch = (search: RouteSearch) => {
   routeSearch = { ...routeSearch, ...search };
   notifyRouteSearch();
 };

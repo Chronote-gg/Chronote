@@ -7,8 +7,13 @@ import { createOpenAIClient } from "./openaiClient";
 import { config } from "./configService";
 import { getMeetingModelOverrides } from "./meetingModelOverrides";
 
-export async function getImage(meeting: MeetingData): Promise<string> {
+export async function getImage(
+  meeting: MeetingData,
+  signal?: AbortSignal,
+): Promise<string> {
+  signal?.throwIfAborted();
   const contextData = await buildMeetingContext(meeting, false);
+  signal?.throwIfAborted();
   const formattedContext = formatContextForPrompt(contextData, "image");
   const briefContext = formattedContext
     ? formattedContext.substring(0, 500)
@@ -22,6 +27,7 @@ export async function getImage(meeting: MeetingData): Promise<string> {
     },
   });
 
+  signal?.throwIfAborted();
   const imagePromptModel = getModelChoice(
     "imagePrompt",
     getMeetingModelOverrides(meeting),
@@ -32,6 +38,7 @@ export async function getImage(meeting: MeetingData): Promise<string> {
       messages: [...messages],
     },
     {
+      signal,
       model: imagePromptModel.model,
       traceName: "image-prompt",
       generationName: "image-prompt",
@@ -42,6 +49,7 @@ export async function getImage(meeting: MeetingData): Promise<string> {
     },
   );
 
+  signal?.throwIfAborted();
   const imageModel = getModelChoice("image", getMeetingModelOverrides(meeting));
   const imageClient = createOpenAIClient({
     traceName: "image",
@@ -55,13 +63,17 @@ export async function getImage(meeting: MeetingData): Promise<string> {
     },
     parentSpanContext: meeting.langfuseParentSpanContext,
   });
-  const response = await imageClient.images.generate({
-    model: imageModel.model,
-    size: "1024x1024",
-    quality: "hd",
-    n: 1,
-    prompt: imagePrompt,
-  });
+  const response = await imageClient.images.generate(
+    {
+      model: imageModel.model,
+      size: "1024x1024",
+      quality: "hd",
+      n: 1,
+      prompt: imagePrompt,
+    },
+    signal ? { signal } : undefined,
+  );
+  signal?.throwIfAborted();
 
   const output = response.data?.[0]?.url;
 

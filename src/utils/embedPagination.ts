@@ -41,6 +41,7 @@ interface BuildEmbedsOptions {
   baseTitle: string;
   footerText?: string;
   color?: number;
+  descriptionPrefix?: string;
 }
 
 export function buildPaginatedEmbeds({
@@ -48,12 +49,16 @@ export function buildPaginatedEmbeds({
   baseTitle,
   footerText,
   color,
+  descriptionPrefix = "",
 }: BuildEmbedsOptions): EmbedBuilder[] {
-  const parts = splitTextForEmbeds(text);
+  const parts = splitTextForEmbeds(
+    text,
+    EMBED_DESCRIPTION_LIMIT - descriptionPrefix.length,
+  );
 
   return parts.map((part, index) => {
     const embed = new EmbedBuilder()
-      .setDescription(part || " ")
+      .setDescription(`${descriptionPrefix}${part}` || " ")
       .setTitle(
         parts.length > 1
           ? `${baseTitle} (part ${index + 1}/${parts.length})`

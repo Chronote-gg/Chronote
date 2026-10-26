@@ -1,13 +1,18 @@
+import { getMeetingProcessingSignal } from "../services/meetingProcessingLifetime";
+import { assertNotionOutcomeKnown } from "../services/notionOperationLifetime";
+import { assertMeetingProcessingSucceeded } from "../utils/meetingProcessing";
+import { notesDeliveryTimingSchema } from "../types/meetingNotesTiming";
 import { MeetingData } from "../types/meeting-data";
 import { MeetingHistory } from "../types/db";
 import { MEETING_STATUS } from "../types/meetingLifecycle";
-import { writeMeetingHistoryService } from "../services/meetingHistoryService";
+import { saveOwnedMeetingHistoryService } from "../services/meetingHistoryService";
 import { maybeAutoExportCompletedMeeting } from "../services/notionAutomationService";
 import {
-  ensureMeetingNotes,
-  ensureMeetingSummaries,
-} from "../services/meetingNotesService";
+  ensureLiveMeetingNotes as ensureMeetingNotes,
+  ensureLiveMeetingSummaries as ensureMeetingSummaries,
+} from "../services/liveMeetingNotesService";
 import { trimNotesForHistory } from "../utils/notesHistory";
+import { transitionMeetingHistory } from "../db";
 
 function buildNotesMetadata(
   meeting: MeetingData,
@@ -86,13 +91,36 @@ function buildNotesHistory(options: {
   ];
 }
 
+function buildDeliveryMetadata(
+  meeting: MeetingData,
+  notesDeliveryTiming: MeetingHistory["notesDeliveryTiming"],
+) {
+  return {
+    startReason: meeting.startReason,
+    startTriggeredByUserId: meeting.startTriggeredByUserId,
+    autoRecordRule: meeting.autoRecordRule,
+    endReason: meeting.endReason,
+    endTriggeredByUserId: meeting.endTriggeredByUserId,
+    cancellationReason: meeting.cancellationReason,
+    summaryMessageId:
+      meeting.summaryMessageId ?? meeting.startMessageId ?? undefined,
+    notesMessageIds: meeting.notesMessageIds,
+    notesDeliveryTiming,
+    delivery: meeting.delivery,
+    notesChannelId: meeting.notesChannelId,
+  };
+}
+
 export async function saveMeetingHistoryToDatabase(meeting: MeetingData) {
   meeting.historySaved = false;
-  if (!meeting.transcribeMeeting) {
-    return;
-  }
+  if (meeting.sessionMode === "tts_only") return;
 
   try {
+    assertMeetingProcessingSucceeded(meeting);
+    const timing = notesDeliveryTimingSchema.safeParse(
+      meeting.notesDeliveryTiming,
+    );
+    const notesDeliveryTiming = timing.success ? timing.data : undefined;
     const timestamp = meeting.startTime.toISOString();
     const duration = meeting.endTime
       ? Math.floor(
@@ -117,22 +145,13 @@ export async function saveMeetingHistoryToDatabase(meeting: MeetingData) {
         meetingCreatorId: meeting.creator.id,
         isAutoRecording: meeting.isAutoRecording,
         status: MEETING_STATUS.CANCELLED,
-        startReason: meeting.startReason,
-        startTriggeredByUserId: meeting.startTriggeredByUserId,
-        autoRecordRule: meeting.autoRecordRule,
-        endReason: meeting.endReason,
-        endTriggeredByUserId: meeting.endTriggeredByUserId,
-        cancellationReason: meeting.cancellationReason,
-        summaryMessageId:
-          meeting.summaryMessageId ?? meeting.startMessageId ?? undefined,
-        notesMessageIds: meeting.notesMessageIds,
-        delivery: meeting.delivery,
-        notesChannelId: meeting.notesChannelId,
+        processing: meeting.processing,
+        ...buildDeliveryMetadata(meeting, notesDeliveryTiming),
         transcriptS3Key: meeting.transcriptS3Key,
         audioS3Key: meeting.audioS3Key,
         chatS3Key: meeting.chatS3Key,
       };
-      await writeMeetingHistoryService(history);
+      await saveOwnedMeetingHistoryService(meeting, history);
       meeting.historySaved = true;
       console.log(
         `Cancelled meeting history saved for guild ${meeting.guildId}, channel ${meeting.voiceChannel.id}`,
@@ -142,6 +161,7 @@ export async function saveMeetingHistoryToDatabase(meeting: MeetingData) {
 
     const notes = await ensureMeetingNotes(meeting);
     const summaries = await ensureMeetingSummaries(meeting, notes);
+    assertMeetingProcessingSucceeded(meeting);
     const transcriptS3Key = meeting.transcriptS3Key;
     const { notesVersion, notesLastEditedBy, notesLastEditedAt, notesHistory } =
       buildNotesMetadata(meeting, notes, timestamp);
@@ -167,17 +187,7 @@ export async function saveMeetingHistoryToDatabase(meeting: MeetingData) {
       meetingCreatorId: meeting.creator.id,
       isAutoRecording: meeting.isAutoRecording,
       status: MEETING_STATUS.COMPLETE,
-      startReason: meeting.startReason,
-      startTriggeredByUserId: meeting.startTriggeredByUserId,
-      autoRecordRule: meeting.autoRecordRule,
-      endReason: meeting.endReason,
-      endTriggeredByUserId: meeting.endTriggeredByUserId,
-      cancellationReason: meeting.cancellationReason,
-      summaryMessageId:
-        meeting.summaryMessageId ?? meeting.startMessageId ?? undefined,
-      notesMessageIds: meeting.notesMessageIds,
-      delivery: meeting.delivery,
-      notesChannelId: meeting.notesChannelId,
+      ...buildDeliveryMetadata(meeting, notesDeliveryTiming),
       notesVersion,
       notesLastEditedBy,
       notesLastEditedAt,
@@ -187,46 +197,49 @@ export async function saveMeetingHistoryToDatabase(meeting: MeetingData) {
       chatS3Key: meeting.chatS3Key,
     };
 
-    await writeMeetingHistoryService(history);
+    await saveOwnedMeetingHistoryService(meeting, history);
     meeting.historySaved = true;
-    await maybeAutoExportCompletedMeeting(history);
+    try {
+      await maybeAutoExportCompletedMeeting(
+        history,
+        getMeetingProcessingSignal(meeting),
+      );
+    } catch (error) {
+      assertNotionOutcomeKnown(error, getMeetingProcessingSignal(meeting));
+      console.warn("Completed meeting Notion export failed", {
+        meetingId: meeting.meetingId,
+        error,
+      });
+    }
     console.log(
       `Meeting history saved for guild ${meeting.guildId}, channel ${meeting.voiceChannel.id}`,
     );
   } catch (error) {
     console.error("Failed to save meeting history:", error);
-    // Don't throw - we don't want to fail the meeting end process if history save fails
+    throw error;
   }
 }
 
 export async function saveMeetingStartToDatabase(
   meeting: MeetingData,
 ): Promise<void> {
-  if (!meeting.transcribeMeeting) return;
-  try {
-    const timestamp = meeting.startTime.toISOString();
-    const history: MeetingHistory = {
-      guildId: meeting.guildId,
-      channelId_timestamp: `${meeting.voiceChannel.id}#${timestamp}`,
-      meetingId: meeting.meetingId,
-      channelId: meeting.voiceChannel.id,
-      textChannelId: meeting.textChannel.id,
-      timestamp,
-      tags: meeting.tags,
-      context: meeting.meetingContext,
-      participants: Array.from(meeting.participants.values()),
-      duration: 0,
-      transcribeMeeting: meeting.transcribeMeeting,
-      generateNotes: meeting.generateNotes,
-      meetingCreatorId: meeting.creator.id,
-      isAutoRecording: meeting.isAutoRecording,
-      status: MEETING_STATUS.IN_PROGRESS,
-      startReason: meeting.startReason,
-      startTriggeredByUserId: meeting.startTriggeredByUserId,
-      autoRecordRule: meeting.autoRecordRule,
-    };
-    await writeMeetingHistoryService(history);
-  } catch (error) {
-    console.error("Failed to save meeting start history:", error);
+  if (meeting.reservation) {
+    const reservation = meeting.reservation;
+    if (reservation.sessionMode === "tts_only") return;
+    const result = await transitionMeetingHistory({
+      key: reservation.historyKey,
+      expectedMeetingId: reservation.meetingId,
+      expectedOwnerInstanceId: reservation.ownerInstanceId,
+      expectedExecutionVersion: reservation.executionVersion,
+      expectedStatus: MEETING_STATUS.STARTING,
+      patch: {
+        status: MEETING_STATUS.IN_PROGRESS,
+        updatedAt: new Date().toISOString(),
+      },
+    });
+    if (result !== "applied")
+      throw new Error("Meeting initialization lost history ownership");
+    return;
   }
+  throw new Error("Recording initialization requires its owned reservation");
 }

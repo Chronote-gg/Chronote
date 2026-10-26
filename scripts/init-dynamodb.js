@@ -32,6 +32,18 @@ const feedbackIndexDefinition = {
 
 const tables = [
   {
+    TableName: "DeploymentControlTable",
+    KeySchema: [
+      { AttributeName: "pk", KeyType: "HASH" },
+      { AttributeName: "sk", KeyType: "RANGE" },
+    ],
+    AttributeDefinitions: [
+      { AttributeName: "pk", AttributeType: "S" },
+      { AttributeName: "sk", AttributeType: "S" },
+    ],
+    BillingMode: "PAY_PER_REQUEST",
+  },
+  {
     TableName: "PaymentTransactionTable",
     KeySchema: [{ AttributeName: "TransactionID", KeyType: "HASH" }],
     AttributeDefinitions: [
@@ -290,7 +302,21 @@ const tables = [
   {
     TableName: "GuildSubscriptionTable",
     KeySchema: [{ AttributeName: "guildId", KeyType: "HASH" }],
-    AttributeDefinitions: [{ AttributeName: "guildId", AttributeType: "S" }],
+    AttributeDefinitions: [
+      { AttributeName: "guildId", AttributeType: "S" },
+      { AttributeName: "recoveryQueue", AttributeType: "S" },
+      { AttributeName: "recoveryDueAt", AttributeType: "N" },
+    ],
+    GlobalSecondaryIndexes: [
+      {
+        IndexName: "RenewalRecoveryDueIndex",
+        KeySchema: [
+          { AttributeName: "recoveryQueue", KeyType: "HASH" },
+          { AttributeName: "recoveryDueAt", KeyType: "RANGE" },
+        ],
+        Projection: { ProjectionType: "KEYS_ONLY" },
+      },
+    ],
     BillingMode: "PAY_PER_REQUEST",
   },
   {
@@ -452,7 +478,9 @@ async function createTables() {
     await ensureFeedbackIndexExists();
   }
 
+  await ensureRenewalRecoveryIndexExists();
   await ensureTableTtlEnabled("MeetingControlCommandTable");
+  await ensureTableTtlEnabled("DeploymentControlTable");
   await ensureTableTtlEnabled("ChatTtsUsageTable");
 
   console.log("\nDynamoDB initialization complete!");
@@ -499,6 +527,33 @@ async function ensureTableTtlEnabled(tableBaseName) {
   } catch (error) {
     console.error(`Error enabling TTL on ${commandTableName}:`, error.message);
   }
+}
+
+async function ensureRenewalRecoveryIndexExists() {
+  const subscriptionTable = tables.find(
+    (table) => table.TableName === "GuildSubscriptionTable",
+  );
+  const name = tableName(subscriptionTable.TableName);
+  const current = await client.send(
+    new DescribeTableCommand({ TableName: name }),
+  );
+  if (
+    current.Table?.GlobalSecondaryIndexes?.some(
+      (index) => index.IndexName === "RenewalRecoveryDueIndex",
+    )
+  )
+    return;
+  await client.send(
+    new UpdateTableCommand({
+      TableName: name,
+      AttributeDefinitions: subscriptionTable.AttributeDefinitions.filter(
+        (attribute) => attribute.AttributeName !== "guildId",
+      ),
+      GlobalSecondaryIndexUpdates: [
+        { Create: subscriptionTable.GlobalSecondaryIndexes[0] },
+      ],
+    }),
+  );
 }
 
 async function ensureFeedbackIndexExists() {

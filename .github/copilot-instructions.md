@@ -8,14 +8,14 @@ This file provides Copilot review context. AGENTS.md remains the source of truth
 
 ## What this project is
 
-- Discord bot that records voice meetings, transcribes them with OpenAI (gpt-4o-transcribe), generates notes with GPT-5.1, and posts results back to Discord.
+- Discord bot that records voice meetings, transcribes them with OpenAI (gpt-4o-transcribe), generates notes with GPT-6.1 Sol, and posts results back to Discord.
 - Supports auto-recording, meeting history in DynamoDB, context injection (server/channel/meeting), dictionary terms for prompt context, and a user-driven notes correction flow using LLMs.
 
 ## Tech stack
 
 - Runtime: Node.js 24.15.0, TypeScript.
 - Discord: discord.js v14, discord-api-types, @discordjs/voice for audio capture, @discordjs/opus, prism-media.
-- AI: openai SDK; gpt-4o-transcribe for transcription; gpt-5.1 for cleanup/notes/corrections; gpt-5-mini for live gate; DALL-E 3 for images.
+- AI: openai SDK; gpt-4o-transcribe for transcription; gpt-6.1-sol for notes; gpt-5.2 for summaries, cleanup, corrections and image prompts; gpt-5-mini for live gate; DALL-E 3 for images.
 - Observability and prompt management: Langfuse for tracing, prompt versioning, and prompt sync scripts.
 - Storage: AWS DynamoDB (tables include MeetingHistory, MeetingUserIndex, PersonalMediaUploadJob, PersonalRecordingSegment, SessionTable, McpOAuthTable, NotionIntegrationTable), S3 for transcripts/audio.
 - Infra: Terraform -> AWS ECS Fargate, ECR, CloudWatch logs; static frontend on S3 + CloudFront with OAC; local Dynamo via docker-compose.
@@ -52,7 +52,7 @@ This file provides Copilot review context. AGENTS.md remains the source of truth
   - Terms are injected into transcription and context prompts, definitions are used outside transcription to reduce prompt bloat.
 - Notes correction flow: `commands/notesCorrections.ts`
   - "Suggest correction" button -> modal (single textarea).
-  - Fetches saved notes + transcript from DB, calls GPT-4o with a "minimal edits, do not copy transcript" prompt, shows a compact line diff, requires approval (meeting creator or ManageChannels if auto-record), updates embed + MeetingHistory and bumps version/last editor.
+  - Fetches saved notes + transcript from DB, uses the notes-correction model with a "minimal edits, do not copy transcript" prompt, shows a compact line diff, requires approval (meeting creator or ManageChannels if auto-record), updates embed + MeetingHistory and bumps version/last editor.
 - Context management: `commands/context.ts` writes/reads ServerContext and ChannelContext.
 - Meeting history persistence: `commands/saveMeetingHistory.ts`, `db.ts` helpers.
   - Optional `processing` metadata records transcription, notes, and summary outcomes independently of lifecycle status. Missing outcomes are unknown. Never infer transcription failure from an unrelated upload error or insert processing notices into stored notes.
@@ -66,6 +66,13 @@ This file provides Copilot review context. AGENTS.md remains the source of truth
 - Production OAuth should use the API domain callback (e.g., `https://api.chronote.gg/auth/discord/callback`). The backend sits behind an ALB unless `ENABLE_API_ALB=false`; `API_DOMAIN` selects its hostname and is independent of whether the ALB exists. The frontend build uses `VITE_API_BASE_URL` from GitHub Actions env vars.
 - Remote MCP: `ENABLE_MCP` defaults true only when Discord OAuth is enabled, requires `OAUTH_SECRET`, and exposes `/mcp` on the API server. Use `MCP_PUBLIC_BASE_URL` for the external API origin so OAuth tokens are resource-bound to the public MCP endpoint.
 - OpenAI org/project IDs are optional (defaults empty).
+- Text generation uses the Responses API through `openaiTextService.ts`. Migrate callers together and delete superseded request paths. Preserve frozen recording settings, cancellation, mention checks and caller fallbacks; audio and image generation keep their dedicated endpoints.
+- `NOTES_MODEL` defaults to `gpt-6.1-sol` for notes only; other previously coupled roles retain independent `gpt-5.2` defaults. Existing `models.*` and compatible `modelParams.*` overrides still apply. Frozen DynamoDB v1 snapshots remain authoritative.
+- Notes use low reasoning by default and omit temperature. Notes requests using
+  supported model profiles, including GPT-6.1 Sol, request explicit 30-minute
+  cache control without breakpoints, including continuations. Older overrides
+  omit unsupported fields. Preserve prompt ordering. See
+  `docs/adr-20261022-sol-notes-caching.md`.
 - Langfuse prompt sync uses `LANGFUSE_PUBLIC_KEY` and `LANGFUSE_SECRET_KEY`. Optional: `LANGFUSE_BASE_URL`, `LANGFUSE_PROMPT_LABEL`, `LANGFUSE_PROMPT_TRANSCRIPTION`, `LANGFUSE_PROMPT_DICTIONARY_TEACHING`.
 - Optional Langfuse prompt override for the finalized audio pass: `LANGFUSE_PROMPT_TRANSCRIPTION_FINAL_PASS`.
 - Langfuse MCP tooling uses `node scripts/setup-langfuse-mcp-auth.js` to write `.opencode/langfuse.mcp.auth`, `.opencode/langfuse.public`, and `.opencode/langfuse.secret` for OpenCode. Codex and Claude Code still expect `LANGFUSE_MCP_AUTH` in the environment.
@@ -98,8 +105,8 @@ This file provides Copilot review context. AGENTS.md remains the source of truth
 
 - Variables (tfvars.example): Discord IDs/tokens, OpenAI keys, OAuth secrets, ENABLE_OAUTH (false by default in example), AWS/GitHub tokens.
 - ECS task environment passes all relevant vars from Terraform; OpenAI org/project optional; OAuth vars included but can be blank if disabled.
-- Terraform plan/apply is manual via `.github/workflows/terraform-plan.yml` and `.github/workflows/terraform-apply.yml`; merges do not auto-apply Terraform. Apply uses a reviewed saved plan artifact plus GitHub environment approval. Production uses GitHub environment `production` with Terraform workspace `default`; sandbox uses GitHub environment `sandbox` with Terraform workspace `sandbox`.
-- Backend deploy workflows wait for unexpired `ActiveMeetingTable` leases before replacing the ECS task. Keep production and sandbox guards aligned when editing deploy steps.
+- Terraform plan/apply is manual via `.github/workflows/terraform-plan.yml` and `.github/workflows/terraform-apply.yml`; merges do not auto-apply Terraform. Apply uses an exact private saved-plan bundle, whole-bundle digest and verified native GitHub environment approval. See `docs/terraform-private-delivery.md`; missing approved storage or supported protection metadata refuses execution. Production uses GitHub environment `production` with Terraform workspace `default`; sandbox uses GitHub environment `sandbox` with Terraform workspace `sandbox`.
+- Backend deploy workflows protect the serving runtime, warm a compatible candidate, promote exact ready members, and wait for runtime-owned work/voice settlement and durable protection release before retirement. Keep production and Sandbox coordinator guards aligned. First legacy production activation follows [the separate introduction procedure](../docs/production-introduction.md) and its current execution blockers.
 - Future work suggestion: keep cache and Redis Terraform resources in `_infra/cache.tf`, and add new cache infrastructure there.
 
 ## Known nuances / gotchas
@@ -172,10 +179,11 @@ Why each check exists:
 - Build (TypeScript + Vite) validates type safety and ensures the frontend bundles. Docs: https://www.typescriptlang.org/docs/handbook/compiler-options.html and https://vite.dev/guide/
 - Docs build (Docusaurus) validates docs compile and link integrity. Command: `yarn docs:check`. Docs: https://docusaurus.io/docs
 - E2E (Playwright) validates core user flows against the UI. Docs: https://playwright.dev/docs/running-tests
-- Code stats and complexity (scc + lizard) keep size and complexity visible in CI. Lizard uses its default warning thresholds (CCN > 15, length > 1000, nloc > 1000000, parameter_count > 100). Use `.sccignore` for scc exclusions and `whitelizard.txt` to suppress known complexity offenders. Docs: https://github.com/boyter/scc and https://github.com/terryyin/lizard
+- Code quality: configure a clean, pinned shared tool checkout through `QUALITY_RATCHET_HOME`, then run `yarn check:quality` before committing. Git-relative duplication, complexity, and file-size checks include tests. `yarn code:stats` reports scc and Lizard diagnostics without suppressions. See `docs/engineering/code-quality.md`.
 - Markdown lint (markdownlint-cli2) enforces consistent Markdown style across all repo `.md` files. Config in `.markdownlint-cli2.jsonc`. Command: `yarn markdownlint:check` (or `yarn markdownlint:fix` to auto-fix). Docs: https://github.com/DavidAnson/markdownlint-cli2 and https://github.com/DavidAnson/markdownlint/blob/main/doc/Rules.md
 - IaC scan (Checkov via uvx) catches Terraform misconfigurations. Docs: https://www.checkov.io/2.Basics/CLI%20Command%20Reference.html and https://docs.astral.sh/uv/concepts/tools/
 - Prompt sync (Langfuse) keeps repo prompt files aligned with Langfuse. Command: `yarn prompts:check`.
+- Production promotes prompts and syncs only the OpenAI LLM connection after backend deployment. Keep live sync out of PR and staging workflows because staging shares the Langfuse project. Provider credentials come from the existing production runtime configuration. YAML changes may show expected PR drift until the merged revision is synced; preserve drift checks and code-quality gates. Details: `docs/langfuse-llm-connections.md`.
 
 Coverage guidance:
 
@@ -303,6 +311,7 @@ Never use apologies.
 
 - Prompts live in prompts/ and prompts/\_fragments, and are synced via Langfuse.
 - Notes should be concise and proportional to meeting length, and follow participant instructions over defaults.
+- Capture explicit assignments and volunteered follow-ups with stated owners and deadlines. Preserve qualifications and completed status. The completeness check stays within the notes generation call.
 - Speaker order can be unreliable, avoid strong inference from ordering.
 - Use server nicknames when provided, else display names, else usernames, keep consistent.
 - Notes corrections should be minimal edits and avoid copying transcript text.
@@ -312,3 +321,7 @@ Never use apologies.
 
 - Keep this file aligned with AGENTS.md and avoid pasting full prompt content.
 - After changes that affect behavior, config, prompts, infra, or user flows, update docs and prompts as required by AGENTS.md.
+
+## Code quality exceptions
+
+Run `yarn check:quality` before committing. Reuse existing code and simplify findings before proposing an exception. Never add suppressions or raise thresholds to make a PR pass. Obtain explicit user authorization before applying `quality-exception`; a reason under `## Quality exception` is required and stays applicable across pushes. Scanner failures cannot be exempted. See `docs/engineering/code-quality.md`.

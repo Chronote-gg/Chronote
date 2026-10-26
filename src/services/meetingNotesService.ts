@@ -1,4 +1,4 @@
-import { MeetingData } from "../types/meeting-data";
+import { MeetingNotesInput } from "../types/meeting-data";
 import { getNotes } from "./notesService";
 import {
   generateMeetingSummaries,
@@ -7,7 +7,7 @@ import {
 import { resolveMeetingNameFromSummary } from "./meetingNameService";
 
 export async function ensureMeetingNotes(
-  meeting: MeetingData,
+  meeting: MeetingNotesInput,
 ): Promise<string | undefined> {
   if (!meeting.generateNotes) return meeting.notesText;
   if (meeting.notesText) return meeting.notesText;
@@ -53,7 +53,7 @@ export async function ensureMeetingNotes(
 }
 
 export async function ensureMeetingSummaries(
-  meeting: MeetingData,
+  meeting: MeetingNotesInput,
   notes: string | undefined,
 ): Promise<MeetingSummaries> {
   if (!meeting.generateNotes) return {};
@@ -85,6 +85,10 @@ export async function ensureMeetingSummaries(
       parentSpanContext: meeting.langfuseParentSpanContext,
       modelParams: meeting.runtimeConfig?.modelParams?.meetingSummary,
       modelOverride: meeting.runtimeConfig?.modelChoices?.meetingSummary,
+      signal: meeting.signal,
+      savedPrompt: meeting.savedSummary,
+      frozenModel: meeting.frozenModels?.meetingSummary,
+      captureNotice: meeting.captureNotice,
     });
     if (!summaries.summarySentence?.trim() && !summaries.summaryLabel?.trim()) {
       meeting.processing = { ...meeting.processing, summary: "failed" };
@@ -96,7 +100,7 @@ export async function ensureMeetingSummaries(
     meeting.summarySentence = summaries.summarySentence;
     meeting.summaryLabel = summaries.summaryLabel;
     meeting.processing = { ...meeting.processing, summary: "generated" };
-    if (!meeting.meetingName) {
+    if (!meeting.meetingName && !meeting.recovered) {
       try {
         meeting.meetingName = await resolveMeetingNameFromSummary({
           guildId: meeting.guildId,

@@ -429,6 +429,79 @@ describe("MeetingDetailDrawer summary copy", () => {
     });
   });
 
+  it("shows unavailable status with a recheck in both drawer layouts while canonical history stays live", async () => {
+    const retry = jest.fn();
+    const detail = buildDetail({
+      status: "in_progress",
+      notes: "",
+      summarySentence: null,
+    });
+    const meeting = buildMeeting({
+      status: "in_progress",
+      notes: "",
+      summary: "Notes will appear after the meeting is processed.",
+    });
+    const result = {
+      ...buildUseMeetingDetailResult({ detail, meeting }),
+      liveStreamEnabled: true,
+      displayStatus: "unavailable" as const,
+      liveStream: {
+        meeting: null,
+        status: "unavailable" as const,
+        events: [],
+        attendees: [],
+        retry,
+      },
+      timelineEmptyLabel:
+        "Recording status cannot be confirmed. Recheck to resume live updates.",
+    };
+    useMeetingDetailMock.mockReturnValue(result);
+    const view = renderDrawer();
+    expect(screen.getByText("Status unavailable")).toBeInTheDocument();
+    expect(screen.queryByText("Live transcript")).not.toBeInTheDocument();
+    expect(
+      screen.queryByText("Notes will appear after the meeting is processed."),
+    ).not.toBeInTheDocument();
+    fireEvent.click(
+      screen.getByRole("button", { name: "Recheck recording status" }),
+    );
+    expect(retry).toHaveBeenCalledTimes(1);
+    fireEvent.click(
+      screen.getAllByRole("button", { name: "Open fullscreen" })[0],
+    );
+    expect(
+      await screen.findByText(result.timelineEmptyLabel),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Recheck recording status" }),
+    ).toBeInTheDocument();
+    expect(detail.status).toBe("in_progress");
+    expect(meeting.status).toBe("in_progress");
+    useMeetingDetailMock.mockReturnValue({
+      ...result,
+      displayStatus: "in_progress",
+      liveStream: { ...result.liveStream, status: "live" },
+      timelineEmptyLabel: "Waiting for the first transcript line...",
+    });
+    view.rerender(
+      <MantineProvider>
+        <MeetingDetailDrawer
+          opened
+          selectedMeetingId="m1"
+          selectedGuildId="g1"
+          canManageSelectedGuild
+          channelNameMap={new Map([["c1", "general"]])}
+          invalidateMeetingLists={jest.fn(async () => {})}
+          onClose={jest.fn()}
+        />
+      </MantineProvider>,
+    );
+    expect(screen.getByText("Live transcript")).toBeInTheDocument();
+    expect(screen.queryByText("Status unavailable")).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Recheck recording status" }),
+    ).not.toBeInTheDocument();
+  });
   it("copies summary notes as Markdown", async () => {
     const notesMarkdown = "- Decision: Ship it\n- Action: Follow up";
     useMeetingDetailMock.mockReturnValue(
@@ -448,6 +521,27 @@ describe("MeetingDetailDrawer summary copy", () => {
       color: "green",
       message: "Summary copied to clipboard.",
     });
+  });
+  it("copied interrupted notes retain the coverage warning", async () => {
+    const capture = {
+      kind: "interrupted" as const,
+      startedAt: "2026-01-01T00:00:00Z",
+      detectedAt: "2026-01-01T01:00:00Z",
+      endedAt: null,
+    };
+    useMeetingDetailMock.mockReturnValue(
+      buildUseMeetingDetailResult({
+        detail: buildDetail({ notes: "Generated saved decision.", capture }),
+        meeting: buildMeeting({ notes: "Generated saved decision.", capture }),
+      }),
+    );
+    renderDrawer();
+    fireEvent.click(screen.getByLabelText("Copy summary as Markdown"));
+    await waitFor(() =>
+      expect(writeTextMock).toHaveBeenCalledWith(
+        expect.stringContaining("These notes cover only the saved recording."),
+      ),
+    );
   });
 
   it("reinitializes the same meeting after the drawer closes", async () => {

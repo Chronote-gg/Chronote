@@ -1,3 +1,11 @@
+import { firstMeeting } from "./firstMeeting";
+import { requireBotInGuild } from "./ensureBotPresence";
+import type { RuntimeApiOperation } from "../../services/runtimeApiOperationService";
+import {
+  projectMeetingCapture,
+  resolveCaptureStatus,
+  type CaptureNoticeInput,
+} from "../../utils/meetingCaptureNotice";
 import { TRPCError } from "@trpc/server";
 import { formatHunkDiff } from "../../utils/diff";
 import { z } from "zod";
@@ -13,7 +21,6 @@ import {
   updateMeetingNameService,
 } from "../../services/meetingHistoryService";
 import {
-  ensureBotInGuild,
   ensureManageGuildWithUserToken,
   type GuildSessionCache,
 } from "../../services/guildAccessService";
@@ -58,7 +65,7 @@ import {
   updateDiscordMessageEmbeds,
 } from "../../services/discordMessageService";
 import { generateMeetingSummaries } from "../../services/meetingSummaryService";
-import { createOpenAIClient } from "../../services/openaiClient";
+import { generateOpenAIText } from "../../services/openaiTextService";
 import { getLangfuseChatPrompt } from "../../services/langfusePromptService";
 import {
   buildModelOverrides,
@@ -119,7 +126,12 @@ import {
   getSnapshotBoolean,
   resolveConfigSnapshot,
 } from "../../services/unifiedConfigService";
-import { authedProcedure, guildMemberProcedure, router } from "../trpc";
+import {
+  authedProcedure,
+  correctionProcedure,
+  guildMemberProcedure,
+  router,
+} from "../trpc";
 import {
   resolveMeetingArtifactAccess,
   resolveServerMeetingArtifactAccess,
@@ -536,6 +548,7 @@ const buildRequesterTag = (user: {
 };
 
 async function generateCorrectedNotes(options: {
+  signal?: AbortSignal;
   currentNotes: string;
   transcript: string;
   suggestion: string;
@@ -546,10 +559,12 @@ async function generateCorrectedNotes(options: {
   modelParams?: Parameters<typeof resolveChatParamsForRole>[0]["config"];
   modelOverride?: string;
 }): Promise<string> {
+  options.signal?.throwIfAborted();
   const priorSuggestions = formatSuggestionsForPrompt(
     options.previousSuggestions,
   );
   const rosters = await buildMentionRosters(options.meeting);
+  options.signal?.throwIfAborted();
   const { messages, langfusePrompt } = await getLangfuseChatPrompt({
     name: config.langfuse.notesCorrectionPromptName,
     variables: {
@@ -577,22 +592,22 @@ async function generateCorrectedNotes(options: {
       model: modelChoice.model,
       config: options.modelParams,
     });
-    const openAIClient = createOpenAIClient({
-      traceName: "notes-correction-web",
-      generationName: "notes-correction-web",
-      tags: ["feature:notes_correction", "surface:web"],
-      metadata: {
-        requesterTag: options.requesterTag,
-      },
-      langfusePrompt,
-    });
-    const completion = await openAIClient.chat.completions.create({
+    options.signal?.throwIfAborted();
+    const content = await generateOpenAIText({
       model: modelChoice.model,
-      messages,
-      ...chatParams,
+      input: messages,
+      modelParams: chatParams,
+      signal: options.signal,
+      tracing: {
+        traceName: "notes-correction-web",
+        generationName: "notes-correction-web",
+        tags: ["feature:notes_correction", "surface:web"],
+        metadata: { requesterTag: options.requesterTag },
+        langfusePrompt,
+      },
     });
+    options.signal?.throwIfAborted();
 
-    const content = completion.choices[0]?.message?.content;
     if (content && content.trim().length > 0) {
       // A correction may keep the mentions already in the notes and may add one
       // the rosters offered, but anything outside both was invented.
@@ -611,6 +626,7 @@ async function generateCorrectedNotes(options: {
         "Failed to generate a correction proposal. Please try again in a moment.",
     });
   } catch (error) {
+    options.signal?.throwIfAborted();
     console.error("Failed to generate corrected notes (web):", error);
     throw new TRPCError({
       code: "INTERNAL_SERVER_ERROR",
@@ -620,13 +636,20 @@ async function generateCorrectedNotes(options: {
   }
 }
 
+const runCorrectionMutation = <T>(
+  operation: RuntimeApiOperation | undefined,
+  run: () => Promise<T>,
+): Promise<T> => (operation ? operation.mutate(run) : run());
+
 async function sendNotesEmbedsToDiscord(params: {
+  operation?: RuntimeApiOperation;
   channelId: string;
   notesBody: string;
   meetingName?: string;
   footerText?: string;
   color?: number;
   processing?: MeetingProcessingOutcome;
+  captureNoticeInput?: CaptureNoticeInput;
 }): Promise<string[]> {
   const embedBatches = batchMeetingNotesEmbeds(
     buildMeetingNotesEmbeds({
@@ -635,6 +658,7 @@ async function sendNotesEmbedsToDiscord(params: {
       footerText: params.footerText,
       color: params.color,
       processing: params.processing,
+      ...params.captureNoticeInput,
     }),
   );
 
@@ -642,18 +666,22 @@ async function sendNotesEmbedsToDiscord(params: {
 
   try {
     for (const embeds of embedBatches) {
-      const msg = await createDiscordMessage(params.channelId, {
-        embeds: embeds.map(
-          (embed) => embed.toJSON() as unknown as Record<string, unknown>,
-        ),
-        components: [],
-      });
+      const msg = await runCorrectionMutation(params.operation, () =>
+        createDiscordMessage(params.channelId, {
+          embeds: embeds.map(
+            (embed) => embed.toJSON() as unknown as Record<string, unknown>,
+          ),
+          components: [],
+        }),
+      );
       messageIds.push(msg.id);
     }
     return messageIds;
   } catch (error) {
+    params.operation?.signal.throwIfAborted();
     if (messageIds.length > 0) {
       await deleteDiscordMessagesSafely({
+        operation: params.operation,
         channelId: params.channelId,
         messageIds,
       });
@@ -670,6 +698,7 @@ type NotesEmbedUpdateResult = {
 };
 
 async function tryEditNotesEmbedsInPlace(params: {
+  operation?: RuntimeApiOperation;
   channelId: string;
   existingMessageIds: string[];
   embeds: Array<Record<string, unknown>>;
@@ -682,10 +711,12 @@ async function tryEditNotesEmbedsInPlace(params: {
     if (params.summaryMessageId && messageId === params.summaryMessageId) {
       return null;
     }
-    const ok = await updateDiscordMessage(params.channelId, messageId, {
-      embeds: [params.embeds[i]],
-      components: [],
-    });
+    const ok = await runCorrectionMutation(params.operation, () =>
+      updateDiscordMessage(params.channelId, messageId, {
+        embeds: [params.embeds[i]],
+        components: [],
+      }),
+    );
     if (!ok) {
       return null;
     }
@@ -702,8 +733,11 @@ async function tryEditNotesEmbedsInPlace(params: {
       continue;
     }
     try {
-      await deleteDiscordMessage(params.channelId, messageId);
+      await runCorrectionMutation(params.operation, () =>
+        deleteDiscordMessage(params.channelId, messageId),
+      );
     } catch (error) {
+      params.operation?.signal.throwIfAborted();
       console.warn(
         "Failed to delete excess notes message after in-place edit",
         { channelId: params.channelId, messageId, error },
@@ -715,6 +749,7 @@ async function tryEditNotesEmbedsInPlace(params: {
 }
 
 async function editOrReplaceNotesEmbeds(params: {
+  operation?: RuntimeApiOperation;
   channelId: string;
   existingMessageIds: string[];
   notesBody: string;
@@ -722,6 +757,7 @@ async function editOrReplaceNotesEmbeds(params: {
   footerText?: string;
   color?: number;
   processing?: MeetingProcessingOutcome;
+  captureNoticeInput?: CaptureNoticeInput;
   summaryMessageId?: string;
 }): Promise<NotesEmbedUpdateResult> {
   const embeds = buildMeetingNotesEmbeds({
@@ -730,6 +766,7 @@ async function editOrReplaceNotesEmbeds(params: {
     footerText: params.footerText,
     color: params.color,
     processing: params.processing,
+    ...params.captureNoticeInput,
   }).map((embed) => embed.toJSON() as unknown as Record<string, unknown>);
 
   if (
@@ -737,6 +774,7 @@ async function editOrReplaceNotesEmbeds(params: {
     embeds.length <= params.existingMessageIds.length
   ) {
     const editedIds = await tryEditNotesEmbedsInPlace({
+      operation: params.operation,
       channelId: params.channelId,
       existingMessageIds: params.existingMessageIds,
       embeds,
@@ -748,12 +786,14 @@ async function editOrReplaceNotesEmbeds(params: {
   }
 
   const messageIds = await sendNotesEmbedsToDiscord({
+    operation: params.operation,
     channelId: params.channelId,
     notesBody: params.notesBody,
     meetingName: params.meetingName,
     footerText: params.footerText,
     color: params.color,
     processing: params.processing,
+    captureNoticeInput: params.captureNoticeInput,
   });
   return { messageIds, strategy: "replaced" };
 }
@@ -780,6 +820,7 @@ async function syncNotesEmbedsAfterWebEdit(params: {
       meetingName: params.history.meetingName,
       footerText: params.footerText,
       processing: params.history.processing,
+      captureNoticeInput: params.history,
       summaryMessageId: params.history.summaryMessageId,
     });
   } catch (error) {
@@ -819,6 +860,7 @@ async function syncNotesEmbedsAfterWebEdit(params: {
 }
 
 async function deleteDiscordMessagesSafely(params: {
+  operation?: RuntimeApiOperation;
   channelId: string;
   messageIds: string[];
   skipMessageId?: string;
@@ -828,8 +870,11 @@ async function deleteDiscordMessagesSafely(params: {
       continue;
     }
     try {
-      await deleteDiscordMessage(params.channelId, messageId);
+      await runCorrectionMutation(params.operation, () =>
+        deleteDiscordMessage(params.channelId, messageId),
+      );
     } catch (error) {
+      params.operation?.signal.throwIfAborted();
       console.warn("Failed deleting Discord message", {
         channelId: params.channelId,
         messageId,
@@ -855,9 +900,6 @@ const resolveMeetingListChannelName = (
   isPersonalMeeting(meeting)
     ? PERSONAL_MEETING_CHANNEL_NAME
     : (channelMap.get(channelId) ?? channelId);
-
-const resolveMeetingListStatus = (status: MeetingSummary["status"]) =>
-  status ?? MEETING_STATUS.COMPLETE;
 
 const resolveMeetingListDuration = (meeting: MeetingSummary): number => {
   const status = meeting.status;
@@ -896,19 +938,7 @@ const list = guildMemberProcedure
     }),
   )
   .query(async ({ ctx, input }) => {
-    const botCheck = await ensureBotInGuild(input.serverId);
-    if (botCheck === null) {
-      throw new TRPCError({
-        code: "TOO_MANY_REQUESTS",
-        message: "Discord rate limited. Please retry.",
-      });
-    }
-    if (!botCheck) {
-      throw new TRPCError({
-        code: "BAD_REQUEST",
-        message: "Bot is not in that guild",
-      });
-    }
+    await requireBotInGuild(input.serverId);
 
     const limit = input.limit ?? config.ask.maxMeetings;
     const meetings = await listRecentMeetingsForGuildService(
@@ -977,7 +1007,8 @@ const list = guildMemberProcedure
           roleNamesByGuildId,
         );
         return {
-          status: resolveMeetingListStatus(meeting.status),
+          ...projectMeetingCapture(meeting),
+          status: resolveCaptureStatus(meeting),
           id: meeting.channelId_timestamp,
           meetingId: meeting.meetingId,
           channelId,
@@ -1165,7 +1196,8 @@ const detail = authedProcedure
 
     return {
       meeting: {
-        status: history.status ?? MEETING_STATUS.COMPLETE,
+        ...projectMeetingCapture(history),
+        status: resolveCaptureStatus(history),
         id: history.channelId_timestamp,
         meetingId: history.meetingId,
         channelId,
@@ -1538,7 +1570,7 @@ const rename = authedProcedure
     return { meetingName };
   });
 
-const suggestNotesCorrection = authedProcedure
+const suggestNotesCorrection = correctionProcedure
   .input(
     z.object({
       serverId: z.string(),
@@ -1547,9 +1579,8 @@ const suggestNotesCorrection = authedProcedure
     }),
   )
   .mutation(async ({ ctx, input }) => {
-    const history = await getMeetingHistoryService(
-      input.serverId,
-      input.meetingId,
+    const history = await ctx.operation.read(() =>
+      getMeetingHistoryService(input.serverId, input.meetingId),
     );
     if (!history || !history.notes) {
       throw new TRPCError({
@@ -1562,18 +1593,24 @@ const suggestNotesCorrection = authedProcedure
       history.channelId ?? parseChannelIdTimestamp(input.meetingId).channelId;
     const attendeeOverrideEnabled = isPersonalMeeting(history)
       ? true
-      : await resolveAttendeeAccessEnabled(input.serverId);
-    await ensurePortalUserCanAccessMeeting({
-      accessToken: ctx.user.accessToken,
-      guildId: input.serverId,
-      meeting: history,
-      session: ctx.req.session,
-      userId: ctx.user.id,
-      attendeeOverrideEnabled,
-    });
+      : await ctx.operation.read(() =>
+          resolveAttendeeAccessEnabled(input.serverId),
+        );
+    await ctx.operation.read(() =>
+      ensurePortalUserCanAccessMeeting({
+        accessToken: ctx.user.accessToken,
+        guildId: input.serverId,
+        meeting: history,
+        session: ctx.req.session,
+        userId: ctx.user.id,
+        attendeeOverrideEnabled,
+      }),
+    );
 
     const transcriptPayload = history.transcriptS3Key
-      ? await fetchJsonFromS3<TranscriptPayload>(history.transcriptS3Key)
+      ? await ctx.operation.read(() =>
+          fetchJsonFromS3<TranscriptPayload>(history.transcriptS3Key!),
+        )
       : undefined;
     const transcript = transcriptPayload?.text ?? "";
 
@@ -1591,27 +1628,34 @@ const suggestNotesCorrection = authedProcedure
       baseNotesVersion,
     };
 
-    const modelParams = await resolveModelParamsForContext({
-      guildId: input.serverId,
-      channelId,
-      userId: ctx.user.id,
-    });
-    const modelChoices = await resolveModelChoicesForContext({
-      guildId: input.serverId,
-      channelId,
-      userId: ctx.user.id,
-    });
+    const modelParams = await ctx.operation.read(() =>
+      resolveModelParamsForContext({
+        guildId: input.serverId,
+        channelId,
+        userId: ctx.user.id,
+      }),
+    );
+    const modelChoices = await ctx.operation.read(() =>
+      resolveModelChoicesForContext({
+        guildId: input.serverId,
+        channelId,
+        userId: ctx.user.id,
+      }),
+    );
 
-    const newNotes = await generateCorrectedNotes({
-      currentNotes: history.notes,
-      transcript,
-      suggestion: input.suggestion,
-      requesterTag,
-      meeting: history,
-      previousSuggestions: history.suggestionsHistory,
-      modelParams: modelParams.notesCorrection,
-      modelOverride: modelChoices.notesCorrection,
-    });
+    const newNotes = await ctx.operation.read(() =>
+      generateCorrectedNotes({
+        signal: ctx.operation.signal,
+        currentNotes: history.notes!,
+        transcript,
+        suggestion: input.suggestion,
+        requesterTag,
+        meeting: history,
+        previousSuggestions: history.suggestionsHistory,
+        modelParams: modelParams.notesCorrection,
+        modelOverride: modelChoices.notesCorrection,
+      }),
+    );
 
     cleanupExpiredPendingNotesCorrections();
     const diff = buildUnifiedDiffForUi(history.notes, newNotes);
@@ -1635,7 +1679,9 @@ const suggestNotesCorrection = authedProcedure
       notesDiff,
       transcriptExcerpt,
     };
-    await notesCorrectionTokenStore.set(token, record);
+    await ctx.operation.mutate(() =>
+      notesCorrectionTokenStore.set(token, record),
+    );
 
     return {
       token,
@@ -1644,7 +1690,7 @@ const suggestNotesCorrection = authedProcedure
     };
   });
 
-const applyNotesCorrection = authedProcedure
+const applyNotesCorrection = correctionProcedure
   .input(
     z.object({
       serverId: z.string(),
@@ -1654,7 +1700,9 @@ const applyNotesCorrection = authedProcedure
   )
   .mutation(async ({ ctx, input }) => {
     cleanupExpiredPendingNotesCorrections();
-    const pending = await notesCorrectionTokenStore.get(input.token);
+    const pending = await ctx.operation.read(() =>
+      notesCorrectionTokenStore.get(input.token),
+    );
     if (!pending) {
       throw new TRPCError({
         code: "NOT_FOUND",
@@ -1671,12 +1719,13 @@ const applyNotesCorrection = authedProcedure
       });
     }
 
-    const history = await getMeetingHistoryService(
-      input.serverId,
-      input.meetingId,
+    const history = await ctx.operation.read(() =>
+      getMeetingHistoryService(input.serverId, input.meetingId),
     );
     if (!history) {
-      await notesCorrectionTokenStore.delete(input.token);
+      await ctx.operation.mutate(() =>
+        notesCorrectionTokenStore.delete(input.token),
+      );
       throw new TRPCError({ code: "NOT_FOUND", message: "Meeting not found" });
     }
 
@@ -1684,26 +1733,32 @@ const applyNotesCorrection = authedProcedure
       history.channelId ?? parseChannelIdTimestamp(input.meetingId).channelId;
     const attendeeOverrideEnabled = isPersonalMeeting(history)
       ? true
-      : await resolveAttendeeAccessEnabled(input.serverId);
-    await ensurePortalUserCanAccessMeeting({
-      accessToken: ctx.user.accessToken,
-      guildId: input.serverId,
-      meeting: history,
-      session: ctx.req.session,
-      userId: ctx.user.id,
-      attendeeOverrideEnabled,
-    });
+      : await ctx.operation.read(() =>
+          resolveAttendeeAccessEnabled(input.serverId),
+        );
+    await ctx.operation.read(() =>
+      ensurePortalUserCanAccessMeeting({
+        accessToken: ctx.user.accessToken,
+        guildId: input.serverId,
+        meeting: history,
+        session: ctx.req.session,
+        userId: ctx.user.id,
+        attendeeOverrideEnabled,
+      }),
+    );
 
     const isMeetingOwner = resolveMeetingOwnerUserId(history) === ctx.user.id;
     const isRequester = pending.requesterId === ctx.user.id;
 
     if (!isMeetingOwner && !isRequester) {
       if (history.isAutoRecording) {
-        await ensurePortalUserCanManageMeetingChannel({
-          guildId: input.serverId,
-          channelId,
-          userId: ctx.user.id,
-        });
+        await ctx.operation.read(() =>
+          ensurePortalUserCanManageMeetingChannel({
+            guildId: input.serverId,
+            channelId,
+            userId: ctx.user.id,
+          }),
+        );
       } else {
         throw new TRPCError({
           code: "FORBIDDEN",
@@ -1726,58 +1781,74 @@ const applyNotesCorrection = authedProcedure
     const footerText = `v${newVersion} • Edited by ${editorLabel}`;
 
     // Generate summaries before any mutations
-    const { serverName, channelName } =
-      await resolveGuildAndChannelNamesForPrompt({
+    const { serverName, channelName } = await ctx.operation.read(() =>
+      resolveGuildAndChannelNamesForPrompt({
         guildId: input.serverId,
         channelId,
-      });
-    const summaryModelParams = await resolveModelParamsForContext({
-      guildId: input.serverId,
-      channelId,
-      userId: ctx.user.id,
-    });
-    const summaryModelChoices = await resolveModelChoicesForContext({
-      guildId: input.serverId,
-      channelId,
-      userId: ctx.user.id,
-    });
+      }),
+    );
+    const summaryModelParams = await ctx.operation.read(() =>
+      resolveModelParamsForContext({
+        guildId: input.serverId,
+        channelId,
+        userId: ctx.user.id,
+      }),
+    );
+    const summaryModelChoices = await ctx.operation.read(() =>
+      resolveModelChoicesForContext({
+        guildId: input.serverId,
+        channelId,
+        userId: ctx.user.id,
+      }),
+    );
     const meetingDate = history.timestamp
       ? new Date(history.timestamp)
       : new Date();
-    const summaries = await generateMeetingSummaries({
-      guildId: input.serverId,
-      notes: pending.newNotes,
-      serverName,
-      channelName,
-      tags: history.tags,
-      now: meetingDate,
-      meetingId: history.meetingId,
-      previousSummarySentence: history.summarySentence,
-      previousSummaryLabel: history.summaryLabel,
-      modelParams: summaryModelParams.meetingSummary,
-      modelOverride: summaryModelChoices.meetingSummary,
-    });
+    const summaries = await ctx.operation.read(() =>
+      generateMeetingSummaries({
+        signal: ctx.operation.signal,
+        guildId: input.serverId,
+        notes: pending.newNotes,
+        serverName,
+        channelName,
+        tags: history.tags,
+        now: meetingDate,
+        meetingId: history.meetingId,
+        previousSummarySentence: history.summarySentence,
+        previousSummaryLabel: history.summaryLabel,
+        modelParams: summaryModelParams.meetingSummary,
+        modelOverride: summaryModelChoices.meetingSummary,
+      }),
+    );
     const summarySentence =
       summaries.summarySentence ?? history.summarySentence;
     const summaryLabel = summaries.summaryLabel ?? history.summaryLabel;
 
     // Persist notes FIRST (without message metadata) so Discord is untouched on conflict
-    const ok = await updateMeetingNotesService({
-      guildId: input.serverId,
-      channelId_timestamp: input.meetingId,
-      notes: pending.newNotes,
-      notesDelta: null,
-      notesVersion: newVersion,
-      editedBy: ctx.user.id,
-      summarySentence,
-      summaryLabel,
-      suggestion: appliedSuggestion,
-      source: { type: "notes_correction", correctionId },
-      expectedPreviousVersion: pending.notesVersion,
-    });
+    const ok = await ctx.operation.read(() =>
+      updateMeetingNotesService(
+        {
+          guildId: input.serverId,
+          channelId_timestamp: input.meetingId,
+          notes: pending.newNotes,
+          notesDelta: null,
+          notesVersion: newVersion,
+          editedBy: ctx.user.id,
+          summarySentence,
+          summaryLabel,
+          suggestion: appliedSuggestion,
+          source: { type: "notes_correction", correctionId },
+          expectedPreviousVersion: pending.notesVersion,
+        },
+        ctx.operation.signal,
+        ctx.operation,
+      ),
+    );
 
     if (!ok) {
-      await notesCorrectionTokenStore.delete(input.token);
+      await ctx.operation.mutate(() =>
+        notesCorrectionTokenStore.delete(input.token),
+      );
       throw new TRPCError({
         code: "CONFLICT",
         message:
@@ -1811,22 +1882,25 @@ const applyNotesCorrection = authedProcedure
         dictionaryTeachingContextToken = uuidv4();
         dictionaryTeachingContextExpiresAtMs =
           Date.now() + DICTIONARY_TEACHING_TOKEN_TTL_MS;
-        await dictionaryTeachingTokenStore.setContext(
-          dictionaryTeachingContextToken,
-          {
-            guildId: input.serverId,
-            requesterId: ctx.user.id,
-            expiresAtMs: dictionaryTeachingContextExpiresAtMs,
-            context: {
-              source: "notes_correction",
-              meetingId: input.meetingId,
-              correctionId,
-              notesDiff: pending.notesDiff,
-              transcriptExcerpt: teachingTranscriptExcerpt,
+        await ctx.operation.mutate(() =>
+          dictionaryTeachingTokenStore.setContext(
+            dictionaryTeachingContextToken!,
+            {
+              guildId: input.serverId,
+              requesterId: ctx.user.id,
+              expiresAtMs: dictionaryTeachingContextExpiresAtMs!,
+              context: {
+                source: "notes_correction",
+                meetingId: input.meetingId,
+                correctionId,
+                notesDiff: pending.notesDiff,
+                transcriptExcerpt: teachingTranscriptExcerpt,
+              },
             },
-          },
+          ),
         );
       } catch (error) {
+        ctx.operation.signal.throwIfAborted();
         dictionaryTeachingContextToken = undefined;
         dictionaryTeachingContextExpiresAtMs = undefined;
         console.warn(
@@ -1841,35 +1915,47 @@ const applyNotesCorrection = authedProcedure
     if (!config.mock.enabled && history.notesChannelId) {
       try {
         embedResult = await editOrReplaceNotesEmbeds({
+          operation: ctx.operation,
           channelId: history.notesChannelId,
           existingMessageIds: history.notesMessageIds ?? [],
           notesBody: pending.newNotes,
           meetingName: history.meetingName,
           footerText,
           processing: history.processing,
+          captureNoticeInput: history,
           summaryMessageId: history.summaryMessageId,
         });
       } catch (error) {
+        ctx.operation.signal.throwIfAborted();
         console.warn("Failed updating notes embeds after correction", error);
       }
     }
 
     // Persist message metadata separately
     if (embedResult && history.notesChannelId) {
-      const metadataOk = await updateMeetingNotesMessageMetadataService({
-        guildId: input.serverId,
-        channelId_timestamp: input.meetingId,
-        notesMessageIds: embedResult.messageIds,
-        notesChannelId: history.notesChannelId,
-        expectedNotesVersion: newVersion,
-      });
+      const metadataOk = await ctx.operation.read(() =>
+        updateMeetingNotesMessageMetadataService(
+          {
+            guildId: input.serverId,
+            channelId_timestamp: input.meetingId,
+            notesMessageIds: embedResult!.messageIds,
+            notesChannelId: history.notesChannelId!,
+            expectedNotesVersion: newVersion,
+          },
+          ctx.operation.signal,
+          ctx.operation,
+        ),
+      );
 
       if (!metadataOk && embedResult.strategy === "replaced") {
         await deleteDiscordMessagesSafely({
+          operation: ctx.operation,
           channelId: history.notesChannelId,
           messageIds: embedResult.messageIds,
         });
-        await notesCorrectionTokenStore.delete(input.token);
+        await ctx.operation.mutate(() =>
+          notesCorrectionTokenStore.delete(input.token),
+        );
         return {
           ok: true,
           dictionaryTeachingContextToken,
@@ -1887,6 +1973,7 @@ const applyNotesCorrection = authedProcedure
       history.notesMessageIds?.length
     ) {
       await deleteDiscordMessagesSafely({
+        operation: ctx.operation,
         channelId: history.notesChannelId,
         messageIds: history.notesMessageIds,
         skipMessageId: history.summaryMessageId,
@@ -1900,9 +1987,11 @@ const applyNotesCorrection = authedProcedure
       history.summaryMessageId
     ) {
       try {
-        const message = await fetchDiscordMessage(
-          history.notesChannelId,
-          history.summaryMessageId,
+        const message = await ctx.operation.read(() =>
+          fetchDiscordMessage(
+            history.notesChannelId!,
+            history.summaryMessageId!,
+          ),
         );
         const embed = message?.embeds?.[0];
         if (embed) {
@@ -1917,13 +2006,16 @@ const applyNotesCorrection = authedProcedure
               summaryLabel,
             }),
           };
-          await updateDiscordMessageEmbeds(
-            history.notesChannelId,
-            history.summaryMessageId,
-            [updated],
+          await ctx.operation.mutate(() =>
+            updateDiscordMessageEmbeds(
+              history.notesChannelId!,
+              history.summaryMessageId!,
+              [updated],
+            ),
           );
         }
       } catch (error) {
+        ctx.operation.signal.throwIfAborted();
         console.warn(
           "Failed to update summary message after web correction",
           error,
@@ -1931,7 +2023,9 @@ const applyNotesCorrection = authedProcedure
       }
     }
 
-    await notesCorrectionTokenStore.delete(input.token);
+    await ctx.operation.mutate(() =>
+      notesCorrectionTokenStore.delete(input.token),
+    );
     return {
       ok: true,
       dictionaryTeachingContextToken,
@@ -1995,6 +2089,7 @@ const setPersonalShareGrants = authedProcedure
   });
 
 export const meetingsRouter = router({
+  firstMeeting,
   list,
   myList,
   detail,

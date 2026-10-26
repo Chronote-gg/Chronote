@@ -58,11 +58,38 @@ resource "aws_appconfig_deployment" "chronote_config_deployment" {
 }
 
 resource "aws_iam_policy" "appconfig_access_policy" {
-  #checkov:skip=CKV_AWS_355 reason: AppConfigData session actions require resource "*" and are scoped by app/env/profile IDs.
-  #checkov:skip=CKV_AWS_290 reason: AppConfigData session actions require "*" and publish actions are limited to the app config workflow.
+  #checkov:skip=CKV_AWS_355 reason: Legacy production permissions are unchanged; Sandbox is resource-scoped.
+  #checkov:skip=CKV_AWS_290 reason: Legacy production permissions are unchanged; Sandbox is resource-scoped.
   name        = "${local.name_prefix}-bot-appconfig-policy"
   description = "Policy for Meeting Notes Bot to access AppConfig data"
-  policy = jsonencode({
+  policy = var.environment == "sandbox" ? jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect   = "Allow"
+        Action   = ["appconfig:GetLatestConfiguration", "appconfig:StartConfigurationSession"]
+        Resource = "${aws_appconfig_application.chronote_config.arn}/environment/${aws_appconfig_environment.chronote_config_env.environment_id}/configuration/${aws_appconfig_configuration_profile.chronote_config_profile.configuration_profile_id}"
+      },
+      {
+        Effect = "Allow"
+        Action = ["appconfig:CreateHostedConfigurationVersion"]
+        Resource = [
+          aws_appconfig_application.chronote_config.arn,
+          aws_appconfig_configuration_profile.chronote_config_profile.arn
+        ]
+      },
+      {
+        Effect = "Allow"
+        Action = ["appconfig:StartDeployment"]
+        Resource = [
+          aws_appconfig_application.chronote_config.arn,
+          aws_appconfig_configuration_profile.chronote_config_profile.arn,
+          aws_appconfig_environment.chronote_config_env.arn,
+          aws_appconfig_deployment_strategy.chronote_config_strategy.arn
+        ]
+      }
+    ]
+    }) : jsonencode({
     Version = "2012-10-17",
     Statement = [
       {

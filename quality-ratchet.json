@@ -1,0 +1,46 @@
+{
+  "schemaVersion": 1,
+  "scope": {
+    "include": ["**/*"],
+    "exclude": [
+      "**/{dist,.next,build,coverage,.turbo,vendor,target,bin,obj,out,.venv}/**",
+      "**/{_generated,generated}/**",
+      "**/*.d.{ts,mts,cts}",
+      "**/{package-lock,npm-shrinkwrap}.json",
+      "**/{pnpm-lock,bun}.yaml",
+      "**/{yarn,bun,Cargo,composer,poetry,uv,Pipfile}.lock",
+      "**/bun.lockb",
+      "**/.terraform.lock.hcl",
+      "**/{.superpowers,.docusaurus}/**",
+      "**/src-tauri/gen/**"
+    ]
+  },
+  "checks": {
+    "complexity": {
+      "mode": "ratchet",
+      "cyclomatic": 15,
+      "cognitive": 15,
+      "include": ["**/*.{js,jsx,mjs,cjs,ts,tsx,mts,cts}"]
+    },
+    "fileSize": {
+      "mode": "ratchet",
+      "maxLines": 1000,
+      "include": ["**/*.{js,jsx,mjs,cjs,ts,tsx,mts,cts}"]
+    },
+    "duplication": {
+      "mode": "ratchet",
+      "minLines": 8,
+      "minTokens": 50,
+      "include": ["**/*.{js,jsx,mjs,cjs,ts,tsx,mts,cts}"],
+      "formats": ["javascript", "jsx", "typescript", "tsx"]
+    }
+  },
+  "overrides": [],
+  "reports": {
+    "testDebt": false,
+    "testSize": {
+      "enabled": false,
+      "oversizedLines": 1000
+    }
+  }
+}

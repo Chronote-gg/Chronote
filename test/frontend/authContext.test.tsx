@@ -111,6 +111,32 @@ describe("AuthContext unauthenticated", () => {
 describe("AuthContext navigation", () => {
   beforeEach(resetAuthContext);
 
+  test("signin_preserves_guide_target", () => {
+    setAuthQuery({ data: null, isLoading: false });
+    window.history.pushState(
+      {},
+      "",
+      "/join?serverId=111111111111111111&historyId=333333333333333333%23intended#optional-setup",
+    );
+    render(
+      <AuthProvider>
+        <AuthProbe onCapture={() => {}} />
+      </AuthProvider>,
+    );
+    const login = screen.getByTestId("auth-state").getAttribute("data-login");
+    if (!login) throw new Error("Missing login URL");
+    const redirect = new URL(login, window.location.origin).searchParams.get(
+      "redirect",
+    );
+    if (!redirect) throw new Error("Missing return URL");
+    const target = new URL(redirect);
+    expect(target.pathname).toBe("/join");
+    expect(target.searchParams.get("historyId")).toBe(
+      "333333333333333333#intended",
+    );
+    expect(target.hash).toBe("#optional-setup");
+  });
+
   test("uses current location for portal redirect targets", () => {
     setAuthQuery({ data: null, isLoading: false });
     window.history.pushState(

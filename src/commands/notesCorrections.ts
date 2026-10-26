@@ -1,3 +1,4 @@
+import { UnresolvedNotionMutation } from "../services/notionOperationLifetime";
 import {
   ActionRowBuilder,
   ButtonBuilder,
@@ -36,8 +37,12 @@ import {
   resolveMeetingNameFromSummary,
 } from "../services/meetingNameService";
 import { buildMeetingNotesEmbeds } from "../utils/meetingNotes";
+import {
+  withMeetingCaptureNotice,
+  type CaptureNoticeInput,
+} from "../utils/meetingCaptureNotice";
 import { MEETING_RENAME_PREFIX } from "./meetingName";
-import { createOpenAIClient } from "../services/openaiClient";
+import { generateOpenAIText } from "../services/openaiTextService";
 import { buildModelOverrides, getModelChoice } from "../services/modelFactory";
 import { config } from "../services/configService";
 import { getLangfuseChatPrompt } from "../services/langfusePromptService";
@@ -57,6 +62,7 @@ type PendingCorrection = {
   channelId?: string;
   notesMessageIds?: string[];
   processing?: MeetingProcessingOutcome;
+  captureNoticeInput?: CaptureNoticeInput;
   notesChannelId?: string;
   summaryMessageId?: string;
   meetingCreatorId?: string;
@@ -146,6 +152,7 @@ function buildCompactDiff(current: string, proposed: string): string {
 }
 
 interface CorrectionInput {
+  signal?: AbortSignal;
   currentNotes: string;
   transcript: string;
   suggestion: string;
@@ -181,6 +188,7 @@ async function generateCorrectedNotes({
   previousSuggestions,
   modelParams,
   modelOverride,
+  signal,
 }: CorrectionInput): Promise<string> {
   const priorSuggestions = formatSuggestionsForPrompt(previousSuggestions);
   const rosters = await buildMentionRosters(meeting);
@@ -209,22 +217,22 @@ async function generateCorrectedNotes({
       model: modelChoice.model,
       config: modelParams,
     });
-    const openAIClient = createOpenAIClient({
-      traceName: "notes-correction",
-      generationName: "notes-correction",
-      tags: ["feature:notes_correction"],
-      metadata: {
-        requesterTag,
-      },
-      langfusePrompt,
-    });
-    const completion = await openAIClient.chat.completions.create({
+    signal?.throwIfAborted();
+    const content = await generateOpenAIText({
       model: modelChoice.model,
-      messages,
-      ...chatParams,
+      input: messages,
+      modelParams: chatParams,
+      signal,
+      tracing: {
+        traceName: "notes-correction",
+        generationName: "notes-correction",
+        tags: ["feature:notes_correction"],
+        metadata: { requesterTag },
+        langfusePrompt,
+      },
     });
+    signal?.throwIfAborted();
 
-    const content = completion.choices[0]?.message?.content;
     if (content && content.trim().length > 0) {
       // A correction may keep the mentions already in the notes and may add one
       // the rosters offered, but anything outside both was invented.
@@ -237,9 +245,11 @@ async function generateCorrectedNotes({
       );
     }
   } catch (error) {
+    signal?.throwIfAborted();
     console.error("Failed to generate corrected notes:", error);
   }
 
+  signal?.throwIfAborted();
   // Fallback: return original notes unchanged if AI call failed
   return currentNotes;
 }
@@ -272,9 +282,11 @@ export function isNotesCorrectionReject(customId: string): boolean {
 
 export async function handleNotesCorrectionButton(
   interaction: ButtonInteraction,
+  signal?: AbortSignal,
 ) {
   const parts = interaction.customId.split(":");
   if (parts.length < 3) {
+    signal?.throwIfAborted();
     await interaction.reply({
       content: "Sorry, I couldn't start the correction flow (invalid id).",
       ephemeral: true,
@@ -301,6 +313,7 @@ export async function handleNotesCorrectionButton(
 
   modal.addComponents(suggestionRow);
 
+  signal?.throwIfAborted();
   await interaction.showModal(modal);
 }
 
@@ -310,9 +323,11 @@ export function isNotesCorrectionModal(customId: string): boolean {
 
 export async function handleNotesCorrectionModal(
   interaction: ModalSubmitInteraction,
+  signal?: AbortSignal,
 ) {
   const parts = interaction.customId.split(":");
   if (parts.length < 2) {
+    signal?.throwIfAborted();
     await interaction.reply({
       content: "Couldn't process that correction request.",
       ephemeral: true,
@@ -324,12 +339,14 @@ export async function handleNotesCorrectionModal(
   const channelIdTimestamp = decodeKey(encodedKey);
   const guildId = interaction.guildId!;
 
+  signal?.throwIfAborted();
   await interaction.deferReply({ ephemeral: true });
 
   try {
     const history = await getMeetingHistoryService(guildId, channelIdTimestamp);
 
     if (!history || !history.notes) {
+      signal?.throwIfAborted();
       await interaction.editReply({
         content:
           "I couldn't find notes to compare against yet. Please try again once the meeting has finished processing.",
@@ -373,6 +390,7 @@ export async function handleNotesCorrectionModal(
       userId: interaction.user.id,
     });
 
+    signal?.throwIfAborted();
     const newNotes = await generateCorrectedNotes({
       currentNotes: history.notes,
       transcript,
@@ -382,11 +400,13 @@ export async function handleNotesCorrectionModal(
       previousSuggestions: history.suggestionsHistory,
       modelParams: modelParams.notesCorrection,
       modelOverride: modelChoices.notesCorrection,
+      signal,
     });
 
     const diff = buildCompactDiff(history.notes, newNotes);
     const token = uuidv4();
 
+    signal?.throwIfAborted();
     pendingCorrections.set(token, {
       guildId,
       channelIdTimestamp,
@@ -394,6 +414,13 @@ export async function handleNotesCorrectionModal(
       channelId: history.channelId,
       notesMessageIds: history.notesMessageIds,
       processing: history.processing,
+      captureNoticeInput: {
+        capture: history.capture,
+        captureCoverage: history.captureCoverage,
+        status: history.status,
+        processing: history.processing,
+        notes: history.notes,
+      },
       notesChannelId: history.notesChannelId,
       summaryMessageId: history.summaryMessageId,
       meetingCreatorId: history.meetingCreatorId,
@@ -424,6 +451,7 @@ export async function handleNotesCorrectionModal(
       reject,
     );
 
+    signal?.throwIfAborted();
     await interaction.editReply({
       content: `Proposed changes:\n\`\`\`diff\n${diff}\n\`\`\`\nOnly the meeting starter${
         history.isAutoRecording ? " or a server context manager" : ""
@@ -435,7 +463,10 @@ export async function handleNotesCorrectionModal(
       allowedMentions: { parse: [] },
     });
   } catch (error) {
+    if (error instanceof UnresolvedNotionMutation) throw error;
+    if (signal?.aborted) return;
     console.error("Failed to handle notes correction modal:", error);
+    signal?.throwIfAborted();
     await interaction.editReply({
       content:
         "Something went wrong while generating the proposed correction. Please try again.",
@@ -447,20 +478,24 @@ export async function handleNotesCorrectionModal(
 async function applyCorrection(
   interaction: ButtonInteraction,
   pending: PendingCorrection,
+  signal?: AbortSignal,
 ): Promise<{ ok: boolean; errorMessage?: string }> {
   const newVersion = (pending.notesVersion ?? 1) + 1;
   const row = buildCorrectionRow(pending.guildId, pending.channelIdTimestamp);
   const { notesBody, summaries } = await buildCorrectionSummaries(
     interaction,
     pending,
+    signal,
   );
 
   // Persist notes FIRST (without message metadata) so Discord is untouched on conflict
+  signal?.throwIfAborted();
   const updateSucceeded = await persistCorrectionUpdate({
     pending,
     newVersion,
     editedBy: interaction.user.id,
     summaries,
+    signal,
   });
 
   if (!updateSucceeded) {
@@ -480,26 +515,36 @@ async function applyCorrection(
       notesBody,
       newVersion,
       summaries.meetingName,
+      signal,
     );
 
   // Persist message metadata separately
   if (messageIds) {
-    const metadataOk = await updateMeetingNotesMessageMetadataService({
-      guildId: pending.guildId,
-      channelId_timestamp: pending.channelIdTimestamp,
-      notesMessageIds: messageIds,
-      notesChannelId: pending.notesChannelId ?? "",
-      expectedNotesVersion: newVersion,
-    });
+    signal?.throwIfAborted();
+    const metadataOk = await updateMeetingNotesMessageMetadataService(
+      {
+        guildId: pending.guildId,
+        channelId_timestamp: pending.channelIdTimestamp,
+        notesMessageIds: messageIds,
+        notesChannelId: pending.notesChannelId ?? "",
+        expectedNotesVersion: newVersion,
+      },
+      signal,
+    );
 
     if (!metadataOk && strategy === "replaced") {
       // Metadata failed with new messages; clean up orphaned new messages
-      await cleanupOldNotesMessages(channel, messageIds, [], undefined);
+      await cleanupOldNotesMessages(channel, messageIds, [], undefined, signal);
       return { ok: true };
     }
   }
 
-  await updateSummaryMessageForCorrection(interaction, pending, summaries);
+  await updateSummaryMessageForCorrection(
+    interaction,
+    pending,
+    summaries,
+    signal,
+  );
 
   if (strategy === "replaced") {
     await cleanupOldNotesMessages(
@@ -507,6 +552,7 @@ async function applyCorrection(
       pending.notesMessageIds,
       messageIds,
       pending.summaryMessageId,
+      signal,
     );
   }
 
@@ -531,6 +577,7 @@ function resolveChannelName(
 async function buildCorrectionSummaries(
   interaction: ButtonInteraction,
   pending: PendingCorrection,
+  signal?: AbortSignal,
 ): Promise<CorrectionSummariesResult> {
   const serverName = interaction.guild?.name ?? "Unknown server";
   const channelName = resolveChannelName(
@@ -549,6 +596,7 @@ async function buildCorrectionSummaries(
   });
   const [, timestamp] = pending.channelIdTimestamp.split("#");
   const meetingDate = timestamp ? new Date(timestamp) : new Date();
+  signal?.throwIfAborted();
   const summaries = await generateMeetingSummaries({
     guildId: pending.guildId,
     notes: pending.newNotes,
@@ -561,6 +609,7 @@ async function buildCorrectionSummaries(
     previousSummaryLabel: pending.summaryLabel,
     modelParams: modelParams.meetingSummary,
     modelOverride: modelChoices.meetingSummary,
+    signal,
   });
   const summarySentence = summaries.summarySentence ?? pending.summarySentence;
   const summaryLabel = summaries.summaryLabel ?? pending.summaryLabel;
@@ -643,6 +692,7 @@ async function updateNotesEmbedsForCorrection(
   notesBody: string,
   newVersion: number,
   meetingName?: string,
+  signal?: AbortSignal,
 ): Promise<NotesEmbedUpdateResult> {
   if (!pending.notesChannelId) {
     return { channel: null, strategy: "none" };
@@ -660,6 +710,7 @@ async function updateNotesEmbedsForCorrection(
     color,
     meetingName,
     pending.processing,
+    pending.captureNoticeInput,
   );
 
   if (existingIds.length > 0 && embeds.length <= existingIds.length) {
@@ -669,13 +720,14 @@ async function updateNotesEmbedsForCorrection(
       embeds,
       row,
       pending.summaryMessageId,
+      signal,
     );
     if (editedIds) {
       return { messageIds: editedIds, channel, strategy: "edited" };
     }
   }
 
-  const messageIds = await sendNewNotesEmbeds(channel, embeds, row);
+  const messageIds = await sendNewNotesEmbeds(channel, embeds, row, signal);
   return { messageIds, channel, strategy: "replaced" };
 }
 
@@ -688,29 +740,34 @@ async function persistCorrectionUpdate(params: {
     summaryLabel?: string;
     meetingName?: string;
   };
+  signal?: AbortSignal;
 }): Promise<boolean> {
   const { pending, newVersion, editedBy, summaries } = params;
   const correctionId = pending.suggestion.correctionId ?? uuidv4();
-  return updateMeetingNotesService({
-    guildId: pending.guildId,
-    channelId_timestamp: pending.channelIdTimestamp,
-    notes: pending.newNotes,
-    notesDelta: null,
-    notesVersion: newVersion,
-    editedBy,
-    summarySentence: summaries.summarySentence,
-    summaryLabel: summaries.summaryLabel,
-    meetingName: summaries.meetingName,
-    suggestion: {
-      ...pending.suggestion,
-      correctionId,
-      source: "discord",
-      baseNotesVersion: pending.notesVersion,
-      resultingNotesVersion: newVersion,
+  params.signal?.throwIfAborted();
+  return updateMeetingNotesService(
+    {
+      guildId: pending.guildId,
+      channelId_timestamp: pending.channelIdTimestamp,
+      notes: pending.newNotes,
+      notesDelta: null,
+      notesVersion: newVersion,
+      editedBy,
+      summarySentence: summaries.summarySentence,
+      summaryLabel: summaries.summaryLabel,
+      meetingName: summaries.meetingName,
+      suggestion: {
+        ...pending.suggestion,
+        correctionId,
+        source: "discord",
+        baseNotesVersion: pending.notesVersion,
+        resultingNotesVersion: newVersion,
+      },
+      source: { type: "notes_correction", correctionId },
+      expectedPreviousVersion: pending.notesVersion,
     },
-    source: { type: "notes_correction", correctionId },
-    expectedPreviousVersion: pending.notesVersion,
-  });
+    params.signal,
+  );
 }
 
 async function cleanupOldNotesMessages(
@@ -718,12 +775,18 @@ async function cleanupOldNotesMessages(
   existingIds?: string[],
   newMessageIds?: string[],
   summaryMessageId?: string,
+  signal?: AbortSignal,
 ): Promise<void> {
   if (!channel || !existingIds?.length || !newMessageIds?.length) {
     return;
   }
   try {
-    await deleteOldNotesMessages(channel, existingIds, summaryMessageId);
+    await deleteOldNotesMessages(
+      channel,
+      existingIds,
+      summaryMessageId,
+      signal,
+    );
   } catch (error) {
     console.error("Failed to clean up old notes messages after update:", error);
   }
@@ -732,10 +795,12 @@ async function cleanupOldNotesMessages(
 async function getPendingOrNotify(
   interaction: ButtonInteraction,
   token: string,
+  signal?: AbortSignal,
 ): Promise<PendingCorrection | undefined> {
   const pending = pendingCorrections.get(token);
 
   if (!pending) {
+    signal?.throwIfAborted();
     await interaction.reply({
       content: "This correction request has expired.",
       ephemeral: true,
@@ -753,6 +818,7 @@ function buildUpdatedEmbeds(
   color?: number | null,
   meetingName?: string,
   processing?: MeetingProcessingOutcome,
+  captureNoticeInput?: CaptureNoticeInput,
 ) {
   const footerText = editedByTag
     ? `v${version} • Edited by ${editedByTag}`
@@ -764,6 +830,7 @@ function buildUpdatedEmbeds(
     footerText,
     color: color ?? undefined,
     processing,
+    ...captureNoticeInput,
   });
 }
 
@@ -794,6 +861,7 @@ async function editExistingNotesEmbeds(
   embeds: ReturnType<typeof buildUpdatedEmbeds>,
   row: ActionRowBuilder<ButtonBuilder>,
   summaryMessageId?: string,
+  signal?: AbortSignal,
 ): Promise<string[] | null> {
   if (!channel?.isSendable()) return null;
 
@@ -805,6 +873,7 @@ async function editExistingNotesEmbeds(
     }
     try {
       const msg = await channel.messages.fetch(messageId);
+      signal?.throwIfAborted();
       await msg.edit({
         embeds: [embeds[i]],
         components: i === 0 ? [row] : [],
@@ -823,6 +892,7 @@ async function editExistingNotesEmbeds(
     if (summaryMessageId && messageId === summaryMessageId) continue;
     try {
       const msg = await channel.messages.fetch(messageId);
+      signal?.throwIfAborted();
       await msg.delete();
     } catch {
       console.warn("Failed to delete excess notes message after in-place edit");
@@ -836,10 +906,12 @@ async function sendNewNotesEmbeds(
   channel: Awaited<ReturnType<typeof interactionChannelFetch>>,
   embeds: ReturnType<typeof buildUpdatedEmbeds>,
   row: ActionRowBuilder<ButtonBuilder>,
+  signal?: AbortSignal,
 ): Promise<string[] | undefined> {
   if (!channel?.isSendable()) return undefined;
   const sentIds: string[] = [];
   for (let i = 0; i < embeds.length; i++) {
+    signal?.throwIfAborted();
     const msg = await channel.send({
       embeds: [embeds[i]],
       components: i === 0 ? [row] : [],
@@ -853,6 +925,7 @@ async function deleteOldNotesMessages(
   channel: Awaited<ReturnType<typeof interactionChannelFetch>>,
   messageIds: string[],
   summaryMessageId?: string,
+  signal?: AbortSignal,
 ): Promise<void> {
   if (!channel?.isSendable()) return;
   for (const id of messageIds) {
@@ -864,6 +937,7 @@ async function deleteOldNotesMessages(
       if (!summaryMessageId && isSummaryMessage(msg)) {
         continue;
       }
+      signal?.throwIfAborted();
       await msg.delete();
     } catch (error) {
       console.error("Failed to delete old notes message after update:", error);
@@ -879,6 +953,7 @@ async function updateSummaryMessageForCorrection(
     summaryLabel?: string;
     meetingName?: string;
   },
+  signal?: AbortSignal,
 ): Promise<void> {
   if (!pending.notesChannelId) return;
   const channel = await interactionChannelFetch(
@@ -921,12 +996,16 @@ async function updateSummaryMessageForCorrection(
       resolveSummaryTitle(summaries.meetingName, summaries.summaryLabel),
     )
     .setDescription(
-      resolveSummaryDescription(
-        summaries.summarySentence,
-        summaries.summaryLabel,
+      withMeetingCaptureNotice(
+        resolveSummaryDescription(
+          summaries.summarySentence,
+          summaries.summaryLabel,
+        ),
+        pending.captureNoticeInput ?? {},
       ),
     );
   try {
+    signal?.throwIfAborted();
     await summaryMessage.edit({ embeds: [updated] });
   } catch (error) {
     console.warn("Failed to update summary message after correction", error);
@@ -983,12 +1062,14 @@ async function resolveTranscript(history: MeetingHistory): Promise<string> {
 
 export async function handleNotesCorrectionAccept(
   interaction: ButtonInteraction,
+  signal?: AbortSignal,
 ) {
   const [, token] = interaction.customId.split(":");
-  const pending = await getPendingOrNotify(interaction, token);
+  const pending = await getPendingOrNotify(interaction, token, signal);
   if (!pending) return;
 
   if (!canApprove(interaction, pending)) {
+    signal?.throwIfAborted();
     await interaction.reply({
       content:
         "Only the meeting starter (or a context manager for auto-started meetings) can accept corrections.",
@@ -997,15 +1078,18 @@ export async function handleNotesCorrectionAccept(
     return;
   }
 
+  signal?.throwIfAborted();
   await interaction.deferUpdate();
+  signal?.throwIfAborted();
   await interaction.editReply({
     content: "Applying correction...",
     components: [],
   });
 
   try {
-    const result = await applyCorrection(interaction, pending);
+    const result = await applyCorrection(interaction, pending, signal);
     if (!result.ok) {
+      signal?.throwIfAborted();
       await interaction.editReply({
         content:
           result.errorMessage ??
@@ -1016,12 +1100,16 @@ export async function handleNotesCorrectionAccept(
     }
 
     pendingCorrections.delete(token);
+    signal?.throwIfAborted();
     await interaction.editReply({
       content: "Correction applied and notes updated.",
       components: [],
     });
   } catch (error) {
+    if (error instanceof UnresolvedNotionMutation) throw error;
+    if (signal?.aborted) return;
     console.error("Failed applying notes correction:", error);
+    signal?.throwIfAborted();
     await interaction.editReply({
       content: "Failed to apply correction. Please try again.",
       components: [],
@@ -1031,9 +1119,10 @@ export async function handleNotesCorrectionAccept(
 
 export async function handleNotesCorrectionReject(
   interaction: ButtonInteraction,
+  signal?: AbortSignal,
 ) {
   const [, token] = interaction.customId.split(":");
-  const pending = await getPendingOrNotify(interaction, token);
+  const pending = await getPendingOrNotify(interaction, token, signal);
   if (!pending) return;
 
   const canReject =
@@ -1041,6 +1130,7 @@ export async function handleNotesCorrectionReject(
     canApprove(interaction, pending);
 
   if (!canReject) {
+    signal?.throwIfAborted();
     await interaction.reply({
       content:
         "You don't have permission to reject this correction. Ask the meeting starter or a context manager (auto-record) to handle it.",
@@ -1050,6 +1140,7 @@ export async function handleNotesCorrectionReject(
   }
 
   pendingCorrections.delete(token);
+  signal?.throwIfAborted();
   await interaction.update({
     content: "Correction rejected.",
     components: [],

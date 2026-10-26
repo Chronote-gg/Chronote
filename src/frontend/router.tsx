@@ -110,10 +110,28 @@ const homeRoute = new Route({
   component: Home,
 });
 
+const joinSearchSchema = z.object({
+  serverId: z
+    .string()
+    .regex(/^\d{17,20}$/)
+    .optional(),
+  historyId: z
+    .string()
+    .regex(/^\d{17,20}#.+$/)
+    .max(512)
+    .optional(),
+});
+
 const joinRoute = new Route({
   getParentRoute: () => marketingRoute,
   path: "join",
   component: Join,
+  validateSearch: (search): z.infer<typeof joinSearchSchema> => {
+    const parsed = joinSearchSchema.safeParse(search);
+    return parsed.success
+      ? parsed.data
+      : { serverId: undefined, historyId: undefined };
+  },
 });
 
 const promoRoute = new Route({
@@ -130,6 +148,7 @@ const upgradeRoute = new Route({
     ...recordingLimitSearch,
     source: z.enum(PURCHASE_SOURCES).catch("unknown").optional(),
     promo: z.string().optional(),
+    offerChoice: z.enum(["automatic", "promotion"]).optional(),
     serverId: optionalStringParam,
     plan: z.enum(["basic", "pro"]).optional(),
     interval: z.enum(["month", "year"]).optional(),
@@ -151,6 +170,7 @@ const upgradeSelectRoute = new Route({
     ...recordingLimitSearch,
     source: z.enum(PURCHASE_SOURCES).catch("unknown").optional(),
     promo: z.string().optional(),
+    offerChoice: z.enum(["automatic", "promotion"]).optional(),
     serverId: optionalStringParam,
     plan: z.enum(["basic", "pro"]).optional(),
     interval: z.enum(["month", "year"]).optional(),
@@ -172,6 +192,7 @@ const upgradeSuccessRoute = new Route({
     ...recordingLimitSearch,
     source: z.enum(PURCHASE_SOURCES).catch("unknown").optional(),
     promo: z.string().optional(),
+    offerChoice: z.enum(["automatic", "promotion"]).optional(),
     serverId: optionalStringParam,
     plan: z.enum(["basic", "pro"]).optional(),
     interval: z.enum(["month", "year"]).optional(),
@@ -298,7 +319,10 @@ const portalBillingRoute = new Route({
   path: "billing",
   component: Billing,
   validateSearch: z.object({
+    plan: z.enum(["basic", "pro"]).optional(),
     promo: z.string().optional(),
+    offerChoice: z.enum(["automatic", "promotion"]).optional(),
+    interval: z.enum(["month", "year"]).optional(),
     source: z.enum(PURCHASE_SOURCES).catch("unknown").optional(),
     ...recordingLimitSearch,
   }).parse,

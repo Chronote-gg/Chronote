@@ -21,6 +21,14 @@ import {
 } from "../../services/notionService";
 import { retryNotionAutomationExport } from "../../services/notionAutomationService";
 
+// These routes do not use correction ownership. Keep their isolated config fixture
+// independent of correction runtime dependencies, and fail any accidental dispatch.
+jest.mock("../../services/runtimeApiOperationService", () => ({
+  runRuntimeApiOperation: jest.fn(() => {
+    throw new Error("Unexpected correction operation");
+  }),
+}));
+
 jest.mock("../../services/guildAccessService", () => ({
   ensureManageGuildWithUserToken: jest.fn(),
   ensureUserInGuild: jest.fn(),

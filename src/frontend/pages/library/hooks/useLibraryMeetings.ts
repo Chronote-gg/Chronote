@@ -2,11 +2,11 @@ import { useCallback, useMemo } from "react";
 import { trpc } from "../../../services/trpc";
 import { useInvalidateMeetingLists } from "../../../hooks/useInvalidateMeetingLists";
 import {
-  deriveSummary,
+  deriveMeetingSummary,
   filterMeetingItems,
   formatChannelLabel,
   formatDateLabel,
-  formatDurationLabel,
+  formatMeetingDurationLabel,
   formatRelativeRecencyLabel,
   resolveMeetingTitle,
 } from "../../../utils/meetingLibrary";
@@ -31,6 +31,8 @@ type UseLibraryMeetingsResult = {
   tagOptions: string[];
   channelOptions: Array<{ value: string; label: string }>;
   channelNameMap: Map<string, string>;
+  hasAccessibleMeetings: boolean;
+  listReady: boolean;
   listLoading: boolean;
   listError: boolean;
   invalidateMeetingLists: () => Promise<void>;
@@ -48,7 +50,11 @@ export const useLibraryMeetings = (
       archivedOnly: params.archiveFilter === "archived",
       includeArchived: params.archiveFilter === "all",
     },
-    { enabled: Boolean(params.selectedGuildId) },
+    {
+      enabled: Boolean(params.selectedGuildId),
+      placeholderData: undefined,
+      refetchOnWindowFocus: "always",
+    },
   );
 
   const meetingRows = useMemo<MeetingSummaryRow[]>(
@@ -76,17 +82,14 @@ export const useLibraryMeetings = (
         meetingRow.channelId,
       );
       const dateLabel = formatDateLabel(meetingRow.timestamp);
-      const durationLabel = formatDurationLabel(meetingRow.duration);
+      const durationLabel = formatMeetingDurationLabel(meetingRow);
       const title = resolveMeetingTitle({
         meetingName: meetingRow.meetingName,
         summaryLabel: meetingRow.summaryLabel,
         summarySentence: meetingRow.summarySentence,
         channelLabel,
       });
-      const summary = deriveSummary(
-        meetingRow.notes,
-        meetingRow.summarySentence,
-      );
+      const summary = deriveMeetingSummary(meetingRow);
       return {
         ...meetingRow,
         title,
@@ -153,6 +156,13 @@ export const useLibraryMeetings = (
 
   return {
     filteredMeetings,
+    hasAccessibleMeetings: meetingRows.length > 0,
+    listReady:
+      Boolean(params.selectedGuildId) &&
+      meetingsQuery.isSuccess &&
+      !meetingsQuery.isPlaceholderData &&
+      !listLoading &&
+      !listError,
     tagOptions,
     channelOptions,
     channelNameMap,

@@ -4,6 +4,7 @@ import {
   getMockBillingSnapshot,
   resolvePromotionCodeId,
 } from "../../src/services/billingService";
+import { getSubscriptionRepository } from "../../src/repositories/subscriptionRepository";
 import { resetMockStore } from "../../src/repositories/mockStore";
 import { createManualEntitlementGrant } from "../../src/services/entitlementService";
 import { clearGuildSubscriptionCache } from "../../src/services/subscriptionService";
@@ -70,4 +71,38 @@ describe("getMockBillingSnapshot", () => {
     expect(snapshot.hasStripeBilling).toBe(false);
     expect(snapshot.canManageBillingPortal).toBe(false);
   });
+});
+
+describe("underlying Stripe billing history", () => {
+  it.each(["canceled", "incomplete_expired"])(
+    "preserves %s underneath a complimentary grant",
+    async (status) => {
+      resetMockStore();
+      clearGuildSubscriptionCache();
+      const guildId = "111111111111111112";
+      await getSubscriptionRepository().write({
+        guildId,
+        status,
+        tier: "basic",
+        subscriptionType: "stripe",
+        startDate: "2026-01-01T00:00:00Z",
+        stripeSubscriptionId: "sub_terminal",
+        stripeCustomerId: "cus_terminal",
+        mode: "test",
+      });
+      await createManualEntitlementGrant({
+        guildId,
+        tier: "basic",
+        createdBy: "admin-1",
+      });
+      const snapshot = await getMockBillingSnapshot(guildId);
+      expect(snapshot).toMatchObject({
+        tier: "basic",
+        status: "comped",
+        stripeStatus: status,
+        billingSource: "manual_comp",
+        hasStripeBilling: true,
+      });
+    },
+  );
 });

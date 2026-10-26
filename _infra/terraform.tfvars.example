@@ -37,7 +37,7 @@ REDIS_AUTH_TOKEN="change-me-redis-auth-token" # only used when ENABLE_ELASTICACH
 ENABLE_API_ALB=true                           # false for a bot-only environment
 ENABLE_API_ALB_DELETION_PROTECTION=true       # must be false before the ALB can be destroyed
 ECS_DESIRED_COUNT=1                           # 0 parks the environment
-NOTES_MODEL="gpt-5.2"                         # optional; model for notes and summaries
+NOTES_MODEL="gpt-6.1-sol"                     # optional; notes generation only
 APP_CONFIG_ENABLED="true"                     # optional; enable AppConfig for unified config
 SUPER_ADMIN_USER_IDS=""                       # comma-separated Discord user IDs
 LANGFUSE_BASE_URL=""                          # blank defaults to https://us.cloud.langfuse.com; set for EU or self-hosted
@@ -140,3 +140,18 @@ ANALYTICS_PROXY_CNAME_TARGET=""              # CNAME target PostHog issues for t
 # - ${project_name}-${environment}/stripe-webhook-secret
 # - ${project_name}-${environment}/langfuse-public-key
 # - ${project_name}-${environment}/langfuse-secret-key
+
+# Inert until existing native Stripe objects and an enrollment start are approved.
+STRIPE_INTRO_OFFER_LEDGER_ENABLED=false # Separate rollout gate; reviewed coverage is required.
+STRIPE_BASIC_INTRO_COUPON_ID=""
+STRIPE_BASIC_ANNUAL_INTRO_COUPON_ID="" # Separate 40 percent once coupon; annual disabled when empty.
+STRIPE_BASIC_INTRO_STARTS_AT=""
+STRIPE_BASIC_INTRO_ENROLLMENT_ENDS_AT="" # Optional; empty means open-ended once the offer is enabled.
+STRIPE_BASIC_INTRO_PORTAL_CONFIGURATION_ID=""
+
+# Off until same-subscription renewal restoration passes native acceptance.
+STRIPE_RENEWAL_GRACE_ENABLED = false
+STRIPE_RENEWAL_REACTIVATION_ENABLED = false
+
+# Publish lifecycle notices before enabling this independently of renewal actions.
+BILLING_LIFECYCLE_ANALYTICS_ENABLED = false

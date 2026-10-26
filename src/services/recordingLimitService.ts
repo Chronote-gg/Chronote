@@ -1,3 +1,9 @@
+import type { MeetingData } from "../types/meeting-data";
+import {
+  getMeetingProcessingSignal,
+  runMeetingProcessingEffect,
+  runMeetingNoticeMutation,
+} from "./meetingProcessingLifetime";
 import {
   ActionRowBuilder,
   ButtonBuilder,
@@ -170,24 +176,31 @@ function resolveAction(
     benefit: benefitFor(target, input),
   };
 }
-async function eligibility(input: RecordingLimitInput) {
+async function eligibility(input: RecordingLimitInput, meeting?: MeetingData) {
   let timer: ReturnType<typeof setTimeout> | undefined;
-  const read = Promise.all([
-    input.resolved
-      ? Promise.resolve(input.resolved)
-      : getGuildLimits(input.guildId),
-    getSubscriptionRepository().get(input.guildId),
-  ])
-    .then(([resolved, stored]) => ({
-      resolved,
-      hasBilling: Boolean(
-        stored?.stripeCustomerId || stored?.stripeSubscriptionId,
-      ),
-    }))
-    .catch(() => undefined);
+  const read = async () => {
+    const reads = [
+      input.resolved
+        ? Promise.resolve(input.resolved)
+        : getGuildLimits(input.guildId),
+      getSubscriptionRepository().get(input.guildId),
+    ] as const;
+    const result = Promise.all(reads)
+      .then(([resolved, stored]) => ({
+        resolved,
+        hasBilling: Boolean(
+          stored?.stripeCustomerId || stored?.stripeSubscriptionId,
+        ),
+      }))
+      .catch(() => undefined);
+    if (meeting) await Promise.allSettled(reads);
+    return result;
+  };
+  // Register before dispatch and retain both reads even when either one fails.
+  if (meeting) return runMeetingProcessingEffect(meeting, read);
   try {
     return await Promise.race([
-      read,
+      read(),
       new Promise<undefined>((resolve) => {
         timer = setTimeout(() => resolve(undefined), 800);
       }),
@@ -213,8 +226,10 @@ function properties(notice: RecordingLimitNotice) {
 }
 export async function encounterRecordingLimit(
   input: RecordingLimitInput,
+  meeting?: MeetingData,
 ): Promise<RecordingLimitNotice> {
-  const known = await eligibility(input);
+  const known = await eligibility(input, meeting);
+  if (meeting) getMeetingProcessingSignal(meeting).throwIfAborted();
   const action = known
     ? resolveAction(input, known.resolved, known.hasBilling)
     : neutralAction(input, "lookup_unavailable");
@@ -259,20 +274,35 @@ function noticeResult(
     },
   });
 }
+function definitelyRejectedNotice(error: unknown): boolean {
+  return (
+    error instanceof DiscordAPIError &&
+    error.status >= 400 &&
+    error.status < 500
+  );
+}
 export async function deliverRecordingLimitNotice<T>(
   notice: RecordingLimitNotice,
   operation: () => Promise<T>,
   kind: "send" | "edit" = "send",
+  meeting?: MeetingData,
 ) {
   try {
-    const value = await operation();
+    const value = meeting
+      ? await runMeetingNoticeMutation(
+          meeting,
+          operation,
+          definitelyRejectedNotice,
+        )
+      : await operation();
     noticeResult(notice, "delivered", kind);
     return { delivery: "delivered" as const, value };
   } catch (error) {
-    const definite =
-      error instanceof DiscordAPIError &&
-      error.status >= 400 &&
-      error.status < 500;
+    const definite = definitelyRejectedNotice(error);
+    if (meeting) {
+      getMeetingProcessingSignal(meeting).throwIfAborted();
+      if (!definite) throw error;
+    }
     const messageMissing =
       error instanceof DiscordAPIError &&
       error.status === 404 &&
@@ -310,15 +340,30 @@ async function claimAutoNotice(
     return undefined;
   }
 }
-export async function notifyRecordingLimit(
+export function notifyRecordingLimit(
   input: RecordingLimitInput,
   channel: NoticeChannel,
   state?: RecordingLimitState,
+  meeting?: MeetingData,
 ): Promise<NoticeMessage | undefined> {
-  const notice = await encounterRecordingLimit(input);
+  const run = () => notifyOwnedRecordingLimit(input, channel, state, meeting);
+  return meeting ? runMeetingProcessingEffect(meeting, run) : run();
+}
+async function notifyOwnedRecordingLimit(
+  input: RecordingLimitInput,
+  channel: NoticeChannel,
+  state?: RecordingLimitState,
+  meeting?: MeetingData,
+): Promise<NoticeMessage | undefined> {
+  const signal = meeting ? getMeetingProcessingSignal(meeting) : undefined;
+  const notice = await encounterRecordingLimit(input, meeting);
+  signal?.throwIfAborted();
   if (input.limitType === "weekly_recording" && state?.pending)
     await state.pending;
+  signal?.throwIfAborted();
   if (state?.deliveryUnknown) {
+    if (meeting)
+      throw new Error("Earlier recording limit notice outcome is unknown");
     noticeResult(notice, "suppressed", "suppress", "previous_delivery_unknown");
     return undefined;
   }
@@ -335,6 +380,7 @@ export async function notifyRecordingLimit(
   if (input.limitType === "weekly_recording" && state?.durationContent)
     notice.payload.content = `${state.durationContent}\n\n${notice.payload.content}`;
   const receipt = await claimAutoNotice(notice);
+  signal?.throwIfAborted();
   if (receipt === false) {
     noticeResult(notice, "suppressed", "suppress", "cooldown");
     return undefined;
@@ -345,15 +391,22 @@ export async function notifyRecordingLimit(
       notice,
       () => existing.edit(notice.payload),
       "edit",
+      meeting,
     );
+    signal?.throwIfAborted();
     if (result.delivery === "delivered") return existing;
     if (state) state.deliveryUnknown = !result.definite;
     if (!result.messageMissing) return undefined;
     if (state) state.message = undefined;
   }
-  const result = await deliverRecordingLimitNotice(notice, () =>
-    channel.send(notice.payload),
+  signal?.throwIfAborted();
+  const result = await deliverRecordingLimitNotice(
+    notice,
+    () => channel.send(notice.payload),
+    "send",
+    meeting,
   );
+  signal?.throwIfAborted();
   if (result.delivery === "delivered") {
     if (state) state.message = result.value;
     return result.value;

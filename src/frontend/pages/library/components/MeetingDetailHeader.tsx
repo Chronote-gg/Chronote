@@ -6,16 +6,14 @@ import {
   IconFilter,
   IconLink,
 } from "@tabler/icons-react";
-import {
-  MEETING_STATUS,
-  type MeetingStatus,
-} from "../../../../types/meetingLifecycle";
+import { MEETING_STATUS } from "../../../../types/meetingLifecycle";
+import type { LiveMeetingStatus } from "../../../../types/liveMeeting";
 import type { MeetingDetails } from "../../../utils/meetingLibrary";
 import { formatDateTimeLabel } from "../../../utils/meetingLibrary";
 
 type MeetingDetailHeaderProps = {
   meeting: MeetingDetails;
-  displayStatus: MeetingStatus;
+  displayStatus: LiveMeetingStatus;
   canManageSelectedGuild: boolean;
   canManageMeetingMetadata: boolean;
   endMeetingPreflightLoading: boolean;

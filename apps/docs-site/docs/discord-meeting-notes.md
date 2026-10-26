@@ -36,6 +36,14 @@ Uncertain results and detector failures still go through transcription. Shadow m
 
 Availability in the software does not mean the option is enabled on the hosted service. Speech detection can make mistakes, including with quiet or brief speech. It needs evaluation on reviewed recordings before enforcement is enabled.
 
+## Updates and interrupted recordings
+
+During a supported service handoff, an existing recording stays with its original owner while other eligible servers can start on the ready replacement. If a start reaches a runtime that is handing over, retry it. The usual server limits and one-active-session rule still apply.
+
+After an interruption, Chronote can recover verified saved conversation using the original transcription and notes settings. Partial notes keep their interruption and coverage warning. If preservation or delivery cannot be confirmed, the meeting can remain unavailable or need review. Recovery does not rejoin the voice channel or automatically resend an uncertain delivery.
+
+See [Interrupted recordings](/core-concepts/meeting-lifecycle/#interrupted-recordings) for the statuses and saved-coverage limits.
+
 ## More than transcription
 
 A transcript preserves what was said; useful meeting notes make that conversation easier to act on. Chronote can:

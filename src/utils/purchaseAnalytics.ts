@@ -1,3 +1,11 @@
+import type { ExpectedIntroOffer } from "../types/pricing";
+
+export function resolvePurchaseOffer(value?: string): ExpectedIntroOffer {
+  return value === "basic_intro_v1" || value === "basic_annual_intro_v1"
+    ? value
+    : "none";
+}
+
 export const PURCHASE_SOURCES = [
   "homepage_pricing",
   "discord_summary",

@@ -48,8 +48,12 @@ in the summary instead of presenting them as confirmed blockers.
   idempotency, token encryption or hashing, resource and scope binding, and
   tenant isolation. Never expose secrets or user content in logs or analytics.
 - Bot and API runtime changes must preserve lease ownership and targeted
-  meeting-control routing. Deploy workflows must not replace bot tasks while
-  an unexpired active-meeting lease remains.
+  meeting-control routing. Deploy workflows must confirm serving-task protection
+  before warming a replacement while existing recordings continue. Exact ready
+  members receive a new serving generation; the old runtime retires only after
+  owned work and uncertain voice operations settle and its native release is
+  durably acknowledged. No unconditional unprotect, early termination or live
+  lease deletion is permitted.
 - Recording and transcription changes must retain the two-hour per-source
   boundary, client-first stop-and-upload behavior, guardrails for silent or
   hallucinated audio, and recoverable state across partial uploads.

@@ -1,3 +1,5 @@
+/** @jest-environment node */
+import { stopMeetingProcessing } from "../services/meetingProcessingLifetime";
 jest.mock("../services/configService", () => ({
   config: {
     chatTts: { maxChars: 400, defaultVoice: "alloy" },
@@ -152,4 +154,49 @@ describe("maybeSpeakChatMessage", () => {
     );
     expect(nextEntry.source).toBe("chat_tts");
   });
+});
+
+test("chat TTS owns the actual usage reservation through cancellation and compensating release", async () => {
+  const meeting = buildMeeting();
+  let entered!: () => void;
+  const started = new Promise<void>((done) => {
+    entered = done;
+  });
+  let reserve!: (value: unknown) => void;
+  mockReserveChatTtsMessageUsage.mockImplementationOnce(() => {
+    entered();
+    return new Promise((done) => {
+      reserve = done;
+    });
+  });
+  let release!: () => void;
+  mockReleaseChatTtsMessageUsageReservation.mockImplementationOnce(
+    () =>
+      new Promise<void>((done) => {
+        release = done;
+      }),
+  );
+  const processing = maybeSpeakChatMessage(meeting, message, { ...entry });
+  const observed = processing.catch(() => {});
+  await started;
+  let settled = false;
+  const drain = stopMeetingProcessing(meeting).then(() => {
+    settled = true;
+  });
+  await Promise.resolve();
+  expect(settled).toBe(false);
+  reserve({
+    allowed: true,
+    reserved: true,
+    guildId: meeting.guildId,
+    period: "synthetic",
+  });
+  for (let i = 0; i < 10; i++) await Promise.resolve();
+  expect(mockReleaseChatTtsMessageUsageReservation).toHaveBeenCalled();
+  expect(settled).toBe(false);
+  release();
+  await observed;
+  await drain;
+  expect(meeting.ttsQueue?.enqueue).not.toHaveBeenCalled();
+  expect(meeting.textChannel.send).not.toHaveBeenCalled();
 });

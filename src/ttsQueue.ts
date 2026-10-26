@@ -1,10 +1,18 @@
+import type { PcmSpan } from "./types/transcriptCorrespondence";
+import { appendPcmSpan } from "./utils/transcriptCorrespondence";
+import {
+  getMeetingProcessingSignal,
+  runMeetingProcessingEffect,
+} from "./services/meetingProcessingLifetime";
+import { checkpointCompletedTranscription } from "./services/recordingContentService";
+import { createCheckpointPlaybackTap } from "./services/recordingCheckpointPlayback";
 import {
   AudioPlayer,
   AudioPlayerStatus,
   StreamType,
   createAudioResource,
 } from "@discordjs/voice";
-import ffmpeg from "fluent-ffmpeg";
+import ffmpeg, { type FfmpegCommand } from "fluent-ffmpeg";
 import prism from "prism-media";
 import { Readable } from "node:stream";
 import { ReadableStream as WebReadableStream } from "node:stream/web";
@@ -84,12 +92,13 @@ function waitForIdleIfPlaying(player: AudioPlayer) {
   return waitForIdle(player);
 }
 
-function createOpusResource(pcmStream: Readable) {
+function createOpusResource(pcmStream: Readable, ownedStreams: Readable[]) {
   const opusEncoder = new prism.opus.Encoder({
     rate: OUTPUT_SAMPLE_RATE,
     channels: 2,
     frameSize: 960,
   });
+  ownedStreams.push(opusEncoder);
   const opusStream = pcmStream.pipe(opusEncoder);
   return createAudioResource(opusStream, {
     inputType: StreamType.Opus,
@@ -114,12 +123,39 @@ function appendCueEvent(
   meeting.audioData.cueEvents.push(entry);
 }
 
+function observeEncoderTermination(command: FfmpegCommand): Promise<void> {
+  return new Promise((resolve) => {
+    command.on("end", () => resolve());
+    command.on("error", () => resolve());
+  });
+}
+async function closePlaybackStreams(streams: Readable[]): Promise<void> {
+  const completion = streams.map(
+    (stream) =>
+      new Promise<void>((resolve) => {
+        if (stream.closed) {
+          resolve();
+          return;
+        }
+        const ignoreError = () => {};
+        stream.on("error", ignoreError);
+        stream.once("close", () => {
+          stream.removeListener("error", ignoreError);
+          resolve();
+        });
+      }),
+  );
+  for (const stream of streams) stream.destroy();
+  await Promise.all(completion);
+}
+
 async function playTtsItem(
   meeting: MeetingData,
   player: AudioPlayer,
   item: TtsQueueTtsItem,
   onPlaybackStart: () => void,
   onPlaybackEnd: () => void,
+  isCurrent: () => boolean,
 ): Promise<void> {
   const modelChoice = getModelChoice(
     "liveVoiceTts",
@@ -137,13 +173,22 @@ async function playTtsItem(
       voice: item.voice,
     },
   });
-  const speechResponse = await openAIClient.audio.speech.create({
-    model: modelChoice.model,
-    voice: item.voice,
-    input: item.text,
-    response_format: "pcm",
-  });
+  const signal = getMeetingProcessingSignal(meeting);
+  signal.throwIfAborted();
+  const speechResponse = await openAIClient.audio.speech.create(
+    {
+      model: modelChoice.model,
+      voice: item.voice,
+      input: item.text,
+      response_format: "pcm",
+    },
+    { signal },
+  );
 
+  if (!isCurrent()) {
+    await speechResponse.body?.cancel();
+    return;
+  }
   if (!speechResponse.body) {
     console.warn("No audio body returned from TTS.");
     return;
@@ -165,41 +210,92 @@ async function playTtsItem(
     audioFilters.push(`volume=${volumeMultiplier}`);
   }
   command.audioFilters(audioFilters);
+  const encoderTermination = observeEncoderTermination(command);
   const resampledPcm = command.pipe() as Readable;
 
-  resampledPcm.on("data", (chunk: Buffer) => {
-    if (
-      meeting.recordBotAudio !== false &&
-      meeting.audioData.audioPassThrough
-    ) {
-      meeting.audioData.audioPassThrough.write(chunk, (err) => {
-        if (err) {
-          console.error("Error writing TTS chunk to recording:", err);
-        }
-      });
-    }
-  });
-
-  const resource = createOpusResource(resampledPcm);
-
+  const ownedStreams = [resampledPcm, pcm24Stream];
+  let tap: ReturnType<typeof createCheckpointPlaybackTap> | undefined;
   const start = Date.now();
-  await waitForIdleIfPlaying(player);
-  item.onBeforePlay?.(meeting);
-  onPlaybackStart();
-  player.play(resource);
-  await waitForIdle(player);
-  onPlaybackEnd();
+  let fullyPlayed: boolean;
+  const consumedSpans: PcmSpan[] = [];
+  let mappedPlayback = true;
+  const playbackTextOnly = meeting.recordBotAudio === false;
+  try {
+    tap =
+      meeting.recordBotAudio === false
+        ? undefined
+        : createCheckpointPlaybackTap({
+            push: (chunk, observedAt) => {
+              if (
+                meeting.recordBotAudio === false ||
+                meeting.ownershipSignal?.aborted
+              )
+                return false;
+              let receivedSpan = false;
+              if (
+                meeting.recordingCapture &&
+                !meeting.recordingCapture.push(
+                  `bot:${item.userId}`,
+                  chunk,
+                  observedAt,
+                  (span) => {
+                    receivedSpan = true;
+                    appendPcmSpan(consumedSpans, span);
+                  },
+                )
+              )
+                return false;
+              if (chunk.length && !receivedSpan) mappedPlayback = false;
+              meeting.audioData.audioPassThrough?.write(chunk, (error) => {
+                if (error) meeting.audioData.captureIncomplete = true;
+              });
+              return true;
+            },
+            stop: () => {
+              meeting.recordingCapture?.interrupt();
+              player.stop(true);
+            },
+          });
+    const resource = createOpusResource(
+      tap ? resampledPcm.pipe(tap.stream) : resampledPcm,
+      ownedStreams,
+    );
+    tap?.attach(resource);
+
+    ownedStreams.push(resource.playStream);
+    await waitForIdleIfPlaying(player);
+    if (!isCurrent()) return;
+    item.onBeforePlay?.(meeting);
+    onPlaybackStart();
+    player.play(resource);
+    await waitForIdle(player);
+    fullyPlayed = isCurrent() && (tap?.complete() ?? true);
+  } finally {
+    tap?.dispose();
+    const streamsClosed = closePlaybackStreams(ownedStreams);
+    command.kill("SIGTERM");
+    onPlaybackEnd();
+    await Promise.all([encoderTermination, streamsClosed]);
+  }
 
   const entry: AudioFileData = {
     userId: item.userId,
     timestamp: start,
-    transcript: item.text,
+    transcript: fullyPlayed ? item.text : undefined,
+    transcriptCorrespondence: !fullyPlayed
+      ? undefined
+      : playbackTextOnly
+        ? { kind: "text_only" }
+        : mappedPlayback
+          ? { kind: "pcm", spans: consumedSpans }
+          : undefined,
     processing: false,
     audioOnlyProcessing: false,
     source: item.source === "chat_tts" ? "chat_tts" : "bot",
     messageId: item.messageId,
   };
   meeting.audioData.audioFiles.push(entry);
+  checkpointCompletedTranscription(meeting);
 
   if (item.source === "chat_tts") {
     chatTtsSpoken.inc();
@@ -213,24 +309,32 @@ async function playSfxItem(
   item: TtsQueueSfxItem,
   options: { waitForIdle?: boolean } = {},
 ): Promise<void> {
-  const resampledPcm = ffmpeg(item.filePath)
+  const command = ffmpeg(item.filePath)
     .audioFrequency(OUTPUT_SAMPLE_RATE)
     .audioChannels(2)
     .format("s16le")
     .on("error", (err) =>
       console.error(`ffmpeg cue pipeline error (${item.label}):`, err),
-    )
-    .pipe() as Readable;
+    );
+  const encoderTermination = observeEncoderTermination(command);
+  const resampledPcm = command.pipe() as Readable;
 
-  const resource = createOpusResource(resampledPcm);
-
+  const ownedStreams = [resampledPcm];
   const start = Date.now();
-  if (options.waitForIdle ?? true) {
-    await waitForIdleIfPlaying(player);
+  try {
+    const resource = createOpusResource(resampledPcm, ownedStreams);
+    ownedStreams.push(resource.playStream);
+    if (options.waitForIdle ?? true) await waitForIdleIfPlaying(player);
+    getMeetingProcessingSignal(meeting).throwIfAborted();
+    player.play(resource);
+    await waitForIdle(player);
+    getMeetingProcessingSignal(meeting).throwIfAborted();
+    appendCueEvent(meeting, item, start);
+  } finally {
+    const streamsClosed = closePlaybackStreams(ownedStreams);
+    command.kill("SIGTERM");
+    await Promise.all([encoderTermination, streamsClosed]);
   }
-  player.play(resource);
-  await waitForIdle(player);
-  appendCueEvent(meeting, item, start);
 }
 
 export function createTtsQueue(
@@ -240,6 +344,7 @@ export function createTtsQueue(
   const queue: TtsQueueItem[] = [];
   let playing = false;
   let preparing = false;
+  let generation = 0;
 
   const playNext = async () => {
     if (playing || preparing || queue.length === 0) return;
@@ -255,13 +360,14 @@ export function createTtsQueue(
       } finally {
         playing = false;
         if (queue.length > 0) {
-          void playNext();
+          void runMeetingProcessingEffect(meeting, playNext).catch(() => {});
         }
       }
       return;
     }
 
     preparing = true;
+    const currentGeneration = generation;
     try {
       await playTtsItem(
         meeting,
@@ -273,18 +379,22 @@ export function createTtsQueue(
         () => {
           playing = false;
         },
+        () =>
+          generation === currentGeneration &&
+          !getMeetingProcessingSignal(meeting).aborted,
       );
     } catch (error) {
       console.error("Failed to stream TTS to Discord:", error);
     } finally {
       preparing = false;
       if (queue.length > 0) {
-        void playNext();
+        void runMeetingProcessingEffect(meeting, playNext).catch(() => {});
       }
     }
   };
 
   const enqueue = (item: TtsQueueItem) => {
+    if (getMeetingProcessingSignal(meeting).aborted) return false;
     if (queue.length >= config.chatTts.queueLimit) {
       if (item.priority === "high") {
         queue.length = 0;
@@ -296,16 +406,17 @@ export function createTtsQueue(
     if (!isSfxItem(item) && item.source === "chat_tts") {
       meeting.resetTtsOnlyIdleTimer?.();
     }
-    void playNext();
+    void runMeetingProcessingEffect(meeting, playNext).catch(() => {});
     return true;
   };
 
   const playCueIfIdle = (item: TtsQueueSfxItem) => {
+    if (getMeetingProcessingSignal(meeting).aborted) return false;
     if (playing || queue.length > 0) return false;
     if (player.state.status !== AudioPlayerStatus.Idle) return false;
 
     playing = true;
-    void (async () => {
+    void runMeetingProcessingEffect(meeting, async () => {
       try {
         if (player.state.status !== AudioPlayerStatus.Idle) {
           return;
@@ -316,18 +427,23 @@ export function createTtsQueue(
       } finally {
         playing = false;
         if (!preparing && queue.length > 0) {
-          void playNext();
+          void runMeetingProcessingEffect(meeting, playNext).catch(() => {});
         }
       }
-    })();
+    }).catch(() => {});
 
     return true;
   };
 
   const stopAndClear = () => {
+    generation++;
     queue.length = 0;
     player.stop(true);
   };
+
+  getMeetingProcessingSignal(meeting).addEventListener("abort", stopAndClear, {
+    once: true,
+  });
 
   return {
     enqueue,

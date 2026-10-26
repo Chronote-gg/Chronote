@@ -46,9 +46,10 @@ export function buildScopeId(context: ConfigOverrideScopeContext): string {
 
 export async function listConfigOverridesForScope(
   context: ConfigOverrideScopeContext,
+  signal?: AbortSignal,
 ): Promise<ConfigOverrideRecord[]> {
   const scopeId = buildScopeId(context);
-  return getConfigOverridesRepository().listByScope(scopeId);
+  return getConfigOverridesRepository().listByScope(scopeId, signal);
 }
 
 export async function listConfigOverridesForScopePrefix(

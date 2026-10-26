@@ -1,7 +1,9 @@
-import "dotenv/config";
+import dotenv from "dotenv";
 import { LangfuseClient, type LangfuseClientParams } from "@langfuse/client";
 
 import { resolveLangfuseBaseUrl } from "../../src/services/langfuseDefaults";
+
+dotenv.config();
 
 function requireEnv(value: string | undefined, name: string): string {
   const trimmed = value?.trim();

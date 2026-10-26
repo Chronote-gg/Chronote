@@ -4,6 +4,7 @@ import { MeetingSummaryPanel } from "./MeetingSummaryPanel";
 
 const meta: Meta<typeof MeetingSummaryPanel> = {
   title: "Library/MeetingSummaryPanel",
+  tags: ["recording-outcomes"],
   component: MeetingSummaryPanel,
   render: (args) => (
     <div
@@ -37,6 +38,40 @@ export default meta;
 type Story = StoryObj<typeof MeetingSummaryPanel>;
 
 export const Default: Story = {};
+export const InterruptedRecording: Story = {
+  args: {
+    capture: {
+      kind: "interrupted",
+      startedAt: "2026-01-01T00:00:00Z",
+      detectedAt: "2026-01-01T01:00:00Z",
+      endedAt: null,
+    },
+    captureCoverage: {
+      kind: "verified",
+      savedDurationMs: 42500,
+      lastConfirmedCaptureAt: "2026-01-01T00:00:43Z",
+    },
+    recoveryNotice: "Saved recording recovery finished.",
+  },
+};
+export const InterruptedLongNotes: Story = {
+  args: {
+    ...InterruptedRecording.args,
+    notes: Array.from(
+      { length: 24 },
+      (_, index) => `- Generated saved decision ${index + 1}.`,
+    ).join("\n"),
+  },
+  play: async ({ canvasElement }) => {
+    const viewport = within(canvasElement).getByTestId(
+      "meeting-summary-scroll-viewport",
+    );
+    await expect(viewport.scrollHeight).toBeGreaterThan(viewport.clientHeight);
+    viewport.scrollTop = 60;
+    await expect(viewport.scrollTop).toBeGreaterThan(0);
+    viewport.scrollTop = 0;
+  },
+};
 
 export const EmptyRecording: Story = {
   args: {
@@ -48,6 +83,42 @@ export const EmptyRecording: Story = {
       notes: "skipped",
       summary: "skipped",
     },
+  },
+};
+export const RecoveryNeedsReview: Story = {
+  args: {
+    summary: "",
+    notes: "",
+    capture: {
+      kind: "complete",
+      startedAt: "2026-01-01T00:00:00Z",
+      endedAt: "2026-01-01T00:00:30Z",
+    },
+    recovery: { disposition: "needs_reconciliation", stage: "verification" },
+    recoveryNotice:
+      "Recovery needs review. Processing or delivery could not be confirmed.",
+    copyDisabled: true,
+  },
+};
+export const NotesDisabledAfterRecovery: Story = {
+  args: {
+    summary: "",
+    notes: "",
+    processing: {
+      transcription: "partial",
+      notes: "skipped",
+      summary: "skipped",
+    },
+    capture: {
+      kind: "interrupted",
+      startedAt: "2026-01-01T00:00:00Z",
+      detectedAt: "2026-01-01T01:00:00Z",
+      endedAt: null,
+    },
+    recovery: { disposition: "done", stage: "notes", outcome: "disabled" },
+    recoveryNotice:
+      "Recovery finished with the original transcription and notes settings.",
+    copyDisabled: true,
   },
 };
 

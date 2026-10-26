@@ -2,6 +2,8 @@ import { LangfuseClient, type LangfuseClientParams } from "@langfuse/client";
 import { config } from "./configService";
 
 let langfuseClient: LangfuseClient | null = null;
+let closing = false;
+let shutdown: Promise<void> | undefined;
 
 export function isLangfuseEnabled(): boolean {
   return (
@@ -14,7 +16,7 @@ export function isLangfuseTracingEnabled(): boolean {
 }
 
 export function getLangfuseClient(): LangfuseClient | null {
-  if (!isLangfuseEnabled()) {
+  if (closing || !isLangfuseEnabled()) {
     return null;
   }
   if (langfuseClient) {
@@ -32,4 +34,16 @@ export function getLangfuseClient(): LangfuseClient | null {
   }
   langfuseClient = new LangfuseClient(options);
   return langfuseClient;
+}
+
+export function shutdownLangfuseClient(): Promise<void> {
+  closing = true;
+  shutdown ??= Promise.resolve().then(async () => {
+    try {
+      await langfuseClient?.shutdown();
+    } finally {
+      langfuseClient = null;
+    }
+  });
+  return shutdown;
 }

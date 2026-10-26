@@ -1,4 +1,9 @@
 import express from "express";
+import {
+  resolveCaptureStatus,
+  projectMeetingCapture,
+} from "../utils/meetingCaptureNotice";
+import { persistExplicitMeetingStop } from "../commands/endMeeting";
 import { rateLimit } from "express-rate-limit";
 import { passThrough } from "../middleware/passThrough";
 import { getMeeting } from "../meetings";
@@ -48,14 +53,15 @@ const REMOTE_LEASE_REFRESH_MS = 10_000;
 const LIVE_MEETING_RATE_LIMIT_WINDOW_MS = 60_000;
 const LIVE_MEETING_RATE_LIMIT_MAX = 120;
 
-function resolveRemoteLeaseStatus(
-  lease: ActiveMeetingLease,
+export function resolveRemoteLeaseStatus(
+  lease?: ActiveMeetingLease,
 ): LiveMeetingStatusPayload["status"] {
+  if (!lease) return "unavailable";
   if (!isLeaseActive(lease)) {
-    if (lease.status === MEETING_STATUS.CANCELLED) {
-      return MEETING_STATUS.CANCELLED;
-    }
-    return MEETING_STATUS.COMPLETE;
+    return lease.status &&
+      ["complete", "cancelled", "interrupted", "failed"].includes(lease.status)
+      ? lease.status
+      : "unavailable";
   }
 
   return lease.status ?? MEETING_STATUS.IN_PROGRESS;
@@ -99,9 +105,14 @@ export function registerLiveMeetingRoutes(app: express.Express) {
           res.status(404).json({ error: "Meeting not found" });
           return;
         }
+        const remoteStatus = resolveRemoteLeaseStatus(lease);
         res.json({
-          status: resolveRemoteLeaseStatus(lease),
-          endedAt: lease.endedAt,
+          status: remoteStatus,
+          endedAt: ["interrupted", "failed", "unavailable"].includes(
+            remoteStatus,
+          )
+            ? undefined
+            : lease.endedAt,
           startReason: lease.startReason,
           startTriggeredByUserId: lease.startTriggeredByUserId,
           autoRecordRule: lease.autoRecordRule,
@@ -112,14 +123,24 @@ export function registerLiveMeetingRoutes(app: express.Express) {
         });
         return;
       }
-      const status = resolveMeetingStatus({
-        cancelled: meeting.cancelled,
-        finished: meeting.finished,
-        finishing: meeting.finishing,
+      const status = resolveCaptureStatus({
+        capture: meeting.recordingCaptureState,
+        status: resolveMeetingStatus({
+          cancelled: meeting.cancelled,
+          finished: meeting.finished,
+          finishing: meeting.finishing,
+        }),
       });
       res.json({
         status,
-        endedAt: meeting.endTime?.toISOString(),
+        ...projectMeetingCapture({
+          capture: meeting.recordingCaptureState,
+          processing: meeting.processing,
+        }),
+        endedAt:
+          meeting.recordingCaptureState?.kind === "interrupted"
+            ? (meeting.recordingCaptureState.endedAt ?? undefined)
+            : meeting.endTime?.toISOString(),
         startReason: meeting.startReason,
         startTriggeredByUserId: meeting.startTriggeredByUserId,
         autoRecordRule: meeting.autoRecordRule,
@@ -167,6 +188,14 @@ export function registerLiveMeetingRoutes(app: express.Express) {
           return;
         }
         res.json({ status: "accepted" });
+        return;
+      }
+      try {
+        await persistExplicitMeetingStop(meeting, MEETING_END_REASONS.WEB_UI);
+      } catch {
+        res.status(409).json({
+          error: "Meeting stop could not be confirmed. Please retry.",
+        });
         return;
       }
       if (meeting.finishing || meeting.finished || meeting.cancelled) {
@@ -366,7 +395,7 @@ export function registerLiveMeetingRoutes(app: express.Express) {
         }
 
         if (!cachedRemoteLease || cachedRemoteLease.meetingId !== meetingId) {
-          return MEETING_STATUS.COMPLETE;
+          return "unavailable";
         }
         return resolveRemoteLeaseStatus(cachedRemoteLease);
       };
@@ -381,15 +410,25 @@ export function registerLiveMeetingRoutes(app: express.Express) {
           let nextStatus: LiveMeetingStatusPayload["status"];
           let endedAt: string | undefined;
           if (meeting) {
-            nextStatus = resolveMeetingStatus({
-              cancelled: meeting.cancelled,
-              finished: meeting.finished,
-              finishing: meeting.finishing,
+            nextStatus = resolveCaptureStatus({
+              capture: meeting.recordingCaptureState,
+              status: resolveMeetingStatus({
+                cancelled: meeting.cancelled,
+                finished: meeting.finished,
+                finishing: meeting.finishing,
+              }),
             });
-            endedAt = meeting.endTime?.toISOString();
+            endedAt =
+              meeting.recordingCaptureState?.kind === "interrupted"
+                ? (meeting.recordingCaptureState.endedAt ?? undefined)
+                : meeting.endTime?.toISOString();
           } else {
             nextStatus = await resolveRemoteMeetingStatus();
-            endedAt = cachedRemoteLease?.endedAt;
+            endedAt = ["interrupted", "failed", "unavailable"].includes(
+              nextStatus,
+            )
+              ? undefined
+              : cachedRemoteLease?.endedAt;
           }
 
           if (nextStatus !== lastStatus) {
@@ -397,12 +436,21 @@ export function registerLiveMeetingRoutes(app: express.Express) {
             const payload: LiveMeetingStatusPayload = {
               status: nextStatus,
               endedAt,
+              ...(meeting
+                ? projectMeetingCapture({
+                    capture: meeting.recordingCaptureState,
+                    processing: meeting.processing,
+                  })
+                : {}),
             };
             sendEvent("status", payload);
           }
           if (
             nextStatus === MEETING_STATUS.COMPLETE ||
-            nextStatus === MEETING_STATUS.CANCELLED
+            nextStatus === MEETING_STATUS.CANCELLED ||
+            nextStatus === MEETING_STATUS.INTERRUPTED ||
+            nextStatus === MEETING_STATUS.FAILED ||
+            nextStatus === "unavailable"
           ) {
             cleanup();
           }

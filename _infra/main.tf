@@ -154,9 +154,9 @@ variable "LANGFUSE_PROMPT_CACHE_TTL_MS" {
 }
 
 variable "NOTES_MODEL" {
-  description = "OpenAI model for notes and summaries"
+  description = "OpenAI model for notes generation only"
   type        = string
-  default     = "gpt-5.2"
+  default     = "gpt-6.1-sol"
 }
 
 variable "TRANSCRIPTS_BUCKET" {
@@ -388,10 +388,64 @@ variable "STRIPE_MODE" {
   default     = "test"
 }
 
+variable "BILLING_LIFECYCLE_ANALYTICS_ENABLED" {
+  description = "Enable noticed subscription lifecycle capture after event acceptance"
+  type        = bool
+  default     = false
+}
+
+variable "STRIPE_RENEWAL_GRACE_ENABLED" {
+  description = "Enforce 48-hour paid-renewal grace only after indexed coverage and deployed writer acceptance"
+  type        = bool
+  default     = false
+}
+
+variable "STRIPE_RENEWAL_REACTIVATION_ENABLED" {
+  description = "Enable same-subscription renewal restoration only after native acceptance"
+  type        = bool
+  default     = false
+}
+
 variable "STRIPE_SUBSCRIPTION_TRANSITIONS_ENABLED" {
   description = "Enable hosted subscription transitions only after billing validation"
   type        = bool
   default     = false
+}
+
+variable "STRIPE_INTRO_OFFER_LEDGER_ENABLED" {
+  description = "Enable fresh introductory offers only after reviewed writer registration and history coverage"
+  type        = bool
+  default     = false
+}
+
+variable "STRIPE_BASIC_INTRO_COUPON_ID" {
+  description = "Existing native 40-percent three-month Basic monthly intro coupon ID; empty disables monthly enrollment"
+  type        = string
+  default     = ""
+}
+
+variable "STRIPE_BASIC_ANNUAL_INTRO_COUPON_ID" {
+  description = "Separate native 40 percent once coupon for Basic first-year annual enrollment; empty disables annual enrollment"
+  type        = string
+  default     = ""
+}
+
+variable "STRIPE_BASIC_INTRO_STARTS_AT" {
+  description = "Basic intro enrollment start as ISO timestamp; empty leaves the offer inactive"
+  type        = string
+  default     = ""
+}
+
+variable "STRIPE_BASIC_INTRO_ENROLLMENT_ENDS_AT" {
+  description = "Optional Basic intro enrollment cutoff as ISO timestamp; empty means open-ended when enabled"
+  type        = string
+  default     = ""
+}
+
+variable "STRIPE_BASIC_INTRO_PORTAL_CONFIGURATION_ID" {
+  description = "Existing safe portal configuration for introductory subscribers; disables plan updates"
+  type        = string
+  default     = ""
 }
 
 variable "STRIPE_PRICE_BASIC" {
@@ -514,9 +568,9 @@ resource "aws_ecr_lifecycle_policy" "app_ecr_repo_lifecycle_policy" {
     "rules": [
         {
             "rulePriority": 1,
-            "description": "Keep last two images",
+            "description": "Keep last two untagged images; retain tagged releases",
             "selection": {
-                "tagStatus": "any",
+                "tagStatus": "untagged",
                 "countType": "imageCountMoreThan",
                 "countNumber": 2
             },
@@ -1491,6 +1545,16 @@ resource "aws_iam_policy" "dynamodb_access_policy" {
     Version = "2012-10-17",
     Statement = [
       {
+        Sid    = "DescribeSubscriptionReadiness"
+        Effect = "Allow"
+        Action = [
+          "dynamodb:DescribeTable"
+        ]
+        Resource = [
+          aws_dynamodb_table.guild_subscription_table.arn
+        ]
+      },
+      {
         Effect = "Allow",
         Action = [
           "dynamodb:GetItem",
@@ -1505,6 +1569,7 @@ resource "aws_iam_policy" "dynamodb_access_policy" {
           aws_dynamodb_table.stripe_webhook_event_table.arn,
           aws_dynamodb_table.interaction_receipt_table.arn,
           aws_dynamodb_table.active_meeting_table.arn,
+          aws_dynamodb_table.deployment_control_table.arn,
           aws_dynamodb_table.meeting_control_command_table.arn,
           "${aws_dynamodb_table.meeting_control_command_table.arn}/index/*",
           aws_dynamodb_table.access_logs_table.arn,
@@ -1534,6 +1599,7 @@ resource "aws_iam_policy" "dynamodb_access_policy" {
           aws_dynamodb_table.installer_table.arn,
           aws_dynamodb_table.onboarding_state_table.arn,
           aws_dynamodb_table.guild_subscription_table.arn,
+          "${aws_dynamodb_table.guild_subscription_table.arn}/index/RenewalRecoveryDueIndex",
           aws_dynamodb_table.entitlement_grant_table.arn,
           "${aws_dynamodb_table.entitlement_grant_table.arn}/index/*"
         ]
@@ -1635,11 +1701,12 @@ resource "aws_ecs_task_definition" "app_task" {
 
   container_definitions = jsonencode([
     {
-      name      = "${local.name_prefix}-bot"
-      image     = aws_ecr_repository.app_ecr_repo.repository_url
-      cpu       = 512
-      memory    = 1024
-      essential = true
+      name        = "${local.name_prefix}-bot"
+      image       = aws_ecr_repository.app_ecr_repo.repository_url
+      cpu         = 512
+      memory      = 1024
+      essential   = true
+      stopTimeout = 120
       portMappings = [
         {
           containerPort = 3001
@@ -1860,6 +1927,18 @@ resource "aws_ecs_task_definition" "app_task" {
           value = var.STRIPE_MODE
         },
         {
+          name  = "BILLING_LIFECYCLE_ANALYTICS_ENABLED"
+          value = tostring(var.BILLING_LIFECYCLE_ANALYTICS_ENABLED)
+        },
+        {
+          name  = "STRIPE_RENEWAL_GRACE_ENABLED"
+          value = tostring(var.STRIPE_RENEWAL_GRACE_ENABLED)
+        },
+        {
+          name  = "STRIPE_RENEWAL_REACTIVATION_ENABLED"
+          value = tostring(var.STRIPE_RENEWAL_REACTIVATION_ENABLED)
+        },
+        {
           name  = "STRIPE_SUBSCRIPTION_TRANSITIONS_ENABLED"
           value = tostring(var.STRIPE_SUBSCRIPTION_TRANSITIONS_ENABLED)
         },
@@ -1890,6 +1969,30 @@ resource "aws_ecs_task_definition" "app_task" {
         {
           name  = "STRIPE_CANCEL_URL"
           value = var.STRIPE_CANCEL_URL
+        },
+        {
+          name  = "STRIPE_INTRO_OFFER_LEDGER_ENABLED"
+          value = tostring(var.STRIPE_INTRO_OFFER_LEDGER_ENABLED)
+        },
+        {
+          name  = "STRIPE_BASIC_INTRO_COUPON_ID"
+          value = var.STRIPE_BASIC_INTRO_COUPON_ID
+        },
+        {
+          name  = "STRIPE_BASIC_ANNUAL_INTRO_COUPON_ID"
+          value = var.STRIPE_BASIC_ANNUAL_INTRO_COUPON_ID
+        },
+        {
+          name  = "STRIPE_BASIC_INTRO_STARTS_AT"
+          value = var.STRIPE_BASIC_INTRO_STARTS_AT
+        },
+        {
+          name  = "STRIPE_BASIC_INTRO_ENROLLMENT_ENDS_AT"
+          value = var.STRIPE_BASIC_INTRO_ENROLLMENT_ENDS_AT
+        },
+        {
+          name  = "STRIPE_BASIC_INTRO_PORTAL_CONFIGURATION_ID"
+          value = var.STRIPE_BASIC_INTRO_PORTAL_CONFIGURATION_ID
         },
         {
           name  = "STRIPE_PORTAL_RETURN_URL"
@@ -1967,7 +2070,7 @@ resource "aws_ecs_service" "app_service" {
   # Deployments update the ECS service task definition outside Terraform.
   # Avoid Terraform reverting task definition revisions during infra applies.
   lifecycle {
-    ignore_changes = [task_definition]
+    ignore_changes = [task_definition, load_balancer]
   }
 
   enable_execute_command = true
@@ -1979,7 +2082,7 @@ resource "aws_ecs_service" "app_service" {
     type = "ECS"
   }
 
-  deployment_minimum_healthy_percent = 50
+  deployment_minimum_healthy_percent = 100
   deployment_maximum_percent         = 200
 
   network_configuration {
@@ -2004,6 +2107,23 @@ resource "aws_dynamodb_table" "guild_subscription_table" {
   name         = "${local.name_prefix}-GuildSubscriptionTable"
   billing_mode = "PAY_PER_REQUEST"
   hash_key     = "guildId"
+
+  attribute {
+    name = "recoveryQueue"
+    type = "S"
+  }
+
+  attribute {
+    name = "recoveryDueAt"
+    type = "N"
+  }
+
+  global_secondary_index {
+    name            = "RenewalRecoveryDueIndex"
+    hash_key        = "recoveryQueue"
+    range_key       = "recoveryDueAt"
+    projection_type = "KEYS_ONLY"
+  }
 
   attribute {
     name = "guildId"
@@ -2139,6 +2259,60 @@ resource "aws_dynamodb_table" "interaction_receipt_table" {
   tags = {
     Name = "InteractionReceiptTable"
   }
+}
+
+resource "aws_dynamodb_table" "deployment_control_table" {
+  name         = "${local.name_prefix}-DeploymentControlTable"
+  billing_mode = "PAY_PER_REQUEST"
+  hash_key     = "pk"
+  range_key    = "sk"
+
+  attribute {
+    name = "pk"
+    type = "S"
+  }
+  attribute {
+    name = "sk"
+    type = "S"
+  }
+  ttl {
+    attribute_name = "expiresAt"
+    enabled        = true
+  }
+  point_in_time_recovery {
+    enabled = true
+  }
+  server_side_encryption {
+    enabled     = true
+    kms_key_arn = aws_kms_key.app_general.arn
+  }
+  tags = {
+    Name = "DeploymentControlTable"
+  }
+}
+
+resource "aws_iam_role_policy" "deployment_control" {
+  name = "${local.name_prefix}-deployment-control"
+  role = aws_iam_role.ecs_task_app_role.id
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = ["dynamodb:ConditionCheckItem"]
+        Resource = [
+          aws_dynamodb_table.deployment_control_table.arn,
+          aws_dynamodb_table.active_meeting_table.arn,
+          aws_dynamodb_table.meeting_history_table.arn
+        ]
+      },
+      {
+        Effect   = "Allow"
+        Action   = ["ecs:GetTaskProtection", "ecs:UpdateTaskProtection"]
+        Resource = ["arn:aws:ecs:${var.aws_region}:${data.aws_caller_identity.current.account_id}:task/${aws_ecs_cluster.main.name}/*"]
+      }
+    ]
+  })
 }
 
 resource "aws_dynamodb_table" "active_meeting_table" {

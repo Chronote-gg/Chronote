@@ -1,3 +1,6 @@
+import { RuntimeAdmissionUnavailable } from "../services/runtimeAdmissionError";
+import { randomUUID } from "node:crypto";
+import { runRuntimeApiOperation } from "../services/runtimeApiOperationService";
 import { initTRPC, TRPCError } from "@trpc/server";
 import type { TrpcContext } from "./context";
 import {
@@ -99,6 +102,24 @@ const isSuperAdminAccess = t.middleware(({ ctx, next }) => {
 export const router = t.router;
 export const publicProcedure = t.procedure;
 export const authedProcedure = t.procedure.use(isAuthed);
+export const correctionProcedure = authedProcedure.use(
+  async ({ next, path }) => {
+    try {
+      return await runRuntimeApiOperation(
+        `api:${path}:${randomUUID()}`,
+        (operation) => next({ ctx: { operation } }),
+      );
+    } catch (error) {
+      if (error instanceof RuntimeAdmissionUnavailable)
+        throw new TRPCError({
+          code: "SERVICE_UNAVAILABLE",
+          message: "Recording service is switching. Please retry.",
+          cause: error,
+        });
+      throw error;
+    }
+  },
+);
 export const manageGuildProcedure = authedProcedure.use(isManageGuild);
 export const guildMemberProcedure = authedProcedure.use(isGuildMember);
 export const superAdminProcedure = authedProcedure.use(isSuperAdminAccess);

@@ -23,6 +23,7 @@ import {
 } from "../../src/constants";
 import {
   buildMeetingContext,
+  collectMeetingContext,
   formatContextForPrompt,
 } from "../../src/services/contextService";
 import { fetchChannelContext } from "../../src/services/channelContextService";
@@ -201,6 +202,7 @@ describe("contextService", () => {
       "guild-1",
       "voice-1",
       expect.any(Number),
+      undefined,
     );
   });
 
@@ -268,4 +270,19 @@ describe("contextService", () => {
     const imageContext = formatContextForPrompt(context, "image");
     expect(imageContext).not.toContain("**Dictionary:**");
   });
+});
+
+test("strict checkpoint context distinguishes unavailable from empty", async () => {
+  mockedResolveConfigSnapshot.mockRejectedValueOnce(new Error("unavailable"));
+  const meeting = {
+    guildId: "generated",
+    voiceChannel: { id: "voice" },
+    meetingContext: "known local context",
+  } as MeetingData;
+  const result = await collectMeetingContext(meeting, false, {
+    strict: true,
+    signal: new AbortController().signal,
+  });
+  expect(result.availability).toBe("unavailable");
+  expect(result.data.meetingContext).toBe("known local context");
 });

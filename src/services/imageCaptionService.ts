@@ -1,7 +1,10 @@
-import type OpenAI from "openai";
+import {
+  getMeetingProcessingSignal,
+  runMeetingProcessingEffect,
+} from "./meetingProcessingLifetime";
 import type { MeetingData } from "../types/meeting-data";
 import type { ChatAttachment, ChatEntry } from "../types/chat";
-import { createOpenAIClient } from "./openaiClient";
+import { generateOpenAIText } from "./openaiTextService";
 import { buildModelOverrides, getModelChoice } from "./modelFactory";
 import { resolveChatParamsForRole } from "./openaiModelParams";
 
@@ -32,12 +35,13 @@ type CollectCaptionCandidatesOptions = {
 };
 
 type CreateCaptionOptions = {
-  openAIClient: OpenAI;
+  tracing: Parameters<typeof generateOpenAIText>[0]["tracing"];
   model: string;
   modelParams: ReturnType<typeof resolveChatParamsForRole>;
   url: string;
   name: string;
   timeoutMs: number;
+  signal: AbortSignal;
 };
 
 const clampFiniteNumber = (value: unknown, fallback: number) => {
@@ -180,52 +184,57 @@ const createCaption = async (
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), options.timeoutMs);
   try {
-    const response = await options.openAIClient.chat.completions.create(
-      {
-        model: options.model,
-        max_completion_tokens: 300,
-        response_format: { type: "json_object" },
-        ...options.modelParams,
-        messages: [
-          {
-            role: "system",
-            content:
-              'You caption images shared in a meeting. Return strict JSON only, no markdown. Schema: {"caption": string, "visibleText": string}. caption is 1-2 sentences. visibleText contains clearly visible text in the image, or empty string.',
-          },
-          {
-            role: "user",
-            content: [
-              {
-                type: "text",
-                text: `Caption this image and extract visible text. Filename: ${options.name}`,
-              },
-              {
-                type: "image_url",
-                image_url: {
-                  url: options.url,
-                  detail: "low",
-                },
-              },
-            ],
-          },
-        ],
-      },
-      { signal: controller.signal },
-    );
+    options.signal.throwIfAborted();
+    const raw = await generateOpenAIText({
+      model: options.model,
+      modelParams: options.modelParams,
+      maxOutputTokens: 300,
+      format: { kind: "json_object" },
+      input: [
+        {
+          role: "system",
+          content:
+            'You caption images shared in a meeting. Return strict JSON only, no markdown. Schema: {"caption": string, "visibleText": string}. caption is 1-2 sentences. visibleText contains clearly visible text in the image, or empty string.',
+        },
+        {
+          role: "user",
+          content: [
+            {
+              type: "input_text",
+              text: `Caption this image and extract visible text. Filename: ${options.name}`,
+            },
+            {
+              type: "input_image",
+              image_url: options.url,
+              detail: "low",
+            },
+          ],
+        },
+      ],
+      signal: AbortSignal.any([controller.signal, options.signal]),
+      tracing: options.tracing,
+    });
 
-    const raw = response.choices?.[0]?.message?.content ?? "";
+    options.signal.throwIfAborted();
     return parseCaptionOutput(raw);
   } finally {
     clearTimeout(timeout);
   }
 };
 
-export async function captionMeetingImages(meeting: MeetingData): Promise<{
+export function captionMeetingImages(meeting: MeetingData) {
+  return runMeetingProcessingEffect(meeting, () =>
+    captionOwnedMeetingImages(meeting),
+  );
+}
+async function captionOwnedMeetingImages(meeting: MeetingData): Promise<{
   candidates: number;
   captioned: number;
   skipped: number;
   truncatedChars: number;
 }> {
+  const signal = getMeetingProcessingSignal(meeting);
+  signal.throwIfAborted();
   const visionConfig = meeting.runtimeConfig?.visionCaptions;
   if (!visionConfig?.enabled) {
     return { candidates: 0, captioned: 0, skipped: 0, truncatedChars: 0 };
@@ -252,7 +261,7 @@ export async function captionMeetingImages(meeting: MeetingData): Promise<{
     return { candidates: 0, captioned: 0, skipped: 0, truncatedChars: 0 };
   }
 
-  const openAIClient = createOpenAIClient({
+  const tracing = {
     traceName: "image-caption",
     generationName: "image-caption",
     userId: meeting.creator.id,
@@ -264,7 +273,7 @@ export async function captionMeetingImages(meeting: MeetingData): Promise<{
       meetingId: meeting.meetingId,
     },
     parentSpanContext: meeting.langfuseParentSpanContext,
-  });
+  };
 
   const startedAt = Date.now();
   const modelChoice = getModelChoice(
@@ -283,6 +292,7 @@ export async function captionMeetingImages(meeting: MeetingData): Promise<{
   let truncatedChars = 0;
 
   for (const candidate of candidates) {
+    signal.throwIfAborted();
     const elapsedMs = Date.now() - startedAt;
     const remainingBudgetMs = MAX_CAPTION_DURATION_MS - elapsedMs;
     if (remainingBudgetMs <= 0) {
@@ -299,12 +309,13 @@ export async function captionMeetingImages(meeting: MeetingData): Promise<{
         Math.max(1_000, remainingBudgetMs),
       );
       const output = await createCaption({
-        openAIClient,
+        tracing,
         model,
         modelParams,
         url: attachment.url,
         name: attachment.name?.trim() || "image",
         timeoutMs,
+        signal,
       });
       if (!output) {
         skipped += 1;
@@ -336,6 +347,7 @@ export async function captionMeetingImages(meeting: MeetingData): Promise<{
 
       captioned += 1;
     } catch (error) {
+      signal.throwIfAborted();
       skipped += 1;
       console.warn("Failed to caption image attachment, skipping.", {
         meetingId: meeting.meetingId,

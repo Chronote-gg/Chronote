@@ -1,4 +1,6 @@
 import { useEffect, useState } from "react";
+import { MeetingCaptureNotice } from "../../components/MeetingCaptureNotice";
+import type { MeetingCapturePresentation } from "../../../utils/meetingCaptureNotice";
 import {
   AppShell,
   Box,
@@ -36,7 +38,7 @@ import {
   uiOverlays,
 } from "../../uiTokens";
 
-type PublicMeeting = {
+type PublicMeeting = MeetingCapturePresentation & {
   title: string;
   summarySentence?: string;
   summaryLabel?: string;
@@ -159,9 +161,7 @@ function PublicMeetingBody({
     <Stack gap="lg">
       <PageHeader
         title={meeting.title}
-        description={`${new Date(meeting.timestamp).toLocaleString()} | ${formatDuration(
-          meeting.duration,
-        )}`}
+        description={`${new Date(meeting.timestamp).toLocaleString()} | ${meeting.capture?.kind === "interrupted" && !meeting.capture.endedAt ? "Unknown duration" : formatDuration(meeting.duration)}`}
       />
 
       <AuthBanner message="Connect Discord to browse your own meeting library." />
@@ -171,12 +171,7 @@ function PublicMeetingBody({
         </Text>
       ) : null}
 
-      <Surface p="lg">
-        <Stack gap="xs">
-          <Text fw={600}>Notes</Text>
-          <MarkdownBody content={meeting.notes} />
-        </Stack>
-      </Surface>
+      <PublicMeetingNotes meeting={meeting} />
 
       {meeting.transcriptAccessEnabled !== false ? (
         <Surface p="lg">
@@ -281,3 +276,19 @@ export function PublicMeetingView({
 }
 
 export type { PublicMeetingViewProps };
+
+export function PublicMeetingNotes({
+  meeting,
+}: {
+  meeting: Pick<PublicMeeting, "notes"> & MeetingCapturePresentation;
+}) {
+  return (
+    <Surface p="lg">
+      <Stack gap="xs">
+        <Text fw={600}>Notes</Text>
+        <MeetingCaptureNotice {...meeting} />
+        <MarkdownBody content={meeting.notes} />
+      </Stack>
+    </Surface>
+  );
+}

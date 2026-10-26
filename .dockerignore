@@ -4,6 +4,7 @@
 .husky
 .codex
 .claude
+.superpowers
 .venv
 node_modules
 dist

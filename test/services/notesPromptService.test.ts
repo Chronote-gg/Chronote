@@ -114,7 +114,7 @@ describe("notesPromptService", () => {
     const { module, getLangfuseChatPrompt } = await loadModule();
     const meeting = buildMeeting();
 
-    await module.getNotesPrompt(meeting);
+    await module.prepareLiveNotesPrompt(meeting);
 
     const call = getLangfuseChatPrompt.mock.calls[0][0];
     expect(call.name).toBe("chronote-notes-system-chat");
@@ -132,7 +132,7 @@ describe("notesPromptService", () => {
   test("role roster lists mention strings and in-meeting counts", async () => {
     const { module, getLangfuseChatPrompt } = await loadModule();
 
-    await module.getNotesPrompt(buildMeeting());
+    await module.prepareLiveNotesPrompt(buildMeeting());
 
     const { roles } = getLangfuseChatPrompt.mock.calls[0][0].variables;
     expect(roles).toContain(`- Design | mention: <@&${ROLE_DESIGN_ID}>`);
@@ -144,7 +144,7 @@ describe("notesPromptService", () => {
   test("role roster sorts roles held by participants first", async () => {
     const { module, getLangfuseChatPrompt } = await loadModule();
 
-    await module.getNotesPrompt(buildMeeting());
+    await module.prepareLiveNotesPrompt(buildMeeting());
 
     const { roles } = getLangfuseChatPrompt.mock.calls[0][0].variables;
     // Alumni sorts first alphabetically, so leading Design proves the sort is
@@ -155,7 +155,7 @@ describe("notesPromptService", () => {
   test("role roster excludes @everyone and managed roles", async () => {
     const { module, getLangfuseChatPrompt } = await loadModule();
 
-    await module.getNotesPrompt(buildMeeting());
+    await module.prepareLiveNotesPrompt(buildMeeting());
 
     const { roles } = getLangfuseChatPrompt.mock.calls[0][0].variables;
     expect(roles).not.toContain("@everyone");
@@ -166,7 +166,7 @@ describe("notesPromptService", () => {
   test("participant roster lists each participant's role names", async () => {
     const { module, getLangfuseChatPrompt } = await loadModule();
 
-    await module.getNotesPrompt(buildMeeting());
+    await module.prepareLiveNotesPrompt(buildMeeting());
 
     const { participantRoster } =
       getLangfuseChatPrompt.mock.calls[0][0].variables;
@@ -179,7 +179,7 @@ describe("notesPromptService", () => {
     const meeting = buildMeeting();
     meeting.participants.get("user-1")!.roleIds = undefined;
 
-    await module.getNotesPrompt(meeting);
+    await module.prepareLiveNotesPrompt(meeting);
 
     const { participantRoster } =
       getLangfuseChatPrompt.mock.calls[0][0].variables;
@@ -210,7 +210,7 @@ describe("notesPromptService", () => {
       { id: GUILD_ID, name: "@everyone" },
     ]) as unknown as MeetingData["guild"]["roles"];
 
-    await module.getNotesPrompt(meeting);
+    await module.prepareLiveNotesPrompt(meeting);
 
     expect(getLangfuseChatPrompt.mock.calls[0][0].variables.roles).toBe(
       module.NO_ROLES_AVAILABLE_TEXT,
@@ -222,7 +222,7 @@ describe("notesPromptService", () => {
     const meeting = buildMeeting();
     meeting.chatLog = [];
 
-    await module.getNotesPrompt(meeting);
+    await module.prepareLiveNotesPrompt(meeting);
 
     const call = getLangfuseChatPrompt.mock.calls[0][0];
     expect(call.variables.chatContextInstruction).toContain(
@@ -248,7 +248,7 @@ describe("notesPromptService", () => {
       },
     ];
 
-    await module.getNotesPrompt(meeting);
+    await module.prepareLiveNotesPrompt(meeting);
 
     const call = getLangfuseChatPrompt.mock.calls[0][0];
     expect(call.variables.chatContextBlock).toContain(
@@ -277,7 +277,7 @@ describe("notesPromptService", () => {
       },
     ];
 
-    await module.getNotesPrompt(meeting);
+    await module.prepareLiveNotesPrompt(meeting);
 
     const call = getLangfuseChatPrompt.mock.calls[0][0];
     expect(call.variables.chatContextBlock).not.toContain(

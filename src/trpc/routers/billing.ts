@@ -1,3 +1,20 @@
+import { cancelRenewalRecovery } from "../../services/renewalRecoveryService";
+import { getRenewalRecoveryView } from "../../services/renewalRecoveryView";
+import {
+  prepareBillingChange,
+  readBillingChange,
+  confirmBillingChange,
+  cancelBillingChange,
+} from "../../services/billingChangeService";
+import {
+  billingChangeSelectionSchema,
+  type BillingChangeView,
+} from "../../types/billingChange";
+import {
+  readRenewalState,
+  restoreRenewal,
+} from "../../services/renewalReactivationService";
+import { renewalRequestSchema, type RenewalView } from "../../types/renewal";
 import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 import {
@@ -47,6 +64,7 @@ const me = authedProcedure
     return getBillingSnapshot({
       stripe,
       guildId: input.serverId,
+      payerId: ctx.user.id,
     });
   });
 
@@ -57,6 +75,11 @@ const checkout = manageGuildProcedure
       tier: z.enum(["basic", "pro"]),
       interval: z.enum(["month", "year"]).default("month"),
       promotionCode: z.string().optional(),
+      savedPromotionCode: z.string().max(200).optional(),
+      expectedOffer: z
+        .enum(["none", "basic_intro_v1", "basic_annual_intro_v1"])
+        .optional(),
+      offerChoice: z.enum(["automatic", "promotion"]).default("automatic"),
       source: z.enum(PURCHASE_SOURCES).catch("unknown").default("direct"),
       limitType: z.enum(RECORDING_LIMIT_TYPES).optional().catch(undefined),
       limitSurface: z
@@ -94,6 +117,16 @@ const checkout = manageGuildProcedure
     }
     let reason = "provider_failed";
     try {
+      if (
+        input.promotionCode?.trim() &&
+        input.savedPromotionCode?.trim() &&
+        input.promotionCode.trim() !== input.savedPromotionCode.trim()
+      )
+        throw new BillingActionError(
+          "BAD_REQUEST",
+          "Saved and selected promotion codes do not match.",
+          "discount_choice_required",
+        );
       let priceId =
         (await resolvePaidPlanPriceId({
           stripe,
@@ -138,6 +171,9 @@ const checkout = manageGuildProcedure
         priceId,
         promotionCodeId,
         promotionCode,
+        savedPromotionCode: input.savedPromotionCode?.trim(),
+        expectedOffer: input.expectedOffer,
+        offerChoice: input.offerChoice,
         tier: input.tier as PaidTier,
         interval: input.interval as BillingInterval,
         source: input.source,
@@ -151,8 +187,7 @@ const checkout = manageGuildProcedure
           userId: ctx.user.id,
           guildId: input.serverId,
           properties: {
-            reason:
-              err instanceof BillingActionError ? "transition_guarded" : reason,
+            reason: err instanceof BillingActionError ? err.reason : reason,
             surface: "billing",
             source: input.source,
             ...recordingLimitAnalytics(input),
@@ -211,7 +246,177 @@ const portal = manageGuildProcedure
     }
   });
 
+const renewal = manageGuildProcedure
+  .input(z.object({ serverId: z.string().min(1) }).strict())
+  .query(async ({ ctx, input }): Promise<RenewalView> => {
+    if (config.mock.enabled)
+      return {
+        state: { kind: "not_applicable" },
+        canManageBilling: false,
+        lifecycleAnalyticsEnabled: false,
+      };
+    const stripe = getStripeClient();
+    if (!stripe)
+      return {
+        state: { kind: "unavailable", knownEndsAt: null },
+        canManageBilling: false,
+        lifecycleAnalyticsEnabled: false,
+      };
+    return readRenewalState({
+      stripe,
+      guildId: input.serverId,
+      payerId: ctx.user.id,
+    });
+  });
+const reactivateRenewal = manageGuildProcedure
+  .input(
+    z
+      .object({
+        serverId: z.string().min(1),
+        request: renewalRequestSchema,
+        analyticsOptOut: z.boolean().default(false),
+      })
+      .strict(),
+  )
+  .mutation(async ({ ctx, input }) => {
+    if (config.mock.enabled) return { kind: "changed" } as const;
+    const stripe = getStripeClient();
+    if (!stripe)
+      throw new TRPCError({
+        code: "INTERNAL_SERVER_ERROR",
+        message: "Stripe not configured",
+      });
+    try {
+      return await restoreRenewal({
+        stripe,
+        guildId: input.serverId,
+        payerId: ctx.user.id,
+        request: input.request,
+        analyticsOptOut: input.analyticsOptOut || ctx.req.headers.dnt === "1",
+      });
+    } catch (error) {
+      if (error instanceof BillingActionError)
+        throw new TRPCError({ code: error.code, message: error.message });
+      throw new TRPCError({
+        code: "INTERNAL_SERVER_ERROR",
+        message: "Unable to check renewal. Check status before trying again.",
+      });
+    }
+  });
+
+async function billingChangeResult<T>(work: () => Promise<T>): Promise<T> {
+  try {
+    return await work();
+  } catch (error) {
+    if (error instanceof BillingActionError)
+      throw new TRPCError({ code: error.code, message: error.message });
+    throw new TRPCError({
+      code: "INTERNAL_SERVER_ERROR",
+      message:
+        "Unable to check this change. Check its status before trying again.",
+    });
+  }
+}
+function changeStripe() {
+  const stripe = getStripeClient();
+  if (!stripe)
+    throw new TRPCError({
+      code: "BAD_REQUEST",
+      message: "Billing is unavailable.",
+    });
+  return stripe;
+}
+const change = manageGuildProcedure
+  .input(z.object({ serverId: z.string().min(1) }).strict())
+  .query(async ({ ctx, input }) => {
+    const stripe = getStripeClient();
+    if (!stripe)
+      return { kind: "none", enabled: false } satisfies BillingChangeView;
+    return billingChangeResult(() =>
+      readBillingChange({
+        stripe,
+        guildId: input.serverId,
+        payerId: ctx.user.id,
+      }),
+    );
+  });
+const prepareChange = manageGuildProcedure
+  .input(
+    z
+      .object({
+        serverId: z.string().min(1),
+        selection: billingChangeSelectionSchema,
+      })
+      .strict(),
+  )
+  .mutation(({ ctx, input }) =>
+    billingChangeResult(() =>
+      prepareBillingChange({
+        stripe: changeStripe(),
+        guildId: input.serverId,
+        payerId: ctx.user.id,
+        selection: input.selection,
+      }),
+    ),
+  );
+const confirmChange = manageGuildProcedure
+  .input(
+    z
+      .object({
+        serverId: z.string().min(1),
+        operationId: z.uuid(),
+        revision: z.string().min(1),
+      })
+      .strict(),
+  )
+  .mutation(({ ctx, input }) =>
+    billingChangeResult(() =>
+      confirmBillingChange({
+        stripe: changeStripe(),
+        guildId: input.serverId,
+        payerId: ctx.user.id,
+        operationId: input.operationId,
+        revision: input.revision,
+      }),
+    ),
+  );
+const cancelChange = manageGuildProcedure
+  .input(
+    z.object({ serverId: z.string().min(1), operationId: z.uuid() }).strict(),
+  )
+  .mutation(({ ctx, input }) =>
+    billingChangeResult(() =>
+      cancelBillingChange({
+        stripe: changeStripe(),
+        guildId: input.serverId,
+        payerId: ctx.user.id,
+        operationId: input.operationId,
+      }),
+    ),
+  );
+
+const cancelRenewalPayment = manageGuildProcedure
+  .input(z.object({ serverId: z.string().min(1) }).strict())
+  .mutation(({ ctx, input }) =>
+    billingChangeResult(async () => {
+      const context = {
+        stripe: changeStripe(),
+        guildId: input.serverId,
+        payerId: ctx.user.id,
+        now: Math.floor(Date.now() / 1000),
+      };
+      await cancelRenewalRecovery(context);
+      return getRenewalRecoveryView(context);
+    }),
+  );
 export const billingRouter = router({
+  cancelRenewalPayment,
+  change,
+  prepareChange,
+  confirmChange,
+  cancelChange,
+  renewal,
+  reactivateRenewal,
   me,
   checkout,
   portal,

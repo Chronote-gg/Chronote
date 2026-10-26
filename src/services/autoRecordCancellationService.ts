@@ -1,10 +1,17 @@
-import { isAudioFileSpeechRejected } from "../utils/audioTranscript";
+import { resolveAudioFileText } from "../utils/audioTranscript";
+import {
+  completionSnapshot,
+  freezeCompletionPolicy,
+} from "./meetingCompletionPolicyService";
 import { waitForFinishProcessing } from "../audio";
 import type { MeetingData } from "../types/meeting-data";
-import { createOpenAIClient } from "./openaiClient";
+import {
+  EmptyOpenAITextOutputError,
+  generateOpenAIText,
+} from "./openaiTextService";
 import { buildModelOverrides, getModelChoice } from "./modelFactory";
-import { config } from "./configService";
 import { resolveChatParamsForRole } from "./openaiModelParams";
+import { assertMeetingProcessingSucceeded } from "../utils/meetingProcessing";
 import { countWords } from "../utils/text";
 
 type CancellationDecision = {
@@ -12,24 +19,12 @@ type CancellationDecision = {
   reason?: string;
 };
 
-const MAX_DURATION_SECONDS = 90;
-const MAX_TRANSCRIPT_WORDS = 50;
-const MAX_CHAT_MESSAGES = 1;
 const MAX_TRANSCRIPT_CHARS = 1200;
 const MAX_CHAT_LINES = 3;
 
-const isAutoCancelEnabled = (meeting: MeetingData) => {
-  if (config.mock.enabled) return false;
-  if (meeting.runtimeConfig?.autoRecordCancellation?.enabled === false) {
-    return false;
-  }
-  return true;
-};
-
 const collectTranscriptText = (meeting: MeetingData) =>
   meeting.audioData.audioFiles
-    .filter((file) => !isAudioFileSpeechRejected(file))
-    .map((file) => file.transcript)
+    .map((file) => resolveAudioFileText(file))
     .filter((text): text is string => Boolean(text && text.trim()))
     .join(" ");
 
@@ -54,40 +49,63 @@ const collectChatLines = (meeting: MeetingData) =>
     })
     .filter((line): line is string => Boolean(line && line.trim()));
 
+function parseCancellationDecision(content: string): CancellationDecision {
+  const parsed = JSON.parse(content) as {
+    cancel?: boolean;
+    reason?: string;
+  };
+  const cancel = Boolean(parsed.cancel);
+  const reason = parsed.reason?.trim();
+  if (!cancel) return { cancel: false };
+  return {
+    cancel: true,
+    reason:
+      reason && reason.length > 0 ? reason : "Not enough content detected.",
+  };
+}
+
 export async function evaluateAutoRecordCancellation(
   meeting: MeetingData,
 ): Promise<CancellationDecision> {
   if (!meeting.isAutoRecording) return { cancel: false };
-  if (!isAutoCancelEnabled(meeting)) return { cancel: false };
+  const snapshot = completionSnapshot(meeting);
+  const policy = snapshot?.policy ?? freezeCompletionPolicy(meeting);
+  if (!policy.enabled) return { cancel: false };
+  if (meeting.reservation && snapshot?.elapsedMilliseconds === undefined)
+    throw new Error("Original auto-record duration is unavailable");
 
-  const durationSeconds = meeting.endTime
-    ? Math.max(
-        0,
-        Math.floor(
-          (meeting.endTime.getTime() - meeting.startTime.getTime()) / 1000,
-        ),
-      )
-    : 0;
+  const durationSeconds =
+    snapshot?.elapsedMilliseconds !== undefined
+      ? Math.floor(snapshot.elapsedMilliseconds / 1000)
+      : meeting.endTime
+        ? Math.max(
+            0,
+            Math.floor(
+              (meeting.endTime.getTime() - meeting.startTime.getTime()) / 1000,
+            ),
+          )
+        : 0;
   const chatMessageCount = meeting.chatLog.filter(
     (entry) => entry.type === "message",
   ).length;
 
   if (
-    durationSeconds > MAX_DURATION_SECONDS ||
-    chatMessageCount > MAX_CHAT_MESSAGES
+    durationSeconds > policy.maximumSeconds ||
+    chatMessageCount > policy.maximumChatMessages
   ) {
     return { cancel: false };
   }
 
   await waitForFinishProcessing(meeting);
+  assertMeetingProcessingSucceeded(meeting);
   const transcriptText = collectTranscriptText(meeting);
   const transcriptWords = countWords(transcriptText);
   const chatLines = collectChatLines(meeting);
 
   const isHeuristicMatch =
-    durationSeconds <= MAX_DURATION_SECONDS &&
-    transcriptWords <= MAX_TRANSCRIPT_WORDS &&
-    chatMessageCount <= MAX_CHAT_MESSAGES;
+    durationSeconds <= policy.maximumSeconds &&
+    transcriptWords <= policy.maximumWords &&
+    chatMessageCount <= policy.maximumChatMessages;
 
   if (!isHeuristicMatch) {
     return { cancel: false };
@@ -123,45 +141,30 @@ export async function evaluateAutoRecordCancellation(
       model: modelChoice.model,
       config: meeting.runtimeConfig?.modelParams?.autoRecordCancel,
     });
-    const openAIClient = createOpenAIClient({
-      traceName: "auto-record-cancel",
-      generationName: "auto-record-cancel",
-      sessionId: meeting.meetingId,
-      tags: ["feature:auto_record_cancel"],
-      metadata: {
-        guildId: meeting.guild.id,
-        channelId: meeting.voiceChannel.id,
-      },
-    });
-    const completion = await openAIClient.chat.completions.create({
+    const content = await generateOpenAIText({
       model: modelChoice.model,
-      messages: [
+      input: [
         { role: "system", content: systemPrompt },
         { role: "user", content: userPrompt },
       ],
-      max_completion_tokens: 120,
-      response_format: { type: "json_object" },
-      ...modelParams,
+      modelParams,
+      maxOutputTokens: 120,
+      format: { kind: "json_object" },
+      tracing: {
+        traceName: "auto-record-cancel",
+        generationName: "auto-record-cancel",
+        sessionId: meeting.meetingId,
+        tags: ["feature:auto_record_cancel"],
+        metadata: {
+          guildId: meeting.guild.id,
+          channelId: meeting.voiceChannel.id,
+        },
+      },
     });
-
-    const content = completion.choices[0].message.content ?? "";
-    if (!content.trim()) {
-      return { cancel: false };
-    }
-    const parsed = JSON.parse(content) as {
-      cancel?: boolean;
-      reason?: string;
-    };
-    const cancel = Boolean(parsed.cancel);
-    const reason = parsed.reason?.trim();
-    if (!cancel) return { cancel: false };
-    return {
-      cancel: true,
-      reason:
-        reason && reason.length > 0 ? reason : "Not enough content detected.",
-    };
+    return parseCancellationDecision(content);
   } catch (error) {
+    if (error instanceof EmptyOpenAITextOutputError) return { cancel: false };
     console.error("Auto-record cancellation check failed:", error);
-    return { cancel: false };
+    throw error;
   }
 }

@@ -1,7 +1,316 @@
+diff --git a/node_modules/@discordjs/voice/dist/index.d.mts b/node_modules/@discordjs/voice/dist/index.d.mts
+index 1d88f49..a79a8b8 100644
+--- a/node_modules/@discordjs/voice/dist/index.d.mts
++++ b/node_modules/@discordjs/voice/dist/index.d.mts
+@@ -587,11 +587,26 @@ interface TransitionResult {
+ interface DAVESessionOptions {
+     decryptionFailureTolerance?: number | undefined;
+ }
++type DAVEResetReason = "none" | "initial" | "epoch-1" | "invalid-welcome" | "invalid-commit" | "decrypt-failures" | "unknown";
++type DAVEReplyDisposition = "not-emitted" | "send-returned" | "skipped-resuming" | "skipped-other-state" | "send-threw";
++interface DAVEResetDiagnostics {
++    reason: DAVEResetReason;
++    atMs: number | null;
++    keyPackageDisposition: DAVEReplyDisposition;
++    invalidationDisposition: DAVEReplyDisposition;
++}
++interface DAVEResetReadinessCount {
++    readonly reason: Exclude<DAVEResetReason, "none">;
++    readonly outcome: "ready" | "superseded-pending" | "destroyed-pending";
++    readonly ageBucket: "under-100ms" | "100ms-to-1s" | "1s-to-10s" | "10s-to-1m" | "1m-or-more";
++    readonly count: number;
++}
+ interface DAVESession extends EventEmitter {
++    on(event: 'resetSummary', listener: (summary: readonly DAVEResetReadinessCount[]) => void): this;
+     on(event: 'error', listener: (error: Error) => void): this;
+     on(event: 'debug', listener: (message: string) => void): this;
+-    on(event: 'keyPackage', listener: (message: Buffer) => void): this;
+-    on(event: 'invalidateTransition', listener: (transitionId: number) => void): this;
++    on(event: 'keyPackage', listener: (message: Buffer, episode?: DAVEResetDiagnostics) => void): this;
++    on(event: 'invalidateTransition', listener: (transitionId: number, episode?: DAVEResetDiagnostics) => void): this;
+ }
+ /**
+  * Manages the DAVE protocol group session.
+@@ -633,6 +648,8 @@ declare class DAVESession extends EventEmitter {
+      * Whether this session is currently re-initializing due to an invalid transition.
+      */
+     reinitializing: boolean;
++    resetDiagnostics: DAVEResetDiagnostics;
++    private recordReset;
+     /**
+      * The underlying DAVE Session of this wrapper.
+      */
+@@ -651,7 +668,7 @@ declare class DAVESession extends EventEmitter {
+     /**
+      * Re-initializes (or initializes) the underlying session.
+      */
+-    reinit(): void;
++    reinit(reason?: Exclude<DAVEResetReason, "none">, episode?: DAVEResetDiagnostics): void;
+     /**
+      * Set the external sender for this session.
+      *
+@@ -682,7 +699,7 @@ declare class DAVESession extends EventEmitter {
+      *
+      * @param transitionId - The transition id to invalidate
+      */
+-    recoverFromInvalidTransition(transitionId: number): void;
++    recoverFromInvalidTransition(transitionId: number, reason?: Exclude<DAVEResetReason, "none">): void;
+     /**
+      * Processes proposals from the MLS group.
+      *
+@@ -1042,6 +1059,7 @@ interface NetworkingOptions {
+     decryptionFailureTolerance?: number | undefined;
+ }
+ interface Networking extends EventEmitter {
++    on(event: 'daveResetSummary', listener: (summary: readonly DAVEResetReadinessCount[]) => void): this;
+     /**
+      * Debug event for Networking.
+      *
+@@ -1343,6 +1361,21 @@ declare class SpeakingMap extends EventEmitter {
+  * @beta
+  */
+ declare class VoiceReceiver {
++    /** Content-free receiver decisions, keyed by the exact decoder input. */
++    readonly packetDiagnostics: WeakMap<Buffer, Readonly<{
++        connectionStatus: string;
++        networkingCode: number | null;
++        daveSessionPresent: boolean;
++        daveNativeSessionPresent: boolean;
++        daveReady: boolean | null;
++        daveProtocolVersion: number | null;
++        daveDecryptDecision: "receiver-bypass" | "no-session" | "silence" | "not-ready" | "protocol-passthrough" | "native-decrypt-returned" | "native-decrypt-unchanged" | "dropped";
++        daveTransitionAgoMs: number | null;
++        daveResetReason: DAVEResetReason | null;
++        daveResetAgoMs: number | null;
++        daveKeyPackageDisposition: DAVEReplyDisposition | null;
++        daveInvalidationDisposition: DAVEReplyDisposition | null;
++    }>>;
+     /**
+      * The attached connection of this receiver.
+      */
+@@ -1568,6 +1601,7 @@ interface VoiceConnectionDestroyedState {
+  */
+ type VoiceConnectionState = VoiceConnectionConnectingState | VoiceConnectionDestroyedState | VoiceConnectionDisconnectedState | VoiceConnectionReadyState | VoiceConnectionSignallingState;
+ interface VoiceConnection extends EventEmitter {
++    on(event: 'daveResetSummary', listener: (summary: readonly DAVEResetReadinessCount[]) => void): this;
+     /**
+      * Emitted when there is an error emitted from the voice connection
+      *
+diff --git a/node_modules/@discordjs/voice/dist/index.d.ts b/node_modules/@discordjs/voice/dist/index.d.ts
+index 1d88f49..a79a8b8 100644
+--- a/node_modules/@discordjs/voice/dist/index.d.ts
++++ b/node_modules/@discordjs/voice/dist/index.d.ts
+@@ -587,11 +587,26 @@ interface TransitionResult {
+ interface DAVESessionOptions {
+     decryptionFailureTolerance?: number | undefined;
+ }
++type DAVEResetReason = "none" | "initial" | "epoch-1" | "invalid-welcome" | "invalid-commit" | "decrypt-failures" | "unknown";
++type DAVEReplyDisposition = "not-emitted" | "send-returned" | "skipped-resuming" | "skipped-other-state" | "send-threw";
++interface DAVEResetDiagnostics {
++    reason: DAVEResetReason;
++    atMs: number | null;
++    keyPackageDisposition: DAVEReplyDisposition;
++    invalidationDisposition: DAVEReplyDisposition;
++}
++interface DAVEResetReadinessCount {
++    readonly reason: Exclude<DAVEResetReason, "none">;
++    readonly outcome: "ready" | "superseded-pending" | "destroyed-pending";
++    readonly ageBucket: "under-100ms" | "100ms-to-1s" | "1s-to-10s" | "10s-to-1m" | "1m-or-more";
++    readonly count: number;
++}
+ interface DAVESession extends EventEmitter {
++    on(event: 'resetSummary', listener: (summary: readonly DAVEResetReadinessCount[]) => void): this;
+     on(event: 'error', listener: (error: Error) => void): this;
+     on(event: 'debug', listener: (message: string) => void): this;
+-    on(event: 'keyPackage', listener: (message: Buffer) => void): this;
+-    on(event: 'invalidateTransition', listener: (transitionId: number) => void): this;
++    on(event: 'keyPackage', listener: (message: Buffer, episode?: DAVEResetDiagnostics) => void): this;
++    on(event: 'invalidateTransition', listener: (transitionId: number, episode?: DAVEResetDiagnostics) => void): this;
+ }
+ /**
+  * Manages the DAVE protocol group session.
+@@ -633,6 +648,8 @@ declare class DAVESession extends EventEmitter {
+      * Whether this session is currently re-initializing due to an invalid transition.
+      */
+     reinitializing: boolean;
++    resetDiagnostics: DAVEResetDiagnostics;
++    private recordReset;
+     /**
+      * The underlying DAVE Session of this wrapper.
+      */
+@@ -651,7 +668,7 @@ declare class DAVESession extends EventEmitter {
+     /**
+      * Re-initializes (or initializes) the underlying session.
+      */
+-    reinit(): void;
++    reinit(reason?: Exclude<DAVEResetReason, "none">, episode?: DAVEResetDiagnostics): void;
+     /**
+      * Set the external sender for this session.
+      *
+@@ -682,7 +699,7 @@ declare class DAVESession extends EventEmitter {
+      *
+      * @param transitionId - The transition id to invalidate
+      */
+-    recoverFromInvalidTransition(transitionId: number): void;
++    recoverFromInvalidTransition(transitionId: number, reason?: Exclude<DAVEResetReason, "none">): void;
+     /**
+      * Processes proposals from the MLS group.
+      *
+@@ -1042,6 +1059,7 @@ interface NetworkingOptions {
+     decryptionFailureTolerance?: number | undefined;
+ }
+ interface Networking extends EventEmitter {
++    on(event: 'daveResetSummary', listener: (summary: readonly DAVEResetReadinessCount[]) => void): this;
+     /**
+      * Debug event for Networking.
+      *
+@@ -1343,6 +1361,21 @@ declare class SpeakingMap extends EventEmitter {
+  * @beta
+  */
+ declare class VoiceReceiver {
++    /** Content-free receiver decisions, keyed by the exact decoder input. */
++    readonly packetDiagnostics: WeakMap<Buffer, Readonly<{
++        connectionStatus: string;
++        networkingCode: number | null;
++        daveSessionPresent: boolean;
++        daveNativeSessionPresent: boolean;
++        daveReady: boolean | null;
++        daveProtocolVersion: number | null;
++        daveDecryptDecision: "receiver-bypass" | "no-session" | "silence" | "not-ready" | "protocol-passthrough" | "native-decrypt-returned" | "native-decrypt-unchanged" | "dropped";
++        daveTransitionAgoMs: number | null;
++        daveResetReason: DAVEResetReason | null;
++        daveResetAgoMs: number | null;
++        daveKeyPackageDisposition: DAVEReplyDisposition | null;
++        daveInvalidationDisposition: DAVEReplyDisposition | null;
++    }>>;
+     /**
+      * The attached connection of this receiver.
+      */
+@@ -1568,6 +1601,7 @@ interface VoiceConnectionDestroyedState {
+  */
+ type VoiceConnectionState = VoiceConnectionConnectingState | VoiceConnectionDestroyedState | VoiceConnectionDisconnectedState | VoiceConnectionReadyState | VoiceConnectionSignallingState;
+ interface VoiceConnection extends EventEmitter {
++    on(event: 'daveResetSummary', listener: (summary: readonly DAVEResetReadinessCount[]) => void): this;
+     /**
+      * Emitted when there is an error emitted from the voice connection
+      *
 diff --git a/node_modules/@discordjs/voice/dist/index.js b/node_modules/@discordjs/voice/dist/index.js
+index 63c6dfb..ae29184 100644
 --- a/node_modules/@discordjs/voice/dist/index.js
 +++ b/node_modules/@discordjs/voice/dist/index.js
-@@ -945,12 +945,16 @@
+@@ -733,6 +733,9 @@ var DAVESession = class extends import_node_events2.EventEmitter {
+    * Whether this session is currently re-initializing due to an invalid transition.
+    */
+   reinitializing = false;
++  pendingResetMeasurement = null;
++  resetMeasurements = new Map();
++  resetDiagnostics = { reason: "none", atMs: null, keyPackageDisposition: "not-emitted", invalidationDisposition: "not-emitted" };
+   /**
+    * The underlying DAVE Session of this wrapper.
+    */
+@@ -762,10 +765,30 @@ var DAVESession = class extends import_node_events2.EventEmitter {
+     if (!this.session) throw new Error("Session not available");
+     return this.session.getVerificationCode(userId);
+   }
++  finishResetMeasurement(outcome) {
++    const pending = this.pendingResetMeasurement;
++    if (!pending) return;
++    this.pendingResetMeasurement = null;
++    const age = Math.max(0, performance.now() - pending.atMs);
++    const ageBucket = age < 100 ? "under-100ms" : age < 1e3 ? "100ms-to-1s" : age < 1e4 ? "1s-to-10s" : age < 6e4 ? "10s-to-1m" : "1m-or-more";
++    const key = `${pending.reason}:${outcome}:${ageBucket}`;
++    const previous = this.resetMeasurements.get(key);
++    if (previous) previous.count++;
++    else this.resetMeasurements.set(key, { reason: pending.reason, outcome, ageBucket, count: 1 });
++  }
++  recordReset(reason) {
++    this.finishResetMeasurement("superseded-pending");
++    if (this.protocolVersion > 0) {
++      const measurementReason = ["initial", "epoch-1", "invalid-welcome", "invalid-commit", "decrypt-failures"].includes(reason) ? reason : "unknown";
++      this.pendingResetMeasurement = { reason: measurementReason, atMs: performance.now() };
++    }
++    return this.resetDiagnostics = { reason, atMs: Date.now(), keyPackageDisposition: "not-emitted", invalidationDisposition: "not-emitted" };
++  }
+   /**
+    * Re-initializes (or initializes) the underlying session.
+    */
+-  reinit() {
++  reinit(reason = "unknown", episode) {
++    if (this.protocolVersion > 0 || this.session) episode ??= this.recordReset(reason);
+     if (this.protocolVersion > 0) {
+       if (this.session) {
+         this.session.reinit(this.protocolVersion, this.userId, this.channelId);
+@@ -774,7 +797,7 @@ var DAVESession = class extends import_node_events2.EventEmitter {
+         this.session = new import_davey.default.DAVESession(this.protocolVersion, this.userId, this.channelId);
+         this.emit("debug", `Session initialized for protocol version ${this.protocolVersion}`);
+       }
+-      this.emit("keyPackage", this.session.getSerializedKeyPackage());
++      this.emit("keyPackage", this.session.getSerializedKeyPackage(), episode);
+     } else if (this.session) {
+       this.session.reset();
+       this.session.setPassthroughMode(true, TRANSITION_EXPIRY);
+@@ -844,7 +867,7 @@ var DAVESession = class extends import_node_events2.EventEmitter {
+     this.emit("debug", `Preparing for epoch (${data.epoch})`);
+     if (data.epoch === 1) {
+       this.protocolVersion = data.protocol_version;
+-      this.reinit();
++      this.reinit("epoch-1");
+     }
+   }
+   /**
+@@ -852,13 +875,14 @@ var DAVESession = class extends import_node_events2.EventEmitter {
+    *
+    * @param transitionId - The transition id to invalidate
+    */
+-  recoverFromInvalidTransition(transitionId) {
++  recoverFromInvalidTransition(transitionId, reason = "unknown") {
+     if (this.reinitializing) return;
++    const episode = this.recordReset(reason);
+     this.emit("debug", `Invalidating transition ${transitionId}`);
+     this.reinitializing = true;
+     this.consecutiveFailures = 0;
+-    this.emit("invalidateTransition", transitionId);
+-    this.reinit();
++    this.emit("invalidateTransition", transitionId, episode);
++    this.reinit(reason, episode);
+   }
+   /**
+    * Processes proposals from the MLS group.
+@@ -890,6 +914,7 @@ var DAVESession = class extends import_node_events2.EventEmitter {
+     const transitionId = payload.readUInt16BE(0);
+     try {
+       this.session.processCommit(payload.subarray(2));
++      if (this.session.ready) this.finishResetMeasurement("ready");
+       if (transitionId === 0) {
+         this.reinitializing = false;
+         this.lastTransitionId = transitionId;
+@@ -900,7 +925,7 @@ var DAVESession = class extends import_node_events2.EventEmitter {
+       return { transitionId, success: true };
+     } catch (error) {
+       this.emit("debug", `MLS commit errored from transition ${transitionId}: ${error}`);
+-      this.recoverFromInvalidTransition(transitionId);
++      this.recoverFromInvalidTransition(transitionId, "invalid-commit");
+       return { transitionId, success: false };
+     }
+   }
+@@ -915,6 +940,7 @@ var DAVESession = class extends import_node_events2.EventEmitter {
+     const transitionId = payload.readUInt16BE(0);
+     try {
+       this.session.processWelcome(payload.subarray(2));
++      if (this.session.ready) this.finishResetMeasurement("ready");
+       if (transitionId === 0) {
+         this.reinitializing = false;
+         this.lastTransitionId = transitionId;
+@@ -925,7 +951,7 @@ var DAVESession = class extends import_node_events2.EventEmitter {
+       return { transitionId, success: true };
+     } catch (error) {
+       this.emit("debug", `MLS welcome errored from transition ${transitionId}: ${error}`);
+-      this.recoverFromInvalidTransition(transitionId);
++      this.recoverFromInvalidTransition(transitionId, "invalid-welcome");
+       return { transitionId, success: false };
+     }
+   }
+@@ -945,19 +971,23 @@ var DAVESession = class extends import_node_events2.EventEmitter {
     * @param userId - The user id that sent the packet
     * @returns The decrypted packet, or `null` if the decryption failed but should be ignored
     */
@@ -20,7 +329,15 @@ diff --git a/node_modules/@discordjs/voice/dist/index.js b/node_modules/@discord
        return buffer;
      } catch (error) {
        if (!this.reinitializing && this.pendingTransitions.size === 0) {
-@@ -966,6 +970,7 @@
+         this.consecutiveFailures++;
+         this.emit("debug", `Failed to decrypt a packet (${this.consecutiveFailures} consecutive fails)`);
+         if (this.consecutiveFailures > this.failureTolerance) {
+-          if (this.lastTransitionId) this.recoverFromInvalidTransition(this.lastTransitionId);
++          if (this.lastTransitionId) this.recoverFromInvalidTransition(this.lastTransitionId, "decrypt-failures");
+           else throw error;
+         }
+       } else if (this.reinitializing) {
+@@ -966,16 +996,25 @@ var DAVESession = class extends import_node_events2.EventEmitter {
          this.emit("debug", `Failed to decrypt a packet (${this.pendingTransitions.size} pending transition[s])`);
        }
      }
@@ -28,7 +345,99 @@ diff --git a/node_modules/@discordjs/voice/dist/index.js b/node_modules/@discord
      return null;
    }
    /**
-@@ -2027,6 +2032,10 @@
+    * Resets the session.
+    */
+   destroy() {
++    this.finishResetMeasurement("destroyed-pending");
+     try {
+       this.session?.reset();
+     } catch {
+     }
++    // shortcut: abrupt exits lose counters; add bounded flushing if that limits analysis.
++    if (this.resetMeasurements.size) {
++      const summary = Object.freeze(Array.from(this.resetMeasurements.values(), (row) => Object.freeze(row)));
++      this.resetMeasurements.clear();
++      // Observation must not interrupt native teardown or the transport state machine.
++      try { this.emit("resetSummary", summary); } catch {}
++    }
+   }
+ };
+ 
+@@ -1348,6 +1387,7 @@ var Networking = class extends import_node_events5.EventEmitter {
+     this.onWsDebug = this.onWsDebug.bind(this);
+     this.onUdpDebug = this.onUdpDebug.bind(this);
+     this.onUdpClose = this.onUdpClose.bind(this);
++    this.onDaveResetSummary = this.onDaveResetSummary.bind(this);
+     this.onDaveDebug = this.onDaveDebug.bind(this);
+     this.onDaveKeyPackage = this.onDaveKeyPackage.bind(this);
+     this.onDaveInvalidateTransition = this.onDaveInvalidateTransition.bind(this);
+@@ -1406,6 +1446,7 @@ var Networking = class extends import_node_events5.EventEmitter {
+       oldDave.off("keyPackage", this.onDaveKeyPackage);
+       oldDave.off("invalidateTransition", this.onDaveInvalidateTransition);
+       oldDave.destroy();
++      oldDave.off("resetSummary", this.onDaveResetSummary);
+     }
+     const oldState = this._state;
+     this._state = newState;
+@@ -1452,9 +1493,10 @@ to ${stringifyState2(newState)}`);
+     );
+     session.on("error", this.onChildError);
+     session.on("debug", this.onDaveDebug);
++    session.on("resetSummary", this.onDaveResetSummary);
+     session.on("keyPackage", this.onDaveKeyPackage);
+     session.on("invalidateTransition", this.onDaveInvalidateTransition);
+-    session.reinit();
++    session.reinit("initial");
+     return session;
+   }
+   /**
+@@ -1660,21 +1702,31 @@ to ${stringifyState2(newState)}`);
+    *
+    * @param keyPackage - The new key package
+    */
+-  onDaveKeyPackage(keyPackage) {
+-    if (this.state.code === 3 /* SelectingProtocol */ || this.state.code === 4 /* Ready */)
++  onDaveKeyPackage(keyPackage, episode) {
++    if (this.state.code === 3 /* SelectingProtocol */ || this.state.code === 4 /* Ready */) {
++      if (episode) episode.keyPackageDisposition = "send-threw";
+       this.state.ws.sendBinaryMessage(import_v82.VoiceOpcodes.DaveMlsKeyPackage, keyPackage);
++      if (episode) episode.keyPackageDisposition = "send-returned";
++    } else if (episode) {
++      episode.keyPackageDisposition = this.state.code === 5 /* Resuming */ ? "skipped-resuming" : "skipped-other-state";
++    }
+   }
+   /**
+    * Called when the DAVE session wants to invalidate their transition and re-initialize.
+    *
+    * @param transitionId - The transition to invalidate
+    */
+-  onDaveInvalidateTransition(transitionId) {
+-    if (this.state.code === 3 /* SelectingProtocol */ || this.state.code === 4 /* Ready */)
++  onDaveInvalidateTransition(transitionId, episode) {
++    if (this.state.code === 3 /* SelectingProtocol */ || this.state.code === 4 /* Ready */) {
++      if (episode) episode.invalidationDisposition = "send-threw";
+       this.state.ws.sendPacket({
+         op: import_v82.VoiceOpcodes.DaveMlsInvalidCommitWelcome,
+         d: { transition_id: transitionId }
+       });
++      if (episode) episode.invalidationDisposition = "send-returned";
++    } else if (episode) {
++      episode.invalidationDisposition = this.state.code === 5 /* Resuming */ ? "skipped-resuming" : "skipped-other-state";
++    }
+   }
+   /**
+    * Propagates debug messages from the child WebSocket.
+@@ -1697,6 +1749,9 @@ to ${stringifyState2(newState)}`);
+    *
+    * @param message - The emitted debug message
+    */
++  onDaveResetSummary(summary) {
++    this.emit("daveResetSummary", summary);
++  }
+   onDaveDebug(message) {
+     this.debug?.(`[DAVE] ${message}`);
+   }
+@@ -2027,6 +2082,10 @@ var VoiceReceiver = class {
    speaking;
    constructor(voiceConnection) {
      this.voiceConnection = voiceConnection;
@@ -39,17 +448,17 @@ diff --git a/node_modules/@discordjs/voice/dist/index.js b/node_modules/@discord
      this.ssrcMap = new SSRCMap();
      this.speaking = new SpeakingMap();
      this.subscriptions = /* @__PURE__ */ new Map();
-@@ -2104,10 +2113,25 @@
+@@ -2104,10 +2163,30 @@ var VoiceReceiver = class {
        const headerExtensionLength = buffer.subarray(14).readUInt16BE();
        packet = packet.subarray(4 * headerExtensionLength);
      }
 -    if (this.voiceConnection.state.status === "ready" /* Ready */ && (this.voiceConnection.state.networking.state.code === 4 /* Ready */ || this.voiceConnection.state.networking.state.code === 5 /* Resuming */)) {
 -      const daveSession = this.voiceConnection.state.networking.state.dave;
 -      if (daveSession) packet = daveSession.decrypt(packet, userId);
--    }
 +    const connectionState = this.voiceConnection.state;
 +    const networkState = connectionState.networking?.state;
 +    const daveSession = networkState?.dave;
++    const reset = daveSession?.resetDiagnostics;
 +    const diagnostics = {
 +      connectionStatus: connectionState.status,
 +      networkingCode: networkState?.code ?? null,
@@ -58,21 +467,183 @@ diff --git a/node_modules/@discordjs/voice/dist/index.js b/node_modules/@discord
 +      daveReady: daveSession?.session?.ready ?? null,
 +      daveProtocolVersion: daveSession?.protocolVersion ?? null,
 +      daveDecryptDecision: "receiver-bypass",
++      daveResetReason: reset?.reason ?? null,
++      daveResetAgoMs: reset?.atMs == null ? null : Math.max(0, Date.now() - reset.atMs),
++      daveKeyPackageDisposition: reset?.keyPackageDisposition ?? null,
++      daveInvalidationDisposition: reset?.invalidationDisposition ?? null,
 +      daveTransitionAgoMs: this.lastDaveTransitionAtMs === null ? null : Math.max(0, Date.now() - this.lastDaveTransitionAtMs)
 +    };
 +    // VoiceConnection becomes Connecting while UDP and DAVE remain active during resume.
 +    if ((this.voiceConnection.state.status === "ready" /* Ready */ || this.voiceConnection.state.status === "connecting" /* Connecting */) && (this.voiceConnection.state.networking.state.code === 4 /* Ready */ || this.voiceConnection.state.networking.state.code === 5 /* Resuming */)) {
 +      diagnostics.daveDecryptDecision = "no-session";
 +      if (daveSession) packet = daveSession.decrypt(packet, userId, diagnostics);
-+    }
+     }
 +    if (packet) this.packetDiagnostics.set(packet, Object.freeze(diagnostics));
      return packet;
    }
    /**
+@@ -2155,7 +2234,9 @@ var VoiceReceiver = class {
+       ...createDefaultAudioReceiveStreamOptions(),
+       ...options
+     });
+-    stream.once("close", () => this.subscriptions.delete(userId));
++    stream.once("close", () => {
++      if (this.subscriptions.get(userId) === stream) this.subscriptions.delete(userId);
++    });
+     this.subscriptions.set(userId, stream);
+     return stream;
+   }
+@@ -2229,6 +2310,7 @@ var VoiceConnection = class extends import_node_events8.EventEmitter {
+     this.onNetworkingStateChange = this.onNetworkingStateChange.bind(this);
+     this.onNetworkingError = this.onNetworkingError.bind(this);
+     this.onNetworkingDebug = this.onNetworkingDebug.bind(this);
++    this.onNetworkingResetSummary = this.onNetworkingResetSummary.bind(this);
+     this.onNetworkingTransitioned = this.onNetworkingTransitioned.bind(this);
+     const adapter = options.adapterCreator({
+       onVoiceServerUpdate: /* @__PURE__ */ __name((data) => this.addServerPacket(data), "onVoiceServerUpdate"),
+@@ -2267,6 +2349,7 @@ var VoiceConnection = class extends import_node_events8.EventEmitter {
+         oldNetworking.off("stateChange", this.onNetworkingStateChange);
+         oldNetworking.off("transitioned", this.onNetworkingTransitioned);
+         oldNetworking.destroy();
++        oldNetworking.off("daveResetSummary", this.onNetworkingResetSummary);
+       }
+       if (newNetworking) this.updateReceiveBindings(newNetworking.state, oldNetworking?.state);
+     }
+@@ -2374,6 +2457,7 @@ var VoiceConnection = class extends import_node_events8.EventEmitter {
+     networking.on("stateChange", this.onNetworkingStateChange);
+     networking.on("error", this.onNetworkingError);
+     networking.on("debug", this.onNetworkingDebug);
++    networking.on("daveResetSummary", this.onNetworkingResetSummary);
+     networking.on("transitioned", this.onNetworkingTransitioned);
+     this.state = {
+       ...this.state,
+@@ -2460,6 +2544,9 @@ var VoiceConnection = class extends import_node_events8.EventEmitter {
+    *
+    * @param transitionId - The transition id
+    */
++  onNetworkingResetSummary(summary) {
++    this.emit("daveResetSummary", summary);
++  }
+   onNetworkingTransitioned(transitionId) {
+     this.emit("transitioned", transitionId);
+   }
 diff --git a/node_modules/@discordjs/voice/dist/index.mjs b/node_modules/@discordjs/voice/dist/index.mjs
+index 4a5678c..612abce 100644
 --- a/node_modules/@discordjs/voice/dist/index.mjs
 +++ b/node_modules/@discordjs/voice/dist/index.mjs
-@@ -885,12 +885,16 @@
+@@ -673,6 +673,9 @@ var DAVESession = class extends EventEmitter2 {
+    * Whether this session is currently re-initializing due to an invalid transition.
+    */
+   reinitializing = false;
++  pendingResetMeasurement = null;
++  resetMeasurements = new Map();
++  resetDiagnostics = { reason: "none", atMs: null, keyPackageDisposition: "not-emitted", invalidationDisposition: "not-emitted" };
+   /**
+    * The underlying DAVE Session of this wrapper.
+    */
+@@ -702,10 +705,30 @@ var DAVESession = class extends EventEmitter2 {
+     if (!this.session) throw new Error("Session not available");
+     return this.session.getVerificationCode(userId);
+   }
++  finishResetMeasurement(outcome) {
++    const pending = this.pendingResetMeasurement;
++    if (!pending) return;
++    this.pendingResetMeasurement = null;
++    const age = Math.max(0, performance.now() - pending.atMs);
++    const ageBucket = age < 100 ? "under-100ms" : age < 1e3 ? "100ms-to-1s" : age < 1e4 ? "1s-to-10s" : age < 6e4 ? "10s-to-1m" : "1m-or-more";
++    const key = `${pending.reason}:${outcome}:${ageBucket}`;
++    const previous = this.resetMeasurements.get(key);
++    if (previous) previous.count++;
++    else this.resetMeasurements.set(key, { reason: pending.reason, outcome, ageBucket, count: 1 });
++  }
++  recordReset(reason) {
++    this.finishResetMeasurement("superseded-pending");
++    if (this.protocolVersion > 0) {
++      const measurementReason = ["initial", "epoch-1", "invalid-welcome", "invalid-commit", "decrypt-failures"].includes(reason) ? reason : "unknown";
++      this.pendingResetMeasurement = { reason: measurementReason, atMs: performance.now() };
++    }
++    return this.resetDiagnostics = { reason, atMs: Date.now(), keyPackageDisposition: "not-emitted", invalidationDisposition: "not-emitted" };
++  }
+   /**
+    * Re-initializes (or initializes) the underlying session.
+    */
+-  reinit() {
++  reinit(reason = "unknown", episode) {
++    if (this.protocolVersion > 0 || this.session) episode ??= this.recordReset(reason);
+     if (this.protocolVersion > 0) {
+       if (this.session) {
+         this.session.reinit(this.protocolVersion, this.userId, this.channelId);
+@@ -714,7 +737,7 @@ var DAVESession = class extends EventEmitter2 {
+         this.session = new Davey.DAVESession(this.protocolVersion, this.userId, this.channelId);
+         this.emit("debug", `Session initialized for protocol version ${this.protocolVersion}`);
+       }
+-      this.emit("keyPackage", this.session.getSerializedKeyPackage());
++      this.emit("keyPackage", this.session.getSerializedKeyPackage(), episode);
+     } else if (this.session) {
+       this.session.reset();
+       this.session.setPassthroughMode(true, TRANSITION_EXPIRY);
+@@ -784,7 +807,7 @@ var DAVESession = class extends EventEmitter2 {
+     this.emit("debug", `Preparing for epoch (${data.epoch})`);
+     if (data.epoch === 1) {
+       this.protocolVersion = data.protocol_version;
+-      this.reinit();
++      this.reinit("epoch-1");
+     }
+   }
+   /**
+@@ -792,13 +815,14 @@ var DAVESession = class extends EventEmitter2 {
+    *
+    * @param transitionId - The transition id to invalidate
+    */
+-  recoverFromInvalidTransition(transitionId) {
++  recoverFromInvalidTransition(transitionId, reason = "unknown") {
+     if (this.reinitializing) return;
++    const episode = this.recordReset(reason);
+     this.emit("debug", `Invalidating transition ${transitionId}`);
+     this.reinitializing = true;
+     this.consecutiveFailures = 0;
+-    this.emit("invalidateTransition", transitionId);
+-    this.reinit();
++    this.emit("invalidateTransition", transitionId, episode);
++    this.reinit(reason, episode);
+   }
+   /**
+    * Processes proposals from the MLS group.
+@@ -830,6 +854,7 @@ var DAVESession = class extends EventEmitter2 {
+     const transitionId = payload.readUInt16BE(0);
+     try {
+       this.session.processCommit(payload.subarray(2));
++      if (this.session.ready) this.finishResetMeasurement("ready");
+       if (transitionId === 0) {
+         this.reinitializing = false;
+         this.lastTransitionId = transitionId;
+@@ -840,7 +865,7 @@ var DAVESession = class extends EventEmitter2 {
+       return { transitionId, success: true };
+     } catch (error) {
+       this.emit("debug", `MLS commit errored from transition ${transitionId}: ${error}`);
+-      this.recoverFromInvalidTransition(transitionId);
++      this.recoverFromInvalidTransition(transitionId, "invalid-commit");
+       return { transitionId, success: false };
+     }
+   }
+@@ -855,6 +880,7 @@ var DAVESession = class extends EventEmitter2 {
+     const transitionId = payload.readUInt16BE(0);
+     try {
+       this.session.processWelcome(payload.subarray(2));
++      if (this.session.ready) this.finishResetMeasurement("ready");
+       if (transitionId === 0) {
+         this.reinitializing = false;
+         this.lastTransitionId = transitionId;
+@@ -865,7 +891,7 @@ var DAVESession = class extends EventEmitter2 {
+       return { transitionId, success: true };
+     } catch (error) {
+       this.emit("debug", `MLS welcome errored from transition ${transitionId}: ${error}`);
+-      this.recoverFromInvalidTransition(transitionId);
++      this.recoverFromInvalidTransition(transitionId, "invalid-welcome");
+       return { transitionId, success: false };
+     }
+   }
+@@ -885,19 +911,23 @@ var DAVESession = class extends EventEmitter2 {
     * @param userId - The user id that sent the packet
     * @returns The decrypted packet, or `null` if the decryption failed but should be ignored
     */
@@ -91,7 +662,15 @@ diff --git a/node_modules/@discordjs/voice/dist/index.mjs b/node_modules/@discor
        return buffer;
      } catch (error) {
        if (!this.reinitializing && this.pendingTransitions.size === 0) {
-@@ -906,6 +910,7 @@
+         this.consecutiveFailures++;
+         this.emit("debug", `Failed to decrypt a packet (${this.consecutiveFailures} consecutive fails)`);
+         if (this.consecutiveFailures > this.failureTolerance) {
+-          if (this.lastTransitionId) this.recoverFromInvalidTransition(this.lastTransitionId);
++          if (this.lastTransitionId) this.recoverFromInvalidTransition(this.lastTransitionId, "decrypt-failures");
+           else throw error;
+         }
+       } else if (this.reinitializing) {
+@@ -906,16 +936,25 @@ var DAVESession = class extends EventEmitter2 {
          this.emit("debug", `Failed to decrypt a packet (${this.pendingTransitions.size} pending transition[s])`);
        }
      }
@@ -99,7 +678,99 @@ diff --git a/node_modules/@discordjs/voice/dist/index.mjs b/node_modules/@discor
      return null;
    }
    /**
-@@ -1967,6 +1972,10 @@
+    * Resets the session.
+    */
+   destroy() {
++    this.finishResetMeasurement("destroyed-pending");
+     try {
+       this.session?.reset();
+     } catch {
+     }
++    // shortcut: abrupt exits lose counters; add bounded flushing if that limits analysis.
++    if (this.resetMeasurements.size) {
++      const summary = Object.freeze(Array.from(this.resetMeasurements.values(), (row) => Object.freeze(row)));
++      this.resetMeasurements.clear();
++      // Observation must not interrupt native teardown or the transport state machine.
++      try { this.emit("resetSummary", summary); } catch {}
++    }
+   }
+ };
+ 
+@@ -1288,6 +1327,7 @@ var Networking = class extends EventEmitter5 {
+     this.onWsDebug = this.onWsDebug.bind(this);
+     this.onUdpDebug = this.onUdpDebug.bind(this);
+     this.onUdpClose = this.onUdpClose.bind(this);
++    this.onDaveResetSummary = this.onDaveResetSummary.bind(this);
+     this.onDaveDebug = this.onDaveDebug.bind(this);
+     this.onDaveKeyPackage = this.onDaveKeyPackage.bind(this);
+     this.onDaveInvalidateTransition = this.onDaveInvalidateTransition.bind(this);
+@@ -1346,6 +1386,7 @@ var Networking = class extends EventEmitter5 {
+       oldDave.off("keyPackage", this.onDaveKeyPackage);
+       oldDave.off("invalidateTransition", this.onDaveInvalidateTransition);
+       oldDave.destroy();
++      oldDave.off("resetSummary", this.onDaveResetSummary);
+     }
+     const oldState = this._state;
+     this._state = newState;
+@@ -1392,9 +1433,10 @@ to ${stringifyState2(newState)}`);
+     );
+     session.on("error", this.onChildError);
+     session.on("debug", this.onDaveDebug);
++    session.on("resetSummary", this.onDaveResetSummary);
+     session.on("keyPackage", this.onDaveKeyPackage);
+     session.on("invalidateTransition", this.onDaveInvalidateTransition);
+-    session.reinit();
++    session.reinit("initial");
+     return session;
+   }
+   /**
+@@ -1600,21 +1642,31 @@ to ${stringifyState2(newState)}`);
+    *
+    * @param keyPackage - The new key package
+    */
+-  onDaveKeyPackage(keyPackage) {
+-    if (this.state.code === 3 /* SelectingProtocol */ || this.state.code === 4 /* Ready */)
++  onDaveKeyPackage(keyPackage, episode) {
++    if (this.state.code === 3 /* SelectingProtocol */ || this.state.code === 4 /* Ready */) {
++      if (episode) episode.keyPackageDisposition = "send-threw";
+       this.state.ws.sendBinaryMessage(VoiceOpcodes2.DaveMlsKeyPackage, keyPackage);
++      if (episode) episode.keyPackageDisposition = "send-returned";
++    } else if (episode) {
++      episode.keyPackageDisposition = this.state.code === 5 /* Resuming */ ? "skipped-resuming" : "skipped-other-state";
++    }
+   }
+   /**
+    * Called when the DAVE session wants to invalidate their transition and re-initialize.
+    *
+    * @param transitionId - The transition to invalidate
+    */
+-  onDaveInvalidateTransition(transitionId) {
+-    if (this.state.code === 3 /* SelectingProtocol */ || this.state.code === 4 /* Ready */)
++  onDaveInvalidateTransition(transitionId, episode) {
++    if (this.state.code === 3 /* SelectingProtocol */ || this.state.code === 4 /* Ready */) {
++      if (episode) episode.invalidationDisposition = "send-threw";
+       this.state.ws.sendPacket({
+         op: VoiceOpcodes2.DaveMlsInvalidCommitWelcome,
+         d: { transition_id: transitionId }
+       });
++      if (episode) episode.invalidationDisposition = "send-returned";
++    } else if (episode) {
++      episode.invalidationDisposition = this.state.code === 5 /* Resuming */ ? "skipped-resuming" : "skipped-other-state";
++    }
+   }
+   /**
+    * Propagates debug messages from the child WebSocket.
+@@ -1637,6 +1689,9 @@ to ${stringifyState2(newState)}`);
+    *
+    * @param message - The emitted debug message
+    */
++  onDaveResetSummary(summary) {
++    this.emit("daveResetSummary", summary);
++  }
+   onDaveDebug(message) {
+     this.debug?.(`[DAVE] ${message}`);
+   }
+@@ -1967,6 +2022,10 @@ var VoiceReceiver = class {
    speaking;
    constructor(voiceConnection) {
      this.voiceConnection = voiceConnection;
@@ -110,17 +781,17 @@ diff --git a/node_modules/@discordjs/voice/dist/index.mjs b/node_modules/@discor
      this.ssrcMap = new SSRCMap();
      this.speaking = new SpeakingMap();
      this.subscriptions = /* @__PURE__ */ new Map();
-@@ -2044,10 +2053,25 @@
+@@ -2044,10 +2103,30 @@ var VoiceReceiver = class {
        const headerExtensionLength = buffer.subarray(14).readUInt16BE();
        packet = packet.subarray(4 * headerExtensionLength);
      }
 -    if (this.voiceConnection.state.status === "ready" /* Ready */ && (this.voiceConnection.state.networking.state.code === 4 /* Ready */ || this.voiceConnection.state.networking.state.code === 5 /* Resuming */)) {
 -      const daveSession = this.voiceConnection.state.networking.state.dave;
 -      if (daveSession) packet = daveSession.decrypt(packet, userId);
--    }
 +    const connectionState = this.voiceConnection.state;
 +    const networkState = connectionState.networking?.state;
 +    const daveSession = networkState?.dave;
++    const reset = daveSession?.resetDiagnostics;
 +    const diagnostics = {
 +      connectionStatus: connectionState.status,
 +      networkingCode: networkState?.code ?? null,
@@ -129,56 +800,63 @@ diff --git a/node_modules/@discordjs/voice/dist/index.mjs b/node_modules/@discor
 +      daveReady: daveSession?.session?.ready ?? null,
 +      daveProtocolVersion: daveSession?.protocolVersion ?? null,
 +      daveDecryptDecision: "receiver-bypass",
++      daveResetReason: reset?.reason ?? null,
++      daveResetAgoMs: reset?.atMs == null ? null : Math.max(0, Date.now() - reset.atMs),
++      daveKeyPackageDisposition: reset?.keyPackageDisposition ?? null,
++      daveInvalidationDisposition: reset?.invalidationDisposition ?? null,
 +      daveTransitionAgoMs: this.lastDaveTransitionAtMs === null ? null : Math.max(0, Date.now() - this.lastDaveTransitionAtMs)
 +    };
 +    // VoiceConnection becomes Connecting while UDP and DAVE remain active during resume.
 +    if ((this.voiceConnection.state.status === "ready" /* Ready */ || this.voiceConnection.state.status === "connecting" /* Connecting */) && (this.voiceConnection.state.networking.state.code === 4 /* Ready */ || this.voiceConnection.state.networking.state.code === 5 /* Resuming */)) {
 +      diagnostics.daveDecryptDecision = "no-session";
 +      if (daveSession) packet = daveSession.decrypt(packet, userId, diagnostics);
-+    }
+     }
 +    if (packet) this.packetDiagnostics.set(packet, Object.freeze(diagnostics));
      return packet;
    }
    /**
-diff --git a/node_modules/@discordjs/voice/dist/index.d.ts b/node_modules/@discordjs/voice/dist/index.d.ts
---- a/node_modules/@discordjs/voice/dist/index.d.ts
-+++ b/node_modules/@discordjs/voice/dist/index.d.ts
-@@ -1343,6 +1343,17 @@
-  * @beta
-  */
- declare class VoiceReceiver {
-+    /** Content-free receiver decisions, keyed by the exact decoder input. */
-+    readonly packetDiagnostics: WeakMap<Buffer, Readonly<{
-+        connectionStatus: string;
-+        networkingCode: number | null;
-+        daveSessionPresent: boolean;
-+        daveNativeSessionPresent: boolean;
-+        daveReady: boolean | null;
-+        daveProtocolVersion: number | null;
-+        daveDecryptDecision: "receiver-bypass" | "no-session" | "silence" | "not-ready" | "protocol-passthrough" | "native-decrypt-returned" | "native-decrypt-unchanged" | "dropped";
-+        daveTransitionAgoMs: number | null;
-+    }>>;
-     /**
-      * The attached connection of this receiver.
-      */
-diff --git a/node_modules/@discordjs/voice/dist/index.d.mts b/node_modules/@discordjs/voice/dist/index.d.mts
---- a/node_modules/@discordjs/voice/dist/index.d.mts
-+++ b/node_modules/@discordjs/voice/dist/index.d.mts
-@@ -1343,6 +1343,17 @@
-  * @beta
-  */
- declare class VoiceReceiver {
-+    /** Content-free receiver decisions, keyed by the exact decoder input. */
-+    readonly packetDiagnostics: WeakMap<Buffer, Readonly<{
-+        connectionStatus: string;
-+        networkingCode: number | null;
-+        daveSessionPresent: boolean;
-+        daveNativeSessionPresent: boolean;
-+        daveReady: boolean | null;
-+        daveProtocolVersion: number | null;
-+        daveDecryptDecision: "receiver-bypass" | "no-session" | "silence" | "not-ready" | "protocol-passthrough" | "native-decrypt-returned" | "native-decrypt-unchanged" | "dropped";
-+        daveTransitionAgoMs: number | null;
-+    }>>;
-     /**
-      * The attached connection of this receiver.
-      */
+@@ -2095,7 +2174,9 @@ var VoiceReceiver = class {
+       ...createDefaultAudioReceiveStreamOptions(),
+       ...options
+     });
+-    stream.once("close", () => this.subscriptions.delete(userId));
++    stream.once("close", () => {
++      if (this.subscriptions.get(userId) === stream) this.subscriptions.delete(userId);
++    });
+     this.subscriptions.set(userId, stream);
+     return stream;
+   }
+@@ -2169,6 +2250,7 @@ var VoiceConnection = class extends EventEmitter8 {
+     this.onNetworkingStateChange = this.onNetworkingStateChange.bind(this);
+     this.onNetworkingError = this.onNetworkingError.bind(this);
+     this.onNetworkingDebug = this.onNetworkingDebug.bind(this);
++    this.onNetworkingResetSummary = this.onNetworkingResetSummary.bind(this);
+     this.onNetworkingTransitioned = this.onNetworkingTransitioned.bind(this);
+     const adapter = options.adapterCreator({
+       onVoiceServerUpdate: /* @__PURE__ */ __name((data) => this.addServerPacket(data), "onVoiceServerUpdate"),
+@@ -2207,6 +2289,7 @@ var VoiceConnection = class extends EventEmitter8 {
+         oldNetworking.off("stateChange", this.onNetworkingStateChange);
+         oldNetworking.off("transitioned", this.onNetworkingTransitioned);
+         oldNetworking.destroy();
++        oldNetworking.off("daveResetSummary", this.onNetworkingResetSummary);
+       }
+       if (newNetworking) this.updateReceiveBindings(newNetworking.state, oldNetworking?.state);
+     }
+@@ -2314,6 +2397,7 @@ var VoiceConnection = class extends EventEmitter8 {
+     networking.on("stateChange", this.onNetworkingStateChange);
+     networking.on("error", this.onNetworkingError);
+     networking.on("debug", this.onNetworkingDebug);
++    networking.on("daveResetSummary", this.onNetworkingResetSummary);
+     networking.on("transitioned", this.onNetworkingTransitioned);
+     this.state = {
+       ...this.state,
+@@ -2400,6 +2484,9 @@ var VoiceConnection = class extends EventEmitter8 {
+    *
+    * @param transitionId - The transition id
+    */
++  onNetworkingResetSummary(summary) {
++    this.emit("daveResetSummary", summary);
++  }
+   onNetworkingTransitioned(transitionId) {
+     this.emit("transitioned", transitionId);
+   }

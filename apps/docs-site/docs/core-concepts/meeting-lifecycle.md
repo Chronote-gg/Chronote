@@ -14,7 +14,11 @@ A meeting starts in three ways:
 - **TTS-only**: A user runs `/say`, or joins a channel with automatic chat-to-speech enabled. Chronote joins only to play TTS and does not create a recorded meeting.
 - **Personal upload**: A user uploads an existing audio or video file from the web portal. Chronote creates a personal meeting owned by that user.
 
-At this point, Chronote joins the voice channel and begins capturing audio from each participant separately. A meeting embed appears in the text channel with controls.
+At this point, Chronote joins the voice channel and begins capturing audio from each participant separately. A recording message appears in the resolved notes channel with controls. For manual starts, the destination order is an optional `notes-channel` choice, the voice-channel override, the server default, then the invocation text channel only when nothing is configured. Context-menu starts use the saved defaults too. Auto-recording requires a configured destination and has no invocation-channel fallback.
+
+The `/startmeeting` response is private, even when the recording is posted in the same channel. After Chronote publishes the recording message, **View recording** opens that exact message. The one-meeting choice accepts ordinary server text channels and does not change saved settings or grant channel access.
+
+An unavailable or inaccessible configured destination blocks the start without fallback. Chronote fixes the destination when recording starts: its controls, processing updates and final notes stay there even if an administrator changes settings during capture.
 
 **Constraints**: Only one meeting can be active per server at a time. The user who starts the meeting must be in a voice channel. The server must have available meeting minutes on its plan.
 
@@ -55,6 +59,16 @@ The meeting is also saved to your meeting history in the database, accessible th
 A completed meeting means that processing ended. It does not guarantee that Chronote generated notes or produced a complete transcript. If a Discord or personal recording contains no usable speech, Chronote finishes without generating notes and explains why. If some audio could not be transcribed but usable text remains, Chronote generates notes from that text and warns that the notes may be incomplete. A processing failure remains separate from both outcomes.
 
 If Notion automation is enabled, Chronote exports completed meeting notes after they are saved. Server automation uses the server manager's configured destination. Personal automation uses the personal meeting owner's Notion destination.
+
+## Interrupted recordings
+
+If recording is interrupted, Chronote can recover verified saved audio or text without joining the voice channel again. Recovery follows the meeting's original transcription and notes settings. It does not generate notes when notes were disabled, and it does not invent notes when no usable saved speech remains.
+
+Recovered partial notes keep an **Interrupted** status. A warning explains that they cover only the saved recording. The warning remains after notes edits and corrections, and appears in Discord, the library, shared meetings, copied or downloaded notes, Remote MCP, and Notion exports. Known transcription gaps still carry a warning even when recording itself finished.
+
+The library shows recovery progress or when processing or delivery needs review. If saved text and audio cannot be combined safely, Chronote retains the content, marks recovery as needing review, and pauses automatic notes delivery and export. Confirmed saved audio duration describes preserved audio, which may contain gaps. It does not prove the full meeting was recorded. If the recording's exact end time is unknown, Chronote leaves it unknown.
+
+If the live page cannot confirm the recording status, it shows **Status unavailable** instead of Complete. Use **Retry** to check again, or open the meeting library for saved content and recovery status.
 
 ## Stage 5: Revise
 

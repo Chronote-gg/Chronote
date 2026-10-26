@@ -110,13 +110,17 @@ export async function listRecentMeetingNamesForPrompt(params: {
   guildId?: string;
   excludeMeetingId?: string;
   limit?: number;
+  signal?: AbortSignal;
 }): Promise<string> {
   if (!params.guildId) return "None.";
   const limit = params.limit ?? MEETING_NAME_SUGGESTION_LIMIT;
   const meetings = await listRecentMeetingsForGuildService(
     params.guildId,
     limit,
-    { includeArchived: true },
+    {
+      includeArchived: true,
+      ...(params.signal ? { signal: params.signal } : {}),
+    },
   );
   const names: string[] = [];
   const seen = new Set<string>();

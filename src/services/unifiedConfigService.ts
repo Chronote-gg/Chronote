@@ -64,14 +64,18 @@ const resolveScopeChain = (context: ConfigResolveContext): ConfigScope[] => {
 
 const resolveScopeOverrides = async (
   context: ConfigResolveContext,
+  signal?: AbortSignal,
 ): Promise<OverrideMaps> => {
   const serverOverrides = context.guildId
     ? new Map(
         (
-          await listConfigOverridesForScope({
-            scope: "server",
-            guildId: context.guildId,
-          })
+          await listConfigOverridesForScope(
+            {
+              scope: "server",
+              guildId: context.guildId,
+            },
+            signal,
+          )
         ).map((record) => [record.configKey, record.value]),
       )
     : EMPTY_MAP;
@@ -79,11 +83,14 @@ const resolveScopeOverrides = async (
     context.guildId && context.channelId
       ? new Map(
           (
-            await listConfigOverridesForScope({
-              scope: "channel",
-              guildId: context.guildId,
-              channelId: context.channelId,
-            })
+            await listConfigOverridesForScope(
+              {
+                scope: "channel",
+                guildId: context.guildId,
+                channelId: context.channelId,
+              },
+              signal,
+            )
           ).map((record) => [record.configKey, record.value]),
         )
       : EMPTY_MAP;
@@ -91,21 +98,27 @@ const resolveScopeOverrides = async (
     context.guildId && context.userId
       ? new Map(
           (
-            await listConfigOverridesForScope({
-              scope: "user",
-              guildId: context.guildId,
-              userId: context.userId,
-            })
+            await listConfigOverridesForScope(
+              {
+                scope: "user",
+                guildId: context.guildId,
+                userId: context.userId,
+              },
+              signal,
+            )
           ).map((record) => [record.configKey, record.value]),
         )
       : EMPTY_MAP;
   const meetingOverrides = context.meetingId
     ? new Map(
         (
-          await listConfigOverridesForScope({
-            scope: "meeting",
-            meetingId: context.meetingId,
-          })
+          await listConfigOverridesForScope(
+            {
+              scope: "meeting",
+              meetingId: context.meetingId,
+            },
+            signal,
+          )
         ).map((record) => [record.configKey, record.value]),
       )
     : EMPTY_MAP;
@@ -163,10 +176,11 @@ const resolveEntryValue = (params: {
 
 export async function resolveConfigSnapshot(
   context: ConfigResolveContext,
+  options: { signal?: AbortSignal; strict?: boolean } = {},
 ): Promise<ResolvedConfigSnapshot> {
   const chain = resolveScopeChain(context);
-  const globalValues = await getGlobalConfigValues();
-  const overrides = await resolveScopeOverrides(context);
+  const globalValues = await getGlobalConfigValues(options);
+  const overrides = await resolveScopeOverrides(context, options.signal);
   const missingRequired = new Set<string>();
 
   const values: Record<string, ResolvedConfigValue> = {};

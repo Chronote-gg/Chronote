@@ -64,6 +64,12 @@ If you see "Some audio could not be transcribed. These notes may be incomplete,"
 
 A processing-failure message is different from an empty recording. Any existing upload retries run before Chronote reports a terminal upload failure.
 
+## A saved desktop draft is paused
+
+"This draft is preserved and paused. Recovery is not available yet" means that draft cannot currently be submitted. Its saved files remain on your computer. In an updated desktop client, **Retry upload** is disabled and **Open folder** remains available. **Delete** removes the local files only when you choose it.
+
+Keep the saved files if you want to preserve the draft. You can start a separate new recording. Update older desktop clients for the correct paused message and retry controls. Updating does not make the paused draft recoverable.
+
 ## Notes correction was rejected with "version conflict"
 
 **Symptoms**: You accept a correction, but it fails with a message about a version conflict.
@@ -112,3 +118,13 @@ A processing-failure message is different from an empty recording. Any existing 
 1. Run `/billing` to check your current plan status.
 2. Verify the payment method is valid in the Stripe portal.
 3. Some features (image generation, extended `/ask` history) require specific plan tiers.
+
+### A renewal payment failed
+
+For an existing paid Basic or Pro subscription, a failed renewal keeps the server's previous paid plan for 48 hours from when Stripe finalizes the renewal invoice. Billing shows the deadline in your local timezone. This also applies when a scheduled plan change reaches renewal: if payment for Basic fails after Pro, you keep Pro during that grace period.
+
+The original payer, with Manage Server permission, can choose **Retry payment** to pay the same invoice, or **Update payment method** to change the card. Updating a card alone does not confirm payment. Once payment settles, the renewed plan covers the invoice's original dates.
+
+**Cancel renewal** removes the unpaid plan charge after confirmation. Your remaining grace time stays available, and you can buy another plan once billing cleanup finishes. Other charges remain payable. Retries and cancellation do not extend the deadline or restart an introductory offer.
+
+Without payment, the server moves to Free at the deadline. Any valid complimentary access continues. A recording already in progress is not stopped just because grace ends. Failed first purchases do not receive paid access, and a failed immediate upgrade keeps the previously paid service.

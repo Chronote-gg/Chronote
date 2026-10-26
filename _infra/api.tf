@@ -124,6 +124,25 @@ resource "aws_lb_target_group" "api_tg" {
   }
 }
 
+resource "aws_lb_target_group" "api_spare_tg" {
+  #checkov:skip=CKV_AWS_378: TLS terminates at the ALB; target group uses HTTP.
+  count       = var.ENABLE_API_ALB ? 1 : 0
+  name        = "${local.name_prefix}-api-spare"
+  port        = 3001
+  protocol    = "HTTP"
+  target_type = "ip"
+  vpc_id      = aws_vpc.app_vpc.id
+
+  health_check {
+    path                = "/health"
+    matcher             = "200-399"
+    interval            = 30
+    timeout             = 5
+    healthy_threshold   = 2
+    unhealthy_threshold = 3
+  }
+}
+
 resource "aws_lb_listener" "api_http" {
   #checkov:skip=CKV_AWS_2: HTTP listener only redirects to HTTPS.
   #checkov:skip=CKV_AWS_103: TLS enforcement handled on HTTPS listener.
@@ -151,10 +170,27 @@ resource "aws_lb_listener" "api_https" {
   certificate_arn   = var.API_CERT_ARN != "" ? var.API_CERT_ARN : aws_acm_certificate.api_cert[0].arn
 
   default_action {
-    type             = "forward"
-    target_group_arn = aws_lb_target_group.api_tg[0].arn
+    type = "forward"
+    forward {
+      target_group {
+        arn    = aws_lb_target_group.api_tg[0].arn
+        weight = 100
+      }
+      target_group {
+        arn    = aws_lb_target_group.api_spare_tg[0].arn
+        weight = 0
+      }
+      stickiness {
+        enabled  = false
+        duration = 1
+      }
+    }
   }
 
+  # After separately approved introduction, the coordinator owns exact weights.
+  lifecycle {
+    ignore_changes = [default_action]
+  }
   depends_on = [aws_acm_certificate_validation.api_cert]
 }
 
@@ -178,4 +214,13 @@ output "api_alb_dns_name" {
 
 output "api_domain" {
   value = var.API_DOMAIN
+}
+
+
+output "deployment_routing" {
+  value = {
+    listener_arn   = length(aws_lb_listener.api_https) > 0 ? aws_lb_listener.api_https[0].arn : ""
+    target_group_a = length(aws_lb_target_group.api_tg) > 0 ? aws_lb_target_group.api_tg[0].arn : ""
+    target_group_b = length(aws_lb_target_group.api_spare_tg) > 0 ? aws_lb_target_group.api_spare_tg[0].arn : ""
+  }
 }

@@ -84,3 +84,64 @@ are part of source validation. Merging master starts deployment, so publishing a
 release remain separately authorized steps. If enabled in the provider endpoint,
 `checkout.session.expired` accelerates cleanup; it is not required for safe
 request-time recovery.
+
+Sessionless preparing attempts are classified before checking a newly displayed
+offer quote. At the safe replay deadline, an unknown creation outcome is saved
+as needs_review with a conditional write. It is not expired or released based
+only on elapsed time, and no new customer or Checkout session is created.
+
+Public price and campaign verification uses an in-process shared snapshot for
+up to 30 seconds. Requests for the same current provider client and configuration
+coalesce. Provider mode, lookup keys or campaign configuration changes invalidate
+it; campaign start and enrollment cutoff bound its lifetime. Unavailable terms
+are retained for at most one second. Server eligibility, frozen attempts and
+Checkout preparation use authoritative reads independently of this public cache.
+
+## Durable offer usage, implementation checkpoint
+
+Each Basic offer has a separate control record under
+`OFFER#<mode>#<guildId>#<offerId>` in GuildSubscriptionTable. The stable monthly
+and annual offer identities do not change when a provider coupon rotates.
+Records are validated on point reads and carry a revision. They are not
+subscription rows and have no cleanup TTL.
+
+Initial Checkout reserves the chosen offer in the same transaction that saves
+the purchase attempt. That transaction checks the prior subscription revision,
+purchase attempt revision and offer revision. A competing request cannot write
+only half of the reservation. Provider creation and unknown outcomes retain the
+reservation. Request-time and webhook expiry release it only after rereading an
+associated native session that is expired and has no subscription.
+
+Purchase acceptance finalizes a reserved offer only after rereading its first
+invoice and verifying server operation, customer, subscription, item, price,
+frozen offer terms, coupon and gross line amount. The invoice must be paid with no amount
+remaining. A zero-cash invoice covered by credit qualifies; positive-payment
+analytics remain separate. Both `invoice.paid` and `invoice.payment_succeeded`
+use the settled-invoice reconciliation handler. The original invoice is bound to
+the purchase, with native completed-Checkout recovery after a later renewal.
+Inclusive-tax line subtotals are not treated as gross plan amounts.
+Replays leave a used record
+unchanged. Replacing the subscription, payer or purchase record cannot clear it.
+
+Fresh offers remain inactive unless `STRIPE_INTRO_OFFER_LEDGER_ENABLED=true`.
+Historical import and per-offer eligibility now use separate verified coverage.
+Regular paid history consumes neither offer. Each cadence can be accepted once
+per server, in either order, including after changing payer. Missing history
+remains unavailable. See [historical offer import](billing-offer-history.md).
+
+Active plan changes, their owned
+provider retirement, deferred schedules and the full exact-consent application
+journey are separate unfinished work. Do not activate or merge this checkpoint
+as the approved switching policy.
+
+Before replacing a completed initial purchase for a verified terminal subscription,
+reconcile that purchase's original offer invoice. Save matching settled use under
+the existing subscription, operation and offer revision fences before creating
+another purchase. A credit-covered zero-cash settlement qualifies. A mismatched
+identity, missing invoice or unresolved payment preserves the original control
+record. A matching native-voided unpaid first invoice on a canceled or
+incomplete_expired subscription releases the reservation atomically before
+replacement. Its positive historical amount_remaining does not prevent release
+from terminal void evidence. Uncollectible invoices remain unresolved because
+they can still be paid. This preserves recovery context and does not import
+earlier history or void unresolved invoices.

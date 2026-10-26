@@ -1,3 +1,4 @@
+import { getDeploymentControlRepository } from "../db";
 import { config } from "../services/configService";
 import {
   getMeetingHistory as getMeetingHistoryRecord,
@@ -23,7 +24,13 @@ import { MEETING_STATUS, type MeetingStatus } from "../types/meetingLifecycle";
 import { trimNotesForHistory } from "../utils/notesHistory";
 import { getMockStore } from "./mockStore";
 
+import type { HistoryTransition } from "../types/deploymentControl";
+
 export type MeetingHistoryRepository = {
+  transitionOwned: (input: HistoryTransition) => Promise<"applied" | "stale">;
+  getOwned: (
+    key: HistoryTransition["key"],
+  ) => Promise<MeetingHistory | undefined>;
   write: (history: MeetingHistory) => Promise<void>;
   get: (
     guildId: string,
@@ -32,7 +39,11 @@ export type MeetingHistoryRepository = {
   listRecentByGuild: (
     guildId: string,
     limit?: number,
-    options?: { archivedOnly?: boolean; includeArchived?: boolean },
+    options?: {
+      archivedOnly?: boolean;
+      includeArchived?: boolean;
+      signal?: AbortSignal;
+    },
   ) => Promise<MeetingHistory[]>;
   listByGuildTimestampRange: (
     guildId: string,
@@ -45,7 +56,11 @@ export type MeetingHistoryRepository = {
     guildId: string,
     channelId: string,
     limit?: number,
-    options?: { archivedOnly?: boolean; includeArchived?: boolean },
+    options?: {
+      archivedOnly?: boolean;
+      includeArchived?: boolean;
+      signal?: AbortSignal;
+    },
   ) => Promise<MeetingHistory[]>;
   updateNotes: (params: {
     guildId: string;
@@ -110,11 +125,22 @@ const filterArchivedMeetings = (
   return meetings.filter((meeting) => !meeting.archivedAt);
 };
 
+const ownedOperations = {
+  transitionOwned: (input: HistoryTransition) =>
+    getDeploymentControlRepository().transitionMeetingHistory(input),
+  getOwned: (key: HistoryTransition["key"]) =>
+    getDeploymentControlRepository().getMeetingHistory(key),
+};
 const realRepository: MeetingHistoryRepository = {
+  ...ownedOperations,
   write: writeMeetingHistory,
   get: getMeetingHistoryRecord,
   listRecentByGuild: async (guildId, limit, options) => {
-    const meetings = await getRecentMeetingsForGuild(guildId, limit);
+    const meetings = await getRecentMeetingsForGuild(
+      guildId,
+      limit,
+      options?.signal,
+    );
     const active = meetings.filter(
       (meeting) => meeting.status !== MEETING_STATUS.CANCELLED,
     );
@@ -143,6 +169,7 @@ const realRepository: MeetingHistoryRepository = {
       guildId,
       channelId,
       limit,
+      options?.signal,
     );
     const active = meetings.filter(
       (meeting) => meeting.status !== MEETING_STATUS.CANCELLED,
@@ -181,6 +208,7 @@ const realRepository: MeetingHistoryRepository = {
 };
 
 const mockRepository: MeetingHistoryRepository = {
+  ...ownedOperations,
   async write(history) {
     const store = getMockStore();
     const existing = store.meetingHistoryByGuild.get(history.guildId) ?? [];
@@ -201,6 +229,7 @@ const mockRepository: MeetingHistoryRepository = {
     );
   },
   async listRecentByGuild(guildId, limit = 10, options) {
+    options?.signal?.throwIfAborted();
     const items = getMockStore().meetingHistoryByGuild.get(guildId) ?? [];
     const active = [...items].filter(
       (item) => item.status !== MEETING_STATUS.CANCELLED,
@@ -210,6 +239,7 @@ const mockRepository: MeetingHistoryRepository = {
       .slice(0, limit);
   },
   async listRecentByChannel(guildId, channelId, limit = 5, options) {
+    options?.signal?.throwIfAborted();
     const items = getMockStore().meetingHistoryByGuild.get(guildId) ?? [];
     const active = items
       .filter((item) => item.channelId === channelId)

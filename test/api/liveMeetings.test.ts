@@ -2,7 +2,10 @@ import { afterEach, beforeEach, expect, jest, test } from "@jest/globals";
 import express from "express";
 import http from "node:http";
 import type { AddressInfo } from "node:net";
-import { registerLiveMeetingRoutes } from "../../src/api/liveMeetings";
+import {
+  registerLiveMeetingRoutes,
+  resolveRemoteLeaseStatus,
+} from "../../src/api/liveMeetings";
 import { getMeeting } from "../../src/meetings";
 import {
   ensureManageGuildWithUserToken,
@@ -511,6 +514,61 @@ test("returns remote lease snapshot status when meeting is not local", async () 
     expect(payload.status).toBe(MEETING_STATUS.PROCESSING);
     expect(payload.endTriggeredByUserId).toBe("user-3");
     expect(payload.endedAt).toBe("2025-01-01T00:10:00.000Z");
+  } finally {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
+});
+
+test("expired or missing remote owner is unavailable, never completed", () => {
+  mockedIsLeaseActive.mockReturnValue(false);
+  const lease = {
+    guildId: "g",
+    meetingId: "m",
+    ownerInstanceId: "o",
+    voiceChannelId: "v",
+    textChannelId: "t",
+    isAutoRecording: false,
+    leaseExpiresAt: 0,
+    createdAt: "2026-01-01T00:00:00Z",
+    updatedAt: "2026-01-01T00:00:00Z",
+    expiresAt: 0,
+    status: MEETING_STATUS.IN_PROGRESS,
+  };
+  expect(resolveRemoteLeaseStatus(lease)).toBe("unavailable");
+  expect(resolveRemoteLeaseStatus()).toBe("unavailable");
+  expect(resolveRemoteLeaseStatus({ ...lease, status: "interrupted" })).toBe(
+    "interrupted",
+  );
+  expect(resolveRemoteLeaseStatus({ ...lease, status: "complete" })).toBe(
+    "complete",
+  );
+});
+test("known local interruption overrides finished flag and detection end time", async () => {
+  mockedGetMeeting.mockReturnValue(
+    makeMeeting({
+      finished: true,
+      endTime: new Date("2026-01-01T01:00:00Z"),
+      recordingCaptureState: {
+        kind: "interrupted",
+        startedAt: "2026-01-01T00:00:00Z",
+        endedAt: null,
+        detectedAt: "2026-01-01T01:00:00Z",
+      },
+    }),
+  );
+  mockedEnsureManageGuildWithUserToken.mockResolvedValue(true);
+  const { server, baseUrl } = createServer(true);
+  try {
+    const response = await requestJson(
+      `${baseUrl}/api/live/guild-1/meeting-1/status`,
+    );
+    const payload = JSON.parse(response.body);
+    expect(payload.status).toBe("interrupted");
+    expect(payload.endedAt).toBeUndefined();
+    expect(payload.capture.endedAt).toBeNull();
+    expect(payload.captureNotice).toContain(
+      "The exact recording end time is unknown.",
+    );
   } finally {
     await new Promise<void>((resolve) => server.close(() => resolve()));
   }

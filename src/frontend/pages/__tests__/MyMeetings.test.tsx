@@ -65,6 +65,67 @@ describe("MyMeetings", () => {
     });
   });
 
+  it.each(["disabled", "no_usable_speech"] as const)(
+    "keeps unknown interrupted duration and truthful terminal %s copy",
+    async (outcome) => {
+      mockMyListUseQuery.mockReturnValue({
+        data: {
+          meetings: [
+            {
+              id: "generated#2026-01-01",
+              meetingId: "generated",
+              serverId: "guild-1",
+              serverName: "Server One",
+              channelId: "generated",
+              channelName: "Generated",
+              timestamp: "2026-01-01T00:00:00Z",
+              duration: 0,
+              tags: [],
+              meetingName: "Generated recovery",
+              status: "interrupted",
+              audioAvailable: false,
+              transcriptAvailable: false,
+              notesAvailable: false,
+              recoveryNotice:
+                outcome === "disabled"
+                  ? "Recovery finished with the original transcription and notes settings."
+                  : "No usable saved speech was found.",
+              capture: {
+                kind: "interrupted",
+                startedAt: "2026-01-01T00:00:00Z",
+                detectedAt: "2026-01-01T00:30:00Z",
+                endedAt: null,
+              },
+              recovery: { disposition: "done", stage: "notes", outcome },
+            },
+          ],
+          hasMore: false,
+          nextCursor: null,
+        },
+        isLoading: false,
+        isFetching: false,
+        error: null,
+        refetch: jest.fn(),
+      });
+      renderPage();
+      expect(
+        await screen.findByText("Unknown duration", { exact: false }),
+      ).toBeInTheDocument();
+      expect(
+        screen.queryByText("Notes will appear after the meeting is processed."),
+      ).not.toBeInTheDocument();
+      expect(screen.queryByText("1m", { exact: true })).not.toBeInTheDocument();
+      expect(screen.getByText("No summary available.")).toBeInTheDocument();
+      expect(screen.queryByText("No summary yet.")).not.toBeInTheDocument();
+      expect(
+        screen.getByText(
+          outcome === "disabled"
+            ? "Recovery finished with the original transcription and notes settings."
+            : "No usable saved speech was found.",
+        ),
+      ).toBeInTheDocument();
+    },
+  );
   it("lists cross-server meetings with server context", async () => {
     renderPage();
 

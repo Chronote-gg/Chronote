@@ -1,8 +1,9 @@
 import type { MeetingStatus } from "../../../types/meetingLifecycle";
+import type { MeetingCapturePresentation } from "../../../utils/meetingCaptureNotice";
 
 export type ArchiveFilter = "active" | "archived" | "all";
 
-export type MeetingSummaryRow = {
+export type MeetingSummaryRow = MeetingCapturePresentation & {
   id: string;
   meetingId: string;
   serverId?: string;

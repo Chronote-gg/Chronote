@@ -16,10 +16,6 @@ const buildMeeting = (): MeetingData =>
 
 const loadModule = async (options: { chatError?: Error } = {}) => {
   jest.resetModules();
-  const getTranscriptionCleanupPrompt = jest.fn().mockResolvedValue({
-    messages: [{ role: "system", content: "cleanup" }],
-    langfusePrompt: { name: "cleanup", version: 1, isFallback: false },
-  });
   const getTranscriptionCoalescePrompt = jest.fn().mockResolvedValue({
     messages: [{ role: "system", content: "coalesce" }],
     langfusePrompt: { name: "coalesce", version: 1, isFallback: false },
@@ -30,7 +26,6 @@ const loadModule = async (options: { chatError?: Error } = {}) => {
   const getModelChoice = jest.fn(() => ({ model: "gpt-5.1" }));
 
   jest.doMock("../../src/services/transcriptionPromptService", () => ({
-    getTranscriptionCleanupPrompt,
     getTranscriptionCoalescePrompt,
   }));
   jest.doMock("../../src/services/openaiChatService", () => ({ chat }));
@@ -47,6 +42,7 @@ const loadModule = async (options: { chatError?: Error } = {}) => {
     },
   }));
   jest.doMock("cockatiel", () => ({
+    ...jest.requireActual<typeof import("cockatiel")>("cockatiel"),
     bulkhead: jest.fn(() => ({})),
     circuitBreaker: jest.fn(() => ({})),
     retry: jest.fn(() => ({})),
@@ -60,40 +56,12 @@ const loadModule = async (options: { chatError?: Error } = {}) => {
   return {
     module,
     chat,
-    getTranscriptionCleanupPrompt,
     getTranscriptionCoalescePrompt,
     getModelChoice,
   };
 };
 
 describe("transcriptionService", () => {
-  test("cleanupTranscription uses the cleanup prompt and chat", async () => {
-    const { module, chat, getTranscriptionCleanupPrompt, getModelChoice } =
-      await loadModule();
-    const meeting = buildMeeting();
-
-    const output = await module.cleanupTranscription(meeting, "raw transcript");
-
-    expect(output).toBe("cleaned");
-    expect(getTranscriptionCleanupPrompt).toHaveBeenCalledWith(
-      meeting,
-      "raw transcript",
-    );
-    expect(getModelChoice).toHaveBeenCalledWith(
-      "transcriptionCleanup",
-      undefined,
-    );
-    expect(chat).toHaveBeenCalledWith(
-      meeting,
-      { messages: [{ role: "system", content: "cleanup" }] },
-      expect.objectContaining({
-        traceName: "transcription-cleanup",
-        generationName: "transcription-cleanup",
-        modelParamRole: "transcriptionCleanup",
-      }),
-    );
-  });
-
   test("coalesceTranscription uses the coalesce prompt and chat", async () => {
     const { module, chat, getTranscriptionCoalescePrompt, getModelChoice } =
       await loadModule();
@@ -126,15 +94,6 @@ describe("transcriptionService", () => {
         modelParamRole: "transcriptionCoalesce",
       }),
     );
-  });
-
-  test("cleanupTranscription exposes a rejected optional cleanup request", async () => {
-    const error = new Error("cleanup failed");
-    const { module } = await loadModule({ chatError: error });
-
-    await expect(
-      module.cleanupTranscription(buildMeeting(), "raw transcript"),
-    ).rejects.toBe(error);
   });
 
   test("coalesceTranscription exposes a rejected optional coalesce request", async () => {

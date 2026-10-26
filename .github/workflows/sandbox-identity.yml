@@ -1,0 +1,307 @@
+name: Sandbox Deployment Identity
+on:
+  workflow_dispatch:
+    inputs:
+      bootstrap_phase:
+        description: Read-only identity check, candidate preparation, first activation, or reviewed unserved-candidate repair
+        type: choice
+        default: none
+        options: [none, prepare, activate, repair]
+      bootstrap_operation_id:
+        description: Reviewed operation UUID, required for prepare, activate, and repair
+        type: string
+        default: ""
+      bootstrap_manifest_sha256:
+        description: Reviewed checksum, manifest for activate or entire old/new manifest envelope for repair
+        type: string
+        default: ""
+      continuation_action:
+        description: Inspect a frozen compatible deployment or explicitly continue its existing candidate
+        type: choice
+        default: none
+        options: [none, inspect, continue]
+      continuation_binding_sha256:
+        description: Reviewed private operation-binding checksum, required only for continue
+        type: string
+        default: ""
+      probe_without_environment:
+        description: Expect the separate job without a Sandbox environment to be denied
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: chronote-deploy-sandbox
+  cancel-in-progress: false
+
+jobs:
+  identity:
+    runs-on: ubuntu-latest
+    environment: sandbox
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24.15.0"
+      - name: Validate exclusive operation inputs
+        env:
+          CONTINUATION_ACTION: ${{ inputs.continuation_action }}
+          CONTINUATION_BINDING_SHA256: ${{ inputs.continuation_binding_sha256 }}
+          BOOTSTRAP_PHASE: ${{ inputs.bootstrap_phase }}
+          BOOTSTRAP_OPERATION_ID: ${{ inputs.bootstrap_operation_id }}
+          BOOTSTRAP_MANIFEST_SHA256: ${{ inputs.bootstrap_manifest_sha256 }}
+          PROBE_WITHOUT_ENVIRONMENT: ${{ inputs.probe_without_environment }}
+        run: |
+          node <<'NODE'
+          const assert = require("node:assert/strict");
+          const e = process.env;
+          const action = e.CONTINUATION_ACTION || "none";
+          assert.ok(["none", "inspect", "continue"].includes(action));
+          if (action === "none") assert.equal(e.CONTINUATION_BINDING_SHA256 || "", "");
+          else {
+            assert.equal(e.GITHUB_RUN_ATTEMPT, "1");
+            assert.equal(e.BOOTSTRAP_PHASE || "none", "none");
+            assert.equal(e.BOOTSTRAP_OPERATION_ID || "", "");
+            assert.equal(e.BOOTSTRAP_MANIFEST_SHA256 || "", "");
+            assert.notEqual(e.PROBE_WITHOUT_ENVIRONMENT, "true");
+            if (action === "continue") assert.match(e.CONTINUATION_BINDING_SHA256 || "", /^[a-f0-9]{64}$/);
+            else assert.equal(e.CONTINUATION_BINDING_SHA256 || "", "");
+          }
+          NODE
+      - name: Assume Sandbox role with a read-only session
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ vars.SANDBOX_BACKEND_DEPLOY_ROLE_ARN }}
+          allowed-account-ids: ${{ vars.AWS_ACCOUNT_ID }}
+          role-session-name: chronote-sandbox-${{ github.run_id }}-${{ github.run_attempt }}
+          role-duration-seconds: 900
+          aws-region: ${{ vars.AWS_REGION }}
+          unset-current-credentials: true
+          mask-aws-account-id: true
+          inline-session-policy: >-
+            {"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":"ecs:DescribeServices","Resource":"arn:aws:ecs:${{ vars.AWS_REGION }}:${{ vars.AWS_ACCOUNT_ID }}:service/${{ vars.ECS_CLUSTER }}/${{ vars.ECS_SERVICE }}"}]}
+      - name: Verify exact Sandbox role session
+        env:
+          EXPECTED_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
+          EXPECTED_ROLE_ARN: ${{ vars.SANDBOX_BACKEND_DEPLOY_ROLE_ARN }}
+          EXPECTED_SESSION_NAME: chronote-sandbox-${{ github.run_id }}-${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+          aws sts get-caller-identity --output json | node scripts/deployment/assert-sandbox-identity.cjs
+      - name: Read Sandbox service counts
+        env:
+          ECS_CLUSTER: ${{ vars.ECS_CLUSTER }}
+          ECS_SERVICE: ${{ vars.ECS_SERVICE }}
+        run: |
+          set -euo pipefail
+          aws ecs describe-services --cluster "$ECS_CLUSTER" --services "$ECS_SERVICE" --output json | node -e '
+            const assert = require("node:assert/strict");
+            try {
+              const response = JSON.parse(require("node:fs").readFileSync(0, "utf8"));
+              assert.deepEqual(response.failures, []);
+              assert.equal(response.services.length, 1);
+              const service = response.services[0];
+              assert.equal(service.serviceName, process.env.ECS_SERVICE);
+              console.log(JSON.stringify({
+                desired: service.desiredCount,
+                running: service.runningCount,
+                pending: service.pendingCount,
+              }));
+            } catch {
+              console.error("Sandbox service lookup failed");
+              process.exitCode = 1;
+            }
+          '
+
+  denial-target:
+    if: ${{ inputs.probe_without_environment }}
+    needs: identity
+    runs-on: ubuntu-latest
+    environment: sandbox
+    permissions:
+      contents: read
+    outputs:
+      role: ${{ vars.SANDBOX_BACKEND_DEPLOY_ROLE_ARN }}
+      account: ${{ vars.AWS_ACCOUNT_ID }}
+      region: ${{ vars.AWS_REGION }}
+    steps:
+      - run: echo "Sandbox target reference bound for the denial probe"
+
+  denial-probe:
+    if: ${{ inputs.probe_without_environment }}
+    needs: denial-target
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Expect AWS to refuse this job without a Sandbox environment
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ needs.denial-target.outputs.role }}
+          allowed-account-ids: ${{ needs.denial-target.outputs.account }}
+          aws-region: ${{ needs.denial-target.outputs.region }}
+          role-session-name: chronote-sandbox-${{ github.run_id }}-${{ github.run_attempt }}
+          role-duration-seconds: 900
+          disable-retry: true
+          unset-current-credentials: true
+          mask-aws-account-id: true
+          inline-session-policy: >-
+            {"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":"ecs:DescribeServices","Resource":"*"}]}
+      - name: Refuse unexpected trust acceptance
+        run: |
+          echo "Unexpected assumption succeeded. Preserve the run for security review."
+          exit 1
+
+  bootstrap:
+    if: ${{ inputs.bootstrap_phase && inputs.bootstrap_phase != 'none' && !inputs.probe_without_environment }}
+    needs: identity
+    runs-on: ubuntu-latest
+    environment: sandbox
+    timeout-minutes: 180
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      BOOTSTRAP_PHASE: ${{ inputs.bootstrap_phase }}
+      BOOTSTRAP_OPERATION_ID: ${{ inputs.bootstrap_operation_id }}
+      BOOTSTRAP_MANIFEST_SHA256: ${{ inputs.bootstrap_manifest_sha256 }}
+      AWS_REGION: ${{ vars.AWS_REGION }}
+      ECS_CLUSTER: ${{ vars.ECS_CLUSTER }}
+      ECS_SERVICE: ${{ vars.ECS_SERVICE }}
+      ECS_TASK_FAMILY: ${{ vars.ECS_TASK_FAMILY }}
+      SECRETS_PREFIX: ${{ vars.SECRETS_PREFIX }}
+    steps:
+      - uses: actions/checkout@v7
+      - name: Bind the operation session
+        id: session
+        run: |
+          node <<'NODE'
+          const assert = require("node:assert/strict");
+          const fs = require("node:fs");
+          assert.equal(process.env.GITHUB_RUN_ATTEMPT, "1");
+          const id = process.env.BOOTSTRAP_OPERATION_ID;
+          assert.match(id, /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i);
+          const number = process.env.BOOTSTRAP_PHASE !== "prepare" ? BigInt("0x" + id.replaceAll("-", "")).toString() : process.env.GITHUB_RUN_ID;
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, "name=chronote-sandbox-" + number + "-1\n");
+          NODE
+      - name: Assume the scoped Sandbox deployment role
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ vars.SANDBOX_BACKEND_DEPLOY_ROLE_ARN }}
+          allowed-account-ids: ${{ vars.AWS_ACCOUNT_ID }}
+          role-session-name: ${{ steps.session.outputs.name }}
+          role-duration-seconds: 10800
+          aws-region: ${{ vars.AWS_REGION }}
+          unset-current-credentials: true
+          mask-aws-account-id: true
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24.15.0"
+          cache: yarn
+      - name: Install dependencies
+        run: bash scripts/ci-install-dependencies.sh
+      - name: Build protocol helpers
+        run: yarn build
+      - name: Validate the reviewed operation binding
+        id: binding
+        env:
+          EXPECTED_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
+          EXPECTED_ROLE_ARN: ${{ vars.SANDBOX_BACKEND_DEPLOY_ROLE_ARN }}
+          BOOTSTRAP_MANIFEST_JSON: ${{ secrets.SANDBOX_BOOTSTRAP_MANIFEST }}
+        run: node scripts/deployment/introduce-sandbox.cjs bind
+      - name: Verify exact Sandbox role session
+        env:
+          EXPECTED_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
+          EXPECTED_ROLE_ARN: ${{ vars.SANDBOX_BACKEND_DEPLOY_ROLE_ARN }}
+          EXPECTED_SESSION_NAME: ${{ steps.binding.outputs.session_name }}
+        run: |
+          set -euo pipefail
+          aws sts get-caller-identity --output json | node scripts/deployment/assert-sandbox-identity.cjs
+      - name: Log in to ECR for preparation
+        if: inputs.bootstrap_phase == 'prepare'
+        id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+      - name: Prepare the source-pinned image
+        if: inputs.bootstrap_phase == 'prepare'
+        env:
+          REGISTRY: ${{ steps.ecr.outputs.registry }}
+          REPOSITORY: ${{ vars.ECR_REPOSITORY }}
+        run: |
+          set -euo pipefail
+          image="$REGISTRY/$REPOSITORY:$GITHUB_SHA"
+          if ! aws ecr describe-images --repository-name "$REPOSITORY" --image-ids "imageTag=$GITHUB_SHA" >/dev/null 2>&1; then
+            docker build --label "org.opencontainers.image.revision=$GITHUB_SHA" -t "$image" .
+            docker run --rm "$image" test -f dist/index.js
+            docker push "$image"
+          fi
+          digest=$(aws ecr describe-images --repository-name "$REPOSITORY" --image-ids "imageTag=$GITHUB_SHA" --query 'imageDetails[0].imageDigest' --output text)
+          echo "CANDIDATE_IMAGE=$REGISTRY/$REPOSITORY@$digest" >> "$GITHUB_ENV"
+      - name: Execute only the selected guarded phase
+        env:
+          EXPECTED_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
+          EXPECTED_ROLE_ARN: ${{ vars.SANDBOX_BACKEND_DEPLOY_ROLE_ARN }}
+          BOOTSTRAP_MANIFEST_JSON: ${{ secrets.SANDBOX_BOOTSTRAP_MANIFEST }}
+        run: node scripts/deployment/introduce-sandbox.cjs "$BOOTSTRAP_PHASE"
+      - name: Remove the private manifest
+        if: always()
+        run: rm -f bootstrap-manifest.json
+
+  continuation:
+    if: ${{ inputs.continuation_action && inputs.continuation_action != 'none' }}
+    needs: identity
+    runs-on: ubuntu-latest
+    environment: sandbox
+    timeout-minutes: 180
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      CONTINUATION_ENVIRONMENT: sandbox
+      CONTINUATION_ACTION: ${{ inputs.continuation_action }}
+      CONTINUATION_BINDING_SHA256: ${{ inputs.continuation_binding_sha256 }}
+      AWS_REGION: ${{ vars.AWS_REGION }}
+      AWS_IGNORE_CONFIGURED_ENDPOINT_URLS: "true"
+      ECS_CLUSTER: ${{ vars.ECS_CLUSTER }}
+      ECS_SERVICE: ${{ vars.ECS_SERVICE }}
+      ECS_TASK_FAMILY: ${{ vars.ECS_TASK_FAMILY }}
+      SECRETS_PREFIX: ${{ vars.SECRETS_PREFIX }}
+      DEPLOYMENT_LISTENER_ARN: ${{ vars.DEPLOYMENT_LISTENER_ARN }}
+      DEPLOYMENT_TARGET_GROUP_A: ${{ vars.DEPLOYMENT_TARGET_GROUP_A }}
+      DEPLOYMENT_TARGET_GROUP_B: ${{ vars.DEPLOYMENT_TARGET_GROUP_B }}
+      EXPECTED_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
+      EXPECTED_ROLE_ARN: ${{ vars.SANDBOX_BACKEND_DEPLOY_ROLE_ARN }}
+      EXPECTED_SESSION_NAME: chronote-sandbox-${{ github.run_id }}-${{ github.run_attempt }}
+    steps:
+      - uses: actions/checkout@v7
+      - name: Assume the scoped Sandbox continuation role
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ vars.SANDBOX_BACKEND_DEPLOY_ROLE_ARN }}
+          allowed-account-ids: ${{ vars.AWS_ACCOUNT_ID }}
+          role-session-name: chronote-sandbox-${{ github.run_id }}-${{ github.run_attempt }}
+          role-duration-seconds: 10800
+          aws-region: ${{ vars.AWS_REGION }}
+          unset-current-credentials: true
+          mask-aws-account-id: true
+      - name: Verify exact Sandbox role session
+        run: |
+          set -euo pipefail
+          aws sts get-caller-identity --output json | node scripts/deployment/assert-sandbox-identity.cjs
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24.15.0"
+          cache: yarn
+      - name: Install dependencies
+        run: bash scripts/ci-install-dependencies.sh
+      - name: Compile protocol helpers
+        run: yarn build
+      - name: Execute only the selected continuation action
+        run: node scripts/deployment/continue-sandbox.cjs "$CONTINUATION_ACTION"

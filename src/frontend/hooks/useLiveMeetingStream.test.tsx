@@ -1,5 +1,5 @@
 import { act, renderHook } from "@testing-library/react";
-import { useLiveMeetingStream } from "./useLiveMeetingStream";
+import { useLiveMeetingStream, toStreamStatus } from "./useLiveMeetingStream";
 
 jest.mock("../services/apiClient", () => ({
   buildApiUrl: (path: string) => path,
@@ -7,12 +7,14 @@ jest.mock("../services/apiClient", () => ({
 
 class TestEventSource extends EventTarget {
   static latest: TestEventSource;
+  static instances: TestEventSource[] = [];
   onerror: (() => void) | null = null;
+  close = jest.fn();
   constructor() {
     super();
     TestEventSource.latest = this;
+    TestEventSource.instances.push(this);
   }
-  close() {}
   emit(type: string, data: unknown) {
     this.dispatchEvent(new MessageEvent(type, { data: JSON.stringify(data) }));
   }
@@ -20,6 +22,7 @@ class TestEventSource extends EventTarget {
 
 const originalEventSource = global.EventSource;
 beforeEach(() => {
+  TestEventSource.instances = [];
   Object.defineProperty(global, "EventSource", {
     configurable: true,
     value: TestEventSource,
@@ -119,4 +122,53 @@ it("retains untouched object identities while inserting late events by numeric o
   );
   expect(result.current.events).toEqual([early]);
   expect(result.current.events[0]).toBe(early);
+});
+
+test("liveOwnerMissingDoesNotRenderComplete and status can be rechecked", () => {
+  const hook = renderHook(() =>
+    useLiveMeetingStream({ guildId: "g", meetingId: "m", enabled: true }),
+  );
+  const source = TestEventSource.latest;
+  act(() =>
+    source.emit("init", {
+      meeting: {
+        guildId: "g",
+        meetingId: "m",
+        channelId: "c",
+        channelName: "Generated",
+        startedAt: "2026-01-01T00:00:00Z",
+        status: "unavailable",
+        attendees: [],
+      },
+      events: [],
+    }),
+  );
+  expect(hook.result.current.status).toBe("unavailable");
+  expect(hook.result.current.meeting).not.toHaveProperty("endedAt");
+  expect(source.close).toHaveBeenCalled();
+  act(() => source.onerror?.());
+  expect(hook.result.current.status).toBe("unavailable");
+  act(() => hook.result.current.retry());
+  act(() =>
+    TestEventSource.latest.emit("init", {
+      meeting: {
+        guildId: "g",
+        meetingId: "m",
+        channelId: "c",
+        channelName: "Generated",
+        startedAt: "2026-01-01T00:00:00Z",
+        status: "in_progress",
+        attendees: [],
+      },
+      events: [],
+    }),
+  );
+  expect(hook.result.current.status).toBe("live");
+});
+
+test("known interrupted and failed recordings stop the live state", () => {
+  expect(toStreamStatus("interrupted")).toBe("interrupted");
+  expect(toStreamStatus("failed")).toBe("failed");
+  expect(toStreamStatus("starting")).toBe("starting");
+  expect(toStreamStatus("complete")).toBe("complete");
 });

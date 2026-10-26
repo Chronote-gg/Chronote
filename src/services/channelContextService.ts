@@ -127,12 +127,19 @@ export async function setChannelContext(
   }
 }
 
-export async function fetchChannelContext(guildId: string, channelId: string) {
-  const overrides = await listConfigOverridesForScope({
-    scope: "channel",
-    guildId,
-    channelId,
-  });
+export async function fetchChannelContext(
+  guildId: string,
+  channelId: string,
+  signal?: AbortSignal,
+) {
+  const overrides = await listConfigOverridesForScope(
+    {
+      scope: "channel",
+      guildId,
+      channelId,
+    },
+    signal,
+  );
   const relevant = overrides.filter((record) =>
     CHANNEL_CONTEXT_KEYS.has(record.configKey),
   );

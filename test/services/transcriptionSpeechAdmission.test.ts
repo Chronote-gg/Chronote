@@ -5,10 +5,12 @@ import {
   rmdirSync,
   readFileSync,
   unlinkSync,
+  writeFileSync,
   ReadStream,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import OpenAI from "openai";
 import type { MeetingData } from "../../src/types/meeting-data";
 import type {
   SpeechAssessment,
@@ -20,6 +22,7 @@ import {
 } from "../../src/services/speechDetectionPolicy";
 import { metricsRegistry } from "../../src/metrics";
 import { transcribeSnippet } from "../../src/services/transcriptionService";
+import * as conversion from "../../src/services/transcriptionAudioService";
 
 let mockTempDir: string;
 let mockPrompt = "";
@@ -31,6 +34,22 @@ const providerSuccess = async ({ file }: { file: ReadStream }) => {
   await consumeFile(file);
   return { text: "retained words", logprobs: [] as { logprob: number }[] };
 };
+const writeTestWav = async (_inputFile: string, outputFile: string) => {
+  const wav = Buffer.alloc(44);
+  wav.write("RIFF", 0);
+  wav.writeUInt32LE(36, 4);
+  wav.write("WAVE", 8);
+  wav.write("fmt ", 12);
+  wav.writeUInt32LE(16, 16);
+  wav.writeUInt16LE(1, 20);
+  wav.writeUInt16LE(1, 22);
+  wav.writeUInt32LE(16000, 24);
+  wav.writeUInt32LE(32000, 28);
+  wav.writeUInt16LE(2, 32);
+  wav.writeUInt16LE(16, 34);
+  wav.write("data", 36);
+  writeFileSync(outputFile, wav);
+};
 const mockAssess = jest.fn<
   ReturnType<SpeechDetector["assess"]>,
   Parameters<SpeechDetector["assess"]>
@@ -41,6 +60,7 @@ const mockGetDetector = jest.fn(() => ({
   shutdown: async () => {},
 }));
 const mockCreate = jest.fn(providerSuccess);
+let mockConvert: jest.SpyInstance;
 jest.mock("../../src/services/tempFileService", () => ({
   ensureMeetingTempDirSync: () => mockEnsureTemp(),
   getMeetingTempDir: () => mockTempDir,
@@ -105,6 +125,9 @@ const snippet = { userId: "test-user", timestamp: 1, chunks: [pcm] };
 
 beforeEach(() => {
   mockTempDir = mkdtempSync(path.join(tmpdir(), "chronote-admission-"));
+  mockConvert = jest
+    .spyOn(conversion, "convertTranscriptionPcmToWav")
+    .mockImplementation(writeTestWav);
   metricsRegistry.resetMetrics();
   mockGetDetector.mockClear();
   mockAssess.mockReset().mockResolvedValue(assessment("non_speech"));
@@ -112,6 +135,7 @@ beforeEach(() => {
   mockPrompt = "";
 });
 afterEach(() => {
+  mockConvert.mockRestore();
   expect(readdirSync(mockTempDir)).toEqual([]);
   rmdirSync(mockTempDir);
 });
@@ -131,7 +155,6 @@ import {
   userStartTalking,
   startProcessingSnippet,
 } from "../../src/audio";
-import * as conversion from "../../src/services/transcriptionAudioService";
 
 jest.mock("../../src/liveVoice", () => ({ maybeRespondLive: jest.fn() }));
 jest.mock("prism-media", () => ({
@@ -292,25 +315,21 @@ test.each(["shadow", "enforce"] as const)(
   },
 );
 test("conversion errors clean both files and record one conversion outcome", async () => {
-  const convert = jest
-    .spyOn(conversion, "convertTranscriptionPcmToWav")
-    .mockRejectedValueOnce(new Error("conversion failed"));
-  try {
-    expect(await transcribeSnippet(buildMeeting("enforce"), snippet)).toEqual({
-      status: "failed",
-      reason: "conversion_error",
-    });
-    expect(mockAssess).not.toHaveBeenCalled();
-    expect(mockCreate).not.toHaveBeenCalled();
-    await expectOutcome("enforce", "conversion_error");
-  } finally {
-    convert.mockRestore();
-  }
+  mockConvert.mockRejectedValueOnce(new Error("conversion failed"));
+  expect(await transcribeSnippet(buildMeeting("enforce"), snippet)).toEqual({
+    status: "failed",
+    reason: "conversion_error",
+  });
+  expect(mockAssess).not.toHaveBeenCalled();
+  expect(mockCreate).not.toHaveBeenCalled();
+  await expectOutcome("enforce", "conversion_error");
 });
 test("counts actual failed and retried SDK submissions with one terminal outcome", async () => {
   mockCreate.mockImplementationOnce(async ({ file }) => {
     for await (const chunk of file) void chunk;
-    throw new Error("provider transient failure");
+    throw new OpenAI.APIConnectionError({
+      message: "provider transient failure",
+    });
   });
   expect(await transcribeSnippet(buildMeeting("off"), snippet)).toMatchObject({
     status: "succeeded",
@@ -399,7 +418,7 @@ test("real voting counts prompt and no-prompt SDK calls, conversion and outcome 
 test("terminal SDK failure counts every retry but only one failed snippet", async () => {
   mockCreate.mockImplementation(async ({ file }) => {
     await consumeFile(file);
-    throw new Error("provider unavailable");
+    throw new OpenAI.APIConnectionError({ message: "provider unavailable" });
   });
   expect(
     await transcribeSnippet(buildMeeting("enforce"), snippet, {

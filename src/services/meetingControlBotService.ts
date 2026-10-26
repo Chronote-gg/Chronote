@@ -1,3 +1,5 @@
+import { interruptOwnedMeeting } from "./ownedMeetingInterruption";
+import { initiatingStopInterruption } from "./meetingStopInterruption";
 import {
   PermissionFlagsBits,
   type Client,
@@ -7,9 +9,10 @@ import {
   type VoiceBasedChannel,
   type VoiceState,
 } from "discord.js";
+import { persistExplicitMeetingStop } from "../commands/endMeeting";
 import { getMeeting } from "../meetings";
 import {
-  buildManualMeetingStartedMessage,
+  publishManualMeetingStartedMessage,
   startManualMeetingFromChannels,
 } from "../commands/startMeeting";
 import {
@@ -17,12 +20,7 @@ import {
   isLeaseActive,
   requestMeetingEndViaLease,
 } from "./activeMeetingLeaseService";
-import { getGuildLimits } from "./subscriptionService";
-import {
-  getSnapshotString,
-  resolveConfigSnapshot,
-} from "./unifiedConfigService";
-import { CONFIG_KEYS } from "../config/keys";
+import { resolveMeetingNotesChannel } from "./meetingNotesDestinationService";
 import { buildLiveMeetingTimelineEvents } from "./meetingTimelineService";
 import {
   MEETING_CONTROL_COMMAND_TYPES,
@@ -130,31 +128,6 @@ const fetchTextChannel = async (guild: Guild, textChannelId: string) => {
   return channel as TextChannel;
 };
 
-const resolveDefaultTextChannelId = async (guild: Guild) => {
-  const { subscription } = await getGuildLimits(guild.id);
-  const snapshot = await resolveConfigSnapshot({
-    guildId: guild.id,
-    tier: subscription.tier,
-  });
-  return getSnapshotString(snapshot, CONFIG_KEYS.notes.channelId, {
-    trim: true,
-  });
-};
-
-const resolveTextChannel = async (
-  guild: Guild,
-  input: StartMeetingCommandInput,
-) => {
-  const textChannelId =
-    input.textChannelId ?? (await resolveDefaultTextChannelId(guild));
-  if (!textChannelId) {
-    throw new MeetingControlExecutionError(
-      "Set a default notes channel or pass textChannelId.",
-    );
-  }
-  return fetchTextChannel(guild, textChannelId);
-};
-
 const fetchMember = async (guild: Guild, userId: string) =>
   guild.members.cache.get(userId) ??
   (await guild.members.fetch(userId).catch(() => null));
@@ -219,6 +192,8 @@ const executeStartMeeting = async (
   client: Client,
   userId: string,
   input: StartMeetingCommandInput,
+  assertOwned: () => Promise<void>,
+  signal?: AbortSignal,
 ): Promise<MeetingControlCommandResult> => {
   const state = await resolveUserVoiceState(client, userId, input);
   const guild = state.guild;
@@ -230,11 +205,20 @@ const executeStartMeeting = async (
   }
   assertSameVoiceChannel(state, voiceChannel);
 
-  const textChannel = await resolveTextChannel(guild, input);
+  const textChannel =
+    input.textChannelId !== undefined
+      ? await fetchTextChannel(guild, input.textChannelId)
+      : await resolveMeetingNotesChannel({
+          guild,
+          voiceChannelId: voiceChannel.id,
+        });
   const member = await fetchMember(guild, userId);
   assertMemberCanUseTextChannel(member, textChannel);
   const creator = await client.users.fetch(userId);
+  await assertOwned();
   const startResult = await startManualMeetingFromChannels({
+    assertStartAllowed: assertOwned,
+    startSignal: signal,
     client,
     guild,
     voiceChannel,
@@ -249,13 +233,19 @@ const executeStartMeeting = async (
     throw new MeetingControlExecutionError(startResult.error);
   }
 
-  const message = await textChannel.send(
-    buildManualMeetingStartedMessage(
-      startResult.meeting,
-      startResult.liveMeetingUrl,
-    ),
+  try {
+    await assertOwned();
+  } catch (error) {
+    await interruptOwnedMeeting(startResult.meeting, {
+      reason: "processing_failure",
+      deadline: Date.now() + 100_000,
+    });
+    throw error;
+  }
+  await publishManualMeetingStartedMessage(
+    startResult.meeting,
+    startResult.liveMeetingUrl,
   );
-  startResult.meeting.startMessageId = message.id;
 
   return {
     status: "started",
@@ -281,6 +271,7 @@ const executeStopLocalMeeting = async (
   userId: string,
   input: StopMeetingCommandInput,
   meeting: MeetingData,
+  assertOwned: () => Promise<void>,
 ): Promise<MeetingControlCommandResult> => {
   if (input.meetingId && meeting.meetingId !== input.meetingId) {
     throw new MeetingControlExecutionError("Meeting not found.");
@@ -294,6 +285,8 @@ const executeStopLocalMeeting = async (
       "You do not have permission to end this meeting.",
     );
   }
+  await assertOwned();
+  await persistExplicitMeetingStop(meeting, MEETING_END_REASONS.MCP);
   if (meeting.finishing || meeting.finished) {
     return {
       status: "stopping",
@@ -301,12 +294,26 @@ const executeStopLocalMeeting = async (
       meetingId: meeting.meetingId,
     };
   }
+  await assertOwned();
   meeting.endReason = MEETING_END_REASONS.MCP;
   meeting.endTriggeredByUserId = userId;
   if (!meeting.onEndMeeting) {
     throw new MeetingControlExecutionError("End meeting handler unavailable.");
   }
-  await meeting.onEndMeeting(meeting);
+  const original = meeting.reservation
+    ? {
+        guildId: meeting.reservation.guildId,
+        meetingId: meeting.reservation.meetingId,
+        ownerInstanceId: meeting.reservation.ownerInstanceId,
+        executionVersion: meeting.reservation.executionVersion,
+        voiceOperationAttemptId: meeting.reservation.voiceOperationAttemptId,
+      }
+    : undefined;
+  try {
+    await meeting.onEndMeeting(meeting);
+  } catch (error) {
+    throw initiatingStopInterruption(meeting, original, error);
+  }
   return { status: "ended", serverId: guildId, meetingId: meeting.meetingId };
 };
 
@@ -315,6 +322,7 @@ const executeStopLeasedMeeting = async (
   guildId: string,
   userId: string,
   input: StopMeetingCommandInput,
+  assertOwned: () => Promise<void>,
 ): Promise<MeetingControlCommandResult> => {
   const lease = await getActiveMeetingLeaseForGuild(guildId);
   if (!lease || !isLeaseActive(lease)) {
@@ -329,6 +337,7 @@ const executeStopLeasedMeeting = async (
       "You do not have permission to end this meeting.",
     );
   }
+  await assertOwned();
   const queued = await requestMeetingEndViaLease(
     guildId,
     lease.meetingId,
@@ -345,6 +354,7 @@ const executeStopMeeting = async (
   client: Client,
   userId: string,
   input: StopMeetingCommandInput,
+  assertOwned: () => Promise<void>,
 ): Promise<MeetingControlCommandResult> => {
   const state = input.serverId
     ? undefined
@@ -356,9 +366,16 @@ const executeStopMeeting = async (
   const guild = await getGuildOrThrow(client, guildId);
   const meeting = getMeeting(guildId);
   if (meeting) {
-    return executeStopLocalMeeting(guild, guildId, userId, input, meeting);
+    return executeStopLocalMeeting(
+      guild,
+      guildId,
+      userId,
+      input,
+      meeting,
+      assertOwned,
+    );
   }
-  return executeStopLeasedMeeting(guild, guildId, userId, input);
+  return executeStopLeasedMeeting(guild, guildId, userId, input, assertOwned);
 };
 
 const resolveLiveMeeting = async (
@@ -490,19 +507,25 @@ const executeGetLiveTranscript = async (
 export async function executeMeetingControlCommand(
   client: Client,
   command: MeetingControlCommand,
+  assertOwned: () => Promise<void> = async () => undefined,
+  signal?: AbortSignal,
 ): Promise<MeetingControlCommandResult> {
+  await assertOwned();
   switch (command.commandType) {
     case MEETING_CONTROL_COMMAND_TYPES.START_MEETING:
       return executeStartMeeting(
         client,
         command.userId,
         command.input as StartMeetingCommandInput,
+        assertOwned,
+        signal,
       );
     case MEETING_CONTROL_COMMAND_TYPES.STOP_MEETING:
       return executeStopMeeting(
         client,
         command.userId,
         command.input as StopMeetingCommandInput,
+        assertOwned,
       );
     case MEETING_CONTROL_COMMAND_TYPES.GET_LIVE_STATUS:
       return executeGetLiveStatus(

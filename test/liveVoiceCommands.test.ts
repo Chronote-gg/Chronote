@@ -1,4 +1,6 @@
+/** @jest-environment node */
 import { afterEach, expect, jest, test } from "@jest/globals";
+jest.mock("dotenv", () => ({ config: jest.fn() }));
 import type { MeetingData } from "../src/types/meeting-data";
 import type { Participant } from "../src/types/participants";
 import type { LiveSegment } from "../src/liveVoice";
@@ -9,6 +11,17 @@ type MemberSpec = {
 };
 
 const BOT_ID = "bot-1";
+
+const completedResponse = (text: string) => ({
+  status: "completed",
+  output_text: text,
+  output: [
+    {
+      type: "message",
+      content: [{ type: "output_text", text }],
+    },
+  ],
+});
 
 const makeSegment = (userId: string, text: string): LiveSegment => ({
   userId,
@@ -107,15 +120,13 @@ const makeMeeting = (options: {
 const setupLiveVoice = async (responses: string[]) => {
   const mockCreate = jest.fn();
   for (const content of responses) {
-    mockCreate.mockResolvedValueOnce({
-      choices: [{ message: { content }, finish_reason: "stop" }],
-    });
+    mockCreate.mockResolvedValueOnce(completedResponse(content));
   }
 
   jest.doMock("openai", () => ({
     __esModule: true,
     default: jest.fn().mockImplementation(() => ({
-      chat: { completions: { create: mockCreate } },
+      responses: { create: mockCreate },
     })),
   }));
   const mockGetLangfuseChatPrompt = jest.fn().mockResolvedValue({
@@ -145,9 +156,10 @@ afterEach(() => {
 });
 
 test("starts confirmation when gate returns command_end", async () => {
-  const { maybeRespondLive } = await setupLiveVoice([
+  const { maybeRespondLive, mockCreate } = await setupLiveVoice([
     '{"action":"command_end"}',
   ]);
+  const { config } = await import("../src/services/configService");
 
   const meeting = makeMeeting({
     creatorId: "user-1",
@@ -160,6 +172,18 @@ test("starts confirmation when gate returns command_end", async () => {
     makeSegment("user-1", "Chronote please end the meeting"),
   );
 
+  expect(mockCreate).toHaveBeenCalledWith(
+    expect.objectContaining({
+      input: [
+        { role: "system", content: "You are a helpful assistant." },
+        { role: "user", content: "Stub prompt." },
+      ],
+      text: expect.objectContaining({ format: { type: "json_object" } }),
+      max_output_tokens: config.liveVoice.gateMaxOutputTokens,
+      store: false,
+    }),
+    expect.objectContaining({ signal: expect.any(AbortSignal) }),
+  );
   expect(meeting.liveVoiceCommandPending?.userId).toBe("user-1");
   expect(meeting.ttsQueue?.enqueue).toHaveBeenCalledWith(
     expect.objectContaining({
@@ -353,4 +377,44 @@ test("drops pending and logs when confirmation prompt cannot enqueue", async () 
   expect(meeting.liveVoiceCommandPending).toBeUndefined();
   expect(errorSpy).toHaveBeenCalled();
   errorSpy.mockRestore();
+});
+
+test("held live gate observes processing cancellation and cannot enqueue a late command", async () => {
+  const { maybeRespondLive, mockCreate } = await setupLiveVoice([]);
+  const lifetime = await import("../src/services/meetingProcessingLifetime");
+  const meeting = makeMeeting({
+    creatorId: "user-1",
+    members: [{ id: "user-1", canEnd: true }],
+  });
+  let started!: () => void;
+  const dispatched = new Promise<void>((done) => {
+    started = done;
+  });
+  let complete!: (value: unknown) => void;
+  mockCreate.mockImplementationOnce(() => {
+    started();
+    return new Promise((done) => {
+      complete = done;
+    });
+  });
+  const task = lifetime.runMeetingProcessingEffect(meeting, () =>
+    maybeRespondLive(meeting, makeSegment("user-1", "Chronote end meeting")),
+  );
+  const result = task.catch(() => {});
+  await dispatched;
+  const options = mockCreate.mock.calls[0][1] as
+    { signal?: AbortSignal } | undefined;
+  expect(options?.signal?.aborted).toBe(false);
+  let settled = false;
+  const drain = lifetime.stopMeetingProcessing(meeting).then(() => {
+    settled = true;
+  });
+  await Promise.resolve();
+  expect(options?.signal?.aborted).toBe(true);
+  expect(settled).toBe(false);
+  complete(completedResponse('{"action":"command_end"}'));
+  await result;
+  await drain;
+  expect(meeting.ttsQueue?.enqueue).not.toHaveBeenCalled();
+  expect(meeting.liveVoiceCommandPending).toBeUndefined();
 });

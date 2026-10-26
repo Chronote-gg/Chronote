@@ -1,22 +1,20 @@
-import { createReadStream, promises as fs } from "node:fs";
+import { finalPassSettingsSchema } from "../types/recordingContent";
+import { resolveChatParamsForRole } from "./openaiModelParams";
+import { liveFinalPassSettings } from "./transcriptionProcessingSettings";
+import type { FinalPassSettings } from "../types/recordingContent";
+import {
+  getMeetingProcessingSignal,
+  runMeetingProcessingEffect,
+} from "./meetingProcessingLifetime";
+import { withTranscriptionInput } from "./transcriptionInput";
+import { promises as fs } from "node:fs";
 import path from "node:path";
 import ffmpeg from "fluent-ffmpeg";
 import type { TranscriptionCreateParamsNonStreaming } from "openai/resources/audio";
 import { z } from "zod";
-import {
-  MAX_SNIPPET_LENGTH,
-  TRANSCRIPTION_FINAL_PASS_CHUNK_SECONDS,
-  TRANSCRIPTION_FINAL_PASS_MAX_CHANGE_RATIO,
-  TRANSCRIPTION_FINAL_PASS_MAX_DROP_RATIO,
-  TRANSCRIPTION_FINAL_PASS_MAX_REQUEST_BYTES,
-  TRANSCRIPTION_FINAL_PASS_MIN_CONFIDENCE,
-  TRANSCRIPTION_FINAL_PASS_PREVIOUS_TAIL_CHARS,
-  TRANSCRIPTION_FINAL_PASS_SEGMENT_BATCH_MAX_CHARS,
-  TRANSCRIPTION_FINAL_PASS_TARGET_MAX_CHUNK_BYTES,
-} from "../constants";
 import type { AudioFileData } from "../types/audio";
 import type { MeetingData } from "../types/meeting-data";
-import { chat } from "./openaiChatService";
+import { chat, type ChatMeetingInput } from "./openaiChatService";
 import { createOpenAIClient } from "./openaiClient";
 import { getMeetingModelOverrides } from "./meetingModelOverrides";
 import { getModelChoice } from "./modelFactory";
@@ -31,8 +29,28 @@ import {
   isLowInformationTranscriptionText,
   isTrivialTranscriptionText,
 } from "../utils/transcriptionText";
-import { resolveAudioFileText } from "../utils/audioTranscript";
+import {
+  resolveAudioFileText,
+  resolveAudioFileTranscript,
+} from "../utils/audioTranscript";
 
+export type FinalPassContent = ChatMeetingInput & {
+  startTime: Date;
+  endTime?: Date;
+  participants: MeetingData["participants"];
+  audioData: Pick<MeetingData["audioData"], "audioFiles">;
+  signal: AbortSignal;
+  enabled: boolean;
+  settings: FinalPassSettings;
+  langfuseParentSpanContext?: MeetingData["langfuseParentSpanContext"];
+  transcriptionModel: string;
+  reconcileModel: import("../types/recordingContent").SavedRecordingSettings["models"]["notes"];
+  prompt(): ReturnType<typeof getTranscriptionPrompt>;
+  finalPassPrompt(
+    input: Parameters<typeof getTranscriptionFinalPassPrompt>[1],
+  ): ReturnType<typeof getTranscriptionFinalPassPrompt>;
+  effect<T>(run: () => Promise<T>): Promise<T>;
+};
 type ChunkLogprobEntry = {
   logprob?: number;
 };
@@ -79,11 +97,8 @@ const FinalPassResponseSchema = z.object({
   edits: z.array(FinalPassEditSchema).default([]),
 });
 
-const ESTIMATED_MP3_BYTES_PER_SECOND = 16_000;
-const MIN_CHUNK_SECONDS = 60;
-
 type FinalPassDependencies = {
-  ensureTempDir: (meeting: MeetingData) => Promise<string>;
+  ensureTempDir: (meeting: FinalPassContent) => Promise<string>;
   getAudioDurationSeconds: (
     audioFilePath: string,
   ) => Promise<number | undefined>;
@@ -92,16 +107,17 @@ type FinalPassDependencies = {
     outputPath: string;
     startSeconds: number;
     durationSeconds: number;
+    signal?: AbortSignal;
   }) => Promise<void>;
   transcribeChunk: (input: {
-    meeting: MeetingData;
+    meeting: FinalPassContent;
     chunkFilePath: string;
     previousChunkTail: string;
     chunkIndex: number;
     chunkCount: number;
   }) => Promise<FinalPassChunkTranscription>;
   reconcileBatch: (input: {
-    meeting: MeetingData;
+    meeting: FinalPassContent;
     chunkTranscript: string;
     previousChunkTail: string;
     chunkLogprobSummary: string;
@@ -141,7 +157,10 @@ export type TranscriptionFinalPassResult = {
   fallbackReason?: string;
 };
 
-const resolveSpeakerLabel = (meeting: MeetingData, userId: string): string => {
+const resolveSpeakerLabel = (
+  meeting: FinalPassContent,
+  userId: string,
+): string => {
   const participant = meeting.participants.get(userId);
   if (!participant) {
     return userId;
@@ -155,9 +174,11 @@ const resolveSpeakerLabel = (meeting: MeetingData, userId: string): string => {
   );
 };
 
-const buildBaselineSegments = (meeting: MeetingData): BaselineSegment[] => {
+const buildBaselineSegments = (
+  meeting: FinalPassContent,
+): BaselineSegment[] => {
   const startedAtMs = meeting.startTime.getTime();
-  const maxSnippetSeconds = MAX_SNIPPET_LENGTH / 1000;
+  const maxSnippetSeconds = meeting.settings.maxSnippetMilliseconds / 1000;
   const orderedFiles = [...meeting.audioData.audioFiles].sort(
     (a, b) => a.timestamp - b.timestamp,
   );
@@ -197,17 +218,16 @@ const buildBaselineSegments = (meeting: MeetingData): BaselineSegment[] => {
   return segments;
 };
 
-const estimateChunkSeconds = () => {
+const estimateChunkSeconds = (settings: FinalPassSettings) => {
   const byTargetSize = Math.floor(
-    TRANSCRIPTION_FINAL_PASS_TARGET_MAX_CHUNK_BYTES /
-      ESTIMATED_MP3_BYTES_PER_SECOND,
+    settings.targetMaxChunkBytes / settings.estimatedMp3BytesPerSecond,
   );
   const byHardLimit = Math.floor(
-    TRANSCRIPTION_FINAL_PASS_MAX_REQUEST_BYTES / ESTIMATED_MP3_BYTES_PER_SECOND,
+    settings.maxRequestBytes / settings.estimatedMp3BytesPerSecond,
   );
   return Math.max(
-    MIN_CHUNK_SECONDS,
-    Math.min(TRANSCRIPTION_FINAL_PASS_CHUNK_SECONDS, byTargetSize, byHardLimit),
+    settings.minChunkSeconds,
+    Math.min(settings.chunkSeconds, byTargetSize, byHardLimit),
   );
 };
 
@@ -237,9 +257,17 @@ const renderAudioChunk = async (input: {
   outputPath: string;
   startSeconds: number;
   durationSeconds: number;
+  signal?: AbortSignal;
 }) =>
   await new Promise<void>((resolve, reject) => {
-    ffmpeg(input.inputPath)
+    input.signal?.throwIfAborted();
+    const command = ffmpeg(input.inputPath);
+    const cancel = () => command.kill("SIGTERM");
+    input.signal?.addEventListener("abort", cancel, { once: true });
+    command
+      .on("start", () => {
+        if (input.signal?.aborted) cancel();
+      })
       .setStartTime(input.startSeconds)
       .setDuration(input.durationSeconds)
       .audioCodec("libmp3lame")
@@ -248,9 +276,11 @@ const renderAudioChunk = async (input: {
       .audioFrequency(48000)
       .toFormat("mp3")
       .on("end", () => {
+        input.signal?.removeEventListener("abort", cancel);
         resolve();
       })
       .on("error", (error) => {
+        input.signal?.removeEventListener("abort", cancel);
         reject(error);
       })
       .save(input.outputPath);
@@ -322,6 +352,12 @@ const buildChunkWindows = (
     return [];
   }
 
+  if (
+    !Number.isFinite(chunkSeconds) ||
+    chunkSeconds < 1 ||
+    durationSeconds > 7200
+  )
+    throw new Error("Invalid or nonprogressing finalized-pass chunk window");
   const windows: ChunkWindow[] = [];
   for (
     let startSeconds = 0, index = 0;
@@ -341,7 +377,7 @@ const segmentPromptLength = (segment: BaselineSegment) =>
   segment.text.length +
   12;
 
-const batchSegments = (segments: BaselineSegment[]) => {
+const batchSegments = (segments: BaselineSegment[], maxChars: number) => {
   const batches: BaselineSegment[][] = [];
   let currentBatch: BaselineSegment[] = [];
   let currentChars = 0;
@@ -349,9 +385,7 @@ const batchSegments = (segments: BaselineSegment[]) => {
   for (const segment of segments) {
     const nextChars = segmentPromptLength(segment);
     const exceedsLimit =
-      currentBatch.length > 0 &&
-      currentChars + nextChars >
-        TRANSCRIPTION_FINAL_PASS_SEGMENT_BATCH_MAX_CHARS;
+      currentBatch.length > 0 && currentChars + nextChars > maxChars;
 
     if (exceedsLimit) {
       batches.push(currentBatch);
@@ -392,9 +426,10 @@ const createResult = (
   enabled: input.enabled,
 });
 
-const resetFinalPassTranscripts = (meeting: MeetingData) => {
+const resetFinalPassTranscripts = (meeting: FinalPassContent) => {
   for (const fileData of meeting.audioData.audioFiles) {
     delete fileData.finalPassTranscript;
+    delete fileData.finalPassCorrespondence;
   }
 };
 
@@ -417,8 +452,9 @@ const getSegmentById = (
 const isEditUsable = (
   edit: FinalPassEdit,
   segment: BaselineSegment,
+  minimumConfidence: number,
 ): boolean => {
-  if (edit.confidence < TRANSCRIPTION_FINAL_PASS_MIN_CONFIDENCE) {
+  if (edit.confidence < minimumConfidence) {
     return false;
   }
   if (edit.action !== "replace") {
@@ -445,13 +481,14 @@ const applyBatchEdits = (
   batch: BaselineSegment[],
   edits: FinalPassEdit[],
   acceptedEdits: Map<string, FinalPassEdit>,
+  minimumConfidence: number,
 ): { candidateEdits: number; rejectedTrivialEdits: number } => {
   let candidateEdits = 0;
   let rejectedTrivialEdits = 0;
   for (const edit of edits) {
     candidateEdits += 1;
     const segment = getSegmentById(batch, edit.segmentId);
-    if (!segment || !isEditUsable(edit, segment)) {
+    if (!segment || !isEditUsable(edit, segment, minimumConfidence)) {
       continue;
     }
     if (edit.action === "replace") {
@@ -467,7 +504,7 @@ const applyBatchEdits = (
 };
 
 const reconcileChunkBatches = async (input: {
-  meeting: MeetingData;
+  meeting: FinalPassContent;
   chunkTranscript: string;
   previousChunkTail: string;
   logprobSummary: string;
@@ -479,8 +516,12 @@ const reconcileChunkBatches = async (input: {
 }): Promise<{ candidateEdits: number; rejectedTrivialEdits: number }> => {
   let candidateEdits = 0;
   let rejectedTrivialEdits = 0;
-  const batches = batchSegments(input.chunkSegments);
+  const batches = batchSegments(
+    input.chunkSegments,
+    input.meeting.settings.segmentBatchMaxChars,
+  );
   for (const batch of batches) {
+    input.meeting.signal.throwIfAborted();
     const edits = await input.dependencies.reconcileBatch({
       meeting: input.meeting,
       chunkTranscript: input.chunkTranscript,
@@ -490,7 +531,13 @@ const reconcileChunkBatches = async (input: {
       chunkCount: input.chunkCount,
       baselineSegments: batch,
     });
-    const batchResult = applyBatchEdits(batch, edits, input.acceptedEdits);
+    input.meeting.signal.throwIfAborted();
+    const batchResult = applyBatchEdits(
+      batch,
+      edits,
+      input.acceptedEdits,
+      input.meeting.settings.minConfidence,
+    );
     candidateEdits += batchResult.candidateEdits;
     rejectedTrivialEdits += batchResult.rejectedTrivialEdits;
   }
@@ -498,7 +545,7 @@ const reconcileChunkBatches = async (input: {
 };
 
 const processChunk = async (input: {
-  meeting: MeetingData;
+  meeting: FinalPassContent;
   options: { audioFilePath: string };
   dependencies: FinalPassDependencies;
   tempDir: string;
@@ -513,14 +560,18 @@ const processChunk = async (input: {
     `transcription_final_pass_chunk_${input.chunk.index + 1}.mp3`,
   );
 
+  const signal = input.meeting.signal;
   try {
+    signal.throwIfAborted();
     await input.dependencies.renderAudioChunk({
       inputPath: input.options.audioFilePath,
       outputPath: chunkFilePath,
       startSeconds: input.chunk.startSeconds,
       durationSeconds: input.chunk.endSeconds - input.chunk.startSeconds,
+      signal,
     });
 
+    signal.throwIfAborted();
     const chunkTranscription = await input.dependencies.transcribeChunk({
       meeting: input.meeting,
       chunkFilePath,
@@ -529,10 +580,11 @@ const processChunk = async (input: {
       chunkCount: input.chunkCount,
     });
 
+    signal.throwIfAborted();
     const chunkTranscript = chunkTranscription.text.trim();
     const nextTail = takeTail(
       chunkTranscript,
-      TRANSCRIPTION_FINAL_PASS_PREVIOUS_TAIL_CHARS,
+      input.meeting.settings.previousTailChars,
     );
     if (!chunkTranscript) {
       return {
@@ -565,6 +617,7 @@ const processChunk = async (input: {
       nextTail,
     };
   } catch (error) {
+    signal.throwIfAborted();
     console.error("Final transcription pass chunk failed.", {
       meetingId: input.meeting.meetingId,
       chunkIndex: input.chunk.index + 1,
@@ -582,7 +635,7 @@ const processChunk = async (input: {
 };
 
 const processAllChunks = async (input: {
-  meeting: MeetingData;
+  meeting: FinalPassContent;
   options: { audioFilePath: string };
   dependencies: FinalPassDependencies;
   tempDir: string;
@@ -653,6 +706,9 @@ const applyAcceptedEdits = (
       continue;
     }
     if (edit.action === "drop") {
+      segment.fileData.finalPassCorrespondence = resolveAudioFileTranscript(
+        segment.fileData,
+      ).correspondence;
       segment.fileData.finalPassTranscript = "";
       continue;
     }
@@ -660,11 +716,12 @@ const applyAcceptedEdits = (
     if (!replacement) {
       continue;
     }
+    segment.fileData.finalPassCorrespondence = resolveAudioFileTranscript(
+      segment.fileData,
+    ).correspondence;
     segment.fileData.finalPassTranscript = replacement;
   }
 };
-
-const LOW_INFORMATION_REPEAT_WINDOW_SECONDS = 180;
 
 const resolveEffectiveSegmentText = (segment: BaselineSegment) =>
   segment.fileData.finalPassTranscript !== undefined
@@ -673,6 +730,7 @@ const resolveEffectiveSegmentText = (segment: BaselineSegment) =>
 
 const applyRepeatedLowInformationFilter = (
   baselineSegments: BaselineSegment[],
+  repeatWindowSeconds: number,
 ): number => {
   const lastKeptBySpeaker = new Map<
     string,
@@ -687,8 +745,7 @@ const applyRepeatedLowInformationFilter = (
     }
 
     const speakerEntries = lastKeptBySpeaker.get(segment.speakerKey) ?? [];
-    const windowStart =
-      segment.offsetSeconds - LOW_INFORMATION_REPEAT_WINDOW_SECONDS;
+    const windowStart = segment.offsetSeconds - repeatWindowSeconds;
     const recentEntries = speakerEntries.filter(
       (entry) => entry.offsetSeconds >= windowStart,
     );
@@ -697,6 +754,9 @@ const applyRepeatedLowInformationFilter = (
     );
 
     if (duplicate) {
+      segment.fileData.finalPassCorrespondence = resolveAudioFileTranscript(
+        segment.fileData,
+      ).correspondence;
       segment.fileData.finalPassTranscript = "";
       repetitionFilteredSegments += 1;
       lastKeptBySpeaker.set(segment.speakerKey, recentEntries);
@@ -715,9 +775,7 @@ const defaultDependencies: FinalPassDependencies = {
   getAudioDurationSeconds,
   renderAudioChunk,
   transcribeChunk: async (input) => {
-    const { prompt, langfusePrompt } = await getTranscriptionPrompt(
-      input.meeting,
-    );
+    const { prompt, langfusePrompt } = await input.meeting.prompt();
     const promptValue = prompt.trim();
     const continuityTail = input.previousChunkTail.trim();
     const continuationPrompt = continuityTail
@@ -728,10 +786,7 @@ const defaultDependencies: FinalPassDependencies = {
       .join("\n\n")
       .trim();
 
-    const modelChoice = getModelChoice(
-      "transcription",
-      getMeetingModelOverrides(input.meeting),
-    );
+    const modelChoice = { model: input.meeting.transcriptionModel };
 
     const openAIClient = createOpenAIClient({
       traceName: "transcription-final-pass-audio",
@@ -750,8 +805,12 @@ const defaultDependencies: FinalPassDependencies = {
       parentSpanContext: input.meeting.langfuseParentSpanContext,
     });
 
-    const request: TranscriptionCreateParamsNonStreaming<"json"> = {
-      file: createReadStream(input.chunkFilePath),
+    const signal = input.meeting.signal;
+    signal.throwIfAborted();
+    const request: Omit<
+      TranscriptionCreateParamsNonStreaming<"json">,
+      "file"
+    > = {
       model: modelChoice.model,
       language: "en",
       temperature: 0,
@@ -760,7 +819,13 @@ const defaultDependencies: FinalPassDependencies = {
       ...(combinedPrompt ? { prompt: combinedPrompt } : {}),
     };
 
-    const result = await openAIClient.audio.transcriptions.create(request);
+    const result = await withTranscriptionInput(input.chunkFilePath, (file) =>
+      openAIClient.audio.transcriptions.create(
+        { ...request, file },
+        { signal },
+      ),
+    );
+    signal.throwIfAborted();
     return {
       text: result.text ?? "",
       logprobs: result.logprobs ?? [],
@@ -776,22 +841,16 @@ const defaultDependencies: FinalPassDependencies = {
       }),
     );
 
-    const { messages, langfusePrompt } = await getTranscriptionFinalPassPrompt(
-      input.meeting,
-      {
-        chunkIndex: input.chunkIndex,
-        chunkCount: input.chunkCount,
-        chunkTranscript: input.chunkTranscript,
-        previousChunkTail: input.previousChunkTail,
-        chunkLogprobSummary: input.chunkLogprobSummary,
-        baselineSegments: promptSegments,
-      },
-    );
+    const { messages, langfusePrompt } = await input.meeting.finalPassPrompt({
+      chunkIndex: input.chunkIndex,
+      chunkCount: input.chunkCount,
+      chunkTranscript: input.chunkTranscript,
+      previousChunkTail: input.previousChunkTail,
+      chunkLogprobSummary: input.chunkLogprobSummary,
+      baselineSegments: promptSegments,
+    });
 
-    const modelChoice = getModelChoice(
-      "transcriptionCoalesce",
-      getMeetingModelOverrides(input.meeting),
-    );
+    const modelChoice = input.meeting.reconcileModel;
 
     const raw = await chat(
       input.meeting,
@@ -800,6 +859,7 @@ const defaultDependencies: FinalPassDependencies = {
       },
       {
         model: modelChoice.model,
+        frozenModel: modelChoice,
         traceName: "transcription-final-pass-reconcile",
         generationName: "transcription-final-pass-reconcile",
         tags: ["feature:transcription_final_pass"],
@@ -821,18 +881,74 @@ const defaultDependencies: FinalPassDependencies = {
   },
 };
 
-export async function runTranscriptionFinalPass(
+export function runTranscriptionFinalPass(
   meeting: MeetingData,
+  options: { audioFilePath: string },
+  dependencyOverrides: Partial<FinalPassDependencies> = {},
+) {
+  const choice = getModelChoice(
+    "transcriptionCoalesce",
+    getMeetingModelOverrides(meeting),
+  );
+  const content: FinalPassContent = {
+    meetingId: meeting.meetingId,
+    creator: { id: meeting.creator.id },
+    guild: { id: meeting.guild.id },
+    voiceChannel: { id: meeting.voiceChannel.id },
+    startTime: meeting.startTime,
+    endTime: meeting.endTime,
+    participants: meeting.participants,
+    audioData: { audioFiles: meeting.audioData.audioFiles },
+    langfuseParentSpanContext: meeting.langfuseParentSpanContext,
+    enabled: meeting.runtimeConfig?.transcription.finalPassEnabled ?? true,
+    settings: liveFinalPassSettings,
+    signal: getMeetingProcessingSignal(meeting),
+    transcriptionModel: getModelChoice(
+      "transcription",
+      getMeetingModelOverrides(meeting),
+    ).model,
+    reconcileModel: {
+      ...choice,
+      params: resolveChatParamsForRole({
+        role: "transcriptionCoalesce",
+        model: choice.model,
+        config: meeting.runtimeConfig?.modelParams?.transcriptionCoalesce,
+      }),
+    },
+    prompt: () => getTranscriptionPrompt(meeting),
+    finalPassPrompt: (input) => getTranscriptionFinalPassPrompt(meeting, input),
+    effect: (run) => runMeetingProcessingEffect(meeting, run),
+  };
+  return runContentTranscriptionFinalPass(
+    content,
+    options,
+    dependencyOverrides,
+  );
+}
+export function runContentTranscriptionFinalPass(
+  content: FinalPassContent,
+  options: { audioFilePath: string },
+  dependencyOverrides: Partial<FinalPassDependencies> = {},
+) {
+  return content.effect(() =>
+    runOwnedTranscriptionFinalPass(content, options, dependencyOverrides),
+  );
+}
+async function runOwnedTranscriptionFinalPass(
+  meeting: FinalPassContent,
   options: {
     audioFilePath: string;
   },
   dependencyOverrides: Partial<FinalPassDependencies> = {},
 ): Promise<TranscriptionFinalPassResult> {
-  const enabled = meeting.runtimeConfig?.transcription.finalPassEnabled ?? true;
+  const signal = meeting.signal;
+  signal.throwIfAborted();
+  const enabled = meeting.enabled;
   if (!enabled) {
     return createResult({ enabled: false });
   }
 
+  finalPassSettingsSchema.parse(meeting.settings);
   const dependencies: FinalPassDependencies = {
     ...defaultDependencies,
     ...dependencyOverrides,
@@ -846,7 +962,7 @@ export async function runTranscriptionFinalPass(
   }
 
   try {
-    const chunkSeconds = estimateChunkSeconds();
+    const chunkSeconds = estimateChunkSeconds(meeting.settings);
     const fallbackDurationSeconds = meeting.endTime
       ? Math.max(
           1,
@@ -856,6 +972,7 @@ export async function runTranscriptionFinalPass(
     const detectedDurationSeconds =
       (await dependencies.getAudioDurationSeconds(options.audioFilePath)) ??
       fallbackDurationSeconds;
+    signal.throwIfAborted();
     const chunkWindows = buildChunkWindows(
       detectedDurationSeconds,
       chunkSeconds,
@@ -869,6 +986,7 @@ export async function runTranscriptionFinalPass(
     }
 
     const tempDir = await dependencies.ensureTempDir(meeting);
+    signal.throwIfAborted();
     const acceptedEdits = new Map<string, FinalPassEdit>();
     const counters = await processAllChunks({
       meeting,
@@ -880,9 +998,12 @@ export async function runTranscriptionFinalPass(
       acceptedEdits,
     });
 
+    signal.throwIfAborted();
     if (acceptedEdits.size === 0) {
-      const repetitionFilteredSegments =
-        applyRepeatedLowInformationFilter(baselineSegments);
+      const repetitionFilteredSegments = applyRepeatedLowInformationFilter(
+        baselineSegments,
+        meeting.settings.repeatWindowSeconds,
+      );
       return createResult({
         enabled: true,
         applied: repetitionFilteredSegments > 0,
@@ -902,8 +1023,8 @@ export async function runTranscriptionFinalPass(
     );
 
     if (
-      editSummary.dropRatio > TRANSCRIPTION_FINAL_PASS_MAX_DROP_RATIO ||
-      editSummary.changeRatio > TRANSCRIPTION_FINAL_PASS_MAX_CHANGE_RATIO
+      editSummary.dropRatio > meeting.settings.maxDropRatio ||
+      editSummary.changeRatio > meeting.settings.maxChangeRatio
     ) {
       // When the reconcile model looks suspicious, keep the baseline transcript
       // untouched and skip the deterministic repetition filter as well.
@@ -923,8 +1044,10 @@ export async function runTranscriptionFinalPass(
     }
 
     applyAcceptedEdits(baselineSegments, acceptedEdits);
-    const repetitionFilteredSegments =
-      applyRepeatedLowInformationFilter(baselineSegments);
+    const repetitionFilteredSegments = applyRepeatedLowInformationFilter(
+      baselineSegments,
+      meeting.settings.repeatWindowSeconds,
+    );
 
     return createResult({
       enabled: true,
@@ -940,6 +1063,7 @@ export async function runTranscriptionFinalPass(
       repetitionFilteredSegments,
     });
   } catch (error) {
+    signal.throwIfAborted();
     console.error("Final transcription pass failed.", {
       meetingId: meeting.meetingId,
       error,

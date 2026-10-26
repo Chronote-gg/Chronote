@@ -1,4 +1,6 @@
 /** @jest-environment node */
+import * as renewalCoverage from "../../src/services/renewalRecoveryService";
+import { sourceSubscription, fundedInvoice } from "../fixtures/renewalStripe";
 import { getMockStore } from "../../src/repositories/mockStore";
 
 import { createCheckoutSession } from "../../src/services/billingService";
@@ -19,6 +21,69 @@ function sessionFields() {
       guild_id: guildId,
       purchase_attempt_id: attempt?.attemptId ?? "",
     },
+  };
+}
+function paidProvider(id: string) {
+  const metadata = {
+    guild_id: guildId,
+    discord_id: "payer",
+    purchase_attempt_id: "",
+  };
+  const native = {
+    ...sourceSubscription,
+    id,
+    latest_invoice: "in_first",
+    customer: "cus_first",
+    metadata,
+    cancel_at: null,
+    cancel_at_period_end: false,
+    items: {
+      ...sourceSubscription.items,
+      data: sourceSubscription.items.data.map((item) => ({
+        ...item,
+        price: { ...item.price, id: "price_basic" },
+        current_period_start: 100,
+        current_period_end: 200,
+      })),
+    },
+  };
+  const invoice = {
+    ...fundedInvoice,
+    id: "in_first",
+    customer: "cus_first",
+    parent: {
+      type: "subscription_details",
+      quote_details: null,
+      subscription_details: { subscription: id, metadata },
+    },
+    lines: {
+      ...fundedInvoice.lines,
+      data: fundedInvoice.lines.data.map((line) => ({
+        ...line,
+        period: { start: 100, end: 200 },
+        pricing: {
+          ...line.pricing,
+          price_details: { price: "price_basic", product: "prod_renewal" },
+        },
+        parent: {
+          ...line.parent,
+          subscription_item_details: {
+            ...line.parent?.subscription_item_details,
+            subscription: id,
+          },
+        },
+      })),
+    },
+  };
+  return {
+    subscriptions: {
+      retrieve: jest.fn(async () => {
+        metadata.purchase_attempt_id =
+          getMockStore().purchaseAttempts.get(guildId)?.attemptId ?? "";
+        return native;
+      }),
+    },
+    invoices: { retrieve: jest.fn(async () => invoice) },
   };
 }
 function fixture() {
@@ -198,26 +263,7 @@ test("complete session with delayed webhook reconciles before directing to billi
     metadata: { guild_id: guildId, purchase_attempt_id: attempt.attemptId },
     livemode: false,
   } as never);
-  Object.assign(stripe, {
-    subscriptions: {
-      retrieve: jest.fn(async () => ({
-        id: "sub_new",
-        status: "active",
-        customer: "cus_first",
-        metadata: {
-          guild_id: guildId,
-          discord_id: "payer",
-          purchase_attempt_id: attempt.attemptId,
-        },
-        livemode: false,
-        created: 100,
-        start_date: 100,
-        items: {
-          data: [{ price: { id: "price_basic" }, current_period_end: 200 }],
-        },
-      })),
-    },
-  });
+  Object.assign(stripe, paidProvider("sub_new"));
   await expect(createCheckoutSession(request)).resolves.toBe(
     `/portal/server/${guildId}/billing`,
   );
@@ -318,29 +364,7 @@ test("webhook acceptance before Checkout response returns billing instead of a s
   const { getMockStore } = await import("../../src/repositories/mockStore");
   const { reconcileSubscription } =
     await import("../../src/services/subscriptionReconciliation");
-  Object.assign(stripe, {
-    subscriptions: {
-      retrieve: jest.fn(async () => {
-        const attempt = getMockStore().purchaseAttempts.get(guildId)!;
-        return {
-          id: "sub_fast",
-          status: "active",
-          customer: "cus_first",
-          metadata: {
-            guild_id: guildId,
-            discord_id: "payer",
-            purchase_attempt_id: attempt.attemptId,
-          },
-          livemode: false,
-          created: 100,
-          start_date: 100,
-          items: {
-            data: [{ price: { id: "price_basic" }, current_period_end: 200 }],
-          },
-        };
-      }),
-    },
-  });
+  Object.assign(stripe, paidProvider("sub_fast"));
   stripe.checkout.sessions.create.mockImplementationOnce(async () => {
     await reconcileSubscription(client, guildId, "sub_fast");
     return {
@@ -360,6 +384,7 @@ test("webhook acceptance before Checkout response returns billing instead of a s
     }),
   ).resolves.toBe(`/portal/server/${guildId}/billing`);
   expect(stripe.checkout.sessions.create).toHaveBeenCalledTimes(1);
+  expect(getMockStore().renewalRecoveryRecords.size).toBe(1);
   expect(getMockStore().purchaseAttempts.get(guildId)?.state).toBe("completed");
 });
 
@@ -452,7 +477,7 @@ test("a completed attempt permits repurchase only after the linked provider subs
     );
     const next = getMockStore().purchaseAttempts.get(guildId)!;
     expect(next.attemptId).not.toBe(old.attemptId);
-    await acceptPurchaseSubscription(guildId, subscription as never);
+    await acceptPurchaseSubscription(guildId, subscription as never, client);
     expect(getMockStore().purchaseAttempts.get(guildId)?.attemptId).toBe(
       next.attemptId,
     );
@@ -517,7 +542,10 @@ test("a returned Checkout from another guild cannot be exposed as this purchase"
       guildId,
       priceId: "price_basic",
     }),
-  ).rejects.toMatchObject({ code: "BAD_REQUEST" });
+  ).rejects.toMatchObject({
+    code: "BAD_REQUEST",
+    reason: "purchase_needs_review",
+  });
 });
 
 test.each([false, true])(
@@ -839,4 +867,72 @@ test("recording-limit context survives checkout and remains frozen across retrie
       }),
     }),
   );
+});
+
+test("completed purchase acknowledgment waits for renewal coverage and retries registration", async () => {
+  const { stripe, client } = fixture();
+  const request = {
+    stripe: client,
+    user: { id: "payer" },
+    guildId,
+    priceId: "price_basic",
+  };
+  await createCheckoutSession(request);
+  Object.assign(stripe, paidProvider("sub_new"));
+  stripe.checkout.sessions.retrieve.mockResolvedValue({
+    ...sessionFields(),
+    id: "cs_first",
+    status: "complete",
+    url: null,
+    customer: "cus_first",
+    subscription: "sub_new",
+    metadata: sessionFields().metadata,
+    livemode: false,
+  } as never);
+  const tracking = jest
+    .spyOn(renewalCoverage, "trackPaidRenewalPeriod")
+    .mockRejectedValueOnce(new Error("Coverage unavailable"));
+  try {
+    await expect(createCheckoutSession(request)).rejects.toThrow(
+      "Coverage unavailable",
+    );
+    expect(getMockStore().purchaseAttempts.get(guildId)?.state).not.toBe(
+      "completed",
+    );
+  } finally {
+    tracking.mockRestore();
+  }
+  expect(await createCheckoutSession(request)).toBe(
+    `/portal/server/${guildId}/billing`,
+  );
+  expect(getMockStore().renewalRecoveryRecords.size).toBe(1);
+  expect(getMockStore().purchaseAttempts.get(guildId)?.state).toBe("completed");
+});
+
+test("only the original payer can resume a paid purchase awaiting coverage", async () => {
+  const { stripe, client } = fixture();
+  const request = {
+    stripe: client,
+    user: { id: "payer" },
+    guildId,
+    priceId: "price_basic",
+  };
+  await createCheckoutSession(request);
+  Object.assign(stripe, paidProvider("sub_new"));
+  getMockStore().subscriptions.set(guildId, {
+    guildId,
+    status: "active",
+    tier: "basic",
+    subscriptionType: "stripe",
+    startDate: "2026-10-12",
+    stripeSubscriptionId: "sub_new",
+    stripeCustomerId: "cus_first",
+  });
+  await expect(
+    createCheckoutSession({ ...request, user: { id: "another-payer" } }),
+  ).rejects.toMatchObject({ code: "FORBIDDEN" });
+  expect(getMockStore().purchaseAttempts.get(guildId)?.state).not.toBe(
+    "completed",
+  );
+  expect(getMockStore().renewalRecoveryRecords.size).toBe(0);
 });

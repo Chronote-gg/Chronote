@@ -6,17 +6,47 @@ export function isAudioFileSpeechRejected(file: AudioFileData): boolean {
   return file.finalSpeechRejection !== undefined;
 }
 
-export function resolveAudioFileText(file: AudioFileData): string {
-  if (isAudioFileSpeechRejected(file)) return "";
-  const text =
+export function resolveAudioFileTranscript(file: AudioFileData) {
+  if (isAudioFileSpeechRejected(file))
+    return { text: "", correspondence: undefined };
+  const selected =
     file.finalPassTranscript !== undefined
-      ? file.finalPassTranscript
-      : file.coalescedTranscript ||
-        file.slowTranscript ||
-        file.transcript ||
-        file.fastTranscripts?.at(-1)?.text ||
-        "";
-  return isTrivialTranscriptionText(text) ? "" : text.trim();
+      ? {
+          text: file.finalPassTranscript,
+          correspondence: file.finalPassCorrespondence,
+        }
+      : file.coalescedTranscript
+        ? {
+            text: file.coalescedTranscript,
+            correspondence: file.coalescedCorrespondence,
+          }
+        : file.slowTranscript
+          ? {
+              text: file.slowTranscript,
+              correspondence: file.slowCorrespondence,
+            }
+          : file.transcript
+            ? {
+                text: file.transcript,
+                correspondence: file.transcriptCorrespondence,
+              }
+            : (file.fastTranscripts?.at(-1) ?? {
+                text: "",
+                correspondence: undefined,
+              });
+  const text = isTrivialTranscriptionText(selected.text)
+    ? ""
+    : selected.text.trim();
+  return {
+    text,
+    correspondence:
+      !text && !file.processing
+        ? (selected.correspondence ?? file.terminalOmission)
+        : selected.correspondence,
+  };
+}
+export function resolveAudioFileText(file: AudioFileData): string {
+  return resolveAudioFileTranscript(file).text;
 }
 
 export function getAudioTranscriptionFacts(

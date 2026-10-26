@@ -35,7 +35,6 @@ describe("upgrade pages", () => {
   });
 
   test.each([
-    { label: "paid Basic", tier: "basic", billingSource: "stripe" },
     { label: "complimentary Pro", tier: "pro", billingSource: "manual_comp" },
     { label: "Free with no Basic price", tier: "free", billingSource: "free" },
   ] as const)(
@@ -264,7 +263,7 @@ describe("upgrade pages", () => {
     setRouteSearch({ promo: "SAVE20", canceled: true });
     renderWithMantine(<Upgrade />);
 
-    expect(screen.getByText("Record longer meetings.")).toBeInTheDocument();
+    expect(screen.getByText("Upgrade your plan")).toBeInTheDocument();
     expect(screen.queryByTestId("navigate")).toBeNull();
     const login = screen.getByRole("link", { name: "Connect Discord" });
     expect(login.getAttribute("href")).toContain("promo%3DSAVE20");

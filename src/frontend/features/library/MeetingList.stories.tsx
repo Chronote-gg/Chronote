@@ -3,6 +3,10 @@ import { Button, Group } from "@mantine/core";
 import { MeetingList } from "./MeetingList";
 import type { MeetingListItem } from "../../pages/library/types";
 import { MEETING_STATUS } from "../../../types/meetingLifecycle";
+import {
+  deriveMeetingSummary,
+  formatMeetingDurationLabel,
+} from "../../utils/meetingLibrary";
 
 const items: MeetingListItem[] = [
   {
@@ -69,6 +73,7 @@ const archivedItems: MeetingListItem[] = [
 
 const meta: Meta<typeof MeetingList> = {
   title: "Library/MeetingList",
+  tags: ["recording-outcomes"],
   component: MeetingList,
   args: {
     items,
@@ -113,6 +118,25 @@ export const Archived: Story = {
     items: archivedItems,
   },
 };
+export const Interrupted: Story = {
+  args: {
+    items: [
+      {
+        ...items[0],
+        status: "interrupted",
+        durationLabel: "Unknown duration",
+        capture: {
+          kind: "interrupted",
+          startedAt: "2026-01-01T00:00:00Z",
+          detectedAt: "2026-01-01T01:00:00Z",
+          endedAt: null,
+        },
+        recoveryNotice: "Saved recording recovery finished.",
+      },
+      { ...items[1], status: "starting" },
+    ],
+  },
+};
 
 export const Paginated: Story = {
   args: {
@@ -124,4 +148,48 @@ export const Paginated: Story = {
       </Group>
     ),
   },
+};
+
+const recoveryListItem = (
+  outcome: "disabled" | "no_usable_speech",
+): MeetingListItem => {
+  const row = {
+    ...items[0],
+    title:
+      outcome === "disabled"
+        ? "Generated notes-disabled recovery"
+        : "Generated no-speech recovery",
+    status: "interrupted" as const,
+    duration: 0,
+    notes: "",
+    summarySentence: undefined,
+    capture: {
+      kind: "interrupted" as const,
+      startedAt: "2026-01-01T00:00:00Z",
+      detectedAt: "2026-01-01T00:30:00Z",
+      endedAt: null,
+    },
+    recoveryNotice:
+      outcome === "disabled"
+        ? "Recovery finished with the original transcription and notes settings."
+        : "No usable saved speech was found.",
+    recovery: {
+      disposition: "done" as const,
+      stage: "notes" as const,
+      outcome,
+    },
+  };
+  return {
+    ...row,
+    durationLabel: formatMeetingDurationLabel(row),
+    summary: deriveMeetingSummary(row),
+  };
+};
+export const MyMeetingsNotesDisabled: Story = {
+  tags: ["r5-fix1", "r5-fix1-list"],
+  args: { items: [recoveryListItem("disabled")] },
+};
+export const MyMeetingsNoUsableSpeech: Story = {
+  tags: ["r5-fix1", "r5-fix1-list"],
+  args: { items: [recoveryListItem("no_usable_speech")] },
 };

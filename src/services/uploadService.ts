@@ -11,11 +11,25 @@ function sanitizeTimestamp(date: Date): string {
   return date.toISOString().replace(/[:]/g, "-");
 }
 
+export function getRecordingArtifactFolder(
+  input: {
+    guildId: string;
+    channelId: string;
+    meetingId: string;
+    reservedAt: string;
+  },
+  configuredPrefix = config.storage.transcriptPrefix,
+): string {
+  const prefix = configuredPrefix ? configuredPrefix.replace(/\/?$/, "/") : "";
+  return `${prefix}${input.guildId}/${input.channelId}_${input.meetingId}_${sanitizeTimestamp(new Date(input.reservedAt))}/`;
+}
 function getMeetingFolder(meeting: MeetingData): string {
-  const prefix = config.storage.transcriptPrefix
-    ? config.storage.transcriptPrefix.replace(/\/?$/, "/")
-    : "";
-  return `${prefix}${meeting.guildId}/${meeting.voiceChannel.id}_${meeting.meetingId}_${sanitizeTimestamp(meeting.startTime)}/`;
+  return getRecordingArtifactFolder({
+    guildId: meeting.guildId,
+    channelId: meeting.voiceChannel.id,
+    meetingId: meeting.meetingId,
+    reservedAt: meeting.startTime.toISOString(),
+  });
 }
 
 async function ensureParticipant(

@@ -1,3 +1,7 @@
+import { prepareNormalPurchaseWriterWitness } from "./normalPurchaseWriterWitness";
+import type { SettlementInvoice } from "./offerUsageSettlement";
+import { prepareInitialOfferSettlement } from "./offerUsageSettlement";
+import { prepareExpiredOfferRelease } from "./offerUsageService";
 import { assertSessionAssociation } from "./purchaseSession";
 import { randomUUID } from "node:crypto";
 import {
@@ -63,6 +67,8 @@ export async function recordDuplicatePurchase(
 export async function acceptPurchaseSubscription(
   guildId: string,
   subscription: StripeSubscription,
+  stripe: StripeClient,
+  settlement?: SettlementInvoice,
 ) {
   const repo = getPurchaseRepository();
   for (let i = 0; i < 3; i++) {
@@ -83,17 +89,40 @@ export async function acceptPurchaseSubscription(
       current.customerId !== customerId
     )
       throw new Error("Purchase subscription association mismatch");
+    if (retiredPurchase(current, subscription)) return;
     const pointer = await getSubscriptionRepository().get(guildId);
     if (pointer?.stripeSubscriptionId !== subscription.id)
       throw new Error("Purchase acceptance pointer changed; retry");
+    const prepared = await prepareInitialOfferSettlement(
+      stripe,
+      current,
+      subscription,
+      settlement,
+    );
+    const writerWitness =
+      prepared.kind === "voided"
+        ? undefined
+        : await prepareNormalPurchaseWriterWitness(
+            stripe,
+            current,
+            subscription,
+            settlement,
+          );
     if (
       await repo.compareAndWrite(
         advanceAttempt(current, {
-          state: "completed",
+          ...(writerWitness ? { writerWitness } : {}),
+          state: preparedPurchaseState(prepared),
           subscriptionId: subscription.id,
+          initialInvoiceId: preparedInvoiceId(
+            prepared,
+            current.initialInvoiceId,
+          ),
         }),
         current,
         pointer,
+        undefined,
+        preparedUsage(prepared),
       )
     )
       return;
@@ -150,6 +179,8 @@ export async function expirePurchaseAttempt(
       advanceAttempt(attempt, { state: "expired", sessionId: session.id }),
       attempt,
       pointer,
+      undefined,
+      await prepareExpiredOfferRelease(attempt, session),
     ))
   )
     throw new Error("Purchase expiration changed concurrently; retry");
@@ -164,4 +195,41 @@ export async function isPurchaseAnalyticsOptedOut(
   if (!attemptId) return false;
   const attempt = await getPurchaseRepository().get(guildId);
   return attempt?.attemptId === attemptId && Boolean(attempt?.analyticsOptOut);
+}
+
+function preparedInvoiceId(
+  prepared: Awaited<ReturnType<typeof prepareInitialOfferSettlement>>,
+  previous: PurchaseAttempt["initialInvoiceId"],
+) {
+  return prepared.kind === "pending" ||
+    prepared.kind === "settled" ||
+    prepared.kind === "voided"
+    ? prepared.invoiceId
+    : previous;
+}
+
+function retiredPurchase(
+  current: PurchaseAttempt,
+  subscription: StripeSubscription,
+): boolean {
+  if (current.state !== "expired") return false;
+  if (
+    current.subscriptionId === subscription.id &&
+    ["canceled", "incomplete_expired"].includes(subscription.status)
+  )
+    return true;
+  throw new Error("Retired purchase subscription association mismatch");
+}
+
+function preparedPurchaseState(
+  prepared: Awaited<ReturnType<typeof prepareInitialOfferSettlement>>,
+): PurchaseAttempt["state"] {
+  return prepared.kind === "voided" ? "expired" : "completed";
+}
+function preparedUsage(
+  prepared: Awaited<ReturnType<typeof prepareInitialOfferSettlement>>,
+) {
+  return prepared.kind === "settled" || prepared.kind === "voided"
+    ? prepared.usage
+    : undefined;
 }

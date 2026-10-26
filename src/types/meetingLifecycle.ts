@@ -26,10 +26,13 @@ export type MeetingEndReason =
   (typeof MEETING_END_REASONS)[keyof typeof MEETING_END_REASONS];
 
 export const MEETING_STATUS = {
+  STARTING: "starting",
   IN_PROGRESS: "in_progress",
   PROCESSING: "processing",
   COMPLETE: "complete",
   CANCELLED: "cancelled",
+  INTERRUPTED: "interrupted",
+  FAILED: "failed",
 } as const;
 
 export type MeetingStatus =
@@ -50,3 +53,7 @@ export type AutoRecordRule = {
   mode: "channel" | "all";
   channelId: string;
 };
+
+/** Missing metadata on old rows remains unknown, never inferred from lifecycle status. */
+export type { RecordingCaptureState } from "./recordingCheckpoint";
+export type { RecoveryDisposition as RecordingRecoveryState } from "./recordingCheckpoint";

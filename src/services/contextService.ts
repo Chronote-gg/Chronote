@@ -26,10 +26,18 @@ export interface MeetingContextData {
  * @param includeMemory Whether to include recent meeting history
  * @returns Complete context data for the meeting
  */
-export async function buildMeetingContext(
+export async function collectMeetingContext(
   meeting: MeetingData,
   includeMemory: boolean = false,
-): Promise<MeetingContextData> {
+  options: {
+    signal?: AbortSignal;
+    strict?: boolean;
+    memoryDepth?: number;
+  } = {},
+): Promise<{
+  availability: "available" | "unavailable";
+  data: MeetingContextData;
+}> {
   const contextData: MeetingContextData = {};
 
   // Include meeting-specific context if provided
@@ -38,16 +46,22 @@ export async function buildMeetingContext(
   }
 
   if (meeting.dictionaryEntries && meeting.dictionaryEntries.length > 0) {
-    contextData.dictionaryEntries = meeting.dictionaryEntries;
+    contextData.dictionaryEntries = meeting.dictionaryEntries.map((entry) => ({
+      ...entry,
+    }));
   }
   if (meeting.runtimeConfig?.dictionary) {
-    contextData.dictionaryBudgets = meeting.runtimeConfig.dictionary;
+    contextData.dictionaryBudgets = { ...meeting.runtimeConfig.dictionary };
   }
 
   try {
-    const serverSnapshot = await resolveConfigSnapshot({
-      guildId: meeting.guildId,
-    });
+    options.signal?.throwIfAborted();
+    const serverSnapshot = await resolveConfigSnapshot(
+      {
+        guildId: meeting.guildId,
+      },
+      options,
+    );
     const serverContextValue =
       serverSnapshot.values[CONFIG_KEYS.context.instructions]?.value;
     if (typeof serverContextValue === "string" && serverContextValue.trim()) {
@@ -58,6 +72,7 @@ export async function buildMeetingContext(
     const channelContext = await fetchChannelContext(
       meeting.guildId,
       meeting.voiceChannel.id,
+      options.signal,
     );
     if (channelContext?.context) {
       contextData.channelContext = channelContext.context;
@@ -65,11 +80,12 @@ export async function buildMeetingContext(
 
     // Fetch recent meetings if memory is enabled
     if (includeMemory) {
-      const memoryDepth = config.context.memoryDepth;
+      const memoryDepth = options.memoryDepth ?? config.context.memoryDepth;
       const recentMeetings = await listRecentMeetingsForChannelService(
         meeting.guildId,
         meeting.voiceChannel.id,
         memoryDepth,
+        options.signal,
       );
 
       if (recentMeetings.length > 0) {
@@ -77,11 +93,19 @@ export async function buildMeetingContext(
       }
     }
   } catch (error) {
-    console.error("Error building meeting context:", error);
-    // Continue with partial context if database fetch fails
+    if (!options.strict)
+      console.error("Error building meeting context:", error);
+    return { availability: "unavailable", data: contextData };
   }
 
-  return contextData;
+  return { availability: "available", data: contextData };
+}
+
+export async function buildMeetingContext(
+  meeting: MeetingData,
+  includeMemory = false,
+): Promise<MeetingContextData> {
+  return (await collectMeetingContext(meeting, includeMemory)).data;
 }
 
 /**
@@ -93,9 +117,9 @@ export async function buildMeetingContext(
 export function formatContextForPrompt(
   context: MeetingContextData,
   promptType: "transcription" | "notes" | "image",
+  maxContextLength = config.context.maxContextLength,
 ): string {
   let formattedContext = "";
-  const maxContextLength = config.context.maxContextLength;
 
   // Add server context
   if (context.serverContext) {

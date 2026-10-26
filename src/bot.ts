@@ -1,4 +1,15 @@
+import { startMeetingRecoveryWorker } from "./services/meetingRecoveryWorkerService";
+import { InitiatingStopInterruption } from "./services/meetingStopInterruption";
 import { waitForGuildInstaller } from "./services/guildInstallerOnboardingService";
+import { randomUUID } from "node:crypto";
+import type { WorkAdmissionAuthority } from "./types/deploymentControl";
+import {
+  beginRuntimeWorkClaim,
+  type RuntimeWorkClaim,
+} from "./services/runtimeWorkAdmissionService";
+import { getActiveMeetingLease, getDeploymentControlRepository } from "./db";
+import { getOwnedSessionReservations } from "./services/activeMeetingLeaseService";
+import { buildOwnedVoiceStrategy } from "./services/guildVoiceOperationService";
 import {
   ButtonInteraction,
   ChatInputCommandInteraction,
@@ -18,12 +29,8 @@ import {
 } from "discord.js";
 import { Routes } from "discord-api-types/v10";
 import { CONFIG_KEYS } from "./config/keys";
-import {
-  endTtsOnlySession,
-  getAllMeetings,
-  getMeeting,
-  initializeMeeting,
-} from "./meetings";
+import { endTtsOnlySession, getMeeting, initializeMeeting } from "./meetings";
+import { resolveMeetingNotesChannel } from "./services/meetingNotesDestinationService";
 import {
   handleRequestStartMeeting,
   handleAutoStartMeeting,
@@ -46,6 +53,7 @@ import { parseTags } from "./utils/tags";
 import {
   handleEndMeetingButton,
   handleEndMeetingOther,
+  persistAutoRecordSuppression,
 } from "./commands/endMeeting";
 import { subscribeToUserVoice, unsubscribeToVoiceUponLeaving } from "./audio";
 import { generateAndSendImage } from "./commands/generateImage";
@@ -114,6 +122,7 @@ import {
   invalidateDiscordGuildCache,
   invalidateDiscordUserCache,
 } from "./services/discordCacheService";
+import { buildFirstMeetingInstallerMessage } from "./utils/firstMeetingGuide";
 import {
   handleOnboardButtonInteraction,
   handleOnboardChannelSelect,
@@ -122,13 +131,16 @@ import {
   isOnboardButton,
   isOnboardChannelSelect,
   isOnboardModal,
-  onboardCommand,
 } from "./commands/onboard";
 import { removeGuildInstaller } from "./services/guildInstallerService";
-import { captureEvent, shutdownAnalytics } from "./services/analyticsService";
-import { shutdownSpeechDetector } from "./services/speechDetectionService";
+import { captureEvent } from "./services/analyticsService";
 import { setDiscordClient } from "./services/discordClientAccessor";
 import { startMeetingControlCommandWorker } from "./services/meetingControlWorkerService";
+import {
+  isRuntimeWarm,
+  getRuntimeAdmissionContext,
+  whenRuntimeServing,
+} from "./services/runtimeLifecycleService";
 import { autoRecordJoinSuppressionService } from "./services/autoRecordJoinSuppressionService";
 import {
   MEETING_END_REASONS,
@@ -166,7 +178,8 @@ const TTS_PREFIX_MODE_CHOICES = USER_CHAT_TTS_SPEAKER_PREFIX_MODE_OPTIONS.map(
   }),
 );
 
-const client = new Client({
+const client: Client = new Client({
+  ws: { buildStrategy: (manager) => buildOwnedVoiceStrategy(client, manager) },
   intents: [
     GatewayIntentBits.Guilds,
     GatewayIntentBits.GuildMessages,
@@ -176,13 +189,6 @@ const client = new Client({
   ],
   partials: [Partials.Channel, Partials.User],
 });
-
-const replyOnboardingDisabled = async (interaction: RepliableInteraction) => {
-  await interaction.reply({
-    content: "Onboarding is currently disabled for this bot.",
-    ephemeral: true,
-  });
-};
 
 const invalidateGuildCache = async (guildId: string, label: string) => {
   try {
@@ -243,17 +249,19 @@ const commandHandlers: Record<
 
 const handleCommandInteraction = async (
   interaction: ChatInputCommandInteraction,
+  signal?: AbortSignal,
 ) => {
   const { commandName } = interaction;
+  signal?.throwIfAborted();
+  if (commandName === "leave") {
+    await handleLeaveCommand(client, interaction, signal);
+    return;
+  }
   if (commandName === "startmeeting") {
     await handleRequestStartMeeting(interaction);
     return;
   }
   if (commandName === "onboard") {
-    if (!config.server.onboardingEnabled) {
-      await replyOnboardingDisabled(interaction);
-      return;
-    }
     await handleOnboardCommand(interaction);
     return;
   }
@@ -265,8 +273,10 @@ const handleCommandInteraction = async (
 
 const modalHandlers: Array<{
   matches: (customId: string) => boolean;
-  handle: (interaction: ModalSubmitInteraction) => Promise<void>;
-  onboarding?: boolean;
+  handle: (
+    interaction: ModalSubmitInteraction,
+    signal?: AbortSignal,
+  ) => Promise<void>;
 }> = [
   {
     matches: isAskFeedbackModal,
@@ -299,26 +309,27 @@ const modalHandlers: Array<{
   {
     matches: isOnboardModal,
     handle: handleOnboardModalSubmit,
-    onboarding: true,
   },
 ];
 
-const handleModalInteraction = async (interaction: ModalSubmitInteraction) => {
+const handleModalInteraction = async (
+  interaction: ModalSubmitInteraction,
+  signal?: AbortSignal,
+) => {
+  signal?.throwIfAborted();
   for (const entry of modalHandlers) {
     if (!entry.matches(interaction.customId)) continue;
-    if (entry.onboarding && !config.server.onboardingEnabled) {
-      await replyOnboardingDisabled(interaction);
-      return;
-    }
-    await entry.handle(interaction);
+    await entry.handle(interaction, signal);
     return;
   }
 };
 
 const buttonHandlers: Array<{
   matches: (customId: string) => boolean;
-  handle: (interaction: ButtonInteraction) => Promise<void>;
-  onboarding?: boolean;
+  handle: (
+    interaction: ButtonInteraction,
+    signal?: AbortSignal,
+  ) => Promise<void>;
 }> = [
   {
     matches: isAskFeedbackUp,
@@ -363,27 +374,27 @@ const buttonHandlers: Array<{
   {
     matches: isOnboardButton,
     handle: handleOnboardButtonInteraction,
-    onboarding: true,
   },
 ];
 
-const handleButtonInteraction = async (interaction: ButtonInteraction) => {
+const handleButtonInteraction = async (
+  interaction: ButtonInteraction,
+  signal?: AbortSignal,
+  work?: RuntimeWorkClaim,
+) => {
+  signal?.throwIfAborted();
   for (const entry of buttonHandlers) {
     if (!entry.matches(interaction.customId)) continue;
-    if (entry.onboarding && !config.server.onboardingEnabled) {
-      await replyOnboardingDisabled(interaction);
-      return;
-    }
-    await entry.handle(interaction);
+    await entry.handle(interaction, signal);
     return;
   }
 
   if (interaction.customId === "end_meeting") {
-    await handleEndMeetingButton(client, interaction);
+    await handleEndMeetingButton(client, interaction, work);
     return;
   }
   if (interaction.customId === "generate_image") {
-    await generateAndSendImage(interaction);
+    await generateAndSendImage(interaction, signal);
   }
 };
 
@@ -391,16 +402,17 @@ const handleChannelSelectInteraction = async (
   interaction: ChannelSelectMenuInteraction,
 ) => {
   if (!isOnboardChannelSelect(interaction.customId)) return;
-  if (!config.server.onboardingEnabled) {
-    await replyOnboardingDisabled(interaction);
-    return;
-  }
   await handleOnboardChannelSelect(interaction);
 };
 
-const handleInteractionCreate = async (interaction: RepliableInteraction) => {
+const handleInteractionCreate = async (
+  interaction: RepliableInteraction,
+  signal?: AbortSignal,
+  work?: RuntimeWorkClaim,
+) => {
+  signal?.throwIfAborted();
   if (interaction.isChatInputCommand()) {
-    await handleCommandInteraction(interaction);
+    await handleCommandInteraction(interaction, signal);
     return;
   }
   if (interaction.isUserContextMenuCommand()) {
@@ -409,7 +421,7 @@ const handleInteractionCreate = async (interaction: RepliableInteraction) => {
       return;
     }
     if (interaction.commandName === DISMISS_AUTORECORD_COMMAND_NAME) {
-      await handleDismissAutoRecord(client, interaction);
+      await handleDismissAutoRecord(client, interaction, signal);
       return;
     }
     await interaction.reply({
@@ -419,11 +431,11 @@ const handleInteractionCreate = async (interaction: RepliableInteraction) => {
     return;
   }
   if (interaction.isModalSubmit()) {
-    await handleModalInteraction(interaction);
+    await handleModalInteraction(interaction, signal);
     return;
   }
   if (interaction.isButton()) {
-    await handleButtonInteraction(interaction);
+    await handleButtonInteraction(interaction, signal, work);
     return;
   }
   if (interaction.isChannelSelectMenu()) {
@@ -452,22 +464,21 @@ const resolveInteractionKind = (interaction: RepliableInteraction): string => {
 
 const tryClaimInteraction = async (
   interaction: RepliableInteraction,
+  authority: WorkAdmissionAuthority,
 ): Promise<boolean> => {
   try {
     return await claimInteractionReceipt({
       interactionId: interaction.id,
       interactionKind: resolveInteractionKind(interaction),
       guildId: interaction.guildId ?? undefined,
+      authority,
     });
   } catch (error) {
-    console.error(
-      "Failed to claim interaction receipt, continuing without idempotency",
-      {
-        interactionId: interaction.id,
-        error,
-      },
-    );
-    return true;
+    console.error("Failed to claim interaction receipt", {
+      interactionId: interaction.id,
+      error,
+    });
+    throw error;
   }
 };
 
@@ -481,69 +492,92 @@ export async function setupBot() {
   client.once(Events.ClientReady, () => {
     console.log(`Logged in as ${client.user?.tag}!`);
     setDiscordClient(client);
-    startMeetingControlCommandWorker(client);
+    whenRuntimeServing(() => {
+      startMeetingControlCommandWorker(client);
+      startMeetingRecoveryWorker();
+      void runServingBotWork(async () => {
+        await setupApplicationCommands();
+        await reevaluateOccupiedVoiceChannels();
+      }).catch((error) =>
+        console.error("Serving bot initialization failed", error),
+      );
+    });
 
-    client.on("voiceStateUpdate", handleVoiceStateUpdate);
+    client.on("voiceStateUpdate", (oldState, newState) => {
+      void handleVoiceStateUpdate(oldState, newState).catch(() => {
+        const meeting = getMeeting(newState.guild.id);
+        console.warn("Voice state operation failed:", {
+          stage: "voice-state-update",
+          ...(meeting ? { meetingId: meeting.meetingId } : {}),
+        });
+      });
+    });
   });
 
   client.on("guildCreate", async (guild) => {
-    await invalidateBotGuildCache("guildCreate");
-    await invalidateGuildCache(guild.id, "guildCreate");
+    if (isRuntimeWarm()) return;
+    await runServingBotWork(async (assertServing) => {
+      await invalidateBotGuildCache("guildCreate");
+      await invalidateGuildCache(guild.id, "guildCreate");
 
-    // Narrowed to recent joins, which drops a create re-emitted for a guild
-    // joined longer ago. See isFreshGuildJoin for the limits of that.
-    if (isFreshGuildJoin(guild)) {
-      captureEvent("server_installed", {
-        guildId: guild.id,
-        properties: { guild_count: client.guilds.cache.size },
-      });
-    }
-
-    if (!config.server.onboardingEnabled) {
-      return;
-    }
-    try {
-      const installer = await waitForGuildInstaller(
-        guild.id,
-        guild.joinedTimestamp,
-      );
-      const dmTarget =
-        installer?.installerId &&
-        (await client.users.fetch(installer.installerId).catch(() => null));
-      const recipient = dmTarget ?? (await guild.fetchOwner());
-      if (recipient) {
-        const targetUser = "user" in recipient ? recipient.user : recipient;
-        const setupUrl = `${config.frontend.siteUrl.replace(/\/$/, "")}/join`;
-        await targetUser.send(
-          [
-            "Thanks for adding Chronote.",
-            "",
-            "To record your first meeting, join a voice channel and run `/startmeeting`. The notes post back to the channel when the meeting ends.",
-            "",
-            `Setup walkthrough: run \`/onboard\` (needs Manage Guild), or see ${setupUrl}`,
-          ].join("\n"),
-        );
+      // Narrowed to recent joins, which drops a create re-emitted for a guild
+      // joined longer ago. See isFreshGuildJoin for the limits of that.
+      if (isFreshGuildJoin(guild)) {
+        captureEvent("server_installed", {
+          guildId: guild.id,
+          properties: { guild_count: client.guilds.cache.size },
+        });
       }
-    } catch (err) {
-      console.warn("Could not DM installer/owner on join", err);
-    }
+
+      if (!config.server.onboardingEnabled) {
+        return;
+      }
+      try {
+        const installer = await waitForGuildInstaller(
+          guild.id,
+          guild.joinedTimestamp,
+        );
+        const dmTarget =
+          installer?.installerId &&
+          (await client.users.fetch(installer.installerId).catch(() => null));
+        const recipient = dmTarget ?? (await guild.fetchOwner());
+        if (recipient) {
+          await assertServing();
+          const targetUser = "user" in recipient ? recipient.user : recipient;
+          await targetUser.send(
+            buildFirstMeetingInstallerMessage({
+              guildId: guild.id,
+              serverName: guild.name,
+              siteUrl: config.frontend.siteUrl,
+            }),
+          );
+        }
+      } catch (err) {
+        console.warn("Could not DM installer/owner on join", err);
+      }
+    }).catch((error) =>
+      console.warn("Guild onboarding admission closed", error),
+    );
   });
 
   client.on("guildDelete", async (guild) => {
-    const removedAt = new Date().toISOString();
-    try {
-      await removeGuildInstaller(guild.id, removedAt);
-    } catch (error) {
-      console.warn("Could not clear installer on guild removal", error);
-    }
-    await invalidateBotGuildCache("guildDelete");
-    await invalidateGuildCache(guild.id, "guildDelete");
-    // Safe to trust: the gateway flags outages with `unavailable` and
-    // discord.js routes those to guildUnavailable instead of here.
-    captureEvent("server_removed", {
-      guildId: guild.id,
-      properties: { guild_count: client.guilds.cache.size },
-    });
+    if (isRuntimeWarm()) return;
+    await runServingBotWork(async () => {
+      const removedAt = new Date().toISOString();
+      try {
+        await removeGuildInstaller(guild.id, removedAt);
+      } catch (error) {
+        console.warn("Could not clear installer on guild removal", error);
+      }
+      await invalidateBotGuildCache("guildDelete");
+      await invalidateGuildCache(guild.id, "guildDelete");
+      // Safe to trust: the gateway flags outages with `unavailable` and
+      // discord.js routes those to guildUnavailable instead of here.
+      captureEvent("server_removed", {
+        guildId: guild.id,
+        properties: { guild_count: client.guilds.cache.size },
+      });
+    }).catch((error) => console.warn("Guild removal admission closed", error));
   });
 
   client.on("guildUpdate", async (_oldGuild, newGuild) => {
@@ -594,6 +628,7 @@ export async function setupBot() {
   });
 
   client.on("interactionCreate", async (interaction) => {
+    if (isRuntimeWarm() || !interaction.isRepliable()) return;
     if (isShuttingDown) {
       // Assume another instance has already been spun up to handle traffic, and don't handle it
       console.log(
@@ -601,52 +636,182 @@ export async function setupBot() {
       );
       return;
     }
+    const ownerControl = isOwnerInteraction(interaction);
+    const local = findInteractionSession(interaction, ownerControl);
+    let work: RuntimeWorkClaim;
     try {
-      if (interaction.isRepliable()) {
-        const claimed = await tryClaimInteraction(interaction);
-        if (!claimed) {
-          console.log("Skipping duplicate interaction", {
-            interactionId: interaction.id,
-            interactionKind: resolveInteractionKind(interaction),
-          });
-          return;
-        }
-        await handleInteractionCreate(interaction);
-      }
-    } catch (e) {
-      console.error("Unknown error processing command: ", e);
-      try {
-        if (interaction.isRepliable()) {
-          const sent = await tryReplyToUnacknowledgedInteraction(
-            interaction,
-            "Unknown Error handling request.",
-          );
-          if (!sent) {
-            console.log(
-              "Skipped unknown error reply because interaction is acknowledged",
-              {
-                interactionId: interaction.id,
-                interactionKind: resolveInteractionKind(interaction),
-              },
-            );
-          }
-        }
-      } catch (e2) {
-        console.error("Error replying to interaction about initial error", e2);
-      }
+      work = beginRuntimeWorkClaim(
+        "interaction",
+        interaction.id,
+        local
+          ? {
+              guildId: local.reservation.guildId,
+              meetingId: local.reservation.meetingId,
+            }
+          : undefined,
+      );
+    } catch {
+      return;
     }
+    await work.trackPromise(() =>
+      executeInteractionWork(interaction, ownerControl, Boolean(local), work),
+    );
   });
 
-  setupApplicationCommands();
-
-  client.login(TOKEN);
+  await client.login(TOKEN);
 }
+
+async function executeInteractionWork(
+  interaction: RepliableInteraction,
+  ownerControl: boolean,
+  local: boolean,
+  work: RuntimeWorkClaim,
+) {
+  let receiptAttempted = false;
+  try {
+    if (interaction.isRepliable()) {
+      if (await isForeignOwnedInteraction(interaction, ownerControl, local))
+        return;
+      const authority = await work.authority();
+      receiptAttempted = true;
+      const claimed = await work.trackEffect(() =>
+        tryClaimInteraction(interaction, authority),
+      );
+      if (!claimed) {
+        console.log("Skipping duplicate interaction", {
+          interactionId: interaction.id,
+          interactionKind: resolveInteractionKind(interaction),
+        });
+        return;
+      }
+      work.acknowledgeInteractionReceipt();
+      work.claimed();
+      await handleInteractionCreate(interaction, work.signal, work);
+    }
+  } catch (e) {
+    if (e instanceof InitiatingStopInterruption)
+      work.acknowledgeInteractionStop(e.original, e.signal, e.deadline);
+    if (receiptAttempted) work.fence();
+    console.error("Unknown error processing command: ", e);
+    if (work.signal.aborted) return;
+    try {
+      if (interaction.isRepliable()) {
+        const sent = await tryReplyToUnacknowledgedInteraction(
+          interaction,
+          "Unknown Error handling request.",
+        );
+        if (!sent) {
+          console.log(
+            "Skipped unknown error reply because interaction is acknowledged",
+            {
+              interactionId: interaction.id,
+              interactionKind: resolveInteractionKind(interaction),
+            },
+          );
+        }
+      }
+    } catch (e2) {
+      console.error("Error replying to interaction about initial error", e2);
+    }
+  } finally {
+    await work.settle();
+  }
+}
+
+function isOwnerInteraction(interaction: RepliableInteraction): boolean {
+  return (
+    (interaction.isButton() && interaction.customId === "end_meeting") ||
+    (interaction.isUserContextMenuCommand() &&
+      interaction.commandName === DISMISS_AUTORECORD_COMMAND_NAME) ||
+    (interaction.isChatInputCommand() &&
+      ["leave", "say"].includes(interaction.commandName))
+  );
+}
+function findInteractionSession(
+  interaction: RepliableInteraction,
+  ownerControl: boolean,
+) {
+  if (!ownerControl || !interaction.guildId) return undefined;
+  return getOwnedSessionReservations().find(
+    ({ reservation }) => reservation.guildId === interaction.guildId,
+  );
+}
+async function isForeignOwnedInteraction(
+  interaction: RepliableInteraction,
+  ownerControl: boolean,
+  local: boolean,
+): Promise<boolean> {
+  if (!ownerControl || local || !interaction.guildId) return false;
+  const lease = await getActiveMeetingLease(interaction.guildId);
+  return Boolean(
+    lease && lease.leaseExpiresAt >= Math.floor(Date.now() / 1000),
+  );
+}
+async function assertServingBotAdmission() {
+  const context = await getRuntimeAdmissionContext();
+  if (
+    (await getDeploymentControlRepository().checkAdmission(context)).kind !==
+    "admitted"
+  )
+    throw new Error("Bot admission closed");
+}
+async function runServingBotWork(
+  run: (assertServing: () => Promise<void>) => Promise<void>,
+) {
+  const work = beginRuntimeWorkClaim("ancillary", randomUUID());
+  return work.trackPromise(() => executeServingBotWork(run, work));
+}
+async function executeServingBotWork(
+  run: (assertServing: () => Promise<void>) => Promise<void>,
+  work: RuntimeWorkClaim,
+) {
+  let started = false;
+  try {
+    const authority = await work.authority();
+    if (
+      authority.kind !== "serving" ||
+      (await getDeploymentControlRepository().checkAdmission(authority.context))
+        .kind !== "admitted"
+    )
+      return;
+    work.claimed();
+    started = true;
+    await run(async () => {
+      work.signal.throwIfAborted();
+      await assertServingBotAdmission();
+      work.signal.throwIfAborted();
+    });
+  } catch (error) {
+    if (started || work.signal.aborted) work.fence();
+    throw error;
+  } finally {
+    await work.settle();
+  }
+}
+async function reevaluateOccupiedVoiceChannels() {
+  const channels = new Set<string>();
+  for (const guild of client.guilds.cache.values())
+    for (const state of guild.voiceStates.cache.values()) {
+      if (
+        !state.channelId ||
+        !state.member ||
+        state.member.user.bot ||
+        channels.has(state.channelId)
+      )
+        continue;
+      channels.add(state.channelId);
+      await handleUserJoin(state);
+    }
+}
+
+export const isBotGatewayReady = () => client.isReady();
 
 async function handleVoiceStateUpdate(
   oldState: VoiceState,
   newState: VoiceState,
 ) {
-  recordSuppressionVoiceState(oldState, newState);
+  if (isRuntimeWarm()) return;
+  await recordSuppressionVoiceState(oldState, newState);
   const botId = client.user?.id;
   if (
     botId &&
@@ -675,31 +840,49 @@ async function handleVoiceStateUpdate(
   }
 }
 
-function recordSuppressionVoiceState(
+async function recordSuppressionVoiceState(
   oldState: VoiceState,
   newState: VoiceState,
 ) {
-  const userId = newState.id || oldState.id;
-  if (!userId) return;
-  const member = newState.member ?? oldState.member;
-  const botUserId = client.user?.id;
-  const isBot =
-    member?.user.bot === true ||
-    (botUserId !== undefined && botUserId === userId);
-  const result = autoRecordJoinSuppressionService.handleVoiceStateChange({
-    guildId: newState.guild.id,
-    userId,
-    isBot,
-    oldChannelId: oldState.channelId,
-    newChannelId: newState.channelId,
-  });
-  if (result.clearedSuppression) {
-    const extra = result.clearedSuppressionInfo
-      ? ` reason=${result.clearedSuppressionInfo.reason} suppressedAt=${result.clearedSuppressionInfo.createdAt}`
-      : "";
-    console.log(
-      `Auto-record suppression cleared after channel became empty: guildId=${newState.guild.id} channelId=${oldState.channelId}${extra}`,
+  if (!oldState.channelId || oldState.channelId === newState.channelId) return;
+  const channel = oldState.guild.channels.cache.get(oldState.channelId);
+  if (!channel?.isVoiceBased()) return;
+  const local = getOwnedSessionReservations().find(
+    ({ reservation }) => reservation.guildId === oldState.guild.id,
+  );
+  let work: RuntimeWorkClaim;
+  try {
+    work = beginRuntimeWorkClaim(
+      "control",
+      randomUUID(),
+      local
+        ? {
+            guildId: local.reservation.guildId,
+            meetingId: local.reservation.meetingId,
+          }
+        : undefined,
     );
+  } catch {
+    return;
+  }
+  try {
+    const authority = await work.authority();
+    await work.trackPromise(() =>
+      autoRecordJoinSuppressionService.clearIfEmpty({
+        guildId: oldState.guild.id,
+        channelId: channel.id,
+        authority,
+        nonBotMemberIds: () =>
+          channel.members
+            .filter((member) => !member.user.bot)
+            .map((member) => member.id),
+      }),
+    );
+  } catch (error) {
+    work.fence();
+    throw error;
+  } finally {
+    await work.settle();
   }
 }
 
@@ -720,12 +903,10 @@ async function handleBotVoiceUpdate(
       const nonBotMemberIds = meeting.voiceChannel.members
         .filter((member) => !member.user.bot)
         .map((member) => member.id);
-      const didSuppress = autoRecordJoinSuppressionService.suppressUntilEmpty({
-        guildId: meeting.guildId,
-        channelId: meeting.voiceChannel.id,
-        nonBotMemberIds,
-        reason: "forced_disconnect",
-      });
+      const didSuppress = await persistAutoRecordSuppression(
+        meeting,
+        "forced_disconnect",
+      );
       if (!didSuppress) {
         console.log(
           `Auto-record suppression not set after forced disconnect (already suppressed or channel empty): guildId=${meeting.guildId} channelId=${meeting.voiceChannel.id} nonBotMembers=${nonBotMemberIds.length}`,
@@ -813,14 +994,16 @@ async function maybeStartAutoTtsOnly(newState: VoiceState) {
     botMember,
   );
   if (!permissionCheck.success) {
+    await assertServingBotAdmission();
     await textChannel.send(
       `Cannot start TTS-only chat-to-speech in **${newState.channel.name}**. ${permissionCheck.errorMessage}`,
     );
     return false;
   }
 
-  await initializeMeeting({
+  const meeting = await initializeMeeting({
     sessionMode: "tts_only",
+    suppressionCheck: { channelId: newState.channel.id },
     captureAudio: false,
     recordBotAudio: false,
     storeChatLog: false,
@@ -835,14 +1018,16 @@ async function maybeStartAutoTtsOnly(newState: VoiceState) {
     chatTtsSpeakerPrefixMode: voiceSettings.chatTtsSpeakerPrefixMode,
     subscriptionTier: subscription.tier,
   });
+  meeting.ownershipSignal?.throwIfAborted();
   await textChannel.send(
     `TTS-only chat-to-speech started in **${newState.channel.name}**. No recording or transcription is active.`,
   );
   return true;
 }
 
-async function handleUserJoin(newState: VoiceState) {
+async function handleUserJoin(newState: VoiceState, admitted = false) {
   const meeting = getMeeting(newState.guild.id);
+  if (meeting?.ownershipSignal?.aborted) return;
 
   // Handle existing meeting attendance
   if (
@@ -881,8 +1066,22 @@ async function handleUserJoin(newState: VoiceState) {
     newState.member &&
     newState.member.user.id !== client.user!.id // Don't trigger for bot joining
   ) {
+    if (!admitted) {
+      try {
+        await runServingBotWork(() => handleUserJoin(newState, true));
+      } catch (error) {
+        console.warn("Voice automation admission closed", error);
+      }
+      return;
+    }
+    const activeLease = await getActiveMeetingLease(newState.guild.id);
     if (
-      autoRecordJoinSuppressionService.shouldSuppressAutoJoin(
+      activeLease &&
+      activeLease.leaseExpiresAt >= Math.floor(Date.now() / 1000)
+    )
+      return;
+    if (
+      await autoRecordJoinSuppressionService.shouldSuppressAutoJoin(
         newState.guild.id,
         newState.channelId!,
       )
@@ -909,7 +1108,6 @@ async function handleUserJoin(newState: VoiceState) {
 
       // If auto-record is enabled, start recording
       if (autoRecordSetting && autoRecordSetting.enabled) {
-        let defaultNotesChannelId: string | undefined;
         let defaultTags: string[] | undefined;
         const { subscription, limits } = await getGuildLimits(
           newState.guild.id,
@@ -919,11 +1117,6 @@ async function handleUserJoin(newState: VoiceState) {
             guildId: newState.guild.id,
             tier: subscription.tier,
           });
-          defaultNotesChannelId = getSnapshotString(
-            snapshot,
-            CONFIG_KEYS.notes.channelId,
-            { trim: true },
-          );
           const notesTagsValue = getSnapshotString(
             snapshot,
             CONFIG_KEYS.notes.tags,
@@ -935,61 +1128,48 @@ async function handleUserJoin(newState: VoiceState) {
         } catch (error) {
           console.error("Failed to resolve server config defaults", error);
         }
-        const resolvedTextChannelId =
-          autoRecordSetting.textChannelId ?? defaultNotesChannelId;
-        if (!resolvedTextChannelId) {
-          console.error(
-            `No default notes channel configured for auto-record in guild ${newState.guild.id}`,
-          );
-          return;
-        }
-        const textChannel = newState.guild.channels.cache.get(
-          resolvedTextChannelId,
-        ) as TextChannel;
-
-        if (textChannel && newState.channel) {
-          console.log(
-            `Auto-starting recording in ${newState.channel.name} due to auto-record settings`,
-          );
-          const {
-            liveVoiceEnabled,
-            liveVoiceCommandsEnabled,
-            liveVoiceTtsVoice,
-            chatTtsEnabled,
-            chatTtsVoice,
-            chatTtsSpeakerPrefixMode,
-          } = await resolveMeetingVoiceSettings(
-            newState.guild.id,
-            newState.channelId!,
-            limits,
-          );
-          const tags = autoRecordSetting.tags ?? defaultTags;
-          const startReason = autoRecordSetting.recordAll
-            ? MEETING_START_REASONS.AUTO_RECORD_ALL
-            : MEETING_START_REASONS.AUTO_RECORD_CHANNEL;
-          const startTriggeredByUserId = newState.member.user.id;
-          const autoRecordRule: AutoRecordRule = {
-            mode: autoRecordSetting.recordAll ? "all" : "channel",
-            channelId: autoRecordSetting.channelId,
-          };
-          await handleAutoStartMeeting(client, newState.channel, textChannel, {
-            tags,
-            liveVoiceEnabled,
-            liveVoiceCommandsEnabled,
-            liveVoiceTtsVoice,
-            chatTtsEnabled,
-            chatTtsVoice,
-            chatTtsSpeakerPrefixMode,
-            startReason,
-            startTriggeredByUserId,
-            autoRecordRule,
-          });
-          return;
-        } else {
-          console.error(
-            `Could not find text channel ${resolvedTextChannelId} for auto-recording`,
-          );
-        }
+        const textChannel = await resolveMeetingNotesChannel({
+          guild: newState.guild,
+          voiceChannelId: newState.channel.id,
+        });
+        console.log(
+          `Auto-starting recording in ${newState.channel.name} due to auto-record settings`,
+        );
+        const {
+          liveVoiceEnabled,
+          liveVoiceCommandsEnabled,
+          liveVoiceTtsVoice,
+          chatTtsEnabled,
+          chatTtsVoice,
+          chatTtsSpeakerPrefixMode,
+        } = await resolveMeetingVoiceSettings(
+          newState.guild.id,
+          newState.channelId!,
+          limits,
+        );
+        const tags = autoRecordSetting.tags ?? defaultTags;
+        const startReason = autoRecordSetting.recordAll
+          ? MEETING_START_REASONS.AUTO_RECORD_ALL
+          : MEETING_START_REASONS.AUTO_RECORD_CHANNEL;
+        const startTriggeredByUserId = newState.member.user.id;
+        const autoRecordRule: AutoRecordRule = {
+          mode: autoRecordSetting.recordAll ? "all" : "channel",
+          channelId: autoRecordSetting.channelId,
+        };
+        await handleAutoStartMeeting(client, newState.channel, textChannel, {
+          assertAdmission: assertServingBotAdmission,
+          tags,
+          liveVoiceEnabled,
+          liveVoiceCommandsEnabled,
+          liveVoiceTtsVoice,
+          chatTtsEnabled,
+          chatTtsVoice,
+          chatTtsSpeakerPrefixMode,
+          startReason,
+          startTriggeredByUserId,
+          autoRecordRule,
+        });
+        return;
       }
 
       await maybeStartAutoTtsOnly(newState);
@@ -1072,6 +1252,15 @@ async function setupApplicationCommands() {
           .setDescription("Optional comma-separated tags for this meeting")
           .setRequired(false)
           .setMaxLength(500),
+      )
+      .addChannelOption((option) =>
+        option
+          .setName("notes-channel")
+          .setDescription(
+            "Text channel for this recording's controls and notes",
+          )
+          .addChannelTypes(ChannelType.GuildText)
+          .setRequired(false),
       ),
     new SlashCommandBuilder()
       .setName("autorecord")
@@ -1433,10 +1622,6 @@ async function setupApplicationCommands() {
       .setDescription("Send feedback, report a bug, or suggest a feature"),
   ];
 
-  if (config.server.onboardingEnabled) {
-    commands.push(onboardCommand);
-  }
-
   const commandPayload = commands.map((command) => command.toJSON());
 
   const rest = new REST({ version: "10" }).setToken(TOKEN);
@@ -1454,41 +1639,10 @@ async function setupApplicationCommands() {
   }
 }
 
-// Signal listener to start graceful shutdown
-process.on("SIGTERM", async () => {
-  console.log("Received SIGTERM, initiating graceful shutdown");
-
-  // Stop accepting new meetings/requests
-  stopHandlingNewMeetings();
-
-  // Wait for ongoing meetings to finish
-  await completeOngoingMeetings();
-
-  // Finalization may still use speech detection. Release the worker afterwards.
-  await shutdownSpeechDetector();
-
-  // Flush buffered analytics before the task goes away. posthog-node batches,
-  // so anything still in the buffer is lost otherwise, and a dropped event is
-  // never reconstructed. This handler is registered at module scope, so it
-  // covers the api-only runtime too.
-  await shutdownAnalytics();
-
-  // Shut down the bot gracefully
-  console.log("Shutting down...");
-  process.exit(0); // Exit the process when all meetings are done
-});
 let isShuttingDown = false;
-
-function stopHandlingNewMeetings() {
+export function stopBotAdmission() {
   isShuttingDown = true;
 }
-
-async function completeOngoingMeetings() {
-  const meetings = getAllMeetings();
-  if (meetings.length > 0) {
-    console.log("Waiting for ongoing meetings to finish...");
-    await Promise.all(meetings.map((meeting) => meeting.isFinished));
-  } else {
-    console.log("No ongoing meetings, ready to shut down.");
-  }
+export async function destroyBot(): Promise<void> {
+  await client.destroy();
 }

@@ -1,3 +1,5 @@
+import type { MeetingData } from "../types/meeting-data";
+import { getAudioTranscriptionFacts } from "./audioTranscript";
 import type {
   MeetingProcessingOutcome,
   ProcessingNotice,
@@ -43,4 +45,21 @@ export function getMeetingProcessingNotice(
     return { tone: "neutral", text: EMPTY_RECORDING_NOTICE };
   }
   return undefined;
+}
+
+/** Empty/suppressed speech is successful processing; known lost capture/provider work is not. */
+export function assertMeetingProcessingSucceeded(meeting: MeetingData): void {
+  const facts = getAudioTranscriptionFacts(meeting.audioData);
+  if (
+    facts.captureIncomplete ||
+    facts.failedSegments > 0 ||
+    Object.values(meeting.processing ?? {}).includes("failed") ||
+    meeting.processing?.transcription === "partial"
+  )
+    throw new Error("Meeting processing failed or remains incomplete");
+  if (
+    meeting.transcribeMeeting &&
+    meeting.audioData.audioFiles.some((file) => file.processing)
+  )
+    throw new Error("Meeting processing remains pending");
 }

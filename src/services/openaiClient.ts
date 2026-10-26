@@ -1,4 +1,4 @@
-import OpenAI from "openai";
+import OpenAI, { type ClientOptions } from "openai";
 import { createHmac } from "node:crypto";
 import { observeOpenAI } from "@langfuse/openai";
 import type { SpanContext } from "@opentelemetry/api";
@@ -18,11 +18,12 @@ type LangfuseOpenAiOptions = {
   disableTracing?: boolean;
 };
 
-function buildBaseOpenAIClient() {
+function buildBaseOpenAIClient(transport?: Pick<ClientOptions, "fetch">) {
   return new OpenAI({
     apiKey: config.openai.apiKey,
     organization: config.openai.organizationId,
     project: config.openai.projectId,
+    ...transport,
   });
 }
 
@@ -36,8 +37,9 @@ export const buildOpenAISafetyIdentifier = (userId?: string) => {
 
 export function createOpenAIClient(
   options: LangfuseOpenAiOptions = {},
+  transport?: Pick<ClientOptions, "fetch">,
 ): OpenAI {
-  const client = buildBaseOpenAIClient();
+  const client = buildBaseOpenAIClient(transport);
   if (options.disableTracing || !isLangfuseTracingEnabled()) {
     return client;
   }

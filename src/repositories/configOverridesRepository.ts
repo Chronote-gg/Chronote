@@ -14,7 +14,10 @@ export type ConfigOverridesRepository = {
     scopeId: string,
     configKey: string,
   ) => Promise<ConfigOverrideRecord | undefined>;
-  listByScope: (scopeId: string) => Promise<ConfigOverrideRecord[]>;
+  listByScope: (
+    scopeId: string,
+    signal?: AbortSignal,
+  ) => Promise<ConfigOverrideRecord[]>;
   listByScopePrefix: (scopePrefix: string) => Promise<ConfigOverrideRecord[]>;
   write: (record: ConfigOverrideRecord) => Promise<void>;
   remove: (scopeId: string, configKey: string) => Promise<void>;
@@ -35,7 +38,8 @@ const mockRepository: ConfigOverridesRepository = {
     );
     return record;
   },
-  async listByScope(scopeId) {
+  async listByScope(scopeId, signal) {
+    signal?.throwIfAborted();
     const items = Array.from(getMockStore().configOverrides.values()).filter(
       (record) => record.scopeId === scopeId,
     );

@@ -143,4 +143,47 @@ describe("mcpMeetingService", () => {
       }),
     );
   });
+  test("authorized MCP notes retain warning metadata without recovery identities", async () => {
+    mockedGetMeetingHistory.mockResolvedValue({
+      ...meeting,
+      status: "interrupted",
+      capture: {
+        kind: "interrupted",
+        startedAt: meeting.timestamp,
+        endedAt: null,
+        detectedAt: "2026-01-02T01:00:00Z",
+      },
+      recovery: {
+        disposition: "claimed",
+        stage: "notes",
+        executionVersion: 3,
+        attempt: 1,
+        retry: { maxAttempts: 4, nextAttemptAt: null },
+      },
+    });
+    const result = await getMcpMeetingSummary({
+      userId: "user-1",
+      guildId: meeting.guildId,
+      id: meeting.channelId_timestamp,
+    });
+    expect(result.meeting.captureNotice).toContain(
+      "These notes cover only the saved recording.",
+    );
+    expect(result.meeting.notes).toBe(meeting.notes);
+    expect(result.meeting.recovery).toEqual({
+      disposition: "claimed",
+      stage: "notes",
+    });
+    mockedCheckMeetingAccess.mockResolvedValue({
+      allowed: false,
+      reason: "not_attendee",
+    });
+    await expect(
+      getMcpMeetingSummary({
+        userId: "user-1",
+        guildId: meeting.guildId,
+        id: meeting.channelId_timestamp,
+      }),
+    ).rejects.toThrow();
+  });
 });

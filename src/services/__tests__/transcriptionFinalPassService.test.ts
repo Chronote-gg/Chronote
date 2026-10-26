@@ -27,7 +27,7 @@ const createMeeting = (transcript: string): MeetingData => {
     },
     startTime,
     endTime: new Date("2026-03-01T00:02:00.000Z"),
-    creator: null as never,
+    creator: { id: "creator-1" } as never,
     guild: { id: "guild-1" } as never,
     isAutoRecording: false,
     finishing: false,
@@ -207,4 +207,47 @@ describe("runTranscriptionFinalPass", () => {
     expect(meeting.audioData.audioFiles[0].finalPassTranscript).toBeUndefined();
     expect(meeting.audioData.audioFiles[1].finalPassTranscript).toBeUndefined();
   });
+});
+
+test("plain finalized-pass refuses invalid budgets before probing or dispatch", async () => {
+  const { runContentTranscriptionFinalPass } =
+    await import("../transcriptionFinalPassService");
+  const { liveFinalPassSettings } =
+    await import("../transcriptionProcessingSettings");
+  // Zero detected duration keeps this regression safe even if early validation regresses.
+  const probe = jest.fn(async () => 0);
+  const prompt = jest.fn(async () => {
+    throw new Error("Unexpected prompt dispatch");
+  });
+  await expect(
+    runContentTranscriptionFinalPass(
+      {
+        meetingId: "generated-budget",
+        creator: { id: "creator" },
+        guild: { id: "guild" },
+        voiceChannel: { id: "voice" },
+        startTime: new Date(0),
+        participants: new Map(),
+        audioData: {
+          audioFiles: createMeeting("Saved speech").audioData.audioFiles,
+        },
+        signal: new AbortController().signal,
+        enabled: true,
+        settings: {
+          ...liveFinalPassSettings,
+          chunkSeconds: 0,
+          minChunkSeconds: 0,
+        },
+        transcriptionModel: "original",
+        reconcileModel: { model: "original", provider: "openai", params: {} },
+        prompt,
+        finalPassPrompt: prompt,
+        effect: (run) => run(),
+      },
+      { audioFilePath: "never-opened" },
+      { getAudioDurationSeconds: probe },
+    ),
+  ).rejects.toThrow();
+  expect(probe).not.toHaveBeenCalled();
+  expect(prompt).not.toHaveBeenCalled();
 });

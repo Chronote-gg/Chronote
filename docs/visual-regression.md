@@ -26,6 +26,17 @@ Their checks also assert key content, upgrade selection and no horizontal
 document overflow. These baselines record the current UI; passing a pixel
 comparison does not establish that its design is good.
 
+Billing covers Free servers with canceled or expired subscription history at
+desktop and mobile widths. The current-plan card shows Free and its usage;
+the previous subscription appears in a separate billing-history section.
+Direct acquisition covers both terminal statuses and keeps Basic and Pro
+purchase actions available.
+Complimentary plans with terminal Stripe history keep their effective Basic
+or Pro plan and may start paying. Home offer failures disable Basic and
+provide a retry action while keeping Pro available.
+Viewport snapshots show the normal responsive layout; full snapshots use the
+expanded visual mode described above.
+
 ## Handling nondeterministic UI
 
 - Prefer deterministic mock data first. Keep timestamps, random IDs, and seeded

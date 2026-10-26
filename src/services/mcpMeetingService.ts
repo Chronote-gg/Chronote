@@ -20,6 +20,10 @@ import {
 } from "./unifiedConfigService";
 import { CONFIG_KEYS } from "../config/keys";
 import type { MeetingHistory } from "../types/db";
+import {
+  projectMeetingCapture,
+  resolveCaptureStatus,
+} from "../utils/meetingCaptureNotice";
 import type { McpTokenRestriction } from "../types/mcpOAuth";
 import { MEETING_STATUS } from "../types/meetingLifecycle";
 import type { Participant } from "../types/participants";
@@ -346,7 +350,9 @@ const summarizeMeeting = (
     meetingId: meeting.meetingId,
     ownershipScope: personalMeeting ? "personal" : "guild",
     ownerUserId: meeting.ownerUserId,
-    status: meeting.status ?? MEETING_STATUS.COMPLETE,
+    ...projectMeetingCapture(meeting),
+    status: resolveCaptureStatus(meeting),
+    ...(meeting.processing ? { processing: meeting.processing } : {}),
     channelId,
     channelName: personalMeeting
       ? PERSONAL_MEETING_CHANNEL_NAME
@@ -1250,6 +1256,7 @@ export async function getMcpMeetingTranscript(input: {
     meetingId: meeting.meetingId,
     id: meeting.channelId_timestamp,
     transcript: resolveMentions.toText(transcriptWindow.transcript),
+    ...projectMeetingCapture(meeting),
     transcriptAvailable: Boolean(transcript),
     offset: transcriptWindow.offset,
     totalChars: transcriptWindow.totalChars,

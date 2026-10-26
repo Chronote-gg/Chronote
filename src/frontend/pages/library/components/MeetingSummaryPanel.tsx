@@ -1,4 +1,9 @@
 import type { CSSProperties, HTMLAttributes } from "react";
+import { MeetingCaptureNotice } from "../../../components/MeetingCaptureNotice";
+import {
+  formatMeetingCaptureNotice,
+  type MeetingCapturePresentation,
+} from "../../../../utils/meetingCaptureNotice";
 import {
   ActionIcon,
   Box,
@@ -38,7 +43,7 @@ const summaryViewportProps: ViewportTestIdProps = {
   "data-testid": "meeting-summary-scroll-viewport",
 };
 
-type MeetingSummaryPanelProps = {
+type MeetingSummaryPanelProps = MeetingCapturePresentation & {
   summary: string;
   notes: string;
   summaryFeedback: SummaryFeedback;
@@ -123,6 +128,11 @@ export function MeetingSummaryPanel({
   onSuggestCorrection,
   style,
   processing,
+  capture,
+  captureCoverage,
+  captureNotice,
+  recovery,
+  recoveryNotice,
 }: MeetingSummaryPanelProps) {
   const disabled = getDisabledActions({
     processing,
@@ -144,7 +154,20 @@ export function MeetingSummaryPanel({
     : {};
   const summaryBody = (
     <>
-      <ProcessingNotice processing={processing} notes={notes} />
+      <MeetingCaptureNotice
+        capture={capture}
+        captureCoverage={captureCoverage}
+        captureNotice={captureNotice}
+        recovery={recovery}
+        recoveryNotice={recoveryNotice}
+        processing={processing}
+        notes={notes}
+      />
+      {!(
+        captureNotice ?? formatMeetingCaptureNotice({ capture, processing })
+      ) ? (
+        <ProcessingNotice processing={processing} notes={notes} />
+      ) : null}
       <MarkdownBody content={summary} compact dimmed />
       <Box style={{ position: "relative" }}>
         <Divider my="sm" />

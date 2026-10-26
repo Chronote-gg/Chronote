@@ -18,23 +18,29 @@ export async function ensureTempBaseDir(): Promise<string> {
   return BASE_TEMP_DIR;
 }
 
-export function getMeetingTempDir(meeting: MeetingData): string {
+export function getMeetingTempDir(
+  meeting: Pick<MeetingData, "meetingId">,
+): string {
   return path.join(BASE_TEMP_DIR, "m", meeting.meetingId);
 }
 
-export function getRetainedMeetingTempDir(meeting: MeetingData): string {
+export function getRetainedMeetingTempDir(
+  meeting: Pick<MeetingData, "meetingId">,
+): string {
   return path.join(RETAINED_TEMP_DIR, meeting.meetingId);
 }
 
 export async function ensureMeetingTempDir(
-  meeting: MeetingData,
+  meeting: Pick<MeetingData, "meetingId">,
 ): Promise<string> {
   const dir = getMeetingTempDir(meeting);
   await fs.mkdir(dir, { recursive: true });
   return dir;
 }
 
-export function ensureMeetingTempDirSync(meeting: MeetingData): string {
+export function ensureMeetingTempDirSync(
+  meeting: Pick<MeetingData, "meetingId">,
+): string {
   const dir = getMeetingTempDir(meeting);
   mkdirSync(dir, { recursive: true });
   return dir;
@@ -53,13 +59,13 @@ export async function cleanupTempBaseDir(): Promise<void> {
 }
 
 export async function cleanupMeetingTempDir(
-  meeting: MeetingData,
+  meeting: Pick<MeetingData, "meetingId">,
 ): Promise<void> {
   await safeRemove(getMeetingTempDir(meeting), "meeting");
 }
 
 export async function retainMeetingTempDir(
-  meeting: MeetingData,
+  meeting: Pick<MeetingData, "meetingId" | "guildId" | "channelId">,
   reason: string,
 ): Promise<string | undefined> {
   const sourceDir = getMeetingTempDir(meeting);

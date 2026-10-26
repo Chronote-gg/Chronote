@@ -1,0 +1,465 @@
+import {
+  joinVoiceChannel,
+  VoiceConnectionStatus,
+  type DiscordGatewayAdapterCreator,
+  type VoiceConnection,
+} from "@discordjs/voice";
+import { z } from "zod";
+import {
+  SimpleShardingStrategy,
+  type Client,
+  type GatewaySendPayload,
+} from "discord.js";
+import type { MeetingInitOptions } from "../meetings";
+import type { DeploymentControlRepository } from "../repositories/deploymentControlRepository";
+import type {
+  SessionReservation,
+  VoiceRecord,
+} from "../types/deploymentControl";
+import { getDeploymentControlRepository } from "../db";
+
+export type OwnedVoiceJoinOptions = Pick<
+  MeetingInitOptions,
+  "voiceChannel" | "guild" | "captureAudio"
+> & { signal: AbortSignal };
+export type VoiceSettlementOptions = {
+  deadline?: number;
+  signal?: AbortSignal;
+};
+const SETTLEMENT_TIMEOUT_MS = 5_000;
+const voiceDispatch = z.object({
+  t: z.literal("VOICE_STATE_UPDATE"),
+  s: z.number().int(),
+  d: z.object({
+    guild_id: z.string(),
+    user_id: z.string(),
+    session_id: z.string().min(1),
+    channel_id: z.string().nullable(),
+  }),
+});
+type Operation = {
+  reservation: SessionReservation;
+  state: VoiceRecord["state"];
+  closed: boolean;
+  attempted: boolean;
+  ambiguous: boolean;
+  session?: string;
+  sequence?: number;
+  closeSequence?: number;
+  acknowledged: boolean;
+  leaveIssued: boolean;
+  connection?: VoiceConnection;
+  cleanup(): void;
+  acknowledge(): void;
+  acknowledgment: Promise<void>;
+  writes: Promise<void>;
+  pending: Set<Promise<void>>;
+  joinStarted: boolean;
+  settlement?: Promise<"settled" | "uncertain">;
+};
+type VoiceTransport = (
+  shardId: number,
+  payload: GatewaySendPayload,
+) => Promise<void>;
+const transports = new WeakMap<Client, VoiceTransport>();
+export function buildOwnedVoiceStrategy(
+  client: Client,
+  manager: ConstructorParameters<typeof SimpleShardingStrategy>[0],
+): SimpleShardingStrategy {
+  const strategy = new SimpleShardingStrategy(manager);
+  transports.set(client, (shardId, payload) => strategy.send(shardId, payload));
+  return strategy;
+}
+function record(
+  reservation: SessionReservation,
+  state: VoiceRecord["state"],
+): VoiceRecord {
+  return {
+    pk: `VOICE#${reservation.guildId}`,
+    sk: "STATE",
+    recordType: "voice",
+    protocolVersion: 1,
+    guildId: reservation.guildId,
+    meetingId: reservation.meetingId,
+    ownerInstanceId: reservation.ownerInstanceId,
+    attemptId: reservation.voiceOperationAttemptId,
+    executionVersion: reservation.executionVersion,
+    sessionMode: reservation.sessionMode,
+    state,
+    updatedAt: Math.floor(Date.now() / 1000),
+  };
+}
+
+/** Serializes local attempts and seals the actual SDK adapter, including SDK reconnect callbacks. */
+export function createGuildVoiceOperationService(
+  repository: Pick<DeploymentControlRepository, "writeVoice">,
+  transportForClient = (client: Client) => transports.get(client),
+) {
+  const operations = new Map<string, Operation>();
+  const settledReservations = new WeakSet<SessionReservation>();
+  function prepareOwnedVoiceSession(
+    reservation: SessionReservation,
+  ): Operation {
+    if (operations.has(reservation.guildId))
+      throw new Error("Voice operation already owned");
+    let acknowledge = () => {};
+    const acknowledgment = new Promise<void>((resolve) => {
+      acknowledge = resolve;
+    });
+    const operation: Operation = {
+      reservation,
+      state: "joining",
+      closed: false,
+      attempted: false,
+      ambiguous: false,
+      acknowledged: false,
+      leaveIssued: false,
+      cleanup: () => {},
+      acknowledge,
+      acknowledgment,
+      writes: Promise.resolve(),
+      pending: new Set(),
+      joinStarted: false,
+    };
+    operations.set(reservation.guildId, operation);
+    return operation;
+  }
+  function persist(operation: Operation, state: VoiceRecord["state"]) {
+    const next = operation.writes.then(async () => {
+      const expected = record(operation.reservation, operation.state);
+      const result = await repository.writeVoice(
+        record(operation.reservation, state),
+        {
+          attemptId: expected.attemptId,
+          state: expected.state,
+          ownerInstanceId: expected.ownerInstanceId,
+          meetingId: expected.meetingId,
+        },
+      );
+      if (result !== "applied")
+        throw new Error("Voice operation ownership changed");
+      operation.state = state;
+    });
+    operation.writes = next;
+    return next;
+  }
+  async function joinOwnedVoiceSession(
+    reservation: SessionReservation,
+    options: OwnedVoiceJoinOptions,
+  ): Promise<VoiceConnection> {
+    const operation =
+      operations.get(reservation.guildId) ??
+      prepareOwnedVoiceSession(reservation);
+    if (
+      options.signal.aborted ||
+      operation.closed ||
+      operation.joinStarted ||
+      operation.reservation !== reservation
+    )
+      throw new Error("Voice operation is closed or already owned");
+    operation.joinStarted = true;
+    const client = options.guild.client;
+    const invalidate = (shardId: number) => {
+      if (shardId === options.guild.shardId) operation.ambiguous = true;
+    };
+    const disconnect = (_event: unknown, shardId: number) =>
+      invalidate(shardId);
+    const onPacket = (packet: unknown, shardId: number) => {
+      if (shardId !== options.guild.shardId) return;
+      const parsed = voiceDispatch.safeParse(packet);
+      if (!parsed.success) return;
+      const { d, s } = parsed.data;
+      if (d.guild_id !== reservation.guildId || d.user_id !== client.user?.id)
+        return;
+      if (!operation.attempted) return;
+      if (operation.sequence !== undefined && s <= operation.sequence) {
+        operation.ambiguous = true;
+        return;
+      }
+      operation.sequence = s;
+      if (!operation.closed && d.channel_id === options.voiceChannel.id) {
+        observeJoin(operation, d.session_id);
+      } else observeLeave(operation, parsed.data);
+    };
+    client.on("raw", onPacket);
+    client.on("shardDisconnect", disconnect);
+    client.on("shardReconnecting", invalidate);
+    client.on("shardResume", invalidate);
+    client.on("shardReady", invalidate);
+    const abort = () => {
+      void settleOwnedVoiceSession(reservation);
+    };
+    options.signal.addEventListener("abort", abort, { once: true });
+    operation.cleanup = () => {
+      client.off("raw", onPacket);
+      client.off("shardDisconnect", disconnect);
+      client.off("shardReconnecting", invalidate);
+      client.off("shardResume", invalidate);
+      client.off("shardReady", invalidate);
+      options.signal.removeEventListener("abort", abort);
+    };
+    // discord.js deliberately marks its adapter type internal; the public SDK owns this boundary.
+    const guildAdapter: DiscordGatewayAdapterCreator = options.guild
+      .voiceAdapterCreator as DiscordGatewayAdapterCreator;
+    const transport = transportForClient(client);
+    if (!transport) {
+      operation.cleanup();
+      throw new Error("Tracked voice transport is not installed");
+    }
+    let leavePermitted = false;
+    const adapterCreator: DiscordGatewayAdapterCreator = (methods) => {
+      const adapter = guildAdapter({
+        onVoiceStateUpdate: (data) => {
+          if (!operation.closed) methods.onVoiceStateUpdate(data);
+        },
+        onVoiceServerUpdate: (data) => {
+          if (!operation.closed) methods.onVoiceServerUpdate(data);
+        },
+        destroy: () => {
+          operation.ambiguous = true;
+          if (!operation.closed) methods.destroy();
+        },
+      });
+      return {
+        sendPayload(payload) {
+          if (
+            operation.closed &&
+            !(leavePermitted && payload.d.channel_id === null)
+          )
+            return false;
+          if (operation.closed) {
+            leavePermitted = false;
+            operation.leaveIssued = true;
+            operation.closeSequence = operation.sequence;
+          }
+          return submit(operation, () =>
+            transport(options.guild.shardId, payload),
+          );
+        },
+        destroy: () => adapter.destroy(),
+      };
+    };
+    try {
+      operation.connection = joinVoiceChannel({
+        channelId: options.voiceChannel.id,
+        guildId: reservation.guildId,
+        adapterCreator,
+        selfDeaf: !options.captureAudio,
+        selfMute: false,
+      });
+      // This is the sole permitted leave after sealing, consumed synchronously by destroy().
+      const connection = operation.connection;
+      connection.on("daveResetSummary", (summary) => {
+        console.info("DAVE reset readiness summary:", JSON.stringify(summary));
+      });
+      const close = () => {
+        leavePermitted = true;
+        if (connection.state.status !== VoiceConnectionStatus.Destroyed)
+          connection.destroy();
+        leavePermitted = false;
+      };
+      closeOperations.set(operation, close);
+      if (options.signal.aborted || operation.closed) {
+        await settleOwnedVoiceSession(reservation);
+        throw new Error("Voice operation closed during join");
+      }
+      if (operation.closed)
+        throw new Error("Voice operation closed during initialization");
+      return connection;
+    } catch (error) {
+      await settleOwnedVoiceSession(reservation);
+      throw error;
+    }
+  }
+  const closeOperations = new WeakMap<Operation, () => void>();
+  async function settleOwnedVoiceSession(
+    reservation: SessionReservation,
+    options: VoiceSettlementOptions = {},
+  ): Promise<"settled" | "uncertain"> {
+    if (settledReservations.has(reservation)) return "settled";
+    const operation = operations.get(reservation.guildId);
+    if (
+      !operation ||
+      operation.reservation.voiceOperationAttemptId !==
+        reservation.voiceOperationAttemptId
+    ) {
+      const expected = record(reservation, "joining");
+      await repository
+        .writeVoice(record(reservation, "uncertain"), {
+          attemptId: expected.attemptId,
+          state: expected.state,
+          ownerInstanceId: expected.ownerInstanceId,
+          meetingId: expected.meetingId,
+        })
+        .catch(() => {});
+      return "uncertain";
+    }
+    if (operation.settlement) return operation.settlement;
+    operation.closed = true;
+    operation.closeSequence = operation.sequence;
+    operation.settlement = (async () => {
+      const deadline = options.deadline ?? Date.now() + SETTLEMENT_TIMEOUT_MS;
+      const sendsFinished = await beforeDeadline(
+        Promise.all([...operation.pending]),
+        deadline,
+        options.signal,
+      );
+      if (!sendsFinished || operation.ambiguous) {
+        operation.ambiguous = true;
+        if (
+          operation.connection?.state.status !== VoiceConnectionStatus.Destroyed
+        )
+          operation.connection?.destroy(false);
+      } else {
+        // No delayed continuation may issue this leave after the deadline.
+        if (Date.now() < deadline && !options.signal?.aborted)
+          closeOperations.get(operation)?.();
+        else {
+          operation.ambiguous = true;
+          if (
+            operation.connection?.state.status !==
+            VoiceConnectionStatus.Destroyed
+          )
+            operation.connection?.destroy(false);
+        }
+        if (
+          !(await beforeDeadline(
+            Promise.all([...operation.pending]),
+            deadline,
+            options.signal,
+          ))
+        )
+          operation.ambiguous = true;
+        if (
+          operation.attempted &&
+          !operation.ambiguous &&
+          !(await beforeDeadline(
+            operation.acknowledgment,
+            deadline,
+            options.signal,
+          ))
+        )
+          operation.ambiguous = true;
+      }
+      const closed =
+        !operation.connection ||
+        operation.connection.state.status === VoiceConnectionStatus.Destroyed;
+      const outcome =
+        closed &&
+        !operation.ambiguous &&
+        (!operation.attempted || operation.acknowledged)
+          ? "settled"
+          : "uncertain";
+      try {
+        await persist(operation, outcome);
+      } catch {
+        operation.cleanup();
+        return "uncertain";
+      }
+      operation.cleanup();
+      if (outcome === "settled") {
+        settledReservations.add(reservation);
+        operations.delete(reservation.guildId);
+      }
+      return outcome;
+    })();
+    return operation.settlement;
+  }
+  async function waitOwnedVoiceEffects(
+    reservation: SessionReservation,
+  ): Promise<void> {
+    const operation = operations.get(reservation.guildId);
+    if (!operation || operation.reservation !== reservation) return;
+    if (!operation.closed)
+      throw new Error("Voice operation must be sealed before draining effects");
+    await operation.settlement;
+    while (operation.pending.size)
+      await Promise.allSettled([...operation.pending]);
+    await Promise.allSettled([operation.writes]);
+  }
+  return {
+    prepareOwnedVoiceSession,
+    joinOwnedVoiceSession,
+    settleOwnedVoiceSession,
+    waitOwnedVoiceEffects,
+  };
+}
+function observeJoin(operation: Operation, sessionId: string): void {
+  if (operation.session && operation.session !== sessionId)
+    operation.ambiguous = true;
+  operation.session = sessionId;
+}
+function observeLeave(
+  operation: Operation,
+  packet: z.infer<typeof voiceDispatch>,
+): void {
+  if (
+    !operation.closed ||
+    !operation.leaveIssued ||
+    packet.d.channel_id !== null ||
+    operation.session !== packet.d.session_id ||
+    operation.closeSequence === undefined ||
+    packet.s <= operation.closeSequence ||
+    operation.ambiguous
+  ) {
+    operation.ambiguous = true;
+    return;
+  }
+  operation.acknowledged = true;
+  operation.acknowledge();
+}
+function submit(operation: Operation, send: () => Promise<void>): boolean {
+  let finish = () => {};
+  const pending = new Promise<void>((resolve) => {
+    finish = resolve;
+  });
+  operation.pending.add(pending);
+  operation.attempted = true;
+  try {
+    void send()
+      .catch(() => {
+        operation.ambiguous = true;
+      })
+      .finally(() => {
+        operation.pending.delete(pending);
+        finish();
+      });
+    return true;
+  } catch {
+    operation.ambiguous = true;
+    operation.pending.delete(pending);
+    finish();
+    return false;
+  }
+}
+async function beforeDeadline(
+  promise: Promise<unknown>,
+  deadline: number,
+  signal?: AbortSignal,
+): Promise<boolean> {
+  if (Date.now() >= deadline || signal?.aborted) return false;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let abort = () => {};
+  try {
+    return await Promise.race([
+      promise.then(() => true),
+      new Promise<boolean>((resolve) => {
+        abort = () => resolve(false);
+        signal?.addEventListener("abort", abort, { once: true });
+        timer = setTimeout(abort, deadline - Date.now());
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+    signal?.removeEventListener("abort", abort);
+  }
+}
+const service = createGuildVoiceOperationService({
+  writeVoice: (record, expected) =>
+    getDeploymentControlRepository().writeVoice(record, expected),
+});
+export const joinOwnedVoiceSession = service.joinOwnedVoiceSession;
+export const settleOwnedVoiceSession = service.settleOwnedVoiceSession;
+export const prepareOwnedVoiceSession = service.prepareOwnedVoiceSession;
+
+export const waitOwnedVoiceEffects = service.waitOwnedVoiceEffects;

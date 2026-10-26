@@ -1,4 +1,13 @@
-import { assertSessionAssociation } from "./purchaseSession";
+import { prepareInitialOfferSettlement } from "./offerUsageSettlement";
+import type { OfferUsageMutation } from "../types/offerUsage";
+import {
+  prepareInitialOfferReservation,
+  prepareExpiredOfferRelease,
+} from "./offerUsageService";
+import {
+  assertSessionAssociation,
+  checkoutInvoiceHint,
+} from "./purchaseSession";
 import { reconcileSubscription } from "./subscriptionReconciliation";
 import { createHash, randomUUID } from "node:crypto";
 import type Stripe from "stripe";
@@ -9,11 +18,14 @@ import {
 import { getSubscriptionRepository } from "../repositories/subscriptionRepository";
 import type { GuildSubscription } from "../types/db";
 import type { PurchaseAttempt } from "../types/purchase";
-import type { StripeClient } from "../types/stripe";
+import type { ExpectedIntroOffer, IntroOfferChoice } from "../types/pricing";
+import { prepareBasicIntroCheckoutWithAuthority } from "./basicIntroOfferService";
+import type { StripeClient, StripeSubscription } from "../types/stripe";
 import { BillingActionError } from "./billingActionError";
 import { captureEvent } from "./analyticsService";
 import {
   resolvePurchaseSource,
+  resolvePurchaseOffer,
   recordingLimitAnalytics,
 } from "../utils/purchaseAnalytics";
 
@@ -21,11 +33,13 @@ const pending = () =>
   new BillingActionError(
     "BAD_REQUEST",
     "A purchase for this server is already in progress. Retry shortly or contact support.",
+    "purchase_pending",
   );
 const review = () =>
   new BillingActionError(
     "BAD_REQUEST",
     "Server purchase needs review. Contact support before purchasing again.",
+    "purchase_needs_review",
   );
 const terminal = (status: string) =>
   ["canceled", "incomplete_expired"].includes(status);
@@ -38,52 +52,142 @@ type PurchaseInput = {
   mode: "live" | "test";
   checkout: Stripe.Checkout.SessionCreateParams;
   expected: GuildSubscription | undefined;
+  expectedOffer?: ExpectedIntroOffer;
+  offerChoice?: IntroOfferChoice;
 };
 
 async function save(
   attempt: PurchaseAttempt,
   change: Partial<PurchaseAttempt>,
   pointer: GuildSubscription | undefined,
+  usage?: OfferUsageMutation,
 ) {
   const next = advanceAttempt(attempt, change);
-  if (!(await getPurchaseRepository().compareAndWrite(next, attempt, pointer)))
+  if (
+    !(await getPurchaseRepository().compareAndWrite(
+      next,
+      attempt,
+      pointer,
+      undefined,
+      usage,
+    ))
+  )
     throw pending();
   return next;
 }
-async function mayRetire(input: PurchaseInput, attempt: PurchaseAttempt) {
+async function prepareRetiredPurchase(
+  input: PurchaseInput,
+  attempt: PurchaseAttempt,
+) {
   if (attempt.incidentKey || attempt.state === "needs_review") throw review();
-  if (attempt.state === "expired") return true;
-  if (attempt.state !== "completed" || !attempt.subscriptionId) return false;
+  if (attempt.state === "expired") return attempt;
+  if (attempt.state !== "completed" || !attempt.subscriptionId)
+    return undefined;
   const linked = await input.stripe.subscriptions.retrieve(
     attempt.subscriptionId,
   );
+  assertRetiredAssociation(input, attempt, linked);
+  if (!terminal(linked.status)) return undefined;
+  const prepared = await prepareInitialOfferSettlement(
+    input.stripe,
+    attempt,
+    linked,
+  );
+  if (prepared.kind === "pending" || prepared.kind === "awaiting_invoice")
+    throw pending();
+  if (prepared.kind === "voided")
+    return save(
+      attempt,
+      { state: "expired", initialInvoiceId: prepared.invoiceId },
+      input.expected,
+      prepared.usage,
+    );
+  if (prepared.kind === "settled")
+    return save(
+      attempt,
+      { initialInvoiceId: prepared.invoiceId },
+      input.expected,
+      prepared.usage,
+    );
+  return attempt;
+}
+
+function assertRetiredAssociation(
+  input: PurchaseInput,
+  attempt: PurchaseAttempt,
+  linked: Awaited<ReturnType<StripeClient["subscriptions"]["retrieve"]>>,
+) {
   if (
+    linked.id !== attempt.subscriptionId ||
+    linked.metadata.purchase_attempt_id !== attempt.attemptId ||
+    linked.metadata.discord_id !== attempt.payerId ||
+    (typeof linked.customer === "string"
+      ? linked.customer
+      : linked.customer.id) !== attempt.customerId ||
     linked.metadata.guild_id !== input.guildId ||
     linked.livemode !== (input.mode === "live")
   )
     throw review();
-  return terminal(linked.status);
 }
 
-async function reserve(input: PurchaseInput) {
-  const repo = getPurchaseRepository();
+function checkoutFingerprint(checkout: PurchaseAttempt["checkout"]): string {
   const fingerprint = createHash("sha256")
     .update(
       JSON.stringify({
-        ...input.checkout,
+        ...checkout,
         metadata: undefined,
         success_url: undefined,
         cancel_url: undefined,
         subscription_data: {
-          ...input.checkout.subscription_data,
+          ...checkout.subscription_data,
           metadata: undefined,
         },
       }),
     )
     .digest("hex");
+  return fingerprint;
+}
+
+function subscriptionPointerChanged(
+  pointer: GuildSubscription | undefined,
+  expected: GuildSubscription | undefined,
+): boolean {
+  return (
+    pointer?.stripeSubscriptionId !== expected?.stripeSubscriptionId ||
+    pointer?.stripeSyncRevision !== expected?.stripeSyncRevision
+  );
+}
+
+type PurchasePreparation =
+  | { kind: "new"; previous: PurchaseAttempt | undefined }
+  | { kind: "reuse"; current: PurchaseAttempt };
+async function preparePurchaseAttempt(
+  input: PurchaseInput,
+): Promise<PurchasePreparation> {
+  const current = await refreshAttempt(
+    input,
+    await getPurchaseRepository().get(input.guildId),
+  );
+  if (!current) return { kind: "new", previous: undefined };
+  const retired = await prepareRetiredPurchase(input, current);
+  return retired
+    ? { kind: "new", previous: retired }
+    : { kind: "reuse", current };
+}
+async function reserve(input: PurchaseInput) {
+  const repo = getPurchaseRepository();
   for (let i = 0; i < 3; i++) {
-    const current = await refreshAttempt(input, await repo.get(input.guildId));
-    if (current && !(await mayRetire(input, current))) {
+    const preparation = await preparePurchaseAttempt(input);
+    const previous =
+      preparation.kind === "reuse" ? preparation.current : preparation.previous;
+    const preparedCheckout = await prepareBasicIntroCheckoutWithAuthority({
+      ...input,
+      current: preparation.kind === "reuse" ? preparation.current : undefined,
+    });
+    const { checkout, authority } = preparedCheckout;
+    const fingerprint = checkoutFingerprint(checkout);
+    if (preparation.kind === "reuse") {
+      const current = preparation.current;
       if (
         current.mode !== input.mode ||
         current.payerId !== input.user.id ||
@@ -105,32 +209,39 @@ async function reserve(input: PurchaseInput) {
       payerId: input.user.id,
       mode: input.mode,
       fingerprint,
+      offerChoice: input.offerChoice ?? "automatic",
       analyticsOptOut: input.checkout.metadata?.analytics_opt_out === "true",
       createdAt: Date.now(),
       state: "preparing",
       checkout: {
-        ...input.checkout,
+        ...checkout,
         expires_at: Math.floor(Date.now() / 1000) + 3600,
         metadata: {
-          ...input.checkout.metadata,
+          ...checkout.metadata,
           purchase_attempt_id: attemptId,
         },
         subscription_data: {
-          ...input.checkout.subscription_data,
+          ...checkout.subscription_data,
           metadata: {
-            ...input.checkout.subscription_data?.metadata,
+            ...checkout.subscription_data?.metadata,
             purchase_attempt_id: attemptId,
           },
         },
       },
     };
-    if (await repo.compareAndWrite(next, current, input.expected)) return next;
-    const pointer = await getSubscriptionRepository().get(input.guildId);
+    const usage = await prepareInitialOfferReservation(next, authority);
     if (
-      pointer?.stripeSubscriptionId !== input.expected?.stripeSubscriptionId ||
-      pointer?.stripeSyncRevision !== input.expected?.stripeSyncRevision
+      await repo.compareAndWrite(
+        next,
+        previous,
+        input.expected,
+        undefined,
+        usage,
+      )
     )
-      throw pending();
+      return next;
+    const pointer = await getSubscriptionRepository().get(input.guildId);
+    if (subscriptionPointerChanged(pointer, input.expected)) throw pending();
   }
   throw pending();
 }
@@ -193,10 +304,37 @@ async function completedSessionOutcome(
     typeof session.subscription === "string"
       ? session.subscription
       : session.subscription.id,
+    checkoutInvoiceHint(session),
   );
   return currentOutcome(attempt);
 }
 
+export async function recoverAcceptedPurchase(input: {
+  stripe: StripeClient;
+  guildId: string;
+  payerId: string;
+  subscription: StripeSubscription;
+}): Promise<string | null> {
+  const attempt = await getPurchaseRepository().get(input.guildId);
+  if (
+    input.subscription.status !== "active" ||
+    !attempt ||
+    !["open", "preparing"].includes(attempt.state) ||
+    input.subscription.metadata.purchase_attempt_id !== attempt.attemptId
+  )
+    return null;
+  if (attempt.payerId !== input.payerId)
+    throw new BillingActionError(
+      "FORBIDDEN",
+      "Only the original payer can manage this purchase.",
+    );
+  await reconcileSubscription(
+    input.stripe,
+    input.guildId,
+    input.subscription.id,
+  );
+  return currentOutcome(attempt);
+}
 export async function createInitialPurchase(
   input: PurchaseInput,
 ): Promise<string> {
@@ -221,10 +359,12 @@ export async function createInitialPurchase(
       attempt,
       { sessionId: session.id, state: "expired" },
       input.expected,
+      await prepareExpiredOfferRelease(attempt, session),
     );
     throw new BillingActionError(
       "BAD_REQUEST",
       "The checkout expired. Retry to start a new purchase.",
+      "purchase_expired",
     );
   }
   if (session.status === "complete") {
@@ -280,7 +420,10 @@ function captureNewCheckout(input: PurchaseInput, attempt: PurchaseAttempt) {
         source: resolvePurchaseSource(
           String(metadata?.purchase_source ?? "direct"),
         ),
-        promo_present: Boolean(metadata?.promo_code),
+        promo_present:
+          metadata?.purchase_promo_present === "true" ||
+          Boolean(metadata?.promo_code),
+        offer: resolvePurchaseOffer(String(metadata?.intro_offer_id ?? "")),
         surface: "billing",
         event_version: 1,
         billing_kind: "new_subscription",
@@ -299,6 +442,8 @@ async function refreshAttempt(
 ) {
   const repo = getPurchaseRepository();
   let current = initial;
+  if (current?.state === "preparing")
+    await checkCheckoutReplayWindow(input, current);
   if (current?.sessionId && current.state === "open" && !current.incidentKey) {
     const session = await input.stripe.checkout.sessions.retrieve(
       current.sessionId,
@@ -306,7 +451,15 @@ async function refreshAttempt(
     assertSessionAssociation(current, session);
     if (session.status === "expired" && !session.subscription) {
       const expired = advanceAttempt(current, { state: "expired" });
-      if (!(await repo.compareAndWrite(expired, current, input.expected)))
+      if (
+        !(await repo.compareAndWrite(
+          expired,
+          current,
+          input.expected,
+          undefined,
+          await prepareExpiredOfferRelease(current, session),
+        ))
+      )
         throw pending();
       current = expired;
     } else if (session.status === "complete" && session.subscription) {

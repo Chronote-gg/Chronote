@@ -1,3 +1,7 @@
+import {
+  getMeetingProcessingSignal,
+  runMeetingProcessingEffect,
+} from "./services/meetingProcessingLifetime";
 import type { Message } from "discord.js";
 import { config } from "./services/configService";
 import type { MeetingData } from "./types/meeting-data";
@@ -43,7 +47,11 @@ async function sendMonthlyLimitNotice(
   status: ChatTtsUsageReservation,
   options: Parameters<typeof buildChatTtsMonthlyLimitTextOnly>[1] = {},
 ) {
-  if (meeting.chatTtsMonthlyLimitNoticeSent) return;
+  if (
+    getMeetingProcessingSignal(meeting).aborted ||
+    meeting.chatTtsMonthlyLimitNoticeSent
+  )
+    return;
   meeting.chatTtsMonthlyLimitNoticeSent = true;
   await Promise.resolve(
     meeting.textChannel.send(buildChatTtsMonthlyLimitTextOnly(status, options)),
@@ -150,19 +158,27 @@ async function sendFinalMonthlyLimitNoticeIfNeeded(
   });
 }
 
-export async function maybeSpeakChatMessage(
+async function speakChatMessage(
   meeting: MeetingData,
   message: Message,
   entry: ChatEntry,
 ): Promise<void> {
+  const signal = getMeetingProcessingSignal(meeting);
+  signal.throwIfAborted();
   const playback = await resolveChatTtsPlayback(meeting, message, entry);
+  signal.throwIfAborted();
   if (!playback) return;
 
   const monthlyLimit = await resolveMonthlyMessageLimit(meeting);
+  signal.throwIfAborted();
   const usageReservation = await reserveChatTtsMessageUsage({
     guildId: meeting.guildId,
     limit: monthlyLimit.limit,
   });
+  if (signal.aborted) {
+    await releaseReservationIfNeeded(usageReservation);
+    signal.throwIfAborted();
+  }
   if (!usageReservation.allowed) {
     chatTtsDropped.inc();
     chatTtsMonthlyLimitBlocked.inc();
@@ -205,5 +221,15 @@ export async function maybeSpeakChatMessage(
     meeting,
     usageReservation,
     monthlyLimit.compedTier,
+  );
+}
+
+export function maybeSpeakChatMessage(
+  meeting: MeetingData,
+  message: Message,
+  entry: ChatEntry,
+): Promise<void> {
+  return runMeetingProcessingEffect(meeting, () =>
+    speakChatMessage(meeting, message, entry),
   );
 }

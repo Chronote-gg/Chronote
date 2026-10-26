@@ -7,6 +7,56 @@ Notable product changes for Chronote users. For the full changelog, see the [Git
 
 ## 2026
 
+### Get your first meeting notes (October 19)
+
+- The installer DM and an empty server library explain how to join voice, run `/startmeeting` and end the recording. **Open portal** goes directly to that server's library.
+- The first-meeting guide links to the permitted recording or saved meeting and distinguishes preparing notes, missing delivery evidence and delivery problems. Interrupted recordings keep their warnings.
+- Context and auto-recording remain optional. `/onboard` is retired; old wizard controls safely link to the portal. See [Getting started](/getting-started/).
+
+### Choose where recording controls and notes appear (October 16)
+
+- Use `notes-channel` on `/startmeeting` for a one-meeting text destination. Otherwise, manual starts use the voice-channel override, then the server default, then the command channel if nothing is configured. The private **View recording** link opens the published recording message.
+- Server settings show inherited destinations and voice-channel overrides. Configure or reset a destination with auto-recording off; changing routing never enables recording. Explicit overrides survive server-default changes, even if they previously matched the default.
+- An unavailable destination blocks a start without fallback. Controls, processing updates and final notes keep the destination selected at start. See [Choose where controls and notes appear](/admin/setup-and-access/#4-choose-where-controls-and-notes-appear).
+
+### Notes delivery timing notice (October 16)
+
+- We are adding content-free measurements of the wait from recording stop until Discord acknowledges the first notes message and all initial notes messages. Partial delivery and missing timing remain separate from complete delivery.
+- These records use the existing server and acting account identities, with no additional identifiers, meeting content or per-server financial amounts. They measure delivery acknowledgement, not readership, and do not promise a response time. See [Measuring notes delivery wait](/whats-new/meeting-processing-times) and the updated [Privacy Policy](/legal/privacy).
+
+### Time to resolve a failed renewal
+
+- When renewal payment fails for an existing paid Basic or Pro subscription, the server keeps its previous paid plan for 48 hours from invoice finalization, including scheduled plan changes. Billing shows the local deadline and lets the original payer retry the same invoice, update their payment method, or cancel the unpaid renewal.
+- Cancellation preserves the remaining grace time. A new purchase becomes available after cleanup. Without payment, the server moves to Free at the original deadline, with any valid complimentary access preserved. See [Billing or plan issues](/troubleshooting/common-issues/#a-renewal-payment-failed).
+
+### Plan-change reviews and independent Basic offers
+
+- Where plan changes are available in Billing, the original payer reviews an exact total before payment. Pro upgrades and monthly to annual changes take effect after payment; downgrades and annual to monthly changes within the same plan wait until renewal.
+- Each server can use the monthly and annual Basic introductory offers once, in either order. Leaving an offer ends it, and future changes do not restart it. Discounts on other servers do not block plan changes. See [Server plans](/features/#basic-introductory-pricing).
+
+### Recording continuity during service handoffs
+
+- A ready replacement can accept new recordings while the previous runtime finishes its existing work. A start caught at the handoff can ask you to retry; active recordings keep their original owner.
+- Interrupted results retain their saved-coverage warnings. Unconfirmed recording or delivery state stays unavailable or needs review instead of appearing complete. See [Discord meeting notes](/discord-meeting-notes/#updates-and-interrupted-recordings).
+
+### Clearer interrupted recording outcomes
+
+- Chronote can recover saved conversation after an interrupted recording while respecting the original transcription and notes settings. It does not rejoin the voice channel or fill missing conversation with invented content.
+- Partial notes retain an **Interrupted** status and a coverage warning across Discord, the library, shared meetings, copies, downloads, Remote MCP, and Notion exports. Editing or correcting the notes keeps the warning.
+- Live pages distinguish known interruption from unavailable recording status. The library shows recovery progress and outcomes that need review. Unknown recording end times remain unknown. See [Meeting lifecycle](/core-concepts/meeting-lifecycle#interrupted-recordings).
+
+### Renewal status and lifecycle analytics notice (October 14)
+
+- Billing separates the current renewal date and rate from payment history. For supported subscriptions, the original payer can turn renewal back on at the displayed terms. A pending result stays visible while Chronote checks it. Subscriptions that need review link to Stripe; a subscription that has ended can be purchased again.
+- We are adding content-free renewal-off views, restoration clicks and outcomes, subscription endings, same-invoice payment recovery and settled-renewal categories. Turning renewal off is separate from the end of paid service. A later settled renewal is separate from a new purchase or cash payment.
+- These events use server identity and the acting account when known, fixed categories and a bounded interval until a scheduled end. They exclude provider IDs, prices, payment amounts, cancellation text and meeting content. Browser Do Not Track also suppresses analytics about an existing subscription’s restoration request and associated result, without changing its original purchase attribution or later automatic billing opt-out. See the [Privacy Policy](/legal/privacy/).
+
+### Basic introductory terms and analytics notice (October 12)
+
+- When Basic introductory pricing is available for an eligible server's first paid subscription, monthly billing is $6/month for three months, then $10/month. Annual billing is $60 for the first year, then $100/year. The offer applies automatically when shown, cannot be combined with another promotion and does not change Pro pricing. See [Server plans](/features/#basic-introductory-pricing) for eligibility and billing management.
+- We are adding fixed introductory-offer categories to purchase events and recording when complete offer terms are visible in the browser. Each displayed offer counts once per page visit and server choice. These counts do not establish unique people, whether someone read the terms or an offer caused a purchase.
+- Paid invoices are categorized as introductory discount, regular price, other discount or unknown from billing evidence. Original offer categories and entered-code presence remain separate from actual invoice discounts. The new categories contain no additional identifiers, prices, provider IDs, raw codes or meeting content. Browser Do Not Track and new-subscription billing opt-outs remain supported. See the [Privacy Policy](/legal/privacy/).
+
 ### Recording limits and plan links (October 12)
 
 - Recording-limit messages explain when recording can resume and link to the plan options for that server. Servers with existing billing get **Manage plan**. No plan removes the two-hour maximum per meeting.

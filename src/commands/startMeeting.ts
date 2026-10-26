@@ -7,6 +7,7 @@ import {
   EmbedBuilder,
   Guild,
   GuildMember,
+  type Message,
   PermissionsBitField,
   TextChannel,
   User,
@@ -20,7 +21,6 @@ import {
   initializeMeeting,
 } from "../meetings";
 import { randomUUID } from "node:crypto";
-import { GuildChannel } from "discord.js/typings";
 import {
   buildAutoRecordPermissionChannelMessage,
   buildAutoRecordPermissionDmMessage,
@@ -30,7 +30,6 @@ import {
   getMissingVoiceChannelPermissions,
 } from "../utils/permissions";
 import { handleEndMeetingOther } from "./endMeeting";
-import { saveMeetingStartToDatabase } from "./saveMeetingHistory";
 import { parseTags } from "../utils/tags";
 import { getGuildLimits } from "../services/subscriptionService";
 import {
@@ -54,15 +53,16 @@ import {
 import type { MeetingData } from "../types/meeting-data";
 import {
   getActiveMeetingLeaseForGuild,
-  getCurrentMeetingLeaseOwnerInstanceId,
   isLeaseActive,
-  releaseMeetingLeaseByIdentifiers,
-  startMeetingLeaseHeartbeat,
-  tryAcquireMeetingLease,
 } from "../services/activeMeetingLeaseService";
 import { fetchGuildMember } from "../utils/guildMembers";
 import type { ChatTtsSpeakerPrefixMode } from "../utils/ttsText";
 import { resolveServerMeetingArtifactAccess } from "../services/meetingArtifactAccessService";
+import {
+  assertMemberCanAccessNotesChannel,
+  resolveMeetingNotesChannel,
+} from "../services/meetingNotesDestinationService";
+import { interruptOwnedMeeting } from "../services/ownedMeetingInterruption";
 
 type GuildLimits = Awaited<ReturnType<typeof getGuildLimits>>["limits"];
 
@@ -75,6 +75,8 @@ type StartMeetingOptions = {
 };
 
 type StartManualMeetingFromChannelsOptions = {
+  assertStartAllowed?: () => Promise<void>;
+  startSignal?: AbortSignal;
   client: Client;
   guild: Guild;
   voiceChannel: VoiceBasedChannel;
@@ -239,12 +241,17 @@ async function getLimitNotice(
 
 const getMeetingRequestOptions = (interaction: StartMeetingInteraction) => {
   if (!interaction.isChatInputCommand()) {
-    return { meetingContext: undefined, tags: undefined };
+    return {
+      meetingContext: undefined,
+      tags: undefined,
+      explicitChannelId: undefined,
+    };
   }
   const meetingContext = interaction.options.getString("context") || undefined;
   const rawTags = interaction.options.getString("tags") || undefined;
   return {
     meetingContext,
+    explicitChannelId: interaction.options.getChannel("notes-channel")?.id,
     tags: rawTags ? parseTags(rawTags) : undefined,
   };
 };
@@ -252,27 +259,15 @@ const getMeetingRequestOptions = (interaction: StartMeetingInteraction) => {
 const replyStartMeetingError = async (
   interaction: StartMeetingInteraction,
   content: string,
-  options?: StartMeetingOptions,
 ) => {
-  if (options?.deferredEphemeralReply) {
-    await interaction.editReply(content);
-    return;
-  }
-
-  if (!options?.ephemeralErrors) {
-    await interaction.reply(content);
-    return;
-  }
-
-  await interaction.reply({ content, ephemeral: true });
+  await interaction.editReply(content);
 };
 
 type GuildChannelResult =
   | {
       ok: true;
       guild: NonNullable<StartMeetingInteraction["guild"]>;
-      guildChannel: GuildChannel;
-      textChannel: TextChannel;
+      invocationChannelId: string;
     }
   | { ok: false; error: string };
 
@@ -290,8 +285,7 @@ const resolveGuildChannels = (
   return {
     ok: true,
     guild,
-    guildChannel: channel as GuildChannel,
-    textChannel: channel as TextChannel,
+    invocationChannelId: channel.id,
   };
 };
 
@@ -301,23 +295,6 @@ const resolveBotMember = (
   const botId = guild.client.user?.id;
   if (!botId) return null;
   return guild.members.cache.get(botId) ?? null;
-};
-
-const ensureBotCanSend = (
-  guildChannel: GuildChannel,
-  botMember: GuildMember,
-) => {
-  const permissions = guildChannel.permissionsFor(botMember);
-  if (!permissions) {
-    return "I do not have permission to send messages in this channel.";
-  }
-  if (!permissions.has(PermissionsBitField.Flags.SendMessages)) {
-    return "I do not have permission to send messages in this channel.";
-  }
-  if (!permissions.has(PermissionsBitField.Flags.ViewChannel)) {
-    return "I do not have permission to send messages in this channel.";
-  }
-  return null;
 };
 
 const ensureNoActiveMeeting = async (guildId: string) => {
@@ -349,6 +326,8 @@ const resolveMemberVoiceChannel = (member: GuildMember): VoiceChannelResult => {
 };
 
 export async function startManualMeetingFromChannels({
+  assertStartAllowed,
+  startSignal,
   client,
   guild,
   voiceChannel,
@@ -413,62 +392,38 @@ export async function startManualMeetingFromChannels({
     liveVoiceTtsVoice,
   } = await resolveMeetingVoiceSettings(guildId, voiceChannel.id, limits);
 
+  const artifactAccess = await resolveServerMeetingArtifactAccess(guildId);
   const meetingId = randomUUID();
-  const leaseOwnerInstanceId = getCurrentMeetingLeaseOwnerInstanceId();
-  const leaseAcquired = await tryAcquireMeetingLease({
-    guildId,
+  await assertStartAllowed?.();
+  startSignal?.throwIfAborted();
+  const meeting = await initializeMeeting({
+    assertStartAllowed,
+    startSignal,
     meetingId,
-    voiceChannelId: voiceChannel.id,
-    voiceChannelName: voiceChannel.name,
-    textChannelId: textChannel.id,
+    voiceChannel,
+    textChannel,
+    guild,
+    creator,
+    transcribeMeeting: true,
+    generateNotes: true,
+    meetingContext,
+    initialInteraction: undefined,
     isAutoRecording: false,
     startReason,
     startTriggeredByUserId,
+    tags,
+    onTimeout: (meeting) => handleEndMeetingOther(client, meeting),
+    onEndMeeting: (meeting) => handleEndMeetingOther(client, meeting),
+    liveVoiceEnabled,
+    liveVoiceCommandsEnabled,
+    liveVoiceTtsVoice,
+    chatTtsEnabled,
+    chatTtsVoice,
+    chatTtsSpeakerPrefixMode,
+    maxMeetingDurationMs: limits.maxMeetingDurationMs,
+    maxMeetingDurationPretty: limits.maxMeetingDurationPretty,
+    subscriptionTier: subscription.tier,
   });
-  if (!leaseAcquired) {
-    return { ok: false, error: "A meeting is already active in this server." };
-  }
-
-  let meeting;
-  try {
-    meeting = await initializeMeeting({
-      meetingId,
-      leaseOwnerInstanceId,
-      voiceChannel,
-      textChannel,
-      guild,
-      creator,
-      transcribeMeeting: true,
-      generateNotes: true,
-      meetingContext,
-      initialInteraction: undefined,
-      isAutoRecording: false,
-      startReason,
-      startTriggeredByUserId,
-      tags,
-      onTimeout: (meeting) => handleEndMeetingOther(client, meeting),
-      onEndMeeting: (meeting) => handleEndMeetingOther(client, meeting),
-      liveVoiceEnabled,
-      liveVoiceCommandsEnabled,
-      liveVoiceTtsVoice,
-      chatTtsEnabled,
-      chatTtsVoice,
-      chatTtsSpeakerPrefixMode,
-      maxMeetingDurationMs: limits.maxMeetingDurationMs,
-      maxMeetingDurationPretty: limits.maxMeetingDurationPretty,
-      subscriptionTier: subscription.tier,
-    });
-  } catch (error) {
-    await releaseMeetingLeaseByIdentifiers(
-      guildId,
-      meetingId,
-      leaseOwnerInstanceId,
-    );
-    throw error;
-  }
-  startMeetingLeaseHeartbeat(meeting);
-  void saveMeetingStartToDatabase(meeting);
-  const artifactAccess = await resolveServerMeetingArtifactAccess(guildId);
 
   return {
     ok: true,
@@ -534,115 +489,159 @@ export function buildManualMeetingStartedMessage(
   return { embeds: [embed], components: [row] };
 }
 
+export async function publishManualMeetingStartedMessage(
+  meeting: MeetingData,
+  liveMeetingUrl: string | null,
+): Promise<Message<true>> {
+  try {
+    const message = await meeting.textChannel.send(
+      buildManualMeetingStartedMessage(meeting, liveMeetingUrl),
+    );
+    meeting.startMessageId = message.id;
+    return message;
+  } catch (error) {
+    console.warn("Failed to publish meeting start", {
+      guildId: meeting.guildId,
+      meetingId: meeting.meetingId,
+      error,
+    });
+    await interruptOwnedMeeting(meeting, {
+      reason: "processing_failure",
+      deadline: Date.now() + 100_000,
+    });
+    throw error;
+  }
+}
+
 export async function handleRequestStartMeeting(
   interaction: StartMeetingInteraction,
   options?: StartMeetingOptions,
 ) {
-  const guildId = interaction.guildId!;
-  const { meetingContext, tags } = getMeetingRequestOptions(interaction);
-  const channelResult = resolveGuildChannels(interaction);
-  if (!channelResult.ok) {
-    await replyStartMeetingError(interaction, channelResult.error, options);
-    return;
-  }
+  if (!options?.deferredEphemeralReply && !interaction.deferred)
+    await interaction.deferReply({ ephemeral: true });
+  let startResult: StartManualMeetingFromChannelsResult;
+  try {
+    const guildId = interaction.guildId!;
+    const { meetingContext, tags, explicitChannelId } =
+      getMeetingRequestOptions(interaction);
+    const channelResult = resolveGuildChannels(interaction);
+    if (!channelResult.ok) {
+      await replyStartMeetingError(interaction, channelResult.error);
+      return;
+    }
 
-  const { guild, guildChannel, textChannel } = channelResult;
-  const botMember = resolveBotMember(guild);
-  if (!botMember) {
+    const { guild, invocationChannelId } = channelResult;
+    const meetingConflict = await ensureNoActiveMeeting(guildId);
+    if (meetingConflict) {
+      await replyStartMeetingError(interaction, meetingConflict);
+      return;
+    }
+
+    const member = await fetchGuildMember(guild, interaction.user.id);
+    if (!member) {
+      await replyStartMeetingError(
+        interaction,
+        "Unable to find your server member profile.",
+      );
+      return;
+    }
+    const voiceResult = resolveMemberVoiceChannel(member);
+    if (!voiceResult.ok) {
+      await replyStartMeetingError(interaction, voiceResult.error);
+      return;
+    }
+    const { voiceChannel } = voiceResult;
+    let textChannel: TextChannel;
+    try {
+      textChannel = await resolveMeetingNotesChannel({
+        guild,
+        voiceChannelId: voiceChannel.id,
+        explicitChannelId,
+        invocationChannelId,
+      });
+      assertMemberCanAccessNotesChannel(member, textChannel);
+    } catch (error) {
+      await replyStartMeetingError(
+        interaction,
+        error instanceof Error
+          ? error.message
+          : "The notes channel is unavailable.",
+      );
+      return;
+    }
+
+    startResult = await startManualMeetingFromChannels({
+      client: interaction.client,
+      guild,
+      voiceChannel,
+      textChannel,
+      creator: interaction.user,
+      meetingContext,
+      tags,
+      startTriggeredByUserId: interaction.user.id,
+    });
+  } catch (error) {
+    console.warn("Failed to prepare or start meeting", {
+      guildId: interaction.guildId,
+      error,
+    });
     await replyStartMeetingError(
       interaction,
-      "Bot not found in guild.",
-      options,
+      "Recording could not be started. Please try again.",
     );
     return;
   }
-
-  const permissionError = ensureBotCanSend(guildChannel, botMember);
-  if (permissionError) {
-    await replyStartMeetingError(interaction, permissionError, options);
-    return;
-  }
-
-  const meetingConflict = await ensureNoActiveMeeting(guildId);
-  if (meetingConflict) {
-    await replyStartMeetingError(interaction, meetingConflict, options);
-    return;
-  }
-
-  const member = await fetchGuildMember(guild, interaction.user.id);
-  if (!member) {
-    await replyStartMeetingError(
-      interaction,
-      "Unable to find your server member profile.",
-      options,
-    );
-    return;
-  }
-  const voiceResult = resolveMemberVoiceChannel(member);
-  if (!voiceResult.ok) {
-    await replyStartMeetingError(interaction, voiceResult.error, options);
-    return;
-  }
-  const { voiceChannel } = voiceResult;
-
-  const startResult = await startManualMeetingFromChannels({
-    client: interaction.client,
-    guild,
-    voiceChannel,
-    textChannel,
-    creator: interaction.user,
-    meetingContext,
-    tags,
-    startTriggeredByUserId: interaction.user.id,
-  });
   if (!startResult.ok) {
     if (startResult.recordingLimitNotice) {
       const notice = startResult.recordingLimitNotice;
-      if (options?.deferredEphemeralReply) {
-        await deliverRecordingLimitNotice(
-          notice,
-          () =>
-            interaction.editReply({
-              content: notice.payload.content,
-              components: notice.payload.components,
-              allowedMentions: notice.payload.allowedMentions,
-            }),
-          "edit",
-        );
-      } else {
-        await deliverRecordingLimitNotice(notice, () =>
-          interaction.reply({
+      await deliverRecordingLimitNotice(
+        notice,
+        () =>
+          interaction.editReply({
             content: notice.payload.content,
             components: notice.payload.components,
             allowedMentions: notice.payload.allowedMentions,
-            ephemeral: true,
           }),
-        );
-      }
+        "edit",
+      );
       return;
     }
-    await replyStartMeetingError(interaction, startResult.error, options);
+    await replyStartMeetingError(interaction, startResult.error);
     return;
   }
 
   const { meeting, liveMeetingUrl } = startResult;
 
-  if (options?.deferredEphemeralReply) {
-    const message = await textChannel.send(
-      buildManualMeetingStartedMessage(meeting, liveMeetingUrl),
-    );
-    meeting.startMessageId = message.id;
-    await interaction.editReply(
-      `Meeting started in **${meeting.voiceChannel.name}**.`,
+  let message: Message<true>;
+  try {
+    message = await publishManualMeetingStartedMessage(meeting, liveMeetingUrl);
+  } catch {
+    await replyStartMeetingError(
+      interaction,
+      "Recording start or publication could not be confirmed. Check the notes channel before trying again. Chronote has started preserving the recording for recovery.",
     );
     return;
   }
-
-  const reply = await interaction.reply({
-    ...buildManualMeetingStartedMessage(meeting, liveMeetingUrl),
-    fetchReply: true,
-  });
-  meeting.startMessageId = reply.id;
+  try {
+    await interaction.editReply({
+      content: `Recording started in **${meeting.voiceChannel.name}**. Controls and notes are in <#${meeting.textChannel.id}>.`,
+      components: [
+        new ActionRowBuilder<ButtonBuilder>().addComponents(
+          new ButtonBuilder()
+            .setLabel("View recording")
+            .setStyle(ButtonStyle.Link)
+            .setURL(message.url),
+        ),
+      ],
+      allowedMentions: { parse: [] },
+    });
+  } catch (error) {
+    console.warn("Failed to acknowledge meeting start", {
+      guildId: meeting.guildId,
+      meetingId: meeting.meetingId,
+      error,
+    });
+  }
 }
 
 export async function handleAutoStartMeeting(
@@ -650,6 +649,7 @@ export async function handleAutoStartMeeting(
   voiceChannel: VoiceBasedChannel,
   textChannel: TextChannel,
   options?: {
+    assertAdmission?: () => Promise<void>;
     tags?: string[];
     liveVoiceEnabled?: boolean;
     liveVoiceCommandsEnabled?: boolean;
@@ -664,6 +664,7 @@ export async function handleAutoStartMeeting(
 ) {
   const guildId = voiceChannel.guild.id;
   const botMember = voiceChannel.guild.members.cache.get(client.user!.id);
+  await options?.assertAdmission?.();
   if (!botMember) {
     await textChannel.send(
       `Cannot start auto-recording - bot not found in server.`,
@@ -689,14 +690,12 @@ export async function handleAutoStartMeeting(
 
   const staleLease = await getActiveMeetingLeaseForGuild(guildId);
   if (staleLease && isLeaseActive(staleLease)) {
-    await textChannel.send(
-      `Cannot start auto-recording in **${voiceChannel.name}** - a meeting is already active in this server.`,
-    );
     return false;
   }
   const { limits, subscription } = await getGuildLimits(guildId);
   const limitNotice = await getLimitNotice(guildId, limits);
   if (limitNotice) {
+    await options?.assertAdmission?.();
     await notifyRecordingLimit(
       {
         ...limitNotice,
@@ -727,63 +726,31 @@ export async function handleAutoStartMeeting(
   }
 
   const meetingId = randomUUID();
-  const leaseOwnerInstanceId = getCurrentMeetingLeaseOwnerInstanceId();
-  const leaseAcquired = await tryAcquireMeetingLease({
-    guildId,
+  // Initialize the meeting using the core function
+  const meeting = await initializeMeeting({
     meetingId,
-    voiceChannelId: voiceChannel.id,
-    voiceChannelName: voiceChannel.name,
-    textChannelId: textChannel.id,
+    voiceChannel,
+    textChannel,
+    guild: voiceChannel.guild,
+    creator: client.user!,
+    transcribeMeeting: true, // Always transcribe for auto-recordings
+    generateNotes: true, // Always generate notes for auto-recordings
+    initialInteraction: undefined, // No interaction for auto-recordings
     isAutoRecording: true,
     startReason: options?.startReason,
     startTriggeredByUserId: options?.startTriggeredByUserId,
     autoRecordRule: options?.autoRecordRule,
+    tags: options?.tags,
+    onTimeout: (meeting) => handleEndMeetingOther(client, meeting),
+    onEndMeeting: (meeting) => handleEndMeetingOther(client, meeting),
+    liveVoiceEnabled: options?.liveVoiceEnabled,
+    liveVoiceCommandsEnabled: options?.liveVoiceCommandsEnabled,
+    liveVoiceTtsVoice: options?.liveVoiceTtsVoice,
+    chatTtsEnabled: options?.chatTtsEnabled,
+    chatTtsVoice: options?.chatTtsVoice,
+    chatTtsSpeakerPrefixMode: options?.chatTtsSpeakerPrefixMode,
+    subscriptionTier: subscription.tier,
   });
-  if (!leaseAcquired) {
-    await textChannel.send(
-      `Cannot start auto-recording in **${voiceChannel.name}** - a meeting is already active in this server.`,
-    );
-    return false;
-  }
-
-  // Initialize the meeting using the core function
-  let meeting;
-  try {
-    meeting = await initializeMeeting({
-      meetingId,
-      leaseOwnerInstanceId,
-      voiceChannel,
-      textChannel,
-      guild: voiceChannel.guild,
-      creator: client.user!,
-      transcribeMeeting: true, // Always transcribe for auto-recordings
-      generateNotes: true, // Always generate notes for auto-recordings
-      initialInteraction: undefined, // No interaction for auto-recordings
-      isAutoRecording: true,
-      startReason: options?.startReason,
-      startTriggeredByUserId: options?.startTriggeredByUserId,
-      autoRecordRule: options?.autoRecordRule,
-      tags: options?.tags,
-      onTimeout: (meeting) => handleEndMeetingOther(client, meeting),
-      onEndMeeting: (meeting) => handleEndMeetingOther(client, meeting),
-      liveVoiceEnabled: options?.liveVoiceEnabled,
-      liveVoiceCommandsEnabled: options?.liveVoiceCommandsEnabled,
-      liveVoiceTtsVoice: options?.liveVoiceTtsVoice,
-      chatTtsEnabled: options?.chatTtsEnabled,
-      chatTtsVoice: options?.chatTtsVoice,
-      chatTtsSpeakerPrefixMode: options?.chatTtsSpeakerPrefixMode,
-      subscriptionTier: subscription.tier,
-    });
-  } catch (error) {
-    await releaseMeetingLeaseByIdentifiers(
-      guildId,
-      meetingId,
-      leaseOwnerInstanceId,
-    );
-    throw error;
-  }
-  startMeetingLeaseHeartbeat(meeting);
-  void saveMeetingStartToDatabase(meeting);
 
   // Send notification that auto-recording has started
   const embed = new EmbedBuilder()

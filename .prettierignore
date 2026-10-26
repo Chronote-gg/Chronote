@@ -8,3 +8,6 @@ apps/desktop/src-tauri/target
 aws-log-latest.json
 .opencode
 prompts/*.md
+
+# Ignored execution briefs and logs
+.superpowers

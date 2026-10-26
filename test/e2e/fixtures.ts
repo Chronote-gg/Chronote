@@ -53,4 +53,8 @@ export const test = base.extend<Fixtures>({
   },
 });
 
+test.afterEach(async ({ page }) => {
+  await page.unrouteAll({ behavior: "wait" });
+});
+
 export { expect };

@@ -50,7 +50,17 @@ Terms are injected into the transcription prompt to help improve spelling accura
 
 Only members with **Manage Server** can use the portal teaching flow. `/dictionary` retains its **Manage Channels** permission for existing Discord workflows. Both paths update the same server dictionary; the portal flow adds AI proposals and a separate human approval step.
 
-### 4. Configure auto-recording
+### 4. Choose where controls and notes appear
+
+In the portal's **Server settings**, set **Default notes channel** and save. Members with **Manage Server** can edit these saved settings. For a voice-channel exception, choose **Edit** beside that voice channel and select its **Notes channel**. The row shows the effective destination and whether it comes from the server default or a voice-channel override.
+
+The notes picker remains available with auto-recording off. Choosing a notes channel never enables recording. **Reset to server default** removes a voice-channel override. Inherited channels follow later server-default changes; an explicit override stays put even when it currently equals the default.
+
+For manual starts, Chronote uses the one-meeting `notes-channel` choice first, then the voice-channel override, then the server default. With none configured, it uses the text channel where the command was run. Auto-recording has no invocation-channel fallback and requires a configured destination.
+
+The destination must be accessible to the starter, and Chronote must have permission to post there. A deleted or inaccessible destination blocks the start without falling back to another channel. Changing settings during a recording affects the next meeting. Its controls, processing updates and final notes stay in the destination selected at start.
+
+### 5. Configure auto-recording
 
 Set up auto-recording so meetings are captured without anyone running `/startmeeting`:
 
@@ -69,7 +79,7 @@ Or enable it for every voice channel:
 
 Auto-record starts when any user joins a configured voice channel. It ends when the channel empties. If the recording produces too little content, it is cancelled automatically instead of generating empty notes.
 
-### 5. Choose which meeting artifacts viewers can access
+### 6. Choose which meeting artifacts viewers can access
 
 In **Server Settings** -> **Meetings**, server admins (members with **Manage Server**) can control two independent settings:
 
@@ -108,7 +118,6 @@ Chronote needs these Discord permissions:
 | `/tts`          | None                | Per-user preference             |
 | `/say`          | None                | Must be in an active meeting    |
 | `/billing`      | None                | Shows subscription status       |
-| `/onboard`      | Manage Server       | Can be disabled server-wide     |
 
 The portal's **Teach Chronote** workflow requires **Manage Server**. It can propose terms from natural-language guidance and, when explicitly opened after a web notes correction, from up to 2,000 characters of the notes diff plus up to 2,000 characters from lexically matching transcript segments. Every entry requires human approval.
 
@@ -162,12 +171,15 @@ Open your server's Billing page in the portal to review its plan and usage. The
 original payer must also have Manage Server permission to manage an existing
 Stripe subscription. Other server managers cannot open the payer's Stripe account.
 
-Existing plan changes are currently unavailable while hosted billing validation
-is completed. Your current subscription stays unchanged; contact support for help.
-When plan changes are enabled, Stripe shows a confirmation for that subscription,
-including the price and any prorations, before applying the change. Returning to
-Chronote does not itself confirm payment; the plan updates after Stripe reports
-the change. A failed confirmation does not create a second subscription.
+When your Billing page offers plan changes, choose a plan and review its exact
+total before confirming. Upgrades to Pro take effect after payment. Switching
+from monthly to annual starts a full new year, with credit for unused paid time.
+A failed or incomplete payment leaves your current plan active. Use **Continue
+payment** to resume the same change, or cancel it before choosing again.
+
+Downgrades to Basic or Free and a change from annual to monthly within the same plan take effect at
+your next renewal. You keep the plan you already paid for until that date.
+Cancel a scheduled change before choosing a different plan.
 
 Only one initial checkout can be in progress for a server. If another server
 manager has already started a purchase, wait for them to finish or for that
@@ -177,8 +189,8 @@ purchase. If billing says the purchase needs review, contact support before
 trying to purchase again.
 
 Use billing management to update payment methods or view invoice history. If a
-subscription has an unpaid invoice, a pending change, or a scheduled cancellation,
-resolve that state before changing plans. Contact support if the original payer
+subscription has an unpaid invoice or a payment is still being settled,
+resolve that payment before changing plans. Contact support if the original payer
 cannot access billing or the server's billing information needs repair.
 
 Plan tiers affect weekly meeting minutes, the number of meetings searchable by `/ask`, and access to features like image generation.

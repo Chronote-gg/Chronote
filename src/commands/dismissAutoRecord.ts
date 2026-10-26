@@ -11,7 +11,10 @@ import { resolveConfigEnum } from "../services/unifiedConfigService";
 import { MEETING_END_REASONS } from "../types/meetingLifecycle";
 import type { MeetingData } from "../types/meeting-data";
 import { canUserEndMeeting } from "../utils/meetingPermissions";
-import { handleEndMeetingOther } from "./endMeeting";
+import {
+  handleEndMeetingOther,
+  persistExplicitMeetingStop,
+} from "./endMeeting";
 
 export const DISMISS_AUTORECORD_COMMAND_NAME = "Stop recording";
 
@@ -111,10 +114,6 @@ async function resolveDismissAutoRecordContext(
     return { ok: false, message: "No active recording to stop right now." };
   }
 
-  if (meeting.finishing) {
-    return { ok: false, message: "This meeting is already ending." };
-  }
-
   const invokerId = interaction.user.id;
   if (!meeting.isAutoRecording) {
     return {
@@ -166,12 +165,14 @@ async function resolveDismissAutoRecordContext(
 export async function handleDismissAutoRecord(
   client: Client,
   interaction: UserContextMenuCommandInteraction,
+  signal?: AbortSignal,
 ) {
   const contextResult = await resolveDismissAutoRecordContext(
     client,
     interaction,
   );
   if (!contextResult.ok) {
+    signal?.throwIfAborted();
     await interaction.reply({
       content: contextResult.message,
       ephemeral: true,
@@ -192,6 +193,7 @@ export async function handleDismissAutoRecord(
     });
 
     if (!permissionDecision.allowed) {
+      signal?.throwIfAborted();
       await interaction.reply({
         content: `You do not have permission to stop this auto-record. ${permissionDecision.hint}`,
         ephemeral: true,
@@ -199,6 +201,7 @@ export async function handleDismissAutoRecord(
       return;
     }
   } else if (!canUserEndMeeting(meeting, invokerId)) {
+    signal?.throwIfAborted();
     await interaction.reply({
       content: "You do not have permission to end this meeting.",
       ephemeral: true,
@@ -206,7 +209,15 @@ export async function handleDismissAutoRecord(
     return;
   }
 
+  signal?.throwIfAborted();
   await interaction.deferReply({ ephemeral: true });
+  signal?.throwIfAborted();
+  await persistExplicitMeetingStop(meeting, MEETING_END_REASONS.DISMISSED);
+  if (meeting.finishing) {
+    signal?.throwIfAborted();
+    await interaction.editReply("This meeting is already ending.");
+    return;
+  }
 
   meeting.endReason = contextResult.context.isAutoRecording
     ? MEETING_END_REASONS.DISMISSED
@@ -218,7 +229,9 @@ export async function handleDismissAutoRecord(
     meeting.cancellationReason = `Stopped by <@${invokerId}>`;
   }
 
-  await handleEndMeetingOther(client, meeting);
+  signal?.throwIfAborted();
+  await handleEndMeetingOther(client, meeting, signal);
+  signal?.throwIfAborted();
   await interaction.editReply(
     contextResult.context.isAutoRecording
       ? "Stopped recording."

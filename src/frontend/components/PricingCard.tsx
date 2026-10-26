@@ -10,8 +10,10 @@ import {
   Title,
 } from "@mantine/core";
 import { IconCheck } from "@tabler/icons-react";
-import type { MouseEventHandler } from "react";
+import type { MouseEventHandler, ReactNode } from "react";
 import Surface from "./Surface";
+import IntroPriceComparison from "./IntroPriceComparison";
+import type { BasicIntroOffer } from "../../types/pricing";
 import { uiBorders, uiColors } from "../uiTokens";
 
 type ButtonVariant =
@@ -25,6 +27,7 @@ type ButtonVariant =
   | "gradient";
 
 type PricingCtaProps = Omit<ButtonProps, "children"> & {
+  "data-testid"?: string;
   variant?: ButtonVariant;
   onClick?: MouseEventHandler<HTMLButtonElement>;
 };
@@ -45,6 +48,8 @@ type PricingCardProps = {
   borderColor?: string;
   borderWidth?: number;
   testId?: string;
+  terms?: ReactNode;
+  introOffer?: BasicIntroOffer;
 };
 
 const resolveBadgeLabel = (highlighted: boolean, badge?: string) =>
@@ -96,6 +101,8 @@ export function PricingCard({
   borderColor,
   borderWidth,
   testId,
+  terms,
+  introOffer,
 }: PricingCardProps) {
   const badgeLabel = resolveBadgeLabel(highlighted, badge);
   const buttonVariant = resolveButtonVariant(highlighted, ctaProps);
@@ -105,6 +112,8 @@ export function PricingCard({
   const computedBorderWidth = resolveBorderWidth(highlighted, borderWidth);
   const computedBorderColor = resolveBorderColor(highlighted, borderColor);
   const badgeColor = resolveBadgeColor(highlighted);
+  const priceTypography =
+    introOffer?.status === "available" ? { fz: 32, lh: 1.2 } : { fz: "xl" };
   return (
     <Surface
       p="xl"
@@ -133,7 +142,8 @@ export function PricingCard({
           <Text c="dimmed">{description}</Text>
         </Stack>
         <Stack gap={4}>
-          <Text fw={700} size="xl">
+          {introOffer ? <IntroPriceComparison offer={introOffer} /> : null}
+          <Text fw={700} {...priceTypography}>
             {price}
           </Text>
           <Text size="sm" c="dimmed">
@@ -155,6 +165,7 @@ export function PricingCard({
           ))}
         </List>
         <Box mt="auto">
+          {terms ? <Box mb="sm">{terms}</Box> : null}
           {cta ? (
             <Button
               variant={buttonVariant}

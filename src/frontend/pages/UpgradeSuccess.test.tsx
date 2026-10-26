@@ -88,7 +88,9 @@ describe("UpgradeSuccess", () => {
 
   it("confirms promotion presence without rendering its value", () => {
     renderUpgradeSuccess();
-    expect(screen.getByText("Promotion applied.")).toBeInTheDocument();
+    expect(
+      screen.getByText("Review applied discounts in billing."),
+    ).toBeInTheDocument();
     expect(screen.queryByText(/SAVE20/)).toBeNull();
   });
 

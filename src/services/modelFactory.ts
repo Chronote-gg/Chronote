@@ -1,4 +1,4 @@
-import { config } from "./configService";
+import { MODEL_SELECTION_DEFAULTS } from "../config/modelChoices";
 import type { ModelRole } from "../config/types";
 
 export type ModelProvider = "openai";
@@ -25,30 +25,14 @@ export const buildModelOverrides = (
   return Object.keys(overrides).length > 0 ? overrides : undefined;
 };
 
-const defaultModels: Record<ModelRole, ModelChoice> = {
-  notes: { provider: "openai", model: config.notes.model },
-  meetingSummary: { provider: "openai", model: config.notes.model },
-  notesCorrection: { provider: "openai", model: config.notes.model },
-  dictionaryTeaching: { provider: "openai", model: "gpt-5-mini" },
-  transcription: { provider: "openai", model: "gpt-4o-transcribe" },
-  transcriptionCleanup: { provider: "openai", model: config.notes.model },
-  transcriptionCoalesce: { provider: "openai", model: "gpt-5-mini" },
-  imageCaption: { provider: "openai", model: "gpt-4o-mini" },
-  image: { provider: "openai", model: "dall-e-3" },
-  imagePrompt: { provider: "openai", model: config.notes.model },
-  ask: { provider: "openai", model: config.liveVoice.responderModel },
-  liveVoiceGate: { provider: "openai", model: config.liveVoice.gateModel },
-  liveVoiceResponder: {
-    provider: "openai",
-    model: config.liveVoice.responderModel,
-  },
-  liveVoiceTts: { provider: "openai", model: config.liveVoice.ttsModel },
-  autoRecordCancel: { provider: "openai", model: config.liveVoice.gateModel },
-};
-
 export function getModelChoice(
   role: ModelRole,
   overrides?: ModelOverrides,
 ): ModelChoice {
-  return overrides?.[role] ?? defaultModels[role];
+  return (
+    overrides?.[role] ?? {
+      provider: "openai",
+      model: MODEL_SELECTION_DEFAULTS[role],
+    }
+  );
 }

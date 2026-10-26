@@ -1,4 +1,6 @@
+/** @jest-environment node */
 import { jest } from "@jest/globals";
+jest.mock("dotenv", () => ({ config: jest.fn() }));
 import type { MeetingData } from "../../src/types/meeting-data";
 import type { AudioSnippet } from "../../src/types/audio";
 
@@ -30,6 +32,7 @@ async function loadModule(options: {
   providerError?: { status?: number; code?: number; secret?: string };
   providerErrorOnce?: { status?: number; code?: number; secret?: string };
   conversionError?: Error;
+  holdConversion?: boolean;
   unlinkError?: Error;
 }) {
   jest.resetModules();
@@ -37,16 +40,25 @@ async function loadModule(options: {
     text: options.providerResult ?? "hello",
     logprobs: [],
   };
+  const { default: OpenAI } = await import("openai");
+  const providerError = (details: { status?: number }) =>
+    new OpenAI.APIError(
+      details.status,
+      { message: "synthetic provider failure" },
+      "synthetic provider failure",
+      new Headers({ "retry-after-ms": "0" }),
+    );
   const create = jest.fn();
   if (options.providerError) {
-    create.mockRejectedValue(options.providerError as never);
+    create.mockRejectedValue(providerError(options.providerError) as never);
   } else if (options.providerErrorOnce) {
     create
-      .mockRejectedValueOnce(options.providerErrorOnce as never)
+      .mockRejectedValueOnce(providerError(options.providerErrorOnce) as never)
       .mockResolvedValue(success as never);
   } else {
     create.mockResolvedValue(success as never);
   }
+  const kill = jest.fn();
   const handlers = new Map<string, (...args: unknown[]) => void>();
 
   const unlinkSync = options.unlinkError
@@ -59,7 +71,11 @@ async function loadModule(options: {
     : jest.fn();
   jest.doMock("node:fs", () => ({
     ...jest.requireActual<typeof import("node:fs")>("node:fs"),
-    createReadStream: jest.fn(() => ({})),
+    createReadStream: jest.fn(() =>
+      jest
+        .requireActual<typeof import("node:stream")>("node:stream")
+        .Readable.from([Buffer.from("synthetic")]),
+    ),
     existsSync: jest.fn(() => true),
     unlinkSync,
     writeFileSync: jest.fn(),
@@ -77,7 +93,9 @@ async function loadModule(options: {
         handlers.set(event, callback);
         return this;
       }),
+      kill,
       save: jest.fn(() => {
+        if (options.holdConversion) return;
         if (options.conversionError) {
           handlers.get("error")?.(options.conversionError);
         } else {
@@ -117,26 +135,18 @@ async function loadModule(options: {
     },
   }));
   jest.doMock("cockatiel", () => ({
-    bulkhead: jest.fn(() => ({})),
-    circuitBreaker: jest.fn(() => ({})),
-    retry: jest.fn(() => ({})),
-    wrap: jest.fn(() => ({
-      execute: async (fn: () => Promise<unknown>) => {
-        try {
-          return await fn();
-        } catch {
-          return await fn();
-        }
-      },
-    })),
-    ConsecutiveBreaker: jest.fn(),
-    ExponentialBackoff: jest.fn(),
-    handleAll: {},
+    ...jest.requireActual<typeof import("cockatiel")>("cockatiel"),
+    bulkhead: () => ({ execute: (run: () => Promise<unknown>) => run() }),
+    wrap: () => ({ execute: (run: () => Promise<unknown>) => run() }),
   }));
 
   return {
     service: await import("../../src/services/transcriptionService"),
     unlinkSync,
+    create,
+    kill,
+    handlers,
+    lifetime: await import("../../src/services/meetingProcessingLifetime"),
   };
 }
 
@@ -208,4 +218,62 @@ describe("transcribeSnippet terminal result", () => {
     });
     expect(unlinkSync).toHaveBeenCalledTimes(2);
   });
+});
+
+test("interruption reaches the issued transcription SDK call and retains its actual lifetime", async () => {
+  const { service, create, lifetime } = await loadModule({});
+  let resolve!: (value: { text: string; logprobs: never[] }) => void;
+  let started!: () => void;
+  const dispatched = new Promise<void>((done) => {
+    started = done;
+  });
+  create.mockImplementationOnce(() => {
+    started();
+    return new Promise((done) => {
+      resolve = done;
+    });
+  });
+  const owned = lifetime.runMeetingProcessingEffect(meeting, () =>
+    service.transcribeSnippet(meeting, snippet),
+  );
+  await dispatched;
+  const options = create.mock.calls[0][1] as
+    { signal?: AbortSignal } | undefined;
+  expect(options?.signal?.aborted).toBe(false);
+  let settled = false;
+  const stopped = lifetime.stopMeetingProcessing(meeting).then(() => {
+    settled = true;
+  });
+  await Promise.resolve();
+  expect(options?.signal?.aborted).toBe(true);
+  expect(settled).toBe(false);
+  const diagnostic = jest.spyOn(console, "error").mockImplementation(() => {});
+  resolve({ text: "late provider result", logprobs: [] });
+  await expect(owned).resolves.toMatchObject({ status: "failed" });
+  await stopped;
+  expect(create).toHaveBeenCalledTimes(1);
+  diagnostic.mockRestore();
+});
+
+test("conversion cancellation waits for observed encoder termination before deleting input", async () => {
+  const { service, create, kill, handlers, unlinkSync, lifetime } =
+    await loadModule({ holdConversion: true });
+  const owned = lifetime.runMeetingProcessingEffect(meeting, () =>
+    service.transcribeSnippet(meeting, snippet),
+  );
+  const diagnostic = jest.spyOn(console, "error").mockImplementation(() => {});
+  let settled = false;
+  const drain = lifetime.stopMeetingProcessing(meeting).then(() => {
+    settled = true;
+  });
+  await Promise.resolve();
+  expect(kill).toHaveBeenCalledWith("SIGTERM");
+  expect(settled).toBe(false);
+  expect(unlinkSync).not.toHaveBeenCalled();
+  handlers.get("end")!();
+  await expect(owned).resolves.toMatchObject({ status: "failed" });
+  await drain;
+  expect(create).not.toHaveBeenCalled();
+  expect(unlinkSync).toHaveBeenCalledTimes(2);
+  diagnostic.mockRestore();
 });

@@ -29,6 +29,17 @@ class ConfigService {
     enabled: isMockMode,
   };
 
+  readonly runtime = {
+    ecs: Boolean(
+      process.env.ECS_CONTAINER_METADATA_URI_V4 ||
+      process.env.ECS_AGENT_URI ||
+      process.env.AWS_EXECUTION_ENV?.startsWith("AWS_ECS"),
+    ),
+    metadataUri: process.env.ECS_CONTAINER_METADATA_URI_V4?.trim() || "",
+    agentUri: process.env.ECS_AGENT_URI?.trim() || "",
+    candidateId: process.env.DEPLOYMENT_CANDIDATE_ID?.trim() || "",
+  };
+
   // Discord Configuration
   readonly discord = {
     botToken: process.env.DISCORD_BOT_TOKEN!,
@@ -110,7 +121,7 @@ class ConfigService {
 
   // Notes generation / testing configuration
   readonly notes = {
-    model: process.env.NOTES_MODEL || "gpt-5.2",
+    model: process.env.NOTES_MODEL || "gpt-6.1-sol",
     longStoryTestMode: process.env.NOTES_LONG_STORY_TEST_MODE === "true",
     longStoryTargetChars:
       parseInt(process.env.NOTES_LONG_STORY_TARGET_CHARS || "20000", 10) ||
@@ -200,6 +211,8 @@ class ConfigService {
   // The frontend points at a reverse proxy so ad blockers cannot drop events;
   // server-side traffic has no such problem, so it goes to PostHog directly.
   readonly analytics = {
+    billingLifecycleEnabled:
+      process.env.BILLING_LIFECYCLE_ANALYTICS_ENABLED === "true",
     posthogKey: process.env.POSTHOG_KEY || "",
     posthogHost: process.env.POSTHOG_HOST || "https://us.i.posthog.com",
   };
@@ -359,6 +372,20 @@ class ConfigService {
   };
 
   readonly stripe = {
+    renewalGraceEnabled: process.env.STRIPE_RENEWAL_GRACE_ENABLED === "true",
+    introOfferLedgerEnabled:
+      process.env.STRIPE_INTRO_OFFER_LEDGER_ENABLED === "true",
+    basicIntroOffer: {
+      couponId: process.env.STRIPE_BASIC_INTRO_COUPON_ID || "",
+      annualCouponId: process.env.STRIPE_BASIC_ANNUAL_INTRO_COUPON_ID || "",
+      startsAt: process.env.STRIPE_BASIC_INTRO_STARTS_AT || "",
+      // Empty leaves enrollment open-ended once the required offer inputs are set.
+      enrollmentEndsAt: process.env.STRIPE_BASIC_INTRO_ENROLLMENT_ENDS_AT || "",
+      portalConfigurationId:
+        process.env.STRIPE_BASIC_INTRO_PORTAL_CONFIGURATION_ID || "",
+    },
+    renewalReactivationEnabled:
+      process.env.STRIPE_RENEWAL_REACTIVATION_ENABLED === "true",
     subscriptionTransitionsEnabled:
       process.env.STRIPE_SUBSCRIPTION_TRANSITIONS_ENABLED === "true",
     secretKey: process.env.STRIPE_SECRET_KEY || "",

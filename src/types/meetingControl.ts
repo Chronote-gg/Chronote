@@ -98,6 +98,7 @@ export type MeetingControlCommand = {
   expiresAt: number;
   claimedByInstanceId?: string;
   claimExpiresAt?: number;
+  claimId?: string;
   result?: MeetingControlCommandResult;
   error?: string;
 };

@@ -37,4 +37,4 @@ RUN npx yarn build
 EXPOSE 3000
 
 # Command to run the application
-CMD ["npx", "yarn", "serve"]
+CMD ["node", "dist/index.js"]

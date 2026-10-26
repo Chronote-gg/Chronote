@@ -1,4 +1,54 @@
-# Purchase and useful-notes events
+# Product lifecycle analytics
+
+## Three lifecycle funnels
+
+Chronote's measurement plan has three main journeys: onboarding, purchase, and cancellation/loss. Renewal restoration is a recovery branch of the loss journey. Turning renewal off is a leading signal; actual loss of a paid relationship happens later. Product inactivity is a separate retention measure, not inferred from billing cancellation.
+
+| Journey           | Main question                                                 | Milestones                                                                                | Source coverage now                                                                                                                                                                                    |
+| ----------------- | ------------------------------------------------------------- | ----------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Onboarding        | Does an installed server reach useful output?                 | Server installed, setup steps, first usable meeting notes                                 | Existing server_installed, onboarding_step_reached and meeting_completed with usable_notes. The useful-notes milestone is a technical value proxy, not a proven retention-based activation definition. |
+| Purchase          | Does an eligible server start paying?                         | Eligible pricing/upgrade entry, plan action, Checkout created, verified paid access saved | Existing upgrade and billing events below. Keep initial purchases separate from renewals and plan changes. Existing positive-payment qualification does not certify every zero-cash purchase.          |
+| Cancellation/loss | Why does a paid server stop paying, and where can it recover? | Paid cohort, renewal-off confirmation, either renewal restored or paid relationship ended | Lifecycle producers are implemented behind a separate default-off gate. Existing payment success alone does not cover this journey.                                                                    |
+
+Use the server as the business unit across these journeys. An organizer, payer and later manager can be different people. Keep a separate person-level purchase-friction view with guild held constant. Native PostHog groups are not currently configured, so use the existing ordered same-guild analysis rather than quietly enabling group analytics or pretending guild-only webhook events belong to the original purchaser.
+
+### Cohorts, windows and outcomes
+
+- Onboarding: first observed install per server in the cohort; seven days to first useful notes is the approved default reporting window. Also show setup step completion. Later reinstall is not automatically a new first-time customer.
+- Purchase: retain the existing seven-day same-server conversion windows and first-entry attribution below. Show overall conversion, step conversion and elapsed time. Separate anonymous/unresolved entries from known server cohorts.
+- Voluntary loss: enter on the first confirmed renewal-off transition in an episode. Follow it to the provider's verified paid-period end, which may be months away. Count only cohorts whose boundary has passed when reporting realized loss. Turning renewal back on is a save attempt; the next verified paid renewal is the stronger retained-payment outcome.
+- Involuntary loss: show payment failure, recovery of that failed invoice, or paid relationship ending. Classify voluntary versus payment-related loss only from known provider evidence; otherwise use unknown. A payment failure is neither an immediate cancellation nor proof that access ended.
+- Win-back after an ended subscription is a new verified paid purchase for the same server, separate from undoing pending cancellation. Use the approved 30-day default reporting window. Saved query configuration remains a separate step.
+- A Pro-to-Basic downgrade is contraction, not loss of all paid service. A complimentary grant can preserve product access after Stripe payment ends. Current paid state and continued use must remain separate measures.
+
+Cohort maturity must be calculable, not guessed from month/year cadence. For a known boundary, the standard event timestamp plus remaining_seconds_to_scheduled_end gives the observed scheduled end. Update it with terms_updated if that date changes while renewal remains off; that does not create another cancellation entry. A missing or out-of-range boundary is unknown and excluded from the mature-cohort rate, with its count shown separately. Use actual ended/settled outcomes as observed results and reconcile boundary drift against bounded application state. This adds a justified duration property, not an invoice/episode identifier or an import of private provider records into PostHog. Include this timing category in the privacy notice before capture.
+
+Hosted Stripe cancellation intent is not directly instrumented today. Manage billing can mean updating a card or viewing an invoice, so it must not be labeled cancellation intent. Confirmed native renewal-off and ended transitions enter the loss analysis even without an earlier observed browser visit.
+
+The new measurement work is specified in the [renewal design](superpowers/specs/2026-10-14-renewal-reactivation-design.md#posthog-measurement) and its [implementation plan](superpowers/plans/2026-10-14-renewal-reactivation.md). Implemented event producers and new loss definitions are not claims of deployed capture or configured PostHog insights. Confirm exact existing saved views before creating anything; prefer updating the existing Chronote reporting and daily health summary.
+
+### Loss and recovery events
+
+| Event                                  | Producer and meaning                                                                                                                                                                                                                                                                                                                                     |
+| -------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| billing_renewal_off_viewed             | Browser visibility of the renewal-off card, once per visible server/terms state in a page visit. Not inferred from a provider webhook or component mount.                                                                                                                                                                                                |
+| billing_renewal_reactivation_clicked   | Explicit eligible primary-action click. Kept separate from the accepted backend request.                                                                                                                                                                                                                                                                 |
+| billing_subscription_state_changed     | Shared authoritative reconciliation, after the conditional state write wins. A real transition between renewal_on, renewal_off and ended, or a changed scheduled end while renewal remains off. The change enum distinguishes terms_updated from a new cancellation episode. Initial observation is a baseline, not an invented historical cancellation. |
+| billing_renewal_reactivation_requested | Protected service after consent and the first durable operation claim. Records an actual accepted request, not a button impression or provider success.                                                                                                                                                                                                  |
+| billing_renewal_reactivation_result    | First persisted terminal operation result: confirmed, rejected or needs_review. Retries and status polling do not emit another result. Processing is not a failure.                                                                                                                                                                                      |
+| billing_payment_failed                 | Verified first failure for a known subscription invoice. Provider retries do not inflate the count.                                                                                                                                                                                                                                                      |
+| billing_payment_recovered              | Verified settlement of that same previously failed invoice, matched internally. A later unrelated payment is not called recovery.                                                                                                                                                                                                                        |
+| billing_renewal_settled                | Verified normal renewal invoice settled with continuing paid service, including a fully credit-covered renewal. It is not a cash-revenue event and is not another purchase.                                                                                                                                                                              |
+
+The save-action branch is renewal-off viewed, explicit click, accepted request, provider-confirmed renewal on, then a later settled renewal. Its conversion denominator differs from all servers with renewal off, including those who never saw the card. Reuse billing_entitlement_saved for its existing qualified initial-purchase, renewal and plan-change outcomes. Do not relabel a renewal as another acquisition or silently change that event's positive-payment contract.
+
+Payloads use guild_id, an actual acting Discord user when known, environment/surface/version and fixed state, plan, cadence, cause and outcome enums. One additional bounded duration is recorded for cohort maturity: remaining_seconds_to_scheduled_end, from 0 to 31,622,400 seconds, with boundary_known. It is derived from the provider-confirmed scheduled end and a server observation time used as the standard event timestamp, never from browser input. No provider, invoice, operation or meeting IDs, amounts, prices, cancellation text, raw errors or new product identifiers. Provider/operation IDs may support private internal deduplication but are never sent to PostHog. Automatic outcomes use guild identity; original purchaser metadata is not evidence of who canceled or restored renewal.
+
+Respect browser DNT and persisted subscription/operation analytics opt-out. A later opt-out during unresolved operation recovery is sticky and cannot be cleared. Private invoice markers retain 400 days of deduplication coverage; older replays and capture gaps remain a reporting limitation. Instrument shared service/reconciliation boundaries so direct UI and hosted-provider outcomes are covered without duplicate producers. Capture remains best effort and must never affect billing. Reconcile bounded aggregate state counts with the application; event gaps and opt-outs are missing evidence, not failures or zero churn.
+
+Privacy policy detail, provider table, last-updated date and What's New notice must cover the new lifecycle categories before capture is enabled. Use a separate default-false BILLING_LIFECYCLE_ANALYTICS_ENABLED rollout gate, independent of the renewal-action gate, so a UI rollback does not disable already-approved lifecycle reporting. The gate is still false. No live analytics configuration changes are made by this implementation.
+
+For the general ordered-step/window model, see [PostHog funnels](https://posthog.com/docs/product-analytics/funnels). Our unit, entry episodes and outcome definitions above are Chronote product decisions. This design amendment verified project 530061 as Chronote with UTC project timezone; it did not query event rows or certify saved funnel configuration.
 
 Custom events contain shape, never meeting content or raw error/promotion values.
 The only product identifiers are `guild_id` and the acting Discord user as the
@@ -16,10 +66,13 @@ flowchart LR
   Discord["Useful notes in Discord"] --> Offer["Offer delivered"]
   Offer -. "native click unknown" .-> Arrival["Upgrade arrival"]
   Home["Homepage pricing"] --> Arrival
-  Arrival --> Auth["Sign in if needed"] --> Ready["Server, billing and selected-period price ready"]
+  Direct["Direct upgrade or promotion link"] --> Arrival
+  Arrival --> Auth["Discord sign-in if needed"] --> Select["Choose a managed server if needed"]
+  Select --> Ready["Server, billing and selected-period price ready"]
   Ready --> Click["Direct plan action (Monthly or Annual)"] --> Checkout["Checkout URL created"]
   Billing["Portal billing"] --> Click
-  Checkout --> Paid["Paid invoice and active entitlement saved"] --> Return["Return to server"]
+  Checkout --> Paid["Paid invoice and active entitlement saved"] --> Success["Existing success page"]
+  Success --> Return["Return to intended server task"]
   Checkout --> Cancel["Cancel/recover"] --> Arrival
 ```
 
@@ -27,16 +80,78 @@ The purchase page defaults to Monthly unless the arrival link requests Annual.
 Its billing selector changes prices on the same page, without adding a checkout
 step. Savings use the configured monthly/yearly pair in the same currency.
 
+Current pages and the proposed introductory pricing use this same journey. No
+new route or intermediate purchase step is added. Homepage terms are conditional;
+signed-in Upgrade and Billing terms use the selected server's offer. After
+payment, the existing success page lets the purchaser return to the intended
+server task. Canceled checkout returns to its purchase page with the original
+server, cadence, source and saved promotion intent. Future measurement views
+must keep visibility, buying actions and paid invoices separate.
+
+## Introductory offer event contract
+
+`offer` is always one of `none`, `basic_intro_v1` or `basic_annual_intro_v1`.
+It is added to `upgrade_ready`, `upgrade_plan_clicked`,
+`billing_checkout_created` and `billing_entitlement_saved`, with event version 1.
+Readiness and actions describe the displayed selected Basic offer. Pro actions
+use `none`. Checkout describes the frozen native offer, and paid capture
+describes the original fixed subscription cohort. No offer category authorizes
+a purchase or proves a particular invoice was discounted.
+
+`basic_intro_offer_exposed` has event version 1, fixed `offer` excluding `none`,
+`interval` (`month` or `year`) and `surface` (`homepage_pricing`, `upgrade` or
+`portal_billing`). An authenticated resolved server uses the existing `guild_id`;
+homepage exposure adds no guild. The existing signed-in browser identity applies.
+There are no new stable identifiers or price/content properties.
+
+Its counting unit is one distinct displayed offer per mounted page entry and
+selected server. It observes the actual `basic-intro-terms` element with
+IntersectionObserver at threshold 1 and requires a visible document and nonzero
+element area. Horizontal clipping, offscreen terms, hidden tabs and rendering
+alone do not count. Switching from monthly to annual can count the annual offer;
+switching back cannot count monthly again. Cadence query changes retain the entry.
+Changing the route/page or selected server starts a new entry. There is no timer
+polling. DNT suppresses capture, and delivery remains best effort. These counts
+are visibility observations, not proof of reading, unique people or causal
+attribution. Repeated page entries can count the same person again.
+
+Canonical paid capture adds `invoice_price`, one of `intro_discounted`,
+`regular_price`, `other_discount` or `unknown`. It classifies the actual event
+invoice from native amounts and discount associations, independently of the
+current subscription period. Supported evidence is a single settled, nonprorated
+subscription line with a known fixed recurring Price, consistent subtotal and
+tax-exclusive total, no balance/credit-note adjustment and coherent line/invoice
+discount references. Regular price requires zero native discounts and equal
+subtotal/tax-exclusive total. Intro pricing additionally requires the matching
+frozen native coupon, correct cadence/duration and exact 40% amount. Other
+supported native discounts use `other_discount`. Missing, ambiguous or failed
+native evidence uses `unknown`.
+
+String invoice discount references trigger retrieval of that exact invoice with
+coupon expansion, never a latest-invoice lookup. Annual once coupons can be
+consumed at finalization and absent from current subscription discounts while
+remaining on the first invoice. Reordered initial events are classified using
+their own invoice. Current-period `getAnnualIntroFirstYearPayment` is for billing
+display and is not used to classify older webhook events. Native classification
+failure cannot retry billing or change entitlement/receipt behavior.
+
+`promo_present` still means a code originally supplied through Chronote. Both
+checkout and paid capture use frozen `purchase_promo_present=true` or existing
+`promo_code` presence, never native coupon use. No raw code enters analytics.
+Existing DNT opt-outs and invoice receipts apply unchanged. Public privacy,
+provider-table and What's New notice must publish before new capture takes effect.
+
 | Event                       | Boundary                                                                       | Safe properties beyond environment/surface/identity                                                                                 |
 | --------------------------- | ------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------- |
 | `upgrade_arrived`           | Once per mounted purchase-route entry                                          | source, canceled, event_version=1                                                                                                   |
+| `basic_intro_offer_exposed` | Fully visible actual terms once per distinct offer per page/server entry       | offer, interval, surface=homepage_pricing/upgrade/portal_billing, event_version=1                                                   |
 | `upgrade_auth_started`      | Explicit purchase-page sign-in action                                          | source, promo_present, event_version=1                                                                                              |
 | `upgrade_blocked`           | Displayed blocking reason changes                                              | source, requested tier/interval, promo_present, reason, event_version=1                                                             |
-| `upgrade_ready`             | Authenticated manageable server, fresh billing and exact requested price       | source, tier/interval, promo_present, event_version=1                                                                               |
-| `upgrade_plan_clicked`      | Explicit eligible paid-tier action on Upgrade or Billing                       | source, tier/interval, promo_present, event_version=1                                                                               |
-| `billing_checkout_created`  | New Stripe subscription checkout returns a URL                                 | source, tier/interval, promo_present, billing_kind, event_version=1                                                                 |
+| `upgrade_ready`             | Authenticated manageable server, fresh billing and exact requested price       | source, tier/interval, promo_present, offer, event_version=1                                                                        |
+| `upgrade_plan_clicked`      | Explicit eligible paid-tier action on Upgrade or Billing                       | source, tier/interval, promo_present, offer, event_version=1                                                                        |
+| `billing_checkout_created`  | New Stripe subscription checkout returns a URL                                 | source, tier/interval, promo_present, offer, billing_kind, event_version=1                                                          |
 | `billing_checkout_rejected` | Billing configuration, price, promotion or guarded transition refuses checkout | fixed reason, source, optional tier/interval, event_version=1                                                                       |
-| `billing_entitlement_saved` | Verified paid positive-value invoice, persisted active Stripe entitlement      | source, tier/interval, promo_present, billing_kind, event_version=1                                                                 |
+| `billing_entitlement_saved` | Verified paid positive-value invoice, persisted active Stripe entitlement      | source, tier/interval, promo_present, offer, invoice_price, billing_kind, event_version=1                                           |
 | `upgrade_offer_delivered`   | Successful CTA-bearing summary or final-notes message                          | surface=discord_summary or discord_notes, event_version=1                                                                           |
 | `meeting_completed`         | Existing finalization and cancellation paths                                   | existing flags/counts plus transcription_outcome, notes_outcome, history_persistence, notes_delivery, usable_notes, event_version=2 |
 
@@ -247,3 +362,12 @@ This change adds context to existing pages. It creates no new purchase step or
 live recording extension. Production capture still depends on public notice
 publication. Saved insights and real conversion evidence follow deployment;
 local tests do not establish ingestion or revenue.
+
+## Checkout rejection categories
+
+The existing fixed blocking-reason field distinguishes `offer_unavailable`,
+`offer_changed_terms`, `discount_choice_required`, `purchase_pending`,
+`purchase_needs_review` and `purchase_expired` from `transition_guarded`.
+Services supply this category explicitly; messages and native provider errors
+are never parsed or sent as analytics properties. The event, identifiers,
+Do Not Track behavior and existing content exclusions remain the same.

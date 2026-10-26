@@ -1,3 +1,10 @@
+import type { RuntimeApiOperation } from "./runtimeApiOperationService";
+import { assertNotionOutcomeKnown } from "./notionOperationLifetime";
+import type { MeetingData } from "../types/meeting-data";
+import {
+  HISTORY_TRANSITION_FIELDS,
+  type HistoryTransition,
+} from "../types/deploymentControl";
 import type {
   MeetingAccessGrant,
   MeetingHistory,
@@ -35,7 +42,11 @@ export async function getMeetingHistoryService(
 export async function listRecentMeetingsForGuildService(
   guildId: string,
   limit?: number,
-  options?: { archivedOnly?: boolean; includeArchived?: boolean },
+  options?: {
+    archivedOnly?: boolean;
+    includeArchived?: boolean;
+    signal?: AbortSignal;
+  },
 ) {
   return getMeetingHistoryRepository().listRecentByGuild(
     guildId,
@@ -78,31 +89,41 @@ export async function listRecentMeetingsForChannelService(
   guildId: string,
   channelId: string,
   limit?: number,
+  signal?: AbortSignal,
 ) {
   return getMeetingHistoryRepository().listRecentByChannel(
     guildId,
     channelId,
     limit,
+    signal ? { signal } : undefined,
   );
 }
 
-export async function updateMeetingNotesService(params: {
-  guildId: string;
-  channelId_timestamp: string;
-  notes: string;
-  notesDelta?: unknown | null;
-  notesVersion: number;
-  editedBy: string;
-  summarySentence?: string;
-  summaryLabel?: string;
-  meetingName?: string;
-  suggestion?: SuggestionHistoryEntry;
-  source?: NotesEditSource;
-  expectedPreviousVersion?: number;
-  metadata?: { notesMessageIds?: string[]; notesChannelId?: string };
-}) {
+export async function updateMeetingNotesService(
+  params: {
+    guildId: string;
+    channelId_timestamp: string;
+    notes: string;
+    notesDelta?: unknown | null;
+    notesVersion: number;
+    editedBy: string;
+    summarySentence?: string;
+    summaryLabel?: string;
+    meetingName?: string;
+    suggestion?: SuggestionHistoryEntry;
+    source?: NotesEditSource;
+    expectedPreviousVersion?: number;
+    metadata?: { notesMessageIds?: string[]; notesChannelId?: string };
+  },
+  signal?: AbortSignal,
+  operation?: RuntimeApiOperation,
+) {
+  signal?.throwIfAborted();
   const repository = getMeetingHistoryRepository();
-  const ok = await repository.updateNotes(params);
+  const ok = await (operation
+    ? operation.mutate(() => repository.updateNotes(params))
+    : repository.updateNotes(params));
+  signal?.throwIfAborted();
   if (!ok) return false;
   try {
     const updated = await repository.get(
@@ -110,9 +131,11 @@ export async function updateMeetingNotesService(params: {
       params.channelId_timestamp,
     );
     if (updated) {
-      await maybeAutoSyncMeetingNotes(updated);
+      signal?.throwIfAborted();
+      await maybeAutoSyncMeetingNotes(updated, signal);
     }
   } catch (error) {
+    assertNotionOutcomeKnown(error, signal);
     console.warn("Failed to sync Notion after notes update", {
       guildId: params.guildId,
       meetingId: params.channelId_timestamp,
@@ -122,14 +145,23 @@ export async function updateMeetingNotesService(params: {
   return true;
 }
 
-export async function updateMeetingNotesMessageMetadataService(params: {
-  guildId: string;
-  channelId_timestamp: string;
-  notesMessageIds: string[];
-  notesChannelId: string;
-  expectedNotesVersion: number;
-}) {
-  return getMeetingHistoryRepository().updateNotesMessageMetadata(params);
+export async function updateMeetingNotesMessageMetadataService(
+  params: {
+    guildId: string;
+    channelId_timestamp: string;
+    notesMessageIds: string[];
+    notesChannelId: string;
+    expectedNotesVersion: number;
+  },
+  signal?: AbortSignal,
+  operation?: RuntimeApiOperation,
+) {
+  signal?.throwIfAborted();
+  return operation
+    ? operation.mutate(() =>
+        getMeetingHistoryRepository().updateNotesMessageMetadata(params),
+      )
+    : getMeetingHistoryRepository().updateNotesMessageMetadata(params);
 }
 
 export async function updateMeetingNameService(params: {
@@ -197,4 +229,66 @@ export async function updateMeetingAccessGrantsService(params: {
   if (updated)
     await replaceMeetingUserIndexForMeetingService(previous, updated);
   return true;
+}
+
+/** Canonical recording lifecycle writes never replace the owned history row. */
+export async function transitionOwnedMeetingHistoryService(
+  meeting: MeetingData,
+  patch: HistoryTransition["patch"],
+  allowedStatuses: readonly MeetingStatus[],
+): Promise<void> {
+  const reservation = meeting.reservation;
+  if (!reservation || reservation.sessionMode !== "meeting")
+    throw new Error("Recording history requires its owned reservation");
+  const repository = getMeetingHistoryRepository();
+  meeting.ownershipSignal?.throwIfAborted();
+  meeting.finalization?.controller.signal.throwIfAborted();
+  const row = await repository.getOwned(reservation.historyKey);
+  meeting.ownershipSignal?.throwIfAborted();
+  meeting.finalization?.controller.signal.throwIfAborted();
+  if (
+    !row ||
+    row.meetingId !== reservation.meetingId ||
+    row.ownerInstanceId !== reservation.ownerInstanceId ||
+    row.executionVersion !== reservation.executionVersion ||
+    !row.status ||
+    !allowedStatuses.includes(row.status)
+  )
+    throw new Error("Recording history ownership or status changed");
+  const result = await repository.transitionOwned({
+    key: reservation.historyKey,
+    expectedMeetingId: reservation.meetingId,
+    expectedOwnerInstanceId: reservation.ownerInstanceId,
+    expectedExecutionVersion: reservation.executionVersion,
+    expectedStatus: row.status,
+    patch: { ...patch, updatedAt: new Date().toISOString() },
+  });
+  meeting.ownershipSignal?.throwIfAborted();
+  meeting.finalization?.controller.signal.throwIfAborted();
+  if (result !== "applied")
+    throw new Error("Recording history transition was fenced");
+}
+
+export async function saveOwnedMeetingHistoryService(
+  meeting: MeetingData,
+  history: MeetingHistory,
+): Promise<void> {
+  const patch = Object.fromEntries(
+    HISTORY_TRANSITION_FIELDS.map((key) => [key, history[key]]),
+  );
+  await transitionOwnedMeetingHistoryService(
+    meeting,
+    patch,
+    history.status === "cancelled"
+      ? ["processing", "cancelled"]
+      : ["processing"],
+  );
+  try {
+    await writeMeetingUserIndexForMeetingService(history);
+  } catch (error) {
+    console.error("Failed to update meeting user index", {
+      meetingId: history.meetingId,
+      error,
+    });
+  }
 }

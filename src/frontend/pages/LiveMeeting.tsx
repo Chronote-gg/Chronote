@@ -12,6 +12,7 @@ import {
   Title,
 } from "@mantine/core";
 import { IconRefresh } from "@tabler/icons-react";
+import { LiveMeetingOutcome } from "../components/LiveMeetingOutcome";
 import { useParams } from "@tanstack/react-router";
 import PageHeader from "../components/PageHeader";
 import Surface from "../components/Surface";
@@ -35,6 +36,14 @@ const buildLoginUrl = () => {
 
 const resolveStreamStatusLabel = (status: string) => {
   switch (status) {
+    case "unavailable":
+      return "Status unavailable";
+    case MEETING_STATUS.INTERRUPTED:
+      return "Interrupted";
+    case MEETING_STATUS.FAILED:
+      return "Failed";
+    case MEETING_STATUS.STARTING:
+      return "Starting";
     case MEETING_STATUS.PROCESSING:
       return "Processing";
     case MEETING_STATUS.COMPLETE:
@@ -50,6 +59,14 @@ const resolveStreamStatusLabel = (status: string) => {
 
 const resolveTimelineEmptyLabel = (status: string) => {
   switch (status) {
+    case "unavailable":
+      return "Live transcript updates are unavailable.";
+    case MEETING_STATUS.INTERRUPTED:
+      return "Recording was interrupted. Saved content may be incomplete.";
+    case MEETING_STATUS.FAILED:
+      return "Recording could not finish.";
+    case MEETING_STATUS.STARTING:
+      return "Recording is starting.";
     case MEETING_STATUS.PROCESSING:
       return "Meeting finished. Waiting for notes and timeline updates.";
     case MEETING_STATUS.CANCELLED:
@@ -154,14 +171,7 @@ export default function LiveMeeting() {
           </Stack>
         </Group>
         <Divider my="sm" />
-        {stream.status === "error" ? (
-          <Center py="sm">
-            <Text size="sm" c="dimmed">
-              Unable to connect. Check your access to the voice channel and try
-              again.
-            </Text>
-          </Center>
-        ) : null}
+        <LiveMeetingOutcome status={stream.status} meeting={stream.meeting} />
         <MeetingTimeline
           events={stream.events}
           activeFilters={activeFilters}

@@ -27,6 +27,7 @@ function isAppConfigEnabled() {
 
 async function ensureSessionToken(
   client: AppConfigDataClient,
+  signal?: AbortSignal,
 ): Promise<string> {
   if (cache?.nextToken) return cache.nextToken;
   const session = await client.send(
@@ -35,7 +36,9 @@ async function ensureSessionToken(
       EnvironmentIdentifier: config.appConfig.environmentId,
       ConfigurationProfileIdentifier: config.appConfig.profileId,
     }),
+    { abortSignal: signal },
   );
+  signal?.throwIfAborted();
   if (!session.InitialConfigurationToken) {
     throw new Error("AppConfig session token missing.");
   }
@@ -59,9 +62,10 @@ function parsePayload(raw: string): { values: Record<string, unknown> } | null {
   }
 }
 
-export async function getGlobalConfigValues(): Promise<
-  Record<string, unknown>
-> {
+export async function getGlobalConfigValues(
+  options: { signal?: AbortSignal; strict?: boolean } = {},
+): Promise<Record<string, unknown>> {
+  options.signal?.throwIfAborted();
   if (config.mock.enabled && process.env.PW_VISUAL === "true") {
     // Visual regression snapshots are meant to reflect the production-like
     // global defaults we typically keep enabled, without requiring AppConfig
@@ -81,12 +85,14 @@ export async function getGlobalConfigValues(): Promise<
 
   const client = new AppConfigDataClient({ region: config.storage.awsRegion });
   try {
-    const token = await ensureSessionToken(client);
+    const token = await ensureSessionToken(client, options.signal);
     const response = await client.send(
       new GetLatestConfigurationCommand({
         ConfigurationToken: token,
       }),
+      { abortSignal: options.signal },
     );
+    options.signal?.throwIfAborted();
     const nextToken = response.NextPollConfigurationToken ?? token;
     const pollSeconds =
       response.NextPollIntervalInSeconds ??
@@ -100,7 +106,7 @@ export async function getGlobalConfigValues(): Promise<
         const parsed = parsePayload(decoded);
         if (parsed) {
           values = parsed.values;
-        }
+        } else if (options.strict) throw new Error("Invalid AppConfig payload");
       }
     }
 
@@ -111,6 +117,7 @@ export async function getGlobalConfigValues(): Promise<
     };
     return values;
   } catch (error) {
+    if (options.strict || options.signal?.aborted) throw error;
     console.warn("AppConfig fetch failed, using cached values:", error);
     return cache?.values ?? {};
   }

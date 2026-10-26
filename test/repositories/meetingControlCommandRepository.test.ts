@@ -1,4 +1,7 @@
-import { afterEach, describe, expect, test } from "@jest/globals";
+/** @jest-environment node */
+import { afterEach, beforeEach, describe, expect, test } from "@jest/globals";
+import { getMockStore } from "../../src/repositories/mockStore";
+import { context, control, runtime } from "../deployment/controlFixtures";
 import {
   getMeetingControlCommandRepository,
   resetMeetingControlCommandMemoryRepository,
@@ -20,6 +23,36 @@ const makeCommand = (
 });
 
 describe("meetingControlCommandRepository", () => {
+  beforeEach(() => {
+    const store = getMockStore();
+    store.deploymentControlRecords.clear();
+    for (const row of [control, runtime("old")])
+      store.deploymentControlRecords.set(
+        JSON.stringify([row.pk, row.sk]),
+        structuredClone(row),
+      );
+  });
+  test("noClaimAfterRetiringAcknowledgment", async () => {
+    const records = getMockStore().deploymentControlRecords;
+    for (const row of [
+      control,
+      { ...runtime("old"), role: "retired" as const },
+    ])
+      records.set(JSON.stringify([row.pk, row.sk]), row);
+    const repository = getMeetingControlCommandRepository();
+    await repository.writeCommand(makeCommand());
+    expect(
+      await repository.claimCommand({
+        requestId: "request-1",
+        instanceId: "old",
+        nowEpochSeconds: 100,
+        claimExpiresAt: 160,
+        updatedAt: "now",
+        claimId: "fixture-claim",
+        authority: { kind: "serving", context },
+      }),
+    ).toBeUndefined();
+  });
   afterEach(() => {
     resetMeetingControlCommandMemoryRepository();
   });
@@ -30,24 +63,26 @@ describe("meetingControlCommandRepository", () => {
 
     await expect(
       repository.listClaimablePendingCommands({
-        instanceId: "instance-1",
-        nowEpochSeconds: 1_767_225_000,
+        instanceId: "old",
+        nowEpochSeconds: 100,
         limit: 10,
       }),
     ).resolves.toHaveLength(1);
 
     const claimed = await repository.claimCommand({
       requestId: "request-1",
-      instanceId: "instance-1",
-      nowEpochSeconds: 1_767_225_000,
-      claimExpiresAt: 1_767_225_060,
+      instanceId: "old",
+      nowEpochSeconds: 100,
+      claimExpiresAt: 160,
       updatedAt: "2026-01-01T00:00:01.000Z",
+      claimId: "synthetic-claim",
+      authority: { kind: "serving", context },
     });
 
     expect(claimed).toMatchObject({
       requestId: "request-1",
-      claimedByInstanceId: "instance-1",
-      claimExpiresAt: 1_767_225_060,
+      claimedByInstanceId: "old",
+      claimExpiresAt: 160,
     });
   });
 
@@ -63,7 +98,7 @@ describe("meetingControlCommandRepository", () => {
     await expect(
       repository.listClaimablePendingCommands({
         instanceId: "owner-1",
-        nowEpochSeconds: 1_767_225_000,
+        nowEpochSeconds: 100,
         limit: 10,
       }),
     ).resolves.toMatchObject([{ requestId: "request-1" }]);
@@ -79,9 +114,11 @@ describe("meetingControlCommandRepository", () => {
       repository.claimCommand({
         requestId: "request-1",
         instanceId: "owner-2",
-        nowEpochSeconds: 1_767_225_000,
-        claimExpiresAt: 1_767_225_060,
+        nowEpochSeconds: 100,
+        claimExpiresAt: 160,
         updatedAt: "2026-01-01T00:00:01.000Z",
+        claimId: "synthetic-claim",
+        authority: { kind: "serving", context },
       }),
     ).resolves.toBeUndefined();
   });
@@ -89,13 +126,13 @@ describe("meetingControlCommandRepository", () => {
   test("does not list or claim expired pending commands", async () => {
     const repository = getMeetingControlCommandRepository();
     await repository.writeCommand(
-      makeCommand({ requestId: "request-1", expiresAt: 1_767_225_000 }),
+      makeCommand({ requestId: "request-1", expiresAt: 100 }),
     );
 
     await expect(
       repository.listClaimablePendingCommands({
-        instanceId: "instance-1",
-        nowEpochSeconds: 1_767_225_001,
+        instanceId: "old",
+        nowEpochSeconds: 101,
         limit: 10,
       }),
     ).resolves.toHaveLength(0);
@@ -103,10 +140,12 @@ describe("meetingControlCommandRepository", () => {
     await expect(
       repository.claimCommand({
         requestId: "request-1",
-        instanceId: "instance-1",
-        nowEpochSeconds: 1_767_225_001,
-        claimExpiresAt: 1_767_225_060,
+        instanceId: "old",
+        nowEpochSeconds: 101,
+        claimExpiresAt: 160,
         updatedAt: "2026-01-01T00:00:01.000Z",
+        claimId: "synthetic-claim",
+        authority: { kind: "serving", context },
       }),
     ).resolves.toBeUndefined();
   });
@@ -116,17 +155,21 @@ describe("meetingControlCommandRepository", () => {
     await repository.writeCommand(makeCommand());
     await repository.claimCommand({
       requestId: "request-1",
-      instanceId: "instance-1",
-      nowEpochSeconds: 1_767_225_000,
-      claimExpiresAt: 1_767_225_060,
+      instanceId: "old",
+      nowEpochSeconds: 100,
+      claimExpiresAt: 160,
       updatedAt: "2026-01-01T00:00:01.000Z",
+      claimId: "synthetic-claim",
+      authority: { kind: "serving", context },
     });
 
     await expect(
       repository.completeCommand({
         requestId: "request-1",
-        instanceId: "instance-1",
+        instanceId: "old",
         updatedAt: "2026-01-01T00:00:02.000Z",
+        claimId: "synthetic-claim",
+        nowEpochSeconds: 102,
         result: {
           status: "started",
           serverId: "guild-1",

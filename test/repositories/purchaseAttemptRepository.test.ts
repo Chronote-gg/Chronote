@@ -225,6 +225,20 @@ describe("purchase Dynamo commands", () => {
 
 describe("mock concurrency parity", () => {
   beforeEach(() => resetMockStore());
+  test("a pending plan change prevents a fresh purchase claim", async () => {
+    const store = getMockStore();
+    store.billingChangeControls.set(`CHANGE_CONTROL#${guildId}`, {
+      operationId: "00000000-0000-4000-8000-000000000001",
+    });
+    expect(
+      await getPurchaseRepository().compareAndWrite(
+        attempt,
+        undefined,
+        store.subscriptions.get(guildId),
+      ),
+    ).toBe(false);
+    expect(store.purchaseAttempts.has(guildId)).toBe(false);
+  });
   test("an incident revision defeats a stale attempt replacement", async () => {
     const repo = getPurchaseRepository();
     const pointer = getMockStore().subscriptions.get(guildId);

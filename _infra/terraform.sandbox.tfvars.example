@@ -25,6 +25,7 @@ NOTION_CLIENT_ID=""
 NOTION_REDIRECT_URI="https://api.sandbox.chronote.gg/api/notion/callback"
 
 # Stripe (sandbox uses test mode)
+STRIPE_RENEWAL_GRACE_ENABLED = false
 STRIPE_MODE="test"
 STRIPE_SUCCESS_URL="https://sandbox.chronote.gg/upgrade/success"
 STRIPE_CANCEL_URL="https://sandbox.chronote.gg/upgrade/select-server?canceled=true"

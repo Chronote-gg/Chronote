@@ -1,20 +1,28 @@
+import type { RecordingCheckpoint } from "./recordingCheckpoint";
 import { Participant } from "./participants";
 import type { MeetingDelivery } from "./meetingDelivery";
 import type { MeetingProcessingOutcome } from "./meetingProcessing";
+import type { NotesDeliveryTiming } from "./meetingNotesTiming";
 import type {
+  RecordingCaptureState,
+  RecordingRecoveryState,
   AutoRecordRule,
   MeetingEndReason,
   MeetingStartReason,
   MeetingStatus,
 } from "./meetingLifecycle";
 
+import type { BillingLifecycleState } from "./billingAnalytics";
+
 export interface GuildSubscription {
+  billingAnalyticsState?: BillingLifecycleState;
   guildId: string;
   status: string;
   tier: string;
   startDate: string;
   endDate?: string;
   nextBillingDate?: string;
+  cancellationAt?: string;
   paymentMethod?: string;
   subscriptionType: string;
   stripeCustomerId?: string;
@@ -85,7 +93,8 @@ export interface InteractionReceipt {
   interactionKind: string;
 }
 
-export interface ActiveMeetingLease {
+interface ActiveMeetingLeaseFields {
+  executionVersion?: number;
   guildId: string;
   meetingId: string;
   ownerInstanceId: string;
@@ -108,6 +117,21 @@ export interface ActiveMeetingLease {
   endRequestedAt?: string;
   endRequestedByUserId?: string;
 }
+
+export type ActiveMeetingLease = ActiveMeetingLeaseFields &
+  (
+    | {
+        sessionMode?: "meeting" | "tts_only";
+        voiceOperationAttemptId?: string;
+        recoveryAttemptId?: never;
+      }
+    | {
+        sessionMode: "recovery";
+        recoveryAttemptId: string;
+        executionVersion: number;
+        voiceOperationAttemptId?: never;
+      }
+  );
 
 // Access Logs Type
 export interface AccessLog {
@@ -250,6 +274,11 @@ export interface PersonalMediaUploadJobRecord {
   errorMessage?: string;
   retryable?: boolean;
   attempts?: number;
+  processingClaimId?: string;
+  artifactAttempts?: Record<
+    string,
+    { prefix: string; audioS3Key: string; transcriptS3Key: string }
+  >;
   queuedAt?: string;
   processingStartedAt?: string;
   processingOwnerInstanceId?: string;
@@ -263,6 +292,14 @@ export interface PersonalMediaUploadJobRecord {
   completedAt?: string;
   expiresAt?: number;
 }
+
+export type PersonalMediaClaim = {
+  uploadId: string;
+  instanceId: string;
+  attempt: number;
+  claimId: string;
+  nowEpochSeconds: number;
+};
 
 export interface FeedbackRecord {
   pk: string; // TARGET#<targetType>#<targetId>
@@ -421,6 +458,18 @@ export interface OnboardingState {
 
 // Meeting History Type
 export interface MeetingHistory {
+  completionPolicy?: import("./meetingCompletionPolicy").CompletionPolicy;
+  recoveryExport?: import("./recordingCheckpoint").RecoveryExport;
+  recoveryTranscript?: {
+    checkpointRevision: number;
+    object: import("./recordingCheckpoint").CheckpointObject;
+  };
+  checkpoint?: RecordingCheckpoint;
+  capture?: RecordingCaptureState;
+  captureCoverage?: import("./recordingCheckpoint").CaptureCoverageSummary;
+  recovery?: RecordingRecoveryState;
+  ownerInstanceId?: string;
+  executionVersion?: number;
   guildId: string; // Partition key
   channelId_timestamp: string; // Sort key (channelId#ISO-timestamp)
   meetingId: string; // Unique meeting identifier
@@ -453,6 +502,7 @@ export interface MeetingHistory {
   cancellationReason?: string;
   summaryMessageId?: string; // Message id for the summary embed
   delivery?: MeetingDelivery; // Acknowledged delivery outcomes, not generation flags
+  notesDeliveryTiming?: NotesDeliveryTiming;
   processing?: MeetingProcessingOutcome;
   notesMessageIds?: string[]; // All message ids when notes span multiple messages
   notesChannelId?: string; // Channel id where notes were posted

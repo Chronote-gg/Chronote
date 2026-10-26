@@ -60,6 +60,20 @@ if (hasBrowserGlobals) {
     }
     window.ResizeObserver = ResizeObserver;
   }
+  // Visibility tests supply callbacks; ordinary rendering tests do not intersect.
+  class IntersectionObserver {
+    root = null;
+    rootMargin = "0px";
+    scrollMargin = "0px";
+    thresholds = [1];
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+    takeRecords() {
+      return [];
+    }
+  }
+  window.IntersectionObserver = IntersectionObserver;
 
   Object.defineProperty(HTMLElement.prototype, "scrollTo", {
     value: () => {},

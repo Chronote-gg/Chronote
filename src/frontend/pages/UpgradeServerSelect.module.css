@@ -14,10 +14,6 @@
   min-width: 0;
 }
 
-.control:last-of-type {
-  flex: 1.2;
-}
-
 .label {
   flex: 1;
   min-height: 70px;
@@ -26,6 +22,20 @@
   align-items: center;
   justify-content: center;
   font-weight: 600;
+}
+
+.plans {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: var(--mantine-spacing-md);
+}
+
+@media (min-width: 1200px) {
+  @container (min-width: 900px) {
+    .plans {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+  }
 }
 
 .annualLabel {

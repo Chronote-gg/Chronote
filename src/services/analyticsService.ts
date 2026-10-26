@@ -27,6 +27,7 @@ type AnalyticsProperties = Record<
 >;
 
 type CaptureArgs = {
+  timestamp?: Date;
   /** Discord user id of whoever took the action, when there is one. */
   userId?: string;
   /** Always set this when the action belongs to a guild. */
@@ -35,13 +36,15 @@ type CaptureArgs = {
 };
 
 let client: PostHog | null = null;
+let closing = false;
+let shutdown: Promise<void> | undefined;
 
 /**
  * No-ops when no key is configured, which keeps local dev, Jest, and CI free
  * of analytics traffic, the same way the frontend does.
  */
 function getClient(): PostHog | null {
-  if (!config.analytics.posthogKey) return null;
+  if (closing || !config.analytics.posthogKey) return null;
   client ??= new PostHog(config.analytics.posthogKey, {
     host: config.analytics.posthogHost,
   });
@@ -61,7 +64,7 @@ function resolveDistinctId(userId?: string, guildId?: string): string | null {
 
 export function captureEvent(
   event: string,
-  { userId, guildId, properties }: CaptureArgs = {},
+  { userId, guildId, properties, timestamp }: CaptureArgs = {},
 ): void {
   // Everything, including client construction, stays inside the guard:
   // analytics must never take down a meeting, and building the client reads
@@ -76,6 +79,7 @@ export function captureEvent(
     posthog.capture({
       distinctId,
       event,
+      ...(timestamp ? { timestamp } : {}),
       properties: {
         ...properties,
         guild_id: guildId,
@@ -95,13 +99,14 @@ export function captureEvent(
  * batches, so without this every event still in the buffer is lost. A dropped
  * event is permanent: nothing later reconstructs it.
  */
-export async function shutdownAnalytics(): Promise<void> {
-  if (!client) return;
-  try {
-    await client.shutdown();
-  } catch (error) {
-    console.warn("Analytics shutdown failed", { error });
-  } finally {
-    client = null;
-  }
+export function shutdownAnalytics(): Promise<void> {
+  closing = true;
+  shutdown ??= Promise.resolve().then(async () => {
+    try {
+      await client?.shutdown();
+    } finally {
+      client = null;
+    }
+  });
+  return shutdown;
 }

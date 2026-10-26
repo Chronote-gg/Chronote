@@ -1,11 +1,15 @@
 import type { MeetingEvent } from "../../../../types/meetingTimeline";
+import {
+  withMeetingCaptureNotice,
+  type MeetingCapturePresentation,
+} from "../../../../utils/meetingCaptureNotice";
 import type {
   MeetingDetailInput,
   MeetingDetails,
 } from "../../../utils/meetingLibrary";
 
 export type MeetingExport = {
-  meeting: {
+  meeting: MeetingCapturePresentation & {
     id: string;
     meetingId: string;
     channelId: string;
@@ -41,12 +45,18 @@ export const buildMeetingExport = (
 ): MeetingExport => ({
   meeting: {
     id: detail.id,
+    status: detail.status,
+    capture: detail.capture,
+    captureCoverage: detail.captureCoverage,
+    captureNotice: detail.captureNotice,
+    recovery: detail.recovery,
+    recoveryNotice: detail.recoveryNotice,
     meetingId: detail.meetingId,
     channelId: detail.channelId,
     timestamp: detail.timestamp,
     duration: detail.duration,
     tags: detail.tags ?? [],
-    notes: detail.notes ?? "",
+    notes: withMeetingCaptureNotice(detail.notes ?? "", detail),
     notesChannelId: normalizeOptionalString(detail.notesChannelId),
     notesMessageId: normalizeOptionalString(detail.notesMessageId),
     ...(detail.transcriptAccessEnabled !== false

@@ -1,4 +1,18 @@
+import { getBillingChangeRepository } from "../repositories/billingChangeRepository";
+import {
+  refreshRenewalRecovery,
+  trackPaidRenewalPeriod,
+  completeRenewalPaidProjection,
+} from "./renewalRecoveryService";
+import { stripeId } from "./billingChangeProvider";
+import {
+  buildBillingLifecycleState,
+  publishBillingLifecycleTransition,
+} from "./billingLifecycleAnalytics";
+import { resolveSubscriptionCancellationAt } from "../utils/stripeCancellation";
+import type { SettlementInvoice } from "./offerUsageSettlement";
 import { randomUUID } from "node:crypto";
+import type { RenewalRecovery } from "../types/renewalRecovery";
 import type { GuildSubscription } from "../types/db";
 import type {
   StripeClient,
@@ -62,6 +76,7 @@ const buildSubscriptionPayload = (params: {
   startDate?: string;
   endDate?: string;
   nextBillingDate?: string;
+  cancellationAt?: string;
   paymentMethod?: string;
   stripeCustomerId?: string;
   stripeSubscriptionId?: string;
@@ -75,6 +90,7 @@ const buildSubscriptionPayload = (params: {
   startDate: params.startDate ?? new Date().toISOString(),
   endDate: params.endDate,
   nextBillingDate: params.nextBillingDate,
+  cancellationAt: params.cancellationAt,
   paymentMethod: params.paymentMethod,
   subscriptionType: "stripe",
   stripeCustomerId: params.stripeCustomerId,
@@ -107,12 +123,41 @@ const isTerminalSubscription = (subscription: StripeSubscription) =>
   subscription.status === "canceled" ||
   subscription.status === "incomplete_expired";
 
+function blocksCanceledRenewalProjection(
+  recovery: RenewalRecovery | undefined,
+  subscription: StripeSubscription,
+): boolean {
+  return (
+    recovery?.subscriptionId === subscription.id &&
+    subscription.status === "active" &&
+    ["canceling", "canceled"].includes(recovery.state)
+  );
+}
+async function hasUnsettledPlanChange(
+  guildId: string,
+  subscription: StripeSubscription,
+) {
+  const control = await getBillingChangeRepository().getControl(guildId);
+  if (!control) return false;
+  const operation = await getBillingChangeRepository().getOperation(
+    guildId,
+    control.operationId,
+  );
+  return Boolean(
+    operation &&
+    !["succeeded", "canceled"].includes(operation.state) &&
+    subscription.metadata.chronote_change_operation === operation.operationId,
+  );
+}
+
 // Read the row before fetching Stripe. If another webhook commits during the
 // fetch, retry both reads so an older response cannot undo its newer state.
 export const reconcileSubscription = async (
   stripe: StripeClient,
   guildId: string,
   subscriptionId: string,
+  settlement?: SettlementInvoice,
+  analyticsContext?: { userId: string; analyticsOptOut: boolean },
 ) => {
   const repo = getSubscriptionRepository();
   for (let attempt = 0; attempt < 3; attempt += 1) {
@@ -135,40 +180,75 @@ export const reconcileSubscription = async (
       )
         return;
     }
+    const recovery = await refreshRenewalRecovery({
+      stripe,
+      guildId,
+      now: Math.floor(Date.now() / 1000),
+    });
+    if (blocksCanceledRenewalProjection(recovery, subscription)) return;
+    if (await hasUnsettledPlanChange(guildId, subscription)) return;
     await validatePurchaseSubscription(guildId, subscription);
     const tier = isTerminalSubscription(subscription)
       ? "free"
       : resolveTierFromSubscription(subscription);
     const updatedBy =
       readMetadataValue(subscription.metadata, "discord_id") || undefined;
-    const accepted = await repo.compareAndWrite(
-      {
-        ...buildSubscriptionPayload({
-          guildId,
-          status: subscription.status,
-          tier,
-          startDate: toIso(subscription.start_date),
-          endDate: toIso(subscription.ended_at),
-          nextBillingDate: toIso(resolveSubscriptionPeriodEnd(subscription)),
-          paymentMethod: subscription.default_payment_method
-            ? "card"
-            : "unknown",
-          stripeCustomerId:
-            typeof subscription.customer === "string"
-              ? subscription.customer
-              : subscription.customer.id,
-          stripeSubscriptionId: subscription.id,
-          updatedBy,
-          priceId: subscription.items.data[0]?.price.id,
-          mode: subscription.livemode ? "live" : "test",
-        }),
-        stripeSyncRevision: randomUUID(),
-      },
-      existing,
-    );
+    const payload: GuildSubscription = {
+      ...buildSubscriptionPayload({
+        guildId,
+        status: subscription.status,
+        tier,
+        startDate: toIso(subscription.start_date),
+        endDate: toIso(subscription.ended_at),
+        nextBillingDate: toIso(resolveSubscriptionPeriodEnd(subscription)),
+        cancellationAt: toIso(resolveSubscriptionCancellationAt(subscription)),
+        paymentMethod: subscription.default_payment_method ? "card" : "unknown",
+        stripeCustomerId:
+          typeof subscription.customer === "string"
+            ? subscription.customer
+            : subscription.customer.id,
+        stripeSubscriptionId: subscription.id,
+        updatedBy,
+        priceId: subscription.items.data[0]?.price.id,
+        mode: subscription.livemode ? "live" : "test",
+      }),
+      stripeSyncRevision: randomUUID(),
+      billingAnalyticsState: ["incomplete", "trialing"].includes(
+        subscription.status,
+      )
+        ? existing?.billingAnalyticsState
+        : buildBillingLifecycleState(subscription),
+    };
+    const accepted = await repo.compareAndWrite(payload, existing);
     if (!accepted) continue;
+    await publishBillingLifecycleTransition({
+      previous: existing,
+      current: payload,
+      provider: subscription,
+      observedAt: new Date(),
+      ...analyticsContext,
+    });
     clearGuildSubscriptionCache(guildId);
-    await acceptPurchaseSubscription(guildId, subscription);
+    if (subscription.status === "active") {
+      await completeRenewalPaidProjection(
+        guildId,
+        subscription,
+        payload,
+        stripe,
+      );
+      const invoiceId =
+        settlement?.invoiceId ?? stripeId(subscription.latest_invoice);
+      if (!invoiceId)
+        throw new Error("Paid renewal coverage requires its provider invoice");
+      await trackPaidRenewalPeriod({
+        stripe,
+        guildId,
+        subscriptionId: subscription.id,
+        invoiceId,
+        now: Math.floor(Date.now() / 1000),
+      });
+    }
+    await acceptPurchaseSubscription(guildId, subscription, stripe, settlement);
     await maybeAutoRevokeCoveredCompGrants({
       guildId,
       tier,

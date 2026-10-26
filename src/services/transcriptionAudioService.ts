@@ -8,9 +8,18 @@ import {
 export function convertTranscriptionPcmToWav(
   inputFile: string,
   outputFile: string,
+  signal?: AbortSignal,
 ): Promise<void> {
   return new Promise((resolve, reject) => {
-    ffmpeg(inputFile)
+    signal?.throwIfAborted();
+    const command = ffmpeg(inputFile);
+    const cleanup = () => signal?.removeEventListener("abort", cancel);
+    const cancel = () => command.kill("SIGTERM");
+    signal?.addEventListener("abort", cancel, { once: true });
+    command
+      .on("start", () => {
+        if (signal?.aborted) cancel();
+      })
       .inputOptions([
         "-f s16le",
         `-ar ${RECORD_SAMPLE_RATE}`,
@@ -21,8 +30,19 @@ export function convertTranscriptionPcmToWav(
         "-c:a pcm_s16le",
         `-ar ${TRANSCRIBE_SAMPLE_RATE}`,
       ])
-      .on("end", () => resolve())
-      .on("error", reject)
-      .save(outputFile);
+      .on("end", () => {
+        cleanup();
+        resolve();
+      })
+      .on("error", (error) => {
+        cleanup();
+        reject(error);
+      });
+    try {
+      command.save(outputFile);
+    } catch (error) {
+      cleanup();
+      reject(error);
+    }
   });
 }

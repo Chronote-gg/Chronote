@@ -8,6 +8,13 @@ encrypted with a dedicated KMS key, and has S3 public access blocking enabled.
 
 Apply this bootstrap stack before initializing the main infrastructure backend.
 
+## Container image retention
+
+The ECR lifecycle policy keeps the last two untagged images and retains tagged
+release images until a separately reviewed retirement. Tagged releases accumulate,
+so storage use can grow. Merging this source change does not update ECR. The policy
+takes effect only after a separate reviewed Terraform apply.
+
 ## Observability (AMP + AMG)
 
 This stack provisions:
@@ -274,18 +281,24 @@ If you prefer separate variable files, use:
 
 `.github/workflows/terraform-plan.yml` is a manual plan workflow. It does not run
 on merge. Use it before planned infra work or when checking drift after deploys.
-When the plan has changes, it uploads a short-lived `tfplan` artifact and writes
-the artifact name, plan run ID, and SHA-256 to the workflow summary.
+The plan and all Terraform output are retained through the approved private,
+versioned capture store. Its public summary contains only status, a logical
+bundle label and the plan and whole-bundle SHA-256 digests.
 
-`.github/workflows/terraform-apply.yml` is a manual apply workflow. It downloads a
-reviewed plan artifact from a specific plan run, verifies the SHA-256, and applies
-that saved plan. It does not generate a fresh unreviewed plan during apply.
+`.github/workflows/terraform-apply.yml` verifies the completed native producer,
+exact source, private object version, whole bundle and actual protected-environment
+individual approval before applying the saved plan. It never replans. Missing
+private storage or supported native protection metadata refuses execution.
+See [private Terraform delivery](../docs/terraform-private-delivery.md) for review,
+configuration, supported protection rules and unknown-acknowledgment handling.
 
 Each GitHub environment used by the workflow must provide:
 
 - Secret `AWS_ACCESS_KEY_ID`
 - Secret `AWS_SECRET_ACCESS_KEY`
 - Secret `TERRAFORM_TFVARS_JSON`
+- Approved secret `TERRAFORM_PRIVATE_STORAGE_JSON`
+- For apply, exact private secret `TERRAFORM_PLAN_REFERENCE_JSON`
 - Optional secret `REDIS_AUTH_TOKEN`
 - Optional secret `REDIS_URL`
 
@@ -354,6 +367,92 @@ The same ordering applies in reverse, and it is the general rule from the root
 `AGENTS.md`: changing a Terraform-managed ECS environment variable takes three
 steps, and the deploy is the one people miss.
 
+## Recording-safe backend replacement
+
+Production and Sandbox use `scripts/deployment/coordinator.cjs` after installing
+runner dependencies and building the backend protocol builders. Both workflows
+serialize deployments per environment and leave running deployments uncancelled.
+The coordinator requires the reviewed ECS rolling service with desired count one;
+it does not change that count or create another service.
+
+The CLI takes `prepare`, `promote`, `retire`, or `reconcile`. Its environment
+inputs are `ECS_CLUSTER`, `ECS_SERVICE`, `ECS_TASK_FAMILY`, `SECRETS_PREFIX`,
+`DEPLOYMENT_RUN_TOKEN`, `DEPLOYMENT_CANDIDATE_ID`, and `CANDIDATE_IMAGE` pinned
+to an image digest. It derives `DDB_TABLE_PREFIX` as `SECRETS_PREFIX` plus `-`,
+checks any explicit override, and verifies the task definition's table route.
+It does not retrieve secret values. AWS CLI calls use argument arrays and the
+compiled shared DynamoDB transaction builders.
+
+1. **Prepare:** verify the exact compatible serving task, its fresh application
+   readiness, and native protection before requesting replacement. Persist the
+   coordinator token, epoch, original membership, task/image identity, and phase
+   under compare-and-set conditions in the existing control row. Register a
+   digest-pinned task definition while preserving unrelated fields.
+2. **Promote:** let the old runtime keep serving while the candidate warms.
+   Require a fresh proof for the intended `all`, `bot`, or `api` mode, dependencies,
+   current epoch/generation, exact task/image identity, and native protection.
+   Atomically select the candidate under a new serving generation. An ECS health
+   result alone cannot select a runtime or authorize recording work.
+3. **Retire:** write an identity, original generation, token, and epoch-bound
+   request to the outgoing runtime row. Its heartbeat enters the single local
+   retirement barrier. Only that runtime can disable native protection after all
+   owned work and voice operations settle. The coordinator requires its exact
+   durable retired acknowledgment and subsequent ECS convergence to complete.
+   A 7,500-second reporting timeout preserves unfinished work.
+4. **Reconcile:** read back ambiguous writes and preserve the old membership on
+   pre-promotion failure. Before any retirement request, a still-ready compatible
+   prior owner can be selected with another new generation. A candidate that has
+   started work remains protected. After retirement starts, or without a safe
+   rollback target, report recovery required; never stop busy tasks, delete
+   leases, or disable protection to create capacity. Unfinished phases prevent
+   another rollout from accumulating protected revisions.
+
+Minimum health remains 100%, maximum 200%, and the application container's stop
+timeout is 120 seconds. The coordinator also requests
+`earlySuccessCriteria = { enable: true, healthyPercent: 100,
+sourceServiceRevisionCleanup: "DEFERRED" }`, preserving unrelated deployment
+configuration. AWS documents `DEPLOYMENT_BLOCKED` when protected tasks prevent a
+deployment reaching steady state, and recommends deferred source cleanup for
+protected tasks. These settings remove that documented cleanup dependency;
+simultaneous old/candidate protection and renewal acceptance remain **UNKNOWN**
+until an authorized native test proves them. Actual protection acknowledgments
+remain mandatory. See [AWS early-success criteria](https://docs.aws.amazon.com/AmazonECS/latest/developerguide/early-success-criteria.html)
+and [API failure messages](https://docs.aws.amazon.com/AmazonECS/latest/developerguide/api_failures_messages.html).
+
+The runner validates its UpdateService CLI input model with an output skeleton
+before any coordinator mutation. AWS provider 6.64.0 has no matching Terraform
+field, so this setting is owned by the shared coordinator. Unsupported runner
+models fail before replacement; a supported local model is not proof of service
+acceptance. The native update and its configuration are checked before promotion.
+
+ECS startup opens one health-only listener on the existing port before initial
+protection. `/health` reports liveness; `/ready` stays unready and other requests
+receive retryable 503 responses until protection permits full application boot.
+Only exact-task initial `DEPLOYMENT_BLOCKED` receives bounded retries within the
+15-minute warmup allowance, with cancellation and finite request timeouts. Full
+API routes reuse that listener. Source protection keeps its existing minute
+renewal and two-minute safety margin; a positive disabled/unsafe proof invalidates
+an older cached confirmation immediately.
+
+Early ECS success ends provider automatic rollback monitoring sooner. The
+coordinator therefore continues checking application readiness, owns the later
+rollback decision, and waits for runtime retirement. Early `SUCCESSFUL`, a quiet
+lease table, and a task-count snapshot are not recording-safe completion proof.
+
+The completed protocol branch is the first compatible ECS release. Intermediate
+implementation revisions have incompatible strict record schemas and cannot be
+treated as deployed warm-replacement targets. First activation requires its own
+reviewed compatible task/image and control-row evidence. The coordinator refuses
+missing or incompatible control state instead of silently enrolling legacy
+tasks. Qualifying readiness also requires the complete runtime safety handler;
+an incomplete composition must remain unready. No deployment is implied by the
+local fixture tests or these infrastructure definitions.
+
+The new deployment-control table retains top-level `hash_key` and `range_key`:
+the pinned provider requires them and rejects a top-level `key_schema` block.
+Existing GSI key deprecation warnings belong to the provider's nested-index
+migration and are not addressed by changing unrelated live tables here.
+
 ## Parking a non-production environment
 
 Nearly all of an idle environment's cost is the API ALB and the cache cluster.
@@ -372,10 +471,10 @@ it. Three variables park it instead:
   blocks the group's own deletion with a `DependencyViolation`. Expect an
   unattached security group in a parked environment; it is not leftover cruft.
 - `ECS_DESIRED_COUNT=0` stops the task without touching the service definition.
-  Terraform stops it immediately, without the `ActiveMeetingTable` lease wait that
-  `deploy.yml` and `deploy-staging.yml` run before replacing a task, so parking an
-  environment while a recording is in progress truncates it and loses the
-  in-memory state. Check for unexpired leases first if anyone might be recording.
+  This bypasses the backend coordinator's runtime retirement acknowledgment.
+  A quiet lease scan is not proof that owned work or voice operations have settled.
+  Parking requires a separately reviewed shutdown with actual runtime retirement
+  evidence; do not use a count change to force unfinished work to stop.
   A variable validation refuses this outright when `environment` is `prod`.
 - `ENABLE_ELASTICACHE=false` drops the cache cluster.
 
@@ -424,3 +523,199 @@ terraform -chdir=_infra import aws_dynamodb_table.meeting_control_command_table 
 
 After importing, run the Terraform Plan workflow with the real environment
 tfvars and verify the repaired resource is no longer shown as drift.
+
+## Renewal and lifecycle rollout
+
+STRIPE_RENEWAL_REACTIVATION_ENABLED and BILLING_LIFECYCLE_ANALYTICS_ENABLED both default to false and are independent of STRIPE_SUBSCRIPTION_TRANSITIONS_ENABLED. Keep them in environment-scoped TFVAR_ variables, apply a reviewed plan, then deploy the backend to use its task definition. A merge alone does not activate them.
+
+Turning the renewal-action flag off stops new provider writes, including retries. Existing operations can still be checked and reconciled. Do not delete their control records or create replacement Checkout to escape uncertainty. Resolve source or price drift through support; do not recancel a successfully restored subscription.
+
+Publish the updated Privacy Policy and What's New notice before lifecycle capture is enabled. Baseline reconciliation and private invoice receipts run independently of capture. A first observation is not a historical cancellation. Invoice deduplication markers are eligible for deletion after 400 days; event capture is best effort, not a financial audit trail. Verify actual Sandbox event rows before production rollout, and keep saved insight configuration separate from code verification.
+
+### Renewal payment grace
+
+`STRIPE_RENEWAL_GRACE_ENABLED` defaults to `false`. It is independent of
+reactivation, plan switching and lifecycle analytics. Prepare the recovery index
+and prove complete paid-period coverage before enabling it. Keep provider
+credentials, account IDs, deployment identifiers and full audit reports in the
+private operations workspace described in the repository's `AGENTS.md`.
+
+1. Keep the environment-scoped GitHub variable
+   `TFVAR_STRIPE_RENEWAL_GRACE_ENABLED=false`. Review and apply a saved Terraform
+   plan that adds `RenewalRecoveryDueIndex`, its query permission and the
+   subscription table's `dynamodb:DescribeTable` permission. Wait for the index to
+   become `ACTIVE`.
+2. Deploy the intended backend image with grace disabled. Terraform apply creates
+   a task definition, but the service ignores task-definition drift. A subsequent
+   backend deployment must move the service to that definition. Verify the exact
+   AWS environment, provider account and mode, running image digest, and flag.
+3. Obtain a normal-writer record from that deployed API image through an
+   authorized paid-subscription reconciliation. It must carry
+   `writerVersion=renewal-grace-v1` and the actual ECS task ARN and image digest.
+   An imported record or a simulated witness cannot establish deployment
+   readiness. If there is no eligible paid subscription, arrange an authorized
+   fixture before continuing.
+4. Run the bounded audit below. It is read-only by default. Set each variable
+   from the reviewed environment's private owner note. The example uses Sandbox
+   provider mode; a production run needs its own scope and authorization.
+
+   ```bash
+   yarn ts-node scripts/billing-renewal-recovery.ts \
+     --account "$STRIPE_ACCOUNT_ID" --mode test \
+     --report "$PRIVATE_REPORT_PATH" --max-pages 20 \
+     --cluster "$ECS_CLUSTER_ARN" --service "$ECS_SERVICE_ARN" \
+     --container "$ECS_CONTAINER_NAME" --image "$API_IMAGE_DIGEST"
+   ```
+
+5. With enforcement still disabled, repeat the command with `--apply` to write
+   owned DynamoDB coverage records. It does not edit Stripe or enable grace.
+   Require a successful exit and a private report with `coverageReady=true`,
+   `enumeration=complete`, `indexActive=true`, `writerVerified=true`, and only
+   `covered` or `ignored` outcomes. Readiness includes two complete traversals and
+   an exact current deployed-writer check. Unpaid trials without paid history are
+   ignored; first-payment failures receive no renewal grace. Applied runs exit
+   nonzero if any prerequisite is missing, including an inactive index or
+   unverified writer.
+6. If the page bound or a failure leaves the report incomplete, resume with
+   `--resume` and the same account, mode, report and apply scope. Preserve its
+   cursor and phase. A completed but unready audit needs correction and a fresh
+   report, rather than resuming its completed cursor. Keep enforcement off while
+   resolving provider errors, source drift or a retired writer witness.
+7. After accepting coverage and the environment's rollout gate, set
+   `TFVAR_STRIPE_RENEWAL_GRACE_ENABLED=true`, review and apply the resulting saved
+   plan, then deploy the backend. Verify the running task's environment and image
+   before exercising an authorized renewal failure. Check the saved deadline,
+   original-payer retry/cancel flow, preserved unrelated charges and hosted expiry.
+   Native test clocks or local DynamoDB do not replace signed-in hosted
+   acceptance. Sandbox's first activation also follows
+   [the controlled bootstrap procedure](../docs/sandbox-bootstrap.md).
+
+To stop new grace adoption, set the variable back to `false`, apply and deploy.
+Already accepted recoveries continue through their original deadline and durable
+cleanup. Turning the flag off does not remove financial fences or restore expired
+access. Preserve their records and reconcile them through the recovery path.
+
+## Sandbox backend deployment identity
+
+Sandbox backend deployments use the Terraform-managed GitHub OIDC role. Its trust requires
+this repository's immutable IDs, the `sandbox` environment and a `master` or `codex/*`
+branch. Terraform creates `SANDBOX_BACKEND_DEPLOY_ROLE_ARN` and `AWS_ACCOUNT_ID`
+environment variables and attaches the existing deployment-routing policy. The shared
+OIDC provider is read as data and remains owned by its existing configuration.
+
+Use the manual `Sandbox Deployment Identity` workflow for the first identity check.
+Its session permits only the Sandbox service metadata read. Both the canary and backend
+verify the exact account, role and run session before proceeding. The backend uses a
+three-hour session to cover bounded warmup and retirement; it has no static-key fallback.
+
+The Sandbox task-role AppConfig policy is scoped to its application, profile,
+environment, configuration and deployment strategy. Production retains its existing
+policy in this change. Frontend, docs and Terraform authentication are separate.
+
+Run the mocked policy checks with `terraform -chdir=_infra init -backend=false` and
+`terraform -chdir=_infra test`. Live introduction still requires a reviewed full saved
+plan, the existing Apply gate, the identity canary and the guarded bootstrap described
+in [sandbox-bootstrap.md](../docs/sandbox-bootstrap.md).
+
+### First Sandbox activation
+
+The manual Sandbox Deployment Identity workflow still defaults to a read-only
+identity check. Optional bootstrap phases are explicit:
+
+- `prepare` publishes a source-pinned image and registers a candidate definition
+  using the scoped Sandbox role. It does not replace the running service.
+- `activate` requires the reviewed manifest in the Sandbox environment secret
+  `SANDBOX_BOOTSTRAP_MANIFEST`, its checksum, and the same operation UUID. The
+  manifest source must match the workflow source. Its exact STS session is
+  `chronote-sandbox-<decimal value of the UUID without hyphens>-1`.
+  The job refuses reruns and verifies the actual identity before writes.
+- `repair` requires a new prepared candidate UUID and the reviewed old/new manifest
+  envelope in `SANDBOX_BOOTSTRAP_MANIFEST`. Supply the checksum of the entire
+  parsed envelope. It accepts only the exact acknowledged, unserved first
+  activation after its coordinator lease expires. See the linked bootstrap
+  runbook for settlement, conditional supersession, and no-replay requirements.
+- `probe_without_environment` runs a separate read-only trust probe with no
+  GitHub environment. Its job should fail at assumption. Verify AWS AccessDenied
+  after OIDC token retrieval; configuration failures or timeouts are not trust
+  evidence. A dispatch from a tag can separately verify the disallowed-ref case.
+
+Preparation, activation, and repair are serialized with normal Sandbox deployments. A
+durable INTRODUCTION receipt fences the one-time stop and listener writes.
+Initialization accepts only its exact acknowledged operation, principal and
+manifest checksum. Unknown provider acknowledgments stop the operation; do not
+rerun it or clear the receipt. Candidate readiness, native protection and a fresh
+serving heartbeat remain required.
+
+This first-activation route conservatively requires empty lease, command and
+personal-job tables and terminal complete/cancelled history status. These checks
+do not establish maintenance input isolation. Record that proof separately in
+the private activation packet before creating the executable manifest. Never
+derive it from a quiet scan. Keep manifest contents and provider receipts out of
+public logs and artifacts. Normal compatible deployments use the coordinator.
+
+## Production backend deployment identity
+
+The production role is source preparation for a separately approved introduction.
+Terraform selects it with `environment = "prod"`; GitHub must use `production`.
+Its OIDC trust binds the account's existing provider, immutable repository and owner
+IDs, the exact production environment subject, and `refs/heads/master`. Topic
+branches and tags cannot assume it. The role output is
+`production_backend_deploy_role_arn`; Actions receives
+`PRODUCTION_BACKEND_DEPLOY_ROLE_ARN` and `AWS_ACCOUNT_ID`.
+
+An environment name is not an approval gate. Before any mutating introduction job,
+verify that production has the reviewed human approval protections, permitted
+branch policy and bypass controls. The workflow
+must fail closed when required environment protection is absent.
+This source does not configure reviewers or change repository security settings.
+Approval configuration needs its own reviewed owner decision before use.
+
+Service writes bind the existing service; PassRole binds the existing task and
+execution roles for ECS tasks. Routing reuses the existing HTTPS listener policy,
+two target groups and lifecycle ignores. Receipts reuse DeploymentControlTable.
+Observation scans only the eight existing maintenance tables. Runtime managed-policy
+readback covers the six existing application-role attachments. Unexpected policies
+or unreadable state must block preservation checks.
+
+The role can put and delete inline policies only on the existing application role.
+AWS does not offer a condition for the inline policy name or its document. These
+permissions therefore can change other inline policies on that role. Task 5's
+reviewed executor must enforce the operation-owned name, exact deny document and
+hash, preserved original policies, approved predecessor and exact run/session.
+A session policy must narrow actions and resources for each phase; it cannot add
+unsupported name or document restrictions. Fence expiry blocks execution and never
+removes the deny automatically. See the [IAM authorization reference](https://docs.aws.amazon.com/service-authorization/latest/reference/list_iam.html).
+
+ECS Exec permission binds this cluster and container. The reviewed session policy
+must narrow it to the exact legacy or candidate task; the executor must constrain
+the probe command. IAM cannot constrain command text. An actual task-principal
+refusal and later authorization are required evidence, not an IAM simulation.
+Only production's existing application role receives the four `ssmmessages`
+channel actions. Their required `Resource = "*"` follows the
+[message gateway authorization model](https://docs.aws.amazon.com/service-authorization/latest/reference/list_ssmmessages.html).
+No general SSM session permission or secret-value read is granted.
+
+Producer discovery is read-only. Application Auto Scaling `DescribeScalableTargets`,
+`DescribeScalingPolicies` and `DescribeScheduledActions`, EventBridge
+`ListEventBuses` and `ListRules`, and Scheduler `ListSchedules` require resource
+wildcards here and are restricted to the deployment region. EventBridge
+`DescribeRule` and `ListTargetsByRule` can read rules in this account and region;
+Scheduler `GetSchedule` can read schedules in this account and region. Those ARN
+wildcards permit complete discovery before producer identities are known. See the
+[scaling](https://docs.aws.amazon.com/service-authorization/latest/reference/list_application-autoscaling.html),
+[EventBridge](https://docs.aws.amazon.com/service-authorization/latest/reference/list_eventbridge.html)
+and [Scheduler](https://docs.aws.amazon.com/service-authorization/latest/reference/list_scheduler.html)
+authorization references.
+
+No producer suspension or restoration authority is granted. The executor must
+retain complete paginated discovery and absent-controller evidence, then refuse
+unsupported or unbound controllers and competing writers. A producer requiring
+suspension needs an exact reviewed resource binding, a narrow source/session-policy
+extension and separate provider approval. Unrelated Grafana rotation stays outside
+mutation authority. These reads do not prove that every possible external writer
+is absent; the reviewed producer inventory must establish that boundary.
+
+Run the focused production identity source test and normal `terraform test`
+discovery with backend-disabled initialization. Mocked tests establish source
+policy shape, not live assumption, environment protection or runtime acceptance.
+Keep concrete resource bindings, invocation envelopes and provider evidence private.

@@ -1,4 +1,11 @@
+import type { RecordingCheckpointCapture } from "../services/recordingCheckpointCapture";
+import type {
+  CaptureCoverage,
+  RecordingCheckpoint,
+  RecordingCaptureState,
+} from "./recordingCheckpoint";
 import type { RecordingLimitState } from "../services/recordingLimitService";
+import type { SessionReservation } from "./deploymentControl";
 import { AudioPlayer, VoiceConnection } from "@discordjs/voice";
 import {
   ButtonInteraction,
@@ -11,6 +18,7 @@ import {
 import type { SpanContext } from "@opentelemetry/api";
 import type { MeetingDelivery } from "./meetingDelivery";
 import type { MeetingProcessingOutcome } from "./meetingProcessing";
+import type { NotesDeliveryTiming } from "./meetingNotesTiming";
 import { AudioData } from "./audio";
 import { ChatEntry } from "./chat";
 import { Participant } from "./participants";
@@ -40,6 +48,23 @@ export type LiveVoiceThinkingCueState = {
 };
 
 export interface MeetingData {
+  reservation?: SessionReservation;
+  recordingCheckpoint?: RecordingCheckpoint;
+  recordingCapture?: RecordingCheckpointCapture;
+  recordingContentTask?: Promise<void>;
+  recordingPreservationTask?: Promise<boolean>;
+  recordingPreservationNotification?: {
+    promise: Promise<void>;
+    outcome: "pending" | "acknowledged" | "unknown";
+  };
+  recordingPreservationFailure?: {
+    reason: "storage_preservation" | "ownership_lost";
+    stoppedAt: string;
+    preservation: "pending" | "confirmed" | "unconfirmed";
+    coverage?: CaptureCoverage;
+    lastConfirmedCheckpoint?: RecordingCheckpoint;
+  };
+  recordingCaptureState?: RecordingCaptureState;
   meetingId: string;
   sessionMode?: VoiceSessionMode;
   captureAudio?: boolean;
@@ -54,6 +79,8 @@ export interface MeetingData {
   channelId: string;
   audioData: AudioData;
   startTime: Date;
+  /** Actual receive setup time, separate from the stable reservation/history timestamp. */
+  captureStartedAt?: Date;
   endTime?: Date;
   timeoutTimer?: ReturnType<typeof setTimeout>;
   creator: User;
@@ -87,6 +114,15 @@ export interface MeetingData {
   botNicknameBeforeSession?: string | null;
   botNicknameChanged?: boolean;
 
+  ownershipSignal?: AbortSignal;
+  finalizationFenced?: boolean;
+  finalization?: {
+    promise: Promise<void>;
+    controller: AbortController;
+    disposition: "pending" | "durable" | "unresolved";
+    preservation?: Promise<boolean>;
+    historyDisposition?: "complete" | "cancelled" | "failed";
+  };
   finishing: boolean;
   // Used for functions that are waiting for the meeting to be completely over
   isFinished: Promise<void>;
@@ -119,6 +155,7 @@ export interface MeetingData {
   startMessageId?: string;
   summaryMessageId?: string;
   delivery?: MeetingDelivery;
+  notesDeliveryTiming?: NotesDeliveryTiming;
   processing?: MeetingProcessingOutcome;
   historySaved?: boolean;
   recordingLimitNotice?: RecordingLimitState;
@@ -130,3 +167,46 @@ export interface MeetingData {
 export interface MeetingSetup {
   interaction: CommandInteraction;
 }
+
+/** Plain content and processing state, explicitly prepared for live or recovered notes. */
+export type MeetingNotesInput = Pick<
+  MeetingData,
+  | "meetingId"
+  | "guildId"
+  | "channelId"
+  | "generateNotes"
+  | "transcribeMeeting"
+  | "startTime"
+  | "finalTranscript"
+  | "notesText"
+  | "processing"
+  | "summarySentence"
+  | "summaryLabel"
+  | "meetingName"
+  | "tags"
+  | "participants"
+  | "attendance"
+  | "langfuseParentSpanContext"
+> & {
+  creator: Pick<User, "id">;
+  guild: Pick<Guild, "id" | "name" | "description">;
+  voiceChannel: Pick<VoiceBasedChannel, "id" | "name">;
+  runtimeConfig?: Pick<
+    MeetingRuntimeConfig,
+    "modelChoices" | "modelParams" | "dictionary" | "visionCaptions"
+  >;
+  signal?: AbortSignal;
+  notesPrompt?: import("../services/langfusePromptService").ChatPromptResult & {
+    promptVisibleRoleIds: string[];
+  };
+  savedSummary?: {
+    prompt: import("../services/savedRecordingPrompt").SavedRecordingPrompt;
+    recentMeetingNames: string;
+  };
+  frozenModels?: Pick<
+    import("./recordingContent").SavedRecordingSettings["models"],
+    "notes" | "meetingSummary"
+  >;
+  captureNotice?: string;
+  recovered?: true;
+};

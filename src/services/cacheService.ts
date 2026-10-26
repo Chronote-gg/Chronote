@@ -58,6 +58,16 @@ export const cache = createCache({
 
 export const isCacheEnabled = cacheEnabled;
 
+/** Readiness checks the actual selected cache, including lazy Redis connection. */
+export async function isRuntimeCacheReady(): Promise<boolean> {
+  if (!redisClient) return true;
+  try {
+    return (await redisClient.ping()) === "PONG";
+  } catch {
+    return false;
+  }
+}
+
 export const withCache = async <T>(
   label: string,
   cached: () => Promise<T>,

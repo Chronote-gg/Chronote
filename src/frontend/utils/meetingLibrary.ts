@@ -1,9 +1,10 @@
 import { format } from "date-fns";
-import type { MeetingEvent } from "../../types/meetingTimeline";
 import {
-  MEETING_STATUS,
-  type MeetingStatus,
-} from "../../types/meetingLifecycle";
+  resolveCaptureStatus,
+  type MeetingCapturePresentation,
+} from "../../utils/meetingCaptureNotice";
+import type { MeetingEvent } from "../../types/meetingTimeline";
+import type { MeetingStatus } from "../../types/meetingLifecycle";
 import type { MeetingProcessingOutcome } from "../../types/meetingProcessing";
 
 const MS_PER_DAY = 1000 * 60 * 60 * 24;
@@ -12,7 +13,7 @@ const MS_PER_MINUTE = 1000 * 60;
 const SUMMARY_CUTOFF = 180;
 const RECENT_LABEL_MAX_DAYS = 7;
 
-export type MeetingDetails = {
+export type MeetingDetails = MeetingCapturePresentation & {
   id: string;
   meetingId: string;
   title: string;
@@ -38,7 +39,7 @@ export type MeetingDetails = {
   processing?: MeetingProcessingOutcome;
 };
 
-export type MeetingDetailInput = {
+export type MeetingDetailInput = MeetingCapturePresentation & {
   id: string;
   meetingId: string;
   channelId: string;
@@ -100,6 +101,20 @@ export const formatDurationLabel = (seconds: number) => {
   }
   return `${minutes}m`;
 };
+
+export const formatMeetingDurationLabel = (
+  meeting: Pick<MeetingDetailInput, "capture" | "duration">,
+) =>
+  meeting.capture?.kind === "interrupted" && !meeting.capture.endedAt
+    ? "Unknown duration"
+    : formatDurationLabel(meeting.duration);
+
+export const deriveMeetingSummary = (
+  meeting: Pick<MeetingDetailInput, "notes" | "summarySentence" | "recovery">,
+) =>
+  meeting.recovery && !meeting.notes?.trim() && !meeting.summarySentence?.trim()
+    ? ""
+    : deriveSummary(meeting.notes ?? "", meeting.summarySentence);
 
 export const formatDateLabel = (timestamp: string) => {
   const date = new Date(timestamp);
@@ -260,17 +275,19 @@ const resolveAttendees = (attendees?: string[]) =>
 
 const resolveEvents = (events?: MeetingEvent[]) => events ?? [];
 
-const resolveStatus = (status?: MeetingDetails["status"]) =>
-  status ?? MEETING_STATUS.COMPLETE;
-
 const resolveDisplayContent = (detail: MeetingDetailInput) => {
   const rawNotes = detail.notes ?? "";
   return {
     summary:
-      detail.processing && !rawNotes.trim() && !detail.summarySentence?.trim()
+      (detail.processing || detail.recovery) &&
+      !rawNotes.trim() &&
+      !detail.summarySentence?.trim()
         ? ""
         : deriveSummary(rawNotes, detail.summarySentence),
-    notes: detail.processing ? rawNotes : resolveNotes(detail.notes),
+    notes:
+      detail.processing || detail.recovery
+        ? rawNotes
+        : resolveNotes(detail.notes),
   };
 };
 
@@ -300,7 +317,7 @@ export const buildMeetingDetails = (
     summaryFeedback: detail.summaryFeedback ?? null,
     dateLabel: formatDateLabel(detail.timestamp),
     recencyLabel: formatRelativeRecencyLabel(detail.timestamp),
-    durationLabel: formatDurationLabel(detail.duration),
+    durationLabel: formatMeetingDurationLabel(detail),
     tags: resolveTags(detail.tags),
     channel: channelLabel,
     audioUrl: detail.audioUrl ?? null,
@@ -311,7 +328,12 @@ export const buildMeetingDetails = (
     decisions: [],
     actions: [],
     events: resolveEvents(detail.events),
-    status: resolveStatus(detail.status),
+    status: resolveCaptureStatus(detail),
+    capture: detail.capture,
+    captureCoverage: detail.captureCoverage,
+    captureNotice: detail.captureNotice,
+    recovery: detail.recovery,
+    recoveryNotice: detail.recoveryNotice,
     processing: detail.processing,
   };
 };

@@ -18,11 +18,11 @@ import { MeetingList } from "../features/library/MeetingList";
 import { useGuildContext } from "../contexts/GuildContext";
 import { trpc } from "../services/trpc";
 import {
-  deriveSummary,
+  deriveMeetingSummary,
   filterMeetingItems,
   formatChannelLabel,
   formatDateLabel,
-  formatDurationLabel,
+  formatMeetingDurationLabel,
   formatRelativeRecencyLabel,
   resolveMeetingTitle,
 } from "../utils/meetingLibrary";
@@ -154,10 +154,10 @@ const toMeetingItems = (meetingRows: MeetingSummaryRow[]): MeetingListItem[] =>
         summarySentence: meetingRow.summarySentence,
         channelLabel,
       }),
-      summary: deriveSummary(meetingRow.notes, meetingRow.summarySentence),
+      summary: deriveMeetingSummary(meetingRow),
       dateLabel: formatDateLabel(meetingRow.timestamp),
       recencyLabel: formatRelativeRecencyLabel(meetingRow.timestamp),
-      durationLabel: formatDurationLabel(meetingRow.duration),
+      durationLabel: formatMeetingDurationLabel(meetingRow),
       channelLabel,
     };
   });

@@ -8,6 +8,7 @@ import {
   markPersonalMediaUploadComplete,
   markPersonalRecordingUploadSegmentProcessed,
   markPersonalRecordingUploadSegmentProcessing,
+  markPersonalRecordingUploadSegmentsFailed,
   markPersonalRecordingSegmentUploadComplete,
   PersonalMediaUploadError,
   resolvePersonalMediaKind,
@@ -31,6 +32,20 @@ import {
 } from "../storageService";
 
 const uploadRepository = {
+  submit: jest.fn(
+    async (job: PersonalMediaUploadJobRecord): Promise<boolean> => {
+      void job;
+      return true;
+    },
+  ),
+  writeHistory: jest.fn(async () => true),
+  writeSegment: jest.fn(async (segment: PersonalRecordingSegmentRecord) => {
+    segmentStore.set(
+      segmentStoreKey(segment.uploadId, segment.segmentKey),
+      segment,
+    );
+    return true;
+  }),
   write: jest.fn(async (job: PersonalMediaUploadJobRecord) => {
     void job;
   }),
@@ -42,9 +57,6 @@ const uploadRepository = {
       return undefined;
     },
   ),
-  update: jest.fn(async (job: PersonalMediaUploadJobRecord) => {
-    void job;
-  }),
   listClaimable: jest.fn(async () => []),
   claim: jest.fn(async () => undefined),
   renewClaim: jest.fn(async () => false),
@@ -63,6 +75,28 @@ const segmentStoreKey = (uploadId: string, segmentKey: string) =>
   `${uploadId}:${segmentKey}`;
 
 const segmentRepository = {
+  prepare: jest.fn(
+    async (
+      segment: PersonalRecordingSegmentRecord,
+      expected: "pending_upload" | "failed" | undefined,
+    ) => {
+      const key = segmentStoreKey(segment.uploadId, segment.segmentKey);
+      if (segmentStore.get(key)?.status !== expected) return false;
+      segmentStore.set(key, segment);
+      return true;
+    },
+  ),
+  transition: jest.fn(
+    async (
+      segment: PersonalRecordingSegmentRecord,
+      expected: PersonalRecordingSegmentRecord["status"],
+    ) => {
+      const key = segmentStoreKey(segment.uploadId, segment.segmentKey);
+      if (segmentStore.get(key)?.status !== expected) return false;
+      segmentStore.set(key, segment);
+      return true;
+    },
+  ),
   write: jest.fn(async (segment: PersonalRecordingSegmentRecord) => {
     segmentStore.set(
       segmentStoreKey(segment.uploadId, segment.segmentKey),
@@ -140,6 +174,40 @@ describe("personalMediaUploadService", () => {
 
   afterEach(() => {
     jest.restoreAllMocks();
+  });
+
+  it("does not fail segments when fenced during the failure-path list read", async () => {
+    let release!: () => void;
+    let enter!: () => void;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const started = new Promise<void>((resolve) => {
+      enter = resolve;
+    });
+    segmentRepository.listByUpload.mockImplementationOnce(async () => {
+      enter();
+      await held;
+      return [{ status: "processing" } as PersonalRecordingSegmentRecord];
+    });
+    const controller = new AbortController();
+    const failure = markPersonalRecordingUploadSegmentsFailed(
+      "synthetic-upload",
+      new Error("provider failed"),
+      {
+        uploadId: "synthetic-upload",
+        instanceId: "worker",
+        attempt: 1,
+        claimId: "still-valid-claim",
+        nowEpochSeconds: 100,
+      },
+      controller.signal,
+    );
+    await started;
+    controller.abort(new Error("synthetic fence"));
+    release();
+    await expect(failure).rejects.toThrow("synthetic fence");
+    expect(uploadRepository.writeSegment).not.toHaveBeenCalled();
   });
 
   it("creates an owner-scoped signed upload intent for audio", async () => {
@@ -327,7 +395,7 @@ describe("personalMediaUploadService", () => {
     });
   });
 
-  it("marks a pending upload as ready for processing", async () => {
+  it("uploadIntakeQueuesWithoutInlineProcessing", async () => {
     const intent = await createPersonalMediaUploadIntent({
       userId: "user-1",
       contentType: "audio/mpeg",
@@ -353,7 +421,100 @@ describe("personalMediaUploadService", () => {
       title: "Planning session",
       tags: ["planning"],
     });
-    expect(uploadRepository.update).toHaveBeenCalledWith(completed);
+    expect(uploadRepository.submit).toHaveBeenCalledWith(completed);
+    expect(uploadRepository.claim).not.toHaveBeenCalled();
+  });
+
+  it("returns the current claimed job when a duplicate intake resumes after metadata verification", async () => {
+    const intent = await createPersonalMediaUploadIntent({
+      userId: "user-1",
+      contentType: "audio/mpeg",
+      fileSize: 1234,
+    });
+    const pending = getWrittenJob();
+    const claimed = {
+      ...pending,
+      status: "processing" as const,
+      attempts: 2,
+      processingOwnerInstanceId: "synthetic-worker",
+      processingClaimId: "synthetic-claim",
+      artifactAttempts: {
+        "2": {
+          prefix: "personal/user-1/upload/attempt-2/",
+          audioS3Key: "audio",
+          transcriptS3Key: "transcript",
+        },
+      },
+    };
+    uploadRepository.get
+      .mockResolvedValueOnce(pending)
+      .mockResolvedValue(claimed);
+    let resume!: () => void;
+    const held = new Promise<void>((resolve) => {
+      resume = resolve;
+    });
+    jest.mocked(getStoredObjectMetadata).mockImplementationOnce(async () => {
+      await held;
+      return { contentLength: 1234, contentType: "audio/mpeg" };
+    });
+    const submission = markPersonalMediaUploadComplete({
+      uploadId: intent.uploadId,
+      userId: "user-1",
+      key: intent.key,
+      uploadToken: intent.uploadToken,
+    });
+    await Promise.resolve();
+    uploadRepository.submit.mockResolvedValueOnce(false);
+    resume();
+    expect(await submission).toEqual(claimed);
+    expect(uploadRepository.submit).toHaveBeenCalledTimes(1);
+    expect(uploadRepository.claim).not.toHaveBeenCalled();
+  });
+
+  it("does not reset a processing segment when duplicate upload signing finishes late", async () => {
+    const session = await createPersonalRecordingUploadSession({
+      userId: "user-1",
+      sources: [{ sourceId: "owner_mic", kind: "owner_mic" }],
+    });
+    uploadRepository.get.mockResolvedValue(getWrittenJob());
+    const input = segmentInput({
+      uploadId: session.uploadId,
+      sourceId: "owner_mic",
+      fileSize: 1000,
+    });
+    const first = await createPersonalRecordingSegmentUploadIntent(input);
+    let resume!: () => void;
+    let started!: () => void;
+    const held = new Promise<void>((resolve) => {
+      resume = resolve;
+    });
+    const signing = new Promise<void>((resolve) => {
+      started = resolve;
+    });
+    const signed = {
+      url: "https://uploads.example/form",
+      fields: { key: "value" },
+    };
+    jest.mocked(getSignedUploadPost).mockImplementationOnce(async () => {
+      started();
+      await held;
+      return signed;
+    });
+    const duplicate = createPersonalRecordingSegmentUploadIntent(input);
+    await signing;
+    const processing = { ...first.segment, status: "processing" as const };
+    segmentStore.set(
+      segmentStoreKey(session.uploadId, first.segment.segmentKey),
+      processing,
+    );
+    resume();
+    await expect(duplicate).resolves.toEqual({
+      segment: processing,
+      uploadRequired: false,
+    });
+    expect(
+      await segmentRepository.get(session.uploadId, first.segment.segmentKey),
+    ).toEqual(processing);
   });
 
   it("marks all desktop recording segments as ready for processing", async () => {
@@ -422,7 +583,7 @@ describe("personalMediaUploadService", () => {
         expect.objectContaining({ sourceId: "system_output" }),
       ],
     });
-    expect(uploadRepository.update).toHaveBeenCalledWith(completed);
+    expect(uploadRepository.submit).toHaveBeenCalledWith(completed);
     await expect(
       segmentRepository.listByUpload(session.uploadId),
     ).resolves.toEqual(
@@ -462,13 +623,23 @@ describe("personalMediaUploadService", () => {
       uploadToken: intent.uploadToken!,
     });
 
-    const processing =
-      await markPersonalRecordingUploadSegmentProcessing(uploaded);
+    const claim = {
+      uploadId: session.uploadId,
+      instanceId: "synthetic-owner",
+      attempt: 1,
+      claimId: "synthetic-claim",
+      nowEpochSeconds: 100,
+    };
+    const processing = await markPersonalRecordingUploadSegmentProcessing(
+      uploaded,
+      claim,
+    );
     const processed = await markPersonalRecordingUploadSegmentProcessed(
       processing,
       {
         transcriptS3Key: "personal/user-1/upload/segments/owner_mic.json",
       },
+      claim,
     );
 
     expect(processed).toMatchObject({
@@ -534,7 +705,7 @@ describe("personalMediaUploadService", () => {
         segmentCount: 1,
         uploadedSegmentCount: 1,
       });
-      expect(uploadRepository.update).toHaveBeenCalledWith(completed);
+      expect(uploadRepository.submit).toHaveBeenCalledWith(completed);
       await expect(
         segmentRepository.listByUpload(session.uploadId),
       ).resolves.toEqual(
@@ -563,7 +734,7 @@ describe("personalMediaUploadService", () => {
     ).rejects.toMatchObject<Partial<PersonalMediaUploadError>>({
       code: "invalid_token",
     });
-    expect(uploadRepository.update).not.toHaveBeenCalled();
+    expect(uploadRepository.submit).not.toHaveBeenCalled();
   });
 
   it("rejects upload completion when the uploaded object is missing", async () => {
@@ -585,7 +756,7 @@ describe("personalMediaUploadService", () => {
     ).rejects.toMatchObject<Partial<PersonalMediaUploadError>>({
       code: "missing_object",
     });
-    expect(uploadRepository.update).not.toHaveBeenCalled();
+    expect(uploadRepository.submit).not.toHaveBeenCalled();
   });
 
   it("rejects upload completion when uploaded object verification fails", async () => {
@@ -610,6 +781,6 @@ describe("personalMediaUploadService", () => {
       code: "storage_unavailable",
       message: "Uploaded media could not be verified. Please retry shortly.",
     });
-    expect(uploadRepository.update).not.toHaveBeenCalled();
+    expect(uploadRepository.submit).not.toHaveBeenCalled();
   });
 });

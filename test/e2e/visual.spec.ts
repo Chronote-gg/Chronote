@@ -1,9 +1,16 @@
-import { useFreeBilling } from "./billingMocks";
+import { renewalGraceFixture } from "../../src/frontend/pages/renewalGraceFixtures";
+import {
+  useFreeBilling,
+  useIntroBilling,
+  useRenewalGrace,
+} from "./billingMocks";
 import type { Page } from "@playwright/test";
 import type { Locator } from "@playwright/test";
 import { expect, test } from "./fixtures";
 import { mockGuilds, mockLibrary, mockSettings } from "./mockData";
 import { applyVisualDefaults, waitForVisualReady } from "./visualUtils";
+import { registerNotesRoutingVisualTests } from "./notesRoutingVisuals";
+import { assertPageCanScroll } from "./scrollAssertions";
 
 const runVisual = process.env.PW_VISUAL === "true";
 const visualModes = ["viewport", "full"] as const;
@@ -173,6 +180,140 @@ test.describe("visual regression", () => {
       maxDiffPixels: PAGE_SCREENSHOT_MAX_DIFF_PIXELS,
     });
   };
+
+  for (const colorScheme of ["light", "dark"] as const) {
+    for (const viewport of marketingViewports) {
+      for (const surface of ["home", "upgrade", "billing"] as const) {
+        const fixture = {
+          home: {
+            path: "/",
+            selector: "home-billing-period",
+            purchase: "home-cta-basic",
+          },
+          upgrade: {
+            path: `/upgrade/select-server?serverId=${mockGuilds.ddm.id}`,
+            selector: "upgrade-billing-period",
+            purchase: "upgrade-plan-basic",
+          },
+          billing: {
+            path: `/portal/server/${mockGuilds.ddm.id}/billing`,
+            selector: "billing-interval",
+            purchase: "billing-plan-basic",
+          },
+        }[surface];
+        test(`basic intro ${surface} ${viewport.name} ${colorScheme} @visual`, async ({
+          page,
+        }) => {
+          await page.setViewportSize(viewport);
+          await page.addInitScript(
+            (scheme) =>
+              localStorage.setItem("mantine-color-scheme-value", scheme),
+            colorScheme,
+          );
+          await useIntroBilling(page);
+          await page.goto(fixture.path);
+          const selector = page.getByTestId(fixture.selector);
+          await expect(page.getByTestId("basic-intro-terms")).toBeVisible();
+          await expect(page.locator("html")).toHaveAttribute(
+            "data-mantine-color-scheme",
+            colorScheme,
+          );
+          for (const interval of ["month", "year"] as const) {
+            await selector
+              .getByText(interval === "month" ? "Monthly" : "Annual", {
+                exact: true,
+              })
+              .click();
+            await expect(page.getByTestId("basic-intro-terms")).toContainText(
+              interval === "month"
+                ? "$6/month for your first 3 months, then $10/month"
+                : "$60 for your first year, then $100/year",
+            );
+            const heights = await selector
+              .locator("label")
+              .evaluateAll((labels) =>
+                labels.map((label) => label.getBoundingClientRect().height),
+              );
+            expect(Math.max(...heights) - Math.min(...heights)).toBeLessThan(1);
+            expect(
+              await page.evaluate(
+                () => document.documentElement.scrollWidth <= innerWidth,
+              ),
+            ).toBe(true);
+            const purchase = page.getByTestId(fixture.purchase);
+            const action =
+              surface === "home" ? purchase : purchase.getByRole("button");
+            await action.scrollIntoViewIfNeeded();
+            await expect(action).toBeVisible();
+            await expect(action).toBeEnabled();
+            if (surface === "home" && viewport.width === 390) {
+              const cards = page.getByTestId("home-pricing-cards");
+              await expect(cards).toBeVisible();
+              const bounds = await cards
+                .locator(":scope > [data-testid]")
+                .evaluateAll((elements) =>
+                  elements.map((element) => {
+                    const box = element.getBoundingClientRect();
+                    return {
+                      top: box.top,
+                      bottom: box.bottom,
+                      left: box.left,
+                      right: box.right,
+                    };
+                  }),
+                );
+              expect(bounds).toHaveLength(3);
+              expect(bounds[1].top).toBeGreaterThan(bounds[0].bottom);
+              expect(bounds[2].top).toBeGreaterThan(bounds[1].bottom);
+              expect(
+                bounds.every(
+                  (box) => box.left >= 0 && box.right <= viewport.width,
+                ),
+              ).toBe(true);
+            }
+            await assertPageCanScroll(page);
+            await page.evaluate(() => window.scrollTo(0, 0));
+            for (const mode of visualModes) {
+              await page.goto(
+                withVisualMode(
+                  new URL(page.url()).pathname + new URL(page.url()).search,
+                  mode,
+                ),
+              );
+              await selector
+                .getByText(interval === "month" ? "Monthly" : "Annual", {
+                  exact: true,
+                })
+                .click();
+              await expect(page.getByTestId("basic-intro-terms")).toContainText(
+                interval === "month" ? "$6/month" : "$60 for your first year",
+              );
+              await waitForVisualReady(page);
+              await page.evaluate(() =>
+                window.scrollTo({ top: 0, left: 0, behavior: "instant" }),
+              );
+              await expect
+                .poll(() => page.evaluate(() => window.scrollY))
+                .toBe(0);
+              await expectVisualScreenshot(
+                page,
+                `basic-intro-${surface}-${viewport.name}-${colorScheme}-${interval}`,
+                mode,
+              );
+              expect(
+                await page.evaluate(
+                  () => document.documentElement.scrollWidth <= innerWidth,
+                ),
+              ).toBe(true);
+              await expect(
+                page.getByTestId("basic-intro-discount"),
+              ).toContainText("40% off");
+            }
+          }
+        });
+      }
+    }
+  }
 
   const resetDrawerScroll = async (
     page: Page,
@@ -441,6 +582,247 @@ test.describe("visual regression", () => {
     }
   });
 
+  for (const viewport of marketingViewports.filter(
+    (item) => item.name === "desktop" || item.name === "mobile",
+  )) {
+    test(`billing renewal grace ${viewport.name} @visual`, async ({ page }) => {
+      await page.setViewportSize(viewport);
+      await useRenewalGrace(page, {
+        view: renewalGraceFixture({ priorTier: "pro", scheduledChange: true }),
+      });
+      for (const mode of visualModes) {
+        await page.goto(
+          withVisualMode(`/portal/server/${mockGuilds.ddm.id}/billing`, mode),
+        );
+        await expect(page.getByTestId("billing-renewal-grace")).toContainText(
+          "keep using Pro until",
+        );
+        await expectVisualScreenshot(
+          page,
+          `billing-renewal-grace-${viewport.name}`,
+          mode,
+        );
+      }
+    });
+    test(`billing canceled subscription ${viewport.name} @visual`, async ({
+      page,
+    }) => {
+      await page.setViewportSize(viewport);
+      await useFreeBilling(page, { terminalStatus: "canceled" });
+      for (const mode of visualModes) {
+        await page.goto(
+          withVisualMode(`/portal/server/${mockGuilds.ddm.id}/billing`, mode),
+        );
+        const currentPlan = page.getByTestId("billing-current-plan");
+        await expect(currentPlan).toContainText("Free");
+        await expect(currentPlan).not.toContainText("Canceled");
+        await page
+          .getByRole("button", { name: "Payment history", exact: true })
+          .click();
+        await expect(page.getByTestId("billing-payment-history")).toContainText(
+          "Previous subscription: Canceled",
+        );
+        await expectVisualScreenshot(
+          page,
+          `billing-canceled-subscription-${viewport.name}`,
+          mode,
+        );
+      }
+    });
+  }
+
+  for (const viewport of marketingViewports.filter(
+    (item) => item.name === "desktop" || item.name === "mobile",
+  )) {
+    test(`billing scheduled cancellation ${viewport.name} @visual`, async ({
+      page,
+    }) => {
+      await page.setViewportSize(viewport);
+      const cancellationAt = "2026-11-12T12:00:00.000Z";
+      await useIntroBilling(page, {
+        status: "ineligible",
+        details: { status: "unavailable" },
+        cancellationAt,
+        nextBillingDate: cancellationAt,
+      });
+      for (const mode of visualModes) {
+        await page.goto(
+          withVisualMode(`/portal/server/${mockGuilds.ddm.id}/billing`, mode),
+        );
+        const currentPlan = page.getByTestId("billing-current-plan");
+        await expect(currentPlan).toContainText(
+          "Your Basic plan ends November 12, 2026.",
+        );
+        await expect(currentPlan).not.toContainText("next billing");
+        await assertPageCanScroll(page);
+        await page.evaluate(() => window.scrollTo(0, 0));
+        await expectVisualScreenshot(
+          page,
+          `billing-scheduled-cancellation-${viewport.name}`,
+          mode,
+        );
+      }
+    });
+  }
+
+  for (const viewport of marketingViewports.filter(
+    (item) => item.name === "desktop" || item.name === "mobile",
+  )) {
+    test(`billing canceled subscription intro ${viewport.name} @visual`, async ({
+      page,
+    }) => {
+      await page.setViewportSize(viewport);
+      await useIntroBilling(page, { legacy: true, terminalStatus: "canceled" });
+      for (const mode of visualModes) {
+        await page.goto(
+          withVisualMode(`/portal/server/${mockGuilds.ddm.id}/billing`, mode),
+        );
+        const currentPlan = page.getByTestId("billing-current-plan");
+        await expect(currentPlan).toContainText("Free");
+        await expect(currentPlan).not.toContainText("Canceled");
+        await page
+          .getByRole("button", { name: "Payment history", exact: true })
+          .click();
+        await expect(page.getByTestId("billing-payment-history")).toContainText(
+          "Previous subscription: Canceled",
+        );
+        await expectVisualScreenshot(
+          page,
+          `billing-canceled-subscription-intro-${viewport.name}`,
+          mode,
+        );
+      }
+    });
+  }
+
+  for (const viewport of marketingViewports.filter(
+    (item) => item.name === "desktop" || item.name === "mobile",
+  )) {
+    test(`billing expired subscription ${viewport.name} @visual`, async ({
+      page,
+    }) => {
+      await page.setViewportSize(viewport);
+      await useFreeBilling(page, { terminalStatus: "incomplete_expired" });
+      for (const mode of visualModes) {
+        await page.goto(
+          withVisualMode(`/portal/server/${mockGuilds.ddm.id}/billing`, mode),
+        );
+        await expect(page.getByTestId("billing-current-plan")).toContainText(
+          "Free",
+        );
+        await page
+          .getByRole("button", { name: "Payment history", exact: true })
+          .click();
+        await expect(page.getByTestId("billing-payment-history")).toContainText(
+          "Previous subscription: Expired",
+        );
+        await expect(
+          page.getByRole("button", { name: "Get Basic again" }),
+        ).toBeEnabled();
+        await expect(
+          page.getByRole("button", { name: "Upgrade to Pro" }),
+        ).toBeEnabled();
+        await expectVisualScreenshot(
+          page,
+          `billing-expired-subscription-${viewport.name}`,
+          mode,
+        );
+      }
+    });
+    for (const terminalStatus of ["canceled", "incomplete_expired"] as const) {
+      test(`direct ${terminalStatus} history ${viewport.name} @visual`, async ({
+        page,
+      }) => {
+        await page.setViewportSize(viewport);
+        await useFreeBilling(page, { terminalStatus });
+        for (const mode of visualModes) {
+          await page.goto(
+            withVisualMode(
+              `/upgrade/select-server?serverId=${mockGuilds.ddm.id}`,
+              mode,
+            ),
+          );
+          await expect(
+            page.getByRole("button", { name: "Continue with Basic" }),
+          ).toBeEnabled();
+          await expect(
+            page.getByRole("button", { name: "Continue with Pro" }),
+          ).toBeEnabled();
+          await expect(page.getByTestId("upgrade-plan-free")).toContainText(
+            "Always free",
+          );
+          await expect(
+            page.getByRole("button", { name: "View billing history" }),
+          ).toBeVisible();
+          await expectVisualScreenshot(
+            page,
+            `direct-${terminalStatus}-history-${viewport.name}`,
+            mode,
+          );
+        }
+      });
+    }
+  }
+
+  for (const viewport of marketingViewports.filter(
+    (item) => item.name === "desktop" || item.name === "mobile",
+  )) {
+    for (const entry of ["billing", "acquisition"] as const) {
+      test(`complimentary terminal ${entry} ${viewport.name} @visual`, async ({
+        page,
+      }) => {
+        await page.setViewportSize(viewport);
+        await useFreeBilling(page, {
+          terminalStatus: "canceled",
+          grantTier: "basic",
+        });
+        for (const mode of visualModes) {
+          const path =
+            entry === "billing"
+              ? `/portal/server/${mockGuilds.ddm.id}/billing`
+              : `/upgrade/select-server?serverId=${mockGuilds.ddm.id}`;
+          await page.goto(withVisualMode(path, mode));
+          const action =
+            entry === "billing"
+              ? "Start paying for Basic"
+              : "Continue with Basic";
+          await expect(
+            page.getByRole("button", { name: action, exact: true }),
+          ).toBeEnabled();
+          if (entry === "billing") {
+            await expect(
+              page.getByTestId("billing-current-plan"),
+            ).toContainText("Basic");
+            await expect(
+              page.getByTestId("billing-current-plan"),
+            ).toContainText("45m / 20h");
+          }
+          await expectVisualScreenshot(
+            page,
+            `comped-terminal-${entry}-${viewport.name}`,
+            mode,
+          );
+        }
+      });
+    }
+    test(`Home unavailable offer ${viewport.name} @visual`, async ({
+      page,
+    }) => {
+      await page.setViewportSize(viewport);
+      await useIntroBilling(page, { status: "unavailable" });
+      for (const mode of visualModes) {
+        await page.goto(withVisualMode("/", mode));
+        await expect(page.getByTestId("home-cta-pro")).toBeEnabled();
+        await expect(page.getByTestId("home-cta-basic")).toBeDisabled();
+        await expectVisualScreenshot(
+          page,
+          `home-offer-unavailable-${viewport.name}`,
+          mode,
+        );
+      }
+    });
+  }
+
   test("upgrade flow pages @visual", async ({ page }) => {
     for (const mode of visualModes) {
       await page.goto(
@@ -632,6 +1014,8 @@ test.describe("visual regression", () => {
       }
     });
   }
+
+  registerNotesRoutingVisualTests(expectVisualScreenshot);
 
   test("settings page @visual", async ({
     serverSelectPage,

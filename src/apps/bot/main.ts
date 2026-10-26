@@ -1,6 +1,4 @@
+import { failRuntimeStartup } from "../../services/runtimeShutdownService";
 import { bootstrapApp } from "../bootstrap";
 
-bootstrapApp("bot").catch((error) => {
-  console.error("Bot startup failed.", error);
-  process.exit(1);
-});
+bootstrapApp("bot").catch(failRuntimeStartup);

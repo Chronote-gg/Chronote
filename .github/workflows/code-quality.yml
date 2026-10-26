@@ -1,0 +1,53 @@
+name: Code quality
+
+on:
+  pull_request:
+    types:
+      [
+        opened,
+        synchronize,
+        reopened,
+        ready_for_review,
+        edited,
+        labeled,
+        unlabeled,
+      ]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: code-quality-pr-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  quality:
+    name: Code quality ratchet
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout exact PR head
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Check shared quality policy
+        id: quality
+        uses: BASIC-BIT/quality-ratchet@0873869f6b8fd80150d24689849ec0aebd94e9dd # v1.0.1
+        with:
+          github-token: ${{ github.token }}
+          repository-path: ${{ github.workspace }}
+
+      - name: Print quality summary
+        if: ${{ failure() && !cancelled() && steps.quality.outputs.report-directory != '' }}
+        shell: bash
+        env:
+          QUALITY_REPORT_DIRECTORY: ${{ steps.quality.outputs.report-directory }}
+        run: |
+          summary_token="$(node -e 'process.stdout.write(require("node:crypto").randomUUID())')"
+          printf '::stop-commands::%s\n' "$summary_token"
+          cat -- "$QUALITY_REPORT_DIRECTORY/summary.md"
+          printf '::%s::\n' "$summary_token"

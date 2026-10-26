@@ -19,6 +19,7 @@ export type TranscriptionInputRequest = {
   force: boolean;
   policyFingerprint: string;
   detector?: SpeechDetector;
+  signal?: AbortSignal;
   observe: (assessment: SpeechAssessment, durationMs: number) => void;
 };
 export type PreparedTranscriptionInput = {
@@ -73,13 +74,19 @@ export async function withPreparedTranscriptionInput<T>(
   consume: (prepared: PreparedTranscriptionInput) => Promise<T>,
 ): Promise<T> {
   try {
+    request.signal?.throwIfAborted();
     const coverage = createSpeechCoverage(
       request.pcm,
       request.policyFingerprint,
     );
     writeFileSync(request.pcmFile, request.pcm);
     const conversionStarted = performance.now();
-    await convertTranscriptionPcmToWav(request.pcmFile, request.wavFile);
+    await convertTranscriptionPcmToWav(
+      request.pcmFile,
+      request.wavFile,
+      request.signal,
+    );
+    request.signal?.throwIfAborted();
     const conversionMs = performance.now() - conversionStarted;
     let admission: SpeechAdmission;
     if (request.force) {

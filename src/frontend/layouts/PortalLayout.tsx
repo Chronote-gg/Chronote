@@ -10,7 +10,7 @@ import {
   useComputedColorScheme,
   useMantineTheme,
 } from "@mantine/core";
-import { useDisclosure } from "@mantine/hooks";
+import { useDisclosure, useMediaQuery } from "@mantine/hooks";
 import { Outlet, useRouterState } from "@tanstack/react-router";
 import type { CSSProperties } from "react";
 import SiteFooter from "../components/SiteFooter";
@@ -48,6 +48,8 @@ export default function PortalLayout() {
   const showNavbar =
     authState !== "unauthenticated" &&
     !pathname.startsWith("/portal/select-server");
+  const desktopNavbar = useMediaQuery(`(min-width: ${theme.breakpoints.sm})`);
+  const visualNavbar = showNavbar && desktopNavbar;
   const isServerWorkspace = pathname.startsWith("/portal/server/");
   const navbarWidth = 300;
   const useInnerScroll =
@@ -63,7 +65,7 @@ export default function PortalLayout() {
           : "portal-personal"
         : "portal-select";
 
-  const gridTemplateAreas = showNavbar
+  const gridTemplateAreas = visualNavbar
     ? `"header header" "navbar main" "footer footer"`
     : `"header" "main" "footer"`;
 
@@ -73,7 +75,7 @@ export default function PortalLayout() {
     overflow: visualMode ? "visible" : "hidden",
     display: visualMode ? "grid" : undefined,
     gridTemplateColumns: visualMode
-      ? showNavbar
+      ? visualNavbar
         ? `${navbarWidth}px 1fr`
         : "1fr"
       : undefined,
@@ -112,6 +114,7 @@ export default function PortalLayout() {
           gridArea: "navbar",
           height: "auto",
           transform: "none",
+          display: visualNavbar ? undefined : "none",
         }
       : baseNavbarStyles,
     main: visualMode

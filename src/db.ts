@@ -1,17 +1,62 @@
+import { listUnpausedPersonalMediaUploadJobs } from "./repositories/personalMediaUploadQueue";
+import {
+  billingChangeControlKey,
+  billingChangeOperationKey,
+  isBillingChangeComplete,
+  type BillingChangeClaim,
+  type BillingChangeWrite,
+  parseChangeUsage,
+} from "./types/billingChange";
+import {
+  renewalOperationKey,
+  renewalControlKey,
+  isRenewalComplete,
+  type RenewalOperation,
+} from "./types/renewal";
+import type { IntroOfferAuthority } from "./types/introOfferAuthority";
+import { validateBoundarySample } from "./types/historyWriterBoundary";
+import {
+  historyWriterBoundaryKey,
+  HISTORY_WRITER_VERSION,
+  historyWriterBoundarySchema,
+  type HistoryWriterBoundary,
+} from "./types/historyWriterBoundary";
+import {
+  historicalOfferImportKey,
+  historicalOfferImportSchema,
+  parseHistoricalOfferImportWrite,
+  type HistoricalOfferImport,
+  type HistoricalOfferImportWrite,
+} from "./types/historicalOfferImport";
+import { assertPurchaseInvoiceBinding } from "./types/purchase";
+import { z } from "zod";
+import {
+  offerUsageKey,
+  offerUsageSchema,
+  parseOfferUsageChange,
+  type OfferUsage,
+  type IntroOfferId,
+  type ProviderMode,
+  type OfferUsageWrite,
+  type OfferUsageMutation,
+} from "./types/offerUsage";
 import type { PurchaseAttempt, PurchaseIncident } from "./types/purchase";
 import { config } from "./services/configService";
 import { randomUUID } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 import {
   AttributeValue,
+  type Put,
+  type ConditionCheck,
   DynamoDBClient,
   TransactWriteItemsCommand,
-  type TransactionCanceledException,
+  TransactionCanceledException,
   GetItemCommand,
   PutItemCommand,
   DeleteItemCommand,
   QueryCommand,
   ScanCommand,
+  DescribeTableCommand,
   UpdateItemCommand,
 } from "@aws-sdk/client-dynamodb";
 import { marshall, unmarshall } from "@aws-sdk/util-dynamodb";
@@ -49,10 +94,44 @@ import {
   FeedbackTargetType,
   ContactFeedbackRecord,
   PersonalMediaUploadJobRecord,
+  PersonalMediaClaim,
   PersonalRecordingSegmentRecord,
 } from "./types/db";
 import type { MeetingStatus } from "./types/meetingLifecycle";
 import { trimNotesForHistory } from "./utils/notesHistory";
+import {
+  createDynamoDeploymentControlRepository,
+  createMockDeploymentControlRepository,
+  classifyDeploymentTransactionError,
+  mockWorkAdmissionAllowed,
+} from "./repositories/deploymentControlRepository";
+import { getMockStore } from "./repositories/mockStore";
+import { requireUnpausedDesktopDraft } from "./repositories/pausedDesktopDraft";
+import type {
+  AdmissionContext,
+  HistoryTransition,
+  WorkAdmissionAuthority,
+} from "./types/deploymentControl";
+import {
+  buildWorkAdmissionChecks,
+  buildPersonalMediaClaimTransaction,
+  buildPersonalClaimCheck,
+  buildPendingSegmentTransaction,
+  buildPersonalUploadSubmissionTransaction,
+  buildPersonalSegmentTransitionTransaction,
+} from "./services/deploymentControlTransactions";
+
+import {
+  renewalRecoveryKey,
+  renewalRecoveryCurrentKey,
+  RENEWAL_RECOVERY_DUE_INDEX,
+  renewalRecoveryNextCheck,
+  readRenewalRecoveryCursor,
+  writeRenewalRecoveryCursor,
+  renewalRecoveryCursorSchema,
+  type RenewalRecovery,
+  type RenewalRecoveryPointer,
+} from "./types/renewalRecovery";
 
 const MEETING_USER_INDEX_WRITE_BATCH_SIZE = 25;
 const PERSONAL_MEDIA_UPLOAD_STATUS_UPDATED_AT_INDEX = "StatusUpdatedAtIndex";
@@ -72,6 +151,79 @@ const dynamoDbClient = new DynamoDBClient(
 
 const tablePrefix = config.database.tablePrefix ?? "";
 const tableName = (name: string) => `${tablePrefix}${name}`;
+export async function getRenewalRecoveryIndexStatus(): Promise<
+  string | undefined
+> {
+  if (config.mock.enabled) return "ACTIVE";
+  const result = await dynamoDbClient.send(
+    new DescribeTableCommand({
+      TableName: tableName("GuildSubscriptionTable"),
+    }),
+  );
+  return result.Table?.GlobalSecondaryIndexes?.find(
+    (index) => index.IndexName === "RenewalRecoveryDueIndex",
+  )?.IndexStatus;
+}
+export async function scanGuildSubscriptionPage(
+  cursor?: string,
+): Promise<{ guildIds: string[]; cursor?: string }> {
+  if (config.mock.enabled) {
+    const keys = [...getMockStore().subscriptions.keys()]
+      .sort()
+      .filter((key) => !cursor || key > cursor)
+      .slice(0, 100);
+    return {
+      guildIds: keys.filter((key) => /^\d{17,20}$/.test(key)),
+      cursor: keys.length === 100 ? keys.at(-1) : undefined,
+    };
+  }
+  const result = await dynamoDbClient.send(
+    new ScanCommand({
+      TableName: tableName("GuildSubscriptionTable"),
+      ConsistentRead: true,
+      Limit: 100,
+      ProjectionExpression: "guildId",
+      ExclusiveStartKey: cursor
+        ? marshall({ guildId: z.string().min(1).parse(cursor) })
+        : undefined,
+    }),
+  );
+  const guildIds = (result.Items ?? [])
+    .map((item) => z.string().parse(unmarshall(item).guildId))
+    .filter((key) => /^\d{17,20}$/.test(key));
+  return {
+    guildIds,
+    cursor: result.LastEvaluatedKey
+      ? z.string().parse(unmarshall(result.LastEvaluatedKey).guildId)
+      : undefined,
+  };
+}
+export function getDeploymentControlRepository() {
+  if (config.mock.enabled) {
+    const store = getMockStore();
+    return createMockDeploymentControlRepository(
+      store.deploymentControlRecords,
+      store.meetingHistoryByGuild,
+      store.activeMeetingLeases,
+      store.personalMediaUploadsById,
+    );
+  }
+  return createDynamoDeploymentControlRepository(
+    dynamoDbClient,
+    {
+      deploymentControl: tableName("DeploymentControlTable"),
+      meetingHistory: tableName("MeetingHistoryTable"),
+      activeMeeting: tableName("ActiveMeetingTable"),
+      personalMediaUpload: tableName("PersonalMediaUploadJobTable"),
+    },
+    { localBootstrap: config.database.useLocalDynamoDB && !config.runtime.ecs },
+  );
+}
+
+export const createInitialMeetingHistory = (history: MeetingHistory) =>
+  getDeploymentControlRepository().createInitialMeetingHistory(history);
+export const transitionMeetingHistory = (input: HistoryTransition) =>
+  getDeploymentControlRepository().transitionMeetingHistory(input);
 const isConditionalCheckFailed = (error: unknown) =>
   (error as { name?: string }).name === "ConditionalCheckFailedException";
 
@@ -411,9 +563,11 @@ export async function getInteractionReceipt(
     : undefined;
 }
 
+const runtimeInteractionReceipts = new Map<string, InteractionReceipt>();
 export async function tryCreateInteractionReceipt(
   receipt: InteractionReceipt,
   replaceExpiredBefore?: number,
+  authority?: WorkAdmissionAuthority,
 ): Promise<boolean> {
   const params = {
     TableName: tableName("InteractionReceiptTable"),
@@ -428,14 +582,38 @@ export async function tryCreateInteractionReceipt(
           ExpressionAttributeValues: marshall({ ":now": replaceExpiredBefore }),
         }),
   };
-  const command = new PutItemCommand(params);
+  if (authority && config.mock.enabled) {
+    const store = getMockStore();
+    if (
+      !mockWorkAdmissionAllowed(
+        authority,
+        store.deploymentControlRecords,
+        store.activeMeetingLeases,
+      )
+    )
+      return false;
+    if (runtimeInteractionReceipts.has(receipt.interactionId)) return false;
+    runtimeInteractionReceipts.set(receipt.interactionId, receipt);
+    return true;
+  }
+  const transaction = authority
+    ? new TransactWriteItemsCommand({
+        TransactItems: [
+          ...buildWorkAdmissionChecks(authority, {
+            deploymentControl: tableName("DeploymentControlTable"),
+            meetingHistory: tableName("MeetingHistoryTable"),
+            activeMeeting: tableName("ActiveMeetingTable"),
+          }),
+          { Put: params },
+        ],
+      })
+    : undefined;
   try {
-    await dynamoDbClient.send(command);
+    if (transaction) await dynamoDbClient.send(transaction);
+    else await dynamoDbClient.send(new PutItemCommand(params));
     return true;
   } catch (error) {
-    if (
-      (error as { name?: string }).name === "ConditionalCheckFailedException"
-    ) {
+    if (classifyDeploymentTransactionError(error) === "stale") {
       return false;
     }
     throw error;
@@ -515,7 +693,23 @@ export async function renewActiveMeetingLease(
     cancellationReason?: ActiveMeetingLease["cancellationReason"];
     endedAt?: ActiveMeetingLease["endedAt"];
   },
+  ownership?: { executionVersion: number; sessionMode: "meeting" | "tts_only" },
 ): Promise<boolean> {
+  const now = Math.floor(Date.now() / 1000);
+  if (config.mock.enabled) {
+    const lease = getMockStore().activeMeetingLeases.get(guildId);
+    if (
+      !lease ||
+      lease.leaseExpiresAt < now ||
+      lease.meetingId !== meetingId ||
+      lease.ownerInstanceId !== ownerInstanceId ||
+      lease.executionVersion !== ownership?.executionVersion ||
+      lease.sessionMode !== ownership?.sessionMode
+    )
+      return false;
+    Object.assign(lease, { leaseExpiresAt, updatedAt, expiresAt, ...snapshot });
+    return true;
+  }
   const updateParts = [
     "#leaseExpiresAt = :leaseExpiresAt",
     "#updatedAt = :updatedAt",
@@ -529,12 +723,14 @@ export async function renewActiveMeetingLease(
     "#status": "status",
     "#meetingId": "meetingId",
     "#ownerInstanceId": "ownerInstanceId",
+    "#executionVersion": "executionVersion",
   };
   const expressionAttributeValues: Record<string, unknown> = {
     ":leaseExpiresAt": leaseExpiresAt,
     ":updatedAt": updatedAt,
     ":expiresAt": expiresAt,
     ":status": snapshot.status,
+    ":now": now,
     ":meetingId": meetingId,
     ":ownerInstanceId": ownerInstanceId,
   };
@@ -570,11 +766,25 @@ export async function renewActiveMeetingLease(
     Key: marshall({ guildId }),
     UpdateExpression: `SET ${updateParts.join(", ")}`,
     ConditionExpression:
-      "#meetingId = :meetingId AND #ownerInstanceId = :ownerInstanceId",
+      "#leaseExpiresAt >= :now AND #meetingId = :meetingId AND #ownerInstanceId = :ownerInstanceId AND " +
+      (ownership
+        ? "#executionVersion = :executionVersion AND sessionMode = :sessionMode"
+        : "attribute_not_exists(#executionVersion)"),
     ExpressionAttributeNames: expressionAttributeNames,
-    ExpressionAttributeValues: marshall(expressionAttributeValues, {
-      removeUndefinedValues: true,
-    }),
+    ExpressionAttributeValues: marshall(
+      {
+        ...expressionAttributeValues,
+        ...(ownership
+          ? {
+              ":executionVersion": ownership.executionVersion,
+              ":sessionMode": ownership.sessionMode,
+            }
+          : {}),
+      },
+      {
+        removeUndefinedValues: true,
+      },
+    ),
   };
   const command = new UpdateItemCommand(params);
   try {
@@ -594,24 +804,61 @@ export async function releaseActiveMeetingLease(
   guildId: string,
   meetingId: string,
   ownerInstanceId: string,
+  ownership?: {
+    executionVersion: number;
+    sessionMode: "meeting" | "tts_only";
+    voiceOperationAttemptId?: string;
+  },
+  signal?: AbortSignal,
 ): Promise<boolean> {
+  signal?.throwIfAborted();
+  if (config.mock.enabled) {
+    const lease = getMockStore().activeMeetingLeases.get(guildId);
+    if (
+      !lease ||
+      lease.meetingId !== meetingId ||
+      lease.ownerInstanceId !== ownerInstanceId ||
+      lease.executionVersion !== ownership?.executionVersion ||
+      lease.sessionMode !== ownership?.sessionMode ||
+      (ownership?.voiceOperationAttemptId !== undefined &&
+        lease.voiceOperationAttemptId !== ownership.voiceOperationAttemptId)
+    )
+      return false;
+    return getMockStore().activeMeetingLeases.delete(guildId);
+  }
   const params: DeleteItemCommand["input"] = {
     TableName: tableName("ActiveMeetingTable"),
     Key: marshall({ guildId }),
     ConditionExpression:
-      "#meetingId = :meetingId AND #ownerInstanceId = :ownerInstanceId",
+      "#meetingId = :meetingId AND #ownerInstanceId = :ownerInstanceId AND " +
+      (ownership
+        ? "#executionVersion = :executionVersion AND sessionMode = :sessionMode"
+        : "attribute_not_exists(#executionVersion)") +
+      (ownership?.voiceOperationAttemptId
+        ? " AND voiceOperationAttemptId = :voiceAttempt"
+        : ""),
     ExpressionAttributeNames: {
       "#meetingId": "meetingId",
       "#ownerInstanceId": "ownerInstanceId",
+      "#executionVersion": "executionVersion",
     },
     ExpressionAttributeValues: marshall({
       ":meetingId": meetingId,
       ":ownerInstanceId": ownerInstanceId,
+      ...(ownership?.voiceOperationAttemptId
+        ? { ":voiceAttempt": ownership.voiceOperationAttemptId }
+        : {}),
+      ...(ownership
+        ? {
+            ":executionVersion": ownership.executionVersion,
+            ":sessionMode": ownership.sessionMode,
+          }
+        : {}),
     }),
   };
   const command = new DeleteItemCommand(params);
   try {
-    await dynamoDbClient.send(command);
+    await dynamoDbClient.send(command, { abortSignal: signal });
     return true;
   } catch (error) {
     if (
@@ -625,14 +872,18 @@ export async function releaseActiveMeetingLease(
 
 export async function getActiveMeetingLease(
   guildId: string,
+  signal?: AbortSignal,
 ): Promise<ActiveMeetingLease | undefined> {
+  signal?.throwIfAborted();
+  if (config.mock.enabled)
+    return getMockStore().activeMeetingLeases.get(guildId);
   const params: GetItemCommand["input"] = {
     TableName: tableName("ActiveMeetingTable"),
     Key: marshall({ guildId }),
     ConsistentRead: true,
   };
   const command = new GetItemCommand(params);
-  const result = await dynamoDbClient.send(command);
+  const result = await dynamoDbClient.send(command, { abortSignal: signal });
   if (result.Item) {
     return unmarshall(result.Item) as ActiveMeetingLease;
   }
@@ -1543,7 +1794,9 @@ export async function deleteConfigOverride(
 
 export async function listConfigOverrides(
   scopeId: string,
+  signal?: AbortSignal,
 ): Promise<ConfigOverrideRecord[]> {
+  signal?.throwIfAborted();
   const params = {
     TableName: tableName("ConfigOverridesTable"),
     KeyConditionExpression: "scopeId = :scopeId",
@@ -1552,7 +1805,8 @@ export async function listConfigOverrides(
     }),
   };
   const command = new QueryCommand(params);
-  const result = await dynamoDbClient.send(command);
+  const result = await dynamoDbClient.send(command, { abortSignal: signal });
+  signal?.throwIfAborted();
   if (result.Items) {
     return result.Items.map((item) => unmarshall(item) as ConfigOverrideRecord);
   }
@@ -1802,7 +2056,9 @@ export async function getRecentMeetingsForChannel(
   guildId: string,
   channelId: string,
   limit: number = 5,
+  signal?: AbortSignal,
 ): Promise<MeetingHistory[]> {
+  signal?.throwIfAborted();
   const params = {
     TableName: tableName("MeetingHistoryTable"),
     KeyConditionExpression:
@@ -1815,7 +2071,8 @@ export async function getRecentMeetingsForChannel(
     Limit: limit,
   };
   const command = new QueryCommand(params);
-  const result = await dynamoDbClient.send(command);
+  const result = await dynamoDbClient.send(command, { abortSignal: signal });
+  signal?.throwIfAborted();
   if (result.Items) {
     return result.Items.map((item) => unmarshall(item) as MeetingHistory);
   }
@@ -1825,7 +2082,9 @@ export async function getRecentMeetingsForChannel(
 export async function getRecentMeetingsForGuild(
   guildId: string,
   limit: number = 10,
+  signal?: AbortSignal,
 ): Promise<MeetingHistory[]> {
+  signal?.throwIfAborted();
   const params = {
     TableName: tableName("MeetingHistoryTable"),
     IndexName: "GuildTimestampIndex",
@@ -1837,7 +2096,8 @@ export async function getRecentMeetingsForGuild(
     Limit: limit,
   };
   const command = new QueryCommand(params);
-  const result = await dynamoDbClient.send(command);
+  const result = await dynamoDbClient.send(command, { abortSignal: signal });
+  signal?.throwIfAborted();
   if (result.Items) {
     return result.Items.map((item) => unmarshall(item) as MeetingHistory);
   }
@@ -2012,6 +2272,7 @@ export async function getPersonalMediaUploadJob(
     new GetItemCommand({
       TableName: tableName("PersonalMediaUploadJobTable"),
       Key: marshall({ uploadId }),
+      ConsistentRead: true,
     }),
   );
   return result.Item
@@ -2019,10 +2280,151 @@ export async function getPersonalMediaUploadJob(
     : undefined;
 }
 
-export async function updatePersonalMediaUploadJob(
+export async function submitPersonalMediaUploadJob(
   job: PersonalMediaUploadJobRecord,
-): Promise<void> {
-  await writePersonalMediaUploadJob(job);
+): Promise<boolean> {
+  try {
+    await dynamoDbClient.send(
+      new TransactWriteItemsCommand(
+        buildPersonalUploadSubmissionTransaction(job, {
+          deploymentControl: tableName("DeploymentControlTable"),
+          personalMediaUpload: tableName("PersonalMediaUploadJobTable"),
+        }),
+      ),
+    );
+    return true;
+  } catch (error) {
+    if (classifyDeploymentTransactionError(error) === "stale") return false;
+    throw error;
+  }
+}
+
+export function personalMediaClaimForJob(
+  job: PersonalMediaUploadJobRecord,
+  instanceId: string,
+): PersonalMediaClaim {
+  if (!job.processingClaimId || !job.attempts)
+    throw new Error("Personal processing claim is missing");
+  return {
+    uploadId: job.uploadId,
+    instanceId,
+    attempt: job.attempts,
+    claimId: job.processingClaimId,
+    nowEpochSeconds: Math.floor(Date.now() / 1000),
+  };
+}
+
+export function personalProcessingHistoryFields(history: MeetingHistory) {
+  return Object.entries(history).filter(
+    ([key, value]) =>
+      value !== undefined &&
+      ![
+        "guildId",
+        "channelId_timestamp",
+        "accessGrants",
+        "archivedAt",
+        "archivedByUserId",
+      ].includes(key),
+  );
+}
+
+export async function writePersonalHistoryUnderClaim(
+  history: MeetingHistory,
+  claim: PersonalMediaClaim,
+  terminalJob?: PersonalMediaUploadJobRecord,
+): Promise<boolean> {
+  const fields = personalProcessingHistoryFields(history);
+  const names: Record<string, string> = { "#status": "status" };
+  const values: Record<string, unknown> = {
+    ":meeting": history.meetingId,
+    ":owner": history.ownerUserId,
+    ":personal": "personal",
+    ":processing": "processing",
+  };
+  fields.forEach(([key, value], index) => {
+    names[`#f${index}`] = key;
+    values[`:f${index}`] = value;
+  });
+  try {
+    await dynamoDbClient.send(
+      new TransactWriteItemsCommand({
+        TransactItems: [
+          terminalJob
+            ? {
+                Put: {
+                  TableName: tableName("PersonalMediaUploadJobTable"),
+                  Item: marshall(terminalJob, { removeUndefinedValues: true }),
+                  ConditionExpression: buildPersonalClaimCheck(claim, "unused")
+                    .ConditionCheck.ConditionExpression,
+                  ExpressionAttributeNames: buildPersonalClaimCheck(
+                    claim,
+                    "unused",
+                  ).ConditionCheck.ExpressionAttributeNames,
+                  ExpressionAttributeValues: buildPersonalClaimCheck(
+                    claim,
+                    "unused",
+                  ).ConditionCheck.ExpressionAttributeValues,
+                },
+              }
+            : buildPersonalClaimCheck(
+                claim,
+                tableName("PersonalMediaUploadJobTable"),
+              ),
+          {
+            Update: {
+              TableName: tableName("MeetingHistoryTable"),
+              Key: marshall({
+                guildId: history.guildId,
+                channelId_timestamp: history.channelId_timestamp,
+              }),
+              UpdateExpression: `SET ${fields.map((_, index) => `#f${index} = :f${index}`).join(", ")}`,
+              ConditionExpression:
+                "attribute_not_exists(guildId) OR (meetingId = :meeting AND ownerUserId = :owner AND ownershipScope = :personal AND #status = :processing)",
+              ExpressionAttributeNames: names,
+              ExpressionAttributeValues: marshall(values),
+            },
+          },
+        ],
+      }),
+    );
+    return true;
+  } catch (error) {
+    if (classifyDeploymentTransactionError(error) === "stale") return false;
+    throw error;
+  }
+}
+
+export async function writePersonalSegmentUnderClaim(
+  segment: PersonalRecordingSegmentRecord,
+  claim: PersonalMediaClaim,
+): Promise<boolean> {
+  if (segment.uploadId !== claim.uploadId) return false;
+  try {
+    await dynamoDbClient.send(
+      new TransactWriteItemsCommand({
+        TransactItems: [
+          buildPersonalClaimCheck(
+            claim,
+            tableName("PersonalMediaUploadJobTable"),
+          ),
+          {
+            Put: {
+              TableName: tableName("PersonalRecordingSegmentTable"),
+              Item: marshall(segment, { removeUndefinedValues: true }),
+              ConditionExpression: "ownerUserId = :owner",
+              ExpressionAttributeValues: marshall({
+                ":owner": segment.ownerUserId,
+              }),
+            },
+          },
+        ],
+      }),
+    );
+    return true;
+  } catch (error) {
+    if (classifyDeploymentTransactionError(error) === "stale") return false;
+    throw error;
+  }
 }
 
 export async function writePersonalRecordingSegment(
@@ -2083,58 +2485,62 @@ export async function updatePersonalRecordingSegment(
   await writePersonalRecordingSegment(segment);
 }
 
+export async function preparePersonalRecordingSegment(
+  segment: PersonalRecordingSegmentRecord,
+  expectedStatus: "pending_upload" | "failed" | undefined,
+): Promise<boolean> {
+  try {
+    await dynamoDbClient.send(
+      new TransactWriteItemsCommand(
+        buildPendingSegmentTransaction(segment, expectedStatus, {
+          deploymentControl: tableName("DeploymentControlTable"),
+          personalMediaUpload: tableName("PersonalMediaUploadJobTable"),
+          personalRecordingSegment: tableName("PersonalRecordingSegmentTable"),
+        }),
+      ),
+    );
+    return true;
+  } catch (error) {
+    if (classifyDeploymentTransactionError(error) === "stale") return false;
+    throw error;
+  }
+}
+
+export async function transitionPersonalRecordingSegment(
+  segment: PersonalRecordingSegmentRecord,
+  expectedStatus: PersonalRecordingSegmentRecord["status"],
+): Promise<boolean> {
+  try {
+    await dynamoDbClient.send(
+      new TransactWriteItemsCommand(
+        buildPersonalSegmentTransitionTransaction(segment, expectedStatus, {
+          deploymentControl: tableName("DeploymentControlTable"),
+          personalRecordingSegment: tableName("PersonalRecordingSegmentTable"),
+        }),
+      ),
+    );
+    return true;
+  } catch (error) {
+    if (classifyDeploymentTransactionError(error) === "stale") return false;
+    throw error;
+  }
+}
+
 export async function listClaimablePersonalMediaUploadJobs(options: {
   instanceId: string;
   nowEpochSeconds: number;
   maxAttempts: number;
   limit: number;
 }): Promise<PersonalMediaUploadJobRecord[]> {
-  const jobs: PersonalMediaUploadJobRecord[] = [];
-  const statuses: PersonalMediaUploadJobRecord["status"][] = [
-    "queued",
-    "processing",
-  ];
-
-  for (const status of statuses) {
-    if (jobs.length >= options.limit) break;
-    const isProcessing = status === "processing";
-    const filterExpression = isProcessing
-      ? "(attribute_not_exists(#claimExpiresAt) OR #claimExpiresAt < :nowEpochSeconds OR #processingOwnerInstanceId = :instanceId) AND (attribute_not_exists(#attempts) OR #attempts < :maxAttempts)"
-      : "(attribute_not_exists(#claimExpiresAt) OR #claimExpiresAt < :nowEpochSeconds) AND (attribute_not_exists(#attempts) OR #attempts < :maxAttempts)";
-    const expressionAttributeNames = {
-      "#status": "status",
-      "#claimExpiresAt": "claimExpiresAt",
-      "#attempts": "attempts",
-      ...(isProcessing
-        ? { "#processingOwnerInstanceId": "processingOwnerInstanceId" }
-        : {}),
-    };
-    const expressionAttributeValues = {
-      ":status": status,
-      ":nowEpochSeconds": options.nowEpochSeconds,
-      ":maxAttempts": options.maxAttempts,
-      ...(isProcessing ? { ":instanceId": options.instanceId } : {}),
-    };
-    const result = await dynamoDbClient.send(
-      new QueryCommand({
-        TableName: tableName("PersonalMediaUploadJobTable"),
-        IndexName: PERSONAL_MEDIA_UPLOAD_STATUS_UPDATED_AT_INDEX,
-        KeyConditionExpression: "#status = :status",
-        FilterExpression: filterExpression,
-        ExpressionAttributeNames: expressionAttributeNames,
-        ExpressionAttributeValues: marshall(expressionAttributeValues),
-        ScanIndexForward: true,
-        Limit: options.limit,
-      }),
-    );
-    jobs.push(
-      ...(result.Items ?? []).map(
-        (item) => unmarshall(item) as PersonalMediaUploadJobRecord,
-      ),
-    );
-  }
-
-  return jobs.slice(0, options.limit);
+  return listUnpausedPersonalMediaUploadJobs(
+    dynamoDbClient,
+    {
+      uploadTable: tableName("PersonalMediaUploadJobTable"),
+      statusIndex: PERSONAL_MEDIA_UPLOAD_STATUS_UPDATED_AT_INDEX,
+      control: getDeploymentControlRepository(),
+    },
+    options,
+  );
 }
 
 export async function claimPersonalMediaUploadJob(options: {
@@ -2144,74 +2550,85 @@ export async function claimPersonalMediaUploadJob(options: {
   claimExpiresAt: number;
   updatedAt: string;
   maxAttempts: number;
+  context: AdmissionContext;
+  claimId: string;
+  expectedAttempts: number;
 }): Promise<PersonalMediaUploadJobRecord | undefined> {
-  try {
-    const result = await dynamoDbClient.send(
-      new UpdateItemCommand({
-        TableName: tableName("PersonalMediaUploadJobTable"),
-        Key: marshall({ uploadId: options.uploadId }),
-        UpdateExpression:
-          "SET #status = :processing, #processingOwnerInstanceId = :instanceId, #claimExpiresAt = :claimExpiresAt, #processingStartedAt = if_not_exists(#processingStartedAt, :updatedAt), #updatedAt = :updatedAt, #attempts = if_not_exists(#attempts, :zero) + :one",
-        ConditionExpression:
-          "(#status = :queued OR (#status = :processing AND (attribute_not_exists(#claimExpiresAt) OR #claimExpiresAt < :nowEpochSeconds))) AND (attribute_not_exists(#attempts) OR #attempts < :maxAttempts)",
-        ExpressionAttributeNames: {
-          "#status": "status",
-          "#processingOwnerInstanceId": "processingOwnerInstanceId",
-          "#claimExpiresAt": "claimExpiresAt",
-          "#processingStartedAt": "processingStartedAt",
-          "#updatedAt": "updatedAt",
-          "#attempts": "attempts",
-        },
-        ExpressionAttributeValues: marshall({
-          ":queued": "queued",
-          ":processing": "processing",
-          ":instanceId": options.instanceId,
-          ":claimExpiresAt": options.claimExpiresAt,
-          ":nowEpochSeconds": options.nowEpochSeconds,
-          ":updatedAt": options.updatedAt,
-          ":zero": 0,
-          ":one": 1,
-          ":maxAttempts": options.maxAttempts,
-        }),
-        ReturnValues: "ALL_NEW",
-      }),
-    );
-    return result.Attributes
-      ? (unmarshall(result.Attributes) as PersonalMediaUploadJobRecord)
+  const previous = await getPersonalMediaUploadJob(options.uploadId);
+  if (!previous) return undefined;
+  await requireUnpausedDesktopDraft(getDeploymentControlRepository(), previous);
+  if (
+    previous.processingClaimId === options.claimId &&
+    previous.processingOwnerInstanceId === options.instanceId &&
+    previous.status === "processing"
+  )
+    return (previous.claimExpiresAt ?? 0) >= options.nowEpochSeconds
+      ? previous
       : undefined;
+  if ((previous.attempts ?? 0) !== options.expectedAttempts) return undefined;
+  const attempt = options.expectedAttempts + 1;
+  const prefix = `personal/${previous.ownerUserId}/${previous.uploadId}/attempt-${attempt}/`;
+  const next: PersonalMediaUploadJobRecord = {
+    ...previous,
+    status: "processing",
+    processingOwnerInstanceId: options.instanceId,
+    processingClaimId: options.claimId,
+    attempts: attempt,
+    claimExpiresAt: options.claimExpiresAt,
+    updatedAt: options.updatedAt,
+    processingStartedAt: previous.processingStartedAt ?? options.updatedAt,
+    artifactAttempts: {
+      ...previous.artifactAttempts,
+      [attempt]: {
+        prefix,
+        audioS3Key: `${prefix}audio.mp3`,
+        transcriptS3Key: `${prefix}transcript.json`,
+      },
+    },
+  };
+  try {
+    await dynamoDbClient.send(
+      new TransactWriteItemsCommand(
+        buildPersonalMediaClaimTransaction(
+          {
+            ...options,
+            job: next,
+            context: { ...options.context, now: options.nowEpochSeconds },
+          },
+          {
+            deploymentControl: tableName("DeploymentControlTable"),
+            meetingHistory: tableName("MeetingHistoryTable"),
+            personalMediaUpload: tableName("PersonalMediaUploadJobTable"),
+          },
+        ),
+      ),
+    );
+    return next;
   } catch (error) {
-    if (isConditionalCheckFailed(error)) return undefined;
+    if (classifyDeploymentTransactionError(error) === "stale") return undefined;
     throw error;
   }
 }
 
-export async function renewPersonalMediaUploadJobClaim(options: {
-  uploadId: string;
-  instanceId: string;
-  claimExpiresAt: number;
-  updatedAt: string;
-}): Promise<boolean> {
+export async function renewPersonalMediaUploadJobClaim(
+  options: PersonalMediaClaim & { claimExpiresAt: number; updatedAt: string },
+): Promise<boolean> {
+  const check = buildPersonalClaimCheck(
+    options,
+    tableName("PersonalMediaUploadJobTable"),
+  ).ConditionCheck;
   try {
     await dynamoDbClient.send(
       new UpdateItemCommand({
-        TableName: tableName("PersonalMediaUploadJobTable"),
-        Key: marshall({ uploadId: options.uploadId }),
-        UpdateExpression:
-          "SET #claimExpiresAt = :claimExpiresAt, #updatedAt = :updatedAt",
-        ConditionExpression:
-          "#status = :processing AND #processingOwnerInstanceId = :instanceId",
-        ExpressionAttributeNames: {
-          "#status": "status",
-          "#processingOwnerInstanceId": "processingOwnerInstanceId",
-          "#claimExpiresAt": "claimExpiresAt",
-          "#updatedAt": "updatedAt",
+        ...check,
+        UpdateExpression: "SET claimExpiresAt = :expiry, updatedAt = :updated",
+        ExpressionAttributeValues: {
+          ...check.ExpressionAttributeValues,
+          ...marshall({
+            ":expiry": options.claimExpiresAt,
+            ":updated": options.updatedAt,
+          }),
         },
-        ExpressionAttributeValues: marshall({
-          ":processing": "processing",
-          ":instanceId": options.instanceId,
-          ":claimExpiresAt": options.claimExpiresAt,
-          ":updatedAt": options.updatedAt,
-        }),
       }),
     );
     return true;
@@ -2220,40 +2637,33 @@ export async function renewPersonalMediaUploadJobClaim(options: {
     throw error;
   }
 }
-
-export async function updateClaimedPersonalMediaUploadJobProgress(options: {
-  uploadId: string;
-  instanceId: string;
-  segmentCount: number;
-  uploadedSegmentCount: number;
-  processedSegmentCount: number;
-  updatedAt: string;
-}): Promise<boolean> {
+export async function updateClaimedPersonalMediaUploadJobProgress(
+  options: PersonalMediaClaim & {
+    segmentCount: number;
+    uploadedSegmentCount: number;
+    processedSegmentCount: number;
+    updatedAt: string;
+  },
+): Promise<boolean> {
+  const check = buildPersonalClaimCheck(
+    options,
+    tableName("PersonalMediaUploadJobTable"),
+  ).ConditionCheck;
   try {
     await dynamoDbClient.send(
       new UpdateItemCommand({
-        TableName: tableName("PersonalMediaUploadJobTable"),
-        Key: marshall({ uploadId: options.uploadId }),
+        ...check,
         UpdateExpression:
-          "SET #segmentCount = :segmentCount, #uploadedSegmentCount = :uploadedSegmentCount, #processedSegmentCount = :processedSegmentCount, #updatedAt = :updatedAt",
-        ConditionExpression:
-          "#status = :processing AND #processingOwnerInstanceId = :instanceId",
-        ExpressionAttributeNames: {
-          "#status": "status",
-          "#processingOwnerInstanceId": "processingOwnerInstanceId",
-          "#segmentCount": "segmentCount",
-          "#uploadedSegmentCount": "uploadedSegmentCount",
-          "#processedSegmentCount": "processedSegmentCount",
-          "#updatedAt": "updatedAt",
+          "SET segmentCount = :segments, uploadedSegmentCount = :uploaded, processedSegmentCount = :processed, updatedAt = :updated",
+        ExpressionAttributeValues: {
+          ...check.ExpressionAttributeValues,
+          ...marshall({
+            ":segments": options.segmentCount,
+            ":uploaded": options.uploadedSegmentCount,
+            ":processed": options.processedSegmentCount,
+            ":updated": options.updatedAt,
+          }),
         },
-        ExpressionAttributeValues: marshall({
-          ":processing": "processing",
-          ":instanceId": options.instanceId,
-          ":segmentCount": options.segmentCount,
-          ":uploadedSegmentCount": options.uploadedSegmentCount,
-          ":processedSegmentCount": options.processedSegmentCount,
-          ":updatedAt": options.updatedAt,
-        }),
       }),
     );
     return true;
@@ -2262,26 +2672,22 @@ export async function updateClaimedPersonalMediaUploadJobProgress(options: {
     throw error;
   }
 }
-
 export async function writeClaimedPersonalMediaUploadJob(
   job: PersonalMediaUploadJobRecord,
   instanceId: string,
 ): Promise<boolean> {
+  const check = buildPersonalClaimCheck(
+    personalMediaClaimForJob(job, instanceId),
+    tableName("PersonalMediaUploadJobTable"),
+  ).ConditionCheck;
   try {
     await dynamoDbClient.send(
       new PutItemCommand({
-        TableName: tableName("PersonalMediaUploadJobTable"),
+        TableName: check.TableName,
+        ConditionExpression: check.ConditionExpression,
+        ExpressionAttributeNames: check.ExpressionAttributeNames,
+        ExpressionAttributeValues: check.ExpressionAttributeValues,
         Item: marshall(job, { removeUndefinedValues: true }),
-        ConditionExpression:
-          "#status = :processing AND #processingOwnerInstanceId = :instanceId",
-        ExpressionAttributeNames: {
-          "#status": "status",
-          "#processingOwnerInstanceId": "processingOwnerInstanceId",
-        },
-        ExpressionAttributeValues: marshall({
-          ":processing": "processing",
-          ":instanceId": instanceId,
-        }),
       }),
     );
     return true;
@@ -3106,7 +3512,12 @@ export async function compareAndWritePurchaseAttempt(
   expected: PurchaseAttempt | undefined,
   pointer: GuildSubscription | undefined,
   incident?: PurchaseIncident,
+  offerUsage?: OfferUsageMutation,
 ): Promise<boolean> {
+  assertPurchaseInvoiceBinding(next, expected);
+  const usage =
+    offerUsage &&
+    parseOfferUsageChange({ ...offerUsage, pointer, operation: next });
   const names: Record<string, string> = { "#guildId": "guildId" };
   const values: Record<string, string> = {};
   const conditions = [
@@ -3159,6 +3570,26 @@ export async function compareAndWritePurchaseAttempt(
                 : {}),
             },
           },
+          ...(next.state === "preparing" &&
+          next.attemptId !== expected?.attemptId
+            ? [
+                {
+                  ConditionCheck: historicalRevisionFence(
+                    billingChangeControlKey(next.guildId),
+                    undefined,
+                  ),
+                },
+                {
+                  ConditionCheck: renewalRecoveryFence(next.guildId),
+                },
+              ]
+            : []),
+          ...(usage
+            ? [
+                { Put: offerUsagePut(usage.next, usage.expected) },
+                ...offerAuthorityFences(usage.authority),
+              ]
+            : []),
           ...(incident
             ? [
                 {
@@ -3275,5 +3706,824 @@ function purchaseIncidentUpdate(incident: PurchaseIncident) {
     UpdateExpression: `SET ${expressions.join(", ")}`,
     ExpressionAttributeNames: names,
     ExpressionAttributeValues: marshall(values),
+  };
+}
+
+export async function readOfferUsage(
+  guildId: string,
+  offerId: IntroOfferId,
+  mode: ProviderMode,
+): Promise<OfferUsage | undefined> {
+  const key = offerUsageKey(guildId, offerId, mode);
+  const result = await dynamoDbClient.send(
+    new GetItemCommand({
+      TableName: tableName("GuildSubscriptionTable"),
+      Key: marshall({ guildId: key }),
+      ConsistentRead: true,
+    }),
+  );
+  if (!result.Item) return undefined;
+  const { guildId: storedKey, serverId, ...record } = unmarshall(result.Item);
+  if (
+    storedKey !== key ||
+    serverId !== guildId ||
+    record.offerId !== offerId ||
+    record.mode !== mode
+  )
+    throw new Error("Stored offer usage scope mismatch");
+  return offerUsageSchema.parse({ ...record, guildId });
+}
+function subscriptionRevisionFence(
+  guildId: string,
+  pointer: GuildSubscription | undefined,
+) {
+  const names: Record<string, string> = { "#guildId": "guildId" };
+  const values: Record<string, string> = {};
+  const conditions = [
+    pointer ? "attribute_exists(#guildId)" : "attribute_not_exists(#guildId)",
+  ];
+  if (pointer)
+    for (const key of ["stripeSubscriptionId", "stripeSyncRevision"] as const) {
+      names[`#${key}`] = key;
+      if (pointer[key] === undefined)
+        conditions.push(`attribute_not_exists(#${key})`);
+      else {
+        conditions.push(`#${key} = :${key}`);
+        values[`:${key}`] = pointer[key];
+      }
+    }
+  return {
+    TableName: tableName("GuildSubscriptionTable"),
+    Key: marshall({ guildId }),
+    ConditionExpression: conditions.join(" AND "),
+    ExpressionAttributeNames: names,
+    ...(Object.keys(values).length
+      ? { ExpressionAttributeValues: marshall(values) }
+      : {}),
+  };
+}
+export async function compareAndWriteOfferUsage(
+  input: OfferUsageWrite,
+): Promise<boolean> {
+  const { next, expected, authority } = parseOfferUsageChange(input);
+  try {
+    await dynamoDbClient.send(
+      new TransactWriteItemsCommand({
+        TransactItems: [
+          {
+            ConditionCheck: subscriptionRevisionFence(
+              next.guildId,
+              input.pointer,
+            ),
+          },
+          {
+            ConditionCheck: {
+              TableName: tableName("GuildSubscriptionTable"),
+              Key: marshall({ guildId: purchaseRecordKey(next.guildId) }),
+              ConditionExpression:
+                "#revision = :revision AND #attemptId = :attemptId AND #mode = :mode",
+              ExpressionAttributeNames: {
+                "#revision": "revision",
+                "#attemptId": "attemptId",
+                "#mode": "mode",
+              },
+              ExpressionAttributeValues: marshall({
+                ":revision": input.operation.revision,
+                ":attemptId": input.operation.attemptId,
+                ":mode": next.mode,
+              }),
+            },
+          },
+          { Put: offerUsagePut(next, expected) },
+          ...offerAuthorityFences(authority),
+        ],
+      }),
+    );
+    return true;
+  } catch (error) {
+    if (isBillingTransactionConflict(error)) return false;
+    throw error;
+  }
+}
+function isBillingTransactionConflict(error: unknown): boolean {
+  const failure = billingCancellationSchema.safeParse(error);
+  if (!failure.success) return false;
+  const codes = failure.data.CancellationReasons.map((reason) => reason.Code);
+  return (
+    codes.some(
+      (code) =>
+        code === "ConditionalCheckFailed" || code === "TransactionConflict",
+    ) &&
+    codes.every(
+      (code) =>
+        !code ||
+        ["None", "ConditionalCheckFailed", "TransactionConflict"].includes(
+          code,
+        ),
+    )
+  );
+}
+const billingCancellationSchema = z.object({
+  name: z.literal("TransactionCanceledException"),
+  CancellationReasons: z.array(z.object({ Code: z.string().optional() })),
+});
+
+function offerUsagePut(
+  next: OfferUsage,
+  expected: OfferUsage | undefined,
+): Put {
+  return {
+    TableName: tableName("GuildSubscriptionTable"),
+    Item: marshall({
+      ...next,
+      guildId: offerUsageKey(next.guildId, next.offerId, next.mode),
+      serverId: next.guildId,
+    }),
+    ConditionExpression: expected
+      ? "#revision = :revision"
+      : "attribute_not_exists(#guildId)",
+    ExpressionAttributeNames: expected
+      ? { "#revision": "revision" }
+      : { "#guildId": "guildId" },
+    ...(expected
+      ? {
+          ExpressionAttributeValues: marshall({
+            ":revision": expected.revision,
+          }),
+        }
+      : {}),
+  };
+}
+
+export async function readHistoricalOfferImport(
+  guildId: string,
+  offerId: IntroOfferId,
+  mode: ProviderMode,
+  accountId: string,
+): Promise<HistoricalOfferImport | undefined> {
+  const key = historicalOfferImportKey(guildId, offerId, mode, accountId);
+  const result = await dynamoDbClient.send(
+    new GetItemCommand({
+      TableName: tableName("GuildSubscriptionTable"),
+      Key: marshall({ guildId: key }),
+      ConsistentRead: true,
+    }),
+  );
+  if (!result.Item) return undefined;
+  const { guildId: storedKey, serverId, ...record } = unmarshall(result.Item);
+  if (
+    storedKey !== key ||
+    serverId !== guildId ||
+    record.accountId !== accountId ||
+    record.mode !== mode ||
+    record.offerId !== offerId
+  )
+    throw new Error("Stored historical import scope mismatch");
+  return historicalOfferImportSchema.parse({ ...record, guildId });
+}
+export async function compareAndWriteHistoricalOfferImport(
+  input: HistoricalOfferImportWrite,
+): Promise<boolean> {
+  const { next, expected, usageNext, usageExpected } =
+    parseHistoricalOfferImportWrite(input);
+  const key = historicalOfferImportKey(
+    next.guildId,
+    next.offerId,
+    next.mode,
+    next.accountId,
+  );
+  try {
+    await dynamoDbClient.send(
+      new TransactWriteItemsCommand({
+        TransactItems: [
+          {
+            ConditionCheck: subscriptionRevisionFence(
+              next.guildId,
+              input.pointer,
+            ),
+          },
+          {
+            ConditionCheck: historicalOperationFence(
+              next.guildId,
+              input.operation,
+            ),
+          },
+          usageNext
+            ? { Put: offerUsagePut(usageNext, usageExpected) }
+            : {
+                ConditionCheck: historicalRevisionFence(
+                  offerUsageKey(next.guildId, next.offerId, next.mode),
+                  usageExpected?.revision,
+                ),
+              },
+          {
+            Put: {
+              ...historicalImportPut(key, next, expected?.revision),
+            },
+          },
+          ...(next.state === "unused"
+            ? [{ ConditionCheck: historyWriterBoundaryFence(next) }]
+            : []),
+        ],
+      }),
+    );
+    return true;
+  } catch (error) {
+    if (isBillingTransactionConflict(error)) return false;
+    throw error;
+  }
+}
+function historicalRevisionFence(
+  key: string,
+  revision: string | undefined,
+): ConditionCheck {
+  return {
+    TableName: tableName("GuildSubscriptionTable"),
+    Key: marshall({ guildId: key }),
+    ConditionExpression: revision
+      ? "#revision = :revision"
+      : "attribute_not_exists(#guildId)",
+    ExpressionAttributeNames: revision
+      ? { "#revision": "revision" }
+      : { "#guildId": "guildId" },
+    ...(revision
+      ? { ExpressionAttributeValues: marshall({ ":revision": revision }) }
+      : {}),
+  };
+}
+function historicalOperationFence(
+  guildId: string,
+  operation: PurchaseAttempt | undefined,
+): ConditionCheck {
+  if (!operation)
+    return historicalRevisionFence(purchaseRecordKey(guildId), undefined);
+  return {
+    TableName: tableName("GuildSubscriptionTable"),
+    Key: marshall({ guildId: purchaseRecordKey(guildId) }),
+    ConditionExpression:
+      "#revision = :revision AND #attemptId = :attemptId AND #mode = :mode",
+    ExpressionAttributeNames: {
+      "#revision": "revision",
+      "#attemptId": "attemptId",
+      "#mode": "mode",
+    },
+    ExpressionAttributeValues: marshall({
+      ":revision": operation.revision,
+      ":attemptId": operation.attemptId,
+      ":mode": operation.mode,
+    }),
+  };
+}
+
+function historicalImportPut(
+  key: string,
+  next: HistoricalOfferImport,
+  revision: string | undefined,
+): Put {
+  const fence = historicalRevisionFence(key, revision);
+  return {
+    TableName: fence.TableName,
+    Item: marshall({ ...next, guildId: key, serverId: next.guildId }),
+    ConditionExpression: fence.ConditionExpression,
+    ExpressionAttributeNames: fence.ExpressionAttributeNames,
+    ...(fence.ExpressionAttributeValues
+      ? { ExpressionAttributeValues: fence.ExpressionAttributeValues }
+      : {}),
+  };
+}
+
+function historyWriterBoundaryFence(
+  next: Extract<HistoricalOfferImport, { state: "unused" }>,
+): ConditionCheck {
+  return {
+    TableName: tableName("GuildSubscriptionTable"),
+    Key: marshall({
+      guildId: historyWriterBoundaryKey(next.accountId, next.mode),
+    }),
+    ConditionExpression:
+      "#revision = :revision AND #state = :state AND #version = :version AND #cutover <= :cutoff AND #verified <= :verified",
+    ExpressionAttributeNames: {
+      "#revision": "revision",
+      "#state": "state",
+      "#version": "writerVersion",
+      "#cutover": "cutoverAt",
+      "#verified": "verifiedAt",
+    },
+    ExpressionAttributeValues: marshall({
+      ":revision": next.writerBoundaryRevision,
+      ":state": "verified",
+      ":version": HISTORY_WRITER_VERSION,
+      ":cutoff": next.createdBefore * 1000,
+      ":verified": next.verifiedAt,
+    }),
+  };
+}
+export async function readHistoryWriterBoundary(
+  accountId: string,
+  mode: ProviderMode,
+): Promise<HistoryWriterBoundary | undefined> {
+  const key = historyWriterBoundaryKey(accountId, mode);
+  const result = await dynamoDbClient.send(
+    new GetItemCommand({
+      TableName: tableName("GuildSubscriptionTable"),
+      Key: marshall({ guildId: key }),
+      ConsistentRead: true,
+    }),
+  );
+  if (!result.Item) return undefined;
+  const { guildId: storedKey, ...record } = unmarshall(result.Item);
+  if (
+    storedKey !== key ||
+    record.accountId !== accountId ||
+    record.mode !== mode
+  )
+    throw new Error("Stored writer boundary scope mismatch");
+  return historyWriterBoundarySchema.parse(record);
+}
+
+export async function compareAndWriteHistoryWriterBoundary(
+  next: HistoryWriterBoundary,
+  expected: HistoryWriterBoundary | undefined,
+  sample: PurchaseAttempt,
+): Promise<boolean> {
+  validateBoundarySample(next, expected, sample);
+  const key = historyWriterBoundaryKey(next.accountId, next.mode);
+  const fence = historicalRevisionFence(key, expected?.revision);
+  try {
+    await dynamoDbClient.send(
+      new TransactWriteItemsCommand({
+        TransactItems: [
+          { ConditionCheck: historicalOperationFence(sample.guildId, sample) },
+          {
+            Put: {
+              TableName: fence.TableName,
+              Item: marshall({ ...next, guildId: key }),
+              ConditionExpression: fence.ConditionExpression,
+              ExpressionAttributeNames: fence.ExpressionAttributeNames,
+              ...(fence.ExpressionAttributeValues
+                ? { ExpressionAttributeValues: fence.ExpressionAttributeValues }
+                : {}),
+            },
+          },
+        ],
+      }),
+    );
+    return true;
+  } catch (error) {
+    if (isBillingTransactionConflict(error)) return false;
+    throw error;
+  }
+}
+export async function removeHistoryWriterBoundary(
+  expected: HistoryWriterBoundary,
+): Promise<boolean> {
+  historyWriterBoundarySchema.parse(expected);
+  const fence = historicalRevisionFence(
+    historyWriterBoundaryKey(expected.accountId, expected.mode),
+    expected.revision,
+  );
+  try {
+    await dynamoDbClient.send(
+      new TransactWriteItemsCommand({ TransactItems: [{ Delete: fence }] }),
+    );
+    return true;
+  } catch (error) {
+    if (isBillingTransactionConflict(error)) return false;
+    throw error;
+  }
+}
+
+function offerAuthorityFences(
+  authority: IntroOfferAuthority | undefined,
+): { ConditionCheck: ConditionCheck }[] {
+  if (!authority) return [];
+  return [
+    {
+      ConditionCheck: {
+        ...historicalRevisionFence(
+          historicalOfferImportKey(
+            authority.guildId,
+            authority.offerId,
+            authority.mode,
+            authority.accountId,
+          ),
+          authority.coverageRevision,
+        ),
+        ConditionExpression:
+          "#revision = :revision AND #state = :state AND #boundary = :boundary",
+        ExpressionAttributeNames: {
+          "#revision": "revision",
+          "#state": "state",
+          "#boundary": "writerBoundaryRevision",
+        },
+        ExpressionAttributeValues: marshall({
+          ":revision": authority.coverageRevision,
+          ":state": "unused",
+          ":boundary": authority.boundaryRevision,
+        }),
+      },
+    },
+    {
+      ConditionCheck: {
+        ...historicalRevisionFence(
+          historyWriterBoundaryKey(authority.accountId, authority.mode),
+          authority.boundaryRevision,
+        ),
+        ConditionExpression:
+          "#revision = :revision AND #state = :state AND #deployment.#image = :image",
+        ExpressionAttributeNames: {
+          "#revision": "revision",
+          "#state": "state",
+          "#deployment": "deployment",
+          "#image": "imageDigest",
+        },
+        ExpressionAttributeValues: marshall({
+          ":revision": authority.boundaryRevision,
+          ":state": "verified",
+          ":image": authority.writerImageDigest,
+        }),
+      },
+    },
+  ];
+}
+
+export async function readRenewalRecord(
+  key: string,
+): Promise<Record<string, unknown> | undefined> {
+  const result = await dynamoDbClient.send(
+    new GetItemCommand({
+      TableName: tableName("GuildSubscriptionTable"),
+      Key: marshall({ guildId: key }),
+      ConsistentRead: true,
+    }),
+  );
+  return result.Item ? unmarshall(result.Item) : undefined;
+}
+
+async function transactRenewalRecords(
+  items: ConstructorParameters<
+    typeof TransactWriteItemsCommand
+  >[0]["TransactItems"],
+): Promise<boolean> {
+  try {
+    await dynamoDbClient.send(
+      new TransactWriteItemsCommand({ TransactItems: items }),
+    );
+    return true;
+  } catch (error) {
+    if (
+      error instanceof TransactionCanceledException &&
+      error.CancellationReasons?.some(
+        (reason) =>
+          reason.Code === "ConditionalCheckFailed" ||
+          reason.Code === "TransactionConflict",
+      ) &&
+      error.CancellationReasons.every(
+        (reason) =>
+          reason.Code === "None" ||
+          reason.Code === "ConditionalCheckFailed" ||
+          reason.Code === "TransactionConflict",
+      )
+    )
+      return false;
+    throw error;
+  }
+}
+
+export async function claimRenewalOperation(
+  operation: RenewalOperation,
+  expected: GuildSubscription,
+): Promise<boolean> {
+  const table = tableName("GuildSubscriptionTable");
+  const conditions = [
+    "attribute_exists(guildId)",
+    "#stripeSubscriptionId = :subscriptionId",
+  ];
+  const names: Record<string, string> = {
+    "#stripeSubscriptionId": "stripeSubscriptionId",
+    "#stripeSyncRevision": "stripeSyncRevision",
+  };
+  const values: Record<string, string> = {
+    ":subscriptionId": operation.subscriptionId,
+  };
+  if (expected.stripeSyncRevision === undefined)
+    conditions.push("attribute_not_exists(#stripeSyncRevision)");
+  else {
+    conditions.push("#stripeSyncRevision = :revision");
+    values[":revision"] = expected.stripeSyncRevision;
+  }
+  return transactRenewalRecords([
+    { ConditionCheck: renewalRecoveryFence(operation.guildId) },
+    {
+      ConditionCheck: {
+        TableName: table,
+        Key: marshall({ guildId: operation.guildId }),
+        ConditionExpression: conditions.join(" AND "),
+        ExpressionAttributeNames: names,
+        ExpressionAttributeValues: marshall(values),
+      },
+    },
+    {
+      ConditionCheck: historicalRevisionFence(
+        billingChangeControlKey(operation.guildId),
+        undefined,
+      ),
+    },
+    {
+      Put: {
+        TableName: table,
+        Item: marshall({
+          ...operation,
+          guildId: renewalOperationKey(
+            operation.guildId,
+            operation.operationId,
+          ),
+        }),
+        ConditionExpression: "attribute_not_exists(guildId)",
+      },
+    },
+    {
+      Put: {
+        TableName: table,
+        Item: marshall({
+          guildId: renewalControlKey(operation.guildId),
+          operationId: operation.operationId,
+          revision: operation.revision,
+        }),
+        ConditionExpression: "attribute_not_exists(guildId)",
+      },
+    },
+  ]);
+}
+
+export async function writeRenewalOperation(
+  next: RenewalOperation,
+  expectedRevision: string,
+): Promise<boolean> {
+  const table = tableName("GuildSubscriptionTable");
+  const control = {
+    TableName: table,
+    Key: marshall({ guildId: renewalControlKey(next.guildId) }),
+    ConditionExpression: "operationId = :operationId",
+    ExpressionAttributeValues: marshall({ ":operationId": next.operationId }),
+  };
+  return transactRenewalRecords([
+    {
+      Put: {
+        TableName: table,
+        Item: marshall({
+          ...next,
+          guildId: renewalOperationKey(next.guildId, next.operationId),
+        }),
+        ConditionExpression: "#revision = :revision",
+        ExpressionAttributeNames: { "#revision": "revision" },
+        ExpressionAttributeValues: marshall({ ":revision": expectedRevision }),
+      },
+    },
+    isRenewalComplete(next) ? { Delete: control } : { ConditionCheck: control },
+  ]);
+}
+
+export async function claimBillingChangeOperation(
+  input: BillingChangeClaim,
+): Promise<boolean> {
+  const operation = input.operation;
+  const usage = input.usage && parseChangeUsage(operation, input.usage);
+  return transactRenewalRecords([
+    { ConditionCheck: renewalRecoveryFence(operation.guildId) },
+    {
+      ConditionCheck: subscriptionRevisionFence(
+        operation.guildId,
+        input.expectedSubscription,
+      ),
+    },
+    {
+      ConditionCheck: historicalRevisionFence(
+        renewalControlKey(operation.guildId),
+        undefined,
+      ),
+    },
+    {
+      ConditionCheck: {
+        TableName: tableName("GuildSubscriptionTable"),
+        Key: marshall({ guildId: purchaseRecordKey(operation.guildId) }),
+        ConditionExpression:
+          "attribute_not_exists(#guildId) OR #state IN (:completed, :expired)",
+        ExpressionAttributeNames: { "#guildId": "guildId", "#state": "state" },
+        ExpressionAttributeValues: marshall({
+          ":completed": "completed",
+          ":expired": "expired",
+        }),
+      },
+    },
+    {
+      Put: {
+        TableName: tableName("GuildSubscriptionTable"),
+        Item: marshall({
+          ...operation,
+          guildId: billingChangeOperationKey(
+            operation.guildId,
+            operation.operationId,
+          ),
+        }),
+        ConditionExpression: "attribute_not_exists(guildId)",
+      },
+    },
+    {
+      Put: {
+        TableName: tableName("GuildSubscriptionTable"),
+        Item: marshall({
+          guildId: billingChangeControlKey(operation.guildId),
+          operationId: operation.operationId,
+        }),
+        ConditionExpression: "attribute_not_exists(guildId)",
+      },
+    },
+    ...(usage
+      ? [
+          { Put: offerUsagePut(usage.next, usage.expected) },
+          ...offerAuthorityFences(usage.authority),
+        ]
+      : []),
+  ]);
+}
+export async function writeBillingChangeOperation(
+  input: BillingChangeWrite,
+): Promise<boolean> {
+  const next = input.next;
+  const usage = input.usage && parseChangeUsage(next, input.usage);
+  const control = {
+    TableName: tableName("GuildSubscriptionTable"),
+    Key: marshall({ guildId: billingChangeControlKey(next.guildId) }),
+    ConditionExpression: "operationId = :operationId",
+    ExpressionAttributeValues: marshall({ ":operationId": next.operationId }),
+  };
+  return transactRenewalRecords([
+    {
+      Put: {
+        TableName: tableName("GuildSubscriptionTable"),
+        Item: marshall({
+          ...next,
+          guildId: billingChangeOperationKey(next.guildId, next.operationId),
+        }),
+        ConditionExpression: "#revision = :revision",
+        ExpressionAttributeNames: { "#revision": "revision" },
+        ExpressionAttributeValues: marshall({
+          ":revision": input.expectedRevision,
+        }),
+      },
+    },
+    isBillingChangeComplete(next)
+      ? { Delete: control }
+      : { ConditionCheck: control },
+    ...(usage ? [{ Put: offerUsagePut(usage.next, usage.expected) }] : []),
+  ]);
+}
+
+export async function writeRenewalRecoveryRecord(input: {
+  next: RenewalRecovery;
+  expectedRevision?: string;
+  expectedPointer?: RenewalRecoveryPointer;
+  supersededWatch?: Extract<RenewalRecovery, { state: "watching" }>;
+  expectedSubscription: GuildSubscription;
+  blocking: boolean;
+}): Promise<boolean> {
+  const next = input.next;
+  if (input.expectedSubscription.stripeSubscriptionId !== next.subscriptionId)
+    return false;
+  const table = tableName("GuildSubscriptionTable");
+  const superseded = input.supersededWatch;
+  const archived: NonNullable<Parameters<typeof transactRenewalRecords>[0]> =
+    superseded
+      ? [
+          {
+            Update: {
+              TableName: table,
+              Key: marshall({ guildId: renewalRecoveryKey(superseded) }),
+              UpdateExpression:
+                "SET #state = :ended, #revision = :newRevision REMOVE nextCheckAt, recoveryQueue, recoveryDueAt",
+              ConditionExpression:
+                "#revision = :revision AND #state = :watching AND enforcementAccepted = :no",
+              ExpressionAttributeNames: {
+                "#state": "state",
+                "#revision": "revision",
+              },
+              ExpressionAttributeValues: marshall({
+                ":ended": "ended",
+                ":newRevision": randomUUID(),
+                ":revision": superseded.revision,
+                ":watching": "watching",
+                ":no": false,
+              }),
+            },
+          },
+        ]
+      : [];
+  return transactRenewalRecords([
+    ...archived,
+    {
+      ConditionCheck: subscriptionRevisionFence(
+        next.guildId,
+        input.expectedSubscription,
+      ),
+    },
+    {
+      Put: {
+        TableName: table,
+        Item: marshall(
+          {
+            ...next,
+            ownerGuildId: next.guildId,
+            guildId: renewalRecoveryKey(next),
+            ...(renewalRecoveryNextCheck(next) !== undefined
+              ? {
+                  recoveryQueue: next.mode,
+                  recoveryDueAt: renewalRecoveryNextCheck(next),
+                }
+              : {}),
+          },
+          { removeUndefinedValues: true },
+        ),
+        ConditionExpression: input.expectedRevision
+          ? "#revision = :revision"
+          : "attribute_not_exists(guildId)",
+        ...(input.expectedRevision
+          ? {
+              ExpressionAttributeNames: { "#revision": "revision" },
+              ExpressionAttributeValues: marshall({
+                ":revision": input.expectedRevision,
+              }),
+            }
+          : {}),
+      },
+    },
+    {
+      Put: {
+        TableName: table,
+        Item: marshall({
+          guildId: renewalRecoveryCurrentKey(next.guildId),
+          key: renewalRecoveryKey(next),
+          revision: next.revision,
+          blocking: input.blocking,
+        }),
+        ConditionExpression: input.expectedPointer
+          ? "#revision = :revision"
+          : "attribute_not_exists(guildId)",
+        ...(input.expectedPointer
+          ? {
+              ExpressionAttributeNames: { "#revision": "revision" },
+              ExpressionAttributeValues: marshall({
+                ":revision": input.expectedPointer.revision,
+              }),
+            }
+          : {}),
+      },
+    },
+  ]);
+}
+function renewalRecoveryFence(guildId: string): ConditionCheck {
+  return {
+    TableName: tableName("GuildSubscriptionTable"),
+    Key: marshall({ guildId: renewalRecoveryCurrentKey(guildId) }),
+    ConditionExpression: "attribute_not_exists(guildId) OR #blocking = :no",
+    ExpressionAttributeNames: { "#blocking": "blocking" },
+    ExpressionAttributeValues: marshall({ ":no": false }),
+  };
+}
+export async function listDueRenewalRecoveries(input: {
+  mode: "test" | "live";
+  now: number;
+  limit: number;
+  cursor?: string;
+}): Promise<{ keys: string[]; cursor?: string }> {
+  const cursor = readRenewalRecoveryCursor(input.cursor);
+  if (cursor && cursor.recoveryQueue !== input.mode)
+    throw new Error("Renewal cursor mode mismatch");
+  const response = await dynamoDbClient.send(
+    new QueryCommand({
+      TableName: tableName("GuildSubscriptionTable"),
+      IndexName: RENEWAL_RECOVERY_DUE_INDEX,
+      KeyConditionExpression: "recoveryQueue = :mode AND recoveryDueAt <= :now",
+      ExpressionAttributeValues: marshall({
+        ":mode": input.mode,
+        ":now": input.now,
+      }),
+      Limit: input.limit,
+      ...(cursor ? { ExclusiveStartKey: marshall(cursor) } : {}),
+    }),
+  );
+  return {
+    keys: (response.Items ?? []).map((item) =>
+      z.string().parse(unmarshall(item).guildId),
+    ),
+    ...(response.LastEvaluatedKey
+      ? {
+          cursor: writeRenewalRecoveryCursor(
+            renewalRecoveryCursorSchema.parse(
+              unmarshall(response.LastEvaluatedKey),
+            ),
+          ),
+        }
+      : {}),
   };
 }

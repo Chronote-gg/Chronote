@@ -20,6 +20,7 @@ import {
 import {
   billingCheckoutMutation,
   billingPortalMutation,
+  billingRenewalQuery,
   setBillingQuery,
   setPricingQuery,
 } from "./mocks/trpc";
@@ -41,6 +42,22 @@ describe.each([
 ] as const)("%s billing action errors", (_name, Page) => {
   beforeEach(() => {
     resetFrontendMocks();
+    billingRenewalQuery.data = {
+      state: {
+        kind: "on",
+        terms: {
+          tier: "basic",
+          interval: "month",
+          currency: "usd",
+          unitAmount: 1000,
+          taxBehavior: "exclusive",
+          renewsAt: "2027-10-12T12:00:00.000Z",
+          discount: null,
+        },
+      },
+      canManageBilling: true,
+      lifecycleAnalyticsEnabled: false,
+    };
     setRouteParams({ serverId: "g1" });
     notifications.clean();
     jest.spyOn(console, "error").mockImplementation(() => undefined);
@@ -102,6 +119,7 @@ describe.each([
             tier: action === "portal" ? "pro" : "free",
             status: "active",
             canManageBillingPortal: true,
+            hasStripeBilling: action === "portal",
             usage: null,
           },
         });

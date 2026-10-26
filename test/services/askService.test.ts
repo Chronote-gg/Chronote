@@ -6,6 +6,7 @@ type LoadOptions = {
   meetings?: MeetingHistory[];
   access?: Array<boolean | null>;
   maxMeetings?: number;
+  responseText?: string;
 };
 
 const buildMeeting = (
@@ -60,6 +61,71 @@ const loadModule = async (options: LoadOptions = {}) => {
     langfuse: { askPromptName: "chronote-ask-system-chat" },
   };
 
+  const responseCreate = jest
+    .fn<(...args: unknown[]) => Promise<unknown>>()
+    .mockResolvedValue({
+      status: "completed",
+      output_text: options.responseText ?? "A generated answer.",
+      output: [
+        {
+          type: "message",
+          content: [
+            {
+              type: "output_text",
+              text: options.responseText ?? "A generated answer.",
+            },
+          ],
+        },
+      ],
+    });
+  const getLangfuseChatPrompt = jest.fn(async () => ({
+    messages: [
+      { role: "system", content: "Use the meeting evidence." },
+      { role: "user", content: "When is the launch?" },
+    ],
+    langfusePrompt: {
+      name: "chronote-ask-system-chat",
+      version: 1,
+      isFallback: false,
+    },
+    source: "langfuse",
+  }));
+
+  jest.doMock("../../src/services/openaiClient", () => ({
+    createOpenAIClient: jest.fn(() => ({
+      responses: { create: responseCreate },
+    })),
+  }));
+  jest.doMock("../../src/services/langfusePromptService", () => ({
+    getLangfuseChatPrompt,
+  }));
+  jest.doMock("../../src/services/modelFactory", () => ({
+    buildModelOverrides: (overrides: unknown) => overrides,
+    getModelChoice: () => ({ provider: "openai", model: "gpt-5.2" }),
+  }));
+  jest.doMock("../../src/services/modelChoiceService", () => ({
+    resolveModelChoicesForContext: async () => ({ ask: "gpt-5.2" }),
+  }));
+  jest.doMock("../../src/services/openaiModelParams", () => ({
+    resolveModelParamsForContext: async () => ({ ask: {} }),
+    resolveChatParamsForRole: () => ({
+      reasoning_effort: "low",
+      verbosity: "low",
+    }),
+  }));
+  jest.doMock("../../src/services/dictionaryService", () => ({
+    listDictionaryEntriesService: async () => [],
+  }));
+  jest.doMock("../../src/services/subscriptionService", () => ({
+    resolveGuildSubscription: async () => ({ tier: "free" }),
+  }));
+  jest.doMock("../../src/services/unifiedConfigService", () => ({
+    resolveConfigSnapshot: async () => ({ tier: "free", values: {} }),
+    getSnapshotBoolean: () => true,
+  }));
+  jest.doMock("../../src/services/analyticsService", () => ({
+    captureEvent: jest.fn(),
+  }));
   jest.doMock("../../src/services/meetingHistoryService", () => ({
     listRecentMeetingsForGuildService,
   }));
@@ -73,6 +139,8 @@ const loadModule = async (options: LoadOptions = {}) => {
     ...module,
     listRecentMeetingsForGuildService,
     ensureUserCanAccessMeeting,
+    responseCreate,
+    getLangfuseChatPrompt,
   };
 };
 
@@ -204,6 +272,88 @@ describe("askService (mock mode)", () => {
 });
 
 describe("askService (non-mock)", () => {
+  test("uses Responses and retains meeting citations", async () => {
+    const meeting = buildMeeting({ notes: "The launch is Thursday." });
+    const answer = 'Thursday. <chronote:cite index="1"/>';
+    const { answerQuestionService, responseCreate, getLangfuseChatPrompt } =
+      await loadModule({
+        mockEnabled: false,
+        meetings: [meeting],
+        responseText: answer,
+      });
+
+    const result = await answerQuestionService({
+      guildId: "guild-1",
+      channelId: "voice-1",
+      question: "When is the launch?",
+      viewerUserId: "viewer-1",
+      history: [
+        {
+          role: "chronote",
+          text: 'Earlier answer. <chronote:cite index="1"/>',
+        },
+      ],
+    });
+
+    expect(responseCreate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        model: "gpt-5.2",
+        input: [
+          { role: "system", content: "Use the meeting evidence." },
+          { role: "user", content: "When is the launch?" },
+        ],
+        max_output_tokens: 800,
+        reasoning: { effort: "low" },
+        text: { verbosity: "low" },
+        store: false,
+      }),
+      undefined,
+    );
+    expect(getLangfuseChatPrompt).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: "chronote-ask-system-chat",
+        variables: expect.objectContaining({
+          question: "When is the launch?",
+          contextBlocks: expect.stringContaining("The launch is Thursday."),
+          historyBlock: "Chronote: Earlier answer.",
+          dictionaryBlock: "None.",
+          maxAnswerTokens: "800",
+        }),
+      }),
+    );
+    expect(result).toEqual({
+      answer,
+      sourceMeetingIds: [meeting.channelId_timestamp],
+      citations: [
+        {
+          index: 1,
+          meetingId: meeting.channelId_timestamp,
+          eventId: undefined,
+        },
+      ],
+    });
+  });
+
+  test.each(["", " \n "])(
+    "rejects completed Responses output without usable text (%j)",
+    async (responseText) => {
+      const { answerQuestionService, responseCreate } = await loadModule({
+        mockEnabled: false,
+        meetings: [buildMeeting({ notes: "The launch is Thursday." })],
+        responseText,
+      });
+
+      await expect(
+        answerQuestionService({
+          guildId: "guild-1",
+          channelId: "voice-1",
+          question: "When is the launch?",
+        }),
+      ).rejects.toThrow(/empty/i);
+      expect(responseCreate).toHaveBeenCalledTimes(1);
+    },
+  );
+
   test("returns upgrade note when no meetings and maxMeetings is reduced", async () => {
     const { answerQuestionService } = await loadModule({
       mockEnabled: false,

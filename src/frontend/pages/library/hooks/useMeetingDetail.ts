@@ -6,10 +6,8 @@ import {
   type MeetingDetailInput,
   type MeetingDetails,
 } from "../../../utils/meetingLibrary";
-import {
-  MEETING_STATUS,
-  type MeetingStatus,
-} from "../../../../types/meetingLifecycle";
+import { MEETING_STATUS } from "../../../../types/meetingLifecycle";
+import type { LiveMeetingStatus } from "../../../../types/liveMeeting";
 import type { MeetingEvent } from "../../../../types/meetingTimeline";
 
 type UseMeetingDetailParams = {
@@ -26,7 +24,7 @@ type UseMeetingDetailResult = {
   detailError: unknown;
   liveStreamEnabled: boolean;
   liveStream: ReturnType<typeof useLiveMeetingStream>;
-  displayStatus: MeetingStatus;
+  displayStatus: LiveMeetingStatus;
   displayAttendees: string[];
   displayEvents: MeetingEvent[];
   timelineEmptyLabel: string;
@@ -68,7 +66,9 @@ const resolveLiveStreamEnabled = (
 };
 
 const shouldRefetchMeeting = (status: string) =>
-  status === MEETING_STATUS.COMPLETE || status === MEETING_STATUS.CANCELLED;
+  ["complete", "cancelled", "interrupted", "failed", "unavailable"].includes(
+    status,
+  );
 
 const resolveLiveStreamParams = (
   meeting: MeetingDetails | null,
@@ -83,8 +83,9 @@ const resolveLiveStreamParams = (
 const resolveDisplayStatus = (
   liveStream: ReturnType<typeof useLiveMeetingStream>,
   meeting: MeetingDetails | null,
-) => {
-  if (liveStream.meeting && liveStream.meeting.status) {
+  enabled: boolean,
+): LiveMeetingStatus => {
+  if (enabled && liveStream.meeting) {
     return liveStream.meeting.status;
   }
   if (meeting && meeting.status) {
@@ -138,7 +139,10 @@ const useLiveStreamRefetch = (params: {
 
   useEffect(() => {
     if (!params.enabled) return;
-    if (!shouldRefetchMeeting(params.status)) return;
+    if (!shouldRefetchMeeting(params.status)) {
+      refetchedMeetingRef.current = null;
+      return;
+    }
     if (!params.selectedGuildId || !params.meetingKey) return;
     if (refetchedMeetingRef.current === params.meetingKey) return;
     refetchedMeetingRef.current = params.meetingKey;
@@ -162,6 +166,10 @@ const resolveTimelineEmptyLabel = (
     return "Timeline data will appear after the meeting finishes processing.";
   }
   switch (status) {
+    case "unavailable":
+      return "Recording status cannot be confirmed. Recheck to resume live updates.";
+    case "error":
+      return "Live transcript connection is unavailable. Recheck to reconnect.";
     case MEETING_STATUS.PROCESSING:
       return "Meeting finished. Waiting for notes and timeline updates.";
     case MEETING_STATUS.CANCELLED:
@@ -196,7 +204,11 @@ export const useMeetingDetail = (
     resolveLiveStreamParams(meeting, params.selectedGuildId, liveStreamEnabled),
   );
 
-  const displayStatus = resolveDisplayStatus(liveStream, meeting);
+  const displayStatus = resolveDisplayStatus(
+    liveStream,
+    meeting,
+    liveStreamEnabled,
+  );
   const displayAttendees = resolveDisplayAttendees(
     liveStreamEnabled,
     liveStream,

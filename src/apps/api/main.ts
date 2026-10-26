@@ -1,6 +1,4 @@
+import { failRuntimeStartup } from "../../services/runtimeShutdownService";
 import { bootstrapApp } from "../bootstrap";
 
-bootstrapApp("api").catch((error) => {
-  console.error("API startup failed.", error);
-  process.exit(1);
-});
+bootstrapApp("api").catch(failRuntimeStartup);

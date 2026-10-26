@@ -1,4 +1,16 @@
 import {
+  getMeetingProcessingSignal,
+  runMeetingProcessingEffect,
+  runMeetingNoticeMutation,
+} from "./services/meetingProcessingLifetime";
+import { recordNotesAcknowledgement } from "./observability/meetingNotesLatency";
+import {
+  beginRecordingDelivery,
+  acknowledgeRecordingDeliveryMessage,
+  finishRecordingDeliveryMutations,
+} from "./services/recordingDeliveryService";
+import {
+  DiscordAPIError,
   ActionRowBuilder,
   ButtonBuilder,
   ButtonStyle,
@@ -6,6 +18,7 @@ import {
   Message,
 } from "discord.js";
 import { MeetingData } from "./types/meeting-data";
+import { withMeetingCaptureNotice } from "./utils/meetingCaptureNotice";
 import { config } from "./services/configService";
 import { buildPortalMeetingUrl } from "./utils/portalLinks";
 import { buildSummaryFeedbackButtonIds } from "./commands/summaryFeedback";
@@ -58,12 +71,18 @@ function truncateFieldValue(value: string, max = MAX_FIELD_VALUE): string {
 function buildMeetingFields(meeting: MeetingData) {
   const attendanceList = Array.from(meeting.attendance).join("\n");
   const startLabel = formatTimestamp(meeting.startTime);
-  const endLabel = meeting.endTime
-    ? formatTimestamp(meeting.endTime)
-    : "Unknown";
-  const durationLabel = meeting.endTime
-    ? formatDurationMinutes(meeting.startTime, meeting.endTime)
-    : formatDurationMinutes(meeting.startTime, new Date());
+  const actualEnd =
+    meeting.recordingCaptureState?.kind === "interrupted"
+      ? meeting.recordingCaptureState.endedAt
+        ? new Date(meeting.recordingCaptureState.endedAt)
+        : undefined
+      : meeting.endTime;
+  const endLabel = actualEnd ? formatTimestamp(actualEnd) : "Unknown";
+  const durationLabel = actualEnd
+    ? formatDurationMinutes(meeting.startTime, actualEnd)
+    : meeting.recordingCaptureState?.kind === "interrupted"
+      ? "Unknown"
+      : formatDurationMinutes(meeting.startTime, new Date());
 
   const fields = [
     { name: "Start Time", value: startLabel, inline: true },
@@ -113,7 +132,14 @@ function buildSummaryEmbed(meeting: MeetingData): EmbedBuilder {
     .setTitle(resolveMeetingTitle(meeting))
     .setColor(SUMMARY_COLOR)
     .setDescription(
-      summary && summary.length > 0 ? summary : "Summary unavailable.",
+      withMeetingCaptureNotice(
+        summary && summary.length > 0 ? summary : "Summary unavailable.",
+        {
+          capture: meeting.recordingCaptureState,
+          processing: meeting.processing,
+          notes: meeting.notesText,
+        },
+      ),
     )
     .addFields(buildMeetingFields(meeting))
     .setTimestamp();
@@ -127,6 +153,7 @@ function buildNotesEmbeds(meeting: MeetingData): EmbedBuilder[] {
     notesBody,
     color: SUMMARY_COLOR,
     processing: meeting.processing,
+    capture: meeting.recordingCaptureState,
   }).map((embed) => embed.setTimestamp());
 }
 
@@ -138,6 +165,36 @@ function buildMeetingPortalUrl(meeting: MeetingData): string {
     meetingId: buildMeetingHistoryKey(meeting),
     fullScreen: true,
   });
+}
+
+function buildResultRow(
+  meeting: MeetingData,
+  portalUrl: string,
+  upgradeUrl?: string,
+): ActionRowBuilder<ButtonBuilder> {
+  const base = config.frontend.siteUrl.replace(/\/$/, "");
+  const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder()
+      .setLabel("Open meeting")
+      .setEmoji("\u{1F680}")
+      .setStyle(ButtonStyle.Link)
+      .setURL(portalUrl),
+    new ButtonBuilder()
+      .setLabel("Optional setup")
+      .setStyle(ButtonStyle.Link)
+      .setURL(
+        `${base}/join?serverId=${encodeURIComponent(meeting.guildId)}#optional-setup`,
+      ),
+  );
+  if (upgradeUrl) {
+    row.addComponents(
+      new ButtonBuilder()
+        .setLabel(SUMMARY_UPGRADE.button)
+        .setStyle(ButtonStyle.Link)
+        .setURL(upgradeUrl),
+    );
+  }
+  return row;
 }
 
 function buildSummaryComponents(
@@ -172,24 +229,7 @@ function buildSummaryComponents(
       .setLabel("Edit tags")
       .setStyle(ButtonStyle.Secondary),
   ];
-  const rows: ActionRowBuilder<ButtonBuilder>[] = [];
-  rows.push(
-    new ActionRowBuilder<ButtonBuilder>().addComponents(
-      new ButtonBuilder()
-        .setLabel("Open in Chronote")
-        .setEmoji("\u{1F680}")
-        .setStyle(ButtonStyle.Link)
-        .setURL(portalUrl),
-    ),
-  );
-  if (upgradeUrl) {
-    rows[0].addComponents(
-      new ButtonBuilder()
-        .setLabel(SUMMARY_UPGRADE.button)
-        .setStyle(ButtonStyle.Link)
-        .setURL(upgradeUrl),
-    );
-  }
+  const rows = [buildResultRow(meeting, portalUrl, upgradeUrl)];
   if (actionButtons.length > 0) {
     const firstRow = actionButtons.slice(0, 3);
     const secondRow = actionButtons.slice(3);
@@ -202,17 +242,62 @@ function buildSummaryComponents(
   }
   return rows;
 }
-export async function updateMeetingMessage(
+export function updateMeetingMessage(
   meeting: MeetingData,
   payload: MeetingMessagePayload,
   phase: Exclude<DeliveryPhase, "notes">,
+  finalization = false,
 ): Promise<{ message?: Message; delivery: DeliveryResult }> {
+  const ownedNotice = Boolean(meeting.finalization) && !finalization;
+  const run = () =>
+    deliverMeetingMessage(meeting, payload, phase, finalization, ownedNotice);
+  return ownedNotice ? runMeetingProcessingEffect(meeting, run) : run();
+}
+function missingMeetingMessage(error: unknown): boolean {
+  return (
+    error instanceof DiscordAPIError &&
+    error.code === 10008 &&
+    error.status === 404
+  );
+}
+function rejectedMeetingMessage(error: unknown): boolean {
+  return (
+    error instanceof DiscordAPIError &&
+    error.status >= 400 &&
+    error.status < 500
+  );
+}
+async function deliverMeetingMessage(
+  meeting: MeetingData,
+  payload: MeetingMessagePayload,
+  phase: Exclude<DeliveryPhase, "notes">,
+  finalization: boolean,
+  ownedNotice: boolean,
+): Promise<{ message?: Message; delivery: DeliveryResult }> {
+  const signal =
+    finalization || ownedNotice
+      ? getMeetingProcessingSignal(meeting)
+      : undefined;
+  signal?.throwIfAborted();
   const channel = meeting.textChannel;
   const errors: DeliveryResult["errors"] = [];
   if (meeting.startMessageId) {
     try {
       const message = await channel.messages.fetch(meeting.startMessageId);
-      await message.edit(payload);
+      signal?.throwIfAborted();
+      if (ownedNotice)
+        await runMeetingNoticeMutation(
+          meeting,
+          () => message.edit(payload),
+          rejectedMeetingMessage,
+        );
+      else await message.edit(payload);
+      if (finalization)
+        await acknowledgeRecordingDeliveryMessage(
+          meeting,
+          "summary",
+          message.id,
+        );
       return {
         message,
         delivery: recordDelivery(meeting, phase, {
@@ -223,12 +308,24 @@ export async function updateMeetingMessage(
         }),
       };
     } catch (error) {
+      signal?.throwIfAborted();
+      if ((finalization || ownedNotice) && !missingMeetingMessage(error))
+        throw error;
       errors.push(deliveryError(error));
     }
   }
 
   try {
-    const message = await channel.send(payload);
+    signal?.throwIfAborted();
+    const message = ownedNotice
+      ? await runMeetingNoticeMutation(
+          meeting,
+          () => channel.send(payload),
+          rejectedMeetingMessage,
+        )
+      : await channel.send(payload);
+    if (finalization)
+      await acknowledgeRecordingDeliveryMessage(meeting, "summary", message.id);
     meeting.startMessageId = message.id;
     return {
       message,
@@ -240,6 +337,7 @@ export async function updateMeetingMessage(
       }),
     };
   } catch (error) {
+    if (finalization || ownedNotice) throw error;
     errors.push(deliveryError(error));
     return {
       delivery: recordDelivery(meeting, phase, {
@@ -266,8 +364,22 @@ export async function updateMeetingProcessingMessage(
   return delivery;
 }
 
-export async function updateMeetingSummaryMessage(
+export function updateMeetingSummaryMessage(
   meeting: MeetingData,
+  options?: { finalization: boolean },
+) {
+  return options?.finalization
+    ? runMeetingProcessingEffect(meeting, async () => {
+        await beginRecordingDelivery(meeting);
+        const result = await deliverMeetingSummary(meeting, true);
+        finishRecordingDeliveryMutations(meeting);
+        return result;
+      })
+    : deliverMeetingSummary(meeting, false);
+}
+async function deliverMeetingSummary(
+  meeting: MeetingData,
+  finalization: boolean,
 ): Promise<{ summary: DeliveryResult; notes: DeliveryResult }> {
   const portalUrl = buildMeetingPortalUrl(meeting);
   const upgrade = await claimSummaryUpgrade(meeting);
@@ -286,7 +398,12 @@ export async function updateMeetingSummaryMessage(
     components: buildSummaryComponents(meeting, portalUrl, upgrade?.url),
   };
   const { message: summaryMessage, delivery: summary } =
-    await updateMeetingMessage(meeting, summaryPayload, "summary");
+    await updateMeetingMessage(
+      meeting,
+      summaryPayload,
+      "summary",
+      finalization,
+    );
   if (summaryMessage) {
     meeting.summaryMessageId = summaryMessage.id;
   }
@@ -304,14 +421,40 @@ export async function updateMeetingSummaryMessage(
 
   const noteEmbeds = buildNotesEmbeds(meeting);
   if (upgradeField) noteEmbeds.at(-1)?.addFields(upgradeField);
-  const notes = await sendMeetingNotes(meeting, noteEmbeds, notesUpgradeUrl);
+  const notes = await sendMeetingNotes(
+    meeting,
+    noteEmbeds,
+    notesUpgradeUrl,
+    finalization,
+  );
   return { summary, notes };
+}
+
+async function acknowledgeMeetingNotes(
+  meeting: MeetingData,
+  messageId: string,
+  complete: boolean,
+): Promise<void> {
+  const timing = meeting.notesText?.trim()
+    ? recordNotesAcknowledgement(meeting.notesDeliveryTiming, {
+        acknowledgedAt: new Date().toISOString(),
+        complete,
+        path: "live",
+      })
+    : undefined;
+  await acknowledgeRecordingDeliveryMessage(
+    meeting,
+    "notes",
+    messageId,
+    timing,
+  );
 }
 
 async function sendMeetingNotes(
   meeting: MeetingData,
   noteEmbeds: EmbedBuilder[],
   upgradeUrl: URL | undefined,
+  finalization: boolean,
 ): Promise<DeliveryResult> {
   const noteEmbedBatches = batchMeetingNotesEmbeds(noteEmbeds);
   const noteMessages: Message[] = [];
@@ -320,19 +463,26 @@ async function sendMeetingNotes(
     const payload: MeetingMessagePayload = {
       embeds,
       components:
-        upgradeUrl && embeds === noteEmbedBatches.at(-1)
+        embeds === noteEmbedBatches.at(-1)
           ? [
-              new ActionRowBuilder<ButtonBuilder>().addComponents(
-                new ButtonBuilder()
-                  .setLabel(SUMMARY_UPGRADE.button)
-                  .setStyle(ButtonStyle.Link)
-                  .setURL(upgradeUrl.toString()),
+              buildResultRow(
+                meeting,
+                buildMeetingPortalUrl(meeting),
+                upgradeUrl?.toString(),
               ),
             ]
           : [],
     };
     try {
+      if (finalization) getMeetingProcessingSignal(meeting).throwIfAborted();
       const message = await meeting.textChannel.send(payload);
+      if (finalization) {
+        await acknowledgeMeetingNotes(
+          meeting,
+          message.id,
+          embeds === noteEmbedBatches.at(-1),
+        );
+      }
       noteMessages.push(message);
       if (upgradeUrl && embeds === noteEmbedBatches.at(-1)) {
         captureEvent("upgrade_offer_delivered", {
@@ -342,6 +492,7 @@ async function sendMeetingNotes(
         });
       }
     } catch (error) {
+      if (finalization) throw error;
       errors.push(deliveryError(error));
     }
   }

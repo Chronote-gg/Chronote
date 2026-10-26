@@ -1,3 +1,4 @@
+import { startMeetingRecoveryWorker } from "./services/meetingRecoveryWorkerService";
 import { discordInstallStateStore } from "./services/discordInstallStateStore";
 import {
   discordCallbackAuthentication,
@@ -49,7 +50,12 @@ import {
   ensureDiscordAccessToken,
 } from "./services/discordAuthService";
 import { startPersonalMediaUploadWorker } from "./services/personalMediaUploadWorkerService";
+import {
+  getRuntimeReadiness,
+  whenRuntimeServing,
+} from "./services/runtimeLifecycleService";
 import { MOCK_STORAGE_UPLOAD_PATH } from "./constants";
+import type { RuntimeHealthServer } from "./services/runtimeHealthServer";
 
 const AUTH_RATE_LIMIT_WINDOW_MS = 60_000;
 const AUTH_RATE_LIMIT_MAX = 20;
@@ -77,7 +83,9 @@ const getFrontendFallback = () =>
     ? config.frontend.siteUrl
     : "/";
 
-export function setupWebServer() {
+export function setupWebServer(
+  healthServer?: RuntimeHealthServer,
+): Promise<void> {
   const app = express();
   const PORT = config.server.port;
 
@@ -138,6 +146,19 @@ export function setupWebServer() {
       version: config.server.npmPackageVersion,
     };
     res.status(200).json(healthCheck);
+  });
+
+  // Readiness is warm dependency proof. Admission still requires a serving generation.
+  app.get("/ready", (_, res) => {
+    const readiness = getRuntimeReadiness();
+    const ready = Boolean(
+      readiness &&
+      readiness.expiresAt > Math.floor(Date.now() / 1000) &&
+      (readiness.runtimeMode === "api" || readiness.gatewayReady) &&
+      readiness.cacheReady &&
+      readiness.dependenciesReady,
+    );
+    res.status(ready ? 200 : 503).json({ status: ready ? "ready" : "warming" });
   });
 
   // Prometheus metrics
@@ -516,8 +537,17 @@ export function setupWebServer() {
   registerGuildRoutes(app);
   registerLiveMeetingRoutes(app);
 
-  app.listen(PORT, () => {
-    console.log(`Server is running and listening on port ${PORT}`);
+  whenRuntimeServing(() => startPersonalMediaUploadWorker());
+  whenRuntimeServing(() => startMeetingRecoveryWorker());
+  if (healthServer) {
+    healthServer.activate(app);
+    return Promise.resolve();
+  }
+  return new Promise((resolve, reject) => {
+    const server = app.listen(PORT, () => {
+      console.log(`Server is running and listening on port ${PORT}`);
+      resolve();
+    });
+    server.once("error", reject);
   });
-  startPersonalMediaUploadWorker();
 }

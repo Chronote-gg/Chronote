@@ -326,3 +326,86 @@ describe("transcriptionFinalPassService", () => {
     expect(hasBoundarySegmentInSecondChunk).toBe(true);
   });
 });
+
+test("interruption waits the actual final-pass provider and prevents reconciliation dispatch", async () => {
+  const { stopMeetingProcessing } =
+    await import("../../src/services/meetingProcessingLifetime");
+  const meeting = buildMeeting();
+  const dependencies = buildDependencies();
+  let entered!: () => void;
+  const submitted = new Promise<void>((done) => {
+    entered = done;
+  });
+  let release!: (value: { text: string }) => void;
+  dependencies.transcribeChunk.mockImplementationOnce(async () => {
+    entered();
+    return new Promise((done) => {
+      release = done;
+    });
+  });
+  const actual = runTranscriptionFinalPass(
+    meeting,
+    { audioFilePath: "synthetic.mp3" },
+    dependencies,
+  );
+  const outcome = actual.then(
+    () => "success",
+    () => "cancelled",
+  );
+  await submitted;
+  let drained = false;
+  const drain = stopMeetingProcessing(meeting).then(() => {
+    drained = true;
+  });
+  await Promise.resolve();
+  const heldBeforeRelease = !drained;
+  release({ text: "late result" });
+  await drain;
+  expect(await outcome).toBe("cancelled");
+  expect(heldBeforeRelease).toBe(true);
+  expect(dependencies.reconcileBatch).not.toHaveBeenCalled();
+});
+
+test.each(["replace", "drop"] as const)(
+  "accepted final-pass %s retains exact selected PCM disposition",
+  async (action) => {
+    const meeting = buildMeeting();
+    const dependencies = buildDependencies();
+    const receipt = {
+      kind: "pcm" as const,
+      spans: [
+        { sourceId: "user:user-1", sequence: 0, startByte: 0, endByte: 3840 },
+      ],
+    };
+    meeting.audioData.audioFiles[0].transcriptCorrespondence = receipt;
+    // Keep one accepted edit below the existing deletion guardrail fraction.
+    for (let i = 0; i < 8; i++)
+      meeting.audioData.audioFiles.push(
+        buildAudioFile({
+          userId: `extra-${i}`,
+          timestamp: meeting.startTime.getTime() + 5000 + i * 1000,
+          transcript: `Independent conversation ${i}`,
+        }),
+      );
+    dependencies.reconcileBatch.mockResolvedValue([
+      {
+        segmentId: "seg-1",
+        action,
+        text: action === "replace" ? "Corrected words" : undefined,
+        confidence: 0.99,
+      },
+    ]);
+    const result = await runTranscriptionFinalPass(
+      meeting,
+      { audioFilePath: "recording.mp3" },
+      dependencies,
+    );
+    expect(result.applied).toBe(true);
+    expect(meeting.audioData.audioFiles[0].finalPassTranscript).toBe(
+      action === "replace" ? "Corrected words" : "",
+    );
+    expect(meeting.audioData.audioFiles[0].finalPassCorrespondence).toEqual(
+      receipt,
+    );
+  },
+);

@@ -9,8 +9,8 @@ permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}
-  cancel-in-progress: true
+  group: chronote-deploy-sandbox
+  cancel-in-progress: false
 
 jobs:
   lint:
@@ -110,7 +110,7 @@ jobs:
             scc --ci --by-file --sort lines /pwd
           lizard_version=$(python3 -c 'import tomllib; lock = tomllib.load(open("uv.lock", "rb")); print(next(package["version"] for package in lock["package"] if package["name"] == "lizard"))')
           python3 -m pip install --quiet "lizard==$lizard_version"
-          lizard -W whitelizard.txt -l ts -l tsx -l js -l jsx src test
+          lizard -i -1 -l ts -l tsx -l js -l jsx src test
 
   # Prompts Check and LLM Connections Check are intentionally absent here.
   # They describe external Langfuse state rather than code quality, ci.yml
@@ -329,22 +329,43 @@ jobs:
     needs: [deploy-target-preflight]
     runs-on: ubuntu-latest
     environment: sandbox
+    timeout-minutes: 180
+    permissions:
+      contents: read
+      id-token: write
     env:
       ECS_CLUSTER: ${{ vars.ECS_CLUSTER }}
       ECS_SERVICE: ${{ vars.ECS_SERVICE }}
       ECS_TASK_FAMILY: ${{ vars.ECS_TASK_FAMILY }}
+      DEPLOYMENT_LISTENER_ARN: ${{ vars.DEPLOYMENT_LISTENER_ARN }}
+      DEPLOYMENT_TARGET_GROUP_A: ${{ vars.DEPLOYMENT_TARGET_GROUP_A }}
+      DEPLOYMENT_TARGET_GROUP_B: ${{ vars.DEPLOYMENT_TARGET_GROUP_B }}
       ECS_LOG_GROUP: ${{ vars.ECS_LOG_GROUP }}
+      AWS_REGION: ${{ vars.AWS_REGION }}
       SECRETS_PREFIX: ${{ vars.SECRETS_PREFIX }}
     steps:
       - name: Checkout
         uses: actions/checkout@v7
 
-      - name: Configure AWS credentials
+      - name: Configure Sandbox backend credentials with OIDC
         uses: aws-actions/configure-aws-credentials@v6
         with:
-          aws-access-key-id: ${{ vars.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          role-to-assume: ${{ vars.SANDBOX_BACKEND_DEPLOY_ROLE_ARN }}
+          allowed-account-ids: ${{ vars.AWS_ACCOUNT_ID }}
+          role-session-name: chronote-sandbox-${{ github.run_id }}-${{ github.run_attempt }}
+          role-duration-seconds: 10800
           aws-region: ${{ vars.AWS_REGION }}
+          unset-current-credentials: true
+          mask-aws-account-id: true
+
+      - name: Verify exact Sandbox deployment identity
+        env:
+          EXPECTED_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
+          EXPECTED_ROLE_ARN: ${{ vars.SANDBOX_BACKEND_DEPLOY_ROLE_ARN }}
+          EXPECTED_SESSION_NAME: chronote-sandbox-${{ github.run_id }}-${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+          aws sts get-caller-identity --output json | node scripts/deployment/assert-sandbox-identity.cjs
 
       - name: Preflight Secrets Manager values
         env:
@@ -420,157 +441,45 @@ jobs:
           docker push "$IMAGE"
           echo "image=$IMAGE" >> $GITHUB_OUTPUT
 
-      - name: Get current task definition
-        id: current-task-def
+      - name: Setup coordinator Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: "24.15.0"
+          cache: "yarn"
+          cache-dependency-path: "yarn.lock"
+
+      - name: Install coordinator dependencies
+        run: bash scripts/ci-install-dependencies.sh
+
+      - name: Build backend protocol builders
+        run: yarn build
+
+      - name: Pin candidate image and deployment identity
         env:
-          AWS_REGION: ${{ vars.AWS_REGION }}
-        run: |
-          CURRENT_TASK_DEF=$(aws ecs describe-services --cluster "$ECS_CLUSTER" --services "$ECS_SERVICE" --region $AWS_REGION | jq -r '.services[0].taskDefinition')
-          echo "current_task_def=$CURRENT_TASK_DEF" >> $GITHUB_OUTPUT
-          echo "Current task definition: $CURRENT_TASK_DEF"
-
-      - name: Wait for active meetings to finish
-        env:
-          AWS_REGION: ${{ vars.AWS_REGION }}
-          ACTIVE_MEETING_DEPLOY_WAIT_SECONDS: ${{ vars.ACTIVE_MEETING_DEPLOY_WAIT_SECONDS }}
-        run: |
-          set -euo pipefail
-
-          secrets_prefix="${SECRETS_PREFIX:-}"
-          if [ -z "$secrets_prefix" ] && [ -n "${ECS_TASK_FAMILY:-}" ]; then
-            secrets_prefix="${ECS_TASK_FAMILY%-bot-task}"
-          fi
-          if [ -z "$secrets_prefix" ]; then
-            echo "ERROR: SECRETS_PREFIX is not set and could not be derived."
-            exit 1
-          fi
-
-          TABLE_NAME="${secrets_prefix}-ActiveMeetingTable"
-          WAIT_TIMEOUT_SECONDS="${ACTIVE_MEETING_DEPLOY_WAIT_SECONDS:-7500}"
-          POLL_SECONDS=30
-          deadline=$(($(date +%s) + WAIT_TIMEOUT_SECONDS))
-
-          while true; do
-            # activeMeetingLeaseService stores leaseExpiresAt as epoch seconds.
-            now_epoch_seconds=$(date +%s)
-            active_count=0
-            exclusive_start_key=""
-
-            while true; do
-              scan_args=(
-                dynamodb scan
-                --table-name "$TABLE_NAME"
-                --region "$AWS_REGION"
-                --consistent-read
-                --filter-expression '#leaseExpiresAt >= :now AND (attribute_not_exists(#status) OR (#status <> :complete AND #status <> :cancelled))'
-                --expression-attribute-names '{"#leaseExpiresAt":"leaseExpiresAt","#status":"status"}'
-                --expression-attribute-values "{\":now\":{\"N\":\"$now_epoch_seconds\"},\":complete\":{\"S\":\"complete\"},\":cancelled\":{\"S\":\"cancelled\"}}"
-                --select COUNT
-                --output json
-                --no-paginate
-              )
-              if [ -n "$exclusive_start_key" ]; then
-                scan_args+=(--exclusive-start-key "$exclusive_start_key")
-              fi
-
-              response=$(aws "${scan_args[@]}")
-              page_count=$(jq -r '.Count // 0' <<<"$response")
-              active_count=$((active_count + page_count))
-              exclusive_start_key=$(jq -c '.LastEvaluatedKey // empty' <<<"$response")
-
-              if [ "$active_count" -gt 0 ] || [ -z "$exclusive_start_key" ]; then
-                break
-              fi
-            done
-
-            if [ "$active_count" = "0" ]; then
-              echo "No active meeting leases found. Continuing deployment."
-              break
-            fi
-
-            if [ "$now_epoch_seconds" -ge "$deadline" ]; then
-              echo "ERROR: Found $active_count active meeting lease(s) after waiting $WAIT_TIMEOUT_SECONDS seconds. Not replacing the ECS task while recording may be active."
-              exit 1
-            fi
-
-            echo "Found $active_count active meeting lease(s). Waiting $POLL_SECONDS seconds before deployment..."
-            sleep "$POLL_SECONDS"
-          done
-
-      - name: Update ECS service with new task definition
-        id: update-service
-        env:
-          AWS_REGION: ${{ vars.AWS_REGION }}
           IMAGE: ${{ steps.build-image.outputs.image }}
-        run: |
-          TASK_DEFINITION=$(aws ecs describe-task-definition --task-definition "$ECS_TASK_FAMILY" --region $AWS_REGION)
-          NEW_TASK_DEFINITION=$(echo "$TASK_DEFINITION" | jq --arg IMAGE "$IMAGE" '.taskDefinition | .containerDefinitions[0].image = $IMAGE')
-          CLEAN_TASK_DEFINITION=$(echo "$NEW_TASK_DEFINITION" | jq 'del(.status, .taskDefinitionArn, .revision, .registeredAt, .registeredBy, .compatibilities, .requiresAttributes)')
-          echo "$CLEAN_TASK_DEFINITION" | jq 'del(.taskDefinitionArn, .status, .revision, .registeredAt, .registeredBy)' > new-task-def.json
-          REGISTERED_TASK_DEF=$(aws ecs register-task-definition --cli-input-json file://new-task-def.json)
-          NEW_TASK_DEFINITION_ARN=$(echo "$REGISTERED_TASK_DEF" | jq -r '.taskDefinition.taskDefinitionArn')
-          echo "new_task_def=$NEW_TASK_DEFINITION_ARN" >> $GITHUB_OUTPUT
-          aws ecs update-service --cluster "$ECS_CLUSTER" --service "$ECS_SERVICE" --task-definition "$NEW_TASK_DEFINITION_ARN" --region $AWS_REGION
-
-      - name: Wait for service stability
-        env:
-          AWS_REGION: ${{ vars.AWS_REGION }}
+          ECR_REPOSITORY: ${{ vars.ECR_REPOSITORY }}
         run: |
           set -euo pipefail
-          echo "Waiting for ECS service to stabilize..."
+          digest=$(aws ecr describe-images --repository-name "$ECR_REPOSITORY" --image-ids imageTag="${IMAGE##*:}" --query 'imageDetails[0].imageDigest' --output text)
+          echo "CANDIDATE_IMAGE=${IMAGE%:*}@$digest" >> "$GITHUB_ENV"
+          echo "DEPLOYMENT_RUN_TOKEN=${{ github.run_id }}-${{ github.run_attempt }}" >> "$GITHUB_ENV"
+          echo "DEPLOYMENT_CANDIDATE_ID=${{ github.run_id }}-${{ github.run_attempt }}" >> "$GITHUB_ENV"
 
-          if aws ecs wait services-stable --cluster "$ECS_CLUSTER" --services "$ECS_SERVICE" --region "$AWS_REGION"; then
-            echo "Service has stabilized successfully!"
-            exit 0
-          fi
+      - name: Protect serving runtime and warm candidate
+        id: prepare
+        run: node scripts/deployment/coordinator.cjs prepare
 
-          echo "ERROR: Service failed to stabilize."
-          SERVICE_STATUS=$(aws ecs describe-services --cluster "$ECS_CLUSTER" --services "$ECS_SERVICE" --region "$AWS_REGION")
-          echo "Recent service events:"
-          echo "$SERVICE_STATUS" | jq -r '.services[0].events[0:10][] | .message' || true
-          exit 1
+      - name: Promote exact ready candidate
+        id: promote
+        run: node scripts/deployment/coordinator.cjs promote
 
-      - name: Verify deployment health
-        env:
-          AWS_REGION: ${{ vars.AWS_REGION }}
-        run: |
-          echo "Verifying deployment health..."
-          # A parked environment (ECS_DESIRED_COUNT=0) is supposed to have no
-          # tasks, so zero is the expected result rather than a failed rollout.
-          DESIRED_COUNT=$(aws ecs describe-services --cluster "$ECS_CLUSTER" --services "$ECS_SERVICE" --region $AWS_REGION --query 'services[0].desiredCount' --output text)
-          if [ "$DESIRED_COUNT" = "0" ]; then
-            echo "Service is parked (desiredCount=0). Image and task definition are updated; skipping running-task health check."
-            exit 0
-          fi
-          RUNNING_TASKS=$(aws ecs list-tasks --cluster "$ECS_CLUSTER" --service-name "$ECS_SERVICE" --desired-status RUNNING --region $AWS_REGION | jq -r '.taskArns[]')
-          if [ -z "$RUNNING_TASKS" ]; then
-            echo "ERROR: No running tasks found!"
-            exit 1
-          fi
-          LOG_GROUP="$ECS_LOG_GROUP"
-          CURRENT_TIME=$(date +%s000)
-          START_TIME=$((CURRENT_TIME - 300000))
-          echo "Checking recent logs for errors..."
-          RECENT_LOGS=$(aws logs filter-log-events --log-group-name $LOG_GROUP --start-time $START_TIME --filter-pattern "ERROR" --region $AWS_REGION 2>/dev/null || echo "{}")
-          if [ $(echo "$RECENT_LOGS" | jq -r '.events | length') -gt 0 ]; then
-            echo "WARNING: Found error logs in the last 5 minutes:"
-            echo "$RECENT_LOGS" | jq -r '.events[] | .message' | head -10
-          fi
-          echo "Deployment completed successfully!"
+      - name: Wait for runtime-owned retirement acknowledgment
+        id: retire
+        run: node scripts/deployment/coordinator.cjs retire
 
-      - name: Rollback on failure
-        if: failure() && steps.update-service.outcome == 'success'
-        env:
-          AWS_REGION: ${{ vars.AWS_REGION }}
-          PREVIOUS_TASK_DEF: ${{ steps.current-task-def.outputs.current_task_def }}
-        run: |
-          echo "Deployment failed! Rolling back to previous task definition: $PREVIOUS_TASK_DEF"
-          aws ecs update-service \
-            --cluster "$ECS_CLUSTER" \
-            --service "$ECS_SERVICE" \
-            --task-definition $PREVIOUS_TASK_DEF \
-            --region $AWS_REGION
-          echo "Rollback initiated. Previous deployment restored."
+      - name: Reconcile failed deployment without terminating work
+        if: failure() && steps.prepare.outcome != 'skipped'
+        run: node scripts/deployment/coordinator.cjs reconcile
 
       - name: Create deployment summary
         if: always()

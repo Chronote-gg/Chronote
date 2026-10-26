@@ -128,6 +128,32 @@ describe("start meeting context menu", () => {
     expect(interaction.reply).not.toHaveBeenCalled();
   });
 
+  it("waits for shared admission and propagates its failure without a second start", async () => {
+    let deny: (error: Error) => void = () => {};
+    mockedHandleRequestStartMeeting.mockImplementationOnce(
+      () =>
+        new Promise<void>((_resolve, reject) => {
+          deny = reject;
+        }),
+    );
+    const interaction = makeInteraction("bot-1");
+    let completed = false;
+    const start = handleStartMeetingContextCommand(makeClient(), interaction);
+    const outcome = start.then(
+      () => {
+        completed = true;
+      },
+      (error: Error) => error,
+    );
+    for (let index = 0; index < 8; index++) await Promise.resolve();
+    expect(completed).toBe(false);
+    expect(mockedHandleRequestStartMeeting).toHaveBeenCalledTimes(1);
+    const blocked = new Error("Session admission closed during promotion");
+    deny(blocked);
+    expect(await outcome).toBe(blocked);
+    expect(interaction.reply).not.toHaveBeenCalled();
+  });
+
   it("starts a meeting when invoked on someone in the same voice channel", async () => {
     const interaction = makeInteraction("user-2", "user-1", {
       "user-1": makeMember("voice-1"),

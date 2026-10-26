@@ -16,6 +16,47 @@ charge and any savings compared with twelve monthly payments. Savings labels
 reflect the available prices. Choose **Continue with Basic** or **Continue with
 Pro** to open checkout for that plan. One subscription covers the server.
 
+### Basic introductory pricing
+
+When an introductory offer is available for your server, Basic costs $6/month
+for the first three months, then $10/month. Annual Basic costs $60 for the first
+year, then $100/year. Annual billing is one yearly payment. Prices are in US
+dollars. Tax may apply. Subscriptions renew automatically unless canceled.
+
+Each server can use the monthly offer once and the annual offer once. Using one
+does not consume the other, and you can use them in either order. Leaving an
+introductory plan ends that offer. Returning to it does not restart the discount.
+Regular paid subscriptions and complimentary access
+do not consume either offer. Changing payer or canceling does not reset a used
+offer. The available offer is shown for the selected server before checkout.
+Pro pricing is unchanged. Introductory pricing cannot be combined with another
+promotion. If you entered a code, choose the introductory offer or that promotion
+before checkout. Any enrollment cutoff is shown with the offer terms. After the
+deadline, the offer no longer applies to new purchases. An existing checkout
+reservation keeps its agreed price while the reservation remains valid. If no
+cutoff is shown,
+enrollment remains open while the offer is available.
+
+When plan changes are available, review the total in Billing before confirming.
+Pro uses its regular price, with credit for unused paid Basic time. A monthly
+to annual change starts a full new year after payment. Downgrades and annual to
+monthly changes within the same plan start at the next renewal. You can cancel a scheduled change
+before it takes effect. An introductory discount on another server does not
+prevent these changes.
+
+Billing shows the verified renewal date and rate for an existing subscription.
+If renewal is off, it shows when paid access ends. Where **Turn renewal back on**
+is available, the original payer can accept the displayed terms to keep that
+same subscription. A pending result stays visible while Chronote checks it.
+Unsupported subscriptions use **Manage billing** for review in Stripe.
+
+**Payment history** holds past payment amounts and coverage dates. The original
+payer can use **View invoices and receipts** to open Stripe. Manage Server
+permission alone does not grant access to another person's billing account.
+After a subscription ends, **Get Basic again** starts a new purchase using the
+selected monthly or annual period. It does not reset a used introductory offer.
+Returning from Stripe takes you back to the same server's Billing page.
+
 | Limit                             | Free       | Basic    | Pro             |
 | --------------------------------- | ---------- | -------- | --------------- |
 | Recording time per rolling 7 days | 4 hours    | 20 hours | No weekly limit |
@@ -169,11 +210,9 @@ For TTS-only sessions, `/leave` makes Chronote leave immediately after the norma
 
 Manage your server's Chronote subscription. Opens the Stripe billing portal for plan management.
 
-### `/onboard`
+### First-meeting guidance
 
-Launches a guided setup wizard for new servers. Requires **Manage Server** permission. Walks through selecting a notes channel and setting context. Dictionary terms can be taught afterward in Server Settings or managed with `/dictionary`.
-
-Can be disabled server-wide after initial setup.
+The installer DM, empty server library and [first-meeting guide](https://chronote.gg/join) explain how to record and find your notes. `/onboard` is retired. Old wizard controls open the portal without changing settings. Context, dictionary and auto-recording setup remain available through their existing commands and Server Settings.
 
 ## Button interactions
 
@@ -184,12 +223,21 @@ These buttons appear on meeting embeds:
 | End Meeting        | During active meeting | Stops recording and begins processing                |
 | Edit Tags          | During and after      | Opens a modal to edit meeting tags                   |
 | Live Transcript    | During active meeting | Links to the real-time transcript on the web portal  |
-| Open in Chronote   | After meeting ends    | Links to the meeting in the web portal               |
+| Open meeting       | After meeting ends    | Links to the saved meeting in the web portal         |
 | Helpful            | After meeting ends    | Positive feedback on notes quality                   |
 | Needs work         | After meeting ends    | Negative feedback on notes quality                   |
 | Suggest correction | After meeting ends    | Opens the notes correction flow (see below)          |
 | Rename meeting     | After meeting ends    | Opens a modal to rename the meeting                  |
 | Generate Image     | After meeting ends    | Creates a DALL-E image from the meeting (plan-gated) |
+
+## Action items
+
+Chronote aims to capture explicit assignments and volunteered follow-ups with
+stated owners and deadlines. Suggestions and conditional plans should retain
+their qualifiers, and completed work should remain marked complete.
+
+Review the notes and use [Suggest correction](#notes-correction-flow) when a task
+is missing or inaccurate.
 
 ## Mentions in notes
 

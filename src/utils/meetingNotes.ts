@@ -2,6 +2,10 @@ import { buildPaginatedEmbeds } from "./embedPagination";
 import type { EmbedBuilder } from "discord.js";
 import type { MeetingProcessingOutcome } from "../types/meetingProcessing";
 import { getMeetingProcessingNotice } from "./meetingProcessing";
+import {
+  formatMeetingCaptureNotice,
+  type CaptureNoticeInput,
+} from "./meetingCaptureNotice";
 
 const DEFAULT_NOTES_EMBED_TITLE = "Meeting Notes";
 const EMBED_FOOTER_LIMIT = 2048;
@@ -78,23 +82,39 @@ export function formatNotesEmbedTitle(
   return baseTitle;
 }
 
-export function buildMeetingNotesEmbeds(params: {
-  notesBody: string;
-  meetingName?: string | null;
-  footerText?: string;
-  color?: number;
-  processing?: MeetingProcessingOutcome;
-}) {
+export function buildMeetingNotesEmbeds(
+  params: {
+    notesBody: string;
+    meetingName?: string | null;
+    footerText?: string;
+    color?: number;
+    processing?: MeetingProcessingOutcome;
+  } & CaptureNoticeInput,
+) {
   const baseTitle = resolveNotesEmbedBaseTitle(params.meetingName);
   const hasNotes = Boolean(params.notesBody.trim());
   const notice = getMeetingProcessingNotice(params.processing, hasNotes);
+  const captureNotice = formatMeetingCaptureNotice({
+    ...params,
+    notes: params.notesBody,
+  });
   const embeds = buildPaginatedEmbeds({
     text: hasNotes ? params.notesBody : (notice?.text ?? params.notesBody),
     baseTitle,
     color: params.color,
+    descriptionPrefix:
+      captureNotice &&
+      (params.capture?.kind === "interrupted" ||
+        params.status === "interrupted")
+        ? `${captureNotice}\n\n`
+        : undefined,
   });
   const noticeText =
-    hasNotes && notice?.tone === "warning" ? notice.text : undefined;
+    hasNotes && notice?.tone === "warning"
+      ? notice.text
+      : hasNotes
+        ? captureNotice
+        : undefined;
   for (const embed of embeds) {
     const footerLimit = Math.min(
       EMBED_FOOTER_LIMIT,

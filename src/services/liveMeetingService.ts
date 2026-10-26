@@ -1,6 +1,10 @@
 import type { MeetingData } from "../types/meeting-data";
 import type { LiveMeetingMeta, LiveMeetingStatus } from "../types/liveMeeting";
 import { resolveMeetingStatus } from "../types/meetingLifecycle";
+import {
+  projectMeetingCapture,
+  resolveCaptureStatus,
+} from "../utils/meetingCaptureNotice";
 import { resolveAttendeeDisplayName } from "../utils/participants";
 
 export function resolveLiveMeetingAttendees(meeting: MeetingData): string[] {
@@ -11,10 +15,13 @@ export function resolveLiveMeetingAttendees(meeting: MeetingData): string[] {
 }
 
 export function buildLiveMeetingMeta(meeting: MeetingData): LiveMeetingMeta {
-  const status: LiveMeetingStatus = resolveMeetingStatus({
-    cancelled: meeting.cancelled,
-    finished: meeting.finished,
-    finishing: meeting.finishing,
+  const status: LiveMeetingStatus = resolveCaptureStatus({
+    capture: meeting.recordingCaptureState,
+    status: resolveMeetingStatus({
+      cancelled: meeting.cancelled,
+      finished: meeting.finished,
+      finishing: meeting.finishing,
+    }),
   });
   return {
     guildId: meeting.guildId,
@@ -24,6 +31,10 @@ export function buildLiveMeetingMeta(meeting: MeetingData): LiveMeetingMeta {
     startedAt: meeting.startTime.toISOString(),
     isAutoRecording: meeting.isAutoRecording,
     status,
+    ...projectMeetingCapture({
+      capture: meeting.recordingCaptureState,
+      processing: meeting.processing,
+    }),
     attendees: resolveLiveMeetingAttendees(meeting),
   };
 }

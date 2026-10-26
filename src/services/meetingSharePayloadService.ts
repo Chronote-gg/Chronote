@@ -1,4 +1,9 @@
 import type { MeetingHistory } from "../types/db";
+import {
+  projectMeetingCapture,
+  resolveCaptureStatus,
+  type MeetingCapturePresentation,
+} from "../utils/meetingCaptureNotice";
 import type { ChatEntry } from "../types/chat";
 import type { MeetingEvent } from "../types/meetingTimeline";
 import type { Participant } from "../types/participants";
@@ -14,7 +19,7 @@ import { buildMeetingTimelineEventsFromHistory } from "./meetingTimelineService"
 import { resolveMeetingArtifactAccess } from "./meetingArtifactAccessService";
 
 export type SharedMeetingPayload = {
-  meeting: {
+  meeting: MeetingCapturePresentation & {
     title: string;
     meetingName?: string;
     summarySentence?: string;
@@ -113,6 +118,9 @@ export async function buildSharedMeetingPayloadService(
   return {
     meeting: {
       title,
+      ...projectMeetingCapture(history),
+      status: resolveCaptureStatus(history),
+      processing: history.processing,
       meetingName: history.meetingName,
       summarySentence,
       summaryLabel: history.summaryLabel,

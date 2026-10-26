@@ -1,21 +1,38 @@
 import { TRPCError } from "@trpc/server";
+import { getPublicPricingSnapshot } from "../../services/publicPricingService";
+import type { BasicIntroOffer } from "../../types/pricing";
 import { config } from "../../services/configService";
-import { getPaidPlans, getMockPaidPlans } from "../../services/pricingService";
+import { getMockPaidPlans } from "../../services/pricingService";
 import { getStripeClient } from "../../services/stripeClient";
 import { publicProcedure, router } from "../trpc";
 
 export const pricingRouter = router({
   plans: publicProcedure.query(async () => {
     if (config.mock.enabled) {
-      return { plans: getMockPaidPlans() };
+      return {
+        plans: getMockPaidPlans(),
+        introOffer: { status: "inactive" } satisfies BasicIntroOffer,
+        annualIntroOffer: { status: "inactive" } satisfies BasicIntroOffer,
+      };
     }
     const stripe = getStripeClient();
     if (!stripe || !config.stripe.secretKey) {
-      return { plans: getMockPaidPlans() };
+      return {
+        plans: getMockPaidPlans(),
+        annualIntroOffer: {
+          status: config.stripe.basicIntroOffer.annualCouponId
+            ? "unavailable"
+            : "inactive",
+        } satisfies BasicIntroOffer,
+        introOffer: {
+          status: Object.values(config.stripe.basicIntroOffer).some(Boolean)
+            ? "unavailable"
+            : "inactive",
+        } satisfies BasicIntroOffer,
+      };
     }
     try {
-      const plans = await getPaidPlans(stripe);
-      return { plans: plans.length ? plans : getMockPaidPlans() };
+      return await getPublicPricingSnapshot(stripe);
     } catch (err) {
       console.error("Failed to load pricing from Stripe", err);
       throw new TRPCError({

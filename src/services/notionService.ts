@@ -1,3 +1,7 @@
+import {
+  runNotionMutation,
+  assertNotionOutcomeKnown,
+} from "./notionOperationLifetime";
 import { z } from "zod";
 import { config } from "./configService";
 import { createMeetingMentionReplacer } from "./meetingMentionService";
@@ -7,6 +11,7 @@ import {
   type NotionIntegrationRepository,
 } from "../repositories/notionIntegrationRepository";
 import type { MeetingHistory } from "../types/db";
+import { withMeetingCaptureNotice } from "../utils/meetingCaptureNotice";
 import type {
   NotionAutomationConfig,
   NotionAutomationMeetingExport,
@@ -116,30 +121,47 @@ const buildBasicAuthHeader = () =>
     `${config.notion.clientId}:${config.notion.clientSecret}`,
   ).toString("base64")}`;
 
-const postNotionToken = async (body: Record<string, string>) => {
-  const response = await notionFetch(NOTION_TOKEN_URL, {
-    method: "POST",
-    headers: {
-      Accept: "application/json",
-      Authorization: buildBasicAuthHeader(),
-      "Content-Type": "application/json",
-      "Notion-Version": config.notion.apiVersion,
-    },
-    body: JSON.stringify(body),
-  });
-
+// Successful bodies and explicit client rejections are terminal acknowledgments.
+// Server failures, lost bodies, and malformed success responses remain uncertain.
+async function readNotionAcknowledgment<T>(
+  response: Response,
+  schema: z.ZodType<T>,
+) {
   const payload: unknown = await response.json();
-  if (!response.ok) {
-    const parsed = notionErrorResponseSchema.safeParse(payload);
-    throw new NotionApiError(
-      response.status,
-      parsed.success ? (parsed.data.code ?? "notion_error") : "notion_error",
-      parsed.success
-        ? (parsed.data.message ?? "Notion request failed.")
-        : "Notion request failed.",
-    );
-  }
-  return notionTokenResponseSchema.parse(payload);
+  if (response.ok) return { value: schema.parse(payload) };
+  const parsed = notionErrorResponseSchema.safeParse(payload);
+  const error = new NotionApiError(
+    response.status,
+    parsed.success ? (parsed.data.code ?? "notion_error") : "notion_error",
+    parsed.success
+      ? (parsed.data.message ?? "Notion request failed.")
+      : "Notion request failed.",
+  );
+  if (response.status >= 500) throw error;
+  return { error };
+}
+
+const postNotionToken = async (
+  body: Record<string, string>,
+  signal?: AbortSignal,
+) => {
+  const token = await runNotionMutation(signal, async () => {
+    const response = await notionFetch(NOTION_TOKEN_URL, {
+      signal,
+      method: "POST",
+      headers: {
+        Accept: "application/json",
+        Authorization: buildBasicAuthHeader(),
+        "Content-Type": "application/json",
+        "Notion-Version": config.notion.apiVersion,
+      },
+      body: JSON.stringify(body),
+    });
+    return readNotionAcknowledgment(response, notionTokenResponseSchema);
+  });
+  signal?.throwIfAborted();
+  if (token.error) throw token.error;
+  return token.value!;
 };
 
 const requestNotionApi = async <T>(params: {
@@ -148,42 +170,47 @@ const requestNotionApi = async <T>(params: {
   method: "GET" | "POST" | "PATCH";
   body?: unknown;
   schema: z.ZodType<T>;
+  signal?: AbortSignal;
 }): Promise<T> => {
-  const response = await notionFetch(`${NOTION_API_ORIGIN}${params.path}`, {
-    method: params.method,
-    headers: {
-      Authorization: `Bearer ${params.accessToken}`,
-      "Content-Type": "application/json",
-      "Notion-Version": config.notion.apiVersion,
-    },
-    body: params.body === undefined ? undefined : JSON.stringify(params.body),
-  });
-
-  const payload: unknown = await response.json();
-  if (!response.ok) {
-    const parsed = notionErrorResponseSchema.safeParse(payload);
-    throw new NotionApiError(
-      response.status,
-      parsed.success ? (parsed.data.code ?? "notion_error") : "notion_error",
-      parsed.success
-        ? (parsed.data.message ?? "Notion request failed.")
-        : "Notion request failed.",
-    );
-  }
-  return params.schema.parse(payload);
+  const request = async () => {
+    params.signal?.throwIfAborted();
+    const response = await notionFetch(`${NOTION_API_ORIGIN}${params.path}`, {
+      signal: params.signal,
+      method: params.method,
+      headers: {
+        Authorization: `Bearer ${params.accessToken}`,
+        "Content-Type": "application/json",
+        "Notion-Version": config.notion.apiVersion,
+      },
+      body: params.body === undefined ? undefined : JSON.stringify(params.body),
+    });
+    return readNotionAcknowledgment(response, params.schema);
+  };
+  const result =
+    params.method === "GET"
+      ? await request()
+      : await runNotionMutation(params.signal, request);
+  params.signal?.throwIfAborted();
+  if (result.error) throw result.error;
+  return result.value!;
 };
 
 const refreshConnection = async (
   connection: NotionConnection,
   repository: NotionIntegrationRepository,
+  signal?: AbortSignal,
 ) => {
   if (!connection.encryptedRefreshToken) {
     throw new NotionApiError(401, "missing_refresh_token", "Reconnect Notion.");
   }
-  const refreshed = await postNotionToken({
-    grant_type: "refresh_token",
-    refresh_token: decryptToken(connection.encryptedRefreshToken),
-  });
+  const refreshed = await postNotionToken(
+    {
+      grant_type: "refresh_token",
+      refresh_token: decryptToken(connection.encryptedRefreshToken),
+    },
+    signal,
+  );
+  signal?.throwIfAborted();
   const updated: NotionConnection = {
     ...connection,
     encryptedAccessToken: encryptToken(refreshed.access_token),
@@ -195,17 +222,26 @@ const refreshConnection = async (
     workspaceIcon: refreshed.workspace_icon ?? undefined,
     updatedAt: new Date().toISOString(),
   };
-  await repository.writeConnection(updated);
+  await runNotionMutation(signal, () =>
+    repository.writeConnection(updated, signal),
+  );
+  signal?.throwIfAborted();
   return updated;
 };
 
 const withNotionToken = async <T>(params: {
   userId: string;
+  signal?: AbortSignal;
   repository?: NotionIntegrationRepository;
   action: (accessToken: string, connection: NotionConnection) => Promise<T>;
 }) => {
   const repository = getRepository(params.repository);
-  const connection = await repository.getConnection(params.userId);
+  params.signal?.throwIfAborted();
+  const connection = await repository.getConnection(
+    params.userId,
+    params.signal,
+  );
+  params.signal?.throwIfAborted();
   if (!connection) {
     throw new NotionApiError(401, "not_connected", "Connect Notion first.");
   }
@@ -216,8 +252,13 @@ const withNotionToken = async <T>(params: {
       connection,
     );
   } catch (err) {
+    assertNotionOutcomeKnown(err, params.signal);
     if (!(err instanceof NotionApiError) || err.status !== 401) throw err;
-    const refreshed = await refreshConnection(connection, repository);
+    const refreshed = await refreshConnection(
+      connection,
+      repository,
+      params.signal,
+    );
     return params.action(
       decryptToken(refreshed.encryptedAccessToken),
       refreshed,
@@ -281,17 +322,21 @@ const toDestinationPage = (
 
 const createMeetingPageInNotion = async (params: {
   userId: string;
+  signal?: AbortSignal;
   meeting: MeetingHistory;
   parent: NotionPageParent;
   repository: NotionIntegrationRepository;
 }) =>
   withNotionToken({
     userId: params.userId,
+    signal: params.signal,
     repository: params.repository,
     async action(accessToken, connection) {
       const markdown = await buildMeetingNotionMarkdown(params.meeting);
+      params.signal?.throwIfAborted();
       const page = await requestNotionApi({
         accessToken,
+        signal: params.signal,
         method: "POST",
         path: "/v1/pages",
         body: {
@@ -306,17 +351,21 @@ const createMeetingPageInNotion = async (params: {
 
 const replaceMeetingPageInNotion = async (params: {
   userId: string;
+  signal?: AbortSignal;
   meeting: MeetingHistory;
   pageId: string;
   repository: NotionIntegrationRepository;
 }) =>
   withNotionToken({
     userId: params.userId,
+    signal: params.signal,
     repository: params.repository,
     async action(accessToken) {
       const markdown = await buildMeetingNotionMarkdown(params.meeting);
+      params.signal?.throwIfAborted();
       return requestNotionApi({
         accessToken,
+        signal: params.signal,
         method: "PATCH",
         path: `/v1/pages/${encodeURIComponent(params.pageId)}/markdown`,
         body: {
@@ -356,7 +405,7 @@ export const buildMeetingNotionMarkdown = async (meeting: MeetingHistory) => {
   const participants = formatParticipantNames(meeting);
   const details = [
     `- Date: ${escapeNotionText(new Date(meeting.timestamp).toISOString())}`,
-    `- Duration: ${escapeNotionText(formatDuration(meeting.duration))}`,
+    `- Duration: ${meeting.capture?.kind === "interrupted" && !meeting.capture.endedAt ? "Unknown" : escapeNotionText(formatDuration(meeting.duration))}`,
     `- Discord channel: ${escapeNotionText(meeting.channelId)}`,
     participants ? `- Participants: ${participants}` : undefined,
     meeting.notesVersion
@@ -375,7 +424,7 @@ export const buildMeetingNotionMarkdown = async (meeting: MeetingHistory) => {
     "",
     "## Notes",
     "",
-    notes,
+    withMeetingCaptureNotice(notes, meeting),
   ].join("\n");
 };
 
@@ -634,6 +683,7 @@ export const getEffectiveMeetingNotionExportStatus = async (params: {
 
 export const exportMeetingToNotionAutomation = async (params: {
   userId: string;
+  signal?: AbortSignal;
   meeting: MeetingHistory;
   destinationPageId: string;
   attemptCount: number;
@@ -642,10 +692,12 @@ export const exportMeetingToNotionAutomation = async (params: {
   const repository = getRepository(params.repository);
   const { page, connection } = await createMeetingPageInNotion({
     userId: params.userId,
+    signal: params.signal,
     repository,
     meeting: params.meeting,
     parent: { type: "page_id", page_id: params.destinationPageId },
   });
+  params.signal?.throwIfAborted();
   const now = new Date().toISOString();
   const meetingExport: NotionAutomationMeetingExport = {
     guildId: params.meeting.guildId,
@@ -660,12 +712,16 @@ export const exportMeetingToNotionAutomation = async (params: {
     lastAttemptAt: now,
     lastExportedAt: now,
   };
-  await repository.writeAutomationMeetingExport(meetingExport);
+  await runNotionMutation(params.signal, () =>
+    repository.writeAutomationMeetingExport(meetingExport, params.signal),
+  );
+  params.signal?.throwIfAborted();
   return meetingExport;
 };
 
 export const syncMeetingToNotionAutomation = async (params: {
   userId: string;
+  signal?: AbortSignal;
   meeting: MeetingHistory;
   existing: NotionAutomationMeetingExport;
   repository?: NotionIntegrationRepository;
@@ -676,10 +732,12 @@ export const syncMeetingToNotionAutomation = async (params: {
   }
   await replaceMeetingPageInNotion({
     userId: params.userId,
+    signal: params.signal,
     repository,
     meeting: params.meeting,
     pageId: params.existing.notionPageId,
   });
+  params.signal?.throwIfAborted();
   const now = new Date().toISOString();
   const updated: NotionAutomationMeetingExport = {
     ...params.existing,
@@ -691,7 +749,10 @@ export const syncMeetingToNotionAutomation = async (params: {
     lastExportedAt: now,
     lastError: undefined,
   };
-  await repository.writeAutomationMeetingExport(updated);
+  await runNotionMutation(params.signal, () =>
+    repository.writeAutomationMeetingExport(updated, params.signal),
+  );
+  params.signal?.throwIfAborted();
   return updated;
 };
 

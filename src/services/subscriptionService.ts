@@ -1,3 +1,4 @@
+import { resolveRenewalAccess } from "./renewalRecoveryAccess";
 import { getSubscriptionRepository } from "../repositories/subscriptionRepository";
 import {
   getBestActiveEntitlementGrantForGuild,
@@ -184,7 +185,12 @@ export async function resolveGuildSubscription(
     getBestActiveEntitlementGrantForGuild(guildId),
   ]);
   const status = subscription?.status || "free";
-  const stripeTier = resolveStripeTier(subscription);
+  const renewalAccess = stripeEnabled
+    ? await resolveRenewalAccess(subscription, Math.floor(Date.now() / 1000))
+    : undefined;
+  const stripeTier = renewalAccess
+    ? renewalAccess.tier
+    : resolveStripeTier(subscription);
   const grantTier = activeGrant?.tier ?? null;
   const publicGrant = toPublicEntitlementGrant(activeGrant);
   const sub = buildResolvedSubscription({
@@ -196,7 +202,10 @@ export async function resolveGuildSubscription(
   setCachedGuildSubscription(
     guildId,
     sub,
-    resolveCacheExpiresAt(activeGrant?.expiresAt),
+    Math.min(
+      resolveCacheExpiresAt(activeGrant?.expiresAt),
+      renewalAccess?.expiresAt ?? Infinity,
+    ),
   );
   return sub;
 }

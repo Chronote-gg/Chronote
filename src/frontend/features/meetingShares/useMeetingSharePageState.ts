@@ -1,4 +1,5 @@
 import { useParams } from "@tanstack/react-router";
+import type { MeetingCapturePresentation } from "../../../utils/meetingCaptureNotice";
 import { trpc } from "../../services/trpc";
 import { useAuth } from "../../contexts/AuthContext";
 import type { MeetingEvent } from "../../../types/meetingTimeline";
@@ -12,7 +13,7 @@ export type MeetingShareMeta = {
   sharedByTag?: string;
 };
 
-export type SharedMeeting = {
+export type SharedMeeting = MeetingCapturePresentation & {
   title: string;
   summarySentence?: string;
   summaryLabel?: string;

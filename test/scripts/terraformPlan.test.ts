@@ -1,50 +1,28 @@
 /** @jest-environment node */
 import { expect, test } from "@jest/globals";
-import { execFileSync } from "node:child_process";
-import { mkdtempSync, mkdirSync, readFileSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { parse } from "yaml";
-
+import { rmSync } from "node:fs";
+import { runTerraform } from "../../scripts/deployment/terraform-workflow.cjs";
+import {
+  fixture,
+  invocation,
+} from "../fixtures/deployment/terraformWorkflow.js";
 test.each(["full", "purchase-permission"])(
   "Terraform %s plan invokes only the selected scope",
-  (scope) => {
-    const workflow = parse(
-      readFileSync(".github/workflows/terraform-plan.yml", "utf8"),
-    );
-    const command = workflow.jobs.plan.steps.find(
-      (step: { name: string }) => step.name === "Terraform plan",
-    ).run;
-    const directory = mkdtempSync(join(tmpdir(), "chronote-plan-"));
-    mkdirSync(join(directory, "_infra"));
+  async (scope) => {
+    const f = fixture();
     try {
-      execFileSync(
-        "bash",
-        [
-          "-c",
-          `terraform() { printf '%s\\n' "$@" > arguments.txt; }; ${command}`,
-        ],
-        {
-          cwd: directory,
-          env: {
-            ...process.env,
-            PLAN_SCOPE: scope,
-            GITHUB_OUTPUT: "output.txt",
-          },
-        },
-      );
-      const args = readFileSync(join(directory, "arguments.txt"), "utf8")
-        .trim()
-        .split("\n");
-      expect(args).toContain("plan");
-      expect(args).toContain("-out=tfplan");
-      expect(args.filter((arg) => arg.startsWith("-target="))).toEqual(
+      const result = await runTerraform(f.options({ ...invocation, scope }));
+      expect(result.status).toBe("planned-changes");
+      const plans = f.commands.filter((command) => command.args[1] === "plan");
+      expect(plans).toHaveLength(1);
+      expect(plans[0].args).toContain("-out=tfplan");
+      expect(plans[0].args.filter((arg) => arg.startsWith("-target="))).toEqual(
         scope === "purchase-permission"
           ? ["-target=aws_iam_role_policy.initial_purchase_condition"]
           : [],
       );
     } finally {
-      rmSync(directory, { recursive: true, force: true });
+      rmSync(f.directory, { recursive: true, force: true });
     }
   },
 );

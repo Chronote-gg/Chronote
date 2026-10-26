@@ -110,7 +110,7 @@ const buildModelParamEntries = (): ConfigEntry[] =>
       {
         key: buildModelParamKey(role, "verbosity"),
         label: `${labelBase} verbosity`,
-        description: "Verbosity hint for GPT-5 models.",
+        description: "Verbosity hint for models that support it.",
         category,
         group,
         valueType: "select",
@@ -729,8 +729,8 @@ export const CONFIG_REGISTRY: ConfigEntry[] = [
   },
   {
     key: "notes.channelId",
-    label: "Notes channel",
-    description: "Default notes channel for meetings and auto-recording.",
+    label: "Default notes channel",
+    description: "Default destination for recording controls and notes.",
     category: "Notes",
     group: "Recommended",
     valueType: "string",

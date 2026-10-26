@@ -1,4 +1,36 @@
+/** @jest-environment node */
 import { beforeEach, describe, expect, test, jest } from "@jest/globals";
+import { completedTextResponse } from "../../src/testSupport/openaiResponse";
+import * as unifiedConfig from "../../src/services/unifiedConfigService";
+import "../deployment/coldNetworkGuard.cjs";
+import { config } from "../../src/services/configService";
+import {
+  updateDiscordMessage,
+  createDiscordMessage,
+  deleteDiscordMessage,
+} from "../../src/services/discordMessageService";
+jest.mock("../../src/services/discordMessageService", () => ({
+  updateDiscordMessage: jest.fn(),
+  createDiscordMessage: jest.fn(),
+  deleteDiscordMessage: jest.fn(),
+  fetchDiscordMessage: jest.fn(),
+  updateDiscordMessageEmbeds: jest.fn(),
+}));
+import { createServer } from "node:http";
+import { createHTTPHandler } from "@trpc/server/adapters/standalone";
+import {
+  fenceRuntimeWorkAdmissions,
+  getRuntimeWorkAdmissionCheckpoints,
+} from "../../src/services/runtimeWorkAdmissionService";
+let mockApiEligible = true;
+const mockApiSettled = jest.fn();
+jest.mock("../../src/services/runtimeLifecycleService", () => ({
+  beginRuntimeWork: () => {
+    if (!mockApiEligible) throw new Error("Runtime warming");
+    return { transition: () => {}, settle: mockApiSettled };
+  },
+  getRuntimeAdmissionContext: async () => ({ instanceId: "synthetic-api" }),
+}));
 import type { Request, Response } from "express";
 import type { MeetingHistory } from "../../src/types/db";
 import type { FeedbackRecord } from "../../src/types/db";
@@ -119,14 +151,10 @@ jest.mock("../../src/services/meetingArtifactAccessService", () => ({
 jest.mock("../../src/services/discordCacheService", () => ({
   listBotGuildsCached: jest.fn(),
   listGuildChannelsCached: jest.fn(),
+  listGuildRolesCached: async () => [],
 }));
 
-const buildCaller = (user = getMockUser()) =>
-  appRouter.createCaller({
-    req: { session: {} } as Request,
-    res: {} as Response,
-    user,
-  });
+import { buildCaller } from "../utils/trpcCaller";
 
 describe("meetings router detail", () => {
   const mockedEnsureManageGuild = jest.mocked(ensureManageGuildWithUserToken);
@@ -448,19 +476,11 @@ describe("meetings notes correction mutations", () => {
       meetingSummary: undefined,
       notesCorrection: undefined,
     });
-    const createCompletion = jest.fn(async () => ({
-      choices: [
-        {
-          message: { content: "Updated notes" },
-        },
-      ],
-    }));
+    const createResponse = jest.fn(async () =>
+      completedTextResponse("Updated notes"),
+    );
     mockedCreateOpenAIClient.mockReturnValue({
-      chat: {
-        completions: {
-          create: createCompletion,
-        },
-      },
+      responses: { create: createResponse },
     } as unknown as ReturnType<typeof createOpenAIClient>);
     mockedGenerateMeetingSummaries.mockResolvedValue({
       summarySentence: "New summary sentence",
@@ -468,6 +488,181 @@ describe("meetings notes correction mutations", () => {
     });
   });
 
+  test("actual HTTP correction remains owned after disconnect and cannot publish after shutdown", async () => {
+    let release!: (value: unknown) => void;
+    let entered!: () => void;
+    const started = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    const provider = new Promise((resolve) => {
+      release = resolve;
+    });
+    mockedGetMeetingHistory.mockResolvedValue({
+      guildId: "guild-1",
+      channelId_timestamp: "channel-1#2025-01-01",
+      meetingId: "synthetic",
+      notes: "Original",
+      notesVersion: 1,
+    } as MeetingHistory);
+    mockedCreateOpenAIClient.mockReturnValue({
+      responses: {
+        create: () => {
+          entered();
+          return provider;
+        },
+      },
+    } as unknown as ReturnType<typeof createOpenAIClient>);
+    const server = createServer(
+      createHTTPHandler({
+        router: appRouter,
+        createContext: ({ req, res }) => ({
+          req: Object.assign(req, { session: {} }) as unknown as Request,
+          res: res as unknown as Response,
+          user: getMockUser(),
+        }),
+      }),
+    );
+    await new Promise<void>((resolve) =>
+      server.listen(0, "127.0.0.1", resolve),
+    );
+    const address = server.address() as { port: number };
+    const abort = new AbortController();
+    const response = fetch(
+      `http://127.0.0.1:${address.port}/meetings.suggestNotesCorrection`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          serverId: "guild-1",
+          meetingId: "channel-1#2025-01-01",
+          suggestion: "Fix",
+        }),
+        signal: abort.signal,
+      },
+    ).catch(() => undefined);
+    try {
+      await started;
+      abort.abort();
+      await response;
+      server.closeAllConnections();
+      server.close();
+      expect(
+        getRuntimeWorkAdmissionCheckpoints().filter(
+          (entry) => entry.domain === "api_correction",
+        ),
+      ).toHaveLength(1);
+      fenceRuntimeWorkAdmissions();
+      expect(mockApiSettled).not.toHaveBeenCalled();
+      const checkpoints = getRuntimeWorkAdmissionCheckpoints();
+      release(completedTextResponse("Late correction"));
+      await Promise.allSettled(checkpoints.map((entry) => entry.ownedPromise));
+      expect(mockApiSettled).toHaveBeenCalledTimes(1);
+      expect(
+        getRuntimeWorkAdmissionCheckpoints().filter(
+          (entry) => entry.domain === "api_correction",
+        ),
+      ).toHaveLength(0);
+    } finally {
+      release(completedTextResponse(""));
+      server.closeAllConnections();
+      server.close();
+    }
+  });
+  test("warm correction router rejects before history/provider dispatch", async () => {
+    mockApiEligible = false;
+    try {
+      await expect(
+        buildCaller().meetings.suggestNotesCorrection({
+          serverId: "guild-1",
+          meetingId: "channel-1#2025-01-01",
+          suggestion: "Fix",
+        }),
+      ).rejects.toThrow();
+      expect(mockedGetMeetingHistory).not.toHaveBeenCalled();
+      expect(mockedCreateOpenAIClient).not.toHaveBeenCalled();
+    } finally {
+      mockApiEligible = true;
+    }
+  });
+  test.each([true, false])(
+    "actual correction embed ACK=%s retains full helper ownership and stops later sends",
+    async (acknowledged) => {
+      const snapshot = jest
+        .spyOn(unifiedConfig, "resolveConfigSnapshot")
+        .mockResolvedValue({} as never);
+      const boolean = jest
+        .spyOn(unifiedConfig, "getSnapshotBoolean")
+        .mockReturnValue(true);
+      const enabled = jest.replaceProperty(config.mock, "enabled", false);
+      const meetingId = "channel-1#2025-01-01";
+      mockedGetMeetingHistory.mockResolvedValue({
+        guildId: "guild-1",
+        channelId_timestamp: meetingId,
+        channelId: "channel-1",
+        meetingId: "synthetic",
+        notes: "Original",
+        notesVersion: 1,
+        notesChannelId: "synthetic-text",
+        notesMessageIds: ["synthetic-old"],
+      } as MeetingHistory);
+      mockedUpdateMeetingNotesService.mockResolvedValue(true);
+      const token = await buildCaller().meetings.suggestNotesCorrection({
+        serverId: "guild-1",
+        meetingId,
+        suggestion: "Fix",
+      });
+      let release!: (value: boolean) => void;
+      let reject!: (error: Error) => void;
+      let entered!: () => void;
+      const started = new Promise<void>((resolve) => {
+        entered = resolve;
+      });
+      jest.mocked(updateDiscordMessage).mockImplementationOnce(() => {
+        entered();
+        return new Promise<boolean>((resolve, fail) => {
+          release = resolve;
+          reject = fail;
+        });
+      });
+      const previous = new Set(
+        getRuntimeWorkAdmissionCheckpoints().map((entry) => entry.id),
+      );
+      const task = buildCaller()
+        .meetings.applyNotesCorrection({
+          serverId: "guild-1",
+          meetingId,
+          token: token.token,
+        })
+        .catch((error: unknown) => error);
+      try {
+        await started;
+        const claim = getRuntimeWorkAdmissionCheckpoints().find(
+          (entry) => !previous.has(entry.id),
+        )!;
+        expect(updateDiscordMessage).toHaveBeenCalledTimes(1);
+        expect(claim.effects.length).toBeGreaterThan(0);
+        fenceRuntimeWorkAdmissions();
+        if (acknowledged) release(true);
+        else reject(new Error("Synthetic lost Discord ACK"));
+        await task;
+        expect(
+          Boolean(
+            getRuntimeWorkAdmissionCheckpoints().find(
+              (entry) => entry.id === claim.id,
+            ),
+          ),
+        ).toBe(!acknowledged);
+        expect(createDiscordMessage).not.toHaveBeenCalled();
+        expect(deleteDiscordMessage).not.toHaveBeenCalled();
+      } finally {
+        release(true);
+        await task;
+        enabled.restore();
+        snapshot.mockRestore();
+        boolean.mockRestore();
+      }
+    },
+  );
   test("suggestNotesCorrection returns a diff and token", async () => {
     const meetingId = "channel-1#2025-01-01T00:00:00.000Z";
     mockedGetMeetingHistory.mockResolvedValue({
@@ -521,17 +716,7 @@ describe("meetings notes correction mutations", () => {
       (_, idx) => `Line ${idx + 1}`,
     ).join("\n");
     mockedCreateOpenAIClient.mockReturnValue({
-      chat: {
-        completions: {
-          create: async () => ({
-            choices: [
-              {
-                message: { content: updated },
-              },
-            ],
-          }),
-        },
-      },
+      responses: { create: async () => completedTextResponse(updated) },
     } as unknown as ReturnType<typeof createOpenAIClient>);
 
     const result = await buildCaller().meetings.suggestNotesCorrection({
@@ -562,19 +747,11 @@ describe("meetings notes correction mutations", () => {
 
     mockedFetchJsonFromS3.mockResolvedValueOnce({ text: "Transcript" });
 
-    const createCompletion = jest.fn(async () => ({
-      choices: [
-        {
-          message: { content: "Line 1\n\nLine 2" },
-        },
-      ],
-    }));
+    const createResponse = jest.fn(async () =>
+      completedTextResponse("Line 1\n\nLine 2"),
+    );
     mockedCreateOpenAIClient.mockReturnValue({
-      chat: {
-        completions: {
-          create: createCompletion,
-        },
-      },
+      responses: { create: createResponse },
     } as unknown as ReturnType<typeof createOpenAIClient>);
 
     const result = await buildCaller().meetings.suggestNotesCorrection({
@@ -607,11 +784,9 @@ describe("meetings notes correction mutations", () => {
     mockedFetchJsonFromS3.mockResolvedValueOnce({ text: "Transcript" });
 
     mockedCreateOpenAIClient.mockReturnValue({
-      chat: {
-        completions: {
-          create: async () => {
-            throw new Error("boom");
-          },
+      responses: {
+        create: async () => {
+          throw new Error("boom");
         },
       },
     } as unknown as ReturnType<typeof createOpenAIClient>);
@@ -689,15 +864,11 @@ describe("meetings notes correction mutations", () => {
     mockedFetchJsonFromS3.mockResolvedValueOnce({
       text: "Jon Smythe from Apollo owns the rollout.",
     });
-    const createCompletion = jest.fn(async () => ({
-      choices: [
-        {
-          message: { content: "Jon Smythe owns the Apollo rollout." },
-        },
-      ],
-    }));
+    const createResponse = jest.fn(async () =>
+      completedTextResponse("Jon Smythe owns the Apollo rollout."),
+    );
     mockedCreateOpenAIClient.mockReturnValue({
-      chat: { completions: { create: createCompletion } },
+      responses: { create: createResponse },
     } as unknown as ReturnType<typeof createOpenAIClient>);
 
     const suggestion = await buildCaller().meetings.suggestNotesCorrection({
@@ -734,6 +905,8 @@ describe("meetings notes correction mutations", () => {
           resultingNotesVersion: 4,
         }),
       }),
+      expect.any(AbortSignal),
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
     );
   });
 

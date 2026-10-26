@@ -1,5 +1,15 @@
+/** @jest-environment node */
 import { metricsRegistry } from "../../metrics";
+import { UnresolvedNotionMutation } from "../notionOperationLifetime";
+import { maybeAutoExportCompletedMeeting } from "../notionAutomationService";
 import { jest } from "@jest/globals";
+import { completedTextResponse } from "../../testSupport/openaiResponse";
+import { getModelChoice } from "../modelFactory";
+import {
+  buildJob,
+  buildDesktopJob,
+  buildSegment,
+} from "../../testSupport/personalMediaUploadFixtures";
 import type {
   PersonalMediaUploadJobRecord,
   PersonalRecordingSegmentRecord,
@@ -15,7 +25,6 @@ import {
   markPersonalRecordingUploadSegmentProcessing,
   updateClaimedPersonalMediaUploadJobProgress,
   updateClaimedPersonalMediaUploadJobRecord,
-  updatePersonalMediaUploadJobRecord,
 } from "../personalMediaUploadService";
 import {
   createPersonalMediaProcessingMeeting,
@@ -30,6 +39,25 @@ import { TRANSCRIPTION_FAILURE_PLACEHOLDER } from "../../constants";
 import type { MeetingSummaries } from "../meetingSummaryService";
 import { resolveMeetingNameFromSummary } from "../meetingNameService";
 import { recordPersonalUploadTerminal } from "../../observability/personalUploadTrace";
+import { writeMeetingUserIndexForMeetingService } from "../meetingUserIndexService";
+import { processPersonalMediaUploadJob } from "../personalMediaUploadWorkerService";
+import {
+  createRuntimeLifecycle,
+  installRuntimeLifecycle,
+} from "../runtimeLifecycleService";
+import { createRuntimeProtectionService } from "../runtimeProtectionService";
+import { getRuntimeInstanceId } from "../runtimeInstanceService";
+import { getDeploymentControlRepository } from "../../db";
+import { getRuntimeWorkAdmissionCheckpoints } from "../runtimeWorkAdmissionService";
+import { PERSONAL_MEDIA_UPLOAD_WORKER_CLAIM_RENEWAL_MS } from "../../constants";
+import type { PersonalMediaUploadRepository } from "../../repositories/personalMediaUploadRepository";
+import { getMockStore } from "../../repositories/mockStore";
+
+let mockWorkerJob: PersonalMediaUploadJobRecord | undefined;
+const mockWorkerClaim = jest.fn<PersonalMediaUploadRepository["claim"]>();
+const mockWorkerRenew = jest.fn<PersonalMediaUploadRepository["renewClaim"]>(
+  async () => mockWorkerJob?.status === "processing",
+);
 
 jest.mock("../../observability/personalUploadTrace", () => ({
   withPersonalUploadProcessingTrace: (
@@ -41,12 +69,18 @@ jest.mock("../../observability/personalUploadTrace", () => ({
 
 const mockUploadedObjects = new Map<string, string | Buffer>();
 const mockConcatLists: string[] = [];
-const mockTranscribe = jest.fn(async () => ({ text: "segment transcript" }));
-const mockChatComplete = jest.fn<
-  () => Promise<{ choices: { message: { content: string | null } }[] }>
->(async () => ({
-  choices: [{ message: { content: "Generated notes" } }],
-}));
+let mockHoldConversion = false;
+let mockConversionEnd: (() => void) | undefined;
+const mockConversionKill = jest.fn();
+const mockTranscribe = jest.fn<
+  (
+    request?: unknown,
+    options?: { signal?: AbortSignal },
+  ) => Promise<{ text: string }>
+>(async () => ({ text: "segment transcript" }));
+const mockCreateResponse = jest.fn<
+  () => Promise<ReturnType<typeof completedTextResponse>>
+>(async () => completedTextResponse("Generated notes"));
 const mockGenerateSummaries = jest.fn<() => Promise<MeetingSummaries>>(
   async () => ({
     summarySentence: "Summary",
@@ -99,6 +133,7 @@ jest.mock("fluent-ffmpeg", () => {
         if (event === "end") this.endHandler = handler;
         return this;
       },
+      kill: mockConversionKill,
       run() {
         if (this.inputPath.endsWith(".txt")) {
           mockConcatLists.push(fs.readFileSync(this.inputPath, "utf8"));
@@ -107,7 +142,8 @@ jest.mock("fluent-ffmpeg", () => {
           fs.mkdirSync(path.dirname(this.outputPath), { recursive: true });
           fs.writeFileSync(this.outputPath, Buffer.from("audio"));
         }
-        this.endHandler?.();
+        if (mockHoldConversion) mockConversionEnd = this.endHandler;
+        else this.endHandler?.();
         return this;
       },
     };
@@ -132,6 +168,32 @@ jest.mock("../meetingHistoryService", () => ({
   writeMeetingHistoryService: jest.fn(async () => undefined),
 }));
 
+jest.mock("../meetingUserIndexService", () => ({
+  writeMeetingUserIndexForMeetingService: jest.fn(async () => undefined),
+}));
+jest.mock("../../repositories/personalMediaUploadRepository", () => ({
+  getPersonalMediaUploadRepository: () => ({
+    claim: mockWorkerClaim,
+    renewClaim: mockWorkerRenew,
+    get: async () => mockWorkerJob,
+    writeHistory: async (
+      history: import("../../types/db").MeetingHistory,
+      claim: import("../../types/db").PersonalMediaClaim,
+      terminal?: PersonalMediaUploadJobRecord,
+    ) => {
+      await writeMeetingHistoryService(history);
+      if (terminal) {
+        if (mockWorkerJob) mockWorkerJob = terminal;
+        return updateClaimedPersonalMediaUploadJobRecord(
+          terminal,
+          claim.instanceId,
+        );
+      }
+      return true;
+    },
+  }),
+}));
+
 jest.mock("../personalMediaUploadService", () => ({
   listPersonalRecordingUploadSegments: jest.fn(async () => []),
   markPersonalRecordingUploadSegmentFailed: jest.fn(
@@ -146,7 +208,6 @@ jest.mock("../personalMediaUploadService", () => ({
   markPersonalRecordingUploadSegmentsFailed: jest.fn(async () => undefined),
   updateClaimedPersonalMediaUploadJobProgress: jest.fn(async () => false),
   updateClaimedPersonalMediaUploadJobRecord: jest.fn(async () => false),
-  updatePersonalMediaUploadJobRecord: jest.fn(async () => undefined),
 }));
 
 jest.mock("../storageService", () => ({
@@ -174,7 +235,7 @@ jest.mock("../tempFileService", () => ({
 jest.mock("../openaiClient", () => ({
   createOpenAIClient: jest.fn(() => ({
     audio: { transcriptions: { create: mockTranscribe } },
-    chat: { completions: { create: mockChatComplete } },
+    responses: { create: mockCreateResponse },
   })),
 }));
 
@@ -205,52 +266,6 @@ jest.mock("../notionAutomationService", () => ({
   maybeAutoExportCompletedMeeting: jest.fn(async () => undefined),
 }));
 
-const buildJob = (): PersonalMediaUploadJobRecord => ({
-  uploadId: "upload-1",
-  ownerUserId: "user-1",
-  status: "queued",
-  mediaKind: "audio",
-  sourceS3Key: "personal-media-uploads/user-1/upload-1/source.mp3",
-  contentType: "audio/mpeg",
-  fileSize: 1234,
-  createdAt: "2026-01-06T18:00:00.000Z",
-  updatedAt: "2026-01-06T18:00:00.000Z",
-});
-
-const buildDesktopJob = (): PersonalMediaUploadJobRecord => ({
-  ...buildJob(),
-  uploadOrigin: "desktop_recording",
-  sourceS3Key: "personal-media-uploads/user-1/upload-1/segments/",
-  sourceManifest: [{ sourceId: "owner_mic", kind: "owner_mic", label: "Me" }],
-  contentType: "audio/wav",
-  fileSize: 2000,
-  status: "processing",
-  processingOwnerInstanceId: "instance-1",
-});
-
-const buildSegment = (
-  sequence: number,
-  status: PersonalRecordingSegmentRecord["status"] = "submitted",
-): PersonalRecordingSegmentRecord => ({
-  uploadId: "upload-1",
-  segmentKey: `owner_mic#${String(sequence).padStart(6, "0")}`,
-  ownerUserId: "user-1",
-  sourceId: "owner_mic",
-  sequence,
-  kind: "owner_mic",
-  label: "Me",
-  sourceS3Key: `personal-media-uploads/user-1/upload-1/segments/owner_mic-${String(sequence).padStart(6, "0")}.wav`,
-  contentType: "audio/wav",
-  fileSize: 1000,
-  checksumSha256: "a".repeat(64),
-  durationMillis: 1000,
-  startedAt: `2026-01-06T18:00:0${sequence}.000Z`,
-  endedAt: `2026-01-06T18:00:0${sequence + 1}.000Z`,
-  status,
-  createdAt: "2026-01-06T18:00:00.000Z",
-  updatedAt: "2026-01-06T18:00:00.000Z",
-});
-
 let recordingSegments: PersonalRecordingSegmentRecord[] = [];
 
 const replaceSegment = (next: PersonalRecordingSegmentRecord) => {
@@ -276,16 +291,54 @@ afterEach(async () => {
   ).toBe(true);
 });
 
+function heldOperation() {
+  let release!: () => void;
+  let enter!: () => void;
+  const started = new Promise<void>((resolve) => {
+    enter = resolve;
+  });
+  const waiting = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  return {
+    started,
+    release,
+    wait: async () => {
+      enter();
+      await waiting;
+    },
+  };
+}
+
+function expectEmptyUploadWithoutNotes() {
+  expect(mockCreateResponse).not.toHaveBeenCalled();
+  expect(writeMeetingHistoryService).toHaveBeenLastCalledWith(
+    expect.objectContaining({
+      notes: "",
+      processing: {
+        transcription: "empty",
+        notes: "skipped",
+        summary: "skipped",
+      },
+    }),
+  );
+}
+
 describe("personalMediaUploadProcessingService", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    jest.mocked(getModelChoice).mockReturnValue({
+      provider: "openai",
+      model: "mock-model",
+    });
     mockUploadedObjects.clear();
     mockConcatLists.length = 0;
     recordingSegments = [];
+    mockWorkerJob = undefined;
     mockTranscribe.mockResolvedValue({ text: "segment transcript" });
-    mockChatComplete.mockResolvedValue({
-      choices: [{ message: { content: "Generated notes" } }],
-    });
+    mockCreateResponse.mockResolvedValue(
+      completedTextResponse("Generated notes"),
+    );
     mockGenerateSummaries.mockResolvedValue({
       summarySentence: "Summary",
       summaryLabel: "Label",
@@ -349,6 +402,30 @@ describe("personalMediaUploadProcessingService", () => {
       },
     );
 
+    it("avoids caching unique personal recording inputs on capable notes models", async () => {
+      recordingSegments = [buildSegment(0)];
+      jest.mocked(getModelChoice).mockReturnValue({
+        provider: "openai",
+        model: "gpt-6.1-sol",
+      });
+
+      const controller = new AbortController();
+      await processPersonalMediaUpload(
+        { ...jobForOrigin(), attempts: 3 },
+        "instance-1",
+        controller.signal,
+      );
+
+      expect(mockCreateResponse).toHaveBeenCalledWith(
+        expect.objectContaining({
+          model: "gpt-6.1-sol",
+          input: [{ role: "user", content: "notes" }],
+          prompt_cache_options: { mode: "explicit", ttl: "30m" },
+        }),
+        { signal: controller.signal },
+      );
+    });
+
     it("does not blame transcription for a source download failure", async () => {
       recordingSegments = [buildSegment(0)];
       jest
@@ -376,12 +453,10 @@ describe("personalMediaUploadProcessingService", () => {
       recordingSegments = [buildSegment(0)];
     });
 
-    it.each(["   ", null, "<@123456789012345678>"])(
+    it.each(["   ", "", "<@123456789012345678>"])(
       "requeues then fails blank sanitized notes (%s)",
       async (content) => {
-        mockChatComplete.mockResolvedValue({
-          choices: [{ message: { content } }],
-        });
+        mockCreateResponse.mockResolvedValue(completedTextResponse(content));
         await processPersonalMediaUpload(
           { ...jobForOrigin(), attempts: 2 },
           "instance-1",
@@ -468,6 +543,285 @@ describe("personalMediaUploadProcessingService", () => {
     );
   });
 
+  it("fences initialization after a held index while the durable claim remains valid", async () => {
+    const held = heldOperation();
+    jest
+      .mocked(writeMeetingUserIndexForMeetingService)
+      .mockImplementationOnce(held.wait);
+    const controller = new AbortController();
+    const initialization = createPersonalMediaProcessingMeeting(
+      buildJob(),
+      "instance-1",
+      controller.signal,
+    );
+    await held.started;
+    controller.abort(new Error("synthetic fence"));
+    held.release();
+    await expect(initialization).rejects.toThrow("synthetic fence");
+    expect(updateClaimedPersonalMediaUploadJobRecord).not.toHaveBeenCalled();
+  });
+
+  it.each(["download", "list"] as const)(
+    "fences canonical writes after a held %s with a valid claim",
+    async (boundary) => {
+      recordingSegments = [buildSegment(0)];
+      const held = heldOperation();
+      if (boundary === "download") {
+        const download = jest
+          .mocked(downloadObjectToFile)
+          .getMockImplementation()!;
+        jest
+          .mocked(downloadObjectToFile)
+          .mockImplementationOnce(async (...args) => {
+            await held.wait();
+            return download(...args);
+          });
+      } else {
+        jest
+          .mocked(listPersonalRecordingUploadSegments)
+          .mockImplementationOnce(async () => recordingSegments)
+          .mockImplementationOnce(async () => {
+            await held.wait();
+            return recordingSegments;
+          });
+      }
+      const controller = new AbortController();
+      const processing = processPersonalMediaUpload(
+        buildDesktopJob(),
+        "instance-1",
+        controller.signal,
+      );
+      await held.started;
+      controller.abort(new Error("synthetic fence"));
+      held.release();
+      await expect(processing).rejects.toThrow("synthetic fence");
+      expect(
+        markPersonalRecordingUploadSegmentProcessing,
+      ).toHaveBeenCalledTimes(boundary === "download" ? 0 : 1);
+      expect(
+        updateClaimedPersonalMediaUploadJobProgress,
+      ).not.toHaveBeenCalled();
+      expect(updateClaimedPersonalMediaUploadJobRecord).not.toHaveBeenCalled();
+      expect(writeMeetingHistoryService).not.toHaveBeenCalled();
+    },
+  );
+
+  it("keeps held indexing counted and retains an unknown subsequent automatic export", async () => {
+    jest.useFakeTimers({ now: 100_000 });
+    getMockStore().deploymentControlRecords.clear();
+    const identity = {
+      kind: "local" as const,
+      instanceId: getRuntimeInstanceId(),
+      localId: "terminal-index-fixture",
+      protocolVersion: 1 as const,
+    };
+    const repository = getDeploymentControlRepository();
+    await repository.initializeControl({
+      pk: "ENV",
+      sk: "CONTROL",
+      recordType: "control",
+      runtimeEnvironment: "local",
+      protocolVersion: 1,
+      coordinatorToken: "fixture",
+      coordinatorEpoch: 1,
+      coordinatorExpiresAt: 1000,
+      servingGeneration: 0,
+      servingMembers: {},
+    });
+    const lifecycle = createRuntimeLifecycle({
+      identity,
+      repository,
+      protection: createRuntimeProtectionService({
+        identity,
+        onUnsafe: jest.fn(() => undefined),
+      }),
+      probeReadiness: async () => ({
+        gatewayReady: true,
+        cacheReady: true,
+        dependenciesReady: true,
+      }),
+      checkpointAndFence: jest.fn(async () => undefined),
+    });
+    installRuntimeLifecycle(lifecycle);
+    await lifecycle.start();
+    await repository.promote({
+      candidateRuntimeMode: "all",
+      coordinatorToken: "fixture",
+      coordinatorEpoch: 1,
+      expectedServingGeneration: 0,
+      expectedServingMembers: [],
+      candidate: identity,
+      proposedGeneration: 1,
+      now: 100,
+    });
+    await lifecycle.getRuntimeAdmissionContext();
+    mockWorkerClaim.mockImplementationOnce(async (input) => {
+      mockWorkerJob = {
+        ...buildJob(),
+        status: "processing",
+        processingClaimId: input.claimId,
+        processingOwnerInstanceId: input.instanceId,
+      };
+      return mockWorkerJob;
+    });
+    const held = heldOperation();
+    const provider = heldOperation();
+    let finishRenewal!: (value: boolean) => void;
+    mockTranscribe.mockImplementationOnce(async () => {
+      await provider.wait();
+      return { text: "synthetic transcript" };
+    });
+    mockWorkerRenew.mockImplementationOnce(
+      () =>
+        new Promise<boolean>((resolve) => {
+          finishRenewal = resolve;
+        }),
+    );
+    jest
+      .mocked(writeMeetingUserIndexForMeetingService)
+      .mockImplementationOnce(async () => undefined)
+      .mockImplementationOnce(held.wait);
+    try {
+      const processing = processPersonalMediaUploadJob(buildJob());
+      await provider.started;
+      await jest.advanceTimersByTimeAsync(
+        PERSONAL_MEDIA_UPLOAD_WORKER_CLAIM_RENEWAL_MS + 1,
+      );
+      provider.release();
+      await held.started;
+      expect(mockWorkerJob?.status).toBe("complete");
+      expect(lifecycle.getWorkCounts()).toMatchObject({
+        personal_processing: 0,
+        ancillary_delivery: 1,
+      });
+      await jest.advanceTimersByTimeAsync(
+        PERSONAL_MEDIA_UPLOAD_WORKER_CLAIM_RENEWAL_MS + 1,
+      );
+      finishRenewal(false);
+      await Promise.resolve();
+      expect(mockWorkerRenew).toHaveBeenCalledTimes(1);
+      expect(getRuntimeWorkAdmissionCheckpoints()).toMatchObject([
+        { domain: "ancillary", fenced: false },
+      ]);
+      held.release();
+      provider.release();
+      await processing;
+      expect(lifecycle.getWorkCounts().ancillary_delivery).toBe(0);
+      expect(getRuntimeWorkAdmissionCheckpoints()).toHaveLength(0);
+      jest
+        .mocked(maybeAutoExportCompletedMeeting)
+        .mockRejectedValueOnce(
+          new UnresolvedNotionMutation(new Error("synthetic lost response")),
+        );
+      mockWorkerClaim.mockImplementationOnce(async (input) => {
+        mockWorkerJob = {
+          ...buildJob(),
+          status: "processing",
+          processingClaimId: input.claimId,
+          processingOwnerInstanceId: input.instanceId,
+        };
+        return mockWorkerJob;
+      });
+      await processPersonalMediaUploadJob(buildJob());
+      expect(lifecycle.getWorkCounts().ancillary_delivery).toBe(1);
+      expect(getRuntimeWorkAdmissionCheckpoints()).toMatchObject([
+        {
+          fenced: true,
+          localSettled: true,
+          terminalAcknowledged: { claimId: mockWorkerJob!.processingClaimId },
+        },
+      ]);
+    } finally {
+      held.release();
+      lifecycle.stop();
+      jest.useRealTimers();
+    }
+  });
+
+  it("acknowledges terminal disposition before awaiting ancillary indexing", async () => {
+    const held = heldOperation();
+    jest
+      .mocked(writeMeetingUserIndexForMeetingService)
+      .mockImplementationOnce(held.wait);
+    const durable = jest.fn();
+    const processing = processPersonalMediaUpload(
+      buildJob(),
+      "instance-1",
+      undefined,
+      durable,
+    );
+    await held.started;
+    const acknowledgedWhileHeld = durable.mock.calls.length;
+    expect(updateClaimedPersonalMediaUploadJobRecord).toHaveBeenCalledWith(
+      expect.objectContaining({ status: "complete" }),
+      "instance-1",
+    );
+    held.release();
+    await processing;
+    expect(acknowledgedWhileHeld).toBe(1);
+    expect(durable).toHaveBeenCalledTimes(1);
+  });
+
+  it("personal conversion cancellation retains the actual encoder until its terminal event", async () => {
+    mockHoldConversion = true;
+    const controller = new AbortController();
+    let settled = false;
+    const processing = processPersonalMediaUpload(
+      buildJob(),
+      "instance-1",
+      controller.signal,
+    );
+    const outcome = processing.then(
+      () => {
+        settled = true;
+        return "complete";
+      },
+      () => {
+        settled = true;
+        return "interrupted";
+      },
+    );
+    while (!mockConversionEnd) await new Promise((done) => setImmediate(done));
+    controller.abort(new Error("synthetic stop"));
+    expect(mockConversionKill).toHaveBeenCalledWith("SIGTERM");
+    expect(settled).toBe(false);
+    mockConversionEnd();
+    mockConversionEnd = undefined;
+    mockHoldConversion = false;
+    expect(await outcome).toBe("interrupted");
+    expect(mockTranscribe).not.toHaveBeenCalled();
+    expect(uploadObjectToS3).not.toHaveBeenCalled();
+  });
+
+  it("fences a provider result returned after processing ownership is lost", async () => {
+    let resume!: (value: { text: string }) => void;
+    const held = new Promise<{ text: string }>((resolve) => {
+      resume = resolve;
+    });
+    let entered!: () => void;
+    const started = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    mockTranscribe.mockImplementationOnce(() => {
+      entered();
+      return held;
+    });
+    const controller = new AbortController();
+    const processing = processPersonalMediaUpload(
+      buildJob(),
+      "instance-1",
+      controller.signal,
+    );
+    await started;
+    expect(mockTranscribe.mock.calls[0][1]?.signal).toBe(controller.signal);
+    controller.abort(new Error("synthetic ownership loss"));
+    resume({ text: "late synthetic transcript" });
+    await expect(processing).rejects.toThrow("synthetic ownership loss");
+    expect(writeMeetingHistoryService).not.toHaveBeenCalled();
+    expect(updateClaimedPersonalMediaUploadJobRecord).not.toHaveBeenCalled();
+    expect(uploadObjectToS3).not.toHaveBeenCalled();
+  });
+
   it("reports unavailable segment counts when every progress read fails", async () => {
     jest
       .mocked(listPersonalRecordingUploadSegments)
@@ -495,7 +849,11 @@ describe("personalMediaUploadProcessingService", () => {
     jest
       .mocked(listPersonalRecordingUploadSegments)
       .mockImplementation(async () => {
-        if (mockUploadedObjects.has("personal/user-1/upload-1/transcript.json"))
+        if (
+          mockUploadedObjects.has(
+            "personal/user-1/upload-1/attempt-2/transcript.json",
+          )
+        )
           throw new Error("progress unavailable");
         return recordingSegments;
       });
@@ -530,7 +888,7 @@ describe("personalMediaUploadProcessingService", () => {
             if (
               (!rejected || boundary === "persistent progress") &&
               mockUploadedObjects.has(
-                "personal/user-1/upload-1/transcript.json",
+                "personal/user-1/upload-1/attempt-3/transcript.json",
               )
             ) {
               rejected = true;
@@ -571,7 +929,7 @@ describe("personalMediaUploadProcessingService", () => {
   );
 
   it("persists a personal attendee participant before processing", async () => {
-    await createPersonalMediaProcessingMeeting(buildJob());
+    await createPersonalMediaProcessingMeeting(buildJob(), "instance-1");
 
     expect(writeMeetingHistoryService).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -588,13 +946,14 @@ describe("personalMediaUploadProcessingService", () => {
         ],
       }),
     );
-    expect(updatePersonalMediaUploadJobRecord).toHaveBeenCalledWith(
+    expect(updateClaimedPersonalMediaUploadJobRecord).toHaveBeenCalledWith(
       expect.objectContaining({
         uploadId: "upload-1",
         meetingGuildId: "personal:user-1",
         meetingId: "upload-1",
         channelId_timestamp: "personal#2026-01-06T18:00:00.000Z",
       }),
+      "instance-1",
     );
   });
 
@@ -611,12 +970,12 @@ describe("personalMediaUploadProcessingService", () => {
       expect.objectContaining({
         status: "processed",
         transcriptS3Key:
-          "personal/user-1/upload-1/segments/owner_mic-000000.transcript.json",
+          "personal/user-1/upload-1/attempt-1/segments/owner_mic-000000.transcript.json",
       }),
       expect.objectContaining({
         status: "processed",
         transcriptS3Key:
-          "personal/user-1/upload-1/segments/owner_mic-000001.transcript.json",
+          "personal/user-1/upload-1/attempt-1/segments/owner_mic-000001.transcript.json",
       }),
     ]);
     expect(
@@ -677,7 +1036,7 @@ describe("personalMediaUploadProcessingService", () => {
     const processedSegment = {
       ...buildSegment(0, "processed"),
       transcriptS3Key:
-        "personal/user-1/upload-1/segments/owner_mic-000000.transcript.json",
+        "personal/user-1/upload-1/attempt-1/segments/owner_mic-000000.transcript.json",
     };
     recordingSegments = [processedSegment];
     mockUploadedObjects.set(
@@ -706,11 +1065,13 @@ describe("personalMediaUploadProcessingService", () => {
     expect(markPersonalRecordingUploadSegmentProcessing).not.toHaveBeenCalled();
     expect(fetchJsonFromS3).toHaveBeenCalledWith(
       processedSegment.transcriptS3Key,
+      undefined,
     );
     expect(uploadObjectToS3).toHaveBeenCalledWith(
-      "personal/user-1/upload-1/transcript.json",
+      "personal/user-1/upload-1/attempt-1/transcript.json",
       expect.stringContaining("cached transcript"),
       "application/json",
+      { signal: undefined },
     );
   });
 
@@ -720,17 +1081,7 @@ describe("personalMediaUploadProcessingService", () => {
 
     await processPersonalMediaUpload(buildDesktopJob(), "instance-1");
 
-    expect(mockChatComplete).not.toHaveBeenCalled();
-    expect(writeMeetingHistoryService).toHaveBeenLastCalledWith(
-      expect.objectContaining({
-        notes: "",
-        processing: {
-          transcription: "empty",
-          notes: "skipped",
-          summary: "skipped",
-        },
-      }),
-    );
+    expectEmptyUploadWithoutNotes();
   });
 
   it("records an empty ordinary upload without generating notes", async () => {
@@ -738,17 +1089,7 @@ describe("personalMediaUploadProcessingService", () => {
 
     await processPersonalMediaUpload(buildJob(), "instance-1");
 
-    expect(mockChatComplete).not.toHaveBeenCalled();
-    expect(writeMeetingHistoryService).toHaveBeenLastCalledWith(
-      expect.objectContaining({
-        notes: "",
-        processing: {
-          transcription: "empty",
-          notes: "skipped",
-          summary: "skipped",
-        },
-      }),
-    );
+    expectEmptyUploadWithoutNotes();
   });
 
   it("salvages cached text on the last attempt and leaves the failed segment failed", async () => {
@@ -884,7 +1225,7 @@ describe("personalMediaUploadProcessingService", () => {
         processing: expect.objectContaining({ transcription: "failed" }),
       }),
     );
-    expect(mockChatComplete).not.toHaveBeenCalled();
+    expect(mockCreateResponse).not.toHaveBeenCalled();
   });
 
   it("keeps an S3 artifact failure as a failed job", async () => {
@@ -962,7 +1303,7 @@ describe("personalMediaUploadProcessingService", () => {
 
     await processPersonalMediaUpload(buildJob(), "instance-1");
 
-    expect(mockChatComplete).not.toHaveBeenCalled();
+    expect(mockCreateResponse).not.toHaveBeenCalled();
     expect(writeMeetingHistoryService).toHaveBeenLastCalledWith(
       expect.objectContaining({
         notes: "",
@@ -997,7 +1338,7 @@ describe("personalMediaUploadProcessingService", () => {
       "instance-1",
     );
 
-    expect(mockChatComplete).not.toHaveBeenCalled();
+    expect(mockCreateResponse).not.toHaveBeenCalled();
     expect(uploadObjectToS3).not.toHaveBeenCalledWith(
       expect.stringContaining("owner_mic-000001.transcript.json"),
       expect.anything(),
@@ -1053,7 +1394,7 @@ describe("personalMediaUploadProcessingService", () => {
       }),
     );
     mockTranscribe.mockRejectedValue(new Error("provider failed"));
-    mockChatComplete.mockRejectedValueOnce(new Error("notes failed"));
+    mockCreateResponse.mockRejectedValueOnce(new Error("notes failed"));
 
     await processPersonalMediaUpload(
       { ...buildDesktopJob(), attempts: 3 },

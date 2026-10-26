@@ -1,14 +1,17 @@
+import { useIntroOfferExpiry } from "../hooks/useIntroOfferExpiry";
+import {
+  isTerminalStripeHistory,
+  requiresStripeManagement,
+} from "../utils/billingManagement";
 import RecordingPlanContext from "../components/RecordingPlanContext";
 import {
   Alert,
   Avatar,
-  Badge,
   Box,
   Button,
   Container,
   Group,
   SegmentedControl,
-  SimpleGrid,
   Stack,
   Text,
   TextInput,
@@ -24,6 +27,10 @@ import {
   recordingLimitAnalytics,
 } from "../../utils/purchaseAnalytics";
 import PricingCard from "../components/PricingCard";
+import BasicIntroTerms from "../components/BasicIntroTerms";
+import IntroPromotionChoice from "../components/IntroPromotionChoice";
+import type { inferRouterInputs } from "@trpc/server";
+import type { AppRouter } from "../../trpc/router";
 import ServerPicker from "../components/ServerPicker";
 import Surface from "../components/Surface";
 import { useAuth } from "../contexts/AuthContext";
@@ -36,12 +43,14 @@ import type { PaidTier } from "../../types/pricing";
 import {
   billingLabelForInterval,
   buildPaidPlanLookup,
-  formatCurrency,
   formatPlanPrice,
-  getAnnualSavings,
+  introOfferPrice,
+  resolveIntroOffer,
   resolvePaidPlan,
 } from "../utils/pricing";
 import classes from "./UpgradeServerSelect.module.css";
+import { useCheckoutAttempt } from "../hooks/useCheckoutAttempt";
+import { useIntroOfferExposure } from "../hooks/useIntroOfferExposure";
 
 const FEATURES = {
   free: [
@@ -115,36 +124,57 @@ export default function UpgradeServerSelect({
   );
   const basicPlan = resolvePaidPlan(planLookup, "basic", interval);
   const proPlan = resolvePaidPlan(planLookup, "pro", interval);
-  const basicSavings = getAnnualSavings(planLookup, "basic");
-  const proSavings = getAnnualSavings(planLookup, "pro");
-  const sharedSavingsMonths =
-    basicSavings?.months === proSavings?.months
-      ? basicSavings?.months
-      : undefined;
-  const savingsBadge =
-    sharedSavingsMonths && Number.isInteger(sharedSavingsMonths)
-      ? `${sharedSavingsMonths} ${sharedSavingsMonths === 1 ? "month" : "months"} free`
-      : basicSavings || proSavings
-        ? "Annual savings"
-        : undefined;
-  const savingsDescription = [
-    basicSavings &&
-      `Basic saves ${formatCurrency(basicSavings.amount, basicSavings.currency)} a year`,
-    proSavings &&
-      `Pro saves ${formatCurrency(proSavings.amount, proSavings.currency)} a year`,
-  ]
-    .filter(Boolean)
-    .join(" · ");
   const billing =
     serverReady && !billingQuery.isError ? billingQuery.data : undefined;
+  const liveOffers = useIntroOfferExpiry(billing, () =>
+    Promise.allSettled([billingQuery.refetch(), pricingQuery.refetch()]),
+  );
+  const offerChoice = promoCode.trim()
+    ? (search.offerChoice ?? "automatic")
+    : "automatic";
+  const attemptIdentity = JSON.stringify([
+    selectedServerId,
+    search.plan,
+    interval,
+    offerChoice,
+    promoCode.trim(),
+    source,
+    limitContext,
+  ]);
+  const checkoutAttempt = useCheckoutAttempt(attemptIdentity, () =>
+    Promise.allSettled([billingQuery.refetch(), pricingQuery.refetch()]),
+  );
+  const failedCheckout = checkoutAttempt.attempt?.request ?? null;
+  const frozenOffer = checkoutAttempt.attempt?.offer ?? null;
+  const offer =
+    frozenOffer ??
+    resolveIntroOffer(
+      interval === "year" ? liveOffers.annualIntroOffer : liveOffers.introOffer,
+      basicPlan,
+    );
+  const shownOffer =
+    offerChoice === "promotion" && promoCode.trim()
+      ? { status: "inactive" as const }
+      : offer;
+  const offerBlocked = offer.status === "unavailable";
+  const displayedOffer =
+    shownOffer.status === "available" ? shownOffer.id : "none";
+  useIntroOfferExposure({
+    offer: displayedOffer,
+    entry: `${from}:${selectedServerId ?? "unresolved"}`,
+    surface: "upgrade",
+    guildId: serverReady ? (selectedServerId ?? undefined) : undefined,
+    enabled: serverReady && !changingServer,
+  });
   const currentTier = billing?.tier;
   const isComped = billing?.billingSource === "manual_comp";
   const isForced = billing?.billingSource === "forced";
   const basicTierEligible =
     currentTier !== "pro" && (currentTier !== "basic" || isComped);
+  const terminalHistory = Boolean(billing && isTerminalStripeHistory(billing));
   const managementOnly =
     isForced ||
-    (billing?.hasStripeBilling && currentTier === "free") ||
+    (billing && requiresStripeManagement(billing)) ||
     (currentTier === "pro" && !isComped);
   const busy = checkoutMutation.isPending || portalMutation.isPending;
   const purchaseReady =
@@ -153,8 +183,18 @@ export default function UpgradeServerSelect({
     Boolean(billing?.billingEnabled) &&
     !billingQuery.isFetching &&
     !pricingQuery.isError &&
+    !pricingQuery.isFetching &&
     !managementOnly &&
+    !checkoutAttempt.refreshing &&
     !busy;
+
+  const basicActionEnabled =
+    purchaseReady &&
+    Boolean(basicPlan) &&
+    basicTierEligible &&
+    !offerBlocked &&
+    !failedCheckout;
+  const proActionEnabled = purchaseReady && Boolean(proPlan) && !failedCheckout;
 
   const arrived = useRef(false);
   const readyStates = useRef(new Set<string>());
@@ -218,15 +258,16 @@ export default function UpgradeServerSelect({
       track("upgrade_blocked", { ...properties, reason: blockedReason });
     }
     lastBlocked.current = blockedReason;
-    const key = `${selectedServerId}:${requestedPlan}:${interval}:${source}`;
+    const key = `${selectedServerId}:${requestedPlan}:${interval}:${source}:${displayedOffer}`;
     if (
-      purchaseReady &&
-      requestedTierEligible &&
-      requestedPrice &&
+      (requestedPlan === "basic" ? basicActionEnabled : proActionEnabled) &&
       !readyStates.current.has(key)
     ) {
       readyStates.current.add(key);
-      track("upgrade_ready", properties);
+      track("upgrade_ready", {
+        ...properties,
+        offer: requestedPlan === "basic" ? displayedOffer : "none",
+      });
     }
   }, [
     limitContext,
@@ -237,9 +278,9 @@ export default function UpgradeServerSelect({
     requestedPlan,
     interval,
     promoCode,
-    purchaseReady,
-    requestedPrice,
-    requestedTierEligible,
+    basicActionEnabled,
+    proActionEnabled,
+    displayedOffer,
   ]);
 
   useEffect(() => setPromoCode(search.promo?.trim() ?? ""), [search.promo]);
@@ -275,6 +316,7 @@ export default function UpgradeServerSelect({
   }
   params.set("interval", intent.interval);
   if (intent.promo) params.set("promo", intent.promo);
+  params.set("offerChoice", offerChoice);
   if (intent.canceled) params.set("canceled", "true");
   const returnUrl = `${window.location.origin}/upgrade/select-server?${params}`;
   const loginUrl = `${buildApiUrl("/auth/discord")}?redirect=${encodeURIComponent(returnUrl)}`;
@@ -292,17 +334,16 @@ export default function UpgradeServerSelect({
   };
   const handleCheckout = async (tier: PaidTier) => {
     if (
-      !purchaseReady ||
       !selectedServerId ||
-      !resolvePaidPlan(planLookup, tier, interval)
+      !(tier === "basic" ? basicActionEnabled : proActionEnabled)
     )
       return;
-    if (tier === "basic" && !basicTierEligible) return;
     // The clicked tier travels with the request, never through a state update.
-    navigate({
+    await navigate({
       replace: true,
       search: { ...intent, plan: tier, canceled: undefined },
     });
+    let attempt: ReturnType<typeof checkoutAttempt.begin> | null = null;
     try {
       track("upgrade_plan_clicked", {
         guild_id: selectedServerId,
@@ -311,20 +352,37 @@ export default function UpgradeServerSelect({
         source,
         ...recordingLimitAnalytics(limitContext ?? {}),
         promo_present: Boolean(intent.promo),
+        offer: tier === "basic" ? displayedOffer : "none",
         event_version: 1,
       });
-      const body = await checkoutMutation.mutateAsync({
+      const request: inferRouterInputs<AppRouter>["billing"]["checkout"] = {
         serverId: selectedServerId,
         tier,
         interval,
-        promotionCode: intent.promo,
+        promotionCode:
+          tier === "basic" &&
+          offer.status === "available" &&
+          offerChoice === "automatic"
+            ? undefined
+            : intent.promo,
+        savedPromotionCode: intent.promo,
+        expectedOffer:
+          tier === "basic" &&
+          offer.status === "available" &&
+          offerChoice === "automatic"
+            ? offer.id
+            : "none",
+        offerChoice,
         source,
         ...limitContext,
         ...(isDoNotTrackEnabled() ? { analyticsDisabled: true } : {}),
-      });
-      window.location.href = body.url;
+      };
+      attempt = checkoutAttempt.begin(request, offer);
+      const body = await checkoutMutation.mutateAsync(request);
+      if (checkoutAttempt.isCurrent(attempt)) window.location.href = body.url;
     } catch (err) {
-      showBillingError(err, "checkout");
+      if (attempt && checkoutAttempt.isCurrent(attempt))
+        showBillingError(err, "checkout");
     }
   };
   const handlePortal = async () => {
@@ -358,8 +416,28 @@ export default function UpgradeServerSelect({
   const showBillingManagement =
     billing && (billing.canManageBillingPortal || managementOnly);
 
+  const guildErrorText =
+    guildError === "auth"
+      ? "Reconnect Discord to load servers you manage."
+      : guildError;
+  const toggleServerPicker = () => setChangingServer(!changingServer);
+  const refreshServers = () => void refresh();
+  const retryBilling = () => void billingQuery.refetch();
+  const billingManagementMessage = terminalHistory
+    ? "Billing history and payment methods remain available."
+    : managementOnly
+      ? "Review this server’s existing plan in its billing settings."
+      : "Existing subscription changes remain subject to billing confirmation.";
+  const billingManagementAction = terminalHistory
+    ? "View billing history"
+    : "Manage billing";
   return (
-    <Container size={1040} py={{ base: "md", md: "xl" }} px={0}>
+    <Container
+      size={1040}
+      py={{ base: "md", md: "xl" }}
+      px={0}
+      style={{ containerType: "inline-size" }}
+    >
       <Stack gap="xl" data-testid="upgrade-purchase">
         <Title
           order={1}
@@ -367,8 +445,9 @@ export default function UpgradeServerSelect({
           lh={1.15}
           style={{ letterSpacing: "-0.025em", textWrap: "balance" }}
         >
-          Record longer meetings.
+          Upgrade your plan
         </Title>
+        <Text c="dimmed">Your subscription helps keep Chronote running.</Text>
         <RecordingPlanContext context={limitContext} />
         {search.canceled && (
           <Alert color="gray" title="Checkout canceled">
@@ -414,8 +493,8 @@ export default function UpgradeServerSelect({
                   <Button
                     variant="subtle"
                     size="sm"
-                    disabled={busy}
-                    onClick={() => setChangingServer(!changingServer)}
+                    disabled={busy || Boolean(failedCheckout)}
+                    onClick={toggleServerPicker}
                   >
                     {changingServer ? "Keep this server" : "Change server"}
                   </Button>
@@ -424,16 +503,12 @@ export default function UpgradeServerSelect({
               {guildError ? (
                 <Alert color="red" title="Servers unavailable">
                   <Stack gap="sm">
-                    <Text size="sm">
-                      {guildError === "auth"
-                        ? "Reconnect Discord to load servers you manage."
-                        : guildError}
-                    </Text>
+                    <Text size="sm">{guildErrorText}</Text>
                     <Group>
                       <Button
                         size="sm"
                         variant="light"
-                        onClick={() => void refresh()}
+                        onClick={refreshServers}
                       >
                         Retry servers
                       </Button>
@@ -477,11 +552,7 @@ export default function UpgradeServerSelect({
                     <Text size="sm">
                       We couldn’t check this server’s current plan.
                     </Text>
-                    <Button
-                      size="sm"
-                      variant="light"
-                      onClick={() => void billingQuery.refetch()}
-                    >
+                    <Button size="sm" variant="light" onClick={retryBilling}>
                       Retry billing
                     </Button>
                   </Stack>
@@ -494,11 +565,7 @@ export default function UpgradeServerSelect({
               )}
               {showBillingManagement && (
                 <Stack gap="sm">
-                  <Text size="sm">
-                    {managementOnly
-                      ? "Review this server’s existing plan in its billing settings."
-                      : "Existing subscription changes remain subject to billing confirmation."}
-                  </Text>
+                  <Text size="sm">{billingManagementMessage}</Text>
                   <Group>
                     {billing.canManageBillingPortal && (
                       <Button
@@ -507,7 +574,7 @@ export default function UpgradeServerSelect({
                         loading={portalMutation.isPending}
                         disabled={busy}
                       >
-                        Manage billing
+                        {billingManagementAction}
                       </Button>
                     )}
                     <Button
@@ -553,38 +620,13 @@ export default function UpgradeServerSelect({
               data={[
                 { label: "Monthly", value: "month" },
                 {
-                  label: (
-                    <Box component="span" className={classes.annualLabel}>
-                      <span>Annual</span>
-                      {savingsBadge && (
-                        <Badge
-                          color="green"
-                          variant="light"
-                          size="lg"
-                          radius="xl"
-                          px={7}
-                          tt="none"
-                          data-testid="upgrade-annual-savings"
-                        >
-                          {savingsBadge}
-                        </Badge>
-                      )}
-                    </Box>
-                  ),
+                  label: "Annual",
                   value: "year",
                   disabled: !planLookup.basic.year && !planLookup.pro.year,
                 },
               ]}
-              disabled={busy}
+              disabled={busy || Boolean(failedCheckout)}
             />
-            <Text size="sm" c="dimmed" ta="center">
-              {savingsDescription || "Per server, not per member."}
-            </Text>
-            {savingsDescription && (
-              <Text size="xs" c="dimmed" ta="center">
-                Per server, not per member.
-              </Text>
-            )}
           </Stack>
           {pricingQuery.isError && (
             <Alert color="red" title="Pricing unavailable">
@@ -600,11 +642,7 @@ export default function UpgradeServerSelect({
               </Stack>
             </Alert>
           )}
-          <SimpleGrid
-            cols={{ base: 1, lg: 3 }}
-            spacing="md"
-            data-testid="upgrade-plans"
-          >
+          <div className={classes.plans} data-testid="upgrade-plans">
             <PricingCard
               name="Free"
               price="$0"
@@ -615,28 +653,30 @@ export default function UpgradeServerSelect({
                   ? "Current plan"
                   : "Free plan"
               }
-              billingLabel="No subscription needed"
+              billingLabel="Always free"
               tone="soft"
               testId="upgrade-plan-free"
             />
             <PricingCard
               name="Basic"
-              price={formatPlanPrice(basicPlan, interval)}
+              price={introOfferPrice(shownOffer, basicPlan, interval)}
               description="For regular meetings."
               features={FEATURES.basic}
               highlighted
               badge={currentTier === "basic" ? "Current plan" : "Recommended"}
               billingLabel={
-                interval === "year" && basicSavings
-                  ? `Billed yearly · Save ${formatCurrency(basicSavings.amount, basicSavings.currency)} a year`
+                offerChoice === "promotion" && promoCode.trim()
+                  ? "Promotion price confirmed at checkout"
                   : billingLabelForInterval(interval)
               }
+              terms={<BasicIntroTerms offer={shownOffer} />}
+              introOffer={shownOffer}
               cta={
                 currentTier === "basic" && !isComped
                   ? "Current plan"
                   : "Continue with Basic"
               }
-              ctaDisabled={!purchaseReady || !basicPlan || !basicTierEligible}
+              ctaDisabled={!basicActionEnabled}
               ctaProps={{
                 variant: "filled",
                 onClick: () => void handleCheckout("basic"),
@@ -650,13 +690,9 @@ export default function UpgradeServerSelect({
               description="For busy servers."
               features={FEATURES.pro}
               badge={currentTier === "pro" ? "Current plan" : undefined}
-              billingLabel={
-                interval === "year" && proSavings
-                  ? `Billed yearly · Save ${formatCurrency(proSavings.amount, proSavings.currency)} a year`
-                  : billingLabelForInterval(interval)
-              }
+              billingLabel={billingLabelForInterval(interval)}
               cta="Continue with Pro"
-              ctaDisabled={!purchaseReady || !proPlan}
+              ctaDisabled={!proActionEnabled}
               ctaProps={{
                 variant: "outline",
                 onClick: () => void handleCheckout("pro"),
@@ -664,29 +700,98 @@ export default function UpgradeServerSelect({
               }}
               testId="upgrade-plan-pro"
             />
-          </SimpleGrid>
-          <Box component="details" open={intent.promo ? true : undefined}>
-            <Text component="summary" size="sm" style={{ cursor: "pointer" }}>
-              Have a code?{intent.promo ? " (code entered)" : ""}
-            </Text>
-            <TextInput
-              mt="sm"
-              maw={360}
-              label="Promo code"
-              className="ph-no-capture"
-              value={promoCode}
-              disabled={busy}
-              onChange={(event) => setPromoCode(event.currentTarget.value)}
-              onBlur={() => navigate({ replace: true, search: intent })}
-              description="Eligibility and discounts are confirmed at checkout."
+          </div>
+          {offer.status === "unavailable" && (
+            <Alert color="yellow" title="Introductory pricing unavailable">
+              Refresh offers before starting Basic checkout.
+            </Alert>
+          )}
+          {offer.status === "expired" && (
+            <Alert color="gray" title="Introductory enrollment ended">
+              The regular Basic price is shown. Choose a plan to continue at
+              that price.
+            </Alert>
+          )}
+          {(offerBlocked || failedCheckout) && (
+            <Stack gap="xs">
+              <Text size="sm">
+                A previous checkout may still be pending. Retry keeps its
+                original terms. Refreshing does not cancel it or change its
+                terms.
+              </Text>
+              <Group>
+                {failedCheckout && (
+                  <Button
+                    disabled={busy || !serverReady}
+                    onClick={async () => {
+                      const attempt = checkoutAttempt.attempt;
+                      if (
+                        busy ||
+                        !serverReady ||
+                        !attempt ||
+                        !checkoutAttempt.isCurrent(attempt)
+                      )
+                        return;
+                      try {
+                        const body = await checkoutMutation.mutateAsync(
+                          attempt.request,
+                        );
+                        if (checkoutAttempt.isCurrent(attempt))
+                          window.location.href = body.url;
+                      } catch (error) {
+                        if (checkoutAttempt.isCurrent(attempt))
+                          showBillingError(error, "checkout");
+                      }
+                    }}
+                  >
+                    Retry checkout
+                  </Button>
+                )}
+                <Button
+                  variant="light"
+                  disabled={busy}
+                  onClick={() => {
+                    checkoutAttempt.refresh();
+                  }}
+                >
+                  Refresh offers
+                </Button>
+              </Group>
+            </Stack>
+          )}
+          {!managementOnly && offer.status === "available" && intent.promo && (
+            <IntroPromotionChoice
+              choice={offerChoice}
+              disabled={busy || Boolean(failedCheckout)}
+              onChange={(value) =>
+                navigate({
+                  replace: true,
+                  search: { ...intent, offerChoice: value },
+                })
+              }
             />
-          </Box>
+          )}
+          {!managementOnly && (
+            <Box component="details" open={intent.promo ? true : undefined}>
+              <Text component="summary" size="sm" style={{ cursor: "pointer" }}>
+                Have a code?{intent.promo ? " (code entered)" : ""}
+              </Text>
+              <TextInput
+                mt="sm"
+                maw={360}
+                label="Promo code"
+                className="ph-no-capture"
+                value={promoCode}
+                disabled={busy || Boolean(failedCheckout)}
+                onChange={(event) => setPromoCode(event.currentTarget.value)}
+                onBlur={() => navigate({ replace: true, search: intent })}
+                description="Eligibility and discounts are confirmed at checkout."
+              />
+            </Box>
+          )}
           <Text size="sm" c="dimmed">
-            Payment is handled securely by Stripe. Any available changes and
-            discounts are confirmed before payment.
-          </Text>
-          <Text size="sm" c="dimmed">
-            Your subscription helps keep Chronote running.
+            Prices are per server. Payment is handled securely by Stripe. Any
+            available changes and discounts are confirmed before payment.
           </Text>
         </Stack>
       </Stack>

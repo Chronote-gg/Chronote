@@ -32,6 +32,8 @@ describe("discordMessageService", () => {
         await import("../../src/services/discordMessageService");
 
       const result = await updateDiscordMessage("chan-1", "msg-1", {
+        content: "Existing portal edit",
+        allowed_mentions: { parse: ["users"] },
         embeds: [{ title: "Updated" }],
         components: [{ type: 1 }],
       });
@@ -42,6 +44,8 @@ describe("discordMessageService", () => {
         expect.objectContaining({
           method: "PATCH",
           body: JSON.stringify({
+            content: "Existing portal edit",
+            allowed_mentions: { parse: ["users"] },
             embeds: [{ title: "Updated" }],
             components: [{ type: 1 }],
           }),

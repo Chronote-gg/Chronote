@@ -1,4 +1,5 @@
 import type { MeetingEvent } from "./meetingTimeline";
+import type { MeetingCapturePresentation } from "../utils/meetingCaptureNotice";
 import type {
   AutoRecordRule,
   MeetingEndReason,
@@ -6,9 +7,9 @@ import type {
   MeetingStatus,
 } from "./meetingLifecycle";
 
-export type LiveMeetingStatus = MeetingStatus;
+export type LiveMeetingStatus = MeetingStatus | "unavailable";
 
-export type LiveMeetingMeta = {
+export type LiveMeetingMeta = Omit<MeetingCapturePresentation, "status"> & {
   guildId: string;
   meetingId: string;
   channelId: string;
@@ -33,7 +34,10 @@ export type LiveMeetingAttendeesPayload = {
   attendees: string[];
 };
 
-export type LiveMeetingStatusPayload = {
+export type LiveMeetingStatusPayload = Omit<
+  MeetingCapturePresentation,
+  "status"
+> & {
   status: LiveMeetingStatus;
   endedAt?: string;
 };

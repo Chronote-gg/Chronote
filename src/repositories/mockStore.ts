@@ -1,7 +1,14 @@
+import type { BillingChangeOperation } from "../types/billingChange";
+import type { RenewalOperation, RenewalControl } from "../types/renewal";
+import type { HistoryWriterBoundary } from "../types/historyWriterBoundary";
+import type { HistoricalOfferImport } from "../types/historicalOfferImport";
+import type { OfferUsage } from "../types/offerUsage";
 import type { PurchaseAttempt, PurchaseIncident } from "../types/purchase";
+import type { DeploymentControlRecord } from "../types/deploymentControl";
 import type { AuthedProfile } from "../trpc/context";
 import type {
   AutoRecordSettings,
+  ActiveMeetingLease,
   EntitlementGrant,
   GuildSubscription,
   ChannelContext,
@@ -37,8 +44,24 @@ import type {
   DiscordRole,
 } from "./types";
 
+import type {
+  RenewalRecovery,
+  RenewalRecoveryPointer,
+} from "../types/renewalRecovery";
+
 type MockStore = {
+  renewalRecoveryRecords: Map<string, RenewalRecovery>;
+  renewalRecoveryPointers: Map<string, RenewalRecoveryPointer>;
+  activeMeetingLeases: Map<string, ActiveMeetingLease>;
+  deploymentControlRecords: Map<string, DeploymentControlRecord>;
+  billingChangeOperations: Map<string, BillingChangeOperation>;
+  billingChangeControls: Map<string, { operationId: string }>;
+  renewalOperations: Map<string, RenewalOperation>;
+  renewalControls: Map<string, RenewalControl>;
   purchaseAttempts: Map<string, PurchaseAttempt>;
+  offerUsages: Map<string, OfferUsage>;
+  historicalOfferImports: Map<string, HistoricalOfferImport>;
+  historyWriterBoundaries: Map<string, HistoryWriterBoundary>;
   purchaseIncidents: Map<string, PurchaseIncident>;
   user: AuthedProfile;
   userGuilds: DiscordGuild[];
@@ -922,7 +945,18 @@ function buildDefaultStore(): MockStore {
     subscriptions,
     paymentTransactions,
     stripeWebhookEvents,
+    renewalRecoveryRecords: new Map(),
+    renewalRecoveryPointers: new Map(),
+    billingChangeOperations: new Map(),
+    billingChangeControls: new Map(),
+    renewalOperations: new Map(),
+    renewalControls: new Map(),
     purchaseAttempts: new Map(),
+    deploymentControlRecords: new Map(),
+    activeMeetingLeases: new Map(),
+    offerUsages: new Map(),
+    historicalOfferImports: new Map(),
+    historyWriterBoundaries: new Map(),
     purchaseIncidents: new Map(),
     onboardingStates,
     meetingHistoryByGuild,

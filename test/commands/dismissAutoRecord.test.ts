@@ -23,6 +23,7 @@ jest.mock("../../src/services/unifiedConfigService", () => ({
 }));
 jest.mock("../../src/commands/endMeeting", () => ({
   handleEndMeetingOther: jest.fn(),
+  persistExplicitMeetingStop: jest.fn(),
 }));
 
 const mockedGetMeeting = getMeeting as jest.MockedFunction<typeof getMeeting>;
@@ -131,7 +132,11 @@ describe("handleDismissAutoRecord", () => {
 
     await handleDismissAutoRecord(client, interaction);
 
-    expect(mockedHandleEndMeetingOther).toHaveBeenCalledWith(client, meeting);
+    expect(mockedHandleEndMeetingOther).toHaveBeenCalledWith(
+      client,
+      meeting,
+      undefined,
+    );
     expect(meeting.endReason).toBe(MEETING_END_REASONS.DISMISSED);
     expect(meeting.endTriggeredByUserId).toBe("user-1");
     expect(meeting.cancelled).toBe(true);
@@ -157,7 +162,11 @@ describe("handleDismissAutoRecord", () => {
     await handleDismissAutoRecord(client, interaction);
 
     expect(mockedResolveConfigEnum).not.toHaveBeenCalled();
-    expect(mockedHandleEndMeetingOther).toHaveBeenCalledWith(client, meeting);
+    expect(mockedHandleEndMeetingOther).toHaveBeenCalledWith(
+      client,
+      meeting,
+      undefined,
+    );
     expect(meeting.endReason).toBe(MEETING_END_REASONS.BUTTON);
     expect(meeting.endTriggeredByUserId).toBe("user-1");
     expect(meeting.cancelled).toBeUndefined();
@@ -207,7 +216,11 @@ describe("handleDismissAutoRecord", () => {
 
     await handleDismissAutoRecord(client, interaction);
 
-    expect(mockedHandleEndMeetingOther).toHaveBeenCalledWith(client, meeting);
+    expect(mockedHandleEndMeetingOther).toHaveBeenCalledWith(
+      client,
+      meeting,
+      undefined,
+    );
   });
 
   it("allows anyone in channel when policy is anyone_in_channel", async () => {
@@ -226,7 +239,11 @@ describe("handleDismissAutoRecord", () => {
 
     await handleDismissAutoRecord(client, interaction);
 
-    expect(mockedHandleEndMeetingOther).toHaveBeenCalledWith(client, meeting);
+    expect(mockedHandleEndMeetingOther).toHaveBeenCalledWith(
+      client,
+      meeting,
+      undefined,
+    );
   });
 
   it("allows admins regardless of policy", async () => {
@@ -249,7 +266,11 @@ describe("handleDismissAutoRecord", () => {
 
     await handleDismissAutoRecord(client, interaction);
 
-    expect(mockedHandleEndMeetingOther).toHaveBeenCalledWith(client, meeting);
+    expect(mockedHandleEndMeetingOther).toHaveBeenCalledWith(
+      client,
+      meeting,
+      undefined,
+    );
   });
 
   it("allows users with ManageChannels", async () => {
@@ -272,7 +293,11 @@ describe("handleDismissAutoRecord", () => {
 
     await handleDismissAutoRecord(client, interaction);
 
-    expect(mockedHandleEndMeetingOther).toHaveBeenCalledWith(client, meeting);
+    expect(mockedHandleEndMeetingOther).toHaveBeenCalledWith(
+      client,
+      meeting,
+      undefined,
+    );
   });
 
   it("allows users with ManageGuild", async () => {
@@ -295,7 +320,11 @@ describe("handleDismissAutoRecord", () => {
 
     await handleDismissAutoRecord(client, interaction);
 
-    expect(mockedHandleEndMeetingOther).toHaveBeenCalledWith(client, meeting);
+    expect(mockedHandleEndMeetingOther).toHaveBeenCalledWith(
+      client,
+      meeting,
+      undefined,
+    );
   });
 
   it("does not treat ManageMessages alone as admin", async () => {

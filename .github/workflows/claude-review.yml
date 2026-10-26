@@ -263,8 +263,8 @@ jobs:
 
       - name: Review with Claude
         id: claude_review
-        # Pinned from anthropics/claude-code-action v1.0.223. Update deliberately.
-        uses: anthropics/claude-code-action@9cdae7f0d995e3ba7c33f226087fdf82a59cd520
+        # Pinned from anthropics/claude-code-action v1.0.248. Update deliberately.
+        uses: anthropics/claude-code-action@1d6de8cb0c237e7c15e9e1bdf973826ebae490cc
         with:
           claude_code_oauth_token: ${{ steps.claude_auth.outputs.token }}
           github_token: ${{ github.token }}
