@@ -53,7 +53,7 @@ test("same-run continuation has a credential-free separately protected gate and 
     workflow.match(
       /role-session-name: introduction-\$\{\{ github.run_id \}\}-\$\{\{ github.run_attempt \}\}/g,
     ),
-  ).toHaveLength(2);
+  ).toHaveLength(3);
   expect(workflow).toContain("group: chronote-deploy-production");
   expect(workflow).toContain("cancel-in-progress: false");
 });

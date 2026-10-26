@@ -157,6 +157,24 @@ function coordinatorRecipes(options) {
     validators[wire.operation]();
     return {
       resourceIds: [options.table],
+      ...(a.purpose === "promote"
+        ? {
+            facts: {
+              kind: "promotion",
+              control: context.control,
+              ...context.historicalPromotion,
+            },
+          }
+        : a.purpose === "route"
+          ? {
+              facts: {
+                kind: "route",
+                listenerArn: wire.input.ListenerArn,
+                targetGroupArn:
+                  context.control.deployment.routing.candidateGroup,
+              },
+            }
+          : {}),
       evidenceHash: canonicalHash({
         request: wire,
         directAcknowledgment: true,
@@ -169,8 +187,13 @@ function coordinatorRecipes(options) {
       generation: a.purpose === "promote" ? a.generation + 1 : a.generation,
       phase: a.toPhase,
     };
-    if (!isDeepStrictEqual(input, expected)) refuse();
-    return { resourceIds: [options.table], evidenceHash: canonicalHash(input) };
+    const { facts, ...state } = input;
+    if (!isDeepStrictEqual(state, expected)) refuse();
+    return {
+      resourceIds: [options.table],
+      evidenceHash: canonicalHash(input),
+      ...(facts ? { facts } : {}),
+    };
   }
   return { request, acknowledgment, observation };
 }

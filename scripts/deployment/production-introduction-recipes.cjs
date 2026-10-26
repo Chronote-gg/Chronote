@@ -165,6 +165,17 @@ function introductionRecipes(options) {
         throw Error("introduction_ack_missing");
       return {
         resourceIds: [table],
+        ...(a.purpose === "initialize" ? { facts: c.coldExclusion } : {}),
+        ...(a.purpose === "promote"
+          ? {
+              facts: {
+                kind: "promotion",
+                control: c.control,
+                candidate: c.runtime,
+                nativeProtection: c.nativeProtection,
+              },
+            }
+          : {}),
         evidenceHash: canonicalHash({
           request: wire,
           directAcknowledgment: true,
@@ -175,10 +186,14 @@ function introductionRecipes(options) {
       if (
         value.purpose !== a.purpose ||
         !/^[a-f0-9]{64}$/.test(value.stateHash) ||
-        Object.keys(value).length !== 2
+        Object.keys(value).length !== (value.facts ? 3 : 2)
       )
         throw Error("introduction_observation_refused");
-      return { resourceIds: [table], evidenceHash: canonicalHash(value) };
+      return {
+        resourceIds: [table],
+        evidenceHash: canonicalHash(value),
+        ...(value.facts ? { facts: value.facts } : {}),
+      };
     },
   };
 }

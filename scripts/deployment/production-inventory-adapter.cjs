@@ -141,7 +141,7 @@ function createInventoryReader(m, aws) {
       "ecs",
       "describe-tasks",
       { cluster: m.runtime.clusterArn, tasks: input.arns },
-      "{items:tasks[].{taskArn:taskArn,taskDefinitionArn:taskDefinitionArn,group:group,lastStatus:lastStatus,desiredStatus:desiredStatus},failures:failures[].{arn:arn,reason:reason}}",
+      `{items:tasks[].{${require("./production-projections.cjs").taskFields}},failures:failures[].{arn:arn,reason:reason}}`,
     );
     const running = r.items.filter((t) => t.lastStatus !== "STOPPED");
     const protection = running.length
@@ -158,6 +158,15 @@ function createInventoryReader(m, aws) {
     return {
       items: r.items.map((t) => ({
         ...t,
+        ...(t.lastStatus !== "STOPPED" &&
+        protection.protectedTasks.find((p) => p.taskArn === t.taskArn)
+          ?.expirationDate
+          ? {
+              protectionExpiresAt: protection.protectedTasks.find(
+                (p) => p.taskArn === t.taskArn,
+              ).expirationDate,
+            }
+          : {}),
         protectionEnabled:
           t.lastStatus === "STOPPED"
             ? false

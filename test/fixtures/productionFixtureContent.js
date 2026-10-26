@@ -7,14 +7,40 @@ import { bound } from "./productionManifest.js";
 import { fixtureFolder } from "../../scripts/deployment/production-content-policy.cjs";
 import { frozenFixtureDefinitions } from "../../scripts/deployment/production-fixture-definitions.cjs";
 const hash = (bytes) => createHash("sha256").update(bytes).digest("hex");
-export function contentFixture() {
-  const binding = bound(completeManifest()),
+function shiftDates(value, milliseconds) {
+  if (
+    typeof value === "string" &&
+    /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(value)
+  )
+    return new Date(Date.parse(value) + milliseconds).toISOString();
+  if (Array.isArray(value))
+    return value.map((entry) => shiftDates(entry, milliseconds));
+  if (value && typeof value === "object")
+    return Object.fromEntries(
+      Object.entries(value).map(([key, entry]) => [
+        key,
+        shiftDates(entry, milliseconds),
+      ]),
+    );
+  return value;
+}
+export function contentFixture({
+  secondOffsetSeconds = 0,
+  firstOffsetSeconds = 0,
+  binding: providedBinding,
+  ownerIds,
+} = {}) {
+  const binding = providedBinding ?? bound(completeManifest()),
     m = binding.manifest;
   const objects = new Map();
   const fixtures = m.handoff.grants.map((expected, index) => {
     const { grant, history } = sample();
+    const offset = index === 0 ? firstOffsetSeconds : secondOffsetSeconds;
+    if (offset) Object.assign(history, shiftDates(history, offset * 1000));
     Object.assign(grant, expected, { pk: `FIXTURE#${expected.grantId}` });
-    const owner = `11111111-2222-4333-8444-${String(index + 1).padStart(12, "0")}`;
+    const owner =
+      ownerIds?.[index] ??
+      `11111111-2222-4333-8444-${String(index + 1).padStart(12, "0")}`;
     Object.assign(grant.ownership, {
       meetingId: expected.meetingId,
       ownerInstanceId: owner,

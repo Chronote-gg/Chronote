@@ -5,6 +5,7 @@ const { githubJson } = require("./production-private-package.cjs");
 const {
   frozenFixtureDefinitions,
 } = require("./production-fixture-definitions.cjs");
+const preparedPins = new Map();
 const id = z.string().min(1).max(1024),
   hash = z.string().regex(/^[a-f0-9]{64}$/);
 const object = z
@@ -121,13 +122,28 @@ function verifyFixtureReviews(value, m) {
       refuse();
   }
 }
+function assertSupplementFile(file, path) {
+  if (
+    file.type !== "file" ||
+    file.path !== path ||
+    file.encoding !== "base64" ||
+    !Number.isSafeInteger(file.size) ||
+    file.size < 1 ||
+    file.size > 262144
+  )
+    refuse();
+}
 async function readPinnedSupplement(binding, env, mode) {
   const m = binding.manifest,
     declaration = m.acceptance;
   if (!declaration || !["prepare-acceptance", "accept"].includes(mode))
     refuse();
-  let commit = env.INTRODUCTION_SUPPLEMENT_COMMIT;
-  if (mode === "prepare-acceptance") {
+  const prepared = preparedPins.get(binding.manifestHash);
+  let commit =
+    mode === "prepare-acceptance"
+      ? prepared?.supplementCommit
+      : env.INTRODUCTION_SUPPLEMENT_COMMIT;
+  if (mode === "prepare-acceptance" && !prepared) {
     const resolved = await githubJson(
       `repos/${declaration.supplementRepository}/commits/${encodeURIComponent(declaration.selectorRef)}`,
       "{sha}",
@@ -143,19 +159,17 @@ async function readPinnedSupplement(binding, env, mode) {
     "{type,path,encoding,size,content}",
     env.INTRODUCTION_OPS_READ_TOKEN,
   );
-  if (
-    file.type !== "file" ||
-    file.path !== declaration.supplementPath ||
-    file.encoding !== "base64" ||
-    !Number.isSafeInteger(file.size) ||
-    file.size < 1 ||
-    file.size > 262144
-  )
-    refuse();
+  assertSupplementFile(file, declaration.supplementPath);
   const bytes = Buffer.from(file.content, "base64");
   if (bytes.length !== file.size) refuse();
   const supplementHash = createHash("sha256").update(bytes).digest("hex");
-  if (mode === "accept" && supplementHash !== env.INTRODUCTION_SUPPLEMENT_HASH)
+  if (
+    (mode === "accept" &&
+      supplementHash !== env.INTRODUCTION_SUPPLEMENT_HASH) ||
+    (mode === "prepare-acceptance" &&
+      prepared &&
+      supplementHash !== prepared.supplementHash)
+  )
     refuse();
   return {
     supplementCommit: commit,
@@ -163,4 +177,29 @@ async function readPinnedSupplement(binding, env, mode) {
     value: JSON.parse(bytes.toString("utf8")),
   };
 }
-module.exports = { verifySupplement, readPinnedSupplement };
+function waitForSupplementFromOriginalRun() {
+  return require("./production-prepare-wait.cjs").waitWithinOriginalPreparation(
+    async (binding) => {
+      const candidate = await readPinnedSupplement(
+        binding,
+        process.env,
+        "prepare-acceptance",
+      );
+      verifySupplement(
+        candidate.value,
+        binding,
+        undefined,
+        Math.floor(Date.now() / 1000),
+      );
+      preparedPins.set(binding.manifestHash, {
+        supplementCommit: candidate.supplementCommit,
+        supplementHash: candidate.supplementHash,
+      });
+    },
+  );
+}
+module.exports = {
+  verifySupplement,
+  readPinnedSupplement,
+  waitForSupplementFromOriginalRun,
+};

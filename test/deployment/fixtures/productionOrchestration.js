@@ -23,7 +23,7 @@ import {
 } from "../../../scripts/deployment/production-candidate.cjs";
 import { verifyDeclaredRoutes } from "../../../scripts/deployment/production-source-routes.cjs";
 import { counts } from "./coordinatorFixture";
-export async function productionOrchestrationFixture() {
+export async function productionOrchestrationFixture(settings = {}) {
   const m = completeManifest();
   m.runtime.continuationDigest = m.runtime.candidateDigest;
   const prefix = `task5-${randomUUID()}-`;
@@ -144,6 +144,8 @@ export async function productionOrchestrationFixture() {
       contents: readFileSync(resolve(id), "utf8").replace(/\r\n/g, "\n"),
     }),
   }));
+  settings.configure?.(m);
+  const instanceId = (slot) => settings.instanceIds?.[slot] ?? slot;
   const binding = bound(m),
     read = async (key) => {
       const row = await readIntroductionDocument(table, key);
@@ -192,7 +194,7 @@ export async function productionOrchestrationFixture() {
       ctl = await read({ pk: "ENV", sk: "CONTROL" });
     const identity = {
       kind: "ecs",
-      instanceId: t.slot,
+      instanceId: instanceId(t.slot),
       protocolVersion: 1,
       candidateId: s.candidateId,
       imageDigest: s.digest,
@@ -200,7 +202,7 @@ export async function productionOrchestrationFixture() {
     };
     await put({
       pk: "ENV",
-      sk: `RUNTIME#${t.slot}`,
+      sk: `RUNTIME#${instanceId(t.slot)}`,
       recordType: "runtime",
       identity,
       role: "candidate",
@@ -226,7 +228,9 @@ export async function productionOrchestrationFixture() {
     });
   }
   function retireRuntime(r, t, ctl) {
-    const recording = state.recordings.find((x) => x.instanceId === t.slot);
+    const recording = state.recordings.find(
+      (x) => x.instanceId === instanceId(t.slot),
+    );
     if (r.retirementRequest && ctl.servingGeneration === 0)
       state.failedRetirementAt ??= state.time + state.delayFailedRetirement;
     if (
@@ -252,7 +256,7 @@ export async function productionOrchestrationFixture() {
     const ctl = await read({ pk: "ENV", sk: "CONTROL" });
     if (!ctl) return;
     for (const t of state.tasks.filter((t) => t.slot !== "legacy")) {
-      const r = await read({ pk: "ENV", sk: `RUNTIME#${t.slot}` });
+      const r = await read({ pk: "ENV", sk: `RUNTIME#${instanceId(t.slot)}` });
       if (!r) continue;
       Object.assign(r.readiness, {
         observedEpoch: ctl.coordinatorEpoch,
@@ -264,6 +268,10 @@ export async function productionOrchestrationFixture() {
         provenAt: state.time,
         expiresAt: state.time + 600,
       });
+      const recording = state.recordings.find(
+        (item) => item.instanceId === r.identity.instanceId,
+      );
+      if (recording && state.time >= recording.endsAt) r.workCounts = counts();
       retireRuntime(r, t, ctl);
       await put(r);
     }
@@ -315,7 +323,7 @@ export async function productionOrchestrationFixture() {
         state.recordings.push({
           instanceId: owner.instanceId,
           startedAt: state.time,
-          endsAt: state.time + 180,
+          endsAt: state.time + (settings.recordingDuration ?? 180),
         });
       row.workCounts = counts(1);
       await put(row);
@@ -377,7 +385,10 @@ export async function productionOrchestrationFixture() {
           protectedTasks: await Promise.all(
             input.tasks.map(async (taskArn) => {
               const t = state.tasks.find((t) => t.taskArn === taskArn),
-                r = await read({ pk: "ENV", sk: `RUNTIME#${t.slot}` });
+                r = await read({
+                  pk: "ENV",
+                  sk: `RUNTIME#${instanceId(t.slot)}`,
+                });
               return {
                 taskArn,
                 protectionEnabled: r?.role !== "retired" && t.slot !== "legacy",
@@ -581,6 +592,7 @@ export async function productionOrchestrationFixture() {
       invoke,
       aws,
       now: () => state.time,
+      nowMilliseconds: () => state.time * 1000,
       sleep: async (ms) => {
         state.time += ms / 1000;
         await refreshRuntime();

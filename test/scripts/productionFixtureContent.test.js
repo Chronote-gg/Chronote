@@ -88,9 +88,11 @@ jest.mock("node:child_process", () => {
 });
 jest.mock("@aws-sdk/client-s3", () => ({
   ...jest.requireActual("@aws-sdk/client-s3"),
-  S3Client: jest.fn((settings) => ({
-    send: (command) => mockS3(command, settings),
-  })),
+  S3Client: jest.fn((settings) =>
+    jest
+      .requireActual("../fixtures/productionProviderFixtures.js")
+      .s3Transport(mockS3, settings),
+  ),
 }));
 
 beforeEach(() => {

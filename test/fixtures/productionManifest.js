@@ -1,4 +1,5 @@
 import { fixtureInputBinding } from "../../scripts/deployment/production-fixture-definitions.cjs";
+import { introductionFixture } from "./productionIntroduction";
 import {
   parseExecution,
   bindExecution,
@@ -149,4 +150,15 @@ function bound(m = fixture()) {
   );
 }
 
-export { fixture, bound };
+function heldIntroduction(binding) {
+  const m = binding.manifest;
+  return {
+    ...introductionFixture({
+      holdId: m.holdId,
+      introductionId: m.introductionId,
+      revision: 1,
+    }),
+    manifestHash: binding.manifestHash,
+  };
+}
+export { fixture, bound, heldIntroduction };

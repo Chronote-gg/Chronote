@@ -32,6 +32,9 @@ async function preflight(options, mode = "introduce") {
     m = assertProductionPreflight(binding, now());
   if (now() + 1800 >= m.validUntil)
     throw Error("finite_execution_window_prerequisite");
+  await require("./production-acceptance-capacity.cjs").screenInitialAcceptanceCapacity(
+    options,
+  );
   await candidate.definitions();
   const definition = await inventory.definition(m.runtime.candidateDefinition),
     container = definition.containerDefinitions.find(
@@ -107,11 +110,17 @@ async function runCli(args = process.argv.slice(2), output = console) {
       throw Error();
     const loaded = await loadProductionPackage(process.env, awsCli, args[0]),
       { binding, evidence } = loaded;
+    const launcherSettings = require("./production-launcher-settings.cjs");
+    const launcherBaseline = launcherSettings.readLauncherSettings(
+      await launcherSettings.collectLauncherSettingsFromOriginalRun(),
+      binding,
+    );
     const provider = createProductionAws(binding),
       now = () => Math.floor(Date.now() / 1000),
       inventory = createInventoryReader(binding.manifest, provider.aws);
     const options = {
       ...provider,
+      launcherBaseline,
       binding,
       evidence,
       now,
@@ -130,11 +139,14 @@ async function runCli(args = process.argv.slice(2), output = console) {
     });
     output.log(JSON.stringify(await introduceProduction(options, args[0])));
     return 0;
-  } catch {
+  } catch (error) {
     output.error(
       JSON.stringify({
         status: "refused",
-        reason: "introduction_prerequisite_or_recovery_required",
+        reason:
+          error?.message === "acceptance_capacity_refused"
+            ? "acceptance_capacity_refused"
+            : "introduction_prerequisite_or_recovery_required",
         admission: "preserve",
         deployment: "preserve",
       }),

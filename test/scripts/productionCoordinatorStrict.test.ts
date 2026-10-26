@@ -19,6 +19,7 @@ import {
 import {
   fixture as manifestFixture,
   bound,
+  heldIntroduction,
 } from "../fixtures/productionManifest.js";
 import {
   createCoordinator,
@@ -84,18 +85,7 @@ function strictFixture(
   editManifest(m);
   const binding = bound(m);
   const authority = authorityFor(binding);
-  const hold = {
-    pk: "ENV",
-    sk: "INTRODUCTION",
-    recordType: "production_introduction",
-    protocolVersion: 1,
-    holdId: m.holdId,
-    introductionId: m.introductionId,
-    manifestHash: binding.manifestHash,
-    revision: 1,
-    admission: { state: "held" },
-    deployment: { state: "held" },
-  };
+  const hold = heldIntroduction(binding);
   Object.assign(f.state.ctl, {
     maintenance: {
       holdId: m.holdId,
@@ -224,7 +214,9 @@ function strictFixture(
     read,
     write,
     invoke,
+    aws: f.aws,
     now: f.options.now,
+    nowMilliseconds: () => f.options.now() * 1000,
     readService: async () => ({
       ...f.svc,
       deploymentConfiguration: {

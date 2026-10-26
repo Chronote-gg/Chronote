@@ -159,7 +159,11 @@ function createProductionBootstrap(options) {
       );
     }
     const stop = find("stop_service");
-    await actions.run(stop, undefined, observeServiceStop);
+    await actions.run(
+      stop,
+      { launcherBaseline: options.launcherBaseline },
+      observeServiceStop,
+    );
     await route(find("route_maintenance", (a) => a.targetGroup === "b"));
     const after = await inventoryNow(),
       lineage = [];
@@ -196,7 +200,40 @@ function createProductionBootstrap(options) {
     };
     await actions.run(
       find("introduction_write", (a) => a.purpose === "initialize"),
-      { control: initial, lineage },
+      {
+        control: initial,
+        lineage,
+        coldExclusion: {
+          kind: "cold_exclusion",
+          control: initial,
+          scopeHash: after.scopeHash,
+          observedAt: after.observedAt,
+          tasks: after.tasks.map(
+            ({
+              taskArn,
+              taskDefinitionArn,
+              lastStatus,
+              desiredStatus,
+              protectionEnabled,
+              classification,
+            }) => ({
+              taskArn,
+              taskDefinitionArn,
+              lastStatus,
+              desiredStatus,
+              protectionEnabled,
+              classification,
+            }),
+          ),
+          services: after.services,
+          targets: after.targets,
+          launchers: after.launchers,
+          coverage: after.coverage.map(({ operation, status }) => ({
+            operation,
+            status,
+          })),
+        },
+      },
       async () => {
         const value = await control();
         if (!isDeepStrictEqual(value, initial))
@@ -266,7 +303,12 @@ function createProductionBootstrap(options) {
     );
     await actions.run(
       action,
-      { runtime: warm.runtime, now: now() },
+      {
+        runtime: warm.runtime,
+        control: warm.control,
+        nativeProtection: [warm.nativeProtection],
+        now: now(),
+      },
       async () => {
         const value = await control();
         if (

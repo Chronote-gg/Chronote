@@ -57,6 +57,11 @@ function createRuntimeProof({ aws, config, types, now, diagnostic }) {
         "Native task protection unconfirmed; preserve work and investigate capacity/DEPLOYMENT_BLOCKED",
       );
     diagnostic.nativeProtection = "last_check_confirmed";
+    return {
+      taskArn: proof.taskArn,
+      protectionEnabled: true,
+      expirationDate: proof.expirationDate,
+    };
   }
   return { ready, protectedTask };
 }

@@ -11,6 +11,34 @@ const taskSchema = z
     lastStatus: id,
     desiredStatus: id,
     protectionEnabled: z.boolean(),
+    protectionExpiresAt: z.string().optional(),
+    containers: z
+      .array(
+        z
+          .object({
+            name: id,
+            imageDigest: id.optional(),
+            networkInterfaces: z
+              .array(z.object({ privateIpv4Address: id }).strict())
+              .optional(),
+          })
+          .strict(),
+      )
+      .optional(),
+    overrides: z
+      .array(
+        z
+          .object({
+            name: id,
+            environmentNames: z.array(id).optional(),
+            environmentFiles: z
+              .array(z.object({ type: id, value: id }).strict())
+              .optional(),
+            commandLength: z.number().int().nonnegative().optional(),
+          })
+          .strict(),
+      )
+      .optional(),
   })
   .strict();
 const serviceSchema = z
@@ -120,7 +148,47 @@ function inspectDeclaredRoutes(m, result, declaredRoutes, block) {
       block("declared_route_unverified");
   }
 }
-async function collectLaunchInventory({ scope, read, now, declaredRoutes }) {
+async function collectScheduledLaunchers(pages, result, block) {
+  const buses = await pages("listEventBuses");
+  for (const eventBusId of new Set([
+    "default",
+    ...buses.map((bus) => bus.id),
+  ])) {
+    const rules = await pages("listRules", { eventBusId });
+    for (const rule of rules) {
+      const targets = await pages("listRuleTargets", {
+        eventBusId,
+        ruleId: rule.id,
+      });
+      result.launchers.push({
+        operation: "eventbridge",
+        eventBusId,
+        ...rule,
+        targets,
+      });
+    }
+  }
+  const groups = await pages("listScheduleGroups");
+  for (const group of [
+    { id: "default" },
+    ...groups.filter((group) => group.id !== "default"),
+  ]) {
+    if (!id.safeParse(group.id).success) {
+      block("launcher_metadata_invalid");
+      continue;
+    }
+    result.launchers.push(
+      ...(await pages("listSchedules", { groupId: group.id })).map((item) => ({
+        operation: "scheduler",
+        ...item,
+      })),
+    );
+  }
+}
+async function collectInventory(
+  { scope, read, now, declaredRoutes, expectedTaskArns = [] },
+  cold,
+) {
   const m = parseExecution(scope, canonicalHash(scope));
   const result = {
     scopeHash: canonicalHash(m),
@@ -219,6 +287,7 @@ async function collectLaunchInventory({ scope, read, now, declaredRoutes }) {
     serviceSchema,
   );
   if (
+    cold &&
     result.services.some(
       (s) =>
         s.serviceArn !== m.runtime.serviceArn ||
@@ -236,10 +305,15 @@ async function collectLaunchInventory({ scope, read, now, declaredRoutes }) {
   )
     block("duplicate_task_identity");
   const arns = [
-    ...new Set([...running, ...stopped, ...m.runtime.legacyTaskArns]),
+    ...new Set([
+      ...running,
+      ...stopped,
+      ...m.runtime.legacyTaskArns,
+      ...expectedTaskArns,
+    ]),
   ];
   result.tasks = await batch("describeTasks", arns, "taskArn", taskSchema);
-  await inspectTaskBindings({ m, read, base, result, block });
+  if (cold) await inspectTaskBindings({ m, read, base, result, block });
   for (const targetGroupArn of [
     m.resources.targetGroupA,
     m.resources.targetGroupB,
@@ -248,7 +322,7 @@ async function collectLaunchInventory({ scope, read, now, declaredRoutes }) {
     result.targets.push(
       ...targets.map((target) => ({ targetGroupArn, ...target })),
     );
-    if (targets.length) block("registered_or_draining_target");
+    if (cold && targets.length) block("registered_or_draining_target");
   }
   for (const operation of [
     "listScalingTargets",
@@ -258,41 +332,7 @@ async function collectLaunchInventory({ scope, read, now, declaredRoutes }) {
     result.launchers.push(
       ...(await pages(operation)).map((item) => ({ operation, ...item })),
     );
-  const buses = await pages("listEventBuses");
-  for (const eventBusId of new Set([
-    "default",
-    ...buses.map((bus) => bus.id),
-  ])) {
-    const rules = await pages("listRules", { eventBusId });
-    for (const rule of rules) {
-      const targets = await pages("listRuleTargets", {
-        eventBusId,
-        ruleId: rule.id,
-      });
-      result.launchers.push({
-        operation: "eventbridge",
-        eventBusId,
-        ...rule,
-        targets,
-      });
-    }
-  }
-  const groups = await pages("listScheduleGroups");
-  for (const group of [
-    { id: "default" },
-    ...groups.filter((group) => group.id !== "default"),
-  ]) {
-    if (!id.safeParse(group.id).success) {
-      block("launcher_metadata_invalid");
-      continue;
-    }
-    result.launchers.push(
-      ...(await pages("listSchedules", { groupId: group.id })).map((item) => ({
-        operation: "scheduler",
-        ...item,
-      })),
-    );
-  }
+  await collectScheduledLaunchers(pages, result, block);
   // Launcher payloads are deliberately unavailable. A present launcher needs a typed hold/restore adapter.
   if (result.launchers.length) block("launcher_recipe_unsupported");
   inspectDeclaredRoutes(m, result, declaredRoutes, block);
@@ -387,4 +427,11 @@ function compareProcessExclusion({
     observedAt: after.observedAt,
   };
 }
-module.exports = { collectLaunchInventory, compareProcessExclusion };
+const collectLaunchInventory = (options) => collectInventory(options, true);
+const collectAcceptanceInventory = (options) =>
+  collectInventory(options, false);
+module.exports = {
+  collectLaunchInventory,
+  collectAcceptanceInventory,
+  compareProcessExclusion,
+};

@@ -60,7 +60,17 @@ function createProductionActions(options) {
     return j.observe(
       action.actionId,
       action.kind === "introduction_write"
-        ? { purpose: action.purpose, stateHash: canonicalHash(value) }
+        ? {
+            purpose: action.purpose,
+            stateHash: canonicalHash(value),
+            ...(["initialize", "promote", "replace_control", "renew"].includes(
+              action.purpose,
+            )
+              ? { facts: { kind: "control", control: value } }
+              : action.purpose === "retire_failed"
+                ? { facts: { kind: "runtime", runtime: value } }
+                : {}),
+          }
         : value,
     );
   }

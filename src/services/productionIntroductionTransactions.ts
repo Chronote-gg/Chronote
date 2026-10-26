@@ -82,8 +82,13 @@ export const introductionAuthoritySchema = z
       Object.keys(v.actions).length > 0,
   );
 export type IntroductionAuthority = z.infer<typeof introductionAuthoritySchema>;
+import { introductionHistoricalFactsSchema } from "./productionIntroductionHistory";
 const receipt = z
-  .object({ resourceIds: z.array(id).min(1).max(100), evidenceHash: hash })
+  .object({
+    resourceIds: z.array(id).min(1).max(100),
+    evidenceHash: hash,
+    facts: introductionHistoricalFactsSchema.optional(),
+  })
   .strict();
 const actionFields = {
   ...common,
@@ -124,6 +129,7 @@ export const introductionActionSchema = z
         ...submitted,
         acknowledgment: receipt,
         acknowledgedAt: seconds,
+        acknowledgedAtMilliseconds: seconds.optional(),
         phase: z.literal("acknowledged"),
         version: z.literal(3),
       })
@@ -134,6 +140,7 @@ export const introductionActionSchema = z
         ...submitted,
         acknowledgment: receipt,
         acknowledgedAt: seconds,
+        acknowledgedAtMilliseconds: seconds.optional(),
         observation: receipt,
         observedAt: seconds,
         phase: z.literal("observed"),

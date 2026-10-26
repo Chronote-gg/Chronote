@@ -164,10 +164,22 @@ function createProductionCoordinator(options) {
   }
   const control = () => read({ pk: "ENV", sk: "CONTROL" });
   async function finish(a, observed) {
+    const facts =
+      observed.deployment.phase === "complete"
+        ? {
+            kind: "retirement_complete",
+            control: observed,
+            runtime: await read({
+              pk: "ENV",
+              sk: `RUNTIME#${observed.deployment.outgoing.instanceId}`,
+            }),
+          }
+        : { kind: "control", control: observed };
     await journal.observe(a.actionId, {
       epoch: observed.coordinatorEpoch,
       generation: observed.servingGeneration,
       phase: observed.deployment.phase,
+      facts,
     });
     return observed;
   }
@@ -250,7 +262,30 @@ function createProductionCoordinator(options) {
       await finish(a, await control());
     },
     async promote(ctl, promotion) {
-      const a = await submit("promote", { control: ctl, promotion });
+      const types = require("../../dist/types/deploymentControl.js");
+      const candidate = types.runtimeRecordSchema.parse(
+        await read({
+          pk: "ENV",
+          sk: `RUNTIME#${promotion.candidate.instanceId}`,
+        }),
+      );
+      const proof = require("./runtime-proof.cjs").createRuntimeProof({
+        aws: options.aws,
+        config: { cluster: m.runtime.clusterArn },
+        types,
+        now,
+        diagnostic: {},
+      });
+      if (!proof.ready(candidate, ctl, promotion.candidate, m.runtime.mode))
+        refuse();
+      const nativeProtection = [];
+      for (const identity of [ctl.deployment.outgoing, promotion.candidate])
+        nativeProtection.push(await proof.protectedTask(identity));
+      const a = await submit("promote", {
+        control: ctl,
+        promotion,
+        historicalPromotion: { candidate, nativeProtection },
+      });
       const observed = await control();
       if (
         !isDeepStrictEqual(observed.servingMembers, {

@@ -32,4 +32,4 @@ function cleanProjection(value) {
     );
   return value;
 }
-module.exports = { projection, cleanProjection };
+module.exports = { projection, cleanProjection, taskFields };

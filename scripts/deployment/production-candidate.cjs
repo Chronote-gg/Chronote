@@ -202,8 +202,10 @@ function createCandidateInspection({ binding, aws, read, definition, now }) {
     );
     assertUnservedRuntime(runtime, s);
     assertEmptyControl(control);
-    if (ready) await assertReady(s, runtime, control, container);
-    return { runtime, control, task, service: svc };
+    const nativeProtection = ready
+      ? await assertReady(s, runtime, control, container)
+      : undefined;
+    return { runtime, control, task, service: svc, nativeProtection };
   }
   async function candidateRuntime(task) {
     const result = await aws("dynamodb", "query", {
@@ -231,7 +233,7 @@ function createCandidateInspection({ binding, aws, read, definition, now }) {
       !proof.ready(runtime, control, runtime.identity, m.runtime.mode)
     )
       throw Error("candidate_waiting");
-    await proof.protectedTask(runtime.identity);
+    const nativeProtection = await proof.protectedTask(runtime.identity);
     const target = await aws("elbv2", "describe-target-health", {
       TargetGroupArn: m.resources.targetGroupA,
     });
@@ -243,6 +245,7 @@ function createCandidateInspection({ binding, aws, read, definition, now }) {
       target.TargetHealthDescriptions[0].TargetHealth.State !== "healthy"
     )
       throw Error("candidate_waiting");
+    return nativeProtection;
   }
   return { definitions, inspect, service, tasks };
 }

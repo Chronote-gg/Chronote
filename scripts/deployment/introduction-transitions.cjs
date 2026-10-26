@@ -152,8 +152,13 @@ function acknowledgedService(m, a, response) {
     refuse();
   return [expected.service, expected.taskDefinition];
 }
-function acknowledgmentFor(m, a, response) {
-  let resourceIds;
+function serviceLauncherFact(action, context) {
+  return action.kind === "stop_service" && context?.launcherBaseline
+    ? { launcherBaseline: context.launcherBaseline }
+    : {};
+}
+function acknowledgmentFor(m, a, response, context) {
+  let resourceIds, facts;
   switch (a.kind) {
     case "stop_legacy":
       if (
@@ -162,10 +167,23 @@ function acknowledgmentFor(m, a, response) {
       )
         refuse();
       resourceIds = [a.taskArn];
+      facts = {
+        kind: "task_stop",
+        taskArn: a.taskArn,
+        desiredStatus: "STOPPED",
+      };
       break;
     case "route_maintenance":
     case "route_candidate": {
       const expected = acknowledgedListener(m, a, response);
+      facts = {
+        kind: "route",
+        listenerArn: expected.ListenerArn,
+        targetGroupArn:
+          a.targetGroup === "a"
+            ? m.resources.targetGroupA
+            : m.resources.targetGroupB,
+      };
       resourceIds = [
         expected.ListenerArn,
         a.targetGroup === "a"
@@ -178,6 +196,13 @@ function acknowledgmentFor(m, a, response) {
     case "stop_failed":
     case "launch_candidate": {
       resourceIds = acknowledgedService(m, a, response);
+      facts = {
+        kind: "service_request",
+        serviceArn: response.service.serviceArn,
+        taskDefinition: response.service.taskDefinition,
+        desiredCount: response.service.desiredCount,
+        ...serviceLauncherFact(a, context),
+      };
       break;
     }
     default:
@@ -185,6 +210,7 @@ function acknowledgmentFor(m, a, response) {
   }
   return {
     resourceIds,
+    facts,
     evidenceHash: canonicalHash({
       kind: a.kind,
       resourceIds,
@@ -289,6 +315,17 @@ function observationFor(m, a, input) {
       return refuse();
   }
   return {
+    facts: {
+      kind: {
+        stop_failed: "failed_stopped",
+        stop_service: "service_stopped",
+        stop_legacy: "task_stopped",
+        route_maintenance: "route",
+        route_candidate: "route",
+        launch_candidate: "task_running",
+      }[a.kind],
+      ...observation,
+    },
     resourceIds: Object.values(observation)
       .flat()
       .filter((v) => typeof v === "string" && v.startsWith("arn:")),
@@ -437,6 +474,9 @@ function createJournal(options, recipes) {
       } catch {
         return refuse();
       }
+      const acknowledgedAtMilliseconds = (
+        options.nowMilliseconds ?? Date.now
+      )();
       responses.set(id, {
         previous: submitted,
         next: {
@@ -444,7 +484,8 @@ function createJournal(options, recipes) {
           phase: "acknowledged",
           version: 3,
           acknowledgment: receipt,
-          acknowledgedAt: now(),
+          acknowledgedAt: Math.floor(acknowledgedAtMilliseconds / 1000),
+          acknowledgedAtMilliseconds,
         },
       });
       return acknowledge(id);

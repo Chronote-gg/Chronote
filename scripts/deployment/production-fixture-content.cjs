@@ -369,12 +369,12 @@ async function collectContents(
   );
   const { acknowledgment, ...transcriptReference } = transcript.reference;
   if (!isDeepStrictEqual(transcriptReference, review.transcript)) refuse();
-  await verifyNotes(client, m, metadata, review, session);
+  const notes = await verifyNotes(client, m, metadata, review, session);
   const capture =
     require("../../dist/services/productionFixtureCapture.js").inspectFixtureSavedAudio(
       { metadata, manifest, audio, acrossHandoff: index === 0 },
     );
-  return { manifest, audio, capture, historicalHandoff: "unverified" };
+  return { manifest, audio, notes, capture, historicalHandoff: "unverified" };
 }
 async function verifyNotes(client, m, { history, grant }, review, session) {
   session.assertCurrent();
@@ -396,6 +396,7 @@ async function verifyNotes(client, m, { history, grant }, review, session) {
     !isDeepStrictEqual(review.notes.messageIds, history.notesMessageIds)
   )
     refuse();
+  return text;
 }
 function validateCollectionHold(binding, hold) {
   const m = binding.manifest;
@@ -404,7 +405,7 @@ function validateCollectionHold(binding, hold) {
     hold.introductionId !== m.introductionId ||
     hold.manifestHash !== binding.manifestHash ||
     hold.revision !== 1 ||
-    hold.admission.state !== "held" ||
+    !["held", "reopened"].includes(hold.admission.state) ||
     hold.deployment.state !== "held"
   )
     refuse();
@@ -427,11 +428,16 @@ async function readCollectionState(binding, readers) {
   );
   validateCollectionHold(binding, hold);
   if (
-    !isDeepStrictEqual(control.maintenance, {
-      holdId: m.holdId,
-      introductionId: m.introductionId,
-      revision: 1,
-    }) ||
+    !isDeepStrictEqual(
+      control.maintenance,
+      hold.admission.state === "held"
+        ? {
+            holdId: m.holdId,
+            introductionId: m.introductionId,
+            revision: 1,
+          }
+        : undefined,
+    ) ||
     fixtureAuthority.manifestHash !== binding.manifestHash ||
     fixtureAuthority.holdId !== m.holdId ||
     fixtureAuthority.introductionId !== m.introductionId ||

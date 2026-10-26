@@ -42,6 +42,18 @@ function createReaders(m) {
       throw new Error("production_write_refused");
     }
     if (
+      !(
+        service === "iam" &&
+        [
+          "get-role",
+          "list-role-policies",
+          "get-role-policy",
+          "list-attached-role-policies",
+          "get-policy",
+          "get-policy-version",
+          "get-open-id-connect-provider",
+        ].includes(operation)
+      ) &&
       !/^(describe-|list-|get-task-protection$|get-caller-identity$|validate-update-service$)/.test(
         operation,
       )
@@ -100,9 +112,13 @@ function createProductionAws(binding) {
       input.TransactItems.some(
         (item) =>
           item.Delete ||
-          ![table, m.resources.tables.meetingControl].includes(
-            (item.Put ?? item.Update ?? item.ConditionCheck)?.TableName,
-          ),
+          !(item.ConditionCheck
+            ? Object.values(m.resources.tables).includes(
+                item.ConditionCheck.TableName,
+              )
+            : [table, m.resources.tables.meetingControl].includes(
+                (item.Put ?? item.Update)?.TableName,
+              )),
       )
     )
       throw new Error("production_write_refused");

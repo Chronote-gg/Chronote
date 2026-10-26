@@ -1,5 +1,9 @@
 /** @jest-environment node */
 import {
+  protectedEnvironment as environment,
+  protectedPolicy,
+} from "../fixtures/productionProviderFixtures.js";
+import {
   createAcceptanceReadAws,
   createProductionAws,
 } from "../../scripts/deployment/production-aws.cjs";
@@ -68,27 +72,8 @@ function hostedFixture(manifest = fixture()) {
     AWS_REGION: manifest.identity.region,
     PRODUCTION_INTRODUCTION_ROLE_ARN: manifest.identity.roleArn,
   };
-  const environment = (name) => ({
-      id:
-        name === "production" ? 1 : name === "production-continuation" ? 2 : 3,
-      name,
-      can_admins_bypass: false,
-      protection_rules: [
-        {
-          type: "required_reviewers",
-          prevent_self_review: true,
-          reviewers: [{ type: "User", id: 7 }],
-        },
-      ],
-      deployment_branch_policy: { custom_branch_policies: true },
-    }),
-    branches = [{ name: "master", type: "branch" }];
-  const policy = (name) => ({
-    environmentId: environment(name).id,
-    environmentHash: canonicalHash(environment(name)),
-    branchPolicyHash: canonicalHash(branches),
-    reviewerIds: ["7"],
-  });
+  const branches = [{ name: "master", type: "branch" }];
+  const policy = (name) => protectedPolicy(name, branches);
   const evidence = Object.fromEntries(
     Object.keys(manifest.prerequisites).map((name) => [
       name,

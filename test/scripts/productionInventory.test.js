@@ -206,3 +206,26 @@ test("new matching task after initial inventory is relaunch evidence", async () 
     }).blockers,
   ).toContain("task_relaunch");
 });
+import { collectAcceptanceInventory } from "../../scripts/deployment/production-inventory.cjs";
+
+test("acceptance discovery directly describes runtime tasks omitted by cluster lists without weakening cold exclusion", async () => {
+  const m = fixture();
+  const knownTask =
+    m.runtime.clusterArn.replace(":cluster/", ":task/") + "/selected";
+  const described = [];
+  const read = reader(m, {
+    describeTasks: async (input) => {
+      described.push(...input.arns);
+      return reader(m)("describeTasks", input);
+    },
+  });
+  const result = await collectAcceptanceInventory({
+    scope: m,
+    now: 150,
+    read,
+    expectedTaskArns: [knownTask],
+  });
+  expect(described).toContain(knownTask);
+  expect(result.tasks).toHaveLength(2);
+  expect(result.blockers).toEqual(["declared_route_unverified"]);
+});

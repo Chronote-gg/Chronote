@@ -115,26 +115,28 @@ run "exact_production_authority" {
 
 run "acceptance_disabled_by_default" {
   command = plan
-  plan_options { target = [aws_iam_role.production_acceptance_collector] }
+  plan_options { target = [aws_iam_role.production_acceptance_collector, aws_iam_role_policy.production_launcher_reads] }
   variables {
     environment                              = "prod"
     enable_production_introduction_roles     = true
     production_introduction_task_definitions = ["arn:aws:ecs:us-east-1:123456789012:task-definition/chronote-prod-bot-task:1", "arn:aws:ecs:us-east-1:123456789012:task-definition/chronote-prod-bot-task:2", "arn:aws:ecs:us-east-1:123456789012:task-definition/chronote-prod-bot-task:3", "arn:aws:ecs:us-east-1:123456789012:task-definition/chronote-prod-bot-task:4"]
   }
   assert {
-    condition     = length(aws_iam_role.production_acceptance_collector) == 0
+    condition     = length(aws_iam_role.production_acceptance_collector) == 0 && length(aws_iam_role_policy.production_launcher_reads) == 0
     error_message = "The read collector must remain separately disabled by default."
   }
 }
 run "acceptance_effective_policy" {
   command = plan
-  plan_options { target = [aws_iam_role_policy.production_acceptance_collector, aws_iam_role_policy.production_introduction_fixture_reads] }
+  plan_options { target = [aws_iam_role_policy.production_acceptance_collector, aws_iam_role_policy.production_introduction_fixture_reads, aws_iam_role_policy.production_launcher_reads] }
   variables {
-    TRANSCRIPTS_PREFIX                     = "recordings/"
-    environment                            = "prod"
-    github_environment                     = "production"
-    enable_production_introduction_roles   = true
-    enable_production_acceptance_collector = true
+    TRANSCRIPTS_PREFIX                           = "recordings/"
+    environment                                  = "prod"
+    github_environment                           = "production"
+    enable_production_introduction_roles         = true
+    enable_production_acceptance_collector       = true
+    production_introduction_route_role_arns      = ["arn:aws:iam::123456789012:role/deploy", "arn:aws:iam::123456789012:role/apply", "arn:aws:iam::123456789012:role/prompt-guard"]
+    production_introduction_reviewed_policy_arns = ["arn:aws:iam::123456789012:policy/reviewed"]
     production_acceptance_fixtures = [
       { guild_id = "guild", voice_channel_id = "voice", meeting_id = "first" },
       { guild_id = "guild", voice_channel_id = "voice", meeting_id = "second" }
@@ -182,4 +184,17 @@ run "acceptance_effective_policy" {
     s.Condition.Null["dynamodb:Attributes"] == "false")])
     error_message = "History IAM must stay partition/attribute restricted and GetItem-only; exact sort keys are enforced by the authenticated reader."
   }
+  assert {
+    condition = length(aws_iam_role_policy.production_launcher_reads) == 2 && alltrue([
+      for policy in aws_iam_role_policy.production_launcher_reads : toset(flatten([for s in jsondecode(policy.policy).Statement : s.Action])) == toset(["iam:GetRole", "iam:ListRolePolicies", "iam:GetRolePolicy", "iam:ListAttachedRolePolicies", "iam:GetPolicy", "iam:GetPolicyVersion", "iam:GetOpenIDConnectProvider"])
+    ])
+    error_message = "Only the seven consumed read operations belong on the original mutation and collector roles."
+  }
+  assert {
+    condition = alltrue(flatten([for policy in aws_iam_role_policy.production_launcher_reads : [for s in jsondecode(policy.policy).Statement : (
+      s.Effect == "Allow" && !can(s.Condition) && alltrue([for arn in tolist(try(tolist(s.Resource), [s.Resource])) : can(regex(s.Sid == "NamedRoleMetadata" ? "^arn:aws:iam::[0-9]{12}:role/[^*?]+$" : s.Sid == "DeclaredPolicyMetadata" ? "^arn:aws:iam::(aws|[0-9]{12}):policy/[^*?]+$" : "^arn:aws:iam::[0-9]{12}:oidc-provider/token.actions.githubusercontent.com$", arn))])
+    )]]))
+    error_message = "IAM metadata must use exact matching role, policy and provider resources without a regional condition."
+  }
+
 }
