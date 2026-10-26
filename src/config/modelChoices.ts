@@ -88,17 +88,19 @@ export const MODEL_SELECTION_OPTIONS: Record<ModelRole, string[]> = {
   autoRecordCancel: CHAT_MODEL_OPTIONS,
 };
 
+const DEFAULT_TEXT_MODEL = "gpt-5.2";
+
 export const MODEL_SELECTION_DEFAULTS: Record<ModelRole, string> = {
   notes: config.notes.model,
-  meetingSummary: config.notes.model,
-  notesCorrection: config.notes.model,
+  meetingSummary: DEFAULT_TEXT_MODEL,
+  notesCorrection: DEFAULT_TEXT_MODEL,
   dictionaryTeaching: "gpt-5-mini",
   transcription: "gpt-4o-transcribe",
-  transcriptionCleanup: config.notes.model,
+  transcriptionCleanup: DEFAULT_TEXT_MODEL,
   transcriptionCoalesce: "gpt-5-mini",
   imageCaption: "gpt-4o-mini",
   image: "dall-e-3",
-  imagePrompt: config.notes.model,
+  imagePrompt: DEFAULT_TEXT_MODEL,
   ask: config.liveVoice.responderModel,
   liveVoiceGate: config.liveVoice.gateModel,
   liveVoiceResponder: config.liveVoice.responderModel,

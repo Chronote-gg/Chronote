@@ -13,7 +13,10 @@ const truncated = (text: string) => ({
   output: [],
 });
 
-async function loadResponse(response: object | object[]) {
+async function loadResponse(
+  response: object | object[],
+  model = "gpt-6.1-sol",
+) {
   jest.resetModules();
   const responses = Array.isArray(response) ? response : [response];
   let callIndex = 0;
@@ -29,7 +32,7 @@ async function loadResponse(response: object | object[]) {
     buildOpenAISafetyIdentifier: jest.fn(() => "safety-id"),
   }));
   jest.doMock("../../src/services/modelFactory", () => ({
-    getModelChoice: jest.fn(() => ({ model: "gpt-6.1-sol" })),
+    getModelChoice: jest.fn(() => ({ model })),
   }));
   jest.doMock("../../src/services/meetingModelOverrides", () => ({
     getMeetingModelOverrides: jest.fn(),
@@ -52,6 +55,12 @@ async function loadResponse(response: object | object[]) {
   return {
     run: (signal?: AbortSignal) =>
       chat(meeting, { messages }, { ...options, signal }),
+    runCorrection: () =>
+      chat(
+        meeting,
+        { messages },
+        { ...options, modelParamRole: "notesCorrection" },
+      ),
     runFrozen: () =>
       chat(
         meeting,
@@ -93,8 +102,15 @@ test("Meeting text always uses Responses and translates frozen parameters", asyn
       text: { verbosity: "low" },
       store: false,
       safety_identifier: "safety-id",
+      prompt_cache_options: { mode: "explicit", ttl: "30m" },
     }),
     expect.objectContaining({ signal: expect.any(AbortSignal) }),
+  );
+  expect(fixture.responsesCreate.mock.calls[0][0]).not.toHaveProperty(
+    "prompt_cache_key",
+  );
+  expect(fixture.responsesCreate.mock.calls[0][0]).not.toHaveProperty(
+    "prompt_cache_retention",
   );
   expect(fixture.messages).toEqual([
     { role: "user", content: "Write the notes." },
@@ -154,6 +170,74 @@ test("Responses keeps frozen model parameters instead of new live defaults", asy
     }),
     expect.anything(),
   );
+  expect(fixture.responsesCreate.mock.calls[0][0]).not.toHaveProperty(
+    "prompt_cache_options",
+  );
+});
+
+test.each([
+  "gpt-6.1-sol",
+  "gpt-6-sol",
+  "gpt-6-luna",
+  "gpt-6-astra",
+  "gpt-5.6-sol",
+  "gpt-5.6-terra",
+  "gpt-5.6-luna",
+  "gpt-6.1-sol-2026-10-01",
+])(
+  "notes on %s avoids cache writes for unique meeting inputs",
+  async (model) => {
+    const fixture = await loadResponse(completed("Notes"), model);
+
+    await expect(fixture.run()).resolves.toBe("Notes");
+    expect(fixture.responsesCreate.mock.calls[0][0]).toMatchObject({
+      model,
+      prompt_cache_options: { mode: "explicit", ttl: "30m" },
+      input: [{ role: "user", content: "Write the notes." }],
+    });
+  },
+);
+
+test.each([
+  "gpt-5.2",
+  "gpt-5.2-pro",
+  "gpt-5-mini",
+  "gpt-5-nano",
+  "gpt-4o-mini",
+  "unknown-model",
+])("notes on %s omits unsupported explicit-cache fields", async (model) => {
+  const fixture = await loadResponse(completed("Notes"), model);
+
+  await expect(fixture.run()).resolves.toBe("Notes");
+  expect(fixture.responsesCreate.mock.calls[0][0]).not.toHaveProperty(
+    "prompt_cache_options",
+  );
+});
+
+test("non-notes chat roles keep their existing cache behavior", async () => {
+  const fixture = await loadResponse(completed("Correction"));
+
+  await expect(fixture.runCorrection()).resolves.toBe("Correction");
+  expect(fixture.responsesCreate.mock.calls[0][0]).not.toHaveProperty(
+    "prompt_cache_options",
+  );
+});
+
+test("ordinary text callers keep their existing cache behavior", async () => {
+  const fixture = await loadResponse(completed("Summary"));
+  const { generateOpenAIText } =
+    await import("../../src/services/openaiTextService");
+
+  await expect(
+    generateOpenAIText({
+      model: "gpt-6.1-sol",
+      modelParams: { reasoning_effort: "low" },
+      input: [{ role: "user", content: "Write a summary." }],
+    }),
+  ).resolves.toBe("Summary");
+  expect(fixture.responsesCreate.mock.calls[0][0]).not.toHaveProperty(
+    "prompt_cache_options",
+  );
 });
 
 test("Responses continuation preserves encrypted reasoning and assistant phase", async () => {
@@ -183,6 +267,15 @@ test("Responses continuation preserves encrypted reasoning and assistant phase",
   ]);
 
   await expect(fixture.run()).resolves.toBe("First second");
+  for (const [request] of fixture.responsesCreate.mock.calls) {
+    expect(request.prompt_cache_options).toEqual({
+      mode: "explicit",
+      ttl: "30m",
+    });
+    expect(request.input.slice(0, fixture.messages.length)).toEqual(
+      fixture.messages,
+    );
+  }
   expect(fixture.responsesCreate.mock.calls[1][0].input).toEqual(
     expect.arrayContaining([
       expect.objectContaining({

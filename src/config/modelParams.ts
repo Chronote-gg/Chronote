@@ -81,7 +81,7 @@ const buildDefaults = (
 });
 
 export const MODEL_PARAM_DEFAULTS: Record<ModelParamRole, ModelParamConfig> = {
-  notes: buildDefaults("temperature", 0),
+  notes: buildDefaults("reasoning", 0),
   meetingSummary: buildDefaults("temperature", 0),
   notesCorrection: buildDefaults("temperature", 0),
   dictionaryTeaching: buildDefaults("temperature", 0),

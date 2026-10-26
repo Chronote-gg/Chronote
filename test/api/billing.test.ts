@@ -9,11 +9,7 @@ import {
   jest,
   test,
 } from "@jest/globals";
-import express from "express";
-import http from "node:http";
-import type { AddressInfo } from "node:net";
 import * as renewalRecoveryService from "../../src/services/renewalRecoveryService";
-import { registerBillingRoutes } from "../../src/api/billing";
 import { getEntitlementGrantRepository } from "../../src/repositories/entitlementGrantRepository";
 import { getStripeWebhookRepository } from "../../src/repositories/stripeWebhookRepository";
 import { getSubscriptionRepository } from "../../src/repositories/subscriptionRepository";
@@ -37,8 +33,16 @@ beforeEach(() => {
 afterEach(() => {
   jest.mocked(renewalRecoveryService.trackPaidRenewalPeriod).mockRestore();
 });
-const guildId = "111111111111111111";
-const basicPrice = { id: "price_basic", lookup_key: "chronote_basic_monthly" };
+import {
+  createServer,
+  postWebhook,
+  closeServer,
+  subscriptionEvent,
+  guildId,
+  basicPrice,
+  activeStripeSubscription,
+} from "../fixtures/billingWebhook";
+
 const originalStripeConfig = { ...config.stripe };
 
 const createStripe = (event: StripeEvent, retrieve?: jest.Mock) =>
@@ -62,80 +66,6 @@ const createStripe = (event: StripeEvent, retrieve?: jest.Mock) =>
         ),
     },
   }) as unknown as StripeClient;
-
-const createServer = (stripe: StripeClient) => {
-  const app = express();
-  app.use("/api/billing/webhook", express.raw({ type: "*/*" }));
-  registerBillingRoutes(app, stripe);
-  const server = app.listen(0);
-  const { port } = server.address() as AddressInfo;
-  return { server, baseUrl: `http://127.0.0.1:${port}` };
-};
-
-const postWebhook = async (baseUrl: string) =>
-  new Promise<{ statusCode: number; body: string }>((resolve, reject) => {
-    const req = http.request(
-      `${baseUrl}/api/billing/webhook`,
-      {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-          "stripe-signature": "sig_test",
-        },
-      },
-      (res) => {
-        let body = "";
-        res.setEncoding("utf8");
-        res.on("data", (chunk) => {
-          body += chunk;
-        });
-        res.on("end", () => {
-          resolve({ statusCode: res.statusCode ?? 0, body });
-        });
-      },
-    );
-    req.on("error", reject);
-    req.write("{}");
-    req.end();
-  });
-
-const closeServer = async (server: http.Server) =>
-  new Promise<void>((resolve, reject) => {
-    server.close((error) => {
-      if (error) {
-        reject(error);
-        return;
-      }
-      resolve();
-    });
-  });
-
-const subscriptionEvent = (status: string, eventId: string) =>
-  ({
-    id: eventId,
-    type: "customer.subscription.updated",
-    data: {
-      object: {
-        id: "sub_basic",
-        latest_invoice: "in_current",
-        status,
-        metadata: { guild_id: guildId },
-        start_date: 1_767_225_600,
-        ended_at: null,
-        customer: "cus_basic",
-        default_payment_method: "pm_basic",
-        livemode: false,
-        items: {
-          data: [
-            {
-              price: basicPrice,
-              current_period_end: 1_769_904_000,
-            },
-          ],
-        },
-      },
-    },
-  }) as unknown as StripeEvent;
 
 const failedInvoiceEvent = {
   id: "evt_invoice_failed",
@@ -201,27 +131,6 @@ const checkoutCompletedEvent = {
     },
   },
 } as unknown as StripeEvent;
-
-const activeStripeSubscription = {
-  latest_invoice: "in_current",
-  id: "sub_basic",
-  created: 1_767_225_600,
-  status: "active",
-  metadata: { guild_id: guildId },
-  start_date: 1_767_225_600,
-  ended_at: null,
-  customer: "cus_basic",
-  default_payment_method: "pm_basic",
-  livemode: false,
-  items: {
-    data: [
-      {
-        price: basicPrice,
-        current_period_end: 1_769_904_000,
-      },
-    ],
-  },
-};
 
 function invoiceDiscountFixture(variant: string) {
   const monthly = variant === "monthly";

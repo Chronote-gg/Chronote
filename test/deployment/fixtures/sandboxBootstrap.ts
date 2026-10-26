@@ -1,8 +1,8 @@
+import { cleanupOwnedTables } from "./ownedDynamoTables";
 import { randomUUID, createHash } from "node:crypto";
 import {
   DynamoDBClient,
   CreateTableCommand,
-  DeleteTableCommand,
   GetItemCommand,
   ScanCommand,
   TransactWriteItemsCommand,
@@ -19,11 +19,7 @@ export const client = new DynamoDBClient({
   credentials: { accessKeyId: "dummy", secretAccessKey: "dummy" },
 });
 const created: string[] = [];
-afterAll(async () => {
-  for (const TableName of created)
-    await client.send(new DeleteTableCommand({ TableName }));
-  client.destroy();
-});
+afterAll(() => cleanupOwnedTables(client, created));
 export async function fixture() {
   const account = "123456789012",
     region = "us-east-1";

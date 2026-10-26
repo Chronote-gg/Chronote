@@ -1,4 +1,5 @@
 import type OpenAI from "openai";
+import type { ModelParamRole } from "../config/types";
 import type {
   Response,
   ResponseCreateParamsNonStreaming,
@@ -7,6 +8,7 @@ import type {
 import { toResponseInputItems } from "openai/lib/responses/ResponseInputItems";
 import type { SavedRecordingSettings } from "../types/recordingContent";
 import { createOpenAIClient } from "./openaiClient";
+import { buildOpenAIPromptCacheParams } from "./openaiPromptCache";
 
 export const MEETING_TEXT_MAX_REQUESTS = 3;
 
@@ -24,6 +26,7 @@ export type OpenAITextFormat =
 
 type TextGenerationOptions = {
   model: string;
+  modelParamRole?: ModelParamRole;
   input: readonly ResponseInputItem[];
   modelParams: SavedRecordingSettings["models"]["notes"]["params"];
   format?: OpenAITextFormat;
@@ -37,6 +40,10 @@ type TextGenerationOptions = {
 type TextRequest = TextGenerationOptions & {
   format: OpenAITextFormat;
   client: OpenAI;
+  promptCacheParams: Pick<
+    ResponseCreateParamsNonStreaming,
+    "prompt_cache_options"
+  >;
 };
 
 function responseText(
@@ -101,6 +108,7 @@ async function generateResponsesText(request: TextRequest): Promise<string> {
         text: responseText(request),
         max_output_tokens: request.maxOutputTokens,
         safety_identifier: request.safetyIdentifier,
+        ...request.promptCacheParams,
       },
       request.signal ? { signal: request.signal } : undefined,
     );
@@ -127,6 +135,11 @@ export async function generateOpenAIText(
 ): Promise<string> {
   options.signal?.throwIfAborted();
   const format: OpenAITextFormat = options.format ?? { kind: "text" };
+  const promptCacheParams = buildOpenAIPromptCacheParams({
+    model: options.model,
+    modelParamRole: options.modelParamRole,
+  });
+  const promptCache = promptCacheParams.prompt_cache_options;
   const client = createOpenAIClient({
     ...options.tracing,
     metadata: {
@@ -135,7 +148,25 @@ export async function generateOpenAIText(
       outputFormat: format.kind,
       reasoningEffort: options.modelParams.reasoning_effort,
       verbosity: options.modelParams.verbosity,
+      ...(promptCache
+        ? {
+            promptCacheMode: promptCache.mode,
+            promptCacheTtl: promptCache.ttl,
+            promptCacheBreakpointCount: 0,
+          }
+        : {}),
     },
   });
-  return generateResponsesText({ ...options, format, client });
+  return generateResponsesText({
+    ...options,
+    format,
+    client,
+    promptCacheParams,
+  });
+}
+
+export function generateOpenAINotes(
+  options: Omit<TextGenerationOptions, "modelParamRole">,
+): Promise<string> {
+  return generateOpenAIText({ ...options, modelParamRole: "notes" });
 }

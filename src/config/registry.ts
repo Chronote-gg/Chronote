@@ -105,7 +105,7 @@ const buildModelParamEntries = (): ConfigEntry[] =>
       {
         key: buildModelParamKey(role, "verbosity"),
         label: `${labelBase} verbosity`,
-        description: "Verbosity hint for GPT-5 models.",
+        description: "Verbosity hint for models that support it.",
         category,
         group,
         valueType: "select",

@@ -146,7 +146,8 @@ test("generateMeetingSummaries builds prompts and parses response", async () => 
 
   const { generateMeetingSummaries } =
     await import("../../src/services/meetingSummaryService");
-  const { config } = await import("../../src/services/configService");
+  const { MODEL_SELECTION_DEFAULTS } =
+    await import("../../src/config/modelChoices");
 
   const now = new Date("2025-02-03T12:00:00Z");
   const expectedDate = now.toLocaleDateString("en-US", {
@@ -171,7 +172,7 @@ test("generateMeetingSummaries builds prompts and parses response", async () => 
   });
   expect(mockCreate).toHaveBeenCalledTimes(1);
   const call = mockCreate.mock.calls[0][0];
-  expect(call.model).toBe(config.notes.model);
+  expect(call.model).toBe(MODEL_SELECTION_DEFAULTS.meetingSummary);
   expect(call.temperature).toBe(0);
   expect(call.reasoning).toEqual({ effort: "none" });
   expect(call.text.format).toEqual({ type: "json_object" });

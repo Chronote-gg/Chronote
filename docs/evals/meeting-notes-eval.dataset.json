@@ -41,5 +41,37 @@
     "metadata": {
       "label": "no-assignment-should-not-invent-role-mentions"
     }
+  },
+  {
+    "input": {
+      "transcript": "User A: I already sent the draft checklist. I will update the onboarding guide by Friday. User B: I will review the guide by Monday. I might organize a trial session if the guide is ready, but I am not committing to that. User A: We agreed on one trial next month, with an estimated cost of $400 to $600 total, capped at $600 and subject to approval. That is a one-time budget, not a monthly amount. User B: A second trial is still just a proposal; no decision yet.",
+      "participantRoster": "- User A | username: user-a | display name: User A | server nickname: - | id: 200000000000000001 | mention: <@200000000000000001> | profile: https://discord.com/users/200000000000000001 | roles: Design\n- User B | username: user-b | display name: User B | server nickname: - | id: 200000000000000002 | mention: <@200000000000000002> | profile: https://discord.com/users/200000000000000002 | roles: Moderator",
+      "roles": "- Design | mention: <@&300000000000000001> | in this meeting: 1\n- Moderator | mention: <@&300000000000000002> | in this meeting: 1\n- Alumni | mention: <@&300000000000000003> | in this meeting: 0",
+      "serverName": "Server X",
+      "voiceChannelName": "Channel Y",
+      "attendees": "User A, User B",
+      "allowedUserIds": ["200000000000000001", "200000000000000002"],
+      "allowedRoleIds": [
+        "300000000000000001",
+        "300000000000000002",
+        "300000000000000003"
+      ],
+      "guildId": "100000000000000001"
+    },
+    "expectedOutput": {
+      "expectedUserIds": ["200000000000000001", "200000000000000002"],
+      "expectedRoleIds": []
+    },
+    "metadata": {
+      "label": "volunteered-actions-and-qualified-decisions",
+      "contentReview": "Manual review required; automated grades cover mention safety and expected participant mention recall only.",
+      "reviewCriteria": [
+        "Include User A's volunteered guide update due Friday and User B's review due Monday, with the correct owners.",
+        "Treat sending the draft checklist as completed work, not an open action.",
+        "Keep organizing the trial tentative and conditional, and the second trial an undecided proposal.",
+        "Preserve the agreed one trial next month, subject to approval, with an estimated $400 to $600 total cost and a $600 one-time cap rather than a monthly allowance.",
+        "Keep the notes concise and proportional without duplicating details or exposing the silent check."
+      ]
+    }
   }
 ]

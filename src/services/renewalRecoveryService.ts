@@ -171,7 +171,11 @@ export async function refreshRenewalRecovery(
     (pointer.stripeCustomerId && pointer.stripeCustomerId !== record.customerId)
   )
     return record;
-  if (record.state === "watching" && input.now < record.paid.periodEnd)
+  if (
+    record.state === "watching" &&
+    input.now < record.paid.periodEnd &&
+    pointer.status !== "canceled"
+  )
     return record;
   const subscription = await input.stripe.subscriptions.retrieve(
     record.subscriptionId,

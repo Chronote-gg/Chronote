@@ -33,7 +33,7 @@ import {
 } from "./storageService";
 import { ensureTempBaseDir } from "./tempFileService";
 import { createOpenAIClient } from "./openaiClient";
-import { generateOpenAIText } from "./openaiTextService";
+import { generateOpenAINotes } from "./openaiTextService";
 import { getModelChoice } from "./modelFactory";
 import { resolveChatParamsForRole } from "./openaiModelParams";
 import { getLangfuseChatPrompt } from "./langfusePromptService";
@@ -1058,7 +1058,7 @@ const generatePersonalUploadNotes = async (input: {
     model: modelChoice.model,
   });
   input.signal?.throwIfAborted();
-  const content = await generateOpenAIText({
+  const content = await generateOpenAINotes({
     model: modelChoice.model,
     input: messages,
     modelParams: chatParams,
