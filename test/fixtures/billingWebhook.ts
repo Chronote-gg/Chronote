@@ -1,3 +1,4 @@
+import { jest } from "@jest/globals";
 import express from "express";
 import type { Server } from "node:http";
 import type { AddressInfo } from "node:net";
@@ -57,3 +58,25 @@ export const activeStripeSubscription = {
   status: "active",
   created: 1_767_225_600,
 };
+
+export const createWebhookStripe = (event: StripeEvent, retrieve?: jest.Mock) =>
+  ({
+    prices: {
+      retrieve: jest.fn(async () => ({
+        ...basicPrice,
+        recurring: { interval: "month" },
+      })),
+    },
+    webhooks: {
+      constructEvent: jest.fn(() => event),
+    },
+    subscriptions: {
+      retrieve:
+        retrieve ??
+        jest.fn(async () =>
+          event.type.startsWith("customer.subscription.")
+            ? event.data.object
+            : { ...activeStripeSubscription, status: "past_due" },
+        ),
+    },
+  }) as unknown as StripeClient;

@@ -128,7 +128,8 @@ function createSourceLossInspection({
     const arns = await listServiceTaskArns(aws, config);
     assert.deepEqual(arns, [candidate.taskArn]);
     const terminal = await terminalTasks(ctl, candidate);
-    const nativeProtectionExpiresAt = await proof.protectedTask(candidate);
+    const nativeProtectionExpiresAt =
+      Date.parse((await proof.protectedTask(candidate)).expirationDate) / 1000;
     const revision = await routing.validateSourceLoss(ctl, svc, candidate);
     return {
       ...terminal,

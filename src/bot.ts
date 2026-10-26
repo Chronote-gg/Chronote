@@ -1,4 +1,7 @@
-import { startMeetingRecoveryWorker } from "./services/meetingRecoveryWorkerService";
+import { recordMeetingParticipantEvent } from "./services/recordingParticipantService";
+
+import { registerRuntimeNotionOwner } from "./services/notionOperationLifetime";
+import { registerServingBotStartup } from "./services/botStartupService";
 import { InitiatingStopInterruption } from "./services/meetingStopInterruption";
 import { waitForGuildInstaller } from "./services/guildInstallerOnboardingService";
 import { randomUUID } from "node:crypto";
@@ -44,11 +47,7 @@ import {
   resolveConfigSnapshot,
 } from "./services/unifiedConfigService";
 import { getGuildLimits } from "./services/subscriptionService";
-import {
-  formatParticipantLabel,
-  formatUserMention,
-  fromMember,
-} from "./utils/participants";
+
 import { parseTags } from "./utils/tags";
 import {
   handleEndMeetingButton,
@@ -135,11 +134,9 @@ import {
 import { removeGuildInstaller } from "./services/guildInstallerService";
 import { captureEvent } from "./services/analyticsService";
 import { setDiscordClient } from "./services/discordClientAccessor";
-import { startMeetingControlCommandWorker } from "./services/meetingControlWorkerService";
 import {
   isRuntimeWarm,
   getRuntimeAdmissionContext,
-  whenRuntimeServing,
 } from "./services/runtimeLifecycleService";
 import { autoRecordJoinSuppressionService } from "./services/autoRecordJoinSuppressionService";
 import {
@@ -492,16 +489,15 @@ export async function setupBot() {
   client.once(Events.ClientReady, () => {
     console.log(`Logged in as ${client.user?.tag}!`);
     setDiscordClient(client);
-    whenRuntimeServing(() => {
-      startMeetingControlCommandWorker(client);
-      startMeetingRecoveryWorker();
-      void runServingBotWork(async () => {
+    registerServingBotStartup(client, (acknowledgeAdmission) =>
+      runServingBotWork(async () => {
+        acknowledgeAdmission();
         await setupApplicationCommands();
         await reevaluateOccupiedVoiceChannels();
       }).catch((error) =>
         console.error("Serving bot initialization failed", error),
-      );
-    });
+      ),
+    );
 
     client.on("voiceStateUpdate", (oldState, newState) => {
       void handleVoiceStateUpdate(oldState, newState).catch(() => {
@@ -660,7 +656,6 @@ export async function setupBot() {
 
   await client.login(TOKEN);
 }
-
 async function executeInteractionWork(
   interaction: RepliableInteraction,
   ownerControl: boolean,
@@ -668,6 +663,7 @@ async function executeInteractionWork(
   work: RuntimeWorkClaim,
 ) {
   let receiptAttempted = false;
+  let unregister = () => {};
   try {
     if (interaction.isRepliable()) {
       if (await isForeignOwnedInteraction(interaction, ownerControl, local))
@@ -686,6 +682,7 @@ async function executeInteractionWork(
       }
       work.acknowledgeInteractionReceipt();
       work.claimed();
+      unregister = registerRuntimeNotionOwner(work);
       await handleInteractionCreate(interaction, work.signal, work);
     }
   } catch (e) {
@@ -715,6 +712,7 @@ async function executeInteractionWork(
     }
   } finally {
     await work.settle();
+    unregister();
   }
 }
 
@@ -1036,22 +1034,7 @@ async function handleUserJoin(newState: VoiceState, admitted = false) {
     newState.member.user.id !== client.user!.id &&
     meeting.voiceChannel.id === newState.channelId
   ) {
-    const participant = fromMember(newState.member);
-    const userLabel = formatParticipantLabel(participant, {
-      includeUsername: false,
-      fallbackName: newState.member.user.username,
-    });
-    console.log(`${userLabel} joined the voice channel.`);
-    meeting.participants.set(participant.id, participant);
-    if (meeting.storeChatLog !== false) {
-      meeting.attendance.add(formatUserMention(participant.id));
-      meeting.chatLog.push({
-        type: "join",
-        user: participant,
-        channelId: newState.channelId!,
-        timestamp: new Date().toISOString(),
-      });
-    }
+    if (!recordMeetingParticipantEvent(meeting, newState, "join")) return;
 
     if (meeting.captureAudio !== false) {
       await subscribeToUserVoice(meeting, newState.member!.user.id);
@@ -1187,21 +1170,7 @@ async function handleUserLeave(oldState: VoiceState) {
     oldState.member.user.id !== client.user!.id &&
     meeting.voiceChannel.id === oldState.channelId
   ) {
-    const participant = fromMember(oldState.member);
-    const userLabel = formatParticipantLabel(participant, {
-      includeUsername: false,
-      fallbackName: oldState.member.user.username,
-    });
-    console.log(`${userLabel} left the voice channel.`);
-    meeting.participants.set(participant.id, participant);
-    if (meeting.storeChatLog !== false) {
-      meeting.chatLog.push({
-        type: "leave",
-        user: participant,
-        channelId: oldState.channelId!,
-        timestamp: new Date().toISOString(),
-      });
-    }
+    if (!recordMeetingParticipantEvent(meeting, oldState, "leave")) return;
 
     if (meeting.captureAudio !== false) {
       unsubscribeToVoiceUponLeaving(meeting, oldState.member!.user.id);

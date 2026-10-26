@@ -1,3 +1,12 @@
+import {
+  runBillingOperation,
+  persistBillingAcknowledgment,
+  type RuntimeBillingOwner,
+} from "./runtimeBillingOperationService";
+import {
+  assertBillingDispatchOutcomeKnown,
+  UnresolvedBillingMutation,
+} from "./runtimeBillingOperationService";
 import { RENEWAL_QUOTE_TTL_MS } from "../utils/renewalConstants";
 import { isPurchaseAnalyticsOptedOut } from "./purchaseReconciliation";
 import { captureRenewalOperationEvent } from "./billingLifecycleAnalytics";
@@ -36,6 +45,7 @@ type Context = {
   guildId: string;
   payerId: string;
   now?: number;
+  owner?: RuntimeBillingOwner;
 };
 const iso = (seconds: number) => new Date(seconds * 1000).toISOString();
 const isPayer = (source: RenewalSource, payerId: string) =>
@@ -204,6 +214,7 @@ export async function readRenewalState({
   }
 }
 export async function restoreRenewal({
+  owner,
   stripe,
   guildId,
   payerId,
@@ -214,102 +225,36 @@ export async function restoreRenewal({
   request: RenewalRequest;
   analyticsOptOut: boolean;
 }): Promise<RenewalResult> {
-  const repo = getRenewalReactivationRepository();
-  const signed =
-    request.kind === "confirm"
-      ? readRenewalRecoveryQuote(request.quoteToken, { guildId, payerId })
-      : undefined;
-  const operationId =
-    request.kind === "recover" ? request.operationId : signed?.nonce;
-  if (!operationId) return { kind: "changed" };
-  let prior = await repo.getOperation({ guildId, operationId });
-  if (prior) {
-    if (prior.payerId !== payerId)
-      throw new BillingActionError(
-        "FORBIDDEN",
-        "Only the original payer can manage this server's Stripe billing",
+  return runBillingOperation(owner, async (owner) => {
+    const repo = getRenewalReactivationRepository();
+    const signed =
+      request.kind === "confirm"
+        ? readRenewalRecoveryQuote(request.quoteToken, { guildId, payerId })
+        : undefined;
+    const operationId =
+      request.kind === "recover" ? request.operationId : signed?.nonce;
+    if (!operationId) return { kind: "changed" };
+    const prior = await repo.getOperation({ guildId, operationId });
+    if (prior)
+      return restorePriorRenewal(
+        { stripe, guildId, payerId, now, owner },
+        prior,
+        signed,
+        analyticsOptOut,
       );
-    if (
-      signed &&
-      (signed.subscriptionId !== prior.subscriptionId ||
-        signed.sourceFingerprint !== prior.sourceFingerprint)
-    )
+    if (request.kind !== "confirm" || !config.stripe.renewalReactivationEnabled)
       return { kind: "changed" };
-    if (prior.state === "rejected") return { kind: "changed" };
-    if (
-      analyticsOptOut &&
-      !prior.analyticsOptOut &&
-      prior.state !== "succeeded"
-    ) {
-      const optedOut = {
-        ...prior,
-        analyticsOptOut: true,
-        revision: randomUUID(),
-      };
-      if (
-        !(await repo.compareAndWrite({
-          next: optedOut,
-          expectedRevision: prior.revision,
-        }))
-      )
-        return { kind: "processing", operationId: prior.operationId };
-      prior = optedOut;
-    }
-    return recover({ stripe, guildId, payerId, now }, prior);
-  }
-  if (request.kind !== "confirm" || !config.stripe.renewalReactivationEnabled)
-    return { kind: "changed" };
-  const quote = readRenewalQuote(request.quoteToken, now, { guildId, payerId });
-  if (!quote) return { kind: "changed" };
-  const saved = await getSubscriptionRepository().get(guildId);
-  if (
-    !saved ||
-    saved.stripeSubscriptionId !== quote.subscriptionId ||
-    (saved.stripeSyncRevision ?? null) !== quote.sourceRevision
-  )
-    return { kind: "changed" };
-  const source = await readRenewalSource({
-    stripe,
-    guildId,
-    subscriptionId: quote.subscriptionId,
-  });
-  if (!isPayer(source, payerId))
-    throw new BillingActionError(
-      "FORBIDDEN",
-      "Only the original payer can manage this server's Stripe billing",
+    const quote = readRenewalQuote(request.quoteToken, now, {
+      guildId,
+      payerId,
+    });
+    if (!quote) return { kind: "changed" };
+    return startRenewal(
+      { stripe, guildId, payerId, now, owner },
+      quote,
+      analyticsOptOut,
     );
-  if (
-    source.kind !== "verified" ||
-    source.cancellationAt === null ||
-    source.sourceFingerprint !== quote.sourceFingerprint
-  )
-    return { kind: "changed" };
-  const operation: RenewalOperation = {
-    operationId: quote.nonce,
-    quoteNonce: quote.nonce,
-    guildId,
-    payerId,
-    mode: source.subscription.livemode ? "live" : "test",
-    subscriptionId: source.subscription.id,
-    sourceFingerprint: source.sourceFingerprint,
-    invariantFingerprint: source.invariantFingerprint,
-    sourceRevision: quote.sourceRevision,
-    approvedTerms: quote.terms,
-    stripeRequest: source.stripeRequest,
-    idempotencyKey: `renewal-${source.subscription.livemode ? "live" : "test"}-${guildId}-${quote.nonce}`,
-    firstAttemptAt: now,
-    analyticsOptOut:
-      analyticsOptOut ||
-      (await isPurchaseAnalyticsOptedOut(guildId, source.subscription).catch(
-        () => true,
-      )),
-    revision: randomUUID(),
-    state: "applying",
-  };
-  if (!(await repo.claim({ operation, expectedSubscription: saved })))
-    return { kind: "changed" };
-  await captureRenewalOperationEvent({ operation, phase: "requested" });
-  return recover({ stripe, guildId, payerId, now }, operation);
+  });
 }
 type RecoveryState =
   | { state: "verifying" }
@@ -355,7 +300,11 @@ class RenewalRecovery {
     });
   }
 
-  private async save(next: RenewalOperation) {
+  private save(next: RenewalOperation) {
+    return this.context.owner.effect(() => this.write(next));
+  }
+
+  private async write(next: RenewalOperation) {
     const accepted = await this.repo.compareAndWrite({
       next,
       expectedRevision: this.operation.revision,
@@ -453,18 +402,27 @@ class RenewalRecovery {
       this.operation.state === "needs_review"
     )
       return { kind: "result", result: this.processing() };
+    let acknowledged = false;
     try {
-      await clearPendingCancellation({
-        stripe: this.context.stripe,
-        operation: this.operation,
-      });
-    } catch {
-      /* A transport failure can hide a successful update. Always read back. */
+      await this.context.owner.effect(() =>
+        clearPendingCancellation({
+          stripe: this.context.stripe,
+          operation: this.operation,
+        }),
+      );
+      acknowledged = true;
+    } catch (error) {
+      assertBillingDispatchOutcomeKnown(error);
+      // A definite rejection may be reconciled against existing provider state.
     }
     if (this.operation.state === "applying") {
       const verifying = this.next({ state: "verifying" });
-      if (!(await this.save(verifying)))
-        return { kind: "result", result: this.processing() };
+      const saved = acknowledged
+        ? await persistBillingAcknowledgment(this.context.owner, () =>
+            this.write(verifying),
+          )
+        : await this.save(verifying);
+      if (!saved) return { kind: "result", result: this.processing() };
       this.operation = verifying;
     }
     const current = await this.readSource();
@@ -480,6 +438,7 @@ class RenewalRecovery {
       this.operation.subscriptionId,
       undefined,
       { userId: payerId, analyticsOptOut: this.privacySuppressed },
+      this.context.owner,
     );
     const persisted = await getSubscriptionRepository().get(guildId);
     const confirmed = await this.readSource();
@@ -501,6 +460,7 @@ class RenewalRecovery {
   }
 
   private async handleError(error: unknown): Promise<RenewalResult> {
+    if (error instanceof UnresolvedBillingMutation) throw error;
     if (error instanceof BillingActionError && error.code === "FORBIDDEN")
       throw error;
     if (error instanceof BillingActionError && error.code === "BAD_REQUEST") {
@@ -535,4 +495,109 @@ async function retainRenewalOptOut(
       () => true,
     ))
   );
+}
+
+async function restorePriorRenewal(
+  context: Required<Context>,
+  prior: RenewalOperation,
+  signed: RenewalQuote | undefined,
+  analyticsOptOut: boolean,
+): Promise<RenewalResult> {
+  const { payerId } = context;
+  const repo = getRenewalReactivationRepository();
+  if (prior.payerId !== payerId)
+    throw new BillingActionError(
+      "FORBIDDEN",
+      "Only the original payer can manage this server's Stripe billing",
+    );
+  if (
+    signed &&
+    (signed.subscriptionId !== prior.subscriptionId ||
+      signed.sourceFingerprint !== prior.sourceFingerprint)
+  )
+    return { kind: "changed" };
+  if (prior.state === "rejected") return { kind: "changed" };
+  if (
+    analyticsOptOut &&
+    !prior.analyticsOptOut &&
+    prior.state !== "succeeded"
+  ) {
+    const optedOut = {
+      ...prior,
+      analyticsOptOut: true,
+      revision: randomUUID(),
+    };
+    if (
+      !(await context.owner.effect(() =>
+        repo.compareAndWrite({
+          next: optedOut,
+          expectedRevision: prior.revision,
+        }),
+      ))
+    )
+      return { kind: "processing", operationId: prior.operationId };
+    prior = optedOut;
+  }
+  return recover(context, prior);
+}
+async function startRenewal(
+  context: Required<Context>,
+  quote: RenewalQuote,
+  analyticsOptOut: boolean,
+): Promise<RenewalResult> {
+  const { stripe, guildId, payerId, now } = context;
+  const repo = getRenewalReactivationRepository();
+  const saved = await getSubscriptionRepository().get(guildId);
+  if (
+    !saved ||
+    saved.stripeSubscriptionId !== quote.subscriptionId ||
+    (saved.stripeSyncRevision ?? null) !== quote.sourceRevision
+  )
+    return { kind: "changed" };
+  const source = await readRenewalSource({
+    stripe,
+    guildId,
+    subscriptionId: quote.subscriptionId,
+  });
+  if (!isPayer(source, payerId))
+    throw new BillingActionError(
+      "FORBIDDEN",
+      "Only the original payer can manage this server's Stripe billing",
+    );
+  if (
+    source.kind !== "verified" ||
+    source.cancellationAt === null ||
+    source.sourceFingerprint !== quote.sourceFingerprint
+  )
+    return { kind: "changed" };
+  const operation: RenewalOperation = {
+    operationId: quote.nonce,
+    quoteNonce: quote.nonce,
+    guildId,
+    payerId,
+    mode: source.subscription.livemode ? "live" : "test",
+    subscriptionId: source.subscription.id,
+    sourceFingerprint: source.sourceFingerprint,
+    invariantFingerprint: source.invariantFingerprint,
+    sourceRevision: quote.sourceRevision,
+    approvedTerms: quote.terms,
+    stripeRequest: source.stripeRequest,
+    idempotencyKey: `renewal-${source.subscription.livemode ? "live" : "test"}-${guildId}-${quote.nonce}`,
+    firstAttemptAt: now,
+    analyticsOptOut:
+      analyticsOptOut ||
+      (await isPurchaseAnalyticsOptedOut(guildId, source.subscription).catch(
+        () => true,
+      )),
+    revision: randomUUID(),
+    state: "applying",
+  };
+  if (
+    !(await context.owner.effect(() =>
+      repo.claim({ operation, expectedSubscription: saved }),
+    ))
+  )
+    return { kind: "changed" };
+  await captureRenewalOperationEvent({ operation, phase: "requested" });
+  return recover(context, operation);
 }

@@ -292,6 +292,57 @@ private storage or supported native protection metadata refuses execution.
 See [private Terraform delivery](../docs/terraform-private-delivery.md) for review,
 configuration, supported protection rules and unknown-acknowledgment handling.
 
+`plan_scope` accepts only `full`, `purchase-permission`, or
+`deployment-prerequisites`. `full` remains untargeted; `purchase-permission`
+continues to target only `aws_iam_role_policy.initial_purchase_condition`.
+Unsupported scope values fail before the plan command, and no scope accepts
+arbitrary Terraform arguments.
+
+`deployment-prerequisites` targets exactly:
+
+1. `aws_dynamodb_table.deployment_control_table`
+2. `aws_lb_target_group.api_spare_tg[0]`
+3. `aws_iam_role_policy.deployment_control`
+4. `aws_iam_policy.deployment_routing[0]`
+
+The inline deployment-control policy supplies its table's item/read permissions
+without changing the shared DynamoDB policy or depending on GSI work. Routing
+permissions construct the existing service, service-deployment and service-revision
+ARNs from its account, region, cluster and name prefix, so planning that policy
+does not depend on the ECS service or its task definition.
+
+Terraform targeting includes dependencies. Review the complete saved plan's
+dependency closure before approval. Reject any GSI migration, public-site change,
+ECS service change or task-definition change. Local mocked plans establish source
+behavior, not the closure of an actual saved production plan. Minimum health
+100%, maximum 200% and `DEFERRED` source cleanup belong only to separately approved
+activation. This prerequisite scope does not activate them. The saved-plan hash
+review and GitHub environment approval required by Terraform Apply are unchanged.
+
+Before artifact creation or upload, this scope runs
+`terraform show -json tfplan` through
+`scripts/deployment/validate-prerequisite-plan.cjs`. The guard requires the
+existing `aws_kms_key.app_general` to be a no-op. It permits create/update only
+for the four exact addresses above, other managed no-ops and dependent data reads.
+It rejects deletes, replacements, unsupported actions, invalid or missing action
+evidence and all other managed changes. A failed show/validation pipeline blocks
+artifact upload. Its output contains only fixed resource/action results, never
+plan values. Other plan scopes keep their existing behavior.
+
+The existing key's entire policy expression now has one configured owner,
+`aws_kms_key_policy.app_general`. The key's identity, rotation and deletion
+settings are unchanged. The key and encrypted DynamoDB tables do not depend on
+that policy resource, keeping CloudFront dependencies out of prerequisite plans.
+Encrypted CloudWatch log groups and the critical-alert SNS topic explicitly wait
+for the policy's service grants during cold creation.
+
+Standalone policy adoption requires a separate reviewed plan and approval; it is
+outside the four-target Apply. The actual state-backed prerequisite plan must
+show the existing key as a no-op or remain blocked. Mocked cold-state plans do not
+prove migration safety. Destroying the standalone policy restores the default key
+policy, so an ownership handback or revert needs separate review. Never remove the
+resource blindly.
+
 Each GitHub environment used by the workflow must provide:
 
 - Secret `AWS_ACCESS_KEY_ID`
@@ -676,6 +727,8 @@ two target groups and lifecycle ignores. Receipts reuse DeploymentControlTable.
 Observation scans only the eight existing maintenance tables. Runtime managed-policy
 readback covers the six existing application-role attachments. Unexpected policies
 or unreadable state must block preservation checks.
+
+The introduction role and acceptance collector allow `ecs:DescribeTaskDefinition` through a separate `RegionalDefinitionMetadata` statement with `Resource = "*"` and the configured `aws:RequestedRegion`. The [ECS authorization reference](https://docs.aws.amazon.com/service-authorization/latest/reference/list_ecs.html) does not support resource-level authorization for that operation. This permits regional task-definition metadata reads beyond the reviewed families. The source still validates exact reviewed definition ARNs, account, region and family; IAM does not enforce that narrower selection. The collector inherits this statement explicitly. No list, mutation or secret permission is added, and the four-target prerequisite plan cannot provision these roles. Effective permissions and any provisioning require separate execution approval.
 
 The role can put and delete inline policies only on the existing application role.
 AWS does not offer a condition for the inline policy name or its document. These

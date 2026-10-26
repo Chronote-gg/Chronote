@@ -99,8 +99,10 @@ Both the key and project ID must be nonempty. Missing runtime configuration
 fails the job before any push; the required `OpenAI-Project` header is never
 dropped. Values are masked and exported only within that step, without
 persisting them to Actions environment files, outputs, or artifacts. Langfuse
-credentials and base URL use the same bindings as prompt promotion. No new
-GitHub secrets or Terraform apply are needed.
+credentials and base URL use the same bindings as prompt promotion. Routine
+sync needs no new GitHub secrets or Terraform apply once the prompt-guard OIDC
+role and its permissions are provisioned. The role is disabled by default;
+first provisioning requires the separately approved Terraform apply.
 
 Other providers, including Bedrock, remain explicitly managed with the existing
 commands and provider credentials. The automatic job never includes their YAML.

@@ -847,6 +847,7 @@ resource "aws_security_group" "ecs_service_sg" {
 }
 
 resource "aws_cloudwatch_log_group" "app_log_group" {
+  depends_on        = [aws_kms_key_policy.app_general]
   name              = "/ecs/${local.name_prefix}-bot"
   retention_in_days = 365
   kms_key_id        = aws_kms_key.app_general.arn
@@ -860,7 +861,10 @@ resource "aws_kms_key" "app_general" {
   description             = "KMS key for ECR, CloudWatch logs, and other app resources"
   deletion_window_in_days = 7
   enable_key_rotation     = true
+}
 
+resource "aws_kms_key_policy" "app_general" {
+  key_id = aws_kms_key.app_general.id
   policy = jsonencode({
     Version = "2012-10-17",
     Statement = [
@@ -2300,6 +2304,14 @@ resource "aws_iam_role_policy" "deployment_control" {
     Statement = [
       {
         Effect = "Allow"
+        Action = [
+          "dynamodb:GetItem", "dynamodb:PutItem", "dynamodb:UpdateItem",
+          "dynamodb:DeleteItem", "dynamodb:Query", "dynamodb:Scan"
+        ]
+        Resource = [aws_dynamodb_table.deployment_control_table.arn]
+      },
+      {
+        Effect = "Allow"
         Action = ["dynamodb:ConditionCheckItem"]
         Resource = [
           aws_dynamodb_table.deployment_control_table.arn,
@@ -3185,6 +3197,7 @@ resource "aws_iam_role_policy" "vpc_flow_logs_policy" {
 }
 
 resource "aws_cloudwatch_log_group" "vpc_flow_logs" {
+  depends_on        = [aws_kms_key_policy.app_general]
   name              = local.vpc_flow_logs_log_group_name
   retention_in_days = 365
   kms_key_id        = aws_kms_key.app_general.arn

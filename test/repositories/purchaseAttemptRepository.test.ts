@@ -199,6 +199,11 @@ describe("purchase Dynamo commands", () => {
     expect(send).not.toHaveBeenCalled();
   });
   test("reclaims only expired processing receipts and finishes only an unexpired owned lease", async () => {
+    send.mockRejectedValueOnce(
+      Object.assign(new Error("existing"), {
+        name: "ConditionalCheckFailedException",
+      }),
+    );
     await claimStripeWebhookEvent({
       eventId: "evt",
       receivedAt: "now",
@@ -209,13 +214,23 @@ describe("purchase Dynamo commands", () => {
     });
     await finishStripeWebhookEvent("evt", "token", false);
     const claim = send.mock.calls[0][0];
-    const finish = send.mock.calls[1][0];
+    const retry = send.mock.calls[1][0];
+    const finish = send.mock.calls[2][0];
     expect(claim).toBeInstanceOf(PutItemCommand);
     expect(finish).toBeInstanceOf(UpdateItemCommand);
     if (claim instanceof PutItemCommand)
-      expect(claim.input.ConditionExpression).toContain(
+      expect(claim.input.ConditionExpression).toBe(
+        "attribute_not_exists(eventId)",
+      );
+    expect(retry).toBeInstanceOf(UpdateItemCommand);
+    if (retry instanceof UpdateItemCommand) {
+      expect(retry.input.ConditionExpression).toContain(
         "#state = :processing AND leaseUntil <= :now",
       );
+      expect(retry.input.UpdateExpression).toBe(
+        "SET leaseToken = :token, leaseUntil = :until REMOVE expiresAt",
+      );
+    }
     if (finish instanceof UpdateItemCommand)
       expect(finish.input.ConditionExpression).toContain(
         "leaseToken = :token AND leaseUntil > :now",

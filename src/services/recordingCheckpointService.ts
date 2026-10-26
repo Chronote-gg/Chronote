@@ -1,3 +1,5 @@
+import { fixtureInputSnapshot } from "./fixtureInputService";
+import { validateFixtureCapture } from "./fixtureEvidenceValidation";
 import { createHash } from "node:crypto";
 import { summarizeCaptureCoverage } from "../utils/meetingCaptureNotice";
 import { isDeepStrictEqual } from "node:util";
@@ -54,6 +56,7 @@ type Objects = {
   read: typeof fetchObjectBytesFromS3;
 };
 export type CheckpointFlushInput = {
+  fixtureInput?: import("../types/fixtureEvidence").FixtureInputEvidence;
   ownership?: CheckpointPublication["ownership"];
   capture: RecordingCaptureProvenance;
   captureState?: RecordingCaptureState;
@@ -329,6 +332,29 @@ function matchesAcknowledgedTransition(
     )
   );
 }
+function fixtureEvidenceFields(
+  fixtureInput: RecordingManifest["fixtureInput"],
+) {
+  return fixtureInput ? { fixtureInput } : {};
+}
+function selectedFixtureEvidence(
+  input: CheckpointFlushInput,
+  previous: RecordingManifest | undefined,
+) {
+  const fixtureInput = input.fixtureInput ?? previous?.fixtureInput;
+  validateFixtureCapture(input.capture, fixtureInput, previous?.fixtureInput);
+  return fixtureInput;
+}
+function checkpointMetadataChanged(
+  state: RecordingCaptureState,
+  fixtureInput: RecordingManifest["fixtureInput"],
+  previous: RecordingManifest | undefined,
+) {
+  return (
+    !isDeepStrictEqual(state, previous?.captureState) ||
+    !isDeepStrictEqual(fixtureInput, previous?.fixtureInput)
+  );
+}
 export function createRecordingCheckpointService(
   dependencies: { repository: Repository; objects: Objects } = {
     repository: getDeploymentControlRepository(),
@@ -398,6 +424,7 @@ export function createRecordingCheckpointService(
       manifest.artifactFolder !== pointer.artifactFolder
     )
       throw new Error("Checkpoint capture binding mismatch");
+    validateFixtureCapture(manifest.capture, manifest.fixtureInput);
     const identities = new Set<string>();
     for (const item of manifest.artifacts) {
       const expected = `${prefix}${item.kind}/${encodeURIComponent(item.sourceId)}/${item.sequence}-${item.object.checksumSha256}`;
@@ -461,6 +488,7 @@ export function createRecordingCheckpointService(
   ): Promise<CheckpointAppendResult> {
     const capture = input.capture;
     const state = captureState(input, previous);
+    const fixtureInput = selectedFixtureEvidence(input, previous);
     assertCompleteCapturePreserved(state, previous?.captureState);
     const key = {
       guildId: capture.guildId,
@@ -494,11 +522,12 @@ export function createRecordingCheckpointService(
     if (
       !checkpoint ||
       artifacts.length !== previous?.artifacts.length ||
-      !isDeepStrictEqual(state, previous?.captureState)
+      checkpointMetadataChanged(state, fixtureInput, previous)
     ) {
       const folder =
         previous?.artifactFolder ?? getRecordingArtifactFolder(capture);
       const manifest: RecordingManifest = {
+        ...fixtureEvidenceFields(fixtureInput),
         artifactFolder: folder,
         schemaVersion: 1,
         revision: (checkpoint?.revision ?? 0) + 1,
@@ -579,6 +608,7 @@ export function createRecordingCheckpointService(
       acknowledged = {
         checkpoint,
         manifest: {
+          ...fixtureEvidenceFields(fixtureInput),
           artifactFolder: checkpoint.artifactFolder,
           schemaVersion: 1,
           revision: checkpoint.revision,
@@ -793,6 +823,7 @@ export function createRecordingCheckpointService(
           generateNotes: meeting.generateNotes,
         },
       },
+      fixtureInput: fixtureInputSnapshot(meeting),
       captureState: meeting.recordingCaptureState,
       previous: meeting.recordingCheckpoint,
       expectedStatus: row.status,
@@ -855,6 +886,7 @@ export function createRecordingCheckpointService(
         artifact: CheckpointArtifactInput;
       },
     ) => flush({ ...input, artifacts: [input.artifact] }),
+    readMetadata: loadManifest,
     read,
     readVerifiedObject: verifiedBytes,
     appendRecordingCheckpoint,

@@ -1,7 +1,9 @@
 # ADR-20261021: Transcription Work Ownership
 
-Status: Accepted  
-Date: 2026-10-21  
+Status: Accepted
+
+Date: 2026-10-21
+
 Owners: Audio pipeline
 
 ## Context

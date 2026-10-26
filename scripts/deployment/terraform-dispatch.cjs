@@ -24,7 +24,11 @@ function parseDispatch(env, event) {
   const base = {
     github_environment: z.enum(["production", "sandbox"]),
     terraform_workspace: z.enum(["default", "sandbox"]),
-    plan_scope: z.enum(["full", "purchase-permission"]),
+    plan_scope: z.enum([
+      "full",
+      "purchase-permission",
+      "deployment-prerequisites",
+    ]),
   };
   const hash = z.string().regex(/^[a-f0-9]{64}$/);
   const apply = workflowPath === ".github/workflows/terraform-apply.yml";

@@ -28,19 +28,72 @@ credential_tfvars = {
     "REDIS_URL",
     "grafana_api_key",
 }
-github_vars = json.loads(os.environ.get("GITHUB_VARS_JSON") or "{}")
+collection_keys = {
+    "production_introduction_task_definitions",
+    "production_introduction_standalone_tasks",
+    "production_acceptance_fixtures",
+}
+canonical_keys = collection_keys | {
+    "enable_production_introduction_roles",
+    "enable_production_acceptance_collector",
+}
+
+
+def unique_object(pairs):
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("duplicate key")
+        result[key] = value
+    return result
+
+
+def decode_json(value):
+    try:
+        return json.loads(value, object_pairs_hook=unique_object)
+    except (ValueError, TypeError):
+        raise SystemExit("Invalid Terraform variable JSON; values are not logged.") from None
+
+
+def collection_value(key, value):
+    parsed = decode_json(value)
+    valid = isinstance(parsed, list)
+    if valid and key == "production_acceptance_fixtures":
+        fields = {"guild_id", "voice_channel_id", "meeting_id"}
+        valid = all(
+            isinstance(item, dict)
+            and set(item) == fields
+            and all(isinstance(member, str) for member in item.values())
+            for item in parsed
+        )
+    elif valid:
+        valid = all(isinstance(item, str) for item in parsed)
+    if not valid:
+        raise SystemExit("Invalid declared Terraform collection shape; values are not logged.")
+    return parsed
+
+
+github_vars = decode_json(os.environ.get("GITHUB_VARS_JSON") or "{}")
+if not isinstance(github_vars, dict):
+    raise SystemExit("GitHub Terraform variables must be a JSON object.")
+# Refuse credential overrides before decoding any collection payload.
+for name in github_vars:
+    if name.startswith("TFVAR_") and name[len("TFVAR_") :] in credential_tfvars:
+        raise SystemExit("TFVAR would override a credential. Credentials belong in TERRAFORM_TFVARS_JSON.")
+
+seen = set()
 for name, value in github_vars.items():
     if not name.startswith("TFVAR_"):
         continue
     key = name[len("TFVAR_") :]
-    # Variables are writable by people who cannot write secrets, so a
-    # credential must never be settable through this path.
-    if key in credential_tfvars:
-        raise SystemExit(
-            f"{name} would override the credential {key}. "
-            "Credentials belong in TERRAFORM_TFVARS_JSON."
-        )
-    if str(value).strip():
+    if key.lower() in canonical_keys:
+        key = key.lower()
+        if key in seen:
+            raise SystemExit("Ambiguous declared Terraform variable aliases.")
+        seen.add(key)
+    if key in collection_keys:
+        data[key] = collection_value(key, value)
+    elif str(value).strip():
         data[key] = str(value).strip()
 
 required = ["GITHUB_TOKEN", "AWS_TOKEN_KEY", "DISCORD_CLIENT_ID"]

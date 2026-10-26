@@ -1,48 +1,74 @@
 #!/usr/bin/env node
-const { execSync } = require("child_process");
+const { execFileSync } = require("child_process");
+const path = require("path");
 
-// Get staged files
-const stagedFiles = process.argv.slice(2);
-
-if (stagedFiles.length === 0) {
-  console.log("No staged files to lint");
-  process.exit(0);
+function batches(files) {
+  const result = [];
+  let batch = [];
+  let length = 0;
+  for (const file of files) {
+    if (length + file.length + 3 > 6000 && batch.length) {
+      result.push(batch);
+      batch = [];
+      length = 0;
+    }
+    batch.push(file);
+    length += file.length + 3;
+  }
+  if (batch.length) result.push(batch);
+  return result;
 }
 
-// Separate files by type
-const jsFiles = stagedFiles.filter((f) => /\.(js|jsx|ts|tsx)$/.test(f));
-const formatFiles = stagedFiles.filter((f) =>
-  /\.(js|jsx|ts|tsx|json|md|yml|yaml)$/.test(f),
-);
-
-try {
-  // Run ESLint on JS/TS files
-  if (jsFiles.length > 0) {
-    console.log("Running ESLint...");
-    execSync(`npx eslint --fix ${jsFiles.join(" ")}`, { stdio: "inherit" });
+function runStagedChecks(run = execFileSync) {
+  const readPaths = (args) =>
+    run("git", args, { encoding: "utf8" }).split("\0").filter(Boolean);
+  const staged = readPaths([
+    "diff",
+    "--cached",
+    "--name-only",
+    "--diff-filter=ACM",
+    "-z",
+  ]);
+  if (!staged.length) return;
+  const tools = [
+    ["eslint/bin/eslint.js", "--fix", /\.(js|jsx|ts|tsx)$/],
+    [
+      "prettier/bin/prettier.cjs",
+      "--write",
+      /\.(js|jsx|ts|tsx|json|md|yml|yaml)$/,
+    ],
+  ];
+  for (const [tool, option, pattern] of tools) {
+    for (const batch of batches(staged.filter((file) => pattern.test(file)))) {
+      run(
+        process.execPath,
+        [
+          path.resolve(__dirname, "../node_modules", tool),
+          option,
+          "--",
+          ...batch,
+        ],
+        {
+          stdio: "inherit",
+        },
+      );
+    }
   }
-
-  // Run Prettier on all applicable files
-  if (formatFiles.length > 0) {
-    console.log("Running Prettier...");
-    execSync(`npx prettier --write ${formatFiles.join(" ")}`, {
-      stdio: "inherit",
-    });
+  const stagedSet = new Set(staged);
+  const changed = readPaths(["diff", "--name-only", "-z"]).filter((file) =>
+    stagedSet.has(file),
+  );
+  for (const batch of batches(changed)) {
+    run("git", ["add", "--", ...batch], { stdio: "inherit" });
   }
+}
 
-  console.log("✅ Linting complete!");
-
-  // Check if any files were modified by the linters
-  const modifiedFiles = execSync("git diff --name-only", {
-    encoding: "utf8",
-  }).trim();
-  if (modifiedFiles) {
-    console.log("📝 Files were modified by linters, staging changes...");
-    execSync(`git add ${modifiedFiles.split("\n").join(" ")}`, {
-      stdio: "inherit",
-    });
+module.exports = { runStagedChecks };
+if (require.main === module) {
+  try {
+    runStagedChecks();
+  } catch (error) {
+    console.error("Staged checks failed:", error.message);
+    process.exitCode = 1;
   }
-} catch {
-  console.error("❌ Linting failed");
-  process.exit(1);
 }

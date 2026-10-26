@@ -6,6 +6,7 @@ jest.mock("@aws-sdk/client-dynamodb", () => ({
   ...jest.requireActual("@aws-sdk/client-dynamodb"),
   DynamoDBClient: jest.fn(() => ({ send: mockSend })),
 }));
+import { TransactionCanceledException } from "@aws-sdk/client-dynamodb";
 import { marshall } from "@aws-sdk/util-dynamodb";
 import {
   claimPersonalMediaUploadJob,
@@ -95,18 +96,21 @@ test.each(["paused", "owner mismatch", "read unavailable", "unpaused"])(
 test("submission classifies an atomic marker refusal without falling back to put", async () => {
   mockSend.mockImplementation(async (command) => {
     if (command.constructor.name === "TransactWriteItemsCommand")
-      throw {
-        name: "TransactionCanceledException",
+      throw new TransactionCanceledException({
+        $metadata: {},
+        message: "synthetic conditional cancellation",
         CancellationReasons: [
+          { Code: "None" },
+          { Code: "None" },
           { Code: "ConditionalCheckFailed" },
           { Code: "None" },
         ],
-      };
+      });
     return {};
   });
-  expect(await submitPersonalMediaUploadJob({ ...job, status: "queued" })).toBe(
-    false,
-  );
+  expect(
+    await submitPersonalMediaUploadJob({ ...job, status: "queued" }, context),
+  ).toBe(false);
 });
 
 test("queue pages through paused and empty filtered pages before the batch limit", async () => {
@@ -160,5 +164,53 @@ test.each(["malformed", "unavailable"])(
         limit: 1,
       }),
     ).rejects.toThrow();
+  },
+);
+
+test.each([
+  ["missing", undefined],
+  ["short", ["None", "None", "ConditionalCheckFailed"]],
+  ["all none", ["None", "None", "None", "None"]],
+  [
+    "mixed unknown",
+    ["None", "None", "ConditionalCheckFailed", "ValidationError"],
+  ],
+])(
+  "incomplete or uncertain %s cancellation cannot settle a personal submission or claim",
+  async (_name, codes) => {
+    const failure = new TransactionCanceledException({
+      $metadata: {},
+      message: "synthetic uncertain cancellation",
+      CancellationReasons: codes?.map((Code) => ({ Code })),
+    });
+    mockSend.mockRejectedValue(failure);
+    await expect(
+      submitPersonalMediaUploadJob({ ...job, status: "queued" }, context),
+    ).rejects.toThrow();
+    mockSend
+      .mockReset()
+      .mockResolvedValueOnce({
+        Item: marshall({
+          ...job,
+          status: "queued",
+          processingClaimId: "previous",
+        }),
+      })
+      .mockResolvedValueOnce({})
+      .mockRejectedValueOnce(failure);
+    await expect(
+      claimPersonalMediaUploadJob({
+        uploadId: job.uploadId,
+        instanceId: "old",
+        nowEpochSeconds: 100,
+        claimExpiresAt: 200,
+        updatedAt: "later",
+        maxAttempts: 3,
+        context,
+        claimId: "new-claim",
+        expectedAttempts: 1,
+      }),
+    ).rejects.toBe(failure);
+    expect(mockSend.mock.calls.at(-1)?.[0].input.TransactItems).toHaveLength(4);
   },
 );

@@ -195,6 +195,26 @@ Whole-branch review, published exact-head checks, clean mergeability and the pos
 
 For the separately reviewed one-time introduction from an incompatible runtime, see [Sandbox bootstrap tooling](sandbox-bootstrap.md). Normal deployments still use the existing coordinator. The bootstrap and read-only observation commands do not apply infrastructure, stop legacy work, register an image, alter the listener or start a monitor automatically.
 
+## Stripe receipt admission and retention
+
+Authenticated callbacks persist an event ID and lease even when runtime proof is unavailable. No event payload is stored. A genuinely new proved receipt records immutable `birth` provenance under `stripe-receipt-admission-v1`. A lease retry updates only `leaseToken` and `leaseUntil` and removes unresolved TTL. It never replaces birth or first-admission history.
+
+Every recognized callback must atomically record its continuation admission with the existing Control and runtime admission conditions before invoking its handler. Admission binds the unexpired receipt token, attempt ID, exact runtime and serving generation. A lost transaction response prevents handler invocation. A legacy or unproven processing receipt remains retained and returns a retryable failure. A running prior admission cannot replay after lease expiry. Only a failed attempt that performed no mutation can receive fresh admission while preserving its first admission.
+
+The registered billing owner covers the complete handler, nested domain and provider writes, and final receipt persistence. Reads and pure computation do not start mutation tracking. A read failure before any mutation can release its attempt. A lost mutation acknowledgment, a failure after an acknowledged domain or provider write, or a failed final receipt write leaves unresolved ownership. Matching later reads do not create acknowledgment. Successful completed duplicates retain their existing acknowledgment behavior.
+
+New and reclaimed unresolved receipts have no TTL. Successful completion restores 30-day retention. Untouched legacy rows retain any existing TTL until separately inventoried. The change does not migrate them. Longer unresolved metadata retention can increase storage cost, which has not been priced. Analytics deduplication markers retain their existing retention periods and event properties.
+
+`scripts/deployment/retained-receipts.cjs` exports the versioned safe projection and `preservedUnadmittedReceipt` predicate. The projection represents any admission or first-admission object as a presence Boolean, so malformed empty history still blocks classification. A matching predicate returns `preserved_unadmitted_receipt`, meaning future work that has never crossed this admission boundary. It does not mean a payment is settled. The ordinary retained-work classifier continues to block those receipts.
+
+Task7 must obtain authenticated, complete inventory of every serving and draining callback receiver, exact reviewed source and image bindings, acknowledged legacy retirement and routing evidence, and the current exact hold. It must bind that evidence to the reviewed disposition and source through the existing compatibility contract before introducing an opaque authorizing closure. The Task6 schema checks shape and compatibility only. Caller-supplied objects, source hashes or a nonauthorizing predicate result cannot release a hold. Unknown or omitted receivers block reopening.
+
+## Standalone renewal coverage audit
+
+`scripts/billing-renewal-recovery.ts` supports read-only coverage audit, bounded pagination and resume, provider identity checks, and existing index/deployed-writer coverage evidence. Standalone `--apply` is disabled and fails before any domain or provider write. The audit cannot register or refresh renewal recovery records. Existing admitted renewal workers retain their current behavior.
+
+Restoring standalone writes requires a separately reviewed admitted executor. Do not initialize an arbitrary runtime, bypass billing admission, or treat an audit report as write authority. Historical apply reports remain readable, but they cannot resume in apply mode.
+
 ## Sandbox source-loss recovery
 
 A separately approved stopped-source operation uses [Sandbox source-loss recovery](sandbox-source-loss.md). It restores the existing candidate's admission and routing while preserving pending settlement. Healthy-source continuation and normal retirement still require their original evidence.
@@ -206,3 +226,5 @@ The separately approved [historical carryforward contract](sandbox-carryforward.
 The manual `production-introduction.yml` is source-staged and operationally blocked. It defaults to inspection, binds one exact proposal with read-only identity evidence, and validates the late private envelope before refusing at `Post-bind human authority unavailable; preserve state`. It shares uncancelled production deployment concurrency. A collector alone cannot unlock execution.
 
 The [production introduction procedure](production-introduction.md) explains the accepted eventual phase contract, current missing human gate and private delivery/collector/store, exact-run authority, recovery limits, Terraform confidentiality and acceptance status. No exact private execution packet is available yet. Ordinary frontend publication waits for backend success; docs publication precedes the backend and is independent of its result.
+
+The separate [production interruption contract](production-interruption-contract.md) records A's maintenance boundary, current source refusal, private Apply guard, connection-sync permission exposure and unproved execution prerequisites.

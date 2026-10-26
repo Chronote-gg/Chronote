@@ -8,6 +8,24 @@ import {
   type TransactWriteItemsCommandInput,
 } from "@aws-sdk/client-dynamodb";
 import { marshall, unmarshall } from "@aws-sdk/util-dynamodb";
+export const createLocalControlTable = (
+  client: DynamoDBClient,
+  TableName: string,
+) =>
+  client.send(
+    new CreateTableCommand({
+      TableName,
+      BillingMode: "PAY_PER_REQUEST",
+      KeySchema: ["pk", "sk"].map((AttributeName, index) => ({
+        AttributeName,
+        KeyType: index === 0 ? "HASH" : "RANGE",
+      })),
+      AttributeDefinitions: ["pk", "sk"].map((AttributeName) => ({
+        AttributeName,
+        AttributeType: "S",
+      })),
+    }),
+  );
 export function localControlTable() {
   const client = new DynamoDBClient({
     region: "local",
@@ -15,20 +33,7 @@ export function localControlTable() {
     credentials: { accessKeyId: "dummy", secretAccessKey: "dummy" },
   });
   const createTable = (TableName: string) =>
-    client.send(
-      new CreateTableCommand({
-        TableName,
-        BillingMode: "PAY_PER_REQUEST",
-        KeySchema: ["pk", "sk"].map((AttributeName, index) => ({
-          AttributeName,
-          KeyType: index === 0 ? "HASH" : "RANGE",
-        })),
-        AttributeDefinitions: ["pk", "sk"].map((AttributeName) => ({
-          AttributeName,
-          AttributeType: "S",
-        })),
-      }),
-    );
+    createLocalControlTable(client, TableName);
   function records(TableName: string) {
     const put = (row: object) =>
       client.send(new PutItemCommand({ TableName, Item: marshall(row) }));

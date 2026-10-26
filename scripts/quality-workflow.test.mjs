@@ -115,7 +115,7 @@ test("local and broad checks use the shared launcher and consumer contracts", ()
   );
   assert.equal(
     pkg.scripts["test:quality"],
-    "node --test scripts/quality-workflow.test.mjs scripts/shared-quality.test.mjs",
+    "node --test scripts/quality-workflow.test.mjs scripts/shared-quality.test.mjs scripts/lint-staged-win.test.cjs",
   );
   for (const name of ["check:parallel", "check:ci"]) {
     assert.match(pkg.scripts[name], /check:quality/);

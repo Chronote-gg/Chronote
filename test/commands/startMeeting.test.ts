@@ -355,7 +355,13 @@ test("initial recovery history and lease retain the routed text channel", async 
       ts.isFunctionDeclaration(node) &&
       node.name?.text === "initializeNewMeeting",
   );
-  if (!declaration) throw new Error("Missing initializer");
+  const fixtureOptions = source.statements.find(
+    (node) =>
+      ts.isFunctionDeclaration(node) &&
+      node.name?.text === "assertFixtureStartOptions",
+  );
+  if (!declaration || !fixtureOptions)
+    throw new Error("Missing initializer guards");
   const acquire = jest.fn(async () => ({
     kind: "blocked",
     reason: "deployment",
@@ -368,7 +374,10 @@ test("initial recovery history and lease retain the routed text channel", async 
   await expect(
     vm.runInContext(
       ts.transpileModule(
-        declaration.getText(source) + "\ninitializeNewMeeting(options);",
+        fixtureOptions.getText(source) +
+          "\n" +
+          declaration.getText(source) +
+          "\ninitializeNewMeeting(options);",
         { compilerOptions: { target: ts.ScriptTarget.ES2022 } },
       ).outputText,
       context,

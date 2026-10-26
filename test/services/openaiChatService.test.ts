@@ -22,7 +22,10 @@ const loadModule = async (
   const responseCreate = jest.fn().mockImplementation(() => {
     const response = responses[Math.min(callIndex, responses.length - 1)];
     callIndex += 1;
-    const result = completedTextResponse(response.content);
+    const result = {
+      ...completedTextResponse(response.content),
+      model: "provider-model-7",
+    };
     return response.truncated
       ? {
           ...result,
@@ -99,4 +102,30 @@ describe("openaiChatService", () => {
 
     expect(responseCreate).toHaveBeenCalledTimes(1);
   });
+});
+
+test("records every continuation response with actual model and resolved prompt metadata", async () => {
+  const { module } = await loadModule([
+    { content: "one", truncated: true },
+    { content: "two" },
+  ]);
+  const acknowledged = jest.fn();
+  const observeGeneration = jest.fn(() => acknowledged);
+  const meeting = { ...buildMeeting(), observeGeneration };
+  const prompt = { name: "notes-template", version: 8, isFallback: false };
+  expect(
+    await module.chat(
+      meeting,
+      { messages: [{ role: "user", content: "private input" }] },
+      { langfusePrompt: prompt },
+    ),
+  ).toBe("onetwo");
+  expect(observeGeneration.mock.calls).toEqual([
+    ["notes", "gpt-test", prompt],
+    ["notes", "gpt-test", prompt],
+  ]);
+  expect(acknowledged.mock.calls).toEqual([
+    ["provider-model-7"],
+    ["provider-model-7"],
+  ]);
 });

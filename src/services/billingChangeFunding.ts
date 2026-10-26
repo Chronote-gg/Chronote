@@ -1,3 +1,4 @@
+import type { StripeEffect } from "../types/stripe";
 import type {
   StripeClient,
   StripeInvoice,
@@ -39,28 +40,32 @@ export function assertFundingOwner(
 }
 export async function createChangeFundingDraft(input: {
   stripe: StripeClient;
+  effect?: StripeEffect;
   operation: BillingChangeOperation;
   subscription: StripeSubscription;
 }) {
   const { stripe, operation, subscription } = input;
-  const invoice = await stripe.invoices.create(
-    {
-      customer: operation.source.customerId,
-      auto_advance: false,
-      collection_method: "charge_automatically",
-      pending_invoice_items_behavior: "exclude",
-      discounts: "",
-      ...(subscription.automatic_tax.enabled
-        ? { automatic_tax: { enabled: true } }
-        : { default_tax_rates: operation.source.taxRateIds }),
-      default_payment_method: stripeId(subscription.default_payment_method),
-      metadata: {
-        ...changeMetadata(operation),
-        chronote_invoice_role: "funding",
+  const write: StripeEffect = input.effect ?? ((run) => run());
+  const invoice = await write(() =>
+    stripe.invoices.create(
+      {
+        customer: operation.source.customerId,
+        auto_advance: false,
+        collection_method: "charge_automatically",
+        pending_invoice_items_behavior: "exclude",
+        discounts: "",
+        ...(subscription.automatic_tax.enabled
+          ? { automatic_tax: { enabled: true } }
+          : { default_tax_rates: operation.source.taxRateIds }),
+        default_payment_method: stripeId(subscription.default_payment_method),
+        metadata: {
+          ...changeMetadata(operation),
+          chronote_invoice_role: "funding",
+        },
+        description: "Chronote plan change",
       },
-      description: "Chronote plan change",
-    },
-    changeIdempotency(operation, "funding-draft"),
+      changeIdempotency(operation, "funding-draft"),
+    ),
   );
   assertFundingOwner(invoice, operation);
   if (invoice.status !== "draft") throw changeUnavailable();
@@ -69,12 +74,14 @@ export async function createChangeFundingDraft(input: {
 async function completeFundingDraft(
   input: {
     stripe: StripeClient;
+    effect?: StripeEffect;
     operation: BillingChangeOperation;
     subscription: StripeSubscription;
   },
   invoice: StripeInvoice,
 ) {
   const { stripe, operation } = input;
+  const write: StripeEffect = input.effect ?? ((run) => run());
   if (invoice.status === "draft") {
     const parts = [
       {
@@ -110,42 +117,46 @@ async function completeFundingDraft(
         taxCode = stripeId(product.tax_code);
       }
       if (!existing.length)
-        await stripe.invoiceItems.create(
-          {
-            customer: operation.source.customerId,
-            invoice: invoice.id,
-            ...(part.amount < 0
-              ? {
-                  amount: part.amount,
-                  currency: operation.target.currency,
-                  tax_behavior: part.taxBehavior,
-                  ...(taxCode ? { tax_code: taxCode } : {}),
-                }
-              : {
-                  price_data: {
+        await write(() =>
+          stripe.invoiceItems.create(
+            {
+              customer: operation.source.customerId,
+              invoice: invoice.id,
+              ...(part.amount < 0
+                ? {
+                    amount: part.amount,
                     currency: operation.target.currency,
-                    product: part.productId ?? operation.source.productId,
-                    unit_amount: part.amount,
                     tax_behavior: part.taxBehavior,
-                  },
-                }),
-            ...(input.subscription.automatic_tax.enabled
-              ? {}
-              : { tax_rates: operation.source.taxRateIds }),
-            discountable: false,
-            description: part.description,
-            metadata: {
-              ...changeMetadata(operation),
-              chronote_change_part: part.role,
+                    ...(taxCode ? { tax_code: taxCode } : {}),
+                  }
+                : {
+                    price_data: {
+                      currency: operation.target.currency,
+                      product: part.productId ?? operation.source.productId,
+                      unit_amount: part.amount,
+                      tax_behavior: part.taxBehavior,
+                    },
+                  }),
+              ...(input.subscription.automatic_tax.enabled
+                ? {}
+                : { tax_rates: operation.source.taxRateIds }),
+              discountable: false,
+              description: part.description,
+              metadata: {
+                ...changeMetadata(operation),
+                chronote_change_part: part.role,
+              },
             },
-          },
-          changeIdempotency(operation, `funding-${part.role}`),
+            changeIdempotency(operation, `funding-${part.role}`),
+          ),
         );
     }
-    invoice = await stripe.invoices.finalizeInvoice(
-      invoice.id,
-      { auto_advance: false },
-      changeIdempotency(operation, "funding-finalize"),
+    invoice = await write(() =>
+      stripe.invoices.finalizeInvoice(
+        invoice.id,
+        { auto_advance: false },
+        changeIdempotency(operation, "funding-finalize"),
+      ),
     );
   }
   return invoice;
@@ -153,6 +164,7 @@ async function completeFundingDraft(
 
 export async function finalizeChangeFunding(input: {
   stripe: StripeClient;
+  effect?: StripeEffect;
   operation: BillingChangeOperation;
   subscription: StripeSubscription;
 }) {

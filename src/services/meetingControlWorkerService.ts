@@ -1,3 +1,5 @@
+import { resolveFixtureStartScope } from "./productionFixtureCommandService";
+import type { NewWorkScope } from "../types/productionIntroduction";
 import {
   InitiatingStopInterruption,
   sameOriginalSession,
@@ -73,20 +75,34 @@ function isOriginalStopInterruption(
   );
 }
 
+async function resolveQueuedScope(
+  command: MeetingControlCommand,
+  authority: WorkAdmissionAuthority,
+  repository: ReturnType<typeof getMeetingControlCommandRepository>,
+) {
+  if (command.commandType !== "start_meeting" || authority.kind !== "serving")
+    return undefined;
+  const stored = await repository.getCommand(command.requestId);
+  if (!stored) throw new Error("Queued command missing");
+  return resolveFixtureStartScope(stored, authority.context.maintenance);
+}
+
 async function runCommand(
   client: Client,
   command: MeetingControlCommand,
   instanceId: string,
   work: RuntimeWorkClaim,
 ) {
+  const repository = getMeetingControlCommandRepository();
   let authority: WorkAdmissionAuthority;
+  let scope: NewWorkScope | undefined;
   try {
     authority = await work.authority();
+    scope = await resolveQueuedScope(command, authority, repository);
   } catch {
     await work.settle();
     return;
   }
-  const repository = getMeetingControlCommandRepository();
   const claimId = randomUUID();
   const claimInput = {
     requestId: command.requestId,
@@ -96,6 +112,7 @@ async function runCommand(
     claimExpiresAt: epochSeconds() + WORKER_CLAIM_SECONDS,
     updatedAt: nowIso(),
     authority,
+    scope,
   };
   work.recordClaim({
     claimId,
@@ -148,6 +165,7 @@ async function runCommand(
       claimed,
       assertOwned,
       work.signal,
+      scope,
     );
     work.signal.throwIfAborted();
     const committed = await repository.completeCommand({

@@ -52,7 +52,25 @@ export function createRecoveryFaultDatabase(names?: {
       }),
     );
   }
+  async function createTable(TableName: string, keys: string[]) {
+    const AttributeDefinitions = keys.map((AttributeName) => ({
+      AttributeName,
+      AttributeType: "S" as const,
+    }));
+    await client.send(
+      new CreateTableCommand({
+        TableName,
+        AttributeDefinitions,
+        BillingMode: "PAY_PER_REQUEST",
+        KeySchema: AttributeDefinitions.map(({ AttributeName }, index) => ({
+          AttributeName,
+          KeyType: index === 0 ? "HASH" : "RANGE",
+        })),
+      }),
+    );
+  }
   return {
+    createTable,
     tables,
     client,
     repository,
@@ -63,20 +81,7 @@ export function createRecoveryFaultDatabase(names?: {
         [tables.meetingHistory, ["guildId", "channelId_timestamp"]],
         [tables.activeMeeting, ["guildId"]],
       ] as const) {
-        await client.send(
-          new CreateTableCommand({
-            TableName: name,
-            BillingMode: "PAY_PER_REQUEST",
-            KeySchema: keys.map((AttributeName, index) => ({
-              AttributeName,
-              KeyType: index === 0 ? "HASH" : "RANGE",
-            })),
-            AttributeDefinitions: keys.map((AttributeName) => ({
-              AttributeName,
-              AttributeType: "S",
-            })),
-          }),
-        );
+        await createTable(name, [...keys]);
         created.push(name);
       }
     },

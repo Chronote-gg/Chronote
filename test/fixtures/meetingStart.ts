@@ -40,6 +40,7 @@ jest.mock("../../src/services/meetingArtifactAccessService", () => ({
   })),
 }));
 jest.mock("../../src/services/activeMeetingLeaseService", () => ({
+  ...jest.requireActual("../../src/services/activeMeetingLeaseService"),
   getActiveMeetingLeaseForGuild: jest.fn(async () => undefined),
   isLeaseActive: (lease: { leaseExpiresAt: number }) =>
     lease.leaseExpiresAt > Date.now() / 1000,
@@ -53,6 +54,7 @@ jest.mock("../../src/utils/permissions", () => ({
   canBotSendMessages: jest.fn(() => true),
 }));
 jest.mock("../../src/services/ownedMeetingInterruption", () => ({
+  ...jest.requireActual("../../src/services/ownedMeetingInterruption"),
   interruptOwnedMeeting: jest.fn(async () => ({ kind: "unresolved" })),
 }));
 
@@ -97,7 +99,12 @@ export function createMeetingStartDiscordFixture() {
   ]);
   const voice: VoiceChannel = Reflect.construct(VoiceChannel, [
     guild,
-    { id: "voice-1", type: ChannelType.GuildVoice, name: "Voice" },
+    {
+      id: "voice-1",
+      type: ChannelType.GuildVoice,
+      name: "Voice",
+      bitrate: 64000,
+    },
     client,
   ]);
   const notes: TextChannel = Reflect.construct(TextChannel, [

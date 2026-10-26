@@ -1,4 +1,14 @@
-import { getMeetingProcessingSignal } from "../services/meetingProcessingLifetime";
+import {
+  assertFixtureFinalization,
+  fixtureOutputSnapshot,
+  fixtureParticipants,
+  isFixture,
+} from "../services/fixtureInputService";
+import { registerNotionMutationTracker } from "../services/notionOperationLifetime";
+import {
+  getMeetingProcessingSignal,
+  runMeetingProcessingEffect,
+} from "../services/meetingProcessingLifetime";
 import { assertNotionOutcomeKnown } from "../services/notionOperationLifetime";
 import { assertMeetingProcessingSucceeded } from "../utils/meetingProcessing";
 import { notesDeliveryTimingSchema } from "../types/meetingNotesTiming";
@@ -130,15 +140,7 @@ export async function saveMeetingHistoryToDatabase(meeting: MeetingData) {
 
     if (meeting.cancelled) {
       const history: MeetingHistory = {
-        guildId: meeting.guildId,
-        channelId_timestamp: `${meeting.voiceChannel.id}#${timestamp}`,
-        meetingId: meeting.meetingId,
-        channelId: meeting.voiceChannel.id,
-        textChannelId: meeting.textChannel.id,
-        timestamp,
-        tags: meeting.tags,
-        context: meeting.meetingContext,
-        participants: Array.from(meeting.participants.values()),
+        ...meetingHistoryFields(meeting, timestamp),
         duration,
         transcribeMeeting: meeting.transcribeMeeting,
         generateNotes: meeting.generateNotes,
@@ -159,6 +161,7 @@ export async function saveMeetingHistoryToDatabase(meeting: MeetingData) {
       return;
     }
 
+    assertFixtureFinalization(meeting);
     const notes = await ensureMeetingNotes(meeting);
     const summaries = await ensureMeetingSummaries(meeting, notes);
     assertMeetingProcessingSucceeded(meeting);
@@ -167,19 +170,11 @@ export async function saveMeetingHistoryToDatabase(meeting: MeetingData) {
       buildNotesMetadata(meeting, notes, timestamp);
 
     const history: MeetingHistory = {
-      guildId: meeting.guildId,
-      channelId_timestamp: `${meeting.voiceChannel.id}#${timestamp}`,
-      meetingId: meeting.meetingId,
-      channelId: meeting.voiceChannel.id,
-      textChannelId: meeting.textChannel.id,
-      timestamp,
-      tags: meeting.tags,
+      ...meetingHistoryFields(meeting, timestamp),
       notes,
       meetingName: meeting.meetingName,
       summarySentence: summaries.summarySentence,
       summaryLabel: summaries.summaryLabel,
-      context: meeting.meetingContext,
-      participants: Array.from(meeting.participants.values()),
       duration,
       transcribeMeeting: meeting.transcribeMeeting,
       generateNotes: meeting.generateNotes,
@@ -187,6 +182,7 @@ export async function saveMeetingHistoryToDatabase(meeting: MeetingData) {
       meetingCreatorId: meeting.creator.id,
       isAutoRecording: meeting.isAutoRecording,
       status: MEETING_STATUS.COMPLETE,
+      ...fixtureOutputSnapshot(meeting),
       ...buildDeliveryMetadata(meeting, notesDeliveryTiming),
       notesVersion,
       notesLastEditedBy,
@@ -199,17 +195,20 @@ export async function saveMeetingHistoryToDatabase(meeting: MeetingData) {
 
     const committed = await saveOwnedMeetingHistoryService(meeting, history);
     meeting.historySaved = true;
+    const signal = getMeetingProcessingSignal(meeting);
+    const unregister = registerNotionMutationTracker(signal, (run) =>
+      runMeetingProcessingEffect(meeting, run),
+    );
     try {
-      await maybeAutoExportCompletedMeeting(
-        committed,
-        getMeetingProcessingSignal(meeting),
-      );
+      await maybeAutoExportCompletedMeeting(committed, signal);
     } catch (error) {
-      assertNotionOutcomeKnown(error, getMeetingProcessingSignal(meeting));
+      assertNotionOutcomeKnown(error, signal);
       console.warn("Completed meeting Notion export failed", {
         meetingId: meeting.meetingId,
         error,
       });
+    } finally {
+      unregister();
     }
     console.log(
       `Meeting history saved for guild ${meeting.guildId}, channel ${meeting.voiceChannel.id}`,
@@ -242,4 +241,19 @@ export async function saveMeetingStartToDatabase(
     return;
   }
   throw new Error("Recording initialization requires its owned reservation");
+}
+
+function meetingHistoryFields(meeting: MeetingData, timestamp: string) {
+  return {
+    guildId: meeting.guildId,
+    channelId_timestamp: `${meeting.voiceChannel.id}#${timestamp}`,
+    meetingId: meeting.meetingId,
+    channelId: meeting.voiceChannel.id,
+    textChannelId: meeting.textChannel.id,
+    timestamp,
+    tags: isFixture(meeting) ? [] : meeting.tags,
+    context: isFixture(meeting) ? undefined : meeting.meetingContext,
+    participants:
+      fixtureParticipants(meeting) ?? Array.from(meeting.participants.values()),
+  };
 }

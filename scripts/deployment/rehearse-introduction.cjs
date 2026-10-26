@@ -3,7 +3,9 @@ const {
   parseRehearsalManifest,
   parseRehearsalAuthorization,
 } = require("./rehearsal-manifest.cjs");
-const { createIntroductionEngine } = require("./introduce-production.cjs");
+const {
+  createIntroductionEngine,
+} = require("./staged-introduce-production.cjs");
 const { readArguments } = require("./sandbox-manifest.cjs");
 function createRehearsalIntroduction(options) {
   const m = parseRehearsalManifest(options.manifest, options.expectedSha256);

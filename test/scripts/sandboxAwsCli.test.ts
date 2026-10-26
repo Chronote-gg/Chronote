@@ -2,7 +2,7 @@
 import { execFile } from "node:child_process";
 import { nativeTransport } from "../../scripts/deployment/collector-native.cjs";
 import { collectRehearsalTags } from "../../scripts/deployment/collector-tags.cjs";
-import { createProductionIntroduction } from "../../scripts/deployment/introduce-production.cjs";
+import { createProductionIntroduction } from "../../scripts/deployment/staged-introduce-production.cjs";
 import { manifestFixture } from "../fixtures/deployment/productionIntroduction.js";
 import { manifestHash } from "../../scripts/deployment/sandbox-manifest.cjs";
 import { awsCaller } from "../../scripts/deployment/sandbox-manifest.cjs";

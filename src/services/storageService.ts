@@ -57,8 +57,19 @@ const buildMockUploadPost = (
   },
 });
 
-export type StorageWriteOptions = { signal?: AbortSignal; immutable?: boolean };
+export type StorageWriteOptions = {
+  signal?: AbortSignal;
+  immutable?: boolean;
+  onAcknowledged?: (receipt: { key: string; versionId: string | null }) => void;
+};
 
+function acknowledgeUpload(
+  options: StorageWriteOptions,
+  key: string,
+  versionId: string | undefined,
+) {
+  options.onAcknowledged?.({ key, versionId: versionId ?? null });
+}
 export async function uploadObjectToS3(
   key: string,
   body: string | Uint8Array | Buffer,
@@ -89,7 +100,7 @@ export async function uploadObjectToS3(
           ? body.byteLength
           : body.length;
 
-    await s3Client.send(
+    const receipt = await s3Client.send(
       new PutObjectCommand({
         Bucket: config.storage.transcriptBucket,
         Key: key,
@@ -100,6 +111,7 @@ export async function uploadObjectToS3(
       }),
       { abortSignal: options.signal },
     );
+    acknowledgeUpload(options, key, receipt.VersionId);
     return key;
   } catch (error) {
     if (!options.immutable)

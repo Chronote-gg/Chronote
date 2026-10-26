@@ -1,3 +1,7 @@
+import {
+  runBillingOperation,
+  type RuntimeBillingOwner,
+} from "./runtimeBillingOperationService";
 import { getRenewalRecoveryView } from "./renewalRecoveryView";
 import type { RenewalRecoveryView } from "../types/renewalRecovery";
 import { assertStripePayer } from "./billingPayerService";
@@ -273,42 +277,11 @@ export async function saveGuildSubscription(subscription: GuildSubscription) {
 
 export async function recordPaymentTransaction(
   transaction: PaymentTransaction,
+  owner?: RuntimeBillingOwner,
 ) {
-  await getPaymentTransactionRepository().write(transaction);
-}
-
-export async function ensureStripeCustomer(
-  stripe: StripeClient,
-  user: StripeUser,
-): Promise<string> {
-  const searchEmail = user.email;
-  if (searchEmail) {
-    let startingAfter: string | undefined;
-    do {
-      const found = await stripe.customers.list({
-        email: searchEmail,
-        limit: 100,
-        ...(startingAfter ? { starting_after: startingAfter } : {}),
-      });
-      const owned = found.data.find(
-        (customer) => customer.metadata.discord_id === user.id,
-      );
-      if (owned) return owned.id;
-      startingAfter = found.has_more ? found.data.at(-1)?.id : undefined;
-    } while (startingAfter);
-  }
-  const created = await stripe.customers.create({
-    ...(searchEmail ? { email: searchEmail } : {}),
-    metadata: {
-      discord_id: user.id,
-      discord_username: user.username ?? "",
-      // Lets PostHog revenue analytics join this Stripe customer to the
-      // PostHog person. Must match the distinct id used by the portal and the
-      // bot, which is the Discord user id.
-      posthog_person_distinct_id: user.id,
-    },
-  });
-  return created.id;
+  await runBillingOperation(owner, (admitted) =>
+    admitted.effect(() => getPaymentTransactionRepository().write(transaction)),
+  );
 }
 
 export async function resolvePromotionCodeId(
@@ -449,8 +422,8 @@ function checkoutReturnUrls(
   return { successUrl, cancelUrl };
 }
 
-export async function createCheckoutSession(
-  params: CheckoutSessionInput,
+async function createCheckoutSessionOwned(
+  params: CheckoutSessionInput & { owner: RuntimeBillingOwner },
 ): Promise<string> {
   const {
     stripe,
@@ -480,6 +453,7 @@ export async function createCheckoutSession(
   );
   const expected = await getSubscriptionRepository().get(guildId);
   const confirmationUrl = await createExistingSubscriptionConfirmation({
+    owner: params.owner,
     stripe,
     user,
     guildId,
@@ -503,6 +477,7 @@ export async function createCheckoutSession(
     savedPromo,
   );
   return createInitialPurchase({
+    owner: params.owner,
     stripe,
     user,
     guildId,
@@ -532,6 +507,7 @@ export async function createCheckoutSession(
 }
 
 async function createExistingSubscriptionConfirmation(params: {
+  owner: RuntimeBillingOwner;
   stripe: StripeClient;
   user: StripeUser;
   guildId: string;
@@ -566,6 +542,7 @@ async function createExistingSubscriptionConfirmation(params: {
       guildId,
       payerId: user.id,
       subscription,
+      owner: params.owner,
     });
     if (recovered) return recovered;
     // Only provider-confirmed terminal subscriptions can start a new purchase.
@@ -634,7 +611,8 @@ async function managedPortalConfiguration(
     : undefined;
 }
 
-export async function createPortalSession(params: {
+async function createPortalSessionOwned(params: {
+  owner: RuntimeBillingOwner;
   stripe: StripeClient;
   user: StripeUser;
   guildId: string;
@@ -670,15 +648,17 @@ export async function createPortalSession(params: {
     stripe,
     providerSubscription,
   );
-  const portal = await stripe.billingPortal.sessions.create({
-    customer: customerId,
-    ...(configuration ? { configuration } : {}),
+  const portal = await params.owner.effect(() =>
+    stripe.billingPortal.sessions.create({
+      customer: customerId,
+      ...(configuration ? { configuration } : {}),
 
-    return_url: new URL(
-      `/portal/server/${encodeURIComponent(guildId)}/billing`,
-      config.frontend.siteUrl,
-    ).toString(),
-  });
+      return_url: new URL(
+        `/portal/server/${encodeURIComponent(guildId)}/billing`,
+        config.frontend.siteUrl,
+      ).toString(),
+    }),
+  );
   if (!portal.url) {
     throw new Error("Stripe did not return a portal URL");
   }
@@ -732,4 +712,22 @@ async function loadProviderBillingState(
   } catch {
     return { details: { status: "unavailable" }, cancellationAt };
   }
+}
+
+export function createCheckoutSession(
+  params: CheckoutSessionInput & { owner?: RuntimeBillingOwner },
+): Promise<string> {
+  return runBillingOperation(params.owner, (owner) =>
+    createCheckoutSessionOwned({ ...params, owner }),
+  );
+}
+export function createPortalSession(params: {
+  stripe: StripeClient;
+  user: StripeUser;
+  guildId: string;
+  owner?: RuntimeBillingOwner;
+}): Promise<string> {
+  return runBillingOperation(params.owner, (owner) =>
+    createPortalSessionOwned({ ...params, owner }),
+  );
 }

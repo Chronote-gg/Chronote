@@ -1,5 +1,1 @@
-aws --no-cli-pager ecs update-service `
-  --cluster meeting-notes-bot-cluster `
-  --service meeting-notes-bot-service `
-  --force-new-deployment `
-  --region us-east-1
+throw 'Direct force deployment is retired. Use the guarded production deployment workflow, which shares the deployment lock and checks the durable introduction hold.'

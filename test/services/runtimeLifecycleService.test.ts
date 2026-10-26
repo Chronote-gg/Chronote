@@ -4,7 +4,10 @@ import { createProcessShutdownOwner } from "../../src/services/processShutdownSe
 import { createRuntimeLifecycle } from "../../src/services/runtimeLifecycleService";
 import { createRuntimeProtectionService } from "../../src/services/runtimeProtectionService";
 import { createMockDeploymentControlRepository } from "../../src/repositories/deploymentControlRepository";
-import type { RuntimeIdentity } from "../../src/types/deploymentControl";
+import type {
+  DeploymentControlRecord,
+  RuntimeIdentity,
+} from "../../src/types/deploymentControl";
 
 const identity: RuntimeIdentity = {
   kind: "local",
@@ -22,8 +25,9 @@ function barrier<T>() {
 }
 async function repositoryFixture(
   runtimeEnvironment: "local" | "ecs" = "local",
+  records?: Map<string, DeploymentControlRecord>,
 ) {
-  const repository = createMockDeploymentControlRepository();
+  const repository = createMockDeploymentControlRepository(records);
   await repository.initializeControl({
     pk: "ENV",
     sk: "CONTROL",
@@ -38,8 +42,8 @@ async function repositoryFixture(
   });
   return repository;
 }
-async function fixture() {
-  const repository = await repositoryFixture();
+async function fixture(records?: Map<string, DeploymentControlRecord>) {
+  const repository = await repositoryFixture("local", records);
   const protection = createRuntimeProtectionService({
     identity,
     now,
@@ -658,6 +662,110 @@ test("all seven real work handles share one deadline and pending recovery cannot
     owner.dispose();
     lifecycle.stop();
   }
+});
+
+test("maintenance keeps serving listeners separate and retries ordinary initialization after release", async () => {
+  const { lifecycle, repository } = await fixture();
+  await promote(repository);
+  const stored = await repository.getRecord("ENV", "CONTROL");
+  if (stored?.recordType !== "control") throw new Error("missing control");
+  const held: typeof stored = {
+    ...stored,
+    maintenance: { holdId: "hold", introductionId: "intro", revision: 1 },
+  };
+  const getRecord = repository.getRecord;
+  jest.spyOn(repository, "getRecord").mockImplementation(async (pk, sk) => {
+    if (pk === "ENV" && sk === "CONTROL") return held;
+    return getRecord(pk, sk);
+  });
+  const serving = jest.fn();
+  const ordinary = jest.fn(async (acknowledgeAdmission: () => void) => {
+    acknowledgeAdmission();
+  });
+  lifecycle.whenServing(serving);
+  lifecycle.whenOrdinaryAdmissionOpen(ordinary);
+  await lifecycle.refreshRuntimeReadiness();
+  expect(serving).toHaveBeenCalledTimes(1);
+  expect(ordinary).not.toHaveBeenCalled();
+  expect(await lifecycle.getRuntimeAdmissionContext()).toMatchObject({
+    maintenance: held.maintenance,
+  });
+  await lifecycle.refreshRuntimeReadiness();
+  expect(ordinary).not.toHaveBeenCalled();
+  delete held.maintenance;
+  await lifecycle.refreshRuntimeReadiness();
+  expect(ordinary).toHaveBeenCalledTimes(1);
+  await lifecycle.refreshRuntimeReadiness();
+  expect(ordinary).toHaveBeenCalledTimes(1);
+  lifecycle.stop();
+});
+
+test("ordinary startup retries a hold that closes before atomic admission and never overlaps an active attempt", async () => {
+  const records = new Map<string, DeploymentControlRecord>();
+  const { lifecycle, repository } = await fixture(records);
+  await promote(repository);
+  await lifecycle.refreshRuntimeReadiness();
+  const control = await repository.getRecord("ENV", "CONTROL");
+  if (control?.recordType !== "control") throw new Error("missing control");
+  const notified = barrier<void>();
+  const checkAdmission = barrier<void>();
+  const initialized = barrier<void>();
+  const finishInitialization = barrier<void>();
+  let pending = Promise.resolve();
+  const setup = jest.fn();
+  const ordinary = jest.fn((acknowledgeAdmission: () => void) => {
+    pending = (async () => {
+      const context = await lifecycle.getRuntimeAdmissionContext();
+      notified.resolve();
+      await checkAdmission.promise;
+      if ((await repository.checkAdmission(context)).kind !== "admitted")
+        return;
+      acknowledgeAdmission();
+      setup();
+      initialized.resolve();
+      await finishInitialization.promise;
+    })();
+    return pending;
+  });
+  lifecycle.whenOrdinaryAdmissionOpen(ordinary);
+  await notified.promise;
+  records.set(JSON.stringify(["ENV", "CONTROL"]), {
+    ...control,
+    maintenance: { holdId: "hold", introductionId: "intro", revision: 1 },
+  });
+  await lifecycle.refreshRuntimeReadiness();
+  expect(ordinary).toHaveBeenCalledTimes(1);
+  checkAdmission.resolve();
+  await pending;
+  expect(setup).not.toHaveBeenCalled();
+  records.set(JSON.stringify(["ENV", "CONTROL"]), control);
+  await lifecycle.refreshRuntimeReadiness();
+  expect(ordinary).toHaveBeenCalledTimes(2);
+  await initialized.promise;
+  await lifecycle.refreshRuntimeReadiness();
+  await lifecycle.refreshRuntimeReadiness();
+  expect(ordinary).toHaveBeenCalledTimes(2);
+  expect(setup).toHaveBeenCalledTimes(1);
+  finishInitialization.resolve();
+  await pending;
+  await lifecycle.refreshRuntimeReadiness();
+  expect(ordinary).toHaveBeenCalledTimes(2);
+  lifecycle.stop();
+});
+
+test("ordinary initialization is not replayed after admission was acknowledged and setup failed", async () => {
+  const { lifecycle, repository } = await fixture();
+  await promote(repository);
+  const ordinary = jest.fn(async (acknowledgeAdmission: () => void) => {
+    acknowledgeAdmission();
+    throw new Error("Generated setup failure after admission");
+  });
+  lifecycle.whenOrdinaryAdmissionOpen(ordinary);
+  await lifecycle.refreshRuntimeReadiness();
+  await lifecycle.refreshRuntimeReadiness();
+  await lifecycle.refreshRuntimeReadiness();
+  expect(ordinary).toHaveBeenCalledTimes(1);
+  lifecycle.stop();
 });
 
 test("actual runtime start and refreshed heartbeat advertise exact canonical writer capability", async () => {

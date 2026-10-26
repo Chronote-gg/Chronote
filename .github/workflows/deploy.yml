@@ -25,14 +25,18 @@ jobs:
   deploybackend:
     name: Deploy Backend
     timeout-minutes: 180
-    permissions:
-      contents: read
-      id-token: write
     # Publish privacy/What's New notices before expanded capture goes live.
     needs: [ci, deploy-docs]
     runs-on: ubuntu-latest
     environment: production
+    permissions:
+      contents: read
+      id-token: write
     env:
+      DEPLOYMENT_ENVIRONMENT: production
+      DEPLOYMENT_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
+      DEPLOYMENT_CONTROL_TABLE: ${{ vars.DEPLOYMENT_CONTROL_TABLE }}
+      DEPLOYMENT_GUARD_ROLE_ARN: ${{ vars.PRODUCTION_BACKEND_DEPLOY_ROLE_ARN }}
       ECS_CLUSTER: ${{ vars.ECS_CLUSTER }}
       ECS_SERVICE: ${{ vars.ECS_SERVICE }}
       ECS_TASK_FAMILY: ${{ vars.ECS_TASK_FAMILY }}
@@ -53,6 +57,12 @@ jobs:
           cache: "yarn"
           cache-dependency-path: "yarn.lock"
 
+      - name: Install coordinator dependencies
+        run: bash scripts/ci-install-dependencies.sh
+
+      - name: Build backend protocol builders
+        run: yarn build
+
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v6
         with:
@@ -71,6 +81,10 @@ jobs:
         run: |
           set -euo pipefail
           aws sts get-caller-identity --output json 2>/dev/null | node scripts/deployment/assert-production-identity.cjs
+
+      - name: Refuse held production deployment
+        id: hold-guard
+        run: node scripts/deployment/production-writer-guard.cjs
 
       - name: Preflight Secrets Manager values
         env:
@@ -150,14 +164,9 @@ jobs:
             exit 1
           }
 
+          node scripts/deployment/production-writer-guard.cjs
           docker push "$IMAGE"
           echo "image=$IMAGE" >> $GITHUB_OUTPUT
-
-      - name: Install coordinator dependencies
-        run: bash scripts/ci-install-dependencies.sh
-
-      - name: Build backend protocol builders
-        run: yarn build
 
       - name: Pin candidate image and deployment identity
         env:
@@ -183,7 +192,7 @@ jobs:
         run: node scripts/deployment/coordinator.cjs retire
 
       - name: Reconcile failed deployment without terminating work
-        if: failure() && steps.prepare.outcome != 'skipped'
+        if: failure() && steps.hold-guard.outcome == 'success' && steps.prepare.outcome == 'success'
         run: node scripts/deployment/coordinator.cjs reconcile
 
       - name: Create deployment summary
@@ -372,6 +381,16 @@ jobs:
     name: Promote Prompts
     needs: [deploybackend]
     runs-on: ubuntu-latest
+    environment: production
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      DEPLOYMENT_ENVIRONMENT: production
+      DEPLOYMENT_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
+      DEPLOYMENT_CONTROL_TABLE: ${{ vars.DEPLOYMENT_CONTROL_TABLE }}
+      DEPLOYMENT_GUARD_ROLE_ARN: ${{ vars.PRODUCTION_PROMPT_GUARD_ROLE_ARN }}
+      AWS_REGION: ${{ vars.AWS_REGION }}
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -385,6 +404,19 @@ jobs:
 
       - name: Install dependencies
         run: bash scripts/ci-install-dependencies.sh
+
+      - name: Build hold schema
+        run: yarn build
+
+      - name: Configure read-only production hold identity
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ vars.PRODUCTION_PROMPT_GUARD_ROLE_ARN }}
+          role-session-name: prompt-${{ github.run_id }}-${{ github.run_attempt }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Check production hold
+        run: node scripts/deployment/production-writer-guard.cjs
 
       - name: Show pending prompt changes
         env:
@@ -400,7 +432,9 @@ jobs:
           LANGFUSE_SECRET_KEY: ${{ secrets.LANGFUSE_SECRET_KEY }}
           LANGFUSE_BASE_URL: ${{ vars.LANGFUSE_BASE_URL }}
           LANGFUSE_PROMPT_LABEL: ${{ vars.LANGFUSE_PROMPT_LABEL }}
-        run: yarn prompts:push
+        run: |
+          node scripts/deployment/production-writer-guard.cjs
+          yarn prompts:push
 
       - name: Verify repo and Langfuse agree
         env:
@@ -417,6 +451,15 @@ jobs:
     runs-on: ubuntu-latest
     environment: production
     timeout-minutes: 15
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      DEPLOYMENT_ENVIRONMENT: production
+      DEPLOYMENT_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
+      DEPLOYMENT_CONTROL_TABLE: ${{ vars.DEPLOYMENT_CONTROL_TABLE }}
+      DEPLOYMENT_GUARD_ROLE_ARN: ${{ vars.PRODUCTION_PROMPT_GUARD_ROLE_ARN }}
+      AWS_REGION: ${{ vars.AWS_REGION }}
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -431,12 +474,26 @@ jobs:
       - name: Install dependencies
         run: bash scripts/ci-install-dependencies.sh
 
-      - name: Configure AWS credentials
+      - name: Build hold schema
+        run: yarn build
+
+      - name: Configure reviewed connection-sync identity
         uses: aws-actions/configure-aws-credentials@v6
         with:
-          aws-access-key-id: ${{ vars.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          role-to-assume: ${{ vars.PRODUCTION_PROMPT_GUARD_ROLE_ARN }}
+          allowed-account-ids: ${{ vars.AWS_ACCOUNT_ID }}
+          role-session-name: prompt-${{ github.run_id }}-${{ github.run_attempt }}
+          unset-current-credentials: true
           aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Verify exact connection-sync role session
+        env:
+          EXPECTED_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
+          EXPECTED_ROLE_ARN: ${{ vars.PRODUCTION_PROMPT_GUARD_ROLE_ARN }}
+          EXPECTED_SESSION_NAME: prompt-${{ github.run_id }}-${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+          aws sts get-caller-identity --output json 2>/dev/null | node scripts/deployment/assert-production-identity.cjs
 
       - name: Sync serving OpenAI connection
         env:
@@ -471,11 +528,20 @@ jobs:
             echo "ERROR: Could not resolve the serving ECS service task definition."
             exit 1
           fi
+          expected_definition="arn:aws:ecs:${AWS_REGION}:${DEPLOYMENT_ACCOUNT_ID}:task-definition/${ECS_TASK_FAMILY}:"
+          revision="${task_definition_arn#"$expected_definition"}"
+          if [ "$revision" = "$task_definition_arn" ] || ! [[ "$revision" =~ ^[1-9][0-9]*$ ]]; then
+            echo "ERROR: Serving task definition is outside the reviewed account, region or family."
+            exit 1
+          fi
+          export SERVING_TASK_DEFINITION_ARN="$task_definition_arn"
           # Match the app container exactly as the deployment coordinator does.
           if ! OPENAI_PROJECT_ID=$(aws ecs describe-task-definition \
             --task-definition "$task_definition_arn" --output json 2>/dev/null | node -e '
               const { readFileSync } = require("node:fs");
               const { taskDefinition } = JSON.parse(readFileSync(0, "utf8"));
+              if (taskDefinition.taskDefinitionArn !== process.env.SERVING_TASK_DEFINITION_ARN
+                || taskDefinition.family !== process.env.ECS_TASK_FAMILY) process.exit(1);
               const apps = taskDefinition.containerDefinitions.filter((container) =>
                 container.environment?.some((entry) => entry.name === "DDB_TABLE_PREFIX"),
               );
@@ -491,6 +557,7 @@ jobs:
             exit 1
           fi
           echo "::add-mask::$OPENAI_PROJECT_ID"
+          node scripts/deployment/production-writer-guard.cjs
           if ! OPENAI_API_KEY=$(aws secretsmanager get-secret-value \
             --secret-id "${SECRETS_PREFIX}/openai-api-key" --version-stage AWSCURRENT \
             --query SecretString --output text 2>/dev/null) \
@@ -505,5 +572,6 @@ jobs:
           trap 'rm -rf "$connections_dir"' EXIT
           cp langfuse/llm-connections/openai.yml "$connections_dir/openai.yml"
           yarn llm-connections:push --dir "$connections_dir" --dry-run
+          node scripts/deployment/production-writer-guard.cjs
           yarn llm-connections:push --dir "$connections_dir"
           yarn llm-connections:check --dir "$connections_dir"

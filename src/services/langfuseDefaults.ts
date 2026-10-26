@@ -12,6 +12,8 @@
  * importing `configService`, which validates the whole app config on load.
  */
 export const DEFAULT_LANGFUSE_BASE_URL = "https://us.cloud.langfuse.com";
+export const DEFAULT_TRANSCRIPTION_PROMPT_NAME =
+  "chronote-transcription-prompt";
 
 /**
  * The single way to turn `LANGFUSE_BASE_URL` into a host. Trims first, so a

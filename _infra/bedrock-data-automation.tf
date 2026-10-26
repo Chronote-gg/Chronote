@@ -47,7 +47,7 @@ variable "BEDROCK_DATA_AUTOMATION_TIMEOUT_MS" {
 }
 
 locals {
-  bedrock_input_bucket_name = var.BEDROCK_DATA_AUTOMATION_INPUT_BUCKET != "" ? var.BEDROCK_DATA_AUTOMATION_INPUT_BUCKET : local.transcripts_bucket_name
+  bedrock_input_bucket_name  = var.BEDROCK_DATA_AUTOMATION_INPUT_BUCKET != "" ? var.BEDROCK_DATA_AUTOMATION_INPUT_BUCKET : local.transcripts_bucket_name
   bedrock_output_bucket_name = var.BEDROCK_DATA_AUTOMATION_OUTPUT_BUCKET != "" ? var.BEDROCK_DATA_AUTOMATION_OUTPUT_BUCKET : local.transcripts_bucket_name
 }
 

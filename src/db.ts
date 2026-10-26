@@ -1,3 +1,11 @@
+import {
+  buildPendingSegmentTransaction,
+  buildPersonalUploadSubmissionTransaction,
+  buildPersonalSegmentTransitionTransaction,
+} from "./services/personalUploadTransactions";
+import { completeConditionalCancellation } from "./repositories/deploymentControlErrors";
+import { createStripeWebhookDynamoRepository } from "./repositories/stripeWebhookDynamoRepository";
+import { transactPersonalAdmission } from "./services/personalAdmissionTransaction";
 import { personalCanonicalWriter } from "./types/meetingCanonicalWriter";
 import { canonicalFieldsSupersededAfter } from "./types/meetingCanonicalContent";
 import type { PersonalHistoryWriteResult } from "./types/personalHistoryWrite";
@@ -123,9 +131,6 @@ import {
   buildWorkAdmissionChecks,
   buildPersonalMediaClaimTransaction,
   buildPersonalClaimCheck,
-  buildPendingSegmentTransaction,
-  buildPersonalUploadSubmissionTransaction,
-  buildPersonalSegmentTransitionTransaction,
 } from "./services/deploymentControlTransactions";
 
 import {
@@ -2256,13 +2261,20 @@ export async function getMeetingUserIndexRecordsForUserInRange(
 
 export async function writePersonalMediaUploadJob(
   job: PersonalMediaUploadJobRecord,
+  context: AdmissionContext,
 ): Promise<void> {
-  await dynamoDbClient.send(
-    new PutItemCommand({
-      TableName: tableName("PersonalMediaUploadJobTable"),
-      Item: marshall(job, { removeUndefinedValues: true }),
-    }),
-  );
+  if (
+    !(await transactPersonalAdmission(dynamoDbClient, context, tablePrefix, [
+      {
+        Put: {
+          TableName: tableName("PersonalMediaUploadJobTable"),
+          Item: marshall(job, { removeUndefinedValues: true }),
+          ConditionExpression: "attribute_not_exists(uploadId)",
+        },
+      },
+    ]))
+  )
+    throw new Error("Personal upload already exists");
 }
 
 export async function getPersonalMediaUploadJob(
@@ -2282,21 +2294,14 @@ export async function getPersonalMediaUploadJob(
 
 export async function submitPersonalMediaUploadJob(
   job: PersonalMediaUploadJobRecord,
+  context: AdmissionContext,
 ): Promise<boolean> {
-  try {
-    await dynamoDbClient.send(
-      new TransactWriteItemsCommand(
-        buildPersonalUploadSubmissionTransaction(job, {
-          deploymentControl: tableName("DeploymentControlTable"),
-          personalMediaUpload: tableName("PersonalMediaUploadJobTable"),
-        }),
-      ),
-    );
-    return true;
-  } catch (error) {
-    if (classifyDeploymentTransactionError(error) === "stale") return false;
-    throw error;
-  }
+  return transactPersonalAdmission(dynamoDbClient, context, tablePrefix, [
+    ...buildPersonalUploadSubmissionTransaction(job, {
+      deploymentControl: tableName("DeploymentControlTable"),
+      personalMediaUpload: tableName("PersonalMediaUploadJobTable"),
+    }).TransactItems!,
+  ]);
 }
 
 export function personalMediaClaimForJob(
@@ -2495,17 +2500,6 @@ export async function writePersonalSegmentUnderClaim(
   }
 }
 
-export async function writePersonalRecordingSegment(
-  segment: PersonalRecordingSegmentRecord,
-): Promise<void> {
-  await dynamoDbClient.send(
-    new PutItemCommand({
-      TableName: tableName("PersonalRecordingSegmentTable"),
-      Item: marshall(segment, { removeUndefinedValues: true }),
-    }),
-  );
-}
-
 export async function getPersonalRecordingSegment(
   uploadId: string,
   segmentKey: string,
@@ -2547,51 +2541,31 @@ export async function listPersonalRecordingSegments(
   return segments;
 }
 
-export async function updatePersonalRecordingSegment(
-  segment: PersonalRecordingSegmentRecord,
-): Promise<void> {
-  await writePersonalRecordingSegment(segment);
-}
-
 export async function preparePersonalRecordingSegment(
   segment: PersonalRecordingSegmentRecord,
   expectedStatus: "pending_upload" | "failed" | undefined,
+  context: AdmissionContext,
 ): Promise<boolean> {
-  try {
-    await dynamoDbClient.send(
-      new TransactWriteItemsCommand(
-        buildPendingSegmentTransaction(segment, expectedStatus, {
-          deploymentControl: tableName("DeploymentControlTable"),
-          personalMediaUpload: tableName("PersonalMediaUploadJobTable"),
-          personalRecordingSegment: tableName("PersonalRecordingSegmentTable"),
-        }),
-      ),
-    );
-    return true;
-  } catch (error) {
-    if (classifyDeploymentTransactionError(error) === "stale") return false;
-    throw error;
-  }
+  return transactPersonalAdmission(dynamoDbClient, context, tablePrefix, [
+    ...buildPendingSegmentTransaction(segment, expectedStatus, {
+      deploymentControl: tableName("DeploymentControlTable"),
+      personalMediaUpload: tableName("PersonalMediaUploadJobTable"),
+      personalRecordingSegment: tableName("PersonalRecordingSegmentTable"),
+    }).TransactItems!,
+  ]);
 }
 
 export async function transitionPersonalRecordingSegment(
   segment: PersonalRecordingSegmentRecord,
   expectedStatus: PersonalRecordingSegmentRecord["status"],
+  context: AdmissionContext,
 ): Promise<boolean> {
-  try {
-    await dynamoDbClient.send(
-      new TransactWriteItemsCommand(
-        buildPersonalSegmentTransitionTransaction(segment, expectedStatus, {
-          deploymentControl: tableName("DeploymentControlTable"),
-          personalRecordingSegment: tableName("PersonalRecordingSegmentTable"),
-        }),
-      ),
-    );
-    return true;
-  } catch (error) {
-    if (classifyDeploymentTransactionError(error) === "stale") return false;
-    throw error;
-  }
+  return transactPersonalAdmission(dynamoDbClient, context, tablePrefix, [
+    ...buildPersonalSegmentTransitionTransaction(segment, expectedStatus, {
+      deploymentControl: tableName("DeploymentControlTable"),
+      personalRecordingSegment: tableName("PersonalRecordingSegmentTable"),
+    }).TransactItems!,
+  ]);
 }
 
 export async function listClaimablePersonalMediaUploadJobs(options: {
@@ -2654,26 +2628,26 @@ export async function claimPersonalMediaUploadJob(options: {
       },
     },
   };
+  const transaction = buildPersonalMediaClaimTransaction(
+    {
+      ...options,
+      job: next,
+      context: { ...options.context, now: options.nowEpochSeconds },
+    },
+    {
+      deploymentControl: tableName("DeploymentControlTable"),
+      meetingHistory: tableName("MeetingHistoryTable"),
+      personalMediaUpload: tableName("PersonalMediaUploadJobTable"),
+    },
+  );
   try {
-    await dynamoDbClient.send(
-      new TransactWriteItemsCommand(
-        buildPersonalMediaClaimTransaction(
-          {
-            ...options,
-            job: next,
-            context: { ...options.context, now: options.nowEpochSeconds },
-          },
-          {
-            deploymentControl: tableName("DeploymentControlTable"),
-            meetingHistory: tableName("MeetingHistoryTable"),
-            personalMediaUpload: tableName("PersonalMediaUploadJobTable"),
-          },
-        ),
-      ),
-    );
+    await dynamoDbClient.send(new TransactWriteItemsCommand(transaction));
     return next;
   } catch (error) {
-    if (classifyDeploymentTransactionError(error) === "stale") return undefined;
+    if (
+      completeConditionalCancellation(error, transaction.TransactItems!.length)
+    )
+      return undefined;
     throw error;
   }
 }
@@ -3440,63 +3414,31 @@ export async function compareAndWritePurchaseAttempt(
   }
 }
 
-export async function claimStripeWebhookEvent(
-  event: StripeWebhookEvent,
-): Promise<boolean> {
-  try {
-    await dynamoDbClient.send(
-      new PutItemCommand({
-        TableName: tableName("StripeWebhookEventTable"),
-        Item: marshall(event),
-        ConditionExpression:
-          "attribute_not_exists(eventId) OR (#state = :processing AND leaseUntil <= :now)",
-        ExpressionAttributeNames: { "#state": "state" },
-        ExpressionAttributeValues: marshall({
-          ":processing": "processing",
-          ":now": Date.now(),
-        }),
-      }),
-    );
-    return true;
-  } catch (error) {
-    if (isConditionalCheckFailed(error)) return false;
-    throw error;
-  }
+function stripeWebhookDynamoRepository() {
+  return createStripeWebhookDynamoRepository(
+    dynamoDbClient,
+    tableName("StripeWebhookEventTable"),
+    {
+      deploymentControl: tableName("DeploymentControlTable"),
+      meetingHistory: tableName("MeetingHistoryTable"),
+    },
+  );
 }
-export async function finishStripeWebhookEvent(
+export const claimStripeWebhookEvent = (event: StripeWebhookEvent) =>
+  stripeWebhookDynamoRepository().claim(event);
+export const finishStripeWebhookEvent = (
   eventId: string,
-  leaseToken: string,
+  token: string,
   release: boolean,
-): Promise<boolean> {
-  const base = {
-    TableName: tableName("StripeWebhookEventTable"),
-    Key: marshall({ eventId }),
-    ConditionExpression:
-      "#state = :processing AND leaseToken = :token AND leaseUntil > :now",
-    ExpressionAttributeNames: { "#state": "state" },
-    ExpressionAttributeValues: marshall({
-      ":processing": "processing",
-      ":token": leaseToken,
-      ":now": Date.now(),
-      ...(release ? {} : { ":completed": "completed" }),
-    }),
-  };
-  try {
-    await dynamoDbClient.send(
-      release
-        ? new DeleteItemCommand(base)
-        : new UpdateItemCommand({
-            ...base,
-            UpdateExpression:
-              "SET #state = :completed REMOVE leaseToken, leaseUntil",
-          }),
-    );
-    return true;
-  } catch (error) {
-    if (isConditionalCheckFailed(error)) return false;
-    throw error;
-  }
-}
+) => stripeWebhookDynamoRepository().finish(eventId, token, release);
+export const admitStripeWebhookEvent = (
+  eventId: string,
+  token: string,
+  attemptId: string,
+  context: AdmissionContext,
+) => stripeWebhookDynamoRepository().admit(eventId, token, attemptId, context);
+export const failStripeWebhookEvent = (eventId: string, token: string) =>
+  stripeWebhookDynamoRepository().fail(eventId, token);
 
 function purchaseIncidentUpdate(incident: PurchaseIncident) {
   const { guildId: originalGuildId, key, ...fields } = incident;

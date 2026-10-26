@@ -1,3 +1,9 @@
+import type { StripeEffect } from "../types/stripe";
+import {
+  runBillingOperation,
+  persistBillingAcknowledgment,
+  type RuntimeBillingOwner,
+} from "./runtimeBillingOperationService";
 import { prepareInitialOfferSettlement } from "./offerUsageSettlement";
 import type { OfferUsageMutation } from "../types/offerUsage";
 import {
@@ -46,6 +52,8 @@ const terminal = (status: string) =>
 const billingUrl = (guildId: string) => `/portal/server/${guildId}/billing`;
 
 type PurchaseInput = {
+  owner?: RuntimeBillingOwner;
+  effect?: StripeEffect;
   stripe: StripeClient;
   user: { id: string; email?: string; username?: string };
   guildId: string;
@@ -56,7 +64,7 @@ type PurchaseInput = {
   offerChoice?: IntroOfferChoice;
 };
 
-async function save(
+async function writePurchase(
   attempt: PurchaseAttempt,
   change: Partial<PurchaseAttempt>,
   pointer: GuildSubscription | undefined,
@@ -75,6 +83,11 @@ async function save(
     throw pending();
   return next;
 }
+const save = (
+  input: PurchaseInput,
+  ...args: Parameters<typeof writePurchase>
+) => input.owner!.effect(() => writePurchase(...args));
+
 async function prepareRetiredPurchase(
   input: PurchaseInput,
   attempt: PurchaseAttempt,
@@ -97,6 +110,7 @@ async function prepareRetiredPurchase(
     throw pending();
   if (prepared.kind === "voided")
     return save(
+      input,
       attempt,
       { state: "expired", initialInvoiceId: prepared.invoiceId },
       input.expected,
@@ -104,6 +118,7 @@ async function prepareRetiredPurchase(
     );
   if (prepared.kind === "settled")
     return save(
+      input,
       attempt,
       { initialInvoiceId: prepared.invoiceId },
       input.expected,
@@ -198,7 +213,7 @@ async function reserve(input: PurchaseInput) {
         input.checkout.metadata?.analytics_opt_out === "true" &&
         !current.analyticsOptOut
       )
-        return save(current, { analyticsOptOut: true }, input.expected);
+        return save(input, current, { analyticsOptOut: true }, input.expected);
       return current;
     }
     const attemptId = randomUUID();
@@ -231,12 +246,8 @@ async function reserve(input: PurchaseInput) {
     };
     const usage = await prepareInitialOfferReservation(next, authority);
     if (
-      await repo.compareAndWrite(
-        next,
-        previous,
-        input.expected,
-        undefined,
-        usage,
+      await input.owner!.effect(() =>
+        repo.compareAndWrite(next, previous, input.expected, undefined, usage),
       )
     )
       return next;
@@ -251,6 +262,7 @@ async function customer(
   initial: PurchaseAttempt,
 ): Promise<PurchaseAttempt> {
   const attempt = await freezeCustomerOperation(input, initial);
+  const write: StripeEffect = input.effect ?? ((run) => run());
   if (attempt.incidentKey || attempt.state === "needs_review") throw review();
   if (attempt.customerId) return attempt;
   if (attempt.state !== "preparing") throw pending();
@@ -263,19 +275,22 @@ async function customer(
       throw review();
     customerId = owned.id;
   } else {
-    const created = await input.stripe.customers.create(operation.params, {
-      idempotencyKey: `purchase-customer-${attempt.attemptId}`,
-    });
+    const created = await write(() =>
+      input.stripe.customers.create(operation.params, {
+        idempotencyKey: `purchase-customer-${attempt.attemptId}`,
+      }),
+    );
     customerId = created.id;
   }
-  return save(
-    attempt,
-    {
-      customerId,
-      checkout: { ...attempt.checkout, customer: customerId },
-    },
-    input.expected,
-  );
+  const change = {
+    customerId,
+    checkout: { ...attempt.checkout, customer: customerId },
+  };
+  return operation.kind === "create"
+    ? persistBillingAcknowledgment(input.owner!, () =>
+        writePurchase(attempt, change, input.expected),
+      )
+    : save(input, attempt, change, input.expected);
 }
 
 async function currentOutcome(attempt: PurchaseAttempt): Promise<string> {
@@ -305,6 +320,8 @@ async function completedSessionOutcome(
       ? session.subscription
       : session.subscription.id,
     checkoutInvoiceHint(session),
+    undefined,
+    input.owner,
   );
   return currentOutcome(attempt);
 }
@@ -314,6 +331,7 @@ export async function recoverAcceptedPurchase(input: {
   guildId: string;
   payerId: string;
   subscription: StripeSubscription;
+  owner?: RuntimeBillingOwner;
 }): Promise<string | null> {
   const attempt = await getPurchaseRepository().get(input.guildId);
   if (
@@ -332,63 +350,36 @@ export async function recoverAcceptedPurchase(input: {
     input.stripe,
     input.guildId,
     input.subscription.id,
+    undefined,
+    undefined,
+    input.owner,
   );
   return currentOutcome(attempt);
 }
 export async function createInitialPurchase(
-  input: PurchaseInput,
+  input: PurchaseInput & { owner?: RuntimeBillingOwner },
 ): Promise<string> {
-  let attempt = await reserve(input);
-  if (attempt.state === "completed") return currentOutcome(attempt);
-  await checkCheckoutReplayWindow(input, attempt);
-  attempt = await customer(input, attempt);
-  const pointer = await getSubscriptionRepository().get(input.guildId);
-  if (!sameSubscriptionPointer(pointer, input.expected))
-    return currentOutcome(attempt);
-  const createsCheckout = !attempt.sessionId;
-  await checkCheckoutReplayWindow(input, attempt);
-  const session = attempt.sessionId
-    ? await input.stripe.checkout.sessions.retrieve(attempt.sessionId)
-    : await input.stripe.checkout.sessions.create(attempt.checkout, {
-        idempotencyKey: `purchase-checkout-${attempt.attemptId}`,
-      });
-  assertSessionAssociation(attempt, session);
-  if (session.status === "expired") {
-    if (session.subscription) throw review();
-    await save(
-      attempt,
-      { sessionId: session.id, state: "expired" },
-      input.expected,
-      await prepareExpiredOfferRelease(attempt, session),
-    );
-    throw new BillingActionError(
-      "BAD_REQUEST",
-      "The checkout expired. Retry to start a new purchase.",
-      "purchase_expired",
-    );
-  }
-  if (session.status === "complete") {
-    return completedSessionOutcome(input, attempt, session);
-  }
-  if (session.status !== "open" || !session.url) throw pending();
-  try {
-    attempt = await save(
-      attempt,
-      { sessionId: session.id, state: "open" },
-      input.expected,
-    );
-  } catch {
-    return currentOutcome(attempt);
-  }
-  const current = await getPurchaseRepository().get(input.guildId);
-  const latestPointer = await getSubscriptionRepository().get(input.guildId);
-  if (
-    current?.revision !== attempt.revision ||
-    !sameSubscriptionPointer(latestPointer, input.expected)
-  )
-    return currentOutcome(attempt);
-  if (createsCheckout) captureNewCheckout(input, attempt);
-  return session.url;
+  return runBillingOperation(input.owner, async (owner) => {
+    input = { ...input, owner, effect: owner.effect };
+    let attempt = await reserve(input);
+    const write: StripeEffect = input.effect ?? ((run) => run());
+    if (attempt.state === "completed") return currentOutcome(attempt);
+    await checkCheckoutReplayWindow(input, attempt);
+    attempt = await customer(input, attempt);
+    const pointer = await getSubscriptionRepository().get(input.guildId);
+    if (!sameSubscriptionPointer(pointer, input.expected))
+      return currentOutcome(attempt);
+    const createsCheckout = !attempt.sessionId;
+    await checkCheckoutReplayWindow(input, attempt);
+    const session = attempt.sessionId
+      ? await input.stripe.checkout.sessions.retrieve(attempt.sessionId)
+      : await write(() =>
+          input.stripe.checkout.sessions.create(attempt.checkout, {
+            idempotencyKey: `purchase-checkout-${attempt.attemptId}`,
+          }),
+        );
+    return finishCheckoutSession(input, attempt, session, createsCheckout);
+  });
 }
 
 async function checkCheckoutReplayWindow(
@@ -397,7 +388,7 @@ async function checkCheckoutReplayWindow(
 ) {
   // Stripe requires 30 minutes remaining; leave one minute for the request.
   if (!attempt.sessionId && Date.now() - attempt.createdAt >= 29 * 60 * 1000) {
-    await save(attempt, { state: "needs_review" }, input.expected);
+    await save(input, attempt, { state: "needs_review" }, input.expected);
     throw review();
   }
 }
@@ -451,13 +442,17 @@ async function refreshAttempt(
     assertSessionAssociation(current, session);
     if (session.status === "expired" && !session.subscription) {
       const expired = advanceAttempt(current, { state: "expired" });
+      const previous = current;
+      const usage = await prepareExpiredOfferRelease(current, session);
       if (
-        !(await repo.compareAndWrite(
-          expired,
-          current,
-          input.expected,
-          undefined,
-          await prepareExpiredOfferRelease(current, session),
+        !(await input.owner!.effect(() =>
+          repo.compareAndWrite(
+            expired,
+            previous,
+            input.expected,
+            undefined,
+            usage,
+          ),
         ))
       )
         throw pending();
@@ -469,6 +464,9 @@ async function refreshAttempt(
         typeof session.subscription === "string"
           ? session.subscription
           : session.subscription.id,
+        undefined,
+        undefined,
+        input.owner,
       );
       current = await repo.get(input.guildId);
     }
@@ -520,6 +518,7 @@ async function freezeCustomerOperation(
         };
     try {
       attempt = await save(
+        input,
         attempt,
         { customerOperation: operation },
         input.expected,
@@ -548,4 +547,59 @@ function sameSubscriptionPointer(
     left?.stripeSubscriptionId === right?.stripeSubscriptionId &&
     left?.stripeSyncRevision === right?.stripeSyncRevision
   );
+}
+
+async function finishCheckoutSession(
+  input: PurchaseInput,
+  attempt: PurchaseAttempt,
+  session: Stripe.Checkout.Session,
+  createsCheckout: boolean,
+): Promise<string> {
+  assertSessionAssociation(attempt, session);
+  if (session.status === "expired") {
+    if (session.subscription) throw review();
+    await save(
+      input,
+      attempt,
+      { sessionId: session.id, state: "expired" },
+      input.expected,
+      await prepareExpiredOfferRelease(attempt, session),
+    );
+    throw new BillingActionError(
+      "BAD_REQUEST",
+      "The checkout expired. Retry to start a new purchase.",
+      "purchase_expired",
+    );
+  }
+  if (session.status === "complete") {
+    return completedSessionOutcome(input, attempt, session);
+  }
+  if (session.status !== "open" || !session.url) throw pending();
+  const receipt = async () => {
+    try {
+      return await writePurchase(
+        attempt,
+        { sessionId: session.id, state: "open" },
+        input.expected,
+      );
+    } catch (error) {
+      // Only a definite CAS rejection can use the other writer's exact completed receipt.
+      if (error instanceof BillingActionError) return currentOutcome(attempt);
+      throw error;
+    }
+  };
+  const saved = createsCheckout
+    ? await persistBillingAcknowledgment(input.owner!, receipt)
+    : await input.owner!.effect(receipt);
+  if (typeof saved === "string") return saved;
+  attempt = saved;
+  const current = await getPurchaseRepository().get(input.guildId);
+  const latestPointer = await getSubscriptionRepository().get(input.guildId);
+  if (
+    current?.revision !== attempt.revision ||
+    !sameSubscriptionPointer(latestPointer, input.expected)
+  )
+    return currentOutcome(attempt);
+  if (createsCheckout) captureNewCheckout(input, attempt);
+  return session.url;
 }

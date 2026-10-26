@@ -19,13 +19,14 @@ on:
         type: string
         default: sandbox
       plan_scope:
-        description: Full infrastructure or only the purchase-coordination permission prerequisite
+        description: Full infrastructure or a fixed permission/deployment prerequisite scope
         required: true
         type: choice
         default: full
         options:
           - full
           - purchase-permission
+          - deployment-prerequisites
 
 permissions:
   actions: read

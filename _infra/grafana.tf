@@ -237,6 +237,7 @@ resource "aws_lambda_function" "grafana_token_rotation" {
 
 # CloudWatch log group for the Lambda (encrypted, retained)
 resource "aws_cloudwatch_log_group" "grafana_token_rotation" {
+  depends_on        = [aws_kms_key_policy.app_general]
   count             = local.grafana_rotation_enabled ? 1 : 0
   name              = "/aws/lambda/${aws_lambda_function.grafana_token_rotation[0].function_name}"
   retention_in_days = 365

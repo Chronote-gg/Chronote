@@ -6,7 +6,7 @@ import {
   manifestFixture,
   introductionFixture,
 } from "../fixtures/deployment/productionIntroduction.js";
-import { createProductionIntroduction } from "../../scripts/deployment/introduce-production.cjs";
+import { createProductionIntroduction } from "../../scripts/deployment/staged-introduce-production.cjs";
 import { manifestHash } from "../../scripts/deployment/sandbox-manifest.cjs";
 test.each(["fence", "drain", "activate", "abort", "complete", "reconcile"])(
   "CLI dependency absence refuses %s before all writes",

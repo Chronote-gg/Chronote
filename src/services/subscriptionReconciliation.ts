@@ -1,3 +1,7 @@
+import {
+  runBillingOperation,
+  type RuntimeBillingOwner,
+} from "./runtimeBillingOperationService";
 import { getBillingChangeRepository } from "../repositories/billingChangeRepository";
 import {
   refreshRenewalRecovery,
@@ -102,6 +106,7 @@ const buildSubscriptionPayload = (params: {
 });
 
 const maybeAutoRevokeCoveredCompGrants = async (params: {
+  owner: RuntimeBillingOwner;
   guildId: string;
   tier: KnownTier;
   status: string;
@@ -111,6 +116,7 @@ const maybeAutoRevokeCoveredCompGrants = async (params: {
   if (params.tier !== "basic" && params.tier !== "pro") return;
   if (params.status !== "active" && params.status !== "trialing") return;
   await autoRevokeCoveredCompGrants({
+    owner: params.owner,
     guildId: params.guildId,
     paidTier: params.tier,
     stripeSubscriptionId: params.stripeSubscriptionId,
@@ -150,14 +156,85 @@ async function hasUnsettledPlanChange(
   );
 }
 
+function subscriptionProjection(
+  guildId: string,
+  subscription: StripeSubscription,
+  existing: GuildSubscription | undefined,
+) {
+  const tier = isTerminalSubscription(subscription)
+    ? "free"
+    : resolveTierFromSubscription(subscription);
+  const updatedBy =
+    readMetadataValue(subscription.metadata, "discord_id") || undefined;
+  const payload: GuildSubscription = {
+    ...buildSubscriptionPayload({
+      guildId,
+      status: subscription.status,
+      tier,
+      startDate: toIso(subscription.start_date),
+      endDate: toIso(subscription.ended_at),
+      nextBillingDate: toIso(resolveSubscriptionPeriodEnd(subscription)),
+      cancellationAt: toIso(resolveSubscriptionCancellationAt(subscription)),
+      paymentMethod: subscription.default_payment_method ? "card" : "unknown",
+      stripeCustomerId:
+        typeof subscription.customer === "string"
+          ? subscription.customer
+          : subscription.customer.id,
+      stripeSubscriptionId: subscription.id,
+      updatedBy,
+      priceId: subscription.items.data[0]?.price.id,
+      mode: subscription.livemode ? "live" : "test",
+    }),
+    stripeSyncRevision: randomUUID(),
+    billingAnalyticsState: ["incomplete", "trialing"].includes(
+      subscription.status,
+    )
+      ? existing?.billingAnalyticsState
+      : buildBillingLifecycleState(subscription),
+  };
+  return { payload, tier, updatedBy };
+}
+
+async function completePaidSubscription(
+  stripe: StripeClient,
+  guildId: string,
+  subscription: StripeSubscription,
+  payload: GuildSubscription,
+  settlement: SettlementInvoice | undefined,
+  owner: RuntimeBillingOwner,
+) {
+  if (subscription.status === "active") {
+    await completeRenewalPaidProjection(
+      guildId,
+      subscription,
+      payload,
+      stripe,
+      owner,
+    );
+    const invoiceId =
+      settlement?.invoiceId ?? stripeId(subscription.latest_invoice);
+    if (!invoiceId)
+      throw new Error("Paid renewal coverage requires its provider invoice");
+    await trackPaidRenewalPeriod({
+      stripe,
+      guildId,
+      subscriptionId: subscription.id,
+      invoiceId,
+      now: Math.floor(Date.now() / 1000),
+      owner,
+    });
+  }
+}
+
 // Read the row before fetching Stripe. If another webhook commits during the
 // fetch, retry both reads so an older response cannot undo its newer state.
-export const reconcileSubscription = async (
+const reconcileSubscriptionOwned = async (
   stripe: StripeClient,
   guildId: string,
   subscriptionId: string,
-  settlement?: SettlementInvoice,
-  analyticsContext?: { userId: string; analyticsOptOut: boolean },
+  settlement: SettlementInvoice | undefined,
+  analyticsContext: { userId: string; analyticsOptOut: boolean } | undefined,
+  owner: RuntimeBillingOwner,
 ) => {
   const repo = getSubscriptionRepository();
   for (let attempt = 0; attempt < 3; attempt += 1) {
@@ -176,6 +253,7 @@ export const reconcileSubscription = async (
           guildId,
           existing.stripeSubscriptionId,
           subscription,
+          owner,
         )
       )
         return;
@@ -184,42 +262,19 @@ export const reconcileSubscription = async (
       stripe,
       guildId,
       now: Math.floor(Date.now() / 1000),
+      owner,
     });
     if (blocksCanceledRenewalProjection(recovery, subscription)) return;
     if (await hasUnsettledPlanChange(guildId, subscription)) return;
     await validatePurchaseSubscription(guildId, subscription);
-    const tier = isTerminalSubscription(subscription)
-      ? "free"
-      : resolveTierFromSubscription(subscription);
-    const updatedBy =
-      readMetadataValue(subscription.metadata, "discord_id") || undefined;
-    const payload: GuildSubscription = {
-      ...buildSubscriptionPayload({
-        guildId,
-        status: subscription.status,
-        tier,
-        startDate: toIso(subscription.start_date),
-        endDate: toIso(subscription.ended_at),
-        nextBillingDate: toIso(resolveSubscriptionPeriodEnd(subscription)),
-        cancellationAt: toIso(resolveSubscriptionCancellationAt(subscription)),
-        paymentMethod: subscription.default_payment_method ? "card" : "unknown",
-        stripeCustomerId:
-          typeof subscription.customer === "string"
-            ? subscription.customer
-            : subscription.customer.id,
-        stripeSubscriptionId: subscription.id,
-        updatedBy,
-        priceId: subscription.items.data[0]?.price.id,
-        mode: subscription.livemode ? "live" : "test",
-      }),
-      stripeSyncRevision: randomUUID(),
-      billingAnalyticsState: ["incomplete", "trialing"].includes(
-        subscription.status,
-      )
-        ? existing?.billingAnalyticsState
-        : buildBillingLifecycleState(subscription),
-    };
-    const accepted = await repo.compareAndWrite(payload, existing);
+    const { payload, tier, updatedBy } = subscriptionProjection(
+      guildId,
+      subscription,
+      existing,
+    );
+    const accepted = await owner.effect(() =>
+      repo.compareAndWrite(payload, existing),
+    );
     if (!accepted) continue;
     await publishBillingLifecycleTransition({
       previous: existing,
@@ -229,27 +284,23 @@ export const reconcileSubscription = async (
       ...analyticsContext,
     });
     clearGuildSubscriptionCache(guildId);
-    if (subscription.status === "active") {
-      await completeRenewalPaidProjection(
-        guildId,
-        subscription,
-        payload,
-        stripe,
-      );
-      const invoiceId =
-        settlement?.invoiceId ?? stripeId(subscription.latest_invoice);
-      if (!invoiceId)
-        throw new Error("Paid renewal coverage requires its provider invoice");
-      await trackPaidRenewalPeriod({
-        stripe,
-        guildId,
-        subscriptionId: subscription.id,
-        invoiceId,
-        now: Math.floor(Date.now() / 1000),
-      });
-    }
-    await acceptPurchaseSubscription(guildId, subscription, stripe, settlement);
+    await completePaidSubscription(
+      stripe,
+      guildId,
+      subscription,
+      payload,
+      settlement,
+      owner,
+    );
+    await acceptPurchaseSubscription(
+      guildId,
+      subscription,
+      stripe,
+      settlement,
+      owner,
+    );
     await maybeAutoRevokeCoveredCompGrants({
+      owner,
       guildId,
       tier,
       status: subscription.status,
@@ -266,6 +317,7 @@ async function rejectCompetingSubscription(
   guildId: string,
   previousId: string,
   subscription: StripeSubscription,
+  owner: RuntimeBillingOwner,
 ) {
   // Old terminal events cannot adopt a guild that now points elsewhere.
   if (isTerminalSubscription(subscription)) return true;
@@ -280,9 +332,29 @@ async function rejectCompetingSubscription(
     subscription.created <= previous.created
   ) {
     if (!isTerminalSubscription(previous))
-      await recordDuplicatePurchase(guildId, previous, subscription);
+      await recordDuplicatePurchase(guildId, previous, subscription, owner);
     return true;
   }
 
   return false;
+}
+
+export function reconcileSubscription(
+  stripe: StripeClient,
+  guildId: string,
+  subscriptionId: string,
+  settlement?: SettlementInvoice,
+  analyticsContext?: { userId: string; analyticsOptOut: boolean },
+  owner?: RuntimeBillingOwner,
+) {
+  return runBillingOperation(owner, (admitted) =>
+    reconcileSubscriptionOwned(
+      stripe,
+      guildId,
+      subscriptionId,
+      settlement,
+      analyticsContext,
+      admitted,
+    ),
+  );
 }

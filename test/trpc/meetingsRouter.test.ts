@@ -1,4 +1,11 @@
 /** @jest-environment node */
+import { beforeEach, describe, expect, test, jest } from "@jest/globals";
+jest.mock("../../src/db", () => ({
+  ...jest.requireActual("../../src/db"),
+  getDeploymentControlRepository: () => ({
+    checkAdmission: async () => ({ kind: "admitted" }),
+  }),
+}));
 import { registerMeetingUpdateDeliveryDetailTests } from "./meetingUpdateDeliveryDetail.tests";
 jest.mock("../../src/services/meetingUpdateService", () => ({
   updateMeeting: jest.fn(),
@@ -8,11 +15,10 @@ import {
   savedUpdate,
   expectSavedUpdateAcknowledgment,
 } from "./meetingUpdateResult.fixture";
-import { beforeEach, describe, expect, test, jest } from "@jest/globals";
 import { completedTextResponse } from "../../src/testSupport/openaiResponse";
 
 import "../deployment/coldNetworkGuard.cjs";
-
+import { verifyCorrectionDisconnect } from "../fixtures/correctionDisconnect";
 import {
   updateDiscordMessage,
   createDiscordMessage,
@@ -25,8 +31,6 @@ jest.mock("../../src/services/discordMessageService", () => ({
   fetchDiscordMessage: jest.fn(),
   updateDiscordMessageEmbeds: jest.fn(),
 }));
-import { createServer } from "node:http";
-import { createHTTPHandler } from "@trpc/server/adapters/standalone";
 import {
   fenceRuntimeWorkAdmissions,
   getRuntimeWorkAdmissionCheckpoints,
@@ -40,7 +44,6 @@ jest.mock("../../src/services/runtimeLifecycleService", () => ({
   },
   getRuntimeAdmissionContext: async () => ({ instanceId: "synthetic-api" }),
 }));
-import type { Request, Response } from "express";
 import type { MeetingHistory } from "../../src/types/db";
 import type { FeedbackRecord } from "../../src/types/db";
 import type { MeetingEvent } from "../../src/types/meetingTimeline";
@@ -511,61 +514,12 @@ describe("meetings notes correction mutations", () => {
         },
       },
     } as unknown as ReturnType<typeof createOpenAIClient>);
-    const server = createServer(
-      createHTTPHandler({
-        router: appRouter,
-        createContext: ({ req, res }) => ({
-          req: Object.assign(req, { session: {} }) as unknown as Request,
-          res: res as unknown as Response,
-          user: getMockUser(),
-        }),
-      }),
-    );
-    await new Promise<void>((resolve) =>
-      server.listen(0, "127.0.0.1", resolve),
-    );
-    const address = server.address() as { port: number };
-    const abort = new AbortController();
-    const response = fetch(
-      `http://127.0.0.1:${address.port}/meetings.suggestNotesCorrection`,
-      {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          serverId: "guild-1",
-          meetingId: "channel-1#2025-01-01",
-          suggestion: "Fix",
-        }),
-        signal: abort.signal,
-      },
-    ).catch(() => undefined);
-    try {
-      await started;
-      abort.abort();
-      await response;
-      server.closeAllConnections();
-      server.close();
-      expect(
-        getRuntimeWorkAdmissionCheckpoints().filter(
-          (entry) => entry.domain === "api_correction",
-        ),
-      ).toHaveLength(1);
-      fenceRuntimeWorkAdmissions();
-      expect(mockApiSettled).not.toHaveBeenCalled();
-      const checkpoints = getRuntimeWorkAdmissionCheckpoints();
-      release(completedTextResponse("Late correction"));
-      await Promise.allSettled(checkpoints.map((entry) => entry.ownedPromise));
-      expect(mockApiSettled).toHaveBeenCalledTimes(1);
-      expect(
-        getRuntimeWorkAdmissionCheckpoints().filter(
-          (entry) => entry.domain === "api_correction",
-        ),
-      ).toHaveLength(0);
-    } finally {
-      release(completedTextResponse(""));
-      server.closeAllConnections();
-      server.close();
-    }
+    await verifyCorrectionDisconnect({
+      router: appRouter,
+      started,
+      settled: mockApiSettled,
+      release,
+    });
   });
   test("warm correction router rejects before history/provider dispatch", async () => {
     mockApiEligible = false;

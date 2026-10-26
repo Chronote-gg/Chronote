@@ -43,6 +43,16 @@ test.each(["ci.yml", "ci-core.yml", "deploy-staging.yml"])(
 );
 
 const mockShell = `
+node() {
+  if [ "$1" = scripts/deployment/production-writer-guard.cjs ]; then
+    printf '%s\\n' guard >> guard-calls.txt
+    [ "$FIXTURE_FAILURE" != held ] || return 1
+    if [ "$FIXTURE_FAILURE" = held-before-push ] && [ "$(wc -l < guard-calls.txt)" = 2 ]; then return 1; fi
+  else
+    command node "$@"
+  fi
+}
+
 aws() {
   printf '%s\\n' "$1 $2" >> aws-calls.txt
   case "$1 $2" in
@@ -52,11 +62,15 @@ aws() {
       if [ "$FIXTURE_FAILURE" = service ]; then
         printf '%s' None
       else
-        printf '%s' fixture-serving-task-definition
+        case "$FIXTURE_FAILURE" in
+          wrong-account) printf '%s' arn:aws:ecs:us-east-1:999999999999:task-definition/fixture-bot-task:1 ;;
+          wrong-family) printf '%s' arn:aws:ecs:us-east-1:123456789012:task-definition/other:1 ;;
+          *) printf '%s' arn:aws:ecs:us-east-1:123456789012:task-definition/fixture-bot-task:1 ;;
+        esac
       fi
       ;;
     "ecs describe-task-definition")
-      [[ "$*" == *"--task-definition fixture-serving-task-definition"* ]] || return 92
+      [[ "$*" == *"--task-definition arn:aws:ecs:us-east-1:123456789012:task-definition/fixture-bot-task:1"* ]] || return 92
       [ "$FIXTURE_FAILURE" != definition ] || return 1
       if [ "$FIXTURE_FAILURE" = invalid-json ]; then
         printf '%s' not-json
@@ -138,13 +152,21 @@ exit "$sync_status"`,
         encoding: "utf8",
         env: {
           ...process.env,
+          AWS_REGION: "us-east-1",
+          DEPLOYMENT_ACCOUNT_ID: "123456789012",
           ECS_CLUSTER: "fixture-cluster",
           ECS_SERVICE: "fixture-service",
           ECS_TASK_FAMILY: "fixture-bot-task",
           SECRETS_PREFIX: prefix,
           FIXTURE_FAILURE: failure,
           FIXTURE_TASK_DEFINITION: JSON.stringify({
-            taskDefinition: { containerDefinitions: containers },
+            taskDefinition: {
+              taskDefinitionArn:
+                "arn:aws:ecs:us-east-1:123456789012:task-definition/fixture-bot-task:1",
+              family:
+                failure === "returned-family" ? "other" : "fixture-bot-task",
+              containerDefinitions: containers,
+            },
           }),
           GITHUB_ENV: "github-env",
           GITHUB_OUTPUT: "github-output",
@@ -197,6 +219,9 @@ test.each(["", "fixture"])(
 
 test.each([
   "service",
+  "wrong-account",
+  "wrong-family",
+  "returned-family",
   "definition",
   "invalid-json",
   "app",
@@ -221,5 +246,16 @@ test.each([
     const result = runSync(failure);
     expect(result.status).not.toBe(0);
     expect(result.yarn).toHaveLength(calls);
+  },
+);
+
+test.each(["held", "held-before-push"])(
+  "hold at %s prevents live connection publication",
+  (failure) => {
+    const result = runSync(failure);
+    expect(result.status).not.toBe(0);
+    expect(result.yarn).toEqual(
+      failure === "held" ? [] : [["llm-connections:push", "--dry-run"]],
+    );
   },
 );

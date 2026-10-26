@@ -23,7 +23,7 @@ const invocationSchema = z
     runAttempt: z.literal(1),
     environment: z.enum(["production", "sandbox"]),
     workspace: z.enum(["default", "sandbox"]),
-    scope: z.enum(["full", "purchase-permission"]),
+    scope: z.enum(["full", "purchase-permission", "deployment-prerequisites"]),
   })
   .strict();
 const zipNames = ["discord_alert.zip", "grafana_token_rotation.zip"];
