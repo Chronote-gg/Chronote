@@ -351,9 +351,22 @@ jobs:
       - name: Set up Terraform
         uses: hashicorp/setup-terraform@v4
         with:
+          terraform_version: "1.16.0"
           terraform_wrapper: false
 
       - name: Test Sandbox deployment permissions with mocked providers
         run: |
           terraform -chdir=_infra init -backend=false -input=false
           terraform -chdir=_infra test -no-color
+
+      - name: Test production bootstrap with mocked providers
+        env:
+          BOOTSTRAP_MOCK_PLAN_JSONL: ${{ runner.temp }}/bootstrap-mock-plans.jsonl
+        run: |
+          terraform -chdir=_infra/production-bootstrap init -backend=false -input=false -lockfile=readonly
+          terraform -chdir=_infra/production-bootstrap fmt -check -recursive
+          terraform -chdir=_infra/production-bootstrap validate -no-color
+          terraform -chdir=_infra/production-bootstrap test -no-color -filter=tests/bootstrap.tftest.hcl
+          terraform -chdir=_infra/production-bootstrap test -no-color -json -verbose -filter=tests/guard-plan.tftest.hcl > "$RUNNER_TEMP/bootstrap-mock-raw.jsonl"
+          node _infra/production-bootstrap/compact-mock-plan.cjs "$RUNNER_TEMP/bootstrap-mock-raw.jsonl" > "$BOOTSTRAP_MOCK_PLAN_JSONL"
+          node --test _infra/production-bootstrap/verify-plan.test.cjs
