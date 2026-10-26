@@ -1,6 +1,7 @@
 /** @jest-environment node */
 import { jest, test, expect, beforeEach } from "@jest/globals";
 import { createHash } from "node:crypto";
+import { parse, stringify } from "yaml";
 import {
   reviewedRoutes,
   readActualSource,
@@ -92,21 +93,97 @@ test("wrong source, dirty source and unavailable template never bind a fallback"
   expect(() => verifyDeclaredRoutes(binding())).toThrow();
 });
 
-test.each(["deploy.yml", "terraform-apply.yml"])(
-  "actual reviewed %s source with bound hashes refuses its unaccounted static credential route",
-  (workflow) => {
-    const actual = binding();
-    const read = (file, encoding) =>
-      String(file).endsWith(workflow)
-        ? readActualSource(file, encoding)
-        : readOidcOnlySource(file, encoding);
-    actual.manifest.launcherRoutes = reviewedRoutes(actual.manifest, read);
-    mockFile.mockImplementation(read);
+function reviewedWorkflowBinding(workflow, contents) {
+  const actual = binding();
+  const read = (file, encoding) =>
+    String(file).endsWith(workflow)
+      ? contents
+      : readOidcOnlySource(file, encoding);
+  actual.manifest.launcherRoutes = reviewedRoutes(actual.manifest, read);
+  mockFile.mockImplementation(read);
+  return actual;
+}
+const applyPath = ".github/workflows/terraform-apply.yml";
+test("actual reviewed deploy source with bound hashes refuses its unaccounted static credential route", () => {
+  const contents = readActualSource(".github/workflows/deploy.yml", "utf8");
+  expect(() =>
+    verifyDeclaredRoutes(reviewedWorkflowBinding("deploy.yml", contents)),
+  ).toThrow("unaccounted_static_credential_route");
+});
+test("actual reviewed Apply source accounts for its Sandbox and production role-only routes", () => {
+  const contents = readActualSource(applyPath, "utf8");
+  const credentials = parse(contents).jobs.apply.steps.filter((step) =>
+    step.uses?.startsWith("aws-actions/configure-aws-credentials@"),
+  );
+  expect(credentials.map((step) => step.with["role-to-assume"])).toEqual([
+    "${{ vars.TERRAFORM_AWS_ROLE_ARN }}",
+    "${{ vars.PRODUCTION_APPLY_ROLE_ARN }}",
+  ]);
+  expect(
+    declaredRoutesVerified(
+      verifyDeclaredRoutes(
+        reviewedWorkflowBinding("terraform-apply.yml", contents),
+      ),
+      scope,
+    ),
+  ).toBe(true);
+});
+const credentialNames = [
+  "AWS_ACCESS_KEY_ID",
+  "AWS_SECRET_ACCESS_KEY",
+  "AWS_SESSION_TOKEN",
+];
+const staticAcquisitions = [
+  ...["aws-access-key-id", "aws-secret-access-key", "aws-session-token"].map(
+    (name) => [
+      name,
+      {
+        uses: "aws-actions/configure-aws-credentials@v6",
+        with: { [name]: "SYNTHETIC_UNACCOUNTED" },
+      },
+    ],
+  ),
+  ...credentialNames.map((name) => [
+    name,
+    { run: "true", env: { [name]: "SYNTHETIC_UNACCOUNTED" } },
+  ]),
+  ...["secrets", "vars"].flatMap((namespace) =>
+    credentialNames.map((name) => [
+      namespace + "." + name,
+      { run: "echo ${{ " + namespace + "." + name + " }}" },
+    ]),
+  ),
+];
+test.each(staticAcquisitions)(
+  "Apply source refuses reintroduced %s acquisition even with matching reviewed hashes",
+  (_name, step) => {
+    const workflow = parse(readActualSource(applyPath, "utf8"));
+    workflow.jobs.apply.steps.push(step);
+    const actual = reviewedWorkflowBinding(
+      "terraform-apply.yml",
+      stringify(workflow),
+    );
     expect(() => verifyDeclaredRoutes(actual)).toThrow(
       "unaccounted_static_credential_route",
     );
   },
 );
+test("current Plan static credential content is detected by the common workflow accounting check", () => {
+  const contents = readActualSource(
+    ".github/workflows/terraform-plan.yml",
+    "utf8",
+  );
+  expect(
+    parse(contents).jobs.plan.steps.filter(
+      (step) => step.with?.["aws-access-key-id"],
+    ),
+  ).toHaveLength(1);
+  // Plan is not in the launcher inventory; supply its actual body through a declared workflow transport.
+  const actual = reviewedWorkflowBinding("terraform-apply.yml", contents);
+  expect(() => verifyDeclaredRoutes(actual)).toThrow(
+    "unaccounted_static_credential_route",
+  );
+});
 
 test("OIDC-exported credential consumption is not static credential acquisition", () => {
   const actual = binding();
