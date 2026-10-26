@@ -1,7 +1,7 @@
-diff --git a/node_modules/storybook/dist/_node-chunks/chunk-563U7QZ2.js b/node_modules/storybook/dist/_node-chunks/chunk-563U7QZ2.js
+diff --git a/node_modules/storybook/dist/_node-chunks/chunk-6KVIAW36.js b/node_modules/storybook/dist/_node-chunks/chunk-6KVIAW36.js
 index 04ddd65..42f4d4a 100644
---- a/node_modules/storybook/dist/_node-chunks/chunk-563U7QZ2.js
-+++ b/node_modules/storybook/dist/_node-chunks/chunk-563U7QZ2.js
+--- a/node_modules/storybook/dist/_node-chunks/chunk-6KVIAW36.js
++++ b/node_modules/storybook/dist/_node-chunks/chunk-6KVIAW36.js
 @@ -731,7 +731,7 @@ var importMetaResolve = (...args) => typeof import.meta.resolve != "function" &&
  async function importModule(path2, { skipCache = !1 } = {}) {
    if (!isTypescriptLoaderRegistered) {

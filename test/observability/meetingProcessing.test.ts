@@ -8,13 +8,9 @@ import { updateActiveObservation } from "@langfuse/tracing";
 jest.mock("../../src/services/langfuseClient", () => ({
   isLangfuseTracingEnabled: () => true,
 }));
-jest.mock("@langfuse/tracing", () => ({
-  propagateAttributes: (_attributes: unknown, run: () => unknown) => run(),
-  startActiveObservation: (_name: string, run: (span: unknown) => unknown) =>
-    run({ otelSpan: { spanContext: () => ({}) } }),
-  setActiveTraceIO: jest.fn(),
-  updateActiveObservation: jest.fn(),
-}));
+jest.mock("@langfuse/tracing", () =>
+  jest.requireActual("../fixtures/langfuseTracing"),
+);
 
 function meeting(): MeetingData {
   return {

@@ -7,17 +7,17 @@ diff --git a/node_modules/@langfuse/openai/dist/index.cjs b/node_modules/@langfu
      } = completionUsage;
 +    // Nested cache write details repeat the aggregate cache_write_tokens count.
 +    const numericInputDetails = Object.fromEntries(
-+      Object.entries(input_tokens_details != null ? input_tokens_details : {}).filter(
++      Object.entries(input_tokens_details ?? {}).filter(
 +        ([, value]) => typeof value === "number" && Number.isFinite(value)
 +      )
 +    );
 +    const numericOutputDetails = Object.fromEntries(
-+      Object.entries(output_tokens_details != null ? output_tokens_details : {}).filter(
++      Object.entries(output_tokens_details ?? {}).filter(
 +        ([, value]) => typeof value === "number" && Number.isFinite(value)
 +      )
 +    );
      let finalInputTokens = input_tokens;
--    Object.keys(input_tokens_details != null ? input_tokens_details : {}).forEach((key) => {
+-    Object.keys(input_tokens_details ?? {}).forEach((key) => {
 +    Object.values(numericInputDetails).forEach((value) => {
        finalInputTokens = Math.max(
 -        finalInputTokens - input_tokens_details[key],
@@ -26,7 +26,7 @@ diff --git a/node_modules/@langfuse/openai/dist/index.cjs b/node_modules/@langfu
        );
      });
      let finalOutputTokens = output_tokens;
--    Object.keys(output_tokens_details != null ? output_tokens_details : {}).forEach((key) => {
+-    Object.keys(output_tokens_details ?? {}).forEach((key) => {
 +    Object.values(numericOutputDetails).forEach((value) => {
        finalOutputTokens = Math.max(
 -        finalOutputTokens - output_tokens_details[key],
@@ -38,14 +38,14 @@ diff --git a/node_modules/@langfuse/openai/dist/index.cjs b/node_modules/@langfu
        output: finalOutputTokens,
        total: total_tokens,
        ...Object.fromEntries(
--        Object.entries(input_tokens_details != null ? input_tokens_details : {}).map(([key, value]) => [
+-        Object.entries(input_tokens_details ?? {}).map(([key, value]) => [
 +        Object.entries(numericInputDetails).map(([key, value]) => [
            `input_${key}`,
            value
          ])
        ),
        ...Object.fromEntries(
--        Object.entries(output_tokens_details != null ? output_tokens_details : {}).map(([key, value]) => [
+-        Object.entries(output_tokens_details ?? {}).map(([key, value]) => [
 +        Object.entries(numericOutputDetails).map(([key, value]) => [
            `output_${key}`,
            value
@@ -59,17 +59,17 @@ diff --git a/node_modules/@langfuse/openai/dist/index.mjs b/node_modules/@langfu
      } = completionUsage;
 +    // Nested cache write details repeat the aggregate cache_write_tokens count.
 +    const numericInputDetails = Object.fromEntries(
-+      Object.entries(input_tokens_details != null ? input_tokens_details : {}).filter(
++      Object.entries(input_tokens_details ?? {}).filter(
 +        ([, value]) => typeof value === "number" && Number.isFinite(value)
 +      )
 +    );
 +    const numericOutputDetails = Object.fromEntries(
-+      Object.entries(output_tokens_details != null ? output_tokens_details : {}).filter(
++      Object.entries(output_tokens_details ?? {}).filter(
 +        ([, value]) => typeof value === "number" && Number.isFinite(value)
 +      )
 +    );
      let finalInputTokens = input_tokens;
--    Object.keys(input_tokens_details != null ? input_tokens_details : {}).forEach((key) => {
+-    Object.keys(input_tokens_details ?? {}).forEach((key) => {
 +    Object.values(numericInputDetails).forEach((value) => {
        finalInputTokens = Math.max(
 -        finalInputTokens - input_tokens_details[key],
@@ -78,7 +78,7 @@ diff --git a/node_modules/@langfuse/openai/dist/index.mjs b/node_modules/@langfu
        );
      });
      let finalOutputTokens = output_tokens;
--    Object.keys(output_tokens_details != null ? output_tokens_details : {}).forEach((key) => {
+-    Object.keys(output_tokens_details ?? {}).forEach((key) => {
 +    Object.values(numericOutputDetails).forEach((value) => {
        finalOutputTokens = Math.max(
 -        finalOutputTokens - output_tokens_details[key],
@@ -90,14 +90,14 @@ diff --git a/node_modules/@langfuse/openai/dist/index.mjs b/node_modules/@langfu
        output: finalOutputTokens,
        total: total_tokens,
        ...Object.fromEntries(
--        Object.entries(input_tokens_details != null ? input_tokens_details : {}).map(([key, value]) => [
+-        Object.entries(input_tokens_details ?? {}).map(([key, value]) => [
 +        Object.entries(numericInputDetails).map(([key, value]) => [
            `input_${key}`,
            value
          ])
        ),
        ...Object.fromEntries(
--        Object.entries(output_tokens_details != null ? output_tokens_details : {}).map(([key, value]) => [
+-        Object.entries(output_tokens_details ?? {}).map(([key, value]) => [
 +        Object.entries(numericOutputDetails).map(([key, value]) => [
            `output_${key}`,
            value

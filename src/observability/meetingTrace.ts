@@ -1,6 +1,5 @@
 import {
   propagateAttributes,
-  setActiveTraceIO,
   startActiveObservation,
   updateActiveObservation,
 } from "@langfuse/tracing";
@@ -53,7 +52,6 @@ export async function withMeetingEndTrace(
           const previousContext = meeting.langfuseParentSpanContext;
           meeting.langfuseParentSpanContext = chain.otelSpan.spanContext();
 
-          setActiveTraceIO({ input: traceInput });
           updateActiveObservation(
             {
               input: traceInput,

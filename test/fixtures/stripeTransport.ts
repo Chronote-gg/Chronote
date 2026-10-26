@@ -24,7 +24,7 @@ export function stripeTransport(
         status: 200,
         headers: {
           "Content-Type": "application/json",
-          "Stripe-Version": "2026-07-29.dahlia",
+          "Stripe-Version": "2026-09-30.endive",
         },
       });
     }),

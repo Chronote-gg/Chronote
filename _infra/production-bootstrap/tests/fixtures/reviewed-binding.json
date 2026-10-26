@@ -1,0 +1,22 @@
+{
+  "backendKey": "meeting-notes-terraform/production-bootstrap/state",
+  "variables": {
+    "production_account_id": "123456789012",
+    "aws_region": "us-east-1",
+    "environment": "prod",
+    "enable_private_evidence_store": true,
+    "enable_production_terraform_role": true,
+    "kms_key_arn": "arn:aws:kms:us-east-1:123456789012:key/11111111-1111-1111-1111-111111111111",
+    "administrator_role_arn": "arn:aws:iam::123456789012:role/Administrator",
+    "reviewer_role_arn": "arn:aws:iam::123456789012:role/Reviewer",
+    "github_repository_id": "123456",
+    "github_owner_id": "654321",
+    "production_certificate_arn": "arn:aws:acm:us-east-1:123456789012:certificate/22222222-2222-2222-2222-222222222222",
+    "production_hosted_zone_id": "Z0123456789"
+  },
+  "policySha256": {
+    "bucket": "e128587fb4b4223ebdfdebe7d08fba306da2cc9732cbe31c167b940376602c99",
+    "trust": "804435c8fbd59fdc295ed64122cab8f7112752e459024f36a1c51d48874f522f",
+    "role": "8e2eef01c04575789027abca23b17da2fbbb92ab3ad8d8cf848c2b3b0e7055be"
+  }
+}

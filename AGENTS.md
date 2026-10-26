@@ -228,6 +228,13 @@ Optional Windows helper (prints loaded env, supports `-Mock` / `-SkipDocker`):
 - Create a dedicated Discord text channel and voice channel for the branch, then use those for testing.
 - If `.env` changes on main, re-run the script or copy `.env` into the worktree.
 
+## Dependency maintenance
+
+- The weekly maintenance job covers Chronote and chronote-ops, consolidates dependency PRs, checks compatible upgrades and leaves merging to a human.
+- Stripe 23 uses API `2026-09-30.endive`; billing-cycle anchor requests use `{ type: "now" }`. Langfuse 6 records trace input/output on the root observation.
+- Dependabot proposes one cross-ecosystem version-update PR each Monday at 09:00 UTC, including desktop npm and Rust dependencies. Security updates are grouped within each ecosystem and may arrive outside that schedule.
+- Consolidate outstanding dependency PRs on current master, retain intentional compatibility ignores and security resolutions, run the normal quality gates, and close superseded PRs only after the replacement is published with their links.
+
 ## Checks
 
 - Set up the pinned shared tool through `QUALITY_RATCHET_HOME`, then run `yarn check:quality` before committing and `yarn test:quality` after consumer workflow or launcher changes. Keep engine changes in BASIC-BIT/quality-ratchet. Include tests, fixtures, mocks, stories, and module variants.
@@ -237,7 +244,7 @@ Optional Windows helper (prints loaded env, supports `-Mock` / `-SkipDocker`):
 - CI-parity local gate: `yarn run check:ci` (lint:check, prettier:check, markdownlint:check, test, build:all, docs:check, test:e2e, checkov, code:stats, prompts:check, docker:build). Avoid `yarn check` (built-in Yarn integrity command).
 - CI runs the same set as `check:ci` (see `.github/workflows/ci.yml` and `.github/workflows/ci-core.yml`).
 - When running checks locally, avoid docker builds unless explicitly requested.
-- Windows Visual Regression must use Node.js 24.16.0 or later within 24.x for the [confirmed upstream Windows TCP crash](https://github.com/nodejs/node/issues/63620). Do not repin this job to 24.15.0.
+- Windows Visual Regression and native desktop smoke jobs use Node.js 24.19.0 and must stay on 24.16.0 or later within 24.x for the [confirmed upstream Windows TCP crash](https://github.com/nodejs/node/issues/63620). Do not repin this job to 24.15.0.
 - Visual regression baselines: update with `yarn test:visual:update`.
 - Upgrade billing defaults to Monthly unless the arrival link requests Annual. Annual savings use matching monthly/yearly prices in the same currency; never hardcode a discount or substitute a monthly price for an unavailable annual plan. Screenshot coverage includes both selected billing periods.
 - Review baseline changes before committing. The PR Visual Regression check fails on visual test failures; upgrade and post-install welcome snapshots cover desktop, mobile and wide screens. Branch protection separately controls whether that check is required for merge.

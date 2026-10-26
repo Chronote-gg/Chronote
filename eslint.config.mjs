@@ -13,6 +13,7 @@ export default [
   {
     files: [
       "scripts/**/*.{js,mjs,cjs}",
+      "_infra/production-bootstrap/**/*.cjs",
       "test/deployment/**/*.cjs",
       "test/audio/fixtures/voiceCaptureExit.cjs",
       "test/observability/fixtures/langfuseOpenaiCacheUsage.cjs",
