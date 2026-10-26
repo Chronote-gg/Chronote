@@ -253,7 +253,7 @@ export function changeUpdateParams(
     proration_behavior: reset ? "none" : "always_invoice",
     ...(reset
       ? ({
-          billing_cycle_anchor: "now",
+          billing_cycle_anchor: { type: "now" },
         } satisfies Stripe.SubscriptionUpdateParams)
       : { proration_date: source.at }),
     ...(timing === "apply" ? { payment_behavior: "default_incomplete" } : {}),
@@ -276,7 +276,7 @@ export async function previewBillingChange(input: {
       proration_behavior: "always_invoice",
       ...(reset
         ? ({
-            billing_cycle_anchor: "now",
+            billing_cycle_anchor: { type: "now" },
           } satisfies Stripe.SubscriptionUpdateParams)
         : { proration_date: input.source.at }),
     },

@@ -433,15 +433,19 @@ async function firstScheduledInvoice(
   }
   return null;
 }
+function recurringInvoiceReason(reason: Stripe.Invoice["billing_reason"]) {
+  if (reason === "subscription_cycle") return "subscription_cycle";
+  if (reason === "subscription_update") return "subscription_update";
+  return null;
+}
 export function isScheduledInvoice(
   invoice: import("../types/stripe").StripeInvoice,
   operation: ScheduledInvoiceOperation,
   periodStart = operation.source.periodEnd,
 ) {
   if (operation.target.offer) {
-    const reason = invoice.billing_reason;
-    if (reason !== "subscription_cycle" && reason !== "subscription_update")
-      return false;
+    const reason = recurringInvoiceReason(invoice.billing_reason);
+    if (!reason) return false;
     try {
       assertRecurringOfferInvoice(
         invoice,

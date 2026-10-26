@@ -9,6 +9,6 @@ jest.mock("stripe");
 it("keeps the API contract pinned across Stripe SDK updates", () => {
   getStripeClient();
   expect(Stripe).toHaveBeenCalledWith(config.stripe.secretKey, {
-    apiVersion: "2026-07-29.dahlia",
+    apiVersion: "2026-09-30.endive",
   });
 });
