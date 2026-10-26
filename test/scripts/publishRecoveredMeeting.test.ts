@@ -24,6 +24,10 @@ import {
   type PublicationClaim,
   type PublicationReceipt,
 } from "../../src/services/recoveryDiscordPublication";
+import {
+  publicationSnapshot,
+  publicationSnapshotDigest,
+} from "../../src/types/meetingPublication";
 import { createDiscordMessageEditor } from "../../src/services/discordMessageEditor";
 import { fixture, input } from "../services/recoveryDiscordPublication.fixture";
 
@@ -316,6 +320,7 @@ test("private batched preview applies exactly once, preserves fields and reconci
   twoSlots(f, true);
   const before = structuredClone(f.messages.get("400")!);
   const history = JSON.stringify(f.history);
+  const capturedPublication = publicationSnapshotDigest(f.history);
   const requests = await httpDiscord(f);
   const directory = join(root, "review");
   expect(await run(previewArgs(directory), f.deps)).toBe(0);
@@ -342,7 +347,25 @@ test("private batched preview applies exactly once, preserves fields and reconci
     ...before,
     embeds: preview.targets[0].afterEmbeds,
   });
-  expect(JSON.stringify(f.history)).toBe(history);
+  const enrolled = f.history as import("../../src/types/db").MeetingHistory;
+  expect(enrolled.updateDelivery).toMatchObject({
+    revision: "adopted-" + preview.previewDigest,
+    policy: { kind: "active" },
+    progress: { kind: "synced" },
+    lastSuccess: null,
+    attempts: 0,
+    createdCandidates: [],
+    cleanupCandidates: [],
+  });
+  expect(Object.values(enrolled.updateDelivery!.parts)).toEqual(
+    Array.from({ length: 6 }, () => ({ desired: 0, acknowledged: 0 })),
+  );
+  expect(enrolled.updateDeliveryDueAt).toBeUndefined();
+  expect(enrolled.updateDeliveryQueue).toBeUndefined();
+  const preservedHistory = { ...f.history };
+  Reflect.deleteProperty(preservedHistory, "publicationRepair");
+  Reflect.deleteProperty(preservedHistory, "updateDelivery");
+  expect(JSON.stringify(preservedHistory)).toBe(history);
   const after = JSON.stringify(preview.targets[0].afterEmbeds);
   expect(after).toContain("Текст.");
   expect(after).toContain("v2 | Recovered notes");
@@ -359,6 +382,13 @@ test("private batched preview applies exactly once, preserves fields and reconci
     ),
   );
   expect(receipt.status).toBe("verified");
+  expect(publicationSnapshot(f.history).publicationRepair).toEqual({
+    kind: "settled",
+    runId: receipt.runId,
+    previewDigest: preview.previewDigest,
+    receiptKey: [...f.claims.values()][0].value.receiptKey,
+    snapshot: capturedPublication,
+  });
   const remote = JSON.stringify([...f.receipts, ...f.claims]);
   expect(await run(args, f.deps)).toBe(0);
   expect(

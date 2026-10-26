@@ -1,3 +1,7 @@
+import {
+  publicationSnapshotCondition,
+  settledLifecycleDelivery,
+} from "../types/meetingPublication";
 import { planCompatibleReplacement } from "./runtimeCompatibleReplacementService";
 import type {
   TransactWriteItem,
@@ -805,6 +809,40 @@ export function buildHistoryTransition(
     );
     updates.push(`#field${index} = :value${index}`);
   });
+  let publicationCondition = "";
+  if (input.expectedPublication) {
+    const proof = publicationSnapshotCondition(input.expectedPublication);
+    Object.assign(names, proof.names);
+    Object.assign(
+      values,
+      marshall(proof.values, { removeUndefinedValues: true }),
+    );
+    publicationCondition = " AND " + proof.condition;
+    const settled = settledLifecycleDelivery(
+      input.expectedPublication,
+      input.patch,
+    );
+    if (settled) {
+      names["#settledDelivery"] = "updateDelivery";
+      updates.push("#settledDelivery = :settledDelivery");
+      Object.assign(values, marshall({ ":settledDelivery": settled.delivery }));
+      if (settled.dueAt !== undefined) {
+        names["#settledQueue"] = "updateDeliveryQueue";
+        names["#settledDue"] = "updateDeliveryDueAt";
+        updates.push(
+          "#settledQueue = :settledQueue",
+          "#settledDue = :settledDue",
+        );
+        Object.assign(
+          values,
+          marshall({
+            ":settledQueue": "meeting-update:v1",
+            ":settledDue": settled.dueAt,
+          }),
+        );
+      }
+    }
+  }
   let checkpointCondition = "";
   if (input.expectedCheckpointRevision !== undefined) {
     names["#checkpoint"] = "checkpoint";
@@ -825,6 +863,7 @@ export function buildHistoryTransition(
     ConditionExpression:
       "meetingId = :meeting AND ownerInstanceId = :owner AND executionVersion = :version AND #status = :prior" +
       checkpointCondition +
+      publicationCondition +
       recordingDeliveryCondition(input, names, values),
     UpdateExpression: `SET ${updates.join(", ")}`,
     ExpressionAttributeNames: names,

@@ -1,4 +1,7 @@
 /** @jest-environment node */
+import { requestMeetingUpdateDelivery } from "../../src/types/meetingUpdateDelivery";
+import { getMeetingHistoryRepository } from "../../src/repositories/meetingHistoryRepository";
+import type { MeetingHistory } from "../../src/types/db";
 import {
   transitionOwnedMeetingHistoryService,
   saveOwnedMeetingHistoryService,
@@ -99,6 +102,252 @@ describe("owned recording history", () => {
     } as unknown as MeetingData;
     return { row, meeting };
   }
+  afterEach(() => jest.restoreAllMocks());
+
+  function conflictFixture() {
+    const base = fixture();
+    const repository = getMeetingHistoryRepository();
+    const transition = repository.transitionOwned.bind(repository);
+    const read = jest.spyOn(repository, "getOwned");
+    const writes = jest.spyOn(repository, "transitionOwned");
+    const current = () => {
+      const row = getMockStore().meetingHistoryByGuild.get(
+        base.row.guildId,
+      )?.[0];
+      if (!row) throw new Error("Expected owned history");
+      return row;
+    };
+    const replace = (patch: Partial<MeetingHistory>) => {
+      const row = structuredClone({ ...current(), ...patch });
+      getMockStore().meetingHistoryByGuild.set(row.guildId, [row]);
+    };
+    const edit = (revision: number) =>
+      replace({
+        updateDelivery: requestMeetingUpdateDelivery({
+          history: current(),
+          mutation: { kind: "rename", meetingName: "Edited " + revision },
+          revision: "delivery-" + revision,
+          now: 100,
+          policy: { kind: "held", reason: "initial_publication_unsettled" },
+        }),
+        contentRevision: revision,
+        contentMutation: {
+          id: "synthetic-edit-" + revision,
+          fingerprint: "a".repeat(64),
+          fieldRevisions: { meetingName: revision },
+        },
+        meetingName: "Edited " + revision,
+      });
+    const terminal: MeetingHistory = {
+      ...base.row,
+      status: "complete",
+      notes: "Generated notes",
+      meetingName: "Generated title",
+      summarySentence: "Generated summary",
+    };
+    return {
+      ...base,
+      read,
+      writes,
+      transition,
+      current,
+      replace,
+      edit,
+      terminal,
+    };
+  }
+
+  it("remerges the original terminal fields after two canonical conflicts", async () => {
+    const f = conflictFixture();
+    f.writes.mockImplementation(async (input) => {
+      if (f.writes.mock.calls.length <= 2) f.edit(f.writes.mock.calls.length);
+      return f.transition(input);
+    });
+    const saved = await saveOwnedMeetingHistoryService(f.meeting, f.terminal);
+    expect(f.writes).toHaveBeenCalledTimes(3);
+    expect(saved).toMatchObject({
+      status: "complete",
+      meetingName: "Edited 2",
+      notes: "Generated notes",
+      summarySentence: "Generated summary",
+    });
+    expect(f.current()).toMatchObject({
+      status: "complete",
+      contentRevision: 2,
+      meetingName: "Edited 2",
+      notes: "Generated notes",
+      summarySentence: "Generated summary",
+    });
+    expect(f.terminal.meetingName).toBe("Generated title");
+  });
+
+  it("exhausts three canonical transition attempts without a fourth read or save", async () => {
+    const f = conflictFixture();
+    f.writes.mockImplementation(async (input) => {
+      f.edit(f.writes.mock.calls.length);
+      return f.transition(input);
+    });
+    await expect(
+      saveOwnedMeetingHistoryService(f.meeting, f.terminal),
+    ).rejects.toThrow("fenced");
+    expect(f.writes).toHaveBeenCalledTimes(3);
+    expect(f.read).toHaveBeenCalledTimes(3);
+    expect(f.current()).toMatchObject({
+      status: "processing",
+      contentRevision: 3,
+      meetingName: "Edited 3",
+    });
+  });
+
+  it.each([
+    { meetingId: "replacement" },
+    { ownerInstanceId: "replacement" },
+    { executionVersion: 2 },
+    { status: "cancelled" },
+    { summaryMessageId: "different-publication" },
+    {
+      canonicalWriter: {
+        kind: "recording",
+        ownerInstanceId: "other",
+        executionVersion: 1,
+      },
+    },
+  ] satisfies Partial<MeetingHistory>[])(
+    "stops canonical retry when a noncanonical fence changes: %j",
+    async (change) => {
+      const f = conflictFixture();
+      f.writes.mockImplementationOnce(async (input) => {
+        f.edit(1);
+        f.replace(change);
+        return f.transition(input);
+      });
+      // Both statuses are allowed initially; a changed status still cannot be adopted.
+      await expect(
+        transitionOwnedMeetingHistoryService(
+          f.meeting,
+          { status: "cancelled" },
+          ["processing", "cancelled"],
+          0,
+        ),
+      ).rejects.toThrow();
+      expect(f.writes).toHaveBeenCalledTimes(1);
+      expect(f.current()).toMatchObject(change);
+      expect(f.current().notes).toBe("Existing");
+    },
+  );
+
+  it("does not retry an unchanged stale snapshot", async () => {
+    const f = conflictFixture();
+    f.writes.mockResolvedValueOnce("stale");
+    await expect(
+      saveOwnedMeetingHistoryService(f.meeting, f.terminal),
+    ).rejects.toThrow("fenced");
+    expect(f.writes).toHaveBeenCalledTimes(1);
+    expect(f.current().status).toBe("processing");
+  });
+
+  it.each(["read", "transition"] as const)(
+    "propagates a repository %s error without retry",
+    async (boundary) => {
+      const f = conflictFixture();
+      const error = new Error("synthetic transport error");
+      if (boundary === "read") f.read.mockRejectedValueOnce(error);
+      else f.writes.mockRejectedValueOnce(error);
+      await expect(
+        saveOwnedMeetingHistoryService(f.meeting, f.terminal),
+      ).rejects.toBe(error);
+      expect(f.read).toHaveBeenCalledTimes(1);
+      expect(f.writes).toHaveBeenCalledTimes(boundary === "read" ? 0 : 1);
+      expect(f.current().status).toBe("processing");
+    },
+  );
+
+  it.each(["read", "transition", "reread"] as const)(
+    "stops when ownership aborts during %s",
+    async (boundary) => {
+      const f = conflictFixture();
+      const controller = new AbortController();
+      const error = new Error("synthetic ownership abort");
+      f.meeting.ownershipSignal = controller.signal;
+      const getOwned = f.read.getMockImplementation();
+      if (!getOwned) throw new Error("Expected real repository read");
+      f.read.mockImplementation(async (...args) => {
+        const row = await getOwned(...args);
+        if (
+          boundary === "read" ||
+          (boundary === "reread" && f.read.mock.calls.length === 2)
+        )
+          controller.abort(error);
+        return row;
+      });
+      f.writes.mockImplementationOnce(async (input) => {
+        f.edit(1);
+        const result = await f.transition(input);
+        if (boundary === "transition") controller.abort(error);
+        return result;
+      });
+      await expect(
+        saveOwnedMeetingHistoryService(f.meeting, f.terminal),
+      ).rejects.toBe(error);
+      expect(f.writes).toHaveBeenCalledTimes(boundary === "read" ? 0 : 1);
+      expect(f.current().status).toBe("processing");
+    },
+  );
+
+  it("stops when finalization aborts during a canonical retry read", async () => {
+    const f = conflictFixture();
+    const controller = new AbortController();
+    const error = new Error("synthetic finalization abort");
+    f.meeting.finalization = {
+      controller,
+      promise: Promise.resolve(),
+      disposition: "pending",
+    };
+    const getOwned = f.read.getMockImplementation();
+    if (!getOwned) throw new Error("Expected real repository read");
+    f.read.mockImplementation(async (...args) => {
+      const row = await getOwned(...args);
+      if (f.read.mock.calls.length === 2) controller.abort(error);
+      return row;
+    });
+    f.writes.mockImplementationOnce(async (input) => {
+      f.edit(1);
+      return f.transition(input);
+    });
+    await expect(
+      saveOwnedMeetingHistoryService(f.meeting, f.terminal),
+    ).rejects.toBe(error);
+    expect(f.writes).toHaveBeenCalledTimes(1);
+    expect(f.current().status).toBe("processing");
+  });
+
+  it.each(["policy", "acknowledgment", "progress"] as const)(
+    "does not retry a canonical edit with an independent delivery %s change",
+    async (field) => {
+      const f = conflictFixture();
+      f.edit(1);
+      f.writes.mockImplementationOnce(async (input) => {
+        f.edit(2);
+        const delivery = f.current().updateDelivery;
+        if (!delivery) throw new Error("Expected canonical delivery intent");
+        if (field === "policy") delivery.policy = { kind: "active" };
+        if (field === "acknowledgment")
+          delivery.parts.notesTitle.acknowledged = 1;
+        if (field === "progress")
+          delivery.progress = {
+            kind: "blocked",
+            reason: "provider_outcome_unknown",
+          };
+        return f.transition(input);
+      });
+      await expect(
+        saveOwnedMeetingHistoryService(f.meeting, f.terminal),
+      ).rejects.toThrow("fenced");
+      expect(f.writes).toHaveBeenCalledTimes(1);
+      expect(f.current().status).toBe("processing");
+    },
+  );
+
   it("lateInitialSaveCannotRegressTerminalHistory", async () => {
     const { row, meeting } = fixture("complete");
     await expect(saveMeetingStartToDatabase(meeting)).rejects.toThrow(

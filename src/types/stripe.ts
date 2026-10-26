@@ -1,5 +1,5 @@
 import Stripe from "stripe";
-import type { Stripe as StripeTypes } from "stripe/cjs/stripe.core";
+import type StripeTypes from "stripe";
 
 export type StripeClient = InstanceType<typeof Stripe>;
 export type StripeEffect = <T>(run: () => Promise<T>) => Promise<T>;

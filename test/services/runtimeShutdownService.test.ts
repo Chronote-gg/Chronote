@@ -3,6 +3,7 @@ const mockLifecycleStop = jest.fn(async () => {});
 const mockInitStop = jest.fn(async () => {});
 const mockControlStop = jest.fn(async () => {});
 const mockPersonalStop = jest.fn(async () => {});
+const mockMeetingUpdateStop = jest.fn(async () => {});
 const mockBillingStop = jest.fn(async () => {});
 const mockFence = jest.fn();
 const mockCloseAdmission = jest.fn();
@@ -27,6 +28,9 @@ jest.mock("../../src/services/runtimeLifecycleService", () => ({
   closeRuntimeAdmission: () => mockCloseAdmission(),
   getRuntimeWorkCounts: () => ({ ancillary_delivery: 0 }),
   shutdownRuntimeLifecycle: () => mockLifecycleStop(),
+}));
+jest.mock("../../src/services/meetingUpdateDeliveryWorkerService", () => ({
+  stopMeetingUpdateDeliveryWorker: () => mockMeetingUpdateStop(),
 }));
 jest.mock("../../src/services/renewalRecoveryWorkerService", () => ({
   stopRenewalRecoveryWorker: () => mockBillingStop(),
@@ -115,6 +119,34 @@ test("zero work counts cannot turn a rejected actual server close into successfu
     expect(await owner.request("signal")).toEqual({ kind: "unresolved" });
     expect(exit).toHaveBeenCalledWith(1);
   } finally {
+    owner.dispose();
+  }
+});
+
+test("composed shutdown awaits the meeting update provider lifetime", async () => {
+  const tail = held();
+  mockMeetingUpdateStop.mockReturnValueOnce(tail.promise);
+  const exit = jest
+    .spyOn(process, "exit")
+    .mockImplementation(() => undefined as never);
+  const owner = moduleFactory()({
+    stopBotAdmission: jest.fn(),
+    closeServer: async () => {},
+    destroyBot: async () => {},
+  });
+  try {
+    let settled = false;
+    const result = owner.request("signal").then((value) => {
+      settled = true;
+      return value;
+    });
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(settled).toBe(false);
+    expect(exit).not.toHaveBeenCalled();
+    tail.release();
+    expect(await result).toEqual({ kind: "settled" });
+  } finally {
+    tail.release();
     owner.dispose();
   }
 });

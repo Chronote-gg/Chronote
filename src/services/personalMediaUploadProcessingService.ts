@@ -1,3 +1,4 @@
+import { writeClaimedPersonalHistory } from "./personalMediaClaimedHistory";
 import { buildPersonalMeetingGuildId } from "../utils/meetingOwnership";
 import { requireUnpausedPersonalMediaUpload } from "./personalMediaUploadStatusService";
 import {
@@ -30,8 +31,6 @@ import {
 } from "../constants";
 import { getMeetingHistoryService } from "./meetingHistoryService";
 import { personalMediaClaimForJob } from "../db";
-import { getPersonalMediaUploadRepository } from "../repositories/personalMediaUploadRepository";
-import { writeMeetingUserIndexForMeetingService } from "./meetingUserIndexService";
 import {
   downloadObjectToFile,
   fetchJsonFromS3,
@@ -1074,25 +1073,15 @@ async function writeClaimedHistory(
   terminalJob?: PersonalMediaUploadJobRecord,
   onDurable?: () => void,
 ) {
-  assertPersonalProcessingActive(job);
-  if (
-    !(await getPersonalMediaUploadRepository().writeHistory(
-      history,
-      personalMediaClaimForJob(job, instanceId),
-      terminalJob,
-    ))
-  )
-    throw new Error("Personal history claim lost");
-  if (terminalJob) onDurable?.();
-  assertPersonalProcessingActive(job);
-  try {
-    await writeMeetingUserIndexForMeetingService(history);
-  } catch (error) {
-    console.error(
-      "Failed to index personal meeting history",
-      buildProviderFailureObservation(error),
-    );
-  }
+  return writeClaimedPersonalHistory({
+    job,
+    history,
+    instanceId,
+    terminalJob,
+    onDurable,
+    assertActive: assertPersonalProcessingActive,
+    observeFailure: buildProviderFailureObservation,
+  });
 }
 
 const writeProcessingMeeting = async (
@@ -1386,7 +1375,7 @@ export async function processPersonalMediaUpload(
         result,
         completedAt,
       );
-      await markPersonalMediaUploadComplete(
+      const committed = await markPersonalMediaUploadComplete(
         job,
         identity,
         result,
@@ -1397,7 +1386,7 @@ export async function processPersonalMediaUpload(
       );
       assertPersonalProcessingActive(job);
       try {
-        await maybeAutoExportCompletedMeeting(meetingHistory, signal);
+        await maybeAutoExportCompletedMeeting(committed, signal);
       } catch (error) {
         assertNotionOutcomeKnown(error, signal);
         console.error(

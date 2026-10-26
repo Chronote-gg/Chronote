@@ -78,8 +78,21 @@ describe("completion notes latency contract", () => {
     jest
       .mocked(updateMeetingSummaryMessage)
       .mockImplementation(async (meeting) => {
-        meeting.delivery = {
-          notes: { outcome: "complete", sent: 2, intended: 2, errors: [] },
+        const notes = {
+          outcome: "complete" as const,
+          sent: 2,
+          intended: 2,
+          errors: [],
+        };
+        meeting.delivery = { notes };
+        return {
+          notes,
+          summary: {
+            outcome: "not_applicable",
+            sent: 0,
+            intended: 0,
+            errors: [],
+          },
         };
       });
   });
@@ -293,6 +306,7 @@ describe("completion notes latency contract", () => {
         .spyOn(historyService, "saveOwnedMeetingHistoryService")
         .mockImplementation(async (_meeting, history) => {
           Object.assign(row, history);
+          return history;
         });
       const exportNotes = jest
         .spyOn(notion, "maybeAutoExportCompletedMeeting")
@@ -388,8 +402,21 @@ describe("completion notes latency contract", () => {
     jest
       .mocked(updateMeetingSummaryMessage)
       .mockImplementationOnce(async (current) => {
-        current.delivery = {
-          notes: { outcome: "partial", sent: 1, intended: 2, errors: [] },
+        const notes = {
+          outcome: "partial" as const,
+          sent: 1,
+          intended: 2,
+          errors: [],
+        };
+        current.delivery = { notes };
+        return {
+          notes,
+          summary: {
+            outcome: "not_applicable",
+            sent: 0,
+            intended: 0,
+            errors: [],
+          },
         };
       });
     await runEndMeetingFlow({ client: {} as Client, meeting });

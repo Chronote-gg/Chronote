@@ -250,6 +250,22 @@ test("mock installation refuses the entire cohort on conflict and permits exact 
     );
   expect(await repository.installPausedDesktopDrafts(input)).toBe("stale");
 });
+test("bound mock repository uses shared upload parents for paused-draft installation", async () => {
+  const input = installation();
+  const store = getMockStore();
+  store.deploymentControlRecords.clear();
+  store.deploymentControlRecords.set(
+    JSON.stringify(["ENV", "CONTROL"]),
+    input.control,
+  );
+  for (const { expectedParent } of input.pairs)
+    store.personalMediaUploadsById.set(expectedParent.uploadId, expectedParent);
+  const repository = getDeploymentControlRepository();
+  expect(await repository.installPausedDesktopDrafts(input)).toBe("applied");
+  expect(
+    await repository.getRecord(input.pairs[1].record.pk, "PAUSED_DRAFT"),
+  ).toEqual(input.pairs[1].record);
+});
 test.each([
   { name: "TimeoutError", code: "ETIMEDOUT" },
   { name: "Error", code: "ECONNRESET" },

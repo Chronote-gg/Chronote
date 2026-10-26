@@ -267,6 +267,17 @@ function rejectedMeetingMessage(error: unknown): boolean {
     error.status < 500
   );
 }
+function fallbackDiagnostics(
+  error: unknown,
+  finalization: boolean,
+): Pick<
+  Extract<DeliveryResult, { outcome: "sent_fallback" }>,
+  "errors" | "recoveredMissingMessage"
+> {
+  return finalization && missingMeetingMessage(error)
+    ? { errors: [], recoveredMissingMessage: { code: 10008, status: 404 } }
+    : { errors: [deliveryError(error)] };
+}
 async function deliverMeetingMessage(
   meeting: MeetingData,
   payload: MeetingMessagePayload,
@@ -280,7 +291,7 @@ async function deliverMeetingMessage(
       : undefined;
   signal?.throwIfAborted();
   const channel = meeting.textChannel;
-  const errors: DeliveryResult["errors"] = [];
+  let fallback: ReturnType<typeof fallbackDiagnostics> = { errors: [] };
   if (meeting.startMessageId) {
     try {
       const message = await channel.messages.fetch(meeting.startMessageId);
@@ -304,14 +315,14 @@ async function deliverMeetingMessage(
           outcome: "edited_existing",
           intended: 1,
           sent: 1,
-          errors,
+          errors: [],
         }),
       };
     } catch (error) {
       signal?.throwIfAborted();
       if ((finalization || ownedNotice) && !missingMeetingMessage(error))
         throw error;
-      errors.push(deliveryError(error));
+      fallback = fallbackDiagnostics(error, finalization);
     }
   }
 
@@ -333,18 +344,17 @@ async function deliverMeetingMessage(
         outcome: "sent_fallback",
         intended: 1,
         sent: 1,
-        errors,
+        ...fallback,
       }),
     };
   } catch (error) {
     if (finalization || ownedNotice) throw error;
-    errors.push(deliveryError(error));
     return {
       delivery: recordDelivery(meeting, phase, {
         outcome: "failed",
         intended: 1,
         sent: 0,
-        errors,
+        errors: [...fallback.errors, deliveryError(error)],
       }),
     };
   }

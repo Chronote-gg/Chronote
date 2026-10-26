@@ -1,6 +1,6 @@
 /** @jest-environment node */
 import { readFileSync } from "node:fs";
-import { runInNewContext } from "node:vm";
+import { runDynamoInitialization } from "./dynamoInitScript.fixture";
 import * as dynamo from "@aws-sdk/client-dynamodb";
 
 test.each([false, true])(
@@ -10,32 +10,19 @@ test.each([false, true])(
       if (command instanceof dynamo.DescribeTableCommand)
         return {
           Table: {
-            GlobalSecondaryIndexes: exists
-              ? [{ IndexName: "RenewalRecoveryDueIndex" }]
-              : [],
+            GlobalSecondaryIndexes:
+              command.input.TableName === "MeetingHistoryTable"
+                ? [{ IndexName: "UpdateDeliveryDueIndex" }]
+                : exists
+                  ? [{ IndexName: "RenewalRecoveryDueIndex" }]
+                  : [],
           },
         };
       if (command instanceof dynamo.DescribeTimeToLiveCommand)
         return { TimeToLiveDescription: { TimeToLiveStatus: "ENABLED" } };
       return {};
     });
-    const source = readFileSync("scripts/init-dynamodb.js", "utf8");
-    const end = source.lastIndexOf("createTables().catch");
-    expect(end).toBeGreaterThan(0);
-    await runInNewContext(source.slice(0, end) + "createTables();", {
-      require: (name: string) =>
-        name === "dotenv"
-          ? { config() {} }
-          : {
-              ...dynamo,
-              DynamoDBClient: class {
-                send = send;
-              },
-            },
-      console: { log() {}, error() {} },
-      process: { env: {} },
-      setTimeout,
-    });
+    await runDynamoInitialization(send);
     const updates = send.mock.calls
       .map((call) => call[0])
       .filter((command) => command instanceof dynamo.UpdateTableCommand);
@@ -68,7 +55,7 @@ test("Terraform exposes only the exact recovery due index to the task role", () 
   expect(source).toContain('projection_type = "KEYS_ONLY"');
 });
 
-test("the task can describe only the subscription table for renewal readiness", () => {
+test("the task can describe only the two exact tables for delivery readiness", () => {
   const source = readFileSync("_infra/main.tf", "utf8");
   const policy = source.match(
     /resource "aws_iam_policy" "dynamodb_access_policy" \{([\s\S]*?)\n\}/,
@@ -86,6 +73,6 @@ test("the task can describe only the subscription table for renewal readiness", 
     /Action\s*=\s*\[\s*"dynamodb:DescribeTable"\s*,?\s*\]/,
   );
   expect(describe[0]).toMatch(
-    /Resource\s*=\s*\[\s*aws_dynamodb_table\.guild_subscription_table\.arn\s*,?\s*\]/,
+    /Resource\s*=\s*\[\s*aws_dynamodb_table\.guild_subscription_table\.arn\s*,\s*aws_dynamodb_table\.meeting_history_table\.arn\s*,?\s*\]/,
   );
 });

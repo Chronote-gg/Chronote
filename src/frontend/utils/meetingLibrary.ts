@@ -1,3 +1,4 @@
+import type { MeetingUpdatePublicDelivery } from "../../services/meetingUpdateStatus";
 import { format } from "date-fns";
 import {
   resolveCaptureStatus,
@@ -37,6 +38,7 @@ export type MeetingDetails = MeetingCapturePresentation & {
   events: MeetingEvent[];
   status?: MeetingStatus;
   processing?: MeetingProcessingOutcome;
+  updateDelivery?: MeetingUpdatePublicDelivery;
 };
 
 export type MeetingDetailInput = MeetingCapturePresentation & {
@@ -68,6 +70,7 @@ export type MeetingDetailInput = MeetingCapturePresentation & {
   events?: MeetingEvent[];
   status?: MeetingStatus;
   processing?: MeetingProcessingOutcome;
+  updateDelivery?: MeetingUpdatePublicDelivery;
 };
 
 export type MeetingFilterItem = {
@@ -335,5 +338,6 @@ export const buildMeetingDetails = (
     recovery: detail.recovery,
     recoveryNotice: detail.recoveryNotice,
     processing: detail.processing,
+    updateDelivery: detail.updateDelivery,
   };
 };

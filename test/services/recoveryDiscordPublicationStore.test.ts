@@ -1,12 +1,16 @@
 /** @jest-environment node */
-import { DynamoDBClient, GetItemCommand } from "@aws-sdk/client-dynamodb";
+import {
+  DynamoDBClient,
+  GetItemCommand,
+  UpdateItemCommand,
+} from "@aws-sdk/client-dynamodb";
 import {
   S3Client,
   GetObjectCommand,
   PutObjectCommand,
 } from "@aws-sdk/client-s3";
 import { STSClient } from "@aws-sdk/client-sts";
-import { marshall } from "@aws-sdk/util-dynamodb";
+import { marshall, unmarshall } from "@aws-sdk/util-dynamodb";
 import { createRecoveryDiscordPublicationStore } from "../../src/services/recoveryDiscordPublicationStore";
 import {
   applyRecoveryDiscordPublication as apply,
@@ -25,19 +29,36 @@ function setup() {
   const dynamo = new DynamoDBClient(config);
   const s3 = new S3Client(config);
   const sts = new STSClient(config);
-  const identity = jest
-    .spyOn(sts, "send")
-    .mockResolvedValue({ Account: input.accountId });
-  const history = jest
-    .spyOn(dynamo, "send")
-    .mockResolvedValue({ Item: marshall(f.history) });
+  const identity = jest.fn(async () => ({ Account: input.accountId }));
+  jest.spyOn(sts, "send").mockImplementation(identity);
+  const persistedHistory = structuredClone(f.history);
+  const history = jest.fn(async (command: unknown) => {
+    if (command instanceof GetItemCommand)
+      return { Item: marshall(persistedHistory) };
+    if (command instanceof UpdateItemCommand) {
+      const names = command.input.ExpressionAttributeNames ?? {};
+      const values = unmarshall(command.input.ExpressionAttributeValues ?? {});
+      const expression = command.input.UpdateExpression ?? "";
+      const set = expression.match(/SET (.*?)(?: REMOVE|$)/)?.[1];
+      for (const assignment of set?.split(", ") ?? []) {
+        const [name, value] = assignment.split(" = ");
+        Object.assign(persistedHistory, { [names[name]]: values[value] });
+      }
+      const remove = expression.match(/REMOVE (.*)/)?.[1];
+      for (const name of remove?.split(", ") ?? [])
+        Reflect.deleteProperty(persistedHistory, names[name]);
+      return { $metadata: {} };
+    }
+    throw new Error("Unexpected Dynamo operation");
+  });
+  jest.spyOn(dynamo, "send").mockImplementation(history);
   const objects = new Map<string, { body: string; etag: string }>();
   objects.set(input.recoveryManifestKey, {
     body: JSON.stringify(f.manifest),
     etag: "manifest",
   });
   let revision = 0;
-  const send = jest.spyOn(s3, "send").mockImplementation(async (command) => {
+  const send = jest.fn(async (command: unknown) => {
     if (command instanceof GetObjectCommand) {
       const object = objects.get(command.input.Key!);
       if (!object)
@@ -67,6 +88,7 @@ function setup() {
     }
     throw new Error("unexpected AWS operation");
   });
+  jest.spyOn(s3, "send").mockImplementation(send);
   const create = () =>
     createRecoveryDiscordPublicationStore({ dynamo, s3, sts, scope: input });
   return { ...f, dynamo, s3, sts, identity, history, objects, send, create };
@@ -78,6 +100,8 @@ test("consistent exact history reads and owner-bound S3 reads", async () => {
   expect(await store.readHistory(input)).toEqual(await f.deps.readHistory());
   const call = f.history.mock.calls[0][0];
   expect(call).toBeInstanceOf(GetItemCommand);
+  if (!(call instanceof GetItemCommand))
+    throw new Error("Expected consistent history read");
   expect(call.input).toEqual({
     TableName: input.table,
     ConsistentRead: true,
@@ -87,7 +111,10 @@ test("consistent exact history reads and owner-bound S3 reads", async () => {
     }),
   });
   await store.readManifest(input);
-  expect(f.send.mock.calls[0][0].input).toMatchObject({
+  const manifestRead = f.send.mock.calls[0][0];
+  if (!(manifestRead instanceof GetObjectCommand))
+    throw new Error("Expected manifest object read");
+  expect(manifestRead.input).toMatchObject({
     Bucket: input.bucket,
     Key: input.recoveryManifestKey,
     ExpectedBucketOwner: input.accountId,
