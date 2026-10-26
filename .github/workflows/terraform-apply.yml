@@ -35,12 +35,14 @@ on:
         required: true
         type: string
       plan_scope:
-        description: Scope of the reviewed saved plan
+        default: meeting-update-delivery
+        description: Scope of the reviewed saved plan; Sandbox requires meeting-update-delivery
         required: true
         type: choice
         options:
           - full
           - purchase-permission
+          - meeting-update-delivery
           - deployment-prerequisites
       confirmation:
         description: Type apply to request the reviewed plan; native approval is also required
@@ -87,13 +89,18 @@ jobs:
         run: |
           bash scripts/ci-install-dependencies.sh
           yarn build
-      - name: Configure AWS credentials
-        if: inputs.github_environment != 'production'
+      - name: Validate Terraform dispatch scope
+        run: node scripts/deployment/terraform-dispatch.cjs --validate
+      - name: Configure Sandbox AWS credentials
+        if: ${{ inputs.github_environment == 'sandbox' }}
         uses: aws-actions/configure-aws-credentials@v6
         with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          role-to-assume: ${{ vars.TERRAFORM_AWS_ROLE_ARN }}
+          allowed-account-ids: ${{ vars.AWS_ACCOUNT_ID }}
           aws-region: ${{ env.AWS_REGION }}
+          role-session-name: terraform-apply-${{ github.run_id }}-${{ github.run_attempt }}
+          role-duration-seconds: 3600
+          unset-current-credentials: true
 
       - name: Configure reviewed production Apply identity
         if: inputs.github_environment == 'production'

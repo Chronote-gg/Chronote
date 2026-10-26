@@ -48,6 +48,8 @@ export function fixture() {
   const commands = [],
     controls = {
       exitCode: 2,
+      environment: "production",
+      planJson: undefined,
       fail: "",
       lostApply: false,
       applyTitle: "",
@@ -94,8 +96,8 @@ export function fixture() {
       env: {
         ...options.env,
         PLAN_EXIT: String(controls.exitCode),
-        PLAN_JSON: JSON.stringify(controls.plan),
         FAIL: controls.fail,
+        PLAN_JSON: JSON.stringify(controls.planJson ?? controls.plan),
       },
     });
     if (file === "terraform" && args[1] === "apply" && controls.lostApply)
@@ -110,7 +112,7 @@ export function fixture() {
         {
           state: "approved",
           comment: "reviewed",
-          environments: [{ id: 7, name: invocation.environment }],
+          environments: [{ id: 7, name: controls.environment }],
           user: { id: 2, type: "User" },
         },
       ];
@@ -128,7 +130,7 @@ export function fixture() {
         value.branch_policies[0].id = 12;
     } else if (url.includes("/environments/"))
       value = nativeEnvironment(
-        invocation.environment,
+        controls.environment,
         controls.envChange &&
           commands.filter((c) => c.args[1] === "validate").length >= 2
           ? "2026-10-21T12:00:00Z"

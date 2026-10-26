@@ -27,6 +27,7 @@ function parseDispatch(env, event) {
     plan_scope: z.enum([
       "full",
       "purchase-permission",
+      "meeting-update-delivery",
       "deployment-prerequisites",
     ]),
   };
@@ -69,15 +70,16 @@ function parseDispatch(env, event) {
     bundleSha256: input.bundle_sha256,
   };
 }
-async function main() {
+async function main(validateOnly = false) {
   let result = { status: "refused" };
   try {
     process.umask(0o077);
-    const { nativeGitHub } = require("./terraform-native.cjs");
-    const { runTerraform } = require("./terraform-workflow.cjs");
     const env = process.env,
       event = JSON.parse(readFileSync(env.GITHUB_EVENT_PATH, "utf8"));
     const options = parseDispatch(env, event);
+    if (validateOnly) return;
+    const { nativeGitHub } = require("./terraform-native.cjs");
+    const { runTerraform } = require("./terraform-workflow.cjs");
     const directory = process.cwd();
     assert.equal(
       execFileSync("git", ["rev-parse", "HEAD"], {
@@ -139,5 +141,5 @@ async function main() {
     process.exitCode = 1;
   }
 }
-if (require.main === module) void main();
+if (require.main === module) void main(process.argv[2] === "--validate");
 module.exports = { parseDispatch };

@@ -1,8 +1,11 @@
 /** @jest-environment node */
+import { Buffer } from "node:buffer";
 import { executeTerraformDispatch } from "../fixtures/deployment/terraformDispatchVm.js";
 import process from "node:process";
 import { test, expect } from "@jest/globals";
-import { readFileSync } from "node:fs";
+import { readFileSync, mkdtempSync, writeFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { parse } from "yaml";
 import { runTitle } from "../../scripts/deployment/terraform-native.cjs";
 import { spawnSync } from "node:child_process";
@@ -81,12 +84,13 @@ test.each(["plan", "apply"])(
     ).toBe(false);
     const commands = steps.filter((step) => step.run).map((step) => step.run);
     expect(commands).toEqual([
-      ...(mode === "plan"
-        ? ["bash scripts/ci-install-dependencies.sh"]
-        : [
-            "bash scripts/ci-install-dependencies.sh\nyarn build\n",
-            "node scripts/deployment/production-writer-guard.cjs --inspect",
-          ]),
+      mode === "plan"
+        ? "bash scripts/ci-install-dependencies.sh"
+        : "bash scripts/ci-install-dependencies.sh\nyarn build\n",
+      "node scripts/deployment/terraform-dispatch.cjs --validate",
+      ...(mode === "apply"
+        ? ["node scripts/deployment/production-writer-guard.cjs --inspect"]
+        : []),
       "set +x\nnode scripts/deployment/terraform-dispatch.cjs\n",
     ]);
     const inputs =
@@ -178,3 +182,258 @@ test("unexpected delegated failure stays unknown without raw errors or retry", a
   expect(result.invocations).toBe(1);
   expect(result.exitCode).toBe(1);
 });
+
+test("delivery scope is Sandbox-only while production retains its scopes", () => {
+  for (const scope of [
+    "full",
+    "purchase-permission",
+    "deployment-prerequisites",
+  ])
+    expect(
+      parseDispatch(env, {
+        ...event,
+        inputs: { ...event.inputs, plan_scope: scope },
+      }).invocation.scope,
+    ).toBe(scope);
+  expect(
+    parseDispatch(...sandboxDispatch("plan", "meeting-update-delivery"))
+      .invocation.scope,
+  ).toBe("meeting-update-delivery");
+  expect(() =>
+    parseDispatch(env, {
+      ...event,
+      inputs: { ...event.inputs, plan_scope: "meeting-update-delivery" },
+    }),
+  ).toThrow();
+});
+function sandboxDispatch(mode, scope) {
+  return [
+    {
+      ...env,
+      GITHUB_WORKFLOW_REF: env.GITHUB_WORKFLOW_REF.replace(
+        "terraform-plan",
+        `terraform-${mode}`,
+      ),
+    },
+    {
+      ...event,
+      inputs: {
+        github_environment: "sandbox",
+        terraform_workspace: "sandbox",
+        plan_scope: scope,
+        ...(mode === "apply"
+          ? {
+              plan_run_id: "9",
+              artifact_name: "terraform-plan-sandbox-sandbox-9",
+              plan_sha256: "b".repeat(64),
+              bundle_sha256: "c".repeat(64),
+              confirmation: "apply",
+            }
+          : {}),
+      },
+    },
+  ];
+}
+test.each(
+  ["plan", "apply"].flatMap((mode) =>
+    ["full", "purchase-permission", "deployment-prerequisites", undefined].map(
+      (scope) => [mode, scope],
+    ),
+  ),
+)("Sandbox %s dispatch refuses unsupported scope %s", (mode, scope) => {
+  expect(() => parseDispatch(...sandboxDispatch(mode, scope))).toThrow();
+});
+test.each(
+  ["plan", "apply"].flatMap((mode) =>
+    [
+      "full",
+      "purchase-permission",
+      "deployment-prerequisites",
+      undefined,
+      "meeting-update-delivery",
+    ].map((scope) => [mode, scope]),
+  ),
+)(
+  "Sandbox %s preflight validates scope %s before credentialed boundaries",
+  async (mode, scope) => {
+    const [environment, dispatchedEvent] = sandboxDispatch(mode, scope),
+      effects = [];
+    const record = (name) => effects.push(name);
+    const fakeProcess = {
+      env: {
+        ...environment,
+        GITHUB_EVENT_PATH: "event",
+        TERRAFORM_PRIVATE_STORAGE_JSON: "{}",
+        TERRAFORM_PLAN_REFERENCE_JSON: "{}",
+        RUNNER_TEMP: "private",
+      },
+      umask: () => {},
+      cwd: () => "checkout",
+      once: () => {},
+      removeListener: () => {},
+      exitCode: undefined,
+    };
+    const messages = await executeTerraformDispatch(
+      {
+        "node:fs": {
+          readFileSync: () => JSON.stringify(dispatchedEvent),
+          mkdirSync: () => record("directory"),
+        },
+        "node:child_process": {
+          execFileSync: () => {
+            record("git");
+            return sha;
+          },
+        },
+        "./terraform-native.cjs": {
+          nativeGitHub: () => {
+            record("GitHub");
+            return () => {};
+          },
+        },
+        "./terraform-workflow.cjs": {
+          runTerraform: async () => {
+            record("execution");
+            return { status: "planned-changes" };
+          },
+        },
+      },
+      fakeProcess,
+      true,
+    );
+    expect(effects).toEqual([]);
+    expect(messages).toEqual(
+      scope === "meeting-update-delivery" ? [] : ['{"status":"refused"}'],
+    );
+    expect(fakeProcess.exitCode).toBe(
+      scope === "meeting-update-delivery" ? undefined : 1,
+    );
+  },
+);
+test.each(["plan", "apply"])(
+  "%s validates scope before every AWS credential step",
+  (mode) => {
+    const workflow = parse(
+      readFileSync(`.github/workflows/terraform-${mode}.yml`, "utf8"),
+    );
+    const steps = workflow.jobs[mode].steps,
+      validation = steps.findIndex(
+        (step) =>
+          step.run?.trim() ===
+          "node scripts/deployment/terraform-dispatch.cjs --validate",
+      );
+    expect(validation).toBeGreaterThanOrEqual(0);
+    for (const [index, step] of steps.entries())
+      if (step.uses?.startsWith("aws-actions/configure-aws-credentials"))
+        expect(validation).toBeLessThan(index);
+  },
+);
+
+test.each(["plan", "apply"])(
+  "%s Sandbox uses OIDC with a bounded session and no static fallback",
+  (mode) => {
+    const workflow = parse(
+      readFileSync(`.github/workflows/terraform-${mode}.yml`, "utf8"),
+    );
+    expect(workflow.permissions["id-token"]).toBe("write");
+    expect(workflow.on.workflow_dispatch.inputs.plan_scope.options).toContain(
+      "meeting-update-delivery",
+    );
+    expect(workflow.on.workflow_dispatch.inputs.plan_scope.options).toContain(
+      "deployment-prerequisites",
+    );
+    const steps = workflow.jobs[mode].steps;
+    const staticStep = steps.find((s) => s.with?.["aws-access-key-id"]);
+    if (mode === "plan")
+      expect(staticStep.if).toBe(
+        "${{ inputs.github_environment == 'production' }}",
+      );
+    else {
+      expect(staticStep).toBeUndefined();
+      const production = steps.find(
+        (s) =>
+          s.with?.["role-to-assume"] ===
+          "${{ vars.PRODUCTION_APPLY_ROLE_ARN }}",
+      );
+      expect(production.if).toBe("inputs.github_environment == 'production'");
+    }
+    const oidc = steps.find(
+      (s) =>
+        s.with?.["role-to-assume"] === "${{ vars.TERRAFORM_AWS_ROLE_ARN }}",
+    );
+    expect(oidc.if).toBe("${{ inputs.github_environment == 'sandbox' }}");
+    expect(oidc.with["role-to-assume"]).toBe(
+      "${{ vars.TERRAFORM_AWS_ROLE_ARN }}",
+    );
+    expect(oidc.with["allowed-account-ids"]).toBe("${{ vars.AWS_ACCOUNT_ID }}");
+    expect(oidc.with["role-session-name"]).toContain("github.run_id");
+    expect(oidc.with["role-duration-seconds"]).toBe(3600);
+    if (mode === "plan") {
+      const policy = JSON.parse(oidc.with["inline-session-policy"]);
+      expect(
+        policy.Statement.flatMap((statement) => statement.Action).join(" "),
+      ).not.toMatch(
+        /cloudfront:|acm:|route53:|s3:GetReplicationConfiguration|s3:GetAccelerateConfiguration/,
+      );
+      expect(
+        policy.Statement.find((s) => s.Action.includes("s3:GetObject"))
+          .Resource,
+      ).toBe(
+        "arn:aws:s3:::*/meeting-notes-terraform/sandbox/meeting-notes-terraform/state",
+      );
+      expect(
+        Buffer.byteLength(oidc.with["inline-session-policy"]),
+      ).toBeLessThanOrEqual(2048);
+      expect(
+        policy.Statement.some(
+          (s) =>
+            s.Action.includes("s3:PutObject") &&
+            s.Resource === "arn:aws:s3:::*/terraform/sandbox/*",
+        ),
+      ).toBe(true);
+      for (const s of policy.Statement) {
+        expect(s.Effect).toBe("Allow");
+        expect(s.Action).not.toContain("*");
+        expect(s.Action.join(" ")).not.toMatch(
+          /UpdateTable|CreatePolicyVersion|DeletePolicy|PassRole/,
+        );
+        if (s.Action.includes("s3:PutObject"))
+          expect(s.Resource).toBe("arn:aws:s3:::*/terraform/sandbox/*");
+      }
+    }
+  },
+);
+
+test.each(["plan", "apply"])(
+  "%s executable preflight accepts only the reviewed Sandbox scope without private configuration",
+  (mode) => {
+    const directory = mkdtempSync(join(tmpdir(), "terraform-preflight-")),
+      path = join(directory, "event.json");
+    try {
+      for (const scope of ["meeting-update-delivery", "full"]) {
+        const [environment, dispatchedEvent] = sandboxDispatch(mode, scope);
+        writeFileSync(path, JSON.stringify(dispatchedEvent));
+        const result = spawnSync(
+          process.execPath,
+          ["scripts/deployment/terraform-dispatch.cjs", "--validate"],
+          {
+            encoding: "utf8",
+            env: {
+              ...environment,
+              GITHUB_EVENT_PATH: path,
+              PATH: process.env.PATH,
+              SystemRoot: process.env.SystemRoot,
+            },
+          },
+        );
+        expect(result.status).toBe(scope === "meeting-update-delivery" ? 0 : 1);
+        expect(result.stdout.trim()).toBe(
+          scope === "meeting-update-delivery" ? "" : '{"status":"refused"}',
+        );
+        expect(result.stderr).toBe("");
+      }
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  },
+);

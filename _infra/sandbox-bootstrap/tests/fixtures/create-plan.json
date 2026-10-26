@@ -1,0 +1,484 @@
+{
+  "format_version": "1.2",
+  "terraform_version": "1.16.0",
+  "applyable": true,
+  "complete": true,
+  "errored": false,
+  "variables": {
+    "sandbox_account_id": {
+      "value": "123456789012"
+    },
+    "aws_region": {
+      "value": "us-east-1"
+    },
+    "environment": {
+      "value": "sandbox"
+    },
+    "enable_private_evidence_store": {
+      "value": true
+    },
+    "enable_sandbox_terraform_role": {
+      "value": true
+    },
+    "kms_key_arn": {
+      "value": "arn:aws:kms:us-east-1:123456789012:key/11111111-1111-4111-8111-111111111111"
+    },
+    "administrator_role_arn": {
+      "value": "arn:aws:iam::123456789012:role/Administrator"
+    },
+    "reviewer_role_arn": {
+      "value": "arn:aws:iam::123456789012:role/PrivateReader"
+    },
+    "github_repository_id": {
+      "value": "123456"
+    },
+    "github_owner_id": {
+      "value": "654321"
+    },
+    "trusted_refs": {
+      "value": [
+        "refs/heads/codex/sandbox-terraform-capture",
+        "refs/heads/master"
+      ]
+    }
+  },
+  "resource_changes": [
+    {
+      "address": "aws_s3_bucket.private_evidence[0]",
+      "mode": "managed",
+      "type": "aws_s3_bucket",
+      "name": "private_evidence",
+      "index": 0,
+      "provider_name": "registry.terraform.io/hashicorp/aws",
+      "change": {
+        "actions": ["create"],
+        "before": null,
+        "after": {
+          "bucket": "meeting-notes-sandbox-private-evidence-123456789012",
+          "cors_rule": [],
+          "force_destroy": false,
+          "grant": [],
+          "lifecycle_rule": [],
+          "logging": [],
+          "object_lock_configuration": [],
+          "replication_configuration": [],
+          "server_side_encryption_configuration": [],
+          "tags": null,
+          "timeouts": null,
+          "versioning": [],
+          "website": []
+        },
+        "after_unknown": {
+          "acceleration_status": true,
+          "acl": true,
+          "arn": true,
+          "bucket_domain_name": true,
+          "bucket_namespace": true,
+          "bucket_prefix": true,
+          "bucket_region": true,
+          "bucket_regional_domain_name": true,
+          "cors_rule": [],
+          "grant": [],
+          "hosted_zone_id": true,
+          "id": true,
+          "lifecycle_rule": [],
+          "logging": [],
+          "object_lock_configuration": [],
+          "object_lock_enabled": true,
+          "policy": true,
+          "region": true,
+          "replication_configuration": [],
+          "request_payer": true,
+          "server_side_encryption_configuration": [],
+          "tags_all": true,
+          "versioning": [],
+          "website": [],
+          "website_domain": true,
+          "website_endpoint": true
+        },
+        "before_sensitive": false,
+        "after_sensitive": {
+          "cors_rule": [],
+          "grant": [],
+          "lifecycle_rule": [],
+          "logging": [],
+          "object_lock_configuration": [],
+          "replication_configuration": [],
+          "server_side_encryption_configuration": [],
+          "tags_all": {},
+          "versioning": [],
+          "website": []
+        }
+      }
+    },
+    {
+      "address": "aws_s3_bucket_public_access_block.private_evidence[0]",
+      "mode": "managed",
+      "type": "aws_s3_bucket_public_access_block",
+      "name": "private_evidence",
+      "index": 0,
+      "provider_name": "registry.terraform.io/hashicorp/aws",
+      "change": {
+        "actions": ["create"],
+        "before": null,
+        "after": {
+          "block_public_acls": true,
+          "block_public_policy": true,
+          "bucket": "meeting-notes-sandbox-private-evidence-123456789012",
+          "ignore_public_acls": true,
+          "restrict_public_buckets": true,
+          "skip_destroy": null
+        },
+        "after_unknown": {
+          "id": true,
+          "region": true
+        },
+        "before_sensitive": false,
+        "after_sensitive": {}
+      }
+    },
+    {
+      "address": "aws_s3_bucket_ownership_controls.private_evidence[0]",
+      "mode": "managed",
+      "type": "aws_s3_bucket_ownership_controls",
+      "name": "private_evidence",
+      "index": 0,
+      "provider_name": "registry.terraform.io/hashicorp/aws",
+      "change": {
+        "actions": ["create"],
+        "before": null,
+        "after": {
+          "bucket": "meeting-notes-sandbox-private-evidence-123456789012",
+          "rule": [
+            {
+              "object_ownership": "BucketOwnerEnforced"
+            }
+          ]
+        },
+        "after_unknown": {
+          "id": true,
+          "region": true,
+          "rule": [{}]
+        },
+        "before_sensitive": false,
+        "after_sensitive": {
+          "rule": [{}]
+        }
+      }
+    },
+    {
+      "address": "aws_s3_bucket_versioning.private_evidence[0]",
+      "mode": "managed",
+      "type": "aws_s3_bucket_versioning",
+      "name": "private_evidence",
+      "index": 0,
+      "provider_name": "registry.terraform.io/hashicorp/aws",
+      "change": {
+        "actions": ["create"],
+        "before": null,
+        "after": {
+          "bucket": "meeting-notes-sandbox-private-evidence-123456789012",
+          "expected_bucket_owner": null,
+          "mfa": null,
+          "versioning_configuration": [
+            {
+              "status": "Enabled"
+            }
+          ]
+        },
+        "after_unknown": {
+          "id": true,
+          "region": true,
+          "versioning_configuration": [
+            {
+              "mfa_delete": true
+            }
+          ]
+        },
+        "before_sensitive": false,
+        "after_sensitive": {
+          "versioning_configuration": [{}]
+        }
+      }
+    },
+    {
+      "address": "aws_s3_bucket_server_side_encryption_configuration.private_evidence[0]",
+      "mode": "managed",
+      "type": "aws_s3_bucket_server_side_encryption_configuration",
+      "name": "private_evidence",
+      "index": 0,
+      "provider_name": "registry.terraform.io/hashicorp/aws",
+      "change": {
+        "actions": ["create"],
+        "before": null,
+        "after": {
+          "bucket": "meeting-notes-sandbox-private-evidence-123456789012",
+          "expected_bucket_owner": null,
+          "rule": [
+            {
+              "apply_server_side_encryption_by_default": [
+                {
+                  "kms_master_key_id": "arn:aws:kms:us-east-1:123456789012:key/11111111-1111-4111-8111-111111111111",
+                  "sse_algorithm": "aws:kms"
+                }
+              ],
+              "bucket_key_enabled": false
+            }
+          ]
+        },
+        "after_unknown": {
+          "id": true,
+          "region": true,
+          "rule": [
+            {
+              "apply_server_side_encryption_by_default": [{}],
+              "blocked_encryption_types": true
+            }
+          ]
+        },
+        "before_sensitive": false,
+        "after_sensitive": {
+          "rule": [
+            {
+              "apply_server_side_encryption_by_default": [{}],
+              "blocked_encryption_types": []
+            }
+          ]
+        }
+      }
+    },
+    {
+      "address": "aws_s3_bucket_policy.private_evidence[0]",
+      "mode": "managed",
+      "type": "aws_s3_bucket_policy",
+      "name": "private_evidence",
+      "index": 0,
+      "provider_name": "registry.terraform.io/hashicorp/aws",
+      "change": {
+        "actions": ["create"],
+        "before": null,
+        "after": {
+          "bucket": "meeting-notes-sandbox-private-evidence-123456789012",
+          "policy": "{\"Statement\":[{\"Action\":\"s3:*\",\"Condition\":{\"Bool\":{\"aws:SecureTransport\":\"false\"}},\"Effect\":\"Deny\",\"Principal\":\"*\",\"Resource\":[\"arn:aws:s3:::meeting-notes-sandbox-private-evidence-123456789012\",\"arn:aws:s3:::meeting-notes-sandbox-private-evidence-123456789012/*\"],\"Sid\":\"TLSOnly\"},{\"Action\":\"s3:*\",\"Condition\":{\"ArnNotEquals\":{\"aws:PrincipalArn\":[\"arn:aws:iam::123456789012:role/Administrator\",\"arn:aws:iam::123456789012:role/PrivateReader\",\"arn:aws:iam::123456789012:role/meeting-notes-sandbox-github-terraform\"]}},\"Effect\":\"Deny\",\"Principal\":\"*\",\"Resource\":[\"arn:aws:s3:::meeting-notes-sandbox-private-evidence-123456789012\",\"arn:aws:s3:::meeting-notes-sandbox-private-evidence-123456789012/*\"],\"Sid\":\"OnlyReviewedPrincipals\"},{\"Condition\":{\"ArnEquals\":{\"aws:PrincipalArn\":\"arn:aws:iam::123456789012:role/meeting-notes-sandbox-github-terraform\"}},\"Effect\":\"Deny\",\"NotAction\":[\"s3:GetBucketLocation\",\"s3:GetBucketVersioning\",\"s3:GetBucketOwnershipControls\",\"s3:GetBucketPublicAccessBlock\",\"s3:GetBucketPolicyStatus\",\"s3:GetBucketPolicy\",\"s3:GetEncryptionConfiguration\",\"s3:GetLifecycleConfiguration\",\"s3:PutObject\",\"s3:GetObjectVersion\"],\"Principal\":\"*\",\"Resource\":[\"arn:aws:s3:::meeting-notes-sandbox-private-evidence-123456789012\",\"arn:aws:s3:::meeting-notes-sandbox-private-evidence-123456789012/*\"],\"Sid\":\"CaptureCannotAdminister\"},{\"Condition\":{\"ArnEquals\":{\"aws:PrincipalArn\":\"arn:aws:iam::123456789012:role/PrivateReader\"},\"ArnNotEquals\":{\"aws:PrincipalArn\":\"arn:aws:iam::123456789012:role/Administrator\"}},\"Effect\":\"Deny\",\"NotAction\":[\"s3:GetBucketLocation\",\"s3:GetBucketVersioning\",\"s3:GetBucketOwnershipControls\",\"s3:GetBucketPublicAccessBlock\",\"s3:GetBucketPolicyStatus\",\"s3:GetBucketPolicy\",\"s3:GetEncryptionConfiguration\",\"s3:GetLifecycleConfiguration\",\"s3:GetObjectVersion\",\"s3:ListBucketVersions\"],\"Principal\":\"*\",\"Resource\":[\"arn:aws:s3:::meeting-notes-sandbox-private-evidence-123456789012\",\"arn:aws:s3:::meeting-notes-sandbox-private-evidence-123456789012/*\"],\"Sid\":\"ReviewerCannotWrite\"},{\"Action\":\"s3:ListBucketVersions\",\"Condition\":{\"ArnEquals\":{\"aws:PrincipalArn\":\"arn:aws:iam::123456789012:role/PrivateReader\"},\"ArnNotEquals\":{\"aws:PrincipalArn\":\"arn:aws:iam::123456789012:role/Administrator\"},\"StringNotLike\":{\"s3:prefix\":\"terraform/sandbox/*\"}},\"Effect\":\"Deny\",\"Principal\":\"*\",\"Resource\":\"arn:aws:s3:::meeting-notes-sandbox-private-evidence-123456789012\",\"Sid\":\"ReviewerNamespaceListOnly\"},{\"Action\":[\"s3:PutObject\",\"s3:GetObjectVersion\"],\"Condition\":{\"ArnEquals\":{\"aws:PrincipalArn\":[\"arn:aws:iam::123456789012:role/meeting-notes-sandbox-github-terraform\",\"arn:aws:iam::123456789012:role/PrivateReader\"]},\"ArnNotEquals\":{\"aws:PrincipalArn\":\"arn:aws:iam::123456789012:role/Administrator\"}},\"Effect\":\"Deny\",\"NotResource\":\"arn:aws:s3:::meeting-notes-sandbox-private-evidence-123456789012/terraform/sandbox/*\",\"Principal\":\"*\",\"Sid\":\"CaptureNamespaceOnly\"},{\"Action\":\"s3:PutObject\",\"Condition\":{\"StringNotEquals\":{\"s3:if-none-match\":\"*\"}},\"Effect\":\"Deny\",\"Principal\":\"*\",\"Resource\":\"arn:aws:s3:::meeting-notes-sandbox-private-evidence-123456789012/*\",\"Sid\":\"ConditionalCreateOnly\"},{\"Action\":\"s3:PutObject\",\"Condition\":{\"StringNotEquals\":{\"s3:x-amz-server-side-encryption\":\"aws:kms\"}},\"Effect\":\"Deny\",\"Principal\":\"*\",\"Resource\":\"arn:aws:s3:::meeting-notes-sandbox-private-evidence-123456789012/*\",\"Sid\":\"ExactKMSAlgorithm\"},{\"Action\":\"s3:PutObject\",\"Condition\":{\"StringNotEquals\":{\"s3:x-amz-server-side-encryption-aws-kms-key-id\":\"arn:aws:kms:us-east-1:123456789012:key/11111111-1111-4111-8111-111111111111\"}},\"Effect\":\"Deny\",\"Principal\":\"*\",\"Resource\":\"arn:aws:s3:::meeting-notes-sandbox-private-evidence-123456789012/*\",\"Sid\":\"ExactKMSKey\"},{\"Action\":[\"s3:GetBucketLocation\",\"s3:GetBucketVersioning\",\"s3:GetBucketOwnershipControls\",\"s3:GetBucketPublicAccessBlock\",\"s3:GetBucketPolicyStatus\",\"s3:GetBucketPolicy\",\"s3:GetEncryptionConfiguration\",\"s3:GetLifecycleConfiguration\"],\"Condition\":{\"ArnEquals\":{\"aws:PrincipalArn\":[\"arn:aws:iam::123456789012:role/meeting-notes-sandbox-github-terraform\",\"arn:aws:iam::123456789012:role/PrivateReader\"]}},\"Effect\":\"Allow\",\"Principal\":{\"AWS\":\"arn:aws:iam::123456789012:root\"},\"Resource\":\"arn:aws:s3:::meeting-notes-sandbox-private-evidence-123456789012\",\"Sid\":\"ControlReadback\"},{\"Action\":\"s3:PutObject\",\"Condition\":{\"ArnEquals\":{\"aws:PrincipalArn\":\"arn:aws:iam::123456789012:role/meeting-notes-sandbox-github-terraform\"},\"StringEquals\":{\"s3:if-none-match\":\"*\",\"s3:x-amz-server-side-encryption\":\"aws:kms\",\"s3:x-amz-server-side-encryption-aws-kms-key-id\":\"arn:aws:kms:us-east-1:123456789012:key/11111111-1111-4111-8111-111111111111\"}},\"Effect\":\"Allow\",\"Principal\":{\"AWS\":\"arn:aws:iam::123456789012:root\"},\"Resource\":\"arn:aws:s3:::meeting-notes-sandbox-private-evidence-123456789012/terraform/sandbox/*\",\"Sid\":\"ConditionalCapture\"},{\"Action\":\"s3:GetObjectVersion\",\"Condition\":{\"ArnEquals\":{\"aws:PrincipalArn\":[\"arn:aws:iam::123456789012:role/meeting-notes-sandbox-github-terraform\",\"arn:aws:iam::123456789012:role/PrivateReader\"]}},\"Effect\":\"Allow\",\"Principal\":{\"AWS\":\"arn:aws:iam::123456789012:root\"},\"Resource\":\"arn:aws:s3:::meeting-notes-sandbox-private-evidence-123456789012/terraform/sandbox/*\",\"Sid\":\"ExactVersionReview\"}],\"Version\":\"2012-10-17\"}"
+        },
+        "after_unknown": {
+          "id": true,
+          "region": true
+        },
+        "before_sensitive": false,
+        "after_sensitive": {}
+      }
+    },
+    {
+      "address": "aws_iam_role.sandbox_terraform[0]",
+      "mode": "managed",
+      "type": "aws_iam_role",
+      "name": "sandbox_terraform",
+      "index": 0,
+      "provider_name": "registry.terraform.io/hashicorp/aws",
+      "change": {
+        "actions": ["create"],
+        "before": null,
+        "after": {
+          "assume_role_policy": "{\"Statement\":[{\"Action\":\"sts:AssumeRoleWithWebIdentity\",\"Condition\":{\"StringEquals\":{\"token.actions.githubusercontent.com:aud\":\"sts.amazonaws.com\",\"token.actions.githubusercontent.com:ref\":[\"refs/heads/codex/sandbox-terraform-capture\",\"refs/heads/master\"],\"token.actions.githubusercontent.com:repository_id\":\"123456\",\"token.actions.githubusercontent.com:repository_owner_id\":\"654321\",\"token.actions.githubusercontent.com:sub\":\"repo:Chronote-gg/Chronote:environment:sandbox\"}},\"Effect\":\"Allow\",\"Principal\":{\"Federated\":\"arn:aws:iam::123456789012:oidc-provider/token.actions.githubusercontent.com\"}}],\"Version\":\"2012-10-17\"}",
+          "description": null,
+          "force_detach_policies": null,
+          "inline_policy": [],
+          "max_session_duration": 3600,
+          "name": "meeting-notes-sandbox-github-terraform",
+          "path": "/",
+          "permissions_boundary": null,
+          "tags": null
+        },
+        "after_unknown": {
+          "arn": true,
+          "create_date": true,
+          "id": true,
+          "inline_policy": [],
+          "managed_policy_arns": true,
+          "name_prefix": true,
+          "tags_all": true,
+          "unique_id": true
+        },
+        "before_sensitive": false,
+        "after_sensitive": {
+          "inline_policy": [],
+          "managed_policy_arns": [],
+          "tags_all": {}
+        }
+      }
+    },
+    {
+      "address": "aws_iam_role_policy.sandbox_terraform[0]",
+      "mode": "managed",
+      "type": "aws_iam_role_policy",
+      "name": "sandbox_terraform",
+      "index": 0,
+      "provider_name": "registry.terraform.io/hashicorp/aws",
+      "change": {
+        "actions": ["create"],
+        "before": null,
+        "after": {
+          "name": "meeting-notes-sandbox-terraform-prerequisites",
+          "policy": "{\"Statement\":[{\"Action\":[\"s3:GetObject\",\"s3:PutObject\"],\"Effect\":\"Allow\",\"Resource\":\"arn:aws:s3:::meeting-notes-terraform-state-bucket/meeting-notes-terraform/sandbox/meeting-notes-terraform/state\",\"Sid\":\"ApplicationState\"},{\"Action\":\"s3:ListBucket\",\"Condition\":{\"StringEquals\":{\"s3:prefix\":[\"meeting-notes-terraform/\",\"meeting-notes-terraform/sandbox/\"]}},\"Effect\":\"Allow\",\"Resource\":\"arn:aws:s3:::meeting-notes-terraform-state-bucket\",\"Sid\":\"WorkspaceDiscovery\"},{\"Action\":\"dynamodb:DescribeTable\",\"Effect\":\"Allow\",\"Resource\":\"arn:aws:dynamodb:us-east-1:123456789012:table/meeting-notes-terraform-state-locks\",\"Sid\":\"StateLockMetadata\"},{\"Action\":[\"dynamodb:GetItem\",\"dynamodb:PutItem\",\"dynamodb:DeleteItem\"],\"Condition\":{\"ForAllValues:StringEquals\":{\"dynamodb:LeadingKeys\":[\"meeting-notes-terraform-state-bucket/meeting-notes-terraform/sandbox/meeting-notes-terraform/state\",\"meeting-notes-terraform-state-bucket/meeting-notes-terraform/sandbox/meeting-notes-terraform/state-md5\"]}},\"Effect\":\"Allow\",\"Resource\":\"arn:aws:dynamodb:us-east-1:123456789012:table/meeting-notes-terraform-state-locks\",\"Sid\":\"SandboxStateLocks\"},{\"Action\":[\"dynamodb:DescribeTable\",\"dynamodb:DescribeContinuousBackups\",\"dynamodb:DescribeTimeToLive\",\"dynamodb:ListTagsOfResource\"],\"Effect\":\"Allow\",\"Resource\":[\"arn:aws:dynamodb:us-east-1:123456789012:table/meeting-notes-sandbox-AccessLogsTable\",\"arn:aws:dynamodb:us-east-1:123456789012:table/meeting-notes-sandbox-ActiveMeetingTable\",\"arn:aws:dynamodb:us-east-1:123456789012:table/meeting-notes-sandbox-AskConversationTable\",\"arn:aws:dynamodb:us-east-1:123456789012:table/meeting-notes-sandbox-AutoRecordSettingsTable\",\"arn:aws:dynamodb:us-east-1:123456789012:table/meeting-notes-sandbox-ChannelContextTable\",\"arn:aws:dynamodb:us-east-1:123456789012:table/meeting-notes-sandbox-ChatTtsUsageTable\",\"arn:aws:dynamodb:us-east-1:123456789012:table/meeting-notes-sandbox-ConfigOverridesTable\",\"arn:aws:dynamodb:us-east-1:123456789012:table/meeting-notes-sandbox-ContactFeedbackTable\",\"arn:aws:dynamodb:us-east-1:123456789012:table/meeting-notes-sandbox-DeploymentControlTable\",\"arn:aws:dynamodb:us-east-1:123456789012:table/meeting-notes-sandbox-DictionaryTable\",\"arn:aws:dynamodb:us-east-1:123456789012:table/meeting-notes-sandbox-EntitlementGrantTable\",\"arn:aws:dynamodb:us-east-1:123456789012:table/meeting-notes-sandbox-FeedbackTable\",\"arn:aws:dynamodb:us-east-1:123456789012:table/meeting-notes-sandbox-GuildSubscriptionTable\",\"arn:aws:dynamodb:us-east-1:123456789012:table/meeting-notes-sandbox-InstallerTable\",\"arn:aws:dynamodb:us-east-1:123456789012:table/meeting-notes-sandbox-InteractionReceiptTable\",\"arn:aws:dynamodb:us-east-1:123456789012:table/meeting-notes-sandbox-McpOAuthTable\",\"arn:aws:dynamodb:us-east-1:123456789012:table/meeting-notes-sandbox-MeetingControlCommandTable\",\"arn:aws:dynamodb:us-east-1:123456789012:table/meeting-notes-sandbox-MeetingHistoryTable\",\"arn:aws:dynamodb:us-east-1:123456789012:table/meeting-notes-sandbox-MeetingShareTable\",\"arn:aws:dynamodb:us-east-1:123456789012:table/meeting-notes-sandbox-MeetingUserIndexTable\",\"arn:aws:dynamodb:us-east-1:123456789012:table/meeting-notes-sandbox-NotionIntegrationTable\",\"arn:aws:dynamodb:us-east-1:123456789012:table/meeting-notes-sandbox-OnboardingStateTable\",\"arn:aws:dynamodb:us-east-1:123456789012:table/meeting-notes-sandbox-PaymentTransactionTable\",\"arn:aws:dynamodb:us-east-1:123456789012:table/meeting-notes-sandbox-PersonalMediaUploadJobTable\",\"arn:aws:dynamodb:us-east-1:123456789012:table/meeting-notes-sandbox-PersonalRecordingSegmentTable\",\"arn:aws:dynamodb:us-east-1:123456789012:table/meeting-notes-sandbox-RecordingTranscriptTable\",\"arn:aws:dynamodb:us-east-1:123456789012:table/meeting-notes-sandbox-ServerContextTable\",\"arn:aws:dynamodb:us-east-1:123456789012:table/meeting-notes-sandbox-SessionTable\",\"arn:aws:dynamodb:us-east-1:123456789012:table/meeting-notes-sandbox-StripeWebhookEventTable\",\"arn:aws:dynamodb:us-east-1:123456789012:table/meeting-notes-sandbox-UserSpeechSettingsTable\"],\"Sid\":\"TableMetadata\"},{\"Action\":[\"iam:GetPolicy\",\"iam:GetPolicyVersion\",\"iam:ListPolicyTags\"],\"Effect\":\"Allow\",\"Resource\":\"arn:aws:iam::123456789012:policy/meeting-notes-sandbox-bot-dynamodb-policy\",\"Sid\":\"RuntimePolicyMetadata\"},{\"Action\":[\"kms:DescribeKey\",\"kms:GetKeyPolicy\",\"kms:GetKeyRotationStatus\",\"kms:ListResourceTags\"],\"Effect\":\"Allow\",\"Resource\":\"arn:aws:kms:us-east-1:123456789012:key/11111111-1111-4111-8111-111111111111\",\"Sid\":\"KeyMetadata\"},{\"Action\":\"dynamodb:UpdateTable\",\"Effect\":\"Allow\",\"Resource\":\"arn:aws:dynamodb:us-east-1:123456789012:table/meeting-notes-sandbox-MeetingHistoryTable\",\"Sid\":\"HistoryDeliveryIndex\"},{\"Action\":[\"iam:ListPolicyVersions\",\"iam:CreatePolicyVersion\"],\"Effect\":\"Allow\",\"Resource\":\"arn:aws:iam::123456789012:policy/meeting-notes-sandbox-bot-dynamodb-policy\",\"Sid\":\"RuntimePolicyVersion\"},{\"Action\":[\"s3:GetBucketLocation\",\"s3:GetBucketVersioning\",\"s3:GetBucketOwnershipControls\",\"s3:GetBucketPublicAccessBlock\",\"s3:GetBucketPolicyStatus\",\"s3:GetBucketPolicy\",\"s3:GetEncryptionConfiguration\",\"s3:GetLifecycleConfiguration\"],\"Effect\":\"Allow\",\"Resource\":\"arn:aws:s3:::meeting-notes-sandbox-private-evidence-123456789012\",\"Sid\":\"CaptureControls\"},{\"Action\":\"s3:PutObject\",\"Condition\":{\"StringEquals\":{\"s3:if-none-match\":\"*\",\"s3:x-amz-server-side-encryption\":\"aws:kms\",\"s3:x-amz-server-side-encryption-aws-kms-key-id\":\"arn:aws:kms:us-east-1:123456789012:key/11111111-1111-4111-8111-111111111111\"}},\"Effect\":\"Allow\",\"Resource\":\"arn:aws:s3:::meeting-notes-sandbox-private-evidence-123456789012/terraform/sandbox/*\",\"Sid\":\"ConditionalCapture\"},{\"Action\":\"s3:GetObjectVersion\",\"Effect\":\"Allow\",\"Resource\":\"arn:aws:s3:::meeting-notes-sandbox-private-evidence-123456789012/terraform/sandbox/*\",\"Sid\":\"ExactVersionCapture\"},{\"Action\":[\"kms:GenerateDataKey\",\"kms:Decrypt\"],\"Condition\":{\"StringEquals\":{\"kms:CallerAccount\":\"123456789012\",\"kms:ViaService\":\"s3.us-east-1.amazonaws.com\"},\"StringLike\":{\"kms:EncryptionContext:aws:s3:arn\":\"arn:aws:s3:::meeting-notes-sandbox-private-evidence-123456789012/terraform/sandbox/*\"}},\"Effect\":\"Allow\",\"Resource\":\"arn:aws:kms:us-east-1:123456789012:key/11111111-1111-4111-8111-111111111111\",\"Sid\":\"CaptureKeyUse\"}],\"Version\":\"2012-10-17\"}",
+          "role": "meeting-notes-sandbox-github-terraform"
+        },
+        "after_unknown": {
+          "id": true,
+          "name_prefix": true
+        },
+        "before_sensitive": false,
+        "after_sensitive": {}
+      }
+    },
+    {
+      "address": "data.aws_caller_identity.current[0]",
+      "mode": "data",
+      "type": "aws_caller_identity",
+      "name": "current",
+      "index": 0,
+      "provider_name": "registry.terraform.io/hashicorp/aws",
+      "change": {
+        "actions": ["no-op"],
+        "before": {
+          "account_id": "123456789012",
+          "arn": "arn:aws:sts::123456789012:assumed-role/Administrator/offline"
+        },
+        "after": {
+          "account_id": "123456789012",
+          "arn": "arn:aws:sts::123456789012:assumed-role/Administrator/offline"
+        },
+        "after_unknown": {}
+      }
+    },
+    {
+      "address": "data.aws_kms_key.existing[0]",
+      "mode": "data",
+      "type": "aws_kms_key",
+      "name": "existing",
+      "index": 0,
+      "provider_name": "registry.terraform.io/hashicorp/aws",
+      "change": {
+        "actions": ["no-op"],
+        "before": {
+          "key_id": "arn:aws:kms:us-east-1:123456789012:key/11111111-1111-1111-1111-111111111111",
+          "arn": "arn:aws:kms:us-east-1:123456789012:key/11111111-1111-1111-1111-111111111111",
+          "aws_account_id": "123456789012",
+          "key_state": "Enabled"
+        },
+        "after": {
+          "key_id": "arn:aws:kms:us-east-1:123456789012:key/11111111-1111-4111-8111-111111111111",
+          "arn": "arn:aws:kms:us-east-1:123456789012:key/11111111-1111-4111-8111-111111111111",
+          "aws_account_id": "123456789012",
+          "key_state": "Enabled"
+        },
+        "after_unknown": {}
+      }
+    },
+    {
+      "address": "data.aws_iam_openid_connect_provider.github[0]",
+      "mode": "data",
+      "type": "aws_iam_openid_connect_provider",
+      "name": "github",
+      "index": 0,
+      "provider_name": "registry.terraform.io/hashicorp/aws",
+      "change": {
+        "actions": ["no-op"],
+        "before": {
+          "arn": "arn:aws:iam::123456789012:oidc-provider/token.actions.githubusercontent.com",
+          "url": "https://token.actions.githubusercontent.com",
+          "client_id_list": ["sts.amazonaws.com"]
+        },
+        "after": {
+          "arn": "arn:aws:iam::123456789012:oidc-provider/token.actions.githubusercontent.com",
+          "url": "https://token.actions.githubusercontent.com",
+          "client_id_list": ["sts.amazonaws.com"]
+        },
+        "after_unknown": {}
+      }
+    }
+  ],
+  "configuration": {
+    "root_module": {
+      "resources": [
+        {
+          "address": "aws_s3_bucket.private_evidence",
+          "mode": "managed",
+          "type": "aws_s3_bucket",
+          "name": "private_evidence",
+          "expressions": {}
+        },
+        {
+          "address": "aws_s3_bucket_public_access_block.private_evidence",
+          "mode": "managed",
+          "type": "aws_s3_bucket_public_access_block",
+          "name": "private_evidence",
+          "expressions": {}
+        },
+        {
+          "address": "aws_s3_bucket_ownership_controls.private_evidence",
+          "mode": "managed",
+          "type": "aws_s3_bucket_ownership_controls",
+          "name": "private_evidence",
+          "expressions": {}
+        },
+        {
+          "address": "aws_s3_bucket_versioning.private_evidence",
+          "mode": "managed",
+          "type": "aws_s3_bucket_versioning",
+          "name": "private_evidence",
+          "expressions": {}
+        },
+        {
+          "address": "aws_s3_bucket_server_side_encryption_configuration.private_evidence",
+          "mode": "managed",
+          "type": "aws_s3_bucket_server_side_encryption_configuration",
+          "name": "private_evidence",
+          "expressions": {}
+        },
+        {
+          "address": "aws_s3_bucket_policy.private_evidence",
+          "mode": "managed",
+          "type": "aws_s3_bucket_policy",
+          "name": "private_evidence",
+          "expressions": {}
+        },
+        {
+          "address": "aws_iam_role.sandbox_terraform",
+          "mode": "managed",
+          "type": "aws_iam_role",
+          "name": "sandbox_terraform",
+          "expressions": {}
+        },
+        {
+          "address": "aws_iam_role_policy.sandbox_terraform",
+          "mode": "managed",
+          "type": "aws_iam_role_policy",
+          "name": "sandbox_terraform",
+          "expressions": {}
+        },
+        {
+          "address": "data.aws_caller_identity.current",
+          "mode": "data",
+          "type": "aws_caller_identity",
+          "name": "current",
+          "expressions": {}
+        },
+        {
+          "address": "data.aws_kms_key.existing",
+          "mode": "data",
+          "type": "aws_kms_key",
+          "name": "existing",
+          "expressions": {}
+        },
+        {
+          "address": "data.aws_iam_openid_connect_provider.github",
+          "mode": "data",
+          "type": "aws_iam_openid_connect_provider",
+          "name": "github",
+          "expressions": {}
+        }
+      ]
+    }
+  }
+}

@@ -28,6 +28,7 @@ function nativeGitHub(token, request = fetch) {
   };
 }
 function runTitle(invocation, inputs) {
+  require("./terraform-bundle.cjs").parseInvocation(invocation);
   const target = `${invocation.environment}/${invocation.workspace}/${invocation.scope}`;
   if (invocation.workflowPath.endsWith("terraform-plan.yml"))
     return `Terraform Plan ${target}`;

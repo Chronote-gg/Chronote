@@ -5,14 +5,20 @@ import { runInNewContext } from "node:vm";
 import process from "node:process";
 
 /** Execute the real entry point with caller-selected native transport boundaries. */
-export async function executeTerraformDispatch(modules, invocationProcess) {
+export async function executeTerraformDispatch(
+  modules,
+  invocationProcess,
+  validateOnly = false,
+) {
   const realRequire = createRequire(
     join(process.cwd(), "scripts/deployment/terraform-dispatch.cjs"),
   );
   const messages = [];
   await runInNewContext(
     readFileSync("scripts/deployment/terraform-dispatch.cjs", "utf8") +
-      "\nmain();",
+      "\nmain(" +
+      JSON.stringify(validateOnly) +
+      ");",
     {
       require: (name) => modules[name] ?? realRequire(name),
       module: { exports: {} },
