@@ -96,7 +96,11 @@ async function trackedPaidAccess(
     return verifiedCurrentPaidAccess(subscription, now);
   const savedCourtesy = courtesy(record, now);
   if (savedCourtesy) return savedCourtesy;
-  if (record.state === "watching" && now < record.paid.periodEnd)
+  if (
+    record.state === "watching" &&
+    now < record.paid.periodEnd &&
+    subscription.status !== "canceled"
+  )
     return { tier: record.paid.tier, expiresAt: record.paid.periodEnd * 1000 };
   const stripe = getStripeClient();
   if (!stripe) return noPaidAccess;
