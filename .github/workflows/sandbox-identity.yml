@@ -73,7 +73,7 @@ jobs:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
         with:
-          node-version: "24.15.0"
+          node-version-file: ".nvmrc"
       - name: Validate exclusive operation inputs
         env:
           CONTINUATION_ACTION: ${{ inputs.continuation_action }}
@@ -241,7 +241,7 @@ jobs:
           mask-aws-account-id: true
       - uses: actions/setup-node@v7
         with:
-          node-version: "24.15.0"
+          node-version-file: ".nvmrc"
           cache: yarn
       - name: Install dependencies
         run: bash scripts/ci-install-dependencies.sh
@@ -340,7 +340,7 @@ jobs:
           aws sts get-caller-identity --output json | node scripts/deployment/assert-sandbox-identity.cjs
       - uses: actions/setup-node@v7
         with:
-          node-version: "24.15.0"
+          node-version-file: ".nvmrc"
           cache: yarn
       - name: Install dependencies
         run: bash scripts/ci-install-dependencies.sh

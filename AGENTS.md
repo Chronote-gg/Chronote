@@ -15,7 +15,7 @@
 
 ## Tech stack
 
-- Runtime: Node.js 24.15.0, TypeScript.
+- Runtime: Node.js 24.22.1, TypeScript.
 - Discord: discord.js v14, discord-api-types, @discordjs/voice for audio capture, @discordjs/opus, prism-media.
 - AI: openai SDK; gpt-4o-transcribe for transcription; gpt-6.1-sol for notes; gpt-5.2 for summaries, cleanup, corrections and image prompts; gpt-5-mini for live gate; DALL-E 3 for images.
 - Observability and prompt management: Langfuse for tracing, prompt versioning, and prompt sync scripts. AMG (Grafana) service account token is auto-rotated via EventBridge + Lambda (see `_infra/grafana.tf` and `_infra/README.md`). Critical alerts (ECS down, ALB 5xx, unhealthy hosts, rotation failures) are sent via SNS email and optionally to a Discord channel via a separate Node.js Lambda (see `_infra/notifications.tf` and `_infra/README.md`).
@@ -244,7 +244,7 @@ Optional Windows helper (prints loaded env, supports `-Mock` / `-SkipDocker`):
 - CI-parity local gate: `yarn run check:ci` (lint:check, prettier:check, markdownlint:check, test, build:all, docs:check, test:e2e, checkov, code:stats, prompts:check, docker:build). Avoid `yarn check` (built-in Yarn integrity command).
 - CI runs the same set as `check:ci` (see `.github/workflows/ci.yml` and `.github/workflows/ci-core.yml`).
 - When running checks locally, avoid docker builds unless explicitly requested.
-- Windows Visual Regression and native desktop smoke jobs use Node.js 24.19.0 and must stay on 24.16.0 or later within 24.x for the [confirmed upstream Windows TCP crash](https://github.com/nodejs/node/issues/63620). Do not repin this job to 24.15.0.
+- Windows Visual Regression and native desktop smoke jobs use Node.js 24.22.1 or later within 24.x for the [confirmed upstream Windows TCP crash](https://github.com/nodejs/node/issues/63620). Do not repin this job to 24.15.0.
 - Visual regression baselines: update with `yarn test:visual:update`.
 - Upgrade billing defaults to Monthly unless the arrival link requests Annual. Annual savings use matching monthly/yearly prices in the same currency; never hardcode a discount or substitute a monthly price for an unavailable annual plan. Screenshot coverage includes both selected billing periods.
 - Review baseline changes before committing. The PR Visual Regression check fails on visual test failures; upgrade and post-install welcome snapshots cover desktop, mobile and wide screens. Branch protection separately controls whether that check is required for merge.
