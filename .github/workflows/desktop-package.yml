@@ -38,7 +38,7 @@ jobs:
         uses: actions/setup-node@v7
         with:
           # Includes the Windows loopback TCP crash fix from Node 24.16.
-          node-version: "24.19.0"
+          node-version-file: ".nvmrc"
           cache: "yarn"
           cache-dependency-path: |
             yarn.lock
@@ -113,7 +113,7 @@ jobs:
         uses: actions/setup-node@v7
         with:
           # Includes the Windows loopback TCP crash fix from Node 24.16.
-          node-version: "24.19.0"
+          node-version-file: ".nvmrc"
           cache: "yarn"
           cache-dependency-path: |
             yarn.lock

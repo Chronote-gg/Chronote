@@ -138,7 +138,7 @@ test.each(["all", "bot", "api", "fault"] as const)(
         }>(directory, "ready.json");
         expect(readiness).toMatchObject({
           pid: 1,
-          node: "v24.15.0",
+          node: `v${readFileSync(path.resolve(".nvmrc"), "utf8").trim()}`,
           mode: mode === "fault" ? "all" : mode,
         });
         if (mode === "fault") {

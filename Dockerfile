@@ -1,5 +1,5 @@
 # Use an official Node.js runtime as a parent image
-FROM node:24.15.0-alpine
+FROM node:24.22.1-alpine
 
 # Install build tools necessary for node-gyp
 RUN apk add --no-cache \
