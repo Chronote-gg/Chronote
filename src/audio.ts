@@ -1145,15 +1145,15 @@ export async function subscribeToUserVoice(
 }
 
 export function userStartTalking(meeting: MeetingData, userId: string) {
-  if (!allowFixtureActor(meeting, userId)) return;
   if (isCaptureIntakeStopped(meeting)) return;
+  if (!allowFixtureActor(meeting, userId)) return;
   markSpeakerStart(meeting, userId);
   clearSnippetTimer(meeting, userId);
 }
 
 export function userStopTalking(meeting: MeetingData, userId: string) {
-  if (!allowFixtureActor(meeting, userId)) return;
   if (isCaptureIntakeStopped(meeting)) return;
+  if (!allowFixtureActor(meeting, userId)) return;
   finishSpeakerTurn(meeting, userId);
 }
 function finishSpeakerTurn(meeting: MeetingData, userId: string) {

@@ -901,6 +901,64 @@ describe("manual fixture receiver boundaries", () => {
     jest.restoreAllMocks();
     jest.useRealTimers();
   });
+  test.each([
+    ["start", userStartTalking],
+    ["end", userStopTalking],
+  ] as const)(
+    "late speaking %s leaves closed fixture evidence unchanged",
+    async (_event, handleSpeaking) => {
+      jest.useFakeTimers();
+      const { meeting } = createMeeting([]);
+      await bindManualFixture(meeting);
+      await subscribeToUserVoice(meeting, "user-1");
+      stopRecordingCapture(meeting);
+      const closed = fixtureInputSnapshot(meeting);
+      expect(closed).toMatchObject({ state: "closed", failureReasons: [] });
+
+      handleSpeaking(meeting, "user-1");
+      expect(fixtureInputSnapshot(meeting)).toEqual(closed);
+      handleSpeaking(meeting, "foreign");
+
+      expect(fixtureInputSnapshot(meeting)).toEqual(closed);
+      expect(meeting.audioData.speakerStates).toBeUndefined();
+      await jest.advanceTimersByTimeAsync(1000);
+      await waitForCaptureStreamSettlement(meeting);
+    },
+  );
+  test.each([
+    ["start", userStartTalking],
+    ["end", userStopTalking],
+  ] as const)(
+    "active speaking %s rejects a foreign fixture actor",
+    async (_event, handleSpeaking) => {
+      const { meeting } = createMeeting([]);
+      await bindManualFixture(meeting);
+
+      handleSpeaking(meeting, "foreign");
+
+      expect(fixtureInputSnapshot(meeting)).toMatchObject({
+        state: "contaminated",
+        unexpectedSourceAttempts: 1,
+        failureReasons: ["unbound_audio"],
+      });
+      expect(meeting.audioData.speakerStates).toBeUndefined();
+    },
+  );
+  test("active fixture speaking updates the bound actor's turn", async () => {
+    jest.useFakeTimers();
+    const { meeting } = createMeeting([]);
+    await bindManualFixture(meeting);
+
+    userStartTalking(meeting, "user-1");
+    expect(meeting.audioData.speakerStates?.get("user-1")?.active).toBe(true);
+    userStopTalking(meeting, "user-1");
+    expect(meeting.audioData.speakerStates?.get("user-1")?.active).toBe(false);
+    expect(fixtureInputSnapshot(meeting)).toMatchObject({
+      state: "observing",
+      unexpectedSourceAttempts: 0,
+      failureReasons: [],
+    });
+  });
   test("manual silence segmentation keeps observation while foreign subscriptions are rejected", async () => {
     jest.useFakeTimers();
     const streams: PassThrough[] = [];

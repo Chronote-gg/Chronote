@@ -33,9 +33,41 @@ impl ApiStub {
                 stream
                     .set_read_timeout(Some(Duration::from_secs(2)))
                     .unwrap();
-                let mut request = [0_u8; 8192];
-                let size = stream.read(&mut request).unwrap();
-                assert!(size > 0);
+                // TCP reads can split both headers and the streamed multipart body.
+                let mut headers = Vec::new();
+                while !headers.ends_with(b"\r\n\r\n") {
+                    assert!(headers.len() < 8192, "stub request headers exceeded limit");
+                    let mut byte = [0_u8; 1];
+                    stream
+                        .read_exact(&mut byte)
+                        .expect("incomplete request headers");
+                    headers.push(byte[0]);
+                }
+                let headers = std::str::from_utf8(&headers).unwrap();
+                let mut content_length = None;
+                for line in headers.lines().skip(1) {
+                    if let Some((name, value)) = line.split_once(':') {
+                        assert!(
+                            !name.eq_ignore_ascii_case("transfer-encoding"),
+                            "stub expects length-delimited reqwest requests"
+                        );
+                        if name.eq_ignore_ascii_case("content-length") {
+                            assert!(content_length.is_none(), "duplicate content length");
+                            content_length = Some(value.trim().parse::<u64>().unwrap());
+                        }
+                    }
+                }
+                let content_length = content_length.expect("stub request needs content length");
+                assert!(
+                    content_length <= 1024 * 1024,
+                    "stub request body exceeded limit"
+                );
+                let received = std::io::copy(
+                    &mut (&mut stream).take(content_length),
+                    &mut std::io::sink(),
+                )
+                .unwrap();
+                assert_eq!(received, content_length, "incomplete request body");
                 count.fetch_add(1, Ordering::SeqCst);
                 let (status, body) = responses.next().expect("unexpected network retry");
                 let body = body.replace("$BASE_URL", &response_url);
@@ -59,6 +91,36 @@ impl Drop for ApiStub {
             result.unwrap();
         }
     }
+}
+
+#[test]
+fn api_stub_waits_for_fragmented_headers_and_complete_body() {
+    let api = ApiStub::new(vec![("204 No Content", String::new())]);
+    let mut stream = std::net::TcpStream::connect(api.url.trim_start_matches("http://")).unwrap();
+    stream
+        .set_read_timeout(Some(Duration::from_millis(100)))
+        .unwrap();
+    let mut response = [0_u8; 256];
+    for fragment in [
+        &b"POST /storage HTTP/1.1\r\nContent-Len"[..],
+        &b"gth: 6\r\n\r\nabc"[..],
+    ] {
+        stream.write_all(fragment).unwrap();
+        let result = stream.read(&mut response);
+        assert!(
+            matches!(&result, Err(error) if matches!(error.kind(), std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut)),
+            "stub responded before the complete request: {result:?}"
+        );
+        assert_eq!(api.requests.load(Ordering::SeqCst), 0);
+    }
+    stream.write_all(b"def").unwrap();
+    stream
+        .set_read_timeout(Some(Duration::from_secs(2)))
+        .unwrap();
+    let mut response = Vec::new();
+    stream.read_to_end(&mut response).unwrap();
+    assert!(response.starts_with(b"HTTP/1.1 204 No Content\r\n"));
+    assert_eq!(api.requests.load(Ordering::SeqCst), 1);
 }
 
 struct Draft {
@@ -186,16 +248,19 @@ fn segment_completion_pause_preserves_original_metadata_and_bytes() {
             pause_response(),
         ]);
         let draft = Draft::new(RECORDING_SEGMENT_STATUS_SEALED);
-        assert!(matches!(
-            submit_recording_manifest_with_token(
-                &api.url,
-                &draft.directory,
-                &draft.manifest,
-                "test-token"
-            )
-            .await,
-            Err(RecordingUploadError::Paused(_))
-        ));
+        let result = submit_recording_manifest_with_token(
+            &api.url,
+            &draft.directory,
+            &draft.manifest,
+            "test-token",
+        )
+        .await;
+        assert!(
+            matches!(&result, Err(RecordingUploadError::Paused(_))),
+            "error={:?}; requests={}",
+            result.as_ref().err(),
+            api.requests.load(Ordering::SeqCst)
+        );
         draft.assert_preserved();
         assert_eq!(
             draft.manifest.lock().unwrap().segments[0]
