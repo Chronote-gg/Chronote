@@ -1,4 +1,23 @@
 /** @jest-environment node */
+import { DiscordAPIError } from "discord.js";
+import { updateMeetingSummaryMessage } from "../../src/embed";
+import { saveMeetingHistoryToDatabase } from "../../src/commands/saveMeetingHistory";
+import { initialMeetingUpdatePolicy } from "../../src/types/meetingPublication";
+import { discordEditorMessageSchema } from "../../src/services/discordMessageEditor";
+import "../services/recordingPublicationRuntime";
+jest.mock("../../src/services/summaryUpgradeService", () => ({
+  claimSummaryUpgrade: async () => ({
+    url: "https://example.invalid/upgrade",
+    recordedSeconds: 5400,
+  }),
+}));
+jest.mock("../../src/services/liveMeetingNotesService", () => ({
+  ensureLiveMeetingNotes: async (meeting: MeetingData) => meeting.notesText,
+  ensureLiveMeetingSummaries: async (meeting: MeetingData) => ({
+    summarySentence: meeting.summarySentence,
+    summaryLabel: meeting.summaryLabel,
+  }),
+}));
 import { featureCanonicalRecords } from "../services/meetingCanonicalPeers.fixture";
 import { publicationHttpFixture } from "./meetingPublicationHttp.fixture";
 import type { MeetingData } from "../../src/types/meeting-data";
@@ -7,8 +26,6 @@ import { publicationDynamoFixture } from "./meetingPublicationDynamo.fixture";
 import { key, history } from "../types/meetingUpdateDelivery.fixture";
 import {
   beginRecordingDelivery,
-  acknowledgeRecordingDeliveryMessage,
-  finishRecordingDeliveryMutations,
   acknowledgeRecordingDeliveryHistory,
 } from "../../src/services/recordingDeliveryService";
 import { saveOwnedMeetingHistoryService } from "../../src/services/meetingHistoryService";
@@ -35,6 +52,7 @@ jest.mock("../../src/services/meetingUpdateDeliveryWorkerService", () => ({
 }));
 jest.mock("../../src/services/notionAutomationService", () => ({
   maybeAutoSyncMeetingNotes: async () => undefined,
+  maybeAutoExportCompletedMeeting: async () => undefined,
 }));
 
 beforeEach(async () => {
@@ -67,7 +85,11 @@ function reservation() {
     historyKey: key,
   };
 }
-async function initialPublication(initiallyEmpty = false) {
+async function initialPublication(
+  initiallyEmpty = false,
+  mode: "existing" | "no-start" | "missing-start" = "no-start",
+  beforeDelivery?: (meeting: MeetingData) => Promise<void>,
+) {
   const original = reservation();
   const row: MeetingHistory = {
     ...history(),
@@ -105,30 +127,85 @@ async function initialPublication(initiallyEmpty = false) {
     ...original,
     leaseExpiresAt: Math.floor(Date.now() / 1000) + 3600,
   });
+  const startId = mode === "no-start" ? undefined : "910003";
+  if (mode === "existing")
+    http.remote.set(
+      "910003",
+      discordEditorMessageSchema.parse({
+        id: "910003",
+        channel_id: "910002",
+        author: { id: "910001", bot: true },
+        content: "",
+        embeds: [],
+        components: [],
+        attachments: [],
+        flags: 0,
+      }),
+    );
   const meeting = {
     guildId: row.guildId,
+    guild: { id: row.guildId, name: "Synthetic" },
     meetingId: row.meetingId,
     reservation: original,
-    textChannel: { id: "910002" },
+    sessionMode: "meeting",
+    creator: { id: "synthetic-generator" },
+    voiceChannel: { id: row.channelId, name: "Synthetic" },
+    textChannel: {
+      id: "910002",
+      send: (payload: unknown) => http.write(payload),
+      messages: {
+        fetch: async (id: string) => {
+          const response = await http.fetchImpl(
+            "https://discord.test/api/v10/channels/910002/messages/" + id,
+          );
+          if (response.status === 404)
+            throw new DiscordAPIError(
+              { code: 10008, message: "Unknown Message" },
+              10008,
+              404,
+              "GET",
+              "https://discord.test/messages/" + id,
+              { body: undefined, files: [] },
+            );
+          const message = discordEditorMessageSchema.parse(
+            await response.json(),
+          );
+          return {
+            ...message,
+            edit: (payload: unknown) => http.write(payload, id),
+          };
+        },
+      },
+    },
+    startMessageId: startId,
+    startTime: new Date(row.timestamp),
+    endTime: new Date(Date.parse(row.timestamp) + 60000),
+    attendance: new Set(),
+    participants: new Map(),
+    audioData: { audioFiles: [] },
+    generateNotes: true,
+    transcribeMeeting: true,
+    notesText: row.notes,
+    notesVersion: 1,
+    meetingName: row.meetingName,
+    summarySentence: row.summarySentence,
+    summaryLabel: row.summaryLabel,
+    processing: {
+      transcription: "ready",
+      notes: "generated",
+      summary: "generated",
+    },
   } as unknown as MeetingData;
-  await beginRecordingDelivery(meeting);
-  // Provider sends were acknowledged before the existing checkpoint API admits terminal persistence.
-  const summaryId = await http.send();
-  await acknowledgeRecordingDeliveryMessage(meeting, "summary", summaryId);
-  const notesId = await http.send();
-  await acknowledgeRecordingDeliveryMessage(meeting, "notes", notesId);
-  finishRecordingDeliveryMutations(meeting);
+  await beforeDelivery?.(meeting);
+  await updateMeetingSummaryMessage(meeting, { finalization: true });
   const terminal: MeetingHistory = {
     ...row,
     checkpoint: undefined,
     status: "complete",
-    summaryMessageId: summaryId,
+    summaryMessageId: meeting.summaryMessageId,
     notesChannelId: "910002",
-    notesMessageIds: [notesId],
-    delivery: {
-      summary: { outcome: "complete", intended: 1, sent: 1, errors: [] },
-      notes: { outcome: "complete", intended: 1, sent: 1, errors: [] },
-    },
+    notesMessageIds: meeting.notesMessageIds,
+    delivery: meeting.delivery,
   };
   return { meeting, terminal, original };
 }
@@ -387,3 +464,222 @@ function assertRecordingCanonicalMerge(
     expect(row?.notesLastEditedBy).toBe("synthetic-generator");
   }
 }
+
+test.each(["existing", "no-start", "missing-start"] as const)(
+  "actual %s producer metadata persists and activates through terminal ACK",
+  async (mode) => {
+    const { meeting } = await initialPublication(false, mode);
+    await correction();
+    await saveMeetingHistoryToDatabase(meeting);
+    expect(meeting.historySaved).toBe(true);
+    await acknowledgeRecordingDeliveryHistory(meeting);
+    const row = await mockFixture.read();
+    expect(row?.updateDelivery?.policy.kind).toBe("active");
+    expect(row?.delivery?.summary).toMatchObject({
+      outcome: mode === "existing" ? "edited_existing" : "sent_fallback",
+      errors: [],
+    });
+    if (mode === "missing-start")
+      expect(row?.delivery?.summary).toHaveProperty("recoveredMissingMessage", {
+        code: 10008,
+        status: 404,
+      });
+    expect(http.writes.map((write) => write.method)).toEqual(
+      mode === "existing" ? ["PATCH", "POST"] : ["POST", "POST"],
+    );
+    const notes = http.remote.get(row!.notesMessageIds![0])!;
+    expect(notes.components.length).toBeGreaterThan(0);
+    expect(notes.embeds.at(-1)).toHaveProperty("fields", [
+      expect.objectContaining({ name: "Need more recording time?" }),
+    ]);
+    expect(
+      initialMeetingUpdatePolicy({ ...row!, updateDelivery: undefined }),
+    ).toEqual({ kind: "active" });
+  },
+);
+test.each([1, 2, 3])(
+  "real Dynamo canonical metadata conflict budget %i keeps one provider invocation",
+  async (conflicts) => {
+    let attempts = 0;
+    const transition = mockFixture.original.transitionMeetingHistory.bind(
+      mockFixture.original,
+    );
+    const statuses: string[] = [];
+    const work = initialPublication(false, "existing", async () => {
+      jest
+        .spyOn(mockFixture.original, "transitionMeetingHistory")
+        .mockImplementation(async (input) => {
+          if (input.recordingDelivery && input.patch.summaryMessageId) {
+            attempts++;
+            if (attempts <= conflicts)
+              expect(
+                (
+                  await updateMeeting({
+                    key,
+                    actor: { editedBy: "editor" },
+                    mutation: {
+                      kind: "rename",
+                      meetingName: "Edited " + attempts,
+                    },
+                  })
+                ).kind,
+              ).toBe("saved");
+          }
+          const result = await transition(input);
+          if (input.patch.summaryMessageId) statuses.push(result);
+          return result;
+        });
+    });
+    if (conflicts === 3) {
+      await expect(work).rejects.toThrow("fenced");
+      expect(http.writes.map((write) => write.method)).toEqual(["PATCH"]);
+      expect(statuses).toEqual(["stale", "stale", "stale"]);
+    } else {
+      const { meeting, terminal } = await work;
+      expect(statuses).toEqual([...Array(conflicts).fill("stale"), "applied"]);
+      await saveOwnedMeetingHistoryService(meeting, terminal);
+      await acknowledgeRecordingDeliveryHistory(meeting);
+      expect((await mockFixture.read())?.updateDelivery?.policy.kind).toBe(
+        "active",
+      );
+      expect(http.writes.map((write) => write.method)).toEqual([
+        "PATCH",
+        "POST",
+      ]);
+    }
+    expect(attempts).toBe(Math.min(3, conflicts + 1));
+  },
+);
+test.each(["intent", "notes", "terminal"] as const)(
+  "real canonical race retries %s metadata in place",
+  async (phase) => {
+    let raced = false;
+    const transition = mockFixture.original.transitionMeetingHistory.bind(
+      mockFixture.original,
+    );
+    const statuses: string[] = [];
+    const { meeting, terminal } = await initialPublication(
+      false,
+      "no-start",
+      async () => {
+        jest
+          .spyOn(mockFixture.original, "transitionMeetingHistory")
+          .mockImplementation(async (input) => {
+            const target =
+              Boolean(input.recordingDelivery) &&
+              (phase === "intent"
+                ? input.recordingDelivery?.phase === "intent"
+                : phase === "notes"
+                  ? Boolean(input.patch.notesMessageIds)
+                  : input.patch.recovery?.disposition === "done");
+            if (target && !raced) {
+              raced = true;
+              expect(
+                (
+                  await updateMeeting({
+                    key,
+                    actor: { editedBy: "editor" },
+                    mutation: { kind: "rename", meetingName: "Raced" },
+                  })
+                ).kind,
+              ).toBe("saved");
+            }
+            const result = await transition(input);
+            if (target) statuses.push(result);
+            return result;
+          });
+      },
+    );
+    await saveOwnedMeetingHistoryService(meeting, terminal);
+    await acknowledgeRecordingDeliveryHistory(meeting);
+    expect(statuses).toEqual(["stale", "applied"]);
+    expect((await mockFixture.read())?.updateDelivery?.policy.kind).toBe(
+      "active",
+    );
+    expect(http.writes.map((write) => write.method)).toEqual(["POST", "POST"]);
+  },
+);
+test.each([false, true])(
+  "real expired lease fences summary metadata even with canonical change=%s",
+  async (canonical) => {
+    let expired = false;
+    const transition = mockFixture.original.transitionMeetingHistory.bind(
+      mockFixture.original,
+    );
+    const statuses: string[] = [];
+    await expect(
+      initialPublication(false, "existing", async () => {
+        jest
+          .spyOn(mockFixture.original, "transitionMeetingHistory")
+          .mockImplementation(async (input) => {
+            if (
+              input.recordingDelivery &&
+              input.patch.summaryMessageId &&
+              !expired
+            ) {
+              expired = true;
+              if (canonical)
+                await updateMeeting({
+                  key,
+                  actor: { editedBy: "editor" },
+                  mutation: { kind: "rename", meetingName: "New" },
+                });
+              await mockFixture.put(mockFixture.tables.activeMeeting, {
+                ...reservation(),
+                leaseExpiresAt: Math.floor(Date.now() / 1000) - 1,
+              });
+            }
+            const result = await transition(input);
+            if (input.patch.summaryMessageId) statuses.push(result);
+            return result;
+          });
+      }),
+    ).rejects.toThrow("fenced");
+    expect(statuses).toEqual(canonical ? ["stale", "stale"] : ["stale"]);
+    expect(http.writes.map((write) => write.method)).toEqual(["PATCH"]);
+    expect((await mockFixture.read())?.summaryMessageId).toBeUndefined();
+  },
+);
+
+test.each(["fetch", "fallback", "ack"] as const)(
+  "actual producer %s failure cannot activate the original publication",
+  async (boundary) => {
+    await expect(
+      initialPublication(
+        false,
+        boundary === "fetch" ? "existing" : "missing-start",
+        async (meeting) => {
+          await correction();
+          if (boundary === "fetch")
+            jest
+              .spyOn(meeting.textChannel.messages, "fetch")
+              .mockRejectedValueOnce(new Error("Ambiguous fetch"));
+          if (boundary === "fallback") http.rejectNextMutation("POST", 500);
+          if (boundary === "ack") {
+            const transition =
+              mockFixture.original.transitionMeetingHistory.bind(
+                mockFixture.original,
+              );
+            jest
+              .spyOn(mockFixture.original, "transitionMeetingHistory")
+              .mockImplementation(async (input) => {
+                if (input.recordingDelivery && input.patch.summaryMessageId)
+                  throw new Error("Uncommitted summary ACK");
+                return transition(input);
+              });
+          }
+        },
+      ),
+    ).rejects.toThrow();
+    const row = await mockFixture.read();
+    expect(row?.recovery?.disposition).toBe("needs_reconciliation");
+    expect(row?.updateDelivery?.policy).toEqual({
+      kind: "held",
+      reason: "initial_publication_unsettled",
+    });
+    expect(row?.updateDeliveryDueAt).toBeUndefined();
+    expect(http.writes.map((write) => write.method)).toEqual(
+      boundary === "fetch" ? [] : ["POST"],
+    );
+  },
+);

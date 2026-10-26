@@ -105,14 +105,20 @@ async function finish(ctx: DeliveryContext) {
   });
   return ctx.result("settled", completed);
 }
-async function hold(ctx: DeliveryContext, row: DeliveryHistory) {
+async function hold(
+  ctx: DeliveryContext,
+  row: DeliveryHistory,
+  providerSeconds?: number,
+) {
   const progress = ctx.own(row);
   const { nextCheckAt: _unused, ...retained } =
     progress.kind === "uncertain" ? { ...progress, nextCheckAt: 0 } : progress;
   void _unused;
   const hasUnknown = progress.operations.some(
     (op) =>
-      op.submission.kind === "submitted" || op.submission.kind === "uncertain",
+      op.submission.kind === "submitted" ||
+      (op.submission.kind === "uncertain" &&
+        op.submission.reason === "provider_outcome_unknown"),
   );
   const after = await ctx.progress(
     row,
@@ -121,12 +127,16 @@ async function hold(ctx: DeliveryContext, row: DeliveryHistory) {
       : {
           ...retained,
           kind: "reconciling",
-          nextCheckAt: progress.claim.leaseExpiresAt,
+          nextCheckAt: Math.max(
+            progress.claim.leaseExpiresAt,
+            "nextCheckAt" in progress ? progress.nextCheckAt : 0,
+            retryAt(ctx, row.updateDelivery.attempts, providerSeconds),
+          ),
         },
   );
   return {
     ...ctx.result("uncertain", after),
-    observations: await observeUncertainDelivery(ctx, after),
+    observations: hasUnknown ? await observeUncertainDelivery(ctx, after) : [],
   };
 }
 async function reconcileClaimed(ctx: DeliveryContext) {
@@ -134,12 +144,17 @@ async function reconcileClaimed(ctx: DeliveryContext) {
   const progress = ctx.own(row);
   for (const [index, operation] of progress.attempt.operations.entries()) {
     const submission = progress.operations[index].submission;
-    if (submission.kind !== "returned" || operation.kind !== "post") continue;
+    const returned =
+      submission.kind === "returned" && operation.kind === "post";
+    const accepted =
+      submission.kind === "uncertain" &&
+      submission.reason === "completion_unknown";
+    if (!returned && !accepted) continue;
     const fingerprint = await verifyDeliveryOperation(
       ctx,
       row,
       operation,
-      submission.messageId,
+      submission.kind === "returned" ? submission.messageId : undefined,
     );
     row = await ctx.submission(index, {
       kind: "verified",
@@ -147,7 +162,10 @@ async function reconcileClaimed(ctx: DeliveryContext) {
       submittedAt: submission.submittedAt,
       verifiedAt: ctx.now(),
       fingerprint,
-      receipt: { kind: "message", messageId: submission.messageId },
+      receipt:
+        submission.kind === "returned"
+          ? { kind: "message", messageId: submission.messageId }
+          : { kind: "none" },
     });
   }
   return finish(ctx);
@@ -230,7 +248,7 @@ async function claimedFailure(
   error: unknown,
 ) {
   const progress = ctx.own(row);
-  if (!allSettled(ctx, row)) return hold(ctx, row);
+  if (!allSettled(ctx, row)) return hold(ctx, row, providerRetryAfter(error));
   if (
     readMeetingUpdateRevisions(row).contentRevision !==
       progress.attempt.contentRevision ||

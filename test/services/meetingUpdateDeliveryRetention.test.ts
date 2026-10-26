@@ -131,10 +131,12 @@ test("a delayed unsettled DELETE holds newer work and cannot settle from matchin
     mutations,
   );
 });
-test("protected whole surplus messages block before the first provider write", async () => {
+test("more protected messages than rendered pages block before the first provider write", async () => {
   const f = deliveryFixture("original ".repeat(3000), "short");
   const surplus = f.input.messages[1];
   surplus.content = "Protected unrelated text";
+  f.input.messages[0].content = "Another protected post";
+  f.remote.set(f.input.messages[0].id, f.input.messages[0]);
   f.remote.set(surplus.id, surplus);
   expect((await run(f).promise).kind).toBe("blocked");
   expect(f.calls.filter((call) => call.method !== "GET")).toEqual([]);

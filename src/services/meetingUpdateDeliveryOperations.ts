@@ -24,6 +24,11 @@ import {
 import type { MeetingUpdatePayload } from "./meetingUpdatePlanTypes";
 
 type Submitted = Extract<MeetingUpdateSubmission, { kind: "submitted" }>;
+type Accepted =
+  | Extract<MeetingUpdateSubmission, { kind: "returned" }>
+  | (Extract<MeetingUpdateSubmission, { kind: "uncertain" }> & {
+      reason: "completion_unknown";
+    });
 class RegistrationNotApplied extends Error {}
 const definiteStatuses = new Set([400, 401, 403, 404, 405, 413, 429]);
 export function providerRetryAfter(error: unknown) {
@@ -145,13 +150,11 @@ async function markRejected(
 }
 async function issueOperation(
   ctx: DeliveryContext,
-  index: number,
   operation: MeetingUpdateProviderOperation,
   payloads: MeetingUpdatePayload[],
   marker: Submitted,
   markInvoked: () => void,
-  markReturned: (id: string) => void,
-) {
+): Promise<Accepted> {
   if (operation.kind === "register") {
     markInvoked();
     await register(ctx, operation);
@@ -183,16 +186,15 @@ async function issueOperation(
     });
     assertDeliveryWriteResponse(response, operation);
     if (operation.kind === "post") {
-      markReturned(response.id);
-      await ctx.submission(index, {
+      return {
         ...marker,
         kind: "returned",
         messageId: response.id,
         returnedAt: ctx.now(),
-      });
-      return response.id;
+      };
     }
   }
+  return { ...marker, kind: "uncertain", reason: "completion_unknown" };
 }
 async function recordVerifiedOperation(
   ctx: DeliveryContext,
@@ -223,7 +225,6 @@ async function operationFailed(
   index: number,
   marker: Submitted,
   invoked: boolean,
-  returnedId: string | undefined,
   error: unknown,
 ) {
   if (!invoked || error instanceof RegistrationNotApplied) {
@@ -258,12 +259,11 @@ async function operationFailed(
     return;
   }
   // An issued mutation never becomes retry permission from an exception or GET.
-  if (!returnedId)
-    await ctx.submission(index, {
-      ...marker,
-      kind: "uncertain",
-      reason: "provider_outcome_unknown",
-    });
+  await ctx.submission(index, {
+    ...marker,
+    kind: "uncertain",
+    reason: "provider_outcome_unknown",
+  });
   throw error;
 }
 export async function executeDeliveryOperation(
@@ -281,24 +281,23 @@ export async function executeDeliveryOperation(
   // A marker ACK failure never enters the local never-invoked recovery path.
   await ctx.submission(index, marker);
   let invoked = false;
-  let returnedId: string | undefined;
+  let accepted: Accepted;
   try {
     await beforeMutation(ctx, operation);
-    await issueOperation(
-      ctx,
-      index,
-      operation,
-      payloads,
-      marker,
-      () => {
-        invoked = true;
-      },
-      (id) => {
-        returnedId = id;
-      },
-    );
-    await recordVerifiedOperation(ctx, index, operation, marker, returnedId);
+    accepted = await issueOperation(ctx, operation, payloads, marker, () => {
+      invoked = true;
+    });
   } catch (error) {
-    await operationFailed(ctx, index, marker, invoked, returnedId, error);
+    await operationFailed(ctx, index, marker, invoked, error);
+    return;
   }
+  // Positive acceptance is durable before independent reads; their failures cannot reject the mutation.
+  await ctx.submission(index, accepted);
+  await recordVerifiedOperation(
+    ctx,
+    index,
+    operation,
+    marker,
+    accepted.kind === "returned" ? accepted.messageId : undefined,
+  );
 }

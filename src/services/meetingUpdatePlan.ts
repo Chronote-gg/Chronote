@@ -11,6 +11,7 @@ import {
 import { PublicationPreviewBlockedError } from "./recoveryDiscordPublicationTypes";
 import {
   assertDeletableNotesLayout,
+  isProtectedNotesLayout,
   notesPointers,
   readMeetingUpdateLayouts,
   validateMeetingUpdateEmbeds,
@@ -150,6 +151,7 @@ function mergeNotesPost(
   layout: MeetingUpdateLayout,
   rendered: EditableEmbed[],
   firstPage: number,
+  pageBudget: number,
 ) {
   const after: Record<string, unknown>[] = [];
   const unrelated = layout.message.embeds.filter(
@@ -164,7 +166,7 @@ function mergeNotesPost(
       continue;
     }
     const candidate = rendered[page];
-    if (!candidate || full) continue;
+    if (!candidate || full || assigned.length >= pageBudget) continue;
     const merged = mergeNotesUpdate(embed, candidate);
     if (!notesMessageFits([...unrelated, ...assigned, merged])) {
       if (!assigned.length)
@@ -199,8 +201,13 @@ function planExistingNotes(
 ): PlannedNotes {
   const planned: PlannedNotes = { slots: [], obsolete: [], remaining: [] };
   let page = 0;
+  let protectedRemaining = layouts.filter(isProtectedNotesLayout).length;
+  if (protectedRemaining > rendered.length)
+    throw new MeetingUpdatePlanBlocked("protected_surplus");
   for (const layout of layouts) {
-    const merged = mergeNotesPost(layout, rendered, page);
+    if (isProtectedNotesLayout(layout)) protectedRemaining--;
+    const budget = Math.max(0, rendered.length - page - protectedRemaining);
+    const merged = mergeNotesPost(layout, rendered, page, budget);
     page = merged.page;
     if (merged.used) {
       planned.slots.push({ kind: "existing", messageId: layout.message.id });
