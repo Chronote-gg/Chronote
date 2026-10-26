@@ -1,9 +1,15 @@
 import {
+  conditional,
+  sessionReservationFailure,
+  type ConditionalResult,
+} from "./deploymentControlErrors";
+import {
   createDynamoRecoveryRepository,
   createMockRecoveryRepository,
 } from "./meetingRecoveryRepository";
 import type { RecoveryRepository } from "../types/meetingRecovery";
 import { planCompatibleReplacement } from "../services/runtimeCompatibleReplacementService";
+import { buildPausedDesktopDraftInstallationTransaction } from "../services/pausedDesktopDraftTransactions";
 import {
   recordingCheckpointSchema,
   recoveryDispositionSchema,
@@ -18,10 +24,13 @@ import {
   UpdateItemCommand,
 } from "@aws-sdk/client-dynamodb";
 import { marshall, unmarshall } from "@aws-sdk/util-dynamodb";
-import { z } from "zod";
 import { isDeepStrictEqual } from "node:util";
 import { planLocalBootstrap } from "../services/runtimeLocalBootstrapPlan";
-import type { ActiveMeetingLease, MeetingHistory } from "../types/db";
+import type {
+  ActiveMeetingLease,
+  MeetingHistory,
+  PersonalMediaUploadJobRecord,
+} from "../types/db";
 import {
   buildCompatibleReplacementTransaction,
   buildHistoryTransition,
@@ -65,65 +74,22 @@ import {
   type SuppressionRecord,
   suppressionRecordSchema,
   type RuntimeRetirementRequestInput,
+  type PausedDesktopDraftInstallation,
 } from "../types/deploymentControl";
 
-export type ConditionalResult = "applied" | "stale";
+export {
+  classifyDeploymentTransactionError,
+  DeploymentControlError,
+  type ConditionalResult,
+} from "./deploymentControlErrors";
 export type ExpectedVoiceState = Pick<
   VoiceRecord,
   "attemptId" | "state" | "ownerInstanceId" | "meetingId"
 >;
-const errorSchema = z.object({
-  name: z.string().optional(),
-  CancellationReasons: z
-    .array(z.object({ Code: z.string().optional() }))
-    .optional(),
-});
-export function classifyDeploymentTransactionError(
-  error: unknown,
-): "stale" | "conflict" | "unavailable" {
-  const parsed = errorSchema.safeParse(error);
-  if (!parsed.success) return "unavailable";
-  const { name, CancellationReasons: reasons } = parsed.data;
-  if (name === "ConditionalCheckFailedException") return "stale";
-  if (name === "TransactionConflictException") return "conflict";
-  if (name !== "TransactionCanceledException" || !reasons?.length)
-    return "unavailable";
-  if (
-    reasons.some(
-      (reason) =>
-        !["None", "ConditionalCheckFailed", "TransactionConflict"].includes(
-          reason.Code ?? "",
-        ),
-    )
-  )
-    return "unavailable";
-  if (reasons.some((reason) => reason.Code === "TransactionConflict"))
-    return "conflict";
-  return reasons.some((reason) => reason.Code === "ConditionalCheckFailed")
-    ? "stale"
-    : "unavailable";
-}
-export class DeploymentControlError extends Error {
-  constructor(
-    public readonly kind: "conflict" | "unavailable",
-    public readonly cause: unknown,
-  ) {
-    super(`Deployment control ${kind}`);
-  }
-}
-async function conditional(
-  operation: () => Promise<unknown>,
-): Promise<ConditionalResult> {
-  try {
-    await operation();
-    return "applied";
-  } catch (error) {
-    const kind = classifyDeploymentTransactionError(error);
-    if (kind === "stale") return "stale";
-    throw new DeploymentControlError(kind, error);
-  }
-}
 export type DeploymentControlRepository = RecoveryRepository & {
+  installPausedDesktopDrafts(
+    input: PausedDesktopDraftInstallation,
+  ): Promise<ConditionalResult>;
   writeSuppression(input: {
     record: SuppressionRecord;
     expectedVersion?: number;
@@ -188,6 +154,22 @@ export function createDynamoDeploymentControlRepository(
     );
   }
   return {
+    installPausedDesktopDrafts(input) {
+      const transaction = buildPausedDesktopDraftInstallationTransaction(
+        input,
+        tables,
+      );
+      const command = new TransactWriteItemsCommand(transaction);
+      // An unknown installation acknowledgment must stop for readback, never replay.
+      command.middlewareStack.add((next) => next, {
+        name: "retryMiddleware",
+        step: "finalizeRequest",
+        priority: "high",
+        override: true,
+      });
+      // Explicit options bypass the SDK command-class handler cache.
+      return conditional(() => client.send(command, {}));
+    },
     ...createDynamoRecoveryRepository(client, {
       ...tables,
       get activeMeeting() {
@@ -211,28 +193,7 @@ export function createDynamoDeploymentControlRepository(
         await client.send(new TransactWriteItemsCommand(transaction));
         return { kind: "admitted" };
       } catch (error) {
-        const parsed = errorSchema.safeParse(error);
-        if (
-          !parsed.success ||
-          classifyDeploymentTransactionError(error) !== "stale"
-        )
-          return { kind: "blocked", reason: "unavailable" };
-        const reasons = parsed.data.CancellationReasons ?? [];
-        const failed = (index: number) =>
-          reasons[index]?.Code === "ConditionalCheckFailed";
-        return {
-          kind: "blocked",
-          reason:
-            failed(0) || failed(1)
-              ? "not_serving"
-              : failed(3)
-                ? "voice_uncertain"
-                : failed(2) || (input.history && failed(4))
-                  ? "active_session"
-                  : input.suppression && failed(input.history ? 5 : 4)
-                    ? "suppressed"
-                    : "unavailable",
-        };
+        return sessionReservationFailure(error, input);
       }
     },
     supportsLocalBootstrap,
@@ -590,6 +551,7 @@ export function createMockDeploymentControlRepository(
   records = new Map<string, DeploymentControlRecord>(),
   histories = new Map<string, MeetingHistory[]>(),
   leases = new Map<string, ActiveMeetingLease>(),
+  uploads = new Map<string, PersonalMediaUploadJobRecord>(),
 ): DeploymentControlRepository {
   const requests =
     mockReservationRequests.get(records) ??
@@ -627,6 +589,27 @@ export function createMockDeploymentControlRepository(
     );
   };
   return {
+    async installPausedDesktopDrafts(input) {
+      buildPausedDesktopDraftInstallationTransaction(input, {
+        deploymentControl: "mock",
+        meetingHistory: "mock",
+        personalMediaUpload: "mock",
+      });
+      if (
+        !isDeepStrictEqual(getControl(), input.control) ||
+        input.pairs.some(
+          ({ record, expectedParent }) =>
+            records.has(recordKey(record.pk, record.sk)) ||
+            !isDeepStrictEqual(
+              uploads.get(expectedParent.uploadId),
+              expectedParent,
+            ),
+        )
+      )
+        return "stale";
+      input.pairs.forEach(({ record }) => store(record));
+      return "applied";
+    },
     ...createMockRecoveryRepository(records, histories, leases, (context) =>
       mockWorkAdmissionAllowed({ kind: "serving", context }, records, leases),
     ),
@@ -734,7 +717,9 @@ export function createMockDeploymentControlRepository(
     },
     async getRecord(pk, sk) {
       const row = records.get(recordKey(pk, sk));
-      return row ? structuredClone(row) : undefined;
+      return row
+        ? structuredClone(parseDeploymentControlRecord(row))
+        : undefined;
     },
     async initializeControl(record) {
       controlRecordSchema.parse(record);

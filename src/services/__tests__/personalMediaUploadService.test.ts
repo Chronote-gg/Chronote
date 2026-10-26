@@ -57,9 +57,6 @@ const uploadRepository = {
       return undefined;
     },
   ),
-  update: jest.fn(async (job: PersonalMediaUploadJobRecord) => {
-    void job;
-  }),
   listClaimable: jest.fn(async () => []),
   claim: jest.fn(async () => undefined),
   renewClaim: jest.fn(async () => false),
@@ -470,7 +467,7 @@ describe("personalMediaUploadService", () => {
     uploadRepository.submit.mockResolvedValueOnce(false);
     resume();
     expect(await submission).toEqual(claimed);
-    expect(uploadRepository.update).not.toHaveBeenCalled();
+    expect(uploadRepository.submit).toHaveBeenCalledTimes(1);
     expect(uploadRepository.claim).not.toHaveBeenCalled();
   });
 

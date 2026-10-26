@@ -2,6 +2,10 @@
 const assert = require("node:assert/strict");
 const { z } = require("zod");
 const {
+  pausedDraftsSchema,
+  validatePausedBinding,
+} = require("./paused-draft-contract.cjs");
+const {
   schema,
   envelopeSchema,
   assertHash,
@@ -12,6 +16,7 @@ const rehearsalSchema = schema
   .extend({
     kind: z.literal("rehearsal-introduction"),
     environment: z.literal("rehearsal"),
+    pausedDrafts: pausedDraftsSchema.optional(),
     disposablePrefix: z.string(),
     resourceEvidence: z.array(
       z
@@ -127,6 +132,7 @@ function parseRehearsalManifest(input, expectedSha256) {
   const m = validateManifest(rehearsalSchema.parse(input));
   assertOwnedResources(m);
   // Declared tags are expectations. Only the future trusted collector can prove native ownership.
+  validatePausedBinding(m);
   return m;
 }
 function parseRehearsalAuthorization(input, manifest, expectedSha256) {

@@ -1,0 +1,73 @@
+.retained-recording-card {
+  display: grid;
+  gap: 0.45rem;
+  padding: 0.75rem;
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  border-radius: 0.7rem;
+  background: rgba(15, 23, 42, 0.62);
+}
+
+.retained-recording-card strong {
+  color: #f8fbff;
+}
+
+.retained-recording-card span {
+  color: #93a4bc;
+  font-size: 0.78rem;
+}
+
+.retained-recording-card code {
+  overflow-wrap: anywhere;
+  user-select: text;
+  color: #c4b5fd;
+  font-size: 0.78rem;
+}
+
+.retained-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.retained-actions button {
+  padding: 0.52rem 0.72rem;
+}
+
+.retained-recording-card {
+  color: #93a4bc;
+  font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+  font-size: 0.92rem;
+  line-height: 1.4;
+}
+.retained-recording-card p {
+  margin: 0.25rem 0;
+}
+.retained-recording-card .message {
+  color: #b7d7ee;
+}
+.retained-recording-card .error {
+  color: #fca5a5;
+}
+.retained-actions button {
+  font: inherit;
+  font-weight: 800;
+  border: 0;
+  border-radius: 0.6rem;
+  color: #07111f;
+  background: #8ed7ff;
+  cursor: pointer;
+}
+.retained-actions button.secondary-button {
+  background: #1e293b;
+  color: #dbeafe;
+}
+.retained-actions button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.retained-recording-card .retry-upload:disabled {
+  color: #64748b;
+  background: #1e293b;
+  opacity: 1;
+}

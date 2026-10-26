@@ -1,3 +1,4 @@
+import { buildPausedDesktopDraftMarker } from "../../src/testSupport/personalMediaUploadFixtures";
 import { randomUUID } from "node:crypto";
 import {
   CreateTableCommand,
@@ -16,6 +17,8 @@ import {
   buildPersonalMediaClaimTransaction,
   buildWorkAdmissionChecks,
   buildPendingSegmentTransaction,
+  buildPersonalUploadSubmissionTransaction,
+  buildPersonalSegmentTransitionTransaction,
 } from "../../src/services/deploymentControlTransactions";
 import { context, control, runtime, promotion } from "./controlFixtures";
 import { config } from "../../src/services/configService";
@@ -235,6 +238,204 @@ function claimInput(job: PersonalMediaUploadJobRecord) {
     context,
   };
 }
+test("a durable pause blocks first claim after a late unconditional queued write", async () => {
+  const job = upload();
+  await put(tables.deploymentControl, buildPausedDesktopDraftMarker(job));
+  await put(tables.personalMediaUpload, job);
+  await expect(
+    client.send(
+      new TransactWriteItemsCommand(
+        buildPersonalMediaClaimTransaction(claimInput(job), tables),
+      ),
+    ),
+  ).rejects.toMatchObject({ name: "TransactionCanceledException" });
+  const expired = { ...claimInput(job).job, claimExpiresAt: 99 };
+  await put(tables.personalMediaUpload, expired);
+  const takeover = { ...claimInput(job), expectedAttempts: 1 };
+  takeover.job.attempts = 2;
+  await expect(
+    client.send(
+      new TransactWriteItemsCommand(
+        buildPersonalMediaClaimTransaction(takeover, tables),
+      ),
+    ),
+  ).rejects.toMatchObject({ name: "TransactionCanceledException" });
+});
+test.each(["submission", "prepare", "transition"] as const)(
+  "late %s atomically refuses a pause",
+  async (operation) => {
+    const job = { ...upload(), status: "pending_upload" as const };
+    const segment: PersonalRecordingSegmentRecord = {
+      uploadId: job.uploadId,
+      ownerUserId: job.ownerUserId,
+      segmentKey: "synthetic",
+      sourceId: "synthetic",
+      sequence: 0,
+      kind: "owner_mic",
+      label: "Synthetic",
+      sourceS3Key: "source",
+      contentType: "audio/wav",
+      fileSize: 10,
+      checksumSha256: "a".repeat(64),
+      durationMillis: 100,
+      startedAt: "now",
+      endedAt: "later",
+      status: "pending_upload",
+      createdAt: "now",
+      updatedAt: "now",
+    };
+    await put(tables.personalMediaUpload, job);
+    await put(tables.personalRecordingSegment, segment);
+    await put(tables.deploymentControl, {
+      pk: `UPLOAD#${job.uploadId}`,
+      sk: "PAUSED_DRAFT",
+      recordType: "foreign",
+    });
+    const transactions = {
+      submission: buildPersonalUploadSubmissionTransaction(
+        { ...job, status: "queued" },
+        tables,
+      ),
+      prepare: buildPendingSegmentTransaction(
+        segment,
+        "pending_upload",
+        tables,
+      ),
+      transition: buildPersonalSegmentTransitionTransaction(
+        { ...segment, status: "uploaded" },
+        "pending_upload",
+        tables,
+      ),
+    };
+    await expect(
+      client.send(new TransactWriteItemsCommand(transactions[operation])),
+    ).rejects.toMatchObject({ name: "TransactionCanceledException" });
+    const parentResult = await client.send(
+      new GetItemCommand({
+        TableName: tables.personalMediaUpload,
+        Key: marshall({ uploadId: job.uploadId }),
+        ConsistentRead: true,
+      }),
+    );
+    const segmentResult = await client.send(
+      new GetItemCommand({
+        TableName: tables.personalRecordingSegment,
+        Key: marshall({
+          uploadId: job.uploadId,
+          segmentKey: segment.segmentKey,
+        }),
+        ConsistentRead: true,
+      }),
+    );
+    expect(unmarshall(parentResult.Item!)).toEqual(job);
+    expect(unmarshall(segmentResult.Item!)).toEqual(segment);
+    await client.send(
+      new DeleteItemCommand({
+        TableName: tables.deploymentControl,
+        Key: marshall({ pk: `UPLOAD#${job.uploadId}`, sk: "PAUSED_DRAFT" }),
+      }),
+    );
+    await client.send(new TransactWriteItemsCommand(transactions[operation]));
+  },
+);
+function pausePair(job: PersonalMediaUploadJobRecord) {
+  const expectedParent = { ...job, uploadOrigin: "desktop_recording" as const };
+  const record = buildPausedDesktopDraftMarker(job);
+  return { record, expectedParent };
+}
+test.each([
+  "install first",
+  "claim first",
+  "marker conflict",
+  "parent changed",
+  "control changed",
+])("two-draft atomic installation: %s", async (order) => {
+  const pairs = [pausePair(upload()), pausePair(upload())] as const;
+  for (const pair of pairs)
+    await put(tables.personalMediaUpload, pair.expectedParent);
+  if (order === "claim first")
+    await client.send(
+      new TransactWriteItemsCommand(
+        buildPersonalMediaClaimTransaction(
+          claimInput(pairs[0].expectedParent),
+          tables,
+        ),
+      ),
+    );
+  const closed = { ...control, servingMembers: {} };
+  await put(tables.deploymentControl, closed);
+  if (order === "marker conflict")
+    await put(tables.deploymentControl, {
+      ...pairs[0].record,
+      operationId: "other",
+    });
+  if (order === "parent changed")
+    await put(tables.personalMediaUpload, {
+      ...pairs[1].expectedParent,
+      fileSize: 99,
+    });
+  if (order === "control changed")
+    await put(tables.deploymentControl, { ...closed, coordinatorEpoch: 4 });
+  const result = await repository.installPausedDesktopDrafts({
+    control: closed,
+    coordinatorToken: closed.coordinatorToken,
+    coordinatorEpoch: closed.coordinatorEpoch,
+    pairs,
+    now: 100,
+  });
+  expect(result).toBe(order === "install first" ? "applied" : "stale");
+  expect(
+    await repository.getRecord(pairs[1].record.pk, "PAUSED_DRAFT"),
+  ).toEqual(order === "install first" ? pairs[1].record : undefined);
+  if (order === "install first") {
+    await put(tables.deploymentControl, control);
+    for (const pair of pairs) {
+      await put(tables.personalMediaUpload, pair.expectedParent);
+      await put(tables.personalRecordingSegment, {
+        uploadId: pair.expectedParent.uploadId,
+        segmentKey: "late-segment",
+        status: "uploaded",
+      });
+      await expect(
+        client.send(
+          new TransactWriteItemsCommand(
+            buildPersonalMediaClaimTransaction(
+              claimInput(pair.expectedParent),
+              tables,
+            ),
+          ),
+        ),
+      ).rejects.toMatchObject({ name: "TransactionCanceledException" });
+      const expired = {
+        ...claimInput(pair.expectedParent).job,
+        claimExpiresAt: 99,
+      };
+      await put(tables.personalMediaUpload, expired);
+      const takeover = {
+        ...claimInput(pair.expectedParent),
+        expectedAttempts: 1,
+      };
+      takeover.job.attempts = 2;
+      await expect(
+        client.send(
+          new TransactWriteItemsCommand(
+            buildPersonalMediaClaimTransaction(takeover, tables),
+          ),
+        ),
+      ).rejects.toMatchObject({ name: "TransactionCanceledException" });
+      expect(
+        await repository.getRecord(pair.record.pk, pair.record.sk),
+      ).toEqual(pair.record);
+    }
+    const ordinary = upload();
+    await put(tables.personalMediaUpload, ordinary);
+    await client.send(
+      new TransactWriteItemsCommand(
+        buildPersonalMediaClaimTransaction(claimInput(ordinary), tables),
+      ),
+    );
+  }
+});
 test.each(["retired", "expired protection", "foreign member"])(
   "personal claim refuses %s in its transaction",
   async (reason) => {

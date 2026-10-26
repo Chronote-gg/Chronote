@@ -64,6 +64,12 @@ If you see "Some audio could not be transcribed. These notes may be incomplete,"
 
 A processing-failure message is different from an empty recording. Any existing upload retries run before Chronote reports a terminal upload failure.
 
+## A saved desktop draft is paused
+
+"This draft is preserved and paused. Recovery is not available yet" means that draft cannot currently be submitted. Its saved files remain on your computer. In an updated desktop client, **Retry upload** is disabled and **Open folder** remains available. **Delete** removes the local files only when you choose it.
+
+Keep the saved files if you want to preserve the draft. You can start a separate new recording. Update older desktop clients for the correct paused message and retry controls. Updating does not make the paused draft recoverable.
+
 ## Notes correction was rejected with "version conflict"
 
 **Symptoms**: You accept a correction, but it fails with a message about a version conflict.
