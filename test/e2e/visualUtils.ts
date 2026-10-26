@@ -38,20 +38,19 @@ export async function applyVisualDefaults(page: Page): Promise<void> {
     const NativeDate = Date;
     const FixedDate = function FixedDate(
       this: Date,
-      ...args: ConstructorParameters<typeof Date>
+      ...args: [] | ConstructorParameters<typeof Date>
     ): Date {
       if (!(this instanceof FixedDate)) return new NativeDate(fixedTime);
       if (args.length === 0) {
         return new NativeDate(fixedTime);
       }
       return new NativeDate(...args);
-    } as unknown as DateConstructor;
+    };
     FixedDate.prototype = NativeDate.prototype;
     FixedDate.now = () => fixedTime;
     FixedDate.parse = NativeDate.parse;
     FixedDate.UTC = NativeDate.UTC;
-    // @ts-expect-error override global Date for deterministic snapshots
-    window.Date = FixedDate;
+    window.Date = FixedDate as unknown as DateConstructor;
   });
 }
 
