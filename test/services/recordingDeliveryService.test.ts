@@ -1,4 +1,5 @@
 /** @jest-environment node */
+import { matchesPublicationSnapshot } from "../../src/types/meetingPublication";
 import type { MeetingData } from "../../src/types/meeting-data";
 import type { MeetingHistory } from "../../src/types/db";
 import type { HistoryTransition } from "../../src/types/deploymentControl";
@@ -219,3 +220,104 @@ test("uncertain timing write must match the exact durable timing before continui
   ).rejects.toThrow("timing not committed");
   expect(row.notesMessageIds).toEqual(["notes"]);
 });
+
+function advanceCanonical(row: MeetingHistory) {
+  const revision = (row.contentRevision ?? 0) + 1;
+  Object.assign(row, {
+    contentRevision: revision,
+    meetingName: "Edited " + revision,
+    contentMutation: {
+      id: "edit-" + revision,
+      fingerprint: "a".repeat(64),
+      fieldRevisions: { meetingName: revision },
+    },
+  });
+}
+test.each(["intent", "summary", "notes", "terminal"] as const)(
+  "retries only canonical conflicts for %s with original metadata",
+  async (phase) => {
+    const { meeting, row } = fixture();
+    if (phase !== "intent") await beginRecordingDelivery(meeting);
+    if (phase === "terminal") {
+      finishRecordingDeliveryMutations(meeting);
+      row.status = "complete";
+    }
+    mockRepository.transitionMeetingHistory.mockClear();
+    const patches: HistoryTransition["patch"][] = [];
+    mockRepository.transitionMeetingHistory.mockImplementation(
+      async (input: HistoryTransition) => {
+        patches.push(input.patch);
+        if (patches.length <= 2) advanceCanonical(row);
+        if (
+          !input.expectedPublication ||
+          !matchesPublicationSnapshot(
+            structuredClone(row),
+            input.expectedPublication,
+          )
+        )
+          return "stale";
+        Object.assign(row, input.patch);
+        return "applied";
+      },
+    );
+    const work =
+      phase === "intent"
+        ? beginRecordingDelivery(meeting)
+        : phase === "terminal"
+          ? acknowledgeRecordingDeliveryHistory(meeting)
+          : acknowledgeRecordingDeliveryMessage(meeting, phase, "accepted-id");
+    await expect(work).resolves.toBeUndefined();
+    expect(patches).toHaveLength(3);
+    expect(patches[1]).toEqual(patches[0]);
+    expect(patches[2]).toEqual(patches[0]);
+    expect(row.meetingName).toBe("Edited 2");
+    if (phase === "summary") expect(row.summaryMessageId).toBe("accepted-id");
+    if (phase === "notes") expect(row.notesMessageIds).toEqual(["accepted-id"]);
+  },
+);
+test("caps canonical metadata recovery at three transitions and three reads", async () => {
+  const { meeting, row } = fixture();
+  mockRepository.transitionMeetingHistory.mockImplementation(
+    async (input: HistoryTransition) => {
+      advanceCanonical(row);
+      expect(
+        matchesPublicationSnapshot(
+          structuredClone(row),
+          input.expectedPublication!,
+        ),
+      ).toBe(false);
+      return "stale";
+    },
+  );
+  await expect(beginRecordingDelivery(meeting)).rejects.toThrow("fenced");
+  expect(mockRepository.transitionMeetingHistory).toHaveBeenCalledTimes(3);
+  expect(mockRepository.getMeetingHistory).toHaveBeenCalledTimes(3);
+});
+test.each([
+  { status: "complete" },
+  { ownerInstanceId: "other" },
+  { executionVersion: 2 },
+  "checkpoint",
+  { summaryMessageId: "other" },
+  { notesMessageIds: ["other"] },
+  { notesChannelId: "other" },
+  {
+    delivery: {
+      summary: { outcome: "failed", intended: 1, sent: 0, errors: [] },
+    },
+  },
+] satisfies (Partial<MeetingHistory> | "checkpoint")[])(
+  "does not adopt a mixed canonical/noncanonical conflict %j",
+  async (change) => {
+    const { meeting, row } = fixture();
+    mockRepository.transitionMeetingHistory.mockImplementationOnce(async () => {
+      advanceCanonical(row);
+      if (change === "checkpoint")
+        row.checkpoint = { ...row.checkpoint!, revision: 4 };
+      else Object.assign(row, change);
+      return "stale";
+    });
+    await expect(beginRecordingDelivery(meeting)).rejects.toThrow();
+    expect(mockRepository.transitionMeetingHistory).toHaveBeenCalledTimes(1);
+  },
+);

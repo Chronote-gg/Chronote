@@ -7,6 +7,12 @@ Notable product changes for Chronote users. For the full changelog, see the [Git
 
 ## 2026
 
+### Saved notes and automatic Discord updates (October 23)
+
+- Edits, imports, approved corrections, and meeting renames save the meeting record before updating existing Discord posts.
+- The portal shows pending, verified, attention, and held publication states while keeping saved notes visible. Personal meetings without a Discord destination do not claim a Discord update.
+- Existing correction teaching and Notion controls remain available. See [Saved notes and Discord updates](/features/#saved-notes-and-discord-updates).
+
 ### Get your first meeting notes (October 19)
 
 - The installer DM and an empty server library explain how to join voice, run `/startmeeting` and end the recording. **Open portal** goes directly to that server's library.

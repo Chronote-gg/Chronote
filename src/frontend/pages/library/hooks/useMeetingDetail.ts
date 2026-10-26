@@ -1,3 +1,4 @@
+import type { MeetingUpdatePublicDelivery } from "../../../../services/meetingUpdateStatus";
 import { useEffect, useMemo, useRef } from "react";
 import { trpc } from "../../../services/trpc";
 import { useLiveMeetingStream } from "../../../hooks/useLiveMeetingStream";
@@ -10,7 +11,12 @@ import { MEETING_STATUS } from "../../../../types/meetingLifecycle";
 import type { LiveMeetingStatus } from "../../../../types/liveMeeting";
 import type { MeetingEvent } from "../../../../types/meetingTimeline";
 
+const UPDATE_DELIVERY_REFRESH_MS = 5000;
+const MAX_UPDATE_DELIVERY_REFRESH_READS = 60;
+
 type UseMeetingDetailParams = {
+  opened: boolean;
+  acknowledgedDelivery?: MeetingUpdatePublicDelivery;
   selectedGuildId: string | null;
   selectedMeetingId: string | null;
   channelNameMap: Map<string, string>;
@@ -31,7 +37,9 @@ type UseMeetingDetailResult = {
 };
 
 const isDetailQueryEnabled = (params: UseMeetingDetailParams) =>
-  params.selectedGuildId != null && params.selectedMeetingId != null;
+  params.opened &&
+  params.selectedGuildId != null &&
+  params.selectedMeetingId != null;
 
 const resolveDetail = (data: { meeting?: MeetingDetailInput } | undefined) => {
   if (!data || !data.meeting) return null;
@@ -190,7 +198,54 @@ export const useMeetingDetail = (
     { enabled: isDetailQueryEnabled(params) },
   );
 
-  const detail = resolveDetail(detailQuery.data);
+  const queriedDetail = resolveDetail(detailQuery.data);
+  const detail =
+    queriedDetail?.id === params.selectedMeetingId ? queriedDetail : null;
+  const acknowledgment = params.acknowledgedDelivery;
+  const delivery =
+    acknowledgment &&
+    (!detail?.updateDelivery ||
+      detail.updateDelivery.desiredRevision < acknowledgment.desiredRevision)
+      ? acknowledgment
+      : detail?.updateDelivery;
+  const pollable = delivery?.pollable === true;
+  const desiredRevision = delivery?.desiredRevision;
+  const refetch = detailQuery.refetch;
+  useEffect(() => {
+    if (
+      !params.opened ||
+      !params.selectedGuildId ||
+      !params.selectedMeetingId ||
+      !pollable
+    )
+      return;
+    let active = true;
+    // Each fresh pending episode gets a bounded budget, including a later save.
+    let remaining = MAX_UPDATE_DELIVERY_REFRESH_READS;
+    let timer: ReturnType<typeof setTimeout>;
+    const refresh = async () => {
+      if (!active || remaining-- <= 0) return;
+      try {
+        await refetch({ cancelRefetch: false });
+      } catch {
+        // Query errors retain canonical content; a later bounded read can recover.
+      }
+      if (active && remaining > 0)
+        timer = setTimeout(() => void refresh(), UPDATE_DELIVERY_REFRESH_MS);
+    };
+    timer = setTimeout(() => void refresh(), UPDATE_DELIVERY_REFRESH_MS);
+    return () => {
+      active = false;
+      clearTimeout(timer);
+    };
+  }, [
+    params.opened,
+    params.selectedGuildId,
+    params.selectedMeetingId,
+    pollable,
+    desiredRevision,
+    refetch,
+  ]);
 
   const meeting = useMemo(() => {
     return buildMeetingFromDetail(detail, params.channelNameMap);
@@ -236,8 +291,8 @@ export const useMeetingDetail = (
   return {
     detail,
     meeting,
-    detailLoading: detailQuery.isLoading || detailQuery.isFetching,
-    detailError: detailQuery.error,
+    detailLoading: detailQuery.isLoading && !detail,
+    detailError: detail ? null : detailQuery.error,
     liveStreamEnabled,
     liveStream,
     displayStatus,

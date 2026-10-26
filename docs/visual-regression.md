@@ -9,6 +9,10 @@ viewport size with no layout overrides. Most full snapshots enable visual mode
 so headers, footers, and scroll areas expand to show all content. The new mobile
 and wide marketing snapshots use the normal page layout for both captures,
 with `fullPage` enabled for the full image.
+The meeting drawer's bounded Summary pane keeps its normal viewport and
+scrolling in both modes. A full-page screenshot does not show every note
+at once; the remaining notes stay reachable by scrolling.
+
 Visual mode is toggled with query parameters. Use `?visual=1` (or `?screenshot=1`)
 to enable it and `?visual=0` to disable it.
 

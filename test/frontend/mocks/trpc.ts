@@ -1,3 +1,13 @@
+import type { QueryState, MutationState } from "./trpcState";
+import {
+  buildQueryState,
+  buildMutationState,
+  resetQueryState,
+  resetMutationState,
+} from "./trpcState";
+import type { inferRouterOutputs } from "@trpc/server";
+import type { AppRouter } from "../../../src/trpc/router";
+import type { MeetingUpdatePublicDelivery } from "../../../src/services/meetingUpdateStatus";
 import type { RenewalRecoveryView } from "../../../src/types/renewalRecovery";
 import type { BillingChangeView } from "../../../src/types/billingChange";
 import type { RenewalView, RenewalResult } from "../../../src/types/renewal";
@@ -16,21 +26,6 @@ import type {
 } from "../../../src/types/db";
 import type { MeetingStatus } from "../../../src/types/meetingLifecycle";
 import type { PaidPlan, BasicIntroOffer } from "../../../src/types/pricing";
-
-type QueryState<T> = {
-  dataUpdatedAt: number;
-  data: T | null;
-  isLoading: boolean;
-  isFetching: boolean;
-  error: unknown;
-  refetch: jest.Mock<Promise<void>, []>;
-};
-
-type MutationState<TArgs extends unknown[], TResult> = {
-  mutateAsync: jest.Mock<Promise<TResult>, TArgs>;
-  isPending: boolean;
-  reset: jest.Mock<void, []>;
-};
 
 type AuthUser = {
   id: string;
@@ -105,6 +100,7 @@ export type MeetingEvent = {
 };
 
 export type MeetingDetail = {
+  updateDelivery?: MeetingUpdatePublicDelivery;
   id: string;
   meetingId: string;
   channelId: string;
@@ -120,6 +116,28 @@ export type MeetingDetail = {
   status?: MeetingStatus;
 };
 
+type MeetingResults = inferRouterOutputs<AppRouter>["meetings"];
+const savedNotesResult: MeetingResults["updateNotes"] = {
+  ok: true,
+  kind: "saved",
+  delivery: {
+    status: "unpublished",
+    reason: null,
+    pollable: false,
+    desiredRevision: 1,
+    syncedRevision: null,
+    lastSuccess: null,
+  },
+};
+const savedRenameResult: MeetingResults["rename"] = {
+  meetingName: "Renamed meeting",
+  kind: "saved",
+  delivery: savedNotesResult.delivery,
+};
+const savedCorrectionResult: MeetingResults["applyNotesCorrection"] = {
+  ...savedNotesResult,
+  dictionaryTeachingInstruction: "Synthetic correction",
+};
 type PricingPlansData = {
   plans: PaidPlan[];
   introOffer?: BasicIntroOffer;
@@ -258,43 +276,6 @@ type AdminFeedbackData = {
   items: FeedbackRecord[];
   nextCursor?: string | null;
   guildsById?: Record<string, string>;
-};
-
-const buildQueryState = <T>(data: T | null): QueryState<T> => ({
-  dataUpdatedAt: 0,
-  data,
-  isLoading: false,
-  isFetching: false,
-  error: null,
-  refetch: jest.fn<Promise<void>, []>().mockResolvedValue(undefined),
-});
-
-const buildMutationState = <TArgs extends unknown[], TResult>(
-  result: TResult,
-): MutationState<TArgs, TResult> => ({
-  mutateAsync: jest.fn<Promise<TResult>, TArgs>().mockResolvedValue(result),
-  isPending: false,
-  reset: jest.fn(),
-});
-
-const resetQueryState = <T>(state: QueryState<T>, data: T | null) => {
-  state.dataUpdatedAt = 0;
-  state.data = data;
-  state.isLoading = false;
-  state.isFetching = false;
-  state.error = null;
-  state.refetch.mockReset();
-  state.refetch.mockResolvedValue(undefined);
-};
-
-const resetMutationState = <TArgs extends unknown[], TResult>(
-  state: MutationState<TArgs, TResult>,
-  result: TResult,
-) => {
-  state.isPending = false;
-  state.mutateAsync.mockReset();
-  state.mutateAsync.mockResolvedValue(result);
-  state.reset.mockReset();
 };
 
 export const authQuery = buildQueryState<AuthUser | null>(null);
@@ -451,16 +432,16 @@ export const meetingsArchiveMutation = buildMutationState<[unknown], void>(
 );
 export const meetingsRenameMutation = buildMutationState<
   [unknown],
-  { meetingName: string }
->({ meetingName: "Renamed meeting" });
+  MeetingResults["rename"]
+>(savedRenameResult);
 export const meetingsUpdateNotesMutation = buildMutationState<
   [unknown],
-  { ok: true }
->({ ok: true });
+  MeetingResults["updateNotes"]
+>(savedNotesResult);
 export const meetingsImportNotesMutation = buildMutationState<
   [unknown],
-  { ok: true }
->({ ok: true });
+  MeetingResults["importNotes"]
+>(savedNotesResult);
 export const meetingsSuggestNotesCorrectionMutation = buildMutationState<
   [unknown],
   { token: string; diff: string; changed: boolean }
@@ -471,8 +452,8 @@ export const meetingsSuggestNotesCorrectionMutation = buildMutationState<
 });
 export const meetingsApplyNotesCorrectionMutation = buildMutationState<
   [unknown],
-  { ok: true }
->({ ok: true });
+  MeetingResults["applyNotesCorrection"]
+>(savedCorrectionResult);
 export const meetingsShareSetVisibilityMutation = buildMutationState<
   [unknown],
   MeetingShareStateData
@@ -665,51 +646,53 @@ export const trpcUtils = {
   },
   ask: {
     listConversations: {
-      invalidate: jest.fn<Promise<void>, [unknown]>(),
+      invalidate: jest.fn<(input: unknown) => Promise<void>>(),
       setData: jest.fn(),
     },
     listSharedConversations: {
-      invalidate: jest.fn<Promise<void>, [unknown]>(),
+      invalidate: jest.fn<(input: unknown) => Promise<void>>(),
       setData: jest.fn(),
     },
     getConversation: {
-      invalidate: jest.fn<Promise<void>, [unknown]>(),
+      invalidate: jest.fn<(input: unknown) => Promise<void>>(),
       setData: jest.fn(),
     },
     getSharedConversation: {
-      invalidate: jest.fn<Promise<void>, [unknown]>(),
+      invalidate: jest.fn<(input: unknown) => Promise<void>>(),
       setData: jest.fn(),
     },
   },
   meetings: {
-    list: { invalidate: jest.fn<Promise<void>, [unknown]>() },
-    detail: { invalidate: jest.fn<Promise<void>, [unknown]>() },
+    list: { invalidate: jest.fn<(input: unknown) => Promise<void>>() },
+    detail: { invalidate: jest.fn<(input: unknown) => Promise<void>>() },
   },
   notion: {
-    exportStatus: { invalidate: jest.fn<Promise<void>, [unknown]>() },
-    automationStatus: { invalidate: jest.fn<Promise<void>, [unknown]>() },
+    exportStatus: { invalidate: jest.fn<(input: unknown) => Promise<void>>() },
+    automationStatus: {
+      invalidate: jest.fn<(input: unknown) => Promise<void>>(),
+    },
   },
   serviceAccounts: {
-    list: { invalidate: jest.fn<Promise<void>, [unknown]>() },
+    list: { invalidate: jest.fn<(input: unknown) => Promise<void>>() },
   },
   servers: {
-    channels: { invalidate: jest.fn<Promise<void>, [unknown]>() },
+    channels: { invalidate: jest.fn<(input: unknown) => Promise<void>>() },
   },
   context: {
-    get: { invalidate: jest.fn<Promise<void>, [unknown]>() },
+    get: { invalidate: jest.fn<(input: unknown) => Promise<void>>() },
   },
   autorecord: {
-    list: { invalidate: jest.fn<Promise<void>, [unknown]>() },
+    list: { invalidate: jest.fn<(input: unknown) => Promise<void>>() },
   },
   channelContexts: {
-    list: { invalidate: jest.fn<Promise<void>, [unknown]>() },
+    list: { invalidate: jest.fn<(input: unknown) => Promise<void>>() },
   },
   dictionary: {
-    list: { invalidate: jest.fn<Promise<void>, [unknown]>() },
+    list: { invalidate: jest.fn<(input: unknown) => Promise<void>>() },
   },
   config: {
-    server: { invalidate: jest.fn<Promise<void>, [unknown]>() },
-    global: { invalidate: jest.fn<Promise<void>, [unknown]>() },
+    server: { invalidate: jest.fn<(input: unknown) => Promise<void>>() },
+    global: { invalidate: jest.fn<(input: unknown) => Promise<void>>() },
   },
 };
 
@@ -810,17 +793,18 @@ export const resetTrpcMocks = () => {
     conversation: defaultAskConversation,
   });
   resetMutationState(meetingsArchiveMutation, undefined);
-  resetMutationState(meetingsRenameMutation, {
-    meetingName: "Renamed meeting",
-  });
-  resetMutationState(meetingsUpdateNotesMutation, { ok: true });
-  resetMutationState(meetingsImportNotesMutation, { ok: true });
+  resetMutationState(meetingsRenameMutation, savedRenameResult);
+  resetMutationState(meetingsUpdateNotesMutation, savedNotesResult);
+  resetMutationState(meetingsImportNotesMutation, savedNotesResult);
   resetMutationState(meetingsSuggestNotesCorrectionMutation, {
     token: "mock-notes-correction-token",
     diff: "+ mock diff",
     changed: true,
   });
-  resetMutationState(meetingsApplyNotesCorrectionMutation, { ok: true });
+  resetMutationState(
+    meetingsApplyNotesCorrectionMutation,
+    savedCorrectionResult,
+  );
   resetMutationState(meetingsShareSetVisibilityMutation, {
     meetingSharingPolicy: "server",
     state: {

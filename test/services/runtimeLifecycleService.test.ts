@@ -659,3 +659,24 @@ test("all seven real work handles share one deadline and pending recovery cannot
     lifecycle.stop();
   }
 });
+
+test("actual runtime start and refreshed heartbeat advertise exact canonical writer capability", async () => {
+  const { lifecycle, repository } = await fixture();
+  try {
+    expect(
+      await repository.getRecord("ENV", "RUNTIME#" + identity.instanceId),
+    ).toMatchObject({
+      identity,
+      canonicalContentWriter: 1,
+    });
+    await lifecycle.refreshRuntimeReadiness();
+    expect(
+      await repository.getRecord("ENV", "RUNTIME#" + identity.instanceId),
+    ).toMatchObject({
+      identity,
+      canonicalContentWriter: 1,
+    });
+  } finally {
+    lifecycle.stop();
+  }
+});

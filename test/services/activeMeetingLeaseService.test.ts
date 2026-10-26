@@ -8,6 +8,7 @@ import {
   test,
 } from "@jest/globals";
 jest.mock("dotenv", () => ({ config: jest.fn() }));
+import { createMockDeploymentControlRepository } from "../../src/repositories/deploymentControlRepository";
 import type { MeetingData } from "../../src/types/meeting-data";
 import {
   getActiveMeetingLeaseForGuild,
@@ -135,6 +136,23 @@ describe("activeMeetingLeaseService", () => {
     return { reservation: admitted.reservation, getMeetingHistory };
   }
 
+  test("actual recording reservation binds canonical capability to its execution", async () => {
+    const { reservation } = await recordingReservation();
+    expect(
+      getDeploymentControlRepository().reserveSession,
+    ).toHaveBeenCalledWith(
+      expect.objectContaining({
+        history: expect.objectContaining({
+          canonicalWriter: {
+            kind: "recording",
+            ownerInstanceId: reservation.ownerInstanceId,
+            executionVersion: reservation.executionVersion,
+          },
+        }),
+      }),
+    );
+  });
+
   test.each(["absent", "newer", "initialization_unknown"] as const)(
     "TTS reconciliation requires original lease and actual cleanup: %s",
     async (remote) => {
@@ -171,6 +189,9 @@ describe("activeMeetingLeaseService", () => {
               textChannelId: "text",
               isAutoRecording: false,
               leaseExpiresAt: 9999999999,
+              createdAt: new Date(Date.now()).toISOString(),
+              updatedAt: new Date(Date.now()).toISOString(),
+              expiresAt: 9999999999 + 120,
             }
           : undefined,
       );
@@ -279,9 +300,10 @@ describe("activeMeetingLeaseService", () => {
     const { prepareOwnedVoiceSession } =
       await import("../../src/services/guildVoiceOperationService");
     expect(prepareOwnedVoiceSession).not.toHaveBeenCalled();
-    expect(
-      jest.mocked(beginRuntimeWork).mock.results[0].value.settle,
-    ).toHaveBeenCalledTimes(1);
+    const pendingWork = jest.mocked(beginRuntimeWork).mock.results[0];
+    if (pendingWork?.type !== "return")
+      throw new Error("Expected pending admission work handle");
+    expect(pendingWork.value.settle).toHaveBeenCalledTimes(1);
   });
 
   test.each([
@@ -576,12 +598,13 @@ describe("activeMeetingLeaseService", () => {
   });
 
   test("reservationHeartbeatsBeforeInitialization and synchronous pending work", async () => {
-    const reserveSession = jest.fn(async () => ({ kind: "admitted" as const }));
-    jest
-      .mocked(getDeploymentControlRepository)
-      .mockReturnValue({ reserveSession } as ReturnType<
-        typeof getDeploymentControlRepository
-      >);
+    const reserveSession = jest
+      .fn<ReturnType<typeof getDeploymentControlRepository>["reserveSession"]>()
+      .mockResolvedValue({ kind: "admitted" });
+    jest.mocked(getDeploymentControlRepository).mockReturnValue({
+      ...createMockDeploymentControlRepository(),
+      reserveSession,
+    });
     mockedRenewActiveMeetingLease.mockResolvedValue(true);
     const resultPromise = tryAcquireMeetingLease({
       guildId: "reserved-guild",

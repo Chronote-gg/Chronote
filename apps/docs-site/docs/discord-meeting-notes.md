@@ -36,6 +36,12 @@ After an interruption, Chronote can recover verified saved conversation using th
 
 See [Interrupted recordings](/core-concepts/meeting-lifecycle/#interrupted-recordings) for the statuses and saved-coverage limits.
 
+## Changing saved notes
+
+Edit or import notes, approve a correction, or rename a meeting using the usual permissions. Chronote saves the meeting record and updates its existing Discord posts automatically. The portal distinguishes saved changes, a pending Discord update, verified delivery, and updates needing attention or held publication. Your saved notes remain available while Discord catches up.
+
+See [Saved notes and Discord updates](/features/#saved-notes-and-discord-updates) for status meanings and limits. Notion export is separate.
+
 ## More than transcription
 
 A transcript preserves what was said; useful meeting notes make that conversation easier to act on. Chronote can:

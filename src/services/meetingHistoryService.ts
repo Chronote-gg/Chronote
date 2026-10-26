@@ -1,5 +1,9 @@
+import {
+  canonicalContentAdvanced,
+  MAX_RECORDING_CANONICAL_TRANSITION_ATTEMPTS,
+} from "./recordingCanonicalConflict";
+import { publicationSnapshot } from "../types/meetingPublication";
 import type { RuntimeApiOperation } from "./runtimeApiOperationService";
-import { assertNotionOutcomeKnown } from "./notionOperationLifetime";
 import type { MeetingData } from "../types/meeting-data";
 import {
   HISTORY_TRANSITION_FIELDS,
@@ -17,7 +21,8 @@ import {
   replaceMeetingUserIndexForMeetingService,
   writeMeetingUserIndexForMeetingService,
 } from "./meetingUserIndexService";
-import { maybeAutoSyncMeetingNotes } from "./notionAutomationService";
+import { updateMeeting } from "./meetingUpdateService";
+import type { MeetingUpdateMutation } from "../types/meetingUpdateDelivery";
 
 export async function writeMeetingHistoryService(history: MeetingHistory) {
   await getMeetingHistoryRepository().write(history);
@@ -118,50 +123,50 @@ export async function updateMeetingNotesService(
   signal?: AbortSignal,
   operation?: RuntimeApiOperation,
 ) {
-  signal?.throwIfAborted();
-  const repository = getMeetingHistoryRepository();
-  const ok = await (operation
-    ? operation.mutate(() => repository.updateNotes(params))
-    : repository.updateNotes(params));
-  signal?.throwIfAborted();
-  if (!ok) return false;
-  try {
-    const updated = await repository.get(
-      params.guildId,
-      params.channelId_timestamp,
-    );
-    if (updated) {
-      signal?.throwIfAborted();
-      await maybeAutoSyncMeetingNotes(updated, signal);
-    }
-  } catch (error) {
-    assertNotionOutcomeKnown(error, signal);
-    console.warn("Failed to sync Notion after notes update", {
+  const changes: Extract<
+    MeetingUpdateMutation,
+    { kind: "correction" }
+  >["changes"] = [
+    {
+      kind: "notes",
+      notes: params.notes,
+      ...(params.notesDelta !== undefined
+        ? { notesDelta: params.notesDelta }
+        : {}),
+    },
+  ];
+  if (params.meetingName !== undefined)
+    changes.push({ kind: "rename", meetingName: params.meetingName });
+  if (params.summarySentence !== undefined)
+    changes.push({ kind: "summarySentence", value: params.summarySentence });
+  if (params.summaryLabel !== undefined)
+    changes.push({ kind: "summaryLabel", value: params.summaryLabel });
+  const result = await updateMeeting({
+    key: {
       guildId: params.guildId,
-      meetingId: params.channelId_timestamp,
-      error,
-    });
-  }
-  return true;
-}
-
-export async function updateMeetingNotesMessageMetadataService(
-  params: {
-    guildId: string;
-    channelId_timestamp: string;
-    notesMessageIds: string[];
-    notesChannelId: string;
-    expectedNotesVersion: number;
-  },
-  signal?: AbortSignal,
-  operation?: RuntimeApiOperation,
-) {
-  signal?.throwIfAborted();
-  return operation
-    ? operation.mutate(() =>
-        getMeetingHistoryRepository().updateNotesMessageMetadata(params),
-      )
-    : getMeetingHistoryRepository().updateNotesMessageMetadata(params);
+      channelId_timestamp: params.channelId_timestamp,
+    },
+    mutation:
+      changes.length === 1
+        ? {
+            kind: "notes",
+            notes: params.notes,
+            ...(params.notesDelta !== undefined
+              ? { notesDelta: params.notesDelta }
+              : {}),
+          }
+        : { kind: "correction", changes },
+    actor: { editedBy: params.editedBy },
+    notesEdit: {
+      expectedNotesVersion:
+        params.expectedPreviousVersion ?? params.notesVersion - 1,
+      source: params.source,
+      suggestion: params.suggestion,
+    },
+    signal,
+    operation,
+  });
+  return result.kind === "saved";
 }
 
 export async function updateMeetingNameService(params: {
@@ -169,11 +174,15 @@ export async function updateMeetingNameService(params: {
   channelId_timestamp: string;
   meetingName: string;
 }) {
-  return getMeetingHistoryRepository().updateMeetingName(
-    params.guildId,
-    params.channelId_timestamp,
-    params.meetingName,
-  );
+  const result = await updateMeeting({
+    key: {
+      guildId: params.guildId,
+      channelId_timestamp: params.channelId_timestamp,
+    },
+    mutation: { kind: "rename", meetingName: params.meetingName },
+    actor: { editedBy: "legacy-rename" },
+  });
+  return result.kind === "saved";
 }
 
 export async function updateMeetingTagsService(
@@ -231,64 +240,126 @@ export async function updateMeetingAccessGrantsService(params: {
   return true;
 }
 
+import {
+  canonicalFieldsSupersededAfter,
+  originalCompletionExportView,
+} from "../types/meetingCanonicalContent";
+
 /** Canonical recording lifecycle writes never replace the owned history row. */
-export async function transitionOwnedMeetingHistoryService(
+function preserveCanonicalHistory(input: {
+  row: MeetingHistory;
+  patch: HistoryTransition["patch"];
+  canonicalBaseline: number | undefined;
+}): HistoryTransition["patch"] {
+  const { row, canonicalBaseline, patch } = input;
+  if (canonicalBaseline === undefined) return patch;
+  const superseded = canonicalFieldsSupersededAfter(row, canonicalBaseline);
+  if (!superseded)
+    throw new Error("Recording history canonical baseline is stale");
+  return Object.fromEntries(
+    Object.entries(patch).filter(([field]) => !superseded.has(field)),
+  );
+}
+function hasRecordingHistoryOwnership(
+  row: MeetingHistory | undefined,
+  reservation: NonNullable<MeetingData["reservation"]>,
+  allowedStatuses: readonly MeetingStatus[],
+): row is MeetingHistory & { status: MeetingStatus } {
+  return Boolean(
+    row &&
+    row.meetingId === reservation.meetingId &&
+    row.ownerInstanceId === reservation.ownerInstanceId &&
+    row.executionVersion === reservation.executionVersion &&
+    row.status &&
+    allowedStatuses.includes(row.status),
+  );
+}
+
+function assertOwnedHistoryNotAborted(meeting: MeetingData): void {
+  meeting.ownershipSignal?.throwIfAborted();
+  meeting.finalization?.controller.signal.throwIfAborted();
+}
+
+async function commitOwnedMeetingHistory(
   meeting: MeetingData,
   patch: HistoryTransition["patch"],
   allowedStatuses: readonly MeetingStatus[],
-): Promise<void> {
+  canonicalBaseline?: number,
+): Promise<MeetingHistory> {
   const reservation = meeting.reservation;
   if (!reservation || reservation.sessionMode !== "meeting")
     throw new Error("Recording history requires its owned reservation");
   const repository = getMeetingHistoryRepository();
-  meeting.ownershipSignal?.throwIfAborted();
-  meeting.finalization?.controller.signal.throwIfAborted();
-  const row = await repository.getOwned(reservation.historyKey);
-  meeting.ownershipSignal?.throwIfAborted();
-  meeting.finalization?.controller.signal.throwIfAborted();
-  if (
-    !row ||
-    row.meetingId !== reservation.meetingId ||
-    row.ownerInstanceId !== reservation.ownerInstanceId ||
-    row.executionVersion !== reservation.executionVersion ||
-    !row.status ||
-    !allowedStatuses.includes(row.status)
-  )
-    throw new Error("Recording history ownership or status changed");
-  const result = await repository.transitionOwned({
-    key: reservation.historyKey,
-    expectedMeetingId: reservation.meetingId,
-    expectedOwnerInstanceId: reservation.ownerInstanceId,
-    expectedExecutionVersion: reservation.executionVersion,
-    expectedStatus: row.status,
-    patch: { ...patch, updatedAt: new Date().toISOString() },
-  });
-  meeting.ownershipSignal?.throwIfAborted();
-  meeting.finalization?.controller.signal.throwIfAborted();
-  if (result !== "applied")
-    throw new Error("Recording history transition was fenced");
+  let previous: MeetingHistory | undefined;
+  for (
+    let attempt = 0;
+    attempt < MAX_RECORDING_CANONICAL_TRANSITION_ATTEMPTS;
+    attempt++
+  ) {
+    assertOwnedHistoryNotAborted(meeting);
+    const row = await repository.getOwned(reservation.historyKey);
+    assertOwnedHistoryNotAborted(meeting);
+    if (!hasRecordingHistoryOwnership(row, reservation, allowedStatuses))
+      throw new Error("Recording history ownership or status changed");
+    if (previous && !canonicalContentAdvanced(previous, row))
+      throw new Error("Recording history transition was fenced");
+    const nextPatch = {
+      ...preserveCanonicalHistory({ row, patch, canonicalBaseline }),
+      updatedAt: new Date().toISOString(),
+    };
+    const result = await repository.transitionOwned({
+      expectedPublication: publicationSnapshot(row),
+      key: reservation.historyKey,
+      expectedMeetingId: reservation.meetingId,
+      expectedOwnerInstanceId: reservation.ownerInstanceId,
+      expectedExecutionVersion: reservation.executionVersion,
+      expectedStatus: row.status,
+      patch: nextPatch,
+    });
+    assertOwnedHistoryNotAborted(meeting);
+    if (result === "applied") return { ...row, ...nextPatch };
+    previous = row;
+  }
+  throw new Error("Recording history transition was fenced");
+}
+
+export async function transitionOwnedMeetingHistoryService(
+  meeting: MeetingData,
+  patch: HistoryTransition["patch"],
+  allowedStatuses: readonly MeetingStatus[],
+  canonicalBaseline?: number,
+): Promise<void> {
+  await commitOwnedMeetingHistory(
+    meeting,
+    patch,
+    allowedStatuses,
+    canonicalBaseline,
+  );
 }
 
 export async function saveOwnedMeetingHistoryService(
   meeting: MeetingData,
   history: MeetingHistory,
-): Promise<void> {
+): Promise<MeetingHistory> {
   const patch = Object.fromEntries(
     HISTORY_TRANSITION_FIELDS.map((key) => [key, history[key]]),
   );
-  await transitionOwnedMeetingHistoryService(
+  const committed = await commitOwnedMeetingHistory(
     meeting,
     patch,
     history.status === "cancelled"
       ? ["processing", "cancelled"]
       : ["processing"],
+    history.contentRevision ?? 0,
   );
+  const canonical = originalCompletionExportView(history, committed);
   try {
-    await writeMeetingUserIndexForMeetingService(history);
+    await writeMeetingUserIndexForMeetingService(canonical);
   } catch (error) {
     console.error("Failed to update meeting user index", {
       meetingId: history.meetingId,
       error,
     });
   }
+  return canonical;
 }

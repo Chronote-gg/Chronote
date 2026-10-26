@@ -1,3 +1,12 @@
+import { createRecoveryPublicationBarrier } from "../../src/services/recoveryDiscordPublicationBarrier";
+import { createMockMeetingPublicationRepository } from "../../src/repositories/meetingPublicationRepository";
+import { parseMeetingUpdateHistory } from "../../src/repositories/meetingUpdateDeliveryState";
+import {
+  bindRecoveryPublication,
+  publicationHistorySchema,
+  recoveryPublicationManifestSchema,
+  stablePublicationJson,
+} from "../../src/services/recoveryDiscordPublicationTypes";
 import { createHash } from "node:crypto";
 import type { PublicationDependencies } from "../../src/services/recoveryDiscordPublication";
 import type { DiscordEditorMessage } from "../../src/services/discordMessageEditor";
@@ -22,6 +31,11 @@ export function fixture(notes = "Обсуждение. Имя говорящег
     channelId: "200",
     timestamp,
     meetingId: "meeting-1",
+    participants: [],
+    duration: 60,
+    transcribeMeeting: true,
+    generateNotes: true,
+    status: "complete" as const,
     notes,
     notesVersion: 2,
     meetingName: "Совещание",
@@ -31,9 +45,9 @@ export function fixture(notes = "Обсуждение. Имя говорящег
     notesChannelId: "300",
     notesMessageIds: ["400"],
     processing: {
-      transcription: "partial",
-      notes: "generated",
-      summary: "generated",
+      transcription: "partial" as const,
+      notes: "generated" as const,
+      summary: "generated" as const,
     },
     operatorRecovery: {
       appliedAt: timestamp,
@@ -50,7 +64,7 @@ export function fixture(notes = "Обсуждение. Имя говорящег
       transcriptSha256: sha("transcript"),
     },
   };
-  const manifest = {
+  const manifest = recoveryPublicationManifestSchema.parse({
     id: "approved-1",
     meetingId: "meeting-1",
     language: "ru",
@@ -73,7 +87,7 @@ export function fixture(notes = "Обсуждение. Имя говорящег
         sha256: sha("history"),
       },
     ],
-  };
+  });
   const messages = new Map<string, DiscordEditorMessage>([
     [
       "400",
@@ -111,7 +125,28 @@ export function fixture(notes = "Обсуждение. Имя говорящег
     readClaim: jest.fn(),
     readReceipt: jest.fn(),
   };
+  const publication = createRecoveryPublicationBarrier({
+    repository: createMockMeetingPublicationRepository(
+      new Map([[history.guildId, [parseMeetingUpdateHistory(history)]]]),
+    ),
+    key: {
+      guildId: history.guildId,
+      channelId_timestamp: history.channelId_timestamp,
+    },
+    async validate(current, binding) {
+      return (
+        stablePublicationJson(
+          bindRecoveryPublication(
+            input,
+            publicationHistorySchema.parse(current),
+            manifest,
+          ),
+        ) === stablePublicationJson(binding)
+      );
+    },
+  });
   const deps = {
+    publication,
     readHistory: jest.fn(async () => history),
     readManifest: jest.fn(async () => manifest),
     now: () => timestamp,
