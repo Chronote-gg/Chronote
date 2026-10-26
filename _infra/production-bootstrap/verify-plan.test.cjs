@@ -396,3 +396,24 @@ test("accepts the pinned provider's scheme-less GitHub issuer readback", () => {
     "token.actions.githubusercontent.com";
   assert.equal(validateBootstrapPlan(f.plan, f.binding), true);
 });
+
+for (const audiences of [
+  ["prefix-sts.amazonaws.com"],
+  ["sts.amazonaws.com.attacker.example"],
+  ["https://attacker.example/sts.amazonaws.com/path"],
+  "sts.amazonaws.com",
+])
+  test(`rejects an OIDC audience without an exact STS array member: ${JSON.stringify(audiences)}`, () => {
+    const f = fixture();
+    f.plan.resource_changes[10].change.after.client_id_list = audiences;
+    assert.throws(() => validateBootstrapPlan(f.plan, f.binding));
+  });
+
+test("accepts another OIDC audience alongside the exact STS audience", () => {
+  const f = fixture();
+  f.plan.resource_changes[10].change.after.client_id_list = [
+    "another-client",
+    "sts.amazonaws.com",
+  ];
+  assert.equal(validateBootstrapPlan(f.plan, f.binding), true);
+});

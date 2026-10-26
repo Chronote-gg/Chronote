@@ -237,7 +237,11 @@ function validateDataIdentity(r, account) {
       r.change.after.client_id_list,
     );
     assert.ok(Array.isArray(r.change.after.client_id_list));
-    assert.ok(r.change.after.client_id_list.includes("sts.amazonaws.com"));
+    assert.ok(
+      r.change.after.client_id_list.some(
+        (audience) => audience === "sts.amazonaws.com",
+      ),
+    );
   }
 }
 function assertNoEmbeddedControls(change, config, keys) {
