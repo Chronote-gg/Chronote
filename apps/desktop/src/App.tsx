@@ -1,6 +1,11 @@
 import { type MouseEvent, useEffect, useRef, useState } from "react";
 import chronoteIconSrc from "../src-tauri/icons/64x64.png";
 import { RecorderPanel, type SourceSignal } from "./RecorderPanel";
+import {
+  RetainedRecordingCard,
+  type RetainedRecording,
+  type RetainedRecordingAction,
+} from "./RetainedRecordingCard";
 
 type DesktopUser = {
   id: string;
@@ -44,7 +49,13 @@ type LoginResult = {
 
 type UploadJob = {
   uploadId: string;
-  status: "pending_upload" | "queued" | "processing" | "complete" | "failed";
+  status:
+    | "pending_upload"
+    | "queued"
+    | "processing"
+    | "complete"
+    | "failed"
+    | "paused";
   errorMessage?: string;
   meetingGuildId?: string;
   channelIdTimestamp?: string;
@@ -55,33 +66,6 @@ type UploadJob = {
 
 type UploadResult = {
   job: UploadJob;
-};
-
-type RetainedRecordingSource = {
-  sourceId: string;
-  kind: string;
-  label: string;
-  fileSize: number;
-  segmentCount: number;
-  uploadedSegmentCount: number;
-};
-
-type RetainedRecording = {
-  recordingId: string;
-  startedAt: string;
-  stoppedAt: string;
-  retainedAt: string;
-  title?: string | null;
-  tags: string[];
-  status: string;
-  errorMessage?: string | null;
-  localPath: string;
-  sources: RetainedRecordingSource[];
-};
-
-type RetainedRecordingAction = {
-  recordingId: string;
-  action: "retry" | "open" | "delete";
 };
 
 const DEFAULT_API_BASE_URL =
@@ -144,12 +128,14 @@ const uploadStatusCopy = (
   if (job.status === "complete") {
     return "Your meeting is ready, but Chronote is still syncing the link.";
   }
+  if (job.status === "paused") return "Draft paused.";
   if (job.status === "failed") return "Processing failed.";
   if (meetingUrl) return "Your meeting is processing. You can open it now.";
   return "Processing your meeting. This will update when notes are ready.";
 };
 
 function openMeetingUrl(portalBaseUrl: string, job: UploadJob) {
+  if (job.status === "paused") return undefined;
   if (!job.meetingGuildId || !job.channelIdTimestamp) return undefined;
   const base = portalBaseUrl.replace(/\/$/, "");
   return `${base}/portal/meetings/${encodeURIComponent(
@@ -159,18 +145,6 @@ function openMeetingUrl(portalBaseUrl: string, job: UploadJob) {
 
 function openPortalUrl(portalBaseUrl: string) {
   return `${portalBaseUrl.replace(/\/$/, "")}/portal/meetings`;
-}
-
-function formatRetainedDate(value: string) {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return value;
-  return date.toLocaleString();
-}
-
-function formatBytes(bytes: number) {
-  if (bytes >= 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-  if (bytes >= 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${bytes} B`;
 }
 
 function getDeviceLabel(
@@ -347,6 +321,7 @@ export default function App() {
     if (
       !job ||
       job.status === "failed" ||
+      job.status === "paused" ||
       (job.status === "complete" && (meetingUrl || completeMissingLinkTimedOut))
     ) {
       return;
@@ -356,7 +331,10 @@ export default function App() {
         apiBaseUrl,
         uploadId: job.uploadId,
       })
-        .then((result) => setJob(result.job))
+        .then((result) => {
+          setJob(result.job);
+          if (result.job.status === "paused") setMessage(null);
+        })
         .catch(() => undefined);
     }, UPLOAD_STATUS_POLL_MS);
     return () => window.clearInterval(timer);
@@ -515,7 +493,7 @@ export default function App() {
       });
       setJob(result.job);
       setRecording({ isRecording: false });
-      setMessage("Upload received.");
+      setMessage(result.job.status === "paused" ? null : "Upload received.");
     } catch (err) {
       setError(
         formatError(
@@ -544,7 +522,7 @@ export default function App() {
         recordingId,
       });
       setJob(result.job);
-      setMessage("Upload received.");
+      setMessage(result.job.status === "paused" ? null : "Upload received.");
       await refreshRetainedRecordings();
     } catch (err) {
       setError(
@@ -792,87 +770,25 @@ export default function App() {
                 <div className="retained-recordings">
                   <h3>Saved recordings</h3>
                   <p>
-                    Uploads that fail stay on this computer until you retry or
-                    delete them.
+                    Saved recordings stay on this computer until uploaded or
+                    deleted. Paused drafts cannot be retried.
                   </p>
                   {retainedRecordings.map((retained) => {
                     const runningAction =
                       retainedAction?.recordingId === retained.recordingId
                         ? retainedAction.action
                         : null;
-                    const retryable = retained.status === "failed_upload";
                     return (
-                      <article
-                        className="retained-recording-card"
+                      <RetainedRecordingCard
                         key={retained.recordingId}
-                      >
-                        <strong>
-                          {retained.title || "Untitled recording"}
-                        </strong>
-                        <span>
-                          Saved {formatRetainedDate(retained.retainedAt)}
-                        </span>
-                        {retained.errorMessage ? (
-                          <p className="error">{retained.errorMessage}</p>
-                        ) : null}
-                        <p>
-                          {retained.sources
-                            .map(
-                              (source) =>
-                                `${source.label}: ${source.uploadedSegmentCount}/${source.segmentCount} segments, ${formatBytes(source.fileSize)}`,
-                            )
-                            .join(" | ")}
-                        </p>
-                        <code>{retained.localPath}</code>
-                        <div className="retained-actions">
-                          <button
-                            type="button"
-                            onClick={() =>
-                              void retryRetainedRecording(retained.recordingId)
-                            }
-                            disabled={
-                              busy ||
-                              recording.isRecording ||
-                              runningAction !== null ||
-                              !retryable
-                            }
-                          >
-                            {runningAction === "retry"
-                              ? "Retrying..."
-                              : retryable
-                                ? "Retry upload"
-                                : "Not retryable"}
-                          </button>
-                          <button
-                            type="button"
-                            className="secondary-button"
-                            onClick={() =>
-                              void openRetainedRecording(retained.recordingId)
-                            }
-                            disabled={runningAction !== null}
-                          >
-                            {runningAction === "open"
-                              ? "Opening..."
-                              : "Open folder"}
-                          </button>
-                          <button
-                            type="button"
-                            className="secondary-button"
-                            onClick={() =>
-                              void deleteRetainedRecording(retained.recordingId)
-                            }
-                            disabled={
-                              busy ||
-                              recording.isRecording ||
-                              runningAction !== null
-                            }
-                          >
-                            {runningAction === "delete"
-                              ? "Deleting..."
-                              : "Delete"}
-                          </button>
-                        </div>
-                      </article>
+                        retained={retained}
+                        runningAction={runningAction}
+                        busy={busy}
+                        isRecording={recording.isRecording}
+                        onRetry={retryRetainedRecording}
+                        onOpen={openRetainedRecording}
+                        onDelete={deleteRetainedRecording}
+                      />
                     );
                   })}
                 </div>

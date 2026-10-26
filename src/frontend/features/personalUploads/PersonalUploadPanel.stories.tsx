@@ -76,3 +76,19 @@ export const Failed: Story = {
     uploadProgress: 100,
   },
 };
+
+export const Paused: Story = {
+  tags: ["paused-draft"],
+  args: {
+    job: {
+      status: "paused",
+      retryable: false,
+      errorMessage:
+        "This draft is preserved and paused. Recovery is not available yet.",
+    },
+    statusLabel: "Draft paused.",
+    uploadProgress: 100,
+  },
+};
+
+export const PausedMobile: Story = { ...Paused, tags: ["paused-draft"] };

@@ -12,16 +12,18 @@ import {
   IconAlertTriangle,
   IconCheck,
   IconExternalLink,
+  IconInfoCircle,
   IconUpload,
 } from "@tabler/icons-react";
 import Surface from "../../components/Surface";
 
 export type PersonalUploadStatus =
-  "pending_upload" | "queued" | "processing" | "complete" | "failed";
+  "pending_upload" | "queued" | "processing" | "complete" | "failed" | "paused";
 
 export type PersonalUploadPanelJob = {
   status: PersonalUploadStatus;
   errorMessage?: string;
+  retryable?: boolean;
   meetingGuildId?: string;
   channelId_timestamp?: string;
 };
@@ -54,7 +56,12 @@ const canSubmitUpload = (
   job?: PersonalUploadPanelJob | null,
 ) => {
   if (!file) return false;
-  return job?.status !== "queued" && job?.status !== "processing";
+  return (
+    job?.status !== "queued" &&
+    job?.status !== "processing" &&
+    job?.status !== "paused" &&
+    job?.retryable !== false
+  );
 };
 
 function ChooseFileButton({
@@ -128,14 +135,22 @@ function UploadProgressStatus({
   );
 }
 
-function UploadErrorAlert({ message }: { message?: string | null }) {
+function UploadMessageAlert({
+  message,
+  paused,
+}: {
+  message?: string | null;
+  paused: boolean;
+}) {
   if (!message) return null;
 
   return (
     <Alert
-      color="red"
+      color={paused ? "blue" : "red"}
       variant="light"
-      icon={<IconAlertTriangle size={16} />}
+      icon={
+        paused ? <IconInfoCircle size={16} /> : <IconAlertTriangle size={16} />
+      }
       data-testid="personal-upload-error"
     >
       {message}
@@ -230,7 +245,10 @@ export function PersonalUploadPanel({
 }: PersonalUploadPanelProps) {
   const openMeetingAvailable = canOpenMeeting(job);
   const submitAvailable = canSubmitUpload(file, job);
-  const uploadErrorMessage = errorMessage ?? job?.errorMessage ?? null;
+  const uploadErrorMessage =
+    job?.status === "paused"
+      ? (job.errorMessage ?? errorMessage ?? null)
+      : (errorMessage ?? job?.errorMessage ?? null);
 
   return (
     <Surface p="lg" tone="soft" data-testid="personal-upload-panel">
@@ -280,7 +298,10 @@ export function PersonalUploadPanel({
           statusLabel={statusLabel}
           uploadProgress={uploadProgress}
         />
-        <UploadErrorAlert message={uploadErrorMessage} />
+        <UploadMessageAlert
+          message={uploadErrorMessage}
+          paused={job?.status === "paused"}
+        />
         <UploadCompleteAlert job={job} />
         <UploadActions
           openMeetingAvailable={openMeetingAvailable}

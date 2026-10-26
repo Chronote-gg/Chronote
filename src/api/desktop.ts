@@ -146,10 +146,12 @@ const sendUploadError = (res: Response, error: unknown) => {
     const status =
       error.code === "not_found" || error.code === "forbidden"
         ? 404
-        : error.code === "storage_unavailable" ||
-            error.code === "signing_failed"
-          ? 500
-          : 400;
+        : error.code === "paused"
+          ? 409
+          : error.code === "storage_unavailable" ||
+              error.code === "signing_failed"
+            ? 500
+            : 400;
     res.status(status).json({ error: error.code, message: error.message });
     return;
   }

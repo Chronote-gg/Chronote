@@ -1,3 +1,4 @@
+import type { PausedDesktopDraftRecord } from "../types/deploymentControl";
 import type {
   PersonalMediaUploadJobRecord,
   PersonalRecordingSegmentRecord,
@@ -64,4 +65,21 @@ export const buildSegment = (
   status,
   createdAt: "2026-01-06T18:00:00.000Z",
   updatedAt: "2026-01-06T18:00:00.000Z",
+});
+
+export const buildPausedDesktopDraftMarker = (
+  job: Pick<PersonalMediaUploadJobRecord, "uploadId" | "ownerUserId">,
+  overrides: Partial<PausedDesktopDraftRecord> = {},
+): PausedDesktopDraftRecord => ({
+  pk: `UPLOAD#${job.uploadId}`,
+  sk: "PAUSED_DRAFT",
+  recordType: "paused_desktop_draft",
+  protocolVersion: 1,
+  uploadId: job.uploadId,
+  ownerUserId: job.ownerUserId,
+  operationId: "synthetic-operation",
+  manifestSha256: "a".repeat(64),
+  preservedCaptureSha256: "b".repeat(64),
+  createdAt: 100,
+  ...overrides,
 });
