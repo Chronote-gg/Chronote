@@ -1,14 +1,8 @@
-import { stableJson } from "../utils/stableJson";
 import {
-  meetingUpdateDeliverySchema,
-  presentationPartSchema,
-} from "../types/meetingUpdateDelivery";
-import { isDeepStrictEqual } from "node:util";
-import {
-  publicationSnapshot,
-  initialMeetingUpdatePolicy,
-  PUBLICATION_SNAPSHOT_FIELDS,
-} from "../types/meetingPublication";
+  canonicalContentAdvanced,
+  MAX_RECORDING_CANONICAL_TRANSITION_ATTEMPTS,
+} from "./recordingCanonicalConflict";
+import { publicationSnapshot } from "../types/meetingPublication";
 import type { RuntimeApiOperation } from "./runtimeApiOperationService";
 import type { MeetingData } from "../types/meeting-data";
 import {
@@ -281,68 +275,9 @@ function hasRecordingHistoryOwnership(
   );
 }
 
-const MAX_OWNED_HISTORY_TRANSITION_ATTEMPTS = 3;
-
 function assertOwnedHistoryNotAborted(meeting: MeetingData): void {
   meeting.ownershipSignal?.throwIfAborted();
   meeting.finalization?.controller.signal.throwIfAborted();
-}
-
-function canonicalDeliveryAdvanced(
-  previous: MeetingHistory,
-  current: MeetingHistory,
-): boolean {
-  const before = previous.updateDelivery;
-  const after = current.updateDelivery;
-  if (!after) return !before;
-  const expected =
-    before ??
-    meetingUpdateDeliverySchema.parse({
-      revision: after.revision,
-      policy: initialMeetingUpdatePolicy(previous),
-      parts: after.parts,
-      progress: {
-        kind: "pending",
-        nextCheckAt:
-          "nextCheckAt" in after.progress ? after.progress.nextCheckAt : 0,
-      },
-    });
-  // Content requests may advance desired parts, never publication authority or receipts.
-  return (
-    stableJson({
-      ...expected,
-      revision: after.revision,
-      parts: after.parts,
-    }) === stableJson(after) &&
-    presentationPartSchema.options.every(
-      (part) =>
-        after.parts[part].acknowledged ===
-          (before?.parts[part].acknowledged ?? 0) &&
-        after.parts[part].desired >= (before?.parts[part].desired ?? 0) &&
-        after.parts[part].desired <= (current.contentRevision ?? 0),
-    )
-  );
-}
-
-function canonicalContentAdvanced(
-  previous: MeetingHistory,
-  current: MeetingHistory,
-): boolean {
-  const baseline = previous.contentRevision ?? 0;
-  if ((current.contentRevision ?? 0) <= baseline) return false;
-  const changed = canonicalFieldsSupersededAfter(current, baseline);
-  if (!changed || !canonicalDeliveryAdvanced(previous, current)) return false;
-  const canonicalFields = new Set([
-    ...changed,
-    "contentRevision",
-    "contentMutation",
-    "updateDelivery",
-  ]);
-  return PUBLICATION_SNAPSHOT_FIELDS.every(
-    (field) =>
-      canonicalFields.has(field) ||
-      isDeepStrictEqual(previous[field], current[field]),
-  );
 }
 
 async function commitOwnedMeetingHistory(
@@ -358,7 +293,7 @@ async function commitOwnedMeetingHistory(
   let previous: MeetingHistory | undefined;
   for (
     let attempt = 0;
-    attempt < MAX_OWNED_HISTORY_TRANSITION_ATTEMPTS;
+    attempt < MAX_RECORDING_CANONICAL_TRANSITION_ATTEMPTS;
     attempt++
   ) {
     assertOwnedHistoryNotAborted(meeting);

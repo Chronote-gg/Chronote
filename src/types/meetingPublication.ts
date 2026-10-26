@@ -113,10 +113,14 @@ type PublicationPhase = NonNullable<
 >;
 function acknowledgedPhase(
   phase: PublicationPhase | undefined,
+  kind: "summary" | "notes",
 ): phase is PublicationPhase {
   return (
     phase !== undefined &&
-    phase.outcome === "complete" &&
+    (phase.outcome === "complete" ||
+      (kind === "summary" &&
+        (phase.outcome === "edited_existing" ||
+          phase.outcome === "sent_fallback"))) &&
     phase.intended > 0 &&
     phase.sent === phase.intended &&
     phase.errors.length === 0
@@ -125,7 +129,7 @@ function acknowledgedPhase(
 function notesPublicationSettled(row: MeetingPublicationSnapshot): boolean {
   const notes = row.delivery?.notes;
   return (
-    acknowledgedPhase(notes) &&
+    acknowledgedPhase(notes, "notes") &&
     row.notesMessageIds?.length === notes.intended &&
     new Set(row.notesMessageIds).size === notes.intended &&
     Boolean(row.notesChannelId)
@@ -139,7 +143,7 @@ export function originalPublicationSettled(
     ["complete", "interrupted"].includes(row.status ?? "") &&
     !publicationMutationExcluded(row) &&
     (!row.ownerInstanceId || row.recovery?.disposition === "done") &&
-    acknowledgedPhase(summary) &&
+    acknowledgedPhase(summary, "summary") &&
     summary.intended === 1 &&
     Boolean(row.summaryMessageId) &&
     notesPublicationSettled(row)

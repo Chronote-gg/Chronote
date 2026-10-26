@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { isSummaryUpgradeField } from "../utils/summaryUpgrade";
 import {
   discordChannelSchema,
   discordEditorMessageSchema,
@@ -124,17 +125,24 @@ function readLayout(
     ),
   };
 }
+function routineNotesShape(embed: EditableEmbed): EditableEmbed {
+  return embed.fields?.length === 1 && isSummaryUpgradeField(embed.fields[0])
+    ? { ...embed, fields: undefined }
+    : embed;
+}
 function findRoutineNotesSlots(
   embeds: EditableEmbed[],
   meetingName: string | undefined,
   allowFooterlessRename: boolean,
 ): number[] {
   const recognized = embeds.flatMap((embed, index) =>
-    isNotesEmbed(embed, meetingName) ? [index] : [],
+    isNotesEmbed(routineNotesShape(embed), meetingName) ? [index] : [],
   );
   if (recognized.length || !allowFooterlessRename) return recognized;
   const candidates = embeds.flatMap((embed, index) =>
-    !embed.footer && hasNotesEmbedShape(embed) ? [index] : [],
+    !embed.footer && hasNotesEmbedShape(routineNotesShape(embed))
+      ? [index]
+      : [],
   );
   return candidates.length === 1 || coherentFooterlessPages(embeds, candidates)
     ? candidates
@@ -172,9 +180,21 @@ function readRegisteredLayouts(input: MeetingUpdatePlanInput) {
         ),
       )
     : [];
-  for (const layout of notes)
-    if (!layout.notesSlots.length || layout.summarySlots.length)
+  for (const layout of notes) {
+    if (
+      !layout.notesSlots.length ||
+      layout.summarySlots.length ||
+      layout.embeds.some(
+        (embed, index) =>
+          !layout.notesSlots.includes(index) &&
+          isNotesEmbed(
+            { ...embed, fields: undefined },
+            input.history.meetingName,
+          ),
+      )
+    )
       throw new MeetingUpdatePlanBlocked("unsupported_notes_layout");
+  }
   const summary = summaryId
     ? readLayout(
         input,
@@ -301,6 +321,8 @@ function validatePagination(
   const slots = layouts.flatMap((layout) =>
     layout.notesSlots.map((index) => layout.embeds[index]),
   );
+  if (slots.flatMap((slot) => slot.fields ?? []).length > 1)
+    throw new MeetingUpdatePlanBlocked("unsupported_notes_layout");
   const labels = slots.map(readPageLabel);
   const sameTitle = labels.every(
     (label) => label.baseTitle === labels[0]?.baseTitle,
@@ -321,16 +343,19 @@ function validatePagination(
     return;
   throw new MeetingUpdatePlanBlocked("unsupported_pagination");
 }
-export function assertDeletableNotesLayout(layout: MeetingUpdateLayout): void {
+export function isProtectedNotesLayout(layout: MeetingUpdateLayout): boolean {
   const message = layout.message;
-  if (
+  return (
     !layout.notesSlots.length ||
-    layout.summarySlots.length ||
+    layout.summarySlots.length > 0 ||
     layout.notesSlots.length !== layout.embeds.length ||
     message.content !== "" ||
-    message.components.length ||
-    message.attachments.length ||
+    message.components.length > 0 ||
+    message.attachments.length > 0 ||
     message.flags !== 0
-  )
+  );
+}
+export function assertDeletableNotesLayout(layout: MeetingUpdateLayout): void {
+  if (isProtectedNotesLayout(layout))
     throw new MeetingUpdatePlanBlocked("protected_surplus");
 }

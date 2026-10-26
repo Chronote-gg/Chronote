@@ -382,7 +382,7 @@ export function createDeliveryContext(
               progress: {
                 ...progress,
                 claim: { ...progress.claim, leaseExpiresAt },
-                nextCheckAt: leaseExpiresAt,
+                nextCheckAt: Math.max(progress.nextCheckAt, leaseExpiresAt),
               },
             },
             false,

@@ -96,6 +96,7 @@ export function renderNotesUpdate(
       rendered.map((embed) => embed.toJSON()),
     ).map((embed) => ({
       ...first,
+      fields: undefined,
       ...embed,
       footer: { ...first.footer, text: embed.footer?.text ?? "" },
     }));
@@ -109,7 +110,7 @@ export function renderNotesUpdate(
       )
     )
       throw new MeetingUpdatePlanBlocked("truncated_notice");
-    return embeds;
+    return placeUpgradeField(slots, embeds);
   }
   const footerNotice = requiredNotesFooterNotice(history);
   const captureNotice = notesCapturePrefix(history);
@@ -128,7 +129,19 @@ export function renderNotesUpdate(
     }
     return next;
   });
-  return embeds;
+  return placeUpgradeField(slots, embeds);
+}
+function placeUpgradeField(
+  slots: EditableEmbed[],
+  rendered: EditableEmbed[],
+): EditableEmbed[] {
+  const field = slots.flatMap((slot) => slot.fields ?? [])[0];
+  return rendered.map((embed, index) => {
+    const next = { ...embed };
+    delete next.fields;
+    if (field && index === rendered.length - 1) next.fields = [field];
+    return next;
+  });
 }
 function footerHasNotice(slot: EditableEmbed, notice: string): boolean {
   const footer = slot.footer?.text ?? "";
@@ -164,6 +177,8 @@ export function mergeNotesUpdate(
     title: candidate.title,
     description: candidate.description,
   };
+  if (candidate.fields?.length) result.fields = candidate.fields;
+  else delete result.fields;
   if (candidate.footer)
     result.footer = {
       ...(typeof current.footer === "object" && current.footer !== null

@@ -187,7 +187,7 @@ describe("scoped meeting update planning", () => {
   });
 
   it.each(["content", "components", "attachments", "unrelated"])(
-    "holds protected surplus posts with %s",
+    "retains the protected final post with %s",
     (surface) => {
       const input = fixture("x".repeat(9000), "Short");
       const surplus = input.messages[1];
@@ -196,6 +196,20 @@ describe("scoped meeting update planning", () => {
       if (surface === "attachments") surplus.attachments = [{ id: "999997" }];
       if (surface === "unrelated")
         surplus.embeds.push({ title: "Unrelated", description: "Keep" });
+      const result = ready(input);
+      expect(result.targets[0].messageId).toBe(surplus.id);
+      expect(result.targets[0].after).toMatchObject({
+        content: surplus.content,
+        components: surplus.components,
+        attachments: surplus.attachments,
+        flags: surplus.flags,
+      });
+      expect(
+        result.attempt.operations.find(
+          (operation) => operation.kind === "delete",
+        ),
+      ).toMatchObject({ messageId: input.messages[0].id });
+      input.messages[0].content = "Also protected";
       expect(planMeetingUpdate(input)).toMatchObject({
         kind: "blocked",
         reason: "protected_surplus",

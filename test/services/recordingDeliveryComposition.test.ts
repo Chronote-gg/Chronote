@@ -1,23 +1,8 @@
 /** @jest-environment node */
-jest.mock("../../src/services/configService", () => ({
-  config: { frontend: { siteUrl: "https://example.invalid" } },
-}));
-jest.mock("../../src/commands/summaryFeedback", () => ({
-  buildSummaryFeedbackButtonIds: () => ({ up: "up", down: "down" }),
-}));
-jest.mock("../../src/commands/meetingName", () => ({
-  MEETING_RENAME_PREFIX: "rename",
-}));
+import "./recordingPublicationRuntime";
 jest.mock("../../src/services/summaryUpgradeService", () => ({
   claimSummaryUpgrade: async () => undefined,
 }));
-jest.mock("../../src/services/analyticsService", () => ({
-  captureEvent: jest.fn(),
-}));
-jest.mock("../../src/services/langfuseClient", () => ({
-  isLangfuseTracingEnabled: () => false,
-}));
-jest.mock("@langfuse/tracing", () => ({ updateActiveObservation: jest.fn() }));
 const mockRepository = {
   getMeetingHistory: jest.fn(),
   transitionMeetingHistory: jest.fn(),
@@ -25,6 +10,12 @@ const mockRepository = {
 jest.mock("../../src/db", () => ({
   getDeploymentControlRepository: () => mockRepository,
 }));
+import { DiscordAPIError } from "discord.js";
+import {
+  originalPublicationSettled,
+  publicationSnapshot,
+  matchesPublicationSnapshot,
+} from "../../src/types/meetingPublication";
 import { updateMeetingSummaryMessage } from "../../src/embed";
 import { acknowledgeRecordingDeliveryHistory } from "../../src/services/recordingDeliveryService";
 import type { MeetingData } from "../../src/types/meeting-data";
@@ -276,3 +267,90 @@ test("an invalid later clock retains the valid first observation", async () => {
   });
   expect(meeting.notesDeliveryTiming).toEqual(row.notesDeliveryTiming);
 });
+
+test.each(["existing", "no-start", "missing-start"] as const)(
+  "settles actual live summary %s and retains recovered diagnostics",
+  async (mode) => {
+    const { meeting, row, edit, send } = fixture();
+    meeting.notesText = "One batch";
+    send
+      .mockResolvedValueOnce({
+        id: mode === "existing" ? "notes" : "replacement",
+      })
+      .mockResolvedValueOnce({ id: "notes" });
+    if (mode === "no-start") meeting.startMessageId = undefined;
+    if (mode === "missing-start")
+      jest
+        .spyOn(meeting.textChannel.messages, "fetch")
+        .mockRejectedValueOnce(
+          new DiscordAPIError(
+            { code: 10008, message: "Unknown Message" },
+            10008,
+            404,
+            "GET",
+            "https://discord.test/message",
+            { body: undefined, files: [] },
+          ),
+        );
+    await updateMeetingSummaryMessage(meeting, { finalization: true });
+    row.status = "complete";
+    row.delivery = meeting.delivery;
+    await acknowledgeRecordingDeliveryHistory(meeting);
+    expect(row.recovery?.disposition).toBe("done");
+    expect(row.delivery?.summary).toMatchObject({
+      outcome: mode === "existing" ? "edited_existing" : "sent_fallback",
+      intended: 1,
+      sent: 1,
+      errors: [],
+      ...(mode === "missing-start"
+        ? { recoveredMissingMessage: { code: 10008, status: 404 } }
+        : {}),
+    });
+    expect(originalPublicationSettled(publicationSnapshot(row))).toBe(true);
+    expect(edit).toHaveBeenCalledTimes(mode === "existing" ? 1 : 0);
+    expect(send).toHaveBeenCalledTimes(mode === "existing" ? 1 : 2);
+  },
+);
+
+test.each([1, 2, 3])(
+  "one production invocation survives only the bounded %i canonical summary ACK conflicts",
+  async (conflicts) => {
+    const { meeting, row, edit, send } = fixture();
+    meeting.notesText = "One batch";
+    send.mockResolvedValue({ id: "notes" });
+    let summaryWrites = 0;
+    mockRepository.transitionMeetingHistory.mockImplementation(
+      async (input) => {
+        if (input.patch.summaryMessageId) {
+          summaryWrites++;
+          if (summaryWrites <= conflicts)
+            Object.assign(row, {
+              contentRevision: summaryWrites,
+              meetingName: "Edited " + summaryWrites,
+              contentMutation: {
+                id: "edit-" + summaryWrites,
+                fingerprint: "a".repeat(64),
+                fieldRevisions: { meetingName: summaryWrites },
+              },
+            });
+        }
+        if (
+          !matchesPublicationSnapshot(
+            structuredClone(row),
+            input.expectedPublication,
+          )
+        )
+          return "stale";
+        Object.assign(row, input.patch);
+        return "applied";
+      },
+    );
+    const work = updateMeetingSummaryMessage(meeting, { finalization: true });
+    if (conflicts < 3) await expect(work).resolves.toBeDefined();
+    else await expect(work).rejects.toThrow("fenced");
+    expect(edit).toHaveBeenCalledTimes(1);
+    expect(send).toHaveBeenCalledTimes(conflicts < 3 ? 1 : 0);
+    expect(summaryWrites).toBe(Math.min(conflicts + 1, 3));
+    expect(row.summaryMessageId).toBe(conflicts < 3 ? "summary" : undefined);
+  },
+);

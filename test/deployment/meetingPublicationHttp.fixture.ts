@@ -26,13 +26,22 @@ function sendJson(
   response.setHeader("content-type", "application/json");
   response.end(JSON.stringify(value));
 }
-async function requestEmbeds(request: IncomingMessage) {
+async function requestPayload(request: IncomingMessage) {
   const chunks: Buffer[] = [];
   for await (const chunk of request) chunks.push(Buffer.from(chunk));
   const payload: unknown = JSON.parse(Buffer.concat(chunks).toString("utf8"));
   if (!payload || typeof payload !== "object" || !("embeds" in payload))
     throw new Error("Missing synthetic HTTP embeds");
-  return discordEditorMessageSchema.shape.embeds.parse(payload.embeds);
+  return {
+    embeds: discordEditorMessageSchema.shape.embeds.parse(payload.embeds),
+    ...("components" in payload
+      ? {
+          components: discordEditorMessageSchema.shape.components.parse(
+            payload.components,
+          ),
+        }
+      : {}),
+  };
 }
 /** Local HTTP responses exercise actual fetch transport and held provider lifetime. */
 export async function publicationHttpFixture(input: {
@@ -45,6 +54,11 @@ export async function publicationHttpFixture(input: {
     input.messages.map((message) => [message.id, structuredClone(message)]),
   );
   const writes: Array<{ method: string; id: string }> = [];
+  const reads: string[] = [];
+  let rejectedMutation: { method: string; status: number } | undefined;
+  let readFailure:
+    | { id: string; method: string; status: number; retryAfter: number }
+    | undefined;
   let held:
     | {
         entered: ReturnType<typeof deferred>;
@@ -76,13 +90,22 @@ export async function publicationHttpFixture(input: {
   ): Promise<void> {
     const method = request.method ?? "GET";
     writes.push({ method, id });
+    if (rejectedMutation?.method === method) {
+      const rejection = rejectedMutation;
+      rejectedMutation = undefined;
+      return sendJson(
+        response,
+        { message: "Synthetic rejected mutation" },
+        rejection.status,
+      );
+    }
     if (method === "DELETE") {
       remote.delete(id);
       response.statusCode = 204;
       response.end();
       return;
     }
-    const embeds = await requestEmbeds(request);
+    const payload = await requestPayload(request);
     if (method === "PATCH" && held) {
       const wait = held;
       held = undefined;
@@ -91,7 +114,7 @@ export async function publicationHttpFixture(input: {
     }
     const message = getMessage(id, method);
     if (!message) return sendJson(response, { code: 10008 }, 404);
-    const after = discordEditorMessageSchema.parse({ ...message, embeds });
+    const after = discordEditorMessageSchema.parse({ ...message, ...payload });
     remote.set(after.id, after);
     sendJson(response, after);
   }
@@ -110,6 +133,21 @@ export async function publicationHttpFixture(input: {
       });
     const id = path.split("/").at(-1) ?? "";
     if (request.method !== "GET") return mutate(request, response, id);
+    reads.push(id);
+    if (
+      readFailure?.id === id &&
+      writes.some(
+        (write) => write.id === id && write.method === readFailure?.method,
+      )
+    ) {
+      const failure = readFailure;
+      readFailure = undefined;
+      return sendJson(
+        response,
+        { retry_after: failure.retryAfter },
+        failure.status,
+      );
+    }
     const message = remote.get(id);
     if (!message)
       return sendJson(
@@ -136,10 +174,35 @@ export async function publicationHttpFixture(input: {
   return {
     remote,
     writes,
+    reads,
+    rejectNextMutation(method: string, status: number) {
+      rejectedMutation = { method, status };
+    },
+    failReadAfterMutation(
+      id: string,
+      method: string,
+      status: number,
+      retryAfter = 120,
+    ) {
+      readFailure = { id, method, status, retryAfter };
+    },
     fetchImpl,
     holdPatch() {
       held = { entered: deferred(), tail: deferred() };
       return held;
+    },
+    async write(payload: unknown, messageId?: string) {
+      const response = await fetch(
+        base +
+          "/api/v10/channels/" +
+          input.channelId +
+          "/messages" +
+          (messageId ? "/" + messageId : ""),
+        { method: messageId ? "PATCH" : "POST", body: JSON.stringify(payload) },
+      );
+      if (!response.ok)
+        throw new Error("Synthetic mutation rejected: " + response.status);
+      return discordEditorMessageSchema.parse(await response.json());
     },
     async send() {
       const response = await fetch(
