@@ -1,3 +1,4 @@
+import { completedTextResponse } from "../../src/testSupport/openaiResponse";
 import { createServer } from "node:http";
 import { createHTTPHandler } from "@trpc/server/adapters/standalone";
 import type { Request, Response } from "express";
@@ -54,7 +55,7 @@ export async function verifyCorrectionDisconnect(input: {
     fenceRuntimeWorkAdmissions();
     expect(input.settled).not.toHaveBeenCalled();
     const checkpoints = getRuntimeWorkAdmissionCheckpoints();
-    input.release({ choices: [{ message: { content: "Late correction" } }] });
+    input.release(completedTextResponse("Late correction"));
     await Promise.allSettled(checkpoints.map((entry) => entry.ownedPromise));
     expect(input.settled).toHaveBeenCalledTimes(1);
     expect(
@@ -63,7 +64,7 @@ export async function verifyCorrectionDisconnect(input: {
       ),
     ).toHaveLength(0);
   } finally {
-    input.release({ choices: [] });
+    input.release(completedTextResponse(""));
     server.closeAllConnections();
     server.close();
   }

@@ -1,5 +1,6 @@
 import { describe, expect, test, jest } from "@jest/globals";
 import type { MeetingData } from "../../src/types/meeting-data";
+import { completedTextResponse } from "../../src/testSupport/openaiResponse";
 
 const buildMeeting = (): MeetingData =>
   ({
@@ -14,25 +15,27 @@ const buildMeeting = (): MeetingData =>
   }) as MeetingData;
 
 const loadModule = async (
-  responses: { content: string | null; finish: string }[],
+  responses: { content: string; truncated?: boolean }[],
 ) => {
   jest.resetModules();
   let callIndex = 0;
-  const completionCreate = jest.fn().mockImplementation(() => {
+  const responseCreate = jest.fn().mockImplementation(() => {
     const response = responses[Math.min(callIndex, responses.length - 1)];
     callIndex += 1;
-    return {
+    const result = {
+      ...completedTextResponse(response.content),
       model: "provider-model-7",
-      choices: [
-        {
-          finish_reason: response.finish,
-          message: { content: response.content },
-        },
-      ],
     };
+    return response.truncated
+      ? {
+          ...result,
+          status: "incomplete",
+          incomplete_details: { reason: "max_output_tokens" },
+        }
+      : result;
   });
   const createOpenAIClient = jest.fn(() => ({
-    chat: { completions: { create: completionCreate } },
+    responses: { create: responseCreate },
   }));
   const getModelChoice = jest.fn(() => ({ model: "gpt-test" }));
   const resolveChatParamsForRole = jest.fn(() => ({}));
@@ -52,23 +55,23 @@ const loadModule = async (
   const module = await import("../../src/services/openaiChatService");
   return {
     module,
-    completionCreate,
+    responseCreate,
     createOpenAIClient,
   };
 };
 
 describe("openaiChatService", () => {
-  test("chat accumulates multi-call responses", async () => {
-    const { module, completionCreate } = await loadModule([
-      { content: "hello ", finish: "length" },
-      { content: "world", finish: "stop" },
+  test("chat accumulates multi-call Responses output", async () => {
+    const { module, responseCreate } = await loadModule([
+      { content: "hello ", truncated: true },
+      { content: "world" },
     ]);
     const meeting = buildMeeting();
 
     const output = await module.chat(
       meeting,
       {
-        messages: [],
+        messages: [{ role: "user", content: "Write the meeting notes." }],
       },
       {
         traceName: "notes",
@@ -77,29 +80,34 @@ describe("openaiChatService", () => {
     );
 
     expect(output).toBe("hello world");
-    expect(completionCreate).toHaveBeenCalledTimes(2);
-    const firstRequest = completionCreate.mock.calls[0][0];
+    expect(responseCreate).toHaveBeenCalledTimes(2);
+    const firstRequest = responseCreate.mock.calls[0][0];
     expect(firstRequest.safety_identifier).toBe("safety-id");
+    expect(firstRequest.store).toBe(false);
+    expect(firstRequest.input).toEqual(
+      expect.arrayContaining([
+        { role: "user", content: "Write the meeting notes." },
+      ]),
+    );
     expect(firstRequest).not.toHaveProperty("user");
   });
 
-  test("chat stops when content is empty", async () => {
-    const { module, completionCreate } = await loadModule([
-      { content: null, finish: "stop" },
-    ]);
+  test("chat rejects an empty completed response", async () => {
+    const { module, responseCreate } = await loadModule([{ content: "" }]);
     const meeting = buildMeeting();
 
-    const output = await module.chat(meeting, { messages: [] });
+    await expect(module.chat(meeting, { messages: [] })).rejects.toThrow(
+      "OpenAI Responses output empty.",
+    );
 
-    expect(output).toBe("");
-    expect(completionCreate).toHaveBeenCalledTimes(1);
+    expect(responseCreate).toHaveBeenCalledTimes(1);
   });
 });
 
 test("records every continuation response with actual model and resolved prompt metadata", async () => {
   const { module } = await loadModule([
-    { content: "one", finish: "length" },
-    { content: "two", finish: "stop" },
+    { content: "one", truncated: true },
+    { content: "two" },
   ]);
   const acknowledged = jest.fn();
   const observeGeneration = jest.fn(() => acknowledged);

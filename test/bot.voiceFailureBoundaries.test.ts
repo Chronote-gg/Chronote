@@ -10,6 +10,7 @@ import path from "node:path";
 import { EventEmitter } from "node:events";
 import vm from "node:vm";
 import ts from "typescript";
+import { createCommandRegistrationContext } from "./fixtures/botCommandRegistration";
 
 // Execute the production registrations without starting Discord or importing cloud clients.
 function loadVoiceBoundary(rejectSubscription: () => Promise<void>) {
@@ -139,7 +140,6 @@ import {
   Guild,
   TextChannel,
   VoiceChannel,
-  SlashCommandBuilder,
   REST,
   Routes,
 } from "discord.js";
@@ -315,28 +315,8 @@ test("a missing configured auto destination does not start elsewhere", async () 
 test("registered startmeeting offers an optional ordinary text notes channel", async () => {
   const declaration = readBotFunction("setupApplicationCommands");
   const put = jest.spyOn(REST.prototype, "put").mockResolvedValue([]);
-  const command = new SlashCommandBuilder()
-    .setName("fixture")
-    .setDescription("Fixture");
-  const context = vm.createContext({
-    SlashCommandBuilder,
-    ChannelType,
-    REST,
-    Routes,
-    TOKEN: "fake",
-    CLIENT_ID: "bot-1",
-    config: {
-      server: { onboardingEnabled: false },
-      chatTts: { maxChars: 100 },
-    },
-    TTS_VOICE_CHOICES: [{ name: "Alloy", value: "alloy" }],
-    TTS_PREFIX_MODE_CHOICES: [{ name: "Default", value: "default" }],
-    MIN_TTS_VOLUME_PERCENT: 0,
-    MAX_TTS_VOLUME_PERCENT: 200,
-    billingCommand: command,
-    dismissAutoRecordCommand: command,
-    startMeetingContextCommand: command,
-    console: { log: jest.fn(), error: jest.fn() },
+  const context = createCommandRegistrationContext({
+    onboardingEnabled: false,
   });
   try {
     await vm.runInContext(

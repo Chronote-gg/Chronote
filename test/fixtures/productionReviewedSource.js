@@ -34,6 +34,7 @@ export function reviewedRoutes(m, read = sourceTransport.read) {
   return [
     ["workflow", ".github/workflows/deploy.yml"],
     ["workflow", ".github/workflows/terraform-apply.yml"],
+    ["workflow", ".github/workflows/production-introduction.yml"],
     ["manual", "scripts/force-deployment.ps1"],
   ].map(([kind, id]) => ({
     kind,

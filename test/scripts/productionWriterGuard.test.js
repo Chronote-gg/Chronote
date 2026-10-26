@@ -70,3 +70,19 @@ test("missing-table exception proves actual exact table create, not empty or oth
   wrong.resource_changes[1].change.after.name = "other";
   expect(() => assertPrerequisitePlan(wrong, config.table)).toThrow();
 });
+
+test("caller hashes, Booleans and copied prerequisite objects cannot authorize missing Control", async () => {
+  for (const prerequisite of [
+    true,
+    {},
+    { plan: plan(), validated: true, hash: "a".repeat(64) },
+  ])
+    await expect(
+      invoke(
+        async () => {
+          throw { name: "ResourceNotFoundException" };
+        },
+        { prerequisite },
+      ),
+    ).rejects.toThrow("production_writer_refused");
+});

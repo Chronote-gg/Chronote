@@ -1,4 +1,8 @@
 /** @jest-environment node */
+import {
+  seedServingRuntime,
+  stopServingRuntime,
+} from "../fixtures/servingRuntime";
 
 import { afterEach, beforeEach, describe, expect, test } from "@jest/globals";
 import crypto from "node:crypto";
@@ -251,13 +255,14 @@ const checksumSha256 = (body: Buffer) =>
   crypto.createHash("sha256").update(body).digest("hex");
 
 describe("desktop API", () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     resetMockStore();
     resetDesktopAuthMemoryRepository();
     Object.defineProperty(config.mock, "enabled", {
       get: () => true,
       configurable: true,
     });
+    await seedServingRuntime();
   });
 
   afterEach(() => {
@@ -881,3 +886,5 @@ describe("desktop API", () => {
     }
   });
 });
+
+afterAll(stopServingRuntime);

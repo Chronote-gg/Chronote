@@ -6,6 +6,7 @@ jest.mock("../../src/db", () => ({
   }),
 }));
 import { beforeEach, describe, expect, test, jest } from "@jest/globals";
+import { completedTextResponse } from "../../src/testSupport/openaiResponse";
 import * as unifiedConfig from "../../src/services/unifiedConfigService";
 import "../deployment/coldNetworkGuard.cjs";
 import { config } from "../../src/services/configService";
@@ -35,7 +36,6 @@ jest.mock("../../src/services/runtimeLifecycleService", () => ({
   },
   getRuntimeAdmissionContext: async () => ({ instanceId: "synthetic-api" }),
 }));
-import type { Request, Response } from "express";
 import type { MeetingHistory } from "../../src/types/db";
 import type { FeedbackRecord } from "../../src/types/db";
 import type { MeetingEvent } from "../../src/types/meetingTimeline";
@@ -159,12 +159,7 @@ jest.mock("../../src/services/discordCacheService", () => ({
   listGuildRolesCached: async () => [],
 }));
 
-const buildCaller = (user = getMockUser()) =>
-  appRouter.createCaller({
-    req: { session: {} } as Request,
-    res: {} as Response,
-    user,
-  });
+import { buildCaller } from "../utils/trpcCaller";
 
 describe("meetings router detail", () => {
   const mockedEnsureManageGuild = jest.mocked(ensureManageGuildWithUserToken);
@@ -492,19 +487,11 @@ describe("meetings notes correction mutations", () => {
       meetingSummary: undefined,
       notesCorrection: undefined,
     });
-    const createCompletion = jest.fn(async () => ({
-      choices: [
-        {
-          message: { content: "Updated notes" },
-        },
-      ],
-    }));
+    const createResponse = jest.fn(async () =>
+      completedTextResponse("Updated notes"),
+    );
     mockedCreateOpenAIClient.mockReturnValue({
-      chat: {
-        completions: {
-          create: createCompletion,
-        },
-      },
+      responses: { create: createResponse },
     } as unknown as ReturnType<typeof createOpenAIClient>);
     mockedGenerateMeetingSummaries.mockResolvedValue({
       summarySentence: "New summary sentence",
@@ -529,12 +516,10 @@ describe("meetings notes correction mutations", () => {
       notesVersion: 1,
     } as MeetingHistory);
     mockedCreateOpenAIClient.mockReturnValue({
-      chat: {
-        completions: {
-          create: () => {
-            entered();
-            return provider;
-          },
+      responses: {
+        create: () => {
+          entered();
+          return provider;
         },
       },
     } as unknown as ReturnType<typeof createOpenAIClient>);
@@ -712,17 +697,7 @@ describe("meetings notes correction mutations", () => {
       (_, idx) => `Line ${idx + 1}`,
     ).join("\n");
     mockedCreateOpenAIClient.mockReturnValue({
-      chat: {
-        completions: {
-          create: async () => ({
-            choices: [
-              {
-                message: { content: updated },
-              },
-            ],
-          }),
-        },
-      },
+      responses: { create: async () => completedTextResponse(updated) },
     } as unknown as ReturnType<typeof createOpenAIClient>);
 
     const result = await buildCaller().meetings.suggestNotesCorrection({
@@ -753,19 +728,11 @@ describe("meetings notes correction mutations", () => {
 
     mockedFetchJsonFromS3.mockResolvedValueOnce({ text: "Transcript" });
 
-    const createCompletion = jest.fn(async () => ({
-      choices: [
-        {
-          message: { content: "Line 1\n\nLine 2" },
-        },
-      ],
-    }));
+    const createResponse = jest.fn(async () =>
+      completedTextResponse("Line 1\n\nLine 2"),
+    );
     mockedCreateOpenAIClient.mockReturnValue({
-      chat: {
-        completions: {
-          create: createCompletion,
-        },
-      },
+      responses: { create: createResponse },
     } as unknown as ReturnType<typeof createOpenAIClient>);
 
     const result = await buildCaller().meetings.suggestNotesCorrection({
@@ -798,11 +765,9 @@ describe("meetings notes correction mutations", () => {
     mockedFetchJsonFromS3.mockResolvedValueOnce({ text: "Transcript" });
 
     mockedCreateOpenAIClient.mockReturnValue({
-      chat: {
-        completions: {
-          create: async () => {
-            throw new Error("boom");
-          },
+      responses: {
+        create: async () => {
+          throw new Error("boom");
         },
       },
     } as unknown as ReturnType<typeof createOpenAIClient>);
@@ -880,15 +845,11 @@ describe("meetings notes correction mutations", () => {
     mockedFetchJsonFromS3.mockResolvedValueOnce({
       text: "Jon Smythe from Apollo owns the rollout.",
     });
-    const createCompletion = jest.fn(async () => ({
-      choices: [
-        {
-          message: { content: "Jon Smythe owns the Apollo rollout." },
-        },
-      ],
-    }));
+    const createResponse = jest.fn(async () =>
+      completedTextResponse("Jon Smythe owns the Apollo rollout."),
+    );
     mockedCreateOpenAIClient.mockReturnValue({
-      chat: { completions: { create: createCompletion } },
+      responses: { create: createResponse },
     } as unknown as ReturnType<typeof createOpenAIClient>);
 
     const suggestion = await buildCaller().meetings.suggestNotesCorrection({

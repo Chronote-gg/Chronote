@@ -12,6 +12,7 @@ import { trpc } from "../../services/trpc";
 import type { NotionAutomationStatus } from "../../../types/notionIntegration";
 import { useLibraryMeetings } from "./hooks/useLibraryMeetings";
 import type { ArchiveFilter } from "./types";
+import { FirstMeetingEmptyState } from "./components/FirstMeetingEmptyState";
 
 type LibraryNotionAutomation = NonNullable<
   NotionAutomationStatus["automation"]
@@ -89,6 +90,20 @@ function LibraryNotionStatus({
   );
 }
 
+function hasLibraryFilters(filters: {
+  query: string;
+  selectedTags: string[];
+  selectedChannel: string | null;
+  rangeChanged: boolean;
+}) {
+  return Boolean(
+    filters.query.trim() ||
+    filters.selectedTags.length ||
+    filters.selectedChannel ||
+    filters.rangeChanged,
+  );
+}
+
 export default function LibraryPage() {
   const navigate = useNavigate({ from: "/portal/server/$serverId/library" });
   const search = useSearch({ from: "/portal/server/$serverId/library" });
@@ -97,6 +112,7 @@ export default function LibraryPage() {
   const [query, setQuery] = useState("");
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
   const [selectedRange, setSelectedRange] = useState("30");
+  const [rangeChanged, setRangeChanged] = useState(false);
   const [selectedChannel, setSelectedChannel] = useState<string | null>(null);
   const [archiveFilter, setArchiveFilter] = useState<ArchiveFilter>("active");
 
@@ -112,6 +128,8 @@ export default function LibraryPage() {
 
   const {
     filteredMeetings,
+    hasAccessibleMeetings,
+    listReady,
     tagOptions,
     channelOptions,
     listLoading,
@@ -125,6 +143,13 @@ export default function LibraryPage() {
     selectedChannel,
     selectedRange,
   });
+
+  const firstMeeting =
+    selectedGuild &&
+    listReady &&
+    !hasAccessibleMeetings &&
+    archiveFilter === "active" &&
+    !hasLibraryFilters({ query, selectedTags, selectedChannel, rangeChanged });
 
   return (
     <Stack gap="lg" data-testid="library-page">
@@ -142,65 +167,94 @@ export default function LibraryPage() {
         }}
       />
 
-      <FiltersBar
-        query={query}
-        onQueryChange={setQuery}
-        tagOptions={tagOptions}
-        selectedTags={selectedTags}
-        onTagsChange={setSelectedTags}
-        selectedRange={selectedRange}
-        onRangeChange={(value) => setSelectedRange(value)}
-        archiveFilter={archiveFilter}
-        onArchiveFilterChange={setArchiveFilter}
-        selectedChannel={selectedChannel}
-        onChannelChange={setSelectedChannel}
-        channelOptions={channelOptions}
-      />
-
-      <Group justify="space-between" align="center" wrap="wrap">
-        <Group gap="sm" align="center" wrap="wrap">
-          <Text c="dimmed" size="sm">
-            {filteredMeetings.length}{" "}
-            {archiveFilter === "archived" ? "archived meetings" : "meetings"}
-          </Text>
-        </Group>
-        <Group gap="xs" align="center">
-          <Text size="xs" c="dimmed">
-            Sorted by recency |{" "}
-            {selectedRange === "all"
-              ? "All time"
-              : `Range: ${selectedRange} days`}
-          </Text>
-          <RefreshButton
-            onClick={handleRefresh}
-            size="xs"
-            variant="subtle"
-            data-testid="library-refresh-top"
+      {firstMeeting ? (
+        <>
+          <Group justify="flex-end">
+            <RefreshButton
+              onClick={handleRefresh}
+              data-testid="library-refresh"
+            />
+            <Button
+              size="xs"
+              variant="subtle"
+              onClick={() => setArchiveFilter("archived")}
+            >
+              View archived meetings
+            </Button>
+          </Group>
+          <FirstMeetingEmptyState
+            discordUrl={`https://discord.com/channels/${selectedGuild.id}`}
+            optionalSetupUrl={`/join?serverId=${selectedGuild.id}#optional-setup`}
           />
-        </Group>
-      </Group>
-      <MeetingList
-        items={filteredMeetings}
-        listLoading={listLoading}
-        listError={listError}
-        onSelect={(meetingId) =>
-          navigate({
-            search: (prev) => ({
-              ...prev,
-              meetingId,
-            }),
-          })
-        }
-        selectedMeetingId={selectedMeetingId}
-      />
-      <Group justify="flex-end">
-        <RefreshButton
-          onClick={handleRefresh}
-          size="xs"
-          variant="subtle"
-          data-testid="library-refresh"
-        />
-      </Group>
+        </>
+      ) : (
+        <>
+          <FiltersBar
+            query={query}
+            onQueryChange={setQuery}
+            tagOptions={tagOptions}
+            selectedTags={selectedTags}
+            onTagsChange={setSelectedTags}
+            selectedRange={selectedRange}
+            onRangeChange={(value) => {
+              setRangeChanged(true);
+              setSelectedRange(value);
+            }}
+            archiveFilter={archiveFilter}
+            onArchiveFilterChange={setArchiveFilter}
+            selectedChannel={selectedChannel}
+            onChannelChange={setSelectedChannel}
+            channelOptions={channelOptions}
+          />
+
+          <Group justify="space-between" align="center" wrap="wrap">
+            <Group gap="sm" align="center" wrap="wrap">
+              <Text c="dimmed" size="sm">
+                {filteredMeetings.length}{" "}
+                {archiveFilter === "archived"
+                  ? "archived meetings"
+                  : "meetings"}
+              </Text>
+            </Group>
+            <Group gap="xs" align="center">
+              <Text size="xs" c="dimmed">
+                Sorted by recency |{" "}
+                {selectedRange === "all"
+                  ? "All time"
+                  : `Range: ${selectedRange} days`}
+              </Text>
+              <RefreshButton
+                onClick={handleRefresh}
+                size="xs"
+                variant="subtle"
+                data-testid="library-refresh-top"
+              />
+            </Group>
+          </Group>
+          <MeetingList
+            items={filteredMeetings}
+            listLoading={listLoading}
+            listError={listError}
+            onSelect={(meetingId) =>
+              navigate({
+                search: (prev) => ({
+                  ...prev,
+                  meetingId,
+                }),
+              })
+            }
+            selectedMeetingId={selectedMeetingId}
+          />
+          <Group justify="flex-end">
+            <RefreshButton
+              onClick={handleRefresh}
+              size="xs"
+              variant="subtle"
+              data-testid="library-refresh"
+            />
+          </Group>
+        </>
+      )}
     </Stack>
   );
 }

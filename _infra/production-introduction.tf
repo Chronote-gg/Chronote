@@ -78,9 +78,14 @@ resource "aws_iam_role_policy" "production_prompt_guard" {
   count = local.production_introduction_enabled ? 1 : 0
   role  = aws_iam_role.production_introduction["prompt-guard"].id
   name  = "read-introduction-hold"
+  # All trusted guard-role consumers can read this key and regional task-definition metadata.
   policy = jsonencode({ Version = "2012-10-17", Statement = [
     { Effect = "Allow", Action = ["dynamodb:GetItem"], Resource = aws_dynamodb_table.deployment_control_table.arn, Condition = { "ForAllValues:StringEquals" = { "dynamodb:LeadingKeys" = ["ENV"] } } },
     { Effect = "Allow", Action = ["kms:Decrypt"], Resource = aws_kms_key.app_general.arn, Condition = { StringEquals = { "kms:ViaService" = "dynamodb.${var.aws_region}.amazonaws.com", "kms:CallerAccount" = data.aws_caller_identity.current.account_id, "kms:EncryptionContext:aws:dynamodb:tableName" = aws_dynamodb_table.deployment_control_table.name } } }
+    , { Sid = "ServingServiceMetadata", Effect = "Allow", Action = ["ecs:DescribeServices"], Resource = aws_ecs_service.app_service.id },
+    { Sid = "RegionalDefinitionMetadata", Effect = "Allow", Action = ["ecs:DescribeTaskDefinition"], Resource = "*", Condition = { StringEquals = { "aws:RequestedRegion" = var.aws_region } } },
+    { Sid = "ServingOpenAIKey", Effect = "Allow", Action = ["secretsmanager:GetSecretValue"], Resource = aws_secretsmanager_secret.openai_api_key.arn, Condition = { StringEquals = { "secretsmanager:VersionStage" = "AWSCURRENT" } } },
+    { Sid = "ServingOpenAIKeyDecrypt", Effect = "Allow", Action = ["kms:Decrypt"], Resource = aws_kms_key.app_general.arn, Condition = { StringEquals = { "kms:ViaService" = "secretsmanager.${var.aws_region}.amazonaws.com", "kms:CallerAccount" = data.aws_caller_identity.current.account_id, "kms:EncryptionContext:SecretARN" = aws_secretsmanager_secret.openai_api_key.arn } } }
   ] })
 }
 resource "aws_iam_role_policy" "production_introduction" {

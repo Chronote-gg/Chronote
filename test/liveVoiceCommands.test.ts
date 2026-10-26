@@ -12,6 +12,17 @@ type MemberSpec = {
 
 const BOT_ID = "bot-1";
 
+const completedResponse = (text: string) => ({
+  status: "completed",
+  output_text: text,
+  output: [
+    {
+      type: "message",
+      content: [{ type: "output_text", text }],
+    },
+  ],
+});
+
 const makeSegment = (userId: string, text: string): LiveSegment => ({
   userId,
   text,
@@ -109,15 +120,13 @@ const makeMeeting = (options: {
 const setupLiveVoice = async (responses: string[]) => {
   const mockCreate = jest.fn();
   for (const content of responses) {
-    mockCreate.mockResolvedValueOnce({
-      choices: [{ message: { content }, finish_reason: "stop" }],
-    });
+    mockCreate.mockResolvedValueOnce(completedResponse(content));
   }
 
   jest.doMock("openai", () => ({
     __esModule: true,
     default: jest.fn().mockImplementation(() => ({
-      chat: { completions: { create: mockCreate } },
+      responses: { create: mockCreate },
     })),
   }));
   const mockGetLangfuseChatPrompt = jest.fn().mockResolvedValue({
@@ -147,9 +156,10 @@ afterEach(() => {
 });
 
 test("starts confirmation when gate returns command_end", async () => {
-  const { maybeRespondLive } = await setupLiveVoice([
+  const { maybeRespondLive, mockCreate } = await setupLiveVoice([
     '{"action":"command_end"}',
   ]);
+  const { config } = await import("../src/services/configService");
 
   const meeting = makeMeeting({
     creatorId: "user-1",
@@ -162,6 +172,18 @@ test("starts confirmation when gate returns command_end", async () => {
     makeSegment("user-1", "Chronote please end the meeting"),
   );
 
+  expect(mockCreate).toHaveBeenCalledWith(
+    expect.objectContaining({
+      input: [
+        { role: "system", content: "You are a helpful assistant." },
+        { role: "user", content: "Stub prompt." },
+      ],
+      text: expect.objectContaining({ format: { type: "json_object" } }),
+      max_output_tokens: config.liveVoice.gateMaxOutputTokens,
+      store: false,
+    }),
+    expect.objectContaining({ signal: expect.any(AbortSignal) }),
+  );
   expect(meeting.liveVoiceCommandPending?.userId).toBe("user-1");
   expect(meeting.ttsQueue?.enqueue).toHaveBeenCalledWith(
     expect.objectContaining({
@@ -390,14 +412,7 @@ test("held live gate observes processing cancellation and cannot enqueue a late 
   await Promise.resolve();
   expect(options?.signal?.aborted).toBe(true);
   expect(settled).toBe(false);
-  complete({
-    choices: [
-      {
-        message: { content: '{"action":"command_end"}' },
-        finish_reason: "stop",
-      },
-    ],
-  });
+  complete(completedResponse('{"action":"command_end"}'));
   await result;
   await drain;
   expect(meeting.ttsQueue?.enqueue).not.toHaveBeenCalled();

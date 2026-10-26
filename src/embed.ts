@@ -167,6 +167,36 @@ function buildMeetingPortalUrl(meeting: MeetingData): string {
   });
 }
 
+function buildResultRow(
+  meeting: MeetingData,
+  portalUrl: string,
+  upgradeUrl?: string,
+): ActionRowBuilder<ButtonBuilder> {
+  const base = config.frontend.siteUrl.replace(/\/$/, "");
+  const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder()
+      .setLabel("Open meeting")
+      .setEmoji("\u{1F680}")
+      .setStyle(ButtonStyle.Link)
+      .setURL(portalUrl),
+    new ButtonBuilder()
+      .setLabel("Optional setup")
+      .setStyle(ButtonStyle.Link)
+      .setURL(
+        `${base}/join?serverId=${encodeURIComponent(meeting.guildId)}#optional-setup`,
+      ),
+  );
+  if (upgradeUrl) {
+    row.addComponents(
+      new ButtonBuilder()
+        .setLabel(SUMMARY_UPGRADE.button)
+        .setStyle(ButtonStyle.Link)
+        .setURL(upgradeUrl),
+    );
+  }
+  return row;
+}
+
 function buildSummaryComponents(
   meeting: MeetingData,
   portalUrl: string,
@@ -199,24 +229,7 @@ function buildSummaryComponents(
       .setLabel("Edit tags")
       .setStyle(ButtonStyle.Secondary),
   ];
-  const rows: ActionRowBuilder<ButtonBuilder>[] = [];
-  rows.push(
-    new ActionRowBuilder<ButtonBuilder>().addComponents(
-      new ButtonBuilder()
-        .setLabel("Open in Chronote")
-        .setEmoji("\u{1F680}")
-        .setStyle(ButtonStyle.Link)
-        .setURL(portalUrl),
-    ),
-  );
-  if (upgradeUrl) {
-    rows[0].addComponents(
-      new ButtonBuilder()
-        .setLabel(SUMMARY_UPGRADE.button)
-        .setStyle(ButtonStyle.Link)
-        .setURL(upgradeUrl),
-    );
-  }
+  const rows = [buildResultRow(meeting, portalUrl, upgradeUrl)];
   if (actionButtons.length > 0) {
     const firstRow = actionButtons.slice(0, 3);
     const secondRow = actionButtons.slice(3);
@@ -450,13 +463,12 @@ async function sendMeetingNotes(
     const payload: MeetingMessagePayload = {
       embeds,
       components:
-        upgradeUrl && embeds === noteEmbedBatches.at(-1)
+        embeds === noteEmbedBatches.at(-1)
           ? [
-              new ActionRowBuilder<ButtonBuilder>().addComponents(
-                new ButtonBuilder()
-                  .setLabel(SUMMARY_UPGRADE.button)
-                  .setStyle(ButtonStyle.Link)
-                  .setURL(upgradeUrl.toString()),
+              buildResultRow(
+                meeting,
+                buildMeetingPortalUrl(meeting),
+                upgradeUrl?.toString(),
               ),
             ]
           : [],

@@ -154,9 +154,9 @@ variable "LANGFUSE_PROMPT_CACHE_TTL_MS" {
 }
 
 variable "NOTES_MODEL" {
-  description = "OpenAI model for notes and summaries"
+  description = "OpenAI model for notes generation only"
   type        = string
-  default     = "gpt-5.2"
+  default     = "gpt-6.1-sol"
 }
 
 variable "TRANSCRIPTS_BUCKET" {

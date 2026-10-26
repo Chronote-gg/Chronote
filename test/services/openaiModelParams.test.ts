@@ -113,3 +113,74 @@ test("falls back to temperature for non GPT-5 models", () => {
   expect(params.reasoning_effort).toBeUndefined();
   expect(params.verbosity).toBeUndefined();
 });
+
+test.each(["gpt-6.1-sol", "gpt-6-astra"])(
+  "uses supported low reasoning instead of temperature for %s",
+  (model) => {
+    const params = resolveChatParamsForRole({
+      role: "notes",
+      model,
+      config: baseConfig,
+    });
+    expect(params).toEqual({ reasoning_effort: "low" });
+  },
+);
+
+test.each(["gpt-6-sol", "gpt-6-luna"])(
+  "preserves explicit non-reasoning temperature mode for %s",
+  (model) => {
+    const params = resolveChatParamsForRole({
+      role: "notes",
+      model,
+      config: { ...baseConfig, temperature: 0.2 },
+    });
+    expect(params).toEqual({ reasoning_effort: "none", temperature: 0.2 });
+  },
+);
+
+test.each(["gpt-6.1-sol", "gpt-6-astra", "gpt-6-sol", "gpt-6-luna"])(
+  "supports maximum reasoning without sampling parameters for %s",
+  (model) => {
+    const params = resolveChatParamsForRole({
+      role: "notes",
+      model,
+      config: {
+        ...baseConfig,
+        samplingMode: "reasoning",
+        reasoningEffort: "max",
+      },
+    });
+    expect(params).toEqual({ reasoning_effort: "max" });
+  },
+);
+
+test.each(["gpt-6.1-sol", "gpt-6-astra", "gpt-6-sol", "gpt-6-luna"])(
+  "maps unsupported minimal reasoning to low for %s",
+  (model) => {
+    expect(
+      resolveChatParamsForRole({
+        role: "notes",
+        model,
+        config: {
+          ...baseConfig,
+          samplingMode: "reasoning",
+          reasoningEffort: "minimal",
+        },
+      }),
+    ).toEqual({ reasoning_effort: "low" });
+  },
+);
+
+test("preserves legacy GPT-5.6 minimal effort fallback", () => {
+  expect(
+    resolveChatParamsForRole({
+      role: "notes",
+      model: "gpt-5.6-sol",
+      config: {
+        ...baseConfig,
+        samplingMode: "reasoning",
+        reasoningEffort: "minimal",
+      },
+    }),
+  ).toEqual({ reasoning_effort: "none" });
+});

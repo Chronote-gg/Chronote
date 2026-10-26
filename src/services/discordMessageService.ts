@@ -1,4 +1,5 @@
 import { config } from "./configService";
+import { createDiscordMessageTransport } from "./discordMessageEditor";
 
 type DiscordMessage = {
   id: string;
@@ -21,15 +22,13 @@ export async function fetchDiscordMessage(
   channelId: string,
   messageId: string,
 ): Promise<DiscordMessage | null> {
-  const resp = await fetch(
-    `https://discord.com/api/channels/${channelId}/messages/${messageId}`,
-    { headers: buildHeaders() },
-  );
-  if (resp.status === 404) return null;
-  if (!resp.ok) {
-    throw new Error(`Discord message fetch failed (${resp.status})`);
-  }
-  return (await resp.json()) as DiscordMessage;
+  const transport = createDiscordMessageTransport({
+    token: config.discord.botToken,
+  });
+  return (await transport.getMessage({
+    channelId,
+    messageId,
+  })) as DiscordMessage | null;
 }
 
 export async function updateDiscordMessage(
@@ -37,19 +36,10 @@ export async function updateDiscordMessage(
   messageId: string,
   payload: Partial<DiscordMessagePayload>,
 ): Promise<boolean> {
-  const resp = await fetch(
-    `https://discord.com/api/channels/${channelId}/messages/${messageId}`,
-    {
-      method: "PATCH",
-      headers: buildHeaders(),
-      body: JSON.stringify(payload),
-    },
-  );
-  if (resp.status === 404) return false;
-  if (!resp.ok) {
-    throw new Error(`Discord message update failed (${resp.status})`);
-  }
-  return true;
+  const transport = createDiscordMessageTransport({
+    token: config.discord.botToken,
+  });
+  return transport.updateMessage({ channelId, messageId, payload });
 }
 
 export async function updateDiscordMessageEmbeds(

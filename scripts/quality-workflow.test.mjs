@@ -66,8 +66,8 @@ test("the shared action runs for every PR and exception change with read-only ac
   assert.equal(job["runs-on"], "ubuntu-latest");
   assert.equal(job["timeout-minutes"], 20);
   assert.equal(job.secrets, undefined);
-  assert.equal(job.steps.length, 2);
-  const [checkout, action] = job.steps;
+  assert.equal(job.steps.length, 3);
+  const [checkout, action, diagnostic] = job.steps;
   assert.equal(
     checkout.uses,
     "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
@@ -82,8 +82,29 @@ test("the shared action runs for every PR and exception change with read-only ac
     "github-token": "${{ github.token }}",
     "repository-path": "${{ github.workspace }}",
   });
+  assert.equal(action.id, "quality");
   assert.equal(action.if, undefined);
   assert.equal(action["continue-on-error"], undefined);
+  assert.equal(diagnostic.name, "Print quality summary");
+  assert.equal(
+    diagnostic.if,
+    "${{ failure() && !cancelled() && steps.quality.outputs.report-directory != '' }}",
+  );
+  assert.equal(diagnostic.shell, "bash");
+  assert.deepEqual(diagnostic.env, {
+    QUALITY_REPORT_DIRECTORY: "${{ steps.quality.outputs.report-directory }}",
+  });
+  assert.match(diagnostic.run, /randomUUID/);
+  assert.match(diagnostic.run, /::stop-commands::/);
+  assert.match(
+    diagnostic.run,
+    /cat -- "\$QUALITY_REPORT_DIRECTORY\/summary\.md"/,
+  );
+  assert.doesNotMatch(
+    diagnostic.run,
+    /quality-results\.json|quality-evidence\.json/,
+  );
+  assert.equal(diagnostic["continue-on-error"], undefined);
 });
 
 test("local and broad checks use the shared launcher and consumer contracts", () => {

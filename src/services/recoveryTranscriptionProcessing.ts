@@ -11,8 +11,8 @@ import { compileSavedChatPrompt } from "./savedRecordingPrompt";
 import {
   cleanupContentTranscription,
   retainCleanupTranscript,
-  type TranscriptionContentInput,
-} from "./transcriptionService";
+} from "./transcriptionCleanupService";
+import type { TranscriptionContentInput } from "./transcriptionService";
 import {
   runContentTranscriptionFinalPass,
   type FinalPassContent,

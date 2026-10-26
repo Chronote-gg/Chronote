@@ -19,7 +19,6 @@ jest.mock("../../src/liveVoice", () => ({
 jest.mock("../../src/services/transcriptionService", () => ({
   transcribeSnippet: jest.fn(),
   coalesceTranscription: jest.fn(),
-  cleanupTranscription: jest.fn(),
 }));
 
 describe("startProcessingSnippet", () => {

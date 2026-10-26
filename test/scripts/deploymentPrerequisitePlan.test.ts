@@ -1,8 +1,6 @@
 /** @jest-environment node */
 import { expect, test } from "@jest/globals";
 import { spawnSync } from "node:child_process";
-import { readFileSync } from "node:fs";
-import { parse } from "yaml";
 
 const guard = "scripts/deployment/validate-prerequisite-plan.cjs";
 const targets = [
@@ -118,50 +116,6 @@ test("refuses invalid JSON with a sanitized error", () => {
   expect(result.stderr).toContain("rejected");
   expect(result.stderr).not.toContain("SECRET-PLAN-VALUE");
 });
-
-test.each([0, 1])(
-  "workflow guard propagates Terraform show exit %i before artifact upload",
-  (showExit) => {
-    const workflow = parse(
-      readFileSync(".github/workflows/terraform-plan.yml", "utf8"),
-    );
-    const steps = workflow.jobs.plan.steps;
-    const index = steps.findIndex(
-      (step: { name: string }) =>
-        step.name === "Validate deployment prerequisite actions",
-    );
-    expect(index).toBeGreaterThan(-1);
-    expect(index).toBeLessThan(
-      steps.findIndex(
-        (step: { name: string }) =>
-          step.name === "Upload reviewed plan artifact",
-      ),
-    );
-    expect(steps[index].if).toBe(
-      "inputs.plan_scope == 'deployment-prerequisites'",
-    );
-    const result = spawnSync(
-      "bash",
-      [
-        "-c",
-        'terraform() { printf "%s" "$PLAN_JSON"; return "$SHOW_EXIT"; }; ' +
-          steps[index].run,
-      ],
-      {
-        env: {
-          ...process.env,
-          PLAN_JSON: JSON.stringify({
-            resource_changes: [kms, change(targets[0])],
-          }),
-          SHOW_EXIT: String(showExit),
-        },
-        encoding: "utf8",
-      },
-    );
-    expect(result.status).toBe(showExit);
-    expect(result.stdout + result.stderr).not.toContain("SECRET-PLAN-VALUE");
-  },
-);
 
 test.each([
   {

@@ -1,6 +1,7 @@
 import {
   finalizationFixture,
   successfulArtifactUpload,
+  successfulFinalPassResult,
 } from "../fixtures/endMeeting";
 import { getNotes } from "../../src/services/notesService";
 import type { Client } from "discord.js";
@@ -10,10 +11,16 @@ import {
   buildMixedAudio,
   cleanupSpeakerTracks,
   closeOutputFile,
-  compileTranscriptions,
   waitForAudioOnlyFinishProcessing,
   waitForFinishProcessing,
 } from "../../src/audio";
+import {
+  compileTranscriptions,
+  createMeetingTranscriptCompiler,
+  type MeetingTranscriptCompiler,
+} from "../../src/services/transcriptCompilationService";
+import { runTranscriptionFinalPass } from "../../src/services/transcriptionFinalPassService";
+import * as recordingContent from "../../src/services/recordingContentService";
 import { uploadMeetingArtifacts } from "../../src/services/uploadService";
 import { saveMeetingHistoryToDatabase } from "../../src/commands/saveMeetingHistory";
 import { cleanupMeetingTempDir } from "../../src/services/tempFileService";
@@ -122,6 +129,56 @@ describe("completion notes latency contract", () => {
       throw new Error("Expected completion properties");
     return { ...completion, properties: completion.properties };
   }
+
+  it("owns one compiler for notes, the processed checkpoint and cue-inclusive upload", async () => {
+    const meeting = timedMeeting();
+    const client = {} as Client;
+    const compile = jest.fn<
+      ReturnType<MeetingTranscriptCompiler>,
+      Parameters<MeetingTranscriptCompiler>
+    >(async (options) => {
+      options?.cleanupAcknowledged?.("acknowledged");
+      return options?.includeCues
+        ? "Synthetic upload transcript"
+        : "Synthetic notes transcript";
+    });
+    jest.mocked(createMeetingTranscriptCompiler).mockReturnValueOnce(compile);
+    jest.mocked(runTranscriptionFinalPass).mockResolvedValueOnce({
+      ...successfulFinalPassResult,
+      enabled: false,
+    });
+    const checkpoint = jest.spyOn(
+      recordingContent,
+      "checkpointCompletedTranscription",
+    );
+    try {
+      await runEndMeetingFlow({ client, meeting });
+      expect(createMeetingTranscriptCompiler).toHaveBeenCalledTimes(1);
+      expect(createMeetingTranscriptCompiler).toHaveBeenCalledWith(
+        client,
+        meeting,
+      );
+      expect(compile).toHaveBeenCalledTimes(2);
+      expect(compile).toHaveBeenNthCalledWith(1, {
+        cleanupAcknowledged: expect.any(Function),
+      });
+      expect(compile).toHaveBeenNthCalledWith(2, { includeCues: true });
+      expect(meeting.finalTranscript).toBe("Synthetic notes transcript");
+      expect(checkpoint).toHaveBeenCalledWith(meeting, {
+        finalPass: "disabled",
+        cleanup: "acknowledged",
+        finalText: "Synthetic notes transcript",
+      });
+      expect(uploadMeetingArtifacts).toHaveBeenCalledWith(
+        meeting,
+        expect.objectContaining({
+          transcriptText: "Synthetic upload transcript",
+        }),
+      );
+    } finally {
+      checkpoint.mockRestore();
+    }
+  });
 
   it("adds version 3 timing without changing recording duration", async () => {
     const meeting = timedMeeting();

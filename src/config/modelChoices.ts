@@ -38,6 +38,10 @@ export const MODEL_SELECTION_ROLE_LABELS: Record<ModelRole, string> = {
 };
 
 const CHAT_MODEL_OPTIONS = [
+  "gpt-6.1-sol",
+  "gpt-6-sol",
+  "gpt-6-luna",
+  "gpt-6-astra",
   "gpt-5.6-sol",
   "gpt-5.6-terra",
   "gpt-5.6-luna",
@@ -49,6 +53,10 @@ const CHAT_MODEL_OPTIONS = [
 ];
 
 const COALESCE_MODEL_OPTIONS = [
+  "gpt-6-luna",
+  "gpt-6-sol",
+  "gpt-6.1-sol",
+  "gpt-6-astra",
   "gpt-5.6-luna",
   "gpt-5.6-terra",
   "gpt-5.6-sol",
@@ -80,17 +88,19 @@ export const MODEL_SELECTION_OPTIONS: Record<ModelRole, string[]> = {
   autoRecordCancel: CHAT_MODEL_OPTIONS,
 };
 
+const DEFAULT_TEXT_MODEL = "gpt-5.2";
+
 export const MODEL_SELECTION_DEFAULTS: Record<ModelRole, string> = {
   notes: config.notes.model,
-  meetingSummary: config.notes.model,
-  notesCorrection: config.notes.model,
+  meetingSummary: DEFAULT_TEXT_MODEL,
+  notesCorrection: DEFAULT_TEXT_MODEL,
   dictionaryTeaching: "gpt-5-mini",
   transcription: "gpt-4o-transcribe",
-  transcriptionCleanup: config.notes.model,
+  transcriptionCleanup: DEFAULT_TEXT_MODEL,
   transcriptionCoalesce: "gpt-5-mini",
   imageCaption: "gpt-4o-mini",
   image: "dall-e-3",
-  imagePrompt: config.notes.model,
+  imagePrompt: DEFAULT_TEXT_MODEL,
   ask: config.liveVoice.responderModel,
   liveVoiceGate: config.liveVoice.gateModel,
   liveVoiceResponder: config.liveVoice.responderModel,

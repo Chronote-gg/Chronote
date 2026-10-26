@@ -7,6 +7,12 @@ Notable product changes for Chronote users. For the full changelog, see the [Git
 
 ## 2026
 
+### Get your first meeting notes (October 19)
+
+- The installer DM and an empty server library explain how to join voice, run `/startmeeting` and end the recording. **Open portal** goes directly to that server's library.
+- The first-meeting guide links to the permitted recording or saved meeting and distinguishes preparing notes, missing delivery evidence and delivery problems. Interrupted recordings keep their warnings.
+- Context and auto-recording remain optional. `/onboard` is retired; old wizard controls safely link to the portal. See [Getting started](/getting-started/).
+
 ### Choose where recording controls and notes appear (October 16)
 
 - Use `notes-channel` on `/startmeeting` for a one-meeting text destination. Otherwise, manual starts use the voice-channel override, then the server default, then the command channel if nothing is configured. The private **View recording** link opens the published recording message.

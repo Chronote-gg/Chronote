@@ -1,6 +1,6 @@
 name: Terraform Plan
 
-run-name: Terraform Plan ${{ inputs.github_environment }} by ${{ github.actor }}
+run-name: Terraform Plan ${{ inputs.github_environment }}/${{ inputs.terraform_workspace }}/${{ inputs.plan_scope }}
 
 on:
   workflow_dispatch:
@@ -27,8 +27,10 @@ on:
           - full
           - purchase-permission
           - deployment-prerequisites
+          - deployment-prerequisites
 
 permissions:
+  actions: read
   contents: read
 
 concurrency:
@@ -39,295 +41,42 @@ jobs:
   plan:
     name: Terraform Plan
     runs-on: ubuntu-latest
+    timeout-minutes: 360
     environment: ${{ inputs.github_environment }}
     env:
       TF_IN_AUTOMATION: "true"
       TF_INPUT: "false"
       AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
-      PLAN_ARTIFACT_NAME: terraform-plan-${{ inputs.github_environment }}-${{ inputs.terraform_workspace }}-${{ github.run_id }}
     steps:
-      - name: Checkout
+      - name: Checkout reviewed source
         uses: actions/checkout@v7
-
-      - name: Setup Node
-        uses: actions/setup-node@v6
         with:
-          node-version-file: .nvmrc
+          ref: ${{ github.sha }}
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: "24.15.0"
           cache: yarn
-      - name: Install provenance dependencies
-        run: yarn install --frozen-lockfile
-
+      - name: Install dependencies
+        run: bash scripts/ci-install-dependencies.sh
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v6
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
-
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v4
         with:
           terraform_wrapper: false
-
-      - name: Check environment and workspace pairing
+      - name: Run private Terraform Plan
         env:
-          GITHUB_ENVIRONMENT: ${{ inputs.github_environment }}
-          TERRAFORM_WORKSPACE: ${{ inputs.terraform_workspace }}
-        run: |
-          set -euo pipefail
-
-          if [ "$GITHUB_ENVIRONMENT" = "production" ] && [ "$TERRAFORM_WORKSPACE" != "default" ]; then
-            echo "ERROR: production Terraform plans must use the default workspace."
-            exit 1
-          fi
-
-          if [ "$GITHUB_ENVIRONMENT" = "sandbox" ] && [ "$TERRAFORM_WORKSPACE" != "sandbox" ]; then
-            echo "ERROR: sandbox Terraform plans must use the sandbox workspace."
-            exit 1
-          fi
-
-      - name: Write Terraform variables
-        env:
+          GH_TOKEN: ${{ github.token }}
+          TERRAFORM_PRIVATE_STORAGE_JSON: ${{ secrets.TERRAFORM_PRIVATE_STORAGE_JSON }}
           TERRAFORM_TFVARS_JSON: ${{ secrets.TERRAFORM_TFVARS_JSON }}
           REDIS_AUTH_TOKEN: ${{ secrets.REDIS_AUTH_TOKEN }}
           REDIS_URL: ${{ secrets.REDIS_URL }}
           GITHUB_VARS_JSON: ${{ toJSON(vars) }}
         run: |
-          set -euo pipefail
-
-          if [ -z "${TERRAFORM_TFVARS_JSON:-}" ]; then
-            echo "ERROR: TERRAFORM_TFVARS_JSON is not configured for this GitHub environment."
-            exit 1
-          fi
-
-          umask 077
-          printf '%s' "$TERRAFORM_TFVARS_JSON" > _infra/terraform.auto.tfvars.json
-
-          python3 - <<'PY'
-          import json
-          import os
-          from pathlib import Path
-
-          path = Path("_infra/terraform.auto.tfvars.json")
-          data = json.loads(path.read_text())
-          aws_access_key_id = os.environ.get("AWS_ACCESS_KEY_ID", "").strip()
-          if aws_access_key_id:
-              data["AWS_TOKEN_KEY"] = aws_access_key_id
-
-          for name in ["REDIS_AUTH_TOKEN", "REDIS_URL"]:
-              value = os.environ.get(name, "").strip()
-              if value:
-                  data[name] = value
-
-          # Terraform inputs that are not credentials belong in GitHub Actions
-          # variables rather than in the write-only tfvars secret. A variable can
-          # be read, diffed and changed on its own, where editing one key in the
-          # secret means rewriting a blob that also carries credentials, so in
-          # practice non-secret flags there are unreadable and never get changed.
-          # Any variable named TFVAR_<KEY> overrides <KEY>.
-          credential_tfvars = {
-              "GITHUB_TOKEN",
-              "AWS_TOKEN_KEY",
-              "LANGFUSE_SECRET_KEY",
-              "DOCS_ALGOLIA_API_KEY",
-              "REDIS_AUTH_TOKEN",
-              "REDIS_URL",
-              "grafana_api_key",
-          }
-          github_vars = json.loads(os.environ.get("GITHUB_VARS_JSON") or "{}")
-          for name, value in github_vars.items():
-              if not name.startswith("TFVAR_"):
-                  continue
-              key = name[len("TFVAR_") :]
-              # Variables are writable by people who cannot write secrets, so a
-              # credential must never be settable through this path.
-              if key in credential_tfvars:
-                  raise SystemExit(
-                      f"{name} would override the credential {key}. "
-                      "Credentials belong in TERRAFORM_TFVARS_JSON."
-                  )
-              if str(value).strip():
-                  data[key] = str(value).strip()
-
-          required = ["GITHUB_TOKEN", "AWS_TOKEN_KEY", "DISCORD_CLIENT_ID"]
-          string_fields = required + [
-              "SUPER_ADMIN_USER_IDS",
-              "grafana_api_key",
-              "grafana_url",
-              "grafana_service_account_id",
-          ]
-          for name in string_fields:
-              value = data.get(name)
-              if isinstance(value, list) and all(isinstance(item, str) for item in value):
-                  non_empty_items = [item for item in value if item.strip()]
-                  if len(non_empty_items) == 1:
-                      data[name] = non_empty_items[0]
-
-          def describe_type(value):
-              if isinstance(value, list):
-                  item_types = sorted({type(item).__name__ for item in value})
-                  return f"list length {len(value)} with item types {item_types}"
-              return type(value).__name__
-
-          wrong_type = [
-              f"{name} ({describe_type(data[name])})"
-              for name in string_fields
-              if name in data and data[name] is not None and not isinstance(data[name], str)
-          ]
-          if wrong_type:
-              raise SystemExit(
-                  "Terraform variables must be JSON strings: " + ", ".join(wrong_type)
-              )
-
-          path.write_text(json.dumps(data, separators=(",", ":")))
-
-          missing = [name for name in required if not data.get(name)]
-          if missing:
-              raise SystemExit(
-                  "Missing required Terraform variables in TERRAFORM_TFVARS_JSON: "
-                  + ", ".join(missing)
-              )
-
-          if data.get("grafana_api_key"):
-              raise SystemExit(
-                  "grafana_api_key must be empty after Grafana token rotation is active. "
-                  "Use grafana_service_account_id plus the Secrets Manager token instead."
-              )
-
-          if data.get("grafana_url") and not data.get("grafana_service_account_id"):
-              raise SystemExit(
-                  "grafana_service_account_id is required when grafana_url is configured."
-              )
-          PY
-
-      - name: Terraform init
-        run: terraform -chdir=_infra init -input=false
-
-      - name: Select or create Terraform workspace
-        env:
-          TERRAFORM_WORKSPACE: ${{ inputs.terraform_workspace }}
-        run: |
-          set -euo pipefail
-          terraform -chdir=_infra workspace select "$TERRAFORM_WORKSPACE" || terraform -chdir=_infra workspace new "$TERRAFORM_WORKSPACE"
-
-      - name: Terraform validate
-        run: terraform -chdir=_infra validate -no-color
-
-      - name: Terraform plan
-        id: plan
-        env:
-          PLAN_SCOPE: ${{ inputs.plan_scope }}
-        run: |
-          set -euo pipefail
-          plan_args=()
-          case "$PLAN_SCOPE" in
-            full) ;;
-            purchase-permission)
-              plan_args=(-target=aws_iam_role_policy.initial_purchase_condition)
-              ;;
-            deployment-prerequisites)
-              plan_args=(
-                -target=aws_dynamodb_table.deployment_control_table
-                '-target=aws_lb_target_group.api_spare_tg[0]'
-                -target=aws_iam_role_policy.deployment_control
-                '-target=aws_iam_policy.deployment_routing[0]'
-              )
-              ;;
-            *)
-              echo "ERROR: Unsupported PLAN_SCOPE: $PLAN_SCOPE" >&2
-              exit 1
-              ;;
-          esac
-          set +e
-          terraform -chdir=_infra plan -no-color -input=false -detailed-exitcode -out=tfplan "${plan_args[@]}" | tee _infra/terraform-plan.txt
-          exit_code=${PIPESTATUS[0]}
-          set -e
-
-          if [ "$exit_code" -eq 1 ]; then
-            echo "Terraform plan failed."
-            exit 1
-          fi
-
-          if [ "$exit_code" -eq 2 ]; then
-            echo "changes=true" >> "$GITHUB_OUTPUT"
-            echo "Terraform plan completed with pending changes."
-          else
-            echo "changes=false" >> "$GITHUB_OUTPUT"
-            echo "Terraform plan completed with no pending changes."
-          fi
-
-      - name: Validate deployment prerequisite actions
-        if: inputs.plan_scope == 'deployment-prerequisites'
-        run: |
-          set -euo pipefail
-          if ! terraform -chdir=_infra show -json tfplan 2>/dev/null | node scripts/deployment/validate-prerequisite-plan.cjs; then
-            echo "ERROR: Deployment prerequisite plan validation failed." >&2
-            exit 1
-          fi
-
-      - name: Record plan artifact metadata
-        id: artifact
-        if: steps.plan.outputs.changes == 'true'
-        env:
-          PLAN_ENVIRONMENT: ${{ inputs.github_environment }}
-          PLAN_WORKSPACE: ${{ inputs.terraform_workspace }}
-          PLAN_SCOPE: ${{ inputs.plan_scope }}
-        run: |
-          set -euo pipefail
-
-          node scripts/deployment/plan-provenance.cjs
-          sha256sum _infra/tfplan | awk '{print $1}' > _infra/tfplan.sha256
-          find _infra -maxdepth 1 -type f -name "*.zip" -print0 \
-            | sort -z \
-            | while IFS= read -r -d '' zip_path; do
-              zip_name="$(basename "$zip_path")"
-              zip_hash="$(sha256sum "$zip_path" | awk '{print $1}')"
-              printf '%s  %s\n' "$zip_hash" "$zip_name"
-            done > _infra/lambda-zips.sha256
-
-          echo "name=$PLAN_ARTIFACT_NAME" >> "$GITHUB_OUTPUT"
-          echo "sha256=$(cat _infra/tfplan.sha256)" >> "$GITHUB_OUTPUT"
-
-      - name: Upload reviewed plan artifact
-        if: steps.plan.outputs.changes == 'true'
-        uses: actions/upload-artifact@v7
-        with:
-          name: ${{ steps.artifact.outputs.name }}
-          path: |
-            _infra/tfplan
-            _infra/tfplan.sha256
-            _infra/plan-provenance.json
-            _infra/lambda-zips.sha256
-            _infra/terraform-plan.txt
-            _infra/*.zip
-          retention-days: 1
-          if-no-files-found: error
-
-      - name: Write summary
-        if: always()
-        env:
-          GITHUB_ENVIRONMENT: ${{ inputs.github_environment }}
-          TERRAFORM_WORKSPACE: ${{ inputs.terraform_workspace }}
-          PLAN_CHANGES: ${{ steps.plan.outputs.changes || 'unknown' }}
-          PLAN_ARTIFACT_NAME: ${{ steps.artifact.outputs.name || '' }}
-          PLAN_SHA256: ${{ steps.artifact.outputs.sha256 || '' }}
-        run: |
-          {
-            echo "## Terraform Plan"
-            echo
-            echo "- GitHub environment: \`$GITHUB_ENVIRONMENT\`"
-            echo "- Terraform workspace: \`$TERRAFORM_WORKSPACE\`"
-            echo "- Pending changes: \`$PLAN_CHANGES\`"
-
-            if [ -n "$PLAN_ARTIFACT_NAME" ]; then
-              echo "- Plan run ID: \`$GITHUB_RUN_ID\`"
-              echo "- Apply artifact: \`$PLAN_ARTIFACT_NAME\`"
-              echo "- Plan SHA-256: \`$PLAN_SHA256\`"
-              echo
-              echo "Use \`.github/workflows/terraform-apply.yml\` with this run ID, artifact name, and SHA-256 after reviewing the plan output."
-            fi
-          } >> "$GITHUB_STEP_SUMMARY"
-
-      - name: Remove generated tfvars
-        if: always()
-        run: rm -f _infra/terraform.auto.tfvars.json _infra/tfplan _infra/tfplan.sha256 _infra/lambda-zips.sha256 _infra/terraform-plan.txt _infra/*.zip
+          set +x
+          node scripts/deployment/terraform-dispatch.cjs

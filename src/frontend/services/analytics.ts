@@ -37,6 +37,8 @@ function isPrivateQueryKey(key: string): boolean {
   try {
     // Encoded return URLs add a second encoding layer to query keys.
     return [
+      "historyid",
+      "serverid",
       "promo",
       "promotioncode",
       "source",
@@ -53,6 +55,14 @@ export function redactShareIds(value: string, depth = 0): string {
   if (depth > 8) return "[redacted]";
   return value
     .replace(SHARE_ID_PATTERN, "/share/$1/:serverId/:shareId")
+    .replace(
+      /(https:\/\/discord\.com\/channels)\/[^/?#]+(?:\/[^/?#]+){0,2}/gi,
+      "$1/[redacted]",
+    )
+    .replace(
+      /\/portal\/meetings\/[^/?#]+\/[^/?#]+/gi,
+      "/portal/meetings/:serverId/:historyId",
+    )
     .replace(/\/promo\/[^/?#]+/gi, "/promo/:code")
     .replace(/%2fpromo%2f(?:(?!%2f|%3f|%23|%26).)+/gi, "%2Fpromo%2F%3Acode")
     .replace(

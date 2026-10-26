@@ -9,6 +9,7 @@ const receipts = new WeakMap();
 const paths = [
   ["workflow", ".github/workflows/deploy.yml"],
   ["workflow", ".github/workflows/terraform-apply.yml"],
+  ["workflow", ".github/workflows/production-introduction.yml"],
   ["manual", "scripts/force-deployment.ps1"],
 ];
 function assertWorkflowCredentials(contents) {
@@ -30,6 +31,63 @@ function assertWorkflowCredentials(contents) {
     )
   )
     throw Error("unaccounted_static_credential_route");
+}
+function assertStagedRoute(contents, root) {
+  const workflow = parse(contents);
+  const expectedActions = [
+    "sts:GetCallerIdentity",
+    "dynamodb:GetItem",
+    "ecs:DescribeServices",
+    "ecs:ListTasks",
+    "ecs:DescribeTasks",
+  ];
+  if (
+    JSON.stringify(Object.keys(workflow.jobs).sort()) !==
+    JSON.stringify(["bind", "execute"])
+  )
+    throw Error("staged_source_prerequisite");
+  for (const job of Object.values(workflow.jobs)) {
+    const identities = job.steps.filter((step) =>
+      step.uses?.startsWith("aws-actions/configure-aws-credentials@"),
+    );
+    if (
+      job.environment !== "production" ||
+      identities.length !== 1 ||
+      identities[0].with["role-to-assume"] !==
+        "${{ vars.PRODUCTION_BACKEND_DEPLOY_ROLE_ARN }}"
+    )
+      throw Error("staged_source_prerequisite");
+    const policy = JSON.parse(identities[0].with["inline-session-policy"]);
+    const expected = {
+      Version: "2012-10-17",
+      Statement: [
+        { Effect: "Allow", Action: expectedActions, Resource: "*" },
+        {
+          Effect: "Allow",
+          Action: "kms:Decrypt",
+          Resource: "*",
+          Condition: {
+            StringEquals: {
+              "kms:ViaService": "dynamodb.${{ vars.AWS_REGION }}.amazonaws.com",
+              "kms:CallerAccount": "${{ vars.AWS_ACCOUNT_ID }}",
+            },
+          },
+        },
+      ],
+    };
+    if (canonicalHash(policy) !== canonicalHash(expected))
+      throw Error("staged_source_prerequisite");
+  }
+  const source = readFileSync(
+    resolve(root, "scripts/deployment/production-workflow.cjs"),
+    "utf8",
+  );
+  for (const required of [
+    "./staged-production-manifest.cjs",
+    "./staged-introduce-production.cjs",
+    'throw new Error("Post-bind human authority unavailable; preserve state")',
+  ])
+    if (!source.includes(required)) throw Error("staged_source_prerequisite");
 }
 function verifyDeclaredRoutes(binding) {
   const root = resolve(__dirname, "../..");
@@ -55,6 +113,8 @@ function verifyDeclaredRoutes(binding) {
       "\n",
     );
     if (kind === "workflow") assertWorkflowCredentials(contents);
+    if (id === ".github/workflows/production-introduction.yml")
+      assertStagedRoute(contents, root);
     return {
       kind,
       id,

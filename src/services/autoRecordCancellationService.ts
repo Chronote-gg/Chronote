@@ -4,7 +4,10 @@ import {
 } from "./meetingCompletionPolicyService";
 import { waitForFinishProcessing } from "../audio";
 import type { MeetingData } from "../types/meeting-data";
-import { createOpenAIClient } from "./openaiClient";
+import {
+  EmptyOpenAITextOutputError,
+  generateOpenAIText,
+} from "./openaiTextService";
 import { buildModelOverrides, getModelChoice } from "./modelFactory";
 import { resolveChatParamsForRole } from "./openaiModelParams";
 import { assertMeetingProcessingSucceeded } from "../utils/meetingProcessing";
@@ -44,6 +47,21 @@ const collectChatLines = (meeting: MeetingData) =>
       return `[${attachmentLabel}]`;
     })
     .filter((line): line is string => Boolean(line && line.trim()));
+
+function parseCancellationDecision(content: string): CancellationDecision {
+  const parsed = JSON.parse(content) as {
+    cancel?: boolean;
+    reason?: string;
+  };
+  const cancel = Boolean(parsed.cancel);
+  const reason = parsed.reason?.trim();
+  if (!cancel) return { cancel: false };
+  return {
+    cancel: true,
+    reason:
+      reason && reason.length > 0 ? reason : "Not enough content detected.",
+  };
+}
 
 export async function evaluateAutoRecordCancellation(
   meeting: MeetingData,
@@ -122,44 +140,29 @@ export async function evaluateAutoRecordCancellation(
       model: modelChoice.model,
       config: meeting.runtimeConfig?.modelParams?.autoRecordCancel,
     });
-    const openAIClient = createOpenAIClient({
-      traceName: "auto-record-cancel",
-      generationName: "auto-record-cancel",
-      sessionId: meeting.meetingId,
-      tags: ["feature:auto_record_cancel"],
-      metadata: {
-        guildId: meeting.guild.id,
-        channelId: meeting.voiceChannel.id,
-      },
-    });
-    const completion = await openAIClient.chat.completions.create({
+    const content = await generateOpenAIText({
       model: modelChoice.model,
-      messages: [
+      input: [
         { role: "system", content: systemPrompt },
         { role: "user", content: userPrompt },
       ],
-      max_completion_tokens: 120,
-      response_format: { type: "json_object" },
-      ...modelParams,
+      modelParams,
+      maxOutputTokens: 120,
+      format: { kind: "json_object" },
+      tracing: {
+        traceName: "auto-record-cancel",
+        generationName: "auto-record-cancel",
+        sessionId: meeting.meetingId,
+        tags: ["feature:auto_record_cancel"],
+        metadata: {
+          guildId: meeting.guild.id,
+          channelId: meeting.voiceChannel.id,
+        },
+      },
     });
-
-    const content = completion.choices[0].message.content ?? "";
-    if (!content.trim()) {
-      return { cancel: false };
-    }
-    const parsed = JSON.parse(content) as {
-      cancel?: boolean;
-      reason?: string;
-    };
-    const cancel = Boolean(parsed.cancel);
-    const reason = parsed.reason?.trim();
-    if (!cancel) return { cancel: false };
-    return {
-      cancel: true,
-      reason:
-        reason && reason.length > 0 ? reason : "Not enough content detected.",
-    };
+    return parseCancellationDecision(content);
   } catch (error) {
+    if (error instanceof EmptyOpenAITextOutputError) return { cancel: false };
     console.error("Auto-record cancellation check failed:", error);
     throw error;
   }

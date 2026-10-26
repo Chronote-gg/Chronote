@@ -183,7 +183,7 @@ async function readGithubSettings(m, declaration, token) {
     })
   )
     refuse();
-  for (const route of declaration.routes.slice(0, 2)) {
+  for (const route of declaration.routes.slice(0, 3)) {
     const actual = await githubJson(
       `${product}/actions/workflows/${encodeURIComponent(route.path.split("/").at(-1))}`,
       "{id,path,state}",
@@ -205,7 +205,7 @@ async function readGithubSettings(m, declaration, token) {
   );
   if (
     declaration.routes
-      .slice(0, 2)
+      .slice(0, 3)
       .some((r) => String(environment.id) !== r.environmentId)
   )
     refuse();

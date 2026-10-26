@@ -1,4 +1,5 @@
 /** @jest-environment node */
+import { completedTextResponse as mockCompletedTextResponse } from "../../src/testSupport/openaiResponse";
 jest.mock("dotenv", () => ({ config: () => ({ parsed: {} }) }));
 jest.mock("../../src/services/transcriptionService", () => ({
   ...jest.requireActual("../../src/services/transcriptionService"),
@@ -10,33 +11,22 @@ jest.mock("../../src/services/transcriptionService", () => ({
 import { transcribeContentSnippet } from "../../src/services/transcriptionService";
 import { createHash } from "node:crypto";
 import { liveTranscriptionProcessingSettings } from "../../src/services/transcriptionProcessingSettings";
-const mockCompletionBodies: unknown[] = [];
+const mockResponseBodies: unknown[] = [];
 jest.mock("../../src/services/openaiClient", () => ({
   buildOpenAISafetyIdentifier: (id: string) => `safety:${id}`,
   createOpenAIClient: jest.fn((options: { traceName?: string }) => ({
-    chat: {
-      completions: {
-        create: jest.fn(async (body: unknown) => {
-          mockCompletionBodies.push(body);
-          return {
-            choices: [
-              {
-                finish_reason: "stop",
-                message: {
-                  content:
-                    options.traceName === "meeting-summary"
-                      ? JSON.stringify({
-                          summarySentence:
-                            "Release testing will finish tomorrow.",
-                          summaryLabel: "Release Testing",
-                        })
-                      : "Saved decision <@123> <@&456> <@999>.",
-                },
-              },
-            ],
-          };
-        }),
-      },
+    responses: {
+      create: jest.fn(async (body: unknown) => {
+        mockResponseBodies.push(body);
+        return mockCompletedTextResponse(
+          options.traceName === "meeting-summary"
+            ? JSON.stringify({
+                summarySentence: "Release testing will finish tomorrow.",
+                summaryLabel: "Release Testing",
+              })
+            : "Saved decision <@123> <@&456> <@999>.",
+        );
+      }),
     },
   })),
 }));
@@ -85,7 +75,7 @@ async function fixture(
 }
 beforeEach(() => {
   jest.clearAllMocks();
-  mockCompletionBodies.length = 0;
+  mockResponseBodies.length = 0;
 });
 test("notesDisabledRemainDisabled", async () => {
   const f = await fixture(undefined, {
@@ -127,8 +117,14 @@ test("partialSpeechGeneratesNotesWithoutVoiceJoin and verifiedTranscriptRecovers
   expect(input.captureNotice).toContain("ended abruptly");
   expect(input.captureNotice).toContain("cause is unknown");
   expect(input.captureNotice).toContain("never invent");
-  expect(mockCompletionBodies).toHaveLength(2);
-  for (const body of mockCompletionBodies) {
+  expect(mockResponseBodies).toHaveLength(2);
+  for (const body of mockResponseBodies) {
+    expect(body).toMatchObject({
+      model: "original-model",
+      input: expect.any(Array),
+      store: false,
+    });
+    expect(body).not.toHaveProperty("messages");
     expect(JSON.stringify(body)).toContain("ended abruptly");
     expect(JSON.stringify(body)).toContain("never invent");
   }
@@ -583,7 +579,7 @@ test.each(["delivery", "pending"])(
     expect(f.claim.history.notesDeliveryTiming).toEqual(timing);
     expect(f.claim.history.recovery?.disposition).toBe("done");
     expect(f.send).toHaveBeenCalledTimes(2);
-    expect(mockCompletionBodies).toHaveLength(2);
+    expect(mockResponseBodies).toHaveLength(2);
   },
 );
 

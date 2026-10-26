@@ -1,10 +1,5 @@
 /** @jest-environment node */
 import { seedBillingRuntime } from "../fixtures/billingRuntime";
-import {
-  createServer,
-  postWebhook,
-  closeServer,
-} from "../fixtures/billingWebhook";
 
 import {
   afterAll,
@@ -25,7 +20,7 @@ import { createManualEntitlementGrant } from "../../src/services/entitlementServ
 import * as entitlementService from "../../src/services/entitlementService";
 import * as purchaseReconciliation from "../../src/services/purchaseReconciliation";
 import { clearGuildSubscriptionCache } from "../../src/services/subscriptionService";
-import type { StripeClient, StripeEvent } from "../../src/types/stripe";
+import type { StripeEvent } from "../../src/types/stripe";
 import { captureEvent } from "../../src/services/analyticsService";
 jest.mock("../../src/services/analyticsService", () => ({
   captureEvent: jest.fn(),
@@ -39,58 +34,18 @@ beforeEach(() => {
 afterEach(() => {
   jest.mocked(renewalRecoveryService.trackPaidRenewalPeriod).mockRestore();
 });
-const guildId = "111111111111111111";
-const basicPrice = { id: "price_basic", lookup_key: "chronote_basic_monthly" };
+import {
+  createServer,
+  postWebhook,
+  closeServer,
+  createWebhookStripe as createStripe,
+  subscriptionEvent,
+  guildId,
+  basicPrice,
+  activeStripeSubscription,
+} from "../fixtures/billingWebhook";
+
 const originalStripeConfig = { ...config.stripe };
-
-const createStripe = (event: StripeEvent, retrieve?: jest.Mock) =>
-  ({
-    prices: {
-      retrieve: jest.fn(async () => ({
-        ...basicPrice,
-        recurring: { interval: "month" },
-      })),
-    },
-    webhooks: {
-      constructEvent: jest.fn(() => event),
-    },
-    subscriptions: {
-      retrieve:
-        retrieve ??
-        jest.fn(async () =>
-          event.type.startsWith("customer.subscription.")
-            ? event.data.object
-            : { ...activeStripeSubscription, status: "past_due" },
-        ),
-    },
-  }) as unknown as StripeClient;
-
-const subscriptionEvent = (status: string, eventId: string) =>
-  ({
-    id: eventId,
-    type: "customer.subscription.updated",
-    data: {
-      object: {
-        id: "sub_basic",
-        latest_invoice: "in_current",
-        status,
-        metadata: { guild_id: guildId },
-        start_date: 1_767_225_600,
-        ended_at: null,
-        customer: "cus_basic",
-        default_payment_method: "pm_basic",
-        livemode: false,
-        items: {
-          data: [
-            {
-              price: basicPrice,
-              current_period_end: 1_769_904_000,
-            },
-          ],
-        },
-      },
-    },
-  }) as unknown as StripeEvent;
 
 const failedInvoiceEvent = {
   id: "evt_invoice_failed",
@@ -156,27 +111,6 @@ const checkoutCompletedEvent = {
     },
   },
 } as unknown as StripeEvent;
-
-const activeStripeSubscription = {
-  latest_invoice: "in_current",
-  id: "sub_basic",
-  created: 1_767_225_600,
-  status: "active",
-  metadata: { guild_id: guildId },
-  start_date: 1_767_225_600,
-  ended_at: null,
-  customer: "cus_basic",
-  default_payment_method: "pm_basic",
-  livemode: false,
-  items: {
-    data: [
-      {
-        price: basicPrice,
-        current_period_end: 1_769_904_000,
-      },
-    ],
-  },
-};
 
 function invoiceDiscountFixture(variant: string) {
   const monthly = variant === "monthly";

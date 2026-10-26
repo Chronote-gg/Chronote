@@ -42,7 +42,7 @@ import {
   type CaptureNoticeInput,
 } from "../utils/meetingCaptureNotice";
 import { MEETING_RENAME_PREFIX } from "./meetingName";
-import { createOpenAIClient } from "../services/openaiClient";
+import { generateOpenAIText } from "../services/openaiTextService";
 import { buildModelOverrides, getModelChoice } from "../services/modelFactory";
 import { config } from "../services/configService";
 import { getLangfuseChatPrompt } from "../services/langfusePromptService";
@@ -217,27 +217,22 @@ async function generateCorrectedNotes({
       model: modelChoice.model,
       config: modelParams,
     });
-    const openAIClient = createOpenAIClient({
-      traceName: "notes-correction",
-      generationName: "notes-correction",
-      tags: ["feature:notes_correction"],
-      metadata: {
-        requesterTag,
+    signal?.throwIfAborted();
+    const content = await generateOpenAIText({
+      model: modelChoice.model,
+      input: messages,
+      modelParams: chatParams,
+      signal,
+      tracing: {
+        traceName: "notes-correction",
+        generationName: "notes-correction",
+        tags: ["feature:notes_correction"],
+        metadata: { requesterTag },
+        langfusePrompt,
       },
-      langfusePrompt,
     });
     signal?.throwIfAborted();
-    const completion = await openAIClient.chat.completions.create(
-      {
-        model: modelChoice.model,
-        messages,
-        ...chatParams,
-      },
-      signal ? { signal } : undefined,
-    );
-    signal?.throwIfAborted();
 
-    const content = completion.choices[0]?.message?.content;
     if (content && content.trim().length > 0) {
       // A correction may keep the mentions already in the notes and may add one
       // the rosters offered, but anything outside both was invented.

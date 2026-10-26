@@ -35,6 +35,7 @@ const resolvePortalRedirect = (location?: Location) => {
   }
   const pathname = location.pathname;
   const useCurrentLocation =
+    pathname === "/join" ||
     pathname.startsWith("/portal") ||
     pathname.startsWith("/live") ||
     pathname.startsWith("/share") ||

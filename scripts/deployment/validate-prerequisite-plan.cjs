@@ -42,7 +42,7 @@ function validatePrerequisitePlan(plan) {
   assert.ok(keyUnchanged);
   return { result: "accepted", existingKey: "no-op", changes };
 }
-module.exports = { validatePrerequisitePlan };
+module.exports = { validatePrerequisitePlan, targets };
 if (require.main === module)
   try {
     process.stdout.write(

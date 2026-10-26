@@ -6,7 +6,7 @@ import { normalizeTags, parseTags } from "../utils/tags";
 import { buildUpgradeTextOnly } from "../utils/upgradePrompt";
 import { ensureUserCanAccessMeeting } from "./meetingAccessService";
 import { CONFIG_KEYS } from "../config/keys";
-import { createOpenAIClient } from "./openaiClient";
+import { generateOpenAIText } from "./openaiTextService";
 import { buildModelOverrides, getModelChoice } from "./modelFactory";
 import { getLangfuseChatPrompt } from "./langfusePromptService";
 import { resolveModelChoicesForContext } from "./modelChoiceService";
@@ -66,7 +66,7 @@ const scrubInternalIds = (text: string) =>
     .replace(/\s{2,}/g, " ")
     .trim();
 
-const ASK_MAX_COMPLETION_TOKENS = 800;
+const ASK_MAX_OUTPUT_TOKENS = 800;
 const ASK_MEETING_DELIMITER = "---";
 
 const buildDictionaryBlock = async (guildId: string): Promise<string> => {
@@ -302,7 +302,7 @@ export async function answerQuestionService(
       contextBlocks: contextBlocks.join(`\n\n${ASK_MEETING_DELIMITER}\n\n`),
       historyBlock,
       dictionaryBlock,
-      maxAnswerTokens: String(ASK_MAX_COMPLETION_TOKENS),
+      maxAnswerTokens: String(ASK_MAX_OUTPUT_TOKENS),
     },
   });
 
@@ -322,25 +322,23 @@ export async function answerQuestionService(
     model: modelChoice.model,
     config: modelParams.ask,
   });
-  const openAIClient = createOpenAIClient({
-    traceName: "ask",
-    generationName: "ask",
-    tags: ["feature:ask"],
-    metadata: {
-      guildId,
-      channelId,
-      scope,
-    },
-    langfusePrompt,
-  });
-  const completion = await openAIClient.chat.completions.create({
+  const answer = await generateOpenAIText({
     model: modelChoice.model,
-    messages,
-    max_completion_tokens: ASK_MAX_COMPLETION_TOKENS,
-    ...chatParams,
+    input: messages,
+    modelParams: chatParams,
+    maxOutputTokens: ASK_MAX_OUTPUT_TOKENS,
+    tracing: {
+      traceName: "ask",
+      generationName: "ask",
+      tags: ["feature:ask"],
+      metadata: {
+        guildId,
+        channelId,
+        scope,
+      },
+      langfusePrompt,
+    },
   });
-
-  const answer = completion.choices[0].message.content ?? "No answer.";
   const citations = buildAskCitations({ text: answer, meetings });
 
   return {

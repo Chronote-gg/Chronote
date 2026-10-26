@@ -224,3 +224,19 @@ test.each([
       await expect(collectLauncherSettingsFromOriginalRun()).rejects.toThrow();
   },
 );
+
+// Positive fixtures deliberately use synthetic OIDC-only workflow source.
+test.each(["SECRETS_PREFIX", "LANGFUSE_BASE_URL", "ECS_TASK_FAMILY"])(
+  "connection-sync selector %s drift cannot mint launcher authority",
+  async (selector) => {
+    mockGithub.mockImplementation(async (...args) => {
+      const result = await f.github(...args);
+      if (args[0].includes("/environments/production/variables?"))
+        result.items = result.items.map((item) =>
+          item.name === selector ? { ...item, value: "changed" } : item,
+        );
+      return result;
+    });
+    await expect(collectLauncherSettingsFromOriginalRun()).rejects.toThrow();
+  },
+);

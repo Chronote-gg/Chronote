@@ -35,7 +35,19 @@ jobs:
           persist-credentials: false
 
       - name: Check shared quality policy
+        id: quality
         uses: BASIC-BIT/quality-ratchet@0873869f6b8fd80150d24689849ec0aebd94e9dd # v1.0.1
         with:
           github-token: ${{ github.token }}
           repository-path: ${{ github.workspace }}
+
+      - name: Print quality summary
+        if: ${{ failure() && !cancelled() && steps.quality.outputs.report-directory != '' }}
+        shell: bash
+        env:
+          QUALITY_REPORT_DIRECTORY: ${{ steps.quality.outputs.report-directory }}
+        run: |
+          summary_token="$(node -e 'process.stdout.write(require("node:crypto").randomUUID())')"
+          printf '::stop-commands::%s\n' "$summary_token"
+          cat -- "$QUALITY_REPORT_DIRECTORY/summary.md"
+          printf '::%s::\n' "$summary_token"

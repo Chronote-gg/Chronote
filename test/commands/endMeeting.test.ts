@@ -6,6 +6,7 @@ import {
   recordingLimitMeeting,
   recordingOnlyFinalizationState,
   successfulArtifactUpload,
+  successfulFinalPassResult,
 } from "../fixtures/endMeeting";
 /** @jest-environment node */
 
@@ -30,13 +31,13 @@ import {
   persistExplicitMeetingStop,
 } from "../../src/commands/endMeeting";
 import { startProcessingSnippet } from "../../src/audio";
+import { compileTranscriptions } from "../../src/services/transcriptCompilationService";
 import { withMeetingEndTrace } from "../../src/observability/meetingTrace";
 import { evaluateAutoRecordCancellation } from "../../src/services/autoRecordCancellationService";
 import {
   buildMixedAudio,
   cleanupSpeakerTracks,
   closeOutputFile,
-  compileTranscriptions,
   waitForAudioOnlyFinishProcessing,
   waitForFinishProcessing,
 } from "../../src/audio";
@@ -79,8 +80,7 @@ const mockedCleanupSpeakerTracks = cleanupSpeakerTracks as jest.MockedFunction<
 const mockedCloseOutputFile = closeOutputFile as jest.MockedFunction<
   typeof closeOutputFile
 >;
-const mockedCompileTranscriptions =
-  compileTranscriptions as jest.MockedFunction<typeof compileTranscriptions>;
+const mockedCompileTranscriptions = jest.mocked(compileTranscriptions);
 const mockedWaitForAudioOnlyFinishProcessing =
   waitForAudioOnlyFinishProcessing as jest.MockedFunction<
     typeof waitForAudioOnlyFinishProcessing
@@ -139,20 +139,9 @@ describe("handleEndMeetingOther", () => {
     mockedRetainMeetingTempDir.mockResolvedValue(
       "tmp/retained-meetings/meeting-1",
     );
-    mockedRunTranscriptionFinalPass.mockResolvedValue({
-      enabled: true,
-      applied: false,
-      processedChunks: 0,
-      totalChunks: 0,
-      totalSegments: 0,
-      candidateEdits: 0,
-      acceptedEdits: 0,
-      replacedSegments: 0,
-      droppedSegments: 0,
-      rejectedTrivialEdits: 0,
-      repetitionFilteredSegments: 0,
-      fallbackApplied: false,
-    });
+    mockedRunTranscriptionFinalPass.mockResolvedValue(
+      successfulFinalPassResult,
+    );
   });
 
   afterEach(() => {
@@ -465,10 +454,6 @@ describe("handleEndMeetingOther", () => {
   ])(
     "runs final transcription and counts useful notes only for accepted %s outcome",
     async (state) => {
-      const { compileTranscriptions } = jest.requireMock("../../src/audio") as {
-        compileTranscriptions: jest.Mock;
-      };
-
       mockedWithMeetingEndTrace.mockImplementation(async (_meeting, fn) =>
         fn(),
       );
@@ -507,9 +492,9 @@ describe("handleEndMeetingOther", () => {
         });
       mockedGetGuildLimits.mockResolvedValue({ limits: {} } as never);
       mockedUpdateMeetingStatusService.mockResolvedValue(undefined);
-      compileTranscriptions.mockResolvedValue("transcript text");
+      mockedCompileTranscriptions.mockResolvedValue("transcript text");
       if (state === "transcription_error")
-        compileTranscriptions.mockRejectedValueOnce(
+        mockedCompileTranscriptions.mockRejectedValueOnce(
           new Error("transcription unavailable"),
         );
       if (state === "upload_error")

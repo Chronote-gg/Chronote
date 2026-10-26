@@ -1,4 +1,5 @@
 /** @jest-environment node */
+import { completedTextResponse as mockCompletedTextResponse } from "../../src/testSupport/openaiResponse";
 jest.mock("dotenv", () => ({ config: () => ({ parsed: {} }) }));
 jest.mock("../../src/services/transcriptionService", () => ({
   ...jest.requireActual("../../src/services/transcriptionService"),
@@ -24,17 +25,10 @@ jest.mock("../../src/services/mixedPcmService", () => ({
 jest.mock("../../src/services/openaiClient", () => ({
   buildOpenAISafetyIdentifier: (id: string) => id,
   createOpenAIClient: jest.fn(() => ({
-    chat: {
-      completions: {
-        create: jest.fn(async () => ({
-          choices: [
-            {
-              finish_reason: "stop",
-              message: { content: "Original saved cleanup result." },
-            },
-          ],
-        })),
-      },
+    responses: {
+      create: jest.fn(async () =>
+        mockCompletedTextResponse("Original saved cleanup result."),
+      ),
     },
   })),
 }));
@@ -50,7 +44,8 @@ import { renderMixedPcmTracks } from "../../src/services/mixedPcmService";
 import { createOpenAIClient } from "../../src/services/openaiClient";
 async function fixture(complete = false) {
   const f = await recoveryFixture();
-  const signal = new AbortController().signal;
+  const controller = new AbortController();
+  const signal = controller.signal;
   const content = await readRecoveryContent(f.claim.history, f.reader, signal);
   if (content.context.settings.availability !== "available")
     throw new Error("settings");
@@ -134,7 +129,7 @@ async function fixture(complete = false) {
         ],
       };
   }
-  return { ...f, content, signal };
+  return { ...f, content, signal, controller };
 }
 beforeEach(() => jest.clearAllMocks());
 test("partial capture uses frozen cleanup and explicitly skips finalized-only stage", async () => {
@@ -153,6 +148,20 @@ test("partial capture uses frozen cleanup and explicitly skips finalized-only st
       userId: "123",
     }),
   );
+  const client = jest.mocked(createOpenAIClient).mock.results[0].value;
+  expect(client.responses.create).toHaveBeenCalledWith(
+    expect.objectContaining({
+      model: "original-model",
+      input: expect.any(Array),
+      store: false,
+    }),
+    expect.objectContaining({ signal: expect.any(AbortSignal) }),
+  );
+  const sdkSignal = jest.mocked(client.responses.create).mock.calls[0][1]
+    ?.signal;
+  expect(sdkSignal?.aborted).toBe(false);
+  f.controller.abort(new Error("cancel recovery"));
+  expect(sdkSignal?.aborted).toBe(true);
 });
 test("complete verified PCM uses shared mixer and plain finalized-pass with frozen budgets", async () => {
   const f = await fixture(true);

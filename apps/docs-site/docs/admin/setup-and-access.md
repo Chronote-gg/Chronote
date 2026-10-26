@@ -118,7 +118,6 @@ Chronote needs these Discord permissions:
 | `/tts`          | None                | Per-user preference             |
 | `/say`          | None                | Must be in an active meeting    |
 | `/billing`      | None                | Shows subscription status       |
-| `/onboard`      | Manage Server       | Can be disabled server-wide     |
 
 The portal's **Teach Chronote** workflow requires **Manage Server**. It can propose terms from natural-language guidance and, when explicitly opened after a web notes correction, from up to 2,000 characters of the notes diff plus up to 2,000 characters from lexically matching transcript segments. Every entry requires human approval.
 

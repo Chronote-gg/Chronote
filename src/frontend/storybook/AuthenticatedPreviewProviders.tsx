@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { QueryClientProvider, type QueryClient } from "@tanstack/react-query";
+import { QueryClientProvider, QueryClient } from "@tanstack/react-query";
 import { trpc } from "../services/trpc";
 import { AuthProvider } from "../contexts/AuthContext";
 import { GuildProvider } from "../contexts/GuildContext";
@@ -25,3 +25,8 @@ export function AuthenticatedPreviewProviders({
     </trpc.Provider>
   );
 }
+
+export const createPreviewQueryClient = () =>
+  new QueryClient({
+    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+  });

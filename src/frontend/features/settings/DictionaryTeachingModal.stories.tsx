@@ -1,10 +1,11 @@
 import { useState, type ReactNode } from "react";
 import type { Meta, StoryObj } from "@storybook/react";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { QueryClientProvider } from "@tanstack/react-query";
 import { httpBatchLink } from "@trpc/client";
 import { expect, userEvent, within } from "storybook/test";
 import { trpc } from "../../services/trpc";
 import DictionaryTeachingModal from "./DictionaryTeachingModal";
+import { createPreviewQueryClient } from "../../storybook/AuthenticatedPreviewProviders";
 
 const previewResult = {
   token: "11111111-1111-4111-8111-111111111111",
@@ -61,15 +62,7 @@ const previewResult = {
 };
 
 function TrpcStoryProvider({ children }: { children: ReactNode }) {
-  const [queryClient] = useState(
-    () =>
-      new QueryClient({
-        defaultOptions: {
-          queries: { retry: false },
-          mutations: { retry: false },
-        },
-      }),
-  );
+  const [queryClient] = useState(createPreviewQueryClient);
   const [client] = useState(() =>
     trpc.createClient({
       links: [

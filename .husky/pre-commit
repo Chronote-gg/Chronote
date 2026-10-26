@@ -9,7 +9,7 @@ fi
 # Run linting based on OS
 if command -v cmd.exe >/dev/null 2>&1; then
   # Windows - use Node directly to avoid shell issues
-  node scripts/lint-staged-win.js $STAGED_FILES
+  node scripts/lint-staged-win.js
 else
   # Unix-like systems - use lint-staged normally
   npx lint-staged

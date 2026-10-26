@@ -1,5 +1,6 @@
 mock_provider "aws" {
   override_during = plan
+  mock_resource "aws_secretsmanager_secret" { defaults = { arn = "arn:aws:secretsmanager:us-east-1:123456789012:secret:chronote-prod/openai-api-key-abcdef" } }
   mock_resource "aws_s3_bucket" { defaults = { arn = "arn:aws:s3:::test-artifacts", bucket = "test-artifacts" } }
   mock_resource "aws_dynamodb_table" { defaults = { arn = "arn:aws:dynamodb:us-east-1:123456789012:table/test" } }
   mock_resource "aws_ecs_service" { defaults = { id = "arn:aws:ecs:us-east-1:123456789012:service/chronote-prod-bot-cluster/chronote-prod-bot-service" } }
@@ -104,8 +105,24 @@ run "exact_production_authority" {
     error_message = "Introduction cannot gain deletion, forced unprotection, registration or secret-read authority."
   }
   assert {
-    condition     = alltrue([for s in jsondecode(aws_iam_role_policy.production_prompt_guard[0].policy).Statement : alltrue([for a in s.Action : contains(["dynamodb:GetItem", "kms:Decrypt"], a)])])
-    error_message = "Prompt guard is read-only."
+    condition     = alltrue([for s in jsondecode(aws_iam_role_policy.production_prompt_guard[0].policy).Statement : alltrue([for a in s.Action : contains(["dynamodb:GetItem", "kms:Decrypt", "ecs:DescribeServices", "ecs:DescribeTaskDefinition", "secretsmanager:GetSecretValue"], a)])])
+    error_message = "The existing guard role may only read the hold, serving metadata and the existing OpenAI secret."
+  }
+  assert {
+    condition     = alltrue([for s in jsondecode(aws_iam_role_policy.production_prompt_guard[0].policy).Statement : !contains(s.Action, "ecs:DescribeTaskDefinition") || (s.Resource == "*" && s.Condition.StringEquals["aws:RequestedRegion"] == var.aws_region)])
+    error_message = "DescribeTaskDefinition is region restricted metadata, not IAM family isolation."
+  }
+  assert {
+    condition     = alltrue([for s in jsondecode(aws_iam_role_policy.production_prompt_guard[0].policy).Statement : !contains(s.Action, "ecs:DescribeServices") || s.Resource == aws_ecs_service.app_service.id])
+    error_message = "DescribeServices must select only the existing service."
+  }
+  assert {
+    condition     = alltrue([for s in jsondecode(aws_iam_role_policy.production_prompt_guard[0].policy).Statement : !contains(s.Action, "secretsmanager:GetSecretValue") || (s.Resource == aws_secretsmanager_secret.openai_api_key.arn && s.Condition.StringEquals["secretsmanager:VersionStage"] == "AWSCURRENT")])
+    error_message = "Only the existing OpenAI current secret version may be read by all guard-role consumers."
+  }
+  assert {
+    condition     = aws_secretsmanager_secret.openai_api_key.kms_key_id == aws_kms_key.app_general.arn && alltrue([for s in jsondecode(aws_iam_role_policy.production_prompt_guard[0].policy).Statement : try(s.Sid, "") != "ServingOpenAIKeyDecrypt" || (s.Resource == aws_kms_key.app_general.arn && s.Condition.StringEquals["kms:ViaService"] == "secretsmanager.${var.aws_region}.amazonaws.com" && s.Condition.StringEquals["kms:CallerAccount"] == "123456789012" && s.Condition.StringEquals["kms:EncryptionContext:SecretARN"] == aws_secretsmanager_secret.openai_api_key.arn)])
+    error_message = "Decrypt must use the secret actual key through Secrets Manager and its exact context."
   }
   assert {
     condition     = alltrue([for s in jsondecode(aws_iam_role_policy.production_introduction[0].policy).Statement : !contains(s.Action, "ecs:StopTask")])

@@ -227,7 +227,7 @@ describe("existing server subscription checkout", () => {
         guildId,
         priceId: "price_basic",
       }),
-    ).rejects.toMatchObject({ code: "BAD_REQUEST" });
+    ).rejects.toMatchObject({ cause: { code: "BAD_REQUEST" } });
     expect(captureEvent).not.toHaveBeenCalled();
   });
 

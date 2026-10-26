@@ -41,7 +41,7 @@ const workflow = z
   })
   .strict();
 const variables = [
-  "PRODUCTION_DEPLOY_ROLE_ARN",
+  "PRODUCTION_BACKEND_DEPLOY_ROLE_ARN",
   "PRODUCTION_APPLY_ROLE_ARN",
   "PRODUCTION_PROMPT_GUARD_ROLE_ARN",
   "AWS_ACCOUNT_ID",
@@ -50,6 +50,8 @@ const variables = [
   "ECS_CLUSTER",
   "ECS_SERVICE",
   "ECS_TASK_FAMILY",
+  "SECRETS_PREFIX",
+  "LANGFUSE_BASE_URL",
   "DEPLOYMENT_LISTENER_ARN",
   "DEPLOYMENT_TARGET_GROUP_A",
   "DEPLOYMENT_TARGET_GROUP_B",
@@ -79,6 +81,7 @@ const launcherSettingsSchema = z
       })
       .strict(),
     routes: z.tuple([
+      workflow,
       workflow,
       workflow,
       z
@@ -160,7 +163,7 @@ function assertDeclarationRolesAndVariables(m, declaration) {
     collector: m.acceptance.collectorRoleArn,
     task: m.resources.taskRoleArn,
     execution: m.resources.executionRoleArn,
-    deploy: v.PRODUCTION_DEPLOY_ROLE_ARN,
+    deploy: v.PRODUCTION_BACKEND_DEPLOY_ROLE_ARN,
     apply: v.PRODUCTION_APPLY_ROLE_ARN,
     promptGuard: v.PRODUCTION_PROMPT_GUARD_ROLE_ARN,
   };
@@ -211,10 +214,12 @@ function assertDeclaration(binding, input) {
   )
     refuse();
   assertDeclarationRolesAndVariables(m, declaration);
-  const [deploy, apply, manual] = declaration.routes;
+  const [deploy, apply, staged, manual] = declaration.routes;
   if (
     deploy.path !== ".github/workflows/deploy.yml" ||
     apply.path !== ".github/workflows/terraform-apply.yml" ||
+    staged.path !== ".github/workflows/production-introduction.yml" ||
+    staged.id !== staged.path ||
     manual.id !== "scripts/force-deployment.ps1" ||
     deploy.id !== deploy.path ||
     apply.id !== apply.path

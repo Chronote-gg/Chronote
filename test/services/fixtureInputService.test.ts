@@ -1,4 +1,6 @@
 /** @jest-environment node */
+import * as historyRepository from "../../src/repositories/meetingHistoryRepository";
+import * as historyIndex from "../../src/services/meetingUserIndexService";
 import { fixtureGrantIdentity } from "../fixtures/productionIntroduction";
 import { createHash } from "node:crypto";
 import { config } from "../../src/services/configService";
@@ -454,7 +456,7 @@ test.each(["acknowledged", "lost", "wrong-key"])(
   "fixture final upload and owned history preserve %s direct receipt without readback",
   async (outcome) => {
     const carrier = await verified();
-    capture(carrier);
+    const captured = capture(carrier);
     close(carrier);
     const meeting = {
       ...carrier,
@@ -533,6 +535,44 @@ test.each(["acknowledged", "lost", "wrong-key"])(
       expect(row.fixtureInput?.state).toBe("closed");
       expect(row.notesVersion).toBe(1);
       expect(JSON.stringify(row)).not.toContain("SECRET_LABEL_SENTINEL");
+      const owned = {
+        ...row,
+        ...ownership,
+        status: "processing",
+        checkpoint: { capture: captured },
+      };
+      const transitionOwned = jest.fn(async () => "applied");
+      const repository = jest
+        .spyOn(historyRepository, "getMeetingHistoryRepository")
+        .mockReturnValue({
+          getOwned: jest.fn(async () => owned),
+          transitionOwned,
+        } as never);
+      const index = jest
+        .spyOn(historyIndex, "writeMeetingUserIndexForMeetingService")
+        .mockResolvedValue(undefined);
+      const actual = jest.requireActual<
+        typeof import("../../src/services/meetingHistoryService")
+      >("../../src/services/meetingHistoryService");
+      try {
+        const changed = structuredClone(row);
+        changed.fixtureTranscript!.checksumSha256 = "f".repeat(64);
+        await expect(
+          actual.saveOwnedMeetingHistoryService(meeting, changed),
+        ).rejects.toThrow("live original evidence");
+        await expect(
+          actual.saveOwnedMeetingHistoryService(
+            { ...meeting, reservation: { ...reservation } },
+            row,
+          ),
+        ).rejects.toThrow();
+        expect(transitionOwned).not.toHaveBeenCalled();
+        await actual.saveOwnedMeetingHistoryService(meeting, row);
+        expect(transitionOwned).toHaveBeenCalledTimes(1);
+      } finally {
+        repository.mockRestore();
+        index.mockRestore();
+      }
     } finally {
       bucket.restore();
     }

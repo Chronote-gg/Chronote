@@ -17,17 +17,20 @@ test("backend and prompts check holds before their writes and share noncanceling
   );
   expect(deploy).toContain("steps.hold-guard.outcome == 'success'");
 });
-test("Apply shares production lock and verifies actual plan provenance at mutation boundary", () => {
+test("Apply retains private delivery and invokes the native guard at the saved-plan boundary", () => {
   const apply = read("terraform-apply");
   expect(apply).toContain("chronote-deploy-production");
-  expect(apply).toContain("PREREQUISITE_PLAN_JSON");
-  expect(apply).toContain("plan-provenance.json");
-  expect(apply.indexOf("production-writer-guard.cjs")).toBeLessThan(
-    apply.indexOf("apply -no-color -input=false tfplan"),
+  expect(apply).toContain("terraform-dispatch.cjs");
+  expect(apply).not.toContain("upload-artifact");
+  const native = readFileSync(
+    "scripts/deployment/terraform-workflow.cjs",
+    "utf8",
   );
-  expect(read("terraform-plan")).toContain(
-    "node scripts/deployment/plan-provenance.cjs",
-  );
+  expect(native).toContain("await runGuard(options.env, false, prerequisite)");
+  expect(
+    native.indexOf("await runGuard(options.env, false, prerequisite)"),
+  ).toBeLessThan(native.indexOf('await e.terraform(["apply"'));
+  expect(read("terraform-plan")).toContain("deployment-prerequisites");
 });
 
 test("same-run continuation has a credential-free separately protected gate and immutable session/package inputs", () => {
@@ -56,4 +59,18 @@ test("same-run continuation has a credential-free separately protected gate and 
   ).toHaveLength(3);
   expect(workflow).toContain("group: chronote-deploy-production");
   expect(workflow).toContain("cancel-in-progress: false");
+});
+
+test("connection sync uses the existing guard identity before secret read and publication", () => {
+  const sync = read("deploy").split("  sync-openai-connection:")[1];
+  expect(sync).toContain("PRODUCTION_PROMPT_GUARD_ROLE_ARN");
+  expect(sync).toContain("id-token: write");
+  expect(sync).toContain("unset-current-credentials: true");
+  expect(sync).not.toMatch(/aws-access-key-id|aws-secret-access-key/);
+  expect(sync.indexOf("production-writer-guard.cjs")).toBeLessThan(
+    sync.indexOf("secretsmanager get-secret-value"),
+  );
+  expect(sync).toMatch(
+    /production-writer-guard.cjs\s+yarn llm-connections:push --dir "\$connections_dir"\s/,
+  );
 });

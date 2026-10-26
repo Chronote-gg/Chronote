@@ -1,3 +1,4 @@
+import { MantineProvider } from "@mantine/core";
 import React from "react";
 import { beforeEach, describe, expect, test } from "@jest/globals";
 import { fireEvent, screen, waitFor } from "@testing-library/react";
@@ -9,6 +10,7 @@ import {
   setMeetingsDetailQuery,
   setMeetingsListQuery,
   setServersChannelsQuery,
+  meetingsListQuery,
 } from "./mocks/trpc";
 import PortalServerLayout from "../../src/frontend/layouts/PortalServerLayout";
 import Library from "../../src/frontend/pages/Library";
@@ -18,9 +20,23 @@ const MS_PER_DAY = 24 * 60 * 60 * 1000;
 const buildRecentTimestamp = () =>
   new Date(resolveNowMs() - MS_PER_DAY).toISOString();
 
+function expectFilteredLibrary(view: ReturnType<typeof renderWithMantine>) {
+  Object.assign(meetingsListQuery, { isSuccess: true });
+  view.rerender(
+    <MantineProvider>
+      <Library />
+    </MantineProvider>,
+  );
+  expect(screen.queryByText("Your first meeting goes here.")).toBeNull();
+}
+
 describe("Library page", () => {
   beforeEach(() => {
     resetFrontendMocks();
+    Object.assign(meetingsListQuery, {
+      isSuccess: true,
+      isPlaceholderData: false,
+    });
     guildState.selectedGuildId = "g1";
     guildState.guilds = [{ id: "g1", name: "Guild One", canManage: true }];
     setServersChannelsQuery({
@@ -31,22 +47,99 @@ describe("Library page", () => {
     });
   });
 
-  test("shows empty state when no meetings match filters", () => {
-    setMeetingsListQuery({
-      data: { meetings: [] },
-      isLoading: false,
-      error: null,
-    });
-    renderWithMantine(
-      <>
-        <PortalServerLayout />
-        <Library />
-      </>,
+  test("empty_library_uses_selected_example_layout", () => {
+    renderWithMantine(<Library />);
+    expect(
+      screen.getByText("Your first meeting goes here."),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Join a voice channel.")).toBeInTheDocument();
+    expect(screen.getByText("Start recording.")).toBeInTheDocument();
+    expect(screen.getByText("End the recording.")).toBeInTheDocument();
+    expect(screen.getAllByTestId("sample-summary")).toHaveLength(1);
+    expect(
+      screen.getByText("Example notes · Fictional meeting"),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Open Discord" })).toHaveAttribute(
+      "href",
+      "https://discord.com/channels/g1",
     );
-    expect(screen.getByTestId("library-refresh-top")).toBeInTheDocument();
+    expect(
+      screen.getByText("Optional setup").closest("details"),
+    ).not.toHaveAttribute("open");
+    expect(screen.queryByTestId("library-search")).toBeNull();
+    expect(screen.queryByText(/Sorted by recency/)).toBeNull();
+  });
+
+  test("empty library retains its refresh action", () => {
+    renderWithMantine(<Library />);
+    expect(screen.getByRole("button", { name: "Refresh" })).toBeVisible();
+  });
+
+  test.each(["loading", "error", "placeholder", "disabled", "unknown server"])(
+    "%s is not first use",
+    (state) => {
+      if (state === "loading") setMeetingsListQuery({ isLoading: true });
+      if (state === "error")
+        setMeetingsListQuery({ error: new Error("offline") });
+      if (state === "placeholder")
+        Object.assign(meetingsListQuery, { isPlaceholderData: true });
+      if (state === "disabled") guildState.selectedGuildId = null;
+      if (state === "unknown server") guildState.guilds = [];
+      renderWithMantine(<Library />);
+      expect(screen.queryByText("Your first meeting goes here.")).toBeNull();
+      expect(screen.getByTestId("library-search")).toBeInTheDocument();
+    },
+  );
+
+  test("older_unfiltered_row_suppresses_first_use", () => {
+    setMeetingsListQuery({
+      data: {
+        meetings: [
+          {
+            id: "old",
+            meetingId: "old",
+            channelId: "c1",
+            channelName: "General",
+            timestamp: new Date(resolveNowMs() - 60 * MS_PER_DAY).toISOString(),
+            duration: 60,
+            tags: [],
+            notes: "Old notes",
+            audioAvailable: false,
+            transcriptAvailable: true,
+          },
+        ],
+      },
+    });
+    renderWithMantine(<Library />);
+    expect(screen.queryByText("Your first meeting goes here.")).toBeNull();
+    expect(screen.getByTestId("library-search")).toBeInTheDocument();
     expect(
       screen.getByText(/No meetings match these filters yet/i),
     ).toBeInTheDocument();
+  });
+
+  test("filtered_empty_is_not_first_meeting", () => {
+    Object.assign(meetingsListQuery, { isSuccess: false });
+    const view = renderWithMantine(<Library />);
+    fireEvent.change(screen.getByTestId("library-search"), {
+      target: { value: "not found" },
+    });
+    expectFilteredLibrary(view);
+    expect(
+      screen.getByText(/No meetings match these filters yet/i),
+    ).toBeInTheDocument();
+  });
+
+  test("empty_library_filters_do_not_hide_existing_results", () => {
+    Object.assign(meetingsListQuery, { isSuccess: false });
+    const view = renderWithMantine(<Library />);
+    fireEvent.change(screen.getByTestId("library-range"), {
+      target: { value: "Last 7 days" },
+    });
+    fireEvent.click(screen.getByTestId("library-archive-filter"));
+    fireEvent.click(screen.getByRole("option", { name: "Archived" }));
+    expectFilteredLibrary(view);
+    expect(screen.getByTestId("library-search")).toBeInTheDocument();
   });
 
   test("renders meeting details for a selected row", async () => {

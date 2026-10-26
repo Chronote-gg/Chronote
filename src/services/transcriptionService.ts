@@ -1,12 +1,14 @@
 import { liveTranscriptionInput } from "./liveTranscriptionInput";
-import { resolveChatParamsForRole } from "./openaiModelParams";
-import { withTranscriptionInput } from "./transcriptionInput";
-
-import type OpenAI from "openai";
-import type {
-  Transcription,
-  TranscriptionCreateParamsNonStreaming,
-} from "openai/resources/audio";
+import {
+  createTranscriptionFailureScope,
+  isExhaustedTranscriptionFailure,
+  runTranscriptionRequest,
+} from "./transcriptionRequest";
+import {
+  createTranscriptionAttemptLedger,
+  type TranscriptionCandidateId,
+} from "../observability/transcriptionAttempts";
+import type { Transcription } from "openai/resources/audio";
 import { existsSync, unlinkSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import ffmpeg from "fluent-ffmpeg";
@@ -14,10 +16,7 @@ import {
   bulkhead,
   circuitBreaker,
   ConsecutiveBreaker,
-  ExponentialBackoff,
-  handleAll,
-  retry,
-  wrap,
+  handleWhen,
 } from "cockatiel";
 import Bottleneck from "bottleneck";
 import type {
@@ -48,7 +47,6 @@ import {
   TRANSCRIPTION_RATE_MIN_WORDS,
   TRANSCRIPTION_MAX_CONCURRENT,
   TRANSCRIPTION_MAX_QUEUE,
-  TRANSCRIPTION_MAX_RETRIES,
   TRANSCRIPTION_RATE_MIN_TIME,
   TRANSCRIBE_SAMPLE_RATE,
 } from "../constants";
@@ -60,7 +58,7 @@ import {
   type TranscriptionVoteDecision,
   type TranscriptionVoteGateResult,
 } from "../utils/transcriptionVote";
-import { createOpenAIClient } from "./openaiClient";
+import type { createOpenAIClient } from "./openaiClient";
 import { getModelChoice } from "./modelFactory";
 import { isLangfuseTracingEnabled } from "./langfuseClient";
 import {
@@ -69,17 +67,16 @@ import {
   updateActiveObservation,
 } from "@langfuse/tracing";
 import { buildLangfuseTranscriptionAudioAttachment } from "../observability/langfuseAudioAttachment";
-import { buildLangfuseTranscriptionAccounting } from "../observability/langfuseUsageDetails";
+import { recordLangfuseTranscriptionAccounting } from "../observability/langfuseUsageDetails";
 import { toLangfuseAttributeMetadata } from "../observability/langfuseMetadata";
 import { ensureMeetingTempDirSync } from "./tempFileService";
 import { evaluateNoiseGate } from "../utils/audioNoiseGate";
 import { countWords } from "../utils/text";
 import {
   getTranscriptionPrompt,
-  getTranscriptionCleanupPrompt,
   getTranscriptionCoalescePrompt,
 } from "./transcriptionPromptService";
-import { chat, type ChatMeetingInput } from "./openaiChatService";
+import { chat } from "./openaiChatService";
 import { getMeetingModelOverrides } from "./meetingModelOverrides";
 import { getTranscriptionTextQuality } from "../utils/transcriptionText";
 
@@ -249,7 +246,8 @@ type TranscriptionTraceContext = {
 async function transcribeInternal(
   meeting: TranscriptionContentInput,
   file: string,
-  context?: TranscriptionTraceContext,
+  context: TranscriptionTraceContext | undefined,
+  queueWaitMs: number,
 ): Promise<string> {
   meeting.signal.throwIfAborted();
   const { prompt, langfusePrompt } = await meeting.prompt();
@@ -264,6 +262,7 @@ async function transcribeInternal(
     getMeetingModelOverrides(meeting),
   );
   const traceMetadata = {
+    transcriptionQueueWaitMs: queueWaitMs,
     guildId: meeting.guild.id,
     channelId: meeting.voiceChannel.id,
     meetingId: meeting.meetingId,
@@ -279,40 +278,35 @@ async function transcribeInternal(
     promptFallback: langfusePrompt?.isFallback ?? false,
     transcriptionVoteEnabled: voteEnabled,
   };
+  const ledger = createTranscriptionAttemptLedger(traceMetadata.audioSeconds);
 
   const runTranscription = async (
-    openAIClient: OpenAI,
+    candidate: TranscriptionCandidateId,
+    clientOptions: Parameters<typeof createOpenAIClient>[0],
     promptText?: string,
   ) => {
-    const signal = meeting.signal;
-    signal.throwIfAborted();
-    return withTranscriptionInput(file, async (input) => {
-      const request: TranscriptionCreateParamsNonStreaming<"json"> = {
-        file: input,
+    const transcription = await runTranscriptionRequest({
+      candidate,
+      file,
+      signal: meeting.signal,
+      ledger,
+      clientOptions,
+      observeGeneration: meeting.observeGeneration,
+      generationOperation: `transcription-audio-${passMode}`,
+      request: {
         model: modelChoice.model,
         language: "en",
         temperature: 0,
         response_format: "json",
         include: ["logprobs"],
         ...(promptText ? { prompt: promptText } : {}),
-      };
-      const acknowledge = meeting.observeGeneration?.(
-        `transcription-audio-${passMode}`,
-        modelChoice.model,
-        promptText ? langfusePrompt : null,
-      );
-      const transcription = await openAIClient.audio.transcriptions.create(
-        request,
-        { signal },
-      );
-      signal.throwIfAborted();
-      acknowledge?.(null);
-      return {
-        text: transcription.text ?? "",
-        logprobs: transcription.logprobs ?? [],
-        usage: transcription.usage,
-      };
+      },
     });
+    return {
+      text: transcription.text ?? "",
+      logprobs: transcription.logprobs ?? [],
+      usage: transcription.usage,
+    };
   };
 
   const guardConfig = resolveGuardConfig(meeting, context);
@@ -462,9 +456,13 @@ async function transcribeInternal(
   };
 
   const runAndSelectTranscription = async (
-    openAIClient: OpenAI,
+    clientOptions: Parameters<typeof createOpenAIClient>[0],
   ): Promise<TranscriptionSelection> => {
-    const promptOutput = await runTranscription(openAIClient, resolvedPrompt);
+    const promptOutput = await runTranscription(
+      "prompt",
+      clientOptions,
+      resolvedPrompt,
+    );
     const promptCandidate = await applyGuardsAndLog(promptOutput, {
       id: "prompt",
       promptText: resolvedPrompt,
@@ -485,7 +483,7 @@ async function transcribeInternal(
       };
     }
 
-    const noPromptOutput = await runTranscription(openAIClient);
+    const noPromptOutput = await runTranscription("no_prompt", clientOptions);
     const noPromptCandidate = await applyGuardsAndLog(noPromptOutput, {
       id: "no_prompt",
     });
@@ -526,7 +524,7 @@ async function transcribeInternal(
   };
 
   if (!isLangfuseTracingEnabled()) {
-    const openAIClient = createOpenAIClient({
+    const selection = await runAndSelectTranscription({
       traceName: "transcription",
       generationName: "transcription",
       userId: meeting.creator.id,
@@ -535,7 +533,7 @@ async function transcribeInternal(
       metadata: traceMetadata,
       langfusePrompt,
     });
-    const selection = await runAndSelectTranscription(openAIClient);
+    meeting.signal.throwIfAborted();
     return selection.selected.guardResult.text;
   }
 
@@ -568,7 +566,7 @@ async function transcribeInternal(
             { asType: "generation" },
           );
 
-          await meeting
+          const attachment = meeting
             .effect(() =>
               langfuseAttachmentLimiter
                 .schedule(() => {
@@ -601,136 +599,118 @@ async function transcribeInternal(
             )
             .catch(() => {});
 
-          const openAIClient = createOpenAIClient({
-            disableTracing: true,
-            langfusePrompt,
-          });
-          const selection = await runAndSelectTranscription(openAIClient);
-          const {
-            guardResult,
-            transcriptStats,
-            suppressionEnabled,
-            promptEchoEnabled,
-            hardSilenceDbfs,
-            rateMaxSeconds,
-            rateMinWords,
-            rateMinSyllables,
-            maxSyllablesPerSecond,
-          } = selection.selected;
-
-          const accounting = buildLangfuseTranscriptionAccounting(
-            [
-              selection.promptCandidate.usage,
-              ...(selection.noPromptCandidate
-                ? [selection.noPromptCandidate.usage]
-                : []),
-            ],
-            context?.audioSeconds,
-          );
-          if (accounting.unpricedRequestCount > 0) {
-            console.warn("Transcription cost accounting is incomplete.", {
-              ...traceMetadata,
-              transcriptionCostAccountingStatus: accounting.status,
-              transcriptionRequestCount: accounting.requestCount,
-              transcriptionPricedRequestCount: accounting.pricedRequestCount,
-              transcriptionUnpricedRequestCount:
-                accounting.unpricedRequestCount,
+          let selectedText: string;
+          try {
+            const selection = await runAndSelectTranscription({
+              disableTracing: true,
+              langfusePrompt,
             });
-          }
-          updateActiveObservation(
-            {
-              output: guardResult.text,
-              usageDetails: accounting.usageDetails,
-              metadata: {
-                transcriptionCostAccountingStatus: accounting.status,
-                transcriptionRequestCount: accounting.requestCount,
-                transcriptionPricedRequestCount: accounting.pricedRequestCount,
-                transcriptionUnpricedRequestCount:
-                  accounting.unpricedRequestCount,
-                transcriptionFlags: guardResult.flags,
-                transcriptionCandidate: selection.selected.candidateId,
-                quietAudio: guardResult.quietAudio,
-                quietByPeak: guardResult.quietByPeak,
-                quietByActivity: guardResult.quietByActivity,
-                hardSilenceDetected: guardResult.hardSilenceDetected,
-                suppressionEnabled,
-                promptEchoEnabled,
-                hardSilenceDbfs,
-                rateMaxSeconds,
-                rateMinWords,
-                rateMinSyllables,
-                maxSyllablesPerSecond,
-                ...transcriptStats,
-                transcriptionRawTextTrivial:
-                  selection.selected.rawTextQuality.trivial,
-                transcriptionRawTextReasons:
-                  selection.selected.rawTextQuality.reasons,
-                transcriptionTextTrivial:
-                  selection.selected.selectedTextQuality.trivial,
-                transcriptionTextReasons:
-                  selection.selected.selectedTextQuality.reasons,
-                transcriptionAlnumCharCount:
-                  selection.selected.selectedTextQuality.alnumCharCount,
-                logprobMetrics: guardResult.logprobMetrics,
-                promptEchoDetected: guardResult.promptEchoDetected,
-                promptEchoMetrics: guardResult.promptEchoMetrics,
-                rateMismatchDetected: guardResult.rateMismatchDetected,
-                noiseGateEnabled: context?.noiseGateEnabled,
-                noiseGateMode: passMode,
-                noiseGateMetrics: context?.noiseGateMetrics,
-                suppressed: guardResult.suppressed,
-                transcriptionVoteEnabled: voteEnabled,
-                transcriptionVoteGateReasons: selection.voteGate.reasons,
-                transcriptionVoteAttempted: Boolean(
-                  selection.noPromptCandidate,
-                ),
-                transcriptionVoteSelected: selection.selected.candidateId,
-                transcriptionVoteDecisionReasons:
-                  selection.voteDecision?.reasons,
-                transcriptionVotePromptScore:
-                  selection.voteDecision?.promptScore,
-                transcriptionVoteNoPromptScore:
-                  selection.voteDecision?.noPromptScore,
-                transcriptionVotePromptFlags:
-                  selection.promptCandidate.guardResult.flags,
-                transcriptionVoteNoPromptFlags:
-                  selection.noPromptCandidate?.guardResult.flags,
-                transcriptionVotePromptTrivialText:
-                  selection.promptCandidate.selectedTextQuality.trivial,
-                transcriptionVotePromptTrivialReasons:
-                  selection.promptCandidate.selectedTextQuality.reasons,
-                transcriptionVoteNoPromptTrivialText:
-                  selection.noPromptCandidate?.selectedTextQuality.trivial,
-                transcriptionVoteNoPromptTrivialReasons:
-                  selection.noPromptCandidate?.selectedTextQuality.reasons,
-              },
-            },
-            { asType: "generation" },
-          );
+            const {
+              guardResult,
+              transcriptStats,
+              suppressionEnabled,
+              promptEchoEnabled,
+              hardSilenceDbfs,
+              rateMaxSeconds,
+              rateMinWords,
+              rateMinSyllables,
+              maxSyllablesPerSecond,
+            } = selection.selected;
 
-          return guardResult.text;
+            updateActiveObservation(
+              {
+                output: guardResult.text,
+                metadata: {
+                  transcriptionFlags: guardResult.flags,
+                  transcriptionCandidate: selection.selected.candidateId,
+                  quietAudio: guardResult.quietAudio,
+                  quietByPeak: guardResult.quietByPeak,
+                  quietByActivity: guardResult.quietByActivity,
+                  hardSilenceDetected: guardResult.hardSilenceDetected,
+                  suppressionEnabled,
+                  promptEchoEnabled,
+                  hardSilenceDbfs,
+                  rateMaxSeconds,
+                  rateMinWords,
+                  rateMinSyllables,
+                  maxSyllablesPerSecond,
+                  ...transcriptStats,
+                  transcriptionRawTextTrivial:
+                    selection.selected.rawTextQuality.trivial,
+                  transcriptionRawTextReasons:
+                    selection.selected.rawTextQuality.reasons,
+                  transcriptionTextTrivial:
+                    selection.selected.selectedTextQuality.trivial,
+                  transcriptionTextReasons:
+                    selection.selected.selectedTextQuality.reasons,
+                  transcriptionAlnumCharCount:
+                    selection.selected.selectedTextQuality.alnumCharCount,
+                  logprobMetrics: guardResult.logprobMetrics,
+                  promptEchoDetected: guardResult.promptEchoDetected,
+                  promptEchoMetrics: guardResult.promptEchoMetrics,
+                  rateMismatchDetected: guardResult.rateMismatchDetected,
+                  noiseGateEnabled: context?.noiseGateEnabled,
+                  noiseGateMode: passMode,
+                  noiseGateMetrics: context?.noiseGateMetrics,
+                  suppressed: guardResult.suppressed,
+                  transcriptionVoteEnabled: voteEnabled,
+                  transcriptionVoteGateReasons: selection.voteGate.reasons,
+                  transcriptionVoteAttempted: Boolean(
+                    selection.noPromptCandidate,
+                  ),
+                  transcriptionVoteSelected: selection.selected.candidateId,
+                  transcriptionVoteDecisionReasons:
+                    selection.voteDecision?.reasons,
+                  transcriptionVotePromptScore:
+                    selection.voteDecision?.promptScore,
+                  transcriptionVoteNoPromptScore:
+                    selection.voteDecision?.noPromptScore,
+                  transcriptionVotePromptFlags:
+                    selection.promptCandidate.guardResult.flags,
+                  transcriptionVoteNoPromptFlags:
+                    selection.noPromptCandidate?.guardResult.flags,
+                  transcriptionVotePromptTrivialText:
+                    selection.promptCandidate.selectedTextQuality.trivial,
+                  transcriptionVotePromptTrivialReasons:
+                    selection.promptCandidate.selectedTextQuality.reasons,
+                  transcriptionVoteNoPromptTrivialText:
+                    selection.noPromptCandidate?.selectedTextQuality.trivial,
+                  transcriptionVoteNoPromptTrivialReasons:
+                    selection.noPromptCandidate?.selectedTextQuality.reasons,
+                },
+              },
+              { asType: "generation" },
+            );
+
+            selectedText = guardResult.text;
+          } finally {
+            recordLangfuseTranscriptionAccounting(
+              ledger.snapshot(),
+              traceMetadata.audioSeconds,
+            );
+            await attachment;
+          }
+          meeting.signal.throwIfAborted();
+          return selectedText;
         },
         { asType: "generation" },
       ),
   );
 }
 
-const retryPolicy = retry(handleAll, {
-  maxAttempts: TRANSCRIPTION_MAX_RETRIES,
-  backoff: new ExponentialBackoff(),
-});
-const breakerPolicy = circuitBreaker(handleAll, {
-  halfOpenAfter: TRANSCRIPTION_BREAK_DURATION,
-  breaker: new ConsecutiveBreaker(
-    TRANSCRIPTION_BREAK_AFTER_CONSECUTIVE_FAILURES,
-  ),
-});
+const breakerPolicy = circuitBreaker(
+  handleWhen(isExhaustedTranscriptionFailure),
+  {
+    halfOpenAfter: TRANSCRIPTION_BREAK_DURATION,
+    breaker: new ConsecutiveBreaker(
+      TRANSCRIPTION_BREAK_AFTER_CONSECUTIVE_FAILURES,
+    ),
+  },
+);
 const bulkheadPolicy = bulkhead(
   TRANSCRIPTION_MAX_CONCURRENT,
   TRANSCRIPTION_MAX_QUEUE,
 );
-
-const policies = wrap(bulkheadPolicy, breakerPolicy, retryPolicy);
 
 const limiter = new Bottleneck({
   minTime: TRANSCRIPTION_RATE_MIN_TIME,
@@ -746,10 +726,22 @@ async function transcribe(
   file: string,
   context?: TranscriptionTraceContext,
 ): Promise<string> {
-  return await policies.execute(() => {
-    meeting.signal.throwIfAborted();
-    return limiter.schedule(() => transcribeInternal(meeting, file, context));
-  });
+  const queuedAt = performance.now();
+  const scope = createTranscriptionFailureScope();
+  return bulkheadPolicy.execute(() =>
+    scope.run(() => {
+      meeting.signal.throwIfAborted();
+      return breakerPolicy.execute(() =>
+        limiter.schedule(() =>
+          scope.run(() => {
+            meeting.signal.throwIfAborted();
+            const queueWaitMs = Math.max(0, performance.now() - queuedAt);
+            return transcribeInternal(meeting, file, context, queueWaitMs);
+          }),
+        ),
+      );
+    }),
+  );
 }
 
 type TempSnippetFiles = {
@@ -959,67 +951,6 @@ type CoalesceInput = {
   slowTranscript: string;
   fastTranscripts: TranscriptVariant[];
 };
-
-export async function cleanupTranscription(
-  meeting: MeetingData,
-  transcription: string,
-) {
-  const { messages, langfusePrompt } = await getTranscriptionCleanupPrompt(
-    meeting,
-    transcription,
-  );
-  const modelChoice = getModelChoice(
-    "transcriptionCleanup",
-    getMeetingModelOverrides(meeting),
-  );
-  return cleanupContentTranscription(
-    meeting,
-    { messages, langfusePrompt },
-    {
-      ...modelChoice,
-      params: resolveChatParamsForRole({
-        role: "transcriptionCleanup",
-        model: modelChoice.model,
-        config: meeting.runtimeConfig?.modelParams?.transcriptionCleanup,
-      }),
-    },
-    meeting.langfuseParentSpanContext,
-  );
-}
-export async function cleanupContentTranscription(
-  content: ChatMeetingInput,
-  prompt: Pick<
-    Awaited<ReturnType<typeof getTranscriptionCleanupPrompt>>,
-    "messages" | "langfusePrompt"
-  >,
-  model: import("../types/recordingContent").SavedRecordingSettings["models"]["transcriptionCleanup"],
-  parentSpanContext?: MeetingData["langfuseParentSpanContext"],
-) {
-  return chat(
-    content,
-    { messages: [...prompt.messages] },
-    {
-      model: model.model,
-      frozenModel: model,
-      traceName: "transcription-cleanup",
-      generationName: "transcription-cleanup",
-      tags: ["feature:transcription_cleanup"],
-      langfusePrompt: prompt.langfusePrompt,
-      parentSpanContext,
-      modelParamRole: "transcriptionCleanup",
-    },
-  );
-}
-export function retainCleanupTranscript(
-  original: string,
-  cleaned: string,
-  minimumLineRatio: number,
-) {
-  return (cleaned || "").split("\n").length <
-    original.split("\n").length * minimumLineRatio
-    ? original
-    : cleaned;
-}
 
 export async function coalesceTranscription(
   meeting: MeetingData,

@@ -19,6 +19,7 @@ const requiredTestEnv = {
   DISCORD_CLIENT_SECRET: "test-discord-client-secret",
   DISCORD_CALLBACK_URL: "http://localhost:3001/callback",
   OAUTH_SECRET: "test-oauth-secret",
+  SESSION_SECRET: "test-oauth-secret",
   OPENAI_API_KEY: "test-openai-api-key",
   STRIPE_MODE: "test",
   STRIPE_SECRET_KEY: "test-stripe-secret-key",
@@ -28,11 +29,8 @@ const requiredTestEnv = {
   FRONTEND_SITE_URL: "http://localhost:5173",
 };
 
-Object.entries(requiredTestEnv).forEach(([key, value]) => {
-  if (!process.env[key]) {
-    process.env[key] = value;
-  }
-});
+// Tests must not inherit a developer's live provider credentials.
+Object.assign(process.env, requiredTestEnv);
 
 // Browser-specific polyfills (only apply in jsdom environment)
 const hasBrowserGlobals = typeof window !== "undefined";

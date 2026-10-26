@@ -1,6 +1,5 @@
 import {
   resolveSpeakerLabel,
-  finalTranscriptSpeakerLabel,
   warnMissingSnippetStart,
 } from "./services/recordingSpeakerService";
 import {
@@ -32,7 +31,6 @@ import {
   startRecordingContentCheckpoint,
   checkpointCompletedTranscription,
   checkpointRecordingContext,
-  captureRecordingTranscriptScope,
 } from "./services/recordingContentService";
 import { createRecordingCheckpointCapture } from "./services/recordingCheckpointCapture";
 import { appendMeetingCheckpointArtifacts } from "./services/recordingCheckpointService";
@@ -52,7 +50,6 @@ import {
   NOISE_GATE_WINDOW_MS,
   RECORD_SAMPLE_RATE,
   SILENCE_THRESHOLD,
-  TRANSCRIPTION_CLEANUP_LINES_DIFFERENCE_ISSUE,
 } from "./constants";
 import {
   AudioFileData,
@@ -64,19 +61,16 @@ import {
 import { MeetingData } from "./types/meeting-data";
 import { EndBehaviorType, VoiceConnectionStatus } from "@discordjs/voice";
 import { OpusDiagnosticDecoder } from "./utils/opusDiagnosticDecoder";
-import { disposeVoiceStream } from "./utils/disposeVoiceStream";
+import { closeCaptureStream } from "./services/captureStreamSettlementService";
+export { waitForCaptureStreamSettlement } from "./services/captureStreamSettlementService";
 import { PassThrough, Readable } from "node:stream";
 import {
-  cleanupTranscription,
-  retainCleanupTranscript,
   coalesceTranscription,
   transcribeSnippet,
 } from "./services/transcriptionService";
-import { resolveAudioFileText } from "./utils/audioTranscript";
-import { buildModelOverrides, getModelChoice } from "./services/modelFactory";
 import { formatParticipantLabel } from "./utils/participants";
+import { buildModelOverrides, getModelChoice } from "./services/modelFactory";
 import ffmpeg from "fluent-ffmpeg";
-import { Client } from "discord.js";
 import * as fs from "node:fs";
 import path from "node:path";
 import { maybeRespondLive } from "./liveVoice";
@@ -87,10 +81,6 @@ import {
   getMeetingTempDir,
 } from "./services/tempFileService";
 import { evaluateNoiseGate } from "./utils/audioNoiseGate";
-
-const TRANSCRIPTION_HEADER =
-  `NOTICE: Transcription is automatically generated and may not be perfectly accurate!\n` +
-  `-----------------------------------------------------------------------------------\n`;
 
 function generateSilentBuffer(
   durationMs: number,
@@ -173,32 +163,6 @@ function getVoiceSubscriptions(
   return created;
 }
 
-const captureStreamClosures = new WeakMap<MeetingData, Set<Promise<void>>>();
-export async function waitForCaptureStreamSettlement(
-  meeting: MeetingData,
-): Promise<void> {
-  const pending = captureStreamClosures.get(meeting);
-  while (pending?.size) await Promise.all([...pending]);
-}
-function closeCaptureStream(
-  meeting: MeetingData,
-  stream: Readable,
-  detachOwnedListeners: () => void,
-) {
-  if (!stream.closed) {
-    let pending = captureStreamClosures.get(meeting);
-    if (!pending) {
-      pending = new Set();
-      captureStreamClosures.set(meeting, pending);
-    }
-    const closed = new Promise<void>((resolve) =>
-      stream.once("close", resolve),
-    );
-    pending.add(closed);
-    void closed.then(() => pending.delete(closed));
-  }
-  disposeVoiceStream(stream, detachOwnedListeners);
-}
 function clearVoiceSubscription(
   meeting: MeetingData,
   userId: string,
@@ -1262,86 +1226,6 @@ function getAudioDuration(audio: AudioSnippet): number {
   return (
     getAudioBytes(audio) / (RECORD_SAMPLE_RATE * CHANNELS * BYTES_PER_SAMPLE)
   );
-}
-
-export async function compileTranscriptions(
-  client: Client,
-  meeting: MeetingData,
-  options: {
-    includeCues?: boolean;
-    cleanupAcknowledged?: (
-      outcome: "acknowledged" | "fallback" | "disabled",
-    ) => void;
-  } = {},
-): Promise<string> {
-  const inputFiles = [...meeting.audioData.audioFiles];
-  captureRecordingTranscriptScope(meeting, inputFiles);
-  const segments = inputFiles
-    .map((fileData) => ({
-      userId: fileData.userId,
-      timestamp: fileData.timestamp,
-      text: resolveAudioFileText(fileData),
-    }))
-    .filter((segment) => segment.text && segment.text.length > 0);
-
-  if (options.includeCues && meeting.audioData.cueEvents) {
-    for (const cue of meeting.audioData.cueEvents) {
-      if (!cue.text) continue;
-      segments.push({
-        userId: cue.userId,
-        timestamp: cue.timestamp,
-        text: cue.text,
-      });
-    }
-  }
-
-  segments.sort((a, b) => a.timestamp - b.timestamp);
-
-  const transcription = segments
-    .map((segment) => {
-      const speakerLabel = finalTranscriptSpeakerLabel(
-        client,
-        meeting,
-        segment.userId,
-      );
-
-      return `[${speakerLabel} @ ${new Date(
-        segment.timestamp,
-      ).toLocaleString()}]: ${segment.text}`;
-    })
-    .join("\n");
-
-  if (transcription.length === 0) {
-    options.cleanupAcknowledged?.("disabled");
-    return transcription;
-  }
-
-  const premiumConfig = meeting.runtimeConfig?.premiumTranscription;
-  if (!premiumConfig?.enabled || !premiumConfig.cleanupEnabled) {
-    options.cleanupAcknowledged?.("disabled");
-    return TRANSCRIPTION_HEADER + transcription;
-  }
-
-  try {
-    const cleanedUpTranscription = await cleanupTranscription(
-      meeting,
-      transcription,
-    );
-
-    const retained = retainCleanupTranscript(
-      transcription,
-      cleanedUpTranscription,
-      TRANSCRIPTION_CLEANUP_LINES_DIFFERENCE_ISSUE,
-    );
-    options.cleanupAcknowledged?.(
-      retained === cleanedUpTranscription ? "acknowledged" : "fallback",
-    );
-    return TRANSCRIPTION_HEADER + retained;
-  } catch (error) {
-    options.cleanupAcknowledged?.("fallback");
-    console.error("Transcription cleanup failed, returning original:", error);
-    return TRANSCRIPTION_HEADER + transcription;
-  }
 }
 
 type OutputCompletion = { kind: "closed" } | { kind: "failed"; error: Error };

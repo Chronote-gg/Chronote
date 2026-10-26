@@ -2,6 +2,13 @@
 import { UnresolvedNotionMutation } from "../notionOperationLifetime";
 import { maybeAutoExportCompletedMeeting } from "../notionAutomationService";
 import { jest } from "@jest/globals";
+import { completedTextResponse } from "../../testSupport/openaiResponse";
+import { getModelChoice } from "../modelFactory";
+import {
+  buildJob,
+  buildDesktopJob,
+  buildSegment,
+} from "../../testSupport/personalMediaUploadFixtures";
 import type {
   PersonalMediaUploadJobRecord,
   PersonalRecordingSegmentRecord,
@@ -70,11 +77,9 @@ const mockTranscribe = jest.fn<
     options?: { signal?: AbortSignal },
   ) => Promise<{ text: string }>
 >(async () => ({ text: "segment transcript" }));
-const mockChatComplete = jest.fn<
-  () => Promise<{ choices: { message: { content: string | null } }[] }>
->(async () => ({
-  choices: [{ message: { content: "Generated notes" } }],
-}));
+const mockCreateResponse = jest.fn<
+  () => Promise<ReturnType<typeof completedTextResponse>>
+>(async () => completedTextResponse("Generated notes"));
 const mockGenerateSummaries = jest.fn<() => Promise<MeetingSummaries>>(
   async () => ({
     summarySentence: "Summary",
@@ -230,7 +235,7 @@ jest.mock("../tempFileService", () => ({
 jest.mock("../openaiClient", () => ({
   createOpenAIClient: jest.fn(() => ({
     audio: { transcriptions: { create: mockTranscribe } },
-    chat: { completions: { create: mockChatComplete } },
+    responses: { create: mockCreateResponse },
   })),
 }));
 
@@ -261,69 +266,6 @@ jest.mock("../notionAutomationService", () => ({
   maybeAutoExportCompletedMeeting: jest.fn(async () => undefined),
 }));
 
-const buildJob = (): PersonalMediaUploadJobRecord => ({
-  uploadId: "upload-1",
-  ownerUserId: "user-1",
-  status: "queued",
-  attempts: 1,
-  processingClaimId: "synthetic-claim",
-  processingOwnerInstanceId: "instance-1",
-  claimExpiresAt: 2_000_000_000,
-  artifactAttempts: Object.fromEntries(
-    [1, 2, 3].map((attempt) => {
-      const prefix = `personal/user-1/upload-1/attempt-${attempt}/`;
-      return [
-        String(attempt),
-        {
-          prefix,
-          audioS3Key: `${prefix}audio.mp3`,
-          transcriptS3Key: `${prefix}transcript.json`,
-        },
-      ];
-    }),
-  ),
-  mediaKind: "audio",
-  sourceS3Key: "personal-media-uploads/user-1/upload-1/source.mp3",
-  contentType: "audio/mpeg",
-  fileSize: 1234,
-  createdAt: "2026-01-06T18:00:00.000Z",
-  updatedAt: "2026-01-06T18:00:00.000Z",
-});
-
-const buildDesktopJob = (): PersonalMediaUploadJobRecord => ({
-  ...buildJob(),
-  uploadOrigin: "desktop_recording",
-  sourceS3Key: "personal-media-uploads/user-1/upload-1/segments/",
-  sourceManifest: [{ sourceId: "owner_mic", kind: "owner_mic", label: "Me" }],
-  contentType: "audio/wav",
-  fileSize: 2000,
-  status: "processing",
-  processingOwnerInstanceId: "instance-1",
-});
-
-const buildSegment = (
-  sequence: number,
-  status: PersonalRecordingSegmentRecord["status"] = "submitted",
-): PersonalRecordingSegmentRecord => ({
-  uploadId: "upload-1",
-  segmentKey: `owner_mic#${String(sequence).padStart(6, "0")}`,
-  ownerUserId: "user-1",
-  sourceId: "owner_mic",
-  sequence,
-  kind: "owner_mic",
-  label: "Me",
-  sourceS3Key: `personal-media-uploads/user-1/upload-1/segments/owner_mic-${String(sequence).padStart(6, "0")}.wav`,
-  contentType: "audio/wav",
-  fileSize: 1000,
-  checksumSha256: "a".repeat(64),
-  durationMillis: 1000,
-  startedAt: `2026-01-06T18:00:0${sequence}.000Z`,
-  endedAt: `2026-01-06T18:00:0${sequence + 1}.000Z`,
-  status,
-  createdAt: "2026-01-06T18:00:00.000Z",
-  updatedAt: "2026-01-06T18:00:00.000Z",
-});
-
 let recordingSegments: PersonalRecordingSegmentRecord[] = [];
 
 const replaceSegment = (next: PersonalRecordingSegmentRecord) => {
@@ -352,17 +294,35 @@ function heldOperation() {
   };
 }
 
+function expectEmptyUploadWithoutNotes() {
+  expect(mockCreateResponse).not.toHaveBeenCalled();
+  expect(writeMeetingHistoryService).toHaveBeenLastCalledWith(
+    expect.objectContaining({
+      notes: "",
+      processing: {
+        transcription: "empty",
+        notes: "skipped",
+        summary: "skipped",
+      },
+    }),
+  );
+}
+
 describe("personalMediaUploadProcessingService", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    jest.mocked(getModelChoice).mockReturnValue({
+      provider: "openai",
+      model: "mock-model",
+    });
     mockUploadedObjects.clear();
     mockConcatLists.length = 0;
     recordingSegments = [];
     mockWorkerJob = undefined;
     mockTranscribe.mockResolvedValue({ text: "segment transcript" });
-    mockChatComplete.mockResolvedValue({
-      choices: [{ message: { content: "Generated notes" } }],
-    });
+    mockCreateResponse.mockResolvedValue(
+      completedTextResponse("Generated notes"),
+    );
     mockGenerateSummaries.mockResolvedValue({
       summarySentence: "Summary",
       summaryLabel: "Label",
@@ -426,6 +386,30 @@ describe("personalMediaUploadProcessingService", () => {
       },
     );
 
+    it("avoids caching unique personal recording inputs on capable notes models", async () => {
+      recordingSegments = [buildSegment(0)];
+      jest.mocked(getModelChoice).mockReturnValue({
+        provider: "openai",
+        model: "gpt-6.1-sol",
+      });
+
+      const controller = new AbortController();
+      await processPersonalMediaUpload(
+        { ...jobForOrigin(), attempts: 3 },
+        "instance-1",
+        controller.signal,
+      );
+
+      expect(mockCreateResponse).toHaveBeenCalledWith(
+        expect.objectContaining({
+          model: "gpt-6.1-sol",
+          input: [{ role: "user", content: "notes" }],
+          prompt_cache_options: { mode: "explicit", ttl: "30m" },
+        }),
+        { signal: controller.signal },
+      );
+    });
+
     it("does not blame transcription for a source download failure", async () => {
       recordingSegments = [buildSegment(0)];
       jest
@@ -453,12 +437,10 @@ describe("personalMediaUploadProcessingService", () => {
       recordingSegments = [buildSegment(0)];
     });
 
-    it.each(["   ", null, "<@123456789012345678>"])(
+    it.each(["   ", "", "<@123456789012345678>"])(
       "requeues then fails blank sanitized notes (%s)",
       async (content) => {
-        mockChatComplete.mockResolvedValue({
-          choices: [{ message: { content } }],
-        });
+        mockCreateResponse.mockResolvedValue(completedTextResponse(content));
         await processPersonalMediaUpload(
           { ...jobForOrigin(), attempts: 2 },
           "instance-1",
@@ -1083,17 +1065,7 @@ describe("personalMediaUploadProcessingService", () => {
 
     await processPersonalMediaUpload(buildDesktopJob(), "instance-1");
 
-    expect(mockChatComplete).not.toHaveBeenCalled();
-    expect(writeMeetingHistoryService).toHaveBeenLastCalledWith(
-      expect.objectContaining({
-        notes: "",
-        processing: {
-          transcription: "empty",
-          notes: "skipped",
-          summary: "skipped",
-        },
-      }),
-    );
+    expectEmptyUploadWithoutNotes();
   });
 
   it("records an empty ordinary upload without generating notes", async () => {
@@ -1101,17 +1073,7 @@ describe("personalMediaUploadProcessingService", () => {
 
     await processPersonalMediaUpload(buildJob(), "instance-1");
 
-    expect(mockChatComplete).not.toHaveBeenCalled();
-    expect(writeMeetingHistoryService).toHaveBeenLastCalledWith(
-      expect.objectContaining({
-        notes: "",
-        processing: {
-          transcription: "empty",
-          notes: "skipped",
-          summary: "skipped",
-        },
-      }),
-    );
+    expectEmptyUploadWithoutNotes();
   });
 
   it("salvages cached text on the last attempt and leaves the failed segment failed", async () => {
@@ -1247,7 +1209,7 @@ describe("personalMediaUploadProcessingService", () => {
         processing: expect.objectContaining({ transcription: "failed" }),
       }),
     );
-    expect(mockChatComplete).not.toHaveBeenCalled();
+    expect(mockCreateResponse).not.toHaveBeenCalled();
   });
 
   it("keeps an S3 artifact failure as a failed job", async () => {
@@ -1325,7 +1287,7 @@ describe("personalMediaUploadProcessingService", () => {
 
     await processPersonalMediaUpload(buildJob(), "instance-1");
 
-    expect(mockChatComplete).not.toHaveBeenCalled();
+    expect(mockCreateResponse).not.toHaveBeenCalled();
     expect(writeMeetingHistoryService).toHaveBeenLastCalledWith(
       expect.objectContaining({
         notes: "",
@@ -1360,7 +1322,7 @@ describe("personalMediaUploadProcessingService", () => {
       "instance-1",
     );
 
-    expect(mockChatComplete).not.toHaveBeenCalled();
+    expect(mockCreateResponse).not.toHaveBeenCalled();
     expect(uploadObjectToS3).not.toHaveBeenCalledWith(
       expect.stringContaining("owner_mic-000001.transcript.json"),
       expect.anything(),
@@ -1416,7 +1378,7 @@ describe("personalMediaUploadProcessingService", () => {
       }),
     );
     mockTranscribe.mockRejectedValue(new Error("provider failed"));
-    mockChatComplete.mockRejectedValueOnce(new Error("notes failed"));
+    mockCreateResponse.mockRejectedValueOnce(new Error("notes failed"));
 
     await processPersonalMediaUpload(
       { ...buildDesktopJob(), attempts: 3 },

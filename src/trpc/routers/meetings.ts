@@ -1,4 +1,6 @@
 import { publishCorrectionMessages } from "../../services/correctionMessageDeliveryService";
+import { firstMeeting } from "./firstMeeting";
+import { requireBotInGuild } from "./ensureBotPresence";
 import type { RuntimeApiOperation } from "../../services/runtimeApiOperationService";
 import {
   projectMeetingCapture,
@@ -20,7 +22,6 @@ import {
   updateMeetingNameService,
 } from "../../services/meetingHistoryService";
 import {
-  ensureBotInGuild,
   ensureManageGuildWithUserToken,
   type GuildSessionCache,
 } from "../../services/guildAccessService";
@@ -65,7 +66,7 @@ import {
   updateDiscordMessageEmbeds,
 } from "../../services/discordMessageService";
 import { generateMeetingSummaries } from "../../services/meetingSummaryService";
-import { createOpenAIClient } from "../../services/openaiClient";
+import { generateOpenAIText } from "../../services/openaiTextService";
 import { getLangfuseChatPrompt } from "../../services/langfusePromptService";
 import {
   buildModelOverrides,
@@ -592,27 +593,22 @@ async function generateCorrectedNotes(options: {
       model: modelChoice.model,
       config: options.modelParams,
     });
-    const openAIClient = createOpenAIClient({
-      traceName: "notes-correction-web",
-      generationName: "notes-correction-web",
-      tags: ["feature:notes_correction", "surface:web"],
-      metadata: {
-        requesterTag: options.requesterTag,
+    options.signal?.throwIfAborted();
+    const content = await generateOpenAIText({
+      model: modelChoice.model,
+      input: messages,
+      modelParams: chatParams,
+      signal: options.signal,
+      tracing: {
+        traceName: "notes-correction-web",
+        generationName: "notes-correction-web",
+        tags: ["feature:notes_correction", "surface:web"],
+        metadata: { requesterTag: options.requesterTag },
+        langfusePrompt,
       },
-      langfusePrompt,
     });
     options.signal?.throwIfAborted();
-    const completion = await openAIClient.chat.completions.create(
-      {
-        model: modelChoice.model,
-        messages,
-        ...chatParams,
-      },
-      options.signal ? { signal: options.signal } : undefined,
-    );
-    options.signal?.throwIfAborted();
 
-    const content = completion.choices[0]?.message?.content;
     if (content && content.trim().length > 0) {
       // A correction may keep the mentions already in the notes and may add one
       // the rosters offered, but anything outside both was invented.
@@ -943,19 +939,7 @@ const list = guildMemberProcedure
     }),
   )
   .query(async ({ ctx, input }) => {
-    const botCheck = await ensureBotInGuild(input.serverId);
-    if (botCheck === null) {
-      throw new TRPCError({
-        code: "TOO_MANY_REQUESTS",
-        message: "Discord rate limited. Please retry.",
-      });
-    }
-    if (!botCheck) {
-      throw new TRPCError({
-        code: "BAD_REQUEST",
-        message: "Bot is not in that guild",
-      });
-    }
+    await requireBotInGuild(input.serverId);
 
     const limit = input.limit ?? config.ask.maxMeetings;
     const meetings = await listRecentMeetingsForGuildService(
@@ -1352,7 +1336,7 @@ const updateNotes = authedProcedure
 
     const newVersion = currentVersion + 1;
     const editorLabel = buildRequesterTag(ctx.user);
-    const footerText = `v${newVersion} • Edited by ${editorLabel}`;
+    const footerText = `v${newVersion} â€¢ Edited by ${editorLabel}`;
 
     const ok = await updateMeetingNotesService({
       guildId: input.serverId,
@@ -1795,7 +1779,7 @@ const applyNotesCorrection = correctionProcedure
       resultingNotesVersion: newVersion,
     };
     const editorLabel = buildRequesterTag(ctx.user);
-    const footerText = `v${newVersion} • Edited by ${editorLabel}`;
+    const footerText = `v${newVersion} â€¢ Edited by ${editorLabel}`;
 
     // Generate summaries before any mutations
     const { serverName, channelName } = await ctx.operation.read(() =>
@@ -2080,6 +2064,7 @@ const setPersonalShareGrants = authedProcedure
   });
 
 export const meetingsRouter = router({
+  firstMeeting,
   list,
   myList,
   detail,

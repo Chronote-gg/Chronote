@@ -433,7 +433,7 @@ async function startWorkers(
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
   };
-  await uploads.write(job);
+  await uploads.write(job, await good.lifecycle.getRuntimeAdmissionContext());
   const processingGate = barrier(),
     processingEntered = barrier(),
     ancillaryGate = barrier(),

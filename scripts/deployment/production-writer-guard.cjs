@@ -2,13 +2,10 @@
 const { z } = require("zod");
 const { DynamoDBClient, GetItemCommand } = require("@aws-sdk/client-dynamodb");
 const { marshall, unmarshall } = require("@aws-sdk/util-dynamodb");
-const { readFileSync } = require("node:fs");
 const { awsCli } = require("./coordinator-aws.cjs");
 const {
   validatePrerequisitePlan,
 } = require("./validate-prerequisite-plan.cjs");
-const { assertPlanProvenance } = require("./plan-provenance.cjs");
-const receipts = new WeakSet();
 const configSchema = z
   .object({
     environment: z.literal("production"),
@@ -34,30 +31,6 @@ function assertPrerequisitePlan(plan, table) {
     )
   )
     refuse();
-}
-function prerequisiteReceipt({
-  config,
-  plan,
-  provenance,
-  bytes,
-  expected,
-  producingRun,
-}) {
-  const p = assertPlanProvenance({ provenance, bytes, expected, producingRun });
-  if (
-    p.environment !== "production" ||
-    p.workspace !== "default" ||
-    p.scope !== "deployment-prerequisites"
-  )
-    refuse();
-  assertPrerequisitePlan(plan, config.table);
-  const receipt = {
-    table: config.table,
-    accountId: config.accountId,
-    region: config.region,
-  };
-  receipts.add(receipt);
-  return receipt;
 }
 function assertCaller(config, caller) {
   configSchema.parse(config);
@@ -85,9 +58,9 @@ async function assertNormalWriter({
   } catch (error) {
     if (
       error.name === "ResourceNotFoundException" &&
-      receipts.has(prerequisite) &&
-      ["table", "accountId", "region"].every(
-        (k) => prerequisite[k] === config[k],
+      require("./terraform-workflow.cjs").privatePrerequisiteVerified(
+        prerequisite,
+        config,
       )
     )
       return { status: "allowed_prerequisite" };
@@ -111,35 +84,10 @@ function guardConfiguration(env) {
     table: env.DEPLOYMENT_CONTROL_TABLE,
   });
 }
-async function runGuard(env = process.env, inspectOnly = false) {
+async function runGuard(env = process.env, inspectOnly = false, prerequisite) {
   const config = guardConfiguration(env);
   const caller = await awsCli("sts", "get-caller-identity", {});
   const client = new DynamoDBClient({ region: config.region });
-  let prerequisite;
-  if (env.PREREQUISITE_PLAN_JSON) {
-    const input = {
-      config,
-      plan: JSON.parse(readFileSync(env.PREREQUISITE_PLAN_JSON, "utf8")),
-      provenance: JSON.parse(
-        readFileSync("_infra/plan-artifact/plan-provenance.json", "utf8"),
-      ),
-      bytes: readFileSync("_infra/tfplan"),
-      producingRun: JSON.parse(readFileSync("_infra/plan-run.json", "utf8")),
-      expected: {
-        repository: env.GITHUB_REPOSITORY,
-        source: env.GITHUB_SHA,
-        ref: env.GITHUB_REF,
-        runId: env.PLAN_RUN_ID,
-        artifact: env.ARTIFACT_NAME,
-        planHash: env.EXPECTED_SHA256,
-        environment: "production",
-        workspace: "default",
-      },
-    };
-    const provenance = assertPlanProvenance(input);
-    if (provenance.scope === "deployment-prerequisites")
-      prerequisite = prerequisiteReceipt(input);
-  }
   if (inspectOnly) {
     assertCaller(config, caller);
     try {
@@ -185,7 +133,6 @@ module.exports = {
   assertNormalWriter,
   assertCaller,
   assertPrerequisitePlan,
-  prerequisiteReceipt,
   guardConfiguration,
   runGuard,
 };

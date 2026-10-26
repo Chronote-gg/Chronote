@@ -6,7 +6,6 @@ import {
   readActualSource,
   readOidcOnlySource,
 } from "../fixtures/productionReviewedSource.js";
-import { canonicalHash } from "../../scripts/deployment/production-manifest.cjs";
 import {
   verifyDeclaredRoutes,
   readVerifiedFallbackTemplates,
@@ -28,19 +27,13 @@ function binding() {
     manifestHash: scope,
     manifest: {
       identity: { sourceCommit: commit },
-      launcherRoutes: [
-        ["workflow", ".github/workflows/deploy.yml"],
-        ["workflow", ".github/workflows/terraform-apply.yml"],
-        ["manual", "scripts/force-deployment.ps1"],
-      ].map(([kind, id]) => ({
-        kind,
-        id,
-        evidenceHash: canonicalHash({
-          sourceCommit: commit,
-          path: id,
-          contents: route,
-        }),
-      })),
+      launcherRoutes: reviewedRoutes(
+        { identity: { sourceCommit: commit } },
+        (file, encoding) =>
+          file.endsWith("production-introduction.yml")
+            ? readActualSource(file, encoding)
+            : route,
+      ),
     },
   };
 }
@@ -53,7 +46,12 @@ beforeEach(() => {
   mockFile
     .mockReset()
     .mockImplementation((file) =>
-      file.replaceAll("\\", "/").endsWith(path) ? template : route,
+      file.replaceAll("\\", "/").endsWith(path)
+        ? template
+        : String(file).includes("production-introduction.yml") ||
+            String(file).includes("production-workflow.cjs")
+          ? readActualSource(file, "utf8")
+          : route,
     );
 });
 test("fallback template identity comes from the authenticated clean source receipt", () => {
@@ -114,11 +112,35 @@ test("OIDC-exported credential consumption is not static credential acquisition"
   const actual = binding();
   const read = (file, encoding) =>
     String(file).endsWith("deploy.yml")
-      ? 'jobs: { reviewed: { steps: [{ uses: "aws-actions/configure-aws-credentials@v6", with: { role-to-assume: "${{ vars.PRODUCTION_DEPLOY_ROLE_ARN }}" } }, { run: "echo $AWS_ACCESS_KEY_ID" }] } }'
+      ? 'jobs: { reviewed: { steps: [{ uses: "aws-actions/configure-aws-credentials@v6", with: { role-to-assume: "${{ vars.PRODUCTION_BACKEND_DEPLOY_ROLE_ARN }}" } }, { run: "echo $AWS_ACCESS_KEY_ID" }] } }'
       : readOidcOnlySource(file, encoding);
   actual.manifest.launcherRoutes = reviewedRoutes(actual.manifest, read);
   mockFile.mockImplementation(read);
   expect(declaredRoutesVerified(verifyDeclaredRoutes(actual), scope)).toBe(
     true,
   );
+});
+
+test("staged source cannot silently replace its session limit or unavailable-authority refusal", () => {
+  for (const target of [
+    "production-introduction.yml",
+    "production-workflow.cjs",
+  ]) {
+    const actual = binding();
+    const read = (file, encoding) => {
+      const content = readOidcOnlySource(file, encoding);
+      if (!String(file).endsWith(target)) return content;
+      return target.endsWith(".yml")
+        ? content.replace('"ecs:DescribeTasks"', '"ecs:UpdateService"')
+        : content.replace(
+            'throw new Error("Post-bind human authority unavailable; preserve state")',
+            "return {}",
+          );
+    };
+    actual.manifest.launcherRoutes = reviewedRoutes(actual.manifest, read);
+    mockFile.mockImplementation(read);
+    expect(() => verifyDeclaredRoutes(actual)).toThrow(
+      "staged_source_prerequisite",
+    );
+  }
 });

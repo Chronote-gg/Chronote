@@ -19,7 +19,7 @@ export function launcherFixture(m = completeManifest()) {
   };
   const oidc = `arn:aws:iam::${account}:oidc-provider/token.actions.githubusercontent.com`;
   const variables = {
-    PRODUCTION_DEPLOY_ROLE_ARN: roles.deploy,
+    PRODUCTION_BACKEND_DEPLOY_ROLE_ARN: roles.deploy,
     PRODUCTION_APPLY_ROLE_ARN: roles.apply,
     PRODUCTION_PROMPT_GUARD_ROLE_ARN: roles.promptGuard,
     AWS_ACCOUNT_ID: account,
@@ -28,6 +28,8 @@ export function launcherFixture(m = completeManifest()) {
     ECS_CLUSTER: m.runtime.clusterArn,
     ECS_SERVICE: m.runtime.serviceArn,
     ECS_TASK_FAMILY: m.runtime.family,
+    SECRETS_PREFIX: "synthetic",
+    LANGFUSE_BASE_URL: "https://langfuse.invalid",
     DEPLOYMENT_LISTENER_ARN: m.resources.listenerArn,
     DEPLOYMENT_TARGET_GROUP_A: m.resources.targetGroupA,
     DEPLOYMENT_TARGET_GROUP_B: m.resources.targetGroupB,
@@ -104,10 +106,11 @@ export function launcherFixture(m = completeManifest()) {
   const paths = [
     ".github/workflows/deploy.yml",
     ".github/workflows/terraform-apply.yml",
+    ".github/workflows/production-introduction.yml",
     "scripts/force-deployment.ps1",
   ];
   m.launcherRoutes = paths.map((id, i) => ({
-    kind: i === 2 ? "manual" : "workflow",
+    kind: i === 3 ? "manual" : "workflow",
     id,
     evidenceHash: String(i + 1).repeat(64),
   }));
@@ -128,7 +131,7 @@ export function launcherFixture(m = completeManifest()) {
     },
     routes: m.launcherRoutes.map((r, i) => ({
       ...r,
-      ...(i === 2
+      ...(i === 3
         ? { status: "retired" }
         : {
             workflowId: i + 1,
