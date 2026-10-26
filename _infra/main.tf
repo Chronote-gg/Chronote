@@ -568,9 +568,9 @@ resource "aws_ecr_lifecycle_policy" "app_ecr_repo_lifecycle_policy" {
     "rules": [
         {
             "rulePriority": 1,
-            "description": "Keep last two images",
+            "description": "Keep last two untagged images; retain tagged releases",
             "selection": {
-                "tagStatus": "any",
+                "tagStatus": "untagged",
                 "countType": "imageCountMoreThan",
                 "countNumber": 2
             },
