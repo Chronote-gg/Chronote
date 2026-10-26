@@ -32,6 +32,16 @@ updates:
       - dependency-name: "typescript"
         versions: ["7.0.x"]
 
+      # Langfuse 6.x requires the OpenTelemetry 2.x / 0.223 stack.
+      - dependency-name: "@opentelemetry/core"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "@opentelemetry/api"
+        versions: [">=1.10.0"]
+      - dependency-name: "@opentelemetry/sdk-node"
+        versions: [">=0.300.0"]
+      - dependency-name: "@opentelemetry/exporter-trace-otlp-http"
+        versions: [">=0.300.0"]
+
   - package-ecosystem: "uv"
     directory: "/"
     # 1.24.3 crashes parsing existing TypeScript; reconsider when fixed upstream.
@@ -58,6 +68,10 @@ updates:
 
   - package-ecosystem: "docker"
     directory: "/"
+    # The application and shared quality tool target Node 24.
+    ignore:
+      - dependency-name: "node"
+        update-types: ["version-update:semver-major"]
     patterns:
       - "*"
     multi-ecosystem-group: "dependencies"

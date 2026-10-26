@@ -5,7 +5,7 @@ import { readFileSync } from "node:fs";
 
 const read = (name) =>
   readFileSync(new URL("../" + name, import.meta.url), "utf8");
-const release = "0873869f6b8fd80150d24689849ec0aebd94e9dd";
+const release = "84fa993cf93b9dedd4da19ecbad75bc8712d0874";
 
 function hasVisibleQualityExceptionHeading(template) {
   let inComment = false;

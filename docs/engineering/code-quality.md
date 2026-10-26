@@ -76,11 +76,11 @@ governs a shared-tool comparison.
 
 ## Local tool setup
 
-Use Node 24.15.0 or a newer Node 24 release. Keep the tool separate from the application checkout. For example, in PowerShell:
+Use Node 24.22.1 or a newer Node 24 release. CI reads the exact version from `.nvmrc`; keep the Docker base and application engine floor aligned when changing it. Keep the tool separate from the application checkout. For example, in PowerShell:
 
 ```powershell
 git clone https://github.com/BASIC-BIT/quality-ratchet.git D:/tools/quality-ratchet
-git -C D:/tools/quality-ratchet checkout --detach 0873869f6b8fd80150d24689849ec0aebd94e9dd
+git -C D:/tools/quality-ratchet checkout --detach 84fa993cf93b9dedd4da19ecbad75bc8712d0874
 Push-Location D:/tools/quality-ratchet
 npm ci --ignore-scripts --omit=dev --include=optional
 Pop-Location
@@ -92,4 +92,4 @@ yarn check:quality --base origin/master
 
 On Linux, set `QUALITY_RATCHET_HOME=/path/to/quality-ratchet` in the command environment after the same checkout and install steps. No threshold, mode, scope, or exception override is available through this setting.
 
-The shared [design](https://github.com/BASIC-BIT/quality-ratchet/blob/0873869f6b8fd80150d24689849ec0aebd94e9dd/docs/superpowers/specs/2026-10-16-quality-ratchet-design.md) and [implementation plan](https://github.com/BASIC-BIT/quality-ratchet/blob/0873869f6b8fd80150d24689849ec0aebd94e9dd/docs/superpowers/plans/2026-10-16-quality-ratchet.md) are maintained in the shared repository. Earlier Chronote design and acceptance documents describe the original local implementation.
+The shared [design](https://github.com/BASIC-BIT/quality-ratchet/blob/84fa993cf93b9dedd4da19ecbad75bc8712d0874/docs/superpowers/specs/2026-10-16-quality-ratchet-design.md) and [implementation plan](https://github.com/BASIC-BIT/quality-ratchet/blob/84fa993cf93b9dedd4da19ecbad75bc8712d0874/docs/superpowers/plans/2026-10-16-quality-ratchet.md) are maintained in the shared repository. Earlier Chronote design and acceptance documents describe the original local implementation.

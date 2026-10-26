@@ -23,7 +23,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v7
         with:
-          node-version: "24.15.0"
+          node-version-file: ".nvmrc"
           cache: "yarn"
           cache-dependency-path: "yarn.lock"
 
@@ -43,7 +43,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v7
         with:
-          node-version: "24.15.0"
+          node-version-file: ".nvmrc"
           cache: "yarn"
           cache-dependency-path: "yarn.lock"
 
@@ -63,7 +63,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v7
         with:
-          node-version: "24.15.0"
+          node-version-file: ".nvmrc"
           cache: "yarn"
           cache-dependency-path: "yarn.lock"
 
@@ -130,7 +130,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v7
         with:
-          node-version: "24.15.0"
+          node-version-file: ".nvmrc"
           cache: "yarn"
           cache-dependency-path: "yarn.lock"
 
@@ -162,7 +162,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v7
         with:
-          node-version: "24.15.0"
+          node-version-file: ".nvmrc"
           cache: "yarn"
           cache-dependency-path: |
             yarn.lock
@@ -184,7 +184,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v7
         with:
-          node-version: "24.15.0"
+          node-version-file: ".nvmrc"
           cache: "yarn"
           cache-dependency-path: "yarn.lock"
 
@@ -206,7 +206,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v7
         with:
-          node-version: "24.15.0"
+          node-version-file: ".nvmrc"
           cache: "yarn"
           cache-dependency-path: "yarn.lock"
 
@@ -444,7 +444,7 @@ jobs:
       - name: Setup coordinator Node.js
         uses: actions/setup-node@v7
         with:
-          node-version: "24.15.0"
+          node-version-file: ".nvmrc"
           cache: "yarn"
           cache-dependency-path: "yarn.lock"
 
@@ -530,7 +530,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v7
         with:
-          node-version: "24.15.0"
+          node-version-file: ".nvmrc"
           cache: "yarn"
           cache-dependency-path: "yarn.lock"
 
@@ -609,7 +609,7 @@ jobs:
         if: steps.docs-config.outputs.enabled == 'true'
         uses: actions/setup-node@v7
         with:
-          node-version: "24.15.0"
+          node-version-file: ".nvmrc"
           cache: "yarn"
           cache-dependency-path: "yarn.lock"
 
