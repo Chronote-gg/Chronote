@@ -27,7 +27,6 @@ on:
           - full
           - purchase-permission
           - deployment-prerequisites
-          - deployment-prerequisites
 
 permissions:
   actions: read

@@ -15,8 +15,8 @@ variable "production_introduction_standalone_tasks" {
   type    = set(string)
   default = []
   validation {
-    condition     = alltrue([for arn in var.production_introduction_standalone_tasks : can(regex("^arn:aws:ecs:[a-z0-9-]+:[0-9]{12}:task/[^*]+/[^*]+$", arn))])
-    error_message = "Only exact approved standalone task ARNs are permitted."
+    condition     = alltrue([for arn in var.production_introduction_standalone_tasks : can(regex("^arn:aws:ecs:[a-z0-9-]+:[0-9]{12}:task/[A-Za-z0-9_-]{1,255}/[0-9a-f]{32}$", arn))])
+    error_message = "Only exact long task ARNs with a cluster name and 32-character lowercase hexadecimal task ID are permitted."
   }
 }
 locals {

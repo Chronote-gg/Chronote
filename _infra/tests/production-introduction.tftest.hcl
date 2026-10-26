@@ -147,6 +147,184 @@ run "exact_production_authority" {
   }
 }
 
+run "standalone_task_rejects_question_mark" {
+  command = plan
+  plan_options { target = [aws_iam_role_policy.production_introduction] }
+  variables {
+    environment                              = "prod"
+    github_environment                       = "production"
+    enable_production_introduction_roles     = true
+    production_introduction_task_definitions = ["arn:aws:ecs:us-east-1:123456789012:task-definition/chronote-prod-bot-task:1", "arn:aws:ecs:us-east-1:123456789012:task-definition/chronote-prod-bot-task:2", "arn:aws:ecs:us-east-1:123456789012:task-definition/chronote-prod-bot-task:3", "arn:aws:ecs:us-east-1:123456789012:task-definition/chronote-prod-bot-task:4"]
+    production_introduction_standalone_tasks = ["arn:aws:ecs:us-east-1:123456789012:task/chronote-prod-bot-cluster/????????????????????????????????"]
+  }
+  expect_failures = [var.production_introduction_standalone_tasks]
+}
+
+run "standalone_task_rejects_task_asterisk" {
+  command = plan
+  plan_options { target = [aws_iam_role.production_introduction] }
+  variables {
+    production_introduction_standalone_tasks = ["arn:aws:ecs:us-east-1:123456789012:task/chronote-prod-bot-cluster/*"]
+  }
+  expect_failures = [var.production_introduction_standalone_tasks]
+}
+
+run "standalone_task_rejects_cluster_question_mark" {
+  command = plan
+  plan_options { target = [aws_iam_role.production_introduction] }
+  variables {
+    production_introduction_standalone_tasks = ["arn:aws:ecs:us-east-1:123456789012:task/chronote-prod-bot-cluste?/0123456789abcdef0123456789abcdef"]
+  }
+  expect_failures = [var.production_introduction_standalone_tasks]
+}
+
+run "standalone_task_rejects_cluster_asterisk" {
+  command = plan
+  plan_options { target = [aws_iam_role.production_introduction] }
+  variables {
+    production_introduction_standalone_tasks = ["arn:aws:ecs:us-east-1:123456789012:task/chronote-prod-bot-*/0123456789abcdef0123456789abcdef"]
+  }
+  expect_failures = [var.production_introduction_standalone_tasks]
+}
+
+run "standalone_task_rejects_nested_path" {
+  command = plan
+  plan_options { target = [aws_iam_role.production_introduction] }
+  variables {
+    production_introduction_standalone_tasks = ["arn:aws:ecs:us-east-1:123456789012:task/chronote-prod-bot-cluster/extra/0123456789abcdef0123456789abcdef"]
+  }
+  expect_failures = [var.production_introduction_standalone_tasks]
+}
+
+run "standalone_task_rejects_empty_cluster" {
+  command = plan
+  plan_options { target = [aws_iam_role.production_introduction] }
+  variables {
+    production_introduction_standalone_tasks = ["arn:aws:ecs:us-east-1:123456789012:task//0123456789abcdef0123456789abcdef"]
+  }
+  expect_failures = [var.production_introduction_standalone_tasks]
+}
+
+run "standalone_task_rejects_empty_task_id" {
+  command = plan
+  plan_options { target = [aws_iam_role.production_introduction] }
+  variables {
+    production_introduction_standalone_tasks = ["arn:aws:ecs:us-east-1:123456789012:task/chronote-prod-bot-cluster/"]
+  }
+  expect_failures = [var.production_introduction_standalone_tasks]
+}
+
+run "standalone_task_rejects_short_task_id" {
+  command = plan
+  plan_options { target = [aws_iam_role.production_introduction] }
+  variables {
+    production_introduction_standalone_tasks = ["arn:aws:ecs:us-east-1:123456789012:task/chronote-prod-bot-cluster/123456789abcdef0123456789abcdef"]
+  }
+  expect_failures = [var.production_introduction_standalone_tasks]
+}
+
+run "standalone_task_rejects_long_task_id" {
+  command = plan
+  plan_options { target = [aws_iam_role.production_introduction] }
+  variables {
+    production_introduction_standalone_tasks = ["arn:aws:ecs:us-east-1:123456789012:task/chronote-prod-bot-cluster/0123456789abcdef0123456789abcdef0"]
+  }
+  expect_failures = [var.production_introduction_standalone_tasks]
+}
+
+run "standalone_task_rejects_non_hex_task_id" {
+  command = plan
+  plan_options { target = [aws_iam_role.production_introduction] }
+  variables {
+    production_introduction_standalone_tasks = ["arn:aws:ecs:us-east-1:123456789012:task/chronote-prod-bot-cluster/123456789abcdef0123456789abcdefg"]
+  }
+  expect_failures = [var.production_introduction_standalone_tasks]
+}
+
+run "standalone_task_rejects_invalid_cluster_character" {
+  command = plan
+  plan_options { target = [aws_iam_role.production_introduction] }
+  variables {
+    production_introduction_standalone_tasks = ["arn:aws:ecs:us-east-1:123456789012:task/chronote.prod.bot.cluster/0123456789abcdef0123456789abcdef"]
+  }
+  expect_failures = [var.production_introduction_standalone_tasks]
+}
+
+run "standalone_task_rejects_oversized_cluster" {
+  command = plan
+  plan_options { target = [aws_iam_role.production_introduction] }
+  variables {
+    production_introduction_standalone_tasks = ["arn:aws:ecs:us-east-1:123456789012:task/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/0123456789abcdef0123456789abcdef"]
+  }
+  expect_failures = [var.production_introduction_standalone_tasks]
+}
+
+run "standalone_task_rejects_hyphenated_task_id" {
+  command = plan
+  plan_options { target = [aws_iam_role.production_introduction] }
+  variables {
+    production_introduction_standalone_tasks = ["arn:aws:ecs:us-east-1:123456789012:task/chronote-prod-bot-cluster/01234567-89ab-cdef-0123-456789abcdef"]
+  }
+  expect_failures = [var.production_introduction_standalone_tasks]
+}
+
+run "exact_standalone_task_policy" {
+  command = plan
+  plan_options { target = [aws_iam_role_policy.production_introduction] }
+  variables {
+    environment                              = "prod"
+    github_environment                       = "production"
+    enable_production_introduction_roles     = true
+    production_introduction_task_definitions = ["arn:aws:ecs:us-east-1:123456789012:task-definition/chronote-prod-bot-task:1", "arn:aws:ecs:us-east-1:123456789012:task-definition/chronote-prod-bot-task:2", "arn:aws:ecs:us-east-1:123456789012:task-definition/chronote-prod-bot-task:3", "arn:aws:ecs:us-east-1:123456789012:task-definition/chronote-prod-bot-task:4"]
+    production_introduction_standalone_tasks = ["arn:aws:ecs:us-east-1:123456789012:task/chronote-prod-bot-cluster/0123456789abcdef0123456789abcdef"]
+  }
+  assert {
+    condition = one([for s in jsondecode(aws_iam_role_policy.production_introduction[0].policy).Statement : s if contains(s.Action, "ecs:StopTask")]) == {
+      Sid = "ApprovedStandaloneStops", Effect = "Allow", Action = ["ecs:StopTask"], Resource = ["arn:aws:ecs:us-east-1:123456789012:task/chronote-prod-bot-cluster/0123456789abcdef0123456789abcdef"]
+    }
+    error_message = "Standalone stop authority must contain exactly the approved task ARN and no additional action or resource."
+  }
+}
+
+run "standalone_task_rejects_foreign_account" {
+  command = plan
+  plan_options { target = [aws_iam_role_policy.production_introduction] }
+  variables {
+    environment                              = "prod"
+    github_environment                       = "production"
+    enable_production_introduction_roles     = true
+    production_introduction_task_definitions = ["arn:aws:ecs:us-east-1:123456789012:task-definition/chronote-prod-bot-task:1", "arn:aws:ecs:us-east-1:123456789012:task-definition/chronote-prod-bot-task:2", "arn:aws:ecs:us-east-1:123456789012:task-definition/chronote-prod-bot-task:3", "arn:aws:ecs:us-east-1:123456789012:task-definition/chronote-prod-bot-task:4"]
+    production_introduction_standalone_tasks = ["arn:aws:ecs:us-east-1:999999999999:task/chronote-prod-bot-cluster/0123456789abcdef0123456789abcdef"]
+  }
+  expect_failures = [aws_iam_role.production_introduction]
+}
+
+run "standalone_task_rejects_foreign_region" {
+  command = plan
+  plan_options { target = [aws_iam_role_policy.production_introduction] }
+  variables {
+    environment                              = "prod"
+    github_environment                       = "production"
+    enable_production_introduction_roles     = true
+    production_introduction_task_definitions = ["arn:aws:ecs:us-east-1:123456789012:task-definition/chronote-prod-bot-task:1", "arn:aws:ecs:us-east-1:123456789012:task-definition/chronote-prod-bot-task:2", "arn:aws:ecs:us-east-1:123456789012:task-definition/chronote-prod-bot-task:3", "arn:aws:ecs:us-east-1:123456789012:task-definition/chronote-prod-bot-task:4"]
+    production_introduction_standalone_tasks = ["arn:aws:ecs:us-west-2:123456789012:task/chronote-prod-bot-cluster/0123456789abcdef0123456789abcdef"]
+  }
+  expect_failures = [aws_iam_role.production_introduction]
+}
+
+run "standalone_task_rejects_foreign_cluster" {
+  command = plan
+  plan_options { target = [aws_iam_role_policy.production_introduction] }
+  variables {
+    environment                              = "prod"
+    github_environment                       = "production"
+    enable_production_introduction_roles     = true
+    production_introduction_task_definitions = ["arn:aws:ecs:us-east-1:123456789012:task-definition/chronote-prod-bot-task:1", "arn:aws:ecs:us-east-1:123456789012:task-definition/chronote-prod-bot-task:2", "arn:aws:ecs:us-east-1:123456789012:task-definition/chronote-prod-bot-task:3", "arn:aws:ecs:us-east-1:123456789012:task-definition/chronote-prod-bot-task:4"]
+    production_introduction_standalone_tasks = ["arn:aws:ecs:us-east-1:123456789012:task/other-cluster/0123456789abcdef0123456789abcdef"]
+  }
+  expect_failures = [aws_iam_role.production_introduction]
+}
+
 run "acceptance_disabled_by_default" {
   command = plan
   plan_options { target = [aws_iam_role.production_acceptance_collector, aws_iam_role_policy.production_launcher_reads] }
