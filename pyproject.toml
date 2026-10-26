@@ -5,7 +5,8 @@ description = "Dev tooling dependencies for local scripts"
 requires-python = ">=3.10"
 dependencies = [
     "boto3>=1.43.109",
-    "lizard>=1.23.0",
+    # 1.24.3 crashes on existing TypeScript in meetingTimelineService.ts.
+    "lizard==1.24.1",
     "requests>=2.34.2",
 ]
 

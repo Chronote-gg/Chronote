@@ -232,7 +232,6 @@ Optional Windows helper (prints loaded env, supports `-Mock` / `-SkipDocker`):
 
 - The weekly maintenance job covers Chronote and chronote-ops, consolidates dependency PRs, checks compatible upgrades and leaves merging to a human.
 - Stripe 23 uses API `2026-09-30.endive`; billing-cycle anchor requests use `{ type: "now" }`. Langfuse 6 records trace input/output on the root observation.
-
 - Dependabot proposes one cross-ecosystem version-update PR each Monday at 09:00 UTC, including desktop npm and Rust dependencies. Security updates are grouped within each ecosystem and may arrive outside that schedule.
 - Consolidate outstanding dependency PRs on current master, retain intentional compatibility ignores and security resolutions, run the normal quality gates, and close superseded PRs only after the replacement is published with their links.
 
