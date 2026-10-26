@@ -25,6 +25,7 @@ import { parseMeetingUpdateHistory } from "../../src/repositories/meetingUpdateD
 import { personalProcessingHistoryFields } from "../../src/db";
 import { authority } from "../repositories/meetingUpdateDeliveryContract";
 beforeEach(() => resetMockStore());
+afterEach(() => jest.restoreAllMocks());
 test("initial terminal persistence after a newer notes save preserves the canonical edit and its intent", async () => {
   const row = {
     ...history(),

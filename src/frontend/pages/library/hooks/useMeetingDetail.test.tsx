@@ -220,6 +220,49 @@ describe("completed delivery refresh", () => {
     });
     expect(mockRefetch).toHaveBeenCalledTimes(1);
   });
+  test("a higher acknowledged revision restarts a bounded budget with stable refetch", async () => {
+    const pending = mockDetail.updateDelivery;
+    if (!pending) throw new Error("Pending delivery fixture required");
+    const acknowledgment: Pick<
+      Parameters<typeof useMeetingDetail>[0],
+      "acknowledgedDelivery"
+    > = {};
+    const selection = params();
+    const hook = renderHook(() =>
+      useMeetingDetail({ ...selection, ...acknowledgment }),
+    );
+    // mockRefetch is the same function throughout, including every new data object.
+    const read = async () => {
+      mockDetail = {
+        ...mockDetail,
+        updateDelivery: { ...(mockDetail.updateDelivery ?? pending) },
+      };
+      hook.rerender();
+      await act(async () => {
+        jest.advanceTimersByTime(5000);
+      });
+    };
+    for (let i = 0; i < 61; i++) await read();
+    expect(mockRefetch).toHaveBeenCalledTimes(60);
+
+    acknowledgment.acknowledgedDelivery = {
+      ...pending,
+      desiredRevision: pending.desiredRevision + 1,
+    };
+    await read();
+    expect(mockRefetch).toHaveBeenCalledTimes(61);
+    expect(hook.result.current.meeting?.notes).toBe("Saved canonical notes");
+
+    // Canonical readback catches the ACK without starting another episode.
+    mockDetail = {
+      ...mockDetail,
+      updateDelivery: acknowledgment.acknowledgedDelivery,
+    };
+    for (let i = 0; i < 61; i++) await read();
+    expect(mockRefetch).toHaveBeenCalledTimes(120);
+    expect(hook.result.current.meeting?.notes).toBe("Saved canonical notes");
+  });
+
   test("bounds an open pending selection to sixty completed reads", async () => {
     renderHook(() => useMeetingDetail(params()));
     for (let i = 0; i < 61; i++)

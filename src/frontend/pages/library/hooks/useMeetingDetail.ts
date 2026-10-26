@@ -209,6 +209,7 @@ export const useMeetingDetail = (
       ? acknowledgment
       : detail?.updateDelivery;
   const pollable = delivery?.pollable === true;
+  const desiredRevision = delivery?.desiredRevision;
   const refetch = detailQuery.refetch;
   useEffect(() => {
     if (
@@ -242,6 +243,7 @@ export const useMeetingDetail = (
     params.selectedGuildId,
     params.selectedMeetingId,
     pollable,
+    desiredRevision,
     refetch,
   ]);
 
