@@ -1,6 +1,11 @@
 /** @jest-environment node */
 import { jest, test, expect, beforeEach } from "@jest/globals";
 import { createHash } from "node:crypto";
+import {
+  reviewedRoutes,
+  readActualSource,
+  readOidcOnlySource,
+} from "../fixtures/productionReviewedSource.js";
 import { canonicalHash } from "../../scripts/deployment/production-manifest.cjs";
 import {
   verifyDeclaredRoutes,
@@ -15,7 +20,8 @@ jest.mock("node:child_process", () => ({
 jest.mock("node:fs", () => ({ readFileSync: (...args) => mockFile(...args) }));
 const commit = "a".repeat(40),
   scope = "b".repeat(64),
-  template = "reviewed source template bytes";
+  template = "reviewed source template bytes",
+  route = "jobs: { reviewed: { steps: [] } }";
 const path = "src/services/transcriptionPromptService.ts";
 function binding() {
   return {
@@ -32,7 +38,7 @@ function binding() {
         evidenceHash: canonicalHash({
           sourceCommit: commit,
           path: id,
-          contents: "route",
+          contents: route,
         }),
       })),
     },
@@ -47,7 +53,7 @@ beforeEach(() => {
   mockFile
     .mockReset()
     .mockImplementation((file) =>
-      file.replaceAll("\\", "/").endsWith(path) ? template : "route",
+      file.replaceAll("\\", "/").endsWith(path) ? template : route,
     );
 });
 test("fallback template identity comes from the authenticated clean source receipt", () => {
@@ -83,7 +89,36 @@ test("wrong source, dirty source and unavailable template never bind a fallback"
   mockFile.mockImplementation((file) => {
     if (file.replaceAll("\\", "/").endsWith(path))
       throw Error("missing-template");
-    return "route";
+    return route;
   });
   expect(() => verifyDeclaredRoutes(binding())).toThrow();
+});
+
+test.each(["deploy.yml", "terraform-apply.yml"])(
+  "actual reviewed %s source with bound hashes refuses its unaccounted static credential route",
+  (workflow) => {
+    const actual = binding();
+    const read = (file, encoding) =>
+      String(file).endsWith(workflow)
+        ? readActualSource(file, encoding)
+        : readOidcOnlySource(file, encoding);
+    actual.manifest.launcherRoutes = reviewedRoutes(actual.manifest, read);
+    mockFile.mockImplementation(read);
+    expect(() => verifyDeclaredRoutes(actual)).toThrow(
+      "unaccounted_static_credential_route",
+    );
+  },
+);
+
+test("OIDC-exported credential consumption is not static credential acquisition", () => {
+  const actual = binding();
+  const read = (file, encoding) =>
+    String(file).endsWith("deploy.yml")
+      ? 'jobs: { reviewed: { steps: [{ uses: "aws-actions/configure-aws-credentials@v6", with: { role-to-assume: "${{ vars.PRODUCTION_DEPLOY_ROLE_ARN }}" } }, { run: "echo $AWS_ACCESS_KEY_ID" }] } }'
+      : readOidcOnlySource(file, encoding);
+  actual.manifest.launcherRoutes = reviewedRoutes(actual.manifest, read);
+  mockFile.mockImplementation(read);
+  expect(declaredRoutesVerified(verifyDeclaredRoutes(actual), scope)).toBe(
+    true,
+  );
 });

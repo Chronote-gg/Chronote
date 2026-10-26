@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { jest } from "@jest/globals";
+import { reviewedRoutes } from "../../fixtures/productionReviewedSource.js";
 import { GetItemCommand, QueryCommand } from "@aws-sdk/client-dynamodb";
 import { unmarshall } from "@aws-sdk/util-dynamodb";
 import {
@@ -23,6 +23,13 @@ import {
 } from "../../../scripts/deployment/production-candidate.cjs";
 import { verifyDeclaredRoutes } from "../../../scripts/deployment/production-source-routes.cjs";
 import { counts } from "./coordinatorFixture";
+jest.mock("node:fs", () => ({
+  ...jest.requireActual("node:fs"),
+  readFileSync: (...args) =>
+    jest
+      .requireActual("../../fixtures/productionReviewedSource.js")
+      .sourceTransport.read(...args),
+}));
 export async function productionOrchestrationFixture(settings = {}) {
   const m = completeManifest();
   m.runtime.continuationDigest = m.runtime.candidateDigest;
@@ -131,19 +138,7 @@ export async function productionOrchestrationFixture(settings = {}) {
     legacy.containerDefinitions[0].environment.map((e) => e.name);
   definitions.set(m.runtime.legacyDefinition, legacy);
   m.runtime.configurationHash = canonicalHash(definitionMetadata(legacy));
-  m.launcherRoutes = [
-    ["workflow", ".github/workflows/deploy.yml"],
-    ["workflow", ".github/workflows/terraform-apply.yml"],
-    ["manual", "scripts/force-deployment.ps1"],
-  ].map(([kind, id]) => ({
-    kind,
-    id,
-    evidenceHash: canonicalHash({
-      sourceCommit: m.identity.sourceCommit,
-      path: id,
-      contents: readFileSync(resolve(id), "utf8").replace(/\r\n/g, "\n"),
-    }),
-  }));
+  m.launcherRoutes = reviewedRoutes(m);
   settings.configure?.(m);
   const instanceId = (slot) => settings.instanceIds?.[slot] ?? slot;
   const binding = bound(m),

@@ -6,6 +6,11 @@ import { createHash, randomUUID } from "node:crypto";
 import { productionOrchestrationFixture } from "./productionOrchestration.js";
 import { consumeMaximumRenewals } from "./maximumIntroductionRenewals.js";
 import { hostedAcceptance } from "./productionAcceptanceHosted.js";
+import {
+  sourceTransport,
+  readActualSource,
+  readOidcOnlySource,
+} from "../../fixtures/productionReviewedSource.js";
 import { contentFixture } from "../../fixtures/productionFixtureContent.js";
 import {
   createIntroductionTable,
@@ -13,6 +18,7 @@ import {
   readIntroductionDocument as read,
 } from "./introductionStore";
 import { loadProductionPackage } from "../../../scripts/deployment/production-private-package.cjs";
+import { verifyDeclaredRoutes } from "../../../scripts/deployment/production-source-routes.cjs";
 import {
   collectLauncherSettingsFromOriginalRun,
   readLauncherSettings,
@@ -26,6 +32,7 @@ import { dispatchAcceptance } from "../../../scripts/deployment/accept-productio
 const mockProductionClients = [];
 let mockAfterProductionSend = async () => undefined;
 afterEach(() => {
+  sourceTransport.read = readOidcOnlySource;
   jest.restoreAllMocks();
   for (const client of mockProductionClients.splice(0)) client.destroy();
   mockCli.mockReset();
@@ -102,12 +109,36 @@ function cloneInTestRealm(value) {
 }
 async function assertFinalFault({
   fault,
+  purpose,
   f,
   table,
-  token,
-  value,
+  collect,
   invocations,
 }) {
+  if (fault === "static-route") {
+    const beforeHold = await read(table, { pk: "ENV", sk: "INTRODUCTION" });
+    const beforeControl = await read(table, { pk: "ENV", sk: "CONTROL" });
+    sourceTransport.read = readActualSource;
+    expect(() => verifyDeclaredRoutes(f.binding)).toThrow(
+      "unaccounted_static_credential_route",
+    );
+    await expect(collect()).rejects.toThrow("fixture_content_refused");
+    expect(await read(table, { pk: "ENV", sk: "INTRODUCTION" })).toEqual(
+      beforeHold,
+    );
+    expect(await read(table, { pk: "ENV", sk: "CONTROL" })).toEqual(
+      beforeControl,
+    );
+    expect(
+      await read(table, {
+        pk: `INTRODUCTION#${f.m.introductionId}`,
+        sk: `ACTION#${f.m.actions.find((action) => action.purpose === purpose).actionId}`,
+      }),
+    ).toBeUndefined();
+    expect(invocations()).toBe(0);
+    return;
+  }
+  const { token, value } = await collect();
   if (fault === "expiry-before-dispatch") f.state.time = f.m.validUntil;
   if (fault === "late-ack") await dispatchAcceptance(token);
   else await expect(dispatchAcceptance(token)).rejects.toThrow();
@@ -124,7 +155,6 @@ async function assertFinalFault({
   expect(journal?.phase).toBe(expectedPhase);
   expect(invocations()).toBe(["late-ack", "lost-ack"].includes(fault) ? 1 : 0);
   const changed = ["late-ack", "lost-ack"].includes(fault);
-  const purpose = value.stage.action.purpose;
   const reopened = purpose !== "persist_acceptance" && changed;
   const released = purpose === "release_deployment" && changed;
   const hold = await read(table, { pk: "ENV", sk: "INTRODUCTION" });
@@ -337,29 +367,33 @@ export async function fullAcceptance(
     if (fault === "lost-ack")
       throw Error("transport ACK lost after native commit");
   };
-  for (const purpose of [
-    "persist_acceptance",
-    "reopen_admission",
-    "release_deployment",
-  ]) {
-    currentPurpose = purpose;
+  const collect = async (purpose) => {
     const token = await collectAcceptanceFromOriginalRun(),
       value = readAcceptance(token);
     expect(value.stage.action.purpose).toBe(purpose);
     expect(value.history.entries.length).toBe(path === "normal" ? 95 : 107);
     for (const copy of [{ ...token }, structuredClone(token)])
       expect(() => readAcceptance(copy)).toThrow();
+    return { token, value };
+  };
+  for (const purpose of [
+    "persist_acceptance",
+    "reopen_admission",
+    "release_deployment",
+  ]) {
+    currentPurpose = purpose;
     if (fault && purpose === faultPurpose) {
       await assertFinalFault({
         fault,
+        purpose,
         f,
         table,
-        token,
-        value,
+        collect: () => collect(purpose),
         invocations: () => finalInvocations,
       });
       return;
     }
+    const { token } = await collect(purpose);
     await dispatchAcceptance(token);
   }
   expect(

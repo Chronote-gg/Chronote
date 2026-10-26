@@ -1,5 +1,5 @@
-import { introduceProduction } from "../../scripts/deployment/introduce-production.cjs";
 import { productionOrchestrationFixture } from "./fixtures/productionOrchestration.js";
+import { introduceProduction } from "../../scripts/deployment/introduce-production.cjs";
 jest.mock("node:child_process", () => ({
   ...jest.requireActual("node:child_process"),
   execFileSync: jest.fn((_file, args) =>

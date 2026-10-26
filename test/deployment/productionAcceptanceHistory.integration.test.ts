@@ -1,7 +1,7 @@
+import { productionOrchestrationFixture } from "./fixtures/productionOrchestration.js";
 import { consumeMaximumRenewals } from "./fixtures/maximumIntroductionRenewals.js";
 import { introduceProduction } from "../../scripts/deployment/introduce-production.cjs";
 import { readIntroductionHistory } from "../../scripts/deployment/production-acceptance-history.cjs";
-import { productionOrchestrationFixture } from "./fixtures/productionOrchestration.js";
 import {
   buildReserveIntroductionAction,
   buildTransitionIntroductionAction,

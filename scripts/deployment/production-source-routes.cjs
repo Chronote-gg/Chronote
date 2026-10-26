@@ -3,6 +3,7 @@ const { createHash } = require("node:crypto");
 const { readFileSync } = require("node:fs");
 const { execFileSync } = require("node:child_process");
 const { resolve } = require("node:path");
+const { parse } = require("yaml");
 const { canonicalHash } = require("./production-manifest.cjs");
 const receipts = new WeakMap();
 const paths = [
@@ -10,6 +11,26 @@ const paths = [
   ["workflow", ".github/workflows/terraform-apply.yml"],
   ["manual", "scripts/force-deployment.ps1"],
 ];
+function assertWorkflowCredentials(contents) {
+  const workflow = parse(contents);
+  if (
+    !workflow?.jobs ||
+    typeof workflow.jobs !== "object" ||
+    Array.isArray(workflow.jobs)
+  )
+    throw Error("source_route_prerequisite");
+  // Static credential inputs/references are outside the reviewed seven-role identity inventory.
+  const source = JSON.stringify(workflow);
+  if (
+    /"(?:aws-access-key-id|aws-secret-access-key|aws-session-token|AWS_ACCESS_KEY_ID|AWS_SECRET_ACCESS_KEY|AWS_SESSION_TOKEN)"\s*:/i.test(
+      source,
+    ) ||
+    /\b(?:secrets|vars)\.(?:AWS_ACCESS_KEY_ID|AWS_SECRET_ACCESS_KEY|AWS_SESSION_TOKEN)\b/.test(
+      source,
+    )
+  )
+    throw Error("unaccounted_static_credential_route");
+}
 function verifyDeclaredRoutes(binding) {
   const root = resolve(__dirname, "../..");
   try {
@@ -28,15 +49,22 @@ function verifyDeclaredRoutes(binding) {
   } catch {
     throw Error("source_route_prerequisite");
   }
-  const expected = paths.map(([kind, id]) => ({
-    kind,
-    id,
-    evidenceHash: canonicalHash({
-      sourceCommit: binding.manifest.identity.sourceCommit,
-      path: id,
-      contents: readFileSync(resolve(root, id), "utf8").replace(/\r\n/g, "\n"),
-    }),
-  }));
+  const expected = paths.map(([kind, id]) => {
+    const contents = readFileSync(resolve(root, id), "utf8").replace(
+      /\r\n/g,
+      "\n",
+    );
+    if (kind === "workflow") assertWorkflowCredentials(contents);
+    return {
+      kind,
+      id,
+      evidenceHash: canonicalHash({
+        sourceCommit: binding.manifest.identity.sourceCommit,
+        path: id,
+        contents,
+      }),
+    };
+  });
   if (
     canonicalHash(expected) !== canonicalHash(binding.manifest.launcherRoutes)
   )

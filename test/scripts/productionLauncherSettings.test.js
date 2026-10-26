@@ -1,8 +1,15 @@
 /** @jest-environment node */
+import { expect, test, jest, beforeEach, afterEach } from "@jest/globals";
 import { canonicalHash as hash } from "../../scripts/deployment/production-manifest.cjs";
 import process from "node:process";
-import { expect, test, jest, beforeEach, afterEach } from "@jest/globals";
+import { readFileSync as mockFile } from "node:fs";
 import { launcherFixture } from "../fixtures/productionLauncher.js";
+import {
+  reviewedRoutes,
+  readActualSource,
+  readOidcOnlySource,
+} from "../fixtures/productionReviewedSource.js";
+import { runCli } from "../../scripts/deployment/introduce-production.cjs";
 import {
   collectLauncherSettingsFromOriginalRun,
   readLauncherSettings,
@@ -18,12 +25,30 @@ jest.mock("../../scripts/deployment/production-private-package.cjs", () => ({
 jest.mock("../../scripts/deployment/production-aws.cjs", () => ({
   createProductionAws: () => ({ aws: (...args) => mockAws(...args) }),
 }));
-jest.mock("../../scripts/deployment/production-source-routes.cjs", () => ({
-  verifyDeclaredRoutes: jest.fn(),
+jest.mock("node:fs", () => {
+  const actual = jest.requireActual("node:fs");
+  return { ...actual, readFileSync: jest.fn(actual.readFileSync) };
+});
+jest.mock("node:child_process", () => ({
+  ...jest.requireActual("node:child_process"),
+  execFileSync: jest.fn((_file, args) =>
+    args[0] === "rev-parse" ? "a".repeat(40) : "",
+  ),
 }));
 let f;
+function bindSource(read) {
+  mockFile.mockImplementation(read);
+  f.binding.manifest.launcherRoutes = reviewedRoutes(f.binding.manifest, read);
+  f.declaration.routes = f.declaration.routes.map((route, index) => ({
+    ...route,
+    ...f.binding.manifest.launcherRoutes[index],
+  }));
+  f.binding.manifest.prerequisites.launcherHolds = hash(f.declaration);
+  f.binding.manifestHash = hash(f.binding.manifest);
+}
 beforeEach(() => {
   f = launcherFixture();
+  bindSource(readOidcOnlySource);
   process.env.GITHUB_JOB = "accept";
   process.env.INTRODUCTION_OPS_READ_TOKEN = "dummy-read";
   jest.spyOn(Date, "now").mockReturnValue(320000);
@@ -33,6 +58,28 @@ beforeEach(() => {
   }));
   mockGithub.mockImplementation(f.github);
   mockAws.mockImplementation(f.aws);
+});
+
+test.each(["introduce", "prepare-acceptance", "accept"])(
+  "actual deployment source cannot mint fresh %s launcher authority despite valid settings",
+  async (mode) => {
+    bindSource(readActualSource);
+    process.env.GITHUB_JOB = mode;
+    await expect(collectLauncherSettingsFromOriginalRun()).rejects.toThrow(
+      "unaccounted_static_credential_route",
+    );
+    expect(mockAws).not.toHaveBeenCalled();
+    expect(mockGithub).not.toHaveBeenCalled();
+  },
+);
+
+test("original entrypoint refuses the actual static route before hold acquisition or interruption", async () => {
+  bindSource(readActualSource);
+  process.env.GITHUB_JOB = "introduce";
+  const output = { log: jest.fn(), error: jest.fn() };
+  expect(await runCli(["introduce"], output)).toBe(1);
+  expect(output.log).not.toHaveBeenCalled();
+  expect(mockAws).not.toHaveBeenCalled();
 });
 afterEach(() => {
   jest.restoreAllMocks();
