@@ -62,6 +62,12 @@ function parseInvocation(value) {
     parsed.workspace,
     parsed.environment === "production" ? "default" : "sandbox",
   );
+  if (parsed.environment === "sandbox")
+    assert.equal(
+      parsed.scope,
+      "meeting-update-delivery",
+      "Sandbox supports only meeting-update-delivery",
+    );
   if (parsed.scope === "meeting-update-delivery")
     assert.equal(parsed.environment, "sandbox");
   return parsed;

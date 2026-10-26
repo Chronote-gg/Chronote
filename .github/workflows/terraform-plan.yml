@@ -19,10 +19,10 @@ on:
         type: string
         default: sandbox
       plan_scope:
-        description: Full infrastructure or a fixed permission/deployment prerequisite scope
+        description: Sandbox requires meeting-update-delivery; production supports its reviewed scopes
         required: true
         type: choice
-        default: full
+        default: meeting-update-delivery
         options:
           - full
           - purchase-permission
@@ -60,6 +60,8 @@ jobs:
           cache: yarn
       - name: Install dependencies
         run: bash scripts/ci-install-dependencies.sh
+      - name: Validate Terraform dispatch scope
+        run: node scripts/deployment/terraform-dispatch.cjs --validate
       - name: Configure production AWS credentials
         if: ${{ inputs.github_environment == 'production' }}
         uses: aws-actions/configure-aws-credentials@v6

@@ -378,12 +378,17 @@ test("Sandbox keeps its existing reviewer-only profile without a production bran
   f.data.approvals[0].environments[0].name = "sandbox";
   f.data.run.display_title = f.data.run.display_title.replace(
     "production/default/full",
-    "sandbox/sandbox/full",
+    "sandbox/sandbox/meeting-update-delivery",
   );
   await expect(
     verifyApproval(
       f.get,
-      { ...invocation, environment: "sandbox", workspace: "sandbox" },
+      {
+        ...invocation,
+        environment: "sandbox",
+        workspace: "sandbox",
+        scope: "meeting-update-delivery",
+      },
       reviewInputs,
     ),
   ).resolves.toMatchObject({ environment: { deployment_branch_policy: null } });

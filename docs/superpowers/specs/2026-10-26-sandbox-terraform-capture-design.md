@@ -8,7 +8,7 @@ Keep the existing dependency graph and permit only the metadata reads needed to 
 
 Before publishing a successful scoped plan and immediately before applying its verified binary, validate a private JSON rendering of that same binary. Reject extra managed effects, deletion, replacement, creation, import, move, unknown security fields and widened permissions. No caller-supplied Terraform targets.
 
-Sandbox workflows use only OIDC. Preserve production credential behavior and all existing full/purchase-permission behavior. Keep private binding and reference in the existing environment secrets. No SSM discovery, token bridge, credential extraction, or static fallback.
+Sandbox workflows use only OIDC. Preserve production credential behavior and its existing full/purchase-permission/deployment-prerequisites scopes. The current Sandbox credential route accepts only meeting-update-delivery; refuse every other or missing scope and incompatible saved bundle before credentialed execution or capture. Keep private binding and reference in the existing environment secrets. No SSM discovery, token bridge, credential extraction, or static fallback.
 
 Bootstrap is a separate default-off Terraform root owning only a dedicated private evidence bucket and scoped OIDC role. It uses independent state and the existing Sandbox KMS key. It does not modify the transcript bucket, deployment role, production bootstrap, or application state. Follow existing capture controls: versioning, owner enforcement, public access blocks, exact SSE-KMS, no bucket keys, no lifecycle expiration, conditional writes and exact-version readback. The execution role cannot administer or delete evidence or administer itself or its key.
 

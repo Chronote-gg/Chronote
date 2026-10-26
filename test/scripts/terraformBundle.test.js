@@ -181,3 +181,47 @@ test("restore refuses existing destinations before writing any file", () => {
     rmSync(destination, { recursive: true, force: true });
   }
 });
+
+test.each(
+  ["create", "verify"].flatMap((stage) =>
+    ["full", "purchase-permission", "deployment-prerequisites", undefined].map(
+      (scope) => [stage, scope],
+    ),
+  ),
+)(
+  "Sandbox bundle %s refuses unsupported scope %s even when provenance matches",
+  (stage, scope) => {
+    const f = fixture();
+    const unsupported = {
+      ...invocation,
+      environment: "sandbox",
+      workspace: "sandbox",
+      scope,
+    };
+    try {
+      if (stage === "create")
+        expect(() =>
+          createBundle({
+            invocation: unsupported,
+            terraformVersion: f.bundle.terraformVersion,
+            lockfileSha256: f.bundle.lockfileSha256,
+            directory: f.directory,
+            review: Buffer.from("PRIVATE_REVIEW"),
+            output: [],
+          }),
+        ).toThrow();
+      else {
+        f.bundle.invocation = unsupported;
+        expect(() =>
+          verifyBundle(f.bundle, {
+            ...f.expected,
+            invocation: unsupported,
+            bundleSha256: digest(JSON.stringify(f.bundle)),
+          }),
+        ).toThrow();
+      }
+    } finally {
+      rmSync(f.directory, { recursive: true, force: true });
+    }
+  },
+);

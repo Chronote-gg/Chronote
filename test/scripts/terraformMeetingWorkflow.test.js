@@ -125,3 +125,51 @@ test.each([
     }
   },
 );
+
+test.each(
+  ["plan", "apply"].flatMap((mode) =>
+    ["full", "purchase-permission", "deployment-prerequisites", undefined].map(
+      (scope) => [mode, scope],
+    ),
+  ),
+)(
+  "direct Sandbox %s refuses scope %s before storage, native metadata or commands",
+  async (mode, scope) => {
+    const f = fixture(),
+      effects = [];
+    try {
+      const options = f.options({
+        ...sandbox,
+        scope,
+        workflowPath: `.github/workflows/terraform-${mode}.yml`,
+      });
+      const result = await runTerraform({
+        ...options,
+        client: {
+          ...options.client,
+          send: async () => {
+            effects.push("storage");
+            throw new Error("unexpected storage");
+          },
+        },
+        get: async () => {
+          effects.push("native metadata");
+          throw new Error("unexpected native metadata");
+        },
+        command: async () => {
+          effects.push("command");
+          throw new Error("unexpected command");
+        },
+      });
+      expect(result).toEqual({ status: "refused" });
+      expect(effects).toEqual([]);
+      expect(f.storage.objects.size).toBe(0);
+      expect(f.commands).toEqual([]);
+      expect(readdirSync(options.privateDirectory)).not.toContain(
+        "bundle-reference.json",
+      );
+    } finally {
+      rmSync(f.directory, { recursive: true, force: true });
+    }
+  },
+);

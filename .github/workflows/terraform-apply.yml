@@ -35,7 +35,8 @@ on:
         required: true
         type: string
       plan_scope:
-        description: Scope of the reviewed saved plan
+        default: meeting-update-delivery
+        description: Scope of the reviewed saved plan; Sandbox requires meeting-update-delivery
         required: true
         type: choice
         options:
@@ -88,6 +89,8 @@ jobs:
         run: |
           bash scripts/ci-install-dependencies.sh
           yarn build
+      - name: Validate Terraform dispatch scope
+        run: node scripts/deployment/terraform-dispatch.cjs --validate
       - name: Configure Sandbox AWS credentials
         if: ${{ inputs.github_environment == 'sandbox' }}
         uses: aws-actions/configure-aws-credentials@v6
