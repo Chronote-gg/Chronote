@@ -30,22 +30,25 @@ test("private capture uses conditional one-attempt creation and exact version or
 test.each([
   ["native SSE-C block", { EncryptionType: ["SSE-C"] }],
   ["undefined optional block", undefined],
-])("private capture readiness accepts %s", async (_, blockedEncryptionTypes) => {
-  const f = fixture(),
-    send = f.client.send;
-  f.client.send = async (command) => {
-    const result = await send(command);
-    if (command.constructor.name === "GetBucketEncryptionCommand")
-      result.ServerSideEncryptionConfiguration.Rules[0].BlockedEncryptionTypes =
-        blockedEncryptionTypes;
-    return result;
-  };
-  const store = createPrivateCapture(f.options);
-  await expect(store.checkReady()).resolves.toBeUndefined();
-  expect(f.calls.some((c) => c.constructor.name === "PutObjectCommand")).toBe(
-    false,
-  );
-});
+])(
+  "private capture readiness accepts %s",
+  async (_, blockedEncryptionTypes) => {
+    const f = fixture(),
+      send = f.client.send;
+    f.client.send = async (command) => {
+      const result = await send(command);
+      if (command.constructor.name === "GetBucketEncryptionCommand")
+        result.ServerSideEncryptionConfiguration.Rules[0].BlockedEncryptionTypes =
+          blockedEncryptionTypes;
+      return result;
+    };
+    const store = createPrivateCapture(f.options);
+    await expect(store.checkReady()).resolves.toBeUndefined();
+    expect(f.calls.some((c) => c.constructor.name === "PutObjectCommand")).toBe(
+      false,
+    );
+  },
+);
 
 test.each([
   [
