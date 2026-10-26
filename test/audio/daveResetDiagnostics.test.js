@@ -14,6 +14,7 @@ import Davey from "@snazzah/davey";
 import { VoiceOpcodes } from "discord-api-types/voice/v8";
 import prism from "prism-media";
 import controls from "./fixtures/davePublicControls.cjs";
+import { offlineVoiceConnection } from "./fixtures/offlineVoiceConnection.mjs";
 
 // Only the transport is offline; wrapper, networking and MLS methods remain real.
 class OfflineNetworking extends Networking {
@@ -285,15 +286,7 @@ test.each([
 );
 
 test("native activation and resume recovery retain the latest episode without retry", () => {
-  const connection = new VoiceConnection(
-    {
-      guildId: "offline",
-      channelId: "offline",
-      selfDeaf: false,
-      selfMute: false,
-    },
-    { adapterCreator: () => ({ sendPayload: () => true, destroy: () => {} }) },
-  );
+  const connection = offlineVoiceConnection(VoiceConnection);
   const network = networkAt();
   network.on("stateChange", connection.onNetworkingStateChange);
   network.on("transitioned", connection.onNetworkingTransitioned);
