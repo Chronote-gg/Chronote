@@ -1,11 +1,15 @@
 /** @jest-environment node */
+import { buildPausedDesktopDraftMarker } from "../../src/testSupport/personalMediaUploadFixtures";
 import {
   createMockDeploymentControlRepository,
   classifyDeploymentTransactionError,
 } from "../../src/repositories/deploymentControlRepository";
 import { buildHistoryTransition } from "../../src/services/deploymentControlTransactions";
 import type { ActiveMeetingLease, MeetingHistory } from "../../src/types/db";
-import type { HistoryTransition } from "../../src/types/deploymentControl";
+import type {
+  DeploymentControlRecord,
+  HistoryTransition,
+} from "../../src/types/deploymentControl";
 import { parseDeploymentControlRecord } from "../../src/types/deploymentControl";
 import {
   context,
@@ -14,6 +18,61 @@ import {
   promotion,
   history,
 } from "../deployment/controlFixtures";
+
+test("paused draft markers are strict durable control records", async () => {
+  const marker = buildPausedDesktopDraftMarker({
+    uploadId: "synthetic-draft",
+    ownerUserId: "synthetic-owner",
+  });
+  expect(parseDeploymentControlRecord(marker)).toEqual(marker);
+  const records = new Map<string, DeploymentControlRecord>();
+  const repository = createMockDeploymentControlRepository(records);
+  const key = JSON.stringify([marker.pk, marker.sk]);
+  for (const patch of [
+    { pk: "UPLOAD#other" },
+    { manifestSha256: "bad" },
+    { expiresAt: 200 },
+    { ownerUserId: "" },
+  ]) {
+    const invalid = { ...marker, ...patch };
+    expect(() => parseDeploymentControlRecord(invalid)).toThrow();
+    records.set(key, invalid);
+    await expect(repository.getRecord(marker.pk, marker.sk)).rejects.toThrow();
+  }
+});
+
+test("runtime read snapshots preserve retirement compare-and-swap authority", async () => {
+  const repository = createMockDeploymentControlRepository();
+  await repository.initializeControl({ ...control, servingMembers: {} });
+  const row = runtime("old", "candidate");
+  await repository.writeRuntime(row);
+  const request = {
+    identity: row.identity,
+    authorizedGeneration: row.authorizedGeneration,
+    coordinatorToken: control.coordinatorToken,
+    coordinatorEpoch: control.coordinatorEpoch,
+  };
+  expect(
+    await repository.requestRetirement({ record: row, request, now: 100 }),
+  ).toBe("applied");
+  const snapshot = await repository.getRecord(row.pk, row.sk);
+  if (snapshot?.recordType !== "runtime")
+    throw new Error("Runtime fixture missing");
+  expect(snapshot.retirementRequest).toEqual(request);
+  expect(
+    await repository.transitionRuntimeRole({
+      record: { ...snapshot, role: "draining" },
+      expectedRole: snapshot.role,
+      expectedGeneration: snapshot.authorizedGeneration,
+      retirementEpoch: control.coordinatorEpoch,
+      expectedRetirementRequest: snapshot.retirementRequest,
+    }),
+  ).toBe("applied");
+  expect(await repository.getRecord(row.pk, row.sk)).toMatchObject({
+    role: "draining",
+    retirementRequest: request,
+  });
+});
 
 test("missingControlRejectsAdmission", async () => {
   const repository = createMockDeploymentControlRepository();

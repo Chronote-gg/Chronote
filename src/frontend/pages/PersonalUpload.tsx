@@ -34,6 +34,7 @@ type CreateUploadIntentMutation = {
 type CompleteUploadMutation = {
   data?: { job?: PersonalUploadPanelJob | null } | null;
   isPending: boolean;
+  reset: () => void;
   mutateAsync: (input: {
     uploadId: string;
     key: string;
@@ -41,7 +42,7 @@ type CompleteUploadMutation = {
     originalFileName: string;
     title?: string;
     tags?: string[];
-  }) => Promise<unknown>;
+  }) => Promise<{ job?: PersonalUploadPanelJob | null }>;
 };
 
 type PersonalMeetingNavigate = (options: {
@@ -66,6 +67,7 @@ const JOB_STATUS_LABELS: Partial<Record<PersonalUploadStatus, string>> = {
   processing: "Processing uploaded media...",
   complete: "Processing complete.",
   failed: "Processing failed.",
+  paused: "Draft paused.",
 };
 
 const parseTags = (tagsText: string) =>
@@ -142,7 +144,12 @@ const isUploadDisabled = (
   Boolean(job && BLOCKING_JOB_STATUSES.has(job.status));
 
 const shouldPollUploadStatus = (status?: PersonalUploadStatus) =>
-  Boolean(status && status !== "complete" && status !== "failed");
+  Boolean(
+    status &&
+    status !== "complete" &&
+    status !== "failed" &&
+    status !== "paused",
+  );
 
 function useUploadStatusPolling(
   uploadId: string | null,
@@ -192,7 +199,7 @@ async function submitPersonalUpload(input: {
     await uploadFileToSignedPost(intent.upload, file, input.setUploadProgress);
     input.setPhase("submitting");
     const tags = parseTags(input.tagsText);
-    await input.completeUpload.mutateAsync({
+    const result = await input.completeUpload.mutateAsync({
       uploadId: intent.uploadId,
       key: intent.key,
       uploadToken: intent.uploadToken,
@@ -200,6 +207,13 @@ async function submitPersonalUpload(input: {
       title: input.title.trim() || undefined,
       tags: tags.length ? tags : undefined,
     });
+    if (result.job?.status === "paused") {
+      input.setErrorMessage(
+        result.job.errorMessage ??
+          "This draft is preserved and paused. Recovery is not available yet.",
+      );
+      return;
+    }
     notifications.show({ message: "Upload received. Processing started." });
   } catch (error) {
     input.setErrorMessage(getUploadErrorMessage(error));
@@ -277,7 +291,13 @@ export default function PersonalUpload() {
         errorMessage={errorMessage}
         file={file}
         job={job}
-        onFileChange={setFile}
+        onFileChange={(nextFile) => {
+          setFile(nextFile);
+          setUploadId(null);
+          setUploadProgress(0);
+          setErrorMessage(null);
+          completeUpload.reset();
+        }}
         onOpenMeeting={openMeeting}
         onSubmit={submitUpload}
         onTagsTextChange={setTagsText}

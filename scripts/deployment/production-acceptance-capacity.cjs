@@ -218,7 +218,11 @@ function initialCapacityEnvelopes(binding, snapshot, historyKeys = []) {
   return result;
 }
 async function screenInitialAcceptanceCapacity(options) {
-  const { readRetainedMetadata, projections } = require("./retained-work.cjs");
+  const {
+    readRetainedMetadata,
+    projections,
+    assertInitialPersonalFeasibility,
+  } = require("./retained-work.cjs");
   const snapshot = await readRetainedMetadata({
     tables: options.binding.manifest.resources.tables,
     read: options.scan,
@@ -229,6 +233,7 @@ async function screenInitialAcceptanceCapacity(options) {
     snapshot.coverage.some((c) => c.status !== "enumerated")
   )
     throw Error("acceptance_capacity_refused");
+  assertInitialPersonalFeasibility(snapshot);
   const keys = [];
   const {
     fixtureGrantSchema,

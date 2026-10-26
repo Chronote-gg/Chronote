@@ -401,4 +401,20 @@ function classifyRetainedWork(
     reopeningBlockers,
   };
 }
-module.exports = { readRetainedMetadata, classifyRetainedWork, projections };
+/** Feasibility only: final acceptance still recollects the complete retained inventory. */
+function assertInitialPersonalFeasibility(snapshot) {
+  const personal = {
+    ...snapshot,
+    records: snapshot.records.filter((row) =>
+      ["personalJob", "personalSegment"].includes(row.table),
+    ),
+  };
+  if (classifyRetainedWork(personal).reopeningBlockers.length)
+    throw Error("personal_retained_prerequisite");
+}
+module.exports = {
+  readRetainedMetadata,
+  classifyRetainedWork,
+  projections,
+  assertInitialPersonalFeasibility,
+};

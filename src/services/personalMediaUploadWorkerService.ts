@@ -1,3 +1,4 @@
+import { PausedDesktopDraftError } from "../repositories/pausedDesktopDraft";
 import { registerRuntimeNotionOwner } from "./notionOperationLifetime";
 import {
   PERSONAL_MEDIA_UPLOAD_MAX_PROCESSING_ATTEMPTS,
@@ -81,8 +82,8 @@ async function runUploadJob(
       return;
     }
     work.claimed();
-  } catch {
-    work.fence();
+  } catch (error) {
+    if (!(error instanceof PausedDesktopDraftError)) work.fence();
     await work.settle();
     return;
   }

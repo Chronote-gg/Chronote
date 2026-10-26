@@ -46,15 +46,86 @@ import {
   type RuntimeRetirementRequestInput,
   retirementRequestSchema,
   sameRuntimeIdentity,
+  pausedDesktopDraftKey,
 } from "../types/deploymentControl";
+
+export function buildUnpausedDesktopDraftCheck(
+  uploadId: string,
+  table: string,
+): TransactWriteItem {
+  return {
+    ConditionCheck: {
+      TableName: table,
+      Key: marshall(pausedDesktopDraftKey(uploadId)),
+      ConditionExpression: "attribute_not_exists(pk)",
+    },
+  };
+}
+export function buildPersonalUploadSubmissionTransaction(
+  job: PersonalMediaUploadJobRecord,
+  tables: { deploymentControl: string; personalMediaUpload: string },
+): TransactWriteItemsCommandInput {
+  return {
+    TransactItems: [
+      buildUnpausedDesktopDraftCheck(job.uploadId, tables.deploymentControl),
+      {
+        Put: {
+          TableName: tables.personalMediaUpload,
+          Item: marshall(job, { removeUndefinedValues: true }),
+          ConditionExpression:
+            "#status = :pending AND ownerUserId = :owner AND attribute_not_exists(processingClaimId)",
+          ExpressionAttributeNames: { "#status": "status" },
+          ExpressionAttributeValues: marshall({
+            ":pending": "pending_upload",
+            ":owner": job.ownerUserId,
+          }),
+        },
+      },
+    ],
+  };
+}
+export function buildPersonalSegmentTransitionTransaction(
+  segment: PersonalRecordingSegmentRecord,
+  expectedStatus: PersonalRecordingSegmentRecord["status"],
+  tables: { deploymentControl: string; personalRecordingSegment: string },
+): TransactWriteItemsCommandInput {
+  return {
+    TransactItems: [
+      buildUnpausedDesktopDraftCheck(
+        segment.uploadId,
+        tables.deploymentControl,
+      ),
+      {
+        Put: {
+          TableName: tables.personalRecordingSegment,
+          Item: marshall(segment, { removeUndefinedValues: true }),
+          ConditionExpression: "#status = :expected AND ownerUserId = :owner",
+          ExpressionAttributeNames: { "#status": "status" },
+          ExpressionAttributeValues: marshall({
+            ":expected": expectedStatus,
+            ":owner": segment.ownerUserId,
+          }),
+        },
+      },
+    ],
+  };
+}
 
 export function buildPendingSegmentTransaction(
   segment: PersonalRecordingSegmentRecord,
   expectedStatus: "pending_upload" | "failed" | undefined,
-  tables: { personalMediaUpload: string; personalRecordingSegment: string },
+  tables: {
+    personalMediaUpload: string;
+    personalRecordingSegment: string;
+    deploymentControl: string;
+  },
 ): TransactWriteItemsCommandInput {
   return {
     TransactItems: [
+      buildUnpausedDesktopDraftCheck(
+        segment.uploadId,
+        tables.deploymentControl,
+      ),
       {
         ConditionCheck: {
           TableName: tables.personalMediaUpload,
@@ -161,6 +232,10 @@ export function buildPersonalMediaClaimTransaction(
     ClientRequestToken: input.claimId,
     TransactItems: [
       ...buildRuntimeAdmissionChecks(input.context, tables),
+      buildUnpausedDesktopDraftCheck(
+        input.job.uploadId,
+        tables.deploymentControl,
+      ),
       {
         Put: {
           TableName: tables.personalMediaUpload,
@@ -296,7 +371,7 @@ export function buildSessionReservationTransaction(
 }
 
 /** Snapshot equality includes absent optional fields, so a renewed proof wins CAS. */
-function snapshotCondition(record: ControlRecord | RuntimeRecord) {
+export function snapshotCondition(record: ControlRecord | RuntimeRecord) {
   const names: Record<string, string> = {};
   const values: Record<string, unknown> = {};
   const fields = [

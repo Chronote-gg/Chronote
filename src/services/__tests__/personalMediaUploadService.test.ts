@@ -463,6 +463,7 @@ describe("personalMediaUploadService", () => {
     uploadRepository.submit.mockResolvedValueOnce(false);
     resume();
     expect(await submission).toEqual(claimed);
+    expect(uploadRepository.submit).toHaveBeenCalledTimes(1);
     expect(uploadRepository.claim).not.toHaveBeenCalled();
   });
 

@@ -18,6 +18,10 @@ Only the first approved legacy stop may interrupt work. No subsequent failure pe
 
 Fixture authority is an original durable grant for one exact queued request and preassigned meeting, with resolved destinations. A public request flag, allowlist, copied reservation or caller-supplied hash cannot create it. Personal fixtures are outside this contract. History completion must match the live fixture snapshot, capture lineage and direct upload receipt before the owned transition.
 
+Paused desktop drafts retain their public pause status and local bytes, but A has no positive personal-draft preservation contract. Pending, queued, processing, failed or otherwise incomplete personal jobs and unprocessed segments remain reopening blockers, even with a valid pause marker and genuine staged capture evidence. Staged metadata does not supply A authority or the installer's full expected parent. Supporting those drafts in A requires a separate original-binding, ownership/effects, installer-boundary and capacity decision.
+
+The initial metadata scan refuses personal rows that the existing classifier cannot mark safe terminal, before acquiring the hold or stopping legacy work. It uses the same safe projections and adds no marker or content reads. This narrow, non-atomic feasibility screen permits otherwise supported active legacy work; it does not replace fresh post-stop and final retained classification. Late arrivals or changed evidence can still block progress while maintenance remains held.
+
 Preparation does not prove complete retained-work classification. Final acceptance recollects retained work before each closing action. Persisting acceptance, reopening admission and releasing deployment each use a separate atomic transaction, current mutable guards and original expiry. Expiry stops dispatch but does not erase a directly received late acknowledgment.
 
 ## Finite capacity and source evidence

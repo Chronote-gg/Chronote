@@ -1,6 +1,7 @@
 "use strict";
 const assert = require("node:assert/strict");
 const { createHash } = require("node:crypto");
+const { classifyPausedDraft } = require("./paused-draft-capture.cjs");
 const {
   validateBinding: validateMaintenanceBinding,
 } = require("./maintenance-fence.cjs");
@@ -245,6 +246,8 @@ function validUploadInput(row) {
 }
 function classifyUpload(snapshot, compatibility, row) {
   if (!nonempty(row.ownerUserId)) return "blocked";
+  const paused = classifyPausedDraft(snapshot, compatibility, "uploads", row);
+  if (paused !== undefined) return paused;
   if (row.status === "processing")
     return ownedState(
       snapshot,
@@ -298,6 +301,8 @@ function classifySegment(snapshot, compatibility, row) {
     (upload) => upload.uploadId === row.uploadId,
   );
   if (!parent || row.ownerUserId !== parent.ownerUserId) return "blocked";
+  const paused = classifyPausedDraft(snapshot, compatibility, "segments", row);
+  if (paused !== undefined) return paused;
   if (["processed", "failed"].includes(row.status))
     return acknowledged(snapshot, "segments", row) ? "retained" : "blocked";
   if (!["pending_upload", "uploaded", "submitted"].includes(row.status))
@@ -457,6 +462,7 @@ function classifyRow(snapshot, compatibility, table, row) {
 }
 function classifyProductionWork(snapshot, compatibility) {
   const result = {
+    retained: [],
     active: [],
     portable: [],
     blocked: [],
@@ -479,6 +485,16 @@ function classifyProductionWork(snapshot, compatibility) {
     for (const row of snapshot.tables[table]) {
       const category = classifyRow(snapshot, compatibility, table, row);
       result.counts[category]++;
+      if (
+        category === "retained" &&
+        ["uploads", "segments"].includes(table) &&
+        classifyPausedDraft(snapshot, compatibility, table, row) === "retained"
+      )
+        result.retained.push({
+          table,
+          key: rowKey(table, row),
+          disposition: "paused",
+        });
       if (category !== "retained")
         result[category].push({
           table,
@@ -521,6 +537,11 @@ function assertProductionDrain(proof, binding) {
   const result = classifyProductionWork(snapshot, compatibility);
   assert.equal(result.active.length, 0, "Active production work");
   assert.equal(result.blocked.length, 0, "Uncertain production work");
+  if (compatibility.pausedDrafts)
+    assert.ok(
+      compatibility.pausedDrafts.validUntil > now,
+      "Expired compatibility evidence",
+    );
   for (const entry of compatibility.uploads ?? [])
     assert.ok(entry.validUntil > now, "Expired compatibility evidence");
   return result;
@@ -619,6 +640,7 @@ async function scanProductionWork(aws, options) {
   return snapshot;
 }
 module.exports = {
+  projections,
   classifyProductionWork,
   assertProductionDrain,
   scanProductionWork,

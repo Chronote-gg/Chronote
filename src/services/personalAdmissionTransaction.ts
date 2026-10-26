@@ -4,6 +4,7 @@ import {
   TransactionCanceledException,
   type TransactWriteItem,
 } from "@aws-sdk/client-dynamodb";
+import { completeConditionalCancellation } from "../repositories/deploymentControlErrors";
 import type { AdmissionContext } from "../types/deploymentControl";
 import { buildRuntimeAdmissionChecks } from "./deploymentControlTransactions";
 import { RuntimeAdmissionUnavailable } from "./runtimeAdmissionError";
@@ -26,19 +27,15 @@ export async function transactPersonalAdmission(
     return true;
   } catch (error) {
     if (!(error instanceof TransactionCanceledException)) throw error;
-    const reasons = error.CancellationReasons;
+    const reasons = completeConditionalCancellation(
+      error,
+      checks.length + writes.length,
+    );
+    if (!reasons) throw error;
     if (
-      !reasons ||
       reasons.slice(0, checks.length).some((reason) => reason.Code !== "None")
     )
       throw new RuntimeAdmissionUnavailable("Runtime is not accepting work");
-    if (
-      reasons.some(
-        (reason) =>
-          reason.Code !== "None" && reason.Code !== "ConditionalCheckFailed",
-      )
-    )
-      throw error;
     return false;
   }
 }

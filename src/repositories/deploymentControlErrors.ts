@@ -1,8 +1,9 @@
-import { z } from "zod";
 import type {
   SessionReservationInput,
   SessionReservationWriteResult,
 } from "../types/deploymentControl";
+import { z } from "zod";
+export type ConditionalResult = "applied" | "stale";
 const errorSchema = z.object({
   name: z.string().optional(),
   CancellationReasons: z
@@ -34,16 +35,62 @@ export function classifyDeploymentTransactionError(
     ? "stale"
     : "unavailable";
 }
+export class DeploymentControlError extends Error {
+  constructor(
+    public readonly kind: "conflict" | "unavailable",
+    public readonly cause: unknown,
+  ) {
+    super(`Deployment control ${kind}`);
+  }
+}
+export async function conditional(
+  operation: () => Promise<unknown>,
+): Promise<ConditionalResult> {
+  try {
+    await operation();
+    return "applied";
+  } catch (error) {
+    const kind = classifyDeploymentTransactionError(error);
+    if (kind === "stale") return "stale";
+    throw new DeploymentControlError(kind, error);
+  }
+}
+
+/** Only a complete atomic cancellation proves that no transaction item was written. */
+export function completeConditionalCancellation(
+  error: unknown,
+  itemCount: number,
+) {
+  const parsed = errorSchema.safeParse(error);
+  if (!parsed.success || parsed.data.name !== "TransactionCanceledException")
+    return undefined;
+  const reasons = parsed.data.CancellationReasons;
+  if (
+    !reasons ||
+    reasons.length !== itemCount ||
+    reasons.some(
+      (reason) =>
+        reason.Code !== "None" && reason.Code !== "ConditionalCheckFailed",
+    ) ||
+    !reasons.some((reason) => reason.Code === "ConditionalCheckFailed")
+  )
+    return undefined;
+  return reasons;
+}
 
 export function sessionReservationFailure(
   error: unknown,
   input: SessionReservationInput,
 ): SessionReservationWriteResult {
-  const parsed = errorSchema.safeParse(error);
-  if (!parsed.success || classifyDeploymentTransactionError(error) !== "stale")
-    return { kind: "blocked", reason: "unavailable" };
-  const reasons = parsed.data.CancellationReasons ?? [];
   const count = input.scope?.kind === "fixture" ? 3 : 2;
+  const reasons = completeConditionalCancellation(
+    error,
+    count +
+      2 +
+      Number(Boolean(input.history)) +
+      Number(Boolean(input.suppression)),
+  );
+  if (!reasons) return { kind: "blocked", reason: "unavailable" };
   const failed = (index: number) =>
     reasons[index]?.Code === "ConditionalCheckFailed";
   if (

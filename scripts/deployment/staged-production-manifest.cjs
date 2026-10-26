@@ -2,6 +2,10 @@
 const assert = require("node:assert/strict");
 const { z } = require("zod");
 const {
+  pausedDraftsSchema,
+  validatePausedBinding,
+} = require("./paused-draft-contract.cjs");
+const {
   schema,
   envelopeSchema,
   assertHash,
@@ -13,6 +17,7 @@ const productionSchema = schema
   .extend({
     kind: z.literal("production-introduction"),
     environment: z.literal("production"),
+    pausedDrafts: pausedDraftsSchema.optional(),
   })
   .strict();
 const authorizationSchema = envelopeSchema
@@ -60,6 +65,7 @@ function parseProductionManifest(input, expectedSha256) {
   ];
   for (const name of resourceNames)
     assert.ok(!/^cr-[a-f0-9]{16}-/.test(name), "Nonproduction resource");
+  validatePausedBinding(m);
   return m;
 }
 function parsePhaseAuthorization(input, manifest, expectedSha256) {

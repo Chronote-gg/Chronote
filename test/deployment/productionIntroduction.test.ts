@@ -407,3 +407,66 @@ test("fixture admission refuses a grant without the frozen manual input binding"
     newWorkScopeSchema.safeParse({ ...scope, scriptSha256: undefined }).success,
   ).toBe(false);
 });
+
+test.each(["ordinary", "fixture"] as const)(
+  "reservation cancellation indexes follow the actual %s transaction",
+  async (kind) => {
+    const input = {
+      ...request(),
+      scope: kind === "fixture" ? scope : undefined,
+      suppression: { channelId: "channel", expectedVersion: 1 },
+    };
+    const prefix = kind === "fixture" ? 3 : 2;
+    const command = buildSessionReservationTransaction(input, tables);
+    expect(command.TransactItems).toHaveLength(prefix + 4);
+    expect(command.TransactItems![prefix].Put?.TableName).toBe(
+      tables.activeMeeting,
+    );
+    expect(command.TransactItems![prefix + 1].Put?.Item?.sk.S).toBe("STATE");
+    const client = new DynamoDBClient({
+      region: "local",
+      credentials: { accessKeyId: "dummy", secretAccessKey: "dummy" },
+    });
+    const send = jest.spyOn(client, "send");
+    const repository = createDynamoDeploymentControlRepository(client, tables);
+    try {
+      for (let failed = 0; failed < prefix + 4; failed++) {
+        const CancellationReasons = command.TransactItems!.map(
+          (_item, index) => ({
+            Code: index === failed ? "ConditionalCheckFailed" : "None",
+          }),
+        );
+        send.mockRejectedValueOnce({
+          name: "TransactionCanceledException",
+          CancellationReasons,
+        });
+        expect(await repository.reserveSession(input)).toEqual({
+          kind: "blocked",
+          reason:
+            failed < prefix
+              ? "not_serving"
+              : failed === prefix + 1
+                ? "voice_uncertain"
+                : failed === prefix + 3
+                  ? "suppressed"
+                  : "active_session",
+        });
+        expect(send.mock.calls.at(-1)![0].input).toEqual(command);
+      }
+      const incomplete = Array.from({ length: prefix + 2 }, (_v, index) => ({
+        Code: index === prefix + 1 ? "ConditionalCheckFailed" : "None",
+      }));
+      send.mockRejectedValueOnce({
+        name: "TransactionCanceledException",
+        CancellationReasons: incomplete,
+      });
+      expect(await repository.reserveSession(input)).toEqual({
+        kind: "blocked",
+        reason: "unavailable",
+      });
+    } finally {
+      send.mockRestore();
+      client.destroy();
+    }
+  },
+);

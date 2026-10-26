@@ -3,17 +3,19 @@ import {
   seedServingRuntime,
   stopServingRuntime,
 } from "../fixtures/servingRuntime";
+import { buildPausedDesktopDraftMarker } from "../../src/testSupport/personalMediaUploadFixtures";
 
 import { afterEach, beforeEach, describe, expect, test } from "@jest/globals";
 import crypto from "node:crypto";
 import express from "express";
 import http from "node:http";
 import type { AddressInfo } from "node:net";
+import { promisify } from "node:util";
 import { registerDesktopRoutes } from "../../src/api/desktop";
 import { MAXIMUM_MEETING_DURATION } from "../../src/constants";
 import { registerMockStorageRoutes } from "../../src/api/mockStorage";
 import { resetDesktopAuthMemoryRepository } from "../../src/repositories/desktopAuthRepository";
-import { resetMockStore } from "../../src/repositories/mockStore";
+import { getMockStore, resetMockStore } from "../../src/repositories/mockStore";
 import { config } from "../../src/services/configService";
 
 type TokenResponse = {
@@ -25,6 +27,12 @@ type TokenResponse = {
     username: string;
     avatar: string | null;
   };
+};
+
+type RecordingSessionSource = {
+  sourceId: string;
+  kind: string;
+  label?: string;
 };
 
 type RecordingSessionResponse = {
@@ -113,16 +121,17 @@ const createServer = (options: { authenticated?: boolean } = {}) => {
   return { server, baseUrl: `http://127.0.0.1:${port}`, session };
 };
 
-const closeServer = async (server: http.Server) =>
-  new Promise<void>((resolve, reject) => {
-    server.close((error) => {
-      if (error) {
-        reject(error);
-        return;
-      }
-      resolve();
-    });
+const createDesktopServer = () => {
+  const result = createServer();
+  Object.defineProperty(config.mcp, "publicBaseUrl", {
+    get: () => result.baseUrl,
+    configurable: true,
   });
+  return result;
+};
+
+const closeServer = (server: http.Server) =>
+  promisify(server.close.bind(server))();
 
 const readJson = async <T>(response: Response): Promise<T> =>
   (await response.json()) as T;
@@ -227,6 +236,34 @@ const authorizeDesktopToken = async (baseUrl: string, scope?: string) => {
   });
   await expectSuccess(tokenResponse);
   return readJson<TokenResponse>(tokenResponse);
+};
+
+const postRecordingSession = (
+  baseUrl: string,
+  accessToken: string,
+  sources: RecordingSessionSource[],
+) =>
+  fetch(`${baseUrl}/api/desktop/recordings/session`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${accessToken}`,
+    },
+    body: JSON.stringify({ sources }),
+  });
+
+const authorizeRecordingSession = async (
+  baseUrl: string,
+  sources: RecordingSessionSource[],
+) => {
+  const token = await authorizeDesktopToken(baseUrl);
+  const response = await postRecordingSession(
+    baseUrl,
+    token.access_token,
+    sources,
+  );
+  await expectSuccess(response);
+  return { token, session: await readJson<RecordingSessionResponse>(response) };
 };
 
 const uploadSegment = async (
@@ -440,21 +477,9 @@ describe("desktop API", () => {
 
     try {
       const token = await authorizeDesktopToken(baseUrl, "profile:read");
-      const response = await fetch(
-        `${baseUrl}/api/desktop/recordings/session`,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${token.access_token}`,
-          },
-          body: JSON.stringify({
-            sources: [
-              { sourceId: "owner_mic", kind: "owner_mic", label: "Me" },
-            ],
-          }),
-        },
-      );
+      const response = await postRecordingSession(baseUrl, token.access_token, [
+        { sourceId: "owner_mic", kind: "owner_mic", label: "Me" },
+      ]);
 
       expect(response.status).toBe(403);
       await expect(readJson<{ error: string }>(response)).resolves.toEqual(
@@ -469,24 +494,16 @@ describe("desktop API", () => {
     const { server, baseUrl } = createServer();
 
     try {
-      const response = await fetch(
-        `${baseUrl}/api/desktop/recordings/session`,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: "Bearer desktop_at_not-a-real-token",
+      const response = await postRecordingSession(
+        baseUrl,
+        "desktop_at_not-a-real-token",
+        [
+          {
+            sourceId: "owner_mic",
+            kind: "owner_mic",
+            label: "Me",
           },
-          body: JSON.stringify({
-            sources: [
-              {
-                sourceId: "owner_mic",
-                kind: "owner_mic",
-                label: "Me",
-              },
-            ],
-          }),
-        },
+        ],
       );
       expect(response.status).toBe(401);
       await expect(readJson<{ error: string }>(response)).resolves.toEqual(
@@ -498,11 +515,7 @@ describe("desktop API", () => {
   });
 
   test("authorizes, uploads, and completes a multi-source desktop recording", async () => {
-    const { server, baseUrl } = createServer();
-    Object.defineProperty(config.mcp, "publicBaseUrl", {
-      get: () => baseUrl,
-      configurable: true,
-    });
+    const { server, baseUrl } = createDesktopServer();
 
     try {
       const token = await authorizeDesktopToken(baseUrl);
@@ -513,29 +526,21 @@ describe("desktop API", () => {
         "meetings:read",
       ]);
 
-      const sessionResponse = await fetch(
-        `${baseUrl}/api/desktop/recordings/session`,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${token.access_token}`,
+      const sessionResponse = await postRecordingSession(
+        baseUrl,
+        token.access_token,
+        [
+          {
+            sourceId: "owner_mic",
+            kind: "owner_mic",
+            label: "Me",
           },
-          body: JSON.stringify({
-            sources: [
-              {
-                sourceId: "owner_mic",
-                kind: "owner_mic",
-                label: "Me",
-              },
-              {
-                sourceId: "system_output",
-                kind: "system_output",
-                label: "System/Other",
-              },
-            ],
-          }),
-        },
+          {
+            sourceId: "system_output",
+            kind: "system_output",
+            label: "System/Other",
+          },
+        ],
       );
       await expectSuccess(sessionResponse);
       const session = await readJson<RecordingSessionResponse>(sessionResponse);
@@ -677,31 +682,12 @@ describe("desktop API", () => {
   });
 
   test("rejects a recording segment past the maximum length for one source", async () => {
-    const { server, baseUrl } = createServer();
-    Object.defineProperty(config.mcp, "publicBaseUrl", {
-      get: () => baseUrl,
-      configurable: true,
-    });
+    const { server, baseUrl } = createDesktopServer();
 
     try {
-      const token = await authorizeDesktopToken(baseUrl);
-      const sessionResponse = await fetch(
-        `${baseUrl}/api/desktop/recordings/session`,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${token.access_token}`,
-          },
-          body: JSON.stringify({
-            sources: [
-              { sourceId: "owner_mic", kind: "owner_mic", label: "Me" },
-            ],
-          }),
-        },
-      );
-      await expectSuccess(sessionResponse);
-      const session = await readJson<RecordingSessionResponse>(sessionResponse);
+      const { token, session } = await authorizeRecordingSession(baseUrl, [
+        { sourceId: "owner_mic", kind: "owner_mic", label: "Me" },
+      ]);
 
       const body = Buffer.from([0, 1, 2, 3]);
       const response = await fetch(
@@ -735,40 +721,17 @@ describe("desktop API", () => {
   });
 
   test("submits a desktop recording when one registered source has no segments", async () => {
-    const { server, baseUrl } = createServer();
-    Object.defineProperty(config.mcp, "publicBaseUrl", {
-      get: () => baseUrl,
-      configurable: true,
-    });
+    const { server, baseUrl } = createDesktopServer();
 
     try {
-      const token = await authorizeDesktopToken(baseUrl);
-      const sessionResponse = await fetch(
-        `${baseUrl}/api/desktop/recordings/session`,
+      const { token, session } = await authorizeRecordingSession(baseUrl, [
+        { sourceId: "owner_mic", kind: "owner_mic", label: "Me" },
         {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${token.access_token}`,
-          },
-          body: JSON.stringify({
-            sources: [
-              {
-                sourceId: "owner_mic",
-                kind: "owner_mic",
-                label: "Me",
-              },
-              {
-                sourceId: "system_output",
-                kind: "system_output",
-                label: "System/Other",
-              },
-            ],
-          }),
+          sourceId: "system_output",
+          kind: "system_output",
+          label: "System/Other",
         },
-      );
-      await expectSuccess(sessionResponse);
-      const session = await readJson<RecordingSessionResponse>(sessionResponse);
+      ]);
 
       const ownerBody = Buffer.from([0, 1, 2, 3]);
       const ownerIntentResponse = await fetch(
@@ -847,36 +810,20 @@ describe("desktop API", () => {
   });
 
   test("rejects duplicate source IDs when creating a desktop recording session", async () => {
-    const { server, baseUrl } = createServer();
-    Object.defineProperty(config.mcp, "publicBaseUrl", {
-      get: () => baseUrl,
-      configurable: true,
-    });
+    const { server, baseUrl } = createDesktopServer();
 
     try {
       const token = await authorizeDesktopToken(baseUrl);
-      const response = await fetch(
-        `${baseUrl}/api/desktop/recordings/session`,
+      const response = await postRecordingSession(baseUrl, token.access_token, [
         {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${token.access_token}`,
-          },
-          body: JSON.stringify({
-            sources: [
-              {
-                sourceId: "owner_mic",
-                kind: "owner_mic",
-              },
-              {
-                sourceId: "owner_mic",
-                kind: "owner_mic",
-              },
-            ],
-          }),
+          sourceId: "owner_mic",
+          kind: "owner_mic",
         },
-      );
+        {
+          sourceId: "owner_mic",
+          kind: "owner_mic",
+        },
+      ]);
       expect(response.status).toBe(400);
       await expect(readJson<{ error: string }>(response)).resolves.toEqual(
         expect.objectContaining({ error: "invalid_request" }),
@@ -885,6 +832,83 @@ describe("desktop API", () => {
       await closeServer(server);
     }
   });
+  test("desktop mutations return stable paused conflicts and status preserves the raw original", async () => {
+    const { server, baseUrl } = createDesktopServer();
+    try {
+      const { token, session } = await authorizeRecordingSession(baseUrl, [
+        { sourceId: "mic", kind: "owner_mic" },
+      ]);
+      const headers = {
+        Authorization: "Bearer " + token.access_token,
+        "Content-Type": "application/json",
+      };
+      const original = structuredClone(
+        getMockStore().personalMediaUploadsById.get(session.uploadId),
+      );
+      const marker = buildPausedDesktopDraftMarker(
+        { uploadId: session.uploadId, ownerUserId: mockDesktopUser.id },
+        { operationId: "private-operation" },
+      );
+      getMockStore().deploymentControlRecords.set(
+        JSON.stringify([marker.pk, marker.sk]),
+        marker,
+      );
+      const segmentInput = {
+        uploadId: session.uploadId,
+        sourceId: "mic",
+        sequence: 0,
+        contentType: "audio/wav",
+        fileSize: 10,
+        checksumSha256: "a".repeat(64),
+        durationMillis: 1000,
+        startedAt: "2026-01-01T00:00:00.000Z",
+        endedAt: "2026-01-01T00:00:01.000Z",
+      };
+      for (const [route, body] of [
+        ["segment-intent", segmentInput],
+        [
+          "segment-complete",
+          {
+            uploadId: session.uploadId,
+            sourceId: "mic",
+            sequence: 0,
+            key: "synthetic/key",
+            uploadToken: "synthetic-token",
+          },
+        ],
+        ["submit", { uploadId: session.uploadId }],
+      ] as const) {
+        const response = await fetch(
+          baseUrl + "/api/desktop/recordings/" + route,
+          { method: "POST", headers, body: JSON.stringify(body) },
+        );
+        expect(response.status).toBe(409);
+        expect(await response.json()).toEqual({
+          error: "paused",
+          message:
+            "This draft is preserved and paused. Recovery is not available yet.",
+        });
+      }
+      const status = await fetch(
+        baseUrl + "/api/desktop/recordings/" + session.uploadId,
+        { headers },
+      );
+      expect(status.status).toBe(200);
+      expect(await status.json()).toEqual({
+        job: {
+          ...original,
+          status: "paused",
+          retryable: false,
+          errorMessage:
+            "This draft is preserved and paused. Recovery is not available yet.",
+        },
+      });
+      expect(
+        getMockStore().personalMediaUploadsById.get(session.uploadId),
+      ).toEqual(original);
+    } finally {
+      await closeServer(server);
+    }
+  });
 });
-
 afterAll(stopServingRuntime);

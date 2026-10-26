@@ -19,3 +19,7 @@ The privileged recovery-publication CLI remains an operational exclusion with an
 ## Alternatives
 
 Taking either colliding implementation wholesale would discard reviewed behavior. Combining their manifests or accepting caller-provided receipts would blur authority. Migrating every static credential route or adding an admitted recovery-publication executor would require separate scope and review. These changes are deferred.
+
+## Paused personal drafts
+
+Preserve the public paused-draft protocol separately from A acceptance. Its marker and staged capture token cannot make incomplete personal work safe terminal. Reuse A's existing personal classification in the initial metadata scan to refuse known infeasible inventory before interruption, while keeping post-stop and final checks. This can refuse an attended window that needs a separately reviewed preservation contract; it avoids deliberately entering maintenance with personal work already known to block reopening. The screen is non-atomic and cannot guarantee later eligibility.

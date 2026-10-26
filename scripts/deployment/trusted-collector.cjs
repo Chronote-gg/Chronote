@@ -6,6 +6,7 @@ const { parseRehearsalManifest } = require("./rehearsal-manifest.cjs");
 const { awsCaller } = require("./sandbox-manifest.cjs");
 const { verifyCollectorRequest } = require("./collector-command.cjs");
 const { nativeTransport } = require("./collector-native.cjs");
+const { collectPausedDrafts } = require("./paused-draft-capture.cjs");
 const { collectNativeInventory } = require("./collector-inventory.cjs");
 const { collectRehearsalTags } = require("./collector-tags.cjs");
 const { collectTaskSession } = require("./collector-session.cjs");
@@ -95,6 +96,14 @@ function createTrustedCollector(options) {
             native: native.tasks.bound,
             ecs,
           });
+    const pausedDrafts = await collectPausedDrafts({
+      ...options,
+      m,
+      aws: boundedAws,
+      now,
+      snapshot,
+      validUntil: request.validUntil,
+    });
     const blockers = collectionBlockers(snapshot);
     assert.ok(now() < request.validUntil, "UNKNOWN: observation expired");
     const capture = await store.capture({
@@ -104,6 +113,9 @@ function createTrustedCollector(options) {
       native,
       tags,
       session,
+      ...(pausedDrafts
+        ? { compatibility: { binding: m.binding, uploads: [], pausedDrafts } }
+        : {}),
       observedAt: Math.floor(now()),
       blockers,
     });

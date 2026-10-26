@@ -19,7 +19,7 @@ import {
   STRIPE_RECEIPT_RETENTION_SECONDS,
 } from "../types/stripeWebhookReceipt";
 import { buildRuntimeAdmissionChecks } from "../services/deploymentControlTransactions";
-import { classifyDeploymentTransactionError } from "./deploymentControlTransactionError";
+import { classifyDeploymentTransactionError } from "./deploymentControlErrors";
 async function conditional(write: () => Promise<unknown>): Promise<boolean> {
   try {
     await write();

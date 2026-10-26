@@ -1,4 +1,8 @@
 import {
+  proofReady,
+  mockServingAdmissionAllowed,
+} from "./deploymentControlReadiness";
+import {
   consumedFixtureMatches,
   mockMaintenanceAllows,
   consumeMockFixture,
@@ -8,11 +12,17 @@ import {
   type NewWorkScope,
 } from "../types/productionIntroduction";
 import {
+  conditional,
+  sessionReservationFailure,
+  type ConditionalResult,
+} from "./deploymentControlErrors";
+import {
   createDynamoRecoveryRepository,
   createMockRecoveryRepository,
 } from "./meetingRecoveryRepository";
 import type { RecoveryRepository } from "../types/meetingRecovery";
 import { planCompatibleReplacement } from "../services/runtimeCompatibleReplacementService";
+import { buildPausedDesktopDraftInstallationTransaction } from "../services/pausedDesktopDraftTransactions";
 import {
   recordingCheckpointSchema,
   recoveryDispositionSchema,
@@ -27,13 +37,13 @@ import {
   UpdateItemCommand,
 } from "@aws-sdk/client-dynamodb";
 import { marshall, unmarshall } from "@aws-sdk/util-dynamodb";
-import {
-  classifyDeploymentTransactionError,
-  sessionReservationFailure,
-} from "./deploymentControlTransactionError";
 import { isDeepStrictEqual } from "node:util";
 import { planLocalBootstrap } from "../services/runtimeLocalBootstrapPlan";
-import type { ActiveMeetingLease, MeetingHistory } from "../types/db";
+import type {
+  ActiveMeetingLease,
+  MeetingHistory,
+  PersonalMediaUploadJobRecord,
+} from "../types/db";
 import {
   buildCompatibleReplacementTransaction,
   buildHistoryTransition,
@@ -77,35 +87,22 @@ import {
   type SuppressionRecord,
   suppressionRecordSchema,
   type RuntimeRetirementRequestInput,
+  type PausedDesktopDraftInstallation,
 } from "../types/deploymentControl";
 
-export type ConditionalResult = "applied" | "stale";
+export {
+  classifyDeploymentTransactionError,
+  DeploymentControlError,
+  type ConditionalResult,
+} from "./deploymentControlErrors";
 export type ExpectedVoiceState = Pick<
   VoiceRecord,
   "attemptId" | "state" | "ownerInstanceId" | "meetingId"
 >;
-export { classifyDeploymentTransactionError } from "./deploymentControlTransactionError";
-export class DeploymentControlError extends Error {
-  constructor(
-    public readonly kind: "conflict" | "unavailable",
-    public readonly cause: unknown,
-  ) {
-    super(`Deployment control ${kind}`);
-  }
-}
-async function conditional(
-  operation: () => Promise<unknown>,
-): Promise<ConditionalResult> {
-  try {
-    await operation();
-    return "applied";
-  } catch (error) {
-    const kind = classifyDeploymentTransactionError(error);
-    if (kind === "stale") return "stale";
-    throw new DeploymentControlError(kind, error);
-  }
-}
 export type DeploymentControlRepository = RecoveryRepository & {
+  installPausedDesktopDrafts(
+    input: PausedDesktopDraftInstallation,
+  ): Promise<ConditionalResult>;
   writeSuppression(input: {
     record: SuppressionRecord;
     expectedVersion?: number;
@@ -173,6 +170,22 @@ export function createDynamoDeploymentControlRepository(
     );
   }
   return {
+    installPausedDesktopDrafts(input) {
+      const transaction = buildPausedDesktopDraftInstallationTransaction(
+        input,
+        tables,
+      );
+      const command = new TransactWriteItemsCommand(transaction);
+      // An unknown installation acknowledgment must stop for readback, never replay.
+      command.middlewareStack.add((next) => next, {
+        name: "retryMiddleware",
+        step: "finalizeRequest",
+        priority: "high",
+        override: true,
+      });
+      // Explicit options bypass the SDK command-class handler cache.
+      return conditional(() => client.send(command, {}));
+    },
     ...createDynamoRecoveryRepository(client, {
       ...tables,
       get activeMeeting() {
@@ -429,25 +442,6 @@ export function createDynamoDeploymentControlRepository(
   };
 }
 
-function proofReady(
-  row: RuntimeRecord,
-  epoch: number | undefined,
-  generation: number,
-  now: number,
-): boolean {
-  return (
-    (epoch === undefined || row.readiness.observedEpoch === epoch) &&
-    row.readiness.observedGeneration === generation &&
-    (row.readiness.runtimeMode === "api" || row.readiness.gatewayReady) &&
-    row.readiness.cacheReady &&
-    row.readiness.dependenciesReady &&
-    row.readiness.provenAt <= now &&
-    row.readiness.expiresAt > now &&
-    row.protection.provenAt <= now &&
-    row.protection.expiresAt > now &&
-    row.expiresAt === undefined
-  );
-}
 const mockReservationRequests = new WeakMap<
   Map<string, DeploymentControlRecord>,
   Map<string, SessionReservationInput>
@@ -483,22 +477,6 @@ export function mockWorkAdmissionAllowed(
   return (
     mockMaintenanceAllows(control, scope, records) &&
     mockServingAdmissionAllowed(control, row, context)
-  );
-}
-function mockServingAdmissionAllowed(
-  control: ControlRecord,
-  row: RuntimeRecord,
-  context: AdmissionContext,
-) {
-  const selected = control.servingMembers[context.instanceId];
-  return Boolean(
-    selected &&
-    sameRuntimeIdentity(selected, context.identity) &&
-    sameRuntimeIdentity(row.identity, context.identity) &&
-    control.servingGeneration === context.authorizedGeneration &&
-    row.role === "serving" &&
-    row.authorizedGeneration === context.authorizedGeneration &&
-    proofReady(row, undefined, context.authorizedGeneration, context.now),
   );
 }
 function repeatedReservationResult(
@@ -566,6 +544,7 @@ export function createMockDeploymentControlRepository(
   records = new Map<string, DeploymentControlRecord>(),
   histories = new Map<string, MeetingHistory[]>(),
   leases = new Map<string, ActiveMeetingLease>(),
+  uploads = new Map<string, PersonalMediaUploadJobRecord>(),
 ): DeploymentControlRepository {
   const requests =
     mockReservationRequests.get(records) ??
@@ -590,6 +569,27 @@ export function createMockDeploymentControlRepository(
   };
 
   return {
+    async installPausedDesktopDrafts(input) {
+      buildPausedDesktopDraftInstallationTransaction(input, {
+        deploymentControl: "mock",
+        meetingHistory: "mock",
+        personalMediaUpload: "mock",
+      });
+      if (
+        !isDeepStrictEqual(getControl(), input.control) ||
+        input.pairs.some(
+          ({ record, expectedParent }) =>
+            records.has(recordKey(record.pk, record.sk)) ||
+            !isDeepStrictEqual(
+              uploads.get(expectedParent.uploadId),
+              expectedParent,
+            ),
+        )
+      )
+        return "stale";
+      input.pairs.forEach(({ record }) => store(record));
+      return "applied";
+    },
     ...createMockRecoveryRepository(
       records,
       histories,
@@ -727,9 +727,9 @@ export function createMockDeploymentControlRepository(
     },
     async getRecord(pk, sk) {
       const row = records.get(recordKey(pk, sk));
-      if (!row) return undefined;
-      parseDeploymentControlRecord(row);
-      return structuredClone(row);
+      return row
+        ? structuredClone(parseDeploymentControlRecord(row))
+        : undefined;
     },
     async initializeControl(record) {
       controlRecordSchema.parse(record);
