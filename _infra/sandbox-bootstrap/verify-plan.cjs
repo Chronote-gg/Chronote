@@ -270,7 +270,9 @@ function validateMetadata(entry, input, approved) {
     );
     insist(
       Array.isArray(result.client_id_list) &&
-        result.client_id_list.includes("sts.amazonaws.com"),
+        result.client_id_list.some(
+          (audience) => audience === "sts.amazonaws.com",
+        ),
       "STS audience absent",
     );
   }
