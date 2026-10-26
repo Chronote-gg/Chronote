@@ -1,10 +1,10 @@
 /** @jest-environment node */
+import { jest } from "@jest/globals";
 jest.mock("../../src/services/runtimeApiOperationService", () => ({
   runRuntimeApiOperation: jest.requireActual("../fixtures/notionOwner")
     .runTestNotionOperation,
 }));
 import { withTestNotionOwner } from "../fixtures/notionOwner";
-import { jest } from "@jest/globals";
 import type { MeetingHistory } from "../../src/types/db";
 import type {
   NotionAutomationConfig,

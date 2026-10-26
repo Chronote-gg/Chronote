@@ -61,12 +61,13 @@ jest.mock("node:child_process", () => {
 });
 jest.mock("@aws-sdk/client-dynamodb", () => {
   const actual = jest.requireActual("@aws-sdk/client-dynamodb");
+  const { env } = jest.requireActual("node:process");
   return {
     ...actual,
     DynamoDBClient: jest.fn((settings) => {
       const client = new actual.DynamoDBClient({
         ...settings,
-        endpoint: "http://127.0.0.1:18157",
+        endpoint: env.DEPLOYMENT_TEST_DYNAMODB_ENDPOINT,
         region: "local",
         credentials: { accessKeyId: "dummy", secretAccessKey: "dummy" },
         maxAttempts: 1,

@@ -21,7 +21,6 @@ function createProductionBootstrap(options) {
   const {
       binding,
       read,
-      write,
       now,
       aws,
       scan,

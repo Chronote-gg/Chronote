@@ -1,8 +1,4 @@
 /** @jest-environment node */
-jest.mock("../../src/services/runtimeApiOperationService", () => ({
-  runRuntimeApiOperation: jest.requireActual("../fixtures/runtimeApiOperation")
-    .runTestApiOperation,
-}));
 import {
   afterAll,
   beforeEach,
@@ -11,6 +7,10 @@ import {
   it,
   jest,
 } from "@jest/globals";
+jest.mock("../../src/services/runtimeApiOperationService", () => ({
+  runRuntimeApiOperation: jest.requireActual("../fixtures/runtimeApiOperation")
+    .runTestApiOperation,
+}));
 import { config } from "../../src/services/configService";
 import {
   createCheckoutSession,

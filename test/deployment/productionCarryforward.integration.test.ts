@@ -39,7 +39,7 @@ const names = {
 };
 const client = new DynamoDBClient({
   endpoint: process.env.DEPLOYMENT_TEST_DYNAMODB_ENDPOINT,
-  region: "local",
+  region: "us-east-1",
   credentials: { accessKeyId: "dummy", secretAccessKey: "dummy" },
 });
 let repository: ReturnType<

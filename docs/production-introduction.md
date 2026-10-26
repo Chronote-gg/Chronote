@@ -108,5 +108,5 @@ Historical H7/R6 observations in the [handoff guide](deployment-handoff.md#evide
 - [Production role and permission limits](../_infra/README.md#production-backend-deployment-identity)
 - [Ordinary handoff and recording recovery](deployment-handoff.md)
 - [Separate Sandbox bootstrap](sandbox-bootstrap.md)
-- Source contracts: `scripts/deployment/staged-production-manifest.cjs`, `production-evidence.cjs`, `introduce-production.cjs` and `production-workflow.cjs`.
+- Source contracts: `scripts/deployment/staged-production-manifest.cjs`, `production-evidence.cjs`, `staged-introduce-production.cjs` and `production-workflow.cjs`.
 - Local lifecycle coverage: `test/deployment/productionIntroduction.integration.test.ts` and `productionCarryforward.integration.test.ts`.

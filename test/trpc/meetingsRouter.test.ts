@@ -1,4 +1,5 @@
 /** @jest-environment node */
+import { beforeEach, describe, expect, test, jest } from "@jest/globals";
 jest.mock("../../src/db", () => ({
   ...jest.requireActual("../../src/db"),
   getDeploymentControlRepository: () => ({
@@ -14,7 +15,6 @@ import {
   savedUpdate,
   expectSavedUpdateAcknowledgment,
 } from "./meetingUpdateResult.fixture";
-import { beforeEach, describe, expect, test, jest } from "@jest/globals";
 import { completedTextResponse } from "../../src/testSupport/openaiResponse";
 
 import "../deployment/coldNetworkGuard.cjs";

@@ -298,7 +298,7 @@ test("native API admission orders provider ownership before hold and keeps its a
 });
 
 test("an incidental DynamoDB client without explicit endpoint uses the validated loopback harness", async () => {
-  const incidental = new DynamoDBClient({ region: "us-east-1" });
+  const incidental = new DynamoDBClient({ region: "local" });
   try {
     const result = await incidental.send(
       new DescribeTableCommand({ TableName: tables.deploymentControl }),

@@ -1,10 +1,10 @@
+import { jest } from "@jest/globals";
 const { context } = jest.requireActual<{
   context: import("../../types/deploymentControl").AdmissionContext;
 }>("../../../test/deployment/controlFixtures");
 jest.mock("../runtimeLifecycleService", () => ({
   getRuntimeAdmissionContext: async () => context,
 }));
-import { jest } from "@jest/globals";
 import { PERSONAL_MEDIA_UPLOAD_MAX_BYTES } from "../../constants";
 import {
   createPersonalMediaUploadIntent,

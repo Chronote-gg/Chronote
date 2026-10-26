@@ -213,6 +213,10 @@ function baseScope(m) {
     ),
   };
 }
+function concreteAudioResource(pattern) {
+  expect(pattern).toMatch(/^[^*]*\*$/);
+  return `${pattern.slice(0, -1)}user/1-hash`;
+}
 function effective(
   scope,
   session,
@@ -243,7 +247,7 @@ test("effective base and mandatory session intersection excludes other fixture, 
   const session = contentPolicy(m, 0, "1970-01-01T00:02:00.000Z", owner);
   expect(scope.allow).toHaveLength(6);
   expect(scope.deny).toHaveLength(4);
-  const audio = session.Statement[0].Resource[2].replace("*", "user/1-hash");
+  const audio = concreteAudioResource(session.Statement[0].Resource[2]);
   expect(effective(scope, session, audio)).toEqual({ s3: true, kms: true });
   for (const key of [
     audio.replace(m.handoff.grants[0].meetingId, m.handoff.grants[1].meetingId),
@@ -268,9 +272,7 @@ test("IAM question marks cross slash and explicit context denial wins even when 
   expect(iamMatches("a?b", "a/b")).toBe(true);
   const shapedOwner = "context/audio/xx-xxxx-4xxx-xxxx-xxxxxxxxxxxx";
   // Equal-width substitutions demonstrate that base shapes do not validate UUID or ISO semantics.
-  const allowed = scope.allow[2]
-    .replaceAll("?", "x")
-    .replace("*", "user/1-hash");
+  const allowed = concreteAudioResource(scope.allow[2].replaceAll("?", "x"));
   expect(scope.allow.some((pattern) => iamMatches(pattern, allowed))).toBe(
     true,
   );
@@ -282,10 +284,11 @@ test("IAM question marks cross slash and explicit context denial wins even when 
   ).toThrow();
   const slashOwner = "xxxxxxxx-xxxx-4xxx-xxxx-xx/context/x";
   expect(slashOwner.length).toBe(36);
-  const key = scope.allow[2]
-    .replace("????????-????-4???-????-????????????", slashOwner)
-    .replaceAll("?", "0")
-    .replace("*", "user/1-hash");
+  const key = concreteAudioResource(
+    scope.allow[2]
+      .replace("????????-????-4???-????-????????????", slashOwner)
+      .replaceAll("?", "0"),
+  );
   expect(scope.allow.some((pattern) => iamMatches(pattern, key))).toBe(true);
   expect(scope.deny.some((pattern) => iamMatches(pattern, key))).toBe(true);
   const broadSession = {
