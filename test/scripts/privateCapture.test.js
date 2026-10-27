@@ -77,6 +77,28 @@ test("legacy raw policy binding preserves exact noncanonical matching", async ()
   expect(changed.objects.size).toBe(0);
 });
 
+test.each([undefined, false, true, null, "false", 0])(
+  "private exact-version readback validates native bucket-key metadata %p",
+  async (bucketKey) => {
+    const f = fixture(),
+      send = f.client.send;
+    f.client.send = async (command) => {
+      const result = await send(command);
+      if (command.constructor.name === "GetObjectCommand") {
+        delete result.BucketKeyEnabled;
+        if (bucketKey !== undefined) result.BucketKeyEnabled = bucketKey;
+      }
+      return result;
+    };
+    const operation = createPrivateCapture(f.options).capture({
+      synthetic: true,
+    });
+    if (bucketKey === undefined || bucketKey === false)
+      await expect(operation).resolves.toMatchObject({ versionId: "v1" });
+    else await expect(operation).rejects.toThrow();
+  },
+);
+
 test.each([
   ["Action", (p) => (p.Statement[0].Action[0] = "s3:DeleteObject")],
   ["Effect", (p) => (p.Statement[0].Effect = "Deny")],
@@ -242,6 +264,9 @@ test.each([
   "null-version",
   "changed-bytes",
   "changed-version",
+  "wrong-algorithm",
+  "wrong-kms",
+  "wrong-size",
   "public",
   "lifecycle",
   "retention",
@@ -260,13 +285,17 @@ test.each([
     const result = await send(c);
     if (c.constructor.name === "PutObjectCommand" && fault === "null-version")
       result.VersionId = "null";
-    if (c.constructor.name === "GetObjectCommand" && fault === "changed-bytes")
-      result.Body = [Buffer.from("{}")];
-    if (
-      c.constructor.name === "GetObjectCommand" &&
-      fault === "changed-version"
-    )
-      result.VersionId = "v2";
+    if (c.constructor.name === "GetObjectCommand")
+      Object.assign(
+        result,
+        {
+          "changed-bytes": { Body: [Buffer.from("{}")] },
+          "changed-version": { VersionId: "v2" },
+          "wrong-algorithm": { ServerSideEncryption: "AES256" },
+          "wrong-kms": { SSEKMSKeyId: result.SSEKMSKeyId + "other" },
+          "wrong-size": { ContentLength: result.ContentLength + 1 },
+        }[fault],
+      );
     if (
       c.constructor.name === "GetBucketPolicyStatusCommand" &&
       fault === "public"

@@ -231,6 +231,24 @@ test("authenticates both metadata gates then uses distinct exact-folder sessions
   expect(() => readGeneratedFixtures(token)).toThrow();
 });
 
+test.each([undefined, false, true, null, "false", 0])(
+  "fixture content validates native bucket-key metadata %p",
+  async (bucketKey) => {
+    const normal = mockS3.getMockImplementation();
+    mockS3.mockImplementation(async (...args) => {
+      const result = await normal(...args);
+      delete result.BucketKeyEnabled;
+      if (bucketKey !== undefined) result.BucketKeyEnabled = bucketKey;
+      return result;
+    });
+    const operation = collectGeneratedFixturesFromOriginalRun();
+    if (bucketKey === undefined || bucketKey === false) {
+      const token = await operation;
+      expect(readGeneratedFixtures(token).fixtures).toHaveLength(2);
+    } else await expect(operation).rejects.toThrow();
+  },
+);
+
 test.each([
   "loader",
   "source",
