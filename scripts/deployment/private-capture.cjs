@@ -5,6 +5,7 @@ const s3 = require("@aws-sdk/client-s3");
 const { digest } = require("./collector-payload.cjs");
 const { boundedBody } = require("./collector-principal.cjs");
 const { captureNamespace } = require("./collector-command.cjs");
+const { bindingHash } = require("./binding-hash.cjs");
 const hash = z.string().regex(/^[a-f0-9]{64}$/);
 const storageBinding = z
   .object({
@@ -56,7 +57,11 @@ async function checkStore(send, b, now) {
     "UNKNOWN: privacy",
   );
   const policy = (await send("GetBucketPolicy")).Policy;
-  assert.equal(digest(policy), b.policySha256, "UNKNOWN: policy binding");
+  assert.ok(
+    digest(policy) === b.policySha256 ||
+      bindingHash(JSON.parse(policy)) === b.policySha256,
+    "UNKNOWN: policy binding",
+  );
   const encryption = await send("GetBucketEncryption");
   const rules = encryption.ServerSideEncryptionConfiguration?.Rules,
     expectedRule = {
