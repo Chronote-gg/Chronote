@@ -6,6 +6,7 @@ import {
   reviewedRoutes,
   readActualSource,
   readOidcOnlySource,
+  readStaticCredentialSource,
 } from "../fixtures/productionReviewedSource.js";
 import {
   verifyDeclaredRoutes,
@@ -104,8 +105,21 @@ function reviewedWorkflowBinding(workflow, contents) {
   return actual;
 }
 const applyPath = ".github/workflows/terraform-apply.yml";
-test("actual reviewed deploy source with bound hashes refuses its unaccounted static credential route", () => {
+test("actual reviewed deploy source retains both OIDC site publishers", () => {
   const contents = readActualSource(".github/workflows/deploy.yml", "utf8");
+  expect(
+    declaredRoutesVerified(
+      verifyDeclaredRoutes(reviewedWorkflowBinding("deploy.yml", contents)),
+      scope,
+    ),
+  ).toBe(true);
+});
+
+test("a static site-publisher credential still refuses even with freshly bound source hashes", () => {
+  const contents = readStaticCredentialSource(
+    ".github/workflows/deploy.yml",
+    "utf8",
+  );
   expect(() =>
     verifyDeclaredRoutes(reviewedWorkflowBinding("deploy.yml", contents)),
   ).toThrow("unaccounted_static_credential_route");

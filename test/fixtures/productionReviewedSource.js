@@ -6,25 +6,20 @@ import { canonicalHash } from "../../scripts/deployment/production-manifest.cjs"
 export const readActualSource = (...args) =>
   jest.requireActual("node:fs").readFileSync(...args);
 
-// Synthetic reviewed workflow for protocol positives, not current deployment compatibility.
-export function readOidcOnlySource(path, encoding) {
+// Protocol positives now retain both real site publishers and their guards.
+export const readOidcOnlySource = readActualSource;
+
+export function readStaticCredentialSource(path, encoding) {
   const contents = readActualSource(path, encoding);
-  const route = String(path).replaceAll("\\", "/");
   if (
-    !route.endsWith(".github/workflows/deploy.yml") &&
-    !route.endsWith(".github/workflows/terraform-apply.yml")
+    !String(path).replaceAll("\\", "/").endsWith(".github/workflows/deploy.yml")
   )
     return contents;
   const workflow = parse(contents);
-  if (route.endsWith("/deploy.yml")) {
-    delete workflow.jobs["deploy-frontend"];
-    delete workflow.jobs["deploy-docs"];
-    workflow.jobs.deploybackend.needs = ["ci"];
-  } else {
-    workflow.jobs.apply.steps = workflow.jobs.apply.steps.filter(
-      (step) => !step.with?.["aws-access-key-id"],
-    );
-  }
+  workflow.jobs["deploy-docs"].steps.push({
+    uses: "aws-actions/configure-aws-credentials@v6",
+    with: { "aws-access-key-id": "SYNTHETIC_UNACCOUNTED" },
+  });
   return stringify(workflow);
 }
 
