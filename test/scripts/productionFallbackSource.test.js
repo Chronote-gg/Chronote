@@ -168,18 +168,21 @@ test.each(staticAcquisitions)(
     );
   },
 );
-test("current Plan static credential content is detected by the common workflow accounting check", () => {
+test("Plan has no static credentials and accounting still refuses a reintroduced legacy route", () => {
   const contents = readActualSource(
     ".github/workflows/terraform-plan.yml",
     "utf8",
   );
+  const workflow = parse(contents);
   expect(
-    parse(contents).jobs.plan.steps.filter(
-      (step) => step.with?.["aws-access-key-id"],
-    ),
-  ).toHaveLength(1);
+    workflow.jobs.plan.steps.filter((step) => step.with?.["aws-access-key-id"]),
+  ).toHaveLength(0);
+  workflow.jobs.plan.steps.push(staticAcquisitions[0][1]);
   // Plan is not in the launcher inventory; supply its actual body through a declared workflow transport.
-  const actual = reviewedWorkflowBinding("terraform-apply.yml", contents);
+  const actual = reviewedWorkflowBinding(
+    "terraform-apply.yml",
+    stringify(workflow),
+  );
   expect(() => verifyDeclaredRoutes(actual)).toThrow(
     "unaccounted_static_credential_route",
   );

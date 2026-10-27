@@ -1,0 +1,50 @@
+name: Verify production bootstrap
+on:
+  workflow_dispatch:
+    inputs:
+      source_sha:
+        description: Exact reviewed master source SHA
+        required: true
+        type: string
+      storage_sha256:
+        description: Reviewed private storage binding byte digest
+        required: true
+        type: string
+      deadline_utc:
+        description: Reviewed operation deadline in UTC ISO format
+        required: true
+        type: string
+permissions:
+  contents: read
+concurrency:
+  group: production-bootstrap-verification
+  cancel-in-progress: false
+jobs:
+  verify:
+    if: github.ref == 'refs/heads/master' && github.run_attempt == 1
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      actions: read
+      id-token: write
+    env:
+      VERIFICATION_SOURCE_SHA: ${{ inputs.source_sha }}
+      VERIFICATION_STORAGE_SHA256: ${{ inputs.storage_sha256 }}
+      VERIFICATION_DEADLINE: ${{ inputs.deadline_utc }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: yarn
+      - name: Install locked dependencies
+        run: bash scripts/ci-install-dependencies.sh
+      - name: Verify approval, restricted session and encrypted synthetic storage
+        env:
+          BOOTSTRAP_VERIFICATION_STORAGE_JSON: ${{ secrets.BOOTSTRAP_VERIFICATION_STORAGE_JSON }}
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/deployment/verify-production-bootstrap.cjs run
