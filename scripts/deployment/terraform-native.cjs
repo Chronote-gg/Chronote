@@ -104,6 +104,9 @@ async function branchPolicyProof(get, environment, invocation, run) {
 }
 async function verifyApproval(get, invocation, inputs) {
   const run = await verifyRun(get, invocation, false, inputs);
+  return verifyEnvironmentApproval(get, invocation, run);
+}
+async function verifyEnvironmentApproval(get, invocation, run) {
   const environment = await get(
     `/repos/${invocation.repository}/environments/${invocation.environment}`,
   );
@@ -145,4 +148,10 @@ async function verifyApproval(get, invocation, inputs) {
     createdAt: run.created_at,
   };
 }
-module.exports = { nativeGitHub, verifyRun, verifyApproval, runTitle };
+module.exports = {
+  nativeGitHub,
+  verifyRun,
+  verifyApproval,
+  runTitle,
+  verifyEnvironmentApproval,
+};

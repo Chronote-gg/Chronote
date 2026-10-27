@@ -62,13 +62,35 @@ jobs:
         run: bash scripts/ci-install-dependencies.sh
       - name: Validate Terraform dispatch scope
         run: node scripts/deployment/terraform-dispatch.cjs --validate
+      - name: Mask production Plan identity
+        id: plan-identity
+        if: ${{ inputs.github_environment == 'production' }}
+        env:
+          TERRAFORM_PRIVATE_STORAGE_JSON: ${{ secrets.TERRAFORM_PRIVATE_STORAGE_JSON }}
+        run: node scripts/deployment/terraform-plan-identity.cjs
+      - name: Validate production identity bindings
+        if: ${{ inputs.github_environment == 'production' }}
+        env:
+          IDENTITY_MATCHES: ${{ vars.AWS_ACCOUNT_ID == steps.plan-identity.outputs.account_id && vars.TERRAFORM_AWS_ROLE_ARN == steps.plan-identity.outputs.role_arn && vars.DEPLOYMENT_CONTROL_TABLE == steps.plan-identity.outputs.control_table }}
+        run: test "$IDENTITY_MATCHES" = true
+      - name: Validate exact production identity
+        if: ${{ inputs.github_environment == 'production' }}
+        env:
+          TERRAFORM_PRIVATE_STORAGE_JSON: ${{ secrets.TERRAFORM_PRIVATE_STORAGE_JSON }}
+          GITHUB_VARS_JSON: ${{ toJSON(vars) }}
+        run: node scripts/deployment/terraform-plan-identity.cjs --validate
       - name: Configure production AWS credentials
         if: ${{ inputs.github_environment == 'production' }}
         uses: aws-actions/configure-aws-credentials@v6
         with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          role-to-assume: ${{ vars.TERRAFORM_AWS_ROLE_ARN }}
+          allowed-account-ids: ${{ vars.AWS_ACCOUNT_ID }}
           aws-region: ${{ env.AWS_REGION }}
+          role-session-name: terraform-plan-${{ github.run_id }}-${{ github.run_attempt }}
+          role-duration-seconds: 3600
+          unset-current-credentials: true
+          mask-aws-account-id: true
+          inline-session-policy: '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":["dynamodb:Describe*","dynamodb:ListTagsOfResource","dynamodb:GetItem","iam:Get*","iam:List*","kms:Describe*","kms:Get*","kms:List*","s3:ListBucket","s3:GetBucket*","s3:GetEncryptionConfiguration","s3:GetLifecycleConfiguration","ec2:Describe*","elasticloadbalancing:Describe*","ecs:Describe*","ecs:ListTagsForResource","acm:Describe*","acm:ListTagsForCertificate","route53:Get*","route53:List*"],"Resource":"*"},{"Effect":"Allow","Action":["s3:GetObject"],"Resource":"arn:aws:s3:::meeting-notes-terraform-state-bucket/meeting-notes-terraform/state"},{"Effect":"Allow","Action":["dynamodb:PutItem","dynamodb:DeleteItem"],"Resource":"arn:aws:dynamodb:us-east-1:${{ vars.AWS_ACCOUNT_ID }}:table/meeting-notes-terraform-state-locks"},{"Effect":"Allow","Action":["s3:PutObject","s3:GetObjectVersion"],"Resource":"arn:aws:s3:::meeting-notes-prod-private-evidence-${{ vars.AWS_ACCOUNT_ID }}/terraform/production/*"},{"Effect":"Allow","Action":["kms:GenerateDataKey","kms:Decrypt"],"Resource":"arn:aws:kms:us-east-1:${{ vars.AWS_ACCOUNT_ID }}:key/*"}]}'
       - name: Configure Sandbox AWS credentials
         if: ${{ inputs.github_environment == 'sandbox' }}
         uses: aws-actions/configure-aws-credentials@v6
@@ -86,6 +108,10 @@ jobs:
           terraform_wrapper: false
       - name: Run private Terraform Plan
         env:
+          DEPLOYMENT_ENVIRONMENT: ${{ inputs.github_environment }}
+          DEPLOYMENT_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
+          DEPLOYMENT_CONTROL_TABLE: ${{ vars.DEPLOYMENT_CONTROL_TABLE }}
+          DEPLOYMENT_GUARD_ROLE_ARN: ${{ vars.TERRAFORM_AWS_ROLE_ARN }}
           GH_TOKEN: ${{ github.token }}
           TERRAFORM_PRIVATE_STORAGE_JSON: ${{ secrets.TERRAFORM_PRIVATE_STORAGE_JSON }}
           TERRAFORM_TFVARS_JSON: ${{ secrets.TERRAFORM_TFVARS_JSON }}

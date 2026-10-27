@@ -138,6 +138,29 @@ function createTerraformCapture({
     namespace: `terraform/${i.environment}/${i.runId}/1/${digest(JSON.stringify(i))}`,
   });
 }
+function createVerificationCapture({
+  identity,
+  purpose,
+  binding,
+  client,
+  now,
+}) {
+  z.object({
+    runId: z.string().regex(/^[1-9]\d{0,15}$/),
+    sourceSha: z.string().regex(/^[a-f0-9]{40}$/),
+  })
+    .strict()
+    .parse(identity);
+  z.enum(["payload", "report"]).parse(purpose);
+  return createStore({
+    binding,
+    client,
+    now,
+    storeId: binding.storeId,
+    validUntil: (now ?? (() => Math.floor(Date.now() / 1000)))() + 900,
+    namespace: `terraform/production/verification/${identity.runId}/1/${identity.sourceSha}/${purpose}`,
+  });
+}
 function createStore({
   binding,
   client,
@@ -287,4 +310,5 @@ module.exports = {
   createPrivateCapture,
   createPreparationCapture,
   createTerraformCapture,
+  createVerificationCapture,
 };

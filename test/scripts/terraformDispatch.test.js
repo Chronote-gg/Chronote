@@ -1,5 +1,6 @@
 /** @jest-environment node */
 import { Buffer } from "node:buffer";
+import { createHash } from "node:crypto";
 import { executeTerraformDispatch } from "../fixtures/deployment/terraformDispatchVm.js";
 import process from "node:process";
 import { test, expect } from "@jest/globals";
@@ -90,7 +91,11 @@ test.each(["plan", "apply"])(
       "node scripts/deployment/terraform-dispatch.cjs --validate",
       ...(mode === "apply"
         ? ["node scripts/deployment/production-writer-guard.cjs --inspect"]
-        : []),
+        : [
+            "node scripts/deployment/terraform-plan-identity.cjs",
+            'test "$IDENTITY_MATCHES" = true',
+            "node scripts/deployment/terraform-plan-identity.cjs --validate",
+          ]),
       "set +x\nnode scripts/deployment/terraform-dispatch.cjs\n",
     ]);
     const inputs =
@@ -329,6 +334,66 @@ test.each(["plan", "apply"])(
   },
 );
 
+test("production Plan uses the reviewed OIDC read, lock and capture session", () => {
+  const workflow = parse(
+    readFileSync(".github/workflows/terraform-plan.yml", "utf8"),
+  );
+  const job = workflow.jobs.plan;
+  const production = job.steps.find(
+    (step) =>
+      step.if === "${{ inputs.github_environment == 'production' }}" &&
+      step.with?.["role-to-assume"],
+  );
+  expect(production.with).toMatchObject({
+    "role-to-assume": "${{ vars.TERRAFORM_AWS_ROLE_ARN }}",
+    "allowed-account-ids": "${{ vars.AWS_ACCOUNT_ID }}",
+    "aws-region": "${{ env.AWS_REGION }}",
+    "role-session-name":
+      "terraform-plan-${{ github.run_id }}-${{ github.run_attempt }}",
+    "role-duration-seconds": 3600,
+    "unset-current-credentials": true,
+  });
+  const text = production.with["inline-session-policy"];
+  expect(createHash("sha256").update(text).digest("hex")).toBe(
+    "dcaee452fb07479d8e4138092d5cbaf313e45f56c6da5c131945e1ecc3e987a0",
+  );
+  expect(Buffer.byteLength(text)).toBeLessThanOrEqual(2048);
+  const statements = JSON.parse(text).Statement;
+  const writes = statements.filter((statement) =>
+    statement.Action.some((action) =>
+      /:(Put|Delete|Create|Update|Modify|Pass|Set)/.test(action),
+    ),
+  );
+  expect(writes).toEqual([
+    {
+      Effect: "Allow",
+      Action: ["dynamodb:PutItem", "dynamodb:DeleteItem"],
+      Resource:
+        "arn:aws:dynamodb:us-east-1:${{ vars.AWS_ACCOUNT_ID }}:table/meeting-notes-terraform-state-locks",
+    },
+    {
+      Effect: "Allow",
+      Action: ["s3:PutObject", "s3:GetObjectVersion"],
+      Resource:
+        "arn:aws:s3:::meeting-notes-prod-private-evidence-${{ vars.AWS_ACCOUNT_ID }}/terraform/production/*",
+    },
+  ]);
+  expect(
+    statements.find((statement) => statement.Action.includes("s3:GetObject"))
+      .Resource,
+  ).toBe(
+    "arn:aws:s3:::meeting-notes-terraform-state-bucket/meeting-notes-terraform/state",
+  );
+  expect(
+    job.steps.find((step) => step.name === "Run private Terraform Plan").env,
+  ).toMatchObject({
+    DEPLOYMENT_ENVIRONMENT: "${{ inputs.github_environment }}",
+    DEPLOYMENT_ACCOUNT_ID: "${{ vars.AWS_ACCOUNT_ID }}",
+    DEPLOYMENT_CONTROL_TABLE: "${{ vars.DEPLOYMENT_CONTROL_TABLE }}",
+    DEPLOYMENT_GUARD_ROLE_ARN: "${{ vars.TERRAFORM_AWS_ROLE_ARN }}",
+  });
+});
+
 test.each(["plan", "apply"])(
   "%s Sandbox uses OIDC with a bounded session and no static fallback",
   (mode) => {
@@ -344,12 +409,8 @@ test.each(["plan", "apply"])(
     );
     const steps = workflow.jobs[mode].steps;
     const staticStep = steps.find((s) => s.with?.["aws-access-key-id"]);
-    if (mode === "plan")
-      expect(staticStep.if).toBe(
-        "${{ inputs.github_environment == 'production' }}",
-      );
-    else {
-      expect(staticStep).toBeUndefined();
+    expect(staticStep).toBeUndefined();
+    if (mode === "apply") {
       const production = steps.find(
         (s) =>
           s.with?.["role-to-assume"] ===
@@ -359,7 +420,8 @@ test.each(["plan", "apply"])(
     }
     const oidc = steps.find(
       (s) =>
-        s.with?.["role-to-assume"] === "${{ vars.TERRAFORM_AWS_ROLE_ARN }}",
+        s.with?.["role-to-assume"] === "${{ vars.TERRAFORM_AWS_ROLE_ARN }}" &&
+        s.if === "${{ inputs.github_environment == 'sandbox' }}",
     );
     expect(oidc.if).toBe("${{ inputs.github_environment == 'sandbox' }}");
     expect(oidc.with["role-to-assume"]).toBe(
