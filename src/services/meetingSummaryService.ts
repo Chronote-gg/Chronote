@@ -16,6 +16,8 @@ export type MeetingSummaries = {
 };
 
 type MeetingSummaryInput = {
+  observeGeneration?: import("../types/fixtureEvidence").GenerationObserver;
+  recentMeetingNames?: string;
   savedPrompt?: MeetingNotesInput["savedSummary"];
   frozenModel?: NonNullable<
     MeetingNotesInput["frozenModels"]
@@ -94,6 +96,7 @@ async function prepareSummaryPrompt(input: MeetingSummaryInput) {
   const previousSentence = input.previousSummarySentence?.trim();
   const previousLabel = input.previousSummaryLabel?.trim();
   const recentMeetingNames =
+    input.recentMeetingNames ??
     input.savedPrompt?.recentMeetingNames ??
     (await listRecentMeetingNamesForPrompt({
       guildId: input.guildId,
@@ -152,6 +155,8 @@ export async function generateMeetingSummaries(
       });
     input.signal?.throwIfAborted();
     const content = await generateOpenAIText({
+      observeGeneration: input.observeGeneration,
+      generationOperation: "summary",
       model: modelChoice.model,
       input: messages,
       modelParams: chatParams,

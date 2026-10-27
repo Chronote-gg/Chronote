@@ -1,4 +1,8 @@
 /** @jest-environment node */
+import {
+  seedServingRuntime,
+  stopServingRuntime,
+} from "../fixtures/servingRuntime";
 import * as stripeClient from "../../src/services/stripeClient";
 import { resolveRenewalAccess } from "../../src/services/renewalRecoveryAccess";
 import { config } from "../../src/services/configService";
@@ -12,15 +16,17 @@ const original = {
   mode: config.subscription.stripeMode,
   grace: config.stripe.renewalGraceEnabled,
 };
-beforeEach(() => {
+beforeEach(async () => {
   config.mock.enabled = true;
   config.subscription.stripeMode = "test";
   resetMockStore();
+  await seedServingRuntime();
   getMockStore().subscriptions.set(
     renewalSubscription.guildId,
     structuredClone(renewalSubscription),
   );
 });
+afterAll(stopServingRuntime);
 afterEach(() => {
   config.mock.enabled = original.mock;
   config.subscription.stripeMode = original.mode;

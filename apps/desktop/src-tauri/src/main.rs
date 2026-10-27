@@ -4,6 +4,7 @@
 )]
 
 mod audio;
+mod crypto;
 mod recording_upload;
 use recording_upload::{submit_recording_manifest, upload_segment_file};
 
@@ -17,13 +18,11 @@ use std::thread::{self, JoinHandle};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use audio::{AudioDevice, CaptureDirection, CaptureHandle, CaptureSegment, CaptureSignalLevel};
-use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use chrono::{SecondsFormat, TimeZone, Utc};
+use crypto::{pkce_challenge, random_url_token, sha256_file};
 use directories::ProjectDirs;
-use rand::{rngs::OsRng, RngCore};
 use reqwest::multipart::{Form, Part};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 use tauri::{Emitter, Manager, State};
 use tokio::sync::mpsc as async_mpsc;
 use url::Url;
@@ -898,8 +897,8 @@ fn begin_login(api_base_url: &str) -> Result<PendingLogin, String> {
         .map_err(|error| error.to_string())?
         .port();
     let redirect_uri = format!("http://127.0.0.1:{port}/auth/callback");
-    let state = random_url_token(32);
-    let code_verifier = random_url_token(32);
+    let state = random_url_token(32)?;
+    let code_verifier = random_url_token(32)?;
     let code_challenge = pkce_challenge(&code_verifier);
     let mut authorize_url = Url::parse(&format!("{api_base_url}/api/desktop/auth/authorize"))
         .map_err(|error| error.to_string())?;
@@ -1455,20 +1454,6 @@ fn relative_recording_file_name(directory: &Path, path: &Path) -> Result<String,
     Ok(parts.join("/"))
 }
 
-fn sha256_file(path: &Path) -> Result<String, String> {
-    let mut file = fs::File::open(path).map_err(|error| error.to_string())?;
-    let mut hasher = Sha256::new();
-    let mut buffer = [0_u8; 64 * 1024];
-    loop {
-        let read = file.read(&mut buffer).map_err(|error| error.to_string())?;
-        if read == 0 {
-            break;
-        }
-        hasher.update(&buffer[..read]);
-    }
-    Ok(format!("{:x}", hasher.finalize()))
-}
-
 fn epoch_millis_to_iso(value: u64) -> String {
     Utc.timestamp_millis_opt(value.min(i64::MAX as u64) as i64)
         .single()
@@ -1974,16 +1959,6 @@ fn retained_source_path(directory: &Path, file_name: &str) -> Result<PathBuf, St
         return Err("Retained recording source file name is invalid.".to_string());
     }
     Ok(directory.join(relative_path))
-}
-
-fn random_url_token(byte_count: usize) -> String {
-    let mut bytes = vec![0_u8; byte_count];
-    OsRng.fill_bytes(&mut bytes);
-    URL_SAFE_NO_PAD.encode(bytes)
-}
-
-fn pkce_challenge(code_verifier: &str) -> String {
-    URL_SAFE_NO_PAD.encode(Sha256::digest(code_verifier.as_bytes()))
 }
 
 fn now_iso() -> String {

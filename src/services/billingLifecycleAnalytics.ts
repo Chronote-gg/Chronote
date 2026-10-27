@@ -1,3 +1,7 @@
+import {
+  runBillingOperation,
+  type RuntimeBillingOwner,
+} from "./runtimeBillingOperationService";
 import type { GuildSubscription } from "../types/db";
 import type { BillingLifecycleState } from "../types/billingAnalytics";
 import type { RenewalOperation } from "../types/renewal";
@@ -135,13 +139,17 @@ function lifecycleChange(
     return "plan_changed";
   return null;
 }
-async function receipt(key: string) {
+async function receipt(key: string, owner?: RuntimeBillingOwner) {
   const now = Date.now();
-  return getStripeWebhookRepository().tryCreate({
-    eventId: `billing_lifecycle:${key}`,
-    receivedAt: new Date(now).toISOString(),
-    expiresAt: Math.floor(now / 1000) + 86400 * 400,
-  });
+  return runBillingOperation(owner, (admitted) =>
+    admitted.effect(() =>
+      getStripeWebhookRepository().tryCreate({
+        eventId: `billing_lifecycle:${key}`,
+        receivedAt: new Date(now).toISOString(),
+        expiresAt: Math.floor(now / 1000) + 86400 * 400,
+      }),
+    ),
+  );
 }
 export async function captureRenewalOperationEvent({
   operation,
@@ -196,10 +204,12 @@ export async function captureBillingInvoiceOutcome({
   stripe,
   invoice,
   outcome,
+  owner,
 }: {
   stripe: StripeClient;
   invoice: StripeInvoice;
   outcome: "failed" | "settled";
+  owner?: RuntimeBillingOwner;
 }): Promise<void> {
   try {
     const native = await stripe.invoices.retrieve(invoice.id);
@@ -227,11 +237,11 @@ export async function captureBillingInvoiceOutcome({
         });
     };
     if (outcome === "failed") {
-      if (isFailedInvoice(native) && (await receipt(`failed:${key}`)))
+      if (isFailedInvoice(native) && (await receipt(`failed:${key}`, owner)))
         emit("billing_payment_failed");
       return;
     }
-    await captureSettlement(native, provider, key, emit);
+    await captureSettlement(native, provider, key, emit, owner);
   } catch {
     console.warn("Billing invoice analytics unavailable");
   }
@@ -265,6 +275,7 @@ async function captureSettlement(
   provider: StripeSubscription,
   key: string,
   emit: (event: string) => void,
+  owner?: RuntimeBillingOwner,
 ) {
   if (
     invoice.status !== "paid" ||
@@ -275,8 +286,12 @@ async function captureSettlement(
   if (
     await getStripeWebhookRepository().get(`billing_lifecycle:failed:${key}`)
   ) {
-    if (await receipt(`recovered:${key}`)) emit("billing_payment_recovered");
+    if (await receipt(`recovered:${key}`, owner))
+      emit("billing_payment_recovered");
   }
-  if (isServiceRenewal(invoice, provider) && (await receipt(`settled:${key}`)))
+  if (
+    isServiceRenewal(invoice, provider) &&
+    (await receipt(`settled:${key}`, owner))
+  )
     emit("billing_renewal_settled");
 }

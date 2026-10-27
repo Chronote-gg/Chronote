@@ -1,3 +1,7 @@
+import {
+  runBillingOperation,
+  type RuntimeBillingOwner,
+} from "./runtimeBillingOperationService";
 import { randomUUID } from "node:crypto";
 import { getEntitlementGrantRepository } from "../repositories/entitlementGrantRepository";
 import { nowIso } from "../utils/time";
@@ -194,9 +198,10 @@ export async function getBestActiveEntitlementGrantForGuild(
   return active[0] ?? null;
 }
 
-export async function autoRevokeCoveredCompGrants(input: {
+async function autoRevokeCoveredCompGrantsOwned(input: {
   guildId: string;
   paidTier: EntitlementGrantTier;
+  owner: RuntimeBillingOwner;
   stripeSubscriptionId?: string | null;
   revokedBy?: string;
 }): Promise<number> {
@@ -208,18 +213,31 @@ export async function autoRevokeCoveredCompGrants(input: {
   );
   await Promise.all(
     covered.map((grant) =>
-      getEntitlementGrantRepository().revoke({
-        grantId: grant.grantId,
-        revokedAt: nowIso(),
-        revokedBy: input.revokedBy ?? "stripe",
-        revocationReason: "stripe_same_or_higher_tier",
-        autoRevokedByStripeSubscriptionId:
-          input.stripeSubscriptionId ?? undefined,
-      }),
+      input.owner.effect(() =>
+        getEntitlementGrantRepository().revoke({
+          grantId: grant.grantId,
+          revokedAt: nowIso(),
+          revokedBy: input.revokedBy ?? "stripe",
+          revocationReason: "stripe_same_or_higher_tier",
+          autoRevokedByStripeSubscriptionId:
+            input.stripeSubscriptionId ?? undefined,
+        }),
+      ),
     ),
   );
   if (covered.length > 0) {
     clearGuildSubscriptionCache(input.guildId);
   }
   return covered.length;
+}
+
+export function autoRevokeCoveredCompGrants(
+  input: Omit<
+    Parameters<typeof autoRevokeCoveredCompGrantsOwned>[0],
+    "owner"
+  > & { owner?: RuntimeBillingOwner },
+) {
+  return runBillingOperation(input.owner, (owner) =>
+    autoRevokeCoveredCompGrantsOwned({ ...input, owner }),
+  );
 }

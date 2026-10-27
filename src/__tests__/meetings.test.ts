@@ -3,6 +3,10 @@ jest.mock("../services/recordingLimitService", () => ({
   notifyRecordingLimit: jest.fn(),
 }));
 jest.mock("../services/activeMeetingLeaseService", () => ({
+  originalFixtureScope: (reservation: unknown) =>
+    jest
+      .requireActual("../services/activeMeetingLeaseService")
+      .originalFixtureScope(reservation),
   tryAcquireMeetingLease: jest.fn(async (input) => ({
     kind: "admitted",
     reservation: {
@@ -187,12 +191,8 @@ import {
 } from "../meetings";
 import type { Guild, TextChannel, User, VoiceBasedChannel } from "discord.js";
 
-const buildMembers = (members: Array<{ user: { id: string } }> = []) => ({
-  map: <T>(callback: (member: { user: { id: string } }) => T) =>
-    members.map(callback),
-  has: jest.fn(() => false),
-  size: members.length,
-});
+const buildMembers = (members: Array<{ user: { id: string } }> = []) =>
+  new Collection(members.map((member) => [member.user.id, member]));
 
 const buildBotMember = (
   displayName = "Meeting Notes Bot",

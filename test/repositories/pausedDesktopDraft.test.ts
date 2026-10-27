@@ -75,7 +75,9 @@ test("shared lookup exposes structured pause and refuses foreign or invalid bind
 });
 test("mock submission and all claim paths refuse key existence", async () => {
   const repository = getPersonalMediaUploadRepository();
-  expect(await repository.submit({ ...job, status: "queued" })).toBe(false);
+  expect(await repository.submit({ ...job, status: "queued" }, context)).toBe(
+    false,
+  );
   for (const state of [
     { status: "queued" as const },
     {
@@ -115,7 +117,9 @@ test("mock submission and all claim paths refuse key existence", async () => {
     JSON.stringify([marker.pk, marker.sk]),
   );
   getMockStore().personalMediaUploadsById.set(job.uploadId, job);
-  expect(await repository.submit({ ...job, status: "queued" })).toBe(true);
+  expect(await repository.submit({ ...job, status: "queued" }, context)).toBe(
+    true,
+  );
 });
 test("mock late segment prepare and transition refuse key existence", async () => {
   const segment = {
@@ -138,12 +142,18 @@ test("mock late segment prepare and transition refuse key existence", async () =
     updatedAt: "now",
   };
   const repository = getPersonalRecordingSegmentRepository();
-  await repository.write(segment);
-  expect(await repository.prepare(segment, "pending_upload")).toBe(false);
+  getMockStore().personalRecordingSegmentsByUploadId.set(
+    job.uploadId,
+    new Map([[segment.segmentKey, segment]]),
+  );
+  expect(await repository.prepare(segment, "pending_upload", context)).toBe(
+    false,
+  );
   expect(
     await repository.transition(
       { ...segment, status: "uploaded" },
       "pending_upload",
+      context,
     ),
   ).toBe(false);
 });

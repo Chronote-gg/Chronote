@@ -1,3 +1,4 @@
+import type { MaintenanceHold } from "../types/productionIntroduction";
 import { RuntimeAdmissionUnavailable } from "./runtimeAdmissionError";
 import { admitCompatibleReplacement } from "./runtimeCompatibleReplacementService";
 import type { DeploymentControlRepository } from "../repositories/deploymentControlRepository";
@@ -30,6 +31,38 @@ export type RuntimeWorkRegistration = RuntimeWorkHandle & {
   beginOwnedControl(): RuntimeWorkHandle;
 };
 export type RuntimeLifecycle = ReturnType<typeof createRuntimeLifecycle>;
+export type OrdinaryAdmissionListener = (
+  acknowledgeAdmission: () => void,
+) => Promise<void>;
+
+function notifyRuntimeListeners(listeners: Set<() => void>, ready: boolean) {
+  if (!ready) return;
+  for (const listener of listeners) {
+    listeners.delete(listener);
+    listener();
+  }
+}
+
+function notifyOrdinaryListeners(
+  listeners: Map<OrdinaryAdmissionListener, boolean>,
+  ready: boolean,
+) {
+  if (!ready) return;
+  for (const [listener, running] of listeners) {
+    if (running) continue;
+    listeners.set(listener, true);
+    void Promise.resolve()
+      .then(() =>
+        listener(() => {
+          listeners.delete(listener);
+        }),
+      )
+      .catch(() => undefined)
+      .finally(() => {
+        if (listeners.has(listener)) listeners.set(listener, false);
+      });
+  }
+}
 
 export function createRuntimeLifecycle(options: {
   identity: RuntimeIdentity;
@@ -49,6 +82,8 @@ export function createRuntimeLifecycle(options: {
   let releaseUncertain = false;
   let started = false;
   let safetyHandler = options.checkpointAndFence;
+  let maintenance: MaintenanceHold | undefined;
+  const ordinaryListeners = new Map<OrdinaryAdmissionListener, boolean>();
   const servingListeners = new Set<() => void>();
   const counts: Record<RuntimeWorkKind, number> = {
     pending_admission: 0,
@@ -189,12 +224,10 @@ export function createRuntimeLifecycle(options: {
     row = next;
     if (await admitCompatibleReplacement(repository, next, now()))
       return refresh();
+    maintenance = control.maintenance;
     allowed = canAcceptWork(control, row);
-    if (allowed)
-      for (const listener of servingListeners) {
-        servingListeners.delete(listener);
-        listener();
-      }
+    notifyRuntimeListeners(servingListeners, allowed);
+    notifyOrdinaryListeners(ordinaryListeners, allowed && !maintenance);
     return structuredClone(readiness);
   }
   function refreshRuntimeReadiness() {
@@ -293,6 +326,7 @@ export function createRuntimeLifecycle(options: {
         observedEpoch: row.readiness.observedEpoch,
         protocolVersion: 1,
         now: now(),
+        ...(maintenance ? { maintenance: structuredClone(maintenance) } : {}),
       };
     });
   }
@@ -452,6 +486,11 @@ export function createRuntimeLifecycle(options: {
       Boolean(row && row.readiness.expiresAt > now()),
     getReadiness: () => (row ? structuredClone(row.readiness) : undefined),
     getRole: () => row?.role,
+    whenOrdinaryAdmissionOpen(listener: OrdinaryAdmissionListener) {
+      if (!ordinaryListeners.has(listener))
+        ordinaryListeners.set(listener, false);
+      notifyOrdinaryListeners(ordinaryListeners, allowed && !maintenance);
+    },
     whenServing(listener: () => void) {
       if (allowed) listener();
       else servingListeners.add(listener);
@@ -482,10 +521,13 @@ export function createRuntimeLifecycle(options: {
 }
 
 let runtime: RuntimeLifecycle | undefined;
+const pendingOrdinaryListeners: OrdinaryAdmissionListener[] = [];
 const pendingServingListeners: Array<() => void> = [];
 export function installRuntimeLifecycle(value: RuntimeLifecycle) {
   if (runtime) throw new Error("Runtime lifecycle already installed");
   runtime = value;
+  for (const listener of pendingOrdinaryListeners.splice(0))
+    value.whenOrdinaryAdmissionOpen(listener);
   for (const listener of pendingServingListeners.splice(0))
     value.whenServing(listener);
 }
@@ -513,6 +555,12 @@ export const whenRuntimeServing = (listener: () => void) =>
   runtime
     ? runtime.whenServing(listener)
     : pendingServingListeners.push(listener);
+export const whenOrdinaryAdmissionOpen = (
+  listener: OrdinaryAdmissionListener,
+) =>
+  runtime
+    ? runtime.whenOrdinaryAdmissionOpen(listener)
+    : pendingOrdinaryListeners.push(listener);
 export const isRuntimeWarm = () =>
   !runtime ||
   runtime.getRole() === "candidate" ||

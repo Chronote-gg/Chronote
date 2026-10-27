@@ -1,3 +1,4 @@
+import { liveTranscriptionInput } from "./liveTranscriptionInput";
 import {
   createTranscriptionFailureScope,
   isExhaustedTranscriptionFailure,
@@ -7,10 +8,6 @@ import {
   createTranscriptionAttemptLedger,
   type TranscriptionCandidateId,
 } from "../observability/transcriptionAttempts";
-import {
-  getMeetingProcessingSignal,
-  runMeetingProcessingEffect,
-} from "./meetingProcessingLifetime";
 import type { Transcription } from "openai/resources/audio";
 import path from "node:path";
 import {
@@ -95,6 +92,7 @@ import {
 } from "../metrics";
 
 export type TranscriptionContentInput = {
+  observeGeneration?: import("../types/fixtureEvidence").GenerationObserver;
   meetingId: string;
   creator: { id: string };
   guild: { id: string };
@@ -315,6 +313,8 @@ async function transcribeInternal(
               audioSeconds: context.audioSeconds,
             })
         : undefined,
+      observeGeneration: meeting.observeGeneration,
+      generationOperation: `transcription-audio-${passMode}`,
       request: {
         model: modelChoice.model,
         language: "en",
@@ -969,16 +969,7 @@ export function transcribeSnippet(
   options: Parameters<typeof transcribeContentSnippet>[2] = {},
 ) {
   return transcribeContentSnippet(
-    {
-      meetingId: meeting.meetingId,
-      creator: { id: meeting.creator.id },
-      guild: { id: meeting.guild.id },
-      voiceChannel: { id: meeting.voiceChannel.id },
-      signal: getMeetingProcessingSignal(meeting),
-      runtimeConfig: meeting.runtimeConfig,
-      prompt: () => getTranscriptionPrompt(meeting),
-      effect: (run) => runMeetingProcessingEffect(meeting, run),
-    },
+    liveTranscriptionInput(meeting),
     snippet,
     options,
   );

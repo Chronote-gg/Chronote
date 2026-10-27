@@ -437,26 +437,28 @@ test.describe("visual regression", () => {
     }
   });
 
-  test("library page @visual", async ({
-    serverSelectPage,
-    libraryPage,
-    page,
-  }) => {
-    let notionState: NotionVisualState = {
-      connected: true,
-      exported: true,
-      outdated: true,
-    };
-    await installNotionVisualState(page, () => notionState);
+  visualModes.forEach((mode) => {
+    test(`library page ${mode} @visual`, async ({
+      serverSelectPage,
+      libraryPage,
+      page,
+    }) => {
+      let notionState: NotionVisualState = {
+        connected: true,
+        exported: true,
+        outdated: true,
+      };
+      await installNotionVisualState(page, () => notionState);
+      const openLibrary = async () => {
+        await page.goto(withVisualMode("/portal/select-server", mode));
+        await serverSelectPage.openServerByName(mockGuilds.ddm.name);
+        await libraryPage.waitForLoaded();
+        await page.getByTestId("library-range").click();
+        await page.getByRole("option", { name: "All time" }).click();
+        await libraryPage.waitForLoaded(mockLibrary.meetingCount);
+      };
 
-    for (const mode of visualModes) {
-      notionState = { connected: true, exported: true, outdated: true };
-      await page.goto(withVisualMode("/portal/select-server", mode));
-      await serverSelectPage.openServerByName(mockGuilds.ddm.name);
-      await libraryPage.waitForLoaded();
-      await page.getByTestId("library-range").click();
-      await page.getByRole("option", { name: "All time" }).click();
-      await libraryPage.waitForLoaded(mockLibrary.meetingCount);
+      await openLibrary();
       await expectVisualScreenshot(page, "library-list", mode);
 
       await libraryPage.openFirstMeeting();
@@ -522,12 +524,7 @@ test.describe("visual regression", () => {
       await expectVisualScreenshot(page, "library-archived", mode);
 
       notionState = { connected: false, exported: false, outdated: false };
-      await page.goto(withVisualMode("/portal/select-server", mode));
-      await serverSelectPage.openServerByName(mockGuilds.ddm.name);
-      await libraryPage.waitForLoaded();
-      await page.getByTestId("library-range").click();
-      await page.getByRole("option", { name: "All time" }).click();
-      await libraryPage.waitForLoaded(mockLibrary.meetingCount);
+      await openLibrary();
       await libraryPage.openFirstMeeting();
       const connectDrawerDialog = page.getByRole("dialog");
       await expect(connectDrawerDialog).toBeVisible();
@@ -541,7 +538,7 @@ test.describe("visual regression", () => {
       await expectVisualScreenshot(page, "library-notion-connect-menu", mode, {
         target: connectDrawerDialog,
       });
-    }
+    });
   });
 
   test("ask page @visual", async ({ serverSelectPage, nav, askPage, page }) => {

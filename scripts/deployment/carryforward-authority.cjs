@@ -101,7 +101,11 @@ function createCarryforwardAuthority({
   async function sourceProtection(outgoing, ctl) {
     if (!outgoing || sourceRetired(await runtime(outgoing), ctl)) return {};
     try {
-      return { expiry: await proof.protectedTask(outgoing) };
+      return {
+        expiry:
+          Date.parse((await proof.protectedTask(outgoing)).expirationDate) /
+          1000,
+      };
     } catch (error) {
       // Retirement releases protection before publishing its acknowledgment.
       return { error };
@@ -116,7 +120,11 @@ function createCarryforwardAuthority({
     const current = await inspector.control();
     const identities = own(current);
     const expirations = await Promise.all(
-      identities.map((identity) => proof.protectedTask(identity)),
+      identities.map(
+        async (identity) =>
+          Date.parse((await proof.protectedTask(identity)).expirationDate) /
+          1000,
+      ),
     );
     const outgoing = current.servingMembers[claim.archive.source.instanceId]
       ? undefined

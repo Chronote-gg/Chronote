@@ -1,4 +1,8 @@
 /** @jest-environment node */
+jest.mock("../../src/services/runtimeApiOperationService", () => ({
+  runRuntimeApiOperation: jest.requireActual("../fixtures/runtimeApiOperation")
+    .runTestApiOperation,
+}));
 import { classifyHistoricalOfferInvoice } from "../../src/services/historicalOfferEvidence";
 import { acceptPurchaseSubscription } from "../../src/services/purchaseReconciliation";
 import { getMockStore, resetMockStore } from "../../src/repositories/mockStore";

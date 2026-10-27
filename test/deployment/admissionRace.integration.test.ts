@@ -299,3 +299,150 @@ test("suppression CAS rejects reservation atomically", async () => {
   });
   expect(await repository.getRecord(request.voice.pk, "STATE")).toBeUndefined();
 });
+
+test("ordinary maintenance is still held after promotion and coordinator expiry", async () => {
+  await client.send(
+    new PutItemCommand({
+      TableName: tables.deploymentControl,
+      Item: marshall({
+        ...control,
+        coordinatorExpiresAt: 120,
+        maintenance: { holdId: "hold", introductionId: "intro", revision: 1 },
+      }),
+    }),
+  );
+  expect(await repository.promote(promotion)).toBe("applied");
+  expect(
+    await repository.checkAdmission({
+      ...context,
+      now: 150,
+      identity: promotion.candidate,
+      instanceId: "new",
+      authorizedGeneration: 8,
+    }),
+  ).toEqual({ kind: "blocked", reason: "not_serving" });
+});
+
+function fixtureRequest() {
+  const request = input();
+  const reference = {
+    holdId: "hold",
+    introductionId: "intro",
+    grantId: randomUUID(),
+    revision: 1,
+  };
+  const bindings = {
+    commandId: randomUUID(),
+    guildId: request.lease.guildId,
+    meetingId: request.lease.meetingId,
+    voiceChannelId: request.lease.voiceChannelId,
+    textChannelId: request.lease.textChannelId,
+    actorUserId: "actor",
+    inputProfile: "manual_script_v1",
+    scriptSha256: "a".repeat(64),
+    checklistSha256: "b".repeat(64),
+    sessionMode: "meeting" as const,
+  };
+  const scope = { kind: "fixture" as const, reference, ...bindings };
+  const grant = {
+    pk: `FIXTURE#${reference.grantId}`,
+    sk: "AUTHORITY",
+    recordType: "fixture_grant",
+    protocolVersion: 1,
+    ...reference,
+    ...bindings,
+    state: "issued",
+  };
+  return {
+    request: {
+      ...request,
+      scope,
+      lease: { ...request.lease, startTriggeredByUserId: "actor" },
+    },
+    grant,
+  };
+}
+async function installFixture(
+  grant: ReturnType<typeof fixtureRequest>["grant"],
+) {
+  await client.send(
+    new PutItemCommand({
+      TableName: tables.deploymentControl,
+      Item: marshall({
+        ...control,
+        maintenance: { holdId: "hold", introductionId: "intro", revision: 1 },
+      }),
+    }),
+  );
+  await client.send(
+    new PutItemCommand({
+      TableName: tables.deploymentControl,
+      Item: marshall(grant),
+    }),
+  );
+}
+test("native fixture consumption atomically binds one reservation and cannot be replayed", async () => {
+  const { request, grant } = fixtureRequest();
+  await installFixture(grant);
+  const results = await Promise.all([
+    repository.reserveSession(request),
+    repository.reserveSession({
+      ...request,
+      requestToken: randomUUID(),
+      lease: { ...request.lease, voiceOperationAttemptId: "other-attempt" },
+      voice: { ...request.voice, attemptId: "other-attempt" },
+    }),
+  ]);
+  expect(results.filter((result) => result.kind === "admitted")).toHaveLength(
+    1,
+  );
+  expect(results.filter((result) => result.kind === "blocked")).toHaveLength(1);
+  const consumed = await repository.getRecord(grant.pk, grant.sk);
+  expect(consumed).toMatchObject({
+    state: "consumed",
+    ownership: {
+      guildId: request.lease.guildId,
+      meetingId: request.lease.meetingId,
+      ownerInstanceId: "old",
+      executionVersion: 1,
+      sessionMode: "meeting",
+    },
+  });
+  expect(
+    await repository.reserveSession({ ...request, requestToken: randomUUID() }),
+  ).toEqual({ kind: "blocked", reason: "not_serving" });
+});
+test.each([
+  "actorUserId",
+  "commandId",
+  "meetingId",
+  "voiceChannelId",
+  "textChannelId",
+  "introductionId",
+  "holdId",
+  "revision",
+] as const)(
+  "native fixture refuses wrong grant %s without partial reservation",
+  async (field) => {
+    const { request, grant } = fixtureRequest();
+    await installFixture({
+      ...grant,
+      [field]: field === "revision" ? 2 : "wrong",
+    });
+    expect(await repository.reserveSession(request)).toEqual({
+      kind: "blocked",
+      reason: "not_serving",
+    });
+    const lease = await client.send(
+      new GetItemCommand({
+        TableName: tables.activeMeeting,
+        Key: marshall({ guildId: request.lease.guildId }),
+        ConsistentRead: true,
+      }),
+    );
+    expect(lease.Item).toBeUndefined();
+    expect(await repository.getRecord(grant.pk, grant.sk)).toMatchObject({
+      state: "issued",
+    });
+  },
+);

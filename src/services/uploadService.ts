@@ -1,4 +1,10 @@
 import { isAudioFileSpeechRejected } from "../utils/audioTranscript";
+import { createHash } from "node:crypto";
+import {
+  isFixture,
+  fixtureParticipant,
+  recordFixtureTranscript,
+} from "./fixtureInputService";
 import { promises as fs } from "node:fs";
 import { MeetingData } from "../types/meeting-data";
 import { uploadObjectToS3 } from "./storageService";
@@ -36,6 +42,7 @@ async function ensureParticipant(
   meeting: MeetingData,
   userId: string,
 ): Promise<Participant | undefined> {
+  if (isFixture(meeting)) return fixtureParticipant(meeting, userId);
   const existing = meeting.participants.get(userId);
   if (existing) return existing;
 
@@ -90,7 +97,9 @@ function buildTranscriptJson(
     ].sort((a, b) => a.timestamp - b.timestamp);
 
   const formattedSegments = builtSegments.map((seg) => {
-    const participant = meeting.participants.get(seg.userId);
+    const participant = isFixture(meeting)
+      ? fixtureParticipant(meeting, seg.userId)
+      : meeting.participants.get(seg.userId);
     return {
       userId: seg.userId,
       username: participant?.username,
@@ -218,14 +227,15 @@ export async function uploadMeetingArtifacts(
     try {
       const transcriptJsonKey = `${folder}transcript.json`;
 
-      const uploaded = await uploadObjectToS3(
+      const body = JSON.stringify(
+        buildTranscriptJson(meeting, opts.transcriptText),
+        null,
+        2,
+      );
+      const uploaded = await uploadFinalTranscript(
+        meeting,
         transcriptJsonKey,
-        JSON.stringify(
-          buildTranscriptJson(meeting, opts.transcriptText),
-          null,
-          2,
-        ),
-        "application/json",
+        body,
       );
 
       if (uploaded) {
@@ -238,4 +248,47 @@ export async function uploadMeetingArtifacts(
   }
 
   return result;
+}
+
+async function uploadFinalTranscript(
+  meeting: MeetingData,
+  transcriptJsonKey: string,
+  body: string,
+) {
+  const receipt = isFixture(meeting)
+    ? {
+        key: transcriptJsonKey,
+        checksumSha256: createHash("sha256").update(body).digest("hex"),
+        byteLength: Buffer.byteLength(body),
+      }
+    : undefined;
+  if (receipt)
+    recordFixtureTranscript(meeting, {
+      ...receipt,
+      acknowledgment: { state: "unknown" },
+    });
+  return uploadObjectToS3(
+    transcriptJsonKey,
+    body,
+    "application/json",
+    ...(receipt
+      ? [
+          {
+            onAcknowledged: ({
+              key,
+              versionId,
+            }: {
+              key: string;
+              versionId: string | null;
+            }) => {
+              if (key === receipt.key)
+                recordFixtureTranscript(meeting, {
+                  ...receipt,
+                  acknowledgment: { state: "acknowledged", versionId },
+                });
+            },
+          },
+        ]
+      : []),
+  );
 }

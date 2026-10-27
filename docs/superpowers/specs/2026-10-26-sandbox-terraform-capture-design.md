@@ -1,0 +1,15 @@
+# Sandbox Terraform delivery prerequisites
+
+Prepare a supported Sandbox route for PR439 acceptance. The current runner lacks private capture configuration and uses an account-root static credential route. Use a dedicated Sandbox evidence bucket, a scoped OIDC execution role, existing versioned private capture, and a Sandbox-only `meeting-update-delivery` plan scope.
+
+The scope targets only `aws_dynamodb_table.meeting_history_table` and `aws_iam_policy.dynamodb_access_policy`. It may add `UpdateDeliveryDueIndex`, with `updateDeliveryQueue` string hash key, `updateDeliveryDueAt` number range key, and `KEYS_ONLY` projection, and add the exact Sandbox MeetingHistory ARN to the existing `DescribeSubscriptionReadiness` statement. It may accept an already-correct no-op. Every other managed resource must remain unchanged. Existing primary keys, other indexes, encryption, retention, tags, policy statements and permissions must remain unchanged.
+
+Keep the existing dependency graph and permit only the metadata reads needed to refresh it. Do not grant KMS administration, storage administration, runtime content reads, IAM attachment or role passing, or unrelated application writes. Plan uses a restrictive session policy excluding application/state writes; Apply retains the existing exact saved-plan and native approval contract.
+
+Before publishing a successful scoped plan and immediately before applying its verified binary, validate a private JSON rendering of that same binary. Reject extra managed effects, deletion, replacement, creation, import, move, unknown security fields and widened permissions. No caller-supplied Terraform targets.
+
+Sandbox workflows use only OIDC. Preserve production credential behavior and its existing full/purchase-permission/deployment-prerequisites scopes. The current Sandbox credential route accepts only meeting-update-delivery; refuse every other or missing scope and incompatible saved bundle before credentialed execution or capture. Keep private binding and reference in the existing environment secrets. No SSM discovery, token bridge, credential extraction, or static fallback.
+
+Bootstrap is a separate default-off Terraform root owning only a dedicated private evidence bucket and scoped OIDC role. It uses independent state and the existing Sandbox KMS key. It does not modify the transcript bucket, deployment role, production bootstrap, or application state. Follow existing capture controls: versioning, owner enforcement, public access blocks, exact SSE-KMS, no bucket keys, no lifecycle expiration, conditional writes and exact-version readback. The execution role cannot administer or delete evidence or administer itself or its key.
+
+Native installation and GitHub configuration use protected local files and an already authenticated operator. GitHub settings must provide the verifier's supported individual approval and disable administrator bypass. No plan/apply, deployment, fixture or hosted acceptance success follows from offline source validation.

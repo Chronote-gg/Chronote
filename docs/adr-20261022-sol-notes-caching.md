@@ -1,7 +1,9 @@
 # ADR-20261022: Sol notes defaults and cache policy
 
-Status: Accepted  
-Date: 2026-10-22  
+Status: Accepted
+
+Date: 2026-10-22
+
 Owners: Notes pipeline
 
 ## Context

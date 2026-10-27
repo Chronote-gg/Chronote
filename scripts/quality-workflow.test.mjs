@@ -5,7 +5,7 @@ import { readFileSync } from "node:fs";
 
 const read = (name) =>
   readFileSync(new URL("../" + name, import.meta.url), "utf8");
-const release = "0873869f6b8fd80150d24689849ec0aebd94e9dd";
+const release = "84fa993cf93b9dedd4da19ecbad75bc8712d0874";
 
 function hasVisibleQualityExceptionHeading(template) {
   let inComment = false;
@@ -115,7 +115,7 @@ test("local and broad checks use the shared launcher and consumer contracts", ()
   );
   assert.equal(
     pkg.scripts["test:quality"],
-    "node --test scripts/quality-workflow.test.mjs scripts/shared-quality.test.mjs",
+    "node --test scripts/quality-workflow.test.mjs scripts/shared-quality.test.mjs scripts/lint-staged-win.test.cjs",
   );
   for (const name of ["check:parallel", "check:ci"]) {
     assert.match(pkg.scripts[name], /check:quality/);

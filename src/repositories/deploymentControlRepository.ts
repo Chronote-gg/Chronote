@@ -1,4 +1,17 @@
 import {
+  proofReady,
+  mockServingAdmissionAllowed,
+} from "./deploymentControlReadiness";
+import {
+  consumedFixtureMatches,
+  mockMaintenanceAllows,
+  consumeMockFixture,
+} from "../services/deploymentFixtureAdmission";
+import {
+  newWorkScopeSchema,
+  type NewWorkScope,
+} from "../types/productionIntroduction";
+import {
   matchesOwnedHistoryTransition,
   applyMockOwnedHistoryTransition,
 } from "./meetingHistoryTransitionState";
@@ -124,7 +137,10 @@ export type DeploymentControlRepository = RecoveryRepository & {
     expected?: ExpectedVoiceState,
   ): Promise<ConditionalResult>;
   /** Diagnostic only. Work claims must include buildRuntimeAdmissionChecks in their own transaction. */
-  checkAdmission(context: AdmissionContext): Promise<AdmissionCheckResult>;
+  checkAdmission(
+    context: AdmissionContext,
+    scope?: NewWorkScope,
+  ): Promise<AdmissionCheckResult>;
   promote(input: PromotionInput): Promise<ConditionalResult>;
   createInitialMeetingHistory(
     history: MeetingHistory,
@@ -347,11 +363,11 @@ export function createDynamoDeploymentControlRepository(
         ),
       );
     },
-    async checkAdmission(context) {
+    async checkAdmission(context, scope) {
       const result = await conditional(() =>
         client.send(
           new TransactWriteItemsCommand({
-            TransactItems: buildRuntimeAdmissionChecks(context, tables),
+            TransactItems: buildRuntimeAdmissionChecks(context, tables, scope),
           }),
         ),
       );
@@ -430,25 +446,6 @@ export function createDynamoDeploymentControlRepository(
   };
 }
 
-function proofReady(
-  row: RuntimeRecord,
-  epoch: number | undefined,
-  generation: number,
-  now: number,
-): boolean {
-  return (
-    (epoch === undefined || row.readiness.observedEpoch === epoch) &&
-    row.readiness.observedGeneration === generation &&
-    (row.readiness.runtimeMode === "api" || row.readiness.gatewayReady) &&
-    row.readiness.cacheReady &&
-    row.readiness.dependenciesReady &&
-    row.readiness.provenAt <= now &&
-    row.readiness.expiresAt > now &&
-    row.protection.provenAt <= now &&
-    row.protection.expiresAt > now &&
-    row.expiresAt === undefined
-  );
-}
 const mockReservationRequests = new WeakMap<
   Map<string, DeploymentControlRecord>,
   Map<string, SessionReservationInput>
@@ -458,6 +455,7 @@ export function mockWorkAdmissionAllowed(
   authority: WorkAdmissionAuthority,
   records: Map<string, DeploymentControlRecord>,
   leases: Map<string, ActiveMeetingLease>,
+  scope: NewWorkScope = { kind: "ordinary" },
 ): boolean {
   if (authority.kind === "session") {
     const owner = authority.ownership;
@@ -473,28 +471,23 @@ export function mockWorkAdmissionAllowed(
   }
   const { context } = authority;
   admissionContextSchema.parse(context);
+  newWorkScopeSchema.parse(scope);
   const control = records.get(JSON.stringify(["ENV", "CONTROL"]));
   const row = records.get(
     JSON.stringify(["ENV", `RUNTIME#${context.instanceId}`]),
   );
   if (control?.recordType !== "control" || row?.recordType !== "runtime")
     return false;
-  const selected = control.servingMembers[context.instanceId];
-  return Boolean(
-    selected &&
-    sameRuntimeIdentity(selected, context.identity) &&
-    sameRuntimeIdentity(row.identity, context.identity) &&
-    control.servingGeneration === context.authorizedGeneration &&
-    row.role === "serving" &&
-    row.authorizedGeneration === context.authorizedGeneration &&
-    proofReady(row, undefined, context.authorizedGeneration, context.now),
+  return (
+    mockMaintenanceAllows(control, scope, records) &&
+    mockServingAdmissionAllowed(control, row, context)
   );
 }
 function repeatedReservationResult(
   previous: SessionReservationInput,
   input: SessionReservationInput,
 ): SessionReservationWriteResult {
-  return isDeepStrictEqual(previous, input)
+  return isDeepStrictEqual(previous, structuredClone(input))
     ? { kind: "admitted" }
     : { kind: "blocked", reason: "unavailable" };
 }
@@ -578,20 +571,7 @@ export function createMockDeploymentControlRepository(
     records.set(recordKey(record.pk, record.sk), structuredClone(record));
     return "applied";
   };
-  const canReserve = (context: AdmissionContext) => {
-    const control = getControl();
-    const runtime = getRuntime(context.instanceId);
-    const selected = control?.servingMembers[context.instanceId];
-    if (!control || !runtime || !selected) return false;
-    return (
-      sameRuntimeIdentity(selected, context.identity) &&
-      sameRuntimeIdentity(runtime.identity, context.identity) &&
-      control.servingGeneration === context.authorizedGeneration &&
-      runtime.role === "serving" &&
-      runtime.authorizedGeneration === context.authorizedGeneration &&
-      proofReady(runtime, undefined, context.authorizedGeneration, context.now)
-    );
-  };
+
   return {
     async installPausedDesktopDrafts(input) {
       buildPausedDesktopDraftInstallationTransaction(input, {
@@ -614,8 +594,30 @@ export function createMockDeploymentControlRepository(
       input.pairs.forEach(({ record }) => store(record));
       return "applied";
     },
-    ...createMockRecoveryRepository(records, histories, leases, (context) =>
-      mockWorkAdmissionAllowed({ kind: "serving", context }, records, leases),
+    ...createMockRecoveryRepository(
+      records,
+      histories,
+      leases,
+      (context, grant) => {
+        if (!grant)
+          return mockWorkAdmissionAllowed(
+            { kind: "serving", context },
+            records,
+            leases,
+          );
+        const control = getControl();
+        const runtime = getRuntime(context.instanceId);
+        return Boolean(
+          control &&
+          runtime &&
+          mockServingAdmissionAllowed(control, runtime, context) &&
+          consumedFixtureMatches(
+            control.maintenance,
+            records.get(recordKey(grant.pk, grant.sk)),
+            grant,
+          ),
+        );
+      },
     ),
     async reserveSession(input) {
       buildSessionReservationTransaction(input, {
@@ -626,7 +628,14 @@ export function createMockDeploymentControlRepository(
       const previous = requests.get(input.requestToken);
       if (previous) return repeatedReservationResult(previous, input);
       const { context, lease, voice, history, suppression } = input;
-      if (!canReserve(context))
+      if (
+        !mockWorkAdmissionAllowed(
+          { kind: "serving", context },
+          records,
+          leases,
+          input.scope,
+        )
+      )
         return { kind: "blocked", reason: "not_serving" };
       const existingVoice = records.get(recordKey(voice.pk, voice.sk));
       if (
@@ -654,6 +663,7 @@ export function createMockDeploymentControlRepository(
         );
         if (!allowed) return { kind: "blocked", reason: "suppressed" };
       }
+      consumeMockFixture(input, records);
       leases.set(lease.guildId, structuredClone(lease));
       store(voice);
       if (history)
@@ -826,28 +836,13 @@ export function createMockDeploymentControlRepository(
         return "stale";
       return store(record);
     },
-    async checkAdmission(context) {
-      admissionContextSchema.parse(context);
-      const control = getControl();
-      const runtime = getRuntime(context.instanceId);
-      return control &&
-        runtime &&
-        control.protocolVersion === context.protocolVersion &&
-        control.servingMembers[context.instanceId] &&
-        sameRuntimeIdentity(
-          control.servingMembers[context.instanceId],
-          context.identity,
-        ) &&
-        sameRuntimeIdentity(runtime.identity, context.identity) &&
-        control.servingGeneration === context.authorizedGeneration &&
-        runtime.role === "serving" &&
-        runtime.authorizedGeneration === context.authorizedGeneration &&
-        proofReady(
-          runtime,
-          undefined,
-          context.authorizedGeneration,
-          context.now,
-        )
+    async checkAdmission(context, scope) {
+      return mockWorkAdmissionAllowed(
+        { kind: "serving", context },
+        records,
+        leases,
+        scope,
+      )
         ? { kind: "admitted" }
         : { kind: "blocked", reason: "not_serving" };
     },

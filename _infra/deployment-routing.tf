@@ -23,15 +23,15 @@ resource "aws_iam_policy" "deployment_routing" {
       {
         Effect   = "Allow"
         Action   = ["ecs:ListServiceDeployments"]
-        Resource = aws_ecs_service.app_service.id
+        Resource = "arn:aws:ecs:${var.aws_region}:${data.aws_caller_identity.current.account_id}:service/${aws_ecs_cluster.main.name}/${local.name_prefix}-bot-service"
       },
       {
         Effect = "Allow"
         Action = ["ecs:DescribeServiceDeployments", "ecs:DescribeServiceRevisions"]
         Resource = [
-          aws_ecs_service.app_service.id,
-          "arn:aws:ecs:${var.aws_region}:${data.aws_caller_identity.current.account_id}:service-deployment/${aws_ecs_cluster.main.name}/${aws_ecs_service.app_service.name}/*",
-          "arn:aws:ecs:${var.aws_region}:${data.aws_caller_identity.current.account_id}:service-revision/${aws_ecs_cluster.main.name}/${aws_ecs_service.app_service.name}/*"
+          "arn:aws:ecs:${var.aws_region}:${data.aws_caller_identity.current.account_id}:service/${aws_ecs_cluster.main.name}/${local.name_prefix}-bot-service",
+          "arn:aws:ecs:${var.aws_region}:${data.aws_caller_identity.current.account_id}:service-deployment/${aws_ecs_cluster.main.name}/${local.name_prefix}-bot-service/*",
+          "arn:aws:ecs:${var.aws_region}:${data.aws_caller_identity.current.account_id}:service-revision/${aws_ecs_cluster.main.name}/${local.name_prefix}-bot-service/*"
         ]
       }
     ]

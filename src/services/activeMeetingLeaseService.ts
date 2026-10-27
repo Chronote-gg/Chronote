@@ -1,3 +1,4 @@
+import type { NewWorkScope } from "../types/productionIntroduction";
 import { areMeetingNoticesSettled } from "./meetingProcessingLifetime";
 import { isDeepStrictEqual } from "node:util";
 import type { RecordingCheckpoint } from "../types/recordingCheckpoint";
@@ -39,6 +40,7 @@ const ACTIVE_MEETING_HEARTBEAT_MS = 10_000;
 const ACTIVE_MEETING_TTL_GRACE_SECONDS = 120;
 
 export type AcquireMeetingLeaseInput = {
+  scope?: NewWorkScope;
   assertStartAllowed?: () => Promise<void>;
   startSignal?: AbortSignal;
   guildId: string;
@@ -59,6 +61,7 @@ export type AcquireMeetingLeaseInput = {
   | { sessionMode: "tts_only"; history?: never }
 );
 type OwnedReservation = {
+  fixtureScope?: Extract<NewWorkScope, { kind: "fixture" }>;
   releasing?: boolean;
   reservation: SessionReservation;
   controller: AbortController;
@@ -242,6 +245,7 @@ async function acquireReservation(
       }
     : undefined;
   const request = {
+    scope: input.scope,
     context: { ...context, now: nowEpochSeconds },
     lease: leaseRecord,
     voice: {
@@ -315,6 +319,7 @@ async function acquireReservation(
       }
     : { ...shared, sessionMode: "tts_only" };
   const owned: OwnedReservation = {
+    fixtureScope: retainedFixtureScope(input.scope),
     reservation,
     controller: new AbortController(),
   };
@@ -963,4 +968,17 @@ export function startMeetingLeaseHeartbeat(meeting: MeetingData) {
     void runTick();
   }, ACTIVE_MEETING_HEARTBEAT_MS);
   meeting.leaseHeartbeatTimer.unref?.();
+}
+
+/** Only the actual admitted object can recover its private fixture scope. */
+function retainedFixtureScope(scope: NewWorkScope | undefined) {
+  return scope?.kind === "fixture" ? structuredClone(scope) : undefined;
+}
+export function originalFixtureScope(reservation: SessionReservation) {
+  const owned = reservations.get(
+    reservationKey(reservation.guildId, reservation.meetingId),
+  );
+  if (owned?.reservation !== reservation || owned.controller.signal.aborted)
+    return undefined;
+  return owned.fixtureScope;
 }

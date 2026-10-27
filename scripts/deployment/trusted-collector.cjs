@@ -1,7 +1,7 @@
 "use strict";
 const assert = require("node:assert/strict");
 const { ECSClient } = require("@aws-sdk/client-ecs");
-const { parseProductionManifest } = require("./production-manifest.cjs");
+const { parseProductionManifest } = require("./staged-production-manifest.cjs");
 const { parseRehearsalManifest } = require("./rehearsal-manifest.cjs");
 const { awsCaller } = require("./sandbox-manifest.cjs");
 const { verifyCollectorRequest } = require("./collector-command.cjs");

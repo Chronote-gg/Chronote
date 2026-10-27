@@ -3,7 +3,7 @@ import { existsSync, realpathSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const release = "0873869f6b8fd80150d24689849ec0aebd94e9dd";
+const release = "84fa993cf93b9dedd4da19ecbad75bc8712d0874";
 const repo = resolve(fileURLToPath(new URL("../", import.meta.url)));
 const setup =
   "Set QUALITY_RATCHET_HOME to a clean quality-ratchet checkout at " +

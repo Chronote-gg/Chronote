@@ -1,3 +1,4 @@
+import { RuntimeAdmissionUnavailable } from "../services/runtimeAdmissionError";
 import {
   personalCanonicalWriter,
   personalClaimMatches,
@@ -34,7 +35,10 @@ import {
 } from "./pausedDesktopDraft";
 
 export type PersonalMediaUploadRepository = {
-  submit: (job: PersonalMediaUploadJobRecord) => Promise<boolean>;
+  submit: (
+    job: PersonalMediaUploadJobRecord,
+    context: AdmissionContext,
+  ) => Promise<boolean>;
   writeHistory: (
     history: MeetingHistory,
     claim: PersonalMediaClaim,
@@ -44,7 +48,10 @@ export type PersonalMediaUploadRepository = {
     segment: PersonalRecordingSegmentRecord,
     claim: PersonalMediaClaim,
   ) => Promise<boolean>;
-  write: (job: PersonalMediaUploadJobRecord) => Promise<void>;
+  write: (
+    job: PersonalMediaUploadJobRecord,
+    context: AdmissionContext,
+  ) => Promise<void>;
   get: (uploadId: string) => Promise<PersonalMediaUploadJobRecord | undefined>;
   listClaimable: (options: {
     instanceId: string;
@@ -119,7 +126,8 @@ function mockJobClaimable(
 }
 
 const mockRepository: PersonalMediaUploadRepository = {
-  async submit(job) {
+  async submit(job, context) {
+    assertMockPersonalAdmission(context);
     if (mockDesktopDraftPaused(job.uploadId)) return false;
     const current = getMockStore().personalMediaUploadsById.get(job.uploadId);
     if (
@@ -182,12 +190,19 @@ const mockRepository: PersonalMediaUploadRepository = {
     segments.set(segment.segmentKey, structuredClone(segment));
     return true;
   },
-  async write(job) {
-    getMockStore().personalMediaUploadsById.set(job.uploadId, job);
+  async write(job, context) {
+    assertMockPersonalAdmission(context);
+    if (getMockStore().personalMediaUploadsById.has(job.uploadId))
+      throw new Error("Upload already exists");
+    getMockStore().personalMediaUploadsById.set(
+      job.uploadId,
+      structuredClone(job),
+    );
   },
   async get(uploadId) {
     return getMockStore().personalMediaUploadsById.get(uploadId);
   },
+
   async listClaimable({ instanceId, nowEpochSeconds, maxAttempts, limit }) {
     const candidates = Array.from(
       getMockStore().personalMediaUploadsById.values(),
@@ -327,4 +342,16 @@ const mockRepository: PersonalMediaUploadRepository = {
 
 export function getPersonalMediaUploadRepository(): PersonalMediaUploadRepository {
   return config.mock.enabled ? mockRepository : realRepository;
+}
+
+export function assertMockPersonalAdmission(context: AdmissionContext): void {
+  const store = getMockStore();
+  if (
+    !mockWorkAdmissionAllowed(
+      { kind: "serving", context },
+      store.deploymentControlRecords,
+      store.activeMeetingLeases,
+    )
+  )
+    throw new RuntimeAdmissionUnavailable("Runtime is not accepting work");
 }

@@ -14,6 +14,7 @@ import {
 } from "./meetingUpdateDelivery.fixture";
 import { planMeetingUpdate } from "../../src/services/meetingUpdatePlan";
 import { now } from "../types/meetingUpdateDelivery.fixture";
+import { context } from "../deployment/controlFixtures";
 beforeEach(initializeDeliveryClock);
 afterEach(settleDeliveryWorks);
 async function heldDelivery() {
@@ -25,6 +26,34 @@ async function heldDelivery() {
   if (plan.kind !== "ready") throw new Error("Expected plan");
   return { f, tail, invocation, after: plan.targets[0].after };
 }
+test("an existing delivery owner renews and completes when ordinary admission enters maintenance", async () => {
+  const h = await heldDelivery();
+  const renewed = deferred<void>();
+  const lifecycle = jest.requireMock<
+    typeof import("../../src/services/runtimeLifecycleService")
+  >("../../src/services/runtimeLifecycleService");
+  jest
+    .spyOn(lifecycle, "getRuntimeAdmissionContext")
+    .mockImplementation(async () => ({
+      ...context,
+      now: Math.floor(Date.now() / 1000),
+      maintenance: { holdId: "hold", introductionId: "intro", revision: 1 },
+    }));
+  const record = h.invocation.work.recordClaim.bind(h.invocation.work);
+  jest.spyOn(h.invocation.work, "recordClaim").mockImplementation((claim) => {
+    record(claim);
+    if (claim.expiresAt > now + 60) renewed.resolve();
+  });
+  jest.spyOn(Date, "now").mockReturnValue((now + 20) * 1000);
+  try {
+    await renewed.promise;
+  } finally {
+    h.f.remote.set(h.after.id, h.after);
+    h.tail.resolve(Response.json(h.after));
+  }
+  expect((await h.invocation.promise).kind).toBe("settled");
+  expect((await h.f.read()).updateDelivery.progress.kind).toBe("synced");
+});
 test.each([true, false])(
   "renewal ACK loss committed%s has exact readback or unresolved outcome",
   async (committed) => {

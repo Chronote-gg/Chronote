@@ -1,10 +1,13 @@
+import { collectRetainedClosure } from "../../scripts/deployment/production-acceptance-retained.cjs";
+import { fixture as originalManifest } from "../fixtures/productionManifest.js";
+import { parseExecution } from "../../scripts/deployment/production-manifest.cjs";
 import { Buffer } from "node:buffer";
 /** @jest-environment node */
 import { test, expect } from "@jest/globals";
 import { marshall } from "@aws-sdk/util-dynamodb";
 import { privateCaptureFixture } from "../fixtures/deployment/privateCapture.js";
 import { manifestHash } from "../../scripts/deployment/sandbox-manifest.cjs";
-import { parseProductionManifest } from "../../scripts/deployment/production-manifest.cjs";
+import { parseProductionManifest } from "../../scripts/deployment/staged-production-manifest.cjs";
 import {
   preparePausedDrafts,
   collectPausedDrafts,
@@ -937,4 +940,46 @@ test("preparation bounds the entire cohort including source-manifest objects", a
       });
     }),
   ).rejects.toThrow(/^UNKNOWN/);
+});
+
+test("genuine staged paused evidence cannot authorize A retained closure", async () => {
+  const f = await fixture(({ parents }) => {
+    parents[1].status = "queued";
+  });
+  const evidence = await collectPausedDrafts({
+    ...f.options,
+    m: f.m,
+    snapshot: f.snapshot,
+    validUntil: 1050,
+  });
+  expect(
+    classifyProductionWork(f.snapshot, {
+      binding: f.m.binding,
+      uploads: [],
+      pausedDrafts: evidence,
+    }).counts.retained,
+  ).toBe(4);
+  expect(() => parseExecution(f.m)).toThrow();
+  const manifest = originalManifest();
+  const records = { personalJob: f.parents, personalSegment: f.segments };
+  await expect(
+    collectRetainedClosure(
+      { binding: { manifest } },
+      { evidence: {} },
+      {
+        scan: async (_operation, input) => ({
+          Items: (
+            records[
+              Object.keys(manifest.resources.tables).find(
+                (key) => manifest.resources.tables[key] === input.TableName,
+              )
+            ] ?? []
+          ).map(marshall),
+        }),
+      },
+      [],
+      { pausedDrafts: evidence },
+      1000,
+    ),
+  ).rejects.toThrow("acceptance_retained_prerequisite");
 });

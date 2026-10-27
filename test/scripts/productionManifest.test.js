@@ -1,188 +1,145 @@
 /** @jest-environment node */
-import { expect, test } from "@jest/globals";
+import * as builders from "../../src/services/productionIntroductionTransactions";
 import {
-  manifestFixture,
-  phaseAuthorization,
-} from "../fixtures/deployment/productionIntroduction.js";
+  authorityFor,
+  assertMutationAllowed,
+  createIntroductionHold,
+} from "../../scripts/deployment/introduction-hold.cjs";
+
+import { test, expect } from "@jest/globals";
 import {
-  manifestHash,
-  parseManifest,
-} from "../../scripts/deployment/sandbox-manifest.cjs";
-import {
-  parseProductionManifest,
-  parsePhaseAuthorization,
+  parsePreparation,
+  parseExecution,
+  bindExecution,
+  canonicalHash,
+  publicFailure,
 } from "../../scripts/deployment/production-manifest.cjs";
-
-import { rehearsalFixture } from "../fixtures/deployment/rehearsalIntroduction.js";
-import { buildMaintenancePolicy } from "../../scripts/deployment/maintenance-fence.cjs";
-
-const authorization = (m) => phaseAuthorization(m, "fence");
-test("strict production manifest accepts exact operation and Sandbox rejects it", () => {
-  const m = manifestFixture();
-  expect(parseProductionManifest(m, manifestHash(m))).toEqual(m);
-  expect(() => parseManifest(m, manifestHash(m))).toThrow();
-});
-test.each([
-  "environment",
-  "kind",
-  "ownedPolicySha256",
-  "taskDefinition",
-  "controlTableArn",
-])("rejects changed %s", (field) => {
-  const m = manifestFixture();
-  m[field] = "invalid";
-  expect(() => parseProductionManifest(m, manifestHash(m))).toThrow();
-});
-test("requires reviewed manifest hash", () => {
-  const m = manifestFixture();
-  expect(() => parseProductionManifest(m, "0".repeat(64))).toThrow();
-});
-test("accepts exact invocation envelope", () => {
-  const m = manifestFixture(),
-    a = authorization(m);
-  expect(parsePhaseAuthorization(a, m, manifestHash(m))).toEqual(a.envelope);
-});
-test.each([
-  "bindSha256",
-  "expectedSha256",
-  "currentRunId",
-  "currentRunAttempt",
-])("rejects delivery substitution %s", (field) => {
-  const m = manifestFixture(),
-    a = authorization(m);
-  a[field] = "wrong";
-  expect(() => parsePhaseAuthorization(a, m, manifestHash(m))).toThrow();
-});
-test.each([
-  "operationId",
-  "manifestSha256",
-  "principalArn",
-  "sourceSha",
-  "phase",
-  "runAttempt",
-])("rejects invalid envelope %s even when rehashed", (field) => {
-  const m = manifestFixture(),
-    a = authorization(m);
-  a.envelope[field] = "wrong";
-  a.expectedSha256 = a.bindSha256 = manifestHash(a.envelope);
-  expect(() => parsePhaseAuthorization(a, m, manifestHash(m))).toThrow();
-});
-
-test.each([
-  "fallbackTaskDefinition",
-  "fallbackSourceSha",
-  "fallbackDigest",
-  "targetDeploymentConfiguration",
-])("requires explicit approved fallback/controller %s", (field) => {
-  const m = manifestFixture();
-  delete m[field];
-  expect(() => parseProductionManifest(m, manifestHash(m))).toThrow();
-});
-test("refuses automatic rollback in the approved target configuration", () => {
-  const m = manifestFixture();
-  m.targetDeploymentConfiguration.deploymentCircuitBreaker.rollback = true;
-  expect(() => parseProductionManifest(m, manifestHash(m))).toThrow();
-});
-
-test("accepts explicitly bound candidate-equal fallback definition source and digest", () => {
-  const m = manifestFixture();
-  m.fallbackTaskDefinition = m.taskDefinition;
-  m.fallbackSourceSha = m.binding.sourceSha;
-  m.fallbackDigest = m.binding.candidateDigest;
-  expect(parseProductionManifest(m, manifestHash(m))).toEqual(m);
-});
-
-test.each(["taskDefinition", "fallbackTaskDefinition"])(
-  "rejects legacy as %s",
-  (field) => {
-    const m = manifestFixture();
-    m[field] = m.legacyTaskDefinition;
-    expect(() => parseProductionManifest(m, manifestHash(m))).toThrow();
-  },
-);
-
-// Production must reject the reserved namespace even after valid packet rehashing.
-const reservedName = "cr-0123456789abcdef-resource";
-function expectNonproduction(m) {
-  m.ownedPolicySha256 = manifestHash(buildMaintenancePolicy(m.binding));
-  expect(() => parseProductionManifest(m, manifestHash(m))).toThrow(
-    "Nonproduction resource",
-  );
-}
-test("rejects a correctly rehashed rehearsal inventory relabeled as production", () => {
-  const m = rehearsalFixture();
-  delete m.disposablePrefix;
-  delete m.resourceEvidence;
-  m.kind = "production-introduction";
-  m.environment = "production";
-  expectNonproduction(m);
-});
-test.each(["service", "bucket", "containerName", "imageRepository"])(
-  "rejects an isolated reserved %s from another operation",
-  (field) => {
-    const m = manifestFixture();
-    m[field] = reservedName;
-    expectNonproduction(m);
-  },
-);
-test("rejects a reserved cluster with its matching legacy task ARN", () => {
-  const m = manifestFixture();
-  m.legacyTaskArn = m.legacyTaskArn.replace(m.cluster, reservedName);
-  m.cluster = reservedName;
-  expectNonproduction(m);
-});
-test.each(["deploymentRoleArn", "executionRoleArn", "taskRoleArn"])(
-  "rejects an isolated reserved %s after an IAM path",
-  (field) => {
-    const m = manifestFixture();
-    const holder = field === "taskRoleArn" ? m.binding : m;
-    holder[field] =
-      `arn:aws:iam::${m.binding.accountId}:role/production/${reservedName}`;
-    expectNonproduction(m);
-  },
-);
-test.each(["taskDefinition", "legacyTaskDefinition", "fallbackTaskDefinition"])(
-  "rejects an isolated reserved %s family",
-  (field) => {
-    const m = manifestFixture();
-    m[field] = m[field].replace("chronote-bot", reservedName);
-    expectNonproduction(m);
-  },
-);
-test.each(["listenerArn", "targetGroupA", "targetGroupB"])(
-  "rejects an isolated reserved %s resource name",
-  (field) => {
-    const m = manifestFixture();
-    m[field] = m[field].replace(/chronote(?:-[ab])?/, reservedName);
-    expectNonproduction(m);
-  },
-);
-test("rejects one reserved table among otherwise production table names", () => {
-  const m = manifestFixture();
-  m.tablePrefix = "cr-";
-  for (const slot of Object.keys(m.binding.tableArns)) {
-    m.binding.tableArns[slot] = m.binding.tableArns[slot].replace(
-      "chronote-",
-      "cr-production-",
-    );
+import { fixture, bound } from "../fixtures/productionManifest.js";
+test("preparation cannot execute and exact hash, root, foreign and missing bindings refuse", () => {
+  expect(
+    parsePreparation({
+      kind: "preparation",
+      schemaVersion: 1,
+      environment: "production",
+      deferred: ["identity", "runtime"],
+    }).kind,
+  ).toBe("preparation");
+  expect(() => bindExecution({ kind: "preparation" }, {}, {})).toThrow();
+  expect(bound().manifestHash).toMatch(/^[a-f0-9]{64}$/);
+  expect(() => parseExecution(fixture(), "0".repeat(64))).toThrow();
+  for (const change of [
+    (m) => delete m.identity.runId,
+    (m) => (m.resources.targetGroupB = m.resources.targetGroupA),
+    (m) =>
+      m.runtime.legacyTaskArns.push(
+        "arn:aws:ecs:us-east-1:999999999999:task/app/foreign",
+      ),
+    (m) => (m.actions[0].command = "stop all"),
+    (m) => (m.runtime.cpu = 1024),
+  ]) {
+    const m = fixture();
+    change(m);
+    expect(() => parseExecution(m, canonicalHash(m))).toThrow();
   }
-  m.binding.activeMeetingTableArn = m.binding.tableArns.leases;
-  m.binding.personalMediaUploadJobTableArn = m.binding.tableArns.uploads;
-  m.controlTableArn = m.controlTableArn.replace("chronote-", "cr-");
-  m.binding.tableArns.history = m.binding.tableArns.history.replace(
-    "cr-production-MeetingHistoryTable",
-    reservedName,
-  );
-  expectNonproduction(m);
+  const m = fixture();
+  const parsed = parseExecution(m, canonicalHash(m));
+  for (const arn of [
+    `arn:aws:iam::${m.identity.accountId}:root`,
+    `arn:aws:sts::${m.identity.accountId}:assumed-role/deploy/other`,
+  ])
+    expect(() =>
+      bindExecution(
+        parsed,
+        { ...m.identity, now: 150, endpointOverrides: [] },
+        { accountId: m.identity.accountId, arn },
+      ),
+    ).toThrow();
+  expect(() =>
+    bindExecution(
+      parsed,
+      { ...m.identity, now: 201, endpointOverrides: [] },
+      {},
+    ),
+  ).toThrow();
 });
-test("does not treat unrelated ARN path and identifier text as reserved names", () => {
-  const m = manifestFixture();
-  m.deploymentRoleArn = m.deploymentRoleArn.replace(
-    "role/",
-    `role/${reservedName}/`,
+test("canonical hash sorts object keys and set arrays but preserves action order", () => {
+  const m = fixture();
+  m.resources.artifactPrefixes.push("other/");
+  const changed = structuredClone(m);
+  changed.resources.artifactPrefixes.reverse();
+  expect(canonicalHash(changed)).toBe(canonicalHash(m));
+  changed.actions.reverse();
+  expect(canonicalHash(changed)).not.toBe(canonicalHash(m));
+});
+test("sensitive validation and provider errors emit only bounded public status", () => {
+  const secret = "arn:aws:private:CUSTOMER_SECRET";
+  expect(JSON.stringify(publicFailure(new Error(secret)))).not.toContain(
+    secret,
   );
-  m.listenerArn += `/${reservedName}`;
-  m.targetGroupA += `/${reservedName}`;
-  m.bucket = `production-${reservedName}`;
-  expect(parseProductionManifest(m, manifestHash(m))).toEqual(m);
+  expect(publicFailure(new Error(secret))).toEqual({
+    status: "refused",
+    reason: "introduction_refused",
+  });
+});
+
+test("only exact bound introduction action or exact fixture run can cross the held deployment guard", async () => {
+  const binding = bound();
+  const authority = authorityFor(binding);
+  const hold = {
+    pk: "ENV",
+    sk: "INTRODUCTION",
+    recordType: "production_introduction",
+    protocolVersion: 1,
+    holdId: "hold",
+    introductionId: "intro",
+    manifestHash: binding.manifestHash,
+    revision: 1,
+    admission: { state: "held" },
+    deployment: { state: "held" },
+  };
+  const requestedAction = {
+    kind: "introduction_action",
+    actionId: "stop",
+    operationId: "op",
+    actor: binding.actor,
+    runToken: "bootstrap-run",
+    intentHash: authority.actions.stop.intentHash,
+  };
+  expect(() =>
+    assertMutationAllowed({
+      builders,
+      hold,
+      operationAuthority: authority,
+      requestedAction,
+      now: 150,
+    }),
+  ).not.toThrow();
+  expect(() =>
+    assertMutationAllowed({
+      builders,
+      hold,
+      operationAuthority: authority,
+      requestedAction: { ...requestedAction, actionId: "foreign" },
+      now: 150,
+    }),
+  ).toThrow();
+  expect(() =>
+    assertMutationAllowed({
+      builders,
+      hold,
+      operationAuthority: authority,
+      requestedAction,
+      now: 201,
+    }),
+  ).toThrow();
+  await expect(
+    createIntroductionHold({
+      builders,
+      table: "t",
+      write: () => {
+        throw new Error("should not write");
+      },
+      now: () => 150,
+    }).acquire({ ...binding, actor: "arn:aws:iam::123456789012:root" }),
+  ).rejects.toThrow();
 });

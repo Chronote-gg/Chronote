@@ -2,11 +2,15 @@
 import { Buffer } from "node:buffer";
 import { test, expect } from "@jest/globals";
 import {
+  runTitle,
   nativeGitHub,
   verifyApproval,
   verifyRun,
 } from "../../scripts/deployment/terraform-native.cjs";
-import { nativeEnvironment } from "../fixtures/deployment/terraformWorkflow.js";
+import {
+  nativeEnvironment,
+  nativeBranchPolicies,
+} from "../fixtures/deployment/terraformWorkflow.js";
 const repository = "Chronote-gg/Chronote",
   sourceSha = "a".repeat(40);
 const invocation = {
@@ -30,6 +34,7 @@ const run = {
   repository: { full_name: repository },
   head_repository: { full_name: repository },
   head_sha: sourceSha,
+  head_branch: "master",
   path: invocation.workflowPath,
   event: "workflow_dispatch",
   run_attempt: 1,
@@ -54,6 +59,9 @@ function fixture() {
     environment: structuredClone(environment),
     approvals: structuredClone(approvals),
     customRules: { total_count: 0, custom_deployment_protection_rules: [] },
+    branchPolicies: nativeBranchPolicies(),
+    branchLink: false,
+    branchUnavailable: false,
   };
   const requests = [];
   const get = nativeGitHub("fake-token", async (url, options) => {
@@ -64,12 +72,21 @@ function fixture() {
       ? data.customRules
       : url.endsWith("/approvals")
         ? data.approvals
-        : url.includes("/environments/")
-          ? data.environment
-          : data.run;
+        : url.includes("/deployment-branch-policies?")
+          ? data.branchPolicies
+          : url.includes("/environments/")
+            ? data.environment
+            : data.run;
     return {
-      ok: true,
-      headers: { get: () => null },
+      ok: !(
+        url.includes("/deployment-branch-policies?") && data.branchUnavailable
+      ),
+      headers: {
+        get: () =>
+          url.includes("/deployment-branch-policies?") && data.branchLink
+            ? "<next>; rel=next"
+            : null,
+      },
       body: [Buffer.from(JSON.stringify(value))],
     };
   });
@@ -328,3 +345,144 @@ test.each([
     verifyApproval(f.get, invocation, reviewInputs),
   ).rejects.toThrow();
 });
+
+test("native titles accept delivery only for Sandbox", () => {
+  expect(
+    runTitle(
+      {
+        ...invocation,
+        environment: "sandbox",
+        workspace: "sandbox",
+        scope: "meeting-update-delivery",
+      },
+      reviewInputs,
+    ),
+  ).toContain("sandbox/sandbox/meeting-update-delivery");
+  expect(() =>
+    runTitle({ ...invocation, scope: "meeting-update-delivery" }, reviewInputs),
+  ).toThrow();
+});
+test("production approval retains the complete authenticated exact-master branch proof", async () => {
+  const f = fixture();
+  f.data.environment.protection_rules.reverse();
+  const proof = await verifyApproval(f.get, invocation, reviewInputs);
+  expect(proof.branchPolicies).toEqual(nativeBranchPolicies());
+  expect(f.requests).toContain(
+    "https://api.github.com/repos/Chronote-gg/Chronote/environments/production/deployment-branch-policies?per_page=100",
+  );
+});
+
+test("Sandbox keeps its existing reviewer-only profile without a production branch-policy lookup", async () => {
+  const f = fixture();
+  f.data.environment = nativeEnvironment("sandbox");
+  f.data.approvals[0].environments[0].name = "sandbox";
+  f.data.run.display_title = f.data.run.display_title.replace(
+    "production/default/full",
+    "sandbox/sandbox/meeting-update-delivery",
+  );
+  await expect(
+    verifyApproval(
+      f.get,
+      {
+        ...invocation,
+        environment: "sandbox",
+        workspace: "sandbox",
+        scope: "meeting-update-delivery",
+      },
+      reviewInputs,
+    ),
+  ).resolves.toMatchObject({ environment: { deployment_branch_policy: null } });
+  expect(
+    f.requests.some((url) => url.includes("deployment-branch-policies")),
+  ).toBe(false);
+});
+
+test.each([
+  "null-profile",
+  "protected-branches",
+  "missing-branch-rule",
+  "duplicate-rule",
+  "missing-count",
+  "extra-policy",
+  "missing-type",
+  "tag",
+  "wildcard",
+  "foreign-branch",
+  "foreign-run-branch",
+])("production approval refuses %s branch proof", async (fault) => {
+  const f = fixture();
+  const mutations = {
+    "null-profile": () => {
+      f.data.environment.deployment_branch_policy = null;
+      f.data.environment.protection_rules.pop();
+    },
+    "protected-branches": () => {
+      f.data.environment.deployment_branch_policy.protected_branches = true;
+    },
+    "missing-branch-rule": () => {
+      f.data.environment.protection_rules.pop();
+    },
+    "duplicate-rule": () => {
+      f.data.environment.protection_rules.push({ type: "branch_policy" });
+    },
+    "missing-count": () => {
+      delete f.data.branchPolicies.total_count;
+    },
+    "extra-policy": () => {
+      f.data.branchPolicies.total_count = 2;
+      f.data.branchPolicies.branch_policies.push({
+        id: 12,
+        name: "other",
+        type: "branch",
+      });
+    },
+    "missing-type": () => {
+      delete f.data.branchPolicies.branch_policies[0].type;
+    },
+    tag: () => {
+      f.data.branchPolicies.branch_policies[0].type = "tag";
+    },
+    wildcard: () => {
+      f.data.branchPolicies.branch_policies[0].name = "*";
+    },
+    "foreign-branch": () => {
+      f.data.branchPolicies.branch_policies[0].name = "other";
+    },
+    "foreign-run-branch": () => {
+      f.data.run.head_branch = "other";
+    },
+  };
+  mutations[fault]();
+  await expect(
+    verifyApproval(f.get, invocation, reviewInputs),
+  ).rejects.toThrow();
+});
+
+test.each([
+  "linked-page",
+  "unavailable",
+  "missing-proof",
+  "empty-list",
+  "count-mismatch",
+  "missing-flags",
+])(
+  "production approval refuses incomplete branch evidence: %s",
+  async (fault) => {
+    const f = fixture();
+    if (fault === "linked-page") f.data.branchLink = true;
+    if (fault === "unavailable") f.data.branchUnavailable = true;
+    if (fault === "missing-proof") f.data.branchPolicies = null;
+    if (fault === "empty-list") f.data.branchPolicies.branch_policies = [];
+    if (fault === "count-mismatch")
+      f.data.branchPolicies.branch_policies.push({
+        id: 12,
+        name: "other",
+        type: "branch",
+      });
+    if (fault === "missing-flags")
+      delete f.data.environment.deployment_branch_policy.custom_branch_policies;
+    await expect(
+      verifyApproval(f.get, invocation, reviewInputs),
+    ).rejects.toThrow();
+  },
+);

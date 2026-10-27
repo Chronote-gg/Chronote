@@ -6,7 +6,7 @@ import {
   collectorTemplateSha256,
   captureNamespace,
 } from "../../scripts/deployment/collector-command.cjs";
-import { parseProductionManifest } from "../../scripts/deployment/production-manifest.cjs";
+import { parseProductionManifest } from "../../scripts/deployment/staged-production-manifest.cjs";
 import { manifestHash } from "../../scripts/deployment/sandbox-manifest.cjs";
 
 test("fresh nonces change concrete commands but preserve the reviewed template", () => {

@@ -1,3 +1,4 @@
+import { runBillingWorkerOperation } from "./runtimeBillingOperationService";
 import { getRenewalRecoveryRepository } from "../repositories/renewalRecoveryRepository";
 import {
   renewalRecoveryKey,
@@ -38,19 +39,17 @@ async function processRecovery(key: string, input: Poll): Promise<void> {
         getRenewalRecoveryRepository().getCurrent(record.guildId),
       );
       if (!current || renewalRecoveryKey(current) !== key) return;
-      work.acknowledgeDurableBillingRecovery(key);
-      work.claimed();
       const signal = AbortSignal.any([input.signal, work.signal]);
-      await reconcileRenewalRecovery({
-        stripe: input.stripe,
-        guildId: record.guildId,
-        now: input.now,
-        signal,
-        effect: (run) =>
-          work.trackBillingMutation(() => {
-            signal.throwIfAborted();
-            return run();
-          }),
+      await runBillingWorkerOperation(work, signal, async (owner) => {
+        work.acknowledgeDurableBillingRecovery(key);
+        await reconcileRenewalRecovery({
+          stripe: input.stripe,
+          guildId: record.guildId,
+          now: input.now,
+          signal,
+          owner,
+          effect: owner.effect,
+        });
       });
     } finally {
       work.acknowledgeReadOnlyRecoveryPoll();

@@ -1,22 +1,24 @@
 version: 2
 
+# One weekly PR across application, desktop, tooling and infrastructure.
 multi-ecosystem-groups:
-  app:
+  dependencies:
     schedule:
       interval: "weekly"
-  infra:
-    schedule:
-      interval: "weekly"
-  tooling:
-    schedule:
-      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+      timezone: "Etc/UTC"
 
 updates:
   - package-ecosystem: "npm"
     directory: "/"
     patterns:
       - "*"
-    multi-ecosystem-group: "app"
+    multi-ecosystem-group: "dependencies"
+    groups:
+      security-updates:
+        applies-to: security-updates
+        patterns: ["*"]
     # TypeScript 7.0 is the Go compiler rewrite and ships no programmatic
     # compiler API, so typescript-eslint and ts-jest cannot consume it and both
     # fail hard on a 7.0 bump.
@@ -30,38 +32,103 @@ updates:
       - dependency-name: "typescript"
         versions: ["7.0.x"]
 
+      # Langfuse 6.x requires the OpenTelemetry 2.x / 0.223 stack.
+      - dependency-name: "@opentelemetry/core"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "@opentelemetry/api"
+        versions: [">=1.10.0"]
+      - dependency-name: "@opentelemetry/sdk-node"
+        versions: [">=0.300.0"]
+      - dependency-name: "@opentelemetry/exporter-trace-otlp-http"
+        versions: [">=0.300.0"]
+
   - package-ecosystem: "uv"
     directory: "/"
+    # 1.24.2 and 1.24.3 crash parsing current TypeScript; reconsider after an upstream fix.
+    ignore:
+      - dependency-name: "lizard"
+        versions: ["1.24.2", "1.24.3"]
     patterns:
       - "*"
-    multi-ecosystem-group: "tooling"
+    multi-ecosystem-group: "dependencies"
+    groups:
+      security-updates:
+        applies-to: security-updates
+        patterns: ["*"]
 
   - package-ecosystem: "github-actions"
     directory: "/"
     patterns:
       - "*"
-    multi-ecosystem-group: "tooling"
+    multi-ecosystem-group: "dependencies"
+    groups:
+      security-updates:
+        applies-to: security-updates
+        patterns: ["*"]
 
   - package-ecosystem: "docker"
     directory: "/"
+    # The application and shared quality tool target Node 24.
+    ignore:
+      - dependency-name: "node"
+        update-types: ["version-update:semver-major"]
     patterns:
       - "*"
-    multi-ecosystem-group: "infra"
+    multi-ecosystem-group: "dependencies"
+    groups:
+      security-updates:
+        applies-to: security-updates
+        patterns: ["*"]
 
   - package-ecosystem: "docker-compose"
     directory: "/"
     patterns:
       - "*"
-    multi-ecosystem-group: "infra"
+    multi-ecosystem-group: "dependencies"
+    groups:
+      security-updates:
+        applies-to: security-updates
+        patterns: ["*"]
 
   - package-ecosystem: "terraform"
     directory: "/_infra"
     patterns:
       - "*"
-    multi-ecosystem-group: "infra"
+    multi-ecosystem-group: "dependencies"
+    groups:
+      security-updates:
+        applies-to: security-updates
+        patterns: ["*"]
 
   - package-ecosystem: "terraform"
     directory: "/_infra_state_mgmt"
     patterns:
       - "*"
-    multi-ecosystem-group: "infra"
+    multi-ecosystem-group: "dependencies"
+    groups:
+      security-updates:
+        applies-to: security-updates
+        patterns: ["*"]
+
+  - package-ecosystem: "npm"
+    directory: "/apps/desktop"
+    patterns:
+      - "*"
+    multi-ecosystem-group: "dependencies"
+    groups:
+      security-updates:
+        applies-to: security-updates
+        patterns: ["*"]
+    ignore:
+      - dependency-name: "typescript"
+        versions: ["7.0.x"]
+
+  - package-ecosystem: "cargo"
+    directory: "/apps/desktop/src-tauri"
+    patterns:
+      - "*"
+    multi-ecosystem-group: "dependencies"
+    groups:
+      security-updates:
+        applies-to: security-updates
+        patterns: ["*"]

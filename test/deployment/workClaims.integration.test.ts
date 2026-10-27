@@ -1,3 +1,9 @@
+import {
+  buildPendingSegmentTransaction,
+  buildPersonalUploadSubmissionTransaction,
+  buildPersonalSegmentTransitionTransaction,
+} from "../../src/services/personalUploadTransactions";
+import { transactPersonalAdmission } from "../../src/services/personalAdmissionTransaction";
 import { buildPausedDesktopDraftMarker } from "../../src/testSupport/personalMediaUploadFixtures";
 import { randomUUID } from "node:crypto";
 import {
@@ -16,9 +22,6 @@ import {
   buildPersonalClaimCheck,
   buildPersonalMediaClaimTransaction,
   buildWorkAdmissionChecks,
-  buildPendingSegmentTransaction,
-  buildPersonalUploadSubmissionTransaction,
-  buildPersonalSegmentTransitionTransaction,
 } from "../../src/services/deploymentControlTransactions";
 import { context, control, runtime, promotion } from "./controlFixtures";
 import { config } from "../../src/services/configService";
@@ -33,9 +36,9 @@ import type {
 
 const prefix = `work-claims-${randomUUID()}-`;
 const tables = {
-  deploymentControl: `${prefix}Control`,
-  meetingHistory: `${prefix}History`,
-  activeMeeting: `${prefix}Lease`,
+  deploymentControl: `${prefix}DeploymentControlTable`,
+  meetingHistory: `${prefix}MeetingHistoryTable`,
+  activeMeeting: `${prefix}ActiveMeetingTable`,
   personalMediaUpload: `${prefix}Upload`,
   command: `${prefix}Command`,
   receipt: `${prefix}Receipt`,
@@ -261,9 +264,19 @@ test("a durable pause blocks first claim after a late unconditional queued write
     ),
   ).rejects.toMatchObject({ name: "TransactionCanceledException" });
 });
-test.each(["submission", "prepare", "transition"] as const)(
-  "late %s atomically refuses a pause",
-  async (operation) => {
+test.each(
+  (["submission", "prepare", "transition"] as const).flatMap((operation) =>
+    [false, true].flatMap((held) =>
+      ["absent", "valid", "malformed"].map((marker) => ({
+        operation,
+        held,
+        marker,
+      })),
+    ),
+  ),
+)(
+  "$operation with held=$held marker=$marker uses actual atomic admission",
+  async ({ operation, held, marker }) => {
     const job = { ...upload(), status: "pending_upload" as const };
     const segment: PersonalRecordingSegmentRecord = {
       uploadId: job.uploadId,
@@ -286,11 +299,22 @@ test.each(["submission", "prepare", "transition"] as const)(
     };
     await put(tables.personalMediaUpload, job);
     await put(tables.personalRecordingSegment, segment);
-    await put(tables.deploymentControl, {
-      pk: `UPLOAD#${job.uploadId}`,
-      sk: "PAUSED_DRAFT",
-      recordType: "foreign",
-    });
+    if (held)
+      await put(tables.deploymentControl, {
+        ...control,
+        maintenance: { holdId: "held", introductionId: "intro", revision: 1 },
+      });
+    if (marker !== "absent")
+      await put(
+        tables.deploymentControl,
+        marker === "valid"
+          ? buildPausedDesktopDraftMarker(job)
+          : {
+              pk: `UPLOAD#${job.uploadId}`,
+              sk: "PAUSED_DRAFT",
+              recordType: "foreign",
+            },
+      );
     const transactions = {
       submission: buildPersonalUploadSubmissionTransaction(
         { ...job, status: "queued" },
@@ -307,9 +331,16 @@ test.each(["submission", "prepare", "transition"] as const)(
         tables,
       ),
     };
-    await expect(
-      client.send(new TransactWriteItemsCommand(transactions[operation])),
-    ).rejects.toMatchObject({ name: "TransactionCanceledException" });
+    const result = transactPersonalAdmission(
+      client,
+      context,
+      prefix,
+      transactions[operation].TransactItems!,
+    );
+    const applied = !held && marker === "absent";
+    if (held)
+      await expect(result).rejects.toThrow("Runtime is not accepting work");
+    else await expect(result).resolves.toBe(applied);
     const parentResult = await client.send(
       new GetItemCommand({
         TableName: tables.personalMediaUpload,
@@ -327,15 +358,16 @@ test.each(["submission", "prepare", "transition"] as const)(
         ConsistentRead: true,
       }),
     );
-    expect(unmarshall(parentResult.Item!)).toEqual(job);
-    expect(unmarshall(segmentResult.Item!)).toEqual(segment);
-    await client.send(
-      new DeleteItemCommand({
-        TableName: tables.deploymentControl,
-        Key: marshall({ pk: `UPLOAD#${job.uploadId}`, sk: "PAUSED_DRAFT" }),
-      }),
+    expect(unmarshall(parentResult.Item!)).toEqual(
+      applied && operation === "submission"
+        ? { ...job, status: "queued" }
+        : job,
     );
-    await client.send(new TransactWriteItemsCommand(transactions[operation]));
+    expect(unmarshall(segmentResult.Item!)).toEqual(
+      applied && operation === "transition"
+        ? { ...segment, status: "uploaded" }
+        : segment,
+    );
   },
 );
 function pausePair(job: PersonalMediaUploadJobRecord) {
@@ -579,16 +611,24 @@ test("old owner claims and renews a targeted stop after promotion, while new sta
     }),
   ).toBe(false);
   const nextId = randomUUID();
-  await commands.writeCommand({
-    requestId: nextId,
-    queueStatus: "pending",
-    commandType: "start_meeting",
-    userId: "synthetic-user",
-    input: {},
-    createdAt: "now",
-    updatedAt: "now",
-    expiresAt: 200,
-  });
+  await commands.writeCommand(
+    {
+      requestId: nextId,
+      queueStatus: "pending",
+      commandType: "start_meeting",
+      userId: "synthetic-user",
+      input: {},
+      createdAt: "now",
+      updatedAt: "now",
+      expiresAt: 200,
+    },
+    {
+      ...context,
+      instanceId: "new",
+      identity: runtime("new").identity,
+      authorizedGeneration: 8,
+    },
+  );
   expect(
     await commands.claimCommand({
       ...input,
@@ -726,4 +766,40 @@ test("warm runtime receipt transaction leaves the interaction for its exact old 
       )
     ).Item,
   ).toBeDefined();
+});
+
+test("real personal transaction commit followed by lost ACK remains unknown", async () => {
+  const job = { ...upload(), status: "pending_upload" as const };
+  await put(tables.personalMediaUpload, job);
+  const failure = new Error("synthetic lost atomic acknowledgment");
+  const send = client.send.bind(client);
+  const intercepted = jest
+    .spyOn(client, "send")
+    .mockImplementationOnce(async (command) => {
+      await send(command);
+      throw failure;
+    });
+  try {
+    await expect(
+      transactPersonalAdmission(
+        client,
+        context,
+        prefix,
+        buildPersonalUploadSubmissionTransaction(
+          { ...job, status: "queued" },
+          tables,
+        ).TransactItems!,
+      ),
+    ).rejects.toBe(failure);
+  } finally {
+    intercepted.mockRestore();
+  }
+  const persisted = await client.send(
+    new GetItemCommand({
+      TableName: tables.personalMediaUpload,
+      Key: marshall({ uploadId: job.uploadId }),
+      ConsistentRead: true,
+    }),
+  );
+  expect(unmarshall(persisted.Item!).status).toBe("queued");
 });

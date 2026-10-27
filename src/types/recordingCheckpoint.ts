@@ -1,3 +1,4 @@
+import { fixtureInputEvidenceSchema } from "./fixtureEvidence";
 import { z } from "zod";
 
 const id = z.string().min(1).max(1024);
@@ -181,6 +182,7 @@ export const checkpointArtifactSchema = z
   );
 export const recordingManifestSchema = z
   .object({
+    fixtureInput: fixtureInputEvidenceSchema.optional(),
     artifactFolder: id,
     schemaVersion: z.literal(1),
     revision: z.number().int().positive(),

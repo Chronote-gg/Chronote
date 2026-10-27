@@ -1,3 +1,8 @@
+import { assertFixtureCommandMatches } from "../services/productionFixtureCommandService";
+import type { AdmissionContext } from "../types/deploymentControl";
+import { buildRuntimeAdmissionChecks } from "../services/deploymentControlTransactions";
+import { RuntimeAdmissionUnavailable } from "../services/runtimeAdmissionError";
+import type { NewWorkScope } from "../types/productionIntroduction";
 import {
   GetItemCommand,
   PutItemCommand,
@@ -35,6 +40,7 @@ export type ClaimMeetingControlCommandInput = {
   updatedAt: string;
   claimId: string;
   authority: WorkAdmissionAuthority;
+  scope?: NewWorkScope;
 };
 
 export type CompleteMeetingControlCommandInput = {
@@ -59,7 +65,10 @@ export type MeetingControlCommandRepository = {
   renewCommand: (
     input: Omit<ClaimMeetingControlCommandInput, "authority">,
   ) => Promise<boolean>;
-  writeCommand: (command: MeetingControlCommand) => Promise<void>;
+  writeCommand: (
+    command: MeetingControlCommand,
+    context?: AdmissionContext,
+  ) => Promise<void>;
   getCommand: (requestId: string) => Promise<MeetingControlCommand | undefined>;
   listClaimablePendingCommands: (options: {
     instanceId: string;
@@ -102,6 +111,14 @@ function validClaimAuthority(
   command: MeetingControlCommand,
   input: ClaimMeetingControlCommandInput,
 ): boolean {
+  if (input.scope?.kind === "fixture") {
+    if (input.authority.kind !== "serving") return false;
+    try {
+      assertFixtureCommandMatches(command, input.scope);
+    } catch {
+      return false;
+    }
+  }
   if (input.authority.kind === "serving")
     return (
       input.instanceId === input.authority.context.instanceId &&
@@ -125,13 +142,27 @@ export function createDynamoMeetingControlCommandRepository(
   tables: ControlTableNames,
 ): MeetingControlCommandRepository {
   const repository: MeetingControlCommandRepository = {
-    async writeCommand(command) {
+    async writeCommand(command, context) {
+      const put = {
+        TableName: tableName,
+        Item: marshall(command, { removeUndefinedValues: true }),
+        ConditionExpression: "attribute_not_exists(#requestId)",
+        ExpressionAttributeNames: { "#requestId": "requestId" },
+      };
+      if (command.commandType !== "start_meeting") {
+        await dynamoDbClient.send(new PutItemCommand(put));
+        return;
+      }
+      if (!context)
+        throw new RuntimeAdmissionUnavailable(
+          "Start enqueue requires runtime admission",
+        );
       await dynamoDbClient.send(
-        new PutItemCommand({
-          TableName: tableName,
-          Item: marshall(command, { removeUndefinedValues: true }),
-          ConditionExpression: "attribute_not_exists(#requestId)",
-          ExpressionAttributeNames: { "#requestId": "requestId" },
+        new TransactWriteItemsCommand({
+          TransactItems: [
+            ...buildRuntimeAdmissionChecks(context, tables),
+            { Put: put },
+          ],
         }),
       );
     },
@@ -209,7 +240,13 @@ export function createDynamoMeetingControlCommandRepository(
           new TransactWriteItemsCommand({
             ClientRequestToken: input.claimId,
             TransactItems: [
-              ...buildWorkAdmissionChecks(input.authority, tables),
+              ...(input.authority.kind === "serving"
+                ? buildRuntimeAdmissionChecks(
+                    input.authority.context,
+                    tables,
+                    input.scope,
+                  )
+                : buildWorkAdmissionChecks(input.authority, tables)),
               {
                 Put: {
                   TableName: tableName,
@@ -277,15 +314,18 @@ export function createDynamoMeetingControlCommandRepository(
               "#error": "error",
               "#claimedByInstanceId": "claimedByInstanceId",
             },
-            ExpressionAttributeValues: marshall({
-              ":pending": PENDING_STATUS,
-              ":completed": "completed",
-              ":result": input.result,
-              ":updatedAt": input.updatedAt,
-              ":instanceId": input.instanceId,
-              ":claimId": input.claimId,
-              ":now": input.nowEpochSeconds,
-            }),
+            ExpressionAttributeValues: marshall(
+              {
+                ":pending": PENDING_STATUS,
+                ":completed": "completed",
+                ":result": input.result,
+                ":updatedAt": input.updatedAt,
+                ":instanceId": input.instanceId,
+                ":claimId": input.claimId,
+                ":now": input.nowEpochSeconds,
+              },
+              { removeUndefinedValues: true },
+            ),
           }),
         );
         return true;
@@ -363,7 +403,20 @@ const memoryRepository: MeetingControlCommandRepository = {
     command.updatedAt = input.updatedAt;
     return true;
   },
-  async writeCommand(command) {
+  async writeCommand(command, context) {
+    const store = getMockStore();
+    if (
+      command.commandType === "start_meeting" &&
+      (!context ||
+        !mockWorkAdmissionAllowed(
+          { kind: "serving", context },
+          store.deploymentControlRecords,
+          store.activeMeetingLeases,
+        ))
+    )
+      throw new RuntimeAdmissionUnavailable(
+        "Start enqueue requires runtime admission",
+      );
     if (memoryCommands.has(command.requestId)) {
       throw new Error("Meeting control command already exists.");
     }
@@ -408,6 +461,7 @@ const memoryRepository: MeetingControlCommandRepository = {
         input.authority,
         store.deploymentControlRecords,
         store.activeMeetingLeases,
+        input.scope,
       )
     )
       return undefined;

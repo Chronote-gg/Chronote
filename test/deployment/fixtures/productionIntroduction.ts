@@ -17,7 +17,7 @@ import {
   introductionFixture,
   phaseAuthorization,
 } from "../../fixtures/deployment/productionIntroduction.js";
-import { createProductionIntroduction } from "../../../scripts/deployment/introduce-production.cjs";
+import { createProductionIntroduction } from "../../../scripts/deployment/staged-introduce-production.cjs";
 import { stateDigest } from "../../../scripts/deployment/production-evidence.cjs";
 import { manifestHash } from "../../../scripts/deployment/sandbox-manifest.cjs";
 import { runtime } from "../controlFixtures";

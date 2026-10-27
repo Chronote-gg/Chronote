@@ -11,7 +11,28 @@ const {
 } = require("./terraform-bundle.cjs");
 const { verifyRun, verifyApproval } = require("./terraform-native.cjs");
 const { runPrivateCommand } = require("./terraform-process.cjs");
+const { verifyMeetingUpdatePlan } = require("./terraform-meeting-update.cjs");
 const { digest } = require("./collector-payload.cjs");
+const {
+  targets,
+  validatePrerequisitePlan,
+} = require("./validate-prerequisite-plan.cjs");
+const prerequisites = new WeakMap();
+function privatePrerequisiteVerified(token, config) {
+  const binding = prerequisites.get(token);
+  if (!binding || JSON.stringify(binding.config) !== JSON.stringify(config))
+    return false;
+  try {
+    require("./production-writer-guard.cjs").assertPrerequisitePlan(
+      binding.plan,
+      config.table,
+    );
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function execution(options, invocation) {
   const output = [],
     store = createTerraformCapture({
@@ -111,11 +132,22 @@ async function version(executionState) {
   assert.match(value, /^\d+\.\d+\.\d+$/);
   return value;
 }
+async function verifyDelivery(e, options, invocation) {
+  if (invocation.scope !== "meeting-update-delivery") return;
+  const shown = await e.terraform(["show", "-json", "tfplan"]);
+  verifyMeetingUpdatePlan(
+    JSON.parse(Buffer.from(shown.stdout, "base64").toString()),
+    {
+      accountId: options.binding.accountId,
+      region: options.binding.region,
+    },
+  );
+}
 async function plan(options, invocation, e) {
   await verifyRun(options.get, invocation, false);
   await e.retain({ kind: "terraform-plan-intent-v1", invocation });
   const terraformVersion = await version(e);
-  await prepare(e, options, true);
+  await prepare(e, options, invocation.environment === "production");
   const args = [
     "plan",
     "-no-color",
@@ -125,8 +157,22 @@ async function plan(options, invocation, e) {
   ];
   if (invocation.scope === "purchase-permission")
     args.push("-target=aws_iam_role_policy.initial_purchase_condition");
+  if (invocation.scope === "meeting-update-delivery")
+    args.push(
+      "-target=aws_dynamodb_table.meeting_history_table",
+      "-target=aws_iam_policy.dynamodb_access_policy",
+    );
+  if (invocation.scope === "deployment-prerequisites")
+    args.push(...[...targets].map((target) => `-target=${target}`));
   const planned = await e.terraform(args, [0, 2]);
+  if (invocation.scope === "deployment-prerequisites") {
+    const shown = await e.terraform(["show", "-json", "tfplan"]);
+    validatePrerequisitePlan(
+      JSON.parse(Buffer.from(shown.stdout, "base64").toString()),
+    );
+  }
   const shown = await e.terraform(["show", "-no-color", "tfplan"]);
+  await verifyDelivery(e, options, invocation);
   const bundle = createBundle({
     invocation,
     terraformVersion,
@@ -149,6 +195,8 @@ async function plan(options, invocation, e) {
   };
 }
 async function apply(options, invocation, e, startApply) {
+  if (invocation.environment === "production")
+    await require("./production-writer-guard.cjs").runGuard(options.env, true);
   const proof = await verifyApproval(options.get, invocation, options);
   const producer = parseInvocation({
     ...invocation,
@@ -208,6 +256,32 @@ async function apply(options, invocation, e, startApply) {
       readFileSync(join(options.directory, "_infra", name)),
       bytes,
     );
+  let prerequisite;
+  if (invocation.environment === "production") {
+    const {
+      runGuard,
+      guardConfiguration,
+    } = require("./production-writer-guard.cjs");
+    if (invocation.scope === "deployment-prerequisites") {
+      const shown = await e.terraform(["show", "-json", "tfplan"]);
+      const plan = JSON.parse(Buffer.from(shown.stdout, "base64").toString());
+      const config = guardConfiguration(options.env);
+      validatePrerequisitePlan(plan);
+      // Only this authenticated, restored bundle can authorize a missing Control table.
+      assert.deepEqual(
+        readFileSync(join(options.directory, "_infra/tfplan")),
+        files.get("tfplan"),
+      );
+      prerequisite = {};
+      prerequisites.set(prerequisite, { config, plan });
+    }
+    await runGuard(options.env, false, prerequisite);
+  }
+  await verifyDelivery(e, options, invocation);
+  assert.equal(
+    digest(readFileSync(join(options.directory, "_infra/tfplan"))),
+    options.planSha256,
+  );
   options.signal.throwIfAborted();
   startApply();
   await e.terraform(["apply", "-no-color", "-input=false", "tfplan"]);
@@ -279,4 +353,4 @@ async function runTerraform(options) {
   }
   return result;
 }
-module.exports = { runTerraform };
+module.exports = { runTerraform, privatePrerequisiteVerified };

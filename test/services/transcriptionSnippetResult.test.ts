@@ -277,3 +277,42 @@ test("conversion cancellation waits for observed encoder termination before dele
   expect(unlinkSync).toHaveBeenCalledTimes(2);
   diagnostic.mockRestore();
 });
+
+test("actual audio request records no-prompt and resolved prompt metadata without claiming a provider revision", async () => {
+  const { service, create } = await loadModule({
+    providerResult: "Synthetic spoken words",
+  });
+  const acknowledgments = jest.fn();
+  const observeGeneration = jest.fn(() => acknowledgments);
+  const content: import("../../src/services/transcriptionService").TranscriptionContentInput =
+    {
+      meetingId: meeting.meetingId,
+      creator: meeting.creator,
+      guild: meeting.guild,
+      voiceChannel: meeting.voiceChannel,
+      runtimeConfig: meeting.runtimeConfig,
+      signal: new AbortController().signal,
+      effect: (run) => run(),
+      prompt: async () => ({ prompt: "", source: "fallback" }),
+      observeGeneration,
+    };
+  await service.transcribeContentSnippet(content, snippet);
+  expect(observeGeneration).toHaveBeenLastCalledWith(
+    "transcription-audio-slow",
+    "mock-transcription",
+    null,
+  );
+  expect(acknowledgments).toHaveBeenLastCalledWith(null);
+  content.prompt = async () => ({
+    prompt: "Synthetic glossary",
+    source: "langfuse",
+    langfusePrompt: { name: "audio-prompt", version: 8, isFallback: false },
+  });
+  await service.transcribeContentSnippet(content, snippet);
+  expect(observeGeneration).toHaveBeenLastCalledWith(
+    "transcription-audio-slow",
+    "mock-transcription",
+    { name: "audio-prompt", version: 8, isFallback: false },
+  );
+  expect(create).toHaveBeenCalledTimes(2);
+});

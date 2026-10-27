@@ -1,0 +1,222 @@
+name: Production introduction
+on:
+  workflow_dispatch:
+    inputs:
+      package_id:
+        description: Reviewed private package identifier
+        required: true
+        type: string
+      package_commit:
+        description: Immutable private package commit
+        required: true
+        type: string
+      intent_hash:
+        description: Reviewed canonical whole-package intent hash
+        required: true
+        type: string
+permissions:
+  contents: read
+concurrency:
+  group: chronote-deploy-production
+  cancel-in-progress: false
+jobs:
+  introduce:
+    name: Introduce production
+    if: github.ref == 'refs/heads/master'
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 180
+    permissions:
+      contents: read
+      actions: read
+      deployments: read
+      id-token: write
+    env:
+      AWS_REGION: ${{ vars.AWS_REGION }}
+      AWS_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
+      PRODUCTION_INTRODUCTION_ROLE_ARN: ${{ vars.PRODUCTION_INTRODUCTION_ROLE_ARN }}
+      INTRODUCTION_PACKAGE_ID: ${{ inputs.package_id }}
+      INTRODUCTION_PACKAGE_COMMIT: ${{ inputs.package_commit }}
+      INTRODUCTION_INTENT_HASH: ${{ inputs.intent_hash }}
+      INTRODUCTION_OPS_READ_TOKEN: ${{ secrets.INTRODUCTION_OPS_READ_TOKEN }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: .nvmrc
+          cache: yarn
+      - name: Build reviewed source
+        run: |
+          yarn install --frozen-lockfile
+          yarn build
+      - name: Require configured introduction authority
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -z "$AWS_REGION" ] || [ -z "$AWS_ACCOUNT_ID" ] || [ -z "$PRODUCTION_INTRODUCTION_ROLE_ARN" ] || [ -z "$INTRODUCTION_OPS_READ_TOKEN" ]; then
+            echo '{"status":"refused","reason":"introduction_configuration_prerequisite"}'
+            exit 1
+          fi
+      - uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ env.PRODUCTION_INTRODUCTION_ROLE_ARN }}
+          role-session-name: introduction-${{ github.run_id }}-${{ github.run_attempt }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-duration-seconds: 10800
+          mask-aws-account-id: true
+      - name: Execute reviewed finite actions
+        run: node scripts/deployment/introduce-production.cjs introduce
+  approve-continuation:
+    name: Approve failed-unserved continuation
+    needs: introduce
+    if: always() && needs.introduce.result == 'failure' && github.ref == 'refs/heads/master'
+    runs-on: ubuntu-latest
+    environment: production-continuation
+    permissions: {}
+    steps:
+      - name: Record protected gate completion
+        run: echo '{"status":"continuation_gate_completed"}'
+  continue:
+    name: Continue failed-unserved introduction
+    needs: [introduce, approve-continuation]
+    if: always() && needs.introduce.result == 'failure' && needs.approve-continuation.result == 'success' && github.ref == 'refs/heads/master'
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 180
+    permissions:
+      contents: read
+      actions: read
+      deployments: read
+      id-token: write
+    env:
+      AWS_REGION: ${{ vars.AWS_REGION }}
+      AWS_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
+      PRODUCTION_INTRODUCTION_ROLE_ARN: ${{ vars.PRODUCTION_INTRODUCTION_ROLE_ARN }}
+      INTRODUCTION_PACKAGE_ID: ${{ inputs.package_id }}
+      INTRODUCTION_PACKAGE_COMMIT: ${{ inputs.package_commit }}
+      INTRODUCTION_INTENT_HASH: ${{ inputs.intent_hash }}
+      INTRODUCTION_OPS_READ_TOKEN: ${{ secrets.INTRODUCTION_OPS_READ_TOKEN }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: .nvmrc
+          cache: yarn
+      - name: Build reviewed source
+        run: |
+          yarn install --frozen-lockfile
+          yarn build
+      - name: Require configured introduction authority
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -z "$AWS_REGION" ] || [ -z "$AWS_ACCOUNT_ID" ] || [ -z "$PRODUCTION_INTRODUCTION_ROLE_ARN" ] || [ -z "$INTRODUCTION_OPS_READ_TOKEN" ]; then
+            echo '{"status":"refused","reason":"introduction_configuration_prerequisite"}'
+            exit 1
+          fi
+      - uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ env.PRODUCTION_INTRODUCTION_ROLE_ARN }}
+          role-session-name: introduction-${{ github.run_id }}-${{ github.run_attempt }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-duration-seconds: 10800
+          mask-aws-account-id: true
+      - name: Execute reviewed finite actions
+        run: node scripts/deployment/introduce-production.cjs continue
+  prepare-acceptance:
+    name: Prepare production acceptance
+    needs: [introduce, continue]
+    if: always() && github.ref == 'refs/heads/master' && (needs.introduce.result == 'success' || needs.continue.result == 'success')
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      actions: read
+      deployments: read
+      id-token: write
+    outputs:
+      supplement_commit: ${{ steps.prepare.outputs.supplement_commit }}
+      supplement_hash: ${{ steps.prepare.outputs.supplement_hash }}
+    env:
+      AWS_REGION: ${{ vars.AWS_REGION }}
+      AWS_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
+      PRODUCTION_INTRODUCTION_ROLE_ARN: ${{ vars.PRODUCTION_INTRODUCTION_ROLE_ARN }}
+      INTRODUCTION_PACKAGE_ID: ${{ inputs.package_id }}
+      INTRODUCTION_PACKAGE_COMMIT: ${{ inputs.package_commit }}
+      INTRODUCTION_INTENT_HASH: ${{ inputs.intent_hash }}
+      INTRODUCTION_OPS_READ_TOKEN: ${{ secrets.INTRODUCTION_OPS_READ_TOKEN }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: .nvmrc
+          cache: yarn
+      - name: Build reviewed source
+        run: |
+          yarn install --frozen-lockfile
+          yarn build
+      - uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ vars.PRODUCTION_ACCEPTANCE_COLLECTOR_ROLE_ARN }}
+          role-session-name: introduction-read-${{ github.run_id }}-${{ github.run_attempt }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-duration-seconds: 3600
+          mask-aws-account-id: true
+      - name: Pin reviewed fixture outputs and current evidence
+        id: prepare
+        run: node scripts/deployment/accept-production.cjs
+  approve-acceptance:
+    name: Approve production acceptance
+    needs: prepare-acceptance
+    if: github.ref == 'refs/heads/master'
+    runs-on: ubuntu-latest
+    environment: production-acceptance
+    permissions: {}
+    steps:
+      - name: Record protected gate completion
+        run: echo '{"status":"acceptance_gate_completed","retainedWorkClassification":"UNVERIFIED"}'
+  accept:
+    name: Accept production introduction
+    needs: [prepare-acceptance, approve-acceptance]
+    if: github.ref == 'refs/heads/master'
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 180
+    permissions:
+      contents: read
+      actions: read
+      deployments: read
+      id-token: write
+    env:
+      AWS_REGION: ${{ vars.AWS_REGION }}
+      AWS_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
+      PRODUCTION_INTRODUCTION_ROLE_ARN: ${{ vars.PRODUCTION_INTRODUCTION_ROLE_ARN }}
+      INTRODUCTION_PACKAGE_ID: ${{ inputs.package_id }}
+      INTRODUCTION_PACKAGE_COMMIT: ${{ inputs.package_commit }}
+      INTRODUCTION_INTENT_HASH: ${{ inputs.intent_hash }}
+      INTRODUCTION_OPS_READ_TOKEN: ${{ secrets.INTRODUCTION_OPS_READ_TOKEN }}
+      INTRODUCTION_SUPPLEMENT_COMMIT: ${{ needs.prepare-acceptance.outputs.supplement_commit }}
+      INTRODUCTION_SUPPLEMENT_HASH: ${{ needs.prepare-acceptance.outputs.supplement_hash }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: .nvmrc
+          cache: yarn
+      - name: Build reviewed source
+        run: |
+          yarn install --frozen-lockfile
+          yarn build
+      - uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ env.PRODUCTION_INTRODUCTION_ROLE_ARN }}
+          role-session-name: introduction-${{ github.run_id }}-${{ github.run_attempt }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-duration-seconds: 10800
+          mask-aws-account-id: true
+      - name: Recollect, persist acceptance, reopen admission and release deployment
+        run: node scripts/deployment/accept-production.cjs

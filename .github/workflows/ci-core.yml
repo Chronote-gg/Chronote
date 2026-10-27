@@ -22,7 +22,7 @@ jobs:
       - name: Set up Node
         uses: actions/setup-node@v7
         with:
-          node-version: "24.15.0"
+          node-version-file: ".nvmrc"
           cache: "yarn"
 
       - name: Install dependencies
@@ -51,7 +51,7 @@ jobs:
       - name: Set up Node
         uses: actions/setup-node@v7
         with:
-          node-version: "24.15.0"
+          node-version-file: ".nvmrc"
           cache: "yarn"
 
       - name: Install dependencies
@@ -81,7 +81,7 @@ jobs:
       - name: Set up Node
         uses: actions/setup-node@v7
         with:
-          node-version: "24.15.0"
+          node-version-file: ".nvmrc"
           cache: "yarn"
 
       - name: Install dependencies
@@ -110,7 +110,7 @@ jobs:
       - name: Set up Node
         uses: actions/setup-node@v7
         with:
-          node-version: "24.15.0"
+          node-version-file: ".nvmrc"
           cache: "yarn"
 
       - name: Install dependencies
@@ -134,7 +134,7 @@ jobs:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
         with:
-          node-version: "24.15.0"
+          node-version-file: ".nvmrc"
           cache: yarn
       - name: Install dependencies
         run: bash scripts/ci-install-dependencies.sh
@@ -153,7 +153,7 @@ jobs:
       - name: Set up Node
         uses: actions/setup-node@v7
         with:
-          node-version: "24.15.0"
+          node-version-file: ".nvmrc"
           cache: "yarn"
 
       - name: Install dependencies
@@ -181,7 +181,7 @@ jobs:
       - name: Set up Node
         uses: actions/setup-node@v7
         with:
-          node-version: "24.15.0"
+          node-version-file: ".nvmrc"
           cache: "yarn"
           cache-dependency-path: |
             yarn.lock
@@ -203,7 +203,7 @@ jobs:
       - name: Set up Node
         uses: actions/setup-node@v7
         with:
-          node-version: "24.15.0"
+          node-version-file: ".nvmrc"
           cache: "yarn"
 
       - name: Install dependencies
@@ -223,7 +223,7 @@ jobs:
       - name: Set up Node
         uses: actions/setup-node@v7
         with:
-          node-version: "24.15.0"
+          node-version-file: ".nvmrc"
           cache: "yarn"
 
       - name: Install dependencies
@@ -263,7 +263,7 @@ jobs:
       - name: Set up Node
         uses: actions/setup-node@v7
         with:
-          node-version: "24.15.0"
+          node-version-file: ".nvmrc"
           cache: "yarn"
 
       - name: Install dependencies
@@ -338,7 +338,7 @@ jobs:
       - name: Set up Node
         uses: actions/setup-node@v7
         with:
-          node-version: "24.15.0"
+          node-version-file: ".nvmrc"
           cache: "yarn"
 
       - name: Set up uv
@@ -352,9 +352,34 @@ jobs:
       - name: Set up Terraform
         uses: hashicorp/setup-terraform@v4
         with:
+          terraform_version: "1.16.0"
           terraform_wrapper: false
 
       - name: Test Sandbox deployment permissions with mocked providers
         run: |
           terraform -chdir=_infra init -backend=false -input=false
           terraform -chdir=_infra test -no-color
+
+      - name: Test production bootstrap with mocked providers
+        env:
+          BOOTSTRAP_MOCK_PLAN_JSONL: ${{ runner.temp }}/bootstrap-mock-plans.jsonl
+        run: |
+          terraform -chdir=_infra/production-bootstrap init -backend=false -input=false -lockfile=readonly
+          terraform -chdir=_infra/production-bootstrap fmt -check -recursive
+          terraform -chdir=_infra/production-bootstrap validate -no-color
+          terraform -chdir=_infra/production-bootstrap test -no-color -filter=tests/bootstrap.tftest.hcl
+          terraform -chdir=_infra/production-bootstrap test -no-color -json -verbose -filter=tests/guard-plan.tftest.hcl > "$RUNNER_TEMP/bootstrap-mock-raw.jsonl"
+          node _infra/production-bootstrap/compact-mock-plan.cjs "$RUNNER_TEMP/bootstrap-mock-raw.jsonl" > "$BOOTSTRAP_MOCK_PLAN_JSONL"
+          node --test _infra/production-bootstrap/verify-plan.test.cjs
+
+      - name: Test Sandbox bootstrap with mocked providers
+        env:
+          SANDBOX_BOOTSTRAP_MOCK_PLAN_JSONL: ${{ runner.temp }}/sandbox-bootstrap-mock-plans.jsonl
+        run: |
+          terraform -chdir=_infra/sandbox-bootstrap init -backend=false -input=false -lockfile=readonly
+          terraform -chdir=_infra/sandbox-bootstrap fmt -check -recursive
+          terraform -chdir=_infra/sandbox-bootstrap validate -no-color
+          terraform -chdir=_infra/sandbox-bootstrap test -no-color -filter=tests/bootstrap.tftest.hcl
+          terraform -chdir=_infra/sandbox-bootstrap test -no-color -json -verbose -filter=tests/guard-plan.tftest.hcl > "$RUNNER_TEMP/sandbox-bootstrap-mock-raw.jsonl"
+          node _infra/sandbox-bootstrap/compact-mock-plan.cjs "$RUNNER_TEMP/sandbox-bootstrap-mock-raw.jsonl" > "$SANDBOX_BOOTSTRAP_MOCK_PLAN_JSONL"
+          node --test _infra/sandbox-bootstrap/verify-plan.test.cjs

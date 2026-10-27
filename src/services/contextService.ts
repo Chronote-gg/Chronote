@@ -1,3 +1,4 @@
+import { isFixture } from "./fixtureInputService";
 import { CONFIG_KEYS } from "../config/keys";
 import { MeetingData } from "../types/meeting-data";
 import { MeetingHistory, type DictionaryEntry } from "../types/db";
@@ -20,6 +21,26 @@ export interface MeetingContextData {
   dictionaryBudgets?: DictionaryBudgets;
 }
 
+function initialMeetingContext(meeting: MeetingData): MeetingContextData {
+  const contextData: MeetingContextData = {};
+
+  // Include meeting-specific context if provided
+  if (meeting.meetingContext) {
+    contextData.meetingContext = meeting.meetingContext;
+  }
+
+  if (meeting.dictionaryEntries && meeting.dictionaryEntries.length > 0) {
+    contextData.dictionaryEntries = meeting.dictionaryEntries.map((entry) => ({
+      ...entry,
+    }));
+  }
+  if (meeting.runtimeConfig?.dictionary) {
+    contextData.dictionaryBudgets = { ...meeting.runtimeConfig.dictionary };
+  }
+
+  return contextData;
+}
+
 /**
  * Build complete context data for a meeting
  * @param meeting The meeting data
@@ -38,21 +59,8 @@ export async function collectMeetingContext(
   availability: "available" | "unavailable";
   data: MeetingContextData;
 }> {
-  const contextData: MeetingContextData = {};
-
-  // Include meeting-specific context if provided
-  if (meeting.meetingContext) {
-    contextData.meetingContext = meeting.meetingContext;
-  }
-
-  if (meeting.dictionaryEntries && meeting.dictionaryEntries.length > 0) {
-    contextData.dictionaryEntries = meeting.dictionaryEntries.map((entry) => ({
-      ...entry,
-    }));
-  }
-  if (meeting.runtimeConfig?.dictionary) {
-    contextData.dictionaryBudgets = { ...meeting.runtimeConfig.dictionary };
-  }
+  if (isFixture(meeting)) return { availability: "available", data: {} };
+  const contextData = initialMeetingContext(meeting);
 
   try {
     options.signal?.throwIfAborted();

@@ -1,3 +1,4 @@
+import type { NewWorkScope } from "../types/productionIntroduction";
 import {
   ActionRowBuilder,
   ButtonBuilder,
@@ -75,6 +76,7 @@ type StartMeetingOptions = {
 };
 
 type StartManualMeetingFromChannelsOptions = {
+  scope?: NewWorkScope;
   assertStartAllowed?: () => Promise<void>;
   startSignal?: AbortSignal;
   client: Client;
@@ -326,6 +328,7 @@ const resolveMemberVoiceChannel = (member: GuildMember): VoiceChannelResult => {
 };
 
 export async function startManualMeetingFromChannels({
+  scope,
   assertStartAllowed,
   startSignal,
   client,
@@ -393,10 +396,11 @@ export async function startManualMeetingFromChannels({
   } = await resolveMeetingVoiceSettings(guildId, voiceChannel.id, limits);
 
   const artifactAccess = await resolveServerMeetingArtifactAccess(guildId);
-  const meetingId = randomUUID();
+  const meetingId = scope?.kind === "fixture" ? scope.meetingId : randomUUID();
   await assertStartAllowed?.();
   startSignal?.throwIfAborted();
   const meeting = await initializeMeeting({
+    scope,
     assertStartAllowed,
     startSignal,
     meetingId,

@@ -16,44 +16,15 @@ const {
   createAwsCaller,
   listServiceTaskArns,
 } = require("./coordinator-aws.cjs");
-const WARMUP_SECONDS = 900;
-const RETIREMENT_SECONDS = 7500;
-const CLI_PHASES = ["prepare", "promote", "retire", "reconcile"];
+const {
+  WARMUP_SECONDS,
+  RETIREMENT_SECONDS,
+  LEASE_SECONDS,
+  RENEWAL_MARGIN_SECONDS,
+} = require("./production-capacity.cjs");
+const { runCli } = require("./coordinator-cli.cjs");
 
-function configuration(env) {
-  const required = (key) => {
-    if (!env[key]?.trim())
-      throw new CoordinatorFailure("configuration_invalid", `Missing ${key}`);
-    return env[key].trim();
-  };
-  const prefix = required("SECRETS_PREFIX");
-  if (!/^[A-Za-z0-9][A-Za-z0-9-]*$/.test(prefix))
-    throw new CoordinatorFailure(
-      "configuration_invalid",
-      "Invalid SECRETS_PREFIX",
-    );
-  const tablePrefix = `${prefix}-`;
-  if (env.DDB_TABLE_PREFIX && env.DDB_TABLE_PREFIX !== tablePrefix)
-    throw new CoordinatorFailure(
-      "configuration_invalid",
-      "DDB_TABLE_PREFIX mismatch",
-    );
-  const image = required("CANDIDATE_IMAGE");
-  if (!/@sha256:[a-f0-9]{64}$/.test(image))
-    throw new CoordinatorFailure(
-      "configuration_invalid",
-      "Candidate image must pin its digest",
-    );
-  return {
-    cluster: required("ECS_CLUSTER"),
-    service: required("ECS_SERVICE"),
-    family: required("ECS_TASK_FAMILY"),
-    runToken: required("DEPLOYMENT_RUN_TOKEN"),
-    candidateId: required("DEPLOYMENT_CANDIDATE_ID"),
-    image,
-    tablePrefix,
-  };
-}
+const { configuration } = require("./coordinator-definition.cjs");
 function protocolModules(options) {
   const builders =
     options.builders ??
@@ -63,9 +34,26 @@ function protocolModules(options) {
   return { builders, types };
 }
 function createCoordinator(options = {}) {
-  const { diagnostic = {} } = options;
+  const { diagnostic = {}, production } = options;
+  if (production)
+    require("./production-coordinator.cjs").assertProductionCoordinator(
+      production,
+    );
   const config = configuration(options.env ?? process.env);
-  const aws = createAwsCaller(options.aws ?? awsCli, diagnostic);
+  const callAws = createAwsCaller(options.aws ?? awsCli, diagnostic);
+  const aws = async (service, operation, input) => {
+    if (
+      [
+        "update-item",
+        "transact-write-items",
+        "register-task-definition",
+        "update-service",
+        "modify-listener",
+      ].includes(operation)
+    )
+      await assertWriter();
+    return callAws(service, operation, input);
+  };
   const now = options.now ?? (() => Math.floor(Date.now() / 1000));
   const sleep =
     options.sleep ??
@@ -89,6 +77,7 @@ function createCoordinator(options = {}) {
     aws,
     config,
     env: options.env ?? process.env,
+    production,
     failure: (category, message) => new CoordinatorFailure(category, message),
   });
   const persistRouting = (ctl, value) =>
@@ -107,7 +96,33 @@ function createCoordinator(options = {}) {
         "Routing authority changed",
       );
   }
+  async function assertWriter() {
+    const response = await callAws("dynamodb", "get-item", {
+      TableName: tables.deploymentControl,
+      Key: marshall({ pk: "ENV", sk: "INTRODUCTION" }),
+      ConsistentRead: true,
+    });
+    if (!response.Item) {
+      if (production)
+        throw new CoordinatorFailure(
+          "introduction_held",
+          "Bound introduction hold missing",
+        );
+      return;
+    }
+    const hold = types.parseDeploymentControlRecord(unmarshall(response.Item));
+    if (hold.deployment.state === "released" && !production) return;
+    if (production) return production.guard(await control(), config);
+    throw new CoordinatorFailure(
+      "introduction_held",
+      "Production introduction holds deployment",
+    );
+  }
+  async function assertAcknowledged(purpose) {
+    if (production) await production.assertAcknowledged(purpose);
+  }
   async function completePromotion(ctl, candidate) {
+    if (production) await production.assertAcknowledged("promote");
     const row = await runtime(candidate);
     if (!ready(row, ctl, candidate, ctl.deployment.runtimeMode))
       throw new CoordinatorFailure(
@@ -152,6 +167,10 @@ function createCoordinator(options = {}) {
     return row;
   }
   async function save(previous, next) {
+    if (production) {
+      await assertWriter();
+      return production.save(previous, next);
+    }
     types.controlRecordSchema.parse(next);
     const values = {
       ":token": previous.coordinatorToken,
@@ -166,6 +185,10 @@ function createCoordinator(options = {}) {
       condition += " AND deployment = :deployment";
       values[":deployment"] = previous.deployment;
     } else condition += " AND attribute_not_exists(deployment)";
+    if (previous.maintenance) {
+      condition += " AND maintenance = :maintenance";
+      values[":maintenance"] = previous.maintenance;
+    } else condition += " AND attribute_not_exists(maintenance)";
     // Recovery cursor and compatible-replacement evidence have independent writers.
     const fields = [
       "coordinatorToken",
@@ -228,13 +251,21 @@ function createCoordinator(options = {}) {
   }
   async function renew(row) {
     own(row);
-    return save(row, { ...row, coordinatorExpiresAt: now() + 180 });
+    if (production && row.coordinatorExpiresAt > now() + RENEWAL_MARGIN_SECONDS)
+      return production.validateCurrent(row, config);
+    return save(row, { ...row, coordinatorExpiresAt: now() + LEASE_SECONDS });
   }
   async function phase(row, value, patch = {}) {
     own(row);
+    if (
+      production &&
+      row.deployment.phase === value &&
+      Object.keys(patch).length === 0
+    )
+      return production.validateCurrent(row, config);
     return save(row, {
       ...row,
-      coordinatorExpiresAt: now() + 180,
+      coordinatorExpiresAt: now() + LEASE_SECONDS,
       deployment: {
         ...row.deployment,
         ...patch,
@@ -313,7 +344,11 @@ function createCoordinator(options = {}) {
         "Existing deployment is not an unambiguous compatible serving task",
       );
     const oldDefinition = await definition(svc.taskDefinition);
-    const latest = await definition(options.taskTemplate?.arn ?? config.family);
+    const latest = await definition(
+      production
+        ? production.binding.manifest.runtime.continuationDefinition
+        : (options.taskTemplate?.arn ?? config.family),
+    );
     if (latest.family !== config.family)
       throw new CoordinatorFailure(
         "configuration_invalid",
@@ -336,7 +371,8 @@ function createCoordinator(options = {}) {
         "application_not_ready",
         "Existing runtime is not a ready compatible serving owner",
       );
-    const nativeProtectionExpiresAt = await protectedTask(outgoing[0]);
+    const nativeProtectionExpiresAt =
+      Date.parse((await protectedTask(outgoing[0])).expirationDate) / 1000;
     return { outgoing: outgoing[0], mode, nativeProtectionExpiresAt };
   }
   async function findRegistered() {
@@ -372,7 +408,34 @@ function createCoordinator(options = {}) {
       );
     return matches[0];
   }
+  async function registerProduction(ctl) {
+    const m = production.binding.manifest;
+    const pinned = await definition(m.runtime.continuationDefinition);
+    const actual = taskContainer(pinned, config.tablePrefix);
+    const expected = candidateDefinition(
+      await definition(m.runtime.candidateDefinition),
+      config,
+    );
+    if (
+      pinned.taskDefinitionArn !== m.runtime.continuationDefinition ||
+      actual.image !== config.image ||
+      actual.stopTimeout !== 120 ||
+      actual.environment.filter((v) => v.name === "DEPLOYMENT_CANDIDATE_ID")
+        .length !== 1 ||
+      actual.environment.find((v) => v.name === "DEPLOYMENT_CANDIDATE_ID")
+        .value !== config.candidateId ||
+      !isDeepStrictEqual(candidateDefinition(pinned, config), expected)
+    )
+      throw new CoordinatorFailure(
+        "configuration_invalid",
+        "Pinned candidate configuration differs",
+      );
+    return phase(ctl, "preparing", {
+      taskDefinition: pinned.taskDefinitionArn,
+    });
+  }
   async function register(ctl) {
+    if (production) return registerProduction(ctl);
     let arn = ctl.deployment.taskDefinition ?? (await findRegistered());
     if (!arn) {
       const latest = await definition(
@@ -411,7 +474,26 @@ function createCoordinator(options = {}) {
       );
     return phase(ctl, "preparing", { taskDefinition: arn });
   }
+  async function launchCandidate(ctl, svc, deploymentConfiguration) {
+    if (production) await production.launch(ctl, svc);
+    else
+      try {
+        await aws("ecs", "update-service", {
+          cluster: config.cluster,
+          service: config.service,
+          taskDefinition: ctl.deployment.taskDefinition,
+          ...(ctl.deployment.routing
+            ? { loadBalancers: routing.binding(ctl.deployment.routing, true) }
+            : {}),
+          deploymentConfiguration,
+        });
+      } catch (error) {
+        if ((await service()).taskDefinition !== ctl.deployment.taskDefinition)
+          throw error;
+      }
+  }
   async function prepare() {
+    await assertWriter();
     let ctl = await control();
     const svc = await service();
     const deploymentConfiguration = {
@@ -431,8 +513,10 @@ function createCoordinator(options = {}) {
     });
     if (ctl.deployment?.runToken === config.runToken) {
       own(ctl);
-      if (ctl.deployment.phase !== "preparing")
+      if (ctl.deployment.phase !== "preparing") {
+        await assertAcknowledged("launch");
         return { kind: "preserved", phase: ctl.deployment.phase };
+      }
       ctl = await renew(ctl);
     } else {
       if (
@@ -449,7 +533,7 @@ function createCoordinator(options = {}) {
         ...ctl,
         coordinatorToken: config.runToken,
         coordinatorEpoch: ctl.coordinatorEpoch + 1,
-        coordinatorExpiresAt: now() + 180,
+        coordinatorExpiresAt: now() + LEASE_SECONDS,
         deployment: {
           ...config,
           runtimeMode: previous.mode,
@@ -466,20 +550,7 @@ function createCoordinator(options = {}) {
     ctl = await register(ctl);
     await protectedTask(ctl.deployment.outgoing);
     ctl = await phase(ctl, "warming");
-    try {
-      await aws("ecs", "update-service", {
-        cluster: config.cluster,
-        service: config.service,
-        taskDefinition: ctl.deployment.taskDefinition,
-        ...(ctl.deployment.routing
-          ? { loadBalancers: routing.binding(ctl.deployment.routing, true) }
-          : {}),
-        deploymentConfiguration,
-      });
-    } catch (error) {
-      if ((await service()).taskDefinition !== ctl.deployment.taskDefinition)
-        throw error;
-    }
+    await launchCandidate(ctl, svc, deploymentConfiguration);
     const updated = await service();
     if (updated.taskDefinition !== ctl.deployment.taskDefinition)
       throw new CoordinatorFailure(
@@ -581,7 +652,20 @@ function createCoordinator(options = {}) {
         "Reviewed candidate changed",
       );
   }
+  async function promoteCandidate(ctl, promotion, identity, retained) {
+    return production
+      ? await production.promote(ctl, promotion)
+      : await transactPromotion(
+          ctl,
+          builders.buildPromotionTransaction({ ...promotion, tables }),
+          identity,
+          promotion.proposedGeneration,
+          retained,
+        );
+  }
   async function promote() {
+    await assertWriter();
+    await assertAcknowledged("launch");
     const deadline = now() + WARMUP_SECONDS;
     while (now() <= deadline) {
       let ctl = await renew(await control());
@@ -629,8 +713,7 @@ function createCoordinator(options = {}) {
             ? { routing: { ...d.routing, candidateRevision: revision } }
             : {}),
         });
-        const transaction = builders.buildPromotionTransaction({
-          tables,
+        const promotion = {
           coordinatorToken: config.runToken,
           coordinatorEpoch: ctl.coordinatorEpoch,
           expectedServingGeneration: d.originalGeneration,
@@ -640,14 +723,8 @@ function createCoordinator(options = {}) {
           retainedMembers: retained,
           proposedGeneration: d.originalGeneration + 1,
           now: now(),
-        });
-        ctl = await transactPromotion(
-          ctl,
-          transaction,
-          warm.identity,
-          d.originalGeneration + 1,
-          retained,
-        );
+        };
+        ctl = await promoteCandidate(ctl, promotion, warm.identity, retained);
         await completePromotion(ctl, warm.identity);
         return { kind: "promoted" };
       }
@@ -658,23 +735,11 @@ function createCoordinator(options = {}) {
       "Candidate readiness timeout; old admission retained, protected tasks preserved (check DEPLOYMENT_BLOCKED)",
     );
   }
-  async function requestRetirement(ctl, identity, generation) {
-    const row = await runtime(identity);
-    const request = {
-      identity,
-      authorizedGeneration: generation,
-      coordinatorToken: config.runToken,
-      coordinatorEpoch: ctl.coordinatorEpoch,
-    };
-    if (
-      row.retirementRequest &&
-      !isDeepStrictEqual(row.retirementRequest, request)
-    )
-      throw new CoordinatorFailure(
-        "outcome_uncertain",
-        "Different retirement request requires recovery",
-      );
-    if (!row.retirementRequest) {
+  async function writeRetirement(ctl, row, request, identity) {
+    if (production) {
+      await assertWriter();
+      await production.retirement(ctl, { record: row, request, now: now() });
+    } else
       try {
         await aws(
           "dynamodb",
@@ -693,6 +758,26 @@ function createCoordinator(options = {}) {
         )
           throw error;
       }
+  }
+  async function requestRetirement(ctl, identity, generation) {
+    const row = await runtime(identity);
+    const request = {
+      identity,
+      authorizedGeneration: generation,
+      coordinatorToken: config.runToken,
+      coordinatorEpoch: ctl.coordinatorEpoch,
+    };
+    if (
+      row.retirementRequest &&
+      !isDeepStrictEqual(row.retirementRequest, request)
+    )
+      throw new CoordinatorFailure(
+        "outcome_uncertain",
+        "Different retirement request requires recovery",
+      );
+    if (row.retirementRequest) await assertAcknowledged("retirement");
+    if (!row.retirementRequest) {
+      await writeRetirement(ctl, row, request, identity);
     }
     const observed = await runtime(identity);
     return (
@@ -704,6 +789,7 @@ function createCoordinator(options = {}) {
     );
   }
   async function retire() {
+    await assertWriter();
     const deadline = now() + RETIREMENT_SECONDS;
     while (now() <= deadline) {
       let ctl = await renew(await control());
@@ -810,6 +896,12 @@ function createCoordinator(options = {}) {
     };
   }
   async function reconcile() {
+    await assertWriter();
+    if (production)
+      return {
+        kind: "recovery_required",
+        reason: "production_continuation_required",
+      };
     let ctl = await renew(await control());
     const d = ctl.deployment;
     if (d.phase === "complete") return { kind: "complete" };
@@ -868,59 +960,24 @@ function createCoordinator(options = {}) {
         nativeProtectionExpiresAt: previous.nativeProtectionExpiresAt,
       };
     },
-    inspectContinuation: () =>
-      require("./continuation-inspection.cjs").inspectContinuation({
-        control,
-        own,
-        service,
-        candidate,
-        runtime,
-        ready,
-        protectedTask,
-        routing,
-      }),
+    inspectContinuation: async () => {
+      if (production) await assertWriter();
+      const inspected =
+        await require("./continuation-inspection.cjs").inspectContinuation({
+          control,
+          own,
+          service,
+          candidate,
+          runtime,
+          ready,
+          protectedTask,
+          routing,
+        });
+      if (production)
+        await production.validateCurrent(inspected.control, config);
+      return inspected;
+    },
   };
-}
-async function runCli(requestedPhase, options = {}, output = console) {
-  const diagnostic = {
-    requestedPhase: CLI_PHASES.includes(requestedPhase)
-      ? requestedPhase
-      : "invalid",
-    knownPhase: "unknown",
-    operation: "configuration",
-    nativeProtection: "not_checked",
-  };
-  try {
-    if (!CLI_PHASES.includes(requestedPhase))
-      throw new CoordinatorFailure(
-        "invalid_phase",
-        "Expected a coordinator phase",
-        "arguments",
-      );
-    const coordinator = createCoordinator({ ...options, diagnostic });
-    const result = await coordinator[requestedPhase]();
-    output.log(JSON.stringify(result));
-    return result.kind === "recovery_required" || result.recoveryRequired
-      ? 1
-      : 0;
-  } catch (error) {
-    output.error(
-      JSON.stringify({
-        kind: "deployment_failed",
-        ...diagnostic,
-        operation:
-          error instanceof CoordinatorFailure
-            ? (error.operation ?? diagnostic.operation)
-            : diagnostic.operation,
-        category:
-          error instanceof CoordinatorFailure
-            ? error.category
-            : "state_validation_failed",
-        taskAction: "no_stop_or_unprotect_requested",
-      }),
-    );
-    return 1;
-  }
 }
 module.exports = {
   createCoordinator,

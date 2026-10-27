@@ -1,4 +1,15 @@
 import {
+  verifyFixtureReservation,
+  isFixture,
+  fixtureParticipant,
+  allowFixtureActor,
+} from "./services/fixtureInputService";
+import {
+  observeFixtureChannel,
+  observeFixtureConnection,
+} from "./services/fixtureObservationService";
+import type { NewWorkScope } from "./types/productionIntroduction";
+import {
   reservationTimingReceipt,
   freezeCompletionPolicy,
 } from "./services/meetingCompletionPolicyService";
@@ -145,6 +156,7 @@ export function deleteMeetingSetup(key: string) {
 }
 
 export interface MeetingInitOptions {
+  scope?: NewWorkScope;
   meetingId?: string;
   reservedAt?: number;
   suppressionCheck?: { channelId: string; expectedVersion?: number };
@@ -413,15 +425,33 @@ export function initializeMeeting(
   }
   return initialization;
 }
+function assertFixtureStartOptions(options: MeetingInitOptions) {
+  if (
+    options.scope?.kind === "fixture" &&
+    (options.meetingContext ||
+      options.tags?.length ||
+      options.creator.id !== options.scope.actorUserId)
+  )
+    throw new Error("Fixture input profile mismatch");
+}
+function assertVerifiedFixture(
+  options: MeetingInitOptions,
+  reservation: SessionReservation,
+) {
+  if (options.scope?.kind === "fixture" && !isFixture({ reservation }))
+    throw new Error("Fixture input profile unavailable or contaminated");
+}
 async function initializeNewMeeting(
   options: MeetingInitOptions & { meetingId: string },
 ): Promise<MeetingData> {
+  assertFixtureStartOptions(options);
   const observedAt = Date.now();
   const reservedAt = options.reservedAt ?? observedAt;
   const timingReceipt = reservationTimingReceipt(reservedAt, observedAt);
   const meetingId = options.meetingId;
   const timestamp = new Date(reservedAt).toISOString();
   const shared = {
+    scope: options.scope,
     assertStartAllowed: options.assertStartAllowed,
     startSignal: options.startSignal,
     guildId: options.guild.id,
@@ -478,6 +508,8 @@ async function initializeNewMeeting(
     { cleanup: [] };
   try {
     options.startSignal?.throwIfAborted();
+    await verifyFixtureReservation(admission.reservation);
+    assertVerifiedFixture(options, admission.reservation);
     const meeting = await initializeReservedMeeting({
       ...options,
       meetingId,
@@ -499,7 +531,10 @@ async function disposeFailedInitialization(initialization: {
   cleanup: Array<() => void>;
 }): Promise<boolean> {
   const meeting = initialization.meeting;
-  if (!meeting) return true;
+  if (!meeting) {
+    for (const cleanup of initialization.cleanup) cleanup();
+    return true;
+  }
   const original = meeting.reservation;
   let timer: ReturnType<typeof setTimeout> | undefined;
   const expired = new Promise<boolean>((resolve) => {
@@ -534,6 +569,29 @@ async function disposeFailedInitialization(initialization: {
   }
 }
 
+function shouldLoadMeetingDictionary(meeting: MeetingData) {
+  return meeting.captureAudio && !isFixture(meeting);
+}
+function resolveVoiceFeatures(
+  fixture: boolean,
+  canCaptureAudio: boolean,
+  liveVoiceOverride: boolean | undefined,
+  liveVoiceCommandsOverride: boolean | undefined,
+  chatTtsOverride: boolean | undefined,
+) {
+  const liveVoiceEnabled =
+    !fixture &&
+    canCaptureAudio &&
+    config.liveVoice.mode === "tts_gate" &&
+    liveVoiceOverride !== false;
+  const liveVoiceCommandsEnabled =
+    !fixture &&
+    canCaptureAudio &&
+    config.liveVoice.mode === "tts_gate" &&
+    liveVoiceCommandsOverride === true;
+  const chatTtsEnabled = !fixture && (chatTtsOverride ?? false);
+  return { liveVoiceEnabled, liveVoiceCommandsEnabled, chatTtsEnabled };
+}
 async function initializeReservedMeeting(
   options: MeetingInitOptions & {
     reservation: SessionReservation;
@@ -583,6 +641,16 @@ async function initializeReservedMeeting(
     ? AbortSignal.any([reservationSignal, options.startSignal])
     : reservationSignal;
   signal.throwIfAborted();
+  options.initialization.cleanup.push(
+    observeFixtureChannel({
+      reservation: options.reservation,
+      client: guild.client,
+      guild,
+      channelId: voiceChannel.id,
+      memberIds: () => [...voiceChannel.members.keys()],
+      signal,
+    }),
+  );
   // The reservation and its heartbeat exist before the SDK can issue a join.
   let connection;
   try {
@@ -601,17 +669,18 @@ async function initializeReservedMeeting(
   }
 
   signal.throwIfAborted();
+  observeFixtureConnection({ reservation: options.reservation }, connection);
+  const fixture = isFixture({ reservation: options.reservation });
   const receiver = connection.receiver;
   const attendance: Set<string> = new Set<string>();
-  const liveVoiceEnabled =
-    canCaptureAudio &&
-    config.liveVoice.mode === "tts_gate" &&
-    liveVoiceOverride !== false;
-  const liveVoiceCommandsEnabled =
-    canCaptureAudio &&
-    config.liveVoice.mode === "tts_gate" &&
-    liveVoiceCommandsOverride === true;
-  const chatTtsEnabled = chatTtsOverride ?? false;
+  const { liveVoiceEnabled, liveVoiceCommandsEnabled, chatTtsEnabled } =
+    resolveVoiceFeatures(
+      fixture,
+      canCaptureAudio,
+      liveVoiceOverride,
+      liveVoiceCommandsOverride,
+      chatTtsOverride,
+    );
   const botAudioEnabled =
     liveVoiceEnabled || chatTtsEnabled || liveVoiceCommandsEnabled;
   const liveAudioPlayer = botAudioEnabled
@@ -636,8 +705,8 @@ async function initializeReservedMeeting(
     meetingId: meetingId ?? uuidv4(),
     sessionMode,
     captureAudio: canCaptureAudio,
-    recordBotAudio,
-    storeChatLog,
+    recordBotAudio: fixture ? false : recordBotAudio,
+    storeChatLog: fixture ? false : storeChatLog,
     chatLog: [],
     attendance,
     connection,
@@ -726,10 +795,11 @@ async function initializeReservedMeeting(
   // Snapshot participants for initial members
   await Promise.all(
     voiceChannel.members.map(async (member) => {
-      const participant = await buildParticipantSnapshot(
-        voiceChannel.guild,
-        member.user.id,
-      );
+      if (fixture && member.user.id === guild.client.user!.id) return;
+      if (!allowFixtureActor(meeting, member.user.id)) return;
+      const participant =
+        fixtureParticipant(meeting, member.user.id) ??
+        (await buildParticipantSnapshot(voiceChannel.guild, member.user.id));
       if (participant) {
         meeting.participants.set(member.user.id, participant);
         attendance.add(formatUserMention(member.user.id));
@@ -740,9 +810,11 @@ async function initializeReservedMeeting(
   signal.throwIfAborted();
   if (meeting.captureAudio) {
     await Promise.all(
-      voiceChannel.members.map((member) =>
-        subscribeToUserVoice(meeting, member.user.id),
-      ),
+      voiceChannel.members
+        .filter(
+          (member) => !fixture || member.user.id !== guild.client.user!.id,
+        )
+        .map((member) => subscribeToUserVoice(meeting, member.user.id)),
     );
 
     receiver.speaking.on("start", (userId) => {
@@ -830,7 +902,7 @@ async function initializeReservedMeeting(
   signal.throwIfAborted();
   resetTtsOnlyIdleTimeout(meeting);
 
-  if (meeting.captureAudio) {
+  if (shouldLoadMeetingDictionary(meeting)) {
     try {
       meeting.dictionaryEntries = await listDictionaryEntriesService(
         meeting.guildId,

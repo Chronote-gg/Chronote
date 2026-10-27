@@ -1,3 +1,6 @@
+import { beforeEach, afterEach } from "@jest/globals";
+import { config } from "../../src/services/configService";
+import { getMockStore, resetMockStore } from "../../src/repositories/mockStore";
 import {
   trackPaidRenewalPeriod,
   refreshRenewalRecovery,
@@ -174,4 +177,27 @@ export function renewalRecoveryFixture() {
     refresh,
     fail,
   };
+}
+
+export function installRenewalRecoveryTestState() {
+  const original = {
+    mock: config.mock.enabled,
+    enabled: config.stripe.renewalGraceEnabled,
+    mode: config.subscription.stripeMode,
+  };
+  beforeEach(() => {
+    config.mock.enabled = true;
+    config.subscription.stripeMode = "test";
+    config.stripe.renewalGraceEnabled = true;
+    resetMockStore();
+    getMockStore().subscriptions.set(
+      renewalSubscription.guildId,
+      structuredClone(renewalSubscription),
+    );
+  });
+  afterEach(() => {
+    config.mock.enabled = original.mock;
+    config.stripe.renewalGraceEnabled = original.enabled;
+    config.subscription.stripeMode = original.mode;
+  });
 }

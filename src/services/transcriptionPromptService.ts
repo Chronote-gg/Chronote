@@ -1,3 +1,4 @@
+import { isFixture, fixtureLabels } from "./fixtureInputService";
 import type { MeetingData } from "../types/meeting-data";
 import type { TranscriptVariant } from "../types/audio";
 import { buildMeetingContext, formatContextForPrompt } from "./contextService";
@@ -27,6 +28,16 @@ type TranscriptionPromptVariables = {
 const buildTranscriptionPromptVariables = (
   meeting: MeetingData,
 ): TranscriptionPromptVariables => {
+  if (isFixture(meeting))
+    return {
+      serverName: fixtureLabels.serverName,
+      channelName: fixtureLabels.voiceChannelName,
+      serverDescriptionLine: "",
+      attendeesLine: `Attendees: ${fixtureLabels.attendees}`,
+      botNamesLine: `Bot Names: ${fixtureLabels.botDisplayName}`,
+      dictionaryBlock: "",
+      meetingContextLine: "",
+    };
   const serverName = meeting.voiceChannel.guild.name;
   const channelName = meeting.voiceChannel.name;
   const serverDescription = meeting.guild.description || "";
@@ -120,29 +131,43 @@ export async function getTranscriptionCleanupPrompt(
   const contextData = await buildMeetingContext(meeting, false);
   const formattedContext = formatContextForPrompt(contextData, "transcription");
 
-  const serverName = meeting.guild.name;
-  const serverDescription = meeting.guild.description ?? "";
-  const roles = meeting.guild.roles
-    .valueOf()
-    .map((role) => role.name)
-    .join(", ");
-  const events = meeting.guild.scheduledEvents
-    .valueOf()
-    .map((event) => event.name)
-    .join(", ");
-  const channelNames = meeting.guild.channels
-    .valueOf()
-    .map((channel) => channel.name)
-    .join(", ");
+  const serverName = isFixture(meeting)
+    ? fixtureLabels.serverName
+    : meeting.guild.name;
+  const serverDescription = isFixture(meeting)
+    ? ""
+    : (meeting.guild.description ?? "");
+  const roles = isFixture(meeting)
+    ? ""
+    : meeting.guild.roles
+        .valueOf()
+        .map((role) => role.name)
+        .join(", ");
+  const events = isFixture(meeting)
+    ? ""
+    : meeting.guild.scheduledEvents
+        .valueOf()
+        .map((event) => event.name)
+        .join(", ");
+  const channelNames = isFixture(meeting)
+    ? ""
+    : meeting.guild.channels
+        .valueOf()
+        .map((channel) => channel.name)
+        .join(", ");
 
   return await getLangfuseChatPrompt({
     name: config.langfuse.transcriptionCleanupPromptName,
     variables: {
       formattedContext,
-      attendees: resolveMeetingAttendees(meeting).join(", "),
+      attendees: isFixture(meeting)
+        ? fixtureLabels.attendees
+        : resolveMeetingAttendees(meeting).join(", "),
       serverName,
       serverDescription,
-      voiceChannelName: meeting.voiceChannel.name,
+      voiceChannelName: isFixture(meeting)
+        ? fixtureLabels.voiceChannelName
+        : meeting.voiceChannel.name,
       roles,
       events,
       channelNames,
@@ -194,9 +219,15 @@ export async function getTranscriptionCoalescePrompt(
     name: config.langfuse.transcriptionCoalescePromptName,
     variables: {
       formattedContext,
-      serverName: meeting.guild.name,
-      voiceChannelName: meeting.voiceChannel.name,
-      attendees: resolveMeetingAttendees(meeting).join(", "),
+      serverName: isFixture(meeting)
+        ? fixtureLabels.serverName
+        : meeting.guild.name,
+      voiceChannelName: isFixture(meeting)
+        ? fixtureLabels.voiceChannelName
+        : meeting.voiceChannel.name,
+      attendees: isFixture(meeting)
+        ? fixtureLabels.attendees
+        : resolveMeetingAttendees(meeting).join(", "),
       slowTranscript: input.slowTranscript,
       fastTranscriptBlock,
     },
@@ -213,9 +244,15 @@ export async function getTranscriptionFinalPassPrompt(
     name: config.langfuse.transcriptionFinalPassPromptName,
     variables: {
       formattedContext,
-      attendees: resolveMeetingAttendees(meeting).join(", "),
-      serverName: meeting.guild.name,
-      voiceChannelName: meeting.voiceChannel.name,
+      attendees: isFixture(meeting)
+        ? fixtureLabels.attendees
+        : resolveMeetingAttendees(meeting).join(", "),
+      serverName: isFixture(meeting)
+        ? fixtureLabels.serverName
+        : meeting.guild.name,
+      voiceChannelName: isFixture(meeting)
+        ? fixtureLabels.voiceChannelName
+        : meeting.voiceChannel.name,
       chunkIndex: String(input.chunkIndex),
       chunkCount: String(input.chunkCount),
       chunkTranscript: input.chunkTranscript,

@@ -1,3 +1,15 @@
+import {
+  resolveSpeakerLabel,
+  warnMissingSnippetStart,
+} from "./services/recordingSpeakerService";
+import {
+  allowFixtureActor,
+  acceptedFixturePcm,
+  startFixtureCapture,
+  beginFixtureClosure,
+  closeFixtureObservation,
+  failFixture,
+} from "./services/fixtureInputService";
 import type {
   PcmSpan,
   TranscriptCorrespondence,
@@ -51,7 +63,8 @@ import {
 import { MeetingData } from "./types/meeting-data";
 import { EndBehaviorType, VoiceConnectionStatus } from "@discordjs/voice";
 import { OpusDiagnosticDecoder } from "./utils/opusDiagnosticDecoder";
-import { disposeVoiceStream } from "./utils/disposeVoiceStream";
+import { closeCaptureStream } from "./services/captureStreamSettlementService";
+export { waitForCaptureStreamSettlement } from "./services/captureStreamSettlementService";
 import { PassThrough, Readable } from "node:stream";
 import {
   coalesceTranscription,
@@ -144,20 +157,6 @@ function getSpeakerState(
   return getSpeakerStates(meeting).get(userId);
 }
 
-function warnMissingSnippetStart(meeting: MeetingData, userId: string) {
-  if (!meeting.audioData.missingStartWarnings) {
-    meeting.audioData.missingStartWarnings = new Set();
-  }
-  if (meeting.audioData.missingStartWarnings.has(userId)) {
-    return;
-  }
-  meeting.audioData.missingStartWarnings.add(userId);
-  const speakerLabel = resolveSpeakerLabel(meeting, userId);
-  console.warn(
-    `Missing speaking start timestamp, using receipt time for snippet: guildId=${meeting.guildId} channelId=${meeting.channelId} meetingId=${meeting.meetingId} userId=${userId} speaker=${speakerLabel}`,
-  );
-}
-
 function getVoiceSubscriptions(
   meeting: MeetingData,
 ): Map<string, VoiceSubscriptionState> {
@@ -170,41 +169,6 @@ function getVoiceSubscriptions(
   return created;
 }
 
-function resolveSpeakerLabel(meeting: MeetingData, userId: string): string {
-  const participant = meeting.participants?.get(userId);
-  if (!participant) return userId;
-  return formatParticipantLabel(participant, {
-    includeUsername: true,
-    fallbackName: participant.username ?? userId,
-  });
-}
-
-const captureStreamClosures = new WeakMap<MeetingData, Set<Promise<void>>>();
-export async function waitForCaptureStreamSettlement(
-  meeting: MeetingData,
-): Promise<void> {
-  const pending = captureStreamClosures.get(meeting);
-  while (pending?.size) await Promise.all([...pending]);
-}
-function closeCaptureStream(
-  meeting: MeetingData,
-  stream: Readable,
-  detachOwnedListeners: () => void,
-) {
-  if (!stream.closed) {
-    let pending = captureStreamClosures.get(meeting);
-    if (!pending) {
-      pending = new Set();
-      captureStreamClosures.set(meeting, pending);
-    }
-    const closed = new Promise<void>((resolve) =>
-      stream.once("close", resolve),
-    );
-    pending.add(closed);
-    void closed.then(() => pending.delete(closed));
-  }
-  disposeVoiceStream(stream, detachOwnedListeners);
-}
 function clearVoiceSubscription(
   meeting: MeetingData,
   userId: string,
@@ -1011,12 +975,20 @@ export function clearSnippetTimer(meeting: MeetingData, userId: string) {
   meeting.audioData.silenceTimers = currentTimers;
 }
 
+function acceptVoicePcm(
+  meeting: MeetingData,
+  userId: string,
+  state: VoiceSubscriptionState,
+) {
+  return allowFixtureActor(meeting, userId) && !state.suppressResubscribe;
+}
+
 // Subscribe to a user's voice stream and handle the audio data
 export async function subscribeToUserVoice(
   meeting: MeetingData,
   userId: string,
 ) {
-  if (!isCaptureActive(meeting)) return;
+  if (!allowFixtureActor(meeting, userId) || !isCaptureActive(meeting)) return;
 
   clearVoiceSubscription(meeting, userId);
 
@@ -1049,11 +1021,13 @@ export async function subscribeToUserVoice(
     subscriptions.set(userId, subscriptionState);
     createdState = subscriptionState;
     meeting.captureStartedAt ??= new Date();
+    startFixtureCapture(meeting, meeting.captureStartedAt);
     ensureRecordingCheckpointCapture(meeting);
 
     // Prevent decoder errors (often caused by malformed or partial packets) from crashing the process.
     const onDecoderError = (err: Error) => {
       if (subscriptionState.suppressResubscribe) return;
+      failFixture(meeting, "decoder_failure");
       if (isCaptureActive(meeting)) {
         meeting.audioData.captureIncomplete = true;
       }
@@ -1071,6 +1045,7 @@ export async function subscribeToUserVoice(
     // Prism's Opus stream can also emit errors; guard those too.
     const onOpusError = (err: Error) => {
       if (subscriptionState.suppressResubscribe) return;
+      failFixture(meeting, "decoder_failure");
       if (isCaptureActive(meeting)) {
         meeting.audioData.captureIncomplete = true;
       }
@@ -1093,6 +1068,7 @@ export async function subscribeToUserVoice(
 
     const onDecodedError = (err: Error) => {
       if (subscriptionState.suppressResubscribe) return;
+      failFixture(meeting, "decoder_failure");
       if (isCaptureActive(meeting)) {
         meeting.audioData.captureIncomplete = true;
       }
@@ -1114,6 +1090,7 @@ export async function subscribeToUserVoice(
 
     const onOpusClose = () => {
       if (subscriptionState.suppressResubscribe) return;
+      failFixture(meeting, "observer_gap");
       scheduleResubscribe(meeting, userId, "opus-stream-close");
     };
     opusStream.on("close", onOpusClose);
@@ -1123,6 +1100,7 @@ export async function subscribeToUserVoice(
 
     const onOpusEnd = () => {
       if (subscriptionState.suppressResubscribe) return;
+      failFixture(meeting, "observer_gap");
       scheduleResubscribe(meeting, userId, "opus-stream-end");
     };
     opusStream.on("end", onOpusEnd);
@@ -1131,7 +1109,7 @@ export async function subscribeToUserVoice(
     );
 
     const onPcmData = (chunk: Buffer) => {
-      if (subscriptionState.suppressResubscribe) return;
+      if (!acceptVoicePcm(meeting, userId, subscriptionState)) return;
       if (!isCaptureActive(meeting) || meeting.ownershipSignal?.aborted) return;
       let acceptedSpan: PcmSpan | undefined;
       if (
@@ -1151,6 +1129,7 @@ export async function subscribeToUserVoice(
         audioSeconds:
           chunk.length / (RECORD_SAMPLE_RATE * CHANNELS * BYTES_PER_SAMPLE),
       });
+      acceptedFixturePcm(meeting, chunk.byteLength);
       subscriptionState.lastPcmAt = Date.now();
       subscriptionState.consecutiveNoPcmEvents = 0;
       subscriptionState.lastNoPcmAt = undefined;
@@ -1213,12 +1192,14 @@ export async function subscribeToUserVoice(
 
 export function userStartTalking(meeting: MeetingData, userId: string) {
   if (isCaptureIntakeStopped(meeting)) return;
+  if (!allowFixtureActor(meeting, userId)) return;
   markSpeakerStart(meeting, userId);
   clearSnippetTimer(meeting, userId);
 }
 
 export function userStopTalking(meeting: MeetingData, userId: string) {
   if (isCaptureIntakeStopped(meeting)) return;
+  if (!allowFixtureActor(meeting, userId)) return;
   finishSpeakerTurn(meeting, userId);
 }
 function finishSpeakerTurn(meeting: MeetingData, userId: string) {
@@ -1481,6 +1462,7 @@ export function stopRecordingCapture(
   meeting: MeetingData,
   disposition: "complete" | "interrupted" = "complete",
 ) {
+  beginFixtureClosure(meeting);
   meeting.captureAudio = false;
   meeting.recordBotAudio = false;
   for (const id of getVoiceSubscriptions(meeting).keys())
@@ -1493,6 +1475,7 @@ export function stopRecordingCapture(
     return;
   const endedAt = new Date().toISOString();
   const startedAt = meeting.captureStartedAt?.toISOString() ?? null;
+  closeFixtureObservation(meeting, endedAt, disposition === "complete");
   meeting.recordingCaptureState =
     disposition === "complete" && startedAt
       ? { kind: "complete", startedAt, endedAt }

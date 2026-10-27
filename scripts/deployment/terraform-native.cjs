@@ -28,6 +28,7 @@ function nativeGitHub(token, request = fetch) {
   };
 }
 function runTitle(invocation, inputs) {
+  require("./terraform-bundle.cjs").parseInvocation(invocation);
   const target = `${invocation.environment}/${invocation.workspace}/${invocation.scope}`;
   if (invocation.workflowPath.endsWith("terraform-plan.yml"))
     return `Terraform Plan ${target}`;
@@ -60,8 +61,15 @@ function checkProtection(environment, invocation, run) {
   // Native JSON mapping is pinned in docs/terraform-private-delivery.md; omission never means false.
   assert.equal(environment.can_admins_bypass, false);
   assert.ok(Date.parse(environment.updated_at) < Date.parse(run.created_at));
-  assert.equal(environment.protection_rules.length, 1);
-  const rule = environment.protection_rules[0];
+  assert.deepEqual(
+    environment.protection_rules.map((rule) => rule.type).sort(),
+    invocation.environment === "production"
+      ? ["branch_policy", "required_reviewers"]
+      : ["required_reviewers"],
+  );
+  const rule = environment.protection_rules.find(
+    (rule) => rule.type === "required_reviewers",
+  );
   assert.equal(rule.type, "required_reviewers");
   assert.equal(typeof rule.prevent_self_review, "boolean");
   assert.equal(rule.reviewers.length, 1);
@@ -71,15 +79,45 @@ function checkProtection(environment, invocation, run) {
   assert.ok(
     Number.isSafeInteger(reviewer.reviewer.id) && reviewer.reviewer.id > 0,
   );
-  assert.equal(environment.deployment_branch_policy, null);
-  return reviewer.reviewer.id;
+  return rule;
+}
+async function branchPolicyProof(get, environment, invocation, run) {
+  if (invocation.environment !== "production") {
+    assert.equal(environment.deployment_branch_policy, null);
+    return null;
+  }
+  assert.deepEqual(environment.deployment_branch_policy, {
+    protected_branches: false,
+    custom_branch_policies: true,
+  });
+  assert.equal(run.head_branch, "master");
+  const proof = await get(
+    `/repos/${invocation.repository}/environments/${invocation.environment}/deployment-branch-policies?per_page=100`,
+  );
+  assert.equal(proof.total_count, 1);
+  assert.equal(proof.branch_policies.length, 1);
+  const policy = proof.branch_policies[0];
+  assert.ok(Number.isSafeInteger(policy.id) && policy.id > 0);
+  assert.equal(policy.name, "master");
+  assert.equal(policy.type, "branch");
+  return proof;
 }
 async function verifyApproval(get, invocation, inputs) {
   const run = await verifyRun(get, invocation, false, inputs);
+  return verifyEnvironmentApproval(get, invocation, run);
+}
+async function verifyEnvironmentApproval(get, invocation, run) {
   const environment = await get(
     `/repos/${invocation.repository}/environments/${invocation.environment}`,
   );
-  const reviewerId = checkProtection(environment, invocation, run);
+  const reviewRule = checkProtection(environment, invocation, run);
+  const reviewerId = reviewRule.reviewers[0].reviewer.id;
+  const branchPolicies = await branchPolicyProof(
+    get,
+    environment,
+    invocation,
+    run,
+  );
   const customRules = await get(
     `/repos/${invocation.repository}/environments/${invocation.environment}/deployment_protection_rules`,
   );
@@ -95,13 +133,25 @@ async function verifyApproval(get, invocation, inputs) {
   assert.equal(review.state, "approved");
   assert.equal(review.user.type, "User");
   assert.equal(review.user.id, reviewerId);
-  if (environment.protection_rules[0].prevent_self_review) {
+  if (reviewRule.prevent_self_review) {
     assert.notEqual(review.user.id, run.actor.id);
     assert.notEqual(review.user.id, run.triggering_actor.id);
   }
   assert.equal(review.environments.length, 1);
   assert.equal(review.environments[0].id, environment.id);
   assert.equal(review.environments[0].name, invocation.environment);
-  return { environment, customRules, review, createdAt: run.created_at };
+  return {
+    environment,
+    branchPolicies,
+    customRules,
+    review,
+    createdAt: run.created_at,
+  };
 }
-module.exports = { nativeGitHub, verifyRun, verifyApproval, runTitle };
+module.exports = {
+  nativeGitHub,
+  verifyRun,
+  verifyApproval,
+  runTitle,
+  verifyEnvironmentApproval,
+};

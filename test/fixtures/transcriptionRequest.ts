@@ -1,3 +1,5 @@
+import type { GenerationObserver } from "../../src/types/fixtureEvidence";
+import type { LangfusePromptMeta } from "../../src/services/langfusePromptService";
 import { Readable } from "node:stream";
 import type { ClientOptions } from "openai";
 import type { Transcription } from "openai/resources/audio";
@@ -16,10 +18,13 @@ type FixtureOptions = {
   multipartError?: Error;
   holdFetch?: Promise<void>;
   defaultTransport?: boolean;
+  observeGeneration?: GenerationObserver;
+  generationPrompt?: LangfusePromptMeta;
 };
 
 export async function buildAsrFixture(options: FixtureOptions) {
   jest.resetModules();
+  process.env.OPENAI_API_KEY = "test-openai-api-key";
   jest.dontMock("../../src/services/openaiClient");
   jest.dontMock("cockatiel");
   const openedStreams: Readable[] = [];
@@ -99,7 +104,11 @@ export async function buildAsrFixture(options: FixtureOptions) {
         prompt: options.prompt ?? "Project terminology.",
       },
       ledger,
-      clientOptions: { disableTracing: true },
+      observeGeneration: options.observeGeneration,
+      clientOptions: {
+        disableTracing: true,
+        langfusePrompt: options.generationPrompt,
+      },
       ...(options.defaultTransport ? {} : { transport: { fetch } }),
     });
   return {

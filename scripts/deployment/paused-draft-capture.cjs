@@ -67,7 +67,7 @@ function parseManifest(options) {
   const module =
     options.manifest.kind === "rehearsal-introduction"
       ? "./rehearsal-manifest.cjs"
-      : "./production-manifest.cjs";
+      : "./staged-production-manifest.cjs";
   const parser =
     options.manifest.kind === "rehearsal-introduction"
       ? "parseRehearsalManifest"

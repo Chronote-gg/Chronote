@@ -119,20 +119,23 @@ async function scheduleFreeChange(
   stripe: StripeClient,
   operation: Accepted,
   subscription: StripeSubscription,
+  write: StripeEffect = (run) => run(),
 ) {
   const cancellation =
     operation.source.billingMode === "classic"
       ? { cancel_at_period_end: true }
       : { cancel_at: operation.source.periodEnd };
   if (subscription.schedule) throw changeUnavailable();
-  subscription = await stripe.subscriptions.update(
-    subscription.id,
-    {
-      ...cancellation,
-      proration_behavior: "none",
-      metadata: { chronote_scheduled_change: operation.operationId },
-    },
-    changeIdempotency(operation, "schedule-free"),
+  subscription = await write(() =>
+    stripe.subscriptions.update(
+      subscription.id,
+      {
+        ...cancellation,
+        proration_behavior: "none",
+        metadata: { chronote_scheduled_change: operation.operationId },
+      },
+      changeIdempotency(operation, "schedule-free"),
+    ),
   );
   if (
     !unchangedService(subscription, operation) ||
@@ -147,6 +150,7 @@ async function configurePaidSchedule(
   operation: Accepted,
   subscription: StripeSubscription,
   onCreated: (scheduleId: string) => Promise<void>,
+  write: StripeEffect = (run) => run(),
 ) {
   const existingScheduleId = stripeId(subscription.schedule);
   const existingSchedule = existingScheduleId
@@ -162,17 +166,20 @@ async function configurePaidSchedule(
     stripe,
     operation,
     existingSchedule,
+    write,
   );
   await onCreated(schedule.id);
-  const updated = await stripe.subscriptionSchedules.update(
-    schedule.id,
-    {
-      end_behavior: "release",
-      proration_behavior: "none",
-      phases: buildChangeSchedulePhases(subscription, operation),
-      metadata: changeMetadata(operation),
-    },
-    changeIdempotency(operation, "set-schedule-phases"),
+  const updated = await write(() =>
+    stripe.subscriptionSchedules.update(
+      schedule.id,
+      {
+        end_behavior: "release",
+        proration_behavior: "none",
+        phases: buildChangeSchedulePhases(subscription, operation),
+        metadata: changeMetadata(operation),
+      },
+      changeIdempotency(operation, "set-schedule-phases"),
+    ),
   );
   if (
     updated.phases.length !== 2 ||
@@ -186,6 +193,7 @@ export async function scheduleBillingChange(
   stripe: StripeClient,
   operation: Accepted,
   onCreated: (scheduleId: string) => Promise<void> = async () => {},
+  write: StripeEffect = (run) => run(),
 ): Promise<string | null> {
   const subscription = await readScheduleSource(stripe, operation);
   const currentScheduleId = stripeId(subscription.schedule);
@@ -203,8 +211,14 @@ export async function scheduleBillingChange(
     return null;
   assertScheduleSourceUnchanged(subscription, operation);
   if (operation.target.selection.tier === "free")
-    return scheduleFreeChange(stripe, operation, subscription);
-  return configurePaidSchedule(stripe, operation, subscription, onCreated);
+    return scheduleFreeChange(stripe, operation, subscription, write);
+  return configurePaidSchedule(
+    stripe,
+    operation,
+    subscription,
+    onCreated,
+    write,
+  );
 }
 
 export async function canceledBeforeSchedule(
@@ -233,6 +247,7 @@ export async function cancelChangeSchedule(
   stripe: StripeClient,
   operation: BillingChangeOperation,
   scheduleId: string | null,
+  write: StripeEffect = (run) => run(),
 ): Promise<boolean> {
   const recovery = await getRenewalRecoveryRepository().getCurrent(
     operation.guildId,
@@ -247,7 +262,12 @@ export async function cancelChangeSchedule(
     return completedRecoveryOwnsCancellation(subscription, recovery);
   }
   if (scheduleId) {
-    const released = await releaseOwnedSchedule(stripe, operation, scheduleId);
+    const released = await releaseOwnedSchedule(
+      stripe,
+      operation,
+      scheduleId,
+      write,
+    );
     if (!released) return false;
     const subscription = await stripe.subscriptions.retrieve(
       operation.source.subscriptionId,
@@ -258,7 +278,13 @@ export async function cancelChangeSchedule(
         operation.source.invariantFingerprint
     )
       return false;
-    return restoreOriginalCancellation(stripe, operation, subscription);
+    return restoreOriginalCancellation(
+      stripe,
+      operation,
+      subscription,
+      false,
+      write,
+    );
   }
   if (operation.target.selection.tier !== "free") return false;
   const subscription = await stripe.subscriptions.retrieve(
@@ -267,7 +293,13 @@ export async function cancelChangeSchedule(
   if (!unchangedService(subscription, operation)) return false;
   if (subscription.metadata.chronote_scheduled_change !== operation.operationId)
     return false;
-  return restoreOriginalCancellation(stripe, operation, subscription, true);
+  return restoreOriginalCancellation(
+    stripe,
+    operation,
+    subscription,
+    true,
+    write,
+  );
 }
 function completedRecoveryOwnsCancellation(
   subscription: StripeSubscription,
@@ -292,6 +324,7 @@ async function restoreOriginalCancellation(
   operation: BillingChangeOperation,
   subscription: StripeSubscription,
   clearOwnCancellation = false,
+  write: StripeEffect,
 ) {
   const original = operation.source.cancellation;
   if (!original?.at && !original?.atPeriodEnd && !clearOwnCancellation)
@@ -299,14 +332,16 @@ async function restoreOriginalCancellation(
   const cancellation = original?.atPeriodEnd
     ? { cancel_at_period_end: true }
     : { cancel_at: original?.at ?? ("" as const) };
-  const restored = await stripe.subscriptions.update(
-    subscription.id,
-    {
-      ...cancellation,
-      proration_behavior: "none",
-      metadata: { chronote_scheduled_change: "" },
-    },
-    changeIdempotency(operation, "restore-original-cancellation"),
+  const restored = await write(() =>
+    stripe.subscriptions.update(
+      subscription.id,
+      {
+        ...cancellation,
+        proration_behavior: "none",
+        metadata: { chronote_scheduled_change: "" },
+      },
+      changeIdempotency(operation, "restore-original-cancellation"),
+    ),
   );
   const expected =
     original?.at ?? (original?.atPeriodEnd ? operation.source.periodEnd : null);
@@ -433,15 +468,19 @@ async function firstScheduledInvoice(
   }
   return null;
 }
+function recurringInvoiceReason(reason: Stripe.Invoice["billing_reason"]) {
+  if (reason === "subscription_cycle") return "subscription_cycle";
+  if (reason === "subscription_update") return "subscription_update";
+  return null;
+}
 export function isScheduledInvoice(
   invoice: import("../types/stripe").StripeInvoice,
   operation: ScheduledInvoiceOperation,
   periodStart = operation.source.periodEnd,
 ) {
   if (operation.target.offer) {
-    const reason = invoice.billing_reason;
-    if (reason !== "subscription_cycle" && reason !== "subscription_update")
-      return false;
+    const reason = recurringInvoiceReason(invoice.billing_reason);
+    if (!reason) return false;
     try {
       assertRecurringOfferInvoice(
         invoice,
@@ -534,6 +573,7 @@ async function recoverCreatedSchedule(
   stripe: StripeClient,
   operation: Accepted,
   existing: Stripe.SubscriptionSchedule | null,
+  write: StripeEffect = (run) => run(),
 ) {
   if (existing?.metadata?.chronote_change_operation === operation.operationId) {
     assertOwnedSchedule(existing, operation);
@@ -554,9 +594,11 @@ async function recoverCreatedSchedule(
   }
   // Stripe forbids metadata with from_subscription. A repeat of the same creation
   // key recovers our unmarked result; a foreign schedule cannot satisfy that call.
-  const created = await stripe.subscriptionSchedules.create(
-    { from_subscription: operation.source.subscriptionId },
-    changeIdempotency(operation, "create-schedule"),
+  const created = await write(() =>
+    stripe.subscriptionSchedules.create(
+      { from_subscription: operation.source.subscriptionId },
+      changeIdempotency(operation, "create-schedule"),
+    ),
   );
   if (
     (existing && existing.id !== created.id) ||

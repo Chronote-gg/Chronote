@@ -1,5 +1,7 @@
 # First production introduction
 
+This document describes the separate staged fence-and-drain protocol. The selected A interruption and test-before-reopen contract is documented in [Production interruption contract](production-interruption-contract.md). Their manifests, receipts and execution authority are not interchangeable.
+
 This procedure covers the one-time transition from the legacy production runtime to the protected handoff protocol. BASIC approved preparation and a brief maintenance window after existing work finishes. Production execution still needs its own exact packet and approvals. Recordings must finish, valid uploads must survive, and unfinished work must remain recoverable.
 
 **Execution is BLOCKED as of October 22, 2026.** The source-staged workflow binds a proposal and validates its private authorization envelope, then refuses at `Post-bind human authority unavailable; preserve state`. Both introduction jobs use read-only AWS sessions. The introduction CLI also refuses consequential phases without a trusted collector. Adding the collector alone must not enable execution.
@@ -106,5 +108,5 @@ Historical H7/R6 observations in the [handoff guide](deployment-handoff.md#evide
 - [Production role and permission limits](../_infra/README.md#production-backend-deployment-identity)
 - [Ordinary handoff and recording recovery](deployment-handoff.md)
 - [Separate Sandbox bootstrap](sandbox-bootstrap.md)
-- Source contracts: `scripts/deployment/production-manifest.cjs`, `production-evidence.cjs`, `introduce-production.cjs` and `production-workflow.cjs`.
+- Source contracts: `scripts/deployment/staged-production-manifest.cjs`, `production-evidence.cjs`, `staged-introduce-production.cjs` and `production-workflow.cjs`.
 - Local lifecycle coverage: `test/deployment/productionIntroduction.integration.test.ts` and `productionCarryforward.integration.test.ts`.
