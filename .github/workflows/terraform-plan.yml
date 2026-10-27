@@ -19,7 +19,7 @@ on:
         type: string
         default: sandbox
       plan_scope:
-        description: Sandbox requires meeting-update-delivery; production supports its reviewed scopes
+        description: Sandbox requires meeting-update-delivery; production requires deployment-prerequisites
         required: true
         type: choice
         default: meeting-update-delivery
@@ -62,6 +62,11 @@ jobs:
         run: bash scripts/ci-install-dependencies.sh
       - name: Validate Terraform dispatch scope
         run: node scripts/deployment/terraform-dispatch.cjs --validate
+      - name: Validate production Plan scope
+        if: ${{ inputs.github_environment == 'production' }}
+        env:
+          PLAN_SCOPE: ${{ inputs.plan_scope }}
+        run: test "$PLAN_SCOPE" = deployment-prerequisites
       - name: Mask production Plan identity
         id: plan-identity
         if: ${{ inputs.github_environment == 'production' }}

@@ -67,6 +67,43 @@ test("outer executable never prints malformed private configuration or exception
   expect(result.stderr).toBe("");
 });
 
+test("production Plan refuses unsupported scopes before either credential step", () => {
+  const workflow = parse(
+    readFileSync(".github/workflows/terraform-plan.yml", "utf8"),
+  );
+  const steps = workflow.jobs.plan.steps;
+  const index = steps.findIndex(
+    (step) => step.name === "Validate production Plan scope",
+  );
+  expect(index).toBeGreaterThanOrEqual(0);
+  const guard = steps[index];
+  expect(guard.if).toBe("${{ inputs.github_environment == 'production' }}");
+  expect(guard.env.PLAN_SCOPE).toBe("${{ inputs.plan_scope }}");
+  for (const [credentialIndex, step] of steps.entries())
+    if (step.uses?.startsWith("aws-actions/configure-aws-credentials@"))
+      expect(index).toBeLessThan(credentialIndex);
+  for (const scope of [
+    "deployment-prerequisites",
+    "full",
+    "purchase-permission",
+    "meeting-update-delivery",
+    "",
+    "DEPLOYMENT-PREREQUISITES",
+  ]) {
+    const result = spawnSync("bash", ["-c", guard.run], {
+      encoding: "utf8",
+      env: {
+        PATH: process.env.PATH,
+        SystemRoot: process.env.SystemRoot,
+        PLAN_SCOPE: scope,
+      },
+    });
+    expect(result.error).toBeUndefined();
+    expect(result.status).toBe(scope === "deployment-prerequisites" ? 0 : 1);
+    expect(result.stdout + result.stderr).toBe("");
+  }
+});
+
 test.each(["plan", "apply"])(
   "%s workflow routes all Terraform through the private boundary and pins checkout",
   (mode) => {
@@ -92,6 +129,7 @@ test.each(["plan", "apply"])(
       ...(mode === "apply"
         ? ["node scripts/deployment/production-writer-guard.cjs --inspect"]
         : [
+            'test "$PLAN_SCOPE" = deployment-prerequisites',
             "node scripts/deployment/terraform-plan-identity.cjs",
             'test "$IDENTITY_MATCHES" = true',
             "node scripts/deployment/terraform-plan-identity.cjs --validate",
