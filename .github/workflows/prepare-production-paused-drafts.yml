@@ -1,0 +1,65 @@
+name: Prepare production paused drafts
+on:
+  workflow_dispatch:
+    inputs:
+      operation_id:
+        description: Reviewed preservation operation UUID
+        required: true
+        type: string
+      request_commit:
+        description: Immutable private request commit
+        required: true
+        type: string
+      request_sha256:
+        description: Reviewed canonical request SHA-256
+        required: true
+        type: string
+permissions:
+  contents: read
+jobs:
+  prepare-paused-drafts:
+    name: Prepare production paused drafts
+    if: github.ref == 'refs/heads/master'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      actions: read
+      id-token: write
+    env:
+      AWS_REGION: ${{ vars.AWS_REGION }}
+      AWS_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
+      AWS_MAX_ATTEMPTS: "1"
+      PRODUCTION_PAUSED_PREPARATION_ROLE_ARN: ${{ vars.PRODUCTION_PAUSED_PREPARATION_ROLE_ARN }}
+      PAUSED_PREPARATION_OPERATION_ID: ${{ inputs.operation_id }}
+      PAUSED_PREPARATION_REQUEST_COMMIT: ${{ inputs.request_commit }}
+      PAUSED_PREPARATION_REQUEST_SHA256: ${{ inputs.request_sha256 }}
+      INTRODUCTION_OPS_READ_TOKEN: ${{ secrets.INTRODUCTION_OPS_READ_TOKEN }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: .nvmrc
+          cache: yarn
+      - name: Build exact source
+        run: |
+          yarn install --frozen-lockfile
+          yarn build
+      - uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ env.PRODUCTION_PAUSED_PREPARATION_ROLE_ARN }}
+          role-session-name: paused-preparation-${{ github.run_id }}-1
+          aws-region: ${{ env.AWS_REGION }}
+          role-duration-seconds: 900
+          mask-aws-account-id: true
+      - name: Prepare exact structural cohort
+        run: node scripts/deployment/production-paused-preparation.cjs
+      - uses: actions/upload-artifact@v7
+        with:
+          name: paused-draft-preparation
+          path: .paused-preparation/preparation.json
+          if-no-files-found: error
+          retention-days: 1

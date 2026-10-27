@@ -108,6 +108,7 @@ async function policy(aws, arn, expected, declaration, grants = true) {
     arn,
     versionId: before.DefaultVersionId,
     documentHash: canonicalHash(document(value.PolicyVersion.Document)),
+    document: document(value.PolicyVersion.Document),
   };
 }
 function assertEcsTrust(s) {
@@ -208,6 +209,14 @@ function assertTrust(trust, expected, declaration) {
   assertOidcConditions(s, expected, declaration);
   if (collector) assertCollectorTrust(statements, s, expected, declaration);
 }
+function policySnapshot(value) {
+  if (value === null) return null;
+  return {
+    arn: value.arn,
+    versionId: value.versionId,
+    documentHash: value.documentHash,
+  };
+}
 async function readRole(aws, expected, declaration) {
   const RoleName = expected.arn.split("/").at(-1);
   const select = async () => {
@@ -238,7 +247,8 @@ async function readRole(aws, expected, declaration) {
   const inlineNames = await names(),
     arns = await attachments(),
     inline = [],
-    attached = [];
+    attached = [],
+    inlineDocuments = [];
   for (const PolicyName of inlineNames) {
     const r = await aws(
       "iam",
@@ -248,6 +258,11 @@ async function readRole(aws, expected, declaration) {
     );
     if (r.RoleName !== RoleName || r.PolicyName !== PolicyName) refuse();
     assertDelegation(r.PolicyDocument, expected, declaration);
+    inlineDocuments.push({
+      name: PolicyName,
+      document: document(r.PolicyDocument),
+      documentHash: canonicalHash(document(r.PolicyDocument)),
+    });
     inline.push({
       name: PolicyName,
       documentHash: canonicalHash(document(r.PolicyDocument)),
@@ -286,13 +301,16 @@ async function readRole(aws, expected, declaration) {
     roleId: before.RoleId,
     trustHash: canonicalHash(document(before.AssumeRolePolicyDocument)),
     inline,
-    attached,
-    boundary,
+    attached: attached.map(policySnapshot),
+    boundary: policySnapshot(boundary),
   };
   if (!same(actual, expected)) refuse();
+  return { ...actual, inline: inlineDocuments, attached, boundary };
 }
 async function readIamSettings(aws, declaration) {
-  for (const role of declaration.roles) await readRole(aws, role, declaration);
+  const roles = [];
+  for (const role of declaration.roles)
+    roles.push(await readRole(aws, role, declaration));
   for (const expected of declaration.oidcProviders) {
     if (
       expected.arn !==
@@ -318,5 +336,6 @@ async function readIamSettings(aws, declaration) {
     )
       refuse();
   }
+  return roles;
 }
 module.exports = { readIamSettings };

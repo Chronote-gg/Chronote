@@ -3,6 +3,7 @@ import {
   controlRecordSchema,
   runtimeRecordSchema,
 } from "../types/deploymentControl";
+import { pausedInitializationDigestsSchema } from "./productionPausedInitialization";
 
 const id = z.string().min(1).max(1024);
 const nativeProtection = z
@@ -39,6 +40,7 @@ export const introductionHistoricalFactsSchema = z.discriminatedUnion("kind", [
   z
     .object({
       kind: z.literal("cold_exclusion"),
+      paused: pausedInitializationDigestsSchema.optional(),
       control: controlRecordSchema,
       scopeHash: id,
       observedAt: z.number().int().nonnegative(),
@@ -156,7 +158,11 @@ export const introductionHistoricalFactsSchema = z.discriminatedUnion("kind", [
     })
     .strict(),
   z
-    .object({ kind: z.literal("control"), control: controlRecordSchema })
+    .object({
+      kind: z.literal("control"),
+      control: controlRecordSchema,
+      paused: pausedInitializationDigestsSchema.optional(),
+    })
     .strict(),
   z
     .object({ kind: z.literal("runtime"), runtime: runtimeRecordSchema })

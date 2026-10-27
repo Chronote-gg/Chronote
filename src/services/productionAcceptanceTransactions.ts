@@ -1,3 +1,4 @@
+import { indexedPausedSourceCondition } from "./productionPausedInitialization";
 import { isDeepStrictEqual as same } from "node:util";
 import { z } from "zod";
 import { marshall } from "@aws-sdk/util-dynamodb";
@@ -64,6 +65,7 @@ export type AcceptanceGuard = {
   fields: readonly string[];
   maximumItemBytes: number;
   presentFields?: readonly string[];
+  pausedParent?: boolean;
 };
 export type FinalAcceptanceInput = {
   purpose: AcceptancePurpose;
@@ -277,13 +279,12 @@ export function buildFinalAcceptanceTransaction(
         }
       : { ConditionCheck: check(table, acceptance) },
     ...guards.map((g) => ({
-      ConditionCheck: snapshotCondition(
-        g.table,
-        g.key,
-        g.row,
-        g.fields,
-        g.presentFields,
-      ),
+      ConditionCheck: g.pausedParent
+        ? indexedPausedSourceCondition(
+            snapshotCondition(g.table, g.key, g.row, g.fields, g.presentFields),
+            g.row.sourceManifest,
+          )
+        : snapshotCondition(g.table, g.key, g.row, g.fields, g.presentFields),
     })),
   ];
   const sizes = [

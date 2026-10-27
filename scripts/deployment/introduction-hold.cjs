@@ -10,7 +10,7 @@ function modules(options) {
     require("../../dist/services/productionIntroductionTransactions.js")
   );
 }
-function authorityFor(binding) {
+function authorityFor(binding, pausedDigests) {
   const m = binding.manifest;
   return {
     pk: `INTRODUCTION#${m.introductionId}`,
@@ -43,6 +43,16 @@ function authorityFor(binding) {
             action: a,
             runtime: m.runtime,
             resources: m.resources,
+            ...(a.kind === "introduction_write" &&
+            a.purpose === "initialize" &&
+            pausedDigests
+              ? {
+                  paused:
+                    require("../../dist/services/productionPausedInitialization.js").pausedInitializationDigestsSchema.parse(
+                      pausedDigests,
+                    ),
+                }
+              : {}),
           }),
         },
       ]),
@@ -59,7 +69,7 @@ function createIntroductionHold(options) {
     const hold = builders.introductionHoldSchema.parse(
       await options.read({ pk: "ENV", sk: "INTRODUCTION" }),
     );
-    const expected = authorityFor(binding);
+    const expected = authorityFor(binding, options.pausedDigests);
     const authority = builders.introductionAuthoritySchema.parse(
       await options.read({ pk: expected.pk, sk: expected.sk }),
     );
@@ -116,7 +126,7 @@ function createIntroductionHold(options) {
         admission: { state: "held" },
         deployment: { state: "held" },
       };
-      const authority = authorityFor(binding);
+      const authority = authorityFor(binding, options.pausedDigests);
       await options.write(
         builders.buildAcquireIntroductionHold({ hold, authority, tables }),
       );

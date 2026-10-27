@@ -70,6 +70,14 @@ async function prepareDispatch(options, action, context) {
   return () => {
     const at = now();
     assertBoundExecution(binding, at);
+    if (action.purpose === "initialize" && context?.paused) {
+      const expected =
+        require("./production-paused-drafts.cjs").pausedInitializationGuards(
+          context.pausedInitializationToken,
+          context.paused.markers[0].createdAt,
+        );
+      if (!isDeepStrictEqual(expected, context.paused)) refuse();
+    }
     if (
       (leased && (!ctl || ctl.coordinatorExpiresAt <= at)) ||
       (nextExpiry !== undefined && nextExpiry <= at)

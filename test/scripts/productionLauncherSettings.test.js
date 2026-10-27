@@ -1,9 +1,16 @@
 /** @jest-environment node */
+import {
+  mockPreparationAws as mockAws,
+  mockPreparationS3 as mockSend,
+} from "../fixtures/productionPreparationTransport.js";
 import { expect, test, jest, beforeEach, afterEach } from "@jest/globals";
 import { canonicalHash as hash } from "../../scripts/deployment/production-manifest.cjs";
 import process from "node:process";
 import { readFileSync as mockFile } from "node:fs";
-import { launcherFixture } from "../fixtures/productionLauncher.js";
+import {
+  launcherFixture,
+  bindPreservationPolicies,
+} from "../fixtures/productionLauncher.js";
 import {
   reviewedRoutes,
   readActualSource,
@@ -13,10 +20,11 @@ import { runCli } from "../../scripts/deployment/introduce-production.cjs";
 import {
   collectLauncherSettingsFromOriginalRun,
   readLauncherSettings,
+  readPausedEffectivePolicyScope,
 } from "../../scripts/deployment/production-launcher-settings.cjs";
 const mockLoad = jest.fn(),
   mockGithub = jest.fn(),
-  mockAws = jest.fn();
+  mockExec = jest.fn();
 jest.mock("../../scripts/deployment/production-private-package.cjs", () => ({
   loadAcceptancePackage: () => mockLoad(),
   loadProductionPackage: () => mockLoad(),
@@ -29,12 +37,12 @@ jest.mock("node:fs", () => {
   const actual = jest.requireActual("node:fs");
   return { ...actual, readFileSync: jest.fn(actual.readFileSync) };
 });
-jest.mock("node:child_process", () => ({
-  ...jest.requireActual("node:child_process"),
-  execFileSync: jest.fn((_file, args) =>
-    args[0] === "rev-parse" ? "a".repeat(40) : "",
-  ),
-}));
+jest.mock("node:child_process", () =>
+  jest
+    .requireActual("../fixtures/productionProcessMock.js")
+    .reviewedProcessModuleMock((...args) => mockExec(...args)),
+);
+
 let f;
 function bindSource(read) {
   mockFile.mockImplementation(read);
@@ -86,6 +94,8 @@ afterEach(() => {
   mockLoad.mockReset();
   mockGithub.mockReset();
   mockAws.mockReset();
+  mockSend.mockReset();
+  mockExec.mockReset();
 });
 test("actual no-argument producer compares original settings, emits only bounded metadata and rejects copies", async () => {
   const token = await collectLauncherSettingsFromOriginalRun();
@@ -240,3 +250,91 @@ test.each(["SECRETS_PREFIX", "LANGFUSE_BASE_URL", "ECS_TASK_FAMILY"])(
     await expect(collectLauncherSettingsFromOriginalRun()).rejects.toThrow();
   },
 );
+
+test("native settings producer retains authenticated preparation and checked policy authority", async () => {
+  const { pausedPreparationFixture } =
+    await import("../fixtures/productionPausedPreparation.js");
+  const { bound } = await import("../fixtures/productionManifest.js");
+  const { prepareOriginalPausedDrafts } =
+    await import("../../scripts/deployment/production-paused-preparation.cjs");
+  const { authenticateOriginalPausedPreparation } =
+    await import("../../scripts/deployment/production-paused-draft-binding.cjs");
+  const { bindOriginalPausedDisposition } =
+    await import("../../scripts/deployment/production-paused-drafts.cjs");
+  const m = f.binding.manifest;
+  m.operationId = "00000000-0000-4000-8000-000000000001";
+  const prep = pausedPreparationFixture(m),
+    oldEnv = process.env;
+  prep.request.validUntil = m.validUntil + 100;
+  prep.request.storeBinding.retentionUntil = m.validUntil + 200;
+  prep.env.PAUSED_PREPARATION_REQUEST_SHA256 = hash(prep.request);
+  process.env = { ...prep.env };
+  mockGithub.mockImplementation(prep.github);
+  mockAws.mockImplementation(prep.aws);
+  mockSend.mockImplementation(prep.send);
+  mockExec.mockImplementation(async () => ({ stdout: prep.state.archive }));
+  try {
+    const receipt = await prepareOriginalPausedDrafts(),
+      declaration = prep.finish(receipt);
+    const capture = JSON.parse(prep.state.capture.toString());
+    const scope = {
+      manifest: m,
+      identities: prep.request.cohort,
+      objects: capture.objects,
+      request: prep.request,
+    };
+    bindPreservationPolicies(f, scope);
+    const evidence = {
+      launcherHolds: f.declaration,
+      retainedDisposition: { pausedDesktopDrafts: declaration },
+    };
+    m.prerequisites.retainedDisposition = hash(evidence.retainedDisposition);
+    f.binding = bound(m);
+    const pausedPreparation = await authenticateOriginalPausedPreparation(
+      f.binding,
+      evidence,
+      "synthetic-github",
+    );
+    const cohort = bindOriginalPausedDisposition(
+      f.binding,
+      evidence,
+      pausedPreparation,
+    );
+    process.env = { ...oldEnv, GITHUB_JOB: "introduce" };
+    mockLoad.mockResolvedValue({
+      binding: f.binding,
+      evidence,
+      pausedPreparation,
+    });
+    mockGithub.mockImplementation(f.github);
+    mockAws.mockImplementation(f.aws);
+    const token = await collectLauncherSettingsFromOriginalRun();
+    const checked = readPausedEffectivePolicyScope(
+      token,
+      cohort,
+      "introduction",
+    );
+    expect(checked).toMatchObject({
+      purpose: "introduction",
+      actor: f.binding.actor,
+      captureHash: declaration.capture.sha256,
+    });
+    expect(checked.scopeSha256).toMatch(/^[a-f0-9]{64}$/);
+    expect(() =>
+      readPausedEffectivePolicyScope({ ...token }, cohort),
+    ).toThrow();
+    expect(() =>
+      readPausedEffectivePolicyScope(token, { ...cohort }),
+    ).toThrow();
+    expect(() =>
+      readPausedEffectivePolicyScope(token, cohort, "collector"),
+    ).toThrow();
+    Date.now.mockReturnValue(330000);
+    const fresh = await collectLauncherSettingsFromOriginalRun();
+    expect(readPausedEffectivePolicyScope(fresh, cohort).scopeSha256).toBe(
+      checked.scopeSha256,
+    );
+  } finally {
+    process.env = oldEnv;
+  }
+});

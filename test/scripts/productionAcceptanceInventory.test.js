@@ -1,10 +1,25 @@
 /** @jest-environment node */
 import { test, expect } from "@jest/globals";
-import { assertAcceptanceWriters } from "../../scripts/deployment/production-acceptance-inventory.cjs";
+import { marshall } from "@aws-sdk/util-dynamodb";
+import {
+  assertAcceptanceWriters,
+  readRuntimeInventory,
+} from "../../scripts/deployment/production-acceptance-inventory.cjs";
 import { writerFixture } from "../fixtures/productionAcceptanceWriters.js";
 
 test("accepts the exact serving and retired writer set at its actual generation", () => {
   expect(assertAcceptanceWriters(writerFixture())).toHaveLength(2);
+});
+test("native complete runtime inventory refuses an otherwise valid non-UUID identity", async () => {
+  const f = writerFixture(),
+    row = f.runtimes[0];
+  row.identity.instanceId = "legacy-worker";
+  row.sk = "RUNTIME#legacy-worker";
+  await expect(
+    readRuntimeInventory(f.m, {
+      aws: async () => ({ Items: [marshall(row)] }),
+    }),
+  ).rejects.toThrow();
 });
 test.each([
   "missing runtime",
@@ -20,6 +35,9 @@ test.each([
   "launcher",
   "generation",
   "overrides",
+  "unsafe runtime",
+  "unbounded runtime identity",
+  "unbounded fixture authority",
 ])("refuses %s", (problem) => {
   const f = writerFixture();
   const changes = {
@@ -45,6 +63,12 @@ test.each([
       (f.inventory.tasks[2].overrides = [
         { name: "app", environmentNames: ["BOT_INSTANCE_ID"] },
       ]),
+    "unsafe runtime": () =>
+      (f.runtimes[0].heartbeatAt = Number.MAX_SAFE_INTEGER + 1),
+    "unbounded runtime identity": () =>
+      (f.runtimes[0].identity.instanceId = "legacy-worker"),
+    "unbounded fixture authority": () =>
+      (f.fixtureAuthority.priorEpoch = Number.MAX_SAFE_INTEGER + 1),
   };
   changes[problem]();
   expect(() => assertAcceptanceWriters(f)).toThrow();

@@ -28,6 +28,7 @@ function assertServiceTopology(svc, m, warming) {
     throw Error("topology_prerequisite");
 }
 async function preflight(options, mode = "introduce") {
+  options.introductionMode = mode;
   const { binding, aws, candidate, now, inventory } = options,
     m = assertProductionPreflight(binding, now());
   if (now() + 1800 >= m.validUntil)
@@ -115,8 +116,10 @@ async function runCli(args = process.argv.slice(2), output = console) {
     const loaded = await loadProductionPackage(process.env, awsCli, args[0]),
       { binding, evidence } = loaded;
     const launcherSettings = require("./production-launcher-settings.cjs");
+    const launcherSettingsToken =
+      await launcherSettings.collectLauncherSettingsFromOriginalRun();
     const launcherBaseline = launcherSettings.readLauncherSettings(
-      await launcherSettings.collectLauncherSettingsFromOriginalRun(),
+      launcherSettingsToken,
       binding,
     );
     const provider = createProductionAws(binding),
@@ -125,6 +128,17 @@ async function runCli(args = process.argv.slice(2), output = console) {
     const options = {
       ...provider,
       launcherBaseline,
+      launcherSettingsToken,
+      ...(loaded.pausedPreparation
+        ? {
+            pausedBound:
+              require("./production-paused-drafts.cjs").bindOriginalPausedDisposition(
+                binding,
+                evidence,
+                loaded.pausedPreparation,
+              ),
+          }
+        : {}),
       binding,
       evidence,
       now,

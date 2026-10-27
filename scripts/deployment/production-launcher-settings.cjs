@@ -1,5 +1,6 @@
 "use strict";
 const { isDeepStrictEqual: same } = require("node:util");
+const { canonicalHash } = require("./production-manifest.cjs");
 const {
   loadAcceptancePackage,
   loadProductionPackage,
@@ -48,7 +49,7 @@ async function collectLauncherSettingsFromOriginalRun() {
     declaration,
     process.env.INTRODUCTION_OPS_READ_TOKEN,
   );
-  await readIamSettings(readers.aws, declaration);
+  const roles = await readIamSettings(readers.aws, declaration);
   // Recheck the GitHub selectors after IAM document collection; neither provider is an atomic snapshot.
   await readGithubSettings(
     m,
@@ -73,8 +74,36 @@ async function collectLauncherSettingsFromOriginalRun() {
       "oidc",
     ],
   };
+  const authority = loaded.collection ?? loaded.binding;
+  let paused;
+  if (loaded.evidence.retainedDisposition?.pausedDesktopDrafts) {
+    const drafts = require("./production-paused-drafts.cjs");
+    const cohort = drafts.bindOriginalPausedDisposition(
+      authority,
+      loaded.evidence,
+      loaded.pausedPreparation,
+    );
+    const scope = drafts.readPausedReaderScope(cohort);
+    const { assertPausedPolicy } = require("./production-paused-policy.cjs");
+    const principals = ["introduction", "collector"].map((purpose) =>
+      assertPausedPolicy(scope, roles, purpose),
+    );
+    paused = {
+      identity: pausedIdentity(scope),
+      scope,
+      principals,
+      scopeSha256: canonicalHash({
+        manifestHash: scope.manifestHash,
+        requestHash: canonicalHash(scope.request),
+        declarationHash: canonicalHash(scope.declaration),
+        captureHash: scope.declaration.capture.sha256,
+        principals,
+        launcherBaselineHash: observation.baselineHash,
+      }),
+    };
+  }
   const token = Object.freeze({});
-  receipts.set(token, { m, observation });
+  receipts.set(token, { m, observation, authority, roles, paused });
   return token;
 }
 function readLauncherSettings(token, binding) {
@@ -83,7 +112,58 @@ function readLauncherSettings(token, binding) {
   current(value.m);
   return structuredClone(value.observation);
 }
+function pausedIdentity(scope) {
+  return canonicalHash({
+    manifestHash: scope.manifestHash,
+    actor: scope.actor,
+    purpose: scope.purpose,
+    identities: scope.identities,
+    objects: scope.objects,
+    request: scope.request,
+    declaration: scope.declaration,
+    capture: scope.capture,
+  });
+}
+function readPausedEffectivePolicyScope(token, cohortToken, principalPurpose) {
+  const value = receipts.get(token);
+  if (!value?.paused) refuse();
+  const now = current(value.m);
+  const binding =
+    require("./production-paused-draft-binding.cjs").readDraftBinding(
+      value.authority,
+    );
+  const scope = require("./production-paused-drafts.cjs").readPausedReaderScope(
+    cohortToken,
+  );
+  if (
+    binding.purpose !== scope.purpose ||
+    binding.actor !== scope.actor ||
+    binding.manifestHash !== scope.manifestHash ||
+    (principalPurpose && principalPurpose !== binding.purpose) ||
+    pausedIdentity(scope) !== value.paused.identity ||
+    now >= scope.validUntil
+  )
+    refuse();
+  const principal = value.paused.principals.find(
+    (p) => p.purpose === binding.purpose,
+  );
+  if (!principal) refuse();
+  const receipt = {
+    manifestHash: scope.manifestHash,
+    purpose: binding.purpose,
+    actor: binding.actor,
+    principal,
+    cohortHash: canonicalHash(scope.identities),
+    captureHash: scope.declaration.capture.sha256,
+    declarationHash: canonicalHash(scope.declaration),
+    launcherBaselineHash: value.observation.baselineHash,
+    observedAt: value.observation.observedAt,
+    validUntil: Math.min(value.m.validUntil, scope.validUntil),
+  };
+  return { ...receipt, scopeSha256: value.paused.scopeSha256 };
+}
 module.exports = {
   collectLauncherSettingsFromOriginalRun,
   readLauncherSettings,
+  readPausedEffectivePolicyScope,
 };

@@ -1,3 +1,7 @@
+import {
+  preservationPolicy,
+  policyName,
+} from "../../scripts/deployment/production-paused-policy.cjs";
 import { completeManifest } from "./productionCompleteManifest.js";
 import { protectedEnvironment } from "./productionProviderFixtures.js";
 import { bound } from "./productionManifest.js";
@@ -52,6 +56,7 @@ export function launcherFixture(m = completeManifest()) {
       allowed_actions: "all",
       selected_actions_url: null,
     };
+  const inlinePolicies = new Map();
   const documents = new Map(),
     roleRows = new Map();
   for (const [purpose, arn] of Object.entries(roles)) {
@@ -271,7 +276,18 @@ export function launcherFixture(m = completeManifest()) {
         },
       };
     if (operation === "list-role-policies")
-      return { PolicyNames: [], IsTruncated: false };
+      return {
+        PolicyNames: [...(inlinePolicies.get(input.RoleName)?.keys() ?? [])],
+        IsTruncated: false,
+      };
+    if (operation === "get-role-policy")
+      return {
+        RoleName: input.RoleName,
+        PolicyName: input.PolicyName,
+        PolicyDocument: inlinePolicies
+          .get(input.RoleName)
+          ?.get(input.PolicyName),
+      };
     if (operation === "list-attached-role-policies")
       return {
         AttachedPolicies: state.attachmentChanged
@@ -287,5 +303,22 @@ export function launcherFixture(m = completeManifest()) {
       };
     throw Error("unexpected IAM read");
   };
-  return { binding, declaration, state, roleRows, github, aws };
+  return { binding, declaration, state, roleRows, inlinePolicies, github, aws };
+}
+
+export function bindPreservationPolicies(launcher, scope) {
+  for (const purpose of ["introduction", "collector"]) {
+    const role = launcher.declaration.roles.find(
+      (row) => row.purpose === purpose,
+    );
+    const document = preservationPolicy(scope, purpose);
+    launcher.inlinePolicies.set(
+      role.arn.split("/").at(-1),
+      new Map([[policyName, document]]),
+    );
+    role.inline = [{ name: policyName, documentHash: hash(document) }];
+  }
+  launcher.binding.manifest.prerequisites.launcherHolds = hash(
+    launcher.declaration,
+  );
 }

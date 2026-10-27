@@ -54,7 +54,7 @@ export async function seedServingRuntime() {
     installRuntimeLifecycle(lifecycle);
     await lifecycle.start();
   } else await lifecycle.refreshRuntimeReadiness();
-  await repository.promote({
+  const promoted = await repository.promote({
     candidateRuntimeMode: "all",
     coordinatorToken: "fixture",
     coordinatorEpoch: 1,
@@ -62,8 +62,9 @@ export async function seedServingRuntime() {
     expectedServingMembers: [],
     candidate: identity,
     proposedGeneration: 1,
-    now,
+    now: Math.floor(Date.now() / 1000),
   });
+  assert.equal(promoted, "applied");
   const context = await lifecycle.getRuntimeAdmissionContext();
   assert.equal((await repository.checkAdmission(context)).kind, "admitted");
   return lifecycle;

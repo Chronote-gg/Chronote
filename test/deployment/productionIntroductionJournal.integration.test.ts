@@ -9,6 +9,7 @@ import {
   GetItemCommand,
   TransactWriteItemsCommand,
   PutItemCommand,
+  DeleteItemCommand,
   type TransactWriteItemsCommandInput,
 } from "@aws-sdk/client-dynamodb";
 import { marshall, unmarshall } from "@aws-sdk/util-dynamodb";
@@ -16,6 +17,10 @@ import * as builders from "../../src/services/productionIntroductionTransactions
 import { createIntroductionHold } from "../../scripts/deployment/introduction-hold.cjs";
 import { createIntroductionJournal } from "../../scripts/deployment/introduction-transitions.cjs";
 import { bound, fixture } from "../fixtures/productionManifest.js";
+import { authorityFor } from "../../scripts/deployment/introduction-hold.cjs";
+import { pausedInitializationSchema } from "../../src/services/productionPausedInitialization";
+import { pausedInitializationFixture } from "../fixtures/productionPausedInitialization";
+import { createIntroductionTable } from "./fixtures/introductionStore";
 const table = "introduction-" + randomUUID();
 const client = new DynamoDBClient({
   endpoint: process.env.DEPLOYMENT_TEST_DYNAMODB_ENDPOINT,
@@ -81,6 +86,182 @@ test("acquires one durable hold before CONTROL exists and refuses reacquisition"
   expect(
     (await read({ pk: "ENV", sk: "INTRODUCTION" }))?.expiresAt,
   ).toBeUndefined();
+});
+
+test("original initialization atomically pauses two projected drafts and preserves their full rows", async () => {
+  const controlTable = "paused-control-" + randomUUID(),
+    jobTable = "paused-jobs-" + randomUUID(),
+    segmentTable = "paused-segments-" + randomUUID();
+  const put = (TableName: string, item: object) =>
+    client.send(new PutItemCommand({ TableName, Item: marshall(item) }));
+  const get = async (TableName: string, key: object) => {
+    const result = await client.send(
+      new GetItemCommand({
+        TableName,
+        Key: marshall(key),
+        ConsistentRead: true,
+      }),
+    );
+    return result.Item ? unmarshall(result.Item) : undefined;
+  };
+  await createIntroductionTable(controlTable);
+  await createIntroductionTable(jobTable, ["uploadId"]);
+  await createIntroductionTable(segmentTable, ["uploadId", "segmentKey"]);
+  const b = bound(),
+    a = builders.introductionAuthoritySchema.parse(authorityFor(b));
+  const h = builders.introductionHoldSchema.parse({
+    pk: "ENV",
+    sk: "INTRODUCTION",
+    recordType: "production_introduction",
+    protocolVersion: 1,
+    holdId: a.holdId,
+    introductionId: a.introductionId,
+    manifestHash: a.manifestHash,
+    revision: 1,
+    admission: { state: "held" },
+    deployment: { state: "held" },
+  });
+  const initial = controlRecordSchema.parse({
+    pk: "ENV",
+    sk: "CONTROL",
+    recordType: "control",
+    protocolVersion: 1,
+    runtimeEnvironment: "ecs",
+    coordinatorToken: a.runToken,
+    coordinatorEpoch: 1,
+    coordinatorExpiresAt: 190,
+    servingGeneration: 0,
+    servingMembers: {},
+    maintenance: {
+      holdId: h.holdId,
+      introductionId: h.introductionId,
+      revision: 1,
+    },
+  });
+  const lineage = ["stop", "route"].map((actionId) =>
+    builders.introductionActionSchema.parse({
+      pk: a.pk,
+      sk: `ACTION#${actionId}`,
+      recordType: "introduction_action",
+      holdId: a.holdId,
+      introductionId: a.introductionId,
+      manifestHash: a.manifestHash,
+      operationId: a.operationId,
+      revision: a.revision,
+      actor: a.actor,
+      runToken: a.runToken,
+      actionId,
+      kind: a.actions[actionId].kind,
+      intentHash: a.actions[actionId].intentHash,
+      requestHash: "a".repeat(64),
+      predecessor: null,
+      reservedAt: 140,
+      attemptId: randomUUID(),
+      submittedAt: 141,
+      acknowledgment: {
+        resourceIds: ["synthetic"],
+        evidenceHash: "b".repeat(64),
+      },
+      acknowledgedAt: 142,
+      observation: {
+        resourceIds: ["synthetic"],
+        evidenceHash: "c".repeat(64),
+      },
+      observedAt: 143,
+      phase: "observed",
+      version: 4,
+    }),
+  );
+  const paused = pausedInitializationSchema.parse(
+    pausedInitializationFixture(a, true),
+  );
+  const { parents, segments } = paused;
+  const fullParents = parents.map((parent) => ({
+    ...parent,
+    title: "PRIVATE TITLE",
+    tags: ["PRIVATE TAG"],
+    sourceManifest: parent.sourceManifest.map((source) => ({
+      ...source,
+      label: "PRIVATE LABEL",
+      originalFileName: "PRIVATE FILE",
+    })),
+  }));
+  const fullSegments = segments.map((segment) => ({
+    ...segment,
+    label: "PRIVATE SEGMENT",
+  }));
+  await put(controlTable, h);
+  await put(controlTable, a);
+  for (const row of lineage) await put(controlTable, row);
+  for (const row of fullParents) await put(jobTable, row);
+  for (const row of fullSegments) await put(segmentTable, row);
+  const transaction = builders.buildInitializeIntroductionControl({
+    hold: h,
+    authority: a,
+    control: initial,
+    lineage,
+    paused,
+    tables: {
+      deploymentControl: controlTable,
+      personalJob: jobTable,
+      personalSegment: segmentTable,
+    },
+  });
+  for (const change of [
+    { ownerUserId: "other" },
+    { status: "queued" },
+    { segmentCount: 2 },
+    { sourceManifest: [{ sourceId: "changed", kind: "owner_mic" }] },
+  ]) {
+    await put(jobTable, { ...fullParents[0], ...change });
+    await expect(write(transaction)).rejects.toThrow();
+    expect(
+      await get(controlTable, { pk: "ENV", sk: "CONTROL" }),
+    ).toBeUndefined();
+    expect(
+      await get(controlTable, { pk: "UPLOAD#one", sk: "PAUSED_DRAFT" }),
+    ).toBeUndefined();
+    await put(jobTable, fullParents[0]);
+  }
+  await put(segmentTable, { ...fullSegments[0], fileSize: 11 });
+  await expect(write(transaction)).rejects.toThrow();
+  await put(segmentTable, fullSegments[0]);
+  await put(controlTable, paused.markers[0]);
+  await expect(write(transaction)).rejects.toThrow();
+  expect(await get(controlTable, { pk: "ENV", sk: "CONTROL" })).toBeUndefined();
+  await client.send(
+    new DeleteItemCommand({
+      TableName: controlTable,
+      Key: marshall({ pk: "UPLOAD#one", sk: "PAUSED_DRAFT" }),
+    }),
+  );
+  await write(transaction);
+  for (let index = 0; index < parents.length; index++) {
+    expect(await get(jobTable, { uploadId: parents[index].uploadId })).toEqual(
+      fullParents[index],
+    );
+    expect(
+      await get(segmentTable, {
+        uploadId: segments[index].uploadId,
+        segmentKey: segments[index].segmentKey,
+      }),
+    ).toEqual(fullSegments[index]);
+    expect(
+      await get(controlTable, {
+        pk: paused.markers[index].pk,
+        sk: "PAUSED_DRAFT",
+      }),
+    ).toEqual(paused.markers[index]);
+  }
+  expect(
+    await get(controlTable, { pk: a.pk, sk: "INITIALIZATION" }),
+  ).toMatchObject({
+    paused: {
+      cohortSha256: paused.cohortSha256,
+      captureSha256: paused.captureSha256,
+      policyScopeSha256: paused.policyScopeSha256,
+    },
+  });
 });
 test("concurrent callers and restarted journals invoke one actual mutation only", async () => {
   let calls = 0;

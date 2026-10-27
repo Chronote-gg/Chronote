@@ -1,3 +1,8 @@
+import { marshall } from "@aws-sdk/util-dynamodb";
+import {
+  readRetainedMetadata,
+  classifyRetainedWork,
+} from "../../scripts/deployment/retained-work.cjs";
 import { productionOrchestrationFixture } from "./fixtures/productionOrchestration.js";
 import { consumeMaximumRenewals } from "./fixtures/maximumIntroductionRenewals.js";
 import { introduceProduction } from "../../scripts/deployment/introduce-production.cjs";
@@ -118,16 +123,27 @@ test.each(["normal", "repair"])(
 
 test("oversized initial retained metadata refuses before acquiring holds or stopping legacy", async () => {
   const f = await productionOrchestrationFixture();
+  // Eleven partially projected history items alone exceed 4 MiB at 400 KiB each.
+  const histories = Array.from({ length: 11 }, (_, index) => ({
+    guildId: "retained",
+    channelId_timestamp: String(index),
+    status: "complete",
+    checkpoint: { schemaVersion: 1 },
+    recovery: { disposition: "done" },
+  }));
   f.options.scan = async (_operation, input) => ({
     Items:
       input.TableName === f.m.resources.tables.meetingHistory
-        ? [0, 1].map((n) => ({
-            guildId: { S: "retained" },
-            channelId_timestamp: { S: String(n) },
-            status: { S: "complete" },
-          }))
+        ? histories.map((row) => marshall(row))
         : [],
   });
+  const snapshot = await readRetainedMetadata({
+    tables: f.m.resources.tables,
+    read: f.options.scan,
+    now: f.options.now(),
+  });
+  expect(snapshot.records).toHaveLength(histories.length);
+  expect(classifyRetainedWork(snapshot).reopeningBlockers).toEqual([]);
   await expect(introduceProduction(f.options, "introduce")).rejects.toThrow(
     "acceptance_capacity_refused",
   );

@@ -140,7 +140,7 @@ export async function productionOrchestrationFixture(settings = {}) {
   definitions.set(m.runtime.legacyDefinition, legacy);
   m.runtime.configurationHash = canonicalHash(definitionMetadata(legacy));
   m.launcherRoutes = reviewedRoutes(m);
-  settings.configure?.(m);
+  await settings.configure?.(m);
   const instanceId = (slot) => settings.instanceIds?.[slot] ?? slot;
   const binding = bound(m),
     read = async (key) => {

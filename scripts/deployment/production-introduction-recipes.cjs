@@ -14,6 +14,8 @@ function introductionRecipes(options) {
     const tables = {
         deploymentControl: table,
         meetingHistory: m.resources.tables.meetingHistory,
+        personalJob: m.resources.tables.personalJob,
+        personalSegment: m.resources.tables.personalSegment,
       },
       base = { hold, authority, tables };
     let input;
@@ -23,7 +25,37 @@ function introductionRecipes(options) {
           ...base,
           control: c.control,
           lineage: c.lineage,
+          paused: c.paused,
         });
+        if (c.paused) {
+          const cohort = {
+            ...c.paused,
+            identities: c.paused.parents.map(({ uploadId, ownerUserId }) => ({
+              uploadId,
+              ownerUserId,
+            })),
+            declaration: { capture: { sha256: c.paused.captureSha256 } },
+            digests: {
+              cohortSha256: c.paused.cohortSha256,
+              captureSha256: c.paused.captureSha256,
+              policyScopeSha256: c.paused.policyScopeSha256,
+            },
+          };
+          const bounds =
+            require("./production-acceptance-capacity.cjs").initializationCapacityEnvelope(
+              {
+                manifest: m,
+                manifestHash: authority.manifestHash,
+                actor: authority.actor,
+              },
+              cohort,
+              c.lineage,
+            );
+          require("../../dist/services/productionAcceptanceConditions.js").assertTransactionCapacity(
+            input,
+            bounds.map((bound) => bound.maximumItemBytes),
+          );
+        }
         break;
       case "replace_control":
         input = builders.buildReplaceUnservedControl({
@@ -165,7 +197,25 @@ function introductionRecipes(options) {
         throw Error("introduction_ack_missing");
       return {
         resourceIds: [table],
-        ...(a.purpose === "initialize" ? { facts: c.coldExclusion } : {}),
+        ...(a.purpose === "initialize"
+          ? {
+              facts: {
+                ...c.coldExclusion,
+                ...(c.paused
+                  ? {
+                      paused:
+                        require("../../dist/services/productionPausedInitialization.js").pausedInitializationDigestsSchema.parse(
+                          {
+                            cohortSha256: c.paused.cohortSha256,
+                            captureSha256: c.paused.captureSha256,
+                            policyScopeSha256: c.paused.policyScopeSha256,
+                          },
+                        ),
+                    }
+                  : {}),
+              },
+            }
+          : {}),
         ...(a.purpose === "promote"
           ? {
               facts: {

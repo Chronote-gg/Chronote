@@ -283,6 +283,7 @@ function createStore({
   return { capture, readCapture, checkReady: () => checkStore(send, b, now) };
 }
 module.exports = {
+  storageBinding,
   createPrivateCapture,
   createPreparationCapture,
   createTerraformCapture,

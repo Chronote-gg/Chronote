@@ -1,4 +1,5 @@
 /** @jest-environment node */
+import { privateFileResponse } from "../fixtures/productionPrivateFile.js";
 import {
   protectedEnvironment as environment,
   protectedPolicy,
@@ -160,16 +161,10 @@ function hostedFixture(manifest = fixture()) {
     if (endpoint.startsWith("repos/Chronote-gg/chronote-ops/contents/")) {
       const path = endpoint.split("/contents/")[1].split("?")[0],
         name = path.split("/").at(-1).replace(".json", "");
-      const bytes = Buffer.from(
-        JSON.stringify(name === "execution" ? pkg : evidence[name]),
-      );
-      value = {
-        type: "file",
+      value = privateFileResponse(
         path,
-        encoding: "base64",
-        size: bytes.length,
-        content: bytes.toString("base64"),
-      };
+        name === "execution" ? pkg : evidence[name],
+      );
     } else if (endpoint.includes("deployment-branch-policies"))
       value = branches;
     else if (endpoint.includes("/environments/"))
@@ -184,7 +179,7 @@ function hostedFixture(manifest = fixture()) {
     Account: manifest.identity.accountId,
     Arn: `arn:aws:sts::${manifest.identity.accountId}:assumed-role/deploy/introduction-10-1`,
   }));
-  return { env, aws, calls, approvals, jobs, run, pkg };
+  return { env, aws, calls, approvals, jobs, run, pkg, evidence };
 }
 
 test("preparation authenticates its distinct read-only identity without minting mutation binding", async () => {
@@ -215,7 +210,12 @@ test("preparation authenticates its distinct read-only identity without minting 
   const loaded = await loadAcceptancePackage();
   const collection = readCollectionBinding(loaded.collection);
   const reader = createAcceptanceReadAws(loaded.collection);
-  expect(Object.keys(reader).sort()).toEqual(["aws", "read"]);
+  expect(Object.keys(reader).sort()).toEqual([
+    "aws",
+    "pausedDraftMetadata",
+    "read",
+    "scan",
+  ]);
   expect(collection.manifest.identity.roleArn).toBe(
     f.env.PRODUCTION_INTRODUCTION_ROLE_ARN,
   );
@@ -357,5 +357,18 @@ test.each(["introduce", "continue"])(
     });
     await expect(loadProductionPackage(f.env, f.aws, mode)).rejects.toThrow();
     expect(f.aws).not.toHaveBeenCalled();
+  },
+);
+
+test.each([null, false, {}, "verified"])(
+  "original loading rejects malformed explicit paused declaration %p",
+  async (pausedDesktopDrafts) => {
+    const f = hostedFixture();
+    f.evidence.retainedDisposition.pausedDesktopDrafts = pausedDesktopDrafts;
+    f.pkg.manifest.prerequisites.retainedDisposition = canonicalHash(
+      f.evidence.retainedDisposition,
+    );
+    f.env.INTRODUCTION_INTENT_HASH = packageIntentHash(f.pkg);
+    await expect(loadProductionPackage(f.env, f.aws)).rejects.toThrow();
   },
 );

@@ -4,6 +4,13 @@ import { bound } from "../fixtures/productionManifest.js";
 import { createProductionAws } from "../../scripts/deployment/production-aws.cjs";
 import { DescribeTableCommand } from "@aws-sdk/client-dynamodb";
 import { meetingUpdateIndexMetadata } from "../fixtures/productionMeetingUpdateIndex.js";
+const mockSettings = Object.freeze({});
+jest.mock("../../scripts/deployment/production-launcher-settings.cjs", () => ({
+  readPausedEffectivePolicyScope: (token) => {
+    if (token !== mockSettings) throw Error("settings_refused");
+    return {};
+  },
+}));
 const mockClients = [],
   mockExec = jest.fn();
 jest.mock("@aws-sdk/client-dynamodb", () => {
@@ -19,16 +26,16 @@ jest.mock("@aws-sdk/client-dynamodb", () => {
     },
   };
 });
-jest.mock("node:child_process", () => {
-  const actual = jest.requireActual("node:child_process"),
-    execFile = () => undefined;
-  execFile[Symbol.for("nodejs.util.promisify.custom")] = (...args) =>
-    mockExec(...args);
-  return { ...actual, execFile };
-});
+jest.mock("node:child_process", () =>
+  jest
+    .requireActual("../fixtures/productionProcessMock.js")
+    .processModuleMock((...args) => mockExec(...args)),
+);
+
 afterEach(() => {
   jest.restoreAllMocks();
   mockClients.splice(0);
+  mockS3Clients.splice(0);
   mockExec.mockReset();
 });
 
@@ -161,4 +168,255 @@ test("provider refuses generic mutations, delete, idempotent replay token and fo
     await expect(provider.write(input)).rejects.toThrow();
   expect(mockClients[1].send).not.toHaveBeenCalled();
   expect(mockExec).not.toHaveBeenCalled();
+});
+
+const mockPausedScopes = new WeakMap(),
+  mockS3Clients = [];
+jest.mock("../../scripts/deployment/production-paused-drafts.cjs", () => ({
+  readPausedReaderScope: (token) => {
+    const scope = mockPausedScopes.get(token);
+    if (!scope) throw Error("paused_cohort_token_refused");
+    return scope;
+  },
+}));
+jest.mock("@aws-sdk/client-s3", () => {
+  const actual = jest.requireActual("@aws-sdk/client-s3");
+  return {
+    ...actual,
+    S3Client: class {
+      constructor(config) {
+        this.config = config;
+        this.send = jest.fn(async () => ({}));
+        mockS3Clients.push(this);
+      }
+    },
+  };
+});
+function pausedProvider() {
+  jest.spyOn(Date, "now").mockReturnValue(150000);
+  const binding = bound(),
+    token = Object.freeze({});
+  mockPausedScopes.set(token, {
+    manifest: binding.manifest,
+    identities: [
+      { uploadId: "u1", ownerUserId: "o1", sourceCount: 2 },
+      { uploadId: "u2", ownerUserId: "o2", sourceCount: 1 },
+    ],
+    objects: [{ key: "recordings/u1/segment.wav", versionId: "immutable-v1" }],
+  });
+  return { provider: createProductionAws(binding), token, binding };
+}
+
+test("paused lifecycle absence is empty and access failures remain failures", async () => {
+  const { provider, token } = pausedProvider();
+  const send = mockS3Clients.at(-1).send;
+  send.mockRejectedValueOnce(
+    Object.assign(new Error("absent"), {
+      name: "NoSuchLifecycleConfiguration",
+    }),
+  );
+  await expect(
+    provider.pausedDraftMetadata(token, mockSettings, {
+      kind: "bucketLifecycle",
+    }),
+  ).resolves.toEqual({ Rules: [] });
+  const denied = Object.assign(new Error("denied"), { name: "AccessDenied" });
+  send.mockRejectedValueOnce(denied);
+  await expect(
+    provider.pausedDraftMetadata(token, mockSettings, {
+      kind: "bucketLifecycle",
+    }),
+  ).rejects.toBe(denied);
+});
+test("paused parent uses exact consistent indexed projection without private text", async () => {
+  const { provider, token, binding } = pausedProvider();
+  await provider.pausedDraftMetadata(token, mockSettings, {
+    kind: "parent",
+    uploadId: "u1",
+  });
+  const input = mockClients[0].send.mock.calls[0][0].input;
+  expect(input.TableName).toBe(binding.manifest.resources.tables.personalJob);
+  expect(input.ConsistentRead).toBe(true);
+  expect(input.KeyConditionExpression).toBe("#uploadId = :uploadId");
+  expect(input.FilterExpression).toBe(
+    "attribute_type(#manifest, :listType) AND size(#manifest) = :sourceCount",
+  );
+  expect(input.ExpressionAttributeValues).toMatchObject({
+    ":uploadId": { S: "u1" },
+    ":sourceCount": { N: "2" },
+    ":listType": { S: "L" },
+  });
+  expect(Object.values(input.ExpressionAttributeNames)).not.toEqual(
+    expect.arrayContaining([
+      "label",
+      "originalFileName",
+      "title",
+      "tags",
+      "error",
+    ]),
+  );
+  expect(input.ProjectionExpression).toContain("#manifest[0].#sourceId");
+  expect(input.ProjectionExpression).toContain("#manifest[1].#kind");
+  expect(input.ProjectionExpression.split(",")).not.toContain("#manifest");
+});
+test("paused segments and exact version HEAD return only structural metadata", async () => {
+  const { provider, token } = pausedProvider();
+  const cursor = { uploadId: { S: "u1" }, segmentKey: { S: "s1" } };
+  await provider.pausedDraftMetadata(token, mockSettings, {
+    kind: "segments",
+    uploadId: "u1",
+    cursor,
+  });
+  const input = mockClients[0].send.mock.calls[0][0].input;
+  expect(input.ConsistentRead).toBe(true);
+  expect(input.ExclusiveStartKey).toEqual(cursor);
+  expect(Object.values(input.ExpressionAttributeNames)).not.toContain("label");
+  mockS3Clients.at(-1).send.mockResolvedValue({
+    VersionId: "immutable-v1",
+    ContentLength: 4,
+    ContentType: "audio/wav",
+    ChecksumSHA256: "hash",
+    ChecksumType: "FULL_OBJECT",
+    ServerSideEncryption: "aws:kms",
+    SSEKMSKeyId: "synthetic-kms-key",
+    Metadata: { secret: "omitted" },
+  });
+  await expect(
+    provider.pausedDraftMetadata(token, mockSettings, {
+      kind: "object",
+      key: "recordings/u1/segment.wav",
+      versionId: "immutable-v1",
+    }),
+  ).resolves.toEqual({
+    VersionId: "immutable-v1",
+    ContentLength: 4,
+    ContentType: "audio/wav",
+    ChecksumSHA256: "hash",
+    ChecksumType: "FULL_OBJECT",
+    ServerSideEncryption: "aws:kms",
+    SSEKMSKeyId: "synthetic-kms-key",
+  });
+  expect(mockS3Clients.at(-1).send.mock.calls[0][0].input).toEqual({
+    Bucket: "test-artifacts",
+    ExpectedBucketOwner: "123456789012",
+    Key: "recordings/u1/segment.wav",
+    VersionId: "immutable-v1",
+    ChecksumMode: "ENABLED",
+  });
+});
+test.each([
+  { kind: "parent", uploadId: "foreign" },
+  { kind: "parent", uploadId: "u1", sourceCount: 1 },
+  { kind: "parent", uploadId: "u1", ProjectionExpression: "title" },
+  { kind: "object", key: "recordings/u1/segment.wav" },
+  { kind: "object", key: "recordings/u1/segment.wav", versionId: "null" },
+  { kind: "object", key: "recordings/u1/segment.wav", versionId: "other" },
+  { kind: "tableTtl", table: "meetingHistory" },
+  {
+    kind: "segments",
+    uploadId: "u1",
+    cursor: { uploadId: { S: "foreign" }, segmentKey: { S: "s1" } },
+  },
+])(
+  "paused reader refuses unauthorized selectors before transport: %j",
+  async (request) => {
+    const { provider, token } = pausedProvider();
+    await expect(
+      provider.pausedDraftMetadata(token, mockSettings, request),
+    ).rejects.toThrow();
+    expect(mockClients[0].send).not.toHaveBeenCalled();
+    expect(mockS3Clients.at(-1).send).not.toHaveBeenCalled();
+  },
+);
+test("paused reader refuses copied tokens and scopes from another package", async () => {
+  const { provider, token } = pausedProvider();
+  await expect(
+    provider.pausedDraftMetadata({ ...token }, mockSettings, {
+      kind: "parent",
+      uploadId: "u1",
+    }),
+  ).rejects.toThrow();
+  const foreign = Object.freeze({}),
+    scope = mockPausedScopes.get(token);
+  mockPausedScopes.set(foreign, {
+    ...scope,
+    manifest: { ...scope.manifest, operationId: "other" },
+  });
+  await expect(
+    provider.pausedDraftMetadata(foreign, mockSettings, {
+      kind: "parent",
+      uploadId: "u1",
+    }),
+  ).rejects.toThrow();
+  expect(mockClients[0].send).not.toHaveBeenCalled();
+});
+test("paused storage metadata reads use only the bound tables and bucket", async () => {
+  const { provider, token, binding } = pausedProvider();
+  mockClients[0].send.mockResolvedValue({
+    TimeToLiveDescription: { TimeToLiveStatus: "DISABLED" },
+    unrelated: "omitted",
+  });
+  await expect(
+    provider.pausedDraftMetadata(token, mockSettings, {
+      kind: "tableTtl",
+      table: "personalJob",
+    }),
+  ).resolves.toEqual({
+    TimeToLiveDescription: { TimeToLiveStatus: "DISABLED" },
+  });
+  expect(mockClients[0].send.mock.calls[0][0].input).toEqual({
+    TableName: binding.manifest.resources.tables.personalJob,
+  });
+  mockS3Clients.at(-1).send.mockResolvedValue({
+    Status: "Enabled",
+    Rules: [
+      {
+        ID: "abort",
+        Status: "Enabled",
+        AbortIncompleteMultipartUpload: { DaysAfterInitiation: 1 },
+      },
+    ],
+    unrelated: "omitted",
+  });
+  await expect(
+    provider.pausedDraftMetadata(token, mockSettings, {
+      kind: "bucketVersioning",
+    }),
+  ).resolves.toEqual({ Status: "Enabled" });
+  await expect(
+    provider.pausedDraftMetadata(token, mockSettings, {
+      kind: "bucketLifecycle",
+    }),
+  ).resolves.toEqual({
+    Rules: [
+      {
+        ID: "abort",
+        Status: "Enabled",
+        AbortIncompleteMultipartUpload: { DaysAfterInitiation: 1 },
+      },
+    ],
+  });
+  for (const [command] of mockS3Clients.at(-1).send.mock.calls)
+    expect(command.input).toEqual({
+      Bucket: binding.manifest.resources.bucket,
+      ExpectedBucketOwner: binding.manifest.identity.accountId,
+    });
+});
+
+test("paused native read requires settings before transport and revalidates after transport", async () => {
+  const { provider, token } = pausedProvider();
+  await expect(
+    provider.pausedDraftMetadata(token, {}, { kind: "parent", uploadId: "u1" }),
+  ).rejects.toThrow();
+  expect(mockClients[0].send).not.toHaveBeenCalled();
+  mockClients[0].send.mockImplementation(async () => {
+    mockPausedScopes.delete(token);
+    return { Items: [] };
+  });
+  await expect(
+    provider.pausedDraftMetadata(token, mockSettings, {
+      kind: "parent",
+      uploadId: "u1",
+    }),
+  ).rejects.toThrow();
 });

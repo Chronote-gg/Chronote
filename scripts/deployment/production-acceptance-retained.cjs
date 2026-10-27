@@ -21,12 +21,22 @@ async function collectRetainedClosure(
   writers,
   compatibility,
   now,
+  pausedContext,
 ) {
   const m = f.binding.manifest;
+  const drafts = require("./production-paused-drafts.cjs");
+  const acquired = pausedContext
+    ? await drafts.collectPausedDraftMetadata(
+        pausedContext.bound,
+        readers,
+        "final",
+        pausedContext.settingsToken,
+      )
+    : undefined;
   const snapshot = await readRetainedMetadata({
     tables: m.resources.tables,
     read: readers.scan,
-    now,
+    now: pausedContext ? Math.floor(Date.now() / 1000) : now,
   });
   if (
     snapshot.coverage.length !== Object.keys(projections).length ||
@@ -53,13 +63,29 @@ async function collectRetainedClosure(
     ...snapshot,
     records: snapshot.records.filter((r) => !compatible.includes(r)),
   };
+  const paused = pausedContext
+    ? await drafts.collectPreservedPausedCohort(
+        acquired,
+        readers,
+        pausedContext.installation,
+        snapshot,
+        pausedContext.settingsToken,
+      )
+    : undefined;
   const classification = classifyRetainedWork(
     remaining,
     loaded.evidence.retainedDisposition,
     compatibility,
+    paused,
   );
   if (classification.reopeningBlockers.length) refuse();
-  return { snapshot, closure, classification, compatible };
+  return {
+    snapshot,
+    closure,
+    classification,
+    compatible,
+    ...(paused ? { paused } : {}),
+  };
 }
 function at(row, path) {
   return path.split(".").reduce((value, part) => value?.[part], row);
@@ -91,7 +117,13 @@ function combinedProjection(prior, guard) {
     (field) =>
       !all.some((parent) => parent !== field && field.startsWith(parent + ".")),
   );
-  const row = {},
+  const row = {
+      ...(guard.pausedParent
+        ? { sourceManifest: structuredClone(guard.row.sourceManifest) }
+        : prior.pausedParent
+          ? { sourceManifest: structuredClone(prior.row.sourceManifest) }
+          : {}),
+    },
     presentFields = [];
   for (const field of fields) {
     const source = guard.fields.includes(field) ? guard : prior;
@@ -116,6 +148,9 @@ function mergeGuards(guards) {
     }
     assertCompatibleGuards(prior, guard);
     Object.assign(prior, combinedProjection(prior, guard), {
+      ...(prior.pausedParent || guard.pausedParent
+        ? { pausedParent: true }
+        : {}),
       maximumItemBytes: Math.max(
         prior.maximumItemBytes,
         guard.maximumItemBytes,
