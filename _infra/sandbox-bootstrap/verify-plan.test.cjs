@@ -4,6 +4,7 @@ const { test: scenario } = require("node:test");
 const { readFileSync, createReadStream } = require("node:fs");
 const { join } = require("node:path");
 const { createHash } = require("node:crypto");
+const { load } = require("js-yaml");
 const guardPath = join(__dirname, "verify-plan.cjs");
 check.ok(
   require("node:fs").existsSync(guardPath),
@@ -447,7 +448,9 @@ scenario(
       "utf8",
     );
     const session = JSON.parse(
-      workflow.match(/inline-session-policy: '([^']+)'/)[1],
+      load(workflow).jobs.plan.steps.find(
+        (step) => step.name === "Configure Sandbox AWS credentials",
+      ).with["inline-session-policy"],
     );
     check.ok(JSON.stringify(session).length <= 2048);
     const trial = candidate();
