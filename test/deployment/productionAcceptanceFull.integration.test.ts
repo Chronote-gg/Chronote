@@ -1,6 +1,6 @@
 import { fullAcceptance } from "./fixtures/fullAcceptance.js";
 test.each(["normal", "repair"])(
-  "authenticated %s package with synthetic OIDC-only reviewed routes, content, maximum renewal history and native final transactions",
+  "authenticated %s package with actual OIDC publisher routes, content, maximum renewal history and native final transactions",
   async (path) => {
     await fullAcceptance(path);
   },
@@ -8,7 +8,7 @@ test.each(["normal", "repair"])(
 );
 
 test.each(["persist_acceptance", "reopen_admission", "release_deployment"])(
-  "fresh %s collector refuses actual static deployment source before any native transition",
+  "fresh %s collector refuses injected static deployment source before any native transition",
   async (purpose) => {
     await fullAcceptance("normal", "static-route", purpose);
   },

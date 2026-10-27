@@ -89,3 +89,9 @@ Sandbox Plan adds a restrictive STS session policy. Its positive metadata read p
 OIDC configuration, source checks and mock provider fixtures do not establish native installation, approval, plan, apply or acceptance success. The protected private storage binding and plan reference remain the existing environment secrets.
 
 After separating the application KMS key policy from the key, the delivery targets have a source-derived dependency closure of 30 DynamoDB tables, the target IAM policy and the application KMS key. The separate key policy is a reverse dependent. CloudFront, application buckets, ACM, Route53 and Terraform data sources are outside this closure. The delivery guard rejects all data-source entries; the Plan session restriction omits the former CDN/DNS/certificate read patterns. Capture bucket control checks and backend state reads remain required.
+
+## Production site publishers
+
+The docs and frontend jobs use the existing production backend deployment role with separate site-only STS sessions. Each session can publish its own bucket and invalidate its own CloudFront distribution, plus read the production hold and use the existing key through the corresponding S3 and DynamoDB contexts. No static AWS credentials, new deployment role or IAM policy are introduced by this workflow source change. The normal hold guard runs before publication; a missing control table or unreleased hold refuses. Docs still publish before backend rollout, and frontend still waits for that backend. Existing native production approval and noncanceling deployment concurrency remain.
+
+The merged site publishing policy and its attachment must actually be installed, along with the normal deployment identity/control prerequisites, before this route can run. Source tests and a merged policy definition do not prove effective S3, KMS, CloudFront or deployment acceptance. No plan/apply or live publication is authorized by this source proposal.
