@@ -147,7 +147,7 @@ function fixture() {
       accountId: m.identity.accountId,
       region: m.identity.region,
       kmsKeyArn: `arn:aws:kms:${m.identity.region}:${m.identity.accountId}:key/00000000-0000-0000-0000-000000000001`,
-      policySha256: "a".repeat(64),
+      canonicalPolicySha256: "a".repeat(64),
       lifecycleSha256: "a".repeat(64),
       retentionUntil: 300,
       administratorTrustSha256: "a".repeat(64),

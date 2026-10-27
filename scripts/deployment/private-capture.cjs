@@ -3,6 +3,7 @@ const assert = require("node:assert/strict");
 const { z } = require("zod");
 const s3 = require("@aws-sdk/client-s3");
 const { digest } = require("./collector-payload.cjs");
+const { bindingHash } = require("./binding-hash.cjs");
 const { boundedBody } = require("./collector-principal.cjs");
 const { captureNamespace } = require("./collector-command.cjs");
 const hash = z.string().regex(/^[a-f0-9]{64}$/);
@@ -16,7 +17,7 @@ const storageBinding = z
     kmsKeyArn: z
       .string()
       .regex(/^arn:aws:kms:[a-z0-9-]+:\d{12}:key\/[a-f0-9-]{36}$/),
-    policySha256: hash,
+    canonicalPolicySha256: hash,
     lifecycleSha256: hash,
     retentionUntil: z.number().int().positive(),
     administratorTrustSha256: hash,
@@ -56,7 +57,11 @@ async function checkStore(send, b, now) {
     "UNKNOWN: privacy",
   );
   const policy = (await send("GetBucketPolicy")).Policy;
-  assert.equal(digest(policy), b.policySha256, "UNKNOWN: policy binding");
+  assert.equal(
+    bindingHash(JSON.parse(policy)),
+    b.canonicalPolicySha256,
+    "UNKNOWN: policy binding",
+  );
   const encryption = await send("GetBucketEncryption");
   const rules = encryption.ServerSideEncryptionConfiguration?.Rules,
     expectedRule = {

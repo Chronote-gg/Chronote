@@ -5,6 +5,73 @@ import { createPrivateCapture } from "../../scripts/deployment/private-capture.c
 import { privateCaptureFixture as fixture } from "../fixtures/deployment/privateCapture.js";
 import { digest } from "../../scripts/deployment/collector-payload.cjs";
 
+const canonicalPolicy =
+  '{"Statement":[{"Action":["s3:GetObject","s3:PutObject"],"Condition":{"Bool":{"aws:SecureTransport":"false"}},"Effect":"Deny","Principal":"*","Resource":"arn:aws:s3:::private-synthetic/*"}],"Version":"2012-10-17"}';
+
+test("private capture accepts reordered nested policy object keys", async () => {
+  const f = fixture(),
+    send = f.client.send;
+  f.binding.canonicalPolicySha256 = digest(canonicalPolicy);
+  f.client.send = async (command) =>
+    command.constructor.name === "GetBucketPolicyCommand"
+      ? {
+          Policy: JSON.stringify({
+            Version: "2012-10-17",
+            Statement: [
+              {
+                Resource: "arn:aws:s3:::private-synthetic/*",
+                Principal: "*",
+                Effect: "Deny",
+                Condition: { Bool: { "aws:SecureTransport": "false" } },
+                Action: ["s3:GetObject", "s3:PutObject"],
+              },
+            ],
+          }),
+        }
+      : send(command);
+  await expect(
+    createPrivateCapture(f.options).checkReady(),
+  ).resolves.toBeUndefined();
+});
+
+test.each([
+  ["changed permission", canonicalPolicy.replace('"Deny"', '"Allow"')],
+  ["changed condition type", canonicalPolicy.replace('"false"', "false")],
+  [
+    "reordered array",
+    canonicalPolicy.replace(
+      '["s3:GetObject","s3:PutObject"]',
+      '["s3:PutObject","s3:GetObject"]',
+    ),
+  ],
+  ["malformed JSON", '{"Statement":'],
+])("private capture refuses %s before writes", async (_, policy) => {
+  const f = fixture(),
+    send = f.client.send;
+  f.binding.canonicalPolicySha256 = digest(canonicalPolicy);
+  f.client.send = async (command) =>
+    command.constructor.name === "GetBucketPolicyCommand"
+      ? { Policy: policy }
+      : send(command);
+  await expect(
+    createPrivateCapture(f.options).capture({ a: 1 }),
+  ).rejects.toThrow("UNKNOWN");
+  expect(f.calls.some((c) => c.constructor.name === "PutObjectCommand")).toBe(
+    false,
+  );
+});
+
+test.each([false, true])(
+  "legacy raw policy hash binding refuses before transport (canonical field present: %s)",
+  (keepCanonical) => {
+    const f = fixture();
+    f.binding.policySha256 = digest("{}");
+    if (!keepCanonical) delete f.binding.canonicalPolicySha256;
+    expect(() => createPrivateCapture(f.options)).toThrow();
+    expect(f.calls).toHaveLength(0);
+  },
+);
+
 test("private capture uses conditional one-attempt creation and exact version original-byte readback", async () => {
   const f = fixture(),
     store = createPrivateCapture(f.options),

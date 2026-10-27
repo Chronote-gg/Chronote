@@ -14,7 +14,7 @@ export function privateCaptureFixture() {
     region: m.binding.region,
     kmsKeyArn:
       "arn:aws:kms:us-east-1:123456789012:key/11111111-1111-4111-8111-111111111111",
-    policySha256: digest("{}"),
+    canonicalPolicySha256: digest("{}"),
     lifecycleSha256: digest("null"),
     retentionUntil: 6000,
     administratorTrustSha256: "a".repeat(64),

@@ -18,6 +18,22 @@ This source supports an approved private store and a narrowly defined native Git
 
 Existing AWS credential routing and tfvars inputs are unchanged. `TERRAFORM_PRIVATE_STORAGE_JSON` is an environment secret containing the strict `versioned-private-s3-v1` binding accepted by `scripts/deployment/private-capture.cjs`: store ID, bucket, expected account owner, region, KMS key ARN, reviewed bucket-policy and lifecycle hashes, retention-until epoch seconds and administrator-trust digest. Do not place the binding in dispatch inputs. It selects no destination by default.
 
+The bucket-policy field is `canonicalPolicySha256`. Construct it from the independently reviewed `GetBucketPolicy.Policy` JSON string with `bindingHash(JSON.parse(policy))`, using `bindingHash` from `scripts/deployment/binding-hash.cjs`. This recursively sorts object keys, preserves every array's order and every parsed scalar value, serializes with `JSON.stringify`, then hashes the UTF-8 bytes with SHA-256. AWS may reorder JSON object keys between reads. Whitespace and object-key order do not change this digest; changed permissions, scalar types and array order do. Invalid JSON refuses before capture writes. Do not use a policy normalizer that sorts arrays or drops fields.
+
+This is an explicit binding migration for every shared private-capture caller, including Sandbox and production Terraform, introduction collection and paused-draft preparation. The strict schema keeps kind `versioned-private-s3-v1` but requires `canonicalPolicySha256` and rejects the old `policySha256` field, including bindings that contain both fields. An existing raw digest cannot be converted into a canonical digest. Before using this source, independently review the complete current policy, calculate and approve its canonical digest, replace the old field in the protected binding, and reapprove any enclosing request or manifest whose hash binds that changed JSON. Do not merely rename the old digest or silently accept either algorithm. Existing production bindings need the same reviewed migration before this source can be rolled out there. This code change does not authorize secret updates, permission changes or deployment.
+
+For example, in a private operator script running from the reviewed checkout:
+
+```js
+const { bindingHash } = require("./scripts/deployment/binding-hash.cjs");
+const canonicalPolicySha256 = bindingHash(JSON.parse(reviewedPolicy));
+const { policySha256: previousRawDigest, ...unchangedBinding } =
+  reviewedBinding;
+const migratedBinding = { ...unchangedBinding, canonicalPolicySha256 };
+```
+
+Keep the complete reviewed policy and migration output private. The lifecycle hash still binds `digest(JSON.stringify(rules))`, with `null` for an absent lifecycle configuration. Object capture hashes still bind exact original bytes. The separate `_infra/production-bootstrap` and `_infra/sandbox-bootstrap` saved-plan guards retain their `policySha256` maps and exact policy-string byte checks. Those saved-plan bindings do not use this migration.
+
 The capture adapter verifies versioning, bucket-owner-enforced ownership, Block Public Access, nonpublic policy, approved SSE-KMS with bucket keys disabled and the exact lifecycle configuration. The single encryption rule may omit `BlockedEncryptionTypes` or report exactly `{ EncryptionType: ["SSE-C"] }`; other encryption rule shapes refuse. Enabled expiration rules refuse. Retention must cover at least the next six hours at each invocation. Execution identities must have separately approved capture/read permissions and no delete or storage-administration authority. Versioning does not prevent an administrator from deleting evidence.
 
 Three non-secret collection inputs use JSON text in their GitHub Actions variable values:
