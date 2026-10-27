@@ -4,6 +4,18 @@ import { jest, expect, afterEach } from "@jest/globals";
 import { Readable } from "node:stream";
 import { createHash, randomUUID } from "node:crypto";
 import { productionOrchestrationFixture } from "./productionOrchestration.js";
+import {
+  preparePausedAcceptance,
+  originalRunCallerIdentity,
+  assertPausedOriginalRows,
+  seedPausedOriginalRows,
+  attachPausedReaders,
+  runFullIntroduction,
+  prepareFullPausedCollector,
+  assertPausedObjectOperations,
+  pausedAcceptanceResult,
+  assertPausedFinalTransaction,
+} from "./fullPausedAcceptance.js";
 import { consumeMaximumRenewals } from "./maximumIntroductionRenewals.js";
 import { hostedAcceptance } from "./productionAcceptanceHosted.js";
 import {
@@ -23,7 +35,6 @@ import {
   collectLauncherSettingsFromOriginalRun,
   readLauncherSettings,
 } from "../../../scripts/deployment/production-launcher-settings.cjs";
-import { introduceProduction } from "../../../scripts/deployment/introduce-production.cjs";
 import {
   collectAcceptanceFromOriginalRun,
   readAcceptance,
@@ -87,11 +98,15 @@ jest.mock("@aws-sdk/client-dynamodb", () => {
 });
 jest.mock("@aws-sdk/client-s3", () => ({
   ...jest.requireActual("@aws-sdk/client-s3"),
-  S3Client: jest.fn((settings) =>
-    jest
+  S3Client: jest.fn((settings) => ({
+    ...jest
       .requireActual("../../fixtures/productionProviderFixtures.js")
       .s3Transport(mockS3, settings),
-  ),
+    config: {
+      maxAttempts: async () => settings.maxAttempts ?? 1,
+      region: async () => settings.region,
+    },
+  })),
 }));
 // Node's native structuredClone returns outer-realm objects under Jest. Rebuild
 // synthetic values in the test realm so production deep equality remains exact.
@@ -141,6 +156,10 @@ async function assertFinalFault({
   }
   const { token, value } = await collect();
   if (fault === "expiry-before-dispatch") f.state.time = f.m.validUntil;
+  if (fault === "paused-marker-after-collect") {
+    const marker = await read(table, { pk: "UPLOAD#one", sk: "PAUSED_DRAFT" });
+    await put(table, { ...marker, createdAt: marker.createdAt + 1 });
+  }
   if (fault === "late-ack") await dispatchAcceptance(token);
   else await expect(dispatchAcceptance(token)).rejects.toThrow();
   const journal = await read(table, {
@@ -152,6 +171,7 @@ async function assertFinalFault({
     "expiry-after-submitted": "submitted",
     "late-ack": "observed",
     "lost-ack": "submitted",
+    "paused-marker-after-collect": "submitted",
   }[fault];
   expect(journal?.phase).toBe(expectedPhase);
   expect(invocations()).toBe(["late-ack", "lost-ack"].includes(fault) ? 1 : 0);
@@ -176,19 +196,28 @@ export async function fullAcceptance(
   path,
   fault,
   faultPurpose = "persist_acceptance",
+  paused = false,
 ) {
   jest
     .spyOn(globalThis, "structuredClone")
     .mockImplementation(cloneInTestRealm);
-  let hosted;
+  let hosted, prep;
+  if (paused) jest.spyOn(Date, "now").mockReturnValue(150000);
   const instanceIds = Object.fromEntries(
     ["bootstrap", "replacement", "handoff"].map((slot) => [slot, randomUUID()]),
   );
   const f = await productionOrchestrationFixture({
     instanceIds,
     recordingDuration: 300,
-    configure: (m) => {
+    configure: async (m) => {
+      if (paused) m.operationId = "00000000-0000-4000-8000-000000000001";
       hosted = hostedAcceptance(m);
+      if (paused)
+        prep = await preparePausedAcceptance(m, hosted, {
+          cli: mockCli,
+          exec: mockExec,
+          s3: mockS3,
+        });
     },
   });
   const m = f.m,
@@ -202,6 +231,7 @@ export async function fullAcceptance(
     guildSubscription: ["guildId"],
   }))
     await createIntroductionTable(m.resources.tables[name], keys);
+  await seedPausedOriginalRows(prep, m, put);
   const env = { ...process.env, ...hosted.env };
   clearEndpointOverrides(env);
   jest.replaceProperty(process, "env", env);
@@ -213,7 +243,7 @@ export async function fullAcceptance(
       const arn = (session) =>
         `arn:aws:sts::${m.identity.accountId}:assumed-role/acceptance-reader/${session}`;
       if (operation === "get-caller-identity")
-        return { Account: m.identity.accountId, Arn: f.binding.actor };
+        return originalRunCallerIdentity(m, f.binding, env.GITHUB_JOB);
       if (operation === "assume-role")
         return {
           AssumedRoleUser: { Arn: arn(input.RoleSessionName) },
@@ -272,33 +302,42 @@ export async function fullAcceptance(
       }));
     return raw;
   });
-  mockExec.mockImplementation(async (file, args, settings) => ({
-    stdout: JSON.stringify(
-      file === "gh"
-        ? await hosted.github(args[1], args[3])
-        : {
-            Account: m.identity.accountId,
-            Arn: `arn:aws:sts::${m.identity.accountId}:assumed-role/acceptance-reader/${settings.env.AWS_ACCESS_KEY_ID}`,
-          },
-    ),
-    stderr: "",
-  }));
+  mockExec.mockImplementation(async (file, args, settings) => {
+    if (prep && args[1].endsWith("/zip"))
+      return { stdout: prep.state.archive, stderr: "" };
+    return {
+      stdout: JSON.stringify(
+        file === "gh"
+          ? await hosted.github(args[1], args[3])
+          : {
+              Account: m.identity.accountId,
+              Arn: `arn:aws:sts::${m.identity.accountId}:assumed-role/acceptance-reader/${settings.env.AWS_ACCESS_KEY_ID}`,
+            },
+      ),
+      stderr: "",
+    };
+  });
   const initial = await loadProductionPackage(process.env, mockCli);
   expect(initial.binding).toEqual(f.binding);
+  f.options.launcherSettingsToken =
+    await collectLauncherSettingsFromOriginalRun();
   f.options.launcherBaseline = readLauncherSettings(
-    await collectLauncherSettingsFromOriginalRun(),
+    f.options.launcherSettingsToken,
     f.binding,
   );
+  const initializationRequests = attachPausedReaders(f, initial, prep, fault);
   consumeMaximumRenewals(f);
-  if (path === "repair") {
-    f.state.failReady = true;
-    await expect(introduceProduction(f.options, "introduce")).rejects.toThrow();
-    f.state.failReady = false;
-  }
-  await introduceProduction(
-    f.options,
-    path === "repair" ? "continue" : "introduce",
-  );
+  if (
+    await runFullIntroduction(
+      f,
+      path,
+      fault,
+      prep,
+      initializationRequests,
+      read,
+    )
+  )
+    return { initializationRefused: true };
   const completeAt = f.state.time;
   await f.options.sleep(400000);
   const records = f.state.recordings;
@@ -338,6 +377,13 @@ export async function fullAcceptance(
     .update(JSON.stringify(hosted.state.supplement))
     .digest("hex");
   mockS3.mockImplementation(async (command) => {
+    if (
+      prep &&
+      (command.input.Bucket === prep.request.storeBinding.bucket ||
+        !command.input.Key ||
+        command.input.Key.startsWith("personal-media-uploads/"))
+    )
+      return prep.send(command);
     const object = content.objects.get(command.input.Key);
     if (!object) throw Error("Unexpected content key");
     const metadata = {
@@ -351,10 +397,12 @@ export async function fullAcceptance(
       ? metadata
       : { ...metadata, Body: Readable.from([object.bytes]) };
   });
+  await prepareFullPausedCollector(prep, env, m, read);
   let finalInvocations = 0,
     currentPurpose;
   mockAfterProductionSend = async (command) => {
     if (command.constructor.name !== "TransactWriteItemsCommand") return;
+    assertPausedFinalTransaction(prep, path, m, command.input);
     if (currentPurpose !== faultPurpose) return;
     const items = command.input.TransactItems;
     const submitted = items.some(
@@ -396,6 +444,7 @@ export async function fullAcceptance(
     }
     const { token } = await collect(purpose);
     await dispatchAcceptance(token);
+    await assertPausedOriginalRows(prep, m, read);
   }
   expect(
     (await read(table, { pk: "ENV", sk: "INTRODUCTION" })).deployment.state,
@@ -403,8 +452,10 @@ export async function fullAcceptance(
   expect(
     (await read(table, { pk: "ENV", sk: "CONTROL" })).maintenance,
   ).toBeUndefined();
+  assertPausedObjectOperations(prep, mockS3.mock.calls);
   jest.restoreAllMocks();
   mockCli.mockReset();
   mockExec.mockReset();
   mockS3.mockReset();
+  return pausedAcceptanceResult(prep);
 }

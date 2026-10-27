@@ -49,20 +49,57 @@ function createProductionBootstrap(options) {
       await sleep(3000);
     }
   }
-  async function retained() {
+  async function retained(phase, exclusion) {
+    const drafts = require("./production-paused-drafts.cjs");
+    let acquired, settingsToken;
+    if (options.pausedBound) {
+      settingsToken =
+        await require("./production-launcher-settings.cjs").collectLauncherSettingsFromOriginalRun();
+      acquired = await drafts.collectPausedDraftMetadata(
+        options.pausedBound,
+        options,
+        phase === "after_exclusion" ? phase : "final",
+        settingsToken,
+      );
+    }
     const snapshot = await readRetainedMetadata({
       tables: m.resources.tables,
       read: scan,
       now: now(),
     });
+    let paused;
+    if (options.pausedBound) {
+      if (phase === "after_exclusion") {
+        paused = drafts.assertInstallablePausedCohort(
+          acquired,
+          snapshot,
+          exclusion,
+          settingsToken,
+        );
+        const view = drafts.readPausedCohort(paused, "installable");
+        if (!isDeepStrictEqual(view.digests, options.pausedDigests))
+          throw Error("paused_scope_changed");
+      } else {
+        const installation =
+          await require("./production-actions.cjs").collectOriginalPausedInstallationFromRun();
+        paused = await drafts.collectPreservedPausedCohort(
+          acquired,
+          options,
+          installation,
+          snapshot,
+          settingsToken,
+        );
+      }
+    }
     const result = classifyRetainedWork(
       snapshot,
       evidence.retainedDisposition,
       compatibilityBinding,
+      paused,
     );
     if (result.reopeningBlockers.length)
       throw Error("retained_work_prerequisite");
-    return result;
+    return { ...result, paused };
   }
   const inventoryNow = () =>
     collectLaunchInventory({
@@ -179,7 +216,27 @@ function createProductionBootstrap(options) {
       }).blockers.length
     )
       throw Error("process_exclusion_prerequisite");
-    await retained();
+    const pausedState = await retained("after_exclusion", {
+      before,
+      after,
+      approvedStopArns: m.runtime.legacyTaskArns,
+      acknowledgments: lineage,
+    });
+    const paused = pausedState.paused
+      ? require("./production-paused-drafts.cjs").pausedInitializationGuards(
+          pausedState.paused,
+          now(),
+        )
+      : undefined;
+    if (pausedState.paused)
+      require("./production-acceptance-capacity.cjs").initializationCapacityEnvelope(
+        binding,
+        require("./production-paused-drafts.cjs").readPausedCohort(
+          pausedState.paused,
+          "installable",
+        ),
+        lineage,
+      );
     const initial = {
       pk: "ENV",
       sk: "CONTROL",
@@ -202,8 +259,12 @@ function createProductionBootstrap(options) {
       {
         control: initial,
         lineage,
+        ...(paused
+          ? { paused, pausedInitializationToken: pausedState.paused }
+          : {}),
         coldExclusion: {
           kind: "cold_exclusion",
+          ...(paused ? { paused: options.pausedDigests } : {}),
           control: initial,
           scopeHash: after.scopeHash,
           observedAt: after.observedAt,

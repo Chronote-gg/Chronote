@@ -3,6 +3,11 @@ const { isDeepStrictEqual: same } = require("node:util");
 const { marshall, unmarshall } = require("@aws-sdk/util-dynamodb");
 const { candidateSlot } = require("./production-candidate.cjs");
 const { createRuntimeProof } = require("./runtime-proof.cjs");
+const { canonicalHash } = require("./production-manifest.cjs");
+const {
+  assertSupportedRuntimeSize,
+  assertSupportedFixtureAuthoritySize,
+} = require("./production-acceptance-capacity.cjs");
 function refuse() {
   throw Error("acceptance_writer_prerequisite");
 }
@@ -169,7 +174,9 @@ function assertAcceptanceWriters(state) {
   const { m, inventory, now } = state;
   const types = require("../../dist/types/deploymentControl.js");
   types.controlRecordSchema.parse(state.control);
-  state.runtimes.forEach((row) => types.runtimeRecordSchema.parse(row));
+  const binding = { manifest: m, manifestHash: canonicalHash(m) };
+  state.runtimes.forEach((row) => assertSupportedRuntimeSize(binding, row));
+  assertSupportedFixtureAuthoritySize(binding, state.fixtureAuthority);
   assertCurrentControl(state);
   if (
     inventory.blockers.length ||
@@ -236,6 +243,7 @@ async function readRuntimeInventory(m, readers) {
     if (!Array.isArray(page.Items)) refuse();
     for (const item of page.Items) {
       const row = types.runtimeRecordSchema.parse(unmarshall(item));
+      assertSupportedRuntimeSize({ manifest: m }, row);
       if (seen.has(row.sk)) refuse();
       seen.add(row.sk);
       rows.push(row);

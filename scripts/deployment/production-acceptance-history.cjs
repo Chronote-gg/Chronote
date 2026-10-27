@@ -190,13 +190,20 @@ function assertLineage(entries) {
       refuse();
   }
 }
-function assertInitialHistory(entries, binding, fixtureAuthority) {
+function assertInitialHistory(
+  entries,
+  binding,
+  fixtureAuthority,
+  pausedDigests,
+) {
   const m = binding.manifest;
   const initialized = exactOne(entries, (a) => a.purpose === "initialize");
   const cold = initialized.acknowledgment.facts;
   if (
     cold?.kind !== "cold_exclusion" ||
     cold.scopeHash !== binding.manifestHash ||
+    !same(cold.paused, pausedDigests) ||
+    !same(initialized.observation.facts?.paused, pausedDigests) ||
     cold.observedAt > initialized.submittedAt ||
     cold.services[0].serviceArn !== m.runtime.serviceArn ||
     !m.runtime.legacyTaskArns.every((arn) =>
@@ -243,7 +250,10 @@ async function readIntroductionHistory(f, readers, now) {
   const { binding, fixtureAuthority } = f,
     m = binding.manifest;
   const originalActor = `arn:aws:sts::${m.identity.accountId}:assumed-role/${m.identity.roleArn.split(":role/")[1]}/${m.identity.sessionName}`;
-  const authority = authorityFor({ ...binding, actor: originalActor });
+  const authority = authorityFor(
+    { ...binding, actor: originalActor },
+    f.pausedDigests,
+  );
   const actual = await readers.read({ pk: authority.pk, sk: authority.sk });
   if (!same(actual, authority)) refuse();
   const path =
@@ -252,7 +262,7 @@ async function readIntroductionHistory(f, readers, now) {
       : "replacement";
   const entries = await readSelectedActions(m, path, authority, readers, now);
   assertLineage(entries);
-  assertInitialHistory(entries, binding, fixtureAuthority);
+  assertInitialHistory(entries, binding, fixtureAuthority, f.pausedDigests);
   const handoff = historicalHandoff(entries, f);
   return { authority, entries, ...handoff };
 }

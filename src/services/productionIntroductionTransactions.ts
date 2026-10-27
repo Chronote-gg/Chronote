@@ -364,6 +364,12 @@ import {
   type PromotionInput,
 } from "../types/deploymentControl";
 import { buildPromotionTransaction } from "./deploymentControlTransactions";
+import {
+  buildPausedInitializationItems,
+  pausedInitializationDigestsSchema,
+  type PausedInitializationGuards,
+} from "./productionPausedInitialization";
+export type { PausedInitializationGuards } from "./productionPausedInitialization";
 
 export const fixtureCoordinatorAuthoritySchema = z
   .object({
@@ -457,16 +463,21 @@ export function buildInitializeIntroductionControl({
   control,
   lineage,
   tables,
+  paused,
 }: {
   hold: IntroductionHold;
   authority: IntroductionAuthority;
   control: ControlRecord;
   lineage: IntroductionAction[];
-  tables: Tables;
+  tables: Tables & { personalJob?: string; personalSegment?: string };
+  paused?: PausedInitializationGuards;
 }): TransactWriteItemsCommandInput {
   validateAuthority(hold, authority);
   assertInitialControl(control, hold, authority);
   assertInitializationLineage(lineage, hold, authority);
+  const pausedItems = paused
+    ? buildPausedInitializationItems(paused, authority, tables)
+    : [];
   return {
     TransactItems: [
       holdCheck(hold, tables.deploymentControl),
@@ -488,7 +499,17 @@ export function buildInitializeIntroductionControl({
           actionId: row.actionId,
           requestHash: row.requestHash,
         })),
+        ...(paused
+          ? {
+              paused: pausedInitializationDigestsSchema.parse({
+                cohortSha256: paused.cohortSha256,
+                captureSha256: paused.captureSha256,
+                policyScopeSha256: paused.policyScopeSha256,
+              }),
+            }
+          : {}),
       }),
+      ...pausedItems,
     ],
   };
 }

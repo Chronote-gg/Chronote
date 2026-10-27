@@ -1,6 +1,12 @@
 "use strict";
 const { authorityFor } = require("./introduction-hold.cjs");
 const { canonicalHash } = require("./production-manifest.cjs");
+const {
+  runtimeCapacityEnvelope,
+  fixtureCoordinatorCapacityEnvelope,
+  assertSupportedRuntimeSize,
+  assertSupportedFixtureAuthoritySize,
+} = require("./production-acceptance-owned-capacity.cjs");
 const ceiling = 400 * 1024;
 const futureText = "\u0000".repeat(1024);
 const digest = "f".repeat(64);
@@ -123,9 +129,64 @@ function closingRecords(binding, purpose) {
   };
   return [hold, authority, submitted, acceptance];
 }
-function initialCapacityEnvelopes(binding, snapshot, historyKeys = []) {
+function markerCapacityBounds(binding, cohort) {
+  if (!cohort) return [];
   const m = binding.manifest,
-    { completeItemSizeBound, assertCapacityBounds } = helpers();
+    { markerSchema } = require("./paused-draft-contract.cjs");
+  return cohort.identities.map((identity) => {
+    const row = markerSchema.parse({
+      uploadId: identity.uploadId,
+      ownerUserId: identity.ownerUserId,
+      pk: `UPLOAD#${identity.uploadId}`,
+      sk: "PAUSED_DRAFT",
+      recordType: "paused_desktop_draft",
+      protocolVersion: 1,
+      operationId: m.operationId,
+      manifestSha256: binding.manifestHash,
+      preservedCaptureSha256: cohort.declaration.capture.sha256,
+      createdAt: Number.MAX_SAFE_INTEGER,
+    });
+    return {
+      table: m.resources.tables.deploymentControl,
+      key: { pk: row.pk, sk: row.sk },
+      maximumItemBytes: helpers().completeItemSizeBound(row),
+    };
+  });
+}
+function initializationCapacityEnvelope(binding, cohort, lineage) {
+  const m = binding.manifest,
+    table = m.resources.tables.deploymentControl,
+    pk = `INTRODUCTION#${m.introductionId}`;
+  const controlBound = (key) => ({ table, key, maximumItemBytes: ceiling });
+  const bounds = [
+    controlBound({ pk: "ENV", sk: "INTRODUCTION" }),
+    {
+      table,
+      key: { pk, sk: `OPERATION#${m.operationId}` },
+      maximumItemBytes: helpers().completeItemSizeBound(
+        authorityFor(binding, cohort?.digests),
+      ),
+    },
+    ...lineage.map((row) => controlBound({ pk, sk: `ACTION#${row.actionId}` })),
+    controlBound({ pk: "ENV", sk: "CONTROL" }),
+    controlBound({ pk, sk: "INITIALIZATION" }),
+    ...(cohort?.parents ?? []).map((row) => ({
+      table: m.resources.tables.personalJob,
+      key: { uploadId: row.uploadId },
+      maximumItemBytes: ceiling,
+    })),
+    ...(cohort?.segments ?? []).map((row) => ({
+      table: m.resources.tables.personalSegment,
+      key: { uploadId: row.uploadId, segmentKey: row.segmentKey },
+      maximumItemBytes: ceiling,
+    })),
+    ...markerCapacityBounds(binding, cohort),
+  ];
+  helpers().assertCapacityBounds(bounds);
+  return bounds;
+}
+function retainedCapacityBounds(binding, snapshot, historyKeys) {
+  const m = binding.manifest;
   const retained = new Map(
     snapshot.records.map((r) => [
       canonicalHash({ table: m.resources.tables[r.table], key: r.key }),
@@ -149,91 +210,147 @@ function initialCapacityEnvelopes(binding, snapshot, historyKeys = []) {
       target,
     );
   }
-  const result = [];
-  for (const path of ["normal", "replacement"])
-    for (const purpose of [
-      "persist_acceptance",
-      "reopen_admission",
-      "release_deployment",
-    ]) {
-      const fixed = closingRecords(binding, purpose).concat(
-        m.handoff.grants.map((g) => futureGrant(binding, g)),
-      );
-      const bounds = fixed.map((row) => ({
-        table: m.resources.tables.deploymentControl,
-        key: { pk: row.pk, sk: row.sk },
-        maximumItemBytes: completeItemSizeBound(row),
-      }));
-      bounds.push(
-        {
-          table: m.resources.tables.deploymentControl,
-          key: { pk: "ENV", sk: "CONTROL" },
-          maximumItemBytes: ceiling,
-        },
-        {
-          table: m.resources.tables.deploymentControl,
-          key: {
-            pk: `INTRODUCTION#${m.introductionId}`,
-            sk: "FIXTURE_COORDINATOR",
-          },
-          maximumItemBytes: ceiling,
-        },
-      );
-      for (let index = 0; index < (path === "normal" ? 2 : 3); index++)
-        bounds.push({
-          table: m.resources.tables.deploymentControl,
-          key: { pk: "ENV", sk: `FUTURE_RUNTIME_BUDGET#${index}` },
-          maximumItemBytes: ceiling,
-        });
-      const historyBounds = new Map(retained);
-      for (let index = 0; index < 2; index++) {
-        const target = {
-          table: m.resources.tables.meetingHistory,
-          key: historyKeys[index] ?? {
-            guildId: m.handoff.grants[index].guildId,
-            channelId_timestamp: `FUTURE_HISTORY_BUDGET#${index}`,
-          },
-          maximumItemBytes: ceiling,
-        };
-        historyBounds.set(
-          canonicalHash({ table: target.table, key: target.key }),
-          target,
-        );
-      }
-      bounds.push(...historyBounds.values());
-      // Observed action rows have no supported successor/overwrite/delete/TTL.
-      // All 200 original actions and all selected renewals are still authenticated
-      // by readIntroductionHistory. No historical row becomes a mutable target.
-      assertCapacityBounds(bounds);
-      result.push({
-        path,
-        purpose,
-        targets: bounds.length,
-        maximumItemBytes: bounds.reduce(
-          (sum, b) => sum + b.maximumItemBytes,
-          0,
-        ),
-      });
-    }
-  return result;
+  const historyBounds = new Map(retained);
+  for (let index = 0; index < 2; index++) {
+    const target = {
+      table: m.resources.tables.meetingHistory,
+      key: historyKeys[index] ?? {
+        guildId: m.handoff.grants[index].guildId,
+        channelId_timestamp: `FUTURE_HISTORY_BUDGET#${index}`,
+      },
+      maximumItemBytes: ceiling,
+    };
+    historyBounds.set(
+      canonicalHash({ table: target.table, key: target.key }),
+      target,
+    );
+  }
+  return [...historyBounds.values()];
 }
-async function screenInitialAcceptanceCapacity(options) {
-  const {
-    readRetainedMetadata,
-    projections,
-    assertInitialPersonalFeasibility,
-  } = require("./retained-work.cjs");
-  const snapshot = await readRetainedMetadata({
-    tables: options.binding.manifest.resources.tables,
-    read: options.scan,
-    now: options.now(),
-  });
+function closingCapacityBounds(binding, path, purpose) {
+  const m = binding.manifest,
+    { completeItemSizeBound } = helpers();
+  const fixed = closingRecords(binding, purpose).concat(
+    m.handoff.grants.map((g) => futureGrant(binding, g)),
+  );
+  const bounds = fixed.map((row) => ({
+    table: m.resources.tables.deploymentControl,
+    key: { pk: row.pk, sk: row.sk },
+    maximumItemBytes: completeItemSizeBound(row),
+  }));
+  bounds.push(
+    {
+      table: m.resources.tables.deploymentControl,
+      key: { pk: "ENV", sk: "CONTROL" },
+      maximumItemBytes: ceiling,
+    },
+    fixtureCoordinatorCapacityEnvelope(binding, path),
+  );
+  for (const slot of [
+    "bootstrap",
+    ...(path === "replacement" ? ["replacement"] : []),
+    "handoff",
+  ])
+    bounds.push(
+      runtimeCapacityEnvelope(
+        binding,
+        slot,
+        slot === "handoff" ? "serving" : "retired",
+      ),
+    );
+  return bounds;
+}
+function initialCapacityEnvelopes(binding, snapshot, historyKeys = [], cohort) {
+  const retained = retainedCapacityBounds(binding, snapshot, historyKeys),
+    markers = markerCapacityBounds(binding, cohort);
+  return ["normal", "replacement"].flatMap((path) =>
+    ["persist_acceptance", "reopen_admission", "release_deployment"].map(
+      (purpose) => {
+        const bounds = [
+          ...closingCapacityBounds(binding, path, purpose),
+          ...retained,
+          ...markers,
+        ];
+        // Historical observed actions remain immutable; only current mutable targets are budgeted.
+        helpers().assertCapacityBounds(bounds);
+        return {
+          path,
+          purpose,
+          targets: bounds.length,
+          maximumItemBytes: bounds.reduce(
+            (sum, bound) => sum + bound.maximumItemBytes,
+            0,
+          ),
+        };
+      },
+    ),
+  );
+}
+async function acquireInitialPausedMetadata(options) {
   if (
-    snapshot.coverage.length !== Object.keys(projections).length ||
-    snapshot.coverage.some((c) => c.status !== "enumerated")
+    options.evidence?.retainedDisposition?.pausedDesktopDrafts &&
+    !options.pausedBound
   )
     throw Error("acceptance_capacity_refused");
-  assertInitialPersonalFeasibility(snapshot);
+  const paused = options.pausedBound
+    ? require("./production-paused-drafts.cjs")
+    : undefined;
+  return paused
+    ? await paused.collectPausedDraftMetadata(
+        options.pausedBound,
+        options,
+        options.introductionMode && options.introductionMode !== "introduce"
+          ? "final"
+          : "before_stop",
+        options.launcherSettingsToken,
+      )
+    : undefined;
+}
+async function screenInitialPausedCohort(options, acquired, snapshot) {
+  const paused = acquired
+    ? require("./production-paused-drafts.cjs")
+    : undefined;
+  let cohort;
+  if (acquired) {
+    const continuing =
+      options.introductionMode && options.introductionMode !== "introduce";
+    options.pausedCohort = continuing
+      ? await paused.collectPreservedPausedCohort(
+          acquired,
+          options,
+          await require("./production-actions.cjs").collectOriginalPausedInstallationFromRun(),
+          snapshot,
+          options.launcherSettingsToken,
+        )
+      : paused.assertInstallablePausedCohort(
+          acquired,
+          snapshot,
+          undefined,
+          options.launcherSettingsToken,
+        );
+    cohort = paused.readPausedCohort(
+      options.pausedCohort,
+      continuing ? "preserved" : "installable",
+    );
+    options.pausedDigests = cohort.digests;
+    options.initialPausedSnapshot = snapshot;
+    if (!continuing)
+      initializationCapacityEnvelope(
+        options.binding,
+        cohort,
+        options.binding.manifest.actions.filter((action) =>
+          [
+            "stop_legacy",
+            "stop_service",
+            "route_maintenance",
+            "hold_launcher",
+          ].includes(action.kind),
+        ),
+      );
+  }
+  return cohort;
+}
+async function readFixtureHistoryKeys(options) {
   const keys = [];
   const {
     fixtureGrantSchema,
@@ -259,10 +376,47 @@ async function screenInitialAcceptanceCapacity(options) {
       keys[index] = row.historyKey;
     }
   }
-  return initialCapacityEnvelopes(options.binding, snapshot, keys);
+  return keys;
+}
+async function screenInitialAcceptanceCapacity(options) {
+  const {
+    readRetainedMetadata,
+    projections,
+    assertInitialPersonalFeasibility,
+    classifyRetainedWork,
+  } = require("./retained-work.cjs");
+  const acquired = await acquireInitialPausedMetadata(options);
+  const snapshot = await readRetainedMetadata({
+    tables: options.binding.manifest.resources.tables,
+    read: options.scan,
+    now: options.now(),
+  });
+  if (
+    snapshot.coverage.length !== Object.keys(projections).length ||
+    snapshot.coverage.some((c) => c.status !== "enumerated")
+  )
+    throw Error("acceptance_capacity_refused");
+  const cohort = await screenInitialPausedCohort(options, acquired, snapshot);
+  if (
+    classifyRetainedWork(
+      snapshot,
+      options.evidence?.retainedDisposition,
+      options.compatibilityBinding,
+      options.pausedCohort,
+    ).records.some((record) => record.category === "uncertain_external_effect")
+  )
+    throw Error("retained_work_prerequisite");
+  assertInitialPersonalFeasibility(snapshot, options.pausedCohort);
+  const keys = await readFixtureHistoryKeys(options);
+  return initialCapacityEnvelopes(options.binding, snapshot, keys, cohort);
 }
 module.exports = {
   initialCapacityEnvelopes,
   screenInitialAcceptanceCapacity,
   assertSupportedGrantSize,
+  runtimeCapacityEnvelope,
+  fixtureCoordinatorCapacityEnvelope,
+  assertSupportedRuntimeSize,
+  assertSupportedFixtureAuthoritySize,
+  initializationCapacityEnvelope,
 };

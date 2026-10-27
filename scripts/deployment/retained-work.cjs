@@ -269,6 +269,8 @@ const dispositionSchema = z
     predicate: z.literal("missing-owner-or-version-v1"),
     sourceCommit: z.string().regex(/^[a-f0-9]{40}$/),
     compatibleFuture: futureReviewSchema.optional(),
+    pausedDesktopDrafts:
+      require("./production-paused-draft-binding.cjs").pausedDesktopDraftsSchema.optional(),
     records: z.array(
       z
         .object({
@@ -415,6 +417,7 @@ function classifyRetainedWork(
   snapshot,
   reviewedDisposition,
   compatibilityBinding,
+  pausedCohort,
 ) {
   const review = dispositionSchema.safeParse(reviewedDisposition);
   const futureReview = review.success
@@ -423,12 +426,18 @@ function classifyRetainedWork(
   const records = snapshot.records.map((entry) => ({
     table: entry.table,
     key: entry.key,
-    category: categoryFor(
-      entry,
-      snapshot,
-      review.success ? review.data : undefined,
-      futureReview,
-    ),
+    category:
+      require("./production-paused-drafts.cjs").pausedCategory(
+        pausedCohort,
+        entry,
+        snapshot,
+      ) ??
+      categoryFor(
+        entry,
+        snapshot,
+        review.success ? review.data : undefined,
+        futureReview,
+      ),
     metadataHash: canonicalHash(entry.metadata),
   }));
   const reopeningBlockers = [];
@@ -442,7 +451,14 @@ function classifyRetainedWork(
   )
     reopeningBlockers.push("metadata_incomplete");
   for (const record of records)
-    if (!safeCategories.includes(record.category))
+    if (
+      ![
+        ...safeCategories,
+        "preserved_paused_desktop_draft",
+        "installable_paused_desktop_draft",
+        "requires_atomic_pause_install",
+      ].includes(record.category)
+    )
       reopeningBlockers.push(record.category);
   return {
     preservesData: true,
@@ -452,14 +468,17 @@ function classifyRetainedWork(
   };
 }
 /** Feasibility only: final acceptance still recollects the complete retained inventory. */
-function assertInitialPersonalFeasibility(snapshot) {
+function assertInitialPersonalFeasibility(snapshot, pausedCohort) {
   const personal = {
     ...snapshot,
     records: snapshot.records.filter((row) =>
       ["personalJob", "personalSegment"].includes(row.table),
     ),
   };
-  if (classifyRetainedWork(personal).reopeningBlockers.length)
+  if (
+    classifyRetainedWork(personal, undefined, undefined, pausedCohort)
+      .reopeningBlockers.length
+  )
     throw Error("personal_retained_prerequisite");
 }
 module.exports = {

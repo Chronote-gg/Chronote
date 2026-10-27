@@ -28,6 +28,18 @@ function current(value) {
     refuse();
   // Native protection and heartbeat proof must remain usable through synchronous dispatch.
   assertAcceptanceWriters({ ...value.state, now: at });
+  if (value.pausedContext) {
+    require("./production-launcher-settings.cjs").readPausedEffectivePolicyScope(
+      value.pausedContext.settingsToken,
+      value.pausedContext.bound,
+    );
+    require("./production-actions.cjs").readOriginalPausedInstallation(
+      value.pausedContext.installation,
+      require("./production-paused-drafts.cjs").readPausedReaderScope(
+        value.pausedContext.bound,
+      ),
+    );
+  }
 }
 async function readCurrentRoute(m, readers) {
   const route = {
@@ -198,10 +210,32 @@ async function collectAcceptanceFromOriginalRun() {
   if (!same(f.binding, binding)) refuse();
   const m = binding.manifest;
   const launchers = require("./production-launcher-settings.cjs");
+  const launcherSettingsToken =
+    await launchers.collectLauncherSettingsFromOriginalRun();
   const launcher = launchers.readLauncherSettings(
-    await launchers.collectLauncherSettingsFromOriginalRun(),
+    launcherSettingsToken,
     binding,
   );
+  let pausedContext;
+  if (loaded.pausedPreparation) {
+    const drafts = require("./production-paused-drafts.cjs");
+    const bound = drafts.bindOriginalPausedDisposition(
+      loaded.collection ?? loaded.binding,
+      loaded.evidence,
+      loaded.pausedPreparation,
+    );
+    const scope = drafts.readPausedReaderScope(bound);
+    f.pausedDigests = drafts.pausedDigestsFor(
+      scope,
+      launchers.readPausedEffectivePolicyScope(launcherSettingsToken, bound),
+    );
+    pausedContext = {
+      bound,
+      settingsToken: launcherSettingsToken,
+      installation:
+        await require("./production-actions.cjs").collectOriginalPausedInstallationFromRun(),
+    };
+  }
   const history = await readIntroductionHistory(f, readers, now());
   baseline(f, history, launcher);
   verifyHistoricalCapture(f, history);
@@ -225,7 +259,17 @@ async function collectAcceptanceFromOriginalRun() {
   const writers = assertAcceptanceWriters(state);
   assertHistoricalRuntimes(history, state);
   await readCurrentRoute(m, readers);
-  const value = { f, loaded, readers, launcher, history, state, writers };
+  const value = {
+    f,
+    loaded,
+    readers,
+    launcher,
+    launcherSettingsToken,
+    pausedContext,
+    history,
+    state,
+    writers,
+  };
   current(value);
   if (!loaded.collection) {
     value.stage = await finalStage(m, readers, history);
@@ -263,6 +307,23 @@ async function collectAcceptanceFromOriginalRun() {
       writers,
       compatibility,
       now(),
+      pausedContext,
+    );
+  }
+  if (loaded.collection && pausedContext) {
+    const compatibility = await verifyOwnershipEvidence(
+      binding,
+      loaded.evidence,
+      process.env.GH_TOKEN,
+    );
+    value.retained = await collectRetainedClosure(
+      f,
+      loaded,
+      readers,
+      writers,
+      compatibility,
+      now(),
+      pausedContext,
     );
   }
   current(value);
@@ -313,20 +374,40 @@ function transactionInputs(token, submitted) {
       fields,
       maximumItemBytes: completeItemSizeBound(row),
     });
+  const capacity = require("./production-acceptance-capacity.cjs");
+  capacity.assertSupportedFixtureAuthoritySize(
+    f.binding,
+    f.fixtureAuthority,
+    history.path,
+  );
   add(f.fixtureAuthority);
   // Every original action was authenticated above. Strict observed/version 4 rows
   // have no supported successor, overwrite, delete or TTL path. Current submitted
   // action remains guarded by the final builder; mutable domain rows stay below.
-  for (const row of state.runtimes)
+  for (const row of state.runtimes) {
+    capacity.assertSupportedRuntimeSize(f.binding, row);
     add(row, [
       ...new Set([
         ...Object.keys(row),
+        "canonicalContentWriter",
         "workCounts",
         "expiresAt",
         "retirementRequest",
         "retirementAcknowledgment",
       ]),
     ]);
+  }
+  if (retained.paused) {
+    require("./production-launcher-settings.cjs").readPausedEffectivePolicyScope(
+      v.launcherSettingsToken,
+      retained.paused,
+    );
+    guards.push(
+      ...require("./production-paused-drafts.cjs").pausedRetainedGuards(
+        retained.paused,
+      ),
+    );
+  }
   for (const entry of retained.snapshot.records) {
     if (retained.compatible.includes(entry)) continue;
     guards.push({

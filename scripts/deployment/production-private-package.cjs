@@ -315,8 +315,8 @@ async function loadOriginalPackage(env, aws, mode) {
     repositoryId: String(run.repositoryId),
     repositoryOwnerId: String(run.repositoryOwnerId),
   };
-  if (mode === "prepare-acceptance")
-    return bindCollector(
+  if (mode === "prepare-acceptance") {
+    const prepared = bindCollector(
       input,
       env,
       context,
@@ -324,15 +324,37 @@ async function loadOriginalPackage(env, aws, mode) {
       evidence,
       acceptanceContext,
     );
-
-  return {
-    ...materializePackage(input, env.INTRODUCTION_INTENT_HASH, context, {
+    return Object.assign(
+      prepared,
+      await optionalPausedPreparation(prepared.collection, evidence, env),
+    );
+  }
+  const materialized = materializePackage(
+    input,
+    env.INTRODUCTION_INTENT_HASH,
+    context,
+    {
       accountId: caller.Account,
       arn: caller.Arn,
-    }),
+    },
+  );
+  return {
+    ...materialized,
     evidence,
+    ...(await optionalPausedPreparation(materialized.binding, evidence, env)),
     ...(acceptanceContext ? { acceptanceContext } : {}),
   };
+}
+async function optionalPausedPreparation(binding, evidence, env) {
+  if (evidence.retainedDisposition.pausedDesktopDrafts === undefined) return {};
+  const pausedPreparation =
+    await require("./production-paused-draft-binding.cjs").authenticateOriginalPausedPreparation(
+      binding,
+      evidence,
+      env.GH_TOKEN,
+      env.INTRODUCTION_OPS_READ_TOKEN,
+    );
+  return { pausedPreparation };
 }
 function bindCollector(
   input,

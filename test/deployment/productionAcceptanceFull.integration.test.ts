@@ -35,3 +35,42 @@ test.each(["reopen_admission", "release_deployment"])(
   },
   240000,
 );
+
+test.each(["normal", "repair"])(
+  "preserves the original two paused drafts through authenticated %s native acceptance",
+  async (path) => {
+    const result = await fullAcceptance(
+      path,
+      undefined,
+      "persist_acceptance",
+      true,
+    );
+    expect(result.pausedIds).toEqual(["one", "two"]);
+    expect(result.finalPurposes).toEqual([
+      "persist_acceptance",
+      "reopen_admission",
+      "release_deployment",
+    ]);
+  },
+  240000,
+);
+
+test("lost native initialize ACK cannot authenticate present original pause markers", async () => {
+  expect(
+    await fullAcceptance(
+      "normal",
+      "initialize-lost-ack",
+      "persist_acceptance",
+      true,
+    ),
+  ).toEqual({ initializationRefused: true });
+}, 240000);
+
+test("native final CAS refuses a paused marker changed after authenticated collection", async () => {
+  await fullAcceptance(
+    "normal",
+    "paused-marker-after-collect",
+    "persist_acceptance",
+    true,
+  );
+}, 240000);

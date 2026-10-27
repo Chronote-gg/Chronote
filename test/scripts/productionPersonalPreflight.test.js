@@ -48,6 +48,15 @@ function initial(rows, paused = false) {
   return { options, next };
 }
 
+function assertNoInterruption(options) {
+  expect(options.candidate.definitions).not.toHaveBeenCalled();
+  expect(options.write).not.toHaveBeenCalled();
+}
+function assertNoPreflightReads(options) {
+  expect(options.read).not.toHaveBeenCalled();
+  expect(options.aws).not.toHaveBeenCalled();
+}
+
 test.each([
   ...[
     "pending_upload",
@@ -77,10 +86,8 @@ test.each([
     await expect(introduceProduction(options, "introduce")).rejects.toThrow(
       "personal_retained_prerequisite",
     );
-    expect(options.candidate.definitions).not.toHaveBeenCalled();
-    expect(options.read).not.toHaveBeenCalled();
-    expect(options.aws).not.toHaveBeenCalled();
-    expect(options.write).not.toHaveBeenCalled();
+    assertNoInterruption(options);
+    assertNoPreflightReads(options);
   },
 );
 
@@ -116,13 +123,12 @@ test.each([
 );
 
 function assertIndexReadOnlyRefusal(options) {
-  expect(options.candidate.definitions).not.toHaveBeenCalled();
+  assertNoInterruption(options);
   expect(options.read.mock.calls).toEqual(
     options.binding.manifest.handoff.grants.map((grant) => [
       { pk: `FIXTURE#${grant.grantId}`, sk: "AUTHORITY" },
     ]),
   );
-  expect(options.write).not.toHaveBeenCalled();
   expect(options.aws).toHaveBeenCalledTimes(1);
 }
 
@@ -196,8 +202,51 @@ test.each(["unavailable", "malformed"])(
     if (kind === "unavailable")
       options.scan.mockRejectedValue(new Error("synthetic read unavailable"));
     await expect(introduceProduction(options, "introduce")).rejects.toThrow();
-    expect(options.candidate.definitions).not.toHaveBeenCalled();
+    assertNoInterruption(options);
     expect(options.aws).not.toHaveBeenCalled();
-    expect(options.write).not.toHaveBeenCalled();
+  },
+);
+
+test.each([
+  {
+    meetingHistory: [
+      {
+        guildId: "guild",
+        channelId_timestamp: "channel#time",
+        status: "complete",
+        contentMutation: { id: "pending-mutation" },
+      },
+    ],
+  },
+  {
+    meetingHistory: [
+      {
+        guildId: "guild",
+        channelId_timestamp: "channel#time",
+        status: "complete",
+        updateDelivery: { revision: 1 },
+      },
+    ],
+  },
+  {
+    notion: [
+      {
+        pk: "GUILD#guild",
+        sk: "EXPORT#meeting",
+        recordType: "automation_export",
+        status: "submitted",
+      },
+    ],
+  },
+  { stripeWebhook: [{ eventId: "event", state: "processing" }] },
+])(
+  "known unrelated uncertain effects refuse before any interruption: %j",
+  async (rows) => {
+    const { options } = initial(rows);
+    await expect(introduceProduction(options, "introduce")).rejects.toThrow(
+      "retained_work_prerequisite",
+    );
+    assertNoInterruption(options);
+    assertNoPreflightReads(options);
   },
 );
