@@ -93,6 +93,26 @@ describe("runTranscriptionFinalPass", () => {
     expect(meeting.audioData.audioFiles[0].finalPassTranscript).toBeUndefined();
   });
 
+  it("keeps each transcription request under the model output cap", async () => {
+    const meeting = createMeeting("Original transcript");
+    const renderedDurations: number[] = [];
+
+    const result = await runTranscriptionFinalPass(
+      meeting,
+      { audioFilePath: "meeting.mp3" },
+      {
+        ...buildNoEditDependencyOverrides(),
+        getAudioDurationSeconds: async () => 900,
+        renderAudioChunk: async ({ durationSeconds }) => {
+          renderedDurations.push(durationSeconds);
+        },
+      },
+    );
+
+    expect(result.totalChunks).toBe(3);
+    expect(renderedDurations).toEqual([300]);
+  });
+
   it("applies a meaningful replacement", async () => {
     const meeting = createMeeting("Original transcript");
 
