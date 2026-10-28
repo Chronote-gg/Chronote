@@ -22,6 +22,8 @@ import {
 } from "@aws-sdk/client-dynamodb";
 import { marshall, unmarshall } from "@aws-sdk/util-dynamodb";
 import { z } from "zod";
+import type { MeetingProcessingOutcome } from "../types/meetingProcessing";
+import type { ProcessingRetryJob } from "../types/meetingProcessingRetry";
 import type {
   MeetingHistory,
   PersonalMediaClaim,
@@ -83,6 +85,16 @@ export type MeetingContentWrite = {
     editedBy: string;
     source?: NotesEditSource;
     suggestion?: SuggestionHistoryEntry;
+  };
+  regeneration?: {
+    expected: {
+      jobId: string;
+      ownerInstanceId: string;
+      expectedNotesVersion: number;
+    };
+    processing: MeetingProcessingOutcome;
+    transcriptS3Key?: string;
+    job: ProcessingRetryJob;
   };
 };
 export type MeetingWriteResult =
@@ -315,6 +327,11 @@ const changedFields = [
   "updateDeliveryDueAt",
   "notesChannelId",
   "notesMessageIds",
+  "processing",
+  "transcriptS3Key",
+  "processingRetry",
+  "processingRetryQueue",
+  "processingRetryDueAt",
 ] as const;
 type WriteOptions = {
   canonicalChecks?: TransactWriteItem[];
@@ -402,7 +419,7 @@ function conditionalUpdate(
       set.push(name + " = " + value);
       values[value] = after[field];
     }
-    // Preserve history/provenance and pointer snapshots even when legacy writers race.
+    // Preserve history/provenance, pointer snapshots and the retry job's exact claim even when other writers race.
     if (
       [
         "notesHistory",
@@ -410,6 +427,7 @@ function conditionalUpdate(
         "notesVersion",
         "notesChannelId",
         "notesMessageIds",
+        "processingRetry",
       ].includes(field)
     ) {
       if (before[field] === undefined)

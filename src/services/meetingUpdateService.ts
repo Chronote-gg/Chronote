@@ -30,6 +30,7 @@ export type MeetingUpdateActionInput = {
   mutation: MeetingUpdateMutation;
   actor: Pick<NotesEdit, "editedBy">;
   notesEdit?: Omit<NotesEdit, "editedBy">;
+  regeneration?: MeetingContentWrite["regeneration"];
   signal?: AbortSignal;
   operation?: RuntimeApiOperation;
 };
@@ -71,6 +72,16 @@ async function syncAcknowledgedNotes(input: {
   }
 }
 
+function expectedNotesVersionMoved(
+  input: MeetingUpdateActionInput,
+  notesVersion: number,
+): boolean {
+  return [
+    input.notesEdit?.expectedNotesVersion,
+    input.regeneration?.expected.expectedNotesVersion,
+  ].some((expected) => expected !== undefined && expected !== notesVersion);
+}
+
 export function createMeetingUpdateService(deps: Dependencies) {
   return async function updateMeeting(
     input: MeetingUpdateActionInput,
@@ -84,10 +95,7 @@ export function createMeetingUpdateService(deps: Dependencies) {
     );
     if (!before) return { kind: "conflict" };
     const revisions = readMeetingUpdateRevisions(before);
-    if (
-      input.notesEdit &&
-      revisions.notesVersion !== input.notesEdit.expectedNotesVersion
-    )
+    if (expectedNotesVersionMoved(input, revisions.notesVersion))
       return { kind: "conflict" };
     await read(() => deps.ready());
     signal?.throwIfAborted();
@@ -110,6 +118,7 @@ export function createMeetingUpdateService(deps: Dependencies) {
       ...(input.notesEdit
         ? { notesEdit: { ...input.notesEdit, ...input.actor } }
         : {}),
+      regeneration: input.regeneration,
     };
     const result = await (input.operation
       ? input.operation.mutate(() =>
