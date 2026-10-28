@@ -33,7 +33,7 @@ export type TranscriptionVoteGateResult = {
 };
 
 export type TranscriptionVoteDecision = {
-  selectedId: TranscriptionVoteCandidateId;
+  selectedId: TranscriptionVoteCandidateId | "none";
   reasons: string[];
   promptScore: number;
   noPromptScore: number;
@@ -62,7 +62,7 @@ const SCORE_CONSECUTIVE_REPEAT_MIN = 3;
 const SCORE_CONSECUTIVE_REPEAT_PENALTY = -20;
 const SCORE_TRIVIAL_TEXT_PENALTY = -400;
 const SCORE_SELECTION_BUFFER = 2;
-const NO_PROMPT_MIN_SELECTION_SCORE = 120;
+const MIN_SELECTION_SCORE = 120;
 
 function normalizeWords(text: string): string[] {
   return text
@@ -205,14 +205,19 @@ export function shouldRunTranscriptionVote(input: {
 function chooseSelectedCandidateId(input: {
   promptQuality: CandidateQuality;
   noPromptQuality: CandidateQuality;
-}): TranscriptionVoteCandidateId {
+}): TranscriptionVoteDecision["selectedId"] {
+  const promptEligible =
+    !input.promptQuality.trivialText &&
+    input.promptQuality.score >= MIN_SELECTION_SCORE;
+  const noPromptEligible =
+    !input.noPromptQuality.trivialText &&
+    input.noPromptQuality.score >= MIN_SELECTION_SCORE;
+  if (!promptEligible && !noPromptEligible) return "none";
+  if (!promptEligible) return "no_prompt";
   if (input.noPromptQuality.trivialText) {
     return "prompt";
   }
-  if (input.promptQuality.trivialText) {
-    return "no_prompt";
-  }
-  if (input.noPromptQuality.score < NO_PROMPT_MIN_SELECTION_SCORE) {
+  if (input.noPromptQuality.score < MIN_SELECTION_SCORE) {
     return "prompt";
   }
   if (
@@ -236,10 +241,11 @@ export function decideTranscriptionVote(input: {
   });
 
   const reasons = [`selected_${selectedId}`];
+  if (selectedId === "none") reasons.push("both_below_quality_floor");
   if (promptQuality.trivialText !== noPromptQuality.trivialText) {
     reasons.push("trivial_text_difference");
   }
-  if (selectedId === "prompt" && noPromptQuality.trivialText) {
+  if (noPromptQuality.trivialText) {
     reasons.push("no_prompt_trivial_text");
   }
   if (selectedId === "no_prompt" && promptQuality.trivialText) {
@@ -251,7 +257,7 @@ export function decideTranscriptionVote(input: {
   if (
     selectedId === "prompt" &&
     !noPromptQuality.trivialText &&
-    noPromptQuality.score < NO_PROMPT_MIN_SELECTION_SCORE
+    noPromptQuality.score < MIN_SELECTION_SCORE
   ) {
     reasons.push("no_prompt_below_quality_floor");
   }

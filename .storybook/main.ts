@@ -28,6 +28,14 @@ const config: StorybookConfig = {
   async viteFinal(config) {
     return mergeConfig(config, {
       envDir: rootDir,
+      resolve: {
+        alias: [
+          {
+            find: "../services/configService",
+            replacement: resolve(rootDir, ".storybook/mocks/configService.ts"),
+          },
+        ],
+      },
       plugins: [
         tsconfigPaths({
           projects: [resolve(rootDir, "tsconfig.frontend.json")],

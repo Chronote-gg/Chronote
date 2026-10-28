@@ -53,7 +53,7 @@ import {
   type PlannedWrite,
 } from "./outageMeetingRecoveryPlan";
 
-import { TRANSCRIPTION_FINAL_PASS_CHUNK_SECONDS } from "../src/constants";
+import { PERSONAL_UPLOAD_TRANSCRIPTION_CHUNK_SECONDS } from "../src/constants";
 
 const DEFAULT_REGION = "us-east-1";
 const DEFAULT_TABLE_PREFIX = "meeting-notes-prod-";
@@ -73,11 +73,7 @@ type DryRunArgs = {
   region: string;
   tablePrefix: string;
   bucket: string;
-  transcription: TranscriptionOptions;
 };
-
-/** language null omits the hint so the provider detects the spoken language. */
-type TranscriptionOptions = { language: string | null; chunkSeconds: number };
 
 function parseCli(argv: string[]) {
   const { values } = parseArgs({
@@ -92,12 +88,6 @@ function parseCli(argv: string[]) {
       region: { type: "string", default: DEFAULT_REGION },
       "table-prefix": { type: "string", default: DEFAULT_TABLE_PREFIX },
       bucket: { type: "string", default: DEFAULT_BUCKET },
-      // "auto" omits the hint; the default matches every product path.
-      "transcription-language": { type: "string", default: "en" },
-      "chunk-seconds": {
-        type: "string",
-        default: String(TRANSCRIPTION_FINAL_PASS_CHUNK_SECONDS),
-      },
     },
   });
   if (values.apply) {
@@ -125,27 +115,6 @@ function parseCli(argv: string[]) {
     region: values.region,
     tablePrefix: values["table-prefix"],
     bucket: values.bucket,
-    transcription: parseTranscriptionOptions(
-      values["transcription-language"],
-      values["chunk-seconds"],
-    ),
-  };
-}
-
-function parseTranscriptionOptions(
-  language: string,
-  chunkSeconds: string,
-): TranscriptionOptions {
-  const seconds = Number(chunkSeconds);
-  if (!Number.isInteger(seconds) || seconds < 30 || seconds > 1200)
-    throw new Error("--chunk-seconds must be an integer from 30 to 1200");
-  if (language !== "auto" && !/^[a-z]{2}$/.test(language))
-    throw new Error(
-      "--transcription-language must be auto or an ISO-639-1 code",
-    );
-  return {
-    language: language === "auto" ? null : language,
-    chunkSeconds: seconds,
   };
 }
 
@@ -274,13 +243,10 @@ async function loadDiscordContext(
   }
 }
 
-async function transcribeRecording(
-  audioS3Key: string,
-  options: TranscriptionOptions,
-) {
+async function transcribeRecording(audioS3Key: string) {
   const { downloadObjectToFile } =
     await import("../src/services/storageService");
-  const { runFfmpeg, splitAudioFile, transcribeAudioFiles } =
+  const { runFfmpeg, resolveTranscriptionInputs, transcribeAudioFiles } =
     await import("../src/services/personalMediaUploadProcessingService");
   const workDir = await fs.mkdtemp(path.join(os.tmpdir(), "outage-recovery-"));
   try {
@@ -289,22 +255,8 @@ async function transcribeRecording(
       throw new Error("Recording could not be downloaded");
     const audioPath = path.join(workDir, "audio.mp3");
     await runFfmpeg(sourcePath, audioPath);
-    const chunkDir = path.join(workDir, "chunks");
-    await fs.mkdir(chunkDir);
-    // Always chunk: the transcription model caps request duration, not just size.
-    const chunks = await splitAudioFile(
-      audioPath,
-      chunkDir,
-      undefined,
-      options.chunkSeconds,
-    );
-    if (!chunks.length) throw new Error("Recording produced no audio chunks");
-    const result = await transcribeAudioFiles(
-      chunks,
-      false,
-      undefined,
-      options.language,
-    );
+    const chunks = await resolveTranscriptionInputs(audioPath, workDir);
+    const result = await transcribeAudioFiles(chunks, false);
     return { text: result.text, chunks: chunks.length };
   } finally {
     await fs.rm(workDir, { recursive: true, force: true });
@@ -348,11 +300,7 @@ async function readReusableTranscript(outDir: string) {
   return { payload, body, provenance };
 }
 
-async function resolveTranscript(
-  history: MeetingHistory,
-  outDir: string,
-  options: TranscriptionOptions,
-) {
+async function resolveTranscript(history: MeetingHistory, outDir: string) {
   const { fetchJsonFromS3 } = await import("../src/services/storageService");
   if (history.transcriptS3Key) {
     const payload = await fetchJsonFromS3<TranscriptPayload>(
@@ -370,7 +318,7 @@ async function resolveTranscript(
   if (transcript) {
     console.log("Reusing transcript.json from a previous dry run.");
   } else {
-    const transcribed = await transcribeRecording(history.audioS3Key, options);
+    const transcribed = await transcribeRecording(history.audioS3Key);
     if (!transcribed.text.trim())
       throw new Error("Recording transcribed empty");
     const payload = buildLegacyTranscriptPayload({
@@ -380,8 +328,8 @@ async function resolveTranscript(
     });
     const body = JSON.stringify(payload, null, 2);
     const provenance: TranscriptProvenance = {
-      language: options.language ?? "auto",
-      chunkSeconds: options.chunkSeconds,
+      language: "auto",
+      chunkSeconds: PERSONAL_UPLOAD_TRANSCRIPTION_CHUNK_SECONDS,
       chunks: transcribed.chunks,
       bodySha256: sha256(body),
     };
@@ -515,11 +463,7 @@ async function dryRun(args: DryRunArgs) {
   const creatorId = history.meetingCreatorId;
   if (!creatorId) throw new Error("Meeting has no meetingCreatorId");
 
-  const transcript = await resolveTranscript(
-    history,
-    args.outDir,
-    args.transcription,
-  );
+  const transcript = await resolveTranscript(history, args.outDir);
   const chatLog = history.chatS3Key
     ? ((await fetchJsonFromS3<ChatEntry[]>(history.chatS3Key)) ?? [])
     : [];

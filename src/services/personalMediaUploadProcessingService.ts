@@ -25,9 +25,8 @@ import type { MeetingProcessingOutcome } from "../types/meetingProcessing";
 import { classifyTranscription } from "../utils/meetingProcessing";
 import {
   PERSONAL_MEDIA_UPLOAD_MAX_PROCESSING_ATTEMPTS,
+  PERSONAL_UPLOAD_TRANSCRIPTION_CHUNK_SECONDS,
   TRANSCRIPTION_FAILURE_PLACEHOLDER,
-  TRANSCRIPTION_FINAL_PASS_CHUNK_SECONDS,
-  TRANSCRIPTION_FINAL_PASS_MAX_REQUEST_BYTES,
 } from "../constants";
 import { getMeetingHistoryService } from "./meetingHistoryService";
 import { personalMediaClaimForJob } from "../db";
@@ -217,11 +216,10 @@ const probeMediaDurationSeconds = (filePath: string, signal?: AbortSignal) =>
     });
   });
 
-export const splitAudioFile = async (
+const splitAudioFile = async (
   inputPath: string,
   outputDir: string,
   signal?: AbortSignal,
-  chunkSeconds = TRANSCRIPTION_FINAL_PASS_CHUNK_SECONDS,
 ) => {
   const pattern = path.join(outputDir, "chunk-%03d.mp3");
   await runFfmpegCommand(
@@ -230,7 +228,7 @@ export const splitAudioFile = async (
         "-f",
         "segment",
         "-segment_time",
-        String(chunkSeconds),
+        String(PERSONAL_UPLOAD_TRANSCRIPTION_CHUNK_SECONDS),
         "-reset_timestamps",
         "1",
       ])
@@ -243,17 +241,12 @@ export const splitAudioFile = async (
   return chunkNames.map((name) => path.join(outputDir, name));
 };
 
-const resolveTranscriptionInputs = async (
+export const resolveTranscriptionInputs = async (
   audioPath: string,
   workDir: string,
   signal?: AbortSignal,
 ) => {
   signal?.throwIfAborted();
-  const audioStat = await fs.stat(audioPath);
-  signal?.throwIfAborted();
-  if (audioStat.size <= TRANSCRIPTION_FINAL_PASS_MAX_REQUEST_BYTES) {
-    return [audioPath];
-  }
   const chunkDir = path.join(workDir, "chunks");
   await fs.mkdir(chunkDir, { recursive: true });
   const chunks = await splitAudioFile(audioPath, chunkDir, signal);
@@ -263,12 +256,7 @@ const resolveTranscriptionInputs = async (
   return chunks;
 };
 
-/** A null language omits the hint so the provider detects the spoken language. */
-const transcribeAudioFile = async (
-  filePath: string,
-  signal: AbortSignal | undefined,
-  language: string | null,
-) => {
+const transcribeAudioFile = async (filePath: string, signal?: AbortSignal) => {
   signal?.throwIfAborted();
   const modelChoice = getModelChoice("transcription");
   const openAIClient = createOpenAIClient({
@@ -280,7 +268,6 @@ const transcribeAudioFile = async (
     const request: TranscriptionCreateParamsNonStreaming<"json"> = {
       file: input,
       model: modelChoice.model,
-      ...(language === null ? {} : { language }),
       temperature: 0,
       response_format: "json",
     };
@@ -297,14 +284,13 @@ export const transcribeAudioFiles = async (
   filePaths: string[],
   acceptPartial: boolean,
   signal?: AbortSignal,
-  language: string | null = "en",
 ): Promise<PersonalTranscriptionResult> => {
   const chunks: string[] = [];
   let failedChunks = 0;
   for (const filePath of filePaths) {
     let transcript: string;
     try {
-      transcript = await transcribeAudioFile(filePath, signal, language);
+      transcript = await transcribeAudioFile(filePath, signal);
     } catch (error) {
       signal?.throwIfAborted();
       if (!acceptPartial) throw error;

@@ -116,6 +116,9 @@ jobs:
       - name: Install dependencies
         run: bash scripts/ci-install-dependencies.sh
 
+      - name: Install FFmpeg for conversion fixtures
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+
       - name: Run Jest
         run: yarn test
 
@@ -247,7 +250,8 @@ jobs:
       - name: Build Docker image
         run: |
           docker build -t meeting-notes-bot-ci .
-          docker run --rm meeting-notes-bot-ci ls -la dist/index.js
+          docker run --rm --network none --cpus 0.5 --memory 1g meeting-notes-bot-ci node scripts/speech-detection/runtime-smoke.mjs --compiled
+          docker run --rm --network none meeting-notes-bot-ci sh -c 'test ! -e .cache'
 
   e2e:
     name: E2E Tests

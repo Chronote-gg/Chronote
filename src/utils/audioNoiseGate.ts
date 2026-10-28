@@ -1,6 +1,13 @@
 import {
   BYTES_PER_SAMPLE,
   CHANNELS,
+  NOISE_GATE_APPLY_TO_FAST,
+  NOISE_GATE_APPLY_TO_SLOW,
+  NOISE_GATE_ENABLED,
+  NOISE_GATE_MIN_ACTIVE_WINDOWS,
+  NOISE_GATE_MIN_PEAK_ABOVE_NOISE_DB,
+  NOISE_GATE_PEAK_DBFS,
+  NOISE_GATE_WINDOW_MS,
   NOISE_GATE_NOISE_FLOOR_PERCENTILE,
   RECORD_SAMPLE_RATE,
 } from "../constants";
@@ -8,6 +15,22 @@ import type { MeetingRuntimeConfig } from "../config/types";
 
 export type NoiseGateConfig =
   MeetingRuntimeConfig["transcription"]["noiseGate"];
+
+export const DEFAULT_NOISE_GATE_CONFIG: NoiseGateConfig = {
+  enabled: NOISE_GATE_ENABLED,
+  windowMs: NOISE_GATE_WINDOW_MS,
+  peakDbfs: NOISE_GATE_PEAK_DBFS,
+  minActiveWindows: NOISE_GATE_MIN_ACTIVE_WINDOWS,
+  minPeakAboveNoiseDb: NOISE_GATE_MIN_PEAK_ABOVE_NOISE_DB,
+  applyToFast: NOISE_GATE_APPLY_TO_FAST,
+  applyToSlow: NOISE_GATE_APPLY_TO_SLOW,
+};
+
+export const isNoiseGateEnabled = (
+  config: NoiseGateConfig,
+  mode: "fast" | "slow",
+) =>
+  config.enabled && (mode === "fast" ? config.applyToFast : config.applyToSlow);
 
 export type NoiseGateMetrics = {
   windowMs: number;

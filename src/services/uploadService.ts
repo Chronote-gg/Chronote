@@ -1,3 +1,4 @@
+import { isAudioFileSpeechRejected } from "../utils/audioTranscript";
 import { createHash } from "node:crypto";
 import {
   isFixture,
@@ -66,14 +67,16 @@ function buildTranscriptJson(
   const resolveSegmentText = (
     file: MeetingData["audioData"]["audioFiles"][0],
   ) =>
-    file.finalPassTranscript !== undefined
-      ? file.finalPassTranscript
-      : (file.coalescedTranscript ??
-        file.slowTranscript ??
-        file.transcript ??
-        (file.fastTranscripts && file.fastTranscripts.length > 0
-          ? file.fastTranscripts[file.fastTranscripts.length - 1].text
-          : undefined));
+    isAudioFileSpeechRejected(file)
+      ? ""
+      : file.finalPassTranscript !== undefined
+        ? file.finalPassTranscript
+        : (file.coalescedTranscript ??
+          file.slowTranscript ??
+          file.transcript ??
+          (file.fastTranscripts && file.fastTranscripts.length > 0
+            ? file.fastTranscripts[file.fastTranscripts.length - 1].text
+            : undefined));
   const builtSegments =
     segments ??
     [
