@@ -235,6 +235,7 @@ Optional Windows helper (prints loaded env, supports `-Mock` / `-SkipDocker`):
 - Stripe 23 uses API `2026-09-30.endive`; billing-cycle anchor requests use `{ type: "now" }`. Langfuse 6 records trace input/output on the root observation.
 - Dependabot proposes one cross-ecosystem version-update PR each Monday at 09:00 UTC, including desktop npm and Rust dependencies. Security updates are grouped within each ecosystem and may arrive outside that schedule.
 - Consolidate outstanding dependency PRs on current master, retain intentional compatibility ignores and security resolutions, run the normal quality gates, and close superseded PRs only after the replacement is published with their links.
+- Audit both npm lockfiles and the desktop Cargo lockfile during maintenance; direct version bumps can leave stale security resolutions in place. Refresh fixed-version floors, verify compatibility, and report unresolved advisories rather than dismissing them. See `docs/engineering/dependency-security.md`.
 
 ## Checks
 

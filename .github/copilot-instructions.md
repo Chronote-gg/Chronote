@@ -164,6 +164,8 @@ This file provides Copilot review context. AGENTS.md remains the source of truth
 
 ## Checks
 
+- Dependency maintenance includes audits of both npm lockfiles and the desktop Cargo lockfile. Check security resolutions against current advisory fixes; a direct dependency update alone does not prove a vulnerable transitive version is gone. See `docs/engineering/dependency-security.md` for tracked upstream limits.
+
 - Local full gate: `yarn run check` (lint --fix, prettier --write, then in parallel test, build:all, docs:check, code:stats, prompts:check).
 - CI-parity local gate: `yarn run check:ci` (lint:check, prettier:check, markdownlint:check, test, build:all, docs:check, test:e2e, checkov, code:stats, prompts:check, docker:build). Avoid `yarn check` (built-in Yarn integrity command).
 - CI runs the same set as `check:ci` (see `.github/workflows/ci.yml`).
