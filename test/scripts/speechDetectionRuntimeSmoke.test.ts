@@ -10,6 +10,7 @@ import {
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { z } from "zod";
+import { withoutNativePciWarning } from "../helpers/nativeRuntimeDiagnostics";
 
 const root = path.resolve(__dirname, "../..");
 const script = path.join(root, "scripts/speech-detection/runtime-smoke.mjs");
@@ -105,7 +106,7 @@ describe("speech detection runtime smoke CLI", () => {
 
   it("runs real bundled inference and validates silence and recurrent state", () => {
     const result = run(model);
-    expect(result.stderr).toBe("");
+    expect(withoutNativePciWarning(result.stderr)).toBe("");
     expect(result.exitCode).toBe(0);
     expect(result.inferenceResults).toHaveLength(1);
     const output = z

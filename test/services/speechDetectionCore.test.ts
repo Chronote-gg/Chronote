@@ -12,6 +12,7 @@ import { createHash } from "node:crypto";
 import { z } from "zod";
 import manifest from "../fixtures/speech-detection/manifest.json";
 import pythonReference from "../fixtures/speech-detection/python-reference.json";
+import { withoutNativePciWarning } from "../helpers/nativeRuntimeDiagnostics";
 
 const wavFromSamples = (samples: number[], channels = 1): Buffer => {
   const wav = Buffer.alloc(44 + samples.length * 2);
@@ -577,7 +578,7 @@ describe("real bundled model synthetic controls", () => {
       encoding: "utf8",
       timeout: 60000,
     });
-    expect(run.stderr).toBe("");
+    expect(withoutNativePciWarning(run.stderr)).toBe("");
     expect(run.status).toBe(0);
     const outputs = z
       .array(

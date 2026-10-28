@@ -116,6 +116,9 @@ jobs:
       - name: Install dependencies
         run: bash scripts/ci-install-dependencies.sh
 
+      - name: Install FFmpeg for conversion fixtures
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+
       - name: Run Jest
         run: yarn test
 
