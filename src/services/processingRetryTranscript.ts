@@ -44,8 +44,8 @@ export async function transcribeMixedRecording(
   }
 }
 
-function folderOf(key: string) {
-  return key.slice(0, key.lastIndexOf("/") + 1);
+function folderOf(key: string | undefined) {
+  return key?.slice(0, key.lastIndexOf("/") + 1);
 }
 
 export function retryTranscriptKey(
@@ -54,11 +54,13 @@ export function retryTranscriptKey(
   },
   jobId: string,
 ): string {
-  const folder =
-    history.checkpoint?.artifactFolder ??
-    (history.audioS3Key && folderOf(history.audioS3Key)) ??
-    (history.transcriptS3Key && folderOf(history.transcriptS3Key));
-  if (folder === undefined)
+  // An empty folder would put the transcript at the bucket root, so it counts as missing.
+  const folder = [
+    history.checkpoint?.artifactFolder,
+    folderOf(history.audioS3Key),
+    folderOf(history.transcriptS3Key),
+  ].find(Boolean);
+  if (!folder)
     throw new Error("Meeting has no artifact folder for a retry transcript");
   return `${folder}transcript-retry-${jobId}.json`;
 }

@@ -45,7 +45,10 @@ import {
 import { createOpenAIClient } from "../../src/services/openaiClient";
 import { buildMeetingTimelineEventsFromHistory } from "../../src/services/meetingTimelineService";
 import { getNotesLatencyProperties } from "../../src/observability/meetingNotesLatency";
-import { recoveryFixture } from "./meetingRecoveryFixtures";
+import {
+  recoveryFixture,
+  savedTranscriptionPrompt,
+} from "./meetingRecoveryFixtures";
 async function fixture(
   text?: string,
   options?: Parameters<typeof recoveryFixture>[1],
@@ -324,18 +327,7 @@ test.each(["Earlier acknowledged discussion.", "Thanks.", ""])(
       transcript: (saved) => {
         if (saved.entries[0]) saved.entries[0].revision = 2;
       },
-      context: (saved) => {
-        saved.prompts.transcription = {
-          availability: "available",
-          value: {
-            name: "original",
-            type: "text",
-            label: "original",
-            version: 1,
-            template: "Saved transcription prompt",
-          },
-        };
-      },
+      context: savedTranscriptionPrompt,
       artifacts: [
         {
           kind: "audio",

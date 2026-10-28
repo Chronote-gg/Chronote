@@ -35,6 +35,21 @@ export function pcmArtifact(
     checksumSha256: createHash("sha256").update(bytes).digest("hex"),
   };
 }
+/** Saves the text transcription prompt that recovery re-transcription requires. */
+export function savedTranscriptionPrompt(
+  saved: ReturnType<typeof generationContextSchema.parse>,
+) {
+  saved.prompts.transcription = {
+    availability: "available",
+    value: {
+      name: "original",
+      type: "text",
+      label: "original",
+      version: 1,
+      template: "Saved transcription prompt",
+    },
+  };
+}
 export async function recoveryFixture(
   text = "We agreed to finish the release testing tomorrow.",
   options: {

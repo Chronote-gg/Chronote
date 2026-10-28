@@ -37,7 +37,11 @@ import {
 } from "../../src/services/processingRetryTranscript";
 import { resetMockStore } from "../../src/repositories/mockStore";
 import type { TranscriptPayload } from "../../src/types/transcript";
-import { pcmArtifact, recoveryFixture } from "./meetingRecoveryFixtures";
+import {
+  pcmArtifact,
+  recoveryFixture,
+  savedTranscriptionPrompt,
+} from "./meetingRecoveryFixtures";
 
 const signal = new AbortController().signal;
 const run = <T>(effect: () => Promise<T>) => effect();
@@ -55,18 +59,7 @@ const savedSpan = {
 
 async function checkpointContent() {
   const f = await recoveryFixture("Saved words.", {
-    context: (saved) => {
-      saved.prompts.transcription = {
-        availability: "available",
-        value: {
-          name: "original",
-          type: "text",
-          label: "original",
-          version: 1,
-          template: "Saved transcription prompt",
-        },
-      };
-    },
+    context: savedTranscriptionPrompt,
     artifacts: [
       pcmArtifact("user:123", 0, Buffer.alloc(3840, 1), [
         { startOffsetMs: 0, durationMs: 20 },
@@ -221,13 +214,18 @@ test.each([
     { transcriptS3Key: "p/g/c_m_t/transcript.json" },
     "p/g/c_m_t/transcript-retry-job-1.json",
   ],
+  [
+    { audioS3Key: "audio.mp3", transcriptS3Key: "p/g/c_m_t/transcript.json" },
+    "p/g/c_m_t/transcript-retry-job-1.json",
+  ],
 ])("retry transcript key for %j", (row, key) =>
   expect(retryTranscriptKey(row, "job-1")).toBe(key),
 );
 
-test("a meeting without any artifact location has no retry transcript key", () => {
-  expect(() => retryTranscriptKey({}, "job-1")).toThrow();
-});
+test.each([{}, { audioS3Key: "" }, { audioS3Key: "audio.mp3" }])(
+  "no retry transcript key without a folder: %j",
+  (row) => expect(() => retryTranscriptKey(row, "job-1")).toThrow(),
+);
 
 test("storing the same transcript twice succeeds; a different body at the key throws", async () => {
   const key = "p/g/c_m_t/transcript-retry-job-1.json";
