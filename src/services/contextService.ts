@@ -21,7 +21,19 @@ export interface MeetingContextData {
   dictionaryBudgets?: DictionaryBudgets;
 }
 
-function initialMeetingContext(meeting: MeetingData): MeetingContextData {
+/** A stored meeting can supply these too, so context is not tied to a live session. */
+export type MeetingContextSource = Pick<
+  MeetingData,
+  | "guildId"
+  | "meetingContext"
+  | "dictionaryEntries"
+  | "runtimeConfig"
+  | "reservation"
+> & { voiceChannel: Pick<MeetingData["voiceChannel"], "id"> };
+
+function initialMeetingContext(
+  meeting: MeetingContextSource,
+): MeetingContextData {
   const contextData: MeetingContextData = {};
 
   // Include meeting-specific context if provided
@@ -48,7 +60,7 @@ function initialMeetingContext(meeting: MeetingData): MeetingContextData {
  * @returns Complete context data for the meeting
  */
 export async function collectMeetingContext(
-  meeting: MeetingData,
+  meeting: MeetingContextSource,
   includeMemory: boolean = false,
   options: {
     signal?: AbortSignal;
