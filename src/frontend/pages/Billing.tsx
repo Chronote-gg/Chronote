@@ -1,4 +1,7 @@
 import BillingRenewalGrace from "../components/BillingRenewalGrace";
+import CheckoutRecovery, {
+  IntroOfferAvailability,
+} from "../components/CheckoutRecovery";
 import { useBillingRenewalRecovery } from "../hooks/useBillingRenewalRecovery";
 import { useBillingChange } from "../hooks/useBillingChange";
 import BillingChangePanel from "../components/BillingChangePanel";
@@ -649,24 +652,6 @@ function BillingPlanCards({
   );
 }
 
-function IntroOfferAvailability({ offer }: { offer: BasicIntroOffer }) {
-  return (
-    <>
-      {offer.status === "unavailable" && (
-        <Alert title="Introductory pricing unavailable" color="yellow">
-          Refresh offers before starting Basic checkout.
-        </Alert>
-      )}
-      {offer.status === "expired" && (
-        <Alert title="Introductory enrollment ended" color="gray">
-          The regular Basic price is shown. Choose a plan to continue at that
-          price.
-        </Alert>
-      )}
-    </>
-  );
-}
-
 function expandedPlanSelection(data: BillingData, showPlans: boolean): boolean {
   return (
     data.tier === "free" ||
@@ -1170,43 +1155,6 @@ function useBillingOfferExposure({
   return displayedOffer;
 }
 
-function BillingCheckoutRecovery({
-  offer,
-  failedCheckout,
-  busy,
-  retryCheckout,
-  refreshOffers,
-}: {
-  offer: BasicIntroOffer;
-  failedCheckout: CheckoutRequest | null;
-  busy: boolean;
-  retryCheckout: () => void;
-  refreshOffers: () => void;
-}) {
-  return (
-    <>
-      {(offer.status === "unavailable" || failedCheckout) && (
-        <Stack gap="xs">
-          <Text size="sm">
-            A previous checkout may still be pending. Retry keeps its original
-            terms. Refreshing does not cancel it or change its terms.
-          </Text>
-          <Group>
-            {failedCheckout && (
-              <Button disabled={busy} onClick={retryCheckout}>
-                Retry checkout
-              </Button>
-            )}
-            <Button disabled={busy} variant="light" onClick={refreshOffers}>
-              Refresh offers
-            </Button>
-          </Group>
-        </Stack>
-      )}
-    </>
-  );
-}
-
 function canSelectBillingChange(input: {
   tier: PlanTier;
   serverId: string | null;
@@ -1571,12 +1519,13 @@ export function Billing() {
           Boolean(change.pending),
         ].some(Boolean)}
       />
-      <BillingCheckoutRecovery
+      <CheckoutRecovery
         offer={offer}
-        failedCheckout={failedCheckout}
-        busy={busy}
-        retryCheckout={retryCheckout}
-        refreshOffers={refreshOffers}
+        checkoutFailed={Boolean(failedCheckout)}
+        retryDisabled={busy}
+        refreshDisabled={busy}
+        onRetry={retryCheckout}
+        onRefresh={refreshOffers}
       />
     </BillingShell>
   );
