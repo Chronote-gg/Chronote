@@ -187,11 +187,15 @@ test("focus checks before discovery and visible live polling stops at a terminal
   const initialResponse = new Promise<void>((resolve) => {
     releaseInitial = resolve;
   });
+  const pinnedResponse = Promise.withResolvers<void>();
   await mockFirstMeetingRequests(page, {
     "servers.listEligible": () => guilds,
-    "meetings.firstMeeting": async () => {
+    "meetings.firstMeeting": async (url) => {
       await initialResponse;
       requests += 1;
+      if (url.searchParams.get("input")?.includes(historyId)) {
+        await pinnedResponse.promise;
+      }
       return state;
     },
   });
@@ -226,6 +230,10 @@ test("focus checks before discovery and visible live polling stops at a terminal
   await expect(page.getByText("Recording in progress")).toBeVisible();
   await expect(page).toHaveURL(/historyId=/);
   await expect.poll(() => requests).toBeGreaterThanOrEqual(beforeFocus + 2);
+  await expect(page.getByText("Checking meeting status...")).toBeVisible();
+  // Model a pinned response that finishes after the browser's next event turn.
+  setTimeout(() => pinnedResponse.resolve(), 100);
+  await expect(page.getByText("Checking meeting status...")).toBeHidden();
   const whileRecording = requests;
   await page.clock.fastForward(10_000);
   await expect.poll(() => requests).toBeGreaterThan(whileRecording);

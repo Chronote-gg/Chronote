@@ -1,8 +1,7 @@
+import { transcriptionLanguageParam } from "../config/transcriptionLanguage";
 import { liveFinalPassInput } from "./liveTranscriptionInput";
 import { finalPassSettingsSchema } from "../types/recordingContent";
-
 import type { FinalPassSettings } from "../types/recordingContent";
-
 import { withTranscriptionInput } from "./transcriptionInput";
 import { promises as fs } from "node:fs";
 import path from "node:path";
@@ -13,7 +12,6 @@ import type { AudioFileData } from "../types/audio";
 import type { MeetingData } from "../types/meeting-data";
 import { chat, type ChatMeetingInput } from "./openaiChatService";
 import { createOpenAIClient } from "./openaiClient";
-
 import {
   type FinalPassSegmentInput,
   getTranscriptionFinalPassPrompt,
@@ -40,6 +38,7 @@ export type FinalPassContent = ChatMeetingInput & {
   settings: FinalPassSettings;
   langfuseParentSpanContext?: MeetingData["langfuseParentSpanContext"];
   transcriptionModel: string;
+  transcriptionLanguage: import("../config/transcriptionLanguage").TranscriptionLanguage;
   reconcileModel: import("../types/recordingContent").SavedRecordingSettings["models"]["notes"];
   prompt(): ReturnType<typeof getTranscriptionPrompt>;
   finalPassPrompt(
@@ -808,7 +807,7 @@ const defaultDependencies: FinalPassDependencies = {
       "file"
     > = {
       model: modelChoice.model,
-      language: "en",
+      ...transcriptionLanguageParam(input.meeting.transcriptionLanguage),
       temperature: 0,
       response_format: "json",
       include: ["logprobs"],
