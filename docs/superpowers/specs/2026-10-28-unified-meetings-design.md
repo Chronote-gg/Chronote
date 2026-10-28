@@ -2,9 +2,11 @@
 
 ## Outcome and review decision
 
+Approved by BASIC on October 28, 2026. The approval covers this design and preparation of an implementation plan, not a production inventory, repair or deployment.
+
 Replace the separate My Meetings and server Library destinations with one Meetings page. People should find every meeting they can access, narrow the list by Discord server or personal recording, and open notes without learning two libraries. This also puts first-meeting guidance in the place new users actually land.
 
-The user approved the clickable prototype, including its visible server icons in the left sidebar and the checkbox "Only meetings I attended." This document proposes the production behavior beneath that layout. Review the permission, attendance, empty-state and link rules before implementation planning. No product implementation or deployment is authorized by this document alone.
+The user approved the clickable prototype, including its visible server icons in the left sidebar and the checkbox "Only meetings I attended." This document records the approved production behavior beneath that layout, including permission, attendance, empty-state and link rules. No product implementation or deployment is authorized by this document alone.
 
 Recommended scope is one UI and one shared discovery path using the existing meeting authorization and detail components. It includes discovery pointers for personal recordings shared with a whole server. No new dependencies, DynamoDB tables or physical indexes, permission grants, recording commands or billing changes are proposed. Historical pointer repair requires a separately reviewed and authorized production metadata operation before full activation.
 
@@ -23,7 +25,7 @@ The prototype uses example data. Its results, counts and working buttons do not 
 
 Use the existing cross-server discovery service behind `meetings.myList`, extend its internal filtering where necessary, and reuse the existing meeting access checks and library detail components. Keep existing MCP input defaults and its legacy attended mode compatible. The portal sends explicit accessible mode and a separate attendance filter.
 
-Keeping both current list implementations behind a new sidebar would retain different defaults, empty states and detail behavior. Rewriting the authorization system would expand the work beyond navigation. The shared-query approach is the single recommended path. The UI direction is approved; the backend details below remain proposals for this review.
+Keeping both current list implementations behind a new sidebar would retain different defaults, empty states and detail behavior. Rewriting the authorization system would expand the work beyond navigation. The shared-query approach is the single recommended path. The UI direction and backend rules below are approved for implementation planning.
 
 ## What the user sees
 
@@ -112,7 +114,7 @@ The sidebar source list may show eligible server metadata from the existing auth
 
 ### Attendance means attendance
 
-Proposed interpretation: use stored participant IDs or legacy attendee mentions. An owner, creator, recording trigger or direct-share recipient is not an attendee merely because MeetingUserIndex contains a pointer. A personal upload without attendance metadata remains available in All meetings and Personal recordings, but does not match the attendance checkbox. This is a stricter portal filter, not a change to the shared access policy or legacy MCP attended semantics.
+Approved interpretation: use stored participant IDs or legacy attendee mentions. An owner, creator, recording trigger or direct-share recipient is not an attendee merely because MeetingUserIndex contains a pointer. A personal upload without attendance metadata remains available in All meetings and Personal recordings, but does not match the attendance checkbox. This is a stricter portal filter, not a change to the shared access policy or legacy MCP attended semantics.
 
 Tests must pin this distinction. In particular, share-only records must not appear as attended, and checking attendance must never return a record the viewer otherwise cannot access. The portal first establishes accessible results, then intersects attendance.
 
@@ -124,7 +126,7 @@ The existing accessible query gathers guild ranges but reads MeetingUserIndex on
 
 Current guild-range queries do not discover personal recordings in another owner's personal partition, and user-index writes do not create a pointer for a guild grant. Direct access understands those grants, but discovery needs an explicit path.
 
-Proposed builder decision: extend the existing MeetingUserIndex with namespaced guild-recipient pointers for personal guild shares. Keep raw-user partitions and the new guild-recipient namespace disjoint, including for non-snowflake mock user IDs. Query only guild-recipient partitions belonging to the authenticated viewer's verified current guild memberships. Merge those candidates into All meetings and Personal recordings, then fetch each canonical record and recheck its current grant and membership before returning anything. The selected-server source continues to mean recordings belonging to that server, not these personal recordings.
+Approved builder decision: extend the existing MeetingUserIndex with namespaced guild-recipient pointers for personal guild shares. Keep raw-user partitions and the new guild-recipient namespace disjoint, including for non-snowflake mock user IDs. Query only guild-recipient partitions belonging to the authenticated viewer's verified current guild memberships. Merge those candidates into All meetings and Personal recordings, then fetch each canonical record and recheck its current grant and membership before returning anything. The selected-server source continues to mean recordings belonging to that server, not these personal recordings.
 
 Update the existing write/replace index path used when meeting access grants change. Revocation removes obsolete pointers, but authorization must still deny access if stale deletion lags. Missing pointer writes must be observable and repairable, rather than silently claiming complete discovery. Do not broadcast copies to every guild member or enumerate all personal partitions during a portal request. A pointer contains only the existing index's lookup metadata, not notes or transcripts. Existing raw-user and MCP callers remain compatible.
 
@@ -134,7 +136,7 @@ Use explicit discriminated source selection: all, personal, or one guild. Resolv
 
 Deduplicate by the stored guild/record key, then use stable newest-first ordering with a deterministic key tie-break. Bind continuation to user, source, date range, attendance and archive/tag filters. An old cursor cannot change the query's source or access. Reset pagination when any of these change. Keep the query's upper time boundary stable while loading subsequent pages.
 
-Do not stop discovery merely because the first bounded batch contains inaccessible or nonmatching records. Continue using existing DynamoDB pagination in bounded work batches, exposing an opaque continuation when unfinished. A scan limit is a work budget, not proof of exhaustion. Preserve per-source progress so inaccessible prefixes and equal timestamps cannot skip visible older rows. Do not silently convert partial source/index failures into a complete empty result. No table-wide backfill or new index is included.
+Do not stop discovery merely because the first bounded batch contains inaccessible or nonmatching records. Continue using existing DynamoDB pagination in bounded work batches, exposing an opaque continuation when unfinished. A scan limit is a work budget, not proof of exhaustion. Preserve per-source progress so inaccessible prefixes and equal timestamps cannot skip visible older rows. Do not silently convert partial source/index failures into a complete empty result. No unbounded request-time scan or new physical index is included. The historical guild-share metadata repair remains a separate authorized operation.
 
 Query caches include the signed-in user and all selection parameters. Changing source clears old rows immediately; late responses from a previous source or user must not populate the new view. Clear meeting-specific cached content on logout or access denial through the existing query-cache mechanisms.
 
