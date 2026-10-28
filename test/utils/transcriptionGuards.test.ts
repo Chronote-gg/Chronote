@@ -24,6 +24,18 @@ const hardSilenceMetrics: NoiseGateMetrics = {
 };
 
 describe("applyTranscriptionGuards", () => {
+  test("does not publish punctuation-only recognizer output", () => {
+    const result = applyTranscriptionGuards({
+      transcription: "###",
+      suppressionEnabled: true,
+      promptEchoEnabled: true,
+      promptText: "Glossary context",
+    });
+    expect(result.text).toBe("");
+    expect(result.suppressed).toBe(true);
+    expect(result.flags).toContain("suppressed_punctuation_only");
+  });
+
   test("suppresses quiet low-confidence transcriptions", () => {
     const result = applyTranscriptionGuards({
       transcription: "I think we should start with the Vket event.",

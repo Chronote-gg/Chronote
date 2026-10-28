@@ -1,4 +1,8 @@
 import type {
+  SpeechAdmission,
+  SpeechCoverage,
+} from "../services/speechDetectionTypes";
+import type {
   TranscriptCorrespondence,
   PcmSpan,
 } from "./transcriptCorrespondence";
@@ -15,6 +19,7 @@ export interface AudioSnippet {
   fastRevision?: number;
   fastTranscribed?: boolean;
   lastFastTranscriptBytes?: number;
+  lastFastSpeechCoverage?: SpeechCoverage;
   interjectionTriggered?: boolean;
   interjectionForced?: boolean;
 }
@@ -33,7 +38,8 @@ export type CoalesceMeta = {
 };
 
 export type SnippetTranscriptionResult =
-  | { status: "succeeded"; text: string }
+  | { status: "succeeded"; text: string; admission: SpeechAdmission }
+  | { status: "skipped"; reason: "non_speech"; coverage: SpeechCoverage }
   | {
       status: "failed";
       reason: "transcription_error" | "conversion_error";
@@ -68,6 +74,7 @@ export interface AudioFileData {
   coalescedTranscript?: string;
   coalesceMeta?: CoalesceMeta;
   transcriptionFailed?: boolean;
+  finalSpeechRejection?: SpeechCoverage;
   source?: AudioSegmentSource;
   messageId?: string;
   processing: boolean;

@@ -1,4 +1,6 @@
 /** @jest-environment node */
+import { expectNoSpeechComparisonMetrics } from "../../testSupport/speechComparisonMetrics";
+import { metricsRegistry } from "../../metrics";
 import { UnresolvedNotionMutation } from "../notionOperationLifetime";
 import { maybeAutoExportCompletedMeeting } from "../notionAutomationService";
 import { jest } from "@jest/globals";
@@ -8,6 +10,7 @@ import {
   buildJob,
   buildDesktopJob,
   buildSegment,
+  heldOperation,
 } from "../../testSupport/personalMediaUploadFixtures";
 import type {
   PersonalMediaUploadJobRecord,
@@ -239,24 +242,7 @@ const replaceSegment = (next: PersonalRecordingSegmentRecord) => {
   return next;
 };
 
-function heldOperation() {
-  let release!: () => void;
-  let enter!: () => void;
-  const started = new Promise<void>((resolve) => {
-    enter = resolve;
-  });
-  const waiting = new Promise<void>((resolve) => {
-    release = resolve;
-  });
-  return {
-    started,
-    release,
-    wait: async () => {
-      enter();
-      await waiting;
-    },
-  };
-}
+expectNoSpeechComparisonMetrics(metricsRegistry);
 
 function expectEmptyUploadWithoutNotes() {
   expect(mockCreateResponse).not.toHaveBeenCalled();

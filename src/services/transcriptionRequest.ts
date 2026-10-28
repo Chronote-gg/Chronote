@@ -37,6 +37,7 @@ type RequestInput = {
   ledger: ReturnType<typeof createTranscriptionAttemptLedger>;
   clientOptions?: Parameters<typeof createOpenAIClient>[0];
   transport?: Pick<ClientOptions, "fetch">;
+  onSdkInvocation?: () => void;
 };
 
 export function createTranscriptionFailureScope() {
@@ -136,6 +137,7 @@ async function runAttempt(input: RequestInput): Promise<Transcription> {
     });
     const result = await withTranscriptionInput(input.file, async (file) => {
       signal.throwIfAborted();
+      input.onSdkInvocation?.();
       attempt.markSdkInvocation();
       const acknowledge = input.observeGeneration?.(
         input.generationOperation ?? "transcription",

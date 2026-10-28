@@ -1,3 +1,5 @@
+import type { SpeechDetectionMode } from "./speechDetection";
+
 export type ConfigScope = "global" | "server" | "channel" | "user" | "meeting";
 export type ConfigValueType = "boolean" | "string" | "number" | "select";
 export type ConfigTier = "free" | "basic" | "pro";
@@ -98,6 +100,7 @@ export type ResolvedConfigSnapshot = {
 
 export type MeetingRuntimeConfig = {
   transcription: {
+    speechDetectionMode: SpeechDetectionMode;
     suppressionEnabled: boolean;
     suppressionHardSilenceDbfs: number;
     suppressionRateMaxSeconds: number;
