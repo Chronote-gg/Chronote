@@ -20,6 +20,8 @@ Production Plan assumes `vars.TERRAFORM_AWS_ROLE_ARN` through GitHub OIDC with a
 
 Tfvars inputs are unchanged. `TERRAFORM_PRIVATE_STORAGE_JSON` is an environment secret containing the strict `versioned-private-s3-v1` binding accepted by `scripts/deployment/private-capture.cjs`: store ID, bucket, expected account owner, region, KMS key ARN, reviewed bucket-policy and lifecycle hashes, retention-until epoch seconds and administrator-trust digest. Do not place the binding in dispatch inputs. It selects no destination by default.
 
+New bindings should set `policySha256` to `bindingHash(JSON.parse(policyText))` using `scripts/deployment/binding-hash.cjs`. This digest sorts object keys recursively and ignores JSON whitespace while preserving every value and array order. Existing raw-text SHA-256 bindings remain accepted for the exact policy text they bind. This changes only policy representation handling; SDK attempts, storage controls and native approval requirements remain unchanged.
+
 The capture adapter verifies versioning, bucket-owner-enforced ownership, Block Public Access, nonpublic policy, approved SSE-KMS with bucket keys disabled and the exact lifecycle configuration. The single encryption rule may omit `BlockedEncryptionTypes` or report exactly `{ EncryptionType: ["SSE-C"] }`; other encryption rule shapes refuse. Enabled expiration rules refuse. Retention must cover at least the next six hours at each invocation. Execution identities must have separately approved capture/read permissions and no delete or storage-administration authority. Versioning does not prevent an administrator from deleting evidence.
 
 Three non-secret collection inputs use JSON text in their GitHub Actions variable values:

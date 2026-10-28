@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { inferRouterInputs } from "@trpc/server";
 import type { AppRouter } from "../../trpc/router";
 import type { BasicIntroOffer } from "../../types/pricing";
+import { showBillingError } from "../utils/billingErrorNotification";
 
 type CheckoutAttempt = {
   identity: string;
@@ -70,11 +71,27 @@ export function useCheckoutAttempt(
       attemptRef.current === attempt,
     [],
   );
+  const retry = useCallback(
+    async (
+      submit: (request: CheckoutAttempt["request"]) => Promise<{ url: string }>,
+    ) => {
+      const attempt = attemptRef.current;
+      if (!attempt || !isCurrent(attempt)) return;
+      try {
+        const body = await submit(attempt.request);
+        if (isCurrent(attempt)) window.location.href = body.url;
+      } catch (error) {
+        if (isCurrent(attempt)) showBillingError(error, "checkout");
+      }
+    },
+    [isCurrent],
+  );
   return {
     attempt: saved?.identity === identity ? saved : null,
     refreshing: refreshing || Boolean(saved && saved.identity !== identity),
     begin,
     isCurrent,
     refresh,
+    retry,
   };
 }

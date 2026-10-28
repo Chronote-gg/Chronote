@@ -5,6 +5,127 @@ import { createPrivateCapture } from "../../scripts/deployment/private-capture.c
 import { privateCaptureFixture as fixture } from "../fixtures/deployment/privateCapture.js";
 import { digest } from "../../scripts/deployment/collector-payload.cjs";
 
+const policy = {
+  Statement: [
+    {
+      Action: ["s3:PutObject", "s3:GetObjectVersion"],
+      Condition: {
+        Bool: { "aws:SecureTransport": "true" },
+        StringEquals: {
+          "aws:PrincipalAccount": "123456789012",
+          "s3:x-amz-server-side-encryption": "aws:kms",
+        },
+      },
+      Effect: "Allow",
+      Principal: { AWS: "arn:aws:iam::123456789012:root" },
+      Resource: ["arn:aws:s3:::private-synthetic/*"],
+    },
+  ],
+  Version: "2012-10-17",
+};
+const canonicalPolicy = JSON.stringify(policy);
+const reorderedPolicy = JSON.stringify({
+  Version: policy.Version,
+  Statement: [
+    {
+      ...policy.Statement[0],
+      Condition: {
+        StringEquals: {
+          "s3:x-amz-server-side-encryption": "aws:kms",
+          "aws:PrincipalAccount": "123456789012",
+        },
+        Bool: { "aws:SecureTransport": "true" },
+      },
+    },
+  ],
+});
+function policyFixture(text, sha256 = digest(canonicalPolicy)) {
+  const f = fixture(),
+    send = f.client.send;
+  f.binding.policySha256 = sha256;
+  f.client.send = async (command) => {
+    const result = await send(command);
+    if (command.constructor.name === "GetBucketPolicyCommand")
+      result.Policy = text;
+    return result;
+  };
+  return f;
+}
+
+test.each([reorderedPolicy, JSON.stringify(policy, null, 2)])(
+  "canonical policy binding permits representation changes through capture and readback (%#)",
+  async (text) => {
+    const f = policyFixture(text),
+      store = createPrivateCapture(f.options),
+      value = { evidence: "synthetic" };
+    await expect(store.checkReady()).resolves.toBeUndefined();
+    const ref = await store.capture(value);
+    expect(await store.readCapture(ref)).toEqual(value);
+    expect(f.objects.size).toBe(1);
+  },
+);
+
+test("legacy raw policy binding preserves exact noncanonical matching", async () => {
+  const f = policyFixture(reorderedPolicy, digest(reorderedPolicy)),
+    store = createPrivateCapture(f.options),
+    value = { legacy: true };
+  expect(await store.readCapture(await store.capture(value))).toEqual(value);
+  const changed = policyFixture(canonicalPolicy, digest(reorderedPolicy));
+  await expect(
+    createPrivateCapture(changed.options).capture(value),
+  ).rejects.toThrow();
+  expect(changed.objects.size).toBe(0);
+});
+
+test.each([undefined, false, true, null, "false", 0])(
+  "private exact-version readback validates native bucket-key metadata %p",
+  async (bucketKey) => {
+    const f = fixture(),
+      send = f.client.send;
+    f.client.send = async (command) => {
+      const result = await send(command);
+      if (command.constructor.name === "GetObjectCommand") {
+        delete result.BucketKeyEnabled;
+        if (bucketKey !== undefined) result.BucketKeyEnabled = bucketKey;
+      }
+      return result;
+    };
+    const operation = createPrivateCapture(f.options).capture({
+      synthetic: true,
+    });
+    if (bucketKey === undefined || bucketKey === false)
+      await expect(operation).resolves.toMatchObject({ versionId: "v1" });
+    else await expect(operation).rejects.toThrow();
+  },
+);
+
+test.each([
+  ["Action", (p) => (p.Statement[0].Action[0] = "s3:DeleteObject")],
+  ["Effect", (p) => (p.Statement[0].Effect = "Deny")],
+  ["Resource", (p) => (p.Statement[0].Resource[0] += "other")],
+  ["Principal", (p) => (p.Statement[0].Principal.AWS += "other")],
+  [
+    "Condition",
+    (p) => (p.Statement[0].Condition.Bool["aws:SecureTransport"] = "false"),
+  ],
+  ["added field", (p) => (p.Statement[0].Sid = "added")],
+  ["removed field", (p) => delete p.Statement[0].Condition],
+  ["array order", (p) => p.Statement[0].Action.reverse()],
+  ["malformed JSON", () => "{malformed"],
+])("canonical policy binding refuses %s before writes", async (_, mutate) => {
+  const changed = JSON.parse(canonicalPolicy),
+    result = mutate(changed),
+    f = policyFixture(
+      result === "{malformed" ? result : JSON.stringify(changed),
+    ),
+    store = createPrivateCapture(f.options);
+  await expect(store.checkReady()).rejects.toThrow();
+  await expect(store.capture({ evidence: "synthetic" })).rejects.toThrow();
+  expect(f.calls.some((c) => c.constructor.name === "PutObjectCommand")).toBe(
+    false,
+  );
+});
+
 test("private capture uses conditional one-attempt creation and exact version original-byte readback", async () => {
   const f = fixture(),
     store = createPrivateCapture(f.options),
@@ -143,6 +264,9 @@ test.each([
   "null-version",
   "changed-bytes",
   "changed-version",
+  "wrong-algorithm",
+  "wrong-kms",
+  "wrong-size",
   "public",
   "lifecycle",
   "retention",
@@ -161,13 +285,17 @@ test.each([
     const result = await send(c);
     if (c.constructor.name === "PutObjectCommand" && fault === "null-version")
       result.VersionId = "null";
-    if (c.constructor.name === "GetObjectCommand" && fault === "changed-bytes")
-      result.Body = [Buffer.from("{}")];
-    if (
-      c.constructor.name === "GetObjectCommand" &&
-      fault === "changed-version"
-    )
-      result.VersionId = "v2";
+    if (c.constructor.name === "GetObjectCommand")
+      Object.assign(
+        result,
+        {
+          "changed-bytes": { Body: [Buffer.from("{}")] },
+          "changed-version": { VersionId: "v2" },
+          "wrong-algorithm": { ServerSideEncryption: "AES256" },
+          "wrong-kms": { SSEKMSKeyId: result.SSEKMSKeyId + "other" },
+          "wrong-size": { ContentLength: result.ContentLength + 1 },
+        }[fault],
+      );
     if (
       c.constructor.name === "GetBucketPolicyStatusCommand" &&
       fault === "public"

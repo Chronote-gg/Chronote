@@ -16,6 +16,7 @@ import {
 import { getBillingChangeRepository } from "../repositories/billingChangeRepository";
 import { getSubscriptionRepository } from "../repositories/subscriptionRepository";
 import { getPurchaseRepository } from "../repositories/purchaseAttemptRepository";
+import { releaseExpiredPurchaseAttempt } from "./initialPurchaseService";
 import { config } from "./configService";
 import { BillingActionError } from "./billingActionError";
 import { resolveChangeTiming } from "./billingChangePolicy";
@@ -159,6 +160,11 @@ async function prepareBillingChangeOwned(
       "BAD_REQUEST",
       "Plan changes are not available yet.",
     );
+  await releaseExpiredPurchaseAttempt({
+    stripe: context.stripe,
+    guildId: context.guildId,
+    owner: context.owner,
+  });
   const currentPurchase = await getPurchaseRepository().get(context.guildId);
   if (
     currentPurchase &&

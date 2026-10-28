@@ -210,6 +210,15 @@ export function recordSpeechWorkerRestart(): void {
   speechWorkerRestarts.inc();
 }
 
+// Outcomes of the billing read-path release of a provider-expired checkout lock.
+// Dimensionless by design: guild-level detail goes to logs, never labels.
+export const checkoutLockReleases = new Counter({
+  name: "checkout_lock_release_total",
+  help: "Billing read-path releases of past-expiry checkout locks, by outcome",
+  labelNames: ["outcome"] as const,
+  registers: [metricsRegistry],
+});
+
 // Express middleware to time requests
 export function metricsMiddleware(
   req: Request,
