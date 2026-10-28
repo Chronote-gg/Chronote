@@ -326,30 +326,37 @@ test.each(["key", "mode"])(
     ).toBe(false);
   },
 );
-test("exact approved source KMS predicate and omitted optional predicate both use native HEAD metadata", async () => {
-  const f = setup(),
-    key = f.request.resourceArns.personalJobKmsKeyArn;
-  const encryption = {
-    serverSideEncryption: "aws:kms",
-    sseKmsKeyId: key,
-    bucketKeyEnabled: false,
-  };
-  f.request.sourceObjects[0].encryption = encryption;
-  process.env.PAUSED_PREPARATION_REQUEST_SHA256 = canonicalHash(f.request);
-  mockSend.mockImplementation((command) =>
-    command.constructor.name === "HeadObjectCommand"
-      ? {
-          ...f.send(command),
-          ServerSideEncryption: "aws:kms",
-          SSEKMSKeyId: key,
-          BucketKeyEnabled: false,
-        }
-      : f.send(command),
-  );
-  await prepareOriginalPausedDrafts();
-  const objects = JSON.parse(f.state.capture.toString()).objects;
-  expect(objects.map((object) => object.encryption)).toEqual([
-    encryption,
-    encryption,
-  ]);
-});
+test.each([undefined, false, true, null, "false", 0])(
+  "source KMS preparation validates native bucket-key metadata %p",
+  async (bucketKey) => {
+    const f = setup(),
+      key = f.request.resourceArns.personalJobKmsKeyArn;
+    const encryption = {
+      serverSideEncryption: "aws:kms",
+      sseKmsKeyId: key,
+      bucketKeyEnabled: false,
+    };
+    f.request.sourceObjects[0].encryption = encryption;
+    process.env.PAUSED_PREPARATION_REQUEST_SHA256 = canonicalHash(f.request);
+    mockSend.mockImplementation((command) =>
+      command.constructor.name === "HeadObjectCommand"
+        ? {
+            ...f.send(command),
+            ServerSideEncryption: "aws:kms",
+            SSEKMSKeyId: key,
+            ...(bucketKey !== undefined ? { BucketKeyEnabled: bucketKey } : {}),
+          }
+        : f.send(command),
+    );
+    if (bucketKey !== undefined && bucketKey !== false) {
+      await assertRefusedWithoutCapture();
+      return;
+    }
+    await prepareOriginalPausedDrafts();
+    const objects = JSON.parse(f.state.capture.toString()).objects;
+    expect(objects.map((object) => object.encryption)).toEqual([
+      encryption,
+      encryption,
+    ]);
+  },
+);
