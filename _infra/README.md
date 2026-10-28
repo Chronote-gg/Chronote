@@ -104,8 +104,15 @@ that address.
 | ALB target 5xx errors         | 10+ target HTTP 5xx responses in 10 min       | 5 min x 2 |
 | ALB unhealthy hosts           | Any unhealthy target for 10 min               | 5 min x 2 |
 | Grafana token rotation errors | Rotation Lambda error in 24 h                 | 1 day x 1 |
+| Checkout lock stuck           | `Checkout lock stuck` app log line in 1 h     | 1 h x 1   |
 
 All alarms also send an OK notification when the condition clears.
+
+`Checkout lock stuck` is logged when a billing page load finds a server's purchase
+lock past its checkout expiry but unreleasable: Stripe still reports the session
+open an hour later, or the session no longer matches the stored attempt. The log
+line carries the guild id; the `checkout_lock_release_total` counter on
+`/metrics` breaks every release attempt down by outcome.
 
 The SNS topic is encrypted with the `app_general` KMS key and restricted to
 publishing from CloudWatch Alarms and EventBridge within the same account.

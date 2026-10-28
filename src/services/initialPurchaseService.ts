@@ -31,6 +31,8 @@ import { isSupersedableOpen } from "./purchaseAttemptOffer";
 import type { StripeClient, StripeSubscription } from "../types/stripe";
 import { BillingActionError } from "./billingActionError";
 import { captureEvent } from "./analyticsService";
+import { RuntimeAdmissionUnavailable } from "./runtimeAdmissionError";
+import { checkoutLockReleases } from "../metrics";
 import {
   resolvePurchaseSource,
   resolvePurchaseOffer,
@@ -554,6 +556,44 @@ async function refreshAttempt(
   return current;
 }
 
+// Stripe expiring a session a little after `expires_at` is normal; still open
+// an hour later means the row will not release on its own.
+const STUCK_OPEN_AFTER_MS = 60 * 60 * 1000;
+// The CloudWatch metric filter in `_infra/notifications.tf` matches this text.
+const STUCK_CHECKOUT_LOG = "Checkout lock stuck";
+
+type ReleaseOutcome =
+  | "released"
+  | "reconciled"
+  | "still_open"
+  | "lost_race"
+  | "deferred_review"
+  | "deferred_admission"
+  | "deferred_error";
+
+function releaseFailureOutcome(error: unknown): ReleaseOutcome {
+  if (error instanceof RuntimeAdmissionUnavailable) return "deferred_admission";
+  if (!(error instanceof BillingActionError)) return "deferred_error";
+  if (error.reason === "purchase_pending") return "lost_race";
+  if (error.reason === "purchase_needs_review") return "deferred_review";
+  return "deferred_error";
+}
+
+function logReleaseFailure(guildId: string, error: unknown) {
+  const outcome = releaseFailureOutcome(error);
+  checkoutLockReleases.inc({ outcome });
+  if (outcome === "lost_race") return;
+  const details = {
+    guildId,
+    outcome,
+    errorName: error instanceof Error ? error.name : "unknown",
+    reason: error instanceof BillingActionError ? error.reason : undefined,
+    error,
+  };
+  if (outcome === "deferred_review") console.error(STUCK_CHECKOUT_LOG, details);
+  else console.warn("Expired checkout release deferred", details);
+}
+
 /**
  * Releases an open checkout the provider has already expired, for when the
  * expiry webhook never arrives. Billing reads call it, so it never throws:
@@ -566,11 +606,11 @@ export async function releaseExpiredPurchaseAttempt(input: {
 }): Promise<void> {
   try {
     const attempt = await getPurchaseRepository().get(input.guildId);
-    const pastLocalExpiry =
-      isSupersedableOpen(attempt) &&
-      Number(attempt.checkout.expires_at) * 1000 <= Date.now();
-    if (!pastLocalExpiry) return;
-    await runBillingOperation(input.owner, async (owner) =>
+    const expiresAtMs = isSupersedableOpen(attempt)
+      ? Number(attempt.checkout.expires_at) * 1000
+      : undefined;
+    if (expiresAtMs === undefined || expiresAtMs > Date.now()) return;
+    const result = await runBillingOperation(input.owner, async (owner) =>
       refreshAttempt(
         {
           stripe: input.stripe,
@@ -581,11 +621,24 @@ export async function releaseExpiredPurchaseAttempt(input: {
         attempt,
       ),
     );
+    const outcome: ReleaseOutcome =
+      result?.state === "expired"
+        ? "released"
+        : result?.state === "open"
+          ? "still_open"
+          : "reconciled";
+    checkoutLockReleases.inc({ outcome });
+    if (
+      outcome === "still_open" &&
+      Date.now() - expiresAtMs > STUCK_OPEN_AFTER_MS
+    )
+      console.error(STUCK_CHECKOUT_LOG, {
+        guildId: input.guildId,
+        outcome,
+        sessionId: result?.sessionId,
+      });
   } catch (error) {
-    console.warn("Expired checkout release deferred", {
-      guildId: input.guildId,
-      error,
-    });
+    logReleaseFailure(input.guildId, error);
   }
 }
 
