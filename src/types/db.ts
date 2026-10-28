@@ -173,7 +173,8 @@ export type NotesEditSource =
       importMode: "replace" | "append";
       sourceName?: string;
       sourceUrl?: string;
-    };
+    }
+  | { type: "processing_retry"; jobId: string };
 
 export type FeedbackRating = "up" | "down";
 export type FeedbackTargetType = "meeting_summary" | "ask_answer";
@@ -466,6 +467,9 @@ export interface MeetingHistory {
   updateDelivery?: import("./meetingUpdateDelivery").MeetingUpdateDelivery;
   updateDeliveryQueue?: typeof import("./meetingUpdateDelivery").MEETING_UPDATE_DELIVERY_QUEUE;
   updateDeliveryDueAt?: number;
+  processingRetry?: import("./meetingProcessingRetry").ProcessingRetryJob;
+  processingRetryQueue?: typeof import("./meetingProcessingRetry").PROCESSING_RETRY_QUEUE;
+  processingRetryDueAt?: number;
   completionPolicy?: import("./meetingCompletionPolicy").CompletionPolicy;
   recoveryExport?: import("./recordingCheckpoint").RecoveryExport;
   recoveryTranscript?: {
