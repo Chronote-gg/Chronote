@@ -125,10 +125,12 @@ test.each([false, true])(
           : "enable_production_introduction_roles")
     ] = "true";
     vars.TFVAR_ENABLE_PRODUCTION_ACCEPTANCE_COLLECTOR = "false";
+    vars.TFVAR_ENABLE_PRODUCTION_PROMPT_GUARD_ROLE = "true";
     expect(run(valid, vars)).toMatchObject({
       ...collections,
       enable_production_introduction_roles: "true",
       enable_production_acceptance_collector: "false",
+      enable_production_prompt_guard_role: "true",
     });
   },
 );
