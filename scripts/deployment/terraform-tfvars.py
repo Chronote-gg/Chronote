@@ -38,6 +38,7 @@ canonical_keys = collection_keys | {
     "docs_distribution_id",
     "enable_production_introduction_roles",
     "enable_production_acceptance_collector",
+    "enable_production_prompt_guard_role",
 }
 
 
