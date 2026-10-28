@@ -1273,6 +1273,13 @@ resource "aws_cloudfront_distribution" "frontend" {
   }
 
   aliases = var.FRONTEND_DOMAIN != "" ? [var.FRONTEND_DOMAIN] : []
+
+  lifecycle {
+    postcondition {
+      condition     = var.frontend_distribution_id == "" || self.id == var.frontend_distribution_id
+      error_message = "frontend_distribution_id must name this distribution; site publishing grants by that ID."
+    }
+  }
 }
 
 resource "aws_cloudfront_function" "docs_index_rewrite" {
@@ -1402,6 +1409,13 @@ resource "aws_cloudfront_distribution" "docs" {
   }
 
   aliases = var.DOCS_DOMAIN != "" ? [var.DOCS_DOMAIN] : []
+
+  lifecycle {
+    postcondition {
+      condition     = var.docs_distribution_id == "" || self.id == var.docs_distribution_id
+      error_message = "docs_distribution_id must name this distribution; site publishing grants by that ID."
+    }
+  }
 }
 
 resource "aws_s3_bucket_policy" "frontend_oac_policy" {
