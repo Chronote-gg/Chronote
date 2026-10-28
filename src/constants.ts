@@ -43,6 +43,10 @@ export const TRANSCRIPTION_PROMPT_ECHO_SIMILARITY_THRESHOLD = 0.2;
 export const TRANSCRIPTION_PROMPT_ECHO_MIN_CHARS = 12;
 export const TRANSCRIPTION_PROMPT_ECHO_MIN_WORDS = 2;
 export const TRANSCRIPTION_FINAL_PASS_CHUNK_SECONDS = 900;
+// Personal uploads are always split by duration, never sent whole: the
+// transcription model caps output near 2,000 tokens per request, so a long
+// request returns a silently truncated transcript.
+export const PERSONAL_UPLOAD_TRANSCRIPTION_CHUNK_SECONDS = 300;
 export const TRANSCRIPTION_FINAL_PASS_MAX_REQUEST_BYTES = 25 * 1024 * 1024;
 export const TRANSCRIPTION_FINAL_PASS_TARGET_MAX_CHUNK_BYTES = 20 * 1024 * 1024;
 export const TRANSCRIPTION_FINAL_PASS_SEGMENT_BATCH_MAX_CHARS = 6000;

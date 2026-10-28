@@ -25,9 +25,8 @@ import type { MeetingProcessingOutcome } from "../types/meetingProcessing";
 import { classifyTranscription } from "../utils/meetingProcessing";
 import {
   PERSONAL_MEDIA_UPLOAD_MAX_PROCESSING_ATTEMPTS,
+  PERSONAL_UPLOAD_TRANSCRIPTION_CHUNK_SECONDS,
   TRANSCRIPTION_FAILURE_PLACEHOLDER,
-  TRANSCRIPTION_FINAL_PASS_CHUNK_SECONDS,
-  TRANSCRIPTION_FINAL_PASS_MAX_REQUEST_BYTES,
 } from "../constants";
 import { getMeetingHistoryService } from "./meetingHistoryService";
 import { personalMediaClaimForJob } from "../db";
@@ -229,7 +228,7 @@ const splitAudioFile = async (
         "-f",
         "segment",
         "-segment_time",
-        String(TRANSCRIPTION_FINAL_PASS_CHUNK_SECONDS),
+        String(PERSONAL_UPLOAD_TRANSCRIPTION_CHUNK_SECONDS),
         "-reset_timestamps",
         "1",
       ])
@@ -248,11 +247,6 @@ const resolveTranscriptionInputs = async (
   signal?: AbortSignal,
 ) => {
   signal?.throwIfAborted();
-  const audioStat = await fs.stat(audioPath);
-  signal?.throwIfAborted();
-  if (audioStat.size <= TRANSCRIPTION_FINAL_PASS_MAX_REQUEST_BYTES) {
-    return [audioPath];
-  }
   const chunkDir = path.join(workDir, "chunks");
   await fs.mkdir(chunkDir, { recursive: true });
   const chunks = await splitAudioFile(audioPath, chunkDir, signal);
@@ -274,7 +268,6 @@ const transcribeAudioFile = async (filePath: string, signal?: AbortSignal) => {
     const request: TranscriptionCreateParamsNonStreaming<"json"> = {
       file: input,
       model: modelChoice.model,
-      language: "en",
       temperature: 0,
       response_format: "json",
     };
