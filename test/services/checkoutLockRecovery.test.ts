@@ -11,6 +11,8 @@ import { runRuntimeApiOperation } from "../../src/services/runtimeApiOperationSe
 import { RuntimeAdmissionUnavailable } from "../../src/services/runtimeAdmissionError";
 import { createCheckoutSession } from "../../src/services/billingService";
 import { releaseExpiredPurchaseAttempt } from "../../src/services/initialPurchaseService";
+import { prepareBillingChange } from "../../src/services/billingChangeService";
+import { config } from "../../src/services/configService";
 import { getMockStore, resetMockStore } from "../../src/repositories/mockStore";
 import {
   initialPurchaseStripe,
@@ -133,4 +135,60 @@ test("billing read never touches an open attempt under incident review", async (
     "PURCHASE#x#DUPLICATE#test#a#b";
   await release();
   expect(retrieve).not.toHaveBeenCalled();
+});
+
+describe("plan change", () => {
+  const transitionsEnabled = config.stripe.subscriptionTransitionsEnabled;
+  const change = () =>
+    prepareBillingChange({
+      stripe: client,
+      guildId: purchaseGuildId,
+      payerId: "payer",
+      selection: { tier: "pro", interval: "month", expectedOffer: "none" },
+    });
+
+  beforeEach(() => {
+    getMockStore().subscriptions.set(purchaseGuildId, {
+      guildId: purchaseGuildId,
+      tier: "basic",
+      status: "active",
+      subscriptionType: "stripe",
+      startDate: "2026-01-01",
+      stripeSubscriptionId: "sub_source",
+    });
+    config.stripe.subscriptionTransitionsEnabled = true;
+    Object.assign(stripe, {
+      subscriptions: {
+        retrieve: jest.fn().mockRejectedValue(new Error("source read reached")),
+      },
+    });
+  });
+
+  afterEach(() => {
+    config.stripe.subscriptionTransitionsEnabled = transitionsEnabled;
+    Reflect.deleteProperty(stripe, "subscriptions");
+  });
+
+  test("releases a provider-expired checkout before its pending check", async () => {
+    pastExpiry();
+    retrieve.mockResolvedValueOnce(providerExpired());
+    await expect(change()).rejects.toThrow("source read reached");
+    expect(attemptState()).toBe("expired");
+  });
+
+  test("still blocks on a live open checkout without calling Stripe", async () => {
+    await expect(change()).rejects.toMatchObject({
+      reason: "purchase_pending",
+    });
+    expect(retrieve).not.toHaveBeenCalled();
+  });
+
+  test("keeps the pending error when expiry cannot be verified", async () => {
+    pastExpiry();
+    retrieve.mockRejectedValueOnce(new Error("connection reset"));
+    await expect(change()).rejects.toMatchObject({
+      reason: "purchase_pending",
+    });
+    expect(retrieve).toHaveBeenCalledTimes(1);
+  });
 });
