@@ -17,6 +17,7 @@ import { getModelChoice } from "./modelFactory";
 import { getMeetingModelOverrides } from "./meetingModelOverrides";
 import { liveFinalPassSettings } from "./transcriptionProcessingSettings";
 import { resolveChatParamsForRole } from "./openaiModelParams";
+import { meetingTranscriptionLanguage } from "../config/transcriptionLanguage";
 
 export function liveTranscriptionInput(
   meeting: MeetingData,
@@ -59,6 +60,7 @@ export function liveFinalPassInput(meeting: MeetingData): FinalPassContent {
       "transcription",
       getMeetingModelOverrides(meeting),
     ).model,
+    transcriptionLanguage: meetingTranscriptionLanguage(meeting.runtimeConfig),
     reconcileModel: {
       ...choice,
       params: resolveChatParamsForRole({

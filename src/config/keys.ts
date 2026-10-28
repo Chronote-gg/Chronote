@@ -4,6 +4,7 @@ export const CONFIG_KEYS = {
   },
   transcription: {
     speechDetectionMode: "transcription.speechDetection.mode",
+    language: "transcription.language",
     premiumEnabled: "transcription.premium.enabled",
     premiumCleanupEnabled: "transcription.premium.cleanup.enabled",
     suppressionEnabled: "transcription.suppression.enabled",
