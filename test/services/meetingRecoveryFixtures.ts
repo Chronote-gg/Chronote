@@ -14,6 +14,27 @@ import {
 } from "../deployment/controlFixtures";
 import type { MeetingHistory, ActiveMeetingLease } from "../../src/types/db";
 import type { CheckpointArtifactInput } from "../../src/types/recordingCheckpoint";
+/** A 48 kHz stereo PCM checkpoint piece whose intervals all bind `sourceId`. */
+export function pcmArtifact(
+  sourceId: string,
+  sequence: number,
+  bytes: Buffer,
+  intervals: Array<{ startOffsetMs: number; durationMs: number }>,
+): CheckpointArtifactInput {
+  return {
+    kind: "audio",
+    sourceId,
+    sequence,
+    contentType: "audio/pcm",
+    format: { encoding: "pcm_s16le", sampleRate: 48000, channels: 2 },
+    coverage: {
+      kind: "known",
+      intervals: intervals.map((interval) => ({ sourceId, ...interval })),
+    },
+    bytes,
+    checksumSha256: createHash("sha256").update(bytes).digest("hex"),
+  };
+}
 export async function recoveryFixture(
   text = "We agreed to finish the release testing tomorrow.",
   options: {

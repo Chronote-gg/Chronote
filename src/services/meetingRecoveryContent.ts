@@ -349,6 +349,7 @@ async function transcribeAudioGroup(
   input: TranscriptionContentInput,
   userId: string,
   timestamp: number,
+  acceptSkipped: boolean,
 ) {
   input.signal.throwIfAborted();
   const length = (group.endFrame - group.startFrame) * 4;
@@ -368,9 +369,9 @@ async function transcribeAudioGroup(
       { tempSuffix: "recovery" },
     );
     input.signal.throwIfAborted();
-    if (result.status !== "succeeded")
-      throw new Error("Recovery transcription failed");
-    return result.text;
+    if (result.status === "succeeded") return result.text;
+    if (result.status === "skipped" && acceptSkipped) return "";
+    throw new Error("Recovery transcription failed");
   } finally {
     // Awaited conversion/provider lifetime has settled, including cancellation/error.
     releaseCheckpointPcm(length);
@@ -382,6 +383,7 @@ async function recoverAudioIntervals(
   input: TranscriptionContentInput,
   startedAt: number,
   residual: readonly ByteRange[],
+  acceptSkipped: boolean,
 ): Promise<AudioFileData[]> {
   const signal = input.signal;
   signal.throwIfAborted();
@@ -406,6 +408,7 @@ async function recoverAudioIntervals(
       input,
       userId,
       timestamp,
+      acceptSkipped,
     );
     if (!getTranscriptionTextQuality(text).trivial)
       files.push({
@@ -459,7 +462,7 @@ function validateTranscriptDispositions(
     )
       throw new InvalidRecoveryContent("Transcript input dispositions overlap");
   }
-  return { dispositions, aggregate };
+  return { represented, dispositions, aggregate };
 }
 export async function recoverTranscript(
   content: RecoveryContent,
@@ -489,6 +492,58 @@ export async function recoverTranscript(
       );
     return { text: acknowledgedText, segments: savedSegments };
   }
+  const { text, segments } = await composeRecoveredTranscript(
+    content,
+    reader,
+    signal,
+    effect,
+    dispositions,
+    false,
+  );
+  return { text, segments };
+}
+/**
+ * Re-transcribes every saved PCM range no saved entry represents (omitted and
+ * never-transcribed audio) and keeps saved entries exactly as stored.
+ */
+export async function retranscribeOmittedRanges(
+  content: RecoveryContent,
+  reader: RecoveryReader,
+  signal: AbortSignal,
+  effect: TranscriptionContentInput["effect"],
+): Promise<{
+  text: string;
+  segments: TranscriptSegment[];
+  retranscribedRanges: number;
+}> {
+  const { represented } = validateTranscriptDispositions(
+    content,
+    content.entries ?? [],
+  );
+  return composeRecoveredTranscript(
+    content,
+    reader,
+    signal,
+    effect,
+    represented,
+    true,
+  );
+}
+/**
+ * A retry accepts ranges the speech gate skips again and never replays the
+ * frozen finalized-audio pass, which would rewrite kept entries and can carry
+ * a superseded chunk length.
+ */
+async function composeRecoveredTranscript(
+  content: RecoveryContent,
+  reader: RecoveryReader,
+  signal: AbortSignal,
+  effect: TranscriptionContentInput["effect"],
+  covered: readonly PcmSpan[],
+  retry: boolean,
+) {
+  const audio = content.verified.filter((item) => item.kind === "audio");
+  const entries = content.entries ?? [];
   if (
     entries.some(
       (entry) =>
@@ -509,8 +564,9 @@ export async function recoverTranscript(
     audioOnlyProcessing: false,
   }));
   const residual = audio
-    .map((item) => ({ item, ranges: residualRanges(item, dispositions) }))
+    .map((item) => ({ item, ranges: residualRanges(item, covered) }))
     .filter(({ ranges }) => ranges.length);
+  const savedCount = files.length;
   if (residual.length) {
     const input = transcriptionInput(content.context, signal, effect);
     const startedAt = Date.parse(
@@ -526,15 +582,20 @@ export async function recoverTranscript(
           input,
           startedAt,
           ranges,
+          retry,
         )),
       );
   }
+  // Only ranges that came back with text count, so audio the gate rejects
+  // again is "nothing to retry" rather than a recovered transcript.
+  const retranscribedRanges = files.length - savedCount;
   const text = await processRecoveryTranscript(
     content,
     reader,
     files,
     signal,
     effect,
+    !retry,
   );
   // Final-pass corrections mutate these files. Cleanup can alter aggregate text,
   // but cannot invent a more precise speaker/time alignment for a segment.
@@ -557,6 +618,7 @@ export async function recoverTranscript(
     segments: [...segments].sort(
       (a, b) => Date.parse(a.startedAt) - Date.parse(b.startedAt),
     ),
+    retranscribedRanges,
   };
 }
 export function recoveryNotesInput(

@@ -155,7 +155,7 @@ type PersonalRecordingSegmentTranscriptArtifact = {
   text: string;
 };
 
-const runFfmpeg = (
+export const runFfmpeg = (
   inputPath: string,
   outputPath: string,
   signal?: AbortSignal,
