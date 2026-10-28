@@ -16,8 +16,10 @@ The attempt freezes customer selection or creation before making its provider
 call, then freezes the Checkout request. Separate opaque idempotency keys identify
 these operations. The fingerprint compares payment terms, excluding metadata and
 return URLs. Source and username changes can recover the same frozen Checkout;
-a payer, mode, price, discount, intro offer or interval change supersedes it.
-Supersede expires the session at Stripe, releases the attempt through the same
+a payer, price, discount, intro offer or interval change supersedes it.
+Supersede first prepares the replacement's offer terms as if the old intro offer
+reservation were released, so an offer refusal leaves the old Checkout intact.
+It then expires the session at Stripe, releases the attempt through the same
 guarded provider read (including any intro offer reservation), then reserves a
 fresh attempt. If Stripe refuses the expire, the session is read: a completed
 session reconciles and returns the normal completed-purchase outcome, and one

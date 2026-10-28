@@ -26,9 +26,12 @@ the billing page never reread the session, so nothing cleared the lock.
    through `refreshAttempt`. It is released only when Stripe confirms `expired`
    with no subscription, reconciled when the session is `complete`, and left
    alone otherwise. Every error is caught so the page still loads.
-2. `reserve` supersedes a live `open` attempt when the payer, mode or payment
-   terms differ, including an intro offer choice, promotion or interval change.
-   It expires the session at Stripe (`checkout.sessions.expire` with
+2. `reserve` supersedes a live `open` attempt when the payer or payment terms
+   differ, including an intro offer choice, promotion or interval change. It
+   first prepares the replacement's offer terms with the old attempt's intro
+   offer reservation judged as released, so an offer refusal is a clean
+   `BillingActionError` and the old Checkout survives. It then expires the
+   session at Stripe (`checkout.sessions.expire` with
    idempotency key `purchase-supersede-<attemptId>`), releases through
    `refreshAttempt` (which also releases any intro offer reservation), then
    reserves a fresh attempt. Release still requires Stripe-confirmed `expired`
@@ -44,8 +47,9 @@ the billing page never reread the session, so nothing cleared the lock.
    second Checkout.
 5. `getGuildBasicIntroOffer` no longer reports the Basic offer as unavailable
    while an `open` attempt is live. The same payer keeps its frozen reserved
-   offer and anyone else gets the normal quote. `preparing`, `needs_review` and
-   incident rows still block.
+   offer and anyone else gets the normal quote, which judges the open attempt's
+   own reservation as released but still requires resolved coverage and writer
+   boundary. `preparing`, `needs_review` and incident rows still block.
 
 ## Consequences
 
@@ -78,8 +82,10 @@ Costs and risks:
 - Two admins can supersede each other's Checkout. Accepted.
 - `reserve` retries at most three times, so heavy mutual superseding can leave
   neither admin with a live Checkout until the next click.
-- While intro offer coverage is unresolved, a second payer can be quoted the
-  offer, and their click expires the first Checkout before being refused. No
-  charge results.
+- Once the expire is acknowledged, any later refusal (the three-attempt cap's
+  `purchase_pending`, an association mismatch needing review, or an offer
+  refusal from state that changed after the pre-expire check) surfaces as an
+  unresolved billing mutation rather than a clean refusal, and the first
+  Checkout is already gone. No charge results.
 - The `checkout.session.expired` webhook stays an optimization, not a
   requirement.

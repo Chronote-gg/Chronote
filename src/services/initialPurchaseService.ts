@@ -27,6 +27,7 @@ import type { GuildSubscription } from "../types/db";
 import type { PurchaseAttempt } from "../types/purchase";
 import type { ExpectedIntroOffer, IntroOfferChoice } from "../types/pricing";
 import { prepareBasicIntroCheckoutWithAuthority } from "./basicIntroOfferService";
+import { isSupersedableOpen } from "./purchaseAttemptOffer";
 import type { StripeClient, StripeSubscription } from "../types/stripe";
 import { BillingActionError } from "./billingActionError";
 import { captureEvent } from "./analyticsService";
@@ -194,10 +195,6 @@ async function preparePurchaseAttempt(
     ? { kind: "new", previous: retired }
     : { kind: "reuse", current };
 }
-const supersedable = (attempt: PurchaseAttempt) =>
-  attempt.state === "open" &&
-  Boolean(attempt.sessionId) &&
-  !attempt.incidentKey;
 const changesFrozenChoice = (error: unknown) =>
   error instanceof BillingActionError &&
   (error.reason === "discount_choice_required" ||
@@ -205,18 +202,18 @@ const changesFrozenChoice = (error: unknown) =>
 
 /** Decides whether a request resumes `current`, supersedes it, or is refused. */
 async function prepareReuse(input: PurchaseInput, current: PurchaseAttempt) {
-  const open = supersedable(current);
-  const sameOwner =
-    current.mode === input.mode && current.payerId === input.user.id;
+  const open = isSupersedableOpen(current);
   // Another payer never reaches the frozen-offer reuse checks.
-  if (open && !sameOwner) return "supersede";
+  if (current.mode !== input.mode || current.payerId !== input.user.id) {
+    if (open) return "supersede";
+    throw pending();
+  }
   try {
     const { checkout } = await prepareBasicIntroCheckoutWithAuthority({
       ...input,
       current,
     });
-    if (sameOwner && current.fingerprint === checkoutFingerprint(checkout))
-      return "reuse";
+    if (current.fingerprint === checkoutFingerprint(checkout)) return "reuse";
     if (open) return "supersede";
   } catch (error) {
     if (open && changesFrozenChoice(error)) return "supersede";
@@ -247,6 +244,12 @@ async function supersedeOpenAttempt(
   input: PurchaseInput,
   current: PurchaseAttempt,
 ): Promise<PurchaseAttempt | "superseded"> {
+  // Once the expire is acknowledged any refusal is an unknown billing outcome,
+  // so the replacement's offer terms are checked first, without the old hold.
+  await prepareBasicIntroCheckoutWithAuthority({
+    ...input,
+    releasing: current.attemptId,
+  });
   try {
     await input.owner!.effect(() =>
       input.stripe.checkout.sessions.expire(current.sessionId!, undefined, {
@@ -564,9 +567,7 @@ export async function releaseExpiredPurchaseAttempt(input: {
   try {
     const attempt = await getPurchaseRepository().get(input.guildId);
     const pastLocalExpiry =
-      attempt?.state === "open" &&
-      Boolean(attempt.sessionId) &&
-      !attempt.incidentKey &&
+      isSupersedableOpen(attempt) &&
       Number(attempt.checkout.expires_at) * 1000 <= Date.now();
     if (!pastLocalExpiry) return;
     await runBillingOperation(input.owner, async (owner) =>

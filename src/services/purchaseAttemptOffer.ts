@@ -10,6 +10,17 @@ import type { PurchaseAttempt } from "../types/purchase";
 import type { BasicIntroOffer, BillingInterval } from "../types/pricing";
 import { config } from "./configService";
 
+export const introOfferIdFor = (interval: BillingInterval): IntroOfferId =>
+  interval === "year" ? BASIC_ANNUAL_INTRO_OFFER_ID : BASIC_INTRO_OFFER_ID;
+
+/** A live provider session with no incident: a newer request may supersede it. */
+export const isSupersedableOpen = (
+  attempt: PurchaseAttempt | undefined,
+): attempt is PurchaseAttempt =>
+  attempt?.state === "open" &&
+  Boolean(attempt.sessionId) &&
+  !attempt.incidentKey;
+
 export async function ownsFrozenReservation(
   current: PurchaseAttempt,
   frozen: Extract<BasicIntroOffer, { status: "available" }>,
@@ -66,10 +77,7 @@ export function canReuseFrozenIntroOffer(
 ): frozen is Extract<BasicIntroOffer, { status: "available" }> {
   return Boolean(
     frozen?.status === "available" &&
-    frozen.id ===
-      (interval === "year"
-        ? BASIC_ANNUAL_INTRO_OFFER_ID
-        : BASIC_INTRO_OFFER_ID) &&
+    frozen.id === introOfferIdFor(interval) &&
     payerId === current.payerId &&
     !current.incidentKey &&
     (current.state === "open" ||
@@ -103,16 +111,19 @@ export async function attemptIntroOffer(
   return blocking ? { status: "unavailable" } : null;
 }
 
-export async function openAttemptHoldsOffer(
+/**
+ * The id of a supersedable open attempt holding `offerId`'s reservation. A
+ * quote judges that reservation as released, so coverage must still resolve.
+ */
+export async function openAttemptHoldingOffer(
   current: PurchaseAttempt | undefined,
   offerId: IntroOfferId,
-): Promise<boolean> {
-  if (current?.state !== "open" || !current.sessionId || current.incidentKey)
-    return false;
+): Promise<string | undefined> {
+  if (!isSupersedableOpen(current)) return undefined;
   const frozen = frozenIntroOffer(current);
-  return (
-    frozen?.status === "available" &&
+  return frozen?.status === "available" &&
     frozen.id === offerId &&
     (await ownsFrozenReservation(current, frozen))
-  );
+    ? current.attemptId
+    : undefined;
 }

@@ -6,7 +6,6 @@ import { readLedgerWriterRuntime } from "./ledgerWriterRuntime";
 import type { IntroOfferAuthority } from "../types/introOfferAuthority";
 import { readSubscriptionPaymentProgress } from "./subscriptionPaymentProgress";
 import {
-  BASIC_INTRO_OFFER_ID,
   BASIC_ANNUAL_INTRO_OFFER_ID,
   BASIC_INTRO_TERMS,
   BASIC_ANNUAL_INTRO_TERMS,
@@ -24,7 +23,8 @@ import { BillingActionError } from "./billingActionError";
 import {
   attemptIntroOffer,
   frozenIntroOffer,
-  openAttemptHoldsOffer,
+  introOfferIdFor,
+  openAttemptHoldingOffer,
   ownsFrozenReservation,
 } from "./purchaseAttemptOffer";
 
@@ -279,13 +279,11 @@ const choiceRequired = () =>
     "discount_choice_required",
   );
 
-const introOfferIdFor = (interval: BillingInterval) =>
-  interval === "year" ? BASIC_ANNUAL_INTRO_OFFER_ID : BASIC_INTRO_OFFER_ID;
-
 export async function selectedOfferDecision(
   stripe: StripeClient,
   guildId: string,
   interval: BillingInterval,
+  releasableOperationId?: string,
 ) {
   const offerId = introOfferIdFor(interval);
   const [account, balance, runtime] = await Promise.all([
@@ -301,6 +299,7 @@ export async function selectedOfferDecision(
     accountId: account.id,
     mode,
     writerImageDigest: runtime?.imageDigest,
+    releasableOperationId,
   });
 }
 function introIntervalIsUnconfigured(
@@ -337,16 +336,10 @@ export async function getGuildBasicIntroOffer(params: {
       params.stripe,
       params.guildId,
       interval,
+      await openAttemptHoldingOffer(current, introOfferIdFor(interval)),
     );
     if (decision.state === "used") return { status: "ineligible" };
-    if (
-      decision.state !== "unused" &&
-      !(
-        decision.state === "reserved" &&
-        (await openAttemptHoldsOffer(current, introOfferIdFor(interval)))
-      )
-    )
-      return { status: "unavailable" };
+    if (decision.state !== "unused") return { status: "unavailable" };
     return await getBasicIntroOffer({
       stripe: params.stripe,
       interval: params.interval,
@@ -495,6 +488,8 @@ export async function prepareBasicIntroCheckoutWithAuthority(params: {
   expectedOffer?: ExpectedIntroOffer;
   offerChoice?: IntroOfferChoice;
   current?: PurchaseAttempt;
+  /** Quote as if this attempt's reservation were released (a supersede dry run). */
+  releasing?: string;
 }): Promise<{
   checkout: Stripe.Checkout.SessionCreateParams;
   authority?: IntroOfferAuthority;
@@ -589,6 +584,7 @@ async function freshIntroQuote(
           params.stripe,
           params.guildId,
           interval,
+          params.releasing,
         );
       } catch {
         throw unavailableOffer();

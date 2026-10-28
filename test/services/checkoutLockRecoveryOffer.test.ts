@@ -18,6 +18,7 @@ import {
 } from "../../src/services/billingService";
 import { expirePurchaseAttempt } from "../../src/services/purchaseReconciliation";
 import { getGuildBasicIntroOffer } from "../../src/services/basicIntroOfferService";
+import { BillingActionError } from "../../src/services/billingActionError";
 import { getMockStore, resetMockStore } from "../../src/repositories/mockStore";
 import { clearGuildSubscriptionCache } from "../../src/services/subscriptionService";
 import {
@@ -208,4 +209,68 @@ test("a preparing attempt still makes the offer unavailable to another payer", a
       payerId: "other",
     }),
   ).toEqual({ status: "unavailable" });
+});
+
+test("another payer is not quoted a reserved offer while intro coverage is unresolved", async () => {
+  const { request } = introPurchaseFixture();
+  await createCheckoutSession({ ...request, expectedOffer: "basic_intro_v1" });
+  getMockStore().historyWriterBoundaries.clear();
+  expect(
+    await getGuildBasicIntroOffer({
+      stripe: request.stripe,
+      guildId: request.guildId,
+      payerId: "other",
+    }),
+  ).toEqual({ status: "unavailable" });
+});
+
+test.each([
+  ["expecting the intro offer", { expectedOffer: "basic_intro_v1" as const }],
+  ["with the automatic choice", {}],
+])(
+  "another payer %s during unresolved coverage is refused before the first checkout is expired",
+  async (_label, offer) => {
+    const { request, stripe } = introPurchaseFixture();
+    await createCheckoutSession({
+      ...request,
+      expectedOffer: "basic_intro_v1",
+    });
+    const first = getMockStore().purchaseAttempts.get(request.guildId)!;
+    getMockStore().historyWriterBoundaries.clear();
+    const refusal = createCheckoutSession({
+      ...request,
+      ...offer,
+      user: { id: "other" },
+    });
+    await expect(refusal).rejects.toBeInstanceOf(BillingActionError);
+    await expect(refusal).rejects.toMatchObject({
+      reason: "offer_unavailable",
+    });
+    expect(stripe.checkout.sessions.expire).not.toHaveBeenCalled();
+    expect(getMockStore().purchaseAttempts.get(request.guildId)).toMatchObject({
+      attemptId: first.attemptId,
+      state: "open",
+    });
+    expect(await introUsage(request.guildId)).toMatchObject({
+      state: "reserved",
+      operationId: first.attemptId,
+    });
+  },
+);
+
+test("another payer with a competing promotion against a preparing attempt gets purchase_pending", async () => {
+  const { request } = introPurchaseFixture();
+  await createCheckoutSession({ ...request, expectedOffer: "basic_intro_v1" });
+  const stored = getMockStore().purchaseAttempts.get(request.guildId)!;
+  Object.assign(stored, { state: "preparing", sessionId: undefined });
+  await expect(
+    createCheckoutSession({
+      ...request,
+      user: { id: "other" },
+      promotionCodeId: "promo_other",
+      promotionCode: "OTHER",
+      offerChoice: "promotion",
+      expectedOffer: "none",
+    }),
+  ).rejects.toMatchObject({ reason: "purchase_pending" });
 });
