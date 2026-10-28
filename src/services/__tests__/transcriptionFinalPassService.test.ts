@@ -110,6 +110,8 @@ describe("runTranscriptionFinalPass", () => {
     );
 
     expect(result.totalChunks).toBe(3);
+    // Every fixture segment falls in the first chunk, and chunks with no
+    // segments to verify are skipped before rendering.
     expect(renderedDurations).toEqual([300]);
   });
 
