@@ -51,6 +51,19 @@ five exhausted transient ASR operations before opening for 10,000 ms;
 unrelated prompt or guard errors cannot trip it. Text Responses, finalized
 audio verification and personal upload retry policies are unchanged.
 
+## Personal upload transcription
+
+Personal uploads and desktop recordings send no `language` hint, matching the
+live path, so the provider detects the spoken language. A forced English hint
+badly truncated non-English recordings.
+
+Normalized audio is always split into
+`PERSONAL_UPLOAD_TRANSCRIPTION_CHUNK_SECONDS` (300 s) chunks before
+transcription, regardless of file size. The transcription model caps output
+near 2,000 tokens per request, so a whole file under the 25 MB request limit
+(about 55 minutes at the 64 kbps normalization bitrate) used to come back
+silently truncated.
+
 ## Langfuse audio attachments
 
 When Langfuse tracing is enabled, each transcription snippet uploads an audio attachment to the trace for debugging.
