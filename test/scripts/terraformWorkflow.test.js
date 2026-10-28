@@ -15,6 +15,7 @@ import {
   invocation,
 } from "../fixtures/deployment/terraformWorkflow.js";
 import { dispatchTerraform } from "../fixtures/deployment/terraformDispatch.js";
+import { runtimePlan } from "../fixtures/deployment/runtimePlan.js";
 async function planAndApply(
   f,
   patch = {},
@@ -325,6 +326,51 @@ test.each(["full", "deployment-prerequisites"])(
     }
   },
 );
+
+test.each([
+  ["", "applied"],
+  ["ResourceNotFoundException", "refused"],
+])(
+  "runtime Apply revalidates its plan and needs the Control table (guard failure %j)",
+  async (failure, status) => {
+    const f = fixture();
+    f.controls.planJson = runtimePlan();
+    f.guard.failure = failure;
+    try {
+      const { apply } = await planAndApply(f, {}, "deployment-runtime");
+      expect(apply.status).toBe(status);
+      expect(
+        f.commands.filter(
+          (c) => c.args[1] === "show" && c.args.includes("-json"),
+        ),
+      ).toHaveLength(2);
+      expect(f.commands.filter((c) => c.args[1] === "apply")).toHaveLength(
+        status === "applied" ? 1 : 0,
+      );
+    } finally {
+      rmSync(f.directory, { recursive: true, force: true });
+    }
+  },
+);
+
+test("runtime Plan refuses to bundle a serving service change", async () => {
+  const f = fixture();
+  f.controls.planJson = runtimePlan();
+  f.controls.planJson.resource_changes.push({
+    address: "aws_ecs_service.app_service",
+    mode: "managed",
+    change: { actions: ["update"] },
+  });
+  try {
+    const options = f.options({ ...invocation, scope: "deployment-runtime" });
+    expect((await runTerraform(options)).status).toBe("failed");
+    expect(
+      existsSync(join(options.privateDirectory, "bundle-reference.json")),
+    ).toBe(false);
+  } finally {
+    rmSync(f.directory, { recursive: true, force: true });
+  }
+});
 
 test("even an authenticated prerequisite bundle cannot bypass a denied Control read", async () => {
   const f = fixture();
