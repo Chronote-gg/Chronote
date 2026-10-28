@@ -165,21 +165,24 @@ export function createProcessingRetryWorker(
   let timer: ReturnType<typeof setInterval> | undefined;
   let stopped = false;
   let idle = false;
+  let refused = false;
 
   async function claimJob(
     key: MeetingUpdateKey,
     work: RetryWork,
+    claimId: string,
     submitted: () => void,
   ): Promise<ClaimedJob | undefined> {
-    const authority = await work.authority();
-    if (authority.kind !== "serving") return undefined;
+    // Admission closes before shutdown fences the work, and a refresh can fail transiently: both skip the key.
+    const authority = await work.authority().catch(() => undefined);
+    if (authority?.kind !== "serving") return undefined;
     const history = await deps.rows.getStrong(key, work.signal);
     const queued = history?.processingRetry;
     if (!history || !queued) return undefined;
     const now = deps.now();
     const claim: Claim = {
       ownerInstanceId: deps.instanceId(),
-      claimId: randomUUID(),
+      claimId,
       leaseExpiresAt: now + PROCESSING_RETRY_CLAIM_SECONDS,
     };
     // Recorded before the write, so a claim whose outcome is unknown stays reconcilable.
@@ -395,11 +398,12 @@ export function createProcessingRetryWorker(
   async function processKey(
     key: MeetingUpdateKey,
     work: RetryWork,
+    claimId: string,
     admitted: () => void,
   ) {
     let submitted = false;
     try {
-      const claimed = await claimJob(key, work, () => {
+      const claimed = await claimJob(key, work, claimId, () => {
         submitted = true;
       });
       admitted();
@@ -420,27 +424,44 @@ export function createProcessingRetryWorker(
 
   /** Resolves once the job is running or was skipped, so poll counts it before the next key. */
   function startJob(key: MeetingUpdateKey): Promise<void> {
+    const claimId = randomUUID();
     let work: RetryWork;
     try {
+      // Per attempt, because a fenced attempt stays registered after its lease lapses and the job must be claimable again.
       work = deps.begin(
         "recovery",
-        `processing-retry:${key.guildId}:${key.channelId_timestamp}`,
+        `processing-retry:${key.guildId}:${key.channelId_timestamp}:${claimId}`,
       );
-    } catch {
+    } catch (error) {
+      // Admission refuses work outside serving, so this repeats every poll until it serves again.
+      if (!refused) console.warn("Processing retry job not started", error);
+      refused = true;
       return Promise.resolve();
     }
+    refused = false;
     let admitted!: () => void;
     const ready = new Promise<void>((resolve) => {
       admitted = resolve;
     });
-    const job = work.trackPromise(() => processKey(key, work, admitted));
+    const job = work.trackPromise(() =>
+      processKey(key, work, claimId, admitted),
+    );
     jobs.add(job);
     void job.finally(() => jobs.delete(job));
     return ready;
   }
 
+  async function readAvailable(): Promise<boolean> {
+    try {
+      return await deps.available();
+    } catch (error) {
+      console.warn("Could not read processing retry availability", error);
+      return false;
+    }
+  }
+
   async function pollDue() {
-    if (!(await deps.available())) {
+    if (!(await readAvailable())) {
       if (!idle) console.warn(IDLE_LOG);
       idle = true;
       return;

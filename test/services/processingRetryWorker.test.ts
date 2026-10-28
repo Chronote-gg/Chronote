@@ -7,6 +7,7 @@ jest.mock("../../src/services/runtimeLifecycleService", () => ({
   beginRuntimeWork: () => ({ settle: jest.fn(), transition: jest.fn() }),
   getRuntimeAdmissionContext: jest.fn(),
 }));
+import { PROCESSING_RETRY_CLAIM_SECONDS } from "../../src/constants";
 import { processingRetryJobs } from "../../src/metrics";
 import { createMockMeetingUpdateDeliveryRepository } from "../../src/repositories/mockMeetingUpdateDeliveryRepository";
 import { createMockProcessingRetryRepository } from "../../src/repositories/processingRetryRepository";
@@ -145,6 +146,19 @@ it("idles without querying while the feature is unavailable", async () => {
   await worker.poll();
   expect(listDue).not.toHaveBeenCalled();
   expect(warn).toHaveBeenCalledTimes(1);
+  expect(warn).toHaveBeenCalledWith(
+    "Processing retry worker idle: flag off or ProcessingRetryDueIndex not ACTIVE",
+  );
+});
+
+it("an availability read error idles without paging", async () => {
+  const warn = jest.spyOn(console, "warn").mockImplementation(() => {});
+  const error = jest.spyOn(console, "error").mockImplementation(() => {});
+  const listDue = jest.spyOn(deps.repository, "listDue");
+  deps.available.mockRejectedValue(new Error("config unavailable"));
+  await pollOnce();
+  expect(listDue).not.toHaveBeenCalled();
+  expect(error).not.toHaveBeenCalled();
   expect(warn).toHaveBeenCalledWith(
     "Processing retry worker idle: flag off or ProcessingRetryDueIndex not ACTIVE",
   );
@@ -384,6 +398,21 @@ it("a throwing claim is logged and the key skipped", async () => {
   );
 });
 
+it("a refused work admission warns once without paging", async () => {
+  const warn = jest.spyOn(console, "warn").mockImplementation(() => {});
+  const error = jest.spyOn(console, "error").mockImplementation(() => {});
+  seed();
+  deps.begin = jest.fn(() => {
+    throw new Error("Runtime is not accepting work");
+  });
+  const worker = createProcessingRetryWorker(deps);
+  await worker.poll();
+  await worker.poll();
+  expect(deps.begin).toHaveBeenCalledTimes(2);
+  expect(warn).toHaveBeenCalledTimes(1);
+  expect(error).not.toHaveBeenCalled();
+});
+
 it("claims nothing without serving authority", async () => {
   seed();
   deps.begin = jest.fn(() => ({
@@ -448,6 +477,18 @@ describe("with real runtime work admission", () => {
     expect(stored().processingRetry).toMatchObject({ status: "queued" });
   });
 
+  it("skips a key without paging when admission closes before the claim", async () => {
+    const error = jest.spyOn(console, "error").mockImplementation(() => {});
+    seed();
+    jest
+      .mocked(getRuntimeAdmissionContext)
+      .mockRejectedValue(new Error("Runtime is not serving"));
+    await pollOnce();
+    expect(error).not.toHaveBeenCalled();
+    expect(getRuntimeWorkAdmissionCheckpoints()).toEqual([]);
+    expect(stored().processingRetry).toMatchObject({ status: "queued" });
+  });
+
   it("releases the work handle after a success", async () => {
     seed();
     await pollOnce();
@@ -466,5 +507,25 @@ describe("with real runtime work admission", () => {
     await pollOnce();
     expect(stored().processingRetry).toMatchObject({ status: "failed" });
     expect(getRuntimeWorkAdmissionCheckpoints()).toEqual([]);
+  });
+
+  // Leaves its fenced handle registered, so it runs last.
+  it("claims a key again after its lease lapses while a fenced handle stays registered", async () => {
+    let clock = now;
+    deps.now = () => clock;
+    seed();
+    deps.run.mockImplementationOnce(async () => {
+      fenceRuntimeWorkAdmissions();
+      throw new Error("lease lost");
+    });
+    await pollOnce();
+    expect(stored().processingRetry).toMatchObject({ status: "running" });
+    clock += PROCESSING_RETRY_CLAIM_SECONDS + 1;
+    await pollOnce();
+    expect(deps.run).toHaveBeenCalledTimes(2);
+    expect(stored().processingRetry).toMatchObject({ status: "succeeded" });
+    expect(getRuntimeWorkAdmissionCheckpoints()).toEqual([
+      expect.objectContaining({ fenced: true, stage: "unresolved" }),
+    ]);
   });
 });
