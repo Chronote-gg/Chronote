@@ -76,8 +76,12 @@ Decisions settled during implementation:
 - Users who cannot edit the meeting's notes see no retry control or job state.
 - Each claim carries a worker-generated `claimId`, so a stale claimant cannot
   save over a newer claim.
-- Availability (flag enabled and index ACTIVE) is cached for 60 seconds.
-- Operator runs flush analytics and exit 1 when any meeting was not queued.
+- The due index's ACTIVE status is cached for 60 seconds per process; the
+  flag is read on every check.
+- Operator runs flush analytics and exit 1 when retry is unavailable under
+  `--apply`, when a queueable meeting fails to queue, when the run throws, or
+  when the analytics flush fails. Skipped meetings, including those needing
+  replace confirmation, are reported but do not fail the run.
 - The `ProcessingRetryWorkerFailed` alarm emails through the critical alerts
   topic when the worker itself fails. Individual job failures are not alarmed;
   they are recorded on the row and shown to the owner.

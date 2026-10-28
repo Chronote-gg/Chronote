@@ -9,7 +9,7 @@ Notable product changes for Chronote users. For the full changelog, see the [Git
 
 ### Retry meetings that failed to process (October 28)
 
-- When a provider outage or error stops transcription, notes or the summary, the meeting's owner can retry from the meeting page. Only the failed steps run again, and existing Discord posts are updated in place. See [Common issues](/troubleshooting/common-issues).
+- When a provider outage or error stops transcription, notes or the summary, the meeting's owner can retry from the meeting page. Chronote re-runs the failed steps and anything that depends on them, and existing Discord posts are updated in place. See [Common issues](/troubleshooting/common-issues).
 
 ### Uploads keep their spoken language (October 28)
 

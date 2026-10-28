@@ -66,7 +66,7 @@ A processing-failure message is different from an empty recording. Any existing 
 
 #### Retry processing
 
-When transcription, notes or the summary failed for a server meeting, the meeting's owner (or someone who can manage the channel, for auto-recorded meetings) can choose **Retry processing** on the meeting page. Chronote re-runs only the steps that failed, then updates the meeting and its existing Discord posts. If the notes were already generated, you confirm replacing them first. Notes someone edited are never replaced. Each meeting allows three attempts. Personal uploads retry on their own and do not show this option.
+When transcription, notes or the summary failed for a server meeting, the meeting's owner (or someone who can manage the channel, for auto-recorded meetings) can choose **Retry processing** on the meeting page. Chronote re-runs the failed steps and anything that depends on them, then updates the meeting and its existing Discord posts. If the notes were already generated, you confirm replacing them first. Notes someone edited are never replaced. Each meeting allows three attempts. Personal uploads retry on their own and do not show this option.
 
 A retry may use the server's current settings when the settings from the original recording are not available. When it does, the meeting page says so.
 
