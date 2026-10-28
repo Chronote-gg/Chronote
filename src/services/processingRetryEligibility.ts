@@ -38,7 +38,7 @@ export function notesEditedByPerson(
   return false;
 }
 
-function hasUsableTranscript(
+export function hasUsableTranscript(
   history: MeetingHistory,
   processing: MeetingProcessingOutcome,
 ): boolean {

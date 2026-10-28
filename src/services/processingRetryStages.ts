@@ -34,6 +34,7 @@ import {
   transcribeMixedRecording,
   UNATTRIBUTED_TRANSCRIPT_NOTICE,
 } from "./processingRetryTranscript";
+import { hasUsableTranscript } from "./processingRetryEligibility";
 import { cleanupWithSavedSettings } from "./recoveryTranscriptionProcessing";
 import { fetchJsonFromS3 } from "./storageService";
 import type { TranscriptionContentInput } from "./transcriptionService";
@@ -196,6 +197,34 @@ async function storedTranscript(input: RunInput): Promise<Transcript> {
   return { text: payload.text, source: "existing" };
 }
 
+/**
+ * A partial transcript is retried to probe for lost speech, but the probe
+ * finding none must not block notes or summary that failed on their own.
+ */
+function generationCanUseStored(error: unknown, history: MeetingHistory) {
+  const processing = history.processing ?? {};
+  return (
+    error instanceof RetryFailure &&
+    error.reason === "nothing_to_retry" &&
+    (processing.notes === "failed" || processing.summary === "failed") &&
+    hasUsableTranscript(history, processing)
+  );
+}
+
+async function sourceTranscript(
+  input: RunInput,
+  content: RecoveryContent | undefined,
+): Promise<Transcript> {
+  if (!input.job.stages.includes("transcription"))
+    return storedTranscript(input);
+  try {
+    return await retryTranscript(input, content);
+  } catch (error) {
+    if (!generationCanUseStored(error, input.history)) throw error;
+    return storedTranscript(input);
+  }
+}
+
 function transcriptionOutcome(
   transcript: Transcript,
   history: MeetingHistory,
@@ -311,11 +340,8 @@ async function runStages(
   input: RunInput,
   sources: Sources,
 ): Promise<ProcessingRetryChanges> {
-  const retranscribe = input.job.stages.includes("transcription");
   const content = await readCheckpoint(input);
-  const transcript = retranscribe
-    ? await retryTranscript(input, content)
-    : await storedTranscript(input);
+  const transcript = await sourceTranscript(input, content);
   sources.transcriptSource = transcript.source;
   const { notesInput, settingsSource } = await notesInputFor(
     input,
@@ -327,7 +353,7 @@ async function runStages(
     notesInput,
     input.history,
     input.job.stages,
-    retranscribe
+    transcript.source !== "existing"
       ? transcriptionOutcome(transcript, input.history, content)
       : undefined,
   );

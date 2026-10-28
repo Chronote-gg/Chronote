@@ -162,6 +162,13 @@ function unverifiableCheckpointWithNothingRetranscribed() {
     retranscribedRanges: 0,
   });
 }
+function nothingToRetranscribe() {
+  jest.mocked(retranscribeOmittedRanges).mockResolvedValue({
+    text: "Saved words.",
+    segments: [],
+    retranscribedRanges: 0,
+  });
+}
 /** Runs a full retry that must end up transcribing the mixed recording. */
 async function runMixedFallback(history: MeetingHistory = failedTranscription) {
   const result = await run(
@@ -335,17 +342,70 @@ test("a checkpoint transcription retry stores transcript-retry-<jobId>.json and 
   });
 });
 
-test("a checkpoint with no omitted ranges fails nothing_to_retry without generating notes", async () => {
-  jest.mocked(retranscribeOmittedRanges).mockResolvedValue({
-    text: "Saved words.",
-    segments: [],
-    retranscribedRanges: 0,
+test.each([
+  ["a failed transcription", failedTranscription],
+  [
+    "a partial transcript whose generation succeeded",
+    {
+      ...base,
+      checkpoint,
+      processing: {
+        transcription: "partial",
+        notes: "generated",
+        summary: "generated",
+      },
+    } satisfies MeetingHistory,
+  ],
+])(
+  "a checkpoint with no omitted ranges fails nothing_to_retry for %s without generating notes",
+  async (_, history) => {
+    nothingToRetranscribe();
+
+    const result = await run(history, fullRetry);
+
+    expect(result).toMatchObject({
+      kind: "failed",
+      reason: "nothing_to_retry",
+    });
+    expect(ensureMeetingNotes).not.toHaveBeenCalled();
+    expect(storeRetryTranscript).not.toHaveBeenCalled();
+  },
+);
+
+test("a partial transcript with nothing to retry still regenerates failed notes from the stored transcript", async () => {
+  nothingToRetranscribe();
+
+  const result = await run(
+    {
+      ...base,
+      checkpoint,
+      processing: {
+        transcription: "partial",
+        notes: "failed",
+        summary: "skipped",
+      },
+    },
+    fullRetry,
+  );
+
+  expect(result).toMatchObject({
+    kind: "succeeded",
+    transcriptSource: "existing",
+    changes: {
+      notes: "Regenerated",
+      processing: {
+        transcription: "partial",
+        notes: "generated",
+        summary: "generated",
+      },
+    },
   });
-
-  const result = await run(failedTranscription, fullRetry);
-
-  expect(result).toMatchObject({ kind: "failed", reason: "nothing_to_retry" });
-  expect(ensureMeetingNotes).not.toHaveBeenCalled();
+  expect(result.kind === "succeeded" && result.changes.transcriptS3Key).toBe(
+    undefined,
+  );
+  expect(jest.mocked(ensureMeetingNotes).mock.calls[0][0]).toMatchObject({
+    finalTranscript: "Stored transcript",
+  });
   expect(storeRetryTranscript).not.toHaveBeenCalled();
 });
 
