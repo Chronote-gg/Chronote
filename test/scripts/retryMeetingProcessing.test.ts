@@ -1,8 +1,15 @@
 /** @jest-environment node */
 import {
+  allQueued,
   parseRetryProcessingArgs,
+  queueRetries,
+  runWithAnalyticsFlush,
   summarizeRetryCandidates,
 } from "../../scripts/retry-meeting-processing";
+import type {
+  ProcessingRetryRequest,
+  ProcessingRetryRequestResult,
+} from "../../src/services/processingRetryRequestService";
 import type { MeetingHistory } from "../../src/types/db";
 import {
   PROCESSING_RETRY_USER_ATTEMPT_CAP,
@@ -118,24 +125,87 @@ test("counts by stage set and skip reason, and never queues a notes replacement"
   });
 });
 
+const job = (status: "queued" | "failed", countedAttempts: number) =>
+  processingRetryJobSchema.parse({
+    jobId: "job-1",
+    status,
+    stages: ["notes", "summary"],
+    requestedBy: "user-1",
+    requestedAt: from,
+    expectedNotesVersion: 1,
+    replaceNotes: false,
+    countedAttempts,
+    settingsSource: "snapshot",
+    transcriptSource: "existing",
+    updatedAt: from,
+  });
+
 test("includes meetings over the user attempt cap", () => {
   const exhausted = row(1, {
     processing: notesFailed,
-    processingRetry: processingRetryJobSchema.parse({
-      jobId: "job-1",
-      status: "failed",
-      stages: ["notes", "summary"],
-      requestedBy: "user-1",
-      requestedAt: from,
-      expectedNotesVersion: 1,
-      replaceNotes: false,
-      countedAttempts: PROCESSING_RETRY_USER_ATTEMPT_CAP,
-      settingsSource: "snapshot",
-      transcriptSource: "existing",
-      updatedAt: from,
-    }),
+    processingRetry: job("failed", PROCESSING_RETRY_USER_ATTEMPT_CAP),
   });
   expect(summarizeRetryCandidates([exhausted]).queueable).toEqual([
     keyOf(exhausted),
   ]);
+});
+
+describe("apply", () => {
+  beforeEach(() => {
+    jest.spyOn(console, "log").mockImplementation(() => undefined);
+    jest.spyOn(console, "error").mockImplementation(() => undefined);
+  });
+  afterEach(() => jest.restoreAllMocks());
+
+  test("tallies results by kind and fails when anything was not queued", async () => {
+    const queued = row(1, {});
+    const results: ProcessingRetryRequestResult[] = [
+      { kind: "queued", history: queued, job: job("queued", 0) },
+      { kind: "conflict" },
+      { kind: "ineligible", reason: "notes_edited" },
+    ];
+    const requests: ProcessingRetryRequest[] = [];
+    const tally = await queueRetries(
+      [keyOf(queued), keyOf(row(2, {})), keyOf(row(3, {}))],
+      operator,
+      async (input) => {
+        requests.push(input);
+        return results[requests.length - 1];
+      },
+    );
+    expect(tally).toEqual({ queued: 1, conflict: 1, ineligible: 1 });
+    expect(allQueued(tally)).toBe(false);
+    expect(allQueued({ queued: 2 })).toBe(true);
+    expect(requests).toHaveLength(3);
+    for (const request of requests)
+      expect(request).toMatchObject({
+        requestedBy: operator,
+        replaceNotes: false,
+        source: "operator",
+      });
+  });
+
+  test("flushes analytics after success and after failure", async () => {
+    const flush = jest.fn(async () => undefined);
+    await expect(runWithAnalyticsFlush(async () => true, flush)).resolves.toBe(
+      true,
+    );
+    await expect(runWithAnalyticsFlush(async () => false, flush)).resolves.toBe(
+      false,
+    );
+    await expect(
+      runWithAnalyticsFlush(async () => {
+        throw new Error("synthetic");
+      }, flush),
+    ).resolves.toBe(false);
+    expect(flush).toHaveBeenCalledTimes(3);
+    await expect(
+      runWithAnalyticsFlush(
+        async () => true,
+        async () => {
+          throw new Error("synthetic flush");
+        },
+      ),
+    ).resolves.toBe(false);
+  });
 });

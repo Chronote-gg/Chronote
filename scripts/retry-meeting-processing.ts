@@ -8,14 +8,22 @@
  *   npx ts-node scripts/retry-meeting-processing.ts --from <iso> --to <iso> \
  *     --operator-user-id <discordUserId> [--guild-id <id>] [--apply]
  *
- * The default is a dry run. It needs a full app environment, because
- * configService validates the whole config at import, plus production AWS
- * credentials. A production run follows the existing production approval
- * rules.
+ * The window matches each meeting's start time, not the time its processing
+ * failed, and both ends are inclusive. A meeting can run for up to the
+ * 2 hour maximum meeting duration before it is processed, so move --from back
+ * by 2 hours from the incident start to catch meetings already running when
+ * it began.
+ *
+ * The default is a dry run. With --apply the exit code is 1 when any
+ * request was not queued, and a final line tallies results by kind. It needs
+ * a full app environment, because configService validates the whole config
+ * at import, plus production AWS credentials. A production run follows the
+ * existing production approval rules.
  */
 import { parseArgs } from "node:util";
 import { z } from "zod";
 import { getProcessingRetryRepository } from "../src/repositories/processingRetryRepository";
+import { shutdownAnalytics } from "../src/services/analyticsService";
 import { isProcessingRetryAvailable } from "../src/services/processingRetryAvailability";
 import { getProcessingRetryEligibility } from "../src/services/processingRetryEligibility";
 import { requestProcessingRetry } from "../src/services/processingRetryRequestService";
@@ -120,13 +128,13 @@ async function scanWindow(args: RetryProcessingArgs) {
 const printKey = (label: string, key: MeetingUpdateKey, extra = "") =>
   console.log(`${label} ${key.guildId} ${key.channelId_timestamp}${extra}`);
 
-async function main(args: RetryProcessingArgs) {
+/** Resolves false when anything that should have been queued was not. */
+async function main(args: RetryProcessingArgs): Promise<boolean> {
   if (args.apply && !(await isProcessingRetryAvailable())) {
     console.error(
       "Processing retry is not available (flag off or due index not ACTIVE). Nothing was queued.",
     );
-    process.exitCode = 1;
-    return;
+    return false;
   }
   const rows = await scanWindow(args);
   const summary = summarizeRetryCandidates(rows);
@@ -140,32 +148,73 @@ async function main(args: RetryProcessingArgs) {
   );
   for (const key of summary.needsConfirmation)
     printKey("skipped_replace_confirmation_required", key);
-  for (const key of summary.queueable) {
-    if (!args.apply) {
-      printKey("would_queue", key);
-      continue;
-    }
-    const result = await requestProcessingRetry({
+  if (!args.apply) {
+    for (const key of summary.queueable) printKey("would_queue", key);
+    return true;
+  }
+  const tally = await queueRetries(summary.queueable, args.operatorUserId);
+  console.log(JSON.stringify({ results: tally }));
+  return allQueued(tally);
+}
+
+export const allQueued = (tally: Record<string, number>) =>
+  Object.keys(tally).every((kind) => kind === "queued");
+
+/** Sequential so a conflict or failure on one meeting is reported against its own key. */
+export async function queueRetries(
+  keys: MeetingUpdateKey[],
+  operatorUserId: string,
+  request: typeof requestProcessingRetry = requestProcessingRetry,
+): Promise<Record<string, number>> {
+  const tally: Record<string, number> = {};
+  for (const key of keys) {
+    const result = await request({
       key,
-      requestedBy: args.operatorUserId,
+      requestedBy: operatorUserId,
       replaceNotes: false,
       source: "operator",
     });
+    increment(tally, result.kind);
     printKey(
       result.kind,
       key,
       result.kind === "ineligible" ? ` ${result.reason}` : "",
     );
   }
+  return tally;
+}
+
+/**
+ * The analytics client batches, so queued-retry events are lost unless it is
+ * flushed before exit. Resolves false when the task or the flush failed.
+ */
+export async function runWithAnalyticsFlush(
+  task: () => Promise<boolean>,
+  flush: () => Promise<void> = shutdownAnalytics,
+): Promise<boolean> {
+  let succeeded = false;
+  try {
+    succeeded = await task();
+  } catch (error) {
+    // Only the error name is printed: a parse failure on a stored row could echo meeting content.
+    console.error(
+      `Processing retry command failed (${error instanceof Error ? error.name : "unknown"}). Keys printed above were handled; rerun the dry run before retrying.`,
+    );
+  }
+  try {
+    await flush();
+  } catch {
+    console.error(
+      "Analytics flush failed; retry request events may be missing.",
+    );
+    return false;
+  }
+  return succeeded;
 }
 
 if (require.main === module) {
   const args = parseRetryProcessingArgs(process.argv.slice(2));
-  // Only the error name is printed: a parse failure on a stored row could echo meeting content.
-  main(args).catch((error: unknown) => {
-    console.error(
-      `Processing retry command failed (${error instanceof Error ? error.name : "unknown"}). Keys printed above were handled; rerun the dry run before retrying.`,
-    );
-    process.exitCode = 1;
+  void runWithAnalyticsFlush(() => main(args)).then((succeeded) => {
+    if (!succeeded) process.exitCode = 1;
   });
 }
