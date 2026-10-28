@@ -215,8 +215,10 @@ it("retained failed checkout does not emit readiness while its purchase actions 
     begin: jest.fn(),
     isCurrent: jest.fn(),
     refresh: jest.fn(),
+    retry: jest.fn(),
   });
   renderSelector();
+  expect(screen.getByText(/Checkout could not be opened/)).toBeVisible();
   expect(screen.getByRole("button", { name: "Retry checkout" })).toBeEnabled();
   expect(button("Basic")).toBeDisabled();
   expect(button("Pro")).toBeDisabled();

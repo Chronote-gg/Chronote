@@ -1431,23 +1431,9 @@ export function Billing() {
   const expandPlans = () => setShowPlans(true);
   const togglePlans = () => setShowPlans((prev) => !prev);
   const refreshOffers = () => checkoutAttempt.refresh();
-  const retryCheckout = async () => {
-    const attempt = checkoutAttempt.attempt;
-    if (
-      busy ||
-      !selectedGuildId ||
-      selectedGuildId !== routeServerId ||
-      !attempt ||
-      !checkoutAttempt.isCurrent(attempt)
-    )
-      return;
-    try {
-      const body = await checkoutMutation.mutateAsync(attempt.request);
-      if (checkoutAttempt.isCurrent(attempt)) window.location.href = body.url;
-    } catch (error) {
-      if (checkoutAttempt.isCurrent(attempt))
-        showBillingError(error, "checkout");
-    }
+  const retryCheckout = () => {
+    if (busy || !selectedGuildId || selectedGuildId !== routeServerId) return;
+    void checkoutAttempt.retry(checkoutMutation.mutateAsync);
   };
 
   if (loading) {

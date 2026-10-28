@@ -388,17 +388,9 @@ export default function UpgradeServerSelect({
         showBillingError(err, "checkout");
     }
   };
-  const retryCheckout = async () => {
-    const attempt = checkoutAttempt.attempt;
-    if (busy || !serverReady || !attempt || !checkoutAttempt.isCurrent(attempt))
-      return;
-    try {
-      const body = await checkoutMutation.mutateAsync(attempt.request);
-      if (checkoutAttempt.isCurrent(attempt)) window.location.href = body.url;
-    } catch (error) {
-      if (checkoutAttempt.isCurrent(attempt))
-        showBillingError(error, "checkout");
-    }
+  const retryCheckout = () => {
+    if (busy || !serverReady) return;
+    void checkoutAttempt.retry(checkoutMutation.mutateAsync);
   };
   const handlePortal = async () => {
     if (!serverReady || !selectedServerId || busy) return;
