@@ -241,7 +241,7 @@ const splitAudioFile = async (
   return chunkNames.map((name) => path.join(outputDir, name));
 };
 
-const resolveTranscriptionInputs = async (
+export const resolveTranscriptionInputs = async (
   audioPath: string,
   workDir: string,
   signal?: AbortSignal,
@@ -280,7 +280,7 @@ const transcribeAudioFile = async (filePath: string, signal?: AbortSignal) => {
   });
 };
 
-const transcribeAudioFiles = async (
+export const transcribeAudioFiles = async (
   filePaths: string[],
   acceptPartial: boolean,
   signal?: AbortSignal,

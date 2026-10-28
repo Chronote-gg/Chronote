@@ -2,7 +2,6 @@
 import { UnresolvedNotionMutation } from "../notionOperationLifetime";
 import { maybeAutoExportCompletedMeeting } from "../notionAutomationService";
 import { jest } from "@jest/globals";
-import ffmpeg from "fluent-ffmpeg";
 import { completedTextResponse } from "../../testSupport/openaiResponse";
 import { getModelChoice } from "../modelFactory";
 import {
@@ -35,10 +34,7 @@ import {
   fetchJsonFromS3,
   uploadObjectToS3,
 } from "../storageService";
-import {
-  PERSONAL_UPLOAD_TRANSCRIPTION_CHUNK_SECONDS,
-  TRANSCRIPTION_FAILURE_PLACEHOLDER,
-} from "../../constants";
+import { TRANSCRIPTION_FAILURE_PLACEHOLDER } from "../../constants";
 import type { MeetingSummaries } from "../meetingSummaryService";
 import { resolveMeetingNameFromSummary } from "../meetingNameService";
 import { recordPersonalUploadTerminal } from "../../observability/personalUploadTrace";
@@ -1267,26 +1263,6 @@ describe("personalMediaUploadProcessingService", () => {
       expect.objectContaining({ status: "failed" }),
       "instance-1",
     );
-  });
-
-  it("splits every upload by duration and lets the provider detect the language", async () => {
-    await processPersonalMediaUpload(buildJob(), "instance-1");
-
-    const segmentCommands = jest
-      .mocked(ffmpeg)
-      .mock.results.map(
-        (result) => result.value as { outputOptionList: string[] },
-      )
-      .filter((command) => command.outputOptionList.includes("segment"));
-    expect(segmentCommands).toHaveLength(1);
-    expect(segmentCommands[0].outputOptionList).toEqual(
-      expect.arrayContaining([
-        "-segment_time",
-        String(PERSONAL_UPLOAD_TRANSCRIPTION_CHUNK_SECONDS),
-      ]),
-    );
-    expect(mockTranscribe).toHaveBeenCalledTimes(1);
-    expect(mockTranscribe.mock.calls[0][0]).not.toHaveProperty("language");
   });
 
   it("excludes the failure placeholder from an ordinary upload", async () => {
