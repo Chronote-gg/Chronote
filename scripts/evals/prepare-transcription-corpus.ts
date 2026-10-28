@@ -51,35 +51,7 @@ async function main() {
             },
     });
   };
-  let seed = 1701;
-  const noise = () => {
-    seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
-    return (seed / 4294967296) * 2 - 1;
-  };
-  for (const split of ["tune", "holdout"] as const) {
-    const seconds = split === "tune" ? 2 : 3;
-    for (const signal of ["silence", "noise", "tone", "click"] as const) {
-      const pcm = Buffer.alloc(48000 * 4 * seconds);
-      for (let frame = 0; frame < pcm.length / 4; frame++) {
-        const amplitude =
-          signal === "noise"
-            ? noise() * 50
-            : signal === "tone"
-              ? Math.sin(
-                  (frame / 48000) *
-                    2 *
-                    Math.PI *
-                    (split === "tune" ? 440 : 880),
-                ) * 4000
-              : signal === "click" && frame === 24000
-                ? 8000
-                : 0;
-        pcm.writeInt16LE(Math.round(amplitude), frame * 4);
-        pcm.writeInt16LE(Math.round(amplitude), frame * 4 + 2);
-      }
-      await add(`${split}-${signal}`, pcm, split, [signal, "nonspeech"]);
-    }
-  }
+  await addSignalControls(add);
   let synthesisRequests = 0;
   if (args.includes("--speech")) {
     const { createOpenAIClient } =
@@ -119,32 +91,7 @@ async function main() {
       await fs.writeFile(source, Buffer.from(await response.arrayBuffer()));
       await decodeTranscriptionEvalAudio(source, pcmFile, 30);
       const pcm = await fs.readFile(pcmFile);
-      let peak = 1;
-      for (let index = 0; index < pcm.length; index += 2)
-        peak = Math.max(peak, Math.abs(pcm.readInt16LE(index)));
-      for (const [variant, dbfs] of [
-        ["normal", -20],
-        ["quiet", -52],
-      ] as const) {
-        const scaled = Buffer.from(pcm);
-        const gain = (32768 * Math.pow(10, dbfs / 20)) / peak;
-        for (let index = 0; index < pcm.length; index += 2)
-          scaled.writeInt16LE(Math.round(pcm.readInt16LE(index) * gain), index);
-        await add(
-          `${phrase.id}-${variant}`,
-          scaled,
-          phrase.split,
-          [
-            "speech",
-            variant,
-            phrase.text.split(/\s+/).length <= 2 ? "short-speech" : "sentence",
-            phrase.id === "workshop" || phrase.id === "makers"
-              ? "dictionary-phrase"
-              : "control",
-          ],
-          phrase.text,
-        );
-      }
+      await addSpeechVariants(add, phrase, pcm);
       const opus = path.join(directory, `${phrase.id}.ogg`);
       await new Promise<void>((resolve, reject) =>
         ffmpeg(source)
@@ -205,3 +152,83 @@ main().catch((error) => {
   );
   process.exitCode = 1;
 });
+
+type AddCase = (
+  id: string,
+  pcm: Buffer,
+  split: "tune" | "holdout",
+  tags: string[],
+  transcript?: string,
+) => Promise<void>;
+
+async function addSignalControls(add: AddCase) {
+  let seed = 1701;
+  const noise = () => {
+    seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
+    return (seed / 4294967296) * 2 - 1;
+  };
+  for (const split of ["tune", "holdout"] as const) {
+    const seconds = split === "tune" ? 2 : 3;
+    for (const signal of ["silence", "noise", "tone", "click"] as const) {
+      const pcm = signalPcm(signal, split, seconds, noise);
+      await add(`${split}-${signal}`, pcm, split, [signal, "nonspeech"]);
+    }
+  }
+}
+
+async function addSpeechVariants(
+  add: AddCase,
+  phrase: { id: string; text: string; split: "tune" | "holdout" },
+  pcm: Buffer,
+) {
+  let peak = 1;
+  for (let index = 0; index < pcm.length; index += 2)
+    peak = Math.max(peak, Math.abs(pcm.readInt16LE(index)));
+  for (const [variant, dbfs] of [
+    ["normal", -20],
+    ["quiet", -52],
+  ] as const) {
+    const scaled = Buffer.from(pcm);
+    const gain = (32768 * Math.pow(10, dbfs / 20)) / peak;
+    for (let index = 0; index < pcm.length; index += 2)
+      scaled.writeInt16LE(Math.round(pcm.readInt16LE(index) * gain), index);
+    await add(
+      `${phrase.id}-${variant}`,
+      scaled,
+      phrase.split,
+      [
+        "speech",
+        variant,
+        phrase.text.split(/\s+/).length <= 2 ? "short-speech" : "sentence",
+        phrase.id === "workshop" || phrase.id === "makers"
+          ? "dictionary-phrase"
+          : "control",
+      ],
+      phrase.text,
+    );
+  }
+}
+
+function signalPcm(
+  signal: "silence" | "noise" | "tone" | "click",
+  split: "tune" | "holdout",
+  seconds: number,
+  noise: () => number,
+) {
+  const pcm = Buffer.alloc(48000 * 4 * seconds);
+  for (let frame = 0; frame < pcm.length / 4; frame++) {
+    const amplitude =
+      signal === "noise"
+        ? noise() * 50
+        : signal === "tone"
+          ? Math.sin(
+              (frame / 48000) * 2 * Math.PI * (split === "tune" ? 440 : 880),
+            ) * 4000
+          : signal === "click" && frame === 24000
+            ? 8000
+            : 0;
+    pcm.writeInt16LE(Math.round(amplitude), frame * 4);
+    pcm.writeInt16LE(Math.round(amplitude), frame * 4 + 2);
+  }
+  return pcm;
+}

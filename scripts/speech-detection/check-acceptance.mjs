@@ -78,6 +78,19 @@ async function main() {
     if (ok) report.machineVerified.push(name);
     else (incomplete ? report.missing : report.failures).push(name);
   };
+  const benchmark = await checkBenchmarkEvidence(report, check);
+  await checkCorpusEvidence(report, check, benchmark);
+  if (values.output) await writeJson(path.resolve(values.output), report);
+  console.log(
+    JSON.stringify({
+      status: report.status,
+      failures: report.failures,
+      missing: report.missing,
+    }),
+  );
+  if (report.status !== "pass") process.exitCode = 1;
+}
+async function checkBenchmarkEvidence(report, check) {
   let benchmark;
   try {
     benchmark = await readJson(values.benchmark);
@@ -141,6 +154,10 @@ async function main() {
   } catch {
     report.missing.push("missing or invalid benchmark evidence");
   }
+  return benchmark;
+}
+
+async function checkCorpusEvidence(report, check, benchmark) {
   try {
     const {
       transcriptionCorpusSchema,
@@ -205,72 +222,7 @@ async function main() {
       cases = manifest.cases.filter((c) => c.split === "holdout");
     const speech = cases.filter((c) => c.label.kind === "speech"),
       nonspeech = cases.filter((c) => c.label.kind === "nonspeech");
-    check(
-      speech.length >= 100 && nonspeech.length >= 50,
-      "minimum unique speech/nonspeech samples",
-      true,
-    );
-    check(
-      speech.filter((c) => c.tags.includes("quiet")).length >= 20 &&
-        speech.filter((c) => c.tags.includes("short")).length >= 20,
-      "minimum quiet/short speech samples",
-      true,
-    );
-    check(
-      cases.every((c) => c.familyId && c.speakerDeviceProfileId),
-      "family and profile metadata",
-      true,
-    );
-    check(
-      new Set(speech.map((c) => c.speakerDeviceProfileId)).size >= 5,
-      "five speech profiles",
-      true,
-    );
-    check(
-      new Set(manifest.cases.map((c) => c.sha256)).size ===
-        manifest.cases.length,
-      "unique audio hashes",
-    );
-    const tuning = new Set([
-      ...manifest.cases
-        .filter((c) => c.split === "tune")
-        .map((c) => c.familyId),
-      ...(review.tuningFamilyIds ?? []),
-    ]);
-    check(
-      cases.every((c) => !tuning.has(c.familyId)),
-      "no tune/holdout family leakage",
-    );
-    const human = cases.every(
-      (c) =>
-        c.label.kind !== "unreviewed" &&
-        c.label.provenance === "human-reviewed",
-    );
-    check(human, "human-reviewed label provenance", true);
-    const attested =
-      review.version === 1 &&
-      review.manifestSha256 === manifestSha256 &&
-      Number.isFinite(Date.parse(review.reviewedAt)) &&
-      review.holdoutUntouchedSinceFreeze === true &&
-      Array.isArray(review.tuningFamilyIds) &&
-      review.tuningFamilyIds.every(
-        (f) => typeof f === "string" && f.length > 0,
-      );
-    check(attested, "review evidence bound to manifest", true);
-    report.attested = {
-      finalHumanReviewRequired: true,
-      humanReviewClaim: human,
-      holdoutUntouchedSinceFreeze: review.holdoutUntouchedSinceFreeze === true,
-      reviewedAt: review.reviewedAt ?? null,
-      truthAutomaticallyVerified: false,
-    };
-    report.manifestSha256 = manifestSha256;
-    report.samples = {
-      uniqueClips: cases.length,
-      speech: speech.length,
-      nonspeech: nonspeech.length,
-      profiles: new Set(speech.map((c) => c.speakerDeviceProfileId)).size,
-    };
+    checkCorpusReview();
     const flatten = (reports) =>
       reports.flatMap((p) =>
         p.results.map((r) => ({ ...r, phase: p.passMode, report: p })),
@@ -290,238 +242,73 @@ async function main() {
       policy: p.policy,
       force: p.force,
     });
-    for (const [name, reports, rows] of [
-      ["baseline", baseline, before],
-      ["candidate", candidate, after],
-    ]) {
+    checkPipelineReports();
+    checkMatchedImplementations();
+
+    function checkMatchedImplementations() {
       check(
-        reports.every(
-          (p) =>
-            p.version === 1 &&
-            p.complete === true &&
-            p.manifestSha256 === manifestSha256 &&
-            p.runs === 3 &&
-            p.mode === "pipeline" &&
-            p.force === false &&
-            typeof p.model === "string" &&
-            p.model.length > 0 &&
-            typeof p.prompt === "string" &&
-            transcriptionPolicySchema.safeParse(p.policy).success &&
-            validImplementation(p) &&
-            p.sourceSha256 &&
-            typeof p.runSha256 === "string" &&
-            /^[a-f0-9]{64}$/.test(p.runSha256) &&
-            Number.isInteger(p.maxRequests) &&
-            p.maxRequests >= 1 &&
-            p.maxRequests <= 200 &&
-            p.selection?.split === "holdout" &&
-            !p.vadReport,
-        ),
-        `${name} complete matched pipeline reports`,
+        validImplementation(detector) &&
+          validImplementation(benchmark) &&
+          [...baseline, ...candidate].every(
+            (p) =>
+              validImplementation(p) &&
+              stableJson(p.implementation.build) ===
+                stableJson(detector.implementation.build),
+          ) &&
+          stableJson(detector.implementation.build) ===
+            stableJson(benchmark?.implementation?.build),
+        "complete matched source/build/compiled implementation identity",
         true,
       );
+      const beforeMap = new Map(before.map((r) => [key(r), r]));
       check(
-        reports.every((p) =>
-          name === "baseline"
-            ? p.speechDetector === "off" && p.speechMode === "off"
-            : p.speechDetector === "production" && p.speechMode === "enforce",
-        ),
-        `${name} detector selection`,
-      );
-      check(
-        ["fast", "slow"].every((phase) =>
-          reports.some((p) => p.passMode === phase),
-        ),
-        `${name} fast and slow phases`,
-        true,
-      );
-      const sortedIds = cases
-        .map((c) => c.id)
-        .sort((a, b) => a.localeCompare(b, "en"));
-      check(
-        reports.every((p) => {
-          const selection = p.selection;
-          if (
-            !selection ||
-            !Number.isInteger(selection.batchSize) ||
-            selection.batchSize < 1 ||
-            selection.batchSize > 25 ||
-            !Number.isInteger(selection.batchIndex) ||
-            selection.batchIndex < 0 ||
-            selection.totalSelectedCases !== cases.length
-          )
-            return false;
-          const ids = sortedIds.slice(
-            selection.batchSize * selection.batchIndex,
-            selection.batchSize * (selection.batchIndex + 1),
-          );
+        after.every((r) => {
+          const b = beforeMap.get(key(r));
           return (
-            ids.length > 0 &&
-            same(ids, selection.selectedCaseIds) &&
-            p.results.length === ids.length * p.runs &&
-            p.results.every((r) => ids.includes(r.caseId)) &&
-            p.runSha256 ===
-              hash(
-                stableJson({
-                  sourceSha256: p.sourceSha256,
-                  cases: ids.map((id) => known.get(id)),
-                  runs: p.runs,
-                  policy: p.policy,
-                  prompt: p.prompt,
-                  mode: p.mode,
-                  passMode: p.passMode,
-                  speechDetector: p.speechDetector,
-                  speechMode: p.speechMode,
-                  implementation: p.implementation,
-                }),
-              )
+            b &&
+            same(signature(b.report), signature(r.report)) &&
+            b.audioSeconds === r.audioSeconds &&
+            (!["minimum_duration", "noise_gate"].includes(b.reason) ||
+              (r.status === "skipped" && r.reason === b.reason))
           );
         }),
-        `${name} deterministic batch provenance`,
-        true,
+        "identical pipeline source/config/prompt/model/repetitions",
       );
-      check(
-        reports.every((p) => {
-          const requests = p.results.reduce((n, r) => n + r.requests, 0),
-            submitted = p.results.reduce(
-              (n, r) => n + r.submittedAudioSeconds,
-              0,
-            ),
-            decoded = p.results.reduce((n, r) => n + r.audioSeconds, 0);
-          return (
-            requests <= p.maxRequests &&
-            p.summary?.requests === requests &&
-            p.summary?.submittedAudioSeconds === submitted &&
-            p.summary?.observedAudioSeconds === decoded
-          );
-        }),
-        `${name} provider budget and summary accounting`,
-        true,
-      );
-      const keys = new Set(rows.map(key));
-      check(
-        keys.size === rows.length &&
-          rows.length === cases.length * 3 * 2 &&
-          cases.every((c) =>
-            ["fast", "slow"].every((phase) =>
-              [1, 2, 3].every((run) => keys.has(`${phase}|${c.id}|${run}`)),
-            ),
-          ),
-        `${name} exact case repetition coverage`,
-        true,
-      );
-      check(
-        rows.every((r) => {
-          const c = known.get(r.caseId);
-          return (
-            c &&
-            r.sha256 === c.sha256 &&
-            same(r.label, c.label) &&
-            same(r.tags, c.tags) &&
-            r.familyId === c.familyId &&
-            r.speakerDeviceProfileId === c.speakerDeviceProfileId &&
-            ["succeeded", "skipped"].includes(r.status) &&
-            typeof r.text === "string" &&
-            r.score?.scored === true &&
-            finite(r.requests) &&
-            Number.isInteger(r.requests) &&
-            finite(r.submittedAudioSeconds) &&
-            finite(r.audioSeconds) &&
-            r.audioSeconds > 0 &&
-            pipelineRowSemantics(
-              r,
-              r.report,
-              DEFAULT_SPEECH_POLICY.policyFingerprint,
-            )
-          );
-        }),
-        `${name} validated rows`,
-        true,
-      );
+      const pipelineProvenance = (reports) =>
+        reports.map((p) => ({
+          manifestSha256: p.manifestSha256,
+          sourceSha256: p.sourceSha256,
+          runSha256: p.runSha256 ?? null,
+          model: p.model,
+          mode: p.mode,
+          passMode: p.passMode,
+          runs: p.runs,
+          force: p.force,
+          promptSha256: hash(p.prompt ?? ""),
+          policySha256: hash(JSON.stringify(p.policy ?? null)),
+          speechDetector: p.speechDetector,
+          speechMode: p.speechMode,
+          selection: p.selection,
+        }));
+      report.provenance = {
+        speechPolicy: detector.speechPolicy,
+        detectorCompiledSha256: detector.compiledSha256 ?? null,
+        benchmarkCompiledSha256: benchmark?.compiledSha256 ?? null,
+        buildAssociationSha256:
+          detector.implementation?.buildAssociationSha256 ?? null,
+        hashEvidenceAuthenticatesExecution: false,
+        pipeline: {
+          baseline: pipelineProvenance(baseline),
+          candidate: pipelineProvenance(candidate),
+        },
+      };
     }
-    check(
-      validImplementation(detector) &&
-        validImplementation(benchmark) &&
-        [...baseline, ...candidate].every(
-          (p) =>
-            validImplementation(p) &&
-            stableJson(p.implementation.build) ===
-              stableJson(detector.implementation.build),
-        ) &&
-        stableJson(detector.implementation.build) ===
-          stableJson(benchmark?.implementation?.build),
-      "complete matched source/build/compiled implementation identity",
-      true,
-    );
-    const beforeMap = new Map(before.map((r) => [key(r), r]));
-    check(
-      after.every((r) => {
-        const b = beforeMap.get(key(r));
-        return (
-          b &&
-          same(signature(b.report), signature(r.report)) &&
-          b.audioSeconds === r.audioSeconds &&
-          (!["minimum_duration", "noise_gate"].includes(b.reason) ||
-            (r.status === "skipped" && r.reason === b.reason))
-        );
-      }),
-      "identical pipeline source/config/prompt/model/repetitions",
-    );
-    const pipelineProvenance = (reports) =>
-      reports.map((p) => ({
-        manifestSha256: p.manifestSha256,
-        sourceSha256: p.sourceSha256,
-        runSha256: p.runSha256 ?? null,
-        model: p.model,
-        mode: p.mode,
-        passMode: p.passMode,
-        runs: p.runs,
-        force: p.force,
-        promptSha256: hash(p.prompt ?? ""),
-        policySha256: hash(JSON.stringify(p.policy ?? null)),
-        speechDetector: p.speechDetector,
-        speechMode: p.speechMode,
-        selection: p.selection,
-      }));
-    report.provenance = {
-      speechPolicy: detector.speechPolicy,
-      detectorCompiledSha256: detector.compiledSha256 ?? null,
-      benchmarkCompiledSha256: benchmark?.compiledSha256 ?? null,
-      buildAssociationSha256:
-        detector.implementation?.buildAssociationSha256 ?? null,
-      hashEvidenceAuthenticatesExecution: false,
-      pipeline: {
-        baseline: pipelineProvenance(baseline),
-        candidate: pipelineProvenance(candidate),
-      },
-    };
     const detectorRows = detector.results ?? [],
       dk = new Set(detectorRows.map((r) => `${r.caseId}|${r.run}`));
-    check(
-      detector.version === 1 &&
-        detector.complete === true &&
-        detector.providerRequests === 0 &&
-        detector.manifestSha256 === manifestSha256 &&
-        detector.split === "holdout" &&
-        detector.runs === 3 &&
-        dk.size === detectorRows.length &&
-        detectorRows.length === cases.length * 3 &&
-        cases.every((c) => [1, 2, 3].every((run) => dk.has(`${c.id}|${run}`))),
-      "complete zero-provider detector coverage",
-      true,
-    );
+    checkDetectorCoverage();
     const fingerprint = detector.speechPolicy?.policyFingerprint,
       modelSha = detector.speechPolicy?.modelSha256;
-    check(
-      same(detector.speechPolicy, DEFAULT_SPEECH_POLICY) &&
-        typeof fingerprint === "string" &&
-        /^[a-f0-9]{64}$/.test(fingerprint) &&
-        typeof modelSha === "string" &&
-        /^[a-f0-9]{64}$/.test(modelSha) &&
-        candidate.every((p) => same(p.speechPolicy, detector.speechPolicy)) &&
-        same(benchmark?.speechPolicy, detector.speechPolicy),
-      "matched model/policy hashes",
-    );
+    checkSpeechPolicy();
     check(
       detectorRows.every((r) => {
         const c = known.get(r.caseId);
@@ -643,117 +430,386 @@ async function main() {
         ),
       };
     }
-    if (
-      !report.missing.some(
-        (s) =>
-          s.includes("rows") ||
-          s.includes("coverage") ||
-          s.includes("accounting"),
-      )
-    ) {
-      const b = measures(before),
-        a = measures(after);
-      const compare = (b, a) =>
-        Object.fromEntries(
-          [
-            "wer",
-            "speechEmpty",
-            "nonspeechFalsePositive",
-            "providerRequests",
-            "requestsPerDecodedMinute",
-            "submittedSecondsPerDecodedMinute",
-          ].map((k) => [k, delta(b[k], a[k])]),
-        );
-      report.scorecard = compare(b, a);
-      report.pipeline = { baseline: b, candidate: a };
-      report.byGroup = Object.fromEntries(
-        ["quiet", "short"].map((tag) => {
-          const b = measures(before.filter((r) => r.tags.includes(tag))),
-            a = measures(after.filter((r) => r.tags.includes(tag)));
-          return [tag, { ...compare(b, a), baseline: b, candidate: a }];
-        }),
-      );
-      report.byPhase = Object.fromEntries(
-        ["fast", "slow"].map((phase) => [
-          phase,
-          compare(
-            measures(before.filter((r) => r.phase === phase)),
-            measures(after.filter((r) => r.phase === phase)),
-          ),
-        ]),
-      );
-      for (const phase of ["fast", "slow"]) {
-        const phaseBefore = measures(before.filter((r) => r.phase === phase));
-        const phaseAfter = measures(after.filter((r) => r.phase === phase));
-        for (const metric of ["wer", "speechEmpty", "nonspeechFalsePositive"])
-          check(
-            phaseAfter[metric].value !== null &&
-              phaseBefore[metric].value !== null &&
-              phaseAfter[metric].value <= phaseBefore[metric].value,
-            `${phase} no ${metric} regression`,
-          );
-      }
-      report.byFamily = Object.fromEntries(
-        [...new Set(cases.map((c) => c.familyId))].map((f) => [
-          f,
-          {
-            ...compare(
-              measures(before.filter((r) => r.familyId === f)),
-              measures(after.filter((r) => r.familyId === f)),
-            ),
-            baseline: measures(before.filter((r) => r.familyId === f)),
-            candidate: measures(after.filter((r) => r.familyId === f)),
-          },
-        ]),
-      );
-      for (const k of ["wer", "speechEmpty", "nonspeechFalsePositive"])
-        check(
-          a[k].value !== null &&
-            b[k].value !== null &&
-            a[k].value <= b[k].value,
-          `no ${k} regression`,
-        );
-    }
-    report.detector = {
-      pipelineSpeechRejection: pipelineRejection,
-      pipelineSpeechRejectionByPhase: pipelineRejectionByPhase,
-      pipelineSpeechRejectionByGroup: pipelineRejectionByGroup,
-      speechRejection: ratio(
-        rejectedSpeech.length,
-        detectorRows.filter((r) => known.get(r.caseId)?.label.kind === "speech")
-          .length,
-      ),
-      baselineAdmittedNonspeechRejection: ratio(
-        rejected.length,
-        admitted.length,
-      ),
-      uncertainty: ratio(
-        detectorRows.filter((r) => r.assessment.kind === "uncertain").length,
-        detectorRows.length,
-      ),
-      unavailability: ratio(
-        detectorRows.filter((r) => r.assessment.kind === "unavailable").length,
-        detectorRows.length,
-      ),
-    };
+    checkPipelineScorecards();
+    recordDetectorScorecard();
     report.status = report.missing.length
       ? "incomplete"
       : report.failures.length
         ? "fail"
         : "pass";
+
+    function validRowIdentity(r, c) {
+      return (
+        c &&
+        r.sha256 === c.sha256 &&
+        same(r.label, c.label) &&
+        same(r.tags, c.tags) &&
+        r.familyId === c.familyId &&
+        r.speakerDeviceProfileId === c.speakerDeviceProfileId
+      );
+    }
+    function validRowResult(r) {
+      return (
+        ["succeeded", "skipped"].includes(r.status) &&
+        typeof r.text === "string" &&
+        r.score?.scored === true &&
+        finite(r.requests) &&
+        Number.isInteger(r.requests) &&
+        finite(r.submittedAudioSeconds) &&
+        finite(r.audioSeconds) &&
+        r.audioSeconds > 0 &&
+        pipelineRowSemantics(
+          r,
+          r.report,
+          DEFAULT_SPEECH_POLICY.policyFingerprint,
+        )
+      );
+    }
+    function checkPipelineReports() {
+      for (const [name, reports, rows] of [
+        ["baseline", baseline, before],
+        ["candidate", candidate, after],
+      ]) {
+        check(
+          reports.every((p) => validPipelineReport(p)),
+          `${name} complete matched pipeline reports`,
+          true,
+        );
+
+        function validPipelineReport(p) {
+          return validPipelineIdentity(p) && validPipelineSelection(p);
+        }
+        function validPipelineIdentity(p) {
+          return (
+            p.version === 1 &&
+            p.complete === true &&
+            p.manifestSha256 === manifestSha256 &&
+            p.runs === 3 &&
+            p.mode === "pipeline" &&
+            p.force === false &&
+            typeof p.model === "string" &&
+            p.model.length > 0 &&
+            typeof p.prompt === "string" &&
+            transcriptionPolicySchema.safeParse(p.policy).success &&
+            validImplementation(p) &&
+            p.sourceSha256
+          );
+        }
+        function validPipelineSelection(p) {
+          return (
+            typeof p.runSha256 === "string" &&
+            /^[a-f0-9]{64}$/.test(p.runSha256) &&
+            Number.isInteger(p.maxRequests) &&
+            p.maxRequests >= 1 &&
+            p.maxRequests <= 200 &&
+            p.selection?.split === "holdout" &&
+            !p.vadReport
+          );
+        }
+        check(
+          reports.every((p) =>
+            name === "baseline"
+              ? p.speechDetector === "off" && p.speechMode === "off"
+              : p.speechDetector === "production" && p.speechMode === "enforce",
+          ),
+          `${name} detector selection`,
+        );
+        check(
+          ["fast", "slow"].every((phase) =>
+            reports.some((p) => p.passMode === phase),
+          ),
+          `${name} fast and slow phases`,
+          true,
+        );
+        const sortedIds = cases
+          .map((c) => c.id)
+          .sort((a, b) => a.localeCompare(b, "en"));
+        check(
+          reports.every((p) => {
+            const selection = p.selection;
+            if (
+              !selection ||
+              !Number.isInteger(selection.batchSize) ||
+              selection.batchSize < 1 ||
+              selection.batchSize > 25 ||
+              !Number.isInteger(selection.batchIndex) ||
+              selection.batchIndex < 0 ||
+              selection.totalSelectedCases !== cases.length
+            )
+              return false;
+            const ids = sortedIds.slice(
+              selection.batchSize * selection.batchIndex,
+              selection.batchSize * (selection.batchIndex + 1),
+            );
+            return (
+              ids.length > 0 &&
+              same(ids, selection.selectedCaseIds) &&
+              p.results.length === ids.length * p.runs &&
+              p.results.every((r) => ids.includes(r.caseId)) &&
+              p.runSha256 ===
+                hash(
+                  stableJson({
+                    sourceSha256: p.sourceSha256,
+                    cases: ids.map((id) => known.get(id)),
+                    runs: p.runs,
+                    policy: p.policy,
+                    prompt: p.prompt,
+                    mode: p.mode,
+                    passMode: p.passMode,
+                    speechDetector: p.speechDetector,
+                    speechMode: p.speechMode,
+                    implementation: p.implementation,
+                  }),
+                )
+            );
+          }),
+          `${name} deterministic batch provenance`,
+          true,
+        );
+        check(
+          reports.every((p) => {
+            const requests = p.results.reduce((n, r) => n + r.requests, 0),
+              submitted = p.results.reduce(
+                (n, r) => n + r.submittedAudioSeconds,
+                0,
+              ),
+              decoded = p.results.reduce((n, r) => n + r.audioSeconds, 0);
+            return (
+              requests <= p.maxRequests &&
+              p.summary?.requests === requests &&
+              p.summary?.submittedAudioSeconds === submitted &&
+              p.summary?.observedAudioSeconds === decoded
+            );
+          }),
+          `${name} provider budget and summary accounting`,
+          true,
+        );
+        const keys = new Set(rows.map(key));
+        check(
+          keys.size === rows.length &&
+            rows.length === cases.length * 3 * 2 &&
+            cases.every((c) =>
+              ["fast", "slow"].every((phase) =>
+                [1, 2, 3].every((run) => keys.has(`${phase}|${c.id}|${run}`)),
+              ),
+            ),
+          `${name} exact case repetition coverage`,
+          true,
+        );
+        check(
+          rows.every((r) => {
+            const c = known.get(r.caseId);
+            return validRowIdentity(r, c) && validRowResult(r);
+          }),
+          `${name} validated rows`,
+          true,
+        );
+      }
+    }
+
+    function recordDetectorScorecard() {
+      report.detector = {
+        pipelineSpeechRejection: pipelineRejection,
+        pipelineSpeechRejectionByPhase: pipelineRejectionByPhase,
+        pipelineSpeechRejectionByGroup: pipelineRejectionByGroup,
+        speechRejection: ratio(
+          rejectedSpeech.length,
+          detectorRows.filter(
+            (r) => known.get(r.caseId)?.label.kind === "speech",
+          ).length,
+        ),
+        baselineAdmittedNonspeechRejection: ratio(
+          rejected.length,
+          admitted.length,
+        ),
+        uncertainty: ratio(
+          detectorRows.filter((r) => r.assessment.kind === "uncertain").length,
+          detectorRows.length,
+        ),
+        unavailability: ratio(
+          detectorRows.filter((r) => r.assessment.kind === "unavailable")
+            .length,
+          detectorRows.length,
+        ),
+      };
+    }
+    function checkDetectorCoverage() {
+      check(
+        detector.version === 1 &&
+          detector.complete === true &&
+          detector.providerRequests === 0 &&
+          detector.manifestSha256 === manifestSha256 &&
+          detector.split === "holdout" &&
+          detector.runs === 3 &&
+          dk.size === detectorRows.length &&
+          detectorRows.length === cases.length * 3 &&
+          cases.every((c) =>
+            [1, 2, 3].every((run) => dk.has(`${c.id}|${run}`)),
+          ),
+        "complete zero-provider detector coverage",
+        true,
+      );
+    }
+    function checkSpeechPolicy() {
+      check(
+        same(detector.speechPolicy, DEFAULT_SPEECH_POLICY) &&
+          typeof fingerprint === "string" &&
+          /^[a-f0-9]{64}$/.test(fingerprint) &&
+          typeof modelSha === "string" &&
+          /^[a-f0-9]{64}$/.test(modelSha) &&
+          candidate.every((p) => same(p.speechPolicy, detector.speechPolicy)) &&
+          same(benchmark?.speechPolicy, detector.speechPolicy),
+        "matched model/policy hashes",
+      );
+    }
+    function checkCorpusReview() {
+      check(
+        speech.length >= 100 && nonspeech.length >= 50,
+        "minimum unique speech/nonspeech samples",
+        true,
+      );
+      check(
+        speech.filter((c) => c.tags.includes("quiet")).length >= 20 &&
+          speech.filter((c) => c.tags.includes("short")).length >= 20,
+        "minimum quiet/short speech samples",
+        true,
+      );
+      check(
+        cases.every((c) => c.familyId && c.speakerDeviceProfileId),
+        "family and profile metadata",
+        true,
+      );
+      check(
+        new Set(speech.map((c) => c.speakerDeviceProfileId)).size >= 5,
+        "five speech profiles",
+        true,
+      );
+      check(
+        new Set(manifest.cases.map((c) => c.sha256)).size ===
+          manifest.cases.length,
+        "unique audio hashes",
+      );
+      const tuning = new Set([
+        ...manifest.cases
+          .filter((c) => c.split === "tune")
+          .map((c) => c.familyId),
+        ...(review.tuningFamilyIds ?? []),
+      ]);
+      check(
+        cases.every((c) => !tuning.has(c.familyId)),
+        "no tune/holdout family leakage",
+      );
+      const human = cases.every(
+        (c) =>
+          c.label.kind !== "unreviewed" &&
+          c.label.provenance === "human-reviewed",
+      );
+      check(human, "human-reviewed label provenance", true);
+      const attested =
+        review.version === 1 &&
+        review.manifestSha256 === manifestSha256 &&
+        Number.isFinite(Date.parse(review.reviewedAt)) &&
+        review.holdoutUntouchedSinceFreeze === true &&
+        Array.isArray(review.tuningFamilyIds) &&
+        review.tuningFamilyIds.every(
+          (f) => typeof f === "string" && f.length > 0,
+        );
+      check(attested, "review evidence bound to manifest", true);
+      report.attested = {
+        finalHumanReviewRequired: true,
+        humanReviewClaim: human,
+        holdoutUntouchedSinceFreeze:
+          review.holdoutUntouchedSinceFreeze === true,
+        reviewedAt: review.reviewedAt ?? null,
+        truthAutomaticallyVerified: false,
+      };
+      report.manifestSha256 = manifestSha256;
+      report.samples = {
+        uniqueClips: cases.length,
+        speech: speech.length,
+        nonspeech: nonspeech.length,
+        profiles: new Set(speech.map((c) => c.speakerDeviceProfileId)).size,
+      };
+    }
+
+    function checkPipelineScorecards() {
+      if (
+        !report.missing.some(
+          (s) =>
+            s.includes("rows") ||
+            s.includes("coverage") ||
+            s.includes("accounting"),
+        )
+      ) {
+        const b = measures(before),
+          a = measures(after);
+        const compare = (b, a) =>
+          Object.fromEntries(
+            [
+              "wer",
+              "speechEmpty",
+              "nonspeechFalsePositive",
+              "providerRequests",
+              "requestsPerDecodedMinute",
+              "submittedSecondsPerDecodedMinute",
+            ].map((k) => [k, delta(b[k], a[k])]),
+          );
+        report.scorecard = compare(b, a);
+        report.pipeline = { baseline: b, candidate: a };
+        report.byGroup = Object.fromEntries(
+          ["quiet", "short"].map((tag) => {
+            const b = measures(before.filter((r) => r.tags.includes(tag))),
+              a = measures(after.filter((r) => r.tags.includes(tag)));
+            return [tag, { ...compare(b, a), baseline: b, candidate: a }];
+          }),
+        );
+        report.byPhase = Object.fromEntries(
+          ["fast", "slow"].map((phase) => [
+            phase,
+            compare(
+              measures(before.filter((r) => r.phase === phase)),
+              measures(after.filter((r) => r.phase === phase)),
+            ),
+          ]),
+        );
+        for (const phase of ["fast", "slow"]) {
+          const phaseBefore = measures(before.filter((r) => r.phase === phase));
+          const phaseAfter = measures(after.filter((r) => r.phase === phase));
+          for (const metric of ["wer", "speechEmpty", "nonspeechFalsePositive"])
+            check(
+              phaseAfter[metric].value !== null &&
+                phaseBefore[metric].value !== null &&
+                phaseAfter[metric].value <= phaseBefore[metric].value,
+              `${phase} no ${metric} regression`,
+            );
+        }
+        report.byFamily = Object.fromEntries(
+          [...new Set(cases.map((c) => c.familyId))].map((f) => [
+            f,
+            {
+              ...compare(
+                measures(before.filter((r) => r.familyId === f)),
+                measures(after.filter((r) => r.familyId === f)),
+              ),
+              baseline: measures(before.filter((r) => r.familyId === f)),
+              candidate: measures(after.filter((r) => r.familyId === f)),
+            },
+          ]),
+        );
+        for (const k of ["wer", "speechEmpty", "nonspeechFalsePositive"])
+          check(
+            a[k].value !== null &&
+              b[k].value !== null &&
+              a[k].value <= b[k].value,
+            `no ${k} regression`,
+          );
+      }
+    }
   } catch {
     report.missing.push("missing or invalid evidence input");
   }
-  if (values.output) await writeJson(path.resolve(values.output), report);
-  console.log(
-    JSON.stringify({
-      status: report.status,
-      failures: report.failures,
-      missing: report.missing,
-    }),
-  );
-  if (report.status !== "pass") process.exitCode = 1;
 }
+
 main().catch(() => {
   console.error(JSON.stringify({ category: "acceptance_failed" }));
   process.exitCode = 1;

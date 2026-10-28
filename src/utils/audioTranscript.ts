@@ -8,7 +8,7 @@ export function isAudioFileSpeechRejected(file: AudioFileData): boolean {
 
 export function resolveAudioFileTranscript(file: AudioFileData) {
   if (isAudioFileSpeechRejected(file))
-    return { text: "", correspondence: undefined };
+    return { text: "", correspondence: file.terminalOmission };
   const selected =
     file.finalPassTranscript !== undefined
       ? {

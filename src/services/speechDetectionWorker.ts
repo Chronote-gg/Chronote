@@ -2,11 +2,13 @@ import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
-import { parentPort, workerData } from "node:worker_threads";
 import { z } from "zod";
 import { DEFAULT_SPEECH_POLICY } from "./speechDetectionPolicy";
 import { assessWavSpeech } from "./speechDetectionCore";
 import type { SileroSession, SpeechWorkerReply } from "./speechDetectionTypes";
+
+// shortcut: synchronous hangs cannot handle owner loss outside containers; add a watchdog if that runtime is supported.
+process.once("disconnect", () => process.exit());
 
 const assetSchema = z.object({
   file: z.string(),
@@ -34,9 +36,7 @@ async function loadSession(): Promise<
   import("onnxruntime-web").InferenceSession
 > {
   try {
-    z.object({
-      policyFingerprint: z.literal(DEFAULT_SPEECH_POLICY.policyFingerprint),
-    }).parse(workerData);
+    z.literal(DEFAULT_SPEECH_POLICY.policyFingerprint).parse(process.argv[2]);
     const assets = path.resolve(
       __dirname,
       path.extname(__filename) === ".ts"
@@ -104,8 +104,10 @@ async function loadSession(): Promise<
 }
 
 async function main(): Promise<void> {
-  const port = parentPort;
-  if (!port) throw Error("worker_error");
+  if (!process.send || !process.connected) throw Error("worker_error");
+  const send = (reply: SpeechWorkerReply): void => {
+    process.send?.(reply);
+  };
   const session = await loadSession();
   const ort = await import("onnxruntime-web");
   const silero: SileroSession = {
@@ -149,7 +151,7 @@ async function main(): Promise<void> {
     throw Error(primed.reason);
   }
   let busy = false;
-  port.on("message", async (message: unknown) => {
+  process.on("message", async (message: unknown) => {
     const parsed = requestSchema.safeParse(message);
     if (!parsed.success || busy) throw Error("invalid_output");
     busy = true;
@@ -160,7 +162,7 @@ async function main(): Promise<void> {
         silero,
         DEFAULT_SPEECH_POLICY,
       );
-      port.postMessage({
+      send({
         type: "assessment",
         requestId: request.requestId,
         assessment,
@@ -169,14 +171,18 @@ async function main(): Promise<void> {
       busy = false;
     }
   });
-  port.on("close", () => {
-    void session.release();
-  });
-  port.postMessage({
+  send({
     type: "ready",
     policyFingerprint: DEFAULT_SPEECH_POLICY.policyFingerprint,
   } satisfies SpeechWorkerReply);
 }
 void main().catch((error) => {
-  throw error;
+  process.exitCode = 1;
+  const reason =
+    error instanceof Error && error.message === "asset_error"
+      ? "asset_error"
+      : "worker_error";
+  process.send?.({ type: "failure", reason } satisfies SpeechWorkerReply, () =>
+    process.exit(1),
+  );
 });

@@ -1,4 +1,5 @@
 /** @jest-environment node */
+import { expectNoSpeechComparisonMetrics } from "../../testSupport/speechComparisonMetrics";
 import { metricsRegistry } from "../../metrics";
 import { UnresolvedNotionMutation } from "../notionOperationLifetime";
 import { maybeAutoExportCompletedMeeting } from "../notionAutomationService";
@@ -9,6 +10,7 @@ import {
   buildJob,
   buildDesktopJob,
   buildSegment,
+  heldOperation,
 } from "../../testSupport/personalMediaUploadFixtures";
 import type {
   PersonalMediaUploadJobRecord,
@@ -240,40 +242,7 @@ const replaceSegment = (next: PersonalRecordingSegmentRecord) => {
   return next;
 };
 
-// These workloads do not participate in Discord snippet comparisons.
-beforeEach(() => metricsRegistry.resetMetrics());
-afterEach(async () => {
-  const comparisonMetrics = await Promise.all(
-    metricsRegistry
-      .getMetricsAsArray()
-      .filter((metric) => metric.name.startsWith("chronote_speech_detection_"))
-      .map((metric) => metricsRegistry.getSingleMetric(metric.name)?.get()),
-  );
-  expect(
-    comparisonMetrics
-      .flatMap((metric) => metric?.values ?? [])
-      .every((value) => value.value === 0),
-  ).toBe(true);
-});
-
-function heldOperation() {
-  let release!: () => void;
-  let enter!: () => void;
-  const started = new Promise<void>((resolve) => {
-    enter = resolve;
-  });
-  const waiting = new Promise<void>((resolve) => {
-    release = resolve;
-  });
-  return {
-    started,
-    release,
-    wait: async () => {
-      enter();
-      await waiting;
-    },
-  };
-}
+expectNoSpeechComparisonMetrics(metricsRegistry);
 
 function expectEmptyUploadWithoutNotes() {
   expect(mockCreateResponse).not.toHaveBeenCalled();

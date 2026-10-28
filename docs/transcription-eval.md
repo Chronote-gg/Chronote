@@ -143,6 +143,14 @@ to enforce speech rejection. Preserve the failed measurements when revising the
 design. Do not increase CPU, memory, deadlines, or substitute model/runtime assets
 without reviewing that design change.
 
+The October 27 child-process recovery benchmark used the same 0.5 CPU / 1 GiB
+limits and workload. Steady availability improved to 600/600 assessments, with
+fast/slow p95 latency of 27.12/37.34 ms and no steady restarts. Total process-tree
+RSS overhead remained 203,436,032 bytes (about 194 MiB), failing the original
+128 MiB gate. Process isolation and passing latency do not establish resource
+acceptance. Later heap, compiler and asset-loading probes did not meet that gate
+and were not adopted.
+
 Build first with `npm run build`. The normal build emits
 `dist/assets/speech-detection/eval-build.json` after TypeScript compilation. The detector-only and
 benchmark scripts load `dist`, including the actual production worker. Pipeline
@@ -253,9 +261,10 @@ buckets and ten simultaneous jobs. Buckets start with a ready worker per phase
 and recover readiness after a timeout so the next bucket does not measure a
 previous bucket's cooldown. Those recovery times are excluded from assessment
 latencies and worker starts are reported. Steady load retains ordinary production
-cooldown/restart behavior. RSS is sampled every 20 ms for the whole process,
-including worker threads; overhead is steady peak minus detector-off peak in the
-same process, before duration-bucket measurements. Resource quotas come from
+cooldown/restart behavior. RSS is sampled every 20 ms for the whole process tree,
+including the child detector; overhead is steady peak minus detector-off peak
+before duration-bucket measurements. Unsupported process-tree measurement remains
+unknown and cannot pass resource acceptance. Resource quotas come from
 cgroup v1/v2 files; absent quota evidence remains unknown. Successful assessment
 p95 and all-outcome p95 are separate so fast failures cannot look healthy. Raw rows retain the
 scheduled phase, control, sequence and bucket repetition. The checker validates

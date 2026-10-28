@@ -2,8 +2,10 @@
 import { writeFile, readFile } from "node:fs/promises";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { prepareTranscriptionFixture } from "../helpers/compiledTranscriptionFixture";
-import { removeOwnedFixture } from "../helpers/compiledSpeechDetectionFixture";
+import {
+  useCompiledTranscriptionFixture,
+  unreviewedPcmManifest,
+} from "../helpers/compiledTranscriptionFixture";
 import { runTranscriptionQualityEval } from "../../src/evals/transcriptionQualityEval";
 import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
@@ -25,11 +27,8 @@ const options = {
 };
 const root = path.resolve(__dirname, "../..");
 let compiled: string;
-beforeAll(async () => {
-  compiled = await prepareTranscriptionFixture(root);
-}, 60000);
-afterAll(() => {
-  if (compiled) removeOwnedFixture(compiled, "vad-build-contract-");
+useCompiledTranscriptionFixture(root, (directory) => {
+  compiled = directory;
 });
 let dir: string;
 beforeEach(async () => {
@@ -232,20 +231,7 @@ test("manifest CLI executes compiled runner and reports its actual loader", asyn
     output = path.join(dir, "cli-output.json");
   await writeFile(
     manifest,
-    JSON.stringify({
-      version: 1,
-      name: "loader control",
-      prompt: "",
-      cases: [
-        {
-          id: "one",
-          file: "control.pcm",
-          sha256: createHash("sha256").update(pcm).digest("hex"),
-          split: "holdout",
-          label: { kind: "unreviewed" },
-        },
-      ],
-    }),
+    JSON.stringify(unreviewedPcmManifest(pcm, "loader control")),
   );
   const cli = spawnSync(
     process.execPath,
@@ -272,6 +258,7 @@ test("manifest CLI executes compiled runner and reports its actual loader", asyn
         NODE_PATH: path.join(root, "node_modules"),
         TS_NODE_TRANSPILE_ONLY: "true",
         TS_NODE_PROJECT: path.join(root, "tsconfig.json"),
+        DOTENV_CONFIG_QUIET: "true",
       },
       timeout: 60000,
     },
@@ -370,6 +357,7 @@ test.each([
           NODE_PATH: path.join(root, "node_modules"),
           MOCK_MODE: "true",
           LANGFUSE_TRACING_ENABLED: "false",
+          DOTENV_CONFIG_QUIET: "true",
         },
         timeout: 60000,
       },

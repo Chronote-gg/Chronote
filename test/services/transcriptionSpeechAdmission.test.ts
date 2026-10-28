@@ -21,7 +21,11 @@ import {
   DEFAULT_SPEECH_POLICY,
 } from "../../src/services/speechDetectionPolicy";
 import { metricsRegistry } from "../../src/metrics";
-import { transcribeSnippet } from "../../src/services/transcriptionService";
+import {
+  transcribeSnippet,
+  transcribeContentSnippet,
+  type TranscriptionContentInput,
+} from "../../src/services/transcriptionService";
 import * as conversion from "../../src/services/transcriptionAudioService";
 
 let mockTempDir: string;
@@ -68,10 +72,9 @@ jest.mock("../../src/services/tempFileService", () => ({
 jest.mock("../../src/services/speechDetectionService", () => ({
   getSpeechDetector: () => mockGetDetector(),
 }));
+const mockOpenAIClient = { audio: { transcriptions: { create: mockCreate } } };
 jest.mock("../../src/services/openaiClient", () => ({
-  createOpenAIClient: () => ({
-    audio: { transcriptions: { create: mockCreate } },
-  }),
+  createOpenAIClient: () => mockOpenAIClient,
 }));
 jest.mock("../../src/services/transcriptionPromptService", () => ({
   getTranscriptionPrompt: async () => ({ prompt: mockPrompt }),
@@ -147,6 +150,34 @@ test("enforcedNonSpeechMakesNoProviderRequest", async () => {
   expect(mockCreate).not.toHaveBeenCalled();
   expect(pcm.equals(originalPcm)).toBe(true);
   expect(readdirSync(mockTempDir)).toEqual([]);
+});
+
+test("abort during detection cannot finalize a nonspeech rejection or count a skipped request", async () => {
+  const controller = new AbortController();
+  mockAssess.mockImplementationOnce(async () => {
+    controller.abort();
+    return assessment("non_speech");
+  });
+  const meeting = buildMeeting("enforce");
+  const input: TranscriptionContentInput = {
+    meetingId: meeting.meetingId,
+    creator: meeting.creator,
+    guild: meeting.guild,
+    voiceChannel: meeting.voiceChannel,
+    runtimeConfig: meeting.runtimeConfig,
+    signal: controller.signal,
+    effect: (run) => run(),
+    prompt: async () => ({ prompt: "", source: "fallback" }),
+  };
+  await expect(transcribeContentSnippet(input, snippet)).resolves.toMatchObject(
+    { status: "failed" },
+  );
+  expect(mockCreate).not.toHaveBeenCalled();
+  expect(await metricTotal("requests_skipped_total")).toBe(0);
+  expect(await metricTotal("skipped_audio_seconds_total")).toBe(0);
+  expect(
+    await metricTotal("snippet_outcomes_total", { outcome: "vad_skipped" }),
+  ).toBe(0);
 });
 
 import { PassThrough } from "node:stream";
@@ -354,11 +385,7 @@ test("records received PCM once while repeated rejected fast snapshots do not sh
     audioData: { currentSnippets: new Map(), audioFiles: [] },
     connection: {
       state: { status: "ready" },
-      receiver: {
-        packetDiagnostics: new WeakMap(),
-        subscribe: () => source,
-        subscriptions: new Map(),
-      },
+      receiver: voiceReceiver(source),
     },
   });
   await subscribeToUserVoice(meeting, "test-user");
@@ -537,11 +564,7 @@ test.each(["off", "shadow", "enforce"] as const)(
       audioData: { currentSnippets: new Map(), audioFiles: [] },
       connection: {
         state: { status: "ready" },
-        receiver: {
-          packetDiagnostics: new WeakMap(),
-          subscribe: () => source,
-          subscriptions: new Map(),
-        },
+        receiver: voiceReceiver(source),
       },
     });
     Object.assign(meeting.runtimeConfig!.transcription, {
@@ -596,3 +619,11 @@ test.each(["off", "shadow", "enforce"] as const)(
     }
   },
 );
+
+function voiceReceiver(source: PassThrough) {
+  return {
+    packetDiagnostics: new WeakMap(),
+    subscribe: () => source,
+    subscriptions: new Map(),
+  };
+}

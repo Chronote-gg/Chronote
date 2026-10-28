@@ -44,6 +44,17 @@ async function main() {
       "Usage: runtime-smoke.mjs --runtime-dir <node_modules-directory> --model <onnx-path>",
     );
   }
+  const { model, manifest } = await validateModel(values, root);
+  const runtimeRoot = values.compiled
+    ? path.dirname(path.dirname(requireCompiled.resolve("onnxruntime-web")))
+    : path.resolve(values["runtime-dir"], "onnxruntime-web");
+  const runtimePackage = await validateRuntime(runtimeRoot, manifest);
+  if (values.compiled)
+    return smokeCompiled(requireCompiled, servicePath, root, runtimePackage);
+  await smokeEngine(runtimeRoot, model, runtimePackage);
+}
+
+async function validateModel(values, root) {
   // Validate model bytes before importing the engine or creating a session.
   const model = await readFile(path.resolve(values.model));
   if (sha256(model) !== modelSha256) throw new Error("Model SHA-256 mismatch");
@@ -61,9 +72,9 @@ async function main() {
   ) {
     throw new Error("Model manifest mismatch");
   }
-  const runtimeRoot = values.compiled
-    ? path.dirname(path.dirname(requireCompiled.resolve("onnxruntime-web")))
-    : path.resolve(values["runtime-dir"], "onnxruntime-web");
+  return { model, manifest };
+}
+async function validateRuntime(runtimeRoot, manifest) {
   const runtimePackage = JSON.parse(
     await readFile(path.join(runtimeRoot, "package.json"), "utf8"),
   );
@@ -80,52 +91,59 @@ async function main() {
       throw new Error(`Runtime asset SHA-256 mismatch: ${asset.file}`);
     }
   }
-  if (values.compiled) {
-    const { getSpeechDetector, shutdownSpeechDetector } =
-      requireCompiled(servicePath);
-    const started = performance.now();
-    let silence;
-    let normalSpeech;
-    let coldStartMs;
-    try {
-      const detector = getSpeechDetector();
-      if (!(await detector.warm()))
-        throw new Error("Compiled production worker not ready");
-      coldStartMs = performance.now() - started;
-      silence = await detector.assess(
-        await readFile(
-          path.join(root, "test/fixtures/speech-detection/tune-silence.wav"),
-        ),
-        "slow",
-      );
-      normalSpeech = await detector.assess(
-        await readFile(
-          path.join(root, "test/fixtures/speech-detection/yes-normal.wav"),
-        ),
-        "slow",
-      );
-      if (silence.kind !== "non_speech" || normalSpeech.kind !== "speech") {
-        throw new Error(
-          `Compiled worker control mismatch: silence=${silence.kind}, speech=${normalSpeech.kind}`,
-        );
-      }
-    } finally {
-      await shutdownSpeechDetector();
-    }
-    process.stdout.write(
-      JSON.stringify({
-        engine: runtimePackage.name,
-        engineVersion: runtimePackage.version,
-        modelSha256,
-        coldStartMs,
-        startupAndInferenceMs: performance.now() - started,
-        silence,
-        normalSpeech,
-        shutdownComplete: true,
-      }) + "\n",
+  return runtimePackage;
+}
+async function smokeCompiled(
+  requireCompiled,
+  servicePath,
+  root,
+  runtimePackage,
+) {
+  const { getSpeechDetector, shutdownSpeechDetector } =
+    requireCompiled(servicePath);
+  const started = performance.now();
+  let silence;
+  let normalSpeech;
+  let coldStartMs;
+  try {
+    const detector = getSpeechDetector();
+    if (!(await detector.warm()))
+      throw new Error("Compiled production worker not ready");
+    coldStartMs = performance.now() - started;
+    silence = await detector.assess(
+      await readFile(
+        path.join(root, "test/fixtures/speech-detection/tune-silence.wav"),
+      ),
+      "slow",
     );
-    return;
+    normalSpeech = await detector.assess(
+      await readFile(
+        path.join(root, "test/fixtures/speech-detection/yes-normal.wav"),
+      ),
+      "slow",
+    );
+    if (silence.kind !== "non_speech" || normalSpeech.kind !== "speech") {
+      throw new Error(
+        `Compiled worker control mismatch: silence=${silence.kind}, speech=${normalSpeech.kind}`,
+      );
+    }
+  } finally {
+    await shutdownSpeechDetector();
   }
+  process.stdout.write(
+    JSON.stringify({
+      engine: runtimePackage.name,
+      engineVersion: runtimePackage.version,
+      modelSha256,
+      coldStartMs,
+      startupAndInferenceMs: performance.now() - started,
+      silence,
+      normalSpeech,
+      shutdownComplete: true,
+    }) + "\n",
+  );
+}
+async function smokeEngine(runtimeRoot, model, runtimePackage) {
   const require = createRequire(path.join(runtimeRoot, "package.json"));
   const ort = require(path.join(runtimeRoot, "dist/ort.node.min.js"));
   ort.env.wasm.numThreads = 1;

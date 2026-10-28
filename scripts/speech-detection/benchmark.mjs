@@ -1,15 +1,19 @@
+import {
+  assessmentStats as stats,
+  assessmentPhases as phases,
+} from "./assessment-stats.mjs";
 import { Buffer } from "node:buffer";
 import process from "node:process";
 import { parseArgs } from "node:util";
 import { monitorEventLoopDelay } from "node:perf_hooks";
 import { spawnSync } from "node:child_process";
 import { readFile } from "node:fs/promises";
+import { readFileSync } from "node:fs";
 import path from "node:path";
 import {
   artifactWorkspace,
   hash,
   implementationProvenance,
-  percentile,
   requireCompiled,
   root,
   writeJson,
@@ -24,28 +28,28 @@ const { values } = parseArgs({
   },
 });
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-const stats = (rows) => ({
-  attempts: rows.length,
-  availability: rows.length
-    ? rows.filter((r) => r.assessment.kind !== "unavailable").length /
-      rows.length
-    : null,
-  p95Ms: percentile(
-    rows
-      .filter((r) => r.assessment.kind !== "unavailable")
-      .map((r) => r.durationMs),
-  ),
-  allOutcomesP95Ms: percentile(rows.map((r) => r.durationMs)),
-  unavailable: rows.filter((r) => r.assessment.kind === "unavailable").length,
-  queueFull: rows.filter((r) => r.assessment.reason === "queue_full").length,
-});
-const phases = (rows) =>
-  Object.fromEntries(
-    ["fast", "slow"].map((phase) => [
-      phase,
-      stats(rows.filter((r) => r.phase === phase)),
-    ]),
-  );
+function processTreeRss(pid = process.pid) {
+  if (process.platform !== "linux") return null;
+  let total = 0;
+  const pending = [pid];
+  try {
+    while (pending.length) {
+      const current = pending.pop();
+      const status = readFileSync(`/proc/${current}/status`, "utf8");
+      const rss = /^VmRSS:\s+(\d+)\s+kB$/m.exec(status);
+      if (!rss) return null;
+      total += Number(rss[1]) * 1024;
+      const children = readFileSync(
+        `/proc/${current}/task/${current}/children`,
+        "utf8",
+      ).trim();
+      if (children) pending.push(...children.split(/\s+/).map(Number));
+    }
+    return total;
+  } catch {
+    return null;
+  }
+}
 function audio(seconds, pcm) {
   const samples = Math.round(seconds * 16000),
     wav = Buffer.alloc(44 + samples * 2);
@@ -89,6 +93,63 @@ async function limits() {
     } catch {
       return { cpu: null, memoryBytes: null, source: "unavailable" };
     }
+  }
+}
+async function measureBucketPhase(
+  rows,
+  bucketDetector,
+  seconds,
+  phase,
+  assess,
+  sources,
+  countStart,
+) {
+  const { getSpeechDetector, shutdownSpeechDetector } = requireCompiled(
+    "./speechDetectionService.js",
+  );
+  for (let run = 0; run < 3; run++) {
+    for (let kind = 0; kind < 2; kind++) {
+      const result = await assess(
+        bucketDetector,
+        audio(seconds, sources[kind]),
+        phase,
+      );
+      rows.push({
+        ...result,
+        run,
+        control: kind === 0 ? "speech" : "nonspeech",
+      });
+      if (result.assessment.kind === "unavailable") {
+        await shutdownSpeechDetector();
+        bucketDetector = getSpeechDetector();
+        await bucketDetector.warm();
+        countStart();
+      }
+    }
+  }
+}
+async function measureBuckets(buckets, assess, sources, countStart) {
+  const { getSpeechDetector, shutdownSpeechDetector } = requireCompiled(
+    "./speechDetectionService.js",
+  );
+  for (const seconds of [0.3, 2, 10, 60, 180]) {
+    const rows = [];
+    for (const phase of ["fast", "slow"]) {
+      await shutdownSpeechDetector();
+      let bucketDetector = getSpeechDetector();
+      await bucketDetector.warm();
+      countStart();
+      await measureBucketPhase(
+        rows,
+        bucketDetector,
+        seconds,
+        phase,
+        assess,
+        sources,
+        countStart,
+      );
+    }
+    buckets.push({ seconds, phases: phases(rows), rows });
   }
 }
 async function main() {
@@ -146,9 +207,11 @@ async function main() {
   async function load(detector) {
     const delay = monitorEventLoopDelay({ resolution: 10 });
     delay.enable();
-    let peakRss = process.memoryUsage().rss;
+    let peakRss = processTreeRss();
     const memory = setInterval(() => {
-      peakRss = Math.max(peakRss, process.memoryUsage().rss);
+      const rss = processTreeRss();
+      peakRss =
+        peakRss === null || rss === null ? null : Math.max(peakRss, rss);
     }, 20);
     const start = performance.now(),
       jobs = [];
@@ -200,36 +263,12 @@ async function main() {
       (sum, item) => sum + item.value,
       0,
     );
-    for (const seconds of [0.3, 2, 10, 60, 180]) {
-      const rows = [];
-      for (const phase of ["fast", "slow"]) {
-        await shutdownSpeechDetector();
-        let bucketDetector = getSpeechDetector();
-        await bucketDetector.warm();
-        isolatedWorkerStarts++;
-        for (let run = 0; run < 3; run++) {
-          for (let kind = 0; kind < 2; kind++) {
-            const result = await assess(
-              bucketDetector,
-              audio(seconds, sources[kind]),
-              phase,
-            );
-            rows.push({
-              ...result,
-              run,
-              control: kind === 0 ? "speech" : "nonspeech",
-            });
-            if (result.assessment.kind === "unavailable") {
-              await shutdownSpeechDetector();
-              bucketDetector = getSpeechDetector();
-              await bucketDetector.warm();
-              isolatedWorkerStarts++;
-            }
-          }
-        }
-      }
-      buckets.push({ seconds, phases: phases(rows), rows });
-    }
+    await measureBuckets(
+      buckets,
+      assess,
+      sources,
+      () => isolatedWorkerStarts++,
+    );
     // A fresh worker avoids mistaking deadline cooldown for the overflow exercise.
     await shutdownSpeechDetector();
     const burstDetector = getSpeechDetector();
@@ -267,7 +306,10 @@ async function main() {
       steady,
       buckets,
       burst,
-      overheadBytes: steady.peakRss - baseline.peakRss,
+      overheadBytes:
+        steady.peakRss === null || baseline.peakRss === null
+          ? null
+          : steady.peakRss - baseline.peakRss,
       addedEventLoopP95Ms: steady.eventLoopP95Ms - baseline.eventLoopP95Ms,
       providerRequests: 0,
       fixtureSha256: Object.fromEntries(
@@ -285,7 +327,7 @@ async function main() {
       steadyWorkerRestarts,
       isolatedWorkerStarts,
       memoryMethod:
-        "20ms process RSS sampling, parent plus worker threads; steady peak minus detector-off same-process peak, before bucket runs",
+        "20ms Linux /proc process-tree RSS sampling, including detector child; steady peak minus detector-off tree peak before bucket runs; unavailable measurements are null",
       bucketMethod:
         "fresh readiness per phase and after any unavailability; cold recovery time excluded from assessment latency",
     };

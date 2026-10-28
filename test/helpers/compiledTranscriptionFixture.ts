@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { cpSync, mkdirSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -55,6 +56,7 @@ export async function prepareTranscriptionAcceptanceFixture(
     for (const file of [
       "check-acceptance.mjs",
       "acceptance-evidence.mjs",
+      "assessment-stats.mjs",
       "evidence.mjs",
     ])
       cpSync(path.join(root, scripts, file), path.join(fixture, scripts, file));
@@ -70,4 +72,56 @@ export async function prepareTranscriptionAcceptanceFixture(
     removeOwnedFixture(fixture, "vad-build-contract-");
     throw error;
   }
+}
+
+export function copyTranscriptionSourceCheckout(
+  root: string,
+  checkout: string,
+) {
+  for (const file of [
+    "src",
+    "assets",
+    "scripts",
+    "package.json",
+    "tsconfig.json",
+    "yarn.lock",
+  ]) {
+    cpSync(path.join(root, file), path.join(checkout, file), {
+      recursive: true,
+      filter: (source) =>
+        source !== path.join(root, "src/frontend") &&
+        source !== path.join(root, "src/setupTests.ts"),
+    });
+  }
+}
+
+export function unreviewedPcmManifest(pcm: Buffer, name: string) {
+  return {
+    version: 1,
+    name,
+    prompt: "",
+    cases: [
+      {
+        id: "one",
+        file: "control.pcm",
+        sha256: createHash("sha256").update(pcm).digest("hex"),
+        split: "holdout",
+        label: { kind: "unreviewed" },
+      },
+    ],
+  };
+}
+
+export function useCompiledTranscriptionFixture(
+  root: string,
+  ready: (directory: string) => void,
+) {
+  let compiled: string;
+  beforeAll(async () => {
+    compiled = await prepareTranscriptionFixture(root);
+    ready(compiled);
+  }, 60000);
+  afterAll(() => {
+    if (compiled) removeOwnedFixture(compiled, "vad-build-contract-");
+  });
 }

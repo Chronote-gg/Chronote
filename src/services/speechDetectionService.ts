@@ -1,5 +1,5 @@
 import path from "node:path";
-import { Worker } from "node:worker_threads";
+import { fork } from "node:child_process";
 import { DEFAULT_SPEECH_POLICY } from "./speechDetectionPolicy";
 import { recordSpeechWorkerRestart } from "../metrics";
 import type {
@@ -39,7 +39,7 @@ const metricsSchema = z
   })
   .refine(
     (m) =>
-      m.scannedFrames === m.totalFrames &&
+      m.scannedFrames <= m.totalFrames &&
       m.maxConsecutiveSpeechFrames <= m.scannedFrames,
   );
 const assessmentSchema = z.discriminatedUnion("kind", [
@@ -65,6 +65,7 @@ const assessmentSchema = z.discriminatedUnion("kind", [
   }),
 ]);
 const replySchema = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("failure"), reason: reasonSchema }),
   z.object({ type: z.literal("ready"), policyFingerprint: z.string() }),
   z.object({
     type: z.literal("assessment"),
@@ -153,6 +154,19 @@ export function createSpeechDetector(
       retire("worker_error");
     }
   };
+  const acceptReady = (current: Generation, fingerprint: string): void => {
+    if (bindings.now() >= current.initDeadline) {
+      retire("timeout");
+      return;
+    }
+    if (current.ready || fingerprint !== bindings.policy.policyFingerprint) {
+      retire("invalid_output");
+      return;
+    }
+    current.ready = true;
+    current.initTimer.cancel();
+    current.finishWarm(true);
+  };
   const start = (): Generation | undefined => {
     if (generation) return generation;
     if (stopped || bindings.now() < cooldownUntil || terminations.size > 0)
@@ -200,21 +214,12 @@ export function createSpeechDetector(
           return;
         }
         const reply = parsed.data;
+        if (reply.type === "failure") {
+          retire(reply.reason);
+          return;
+        }
         if (reply.type === "ready") {
-          if (bindings.now() >= current.initDeadline) {
-            retire("timeout");
-            return;
-          }
-          if (
-            current.ready ||
-            reply.policyFingerprint !== bindings.policy.policyFingerprint
-          ) {
-            retire("invalid_output");
-            return;
-          }
-          current.ready = true;
-          current.initTimer.cancel();
-          current.finishWarm(true);
+          acceptReady(current, reply.policyFingerprint);
           return;
         }
         if (
@@ -240,21 +245,9 @@ export function createSpeechDetector(
           retire(assessment.reason);
           return;
         }
-        if (assessment.kind !== "unavailable") {
-          const { metrics } = assessment;
-          if (
-            (assessment.kind === "non_speech" &&
-              (metrics.peakSpeechProbability >=
-                bindings.policy.rejectionCeiling ||
-                metrics.maxConsecutiveSpeechFrames >=
-                  bindings.policy.minSpeechFrames)) ||
-            (assessment.kind === "speech" &&
-              metrics.maxConsecutiveSpeechFrames <
-                bindings.policy.minSpeechFrames)
-          ) {
-            retire("invalid_output");
-            return;
-          }
+        if (!hasValidAssessmentMetrics(assessment, bindings.policy)) {
+          retire("invalid_output");
+          return;
         }
         const completed = active;
         active = undefined;
@@ -308,16 +301,39 @@ export function createSpeechDetector(
   };
 }
 
+function hasValidAssessmentMetrics(
+  assessment: SpeechAssessment,
+  policy: SpeechPolicy,
+): boolean {
+  if (assessment.kind === "unavailable") return true;
+  const { metrics } = assessment;
+  if (assessment.kind === "speech")
+    return metrics.maxConsecutiveSpeechFrames >= policy.minSpeechFrames;
+  if (metrics.scannedFrames !== metrics.totalFrames) return false;
+  return (
+    assessment.kind !== "non_speech" ||
+    (metrics.peakSpeechProbability < policy.rejectionCeiling &&
+      metrics.maxConsecutiveSpeechFrames < policy.minSpeechFrames)
+  );
+}
+
 function spawnSpeechWorker(policy: SpeechPolicy): SpeechWorkerTransport {
   const source = path.extname(__filename) === ".ts";
-  const worker = new Worker(
+  const worker = fork(
     path.join(
       __dirname,
       source ? "speechDetectionWorker.ts" : "speechDetectionWorker.js",
     ),
+    [policy.policyFingerprint],
     {
-      workerData: { policyFingerprint: policy.policyFingerprint },
-      execArgv: source ? ["-r", require.resolve("ts-node/register")] : [],
+      // Compile WASM directly to optimized code instead of retaining two tiers.
+      execArgv: [
+        "--no-liftoff",
+        ...(source ? ["-r", require.resolve("ts-node/register")] : []),
+      ],
+      serialization: "advanced",
+      stdio: ["ignore", "ignore", "ignore", "ipc"],
+      windowsHide: true,
       env: source
         ? {
             ...process.env,
@@ -328,6 +344,9 @@ function spawnSpeechWorker(policy: SpeechPolicy): SpeechWorkerTransport {
     },
   );
   let terminating = false;
+  const exited = new Promise<void>((resolve) =>
+    worker.once("close", () => resolve()),
+  );
   const replies = new Set<(reply: SpeechWorkerReply) => void>();
   const failures = new Set<(reason: SpeechUnavailableReason) => void>();
   const fail = (reason: SpeechUnavailableReason): void => {
@@ -357,7 +376,9 @@ function spawnSpeechWorker(policy: SpeechPolicy): SpeechWorkerTransport {
   });
   return {
     post(request: SpeechWorkerRequest) {
-      worker.postMessage(request, [request.wav]);
+      worker.send(request, (error) => {
+        if (error) fail("worker_error");
+      });
     },
     onReply(listener) {
       replies.add(listener);
@@ -375,7 +396,8 @@ function spawnSpeechWorker(policy: SpeechPolicy): SpeechWorkerTransport {
       terminating = true;
       replies.clear();
       failures.clear();
-      await worker.terminate();
+      worker.kill("SIGKILL");
+      await exited;
     },
   };
 }

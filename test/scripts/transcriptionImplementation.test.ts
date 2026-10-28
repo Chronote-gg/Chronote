@@ -1,3 +1,4 @@
+import { copyTranscriptionSourceCheckout } from "../helpers/compiledTranscriptionFixture";
 import {
   cpSync,
   mkdtempSync,
@@ -8,22 +9,28 @@ import {
   existsSync,
 } from "node:fs";
 import { spawnSync } from "node:child_process";
-import { createHash } from "node:crypto";
 import path from "node:path";
 import os from "node:os";
-import { prepareTranscriptionFixture } from "../helpers/compiledTranscriptionFixture";
+import {
+  useCompiledTranscriptionFixture,
+  unreviewedPcmManifest,
+  prepareTranscriptionFixture,
+} from "../helpers/compiledTranscriptionFixture";
 import { removeOwnedFixture } from "../helpers/compiledSpeechDetectionFixture";
 import { transcriptionBuildSchema } from "../../src/evals/transcriptionImplementation";
 const root = path.resolve(__dirname, "../..");
 let compiled: string;
-beforeAll(async () => {
-  compiled = await prepareTranscriptionFixture(root);
-}, 60000);
-afterAll(() => {
-  if (compiled) removeOwnedFixture(compiled, "vad-build-contract-");
+useCompiledTranscriptionFixture(root, (directory) => {
+  compiled = directory;
 });
 function run(
-  changed: "none" | "source" | "compiled" | "missing-build",
+  changed:
+    | "none"
+    | "source"
+    | "compiled"
+    | "source-orchestration"
+    | "compiled-orchestration"
+    | "missing-build",
   entry = false,
   sourceRoot = compiled,
 ) {
@@ -58,6 +65,16 @@ function run(
         path.join(clone, "dist/services/speechDetectionCore.js"),
         "// changed compiled implementation",
       );
+    if (changed === "source-orchestration")
+      writeFileSync(
+        path.join(clone, "src/services/transcriptionService.ts"),
+        "// changed production admission and selection",
+      );
+    if (changed === "compiled-orchestration")
+      writeFileSync(
+        path.join(clone, "dist/services/transcriptionService.js"),
+        "// changed compiled production admission and selection",
+      );
     if (changed === "missing-build") unlinkSync(buildPath);
     const pcm = Buffer.alloc(48000 * 4);
     for (let i = 0; i < pcm.length; i += 2) pcm.writeInt16LE(4000, i);
@@ -66,20 +83,7 @@ function run(
       output = path.join(clone, "artifacts/result.json");
     writeFileSync(
       manifest,
-      JSON.stringify({
-        version: 1,
-        name: "build control",
-        prompt: "",
-        cases: [
-          {
-            id: "one",
-            file: "control.pcm",
-            sha256: createHash("sha256").update(pcm).digest("hex"),
-            split: "holdout",
-            label: { kind: "unreviewed" },
-          },
-        ],
-      }),
+      JSON.stringify(unreviewedPcmManifest(pcm, "build control")),
     );
     const child = spawnSync(
       process.execPath,
@@ -110,6 +114,7 @@ function run(
           NODE_PATH: path.join(root, "node_modules"),
           MOCK_MODE: "true",
           LANGFUSE_TRACING_ENABLED: "false",
+          DOTENV_CONFIG_QUIET: "true",
         },
         timeout: 60000,
       },
@@ -133,7 +138,13 @@ test("fresh normal-build association identifies the compiled runner without prov
   expect(result.report.implementation.loader).toBe("compiled");
   expect(result.report.summary.requests).toBe(0);
 });
-test.each(["source", "compiled", "missing-build"] as const)(
+test.each([
+  "source",
+  "compiled",
+  "source-orchestration",
+  "compiled-orchestration",
+  "missing-build",
+] as const)(
   "%s identity mismatch stops real CLI before provider setup",
   (changed) => {
     const result = run(changed);
@@ -155,20 +166,7 @@ test("current-source provenance suite works in an owned checkout with no dist", 
     path.join(os.tmpdir(), "vad-build-contract-source-"),
   );
   try {
-    for (const file of [
-      "src",
-      "assets",
-      "package.json",
-      "tsconfig.json",
-      "yarn.lock",
-    ]) {
-      cpSync(path.join(root, file), path.join(checkout, file), {
-        recursive: true,
-        filter: (source) =>
-          source !== path.join(root, "src/frontend") &&
-          source !== path.join(root, "src/setupTests.ts"),
-      });
-    }
+    copyTranscriptionSourceCheckout(root, checkout);
     expect(existsSync(path.join(checkout, "dist"))).toBe(false);
     const fixture = await prepareTranscriptionFixture(checkout, root);
     let result: ReturnType<typeof run>;

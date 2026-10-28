@@ -92,6 +92,7 @@ export type SpeechWorkerRequest = {
   policyFingerprint: string;
 };
 export type SpeechWorkerReply =
+  | { type: "failure"; reason: SpeechUnavailableReason }
   | { type: "ready"; policyFingerprint: string }
   | { type: "assessment"; requestId: number; assessment: SpeechAssessment };
 export interface SpeechWorkerTransport {

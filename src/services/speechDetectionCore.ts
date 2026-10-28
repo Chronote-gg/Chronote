@@ -14,12 +14,7 @@ type DecodedWav = {
 function readPcmWav(wav: Uint8Array, policy: SpeechPolicy): DecodedWav | null {
   if (wav.length < 12) return null;
   const view = new DataView(wav.buffer, wav.byteOffset, wav.byteLength);
-  if (
-    view.getUint32(0, false) !== 0x52494646 ||
-    view.getUint32(8, false) !== 0x57415645 ||
-    view.getUint32(4, true) + 8 !== wav.length
-  )
-    return null;
+  if (!isRiffWav(view, wav.length)) return null;
   let data: { offset: number; bytes: number } | undefined;
   let channels: number | undefined;
   for (let offset = 12; offset < wav.length;) {
@@ -28,30 +23,77 @@ function readPcmWav(wav: Uint8Array, policy: SpeechPolicy): DecodedWav | null {
     const chunkBytes = view.getUint32(offset + 4, true);
     const next = offset + 8 + chunkBytes + (chunkBytes % 2);
     if (next > wav.length) return null;
-    if (chunkId === 0x666d7420) {
-      if (channels !== undefined || chunkBytes < 16) return null;
-      channels = view.getUint16(offset + 10, true);
-      const blockAlign = view.getUint16(offset + 20, true);
-      if (
-        view.getUint16(offset + 8, true) !== 1 ||
-        channels === 0 ||
-        view.getUint32(offset + 12, true) !== policy.sampleRate ||
-        view.getUint32(offset + 16, true) !== policy.sampleRate * blockAlign ||
-        blockAlign !== channels * 2 ||
-        view.getUint16(offset + 22, true) !== 16
-      )
-        return null;
-    } else if (chunkId === 0x64617461) {
-      if (data !== undefined) return null;
-      data = { offset: offset + 8, bytes: chunkBytes };
+    switch (chunkId) {
+      case 0x666d7420:
+        channels = readFormatChannels(
+          view,
+          offset,
+          chunkBytes,
+          channels,
+          policy,
+        );
+        if (channels === undefined) return null;
+        break;
+      case 0x64617461:
+        if (data !== undefined) return null;
+        data = { offset: offset + 8, bytes: chunkBytes };
+        break;
     }
     offset = next;
   }
+  return decodePcmChannels(view, data, channels);
+}
+
+function hasCompleteSamples(bytes: number, channels: number): boolean {
+  return bytes > 0 && bytes % (channels * 2) === 0;
+}
+
+function readFormatChannels(
+  view: DataView,
+  offset: number,
+  bytes: number,
+  previous: number | undefined,
+  policy: SpeechPolicy,
+): number | undefined {
+  if (previous !== undefined || bytes < 16) return undefined;
+  const channels = view.getUint16(offset + 10, true);
+  return isPcmFormat(view, offset, channels, policy) ? channels : undefined;
+}
+
+function isRiffWav(view: DataView, bytes: number): boolean {
+  return (
+    view.getUint32(0, false) === 0x52494646 &&
+    view.getUint32(8, false) === 0x57415645 &&
+    view.getUint32(4, true) + 8 === bytes
+  );
+}
+
+function isPcmFormat(
+  view: DataView,
+  offset: number,
+  channels: number,
+  policy: SpeechPolicy,
+): boolean {
+  const blockAlign = view.getUint16(offset + 20, true);
+  return (
+    view.getUint16(offset + 8, true) === 1 &&
+    channels > 0 &&
+    view.getUint32(offset + 12, true) === policy.sampleRate &&
+    view.getUint32(offset + 16, true) === policy.sampleRate * blockAlign &&
+    blockAlign === channels * 2 &&
+    view.getUint16(offset + 22, true) === 16
+  );
+}
+
+function decodePcmChannels(
+  view: DataView,
+  data: { offset: number; bytes: number } | undefined,
+  channels: number | undefined,
+): DecodedWav | null {
   if (
     channels === undefined ||
     !data ||
-    data.bytes === 0 ||
-    data.bytes % (channels * 2) !== 0
+    !hasCompleteSamples(data.bytes, channels)
   )
     return null;
   const samples = new Float32Array(data.bytes / (channels * 2));
@@ -114,6 +156,37 @@ function hasBriefPeakAmbiguity(
   return highSamples > 0 && longestResidualRun >= policy.minSpeechFrames;
 }
 
+function isValidInference(
+  result: Awaited<ReturnType<SileroSession["infer"]>>,
+): boolean {
+  return (
+    Number.isFinite(result.probability) &&
+    result.probability >= 0 &&
+    result.probability <= 1 &&
+    result.state.length === 256 &&
+    result.state.every(Number.isFinite)
+  );
+}
+
+function prepareFrame(
+  samples: Float32Array,
+  offset: number,
+  gain: number,
+  context: Float32Array,
+  policy: SpeechPolicy,
+): Float32Array {
+  const input = new Float32Array(policy.contextSamples + policy.frameSamples);
+  input.set(context);
+  for (
+    let index = 0;
+    index < policy.frameSamples && offset + index < samples.length;
+    index++
+  ) {
+    input[policy.contextSamples + index] = samples[offset + index] * gain;
+  }
+  return input;
+}
+
 export async function assessWavSpeech(
   wav: Uint8Array,
   session: SileroSession,
@@ -156,15 +229,7 @@ export async function assessWavSpeech(
   const context = new Float32Array(policy.contextSamples);
   let consecutive = 0;
   for (let offset = 0; offset < samples.length; offset += policy.frameSamples) {
-    const input = new Float32Array(policy.contextSamples + policy.frameSamples);
-    input.set(context);
-    for (
-      let index = 0;
-      index < policy.frameSamples && offset + index < samples.length;
-      index++
-    ) {
-      input[policy.contextSamples + index] = samples[offset + index] * gain;
-    }
+    const input = prepareFrame(samples, offset, gain, context, policy);
     let result: Awaited<ReturnType<SileroSession["infer"]>>;
     try {
       result = await session.infer(input, state);
@@ -175,13 +240,7 @@ export async function assessWavSpeech(
         policyFingerprint: policy.policyFingerprint,
       };
     }
-    if (
-      !Number.isFinite(result.probability) ||
-      result.probability < 0 ||
-      result.probability > 1 ||
-      result.state.length !== 256 ||
-      !result.state.every(Number.isFinite)
-    )
+    if (!isValidInference(result))
       return {
         kind: "unavailable",
         reason: "invalid_output",
@@ -200,13 +259,17 @@ export async function assessWavSpeech(
       metrics.maxConsecutiveSpeechFrames,
       consecutive,
     );
+    if (consecutive >= policy.minSpeechFrames)
+      return {
+        kind: "speech",
+        policyFingerprint: policy.policyFingerprint,
+        metrics,
+      };
   }
   const kind =
-    metrics.maxConsecutiveSpeechFrames >= policy.minSpeechFrames
-      ? "speech"
-      : metrics.peakSpeechProbability < policy.rejectionCeiling &&
-          !hasBriefPeakAmbiguity(samples, peak, policy)
-        ? "non_speech"
-        : "uncertain";
+    metrics.peakSpeechProbability < policy.rejectionCeiling &&
+    !hasBriefPeakAmbiguity(samples, peak, policy)
+      ? "non_speech"
+      : "uncertain";
   return { kind, policyFingerprint: policy.policyFingerprint, metrics };
 }

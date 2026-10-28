@@ -609,142 +609,205 @@ test.each(["pcm", "text_only"] as const)(
   },
 );
 
-test("actual receiver and immutable fast-prefix checkpoint recover only the true tail", async () => {
-  jest.useFakeTimers();
-  jest.setSystemTime(2000);
-  const { meeting, artifacts } = await fixture();
-  const { createRecordingCheckpointCapture } =
-    await import("../../src/services/recordingCheckpointCapture");
-  const { mkdtempSync, rmSync } = await import("node:fs");
-  const { tmpdir } = await import("node:os");
-  const path = await import("node:path");
-  const directory = mkdtempSync(path.join(tmpdir(), "mapped-producer-"));
-  const pcm: CheckpointArtifactInput[] = [];
-  meeting.audioData.currentSnippets = new Map();
-  const stream = new PassThrough();
-  Object.assign(meeting, {
-    connection: {
-      state: { status: "ready" },
-      receiver: {
-        packetDiagnostics: new WeakMap(),
-        subscriptions: new Map(),
-        subscribe: () => stream,
+test.each(["failed", "skipped"] as const)(
+  "actual receiver checkpoint preserves finalized %s disposition during recovery",
+  async (status) => {
+    jest.useFakeTimers();
+    jest.setSystemTime(2000);
+    const { meeting, artifacts } = await fixture();
+    const { createRecordingCheckpointCapture } =
+      await import("../../src/services/recordingCheckpointCapture");
+    const { mkdtempSync, rmSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const path = await import("node:path");
+    const directory = mkdtempSync(path.join(tmpdir(), "mapped-producer-"));
+    const pcm: CheckpointArtifactInput[] = [];
+    meeting.audioData.currentSnippets = new Map();
+    const stream = new PassThrough();
+    Object.assign(meeting, {
+      connection: {
+        state: { status: "ready" },
+        receiver: {
+          packetDiagnostics: new WeakMap(),
+          subscriptions: new Map(),
+          subscribe: () => stream,
+        },
       },
-    },
-    captureAudio: true,
-    startTime: new Date(2000),
-  });
-  meeting.recordingCapture = createRecordingCheckpointCapture({
-    directory,
-    startedAt: 2000,
-    signal: meeting.ownershipSignal!,
-    commit: async (items) => {
-      pcm.push(...items);
-      return true;
-    },
-    stopCapture: jest.fn(),
-  });
-  // Keep generated context artifacts visible while the real capture queues publication.
-  const queueContent = meeting.recordingCapture.queueContent.bind(
-    meeting.recordingCapture,
-  );
-  meeting.recordingCapture.queueContent = (item) => {
-    artifacts.push(item);
-    return queueContent(item);
-  };
-  let resolveFast!: (result: { status: "succeeded"; text: string }) => void;
-  jest
-    .mocked(transcribeSnippet)
-    .mockImplementationOnce(async (_meeting, snapshot) => {
-      expect(snapshot.pcmSpans).toEqual([
-        { sourceId: "user:speaker", sequence: 0, startByte: 0, endByte: 61440 },
-      ]);
-      return new Promise((resolve) => {
-        resolveFast = resolve;
-      });
-    })
-    .mockResolvedValueOnce({ status: "failed", reason: "transcription_error" });
-  try {
-    startRecordingContentCheckpoint(meeting);
-    await meeting.recordingContentTask;
-    await subscribeToUserVoice(meeting, "speaker");
-    userStartTalking(meeting, "speaker");
-    stream.write(Buffer.alloc(61440, 1));
-    userStopTalking(meeting, "speaker");
-    await jest.advanceTimersByTimeAsync(
-      meeting.runtimeConfig!.transcription.fastSilenceMs,
-    );
-    stream.write(Buffer.alloc(3840, 2));
-    resolveFast({ status: "succeeded", text: "Saved immutable prefix" });
-    await jest.advanceTimersByTimeAsync(0);
-    clearSnippetTimer(meeting, "speaker");
-    startProcessingSnippet(meeting, "speaker");
-    await jest.advanceTimersByTimeAsync(0);
-    await meeting.audioData.audioFiles[0].processingPromise;
-    checkpointCompletedTranscription(meeting);
-    const saved = lastTranscript(artifacts);
-    expect(saved.entries[0].correspondence).toEqual({
-      kind: "pcm",
-      spans: [
-        { sourceId: "user:speaker", sequence: 0, startByte: 0, endByte: 61440 },
-      ],
+      captureAudio: true,
+      startTime: new Date(2000),
     });
-    await meeting.recordingCapture.finish();
-    jest.useRealTimers();
-    const f = await recoveryFixture("", {
-      artifacts: pcm.filter((item) => item.kind === "audio"),
-      transcript: (payload) => {
-        payload.entries = saved.entries;
+    meeting.recordingCapture = createRecordingCheckpointCapture({
+      directory,
+      startedAt: 2000,
+      signal: meeting.ownershipSignal!,
+      commit: async (items) => {
+        pcm.push(...items);
+        return true;
       },
-      context: (context) => {
-        if (context.settings.availability !== "available")
-          throw new Error("settings");
-        context.settings.value.transcription.finalPassEnabled = false;
-        context.settings.value.premiumTranscription = {
-          enabled: false,
-          cleanupEnabled: false,
-        };
-        context.prompts.transcription = {
-          availability: "available",
-          value: {
-            name: "original",
-            version: 1,
-            label: "original",
-            type: "text",
-            template: "Original",
+      stopCapture: jest.fn(),
+    });
+    // Keep generated context artifacts visible while the real capture queues publication.
+    const queueContent = meeting.recordingCapture.queueContent.bind(
+      meeting.recordingCapture,
+    );
+    meeting.recordingCapture.queueContent = (item) => {
+      artifacts.push(item);
+      return queueContent(item);
+    };
+    let resolveFast!: (result: {
+      status: "succeeded";
+      text: string;
+      admission: { kind: "not_enforced"; reason: "off" };
+    }) => void;
+    jest
+      .mocked(transcribeSnippet)
+      .mockImplementationOnce(async (_meeting, snapshot) => {
+        expect(snapshot.pcmSpans).toEqual([
+          {
+            sourceId: "user:speaker",
+            sequence: 0,
+            startByte: 0,
+            endByte: 61440,
           },
-        };
-      },
-    });
-    const { readRecoveryContent } =
-      await import("../../src/services/meetingRecoveryContent");
-    const content = await readRecoveryContent(
-      f.claim.history,
-      f.reader,
-      meeting.ownershipSignal!,
-    );
-    const result = await recoverTranscript(
-      content,
-      f.reader,
-      meeting.ownershipSignal!,
-      (run) => run(),
-    );
-    expect(
-      jest.mocked(transcribeContentSnippet).mock.calls.at(-1)![1].chunks[0],
-    ).toEqual(Buffer.alloc(3840, 2));
-    expect(result.text.match(/Saved immutable prefix/g)).toHaveLength(1);
-    expect(result.segments).toHaveLength(2);
-  } finally {
-    clearSnippetTimer(meeting, "speaker");
-    stopRecordingCapture(meeting);
-    await waitForCaptureStreamSettlement(meeting);
-    meeting.recordingCapture.fence();
-    await meeting.recordingCapture.settled();
-    meeting.recordingCapture.releaseSettledBuffers();
-    rmSync(directory, { recursive: true, force: true });
-    jest.useRealTimers();
-  }
-});
+        ]);
+        return new Promise((resolve) => {
+          resolveFast = resolve;
+        });
+      })
+      .mockResolvedValueOnce(
+        status === "failed"
+          ? { status: "failed", reason: "transcription_error" }
+          : {
+              status: "skipped",
+              reason: "non_speech",
+              coverage: {
+                pcmSha256: "a".repeat(64),
+                audioBytes: 65280,
+                policyFingerprint: "saved-policy",
+              },
+            },
+      );
+    try {
+      startRecordingContentCheckpoint(meeting);
+      await meeting.recordingContentTask;
+      await subscribeToUserVoice(meeting, "speaker");
+      userStartTalking(meeting, "speaker");
+      stream.write(Buffer.alloc(61440, 1));
+      userStopTalking(meeting, "speaker");
+      await jest.advanceTimersByTimeAsync(
+        meeting.runtimeConfig!.transcription.fastSilenceMs,
+      );
+      stream.write(Buffer.alloc(3840, 2));
+      resolveFast({
+        status: "succeeded",
+        text: "Saved immutable prefix",
+        admission: { kind: "not_enforced", reason: "off" },
+      });
+      await jest.advanceTimersByTimeAsync(0);
+      clearSnippetTimer(meeting, "speaker");
+      startProcessingSnippet(meeting, "speaker");
+      await jest.advanceTimersByTimeAsync(0);
+      await meeting.audioData.audioFiles[0].processingPromise;
+      checkpointCompletedTranscription(meeting);
+      const saved = lastTranscript(artifacts);
+      if (status === "failed")
+        expect(saved.entries[0].correspondence).toEqual({
+          kind: "pcm",
+          spans: [
+            {
+              sourceId: "user:speaker",
+              sequence: 0,
+              startByte: 0,
+              endByte: 61440,
+            },
+          ],
+        });
+      else {
+        expect(saved.entries).toEqual([]);
+        expect(saved.omitted).toEqual({
+          kind: "pcm",
+          spans: [
+            {
+              sourceId: "user:speaker",
+              sequence: 0,
+              startByte: 0,
+              endByte: 65280,
+            },
+          ],
+        });
+        expect(
+          meeting.audioData.audioFiles[0].finalSpeechRejection,
+        ).toMatchObject({
+          policyFingerprint: "saved-policy",
+        });
+      }
+      await meeting.recordingCapture.finish();
+      jest.useRealTimers();
+      const f = await recoveryFixture("", {
+        artifacts: pcm.filter((item) => item.kind === "audio"),
+        transcript: (payload) => {
+          payload.entries = saved.entries;
+          payload.omitted = saved.omitted;
+        },
+        context: (context) => {
+          if (context.settings.availability !== "available")
+            throw new Error("settings");
+          context.settings.value.transcription.finalPassEnabled = false;
+          context.settings.value.premiumTranscription = {
+            enabled: false,
+            cleanupEnabled: false,
+          };
+          context.prompts.transcription = {
+            availability: "available",
+            value: {
+              name: "original",
+              version: 1,
+              label: "original",
+              type: "text",
+              template: "Original",
+            },
+          };
+        },
+      });
+      const { readRecoveryContent } =
+        await import("../../src/services/meetingRecoveryContent");
+      const content = await readRecoveryContent(
+        f.claim.history,
+        f.reader,
+        meeting.ownershipSignal!,
+      );
+      const beforeRecoveryRequests = jest.mocked(transcribeContentSnippet).mock
+        .calls.length;
+      const result = await recoverTranscript(
+        content,
+        f.reader,
+        meeting.ownershipSignal!,
+        (run) => run(),
+      );
+      if (status === "failed") {
+        expect(
+          jest.mocked(transcribeContentSnippet).mock.calls.at(-1)![1].chunks[0],
+        ).toEqual(Buffer.alloc(3840, 2));
+        expect(result.text.match(/Saved immutable prefix/g)).toHaveLength(1);
+        expect(result.segments).toHaveLength(2);
+      } else {
+        expect(result).toEqual({ text: "", segments: [] });
+        expect(jest.mocked(transcribeContentSnippet).mock.calls).toHaveLength(
+          beforeRecoveryRequests,
+        );
+      }
+    } finally {
+      clearSnippetTimer(meeting, "speaker");
+      stopRecordingCapture(meeting);
+      await waitForCaptureStreamSettlement(meeting);
+      meeting.recordingCapture.fence();
+      await meeting.recordingCapture.settled();
+      meeting.recordingCapture.releaseSettledBuffers();
+      rmSync(directory, { recursive: true, force: true });
+      jest.useRealTimers();
+    }
+  },
+);
 test("actual compile freezes selected membership before asynchronous cleanup", async () => {
   const { meeting, artifacts } = await fixture();
   startRecordingContentCheckpoint(meeting);

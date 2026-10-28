@@ -46,6 +46,14 @@ export function resolveTranscriptionGuardConfig(
     promptEchoEnabled: settings?.promptEchoEnabled ?? true,
     hardSilenceDbfs:
       settings?.suppressionHardSilenceDbfs ?? TRANSCRIPTION_HARD_SILENCE_DBFS,
+    ...resolveRateConfig(settings),
+  };
+}
+
+function resolveRateConfig(
+  settings: Parameters<typeof resolveTranscriptionGuardConfig>[0],
+) {
+  return {
     rateMaxSeconds:
       settings?.suppressionRateMaxSeconds ?? TRANSCRIPTION_RATE_MAX_SECONDS,
     rateMinWords:
@@ -156,17 +164,7 @@ export async function selectTranscription(input: {
     input.onCandidate?.(result);
     return result;
   };
-  const voteCandidate = (
-    candidate: GuardedTranscriptionCandidate,
-  ): TranscriptionVoteCandidate => ({
-    id: candidate.candidateId,
-    text: candidate.guardResult.text,
-    suppressed: candidate.guardResult.suppressed,
-    promptEchoDetected: candidate.guardResult.promptEchoDetected,
-    rateMismatchDetected: candidate.guardResult.rateMismatchDetected,
-    quietAudio: candidate.guardResult.quietAudio,
-    logprobMetrics: candidate.guardResult.logprobMetrics,
-  });
+
   const promptCandidate = await evaluate(
     "prompt",
     await input.transcribe(input.prompt),
@@ -176,7 +174,7 @@ export async function selectTranscription(input: {
     enabled: input.voteEnabled,
     hasPrompt: Boolean(input.prompt),
     passMode: input.passMode,
-    primaryCandidate: voteCandidate(promptCandidate),
+    primaryCandidate: buildTranscriptionVoteCandidate(promptCandidate),
   });
   if (!voteGate.shouldRun)
     return { selected: promptCandidate, promptCandidate, voteGate };
@@ -185,8 +183,8 @@ export async function selectTranscription(input: {
     await input.transcribe(),
   );
   const voteDecision = decideTranscriptionVote({
-    promptCandidate: voteCandidate(promptCandidate),
-    noPromptCandidate: voteCandidate(noPromptCandidate),
+    promptCandidate: buildTranscriptionVoteCandidate(promptCandidate),
+    noPromptCandidate: buildTranscriptionVoteCandidate(noPromptCandidate),
   });
   const selected =
     voteDecision.selectedId === "no_prompt"
@@ -215,3 +213,15 @@ export async function selectTranscription(input: {
     voteDecision,
   };
 }
+
+export const buildTranscriptionVoteCandidate = (
+  candidate: Pick<GuardedTranscriptionCandidate, "candidateId" | "guardResult">,
+): TranscriptionVoteCandidate => ({
+  id: candidate.candidateId,
+  text: candidate.guardResult.text,
+  suppressed: candidate.guardResult.suppressed,
+  promptEchoDetected: candidate.guardResult.promptEchoDetected,
+  rateMismatchDetected: candidate.guardResult.rateMismatchDetected,
+  quietAudio: candidate.guardResult.quietAudio,
+  logprobMetrics: candidate.guardResult.logprobMetrics,
+});

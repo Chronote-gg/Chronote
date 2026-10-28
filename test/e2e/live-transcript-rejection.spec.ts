@@ -150,7 +150,6 @@ for (const entry of ["live page", "dashboard"] as const) {
       expect(file.timestamp).toBe(Date.parse("2025-01-01T00:00:10Z"));
       expect(pcm).toEqual(originalPcm);
     } finally {
-      await page.close();
       for (const client of clients) client.end();
       await new Promise<void>((resolve, reject) =>
         server.close((error) => (error ? reject(error) : resolve())),

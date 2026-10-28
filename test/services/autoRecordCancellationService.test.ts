@@ -191,7 +191,7 @@ const buildSparseMeeting = (): MeetingData =>
 
 describe("autoRecordCancellationService", () => {
   test("excludes final-rejected text from cancellation input", async () => {
-    const { evaluateAutoRecordCancellation, completionCreate } =
+    const { evaluateAutoRecordCancellation, responsesCreate } =
       await loadModule({ responseContent: '{"cancel":true}' });
     const meeting = buildMeeting();
     meeting.audioData.audioFiles.push({
@@ -207,10 +207,10 @@ describe("autoRecordCancellationService", () => {
       },
     });
     await evaluateAutoRecordCancellation(meeting);
-    expect(JSON.stringify(completionCreate.mock.calls)).not.toContain(
+    expect(JSON.stringify(responsesCreate.mock.calls)).not.toContain(
       "rejected guess",
     );
-    expect(JSON.stringify(completionCreate.mock.calls)).toContain(
+    expect(JSON.stringify(responsesCreate.mock.calls)).toContain(
       "No transcript.",
     );
   });

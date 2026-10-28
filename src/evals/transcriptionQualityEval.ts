@@ -115,105 +115,28 @@ export function summarizeQualityRuns(results: CorpusRun[]) {
 }
 
 export async function runTranscriptionQualityEval(args: string[]) {
-  const allowed = new Set([
-    "--manifest",
-    "--mode",
-    "--runs",
-    "--pass-mode",
-    "--max-requests",
-    "--max-clip-seconds",
-    "--split",
-    "--policy",
-    "--prompt-file",
-    "--model",
-    "--output",
-    "--force",
-    "--vad-report",
-    "--artifact-dir",
-    "--speech-detector",
-    "--speech-mode",
-    "--batch-size",
-    "--batch-index",
-  ]);
-  for (const argument of args.filter((item) => item.startsWith("--")))
-    if (!allowed.has(argument))
-      throw new Error(`Unknown corpus option ${argument}`);
-  const manifestPath = path.resolve(flag(args, "--manifest") ?? "");
-  const corpus = transcriptionCorpusSchema.parse(
-    JSON.parse(await fs.readFile(manifestPath, "utf8")),
-  );
-  const mode = flag(args, "--mode") ?? "pipeline";
-  if (mode !== "provider" && mode !== "pipeline" && mode !== "preflight")
-    throw new Error("--mode must be provider, pipeline, or preflight");
-  const passMode = flag(args, "--pass-mode") ?? "slow";
-  if (passMode !== "fast" && passMode !== "slow")
-    throw new Error("--pass-mode must be fast or slow");
-  const runs = numberFlag(args, "--runs", 3, 20);
-  const maxRequests = numberFlag(args, "--max-requests", 100, 200);
-  const maxSeconds = numberFlag(args, "--max-clip-seconds", 30, 60);
-  const split = flag(args, "--split");
-  if (split && split !== "tune" && split !== "holdout")
-    throw new Error("--split must be tune or holdout");
-  const policyFile = flag(args, "--policy");
-  const policy = transcriptionPolicySchema.parse(
-    policyFile
-      ? JSON.parse(await fs.readFile(path.resolve(policyFile), "utf8"))
-      : {},
-  );
-  const promptFile = flag(args, "--prompt-file");
-  const prompt = promptFile
-    ? await fs.readFile(path.resolve(promptFile), "utf8")
-    : corpus.prompt;
-  const force = args.includes("--force");
-  const selected = corpus.cases.filter(
-    (item) => !split || item.split === split,
-  );
-  const batchSize = numberFlag(args, "--batch-size", 25, 25);
-  const batchIndex = Number(flag(args, "--batch-index") ?? 0);
-  const cases = selectCorpusBatch(selected, batchSize, batchIndex);
-  const speechDetector = flag(args, "--speech-detector") ?? "off";
-  if (speechDetector !== "off" && speechDetector !== "production")
-    throw new Error("Invalid speech detector");
-  const speechMode = flag(args, "--speech-mode") ?? "enforce";
-  if (speechMode !== "shadow" && speechMode !== "enforce")
-    throw new Error("Invalid speech mode");
-  if (speechDetector === "off" && flag(args, "--speech-mode"))
-    throw new Error("Speech mode requires production detector");
-  if (
-    speechDetector === "production" &&
-    (flag(args, "--vad-report") || mode === "provider")
-  )
-    throw new Error(
-      "Production detector conflicts with external VAD or provider-only mode",
-    );
-  const vadFile = flag(args, "--vad-report");
-  if (vadFile && mode === "provider")
-    throw new Error("Provider baseline does not accept a VAD gate");
-  const vadReport = vadFile
-    ? transcriptionVadReportSchema.parse(
-        JSON.parse(await fs.readFile(path.resolve(vadFile), "utf8")),
-      )
-    : undefined;
-  if (vadReport)
-    cases.forEach((item) => validateVadCase(item, vadReport.cases));
-  if (!cases.length || cases.length > 200)
-    throw new Error("Select between 1 and 200 corpus cases");
-  const cacheRoot = path.resolve(
-    flag(args, "--artifact-dir") ?? ".cache/transcription-eval",
-  );
-  const output = path.resolve(
-    flag(args, "--output") ??
-      path.join(cacheRoot, `${Date.now()}-${mode}-${passMode}.json`),
-  );
-  const relativeOutput = path.relative(cacheRoot, output);
-  if (
-    !relativeOutput ||
-    relativeOutput.startsWith("..") ||
-    path.isAbsolute(relativeOutput)
-  )
-    throw new Error(
-      "Corpus results must remain inside the selected artifact directory",
-    );
+  const {
+    manifestPath,
+    corpus,
+    mode,
+    passMode,
+    runs,
+    maxRequests,
+    maxSeconds,
+    split,
+    policy,
+    prompt,
+    force,
+    selected,
+    batchSize,
+    batchIndex,
+    cases,
+    speechDetector,
+    speechMode,
+    vadReport,
+    cacheRoot,
+    output,
+  } = await readQualityOptions(args);
   await fs.mkdir(cacheRoot, { recursive: true });
   const tempDir = await fs.mkdtemp(path.join(cacheRoot, "run-"));
   if (
@@ -222,7 +145,6 @@ export async function runTranscriptionQualityEval(args: string[]) {
   )
     throw new Error("Invalid eval temporary directory");
   const results: CorpusRun[] = [];
-  let requests = 0;
   let client: OpenAI | undefined;
   let model = flag(args, "--model");
   const startedAt = new Date().toISOString();
@@ -266,174 +188,137 @@ export async function runTranscriptionQualityEval(args: string[]) {
         timeout: 60000,
       });
     }
-    outer: for (const { item, pcm, pcmFile, wavFile, decodeMs } of prepared) {
-      for (let run = 1; run <= runs; run++) {
-        const result = await runTranscriptionQualityCase({
-          pcm,
-          prompt,
-          passMode,
-          mode,
-          policy,
-          force,
-          production: {
-            detector,
-            mode: detector ? speechMode : "off",
-            pcmFile,
-            wavFile,
-            policyFingerprint: DEFAULT_SPEECH_POLICY.policyFingerprint,
-          },
-          reference: referenceForCase(item),
-          vad: vadReport ? validateVadCase(item, vadReport.cases) : undefined,
-          transcribe: async (requestPrompt) => {
-            if (requests >= maxRequests)
-              throw new TranscriptionBudgetExhausted(
-                "Request budget exhausted",
-              );
-            requests++;
-            const response = await client!.audio.transcriptions.create({
-              file: createReadStream(wavFile),
-              model: model!,
-              language: "en",
-              temperature: 0,
-              response_format: "json",
-              include: ["logprobs"],
-              ...(requestPrompt ? { prompt: requestPrompt } : {}),
-            });
-            return {
-              text: response.text,
-              logprobs: response.logprobs ?? [],
-              usage: response.usage,
-            };
-          },
-        });
-        results.push({
-          ...result,
-          stages: {
-            ...result.stages,
-            decodeMs,
-          },
-          caseId: item.id,
-          run,
-          split: item.split,
-          tags: item.tags,
-          label: item.label,
-          sha256: item.sha256,
-          familyId: item.familyId,
-          speakerDeviceProfileId: item.speakerDeviceProfileId,
-        });
-        console.log(
-          `${item.id} run ${run}: ${result.status}, ${result.requests} requests`,
-        );
-        if (result.reason === "budget_exhausted") break outer;
+    const transcriber = createQualityTranscriber(client, model, maxRequests);
+    const runCases = async () => {
+      outer: for (const { item, pcm, pcmFile, wavFile, decodeMs } of prepared) {
+        for (let run = 1; run <= runs; run++) {
+          const result = await runTranscriptionQualityCase({
+            pcm,
+            prompt,
+            passMode,
+            mode,
+            policy,
+            force,
+            production: {
+              detector,
+              mode: detector ? speechMode : "off",
+              pcmFile,
+              wavFile,
+              policyFingerprint: DEFAULT_SPEECH_POLICY.policyFingerprint,
+            },
+            reference: referenceForCase(item),
+            vad: vadReport ? validateVadCase(item, vadReport.cases) : undefined,
+            transcribe: transcriber(wavFile),
+          });
+          results.push({
+            ...result,
+            stages: {
+              ...result.stages,
+              decodeMs,
+            },
+            caseId: item.id,
+            run,
+            split: item.split,
+            tags: item.tags,
+            label: item.label,
+            sha256: item.sha256,
+            familyId: item.familyId,
+            speakerDeviceProfileId: item.speakerDeviceProfileId,
+          });
+          console.log(
+            `${item.id} run ${run}: ${result.status}, ${result.requests} requests`,
+          );
+          if (result.reason === "budget_exhausted") break outer;
+        }
       }
-    }
-    const summary = summarizeQualityRuns(results);
-    const bySplit = Object.fromEntries(
-      ["tune", "holdout"].map((value) => [
-        value,
-        summarizeQualityRuns(results.filter((item) => item.split === value)),
-      ]),
-    );
-    const byProvenance = Object.fromEntries(
-      ["human-reviewed", "synthetic", "unreviewed"].map((value) => [
-        value,
-        summarizeQualityRuns(
-          results.filter(
-            (item) =>
-              (item.label.kind === "unreviewed"
-                ? "unreviewed"
-                : item.label.provenance) === value,
-          ),
-        ),
-      ]),
-    );
-    const byTag = Object.fromEntries(
-      [...new Set(results.flatMap((item) => item.tags))].map((tag) => [
-        tag,
-        summarizeQualityRuns(results.filter((item) => item.tags.includes(tag))),
-      ]),
-    );
-    await fs.mkdir(path.dirname(output), { recursive: true });
-    await fs.writeFile(
-      output,
-      JSON.stringify(
-        {
-          version: 1,
-          corpus: corpus.name,
-          manifestSha256: createHash("sha256")
-            .update(await fs.readFile(manifestPath))
-            .digest("hex"),
-          startedAt,
-          nodeVersion: process.version,
-          sourceSha256,
-          compiledSha256: implementation.compiledSha256,
-          implementation,
-          runSha256: createHash("sha256")
-            .update(
-              stableJson({
-                sourceSha256,
-                cases,
-                runs,
-                policy,
-                prompt,
-                mode,
-                passMode,
-                speechDetector,
-                speechMode: detector ? speechMode : "off",
-                implementation,
-              }),
-            )
-            .digest("hex"),
-          selection: {
-            split: split ?? null,
-            batchSize,
-            batchIndex,
-            selectedCaseIds: cases.map((item) => item.id),
-            totalSelectedCases: selected.length,
+    };
+    await runCases();
+    const saveReport = async () => {
+      const summary = summarizeQualityRuns(results);
+      const { bySplit, byProvenance, byTag } = summarizeQualityGroups(results);
+      await fs.mkdir(path.dirname(output), { recursive: true });
+      await fs.writeFile(
+        output,
+        JSON.stringify(
+          {
+            version: 1,
+            corpus: corpus.name,
+            manifestSha256: createHash("sha256")
+              .update(await fs.readFile(manifestPath))
+              .digest("hex"),
+            startedAt,
+            nodeVersion: process.version,
+            sourceSha256,
+            compiledSha256: implementation.compiledSha256,
+            implementation,
+            runSha256: createHash("sha256")
+              .update(
+                stableJson({
+                  sourceSha256,
+                  cases,
+                  runs,
+                  policy,
+                  prompt,
+                  mode,
+                  passMode,
+                  speechDetector,
+                  speechMode: detector ? speechMode : "off",
+                  implementation,
+                }),
+              )
+              .digest("hex"),
+            selection: {
+              split: split ?? null,
+              batchSize,
+              batchIndex,
+              selectedCaseIds: cases.map((item) => item.id),
+              totalSelectedCases: selected.length,
+            },
+            speechDetector,
+            speechMode: detector ? speechMode : "off",
+            speechPolicy: DEFAULT_SPEECH_POLICY,
+            warmMs,
+            warmed,
+            finishedAt: new Date().toISOString(),
+            mode,
+            passMode,
+            model: model ?? null,
+            prompt,
+            policy,
+            force,
+            vadReport: vadReport ? { ...vadReport, cases: undefined } : null,
+            runs,
+            maxRequests,
+            complete:
+              results.length === cases.length * runs &&
+              !results.some((item) => item.status === "failed"),
+            requestedRuns: cases.length * runs,
+            costUsd: null,
+            costNote:
+              "Usage is recorded for each response. Failed requests and dollar cost are unpriced.",
+            summary,
+            bySplit,
+            byProvenance,
+            byTag,
+            results,
           },
-          speechDetector,
-          speechMode: detector ? speechMode : "off",
-          speechPolicy: DEFAULT_SPEECH_POLICY,
-          warmMs,
-          warmed,
-          finishedAt: new Date().toISOString(),
-          mode,
-          passMode,
-          model: model ?? null,
-          prompt,
-          policy,
-          force,
-          vadReport: vadReport ? { ...vadReport, cases: undefined } : null,
-          runs,
-          maxRequests,
-          complete:
-            results.length === cases.length * runs &&
-            !results.some((item) => item.status === "failed"),
-          requestedRuns: cases.length * runs,
-          costUsd: null,
-          costNote:
-            "Usage is recorded for each response. Failed requests and dollar cost are unpriced.",
-          summary,
-          bySplit,
-          byProvenance,
-          byTag,
-          results,
-        },
-        (_, value) =>
-          typeof value === "number" && !Number.isFinite(value)
-            ? String(value)
-            : value,
-        2,
-      ),
-    );
-    console.log(JSON.stringify(summary, null, 2));
-    console.log(`Local results: ${output}`);
-    if (
-      results.length !== cases.length * runs ||
-      results.some((item) => item.status === "failed")
-    )
-      process.exitCode = 1;
-    return output;
+          (_, value) =>
+            typeof value === "number" && !Number.isFinite(value)
+              ? String(value)
+              : value,
+          2,
+        ),
+      );
+      console.log(JSON.stringify(summary, null, 2));
+      console.log(`Local results: ${output}`);
+      if (
+        results.length !== cases.length * runs ||
+        results.some((item) => item.status === "failed")
+      )
+        process.exitCode = 1;
+      return output;
+    };
+    return await saveReport();
   } finally {
     if (detector) await shutdownSpeechDetector();
     // Delete only the temporary directory created by this invocation.
@@ -471,4 +356,209 @@ export async function prepareCorpusAudio(
       `Audio duration for ${item.id} must be between 0 and ${maxSeconds} seconds`,
     );
   return { pcm, pcmFile, wavFile, seconds, decodeMs };
+}
+
+function qualityModes(args: string[]): {
+  mode: "provider" | "pipeline" | "preflight";
+  passMode: "fast" | "slow";
+} {
+  const mode = flag(args, "--mode") ?? "pipeline";
+  if (mode !== "provider" && mode !== "pipeline" && mode !== "preflight")
+    throw new Error("--mode must be provider, pipeline, or preflight");
+  const passMode = flag(args, "--pass-mode") ?? "slow";
+  if (passMode !== "fast" && passMode !== "slow")
+    throw new Error("--pass-mode must be fast or slow");
+  return { mode, passMode };
+}
+
+function speechOptions(
+  args: string[],
+  mode: string,
+): { speechDetector: "off" | "production"; speechMode: "shadow" | "enforce" } {
+  const speechDetector = flag(args, "--speech-detector") ?? "off";
+  if (speechDetector !== "off" && speechDetector !== "production")
+    throw new Error("Invalid speech detector");
+  const speechMode = flag(args, "--speech-mode") ?? "enforce";
+  if (speechMode !== "shadow" && speechMode !== "enforce")
+    throw new Error("Invalid speech mode");
+  if (speechDetector === "off" && flag(args, "--speech-mode"))
+    throw new Error("Speech mode requires production detector");
+  if (
+    speechDetector === "production" &&
+    (flag(args, "--vad-report") || mode === "provider")
+  )
+    throw new Error(
+      "Production detector conflicts with external VAD or provider-only mode",
+    );
+  return { speechDetector, speechMode };
+}
+
+function artifactPaths(args: string[], mode: string, passMode: string) {
+  const cacheRoot = path.resolve(
+    flag(args, "--artifact-dir") ?? ".cache/transcription-eval",
+  );
+  const output = path.resolve(
+    flag(args, "--output") ??
+      path.join(cacheRoot, `${Date.now()}-${mode}-${passMode}.json`),
+  );
+  const relativeOutput = path.relative(cacheRoot, output);
+  if (
+    !relativeOutput ||
+    relativeOutput.startsWith("..") ||
+    path.isAbsolute(relativeOutput)
+  )
+    throw new Error(
+      "Corpus results must remain inside the selected artifact directory",
+    );
+  return { cacheRoot, output };
+}
+
+async function readQualityOptions(args: string[]) {
+  validateQualityArguments(args);
+  const manifestPath = path.resolve(flag(args, "--manifest") ?? "");
+  const corpus = transcriptionCorpusSchema.parse(
+    JSON.parse(await fs.readFile(manifestPath, "utf8")),
+  );
+  const { mode, passMode } = qualityModes(args);
+  const runs = numberFlag(args, "--runs", 3, 20);
+  const maxRequests = numberFlag(args, "--max-requests", 100, 200);
+  const maxSeconds = numberFlag(args, "--max-clip-seconds", 30, 60);
+  const split = flag(args, "--split");
+  if (split && split !== "tune" && split !== "holdout")
+    throw new Error("--split must be tune or holdout");
+  const policyFile = flag(args, "--policy");
+  const policy = transcriptionPolicySchema.parse(
+    policyFile
+      ? JSON.parse(await fs.readFile(path.resolve(policyFile), "utf8"))
+      : {},
+  );
+  const promptFile = flag(args, "--prompt-file");
+  const prompt = promptFile
+    ? await fs.readFile(path.resolve(promptFile), "utf8")
+    : corpus.prompt;
+  const force = args.includes("--force");
+  const selected = corpus.cases.filter(
+    (item) => !split || item.split === split,
+  );
+  const batchSize = numberFlag(args, "--batch-size", 25, 25);
+  const batchIndex = Number(flag(args, "--batch-index") ?? 0);
+  const cases = selectCorpusBatch(selected, batchSize, batchIndex);
+  const { speechDetector, speechMode } = speechOptions(args, mode);
+  const vadFile = flag(args, "--vad-report");
+  if (vadFile && mode === "provider")
+    throw new Error("Provider baseline does not accept a VAD gate");
+  const vadReport = vadFile
+    ? transcriptionVadReportSchema.parse(
+        JSON.parse(await fs.readFile(path.resolve(vadFile), "utf8")),
+      )
+    : undefined;
+  if (vadReport)
+    cases.forEach((item) => validateVadCase(item, vadReport.cases));
+  if (!cases.length || cases.length > 200)
+    throw new Error("Select between 1 and 200 corpus cases");
+  const { cacheRoot, output } = artifactPaths(args, mode, passMode);
+  return {
+    manifestPath,
+    corpus,
+    mode,
+    passMode,
+    runs,
+    maxRequests,
+    maxSeconds,
+    split,
+    policy,
+    prompt,
+    force,
+    selected,
+    batchSize,
+    batchIndex,
+    cases,
+    speechDetector,
+    speechMode,
+    vadReport,
+    cacheRoot,
+    output,
+  };
+}
+
+function summarizeQualityGroups(results: CorpusRun[]) {
+  const bySplit = Object.fromEntries(
+    ["tune", "holdout"].map((value) => [
+      value,
+      summarizeQualityRuns(results.filter((item) => item.split === value)),
+    ]),
+  );
+  const byProvenance = Object.fromEntries(
+    ["human-reviewed", "synthetic", "unreviewed"].map((value) => [
+      value,
+      summarizeQualityRuns(
+        results.filter(
+          (item) =>
+            (item.label.kind === "unreviewed"
+              ? "unreviewed"
+              : item.label.provenance) === value,
+        ),
+      ),
+    ]),
+  );
+  const byTag = Object.fromEntries(
+    [...new Set(results.flatMap((item) => item.tags))].map((tag) => [
+      tag,
+      summarizeQualityRuns(results.filter((item) => item.tags.includes(tag))),
+    ]),
+  );
+  return { bySplit, byProvenance, byTag };
+}
+
+function createQualityTranscriber(
+  client: OpenAI | undefined,
+  model: string | undefined,
+  maxRequests: number,
+) {
+  let requests = 0;
+  return (wavFile: string) => async (requestPrompt?: string) => {
+    if (requests >= maxRequests)
+      throw new TranscriptionBudgetExhausted("Request budget exhausted");
+    requests++;
+    const response = await client!.audio.transcriptions.create({
+      file: createReadStream(wavFile),
+      model: model!,
+      language: "en",
+      temperature: 0,
+      response_format: "json",
+      include: ["logprobs"],
+      ...(requestPrompt ? { prompt: requestPrompt } : {}),
+    });
+    return {
+      text: response.text,
+      logprobs: response.logprobs ?? [],
+      usage: response.usage,
+    };
+  };
+}
+
+function validateQualityArguments(args: string[]) {
+  const allowed = new Set([
+    "--manifest",
+    "--mode",
+    "--runs",
+    "--pass-mode",
+    "--max-requests",
+    "--max-clip-seconds",
+    "--split",
+    "--policy",
+    "--prompt-file",
+    "--model",
+    "--output",
+    "--force",
+    "--vad-report",
+    "--artifact-dir",
+    "--speech-detector",
+    "--speech-mode",
+    "--batch-size",
+    "--batch-index",
+  ]);
+  for (const argument of args.filter((item) => item.startsWith("--")))
+    if (!allowed.has(argument))
+      throw new Error(`Unknown corpus option ${argument}`);
 }

@@ -116,26 +116,15 @@ export async function runTranscriptionQualityCase(input: {
     vad: input.vad,
   };
   const finish = () => ({ ...result, durationMs: performance.now() - started });
-  if (input.mode !== "provider" && !input.force) {
-    const reason =
-      audioSeconds <=
-      (input.policy.minSnippetSeconds ?? MINIMUM_TRANSCRIPTION_LENGTH)
-        ? "minimum_duration"
-        : isNoiseGateEnabled(gateConfig, input.passMode) &&
-            !gate.shouldTranscribe
-          ? "noise_gate"
-          : input.vad && !input.vad.shouldTranscribe
-            ? "vad"
-            : undefined;
-    if (reason) {
-      Object.assign(result, {
-        status: "skipped",
-        reason,
-        text: "",
-        score: scoreTranscription(input.reference, ""),
-      });
-      return finish();
-    }
+  const reason = skipReason(input, audioSeconds, gateConfig, gate);
+  if (reason) {
+    Object.assign(result, {
+      status: "skipped",
+      reason,
+      text: "",
+      score: scoreTranscription(input.reference, ""),
+    });
+    return finish();
   }
   const execute = async () => {
     if (input.mode === "preflight") return finish();
@@ -271,4 +260,21 @@ export async function runTranscriptionQualityCase(input: {
     assessment: result.assessment,
     stages: result.stages,
   };
+}
+
+function skipReason(
+  input: Parameters<typeof runTranscriptionQualityCase>[0],
+  audioSeconds: number,
+  gateConfig: Parameters<typeof evaluateNoiseGate>[1],
+  gate: ReturnType<typeof evaluateNoiseGate>,
+) {
+  if (input.mode === "provider" || input.force) return undefined;
+  return audioSeconds <=
+    (input.policy.minSnippetSeconds ?? MINIMUM_TRANSCRIPTION_LENGTH)
+    ? "minimum_duration"
+    : isNoiseGateEnabled(gateConfig, input.passMode) && !gate.shouldTranscribe
+      ? "noise_gate"
+      : input.vad && !input.vad.shouldTranscribe
+        ? "vad"
+        : undefined;
 }

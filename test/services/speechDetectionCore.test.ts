@@ -56,6 +56,22 @@ const fixtureMonoSamples = (wav: Buffer): number[] => {
 };
 
 describe("whole-clip speech assessment", () => {
+  it("returns speech at the second consecutive positive frame without scanning the remaining clip", async () => {
+    const assessment = await assessWavSpeech(
+      wavFromSamples(Array(512 * 10).fill(1000)),
+      probabilitiesSession([0.5, 0.5]),
+      DEFAULT_SPEECH_POLICY,
+    );
+    expect(assessment).toMatchObject({
+      kind: "speech",
+      metrics: {
+        scannedFrames: 2,
+        totalFrames: 10,
+        maxConsecutiveSpeechFrames: 2,
+      },
+    });
+  });
+
   it.each([
     {
       name: "one high sample",
@@ -598,13 +614,18 @@ describe("real bundled model synthetic controls", () => {
       expect(outputs[index].unchanged).toBe(true);
       const metrics = outputs[index].assessment.metrics;
       if (!metrics) throw new Error("Expected scored control assessment");
-      expect(metrics.peakSpeechProbability).toBeCloseTo(
-        reference.peakSpeechProbability,
-        5,
-      );
-      expect(metrics.maxConsecutiveSpeechFrames).toBe(
-        reference.maxConsecutiveSpeechFrames,
-      );
+      if (reference.shouldTranscribe) {
+        expect(metrics.peakSpeechProbability).toBeGreaterThanOrEqual(0.5);
+        expect(metrics.maxConsecutiveSpeechFrames).toBe(2);
+      } else {
+        expect(metrics.peakSpeechProbability).toBeCloseTo(
+          reference.peakSpeechProbability,
+          5,
+        );
+        expect(metrics.maxConsecutiveSpeechFrames).toBe(
+          reference.maxConsecutiveSpeechFrames,
+        );
+      }
       expect(metrics.gain).toBeCloseTo(reference.gain, 12);
     }
     expect(outputs[9].assessment).toEqual(outputs[4].assessment);
@@ -628,8 +649,9 @@ describe("real bundled model synthetic controls", () => {
     expect(
       outputs.every(
         (output) =>
+          output.assessment.kind === "speech" ||
           output.assessment.metrics?.scannedFrames ===
-          output.assessment.metrics?.totalFrames,
+            output.assessment.metrics?.totalFrames,
       ),
     ).toBe(true);
     expect(outputs.every((output) => output.unchanged)).toBe(true);

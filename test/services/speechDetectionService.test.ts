@@ -223,7 +223,7 @@ it("does not load an ONNX runtime or spawn when imported, obtained or shut down 
   const runtimeLoad = jest.fn(() => {
     throw Error("Unexpected ONNX import");
   });
-  jest.doMock("node:worker_threads", () => ({ Worker: workerSpawn }));
+  jest.doMock("node:child_process", () => ({ fork: workerSpawn }));
   jest.doMock("onnxruntime-web", runtimeLoad);
   try {
     await jest.isolateModulesAsync(async () => {
@@ -235,7 +235,7 @@ it("does not load an ONNX runtime or spawn when imported, obtained or shut down 
     expect(workerSpawn).not.toHaveBeenCalled();
     expect(runtimeLoad).not.toHaveBeenCalled();
   } finally {
-    jest.dontMock("node:worker_threads");
+    jest.dontMock("node:child_process");
     jest.dontMock("onnxruntime-web");
   }
 });
@@ -434,4 +434,36 @@ it("does not accept readiness after the absolute initialization deadline", async
   r.clock.elapseWithoutTimers(30000);
   r.workers[0].reply({ type: "ready", policyFingerprint: fingerprint });
   await expect(warm).resolves.toBe(false);
+});
+
+it("accepts partial positive proof while rejecting partial negative scans", async () => {
+  const r = rig();
+  const worker = await r.ready();
+  const positive = r.detector.assess(Uint8Array.of(1), "fast");
+  worker.reply({
+    type: "assessment",
+    requestId: worker.requests[0].requestId,
+    assessment: {
+      kind: "speech",
+      policyFingerprint: fingerprint,
+      metrics: {
+        ...scored.metrics,
+        peakSpeechProbability: 0.5,
+        maxConsecutiveSpeechFrames: 2,
+        scannedFrames: 2,
+        totalFrames: 100,
+      },
+    },
+  });
+  await expect(positive).resolves.toMatchObject({ kind: "speech" });
+  const negative = r.detector.assess(Uint8Array.of(2), "fast");
+  worker.reply({
+    type: "assessment",
+    requestId: worker.requests[1].requestId,
+    assessment: { ...scored, metrics: { ...scored.metrics, totalFrames: 100 } },
+  });
+  await expect(negative).resolves.toMatchObject({
+    kind: "unavailable",
+    reason: "invalid_output",
+  });
 });

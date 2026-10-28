@@ -1,19 +1,16 @@
 /** @jest-environment node */
+import { copyTranscriptionSourceCheckout } from "../helpers/compiledTranscriptionFixture";
+import { TRANSCRIPTION_IMPLEMENTATION_SOURCES } from "../../src/evals/transcriptionImplementation";
 import { DEFAULT_SPEECH_POLICY } from "../../src/services/speechDetectionPolicy";
 import { serialize, deserialize } from "node:v8";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import {
-  mkdtempSync,
-  writeFileSync,
-  readFileSync,
-  cpSync,
-  existsSync,
-} from "node:fs";
+import { mkdtempSync, writeFileSync, readFileSync, existsSync } from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import { prepareTranscriptionAcceptanceFixture } from "../helpers/compiledTranscriptionFixture";
 import { removeOwnedFixture } from "../helpers/compiledSpeechDetectionFixture";
+import { runTranscriptionQualityCase } from "../../src/evals/transcriptionQualityCase";
 const root = path.resolve(__dirname, "../..");
 let compiled: string;
 beforeAll(async () => {
@@ -43,32 +40,7 @@ afterAll(() => {
   if (compiled) removeOwnedFixture(compiled, "vad-build-contract-");
 });
 const hash = (v: string) => createHash("sha256").update(v).digest("hex");
-const sourceFiles = [
-  "src/constants.ts",
-  "src/metrics.ts",
-  "src/utils/audioNoiseGate.ts",
-  "src/utils/transcriptionGuards.ts",
-  "src/utils/transcriptionVote.ts",
-  "src/utils/transcriptionText.ts",
-  "src/utils/text.ts",
-  "src/services/transcriptionAudioService.ts",
-  "src/services/transcriptionInputService.ts",
-  "src/services/speechDetectionService.ts",
-  "src/services/speechDetectionPolicy.ts",
-  "src/services/speechDetectionWorker.ts",
-  "src/services/speechDetectionCore.ts",
-  "src/services/speechDetectionTypes.ts",
-  "src/services/transcriptionSelectionService.ts",
-  "src/services/openaiClient.ts",
-  "src/services/modelFactory.ts",
-  "src/services/configService.ts",
-  "src/evals/transcriptionCorpus.ts",
-  "src/evals/transcriptionMetrics.ts",
-  "src/evals/transcriptionQualityCase.ts",
-  "src/evals/transcriptionQualityEval.ts",
-  "src/evals/transcriptionVadReport.ts",
-  "src/evals/transcriptionImplementation.ts",
-];
+const sourceFiles = TRANSCRIPTION_IMPLEMENTATION_SOURCES;
 const stable = (value: unknown): string =>
   JSON.stringify(value, (_key, item) =>
     item && !Array.isArray(item) && typeof item === "object"
@@ -188,7 +160,15 @@ function fixture() {
     selection: { split: "holdout", batchSize: 25, batchIndex: 0 },
     results,
   };
-  const baseline = { ...common, speechDetector: "off", speechMode: "off" };
+  const baseline = {
+    ...common,
+    speechDetector: "off",
+    speechMode: "off",
+    results: results.map((row) => ({ ...row })),
+  };
+  baseline.results.forEach((row) =>
+    Object.assign(row, { admission: { kind: "not_enforced", reason: "off" } }),
+  );
   const candidate = {
     ...common,
     speechDetector: "production",
@@ -278,7 +258,7 @@ function fixture() {
     compiledSha256,
     speechPolicy: policy,
     limits: { cpu: 0.5, memoryBytes: 1073741824, source: "cgroup-v1" },
-    nodeVersion: "v24.15.0",
+    nodeVersion: "v24.22.1",
     durationSeconds: 120,
     fastPerSecond: 4,
     slowPerSecond: 1,
@@ -456,6 +436,21 @@ function run(
     removeOwnedFixture(dir, "acceptance-");
   }
 }
+function expectRejectedEvidence(
+  f: ReturnType<typeof fixture>,
+  problem: string,
+) {
+  const result = run(f);
+  expect(result.status).not.toBe(0);
+  expect([...result.report.failures, ...result.report.missing]).toContain(
+    problem,
+  );
+  expect(result.report.missing).not.toContain(
+    "missing or invalid evidence input",
+  );
+  return result;
+}
+
 test("complete matched evidence passes with attestation separate from verification", () => {
   const r = run(fixture());
   expect(r.report.benchmarkEvidence.problems).toEqual([]);
@@ -465,6 +460,96 @@ test("complete matched evidence passes with attestation separate from verificati
   expect(r.report.status).toBe("pass");
   expect(r.report.attested.finalHumanReviewRequired).toBe(true);
 });
+test("accepts explicit off admission emitted by the runner", async () => {
+  const f = fixture();
+  const directory = mkdtempSync(path.join(os.tmpdir(), "acceptance-"));
+  try {
+    const produced = await runTranscriptionQualityCase({
+      pcm: Buffer.alloc(384000),
+      prompt: "",
+      passMode: "slow",
+      mode: "pipeline",
+      force: false,
+      policy: { noiseGate: { enabled: false } },
+      production: {
+        mode: "off",
+        pcmFile: path.join(directory, "off.pcm"),
+        wavFile: path.join(directory, "off.wav"),
+        policyFingerprint: DEFAULT_SPEECH_POLICY.policyFingerprint,
+      },
+      transcribe: async () => ({ text: "hello" }),
+    });
+    expect(produced).toMatchObject({ status: "succeeded", requests: 1 });
+    for (const row of f.baseline.results)
+      Object.assign(row, { admission: produced.admission });
+    const result = run(f);
+    expect(result.report.benchmarkEvidence.problems).toEqual([]);
+    expect(result.report.missing).toEqual([]);
+    expect(result.report.failures).toEqual([]);
+    expect(result.status).toBe(0);
+  } finally {
+    removeOwnedFixture(directory, "acceptance-");
+  }
+});
+test("accepts benchmark measurements from the reviewed production runtime", () => {
+  const f = fixture();
+  f.benchmark.nodeVersion = "v24.22.1";
+  const result = run(f);
+  expect(result.report.benchmarkEvidence.problems).toEqual([]);
+  expect(result.status).toBe(0);
+});
+test("accepts early positive speech evidence without requiring a full negative scan", () => {
+  const f = fixture();
+  for (const row of [
+    f.candidate.results[0],
+    f.detector.results[0],
+    f.benchmark.steady.rows[0],
+  ]) {
+    if (!row.assessment || !("metrics" in row.assessment))
+      throw new Error("Missing scored assessment");
+    row.assessment.metrics.totalFrames = 100;
+  }
+  const result = run(f);
+  expect(result.report.benchmarkEvidence.problems).toEqual([]);
+  expect(result.report.missing).toEqual([]);
+  expect(result.status).toBe(0);
+});
+test.each(["non_speech", "uncertain"])(
+  "rejects partial negative %s evidence",
+  (kind) => {
+    const f = fixture();
+    f.detector.results[300].assessment = assessment(kind);
+    f.detector.results[300].assessment.metrics.totalFrames = 100;
+    const result = run(f);
+    expect(result.report.missing).toContain(
+      "validated available detector assessments",
+    );
+    expect(result.status).not.toBe(0);
+  },
+);
+test("rejects benchmark measurements from the historical runtime", () => {
+  const f = fixture();
+  f.benchmark.nodeVersion = "v24.15.0";
+  const result = run(f);
+  expect(result.report.benchmarkEvidence.problems).toContain(
+    "missing or invalid raw benchmark measurements",
+  );
+  expect(result.status).not.toBe(0);
+});
+test.each([
+  undefined,
+  { kind: "not_enforced", reason: "forced" },
+  { kind: "not_enforced", reason: "shadow" },
+])(
+  "rejects off evidence with missing or different admission %j",
+  (admission) => {
+    const f = fixture();
+    Object.assign(f.baseline.results[0], { admission });
+    const result = run(f);
+    expect(result.report.missing).toContain("baseline validated rows");
+    expect(result.status).not.toBe(0);
+  },
+);
 test.each([
   "leak",
   "duplicate",
@@ -491,29 +576,29 @@ test.each([
   "unscored",
 ])("rejects %s even when other evidence looks perfect", (kind) => {
   const f = fixture();
-  switch (kind) {
-    case "leak":
+  const mutations: Record<string, (f: ReturnType<typeof fixture>) => void> = {
+    leak: (f) => {
       f.review.tuningFamilyIds = ["family1"];
-      break;
-    case "duplicate":
+    },
+    duplicate: (f) => {
       f.manifest.cases[1].sha256 = f.manifest.cases[0].sha256;
-      break;
-    case "profiles":
+    },
+    profiles: (f) => {
       f.manifest.cases.forEach((c) => (c.speakerDeviceProfileId = "one"));
-      break;
-    case "speech":
+    },
+    speech: (f) => {
       f.detector.results[0].assessment.kind = "non_speech";
-      break;
-    case "rejection":
+    },
+    rejection: (f) => {
       f.detector.results.forEach((r) => (r.assessment.kind = "uncertain"));
-      break;
-    case "quality":
+    },
+    quality: (f) => {
       f.candidate.results[0].text = "wrong";
-      break;
-    case "empty":
+    },
+    empty: (f) => {
       f.candidate.results[0].text = "";
-      break;
-    case "false-positive":
+    },
+    "false-positive": (f) => {
       f.candidate.results[300].text = "invented";
       f.candidate.results[300].status = "succeeded";
       f.candidate.results[300].reason = undefined;
@@ -522,62 +607,64 @@ test.each([
       f.candidate.results[300].assessment = assessment("uncertain");
       f.candidate.results[300].admission!.assessment =
         f.candidate.results[300].assessment;
-      break;
-    case "incomplete":
+    },
+    incomplete: (f) => {
       f.candidate.complete = false;
-      break;
-    case "matching":
+    },
+    matching: (f) => {
       f.candidate.model = "other";
-      break;
-    case "review":
+    },
+    review: (f) => {
       f.review.holdoutUntouchedSinceFreeze = false;
-      break;
-    case "budget":
+    },
+    budget: (f) => {
       f.benchmark.overheadBytes = 128 * 1024 * 1024;
       f.benchmark.steady.peakRss =
         f.benchmark.baseline.peakRss + f.benchmark.overheadBytes;
-      break;
-    case "phase-quality":
+    },
+    "phase-quality": (f) => {
       f.baseline.results[1].text = "wrong";
       f.candidate.results[0].text = "wrong";
-      break;
-    case "bucket-budget":
+    },
+    "bucket-budget": (f) => {
       for (const row of f.benchmark.buckets[0].rows)
         if (row.phase === "fast") row.durationMs = 501;
       f.benchmark.buckets[0].phases.fast.p95Ms = 501;
       f.benchmark.buckets[0].phases.fast.allOutcomesP95Ms = 501;
-      break;
-    case "nan-budget":
+    },
+    "nan-budget": (f) => {
       f.benchmark.addedEventLoopP95Ms = Number.NaN;
-      break;
-    case "missing-benchmark":
+    },
+    "missing-benchmark": (f) => {
       f.benchmark.complete = false;
-      break;
-    case "insufficient-speech":
+    },
+    "insufficient-speech": (f) => {
       f.manifest.cases.splice(0, 1);
-      break;
-    case "insufficient-quiet":
+    },
+    "insufficient-quiet": (f) => {
       f.manifest.cases[0].tags = [];
-      break;
-    case "missing-provenance":
+    },
+    "missing-provenance": (f) => {
       f.manifest.cases[0].label.provenance = "synthetic";
-      break;
-    case "wrong-hash":
+    },
+    "wrong-hash": (f) => {
       f.detector.results[0].sha256 = hash("different");
-      break;
-    case "duplicate-row":
+    },
+    "duplicate-row": (f) => {
       f.candidate.results[0] = f.candidate.results[1];
-      break;
-    case "preflight":
+    },
+    preflight: (f) => {
       f.candidate.mode = "preflight";
-      break;
-    case "unscored":
+    },
+    unscored: (f) => {
       f.candidate.results[0].score.scored = false;
-      break;
-    case "missing-row":
+    },
+    "missing-row": (f) => {
       f.candidate.results.pop();
-      break;
-  }
+    },
+  };
+  mutations[kind](f);
+
   const expectedProblems: Record<string, string> = {
     leak: "no tune/holdout family leakage",
     duplicate: "unique audio hashes",
@@ -603,14 +690,7 @@ test.each([
     preflight: "candidate complete matched pipeline reports",
     unscored: "candidate validated rows",
   };
-  const result = run(f);
-  expect(result.status).not.toBe(0);
-  expect([...result.report.failures, ...result.report.missing]).toContain(
-    expectedProblems[kind],
-  );
-  expect(result.report.missing).not.toContain(
-    "missing or invalid evidence input",
-  );
+  const result = expectRejectedEvidence(f, expectedProblems[kind]);
   if (kind === "budget" || kind === "bucket-budget")
     expect(result.report.benchmarkEvidence.problems).toEqual([]);
 });
@@ -695,87 +775,89 @@ test.each([
   "row-policy",
 ])("rejects inconsistent acceptance evidence: %s", (kind) => {
   const f = fixture();
-  switch (kind) {
-    case "raw-rows":
+  const mutations: Record<string, (f: ReturnType<typeof fixture>) => void> = {
+    "raw-rows": (f) => {
       Reflect.deleteProperty(f.benchmark.steady, "rows");
-      break;
-    case "phase-count":
+    },
+    "phase-count": (f) => {
       f.benchmark.steady.rows[0].phase = "slow";
-      break;
-    case "control-count":
+    },
+    "control-count": (f) => {
       f.benchmark.steady.rows[0].control = "nonspeech";
-      break;
-    case "edited-availability":
+    },
+    "edited-availability": (f) => {
       f.benchmark.steady.rows[0].assessment = {
         kind: "unavailable",
         reason: "timeout",
         policyFingerprint: DEFAULT_SPEECH_POLICY.policyFingerprint,
       };
-      break;
-    case "rss-summary":
+    },
+    "rss-summary": (f) => {
       f.benchmark.overheadBytes = 1;
-      break;
-    case "event-loop-summary":
+    },
+    "event-loop-summary": (f) => {
       f.benchmark.addedEventLoopP95Ms = 0;
-      break;
-    case "latency-summary":
+    },
+    "latency-summary": (f) => {
       f.benchmark.steady.phases.fast.p95Ms = 1;
-      break;
-    case "burst-rows":
+    },
+    "burst-rows": (f) => {
       Reflect.deleteProperty(f.benchmark.burst, "rows");
-      break;
-    case "bucket-repeats":
+    },
+    "bucket-repeats": (f) => {
       f.benchmark.buckets[0].rows.pop();
-      break;
-    case "missing-compiled":
+    },
+    "missing-compiled": (f) => {
       Reflect.deleteProperty(f.detector, "compiledSha256");
-      break;
-    case "compiled-mismatch":
+    },
+    "compiled-mismatch": (f) => {
       f.detector.compiledSha256 = {
         ...f.detector.compiledSha256,
         "services/speechDetectionService.js": hash("old"),
       };
-      break;
-    case "partial-source":
+    },
+    "partial-source": (f) => {
       f.candidate.sourceSha256 = { source: hash("fake") };
-      break;
-    case "build-source-mismatch":
+    },
+    "build-source-mismatch": (f) => {
       f.candidate.implementation = deserialize(
         serialize(f.candidate.implementation),
       );
       f.candidate.implementation.build.sourceSha256[
         "src/services/speechDetectionService.ts"
       ] = hash("old");
-      break;
-    case "source-loader":
+    },
+    "source-loader": (f) => {
       f.candidate.implementation = {
         ...f.candidate.implementation,
         loader: "source",
       };
-      break;
-    case "zero-sdk-success":
+    },
+    "zero-sdk-success": (f) => {
       f.candidate.results[0].requests = 0;
       f.candidate.results[0].submittedAudioSeconds = 0;
-      break;
-    case "excess-phase-work":
+    },
+    "excess-phase-work": (f) => {
       f.candidate.results[0].requests = 3;
       f.candidate.results[0].submittedAudioSeconds = 6;
-      break;
-    case "submitted-seconds":
+    },
+    "submitted-seconds": (f) => {
       f.candidate.results[0].submittedAudioSeconds = 99;
-      break;
-    case "paid-skip":
+    },
+    "paid-skip": (f) => {
       f.candidate.results[300].requests = 1;
       f.candidate.results[300].submittedAudioSeconds = 2;
-      break;
-    case "budget":
+    },
+    budget: (f) => {
       f.candidate.maxRequests = 1;
-      break;
-    case "row-policy":
+    },
+    "row-policy": (f) => {
       f.candidate.results[0].assessment!.policyFingerprint =
         hash("other policy");
-      break;
-  }
+    },
+  };
+  mutations[kind](f);
+
   const expectedProblems: Record<string, string> = {
     "raw-rows": "complete consistent raw benchmark measurements",
     "phase-count": "complete consistent raw benchmark measurements",
@@ -803,14 +885,7 @@ test.each([
     "row-policy": "candidate validated rows",
     budget: "candidate provider budget and summary accounting",
   };
-  const result = run(f);
-  expect(result.status).not.toBe(0);
-  expect([...result.report.failures, ...result.report.missing]).toContain(
-    expectedProblems[kind],
-  );
-  expect(result.report.missing).not.toContain(
-    "missing or invalid evidence input",
-  );
+  expectRejectedEvidence(f, expectedProblems[kind]);
 });
 
 test("candidate rejection of already-empty verified speech fails both pipeline phase gates", () => {
@@ -849,21 +924,7 @@ test("positive acceptance works from an owned source-only checkout without dist"
     path.join(os.tmpdir(), "vad-build-contract-acceptance-source-"),
   );
   try {
-    for (const file of [
-      "src",
-      "assets",
-      "scripts",
-      "package.json",
-      "tsconfig.json",
-      "yarn.lock",
-    ]) {
-      cpSync(path.join(root, file), path.join(checkout, file), {
-        recursive: true,
-        filter: (source) =>
-          source !== path.join(root, "src/frontend") &&
-          source !== path.join(root, "src/setupTests.ts"),
-      });
-    }
+    copyTranscriptionSourceCheckout(root, checkout);
     expect(existsSync(path.join(checkout, "dist"))).toBe(false);
     const owned = await prepareTranscriptionAcceptanceFixture(checkout, root);
     let result: ReturnType<typeof run>;

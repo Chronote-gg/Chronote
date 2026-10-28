@@ -1,3 +1,4 @@
+import { expectNoSpeechComparisonMetrics } from "../../src/testSupport/speechComparisonMetrics";
 import { metricsRegistry } from "../../src/metrics";
 import { describe, expect, jest, test } from "@jest/globals";
 import type { MeetingData } from "../../src/types/meeting-data";
@@ -156,21 +157,7 @@ const buildDependencies = () => ({
   deleteTempFile: jest.fn(async () => undefined),
 });
 
-// These workloads do not participate in Discord snippet comparisons.
-beforeEach(() => metricsRegistry.resetMetrics());
-afterEach(async () => {
-  const comparisonMetrics = await Promise.all(
-    metricsRegistry
-      .getMetricsAsArray()
-      .filter((metric) => metric.name.startsWith("chronote_speech_detection_"))
-      .map((metric) => metricsRegistry.getSingleMetric(metric.name)?.get()),
-  );
-  expect(
-    comparisonMetrics
-      .flatMap((metric) => metric?.values ?? [])
-      .every((value) => value.value === 0),
-  ).toBe(true);
-});
+expectNoSpeechComparisonMetrics(metricsRegistry);
 
 describe("transcriptionFinalPassService", () => {
   test("reset cannot resurrect rejected files into the baseline", async () => {

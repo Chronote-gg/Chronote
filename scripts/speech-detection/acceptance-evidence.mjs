@@ -1,5 +1,8 @@
 import { z } from "zod";
-import { percentile } from "./evidence.mjs";
+import {
+  assessmentStats,
+  assessmentPhases as phases,
+} from "./assessment-stats.mjs";
 const nonnegative = z.number().finite().nonnegative();
 const integer = nonnegative.int();
 const metric = z
@@ -13,7 +16,7 @@ const metric = z
   .strict()
   .refine(
     (m) =>
-      m.scannedFrames === m.totalFrames &&
+      m.scannedFrames <= m.totalFrames &&
       m.maxConsecutiveSpeechFrames <= m.scannedFrames,
   );
 export function assessmentSchema(fingerprint) {
@@ -24,7 +27,12 @@ export function assessmentSchema(fingerprint) {
         policyFingerprint: z.literal(fingerprint),
         metrics: metric,
       })
-      .strict();
+      .strict()
+      .refine(
+        (assessment) =>
+          kind === "speech" ||
+          assessment.metrics.scannedFrames === assessment.metrics.totalFrames,
+      );
   return z
     .union([
       scored("speech"),
@@ -58,32 +66,6 @@ export function assessmentSchema(fingerprint) {
           : true,
     );
 }
-export const assessmentStats = (rows) => ({
-  attempts: rows.length,
-  availability: rows.length
-    ? rows.filter((r) => r.assessment.kind !== "unavailable").length /
-      rows.length
-    : null,
-  p95Ms: percentile(
-    rows
-      .filter((r) => r.assessment.kind !== "unavailable")
-      .map((r) => r.durationMs),
-  ),
-  allOutcomesP95Ms: percentile(rows.map((r) => r.durationMs)),
-  unavailable: rows.filter((r) => r.assessment.kind === "unavailable").length,
-  queueFull: rows.filter(
-    (r) =>
-      r.assessment.kind === "unavailable" &&
-      r.assessment.reason === "queue_full",
-  ).length,
-});
-const phases = (rows) =>
-  Object.fromEntries(
-    ["fast", "slow"].map((p) => [
-      p,
-      assessmentStats(rows.filter((r) => r.phase === p)),
-    ]),
-  );
 const sameStats = (declared, actual) =>
   [
     "attempts",
@@ -125,7 +107,7 @@ export function inspectBenchmark(input, fingerprint) {
         memoryBytes: z.literal(1073741824),
         source: z.enum(["cgroup-v1", "cgroup-v2"]),
       }),
-      nodeVersion: z.literal("v24.15.0"),
+      nodeVersion: z.literal("v24.22.1"),
       durationSeconds: integer.min(1).max(600),
       fastPerSecond: z.literal(4),
       slowPerSecond: z.literal(1),
@@ -278,27 +260,30 @@ export function inspectBenchmark(input, fingerprint) {
   return { valid: problems.length === 0, recomputed, problems };
 }
 export function pipelineRowSemantics(row, report, fingerprint) {
-  if (
-    !Number.isInteger(row.requests) ||
-    row.requests < 0 ||
-    !Number.isFinite(row.audioSeconds) ||
-    row.audioSeconds <= 0 ||
-    row.submittedAudioSeconds !== row.requests * row.audioSeconds ||
-    typeof row.text !== "string"
-  )
-    return false;
+  if (!validRowAccounting(row)) return false;
   const gateSkip =
     row.status === "skipped" &&
     ["minimum_duration", "noise_gate"].includes(row.reason);
-  if (gateSkip)
+  if (gateSkip) return validGateSkip(row, report);
+  const admission = pipelineAdmission(row, report, fingerprint);
+  if (admission === "invalid") return false;
+  if (admission === "non_speech")
     return (
+      row.status === "skipped" &&
+      row.reason === "non_speech" &&
       row.requests === 0 &&
-      row.text === "" &&
-      !row.assessment &&
-      !row.admission &&
-      (row.reason !== "minimum_duration" ||
-        row.audioSeconds <= (report.policy?.minSnippetSeconds ?? 0.3))
+      row.text === ""
     );
+  const maximum = maximumPipelineRequests(report);
+  return (
+    row.status === "succeeded" &&
+    row.reason === undefined &&
+    row.requests >= 1 &&
+    row.requests <= maximum
+  );
+}
+
+function pipelineAdmission(row, report, fingerprint) {
   if (report.speechDetector === "production") {
     const assessment = assessmentSchema(fingerprint).safeParse(row.assessment);
     if (
@@ -311,25 +296,48 @@ export function pipelineRowSemantics(row, report, fingerprint) {
       row.admission.coverage?.audioBytes !==
         Math.round(row.audioSeconds * 48000 * 4)
     )
-      return false;
-    if (assessment.data.kind === "non_speech")
-      return (
-        row.status === "skipped" &&
-        row.reason === "non_speech" &&
-        row.requests === 0 &&
-        row.text === ""
-      );
-  } else if (row.assessment || row.admission) return false;
-  const maximum =
-    report.passMode === "slow" &&
+      return "invalid";
+    return assessment.data.kind === "non_speech" ? "non_speech" : "admitted";
+  } else if (
+    row.assessment ||
+    !z
+      .object({
+        kind: z.literal("not_enforced"),
+        reason: z.literal("off"),
+      })
+      .strict()
+      .safeParse(row.admission).success
+  )
+    return "invalid";
+  return "admitted";
+}
+
+function validGateSkip(row, report) {
+  return (
+    row.requests === 0 &&
+    row.text === "" &&
+    !row.assessment &&
+    !row.admission &&
+    (row.reason !== "minimum_duration" ||
+      row.audioSeconds <= (report.policy?.minSnippetSeconds ?? 0.3))
+  );
+}
+
+function validRowAccounting(row) {
+  return !(
+    !Number.isInteger(row.requests) ||
+    row.requests < 0 ||
+    !Number.isFinite(row.audioSeconds) ||
+    row.audioSeconds <= 0 ||
+    row.submittedAudioSeconds !== row.requests * row.audioSeconds ||
+    typeof row.text !== "string"
+  );
+}
+
+function maximumPipelineRequests(report) {
+  return report.passMode === "slow" &&
     report.policy?.voteEnabled !== false &&
     report.prompt.trim()
-      ? 2
-      : 1;
-  return (
-    row.status === "succeeded" &&
-    row.reason === undefined &&
-    row.requests >= 1 &&
-    row.requests <= maximum
-  );
+    ? 2
+    : 1;
 }

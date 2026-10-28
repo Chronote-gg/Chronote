@@ -1,3 +1,4 @@
+import { buildTranscriptionVoteCandidate } from "./transcriptionSelectionService";
 import { liveTranscriptionInput } from "./liveTranscriptionInput";
 import {
   createTranscriptionFailureScope,
@@ -17,11 +18,7 @@ import {
   handleWhen,
 } from "cockatiel";
 import Bottleneck from "bottleneck";
-import type {
-  AudioSnippet,
-  SnippetTranscriptionResult,
-  TranscriptVariant,
-} from "../types/audio";
+import type { AudioSnippet, SnippetTranscriptionResult } from "../types/audio";
 import type { MeetingData } from "../types/meeting-data";
 import {
   BYTES_PER_SAMPLE,
@@ -51,7 +48,6 @@ import { applyTranscriptionGuards } from "../utils/transcriptionGuards";
 import {
   decideTranscriptionVote,
   shouldRunTranscriptionVote,
-  type TranscriptionVoteCandidate,
   type TranscriptionVoteDecision,
   type TranscriptionVoteGateResult,
 } from "../utils/transcriptionVote";
@@ -69,11 +65,7 @@ import { toLangfuseAttributeMetadata } from "../observability/langfuseMetadata";
 import { ensureMeetingTempDirSync } from "./tempFileService";
 import { evaluateNoiseGate } from "../utils/audioNoiseGate";
 import { countWords } from "../utils/text";
-import {
-  getTranscriptionPrompt,
-  getTranscriptionCoalescePrompt,
-} from "./transcriptionPromptService";
-import { chat } from "./openaiChatService";
+import { getTranscriptionPrompt } from "./transcriptionPromptService";
 import { getMeetingModelOverrides } from "./meetingModelOverrides";
 import { getTranscriptionTextQuality } from "../utils/transcriptionText";
 import { withPreparedTranscriptionInput } from "./transcriptionInputService";
@@ -455,22 +447,10 @@ async function transcribeInternal(
     };
   };
 
-  const buildVoteCandidate = (
-    candidate: GuardedTranscriptionResult,
-  ): TranscriptionVoteCandidate => {
-    return {
-      id: candidate.candidateId,
-      text: candidate.guardResult.text,
-      suppressed: candidate.guardResult.suppressed,
-      promptEchoDetected: candidate.guardResult.promptEchoDetected,
-      rateMismatchDetected: candidate.guardResult.rateMismatchDetected,
-      quietAudio: candidate.guardResult.quietAudio,
-      logprobMetrics: candidate.guardResult.logprobMetrics,
-    };
-  };
-
   type TranscriptionSelection = {
-    selected: GuardedTranscriptionResult;
+    selected: Omit<GuardedTranscriptionResult, "candidateId"> & {
+      candidateId: TranscriptionVoteDecision["selectedId"];
+    };
     promptCandidate: GuardedTranscriptionResult;
     noPromptCandidate?: GuardedTranscriptionResult;
     voteGate: TranscriptionVoteGateResult;
@@ -494,7 +474,7 @@ async function transcribeInternal(
       enabled: voteEnabled,
       hasPrompt: Boolean(resolvedPrompt),
       passMode,
-      primaryCandidate: buildVoteCandidate(promptCandidate),
+      primaryCandidate: buildTranscriptionVoteCandidate(promptCandidate),
     });
 
     if (!voteGate.shouldRun) {
@@ -511,13 +491,28 @@ async function transcribeInternal(
     });
 
     const voteDecision = decideTranscriptionVote({
-      promptCandidate: buildVoteCandidate(promptCandidate),
-      noPromptCandidate: buildVoteCandidate(noPromptCandidate),
+      promptCandidate: buildTranscriptionVoteCandidate(promptCandidate),
+      noPromptCandidate: buildTranscriptionVoteCandidate(noPromptCandidate),
     });
-    const selected =
+    const selected: TranscriptionSelection["selected"] =
       voteDecision.selectedId === "no_prompt"
         ? noPromptCandidate
-        : promptCandidate;
+        : voteDecision.selectedId === "none"
+          ? {
+              ...promptCandidate,
+              candidateId: "none",
+              selectedTextQuality: getTranscriptionTextQuality(""),
+              guardResult: {
+                ...promptCandidate.guardResult,
+                text: "",
+                suppressed: true,
+                flags: [
+                  ...promptCandidate.guardResult.flags,
+                  "suppressed_vote_quality_floor",
+                ],
+              },
+            }
+          : promptCandidate;
 
     console.log("Transcription vote selected candidate.", {
       ...traceMetadata,
@@ -832,6 +827,22 @@ const resolveNoiseGateContext = (input: {
   return { noiseGateEnabled, noiseGateMetrics };
 };
 
+function reusableSnippetTranscript(
+  buffer: Buffer,
+  options: NonNullable<Parameters<typeof transcribeContentSnippet>[2]>,
+) {
+  const reuse = options.reuseTranscript;
+  if (options.speechDetectionBypass === true || !reuse) return undefined;
+  return !getTranscriptionTextQuality(reuse.text).trivial &&
+    speechCoverageMatches(
+      buffer,
+      reuse.coverage,
+      DEFAULT_SPEECH_POLICY.policyFingerprint,
+    )
+    ? reuse
+    : undefined;
+}
+
 export async function transcribeContentSnippet(
   meeting: TranscriptionContentInput,
   snippet: AudioSnippet,
@@ -872,17 +883,8 @@ export async function transcribeContentSnippet(
     const tempFiles = buildSnippetTempFiles(meeting, snippet, suffix);
     const signal = meeting.signal;
     signal.throwIfAborted();
-    const reuse = options.reuseTranscript;
-    if (
-      !force &&
-      reuse &&
-      !getTranscriptionTextQuality(reuse.text).trivial &&
-      speechCoverageMatches(
-        buffer,
-        reuse.coverage,
-        DEFAULT_SPEECH_POLICY.policyFingerprint,
-      )
-    ) {
+    const reuse = reusableSnippetTranscript(buffer, options);
+    if (reuse) {
       outcome = "reused";
       return {
         status: "succeeded",
@@ -904,6 +906,7 @@ export async function transcribeContentSnippet(
           recordSpeechAssessment({ mode, phase, assessment, durationMs }),
       },
       async ({ wavFile, admission, coverage }) => {
+        signal.throwIfAborted();
         if (
           admission.kind === "assessed" &&
           admission.assessment.kind === "non_speech"
@@ -912,7 +915,6 @@ export async function transcribeContentSnippet(
           recordSpeechRequestSkipped({ phase, audioSeconds });
           return { status: "skipped", reason: "non_speech", coverage };
         }
-        signal.throwIfAborted();
         stage = "transcription";
         outcome = "provider_error";
         const text = await transcribe(meeting, wavFile, {
@@ -975,36 +977,4 @@ export function transcribeSnippet(
   );
 }
 
-type CoalesceInput = {
-  slowTranscript: string;
-  fastTranscripts: TranscriptVariant[];
-};
-
-export async function coalesceTranscription(
-  meeting: MeetingData,
-  input: CoalesceInput,
-): Promise<string> {
-  const { messages, langfusePrompt } = await getTranscriptionCoalescePrompt(
-    meeting,
-    input,
-  );
-  const modelChoice = getModelChoice(
-    "transcriptionCoalesce",
-    getMeetingModelOverrides(meeting),
-  );
-  return await chat(
-    meeting,
-    {
-      messages: [...messages],
-    },
-    {
-      model: modelChoice.model,
-      traceName: "transcription-coalesce",
-      generationName: "transcription-coalesce",
-      tags: ["feature:transcription_coalesce"],
-      langfusePrompt,
-      parentSpanContext: meeting.langfuseParentSpanContext,
-      modelParamRole: "transcriptionCoalesce",
-    },
-  );
-}
+export { coalesceTranscription } from "./transcriptionCoalesceService";
