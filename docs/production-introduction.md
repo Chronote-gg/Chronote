@@ -19,7 +19,7 @@ Use [recording handoff and recovery](deployment-handoff.md) for ordinary compati
 1. Builds and pushes the image of the run commit. The script then verifies in code that BASIC natively approved this exact run (`verifyRunApproval`) and that the AWS session is the exact deploy role session.
 2. Refuses unless the Control table is empty, the listener is in the legacy single-forward or weighted 100/0 form, the spare group is empty and the legacy service is steady at one task.
 3. Registers the candidate from the latest family revision with the run image, `DEPLOYMENT_CANDIDATE_ID` set to the operation id, `stopTimeout` 120, `node dist/index.js`, and the four `STRIPE_*` flags `false` (an enabled flag refuses).
-4. **Pre-stop check.** Any `ActiveMeeting` row, any unexpired non-terminal `MeetingControlCommand`, or any upload job or segment that is not complete, processed or failed defers the run: it exits cleanly with a warning and only the candidate definition exists. A scan failure refuses.
+4. **Pre-stop check.** Any `ActiveMeeting` row, any non-terminal `MeetingControlCommand` that is claimed or not yet past its queue expiry (a claim can be renewed past that expiry), or any upload job or segment that is not complete, processed or failed defers the run: it exits cleanly with a warning and only the candidate definition exists. A scan failure refuses.
 5. Sets desired count 0 and waits up to 15 minutes for the legacy task and both groups' targets to clear.
 6. **Post-stop recheck.** The same counts, plus `MeetingHistory` row growth since step 4.
 7. Switches the listener to the weighted 100/0 form if needed, initializes Control, launches the candidate, waits up to 15 minutes for readiness and promotes it, then confirms it is serving. No `ENV/INTRODUCTION` hold is written, so the ordinary deploy guard allows the next deploy.
@@ -28,7 +28,7 @@ Phase lines in the log (`stop_submitted`, `legacy_stopped`, `post_stop_recheck`,
 
 ### The stop window
 
-The legacy task keeps its Discord gateway until it stops, so a meeting can start after the pre-stop check. The window is the ALB deregistration delay plus the task stop timeout, not seconds. The recheck catches a lease left behind and a meeting that started and finished (history growth). Either way the run still restores service with the candidate, then exits 2 with a `Work appeared during the stop window` error so the affected meeting gets reviewed. A service that was already stopped when the run began always reports an incident because there is no pre-stop count.
+The legacy task keeps its Discord gateway until it stops, so a meeting can start after the pre-stop check. The window is the ALB deregistration delay plus the task stop timeout, not seconds. The recheck catches a lease left behind and a meeting that started and finished (history growth). Either way the run still restores service with the candidate, then exits 2 with a `Work appeared during the stop window` error so the affected meeting gets reviewed. The recheck outcome is stored on the operation's `BOOTSTRAP#` receipt when Control is initialized, so a resumed run reports the same incident. A service that was already stopped when the run began, or a receipt without a stored outcome, always reports an incident.
 
 ### Failure and resume
 

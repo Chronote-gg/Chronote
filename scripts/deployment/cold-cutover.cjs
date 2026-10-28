@@ -27,22 +27,30 @@ const FINANCIAL_FLAGS = [
 const WORK = [
   {
     table: "MeetingControlCommandTable",
-    field: "queueStatus",
+    fields: [
+      "queueStatus",
+      "expiresAt",
+      "claimedByInstanceId",
+      "claimExpiresAt",
+    ],
+    // A claim can be renewed past the queue TTL, so only an expired request nobody claimed is settled.
     active: (row, now) =>
       !["completed", "failed"].includes(row.queueStatus) &&
-      !(row.expiresAt <= now),
+      (row.claimedByInstanceId !== undefined ||
+        row.claimExpiresAt !== undefined ||
+        !(row.expiresAt <= now)),
   },
   {
     table: "PersonalMediaUploadJobTable",
-    field: "status",
+    fields: ["status"],
     active: (row) => !["complete", "failed"].includes(row.status),
   },
   {
     table: "PersonalRecordingSegmentTable",
-    field: "status",
+    fields: ["status"],
     active: (row) => !["processed", "failed"].includes(row.status),
   },
-  { table: "ActiveMeetingTable", field: "guildId", active: () => true },
+  { table: "ActiveMeetingTable", fields: ["guildId"], active: () => true },
 ];
 
 class Refusal extends Error {}
@@ -219,11 +227,7 @@ function createCutover({
       ),
     };
     for (const work of WORK) {
-      const fields = [
-        work.field,
-        ...(work.field === "queueStatus" ? ["expiresAt"] : []),
-      ];
-      const rows = await scan(config.tablePrefix + work.table, fields);
+      const rows = await scan(config.tablePrefix + work.table, work.fields);
       counts[work.table] = rows.filter((row) => work.active(row, now())).length;
     }
     const total = WORK.reduce((sum, w) => sum + counts[w.table], 0);
@@ -465,7 +469,8 @@ function createCutover({
       proof.expiresAt > now()
     );
   }
-  async function finish(bound) {
+  /** `recheck` is stored atomically on the initialized receipt so a resumed run can report it. */
+  async function finish(bound, recheck) {
     const boot = bootstrapFactory({
       binding: bound.m,
       expectedSha256: bound.expectedSha256,
@@ -473,6 +478,7 @@ function createCutover({
       now,
       // The cutover's own post-stop recheck replaces the Sandbox maintenance attestation.
       attestSettled: async () => {},
+      ...(recheck ? { receiptFields: { cutoverRecheck: recheck } } : {}),
     });
     await boot.initialize();
     log({ phase: "control_initialized" });
@@ -579,18 +585,25 @@ function createCutover({
       fail("Weighted routing was not acknowledged");
     log({ phase: "routing_weighted" });
   }
-  async function resume(svc) {
+  async function resume(svc, receipt) {
     const definition = await findCandidate(svc);
     if (!definition) fail("Resumed operation has no registered candidate");
-    log({ phase: "resuming" });
+    // A receipt without the recorded recheck cannot clear the stop window.
+    const recheck = receipt.cutoverRecheck ?? {
+      incident: true,
+      before: null,
+      after: null,
+    };
+    log({ phase: "resuming", recheck });
     await finish(binding(svc, definition));
-    return { kind: "complete", resumed: true };
+    return { kind: "complete", resumed: true, ...recheck };
   }
 
   async function cutover() {
     await identity();
     const svc = await service();
-    if (await read("BOOTSTRAP#" + config.operationId)) return resume(svc);
+    const receipt = await read("BOOTSTRAP#" + config.operationId);
+    if (receipt) return resume(svc, receipt);
     const { routing, form } = await preflight(svc);
     const bound = await preparedCandidate(svc);
     let before;
@@ -617,14 +630,13 @@ function createCutover({
       incident,
     });
     if (form === "legacy") await weightRouting(routing);
-    await finish(bound);
-    return {
-      kind: "complete",
-      resumed: false,
+    const recheck = {
       incident,
       before: before?.counts ?? null,
       after: after?.counts ?? null,
     };
+    await finish(bound, recheck);
+    return { kind: "complete", resumed: false, ...recheck };
   }
   return { inspect, cutover };
 }

@@ -331,6 +331,7 @@ function createBootstrap(options) {
       operationId: m.operationId,
       manifestSha256: options.expectedSha256,
       stage: "initialized",
+      ...options.receiptFields,
     };
     await write(
       [

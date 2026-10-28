@@ -87,6 +87,93 @@ function legacyDefinition() {
 const clone = (value) =>
   value === undefined ? undefined : JSON.parse(JSON.stringify(value));
 
+const isRunning = (state) => state.svc.runningCount > 0;
+function definitionFor(state, name) {
+  return name === family
+    ? state.definitions.at(-1)
+    : state.definitions.find((d) => d.taskDefinitionArn === name);
+}
+function registerDefinition(state, input) {
+  const revision = 239 + state.definitions.length;
+  const registered = {
+    ...clone(input),
+    taskDefinitionArn: ecs + `task-definition/${family}:${revision}`,
+    revision,
+    status: "ACTIVE",
+  };
+  state.registered = registered;
+  state.definitions.push(registered);
+  return { taskDefinition: registered };
+}
+function scanTable(state, input) {
+  const name = input.TableName.slice(prefix.length);
+  if (name === "MeetingHistoryTable") return { Count: state.history };
+  if (name !== "DeploymentControlTable")
+    return { Items: state.work[name].map((v) => marshall(v)) };
+  if (input.Select === "COUNT") return { Count: state.control.size };
+  return { Items: [...state.control.values()].map((v) => marshall(v)) };
+}
+/** One small handler per AWS CLI operation the cutover issues. */
+const AWS_HANDLERS = {
+  "get-caller-identity": (state, input, { env }) => ({
+    Account: account,
+    Arn: `arn:aws:sts::${account}:assumed-role/meeting-notes-prod-github-deploy/${env.EXPECTED_SESSION_NAME}`,
+  }),
+  "describe-services": (state) => ({
+    failures: [],
+    services: [clone(state.svc)],
+  }),
+  "list-tasks": (state, input) => ({
+    taskArns:
+      isRunning(state) && input.desiredStatus === "RUNNING"
+        ? ["legacy-task"]
+        : [],
+  }),
+  "describe-tasks": (state, input) => ({
+    failures: [],
+    tasks: input.tasks.map((taskArn) => ({ taskArn, lastStatus: "RUNNING" })),
+  }),
+  "describe-target-health": (state, input) => ({
+    TargetHealthDescriptions:
+      input.TargetGroupArn === groupA && isRunning(state)
+        ? [{ Target: { Id: "10.0.0.1", Port: 3001 } }]
+        : [],
+  }),
+  "describe-listeners": (state) => ({
+    Listeners: [
+      {
+        ListenerArn: listenerArn,
+        Protocol: "HTTPS",
+        DefaultActions: clone(state.listener),
+      },
+    ],
+  }),
+  "describe-rules": () => ({ Rules: [{ IsDefault: true }] }),
+  "modify-listener": (state, input) => {
+    state.listener = input.DefaultActions;
+    return { Listeners: [{ DefaultActions: input.DefaultActions }] };
+  },
+  "list-task-definitions": (state) => ({
+    taskDefinitionArns: state.definitions
+      .map((d) => d.taskDefinitionArn)
+      .reverse(),
+  }),
+  "describe-task-definition": (state, input) => ({
+    taskDefinition: clone(definitionFor(state, input.taskDefinition)),
+  }),
+  "register-task-definition": registerDefinition,
+  "update-service": (state, input, { onStop }) => {
+    Object.assign(state.svc, { desiredCount: 0, runningCount: 0 });
+    onStop(state);
+    return { service: clone(state.svc) };
+  },
+  "get-item": (state, input) => {
+    const row = state.control.get(unmarshall(input.Key).sk);
+    return row ? { Item: marshall(row) } : {};
+  },
+  scan: scanTable,
+};
+
 /** Stateful AWS fake: one legacy task behind group A until the service is stopped. */
 function fakeAws(env, { work = {}, onStop = () => {}, fail } = {}) {
   const state = {
@@ -129,101 +216,9 @@ function fakeAws(env, { work = {}, onStop = () => {}, fail } = {}) {
   state.aws = async (service, operation, input) => {
     state.calls.push(operation);
     if (fail?.(operation, input)) throw new Error("provider failure");
-    const running = state.svc.runningCount > 0;
-    switch (operation) {
-      case "get-caller-identity":
-        return {
-          Account: account,
-          Arn: `arn:aws:sts::${account}:assumed-role/meeting-notes-prod-github-deploy/${env.EXPECTED_SESSION_NAME}`,
-        };
-      case "describe-services":
-        return { failures: [], services: [clone(state.svc)] };
-      case "list-tasks":
-        return {
-          taskArns:
-            running && input.desiredStatus === "RUNNING" ? ["legacy-task"] : [],
-        };
-      case "describe-tasks":
-        return {
-          failures: [],
-          tasks: input.tasks.map((taskArn) => ({
-            taskArn,
-            lastStatus: "RUNNING",
-          })),
-        };
-      case "describe-target-health":
-        return {
-          TargetHealthDescriptions:
-            input.TargetGroupArn === groupA && running
-              ? [{ Target: { Id: "10.0.0.1", Port: 3001 } }]
-              : [],
-        };
-      case "describe-listeners":
-        return {
-          Listeners: [
-            {
-              ListenerArn: listenerArn,
-              Protocol: "HTTPS",
-              DefaultActions: clone(state.listener),
-            },
-          ],
-        };
-      case "describe-rules":
-        return { Rules: [{ IsDefault: true }] };
-      case "modify-listener":
-        state.listener = input.DefaultActions;
-        return { Listeners: [{ DefaultActions: input.DefaultActions }] };
-      case "list-task-definitions":
-        return {
-          taskDefinitionArns: state.definitions
-            .map((d) => d.taskDefinitionArn)
-            .reverse(),
-        };
-      case "describe-task-definition":
-        return {
-          taskDefinition: clone(
-            input.taskDefinition === family
-              ? state.definitions.at(-1)
-              : state.definitions.find(
-                  (d) => d.taskDefinitionArn === input.taskDefinition,
-                ),
-          ),
-        };
-      case "register-task-definition": {
-        const revision = 239 + state.definitions.length;
-        const registered = {
-          ...clone(input),
-          taskDefinitionArn: ecs + `task-definition/${family}:${revision}`,
-          revision,
-          status: "ACTIVE",
-        };
-        state.registered = registered;
-        state.definitions.push(registered);
-        return { taskDefinition: registered };
-      }
-      case "update-service":
-        Object.assign(state.svc, {
-          desiredCount: 0,
-          runningCount: 0,
-        });
-        onStop(state);
-        return { service: clone(state.svc) };
-      case "get-item": {
-        const row = state.control.get(unmarshall(input.Key).sk);
-        return row ? { Item: marshall(row) } : {};
-      }
-      case "scan": {
-        const name = input.TableName.slice(prefix.length);
-        if (name === "DeploymentControlTable")
-          return input.Select === "COUNT"
-            ? { Count: state.control.size }
-            : { Items: [...state.control.values()].map((v) => marshall(v)) };
-        if (name === "MeetingHistoryTable") return { Count: state.history };
-        return { Items: state.work[name].map((v) => marshall(v)) };
-      }
-      default:
-        throw new Error("Unexpected AWS call " + operation);
-    }
+    const handler = AWS_HANDLERS[operation];
+    if (!handler) throw new Error("Unexpected AWS call " + operation);
+    return handler(state, input, { env, onStop });
   };
   return state;
 }
@@ -240,10 +235,13 @@ function fakeBootstrap(state, env) {
     return {
       initialize: async () => {
         state.calls.push("bootstrap.initialize");
-        state.control.set("BOOTSTRAP#" + env.CUTOVER_OPERATION_ID, {
-          sk: "BOOTSTRAP#" + env.CUTOVER_OPERATION_ID,
-          stage: "initialized",
-        });
+        const key = "BOOTSTRAP#" + env.CUTOVER_OPERATION_ID;
+        if (!state.control.has(key))
+          state.control.set(key, {
+            sk: key,
+            stage: "initialized",
+            ...options.receiptFields,
+          });
       },
       launch: async () => {
         state.calls.push("bootstrap.launch");
@@ -396,6 +394,41 @@ test("terminal rows and expired commands do not block", async () => {
   expect(state.calls).toContain("bootstrap.promote");
 });
 
+test.each([
+  [
+    "claimed with a live claim past the queue TTL",
+    {
+      queueStatus: "pending",
+      expiresAt: 1,
+      claimedByInstanceId: "worker",
+      claimExpiresAt: 4e9,
+    },
+    true,
+  ],
+  [
+    "claimed with an expired claim past the queue TTL",
+    {
+      queueStatus: "pending",
+      expiresAt: 1,
+      claimedByInstanceId: "worker",
+      claimExpiresAt: 2,
+    },
+    true,
+  ],
+  [
+    "unclaimed past the queue TTL",
+    { queueStatus: "pending", expiresAt: 1 },
+    false,
+  ],
+])("a meeting control command %s blocks: %s", async (_, row, blocks) => {
+  const env = environment();
+  const state = fakeAws(env, { work: { MeetingControlCommandTable: [row] } });
+  const result = await run("cutover", env, state);
+  expect(result.code).toBe(0);
+  expect(result.text.includes("Cutover deferred")).toBe(blocks);
+  expect(state.calls.includes("update-service")).toBe(!blocks);
+});
+
 test("an unknown work answer refuses before stopping", async () => {
   const env = environment();
   const state = fakeAws(env, {
@@ -463,22 +496,65 @@ test("refuses enabled financial flags before registering a candidate", async () 
   expect(state.calls).not.toContain("register-task-definition");
 });
 
-test("resumes an initialized operation without a second stop or registration", async () => {
-  const env = environment();
+/** Replays the first run's AWS state with the receipt left at `initialized`. */
+async function resumedAfterInitialize(env, receipt) {
   const first = fakeAws(env);
   await run("cutover", env, first);
   const resumed = fakeAws(env);
   resumed.definitions = first.definitions;
   resumed.svc = first.svc;
   resumed.listener = first.listener;
-  resumed.control.set("BOOTSTRAP#" + env.CUTOVER_OPERATION_ID, {
+  const key = "BOOTSTRAP#" + env.CUTOVER_OPERATION_ID;
+  resumed.control.set(key, receipt(first.control.get(key)));
+  return { resumed, result: await run("cutover", env, resumed) };
+}
+
+test("resumes an initialized operation without a second stop or registration", async () => {
+  const env = environment();
+  const { resumed, result } = await resumedAfterInitialize(env, (stored) => ({
+    ...stored,
     stage: "initialized",
-  });
-  const result = await run("cutover", env, resumed);
+  }));
   expect(result.code).toBe(0);
+  expect(result.text).toContain('"incident":false');
   expect(resumed.calls).not.toContain("update-service");
   expect(resumed.calls).not.toContain("register-task-definition");
   expect(resumed.calls).toContain("bootstrap.promote");
+});
+
+test.each([
+  [
+    "a recorded stop-window incident",
+    (stored) => ({
+      ...stored,
+      stage: "initialized",
+      cutoverRecheck: { ...stored.cutoverRecheck, incident: true },
+    }),
+  ],
+  [
+    "a receipt without the recorded recheck",
+    (stored) => ({ sk: stored.sk, stage: "initialized" }),
+  ],
+])("resume reports %s as an incident", async (_, receipt) => {
+  const env = environment();
+  const { result } = await resumedAfterInitialize(env, receipt);
+  expect(result.code).toBe(2);
+  expect(result.text).toContain('"incident":true');
+});
+
+test("the post-stop recheck is stored with the operation receipt", async () => {
+  const env = environment();
+  const state = fakeAws(env, {
+    onStop: (s) => s.work.ActiveMeetingTable.push({ guildId: "guild-c" }),
+  });
+  await run("cutover", env, state);
+  expect(
+    state.control.get("BOOTSTRAP#" + env.CUTOVER_OPERATION_ID).cutoverRecheck,
+  ).toMatchObject({
+    incident: true,
+    before: { ActiveMeetingTable: 0 },
+    after: { ActiveMeetingTable: 1 },
+  });
 });
 
 test("inspection is read-only and reports readiness", async () => {
