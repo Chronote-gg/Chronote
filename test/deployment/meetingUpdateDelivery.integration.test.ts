@@ -484,7 +484,7 @@ it("conditions a regeneration save on the exact retry job it read", async () => 
     ...row,
     processingRetry: {
       ...runningJob,
-      claim: { ownerInstanceId: "instance-a", leaseExpiresAt: now + 600 },
+      claim: { ...runningJob.claim, leaseExpiresAt: now + 600 },
     },
   };
   const spy = putAfterFirstRead(renewed);

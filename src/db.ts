@@ -148,7 +148,7 @@ import {
 const MEETING_USER_INDEX_WRITE_BATCH_SIZE = 25;
 const PERSONAL_MEDIA_UPLOAD_STATUS_UPDATED_AT_INDEX = "StatusUpdatedAtIndex";
 
-const dynamoDbClient = new DynamoDBClient(
+export const dynamoDbClient = new DynamoDBClient(
   config.database.useLocalDynamoDB
     ? {
         endpoint: "http://localhost:8000",
@@ -207,7 +207,7 @@ export async function scanGuildSubscriptionPage(
       : undefined,
   };
 }
-function controlTableNames() {
+export function controlTableNames() {
   return {
     deploymentControl: tableName("DeploymentControlTable"),
     meetingHistory: tableName("MeetingHistoryTable"),

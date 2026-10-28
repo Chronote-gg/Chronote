@@ -42,6 +42,7 @@ export const processingRetryJobSchema = z
     claim: z
       .object({
         ownerInstanceId: id,
+        claimId: id,
         leaseExpiresAt: z.number().int().nonnegative(),
       })
       .strict()

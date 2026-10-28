@@ -34,7 +34,11 @@ export const runningJob: ProcessingRetryJob = {
   countedAttempts: 0,
   settingsSource: "snapshot",
   transcriptSource: "existing",
-  claim: { ownerInstanceId: "instance-a", leaseExpiresAt: now + 300 },
+  claim: {
+    ownerInstanceId: "instance-a",
+    claimId: "claim-1",
+    leaseExpiresAt: now + 300,
+  },
   updatedAt: "2026-10-22T12:00:00.000Z",
 };
 
@@ -57,6 +61,7 @@ export function regenerationPayload(): Regeneration {
     expected: {
       jobId: "job-1",
       ownerInstanceId: "instance-a",
+      claimId: "claim-1",
       expectedNotesVersion: 1,
     },
     processing: {
@@ -182,7 +187,23 @@ export function regenerationContract(make: () => Harness) {
     ["another job", { jobId: "job-2" }],
     [
       "another owner",
-      { claim: { ownerInstanceId: "instance-b", leaseExpiresAt: now + 300 } },
+      {
+        claim: {
+          ownerInstanceId: "instance-b",
+          claimId: "claim-1",
+          leaseExpiresAt: now + 300,
+        },
+      },
+    ],
+    [
+      "a later claim by the same owner",
+      {
+        claim: {
+          ownerInstanceId: "instance-a",
+          claimId: "claim-2",
+          leaseExpiresAt: now + 300,
+        },
+      },
     ],
     ["a queued job", { status: "queued" }],
   ] satisfies [string, Partial<ProcessingRetryJob>][])(

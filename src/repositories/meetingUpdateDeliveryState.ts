@@ -154,6 +154,7 @@ function regenerationClaimMatches(
     job?.jobId === regeneration.expected.jobId &&
     job.status === "running" &&
     job.claim?.ownerInstanceId === regeneration.expected.ownerInstanceId &&
+    job.claim.claimId === regeneration.expected.claimId &&
     readMeetingUpdateRevisions(row).notesVersion ===
       regeneration.expected.expectedNotesVersion
   );

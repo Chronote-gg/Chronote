@@ -90,6 +90,7 @@ export type MeetingContentWrite = {
     expected: {
       jobId: string;
       ownerInstanceId: string;
+      claimId: string;
       expectedNotesVersion: number;
     };
     processing: MeetingProcessingOutcome;
