@@ -7,7 +7,10 @@ jest.mock("../../src/services/runtimeApiOperationService", () => ({
 jest.mock("../../src/services/analyticsService", () => ({
   captureEvent: jest.fn(),
 }));
+import Stripe from "stripe";
 import { runRuntimeApiOperation } from "../../src/services/runtimeApiOperationService";
+import { UnresolvedBillingMutation } from "../../src/services/runtimeBillingOperationService";
+import { expirePurchaseAttempt } from "../../src/services/purchaseReconciliation";
 import { RuntimeAdmissionUnavailable } from "../../src/services/runtimeAdmissionError";
 import { createCheckoutSession } from "../../src/services/billingService";
 import { releaseExpiredPurchaseAttempt } from "../../src/services/initialPurchaseService";
@@ -21,8 +24,10 @@ import {
   sessionFields,
 } from "../fixtures/initialPurchaseStripe";
 
-const { stripe, client } = initialPurchaseStripe();
-const retrieve = stripe.checkout.sessions.retrieve;
+// Rebuilt per test: the fixture's provider-expired set and persistent mock
+// overrides must not leak between tests.
+let { stripe, client } = initialPurchaseStripe();
+let retrieve = stripe.checkout.sessions.retrieve;
 const request = {
   stripe: client,
   user: { id: "payer" },
@@ -48,6 +53,9 @@ const pastExpiry = () => {
 beforeEach(async () => {
   resetMockStore();
   jest.clearAllMocks();
+  ({ stripe, client } = initialPurchaseStripe());
+  retrieve = stripe.checkout.sessions.retrieve;
+  request.stripe = client;
   jest.spyOn(console, "warn").mockImplementation(() => undefined);
   await createCheckoutSession(request);
   retrieve.mockClear();
@@ -190,5 +198,172 @@ describe("plan change", () => {
       reason: "purchase_pending",
     });
     expect(retrieve).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("supersede", () => {
+  const otherPayer = { ...request, user: { id: "other" } };
+  const refusedExpire = () =>
+    new Stripe.errors.StripeInvalidRequestError({
+      message: "Session is not open",
+      statusCode: 400,
+    });
+  let firstAttemptId: string;
+  beforeEach(() => {
+    otherPayer.stripe = client;
+    firstAttemptId =
+      getMockStore().purchaseAttempts.get(purchaseGuildId)!.attemptId;
+  });
+
+  test("another payer supersedes a live open checkout with a fresh session", async () => {
+    stripe.checkout.sessions.create.mockImplementationOnce(async () => ({
+      ...sessionFields(),
+      id: "cs_second",
+      status: "open",
+      url: "https://checkout.stripe.com/second",
+    }));
+    await expect(
+      createCheckoutSession({ ...otherPayer, priceId: "price_pro" }),
+    ).resolves.toBe("https://checkout.stripe.com/second");
+    expect(stripe.checkout.sessions.expire).toHaveBeenCalledWith(
+      "cs_first",
+      undefined,
+      { idempotencyKey: `purchase-supersede-${firstAttemptId}` },
+    );
+    expect(getMockStore().purchaseAttempts.get(purchaseGuildId)).toMatchObject({
+      payerId: "other",
+      state: "open",
+      sessionId: "cs_second",
+    });
+  });
+
+  test.each([
+    { priceId: "price_pro" },
+    { promotionCodeId: "promo_changed" },
+    { allowPromotionCodes: false },
+  ])(
+    "the same payer changing payment terms %p supersedes the open checkout",
+    async (change) => {
+      await expect(
+        createCheckoutSession({ ...request, ...change }),
+      ).resolves.toContain("checkout.stripe.com");
+      expect(stripe.checkout.sessions.expire).toHaveBeenCalledTimes(1);
+      expect(stripe.checkout.sessions.create).toHaveBeenCalledTimes(2);
+      expect(
+        getMockStore().purchaseAttempts.get(purchaseGuildId)?.attemptId,
+      ).not.toBe(firstAttemptId);
+    },
+  );
+
+  test("a refused expire on a session completed in another tab returns billing, not a new checkout", async () => {
+    Object.assign(stripe, paidProvider("sub_new"));
+    stripe.checkout.sessions.expire.mockImplementationOnce(async () => {
+      // payment completed in another tab between the first retrieve and the expire
+      retrieve.mockResolvedValue({
+        ...sessionFields(),
+        id: "cs_first",
+        status: "complete",
+        subscription: "sub_new",
+      });
+      throw refusedExpire();
+    });
+    await expect(
+      createCheckoutSession({ ...otherPayer, priceId: "price_pro" }),
+    ).resolves.toBe(`/portal/server/${purchaseGuildId}/billing`);
+    expect(stripe.checkout.sessions.create).toHaveBeenCalledTimes(1);
+  });
+
+  test("a refused expire on a still-open session keeps purchase_pending", async () => {
+    stripe.checkout.sessions.expire.mockRejectedValueOnce(refusedExpire());
+    await expect(createCheckoutSession(otherPayer)).rejects.toThrow(
+      "already in progress",
+    );
+    expect(getMockStore().purchaseAttempts.get(purchaseGuildId)).toMatchObject({
+      attemptId: firstAttemptId,
+      state: "open",
+    });
+    expect(stripe.checkout.sessions.create).toHaveBeenCalledTimes(1);
+  });
+
+  test("an unknown expire outcome never releases the attempt", async () => {
+    stripe.checkout.sessions.expire.mockRejectedValueOnce(
+      new Error("socket hang up"),
+    );
+    await expect(createCheckoutSession(otherPayer)).rejects.toBeInstanceOf(
+      UnresolvedBillingMutation,
+    );
+    expect(getMockStore().purchaseAttempts.get(purchaseGuildId)).toMatchObject({
+      attemptId: firstAttemptId,
+      state: "open",
+    });
+  });
+
+  test("a webhook releasing the old attempt during supersede still yields one fresh checkout", async () => {
+    stripe.checkout.sessions.expire.mockImplementationOnce(async (id) => {
+      const expiredSession = {
+        ...sessionFields(),
+        id,
+        status: "expired",
+        url: null,
+        subscription: null,
+      };
+      retrieve.mockResolvedValue(expiredSession);
+      await expirePurchaseAttempt(client, expiredSession as never);
+      return expiredSession;
+    });
+    await expect(createCheckoutSession(otherPayer)).resolves.toContain(
+      "checkout.stripe.com",
+    );
+    expect(stripe.checkout.sessions.create).toHaveBeenCalledTimes(2);
+  });
+
+  test("an open attempt under incident review is never superseded", async () => {
+    getMockStore().purchaseAttempts.get(purchaseGuildId)!.incidentKey =
+      "PURCHASE#x#DUPLICATE#test#a#b";
+    await expect(createCheckoutSession(otherPayer)).rejects.toMatchObject({
+      code: "BAD_REQUEST",
+    });
+    expect(stripe.checkout.sessions.expire).not.toHaveBeenCalled();
+  });
+
+  test("concurrent different choices leave one open attempt whose session is the only unexpired one", async () => {
+    let n = 0;
+    stripe.checkout.sessions.create.mockImplementation(
+      async (params: { metadata: Record<string, string> }) => ({
+        ...sessionFields(),
+        metadata: params.metadata,
+        id: `cs_${++n}`,
+        status: "open",
+        url: `https://checkout.stripe.com/${n}`,
+        expires_at: Math.floor(Date.now() / 1000) + 3600,
+      }),
+    );
+    await Promise.allSettled([
+      createCheckoutSession({
+        ...request,
+        user: { id: "other" },
+        priceId: "price_pro",
+      }),
+      createCheckoutSession({
+        ...request,
+        user: { id: "third" },
+        priceId: "price_pro",
+      }),
+    ]);
+    // includes cs_first from the setup call
+    const created = (
+      await Promise.all(
+        stripe.checkout.sessions.create.mock.results.map((r) => r.value),
+      )
+    ).map((session) => session.id);
+    const expired = stripe.checkout.sessions.expire.mock.calls.map(
+      ([id]) => id,
+    );
+    const stored = getMockStore().purchaseAttempts.get(purchaseGuildId)!;
+    expect(expired).toContain("cs_first");
+    expect(stored.state).toBe("open");
+    expect(created.filter((id) => !expired.includes(id))).toEqual([
+      stored.sessionId,
+    ]);
   });
 });

@@ -680,12 +680,12 @@ describe("authoritative initial-purchase offer", () => {
     ).toBeUndefined();
   });
 
-  test("another payer and competing promotion cannot rewrite the frozen offer", async () => {
+  test("a preparing introductory attempt still refuses another payer and a competing promotion", async () => {
     const { request } = purchaseFixture();
     await createCheckoutSession(request);
-    const attempt = structuredClone(
-      getMockStore().purchaseAttempts.get(request.guildId),
-    );
+    const stored = getMockStore().purchaseAttempts.get(request.guildId)!;
+    Object.assign(stored, { state: "preparing", sessionId: undefined });
+    const attempt = structuredClone(stored);
     await expect(
       createCheckoutSession({ ...request, user: { id: "other" } }),
     ).rejects.toThrow("already in progress");
@@ -1878,7 +1878,7 @@ describe("annual first-year offer", () => {
       }),
     ).resolves.toEqual({ status: "unavailable" });
   });
-  test("alternate promotion is explicit and frozen independently of annual terms", async () => {
+  test("alternate promotion is explicit, and switching to the annual offer supersedes it", async () => {
     const f = annualFixture();
     await createCheckoutSession({
       ...f.request,
@@ -1895,7 +1895,7 @@ describe("annual first-year offer", () => {
         ...f.request,
         expectedOffer: "basic_annual_intro_v1",
       }),
-    ).rejects.toThrow("Choose");
+    ).resolves.toContain("checkout.stripe.com");
   });
   test("verifies separate native once annual terms and leaves monthly independently available", async () => {
     const f = annualFixture();

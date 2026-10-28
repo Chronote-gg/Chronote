@@ -140,6 +140,7 @@ test("an open provider session is not released at the local deadline", async () 
     "checkout.stripe.com",
   );
   expect(stripe.checkout.sessions.create).toHaveBeenCalledTimes(1);
+  expect(stripe.checkout.sessions.expire).not.toHaveBeenCalled();
 });
 
 test("complete session with delayed webhook reconciles before directing to billing", async () => {
@@ -707,25 +708,6 @@ test.each([true, false])(
     expect(captureEvent).not.toHaveBeenCalled();
   },
 );
-
-test.each([
-  { priceId: "price_pro" },
-  { promotionCodeId: "promo_changed" },
-  { allowPromotionCodes: false },
-])("a change to payment terms %p still blocks reuse", async (change) => {
-  const { stripe, client } = fixture();
-  const request = {
-    stripe: client,
-    user: { id: "payer" },
-    guildId,
-    priceId: "price_basic",
-  };
-  await createCheckoutSession(request);
-  await expect(
-    createCheckoutSession({ ...request, ...change }),
-  ).rejects.toThrow("already in progress");
-  expect(stripe.checkout.sessions.create).toHaveBeenCalledTimes(1);
-});
 
 test("recording-limit context survives checkout and remains frozen across retries", async () => {
   const { stripe, client } = fixture();

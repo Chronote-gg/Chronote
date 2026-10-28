@@ -87,3 +87,39 @@ test("webhook and read-path expiry release the introductory reservation exactly 
   expect(await introUsage(request.guildId)).toEqual(before);
   expect(stripe.checkout.sessions.retrieve).toHaveBeenCalledTimes(1);
 });
+
+test("another payer superseding an introductory checkout releases the old reservation once and reserves it afresh", async () => {
+  const { request } = introPurchaseFixture();
+  await createCheckoutSession({ ...request, expectedOffer: "basic_intro_v1" });
+  const first = getMockStore().purchaseAttempts.get(request.guildId)!;
+  await expect(
+    createCheckoutSession({ ...request, user: { id: "other" } }),
+  ).resolves.toContain("checkout.stripe.com");
+  const next = getMockStore().purchaseAttempts.get(request.guildId)!;
+  expect(next.attemptId).not.toBe(first.attemptId);
+  expect(await introUsage(request.guildId)).toMatchObject({
+    state: "reserved",
+    operationId: next.attemptId,
+  });
+});
+
+test("the same payer switching from the intro offer to a promotion supersedes it", async () => {
+  const { request } = introPurchaseFixture();
+  await createCheckoutSession({ ...request, expectedOffer: "basic_intro_v1" });
+  await expect(
+    createCheckoutSession({
+      ...request,
+      promotionCodeId: "promo_other",
+      promotionCode: "OTHER",
+      offerChoice: "promotion",
+      expectedOffer: "none",
+    }),
+  ).resolves.toContain("checkout.stripe.com");
+  expect(
+    getMockStore().purchaseAttempts.get(request.guildId)?.checkout.metadata,
+  ).toMatchObject({ purchase_offer_choice: "promotion" });
+  expect(await introUsage(request.guildId)).toMatchObject({
+    state: "unused",
+    released: { reason: "checkout_expired" },
+  });
+});

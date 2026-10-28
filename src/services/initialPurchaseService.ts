@@ -16,7 +16,7 @@ import {
 } from "./purchaseSession";
 import { reconcileSubscription } from "./subscriptionReconciliation";
 import { createHash, randomUUID } from "node:crypto";
-import type Stripe from "stripe";
+import Stripe from "stripe";
 import {
   getPurchaseRepository,
   advanceAttempt,
@@ -193,33 +193,104 @@ async function preparePurchaseAttempt(
     ? { kind: "new", previous: retired }
     : { kind: "reuse", current };
 }
+const supersedable = (attempt: PurchaseAttempt) =>
+  attempt.state === "open" &&
+  Boolean(attempt.sessionId) &&
+  !attempt.incidentKey;
+const changesFrozenChoice = (error: unknown) =>
+  error instanceof BillingActionError &&
+  (error.reason === "discount_choice_required" ||
+    error.reason === "offer_changed_terms");
+
+/** Decides whether a request resumes `current`, supersedes it, or is refused. */
+async function prepareReuse(input: PurchaseInput, current: PurchaseAttempt) {
+  const open = supersedable(current);
+  const sameOwner =
+    current.mode === input.mode && current.payerId === input.user.id;
+  // Another payer never reaches the frozen-offer reuse checks.
+  if (open && !sameOwner) return "supersede";
+  try {
+    const { checkout } = await prepareBasicIntroCheckoutWithAuthority({
+      ...input,
+      current,
+    });
+    if (sameOwner && current.fingerprint === checkoutFingerprint(checkout))
+      return "reuse";
+    if (open) return "supersede";
+  } catch (error) {
+    if (open && changesFrozenChoice(error)) return "supersede";
+    throw error;
+  }
+  throw pending();
+}
+
+async function reuseOpenOrCurrentAttempt(
+  input: PurchaseInput,
+  current: PurchaseAttempt,
+): Promise<PurchaseAttempt | "superseded"> {
+  if ((await prepareReuse(input, current)) === "supersede")
+    return supersedeOpenAttempt(input, current);
+  if (
+    input.checkout.metadata?.analytics_opt_out === "true" &&
+    !current.analyticsOptOut
+  )
+    return save(input, current, { analyticsOptOut: true }, input.expected);
+  return current;
+}
+
+/**
+ * Expires the open session at Stripe, then lets a provider read decide: only
+ * a Stripe-confirmed expiry with no subscription releases the attempt.
+ */
+async function supersedeOpenAttempt(
+  input: PurchaseInput,
+  current: PurchaseAttempt,
+): Promise<PurchaseAttempt | "superseded"> {
+  try {
+    await input.owner!.effect(() =>
+      input.stripe.checkout.sessions.expire(current.sessionId!, undefined, {
+        idempotencyKey: `purchase-supersede-${current.attemptId}`,
+      }),
+    );
+  } catch (error) {
+    // A refused expire means the session already left `open`; the provider read below decides.
+    if (!(error instanceof Stripe.errors.StripeInvalidRequestError))
+      throw error;
+  }
+  let after: PurchaseAttempt | undefined;
+  try {
+    after = await refreshAttempt(input, current);
+  } catch (error) {
+    // A lost release CAS means another writer moved the attempt; re-read it.
+    if (
+      error instanceof BillingActionError &&
+      error.reason === "purchase_pending"
+    )
+      return "superseded";
+    throw error;
+  }
+  if (after?.attemptId !== current.attemptId || after.state === "expired")
+    return "superseded";
+  if (after.state === "completed") return after;
+  throw pending();
+}
+
 async function reserve(input: PurchaseInput) {
   const repo = getPurchaseRepository();
   for (let i = 0; i < 3; i++) {
     const preparation = await preparePurchaseAttempt(input);
-    const previous =
-      preparation.kind === "reuse" ? preparation.current : preparation.previous;
-    const preparedCheckout = await prepareBasicIntroCheckoutWithAuthority({
-      ...input,
-      current: preparation.kind === "reuse" ? preparation.current : undefined,
-    });
-    const { checkout, authority } = preparedCheckout;
-    const fingerprint = checkoutFingerprint(checkout);
     if (preparation.kind === "reuse") {
-      const current = preparation.current;
-      if (
-        current.mode !== input.mode ||
-        current.payerId !== input.user.id ||
-        current.fingerprint !== fingerprint
-      )
-        throw pending();
-      if (
-        input.checkout.metadata?.analytics_opt_out === "true" &&
-        !current.analyticsOptOut
-      )
-        return save(input, current, { analyticsOptOut: true }, input.expected);
-      return current;
+      const reused = await reuseOpenOrCurrentAttempt(
+        input,
+        preparation.current,
+      );
+      if (reused !== "superseded") return reused;
+      continue;
     }
+    const previous = preparation.previous;
+    const { checkout, authority } =
+      await prepareBasicIntroCheckoutWithAuthority(input);
+    const fingerprint = checkoutFingerprint(checkout);
     const attemptId = randomUUID();
     const next: PurchaseAttempt = {
       guildId: input.guildId,
