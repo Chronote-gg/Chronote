@@ -234,7 +234,8 @@ run "runtime_scope_never_reads_serving_service_or_task_definition" {
       aws_dynamodb_table.guild_subscription_table,
       aws_iam_role.production_introduction["prompt-guard"],
       aws_iam_role_policy.production_prompt_guard[0],
-      aws_lb_target_group.api_tg[0]
+      aws_lb_target_group.api_tg[0],
+      aws_lb_target_group.api_spare_tg[0]
     ]
   }
   variables {
@@ -257,8 +258,8 @@ run "runtime_scope_never_reads_serving_service_or_task_definition" {
     error_message = "Runtime targets must not depend on the serving service or task definition."
   }
   assert {
-    condition     = aws_lb_target_group.api_tg[0].deregistration_delay == "30"
-    error_message = "A draining serving task must stop within 30 seconds so legacy cannot keep starting meetings."
+    condition     = aws_lb_target_group.api_tg[0].deregistration_delay == "5" && aws_lb_target_group.api_spare_tg[0].deregistration_delay == "5"
+    error_message = "A draining serving task must stop within seconds so legacy cannot keep starting meetings."
   }
 }
 run "sandbox_does_not_adopt_production_authority" {

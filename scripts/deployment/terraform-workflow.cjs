@@ -180,7 +180,10 @@ async function plan(options, invocation, e) {
   const validateScope = scopedValidators[invocation.scope];
   if (validateScope) {
     const shown = await e.terraform(["show", "-json", "tfplan"]);
-    validateScope(JSON.parse(Buffer.from(shown.stdout, "base64").toString()));
+    validateScope(
+      JSON.parse(Buffer.from(shown.stdout, "base64").toString()),
+      options.binding,
+    );
   }
   const shown = await e.terraform(["show", "-no-color", "tfplan"]);
   await verifyDelivery(e, options, invocation);
@@ -290,6 +293,7 @@ async function apply(options, invocation, e, startApply) {
       const shown = await e.terraform(["show", "-json", "tfplan"]);
       validateRuntimePlan(
         JSON.parse(Buffer.from(shown.stdout, "base64").toString()),
+        options.binding,
       );
     }
     await runGuard(options.env, false, prerequisite);

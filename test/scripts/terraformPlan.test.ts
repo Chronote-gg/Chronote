@@ -42,6 +42,7 @@ test.each([
                 "-target=aws_iam_policy.dynamodb_access_policy",
                 "-target=aws_dynamodb_table.guild_subscription_table",
                 "-target=aws_lb_target_group.api_tg[0]",
+                "-target=aws_lb_target_group.api_spare_tg[0]",
                 '-target=aws_iam_role.production_introduction["prompt-guard"]',
                 "-target=aws_iam_role_policy.production_prompt_guard[0]",
               ]

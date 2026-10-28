@@ -1,18 +1,20 @@
 /** @jest-environment node */
 import { expect, test } from "@jest/globals";
-import { spawnSync } from "node:child_process";
-import { runtimePlan } from "../fixtures/deployment/runtimePlan.js";
+import {
+  githubTrust,
+  runtimeAccountId,
+  runtimePlan,
+} from "../fixtures/deployment/runtimePlan.js";
+import {
+  runPlanGuard,
+  runtimeGuard,
+} from "../fixtures/deployment/planGuard.js";
 
-const guard = "scripts/deployment/validate-runtime-plan.cjs";
 type Plan = ReturnType<typeof runtimePlan>;
 type Change = Plan["resource_changes"][number];
 
-function validate(input: unknown) {
-  return spawnSync(process.execPath, [guard], {
-    input: JSON.stringify(input),
-    encoding: "utf8",
-  });
-}
+const validate = (input: unknown, account = runtimeAccountId) =>
+  runPlanGuard(runtimeGuard, JSON.stringify(input), [account]);
 function find(plan: Plan, address: string): Change {
   const resource = plan.resource_changes.find((r) => r.address === address);
   if (!resource) throw new Error(`missing ${address}`);
@@ -26,14 +28,17 @@ function rejected(mutate: (plan: Plan) => void) {
   expect(result.stderr).toContain("runtime plan rejected");
 }
 const table = "aws_dynamodb_table.guild_subscription_table";
-const targetGroup = "aws_lb_target_group.api_tg[0]";
+const targetGroups = [
+  "aws_lb_target_group.api_tg[0]",
+  "aws_lb_target_group.api_spare_tg[0]",
+];
 
 test("accepts the runtime creates, policy update, index addition and drain delay", () => {
   const result = validate(runtimePlan());
   expect(result.status).toBe(0);
   const accepted = JSON.parse(result.stdout);
   expect(accepted.result).toBe("accepted");
-  expect(accepted.changes).toHaveLength(11);
+  expect(accepted.changes).toHaveLength(12);
 });
 
 test("accepts targets that already match as no-ops", () => {
@@ -83,7 +88,8 @@ test.each([
   ["aws_iam_policy.dynamodb_access_policy", ["create"]],
   [table, ["create"]],
   [table, ["delete", "create"]],
-  [targetGroup, ["create", "delete"]],
+  [targetGroups[0], ["create", "delete"]],
+  [targetGroups[1], ["delete", "create"]],
   ["aws_iam_role_policy_attachment.site_publishing[0]", ["update"]],
 ])("rejects %s with actions %j", (address, actions) =>
   rejected((plan) => {
@@ -168,7 +174,7 @@ test.each([
   [
     "another delay",
     (after: Record<string, unknown>) => {
-      after.deregistration_delay = "60";
+      after.deregistration_delay = "30";
     },
   ],
   [
@@ -183,17 +189,126 @@ test.each([
       after.name = "other";
     },
   ],
-])("rejects a target group update with %s", (_name, mutate) =>
-  rejected((plan) => {
-    mutate(find(plan, targetGroup).change.after as never);
-  }),
-);
-
-test("refuses invalid JSON with a sanitized error", () => {
-  const result = spawnSync(process.execPath, [guard], {
-    input: "SECRET-PLAN-VALUE",
-    encoding: "utf8",
-  });
-  expect(result.status).toBe(1);
-  expect(result.stderr).not.toContain("SECRET-PLAN-VALUE");
+])("rejects a target group update with %s", (_name, mutate) => {
+  for (const address of targetGroups)
+    rejected((plan) => {
+      mutate(find(plan, address).change.after as never);
+    });
 });
+
+test("rejects a known stream output change on the subscription table", () =>
+  rejected((plan) => {
+    const change = find(plan, table).change as {
+      after: Record<string, unknown>;
+      after_unknown: Record<string, unknown>;
+    };
+    delete change.after_unknown.stream_arn;
+    change.after.stream_arn = "other";
+  }));
+
+test("refuses a missing or foreign account binding", () => {
+  expect(validate(runtimePlan(), "").status).toBe(1);
+  expect(validate(runtimePlan(), "999999999999").status).toBe(1);
+});
+
+const roles = [
+  "aws_iam_role.production_deploy[0]",
+  'aws_iam_role.production_introduction["prompt-guard"]',
+];
+type Trust = {
+  Statement: {
+    Principal: Record<string, string>;
+    Condition: { StringEquals: Record<string, string> };
+  }[];
+};
+test.each([
+  [
+    "a foreign provider",
+    (t: Trust) => {
+      t.Statement[0].Principal.Federated =
+        "arn:aws:iam::999999999999:oidc-provider/token.actions.githubusercontent.com";
+    },
+  ],
+  [
+    "an extra principal",
+    (t: Trust) => {
+      t.Statement[0].Principal.AWS = "*";
+    },
+  ],
+  [
+    "a foreign subject",
+    (t: Trust) => {
+      t.Statement[0].Condition.StringEquals[
+        "token.actions.githubusercontent.com:sub"
+      ] = "repo:Chronote-gg/Chronote:environment:sandbox";
+    },
+  ],
+  [
+    "a second statement",
+    (t: Trust) => {
+      t.Statement.push({
+        Principal: { AWS: "*" },
+        Condition: { StringEquals: {} },
+      });
+    },
+  ],
+])("rejects role trust with %s", (_name, mutate) => {
+  for (const address of roles)
+    rejected((plan) => {
+      const value = JSON.parse(githubTrust()) as Trust;
+      mutate(value);
+      Object.assign(find(plan, address).change, {
+        after: { assume_role_policy: JSON.stringify(value) },
+      });
+    });
+});
+
+const policies = [
+  "aws_iam_role_policy.production_deploy[0]",
+  "aws_iam_policy.site_publishing[0]",
+  "aws_iam_role_policy.production_exec_channels[0]",
+  "aws_iam_policy.dynamodb_access_policy",
+  "aws_iam_role_policy.production_prompt_guard[0]",
+];
+const allow = (Action: unknown, Resource: unknown = "arn:aws:s3:::bucket") => ({
+  Effect: "Allow",
+  Action,
+  Resource,
+});
+test.each([
+  ["any action", allow("*")],
+  ["all IAM actions", allow(["s3:GetObject", "iam:*"])],
+  ["all STS actions", allow("sts:*")],
+  ["NotAction", { Effect: "Allow", NotAction: "s3:GetObject", Resource: "*" }],
+  [
+    "NotResource",
+    { Effect: "Allow", Action: "s3:GetObject", NotResource: "x" },
+  ],
+  ["a write on every resource", allow(["ecs:ListTasks", "iam:PassRole"], "*")],
+  [
+    "a secret read on every resource",
+    allow("secretsmanager:GetSecretValue", ["*"]),
+  ],
+])("rejects a policy granting %s", (_name, statement) => {
+  for (const address of policies)
+    rejected((plan) => {
+      Object.assign(find(plan, address).change, {
+        after: {
+          policy: JSON.stringify({
+            Version: "2012-10-17",
+            Statement: [statement],
+          }),
+        },
+      });
+    });
+});
+
+test.each([null, "", "{}", '{"Statement":[]}'])(
+  "rejects an unknown or empty policy document %j",
+  (policy) => {
+    for (const address of policies)
+      rejected((plan) => {
+        Object.assign(find(plan, address).change, { after: { policy } });
+      });
+  },
+);

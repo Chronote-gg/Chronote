@@ -178,7 +178,7 @@ run "policy_limits" {
     error_message = "Capture requires conditional creates, exact key and exact-version access in the first namespace only."
   }
   assert {
-    condition     = one([for s in jsondecode(aws_iam_role_policy.production_terraform[0].policy).Statement : s if s.Sid == "EvidenceEncryption"]).Condition.StringEquals["kms:ViaService"] == "s3.us-east-1.amazonaws.com" && one([for s in jsondecode(aws_iam_role_policy.production_terraform[0].policy).Statement : s if s.Sid == "ControlServiceGrant"]).Condition.Bool["kms:GrantIsForAWSResource"] == "true" && one([for s in jsondecode(aws_iam_role_policy.production_terraform[0].policy).Statement : s if s.Sid == "ControlEncryption"]).Condition.StringEquals["kms:EncryptionContext:aws:dynamodb:tableName"] == "meeting-notes-prod-DeploymentControlTable"
+    condition     = one([for s in jsondecode(aws_iam_role_policy.production_terraform[0].policy).Statement : s if s.Sid == "EvidenceEncryption"]).Condition.StringEquals["kms:ViaService"] == "s3.us-east-1.amazonaws.com" && one([for s in jsondecode(aws_iam_role_policy.production_terraform[0].policy).Statement : s if s.Sid == "ControlServiceGrant"]).Condition.Bool["kms:GrantIsForAWSResource"] == "true" && one([for s in jsondecode(aws_iam_role_policy.production_terraform[0].policy).Statement : s if s.Sid == "ControlEncryption"]).Condition.StringEquals["kms:EncryptionContext:aws:dynamodb:tableName"] == ["meeting-notes-prod-DeploymentControlTable", "meeting-notes-prod-GuildSubscriptionTable"]
     error_message = "S3 and DynamoDB KMS paths need distinct service/account/context restrictions."
   }
   assert {

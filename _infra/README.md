@@ -354,8 +354,11 @@ before a cold cutover and the first ordinary deploy of `master`. It targets exac
 4. `aws_iam_policy.dynamodb_access_policy`, whose `DescribeSubscriptionReadiness`
    statement the candidate needs at startup
 5. `aws_dynamodb_table.guild_subscription_table`, adding `RenewalRecoveryDueIndex`
-6. `aws_lb_target_group.api_tg[0]`, lowering `deregistration_delay` to 30 seconds
-   so a draining legacy task stops starting meetings sooner
+6. `aws_lb_target_group.api_tg[0]` and `aws_lb_target_group.api_spare_tg[0]`,
+   lowering `deregistration_delay` from 300 to 5 seconds so a draining legacy
+   task stops starting meetings sooner. The tradeoff: a draining task's long
+   in-flight requests, such as MCP live-transcript streams and slow portal
+   requests, are cut after 5 seconds instead of finishing
 7. `aws_iam_role.production_introduction["prompt-guard"]` and
    `aws_iam_role_policy.production_prompt_guard[0]`
 
@@ -373,8 +376,14 @@ unchanged. GitHub variables such as `PRODUCTION_BACKEND_DEPLOY_ROLE_ARN` and
 `scripts/deployment/validate-runtime-plan.cjs` checks the Plan before bundling and
 again on Apply. It requires the existing key and HTTPS listener as no-ops, allows
 create or update only at those addresses, and refuses replacements, deletes, moves
-and imports. The subscription table may change only by gaining that index and its
-two key attributes; the target group only its drain delay, to 30.
+and imports. Both new roles must trust only the in-account GitHub provider for the
+production environment subject. The five policy documents may not grant `*`,
+`iam:*` or `sts:*`, use NotAction or NotResource, or pair `Resource: "*"` with
+anything but Describe or List actions, registry login and the ECS Exec channels.
+Apply passes the account from the private storage binding; the CLI takes it as its
+only argument. The subscription table may change only by gaining that index and its
+two key attributes (its recomputed `stream_arn` and `stream_label` may be unknown);
+each API target group only its drain delay, to 5.
 
 Standalone policy adoption requires a separate reviewed plan and approval; it is
 outside the four-target Apply. The actual state-backed prerequisite plan must
