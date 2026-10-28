@@ -156,7 +156,7 @@ type PersonalRecordingSegmentTranscriptArtifact = {
   text: string;
 };
 
-const runFfmpeg = (
+export const runFfmpeg = (
   inputPath: string,
   outputPath: string,
   signal?: AbortSignal,
@@ -217,10 +217,11 @@ const probeMediaDurationSeconds = (filePath: string, signal?: AbortSignal) =>
     });
   });
 
-const splitAudioFile = async (
+export const splitAudioFile = async (
   inputPath: string,
   outputDir: string,
   signal?: AbortSignal,
+  chunkSeconds = TRANSCRIPTION_FINAL_PASS_CHUNK_SECONDS,
 ) => {
   const pattern = path.join(outputDir, "chunk-%03d.mp3");
   await runFfmpegCommand(
@@ -229,7 +230,7 @@ const splitAudioFile = async (
         "-f",
         "segment",
         "-segment_time",
-        String(TRANSCRIPTION_FINAL_PASS_CHUNK_SECONDS),
+        String(chunkSeconds),
         "-reset_timestamps",
         "1",
       ])
@@ -262,7 +263,12 @@ const resolveTranscriptionInputs = async (
   return chunks;
 };
 
-const transcribeAudioFile = async (filePath: string, signal?: AbortSignal) => {
+/** A null language omits the hint so the provider detects the spoken language. */
+const transcribeAudioFile = async (
+  filePath: string,
+  signal: AbortSignal | undefined,
+  language: string | null,
+) => {
   signal?.throwIfAborted();
   const modelChoice = getModelChoice("transcription");
   const openAIClient = createOpenAIClient({
@@ -274,7 +280,7 @@ const transcribeAudioFile = async (filePath: string, signal?: AbortSignal) => {
     const request: TranscriptionCreateParamsNonStreaming<"json"> = {
       file: input,
       model: modelChoice.model,
-      language: "en",
+      ...(language === null ? {} : { language }),
       temperature: 0,
       response_format: "json",
     };
@@ -287,17 +293,18 @@ const transcribeAudioFile = async (filePath: string, signal?: AbortSignal) => {
   });
 };
 
-const transcribeAudioFiles = async (
+export const transcribeAudioFiles = async (
   filePaths: string[],
   acceptPartial: boolean,
   signal?: AbortSignal,
+  language: string | null = "en",
 ): Promise<PersonalTranscriptionResult> => {
   const chunks: string[] = [];
   let failedChunks = 0;
   for (const filePath of filePaths) {
     let transcript: string;
     try {
-      transcript = await transcribeAudioFile(filePath, signal);
+      transcript = await transcribeAudioFile(filePath, signal, language);
     } catch (error) {
       signal?.throwIfAborted();
       if (!acceptPartial) throw error;
