@@ -242,6 +242,38 @@ run "runtime_scope_never_reads_serving_service_or_task_definition" {
     environment                         = "prod"
     github_environment                  = "production"
     enable_production_prompt_guard_role = true
+    frontend_distribution_id            = "EPRODFRONTEND"
+    docs_distribution_id                = "EPRODDOCS"
+  }
+  override_resource {
+    target          = aws_cloudfront_distribution.frontend
+    override_during = plan
+    values          = { id = "should-not-be-read", arn = "should-not-be-read" }
+  }
+  override_resource {
+    target          = aws_cloudfront_distribution.docs
+    override_during = plan
+    values          = { id = "should-not-be-read", arn = "should-not-be-read" }
+  }
+  override_resource {
+    target          = aws_s3_bucket.frontend
+    override_during = plan
+    values          = { arn = "arn:aws:s3:::meeting-notes-prod-frontend-123456789012" }
+  }
+  override_resource {
+    target          = aws_s3_bucket.docs
+    override_during = plan
+    values          = { arn = "arn:aws:s3:::meeting-notes-prod-docs-123456789012" }
+  }
+  override_resource {
+    target          = aws_cloudfront_function.frontend_route_rewrite
+    override_during = plan
+    values          = { arn = "should-not-be-read" }
+  }
+  override_resource {
+    target          = aws_cloudfront_response_headers_policy.crawler_noindex
+    override_during = plan
+    values          = { id = "should-not-be-read" }
   }
   override_resource {
     target          = aws_ecs_service.app_service
@@ -256,6 +288,11 @@ run "runtime_scope_never_reads_serving_service_or_task_definition" {
   assert {
     condition     = alltrue([for document in [aws_iam_role_policy.production_deploy[0].policy, aws_iam_role_policy.production_prompt_guard[0].policy, aws_iam_role.production_introduction["prompt-guard"].assume_role_policy, aws_iam_role.production_deploy[0].assume_role_policy] : !strcontains(document, "should-not-be-read")])
     error_message = "Runtime targets must not depend on the serving service or task definition."
+  }
+  # A planned distribution would fail its ID postcondition against these overrides.
+  assert {
+    condition     = !strcontains(aws_iam_policy.site_publishing[0].policy, "should-not-be-read") && strcontains(aws_iam_policy.site_publishing[0].policy, "arn:aws:cloudfront::123456789012:distribution/EPRODFRONTEND")
+    error_message = "Site publishing must grant by distribution ID without reading any CloudFront resource."
   }
   assert {
     condition     = aws_lb_target_group.api_tg[0].deregistration_delay == "5" && aws_lb_target_group.api_spare_tg[0].deregistration_delay == "5"

@@ -367,10 +367,18 @@ enables it without introduction authority or reviewed task definitions. The depl
 and prompt guard policies build the service, task family, container, repository,
 execution role and managed policy ARNs from names, and both OIDC data sources look
 the provider up by ARN, so the plan never reads the ECS service, task definition,
-AppConfig or Bedrock resources. The site publishing policy still references both
-CloudFront distributions, so their buckets, functions, origin access controls,
-headers policy and any Terraform-managed certificates are refreshed and must be
-unchanged. GitHub variables such as `PRODUCTION_BACKEND_DEPLOY_ROLE_ARN` and
+AppConfig or Bedrock resources. The site publishing policy grants by distribution
+ID from `frontend_distribution_id` and `docs_distribution_id`, so the plan reads no
+CloudFront resource. Production and Sandbox must set `TFVAR_FRONTEND_DISTRIBUTION_ID`
+and `TFVAR_DOCS_DISTRIBUTION_ID` to the same values as the existing
+`FRONTEND_DISTRIBUTION_ID` and `DOCS_DISTRIBUTION_ID` deploy variables. The policy
+refuses to plan without them, and each distribution has a postcondition that fails
+a full plan if its variable names another distribution.
+
+Known pending rollout: production's distributions lag master (a docs cache
+behavior, frontend error responses and route rewrite function, and the
+`crawler_noindex` headers policy). Those change live portal routing and ship with
+a later frontend and docs rollout, not with this scope. GitHub variables such as `PRODUCTION_BACKEND_DEPLOY_ROLE_ARN` and
 `PRODUCTION_PROMPT_GUARD_ROLE_ARN` stay outside the scope and are set by hand.
 
 `scripts/deployment/validate-runtime-plan.cjs` checks the Plan before bundling and

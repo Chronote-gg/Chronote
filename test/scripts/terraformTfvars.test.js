@@ -134,6 +134,17 @@ test.each([false, true])(
     });
   },
 );
+test("uppercase GitHub distribution variables reach the lowercase Terraform inputs", () => {
+  expect(
+    run(valid, {
+      TFVAR_FRONTEND_DISTRIBUTION_ID: "EFRONTEND1",
+      TFVAR_DOCS_DISTRIBUTION_ID: "EDOCS2",
+    }),
+  ).toMatchObject({
+    frontend_distribution_id: "EFRONTEND1",
+    docs_distribution_id: "EDOCS2",
+  });
+});
 test("unselected scalar variables keep their exact suffix and string behavior", () => {
   expect(
     run(valid, { TFVAR_other_input: '["literal"]', TFVAR_OTHER_INPUT: "TRUE" }),
