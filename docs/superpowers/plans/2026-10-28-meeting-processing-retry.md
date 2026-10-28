@@ -351,13 +351,11 @@ test("re-transcribes only omitted ranges, keeps saved entries, and stays attribu
   expect(result.text).not.toContain("Exact finalized input");
 });
 test("a range the speech gate skips again counts as handled", async () => {
-  jest
-    .mocked(transcribeContentSnippet)
-    .mockResolvedValueOnce({
-      status: "skipped",
-      reason: "non_speech",
-      coverage,
-    });
+  jest.mocked(transcribeContentSnippet).mockResolvedValueOnce({
+    status: "skipped",
+    reason: "non_speech",
+    coverage,
+  });
   await expect(
     retranscribeOmittedRanges(content, f.reader, signal, run),
   ).resolves.toMatchObject({ segments: [{ text: "Saved words." }] });
