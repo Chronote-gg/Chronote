@@ -7,6 +7,10 @@ Notable product changes for Chronote users. For the full changelog, see the [Git
 
 ## 2026
 
+### Uploads keep their spoken language (October 28)
+
+- Personal uploads and Chronote Desktop recordings are no longer transcribed as English. Chronote detects the spoken language, so meetings in other languages produce complete transcripts in that language. See [Personal media uploads](/features/#personal-media-uploads).
+
 ### Abandoned checkouts no longer block billing (October 27)
 
 - Closing Checkout without paying no longer leaves Basic or Pro unavailable on the billing page.
