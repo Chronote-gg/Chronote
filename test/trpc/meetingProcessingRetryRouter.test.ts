@@ -23,9 +23,8 @@ jest.mock("../../src/services/meetingAccessService", () => ({
 jest.mock("../../src/services/discordPermissionsService", () => ({
   ensureUserCanManageChannel: jest.fn(),
 }));
-jest.mock("../../src/services/unifiedConfigService", () => ({
-  resolveConfigSnapshot: jest.fn(async () => ({})),
-  getSnapshotBoolean: jest.fn(() => true),
+jest.mock("../../src/services/attendeeAccessSetting", () => ({
+  resolveAttendeeAccessEnabled: jest.fn(async () => true),
 }));
 jest.mock("../../src/services/processingRetryRequestService", () => ({
   requestProcessingRetry: jest.fn(),

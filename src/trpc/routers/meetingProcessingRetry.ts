@@ -1,7 +1,6 @@
 import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 import type { GuildSessionCache } from "../../services/guildAccessService";
-import { getMeetingHistoryService } from "../../services/meetingHistoryService";
 import { isProcessingRetryAvailable } from "../../services/processingRetryAvailability";
 import { projectProcessingRetry } from "../../services/processingRetryEligibility";
 import {
@@ -16,6 +15,7 @@ import {
 import { authedProcedure } from "../trpc";
 import {
   ensurePortalUserCanEditMeetingNotes,
+  getMeetingOrThrow,
   parseChannelIdTimestamp,
 } from "./meetingEditPermissions";
 
@@ -139,13 +139,7 @@ export const retryProcessing = authedProcedure
     }),
   )
   .mutation(async ({ ctx, input }) => {
-    const history = await getMeetingHistoryService(
-      input.serverId,
-      input.meetingId,
-    );
-    if (!history) {
-      throw new TRPCError({ code: "NOT_FOUND", message: "Meeting not found" });
-    }
+    const history = await getMeetingOrThrow(input.serverId, input.meetingId);
     await ensureUserCanRetry({
       history,
       serverId: input.serverId,

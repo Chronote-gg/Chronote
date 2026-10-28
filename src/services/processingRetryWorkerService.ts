@@ -29,6 +29,7 @@ import {
   updateMeeting,
   type MeetingUpdateActionInput,
 } from "./meetingUpdateService";
+import { registerRuntimeNotionOwner } from "./notionOperationLifetime";
 import { isProcessingRetryAvailable } from "./processingRetryAvailability";
 import {
   runProcessingRetryStages,
@@ -135,6 +136,8 @@ function saveInput(
     key: claimed.key,
     mutation: { kind: "regeneration", changes: regenerationChanges(changes) },
     actor: { editedBy: requestedBy },
+    // The Notion auto-sync after the save runs as a mutation owned by this work.
+    signal: claimed.work.signal,
     ...(changes.notes !== undefined
       ? {
           notesEdit: {
@@ -379,6 +382,7 @@ export function createProcessingRetryWorker(
 
   async function execute(claimed: ClaimedJob) {
     const stopRenewal = renewLease(claimed);
+    const unregisterNotion = registerRuntimeNotionOwner(claimed.work);
     try {
       const run = await runJob(claimed);
       await stopRenewal();
@@ -392,6 +396,8 @@ export function createProcessingRetryWorker(
       // A lost lease or shutdown is not an outcome: the lease lapses and the job is claimed again.
       if (claimed.work.signal.aborted) return;
       await failUnexpected(claimed, error);
+    } finally {
+      unregisterNotion();
     }
   }
 

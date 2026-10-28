@@ -37,11 +37,36 @@ jest.mock("../../src/services/dictionaryService", () => ({
 jest.mock("../../src/services/storageService", () => ({
   fetchJsonFromS3: jest.fn(),
 }));
+jest.mock("../../src/services/subscriptionService", () => ({
+  resolveGuildSubscription: jest.fn(async () => ({ tier: "pro" })),
+}));
+const scopedRuntimeConfig = {
+  premiumTranscription: { enabled: true, cleanupEnabled: true },
+  dictionary: { maxEntries: 3, maxCharsTranscription: 10, maxCharsContext: 20 },
+  visionCaptions: { enabled: false, maxImages: 0, maxTotalChars: 0 },
+  modelChoices: {
+    notes: "channel-notes-model",
+    transcriptionCleanup: "channel-cleanup-model",
+  },
+  modelParams: { notes: { reasoningEffort: "high" } },
+};
+jest.mock("../../src/services/transcriptionCleanupService", () => ({
+  ...jest.requireActual("../../src/services/transcriptionCleanupService"),
+  cleanupContentTranscription: jest.fn(),
+}));
+jest.mock("../../src/services/meetingConfigService", () => ({
+  resolveMeetingRuntimeConfig: jest.fn(async () => scopedRuntimeConfig),
+}));
 import { getLangfuseChatPrompt } from "../../src/services/langfusePromptService";
 import { listRecentMeetingsForChannelService } from "../../src/services/meetingHistoryService";
 import { fetchJsonFromS3 } from "../../src/services/storageService";
 import { config } from "../../src/services/configService";
-import { buildCurrentNotesInput } from "../../src/services/processingRetryNotesInput";
+import {
+  buildCurrentNotesInput,
+  cleanupWithCurrentSettings,
+} from "../../src/services/processingRetryNotesInput";
+import { cleanupContentTranscription } from "../../src/services/transcriptionCleanupService";
+import { resolveMeetingRuntimeConfig } from "../../src/services/meetingConfigService";
 import type { MeetingHistory } from "../../src/types/db";
 
 const signal = new AbortController().signal;
@@ -145,4 +170,83 @@ test("throws when the notes prompt cannot be fetched", async () => {
   await expect(
     buildCurrentNotesInput(row, "Stored transcript", signal),
   ).rejects.toThrow("Langfuse unavailable");
+});
+
+test("carries the meeting's server and channel scoped settings, as a live meeting would", async () => {
+  jest.mocked(listRecentMeetingsForChannelService).mockResolvedValue([]);
+
+  const input = await buildCurrentNotesInput(row, "Stored transcript", signal);
+
+  expect(resolveMeetingRuntimeConfig).toHaveBeenCalledWith({
+    guildId: "guild-1",
+    channelId: "voice-1",
+    userId: "creator-1",
+    tier: "pro",
+  });
+  expect(input.runtimeConfig).toEqual({
+    modelChoices: scopedRuntimeConfig.modelChoices,
+    modelParams: scopedRuntimeConfig.modelParams,
+    dictionary: scopedRuntimeConfig.dictionary,
+    visionCaptions: scopedRuntimeConfig.visionCaptions,
+  });
+});
+
+describe("cleanupWithCurrentSettings", () => {
+  const mixed = "first line\nsecond line";
+  beforeEach(() => {
+    scopedRuntimeConfig.premiumTranscription = {
+      enabled: true,
+      cleanupEnabled: true,
+    };
+  });
+
+  test("cleans with the current cleanup prompt and the channel's cleanup model", async () => {
+    jest
+      .mocked(cleanupContentTranscription)
+      .mockResolvedValueOnce("First line.\nSecond line.");
+
+    const cleaned = await cleanupWithCurrentSettings(row, mixed, signal);
+
+    expect(cleaned).toBe("First line.\nSecond line.");
+    const call = jest.mocked(getLangfuseChatPrompt).mock.calls.at(-1)?.[0];
+    expect(call?.name).toBe(config.langfuse.transcriptionCleanupPromptName);
+    expect(call?.variables).toMatchObject({
+      transcription: mixed,
+      serverName: "Server X",
+      voiceChannelName: "Channel Y",
+      roles: expect.stringContaining("Design"),
+      formattedContext: expect.stringContaining("Server rules"),
+    });
+    const [meeting, , model] = jest.mocked(cleanupContentTranscription).mock
+      .calls[0];
+    expect(meeting).toMatchObject({
+      meetingId: "meeting-1",
+      creator: { id: "creator-1" },
+      signal,
+    });
+    expect(model.model).toBe("channel-cleanup-model");
+  });
+
+  test("returns the transcript unchanged when current settings disable cleanup", async () => {
+    scopedRuntimeConfig.premiumTranscription = {
+      enabled: true,
+      cleanupEnabled: false,
+    };
+    jest.mocked(cleanupContentTranscription).mockClear();
+
+    await expect(cleanupWithCurrentSettings(row, mixed, signal)).resolves.toBe(
+      mixed,
+    );
+    expect(cleanupContentTranscription).not.toHaveBeenCalled();
+  });
+
+  test("keeps the original text when the cleanup call fails", async () => {
+    jest
+      .mocked(cleanupContentTranscription)
+      .mockRejectedValueOnce(new Error("provider down"));
+
+    await expect(cleanupWithCurrentSettings(row, mixed, signal)).resolves.toBe(
+      mixed,
+    );
+  });
 });

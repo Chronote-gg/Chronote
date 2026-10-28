@@ -48,6 +48,19 @@ const claim = (claimId: string) =>
     authority,
   });
 
+/** Seeds the row, then queues a second job over the one it was shown. */
+async function queueNextOver(row: MeetingHistory) {
+  await seed(row);
+  const next = { ...queuedJob, jobId: "job-2" };
+  const result = await repository.queue({
+    key,
+    expected: expectedOf(row),
+    job: next,
+    dueAt: now,
+  });
+  return { next, result };
+}
+
 beforeAll(createTables);
 beforeEach(() => admit(true));
 afterAll(dispose);
@@ -56,31 +69,14 @@ it.each([
   ["queued", queuedRow()],
   ["running", runningRow()],
 ])("queue refuses while a %s job is active", async (_status, row) => {
-  await seed(row);
-  const next = { ...queuedJob, jobId: "job-2" };
-  expect(
-    await repository.queue({
-      key,
-      expected: expectedOf(row),
-      job: next,
-      dueAt: now,
-    }),
-  ).toBe("conflict");
+  expect((await queueNextOver(row)).result).toBe("conflict");
   expect(await read()).toEqual(row);
 });
 
 it("queue replaces a terminal job it was shown", async () => {
   const row = { ...failedRow(), processingRetry: failedJob(runningJob) };
-  await seed(row);
-  const next = { ...queuedJob, jobId: "job-2" };
-  expect(
-    await repository.queue({
-      key,
-      expected: expectedOf(row),
-      job: next,
-      dueAt: now,
-    }),
-  ).toBe("queued");
+  const { next, result } = await queueNextOver(row);
+  expect(result).toBe("queued");
   expect(await read()).toMatchObject({
     processingRetry: next,
     processingRetryQueue: PROCESSING_RETRY_QUEUE,

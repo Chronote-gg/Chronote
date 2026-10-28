@@ -82,6 +82,22 @@ function expectedNotesVersionMoved(
   ].some((expected) => expected !== undefined && expected !== notesVersion);
 }
 
+/**
+ * A regeneration names only a meeting that is still unnamed in the row this
+ * write is conditioned on, so a rename committed before the write wins.
+ */
+function mutationForRow(
+  mutation: MeetingUpdateMutation,
+  before: MeetingHistory,
+): MeetingUpdateMutation {
+  if (mutation.kind !== "regeneration" || !before.meetingName?.trim())
+    return mutation;
+  return {
+    ...mutation,
+    changes: mutation.changes.filter((change) => change.kind !== "rename"),
+  };
+}
+
 export function createMeetingUpdateService(deps: Dependencies) {
   return async function updateMeeting(
     input: MeetingUpdateActionInput,
@@ -99,18 +115,19 @@ export function createMeetingUpdateService(deps: Dependencies) {
       return { kind: "conflict" };
     await read(() => deps.ready());
     signal?.throwIfAborted();
+    const mutation = mutationForRow(input.mutation, before);
     const at = Math.floor(Date.now() / 1000);
     const write: MeetingContentWrite = {
       key: input.key,
       expectedContentRevision: revisions.contentRevision,
       expectedPublication: publicationSnapshot(before),
       expectedDeliveryRevision: before.updateDelivery?.revision ?? null,
-      mutation: input.mutation,
+      mutation,
       mutationId: randomUUID(),
       at,
       nextDelivery: requestMeetingUpdateDelivery({
         history: before,
-        mutation: input.mutation,
+        mutation,
         revision: randomUUID(),
         now: at,
         policy: initialMeetingUpdatePolicy(before),

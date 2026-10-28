@@ -100,6 +100,28 @@ function hasStoredNotes(history: MeetingHistory): boolean {
   return Boolean(history.notes?.trim());
 }
 
+function emptyStagesReason(
+  history: MeetingHistory,
+): ProcessingRetryIneligibleReason {
+  return history.processing?.transcription === "partial"
+    ? "capture_incomplete"
+    : "nothing_failed";
+}
+
+/** A summary-only retry summarizes the stored notes, so it needs some. */
+function summaryLacksNotes(
+  history: MeetingHistory,
+  stages: ProcessingRetryStage[],
+): boolean {
+  const summaryOnly = stages.length === 1 && stages[0] === "summary";
+  return summaryOnly && !hasStoredNotes(history);
+}
+
+function attemptsExhausted(history: MeetingHistory, actor: Actor): boolean {
+  const attempts = history.processingRetry?.countedAttempts ?? 0;
+  return actor === "portal" && attempts >= PROCESSING_RETRY_USER_ATTEMPT_CAP;
+}
+
 export function getProcessingRetryEligibility(
   history: MeetingHistory,
   actor: Actor = "portal",
@@ -108,19 +130,11 @@ export function getProcessingRetryEligibility(
   if (blocked) return { eligible: false, reason: blocked };
   const stages = selectStages(history);
   if (stages.length === 0)
-    return {
-      eligible: false,
-      reason:
-        history.processing?.transcription === "partial"
-          ? "capture_incomplete"
-          : "nothing_failed",
-    };
+    return { eligible: false, reason: emptyStagesReason(history) };
   const transcriptSource = transcriptSourceFor(history, stages);
-  const summaryOnly = stages.length === 1 && stages[0] === "summary";
-  if (!transcriptSource || (summaryOnly && !hasStoredNotes(history)))
+  if (!transcriptSource || summaryLacksNotes(history, stages))
     return { eligible: false, reason: "source_missing" };
-  const attempts = history.processingRetry?.countedAttempts ?? 0;
-  if (actor === "portal" && attempts >= PROCESSING_RETRY_USER_ATTEMPT_CAP)
+  if (attemptsExhausted(history, actor))
     return { eligible: false, reason: "attempts_exhausted" };
   const replacesNotes = stages.includes("notes") && hasStoredNotes(history);
   if (replacesNotes && notesEditedByPerson(history))

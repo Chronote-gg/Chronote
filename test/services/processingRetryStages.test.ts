@@ -20,6 +20,11 @@ jest.mock("../../src/services/storageService", () => ({
 }));
 jest.mock("../../src/services/processingRetryNotesInput", () => ({
   buildCurrentNotesInput: jest.fn(),
+  cleanupWithCurrentSettings: jest.fn(),
+}));
+jest.mock("../../src/services/recoveryTranscriptionProcessing", () => ({
+  ...jest.requireActual("../../src/services/recoveryTranscriptionProcessing"),
+  cleanupWithSavedSettings: jest.fn(),
 }));
 import {
   InvalidRecoveryContent,
@@ -39,7 +44,11 @@ import {
   ensureMeetingSummaries,
 } from "../../src/services/meetingNotesService";
 import { fetchJsonFromS3 } from "../../src/services/storageService";
-import { buildCurrentNotesInput } from "../../src/services/processingRetryNotesInput";
+import {
+  buildCurrentNotesInput,
+  cleanupWithCurrentSettings,
+} from "../../src/services/processingRetryNotesInput";
+import { cleanupWithSavedSettings } from "../../src/services/recoveryTranscriptionProcessing";
 import {
   clearRetriedStages,
   runProcessingRetryStages,
@@ -142,6 +151,26 @@ const notesInput = (): MeetingNotesInput => ({
 });
 const run = (history: MeetingHistory, retry = notesRetry) =>
   runProcessingRetryStages({ history, job: retry, signal, effect, reader });
+const mixedAudioKey = "p/g/c_m_t/audio.mp3";
+function unverifiableCheckpointWithNothingRetranscribed() {
+  jest
+    .mocked(readRecoveryContent)
+    .mockResolvedValue({ ...content, missing: [{}] } as RecoveryContent);
+  jest.mocked(retranscribeOmittedRanges).mockResolvedValue({
+    text: "",
+    segments: [],
+    retranscribedRanges: 0,
+  });
+}
+/** Runs a full retry that must end up transcribing the mixed recording. */
+async function runMixedFallback(history: MeetingHistory = failedTranscription) {
+  const result = await run(
+    { ...history, audioS3Key: mixedAudioKey },
+    fullRetry,
+  );
+  expect(transcribeMixedRecording).toHaveBeenCalledWith(mixedAudioKey, signal);
+  return result;
+}
 
 beforeEach(() => {
   jest.clearAllMocks();
@@ -173,6 +202,15 @@ beforeEach(() => {
   jest
     .mocked(transcribeMixedRecording)
     .mockResolvedValue({ text: "Mixed words." });
+  jest
+    .mocked(cleanupWithSavedSettings)
+    .mockImplementation(async (_content, text) => ({
+      finalText: text,
+      cleanup: "disabled",
+    }));
+  jest
+    .mocked(cleanupWithCurrentSettings)
+    .mockImplementation(async (_history, text) => text);
   jest.mocked(ensureMeetingNotes).mockImplementation(async (input) => {
     input.notesText = "Regenerated";
     input.processing = { ...input.processing, notes: "generated" };
@@ -312,24 +350,9 @@ test("a checkpoint with no omitted ranges fails nothing_to_retry without generat
 });
 
 test("a checkpoint with unverifiable audio and nothing re-transcribed falls back to mixed audio", async () => {
-  jest
-    .mocked(readRecoveryContent)
-    .mockResolvedValue({ ...content, missing: [{}] } as RecoveryContent);
-  jest.mocked(retranscribeOmittedRanges).mockResolvedValue({
-    text: "",
-    segments: [],
-    retranscribedRanges: 0,
-  });
+  unverifiableCheckpointWithNothingRetranscribed();
 
-  const result = await run(
-    { ...failedTranscription, audioS3Key: "p/g/c_m_t/audio.mp3" },
-    fullRetry,
-  );
-
-  expect(transcribeMixedRecording).toHaveBeenCalledWith(
-    "p/g/c_m_t/audio.mp3",
-    signal,
-  );
+  const result = await runMixedFallback();
   expect(result).toMatchObject({
     kind: "succeeded",
     transcriptSource: "mixed",
@@ -361,15 +384,7 @@ test("an unreadable checkpoint falls back to mixed audio", async () => {
     .mocked(readRecoveryContent)
     .mockRejectedValue(new InvalidRecoveryContent("corrupt"));
 
-  const result = await run(
-    { ...failedTranscription, audioS3Key: "p/g/c_m_t/audio.mp3" },
-    fullRetry,
-  );
-
-  expect(transcribeMixedRecording).toHaveBeenCalledWith(
-    "p/g/c_m_t/audio.mp3",
-    signal,
-  );
+  const result = await runMixedFallback();
   expect(result).toMatchObject({
     kind: "succeeded",
     transcriptSource: "mixed",
@@ -573,4 +588,72 @@ test("a parse error from re-transcription fails the stage instead of falling bac
 
   expect(result).toMatchObject({ kind: "failed", reason: "stage_failed" });
   expect(transcribeMixedRecording).not.toHaveBeenCalled();
+});
+
+describe("mixed-audio cleanup", () => {
+  test("a readable checkpoint cleans the mixed transcript with the saved settings", async () => {
+    unverifiableCheckpointWithNothingRetranscribed();
+    jest.mocked(cleanupWithSavedSettings).mockResolvedValue({
+      finalText: "Cleaned mixed words.",
+      cleanup: "acknowledged",
+    });
+
+    await runMixedFallback();
+
+    expect(cleanupWithSavedSettings).toHaveBeenCalledWith(
+      expect.objectContaining({ missing: [{}] }),
+      "Mixed words.",
+      signal,
+    );
+    expect(cleanupWithCurrentSettings).not.toHaveBeenCalled();
+    expect(jest.mocked(storeRetryTranscript).mock.calls[0][1].text).toBe(
+      "Cleaned mixed words.",
+    );
+    expect(jest.mocked(ensureMeetingNotes).mock.calls[0][0]).toMatchObject({
+      finalTranscript: "Cleaned mixed words.",
+    });
+  });
+
+  test("without a readable checkpoint the mixed transcript is cleaned with current settings", async () => {
+    jest
+      .mocked(readRecoveryContent)
+      .mockRejectedValue(new InvalidRecoveryContent("corrupt"));
+    jest
+      .mocked(cleanupWithCurrentSettings)
+      .mockResolvedValue("Currently cleaned words.");
+
+    await runMixedFallback();
+
+    expect(cleanupWithSavedSettings).not.toHaveBeenCalled();
+    expect(cleanupWithCurrentSettings).toHaveBeenCalledWith(
+      expect.objectContaining({ meetingId: "meeting-1" }),
+      "Mixed words.",
+      signal,
+    );
+    expect(jest.mocked(ensureMeetingNotes).mock.calls[0][0]).toMatchObject({
+      finalTranscript: "Currently cleaned words.",
+    });
+  });
+
+  test("saved cleanup inputs that cannot be used fall back to current settings", async () => {
+    jest
+      .mocked(retranscribeOmittedRanges)
+      .mockRejectedValue(new TranscriptOverlapUnknown("overlap"));
+    jest
+      .mocked(cleanupWithSavedSettings)
+      .mockRejectedValue(
+        new InvalidRecoveryContent("Original cleanup inputs unavailable"),
+      );
+    jest
+      .mocked(cleanupWithCurrentSettings)
+      .mockResolvedValue("Currently cleaned words.");
+
+    const result = await runMixedFallback();
+
+    expect(cleanupWithCurrentSettings).toHaveBeenCalled();
+    expect(result).toMatchObject({
+      kind: "succeeded",
+      transcriptSource: "mixed",
+    });
+  });
 });

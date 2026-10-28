@@ -24,13 +24,17 @@ import {
   ensureMeetingNotes,
   ensureMeetingSummaries,
 } from "./meetingNotesService";
-import { buildCurrentNotesInput } from "./processingRetryNotesInput";
+import {
+  buildCurrentNotesInput,
+  cleanupWithCurrentSettings,
+} from "./processingRetryNotesInput";
 import {
   retryTranscriptKey,
   storeRetryTranscript,
   transcribeMixedRecording,
   UNATTRIBUTED_TRANSCRIPT_NOTICE,
 } from "./processingRetryTranscript";
+import { cleanupWithSavedSettings } from "./recoveryTranscriptionProcessing";
 import { fetchJsonFromS3 } from "./storageService";
 import type { TranscriptionContentInput } from "./transcriptionService";
 
@@ -128,7 +132,34 @@ async function freshTranscript(
     transcribeMixedRecording(audioS3Key, input.signal),
   );
   if (mixed === "source_missing") throw new RetryFailure("source_missing");
-  return { text: mixed.text, source: "mixed" };
+  return {
+    text: await cleanupMixedTranscript(input, content, mixed.text),
+    source: "mixed",
+  };
+}
+
+/**
+ * Cleanup is part of normal transcript production, so a retry keeps it. It
+ * uses the saved settings when the checkpoint holds usable ones.
+ */
+async function cleanupMixedTranscript(
+  input: RunInput,
+  content: RecoveryContent | undefined,
+  text: string,
+): Promise<string> {
+  if (content) {
+    try {
+      const saved = await input.effect(() =>
+        cleanupWithSavedSettings(content, text, input.signal),
+      );
+      return saved.finalText;
+    } catch (error) {
+      if (!(error instanceof InvalidRecoveryContent)) throw error;
+    }
+  }
+  return input.effect(() =>
+    cleanupWithCurrentSettings(input.history, text, input.signal),
+  );
 }
 
 /** A previous claimant of this job may already have stored its transcript. */

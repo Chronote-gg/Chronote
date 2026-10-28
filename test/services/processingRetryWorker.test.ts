@@ -14,6 +14,7 @@ import { createMockProcessingRetryRepository } from "../../src/repositories/proc
 import { captureEvent } from "../../src/services/analyticsService";
 import { createMeetingUpdateService } from "../../src/services/meetingUpdateService";
 import { getRuntimeAdmissionContext } from "../../src/services/runtimeLifecycleService";
+import { runNotionMutation } from "../../src/services/notionOperationLifetime";
 import {
   beginRuntimeWorkClaim,
   fenceRuntimeWorkAdmissions,
@@ -61,6 +62,7 @@ const succeeded: ProcessingRetryRun = {
 };
 
 let histories: Map<string, MeetingHistory[]>;
+let rows: ReturnType<typeof createMockMeetingUpdateDeliveryRepository>;
 let works: (RetryWork & { acknowledgeTerminal: jest.Mock })[];
 let deps: ProcessingRetryWorkerDependencies & {
   run: jest.Mock;
@@ -108,7 +110,7 @@ function stubWork() {
 beforeEach(() => {
   histories = new Map();
   works = [];
-  const rows = createMockMeetingUpdateDeliveryRepository(histories, () => true);
+  rows = createMockMeetingUpdateDeliveryRepository(histories, () => true);
   deps = {
     repository: createMockProcessingRetryRepository(histories, () => true),
     rows,
@@ -129,6 +131,18 @@ beforeEach(() => {
   jest.mocked(captureEvent).mockClear();
 });
 afterEach(() => jest.restoreAllMocks());
+
+function expectFailedUnknownWithAlarm(error: jest.SpyInstance) {
+  expect(stored().processingRetry).toMatchObject({
+    status: "failed",
+    failureReason: "unknown",
+    countedAttempts: 1,
+  });
+  expect(error).toHaveBeenCalledWith(
+    PROCESSING_RETRY_WORKER_FAILED_LOG,
+    expect.anything(),
+  );
+}
 
 async function pollOnce() {
   const worker = createProcessingRetryWorker(deps);
@@ -326,15 +340,7 @@ it("an unexpected error fails the job as unknown and logs the alarm line", async
   seed();
   deps.run.mockRejectedValue(new Error("provider exploded"));
   await pollOnce();
-  expect(stored().processingRetry).toMatchObject({
-    status: "failed",
-    failureReason: "unknown",
-    countedAttempts: 1,
-  });
-  expect(error).toHaveBeenCalledWith(
-    PROCESSING_RETRY_WORKER_FAILED_LOG,
-    expect.anything(),
-  );
+  expectFailedUnknownWithAlarm(error);
 });
 
 it("a fenced run leaves the job running for its lease to lapse", async () => {
@@ -366,15 +372,7 @@ it("a save that keeps conflicting under a held claim fails unknown after three a
   deps.save.mockResolvedValue({ kind: "conflict" });
   await pollOnce();
   expect(deps.save).toHaveBeenCalledTimes(3);
-  expect(stored().processingRetry).toMatchObject({
-    status: "failed",
-    failureReason: "unknown",
-    countedAttempts: 1,
-  });
-  expect(error).toHaveBeenCalledWith(
-    PROCESSING_RETRY_WORKER_FAILED_LOG,
-    expect.anything(),
-  );
+  expectFailedUnknownWithAlarm(error);
 });
 
 it("a throwing claim is logged and the key skipped", async () => {
@@ -451,6 +449,121 @@ it("a save that commits and then throws still counts as saved", async () => {
       properties: expect.objectContaining({ outcome: "succeeded" }),
     }),
   );
+});
+
+const generatedName: ProcessingRetryRun = {
+  ...succeeded,
+  changes: { ...succeeded.changes, meetingName: "Generated name" },
+};
+const renameService = () =>
+  createMeetingUpdateService({
+    repository: rows,
+    ready: async () => {},
+    syncNotes: jest.fn(),
+  });
+const userRename = () =>
+  renameService()({
+    key,
+    mutation: { kind: "rename", meetingName: "User name" },
+    actor: { editedBy: REQUESTER },
+  });
+
+function expectUserNameKeptWithRegeneratedNotes() {
+  expect(stored()).toMatchObject({
+    meetingName: "User name",
+    notes: "Regenerated",
+    processingRetry: { status: "succeeded" },
+  });
+}
+
+it("names a meeting that is still unnamed when the result is saved", async () => {
+  seed({ meetingName: undefined });
+  deps.run.mockResolvedValue(generatedName);
+  await pollOnce();
+  expect(stored()).toMatchObject({
+    meetingName: "Generated name",
+    notes: "Regenerated",
+  });
+});
+
+it("a rename during the run keeps the user's name and still saves the regenerated notes", async () => {
+  seed({ meetingName: undefined });
+  deps.run.mockImplementation(async () => {
+    await userRename();
+    return generatedName;
+  });
+  await pollOnce();
+  expectUserNameKeptWithRegeneratedNotes();
+});
+
+it("a rename that lands between the save's read and its write cannot be overwritten", async () => {
+  seed({ meetingName: undefined });
+  deps.run.mockResolvedValue(generatedName);
+  let raced = false;
+  deps.save.mockImplementation(
+    createMeetingUpdateService({
+      repository: {
+        ...rows,
+        async updateContentAndDelivery(input, signal) {
+          if (!raced) {
+            raced = true;
+            await userRename();
+          }
+          return rows.updateContentAndDelivery(input, signal);
+        },
+      },
+      ready: async () => {},
+      syncNotes: jest.fn(),
+    }),
+  );
+  await pollOnce();
+  expect(deps.save).toHaveBeenCalledTimes(2);
+  expectUserNameKeptWithRegeneratedNotes();
+});
+
+describe("Notion auto-sync after the save", () => {
+  const saveWithSync = (sync: (signal?: AbortSignal) => Promise<unknown>) =>
+    deps.save.mockImplementation(
+      createMeetingUpdateService({
+        repository: rows,
+        ready: async () => {},
+        syncNotes: jest.fn(async (_meeting, signal) => {
+          await sync(signal);
+        }),
+      }),
+    );
+
+  it("runs under the job's work, so the mutation is admitted", async () => {
+    const error = jest.spyOn(console, "error").mockImplementation(() => {});
+    seed();
+    const exported = jest.fn(async () => "exported");
+    saveWithSync((signal) => runNotionMutation(signal, exported));
+    await pollOnce();
+    expect(deps.save.mock.calls[0][0].signal).toBe(works[0].signal);
+    expect(exported).toHaveBeenCalled();
+    expect(stored().processingRetry).toMatchObject({ status: "succeeded" });
+    expect(works[0].acknowledgeTerminal).toHaveBeenCalled();
+    expect(error).not.toHaveBeenCalled();
+  });
+
+  it("an uncertain Notion mutation leaves the job succeeded and does not page", async () => {
+    const error = jest.spyOn(console, "error").mockImplementation(() => {});
+    seed();
+    saveWithSync((signal) =>
+      runNotionMutation(signal, async () => {
+        throw new Error("socket hang up");
+      }),
+    );
+    await pollOnce();
+    expect(stored()).toMatchObject({
+      notes: "Regenerated",
+      processingRetry: { status: "succeeded" },
+    });
+    expect(error).not.toHaveBeenCalledWith(
+      PROCESSING_RETRY_WORKER_FAILED_LOG,
+      expect.anything(),
+    );
+  });
 });
 
 describe("with real runtime work admission", () => {

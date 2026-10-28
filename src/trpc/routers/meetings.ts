@@ -75,7 +75,6 @@ import type {
 } from "../../types/db";
 import type { MeetingEvent } from "../../types/meetingTimeline";
 
-import type { Participant } from "../../types/participants";
 import type { TranscriptPayload } from "../../types/transcript";
 import { MEETING_STATUS } from "../../types/meetingLifecycle";
 
@@ -90,10 +89,9 @@ import {
   buildImportedMeetingNotes,
   normalizeImportedNotes,
 } from "../../utils/importedNotes";
-import { resolveAttendeeDisplayName } from "../../utils/participants";
+import { resolveMeetingAttendees } from "../../services/meetingSharePayloadService";
 import {
   buildMeetingMentionReplacer,
-  buildParticipantMap,
   createMeetingMentionReplacer,
   resolveGuildRoleNames,
   resolveMentionsInTimelineEvents,
@@ -109,8 +107,8 @@ import {
   ensurePortalUserCanEditMeetingNotes,
   ensurePortalUserCanManageMeetingChannel,
   parseChannelIdTimestamp,
-  resolveAttendeeAccessEnabled,
 } from "./meetingEditPermissions";
+import { resolveAttendeeAccessEnabled } from "../../services/attendeeAccessSetting";
 import {
   resolveProcessingRetryView,
   retryProcessing,
@@ -125,31 +123,6 @@ import {
   resolveMeetingArtifactAccess,
   resolveServerMeetingArtifactAccess,
 } from "../../services/meetingArtifactAccessService";
-
-const resolveParticipantLabel = (participant: Participant) =>
-  participant.serverNickname ||
-  participant.displayName ||
-  participant.username ||
-  participant.tag ||
-  "Unknown";
-
-const resolveMeetingAttendees = (history: {
-  participants?: Participant[];
-  attendees?: string[];
-}) => {
-  const participants = buildParticipantMap(history.participants);
-  if (history.attendees?.length) {
-    return history.attendees.map((attendee) =>
-      resolveAttendeeDisplayName(attendee, participants),
-    );
-  }
-  if (history.participants?.length) {
-    return history.participants.map((participant) =>
-      resolveParticipantLabel(participant),
-    );
-  }
-  return [];
-};
 
 const NOTES_CORRECTION_DIFF_LINE_LIMIT = 600;
 const NOTES_CORRECTION_DIFF_CHAR_LIMIT = 12_000;

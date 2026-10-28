@@ -1,16 +1,13 @@
+import { resolveAttendeeAccessEnabled } from "../../services/attendeeAccessSetting";
 import { TRPCError } from "@trpc/server";
-import { CONFIG_KEYS } from "../../config/keys";
 import { ensureUserCanManageChannel } from "../../services/discordPermissionsService";
 import type { GuildSessionCache } from "../../services/guildAccessService";
+import { getMeetingHistoryService } from "../../services/meetingHistoryService";
 import {
   checkUserMeetingAccess,
   resolvePersonalMeetingSharedGuildIds,
   type MeetingAccessMissingPermission,
 } from "../../services/meetingAccessService";
-import {
-  getSnapshotBoolean,
-  resolveConfigSnapshot,
-} from "../../services/unifiedConfigService";
 import type { MeetingHistory } from "../../types/db";
 import {
   isPersonalMeeting,
@@ -32,20 +29,15 @@ export const parseChannelIdTimestamp = (channelIdTimestamp: string) => {
   };
 };
 
-export const resolveAttendeeAccessEnabled = async (guildId: string) => {
-  try {
-    const snapshot = await resolveConfigSnapshot({ guildId });
-    return getSnapshotBoolean(
-      snapshot,
-      CONFIG_KEYS.meetings.attendeeAccessEnabled,
-    );
-  } catch (error) {
-    console.warn("Failed to resolve attendee access setting", {
-      guildId,
-      error,
-    });
-    return true;
+export const getMeetingOrThrow = async (
+  guildId: string,
+  channelIdTimestamp: string,
+): Promise<MeetingHistory> => {
+  const history = await getMeetingHistoryService(guildId, channelIdTimestamp);
+  if (!history) {
+    throw new TRPCError({ code: "NOT_FOUND", message: "Meeting not found" });
   }
+  return history;
 };
 
 const formatMeetingAccessErrorMessage = (options: {
