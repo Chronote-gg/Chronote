@@ -251,7 +251,10 @@ function assertObjectEncryption(expected, actual) {
     expected.encryption &&
     (actual.ServerSideEncryption !== expected.encryption.serverSideEncryption ||
       actual.SSEKMSKeyId !== expected.encryption.sseKmsKeyId ||
-      actual.BucketKeyEnabled !== expected.encryption.bucketKeyEnabled)
+      (expected.encryption.bucketKeyEnabled === false
+        ? actual.BucketKeyEnabled !== undefined &&
+          actual.BucketKeyEnabled !== false
+        : actual.BucketKeyEnabled !== expected.encryption.bucketKeyEnabled))
   )
     refuse();
 }

@@ -32,15 +32,28 @@ function fixture() {
   return { ...f, identity, now: () => 1000 };
 }
 
-test("verification capture has its own real content-addressed namespace", async () => {
-  const f = fixture();
-  const store = createVerificationCapture({ ...f, purpose: "payload" });
-  const ref = await store.capture({ synthetic: true });
-  expect(ref.namespace).toBe(
-    `terraform/production/verification/42/1/${"a".repeat(40)}/payload`,
-  );
-  expect(await store.readCapture(ref)).toEqual({ synthetic: true });
-});
+test.each([false, undefined])(
+  "verification capture reads native bucket-key metadata %p",
+  async (bucketKey) => {
+    const f = fixture();
+    const send = f.client.send;
+    f.client.send = async (command) => {
+      const result = await send(command);
+      if (
+        command.constructor.name === "GetObjectCommand" &&
+        bucketKey === undefined
+      )
+        delete result.BucketKeyEnabled;
+      return result;
+    };
+    const store = createVerificationCapture({ ...f, purpose: "payload" });
+    const ref = await store.capture({ synthetic: true });
+    expect(ref.namespace).toBe(
+      `terraform/production/verification/42/1/${"a".repeat(40)}/payload`,
+    );
+    expect(await store.readCapture(ref)).toEqual({ synthetic: true });
+  },
+);
 
 test.each(["runId", "sourceSha", "purpose"])(
   "verification constructor rejects invalid %s before transport",
