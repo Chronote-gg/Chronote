@@ -1,12 +1,53 @@
 # First production introduction
 
-This document describes the separate staged fence-and-drain protocol. The selected A interruption and test-before-reopen contract is documented in [Production interruption contract](production-interruption-contract.md). Their manifests, receipts and execution authority are not interchangeable.
+The first production introduction uses the **cold cutover** below ([decision](adr-20261028-production-cold-cutover.md)). The staged fence-and-drain protocol described after it remains in source but is blocked at `Post-bind human authority unavailable; preserve state` and is not the selected path. The selected A interruption and test-before-reopen contract is documented separately in [Production interruption contract](production-interruption-contract.md). Their manifests, receipts and execution authority are not interchangeable.
+
+Use [recording handoff and recovery](deployment-handoff.md) for ordinary compatible deployments after the cutover. Use [Sandbox bootstrap tooling](sandbox-bootstrap.md) only for its literal Sandbox scope.
+
+## Cold cutover
+
+`Production Cold Cutover` (`.github/workflows/production-cutover.yml`) runs on `master`, attempt 1, in the `production` environment and the `chronote-deploy-production` concurrency group, so it never overlaps an ordinary deploy. Inputs:
+
+- `mode`: `inspect` (default, read-only session) or `cutover`.
+- `operation_id`: a fresh UUID for `cutover`. Reuse it only to resume an interrupted cutover.
+- `environment`: `production`, or `sandbox` for a rehearsal.
+
+`inspect` reports service counts, in-flight work, Control rows, listener form and spare-group targets, plus `readyForCutover`. Run it to pick a quiet window.
+
+`cutover` does this, in order:
+
+1. Builds and pushes the image of the run commit. The script then verifies in code that BASIC natively approved this exact run (`verifyRunApproval`) and that the AWS session is the exact deploy role session.
+2. Refuses unless the Control table is empty, the listener is in the legacy single-forward or weighted 100/0 form, the spare group is empty and the legacy service is steady at one task.
+3. Registers the candidate from the latest family revision with the run image, `DEPLOYMENT_CANDIDATE_ID` set to the operation id, `stopTimeout` 120, `node dist/index.js`, and the four `STRIPE_*` flags `false` (an enabled flag refuses).
+4. **Pre-stop check.** Any `ActiveMeeting` row, any unexpired non-terminal `MeetingControlCommand`, or any upload job or segment that is not complete, processed or failed defers the run: it exits cleanly with a warning and only the candidate definition exists. A scan failure refuses.
+5. Sets desired count 0 and waits up to 15 minutes for the legacy task and both groups' targets to clear.
+6. **Post-stop recheck.** The same counts, plus `MeetingHistory` row growth since step 4.
+7. Switches the listener to the weighted 100/0 form if needed, initializes Control, launches the candidate, waits up to 15 minutes for readiness and promotes it, then confirms it is serving. No `ENV/INTRODUCTION` hold is written, so the ordinary deploy guard allows the next deploy.
+
+Phase lines in the log (`stop_submitted`, `legacy_stopped`, `post_stop_recheck`, `control_initialized`, `candidate_launched`, `candidate_promoted`) show how far a run got.
+
+### The stop window
+
+The legacy task keeps its Discord gateway until it stops, so a meeting can start after the pre-stop check. The window is the ALB deregistration delay plus the task stop timeout, not seconds. The recheck catches a lease left behind and a meeting that started and finished (history growth). Either way the run still restores service with the candidate, then exits 2 with a `Work appeared during the stop window` error so the affected meeting gets reviewed. A service that was already stopped when the run began always reports an incident because there is no pre-stop count.
+
+### Failure and resume
+
+Never relaunch legacy, delete rows, force-expire leases or clear receipts. After a refusal, run `inspect`. A run that stopped before Control initialization can be redispatched with the same operation id from the same commit, or with a new id. Once Control exists, resume only with the same operation id within 30 minutes of initialization; the bootstrap coordinator lease expires after that and recovery becomes a separately reviewed operation. A submitted but unacknowledged launch is never replayed.
+
+### Prerequisites
+
+- The production deploy role (`PRODUCTION_BACKEND_DEPLOY_ROLE_ARN`) with the routing policy attached, from Terraform.
+- Production environment variables `DEPLOYMENT_LISTENER_ARN`, `DEPLOYMENT_TARGET_GROUP_A` and `DEPLOYMENT_TARGET_GROUP_B`. Ordinary deploys need them too.
+- Environment protection that `verifyRunApproval` accepts: BASIC as the single required reviewer, no admin bypass, `master` as the only deployment branch and no custom protection rules.
+- A Sandbox rehearsal needs Sandbox back in a pre-cutover state (empty Control table, legacy or weighted listener, one steady task), which is a separate approved reset.
+
+## Staged fence-and-drain protocol (blocked)
 
 This procedure covers the one-time transition from the legacy production runtime to the protected handoff protocol. BASIC approved preparation and a brief maintenance window after existing work finishes. Production execution still needs its own exact packet and approvals. Recordings must finish, valid uploads must survive, and unfinished work must remain recoverable.
 
 **Execution is BLOCKED as of October 22, 2026.** The source-staged workflow binds a proposal and validates its private authorization envelope, then refuses at `Post-bind human authority unavailable; preserve state`. Both introduction jobs use read-only AWS sessions. The introduction CLI also refuses consequential phases without a trusted collector. Adding the collector alone must not enable execution.
 
-Use [recording handoff and recovery](deployment-handoff.md) for ordinary compatible deployments. Use [Sandbox bootstrap tooling](sandbox-bootstrap.md) only for its literal Sandbox scope. A Sandbox manifest, `testOnly` receipt or standing Sandbox deployment approval cannot authorize this procedure.
+A Sandbox manifest, `testOnly` receipt or standing Sandbox deployment approval cannot authorize this procedure.
 
 ## What users may experience
 
@@ -104,7 +145,8 @@ Historical H7/R6 observations in the [handoff guide](deployment-handoff.md#evide
 
 ## References
 
-- [Introduction decision](adr-20261020-production-legacy-introduction.md)
+- [Cold cutover decision](adr-20261028-production-cold-cutover.md)
+- [Staged introduction decision](adr-20261020-production-legacy-introduction.md)
 - [Production role and permission limits](../_infra/README.md#production-backend-deployment-identity)
 - [Ordinary handoff and recording recovery](deployment-handoff.md)
 - [Separate Sandbox bootstrap](sandbox-bootstrap.md)
