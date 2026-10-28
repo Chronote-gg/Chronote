@@ -4,6 +4,9 @@ import { describe, expect, jest, test } from "@jest/globals";
 import type { MeetingData } from "../../src/types/meeting-data";
 import type { AudioFileData } from "../../src/types/audio";
 import { runTranscriptionFinalPass } from "../../src/services/transcriptionFinalPassService";
+import { TRANSCRIPTION_FINAL_PASS_CHUNK_SECONDS } from "../../src/constants";
+
+const CHUNK_BOUNDARY_MS = TRANSCRIPTION_FINAL_PASS_CHUNK_SECONDS * 1000;
 
 const buildAudioFile = (input: {
   userId: string;
@@ -58,7 +61,7 @@ const buildMeeting = (): MeetingData => {
 const buildLongMeeting = (): MeetingData => {
   const startTime = new Date("2025-01-01T00:00:00.000Z");
   const firstTimestamp = startTime.getTime() + 1_000;
-  const secondTimestamp = startTime.getTime() + 901_000;
+  const secondTimestamp = startTime.getTime() + CHUNK_BOUNDARY_MS + 1_000;
 
   return {
     meetingId: "meeting-long",
@@ -95,8 +98,8 @@ const buildLongMeeting = (): MeetingData => {
 
 const buildBoundaryMeeting = (): MeetingData => {
   const startTime = new Date("2025-01-01T00:00:00.000Z");
-  const nearBoundaryTimestamp = startTime.getTime() + 899_000;
-  const secondChunkTimestamp = startTime.getTime() + 920_000;
+  const nearBoundaryTimestamp = startTime.getTime() + CHUNK_BOUNDARY_MS - 1_000;
+  const secondChunkTimestamp = startTime.getTime() + CHUNK_BOUNDARY_MS + 20_000;
 
   return {
     meetingId: "meeting-boundary",
