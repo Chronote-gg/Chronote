@@ -64,6 +64,12 @@ If you see "Some audio could not be transcribed. These notes may be incomplete,"
 
 A processing-failure message is different from an empty recording. Any existing upload retries run before Chronote reports a terminal upload failure.
 
+#### Retry processing
+
+When transcription, notes or the summary failed for a server meeting, the meeting's owner (or someone who can manage the channel, for auto-recorded meetings) can choose **Retry processing** on the meeting page. Chronote re-runs only the steps that failed, then updates the meeting and its existing Discord posts. If the notes were already generated, you confirm replacing them first. Notes someone edited are never replaced. Each meeting allows three attempts. Personal uploads retry on their own and do not show this option.
+
+A retry may use the server's current settings when the settings from the original recording are not available. When it does, the meeting page says so.
+
 ## A saved desktop draft is paused
 
 "This draft is preserved and paused. Recovery is not available yet" means that draft cannot currently be submitted. Its saved files remain on your computer. In an updated desktop client, **Retry upload** is disabled and **Open folder** remains available. **Delete** removes the local files only when you choose it.

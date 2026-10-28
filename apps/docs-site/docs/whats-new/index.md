@@ -7,6 +7,10 @@ Notable product changes for Chronote users. For the full changelog, see the [Git
 
 ## 2026
 
+### Retry meetings that failed to process (October 28)
+
+- When a provider outage or error stops transcription, notes or the summary, the meeting's owner can retry from the meeting page. Only the failed steps run again, and existing Discord posts are updated in place. See [Common issues](/troubleshooting/common-issues).
+
 ### Uploads keep their spoken language (October 28)
 
 - Personal uploads and Chronote Desktop recordings are no longer transcribed as English. Chronote detects the spoken language, so meetings in other languages produce complete transcripts in that language. See [Personal media uploads](/features/#personal-media-uploads).

@@ -1,6 +1,6 @@
 # ADR-20261028: Meeting Processing Retry
 
-Status: Proposed
+Status: Accepted
 Date: 2026-10-28
 Owners: Recording processing and meeting delivery
 
@@ -61,3 +61,23 @@ API-runtime worker.
 
 The design is in
 `docs/superpowers/specs/2026-10-28-meeting-processing-retry-design.md`.
+
+Decisions settled during implementation:
+
+- The checkpoint does not record why a span was omitted, so a retry
+  re-transcribes all omitted spans and accepts gate skips.
+- The row cannot tell an ASR `partial` from a capture `partial`, so the first
+  retry finds out. A checkpoint whose failed ranges come back empty fails
+  `nothing_to_retry`, and that or a prior successful retry ends eligibility
+  for the `partial`.
+- Retries never replay the finalized-audio pass, which would rewrite kept
+  entries, but keep transcription cleanup.
+- The recovery notice is only fed into prompts for interrupted captures.
+- Users who cannot edit the meeting's notes see no retry control or job state.
+- Each claim carries a worker-generated `claimId`, so a stale claimant cannot
+  save over a newer claim.
+- Availability (flag enabled and index ACTIVE) is cached for 60 seconds.
+- Operator runs flush analytics and exit 1 when any meeting was not queued.
+- The `ProcessingRetryWorkerFailed` alarm emails through the critical alerts
+  topic when the worker itself fails. Individual job failures are not alarmed;
+  they are recorded on the row and shown to the owner.

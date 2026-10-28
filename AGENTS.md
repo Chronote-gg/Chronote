@@ -60,6 +60,8 @@
 - Context management: `commands/context.ts` writes/reads ServerContext and ChannelContext.
 - Meeting history persistence: `commands/saveMeetingHistory.ts`, `db.ts` helpers.
   - Optional `processing` metadata records transcription, notes, and summary outcomes independently of lifecycle status. Missing outcomes are unknown. Never infer transcription failure from an unrelated upload error or insert processing notices into stored notes.
+- Processing retry: `services/processingRetryEligibility.ts` decides eligibility for the portal, `meetings.retryProcessing` and `scripts/retry-meeting-processing.ts`; jobs live on the MeetingHistory row (`processingRetry`, `ProcessingRetryDueIndex`), run in the API-runtime worker under the `recovery` work domain, and save through `updateMeeting`'s `regeneration` mutation. Gated by `meetings.processingRetry.enabled`, which stays off until the index is ACTIVE. See `docs/adr-20261028-meeting-processing-retry.md`.
+  - Users who cannot edit the meeting's notes see no retry control or job state. Retries never replay the finalized-audio pass but keep cleanup, and never replace notes a person edited. Operator runs exit 1 when any meeting was not queued.
 - Web server: `webserver.ts` (health check, optional Discord OAuth scaffolding).
 
 ## Configuration & env
