@@ -1,4 +1,5 @@
 import { seedUnusedOfferCoverage } from "./historyWriterBoundary";
+import { basicMonthlyTestPrice } from "./stripePrices";
 import { config } from "../../src/services/configService";
 import { getMockStore } from "../../src/repositories/mockStore";
 import type { StripeClient } from "../../src/types/stripe";
@@ -12,18 +13,7 @@ export const introSettings = {
 };
 export function introOfferStripe() {
   seedUnusedOfferCoverage();
-  const price = {
-    id: "price_basic",
-    active: true,
-    livemode: false,
-    currency: "usd",
-    unit_amount: 1000,
-    lookup_key: config.stripe.lookupKeys.basicMonthly,
-    billing_scheme: "per_unit",
-    type: "recurring",
-    recurring: { interval: "month", interval_count: 1, usage_type: "licensed" },
-    product: "prod_basic",
-  };
+  const price = basicMonthlyTestPrice();
   const coupon = {
     id: "coupon_intro",
     valid: true,
