@@ -7,45 +7,16 @@ import {
   type ProcessingRetryJob,
 } from "../../src/types/meetingProcessingRetry";
 import type { MeetingUpdateKey } from "../../src/types/meetingUpdateDelivery";
-import { history, key, now } from "../types/meetingUpdateDelivery.fixture";
+import { key, now } from "../types/meetingUpdateDelivery.fixture";
 import { authority } from "./meetingUpdateDeliveryContract";
-
-const iso = "2026-10-28T12:00:00.000Z";
-const failedNotes = {
-  transcription: "ready",
-  notes: "failed",
-  summary: "skipped",
-} as const;
-const queuedJob: ProcessingRetryJob = {
-  jobId: "job-1",
-  status: "queued",
-  stages: ["notes", "summary"],
-  requestedBy: "111111111111111111",
-  requestedAt: iso,
-  expectedNotesVersion: 1,
-  replaceNotes: false,
-  countedAttempts: 0,
-  settingsSource: "current",
-  transcriptSource: "existing",
-  updatedAt: iso,
-};
-const failedRow = (): MeetingHistory => ({
-  ...history(),
-  contentRevision: 3,
-  processing: failedNotes,
-});
-const expectedOf = (row: MeetingHistory) => ({
-  processing: row.processing,
-  notesVersion: row.notesVersion,
-  processingRetry: row.processingRetry,
-});
-const queuedRow = (patch: Partial<MeetingHistory> = {}): MeetingHistory => ({
-  ...failedRow(),
-  processingRetry: queuedJob,
-  processingRetryQueue: PROCESSING_RETRY_QUEUE,
-  processingRetryDueAt: now,
-  ...patch,
-});
+import {
+  expectedOf,
+  failedJob,
+  failedNotes,
+  failedRow,
+  queuedJob,
+  queuedRow,
+} from "./processingRetryRepository.fixture";
 
 let histories: Map<string, MeetingHistory[]>;
 let allowed: boolean;
@@ -291,16 +262,6 @@ describe("renew and fail", () => {
       expect(after[field]).toEqual(before[field]);
   });
 });
-
-function failedJob(running: ProcessingRetryJob): ProcessingRetryJob {
-  return {
-    ...running,
-    status: "failed",
-    failureReason: "stage_failed",
-    countedAttempts: running.countedAttempts + 1,
-    claim: undefined,
-  };
-}
 
 const other = (suffix: string, patch: Partial<MeetingHistory>) => ({
   ...queuedRow(),

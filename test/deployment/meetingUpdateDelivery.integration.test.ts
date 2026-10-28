@@ -9,7 +9,7 @@ import {
   UpdateItemCommand,
   TransactWriteItemsCommand,
 } from "@aws-sdk/client-dynamodb";
-import { marshall, unmarshall } from "@aws-sdk/util-dynamodb";
+import { marshall } from "@aws-sdk/util-dynamodb";
 import type { MeetingHistory } from "../../src/types/db";
 import {
   deliveryContract,
@@ -37,26 +37,9 @@ import {
 } from "../types/meetingUpdateDelivery.fixture";
 import { control, runtime } from "./controlFixtures";
 
-const { tables, client, repository, put, createTestTable, dispose } =
+const { tables, client, repository, put, createTables, read, admit, dispose } =
   meetingUpdateDynamoFixture("meeting-updates");
-async function read(): Promise<MeetingHistory | undefined> {
-  const result = await client.send(
-    new GetItemCommand({
-      TableName: tables.meetingHistory,
-      Key: marshall(key),
-      ConsistentRead: true,
-    }),
-  );
-  return result.Item ? (unmarshall(result.Item) as MeetingHistory) : undefined;
-}
-beforeAll(async () => {
-  await createTestTable(
-    tables.meetingHistory,
-    ["guildId", "channelId_timestamp"],
-    true,
-  );
-  await createTestTable(tables.deploymentControl, ["pk", "sk"]);
-});
+beforeAll(createTables);
 
 it.each([false, true])(
   "maintenance blocks actual new delivery claim including retained takeover=%s",
@@ -161,27 +144,7 @@ describe("real Dynamo atomic persistence", () => {
       await put(tables.meetingHistory, row);
     },
     read,
-    async admit(allowed) {
-      await put(tables.deploymentControl, {
-        ...control,
-        servingMembers: allowed ? control.servingMembers : {},
-      });
-      const row = runtime("old");
-      await put(tables.deploymentControl, {
-        ...row,
-        heartbeatAt: now,
-        readiness: {
-          ...row.readiness,
-          provenAt: now - 1,
-          expiresAt: now + 200,
-        },
-        protection: {
-          ...row.protection!,
-          provenAt: now - 1,
-          expiresAt: now + 200,
-        },
-      });
-    },
+    admit,
   });
   deliveryContract(harness);
   regenerationContract(harness);
