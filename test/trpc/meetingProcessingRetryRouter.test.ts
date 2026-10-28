@@ -2,6 +2,7 @@
 import { beforeEach, describe, expect, test, jest } from "@jest/globals";
 import "../deployment/coldNetworkGuard.cjs";
 import type { MeetingHistory } from "../../src/types/db";
+import type { ProcessingRetryJob } from "../../src/types/meetingProcessingRetry";
 import { getMockUser } from "../../src/repositories/mockStore";
 import { getMeetingHistoryService } from "../../src/services/meetingHistoryService";
 import { checkUserMeetingAccess } from "../../src/services/meetingAccessService";
@@ -45,6 +46,22 @@ const failedNotes = (patch: Partial<MeetingHistory> = {}): MeetingHistory => ({
   ...patch,
 });
 const meeting = failedNotes();
+const retryJob = (
+  patch: Partial<ProcessingRetryJob> = {},
+): ProcessingRetryJob => ({
+  jobId: "job-1",
+  status: "queued",
+  stages: ["notes", "summary"],
+  requestedBy: user.id,
+  requestedAt: "2026-10-28T12:00:00.000Z",
+  expectedNotesVersion: 1,
+  replaceNotes: false,
+  countedAttempts: 0,
+  settingsSource: "current",
+  transcriptSource: "existing",
+  updatedAt: "2026-10-28T12:00:00.000Z",
+  ...patch,
+});
 const input = {
   serverId: meeting.guildId,
   meetingId: meeting.channelId_timestamp,
@@ -62,19 +79,7 @@ beforeEach(() => {
 
 describe("meetings.retryProcessing", () => {
   test("the meeting owner queues a retry with replaceNotes passed through", async () => {
-    const job = {
-      jobId: "job-1",
-      status: "queued" as const,
-      stages: ["notes" as const, "summary" as const],
-      requestedBy: user.id,
-      requestedAt: "2026-10-28T12:00:00.000Z",
-      expectedNotesVersion: 1,
-      replaceNotes: true,
-      countedAttempts: 0,
-      settingsSource: "current" as const,
-      transcriptSource: "existing" as const,
-      updatedAt: "2026-10-28T12:00:00.000Z",
-    };
+    const job = retryJob({ replaceNotes: true });
     jest.mocked(requestProcessingRetry).mockResolvedValue({
       kind: "queued",
       job,
@@ -233,5 +238,70 @@ describe("resolveProcessingRetryView", () => {
       "Unreadable processing retry state",
       expect.anything(),
     );
+  });
+
+  test.each([
+    ["an eligible meeting", {}],
+    ["a queued job", { processingRetry: retryJob() }],
+    [
+      "a failed job",
+      {
+        processingRetry: retryJob({
+          status: "failed",
+          failureReason: "stage_failed",
+          countedAttempts: 1,
+        }),
+      },
+    ],
+  ])("gives a non-editor no job fields for %s", async (_, patch) => {
+    const view = await viewFor(
+      failedNotes({ meetingCreatorId: otherUserId, ...patch }),
+    );
+    expect(view).toEqual({
+      eligible: false,
+      reason: "not_permitted",
+      requiresReplaceConfirm: false,
+      attemptsRemaining: 0,
+    });
+  });
+
+  test("hides a queued job from a non-editor even while retry is unavailable", async () => {
+    jest.mocked(isProcessingRetryAvailable).mockResolvedValue(false);
+    const view = await viewFor(
+      failedNotes({
+        meetingCreatorId: otherUserId,
+        processingRetry: retryJob(),
+      }),
+    );
+    expect(view.reason).toBe("not_permitted");
+    expect(view.status).toBeUndefined();
+  });
+
+  test("skips the permission check when nothing would be shown", async () => {
+    const view = await viewFor(
+      failedNotes({
+        meetingCreatorId: otherUserId,
+        processing: {
+          transcription: "ready",
+          notes: "generated",
+          summary: "generated",
+        },
+        notes: "Generated notes",
+      }),
+    );
+    expect(view.reason).toBe("nothing_failed");
+    expect(checkUserMeetingAccess).not.toHaveBeenCalled();
+  });
+
+  test("reports unavailable when the flag cannot be read", async () => {
+    const warn = jest.spyOn(console, "warn").mockImplementation(() => {});
+    jest
+      .mocked(isProcessingRetryAvailable)
+      .mockRejectedValue(new Error("config read failed"));
+    expect(await viewFor(meeting)).toMatchObject({
+      eligible: false,
+      reason: "unavailable",
+    });
+    expect(warn).toHaveBeenCalled();
   });
 });

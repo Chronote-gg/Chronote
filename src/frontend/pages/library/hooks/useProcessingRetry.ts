@@ -6,13 +6,18 @@ import type { MeetingProcessingRetryProps } from "../components/MeetingProcessin
 export function useProcessingRetry(
   serverId: string | null,
   detail: MeetingDetailInput | null,
+  invalidateMeetingLists: () => Promise<void>,
 ): MeetingProcessingRetryProps | undefined {
   const trpcUtils = trpc.useUtils();
   const mutation = trpc.meetings.retryProcessing.useMutation({
     onError: (error) => {
       notifications.show({ color: "red", message: error.message });
     },
-    onSettled: () => trpcUtils.meetings.detail.invalidate(),
+    onSettled: () =>
+      Promise.all([
+        trpcUtils.meetings.detail.invalidate(),
+        invalidateMeetingLists(),
+      ]),
   });
   const view = detail?.processingRetry;
   if (!serverId || !detail || !view) return undefined;

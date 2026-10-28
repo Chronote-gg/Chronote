@@ -13,9 +13,11 @@ let mockDetail: MeetingDetailInput;
 const mockDetailUtils = { invalidate: mockInvalidate };
 const mockRetryMutate = jest.fn();
 type RefetchInterval = (query: {
-  state: { data?: { meeting?: MeetingDetailInput } };
+  queryHash: string;
+  state: { data?: { meeting?: MeetingDetailInput }; dataUpdateCount: number };
 }) => number | false;
 let mockQueryOptions: { refetchInterval: RefetchInterval };
+let mockRetryOptions: { onSettled: () => Promise<unknown> };
 jest.mock("../../../services/trpc", () => ({
   trpc: {
     useUtils: () => ({ meetings: { detail: mockDetailUtils } }),
@@ -36,7 +38,10 @@ jest.mock("../../../services/trpc", () => ({
         },
       },
       retryProcessing: {
-        useMutation: () => ({ isPending: false, mutate: mockRetryMutate }),
+        useMutation: (options: { onSettled: () => Promise<unknown> }) => {
+          mockRetryOptions = options;
+          return { isPending: false, mutate: mockRetryMutate };
+        },
       },
     },
   },
@@ -151,14 +156,18 @@ test("terminal canonical readback overrides old unavailable display and keeps tr
   expect(hook.result.current.meeting?.transcriptAccessEnabled).toBe(false);
 });
 
-test("polls while a processing retry is active and wires the retry action", () => {
-  const view = {
-    eligible: true,
-    requiresReplaceConfirm: true,
-    attemptsRemaining: 3,
+const retryView = {
+  eligible: true,
+  requiresReplaceConfirm: true,
+  attemptsRemaining: 3,
+};
+const renderRetryDetail = () => {
+  mockDetail = {
+    ...mockDetail,
+    status: "complete",
+    processingRetry: retryView,
   };
-  mockDetail = { ...mockDetail, status: "complete", processingRetry: view };
-  const hook = renderHook(() =>
+  return renderHook(() =>
     useMeetingDetail({
       opened: true,
       selectedGuildId: "generated",
@@ -167,25 +176,47 @@ test("polls while a processing retry is active and wires the retry action", () =
       invalidateMeetingLists: mockListInvalidate,
     }),
   );
-  expect(hook.result.current.processingRetry?.view).toBe(view);
+};
+const retryIntervalFor = (
+  status?: "queued" | "running" | "failed",
+  dataUpdateCount = 1,
+) =>
+  mockQueryOptions.refetchInterval({
+    queryHash: "detail-generated",
+    state: {
+      dataUpdateCount,
+      data: {
+        meeting: { ...mockDetail, processingRetry: { ...retryView, status } },
+      },
+    },
+  });
+
+test("polls while a processing retry is active and wires the retry action", async () => {
+  const hook = renderRetryDetail();
+  expect(hook.result.current.processingRetry?.view).toBe(retryView);
   hook.result.current.processingRetry?.onRetry(true);
   expect(mockRetryMutate).toHaveBeenCalledWith({
     serverId: "generated",
     meetingId: mockDetail.id,
     replaceNotes: true,
   });
-  const intervalFor = (status?: "queued" | "running" | "failed") =>
-    mockQueryOptions.refetchInterval({
-      state: {
-        data: {
-          meeting: { ...mockDetail, processingRetry: { ...view, status } },
-        },
-      },
-    });
-  expect(intervalFor("queued")).toBe(5000);
-  expect(intervalFor("running")).toBe(5000);
-  expect(intervalFor("failed")).toBe(false);
-  expect(intervalFor()).toBe(false);
+  expect(retryIntervalFor("queued")).toBe(5000);
+  expect(retryIntervalFor("running")).toBe(5000);
+  expect(retryIntervalFor("failed")).toBe(false);
+  expect(retryIntervalFor()).toBe(false);
+  await mockRetryOptions.onSettled();
+  expect(mockInvalidate).toHaveBeenCalledTimes(1);
+  expect(mockListInvalidate).toHaveBeenCalledTimes(1);
+});
+
+test("stops polling an active retry after the bounded read budget", () => {
+  renderRetryDetail();
+  expect(retryIntervalFor("queued", 10)).toBe(5000);
+  expect(retryIntervalFor("running", 69)).toBe(5000);
+  expect(retryIntervalFor("running", 70)).toBe(false);
+  expect(retryIntervalFor("running", 75)).toBe(false);
+  expect(retryIntervalFor("failed", 76)).toBe(false);
+  expect(retryIntervalFor("queued", 77)).toBe(5000);
 });
 
 describe("completed delivery refresh", () => {

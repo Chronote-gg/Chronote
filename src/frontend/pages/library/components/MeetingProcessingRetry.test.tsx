@@ -134,7 +134,7 @@ describe("MeetingProcessingRetry", () => {
 
   it("shows the portal summary notice for a summary-only failure", () => {
     renderRetry({
-      view: { ...eligible, eligible: false, reason: "not_permitted" },
+      view: { ...eligible, eligible: false, reason: "unavailable" },
       processing: {
         transcription: "ready",
         notes: "generated",
@@ -147,5 +147,49 @@ describe("MeetingProcessingRetry", () => {
         "The summary could not be generated for this recording.",
       ),
     ).toBeInTheDocument();
+  });
+
+  it("renders nothing for not_permitted, even with a summary failure", () => {
+    const { container } = renderRetry({
+      view: {
+        eligible: false,
+        reason: "not_permitted",
+        requiresReplaceConfirm: false,
+        attemptsRemaining: 0,
+      },
+      processing: {
+        transcription: "ready",
+        notes: "generated",
+        summary: "failed",
+      },
+      notes: "Generated notes",
+    });
+    expect(container.querySelectorAll(":scope > :not(style)")).toHaveLength(0);
+  });
+
+  it("does not spin for a queued job while retry is unavailable", () => {
+    renderRetry({
+      view: {
+        ...eligible,
+        eligible: false,
+        reason: "unavailable",
+        status: "queued",
+      },
+    });
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+  });
+
+  it("keeps the attempts count with its word", () => {
+    renderRetry({
+      view: {
+        ...eligible,
+        status: "failed",
+        failureReason: "stage_failed",
+        attemptsRemaining: 2,
+      },
+    });
+    expect(screen.getByText(/attempts left/).textContent).toBe(
+      "The retry could not finish. Nothing was changed. 2\u00a0attempts left.",
+    );
   });
 });

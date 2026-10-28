@@ -65,6 +65,16 @@ export type ProcessingRetryIneligibleReason =
   | "attempts_exhausted"
   | "notes_edited";
 
+/** Ineligible reasons the portal explains to the user; every other reason renders nothing. */
+export const PROCESSING_RETRY_EXPLAINED_REASONS = [
+  "attempts_exhausted",
+  "notes_edited",
+  "source_missing",
+  "capture_incomplete",
+] as const satisfies readonly ProcessingRetryIneligibleReason[];
+export type ProcessingRetryExplainedReason =
+  (typeof PROCESSING_RETRY_EXPLAINED_REASONS)[number];
+
 export type ProcessingRetryEligibility =
   | {
       eligible: true;

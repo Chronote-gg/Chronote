@@ -169,6 +169,35 @@ const useLiveStreamRefetch = (params: {
   ]);
 };
 
+type RetryPollQuery = {
+  queryHash: string;
+  state: {
+    dataUpdateCount: number;
+    data?: { meeting?: Pick<MeetingDetailInput, "processingRetry"> };
+  };
+};
+
+/** Polls an active retry with the same bounded budget as delivery refresh. */
+const useRetryRefetchInterval = () => {
+  const episode = useRef<{ queryHash: string; firstRead: number } | null>(null);
+  return (query: RetryPollQuery) => {
+    const status = query.state.data?.meeting?.processingRetry?.status;
+    if (status !== "queued" && status !== "running") {
+      episode.current = null;
+      return false;
+    }
+    if (episode.current?.queryHash !== query.queryHash)
+      episode.current = {
+        queryHash: query.queryHash,
+        firstRead: query.state.dataUpdateCount,
+      };
+    const reads = query.state.dataUpdateCount - episode.current.firstRead;
+    return reads < MAX_UPDATE_DELIVERY_REFRESH_READS
+      ? UPDATE_DELIVERY_REFRESH_MS
+      : false;
+  };
+};
+
 const resolveTimelineEmptyLabel = (
   enabled: boolean,
   status: string,
@@ -193,6 +222,7 @@ const resolveTimelineEmptyLabel = (
 export const useMeetingDetail = (
   params: UseMeetingDetailParams,
 ): UseMeetingDetailResult => {
+  const retryRefetchInterval = useRetryRefetchInterval();
   const detailQuery = trpc.meetings.detail.useQuery(
     {
       serverId: params.selectedGuildId ?? "",
@@ -200,12 +230,7 @@ export const useMeetingDetail = (
     },
     {
       enabled: isDetailQueryEnabled(params),
-      refetchInterval: (query) =>
-        ["queued", "running"].includes(
-          query.state.data?.meeting?.processingRetry?.status ?? "",
-        )
-          ? UPDATE_DELIVERY_REFRESH_MS
-          : false,
+      refetchInterval: retryRefetchInterval,
     },
   );
 
@@ -258,7 +283,11 @@ export const useMeetingDetail = (
     refetch,
   ]);
 
-  const processingRetry = useProcessingRetry(params.selectedGuildId, detail);
+  const processingRetry = useProcessingRetry(
+    params.selectedGuildId,
+    detail,
+    params.invalidateMeetingLists,
+  );
 
   const meeting = useMemo(() => {
     return buildMeetingFromDetail(detail, params.channelNameMap);

@@ -9,7 +9,10 @@ import {
   type ProcessingRetryRequestResult,
 } from "../../services/processingRetryRequestService";
 import type { MeetingHistory } from "../../types/db";
-import type { ProcessingRetryView } from "../../types/meetingProcessingRetry";
+import {
+  PROCESSING_RETRY_EXPLAINED_REASONS,
+  type ProcessingRetryView,
+} from "../../types/meetingProcessingRetry";
 import { authedProcedure } from "../trpc";
 import {
   ensurePortalUserCanEditMeetingNotes,
@@ -76,6 +79,36 @@ function projectReadableRetry(history: MeetingHistory): ProcessingRetryView {
   }
 }
 
+/** Non-editors see no retry UI and no job state. */
+const NOT_PERMITTED_VIEW: ProcessingRetryView = {
+  eligible: false,
+  reason: "not_permitted",
+  requiresReplaceConfirm: false,
+  attemptsRemaining: 0,
+};
+
+const EXPLAINED_REASONS: ReadonlySet<string> = new Set(
+  PROCESSING_RETRY_EXPLAINED_REASONS,
+);
+
+function viewShowsAnything(view: ProcessingRetryView): boolean {
+  return (
+    view.eligible ||
+    view.status !== undefined ||
+    EXPLAINED_REASONS.has(view.reason ?? "")
+  );
+}
+
+/** A config read error must not fail the whole meeting load. */
+async function readAvailability(): Promise<boolean> {
+  try {
+    return await isProcessingRetryAvailable();
+  } catch (error) {
+    console.warn("Could not read processing retry availability", error);
+    return false;
+  }
+}
+
 export async function resolveProcessingRetryView(input: {
   history: MeetingHistory;
   serverId: string;
@@ -83,17 +116,16 @@ export async function resolveProcessingRetryView(input: {
   user: RetryUser;
   session?: GuildSessionCache;
 }): Promise<ProcessingRetryView> {
-  if (!(await isProcessingRetryAvailable()))
-    return projectProcessingRetry(input.history, "unavailable");
-  const view = projectReadableRetry(input.history);
-  if (!view.eligible) return view;
+  const view = (await readAvailability())
+    ? projectReadableRetry(input.history)
+    : projectProcessingRetry(input.history, "unavailable");
+  if (!viewShowsAnything(view)) return view;
   try {
     await ensureUserCanRetry(input);
     return view;
   } catch (error) {
     // A Discord rate limit or a denial hides the action instead of failing the page.
-    if (error instanceof TRPCError)
-      return projectProcessingRetry(input.history, "not_permitted");
+    if (error instanceof TRPCError) return NOT_PERMITTED_VIEW;
     throw error;
   }
 }

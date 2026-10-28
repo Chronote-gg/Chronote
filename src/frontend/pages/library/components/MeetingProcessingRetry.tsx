@@ -9,10 +9,12 @@ import {
   Text,
 } from "@mantine/core";
 import type { MeetingProcessingOutcome } from "../../../../types/meetingProcessing";
-import type {
-  ProcessingRetryFailureReason,
-  ProcessingRetryIneligibleReason,
-  ProcessingRetryView,
+import {
+  PROCESSING_RETRY_EXPLAINED_REASONS,
+  type ProcessingRetryExplainedReason,
+  type ProcessingRetryFailureReason,
+  type ProcessingRetryIneligibleReason,
+  type ProcessingRetryView,
 } from "../../../../types/meetingProcessingRetry";
 import { getMeetingProcessingNotice } from "../../../../utils/meetingProcessing";
 
@@ -41,9 +43,7 @@ const FAILURE_COPY: Record<ProcessingRetryFailureReason, string> = {
   unknown: "The retry stopped unexpectedly. Nothing was changed.",
 };
 
-const INELIGIBLE_COPY: Partial<
-  Record<ProcessingRetryIneligibleReason, string>
-> = {
+const INELIGIBLE_COPY: Record<ProcessingRetryExplainedReason, string> = {
   attempts_exhausted: "No retries are left for this meeting.",
   notes_edited: "Retry is unavailable because these notes were edited.",
   source_missing: SOURCE_MISSING_COPY,
@@ -51,8 +51,17 @@ const INELIGIBLE_COPY: Partial<
     "Some audio was never recorded, so a retry cannot recover it.",
 };
 
+// Keeps the count from being stranded at a line end.
+const NO_BREAK_SPACE = "\u00a0";
 const formatAttemptsLeft = (count: number) =>
-  count === 1 ? "1 attempt left." : `${count} attempts left.`;
+  `${count}${NO_BREAK_SPACE}${count === 1 ? "attempt" : "attempts"} left.`;
+
+const isExplainedReason = (
+  reason: ProcessingRetryIneligibleReason | undefined,
+): reason is ProcessingRetryExplainedReason =>
+  PROCESSING_RETRY_EXPLAINED_REASONS.some((explained) => explained === reason);
+
+type Notice = { text: string; dimmed: boolean };
 
 /** Discord footers share getMeetingProcessingNotice, so this summary notice stays portal-only. */
 function summaryNotice(
@@ -65,26 +74,32 @@ function summaryNotice(
   return "The summary could not be generated for this recording.";
 }
 
-function outcomeNotice(view: ProcessingRetryView): string | undefined {
-  if (view.status === "failed") {
-    const reason = FAILURE_COPY[view.failureReason ?? "unknown"];
-    // Attempts left only means something while another retry is offered.
-    return view.eligible && view.attemptsRemaining > 0
-      ? `${reason} ${formatAttemptsLeft(view.attemptsRemaining)}`
-      : reason;
-  }
+function failureNotice(view: ProcessingRetryView): string | undefined {
+  if (view.status !== "failed") return undefined;
+  const reason = FAILURE_COPY[view.failureReason ?? "unknown"];
+  // Attempts left only means something while another retry is offered.
+  return view.eligible && view.attemptsRemaining > 0
+    ? `${reason} ${formatAttemptsLeft(view.attemptsRemaining)}`
+    : reason;
+}
+
+function settingsNotice(view: ProcessingRetryView): string | undefined {
   if (view.status === "succeeded" && view.settingsSource === "current")
     return "This retry used the server's current settings.";
   return undefined;
 }
 
-function retryNotices(view: ProcessingRetryView, props: Props): string[] {
-  const notices = [
+function retryNotices(view: ProcessingRetryView, props: Props): Notice[] {
+  const failure = failureNotice(view);
+  const dimmed = [
     summaryNotice(props.processing, props.notes),
-    outcomeNotice(view),
-    view.reason ? INELIGIBLE_COPY[view.reason] : undefined,
-  ].filter((notice): notice is string => Boolean(notice));
-  return [...new Set(notices)];
+    settingsNotice(view),
+    isExplainedReason(view.reason) ? INELIGIBLE_COPY[view.reason] : undefined,
+  ].filter((text): text is string => Boolean(text) && text !== failure);
+  return [
+    ...(failure ? [{ text: failure, dimmed: false }] : []),
+    ...[...new Set(dimmed)].map((text) => ({ text, dimmed: true })),
+  ];
 }
 
 type RetryModalProps = {
@@ -148,7 +163,11 @@ function RetryModal({
 export function MeetingProcessingRetry(props: Props) {
   const { view, pending, onRetry } = props;
   const [modalOpened, setModalOpened] = useState(false);
-  const active = view.status === "queued" || view.status === "running";
+  if (view.reason === "not_permitted") return null;
+  // An unavailable retry may never be picked up, so it must not spin forever.
+  const active =
+    view.reason !== "unavailable" &&
+    (view.status === "queued" || view.status === "running");
   const notices = retryNotices(view, props);
   if (!active && !view.eligible && notices.length === 0) return null;
   return (
@@ -165,8 +184,12 @@ export function MeetingProcessingRetry(props: Props) {
               </Group>
             ) : null}
             {notices.map((notice) => (
-              <Text key={notice} size="sm" c="dimmed">
-                {notice}
+              <Text
+                key={notice.text}
+                size="sm"
+                c={notice.dimmed ? "dimmed" : undefined}
+              >
+                {notice.text}
               </Text>
             ))}
           </Stack>
