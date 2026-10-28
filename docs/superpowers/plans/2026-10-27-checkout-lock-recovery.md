@@ -47,12 +47,14 @@
 ### Task 1: Read-path release on billing load
 
 **Files:**
+
 - Create: `test/fixtures/initialPurchaseStripe.ts`, `test/fixtures/introOfferPurchase.ts`, `test/services/checkoutLockRecovery.test.ts`, `test/services/checkoutLockRecoveryOffer.test.ts`
 - Modify: `test/services/initialPurchase.test.ts:19-131` (fixtures move out), `test/services/basicIntroOfferService.test.ts:45-127,263-358` (fixtures move out)
 - Modify: `src/services/initialPurchaseService.ts:86-89` (`save`), `:385-394` (`checkCheckoutReplayWindow`), `:430-476` (`refreshAttempt`), new export
 - Modify: `src/services/billingService.ts:113-122` (`getBillingSnapshot`)
 
 **Interfaces:**
+
 - Produces: `export async function releaseExpiredPurchaseAttempt(input: { stripe: StripeClient; guildId: string; owner?: RuntimeBillingOwner }): Promise<void>` in `initialPurchaseService.ts`. Never throws.
 - Produces: `type AttemptRefreshInput = Pick<PurchaseInput, "stripe" | "owner" | "guildId" | "expected">`; `refreshAttempt(input: AttemptRefreshInput, initial: PurchaseAttempt | undefined)`, `checkCheckoutReplayWindow(input: AttemptRefreshInput, attempt)`, `save(input: Pick<PurchaseInput, "owner">, ...)`. Behavior unchanged.
 - Produces (fixtures): `test/fixtures/initialPurchaseStripe.ts` exports `purchaseGuildId`, `sessionFields()`, `paidProvider(id: string)`, `initialPurchaseStripe(): { stripe; client: StripeClient }` (the former `fixture()`), with two additions: `retrieve` echoes the requested session id (existing tests only ask for `cs_first`, so they are unaffected), and `stripe.checkout.sessions.expire: jest.fn()` records the id and returns that session expired (`status: "expired"`, `url: null`, `subscription: null`); from then on `retrieve` reports that id expired. `test/fixtures/introOfferPurchase.ts` exports `introNow`, `introSettings`, `introOfferStripe()` (former `fixture()`), `introPurchaseFixture()` (former `purchaseFixture()`), with the same `expire` behavior for `cs_intro`. The two old test files import these under their old local names; their bodies do not change.
@@ -191,10 +193,12 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ### Task 2: Release before the plan change pending check
 
 **Files:**
+
 - Modify: `src/services/billingChangeService.ts:162-167` (`prepareBillingChangeOwned`)
 - Test: `test/services/checkoutLockRecovery.test.ts`
 
 **Interfaces:**
+
 - Consumes: `releaseExpiredPurchaseAttempt` from Task 1, passed `{ stripe: context.stripe, guildId: context.guildId, owner: context.owner }`.
 
 - [ ] **Step 1: Write the failing tests**
@@ -250,11 +254,13 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ### Task 3: Supersede a live open checkout on a different choice
 
 **Files:**
+
 - Modify: `src/services/initialPurchaseService.ts:192-258` (`reserve`), `:19` (`import Stripe from "stripe"` as a value import, needed for `Stripe.errors`)
 - Test: `test/services/checkoutLockRecovery.test.ts`, `test/services/checkoutLockRecoveryOffer.test.ts`
 - Modify tests: `test/services/initialPurchase.test.ts:816-834` (rewrite), `:232-248` (one added assertion); `test/services/basicIntroOfferService.test.ts:839-858` (rewrite without growing the file)
 
 **Interfaces:**
+
 - Consumes: `refreshAttempt(input: AttemptRefreshInput, initial)` and the fixture `expire` mock from Task 1.
 - Produces (private): `reuseOpenOrCurrentAttempt(input: PurchaseInput, current: PurchaseAttempt): Promise<PurchaseAttempt | "superseded">` and `supersedeOpenAttempt(input: PurchaseInput, current: PurchaseAttempt): Promise<PurchaseAttempt | "superseded">`.
 
@@ -426,11 +432,13 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ### Task 4: Open checkouts stop making the Basic offer unavailable
 
 **Files:**
+
 - Create: `src/services/purchaseAttemptOffer.ts`
 - Modify: `src/services/basicIntroOfferService.ts:299-366` (move out), `:380-430` (`getGuildBasicIntroOffer`, `pendingIntroOffer`)
 - Test: `test/services/checkoutLockRecoveryOffer.test.ts`; modify `test/services/basicIntroOfferService.test.ts:506-548`
 
 **Interfaces:**
+
 - Produces in `purchaseAttemptOffer.ts` (moved unchanged, now exported): `ownsFrozenReservation(current: PurchaseAttempt, frozen: Extract<BasicIntroOffer, { status: "available" }>): Promise<boolean>`, `frozenIntroOffer(current: PurchaseAttempt | undefined): BasicIntroOffer | null`, `canReuseFrozenIntroOffer(frozen, current, interval: BillingInterval, payerId: string | undefined): frozen is Extract<BasicIntroOffer, { status: "available" }>`.
 - Produces: `attemptIntroOffer(current: PurchaseAttempt, params: { payerId?: string; interval?: BillingInterval }): Promise<BasicIntroOffer | null>`: for `preparing`, `needs_review`, or `open` with an `incidentKey`, today's `pendingIntroOffer` result (frozen or `unavailable`); for any other `open` attempt, the frozen offer when it is reusable by this payer and owned, else `null`; for other states, `null`. `null` means "use the normal ledger quote".
 - Produces: `openAttemptHoldsOffer(current: PurchaseAttempt | undefined, offerId: IntroOfferId): Promise<boolean>`: true when `current` is `open`, has a `sessionId`, no `incidentKey`, its frozen offer id is `offerId`, and `ownsFrozenReservation` holds.
@@ -495,6 +503,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ### Task 5: Documentation, ADR and agent rule
 
 **Files:**
+
 - Create: `docs/adr-20261027-checkout-supersede.md`
 - Modify: `docs/billing-initial-purchases.md`, `apps/docs-site/docs/admin/setup-and-access.md:184-189`, `apps/docs-site/docs/whats-new/index.md` (new entry at the top of `## 2026`), `AGENTS.md` (Known nuances / gotchas)
 
