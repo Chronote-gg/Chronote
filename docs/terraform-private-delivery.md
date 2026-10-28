@@ -22,7 +22,7 @@ Tfvars inputs are unchanged. `TERRAFORM_PRIVATE_STORAGE_JSON` is an environment 
 
 New bindings should set `policySha256` to `bindingHash(JSON.parse(policyText))` using `scripts/deployment/binding-hash.cjs`. This digest sorts object keys recursively and ignores JSON whitespace while preserving every value and array order. Existing raw-text SHA-256 bindings remain accepted for the exact policy text they bind. This changes only policy representation handling; SDK attempts, storage controls and native approval requirements remain unchanged.
 
-To migrate an existing raw-text binding, independently compare and review the complete current `GetBucketPolicy.Policy` JSON string against the approved policy. A raw digest alone cannot be converted into a canonical digest. Compute the new value from the reviewed policy, keeping the existing `policySha256` field:
+To migrate an existing raw-text binding, independently compare and review the complete current `GetBucketPolicy.Policy` JSON string against the approved policy. A raw digest alone cannot be converted into a canonical digest. From the reviewed repository root, compute the new value from the reviewed policy, keeping the existing `policySha256` field:
 
 ```js
 const { bindingHash } = require("./scripts/deployment/binding-hash.cjs");
