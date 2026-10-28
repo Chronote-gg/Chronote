@@ -84,30 +84,41 @@ async function readCheckpoint(input: RunInput) {
   }
 }
 
+/** Undefined sends the retry to the mixed recording. */
+async function checkpointTranscript(
+  input: RunInput,
+  content: RecoveryContent,
+): Promise<(Transcript & { segments: TranscriptSegment[] }) | undefined> {
+  try {
+    const result = await retranscribeOmittedRanges(
+      content,
+      input.reader,
+      input.signal,
+      input.effect,
+    );
+    if (result.retranscribedRanges > 0)
+      return { ...result, source: "checkpoint" };
+  } catch (error) {
+    // Provider-side errors, parse failures included, fail the stage.
+    if (
+      !(error instanceof InvalidRecoveryContent) &&
+      !(error instanceof TranscriptOverlapUnknown)
+    )
+      throw error;
+    return undefined;
+  }
+  // Checkpoint audio that could not be verified may still be in the mixed recording.
+  if (content.missing.length && input.history.audioS3Key) return undefined;
+  throw new RetryFailure("nothing_to_retry");
+}
+
 async function freshTranscript(
   input: RunInput,
   content: RecoveryContent | undefined,
 ): Promise<Transcript & { segments?: TranscriptSegment[] }> {
-  if (content) {
-    try {
-      const result = await retranscribeOmittedRanges(
-        content,
-        input.reader,
-        input.signal,
-        input.effect,
-      );
-      if (result.retranscribedRanges === 0)
-        throw new RetryFailure("nothing_to_retry");
-      return { ...result, source: "checkpoint" };
-    } catch (error) {
-      // Provider-side errors, parse failures included, fail the stage.
-      if (
-        !(error instanceof InvalidRecoveryContent) &&
-        !(error instanceof TranscriptOverlapUnknown)
-      )
-        throw error;
-    }
-  }
+  const fromCheckpoint =
+    content && (await checkpointTranscript(input, content));
+  if (fromCheckpoint) return fromCheckpoint;
   const audioS3Key = input.history.audioS3Key;
   if (!audioS3Key)
     throw new RetryFailure(
@@ -160,11 +171,9 @@ function transcriptionOutcome(
   content: RecoveryContent | undefined,
 ): TranscriptionOutcome {
   if (!transcript.text.trim()) return "empty";
+  if (history.capture?.kind === "interrupted") return "partial";
   if (transcript.source === "mixed") return "ready";
-  return history.capture?.kind === "interrupted" ||
-    !content ||
-    content.missing.length ||
-    content.context.captureIncomplete
+  return !content || content.missing.length || content.context.captureIncomplete
     ? "partial"
     : "ready";
 }

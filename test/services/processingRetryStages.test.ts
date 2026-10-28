@@ -311,6 +311,31 @@ test("a checkpoint with no omitted ranges fails nothing_to_retry without generat
   expect(storeRetryTranscript).not.toHaveBeenCalled();
 });
 
+test("a checkpoint with unverifiable audio and nothing re-transcribed falls back to mixed audio", async () => {
+  jest
+    .mocked(readRecoveryContent)
+    .mockResolvedValue({ ...content, missing: [{}] } as RecoveryContent);
+  jest.mocked(retranscribeOmittedRanges).mockResolvedValue({
+    text: "",
+    segments: [],
+    retranscribedRanges: 0,
+  });
+
+  const result = await run(
+    { ...failedTranscription, audioS3Key: "p/g/c_m_t/audio.mp3" },
+    fullRetry,
+  );
+
+  expect(transcribeMixedRecording).toHaveBeenCalledWith(
+    "p/g/c_m_t/audio.mp3",
+    signal,
+  );
+  expect(result).toMatchObject({
+    kind: "succeeded",
+    transcriptSource: "mixed",
+  });
+});
+
 test("an interrupted capture keeps a successful checkpoint retry partial", async () => {
   const result = await run(
     {
@@ -513,7 +538,7 @@ test.each([
   },
 );
 
-test("a mixed fallback on an interrupted capture carries both notices", async () => {
+test("a mixed fallback on an interrupted capture carries both notices and stays partial", async () => {
   jest
     .mocked(retranscribeOmittedRanges)
     .mockRejectedValue(new TranscriptOverlapUnknown("overlap"));
@@ -531,6 +556,7 @@ test("a mixed fallback on an interrupted capture carries both notices", async ()
     kind: "succeeded",
     transcriptSource: "mixed",
     settingsSource: "snapshot",
+    changes: { processing: { transcription: "partial" } },
   });
   expect(jest.mocked(ensureMeetingNotes).mock.calls[0][0].captureNotice).toBe(
     `${RECOVERY_NOTICE}\n\n${UNATTRIBUTED_TRANSCRIPT_NOTICE}`,
