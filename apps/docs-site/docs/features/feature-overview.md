@@ -356,6 +356,8 @@ Use **Upload Media** in the web portal to turn an existing audio or video file i
 
 When processing completes, the meeting appears in **My Meetings** under your personal workspace. Uploaded personal meetings are owned by your Chronote account, not by a Discord server.
 
+Chronote detects the spoken language of uploads and Chronote Desktop recordings, so a meeting held in a language other than English is transcribed in that language rather than forced into English. Discord voice meetings use the server's transcription language setting instead, described in [Discord meeting notes](/discord-meeting-notes/#transcription-language).
+
 ## Chronote Desktop recordings
 
 Chronote Desktop records a personal meeting directly from a Windows computer. It captures your microphone as **Me**, captures system audio as **System/Other**, saves sealed local audio segments while recording, uploads those segments to Chronote, and creates a personal meeting in **My Meetings**.

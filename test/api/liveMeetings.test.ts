@@ -413,6 +413,30 @@ test("streams init payload for live meeting", async () => {
   });
 });
 
+test("streams revised and removed transcript segments", async () => {
+  mockedGetMeeting.mockReturnValue(makeMeeting());
+  mockedEnsureUserInGuild.mockResolvedValue(true);
+  mockedEnsureUserCanConnectChannel.mockResolvedValue(true);
+  mockedBuildLiveMeetingMeta.mockReturnValue(makeMeta());
+  mockedResolveLiveMeetingAttendees.mockReturnValue([]);
+  const original = { ...makeEvent(), id: "voice-1", text: "First guess" };
+  mockedBuildLiveMeetingTimelineEvents
+    .mockReturnValueOnce([original])
+    .mockReturnValueOnce([{ ...original, text: "Corrected words" }])
+    .mockReturnValue([]);
+  const { server, baseUrl } = createServer(true);
+  try {
+    const response = await requestSseUntil(
+      `${baseUrl}/api/live/guild-1/meeting-1/stream`,
+      '"removedEventIds":["voice-1"]',
+    );
+    expect(response.buffer).toContain('"text":"Corrected words"');
+    expect(response.buffer).toContain('"removedEventIds":["voice-1"]');
+  } finally {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
+}, 8500);
+
 test("returns 403 when user lacks manage guild for status", async () => {
   const meeting = makeMeeting();
   mockedGetMeeting.mockReturnValue(meeting);

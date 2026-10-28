@@ -23,6 +23,7 @@ Chronote records voice audio, builds per speaker snippets, and runs transcriptio
 - Guardrails include a loudness gate (noise gate metrics plus token logprobs), a syllable rate gate for short snippets, and a prompt echo gate to suppress prompt repetition.
 - Vote fallback runs a no-prompt candidate for low-confidence slow snippets and picks the better result with a deterministic arbiter (suppression flags, prompt echo, logprobs, repetition checks, and a hard reject for punctuation-only outputs like `.`).
 - The finalized audio pass rejects trivial replacement text, so punctuation-only edits do not overwrite an existing snippet transcript.
+- The finalized audio pass transcribes `TRANSCRIPTION_FINAL_PASS_CHUNK_SECONDS` (300 s) chunks. The transcription model caps output near 2,000 tokens per request, so the earlier 900 s chunks came back truncated on dense speech, and the reconcile prompt could drop the uncovered lines as "not in the chunk transcript".
 - The finalized audio pass also drops repeated low-information snippets from the same speaker when they recur in a short window, which helps clean up bursts of greeting-style hallucinations.
 
 ## Snippet ASR retries
@@ -50,6 +51,28 @@ The shared bulkhead holds two complete logical transcriptions with up to
 five exhausted transient ASR operations before opening for 10,000 ms;
 unrelated prompt or guard errors cannot trip it. Text Responses, finalized
 audio verification and personal upload retry policies are unchanged.
+
+## Personal upload transcription
+
+Personal uploads and desktop recordings send no `language` hint, so the
+provider detects the spoken language. A forced English hint badly truncated
+non-English recordings.
+
+Live meeting snippets and the finalized audio pass take their hint from the
+`transcription.language` setting (global superadmin and server admin scopes,
+default `en`). `auto` omits the `language` field so the provider detects the
+language; any other value is sent as an ISO-639-1 code. The value is captured
+in the meeting runtime config when the meeting starts, and both paths read
+that one value, so the final-pass reconcile never compares transcripts in two
+languages. It is frozen into the saved recording settings, and recovery reruns
+reuse the saved value. Records saved before the setting existed parse as `en`.
+
+Normalized audio is always split into
+`PERSONAL_UPLOAD_TRANSCRIPTION_CHUNK_SECONDS` (300 s) chunks before
+transcription, regardless of file size. The transcription model caps output
+near 2,000 tokens per request, so a whole file under the 25 MB request limit
+(about 55 minutes at the 64 kbps normalization bitrate) used to come back
+silently truncated.
 
 ## Langfuse audio attachments
 

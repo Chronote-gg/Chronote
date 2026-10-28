@@ -83,3 +83,22 @@ export const buildPausedDesktopDraftMarker = (
   createdAt: 100,
   ...overrides,
 });
+
+export function heldOperation() {
+  let release!: () => void;
+  let enter!: () => void;
+  const started = new Promise<void>((resolve) => {
+    enter = resolve;
+  });
+  const waiting = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  return {
+    started,
+    release,
+    wait: async () => {
+      enter();
+      await waiting;
+    },
+  };
+}

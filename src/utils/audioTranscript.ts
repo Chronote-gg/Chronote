@@ -2,7 +2,13 @@ import type { AudioData, AudioFileData } from "../types/audio";
 import type { TranscriptionFacts } from "../types/meetingProcessing";
 import { isTrivialTranscriptionText } from "./transcriptionText";
 
+export function isAudioFileSpeechRejected(file: AudioFileData): boolean {
+  return file.finalSpeechRejection !== undefined;
+}
+
 export function resolveAudioFileTranscript(file: AudioFileData) {
+  if (isAudioFileSpeechRejected(file))
+    return { text: "", correspondence: file.terminalOmission };
   const selected =
     file.finalPassTranscript !== undefined
       ? {
@@ -50,7 +56,9 @@ export function getAudioTranscriptionFacts(
   return {
     usableSegments: files.filter((file) => Boolean(resolveAudioFileText(file)))
       .length,
-    failedSegments: files.filter((file) => file.transcriptionFailed).length,
+    failedSegments: files.filter(
+      (file) => !isAudioFileSpeechRejected(file) && file.transcriptionFailed,
+    ).length,
     captureIncomplete: audio.captureIncomplete ?? false,
   };
 }

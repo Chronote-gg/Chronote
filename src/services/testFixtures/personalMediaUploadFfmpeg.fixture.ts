@@ -16,6 +16,7 @@ export function createPersonalUploadFfmpegFake(state: {
       ...handlers,
       inputPath: "",
       outputPath: "",
+      outputOptionList: [] as string[],
       noVideo() {
         return this;
       },
@@ -38,7 +39,8 @@ export function createPersonalUploadFfmpegFake(state: {
       inputOptions() {
         return this;
       },
-      outputOptions() {
+      outputOptions(options: string[]) {
+        this.outputOptionList.push(...options);
         return this;
       },
       complexFilter() {
@@ -59,7 +61,9 @@ export function createPersonalUploadFfmpegFake(state: {
         }
         if (this.outputPath) {
           fs.mkdirSync(path.dirname(this.outputPath), { recursive: true });
-          fs.writeFileSync(this.outputPath, Buffer.from("audio"));
+          // The segment muxer expands the %03d pattern into numbered chunks.
+          const writtenPath = this.outputPath.replace("%03d", "000");
+          fs.writeFileSync(writtenPath, Buffer.from("audio"));
         }
         if (state.isHeld()) state.captureEnd(this.endHandler);
         else this.endHandler?.();

@@ -10,4 +10,5 @@ export type MeetingEvent = {
   text: string;
   messageId?: string;
   attachments?: ChatAttachment[];
+  offsetSeconds?: number;
 };

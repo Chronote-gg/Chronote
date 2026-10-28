@@ -110,6 +110,7 @@ async function originalFinalPass(
     enabled: true,
     settings: settings.processing.finalPass,
     transcriptionModel: settings.models.transcription.model,
+    transcriptionLanguage: settings.transcription.language,
     reconcileModel: settings.models.transcriptionCoalesce,
     prompt: transcription.prompt,
     finalPassPrompt: async (request) => ({

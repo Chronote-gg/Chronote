@@ -22,3 +22,6 @@ _infra
 npm-debug.log*
 yarn-error.log*
 *.tsbuildinfo
+
+.cache
+.superpowers

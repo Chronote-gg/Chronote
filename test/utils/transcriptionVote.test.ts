@@ -24,6 +24,35 @@ const buildCandidate = (
 });
 
 describe("transcriptionVote", () => {
+  test("rejects both weak candidates instead of choosing a dictionary-looking guess", () => {
+    const weak = { avgLogprob: -2, minLogprob: -3, tokenCount: 2 };
+    const decision = decideTranscriptionVote({
+      promptCandidate: buildCandidate({
+        text: "The Den",
+        logprobMetrics: weak,
+      }),
+      noPromptCandidate: buildCandidate({
+        id: "no_prompt",
+        text: "Hello",
+        logprobMetrics: weak,
+      }),
+    });
+    expect(decision.selectedId).toBe("none");
+    expect(decision.reasons).toContain("both_below_quality_floor");
+  });
+
+  test("does not bypass the retry quality floor when the prompted result is empty", () => {
+    const decision = decideTranscriptionVote({
+      promptCandidate: buildCandidate({ text: "", suppressed: true }),
+      noPromptCandidate: buildCandidate({
+        id: "no_prompt",
+        text: "はい。",
+        logprobMetrics: { avgLogprob: -2, minLogprob: -3, tokenCount: 2 },
+      }),
+    });
+    expect(decision.selectedId).toBe("none");
+  });
+
   test("hasLowConfidenceLogprobs returns true when either threshold fails", () => {
     expect(
       hasLowConfidenceLogprobs({

@@ -20,7 +20,7 @@ const buildCandidate = (
 });
 
 describe("decideTranscriptionVote", () => {
-  it("keeps the prompt candidate when the no-prompt result is punctuation only", () => {
+  it("rejects a weak prompt candidate when the retry is punctuation only", () => {
     const decision = decideTranscriptionVote({
       promptCandidate: buildCandidate({
         id: "prompt",
@@ -42,7 +42,7 @@ describe("decideTranscriptionVote", () => {
       }),
     });
 
-    expect(decision.selectedId).toBe("prompt");
+    expect(decision.selectedId).toBe("none");
     expect(decision.reasons).toContain("trivial_text_difference");
     expect(decision.reasons).toContain("no_prompt_trivial_text");
     expect(decision.noPromptQuality.trivialText).toBe(true);
@@ -83,7 +83,7 @@ describe("decideTranscriptionVote", () => {
       }),
     });
 
-    expect(decision.selectedId).toBe("prompt");
+    expect(decision.selectedId).toBe("none");
     expect(decision.reasons).toContain("no_prompt_trivial_text");
     expect(decision.reasons).toContain("both_trivial_text");
   });

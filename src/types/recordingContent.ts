@@ -6,6 +6,8 @@ import {
 import { z } from "zod";
 import { savedPromptSchema } from "../services/savedRecordingPrompt";
 import { recordingCaptureProvenanceSchema } from "./recordingCheckpoint";
+import { speechDetectionModeSchema } from "../config/speechDetection";
+import { transcriptionLanguageSchema } from "../config/transcriptionLanguage";
 const text = z.string();
 const number = z.number().finite();
 const participant = z
@@ -52,6 +54,8 @@ const budgets = z
   .strict();
 const transcription = z
   .object({
+    speechDetectionMode: speechDetectionModeSchema.default("off"),
+    language: transcriptionLanguageSchema.default("en"),
     suppressionEnabled: z.boolean(),
     suppressionHardSilenceDbfs: number,
     suppressionRateMaxSeconds: number,

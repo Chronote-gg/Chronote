@@ -1,11 +1,13 @@
+import {
+  readPromptFileContent,
+  isTranscriptionLikelyPrompt,
+} from "./transcriptionEvalPrompt";
 import { randomUUID } from "node:crypto";
+import { createRequire } from "node:module";
 import { createReadStream, promises as fs } from "node:fs";
 import path from "node:path";
 import { Readable } from "node:stream";
 import { z } from "zod";
-import matter from "gray-matter";
-import { parse as parseYaml } from "yaml";
-import { distance as levenshteinDistance } from "fastest-levenshtein";
 import {
   BedrockDataAutomationRuntimeClient,
   GetDataAutomationStatusCommand,
@@ -21,7 +23,6 @@ import type { TranscriptionCreateParamsNonStreaming } from "openai/resources/aud
 import { createOpenAIClient } from "../services/openaiClient";
 import { getModelChoice } from "../services/modelFactory";
 import { config } from "../services/configService";
-import { TRANSCRIPTION_PROMPT_SIMILARITY_THRESHOLD } from "../constants";
 import {
   getLangfuseClient,
   isLangfuseEnabled,
@@ -29,6 +30,10 @@ import {
 import { getEvalDataset } from "./evalDataset";
 import { expectedOutputSchema } from "./expectedOutput";
 import { getTranscriptionTextQuality } from "../utils/transcriptionText";
+import {
+  scoreTranscription,
+  summarizeTranscriptionScores,
+} from "./transcriptionMetrics";
 
 type ProviderName = "openai" | "bedrock";
 
@@ -83,17 +88,6 @@ type EvalOutput = {
 type EvalComparisonOutput = {
   withPrompt: EvalOutput;
   withoutPrompt: EvalOutput;
-};
-
-type PromptChatMessage = {
-  role?: string;
-  content?: string;
-};
-
-type PromptFrontMatter = {
-  type?: string;
-  messages?: PromptChatMessage[];
-  prompt?: PromptChatMessage[];
 };
 
 type BedrockEvalConfig = {
@@ -180,6 +174,19 @@ const BdaOutputSchema = z.object({
 const HELP_TEXT = `
 Usage:
   yarn eval:transcription --file <path> [options]
+  yarn eval:transcription --manifest <path> --mode pipeline --runs 3
+
+Corpus options:
+  --mode                    provider | pipeline | preflight (default pipeline)
+  --pass-mode               fast | slow (default slow)
+  --max-requests            Hard request budget, SDK retries disabled (default 100)
+  --max-clip-seconds        Reject longer corpus clips (default 30)
+  --split                   tune | holdout, or omit for both
+  --policy                  JSON policy overrides, stored in the result
+  --vad-report              Local experimental gate decisions bound to clip hashes
+  --artifact-dir            Ignored local artifact directory (default .cache/transcription-eval)
+  --force                   Bypass minimum duration/noise gate and loudness suppression
+  Corpus results stay in the selected artifact directory and tracing stays disabled.
 
 Options:
   --file, -f                Audio file to transcribe (required unless dataset)
@@ -224,58 +231,6 @@ function normalize(value: string): string {
   return value.replace(/\s+/g, " ").trim();
 }
 
-function extractChatPrompt(messages: PromptChatMessage[]): string {
-  const normalized = messages
-    .map((message) => ({
-      role: (message.role ?? "").toLowerCase(),
-      content: message.content?.trim() ?? "",
-    }))
-    .filter((message) => message.content.length > 0);
-
-  const systemMessages = normalized.filter(
-    (message) => message.role === "system",
-  );
-  const selected = systemMessages.length > 0 ? systemMessages : normalized;
-  return selected.map((message) => message.content).join("\n\n");
-}
-
-async function readPromptFileContent(
-  value?: string,
-): Promise<string | undefined> {
-  if (!value) return undefined;
-  const resolved = path.resolve(process.cwd(), value);
-  const raw = await fs.readFile(resolved, "utf8");
-  const trimmed = raw.trimStart();
-  if (!trimmed.startsWith("---")) {
-    return raw.trim();
-  }
-  const parsed = matter(raw, {
-    engines: { yaml: (input) => parseYaml(input) as object },
-  });
-  const data = parsed.data as PromptFrontMatter;
-  if (data.type === "chat") {
-    const messages = data.messages ?? data.prompt;
-    if (!Array.isArray(messages) || messages.length === 0) {
-      return "";
-    }
-    return extractChatPrompt(messages);
-  }
-  return parsed.content.trim();
-}
-
-function normalizeForCompare(value: string): string {
-  return value
-    .toLowerCase()
-    .replace(/[^a-z0-9']+/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
-function tokenize(value: string): string[] {
-  const cleaned = normalizeForCompare(value);
-  return cleaned.length === 0 ? [] : cleaned.split(" ");
-}
-
 function ensureTrailingSlash(value: string): string {
   return value.endsWith("/") ? value : `${value}/`;
 }
@@ -302,85 +257,6 @@ async function streamToString(stream: Readable): Promise<string> {
     chunks.push(typeof chunk === "string" ? Buffer.from(chunk) : chunk);
   }
   return Buffer.concat(chunks).toString("utf8");
-}
-
-function wordErrorRate(reference: string, hypothesis: string): number | null {
-  const referenceTokens = tokenize(reference);
-  if (referenceTokens.length === 0) return null;
-  const hypothesisTokens = tokenize(hypothesis);
-  const prevRow = new Array(hypothesisTokens.length + 1).fill(0);
-
-  for (let i = 0; i <= hypothesisTokens.length; i += 1) {
-    prevRow[i] = i;
-  }
-
-  for (let i = 1; i <= referenceTokens.length; i += 1) {
-    const currentRow = new Array(hypothesisTokens.length + 1);
-    currentRow[0] = i;
-    for (let j = 1; j <= hypothesisTokens.length; j += 1) {
-      const cost = referenceTokens[i - 1] === hypothesisTokens[j - 1] ? 0 : 1;
-      const deletion = prevRow[j] + 1;
-      const insertion = currentRow[j - 1] + 1;
-      const substitution = prevRow[j - 1] + cost;
-      currentRow[j] = Math.min(deletion, insertion, substitution);
-    }
-    for (let j = 0; j <= hypothesisTokens.length; j += 1) {
-      prevRow[j] = currentRow[j];
-    }
-  }
-
-  const distance = prevRow[hypothesisTokens.length];
-  return distance / referenceTokens.length;
-}
-
-function isTranscriptionLikelyPrompt(
-  transcription: string,
-  fullPrompt: string,
-  glossaryContent: string,
-): boolean {
-  const normalizedTranscription = transcription.trim().toLowerCase();
-  const normalizedPrompt = fullPrompt.trim().toLowerCase();
-  const normalizedGlossary = glossaryContent.trim().toLowerCase();
-
-  const firstLineOfGlossary = normalizedGlossary.split("\n")[0]?.trim() ?? "";
-
-  const distanceFull = levenshteinDistance(
-    normalizedTranscription,
-    normalizedPrompt,
-  );
-  const distanceContent = levenshteinDistance(
-    normalizedTranscription,
-    normalizedGlossary,
-  );
-  const distanceFirstLine = levenshteinDistance(
-    normalizedTranscription,
-    firstLineOfGlossary,
-  );
-
-  const maxLengthFull = Math.max(
-    normalizedTranscription.length,
-    normalizedPrompt.length,
-  );
-  const maxLengthContent = Math.max(
-    normalizedTranscription.length,
-    normalizedGlossary.length,
-  );
-  const maxLengthFirstLine = Math.max(
-    normalizedTranscription.length,
-    firstLineOfGlossary.length,
-  );
-
-  const differenceFull = maxLengthFull > 0 ? distanceFull / maxLengthFull : 0;
-  const differenceContent =
-    maxLengthContent > 0 ? distanceContent / maxLengthContent : 0;
-  const differenceFirstLine =
-    maxLengthFirstLine > 0 ? distanceFirstLine / maxLengthFirstLine : 0;
-
-  return (
-    differenceFull < TRANSCRIPTION_PROMPT_SIMILARITY_THRESHOLD ||
-    differenceContent < TRANSCRIPTION_PROMPT_SIMILARITY_THRESHOLD ||
-    differenceFirstLine < TRANSCRIPTION_PROMPT_SIMILARITY_THRESHOLD
-  );
 }
 
 function resolveBedrockConfig(): BedrockEvalConfig {
@@ -748,11 +624,15 @@ function printSummary(output: EvalOutput, reference?: string) {
   console.log(`Trivial outputs: ${output.trivialTextCount}`);
   console.log(`Top stability: ${output.topStability.toFixed(2)}`);
   console.log(`Average latency: ${Math.round(output.avgDurationMs)}ms`);
-  if (reference) {
-    const wer = wordErrorRate(reference, output.text);
-    if (wer !== null) {
-      console.log(`WER: ${wer.toFixed(3)}`);
-    }
+  if (reference !== undefined) {
+    console.log(
+      "All-run reference scores:",
+      summarizeTranscriptionScores(
+        output.results.map((result) =>
+          scoreTranscription(reference, result.text),
+        ),
+      ),
+    );
   }
   console.log("Top outputs:");
   output.distribution.slice(0, 5).forEach(({ text, count }) => {
@@ -772,18 +652,23 @@ function printComparisonSummary(
   console.log(
     `- no prompt: ${output.withoutPrompt.text || "[empty]"} (prompt-like ${output.withoutPrompt.promptLikeCount}/${output.withoutPrompt.runs}, trivial ${output.withoutPrompt.trivialTextCount}/${output.withoutPrompt.runs})`,
   );
-  if (reference) {
-    const withPromptWer = wordErrorRate(reference, output.withPrompt.text);
-    const withoutPromptWer = wordErrorRate(
-      reference,
-      output.withoutPrompt.text,
+  if (reference !== undefined) {
+    console.log(
+      "With prompt all-run scores:",
+      summarizeTranscriptionScores(
+        output.withPrompt.results.map((result) =>
+          scoreTranscription(reference, result.text),
+        ),
+      ),
     );
-    if (withPromptWer !== null) {
-      console.log(`- with prompt WER: ${withPromptWer.toFixed(3)}`);
-    }
-    if (withoutPromptWer !== null) {
-      console.log(`- no prompt WER: ${withoutPromptWer.toFixed(3)}`);
-    }
+    console.log(
+      "Without prompt all-run scores:",
+      summarizeTranscriptionScores(
+        output.withoutPrompt.results.map((result) =>
+          scoreTranscription(reference, result.text),
+        ),
+      ),
+    );
   }
 }
 
@@ -882,6 +767,11 @@ async function runFileEval(options: EvalOptions) {
       output,
       comparison: comparisonOutput,
       referenceLength: reference?.length ?? 0,
+      referenceScores: summarizeTranscriptionScores(
+        output.results.map((result) =>
+          scoreTranscription(reference, result.text),
+        ),
+      ),
     };
     await writeOutputFile(options.output, payload);
     console.log(`\nSaved results to ${options.output}`);
@@ -992,23 +882,29 @@ async function runLangfuseEval(options: EvalOptions) {
           },
         ];
 
-        if (expected?.transcript) {
-          const wer = wordErrorRate(expected.transcript, parsedOutput.text);
-          const exactMatch =
-            normalizeForCompare(expected.transcript) ===
-            normalizeForCompare(parsedOutput.text)
-              ? 1
-              : 0;
-          if (wer !== null) {
+        if (expected?.transcript !== undefined) {
+          const scores = summarizeTranscriptionScores(
+            parsedOutput.results.map((result) =>
+              scoreTranscription(expected.transcript, result.text),
+            ),
+          );
+          if (scores.wer !== null)
+            evaluations.push({ name: "wer", value: scores.wer });
+          if (scores.exactMatchRate !== null)
             evaluations.push({
-              name: "wer",
-              value: wer,
+              name: "exact_match",
+              value: scores.exactMatchRate,
             });
-          }
-          evaluations.push({
-            name: "exact_match",
-            value: exactMatch,
-          });
+          if (scores.unwantedOutputRate !== null)
+            evaluations.push({
+              name: "unwanted_output_rate",
+              value: scores.unwantedOutputRate,
+            });
+          if (scores.speechDroppedRate !== null)
+            evaluations.push({
+              name: "speech_dropped_rate",
+              value: scores.speechDroppedRate,
+            });
         }
 
         return evaluations;
@@ -1021,6 +917,21 @@ async function runLangfuseEval(options: EvalOptions) {
 }
 
 async function runEval() {
+  if (process.argv.includes("--manifest")) {
+    // Both source and compiled entrypoints route release corpus work to dist.
+    // The compiled runner verifies the normal build association before provider calls.
+    const runnerFile = path.resolve(
+      __dirname,
+      "../../dist/evals/transcriptionQualityEval.js",
+    );
+    const loadCompiledRunner = createRequire(runnerFile);
+    const {
+      runTranscriptionQualityEval,
+    }: typeof import("./transcriptionQualityEval") =
+      loadCompiledRunner(runnerFile);
+    await runTranscriptionQualityEval(process.argv.slice(2));
+    return;
+  }
   const options = parseOptions();
   if (options.provider === "openai" && !config.openai.apiKey) {
     throw new Error("OPENAI_API_KEY is required to run transcription evals.");
@@ -1035,6 +946,24 @@ async function runEval() {
 }
 
 runEval().catch((error) => {
-  console.error("Transcription eval failed:", error);
+  if (process.argv.includes("--manifest")) {
+    const status = z
+      .object({ status: z.number().int().min(100).max(599) })
+      .safeParse(error);
+    const buildRequired = z
+      .object({
+        message: z.literal(
+          "transcription_eval_build_required: run npm run build; build association is missing or stale",
+        ),
+      })
+      .safeParse(error).success;
+    console.error({
+      category: buildRequired
+        ? "transcription_eval_build_required"
+        : "corpus_eval_failed",
+      ...(buildRequired ? { hint: "Run npm run build." } : {}),
+      status: status.success ? status.data.status : null,
+    });
+  } else console.error("Transcription eval failed:", error);
   process.exit(1);
 });

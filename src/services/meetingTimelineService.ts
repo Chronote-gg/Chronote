@@ -1,3 +1,4 @@
+import { isAudioFileSpeechRejected } from "../utils/audioTranscript";
 import type { AudioCueEvent, AudioFileData } from "../types/audio";
 import type { ChatEntry } from "../types/chat";
 import type { MeetingHistory } from "../types/db";
@@ -65,7 +66,10 @@ const addEvent = (
   seconds: number,
   event: MeetingEvent,
 ) => {
-  events.push({ seconds, event });
+  events.push({
+    seconds,
+    event: { ...event, offsetSeconds: Math.max(0, seconds) },
+  });
 };
 
 const toTimestampMsSafe = (value: number | string | Date, fallbackMs = 0) =>
@@ -354,6 +358,7 @@ const buildTranscriptSegmentsFromMeeting = (meeting: MeetingData) => {
   };
 
   for (const file of meeting.audioData.audioFiles) {
+    if (isAudioFileSpeechRejected(file)) continue;
     addSegment(
       file,
       file.finalPassTranscript !== undefined

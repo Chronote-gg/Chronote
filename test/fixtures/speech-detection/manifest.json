@@ -1,0 +1,121 @@
+{
+  "version": 1,
+  "name": "synthetic-speech-detection-runtime-controls",
+  "cases": [
+    {
+      "id": "tune-silence",
+      "file": "tune-silence.wav",
+      "sha256": "eaef661c7dbe1718130635db351c4b376915492e3a3d680056ac1e969235f2b4",
+      "split": "tune",
+      "tags": ["silence", "nonspeech"],
+      "label": {
+        "kind": "nonspeech",
+        "provenance": "synthetic",
+        "notes": "Generated signal contains no speech."
+      }
+    },
+    {
+      "id": "tune-tone",
+      "file": "tune-tone.wav",
+      "sha256": "316b2937b391bcedac01dbdf1c111928757fa13462b79dd040e1d22c52a61d8f",
+      "split": "tune",
+      "tags": ["tone", "nonspeech"],
+      "label": {
+        "kind": "nonspeech",
+        "provenance": "synthetic",
+        "notes": "Generated signal contains no speech."
+      }
+    },
+    {
+      "id": "tune-click",
+      "file": "tune-click.wav",
+      "sha256": "013f06a104b2f5302324d12d2d66dc5f750dee2d79b817d1d5898aac5e99eb48",
+      "split": "tune",
+      "tags": ["click", "nonspeech"],
+      "label": {
+        "kind": "nonspeech",
+        "provenance": "synthetic",
+        "notes": "Generated signal contains no speech."
+      }
+    },
+    {
+      "id": "yes-normal",
+      "file": "yes-normal.wav",
+      "sha256": "e2ddf8d2be594d71340aab24dfa8fb677eba75a647ab76b37ac42766901ed0a4",
+      "split": "tune",
+      "tags": ["speech", "normal", "short-speech", "control"],
+      "label": {
+        "kind": "speech",
+        "transcript": "Yes.",
+        "provenance": "synthetic",
+        "notes": "Reference is the independent TTS input. Human recording quality is not established."
+      }
+    },
+    {
+      "id": "yes-quiet",
+      "file": "yes-quiet.wav",
+      "sha256": "afc446cddb121b5e41f27547df437598383778d96dd71ecfc708a8e4dca81f6f",
+      "split": "tune",
+      "tags": ["speech", "quiet", "short-speech", "control"],
+      "label": {
+        "kind": "speech",
+        "transcript": "Yes.",
+        "provenance": "synthetic",
+        "notes": "Reference is the independent TTS input. Human recording quality is not established."
+      }
+    },
+    {
+      "id": "yes-opus",
+      "file": "yes-opus.wav",
+      "sha256": "edd504edb015df001f67a8f29634b30364ea01c8ba3581587b780256c633a515",
+      "split": "tune",
+      "tags": ["speech", "opus", "short-or-sentence"],
+      "label": {
+        "kind": "speech",
+        "transcript": "Yes.",
+        "provenance": "synthetic",
+        "notes": "Reference is the independent TTS input. Human recording quality is not established."
+      }
+    },
+    {
+      "id": "workshop-normal",
+      "file": "workshop-normal.wav",
+      "sha256": "f41273f093c2140c466b80cd91ca636396490d1c056776020990ff946cc5013a",
+      "split": "tune",
+      "tags": ["speech", "normal", "short-speech", "dictionary-phrase"],
+      "label": {
+        "kind": "speech",
+        "transcript": "The Workshop.",
+        "provenance": "synthetic",
+        "notes": "Reference is the independent TTS input. Human recording quality is not established."
+      }
+    },
+    {
+      "id": "workshop-quiet",
+      "file": "workshop-quiet.wav",
+      "sha256": "4bbf5932c16e229189797e6124703e25281c2351dfb55e1f3f96cdd08e14e1b8",
+      "split": "tune",
+      "tags": ["speech", "quiet", "short-speech", "dictionary-phrase"],
+      "label": {
+        "kind": "speech",
+        "transcript": "The Workshop.",
+        "provenance": "synthetic",
+        "notes": "Reference is the independent TTS input. Human recording quality is not established."
+      }
+    },
+    {
+      "id": "workshop-opus",
+      "file": "workshop-opus.wav",
+      "sha256": "40911accf82b2019c19123bb2702e30c5c28b1bde11da119c6191e8d82f06742",
+      "split": "tune",
+      "tags": ["speech", "opus", "short-or-sentence"],
+      "label": {
+        "kind": "speech",
+        "transcript": "The Workshop.",
+        "provenance": "synthetic",
+        "notes": "Reference is the independent TTS input. Human recording quality is not established."
+      }
+    }
+  ],
+  "prompt": "Dictionary terms: VRChat, Discord, The Workshop, The Makers. Context: planning a community event."
+}
