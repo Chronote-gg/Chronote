@@ -380,7 +380,7 @@ describe("authoritative initial-purchase offer", () => {
         guildId: request.guildId,
         payerId: "other",
       }),
-    ).toEqual({ status: "unavailable" });
+    ).toMatchObject({ status: "available", id: "basic_intro_v1" });
     expect(
       await getGuildBasicIntroOffer({
         stripe: request.stripe,
@@ -388,7 +388,7 @@ describe("authoritative initial-purchase offer", () => {
         payerId: "payer",
         interval: "year",
       }),
-    ).toEqual({ status: "unavailable" });
+    ).toEqual({ status: "inactive" });
   });
   test("Checkout revalidates provider terms even while public pricing stays cached", async () => {
     const { request, coupon, stripe } = purchaseFixture();
@@ -1434,7 +1434,7 @@ describe("remaining offer boundary cases", () => {
         guildId: request.guildId,
         payerId: "other",
       }),
-    ).resolves.toEqual({ status: "unavailable" });
+    ).resolves.toEqual({ status: "inactive" });
   });
 });
 

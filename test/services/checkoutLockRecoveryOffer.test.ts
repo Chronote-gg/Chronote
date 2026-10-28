@@ -17,6 +17,7 @@ import {
   getBillingSnapshot,
 } from "../../src/services/billingService";
 import { expirePurchaseAttempt } from "../../src/services/purchaseReconciliation";
+import { getGuildBasicIntroOffer } from "../../src/services/basicIntroOfferService";
 import { getMockStore, resetMockStore } from "../../src/repositories/mockStore";
 import { clearGuildSubscriptionCache } from "../../src/services/subscriptionService";
 import {
@@ -150,4 +151,61 @@ test("an expiry webhook landing during an introductory supersede still yields on
     state: "reserved",
     operationId: next.attemptId,
   });
+});
+
+test("an open Pro checkout does not make the Basic offer unavailable", async () => {
+  const { request } = introPurchaseFixture();
+  await createCheckoutSession({
+    ...request,
+    priceId: "price_pro",
+    tier: "pro",
+    interval: "month",
+  });
+  expect(
+    await getGuildBasicIntroOffer({
+      stripe: request.stripe,
+      guildId: request.guildId,
+      payerId: "other",
+    }),
+  ).toMatchObject({ status: "available", id: "basic_intro_v1" });
+});
+
+test("another payer is quoted the reserved offer and the superseding checkout accepts that quote", async () => {
+  const { request } = introPurchaseFixture();
+  await createCheckoutSession({ ...request, expectedOffer: "basic_intro_v1" });
+  const quote = await getGuildBasicIntroOffer({
+    stripe: request.stripe,
+    guildId: request.guildId,
+    payerId: "other",
+  });
+  expect(quote).toMatchObject({ status: "available", id: "basic_intro_v1" });
+  expect(quote).not.toHaveProperty("reservedForCheckout");
+  await expect(
+    createCheckoutSession({
+      ...request,
+      user: { id: "other" },
+      expectedOffer: "basic_intro_v1",
+    }),
+  ).resolves.toContain("checkout.stripe.com");
+});
+
+test("a preparing attempt still makes the offer unavailable to another payer", async () => {
+  const { request, stripe } = introPurchaseFixture();
+  // A lost create response leaves the attempt `preparing`.
+  stripe.checkout.sessions.create.mockRejectedValueOnce(
+    new Error("lost response"),
+  );
+  await expect(
+    createCheckoutSession({ ...request, expectedOffer: "basic_intro_v1" }),
+  ).rejects.toThrow("lost response");
+  expect(getMockStore().purchaseAttempts.get(request.guildId)?.state).toBe(
+    "preparing",
+  );
+  expect(
+    await getGuildBasicIntroOffer({
+      stripe: request.stripe,
+      guildId: request.guildId,
+      payerId: "other",
+    }),
+  ).toEqual({ status: "unavailable" });
 });
