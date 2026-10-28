@@ -1,4 +1,3 @@
-import { randomUUID } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 import {
   QueryCommand,
@@ -57,9 +56,11 @@ export type ProcessingRetryQueueInput = {
   job: ProcessingRetryJob;
   dueAt: number;
 };
+/** The caller mints `claimId` so it can record the claim before the write is sent. */
 export type ProcessingRetryClaimInput = {
   key: MeetingUpdateKey;
   jobId: string;
+  claimId: string;
   ownerInstanceId: string;
   now: number;
   leaseExpiresAt: number;
@@ -158,7 +159,6 @@ function queueWrite(
 function claimWrite(
   row: MeetingHistory,
   input: ProcessingRetryClaimInput,
-  claimId: string,
 ): RetryWrite | undefined {
   const job = row.processingRetry;
   if (job?.jobId !== input.jobId) return undefined;
@@ -172,7 +172,7 @@ function claimWrite(
     status: "running",
     claim: {
       ownerInstanceId: input.ownerInstanceId,
-      claimId,
+      claimId: input.claimId,
       leaseExpiresAt: input.leaseExpiresAt,
     },
     updatedAt: new Date(input.now * 1000).toISOString(),
@@ -270,10 +270,9 @@ function repositoryOver(store: RetryStore): ProcessingRetryRepository {
     },
     async claim(input) {
       validateClaim(input);
-      const claimId = randomUUID();
       const saved = await apply(
         input.key,
-        (row) => claimWrite(row, input, claimId),
+        (row) => claimWrite(row, input),
         input.authority,
         input.signal,
       );

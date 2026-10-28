@@ -3,11 +3,21 @@ jest.mock("dotenv", () => ({ config: () => ({ parsed: {} }) }));
 jest.mock("../../src/services/analyticsService", () => ({
   captureEvent: jest.fn(),
 }));
+jest.mock("../../src/services/runtimeLifecycleService", () => ({
+  beginRuntimeWork: () => ({ settle: jest.fn(), transition: jest.fn() }),
+  getRuntimeAdmissionContext: jest.fn(),
+}));
 import { processingRetryJobs } from "../../src/metrics";
 import { createMockMeetingUpdateDeliveryRepository } from "../../src/repositories/mockMeetingUpdateDeliveryRepository";
 import { createMockProcessingRetryRepository } from "../../src/repositories/processingRetryRepository";
 import { captureEvent } from "../../src/services/analyticsService";
 import { createMeetingUpdateService } from "../../src/services/meetingUpdateService";
+import { getRuntimeAdmissionContext } from "../../src/services/runtimeLifecycleService";
+import {
+  beginRuntimeWorkClaim,
+  fenceRuntimeWorkAdmissions,
+  getRuntimeWorkAdmissionCheckpoints,
+} from "../../src/services/runtimeWorkAdmissionService";
 import type { ProcessingRetryRun } from "../../src/services/processingRetryStages";
 import {
   createProcessingRetryWorker,
@@ -86,6 +96,7 @@ function stubWork() {
     recordClaim: jest.fn(),
     claimed: jest.fn(),
     acknowledgeTerminal: jest.fn(),
+    acknowledgeReadOnlyRecoveryPoll: jest.fn(),
     fence: jest.fn(() => controller.abort()),
     settle: jest.fn(async () => {}),
   };
@@ -360,6 +371,12 @@ it("a throwing claim is logged and the key skipped", async () => {
     .mockRejectedValue(new Error("unknown outcome"));
   await pollOnce();
   expect(deps.run).not.toHaveBeenCalled();
+  const [submitted] = jest.mocked(deps.repository.claim).mock.calls[0];
+  expect(works[0].recordClaim).toHaveBeenCalledWith({
+    claimId: submitted.claimId,
+    instanceId: "instance-a",
+    expiresAt: now + 300,
+  });
   expect(works[0].fence).toHaveBeenCalled();
   expect(error).toHaveBeenCalledWith(
     PROCESSING_RETRY_WORKER_FAILED_LOG,
@@ -386,4 +403,68 @@ it("claims nothing without serving authority", async () => {
   await pollOnce();
   expect(deps.run).not.toHaveBeenCalled();
   expect(stored().processingRetry).toMatchObject({ status: "queued" });
+});
+
+it("a save that commits and then throws still counts as saved", async () => {
+  jest.spyOn(console, "error").mockImplementation(() => {});
+  seed();
+  const save = deps.save.getMockImplementation()!;
+  deps.save.mockImplementation(async (input) => {
+    await save(input);
+    throw new Error("response lost");
+  });
+  await pollOnce();
+  expect(stored().processingRetry).toMatchObject({ status: "succeeded" });
+  expect(works[0].acknowledgeTerminal).toHaveBeenCalled();
+  expect(captureEvent).toHaveBeenCalledWith(
+    "meeting_processing_retry_completed",
+    expect.objectContaining({
+      properties: expect.objectContaining({ outcome: "succeeded" }),
+    }),
+  );
+});
+
+describe("with real runtime work admission", () => {
+  beforeEach(() => {
+    jest
+      .mocked(getRuntimeAdmissionContext)
+      .mockResolvedValue(authority.context);
+    deps.begin = beginRuntimeWorkClaim;
+  });
+  afterEach(() => {
+    fenceRuntimeWorkAdmissions();
+  });
+
+  it("releases a work handle fenced before its claim was sent, without paging", async () => {
+    const error = jest.spyOn(console, "error").mockImplementation(() => {});
+    seed();
+    jest.spyOn(deps.rows, "getStrong").mockImplementation(async () => {
+      fenceRuntimeWorkAdmissions();
+      throw new Error("aborted");
+    });
+    await pollOnce();
+    expect(getRuntimeWorkAdmissionCheckpoints()).toEqual([]);
+    expect(error).not.toHaveBeenCalled();
+    expect(stored().processingRetry).toMatchObject({ status: "queued" });
+  });
+
+  it("releases the work handle after a success", async () => {
+    seed();
+    await pollOnce();
+    expect(stored().processingRetry).toMatchObject({ status: "succeeded" });
+    expect(getRuntimeWorkAdmissionCheckpoints()).toEqual([]);
+  });
+
+  it("releases the work handle after a failure", async () => {
+    seed();
+    deps.run.mockResolvedValue({
+      kind: "failed",
+      reason: "stage_failed",
+      settingsSource: "current",
+      transcriptSource: "existing",
+    });
+    await pollOnce();
+    expect(stored().processingRetry).toMatchObject({ status: "failed" });
+    expect(getRuntimeWorkAdmissionCheckpoints()).toEqual([]);
+  });
 });

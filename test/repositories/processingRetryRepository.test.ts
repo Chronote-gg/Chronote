@@ -1,4 +1,5 @@
 /** @jest-environment node */
+import { randomUUID } from "node:crypto";
 import { createMockProcessingRetryRepository } from "../../src/repositories/processingRetryRepository";
 import type { MeetingHistory } from "../../src/types/db";
 import {
@@ -67,6 +68,7 @@ const claim = (at: number, ownerInstanceId = "instance-a", jobId = "job-1") =>
   repository().claim({
     key,
     jobId,
+    claimId: randomUUID(),
     ownerInstanceId,
     now: at,
     leaseExpiresAt: at + 300,

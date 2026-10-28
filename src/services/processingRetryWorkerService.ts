@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import {
   PROCESSING_RETRY_CLAIM_RENEWAL_MS,
   PROCESSING_RETRY_CLAIM_SECONDS,
@@ -56,6 +57,7 @@ type RetryWork = Pick<
   | "recordClaim"
   | "claimed"
   | "acknowledgeTerminal"
+  | "acknowledgeReadOnlyRecoveryPoll"
   | "fence"
   | "settle"
 >;
@@ -86,6 +88,8 @@ type ContentChanges = Extract<
 >["changes"];
 type ConflictVerdict = "saved" | "lost" | "notes_changed" | "retry";
 
+// A fenced work handle refuses trackEffect, yet its claim-conditioned terminal write must still run.
+const untracked: RetryWork["trackEffect"] = (run) => run();
 const notesVersionOf = (row: Pick<MeetingHistory, "notesVersion">) =>
   readMeetingUpdateRevisions(row).notesVersion;
 
@@ -173,22 +177,31 @@ export function createProcessingRetryWorker(
     const queued = history?.processingRetry;
     if (!history || !queued) return undefined;
     const now = deps.now();
+    const claim: Claim = {
+      ownerInstanceId: deps.instanceId(),
+      claimId: randomUUID(),
+      leaseExpiresAt: now + PROCESSING_RETRY_CLAIM_SECONDS,
+    };
+    // Recorded before the write, so a claim whose outcome is unknown stays reconcilable.
+    work.recordClaim({
+      claimId: claim.claimId,
+      instanceId: claim.ownerInstanceId,
+      expiresAt: claim.leaseExpiresAt,
+    });
     submitted();
     const job = await deps.repository.claim({
       key,
       jobId: queued.jobId,
-      ownerInstanceId: deps.instanceId(),
+      ...claim,
       now,
-      leaseExpiresAt: now + PROCESSING_RETRY_CLAIM_SECONDS,
       authority,
       signal: work.signal,
     });
-    if (!job?.claim) return undefined;
-    work.recordClaim({
-      claimId: job.claim.claimId,
-      instanceId: job.claim.ownerInstanceId,
-      expiresAt: job.claim.leaseExpiresAt,
-    });
+    if (!job?.claim) {
+      // The write was refused, so the recorded claim never existed.
+      work.acknowledgeTerminal();
+      return undefined;
+    }
     work.claimed();
     return {
       key,
@@ -255,12 +268,19 @@ export function createProcessingRetryWorker(
     return result === "applied" ? failed : undefined;
   }
 
-  async function afterConflict(claimed: ClaimedJob): Promise<ConflictVerdict> {
-    const row = await claimed.work.trackEffect(() =>
-      deps.rows.getStrong(claimed.key),
-    );
+  async function readOwnJob(
+    claimed: ClaimedJob,
+    read: RetryWork["trackEffect"],
+  ) {
+    const row = await read(() => deps.rows.getStrong(claimed.key));
     const job = row?.processingRetry;
-    if (job?.jobId !== claimed.job.jobId) return "lost";
+    return row && job?.jobId === claimed.job.jobId ? { row, job } : undefined;
+  }
+
+  async function afterConflict(claimed: ClaimedJob): Promise<ConflictVerdict> {
+    const own = await readOwnJob(claimed, claimed.work.trackEffect);
+    if (!own) return "lost";
+    const { row, job } = own;
     if (job.status === "succeeded") return "saved";
     if (
       job.status !== "running" ||
@@ -268,7 +288,7 @@ export function createProcessingRetryWorker(
       job.claim.ownerInstanceId !== claimed.claim.ownerInstanceId
     )
       return "lost";
-    return row && notesVersionOf(row) !== claimed.job.expectedNotesVersion
+    return notesVersionOf(row) !== claimed.job.expectedNotesVersion
       ? "notes_changed"
       : "retry";
   }
@@ -343,11 +363,12 @@ export function createProcessingRetryWorker(
       error,
     });
     try {
-      // The fence closes trackEffect, so this write runs untracked.
-      const failed = await failJob(claimed, claimed.job, "unknown", (write) =>
-        write(),
-      );
-      if (failed) completed(claimed, failed);
+      const failed = await failJob(claimed, claimed.job, "unknown", untracked);
+      // A refused fail may mean the save committed before it threw.
+      const own = failed ? undefined : await readOwnJob(claimed, untracked);
+      const terminal =
+        failed ?? (own?.job.status === "succeeded" ? own.job : undefined);
+      if (terminal) completed(claimed, terminal);
     } catch (failError) {
       console.error(PROCESSING_RETRY_WORKER_FAILED_LOG, failError);
     }
@@ -384,11 +405,15 @@ export function createProcessingRetryWorker(
       admitted();
       if (claimed) await execute(claimed);
     } catch (error) {
+      // Shutdown or a lost lease is expected on every deploy and must not page.
+      const cancelled = work.signal.aborted;
       // A claim that may have committed stays unresolved instead of being released.
       if (submitted) work.fence();
-      console.error(PROCESSING_RETRY_WORKER_FAILED_LOG, error);
+      if (!cancelled) console.error(PROCESSING_RETRY_WORKER_FAILED_LOG, error);
     } finally {
       admitted();
+      // Without a claim, a fenced recovery handle is released only by this acknowledgment.
+      if (!submitted) work.acknowledgeReadOnlyRecoveryPoll();
       await work.settle();
     }
   }
