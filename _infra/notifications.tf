@@ -176,6 +176,45 @@ resource "aws_cloudwatch_metric_alarm" "alb_unhealthy_hosts" {
   }
 }
 
+# --- Billing: checkout lock that will not release on its own ---
+# Matches the STUCK_CHECKOUT_LOG text in src/services/initialPurchaseService.ts.
+# It is logged only when a billing page load finds the row stuck, so a server
+# nobody revisits stays silent; this catches the lock someone is blocked by.
+
+resource "aws_cloudwatch_log_metric_filter" "checkout_lock_stuck" {
+  name           = "${local.name_prefix}-checkout-lock-stuck"
+  log_group_name = aws_cloudwatch_log_group.app_log_group.name
+  pattern        = "\"Checkout lock stuck\""
+
+  metric_transformation {
+    name      = "CheckoutLockStuck"
+    namespace = "${local.name_prefix}/Billing"
+    value     = "1"
+  }
+}
+
+resource "aws_cloudwatch_metric_alarm" "checkout_lock_stuck" {
+  count               = local.alerts_enabled ? 1 : 0
+  alarm_name          = "${local.name_prefix}-checkout-lock-stuck"
+  alarm_description   = "A server's checkout lock is stuck open; search app logs for \"Checkout lock stuck\" to find the guild"
+  namespace           = aws_cloudwatch_log_metric_filter.checkout_lock_stuck.metric_transformation[0].namespace
+  metric_name         = aws_cloudwatch_log_metric_filter.checkout_lock_stuck.metric_transformation[0].name
+  statistic           = "Sum"
+  period              = 3600
+  evaluation_periods  = 1
+  threshold           = 1
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  treat_missing_data  = "notBreaching"
+
+  alarm_actions = [aws_sns_topic.critical_alerts[0].arn]
+  ok_actions    = [aws_sns_topic.critical_alerts[0].arn]
+
+  tags = {
+    Project     = "${var.project_name}-discord-bot"
+    Environment = var.environment
+  }
+}
+
 # -----------------------------------------------------------------------
 # Discord alert Lambda: forwards SNS alarm notifications to a Discord channel
 # -----------------------------------------------------------------------

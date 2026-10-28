@@ -17,6 +17,7 @@ import { createCheckoutSession } from "../../src/services/billingService";
 import { releaseExpiredPurchaseAttempt } from "../../src/services/initialPurchaseService";
 import { prepareBillingChange } from "../../src/services/billingChangeService";
 import { config } from "../../src/services/configService";
+import { checkoutLockReleases } from "../../src/metrics";
 import { getMockStore, resetMockStore } from "../../src/repositories/mockStore";
 import {
   initialPurchaseStripe,
@@ -46,10 +47,17 @@ const providerExpired = () => ({
   url: null,
   subscription: null,
 });
-const pastExpiry = () => {
+const pastExpiry = (seconds = 1) => {
   getMockStore().purchaseAttempts.get(purchaseGuildId)!.checkout.expires_at =
-    Math.floor(Date.now() / 1000) - 1;
+    Math.floor(Date.now() / 1000) - seconds;
 };
+const releases = async () =>
+  Object.fromEntries(
+    (await checkoutLockReleases.get()).values.map((v) => [
+      v.labels.outcome,
+      v.value,
+    ]),
+  );
 
 beforeEach(async () => {
   resetMockStore();
@@ -57,7 +65,9 @@ beforeEach(async () => {
   ({ stripe, client } = initialPurchaseStripe());
   retrieve = stripe.checkout.sessions.retrieve;
   request.stripe = client;
+  checkoutLockReleases.reset();
   jest.spyOn(console, "warn").mockImplementation(() => undefined);
+  jest.spyOn(console, "error").mockImplementation(() => undefined);
   await createCheckoutSession(request);
   retrieve.mockClear();
 });
@@ -66,6 +76,7 @@ test("billing read leaves a live open checkout untouched without calling Stripe"
   await release();
   expect(stripe.checkout.sessions.retrieve).not.toHaveBeenCalled();
   expect(attemptState()).toBe("open");
+  expect(await releases()).toEqual({});
 });
 
 test("billing read releases a provider-confirmed expired checkout past its local expiry", async () => {
@@ -74,12 +85,48 @@ test("billing read releases a provider-confirmed expired checkout past its local
   await release();
   expect(retrieve).toHaveBeenCalledTimes(1);
   expect(attemptState()).toBe("expired");
+  expect(await releases()).toEqual({ released: 1 });
 });
 
 test("billing read keeps a past-expiry session that Stripe still reports open", async () => {
   pastExpiry();
   await release();
   expect(attemptState()).toBe("open");
+  expect(await releases()).toEqual({ still_open: 1 });
+  expect(console.error).not.toHaveBeenCalled();
+});
+
+test("billing read reports a session still open an hour past expiry as stuck", async () => {
+  pastExpiry(60 * 60 + 1);
+  await release();
+  expect(await releases()).toEqual({ still_open: 1 });
+  expect(console.error).toHaveBeenCalledWith(
+    "Checkout lock stuck",
+    expect.objectContaining({
+      guildId: purchaseGuildId,
+      outcome: "still_open",
+    }),
+  );
+});
+
+test("billing read reports a session association mismatch as stuck", async () => {
+  pastExpiry();
+  retrieve.mockResolvedValueOnce({
+    ...providerExpired(),
+    customer: "cus_other",
+  });
+  await release();
+  expect(attemptState()).toBe("open");
+  expect(await releases()).toEqual({ deferred_review: 1 });
+  expect(console.error).toHaveBeenCalledWith(
+    "Checkout lock stuck",
+    expect.objectContaining({
+      outcome: "deferred_review",
+      errorName: "BillingActionError",
+      reason: "purchase_needs_review",
+    }),
+  );
+  expect(console.warn).not.toHaveBeenCalled();
 });
 
 test("billing read reconciles a past-expiry session Stripe reports complete", async () => {
@@ -96,6 +143,7 @@ test("billing read reconciles a past-expiry session Stripe reports complete", as
     getMockStore().subscriptions.get(purchaseGuildId)?.stripeSubscriptionId,
   ).toBe("sub_new");
   expect(attemptState()).toBe("completed");
+  expect(await releases()).toEqual({ reconciled: 1 });
 });
 
 test("billing read degrades when Stripe is unreachable", async () => {
@@ -105,8 +153,14 @@ test("billing read degrades when Stripe is unreachable", async () => {
   expect(attemptState()).toBe("open");
   expect(console.warn).toHaveBeenCalledWith(
     "Expired checkout release deferred",
-    expect.objectContaining({ guildId: purchaseGuildId }),
+    expect.objectContaining({
+      guildId: purchaseGuildId,
+      outcome: "deferred_error",
+      errorName: "Error",
+    }),
   );
+  expect(console.error).not.toHaveBeenCalled();
+  expect(await releases()).toEqual({ deferred_error: 1 });
 });
 
 test("billing read degrades when the runtime is not admitting billing work", async () => {
@@ -118,6 +172,7 @@ test("billing read degrades when the runtime is not admitting billing work", asy
     );
   await expect(release()).resolves.toBeUndefined();
   expect(retrieve).not.toHaveBeenCalled();
+  expect(await releases()).toEqual({ deferred_admission: 1 });
 });
 
 test("billing read tolerates a concurrent writer winning the release", async () => {
@@ -136,6 +191,8 @@ test("billing read tolerates a concurrent writer winning the release", async () 
     state: "expired",
     revision: "webhook",
   });
+  expect(await releases()).toEqual({ lost_race: 1 });
+  expect(console.warn).not.toHaveBeenCalled();
 });
 
 test("billing read never touches an open attempt under incident review", async () => {
