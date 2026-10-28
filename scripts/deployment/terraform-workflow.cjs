@@ -17,6 +17,14 @@ const {
   targets,
   validatePrerequisitePlan,
 } = require("./validate-prerequisite-plan.cjs");
+const {
+  runtimeTargets,
+  validateRuntimePlan,
+} = require("./validate-runtime-plan.cjs");
+const scopedValidators = {
+  "deployment-prerequisites": validatePrerequisitePlan,
+  "deployment-runtime": validateRuntimePlan,
+};
 const prerequisites = new WeakMap();
 function privatePrerequisiteVerified(token, config) {
   const binding = prerequisites.get(token);
@@ -164,12 +172,15 @@ async function plan(options, invocation, e) {
     );
   if (invocation.scope === "deployment-prerequisites")
     args.push(...[...targets].map((target) => `-target=${target}`));
-  const planned = await e.terraform(args, [0, 2]);
-  if (invocation.scope === "deployment-prerequisites") {
-    const shown = await e.terraform(["show", "-json", "tfplan"]);
-    validatePrerequisitePlan(
-      JSON.parse(Buffer.from(shown.stdout, "base64").toString()),
+  if (invocation.scope === "deployment-runtime")
+    args.push(
+      ...[...runtimeTargets.keys()].map((target) => `-target=${target}`),
     );
+  const planned = await e.terraform(args, [0, 2]);
+  const validateScope = scopedValidators[invocation.scope];
+  if (validateScope) {
+    const shown = await e.terraform(["show", "-json", "tfplan"]);
+    validateScope(JSON.parse(Buffer.from(shown.stdout, "base64").toString()));
   }
   const shown = await e.terraform(["show", "-no-color", "tfplan"]);
   await verifyDelivery(e, options, invocation);
@@ -274,6 +285,12 @@ async function apply(options, invocation, e, startApply) {
       );
       prerequisite = {};
       prerequisites.set(prerequisite, { config, plan });
+    }
+    if (invocation.scope === "deployment-runtime") {
+      const shown = await e.terraform(["show", "-json", "tfplan"]);
+      validateRuntimePlan(
+        JSON.parse(Buffer.from(shown.stdout, "base64").toString()),
+      );
     }
     await runGuard(options.env, false, prerequisite);
   }

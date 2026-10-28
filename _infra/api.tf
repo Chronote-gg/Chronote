@@ -113,6 +113,8 @@ resource "aws_lb_target_group" "api_tg" {
   protocol    = "HTTP"
   target_type = "ip"
   vpc_id      = aws_vpc.app_vpc.id
+  # ECS waits this long before stopping a draining task, which can still start meetings.
+  deregistration_delay = 30
 
   health_check {
     path                = "/health"

@@ -165,7 +165,7 @@ run "production_identity_and_permissions" {
     error_message = "No alternative or wildcard production trust is allowed."
   }
   assert {
-    condition     = one([for s in jsondecode(aws_iam_role_policy.production_deploy[0].policy).Statement : s.Resource if s.Sid == "ProductionService"]) == aws_ecs_service.app_service.id
+    condition     = one([for s in jsondecode(aws_iam_role_policy.production_deploy[0].policy).Statement : s.Resource if s.Sid == "ProductionService"]) == "arn:aws:ecs:us-east-1:123456789012:service/meeting-notes-prod-bot-cluster/meeting-notes-prod-bot-service"
     error_message = "Service writes must bind only the existing service."
   }
   assert {
@@ -173,7 +173,7 @@ run "production_identity_and_permissions" {
     error_message = "Fence writes must bind only the existing runtime role."
   }
   assert {
-    condition     = toset(one([for s in jsondecode(aws_iam_role_policy.production_deploy[0].policy).Statement : s.Resource if s.Sid == "PassOnlyProductionRuntimeRoles"])) == toset([aws_iam_role.ecs_task_app_role.arn, aws_iam_role.ecs_task_execution_role.arn]) && one([for s in jsondecode(aws_iam_role_policy.production_deploy[0].policy).Statement : s.Condition.StringEquals["iam:PassedToService"] if s.Sid == "PassOnlyProductionRuntimeRoles"]) == "ecs-tasks.amazonaws.com"
+    condition     = toset(one([for s in jsondecode(aws_iam_role_policy.production_deploy[0].policy).Statement : s.Resource if s.Sid == "PassOnlyProductionRuntimeRoles"])) == toset([aws_iam_role.ecs_task_app_role.arn, "arn:aws:iam::123456789012:role/meeting-notes-prod-ecs-task-exec-role"]) && one([for s in jsondecode(aws_iam_role_policy.production_deploy[0].policy).Statement : s.Condition.StringEquals["iam:PassedToService"] if s.Sid == "PassOnlyProductionRuntimeRoles"]) == "ecs-tasks.amazonaws.com"
     error_message = "PassRole must bind only the two existing ECS roles and ECS tasks."
   }
   assert {
@@ -195,6 +195,70 @@ run "production_identity_and_permissions" {
   assert {
     condition     = github_actions_environment_variable.production_deploy_role[0].variable_name == "PRODUCTION_BACKEND_DEPLOY_ROLE_ARN" && github_actions_environment_variable.production_deploy_role[0].value == aws_iam_role.production_deploy[0].arn && github_actions_environment_variable.production_deploy_account[0].value == "123456789012"
     error_message = "Actions variables must expose the exact production role and account."
+  }
+}
+# The runtime Plan scope targets these policies without the serving service or task definition.
+run "constructed_runtime_names_match_serving_resources" {
+  command = plan
+  plan_options {
+    target = [aws_iam_role_policy.production_deploy, aws_ecs_service.app_service, aws_ecr_repository.app_ecr_repo, aws_iam_role.ecs_task_execution_role, aws_iam_policy.kms_app_policy, aws_iam_policy.transcripts_s3_policy, aws_iam_policy.appconfig_access_policy, aws_iam_policy.bedrock_data_automation_policy, aws_iam_policy.bedrock_s3_policy]
+  }
+  variables {
+    environment        = "prod"
+    github_environment = "production"
+  }
+  assert {
+    condition     = one([for s in jsondecode(aws_iam_role_policy.production_deploy[0].policy).Statement : s.Resource if s.Sid == "ProductionService"]) == "arn:aws:ecs:us-east-1:123456789012:service/${aws_ecs_cluster.main.name}/${aws_ecs_service.app_service.name}" && one([for s in jsondecode(aws_iam_role_policy.production_deploy[0].policy).Statement : s.Resource if s.Sid == "ProductionTaskDefinitionRegistration"]) == "arn:aws:ecs:us-east-1:123456789012:task-definition/${aws_ecs_task_definition.app_task.family}:*"
+    error_message = "Constructed service and task family ARNs must name the serving resources."
+  }
+  assert {
+    condition     = one([for s in jsondecode(aws_iam_role_policy.production_deploy[0].policy).Statement : s.Condition.StringEquals["ecs:container-name"] if s.Sid == "RuntimePrincipalProbe"]) == jsondecode(aws_ecs_task_definition.app_task.container_definitions)[0].name && one([for s in jsondecode(aws_iam_role_policy.production_deploy[0].policy).Statement : s.Resource if s.Sid == "ProductionImagePublish"]) == "arn:aws:ecr:us-east-1:123456789012:repository/${aws_ecr_repository.app_ecr_repo.name}"
+    error_message = "Constructed container and repository names must match the serving definitions."
+  }
+  assert {
+    condition     = contains(one([for s in jsondecode(aws_iam_role_policy.production_deploy[0].policy).Statement : s.Resource if s.Sid == "PassOnlyProductionRuntimeRoles"]), "arn:aws:iam::123456789012:role/${aws_iam_role.ecs_task_execution_role.name}") && toset(one([for s in jsondecode(aws_iam_role_policy.production_deploy[0].policy).Statement : s.Resource if s.Sid == "RuntimeManagedPolicyReadback"])) == toset(concat([aws_iam_policy.dynamodb_access_policy.arn], [for p in [aws_iam_policy.kms_app_policy, aws_iam_policy.transcripts_s3_policy, aws_iam_policy.appconfig_access_policy, aws_iam_policy.bedrock_data_automation_policy, aws_iam_policy.bedrock_s3_policy] : "arn:aws:iam::123456789012:policy/${p.name}"]))
+    error_message = "Constructed execution role and managed policy ARNs must name the existing resources."
+  }
+}
+run "runtime_scope_never_reads_serving_service_or_task_definition" {
+  command = plan
+  plan_options {
+    target = [
+      aws_iam_role.production_deploy[0],
+      aws_iam_role_policy.production_deploy[0],
+      aws_iam_role_policy_attachment.production_deploy_routing[0],
+      aws_iam_policy.site_publishing[0],
+      aws_iam_role_policy_attachment.site_publishing[0],
+      aws_iam_role_policy.production_exec_channels[0],
+      aws_iam_policy.dynamodb_access_policy,
+      aws_dynamodb_table.guild_subscription_table,
+      aws_iam_role.production_introduction["prompt-guard"],
+      aws_iam_role_policy.production_prompt_guard[0],
+      aws_lb_target_group.api_tg[0]
+    ]
+  }
+  variables {
+    environment                         = "prod"
+    github_environment                  = "production"
+    enable_production_prompt_guard_role = true
+  }
+  override_resource {
+    target          = aws_ecs_service.app_service
+    override_during = plan
+    values          = { id = "should-not-be-read", name = "should-not-be-read" }
+  }
+  override_resource {
+    target          = aws_ecs_task_definition.app_task
+    override_during = plan
+    values          = { family = "should-not-be-read", container_definitions = "[{\"name\":\"should-not-be-read\"}]" }
+  }
+  assert {
+    condition     = alltrue([for document in [aws_iam_role_policy.production_deploy[0].policy, aws_iam_role_policy.production_prompt_guard[0].policy, aws_iam_role.production_introduction["prompt-guard"].assume_role_policy, aws_iam_role.production_deploy[0].assume_role_policy] : !strcontains(document, "should-not-be-read")])
+    error_message = "Runtime targets must not depend on the serving service or task definition."
+  }
+  assert {
+    condition     = aws_lb_target_group.api_tg[0].deregistration_delay == "30"
+    error_message = "A draining serving task must stop within 30 seconds so legacy cannot keep starting meetings."
   }
 }
 run "sandbox_does_not_adopt_production_authority" {

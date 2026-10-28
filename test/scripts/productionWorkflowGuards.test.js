@@ -31,6 +31,7 @@ test("Apply retains private delivery and invokes the native guard at the saved-p
     native.indexOf("await runGuard(options.env, false, prerequisite)"),
   ).toBeLessThan(native.indexOf('await e.terraform(["apply"'));
   expect(read("terraform-plan")).toContain("deployment-prerequisites");
+  expect(read("terraform-plan")).toContain("deployment-runtime");
 });
 
 test("same-run continuation has a credential-free separately protected gate and immutable session/package inputs", () => {
