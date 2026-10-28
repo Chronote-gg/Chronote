@@ -113,7 +113,7 @@ const toPositiveNumber = (value?: number) =>
 const normalizeForEcho = (value: string) =>
   value
     .toLowerCase()
-    .replace(/[^a-z0-9\s]/g, " ")
+    .replace(/[^\p{L}\p{N}\s]/gu, " ")
     .replace(/\s+/g, " ")
     .trim();
 

@@ -22,9 +22,8 @@ jest.mock("../../src/services/openaiClient", () => ({
 jest.mock("../../src/services/transcriptionPromptService", () => ({
   getTranscriptionPrompt: async () => ({ prompt: "synthetic" }),
 }));
-test("final-pass actual SDK cancellation retains its local upload stream until close", async () => {
-  const started = new Date(0);
-  const meeting = {
+const buildSyntheticMeeting = (language?: string) =>
+  ({
     meetingId: "synthetic",
     guildId: "synthetic",
     channelId: "voice",
@@ -32,7 +31,7 @@ test("final-pass actual SDK cancellation retains its local upload stream until c
     guild: { id: "synthetic" },
     voiceChannel: { id: "synthetic" },
     participants: new Map(),
-    startTime: started,
+    startTime: new Date(0),
     endTime: new Date(120000),
     audioData: {
       audioFiles: [
@@ -45,8 +44,10 @@ test("final-pass actual SDK cancellation retains its local upload stream until c
         },
       ],
     },
-    runtimeConfig: { transcription: { finalPassEnabled: true } },
-  } as unknown as MeetingData;
+    runtimeConfig: { transcription: { finalPassEnabled: true, language } },
+  }) as unknown as MeetingData;
+test("final-pass actual SDK cancellation retains its local upload stream until close", async () => {
+  const meeting = buildSyntheticMeeting();
   let close!: () => void;
   const file = new PassThrough({
     destroy(_error, done) {
@@ -175,3 +176,28 @@ test("final-pass chunk encoder cancellation waits its actual terminal event", as
   expect(transcribe).not.toHaveBeenCalled();
   expect(cleanup).toHaveBeenCalledTimes(1);
 });
+test.each([
+  { language: undefined, expected: "en" },
+  { language: "de", expected: "de" },
+  { language: "auto", expected: undefined },
+])(
+  "final-pass request language for setting $language is $expected",
+  async ({ language, expected }) => {
+    mockReadStream.mockReturnValue(new PassThrough());
+    mockCreate.mockReset().mockResolvedValue({ text: "synthetic baseline" });
+    await runTranscriptionFinalPass(
+      buildSyntheticMeeting(language),
+      { audioFilePath: "synthetic.mp3" },
+      {
+        ensureTempDir: async () => "synthetic",
+        getAudioDurationSeconds: async () => 120,
+        renderAudioChunk: async () => {},
+        reconcileBatch: async () => [],
+        deleteTempFile: async () => {},
+      },
+    );
+    const request = mockCreate.mock.calls[0][0];
+    if (expected) expect(request).toHaveProperty("language", expected);
+    else expect(request).not.toHaveProperty("language");
+  },
+);

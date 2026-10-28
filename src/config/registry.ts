@@ -1,5 +1,6 @@
 import type { ConfigEntry } from "./types";
 import { speechDetectionConfigEntry } from "./speechDetection";
+import { transcriptionLanguageConfigEntry } from "./transcriptionLanguage";
 import {
   FAST_SILENCE_THRESHOLD,
   MAX_SNIPPET_LENGTH,
@@ -31,6 +32,7 @@ import {
 
 export const CONFIG_REGISTRY: ConfigEntry[] = [
   speechDetectionConfigEntry,
+  transcriptionLanguageConfigEntry,
   {
     key: "features.experimental",
     label: "Experimental features",

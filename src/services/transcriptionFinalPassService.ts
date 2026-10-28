@@ -1,3 +1,7 @@
+import {
+  transcriptionLanguageParam,
+  type TranscriptionLanguage,
+} from "../config/transcriptionLanguage";
 import { liveFinalPassInput } from "./liveTranscriptionInput";
 import { finalPassSettingsSchema } from "../types/recordingContent";
 
@@ -40,6 +44,7 @@ export type FinalPassContent = ChatMeetingInput & {
   settings: FinalPassSettings;
   langfuseParentSpanContext?: MeetingData["langfuseParentSpanContext"];
   transcriptionModel: string;
+  transcriptionLanguage: TranscriptionLanguage;
   reconcileModel: import("../types/recordingContent").SavedRecordingSettings["models"]["notes"];
   prompt(): ReturnType<typeof getTranscriptionPrompt>;
   finalPassPrompt(
@@ -808,7 +813,7 @@ const defaultDependencies: FinalPassDependencies = {
       "file"
     > = {
       model: modelChoice.model,
-      language: "en",
+      ...transcriptionLanguageParam(input.meeting.transcriptionLanguage),
       temperature: 0,
       response_format: "json",
       include: ["logprobs"],

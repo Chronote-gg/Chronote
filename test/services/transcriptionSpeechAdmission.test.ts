@@ -236,6 +236,21 @@ test.each(["off", "shadow", "enforce"] as const)(
     await expectOutcome(mode, "transcribed");
   },
 );
+test.each([
+  { language: undefined, expected: "en" },
+  { language: "fr", expected: "fr" },
+  { language: "auto", expected: undefined },
+] as const)(
+  "live request language for setting $language is $expected",
+  async ({ language, expected }) => {
+    const meeting = buildMeeting("off");
+    if (language) meeting.runtimeConfig!.transcription.language = language;
+    await transcribeSnippet(meeting, snippet);
+    const request = mockCreate.mock.calls[0][0];
+    if (expected) expect(request).toHaveProperty("language", expected);
+    else expect(request).not.toHaveProperty("language");
+  },
+);
 test("off supplies the baseline without acquiring a detector", async () => {
   expect(await transcribeSnippet(buildMeeting("off"), snippet)).toMatchObject({
     status: "succeeded",
