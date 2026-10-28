@@ -13,6 +13,8 @@ export async function readIntroOfferDecision(input: {
   mode: ProviderMode;
   offerId: IntroOfferId;
   writerImageDigest: string | undefined;
+  /** A reservation held by this operation is judged as if already released. */
+  releasableOperationId?: string;
 }): Promise<
   | { state: "used" | "reserved" | "unresolved" }
   | { state: "unused"; authority: IntroOfferAuthority }
@@ -24,7 +26,11 @@ export async function readIntroOfferDecision(input: {
     input.mode,
   );
   if (usage?.state === "used") return { state: "used" };
-  if (usage?.state === "reserved") return { state: "reserved" };
+  if (
+    usage?.state === "reserved" &&
+    usage.operationId !== input.releasableOperationId
+  )
+    return { state: "reserved" };
   const [coverage, boundary] = await Promise.all([
     getHistoricalOfferImportRepository().get(
       input.guildId,

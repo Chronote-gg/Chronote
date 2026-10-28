@@ -181,12 +181,13 @@ Downgrades to Basic or Free and a change from annual to monthly within the same 
 your next renewal. You keep the plan you already paid for until that date.
 Cancel a scheduled change before choosing a different plan.
 
-Only one initial checkout can be in progress for a server. If another server
-manager has already started a purchase, wait for them to finish or for that
-checkout to expire. The original payer can retry the same selection to resume it.
-Closing Checkout or returning to Chronote does not immediately end the pending
-purchase. If billing says the purchase needs review, contact support before
-trying to purchase again.
+Only one initial checkout can be in progress for a server. Choosing the same
+plan again resumes it. Choosing a different plan, billing period or discount, or
+starting a purchase as a different server manager, ends the earlier checkout and
+opens a new one. If the earlier checkout was already paid, billing shows that
+subscription instead. A checkout that was closed without paying no longer blocks
+the billing page once it expires. If billing says the purchase needs review,
+contact support before trying to purchase again.
 
 Use billing management to update payment methods or view invoice history. If a
 subscription has an unpaid invoice or a payment is still being settled,
