@@ -50,18 +50,18 @@ These would make the fix a failure even if the lock clears:
 
 ## Decided behavior
 
-| Attempt state at request time | Request | Result |
-| --- | --- | --- |
-| none, `expired`, retired `completed` | any checkout | fresh Checkout (unchanged) |
-| `open`, past `expires_at` | billing page load | guarded release to `expired`, then normal snapshot |
-| `open`, past `expires_at` | checkout click | guarded release, fresh Checkout (unchanged) |
-| `open`, live | same payer, mode and fingerprint | same Checkout URL (unchanged) |
-| `open`, live | different payer, plan, interval, price or discount | expire old session at Stripe, guarded release, fresh Checkout |
-| `open`, live, Stripe refuses the expire | different choice | retrieve the session: if `complete`, reconcile it and return the normal completed-purchase result, not a new Checkout; if still `open` (for example a payment is processing), keep today's `purchase_pending` for this request |
-| `open`, past `expires_at`, Stripe reports `complete` | billing page load | reconcile the completed session the way `refreshAttempt` does on click, so the row stops being `open` |
-| `preparing` | any | unchanged (short replay window, then `needs_review`) |
-| `needs_review` | any | unchanged (blocks, needs a human) |
-| `open`, live or expired | plan change for an existing subscriber | run the release above first; block only if still `open` and live |
+| Attempt state at request time                        | Request                                            | Result                                                                                                                                                                                                                         |
+| ---------------------------------------------------- | -------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| none, `expired`, retired `completed`                 | any checkout                                       | fresh Checkout (unchanged)                                                                                                                                                                                                     |
+| `open`, past `expires_at`                            | billing page load                                  | guarded release to `expired`, then normal snapshot                                                                                                                                                                             |
+| `open`, past `expires_at`                            | checkout click                                     | guarded release, fresh Checkout (unchanged)                                                                                                                                                                                    |
+| `open`, live                                         | same payer, mode and fingerprint                   | same Checkout URL (unchanged)                                                                                                                                                                                                  |
+| `open`, live                                         | different payer, plan, interval, price or discount | expire old session at Stripe, guarded release, fresh Checkout                                                                                                                                                                  |
+| `open`, live, Stripe refuses the expire              | different choice                                   | retrieve the session: if `complete`, reconcile it and return the normal completed-purchase result, not a new Checkout; if still `open` (for example a payment is processing), keep today's `purchase_pending` for this request |
+| `open`, past `expires_at`, Stripe reports `complete` | billing page load                                  | reconcile the completed session the way `refreshAttempt` does on click, so the row stops being `open`                                                                                                                          |
+| `preparing`                                          | any                                                | unchanged (short replay window, then `needs_review`)                                                                                                                                                                           |
+| `needs_review`                                       | any                                                | unchanged (blocks, needs a human)                                                                                                                                                                                              |
+| `open`, live or expired                              | plan change for an existing subscriber             | run the release above first; block only if still `open` and live                                                                                                                                                               |
 
 ## Calls made by the design author
 
