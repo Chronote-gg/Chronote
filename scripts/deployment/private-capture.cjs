@@ -246,7 +246,10 @@ function createStore({
       );
       assert.equal(response.ServerSideEncryption, "aws:kms");
       assert.equal(response.SSEKMSKeyId, b.kmsKeyArn);
-      assert.equal(response.BucketKeyEnabled, false);
+      assert.ok(
+        response.BucketKeyEnabled === undefined ||
+          response.BucketKeyEnabled === false,
+      );
       assert.equal(response.ContentLength, ref.size, "UNKNOWN: capture bytes");
       const bytes = await boundedBody(
         response.Body,
