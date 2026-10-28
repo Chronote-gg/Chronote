@@ -14,7 +14,12 @@ import {
   resolveConfigSnapshot,
 } from "../../src/services/unifiedConfigService";
 
+let clock = 0;
+jest.spyOn(Date, "now").mockImplementation(() => clock);
+
 beforeEach(() => {
+  // Each test starts past the previous test's cached index status.
+  clock += 120_000;
   jest.mocked(getSnapshotBoolean).mockReturnValue(true);
   jest.mocked(getProcessingRetryIndexStatus).mockResolvedValue("ACTIVE");
 });
@@ -48,4 +53,15 @@ it.each([
   jest.spyOn(console, "warn").mockImplementation(() => {});
   jest.mocked(getProcessingRetryIndexStatus).mockImplementation(status);
   expect(await isProcessingRetryAvailable()).toBe(false);
+});
+
+it("describes the due index once per minute across callers", async () => {
+  jest.mocked(getProcessingRetryIndexStatus).mockClear();
+  expect(await isProcessingRetryAvailable()).toBe(true);
+  clock += 59_000;
+  expect(await isProcessingRetryAvailable()).toBe(true);
+  expect(getProcessingRetryIndexStatus).toHaveBeenCalledTimes(1);
+  clock += 2_000;
+  expect(await isProcessingRetryAvailable()).toBe(true);
+  expect(getProcessingRetryIndexStatus).toHaveBeenCalledTimes(2);
 });

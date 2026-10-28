@@ -32,6 +32,10 @@ import Surface from "../../../components/Surface";
 import { uiSpacing } from "../../../uiTokens";
 import type { MeetingProcessingOutcome } from "../../../../types/meetingProcessing";
 import { getMeetingProcessingNotice } from "../../../../utils/meetingProcessing";
+import {
+  MeetingProcessingRetry,
+  type MeetingProcessingRetryProps,
+} from "./MeetingProcessingRetry";
 
 type SummaryFeedback = "up" | "down" | null;
 
@@ -63,6 +67,7 @@ type MeetingSummaryPanelProps = MeetingCapturePresentation & {
   onSuggestCorrection?: () => void;
   style?: CSSProperties;
   processing?: MeetingProcessingOutcome;
+  processingRetry?: MeetingProcessingRetryProps;
 };
 
 type ProcessingNoticeProps = Pick<
@@ -128,6 +133,7 @@ export function MeetingSummaryPanel({
   onSuggestCorrection,
   style,
   processing,
+  processingRetry,
   capture,
   captureCoverage,
   captureNotice,
@@ -167,6 +173,13 @@ export function MeetingSummaryPanel({
         captureNotice ?? formatMeetingCaptureNotice({ capture, processing })
       ) ? (
         <ProcessingNotice processing={processing} notes={notes} />
+      ) : null}
+      {processingRetry ? (
+        <MeetingProcessingRetry
+          {...processingRetry}
+          processing={processing}
+          notes={notes}
+        />
       ) : null}
       <MarkdownBody content={summary} compact dimmed />
       <Box style={{ position: "relative" }}>

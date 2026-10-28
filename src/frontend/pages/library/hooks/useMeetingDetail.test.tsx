@@ -11,18 +11,32 @@ let mockFetching = false;
 let mockQueryError: unknown = null;
 let mockDetail: MeetingDetailInput;
 const mockDetailUtils = { invalidate: mockInvalidate };
+const mockRetryMutate = jest.fn();
+type RefetchInterval = (query: {
+  state: { data?: { meeting?: MeetingDetailInput } };
+}) => number | false;
+let mockQueryOptions: { refetchInterval: RefetchInterval };
 jest.mock("../../../services/trpc", () => ({
   trpc: {
     useUtils: () => ({ meetings: { detail: mockDetailUtils } }),
     meetings: {
       detail: {
-        useQuery: () => ({
-          data: { meeting: mockDetail },
-          isLoading: false,
-          isFetching: mockFetching,
-          error: mockQueryError,
-          refetch: mockRefetch,
-        }),
+        useQuery: (
+          _input: unknown,
+          options: { refetchInterval: RefetchInterval },
+        ) => {
+          mockQueryOptions = options;
+          return {
+            data: { meeting: mockDetail },
+            isLoading: false,
+            isFetching: mockFetching,
+            error: mockQueryError,
+            refetch: mockRefetch,
+          };
+        },
+      },
+      retryProcessing: {
+        useMutation: () => ({ isPending: false, mutate: mockRetryMutate }),
       },
     },
   },
@@ -135,6 +149,43 @@ test("terminal canonical readback overrides old unavailable display and keeps tr
   expect(hook.result.current.liveStreamEnabled).toBe(false);
   expect(hook.result.current.displayStatus).toBe("interrupted");
   expect(hook.result.current.meeting?.transcriptAccessEnabled).toBe(false);
+});
+
+test("polls while a processing retry is active and wires the retry action", () => {
+  const view = {
+    eligible: true,
+    requiresReplaceConfirm: true,
+    attemptsRemaining: 3,
+  };
+  mockDetail = { ...mockDetail, status: "complete", processingRetry: view };
+  const hook = renderHook(() =>
+    useMeetingDetail({
+      opened: true,
+      selectedGuildId: "generated",
+      selectedMeetingId: mockDetail.id,
+      channelNameMap: new Map<string, string>(),
+      invalidateMeetingLists: mockListInvalidate,
+    }),
+  );
+  expect(hook.result.current.processingRetry?.view).toBe(view);
+  hook.result.current.processingRetry?.onRetry(true);
+  expect(mockRetryMutate).toHaveBeenCalledWith({
+    serverId: "generated",
+    meetingId: mockDetail.id,
+    replaceNotes: true,
+  });
+  const intervalFor = (status?: "queued" | "running" | "failed") =>
+    mockQueryOptions.refetchInterval({
+      state: {
+        data: {
+          meeting: { ...mockDetail, processingRetry: { ...view, status } },
+        },
+      },
+    });
+  expect(intervalFor("queued")).toBe(5000);
+  expect(intervalFor("running")).toBe(5000);
+  expect(intervalFor("failed")).toBe(false);
+  expect(intervalFor()).toBe(false);
 });
 
 describe("completed delivery refresh", () => {

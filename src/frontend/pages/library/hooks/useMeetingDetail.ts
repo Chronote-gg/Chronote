@@ -10,6 +10,8 @@ import {
 import { MEETING_STATUS } from "../../../../types/meetingLifecycle";
 import type { LiveMeetingStatus } from "../../../../types/liveMeeting";
 import type { MeetingEvent } from "../../../../types/meetingTimeline";
+import type { MeetingProcessingRetryProps } from "../components/MeetingProcessingRetry";
+import { useProcessingRetry } from "./useProcessingRetry";
 
 const UPDATE_DELIVERY_REFRESH_MS = 5000;
 const MAX_UPDATE_DELIVERY_REFRESH_READS = 60;
@@ -34,6 +36,7 @@ type UseMeetingDetailResult = {
   displayAttendees: string[];
   displayEvents: MeetingEvent[];
   timelineEmptyLabel: string;
+  processingRetry?: MeetingProcessingRetryProps;
 };
 
 const isDetailQueryEnabled = (params: UseMeetingDetailParams) =>
@@ -195,7 +198,15 @@ export const useMeetingDetail = (
       serverId: params.selectedGuildId ?? "",
       meetingId: params.selectedMeetingId ?? "",
     },
-    { enabled: isDetailQueryEnabled(params) },
+    {
+      enabled: isDetailQueryEnabled(params),
+      refetchInterval: (query) =>
+        ["queued", "running"].includes(
+          query.state.data?.meeting?.processingRetry?.status ?? "",
+        )
+          ? UPDATE_DELIVERY_REFRESH_MS
+          : false,
+    },
   );
 
   const queriedDetail = resolveDetail(detailQuery.data);
@@ -246,6 +257,8 @@ export const useMeetingDetail = (
     desiredRevision,
     refetch,
   ]);
+
+  const processingRetry = useProcessingRetry(params.selectedGuildId, detail);
 
   const meeting = useMemo(() => {
     return buildMeetingFromDetail(detail, params.channelNameMap);
@@ -299,5 +312,6 @@ export const useMeetingDetail = (
     displayAttendees,
     displayEvents,
     timelineEmptyLabel,
+    processingRetry,
   };
 };
