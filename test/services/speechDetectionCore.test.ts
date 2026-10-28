@@ -150,7 +150,7 @@ describe("whole-clip speech assessment", () => {
   });
   it("includes the brief-peak rule in policy identity", () => {
     expect(DEFAULT_SPEECH_POLICY.policyFingerprint).toBe(
-      "1005d9d83ce3dba4c4baa63d398ffb337c098957c881b84b0895c3493eb8fd64",
+      "d2cef8e7030aeda5a73aaa88e07204d7807729d11ce2dae7a218c1a1ee0e1aef",
     );
   });
   it("binds coverage to the exact PCM view and policy without changing bytes", () => {
@@ -550,14 +550,10 @@ describe("real bundled model synthetic controls", () => {
       require('ts-node/register/transpile-only');
       const {assessWavSpeech} = require('./src/services/speechDetectionCore');
       const {DEFAULT_SPEECH_POLICY} = require('./src/services/speechDetectionPolicy');
-      const runtimeRoot = path.resolve('node_modules/onnxruntime-web');
-      const ort = require(path.join(runtimeRoot, 'dist/ort.node.min.js'));
-      ort.env.wasm.numThreads = 1;
-      ort.env.wasm.proxy = false;
-      ort.env.wasm.wasmPaths = pathToFileURL(path.join(runtimeRoot, 'dist') + path.sep).href;
+      const ort = require('onnxruntime-node');
       async function main() {
         const inputs = JSON.parse(readFileSync(0, 'utf8'));
-        const session = await ort.InferenceSession.create(new Uint8Array(readFileSync('assets/speech-detection/silero-v6.2.1.onnx')), {executionProviders: ['wasm']});
+        const session = await ort.InferenceSession.create(new Uint8Array(readFileSync('assets/speech-detection/silero-v6.2.1.onnx')), {executionProviders: ['cpu'], executionMode:'sequential', intraOpNumThreads:1, interOpNumThreads:1, enableCpuMemArena:false, enableMemPattern:false});
         const adapter = { async infer(input, state) {
           const result = await session.run({input: new ort.Tensor('float32', input, [1,576]), state: new ort.Tensor('float32', state, [2,1,128]), sr: new ort.Tensor('int64', BigInt64Array.of(16000n), [])});
           return {probability: result.output.data[0], state: result.stateN.data};

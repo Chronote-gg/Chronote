@@ -16,7 +16,7 @@ const parameters = {
   negativeGuardVersion: "brief-peak-v1",
   modelSha256:
     "1a153a22f4509e292a94e67d6f9b85e8deb25b4988682b7e174c65279d8788e3",
-  engineVersion: "onnxruntime-web@1.30.0",
+  engineVersion: "onnxruntime-node@1.30.0",
 } satisfies Omit<SpeechPolicy, "policyFingerprint">;
 
 export const DEFAULT_SPEECH_POLICY: SpeechPolicy = Object.freeze({

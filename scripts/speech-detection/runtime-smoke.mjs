@@ -1,10 +1,11 @@
 import { createHash } from "node:crypto";
 import process from "node:process";
 import { performance } from "node:perf_hooks";
+import { createReadStream } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import path from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 
 const manifestPath = new URL(
@@ -46,8 +47,8 @@ async function main() {
   }
   const { model, manifest } = await validateModel(values, root);
   const runtimeRoot = values.compiled
-    ? path.dirname(path.dirname(requireCompiled.resolve("onnxruntime-web")))
-    : path.resolve(values["runtime-dir"], "onnxruntime-web");
+    ? path.dirname(path.dirname(requireCompiled.resolve("onnxruntime-node")))
+    : path.resolve(values["runtime-dir"], "onnxruntime-node");
   const runtimePackage = await validateRuntime(runtimeRoot, manifest);
   if (values.compiled)
     return smokeCompiled(requireCompiled, servicePath, root, runtimePackage);
@@ -79,15 +80,25 @@ async function validateRuntime(runtimeRoot, manifest) {
     await readFile(path.join(runtimeRoot, "package.json"), "utf8"),
   );
   if (
-    runtimePackage.name !== "onnxruntime-web" ||
+    runtimePackage.name !== "onnxruntime-node" ||
     runtimePackage.version !== "1.30.0" ||
     manifest.runtime.version !== runtimePackage.version
   ) {
     throw new Error("Runtime version mismatch");
   }
-  for (const asset of manifest.runtime.assets) {
-    const bytes = await readFile(path.join(runtimeRoot, asset.file));
-    if (sha256(bytes) !== asset.sha256 || bytes.length !== asset.bytes) {
+  const native =
+    manifest.runtime.platforms[`${process.platform}-${process.arch}`];
+  if (!native) throw new Error("Unsupported runtime platform");
+  for (const asset of [...manifest.runtime.assets, ...native]) {
+    const hash = createHash("sha256");
+    let bytes = 0;
+    for await (const chunk of createReadStream(
+      path.join(runtimeRoot, asset.file),
+    )) {
+      bytes += chunk.length;
+      hash.update(chunk);
+    }
+    if (hash.digest("hex") !== asset.sha256 || bytes !== asset.bytes) {
       throw new Error(`Runtime asset SHA-256 mismatch: ${asset.file}`);
     }
   }
@@ -145,15 +156,15 @@ async function smokeCompiled(
 }
 async function smokeEngine(runtimeRoot, model, runtimePackage) {
   const require = createRequire(path.join(runtimeRoot, "package.json"));
-  const ort = require(path.join(runtimeRoot, "dist/ort.node.min.js"));
-  ort.env.wasm.numThreads = 1;
-  ort.env.wasm.proxy = false;
-  ort.env.wasm.wasmPaths = pathToFileURL(
-    path.join(runtimeRoot, "dist") + path.sep,
-  ).href;
+  const ort = require(path.join(runtimeRoot, "dist/index.js"));
   const started = performance.now();
   const session = await ort.InferenceSession.create(new Uint8Array(model), {
-    executionProviders: ["wasm"],
+    executionProviders: ["cpu"],
+    executionMode: "sequential",
+    intraOpNumThreads: 1,
+    interOpNumThreads: 1,
+    enableCpuMemArena: false,
+    enableMemPattern: false,
   });
   try {
     let state = new ort.Tensor("float32", new Float32Array(256), [2, 1, 128]);
@@ -193,7 +204,7 @@ async function smokeEngine(runtimeRoot, model, runtimePackage) {
         silenceProbability,
         stateShape: [...state.dims],
         frames: 10,
-        wasmThreads: ort.env.wasm.numThreads,
+        cpuThreads: 1,
         startupAndInferenceMs: performance.now() - started,
       }) + "\n",
     );

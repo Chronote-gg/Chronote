@@ -14,7 +14,7 @@ it("loads the API bootstrap and real bot without starting a detector child or lo
     ),
     fork: workerSpawn,
   }));
-  jest.doMock("onnxruntime-web", runtimeLoad);
+  jest.doMock("onnxruntime-node", runtimeLoad);
   try {
     const { bootstrapApp } = await import("../../src/apps/bootstrap");
     expect(typeof bootstrapApp).toBe("function");
@@ -22,6 +22,6 @@ it("loads the API bootstrap and real bot without starting a detector child or lo
     expect(runtimeLoad).not.toHaveBeenCalled();
   } finally {
     jest.dontMock("node:child_process");
-    jest.dontMock("onnxruntime-web");
+    jest.dontMock("onnxruntime-node");
   }
 });

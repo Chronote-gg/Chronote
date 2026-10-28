@@ -4,6 +4,9 @@ set -euo pipefail
 MAX_ATTEMPTS=3
 RETRY_DELAY_SECONDS=15
 
+# CPU binaries are bundled; do not download optional CUDA libraries.
+export ONNXRUNTIME_NODE_INSTALL=skip
+
 for attempt in $(seq 1 "$MAX_ATTEMPTS"); do
   if yarn install --frozen-lockfile --network-timeout 600000 "$@"; then
     # --ignore-scripts skips native builds, but the app still needs its patches.

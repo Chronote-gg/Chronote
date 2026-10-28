@@ -243,7 +243,7 @@ require final review. There is no invented age-based expiry.
 
 ### Resource evidence and comparison report
 
-Run in the approved immutable Alpine image with `--network none --cpus 0.5
+Run in the pinned production image with `--network none --cpus 0.5
 --memory 1g`, mounting final compiled artifacts and these scripts read-only when
 needed. Record the image ID and mount hashes with private results. Never build
 from a dirty/private context.

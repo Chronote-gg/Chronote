@@ -4,6 +4,7 @@ import {
   mkdirSync,
   mkdtempSync,
   rmSync,
+  readFileSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -58,11 +59,11 @@ describe("speech detection runtime smoke CLI", () => {
   });
 
   it("rejects a mismatched engine before loading its assets", () => {
-    const packageRoot = path.join(scratch, "onnxruntime-web");
+    const packageRoot = path.join(scratch, "onnxruntime-node");
     mkdirSync(packageRoot);
     writeFileSync(
       path.join(packageRoot, "package.json"),
-      JSON.stringify({ name: "onnxruntime-web", version: "1.29.0" }),
+      JSON.stringify({ name: "onnxruntime-node", version: "1.29.0" }),
     );
     const result = run(model, scratch);
     expect(result.exitCode).not.toBe(0);
@@ -70,28 +71,35 @@ describe("speech detection runtime smoke CLI", () => {
     expect(result.stderr).toContain("Runtime version mismatch");
   });
 
-  it("rejects corrupt WASM before inference", () => {
-    const packageRoot = path.join(scratch, "onnxruntime-web");
-    mkdirSync(path.join(packageRoot, "dist"), { recursive: true });
+  it("rejects corrupt native binding before inference", () => {
+    const packageRoot = path.join(scratch, "onnxruntime-node");
+    const manifest = JSON.parse(
+      readFileSync(
+        path.join(root, "assets/speech-detection/manifest.json"),
+        "utf8",
+      ),
+    );
+    const assets = [
+      ...manifest.runtime.assets,
+      ...manifest.runtime.platforms[`${process.platform}-${process.arch}`],
+    ];
+    mkdirSync(packageRoot, { recursive: true });
     copyFileSync(
-      path.join(runtime, "onnxruntime-web/package.json"),
+      path.join(runtime, "onnxruntime-node/package.json"),
       path.join(packageRoot, "package.json"),
     );
-    for (const file of ["ort.node.min.js", "ort-wasm-simd-threaded.mjs"]) {
-      copyFileSync(
-        path.join(runtime, "onnxruntime-web/dist", file),
-        path.join(packageRoot, "dist", file),
-      );
+    for (const asset of assets) {
+      const target = path.join(packageRoot, asset.file);
+      mkdirSync(path.dirname(target), { recursive: true });
+      copyFileSync(path.join(runtime, "onnxruntime-node", asset.file), target);
     }
-    writeFileSync(
-      path.join(packageRoot, "dist/ort-wasm-simd-threaded.wasm"),
-      "corrupt WASM",
-    );
+    const binding = `bin/napi-v6/${process.platform}/${process.arch}/onnxruntime_binding.node`;
+    writeFileSync(path.join(packageRoot, binding), "corrupt native binding");
     const result = run(model, scratch);
     expect(result.exitCode).not.toBe(0);
     expect(result.inferenceResults).toHaveLength(0);
     expect(result.stderr).toContain(
-      "Runtime asset SHA-256 mismatch: dist/ort-wasm-simd-threaded.wasm",
+      `Runtime asset SHA-256 mismatch: ${binding}`,
     );
   });
 
@@ -102,7 +110,7 @@ describe("speech detection runtime smoke CLI", () => {
     expect(result.inferenceResults).toHaveLength(1);
     const output = z
       .object({
-        engine: z.literal("onnxruntime-web"),
+        engine: z.literal("onnxruntime-node"),
         engineVersion: z.literal("1.30.0"),
         nodeVersion: z.string().startsWith("v24."),
         modelSha256: z.literal(
@@ -111,7 +119,7 @@ describe("speech detection runtime smoke CLI", () => {
         stateShape: z.tuple([z.literal(2), z.literal(1), z.literal(128)]),
         silenceProbability: z.number().finite(),
         frames: z.literal(10),
-        wasmThreads: z.literal(1),
+        cpuThreads: z.literal(1),
       })
       .parse(JSON.parse(result.inferenceResults[0]));
     expect(output.silenceProbability).toBeGreaterThanOrEqual(0);

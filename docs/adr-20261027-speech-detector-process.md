@@ -1,62 +1,47 @@
 # ADR-20261027: Speech detector process isolation
 
-Status: Accepted for PR implementation. Runtime and quality acceptance remain separate from activation.
+Status: Accepted for implementation. Final image resource acceptance remains required. Detection stays off pending separate quality acceptance and activation approval.
 
-Date: 2026-10-27
+Date: 2026-10-27. Revised: 2026-10-28.
 
 Owners: Audio pipeline
 
-## Context
+## Outcome and scope
 
-The experimental detector used a worker thread inside the recording bot's Node
-process. A process-level failure in that worker could terminate the recorder.
-The pinned WASM engine also retained substantial compilation memory during early
-inference. The original resource benchmark failed; increasing its limits would
-hide the problem.
+Keep detector failures isolated from recording while meeting the existing resource budget. Preserve the Silero model, whole-clip policy, queue, deadlines, original audio and default-off behavior. Replace the WASM backend with the same version of native ONNX Runtime, and use a glibc-based Node image required by its official CPU binaries.
 
-## Decision
+This is an implementation decision within PR403. It does not authorize deployment or speech rejection.
 
-Run the existing detector worker as one local child process, retaining the same
-model, engine, policy, input conversion and single-threaded WASM execution.
-Start that child with the explicit V8 flag `--no-liftoff`, which avoids retaining
-baseline and optimized WASM compilation tiers. Do not pass arbitrary parent
-execution flags to the child.
+## Evidence and decision
 
-Keep the existing bounded queue, deadlines, failure handling and restart
-cooldown. A crash, malformed response, timeout or unavailable worker continues
-through transcription. Register parent-disconnection handling before model
-initialization. A responsive child exits immediately on owner loss; the owner
-kills a stuck child on timeout. Disabled detection must not start it.
+The original worker thread could terminate the recorder on a process-level failure. One child process contains that failure. Typed replies, owned input copies, bounded queuing, deadlines, restart cooldown and hard termination remain in place.
 
-Count the parent's and descendants' RSS when evaluating overhead. A child process
-is a failure boundary, not an independent CPU or memory allocation. Keep the
-original 0.5 CPU, 1 GiB container test and acceptance thresholds.
+The WASM implementation exceeded memory limits. Direct optimized compilation with `--no-liftoff` avoided retaining both compilation tiers and restored steady availability, but its unchanged constrained benchmark still used about 194 MiB of additional process-tree RSS. Heap caps, compiler settings and asset-loading probes did not meet the 128 MiB gate. Those unsuccessful probe settings were not adopted.
 
-## Consequences
+Use `onnxruntime-node@1.30.0` with the existing Silero 6.2.1 bytes. Run one sequential CPU session with one intra-op and inter-op thread, CPU arena and memory-pattern reuse disabled. Bound the compiled child's V8 heap to 16 MiB old space and 1 MiB semi-space. Bound glibc allocator arenas to one in that child. Source-mode ts-node execution needs a larger heap and is not the production resource-test path.
 
-Detector failure can be isolated from recording, at the cost of IPC copies and a
-second Node runtime. Warmup occurs outside assessment deadlines. Resource and
-latency acceptance must use the actual production transport and executable.
+A disposable native adapter passed the unchanged 0.5 CPU / 1 GiB benchmark: 600/600 steady assessments, fast/slow p95 latency of 7.43/8.25 ms and 125.48 MiB process-tree RSS overhead. That run had no allocator-arena override and left only 2.52 MiB below the limit. A separate arena-bound diagnostic was lower, but used a different baseline method and is not final acceptance. Repeat the complete original benchmark against the implemented production image and verified assets before calling the runtime accepted.
 
-Production container exit reaps descendants, including a child stuck in native
-code. Outside that container, a synchronous native hang cannot process an IPC
-disconnect after its owner dies. This implementation adds no independent
-watchdog for that unsupported lifecycle.
+Official native binaries require glibc. Change the image from Node 24.22.1 Alpine to Node 24.22.1 Debian Bookworm slim, with equivalent build tools and FFmpeg. Skip the optional CUDA installer; the CPU binaries are bundled. Keep exact package/version, platform binary size/hash checks and offline startup. Update the engine identity in the policy fingerprint so prior WASM coverage cannot be reused.
 
-This change does not enable speech rejection, prove production request savings,
-change snippet boundaries or replace the missing human-reviewed quality holdout.
-Default mode remains off. Existing recordings are retained.
+## Behavior and quality limits
 
-## Alternatives considered
+Positive speech may return after the existing two-frame criterion. Nonspeech requires a complete scan. Uncertain, unavailable, aborted or failed assessments continue to transcription. Detector failure must not stop recording or remove original audio.
 
-Retaining the worker thread cannot apply this V8 flag through Worker execArgv and
-retains the process failure boundary. A Fargate sidecar or separate service adds
-deployment, resource and communication changes before the local-process option
-has been measured. Native ONNX or another detector changes the engine or model
-and needs a separate quality and compatibility decision.
+All nine controlled native fixtures retained classification and deterministic recurrent-state reset. Silence and click controls matched the saved Python results exactly; the tone probability differed by about 8.94e-8. This is not bit-exact parity across backends or proof of real Discord transcript quality. Do not change classification thresholds or relax existing numeric test tolerances to conceal a difference. Human-reviewed, family-separated quality evidence and matched provider replay remain separate activation gates.
 
-## Notes
+## Lifecycle and resource boundaries
 
-See `docs/superpowers/specs/2026-10-13-speech-detection-design.md` and
-`docs/transcription-eval.md` for the admission contract and acceptance procedure.
-Historical failed measurements remain valid evidence for the earlier runtime.
+Register parent-disconnection handling before model initialization. A responsive child exits immediately on owner loss; the owner kills a stuck child on timeout. Production container exit reaps descendants, including a child synchronously stuck in native code. Outside that container, a synchronous hang cannot process IPC disconnect after owner death. No independent watchdog is included for that unsupported lifecycle.
+
+Count the parent's and every descendant's RSS. Process isolation is a failure boundary, not an independent memory allocation. Keep the original workload, CPU/memory limits, phase deadlines and acceptance thresholds. Missing resource evidence remains unknown and fails acceptance.
+
+## Tradeoffs and alternatives
+
+The native backend requires a larger glibc image, platform-specific integrity checks and verification of the application's other native dependencies. Full builds, packaged inference, crash/lifecycle regressions, controlled numerical checks and the complete resource benchmark must cover the final bytes.
+
+Retaining the WASM implementation preserves image compatibility but has not met memory acceptance. A custom musl native build or compatibility layer adds another unsupported packaging path. A sidecar or remote detector adds deployment and communication changes without removing the resource-accounting requirement. An independent watchdog is only needed if this detector is later supported outside the production container lifecycle.
+
+## References
+
+See `docs/superpowers/specs/2026-10-13-speech-detection-design.md` for the admission contract and `docs/transcription-eval.md` for the unchanged acceptance procedure. Historical failed measurements remain evidence for the superseded runtimes.

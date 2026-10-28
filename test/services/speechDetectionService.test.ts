@@ -224,7 +224,7 @@ it("does not load an ONNX runtime or spawn when imported, obtained or shut down 
     throw Error("Unexpected ONNX import");
   });
   jest.doMock("node:child_process", () => ({ fork: workerSpawn }));
-  jest.doMock("onnxruntime-web", runtimeLoad);
+  jest.doMock("onnxruntime-node", runtimeLoad);
   try {
     await jest.isolateModulesAsync(async () => {
       const { getSpeechDetector, shutdownSpeechDetector } =
@@ -236,7 +236,7 @@ it("does not load an ONNX runtime or spawn when imported, obtained or shut down 
     expect(runtimeLoad).not.toHaveBeenCalled();
   } finally {
     jest.dontMock("node:child_process");
-    jest.dontMock("onnxruntime-web");
+    jest.dontMock("onnxruntime-node");
   }
 });
 it.each(["asset_error", "worker_error"] as const)(

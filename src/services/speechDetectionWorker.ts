@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
+import { createReadStream } from "node:fs";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
-import { pathToFileURL } from "node:url";
 import { z } from "zod";
 import { DEFAULT_SPEECH_POLICY } from "./speechDetectionPolicy";
 import { assessWavSpeech } from "./speechDetectionCore";
@@ -18,9 +18,10 @@ const assetSchema = z.object({
 const manifestSchema = z.object({
   model: assetSchema,
   runtime: z.object({
-    package: z.literal("onnxruntime-web"),
+    package: z.literal("onnxruntime-node"),
     version: z.literal("1.30.0"),
-    assets: z.array(assetSchema).length(3),
+    assets: z.array(assetSchema).length(4),
+    platforms: z.record(z.string(), z.array(assetSchema).min(2)),
   }),
 });
 const requestSchema = z.object({
@@ -32,8 +33,22 @@ const requestSchema = z.object({
 const sha256 = (bytes: Uint8Array): string =>
   createHash("sha256").update(bytes).digest("hex");
 
+async function verifyRuntimeAsset(
+  root: string,
+  asset: z.infer<typeof assetSchema>,
+): Promise<void> {
+  const hash = createHash("sha256");
+  let bytes = 0;
+  for await (const chunk of createReadStream(path.join(root, asset.file))) {
+    bytes += chunk.length;
+    hash.update(chunk);
+  }
+  if (hash.digest("hex") !== asset.sha256 || bytes !== asset.bytes)
+    throw Error("Runtime integrity mismatch");
+}
+
 async function loadSession(): Promise<
-  import("onnxruntime-web").InferenceSession
+  import("onnxruntime-node").InferenceSession
 > {
   try {
     z.literal(DEFAULT_SPEECH_POLICY.policyFingerprint).parse(process.argv[2]);
@@ -57,11 +72,11 @@ async function loadSession(): Promise<
       model.length !== manifest.model.bytes
     )
       throw Error("Model integrity mismatch");
-    const runtimeEntry = require.resolve("onnxruntime-web");
+    const runtimeEntry = require.resolve("onnxruntime-node");
     const runtimeRoot = path.dirname(path.dirname(runtimeEntry));
     const runtimePackage = z
       .object({
-        name: z.literal("onnxruntime-web"),
+        name: z.literal("onnxruntime-node"),
         version: z.literal("1.30.0"),
       })
       .parse(
@@ -75,28 +90,37 @@ async function loadSession(): Promise<
     )
       throw Error("Runtime policy mismatch");
     const expectedFiles = [
-      "dist/ort.node.min.js",
-      "dist/ort-wasm-simd-threaded.mjs",
-      "dist/ort-wasm-simd-threaded.wasm",
+      "dist/index.js",
+      "dist/backend.js",
+      "dist/binding.js",
+      "dist/version.js",
     ];
     if (
       manifest.runtime.assets.map((asset) => asset.file).join(",") !==
       expectedFiles.join(",")
     )
       throw Error("Runtime manifest mismatch");
-    for (const asset of manifest.runtime.assets) {
-      const bytes = await readFile(path.join(runtimeRoot, asset.file));
-      if (sha256(bytes) !== asset.sha256 || bytes.length !== asset.bytes)
-        throw Error("Runtime integrity mismatch");
-    }
-    const ort = await import("onnxruntime-web");
-    ort.env.wasm.numThreads = 1;
-    ort.env.wasm.proxy = false;
-    ort.env.wasm.wasmPaths = pathToFileURL(
-      path.join(runtimeRoot, "dist") + path.sep,
-    ).href;
+    const native =
+      manifest.runtime.platforms[`${process.platform}-${process.arch}`];
+    if (
+      !native ||
+      !native.some(
+        (asset) =>
+          asset.file ===
+          `bin/napi-v6/${process.platform}/${process.arch}/onnxruntime_binding.node`,
+      )
+    )
+      throw Error("Unsupported runtime platform");
+    for (const asset of [...manifest.runtime.assets, ...native])
+      await verifyRuntimeAsset(runtimeRoot, asset);
+    const ort = await import("onnxruntime-node");
     return await ort.InferenceSession.create(new Uint8Array(model), {
-      executionProviders: ["wasm"],
+      executionProviders: ["cpu"],
+      executionMode: "sequential",
+      intraOpNumThreads: 1,
+      interOpNumThreads: 1,
+      enableCpuMemArena: false,
+      enableMemPattern: false,
     });
   } catch {
     throw Error("asset_error");
@@ -109,7 +133,7 @@ async function main(): Promise<void> {
     process.send?.(reply);
   };
   const session = await loadSession();
-  const ort = await import("onnxruntime-web");
+  const ort = await import("onnxruntime-node");
   const silero: SileroSession = {
     async infer(input, state) {
       const output = await session.run({

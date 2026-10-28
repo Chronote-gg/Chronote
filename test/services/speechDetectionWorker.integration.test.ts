@@ -32,6 +32,8 @@ const outputSchema = z.object({
   speech: z.literal("speech"),
   repeated: z.literal(true),
   unchanged: z.literal(true),
+  childExecArgv: z.array(z.string()),
+  childArena: z.literal("1"),
 });
 const removeFixture = (fixture: string) =>
   removeOwnedFixture(fixture, "chronote-vad-");
@@ -95,7 +97,7 @@ function runFixtureScript(
 }
 
 function run(entry: string, cwd: string, source: boolean) {
-  const script = `const {readFileSync}=require('node:fs'); const {performance}=require('node:perf_hooks'); const [entry,silence,yes]=process.argv.slice(1); const {getSpeechDetector,shutdownSpeechDetector}=require(entry); (async()=>{await shutdownSpeechDetector();const d=getSpeechDetector();const start=performance.now();const warm=await d.warm();const coldStartMs=performance.now()-start;try{if(!warm)throw Error('worker not ready');const wav=readFileSync(silence);const before=Buffer.from(wav);const s=await d.assess(wav,'slow');const a=await d.assess(readFileSync(yes),'slow');const b=await d.assess(readFileSync(yes),'slow');process.stdout.write(JSON.stringify({warm,coldStartMs,silence:s.kind,speech:a.kind,repeated:JSON.stringify(a)===JSON.stringify(b),unchanged:before.equals(wav)})+'\\n');}finally{await shutdownSpeechDetector();}})().catch(e=>{console.error(e);process.exitCode=1;});`;
+  const script = `const cp=require('node:child_process');const fork=cp.fork;let childOptions;cp.fork=(...args)=>{childOptions=args[2];return fork(...args)};const {readFileSync}=require('node:fs'); const {performance}=require('node:perf_hooks'); const [entry,silence,yes]=process.argv.slice(1); const {getSpeechDetector,shutdownSpeechDetector}=require(entry); (async()=>{await shutdownSpeechDetector();const d=getSpeechDetector();const start=performance.now();const warm=await d.warm();const coldStartMs=performance.now()-start;try{if(!warm)throw Error('worker not ready');const wav=readFileSync(silence);const before=Buffer.from(wav);const s=await d.assess(wav,'slow');const a=await d.assess(readFileSync(yes),'slow');const b=await d.assess(readFileSync(yes),'slow');process.stdout.write(JSON.stringify({warm,coldStartMs,silence:s.kind,speech:a.kind,repeated:JSON.stringify(a)===JSON.stringify(b),unchanged:before.equals(wav),childExecArgv:childOptions.execArgv,childArena:childOptions.env.MALLOC_ARENA_MAX})+'\\n');}finally{await shutdownSpeechDetector();}})().catch(e=>{console.error(e);process.exitCode=1;});`;
   return spawnSync(
     process.execPath,
     [
@@ -128,6 +130,10 @@ it("starts source worker locally, preserves WAV, and resets recurrent state per 
   expect(result.status).toBe(0);
   const output = outputSchema.parse(JSON.parse(result.stdout));
   expect(output.coldStartMs).toBeLessThan(30000);
+  expect(output.childExecArgv).toEqual([
+    "-r",
+    require.resolve("ts-node/register"),
+  ]);
   console.info("source worker evidence", output);
 }, 60000);
 it(
@@ -143,6 +149,10 @@ it(
       expect(result.status).toBe(0);
       const output = outputSchema.parse(JSON.parse(result.stdout));
       expect(output.coldStartMs).toBeLessThan(30000);
+      expect(output.childExecArgv).toEqual([
+        "--max-old-space-size=16",
+        "--max-semi-space-size=1",
+      ]);
       console.info("dist-only worker evidence", output);
     }),
   60000,
@@ -173,19 +183,42 @@ it.each(["missing", "corrupt"])(
     }),
   60000,
 );
+it.each(["missing", "corrupt"])(
+  "withholds ready for %s native binding in the actual worker",
+  (damage) =>
+    withCompiledFixture((fixture) => {
+      const runtime = path.join(fixture, "node_modules/onnxruntime-node");
+      cpSync(path.join(root, "node_modules/onnxruntime-node"), runtime, {
+        recursive: true,
+      });
+      const binding = path.join(
+        runtime,
+        `bin/napi-v6/${process.platform}/${process.arch}/onnxruntime_binding.node`,
+      );
+      if (damage === "missing") rmSync(binding);
+      else writeFileSync(binding, "corrupt native binding");
+      const script = `const {getSpeechDetector,shutdownSpeechDetector}=require(process.argv[1]);(async()=>{try{process.stdout.write(JSON.stringify({warm:await getSpeechDetector().warm()}));}finally{await shutdownSpeechDetector();}})().catch(()=>{process.exitCode=1;});`;
+      const result = runFixtureScript(fixture, script);
+      expect(result.status).toBe(0);
+      expect(result.stderr).toBe("");
+      expect(JSON.parse(result.stdout)).toEqual({ warm: false });
+    }),
+  60000,
+);
+
 it(
   "withholds ready when first inference fails in a dist-only IPC worker",
   () =>
     withCompiledFixture((fixture) => {
       const assets = path.join(fixture, "dist/assets/speech-detection");
-      const runtime = path.join(fixture, "node_modules/onnxruntime-web");
+      const runtime = path.join(fixture, "node_modules/onnxruntime-node");
       mkdirSync(path.join(runtime, "dist"), { recursive: true });
       writeFileSync(
         path.join(runtime, "package.json"),
         JSON.stringify({
-          name: "onnxruntime-web",
+          name: "onnxruntime-node",
           version: "1.30.0",
-          main: "dist/ort.node.min.js",
+          main: "dist/index.js",
         }),
       );
       // Only this isolated failure-boundary fixture replaces the engine. Real success tests use the verified bundle.
@@ -194,6 +227,16 @@ it(
         .object({
           runtime: z
             .object({
+              platforms: z.record(
+                z.string(),
+                z.array(
+                  z.object({
+                    file: z.string(),
+                    bytes: z.number(),
+                    sha256: z.string(),
+                  }),
+                ),
+              ),
               assets: z.array(
                 z.object({
                   file: z.string(),
@@ -208,10 +251,18 @@ it(
         .parse(
           JSON.parse(readFileSync(path.join(assets, "manifest.json"), "utf8")),
         );
-      for (const asset of fixtureManifest.runtime.assets) {
+      for (const asset of [
+        ...fixtureManifest.runtime.assets,
+        ...fixtureManifest.runtime.platforms[
+          `${process.platform}-${process.arch}`
+        ],
+      ]) {
         const bytes = Buffer.from(
           asset.file.endsWith(".js") ? fakeRuntime : "fixture-only-placeholder",
         );
+        mkdirSync(path.dirname(path.join(runtime, asset.file)), {
+          recursive: true,
+        });
         writeFileSync(path.join(runtime, asset.file), bytes);
         asset.bytes = bytes.length;
         asset.sha256 = createHash("sha256").update(bytes).digest("hex");
@@ -375,7 +426,7 @@ it.each(["initializing", "inference"])(
       const preload = path.join(fixture, "pause-engine.cjs");
       writeFileSync(
         preload,
-        `const fs=require('node:fs');const ort=require('onnxruntime-web');setInterval(()=>{},1000);let calls=0;
+        `const fs=require('node:fs');const ort=require('onnxruntime-node');setInterval(()=>{},1000);let calls=0;
   ort.InferenceSession.create=async()=>{if(process.env.SPEECH_TEST_PHASE==='initializing'){fs.writeFileSync(process.env.SPEECH_TEST_MARKER,String(process.pid));return new Promise(()=>{})}
   return {run:async()=>{if(++calls>1){fs.writeFileSync(process.env.SPEECH_TEST_MARKER,String(process.pid));return new Promise(()=>{})}return {output:{type:'float32',data:Float32Array.of(0)},stateN:{type:'float32',data:new Float32Array(256),dims:[2,1,128]}}},release:()=>new Promise(()=>{})}};`,
       );

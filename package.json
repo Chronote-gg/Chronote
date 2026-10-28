@@ -166,7 +166,7 @@
     "lru-cache": "^11.5.3",
     "lusca": "^1.7.0",
     "nodemon": "^3.1.14",
-    "onnxruntime-web": "1.30.0",
+    "onnxruntime-node": "1.30.0",
     "openai": "7.43.0",
     "opusscript": "^0.1.1",
     "passport": "^0.7.0",

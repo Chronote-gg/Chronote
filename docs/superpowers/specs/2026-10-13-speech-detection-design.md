@@ -26,7 +26,7 @@ At design time, `codex/live-meeting-ui-quality` was based on `c46df7a` with UI a
 | The live timeline reads transcript fields directly, while compilation and final-pass baselines use the resolver.          | `meetingTimelineService.ts`, `audio.ts`, `transcriptionFinalPassService.ts` | Make rejection consistent across all consumers. A rejected segment must disappear from live and final text.                                                   |
 | Forced transcription currently serves pending live voice commands. Normal meeting-end flush does not force transcription. | `userStopTalking`, `commands/endMeeting.ts`                                 | Preserve this bypass through an explicit option. Do not infer it from disabling an unrelated guard.                                                           |
 | The final audio verification pass returns early when there are no baseline segments.                                      | `transcriptionFinalPassService.ts`                                          | It cannot rescue every false rejection. Keep the raw recording, but require evidence before enabling rejection.                                               |
-| The image uses Node 24.22.1 on Alpine. Source Terraform declares 512 CPU units and 1024 MiB memory.                       | `Dockerfile`, `_infra/main.tf`                                              | Verify the exact container and constrained performance. These are repository settings, not live ECS proof.                                                    |
+| The revised image uses Node 24.22.1 on Debian Bookworm slim. Source Terraform declares 512 CPU units and 1024 MiB memory. | `Dockerfile`, `_infra/main.tf`                                              | Verify the exact container and constrained performance. These are repository settings, not live ECS proof.                                                    |
 | `.dockerignore` does not exclude `.cache`.                                                                                | `.dockerignore`                                                             | Exclude eval caches from Docker context before building this feature. Git ignore rules do not exclude Docker build context.                                   |
 
 ### Existing experiment
@@ -57,6 +57,13 @@ Read-only npm metadata on October 13 reported version 1.30.0 for both JavaScript
 
 First prove the recommended runtime with the pinned model in the actual Alpine image. If it cannot meet compatibility or resource requirements, report that evidence and revise the design. Do not silently switch detectors or rebase the container.
 
+October 28 revision: the WASM candidate failed the unchanged memory gate despite
+process isolation and runtime probes. A same-model native adapter passed the
+original benchmark on glibc, with a narrow memory margin. Implement native ONNX
+Runtime 1.30.0 and a pinned Debian image, then repeat all final image and resource
+checks. The decision, numerical differences, compatibility cost and acceptance
+limits are recorded in `docs/adr-20261027-speech-detector-process.md`.
+
 ## Proposed architecture
 
 ### Shared admission boundary
@@ -76,15 +83,16 @@ Do not identify nonspeech from missing decoder data, an empty provider response,
 
 ### Model worker
 
-October 27 runtime revision: the worker now runs in a local child process rather
-than a worker thread. The same model and WASM engine run with explicit
-`--no-liftoff` to avoid retaining two compilation tiers. This also contains
-process-level detector failures. The queue, policy, deadlines, restart cooldown
-and default-off admission contract are unchanged. The benchmark counts the
-parent and all descendants against the same resource targets. See
-`docs/adr-20261027-speech-detector-process.md` for the decision and tradeoffs.
+October 27 runtime revision moved the worker to a local child process, containing
+process-level failures. The initial `--no-liftoff` WASM approach still exceeded
+memory limits. The October 28 native revision retains process isolation, the
+queue, policy thresholds, deadlines, restart cooldown and default-off admission
+contract. Its compiled child has bounded V8 heap and allocator arenas. The
+benchmark counts the parent and all descendants against the same resource
+targets. See `docs/adr-20261027-speech-detector-process.md` for the controls,
+numerical differences and final acceptance requirements.
 
-Use one long-lived Node child worker per bot process, with one loaded model/session and single-threaded WASM. The API-only runtime does not load the model. The worker owns WAV parsing, downmixing, normalization, inference, and recurrent state. Every clip starts with fresh recurrent state, including interleaved speakers and repeated fast snapshots.
+Use one long-lived Node child worker per bot process, with one loaded model/session and sequential single-thread CPU inference. The API-only runtime does not load the model. The worker owns WAV parsing, downmixing, normalization, inference, and recurrent state. Every clip starts with fresh recurrent state, including interleaved speakers and repeated fast snapshots.
 
 Read and copy the detector input before sending it through child-process IPC. Never detach a buffer used by the recorder, a snippet, or provider submission. Do not hand the worker a temporary file path that transcription cleanup might delete. Send only the typed result and numeric metrics back to the parent.
 
@@ -176,7 +184,7 @@ No new authentication, purchase, navigation, or participant-permission step is p
 
 ## Packaging and telemetry
 
-Pin the JavaScript engine package after the compatibility check, initially testing 1.30.0. Bundle Silero v6.2.1, its license, and provenance with SHA-256 `1a153a22f4509e292a94e67d6f9b85e8deb25b4988682b7e174c65279d8788e3`. The saved model is 2,327,524 bytes. Verify the model and matching WASM assets during packaging and worker initialization. Do not fetch model/runtime files from a CDN when a meeting starts.
+Pin `onnxruntime-node@1.30.0` after the compatibility check. Bundle Silero v6.2.1, its license, and provenance with SHA-256 `1a153a22f4509e292a94e67d6f9b85e8deb25b4988682b7e174c65279d8788e3`. The saved model is 2,327,524 bytes. Verify the model, engine version, JavaScript execution assets and matching platform CPU binaries during packaging and worker initialization. Do not fetch model/runtime files from a CDN when a meeting starts. Skip optional CUDA installation.
 
 Backend build output must include the compiled worker and model assets. Container smoke tests must perform inference, not just check that `dist/index.js` exists. Add `.cache` to Docker exclusions so private or synthetic eval artifacts are never copied by `COPY . .`.
 
@@ -188,7 +196,7 @@ User clarification on October 13: feature toggling and measurable improvement ar
 
 The implementation plan must start with runtime feasibility and then progress through independently reviewable checkpoints. Failure at the compatibility checkpoint stops production integration.
 
-1. Prove model inference in Node 24.22.1 on the actual Alpine image, with bundled assets and no runtime network dependency. Match the saved synthetic gate decisions against the Python reference, including repeated and interleaved clip order. Test compiled worker startup, missing/corrupt assets, and shutdown.
+1. Prove model inference in Node 24.22.1 on the actual production image, with bundled assets and no runtime network dependency. Match the saved synthetic gate decisions against the Python reference, including repeated and interleaved clip order. Test compiled worker startup, missing/corrupt assets, and shutdown.
 2. Verify public behavior at the detector service, snippet admission/result, final transcript resolver, live timeline, and corpus runner. Include overload, deadlines, worker crash/recovery, forced live commands, fast/final races, unchanged/changed shortcut coverage, and earlier fast text followed by final rejection. Confirm recorder bytes and offsets remain intact.
 3. Extend evals to call the actual production detector, not an externally generated decision table. Compare VAD on/off with the prompt/echo policy held constant. Separate any later echo-policy experiment factorially. Grade every repetition and stage; include failures and unavailable assessments.
 4. Build a reviewed real Discord corpus in private ops. Reserve a fresh holdout by recording family. Proposed minimum is 100 distinct speech clips and 50 verified nonspeech clips across at least five speaker/device profiles. Include at least 20 quiet and 20 short speech clips, plus dictionary names, clipped edges, stereo effects, supported languages, overlapping voices, clicks, breathing, instrumental music, and background speech. Tags may overlap. Do not label ASR outputs as ground truth.

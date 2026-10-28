@@ -326,21 +326,21 @@ function spawnSpeechWorker(policy: SpeechPolicy): SpeechWorkerTransport {
     ),
     [policy.policyFingerprint],
     {
-      // Compile WASM directly to optimized code instead of retaining two tiers.
-      execArgv: [
-        "--no-liftoff",
-        ...(source ? ["-r", require.resolve("ts-node/register")] : []),
-      ],
+      // The compiled child needs no TypeScript compiler heap.
+      execArgv: source
+        ? ["-r", require.resolve("ts-node/register")]
+        : ["--max-old-space-size=16", "--max-semi-space-size=1"],
       serialization: "advanced",
       stdio: ["ignore", "ignore", "ignore", "ipc"],
       windowsHide: true,
       env: source
         ? {
             ...process.env,
+            MALLOC_ARENA_MAX: "1",
             TS_NODE_PROJECT: path.resolve(__dirname, "../../tsconfig.json"),
             TS_NODE_TRANSPILE_ONLY: "true",
           }
-        : process.env,
+        : { ...process.env, MALLOC_ARENA_MAX: "1" },
     },
   );
   let terminating = false;

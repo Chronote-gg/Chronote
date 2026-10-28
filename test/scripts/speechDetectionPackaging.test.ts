@@ -40,8 +40,8 @@ beforeAll(() => {
     { recursive: true },
   );
   cpSync(
-    path.join(root, "node_modules/onnxruntime-web"),
-    path.join(compiled, "node_modules/onnxruntime-web"),
+    path.join(root, "node_modules/onnxruntime-node"),
+    path.join(compiled, "node_modules/onnxruntime-node"),
     { recursive: true },
   );
   writeFileSync(
@@ -118,22 +118,37 @@ it.each([
   ],
   [
     "missing runtime",
-    "node_modules/onnxruntime-web/dist/ort-wasm-simd-threaded.wasm",
+    `node_modules/onnxruntime-node/bin/napi-v6/${process.platform}/${process.arch}/onnxruntime_binding.node`,
     "missing",
   ],
   [
     "corrupt runtime",
-    "node_modules/onnxruntime-web/dist/ort-wasm-simd-threaded.wasm",
+    `node_modules/onnxruntime-node/bin/napi-v6/${process.platform}/${process.arch}/onnxruntime_binding.node`,
     "corrupt",
   ],
-  ["mismatched engine", "node_modules/onnxruntime-web/package.json", "version"],
+  [
+    "unsupported platform",
+    "dist/assets/speech-detection/manifest.json",
+    "platform",
+  ],
+  [
+    "mismatched engine",
+    "node_modules/onnxruntime-node/package.json",
+    "version",
+  ],
 ])(
   "fails explicitly for %s",
   (_name, file, damage) =>
     checkFixture((fixture) => {
       const target = path.join(fixture, file);
       if (damage === "missing") rmSync(target);
-      else if (damage === "version")
+      else if (damage === "platform") {
+        const manifest = JSON.parse(readFileSync(target, "utf8"));
+        delete manifest.runtime.platforms[
+          `${process.platform}-${process.arch}`
+        ];
+        writeFileSync(target, JSON.stringify(manifest));
+      } else if (damage === "version")
         writeFileSync(
           target,
           readFileSync(target, "utf8").replace('"1.30.0"', '"1.29.0"'),
