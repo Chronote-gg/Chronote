@@ -23,6 +23,7 @@ jest.mock("../../src/services/processingRetryNotesInput", () => ({
 }));
 import {
   InvalidRecoveryContent,
+  TranscriptOverlapUnknown,
   readRecoveryContent,
   recoveryNotesInput,
   retranscribeOmittedRanges,
@@ -43,6 +44,7 @@ import {
   clearRetriedStages,
   runProcessingRetryStages,
 } from "../../src/services/processingRetryStages";
+import { z } from "zod";
 import type { MeetingHistory } from "../../src/types/db";
 import type { MeetingNotesInput } from "../../src/types/meeting-data";
 import {
@@ -111,6 +113,13 @@ const job = (stages: ProcessingRetryJob["stages"]): ProcessingRetryJob =>
       : "existing",
     updatedAt: iso,
   });
+const RECOVERY_NOTICE = "Synthetic recovery capture notice";
+const interrupted: MeetingHistory["capture"] = {
+  kind: "interrupted",
+  startedAt: iso,
+  detectedAt: iso,
+  endedAt: null,
+};
 const notesRetry = job(["notes", "summary"]);
 const fullRetry = job(["transcription", "notes", "summary"]);
 const content = {
@@ -147,6 +156,8 @@ beforeEach(() => {
     .mockImplementation((_history, _content, transcript) => ({
       ...notesInput(),
       finalTranscript: transcript,
+      recovered: true,
+      captureNotice: RECOVERY_NOTICE,
     }));
   jest
     .mocked(buildCurrentNotesInput)
@@ -478,4 +489,62 @@ test("an aborted run rethrows instead of reporting a failure", async () => {
       reader,
     }),
   ).rejects.toBeDefined();
+});
+
+test("a snapshot retry drops the recovered flag so an unnamed meeting can be named", async () => {
+  await run({ ...base, checkpoint, meetingName: undefined });
+
+  expect(
+    jest.mocked(ensureMeetingSummaries).mock.calls[0][0].recovered,
+  ).toBeUndefined();
+});
+
+test.each([
+  ["a completed capture", undefined, undefined],
+  ["an interrupted capture", interrupted, RECOVERY_NOTICE],
+] as const)(
+  "a snapshot retry of %s carries the recovery notice only when interrupted",
+  async (_name, capture, notice) => {
+    await run({ ...base, checkpoint, capture });
+
+    expect(jest.mocked(ensureMeetingNotes).mock.calls[0][0].captureNotice).toBe(
+      notice,
+    );
+  },
+);
+
+test("a mixed fallback on an interrupted capture carries both notices", async () => {
+  jest
+    .mocked(retranscribeOmittedRanges)
+    .mockRejectedValue(new TranscriptOverlapUnknown("overlap"));
+
+  const result = await run(
+    {
+      ...failedTranscription,
+      capture: interrupted,
+      audioS3Key: "p/g/c_m_t/audio.mp3",
+    },
+    fullRetry,
+  );
+
+  expect(result).toMatchObject({
+    kind: "succeeded",
+    transcriptSource: "mixed",
+    settingsSource: "snapshot",
+  });
+  expect(jest.mocked(ensureMeetingNotes).mock.calls[0][0].captureNotice).toBe(
+    `${RECOVERY_NOTICE}\n\n${UNATTRIBUTED_TRANSCRIPT_NOTICE}`,
+  );
+});
+
+test("a parse error from re-transcription fails the stage instead of falling back", async () => {
+  jest.mocked(retranscribeOmittedRanges).mockRejectedValue(new z.ZodError([]));
+
+  const result = await run(
+    { ...failedTranscription, audioS3Key: "p/g/c_m_t/audio.mp3" },
+    fullRetry,
+  );
+
+  expect(result).toMatchObject({ kind: "failed", reason: "stage_failed" });
+  expect(transcribeMixedRecording).not.toHaveBeenCalled();
 });

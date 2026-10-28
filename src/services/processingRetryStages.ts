@@ -100,7 +100,11 @@ async function freshTranscript(
         throw new RetryFailure("nothing_to_retry");
       return { ...result, source: "checkpoint" };
     } catch (error) {
-      if (!unreadable(error) && !(error instanceof TranscriptOverlapUnknown))
+      // Provider-side errors, parse failures included, fail the stage.
+      if (
+        !(error instanceof InvalidRecoveryContent) &&
+        !(error instanceof TranscriptOverlapUnknown)
+      )
         throw error;
     }
   }
@@ -174,6 +178,7 @@ async function notesInputFor(
   settingsSource: Sources["settingsSource"];
 }> {
   const { history, signal } = input;
+  const interrupted = history.capture?.kind === "interrupted";
   if (content) {
     try {
       const notesInput = recoveryNotesInput(
@@ -181,10 +186,17 @@ async function notesInputFor(
         content,
         transcript,
         signal,
-        history.capture?.kind === "interrupted",
+        interrupted,
       );
       return {
-        notesInput: { ...notesInput, meetingName: history.meetingName },
+        notesInput: {
+          ...notesInput,
+          meetingName: history.meetingName,
+          // A retry names an unnamed meeting like a live run does.
+          recovered: undefined,
+          // A completed capture has no gaps for the recovery notice to describe.
+          captureNotice: interrupted ? notesInput.captureNotice : undefined,
+        },
         settingsSource: "snapshot",
       };
     } catch (error) {
@@ -280,7 +292,12 @@ async function runStages(
       : undefined,
   );
   if (transcript.source === "mixed")
-    notesInput.captureNotice = UNATTRIBUTED_TRANSCRIPT_NOTICE;
+    notesInput.captureNotice = [
+      notesInput.captureNotice,
+      UNATTRIBUTED_TRANSCRIPT_NOTICE,
+    ]
+      .filter(Boolean)
+      .join("\n\n");
   await generate(input, notesInput);
   return changesFrom(input, notesInput, transcript.key);
 }
