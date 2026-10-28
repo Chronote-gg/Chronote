@@ -13,8 +13,8 @@ import {
 } from "../fixtures/productionLauncher.js";
 import {
   reviewedRoutes,
-  readActualSource,
   readOidcOnlySource,
+  readStaticCredentialSource,
 } from "../fixtures/productionReviewedSource.js";
 import { runCli } from "../../scripts/deployment/introduce-production.cjs";
 import {
@@ -69,9 +69,9 @@ beforeEach(() => {
 });
 
 test.each(["introduce", "prepare-acceptance", "accept"])(
-  "actual deployment source cannot mint fresh %s launcher authority despite valid settings",
+  "injected static deployment source cannot mint fresh %s launcher authority despite valid settings",
   async (mode) => {
-    bindSource(readActualSource);
+    bindSource(readStaticCredentialSource);
     process.env.GITHUB_JOB = mode;
     await expect(collectLauncherSettingsFromOriginalRun()).rejects.toThrow(
       "unaccounted_static_credential_route",
@@ -81,8 +81,8 @@ test.each(["introduce", "prepare-acceptance", "accept"])(
   },
 );
 
-test("original entrypoint refuses the actual static route before hold acquisition or interruption", async () => {
-  bindSource(readActualSource);
+test("original entrypoint refuses an injected static route before hold acquisition or interruption", async () => {
+  bindSource(readStaticCredentialSource);
   process.env.GITHUB_JOB = "introduce";
   const output = { log: jest.fn(), error: jest.fn() };
   expect(await runCli(["introduce"], output)).toBe(1);

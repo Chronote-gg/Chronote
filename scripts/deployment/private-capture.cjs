@@ -3,9 +3,9 @@ const assert = require("node:assert/strict");
 const { z } = require("zod");
 const s3 = require("@aws-sdk/client-s3");
 const { digest } = require("./collector-payload.cjs");
-const { bindingHash } = require("./binding-hash.cjs");
 const { boundedBody } = require("./collector-principal.cjs");
 const { captureNamespace } = require("./collector-command.cjs");
+const { bindingHash } = require("./binding-hash.cjs");
 const hash = z.string().regex(/^[a-f0-9]{64}$/);
 const storageBinding = z
   .object({
@@ -17,7 +17,7 @@ const storageBinding = z
     kmsKeyArn: z
       .string()
       .regex(/^arn:aws:kms:[a-z0-9-]+:\d{12}:key\/[a-f0-9-]{36}$/),
-    canonicalPolicySha256: hash,
+    policySha256: hash,
     lifecycleSha256: hash,
     retentionUntil: z.number().int().positive(),
     administratorTrustSha256: hash,
@@ -57,9 +57,9 @@ async function checkStore(send, b, now) {
     "UNKNOWN: privacy",
   );
   const policy = (await send("GetBucketPolicy")).Policy;
-  assert.equal(
-    bindingHash(JSON.parse(policy)),
-    b.canonicalPolicySha256,
+  assert.ok(
+    digest(policy) === b.policySha256 ||
+      bindingHash(JSON.parse(policy)) === b.policySha256,
     "UNKNOWN: policy binding",
   );
   const encryption = await send("GetBucketEncryption");
@@ -143,6 +143,29 @@ function createTerraformCapture({
     namespace: `terraform/${i.environment}/${i.runId}/1/${digest(JSON.stringify(i))}`,
   });
 }
+function createVerificationCapture({
+  identity,
+  purpose,
+  binding,
+  client,
+  now,
+}) {
+  z.object({
+    runId: z.string().regex(/^[1-9]\d{0,15}$/),
+    sourceSha: z.string().regex(/^[a-f0-9]{40}$/),
+  })
+    .strict()
+    .parse(identity);
+  z.enum(["payload", "report"]).parse(purpose);
+  return createStore({
+    binding,
+    client,
+    now,
+    storeId: binding.storeId,
+    validUntil: (now ?? (() => Math.floor(Date.now() / 1000)))() + 900,
+    namespace: `terraform/production/verification/${identity.runId}/1/${identity.sourceSha}/${purpose}`,
+  });
+}
 function createStore({
   binding,
   client,
@@ -223,7 +246,10 @@ function createStore({
       );
       assert.equal(response.ServerSideEncryption, "aws:kms");
       assert.equal(response.SSEKMSKeyId, b.kmsKeyArn);
-      assert.equal(response.BucketKeyEnabled, false);
+      assert.ok(
+        response.BucketKeyEnabled === undefined ||
+          response.BucketKeyEnabled === false,
+      );
       assert.equal(response.ContentLength, ref.size, "UNKNOWN: capture bytes");
       const bytes = await boundedBody(
         response.Body,
@@ -292,4 +318,5 @@ module.exports = {
   createPrivateCapture,
   createPreparationCapture,
   createTerraformCapture,
+  createVerificationCapture,
 };

@@ -6,6 +6,7 @@ import {
   reviewedRoutes,
   readActualSource,
   readOidcOnlySource,
+  readStaticCredentialSource,
 } from "../fixtures/productionReviewedSource.js";
 import {
   verifyDeclaredRoutes,
@@ -104,8 +105,21 @@ function reviewedWorkflowBinding(workflow, contents) {
   return actual;
 }
 const applyPath = ".github/workflows/terraform-apply.yml";
-test("actual reviewed deploy source with bound hashes refuses its unaccounted static credential route", () => {
+test("actual reviewed deploy source retains both OIDC site publishers", () => {
   const contents = readActualSource(".github/workflows/deploy.yml", "utf8");
+  expect(
+    declaredRoutesVerified(
+      verifyDeclaredRoutes(reviewedWorkflowBinding("deploy.yml", contents)),
+      scope,
+    ),
+  ).toBe(true);
+});
+
+test("a static site-publisher credential still refuses even with freshly bound source hashes", () => {
+  const contents = readStaticCredentialSource(
+    ".github/workflows/deploy.yml",
+    "utf8",
+  );
   expect(() =>
     verifyDeclaredRoutes(reviewedWorkflowBinding("deploy.yml", contents)),
   ).toThrow("unaccounted_static_credential_route");
@@ -168,18 +182,21 @@ test.each(staticAcquisitions)(
     );
   },
 );
-test("current Plan static credential content is detected by the common workflow accounting check", () => {
+test("Plan has no static credentials and accounting still refuses a reintroduced legacy route", () => {
   const contents = readActualSource(
     ".github/workflows/terraform-plan.yml",
     "utf8",
   );
+  const workflow = parse(contents);
   expect(
-    parse(contents).jobs.plan.steps.filter(
-      (step) => step.with?.["aws-access-key-id"],
-    ),
-  ).toHaveLength(1);
+    workflow.jobs.plan.steps.filter((step) => step.with?.["aws-access-key-id"]),
+  ).toHaveLength(0);
+  workflow.jobs.plan.steps.push(staticAcquisitions[0][1]);
   // Plan is not in the launcher inventory; supply its actual body through a declared workflow transport.
-  const actual = reviewedWorkflowBinding("terraform-apply.yml", contents);
+  const actual = reviewedWorkflowBinding(
+    "terraform-apply.yml",
+    stringify(workflow),
+  );
   expect(() => verifyDeclaredRoutes(actual)).toThrow(
     "unaccounted_static_credential_route",
   );

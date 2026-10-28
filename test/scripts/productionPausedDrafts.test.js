@@ -147,7 +147,7 @@ function fixture() {
       accountId: m.identity.accountId,
       region: m.identity.region,
       kmsKeyArn: `arn:aws:kms:${m.identity.region}:${m.identity.accountId}:key/00000000-0000-0000-0000-000000000001`,
-      canonicalPolicySha256: "a".repeat(64),
+      policySha256: "a".repeat(64),
       lifecycleSha256: "a".repeat(64),
       retentionUntil: 300,
       administratorTrustSha256: "a".repeat(64),
@@ -385,6 +385,55 @@ test("complete capture metadata cannot carry omitted content", () => {
   f.capture.parents[0].title = "private text";
   expect(() => bindFixture(f)).toThrow();
 });
+test("native disabled bucket keys do not fill missing saved attestation", async () => {
+  const f = fixture();
+  f.capture.objects[0].encryption = {
+    serverSideEncryption: "aws:kms",
+    sseKmsKeyId: "exact-key",
+  };
+  const normal = f.readers.pausedDraftMetadata.getMockImplementation();
+  f.readers.pausedDraftMetadata.mockImplementation(async (...args) => {
+    const result = await normal(...args);
+    if (args[2].kind === "object")
+      Object.assign(result, {
+        ServerSideEncryption: "aws:kms",
+        SSEKMSKeyId: "exact-key",
+        BucketKeyEnabled: false,
+      });
+    return result;
+  });
+  await expect(acquireFixture(f)).rejects.toThrow();
+  expect(f.capture.objects[0].encryption).not.toHaveProperty(
+    "bucketKeyEnabled",
+  );
+});
+
+test.each([undefined, false, true, null, "false", 0])(
+  "paused runtime validates native bucket-key metadata %p against attested false",
+  async (bucketKey) => {
+    const f = fixture();
+    f.capture.objects[0].encryption = {
+      serverSideEncryption: "aws:kms",
+      sseKmsKeyId: "exact-key",
+      bucketKeyEnabled: false,
+    };
+    const normal = f.readers.pausedDraftMetadata.getMockImplementation();
+    f.readers.pausedDraftMetadata.mockImplementation(async (...args) => {
+      const result = await normal(...args);
+      if (args[2].kind === "object") {
+        result.ServerSideEncryption = "aws:kms";
+        result.SSEKMSKeyId = "exact-key";
+        if (bucketKey !== undefined) result.BucketKeyEnabled = bucketKey;
+      }
+      return result;
+    });
+    const operation = acquireFixture(f);
+    if (bucketKey === undefined || bucketKey === false)
+      await expect(operation).resolves.toBeDefined();
+    else await expect(operation).rejects.toThrow();
+  },
+);
+
 test("encrypted object identity is preserved when the original capture declares it", async () => {
   const f = fixture();
   f.capture.objects[0].encryption = {

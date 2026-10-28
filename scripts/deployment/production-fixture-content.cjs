@@ -182,7 +182,8 @@ function validateObjectMetadata(m, response, reference, versionId) {
     versionId === "null" ||
     response.ServerSideEncryption !== "aws:kms" ||
     response.SSEKMSKeyId !== m.acceptance.storageKeyArn ||
-    response.BucketKeyEnabled !== false
+    (response.BucketKeyEnabled !== undefined &&
+      response.BucketKeyEnabled !== false)
   )
     refuse();
 }

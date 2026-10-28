@@ -295,7 +295,7 @@ test("expiry during native inventory refuses before Exec and private capture", a
       region: m.binding.region,
       kmsKeyArn:
         "arn:aws:kms:us-east-1:123456789012:key/11111111-1111-4111-8111-111111111111",
-      canonicalPolicySha256: "a".repeat(64),
+      policySha256: "a".repeat(64),
       lifecycleSha256: "b".repeat(64),
       retentionUntil: 6000,
       administratorTrustSha256: "c".repeat(64),

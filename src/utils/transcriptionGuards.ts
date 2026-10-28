@@ -8,6 +8,7 @@ import {
   TRANSCRIPTION_PROMPT_ECHO_SIMILARITY_THRESHOLD,
 } from "../constants";
 import { countWords } from "./text";
+import { getTranscriptionTextQuality } from "./transcriptionText";
 
 type LogprobEntry = {
   logprob?: number;
@@ -555,6 +556,7 @@ export function applyTranscriptionGuards(input: {
   logprobs?: LogprobEntry[];
 }): TranscriptionGuardResult {
   const trimmed = normalizeValue(input.transcription);
+  const punctuationOnly = getTranscriptionTextQuality(trimmed).punctuationOnly;
   const hasText = Boolean(trimmed);
   const loudness = evaluateLoudnessGuard({
     enabled: input.suppressionEnabled,
@@ -607,14 +609,17 @@ export function applyTranscriptionGuards(input: {
   });
 
   return {
-    text: suppression.suppressed ? "" : trimmed,
-    flags: mergeGuardFlags({
-      suppressionEnabled: input.suppressionEnabled,
-      promptEchoEnabled: input.promptEchoEnabled,
-      loudnessFlags,
-      rateFlags,
-      promptEchoFlags,
-    }),
+    text: suppression.suppressed || punctuationOnly ? "" : trimmed,
+    flags: [
+      ...mergeGuardFlags({
+        suppressionEnabled: input.suppressionEnabled,
+        promptEchoEnabled: input.promptEchoEnabled,
+        loudnessFlags,
+        rateFlags,
+        promptEchoFlags,
+      }),
+      ...(punctuationOnly ? ["suppressed_punctuation_only"] : []),
+    ],
     logprobMetrics: loudness.logprobMetrics,
     promptEchoDetected: promptEcho.detected,
     promptEchoMetrics: promptEcho.metrics,
@@ -625,6 +630,6 @@ export function applyTranscriptionGuards(input: {
     rateMismatchDetected: rate.rateMismatchDetected,
     syllableCount: rate.syllableCount,
     syllablesPerSecond: rate.syllablesPerSecond,
-    suppressed: suppression.suppressed,
+    suppressed: suppression.suppressed || punctuationOnly,
   };
 }

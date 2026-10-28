@@ -76,6 +76,7 @@ const buildRuntimeConfig = (
 ): MeetingRuntimeConfig => {
   const base: MeetingRuntimeConfig = {
     transcription: {
+      speechDetectionMode: "off",
       suppressionEnabled: true,
       suppressionHardSilenceDbfs: -60,
       suppressionRateMaxSeconds: 3,
@@ -189,6 +190,30 @@ const buildSparseMeeting = (): MeetingData =>
   });
 
 describe("autoRecordCancellationService", () => {
+  test("excludes final-rejected text from cancellation input", async () => {
+    const { evaluateAutoRecordCancellation, responsesCreate } =
+      await loadModule({ responseContent: '{"cancel":true}' });
+    const meeting = buildMeeting();
+    meeting.audioData.audioFiles.push({
+      userId: "u",
+      timestamp: 1,
+      processing: false,
+      audioOnlyProcessing: false,
+      transcript: "rejected guess",
+      finalSpeechRejection: {
+        pcmSha256: "synthetic",
+        audioBytes: 4,
+        policyFingerprint: "test",
+      },
+    });
+    await evaluateAutoRecordCancellation(meeting);
+    expect(JSON.stringify(responsesCreate.mock.calls)).not.toContain(
+      "rejected guess",
+    );
+    expect(JSON.stringify(responsesCreate.mock.calls)).toContain(
+      "No transcript.",
+    );
+  });
   test("returns false when meeting is not auto-recorded", async () => {
     const {
       evaluateAutoRecordCancellation,

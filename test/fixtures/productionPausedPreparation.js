@@ -3,7 +3,6 @@ import { createHash } from "node:crypto";
 import { Buffer } from "node:buffer";
 import { zipSync, strToU8 } from "fflate";
 import { canonicalHash } from "../../scripts/deployment/production-manifest.cjs";
-import { bindingHash } from "../../scripts/deployment/binding-hash.cjs";
 import {
   scopeFor,
   workflow,
@@ -65,7 +64,7 @@ export function pausedPreparationFixture(manifest) {
       accountId: account,
       region,
       kmsKeyArn: keyArn,
-      canonicalPolicySha256: bindingHash(JSON.parse(policy)),
+      policySha256: digest(policy),
       lifecycleSha256: digest("null"),
       retentionUntil: 400,
       administratorTrustSha256: "f".repeat(64),

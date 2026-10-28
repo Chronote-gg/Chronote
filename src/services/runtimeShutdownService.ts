@@ -23,6 +23,7 @@ import {
 import { stopMeetingControlCommandWorker } from "./meetingControlWorkerService";
 import { stopPersonalMediaUploadWorker } from "./personalMediaUploadWorkerService";
 import { shutdownAnalytics } from "./analyticsService";
+import { shutdownSpeechDetector } from "./speechDetectionService";
 import { shutdownLangfuseClient } from "./langfuseClient";
 import { shutdownLangfuseTracing } from "../observability/langfuseInstrumentation";
 import {
@@ -63,6 +64,7 @@ function interruptSessions(budget: PreservationBudget) {
 async function flushTelemetry() {
   const results = await Promise.allSettled([
     shutdownAnalytics(),
+    shutdownSpeechDetector(),
     shutdownLangfuseClient(),
     shutdownLangfuseTracing(),
   ]);

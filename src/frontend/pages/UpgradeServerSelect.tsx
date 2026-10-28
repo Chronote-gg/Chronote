@@ -4,6 +4,9 @@ import {
   requiresStripeManagement,
 } from "../utils/billingManagement";
 import RecordingPlanContext from "../components/RecordingPlanContext";
+import CheckoutRecovery, {
+  IntroOfferAvailability,
+} from "../components/CheckoutRecovery";
 import {
   Alert,
   Avatar,
@@ -385,6 +388,10 @@ export default function UpgradeServerSelect({
         showBillingError(err, "checkout");
     }
   };
+  const retryCheckout = () => {
+    if (busy || !serverReady) return;
+    void checkoutAttempt.retry(checkoutMutation.mutateAsync);
+  };
   const handlePortal = async () => {
     if (!serverReady || !selectedServerId || busy) return;
     try {
@@ -701,64 +708,15 @@ export default function UpgradeServerSelect({
               testId="upgrade-plan-pro"
             />
           </div>
-          {offer.status === "unavailable" && (
-            <Alert color="yellow" title="Introductory pricing unavailable">
-              Refresh offers before starting Basic checkout.
-            </Alert>
-          )}
-          {offer.status === "expired" && (
-            <Alert color="gray" title="Introductory enrollment ended">
-              The regular Basic price is shown. Choose a plan to continue at
-              that price.
-            </Alert>
-          )}
-          {(offerBlocked || failedCheckout) && (
-            <Stack gap="xs">
-              <Text size="sm">
-                A previous checkout may still be pending. Retry keeps its
-                original terms. Refreshing does not cancel it or change its
-                terms.
-              </Text>
-              <Group>
-                {failedCheckout && (
-                  <Button
-                    disabled={busy || !serverReady}
-                    onClick={async () => {
-                      const attempt = checkoutAttempt.attempt;
-                      if (
-                        busy ||
-                        !serverReady ||
-                        !attempt ||
-                        !checkoutAttempt.isCurrent(attempt)
-                      )
-                        return;
-                      try {
-                        const body = await checkoutMutation.mutateAsync(
-                          attempt.request,
-                        );
-                        if (checkoutAttempt.isCurrent(attempt))
-                          window.location.href = body.url;
-                      } catch (error) {
-                        if (checkoutAttempt.isCurrent(attempt))
-                          showBillingError(error, "checkout");
-                      }
-                    }}
-                  >
-                    Retry checkout
-                  </Button>
-                )}
-                <Button
-                  variant="light"
-                  disabled={busy}
-                  onClick={() => {
-                    checkoutAttempt.refresh();
-                  }}
-                >
-                  Refresh offers
-                </Button>
-              </Group>
-            </Stack>
-          )}
+          <IntroOfferAvailability offer={offer} />
+          <CheckoutRecovery
+            offer={offer}
+            checkoutFailed={Boolean(failedCheckout)}
+            retryDisabled={busy || !serverReady}
+            refreshDisabled={busy}
+            onRetry={retryCheckout}
+            onRefresh={checkoutAttempt.refresh}
+          />
           {!managementOnly && offer.status === "available" && intent.promo && (
             <IntroPromotionChoice
               choice={offerChoice}

@@ -27,6 +27,7 @@ export type LiveMeetingInitPayload = {
 
 export type LiveMeetingEventsPayload = {
   events: MeetingEvent[];
+  removedEventIds?: string[];
 };
 
 export type LiveMeetingAttendeesPayload = {

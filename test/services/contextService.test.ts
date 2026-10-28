@@ -61,6 +61,7 @@ const DEFAULT_NOISE_GATE_CONFIG = {
 };
 
 const DEFAULT_TRANSCRIPTION_CONFIG: MeetingRuntimeConfig["transcription"] = {
+  speechDetectionMode: "off",
   suppressionEnabled: false,
   suppressionHardSilenceDbfs: TRANSCRIPTION_HARD_SILENCE_DBFS,
   suppressionRateMaxSeconds: TRANSCRIPTION_RATE_MAX_SECONDS,

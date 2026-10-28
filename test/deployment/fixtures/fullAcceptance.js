@@ -20,7 +20,7 @@ import { consumeMaximumRenewals } from "./maximumIntroductionRenewals.js";
 import { hostedAcceptance } from "./productionAcceptanceHosted.js";
 import {
   sourceTransport,
-  readActualSource,
+  readStaticCredentialSource,
   readOidcOnlySource,
 } from "../../fixtures/productionReviewedSource.js";
 import { contentFixture } from "../../fixtures/productionFixtureContent.js";
@@ -134,7 +134,7 @@ async function assertFinalFault({
   if (fault === "static-route") {
     const beforeHold = await read(table, { pk: "ENV", sk: "INTRODUCTION" });
     const beforeControl = await read(table, { pk: "ENV", sk: "CONTROL" });
-    sourceTransport.read = readActualSource;
+    sourceTransport.read = readStaticCredentialSource;
     expect(() => verifyDeclaredRoutes(f.binding)).toThrow(
       "unaccounted_static_credential_route",
     );

@@ -5,6 +5,7 @@ import { config } from "../../src/services/configService";
 import { getStripeClient } from "../../src/services/stripeClient";
 import type { StripeClient } from "../../src/types/stripe";
 import type { TrpcContext } from "../../src/trpc/context";
+import { basicMonthlyTestPrice } from "../fixtures/stripePrices";
 
 jest.mock("../../src/services/stripeClient", () => ({
   getStripeClient: jest.fn(),
@@ -24,22 +25,7 @@ afterEach(() => {
 });
 function publicOfferFixture(valid = true) {
   const providerValidity = { valid };
-  const price = {
-    id: "price_basic",
-    active: true,
-    livemode: false,
-    currency: "usd",
-    unit_amount: 1000,
-    lookup_key: config.stripe.lookupKeys.basicMonthly,
-    billing_scheme: "per_unit",
-    type: "recurring",
-    recurring: {
-      interval: "month",
-      interval_count: 1,
-      usage_type: "licensed",
-    },
-    product: "prod_basic",
-  };
+  const price = basicMonthlyTestPrice();
   const annualPrice = {
     ...price,
     id: "price_annual",

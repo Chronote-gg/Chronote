@@ -5,6 +5,7 @@ const mockControlStop = jest.fn(async () => {});
 const mockPersonalStop = jest.fn(async () => {});
 const mockMeetingUpdateStop = jest.fn(async () => {});
 const mockBillingStop = jest.fn(async () => {});
+const mockSpeechStop = jest.fn(async () => {});
 const mockFence = jest.fn();
 const mockCloseAdmission = jest.fn();
 jest.mock("../../src/meetings", () => ({
@@ -44,6 +45,9 @@ jest.mock("../../src/services/personalMediaUploadWorkerService", () => ({
 jest.mock("../../src/services/analyticsService", () => ({
   shutdownAnalytics: async () => {},
 }));
+jest.mock("../../src/services/speechDetectionService", () => ({
+  shutdownSpeechDetector: () => mockSpeechStop(),
+}));
 jest.mock("../../src/services/langfuseClient", () => ({
   shutdownLangfuseClient: async () => {},
 }));
@@ -72,8 +76,10 @@ test("composed owner seals every source synchronously and waits actual worker an
   jest.clearAllMocks();
   const init = held();
   const poll = held();
+  const detector = held();
   mockInitStop.mockReturnValueOnce(init.promise);
   mockControlStop.mockReturnValueOnce(poll.promise);
+  mockSpeechStop.mockReturnValueOnce(detector.promise);
   const exit = jest
     .spyOn(process, "exit")
     .mockImplementation(() => undefined as never);
@@ -94,13 +100,19 @@ test("composed owner seals every source synchronously and waits actual worker an
     init.release();
     await Promise.resolve();
     expect(destroyBot).not.toHaveBeenCalled();
+    expect(mockSpeechStop).not.toHaveBeenCalled();
     poll.release();
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(mockSpeechStop).toHaveBeenCalledTimes(1);
+    expect(exit).not.toHaveBeenCalled();
+    detector.release();
     expect(await result).toEqual({ kind: "settled" });
     expect(destroyBot).toHaveBeenCalledTimes(1);
     expect(exit).toHaveBeenCalledWith(0);
   } finally {
     init.release();
     poll.release();
+    detector.release();
     owner.dispose();
   }
 });

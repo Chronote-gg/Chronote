@@ -7,6 +7,11 @@ Notable product changes for Chronote users. For the full changelog, see the [Git
 
 ## 2026
 
+### Abandoned checkouts no longer block billing (October 27)
+
+- Closing Checkout without paying no longer leaves Basic or Pro unavailable on the billing page.
+- Choosing a different plan, or another server manager starting a purchase, replaces the earlier unpaid checkout instead of showing an in-progress error. See [Setup and access](/admin/setup-and-access).
+
 ### Saved notes and automatic Discord updates (October 23)
 
 - Edits, imports, approved corrections, and meeting renames save the meeting record before updating existing Discord posts.

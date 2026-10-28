@@ -224,20 +224,18 @@ jobs:
     needs: [ci, deploy-docs, deploybackend]
     runs-on: ubuntu-latest
     environment: production
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      id-token: write
     env:
+      AWS_REGION: ${{ vars.AWS_REGION }}
       VITE_API_BASE_URL: ${{ vars.VITE_API_BASE_URL }}
       VITE_POSTHOG_KEY: ${{ vars.VITE_POSTHOG_KEY }}
       VITE_POSTHOG_HOST: ${{ vars.VITE_POSTHOG_HOST }}
     steps:
       - name: Checkout
         uses: actions/checkout@v7
-
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v6
-        with:
-          aws-access-key-id: ${{ vars.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ vars.AWS_REGION }}
 
       - name: Setup Node.js
         uses: actions/setup-node@v7
@@ -252,6 +250,59 @@ jobs:
       - name: Build frontend (Vite)
         run: yarn build:web
 
+      - name: Build hold schema
+        run: yarn build
+
+      - name: Mask site publisher identity
+        id: publisher-identity
+        env:
+          TERRAFORM_PRIVATE_STORAGE_JSON: ${{ secrets.TERRAFORM_PRIVATE_STORAGE_JSON }}
+        run: node scripts/deployment/site-publisher-identity.cjs identity
+
+      - name: Validate site publisher bindings
+        env:
+          IDENTITY_MATCHES: ${{ vars.AWS_ACCOUNT_ID == steps.publisher-identity.outputs.account_id && vars.PRODUCTION_BACKEND_DEPLOY_ROLE_ARN == steps.publisher-identity.outputs.role_arn && vars.DEPLOYMENT_CONTROL_TABLE == steps.publisher-identity.outputs.control_table }}
+        run: test "$IDENTITY_MATCHES" = true
+
+      - name: Prepare site publisher session
+        env:
+          TERRAFORM_PRIVATE_STORAGE_JSON: ${{ secrets.TERRAFORM_PRIVATE_STORAGE_JSON }}
+          AWS_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
+          PRODUCTION_BACKEND_DEPLOY_ROLE_ARN: ${{ vars.PRODUCTION_BACKEND_DEPLOY_ROLE_ARN }}
+          DEPLOYMENT_CONTROL_TABLE: ${{ vars.DEPLOYMENT_CONTROL_TABLE }}
+          FRONTEND_BUCKET: ${{ vars.FRONTEND_BUCKET }}
+          FRONTEND_DISTRIBUTION_ID: ${{ vars.FRONTEND_DISTRIBUTION_ID }}
+        run: node scripts/deployment/site-publisher-identity.cjs session frontend
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ vars.PRODUCTION_BACKEND_DEPLOY_ROLE_ARN }}
+          allowed-account-ids: ${{ vars.AWS_ACCOUNT_ID }}
+          role-session-name: chronote-production-${{ github.run_id }}-${{ github.run_attempt }}
+          role-duration-seconds: 3600
+          unset-current-credentials: true
+          mask-aws-account-id: true
+          aws-region: ${{ vars.AWS_REGION }}
+          inline-session-policy: '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":["s3:ListBucket","s3:PutObject","s3:DeleteObject","s3:AbortMultipartUpload"],"Resource":["arn:aws:s3:::${{ vars.FRONTEND_BUCKET }}","arn:aws:s3:::${{ vars.FRONTEND_BUCKET }}/*"]},{"Effect":"Allow","Action":["cloudfront:CreateInvalidation"],"Resource":"arn:aws:cloudfront::${{ vars.AWS_ACCOUNT_ID }}:distribution/${{ vars.FRONTEND_DISTRIBUTION_ID }}"},{"Effect":"Allow","Action":["dynamodb:GetItem"],"Resource":"arn:aws:dynamodb:${{ vars.AWS_REGION }}:${{ vars.AWS_ACCOUNT_ID }}:table/${{ vars.DEPLOYMENT_CONTROL_TABLE }}","Condition":{"ForAllValues:StringEquals":{"dynamodb:LeadingKeys":["ENV"]}}},{"Effect":"Allow","Action":["kms:GenerateDataKey","kms:Decrypt"],"Resource":"arn:aws:kms:${{ vars.AWS_REGION }}:${{ vars.AWS_ACCOUNT_ID }}:key/*","Condition":{"StringEquals":{"kms:CallerAccount":"${{ vars.AWS_ACCOUNT_ID }}","kms:ViaService":"s3.${{ vars.AWS_REGION }}.amazonaws.com"},"StringLike":{"kms:EncryptionContext:aws:s3:arn":"arn:aws:s3:::${{ vars.FRONTEND_BUCKET }}/*"}}},{"Effect":"Allow","Action":["kms:Decrypt"],"Resource":"arn:aws:kms:${{ vars.AWS_REGION }}:${{ vars.AWS_ACCOUNT_ID }}:key/*","Condition":{"StringEquals":{"kms:CallerAccount":"${{ vars.AWS_ACCOUNT_ID }}","kms:ViaService":"dynamodb.${{ vars.AWS_REGION }}.amazonaws.com","kms:EncryptionContext:aws:dynamodb:subscriberId":"${{ vars.AWS_ACCOUNT_ID }}","kms:EncryptionContext:aws:dynamodb:tableName":"${{ vars.DEPLOYMENT_CONTROL_TABLE }}"}}}]}'
+
+      - name: Verify exact site publisher identity
+        env:
+          EXPECTED_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
+          EXPECTED_ROLE_ARN: ${{ vars.PRODUCTION_BACKEND_DEPLOY_ROLE_ARN }}
+          EXPECTED_SESSION_NAME: chronote-production-${{ github.run_id }}-${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+          aws sts get-caller-identity --output json 2>/dev/null | node scripts/deployment/assert-production-identity.cjs
+
+      - name: Check production hold before frontend publication
+        env:
+          DEPLOYMENT_ENVIRONMENT: production
+          DEPLOYMENT_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
+          DEPLOYMENT_CONTROL_TABLE: ${{ vars.DEPLOYMENT_CONTROL_TABLE }}
+          DEPLOYMENT_GUARD_ROLE_ARN: ${{ vars.PRODUCTION_BACKEND_DEPLOY_ROLE_ARN }}
+        run: node scripts/deployment/production-writer-guard.cjs
+
       - name: Sync frontend to S3 and invalidate CloudFront
         uses: ./.github/actions/sync-frontend
         with:
@@ -263,6 +314,12 @@ jobs:
     needs: [ci]
     runs-on: ubuntu-latest
     environment: production
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      AWS_REGION: ${{ vars.AWS_REGION }}
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -280,42 +337,6 @@ jobs:
           fi
 
           echo "enabled=true" >> "$GITHUB_OUTPUT"
-
-      - name: Configure AWS credentials
-        if: steps.docs-config.outputs.enabled == 'true'
-        uses: aws-actions/configure-aws-credentials@v6
-        with:
-          aws-access-key-id: ${{ vars.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ vars.AWS_REGION }}
-
-      - name: Preflight docs publish targets
-        if: steps.docs-config.outputs.enabled == 'true'
-        env:
-          DOCS_BUCKET: ${{ vars.DOCS_BUCKET }}
-          DOCS_DISTRIBUTION_ID: ${{ vars.DOCS_DISTRIBUTION_ID }}
-        run: |
-          set -euo pipefail
-
-          if [ -z "$DOCS_BUCKET" ]; then
-            echo "ERROR: DOCS_BUCKET is not set in the GitHub Actions environment."
-            exit 1
-          fi
-
-          if [ -z "$DOCS_DISTRIBUTION_ID" ]; then
-            echo "ERROR: DOCS_DISTRIBUTION_ID is not set in the GitHub Actions environment."
-            exit 1
-          fi
-
-          if ! aws s3api head-bucket --bucket "$DOCS_BUCKET" >/dev/null 2>&1; then
-            echo "ERROR: DOCS_BUCKET '$DOCS_BUCKET' is not accessible with the configured AWS credentials."
-            exit 1
-          fi
-
-          if ! aws cloudfront get-distribution --id "$DOCS_DISTRIBUTION_ID" >/dev/null 2>&1; then
-            echo "ERROR: DOCS_DISTRIBUTION_ID '$DOCS_DISTRIBUTION_ID' is not accessible with the configured AWS credentials."
-            exit 1
-          fi
 
       - name: Setup Node.js
         if: steps.docs-config.outputs.enabled == 'true'
@@ -342,32 +363,124 @@ jobs:
         if: steps.docs-config.outputs.enabled == 'true'
         run: test -d build/docs-site
 
-      - name: Sync docs to S3
+      - name: Build hold schema
+        if: steps.docs-config.outputs.enabled == 'true'
+        run: yarn build
+
+      - name: Mask site publisher identity
+        id: publisher-identity
+        if: steps.docs-config.outputs.enabled == 'true'
+        env:
+          TERRAFORM_PRIVATE_STORAGE_JSON: ${{ secrets.TERRAFORM_PRIVATE_STORAGE_JSON }}
+        run: node scripts/deployment/site-publisher-identity.cjs identity
+
+      - name: Validate site publisher bindings
+        if: steps.docs-config.outputs.enabled == 'true'
+        env:
+          IDENTITY_MATCHES: ${{ vars.AWS_ACCOUNT_ID == steps.publisher-identity.outputs.account_id && vars.PRODUCTION_BACKEND_DEPLOY_ROLE_ARN == steps.publisher-identity.outputs.role_arn && vars.DEPLOYMENT_CONTROL_TABLE == steps.publisher-identity.outputs.control_table }}
+        run: test "$IDENTITY_MATCHES" = true
+
+      - name: Prepare site publisher session
+        if: steps.docs-config.outputs.enabled == 'true'
+        env:
+          TERRAFORM_PRIVATE_STORAGE_JSON: ${{ secrets.TERRAFORM_PRIVATE_STORAGE_JSON }}
+          AWS_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
+          PRODUCTION_BACKEND_DEPLOY_ROLE_ARN: ${{ vars.PRODUCTION_BACKEND_DEPLOY_ROLE_ARN }}
+          DEPLOYMENT_CONTROL_TABLE: ${{ vars.DEPLOYMENT_CONTROL_TABLE }}
+          DOCS_BUCKET: ${{ vars.DOCS_BUCKET }}
+          DOCS_DISTRIBUTION_ID: ${{ vars.DOCS_DISTRIBUTION_ID }}
+        run: node scripts/deployment/site-publisher-identity.cjs session docs
+
+      - name: Configure AWS credentials
+        if: steps.docs-config.outputs.enabled == 'true'
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ vars.PRODUCTION_BACKEND_DEPLOY_ROLE_ARN }}
+          allowed-account-ids: ${{ vars.AWS_ACCOUNT_ID }}
+          role-session-name: chronote-production-${{ github.run_id }}-${{ github.run_attempt }}
+          role-duration-seconds: 3600
+          unset-current-credentials: true
+          mask-aws-account-id: true
+          aws-region: ${{ vars.AWS_REGION }}
+          inline-session-policy: '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":["s3:ListBucket","s3:PutObject","s3:DeleteObject","s3:AbortMultipartUpload"],"Resource":["arn:aws:s3:::${{ vars.DOCS_BUCKET }}","arn:aws:s3:::${{ vars.DOCS_BUCKET }}/*"]},{"Effect":"Allow","Action":["cloudfront:CreateInvalidation","cloudfront:GetDistribution","cloudfront:GetInvalidation"],"Resource":"arn:aws:cloudfront::${{ vars.AWS_ACCOUNT_ID }}:distribution/${{ vars.DOCS_DISTRIBUTION_ID }}"},{"Effect":"Allow","Action":["dynamodb:GetItem"],"Resource":"arn:aws:dynamodb:${{ vars.AWS_REGION }}:${{ vars.AWS_ACCOUNT_ID }}:table/${{ vars.DEPLOYMENT_CONTROL_TABLE }}","Condition":{"ForAllValues:StringEquals":{"dynamodb:LeadingKeys":["ENV"]}}},{"Effect":"Allow","Action":["kms:GenerateDataKey","kms:Decrypt"],"Resource":"arn:aws:kms:${{ vars.AWS_REGION }}:${{ vars.AWS_ACCOUNT_ID }}:key/*","Condition":{"StringEquals":{"kms:CallerAccount":"${{ vars.AWS_ACCOUNT_ID }}","kms:ViaService":"s3.${{ vars.AWS_REGION }}.amazonaws.com"},"StringLike":{"kms:EncryptionContext:aws:s3:arn":"arn:aws:s3:::${{ vars.DOCS_BUCKET }}/*"}}},{"Effect":"Allow","Action":["kms:Decrypt"],"Resource":"arn:aws:kms:${{ vars.AWS_REGION }}:${{ vars.AWS_ACCOUNT_ID }}:key/*","Condition":{"StringEquals":{"kms:CallerAccount":"${{ vars.AWS_ACCOUNT_ID }}","kms:ViaService":"dynamodb.${{ vars.AWS_REGION }}.amazonaws.com","kms:EncryptionContext:aws:dynamodb:subscriberId":"${{ vars.AWS_ACCOUNT_ID }}","kms:EncryptionContext:aws:dynamodb:tableName":"${{ vars.DEPLOYMENT_CONTROL_TABLE }}"}}}]}'
+
+      - name: Verify exact site publisher identity
+        if: steps.docs-config.outputs.enabled == 'true'
+        env:
+          EXPECTED_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
+          EXPECTED_ROLE_ARN: ${{ vars.PRODUCTION_BACKEND_DEPLOY_ROLE_ARN }}
+          EXPECTED_SESSION_NAME: chronote-production-${{ github.run_id }}-${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+          aws sts get-caller-identity --output json 2>/dev/null | node scripts/deployment/assert-production-identity.cjs
+
+      - name: Preflight docs publish targets
         if: steps.docs-config.outputs.enabled == 'true'
         env:
           DOCS_BUCKET: ${{ vars.DOCS_BUCKET }}
+          DOCS_DISTRIBUTION_ID: ${{ vars.DOCS_DISTRIBUTION_ID }}
         run: |
+          set -euo pipefail
+
+          if [ -z "$DOCS_BUCKET" ]; then
+            echo "ERROR: DOCS_BUCKET is not set in the GitHub Actions environment."
+            exit 1
+          fi
+
+          if [ -z "$DOCS_DISTRIBUTION_ID" ]; then
+            echo "ERROR: DOCS_DISTRIBUTION_ID is not set in the GitHub Actions environment."
+            exit 1
+          fi
+
+          if ! aws s3api head-bucket --bucket "$DOCS_BUCKET" >/dev/null 2>&1; then
+            echo "ERROR: Docs bucket is not accessible with the configured AWS credentials."
+            exit 1
+          fi
+
+          if ! aws cloudfront get-distribution --id "$DOCS_DISTRIBUTION_ID" >/dev/null 2>&1; then
+            echo "ERROR: Docs distribution is not accessible with the configured AWS credentials."
+            exit 1
+          fi
+
+      - name: Sync docs to S3
+        if: steps.docs-config.outputs.enabled == 'true'
+        env:
+          DEPLOYMENT_ENVIRONMENT: production
+          DEPLOYMENT_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
+          DEPLOYMENT_CONTROL_TABLE: ${{ vars.DEPLOYMENT_CONTROL_TABLE }}
+          DEPLOYMENT_GUARD_ROLE_ARN: ${{ vars.PRODUCTION_BACKEND_DEPLOY_ROLE_ARN }}
+          DOCS_BUCKET: ${{ vars.DOCS_BUCKET }}
+        run: |
+          set -euo pipefail
           if [ -z "$DOCS_BUCKET" ]; then
             echo "DOCS_BUCKET not set in environment variables"
             exit 1
           fi
 
+          node scripts/deployment/production-writer-guard.cjs
           aws s3 sync build/docs-site s3://$DOCS_BUCKET --delete --exclude "assets/*" --cache-control "public,max-age=600"
 
           if [ -d build/docs-site/assets ]; then
+            node scripts/deployment/production-writer-guard.cjs
             aws s3 sync build/docs-site/assets s3://$DOCS_BUCKET/assets --delete --cache-control "public,max-age=31536000,immutable"
           fi
 
       - name: Invalidate docs CloudFront
         if: steps.docs-config.outputs.enabled == 'true'
         env:
+          DEPLOYMENT_ENVIRONMENT: production
+          DEPLOYMENT_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
+          DEPLOYMENT_CONTROL_TABLE: ${{ vars.DEPLOYMENT_CONTROL_TABLE }}
+          DEPLOYMENT_GUARD_ROLE_ARN: ${{ vars.PRODUCTION_BACKEND_DEPLOY_ROLE_ARN }}
           DOCS_DISTRIBUTION_ID: ${{ vars.DOCS_DISTRIBUTION_ID }}
         run: |
+          set -euo pipefail
           if [ -z "$DOCS_DISTRIBUTION_ID" ]; then
             echo "DOCS_DISTRIBUTION_ID not set in environment variables"
             exit 1
           fi
 
+          node scripts/deployment/production-writer-guard.cjs
           INVALIDATION_ID=$(aws cloudfront create-invalidation --distribution-id "$DOCS_DISTRIBUTION_ID" --paths "/*" --query 'Invalidation.Id' --output text)
           aws cloudfront wait invalidation-completed --distribution-id "$DOCS_DISTRIBUTION_ID" --id "$INVALIDATION_ID"
 

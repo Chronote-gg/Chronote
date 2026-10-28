@@ -1,3 +1,5 @@
+import { expectNoSpeechComparisonMetrics } from "../../src/testSupport/speechComparisonMetrics";
+import { metricsRegistry } from "../../src/metrics";
 import { describe, expect, jest, test } from "@jest/globals";
 import type { MeetingData } from "../../src/types/meeting-data";
 import type { AudioFileData } from "../../src/types/audio";
@@ -155,7 +157,33 @@ const buildDependencies = () => ({
   deleteTempFile: jest.fn(async () => undefined),
 });
 
+expectNoSpeechComparisonMetrics(metricsRegistry);
+
 describe("transcriptionFinalPassService", () => {
+  test("reset cannot resurrect rejected files into the baseline", async () => {
+    const meeting = buildMeeting();
+    const dependencies = buildDependencies();
+    const coverage = {
+      pcmSha256: "synthetic",
+      audioBytes: 4,
+      policyFingerprint: "test",
+    };
+    for (const file of meeting.audioData.audioFiles) {
+      file.finalSpeechRejection = coverage;
+      file.finalPassTranscript = "late guess";
+    }
+    const result = await runTranscriptionFinalPass(
+      meeting,
+      { audioFilePath: "audio.mp3" },
+      dependencies,
+    );
+    expect(result.totalSegments).toBe(0);
+    expect(dependencies.transcribeChunk).not.toHaveBeenCalled();
+    for (const file of meeting.audioData.audioFiles) {
+      expect(file.finalSpeechRejection).toBe(coverage);
+      expect(file.finalPassTranscript).toBeUndefined();
+    }
+  });
   test("auto-applies high-confidence replacement edits", async () => {
     const meeting = buildMeeting();
     const dependencies = buildDependencies();

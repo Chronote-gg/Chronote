@@ -71,4 +71,4 @@ runs:
           echo "::error::Frontend distribution id is not set for this environment."
           exit 1
         fi
-        aws cloudfront create-invalidation --distribution-id "$DISTRIBUTION_ID" --paths "/*"
+        aws cloudfront create-invalidation --distribution-id "$DISTRIBUTION_ID" --paths "/*" --query 'Invalidation.Id' --output text >/dev/null

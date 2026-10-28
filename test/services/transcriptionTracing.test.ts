@@ -124,6 +124,7 @@ test.each([
       await expect(result).resolves.toEqual({
         status: "succeeded",
         text: validResponse.text,
+        admission: { kind: "not_enforced", reason: "off" },
       });
       expectReleased(f);
       expectPreservedTrace(f, vote);
@@ -234,7 +235,11 @@ describe.each(attachmentFailures)(
           f.attachment.resolve();
           const expected =
             outcome === "success"
-              ? { status: "succeeded", text: validResponse.text }
+              ? {
+                  status: "succeeded",
+                  text: validResponse.text,
+                  admission: { kind: "not_enforced", reason: "off" },
+                }
               : { status: "failed", reason: "transcription_error" };
           await expect(result).resolves.toEqual(expected);
           if (outcome === "success") {

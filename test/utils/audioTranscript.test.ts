@@ -14,6 +14,35 @@ const file = (overrides: Partial<AudioFileData> = {}): AudioFileData => ({
 });
 
 describe("audio transcript selection", () => {
+  test("final nonspeech rejection defeats every older guess without a failure", () => {
+    const coverage = {
+      pcmSha256: "synthetic-pcm",
+      audioBytes: 4,
+      policyFingerprint: "test-policy",
+    };
+    const rejected = file({
+      transcript: "old guess",
+      slowTranscript: "",
+      coalescedTranscript: "older guess",
+      finalPassTranscript: "late guess",
+      finalSpeechRejection: coverage,
+    });
+    const audioContaining = (entry: AudioFileData): AudioData => ({
+      currentSnippets: new Map(),
+      audioFiles: [entry],
+    });
+    expect(resolveAudioFileText(rejected)).toBe("");
+    expect(
+      getAudioTranscriptionFacts(audioContaining(rejected)).failedSegments,
+    ).toBe(0);
+  });
+  test("unmarked compiler falls through an empty slow result", () => {
+    expect(
+      resolveAudioFileText(
+        file({ slowTranscript: "", transcript: "retained guess" }),
+      ),
+    ).toBe("retained guess");
+  });
   test.each([false, true])(
     "counts spoken user chat with captureIncomplete=%s",
     (captureIncomplete) => {

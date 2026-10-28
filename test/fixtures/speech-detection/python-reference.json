@@ -1,0 +1,87 @@
+{
+  "version": 1,
+  "detector": "silero-v6.2.1-onnx",
+  "modelSha256": "1a153a22f4509e292a94e67d6f9b85e8deb25b4988682b7e174c65279d8788e3",
+  "runtimeVersion": "1.31.0",
+  "numpyVersion": "2.5.1",
+  "parameters": {
+    "threshold": 0.5,
+    "minFrames": 2,
+    "normalizeDbfs": -20.0,
+    "maxGain": 100
+  },
+  "cases": [
+    {
+      "id": "tune-silence",
+      "sha256": "eaef661c7dbe1718130635db351c4b376915492e3a3d680056ac1e969235f2b4",
+      "shouldTranscribe": false,
+      "peakSpeechProbability": 0.008910685777664185,
+      "maxConsecutiveSpeechFrames": 0,
+      "gain": 1.0
+    },
+    {
+      "id": "tune-tone",
+      "sha256": "316b2937b391bcedac01dbdf1c111928757fa13462b79dd040e1d22c52a61d8f",
+      "shouldTranscribe": false,
+      "peakSpeechProbability": 0.0156591534614563,
+      "maxConsecutiveSpeechFrames": 0,
+      "gain": 0.8192
+    },
+    {
+      "id": "tune-click",
+      "sha256": "013f06a104b2f5302324d12d2d66dc5f750dee2d79b817d1d5898aac5e99eb48",
+      "shouldTranscribe": false,
+      "peakSpeechProbability": 0.027906477451324463,
+      "maxConsecutiveSpeechFrames": 0,
+      "gain": 1.2666408967916507
+    },
+    {
+      "id": "yes-normal",
+      "sha256": "e2ddf8d2be594d71340aab24dfa8fb677eba75a647ab76b37ac42766901ed0a4",
+      "shouldTranscribe": true,
+      "peakSpeechProbability": 0.9997962713241577,
+      "maxConsecutiveSpeechFrames": 17,
+      "gain": 1.0116702686014203
+    },
+    {
+      "id": "yes-quiet",
+      "sha256": "afc446cddb121b5e41f27547df437598383778d96dd71ecfc708a8e4dca81f6f",
+      "shouldTranscribe": true,
+      "peakSpeechProbability": 0.9998074769973755,
+      "maxConsecutiveSpeechFrames": 17,
+      "gain": 40.45432098765432
+    },
+    {
+      "id": "yes-opus",
+      "sha256": "edd504edb015df001f67a8f29634b30364ea01c8ba3581587b780256c633a515",
+      "shouldTranscribe": true,
+      "peakSpeechProbability": 0.9997819662094116,
+      "maxConsecutiveSpeechFrames": 17,
+      "gain": 1.3228905934598305
+    },
+    {
+      "id": "workshop-normal",
+      "sha256": "f41273f093c2140c466b80cd91ca636396490d1c056776020990ff946cc5013a",
+      "shouldTranscribe": true,
+      "peakSpeechProbability": 0.9998800158500671,
+      "maxConsecutiveSpeechFrames": 30,
+      "gain": 1.0214463840399004
+    },
+    {
+      "id": "workshop-quiet",
+      "sha256": "4bbf5932c16e229189797e6124703e25281c2351dfb55e1f3f96cdd08e14e1b8",
+      "shouldTranscribe": true,
+      "peakSpeechProbability": 0.9997955560684204,
+      "maxConsecutiveSpeechFrames": 30,
+      "gain": 40.96
+    },
+    {
+      "id": "workshop-opus",
+      "sha256": "40911accf82b2019c19123bb2702e30c5c28b1bde11da119c6191e8d82f06742",
+      "shouldTranscribe": true,
+      "peakSpeechProbability": 0.9998961091041565,
+      "maxConsecutiveSpeechFrames": 29,
+      "gain": 0.7583429761629253
+    }
+  ]
+}

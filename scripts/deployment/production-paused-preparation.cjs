@@ -280,8 +280,13 @@ async function readSourceObject(input, selected, send) {
   assert.equal(head.ContentLength, input.size);
   assert.equal(head.ContentType, input.contentType);
   assert.ok(!head.DeleteMarker);
-  if (head.ServerSideEncryption === "aws:kms")
-    assert.equal(head.BucketKeyEnabled, false);
+  if (head.ServerSideEncryption === "aws:kms") {
+    assert.ok(
+      head.BucketKeyEnabled === undefined || head.BucketKeyEnabled === false,
+    );
+    // Native S3 omits this header when bucket keys are disabled.
+    head.BucketKeyEnabled = false;
+  }
   return capturedObject(input, selected, head);
 }
 function capturedObject(input, selected, head) {
