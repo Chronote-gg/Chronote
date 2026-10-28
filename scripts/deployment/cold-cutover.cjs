@@ -663,6 +663,26 @@ async function verifyApproval(env, get) {
   );
 }
 
+function reportCutover(result, env, output) {
+  if (result.kind === "deferred") {
+    output.log(
+      "::warning title=Cutover deferred::In-flight work is present. Only the candidate definition may have been registered; the legacy service is untouched. Run inspect and retry in a quiet window.",
+    );
+    return 0;
+  }
+  output.log("::notice title=Run the ordinary deploy now::" + FOLLOW_UP);
+  if (env.GITHUB_STEP_SUMMARY)
+    appendFileSync(
+      env.GITHUB_STEP_SUMMARY,
+      "## Cold cutover\n\n" + FOLLOW_UP + "\n",
+    );
+  if (!result.incident) return 0;
+  output.error(
+    INCIDENT_MESSAGES[result.reason] ?? INCIDENT_MESSAGES.work_after_stop,
+  );
+  return 2;
+}
+
 async function runCli(mode, env = process.env, deps = {}) {
   const output = deps.output ?? console;
   const log = (event) => output.log(JSON.stringify(event));
@@ -693,23 +713,7 @@ async function runCli(mode, env = process.env, deps = {}) {
     log({ phase: "approval_verified" });
     const result = await engine.cutover();
     log(result);
-    if (result.kind === "deferred") {
-      output.log(
-        "::warning title=Cutover deferred::In-flight work is present. Only the candidate definition may have been registered; the legacy service is untouched. Run inspect and retry in a quiet window.",
-      );
-      return 0;
-    }
-    output.log("::notice title=Run the ordinary deploy now::" + FOLLOW_UP);
-    if (env.GITHUB_STEP_SUMMARY)
-      appendFileSync(
-        env.GITHUB_STEP_SUMMARY,
-        "## Cold cutover\n\n" + FOLLOW_UP + "\n",
-      );
-    if (!result.incident) return 0;
-    output.error(
-      INCIDENT_MESSAGES[result.reason] ?? INCIDENT_MESSAGES.work_after_stop,
-    );
-    return 2;
+    return reportCutover(result, env, output);
   } catch (error) {
     const reason =
       error instanceof Refusal ? error.message : "unexpected_failure";
