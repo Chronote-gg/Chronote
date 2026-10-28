@@ -40,6 +40,7 @@ export { BillingActionError } from "./billingActionError";
 import {
   createInitialPurchase,
   recoverAcceptedPurchase,
+  releaseExpiredPurchaseAttempt,
 } from "./initialPurchaseService";
 import {
   getGuildBasicIntroOffer,
@@ -119,6 +120,8 @@ export async function getBillingSnapshot(params: {
   if (!stripe || !config.stripe.secretKey) {
     return buildBillingDisabledSnapshot();
   }
+  // Before the subscription read, so a reconciled completion shows in this snapshot.
+  await releaseExpiredPurchaseAttempt({ stripe, guildId });
 
   const [subscription, resolvedSubscription] = await Promise.all([
     getSubscriptionRepository().get(guildId),

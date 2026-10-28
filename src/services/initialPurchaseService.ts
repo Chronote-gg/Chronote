@@ -2,6 +2,7 @@ import type { StripeEffect } from "../types/stripe";
 import {
   runBillingOperation,
   persistBillingAcknowledgment,
+  UnresolvedBillingMutation,
   type RuntimeBillingOwner,
 } from "./runtimeBillingOperationService";
 import { prepareInitialOfferSettlement } from "./offerUsageSettlement";
@@ -16,7 +17,7 @@ import {
 } from "./purchaseSession";
 import { reconcileSubscription } from "./subscriptionReconciliation";
 import { createHash, randomUUID } from "node:crypto";
-import type Stripe from "stripe";
+import Stripe from "stripe";
 import {
   getPurchaseRepository,
   advanceAttempt,
@@ -26,6 +27,7 @@ import type { GuildSubscription } from "../types/db";
 import type { PurchaseAttempt } from "../types/purchase";
 import type { ExpectedIntroOffer, IntroOfferChoice } from "../types/pricing";
 import { prepareBasicIntroCheckoutWithAuthority } from "./basicIntroOfferService";
+import { isSupersedableOpen } from "./purchaseAttemptOffer";
 import type { StripeClient, StripeSubscription } from "../types/stripe";
 import { BillingActionError } from "./billingActionError";
 import { captureEvent } from "./analyticsService";
@@ -63,6 +65,10 @@ type PurchaseInput = {
   expectedOffer?: ExpectedIntroOffer;
   offerChoice?: IntroOfferChoice;
 };
+type AttemptRefreshInput = Pick<
+  PurchaseInput,
+  "stripe" | "owner" | "guildId" | "expected"
+>;
 
 async function writePurchase(
   attempt: PurchaseAttempt,
@@ -84,7 +90,7 @@ async function writePurchase(
   return next;
 }
 const save = (
-  input: PurchaseInput,
+  input: Pick<PurchaseInput, "owner">,
   ...args: Parameters<typeof writePurchase>
 ) => input.owner!.effect(() => writePurchase(...args));
 
@@ -189,33 +195,106 @@ async function preparePurchaseAttempt(
     ? { kind: "new", previous: retired }
     : { kind: "reuse", current };
 }
+const changesFrozenChoice = (error: unknown) =>
+  error instanceof BillingActionError &&
+  (error.reason === "discount_choice_required" ||
+    error.reason === "offer_changed_terms");
+
+/** Decides whether a request resumes `current`, supersedes it, or is refused. */
+async function prepareReuse(input: PurchaseInput, current: PurchaseAttempt) {
+  const open = isSupersedableOpen(current);
+  // Another payer never reaches the frozen-offer reuse checks.
+  if (current.mode !== input.mode || current.payerId !== input.user.id) {
+    if (open) return "supersede";
+    throw pending();
+  }
+  try {
+    const { checkout } = await prepareBasicIntroCheckoutWithAuthority({
+      ...input,
+      current,
+    });
+    if (current.fingerprint === checkoutFingerprint(checkout)) return "reuse";
+    if (open) return "supersede";
+  } catch (error) {
+    if (open && changesFrozenChoice(error)) return "supersede";
+    throw error;
+  }
+  throw pending();
+}
+
+async function reuseOpenOrCurrentAttempt(
+  input: PurchaseInput,
+  current: PurchaseAttempt,
+): Promise<PurchaseAttempt | "superseded"> {
+  if ((await prepareReuse(input, current)) === "supersede")
+    return supersedeOpenAttempt(input, current);
+  if (
+    input.checkout.metadata?.analytics_opt_out === "true" &&
+    !current.analyticsOptOut
+  )
+    return save(input, current, { analyticsOptOut: true }, input.expected);
+  return current;
+}
+
+/**
+ * Expires the open session at Stripe, then lets a provider read decide: only
+ * a Stripe-confirmed expiry with no subscription releases the attempt.
+ */
+async function supersedeOpenAttempt(
+  input: PurchaseInput,
+  current: PurchaseAttempt,
+): Promise<PurchaseAttempt | "superseded"> {
+  // Once the expire is acknowledged any refusal is an unknown billing outcome,
+  // so the replacement's offer terms are checked first, without the old hold.
+  await prepareBasicIntroCheckoutWithAuthority({
+    ...input,
+    releasing: current.attemptId,
+  });
+  try {
+    await input.owner!.effect(() =>
+      input.stripe.checkout.sessions.expire(current.sessionId!, undefined, {
+        idempotencyKey: `purchase-supersede-${current.attemptId}`,
+      }),
+    );
+  } catch (error) {
+    // A refused expire means the session already left `open`; the provider read below decides.
+    if (!(error instanceof Stripe.errors.StripeInvalidRequestError))
+      throw error;
+  }
+  let after: PurchaseAttempt | undefined;
+  try {
+    after = await refreshAttempt(input, current);
+  } catch (error) {
+    // Another writer (often the expiry webhook this expire triggers) moved the
+    // attempt first, so the release check failed against stale state; re-read.
+    // An unknown write outcome must still surface.
+    if (error instanceof UnresolvedBillingMutation) throw error;
+    const row = await getPurchaseRepository().get(input.guildId);
+    if (row?.revision !== current.revision) return "superseded";
+    throw error;
+  }
+  if (after?.attemptId !== current.attemptId || after.state === "expired")
+    return "superseded";
+  if (after.state === "completed") return after;
+  throw pending();
+}
+
 async function reserve(input: PurchaseInput) {
   const repo = getPurchaseRepository();
   for (let i = 0; i < 3; i++) {
     const preparation = await preparePurchaseAttempt(input);
-    const previous =
-      preparation.kind === "reuse" ? preparation.current : preparation.previous;
-    const preparedCheckout = await prepareBasicIntroCheckoutWithAuthority({
-      ...input,
-      current: preparation.kind === "reuse" ? preparation.current : undefined,
-    });
-    const { checkout, authority } = preparedCheckout;
-    const fingerprint = checkoutFingerprint(checkout);
     if (preparation.kind === "reuse") {
-      const current = preparation.current;
-      if (
-        current.mode !== input.mode ||
-        current.payerId !== input.user.id ||
-        current.fingerprint !== fingerprint
-      )
-        throw pending();
-      if (
-        input.checkout.metadata?.analytics_opt_out === "true" &&
-        !current.analyticsOptOut
-      )
-        return save(input, current, { analyticsOptOut: true }, input.expected);
-      return current;
+      const reused = await reuseOpenOrCurrentAttempt(
+        input,
+        preparation.current,
+      );
+      if (reused !== "superseded") return reused;
+      continue;
     }
+    const previous = preparation.previous;
+    const { checkout, authority } =
+      await prepareBasicIntroCheckoutWithAuthority(input);
+    const fingerprint = checkoutFingerprint(checkout);
     const attemptId = randomUUID();
     const next: PurchaseAttempt = {
       guildId: input.guildId,
@@ -383,7 +462,7 @@ export async function createInitialPurchase(
 }
 
 async function checkCheckoutReplayWindow(
-  input: PurchaseInput,
+  input: AttemptRefreshInput,
   attempt: PurchaseAttempt,
 ) {
   // Stripe requires 30 minutes remaining; leave one minute for the request.
@@ -428,7 +507,7 @@ function captureNewCheckout(input: PurchaseInput, attempt: PurchaseAttempt) {
 }
 
 async function refreshAttempt(
-  input: PurchaseInput,
+  input: AttemptRefreshInput,
   initial: PurchaseAttempt | undefined,
 ) {
   const repo = getPurchaseRepository();
@@ -473,6 +552,41 @@ async function refreshAttempt(
   }
 
   return current;
+}
+
+/**
+ * Releases an open checkout the provider has already expired, for when the
+ * expiry webhook never arrives. Billing reads call it, so it never throws:
+ * a Stripe outage or lost race leaves the attempt for the next load or click.
+ */
+export async function releaseExpiredPurchaseAttempt(input: {
+  stripe: StripeClient;
+  guildId: string;
+  owner?: RuntimeBillingOwner;
+}): Promise<void> {
+  try {
+    const attempt = await getPurchaseRepository().get(input.guildId);
+    const pastLocalExpiry =
+      isSupersedableOpen(attempt) &&
+      Number(attempt.checkout.expires_at) * 1000 <= Date.now();
+    if (!pastLocalExpiry) return;
+    await runBillingOperation(input.owner, async (owner) =>
+      refreshAttempt(
+        {
+          stripe: input.stripe,
+          guildId: input.guildId,
+          owner,
+          expected: await getSubscriptionRepository().get(input.guildId),
+        },
+        attempt,
+      ),
+    );
+  } catch (error) {
+    console.warn("Expired checkout release deferred", {
+      guildId: input.guildId,
+      error,
+    });
+  }
 }
 
 async function findOwnedCustomer(input: PurchaseInput) {
