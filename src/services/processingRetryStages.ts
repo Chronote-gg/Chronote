@@ -12,6 +12,7 @@ import type {
 } from "../types/meetingProcessingRetry";
 import type { TranscriptPayload, TranscriptSegment } from "../types/transcript";
 import {
+  INTERRUPTED_CAPTURE_NOTICE,
   InvalidRecoveryContent,
   readRecoveryContent,
   recoveryNotesInput,
@@ -273,7 +274,11 @@ async function notesInputFor(
     }
   }
   return {
-    notesInput: await buildCurrentNotesInput(history, transcript, signal),
+    notesInput: {
+      ...(await buildCurrentNotesInput(history, transcript, signal)),
+      // Without readable saved content only the interruption itself is known.
+      captureNotice: interrupted ? INTERRUPTED_CAPTURE_NOTICE : undefined,
+    },
     settingsSource: "current",
   };
 }

@@ -27,6 +27,7 @@ jest.mock("../../src/services/recoveryTranscriptionProcessing", () => ({
   cleanupWithSavedSettings: jest.fn(),
 }));
 import {
+  INTERRUPTED_CAPTURE_NOTICE,
   InvalidRecoveryContent,
   TranscriptOverlapUnknown,
   readRecoveryContent,
@@ -168,6 +169,11 @@ function nothingToRetranscribe() {
     segments: [],
     retranscribedRanges: 0,
   });
+}
+function unreadableCheckpoint() {
+  jest
+    .mocked(readRecoveryContent)
+    .mockRejectedValue(new InvalidRecoveryContent("corrupt"));
 }
 /** Runs a full retry that must end up transcribing the mixed recording. */
 async function runMixedFallback(history: MeetingHistory = failedTranscription) {
@@ -440,9 +446,7 @@ test("an interrupted capture keeps a successful checkpoint retry partial", async
 });
 
 test("an unreadable checkpoint falls back to mixed audio", async () => {
-  jest
-    .mocked(readRecoveryContent)
-    .mockRejectedValue(new InvalidRecoveryContent("corrupt"));
+  unreadableCheckpoint();
 
   const result = await runMixedFallback();
   expect(result).toMatchObject({
@@ -600,11 +604,29 @@ test("a snapshot retry drops the recovered flag so an unnamed meeting can be nam
 });
 
 test.each([
-  ["a completed capture", undefined, undefined],
-  ["an interrupted capture", interrupted, RECOVERY_NOTICE],
+  ["a snapshot retry of a completed capture", undefined, true, undefined],
+  [
+    "a snapshot retry of an interrupted capture",
+    interrupted,
+    true,
+    RECOVERY_NOTICE,
+  ],
+  [
+    "a current-settings retry of a completed capture",
+    undefined,
+    false,
+    undefined,
+  ],
+  [
+    "a current-settings retry of an interrupted capture",
+    interrupted,
+    false,
+    INTERRUPTED_CAPTURE_NOTICE,
+  ],
 ] as const)(
-  "a snapshot retry of %s carries the recovery notice only when interrupted",
-  async (_name, capture, notice) => {
+  "%s carries a capture notice only when interrupted",
+  async (_name, capture, readable, notice) => {
+    if (!readable) unreadableCheckpoint();
     await run({ ...base, checkpoint, capture });
 
     expect(jest.mocked(ensureMeetingNotes).mock.calls[0][0].captureNotice).toBe(
@@ -635,6 +657,18 @@ test("a mixed fallback on an interrupted capture carries both notices and stays 
   });
   expect(jest.mocked(ensureMeetingNotes).mock.calls[0][0].captureNotice).toBe(
     `${RECOVERY_NOTICE}\n\n${UNATTRIBUTED_TRANSCRIPT_NOTICE}`,
+  );
+});
+
+test("a current-settings mixed fallback on an interrupted capture puts the interruption notice first", async () => {
+  unreadableCheckpoint();
+
+  await runMixedFallback({ ...failedTranscription, capture: interrupted });
+
+  expect(jest.mocked(ensureMeetingNotes).mock.calls[0][0].captureNotice).toBe(
+    `${INTERRUPTED_CAPTURE_NOTICE}
+
+${UNATTRIBUTED_TRANSCRIPT_NOTICE}`,
   );
 });
 

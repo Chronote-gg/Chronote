@@ -122,6 +122,8 @@ export async function readRecoveryContent(
   return { ...verified, context, entries, processing, omitted };
 }
 export type RecoveryContent = Awaited<ReturnType<typeof readRecoveryContent>>;
+export const INTERRUPTED_CAPTURE_NOTICE =
+  "This recording ended abruptly. The interruption cause is unknown.";
 export function recoveryCaptureNotice(
   content: RecoveryContent,
   interrupted: boolean,
@@ -133,7 +135,7 @@ export function recoveryCaptureNotice(
   );
   return [
     interrupted
-      ? "This recording ended abruptly. The interruption cause is unknown."
+      ? INTERRUPTED_CAPTURE_NOTICE
       : "These notes were recovered after processing stopped.",
     "Saved content can contain gaps. Describe only confirmed conversation; never invent missing discussion, decisions, or an ending.",
     content.missing.length
