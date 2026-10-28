@@ -104,6 +104,7 @@ that address.
 | ALB target 5xx errors         | 10+ target HTTP 5xx responses in 10 min       | 5 min x 2 |
 | ALB unhealthy hosts           | Any unhealthy target for 10 min               | 5 min x 2 |
 | Grafana token rotation errors | Rotation Lambda error in 24 h                 | 1 day x 1 |
+| OpenAI requests rejected      | Any OpenAI quota, credit, or 429 log line     | 5 min x 1 |
 
 All alarms also send an OK notification when the condition clears.
 
