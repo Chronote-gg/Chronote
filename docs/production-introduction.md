@@ -23,6 +23,7 @@ Use [recording handoff and recovery](deployment-handoff.md) for ordinary compati
    - An `ActiveMeeting` lease, unless it is both past `leaseExpiresAt` and `complete` or `cancelled` (rows awaiting TTL deletion).
    - A `MeetingControlCommand` that is not `completed` or `failed`, unless nobody ever claimed it and it is past its queue `expiresAt`. A claim can be renewed past that expiry.
    - A personal upload job that is not `complete` or `failed`, except a `pending_upload` intent past its `expiresAt`. Legacy finalization copies the upload-URL expiry onto queued jobs, so expiry is ignored for `queued` and `processing`.
+   - A `pending_upload` desktop parent has no `expiresAt`. It is settled only when neither it nor any of its segments has been updated for seven days, which covers paused drafts waiting on a client. A live recording updates its segments every minute or so, and a row without a parsable timestamp counts as recent.
    - A recording segment that is not `processed` or `failed` and belongs to an in-flight job.
 5. Switches the listener to the weighted 100/0 form if needed. With an empty spare group this is traffic neutral, so it runs before the point of no return.
 6. Sets desired count 0 and waits up to 15 minutes for the legacy task and both groups' targets to clear.

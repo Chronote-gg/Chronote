@@ -95,6 +95,67 @@ test.each([
   expect(work.counts.PersonalRecordingSegmentTable).toBe(expected);
 });
 
+const WEEK = 7 * 24 * 60 * 60;
+const iso = (seconds) => new Date(seconds * 1000).toISOString();
+const IDLE = iso(NOW - WEEK - 1);
+const RECENT = iso(NOW - 60);
+
+test.each([
+  [
+    "a desktop draft idle for over a week",
+    { createdAt: IDLE, updatedAt: IDLE },
+    [{ status: "uploaded", updatedAt: IDLE }],
+    0,
+  ],
+  [
+    "a desktop recording whose latest segment is recent",
+    { createdAt: IDLE, updatedAt: IDLE },
+    [{ status: "uploaded", updatedAt: RECENT }],
+    1,
+  ],
+  [
+    "a desktop recording started recently",
+    { createdAt: RECENT, updatedAt: RECENT },
+    [],
+    1,
+  ],
+  [
+    "a draft without timestamps",
+    {},
+    [{ status: "uploaded", updatedAt: IDLE }],
+    1,
+  ],
+  [
+    "a draft whose segment has no timestamp",
+    { createdAt: IDLE, updatedAt: IDLE },
+    [{ status: "uploaded" }],
+    1,
+  ],
+])("%s counts %i", async (_, job, segments, expected) => {
+  const work = await count({
+    PersonalMediaUploadJobTable: [
+      { uploadId: "d1", status: "pending_upload", ...job },
+    ],
+    PersonalRecordingSegmentTable: segments.map((s) => ({
+      uploadId: "d1",
+      ...s,
+    })),
+  });
+  expect(work.counts.PersonalMediaUploadJobTable).toBe(expected);
+  expect(work.counts.PersonalRecordingSegmentTable).toBe(
+    expected ? segments.length : 0,
+  );
+});
+
+test("idleness never settles a queued job", async () => {
+  const work = await count({
+    PersonalMediaUploadJobTable: [
+      { uploadId: "q1", status: "queued", createdAt: IDLE, updatedAt: IDLE },
+    ],
+  });
+  expect(work.counts.PersonalMediaUploadJobTable).toBe(1);
+});
+
 test("a scan failure propagates instead of reading as empty", async () => {
   const scan = async (name) => {
     if (name === "ActiveMeetingTable") throw new Error("denied");
