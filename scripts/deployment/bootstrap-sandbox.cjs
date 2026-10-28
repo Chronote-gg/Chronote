@@ -561,7 +561,11 @@ function createBootstrap(options) {
     transaction.TransactItems.push(
       receiptUpdate("launched", "complete", { candidate: row.identity }),
     );
-    if (now() >= notAfter) fail("Candidate warmup deadline expired");
+    if (now() >= notAfter) {
+      const error = new Error("Candidate warmup deadline expired");
+      error.code = "warmup_expired";
+      throw error;
+    }
     await write(transaction.TransactItems, async () => {
       const [ctl, receipt] = await state(),
         current = await read(row.sk);

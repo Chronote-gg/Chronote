@@ -1,7 +1,9 @@
 /** @jest-environment node */
 import { expect, test } from "@jest/globals";
 import { randomUUID } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { parse } from "yaml";
 import { marshall, unmarshall } from "@aws-sdk/util-dynamodb";
 import {
@@ -113,6 +115,20 @@ function scanTable(state, input) {
   if (input.Select === "COUNT") return { Count: state.control.size };
   return { Items: [...state.control.values()].map((v) => marshall(v)) };
 }
+/** Applies the cutover's lease renewal only when the guarded CONTROL fields still match. */
+function renewControl(state, input) {
+  const values = unmarshall(input.ExpressionAttributeValues);
+  const control = state.control.get("CONTROL");
+  if (
+    control?.coordinatorToken !== values[":token"] ||
+    control.coordinatorExpiresAt !== values[":seen"] ||
+    control.servingGeneration !== values[":generation"]
+  )
+    throw new Error("ConditionalCheckFailedException");
+  control.coordinatorExpiresAt = values[":expiry"];
+  state.renewedTo = values[":expiry"];
+  return {};
+}
 /** One small handler per AWS CLI operation the cutover issues. */
 const AWS_HANDLERS = {
   "get-caller-identity": (state, input, { env }) => ({
@@ -167,6 +183,7 @@ const AWS_HANDLERS = {
     onStop(state);
     return { service: clone(state.svc) };
   },
+  "update-item": renewControl,
   "get-item": (state, input) => {
     const row = state.control.get(unmarshall(input.Key).sk);
     return row ? { Item: marshall(row) } : {};
@@ -253,6 +270,7 @@ function fakeBootstrap(state, env) {
       },
       readiness: async () => ({ kind: "ready" }),
       promote: async () => {
+        if (state.promoteError) throw state.promoteError;
         state.calls.push("bootstrap.promote");
         state.control.set("CONTROL", {
           sk: "CONTROL",
@@ -294,7 +312,7 @@ async function run(mode, env, state, approval = async () => {}) {
 }
 const index = (state, call) => state.calls.indexOf(call);
 
-test("cuts over in order: approval, candidate, pre-stop check, stop, recheck, routing, bootstrap", async () => {
+test("cuts over in order: approval, candidate, pre-stop check, routing, stop, recheck, bootstrap", async () => {
   const env = environment();
   const state = fakeAws(env);
   const result = await run("cutover", env, state);
@@ -302,8 +320,8 @@ test("cuts over in order: approval, candidate, pre-stop check, stop, recheck, ro
   const order = [
     "approval",
     "register-task-definition",
-    "update-service",
     "modify-listener",
+    "update-service",
     "bootstrap.initialize",
     "bootstrap.launch",
     "bootstrap.promote",
@@ -313,12 +331,12 @@ test("cuts over in order: approval, candidate, pre-stop check, stop, recheck, ro
   const scans = state.calls
     .map((call, i) => (call === "scan" ? i : -1))
     .filter((i) => i >= 0);
-  expect(scans.some((i) => i < index(state, "update-service"))).toBe(true);
+  expect(scans.some((i) => i < index(state, "modify-listener"))).toBe(true);
   expect(
     scans.some(
       (i) =>
         i > index(state, "update-service") &&
-        i < index(state, "modify-listener"),
+        i < index(state, "bootstrap.initialize"),
     ),
   ).toBe(true);
   const container = state.registered.containerDefinitions[0];
@@ -347,6 +365,7 @@ test("cuts over in order: approval, candidate, pre-stop check, stop, recheck, ro
   });
   expect(state.control.has("INTRODUCTION")).toBe(false);
   expect(result.text).toContain('"incident":false');
+  expect(result.text).toContain("Run the ordinary deploy now");
 });
 
 test.each([
@@ -356,7 +375,7 @@ test.each([
   ["PersonalMediaUploadJobTable", { status: "queued" }],
   ["PersonalMediaUploadJobTable", { status: "processing" }],
   ["PersonalMediaUploadJobTable", { status: "pending_upload" }],
-  ["PersonalRecordingSegmentTable", { status: "uploaded" }],
+  ["PersonalRecordingSegmentTable", { status: "renamed_status" }],
   ["PersonalRecordingSegmentTable", {}],
 ])(
   "in-flight %s row %o defers without touching the service",
@@ -445,7 +464,6 @@ test.each([
     "a lease left behind",
     (state) => state.work.ActiveMeetingTable.push({ guildId: "guild-b" }),
   ],
-  ["a meeting that started and finished", (state) => (state.history += 1)],
 ])(
   "post-stop recheck reports %s loudly but still restores service",
   async (_, race) => {
@@ -461,6 +479,39 @@ test.each([
     expect(state.calls).not.toContain("delete-item");
   },
 );
+
+test("a service already stopped before the run reports the missing baseline, not a race", async () => {
+  const env = environment();
+  const state = fakeAws(env);
+  Object.assign(state.svc, { desiredCount: 0, runningCount: 0 });
+  const result = await run("cutover", env, state);
+  expect(result.code).toBe(2);
+  expect(result.text).toContain("::error title=No pre-stop baseline");
+  expect(result.text).not.toContain("Work appeared during the stop window");
+  expect(result.text).toContain('"reason":"no_pre_stop_baseline"');
+  expect(state.calls).not.toContain("update-service");
+  expect(state.calls).toContain("bootstrap.promote");
+});
+
+test("the job summary says the ordinary deploy must follow", async () => {
+  const summary = join(mkdtempSync(join(tmpdir(), "cutover-")), "summary.md");
+  const env = environment({ GITHUB_STEP_SUMMARY: summary });
+  expect((await run("cutover", env, fakeAws(env))).code).toBe(0);
+  expect(readFileSync(summary, "utf8")).toContain(
+    "complete only after an ordinary deploy of master",
+  );
+});
+
+test("a warmup deadline during promotion is a clear refusal", async () => {
+  const env = environment();
+  const state = fakeAws(env);
+  state.promoteError = Object.assign(new Error("expired"), {
+    code: "warmup_expired",
+  });
+  const result = await run("cutover", env, state);
+  expect(result.code).toBe(1);
+  expect(result.text).toContain("Candidate warmup deadline passed");
+});
 
 test("unverified approval refuses before any provider call", async () => {
   const env = environment();
@@ -497,7 +548,7 @@ test("refuses enabled financial flags before registering a candidate", async () 
 });
 
 /** Replays the first run's AWS state with the receipt left at `initialized`. */
-async function resumedAfterInitialize(env, receipt) {
+async function resumedAfterInitialize(env, receipt, prepare = () => {}) {
   const first = fakeAws(env);
   await run("cutover", env, first);
   const resumed = fakeAws(env);
@@ -506,6 +557,7 @@ async function resumedAfterInitialize(env, receipt) {
   resumed.listener = first.listener;
   const key = "BOOTSTRAP#" + env.CUTOVER_OPERATION_ID;
   resumed.control.set(key, receipt(first.control.get(key)));
+  prepare(resumed);
   return { resumed, result: await run("cutover", env, resumed) };
 }
 
@@ -520,6 +572,48 @@ test("resumes an initialized operation without a second stop or registration", a
   expect(resumed.calls).not.toContain("update-service");
   expect(resumed.calls).not.toContain("register-task-definition");
   expect(resumed.calls).toContain("bootstrap.promote");
+});
+
+function expiredControl(env, token = env.CUTOVER_OPERATION_ID) {
+  return {
+    sk: "CONTROL",
+    coordinatorToken: token,
+    coordinatorEpoch: 1,
+    coordinatorExpiresAt: 5,
+    servingGeneration: 0,
+    servingMembers: {},
+  };
+}
+
+test("resume renews an expired bootstrap lease this operation still holds", async () => {
+  const env = environment();
+  const { resumed, result } = await resumedAfterInitialize(
+    env,
+    (stored) => {
+      return { ...stored, stage: "launched" };
+    },
+    (state) => state.control.set("CONTROL", expiredControl(env)),
+  );
+  expect(result.code).toBe(0);
+  expect(resumed.renewedTo).toBeGreaterThan(Math.floor(Date.now() / 1000));
+  expect(index(resumed, "update-item")).toBeLessThan(
+    index(resumed, "bootstrap.initialize"),
+  );
+});
+
+test("resume refuses when the renewal guard no longer matches", async () => {
+  const env = environment();
+  const { resumed, result } = await resumedAfterInitialize(
+    env,
+    (stored) => ({ ...stored, stage: "initialized" }),
+    (state) => {
+      state.control.set("CONTROL", expiredControl(env));
+      state.control.get("CONTROL").servingGeneration = 1;
+    },
+  );
+  expect(result.code).toBe(1);
+  expect(result.text).toContain("Coordinator lease renewal was refused");
+  expect(resumed.calls).not.toContain("bootstrap.launch");
 });
 
 test.each([

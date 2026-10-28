@@ -19,20 +19,28 @@ Use [recording handoff and recovery](deployment-handoff.md) for ordinary compati
 1. Builds and pushes the image of the run commit. The script then verifies in code that BASIC natively approved this exact run (`verifyRunApproval`) and that the AWS session is the exact deploy role session.
 2. Refuses unless the Control table is empty, the listener is in the legacy single-forward or weighted 100/0 form, the spare group is empty and the legacy service is steady at one task.
 3. Registers the candidate from the latest family revision with the run image, `DEPLOYMENT_CANDIDATE_ID` set to the operation id, `stopTimeout` 120, `node dist/index.js`, and the four `STRIPE_*` flags `false` (an enabled flag refuses).
-4. **Pre-stop check.** Any `ActiveMeeting` row, any non-terminal `MeetingControlCommand` that is claimed or not yet past its queue expiry (a claim can be renewed past that expiry), or any upload job or segment that is not complete, processed or failed defers the run: it exits cleanly with a warning and only the candidate definition exists. A scan failure refuses.
-5. Sets desired count 0 and waits up to 15 minutes for the legacy task and both groups' targets to clear.
-6. **Post-stop recheck.** The same counts, plus `MeetingHistory` row growth since step 4.
-7. Switches the listener to the weighted 100/0 form if needed, initializes Control, launches the candidate, waits up to 15 minutes for readiness and promotes it, then confirms it is serving. No `ENV/INTRODUCTION` hold is written, so the ordinary deploy guard allows the next deploy.
+4. **Pre-stop check.** The run defers (exits cleanly with a warning, leaving only the candidate definition) when any of these is in flight. A scan failure refuses, and an unknown status always counts as in flight.
+   - An `ActiveMeeting` lease, unless it is both past `leaseExpiresAt` and `complete` or `cancelled` (rows awaiting TTL deletion).
+   - A `MeetingControlCommand` that is not `completed` or `failed`, unless nobody ever claimed it and it is past its queue `expiresAt`. A claim can be renewed past that expiry.
+   - A personal upload job that is not `complete` or `failed`, except a `pending_upload` intent past its `expiresAt`. Legacy finalization copies the upload-URL expiry onto queued jobs, so expiry is ignored for `queued` and `processing`.
+   - A recording segment that is not `processed` or `failed` and belongs to an in-flight job.
+5. Switches the listener to the weighted 100/0 form if needed. With an empty spare group this is traffic neutral, so it runs before the point of no return.
+6. Sets desired count 0 and waits up to 15 minutes for the legacy task and both groups' targets to clear.
+7. **Post-stop recheck** of the same rules.
+8. Initializes Control, launches the candidate, waits up to 15 minutes for readiness and promotes it, then confirms it is serving. No `ENV/INTRODUCTION` hold is written, so the ordinary deploy guard allows the next deploy.
+9. **Run the ordinary deploy of master (`Meeting Notes Bot Deploy`) immediately.** Promotion writes no deployment record, so if ECS replaces the serving task before an ordinary deploy, the replacement stays a candidate and the next coordinator run fails. The cutover is complete only when that ordinary deploy has gone green after `candidate_promoted`. The workflow summary repeats this.
 
-Phase lines in the log (`stop_submitted`, `legacy_stopped`, `post_stop_recheck`, `control_initialized`, `candidate_launched`, `candidate_promoted`) show how far a run got.
+Phase lines in the log (`pre_stop_check`, `routing_weighted`, `stop_submitted`, `legacy_stopped`, `post_stop_recheck`, `control_initialized`, `candidate_launched`, `candidate_promoted`) show how far a run got.
 
-### The stop window
+### The stop window and limits
 
-The legacy task keeps its Discord gateway until it stops, so a meeting can start after the pre-stop check. The window is the ALB deregistration delay plus the task stop timeout, not seconds. The recheck catches a lease left behind and a meeting that started and finished (history growth). Either way the run still restores service with the candidate, then exits 2 with a `Work appeared during the stop window` error so the affected meeting gets reviewed. The recheck outcome is stored on the operation's `BOOTSTRAP#` receipt when Control is initialized, so a resumed run reports the same incident. A service that was already stopped when the run began, or a receipt without a stored outcome, always reports an incident.
+The legacy task keeps its Discord gateway until it stops, so a meeting can start after the pre-stop check. The window is the ALB deregistration delay plus the task stop timeout, not seconds. The legacy revision (`593a6d6`) runs with ECS's default 30 second stopTimeout, so a meeting that starts during the drain gets about 30 seconds after SIGTERM before SIGKILL. A separate Terraform change lowers the API target groups' deregistration delay to shrink the window.
+
+A lease left behind after the stop exits 2 with `Work appeared during the stop window`, after service is restored with the candidate. A meeting that starts and ends cleanly inside the window leaves no lease and is not detected. If the service was already at zero when the run began (an interrupted earlier run), there is no pre-stop baseline: the run exits 2 with `No pre-stop baseline` so an operator reviews recent meetings. The recheck outcome is stored on the operation's `BOOTSTRAP#` receipt when Control is initialized, so a resumed run reports it again. A receipt without a stored outcome is also reported for review.
 
 ### Failure and resume
 
-Never relaunch legacy, delete rows, force-expire leases or clear receipts. After a refusal, run `inspect`. A run that stopped before Control initialization can be redispatched with the same operation id from the same commit, or with a new id. Once Control exists, resume only with the same operation id within 30 minutes of initialization; the bootstrap coordinator lease expires after that and recovery becomes a separately reviewed operation. A submitted but unacknowledged launch is never replayed.
+Never relaunch legacy, delete rows, force-expire leases or clear receipts. After a refusal, run `inspect`. A run that stopped before Control initialization can be redispatched with the same operation id from the same commit, or with a new id. Once Control exists, resume only with the same operation id. When the receipt is `initialized` or `launched` and Control is still owned by the operation at generation 0 with no members, the resume renews the bootstrap coordinator lease with one conditional update before continuing. A submitted but unacknowledged launch is never replayed.
 
 ### Prerequisites
 

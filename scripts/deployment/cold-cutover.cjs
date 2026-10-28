@@ -1,6 +1,7 @@
 "use strict";
 const { isDeepStrictEqual: same } = require("node:util");
 const { setTimeout: pause } = require("node:timers/promises");
+const { appendFileSync } = require("node:fs");
 const { marshall, unmarshall } = require("@aws-sdk/util-dynamodb");
 const { z } = require("zod");
 const { awsCaller, manifestHash } = require("./sandbox-manifest.cjs");
@@ -12,47 +13,31 @@ const {
 } = require("./task-definition.cjs");
 const { listServiceTaskArns } = require("./service-task-inventory.cjs");
 const { assertPreparedCandidate } = require("./bootstrap-core.cjs");
+const { inFlightWork } = require("./cold-cutover-work.cjs");
 
 const WORKFLOW_PATH = ".github/workflows/production-cutover.yml";
 const STOP_TIMEOUT_SECONDS = 900;
 const READY_TIMEOUT_SECONDS = 900;
+// Matches the lease the bootstrap engine grants at Control initialization.
+const COORDINATOR_LEASE_SECONDS = 1800;
+const INCIDENT_MESSAGES = {
+  work_after_stop:
+    "::error title=Work appeared during the stop window::The candidate is serving, but a meeting or job may have started on the legacy runtime between the pre-stop check and its shutdown. Review the post_stop_recheck counts and affected meetings now.",
+  no_pre_stop_baseline:
+    "::error title=No pre-stop baseline::The legacy service was already stopped when this run began, so work started during the earlier stop window cannot be ruled out. The candidate is serving; review recent meetings and jobs.",
+  recheck_failed:
+    "::error title=Post-stop recheck failed::The candidate is serving, but the post-stop work scan failed. Run inspect and review recent meetings and jobs.",
+  recheck_not_recorded:
+    "::error title=Stop-window outcome not recorded::The resumed operation has no stored post-stop recheck. The candidate is serving; review recent meetings and jobs.",
+};
+const FOLLOW_UP =
+  "The cutover is complete only after an ordinary deploy of master (Meeting Notes Bot Deploy) succeeds. Run it now: until then an ECS task replacement leaves the new task unpromoted.";
 const FINANCIAL_FLAGS = [
   "STRIPE_SUBSCRIPTION_TRANSITIONS_ENABLED",
   "STRIPE_RENEWAL_GRACE_ENABLED",
   "STRIPE_INTRO_OFFER_LEDGER_ENABLED",
   "STRIPE_RENEWAL_REACTIVATION_ENABLED",
 ];
-// Any row, or any status that is not known to be terminal, counts as in-flight work.
-// Leases are read last so the recording check sits closest to the stop.
-const WORK = [
-  {
-    table: "MeetingControlCommandTable",
-    fields: [
-      "queueStatus",
-      "expiresAt",
-      "claimedByInstanceId",
-      "claimExpiresAt",
-    ],
-    // A claim can be renewed past the queue TTL, so only an expired request nobody claimed is settled.
-    active: (row, now) =>
-      !["completed", "failed"].includes(row.queueStatus) &&
-      (row.claimedByInstanceId !== undefined ||
-        row.claimExpiresAt !== undefined ||
-        !(row.expiresAt <= now)),
-  },
-  {
-    table: "PersonalMediaUploadJobTable",
-    fields: ["status"],
-    active: (row) => !["complete", "failed"].includes(row.status),
-  },
-  {
-    table: "PersonalRecordingSegmentTable",
-    fields: ["status"],
-    active: (row) => !["processed", "failed"].includes(row.status),
-  },
-  { table: "ActiveMeetingTable", fields: ["guildId"], active: () => true },
-];
-
 class Refusal extends Error {}
 function fail(message) {
   throw new Refusal(message);
@@ -219,19 +204,11 @@ function createCutover({
     return total;
   }
   /** Counts in-flight work; a scan failure propagates so an unknown answer never reads as empty. */
-  async function activeWork() {
-    // A meeting can start and finish inside the stop window; history growth exposes it.
-    const counts = {
-      meetingHistoryRows: await countRows(
-        config.tablePrefix + "MeetingHistoryTable",
-      ),
-    };
-    for (const work of WORK) {
-      const rows = await scan(config.tablePrefix + work.table, work.fields);
-      counts[work.table] = rows.filter((row) => work.active(row, now())).length;
-    }
-    const total = WORK.reduce((sum, w) => sum + counts[w.table], 0);
-    return { counts, total };
+  function activeWork() {
+    return inFlightWork(
+      (name, fields) => scan(config.tablePrefix + name, fields),
+      now,
+    );
   }
   async function read(sk) {
     const r = await aws("dynamodb", "get-item", {
@@ -436,6 +413,10 @@ function createCutover({
           return await boot.promote(deadline);
         } catch (error) {
           // Only pre-write promotion checks emit this code.
+          if (error.code === "warmup_expired")
+            fail(
+              "Candidate warmup deadline passed before promotion; resume with the same operation id",
+            );
           if (error.code !== "candidate_not_ready") throw error;
         }
       await sleep();
@@ -562,15 +543,6 @@ function createCutover({
     });
     if (stopped.service?.desiredCount !== 0) fail("Stop was not acknowledged");
   }
-  /** Without a pre-stop count (service found already stopped) or a recheck, the window cannot be cleared. */
-  function stopWindowIncident(before, after) {
-    return (
-      !before ||
-      !after ||
-      after.total > 0 ||
-      after.counts.meetingHistoryRows !== before.counts.meetingHistoryRows
-    );
-  }
   async function weightRouting(routing) {
     const changed = await aws("elbv2", "modify-listener", {
       ListenerArn: config.listenerArn,
@@ -585,16 +557,63 @@ function createCutover({
       fail("Weighted routing was not acknowledged");
     log({ phase: "routing_weighted" });
   }
+  /** Returns the pre-stop counts, or undefined when the service was already stopped. */
+  async function checkAndStop(svc, routing, form) {
+    let before;
+    if (svc.desiredCount !== 0) {
+      before = await activeWork();
+      log({ phase: "pre_stop_check", work: before.counts });
+      if (before.total) return before;
+    } else log({ phase: "already_stopped" });
+    // 100/0 with an empty spare group is traffic neutral, so it goes ahead of the stop.
+    if (form === "legacy") await weightRouting(routing);
+    if (before) await stopLegacy();
+    return before;
+  }
+  function stopWindowReason(before, after) {
+    if (!before) return "no_pre_stop_baseline";
+    if (!after) return "recheck_failed";
+    return after.total > 0 ? "work_after_stop" : null;
+  }
+  /** Extends an expired bootstrap lease that this operation still holds before launch or promotion. */
+  async function renewLease(receipt) {
+    if (!["initialized", "launched"].includes(receipt.stage)) return;
+    const control = await read("CONTROL");
+    if (control?.coordinatorToken !== config.operationId) return;
+    try {
+      await aws("dynamodb", "update-item", {
+        TableName: table,
+        Key: marshall({ pk: "ENV", sk: "CONTROL" }),
+        ConditionExpression:
+          "coordinatorToken = :token AND coordinatorEpoch = :epoch AND coordinatorExpiresAt = :seen AND servingGeneration = :generation AND servingMembers = :members AND attribute_not_exists(#deployment)",
+        UpdateExpression: "SET coordinatorExpiresAt = :expiry",
+        ExpressionAttributeNames: { "#deployment": "deployment" },
+        ExpressionAttributeValues: marshall({
+          ":token": config.operationId,
+          ":epoch": 1,
+          ":seen": control.coordinatorExpiresAt,
+          ":generation": 0,
+          ":members": {},
+          ":expiry": now() + COORDINATOR_LEASE_SECONDS,
+        }),
+      });
+    } catch {
+      fail("Coordinator lease renewal was refused; inspect Control ownership");
+    }
+    log({ phase: "coordinator_lease_renewed" });
+  }
   async function resume(svc, receipt) {
     const definition = await findCandidate(svc);
     if (!definition) fail("Resumed operation has no registered candidate");
     // A receipt without the recorded recheck cannot clear the stop window.
     const recheck = receipt.cutoverRecheck ?? {
       incident: true,
+      reason: "recheck_not_recorded",
       before: null,
       after: null,
     };
     log({ phase: "resuming", recheck });
+    await renewLease(receipt);
     await finish(binding(svc, definition));
     return { kind: "complete", resumed: true, ...recheck };
   }
@@ -606,35 +625,25 @@ function createCutover({
     if (receipt) return resume(svc, receipt);
     const { routing, form } = await preflight(svc);
     const bound = await preparedCandidate(svc);
-    let before;
-    if (svc.desiredCount === 0) log({ phase: "already_stopped" });
-    else {
-      before = await activeWork();
-      log({ phase: "pre_stop_check", work: before.counts });
-      if (before.total)
-        return {
-          kind: "deferred",
-          work: before.counts,
-          providerMutations: "candidate_definition_only",
-        };
-      await stopLegacy();
-    }
+    const before = await checkAndStop(svc, routing, form);
+    if (before?.total)
+      return {
+        kind: "deferred",
+        work: before.counts,
+        providerMutations: "candidate_definition_only",
+      };
     await waitStopped(bound.m);
     log({ phase: "legacy_stopped" });
     // Service restoration outranks a failed recheck; an unknown answer is reported as an incident.
     const after = await activeWork().catch(() => undefined);
-    const incident = stopWindowIncident(before, after);
-    log({
-      phase: "post_stop_recheck",
-      work: after?.counts ?? "unknown",
-      incident,
-    });
-    if (form === "legacy") await weightRouting(routing);
+    const reason = stopWindowReason(before, after);
     const recheck = {
-      incident,
+      incident: reason !== null,
+      reason,
       before: before?.counts ?? null,
       after: after?.counts ?? null,
     };
+    log({ phase: "post_stop_recheck", ...recheck });
     await finish(bound, recheck);
     return { kind: "complete", resumed: false, ...recheck };
   }
@@ -690,13 +699,17 @@ async function runCli(mode, env = process.env, deps = {}) {
       );
       return 0;
     }
-    if (result.incident) {
-      output.error(
-        "::error title=Work appeared during the stop window::The candidate is serving, but a meeting or job may have started on the legacy runtime between the pre-stop check and its shutdown. Review the post_stop_recheck counts and affected meetings now.",
+    output.log("::notice title=Run the ordinary deploy now::" + FOLLOW_UP);
+    if (env.GITHUB_STEP_SUMMARY)
+      appendFileSync(
+        env.GITHUB_STEP_SUMMARY,
+        "## Cold cutover\n\n" + FOLLOW_UP + "\n",
       );
-      return 2;
-    }
-    return 0;
+    if (!result.incident) return 0;
+    output.error(
+      INCIDENT_MESSAGES[result.reason] ?? INCIDENT_MESSAGES.work_after_stop,
+    );
+    return 2;
   } catch (error) {
     const reason =
       error instanceof Refusal ? error.message : "unexpected_failure";
