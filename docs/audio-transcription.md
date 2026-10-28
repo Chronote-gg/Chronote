@@ -54,9 +54,10 @@ audio verification and personal upload retry policies are unchanged.
 
 ## Personal upload transcription
 
-Personal uploads and desktop recordings send no `language` hint, matching the
-live path, so the provider detects the spoken language. A forced English hint
-badly truncated non-English recordings.
+Personal uploads and desktop recordings send no `language` hint, so the
+provider detects the spoken language. A forced English hint badly truncated
+non-English recordings. Live meeting snippets and the finalized audio pass
+still send `language: "en"`.
 
 Normalized audio is always split into
 `PERSONAL_UPLOAD_TRANSCRIPTION_CHUNK_SECONDS` (300 s) chunks before
