@@ -63,6 +63,10 @@ type PurchaseInput = {
   expectedOffer?: ExpectedIntroOffer;
   offerChoice?: IntroOfferChoice;
 };
+type AttemptRefreshInput = Pick<
+  PurchaseInput,
+  "stripe" | "owner" | "guildId" | "expected"
+>;
 
 async function writePurchase(
   attempt: PurchaseAttempt,
@@ -84,7 +88,7 @@ async function writePurchase(
   return next;
 }
 const save = (
-  input: PurchaseInput,
+  input: Pick<PurchaseInput, "owner">,
   ...args: Parameters<typeof writePurchase>
 ) => input.owner!.effect(() => writePurchase(...args));
 
@@ -383,7 +387,7 @@ export async function createInitialPurchase(
 }
 
 async function checkCheckoutReplayWindow(
-  input: PurchaseInput,
+  input: AttemptRefreshInput,
   attempt: PurchaseAttempt,
 ) {
   // Stripe requires 30 minutes remaining; leave one minute for the request.
@@ -428,7 +432,7 @@ function captureNewCheckout(input: PurchaseInput, attempt: PurchaseAttempt) {
 }
 
 async function refreshAttempt(
-  input: PurchaseInput,
+  input: AttemptRefreshInput,
   initial: PurchaseAttempt | undefined,
 ) {
   const repo = getPurchaseRepository();
@@ -473,6 +477,43 @@ async function refreshAttempt(
   }
 
   return current;
+}
+
+/**
+ * Releases an open checkout the provider has already expired, for when the
+ * expiry webhook never arrives. Billing reads call it, so it never throws:
+ * a Stripe outage or lost race leaves the attempt for the next load or click.
+ */
+export async function releaseExpiredPurchaseAttempt(input: {
+  stripe: StripeClient;
+  guildId: string;
+  owner?: RuntimeBillingOwner;
+}): Promise<void> {
+  try {
+    const attempt = await getPurchaseRepository().get(input.guildId);
+    const pastLocalExpiry =
+      attempt?.state === "open" &&
+      Boolean(attempt.sessionId) &&
+      !attempt.incidentKey &&
+      Number(attempt.checkout.expires_at) * 1000 <= Date.now();
+    if (!pastLocalExpiry) return;
+    await runBillingOperation(input.owner, async (owner) =>
+      refreshAttempt(
+        {
+          stripe: input.stripe,
+          guildId: input.guildId,
+          owner,
+          expected: await getSubscriptionRepository().get(input.guildId),
+        },
+        attempt,
+      ),
+    );
+  } catch (error) {
+    console.warn("Expired checkout release deferred", {
+      guildId: input.guildId,
+      error,
+    });
+  }
 }
 
 async function findOwnedCustomer(input: PurchaseInput) {

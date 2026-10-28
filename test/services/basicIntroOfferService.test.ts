@@ -1,9 +1,6 @@
 /** @jest-environment node */
 import "../fixtures/admittedApi";
-import {
-  seedUnusedOfferCoverage,
-  testWriterImageDigest,
-} from "../fixtures/historyWriterBoundary";
+import { testWriterImageDigest } from "../fixtures/historyWriterBoundary";
 jest.mock("../../src/services/ledgerWriterRuntime", () => ({
   readLedgerWriterRuntime: jest.fn(async () => ({
     taskArn: "arn:aws:ecs:us-east-1:123456789012:task/test/task-one",
@@ -43,13 +40,12 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { MantineProvider } from "@mantine/core";
 import SubscriptionDetails from "../../src/frontend/components/SubscriptionDetails";
 
-const now = Date.parse("2026-10-12T12:00:00Z");
-const settings = {
-  couponId: "coupon_intro",
-  startsAt: "2026-10-01T00:00:00Z",
-  enrollmentEndsAt: "2026-11-01T00:00:00Z",
-  portalConfigurationId: "bpc_intro",
-};
+import {
+  introNow as now,
+  introSettings as settings,
+  introOfferStripe as fixture,
+  introPurchaseFixture as purchaseFixture,
+} from "../fixtures/introOfferPurchase";
 const plans: PaidPlan[] = [
   {
     tier: "basic",
@@ -65,61 +61,6 @@ const empty = {
   enrollmentEndsAt: "",
   portalConfigurationId: "",
 };
-function fixture() {
-  seedUnusedOfferCoverage();
-  const price = {
-    id: "price_basic",
-    active: true,
-    livemode: false,
-    currency: "usd",
-    unit_amount: 1000,
-    lookup_key: config.stripe.lookupKeys.basicMonthly,
-    billing_scheme: "per_unit",
-    type: "recurring",
-    recurring: { interval: "month", interval_count: 1, usage_type: "licensed" },
-    product: "prod_basic",
-  };
-  const coupon = {
-    id: "coupon_intro",
-    valid: true,
-    livemode: false,
-    percent_off: 40,
-    amount_off: null,
-    currency: null,
-    duration: "repeating",
-    duration_in_months: 3,
-    redeem_by: settings.enrollmentEndsAt
-      ? Date.parse(settings.enrollmentEndsAt) / 1000 + 3600
-      : null,
-    applies_to: { products: ["prod_basic"] },
-  };
-  const portal = {
-    id: "bpc_intro",
-    active: true,
-    livemode: false,
-    features: {
-      subscription_update: { enabled: false },
-      payment_method_update: { enabled: true },
-      subscription_cancel: { enabled: true },
-    },
-  };
-  const stripe = {
-    accounts: { retrieve: jest.fn(async () => ({ id: "acct-owned" })) },
-    balance: { retrieve: jest.fn(async () => ({ livemode: false })) },
-    prices: { retrieve: jest.fn(async () => price) },
-    coupons: { retrieve: jest.fn(async () => coupon) },
-    billingPortal: {
-      configurations: { retrieve: jest.fn(async () => portal) },
-    },
-  };
-  return {
-    price,
-    coupon,
-    portal,
-    stripe,
-    client: stripe as unknown as StripeClient,
-  };
-}
 afterEach(() => {
   Object.assign(config.stripe.basicIntroOffer, empty);
   config.stripe.introOfferLedgerEnabled = false;
@@ -259,103 +200,6 @@ import { createCheckoutSession } from "../../src/services/billingService";
 import { getMockStore, resetMockStore } from "../../src/repositories/mockStore";
 import { clearGuildSubscriptionCache } from "../../src/services/subscriptionService";
 import { createManualEntitlementGrant } from "../../src/services/entitlementService";
-
-function purchaseFixture() {
-  const offer = fixture();
-  const guildId = "111111111111111111";
-  const checkout = {
-    sessions: {
-      create: jest.fn(async () => ({
-        id: "cs_intro",
-        status: "open",
-        url: "https://checkout.stripe.com/intro",
-        livemode: false,
-        customer: "cus_intro",
-        metadata: {
-          guild_id: guildId,
-          purchase_attempt_id:
-            getMockStore().purchaseAttempts.get(guildId)?.attemptId,
-        },
-      })),
-      retrieve: jest.fn(async () => ({
-        id: "cs_intro",
-        status: "open",
-        url: "https://checkout.stripe.com/intro",
-        livemode: false,
-        customer: "cus_intro",
-        metadata: {
-          guild_id: guildId,
-          purchase_attempt_id:
-            getMockStore().purchaseAttempts.get(guildId)?.attemptId,
-        },
-      })),
-    },
-  };
-  const stripe = {
-    ...offer.stripe,
-    prices: {
-      ...offer.stripe.prices,
-      retrieve: jest.fn(async (priceId: string) => {
-        if (priceId === "price_pro")
-          return {
-            ...offer.price,
-            id: priceId,
-            lookup_key: config.stripe.lookupKeys.proMonthly,
-          };
-        if (priceId === "price_annual")
-          return {
-            ...offer.price,
-            id: priceId,
-            lookup_key: config.stripe.lookupKeys.basicAnnual,
-            recurring: {
-              interval: "year",
-              interval_count: 1,
-              usage_type: "licensed",
-            },
-          };
-        return offer.price;
-      }),
-      list: jest.fn(async () => ({
-        data: [
-          { ...offer.price, lookup_key: config.stripe.lookupKeys.basicMonthly },
-          {
-            ...offer.price,
-            id: "price_annual",
-            lookup_key: config.stripe.lookupKeys.basicAnnual,
-            recurring: {
-              interval: "year",
-              interval_count: 1,
-              usage_type: "licensed",
-            },
-          },
-          {
-            ...offer.price,
-            id: "price_pro",
-            lookup_key: config.stripe.lookupKeys.proMonthly,
-          },
-        ],
-      })),
-    },
-    promotionCodes: {
-      list: jest.fn(async () => ({ data: [{ id: "promo_other" }] })),
-    },
-    customers: {
-      list: jest.fn(async () => ({ data: [], has_more: false })),
-      create: jest.fn(async () => ({ id: "cus_intro" })),
-    },
-    checkout,
-  };
-  return {
-    ...offer,
-    stripe,
-    request: {
-      stripe: stripe as unknown as StripeClient,
-      guildId,
-      user: { id: "payer" },
-      priceId: "price_basic",
-    },
-  };
-}
 
 describe("authoritative initial-purchase offer", () => {
   beforeEach(() => {

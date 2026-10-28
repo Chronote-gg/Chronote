@@ -5,126 +5,21 @@ jest.mock("../../src/services/runtimeApiOperationService", () => ({
     .runTestApiOperation,
 }));
 import * as renewalCoverage from "../../src/services/renewalRecoveryService";
-import { sourceSubscription, fundedInvoice } from "../fixtures/renewalStripe";
 import { getMockStore } from "../../src/repositories/mockStore";
 
 import { createCheckoutSession } from "../../src/services/billingService";
 import { resetMockStore } from "../../src/repositories/mockStore";
-import type { StripeClient } from "../../src/types/stripe";
 import { captureEvent } from "../../src/services/analyticsService";
 jest.mock("../../src/services/analyticsService", () => ({
   captureEvent: jest.fn(),
 }));
 
-const guildId = "111111111111111111";
-function sessionFields() {
-  const attempt = getMockStore().purchaseAttempts.get(guildId);
-  return {
-    customer: "cus_first",
-    livemode: false,
-    metadata: {
-      guild_id: guildId,
-      purchase_attempt_id: attempt?.attemptId ?? "",
-    },
-  };
-}
-function paidProvider(id: string) {
-  const metadata = {
-    guild_id: guildId,
-    discord_id: "payer",
-    purchase_attempt_id: "",
-  };
-  const native = {
-    ...sourceSubscription,
-    id,
-    latest_invoice: "in_first",
-    customer: "cus_first",
-    metadata,
-    cancel_at: null,
-    cancel_at_period_end: false,
-    items: {
-      ...sourceSubscription.items,
-      data: sourceSubscription.items.data.map((item) => ({
-        ...item,
-        price: { ...item.price, id: "price_basic" },
-        current_period_start: 100,
-        current_period_end: 200,
-      })),
-    },
-  };
-  const invoice = {
-    ...fundedInvoice,
-    id: "in_first",
-    customer: "cus_first",
-    parent: {
-      type: "subscription_details",
-      quote_details: null,
-      subscription_details: { subscription: id, metadata },
-    },
-    lines: {
-      ...fundedInvoice.lines,
-      data: fundedInvoice.lines.data.map((line) => ({
-        ...line,
-        period: { start: 100, end: 200 },
-        pricing: {
-          ...line.pricing,
-          price_details: { price: "price_basic", product: "prod_renewal" },
-        },
-        parent: {
-          ...line.parent,
-          subscription_item_details: {
-            ...line.parent?.subscription_item_details,
-            subscription: id,
-          },
-        },
-      })),
-    },
-  };
-  return {
-    subscriptions: {
-      retrieve: jest.fn(async () => {
-        metadata.purchase_attempt_id =
-          getMockStore().purchaseAttempts.get(guildId)?.attemptId ?? "";
-        return native;
-      }),
-    },
-    invoices: { retrieve: jest.fn(async () => invoice) },
-  };
-}
-function fixture() {
-  const stripe = {
-    customers: {
-      list: jest.fn(async () => ({ data: [], has_more: false })),
-      create: jest.fn(async () => ({ id: "cus_first" })),
-      retrieve: jest.fn(async () => ({
-        id: "cus_first",
-        metadata: { discord_id: "payer" },
-      })),
-    },
-    checkout: {
-      sessions: {
-        create: jest.fn(async () => ({
-          ...sessionFields(),
-          id: "cs_first",
-          status: "open",
-          url: "https://checkout.stripe.com/first",
-          expires_at: Math.floor(Date.now() / 1000) + 3600,
-        })),
-        retrieve: jest.fn(async () => ({
-          ...sessionFields(),
-          id: "cs_first",
-          status: "open",
-          url: "https://checkout.stripe.com/first",
-          customer: "cus_first",
-          subscription: null,
-          metadata: sessionFields().metadata,
-          livemode: false,
-        })),
-      },
-    },
-  };
-  return { stripe, client: stripe as unknown as StripeClient };
-}
+import {
+  purchaseGuildId as guildId,
+  sessionFields,
+  paidProvider,
+  initialPurchaseStripe as fixture,
+} from "../fixtures/initialPurchaseStripe";
 beforeEach(() => {
   resetMockStore();
   jest.clearAllMocks();
