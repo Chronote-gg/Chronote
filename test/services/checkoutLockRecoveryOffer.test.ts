@@ -123,3 +123,31 @@ test("the same payer switching from the intro offer to a promotion supersedes it
     released: { reason: "checkout_expired" },
   });
 });
+
+test("an expiry webhook landing during an introductory supersede still yields one fresh checkout", async () => {
+  const { request, stripe } = introPurchaseFixture();
+  await createCheckoutSession({ ...request, expectedOffer: "basic_intro_v1" });
+  const first = getMockStore().purchaseAttempts.get(request.guildId)!;
+  const expire = stripe.checkout.sessions.expire.getMockImplementation()!;
+  let releasedByWebhook: unknown;
+  stripe.checkout.sessions.expire.mockImplementationOnce(async (id) => {
+    const expiredSession = await expire(id);
+    // Stripe emits checkout.session.expired; the webhook commits first.
+    await expirePurchaseAttempt(request.stripe, expiredSession as never);
+    releasedByWebhook = await introUsage(request.guildId);
+    return expiredSession;
+  });
+  await expect(
+    createCheckoutSession({ ...request, user: { id: "other" } }),
+  ).resolves.toContain("checkout.stripe.com");
+  expect(releasedByWebhook).toMatchObject({
+    state: "unused",
+    released: { operationId: first.attemptId, reason: "checkout_expired" },
+  });
+  const next = getMockStore().purchaseAttempts.get(request.guildId)!;
+  expect(next).toMatchObject({ payerId: "other", state: "open" });
+  expect(await introUsage(request.guildId)).toMatchObject({
+    state: "reserved",
+    operationId: next.attemptId,
+  });
+});

@@ -2,6 +2,7 @@ import type { StripeEffect } from "../types/stripe";
 import {
   runBillingOperation,
   persistBillingAcknowledgment,
+  UnresolvedBillingMutation,
   type RuntimeBillingOwner,
 } from "./runtimeBillingOperationService";
 import { prepareInitialOfferSettlement } from "./offerUsageSettlement";
@@ -261,12 +262,12 @@ async function supersedeOpenAttempt(
   try {
     after = await refreshAttempt(input, current);
   } catch (error) {
-    // A lost release CAS means another writer moved the attempt; re-read it.
-    if (
-      error instanceof BillingActionError &&
-      error.reason === "purchase_pending"
-    )
-      return "superseded";
+    // Another writer (often the expiry webhook this expire triggers) moved the
+    // attempt first, so the release check failed against stale state; re-read.
+    // An unknown write outcome must still surface.
+    if (error instanceof UnresolvedBillingMutation) throw error;
+    const row = await getPurchaseRepository().get(input.guildId);
+    if (row?.revision !== current.revision) return "superseded";
     throw error;
   }
   if (after?.attemptId !== current.attemptId || after.state === "expired")

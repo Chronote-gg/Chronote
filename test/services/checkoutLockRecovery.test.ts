@@ -11,6 +11,7 @@ import Stripe from "stripe";
 import { runRuntimeApiOperation } from "../../src/services/runtimeApiOperationService";
 import { UnresolvedBillingMutation } from "../../src/services/runtimeBillingOperationService";
 import { expirePurchaseAttempt } from "../../src/services/purchaseReconciliation";
+import * as purchaseRepository from "../../src/repositories/purchaseAttemptRepository";
 import { RuntimeAdmissionUnavailable } from "../../src/services/runtimeAdmissionError";
 import { createCheckoutSession } from "../../src/services/billingService";
 import { releaseExpiredPurchaseAttempt } from "../../src/services/initialPurchaseService";
@@ -315,6 +316,28 @@ describe("supersede", () => {
       "checkout.stripe.com",
     );
     expect(stripe.checkout.sessions.create).toHaveBeenCalledTimes(2);
+  });
+
+  test("a release write with a lost response is not mistaken for another writer", async () => {
+    const real = purchaseRepository.getPurchaseRepository();
+    const spy = jest
+      .spyOn(purchaseRepository, "getPurchaseRepository")
+      .mockReturnValue({
+        ...real,
+        compareAndWrite: async (...args) => {
+          const written = await real.compareAndWrite(...args);
+          if (args[0].state === "expired") throw new Error("response lost");
+          return written;
+        },
+      });
+    try {
+      await expect(createCheckoutSession(otherPayer)).rejects.toBeInstanceOf(
+        UnresolvedBillingMutation,
+      );
+      expect(stripe.checkout.sessions.create).toHaveBeenCalledTimes(1);
+    } finally {
+      spy.mockRestore();
+    }
   });
 
   test("an open attempt under incident review is never superseded", async () => {
