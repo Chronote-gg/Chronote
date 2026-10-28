@@ -36,6 +36,7 @@ collection_keys = {
 canonical_keys = collection_keys | {
     "enable_production_introduction_roles",
     "enable_production_acceptance_collector",
+    "enable_production_prompt_guard_role",
 }
 
 
