@@ -77,6 +77,7 @@ function checkMetricFilter(change, names) {
   const { after } = change;
   assert.equal(after.name, names.failure);
   assert.equal(after.log_group_name, names.logGroup);
+  assert.equal(after.region, "us-east-1");
   assert.equal(after.pattern, '"Processing retry worker failed"');
   const [transformation, ...extra] = after.metric_transformation;
   assert.equal(extra.length, 0);
@@ -99,6 +100,7 @@ function checkAlarm(change, names) {
   const { after } = change;
   assert.equal(after.alarm_name, names.failure);
   assert.equal(after.namespace, names.namespace);
+  assert.equal(after.region, "us-east-1");
   for (const [key, value] of Object.entries(alarmSettings))
     assert.equal(after[key], value);
   assert.deepEqual(after.alarm_actions, [names.topicArn]);

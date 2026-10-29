@@ -79,6 +79,22 @@ test("refuses two new indexes when the delivery index was never applied", () => 
   );
 });
 
+test("refuses a before-state delivery index that differs from its definition", () => {
+  const plan = processingRetryPlan();
+  const { before } = findChange(plan, tableAddress).change;
+  for (const index of before.global_secondary_index)
+    if (index.name === "UpdateDeliveryDueIndex") index.projection_type = "ALL";
+  expect(() => validate(plan)).toThrow();
+});
+
+test.each([filterAddress, alarmAddress])(
+  "rejects %s in another region",
+  (address) =>
+    rejected((plan) => {
+      after(plan, address).region = "us-west-2";
+    }),
+);
+
 test("production must create or keep the alarm pair", () => {
   for (const address of [filterAddress, alarmAddress])
     rejected((plan) => dropResource(plan, address));

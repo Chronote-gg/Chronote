@@ -432,12 +432,27 @@ both share an account. It allows only:
   actions on the critical alerts topic only. Already existing ones must be no-ops.
 
 The KMS key, app log group and critical alerts topic must be no-ops. Production must
-carry the filter and alarm; Sandbox may omit both when its alerting is off. The
-plan is refused when the before state lacks `UpdateDeliveryDueIndex`, because it
-would then add two indexes; apply the delivery index through its own reviewed
-change first. Turn on `meetings.processingRetry.enabled` only once the new index is
-ACTIVE. The production Terraform role's writes come from the separate managed
-policy in `_infra/production-bootstrap/processing-retry.tf`.
+carry the filter and alarm; Sandbox may omit both when its alerting is off (the
+`[0]` targets then match no instance and plan nothing). Targeting includes
+dependencies: the filter and alarm reach both CloudFront distributions through
+`aws_kms_key_policy.app_general`, so any pending site or key policy drift makes the
+plan refuse. Reconcile that through `site-delivery` first.
+
+The plan is also refused when the before state lacks `UpdateDeliveryDueIndex`,
+because it would then add two indexes. `meeting-update-delivery` is Sandbox-only,
+so no workflow in this repository adds that index in production. Production lacks
+it today, and this scope refuses there until a one-time operator `UpdateTable` adds
+it through the private operations route.
+
+Production order:
+
+1. The delivery index exists (operator route above).
+2. Apply `_infra/production-bootstrap` with `enable_processing_retry_policy = true`.
+   Plan needs its log, alarm and topic reads, not only Apply's writes.
+3. Plan `production`/`default`/`processing-retry` on `master`.
+4. Apply that plan at the same SHA.
+5. Turn on `meetings.processingRetry.enabled` once `ProcessingRetryDueIndex` is
+   ACTIVE.
 
 Standalone policy adoption requires a separate reviewed plan and approval; it is
 outside the four-target Apply. The actual state-backed prerequisite plan must

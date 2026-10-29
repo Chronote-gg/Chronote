@@ -26,10 +26,12 @@ resource "aws_iam_policy" "processing_retry" {
       # Index backfill on a customer-managed-key table, as RenewalIndex needs for GuildSubscription.
       { Sid = "HistoryEncryption", Effect = "Allow", Action = ["kms:Encrypt", "kms:Decrypt", "kms:ReEncryptFrom", "kms:ReEncryptTo", "kms:GenerateDataKey", "kms:GenerateDataKeyWithoutPlaintext"], Resource = var.kms_key_arn, Condition = { StringEquals = { "kms:ViaService" = "dynamodb.us-east-1.amazonaws.com", "kms:CallerAccount" = var.production_account_id, "kms:EncryptionContext:aws:dynamodb:tableName" = "meeting-notes-prod-MeetingHistoryTable", "kms:EncryptionContext:aws:dynamodb:subscriberId" = var.production_account_id } } },
       # DescribeLogGroups filters by name prefix and cannot name one group.
+      # No delete: metric filters have no ARN, so DeleteMetricFilter would reach
+      # every filter on the app log group, and the validator refuses deletes.
       { Sid = "LogGroupDiscovery", Effect = "Allow", Action = "logs:DescribeLogGroups", Resource = "arn:aws:logs:${local.retry_region}:log-group:*" },
-      { Sid = "AppLogGroup", Effect = "Allow", Action = ["logs:ListTagsForResource", "logs:DescribeMetricFilters", "logs:PutMetricFilter", "logs:DeleteMetricFilter"], Resource = [local.retry_log_group, "${local.retry_log_group}:*"] },
+      { Sid = "AppLogGroup", Effect = "Allow", Action = ["logs:ListTagsForResource", "logs:DescribeMetricFilters", "logs:PutMetricFilter"], Resource = [local.retry_log_group, "${local.retry_log_group}:*"] },
       # Default tags travel with PutMetricAlarm.
-      { Sid = "RetryWorkerAlarm", Effect = "Allow", Action = ["cloudwatch:PutMetricAlarm", "cloudwatch:DeleteAlarms", "cloudwatch:DescribeAlarms", "cloudwatch:TagResource", "cloudwatch:ListTagsForResource"], Resource = "arn:aws:cloudwatch:${local.retry_region}:alarm:${local.retry_failure_name}" },
+      { Sid = "RetryWorkerAlarm", Effect = "Allow", Action = ["cloudwatch:PutMetricAlarm", "cloudwatch:DescribeAlarms", "cloudwatch:TagResource", "cloudwatch:ListTagsForResource"], Resource = "arn:aws:cloudwatch:${local.retry_region}:alarm:${local.retry_failure_name}" },
       { Sid = "CriticalAlertsTopic", Effect = "Allow", Action = ["sns:GetTopicAttributes", "sns:ListTagsForResource"], Resource = "arn:aws:sns:${local.retry_region}:meeting-notes-prod-critical-alerts" }
     ]
   })
