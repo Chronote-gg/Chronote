@@ -106,47 +106,7 @@ export function fixture() {
   };
   const get = nativeGitHub("fake-token", async (url, options) => {
     expect(options.headers.Authorization).toBe("Bearer fake-token");
-    let value;
-    if (url.endsWith("/approvals"))
-      value = [
-        {
-          state: "approved",
-          comment: "reviewed",
-          environments: [{ id: 7, name: controls.environment }],
-          user: { id: 2, type: "User" },
-        },
-      ];
-    else if (url.endsWith("/deployment_protection_rules"))
-      value = { total_count: 0, custom_deployment_protection_rules: [] };
-    else if (url.includes("/deployment-branch-policies?")) {
-      value = nativeBranchPolicies();
-      if (controls.branchPolicyFault) delete value.branch_policies[0].type;
-      if (
-        (controls.branchPolicyDrift === "before-apply" &&
-          commands.filter((c) => c.args[1] === "validate").length >= 2) ||
-        (controls.branchPolicyDrift === "after-apply" &&
-          commands.some((c) => c.args[1] === "apply"))
-      )
-        value.branch_policies[0].id = 12;
-    } else if (url.includes("/compare/")) value = controls.compare;
-    else if (url.includes("/actions/workflows/"))
-      value = {
-        total_count:
-          controls.busyWorkflow && url.includes(controls.busyWorkflow) ? 1 : 0,
-        workflow_runs: [],
-      };
-    else if (url.includes("/environments/"))
-      value = nativeEnvironment(
-        controls.environment,
-        controls.envChange &&
-          commands.filter((c) => c.args[1] === "validate").length >= 2
-          ? "2026-10-21T12:00:00Z"
-          : "2026-10-19T10:00:00Z",
-      );
-    else {
-      const plan = url.endsWith("/10");
-      value = nativeRun(controls, commands, plan);
-    }
+    const value = nativeResponse(url, controls, commands);
     return {
       ok: true,
       headers: { get: () => null },
@@ -195,24 +155,102 @@ export function fixture() {
   };
 }
 
-function nativeRun(controls, commands, plan) {
+const validations = (commands) =>
+  commands.filter((c) => c.args[1] === "validate").length;
+function driftedBranchPolicies(controls, commands) {
+  const value = nativeBranchPolicies();
+  if (controls.branchPolicyFault) delete value.branch_policies[0].type;
+  const drifted =
+    (controls.branchPolicyDrift === "before-apply" &&
+      validations(commands) >= 2) ||
+    (controls.branchPolicyDrift === "after-apply" &&
+      commands.some((c) => c.args[1] === "apply"));
+  if (drifted) value.branch_policies[0].id = 12;
+  return value;
+}
+function workflowRuns(url, controls) {
+  const busy =
+    Boolean(controls.busyWorkflow) && url.includes(controls.busyWorkflow);
+  return { total_count: busy ? 1 : 0, workflow_runs: [] };
+}
+function changingEnvironment(controls, commands) {
+  const changed = controls.envChange && validations(commands) >= 2;
+  return nativeEnvironment(
+    controls.environment,
+    changed ? "2026-10-21T12:00:00Z" : "2026-10-19T10:00:00Z",
+  );
+}
+// Ordered: the first matching route answers; run metadata is the fallback.
+const nativeRoutes = [
+  [
+    (url) => url.endsWith("/approvals"),
+    ({ controls }) => [
+      {
+        state: "approved",
+        comment: "reviewed",
+        environments: [{ id: 7, name: controls.environment }],
+        user: { id: 2, type: "User" },
+      },
+    ],
+  ],
+  [
+    (url) => url.endsWith("/deployment_protection_rules"),
+    () => ({ total_count: 0, custom_deployment_protection_rules: [] }),
+  ],
+  [
+    (url) => url.includes("/deployment-branch-policies?"),
+    ({ controls, commands }) => driftedBranchPolicies(controls, commands),
+  ],
+  [(url) => url.includes("/compare/"), ({ controls }) => controls.compare],
+  [
+    (url) => url.includes("/actions/workflows/"),
+    ({ url, controls }) => workflowRuns(url, controls),
+  ],
+  [
+    (url) => url.includes("/environments/"),
+    ({ controls, commands }) => changingEnvironment(controls, commands),
+  ],
+  [
+    () => true,
+    ({ url, controls, commands }) =>
+      nativeRun(controls, commands, url.endsWith("/10")),
+  ],
+];
+function nativeResponse(url, controls, commands) {
+  const [, respond] = nativeRoutes.find(([matches]) => matches(url));
+  return respond({ url, controls, commands });
+}
+
+// Fields that differ between the producing plan run and the consuming Apply run.
+function runRole(controls, plan) {
+  if (plan)
+    return {
+      display_title: controls.planTitle,
+      id: 10,
+      head_sha: controls.producerSha,
+      head_branch: controls.producerBranch ?? "master",
+      path: invocation.workflowPath,
+      created_at: "2026-10-20T09:00:00Z",
+    };
   return {
-    display_title: plan ? controls.planTitle : controls.applyTitle,
-    id: plan ? 10 : 20,
+    display_title: controls.applyTitle,
+    id: 20,
+    head_sha: controls.applySha ?? invocation.sourceSha,
+    head_branch: "master",
+    path: ".github/workflows/terraform-apply.yml",
+    created_at: "2026-10-20T10:00:00Z",
+  };
+}
+function nativeRun(controls, commands, plan) {
+  const completed = plan && commands.length > 0;
+  return {
+    ...runRole(controls, plan),
     repository: { full_name: invocation.repository },
     head_repository: { full_name: invocation.repository },
-    head_sha: plan
-      ? controls.producerSha
-      : (controls.applySha ?? invocation.sourceSha),
-    head_branch: plan ? (controls.producerBranch ?? "master") : "master",
-    path: plan
-      ? invocation.workflowPath
-      : ".github/workflows/terraform-apply.yml",
     event: "workflow_dispatch",
     run_attempt: 1,
-    status: plan && commands.length ? "completed" : "in_progress",
-    conclusion: plan && commands.length ? "success" : null,
-    created_at: plan ? "2026-10-20T09:00:00Z" : "2026-10-20T10:00:00Z",
+    status: completed ? "completed" : "in_progress",
+    conclusion: completed ? "success" : null,
     updated_at: controls.producerAfter
       ? "2026-10-20T11:00:00Z"
       : "2026-10-20T09:10:00Z",
