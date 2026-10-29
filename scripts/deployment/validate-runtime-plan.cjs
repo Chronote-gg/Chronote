@@ -2,9 +2,9 @@
 const assert = require("node:assert/strict");
 const {
   validateScopedPlan,
+  assertOtherwiseUnchanged,
   runCli,
 } = require("./validate-prerequisite-plan.cjs");
-const { hasUnknown } = require("./terraform-meeting-update.cjs");
 
 const guildTable = "aws_dynamodb_table.guild_subscription_table";
 const apiTargetGroups = [
@@ -67,20 +67,13 @@ const indexes = (table) =>
     ),
   );
 
-function assertOtherwiseUnchanged(before, after, unknown, changed) {
-  const keys = [before, after, unknown].flatMap(Object.keys);
-  for (const key of new Set(keys)) {
-    if (changed.includes(key)) continue;
-    assert.ok(!hasUnknown(unknown[key] ?? false));
-    assert.deepEqual(after[key], before[key]);
-  }
-}
-
 // A live API target group may change only its drain delay, to 5 seconds.
 function checkApiTargetGroup({ before, after, after_unknown: unknown = {} }) {
   assert.ok(before && after);
   assert.equal(String(after.deregistration_delay), "5");
-  assertOtherwiseUnchanged(before, after, unknown, ["deregistration_delay"]);
+  assertOtherwiseUnchanged({ before, after, unknown }, [
+    "deregistration_delay",
+  ]);
 }
 
 // The live table may change only by gaining the renewal index and its keys.
@@ -95,7 +88,7 @@ function checkGuildTable({ before, after, after_unknown: unknown = {} }) {
   );
   for (const key of streamOutputs)
     if (unknown[key] !== true) assert.equal(after[key], before[key]);
-  assertOtherwiseUnchanged(before, after, unknown, [
+  assertOtherwiseUnchanged({ before, after, unknown }, [
     "attribute",
     "global_secondary_index",
     ...streamOutputs,

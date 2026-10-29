@@ -7,14 +7,17 @@ import {
   invocation,
 } from "../fixtures/deployment/terraformWorkflow.js";
 import { runtimePlan } from "../fixtures/deployment/runtimePlan.js";
+import { sitePlan } from "../fixtures/deployment/sitePlan.js";
 test.each([
   "full",
   "purchase-permission",
   "deployment-prerequisites",
   "deployment-runtime",
+  "site-delivery",
 ])("Terraform %s plan invokes only the selected scope", async (scope) => {
   const f = fixture();
   if (scope === "deployment-runtime") f.controls.planJson = runtimePlan();
+  if (scope === "site-delivery") f.controls.planJson = sitePlan();
   try {
     const result = await runTerraform(f.options({ ...invocation, scope }));
     expect(result.status).toBe("planned-changes");
@@ -46,7 +49,14 @@ test.each([
                 '-target=aws_iam_role.production_introduction["prompt-guard"]',
                 "-target=aws_iam_role_policy.production_prompt_guard[0]",
               ]
-            : [],
+            : scope === "site-delivery"
+              ? [
+                  "-target=aws_cloudfront_function.frontend_route_rewrite",
+                  "-target=aws_cloudfront_response_headers_policy.crawler_noindex",
+                  "-target=aws_cloudfront_distribution.frontend",
+                  "-target=aws_cloudfront_distribution.docs",
+                ]
+              : [],
     );
   } finally {
     rmSync(f.directory, { recursive: true, force: true });

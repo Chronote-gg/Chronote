@@ -19,7 +19,7 @@ on:
         type: string
         default: sandbox
       plan_scope:
-        description: Sandbox requires meeting-update-delivery; production requires deployment-prerequisites or deployment-runtime
+        description: Sandbox requires meeting-update-delivery; production requires deployment-prerequisites, deployment-runtime or site-delivery
         required: true
         type: choice
         default: meeting-update-delivery
@@ -29,6 +29,7 @@ on:
           - meeting-update-delivery
           - deployment-prerequisites
           - deployment-runtime
+          - site-delivery
 
 permissions:
   actions: read
@@ -67,7 +68,7 @@ jobs:
         if: ${{ inputs.github_environment == 'production' }}
         env:
           PLAN_SCOPE: ${{ inputs.plan_scope }}
-        run: test "$PLAN_SCOPE" = deployment-prerequisites || test "$PLAN_SCOPE" = deployment-runtime
+        run: test "$PLAN_SCOPE" = deployment-prerequisites || test "$PLAN_SCOPE" = deployment-runtime || test "$PLAN_SCOPE" = site-delivery
       - name: Mask production Plan identity
         id: plan-identity
         if: ${{ inputs.github_environment == 'production' }}

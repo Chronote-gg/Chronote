@@ -133,6 +133,7 @@ test.each(
       "purchase-permission",
       "deployment-prerequisites",
       "deployment-runtime",
+      "site-delivery",
       undefined,
     ].map((scope) => [mode, scope]),
   ),

@@ -1,6 +1,7 @@
 "use strict";
 const assert = require("node:assert/strict");
 const { readFileSync } = require("node:fs");
+const { hasUnknown } = require("./terraform-meeting-update.cjs");
 
 const targets = new Set([
   "aws_dynamodb_table.deployment_control_table",
@@ -45,6 +46,16 @@ function validateScopedPlan(plan, scope) {
   return { result: "accepted", changes };
 }
 
+// An in-place update may change only `changed`; every other field stays known and equal.
+function assertOtherwiseUnchanged({ before, after, unknown }, changed) {
+  const keys = [before, after, unknown].flatMap(Object.keys);
+  for (const key of new Set(keys)) {
+    if (changed.includes(key)) continue;
+    assert.ok(!hasUnknown(unknown[key] ?? false));
+    assert.deepEqual(after[key], before[key]);
+  }
+}
+
 function validatePrerequisitePlan(plan) {
   const { result, changes } = validateScopedPlan(plan, {
     targets: new Map([...targets].map((t) => [t, ["create", "update"]])),
@@ -65,6 +76,7 @@ function runCli(validate, refusal) {
 module.exports = {
   validatePrerequisitePlan,
   validateScopedPlan,
+  assertOtherwiseUnchanged,
   runCli,
   targets,
 };
