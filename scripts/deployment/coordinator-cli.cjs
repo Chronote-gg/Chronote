@@ -1,9 +1,15 @@
 "use strict";
 const { CoordinatorFailure } = require("./coordinator-aws.cjs");
-const CLI_PHASES = ["prepare", "promote", "retire", "reconcile"];
+const CLI_PHASES = {
+  prepare: "prepare",
+  promote: "promote",
+  retire: "retire",
+  reconcile: "reconcile",
+  "continue-stopped-outgoing": "continueStoppedOutgoing",
+};
 async function runCli(requestedPhase, options = {}, output = console) {
   const diagnostic = {
-    requestedPhase: CLI_PHASES.includes(requestedPhase)
+    requestedPhase: Object.hasOwn(CLI_PHASES, requestedPhase)
       ? requestedPhase
       : "invalid",
     knownPhase: "unknown",
@@ -11,17 +17,18 @@ async function runCli(requestedPhase, options = {}, output = console) {
     nativeProtection: "not_checked",
   };
   try {
-    if (!CLI_PHASES.includes(requestedPhase))
+    if (!Object.hasOwn(CLI_PHASES, requestedPhase))
       throw new CoordinatorFailure(
         "invalid_phase",
         "Expected a coordinator phase",
         "arguments",
       );
     const coordinator = require("./coordinator.cjs").createCoordinator({
+      warn: (message) => output.log(message),
       ...options,
       diagnostic,
     });
-    const result = await coordinator[requestedPhase]();
+    const result = await coordinator[CLI_PHASES[requestedPhase]]();
     output.log(JSON.stringify(result));
     return result.kind === "recovery_required" || result.recoveryRequired
       ? 1
