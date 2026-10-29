@@ -14,12 +14,17 @@ const nextRun = { ...env, DEPLOYMENT_RUN_TOKEN: "run-3" };
 const lostCounts = { ...counts(), finalization: 1 };
 const writes = ["transact-write-items", "update-item", "update-service"];
 
-/** Promoted, retirement requested, then the outgoing task died holding finalization. */
-async function stranded() {
+/** Promoted, with the outgoing runtime still counting finalization work. */
+async function promotedBusy() {
   const f = fixture();
   await f.coordinator.prepare();
   await f.coordinator.promote();
   f.state.rows.old.workCounts = { ...lostCounts };
+  return f;
+}
+/** Promoted, retirement requested, then the outgoing task died holding finalization. */
+async function stranded() {
+  const f = await promotedBusy();
   await expect(f.coordinator.retire()).rejects.toMatchObject({
     category: "retirement_incomplete",
   });
@@ -162,16 +167,15 @@ test("a candidate that is not serving refuses continuation", async () => {
   expect(wrote(f)).toBe(false);
 });
 
-test("a pruned outgoing task counts as stopped only after its heartbeat outlives protection", async () => {
+test("a pruned outgoing task counts as stopped only after its published protection expires", async () => {
   const f = await stranded();
   await f.expire();
   f.state.outgoingTask = "missing";
-  f.state.rows.old.heartbeatAt = f.options.now() - 60;
   await expect(f.next().continueStoppedOutgoing()).rejects.toMatchObject({
-    message: "Missing outgoing task still has a recent heartbeat",
+    message: "Missing outgoing task may still hold native protection",
   });
   expect(wrote(f)).toBe(false);
-  f.state.rows.old.heartbeatAt = f.options.now() - 600;
+  f.state.rows.old.protection.expiresAt = f.options.now();
   expect(await f.next().continueStoppedOutgoing()).toMatchObject({
     kind: "continued",
     taskStatus: "missing",
@@ -225,4 +229,94 @@ test("a coordinator that acquires the environment during the quiet wait keeps it
     category: "coordinator_authority_changed",
   });
   expect(f.state.ctl.coordinatorToken).toBe("other");
+});
+
+test("a retiring deployment whose retirement request was never written refuses continuation", async () => {
+  const f = await stranded();
+  await f.expire();
+  delete f.state.rows.old.retirementRequest;
+  await expect(f.next().continueStoppedOutgoing()).rejects.toMatchObject({
+    category: "continuation_refused",
+    message:
+      "Outgoing runtime must hold this deployment's unacknowledged retirement request",
+  });
+  expect(wrote(f)).toBe(false);
+});
+
+test("a lost continuation race refuses with a clear category", async () => {
+  const f = await stranded();
+  await f.expire();
+  const original = f.aws.getMockImplementation()!;
+  f.aws.mockImplementation(async (service, operation, input) => {
+    if (operation === "transact-write-items") throw new Error("conflict");
+    return original(service, operation, input);
+  });
+  await expect(f.next().continueStoppedOutgoing()).rejects.toMatchObject({
+    category: "continuation_refused",
+    message:
+      "Control or the outgoing runtime changed during continuation; reread state before retrying",
+  });
+  expect(f.state.ctl.deployment?.phase).toBe("retiring");
+});
+
+test("retire completes through the continuation once ECS stops the outgoing task", async () => {
+  const f = await promotedBusy();
+  let sleeps = 0;
+  f.state.onSleep = () => {
+    if (++sleeps === 2) f.state.outgoingTask = "stopped";
+  };
+  const warn = jest.fn();
+  const retiring = createCoordinator({ ...f.options, warn });
+  expect(await retiring.retire()).toEqual({
+    kind: "complete",
+    continuation: {
+      kind: "continued",
+      taskStatus: "stopped",
+      lostWorkCounts: lostCounts,
+    },
+  });
+  expect(sleeps).toBe(2);
+  expect(f.state.rows.old).toMatchObject({
+    role: "retired",
+    retirementContinuation: { continuedBy: "run-2" },
+  });
+  expect(warn).toHaveBeenCalledWith(expect.stringMatching(/finalization=1/));
+});
+
+test("retire keeps waiting while the outgoing task is still running", async () => {
+  const f = await promotedBusy();
+  await expect(f.coordinator.retire()).rejects.toMatchObject({
+    category: "retirement_incomplete",
+  });
+  expect(f.state.rows.old.role).toBe("serving");
+  expect(f.state.rows.old.retirementContinuation).toBeUndefined();
+});
+
+test("an explicit quiet override launches over busy counts with a warning", async () => {
+  const f = fixture();
+  f.state.rows.old.workCounts = { ...counts(), finalization: 1 };
+  const warn = jest.fn();
+  const overridden = createCoordinator({
+    ...f.options,
+    env: { ...env, HANDOFF_QUIET_OVERRIDE: "1" },
+    warn,
+  });
+  expect(await overridden.prepare()).toEqual({ kind: "warming" });
+  expect(warn).toHaveBeenCalledWith(
+    expect.stringMatching(
+      /^::warning title=Handoff quiet gate overridden::.*finalization=1/,
+    ),
+  );
+});
+
+test("an unset or other override value still refuses a busy runtime", async () => {
+  const f = fixture();
+  f.state.rows.old.workCounts = { ...counts(), finalization: 1 };
+  const strict = createCoordinator({
+    ...f.options,
+    env: { ...env, HANDOFF_QUIET_OVERRIDE: "true" },
+  });
+  await expect(strict.prepare()).rejects.toMatchObject({
+    category: "outgoing_busy",
+  });
 });

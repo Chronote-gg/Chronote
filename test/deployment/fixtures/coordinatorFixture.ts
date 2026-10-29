@@ -198,60 +198,63 @@ export function fixture() {
     state.ctl.deployment = values[":complete"];
     state.rows[item.identity.instanceId] = item as types.RuntimeRecord;
   }
-  function dynamo(operation: string, raw: unknown) {
-    const input = raw as GetItemCommandInput &
-      UpdateItemCommandInput &
-      TransactWriteItemsCommandInput;
-    switch (operation) {
-      case "get-item": {
-        const sk = unmarshall(input.Key!).sk;
-        const item = sk === "CONTROL" ? state.ctl : state.rows[sk.substring(8)];
-        return { Item: item ? marshall(item) : undefined };
-      }
-      case "update-item": {
-        const values = unmarshall(input.ExpressionAttributeValues!);
-        if (
-          values[":token"] !== state.ctl.coordinatorToken ||
-          values[":epoch"] !== state.ctl.coordinatorEpoch ||
-          values[":generation"] !== state.ctl.servingGeneration
-        )
-          throw new Error("conditional conflict");
-        for (const [name, field] of Object.entries(
-          input.ExpressionAttributeNames!,
-        )) {
-          Object.assign(state.ctl, {
-            [field as string]: values[`:next${name.replace("#field", "")}`],
-          });
-        }
-        return { Attributes: marshall(state.ctl) };
-      }
-      case "query":
-        return {
-          Items: Object.values(state.rows).map((runtime) => marshall(runtime)),
-        };
-      case "transact-write-items": {
-        if (input.TransactItems![1]?.Put) continuation(input);
-        else if (input.TransactItems![0].Update) promotion(input);
-        else {
-          const values = unmarshall(
-            input.TransactItems![1].Update!.ExpressionAttributeValues!,
-          );
-          const runtime = state.rows[values[":identity"].instanceId];
-          runtime.retirementRequest = values[":request"];
-          if (state.retirementAcknowledged) {
-            runtime.role = "retired";
-            runtime.workCounts = counts();
-            runtime.retirementAcknowledgment = {
-              request: values[":request"],
-              retiredAt: time,
-            };
-          }
-        }
-        return {};
-      }
-      default:
-        throw new Error(`Unexpected AWS operation: ${operation}`);
+  type DynamoInput = GetItemCommandInput &
+    UpdateItemCommandInput &
+    TransactWriteItemsCommandInput;
+  function getItem(input: DynamoInput) {
+    const sk = unmarshall(input.Key!).sk;
+    const item = sk === "CONTROL" ? state.ctl : state.rows[sk.substring(8)];
+    return { Item: item ? marshall(item) : undefined };
+  }
+  function updateItem(input: DynamoInput) {
+    const values = unmarshall(input.ExpressionAttributeValues!);
+    if (
+      values[":token"] !== state.ctl.coordinatorToken ||
+      values[":epoch"] !== state.ctl.coordinatorEpoch ||
+      values[":generation"] !== state.ctl.servingGeneration
+    )
+      throw new Error("conditional conflict");
+    for (const [name, field] of Object.entries(
+      input.ExpressionAttributeNames!,
+    )) {
+      Object.assign(state.ctl, {
+        [field as string]: values[`:next${name.replace("#field", "")}`],
+      });
     }
+    return { Attributes: marshall(state.ctl) };
+  }
+  function retirementRequest(input: DynamoInput) {
+    const values = unmarshall(
+      input.TransactItems![1].Update!.ExpressionAttributeValues!,
+    );
+    const runtime = state.rows[values[":identity"].instanceId];
+    runtime.retirementRequest = values[":request"];
+    if (!state.retirementAcknowledged) return;
+    runtime.role = "retired";
+    runtime.workCounts = counts();
+    runtime.retirementAcknowledgment = {
+      request: values[":request"],
+      retiredAt: time,
+    };
+  }
+  function transactWrite(input: DynamoInput) {
+    if (input.TransactItems![1]?.Put) continuation(input);
+    else if (input.TransactItems![0].Update) promotion(input);
+    else retirementRequest(input);
+    return {};
+  }
+  const dynamoOperations: Record<string, (input: DynamoInput) => unknown> = {
+    "get-item": getItem,
+    "update-item": updateItem,
+    query: () => ({
+      Items: Object.values(state.rows).map((runtime) => marshall(runtime)),
+    }),
+    "transact-write-items": transactWrite,
+  };
+  function dynamo(operation: string, raw: unknown) {
+    const handler = dynamoOperations[operation];
+    if (!handler) throw new Error(`Unexpected AWS operation: ${operation}`);
+    return handler(raw as DynamoInput);
   }
   function ecs(operation: string, raw: unknown) {
     const input = raw as DescribeTasksCommandInput &
