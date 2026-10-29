@@ -19,6 +19,25 @@ test("accepts completed state with no effects and reordered JSON object keys", (
   }
   expect(() => verifyMeetingUpdatePlan(plan, identity)).not.toThrow();
 });
+
+test.each(["update", "no-op"])(
+  "strict delivery refuses unchanged known warm throughput for %s",
+  (action) => {
+    const plan = meetingUpdatePlan();
+    if (action === "no-op")
+      for (const r of plan.resource_changes) {
+        r.change.before = structuredClone(r.change.after);
+        r.change.actions = ["no-op"];
+      }
+    for (const phase of ["before", "after"])
+      plan.resource_changes[0].change[phase].global_secondary_index.find(
+        (index) => index.name === "GuildTimestampIndex",
+      ).warm_throughput = [
+        { read_units_per_second: 1, write_units_per_second: 1 },
+      ];
+    expect(() => verifyMeetingUpdatePlan(plan, identity)).toThrow();
+  },
+);
 test.each([
   [
     "wrong account",

@@ -104,7 +104,7 @@ export function fixture() {
     });
     if (file === "terraform" && args[1] === "apply" && controls.lostApply)
       return { ...record, exitCode: null, outcome: "unknown" };
-    return record;
+    return { ...record, command: file, args };
   };
   const get = nativeGitHub("fake-token", async (url, options) => {
     expect(options.headers.Authorization).toBe("Bearer fake-token");

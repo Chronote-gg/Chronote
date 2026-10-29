@@ -1,6 +1,11 @@
 "use strict";
 const assert = require("node:assert/strict");
 const { z } = require("zod");
+const {
+  verifyModel,
+  verifyChecks,
+  verifyWarmChange,
+} = require("./terraform-meeting-model.cjs");
 const tableAddress = "aws_dynamodb_table.meeting_history_table";
 const policyAddress = "aws_iam_policy.dynamodb_access_policy";
 const tableName = "meeting-notes-sandbox-MeetingHistoryTable";
@@ -101,9 +106,54 @@ function validateIndex(index, desired) {
     );
   }
 }
+function neutralWarmThroughput(change) {
+  for (const value of [change.before, change.after])
+    for (const index of named(value.global_secondary_index).values())
+      if (Object.hasOwn(index, "warm_throughput"))
+        equal(index.warm_throughput, []);
+}
+
+const computedTableFields = ["stream_arn", "stream_label"];
+function knownTableEffects(change, computedWarm) {
+  // AWS 6.69.1 computes these read-only fields. Explicit hash/range keys bind
+  // key_schema, and PAY_PER_REQUEST makes provisioned capacity inapplicable.
+  const mask = structuredClone(change.after_unknown ?? {});
+  for (const field of computedTableFields) delete mask[field];
+  if (Array.isArray(mask.global_secondary_index)) {
+    assert.equal(
+      mask.global_secondary_index.length,
+      change.after.global_secondary_index.length,
+    );
+    mask.global_secondary_index.forEach((indexMask, i) => {
+      assert.ok(indexMask && typeof indexMask === "object");
+      for (const key of ["key_schema", "read_capacity", "write_capacity"])
+        delete indexMask[key];
+      if (computedWarm && Object.hasOwn(indexMask, "warm_throughput")) {
+        assert.ok(
+          indexMask.warm_throughput === true ||
+            indexMask.warm_throughput === false ||
+            (Array.isArray(indexMask.warm_throughput) &&
+              indexMask.warm_throughput.length === 0),
+          "Malformed warm throughput mask",
+        );
+        delete indexMask.warm_throughput;
+      }
+      assert.ok(!hasUnknown(indexMask), "Unknown index effect");
+      validateIndex(change.after.global_secondary_index[i]);
+    });
+    delete mask.global_secondary_index;
+  }
+  assert.ok(!hasUnknown(mask), "Unknown table effect");
+}
+
 // The table may change only by gaining `index` and its key attributes; the
 // processing-retry scope shares this comparison for its own index.
-function tableDelta(change, { name, arn, attributes: added, index }) {
+function tableDelta(change, { name, arn, attributes: added, index }, evidence) {
+  const computedWarm = evidence !== undefined;
+  if (computedWarm) {
+    verifyWarmChange(change, evidence);
+    neutralWarmThroughput(change);
+  }
   for (const value of [change.before, change.after]) {
     assert.equal(value.name, name);
     assert.equal(value.id, name);
@@ -114,26 +164,7 @@ function tableDelta(change, { name, arn, attributes: added, index }) {
     for (const index of named(value.global_secondary_index).values())
       validateIndex(index);
   }
-  // AWS 6.69.1 computes these read-only fields. Explicit hash/range keys bind
-  // key_schema, and PAY_PER_REQUEST makes provisioned capacity inapplicable.
-  const computed = ["stream_arn", "stream_label"];
-  const mask = structuredClone(change.after_unknown ?? {});
-  for (const field of computed) delete mask[field];
-  if (Array.isArray(mask.global_secondary_index)) {
-    assert.equal(
-      mask.global_secondary_index.length,
-      change.after.global_secondary_index.length,
-    );
-    mask.global_secondary_index.forEach((indexMask, i) => {
-      assert.ok(indexMask && typeof indexMask === "object");
-      for (const key of ["key_schema", "read_capacity", "write_capacity"])
-        delete indexMask[key];
-      assert.ok(!hasUnknown(indexMask), "Unknown index effect");
-      validateIndex(change.after.global_secondary_index[i]);
-    });
-    delete mask.global_secondary_index;
-  }
-  assert.ok(!hasUnknown(mask), "Unknown table effect");
+  knownTableEffects(change, computedWarm);
   const expected = structuredClone(change.before);
   const attributes = named(expected.attribute);
   for (const attribute of added) {
@@ -149,10 +180,15 @@ function tableDelta(change, { name, arn, attributes: added, index }) {
     validateIndex(indexes.get(desired.name), index);
   else expected.global_secondary_index.push(desired);
   const normalize = (value) => {
-    const normalized = without(value, computed);
+    const normalized = without(value, computedTableFields);
     normalized.global_secondary_index = value.global_secondary_index.map(
       (index) =>
-        without(index, ["key_schema", "read_capacity", "write_capacity"]),
+        without(index, [
+          "key_schema",
+          "read_capacity",
+          "write_capacity",
+          ...(computedWarm ? ["warm_throughput"] : []),
+        ]),
     );
     return normalized;
   };
@@ -185,7 +221,7 @@ function policyDelta(change, tableArn, accountId) {
     without(change.after, ["policy", ...computed]),
   );
 }
-function verifyResource(resource, arn, accountId) {
+function verifyResource(resource, arn, accountId, evidence) {
   assert.equal(resource.previous_address, undefined, "Moved resource");
   const change = resource.change;
   assert.ok(
@@ -202,22 +238,38 @@ function verifyResource(resource, arn, accountId) {
     assert.equal(resource.provider_name, "registry.terraform.io/hashicorp/aws");
     assert.equal(resource.type, resource.address.split(".")[0]);
     assert.equal(resource.name, resource.address.split(".")[1]);
-    if (resource.address === tableAddress)
-      tableDelta(change, {
-        name: tableName,
-        arn,
-        attributes: deliveryAttributes,
-        index: deliveryIndex,
-      });
-    else policyDelta(change, arn, accountId);
+    if (resource.address === tableAddress) {
+      neutralWarmThroughput(change);
+      tableDelta(
+        change,
+        {
+          name: tableName,
+          arn,
+          attributes: deliveryAttributes,
+          index: deliveryIndex,
+        },
+        evidence,
+      );
+    } else policyDelta(change, arn, accountId);
   } else {
     assert.equal(change.actions[0], "no-op", "Unrelated managed effect");
     known(change);
     equal(change.before, change.after);
   }
-  if (change.actions[0] === "no-op") equal(change.before, change.after);
+  if (change.actions[0] === "no-op") {
+    const normalize = (value) =>
+      resource.address === tableAddress && evidence !== undefined
+        ? {
+            ...value,
+            global_secondary_index: value.global_secondary_index.map((index) =>
+              without(index, ["warm_throughput"]),
+            ),
+          }
+        : value;
+    equal(normalize(change.before), normalize(change.after));
+  }
 }
-function verifyMeetingUpdatePlan(plan, identity) {
+function verifyMeetingUpdatePlan(plan, identity, evidence) {
   const { accountId } = z
     .object({
       accountId: z.string().regex(/^\d{12}$/),
@@ -230,14 +282,15 @@ function verifyMeetingUpdatePlan(plan, identity) {
   assert.notEqual(plan.errored, true);
   equal(plan.deferred_changes ?? [], []);
   equal(plan.action_invocations ?? [], []);
-  for (const check of plan.checks ?? []) assert.equal(check.status, "pass");
   assert.ok(Array.isArray(plan.resource_changes));
+  if (evidence !== undefined) verifyModel(plan, evidence);
+  verifyChecks(plan, evidence);
   const found = new Set();
   const arn = `arn:aws:dynamodb:us-east-1:${accountId}:table/${tableName}`;
   for (const resource of plan.resource_changes) {
     assert.ok(!found.has(resource.address), "Duplicate address");
     found.add(resource.address);
-    verifyResource(resource, arn, accountId);
+    verifyResource(resource, arn, accountId, evidence);
   }
   assert.ok(
     found.has(tableAddress) && found.has(policyAddress),

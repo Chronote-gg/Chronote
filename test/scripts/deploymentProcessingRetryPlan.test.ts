@@ -52,6 +52,20 @@ test("accepts an already applied scope as no-ops", () => {
   expect(validate(markAllNoOp(processingRetryPlan())).changes).toEqual([]);
 });
 
+test("processing retry preserves unchanged known warm throughput on an existing index", () => {
+  const plan = processingRetryPlan();
+  const { before, after } = findChange(plan, tableAddress).change;
+  for (const value of [before, after]) {
+    const index = value.global_secondary_index.find(
+      (index: { name: string }) => index.name === "GuildTimestampIndex",
+    );
+    index.warm_throughput = [
+      { read_units_per_second: 1, write_units_per_second: 1 },
+    ];
+  }
+  expect(() => validate(plan)).not.toThrow();
+});
+
 test("the CLI binds account and environment and explains the prerequisite", () => {
   const text = JSON.stringify(processingRetryPlan());
   expect(runPlanGuard(guard, text, [retryAccountId, "production"]).status).toBe(
