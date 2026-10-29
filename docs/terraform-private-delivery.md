@@ -22,6 +22,18 @@ Tfvars inputs are unchanged. `TERRAFORM_PRIVATE_STORAGE_JSON` is an environment 
 
 New bindings should set `policySha256` to `bindingHash(JSON.parse(policyText))` using `scripts/deployment/binding-hash.cjs`. This digest sorts object keys recursively and ignores JSON whitespace while preserving every value and array order. Existing raw-text SHA-256 bindings remain accepted for the exact policy text they bind. This changes only policy representation handling; SDK attempts, storage controls and native approval requirements remain unchanged.
 
+To migrate an existing raw-text binding, independently compare and review the complete current `GetBucketPolicy.Policy` JSON string against the approved policy. A raw digest alone cannot be converted into a canonical digest. From the reviewed repository root, compute the new value from the reviewed policy, keeping the existing `policySha256` field:
+
+```js
+const { bindingHash } = require("./scripts/deployment/binding-hash.cjs");
+const canonicalHash = bindingHash(JSON.parse(reviewedPolicy));
+const migratedBinding = { ...reviewedBinding, policySha256: canonicalHash };
+```
+
+Update the protected binding through its approved private configuration route and reapprove any enclosing request or manifest hashes that bind the changed JSON. Keep the complete reviewed policy and migration output private. This procedure does not authorize secret updates, permission changes or deployment.
+
+Captured objects retain their exact original-byte hashes. The separate `_infra/production-bootstrap` and `_infra/sandbox-bootstrap` saved-plan guards retain their `policySha256` maps and exact policy-string byte checks; those bindings do not use this migration.
+
 The capture adapter verifies versioning, bucket-owner-enforced ownership, Block Public Access, nonpublic policy, approved SSE-KMS with bucket keys disabled and the exact lifecycle configuration. The single encryption rule may omit `BlockedEncryptionTypes` or report exactly `{ EncryptionType: ["SSE-C"] }`; other encryption rule shapes refuse. Enabled expiration rules refuse. Retention must cover at least the next six hours at each invocation. Execution identities must have separately approved capture/read permissions and no delete or storage-administration authority. Versioning does not prevent an administrator from deleting evidence.
 
 Three non-secret collection inputs use JSON text in their GitHub Actions variable values:
