@@ -1,3 +1,4 @@
+import { meetingBrowseSearchSchema } from "../../utils/meetingBrowseSearch";
 import { Center, ScrollArea, Stack, Text } from "@mantine/core";
 import { useNavigate, useParams } from "@tanstack/react-router";
 import type { MouseEvent, RefObject } from "react";
@@ -42,17 +43,13 @@ const resolvePortalLink = (href: string, serverId: string, origin: string) => {
   return link;
 };
 
-const resolvePortalHref = (
-  href: string,
-  serverId: string,
-  origin: string,
-  location: Location,
-) => {
+const resolvePortalHref = (href: string, serverId: string, origin: string) => {
   const link = resolvePortalLink(href, serverId, origin);
   if (!link) return href;
   return buildMeetingLinkForLocation({
-    pathname: location.pathname,
-    search: location.search,
+    pathname: "/portal/meetings",
+    search: `?scope=guild&serverId=${encodeURIComponent(link.serverId)}`,
+    meetingServerId: link.serverId,
     meetingId: link.meetingId,
     eventId: link.eventId,
   });
@@ -81,9 +78,11 @@ const handlePortalLinkClick = (options: {
   if (!link) return;
   options.event.preventDefault();
   options.navigate({
-    to: ".",
-    search: (prev) => ({
-      ...prev,
+    to: "/portal/meetings",
+    search: meetingBrowseSearchSchema.parse({
+      scope: "guild",
+      serverId: link.serverId,
+      meetingServerId: link.serverId,
       meetingId: link.meetingId,
       eventId: link.eventId,
     }),
@@ -97,7 +96,7 @@ const buildPortalLinkHandler = (options: {
   navigate: ReturnType<typeof useNavigate>;
 }): MarkdownLinkHandler => ({
   resolveHref: (href: string) =>
-    resolvePortalHref(href, options.serverId, options.origin, options.location),
+    resolvePortalHref(href, options.serverId, options.origin),
   openInNewTab: (href: string) =>
     shouldOpenPortalLinkInNewTab(href, options.serverId, options.origin),
   onLinkClick: ({ href, event }) =>

@@ -224,3 +224,21 @@ describe("AuthContext authenticated", () => {
     );
   });
 });
+
+test("login retains the unified source and drawer destination", () => {
+  resetAuthContext();
+  setAuthQuery({ data: null, isLoading: false });
+  const destination =
+    "/portal/meetings?scope=personal&meetingServerId=personal%3Au&meetingId=voice%23date&eventId=e&fullScreen=true";
+  window.history.pushState({}, "", destination);
+  render(
+    <AuthProvider>
+      <AuthProbe onCapture={() => {}} />
+    </AuthProvider>,
+  );
+  const login = screen.getByTestId("auth-state").getAttribute("data-login");
+  if (!login) throw new Error("Missing login URL");
+  expect(
+    new URL(login, window.location.origin).searchParams.get("redirect"),
+  ).toBe(`${window.location.origin}${destination}`);
+});

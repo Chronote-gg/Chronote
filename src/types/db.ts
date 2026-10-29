@@ -539,7 +539,7 @@ export interface MeetingUserIndexRecord {
   channelId_timestamp: string;
   meetingId: string;
   timestamp: string;
-  accessReason?: "attendee" | "owner" | "user_share";
+  accessReason?: "attendee" | "owner" | "user_share" | "guild_share";
 }
 
 export type ContactFeedbackSource = "discord" | "web";

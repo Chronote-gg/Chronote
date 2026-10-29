@@ -30,7 +30,10 @@ test("interrupted library detail keeps warning and scrolls saved notes", async (
       [];
     if (
       !paths.some(
-        (path) => path === "meetings.list" || path === "meetings.detail",
+        (path) =>
+          path === "meetings.list" ||
+          path === "meetings.myList" ||
+          path === "meetings.detail",
       )
     ) {
       await route.continue();

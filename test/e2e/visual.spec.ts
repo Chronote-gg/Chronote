@@ -428,7 +428,7 @@ test.describe("visual regression", () => {
 
     for (const mode of visualModes) {
       await page.goto(withVisualMode("/portal/meetings", mode));
-      await expect(page.getByTestId("my-meetings-page")).toBeVisible();
+      await expect(page.getByTestId("unified-meetings-page")).toBeVisible();
       await expectVisualScreenshot(page, "my-meetings", mode);
 
       notionState = { connected: true, exported: false, outdated: false };
@@ -453,9 +453,7 @@ test.describe("visual regression", () => {
       const openLibrary = async () => {
         await page.goto(withVisualMode("/portal/select-server", mode));
         await serverSelectPage.openServerByName(mockGuilds.ddm.name);
-        await libraryPage.waitForLoaded();
-        await page.getByTestId("library-range").click();
-        await page.getByRole("option", { name: "All time" }).click();
+        await libraryPage.selectAllTime();
         await libraryPage.waitForLoaded(mockLibrary.meetingCount);
       };
 
@@ -465,6 +463,7 @@ test.describe("visual regression", () => {
       await libraryPage.openFirstMeeting();
       const drawerDialog = page.getByRole("dialog");
       await expect(drawerDialog).toBeVisible();
+      await expect(libraryPage.drawerSummaryLabel()).toBeVisible();
       await expectVisualScreenshot(page, "library-drawer", mode);
 
       await drawerDialog.getByRole("button", { name: "Notes actions" }).click();

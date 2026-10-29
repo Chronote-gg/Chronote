@@ -1,15 +1,15 @@
-import type { MeetingUpdatePublicDelivery } from "../../../../services/meetingUpdateStatus";
 import { useEffect, useMemo, useRef } from "react";
-import { trpc } from "../../../services/trpc";
+import type { MeetingUpdatePublicDelivery } from "../../../../services/meetingUpdateStatus";
+import type { LiveMeetingStatus } from "../../../../types/liveMeeting";
+import { MEETING_STATUS } from "../../../../types/meetingLifecycle";
+import type { MeetingEvent } from "../../../../types/meetingTimeline";
 import { useLiveMeetingStream } from "../../../hooks/useLiveMeetingStream";
+import { trpc } from "../../../services/trpc";
 import {
   buildMeetingDetails,
   type MeetingDetailInput,
   type MeetingDetails,
 } from "../../../utils/meetingLibrary";
-import { MEETING_STATUS } from "../../../../types/meetingLifecycle";
-import type { LiveMeetingStatus } from "../../../../types/liveMeeting";
-import type { MeetingEvent } from "../../../../types/meetingTimeline";
 import type { MeetingProcessingRetryProps } from "../components/MeetingProcessingRetry";
 import { useProcessingRetry } from "./useProcessingRetry";
 
@@ -219,6 +219,19 @@ const resolveTimelineEmptyLabel = (
   }
 };
 
+function resolveAuthorizedDetail(
+  data: { meeting?: MeetingDetailInput } | undefined,
+  errorCode: string | undefined,
+  selectedMeetingId: string | null,
+) {
+  const accessDenied =
+    errorCode === "FORBIDDEN" ||
+    errorCode === "UNAUTHORIZED" ||
+    errorCode === "NOT_FOUND";
+  const queriedDetail = accessDenied ? null : resolveDetail(data);
+  return queriedDetail?.id === selectedMeetingId ? queriedDetail : null;
+}
+
 export const useMeetingDetail = (
   params: UseMeetingDetailParams,
 ): UseMeetingDetailResult => {
@@ -234,9 +247,11 @@ export const useMeetingDetail = (
     },
   );
 
-  const queriedDetail = resolveDetail(detailQuery.data);
-  const detail =
-    queriedDetail?.id === params.selectedMeetingId ? queriedDetail : null;
+  const detail = resolveAuthorizedDetail(
+    detailQuery.data,
+    detailQuery.error?.data?.code,
+    params.selectedMeetingId,
+  );
   const acknowledgment = params.acknowledgedDelivery;
   const delivery =
     acknowledgment &&

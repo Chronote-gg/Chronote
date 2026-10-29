@@ -36,7 +36,7 @@ export function buildFirstMeetingInstallerMessage(options: {
             type: ComponentType.Button,
             label: "Open portal",
             style: ButtonStyle.Link,
-            url: `${base}/portal/server/${serverId}/library`,
+            url: `${base}/portal/meetings?scope=guild&serverId=${serverId}`,
           },
           {
             type: ComponentType.Button,
