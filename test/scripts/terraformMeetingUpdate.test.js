@@ -118,17 +118,6 @@ test.each([
     },
   ],
   [
-    "partially unknown warm_throughput",
-    (p) => {
-      p.resource_changes[0].change.after_unknown = {
-        global_secondary_index: [
-          {},
-          { warm_throughput: [{ read_units_per_second: true }] },
-        ],
-      };
-    },
-  ],
-  [
     "unknown policy",
     (p) => {
       p.resource_changes[1].change.after_unknown = { policy: true };
@@ -450,3 +439,39 @@ test.each(["read", "no-op"])(
     }
   },
 );
+
+test("rejects a partially unknown warm_throughput as an unknown index effect", () => {
+  const p = meetingUpdatePlan();
+  p.resource_changes[0].change.after_unknown = {
+    global_secondary_index: [
+      {},
+      { warm_throughput: [{ read_units_per_second: true }] },
+    ],
+  };
+  expect(() => verifyMeetingUpdatePlan(p, identity)).toThrow(
+    "Unknown index effect",
+  );
+});
+
+// One index's unknown warm_throughput must not hide a known pre-warm change on
+// another; the guild index keeps its known value only when it is unchanged.
+test.each([
+  ["unchanged", [], true],
+  [
+    "pre-warmed",
+    [{ read_units_per_second: 50000, write_units_per_second: 20000 }],
+    false,
+  ],
+])("a known %s guild warm_throughput beside an unknown one", (_, warm, ok) => {
+  const p = meetingUpdatePlan();
+  const table = p.resource_changes[0].change;
+  const [guild, delivery] = table.after.global_secondary_index;
+  guild.warm_throughput = warm;
+  delete delivery.warm_throughput;
+  table.after_unknown = {
+    global_secondary_index: [{}, { warm_throughput: true }],
+  };
+  const verify = () => verifyMeetingUpdatePlan(p, identity);
+  if (ok) expect(verify).not.toThrow();
+  else expect(verify).toThrow();
+});
