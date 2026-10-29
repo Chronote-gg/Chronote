@@ -18,6 +18,13 @@ import {
   recoveryDispositionSchema,
 } from "./recordingCheckpoint";
 import { z } from "zod";
+import {
+  RUNTIME_WORK_KINDS,
+  retirementContinuationSchema,
+  runtimeWorkCountsSchema,
+  type RuntimeWorkKind,
+  type RetirementContinuation,
+} from "./retirementContinuation";
 import type { ActiveMeetingLease, MeetingHistory } from "./db";
 import { MEETING_STATUS, type MeetingStatus } from "./meetingLifecycle";
 
@@ -65,16 +72,12 @@ export const protectionConfirmationSchema = z
 export type ProtectionConfirmation = z.infer<
   typeof protectionConfirmationSchema
 >;
-export const RUNTIME_WORK_KINDS = [
-  "pending_admission",
-  "recording",
-  "finalization",
-  "personal_processing",
-  "recovery_processing",
-  "voice_operation",
-  "ancillary_delivery",
-] as const;
-export type RuntimeWorkKind = (typeof RUNTIME_WORK_KINDS)[number];
+export {
+  RUNTIME_WORK_KINDS,
+  retirementContinuationSchema,
+  type RuntimeWorkKind,
+  type RetirementContinuation,
+};
 export type RuntimeWorkHandle = { settle(): void };
 
 export type SessionOwnership = Pick<
@@ -165,25 +168,6 @@ export const deploymentPhaseSchema = z
   })
   .strict();
 export type DeploymentPhase = z.infer<typeof deploymentPhaseSchema>;
-const workCountsSchema = z.record(
-  z.enum(RUNTIME_WORK_KINDS),
-  z.number().int().nonnegative(),
-);
-/** Coordinator record for an outgoing runtime whose ECS task stopped before acknowledging retirement. */
-export const retirementContinuationSchema = z
-  .object({
-    reason: z.literal("outgoing_task_stopped"),
-    taskStatus: z.enum(["stopped", "missing"]),
-    stoppedReason: deploymentText.optional(),
-    stoppedAt: z.string().datetime({ offset: true }).optional(),
-    lostWorkCounts: workCountsSchema.optional(),
-    continuedBy: deploymentText,
-    continuedAt: epochSecond,
-  })
-  .strict();
-export type RetirementContinuation = z.infer<
-  typeof retirementContinuationSchema
->;
 export const controlRecordSchema = z
   .object({
     pk: z.literal("ENV"),
@@ -248,7 +232,7 @@ export const runtimeRecordSchema = z
     canonicalContentWriter: z.literal(1).optional(),
     readiness: runtimeReadinessSchema,
     protection: protectionConfirmationSchema,
-    workCounts: workCountsSchema.optional(),
+    workCounts: runtimeWorkCountsSchema.optional(),
     expiresAt: epochSecond.optional(),
     retirementRequest: retirementRequestSchema.optional(),
     retirementAcknowledgment: retirementAcknowledgmentSchema.optional(),

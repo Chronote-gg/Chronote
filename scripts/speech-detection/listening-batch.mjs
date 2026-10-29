@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { readFile, writeFile, mkdir } from "node:fs/promises";
+import { readFile, writeFile, mkdir, realpath } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { parseArgs, isDeepStrictEqual } from "node:util";
 import { fileURLToPath } from "node:url";
@@ -328,28 +328,21 @@ export function assertPrivateOutput(output) {
     path.isAbsolute(relative) ||
     relative === ".." ||
     relative.startsWith(`..${path.sep}`);
-  if (!outside && !relative.startsWith(`.cache${path.sep}`))
-    throw Error("output_must_be_private_and_untracked");
+  if (!outside) throw Error("output_must_be_private_and_untracked");
 }
 
-export async function main(args = process.argv.slice(2)) {
-  const { values } = parseArgs({
-    args,
-    options: {
-      checkpoints: { type: "string" },
-      bucket: { type: "string" },
-      account: { type: "string" },
-      region: { type: "string" },
-      out: { type: "string" },
-      help: { type: "boolean" },
-    },
-  });
-  if (values.help) {
-    console.log(
-      "node scripts/speech-detection/listening-batch.mjs --checkpoints selected.json --bucket BUCKET --account ACCOUNT_ID --region REGION --out PRIVATE_NEW_DIRECTORY",
-    );
-    return;
-  }
+export async function resolvePrivateOutput(output) {
+  const absolute = path.resolve(output);
+  assertPrivateOutput(absolute);
+  const resolved = path.join(
+    await realpath(path.dirname(absolute)),
+    path.basename(absolute),
+  );
+  assertPrivateOutput(resolved);
+  return resolved;
+}
+
+async function operatorInputs(values) {
   if (
     !values.checkpoints ||
     !values.bucket ||
@@ -370,8 +363,29 @@ export async function main(args = process.argv.slice(2)) {
     .parse(JSON.parse(await readFile(values.checkpoints, "utf8")));
   if (new Set(selected.map((m) => m.meetingId)).size !== selected.length)
     throw Error("duplicate_meeting_selection");
-  const output = path.resolve(values.out);
-  assertPrivateOutput(output);
+  const output = await resolvePrivateOutput(values.out);
+  return { selected, output };
+}
+
+export async function main(args = process.argv.slice(2)) {
+  const { values } = parseArgs({
+    args,
+    options: {
+      checkpoints: { type: "string" },
+      bucket: { type: "string" },
+      account: { type: "string" },
+      region: { type: "string" },
+      out: { type: "string" },
+      help: { type: "boolean" },
+    },
+  });
+  if (values.help) {
+    console.log(
+      "node scripts/speech-detection/listening-batch.mjs --checkpoints selected.json --bucket BUCKET --account ACCOUNT_ID --region REGION --out PRIVATE_NEW_DIRECTORY",
+    );
+    return;
+  }
+  const { selected, output } = await operatorInputs(values);
   const { STSClient, GetCallerIdentityCommand } =
     await import("@aws-sdk/client-sts");
   const identity = await new STSClient({ region: values.region }).send(
