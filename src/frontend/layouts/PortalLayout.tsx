@@ -88,8 +88,8 @@ export default function PortalLayout() {
     display: visualMode ? "grid" : undefined,
     gridTemplateColumns: visualMode
       ? visualNavbar
-        ? `${navbarWidth}px 1fr`
-        : "1fr"
+        ? `${navbarWidth}px minmax(0, 1fr)`
+        : "minmax(0, 1fr)"
       : undefined,
     gridTemplateRows: visualMode ? "auto 1fr auto" : undefined,
     gridTemplateAreas: visualMode ? gridTemplateAreas : undefined,
@@ -132,6 +132,7 @@ export default function PortalLayout() {
     main: visualMode
       ? {
           gridArea: "main",
+          minWidth: 0,
           overflow: "visible",
           height: "auto",
           minHeight: "auto",
@@ -167,7 +168,13 @@ export default function PortalLayout() {
             context={headerContext}
           />
         </AppShell.Header>
-        <AppShell.Main>
+        <AppShell.Main
+          data-testid={
+            pathname === "/portal/meetings"
+              ? "meeting-browse-scroll"
+              : undefined
+          }
+        >
           <Container
             size="xl"
             px={pagePaddingX}
@@ -226,7 +233,13 @@ export default function PortalLayout() {
             context={headerContext}
           />
         </AppShell.Header>
-        <AppShell.Main>
+        <AppShell.Main
+          data-testid={
+            pathname === "/portal/meetings"
+              ? "meeting-browse-scroll"
+              : undefined
+          }
+        >
           <Container
             size="xl"
             px={pagePaddingX}
@@ -293,7 +306,13 @@ export default function PortalLayout() {
             <SiteNavbar onClose={navbarHandlers.close} pathname={pathname} />
           </AppShell.Navbar>
         ) : null}
-        <AppShell.Main>
+        <AppShell.Main
+          data-testid={
+            pathname === "/portal/meetings"
+              ? "meeting-browse-scroll"
+              : undefined
+          }
+        >
           <Container
             size="xl"
             px={pagePaddingX}

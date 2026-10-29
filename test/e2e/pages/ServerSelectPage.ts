@@ -23,9 +23,9 @@ export class ServerSelectPage {
   }
 
   private async waitForPortal(): Promise<void> {
-    await this.page.waitForURL(/\/portal\/server\/.+\/library/);
+    await this.page.waitForURL(/\/portal\/meetings\?/);
     await this.page
-      .getByTestId(testIds.nav.library)
+      .getByTestId(testIds.library.page)
       .waitFor({ state: "visible" });
   }
 

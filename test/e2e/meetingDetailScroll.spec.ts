@@ -121,7 +121,12 @@ for (const visual of ["0", "1"]) {
         ).join("\n") + `\n\n${sentinel}`,
     };
     await mockFirstMeetingRequests(page, {
-      "meetings.list": () => ({ meetings: [meeting] }),
+      "meetings.myList": () => ({
+        meetings: [{ ...meeting, serverId: mockGuilds.ddm.id }],
+        hasMore: false,
+        discoveryComplete: true,
+        nextCursor: null,
+      }),
       "meetings.detail": () => ({
         meeting: {
           ...meeting,

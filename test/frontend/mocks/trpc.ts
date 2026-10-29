@@ -1,3 +1,4 @@
+import { emptyMeetingBrowse } from "./emptyMeetingBrowse";
 import type { QueryState, MutationState } from "./trpcState";
 import {
   buildQueryState,
@@ -144,7 +145,6 @@ type PricingPlansData = {
   annualIntroOffer?: BasicIntroOffer;
 };
 type BillingDataQuery = BillingData;
-type MeetingsListData = { meetings: MeetingSummaryRow[] };
 type MeetingsDetailData = { meeting: MeetingDetail | null };
 type ChannelsData = {
   voiceChannels: ChannelSummary[];
@@ -325,9 +325,6 @@ export const billingRenewalMutation = buildMutationState<
   RenewalResult
 >({ kind: "changed" });
 export const billingQuery = buildQueryState<BillingDataQuery | null>(null);
-export const meetingsListQuery = buildQueryState<MeetingsListData>({
-  meetings: [],
-});
 export const meetingsDetailQuery = buildQueryState<MeetingsDetailData>({
   meeting: null,
 });
@@ -718,7 +715,6 @@ export const resetTrpcMocks = () => {
     lifecycleAnalyticsEnabled: false,
   });
   resetMutationState(billingRenewalMutation, { kind: "changed" });
-  resetQueryState(meetingsListQuery, { meetings: [] });
   resetQueryState(meetingsDetailQuery, { meeting: null });
   resetQueryState(serversChannelsQuery, {
     voiceChannels: [],
@@ -905,12 +901,6 @@ export const setBillingQuery = (
   Object.assign(billingQuery, next);
 };
 
-export const setMeetingsListQuery = (
-  next: Partial<QueryState<MeetingsListData>>,
-) => {
-  Object.assign(meetingsListQuery, next);
-};
-
 export const setMeetingsDetailQuery = (
   next: Partial<QueryState<MeetingsDetailData>>,
 ) => {
@@ -1085,7 +1075,7 @@ jest.mock("../../../src/frontend/services/trpc", () => ({
       setArchived: { useMutation: () => askArchiveMutation },
     },
     meetings: {
-      list: { useQuery: () => meetingsListQuery },
+      myList: { useInfiniteQuery: emptyMeetingBrowse },
       detail: { useQuery: () => meetingsDetailQuery },
       setArchived: { useMutation: () => meetingsArchiveMutation },
       rename: { useMutation: () => meetingsRenameMutation },

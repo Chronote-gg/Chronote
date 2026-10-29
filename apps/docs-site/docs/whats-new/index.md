@@ -7,6 +7,10 @@ Notable product changes for Chronote users. For the full changelog, see the [Git
 
 ## 2026
 
+### One place for your meetings (October 29)
+
+- **Meetings** brings accessible server and personal recordings into one list. Choose a source, filter by actual attendance, or load older meetings. Existing Library and direct meeting links still work. See [Getting started](/getting-started/).
+
 ### Retry meetings that failed to process (October 28)
 
 - When a provider outage or error stops transcription, notes or the summary, the meeting's owner can retry from the meeting page. Chronote re-runs the failed steps and anything that depends on them, and existing Discord posts are updated in place. See [Common issues](/troubleshooting/common-issues).

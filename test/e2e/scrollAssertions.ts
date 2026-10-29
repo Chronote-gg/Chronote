@@ -1,7 +1,29 @@
-import type { Page } from "@playwright/test";
+import type { Locator, Page } from "@playwright/test";
 import { expect } from "./fixtures";
 
-export async function assertPageCanScroll(page: Page): Promise<void> {
+export async function assertPageCanScroll(
+  page: Page,
+  target?: Locator,
+): Promise<void> {
+  if (target) {
+    const metrics = await target.evaluate((element) => {
+      element.scrollTop = 0;
+      const before = element.scrollTop;
+      element.scrollTop = 100;
+      return {
+        height: element.scrollHeight,
+        client: element.clientHeight,
+        before,
+        after: element.scrollTop,
+      };
+    });
+    expect(metrics.height).toBeGreaterThan(metrics.client);
+    expect(metrics.after).toBeGreaterThan(metrics.before);
+    await target.evaluate((element) => {
+      element.scrollTop = 0;
+    });
+    return;
+  }
   const scroll = await page.evaluate(() => {
     const elements = [
       document.scrollingElement,
