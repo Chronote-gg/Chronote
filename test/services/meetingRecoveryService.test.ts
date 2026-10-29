@@ -399,6 +399,56 @@ test.each(["Earlier acknowledged discussion.", "Thanks.", ""])(
   },
 );
 
+test("audio the speech gate skips during recovery is empty text, not a failed attempt", async () => {
+  const bytes = Buffer.alloc(384000);
+  const f = await fixture("", {
+    transcript: (saved) => {
+      if (saved.entries[0]) saved.entries[0].revision = 2;
+    },
+    context: (saved) => {
+      saved.prompts.transcription = {
+        availability: "available",
+        value: {
+          name: "original",
+          type: "text",
+          label: "original",
+          version: 1,
+          template: "Saved transcription prompt",
+        },
+      };
+    },
+    artifacts: [
+      {
+        kind: "audio",
+        sourceId: "user:456",
+        sequence: 2,
+        contentType: "audio/pcm",
+        bytes,
+        checksumSha256: createHash("sha256").update(bytes).digest("hex"),
+        format: { encoding: "pcm_s16le", channels: 2, sampleRate: 48000 },
+        coverage: {
+          kind: "known",
+          intervals: [
+            { sourceId: "user:456", startOffsetMs: 5000, durationMs: 1000 },
+            { sourceId: "user:456", startOffsetMs: 15000, durationMs: 1000 },
+          ],
+        },
+      },
+    ],
+  });
+  jest.mocked(transcribeContentSnippet).mockResolvedValueOnce({
+    status: "skipped",
+    reason: "non_speech",
+    coverage: { kind: "unknown", reason: "source_intervals_unknown" },
+  } as never);
+  await recoverMeeting(f.claim, f.deps);
+  expect(transcribeContentSnippet).toHaveBeenCalledTimes(1);
+  expect(f.claim.history.recovery).toMatchObject({
+    disposition: "done",
+    outcome: "no_usable_speech",
+  });
+});
+
 test.each([
   { chunkSeconds: 0, minChunkSeconds: 0 },
   { estimatedMp3BytesPerSecond: 0 },
