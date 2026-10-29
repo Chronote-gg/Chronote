@@ -521,6 +521,24 @@ test("processing retry Apply refuses a restored plan that changes the table furt
   });
 });
 
+test.each([
+  [
+    "a later commit that changes a Terraform input",
+    (f) => laterApply(f, "b".repeat(40), ["_infra/main.tf"]),
+    "Terraform input changed",
+  ],
+  [
+    "an active deploy",
+    (f) => (f.controls.busyWorkflow = "deploy.yml"),
+    "Production writer deploy.yml",
+  ],
+])("processing retry Apply refuses %s", async (_name, arrange, reason) => {
+  const f = fixture();
+  f.controls.planJson = processingRetryPlan();
+  arrange(f);
+  await expectApply(f, "refused", { scope: "processing-retry", reason });
+});
+
 test("runtime Plan refuses to bundle a serving service change", async () => {
   const f = fixture();
   f.controls.planJson = runtimePlan();
