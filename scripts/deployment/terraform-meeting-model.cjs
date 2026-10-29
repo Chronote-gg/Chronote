@@ -3,6 +3,7 @@ const assert = require("node:assert/strict");
 const { execFileSync } = require("node:child_process");
 const { readdirSync, readFileSync, lstatSync } = require("node:fs");
 const { join } = require("node:path");
+const { isUtf8 } = require("node:buffer");
 const { bindingHash } = require("./binding-hash.cjs");
 const { digest } = require("./collector-payload.cjs");
 // Source audit and maintenance contract: docs/terraform-meeting-source-model.md.
@@ -91,8 +92,10 @@ const proofs = new WeakMap();
 const verifiedChanges = new WeakMap();
 const isSource = (name) =>
   /\.tf(?:\.json)?$/.test(name) || name === ".terraform.lock.hcl";
-const modelDigest = (bytes) =>
-  digest(Buffer.from(bytes.toString("utf8").replace(/\r\n/g, "\n")));
+const modelDigest = (bytes) => {
+  assert.ok(isUtf8(bytes), "Invalid UTF-8 Terraform source");
+  return digest(Buffer.from(bytes.toString("utf8").replace(/\r\n/g, "\n")));
+};
 
 function verifySource(directory, sourceSha) {
   assert.match(sourceSha, /^[a-f0-9]{40}$/);

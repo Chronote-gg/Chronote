@@ -613,3 +613,21 @@ test("source model alone tolerates LF/CRLF; raw lock digest still refuses a byte
     rmSync(directory, { recursive: true, force: true });
   }
 });
+
+test("source model refuses malformed UTF-8 before text normalization", () => {
+  const directory = mkdtempSync(join(tmpdir(), "meeting-model-"));
+  mkdirSync(join(directory, "_infra"));
+  try {
+    const sourceSha = copyModelSource(directory);
+    const file = join(directory, "_infra/main.tf");
+    writeFileSync(
+      file,
+      Buffer.concat([readFileSync(file), Buffer.from([0xff])]),
+    );
+    expect(() => verifySource(directory, sourceSha)).toThrow(
+      /Invalid UTF-8 Terraform source/,
+    );
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
