@@ -1,3 +1,9 @@
+import {
+  getSnapshotBoolean,
+  resolveConfigSnapshot,
+} from "../../src/services/unifiedConfigService";
+/** @jest-environment node */
+import { createLegacyBrowseFixture } from "../../src/testSupport/meetingBrowseLegacy";
 import { beforeEach, describe, expect, test, jest } from "@jest/globals";
 import type { MeetingHistory } from "../../src/types/db";
 import {
@@ -5,7 +11,10 @@ import {
   listBotGuildsCached,
   listGuildChannelsCached,
 } from "../../src/services/discordCacheService";
-import { getMeetingHistoryService } from "../../src/services/meetingHistoryService";
+import {
+  getMeetingHistoryService,
+  listMeetingsForGuildInRangeService,
+} from "../../src/services/meetingHistoryService";
 import { listMeetingUserIndexForUserInRangeService } from "../../src/services/meetingUserIndexService";
 import { checkUserMeetingAccess } from "../../src/services/meetingAccessService";
 import {
@@ -15,6 +24,7 @@ import {
 
 jest.mock("../../src/services/configService", () => ({
   config: {
+    server: { sessionSecret: "test-secret" },
     frontend: { siteUrl: "https://app.example.com" },
     cache: {
       enabled: false,
@@ -30,7 +40,9 @@ jest.mock("../../src/services/configService", () => ({
 }));
 
 jest.mock("../../src/services/discordService", () => ({
-  isDiscordApiError: jest.fn(() => false),
+  isDiscordApiError: jest.fn(
+    (error: unknown) => error instanceof Error && "status" in error,
+  ),
 }));
 
 jest.mock("../../src/services/discordCacheService", () => ({
@@ -62,6 +74,26 @@ jest.mock("../../src/services/unifiedConfigService", () => ({
   getSnapshotBoolean: jest.fn(() => true),
 }));
 
+const mockBrowse = createLegacyBrowseFixture({
+  history: (...args) => listMeetingsForGuildInRangeService(...args),
+  index: (...args) => listMeetingUserIndexForUserInRangeService(...args),
+  get: (...args) => getMeetingHistoryService(...args),
+});
+jest.mock("../../src/repositories/meetingHistoryRepository", () => ({
+  getMeetingHistoryRepository: () => mockBrowse.history,
+}));
+jest.mock("../../src/repositories/meetingUserIndexRepository", () => ({
+  getMeetingUserIndexRepository: () => mockBrowse.index,
+}));
+const mockCursorStates = new Map<string, unknown>();
+jest.mock("../../src/db", () => ({
+  putMeetingBrowseCursorState: async (id: string, state: unknown) => {
+    mockCursorStates.set(id, structuredClone(state));
+  },
+  getMeetingBrowseCursorState: async (id: string) =>
+    structuredClone(mockCursorStates.get(id)),
+}));
+
 const meeting: MeetingHistory = {
   guildId: "guild-old",
   channelId_timestamp: "voice-1#2026-01-02T00:00:00.000Z",
@@ -86,8 +118,22 @@ describe("mcpMeetingService", () => {
   const mockedCheckMeetingAccess = jest.mocked(checkUserMeetingAccess);
 
   beforeEach(() => {
+    mockBrowse.reset();
+    mockCursorStates.clear();
     jest.resetAllMocks();
-    mockedGetGuildMember.mockRejectedValue(new Error("not a member"));
+    jest.mocked(getSnapshotBoolean).mockReturnValue(true);
+    jest
+      .mocked(resolveConfigSnapshot)
+      .mockResolvedValue(
+        {} as Awaited<ReturnType<typeof resolveConfigSnapshot>>,
+      );
+    jest.mocked(listMeetingsForGuildInRangeService).mockResolvedValue([]);
+    jest
+      .mocked(listMeetingUserIndexForUserInRangeService)
+      .mockResolvedValue([]);
+    mockedGetGuildMember.mockRejectedValue(
+      Object.assign(new Error("not a member"), { status: 404 }),
+    );
     mockedListBotGuilds.mockResolvedValue([]);
     mockedListGuildChannels.mockResolvedValue([]);
     mockedGetMeetingHistory.mockResolvedValue(meeting);

@@ -1,3 +1,4 @@
+import { meetingBrowseFiltersSchema } from "../../services/meetingBrowseCursor";
 import { updateMeeting } from "../../services/meetingUpdateService";
 import { approvedCorrectionMutation } from "../../services/approvedMeetingCorrection";
 import { projectMeetingUpdateDelivery } from "../../services/meetingUpdateStatus";
@@ -576,29 +577,41 @@ const list = guildMemberProcedure
 
 const myList = authedProcedure
   .input(
-    z.object({
-      mode: z.enum(["attended", "accessible"]).optional(),
-      range: z.enum(["all", "today", "past_7_days", "custom"]).optional(),
-      limit: z.number().min(1).max(100).optional(),
-      cursor: z.string().min(1).optional(),
-      startDate: z.string().datetime().optional(),
-      endDate: z.string().datetime().optional(),
-      timeZoneOffsetMinutes: z
-        .number()
-        .int()
-        .min(-14 * 60)
-        .max(14 * 60)
-        .optional(),
-      serverIds: z.array(z.string().min(1)).optional(),
-      tags: z.array(z.string().min(1)).optional(),
-      archivedOnly: z.boolean().optional(),
-      includeArchived: z.boolean().optional(),
-    }),
+    z
+      .object({
+        browse: meetingBrowseFiltersSchema.optional(),
+        mode: z.enum(["attended", "accessible"]).optional(),
+        range: z.enum(["all", "today", "past_7_days", "custom"]).optional(),
+        limit: z.number().min(1).max(100).optional(),
+        cursor: z.string().min(1).optional(),
+        startDate: z.string().datetime().optional(),
+        endDate: z.string().datetime().optional(),
+        timeZoneOffsetMinutes: z
+          .number()
+          .int()
+          .min(-14 * 60)
+          .max(14 * 60)
+          .optional(),
+        serverIds: z.array(z.string().min(1)).optional(),
+        tags: z.array(z.string().min(1)).optional(),
+        archivedOnly: z.boolean().optional(),
+        includeArchived: z.boolean().optional(),
+      })
+      .refine(
+        (input) =>
+          !input.browse ||
+          (input.mode === "accessible" && !input.serverIds?.length),
+        {
+          message:
+            "Browse requires accessible mode and uses scope instead of serverIds.",
+        },
+      ),
   )
   .query(async ({ ctx, input }) => {
     try {
       return await listMcpMyMeetings({
         userId: ctx.user.id,
+        browse: input.browse,
         mode: input.mode,
         range: input.range,
         limit: input.limit,

@@ -497,6 +497,7 @@ describe("MCP JSON-RPC handler", () => {
 
   it("calls list_my_meetings with the authenticated user id", async () => {
     jest.mocked(listMcpMyMeetings).mockResolvedValue({
+      discoveryComplete: true,
       mode: "attended",
       range: {
         startDate: "2026-01-01T00:00:00.000Z",
@@ -603,6 +604,7 @@ describe("MCP JSON-RPC handler", () => {
 
   it("allows explicit My Meetings date bounds without an explicit range", async () => {
     jest.mocked(listMcpMyMeetings).mockResolvedValue({
+      discoveryComplete: true,
       mode: "attended",
       range: {
         startDate: "2026-01-01T00:00:00.000Z",
@@ -927,6 +929,7 @@ describe("MCP service account restrictions", () => {
 
   it("pins list_my_meetings to the token guild even when other servers are requested", async () => {
     jest.mocked(listMcpMyMeetings).mockResolvedValue({
+      discoveryComplete: true,
       meetings: [],
       hasMore: false,
       nextCursor: null,

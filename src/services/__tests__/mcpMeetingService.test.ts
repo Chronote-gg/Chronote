@@ -1,3 +1,5 @@
+/** @jest-environment node */
+import { createLegacyBrowseFixture } from "../../testSupport/meetingBrowseLegacy";
 import { jest } from "@jest/globals";
 import {
   getGuildMemberCached,
@@ -28,7 +30,9 @@ import type { MeetingHistory } from "../../types/db";
 import { MEETING_STATUS } from "../../types/meetingLifecycle";
 
 jest.mock("../discordService", () => ({
-  isDiscordApiError: jest.fn(() => false),
+  isDiscordApiError: jest.fn(
+    (error: unknown) => error instanceof Error && "status" in error,
+  ),
 }));
 
 jest.mock("../discordCacheService", () => ({
@@ -61,6 +65,26 @@ jest.mock("../unifiedConfigService", () => ({
   resolveConfigSnapshot: jest.fn(() => Promise.resolve({})),
 }));
 
+const mockBrowse = createLegacyBrowseFixture({
+  history: (...args) => listMeetingsForGuildInRangeService(...args),
+  index: (...args) => listMeetingUserIndexForUserInRangeService(...args),
+  get: (...args) => getMeetingHistoryService(...args),
+});
+jest.mock("../../repositories/meetingHistoryRepository", () => ({
+  getMeetingHistoryRepository: () => mockBrowse.history,
+}));
+jest.mock("../../repositories/meetingUserIndexRepository", () => ({
+  getMeetingUserIndexRepository: () => mockBrowse.index,
+}));
+const mockCursorStates = new Map<string, unknown>();
+jest.mock("../../db", () => ({
+  putMeetingBrowseCursorState: async (id: string, state: unknown) => {
+    mockCursorStates.set(id, structuredClone(state));
+  },
+  getMeetingBrowseCursorState: async (id: string) =>
+    structuredClone(mockCursorStates.get(id)),
+}));
+
 const createMeeting = (
   meetingId: string,
   overrides: Partial<MeetingHistory> = {},
@@ -81,7 +105,13 @@ const createMeeting = (
 
 describe("mcpMeetingService", () => {
   beforeEach(() => {
+    mockBrowse.reset();
+    mockCursorStates.clear();
     jest.clearAllMocks();
+    jest.mocked(listMeetingsForGuildInRangeService).mockResolvedValue([]);
+    jest
+      .mocked(listMeetingUserIndexForUserInRangeService)
+      .mockResolvedValue([]);
     jest.mocked(getSnapshotBoolean).mockReturnValue(true);
     jest.mocked(getGuildMemberCached).mockResolvedValue({ roles: [] });
     jest.mocked(listBotGuildsCached).mockResolvedValue([]);
@@ -167,7 +197,9 @@ describe("mcpMeetingService", () => {
     jest
       .mocked(listRecentMeetingsForGuildService)
       .mockResolvedValue([createMeeting("meeting-1")]);
-    jest.mocked(getGuildMemberCached).mockRejectedValue(new Error("missing"));
+    jest
+      .mocked(getGuildMemberCached)
+      .mockRejectedValue(Object.assign(new Error("missing"), { status: 404 }));
 
     await expect(
       listMcpMeetings({ userId: "user-1", guildId: "guild-1" }),
@@ -386,7 +418,7 @@ describe("mcpMeetingService", () => {
     expect(checkUserMeetingAccess).toHaveBeenCalledTimes(1);
   });
 
-  it("skips the guild-range fallback when indexed attended results fill the pagination probe", async () => {
+  it("merges guild source frontiers even when indexed attended results fill a page", async () => {
     const indexedMeeting = createMeeting("indexed", {
       guildId: "guild-1",
       timestamp: "2026-01-03T00:00:00.000Z",
@@ -449,7 +481,7 @@ describe("mcpMeetingService", () => {
       hasMore: true,
       nextCursor: expect.any(String),
     });
-    expect(listMeetingsForGuildInRangeService).not.toHaveBeenCalled();
+    expect(listMeetingsForGuildInRangeService).toHaveBeenCalled();
   });
 
   it("returns an all-time My Meetings page with a cursor when more visible meetings exist", async () => {
@@ -501,7 +533,7 @@ describe("mcpMeetingService", () => {
       "guild-page",
       "1970-01-01T00:00:00.000Z",
       expect.any(String),
-      15,
+      100,
     );
   });
 
@@ -550,6 +582,7 @@ describe("mcpMeetingService", () => {
       meetings: [{ meetingId: "oldest", serverName: "Guild Cursor" }],
       hasMore: false,
       nextCursor: null,
+      discoveryComplete: true,
     });
   });
 
@@ -581,7 +614,7 @@ describe("mcpMeetingService", () => {
     ).resolves.toMatchObject({
       meetings: [{ meetingId: "accessible", serverName: "Guild 1" }],
     });
-    expect(listMeetingUserIndexForUserInRangeService).not.toHaveBeenCalled();
+    expect(listMeetingUserIndexForUserInRangeService).toHaveBeenCalled();
   });
 
   it("filters archived-only My Meetings results before access checks", async () => {
@@ -708,18 +741,19 @@ describe("mcpMeetingService", () => {
       meetings: [],
       hasMore: false,
       nextCursor: null,
+      discoveryComplete: true,
     });
     expect(listMeetingUserIndexForUserInRangeService).toHaveBeenCalledWith(
       "offset-user",
       "2026-01-01T05:00:00.000Z",
       "2026-01-01T22:00:00.000Z",
-      130,
+      100,
     );
     expect(listMeetingsForGuildInRangeService).toHaveBeenCalledWith(
       "guild-1",
       "2026-01-01T05:00:00.000Z",
       "2026-01-01T22:00:00.000Z",
-      130,
+      100,
     );
   });
 
@@ -742,7 +776,7 @@ describe("mcpMeetingService", () => {
     expect(getGuildMemberCached).toHaveBeenCalledTimes(2);
   });
 
-  it("skips stale indexed meetings when attended mode history fetch fails", async () => {
+  it("fails discovery explicitly: skips stale indexed meetings when attended mode history fetch fails", async () => {
     const fallbackMeeting = createMeeting("fallback", {
       guildId: "guild-1",
       timestamp: "2026-01-02T00:00:00.000Z",
@@ -779,12 +813,10 @@ describe("mcpMeetingService", () => {
         startDate: "2026-01-01T00:00:00.000Z",
         endDate: "2026-01-05T00:00:00.000Z",
       }),
-    ).resolves.toMatchObject({
-      meetings: [{ meetingId: "fallback", serverName: "Guild 1" }],
-    });
+    ).rejects.toThrow("boom");
   });
 
-  it("falls back to server ranges when attended mode index lookup fails", async () => {
+  it("fails discovery explicitly: falls back to server ranges when attended mode index lookup fails", async () => {
     const fallbackMeeting = createMeeting("fallback", {
       guildId: "guild-1",
       timestamp: "2026-01-02T00:00:00.000Z",
@@ -812,14 +844,12 @@ describe("mcpMeetingService", () => {
         startDate: "2026-01-01T00:00:00.000Z",
         endDate: "2026-01-05T00:00:00.000Z",
       }),
-    ).resolves.toMatchObject({
-      meetings: [{ meetingId: "fallback", serverName: "Guild 1" }],
-    });
+    ).rejects.toThrow("index unavailable");
 
     expect(getMeetingHistoryService).not.toHaveBeenCalled();
   });
 
-  it("skips servers whose My Meetings range fallback fails", async () => {
+  it("fails discovery explicitly: skips servers whose My Meetings range fallback fails", async () => {
     const visibleMeeting = createMeeting("visible", {
       guildId: "guild-1",
       timestamp: "2026-01-02T00:00:00.000Z",
@@ -851,9 +881,7 @@ describe("mcpMeetingService", () => {
         startDate: "2026-01-01T00:00:00.000Z",
         endDate: "2026-01-05T00:00:00.000Z",
       }),
-    ).resolves.toMatchObject({
-      meetings: [{ meetingId: "visible", serverName: "Guild 1" }],
-    });
+    ).rejects.toThrow("boom");
   });
 
   it("rejects summary lookup when the caller passes a malformed id", async () => {
