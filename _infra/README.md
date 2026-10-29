@@ -104,8 +104,17 @@ that address.
 | ALB target 5xx errors         | 10+ target HTTP 5xx responses in 10 min       | 5 min x 2 |
 | ALB unhealthy hosts           | Any unhealthy target for 10 min               | 5 min x 2 |
 | Grafana token rotation errors | Rotation Lambda error in 24 h                 | 1 day x 1 |
+| Checkout lock stuck           | `Checkout lock stuck` app log line in 1 h     | 1 h x 1   |
+| OpenAI requests rejected      | Any OpenAI quota, credit, or 429 log line     | 5 min x 1 |
+| Processing retry worker       | `Processing retry worker failed` log line     | 5 min x 1 |
 
 All alarms also send an OK notification when the condition clears.
+
+`Checkout lock stuck` is logged when a billing page load finds a server's purchase
+lock past its checkout expiry but unreleasable: Stripe still reports the session
+open an hour later, or the session no longer matches the stored attempt. The log
+line carries the guild id; the `checkout_lock_release_total` counter on
+`/metrics` breaks every release attempt down by outcome.
 
 The SNS topic is encrypted with the `app_general` KMS key and restricted to
 publishing from CloudWatch Alarms and EventBridge within the same account.
@@ -292,8 +301,8 @@ private storage or supported native protection metadata refuses execution.
 See [private Terraform delivery](../docs/terraform-private-delivery.md) for review,
 configuration, supported protection rules and unknown-acknowledgment handling.
 
-`plan_scope` accepts only `full`, `purchase-permission`, or
-`deployment-prerequisites`. `full` remains untargeted; `purchase-permission`
+`plan_scope` accepts only `full`, `purchase-permission`,
+`deployment-prerequisites` or `deployment-runtime`. `full` remains untargeted; `purchase-permission`
 continues to target only `aws_iam_role_policy.initial_purchase_condition`.
 Unsupported scope values fail before the plan command, and no scope accepts
 arbitrary Terraform arguments.
@@ -335,6 +344,55 @@ settings are unchanged. The key and encrypted DynamoDB tables do not depend on
 that policy resource, keeping CloudFront dependencies out of prerequisite plans.
 Encrypted CloudWatch log groups and the critical-alert SNS topic explicitly wait
 for the policy's service grants during cold creation.
+
+`deployment-runtime` carries what production needs after the prerequisites and
+before a cold cutover and the first ordinary deploy of `master`. It targets exactly:
+
+1. `aws_iam_role.production_deploy[0]`, `aws_iam_role_policy.production_deploy[0]`
+   and `aws_iam_role_policy_attachment.production_deploy_routing[0]`
+2. `aws_iam_policy.site_publishing[0]` and its attachment
+3. `aws_iam_role_policy.production_exec_channels[0]`
+4. `aws_iam_policy.dynamodb_access_policy`, whose `DescribeSubscriptionReadiness`
+   statement the candidate needs at startup
+5. `aws_dynamodb_table.guild_subscription_table`, adding `RenewalRecoveryDueIndex`
+6. `aws_lb_target_group.api_tg[0]` and `aws_lb_target_group.api_spare_tg[0]`,
+   lowering `deregistration_delay` from 300 to 5 seconds so a draining legacy
+   task stops starting meetings sooner. The tradeoff: a draining task's long
+   in-flight requests, such as MCP live-transcript streams and slow portal
+   requests, are cut after 5 seconds instead of finishing
+7. `aws_iam_role.production_introduction["prompt-guard"]` and
+   `aws_iam_role_policy.production_prompt_guard[0]`
+
+The prompt guard role needs `TFVAR_enable_production_prompt_guard_role=true`, which
+enables it without introduction authority or reviewed task definitions. The deploy
+and prompt guard policies build the service, task family, container, repository,
+execution role and managed policy ARNs from names, and both OIDC data sources look
+the provider up by ARN, so the plan never reads the ECS service, task definition,
+AppConfig or Bedrock resources. The site publishing policy grants by distribution
+ID from `frontend_distribution_id` and `docs_distribution_id`, so the plan reads no
+CloudFront resource. Production and Sandbox must set `TFVAR_FRONTEND_DISTRIBUTION_ID`
+and `TFVAR_DOCS_DISTRIBUTION_ID` to the same values as the existing
+`FRONTEND_DISTRIBUTION_ID` and `DOCS_DISTRIBUTION_ID` deploy variables. The policy
+refuses to plan without them, and each distribution has a postcondition that fails
+a full plan if its variable names another distribution.
+
+Known pending rollout: production's distributions lag master (a docs cache
+behavior, frontend error responses and route rewrite function, and the
+`crawler_noindex` headers policy). Those change live portal routing and ship with
+a later frontend and docs rollout, not with this scope. GitHub variables such as `PRODUCTION_BACKEND_DEPLOY_ROLE_ARN` and
+`PRODUCTION_PROMPT_GUARD_ROLE_ARN` stay outside the scope and are set by hand.
+
+`scripts/deployment/validate-runtime-plan.cjs` checks the Plan before bundling and
+again on Apply. It requires the existing key and HTTPS listener as no-ops, allows
+create or update only at those addresses, and refuses replacements, deletes, moves
+and imports. Both new roles must trust only the in-account GitHub provider for the
+production environment subject. The five policy documents may not grant `*`,
+`iam:*` or `sts:*`, use NotAction or NotResource, or pair `Resource: "*"` with
+anything but Describe or List actions, registry login and the ECS Exec channels.
+Apply passes the account from the private storage binding; the CLI takes it as its
+only argument. The subscription table may change only by gaining that index and its
+two key attributes (its recomputed `stream_arn` and `stream_label` may be unknown);
+each API target group only its drain delay, to 5.
 
 Standalone policy adoption requires a separate reviewed plan and approval; it is
 outside the four-target Apply. The actual state-backed prerequisite plan must

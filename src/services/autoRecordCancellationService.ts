@@ -1,3 +1,4 @@
+import { resolveAudioFileText } from "../utils/audioTranscript";
 import {
   completionSnapshot,
   freezeCompletionPolicy,
@@ -23,7 +24,7 @@ const MAX_CHAT_LINES = 3;
 
 const collectTranscriptText = (meeting: MeetingData) =>
   meeting.audioData.audioFiles
-    .map((file) => file.transcript)
+    .map((file) => resolveAudioFileText(file))
     .filter((text): text is string => Boolean(text && text.trim()))
     .join(" ");
 

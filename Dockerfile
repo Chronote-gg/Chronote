@@ -1,13 +1,14 @@
 # Use an official Node.js runtime as a parent image
-FROM node:24.22.1-alpine
+FROM node:24.22.1-bookworm-slim
 
 # Install build tools necessary for node-gyp
-RUN apk add --no-cache \
+RUN apt-get update && apt-get install -y --no-install-recommends \
     python3 \
-    py3-pip \
+    python3-pip \
     make \
     g++ \
     ffmpeg \
+    && rm -rf /var/lib/apt/lists/* \
     && npm install -g node-gyp
 
 # Set the working directory
@@ -17,6 +18,9 @@ WORKDIR /app
 COPY package*.json ./
 COPY yarn.lock ./
 COPY patches ./patches
+
+# CPU binaries are bundled; do not download optional CUDA libraries.
+ENV ONNXRUNTIME_NODE_INSTALL=skip
 
 # Install dependencies. Package registries can return brief 5xx responses, so
 # keep image builds resilient without hiding persistent failures.

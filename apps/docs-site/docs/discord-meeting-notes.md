@@ -28,6 +28,18 @@ One install covers the whole server, and notes land in the channel where the gro
 
 See [Meeting Lifecycle](/core-concepts/meeting-lifecycle/) for the complete recording and processing flow.
 
+## Transcription language
+
+Discord voice meetings are transcribed as English by default. Server admins can change this in **Server Settings** under **Advanced** -> **Transcription** -> **Transcription language**. Choose a fixed language when every meeting in the server uses it, which helps accuracy. Choose `auto` to let Chronote detect the spoken language of each audio snippet. Each meeting keeps the language it had when it started, so a change applies to new meetings.
+
+## Experimental speech detection
+
+Chronote's software includes optional speech detection for Discord recordings. It is off by default. When enabled in enforce mode, it can skip transcription for a whole audio snippet that it identifies as nonspeech. It does not trim speech or remove audio from the recording.
+
+Uncertain results and detector failures still go through transcription. Shadow mode measures decisions while keeping transcription unchanged. Only Chronote superadmins can change this global setting in Experimental settings. Each meeting keeps the mode it had when it started, so a setting change applies to new meetings.
+
+Availability in the software does not mean the option is enabled on the hosted service. Speech detection can make mistakes, including with quiet or brief speech. It needs evaluation on reviewed recordings before enforcement is enabled.
+
 ## Updates and interrupted recordings
 
 During a supported service handoff, an existing recording stays with its original owner while other eligible servers can start on the ready replacement. If a start reaches a runtime that is handing over, retry it. The usual server limits and one-active-session rule still apply.

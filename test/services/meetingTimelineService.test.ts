@@ -221,6 +221,18 @@ test("buildLiveMeetingTimelineEvents dedupes chat TTS and includes end events", 
   expect(
     events.some((event) => event.text.includes("Meeting ended by Alex")),
   ).toBe(true);
+  const rejected = meeting.audioData.audioFiles[1];
+  rejected.finalSpeechRejection = {
+    pcmSha256: "synthetic",
+    audioBytes: 4,
+    policyFingerprint: "test",
+  };
+  rejected.finalPassTranscript = "late guess";
+  expect(
+    buildLiveMeetingTimelineEvents(meeting).some(
+      (event) => event.text === "late guess" || event.text === "Voice line",
+    ),
+  ).toBe(false);
 });
 
 test("buildMeetingTimelineEventsFromHistory includes attachments-only chat messages", () => {

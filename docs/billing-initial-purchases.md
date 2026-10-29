@@ -8,13 +8,23 @@ The control record uses `PURCHASE#<guildId>` in GuildSubscriptionTable. Dedicate
 helpers enforce snowflake guild IDs and keep control records out of subscription
 readers. A transaction checks the original subscription ID/revision and the
 attempt revision. Subscription whole-row writes cannot erase this record. No new
-table, TTL unlock, sweeper, history UI or provider cancellation is introduced.
+table, TTL unlock, sweeper or history UI is introduced. Provider cancellation is
+limited to superseding a live Checkout; see
+`docs/adr-20261027-checkout-supersede.md`.
 
 The attempt freezes customer selection or creation before making its provider
 call, then freezes the Checkout request. Separate opaque idempotency keys identify
 these operations. The fingerprint compares payment terms, excluding metadata and
 return URLs. Source and username changes can recover the same frozen Checkout;
-price, discount and payer changes still receive an in-progress error. An analytics
+a payer, price, discount, intro offer or interval change supersedes it.
+Supersede first prepares the replacement's offer terms as if the old intro offer
+reservation were released, so an offer refusal leaves the old Checkout intact.
+It then expires the session at Stripe, releases the attempt through the same
+guarded provider read (including any intro offer reservation), then reserves a
+fresh attempt. If Stripe refuses the expire, the session is read: a completed
+session reconciles and returns the normal completed-purchase outcome, and one
+still open keeps the in-progress error. An unknown expire outcome releases
+nothing. An analytics
 opt-out received during recovery is retained on the attempt without changing the
 provider request, and suppresses later outcomes for that attempt's subscription.
 Another payer never receives the first payer's hosted Checkout URL. The
@@ -23,7 +33,10 @@ its URL. Responses never grant entitlement.
 
 Checkout expires after one hour. A cancel redirect, closed browser or local clock
 expiry does not release the reservation. A known session is retrieved from Stripe;
-only confirmed expiration without a subscription permits replacement. Unknown
+only confirmed expiration without a subscription permits replacement. Once local
+expiry has passed, a billing page load or plan change also performs that provider
+read through `releaseExpiredPurchaseAttempt`, still releasing only on confirmed
+expiry. Unknown
 creation results remain reserved and become review-required after 29 minutes.
 This leaves Stripe its required 30-minute minimum before the frozen expiry, plus
 one minute for the request. The window is checked again after customer lookup. An old idempotency key is never retried indefinitely. Completed
@@ -109,8 +122,9 @@ Initial Checkout reserves the chosen offer in the same transaction that saves
 the purchase attempt. That transaction checks the prior subscription revision,
 purchase attempt revision and offer revision. A competing request cannot write
 only half of the reservation. Provider creation and unknown outcomes retain the
-reservation. Request-time and webhook expiry release it only after rereading an
-associated native session that is expired and has no subscription.
+reservation. Request-time, billing page load, plan change, supersede and webhook expiry
+release it only after rereading an associated native session that is expired
+and has no subscription.
 
 Purchase acceptance finalizes a reserved offer only after rereading its first
 invoice and verifying server operation, customer, subscription, item, price,

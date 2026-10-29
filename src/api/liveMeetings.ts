@@ -298,7 +298,7 @@ export function registerLiveMeetingRoutes(app: express.Express) {
       res.flushHeaders();
       req.socket.setTimeout(0);
 
-      const seen = new Set<string>();
+      let previousEvents = new Map<string, string>();
       let lastAttendeesKey = "";
       let lastStatus: LiveMeetingStatusPayload["status"] | null = null;
       let cachedRemoteLease = fallbackLease;
@@ -312,13 +312,22 @@ export function registerLiveMeetingRoutes(app: express.Express) {
       const emitEvents = (
         events: ReturnType<typeof buildLiveMeetingTimelineEvents>,
       ) => {
-        const fresh = events.filter((event) => {
-          if (seen.has(event.id)) return false;
-          seen.add(event.id);
-          return true;
-        });
-        if (fresh.length === 0) return;
-        const payload: LiveMeetingEventsPayload = { events: fresh };
+        const currentEvents = new Map(
+          events.map((event) => [event.id, JSON.stringify(event)]),
+        );
+        const fresh = events.filter(
+          (event) =>
+            previousEvents.get(event.id) !== currentEvents.get(event.id),
+        );
+        const removedEventIds = [...previousEvents.keys()].filter(
+          (id) => !currentEvents.has(id),
+        );
+        previousEvents = currentEvents;
+        if (fresh.length === 0 && removedEventIds.length === 0) return;
+        const payload: LiveMeetingEventsPayload = {
+          events: fresh,
+          removedEventIds,
+        };
         sendEvent("events", payload);
       };
 
@@ -359,7 +368,7 @@ export function registerLiveMeetingRoutes(app: express.Express) {
       if (meeting) {
         const initialEvents = buildLiveMeetingTimelineEvents(meeting);
         for (const event of initialEvents) {
-          seen.add(event.id);
+          previousEvents.set(event.id, JSON.stringify(event));
         }
         initPayload.events = initialEvents;
       }

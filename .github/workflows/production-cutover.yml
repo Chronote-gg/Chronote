@@ -1,0 +1,113 @@
+name: Production Cold Cutover
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: inspect is read-only; cutover stops legacy only when no work is in flight
+        type: choice
+        required: true
+        default: inspect
+        options: [inspect, cutover]
+      operation_id:
+        description: Operation UUID for cutover; reuse it only to resume an interrupted cutover
+        type: string
+        default: ""
+      environment:
+        description: production, or sandbox for a rehearsal
+        type: choice
+        required: true
+        default: production
+        options: [production, sandbox]
+permissions:
+  contents: read
+concurrency:
+  group: chronote-deploy-${{ inputs.environment }}
+  cancel-in-progress: false
+jobs:
+  cutover:
+    if: github.ref == 'refs/heads/master' && github.run_attempt == 1
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    timeout-minutes: 120
+    permissions:
+      contents: read
+      actions: read
+      id-token: write
+    env:
+      CUTOVER_ENVIRONMENT: ${{ inputs.environment }}
+      CUTOVER_OPERATION_ID: ${{ inputs.operation_id }}
+      AWS_REGION: ${{ vars.AWS_REGION }}
+      ECS_CLUSTER: ${{ vars.ECS_CLUSTER }}
+      ECS_SERVICE: ${{ vars.ECS_SERVICE }}
+      ECS_TASK_FAMILY: ${{ vars.ECS_TASK_FAMILY }}
+      SECRETS_PREFIX: ${{ vars.SECRETS_PREFIX }}
+      DEPLOYMENT_LISTENER_ARN: ${{ vars.DEPLOYMENT_LISTENER_ARN }}
+      DEPLOYMENT_TARGET_GROUP_A: ${{ vars.DEPLOYMENT_TARGET_GROUP_A }}
+      DEPLOYMENT_TARGET_GROUP_B: ${{ vars.DEPLOYMENT_TARGET_GROUP_B }}
+      EXPECTED_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
+      EXPECTED_ROLE_ARN: ${{ inputs.environment == 'production' && vars.PRODUCTION_BACKEND_DEPLOY_ROLE_ARN || vars.SANDBOX_BACKEND_DEPLOY_ROLE_ARN }}
+      EXPECTED_SESSION_NAME: chronote-${{ inputs.environment }}-${{ github.run_id }}-1
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: ".nvmrc"
+          cache: yarn
+      - name: Install dependencies
+        run: bash scripts/ci-install-dependencies.sh
+      - name: Build protocol helpers
+        if: inputs.mode == 'cutover'
+        run: yarn build
+      - name: Assume a read-only session for inspection
+        if: inputs.mode == 'inspect'
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ env.EXPECTED_ROLE_ARN }}
+          allowed-account-ids: ${{ vars.AWS_ACCOUNT_ID }}
+          role-session-name: ${{ env.EXPECTED_SESSION_NAME }}
+          role-duration-seconds: 900
+          aws-region: ${{ vars.AWS_REGION }}
+          unset-current-credentials: true
+          mask-aws-account-id: true
+          inline-session-policy: >-
+            {"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":["sts:GetCallerIdentity","ecs:DescribeServices","ecs:ListTasks","ecs:DescribeTasks","dynamodb:GetItem","dynamodb:Scan","elasticloadbalancing:DescribeListeners","elasticloadbalancing:DescribeRules","elasticloadbalancing:DescribeTargetHealth"],"Resource":"*"},{"Effect":"Allow","Action":"kms:Decrypt","Resource":"*","Condition":{"StringEquals":{"kms:ViaService":"dynamodb.${{ vars.AWS_REGION }}.amazonaws.com","kms:CallerAccount":"${{ vars.AWS_ACCOUNT_ID }}"}}}]}
+      - name: Report in-flight work and service state
+        if: inputs.mode == 'inspect'
+        run: node scripts/deployment/cold-cutover.cjs inspect
+      - name: Assume the deployment session for cutover
+        if: inputs.mode == 'cutover'
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ env.EXPECTED_ROLE_ARN }}
+          allowed-account-ids: ${{ vars.AWS_ACCOUNT_ID }}
+          role-session-name: ${{ env.EXPECTED_SESSION_NAME }}
+          role-duration-seconds: 10800
+          aws-region: ${{ vars.AWS_REGION }}
+          unset-current-credentials: true
+          mask-aws-account-id: true
+      - name: Log in to ECR
+        if: inputs.mode == 'cutover'
+        id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+      - name: Build and pin the candidate image of this exact commit
+        if: inputs.mode == 'cutover'
+        env:
+          REGISTRY: ${{ steps.ecr.outputs.registry }}
+          REPOSITORY: ${{ vars.ECR_REPOSITORY }}
+        run: |
+          set -euo pipefail
+          image="$REGISTRY/$REPOSITORY:$GITHUB_SHA"
+          if ! aws ecr describe-images --repository-name "$REPOSITORY" --image-ids "imageTag=$GITHUB_SHA" >/dev/null 2>&1; then
+            docker build --label "org.opencontainers.image.revision=$GITHUB_SHA" -t "$image" .
+            docker run --rm "$image" test -f dist/index.js
+            docker push "$image"
+          fi
+          digest=$(aws ecr describe-images --repository-name "$REPOSITORY" --image-ids "imageTag=$GITHUB_SHA" --query 'imageDetails[0].imageDigest' --output text)
+          echo "CANDIDATE_IMAGE=$REGISTRY/$REPOSITORY@$digest" >> "$GITHUB_ENV"
+      - name: Verify approval, then cut over only when nothing is in flight
+        if: inputs.mode == 'cutover'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/deployment/cold-cutover.cjs cutover

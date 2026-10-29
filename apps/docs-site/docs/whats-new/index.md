@@ -7,6 +7,19 @@ Notable product changes for Chronote users. For the full changelog, see the [Git
 
 ## 2026
 
+### Retry meetings that failed to process (October 28)
+
+- When a provider outage or error stops transcription, notes or the summary, the meeting's owner can retry from the meeting page. Chronote re-runs the failed steps and anything that depends on them, and existing Discord posts are updated in place. See [Common issues](/troubleshooting/common-issues).
+
+### Uploads keep their spoken language (October 28)
+
+- Personal uploads and Chronote Desktop recordings are no longer transcribed as English. Chronote detects the spoken language, so meetings in other languages produce complete transcripts in that language. See [Personal media uploads](/features/#personal-media-uploads).
+
+### Abandoned checkouts no longer block billing (October 27)
+
+- Closing Checkout without paying no longer leaves Basic or Pro unavailable on the billing page.
+- Choosing a different plan, or another server manager starting a purchase, replaces the earlier unpaid checkout instead of showing an in-progress error. See [Setup and access](/admin/setup-and-access).
+
 ### Saved notes and automatic Discord updates (October 23)
 
 - Edits, imports, approved corrections, and meeting renames save the meeting record before updating existing Discord posts.

@@ -42,7 +42,12 @@ export const TRANSCRIPTION_RATE_MAX_SYLLABLES_PER_SECOND = 7;
 export const TRANSCRIPTION_PROMPT_ECHO_SIMILARITY_THRESHOLD = 0.2;
 export const TRANSCRIPTION_PROMPT_ECHO_MIN_CHARS = 12;
 export const TRANSCRIPTION_PROMPT_ECHO_MIN_WORDS = 2;
-export const TRANSCRIPTION_FINAL_PASS_CHUNK_SECONDS = 900;
+// Long audio is always split by duration, never sent whole: the transcription
+// model caps output near 2,000 tokens per request, so a long request returns
+// a silently truncated transcript. In the final pass, the reconcile prompt then
+// reads the missing tail as "not in the chunk transcript" and drops those lines.
+export const TRANSCRIPTION_FINAL_PASS_CHUNK_SECONDS = 300;
+export const PERSONAL_UPLOAD_TRANSCRIPTION_CHUNK_SECONDS = 300;
 export const TRANSCRIPTION_FINAL_PASS_MAX_REQUEST_BYTES = 25 * 1024 * 1024;
 export const TRANSCRIPTION_FINAL_PASS_TARGET_MAX_CHUNK_BYTES = 20 * 1024 * 1024;
 export const TRANSCRIPTION_FINAL_PASS_SEGMENT_BATCH_MAX_CHARS = 6000;
@@ -93,6 +98,12 @@ export const PERSONAL_MEDIA_UPLOAD_WORKER_BATCH_SIZE = 2;
 export const PERSONAL_MEDIA_UPLOAD_WORKER_CLAIM_SECONDS = 300;
 export const PERSONAL_MEDIA_UPLOAD_WORKER_CLAIM_RENEWAL_MS = 120_000;
 export const PERSONAL_MEDIA_UPLOAD_MAX_PROCESSING_ATTEMPTS = 3;
+// Lease values mirror the personal upload worker, which runs the same transcription and notes work.
+export const PROCESSING_RETRY_POLL_INTERVAL_MS = 5_000;
+export const PROCESSING_RETRY_MAX_CONCURRENT = 2;
+export const PROCESSING_RETRY_CLAIM_SECONDS = 300;
+export const PROCESSING_RETRY_CLAIM_RENEWAL_MS = 120_000;
+export const PROCESSING_RETRY_SAVE_ATTEMPTS = 3;
 export const PERSONAL_MEDIA_UPLOAD_ALLOWED_CONTENT_TYPES = [
   "audio/mpeg",
   "audio/mp3",

@@ -34,6 +34,7 @@ import {
   type MeetingUpdateMutation,
 } from "../types/meetingUpdateDelivery";
 import { retainCleanupCandidates } from "../types/meetingUpdateCleanup";
+import { processingRetryJobSchema } from "../types/meetingProcessingRetry";
 import { trimNotesForHistory } from "../utils/notesHistory";
 
 export const MAX_MEETING_ITEM_BYTES = 400 * 1024;
@@ -137,7 +138,25 @@ export function canCompareContentWrite(
       matchesPublicationSnapshot(row, input.expectedPublication)) &&
     (!input.notesEdit ||
       readMeetingUpdateRevisions(row).notesVersion ===
-        input.notesEdit.expectedNotesVersion),
+        input.notesEdit.expectedNotesVersion) &&
+    regenerationClaimMatches(row, input.regeneration),
+  );
+}
+
+/** Only the worker still holding the running job may save its result, and only over the notes it read. */
+function regenerationClaimMatches(
+  row: MeetingHistory,
+  regeneration: MeetingContentWrite["regeneration"],
+): boolean {
+  if (!regeneration) return true;
+  const job = row.processingRetry;
+  return (
+    job?.jobId === regeneration.expected.jobId &&
+    job.status === "running" &&
+    job.claim?.ownerInstanceId === regeneration.expected.ownerInstanceId &&
+    job.claim.claimId === regeneration.expected.claimId &&
+    readMeetingUpdateRevisions(row).notesVersion ===
+      regeneration.expected.expectedNotesVersion
   );
 }
 
@@ -151,6 +170,8 @@ export function prepareContentWrite(
   z.string().min(1).max(512).parse(input.mutationId);
   seconds.parse(input.at);
   const mutation = meetingUpdateMutationSchema.parse(input.mutation);
+  if ((mutation.kind === "regeneration") !== Boolean(input.regeneration))
+    throw new Error("Regeneration mutation requires its regeneration payload");
   const requested = requestMeetingUpdateDelivery({
     history,
     mutation,
@@ -165,8 +186,7 @@ export function prepareContentWrite(
     )
   )
     throw new Error("Content write must preserve the exact requested delivery");
-  const changes =
-    mutation.kind === "correction" ? mutation.changes : [mutation];
+  const changes = "changes" in mutation ? mutation.changes : [mutation];
   const notes = changes.find((change) => change.kind === "notes");
   if (Boolean(notes) !== Boolean(input.notesEdit))
     throw new Error("Notes mutation requires notes edit provenance");
@@ -195,8 +215,28 @@ export function prepareContentWrite(
   }
   if (notes && input.notesEdit)
     next = withNotesAudit(history, next, notes, input.notesEdit, editedAt);
+  if (input.regeneration) next = withRegeneration(next, input.regeneration);
   assertMeetingItemSize(next);
   return next;
+}
+
+function withRegeneration(
+  next: MeetingHistory,
+  regeneration: NonNullable<MeetingContentWrite["regeneration"]>,
+): MeetingHistory {
+  const job = processingRetryJobSchema.parse(regeneration.job);
+  if (job.jobId !== regeneration.expected.jobId || job.status !== "succeeded")
+    throw new Error("Regeneration saves only its own succeeded job");
+  const saved: MeetingHistory = {
+    ...next,
+    processing: regeneration.processing,
+    processingRetry: job,
+  };
+  if (regeneration.transcriptS3Key !== undefined)
+    saved.transcriptS3Key = regeneration.transcriptS3Key;
+  delete saved.processingRetryQueue;
+  delete saved.processingRetryDueAt;
+  return saved;
 }
 
 function withNotesAudit(

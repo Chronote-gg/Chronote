@@ -180,7 +180,8 @@ resource "aws_iam_role_policy" "sandbox_deploy" {
           aws_dynamodb_table.active_meeting_table.arn,
           aws_dynamodb_table.meeting_history_table.arn,
           aws_dynamodb_table.meeting_control_command_table.arn,
-          aws_dynamodb_table.personal_media_upload_job_table.arn
+          aws_dynamodb_table.personal_media_upload_job_table.arn,
+          aws_dynamodb_table.personal_recording_segment_table.arn
         ]
       },
       {
@@ -200,7 +201,8 @@ resource "aws_iam_role_policy" "sandbox_deploy" {
               aws_dynamodb_table.active_meeting_table.name,
               aws_dynamodb_table.meeting_history_table.name,
               aws_dynamodb_table.meeting_control_command_table.name,
-              aws_dynamodb_table.personal_media_upload_job_table.name
+              aws_dynamodb_table.personal_media_upload_job_table.name,
+              aws_dynamodb_table.personal_recording_segment_table.name
             ]
           }
         }

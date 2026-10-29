@@ -119,19 +119,31 @@ test("policy readback covers every existing managed runtime attachment", () => {
       /Sid\s*=\s*"RuntimeManagedPolicyReadback"([\s\S]*?)\n\s*\},/,
     )?.[1] ?? "";
   expect(
-    [...readback.matchAll(/aws_iam_policy\.([a-z0-9_]+)\.arn/g)]
-      .map((match) => match[1])
-      .sort(),
-  ).toEqual(
-    [
-      "dynamodb_access_policy",
-      "kms_app_policy",
-      "transcripts_s3_policy",
-      "appconfig_access_policy",
-      "bedrock_data_automation_policy",
-      "bedrock_s3_policy",
-    ].sort(),
+    [...readback.matchAll(/aws_iam_policy\.([a-z0-9_]+)\.arn/g)].map(
+      (match) => match[1],
+    ),
+  ).toEqual(["dynamodb_access_policy"]);
+  // The rest are constructed so a runtime Plan never refreshes their inputs.
+  const infra = ["main", "config", "bedrock-data-automation"]
+    .map((file) => readFileSync(`_infra/${file}.tf`, "utf8"))
+    .join("\n");
+  const declared = [
+    "kms_app_policy",
+    "transcripts_s3_policy",
+    "appconfig_access_policy",
+    "bedrock_data_automation_policy",
+    "bedrock_s3_policy",
+  ].map(
+    (name) =>
+      infra.match(
+        new RegExp(
+          `resource "aws_iam_policy" "${name}" \\{[\\s\\S]*?name\\s*=\\s*"\\$\\{local\\.name_prefix\\}-([^"]+)"`,
+        ),
+      )?.[1],
   );
+  expect(
+    JSON.parse(readback.match(/for name in (\[[^\]]*\])/)?.[1] ?? "[]").sort(),
+  ).toEqual(declared.sort());
 });
 
 test("producer authority is discovery only and preserves the production approval prerequisite", () => {
