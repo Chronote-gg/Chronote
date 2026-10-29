@@ -21,6 +21,9 @@ test("normal writer permits absent hold but refuses held, malformed and unreadab
   await expect(invoke(async () => undefined)).resolves.toEqual({
     status: "allowed",
   });
+  await expect(
+    invoke(async () => ({ deployment: { state: "released" } })),
+  ).resolves.toEqual({ status: "allowed" });
   for (const hold of [
     {},
     { recordType: "production_introduction", deployment: { state: "held" } },

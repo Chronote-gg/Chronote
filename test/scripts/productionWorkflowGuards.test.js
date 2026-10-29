@@ -19,7 +19,10 @@ test("backend and prompts check holds before their writes and share noncanceling
 });
 test("Apply retains private delivery and invokes the native guard at the saved-plan boundary", () => {
   const apply = read("terraform-apply");
-  expect(apply).toContain("chronote-deploy-production");
+  expect(apply).toContain(
+    "group: chronote-terraform-${{ inputs.github_environment }}",
+  );
+  expect(apply).not.toContain("chronote-deploy-production");
   expect(apply).toContain("terraform-dispatch.cjs");
   expect(apply).not.toContain("upload-artifact");
   const native = readFileSync(

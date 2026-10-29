@@ -9,7 +9,12 @@ const {
   verifyBundle,
   restoreBundle,
 } = require("./terraform-bundle.cjs");
-const { verifyRun, verifyApproval } = require("./terraform-native.cjs");
+const {
+  verifyRun,
+  verifyApproval,
+  verifyApplySource,
+  assertProductionIdle,
+} = require("./terraform-native.cjs");
 const { runPrivateCommand } = require("./terraform-process.cjs");
 const { verifyMeetingUpdatePlan } = require("./terraform-meeting-update.cjs");
 const { digest } = require("./collector-payload.cjs");
@@ -246,11 +251,19 @@ async function apply(options, invocation, e, startApply) {
   if (invocation.environment === "production")
     await require("./production-writer-guard.cjs").runGuard(options.env, true);
   const proof = await verifyApproval(options.get, invocation, options);
+  // The plan may come from an earlier master commit; its own run names it.
+  const planRun = await options.get(
+    `/repos/${invocation.repository}/actions/runs/${options.producerRunId}`,
+  );
   const producer = parseInvocation({
     ...invocation,
     workflowPath: ".github/workflows/terraform-plan.yml",
     runId: options.producerRunId,
+    sourceSha: planRun.head_sha,
   });
+  // Exact-SHA equality used to prove this; a later Apply must check it itself.
+  if (invocation.environment === "production")
+    assert.equal(planRun.head_branch, "master");
   assert.equal(
     options.artifactName,
     `terraform-plan-${producer.environment}-${producer.workspace}-${producer.runId}`,
@@ -258,6 +271,12 @@ async function apply(options, invocation, e, startApply) {
   const nativeProducer = await verifyRun(options.get, producer, true);
   assert.ok(
     Date.parse(nativeProducer.updated_at) < Date.parse(proof.createdAt),
+  );
+  const sourceRelation = await verifyApplySource(
+    options.get,
+    invocation.repository,
+    producer.sourceSha,
+    invocation.sourceSha,
   );
   assert.equal(options.reference.sha256, options.bundleSha256);
   const producerStore = createTerraformCapture({
@@ -270,6 +289,7 @@ async function apply(options, invocation, e, startApply) {
     kind: "terraform-apply-intent-v1",
     invocation,
     producer,
+    sourceRelation,
     planSha256: options.planSha256,
     bundleSha256: options.bundleSha256,
     approval: proof,
@@ -337,6 +357,8 @@ async function apply(options, invocation, e, startApply) {
     digest(readFileSync(join(options.directory, "_infra/tfplan"))),
     options.planSha256,
   );
+  if (invocation.environment === "production")
+    await assertProductionIdle(options.get, invocation.repository);
   options.signal.throwIfAborted();
   startApply();
   await e.terraform(["apply", "-no-color", "-input=false", "tfplan"]);
