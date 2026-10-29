@@ -1,3 +1,4 @@
+import { meetingBrowseSearchSchema } from "../utils/meetingBrowseSearch";
 import { useMemo } from "react";
 import { Stack, Text } from "@mantine/core";
 import { useNavigate, useParams } from "@tanstack/react-router";
@@ -62,7 +63,12 @@ export default function MeetingDetail() {
             }),
           })
         }
-        onClose={() => navigate({ to: "/portal/meetings" })}
+        onClose={() =>
+          navigate({
+            to: "/portal/meetings",
+            search: meetingBrowseSearchSchema.parse({}),
+          })
+        }
       />
     </Stack>
   );
