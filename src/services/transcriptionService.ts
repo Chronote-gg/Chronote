@@ -1,3 +1,4 @@
+import { recordSpeechRejection } from "./recordingContentService";
 import { buildTranscriptionVoteCandidate } from "./transcriptionSelectionService";
 import { liveTranscriptionInput } from "./liveTranscriptionInput";
 import {
@@ -965,16 +966,29 @@ export async function transcribeContentSnippet(
   }
 }
 
-export function transcribeSnippet(
+export async function transcribeSnippet(
   meeting: MeetingData,
   snippet: AudioSnippet,
   options: Parameters<typeof transcribeContentSnippet>[2] = {},
 ) {
-  return transcribeContentSnippet(
+  const input = {
+    userId: snippet.userId,
+    timestamp: snippet.timestamp,
+    pcmSpans: snippet.pcmSpans?.map((span) => ({ ...span })),
+  };
+  const result = await transcribeContentSnippet(
     liveTranscriptionInput(meeting),
     snippet,
     options,
   );
+  if (result.status === "skipped")
+    recordSpeechRejection(
+      meeting,
+      input,
+      result.coverage,
+      options.noiseGateMode ?? "slow",
+    );
+  return result;
 }
 
 export { coalesceTranscription } from "./transcriptionCoalesceService";

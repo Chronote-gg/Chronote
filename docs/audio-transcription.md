@@ -191,3 +191,38 @@ shared across meetings. Cancellation artifact compilation has a fresh
 lifetime. Recovery independently uses its saved v1 prompt/settings and durable
 processed-text checkpoints. Selected transcript membership is captured before
 asynchronous cleanup, so files arriving later remain supplemental evidence.
+
+## One-time speech-filter listening check
+
+This is an operator command, not a customer feature or a scheduled job. It extracts a small private batch from explicitly selected completed meetings without calling ASR or replaying the detector. It changes neither enforcement nor production storage. Deploy the receipt-producing code before expecting new evidence; historical empty omissions are not rejection receipts.
+
+1. Through the existing private operator tools, read only the selected meeting history rows and export their committed `checkpoint` pointers into a local, untracked JSON file. Do not include transcript bodies. Select at most three completed meetings. Each entry must explicitly bind the meeting ID:
+
+   ```json
+   [
+     {
+       "meetingId": "SELECTED_MEETING_ID",
+       "checkpoint": { "...": "exact saved checkpoint pointer" }
+     }
+   ]
+   ```
+
+2. Build the source with `yarn build`. In an authorized operator environment with the existing AWS credential chain, run:
+
+   ```sh
+   node scripts/speech-detection/listening-batch.mjs --checkpoints selected.json --account EXPECTED_ACCOUNT_ID --region us-east-1 --bucket VERIFIED_RECORDING_BUCKET --out PRIVATE_NEW_DIRECTORY
+   ```
+
+   Refresh account, region, bucket and meeting identity through the intended private AWS tools first. The command checks STS account and S3 bucket owner. It only uses `GetCallerIdentity` and `GetObject`, never lists meetings, writes production data, or provisions credentials. Do not copy credentials into arguments. Output must be a fresh directory outside the checkout or under its ignored `.cache/` folder. On Windows, use a private user directory with appropriate existing ACLs.
+
+3. Open the numbered WAVs with an ordinary local player. The command selects up to ten distinct rejected inputs, prioritizing final omissions and short clips, and up to three short retained transcript controls. Fast/slow decisions for identical inputs are grouped; overlapping inputs are kept distinct. Controls prove retained correspondence to a transcript, not a saved positive detector decision. They still need human listening. Selection is biased and cannot establish a production error rate.
+
+   Every exact rejected clip is checked against its recorded input hash/length and the original saved PCM objects. The manifest distinguishes `request_skipped`, `final_omission`, and `transcript_present`. The last only means that the same snippet later had transcript text; it does not prove the rejected subinterval was transcribed. Optional `-context.wav` files include at most two seconds either side inside one verified contiguous piece. The manifest marks the exact tested interval within context; unavailable context does not invalidate the exact clip. No names or transcript text are exported.
+
+4. Record brief speech / non-speech / unclear observations locally, tied to clip numbers. Report any speech found in a rejected clip for investigation. Human findings never automatically tune thresholds or change settings. Keep aggregate skipped requests separate from distinct audio inputs and billing.
+
+5. Delete the temporary batch and local checkpoint selection after the check, retaining only minimized findings and necessary private references. Do not commit recordings, transcript bodies or the private manifest. Original recording retention/deletion rules still apply.
+
+Exit 0 means a full batch awaits listening, not that quality passed. Exit 2 means incomplete coverage; inspect the private `manifest.json` gaps. Exit 1 means the command could not complete. Missing receipts, unavailable/deleted/corrupt PCM, identity mismatches and missing enforcement settings are explicit gaps. The script does not guess, substitute mixed recordings, or label a fresh model judgment as historical evidence. A stale pointer can outlive a history-row deletion, so operators must obtain fresh authorized pointers and honor deletion requests, never reuse cached selections to bypass access removal.
+
+Local checks: `node --test scripts/speech-detection/listening-batch.test.mjs` after building, plus `test/services/recordingContentService.test.ts`.
