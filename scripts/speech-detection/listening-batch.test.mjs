@@ -1,3 +1,4 @@
+import { fileURLToPath } from "node:url";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
@@ -7,6 +8,7 @@ import {
   wav,
   assertManifestBinding,
   assertPrivateOutput,
+  resolvePrivateOutput,
   writeMeetingBatch,
 } from "./listening-batch.mjs";
 const hash = (b) => createHash("sha256").update(b).digest("hex");
@@ -98,7 +100,7 @@ test("duplicate fast and slow inputs group without combining overlapping inputs"
   assert.equal(result[0].outcome, "final_omission");
 });
 
-import { mkdtemp, readFile, readdir, rm } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, rm, symlink } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 test("meeting scope, owner attempt and completion must match before reading audio", () => {
@@ -226,14 +228,12 @@ test("batch writes real clips, groups phases, excludes transcript content, and r
 });
 
 test("private output validation recognizes parent traversal by path components", () => {
-  const root = path.resolve(
-    new URL("../../", import.meta.url).pathname.replace(/^\/(?=[A-Za-z]:)/, ""),
-  );
+  const root = path.resolve(fileURLToPath(new URL("../../", import.meta.url)));
   assert.throws(() =>
     assertPrivateOutput(path.join(root, "..listening-private")),
   );
   assert.throws(() => assertPrivateOutput(root));
-  assert.doesNotThrow(() =>
+  assert.throws(() =>
     assertPrivateOutput(path.join(root, ".cache", "listening")),
   );
   assert.doesNotThrow(() =>
@@ -286,5 +286,30 @@ test("optional context failure preserves a valid exact clip without a coverage g
     );
   } finally {
     await rm(output, { recursive: true, force: true });
+  }
+});
+
+test("output resolution rejects symlink parents leading into the public checkout", async () => {
+  const temporary = await mkdtemp(path.join(os.tmpdir(), "listening-path-"));
+  const root = path.resolve(fileURLToPath(new URL("../../", import.meta.url)));
+  try {
+    await symlink(
+      root,
+      path.join(temporary, "linked"),
+      process.platform === "win32" ? "junction" : "dir",
+    );
+    await assert.rejects(
+      resolvePrivateOutput(path.join(temporary, "linked", "batch")),
+      /output_must_be_private/,
+    );
+    assert.equal(
+      await resolvePrivateOutput(path.join(temporary, "batch")),
+      path.join(
+        await (await import("node:fs/promises")).realpath(temporary),
+        "batch",
+      ),
+    );
+  } finally {
+    await rm(temporary, { recursive: true, force: true });
   }
 });

@@ -977,11 +977,8 @@ export async function transcribeSnippet(
   snippet: AudioSnippet,
   options: Parameters<typeof transcribeContentSnippet>[2] = {},
 ) {
-  const input = {
-    userId: snippet.userId,
-    timestamp: snippet.timestamp,
-    pcmSpans: snippet.pcmSpans?.map((span) => ({ ...span })),
-  };
+  const { userId, timestamp } = snippet;
+  const pcmSpans = snippet.pcmSpans?.map((span) => ({ ...span }));
   const result = await transcribeContentSnippet(
     liveTranscriptionInput(meeting),
     snippet,
@@ -990,7 +987,7 @@ export async function transcribeSnippet(
   if (result.status === "skipped")
     recordSpeechRejection(
       meeting,
-      input,
+      { userId, timestamp, pcmSpans },
       result.coverage,
       options.noiseGateMode ?? "slow",
     );
