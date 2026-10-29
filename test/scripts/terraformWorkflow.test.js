@@ -67,15 +67,25 @@ async function planAndApply(
   };
 }
 test.each([
-  ["sandbox", "sandbox", "meeting-update-delivery", "default"],
-  ["production", "default", "full", "sandbox"],
+  ["sandbox", "sandbox", "meeting-update-delivery", "default", false],
+  ["production", "default", "full", "sandbox", false],
+  ["production", "default", "full", "sandbox", true],
 ])(
   "%s Plan and Apply bind init to the validated workspace before workspace selection",
-  async (environment, workspace, scope, inheritedWorkspace) => {
+  async (
+    environment,
+    workspace,
+    scope,
+    inheritedWorkspace,
+    missingWorkspace,
+  ) => {
     const f = fixture(),
       originalOptions = f.options,
-      initWorkspaces = [];
+      initWorkspaces = [],
+      workspaceCommands = [],
+      boundWorkspaces = [];
     f.controls.environment = environment;
+    f.controls.missingWorkspace = missingWorkspace;
     if (environment === "sandbox") f.controls.planJson = meetingUpdatePlan();
     f.options = (current) => {
       const options = originalOptions(current),
@@ -84,7 +94,22 @@ test.each([
       options.command = async (file, args, settings) => {
         if (file === "terraform" && args[1] === "init")
           initWorkspaces.push(settings.env.TF_WORKSPACE);
-        return command(file, args, settings);
+        if (file === "terraform") {
+          if (args[1] === "workspace")
+            workspaceCommands.push({
+              args: args.slice(1),
+              workspace: settings.env.TF_WORKSPACE,
+            });
+          else boundWorkspaces.push(settings.env.TF_WORKSPACE);
+        }
+        const result = await command(file, args, settings);
+        if (
+          file === "terraform" &&
+          args[1] === "workspace" &&
+          args[2] === "new"
+        )
+          f.controls.missingWorkspace = false;
+        return result;
       };
       return options;
     };
@@ -96,6 +121,14 @@ test.each([
       });
       expect(apply.status).toBe("applied");
       expect(initWorkspaces).toEqual([workspace, workspace]);
+      expect(boundWorkspaces.every((value) => value === workspace)).toBe(true);
+      expect(workspaceCommands).toEqual([
+        { args: ["workspace", "select", workspace], workspace: undefined },
+        ...(missingWorkspace
+          ? [{ args: ["workspace", "new", workspace], workspace: undefined }]
+          : []),
+        { args: ["workspace", "select", workspace], workspace: undefined },
+      ]);
     } finally {
       rmSync(f.directory, { recursive: true, force: true });
     }

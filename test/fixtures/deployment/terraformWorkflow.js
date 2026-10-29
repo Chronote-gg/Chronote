@@ -48,6 +48,7 @@ export function fixture() {
   const commands = [],
     controls = {
       exitCode: 2,
+      missingWorkspace: false,
       environment: "production",
       planJson: undefined,
       fail: "",
@@ -80,7 +81,7 @@ export function fixture() {
   const script = join(directory, "fake-terraform.cjs");
   writeFileSync(
     script,
-    `const fs=require('node:fs'); const a=process.argv.slice(2), op=a[1]; process.stderr.write('SECRET_STDERR'); if(op==='version') process.stdout.write(JSON.stringify({terraform_version:'1.14.0'})); else if(op==='show') process.stdout.write(a.includes('-json') ? process.env.PLAN_JSON : 'PRIVATE_REVIEW'); else process.stdout.write('SECRET_STDOUT'); if(op==='plan') {fs.writeFileSync('_infra/tfplan',Buffer.from([0,255,13,10]));fs.writeFileSync('_infra/discord_alert.zip',Buffer.from([80,75,255]));} process.exitCode=op===process.env.FAIL ? 1 : op==='plan' ? Number(process.env.PLAN_EXIT) : 0;`,
+    `const fs=require('node:fs'); const a=process.argv.slice(2), op=a[1]; process.stderr.write('SECRET_STDERR'); if(op==='version') process.stdout.write(JSON.stringify({terraform_version:'1.14.0'})); else if(op==='show') process.stdout.write(a.includes('-json') ? process.env.PLAN_JSON : 'PRIVATE_REVIEW'); else process.stdout.write('SECRET_STDOUT'); if(op==='plan') {fs.writeFileSync('_infra/tfplan',Buffer.from([0,255,13,10]));fs.writeFileSync('_infra/discord_alert.zip',Buffer.from([80,75,255]));} if(op==='workspace' && ['select','new'].includes(a[2]) && process.env.TF_WORKSPACE) {process.stderr.write('workspace overridden using TF_WORKSPACE');process.exitCode=1;} else process.exitCode=op===process.env.FAIL || (op==='workspace' && a[2]==='select' && process.env.MISSING_WORKSPACE==='true') ? 1 : op==='plan' ? Number(process.env.PLAN_EXIT) : 0;`,
   );
   const command = async (file, args, options) => {
     commands.push({ file, args });
@@ -96,6 +97,7 @@ export function fixture() {
       env: {
         ...options.env,
         PLAN_EXIT: String(controls.exitCode),
+        MISSING_WORKSPACE: String(controls.missingWorkspace),
         FAIL: controls.fail,
         PLAN_JSON: JSON.stringify(controls.planJson ?? controls.plan),
       },
