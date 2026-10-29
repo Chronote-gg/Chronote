@@ -162,6 +162,53 @@ test.each([
   }),
 );
 
+test.each([
+  [
+    "an existing behavior",
+    (u: Record<string, unknown>) =>
+      (u.ordered_cache_behavior = [{ grpc_config: true }, {}]),
+  ],
+  [
+    "an origin",
+    (u: Record<string, unknown>) => (u.origin = [{ domain_name: true }]),
+  ],
+  [
+    "the default behavior forwarding",
+    (u: Record<string, unknown>) =>
+      (u.default_cache_behavior = [{ forwarded_values: [{ headers: true }] }]),
+  ],
+  [
+    "a new behavior's target origin",
+    (u: Record<string, unknown>) =>
+      ((u.ordered_cache_behavior as Record<string, unknown>[])[1] = {
+        target_origin_id: true,
+      }),
+  ],
+])("rejects a frontend unknown on %s", (_name, mutate) =>
+  rejected((plan) => {
+    mutate(change(plan, frontend).after_unknown);
+  }),
+);
+
+test("rejects an unknown docs function on the new behavior", () =>
+  rejected((plan) => {
+    (
+      change(plan, docs).after_unknown.ordered_cache_behavior as Record<
+        string,
+        unknown
+      >[]
+    )[1].function_association = [{ function_arn: true }];
+  }));
+
+test.each([
+  [routeRewrite, "code"],
+  [headers, "name"],
+])("rejects an unknown %s %s on create", (address, key) =>
+  rejected((plan) => {
+    change(plan, address).after_unknown[key] = true;
+  }),
+);
+
 test("rejects an unknown value outside the new references", () =>
   rejected((plan) => {
     change(plan, docs).after_unknown.price_class = true;

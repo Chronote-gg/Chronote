@@ -31,6 +31,14 @@ const distributionOutputs = [
   "in_progress_validation_batches",
 ];
 const viewerRequest = "viewer-request";
+// Fields AWS 6.70 computes on a newly added cache behavior.
+const newBehaviorOutputs = ["grpc_config"];
+const newForwardingOutputs = ["headers", "query_string_cache_keys"];
+// Fields each new resource learns only on creation.
+const createOutputs = {
+  [routeRewrite]: ["arn", "etag", "id", "live_stage_etag", "status"],
+  [headersPolicy]: ["arn", "etag", "id"],
+};
 
 const list = (value) => value ?? [];
 const without = (value, keys) =>
@@ -38,37 +46,47 @@ const without = (value, keys) =>
     Object.entries(value).filter(([key]) => !keys.includes(key)),
   );
 
-// A function ARN is unknown until the new function exists; a known one must match.
-function assertAssociation(behavior, mask, functionArn) {
+// A function ARN is unknown only while the new function does not exist yet.
+function assertAssociation(behavior, mask, { functionArn, created }) {
   const [association, ...extra] = list(behavior.function_association);
   assert.equal(extra.length, 0);
   assert.equal(association.event_type, viewerRequest);
   const pending = mask?.function_association?.[0]?.function_arn === true;
+  assert.ok(!pending || created);
   if (!pending) assert.equal(association.function_arn, functionArn);
+  assert.ok(
+    !hasUnknown(
+      without(mask?.function_association?.[0] ?? {}, ["function_arn"]),
+    ),
+  );
   assert.deepEqual(list(behavior.lambda_function_association), []);
 }
 
 // The one new behavior: same origin, read-only methods, the noindex headers.
-function assertNewBehavior(behavior, mask, origin, functionArn) {
+function assertNewBehavior(behavior, mask, origin, rewrite) {
   assert.equal(behavior.target_origin_id, origin);
   assert.equal(behavior.viewer_protocol_policy, "redirect-to-https");
   assert.deepEqual([...behavior.allowed_methods].sort(), ["GET", "HEAD"]);
   assert.deepEqual([...behavior.cached_methods].sort(), ["GET", "HEAD"]);
   assert.deepEqual(list(behavior.trusted_key_groups), []);
   assert.deepEqual(list(behavior.trusted_signers), []);
-  assertAssociation(behavior, mask, functionArn);
+  assertAssociation(behavior, mask, rewrite);
   assert.ok(
     mask?.response_headers_policy_id === true ||
       /^[0-9a-f-]{36}$/.test(behavior.response_headers_policy_id),
   );
+  for (const forwarding of list(mask?.forwarded_values))
+    assert.ok(!hasUnknown(without(forwarding, newForwardingOutputs)));
   const rest = without(mask ?? {}, [
     "function_association",
     "response_headers_policy_id",
+    "forwarded_values",
+    ...newBehaviorOutputs,
   ]);
   assert.ok(!hasUnknown(rest));
 }
 
-function assertOrderedBehaviors(change, newPattern, origin, functionArn) {
+function assertOrderedBehaviors(change, newPattern, origin, rewrite) {
   const before = list(change.before.ordered_cache_behavior);
   const after = list(change.after.ordered_cache_behavior);
   const masks = list(change.unknown.ordered_cache_behavior);
@@ -83,7 +101,7 @@ function assertOrderedBehaviors(change, newPattern, origin, functionArn) {
       assert.deepEqual(behavior, existing);
     } else {
       assert.equal(behavior.path_pattern, newPattern);
-      assertNewBehavior(behavior, masks[index], origin, functionArn);
+      assertNewBehavior(behavior, masks[index], origin, rewrite);
     }
   });
 }
@@ -102,17 +120,18 @@ function checkDocs(raw) {
     "ordered_cache_behavior",
     ...distributionOutputs,
   ]);
-  assertOrderedBehaviors(
-    change,
-    "/search*",
-    "docs-s3",
-    existingFunction(change),
-  );
+  assertOrderedBehaviors(change, "/search*", "docs-s3", {
+    functionArn: existingFunction(change),
+    created: false,
+  });
 }
 
 function checkFrontend(raw, accountId) {
   const change = distributionChange(raw);
-  const functionArn = `arn:aws:cloudfront::${accountId}:function/meeting-notes-prod-frontend-route-rewrite`;
+  const rewrite = {
+    functionArn: `arn:aws:cloudfront::${accountId}:function/meeting-notes-prod-frontend-route-rewrite`,
+    created: true,
+  };
   assertOtherwiseUnchanged(change, [
     "custom_error_response",
     "default_cache_behavior",
@@ -137,15 +156,20 @@ function checkFrontend(raw, accountId) {
     without(before, ["function_association"]),
   );
   assert.ok(!hasUnknown(without(mask ?? {}, ["function_association"])));
-  assertAssociation(after, mask, functionArn);
-  assertOrderedBehaviors(change, "/share/*", "frontend-s3", functionArn);
+  assertAssociation(after, mask, rewrite);
+  assertOrderedBehaviors(change, "/share/*", "frontend-s3", rewrite);
 }
 
 function checkRouteRewrite({ after }) {
   assert.equal(after.name, "meeting-notes-prod-frontend-route-rewrite");
   assert.equal(after.runtime, "cloudfront-js-2.0");
   assert.equal(after.publish, true);
-  assert.equal(after.code, readFileSync(routeRewriteSource, "utf8"));
+  // Line endings follow the checkout, not the reviewed source.
+  const lines = (text) => text.replaceAll("\r\n", "\n");
+  assert.equal(
+    lines(after.code),
+    lines(readFileSync(routeRewriteSource, "utf8")),
+  );
 }
 
 function checkHeadersPolicy({ after }) {
@@ -175,7 +199,15 @@ function validateSitePlan(plan, { accountId }) {
       "aws_s3_bucket.docs",
       "aws_cloudfront_function.docs_index_rewrite",
     ],
-    check: ({ address, change }) => checks[address](change),
+    check: ({ address, change }) => {
+      if (createOutputs[address])
+        assert.ok(
+          !hasUnknown(
+            without(change.after_unknown ?? {}, createOutputs[address]),
+          ),
+        );
+      checks[address](change);
+    },
   });
 }
 module.exports = { validateSitePlan, siteTargets };

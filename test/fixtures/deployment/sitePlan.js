@@ -46,7 +46,15 @@ const distribution = (name, origin, extra) => ({
   viewer_certificate: [{ minimum_protocol_version: "TLSv1.2_2021" }],
   ...extra,
 });
+const unknownFields = (...keys) =>
+  Object.fromEntries(keys.map((key) => [key, true]));
 const newFunction = { function_association: [{ function_arn: true }] };
+// AWS 6.70 computes these on a newly added cache behavior.
+const newBehavior = {
+  forwarded_values: [{ headers: true, query_string_cache_keys: true }],
+  grpc_config: true,
+  response_headers_policy_id: true,
+};
 
 function frontendChange() {
   const before = distribution("frontend", "frontend-s3", {
@@ -84,10 +92,7 @@ function frontendChange() {
   };
   const after_unknown = {
     default_cache_behavior: [newFunction],
-    ordered_cache_behavior: [
-      {},
-      { ...newFunction, response_headers_policy_id: true },
-    ],
+    ordered_cache_behavior: [{}, { ...newFunction, ...newBehavior }],
     tags_all: {},
   };
   return { before, after, after_unknown };
@@ -116,7 +121,7 @@ function docsChange() {
     ],
   };
   const after_unknown = {
-    ordered_cache_behavior: [{}, { response_headers_policy_id: true }],
+    ordered_cache_behavior: [{}, newBehavior],
   };
   return { before, after, after_unknown };
 }
@@ -140,6 +145,13 @@ export function sitePlan() {
             "utf8",
           ),
         },
+        after_unknown: unknownFields(
+          "arn",
+          "etag",
+          "id",
+          "live_stage_etag",
+          "status",
+        ),
       }),
       managed(
         "aws_cloudfront_response_headers_policy.crawler_noindex",
@@ -160,6 +172,7 @@ export function sitePlan() {
               },
             ],
           },
+          after_unknown: unknownFields("arn", "etag", "id"),
         },
       ),
       managed(
