@@ -92,6 +92,9 @@ projection or identity, on-demand limits, table-level warm throughput and all
 other writable settings retain strict comparisons. The shared processing-retry
 table validator does not receive this exception. The future numerical provider
 default remains unknown; this policy proves no configured throughput change.
+The delivery guard also refuses known nonempty warm values on its strict route,
+even when an existing index has the same value before and after. This delivery
+restriction does not change the separate processing-retry scope.
 
 ## Maintenance cost
 

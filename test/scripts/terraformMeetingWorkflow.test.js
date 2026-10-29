@@ -64,6 +64,8 @@ test.each([
   "missing-workspace",
   "plan-data-source",
   "apply-data-source",
+  "plan-known-warm",
+  "apply-known-warm",
 ])(
   "delivery boundary %s uses a private rendering of the exact saved plan",
   async (fault) => {
@@ -89,12 +91,28 @@ test.each([
         },
       });
     if (fault === "plan-data-source") injectData();
+    const injectKnownWarm = () => {
+      for (const phase of ["before", "after"])
+        f.controls.planJson.resource_changes[0].change[
+          phase
+        ].global_secondary_index.find(
+          (index) => index.name === "GuildTimestampIndex",
+        ).warm_throughput = [
+          { read_units_per_second: 1, write_units_per_second: 1 },
+        ];
+    };
+    if (fault === "plan-known-warm") injectKnownWarm();
     const planRejected = [
       "plan-delta",
       "plan-data-source",
       "missing-workspace",
+      "plan-known-warm",
     ].includes(fault);
-    const applyRejected = ["apply-delta", "apply-data-source"].includes(fault);
+    const applyRejected = [
+      "apply-delta",
+      "apply-data-source",
+      "apply-known-warm",
+    ].includes(fault);
     try {
       const planOptions = f.options(sandbox);
       const plan = await runTerraform(planOptions);
@@ -127,6 +145,7 @@ test.each([
             unreviewed: "true",
           };
         if (fault === "apply-data-source") injectData();
+        if (fault === "apply-known-warm") injectKnownWarm();
       });
       expect(result.status).toBe(applyRejected ? "refused" : "applied");
       expect(

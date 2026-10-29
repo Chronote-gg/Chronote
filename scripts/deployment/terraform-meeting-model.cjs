@@ -183,6 +183,25 @@ function meetingModelEvidence(
   return token;
 }
 
+function verifyModelResource(r) {
+  assert.equal(r.mode, "managed");
+  assert.equal(r.provider_name, awsProvider);
+  assert.equal(r.type, r.address.split(".")[0]);
+  assert.equal(r.name, r.address.split(".")[1]);
+  const mask = r.change?.after_unknown;
+  if (mask !== undefined)
+    assert.ok(
+      mask && typeof mask === "object" && !Array.isArray(mask),
+      "Malformed resource unknown mask",
+    );
+  if (r.address === tableAddress && Array.isArray(mask?.global_secondary_index))
+    for (const indexMask of mask.global_secondary_index)
+      assert.ok(
+        indexMask && typeof indexMask === "object" && !Array.isArray(indexMask),
+        "Malformed index unknown mask",
+      );
+}
+
 function verifyModel(plan, token) {
   assert.equal(
     proofs.get(token),
@@ -194,29 +213,7 @@ function verifyModel(plan, token) {
     [...closure].sort(),
     "Unaudited dependency closure",
   );
-  for (const r of plan.resource_changes) {
-    assert.equal(r.mode, "managed");
-    assert.equal(r.provider_name, awsProvider);
-    assert.equal(r.type, r.address.split(".")[0]);
-    assert.equal(r.name, r.address.split(".")[1]);
-    const mask = r.change?.after_unknown;
-    if (mask !== undefined)
-      assert.ok(
-        mask && typeof mask === "object" && !Array.isArray(mask),
-        "Malformed resource unknown mask",
-      );
-    if (
-      r.address === tableAddress &&
-      Array.isArray(mask?.global_secondary_index)
-    )
-      for (const indexMask of mask.global_secondary_index)
-        assert.ok(
-          indexMask &&
-            typeof indexMask === "object" &&
-            !Array.isArray(indexMask),
-          "Malformed index unknown mask",
-        );
-  }
+  plan.resource_changes.forEach(verifyModelResource);
   assert.equal(
     plan.variables?.ENABLE_PROCESSING_RETRY_INDEX?.value,
     false,
@@ -294,6 +291,73 @@ function verifyWarmChange(change, token) {
   );
 }
 
+function excludedCheck(address) {
+  const excluded = excludedChecks.find(
+    (c) => c.to_display === address.to_display,
+  );
+  if (excluded) assert.deepEqual(address, excluded);
+  else if (address.kind === "resource") {
+    assert.ok(closure.includes(address.to_display), "Unknown check address");
+    const [type, name] = address.to_display.split(".");
+    assert.deepEqual(address, {
+      kind: "resource",
+      mode: "managed",
+      type,
+      name,
+      to_display: address.to_display,
+    });
+  } else {
+    assert.ok(
+      [
+        "project_name",
+        "environment",
+        "aws_region",
+        "ENABLE_PROCESSING_RETRY_INDEX",
+      ].includes(address.name),
+      "Unknown check address",
+    );
+    assert.deepEqual(address, {
+      kind: "var",
+      name: address.name,
+      to_display: `var.${address.name}`,
+    });
+  }
+  return excluded;
+}
+
+function verifyCheckInstances(check) {
+  const address = check.address;
+  assert.ok(Array.isArray(check.instances));
+  const instances = new Set();
+  for (const instance of check.instances) {
+    assert.equal(instance.status, "pass");
+    assert.ok(
+      Object.keys(instance).every((key) =>
+        ["address", "status", "problems"].includes(key),
+      ),
+    );
+    assert.deepEqual(instance.problems ?? [], []);
+    const item = instance.address;
+    assert.ok(item && typeof item.to_display === "string");
+    assert.ok(
+      Object.keys(item).every((key) =>
+        ["to_display", "instance_key"].includes(key),
+      ),
+    );
+    const suffix = Object.hasOwn(item, "instance_key")
+      ? `[${JSON.stringify(item.instance_key)}]`
+      : "";
+    if (suffix)
+      assert.ok(
+        typeof item.instance_key === "string" ||
+          (Number.isSafeInteger(item.instance_key) && item.instance_key >= 0),
+      );
+    assert.equal(item.to_display, address.to_display + suffix);
+    assert.ok(!instances.has(item.to_display), "Duplicate check instance");
+    instances.add(item.to_display);
+  }
+}
+
 function verifyChecks(plan, evidence) {
   if (Object.hasOwn(plan, "checks")) assert.ok(Array.isArray(plan.checks));
   const seen = new Set();
@@ -313,36 +377,7 @@ function verifyChecks(plan, evidence) {
         ["address", "status", "instances"].includes(k),
       ),
     );
-    const excluded = excludedChecks.find(
-      (c) => c.to_display === address.to_display,
-    );
-    if (excluded) assert.deepEqual(address, excluded);
-    else if (address.kind === "resource") {
-      assert.ok(closure.includes(address.to_display), "Unknown check address");
-      const [type, name] = address.to_display.split(".");
-      assert.deepEqual(address, {
-        kind: "resource",
-        mode: "managed",
-        type,
-        name,
-        to_display: address.to_display,
-      });
-    } else {
-      assert.ok(
-        [
-          "project_name",
-          "environment",
-          "aws_region",
-          "ENABLE_PROCESSING_RETRY_INDEX",
-        ].includes(address.name),
-        "Unknown check address",
-      );
-      assert.deepEqual(address, {
-        kind: "var",
-        name: address.name,
-        to_display: `var.${address.name}`,
-      });
-    }
+    const excluded = excludedCheck(address);
     if (check.status === "unknown") {
       assert.ok(evidence && excluded, "Relevant unknown check");
       assert.equal(check.instances, undefined, "Unknown check instances");
@@ -355,38 +390,7 @@ function verifyChecks(plan, evidence) {
           ),
           "Excluded resource is included",
         );
-    } else if (check.instances !== undefined) {
-      assert.ok(Array.isArray(check.instances));
-      const instances = new Set();
-      for (const instance of check.instances) {
-        assert.equal(instance.status, "pass");
-        assert.ok(
-          Object.keys(instance).every((key) =>
-            ["address", "status", "problems"].includes(key),
-          ),
-        );
-        assert.deepEqual(instance.problems ?? [], []);
-        const item = instance.address;
-        assert.ok(item && typeof item.to_display === "string");
-        assert.ok(
-          Object.keys(item).every((key) =>
-            ["to_display", "instance_key"].includes(key),
-          ),
-        );
-        const suffix = Object.hasOwn(item, "instance_key")
-          ? `[${JSON.stringify(item.instance_key)}]`
-          : "";
-        if (suffix)
-          assert.ok(
-            typeof item.instance_key === "string" ||
-              (Number.isSafeInteger(item.instance_key) &&
-                item.instance_key >= 0),
-          );
-        assert.equal(item.to_display, address.to_display + suffix);
-        assert.ok(!instances.has(item.to_display), "Duplicate check instance");
-        instances.add(item.to_display);
-      }
-    }
+    } else if (check.instances !== undefined) verifyCheckInstances(check);
   }
 }
 module.exports = {

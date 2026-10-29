@@ -106,29 +106,19 @@ function validateIndex(index, desired) {
     );
   }
 }
-// The table may change only by gaining `index` and its key attributes; the
-// processing-retry scope shares this comparison for its own index.
-function tableDelta(change, { name, arn, attributes: added, index }, evidence) {
-  const computedWarm = evidence !== undefined;
-  if (computedWarm) verifyWarmChange(change, evidence);
-  for (const value of [change.before, change.after]) {
-    assert.equal(value.name, name);
-    assert.equal(value.id, name);
-    assert.equal(value.arn, arn);
-    assert.equal(value.billing_mode, "PAY_PER_REQUEST");
-    if (value.region != null) assert.equal(value.region, "us-east-1");
-    named(value.attribute);
-    for (const index of named(value.global_secondary_index).values()) {
-      validateIndex(index);
-      if (computedWarm && Object.hasOwn(index, "warm_throughput"))
+function neutralWarmThroughput(change) {
+  for (const value of [change.before, change.after])
+    for (const index of named(value.global_secondary_index).values())
+      if (Object.hasOwn(index, "warm_throughput"))
         equal(index.warm_throughput, []);
-    }
-  }
+}
+
+const computedTableFields = ["stream_arn", "stream_label"];
+function knownTableEffects(change, computedWarm) {
   // AWS 6.69.1 computes these read-only fields. Explicit hash/range keys bind
   // key_schema, and PAY_PER_REQUEST makes provisioned capacity inapplicable.
-  const computed = ["stream_arn", "stream_label"];
   const mask = structuredClone(change.after_unknown ?? {});
-  for (const field of computed) delete mask[field];
+  for (const field of computedTableFields) delete mask[field];
   if (Array.isArray(mask.global_secondary_index)) {
     assert.equal(
       mask.global_secondary_index.length,
@@ -154,6 +144,27 @@ function tableDelta(change, { name, arn, attributes: added, index }, evidence) {
     delete mask.global_secondary_index;
   }
   assert.ok(!hasUnknown(mask), "Unknown table effect");
+}
+
+// The table may change only by gaining `index` and its key attributes; the
+// processing-retry scope shares this comparison for its own index.
+function tableDelta(change, { name, arn, attributes: added, index }, evidence) {
+  const computedWarm = evidence !== undefined;
+  if (computedWarm) {
+    verifyWarmChange(change, evidence);
+    neutralWarmThroughput(change);
+  }
+  for (const value of [change.before, change.after]) {
+    assert.equal(value.name, name);
+    assert.equal(value.id, name);
+    assert.equal(value.arn, arn);
+    assert.equal(value.billing_mode, "PAY_PER_REQUEST");
+    if (value.region != null) assert.equal(value.region, "us-east-1");
+    named(value.attribute);
+    for (const index of named(value.global_secondary_index).values())
+      validateIndex(index);
+  }
+  knownTableEffects(change, computedWarm);
   const expected = structuredClone(change.before);
   const attributes = named(expected.attribute);
   for (const attribute of added) {
@@ -169,7 +180,7 @@ function tableDelta(change, { name, arn, attributes: added, index }, evidence) {
     validateIndex(indexes.get(desired.name), index);
   else expected.global_secondary_index.push(desired);
   const normalize = (value) => {
-    const normalized = without(value, computed);
+    const normalized = without(value, computedTableFields);
     normalized.global_secondary_index = value.global_secondary_index.map(
       (index) =>
         without(index, [
@@ -227,7 +238,8 @@ function verifyResource(resource, arn, accountId, evidence) {
     assert.equal(resource.provider_name, "registry.terraform.io/hashicorp/aws");
     assert.equal(resource.type, resource.address.split(".")[0]);
     assert.equal(resource.name, resource.address.split(".")[1]);
-    if (resource.address === tableAddress)
+    if (resource.address === tableAddress) {
+      neutralWarmThroughput(change);
       tableDelta(
         change,
         {
@@ -238,7 +250,7 @@ function verifyResource(resource, arn, accountId, evidence) {
         },
         evidence,
       );
-    else policyDelta(change, arn, accountId);
+    } else policyDelta(change, arn, accountId);
   } else {
     assert.equal(change.actions[0], "no-op", "Unrelated managed effect");
     known(change);
