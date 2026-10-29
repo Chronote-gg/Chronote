@@ -3,6 +3,7 @@ export type MockAuthState = {
   loginUrl: string;
   logoutUrl: string;
   loading: boolean;
+  protectedQueriesReady: boolean;
   refresh: () => Promise<void>;
   user?: {
     id?: string;
@@ -20,6 +21,7 @@ export const authState: MockAuthState = {
   loginUrl: defaultLoginUrl,
   logoutUrl: defaultLogoutUrl,
   loading: false,
+  protectedQueriesReady: true,
   refresh: async () => {},
   user: null,
 };
@@ -29,6 +31,7 @@ export const resetAuthState = () => {
   authState.loginUrl = defaultLoginUrl;
   authState.logoutUrl = defaultLogoutUrl;
   authState.loading = false;
+  authState.protectedQueriesReady = true;
   authState.refresh = async () => {};
   authState.user = null;
 };

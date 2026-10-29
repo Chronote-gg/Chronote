@@ -280,7 +280,7 @@ describe("frontend components", () => {
     const openSpy = jest.spyOn(window, "open").mockImplementation(() => null);
 
     renderWithMantine(<SiteNavbar pathname="/portal/server/g1/library" />);
-    expect(screen.getByText("Personal")).toBeInTheDocument();
+    expect(screen.getByText("Workspace")).toBeInTheDocument();
     expect(screen.getByText("Server")).toBeInTheDocument();
     expect(screen.getByText("Help")).toBeInTheDocument();
     expect(screen.getByText("Guild One")).toBeInTheDocument();
@@ -301,10 +301,10 @@ describe("frontend components", () => {
     const onClose = jest.fn();
 
     renderWithMantine(
-      <SiteNavbar pathname="/portal/server/unknown/ask" onClose={onClose} />,
+      <SiteNavbar pathname="/portal/meetings" onClose={onClose} />,
     );
 
-    expect(screen.getByText("Choose a server")).toBeInTheDocument();
+    expect(screen.getByText("Sources")).toBeInTheDocument();
     expect(screen.getAllByText("Choose a server first").length).toBeGreaterThan(
       0,
     );
@@ -319,7 +319,7 @@ describe("frontend components", () => {
     guildState.guilds = [];
 
     renderWithMantine(<SiteNavbar pathname="/portal/server/g1/library" />);
-    const navLibrary = screen.getByTestId("nav-library");
+    const navLibrary = screen.getByTestId("nav-meetings");
     const disabledAttr =
       navLibrary.getAttribute("data-disabled") ||
       navLibrary.getAttribute("aria-disabled");

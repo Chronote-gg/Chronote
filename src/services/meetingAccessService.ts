@@ -1,3 +1,4 @@
+import { isRecordedMeetingAttendee } from "../utils/meetingUserIndex";
 import type { MeetingHistory } from "../types/db";
 import {
   isPersonalMeeting,
@@ -39,6 +40,7 @@ type MeetingAccessRecord = Pick<
   | "ownerUserId"
   | "ownershipScope"
   | "participants"
+  | "attendees"
   | "textChannelId"
 >;
 
@@ -63,17 +65,6 @@ const resolveSummaryTextChannelId = (meeting: {
   const fallback = meeting.notesChannelId?.trim();
   if (fallback) return fallback;
   return null;
-};
-
-const isMeetingParticipant = (meeting: {
-  participants?: Array<{ id: string }> | null;
-}): ((userId: string) => boolean) => {
-  const ids = new Set(
-    (meeting.participants ?? [])
-      .map((participant) => participant?.id)
-      .filter((id): id is string => typeof id === "string" && id.length > 0),
-  );
-  return (userId: string) => ids.has(userId);
 };
 
 export async function ensureUserCanAccessMeeting(options: {
@@ -138,7 +129,7 @@ export async function checkUserMeetingAccess(options: {
     return { allowed: false, missing: [] };
   }
 
-  if (attendeeOverrideEnabled && isMeetingParticipant(meeting)(userId)) {
+  if (attendeeOverrideEnabled && isRecordedMeetingAttendee(meeting, userId)) {
     return { allowed: true, via: "attendee" };
   }
 

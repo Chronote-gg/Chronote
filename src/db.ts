@@ -1,47 +1,77 @@
 import {
-  buildPendingSegmentTransaction,
-  buildPersonalUploadSubmissionTransaction,
-  buildPersonalSegmentTransitionTransaction,
-} from "./services/personalUploadTransactions";
+  AttributeValue,
+  DeleteItemCommand,
+  GetItemCommand,
+  PutItemCommand,
+  QueryCommand,
+  ScanCommand,
+  TransactWriteItemsCommand,
+  TransactionCanceledException,
+  UpdateItemCommand,
+  type ConditionCheck,
+  type Put,
+} from "@aws-sdk/client-dynamodb";
+import { marshall, unmarshall } from "@aws-sdk/util-dynamodb";
+import { randomUUID } from "node:crypto";
+import { isDeepStrictEqual } from "node:util";
+import { z } from "zod";
 import { completeConditionalCancellation } from "./repositories/deploymentControlErrors";
-import { createStripeWebhookDynamoRepository } from "./repositories/stripeWebhookDynamoRepository";
-import { transactPersonalAdmission } from "./services/personalAdmissionTransaction";
-import { personalCanonicalWriter } from "./types/meetingCanonicalWriter";
-import { canonicalFieldsSupersededAfter } from "./types/meetingCanonicalContent";
-import type { PersonalHistoryWriteResult } from "./types/personalHistoryWrite";
-import {
-  publicationSnapshot,
-  publicationSnapshotCondition,
-} from "./types/meetingPublication";
-import { parseMeetingUpdateHistory } from "./repositories/meetingUpdateDeliveryState";
-import { readDynamoIndexStatus } from "./repositories/dynamoIndexStatus";
 import {
   bindDeploymentControlRepository,
   bindMeetingUpdateDeliveryRepository,
 } from "./repositories/deploymentRepositoryBindings";
+import { readDynamoIndexStatus } from "./repositories/dynamoIndexStatus";
+import { parseMeetingUpdateHistory } from "./repositories/meetingUpdateDeliveryState";
 import { listUnpausedPersonalMediaUploadJobs } from "./repositories/personalMediaUploadQueue";
+import { createStripeWebhookDynamoRepository } from "./repositories/stripeWebhookDynamoRepository";
+import { config } from "./services/configService";
+import { transactPersonalAdmission } from "./services/personalAdmissionTransaction";
+import {
+  buildPendingSegmentTransaction,
+  buildPersonalSegmentTransitionTransaction,
+  buildPersonalUploadSubmissionTransaction,
+} from "./services/personalUploadTransactions";
 import {
   billingChangeControlKey,
   billingChangeOperationKey,
   isBillingChangeComplete,
+  parseChangeUsage,
   type BillingChangeClaim,
   type BillingChangeWrite,
-  parseChangeUsage,
 } from "./types/billingChange";
 import {
-  renewalOperationKey,
-  renewalControlKey,
-  isRenewalComplete,
-  type RenewalOperation,
-} from "./types/renewal";
-import type { IntroOfferAuthority } from "./types/introOfferAuthority";
-import { validateBoundarySample } from "./types/historyWriterBoundary";
-import {
-  historyWriterBoundaryKey,
-  HISTORY_WRITER_VERSION,
-  historyWriterBoundarySchema,
-  type HistoryWriterBoundary,
-} from "./types/historyWriterBoundary";
+  AccessLog,
+  ActiveMeetingLease,
+  AskConversationRecord,
+  AskConversationShareRecord,
+  AskMessageRecord,
+  AutoRecordSettings,
+  ChannelContext,
+  ChatTtsMonthlyUsage,
+  ConfigOverrideRecord,
+  ContactFeedbackRecord,
+  DictionaryEntry,
+  EntitlementGrant,
+  EntitlementGrantStatus,
+  FeedbackRecord,
+  FeedbackTargetType,
+  GuildInstaller,
+  GuildSubscription,
+  InteractionReceipt,
+  MeetingAccessGrant,
+  MeetingHistory,
+  MeetingShareByMeetingRecord,
+  MeetingShareRecord,
+  OnboardingState,
+  PaymentTransaction,
+  PersonalMediaClaim,
+  PersonalMediaUploadJobRecord,
+  PersonalRecordingSegmentRecord,
+  RecordingTranscript,
+  ServerContext,
+  StripeWebhookEvent,
+  UserSpeechSettings,
+} from "./types/db";
 import {
   historicalOfferImportKey,
   historicalOfferImportSchema,
@@ -49,72 +79,40 @@ import {
   type HistoricalOfferImport,
   type HistoricalOfferImportWrite,
 } from "./types/historicalOfferImport";
-import { assertPurchaseInvoiceBinding } from "./types/purchase";
-import { z } from "zod";
+import {
+  HISTORY_WRITER_VERSION,
+  historyWriterBoundaryKey,
+  historyWriterBoundarySchema,
+  validateBoundarySample,
+  type HistoryWriterBoundary,
+} from "./types/historyWriterBoundary";
+import type { IntroOfferAuthority } from "./types/introOfferAuthority";
+import { canonicalFieldsSupersededAfter } from "./types/meetingCanonicalContent";
+import { personalCanonicalWriter } from "./types/meetingCanonicalWriter";
+import type { MeetingStatus } from "./types/meetingLifecycle";
+import {
+  publicationSnapshot,
+  publicationSnapshotCondition,
+} from "./types/meetingPublication";
 import {
   offerUsageKey,
   offerUsageSchema,
   parseOfferUsageChange,
-  type OfferUsage,
   type IntroOfferId,
-  type ProviderMode,
-  type OfferUsageWrite,
+  type OfferUsage,
   type OfferUsageMutation,
+  type OfferUsageWrite,
+  type ProviderMode,
 } from "./types/offerUsage";
+import type { PersonalHistoryWriteResult } from "./types/personalHistoryWrite";
 import type { PurchaseAttempt, PurchaseIncident } from "./types/purchase";
-import { config } from "./services/configService";
-import { randomUUID } from "node:crypto";
-import { isDeepStrictEqual } from "node:util";
+import { assertPurchaseInvoiceBinding } from "./types/purchase";
 import {
-  AttributeValue,
-  type Put,
-  type ConditionCheck,
-  DynamoDBClient,
-  TransactWriteItemsCommand,
-  TransactionCanceledException,
-  GetItemCommand,
-  PutItemCommand,
-  DeleteItemCommand,
-  QueryCommand,
-  ScanCommand,
-  UpdateItemCommand,
-} from "@aws-sdk/client-dynamodb";
-import { marshall, unmarshall } from "@aws-sdk/util-dynamodb";
-import {
-  AccessLog,
-  AutoRecordSettings,
-  ChannelContext,
-  EntitlementGrant,
-  EntitlementGrantStatus,
-  GuildSubscription,
-  MeetingHistory,
-  MeetingAccessGrant,
-  MeetingUserIndexRecord,
-  AskConversationRecord,
-  AskMessageRecord,
-  GuildInstaller,
-  OnboardingState,
-  PaymentTransaction,
-  RecordingTranscript,
-  ServerContext,
-  ActiveMeetingLease,
-  StripeWebhookEvent,
-  InteractionReceipt,
-  UserSpeechSettings,
-  ChatTtsMonthlyUsage,
-  DictionaryEntry,
-  ConfigOverrideRecord,
-  AskConversationShareRecord,
-  MeetingShareRecord,
-  MeetingShareByMeetingRecord,
-  FeedbackRecord,
-  FeedbackTargetType,
-  ContactFeedbackRecord,
-  PersonalMediaUploadJobRecord,
-  PersonalMediaClaim,
-  PersonalRecordingSegmentRecord,
-} from "./types/db";
-import type { MeetingStatus } from "./types/meetingLifecycle";
+  isRenewalComplete,
+  renewalControlKey,
+  renewalOperationKey,
+  type RenewalOperation,
+} from "./types/renewal";
 
 import {
   classifyDeploymentTransactionError,
@@ -122,47 +120,44 @@ import {
 } from "./repositories/deploymentControlRepository";
 import { getMockStore } from "./repositories/mockStore";
 import { requireUnpausedDesktopDraft } from "./repositories/pausedDesktopDraft";
+import {
+  buildPersonalClaimCheck,
+  buildPersonalMediaClaimTransaction,
+  buildWorkAdmissionChecks,
+} from "./services/deploymentControlTransactions";
 import type {
   AdmissionContext,
   HistoryTransition,
   WorkAdmissionAuthority,
 } from "./types/deploymentControl";
-import {
-  buildWorkAdmissionChecks,
-  buildPersonalMediaClaimTransaction,
-  buildPersonalClaimCheck,
-} from "./services/deploymentControlTransactions";
 
 import {
-  renewalRecoveryKey,
-  renewalRecoveryCurrentKey,
   RENEWAL_RECOVERY_DUE_INDEX,
-  renewalRecoveryNextCheck,
   readRenewalRecoveryCursor,
-  writeRenewalRecoveryCursor,
+  renewalRecoveryCurrentKey,
   renewalRecoveryCursorSchema,
+  renewalRecoveryKey,
+  renewalRecoveryNextCheck,
+  writeRenewalRecoveryCursor,
   type RenewalRecovery,
   type RenewalRecoveryPointer,
 } from "./types/renewalRecovery";
 
-const MEETING_USER_INDEX_WRITE_BATCH_SIZE = 25;
 const PERSONAL_MEDIA_UPLOAD_STATUS_UPDATED_AT_INDEX = "StatusUpdatedAtIndex";
 
-export const dynamoDbClient = new DynamoDBClient(
-  config.database.useLocalDynamoDB
-    ? {
-        endpoint: "http://localhost:8000",
-        region: "local",
-        credentials: {
-          accessKeyId: "dummy",
-          secretAccessKey: "dummy",
-        },
-      }
-    : { region: "us-east-1" },
-);
+import {
+  dynamoDbClient,
+  tableName,
+  tablePrefix,
+} from "./repositories/dynamoClient";
+export { dynamoDbClient } from "./repositories/dynamoClient";
 
-const tablePrefix = config.database.tablePrefix ?? "";
-const tableName = (name: string) => `${tablePrefix}${name}`;
+export {
+  getGuildShareIndexMetadataStrong,
+  inventoryGuildShareIndexMetadataPage,
+  meetingShareIndexRepairTarget,
+  meetingUserIndexPointerExistsStrong,
+} from "./repositories/meetingShareIndexStorage";
 const indexStatus = (table: string, indexName: string) =>
   readDynamoIndexStatus(dynamoDbClient, {
     mock: config.mock.enabled,
@@ -1316,6 +1311,11 @@ export async function releaseChatTtsMonthlyUsageReservation(
   }
 }
 
+export {
+  getMeetingBrowseCursorState,
+  putMeetingBrowseCursorState,
+} from "./repositories/meetingBrowseCursorStorage";
+
 // Dictionary operations
 const dictionaryRevisionSid = (guildId: string) =>
   `dictionaryRevision#${guildId}`;
@@ -2169,95 +2169,11 @@ export async function getMeetingHistory(
   return undefined;
 }
 
-export async function writeMeetingUserIndexRecords(
-  records: MeetingUserIndexRecord[],
-): Promise<void> {
-  for (
-    let index = 0;
-    index < records.length;
-    index += MEETING_USER_INDEX_WRITE_BATCH_SIZE
-  ) {
-    await Promise.all(
-      records
-        .slice(index, index + MEETING_USER_INDEX_WRITE_BATCH_SIZE)
-        .map((record) =>
-          dynamoDbClient.send(
-            new PutItemCommand({
-              TableName: tableName("MeetingUserIndexTable"),
-              Item: marshall(record, { removeUndefinedValues: true }),
-            }),
-          ),
-        ),
-    );
-  }
-}
-
-export async function deleteMeetingUserIndexRecords(
-  records: Pick<MeetingUserIndexRecord, "userId" | "userTimestamp">[],
-): Promise<void> {
-  for (
-    let index = 0;
-    index < records.length;
-    index += MEETING_USER_INDEX_WRITE_BATCH_SIZE
-  ) {
-    await Promise.all(
-      records
-        .slice(index, index + MEETING_USER_INDEX_WRITE_BATCH_SIZE)
-        .map((record) =>
-          dynamoDbClient.send(
-            new DeleteItemCommand({
-              TableName: tableName("MeetingUserIndexTable"),
-              Key: marshall({
-                userId: record.userId,
-                userTimestamp: record.userTimestamp,
-              }),
-            }),
-          ),
-        ),
-    );
-  }
-}
-
-export async function getMeetingUserIndexRecordsForUserInRange(
-  userId: string,
-  startTimestamp: string,
-  endTimestamp: string,
-  limit?: number,
-): Promise<MeetingUserIndexRecord[]> {
-  if (limit !== undefined && limit <= 0) return [];
-
-  const items: MeetingUserIndexRecord[] = [];
-  let lastKey: Record<string, AttributeValue> | undefined;
-
-  do {
-    const remaining = limit === undefined ? undefined : limit - items.length;
-    const params = {
-      TableName: tableName("MeetingUserIndexTable"),
-      KeyConditionExpression:
-        "userId = :userId AND userTimestamp BETWEEN :start AND :end",
-      ExpressionAttributeValues: marshall({
-        ":userId": userId,
-        ":start": `${startTimestamp}#`,
-        ":end": `${endTimestamp}#\uffff`,
-      }),
-      ExclusiveStartKey: lastKey,
-      ScanIndexForward: false,
-      ...(remaining !== undefined && remaining > 0 ? { Limit: remaining } : {}),
-    };
-    const command = new QueryCommand(params);
-    const result = await dynamoDbClient.send(command);
-    if (result.Items) {
-      items.push(
-        ...result.Items.map(
-          (item) => unmarshall(item) as MeetingUserIndexRecord,
-        ),
-      );
-    }
-    lastKey = result.LastEvaluatedKey;
-  } while (lastKey && (limit === undefined || items.length < limit));
-
-  return limit === undefined ? items : items.slice(0, limit);
-}
+export {
+  writeMeetingUserIndexRecords,
+  deleteMeetingUserIndexRecords,
+  getMeetingUserIndexRecordsForUserInRange,
+} from "./repositories/meetingUserIndexStorage";
 
 export async function writePersonalMediaUploadJob(
   job: PersonalMediaUploadJobRecord,
@@ -4282,3 +4198,8 @@ export async function listDueRenewalRecoveries(input: {
       : {}),
   };
 }
+
+export {
+  getMeetingHistoryTimestampPage,
+  getMeetingUserIndexTimestampPage,
+} from "./repositories/meetingBrowseStorage";

@@ -48,6 +48,19 @@ export const parsePortalMeetingLink = (
 
   const meetingId = url.searchParams.get("meetingId");
   if (!meetingId) return null;
+  if (url.pathname === "/portal/meetings") {
+    const serverId = url.searchParams.get("meetingServerId");
+    return serverId
+      ? {
+          serverId,
+          meetingId,
+          eventId: url.searchParams.get("eventId") ?? undefined,
+          fullScreen: resolveFullScreenParam(
+            url.searchParams.get("fullScreen"),
+          ),
+        }
+      : null;
+  }
   const match = url.pathname.match(legacyPortalServerPath);
   if (!match) return null;
   const serverId = match[1];
@@ -57,6 +70,7 @@ export const parsePortalMeetingLink = (
 };
 
 export const buildMeetingLinkForLocation = (options: {
+  meetingServerId?: string;
   pathname: string;
   search: string;
   meetingId: string;
@@ -65,6 +79,8 @@ export const buildMeetingLinkForLocation = (options: {
 }) => {
   const params = new URLSearchParams(options.search);
   params.set("meetingId", options.meetingId);
+  if (options.meetingServerId)
+    params.set("meetingServerId", options.meetingServerId);
   if (options.eventId) {
     params.set("eventId", options.eventId);
   } else {

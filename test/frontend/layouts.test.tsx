@@ -49,7 +49,7 @@ describe("portal layouts", () => {
     guildState.guilds = [{ id: "g1", name: "Guild One", canManage: true }];
     setRouterPathname("/portal/server/g1/library");
     renderWithMantine(<PortalLayout />);
-    expect(screen.getByTestId("nav-server-button")).toBeInTheDocument();
+    expect(screen.getByTestId("nav-meetings")).toBeInTheDocument();
     expect(screen.getByTestId("router-outlet")).toBeInTheDocument();
   });
 
@@ -59,7 +59,7 @@ describe("portal layouts", () => {
     guildState.loading = false;
     setRouterPathname("/portal/select-server");
     renderWithMantine(<PortalLayout />);
-    expect(screen.queryByTestId("nav-server-button")).toBeNull();
+    expect(screen.queryByTestId("nav-meetings")).toBeNull();
   });
 
   test("PortalServerLayout returns null while loading", () => {

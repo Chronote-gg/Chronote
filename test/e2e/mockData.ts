@@ -13,8 +13,14 @@ const chronoteGuild =
 
 const ddmMeetings = store.meetingHistoryByGuild.get(ddmGuild.id) ?? [];
 const activeMeetings = ddmMeetings.filter((meeting) => !meeting.archivedAt);
-const firstMeetingNotes = activeMeetings[0]?.notes ?? "";
-const meetingTitle = firstMeetingNotes.split("\n")[0]?.trim() || "Meeting";
+const firstMeetingChannel = store.channelsByGuild
+  .get(ddmGuild.id)
+  ?.find((channel) => channel.id === activeMeetings[0]?.channelId);
+const meetingTitle =
+  activeMeetings[0]?.meetingName ||
+  activeMeetings[0]?.summaryLabel ||
+  activeMeetings[0]?.summarySentence ||
+  `Meeting in ${firstMeetingChannel?.name ?? activeMeetings[0]?.channelId}`;
 
 const conversationKey = `USER#${store.user.id}#GUILD#${ddmGuild.id}`;
 const conversations = store.askConversationsByKey.get(conversationKey) ?? [];

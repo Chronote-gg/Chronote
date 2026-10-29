@@ -20,3 +20,23 @@ export function buildPortalMeetingUrl(options: {
   const trimmed = baseUrl.replace(/\/$/, "");
   return `${trimmed}${path}`;
 }
+
+export function buildPortalMeetingsUrl(options: {
+  baseUrl: string;
+  scope: import("../types/meetingBrowse").MeetingBrowseScope;
+  meetingServerId?: string;
+  meetingId?: string;
+  eventId?: string;
+  fullScreen?: boolean;
+}): string {
+  const params = new URLSearchParams({ scope: options.scope.kind });
+  if (options.scope.kind === "guild")
+    params.set("serverId", options.scope.serverId);
+  if (options.meetingServerId && options.meetingId) {
+    params.set("meetingServerId", options.meetingServerId);
+    params.set("meetingId", options.meetingId);
+    if (options.eventId) params.set("eventId", options.eventId);
+    if (options.fullScreen) params.set("fullScreen", "true");
+  }
+  return `${options.baseUrl.replace(/\/$/, "")}/portal/meetings?${params.toString()}`;
+}
