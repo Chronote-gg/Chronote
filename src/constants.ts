@@ -98,6 +98,12 @@ export const PERSONAL_MEDIA_UPLOAD_WORKER_BATCH_SIZE = 2;
 export const PERSONAL_MEDIA_UPLOAD_WORKER_CLAIM_SECONDS = 300;
 export const PERSONAL_MEDIA_UPLOAD_WORKER_CLAIM_RENEWAL_MS = 120_000;
 export const PERSONAL_MEDIA_UPLOAD_MAX_PROCESSING_ATTEMPTS = 3;
+// Lease values mirror the personal upload worker, which runs the same transcription and notes work.
+export const PROCESSING_RETRY_POLL_INTERVAL_MS = 5_000;
+export const PROCESSING_RETRY_MAX_CONCURRENT = 2;
+export const PROCESSING_RETRY_CLAIM_SECONDS = 300;
+export const PROCESSING_RETRY_CLAIM_RENEWAL_MS = 120_000;
+export const PROCESSING_RETRY_SAVE_ATTEMPTS = 3;
 export const PERSONAL_MEDIA_UPLOAD_ALLOWED_CONTENT_TYPES = [
   "audio/mpeg",
   "audio/mp3",

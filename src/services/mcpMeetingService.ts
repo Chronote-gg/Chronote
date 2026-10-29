@@ -14,11 +14,7 @@ import {
 import { listMeetingUserIndexForUserInRangeService } from "./meetingUserIndexService";
 import { fetchJsonFromS3 } from "./storageService";
 import { checkUserMeetingAccess } from "./meetingAccessService";
-import {
-  getSnapshotBoolean,
-  resolveConfigSnapshot,
-} from "./unifiedConfigService";
-import { CONFIG_KEYS } from "../config/keys";
+import { resolveAttendeeAccessEnabled } from "./attendeeAccessSetting";
 import type { MeetingHistory } from "../types/db";
 import {
   projectMeetingCapture,
@@ -216,22 +212,6 @@ const resolveMeetingDuration = (meeting: MeetingHistory) => {
     );
   }
   return meeting.duration;
-};
-
-const resolveAttendeeAccessEnabled = async (guildId: string) => {
-  try {
-    const snapshot = await resolveConfigSnapshot({ guildId });
-    return getSnapshotBoolean(
-      snapshot,
-      CONFIG_KEYS.meetings.attendeeAccessEnabled,
-    );
-  } catch (error) {
-    console.warn("Failed to resolve MCP meeting access setting", {
-      guildId,
-      error,
-    });
-    return true;
-  }
 };
 
 const assertMcpGuildMembership = async (guildId: string, userId: string) => {

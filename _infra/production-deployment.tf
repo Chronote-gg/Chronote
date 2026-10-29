@@ -1,6 +1,14 @@
 data "aws_iam_openid_connect_provider" "github_production_deploy" {
   count = var.environment == "prod" ? 1 : 0
-  url   = "https://token.actions.githubusercontent.com"
+  arn   = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:oidc-provider/token.actions.githubusercontent.com"
+}
+
+# Built from stable names so a targeted runtime plan never refreshes or changes
+# the serving service, its task definition or their unrelated inputs.
+locals {
+  production_service_arn = "arn:aws:ecs:${var.aws_region}:${data.aws_caller_identity.current.account_id}:service/${aws_ecs_cluster.main.name}/${local.name_prefix}-bot-service"
+  production_task_family = "${local.name_prefix}-bot-task"
+  production_account_arn = "arn:aws:iam::${data.aws_caller_identity.current.account_id}"
 }
 
 data "github_organization" "production_deployment_owner" {
@@ -57,10 +65,10 @@ resource "aws_iam_role_policy" "production_deploy" {
           "ecs:DescribeServices",
           "ecs:UpdateService"
         ],
-        Resource = aws_ecs_service.app_service.id,
+        Resource = local.production_service_arn,
         Condition = {
           ArnLikeIfExists = {
-            "ecs:task-definition" = "arn:aws:ecs:${var.aws_region}:${data.aws_caller_identity.current.account_id}:task-definition/${aws_ecs_task_definition.app_task.family}:*"
+            "ecs:task-definition" = "arn:aws:ecs:${var.aws_region}:${data.aws_caller_identity.current.account_id}:task-definition/${local.production_task_family}:*"
           }
         }
       },
@@ -93,7 +101,7 @@ resource "aws_iam_role_policy" "production_deploy" {
           "ecs:RegisterTaskDefinition",
           "ecs:TagResource"
         ],
-        Resource = "arn:aws:ecs:${var.aws_region}:${data.aws_caller_identity.current.account_id}:task-definition/${aws_ecs_task_definition.app_task.family}:*"
+        Resource = "arn:aws:ecs:${var.aws_region}:${data.aws_caller_identity.current.account_id}:task-definition/${local.production_task_family}:*"
       },
       {
         Sid    = "DefinitionDiscoveryInRegion",
@@ -121,7 +129,7 @@ resource "aws_iam_role_policy" "production_deploy" {
           "ecr:PutImage",
           "ecr:BatchGetImage"
         ],
-        Resource = aws_ecr_repository.app_ecr_repo.arn
+        Resource = "arn:aws:ecr:${var.aws_region}:${data.aws_caller_identity.current.account_id}:repository/${local.name_prefix}-bot-repo"
       },
       {
         Sid    = "RegistryAuthenticationInRegion",
@@ -144,7 +152,7 @@ resource "aws_iam_role_policy" "production_deploy" {
         ],
         Resource = [
           aws_iam_role.ecs_task_app_role.arn,
-          aws_iam_role.ecs_task_execution_role.arn
+          "${local.production_account_arn}:role/${local.name_prefix}-ecs-task-exec-role"
         ],
         Condition = {
           StringEquals = {
@@ -219,7 +227,7 @@ resource "aws_iam_role_policy" "production_deploy" {
         Sid      = "RuntimeManagedPolicyReadback",
         Effect   = "Allow",
         Action   = ["iam:GetPolicy", "iam:GetPolicyVersion"],
-        Resource = [aws_iam_policy.dynamodb_access_policy.arn, aws_iam_policy.kms_app_policy.arn, aws_iam_policy.transcripts_s3_policy.arn, aws_iam_policy.appconfig_access_policy.arn, aws_iam_policy.bedrock_data_automation_policy.arn, aws_iam_policy.bedrock_s3_policy.arn]
+        Resource = concat([aws_iam_policy.dynamodb_access_policy.arn], [for name in ["bot-kms-policy", "bot-transcripts-s3-policy", "bot-appconfig-policy", "bedrock-data-automation", "bedrock-eval-s3"] : "${local.production_account_arn}:policy/${local.name_prefix}-${name}"])
       },
       {
         # Session policy binds the exact task; executor binds the reviewed probe command.
@@ -229,7 +237,7 @@ resource "aws_iam_role_policy" "production_deploy" {
         Resource = [aws_ecs_cluster.main.arn, "arn:aws:ecs:${var.aws_region}:${data.aws_caller_identity.current.account_id}:task/${aws_ecs_cluster.main.name}/*"],
         Condition = {
           StringEquals = {
-            "ecs:container-name" = jsondecode(aws_ecs_task_definition.app_task.container_definitions)[0].name
+            "ecs:container-name" = "${local.name_prefix}-bot"
           }
         }
       },

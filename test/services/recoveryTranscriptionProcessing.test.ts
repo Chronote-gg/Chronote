@@ -165,12 +165,15 @@ test("partial capture uses frozen cleanup and explicitly skips finalized-only st
 });
 test("complete verified PCM uses shared mixer and plain finalized-pass with frozen budgets", async () => {
   const f = await fixture(true);
+  if (f.content.context.settings.availability === "available")
+    f.content.context.settings.value.transcription.language = "ja";
   await recoverTranscript(f.content, f.reader, f.signal, (run) => run());
   expect(renderMixedPcmTracks).toHaveBeenCalledTimes(1);
   const input = jest.mocked(runContentTranscriptionFinalPass).mock.calls[0][0];
   expect(input).not.toHaveProperty("connection");
   expect(input.settings).toEqual(liveTranscriptionProcessingSettings.finalPass);
   expect(input.reconcileModel.model).toBe("original-model");
+  expect(input.transcriptionLanguage).toBe("ja");
   expect(f.content.processing?.finalPass).toBe("acknowledged");
 });
 test("missing original processing inputs reconcile while a verified processed transcript needs no audio or provider", async () => {

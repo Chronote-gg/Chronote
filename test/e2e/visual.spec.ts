@@ -10,6 +10,7 @@ import { expect, test } from "./fixtures";
 import { mockGuilds, mockLibrary, mockSettings } from "./mockData";
 import { applyVisualDefaults, waitForVisualReady } from "./visualUtils";
 import { registerNotesRoutingVisualTests } from "./notesRoutingVisuals";
+import { registerAskVisualTests } from "./askVisuals";
 import { assertPageCanScroll } from "./scrollAssertions";
 
 const runVisual = process.env.PW_VISUAL === "true";
@@ -541,23 +542,7 @@ test.describe("visual regression", () => {
     });
   });
 
-  test("ask page @visual", async ({ serverSelectPage, nav, askPage, page }) => {
-    for (const mode of visualModes) {
-      await page.goto(withVisualMode("/portal/select-server", mode));
-      await serverSelectPage.openServerByName(mockGuilds.ddm.name);
-      await nav.goToAsk();
-      await askPage.waitForReady();
-      await expectVisualScreenshot(page, "ask-list", mode);
-
-      await askPage.switchListMode("archived");
-      await askPage.waitForReady();
-      await expectVisualScreenshot(page, "ask-archived", mode);
-
-      await askPage.startNewChat();
-      await expect(askPage.title()).toContainText(/new chat/i);
-      await expectVisualScreenshot(page, "ask-new-chat", mode);
-    }
-  });
+  registerAskVisualTests(expectVisualScreenshot);
 
   test("billing page @visual", async ({
     serverSelectPage,

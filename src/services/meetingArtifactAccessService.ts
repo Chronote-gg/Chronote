@@ -1,6 +1,7 @@
 import { CONFIG_KEYS } from "../config/keys";
 import type { MeetingHistory } from "../types/db";
 import { isPersonalMeeting } from "../utils/meetingOwnership";
+import { readAttendeeAccessSetting } from "./attendeeAccessSetting";
 import {
   getSnapshotBoolean,
   resolveConfigSnapshot,
@@ -45,23 +46,9 @@ export async function resolveServerMeetingArtifactAccess(
   }
 }
 
-export async function resolveServerAttendeeAccessEnabled(
+export const resolveServerAttendeeAccessEnabled = (
   guildId: string,
-): Promise<boolean> {
-  try {
-    const snapshot = await resolveConfigSnapshot({ guildId });
-    return getSnapshotBoolean(
-      snapshot,
-      CONFIG_KEYS.meetings.attendeeAccessEnabled,
-    );
-  } catch (error) {
-    console.warn("Failed to resolve attendee access setting", {
-      guildId,
-      error,
-    });
-    return false;
-  }
-}
+): Promise<boolean> => readAttendeeAccessSetting(guildId, false);
 
 export async function resolveMeetingArtifactAccess(
   meeting: Pick<

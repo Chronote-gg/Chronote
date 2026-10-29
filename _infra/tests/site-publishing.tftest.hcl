@@ -33,8 +33,10 @@ run "production_site_policy" {
   command = plan
   plan_options { target = [aws_iam_policy.site_publishing, aws_iam_role_policy_attachment.site_publishing] }
   variables {
-    environment        = "prod"
-    github_environment = "production"
+    environment              = "prod"
+    github_environment       = "production"
+    frontend_distribution_id = "EPRODFRONTEND"
+    docs_distribution_id     = "EPRODDOCS"
   }
   override_resource {
     target          = aws_s3_bucket.frontend
@@ -49,12 +51,12 @@ run "production_site_policy" {
   override_resource {
     target          = aws_cloudfront_distribution.frontend
     override_during = plan
-    values          = { arn = "arn:aws:cloudfront::123456789012:distribution/EPRODFRONTEND" }
+    values          = { id = "should-not-be-read", arn = "should-not-be-read" }
   }
   override_resource {
     target          = aws_cloudfront_distribution.docs
     override_during = plan
-    values          = { arn = "arn:aws:cloudfront::123456789012:distribution/EPRODDOCS" }
+    values          = { id = "should-not-be-read", arn = "should-not-be-read" }
   }
   override_resource {
     target          = aws_kms_key.app_general
@@ -101,8 +103,10 @@ run "sandbox_site_policy" {
   command = plan
   plan_options { target = [aws_iam_policy.site_publishing, aws_iam_role_policy_attachment.site_publishing] }
   variables {
-    environment        = "sandbox"
-    github_environment = "sandbox"
+    environment              = "sandbox"
+    github_environment       = "sandbox"
+    frontend_distribution_id = "ESANDBOXFRONTEND"
+    docs_distribution_id     = "ESANDBOXDOCS"
   }
   override_resource {
     target          = aws_s3_bucket.frontend
@@ -117,12 +121,12 @@ run "sandbox_site_policy" {
   override_resource {
     target          = aws_cloudfront_distribution.frontend
     override_during = plan
-    values          = { arn = "arn:aws:cloudfront::123456789012:distribution/ESANDBOXFRONTEND" }
+    values          = { id = "should-not-be-read", arn = "should-not-be-read" }
   }
   override_resource {
     target          = aws_cloudfront_distribution.docs
     override_during = plan
-    values          = { arn = "arn:aws:cloudfront::123456789012:distribution/ESANDBOXDOCS" }
+    values          = { id = "should-not-be-read", arn = "should-not-be-read" }
   }
   override_resource {
     target          = aws_kms_key.app_general
@@ -155,6 +159,40 @@ run "sandbox_site_policy" {
     condition     = length(regexall("\\s", aws_iam_policy.site_publishing[0].policy)) + 6144 >= length(aws_iam_policy.site_publishing[0].policy)
     error_message = "Sandbox managed policy must fit the IAM size limit."
   }
+}
+
+run "site_policy_requires_distribution_ids" {
+  command = plan
+  plan_options { target = [aws_iam_policy.site_publishing] }
+  variables {
+    environment        = "prod"
+    github_environment = "production"
+  }
+  expect_failures = [aws_iam_policy.site_publishing]
+}
+
+run "distribution_ids_must_be_cloudfront_ids" {
+  command = plan
+  plan_options { target = [aws_iam_policy.site_publishing] }
+  variables {
+    environment              = "prod"
+    github_environment       = "production"
+    frontend_distribution_id = "*"
+    docs_distribution_id     = "arn:aws:cloudfront::123456789012:distribution/EPRODDOCS"
+  }
+  expect_failures = [var.frontend_distribution_id, var.docs_distribution_id]
+}
+
+run "mismatched_distribution_id_fails_the_distribution" {
+  command = plan
+  plan_options { target = [aws_cloudfront_distribution.frontend] }
+  variables { frontend_distribution_id = "EOTHER" }
+  override_resource {
+    target          = aws_cloudfront_distribution.frontend
+    override_during = plan
+    values          = { id = "EPRODFRONTEND" }
+  }
+  expect_failures = [aws_cloudfront_distribution.frontend]
 }
 
 run "unsupported_environment_has_no_site_grant" {

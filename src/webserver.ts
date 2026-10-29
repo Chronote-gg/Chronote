@@ -50,6 +50,7 @@ import {
   ensureDiscordAccessToken,
 } from "./services/discordAuthService";
 import { startPersonalMediaUploadWorker } from "./services/personalMediaUploadWorkerService";
+import { startProcessingRetryWorker } from "./services/processingRetryWorkerService";
 import {
   getRuntimeReadiness,
   whenRuntimeServing,
@@ -539,6 +540,7 @@ export function setupWebServer(
 
   whenRuntimeServing(() => startPersonalMediaUploadWorker());
   whenRuntimeServing(() => startMeetingRecoveryWorker());
+  whenRuntimeServing(() => startProcessingRetryWorker());
   if (healthServer) {
     healthServer.activate(app);
     return Promise.resolve();

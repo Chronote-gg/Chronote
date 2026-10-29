@@ -12,7 +12,10 @@ test.each([false, true])(
           Table: {
             GlobalSecondaryIndexes:
               command.input.TableName === "MeetingHistoryTable"
-                ? [{ IndexName: "UpdateDeliveryDueIndex" }]
+                ? [
+                    { IndexName: "UpdateDeliveryDueIndex" },
+                    { IndexName: "ProcessingRetryDueIndex" },
+                  ]
                 : exists
                   ? [{ IndexName: "RenewalRecoveryDueIndex" }]
                   : [],

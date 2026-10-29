@@ -198,7 +198,7 @@ test("later model/context changes cannot rewrite original generation settings", 
   ).toThrow();
 });
 
-test("legacy recording settings default speech detection to off", async () => {
+test("legacy recording settings default speech detection off and language to en", async () => {
   const { meeting, artifacts } = await fixture();
   startRecordingContentCheckpoint(meeting);
   await meeting.recordingContentTask;
@@ -208,14 +208,16 @@ test("legacy recording settings default speech detection to off", async () => {
   expect(payload.settings.availability).toBe("available");
   if (payload.settings.availability !== "available")
     throw new Error("Original recording settings unavailable");
-  const { speechDetectionMode, ...legacyTranscription } =
+  const { speechDetectionMode, language, ...legacyTranscription } =
     payload.settings.value.transcription;
   expect(speechDetectionMode).toBe("off");
+  expect(language).toBe("en");
   const legacySettings = savedRecordingSettingsSchema.parse({
     ...payload.settings.value,
     transcription: legacyTranscription,
   });
   expect(legacySettings.transcription.speechDetectionMode).toBe("off");
+  expect(legacySettings.transcription.language).toBe("en");
 });
 
 test("disabled generation does not fetch unused templates", async () => {

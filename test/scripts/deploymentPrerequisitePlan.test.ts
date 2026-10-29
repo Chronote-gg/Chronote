@@ -1,8 +1,11 @@
 /** @jest-environment node */
 import { expect, test } from "@jest/globals";
-import { spawnSync } from "node:child_process";
+import {
+  prerequisiteGuard,
+  runPlanGuard,
+  runtimeGuard,
+} from "../fixtures/deployment/planGuard.js";
 
-const guard = "scripts/deployment/validate-prerequisite-plan.cjs";
 const targets = [
   "aws_dynamodb_table.deployment_control_table",
   "aws_lb_target_group.api_spare_tg[0]",
@@ -25,12 +28,8 @@ function change(address: string, actions = ["update"], mode = "managed") {
     },
   };
 }
-function validate(input: unknown) {
-  return spawnSync(process.execPath, [guard], {
-    input: JSON.stringify(input),
-    encoding: "utf8",
-  });
-}
+const validate = (input: unknown) =>
+  runPlanGuard(prerequisiteGuard, JSON.stringify(input));
 
 test("accepts only the four prerequisite creates/updates, existing key no-op and dependent reads", () => {
   const result = validate({
@@ -107,15 +106,15 @@ test.each([
   expect(validate(input).status).toBe(1);
 });
 
-test("refuses invalid JSON with a sanitized error", () => {
-  const result = spawnSync(process.execPath, [guard], {
-    input: "SECRET-PLAN-VALUE",
-    encoding: "utf8",
-  });
-  expect(result.status).toBe(1);
-  expect(result.stderr).toContain("rejected");
-  expect(result.stderr).not.toContain("SECRET-PLAN-VALUE");
-});
+test.each([prerequisiteGuard, runtimeGuard])(
+  "%s refuses invalid JSON with a sanitized error",
+  (guard) => {
+    const result = runPlanGuard(guard, "SECRET-PLAN-VALUE");
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("rejected");
+    expect(result.stderr).not.toContain("SECRET-PLAN-VALUE");
+  },
+);
 
 test.each([
   {

@@ -1273,6 +1273,13 @@ resource "aws_cloudfront_distribution" "frontend" {
   }
 
   aliases = var.FRONTEND_DOMAIN != "" ? [var.FRONTEND_DOMAIN] : []
+
+  lifecycle {
+    postcondition {
+      condition     = var.frontend_distribution_id == "" || self.id == var.frontend_distribution_id
+      error_message = "frontend_distribution_id must name this distribution; site publishing grants by that ID."
+    }
+  }
 }
 
 resource "aws_cloudfront_function" "docs_index_rewrite" {
@@ -1402,6 +1409,13 @@ resource "aws_cloudfront_distribution" "docs" {
   }
 
   aliases = var.DOCS_DOMAIN != "" ? [var.DOCS_DOMAIN] : []
+
+  lifecycle {
+    postcondition {
+      condition     = var.docs_distribution_id == "" || self.id == var.docs_distribution_id
+      error_message = "docs_distribution_id must name this distribution; site publishing grants by that ID."
+    }
+  }
 }
 
 resource "aws_s3_bucket_policy" "frontend_oac_policy" {
@@ -2946,10 +2960,28 @@ resource "aws_dynamodb_table" "meeting_history_table" {
     type = "N"
   }
 
+  attribute {
+    name = "processingRetryQueue"
+    type = "S"
+  }
+
+  attribute {
+    name = "processingRetryDueAt"
+    type = "N"
+  }
+
   global_secondary_index {
     name            = "UpdateDeliveryDueIndex"
     hash_key        = "updateDeliveryQueue"
     range_key       = "updateDeliveryDueAt"
+    projection_type = "KEYS_ONLY"
+  }
+
+  # Sparse: only rows with a queued or running processing retry carry the keys.
+  global_secondary_index {
+    name            = "ProcessingRetryDueIndex"
+    hash_key        = "processingRetryQueue"
+    range_key       = "processingRetryDueAt"
     projection_type = "KEYS_ONLY"
   }
 

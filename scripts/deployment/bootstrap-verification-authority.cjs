@@ -1,8 +1,14 @@
 "use strict";
 const assert = require("node:assert/strict");
 const { verifyEnvironmentApproval } = require("./terraform-native.cjs");
-async function verifyAuthority(get, identity, environmentId) {
-  assert.ok(Number.isSafeInteger(environmentId) && environmentId > 0);
+const OWNER_REVIEWER_ID = 2165323;
+/** Proves BASIC natively approved this exact in-progress master dispatch of `workflowPath`. */
+async function verifyRunApproval(
+  get,
+  identity,
+  workflowPath,
+  environment = "production",
+) {
   const path = "/repos/Chronote-gg/Chronote";
   const run = await get(`${path}/actions/runs/${identity.runId}`);
   assert.equal(String(run.id), identity.runId);
@@ -12,10 +18,7 @@ async function verifyAuthority(get, identity, environmentId) {
   assert.equal(run.head_repository.id, run.repository.id);
   assert.equal(run.head_sha, identity.sourceSha);
   assert.equal(run.head_branch, "master");
-  assert.equal(
-    run.path.split("@")[0],
-    ".github/workflows/verify-production-bootstrap.yml",
-  );
+  assert.equal(run.path.split("@")[0], workflowPath);
   assert.equal(run.event, "workflow_dispatch");
   assert.equal(run.run_attempt, 1);
   assert.equal(run.status, "in_progress");
@@ -26,12 +29,21 @@ async function verifyAuthority(get, identity, environmentId) {
     {
       repository: "Chronote-gg/Chronote",
       runId: identity.runId,
-      environment: "production",
+      environment,
     },
     run,
   );
-  assert.equal(proof.environment.id, environmentId);
-  assert.equal(proof.review.user.id, 2165323);
+  assert.equal(proof.review.user.id, OWNER_REVIEWER_ID);
   return proof;
 }
-module.exports = { verifyAuthority };
+async function verifyAuthority(get, identity, environmentId) {
+  assert.ok(Number.isSafeInteger(environmentId) && environmentId > 0);
+  const proof = await verifyRunApproval(
+    get,
+    identity,
+    ".github/workflows/verify-production-bootstrap.yml",
+  );
+  assert.equal(proof.environment.id, environmentId);
+  return proof;
+}
+module.exports = { verifyAuthority, verifyRunApproval };
