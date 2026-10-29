@@ -196,6 +196,23 @@ function verifyModel(plan, token) {
     assert.equal(r.provider_name, awsProvider);
     assert.equal(r.type, r.address.split(".")[0]);
     assert.equal(r.name, r.address.split(".")[1]);
+    const mask = r.change?.after_unknown;
+    if (mask !== undefined)
+      assert.ok(
+        mask && typeof mask === "object" && !Array.isArray(mask),
+        "Malformed resource unknown mask",
+      );
+    if (
+      r.address === tableAddress &&
+      Array.isArray(mask?.global_secondary_index)
+    )
+      for (const indexMask of mask.global_secondary_index)
+        assert.ok(
+          indexMask &&
+            typeof indexMask === "object" &&
+            !Array.isArray(indexMask),
+          "Malformed index unknown mask",
+        );
   }
   assert.equal(
     plan.variables?.ENABLE_PROCESSING_RETRY_INDEX?.value,

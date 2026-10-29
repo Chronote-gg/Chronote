@@ -408,6 +408,24 @@ test.each([
     },
   ],
   [
+    "malformed resource mask",
+    (p) => {
+      table(p).change.after_unknown = [];
+    },
+  ],
+  [
+    "malformed no-op mask",
+    (p) => {
+      p.resource_changes[2].change.after_unknown = [];
+    },
+  ],
+  [
+    "malformed index mask",
+    (p) => {
+      table(p).change.after_unknown.global_secondary_index[0] = [];
+    },
+  ],
+  [
     "known index change",
     (p) => {
       table(p).change.after.global_secondary_index[0].projection_type =
