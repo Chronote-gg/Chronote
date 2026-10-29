@@ -48,6 +48,9 @@ import {
   type SessionReservationInput,
   type WorkAdmissionAuthority,
   type RuntimeRetirementRequestInput,
+  type StoppedOutgoingContinuationInput,
+  controlRecordSchema,
+  runtimeRecordSchema,
   retirementRequestSchema,
   sameRuntimeIdentity,
 } from "../types/deploymentControl";
@@ -274,6 +277,7 @@ export function snapshotCondition(record: ControlRecord | RuntimeRecord) {
             "workCounts",
             "retirementRequest",
             "retirementAcknowledgment",
+            "retirementContinuation",
           ]
         : [
             "deployment",
@@ -636,6 +640,70 @@ export function buildRuntimeRetirementRequest(
             ":request": request,
             ...snapshot.values,
           }),
+        },
+      },
+    ],
+  };
+}
+
+/**
+ * Completes a retiring deployment whose outgoing ECS task already stopped.
+ * The Control condition matches the coordinator fields `save` guards, so a
+ * concurrent coordinator wins; the runtime row must be unchanged since it was
+ * read, so a runtime that is still heartbeating wins. Leases are never touched.
+ */
+export function buildStoppedOutgoingContinuation(
+  input: StoppedOutgoingContinuationInput,
+  tables: ControlTableNames,
+): TransactWriteItemsCommandInput {
+  const control = controlRecordSchema.parse(input.control);
+  const outgoing = runtimeRecordSchema.parse(input.outgoing);
+  const deployment = control.deployment;
+  if (
+    deployment?.phase !== "retiring" ||
+    !sameRuntimeIdentity(deployment.outgoing, outgoing.identity)
+  )
+    throw new Error("Continuation requires the retiring outgoing runtime");
+  const retired = runtimeRecordSchema.parse({
+    ...outgoing,
+    role: "retired",
+    retirementContinuation: input.continuation,
+  });
+  const runtime = snapshotCondition(outgoing);
+  return {
+    TransactItems: [
+      {
+        Update: {
+          TableName: tables.deploymentControl,
+          Key: marshall({ pk: "ENV", sk: "CONTROL" }),
+          ConditionExpression: `coordinatorToken = :token AND coordinatorEpoch = :epoch AND coordinatorExpiresAt = :expiry AND servingGeneration = :generation AND servingMembers = :members AND deployment = :deployment AND ${control.maintenance ? "maintenance = :maintenance" : "attribute_not_exists(maintenance)"}`,
+          UpdateExpression: "SET deployment = :complete",
+          ExpressionAttributeValues: marshall(
+            {
+              ":token": control.coordinatorToken,
+              ":epoch": control.coordinatorEpoch,
+              ":expiry": control.coordinatorExpiresAt,
+              ":generation": control.servingGeneration,
+              ":members": control.servingMembers,
+              ":deployment": deployment,
+              ":complete": {
+                ...deployment,
+                phase: "complete",
+                updatedAt: input.now,
+              },
+              ...(control.maintenance
+                ? { ":maintenance": control.maintenance }
+                : {}),
+            },
+            { removeUndefinedValues: true },
+          ),
+        },
+      },
+      {
+        Put: {
+          TableName: tables.deploymentControl,
+          Item: marshall(retired, { removeUndefinedValues: true }),
+          ...runtime,
         },
       },
     ],

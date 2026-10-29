@@ -142,6 +142,12 @@ test("real requests stay on old application through initial healthy candidate, h
       env: { ...f.options.env, SECRETS_PREFIX: prefix.slice(0, -1) },
     });
     await coordinator.prepare();
+    // Admission stays open while warming, so the old runtime can still start a recording.
+    f.state.rows.old.workCounts = {
+      ...f.state.rows.old.workCounts!,
+      recording: 1,
+    };
+    await put(f.state.rows.old);
     await syncProofs();
     expect((await fetch(`${origin(candidate)}/health`)).status).toBe(200);
     expect((await fetch(`${origin(candidate)}/auth/discord`)).status).toBe(503);

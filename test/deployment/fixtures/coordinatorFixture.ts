@@ -87,7 +87,7 @@ export function fixture() {
       expiresAt: time + 30,
     },
     protection: { identity, provenAt: time, expiresAt: time + 600 },
-    workCounts: counts(role === "serving" ? 1 : 0),
+    workCounts: counts(),
   });
   const state = {
     ctl,
@@ -100,6 +100,7 @@ export function fixture() {
     losePromotionResponse: false,
     loseUpdateResponse: false,
     retirementAcknowledged: false,
+    outgoingTask: "running" as "running" | "stopping" | "stopped" | "missing",
     onSleep: () => undefined,
   };
   const definition = {
@@ -175,6 +176,28 @@ export function fixture() {
       throw new Error("response lost after commit");
     }
   }
+  function continuation(input: TransactWriteItemsCommandInput) {
+    const values = unmarshall(
+      input.TransactItems![0].Update!.ExpressionAttributeValues!,
+    );
+    const item = unmarshall(input.TransactItems![1].Put!.Item!);
+    const stored = state.rows[item.identity.instanceId];
+    const expected = {
+      ...stored,
+      role: item.role,
+      retirementContinuation: item.retirementContinuation,
+    };
+    if (
+      values[":token"] !== state.ctl.coordinatorToken ||
+      values[":epoch"] !== state.ctl.coordinatorEpoch ||
+      values[":expiry"] !== state.ctl.coordinatorExpiresAt ||
+      !isDeepStrictEqual(values[":deployment"], state.ctl.deployment) ||
+      !isDeepStrictEqual(expected, item)
+    )
+      throw new Error("conditional conflict");
+    state.ctl.deployment = values[":complete"];
+    state.rows[item.identity.instanceId] = item as types.RuntimeRecord;
+  }
   function dynamo(operation: string, raw: unknown) {
     const input = raw as GetItemCommandInput &
       UpdateItemCommandInput &
@@ -207,7 +230,8 @@ export function fixture() {
           Items: Object.values(state.rows).map((runtime) => marshall(runtime)),
         };
       case "transact-write-items": {
-        if (input.TransactItems![0].Update) promotion(input);
+        if (input.TransactItems![1]?.Put) continuation(input);
+        else if (input.TransactItems![0].Update) promotion(input);
         else {
           const values = unmarshall(
             input.TransactItems![1].Update!.ExpressionAttributeValues!,
@@ -248,32 +272,54 @@ export function fixture() {
         };
       case "list-tasks":
         return {
-          taskArns: state.launched
-            ? [
-                "arn:aws:ecs:us-east-1:123456789012:task/fixture/old",
-                "arn:aws:ecs:us-east-1:123456789012:task/fixture/new",
-              ]
-            : ["arn:aws:ecs:us-east-1:123456789012:task/fixture/old"],
+          taskArns: [
+            ...(state.outgoingTask === "running"
+              ? ["arn:aws:ecs:us-east-1:123456789012:task/fixture/old"]
+              : []),
+            ...(state.launched
+              ? ["arn:aws:ecs:us-east-1:123456789012:task/fixture/new"]
+              : []),
+          ],
         };
-      case "describe-tasks":
+      case "describe-tasks": {
+        const missing = (arn: string) =>
+          arn === "arn:aws:ecs:us-east-1:123456789012:task/fixture/old" &&
+          state.outgoingTask === "missing";
         return {
-          tasks: input.tasks!.map((arn: string) => ({
-            taskArn: arn,
-            taskDefinitionArn:
-              arn === "arn:aws:ecs:us-east-1:123456789012:task/fixture/old"
-                ? "definition:old"
-                : "definition:new",
-            lastStatus: "RUNNING",
-            containers: [
-              {
-                imageDigest:
-                  arn === "arn:aws:ecs:us-east-1:123456789012:task/fixture/old"
-                    ? oldIdentity.imageDigest
-                    : candidateIdentity.imageDigest,
-              },
-            ],
-          })),
+          failures: input
+            .tasks!.filter(missing)
+            .map((arn: string) => ({ arn, reason: "MISSING" })),
+          tasks: input
+            .tasks!.filter((arn) => !missing(arn))
+            .map((arn: string) => ({
+              taskArn: arn,
+              taskDefinitionArn:
+                arn === "arn:aws:ecs:us-east-1:123456789012:task/fixture/old"
+                  ? "definition:old"
+                  : "definition:new",
+              ...(arn ===
+                "arn:aws:ecs:us-east-1:123456789012:task/fixture/old" &&
+              state.outgoingTask !== "running"
+                ? state.outgoingTask === "stopped"
+                  ? {
+                      lastStatus: "STOPPED",
+                      stoppedAt: "2026-10-29T12:00:00.000000+00:00",
+                      stoppedReason: "Task failed ELB health checks",
+                    }
+                  : { lastStatus: "DEACTIVATING" }
+                : { lastStatus: "RUNNING" }),
+              containers: [
+                {
+                  imageDigest:
+                    arn ===
+                    "arn:aws:ecs:us-east-1:123456789012:task/fixture/old"
+                      ? oldIdentity.imageDigest
+                      : candidateIdentity.imageDigest,
+                },
+              ],
+            })),
         };
+      }
       case "get-task-protection":
         return {
           protectedTasks: input.tasks!.map((taskArn: string) => ({

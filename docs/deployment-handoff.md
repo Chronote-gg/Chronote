@@ -50,6 +50,31 @@ Rollback to the exact prior serving identities is allowed only before any retire
 
 A same-compatible-image replacement can enter serving through exact completed-deployment lineage or the durable compatible-replacement receipt. Incomplete, rolled-back, newer or absent lineage refuses it. The old runtime becomes draining, with its counts and voice guard retained. This is not a general restart or legacy bootstrap policy.
 
+### Handoff starts only on a quiet serving runtime
+
+ECS refuses to protect more tasks than the service's desired count, which is 1. Once the warming candidate holds native protection, the outgoing task's protection renewals fail with `DEPLOYMENT_BLOCKED`. The outgoing runtime then has at most `RUNTIME_PROTECTION_MINUTES` minus `RUNTIME_PROTECTION_MARGIN_SECONDS` (about eight minutes) before its safety handler shuts it down, and ECS stops the task when its health checks fail. A recording or finalization still running at that point is cut off. Promotion cannot help, because it is a Control and listener change that ECS never sees.
+
+`prepare` therefore reads the serving runtime's `workCounts` before taking the coordinator lease, and launches only while `recording`, `finalization` and `voice_operation` are all zero. It polls for up to `HANDOFF_QUIET_SECONDS` (30 minutes) and then fails with `outgoing_busy` without writing anything, so the next deployment simply tries again. Other work kinds do not hold the handoff. The check runs before launch rather than before promotion because waiting after launch only spends the outgoing runtime's remaining protection.
+
+This is the simple, safe answer, not a complete one. Admission stays open while the candidate warms, so a recording that starts in that window can still be cut off. Keeping the outgoing task protectable through the handoff (for example by raising the desired count for its duration) is a separate design. The one-time production introduction keeps its own reviewed action sequence and does not apply this gate.
+
+### Outgoing task stopped before acknowledging
+
+If the outgoing task dies after promotion, it can never write its retirement acknowledgment. `retire` then times out with `retirement_incomplete`, `reconcile` reports `recovery_required`, and every later `prepare` would refuse an environment still in `retiring`.
+
+The coordinator completes such a deployment itself. The next `prepare` does it before acquiring the environment, and operators can run the same code alone with `node scripts/deployment/coordinator.cjs continue-stopped-outgoing`. It refuses, changing nothing, unless all of the following hold:
+
+- Control is in `retiring`, and the previous coordinator's lease has expired (or the caller holds that same run token).
+- The candidate is the exact promoted membership under `originalGeneration + 1`, its runtime row is `serving` and ready, and its native protection is confirmed.
+- The ECS service has converged exactly as `retire` requires (candidate task definition, one running, none pending, one `COMPLETED` deployment), and its only running task is the candidate.
+- Owned routing, if present, is acknowledged on the candidate and passes the same listener and target checks `retire` makes.
+- The outgoing runtime still holds this deployment's retirement request with no acknowledgment.
+- `describe-tasks` reports the exact outgoing task `STOPPED` with a `stoppedAt`. ECS prunes stopped tasks after about an hour, so a `MISSING` task also counts, but only because the service no longer lists it and its runtime row has not heartbeated for longer than native protection can last (10 minutes). A live runtime heartbeats every 10 seconds.
+
+One conditional transaction then marks the outgoing runtime `retired` with a `retirementContinuation` record (stop reason and time, its last `workCounts`, the continuing run and time) and moves Control to `complete`. The Control condition matches the coordinator fields `save` guards, and the runtime condition requires the row to be unchanged since it was read, so a concurrent coordinator or a still-heartbeating runtime wins. The record lives on the runtime row because running runtimes parse Control strictly, and a new Control field would break every runtime still on older code.
+
+Work the dead task still counted is lost; the coordinator prints a `::warning` with those counts and records them on the row. It never deletes a row, releases protection, stops a task or touches a lease. Recovery of that work follows the ordinary lease and recovery paths.
+
 ## Continuing an existing Sandbox candidate
 
 The existing `sandbox-identity.yml` workflow supports an explicit continuation

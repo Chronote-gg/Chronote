@@ -6,6 +6,8 @@ const RENEWAL_INTERVAL_SECONDS = LEASE_SECONDS - RENEWAL_MARGIN_SECONDS;
 const WARMUP_SECONDS = 900;
 const RETIREMENT_SECONDS = 7500;
 const INITIAL_LEASE_SECONDS = 1800;
+// Read-only wait before launch; it holds no lease and makes no renewals.
+const HANDOFF_QUIET_SECONDS = 1800;
 const renewals = (seconds) => Math.ceil(seconds / RENEWAL_INTERVAL_SECONDS);
 const coordinatorRenewals = Object.freeze({
   warming: renewals(WARMUP_SECONDS),
@@ -33,6 +35,7 @@ module.exports = {
   WARMUP_SECONDS,
   RETIREMENT_SECONDS,
   INITIAL_LEASE_SECONDS,
+  HANDOFF_QUIET_SECONDS,
   coordinatorRenewals,
   introductionRenewals,
   MINIMUM_ACTIONS,

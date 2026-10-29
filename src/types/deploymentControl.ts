@@ -165,6 +165,25 @@ export const deploymentPhaseSchema = z
   })
   .strict();
 export type DeploymentPhase = z.infer<typeof deploymentPhaseSchema>;
+const workCountsSchema = z.record(
+  z.enum(RUNTIME_WORK_KINDS),
+  z.number().int().nonnegative(),
+);
+/** Coordinator record for an outgoing runtime whose ECS task stopped before acknowledging retirement. */
+export const retirementContinuationSchema = z
+  .object({
+    reason: z.literal("outgoing_task_stopped"),
+    taskStatus: z.enum(["stopped", "missing"]),
+    stoppedReason: deploymentText.optional(),
+    stoppedAt: z.string().datetime({ offset: true }).optional(),
+    lostWorkCounts: workCountsSchema.optional(),
+    continuedBy: deploymentText,
+    continuedAt: epochSecond,
+  })
+  .strict();
+export type RetirementContinuation = z.infer<
+  typeof retirementContinuationSchema
+>;
 export const controlRecordSchema = z
   .object({
     pk: z.literal("ENV"),
@@ -229,12 +248,11 @@ export const runtimeRecordSchema = z
     canonicalContentWriter: z.literal(1).optional(),
     readiness: runtimeReadinessSchema,
     protection: protectionConfirmationSchema,
-    workCounts: z
-      .record(z.enum(RUNTIME_WORK_KINDS), z.number().int().nonnegative())
-      .optional(),
+    workCounts: workCountsSchema.optional(),
     expiresAt: epochSecond.optional(),
     retirementRequest: retirementRequestSchema.optional(),
     retirementAcknowledgment: retirementAcknowledgmentSchema.optional(),
+    retirementContinuation: retirementContinuationSchema.optional(),
   })
   .strict()
   .superRefine((row, ctx) => {
@@ -271,6 +289,12 @@ export type RuntimeRoleTransition = {
   retirementEpoch: number;
   expectedRetirementRequest?: RetirementRequest;
   expectedRetirementAcknowledgment?: RetirementAcknowledgment;
+};
+export type StoppedOutgoingContinuationInput = {
+  control: ControlRecord;
+  outgoing: RuntimeRecord;
+  continuation: RetirementContinuation;
+  now: number;
 };
 export type RuntimeRetirementRequestInput = {
   record: RuntimeRecord;
