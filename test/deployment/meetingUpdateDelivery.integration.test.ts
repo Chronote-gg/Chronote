@@ -9,14 +9,21 @@ import {
   UpdateItemCommand,
   TransactWriteItemsCommand,
 } from "@aws-sdk/client-dynamodb";
-import { marshall, unmarshall } from "@aws-sdk/util-dynamodb";
+import { marshall } from "@aws-sdk/util-dynamodb";
 import type { MeetingHistory } from "../../src/types/db";
 import {
   deliveryContract,
   numericHeavyWrite,
   authority,
   write,
+  type Harness,
 } from "../repositories/meetingUpdateDeliveryContract";
+import {
+  regenerationContract,
+  regenerationRow,
+  regenerationWrite,
+  runningJob,
+} from "../repositories/meetingRegenerationContract";
 import {
   history,
   key,
@@ -30,26 +37,9 @@ import {
 } from "../types/meetingUpdateDelivery.fixture";
 import { control, runtime } from "./controlFixtures";
 
-const { tables, client, repository, put, createTestTable, dispose } =
+const { tables, client, repository, put, createTables, read, admit, dispose } =
   meetingUpdateDynamoFixture("meeting-updates");
-async function read(): Promise<MeetingHistory | undefined> {
-  const result = await client.send(
-    new GetItemCommand({
-      TableName: tables.meetingHistory,
-      Key: marshall(key),
-      ConsistentRead: true,
-    }),
-  );
-  return result.Item ? (unmarshall(result.Item) as MeetingHistory) : undefined;
-}
-beforeAll(async () => {
-  await createTestTable(
-    tables.meetingHistory,
-    ["guildId", "channelId_timestamp"],
-    true,
-  );
-  await createTestTable(tables.deploymentControl, ["pk", "sk"]);
-});
+beforeAll(createTables);
 
 it.each([false, true])(
   "maintenance blocks actual new delivery claim including retained takeover=%s",
@@ -148,34 +138,16 @@ afterAll(async () => {
   await dispose();
 });
 describe("real Dynamo atomic persistence", () => {
-  deliveryContract(() => ({
+  const harness = (): Harness => ({
     repository,
     seed: async (row) => {
       await put(tables.meetingHistory, row);
     },
     read,
-    async admit(allowed) {
-      await put(tables.deploymentControl, {
-        ...control,
-        servingMembers: allowed ? control.servingMembers : {},
-      });
-      const row = runtime("old");
-      await put(tables.deploymentControl, {
-        ...row,
-        heartbeatAt: now,
-        readiness: {
-          ...row.readiness,
-          provenAt: now - 1,
-          expiresAt: now + 200,
-        },
-        protection: {
-          ...row.protection!,
-          provenAt: now - 1,
-          expiresAt: now + 200,
-        },
-      });
-    },
-  }));
+    admit,
+  });
+  deliveryContract(harness);
+  regenerationContract(harness);
 });
 it("discovers sparse due keys with validated continuation and no future or held rows", async () => {
   const input = write(history(), "discovery");
@@ -414,6 +386,25 @@ it("resolves an interrupted write acknowledgment with an independent strong read
   }
 });
 
+function putAfterFirstRead(racing: MeetingHistory) {
+  const send = client.send.bind(client);
+  let raced = false;
+  return jest
+    .spyOn(client, "send")
+    .mockImplementation(async (command, options) => {
+      const result = await send(command, options);
+      if (command instanceof GetItemCommand && !raced) {
+        raced = true;
+        await send(
+          new PutItemCommand({
+            TableName: tables.meetingHistory,
+            Item: marshall(racing, { removeUndefinedValues: true }),
+          }),
+        );
+      }
+      return result;
+    });
+}
 it("CAS-checks a no-change pointer registration against a save racing after its read", async () => {
   const delivery = planDelivery(
     [registerOperation()],
@@ -427,26 +418,11 @@ it("CAS-checks a no-change pointer registration against a save racing after its 
   };
   await put(tables.meetingHistory, row);
   const next = write(row, "pointer-racing-save");
-  const send = client.send.bind(client);
-  let raced = false;
-  const spy = jest
-    .spyOn(client, "send")
-    .mockImplementation(async (command, options) => {
-      const result = await send(command, options);
-      if (command instanceof GetItemCommand && !raced) {
-        raced = true;
-        await send(
-          new PutItemCommand({
-            TableName: tables.meetingHistory,
-            Item: marshall(
-              { ...row, contentRevision: 2, updateDelivery: next.nextDelivery },
-              { removeUndefinedValues: true },
-            ),
-          }),
-        );
-      }
-      return result;
-    });
+  const spy = putAfterFirstRead({
+    ...row,
+    contentRevision: 2,
+    updateDelivery: next.nextDelivery,
+  });
   try {
     expect(
       await repository.registerNotesPointers({
@@ -459,6 +435,27 @@ it("CAS-checks a no-change pointer registration against a save racing after its 
       }),
     ).toBe("stale");
     expect((await read())?.contentRevision).toBe(2);
+  } finally {
+    spy.mockRestore();
+  }
+});
+
+it("conditions a regeneration save on the exact retry job it read", async () => {
+  const row = regenerationRow();
+  await put(tables.meetingHistory, row);
+  const renewed = {
+    ...row,
+    processingRetry: {
+      ...runningJob,
+      claim: { ...runningJob.claim, leaseExpiresAt: now + 600 },
+    },
+  };
+  const spy = putAfterFirstRead(renewed);
+  try {
+    expect(
+      await repository.updateContentAndDelivery(regenerationWrite(row)),
+    ).toEqual({ kind: "conflict" });
+    expect(await read()).toEqual(renewed);
   } finally {
     spy.mockRestore();
   }

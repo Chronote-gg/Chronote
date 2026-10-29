@@ -61,6 +61,7 @@ export const CONFIG_KEYS = {
     sharingPolicy: "meetings.sharing.policy",
     transcriptAccessEnabled: "meetings.artifacts.transcriptAccess.enabled",
     audioAccessEnabled: "meetings.artifacts.audioAccess.enabled",
+    processingRetryEnabled: "meetings.processingRetry.enabled",
   },
   visionCaptions: {
     enabled: "visionCaptions.enabled",

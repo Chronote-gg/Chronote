@@ -43,7 +43,7 @@ const resolveParticipantLabel = (participant: Participant) =>
   participant.tag ||
   "Unknown";
 
-const resolveMeetingAttendees = (history: {
+export const resolveMeetingAttendees = (history: {
   participants?: Participant[];
   attendees?: string[];
 }) => {

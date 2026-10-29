@@ -219,6 +219,14 @@ export const checkoutLockReleases = new Counter({
   registers: [metricsRegistry],
 });
 
+// Processing retry jobs by outcome (queued, succeeded, failed) and failure reason ("none" otherwise).
+export const processingRetryJobs = new Counter({
+  name: "meeting_processing_retry_jobs_total",
+  help: "Meeting processing retry jobs by outcome and failure reason",
+  labelNames: ["outcome", "reason"] as const,
+  registers: [metricsRegistry],
+});
+
 // Express middleware to time requests
 export function metricsMiddleware(
   req: Request,

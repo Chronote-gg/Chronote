@@ -177,6 +177,22 @@ type MeetingShareStateData = {
     sharedByTag?: string;
   };
 };
+const serverShareState: MeetingShareStateData = {
+  meetingSharingPolicy: "server",
+  state: {
+    visibility: "server",
+    shareId: "share-1",
+    rotated: false,
+  },
+};
+const rotatedShareState: MeetingShareStateData = {
+  meetingSharingPolicy: "server",
+  state: {
+    visibility: "server",
+    shareId: "share-2",
+    rotated: true,
+  },
+};
 type PersonalShareStateData = {
   accessGrants: MeetingAccessGrant[];
 };
@@ -442,6 +458,10 @@ export const meetingsImportNotesMutation = buildMutationState<
   [unknown],
   MeetingResults["importNotes"]
 >(savedNotesResult);
+export const meetingsRetryProcessingMutation = buildMutationState<
+  [unknown],
+  MeetingResults["retryProcessing"] | undefined
+>(undefined);
 export const meetingsSuggestNotesCorrectionMutation = buildMutationState<
   [unknown],
   { token: string; diff: string; changed: boolean }
@@ -457,25 +477,11 @@ export const meetingsApplyNotesCorrectionMutation = buildMutationState<
 export const meetingsShareSetVisibilityMutation = buildMutationState<
   [unknown],
   MeetingShareStateData
->({
-  meetingSharingPolicy: "server",
-  state: {
-    visibility: "server",
-    shareId: "share-1",
-    rotated: false,
-  },
-});
+>(serverShareState);
 export const meetingsShareRotateMutation = buildMutationState<
   [unknown],
   MeetingShareStateData
->({
-  meetingSharingPolicy: "server",
-  state: {
-    visibility: "server",
-    shareId: "share-2",
-    rotated: true,
-  },
-});
+>(rotatedShareState);
 export const meetingsSetPersonalShareGrantsMutation = buildMutationState<
   [unknown],
   PersonalShareStateData
@@ -796,6 +802,7 @@ export const resetTrpcMocks = () => {
   resetMutationState(meetingsRenameMutation, savedRenameResult);
   resetMutationState(meetingsUpdateNotesMutation, savedNotesResult);
   resetMutationState(meetingsImportNotesMutation, savedNotesResult);
+  resetMutationState(meetingsRetryProcessingMutation, undefined);
   resetMutationState(meetingsSuggestNotesCorrectionMutation, {
     token: "mock-notes-correction-token",
     diff: "+ mock diff",
@@ -805,22 +812,8 @@ export const resetTrpcMocks = () => {
     meetingsApplyNotesCorrectionMutation,
     savedCorrectionResult,
   );
-  resetMutationState(meetingsShareSetVisibilityMutation, {
-    meetingSharingPolicy: "server",
-    state: {
-      visibility: "server",
-      shareId: "share-1",
-      rotated: false,
-    },
-  });
-  resetMutationState(meetingsShareRotateMutation, {
-    meetingSharingPolicy: "server",
-    state: {
-      visibility: "server",
-      shareId: "share-2",
-      rotated: true,
-    },
-  });
+  resetMutationState(meetingsShareSetVisibilityMutation, serverShareState);
+  resetMutationState(meetingsShareRotateMutation, rotatedShareState);
   resetMutationState(meetingsSetPersonalShareGrantsMutation, {
     accessGrants: [],
   });
@@ -1098,6 +1091,7 @@ jest.mock("../../../src/frontend/services/trpc", () => ({
       rename: { useMutation: () => meetingsRenameMutation },
       updateNotes: { useMutation: () => meetingsUpdateNotesMutation },
       importNotes: { useMutation: () => meetingsImportNotesMutation },
+      retryProcessing: { useMutation: () => meetingsRetryProcessingMutation },
       suggestNotesCorrection: {
         useMutation: () => meetingsSuggestNotesCorrectionMutation,
       },

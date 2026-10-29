@@ -22,6 +22,7 @@ import {
 } from "./runtimeLifecycleService";
 import { stopMeetingControlCommandWorker } from "./meetingControlWorkerService";
 import { stopPersonalMediaUploadWorker } from "./personalMediaUploadWorkerService";
+import { stopProcessingRetryWorker } from "./processingRetryWorkerService";
 import { shutdownAnalytics } from "./analyticsService";
 import { shutdownSpeechDetector } from "./speechDetectionService";
 import { shutdownLangfuseClient } from "./langfuseClient";
@@ -87,6 +88,7 @@ export function createRuntimeShutdown(resources: {
       const initializations = stopMeetingInitializations();
       const controlPoll = stopMeetingControlCommandWorker();
       const personalPoll = stopPersonalMediaUploadWorker();
+      const processingRetryPoll = stopProcessingRetryWorker();
       const recoveryPoll = stopMeetingRecoveryWorker();
       const billingPoll = stopRenewalRecoveryWorker();
       const meetingUpdatePoll = stopMeetingUpdateDeliveryWorker();
@@ -104,6 +106,7 @@ export function createRuntimeShutdown(resources: {
           initializations,
           controlPoll,
           personalPoll,
+          processingRetryPoll,
           recoveryPoll,
           billingPoll,
           meetingUpdatePoll,

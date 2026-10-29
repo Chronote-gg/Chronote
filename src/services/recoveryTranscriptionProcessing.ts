@@ -241,73 +241,108 @@ async function writeVerifiedTracks(
   }
   return [...tracks.values()];
 }
+type FinalPassOutcome =
+  "acknowledged" | "fallback" | "disabled" | "not_applicable";
+type CleanupOutcome = "acknowledged" | "fallback" | "disabled";
+
+async function applyOriginalFinalPass(
+  content: RecoveryContent,
+  reader: RecoveryReader,
+  files: AudioFileData[],
+  signal: AbortSignal,
+  effect: TranscriptionContentInput["effect"],
+  runFinalPass: boolean,
+): Promise<FinalPassOutcome> {
+  if (!originalSettings(content).transcription.finalPassEnabled)
+    return "disabled";
+  if (!runFinalPass || !completeVerifiedAudio(content)) return "not_applicable";
+  const result = await originalFinalPass(
+    content,
+    reader,
+    files,
+    signal,
+    effect,
+  );
+  return result.fallbackApplied ? "fallback" : "acknowledged";
+}
+
+/**
+ * Cleans a transcript with the meeting's saved cleanup prompt, model and
+ * retention ratio. A provider failure keeps the original text.
+ */
+export async function cleanupWithSavedSettings(
+  content: RecoveryContent,
+  original: string,
+  signal: AbortSignal,
+): Promise<{ finalText: string; cleanup: CleanupOutcome }> {
+  const settings = originalSettings(content);
+  if (
+    !original.trim() ||
+    !settings.premiumTranscription.enabled ||
+    !settings.premiumTranscription.cleanupEnabled
+  )
+    return { finalText: original, cleanup: "disabled" };
+  const prompt = content.context.prompts.cleanup;
+  if (
+    !settings.processing ||
+    prompt?.availability !== "available" ||
+    content.context.cleanupRoleNames === undefined
+  )
+    throw new InvalidRecoveryContent("Original cleanup inputs unavailable");
+  const prepared = compileSavedChatPrompt(prompt.value, {
+    ...transcriptionVariables(content),
+    transcription: original,
+  });
+  try {
+    const cleaned = await cleanupContentTranscription(
+      {
+        meetingId: content.manifest.capture.meetingId,
+        creator: { id: content.context.creatorId },
+        guild: { id: content.manifest.capture.guildId },
+        voiceChannel: { id: content.manifest.capture.channelId },
+        signal,
+      },
+      prepared,
+      settings.models.transcriptionCleanup,
+    );
+    signal.throwIfAborted();
+    const finalText = retainCleanupTranscript(
+      original,
+      cleaned,
+      settings.processing.cleanupMinimumRetainedLineRatio,
+    );
+    return {
+      finalText,
+      cleanup: finalText === cleaned ? "acknowledged" : "fallback",
+    };
+  } catch {
+    signal.throwIfAborted();
+    return { finalText: original, cleanup: "fallback" };
+  }
+}
+
 export async function processRecoveryTranscript(
   content: RecoveryContent,
   reader: RecoveryReader,
   files: AudioFileData[],
   signal: AbortSignal,
   effect: TranscriptionContentInput["effect"],
+  runFinalPass: boolean,
 ) {
   if (!files.length) return "";
-  const settings = originalSettings(content);
-  let finalPass: "acknowledged" | "fallback" | "disabled" | "not_applicable" =
-    settings.transcription.finalPassEnabled ? "not_applicable" : "disabled";
-  if (
-    settings.transcription.finalPassEnabled &&
-    completeVerifiedAudio(content)
-  ) {
-    const result = await originalFinalPass(
-      content,
-      reader,
-      files,
-      signal,
-      effect,
-    );
-    finalPass = result.fallbackApplied ? "fallback" : "acknowledged";
-  }
-  const original = formattedTranscript(content, files);
-  let finalText = original;
-  let cleanup: "acknowledged" | "fallback" | "disabled" = "disabled";
-  if (
-    original.trim() &&
-    settings.premiumTranscription.enabled &&
-    settings.premiumTranscription.cleanupEnabled
-  ) {
-    const prompt = content.context.prompts.cleanup;
-    if (
-      !settings.processing ||
-      prompt?.availability !== "available" ||
-      content.context.cleanupRoleNames === undefined
-    )
-      throw new InvalidRecoveryContent("Original cleanup inputs unavailable");
-    const prepared = compileSavedChatPrompt(prompt.value, {
-      ...transcriptionVariables(content),
-      transcription: original,
-    });
-    try {
-      const cleaned = await cleanupContentTranscription(
-        {
-          meetingId: content.manifest.capture.meetingId,
-          creator: { id: content.context.creatorId },
-          guild: { id: content.manifest.capture.guildId },
-          voiceChannel: { id: content.manifest.capture.channelId },
-          signal,
-        },
-        prepared,
-        settings.models.transcriptionCleanup,
-      );
-      signal.throwIfAborted();
-      finalText = retainCleanupTranscript(
-        original,
-        cleaned,
-        settings.processing.cleanupMinimumRetainedLineRatio,
-      );
-      cleanup = finalText === cleaned ? "acknowledged" : "fallback";
-    } catch {
-      signal.throwIfAborted();
-      cleanup = "fallback";
-    }
-  }
+  const finalPass = await applyOriginalFinalPass(
+    content,
+    reader,
+    files,
+    signal,
+    effect,
+    runFinalPass,
+  );
+  const { finalText, cleanup } = await cleanupWithSavedSettings(
+    content,
+    formattedTranscript(content, files),
+    signal,
+  );
   content.processing = { finalPass, cleanup, finalText };
   return finalText;
 }
