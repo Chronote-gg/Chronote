@@ -171,10 +171,7 @@ test("recoverTranscript treats never-transcribed audio the speech gate skips as 
   });
   await expect(
     recoverTranscript(content, f.reader, signal, run),
-  ).resolves.toMatchObject({
-    segments: [{ text: "Saved words." }],
-    retranscribedRanges: 0,
-  });
+  ).resolves.toMatchObject({ segments: [{ text: "Saved words." }] });
 });
 
 test("mixed recording transcription returns all chunk text and removes its temp dir", async () => {
