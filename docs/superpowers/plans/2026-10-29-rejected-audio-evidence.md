@@ -25,3 +25,5 @@ Use local checkpoint pointers exported by the existing private operator tools. T
 Ruling: use a manual Git worktree inside the task artifact folder because the native app rejected the product source folder as outside this chat's workspace. Preserve the shared checkout. Reuse the existing installed dependency tree read-only for local verification.
 
 No production deployment, AWS media extraction, human listening, full-load benchmark or detector tuning was performed. The operator must obtain fresh authorized checkpoint pointers, honor deletion requests and use a private local output directory. Transcript controls are retained transcript intervals, not saved positive detector decisions.
+
+PR review correction: listening output is restricted to a fresh directory outside the checkout, including after resolving parent symlinks. No `.cache/` exception is allowed because generic cache paths are not ignored by Git. Existing capture queues coalesce unstarted cumulative context/transcription snapshots; the normal recording duration bound limits receipt lifetime.
