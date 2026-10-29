@@ -1,7 +1,8 @@
 // Synthetic `terraform show -json` shape for the processing-retry scope: the
 // delivered MeetingHistory table gaining the retry index, plus the new worker
-// failure filter and alarm. The table values reuse the AWS 6.69.1 provider
-// shape from the Sandbox delivery fixture, renamed per environment.
+// failure filter and alarm. Table values reuse the Sandbox delivery fixture,
+// originally captured with AWS 6.69.1 and unchanged in 6.70.0, then renamed per
+// environment.
 import providerPlan from "./terraformMeetingUpdate-provider.json";
 
 export const retryAccountId = "123456789012";
