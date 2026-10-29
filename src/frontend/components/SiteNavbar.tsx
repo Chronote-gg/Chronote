@@ -1,31 +1,31 @@
 import {
-  Button,
   Divider,
-  Group,
   NavLink,
   ScrollArea,
   Stack,
   Text,
   ThemeIcon,
-  useComputedColorScheme,
   useMantineTheme,
 } from "@mantine/core";
 import {
-  IconBook2,
   IconCalendarEvent,
-  IconChevronRight,
   IconCreditCard,
   IconMessageCircle,
   IconSettings,
   IconUserCog,
-  IconServer,
   IconSparkles,
   IconUpload,
 } from "@tabler/icons-react";
 import type { ComponentType, ReactNode } from "react";
-import { useNavigate } from "@tanstack/react-router";
+import { useNavigate, useSearch } from "@tanstack/react-router";
 import { useAuth } from "../contexts/AuthContext";
 import { type Guild, useGuildContext } from "../contexts/GuildContext";
+import MeetingSources, { type MeetingSource } from "./MeetingSources";
+import type { MeetingBrowseScope } from "../../types/meetingBrowse";
+import {
+  meetingBrowseSearchSchema,
+  selectMeetingSource,
+} from "../utils/meetingBrowseSearch";
 import { uiRadii } from "../uiTokens";
 
 type SiteNavbarProps = {
@@ -38,6 +38,9 @@ type SiteNavbarViewProps = SiteNavbarProps & {
   guilds: Guild[];
   selectedGuildId: string | null;
   onNavigate: (to: string) => void;
+  scope?: MeetingBrowseScope;
+  sources?: MeetingSource[];
+  onSelect?: (scope: MeetingBrowseScope) => void;
 };
 
 type NavItem = {
@@ -46,7 +49,6 @@ type NavItem = {
     | "meetings"
     | "upload"
     | "personal-settings"
-    | "library"
     | "ask"
     | "billing"
     | "settings";
@@ -58,7 +60,7 @@ type NavItem = {
 
 const PERSONAL_NAV_ITEMS: NavItem[] = [
   {
-    label: "My Meetings",
+    label: "Meetings",
     value: "meetings",
     icon: IconCalendarEvent,
     requiresAuth: true,
@@ -81,12 +83,6 @@ const PERSONAL_NAV_ITEMS: NavItem[] = [
 ];
 
 const SERVER_NAV_ITEMS: NavItem[] = [
-  {
-    label: "Library",
-    value: "library",
-    icon: IconBook2,
-    requiresAuth: true,
-  },
   { label: "Ask", value: "ask", icon: IconSparkles, requiresAuth: true },
   {
     label: "Billing",
@@ -130,23 +126,22 @@ export function SiteNavbarView({
   onClose,
   onNavigate,
   pathname,
-  selectedGuildId,
+  scope,
+  sources = guilds,
+  onSelect,
 }: SiteNavbarViewProps) {
   const theme = useMantineTheme();
-  const scheme = useComputedColorScheme("dark");
-  const isDark = scheme === "dark";
-
   const serverIdFromPath = pathname.match(/\/portal\/server\/([^/]+)/)?.[1];
-  const selectedGuild = selectedGuildId
-    ? (guilds.find((g) => g.id === selectedGuildId) ?? null)
-    : null;
-  const pathGuild = serverIdFromPath
-    ? (guilds.find((g) => g.id === serverIdFromPath) ?? null)
-    : null;
-  const resolvedGuild = selectedGuild ?? pathGuild;
-  const activeServerId = resolvedGuild?.id ?? selectedGuildId ?? null;
-  const selectedServerName = resolvedGuild?.name ?? null;
+  const activeScope: MeetingBrowseScope =
+    scope ??
+    (serverIdFromPath
+      ? { kind: "guild", serverId: serverIdFromPath }
+      : { kind: "all" });
+  const activeServerId =
+    activeScope.kind === "guild" ? activeScope.serverId : null;
+  const resolvedGuild = guilds.find((guild) => guild.id === activeServerId);
   const canManage = resolvedGuild?.canManage ?? false;
+  const canAsk = Boolean(resolvedGuild);
   const isAuthenticated = authState === "authenticated";
   const navRadius = theme.radius[uiRadii.control];
 
@@ -169,7 +164,7 @@ export function SiteNavbarView({
       : isServerNavActive(item.value);
     const disabled =
       (item.requiresAuth && !isAuthenticated) ||
-      (!item.to && !activeServerId) ||
+      (!item.to && !canAsk) ||
       (item.requiresManage && !canManage);
     return (
       <NavLink
@@ -206,52 +201,24 @@ export function SiteNavbarView({
   return (
     <ScrollArea h="100%" offsetScrollbars data-visual-scroll>
       <Stack gap="lg" p="md">
-        <NavSection label="Personal">
+        <NavSection label="Workspace">
           <Stack gap={4}>{PERSONAL_NAV_ITEMS.map(renderNavItem)}</Stack>
         </NavSection>
 
         <Divider />
 
+        <NavSection label="Sources">
+          <MeetingSources
+            sources={sources}
+            scope={activeScope}
+            onSelect={(next) => {
+              onSelect?.(next);
+              onClose?.();
+            }}
+          />
+        </NavSection>
         <NavSection label="Server">
-          <Stack gap={6}>
-            <Button
-              variant="light"
-              color={activeServerId ? "brand" : "gray"}
-              leftSection={<IconServer size={16} />}
-              rightSection={<IconChevronRight size={16} />}
-              data-testid="nav-server-button"
-              data-selected-guild-id={activeServerId ?? ""}
-              disabled={!isAuthenticated}
-              justify="space-between"
-              styles={{
-                section: { marginInlineStart: 8, marginInlineEnd: 0 },
-              }}
-              onClick={
-                isAuthenticated
-                  ? () => {
-                      onNavigate("/portal/select-server");
-                      onClose?.();
-                    }
-                  : undefined
-              }
-            >
-              <Group gap="xs" wrap="nowrap" style={{ flex: 1, minWidth: 0 }}>
-                <Text
-                  fw={600}
-                  size="sm"
-                  style={{
-                    overflow: "hidden",
-                    textOverflow: "ellipsis",
-                    whiteSpace: "nowrap",
-                    color: isDark ? theme.white : theme.colors.dark[9],
-                  }}
-                >
-                  {selectedServerName || "Choose a server"}
-                </Text>
-              </Group>
-            </Button>
-            <Stack gap={4}>{SERVER_NAV_ITEMS.map(renderNavItem)}</Stack>
-          </Stack>
+          <Stack gap={4}>{SERVER_NAV_ITEMS.map(renderNavItem)}</Stack>
         </NavSection>
 
         <Divider />
@@ -277,7 +244,19 @@ export function SiteNavbarView({
 
 export function SiteNavbar({ onClose, pathname }: SiteNavbarProps) {
   const { state: authState } = useAuth();
-  const { selectedGuildId, guilds } = useGuildContext();
+  const { selectedGuildId, setSelectedGuildId, guilds } = useGuildContext();
+  const rawSearch = useSearch({ strict: false });
+  const search = meetingBrowseSearchSchema.parse(rawSearch);
+  const scope: MeetingBrowseScope =
+    pathname === "/portal/meetings"
+      ? search.scope === "guild" && search.serverId
+        ? { kind: "guild", serverId: search.serverId }
+        : search.scope === "personal"
+          ? { kind: "personal" }
+          : { kind: "all" }
+      : pathname.match(/\/portal\/server\/([^/]+)/)?.[1]
+        ? { kind: "guild", serverId: pathname.split("/")[3] }
+        : { kind: "all" };
   const navigate = useNavigate();
 
   return (
@@ -288,6 +267,19 @@ export function SiteNavbar({ onClose, pathname }: SiteNavbarProps) {
       onNavigate={(to) => navigate({ to })}
       pathname={pathname}
       selectedGuildId={selectedGuildId}
+      scope={scope}
+      onSelect={(next) => {
+        setSelectedGuildId(
+          next.kind === "guild" &&
+            guilds.some((guild) => guild.id === next.serverId)
+            ? next.serverId
+            : null,
+        );
+        navigate({
+          to: "/portal/meetings",
+          search: selectMeetingSource(search, next),
+        });
+      }}
     />
   );
 }
