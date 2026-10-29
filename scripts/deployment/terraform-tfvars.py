@@ -97,7 +97,13 @@ for name, value in github_vars.items():
     if key in collection_keys:
         data[key] = collection_value(key, value)
     elif str(value).strip():
-        data[key] = str(value).strip()
+        value = str(value).strip()
+        if key == "ENABLE_PROCESSING_RETRY_INDEX":
+            if value not in ("true", "false"):
+                raise SystemExit("Invalid declared Terraform boolean; values are not logged.")
+            data[key] = value == "true"
+        else:
+            data[key] = value
 
 required = ["GITHUB_TOKEN", "AWS_TOKEN_KEY", "DISCORD_CLIENT_ID"]
 string_fields = required + [

@@ -2,6 +2,12 @@
 import process from "node:process";
 import { test, expect } from "@jest/globals";
 import { spawnSync } from "node:child_process";
+import { verifyMeetingUpdatePlan } from "../../scripts/deployment/terraform-meeting-update.cjs";
+import {
+  nativeMeetingPlan,
+  nativeEvidence,
+} from "../fixtures/deployment/terraformMeetingNative.js";
+import { identity } from "../fixtures/deployment/terraformMeetingUpdate.js";
 import {
   mkdtempSync,
   mkdirSync,
@@ -79,6 +85,69 @@ test("moved tfvars normalizes one string and preserves approved credential overl
   });
   expect(values).not.toHaveProperty("OTHER");
 });
+test.each([
+  ["false", false],
+  ["true", true],
+  [" \tfalse\n", false],
+  [" \ttrue\n", true],
+])("declared retry flag %j renders as boolean %s", (value, expected) => {
+  expect(
+    run(valid, { TFVAR_ENABLE_PROCESSING_RETRY_INDEX: value })
+      .ENABLE_PROCESSING_RETRY_INDEX,
+  ).toBe(expected);
+});
+
+test.each(["", " \t\n"])(
+  "empty retry flag %j preserves the base value",
+  (value) => {
+    expect(
+      run(
+        { ...valid, ENABLE_PROCESSING_RETRY_INDEX: true },
+        { TFVAR_ENABLE_PROCESSING_RETRY_INDEX: value },
+      ).ENABLE_PROCESSING_RETRY_INDEX,
+    ).toBe(true);
+    expect(
+      run(valid, { TFVAR_ENABLE_PROCESSING_RETRY_INDEX: value }),
+    ).not.toHaveProperty("ENABLE_PROCESSING_RETRY_INDEX");
+  },
+);
+
+test.each([
+  "False",
+  "TRUE",
+  "yes",
+  "0",
+  "1",
+  "null",
+  '"false"',
+  "[]",
+  "{}",
+  "[PRIVATE_SENTINEL",
+  "PRIVATE_SENTINEL",
+  false,
+  null,
+  [],
+  {},
+])("invalid retry flag %j refuses without logging values", (value) => {
+  const result = render(valid, { TFVAR_ENABLE_PROCESSING_RETRY_INDEX: value });
+  expect(result.status).not.toBe(0);
+  expect(result.exists).toBe(false);
+  expect(result.stdout).toBe("");
+  expect(result.stderr.trim()).toBe(
+    "Invalid declared Terraform boolean; values are not logged.",
+  );
+});
+
+test("rendered retry opt-out passes the full native delivery verifier", () => {
+  const values = run(valid, { TFVAR_ENABLE_PROCESSING_RETRY_INDEX: "false" });
+  const plan = nativeMeetingPlan();
+  plan.variables.ENABLE_PROCESSING_RETRY_INDEX.value =
+    values.ENABLE_PROCESSING_RETRY_INDEX;
+  expect(() =>
+    verifyMeetingUpdatePlan(plan, identity, nativeEvidence(plan)),
+  ).not.toThrow();
+});
+
 test.each([
   "GITHUB_TOKEN",
   "AWS_TOKEN_KEY",
