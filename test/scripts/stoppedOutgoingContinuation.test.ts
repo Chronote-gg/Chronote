@@ -14,12 +14,17 @@ const nextRun = { ...env, DEPLOYMENT_RUN_TOKEN: "run-3" };
 const lostCounts = { ...counts(), finalization: 1 };
 const writes = ["transact-write-items", "update-item", "update-service"];
 
-/** Promoted, retirement requested, then the outgoing task died holding finalization. */
-async function stranded() {
+/** Promoted, with the outgoing runtime still counting finalization work. */
+async function promotedBusy() {
   const f = fixture();
   await f.coordinator.prepare();
   await f.coordinator.promote();
   f.state.rows.old.workCounts = { ...lostCounts };
+  return f;
+}
+/** Promoted, retirement requested, then the outgoing task died holding finalization. */
+async function stranded() {
+  const f = await promotedBusy();
   await expect(f.coordinator.retire()).rejects.toMatchObject({
     category: "retirement_incomplete",
   });
@@ -255,10 +260,7 @@ test("a lost continuation race refuses with a clear category", async () => {
 });
 
 test("retire completes through the continuation once ECS stops the outgoing task", async () => {
-  const f = fixture();
-  await f.coordinator.prepare();
-  await f.coordinator.promote();
-  f.state.rows.old.workCounts = { ...lostCounts };
+  const f = await promotedBusy();
   let sleeps = 0;
   f.state.onSleep = () => {
     if (++sleeps === 2) f.state.outgoingTask = "stopped";
@@ -282,10 +284,7 @@ test("retire completes through the continuation once ECS stops the outgoing task
 });
 
 test("retire keeps waiting while the outgoing task is still running", async () => {
-  const f = fixture();
-  await f.coordinator.prepare();
-  await f.coordinator.promote();
-  f.state.rows.old.workCounts = { ...lostCounts };
+  const f = await promotedBusy();
   await expect(f.coordinator.retire()).rejects.toMatchObject({
     category: "retirement_incomplete",
   });

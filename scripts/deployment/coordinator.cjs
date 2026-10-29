@@ -751,55 +751,59 @@ function createCoordinator(options = {}) {
       Object.values(observed.workCounts).every((count) => count === 0)
     );
   }
+  /** Confirms the promoted candidate still serves before any retirement step. */
+  async function assertRetirementReady(ctl, d) {
+    if (!["promoted", "retiring"].includes(d.phase))
+      throw new CoordinatorFailure(
+        "invalid_phase",
+        "Exact promotion required before retirement",
+      );
+    const retained = d.originalMembers.filter(
+      (member) => member.instanceId !== d.outgoing.instanceId,
+    );
+    if (
+      !d.candidate ||
+      !promotionObserved(ctl, d.candidate, d.originalGeneration + 1, retained)
+    )
+      throw new CoordinatorFailure(
+        "coordinator_authority_changed",
+        "Serving membership changed before retirement",
+      );
+    if (!ready(await runtime(d.candidate), ctl, d.candidate, d.runtimeMode))
+      throw new CoordinatorFailure(
+        "application_not_ready",
+        "Promoted runtime readiness lost; reconcile before retirement",
+      );
+    await protectedTask(d.candidate);
+    if (!d.routing) return;
+    if (d.routing.state !== "candidate")
+      throw new CoordinatorFailure(
+        "routing_unconfirmed",
+        "Routing acknowledgment required before retirement",
+      );
+    await routing.assertAction(d.routing, true);
+    await routing.serving(ctl, await service());
+  }
+  /** One retirement poll: a completion result, or undefined to keep waiting. */
+  async function retireStep(ctl) {
+    const d = ctl.deployment;
+    if (!(await requestRetirement(ctl, d.outgoing, d.originalGeneration))) {
+      const continuation = await handoff.continueIfStopped(ctl);
+      return continuation && { kind: "complete", continuation };
+    }
+    if (!serviceConverged(await service(), d)) return undefined;
+    await phase(ctl, "complete");
+    return { kind: "complete" };
+  }
   async function retire() {
     await assertWriter();
     const deadline = now() + RETIREMENT_SECONDS;
     while (now() <= deadline) {
-      let ctl = await renew(await control());
-      const d = ctl.deployment;
-      if (d.phase === "complete") return { kind: "complete" };
-      if (!["promoted", "retiring"].includes(d.phase))
-        throw new CoordinatorFailure(
-          "invalid_phase",
-          "Exact promotion required before retirement",
-        );
-      const retained = d.originalMembers.filter(
-        (member) => member.instanceId !== d.outgoing.instanceId,
-      );
-      if (
-        !d.candidate ||
-        !promotionObserved(ctl, d.candidate, d.originalGeneration + 1, retained)
-      )
-        throw new CoordinatorFailure(
-          "coordinator_authority_changed",
-          "Serving membership changed before retirement",
-        );
-      const active = await runtime(d.candidate);
-      if (!ready(active, ctl, d.candidate, d.runtimeMode))
-        throw new CoordinatorFailure(
-          "application_not_ready",
-          "Promoted runtime readiness lost; reconcile before retirement",
-        );
-      await protectedTask(d.candidate);
-      if (d.routing) {
-        if (d.routing.state !== "candidate")
-          throw new CoordinatorFailure(
-            "routing_unconfirmed",
-            "Routing acknowledgment required before retirement",
-          );
-        await routing.assertAction(d.routing, true);
-        await routing.serving(ctl, await service());
-      }
-      ctl = await phase(ctl, "retiring");
-      if (await requestRetirement(ctl, d.outgoing, d.originalGeneration)) {
-        if (serviceConverged(await service(), d)) {
-          await phase(ctl, "complete");
-          return { kind: "complete" };
-        }
-      } else {
-        const continuation = await handoff.continueIfStopped(ctl);
-        if (continuation) return { kind: "complete", continuation };
-      }
+      const ctl = await renew(await control());
+      if (ctl.deployment.phase === "complete") return { kind: "complete" };
+      await assertRetirementReady(ctl, ctl.deployment);
+      const result = await retireStep(await phase(ctl, "retiring"));
+      if (result) return result;
       await sleep(10000);
     }
     throw new CoordinatorFailure(

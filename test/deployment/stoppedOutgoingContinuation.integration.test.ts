@@ -1,51 +1,20 @@
 import { randomUUID } from "node:crypto";
-import {
-  CreateTableCommand,
-  DeleteTableCommand,
-  DynamoDBClient,
-  GetItemCommand,
-  PutItemCommand,
-  TransactWriteItemsCommand,
-} from "@aws-sdk/client-dynamodb";
-import { marshall, unmarshall } from "@aws-sdk/util-dynamodb";
+import { DeleteTableCommand } from "@aws-sdk/client-dynamodb";
 import { buildStoppedOutgoingContinuation } from "../../src/services/deploymentControlTransactions";
 import type {
   ControlRecord,
   RuntimeRecord,
 } from "../../src/types/deploymentControl";
 import { control, runtime } from "./controlFixtures";
+import { localControlTable } from "./fixtures/localControlTable";
 
-const prefix = `deployment-test-${randomUUID()}-`;
-const tables = {
-  deploymentControl: `${prefix}DeploymentControlTable`,
-  meetingHistory: `${prefix}MeetingHistoryTable`,
-};
-const client = new DynamoDBClient({
-  endpoint: process.env.DEPLOYMENT_TEST_DYNAMODB_ENDPOINT,
-  region: "local",
-  credentials: { accessKeyId: "dummy", secretAccessKey: "dummy" },
-});
+const table = `deployment-test-${randomUUID()}-DeploymentControlTable`;
+const { client, createTable, records, transact } = localControlTable();
+const { put, read } = records(table);
 
-beforeAll(async () => {
-  await client.send(
-    new CreateTableCommand({
-      TableName: tables.deploymentControl,
-      BillingMode: "PAY_PER_REQUEST",
-      KeySchema: [
-        { AttributeName: "pk", KeyType: "HASH" },
-        { AttributeName: "sk", KeyType: "RANGE" },
-      ],
-      AttributeDefinitions: [
-        { AttributeName: "pk", AttributeType: "S" },
-        { AttributeName: "sk", AttributeType: "S" },
-      ],
-    }),
-  );
-});
+beforeAll(() => createTable(table));
 afterAll(async () => {
-  await client.send(
-    new DeleteTableCommand({ TableName: tables.deploymentControl }),
-  );
+  await client.send(new DeleteTableCommand({ TableName: table }));
   client.destroy();
 });
 
@@ -61,7 +30,7 @@ test("stopped outgoing continuation is one CAS that loses to a live heartbeat or
       cluster: "cluster",
       service: "service",
       family: "family",
-      tablePrefix: prefix,
+      tablePrefix: "deployment-test-",
       candidateId: "new",
       image: "repo@sha256:fixture",
       runtimeMode: "all",
@@ -95,13 +64,7 @@ test("stopped outgoing continuation is one CAS that loses to a live heartbeat or
       coordinatorEpoch: 3,
     },
   };
-  for (const item of [retiring, draining])
-    await client.send(
-      new PutItemCommand({
-        TableName: tables.deploymentControl,
-        Item: marshall(item),
-      }),
-    );
+  for (const item of [retiring, draining]) await put(item);
   const continuation = {
     reason: "outgoing_task_stopped" as const,
     taskStatus: "stopped" as const,
@@ -111,25 +74,12 @@ test("stopped outgoing continuation is one CAS that loses to a live heartbeat or
     continuedAt: 300,
   };
   const write = (control: ControlRecord, row: RuntimeRecord) =>
-    client.send(
-      new TransactWriteItemsCommand(
-        buildStoppedOutgoingContinuation(
-          { control, outgoing: row, continuation, now: 300 },
-          tables,
-        ),
+    transact(
+      table,
+      buildStoppedOutgoingContinuation(
+        { control, outgoing: row, continuation, now: 300 },
+        { deploymentControl: table, meetingHistory: table },
       ),
-    );
-  const read = async (sk: string) =>
-    unmarshall(
-      (
-        await client.send(
-          new GetItemCommand({
-            TableName: tables.deploymentControl,
-            Key: marshall({ pk: "ENV", sk }),
-            ConsistentRead: true,
-          }),
-        )
-      ).Item!,
     );
   await expect(
     write(retiring, { ...draining, heartbeatAt: 99 }),
@@ -137,14 +87,14 @@ test("stopped outgoing continuation is one CAS that loses to a live heartbeat or
   await expect(
     write({ ...retiring, coordinatorEpoch: 2 }, draining),
   ).rejects.toThrow();
-  expect((await read("CONTROL")).deployment.phase).toBe("retiring");
+  expect((await read("ENV", "CONTROL"))!.deployment.phase).toBe("retiring");
   await write(retiring, draining);
-  expect((await read("CONTROL")).deployment).toEqual({
+  expect((await read("ENV", "CONTROL"))!.deployment).toEqual({
     ...retiring.deployment,
     phase: "complete",
     updatedAt: 300,
   });
-  expect(await read(draining.sk)).toEqual({
+  expect(await read("ENV", draining.sk)).toEqual({
     ...draining,
     role: "retired",
     retirementContinuation: continuation,
