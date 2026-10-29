@@ -2,17 +2,33 @@ import {
   QueryClient,
   QueryClientProvider,
   useInfiniteQuery,
+  useQueryClient,
 } from "@tanstack/react-query";
 import { act, renderHook, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { meetingBrowseSearchSchema } from "../../utils/meetingBrowseSearch";
 import { useMeetingBrowse } from "./useMeetingBrowse";
+import {
+  MeetingBrowseProvider,
+  useMeetingBrowseContext,
+} from "../../contexts/MeetingBrowseContext";
 const mockFetch = jest.fn();
+let mockGuilds = [
+  { id: "guild", name: "Current server", canManage: false },
+  { id: "other", name: "Other server", canManage: false },
+];
+jest.mock("../../contexts/GuildContext", () => ({
+  useGuildContext: () => ({ guilds: mockGuilds }),
+}));
 jest.mock("../../contexts/AuthContext", () => ({
   useAuth: () => ({ protectedQueriesReady: true }),
 }));
 jest.mock("../../services/trpc", () => ({
   trpc: {
+    useUtils: () => {
+      const client = useQueryClient();
+      return { meetings: { myList: { reset: () => client.resetQueries() } } };
+    },
     meetings: {
       myList: {
         useInfiniteQuery: (input: Record<string, unknown>, options: object) =>
@@ -199,3 +215,146 @@ test("an incomplete custom range pauses queries and explicit refresh until both 
   expect(result.current.isLoading).toBe(false);
   client.clear();
 });
+
+test.each(["30", "90"])(
+  "refresh advances %s day bounds but continuation keeps its window",
+  async (range) => {
+    jest.useFakeTimers({
+      doNotFake: [
+        "setTimeout",
+        "clearTimeout",
+        "setInterval",
+        "clearInterval",
+        "setImmediate",
+        "clearImmediate",
+        "nextTick",
+        "queueMicrotask",
+        "performance",
+      ],
+    });
+    jest.setSystemTime(new Date("2026-10-01T12:00:00Z"));
+    mockFetch.mockImplementation(async (input) => ({
+      meetings:
+        input.endDate === "2026-10-02T12:00:00.000Z"
+          ? [{ id: "new", timestamp: "2026-10-02T11:00:00Z", tags: [] }]
+          : [],
+      hasMore: !input.cursor,
+      nextCursor: input.cursor ? undefined : "next",
+      discoveryComplete: Boolean(input.cursor),
+    }));
+    const { client, wrapper } = createBrowseHarness();
+    const { result, rerender, unmount } = renderHook(
+      () => useMeetingBrowse(meetingBrowseSearchSchema.parse({ range })),
+      { wrapper },
+    );
+    try {
+      await waitFor(() => expect(result.current.hasMore).toBe(true));
+      const initial = mockFetch.mock.calls[0][0];
+      jest.setSystemTime(new Date("2026-10-02T12:00:00Z"));
+      rerender();
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+      act(() => result.current.loadMore());
+      await waitFor(() => expect(result.current.discoveryComplete).toBe(true));
+      expect(mockFetch.mock.lastCall[0]).toMatchObject({
+        startDate: initial.startDate,
+        endDate: initial.endDate,
+        cursor: "next",
+      });
+      await act(async () => {
+        await result.current.refresh();
+      });
+      await waitFor(() => expect(result.current.items).toHaveLength(1));
+      expect(mockFetch.mock.lastCall[0]).toMatchObject({
+        endDate: "2026-10-02T12:00:00.000Z",
+      });
+      expect(mockFetch.mock.lastCall[0].cursor).toBeUndefined();
+    } finally {
+      unmount();
+      client.clear();
+      jest.useRealTimers();
+    }
+  },
+);
+
+const meeting = {
+  id: "record",
+  meetingId: "meeting",
+  serverId: "guild",
+  serverName: "Current server",
+  timestamp: "2026-10-01T12:00:00Z",
+  tags: [],
+};
+test.each([false, true])(
+  "membership removal hides old rows until canonical reauthorization, attendee=%s",
+  async (attendee) => {
+    mockGuilds = [
+      { id: "guild", name: "Current server", canManage: false },
+      { id: "other", name: "Other server", canManage: false },
+    ];
+    mockFetch.mockReset().mockResolvedValue({
+      meetings: [meeting],
+      hasMore: true,
+      nextCursor: "old-page",
+      discoveryComplete: false,
+    });
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <QueryClientProvider client={client}>
+        <MeetingBrowseProvider
+          search={meetingBrowseSearchSchema.parse({
+            scope: "guild",
+            serverId: "guild",
+          })}
+          enabled
+        >
+          {children}
+        </MeetingBrowseProvider>
+      </QueryClientProvider>
+    );
+    const { result, rerender, unmount } = renderHook(useMeetingBrowseContext, {
+      wrapper,
+    });
+    await waitFor(() => expect(result.current.items).toHaveLength(1));
+    mockGuilds = [...mockGuilds].reverse().map((guild) => ({ ...guild }));
+    rerender();
+    expect(result.current.items).toHaveLength(1);
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+    let finish: (value: unknown) => void = () => {};
+    mockFetch.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        }),
+    );
+    mockGuilds = mockGuilds.filter((guild) => guild.id !== "guild");
+    rerender();
+    expect(result.current.items).toEqual([]);
+    expect(result.current.sources.some((source) => source.id === "guild")).toBe(
+      false,
+    );
+    await waitFor(() => expect(mockFetch).toHaveBeenCalledTimes(2));
+    expect(mockFetch.mock.lastCall[0].cursor).toBeUndefined();
+    await act(async () =>
+      finish({
+        meetings: attendee
+          ? [{ ...meeting, serverName: "Previous server" }]
+          : [],
+        hasMore: false,
+        discoveryComplete: true,
+      }),
+    );
+    await waitFor(() => expect(result.current.discoveryComplete).toBe(true));
+    expect(result.current.items).toHaveLength(attendee ? 1 : 0);
+    expect(
+      result.current.sources.filter((source) => source.id === "guild"),
+    ).toEqual(
+      attendee
+        ? [{ id: "guild", name: "Previous server", retainedAccess: true }]
+        : [],
+    );
+    unmount();
+    client.clear();
+  },
+);

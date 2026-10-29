@@ -167,7 +167,7 @@ describe("mcpMeetingService", () => {
     expect(result.meetings[0]).toMatchObject({
       id: meeting.channelId_timestamp,
       serverId: meeting.guildId,
-      serverName: meeting.guildId,
+      serverName: "Previous server",
       portalUrl:
         "https://app.example.com/portal/meetings/guild-old/voice-1%232026-01-02T00%3A00%3A00.000Z",
     });

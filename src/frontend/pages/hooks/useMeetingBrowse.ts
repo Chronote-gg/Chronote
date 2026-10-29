@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import type { MeetingBrowseScope } from "../../../types/meetingBrowse";
 import { useAuth } from "../../contexts/AuthContext";
 import { trpc } from "../../services/trpc";
@@ -82,9 +82,10 @@ export function useMeetingBrowse(search: MeetingBrowseSearch, enabled = true) {
   const scope = meetingBrowseScope(search);
   const rangeReady = meetingDateRangeState(search) === "ready";
   const canBrowse = enabled && protectedQueriesReady && rangeReady;
+  const [refreshVersion, setRefreshVersion] = useState(0);
   const rangeInput = useMemo(
     () => meetingBrowseRangeInput(search),
-    [search.range, search.startDate, search.endDate],
+    [search.range, search.startDate, search.endDate, refreshVersion],
   );
   const query = trpc.meetings.myList.useInfiniteQuery(
     meetingBrowseQueryInput(search, scope, rangeInput),
@@ -136,6 +137,16 @@ export function useMeetingBrowse(search: MeetingBrowseSearch, enabled = true) {
       }
       if (query.hasNextPage) void query.fetchNextPage();
     },
-    refresh: () => (canBrowse ? query.refetch() : Promise.resolve(undefined)),
+    refresh: () => {
+      if (!canBrowse) return Promise.resolve(undefined);
+      if (
+        (search.range === "30" || search.range === "90") &&
+        rangeInput.endDate !== new Date().toISOString()
+      ) {
+        setRefreshVersion((version) => version + 1);
+        return Promise.resolve(undefined);
+      }
+      return query.refetch();
+    },
   };
 }

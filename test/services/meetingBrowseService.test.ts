@@ -291,13 +291,20 @@ test("retains former-member attendance, but ownership of a real guild row does n
     .mocked(getGuildMemberCached)
     .mockRejectedValue(new DiscordApiError(404, "not member"));
   save(
-    row("attended", { participants: [{ id: "123", username: "actor" }] }),
-    row("creator", { meetingCreatorId: "123" }),
+    row("attended", {
+      guildId: "former",
+      participants: [{ id: "123", username: "actor" }],
+    }),
+    row("creator", { guildId: "former", meetingCreatorId: "123" }),
   );
   const result = await list({
-    browse: { ...browse, scope: { kind: "guild", serverId: "guild" } },
+    browse: { ...browse, scope: { kind: "guild", serverId: "former" } },
   });
   expect(result.meetings.map((item) => item.meetingId)).toEqual(["attended"]);
+  expect(result.meetings[0]).toMatchObject({
+    serverId: "former",
+    serverName: "Previous server",
+  });
   jest.mocked(resolveAttendeeAccessEnabled).mockResolvedValue(false);
   expect((await list()).meetings).toEqual([]);
 });

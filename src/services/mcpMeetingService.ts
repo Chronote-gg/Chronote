@@ -631,7 +631,7 @@ const summarizeUserMeetings = async (
       serverId: meeting.guildId,
       serverName: isPersonalMeeting(meeting)
         ? PERSONAL_MEETING_SERVER_NAME
-        : (server?.name ?? meeting.guildId),
+        : (server?.name ?? "Previous server"),
       serverIcon: server?.icon ?? null,
     };
   });

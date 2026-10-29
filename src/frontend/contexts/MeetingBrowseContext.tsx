@@ -5,6 +5,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
+import { trpc } from "../services/trpc";
 import type { MeetingBrowseSearch } from "../utils/meetingBrowseSearch";
 import { useMeetingBrowse } from "../pages/hooks/useMeetingBrowse";
 import { useGuildContext } from "./GuildContext";
@@ -21,12 +22,42 @@ export function MeetingBrowseProvider({
   search: MeetingBrowseSearch;
   enabled: boolean;
 }) {
-  const browse = useMeetingBrowse(search, enabled);
   const { guilds } = useGuildContext();
-  const [retainedSources, setRetainedSources] = useState<MeetingSource[]>([]);
+  const membershipKey = JSON.stringify(
+    [...new Set(guilds.map((guild) => guild.id))].sort(),
+  );
+  const [membership, setMembership] = useState({
+    key: membershipKey,
+    ready: true,
+  });
+  if (membership.key !== membershipKey)
+    setMembership({ key: membershipKey, ready: false });
+  const membershipReady = membership.key === membershipKey && membership.ready;
+  const utils = trpc.useUtils();
+  const browse = useMeetingBrowse(search, enabled && membershipReady);
   useEffect(() => {
-    setRetainedSources((previous) => {
-      const next = [...previous];
+    if (membershipReady) return;
+    let current = true;
+    void utils.meetings.myList.reset().then(() => {
+      if (current) setMembership({ key: membershipKey, ready: true });
+    });
+    return () => {
+      current = false;
+    };
+  }, [membershipKey, membershipReady, utils]);
+  const [retained, setRetained] = useState<{
+    membershipKey: string;
+    sources: MeetingSource[];
+  }>({
+    membershipKey,
+    sources: [],
+  });
+  const retainedSources =
+    retained.membershipKey === membershipKey ? retained.sources : [];
+  useEffect(() => {
+    setRetained((previous) => {
+      const next =
+        previous.membershipKey === membershipKey ? [...previous.sources] : [];
       for (const row of browse.rows) {
         if (
           row.serverId &&
@@ -40,9 +71,12 @@ export function MeetingBrowseProvider({
             retainedAccess: true,
           });
       }
-      return next.length === previous.length ? previous : next;
+      return previous.membershipKey === membershipKey &&
+        next.length === previous.sources.length
+        ? previous
+        : { membershipKey, sources: next };
     });
-  }, [browse.rows, guilds]);
+  }, [browse.rows, guilds, membershipKey]);
   const sources: MeetingSource[] = [
     ...guilds,
     ...retainedSources.filter(
@@ -62,7 +96,13 @@ export function MeetingBrowseProvider({
       });
   }
   return (
-    <MeetingBrowseContext.Provider value={{ ...browse, sources }}>
+    <MeetingBrowseContext.Provider
+      value={{
+        ...browse,
+        isLoading: !membershipReady || browse.isLoading,
+        sources,
+      }}
+    >
       {children}
     </MeetingBrowseContext.Provider>
   );
