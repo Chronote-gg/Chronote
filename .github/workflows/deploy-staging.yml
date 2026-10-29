@@ -4,6 +4,11 @@ run-name: Sandbox Deploy ${{ github.actor }}
 
 on:
   workflow_dispatch:
+    inputs:
+      handoff_quiet_override:
+        description: Launch even if the serving runtime reports recording, finalization or voice work (use only for a leaked counter, see docs/deployment-handoff.md)
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -467,6 +472,8 @@ jobs:
 
       - name: Protect serving runtime and warm candidate
         id: prepare
+        env:
+          HANDOFF_QUIET_OVERRIDE: ${{ github.event_name == 'workflow_dispatch' && inputs.handoff_quiet_override && '1' || '' }}
         run: node scripts/deployment/coordinator.cjs prepare
 
       - name: Promote exact ready candidate

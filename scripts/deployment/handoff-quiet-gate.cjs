@@ -13,7 +13,18 @@ const HANDOFF_BLOCKING_WORK = ["recording", "finalization", "voice_operation"];
  */
 function createHandoffGate(deps) {
   const { now, sleep, control, original, production, assertWriter } = deps;
-  const stopped = createStoppedOutgoingContinuation(deps);
+  const warn = deps.warn ?? ((message) => console.log(message));
+  const stopped = createStoppedOutgoingContinuation({ ...deps, warn });
+  // Set only by an explicit workflow_dispatch input; push deploys never set it.
+  const overridden = deps.env.HANDOFF_QUIET_OVERRIDE === "1";
+  function override(counts) {
+    const held = HANDOFF_BLOCKING_WORK.map(
+      (kind) => `${kind}=${counts?.[kind] ?? "unknown"}`,
+    ).join(", ");
+    warn(
+      `::warning title=Handoff quiet gate overridden::Launching while the serving runtime reports ${held}. Work it really holds is cut off when its protection lapses.`,
+    );
+  }
   function assertUnowned(ctl) {
     if (
       ctl.coordinatorExpiresAt > now() ||
@@ -34,8 +45,12 @@ function createHandoffGate(deps) {
     for (;;) {
       assertUnowned(ctl);
       const previous = await original(ctl, svc);
-      if (production || quiet(previous.old.workCounts))
+      const counts = previous.old.workCounts;
+      if (production || quiet(counts)) return { ctl, previous };
+      if (overridden) {
+        override(counts);
         return { ctl, previous };
+      }
       if (now() >= deadline)
         throw new CoordinatorFailure(
           "outgoing_busy",
@@ -47,6 +62,7 @@ function createHandoffGate(deps) {
   }
   return {
     acquirable,
+    continueIfStopped: stopped.continueIfStopped,
     async continueStoppedOutgoing() {
       await assertWriter();
       return (await stopped.continueStoppedOutgoing(await control())).result;

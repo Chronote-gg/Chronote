@@ -24,6 +24,7 @@ const {
   RENEWAL_MARGIN_SECONDS,
 } = require("./production-capacity.cjs");
 const { runCli } = require("./coordinator-cli.cjs");
+const { serviceConverged } = require("./stopped-outgoing.cjs");
 
 const { configuration } = require("./coordinator-definition.cjs");
 function protocolModules(options) {
@@ -791,17 +792,13 @@ function createCoordinator(options = {}) {
       }
       ctl = await phase(ctl, "retiring");
       if (await requestRetirement(ctl, d.outgoing, d.originalGeneration)) {
-        const svc = await service();
-        if (
-          svc.taskDefinition === d.taskDefinition &&
-          svc.pendingCount === 0 &&
-          svc.runningCount === 1 &&
-          svc.deployments.length === 1 &&
-          svc.deployments[0].rolloutState === "COMPLETED"
-        ) {
+        if (serviceConverged(await service(), d)) {
           await phase(ctl, "complete");
           return { kind: "complete" };
         }
+      } else {
+        const continuation = await handoff.continueIfStopped(ctl);
+        if (continuation) return { kind: "complete", continuation };
       }
       await sleep(10000);
     }
@@ -829,6 +826,7 @@ function createCoordinator(options = {}) {
     promotionObserved,
     assertWriter,
     warn: options.warn,
+    env: options.env ?? process.env,
   });
   async function rollbackReady(ctl, authorizedGeneration) {
     const d = ctl.deployment;

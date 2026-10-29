@@ -5,20 +5,18 @@ const {
   CoordinatorFailure,
   listServiceTaskArns,
 } = require("./coordinator-aws.cjs");
-// A live runtime heartbeats every 10 seconds, and ECS task protection lasts at
-// most 10 minutes. A row silent for longer cannot belong to a protected task.
-const STOPPED_HEARTBEAT_SECONDS = 600;
 const refuse = (message) => {
   throw new CoordinatorFailure("continuation_refused", message);
 };
+/** The one-task service runs only the candidate definition with no rollout left. */
+const serviceConverged = (svc, d) =>
+  svc.taskDefinition === d.taskDefinition &&
+  svc.pendingCount === 0 &&
+  svc.runningCount === 1 &&
+  svc.deployments?.length === 1 &&
+  svc.deployments[0].rolloutState === "COMPLETED";
 function assertConverged(svc, d) {
-  if (
-    svc.taskDefinition !== d.taskDefinition ||
-    svc.pendingCount !== 0 ||
-    svc.runningCount !== 1 ||
-    svc.deployments?.length !== 1 ||
-    svc.deployments[0].rolloutState !== "COMPLETED"
-  )
+  if (!serviceConverged(svc, d))
     refuse("ECS service must be converged on the candidate with no rollout");
 }
 function assertUnacknowledgedRetirement(row, d, same) {
@@ -114,8 +112,8 @@ function createStoppedOutgoingContinuation({
    * ECS keeps a stopped task describable for about an hour. After that it is
    * MISSING, which alone cannot distinguish a pruned task from a bad ARN. A
    * missing task therefore also needs the service's running list to exclude
-   * it (checked by the caller) and a heartbeat silent for longer than any
-   * native protection could last.
+   * it (checked by the caller) and its last published native protection to
+   * have expired.
    */
   async function stoppedTask(d, row) {
     const result = await aws("ecs", "describe-tasks", {
@@ -148,8 +146,8 @@ function createStoppedOutgoingContinuation({
       !sameEcsTaskArn(missing[0].arn, d.outgoing.taskArn)
     )
       refuse("Outgoing ECS task state is unconfirmed");
-    if (row.heartbeatAt + STOPPED_HEARTBEAT_SECONDS > now())
-      refuse("Missing outgoing task still has a recent heartbeat");
+    if (row.protection.expiresAt > now())
+      refuse("Missing outgoing task may still hold native protection");
     return { taskStatus: "missing" };
   }
   async function write(ctl, row, continuation) {
@@ -165,7 +163,9 @@ function createStoppedOutgoingContinuation({
     } catch (error) {
       const observed = await runtime(ctl.deployment.outgoing);
       if (!isDeepStrictEqual(observed.retirementContinuation, continuation))
-        throw error;
+        refuse(
+          "Control or the outgoing runtime changed during continuation; reread state before retrying",
+        );
     }
     const observed = await control();
     if (
@@ -206,9 +206,28 @@ function createStoppedOutgoingContinuation({
       },
     };
   }
-  return { continueStoppedOutgoing };
+  /**
+   * Lets `retire` finish as soon as ECS reports the outgoing task STOPPED,
+   * instead of waiting out its deadline. Any refusal means keep waiting.
+   */
+  async function continueIfStopped(ctl) {
+    if (production) return undefined;
+    const { outgoing } = ctl.deployment;
+    const result = await aws("ecs", "describe-tasks", {
+      cluster: config.cluster,
+      tasks: [outgoing.taskArn],
+    });
+    const task = result.tasks?.find((item) =>
+      sameEcsTaskArn(item.taskArn, outgoing.taskArn),
+    );
+    if (task?.lastStatus !== "STOPPED") return undefined;
+    try {
+      return (await continueStoppedOutgoing(ctl)).result;
+    } catch (error) {
+      if (error.category === "continuation_refused") return undefined;
+      throw error;
+    }
+  }
+  return { continueStoppedOutgoing, continueIfStopped };
 }
-module.exports = {
-  createStoppedOutgoingContinuation,
-  STOPPED_HEARTBEAT_SECONDS,
-};
+module.exports = { createStoppedOutgoingContinuation, serviceConverged };
