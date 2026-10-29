@@ -76,6 +76,7 @@ beforeEach(() => mockFetch.mockReset());
 test.each([
   { attended: true },
   { range: "7" },
+  { range: "90" },
   { archive: "archived" },
   { tags: "planning" },
   { channelId: "voice" },
@@ -160,5 +161,62 @@ test("retry after a denied refetch reauthorizes the first page before showing re
   await waitFor(() => expect(result.current.discoveryComplete).toBe(true));
   expect(mockFetch.mock.lastCall[0].cursor).toBeUndefined();
   expect(result.current.items).toEqual([]);
+  client.clear();
+});
+
+test("90 days requests the exact rolling custom range", async () => {
+  mockFetch.mockResolvedValue({
+    meetings: [],
+    hasMore: false,
+    discoveryComplete: true,
+  });
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  const wrapper = ({ children }: { children: ReactNode }) => (
+    <QueryClientProvider client={client}>{children}</QueryClientProvider>
+  );
+  const { result } = renderHook(
+    () => useMeetingBrowse(meetingBrowseSearchSchema.parse({ range: "90" })),
+    { wrapper },
+  );
+  await waitFor(() => expect(result.current.discoveryComplete).toBe(true));
+  const input = mockFetch.mock.lastCall[0];
+  expect(input.range).toBe("custom");
+  expect(Date.parse(input.endDate) - Date.parse(input.startDate)).toBe(
+    90 * 86400000,
+  );
+  client.clear();
+});
+test("an incomplete custom range pauses queries and explicit refresh until both endpoints exist", async () => {
+  mockFetch.mockResolvedValue({
+    meetings: [],
+    hasMore: false,
+    discoveryComplete: true,
+  });
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  const wrapper = ({ children }: { children: ReactNode }) => (
+    <QueryClientProvider client={client}>{children}</QueryClientProvider>
+  );
+  const { result } = renderHook(
+    () =>
+      useMeetingBrowse(
+        meetingBrowseSearchSchema.parse({
+          range: "custom",
+          startDate: "2026-10-01T13:00:00.000Z",
+        }),
+      ),
+    { wrapper },
+  );
+  await act(async () => {
+    await result.current.refresh();
+    result.current.loadMore();
+  });
+  expect(mockFetch).not.toHaveBeenCalled();
+  expect(result.current.items).toEqual([]);
+  expect(result.current.discoveryComplete).toBe(false);
+  expect(result.current.isLoading).toBe(false);
   client.clear();
 });

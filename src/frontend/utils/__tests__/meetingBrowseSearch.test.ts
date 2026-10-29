@@ -113,3 +113,9 @@ test("browser Back restores the previous serialized filters and drawer", async (
     fullScreen: true,
   });
 });
+
+test.each([90, "90"])("normalizes the preserved 90-day filter: %s", (range) => {
+  const search = meetingBrowseSearchSchema.parse({ range });
+  expect(search.range).toBe("90");
+  expect(selectMeetingSource(search, { kind: "personal" }).range).toBe("90");
+});

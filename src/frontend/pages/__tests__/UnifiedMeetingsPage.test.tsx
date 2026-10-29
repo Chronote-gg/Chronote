@@ -285,3 +285,51 @@ test("a missing membership source retains authorized rows without onboarding", (
     screen.queryByTestId("first-meeting-empty-state"),
   ).not.toBeInTheDocument();
 });
+
+test("custom dates round-trip as local input values and support clearing either endpoint", () => {
+  const localStart = new Date(2026, 9, 1, 9).toISOString();
+  const localEnd = new Date(2026, 9, 1, 10).toISOString();
+  mockSearch = meetingBrowseSearchSchema.parse({
+    range: "custom",
+    startDate: localStart,
+    endDate: localEnd,
+  });
+  const view = show();
+  expect(screen.getByLabelText("From")).toHaveValue("2026-10-01T09:00");
+  expect(screen.getByLabelText("Until")).toHaveValue("2026-10-01T10:00");
+  fireEvent.change(screen.getByLabelText("From"), {
+    target: { value: "2026-10-01T09:30" },
+  });
+  expect(mockNavigate.mock.lastCall[0].search.startDate).toBe(
+    new Date(2026, 9, 1, 9, 30).toISOString(),
+  );
+  mockSearch = mockNavigate.mock.lastCall[0].search;
+  view.rerender(
+    <MantineProvider>
+      <UnifiedMeetingsPage />
+    </MantineProvider>,
+  );
+  expect(screen.getByLabelText("From")).toHaveValue("2026-10-01T09:30");
+  fireEvent.change(screen.getByLabelText("From"), { target: { value: "" } });
+  expect(mockNavigate.mock.lastCall[0].search.startDate).toBeUndefined();
+  mockSearch = mockNavigate.mock.lastCall[0].search;
+  view.rerender(
+    <MantineProvider>
+      <UnifiedMeetingsPage />
+    </MantineProvider>,
+  );
+  expect(screen.getByLabelText("From")).toHaveValue("");
+  expect(
+    screen.getByText("Choose both dates to load meetings in a custom range."),
+  ).toBeInTheDocument();
+  fireEvent.change(screen.getByLabelText("Until"), { target: { value: "" } });
+  expect(mockNavigate.mock.lastCall[0].search.endDate).toBeUndefined();
+});
+test("Last 90 days remains a selectable filter", () => {
+  show();
+  fireEvent.click(screen.getByTestId("library-range"));
+  fireEvent.click(screen.getByRole("option", { name: "Last 90 days" }));
+  expect(mockNavigate).toHaveBeenCalledWith({
+    search: expect.objectContaining({ range: "90" }),
+  });
+});

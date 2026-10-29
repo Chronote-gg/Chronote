@@ -1,3 +1,4 @@
+import { meetingDateRangeState } from "../../utils/meetingBrowseDates";
 import { useMemo } from "react";
 import { trpc } from "../../services/trpc";
 import { useAuth } from "../../contexts/AuthContext";
@@ -26,6 +27,8 @@ export function meetingBrowseScope(
 export function useMeetingBrowse(search: MeetingBrowseSearch, enabled = true) {
   const { protectedQueriesReady } = useAuth();
   const scope = meetingBrowseScope(search);
+  const rangeReady = meetingDateRangeState(search) === "ready";
+  const canBrowse = enabled && protectedQueriesReady && rangeReady;
   const rangeInput = useMemo(() => {
     if (search.range === "today")
       return {
@@ -33,15 +36,17 @@ export function useMeetingBrowse(search: MeetingBrowseSearch, enabled = true) {
         timeZoneOffsetMinutes: new Date().getTimezoneOffset(),
       };
     if (search.range === "7") return { range: "past_7_days" as const };
-    if (search.range === "30") {
+    if (search.range === "30" || search.range === "90") {
       const now = new Date();
       return {
         range: "custom" as const,
-        startDate: new Date(now.getTime() - 30 * 86400000).toISOString(),
+        startDate: new Date(
+          now.getTime() - Number(search.range) * 86400000,
+        ).toISOString(),
         endDate: now.toISOString(),
       };
     }
-    if (search.range === "custom" && search.startDate && search.endDate)
+    if (search.range === "custom")
       return {
         range: "custom" as const,
         startDate: search.startDate,
@@ -73,7 +78,7 @@ export function useMeetingBrowse(search: MeetingBrowseSearch, enabled = true) {
       includeArchived: search.archive !== "active",
     },
     {
-      enabled: enabled && protectedQueriesReady,
+      enabled: canBrowse,
       placeholderData: undefined,
       getNextPageParam: (page) => page.nextCursor ?? undefined,
       refetchOnWindowFocus: "always",
@@ -81,7 +86,7 @@ export function useMeetingBrowse(search: MeetingBrowseSearch, enabled = true) {
   );
   // Each filter input has its own query key. Never accumulate pages outside that key.
   const rows =
-    enabled && protectedQueriesReady && !query.error
+    canBrowse && !query.error
       ? (query.data?.pages.flatMap((page) => page.meetings) ?? [])
       : [];
   const items: MeetingListItem[] = rows.map((row) => {
@@ -107,23 +112,20 @@ export function useMeetingBrowse(search: MeetingBrowseSearch, enabled = true) {
       selectedChannel: null,
       selectedRange: "all",
     }),
-    isLoading: !protectedQueriesReady || query.isLoading,
+    isLoading: !protectedQueriesReady || (rangeReady && query.isLoading),
     isFetching: query.isFetching,
     error: query.error,
     hasMore: latest?.hasMore === true,
     discoveryComplete:
-      enabled &&
-      protectedQueriesReady &&
-      !query.error &&
-      latest?.discoveryComplete === true,
+      canBrowse && !query.error && latest?.discoveryComplete === true,
     loadMore: () => {
-      if (query.isFetching) return;
+      if (!canBrowse || query.isFetching) return;
       if (query.error) {
         void query.refetch();
         return;
       }
       if (query.hasNextPage) void query.fetchNextPage();
     },
-    refresh: () => query.refetch(),
+    refresh: () => (canBrowse ? query.refetch() : Promise.resolve(undefined)),
   };
 }

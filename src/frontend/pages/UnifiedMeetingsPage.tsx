@@ -1,3 +1,8 @@
+import {
+  formatLocalMeetingDate,
+  parseLocalMeetingDate,
+  meetingDateRangeState,
+} from "../utils/meetingBrowseDates";
 import { trpc } from "../services/trpc";
 import { LibraryNotionStatus } from "./library/components/LibraryNotionStatus";
 import {
@@ -31,6 +36,7 @@ export default function UnifiedMeetingsPage() {
     useSearch({ from: "/portal/meetings" }),
   );
   const browse = useMeetingBrowseContext();
+  const dateRangeState = meetingDateRangeState(search);
   const { guilds } = useGuildContext();
   const navigate = useNavigate({ from: "/portal/meetings" });
   const scope = meetingBrowseScope(search);
@@ -144,19 +150,21 @@ export default function UnifiedMeetingsPage() {
           <TextInput
             label="From"
             type="datetime-local"
-            value={search.startDate?.slice(0, 16) ?? ""}
+            value={formatLocalMeetingDate(search.startDate)}
             onChange={(event) => {
-              const value = event.currentTarget.value;
-              if (value) update({ startDate: new Date(value).toISOString() });
+              update({
+                startDate: parseLocalMeetingDate(event.currentTarget.value),
+              });
             }}
           />
           <TextInput
             label="Until"
             type="datetime-local"
-            value={search.endDate?.slice(0, 16) ?? ""}
+            value={formatLocalMeetingDate(search.endDate)}
             onChange={(event) => {
-              const value = event.currentTarget.value;
-              if (value) update({ endDate: new Date(value).toISOString() });
+              update({
+                endDate: parseLocalMeetingDate(event.currentTarget.value),
+              });
             }}
           />
         </Group>
@@ -185,7 +193,13 @@ export default function UnifiedMeetingsPage() {
           </Button>
         </Group>
       </Group>
-      {completeEmpty && scope.kind === "guild" ? (
+      {dateRangeState !== "ready" ? (
+        <Text role="status">
+          {dateRangeState === "incomplete"
+            ? "Choose both dates to load meetings in a custom range."
+            : "Choose an end date at or after the start date."}
+        </Text>
+      ) : completeEmpty && scope.kind === "guild" ? (
         <FirstMeetingEmptyState
           serverName={
             guild?.name ??

@@ -23,7 +23,7 @@ export const meetingBrowseSearchSchema = z
     attended: optionalBoolean.transform((value) => value ?? false),
     range: z.preprocess(
       (value) => (typeof value === "number" ? String(value) : value),
-      z.enum(["all", "today", "7", "30", "custom"]).catch("all"),
+      z.enum(["all", "today", "7", "30", "90", "custom"]).catch("all"),
     ),
     startDate: optionalString,
     endDate: optionalString,
