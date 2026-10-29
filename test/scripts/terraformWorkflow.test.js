@@ -178,6 +178,38 @@ test.each([
   }
 });
 
+test.each([
+  ["docs/production-introduction.md", "applied"],
+  ["_infra/main.tf", "refused"],
+])(
+  "Apply on a later master commit that changes only %s is %s",
+  async (path, status) => {
+    const f = fixture();
+    const applySha = "b".repeat(40);
+    f.controls.compare = {
+      status: "ahead",
+      merge_base_commit: { sha: invocation.sourceSha },
+      files: [{ filename: path }],
+    };
+    const options = f.options;
+    f.options = (current) => {
+      if (!current?.workflowPath.endsWith("terraform-apply.yml"))
+        return options(current);
+      f.controls.applySha = applySha;
+      return options({ ...current, sourceSha: applySha });
+    };
+    try {
+      const { apply } = await planAndApply(f);
+      expect(apply.status).toBe(status);
+      expect(f.commands.filter((c) => c.args[1] === "apply")).toHaveLength(
+        status === "applied" ? 1 : 0,
+      );
+    } finally {
+      rmSync(f.directory, { recursive: true, force: true });
+    }
+  },
+);
+
 test("lost capture acknowledgment preserves the intent and never starts Terraform or retries", async () => {
   const f = fixture();
   try {

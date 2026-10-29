@@ -128,7 +128,8 @@ export function fixture() {
           commands.some((c) => c.args[1] === "apply"))
       )
         value.branch_policies[0].id = 12;
-    } else if (url.includes("/environments/"))
+    } else if (url.includes("/compare/")) value = controls.compare;
+    else if (url.includes("/environments/"))
       value = nativeEnvironment(
         controls.environment,
         controls.envChange &&
@@ -194,7 +195,9 @@ function nativeRun(controls, commands, plan) {
     id: plan ? 10 : 20,
     repository: { full_name: invocation.repository },
     head_repository: { full_name: invocation.repository },
-    head_sha: plan ? controls.producerSha : invocation.sourceSha,
+    head_sha: plan
+      ? controls.producerSha
+      : (controls.applySha ?? invocation.sourceSha),
     head_branch: "master",
     path: plan
       ? invocation.workflowPath
