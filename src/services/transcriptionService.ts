@@ -76,6 +76,10 @@ import {
 } from "./speechDetectionPolicy";
 import { getSpeechDetector } from "./speechDetectionService";
 import type { SpeechDetectionMode } from "../config/speechDetection";
+import {
+  meetingTranscriptionLanguage,
+  transcriptionLanguageParam,
+} from "../config/transcriptionLanguage";
 import type { SpeechPhase, SpeechCoverage } from "./speechDetectionTypes";
 import {
   recordSpeechAssessment,
@@ -262,6 +266,7 @@ async function transcribeInternal(
   const resolvedPrompt = promptValue.length > 0 ? promptValue : undefined;
   const passMode = context?.noiseGateMode ?? "slow";
   const voteEnabled = resolveTranscriptionVoteEnabled(meeting);
+  const language = meetingTranscriptionLanguage(meeting.runtimeConfig);
 
   const modelChoice = getModelChoice(
     "transcription",
@@ -283,6 +288,7 @@ async function transcribeInternal(
     promptVersion: langfusePrompt?.version,
     promptFallback: langfusePrompt?.isFallback ?? false,
     transcriptionVoteEnabled: voteEnabled,
+    transcriptionLanguage: language,
   };
   const ledger = createTranscriptionAttemptLedger(traceMetadata.audioSeconds);
 
@@ -310,7 +316,7 @@ async function transcribeInternal(
       generationOperation: `transcription-audio-${passMode}`,
       request: {
         model: modelChoice.model,
-        language: "en",
+        ...transcriptionLanguageParam(language),
         temperature: 0,
         response_format: "json",
         include: ["logprobs"],
@@ -567,7 +573,7 @@ async function transcribeInternal(
         "transcription",
         async () => {
           const observationInput = {
-            language: "en",
+            ...transcriptionLanguageParam(language),
             ...(resolvedPrompt ? { prompt: resolvedPrompt } : {}),
           };
           updateActiveObservation(

@@ -184,6 +184,21 @@ export const NotesGenerationFailed: Story = {
   },
 };
 
+export const ProcessingRetryAvailable: Story = {
+  args: {
+    ...NotesGenerationFailed.args,
+    processingRetry: {
+      view: {
+        eligible: true,
+        requiresReplaceConfirm: false,
+        attemptsRemaining: 3,
+      },
+      pending: false,
+      onRetry: () => undefined,
+    },
+  },
+};
+
 export const LegacyUnavailable: Story = {
   args: {
     summary: "Notes will appear after the meeting is processed.",

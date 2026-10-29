@@ -1,5 +1,6 @@
 import type { ConfigEntry } from "./types";
 import { speechDetectionConfigEntry } from "./speechDetection";
+import { transcriptionLanguageConfigEntry } from "./transcriptionLanguage";
 import {
   FAST_SILENCE_THRESHOLD,
   MAX_SNIPPET_LENGTH,
@@ -31,6 +32,7 @@ import {
 
 export const CONFIG_REGISTRY: ConfigEntry[] = [
   speechDetectionConfigEntry,
+  transcriptionLanguageConfigEntry,
   {
     key: "features.experimental",
     label: "Experimental features",
@@ -664,6 +666,20 @@ export const CONFIG_REGISTRY: ConfigEntry[] = [
     defaultValue: true,
     scopes: {
       server: scope(true, false, "admin", "toggle"),
+    },
+    ui: { type: "toggle" },
+  },
+  {
+    key: "meetings.processingRetry.enabled",
+    label: "Processing retry",
+    description:
+      "Let meeting owners and operators re-run failed transcription, notes, or summary processing. Keep this off until the ProcessingRetryDueIndex is active.",
+    category: "Meetings",
+    group: "Experimental",
+    valueType: "boolean",
+    defaultValue: false,
+    scopes: {
+      global: scope(true, true, "superadmin", "toggle"),
     },
     ui: { type: "toggle" },
   },

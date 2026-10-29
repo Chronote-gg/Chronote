@@ -3,6 +3,11 @@ variable "enable_production_introduction_roles" {
   type    = bool
   default = false
 }
+# Ordinary deploys need the prompt guard role without introduction authority.
+variable "enable_production_prompt_guard_role" {
+  type    = bool
+  default = false
+}
 variable "production_introduction_task_definitions" {
   type    = set(string)
   default = []
@@ -21,6 +26,8 @@ variable "production_introduction_standalone_tasks" {
 }
 locals {
   production_introduction_enabled = var.environment == "prod" && var.enable_production_introduction_roles
+  production_prompt_guard_enabled = var.environment == "prod" && (var.enable_production_introduction_roles || var.enable_production_prompt_guard_role)
+  production_oidc_roles           = toset(concat(local.production_introduction_enabled ? ["introduction"] : [], local.production_prompt_guard_enabled ? ["prompt-guard"] : []))
   production_introduction_tables = [
     aws_dynamodb_table.deployment_control_table,
     aws_dynamodb_table.active_meeting_table,
@@ -34,16 +41,16 @@ locals {
   ]
 }
 data "aws_iam_openid_connect_provider" "production_introduction" {
-  count = local.production_introduction_enabled ? 1 : 0
-  url   = "https://token.actions.githubusercontent.com"
+  count = local.production_prompt_guard_enabled ? 1 : 0
+  arn   = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:oidc-provider/token.actions.githubusercontent.com"
 }
 data "github_organization" "production_introduction_owner" {
-  count        = local.production_introduction_enabled ? 1 : 0
+  count        = local.production_prompt_guard_enabled ? 1 : 0
   name         = var.github_owner
   summary_only = true
 }
 resource "aws_iam_role" "production_introduction" {
-  for_each             = local.production_introduction_enabled ? toset(["introduction", "prompt-guard"]) : toset([])
+  for_each             = local.production_oidc_roles
   name                 = "${local.name_prefix}-${each.key}"
   max_session_duration = each.key == "introduction" ? 10800 : 3600
   assume_role_policy = jsonencode({
@@ -65,24 +72,24 @@ resource "aws_iam_role" "production_introduction" {
   })
   lifecycle {
     precondition {
-      condition     = var.github_owner == "Chronote-gg" && var.github_repository == "Chronote" && var.github_environment == "production" && length(aws_lb_listener.api_https) == 1 && length(var.production_introduction_task_definitions) == 4
+      condition     = var.github_owner == "Chronote-gg" && var.github_repository == "Chronote" && var.github_environment == "production" && length(aws_lb_listener.api_https) == 1 && (each.key != "introduction" || length(var.production_introduction_task_definitions) == 4)
       error_message = "Production authority requires exact repository/environment, HTTPS routing, and four reviewed immutable definitions."
     }
     precondition {
-      condition     = alltrue([for arn in var.production_introduction_task_definitions : startswith(arn, "arn:aws:ecs:${var.aws_region}:${data.aws_caller_identity.current.account_id}:task-definition/${aws_ecs_task_definition.app_task.family}:")]) && alltrue([for arn in var.production_introduction_standalone_tasks : startswith(arn, "arn:aws:ecs:${var.aws_region}:${data.aws_caller_identity.current.account_id}:task/${aws_ecs_cluster.main.name}/")])
+      condition     = alltrue([for arn in var.production_introduction_task_definitions : startswith(arn, "arn:aws:ecs:${var.aws_region}:${data.aws_caller_identity.current.account_id}:task-definition/${local.production_task_family}:")]) && alltrue([for arn in var.production_introduction_standalone_tasks : startswith(arn, "arn:aws:ecs:${var.aws_region}:${data.aws_caller_identity.current.account_id}:task/${aws_ecs_cluster.main.name}/")])
       error_message = "Introduction authority cannot cross account, region, cluster, or task family."
     }
   }
 }
 resource "aws_iam_role_policy" "production_prompt_guard" {
-  count = local.production_introduction_enabled ? 1 : 0
+  count = local.production_prompt_guard_enabled ? 1 : 0
   role  = aws_iam_role.production_introduction["prompt-guard"].id
   name  = "read-introduction-hold"
   # All trusted guard-role consumers can read this key and regional task-definition metadata.
   policy = jsonencode({ Version = "2012-10-17", Statement = [
     { Effect = "Allow", Action = ["dynamodb:GetItem"], Resource = aws_dynamodb_table.deployment_control_table.arn, Condition = { "ForAllValues:StringEquals" = { "dynamodb:LeadingKeys" = ["ENV"] } } },
     { Effect = "Allow", Action = ["kms:Decrypt"], Resource = aws_kms_key.app_general.arn, Condition = { StringEquals = { "kms:ViaService" = "dynamodb.${var.aws_region}.amazonaws.com", "kms:CallerAccount" = data.aws_caller_identity.current.account_id, "kms:EncryptionContext:aws:dynamodb:tableName" = aws_dynamodb_table.deployment_control_table.name } } }
-    , { Sid = "ServingServiceMetadata", Effect = "Allow", Action = ["ecs:DescribeServices"], Resource = aws_ecs_service.app_service.id },
+    , { Sid = "ServingServiceMetadata", Effect = "Allow", Action = ["ecs:DescribeServices"], Resource = local.production_service_arn },
     { Sid = "RegionalDefinitionMetadata", Effect = "Allow", Action = ["ecs:DescribeTaskDefinition"], Resource = "*", Condition = { StringEquals = { "aws:RequestedRegion" = var.aws_region } } },
     { Sid = "ServingOpenAIKey", Effect = "Allow", Action = ["secretsmanager:GetSecretValue"], Resource = aws_secretsmanager_secret.openai_api_key.arn, Condition = { StringEquals = { "secretsmanager:VersionStage" = "AWSCURRENT" } } },
     { Sid = "ServingOpenAIKeyDecrypt", Effect = "Allow", Action = ["kms:Decrypt"], Resource = aws_kms_key.app_general.arn, Condition = { StringEquals = { "kms:ViaService" = "secretsmanager.${var.aws_region}.amazonaws.com", "kms:CallerAccount" = data.aws_caller_identity.current.account_id, "kms:EncryptionContext:SecretARN" = aws_secretsmanager_secret.openai_api_key.arn } } }
@@ -117,5 +124,5 @@ output "production_introduction_role_arn" {
   value = local.production_introduction_enabled ? aws_iam_role.production_introduction["introduction"].arn : ""
 }
 output "production_prompt_guard_role_arn" {
-  value = local.production_introduction_enabled ? aws_iam_role.production_introduction["prompt-guard"].arn : ""
+  value = local.production_prompt_guard_enabled ? aws_iam_role.production_introduction["prompt-guard"].arn : ""
 }

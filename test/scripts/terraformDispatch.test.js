@@ -84,6 +84,8 @@ test("production Plan refuses unsupported scopes before either credential step",
       expect(index).toBeLessThan(credentialIndex);
   for (const scope of [
     "deployment-prerequisites",
+    "deployment-runtime",
+    "site-delivery",
     "full",
     "purchase-permission",
     "meeting-update-delivery",
@@ -99,7 +101,15 @@ test("production Plan refuses unsupported scopes before either credential step",
       },
     });
     expect(result.error).toBeUndefined();
-    expect(result.status).toBe(scope === "deployment-prerequisites" ? 0 : 1);
+    expect(result.status).toBe(
+      [
+        "deployment-prerequisites",
+        "deployment-runtime",
+        "site-delivery",
+      ].includes(scope)
+        ? 0
+        : 1,
+    );
     expect(result.stdout + result.stderr).toBe("");
   }
 });
@@ -129,7 +139,7 @@ test.each(["plan", "apply"])(
       ...(mode === "apply"
         ? ["node scripts/deployment/production-writer-guard.cjs --inspect"]
         : [
-            'test "$PLAN_SCOPE" = deployment-prerequisites',
+            'test "$PLAN_SCOPE" = deployment-prerequisites || test "$PLAN_SCOPE" = deployment-runtime || test "$PLAN_SCOPE" = site-delivery',
             "node scripts/deployment/terraform-plan-identity.cjs",
             'test "$IDENTITY_MATCHES" = true',
             "node scripts/deployment/terraform-plan-identity.cjs --validate",
@@ -231,6 +241,8 @@ test("delivery scope is Sandbox-only while production retains its scopes", () =>
     "full",
     "purchase-permission",
     "deployment-prerequisites",
+    "deployment-runtime",
+    "site-delivery",
   ])
     expect(
       parseDispatch(env, {
@@ -279,9 +291,15 @@ function sandboxDispatch(mode, scope) {
 }
 test.each(
   ["plan", "apply"].flatMap((mode) =>
-    ["full", "purchase-permission", "deployment-prerequisites", undefined].map(
-      (scope) => [mode, scope],
-    ),
+    [
+      "full",
+      "purchase-permission",
+      "deployment-prerequisites",
+      "deployment-runtime",
+      "site-delivery",
+      "site-delivery",
+      undefined,
+    ].map((scope) => [mode, scope]),
   ),
 )("Sandbox %s dispatch refuses unsupported scope %s", (mode, scope) => {
   expect(() => parseDispatch(...sandboxDispatch(mode, scope))).toThrow();
@@ -393,7 +411,7 @@ test("production Plan uses the reviewed OIDC read, lock and capture session", ()
   });
   const text = production.with["inline-session-policy"];
   expect(createHash("sha256").update(text).digest("hex")).toBe(
-    "dcaee452fb07479d8e4138092d5cbaf313e45f56c6da5c131945e1ecc3e987a0",
+    "6f9ce0ec80521f0ddc1692f2ae7ddb79a803bbe5fb98885d7acfee5d3e08d2d1",
   );
   expect(Buffer.byteLength(text)).toBeLessThanOrEqual(2048);
   const statements = JSON.parse(text).Statement;

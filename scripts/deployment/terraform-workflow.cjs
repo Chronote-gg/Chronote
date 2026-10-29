@@ -17,6 +17,22 @@ const {
   targets,
   validatePrerequisitePlan,
 } = require("./validate-prerequisite-plan.cjs");
+const {
+  runtimeTargets,
+  validateRuntimePlan,
+} = require("./validate-runtime-plan.cjs");
+const { siteTargets, validateSitePlan } = require("./validate-site-plan.cjs");
+const scopedValidators = {
+  "deployment-prerequisites": validatePrerequisitePlan,
+  "deployment-runtime": validateRuntimePlan,
+  "site-delivery": validateSitePlan,
+};
+// Bound scopes revalidate their restored plan before production Apply.
+const appliedScopes = new Set(["deployment-runtime", "site-delivery"]);
+const scopedTargets = {
+  "deployment-runtime": runtimeTargets,
+  "site-delivery": siteTargets,
+};
 const prerequisites = new WeakMap();
 function privatePrerequisiteVerified(token, config) {
   const binding = prerequisites.get(token);
@@ -164,11 +180,19 @@ async function plan(options, invocation, e) {
     );
   if (invocation.scope === "deployment-prerequisites")
     args.push(...[...targets].map((target) => `-target=${target}`));
+  if (scopedTargets[invocation.scope])
+    args.push(
+      ...[...scopedTargets[invocation.scope].keys()].map(
+        (target) => `-target=${target}`,
+      ),
+    );
   const planned = await e.terraform(args, [0, 2]);
-  if (invocation.scope === "deployment-prerequisites") {
+  const validateScope = scopedValidators[invocation.scope];
+  if (validateScope) {
     const shown = await e.terraform(["show", "-json", "tfplan"]);
-    validatePrerequisitePlan(
+    validateScope(
       JSON.parse(Buffer.from(shown.stdout, "base64").toString()),
+      options.binding,
     );
   }
   const shown = await e.terraform(["show", "-no-color", "tfplan"]);
@@ -274,6 +298,13 @@ async function apply(options, invocation, e, startApply) {
       );
       prerequisite = {};
       prerequisites.set(prerequisite, { config, plan });
+    }
+    if (appliedScopes.has(invocation.scope)) {
+      const shown = await e.terraform(["show", "-json", "tfplan"]);
+      scopedValidators[invocation.scope](
+        JSON.parse(Buffer.from(shown.stdout, "base64").toString()),
+        options.binding,
+      );
     }
     await runGuard(options.env, false, prerequisite);
   }

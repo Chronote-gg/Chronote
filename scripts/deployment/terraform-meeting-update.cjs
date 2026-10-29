@@ -236,4 +236,4 @@ function verifyMeetingUpdatePlan(plan, identity) {
     "Missing target state",
   );
 }
-module.exports = { verifyMeetingUpdatePlan };
+module.exports = { verifyMeetingUpdatePlan, hasUnknown };

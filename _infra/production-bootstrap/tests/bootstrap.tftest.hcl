@@ -73,8 +73,24 @@ run "enabled" {
     error_message = "Trust must bind production, master and both immutable IDs for one hour."
   }
   assert {
-    condition     = alltrue([for s in jsondecode(aws_iam_role_policy.production_terraform[0].policy).Statement : alltrue([for a in flatten([s.Action]) : !contains(["iam:PassRole", "iam:AttachRolePolicy", "iam:DeletePolicyVersion", "iam:UpdateAssumeRolePolicy", "ecs:UpdateService", "ecs:RegisterTaskDefinition", "elasticloadbalancing:ModifyListener", "secretsmanager:GetSecretValue", "dynamodb:Scan", "dynamodb:Query", "s3:DeleteObject", "kms:PutKeyPolicy"], a)])])
-    error_message = "Terraform may prepare four prerequisites, never exercise deployment/customer or self-administration authority."
+    condition     = alltrue([for s in jsondecode(aws_iam_role_policy.production_terraform[0].policy).Statement : alltrue([for a in flatten([s.Action]) : !contains(["iam:PassRole", "iam:UpdateAssumeRolePolicy", "ecs:UpdateService", "ecs:RegisterTaskDefinition", "elasticloadbalancing:ModifyListener", "secretsmanager:GetSecretValue", "dynamodb:Scan", "dynamodb:Query", "s3:DeleteObject", "kms:PutKeyPolicy"], a)])])
+    error_message = "Terraform may prepare the deployment prerequisites and runtime, never exercise deployment/customer or self-administration authority."
+  }
+  assert {
+    condition     = alltrue([for s in jsondecode(aws_iam_role_policy.production_terraform[0].policy).Statement : s.Sid == "DeployRoleAttachments" if contains(flatten([s.Action]), "iam:AttachRolePolicy")]) && one([for s in jsondecode(aws_iam_role_policy.production_terraform[0].policy).Statement : s if s.Sid == "DeployRoleAttachments"]) == { Sid = "DeployRoleAttachments", Effect = "Allow", Action = "iam:AttachRolePolicy", Resource = "arn:aws:iam::123456789012:role/meeting-notes-prod-github-deploy", Condition = { ArnEquals = { "iam:PolicyARN" = ["arn:aws:iam::123456789012:policy/meeting-notes-prod-deployment-routing", "arn:aws:iam::123456789012:policy/meeting-notes-prod-site-publishing"] } } }
+    error_message = "Attachment authority must bind the deploy role to the routing and site publishing policies only."
+  }
+  assert {
+    condition     = alltrue([for s in jsondecode(aws_iam_role_policy.production_terraform[0].policy).Statement : s.Resource == "arn:aws:iam::123456789012:policy/meeting-notes-prod-bot-dynamodb-policy" if contains(flatten([s.Action]), "iam:DeletePolicyVersion")])
+    error_message = "Only the task-role DynamoDB policy may have old versions pruned."
+  }
+  assert {
+    condition     = alltrue([for s in jsondecode(aws_iam_role_policy.production_terraform[0].policy).Statement : toset(flatten([s.Resource])) == toset(["arn:aws:iam::123456789012:role/meeting-notes-prod-github-deploy", "arn:aws:iam::123456789012:role/meeting-notes-prod-prompt-guard"]) if contains(flatten([s.Action]), "iam:CreateRole")]) && one([for s in jsondecode(aws_iam_role_policy.production_terraform[0].policy).Statement : s.Resource if contains(flatten([s.Action]), "dynamodb:UpdateTable") && s.Sid != "ControlTable"]) == "arn:aws:dynamodb:us-east-1:123456789012:table/meeting-notes-prod-GuildSubscriptionTable"
+    error_message = "Runtime writes must bind the two named roles and the subscription table index change."
+  }
+  assert {
+    condition     = toset(flatten([for s in jsondecode(aws_iam_role_policy.production_terraform[0].policy).Statement : s.Resource if contains(flatten([s.Action]), "elasticloadbalancing:ModifyTargetGroupAttributes")])) == toset(["arn:aws:elasticloadbalancing:us-east-1:123456789012:targetgroup/meeting-notes-prod-api-spare/*", "arn:aws:elasticloadbalancing:us-east-1:123456789012:targetgroup/meeting-notes-prod-api-tg/*"])
+    error_message = "Target group attribute writes must bind the spare and serving API target groups only."
   }
 }
 
@@ -142,12 +158,8 @@ run "policy_limits" {
     enable_production_terraform_role = true
   }
   assert {
-    condition = toset(one([for s in jsondecode(aws_iam_role_policy.production_terraform[0].policy).Statement : s if s.Sid == "TableMetadata"]).Resource) == toset([
-      "arn:aws:dynamodb:us-east-1:123456789012:table/meeting-notes-prod-DeploymentControlTable",
-      "arn:aws:dynamodb:us-east-1:123456789012:table/meeting-notes-prod-ActiveMeetingTable",
-      "arn:aws:dynamodb:us-east-1:123456789012:table/meeting-notes-prod-MeetingHistoryTable"
-    ])
-    error_message = "The four-target graph must refresh only the exact Control, ActiveMeeting and MeetingHistory tables."
+    condition     = one([for s in jsondecode(aws_iam_role_policy.production_terraform[0].policy).Statement : s if s.Sid == "TableMetadata"]).Resource == "arn:aws:dynamodb:us-east-1:123456789012:table/meeting-notes-prod-*"
+    error_message = "The runtime graph refreshes every application table, read metadata only and never the state lock table."
   }
   assert {
     condition     = alltrue([for s in jsondecode(aws_iam_role_policy.production_terraform[0].policy).Statement : alltrue([for a in flatten([s.Action]) : !strcontains(a, "*")])])
@@ -166,7 +178,7 @@ run "policy_limits" {
     error_message = "Capture requires conditional creates, exact key and exact-version access in the first namespace only."
   }
   assert {
-    condition     = one([for s in jsondecode(aws_iam_role_policy.production_terraform[0].policy).Statement : s if s.Sid == "EvidenceEncryption"]).Condition.StringEquals["kms:ViaService"] == "s3.us-east-1.amazonaws.com" && one([for s in jsondecode(aws_iam_role_policy.production_terraform[0].policy).Statement : s if s.Sid == "ControlServiceGrant"]).Condition.Bool["kms:GrantIsForAWSResource"] == "true" && one([for s in jsondecode(aws_iam_role_policy.production_terraform[0].policy).Statement : s if s.Sid == "ControlEncryption"]).Condition.StringEquals["kms:EncryptionContext:aws:dynamodb:tableName"] == "meeting-notes-prod-DeploymentControlTable"
+    condition     = one([for s in jsondecode(aws_iam_role_policy.production_terraform[0].policy).Statement : s if s.Sid == "EvidenceEncryption"]).Condition.StringEquals["kms:ViaService"] == "s3.us-east-1.amazonaws.com" && one([for s in jsondecode(aws_iam_role_policy.production_terraform[0].policy).Statement : s if s.Sid == "ControlServiceGrant"]).Condition.Bool["kms:GrantIsForAWSResource"] == "true" && one([for s in jsondecode(aws_iam_role_policy.production_terraform[0].policy).Statement : s if s.Sid == "ControlEncryption"]).Condition.StringEquals["kms:EncryptionContext:aws:dynamodb:tableName"] == ["meeting-notes-prod-DeploymentControlTable", "meeting-notes-prod-GuildSubscriptionTable"]
     error_message = "S3 and DynamoDB KMS paths need distinct service/account/context restrictions."
   }
   assert {
@@ -174,14 +186,67 @@ run "policy_limits" {
     error_message = "The explicitly selected administrator may perform human review without losing maintenance authority."
   }
 }
-run "grant_binds_control_context" {
+run "grant_uses_supported_service_keys" {
   command = plan
   variables {
     enable_private_evidence_store    = true
     enable_production_terraform_role = true
   }
   assert {
-    condition     = try(one([for s in jsondecode(aws_iam_role_policy.production_terraform[0].policy).Statement : s if s.Sid == "ControlServiceGrant"]).Condition.StringEquals["kms:EncryptionContext:aws:dynamodb:tableName"] == "meeting-notes-prod-DeploymentControlTable", false)
-    error_message = "DynamoDB service grants must bind the exact Control encryption context."
+    condition     = one([for s in jsondecode(aws_iam_role_policy.production_terraform[0].policy).Statement : s if s.Sid == "ControlServiceGrant"]).Condition == { Bool = { "kms:GrantIsForAWSResource" = "true" }, StringEquals = { "kms:ViaService" = "dynamodb.us-east-1.amazonaws.com", "kms:CallerAccount" = "123456789012", "kms:GrantConstraintType" = "EncryptionContextSubset" }, "ForAllValues:StringEquals" = { "kms:GrantOperations" = ["Decrypt", "Encrypt", "GenerateDataKey", "GenerateDataKeyWithoutPlaintext", "ReEncryptFrom", "ReEncryptTo", "RetireGrant", "DescribeKey"] } }
+    error_message = "DynamoDB service grants keep service mediation and bounded operations, without principal-ARN or table-context keys a service-made grant cannot satisfy."
+  }
+}
+run "site_delivery_off_by_default" {
+  command = plan
+  variables {
+    enable_private_evidence_store    = true
+    enable_production_terraform_role = true
+  }
+  assert {
+    condition     = length(aws_iam_policy.site_delivery) == 0 && length(aws_iam_role_policy_attachment.site_delivery) == 0
+    error_message = "The initial bootstrap creates no site delivery policy."
+  }
+}
+run "site_delivery_requires_role" {
+  command = plan
+  variables {
+    enable_private_evidence_store = true
+    enable_site_delivery_policy   = true
+    frontend_distribution_id      = "EFRONTEND1"
+    docs_distribution_id          = "EDOCS2"
+  }
+  expect_failures = [var.enable_site_delivery_policy]
+}
+run "site_delivery_requires_distribution_ids" {
+  command = plan
+  variables {
+    enable_private_evidence_store    = true
+    enable_production_terraform_role = true
+    enable_site_delivery_policy      = true
+    docs_distribution_id             = "arn:aws:cloudfront::123456789012:distribution/EDOCS2"
+  }
+  expect_failures = [var.frontend_distribution_id, var.docs_distribution_id]
+}
+run "site_delivery_policy" {
+  command = plan
+  variables {
+    enable_private_evidence_store    = true
+    enable_production_terraform_role = true
+    enable_site_delivery_policy      = true
+    frontend_distribution_id         = "EFRONTEND1"
+    docs_distribution_id             = "EDOCS2"
+  }
+  assert {
+    condition = jsondecode(aws_iam_policy.site_delivery[0].policy).Statement == [
+      { Sid = "ExistingDistributions", Effect = "Allow", Action = "cloudfront:UpdateDistribution", Resource = ["arn:aws:cloudfront::123456789012:distribution/EFRONTEND1", "arn:aws:cloudfront::123456789012:distribution/EDOCS2"] },
+      { Sid = "RouteRewriteFunction", Effect = "Allow", Action = ["cloudfront:CreateFunction", "cloudfront:PublishFunction", "cloudfront:TagResource"], Resource = "arn:aws:cloudfront::123456789012:function/meeting-notes-prod-frontend-route-rewrite" },
+      { Sid = "CrawlerHeadersPolicy", Effect = "Allow", Action = "cloudfront:CreateResponseHeadersPolicy", Resource = "arn:aws:cloudfront::123456789012:response-headers-policy/*" }
+    ]
+    error_message = "Site delivery may update only the two distributions and create only the route function and headers policy."
+  }
+  assert {
+    condition     = aws_iam_role_policy_attachment.site_delivery[0].role == "meeting-notes-prod-github-terraform" && aws_iam_policy.site_delivery[0].name == "meeting-notes-prod-terraform-site-delivery"
+    error_message = "The managed policy attaches to the production Terraform role."
   }
 }

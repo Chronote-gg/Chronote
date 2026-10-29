@@ -184,9 +184,14 @@ test("restore refuses existing destinations before writing any file", () => {
 
 test.each(
   ["create", "verify"].flatMap((stage) =>
-    ["full", "purchase-permission", "deployment-prerequisites", undefined].map(
-      (scope) => [stage, scope],
-    ),
+    [
+      "full",
+      "purchase-permission",
+      "deployment-prerequisites",
+      "deployment-runtime",
+      "site-delivery",
+      undefined,
+    ].map((scope) => [stage, scope]),
   ),
 )(
   "Sandbox bundle %s refuses unsupported scope %s even when provenance matches",

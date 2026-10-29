@@ -128,9 +128,14 @@ test.each([
 
 test.each(
   ["plan", "apply"].flatMap((mode) =>
-    ["full", "purchase-permission", "deployment-prerequisites", undefined].map(
-      (scope) => [mode, scope],
-    ),
+    [
+      "full",
+      "purchase-permission",
+      "deployment-prerequisites",
+      "deployment-runtime",
+      "site-delivery",
+      undefined,
+    ].map((scope) => [mode, scope]),
   ),
 )(
   "direct Sandbox %s refuses scope %s before storage, native metadata or commands",

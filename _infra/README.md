@@ -106,6 +106,7 @@ that address.
 | Grafana token rotation errors | Rotation Lambda error in 24 h                 | 1 day x 1 |
 | Checkout lock stuck           | `Checkout lock stuck` app log line in 1 h     | 1 h x 1   |
 | OpenAI requests rejected      | Any OpenAI quota, credit, or 429 log line     | 5 min x 1 |
+| Processing retry worker       | `Processing retry worker failed` log line     | 5 min x 1 |
 
 All alarms also send an OK notification when the condition clears.
 
@@ -300,8 +301,8 @@ private storage or supported native protection metadata refuses execution.
 See [private Terraform delivery](../docs/terraform-private-delivery.md) for review,
 configuration, supported protection rules and unknown-acknowledgment handling.
 
-`plan_scope` accepts only `full`, `purchase-permission`, or
-`deployment-prerequisites`. `full` remains untargeted; `purchase-permission`
+`plan_scope` accepts only `full`, `purchase-permission`,
+`deployment-prerequisites`, `deployment-runtime` or `site-delivery`. `full` remains untargeted; `purchase-permission`
 continues to target only `aws_iam_role_policy.initial_purchase_condition`.
 Unsupported scope values fail before the plan command, and no scope accepts
 arbitrary Terraform arguments.
@@ -343,6 +344,76 @@ settings are unchanged. The key and encrypted DynamoDB tables do not depend on
 that policy resource, keeping CloudFront dependencies out of prerequisite plans.
 Encrypted CloudWatch log groups and the critical-alert SNS topic explicitly wait
 for the policy's service grants during cold creation.
+
+`deployment-runtime` carries what production needs after the prerequisites and
+before a cold cutover and the first ordinary deploy of `master`. It targets exactly:
+
+1. `aws_iam_role.production_deploy[0]`, `aws_iam_role_policy.production_deploy[0]`
+   and `aws_iam_role_policy_attachment.production_deploy_routing[0]`
+2. `aws_iam_policy.site_publishing[0]` and its attachment
+3. `aws_iam_role_policy.production_exec_channels[0]`
+4. `aws_iam_policy.dynamodb_access_policy`, whose `DescribeSubscriptionReadiness`
+   statement the candidate needs at startup
+5. `aws_dynamodb_table.guild_subscription_table`, adding `RenewalRecoveryDueIndex`
+6. `aws_lb_target_group.api_tg[0]` and `aws_lb_target_group.api_spare_tg[0]`,
+   lowering `deregistration_delay` from 300 to 5 seconds so a draining legacy
+   task stops starting meetings sooner. The tradeoff: a draining task's long
+   in-flight requests, such as MCP live-transcript streams and slow portal
+   requests, are cut after 5 seconds instead of finishing
+7. `aws_iam_role.production_introduction["prompt-guard"]` and
+   `aws_iam_role_policy.production_prompt_guard[0]`
+
+The prompt guard role needs `TFVAR_enable_production_prompt_guard_role=true`, which
+enables it without introduction authority or reviewed task definitions. The deploy
+and prompt guard policies build the service, task family, container, repository,
+execution role and managed policy ARNs from names, and both OIDC data sources look
+the provider up by ARN, so the plan never reads the ECS service, task definition,
+AppConfig or Bedrock resources. The site publishing policy grants by distribution
+ID from `frontend_distribution_id` and `docs_distribution_id`, so the plan reads no
+CloudFront resource. Production and Sandbox must set `TFVAR_FRONTEND_DISTRIBUTION_ID`
+and `TFVAR_DOCS_DISTRIBUTION_ID` to the same values as the existing
+`FRONTEND_DISTRIBUTION_ID` and `DOCS_DISTRIBUTION_ID` deploy variables. The policy
+refuses to plan without them, and each distribution has a postcondition that fails
+a full plan if its variable names another distribution.
+
+Production's distributions lagged master in routing (a docs cache behavior,
+frontend error responses and route rewrite function, and the `crawler_noindex`
+headers policy). Those change live portal routing, so they ship through the
+separate `site-delivery` scope below, not this one. GitHub variables such as `PRODUCTION_BACKEND_DEPLOY_ROLE_ARN` and
+`PRODUCTION_PROMPT_GUARD_ROLE_ARN` stay outside the scope and are set by hand.
+
+`scripts/deployment/validate-runtime-plan.cjs` checks the Plan before bundling and
+again on Apply. It requires the existing key and HTTPS listener as no-ops, allows
+create or update only at those addresses, and refuses replacements, deletes, moves
+and imports. Both new roles must trust only the in-account GitHub provider for the
+production environment subject. The five policy documents may not grant `*`,
+`iam:*` or `sts:*`, use NotAction or NotResource, or pair `Resource: "*"` with
+anything but Describe or List actions, registry login and the ECS Exec channels.
+Apply passes the account from the private storage binding; the CLI takes it as its
+only argument. The subscription table may change only by gaining that index and its
+two key attributes (its recomputed `stream_arn` and `stream_label` may be unknown);
+each API target group only its drain delay, to 5.
+
+`site-delivery` targets exactly `aws_cloudfront_function.frontend_route_rewrite`,
+`aws_cloudfront_response_headers_policy.crawler_noindex` and both distributions.
+`scripts/deployment/validate-site-plan.cjs` checks the Plan and the restored Apply
+plan. It allows only creating that function (with the repository's exact code) and
+headers policy, and updating the distributions in place:
+
+- frontend: the 403 response becomes 404 with `/404.html` and the old
+  `/index.html` fallbacks go; the default behavior gains the viewer-request route
+  rewrite; one new `/share/*` behavior uses the rewrite and the noindex headers.
+- docs: one new `/search*` behavior uses the existing docs rewrite and the noindex
+  headers.
+
+Every existing behavior, origin, alias, certificate and setting must be unchanged.
+The site buckets and docs function must be no-ops; the KMS key and HTTPS listener
+are not in this graph. Apply only after a frontend build with `404.html` and the
+extensionless public-route documents is in the bucket; `sync-frontend` uploads
+both on every deploy. When `scripts/public-routes.json` gains a route, the route
+rewrite's `publicRoutes` list must gain it too, and this scope ships the change.
+The Terraform role's CloudFront writes come from the separate managed policy in
+`_infra/production-bootstrap/site-delivery.tf`.
 
 Standalone policy adoption requires a separate reviewed plan and approval; it is
 outside the four-target Apply. The actual state-backed prerequisite plan must

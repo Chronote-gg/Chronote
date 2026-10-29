@@ -27,6 +27,8 @@ const invocationSchema = z
       "full",
       "purchase-permission",
       "deployment-prerequisites",
+      "deployment-runtime",
+      "site-delivery",
       "meeting-update-delivery",
     ]),
   })

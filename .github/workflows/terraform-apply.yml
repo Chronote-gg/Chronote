@@ -44,6 +44,8 @@ on:
           - purchase-permission
           - meeting-update-delivery
           - deployment-prerequisites
+          - deployment-runtime
+          - site-delivery
       confirmation:
         description: Type apply to request the reviewed plan; native approval is also required
         required: true

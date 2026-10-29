@@ -54,9 +54,18 @@ audio verification and personal upload retry policies are unchanged.
 
 ## Personal upload transcription
 
-Personal uploads and desktop recordings send no `language` hint, matching the
-live path, so the provider detects the spoken language. A forced English hint
-badly truncated non-English recordings.
+Personal uploads and desktop recordings send no `language` hint, so the
+provider detects the spoken language. A forced English hint badly truncated
+non-English recordings.
+
+Live meeting snippets and the finalized audio pass take their hint from the
+`transcription.language` setting (global superadmin and server admin scopes,
+default `en`). `auto` omits the `language` field so the provider detects the
+language; any other value is sent as an ISO-639-1 code. The value is captured
+in the meeting runtime config when the meeting starts, and both paths read
+that one value, so the final-pass reconcile never compares transcripts in two
+languages. It is frozen into the saved recording settings, and recovery reruns
+reuse the saved value. Records saved before the setting existed parse as `en`.
 
 Normalized audio is always split into
 `PERSONAL_UPLOAD_TRANSCRIPTION_CHUNK_SECONDS` (300 s) chunks before

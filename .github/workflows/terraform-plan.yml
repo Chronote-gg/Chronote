@@ -19,7 +19,7 @@ on:
         type: string
         default: sandbox
       plan_scope:
-        description: Sandbox requires meeting-update-delivery; production requires deployment-prerequisites
+        description: Sandbox requires meeting-update-delivery; production requires deployment-prerequisites, deployment-runtime or site-delivery
         required: true
         type: choice
         default: meeting-update-delivery
@@ -28,6 +28,8 @@ on:
           - purchase-permission
           - meeting-update-delivery
           - deployment-prerequisites
+          - deployment-runtime
+          - site-delivery
 
 permissions:
   actions: read
@@ -66,7 +68,7 @@ jobs:
         if: ${{ inputs.github_environment == 'production' }}
         env:
           PLAN_SCOPE: ${{ inputs.plan_scope }}
-        run: test "$PLAN_SCOPE" = deployment-prerequisites
+        run: test "$PLAN_SCOPE" = deployment-prerequisites || test "$PLAN_SCOPE" = deployment-runtime || test "$PLAN_SCOPE" = site-delivery
       - name: Mask production Plan identity
         id: plan-identity
         if: ${{ inputs.github_environment == 'production' }}
@@ -95,7 +97,7 @@ jobs:
           role-duration-seconds: 3600
           unset-current-credentials: true
           mask-aws-account-id: true
-          inline-session-policy: '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":["dynamodb:Describe*","dynamodb:ListTagsOfResource","dynamodb:GetItem","iam:Get*","iam:List*","kms:Describe*","kms:Get*","kms:List*","s3:ListBucket","s3:GetBucket*","s3:GetEncryptionConfiguration","s3:GetLifecycleConfiguration","ec2:Describe*","elasticloadbalancing:Describe*","ecs:Describe*","ecs:ListTagsForResource","acm:Describe*","acm:ListTagsForCertificate","route53:Get*","route53:List*"],"Resource":"*"},{"Effect":"Allow","Action":["s3:GetObject"],"Resource":"arn:aws:s3:::meeting-notes-terraform-state-bucket/meeting-notes-terraform/state"},{"Effect":"Allow","Action":["dynamodb:PutItem","dynamodb:DeleteItem"],"Resource":"arn:aws:dynamodb:us-east-1:${{ vars.AWS_ACCOUNT_ID }}:table/meeting-notes-terraform-state-locks"},{"Effect":"Allow","Action":["s3:PutObject","s3:GetObjectVersion"],"Resource":"arn:aws:s3:::meeting-notes-prod-private-evidence-${{ vars.AWS_ACCOUNT_ID }}/terraform/production/*"},{"Effect":"Allow","Action":["kms:GenerateDataKey","kms:Decrypt"],"Resource":"arn:aws:kms:us-east-1:${{ vars.AWS_ACCOUNT_ID }}:key/*"}]}'
+          inline-session-policy: '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":["dynamodb:Describe*","dynamodb:ListTagsOfResource","dynamodb:GetItem","iam:Get*","iam:List*","kms:Describe*","kms:Get*","kms:List*","s3:ListBucket","s3:GetBucket*","s3:GetEncryptionConfiguration","s3:GetLifecycleConfiguration","ec2:Describe*","elasticloadbalancing:Describe*","ecs:Describe*","ecs:ListTagsForResource","acm:Describe*","acm:ListTagsForCertificate","route53:Get*","route53:List*","s3:GetAccelerateConfiguration","s3:GetReplicationConfiguration","secretsmanager:DescribeSecret","secretsmanager:GetResourcePolicy","cloudfront:GetDistribution","cloudfront:DescribeFunction","cloudfront:GetFunction","cloudfront:GetOriginAccessControl","cloudfront:GetResponseHeadersPolicy","cloudfront:ListTagsForResource"],"Resource":"*"},{"Effect":"Allow","Action":["s3:GetObject"],"Resource":"arn:aws:s3:::meeting-notes-terraform-state-bucket/meeting-notes-terraform/state"},{"Effect":"Allow","Action":["dynamodb:PutItem","dynamodb:DeleteItem"],"Resource":"arn:aws:dynamodb:us-east-1:${{ vars.AWS_ACCOUNT_ID }}:table/meeting-notes-terraform-state-locks"},{"Effect":"Allow","Action":["s3:PutObject","s3:GetObjectVersion"],"Resource":"arn:aws:s3:::meeting-notes-prod-private-evidence-${{ vars.AWS_ACCOUNT_ID }}/terraform/production/*"},{"Effect":"Allow","Action":["kms:GenerateDataKey","kms:Decrypt"],"Resource":"arn:aws:kms:us-east-1:${{ vars.AWS_ACCOUNT_ID }}:key/*"}]}'
       - name: Configure Sandbox AWS credentials
         if: ${{ inputs.github_environment == 'sandbox' }}
         uses: aws-actions/configure-aws-credentials@v6

@@ -33,8 +33,10 @@ run "production_site_policy" {
   command = plan
   plan_options { target = [aws_iam_policy.site_publishing, aws_iam_role_policy_attachment.site_publishing] }
   variables {
-    environment        = "prod"
-    github_environment = "production"
+    environment              = "prod"
+    github_environment       = "production"
+    frontend_distribution_id = "EPRODFRONTEND"
+    docs_distribution_id     = "EPRODDOCS"
   }
   override_resource {
     target          = aws_s3_bucket.frontend
@@ -49,12 +51,12 @@ run "production_site_policy" {
   override_resource {
     target          = aws_cloudfront_distribution.frontend
     override_during = plan
-    values          = { arn = "arn:aws:cloudfront::123456789012:distribution/EPRODFRONTEND" }
+    values          = { id = "should-not-be-read", arn = "should-not-be-read" }
   }
   override_resource {
     target          = aws_cloudfront_distribution.docs
     override_during = plan
-    values          = { arn = "arn:aws:cloudfront::123456789012:distribution/EPRODDOCS" }
+    values          = { id = "should-not-be-read", arn = "should-not-be-read" }
   }
   override_resource {
     target          = aws_kms_key.app_general
@@ -101,8 +103,10 @@ run "sandbox_site_policy" {
   command = plan
   plan_options { target = [aws_iam_policy.site_publishing, aws_iam_role_policy_attachment.site_publishing] }
   variables {
-    environment        = "sandbox"
-    github_environment = "sandbox"
+    environment              = "sandbox"
+    github_environment       = "sandbox"
+    frontend_distribution_id = "ESANDBOXFRONTEND"
+    docs_distribution_id     = "ESANDBOXDOCS"
   }
   override_resource {
     target          = aws_s3_bucket.frontend
@@ -117,12 +121,12 @@ run "sandbox_site_policy" {
   override_resource {
     target          = aws_cloudfront_distribution.frontend
     override_during = plan
-    values          = { arn = "arn:aws:cloudfront::123456789012:distribution/ESANDBOXFRONTEND" }
+    values          = { id = "should-not-be-read", arn = "should-not-be-read" }
   }
   override_resource {
     target          = aws_cloudfront_distribution.docs
     override_during = plan
-    values          = { arn = "arn:aws:cloudfront::123456789012:distribution/ESANDBOXDOCS" }
+    values          = { id = "should-not-be-read", arn = "should-not-be-read" }
   }
   override_resource {
     target          = aws_kms_key.app_general
@@ -157,6 +161,40 @@ run "sandbox_site_policy" {
   }
 }
 
+run "site_policy_requires_distribution_ids" {
+  command = plan
+  plan_options { target = [aws_iam_policy.site_publishing] }
+  variables {
+    environment        = "prod"
+    github_environment = "production"
+  }
+  expect_failures = [aws_iam_policy.site_publishing]
+}
+
+run "distribution_ids_must_be_cloudfront_ids" {
+  command = plan
+  plan_options { target = [aws_iam_policy.site_publishing] }
+  variables {
+    environment              = "prod"
+    github_environment       = "production"
+    frontend_distribution_id = "*"
+    docs_distribution_id     = "arn:aws:cloudfront::123456789012:distribution/EPRODDOCS"
+  }
+  expect_failures = [var.frontend_distribution_id, var.docs_distribution_id]
+}
+
+run "mismatched_distribution_id_fails_the_distribution" {
+  command = plan
+  plan_options { target = [aws_cloudfront_distribution.frontend] }
+  variables { frontend_distribution_id = "EOTHER" }
+  override_resource {
+    target          = aws_cloudfront_distribution.frontend
+    override_during = plan
+    values          = { id = "EPRODFRONTEND" }
+  }
+  expect_failures = [aws_cloudfront_distribution.frontend]
+}
+
 run "unsupported_environment_has_no_site_grant" {
   command = plan
   plan_options { target = [aws_iam_policy.site_publishing, aws_iam_role_policy_attachment.site_publishing] }
@@ -164,5 +202,33 @@ run "unsupported_environment_has_no_site_grant" {
   assert {
     condition     = length(aws_iam_policy.site_publishing) == 0 && length(aws_iam_role_policy_attachment.site_publishing) == 0
     error_message = "Only production and Sandbox may create or attach the site policy."
+  }
+}
+
+# validate-site-plan.cjs names these exact values; keep both sides aligned.
+run "site_delivery_matches_its_plan_validator" {
+  command = plan
+  plan_options {
+    target = [aws_cloudfront_distribution.frontend, aws_cloudfront_distribution.docs, aws_cloudfront_function.frontend_route_rewrite, aws_cloudfront_response_headers_policy.crawler_noindex]
+  }
+  variables {
+    environment        = "prod"
+    github_environment = "production"
+  }
+  assert {
+    condition     = aws_cloudfront_function.frontend_route_rewrite.name == "meeting-notes-prod-frontend-route-rewrite" && aws_cloudfront_function.frontend_route_rewrite.runtime == "cloudfront-js-2.0" && aws_cloudfront_function.frontend_route_rewrite.publish && aws_cloudfront_response_headers_policy.crawler_noindex.name == "meeting-notes-prod-crawler-noindex"
+    error_message = "Function and headers policy names must match the site plan validator."
+  }
+  assert {
+    condition     = [for r in aws_cloudfront_distribution.frontend.custom_error_response : [r.error_code, r.response_code, r.response_page_path, r.error_caching_min_ttl]] == [[403, 404, "/404.html", 0]]
+    error_message = "The frontend serves only the real 404 page for missing objects."
+  }
+  assert {
+    condition     = [for b in aws_cloudfront_distribution.frontend.ordered_cache_behavior : b.path_pattern] == ["/assets/*", "/share/*"] && [for b in aws_cloudfront_distribution.docs.ordered_cache_behavior : b.path_pattern] == ["/assets/*", "/search*"]
+    error_message = "Each distribution gains exactly the behaviors the site plan validator expects."
+  }
+  assert {
+    condition     = [for f in one(aws_cloudfront_distribution.frontend.default_cache_behavior).function_association : f.event_type] == ["viewer-request"]
+    error_message = "The frontend default behavior runs the route rewrite on viewer requests."
   }
 }

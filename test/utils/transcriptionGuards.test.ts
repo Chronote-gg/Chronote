@@ -172,6 +172,24 @@ describe("applyTranscriptionGuards", () => {
     );
   });
 
+  test("suppresses non-Latin prompt echo", () => {
+    const result = applyTranscriptionGuards({
+      transcription: "Название сервера: Творческая студия",
+      suppressionEnabled: false,
+      promptEchoEnabled: true,
+      promptText:
+        "Название сервера: Творческая студия Канал: общий Участники: Пользователь",
+    });
+
+    expect(result.text).toBe("");
+    expect(result.flags).toEqual(
+      expect.arrayContaining([
+        "prompt_echo_substring",
+        "suppressed_prompt_echo",
+      ]),
+    );
+  });
+
   test("keeps text when prompt echo gate is disabled", () => {
     const result = applyTranscriptionGuards({
       transcription: "Server Name: BASIC's Creations",

@@ -41,3 +41,16 @@ it("captures the mode for a meeting while newly resolved meetings see global cha
     "enforce",
   );
 });
+
+it("defaults the transcription language to English", async () => {
+  const resolved = await resolve();
+  expect(resolved.transcription).toHaveProperty("language", "en");
+});
+
+it("captures auto transcription language from global config", async () => {
+  jest
+    .mocked(getGlobalConfigValues)
+    .mockResolvedValue({ "transcription.language": "auto" });
+  const resolved = await resolve();
+  expect(resolved.transcription).toHaveProperty("language", "auto");
+});

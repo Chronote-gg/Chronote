@@ -125,13 +125,26 @@ test.each([false, true])(
           : "enable_production_introduction_roles")
     ] = "true";
     vars.TFVAR_ENABLE_PRODUCTION_ACCEPTANCE_COLLECTOR = "false";
+    vars.TFVAR_ENABLE_PRODUCTION_PROMPT_GUARD_ROLE = "true";
     expect(run(valid, vars)).toMatchObject({
       ...collections,
       enable_production_introduction_roles: "true",
       enable_production_acceptance_collector: "false",
+      enable_production_prompt_guard_role: "true",
     });
   },
 );
+test("uppercase GitHub distribution variables reach the lowercase Terraform inputs", () => {
+  expect(
+    run(valid, {
+      TFVAR_FRONTEND_DISTRIBUTION_ID: "EFRONTEND1",
+      TFVAR_DOCS_DISTRIBUTION_ID: "EDOCS2",
+    }),
+  ).toMatchObject({
+    frontend_distribution_id: "EFRONTEND1",
+    docs_distribution_id: "EDOCS2",
+  });
+});
 test("unselected scalar variables keep their exact suffix and string behavior", () => {
   expect(
     run(valid, { TFVAR_other_input: '["literal"]', TFVAR_OTHER_INPUT: "TRUE" }),
