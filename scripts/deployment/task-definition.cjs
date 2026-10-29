@@ -102,7 +102,44 @@ function assertPreparedTaskDefinition(actual, prepared, rawSha256) {
     environmentOrderOnly(prepared),
   );
 }
+/** Finds the one ACTIVE definition already registered for this exact candidate. */
+async function findCandidateDefinition(aws, config) {
+  const matches = [];
+  let nextToken;
+  do {
+    const page = await aws("ecs", "list-task-definitions", {
+      familyPrefix: config.family,
+      status: "ACTIVE",
+      sort: "DESC",
+      ...(nextToken ? { nextToken } : {}),
+    });
+    for (const arn of page.taskDefinitionArns) {
+      const task = (
+        await aws("ecs", "describe-task-definition", { taskDefinition: arn })
+      ).taskDefinition;
+      if (task.family !== config.family) continue;
+      const container = taskContainer(task, config.tablePrefix);
+      if (
+        container.image === config.image &&
+        container.environment.some(
+          (entry) =>
+            entry.name === "DEPLOYMENT_CANDIDATE_ID" &&
+            entry.value === config.candidateId,
+        )
+      )
+        matches.push(arn);
+    }
+    nextToken = page.nextToken;
+  } while (nextToken);
+  if (matches.length > 1)
+    throw new CoordinatorFailure(
+      "outcome_uncertain",
+      "Ambiguous candidate task definitions require recovery",
+    );
+  return matches[0];
+}
 module.exports = {
+  findCandidateDefinition,
   taskContainer,
   runtimeMode,
   taskDefinitionInput,

@@ -9,6 +9,7 @@ const {
   taskDefinitionInput,
   candidateDefinition,
   assertPreparedTaskDefinition,
+  findCandidateDefinition,
 } = require("./task-definition.cjs");
 const {
   CoordinatorFailure,
@@ -21,12 +22,10 @@ const {
   RETIREMENT_SECONDS,
   LEASE_SECONDS,
   RENEWAL_MARGIN_SECONDS,
-  HANDOFF_QUIET_SECONDS,
 } = require("./production-capacity.cjs");
 const { runCli } = require("./coordinator-cli.cjs");
 
 const { configuration } = require("./coordinator-definition.cjs");
-const HANDOFF_BLOCKING_WORK = ["recording", "finalization", "voice_operation"];
 function protocolModules(options) {
   const builders =
     options.builders ??
@@ -57,7 +56,6 @@ function createCoordinator(options = {}) {
     return callAws(service, operation, input);
   };
   const now = options.now ?? (() => Math.floor(Date.now() / 1000));
-  const warn = options.warn ?? ((message) => console.log(message));
   const sleep =
     options.sleep ??
     ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
@@ -378,77 +376,7 @@ function createCoordinator(options = {}) {
       Date.parse((await protectedTask(outgoing[0])).expirationDate) / 1000;
     return { outgoing: outgoing[0], mode, nativeProtectionExpiresAt, old };
   }
-  /**
-   * Once the candidate holds native protection, ECS refuses the outgoing
-   * task's renewals (protected tasks would exceed desired count 1), so the
-   * outgoing runtime shuts itself down within about eight minutes. Launch only
-   * while the serving runtime holds no recording, finalization or voice work.
-   * The production introduction keeps its own reviewed action sequence.
-   */
-  function assertUnowned(ctl) {
-    if (
-      ctl.coordinatorExpiresAt > now() ||
-      (ctl.deployment && ctl.deployment.phase !== "complete")
-    )
-      throw new CoordinatorFailure(
-        "coordinator_authority_changed",
-        "Another coordinator or unresolved deployment owns this environment",
-      );
-  }
-  async function quietOriginal(ctl, svc) {
-    const deadline = now() + HANDOFF_QUIET_SECONDS;
-    for (;;) {
-      assertUnowned(ctl);
-      const previous = await original(ctl, svc);
-      const counts = previous.old.workCounts;
-      if (
-        production ||
-        (counts &&
-          HANDOFF_BLOCKING_WORK.every((kind) => (counts[kind] ?? 0) === 0))
-      )
-        return { ctl, previous };
-      if (now() >= deadline)
-        throw new CoordinatorFailure(
-          "outgoing_busy",
-          "Serving runtime still holds recording, finalization or voice work; retry the deployment once it is quiet",
-        );
-      await sleep(10000);
-      ctl = await control();
-    }
-  }
-  async function findRegistered() {
-    const matches = [];
-    let nextToken;
-    do {
-      const page = await aws("ecs", "list-task-definitions", {
-        familyPrefix: config.family,
-        status: "ACTIVE",
-        sort: "DESC",
-        ...(nextToken ? { nextToken } : {}),
-      });
-      for (const arn of page.taskDefinitionArns) {
-        const task = await definition(arn);
-        if (task.family !== config.family) continue;
-        const container = taskContainer(task, config.tablePrefix);
-        if (
-          container.image === config.image &&
-          container.environment.some(
-            (entry) =>
-              entry.name === "DEPLOYMENT_CANDIDATE_ID" &&
-              entry.value === config.candidateId,
-          )
-        )
-          matches.push(arn);
-      }
-      nextToken = page.nextToken;
-    } while (nextToken);
-    if (matches.length > 1)
-      throw new CoordinatorFailure(
-        "outcome_uncertain",
-        "Ambiguous candidate task definitions require recovery",
-      );
-    return matches[0];
-  }
+  const findRegistered = () => findCandidateDefinition(aws, config);
   async function registerProduction(ctl) {
     const m = production.binding.manifest;
     const pinned = await definition(m.runtime.continuationDefinition);
@@ -560,10 +488,8 @@ function createCoordinator(options = {}) {
       }
       ctl = await renew(ctl);
     } else {
-      if (!production && ctl.deployment?.phase === "retiring")
-        ctl = (await stopped.continueStoppedOutgoing(ctl)).control;
       let previous;
-      ({ ctl, previous } = await quietOriginal(ctl, svc));
+      ({ ctl, previous } = await handoff.acquirable(ctl, svc));
       const traffic = await routing.prepare(svc, previous.outgoing);
       ctl = await save(ctl, {
         ...ctl,
@@ -884,24 +810,26 @@ function createCoordinator(options = {}) {
       "Retirement/convergence incomplete; preserve tasks and request recovery",
     );
   }
-  const stopped =
-    require("./stopped-outgoing.cjs").createStoppedOutgoingContinuation({
-      aws,
-      config,
-      builders,
-      tables,
-      now,
-      production,
-      control,
-      service,
-      runtime,
-      ready,
-      protectedTask,
-      routing,
-      promotionObserved,
-      same,
-      warn,
-    });
+  const handoff = require("./handoff-quiet-gate.cjs").createHandoffGate({
+    aws,
+    config,
+    builders,
+    tables,
+    types,
+    now,
+    sleep,
+    production,
+    control,
+    service,
+    runtime,
+    original,
+    ready,
+    protectedTask,
+    routing,
+    promotionObserved,
+    assertWriter,
+    warn: options.warn,
+  });
   async function rollbackReady(ctl, authorizedGeneration) {
     const d = ctl.deployment;
     const old = await runtime(d.outgoing);
@@ -1000,10 +928,7 @@ function createCoordinator(options = {}) {
     promote,
     retire,
     reconcile,
-    async continueStoppedOutgoing() {
-      await assertWriter();
-      return (await stopped.continueStoppedOutgoing(await control())).result;
-    },
+    continueStoppedOutgoing: handoff.continueStoppedOutgoing,
     inspectServing: async () => {
       const ctl = await control();
       const svc = await service();

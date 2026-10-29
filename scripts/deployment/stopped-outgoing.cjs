@@ -57,9 +57,10 @@ function createStoppedOutgoingContinuation({
   protectedTask,
   routing,
   promotionObserved,
-  same,
-  warn,
+  types,
+  warn = (message) => console.log(message),
 }) {
+  const same = types.sameRuntimeIdentity;
   function assertAuthority(ctl) {
     const d = ctl.deployment;
     if (production) refuse("Production introduction continuation is separate");
