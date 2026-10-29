@@ -16,18 +16,14 @@ export const RefreshAndArchive: Story = {
     const canvas = within(canvasElement);
     await expect(
       await canvas.findByRole("heading", {
-        name: "Your first meeting goes here.",
+        name: "Your first meeting in Engineering HQ goes here.",
       }),
     ).toBeVisible();
     await expect(
       canvas.getByRole("button", { name: "Refresh", exact: true }),
     ).toBeVisible();
-    await expect(
-      canvas.getByRole("button", { name: "View archived meetings" }),
-    ).toBeVisible();
-    await expect(
-      canvas.queryByTestId("library-search"),
-    ).not.toBeInTheDocument();
+
+    await expect(canvas.queryByTestId("library-search")).toBeInTheDocument();
   },
 };
 export const RefreshAndArchiveMobile: Story = { ...RefreshAndArchive };

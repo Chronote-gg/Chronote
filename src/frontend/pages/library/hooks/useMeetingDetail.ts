@@ -234,7 +234,12 @@ export const useMeetingDetail = (
     },
   );
 
-  const queriedDetail = resolveDetail(detailQuery.data);
+  const errorCode = detailQuery.error?.data?.code;
+  const accessDenied =
+    errorCode === "FORBIDDEN" ||
+    errorCode === "UNAUTHORIZED" ||
+    errorCode === "NOT_FOUND";
+  const queriedDetail = accessDenied ? null : resolveDetail(detailQuery.data);
   const detail =
     queriedDetail?.id === params.selectedMeetingId ? queriedDetail : null;
   const acknowledgment = params.acknowledgedDelivery;

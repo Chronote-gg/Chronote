@@ -215,7 +215,7 @@ export default function Join() {
     ? `https://discord.com/channels/${verifiedServer.id}`
     : "https://discord.com/channels/@me";
   const portalUrl = verifiedServer
-    ? `/portal/server/${verifiedServer.id}/library`
+    ? `/portal/meetings?scope=guild&serverId=${verifiedServer.id}`
     : "/portal";
 
   return (

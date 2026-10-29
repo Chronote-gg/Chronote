@@ -5,6 +5,7 @@ export const useInvalidateMeetingLists = (serverId: string | null) => {
   const trpcUtils = trpc.useUtils();
 
   return useCallback(async () => {
+    await trpcUtils.meetings.myList.invalidate();
     if (!serverId) return;
     await Promise.all([
       trpcUtils.meetings.list.invalidate({
@@ -20,5 +21,5 @@ export const useInvalidateMeetingLists = (serverId: string | null) => {
         includeArchived: true,
       }),
     ]);
-  }, [serverId, trpcUtils.meetings.list]);
+  }, [serverId, trpcUtils.meetings.list, trpcUtils.meetings.myList]);
 };

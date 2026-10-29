@@ -1,3 +1,5 @@
+import { MeetingBrowseProvider } from "../contexts/MeetingBrowseContext";
+import { meetingBrowseSearchSchema } from "../utils/meetingBrowseSearch";
 import {
   AppShell,
   Button,
@@ -11,7 +13,7 @@ import {
   useMantineTheme,
 } from "@mantine/core";
 import { useDisclosure, useMediaQuery } from "@mantine/hooks";
-import { Outlet, useRouterState } from "@tanstack/react-router";
+import { Outlet, useRouterState, useSearch } from "@tanstack/react-router";
 import type { CSSProperties } from "react";
 import SiteFooter from "../components/SiteFooter";
 import SiteHeader from "../components/SiteHeader";
@@ -34,8 +36,15 @@ import {
 } from "../uiTokens";
 
 export default function PortalLayout() {
+  const rawSearch = useSearch({ strict: false });
+
   const [navbarOpened, navbarHandlers] = useDisclosure(false);
-  const { state: authState, loading: authLoading, loginUrl } = useAuth();
+  const {
+    state: authState,
+    loading: authLoading,
+    protectedQueriesReady,
+    loginUrl,
+  } = useAuth();
   const { loading: guildLoading } = useGuildContext();
   const theme = useMantineTheme();
   const colorScheme = useComputedColorScheme("dark");
@@ -45,6 +54,9 @@ export default function PortalLayout() {
   const pathname = useRouterState({
     select: (state) => state.location.pathname,
   });
+  const browseSearch = meetingBrowseSearchSchema.parse(
+    pathname === "/portal/meetings" ? rawSearch : {},
+  );
   const showNavbar =
     authState !== "unauthenticated" &&
     !pathname.startsWith("/portal/select-server");
@@ -192,7 +204,12 @@ export default function PortalLayout() {
     );
   }
 
-  if (authState === "unknown" || authLoading || guildLoading) {
+  if (
+    authState === "unknown" ||
+    authLoading ||
+    !protectedQueriesReady ||
+    guildLoading
+  ) {
     return (
       <AppShell
         padding={0}
@@ -243,57 +260,64 @@ export default function PortalLayout() {
   }
 
   return (
-    <AppShell
-      padding={0}
-      header={{ height: shellHeights.header }}
-      footer={{ height: shellHeights.footer }}
-      style={appShellStyle}
-      navbar={
-        showNavbar
-          ? {
-              width: navbarWidth,
-              breakpoint: "sm",
-              collapsed: { mobile: !navbarOpened },
-            }
-          : undefined
-      }
-      styles={appShellStyles}
+    <MeetingBrowseProvider
+      search={browseSearch}
+      enabled={pathname === "/portal/meetings"}
     >
-      <AppShell.Header p="md">
-        <SiteHeader
-          showNavbarToggle={showNavbar}
-          navbarOpened={navbarOpened}
-          onNavbarToggle={navbarHandlers.toggle}
-          context={headerContext}
-        />
-      </AppShell.Header>
-      {showNavbar ? (
-        <AppShell.Navbar p={0}>
-          <SiteNavbar onClose={navbarHandlers.close} pathname={pathname} />
-        </AppShell.Navbar>
-      ) : null}
-      <AppShell.Main>
-        <Container
-          size="xl"
-          px={pagePaddingX}
-          pt={pagePaddingY}
-          pb={{
-            base: useInnerScroll ? pagePaddingYCompact.base : pagePaddingY.base,
-            md: useInnerScroll ? pagePaddingYCompact.md : pagePaddingY.md,
-          }}
-          style={{
-            display: useInnerScroll ? "flex" : "block",
-            flexDirection: useInnerScroll ? "column" : undefined,
-            minHeight: 0,
-            height: useInnerScroll ? "100%" : undefined,
-          }}
-        >
-          <Outlet />
-        </Container>
-      </AppShell.Main>
-      <AppShell.Footer>
-        <SiteFooter variant="compact" />
-      </AppShell.Footer>
-    </AppShell>
+      <AppShell
+        padding={0}
+        header={{ height: shellHeights.header }}
+        footer={{ height: shellHeights.footer }}
+        style={appShellStyle}
+        navbar={
+          showNavbar
+            ? {
+                width: navbarWidth,
+                breakpoint: "sm",
+                collapsed: { mobile: !navbarOpened },
+              }
+            : undefined
+        }
+        styles={appShellStyles}
+      >
+        <AppShell.Header p="md">
+          <SiteHeader
+            showNavbarToggle={showNavbar}
+            navbarOpened={navbarOpened}
+            onNavbarToggle={navbarHandlers.toggle}
+            context={headerContext}
+          />
+        </AppShell.Header>
+        {showNavbar ? (
+          <AppShell.Navbar p={0}>
+            <SiteNavbar onClose={navbarHandlers.close} pathname={pathname} />
+          </AppShell.Navbar>
+        ) : null}
+        <AppShell.Main>
+          <Container
+            size="xl"
+            px={pagePaddingX}
+            pt={pagePaddingY}
+            pb={{
+              base: useInnerScroll
+                ? pagePaddingYCompact.base
+                : pagePaddingY.base,
+              md: useInnerScroll ? pagePaddingYCompact.md : pagePaddingY.md,
+            }}
+            style={{
+              display: useInnerScroll ? "flex" : "block",
+              flexDirection: useInnerScroll ? "column" : undefined,
+              minHeight: 0,
+              height: useInnerScroll ? "100%" : undefined,
+            }}
+          >
+            <Outlet />
+          </Container>
+        </AppShell.Main>
+        <AppShell.Footer>
+          <SiteFooter variant="compact" />
+        </AppShell.Footer>
+      </AppShell>
+    </MeetingBrowseProvider>
   );
 }

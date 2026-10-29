@@ -113,3 +113,57 @@ describe("GuildContext", () => {
     });
   });
 });
+
+test("account transitions hide previous guild metadata and clear stored selection before queries resume", async () => {
+  resetTrpcMocks();
+  resetAuthState();
+  localStorage.clear();
+  localStorage.setItem("mn-selected-guild", "old");
+  authState.state = "authenticated";
+  authState.user = { id: "old-user" };
+  authState.protectedQueriesReady = true;
+  setGuildQuery({
+    data: { guilds: [{ id: "old", name: "Old private server" }] },
+  });
+  const view = render(
+    <GuildProvider>
+      <GuildProbe onCapture={() => {}} />
+    </GuildProvider>,
+  );
+  await waitFor(() =>
+    expect(screen.getByTestId("guild-state")).toHaveAttribute(
+      "data-count",
+      "1",
+    ),
+  );
+  authState.user = { id: "new-user" };
+  authState.protectedQueriesReady = false;
+  view.rerender(
+    <GuildProvider>
+      <GuildProbe onCapture={() => {}} />
+    </GuildProvider>,
+  );
+  expect(screen.getByTestId("guild-state")).toHaveAttribute("data-count", "0");
+  expect(screen.getByTestId("guild-state")).toHaveAttribute(
+    "data-selected",
+    "",
+  );
+  expect(localStorage.getItem("mn-selected-guild")).toBeNull();
+  setGuildQuery({ data: { guilds: [{ id: "new", name: "New server" }] } });
+  authState.protectedQueriesReady = true;
+  view.rerender(
+    <GuildProvider>
+      <GuildProbe onCapture={() => {}} />
+    </GuildProvider>,
+  );
+  await waitFor(() =>
+    expect(screen.getByTestId("guild-state")).toHaveAttribute(
+      "data-count",
+      "1",
+    ),
+  );
+  expect(screen.getByTestId("guild-state")).toHaveAttribute(
+    "data-selected",
+    "",
+  );
+});

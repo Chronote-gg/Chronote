@@ -1,4 +1,6 @@
+import { useOptionalMeetingBrowseContext } from "../contexts/MeetingBrowseContext";
 import {
+  Box,
   Divider,
   NavLink,
   ScrollArea,
@@ -207,16 +209,18 @@ export function SiteNavbarView({
 
         <Divider />
 
-        <NavSection label="Sources">
-          <MeetingSources
-            sources={sources}
-            scope={activeScope}
-            onSelect={(next) => {
-              onSelect?.(next);
-              onClose?.();
-            }}
-          />
-        </NavSection>
+        <Box visibleFrom={pathname === "/portal/meetings" ? "sm" : undefined}>
+          <NavSection label="Sources">
+            <MeetingSources
+              sources={sources}
+              scope={activeScope}
+              onSelect={(next) => {
+                onSelect?.(next);
+                onClose?.();
+              }}
+            />
+          </NavSection>
+        </Box>
         <NavSection label="Server">
           <Stack gap={4}>{SERVER_NAV_ITEMS.map(renderNavItem)}</Stack>
         </NavSection>
@@ -245,6 +249,7 @@ export function SiteNavbarView({
 export function SiteNavbar({ onClose, pathname }: SiteNavbarProps) {
   const { state: authState } = useAuth();
   const { selectedGuildId, setSelectedGuildId, guilds } = useGuildContext();
+  const browse = useOptionalMeetingBrowseContext();
   const rawSearch = useSearch({ strict: false });
   const search = meetingBrowseSearchSchema.parse(rawSearch);
   const scope: MeetingBrowseScope =
@@ -268,6 +273,7 @@ export function SiteNavbar({ onClose, pathname }: SiteNavbarProps) {
       pathname={pathname}
       selectedGuildId={selectedGuildId}
       scope={scope}
+      sources={browse?.sources}
       onSelect={(next) => {
         setSelectedGuildId(
           next.kind === "guild" &&

@@ -94,7 +94,7 @@ export const InstallerGuide: Story = {
       canvas.getByRole("link", { name: "Open portal" }),
     ).toHaveAttribute(
       "href",
-      "https://chronote.gg/portal/server/12345678901234567890/library",
+      "https://chronote.gg/portal/meetings?scope=guild&serverId=12345678901234567890",
     );
     await expect(
       canvas.getByRole("link", { name: "Open Engineering HQ" }),

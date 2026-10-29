@@ -36,6 +36,7 @@ describe("SiteNavbar", () => {
     jest.mocked(useAuth).mockReturnValue({
       state: "authenticated",
       loading: false,
+      protectedQueriesReady: true,
       loginUrl: "/auth/discord",
       logoutUrl: "/logout",
       user: {
@@ -124,16 +125,15 @@ describe("SiteNavbar", () => {
 });
 
 it("uses URL scope instead of stored guild management rights", () => {
-  jest
-    .mocked(useAuth)
-    .mockReturnValue({
-      state: "authenticated",
-      loading: false,
-      loginUrl: "/auth/discord",
-      logoutUrl: "/logout",
-      user: { id: "user", username: "User", avatar: null },
-      refresh: jest.fn(async () => undefined),
-    });
+  jest.mocked(useAuth).mockReturnValue({
+    state: "authenticated",
+    loading: false,
+    protectedQueriesReady: true,
+    loginUrl: "/auth/discord",
+    logoutUrl: "/logout",
+    user: { id: "user", username: "User", avatar: null },
+    refresh: jest.fn(async () => undefined),
+  });
   jest.mocked(useGuildContext).mockReturnValue({
     guilds: [
       { id: "manager", name: "Manager server", canManage: true },
