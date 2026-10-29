@@ -1,3 +1,8 @@
+import type {
+  MeetingBrowsePageOptions,
+  MeetingBrowsePage,
+} from "./types/meetingBrowse";
+import { assertRawMeetingIndexUserId } from "./utils/meetingUserIndex";
 import {
   buildPendingSegmentTransaction,
   buildPersonalUploadSubmissionTransaction,
@@ -2172,6 +2177,14 @@ export async function getMeetingHistory(
 export async function writeMeetingUserIndexRecords(
   records: MeetingUserIndexRecord[],
 ): Promise<void> {
+  for (const record of records) {
+    if ("accessReason" in record && record.accessReason === "guild_share") {
+      if (!record.userId.startsWith("GUILD_SHARE#"))
+        throw new Error("Invalid guild share principal");
+    } else {
+      assertRawMeetingIndexUserId(record.userId);
+    }
+  }
   for (
     let index = 0;
     index < records.length;
@@ -2224,6 +2237,7 @@ export async function getMeetingUserIndexRecordsForUserInRange(
   endTimestamp: string,
   limit?: number,
 ): Promise<MeetingUserIndexRecord[]> {
+  assertRawMeetingIndexUserId(userId);
   if (limit !== undefined && limit <= 0) return [];
 
   const items: MeetingUserIndexRecord[] = [];
@@ -4280,5 +4294,76 @@ export async function listDueRenewalRecoveries(input: {
           ),
         }
       : {}),
+  };
+}
+
+export async function getMeetingHistoryTimestampPage(
+  guildId: string,
+  options: MeetingBrowsePageOptions,
+): Promise<MeetingBrowsePage<MeetingHistory>> {
+  options.signal?.throwIfAborted();
+  if (!Number.isInteger(options.limit) || options.limit <= 0)
+    throw new Error("Page limit must be a positive integer");
+  const result = await dynamoDbClient.send(
+    new QueryCommand({
+      TableName: tableName("MeetingHistoryTable"),
+      IndexName: "GuildTimestampIndex",
+      KeyConditionExpression:
+        "guildId = :guildId AND #timestamp BETWEEN :start AND :end",
+      ExpressionAttributeNames: { "#timestamp": "timestamp" },
+      ExpressionAttributeValues: marshall({
+        ":guildId": guildId,
+        ":start": options.startTimestamp,
+        ":end": options.endTimestamp,
+      }),
+      Limit: options.limit,
+      ExclusiveStartKey: options.cursor,
+      ScanIndexForward: false,
+    }),
+    { abortSignal: options.signal },
+  );
+  options.signal?.throwIfAborted();
+  return {
+    items: (result.Items ?? []).map((item) => ({
+      record: unmarshall(item) as MeetingHistory,
+      cursorAfter: {
+        guildId: item.guildId,
+        timestamp: item.timestamp,
+        channelId_timestamp: item.channelId_timestamp,
+      },
+    })),
+    nextCursor: result.LastEvaluatedKey,
+  };
+}
+export async function getMeetingUserIndexTimestampPage(
+  principal: string,
+  options: MeetingBrowsePageOptions,
+): Promise<MeetingBrowsePage<MeetingUserIndexRecord>> {
+  options.signal?.throwIfAborted();
+  if (!Number.isInteger(options.limit) || options.limit <= 0)
+    throw new Error("Page limit must be a positive integer");
+  const result = await dynamoDbClient.send(
+    new QueryCommand({
+      TableName: tableName("MeetingUserIndexTable"),
+      KeyConditionExpression:
+        "userId = :userId AND userTimestamp BETWEEN :start AND :end",
+      ExpressionAttributeValues: marshall({
+        ":userId": principal,
+        ":start": `${options.startTimestamp}#`,
+        ":end": `${options.endTimestamp}#\uffff`,
+      }),
+      Limit: options.limit,
+      ExclusiveStartKey: options.cursor,
+      ScanIndexForward: false,
+    }),
+    { abortSignal: options.signal },
+  );
+  options.signal?.throwIfAborted();
+  return {
+    items: (result.Items ?? []).map((item) => ({
+      record: unmarshall(item) as MeetingUserIndexRecord,
+      cursorAfter: { userId: item.userId, userTimestamp: item.userTimestamp },
+    })),
+    nextCursor: result.LastEvaluatedKey,
   };
 }

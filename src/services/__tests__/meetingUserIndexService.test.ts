@@ -33,6 +33,9 @@ describe("meetingUserIndexService", () => {
     deleteRecords.mockResolvedValue(undefined);
     listByUserTimestampRange.mockResolvedValue([]);
     jest.mocked(getMeetingUserIndexRepository).mockReturnValue({
+      listByPrincipalTimestampPage: jest
+        .fn<() => Promise<{ items: [] }>>()
+        .mockResolvedValue({ items: [] }),
       write,
       delete: deleteRecords,
       listByUserTimestampRange,
@@ -69,4 +72,42 @@ describe("meetingUserIndexService", () => {
       }),
     ]);
   });
+});
+
+test("guild grant replacement removes old pointers and exposes failed writes", async () => {
+  const write = jest
+    .fn<() => Promise<void>>()
+    .mockRejectedValue(new Error("write failed"));
+  const remove = jest.fn<() => Promise<void>>().mockResolvedValue(undefined);
+  jest
+    .mocked(getMeetingUserIndexRepository)
+    .mockReturnValue({
+      write,
+      delete: remove,
+      listByUserTimestampRange:
+        jest.fn<() => Promise<MeetingUserIndexRecord[]>>(),
+      listByPrincipalTimestampPage: jest.fn<() => Promise<{ items: [] }>>(),
+    });
+  await expect(
+    replaceMeetingUserIndexForMeetingService(
+      {
+        ...baseMeeting,
+        accessGrants: [{ targetType: "guild", guildId: "old" }],
+      },
+      {
+        ...baseMeeting,
+        accessGrants: [{ targetType: "guild", guildId: "new" }],
+      },
+    ),
+  ).rejects.toThrow("write failed");
+  expect(remove).toHaveBeenCalledWith([
+    expect.objectContaining({ userId: "GUILD_SHARE#old" }),
+  ]);
+  expect(write).toHaveBeenCalledWith([
+    expect.objectContaining({ userId: "owner-1" }),
+    expect.objectContaining({
+      userId: "GUILD_SHARE#new",
+      accessReason: "guild_share",
+    }),
+  ]);
 });

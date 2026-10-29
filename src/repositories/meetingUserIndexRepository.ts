@@ -1,14 +1,28 @@
+import { marshall } from "@aws-sdk/util-dynamodb";
+import type {
+  MeetingBrowsePageOptions,
+  MeetingBrowsePage,
+} from "../types/meetingBrowse";
 import { config } from "../services/configService";
 import {
+  getMeetingUserIndexTimestampPage,
   deleteMeetingUserIndexRecords,
   getMeetingUserIndexRecordsForUserInRange,
   writeMeetingUserIndexRecords,
 } from "../db";
 import type { MeetingUserIndexRecord } from "../types/db";
-import { buildMeetingUserIndexRecords } from "../utils/meetingUserIndex";
+import {
+  assertRawMeetingIndexUserId,
+  buildGuildShareIndexRecords,
+  buildMeetingUserIndexRecords,
+} from "../utils/meetingUserIndex";
 import { getMockStore } from "./mockStore";
 
 export type MeetingUserIndexRepository = {
+  listByPrincipalTimestampPage: (
+    principal: string,
+    options: MeetingBrowsePageOptions,
+  ) => Promise<MeetingBrowsePage<MeetingUserIndexRecord>>;
   write: (records: MeetingUserIndexRecord[]) => Promise<void>;
   delete: (
     records: Pick<MeetingUserIndexRecord, "userId" | "userTimestamp">[],
@@ -22,6 +36,7 @@ export type MeetingUserIndexRepository = {
 };
 
 const realRepository: MeetingUserIndexRepository = {
+  listByPrincipalTimestampPage: getMeetingUserIndexTimestampPage,
   write: writeMeetingUserIndexRecords,
   delete: deleteMeetingUserIndexRecords,
   listByUserTimestampRange: getMeetingUserIndexRecordsForUserInRange,
@@ -30,13 +45,53 @@ const realRepository: MeetingUserIndexRepository = {
 const listMockRecords = (userId: string) =>
   Array.from(getMockStore().meetingHistoryByGuild.values())
     .flatMap((meetings) => meetings)
-    .flatMap(buildMeetingUserIndexRecords)
+    .flatMap((meeting) => [
+      ...buildMeetingUserIndexRecords(meeting),
+      ...buildGuildShareIndexRecords(meeting),
+    ])
     .filter((record) => record.userId === userId);
 
 const mockRepository: MeetingUserIndexRepository = {
-  async write() {},
+  async listByPrincipalTimestampPage(principal, options) {
+    options.signal?.throwIfAborted();
+    if (!Number.isInteger(options.limit) || options.limit <= 0)
+      throw new Error("Page limit must be a positive integer");
+    const records = listMockRecords(principal)
+      .filter(
+        (record) =>
+          record.timestamp >= options.startTimestamp &&
+          record.timestamp <= options.endTimestamp,
+      )
+      .sort((a, b) => b.userTimestamp.localeCompare(a.userTimestamp));
+    const cursorKey = options.cursor?.userTimestamp?.S;
+    const remaining = cursorKey
+      ? records.filter(
+          (record) => record.userTimestamp.localeCompare(cursorKey) < 0,
+        )
+      : records;
+    const items = remaining
+      .slice(0, options.limit)
+      .map((record) => ({
+        record,
+        cursorAfter: marshall({
+          userId: record.userId,
+          userTimestamp: record.userTimestamp,
+        }),
+      }));
+    return {
+      items,
+      nextCursor:
+        items.length < remaining.length ? items.at(-1)?.cursorAfter : undefined,
+    };
+  },
+  async write(records) {
+    for (const record of records)
+      if (record.accessReason !== "guild_share")
+        assertRawMeetingIndexUserId(record.userId);
+  },
   async delete() {},
   async listByUserTimestampRange(userId, startTimestamp, endTimestamp, limit) {
+    assertRawMeetingIndexUserId(userId);
     return listMockRecords(userId)
       .filter(
         (record) =>

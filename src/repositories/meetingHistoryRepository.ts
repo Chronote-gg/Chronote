@@ -1,3 +1,8 @@
+import { marshall } from "@aws-sdk/util-dynamodb";
+import type {
+  MeetingBrowsePageOptions,
+  MeetingBrowsePage,
+} from "../types/meetingBrowse";
 import {
   getDeploymentControlRepository,
   getMeetingUpdateDeliveryRepository,
@@ -7,6 +12,7 @@ import { config } from "../services/configService";
 import {
   getMeetingHistory as getMeetingHistoryRecord,
   getMeetingsForGuildInRange,
+  getMeetingHistoryTimestampPage,
   getRecentMeetingsForChannel,
   getRecentMeetingsForGuild,
   updateMeetingArchive,
@@ -26,6 +32,10 @@ export type MeetingHistoryRepository = Pick<
   MeetingUpdateDeliveryRepository,
   "getStrong" | "updateContentAndDelivery"
 > & {
+  listByGuildTimestampPage: (
+    guildId: string,
+    options: MeetingBrowsePageOptions,
+  ) => Promise<MeetingBrowsePage<MeetingHistory>>;
   transitionOwned: (input: HistoryTransition) => Promise<"applied" | "stale">;
   getOwned: (
     key: HistoryTransition["key"],
@@ -113,6 +123,7 @@ const ownedOperations = {
 };
 const realRepository: MeetingHistoryRepository = {
   ...ownedOperations,
+  listByGuildTimestampPage: getMeetingHistoryTimestampPage,
   write: writeMeetingHistory,
   get: getMeetingHistoryRecord,
   listRecentByGuild: async (guildId, limit, options) => {
@@ -164,6 +175,50 @@ const realRepository: MeetingHistoryRepository = {
 
 const mockRepository: MeetingHistoryRepository = {
   ...ownedOperations,
+  async listByGuildTimestampPage(guildId, options) {
+    options.signal?.throwIfAborted();
+    if (!Number.isInteger(options.limit) || options.limit <= 0)
+      throw new Error("Page limit must be a positive integer");
+    const records = [
+      ...(getMockStore().meetingHistoryByGuild.get(guildId) ?? []),
+    ]
+      .filter(
+        (record) =>
+          record.timestamp >= options.startTimestamp &&
+          record.timestamp <= options.endTimestamp,
+      )
+      .sort(
+        (a, b) =>
+          b.timestamp.localeCompare(a.timestamp) ||
+          b.channelId_timestamp.localeCompare(a.channelId_timestamp),
+      );
+    const cursorTimestamp = options.cursor?.timestamp?.S;
+    const cursorKey = options.cursor?.channelId_timestamp?.S;
+    const remaining =
+      cursorTimestamp && cursorKey
+        ? records.filter(
+            (record) =>
+              record.timestamp.localeCompare(cursorTimestamp) < 0 ||
+              (record.timestamp === cursorTimestamp &&
+                record.channelId_timestamp.localeCompare(cursorKey) < 0),
+          )
+        : records;
+    const items = remaining
+      .slice(0, options.limit)
+      .map((record) => ({
+        record,
+        cursorAfter: marshall({
+          guildId: record.guildId,
+          timestamp: record.timestamp,
+          channelId_timestamp: record.channelId_timestamp,
+        }),
+      }));
+    return {
+      items,
+      nextCursor:
+        items.length < remaining.length ? items.at(-1)?.cursorAfter : undefined,
+    };
+  },
   async write(history) {
     const store = getMockStore();
     const existing = store.meetingHistoryByGuild.get(history.guildId) ?? [];
