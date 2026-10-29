@@ -20,12 +20,29 @@ function commandActive(row, now) {
 }
 
 /**
- * Only an abandoned upload intent expires: legacy finalization copies the upload-URL
+ * Desktop parents carry no `expiresAt`. A live recording touches its segments every
+ * minute or so, so a week without activity on the job or any segment means a paused
+ * draft waiting on a client, not server work.
+ */
+const IDLE_DRAFT_SECONDS = 7 * 24 * 60 * 60;
+
+/** Latest activity in seconds; a row with no parsable timestamp reads as recent. */
+function lastActivity(rows) {
+  const times = rows.map((row) => Date.parse(row.updatedAt ?? row.createdAt));
+  if (times.some((t) => !Number.isFinite(t))) return Infinity;
+  return Math.max(...times) / 1000;
+}
+
+/**
+ * Only an abandoned upload intent settles: legacy finalization copies the upload-URL
  * `expiresAt` onto queued jobs, so expiry says nothing about queued or processing work.
  */
-function jobActive(row, now) {
+function jobActive(row, now, segments) {
   if (["complete", "failed"].includes(row.status)) return false;
-  return !(row.status === "pending_upload" && row.expiresAt <= now);
+  if (row.status !== "pending_upload") return true;
+  if (row.expiresAt <= now) return false;
+  if (row.expiresAt !== undefined) return true;
+  return lastActivity([row, ...segments]) + IDLE_DRAFT_SECONDS > now;
 }
 
 /** Segments carry no TTL; a known non-terminal segment is in flight only while its job is. */
@@ -49,18 +66,28 @@ async function inFlightWork(scan, now) {
     "claimedByInstanceId",
     "claimExpiresAt",
   ]);
+  const segments = await scan("PersonalRecordingSegmentTable", [
+    "uploadId",
+    "status",
+    "createdAt",
+    "updatedAt",
+  ]);
   const jobs = (
     await scan("PersonalMediaUploadJobTable", [
       "uploadId",
       "status",
       "expiresAt",
+      "createdAt",
+      "updatedAt",
     ])
-  ).filter((row) => jobActive(row, now()));
+  ).filter((row) =>
+    jobActive(
+      row,
+      now(),
+      segments.filter((s) => s.uploadId === row.uploadId),
+    ),
+  );
   const activeJobs = new Set(jobs.map((row) => row.uploadId));
-  const segments = await scan("PersonalRecordingSegmentTable", [
-    "uploadId",
-    "status",
-  ]);
   // Leases are read last so the recording check sits closest to the stop.
   const leases = await scan("ActiveMeetingTable", [
     "guildId",
