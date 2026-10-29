@@ -41,7 +41,7 @@ test("accepts a descendant whose changes leave Terraform inputs alone", async ()
   expect(calls).toEqual([
     {
       path: `/repos/${repository}/compare/${planSha}...${applySha}?per_page=1`,
-      options: { paginated: true },
+      options: { paginated: true, maxBytes: 16777216 },
     },
   ]);
 });

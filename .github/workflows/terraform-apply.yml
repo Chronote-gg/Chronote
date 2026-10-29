@@ -89,9 +89,7 @@ jobs:
           node-version-file: ".nvmrc"
           cache: yarn
       - name: Install dependencies
-        run: |
-          bash scripts/ci-install-dependencies.sh
-          yarn build
+        run: bash scripts/ci-install-dependencies.sh
       - name: Validate Terraform dispatch scope
         run: node scripts/deployment/terraform-dispatch.cjs --validate
       - name: Configure Sandbox AWS credentials

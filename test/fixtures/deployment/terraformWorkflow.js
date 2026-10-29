@@ -129,6 +129,12 @@ export function fixture() {
       )
         value.branch_policies[0].id = 12;
     } else if (url.includes("/compare/")) value = controls.compare;
+    else if (url.includes("/actions/workflows/"))
+      value = {
+        total_count:
+          controls.busyWorkflow && url.includes(controls.busyWorkflow) ? 1 : 0,
+        workflow_runs: [],
+      };
     else if (url.includes("/environments/"))
       value = nativeEnvironment(
         controls.environment,
@@ -198,7 +204,7 @@ function nativeRun(controls, commands, plan) {
     head_sha: plan
       ? controls.producerSha
       : (controls.applySha ?? invocation.sourceSha),
-    head_branch: "master",
+    head_branch: plan ? (controls.producerBranch ?? "master") : "master",
     path: plan
       ? invocation.workflowPath
       : ".github/workflows/terraform-apply.yml",

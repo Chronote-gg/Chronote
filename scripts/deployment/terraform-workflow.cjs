@@ -13,6 +13,7 @@ const {
   verifyRun,
   verifyApproval,
   verifyApplySource,
+  assertProductionIdle,
 } = require("./terraform-native.cjs");
 const { runPrivateCommand } = require("./terraform-process.cjs");
 const { verifyMeetingUpdatePlan } = require("./terraform-meeting-update.cjs");
@@ -236,6 +237,9 @@ async function apply(options, invocation, e, startApply) {
     runId: options.producerRunId,
     sourceSha: planRun.head_sha,
   });
+  // Exact-SHA equality used to prove this; a later Apply must check it itself.
+  if (invocation.environment === "production")
+    assert.equal(planRun.head_branch, "master");
   assert.equal(
     options.artifactName,
     `terraform-plan-${producer.environment}-${producer.workspace}-${producer.runId}`,
@@ -329,6 +333,8 @@ async function apply(options, invocation, e, startApply) {
     digest(readFileSync(join(options.directory, "_infra/tfplan"))),
     options.planSha256,
   );
+  if (invocation.environment === "production")
+    await assertProductionIdle(options.get, invocation.repository);
   options.signal.throwIfAborted();
   startApply();
   await e.terraform(["apply", "-no-color", "-input=false", "tfplan"]);

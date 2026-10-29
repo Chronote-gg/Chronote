@@ -3,11 +3,11 @@ const assert = require("node:assert/strict");
 const { boundedBody } = require("./collector-principal.cjs");
 function nativeGitHub(token, request = fetch) {
   assert.ok(typeof token === "string" && token.length > 0);
-  return async (path, { paginated = false } = {}) => {
+  return async (path, { paginated = false, maxBytes = 1048576 } = {}) => {
     try {
       assert.match(
         path,
-        /^\/repos\/Chronote-gg\/Chronote\/[a-zA-Z0-9/_.?=-]+$/,
+        /^\/repos\/Chronote-gg\/Chronote\/[a-zA-Z0-9/_.?=&-]+$/,
       );
       const signal = AbortSignal.timeout(30000);
       const response = await request("https://api.github.com" + path, {
@@ -22,7 +22,7 @@ function nativeGitHub(token, request = fetch) {
       assert.ok(response.ok);
       // Only callers that read a complete first page may accept more pages.
       if (!paginated) assert.equal(response.headers.get("link"), null);
-      return JSON.parse(await boundedBody(response.body, 1048576, signal));
+      return JSON.parse(await boundedBody(response.body, maxBytes, signal));
     } catch {
       throw new Error("UNKNOWN: GitHub metadata unavailable");
     }
@@ -75,7 +75,8 @@ async function verifyApplySource(get, repository, planSha, applySha) {
   try {
     comparison = await get(
       `/repos/${repository}/compare/${planSha}...${applySha}?per_page=1`,
-      { paginated: true },
+      // Each changed file carries its patch, so a normal merge can be large.
+      { paginated: true, maxBytes: 16777216 },
     );
   } catch {
     throw new Error("UNKNOWN: plan and Apply source comparison unavailable");
@@ -99,6 +100,30 @@ async function verifyApplySource(get, repository, planSha, applySha) {
     `Terraform input changed since the reviewed plan: ${changed}`,
   );
   return "ahead";
+}
+// Workflows that move production traffic or roles that the Apply may change.
+const productionWriters = [
+  "deploy.yml",
+  "production-cutover.yml",
+  "introduce-production.yml",
+  "production-introduction.yml",
+];
+const activeStatuses = ["in_progress", "queued", "waiting", "pending"];
+// Apply has its own concurrency group, so it checks for running writers itself.
+async function assertProductionIdle(get, repository) {
+  for (const workflow of productionWriters)
+    for (const status of activeStatuses) {
+      const runs = await get(
+        `/repos/${repository}/actions/workflows/${workflow}/runs?status=${status}&per_page=1`,
+        { paginated: true },
+      );
+      assert.ok(Number.isSafeInteger(runs.total_count));
+      assert.equal(
+        runs.total_count,
+        0,
+        `Production writer ${workflow} has a ${status} run; Apply after it settles`,
+      );
+    }
 }
 function checkProtection(environment, invocation, run) {
   assert.equal(environment.name, invocation.environment);
@@ -197,6 +222,7 @@ module.exports = {
   nativeGitHub,
   verifyRun,
   verifyApplySource,
+  assertProductionIdle,
   verifyApproval,
   runTitle,
   verifyEnvironmentApproval,

@@ -64,6 +64,29 @@ async function planAndApply(
     }),
   };
 }
+// A bound scope reads the plan JSON at Plan and again before Apply.
+function expectRevalidated(f) {
+  expect(
+    f.commands.filter((c) => c.args[1] === "show" && c.args.includes("-json")),
+  ).toHaveLength(2);
+}
+// Plans and applies `scope`, expecting `status`, a matching apply count and,
+// for a refusal, the private failure reason.
+async function expectApply(f, status, { scope = "full", reason } = {}) {
+  try {
+    const { apply } = await planAndApply(f, {}, scope);
+    expect(apply.status).toBe(status);
+    expect(f.commands.filter((c) => c.args[1] === "apply")).toHaveLength(
+      status === "applied" ? 1 : 0,
+    );
+    if (reason)
+      expect(
+        readFileSync(join(f.directory, "private-20", "failure.txt"), "utf8"),
+      ).toContain(reason);
+  } finally {
+    rmSync(f.directory, { recursive: true, force: true });
+  }
+}
 test.each([false, true])(
   "actual prerequisite dispatcher requires acknowledged show before bundle reference (show failure %s)",
   async (failShow) => {
@@ -178,37 +201,57 @@ test.each([
   }
 });
 
+// The plan runs at the fixture source; Apply runs at `applySha`, and the plan
+// run may later report `reportedPlanSha` as its source.
+function laterApply(f, applySha, files, reportedPlanSha) {
+  f.controls.compare = {
+    status: "ahead",
+    merge_base_commit: { sha: reportedPlanSha ?? invocation.sourceSha },
+    files: files.map((filename) => ({ filename })),
+  };
+  const options = f.options;
+  f.options = (current) => {
+    if (!current?.workflowPath.endsWith("terraform-apply.yml"))
+      return options(current);
+    f.controls.applySha = applySha;
+    if (reportedPlanSha) f.controls.producerSha = reportedPlanSha;
+    return options({ ...current, sourceSha: applySha });
+  };
+}
 test.each([
-  ["docs/production-introduction.md", "applied"],
-  ["_infra/main.tf", "refused"],
+  ["docs/production-introduction.md", "applied", undefined],
+  ["_infra/main.tf", "refused", "Terraform input changed"],
 ])(
   "Apply on a later master commit that changes only %s is %s",
-  async (path, status) => {
+  async (path, status, reason) => {
     const f = fixture();
-    const applySha = "b".repeat(40);
-    f.controls.compare = {
-      status: "ahead",
-      merge_base_commit: { sha: invocation.sourceSha },
-      files: [{ filename: path }],
-    };
-    const options = f.options;
-    f.options = (current) => {
-      if (!current?.workflowPath.endsWith("terraform-apply.yml"))
-        return options(current);
-      f.controls.applySha = applySha;
-      return options({ ...current, sourceSha: applySha });
-    };
-    try {
-      const { apply } = await planAndApply(f);
-      expect(apply.status).toBe(status);
-      expect(f.commands.filter((c) => c.args[1] === "apply")).toHaveLength(
-        status === "applied" ? 1 : 0,
-      );
-    } finally {
-      rmSync(f.directory, { recursive: true, force: true });
-    }
+    laterApply(f, "b".repeat(40), [path]);
+    await expectApply(f, status, { reason });
   },
 );
+
+test("a plan run that reports another source cannot borrow the reviewed bundle", async () => {
+  const f = fixture();
+  laterApply(f, "c".repeat(40), ["docs/a.md"], "b".repeat(40));
+  await expectApply(f, "refused");
+});
+
+test("a production plan run from another branch is refused", async () => {
+  const f = fixture();
+  f.controls.producerBranch = "feature";
+  await expectApply(f, "refused");
+});
+
+test.each([
+  "deploy.yml",
+  "production-cutover.yml",
+  "introduce-production.yml",
+  "production-introduction.yml",
+])("Apply refuses while %s has an active run", async (workflow) => {
+  const f = fixture();
+  f.controls.busyWorkflow = workflow;
+  await expectApply(f, "refused", { reason: `Production writer ${workflow}` });
+});
 
 test("lost capture acknowledgment preserves the intent and never starts Terraform or retries", async () => {
   const f = fixture();
@@ -369,37 +412,16 @@ test.each([
     const f = fixture();
     f.controls.planJson = runtimePlan();
     f.guard.failure = failure;
-    try {
-      const { apply } = await planAndApply(f, {}, "deployment-runtime");
-      expect(apply.status).toBe(status);
-      expect(
-        f.commands.filter(
-          (c) => c.args[1] === "show" && c.args.includes("-json"),
-        ),
-      ).toHaveLength(2);
-      expect(f.commands.filter((c) => c.args[1] === "apply")).toHaveLength(
-        status === "applied" ? 1 : 0,
-      );
-    } finally {
-      rmSync(f.directory, { recursive: true, force: true });
-    }
+    await expectApply(f, status, { scope: "deployment-runtime" });
+    expectRevalidated(f);
   },
 );
 
 test("site delivery Apply revalidates its restored plan", async () => {
   const f = fixture();
   f.controls.planJson = sitePlan();
-  try {
-    const { apply } = await planAndApply(f, {}, "site-delivery");
-    expect(apply.status).toBe("applied");
-    expect(
-      f.commands.filter(
-        (c) => c.args[1] === "show" && c.args.includes("-json"),
-      ),
-    ).toHaveLength(2);
-  } finally {
-    rmSync(f.directory, { recursive: true, force: true });
-  }
+  await expectApply(f, "applied", { scope: "site-delivery" });
+  expectRevalidated(f);
 });
 
 test("runtime Plan refuses to bundle a serving service change", async () => {

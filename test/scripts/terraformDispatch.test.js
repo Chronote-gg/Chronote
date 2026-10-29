@@ -132,9 +132,7 @@ test.each(["plan", "apply"])(
     ).toBe(false);
     const commands = steps.filter((step) => step.run).map((step) => step.run);
     expect(commands).toEqual([
-      mode === "plan"
-        ? "bash scripts/ci-install-dependencies.sh"
-        : "bash scripts/ci-install-dependencies.sh\nyarn build\n",
+      "bash scripts/ci-install-dependencies.sh",
       "node scripts/deployment/terraform-dispatch.cjs --validate",
       ...(mode === "apply"
         ? ["node scripts/deployment/production-writer-guard.cjs --inspect"]
