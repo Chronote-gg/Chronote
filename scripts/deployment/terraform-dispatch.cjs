@@ -31,6 +31,7 @@ function parseDispatch(env, event) {
       "deployment-prerequisites",
       "deployment-runtime",
       "site-delivery",
+      "processing-retry",
     ]),
   };
   const hash = z.string().regex(/^[a-f0-9]{64}$/);

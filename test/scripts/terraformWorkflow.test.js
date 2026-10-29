@@ -18,6 +18,10 @@ import { dispatchTerraform } from "../fixtures/deployment/terraformDispatch.js";
 import { runtimePlan } from "../fixtures/deployment/runtimePlan.js";
 import { meetingUpdatePlan } from "../fixtures/deployment/terraformMeetingUpdate.js";
 import { sitePlan } from "../fixtures/deployment/sitePlan.js";
+import {
+  processingRetryPlan,
+  tableAddress,
+} from "../fixtures/deployment/processingRetryPlan.js";
 async function planAndApply(
   f,
   patch = {},
@@ -441,6 +445,28 @@ test("site delivery Apply revalidates its restored plan", async () => {
   }
 });
 
+// Plans and applies `scope`, expecting Apply to refuse before Terraform apply runs.
+async function expectApplyRefused(f, scope, execute) {
+  try {
+    const { apply } = await planAndApply(f, {}, scope, execute);
+    expect(apply.status).toBe("refused");
+    expect(f.commands.filter((c) => c.args[1] === "apply")).toHaveLength(0);
+  } finally {
+    rmSync(f.directory, { recursive: true, force: true });
+  }
+}
+
+test("processing retry Apply refuses a restored plan that changes the table further", async () => {
+  const f = fixture();
+  f.controls.planJson = processingRetryPlan();
+  await expectApplyRefused(f, "processing-retry", (options) => {
+    f.controls.planJson.resource_changes.find(
+      (r) => r.address === tableAddress,
+    ).change.after.billing_mode = "PROVISIONED";
+    return runTerraform(options);
+  });
+});
+
 test("runtime Plan refuses to bundle a serving service change", async () => {
   const f = fixture();
   f.controls.planJson = runtimePlan();
@@ -463,13 +489,7 @@ test("runtime Plan refuses to bundle a serving service change", async () => {
 test("even an authenticated prerequisite bundle cannot bypass a denied Control read", async () => {
   const f = fixture();
   f.guard.failure = "AccessDeniedException";
-  try {
-    const { apply } = await planAndApply(f, {}, "deployment-prerequisites");
-    expect(apply.status).toBe("refused");
-    expect(f.commands.filter((c) => c.args[1] === "apply")).toHaveLength(0);
-  } finally {
-    rmSync(f.directory, { recursive: true, force: true });
-  }
+  await expectApplyRefused(f, "deployment-prerequisites");
 });
 
 test.each(["full", "deployment-prerequisites"])(
