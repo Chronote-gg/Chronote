@@ -160,7 +160,7 @@ test("recoverTranscript still refuses an acknowledged transcript with uncovered 
   ).rejects.toBeInstanceOf(TranscriptOverlapUnknown);
 });
 
-test("recoverTranscript still fails when the speech gate skips never-transcribed audio", async () => {
+test("recoverTranscript treats never-transcribed audio the speech gate skips as handled, not failed", async () => {
   const { f, content } = await checkpointContent();
   content.processing = undefined;
   content.omitted = undefined;
@@ -171,7 +171,10 @@ test("recoverTranscript still fails when the speech gate skips never-transcribed
   });
   await expect(
     recoverTranscript(content, f.reader, signal, run),
-  ).rejects.toThrow("Recovery transcription failed");
+  ).resolves.toMatchObject({
+    segments: [{ text: "Saved words." }],
+    retranscribedRanges: 0,
+  });
 });
 
 test("mixed recording transcription returns all chunk text and removes its temp dir", async () => {
