@@ -95,13 +95,22 @@ function execution(options, invocation) {
     }
   }
   async function command(file, args) {
+    const env = { ...options.env, TF_WORKSPACE: invocation.workspace };
+    if (
+      file === "terraform" &&
+      args[1] === "workspace" &&
+      ["select", "new"].includes(args[2])
+    ) {
+      assert.equal(args[3], invocation.workspace);
+      delete env.TF_WORKSPACE;
+    }
     let result;
     try {
       result = await (options.command ?? runPrivateCommand)(file, args, {
         directory: options.privateDirectory,
         index: output.length,
         cwd: options.directory,
-        env: options.env,
+        env,
         signal: options.signal,
       });
     } catch (error) {

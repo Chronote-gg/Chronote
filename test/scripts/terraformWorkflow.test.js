@@ -16,6 +16,7 @@ import {
 } from "../fixtures/deployment/terraformWorkflow.js";
 import { dispatchTerraform } from "../fixtures/deployment/terraformDispatch.js";
 import { runtimePlan } from "../fixtures/deployment/runtimePlan.js";
+import { meetingUpdatePlan } from "../fixtures/deployment/terraformMeetingUpdate.js";
 import { sitePlan } from "../fixtures/deployment/sitePlan.js";
 import {
   processingRetryPlan,
@@ -26,8 +27,9 @@ async function planAndApply(
   patch = {},
   scope = "full",
   execute = runTerraform,
+  current = invocation,
 ) {
-  const planOptions = f.options({ ...invocation, scope }),
+  const planOptions = f.options({ ...current, scope }),
     plan = await runTerraform(planOptions);
   expect({
     status: plan.status,
@@ -48,9 +50,9 @@ async function planAndApply(
   for (const name of readdirSync(join(f.directory, "_infra")))
     if (name !== ".terraform.lock.hcl" && name !== "terraform.auto.tfvars.json")
       rmSync(join(f.directory, "_infra", name));
-  f.controls.applyTitle = `Terraform Apply production/default/${scope} plan=10 plan-sha=${plan.planSha256} bundle-sha=${plan.bundleSha256}`;
+  f.controls.applyTitle = `Terraform Apply ${current.environment}/${current.workspace}/${scope} plan=10 plan-sha=${plan.planSha256} bundle-sha=${plan.bundleSha256}`;
   const applyOptions = f.options({
-    ...invocation,
+    ...current,
     scope,
     workflowPath: ".github/workflows/terraform-apply.yml",
     runId: "20",
@@ -60,7 +62,7 @@ async function planAndApply(
     apply: await execute({
       ...applyOptions,
       producerRunId: "10",
-      artifactName: "terraform-plan-production-default-10",
+      artifactName: `terraform-plan-${current.environment}-${current.workspace}-10`,
       reference,
       planSha256: plan.planSha256,
       bundleSha256: plan.bundleSha256,
@@ -68,6 +70,75 @@ async function planAndApply(
     }),
   };
 }
+test.each([
+  ["sandbox", "sandbox", "meeting-update-delivery", "default", false],
+  ["production", "default", "full", "sandbox", false],
+  ["production", "default", "full", "sandbox", true],
+])(
+  "%s Plan and Apply bind init to the validated workspace before workspace selection",
+  async (
+    environment,
+    workspace,
+    scope,
+    inheritedWorkspace,
+    missingWorkspace,
+  ) => {
+    const f = fixture(),
+      originalOptions = f.options,
+      initWorkspaces = [],
+      workspaceCommands = [],
+      boundWorkspaces = [];
+    f.controls.environment = environment;
+    f.controls.missingWorkspace = missingWorkspace;
+    if (environment === "sandbox") f.controls.planJson = meetingUpdatePlan();
+    f.options = (current) => {
+      const options = originalOptions(current),
+        command = options.command;
+      options.env = { ...options.env, TF_WORKSPACE: inheritedWorkspace };
+      options.command = async (file, args, settings) => {
+        if (file === "terraform" && args[1] === "init")
+          initWorkspaces.push(settings.env.TF_WORKSPACE);
+        if (file === "terraform") {
+          if (args[1] === "workspace")
+            workspaceCommands.push({
+              args: args.slice(1),
+              workspace: settings.env.TF_WORKSPACE,
+            });
+          else boundWorkspaces.push(settings.env.TF_WORKSPACE);
+        }
+        const result = await command(file, args, settings);
+        if (
+          file === "terraform" &&
+          args[1] === "workspace" &&
+          args[2] === "new"
+        )
+          f.controls.missingWorkspace = false;
+        return result;
+      };
+      return options;
+    };
+    try {
+      const { apply } = await planAndApply(f, {}, scope, runTerraform, {
+        ...invocation,
+        environment,
+        workspace,
+      });
+      expect(apply.status).toBe("applied");
+      expect(initWorkspaces).toEqual([workspace, workspace]);
+      expect(boundWorkspaces.every((value) => value === workspace)).toBe(true);
+      expect(workspaceCommands).toEqual([
+        { args: ["workspace", "select", workspace], workspace: undefined },
+        ...(missingWorkspace
+          ? [{ args: ["workspace", "new", workspace], workspace: undefined }]
+          : []),
+        { args: ["workspace", "select", workspace], workspace: undefined },
+      ]);
+    } finally {
+      rmSync(f.directory, { recursive: true, force: true });
+    }
+  },
+);
+
 test.each([false, true])(
   "actual prerequisite dispatcher requires acknowledged show before bundle reference (show failure %s)",
   async (failShow) => {
