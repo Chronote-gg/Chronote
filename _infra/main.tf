@@ -530,6 +530,7 @@ provider "github" {
 
 locals {
   name_prefix             = "${var.project_name}-${var.environment}"
+  app_log_group_name      = "/ecs/${local.name_prefix}-bot"
   transcripts_bucket_name = var.TRANSCRIPTS_BUCKET != "" ? var.TRANSCRIPTS_BUCKET : "${local.name_prefix}-transcripts-${data.aws_caller_identity.current.account_id}"
   frontend_bucket_name    = var.FRONTEND_BUCKET != "" ? var.FRONTEND_BUCKET : "${local.name_prefix}-frontend-${data.aws_caller_identity.current.account_id}"
   docs_bucket_name        = var.DOCS_BUCKET != "" ? var.DOCS_BUCKET : "${local.name_prefix}-docs-${data.aws_caller_identity.current.account_id}"
@@ -854,7 +855,7 @@ resource "aws_security_group" "ecs_service_sg" {
 
 resource "aws_cloudwatch_log_group" "app_log_group" {
   depends_on        = [aws_kms_key_policy.app_general]
-  name              = "/ecs/${local.name_prefix}-bot"
+  name              = local.app_log_group_name
   retention_in_days = 365
   kms_key_id        = aws_kms_key.app_general.arn
 

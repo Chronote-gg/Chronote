@@ -92,18 +92,32 @@ test("Terraform defines the retry due index on MeetingHistory", () => {
 
 test("the worker failure alarm matches the logged line and emails critical alerts", () => {
   const source = readFileSync("_infra/alerts-processing-retry.tf", "utf8");
+  const main = readFileSync("_infra/main.tf", "utf8");
+  const notifications = readFileSync("_infra/notifications.tf", "utf8");
   expect(source.match(/pattern\s*=\s*"\\"(.*)\\""/)?.[1]).toBe(
     PROCESSING_RETRY_WORKER_FAILED_LOG,
   );
+  // Names, not resource references, keep the KMS key policy out of the
+  // processing-retry targeted graph.
+  expect(source).toContain("log_group_name = local.app_log_group_name");
+  expect(main).toContain(
+    'app_log_group_name      = "/ecs/${local.name_prefix}-bot"',
+  );
+  expect(main).toMatch(/name\s*=\s*local\.app_log_group_name/);
   expect(source).toContain(
-    "log_group_name = aws_cloudwatch_log_group.app_log_group.name",
+    'critical_alerts_topic_arn = "arn:aws:sns:${var.aws_region}:${data.aws_caller_identity.current.account_id}:${local.critical_alerts_topic}"',
   );
   expect(source).toMatch(
-    /alarm_actions\s*=\s*\[aws_sns_topic\.critical_alerts\[0\]\.arn\]/,
+    /alarm_actions\s*=\s*\[local\.critical_alerts_topic_arn\]/,
   );
   expect(source).toMatch(
-    /ok_actions\s*=\s*\[aws_sns_topic\.critical_alerts\[0\]\.arn\]/,
+    /ok_actions\s*=\s*\[local\.critical_alerts_topic_arn\]/,
   );
+  expect(notifications).toContain(
+    'critical_alerts_topic  = "${local.name_prefix}-critical-alerts"',
+  );
+  expect(notifications).toMatch(/name\s*=\s*local\.critical_alerts_topic\n/);
+  expect(source).not.toMatch(/aws_cloudwatch_log_group\.|aws_sns_topic\./);
   expect(
     source.match(/count\s*=\s*local\.alerts_enabled \? 1 : 0/g),
   ).toHaveLength(2);

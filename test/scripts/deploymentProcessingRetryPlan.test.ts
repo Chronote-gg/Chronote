@@ -127,13 +127,56 @@ test.each([
   rejected((plan) => forceUpdate(plan, address)),
 );
 
+test("requires the KMS key as an unchanged dependency", () =>
+  rejected((plan) => dropResource(plan, "aws_kms_key.app_general")));
+
+test("refuses a KMS key policy create pulled into the targeted graph", () => {
+  const plan = processingRetryPlan();
+  plan.resource_changes.push({
+    address: "aws_kms_key_policy.app_general",
+    mode: "managed",
+    change: { actions: ["create"] },
+  });
+  expect(() => validate(plan)).toThrow(
+    "aws_kms_key_policy.app_general is outside the processing-retry closure",
+  );
+});
+
+// The filter and alarm name the log group and topic, so a plan that still
+// carries them means the graph edge to the KMS key policy came back.
 test.each([
-  "aws_kms_key.app_general",
   "aws_cloudwatch_log_group.app_log_group",
   "aws_sns_topic.critical_alerts[0]",
-])("requires %s as an unchanged dependency", (address) =>
-  rejected((plan) => dropResource(plan, address)),
+  "aws_kms_key_policy.app_general",
+])("refuses %s even as a no-op", (address) =>
+  rejected((plan) => {
+    plan.resource_changes.push({
+      address,
+      mode: "managed",
+      change: { actions: ["no-op"] },
+    });
+  }),
 );
+
+test("accepts the AWS 6.70 table mask with computed warm_throughput", () => {
+  const plan = processingRetryPlan();
+  const mask = findChange(plan, tableAddress).change.after_unknown;
+  expect(mask.global_secondary_index).toHaveLength(3);
+  for (const index of mask.global_secondary_index)
+    expect(index.warm_throughput).toBe(true);
+  expect(validate(plan).changes).toHaveLength(3);
+});
+
+test("rejects a partially unknown warm_throughput", () =>
+  rejected((plan) => {
+    findChange(plan, tableAddress).change.after_unknown = {
+      global_secondary_index: [
+        {},
+        {},
+        { warm_throughput: [{ read_units_per_second: true }] },
+      ],
+    };
+  }));
 
 type Values = ReturnType<typeof after>;
 const retryIndex = (v: Values) => v.global_secondary_index.at(-1);
