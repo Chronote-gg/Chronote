@@ -33,6 +33,7 @@ test("Apply retains private delivery and invokes the native guard at the saved-p
   expect(read("terraform-plan")).toContain("deployment-prerequisites");
   expect(read("terraform-plan")).toContain("deployment-runtime");
   expect(read("terraform-plan")).toContain("site-delivery");
+  expect(read("terraform-plan")).toContain("processing-retry");
 });
 
 test("same-run continuation has a credential-free separately protected gate and immutable session/package inputs", () => {

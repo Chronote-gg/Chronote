@@ -17,6 +17,10 @@ import {
 import { dispatchTerraform } from "../fixtures/deployment/terraformDispatch.js";
 import { runtimePlan } from "../fixtures/deployment/runtimePlan.js";
 import { sitePlan } from "../fixtures/deployment/sitePlan.js";
+import {
+  processingRetryPlan,
+  tableAddress,
+} from "../fixtures/deployment/processingRetryPlan.js";
 async function planAndApply(
   f,
   patch = {},
@@ -365,6 +369,28 @@ test("site delivery Apply revalidates its restored plan", async () => {
         (c) => c.args[1] === "show" && c.args.includes("-json"),
       ),
     ).toHaveLength(2);
+  } finally {
+    rmSync(f.directory, { recursive: true, force: true });
+  }
+});
+
+test("processing retry Apply refuses a restored plan that changes the table further", async () => {
+  const f = fixture();
+  f.controls.planJson = processingRetryPlan();
+  try {
+    const { apply } = await planAndApply(
+      f,
+      {},
+      "processing-retry",
+      (options) => {
+        f.controls.planJson.resource_changes.find(
+          (r) => r.address === tableAddress,
+        ).change.after.billing_mode = "PROVISIONED";
+        return runTerraform(options);
+      },
+    );
+    expect(apply.status).toBe("refused");
+    expect(f.commands.filter((c) => c.args[1] === "apply")).toHaveLength(0);
   } finally {
     rmSync(f.directory, { recursive: true, force: true });
   }

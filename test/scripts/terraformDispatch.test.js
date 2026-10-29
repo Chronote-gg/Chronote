@@ -86,6 +86,7 @@ test("production Plan refuses unsupported scopes before either credential step",
     "deployment-prerequisites",
     "deployment-runtime",
     "site-delivery",
+    "processing-retry",
     "full",
     "purchase-permission",
     "meeting-update-delivery",
@@ -106,6 +107,7 @@ test("production Plan refuses unsupported scopes before either credential step",
         "deployment-prerequisites",
         "deployment-runtime",
         "site-delivery",
+        "processing-retry",
       ].includes(scope)
         ? 0
         : 1,
@@ -139,7 +141,7 @@ test.each(["plan", "apply"])(
       ...(mode === "apply"
         ? ["node scripts/deployment/production-writer-guard.cjs --inspect"]
         : [
-            'test "$PLAN_SCOPE" = deployment-prerequisites || test "$PLAN_SCOPE" = deployment-runtime || test "$PLAN_SCOPE" = site-delivery',
+            'test "$PLAN_SCOPE" = deployment-prerequisites || test "$PLAN_SCOPE" = deployment-runtime || test "$PLAN_SCOPE" = site-delivery || test "$PLAN_SCOPE" = processing-retry',
             "node scripts/deployment/terraform-plan-identity.cjs",
             'test "$IDENTITY_MATCHES" = true',
             "node scripts/deployment/terraform-plan-identity.cjs --validate",
@@ -243,6 +245,7 @@ test("delivery scope is Sandbox-only while production retains its scopes", () =>
     "deployment-prerequisites",
     "deployment-runtime",
     "site-delivery",
+    "processing-retry",
   ])
     expect(
       parseDispatch(env, {
@@ -254,6 +257,10 @@ test("delivery scope is Sandbox-only while production retains its scopes", () =>
     parseDispatch(...sandboxDispatch("plan", "meeting-update-delivery"))
       .invocation.scope,
   ).toBe("meeting-update-delivery");
+  expect(
+    parseDispatch(...sandboxDispatch("apply", "processing-retry")).invocation
+      .scope,
+  ).toBe("processing-retry");
   expect(() =>
     parseDispatch(env, {
       ...event,
@@ -312,6 +319,7 @@ test.each(
       "deployment-prerequisites",
       undefined,
       "meeting-update-delivery",
+      "processing-retry",
     ].map((scope) => [mode, scope]),
   ),
 )(
@@ -363,12 +371,11 @@ test.each(
       true,
     );
     expect(effects).toEqual([]);
-    expect(messages).toEqual(
-      scope === "meeting-update-delivery" ? [] : ['{"status":"refused"}'],
+    const supported = ["meeting-update-delivery", "processing-retry"].includes(
+      scope,
     );
-    expect(fakeProcess.exitCode).toBe(
-      scope === "meeting-update-delivery" ? undefined : 1,
-    );
+    expect(messages).toEqual(supported ? [] : ['{"status":"refused"}']);
+    expect(fakeProcess.exitCode).toBe(supported ? undefined : 1);
   },
 );
 test.each(["plan", "apply"])(
@@ -411,7 +418,7 @@ test("production Plan uses the reviewed OIDC read, lock and capture session", ()
   });
   const text = production.with["inline-session-policy"];
   expect(createHash("sha256").update(text).digest("hex")).toBe(
-    "6f9ce0ec80521f0ddc1692f2ae7ddb79a803bbe5fb98885d7acfee5d3e08d2d1",
+    "c330c7fd4fd4286a55ea43b140ee878e4b630076b3990861d27372b57cc7a42e",
   );
   expect(Buffer.byteLength(text)).toBeLessThanOrEqual(2048);
   const statements = JSON.parse(text).Statement;

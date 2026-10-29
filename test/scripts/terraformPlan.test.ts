@@ -8,16 +8,19 @@ import {
 } from "../fixtures/deployment/terraformWorkflow.js";
 import { runtimePlan } from "../fixtures/deployment/runtimePlan.js";
 import { sitePlan } from "../fixtures/deployment/sitePlan.js";
+import { processingRetryPlan } from "../fixtures/deployment/processingRetryPlan.js";
 test.each([
   "full",
   "purchase-permission",
   "deployment-prerequisites",
   "deployment-runtime",
   "site-delivery",
+  "processing-retry",
 ])("Terraform %s plan invokes only the selected scope", async (scope) => {
   const f = fixture();
   if (scope === "deployment-runtime") f.controls.planJson = runtimePlan();
   if (scope === "site-delivery") f.controls.planJson = sitePlan();
+  if (scope === "processing-retry") f.controls.planJson = processingRetryPlan();
   try {
     const result = await runTerraform(f.options({ ...invocation, scope }));
     expect(result.status).toBe("planned-changes");
@@ -56,7 +59,13 @@ test.each([
                   "-target=aws_cloudfront_distribution.frontend",
                   "-target=aws_cloudfront_distribution.docs",
                 ]
-              : [],
+              : scope === "processing-retry"
+                ? [
+                    "-target=aws_dynamodb_table.meeting_history_table",
+                    "-target=aws_cloudwatch_log_metric_filter.processing_retry_worker_failed[0]",
+                    "-target=aws_cloudwatch_metric_alarm.processing_retry_worker_failed[0]",
+                  ]
+                : [],
     );
   } finally {
     rmSync(f.directory, { recursive: true, force: true });

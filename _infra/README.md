@@ -302,7 +302,7 @@ See [private Terraform delivery](../docs/terraform-private-delivery.md) for revi
 configuration, supported protection rules and unknown-acknowledgment handling.
 
 `plan_scope` accepts only `full`, `purchase-permission`,
-`deployment-prerequisites`, `deployment-runtime` or `site-delivery`. `full` remains untargeted; `purchase-permission`
+`deployment-prerequisites`, `deployment-runtime`, `site-delivery` or `processing-retry`. `full` remains untargeted; `purchase-permission`
 continues to target only `aws_iam_role_policy.initial_purchase_condition`.
 Unsupported scope values fail before the plan command, and no scope accepts
 arbitrary Terraform arguments.
@@ -414,6 +414,30 @@ both on every deploy. When `scripts/public-routes.json` gains a route, the route
 rewrite's `publicRoutes` list must gain it too, and this scope ships the change.
 The Terraform role's CloudFront writes come from the separate managed policy in
 `_infra/production-bootstrap/site-delivery.tf`.
+
+`processing-retry` ships the processing retry infrastructure in Sandbox and
+Production. It targets exactly `aws_dynamodb_table.meeting_history_table`,
+`aws_cloudwatch_log_metric_filter.processing_retry_worker_failed[0]` and
+`aws_cloudwatch_metric_alarm.processing_retry_worker_failed[0]`.
+`scripts/deployment/validate-processing-retry-plan.cjs` checks the Plan and the
+restored Apply plan in both environments, binding names to the environment because
+both share an account. It allows only:
+
+- an in-place table update that adds `processingRetryQueue` (S),
+  `processingRetryDueAt` (N) and the KEYS_ONLY `ProcessingRetryDueIndex`. Every
+  other attribute, index, billing, stream, recovery and encryption setting must be
+  unchanged; only the recomputed `stream_arn` and `stream_label` may be unknown.
+- creating the filter and alarm with the repository's pattern, metric, namespace,
+  period, threshold, comparison and missing-data handling, with alarm and OK
+  actions on the critical alerts topic only. Already existing ones must be no-ops.
+
+The KMS key, app log group and critical alerts topic must be no-ops. Production must
+carry the filter and alarm; Sandbox may omit both when its alerting is off. The
+plan is refused when the before state lacks `UpdateDeliveryDueIndex`, because it
+would then add two indexes; apply the delivery index through its own reviewed
+change first. Turn on `meetings.processingRetry.enabled` only once the new index is
+ACTIVE. The production Terraform role's writes come from the separate managed
+policy in `_infra/production-bootstrap/processing-retry.tf`.
 
 Standalone policy adoption requires a separate reviewed plan and approval; it is
 outside the four-target Apply. The actual state-backed prerequisite plan must

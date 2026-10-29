@@ -250,3 +250,45 @@ run "site_delivery_policy" {
     error_message = "The managed policy attaches to the production Terraform role."
   }
 }
+run "processing_retry_off_by_default" {
+  command = plan
+  variables {
+    enable_private_evidence_store    = true
+    enable_production_terraform_role = true
+  }
+  assert {
+    condition     = length(aws_iam_policy.processing_retry) == 0 && length(aws_iam_role_policy_attachment.processing_retry) == 0
+    error_message = "The initial bootstrap creates no processing retry policy."
+  }
+}
+run "processing_retry_requires_role" {
+  command = plan
+  variables {
+    enable_private_evidence_store  = true
+    enable_processing_retry_policy = true
+  }
+  expect_failures = [var.enable_processing_retry_policy]
+}
+run "processing_retry_policy" {
+  command = plan
+  variables {
+    enable_private_evidence_store    = true
+    enable_production_terraform_role = true
+    enable_processing_retry_policy   = true
+  }
+  assert {
+    condition = jsondecode(aws_iam_policy.processing_retry[0].policy).Statement == [
+      { Sid = "HistoryRetryIndex", Effect = "Allow", Action = "dynamodb:UpdateTable", Resource = "arn:aws:dynamodb:us-east-1:123456789012:table/meeting-notes-prod-MeetingHistoryTable" },
+      { Sid = "HistoryEncryption", Effect = "Allow", Action = ["kms:Encrypt", "kms:Decrypt", "kms:ReEncryptFrom", "kms:ReEncryptTo", "kms:GenerateDataKey", "kms:GenerateDataKeyWithoutPlaintext"], Resource = "arn:aws:kms:us-east-1:123456789012:key/11111111-1111-4111-8111-111111111111", Condition = { StringEquals = { "kms:ViaService" = "dynamodb.us-east-1.amazonaws.com", "kms:CallerAccount" = "123456789012", "kms:EncryptionContext:aws:dynamodb:tableName" = "meeting-notes-prod-MeetingHistoryTable", "kms:EncryptionContext:aws:dynamodb:subscriberId" = "123456789012" } } },
+      { Sid = "LogGroupDiscovery", Effect = "Allow", Action = "logs:DescribeLogGroups", Resource = "arn:aws:logs:us-east-1:123456789012:log-group:*" },
+      { Sid = "AppLogGroup", Effect = "Allow", Action = ["logs:ListTagsForResource", "logs:DescribeMetricFilters", "logs:PutMetricFilter", "logs:DeleteMetricFilter"], Resource = ["arn:aws:logs:us-east-1:123456789012:log-group:/ecs/meeting-notes-prod-bot", "arn:aws:logs:us-east-1:123456789012:log-group:/ecs/meeting-notes-prod-bot:*"] },
+      { Sid = "RetryWorkerAlarm", Effect = "Allow", Action = ["cloudwatch:PutMetricAlarm", "cloudwatch:DeleteAlarms", "cloudwatch:DescribeAlarms", "cloudwatch:TagResource", "cloudwatch:ListTagsForResource"], Resource = "arn:aws:cloudwatch:us-east-1:123456789012:alarm:meeting-notes-prod-processing-retry-worker-failed" },
+      { Sid = "CriticalAlertsTopic", Effect = "Allow", Action = ["sns:GetTopicAttributes", "sns:ListTagsForResource"], Resource = "arn:aws:sns:us-east-1:123456789012:meeting-notes-prod-critical-alerts" }
+    ]
+    error_message = "Processing retry may update only the history table, its key context, the app log group's filters and the one alarm."
+  }
+  assert {
+    condition     = aws_iam_role_policy_attachment.processing_retry[0].role == "meeting-notes-prod-github-terraform" && aws_iam_policy.processing_retry[0].name == "meeting-notes-prod-terraform-processing-retry"
+    error_message = "The managed policy attaches to the production Terraform role."
+  }
+}

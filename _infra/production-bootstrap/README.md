@@ -75,6 +75,20 @@ The role's inline policies share IAM's 10,240-character limit and the inline pol
 
 These follow the provider's create, read and update paths (`cloudfront/function.go`, `response_headers_policy.go`, `distribution.go` at AWS provider 6.70.0). It never calls GetDistributionConfig, and no write touches a policy, tag, origin access control or key outside these resources. Effective permissions, including whether CloudFront checks the caller's read access to the associated function, headers policy and certificate during UpdateDistribution, remain unproved until the reviewed Apply; the inline reads cover those cases.
 
+## Processing retry managed policy
+
+`enable_processing_retry_policy` (default false, requires the role) adds `meeting-notes-prod-terraform-processing-retry` and its attachment for the `processing-retry` scope, for the same inline size reason. Table metadata reads (`TableMetadata`), KMS key metadata, the DynamoDB service grant (`ControlServiceGrant`) and the CloudFront, bucket and certificate reads for the KMS key policy's distribution dependencies stay inline.
+
+| Graph node or operation | Allowed API calls and limit                                                                                                                                                                       |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| History retry index     | UpdateTable on the exact MeetingHistory table. The saved-plan validator allows only the one new index and its keys.                                                                               |
+| History encryption      | Encrypt/Decrypt/ReEncryptFrom/ReEncryptTo/GenerateDataKey/GenerateDataKeyWithoutPlaintext through regional DynamoDB, exact account and the MeetingHistory table context, for the index backfill.  |
+| App log group           | DescribeLogGroups on `log-group:*` (it filters by prefix and cannot name a group). ListTagsForResource, DescribeMetricFilters, PutMetricFilter and DeleteMetricFilter on the exact app log group. |
+| Worker failure alarm    | PutMetricAlarm, DeleteAlarms, DescribeAlarms, TagResource and ListTagsForResource on the exact alarm name. Default tags travel with the create.                                                   |
+| Critical alerts topic   | GetTopicAttributes and ListTagsForResource on the exact topic, which the alarm references and the plan refreshes.                                                                                 |
+
+These follow the provider's create and read paths (`logs/metric_filter.go`, `logs/group.go`, `cloudwatch/metric_alarm.go`, `sns/topic.go` at AWS provider 6.70.0) plus the generated tag reads. Effective permissions, including whether the index backfill needs the encryption grant, remain unproved until the reviewed Apply.
+
 ## Offline checks
 
 From the repository root, use the existing cached provider without initializing S3:

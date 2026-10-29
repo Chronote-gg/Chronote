@@ -1,0 +1,204 @@
+/** @jest-environment node */
+import { expect, test } from "@jest/globals";
+import { validateProcessingRetryPlan } from "../../scripts/deployment/validate-processing-retry-plan.cjs";
+import {
+  alarmAddress,
+  filterAddress,
+  processingRetryPlan,
+  quietSandboxPlan,
+  retryAccountId,
+  tableAddress,
+} from "../fixtures/deployment/processingRetryPlan.js";
+import {
+  dropResource,
+  findChange,
+  forceUpdate,
+  markAllNoOp,
+  runPlanGuard,
+} from "../fixtures/deployment/planGuard.js";
+
+type Plan = ReturnType<typeof processingRetryPlan>;
+type Environment = "production" | "sandbox";
+
+const guard = "scripts/deployment/validate-processing-retry-plan.cjs";
+const validate = (plan: Plan, environment: Environment = "production") =>
+  validateProcessingRetryPlan(plan, { accountId: retryAccountId, environment });
+const after = (plan: Plan, address: string) =>
+  findChange(plan, address).change.after;
+function rejected(mutate: (plan: Plan) => void, environment?: Environment) {
+  const plan = processingRetryPlan(environment);
+  mutate(plan);
+  expect(() => validate(plan, environment)).toThrow();
+}
+
+test("accepts the production index, filter and alarm", () => {
+  expect(validate(processingRetryPlan()).changes).toEqual([
+    { address: tableAddress, action: "update" },
+    { address: filterAddress, action: "create" },
+    { address: alarmAddress, action: "create" },
+  ]);
+});
+
+test("accepts Sandbox with or without alerting", () => {
+  expect(
+    validate(processingRetryPlan("sandbox"), "sandbox").changes,
+  ).toHaveLength(3);
+  expect(validate(quietSandboxPlan(), "sandbox").changes).toEqual([
+    { address: tableAddress, action: "update" },
+  ]);
+});
+
+test("accepts an already applied scope as no-ops", () => {
+  expect(validate(markAllNoOp(processingRetryPlan())).changes).toEqual([]);
+});
+
+test("the CLI binds account and environment and explains the prerequisite", () => {
+  const text = JSON.stringify(processingRetryPlan());
+  expect(runPlanGuard(guard, text, [retryAccountId, "production"]).status).toBe(
+    0,
+  );
+  for (const args of [
+    [retryAccountId, "sandbox"],
+    ["999999999999", "production"],
+    [retryAccountId, "staging"],
+  ]) {
+    const result = runPlanGuard(guard, text, args);
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("apply the delivery index first");
+  }
+});
+
+test("refuses two new indexes when the delivery index was never applied", () => {
+  const plan = processingRetryPlan();
+  const { before } = findChange(plan, tableAddress).change;
+  before.global_secondary_index = before.global_secondary_index.filter(
+    (index: { name: string }) => index.name !== "UpdateDeliveryDueIndex",
+  );
+  expect(() => validate(plan)).toThrow(
+    "UpdateDeliveryDueIndex must be applied before processing-retry",
+  );
+});
+
+test("production must create or keep the alarm pair", () => {
+  for (const address of [filterAddress, alarmAddress])
+    rejected((plan) => dropResource(plan, address));
+  rejected((plan) => {
+    dropResource(plan, filterAddress);
+    dropResource(plan, alarmAddress);
+  });
+  rejected((plan) => dropResource(plan, alarmAddress), "sandbox");
+});
+
+test.each([
+  [tableAddress, ["delete", "create"]],
+  [tableAddress, ["create"]],
+  [filterAddress, ["update"]],
+  [alarmAddress, ["delete"]],
+])("rejects %s with actions %j", (address, actions) =>
+  rejected((plan) => {
+    findChange(plan, address).change.actions = actions;
+  }),
+);
+
+test.each([
+  "aws_kms_key.app_general",
+  "aws_cloudwatch_log_group.app_log_group",
+  "aws_sns_topic.critical_alerts[0]",
+  "aws_kms_key_policy.app_general",
+  "aws_cloudfront_distribution.frontend",
+  "aws_dynamodb_table.guild_subscription_table",
+])("rejects a change to %s outside the scope", (address) =>
+  rejected((plan) => forceUpdate(plan, address)),
+);
+
+test.each([
+  "aws_kms_key.app_general",
+  "aws_cloudwatch_log_group.app_log_group",
+  "aws_sns_topic.critical_alerts[0]",
+])("requires %s as an unchanged dependency", (address) =>
+  rejected((plan) => dropResource(plan, address)),
+);
+
+type Values = ReturnType<typeof after>;
+const retryIndex = (v: Values) => v.global_secondary_index.at(-1);
+test.each([
+  ["billing", (v: Values) => (v.billing_mode = "PROVISIONED")],
+  ["recovery", (v: Values) => (v.point_in_time_recovery = [])],
+  ["encryption", (v: Values) => (v.server_side_encryption = [])],
+  ["stream", (v: Values) => (v.stream_enabled = true)],
+  ["table name", (v: Values) => (v.name = "other")],
+  [
+    "extra attribute",
+    (v: Values) => v.attribute.push({ name: "x", type: "S" }),
+  ],
+  ["dropped attribute", (v: Values) => v.attribute.shift()],
+  [
+    "edited guild index",
+    (v: Values) => (v.global_secondary_index[0].projection_type = "KEYS_ONLY"),
+  ],
+  [
+    "dropped delivery index",
+    (v: Values) => v.global_secondary_index.splice(1, 1),
+  ],
+  ["retry projection", (v: Values) => (retryIndex(v).projection_type = "ALL")],
+  ["retry keys", (v: Values) => (retryIndex(v).hash_key = "guildId")],
+  ["retry index name", (v: Values) => (retryIndex(v).name = "Other")],
+  [
+    "second new index",
+    (v: Values) =>
+      v.global_secondary_index.push({ ...retryIndex(v), name: "Another" }),
+  ],
+])("rejects a table update with a changed %s", (_name, mutate) =>
+  rejected((plan) => mutate(after(plan, tableAddress))),
+);
+
+test("rejects unknown table effects", () =>
+  rejected((plan) => {
+    findChange(plan, tableAddress).change.after_unknown = {
+      server_side_encryption: true,
+    };
+  }));
+
+test.each([
+  ["pattern", (v: Values) => (v.pattern = "ERROR")],
+  ["log group", (v: Values) => (v.log_group_name = "/ecs/other")],
+  ["namespace", (v: Values) => (v.metric_transformation[0].namespace = "X")],
+  ["metric", (v: Values) => (v.metric_transformation[0].name = "Other")],
+  ["value", (v: Values) => (v.metric_transformation[0].value = "2")],
+  [
+    "dimensions",
+    (v: Values) => (v.metric_transformation[0].dimensions = { a: "b" }),
+  ],
+  ["second transformation", (v: Values) => v.metric_transformation.push({})],
+])("rejects a metric filter with a changed %s", (_name, mutate) =>
+  rejected((plan) => mutate(after(plan, filterAddress))),
+);
+
+const otherTopic = `arn:aws:sns:us-east-1:${retryAccountId}:other`;
+test.each([
+  ["threshold", (v: Values) => (v.threshold = 5)],
+  ["period", (v: Values) => (v.period = 60)],
+  ["metric", (v: Values) => (v.metric_name = "Other")],
+  ["namespace", (v: Values) => (v.namespace = "Other/Logs")],
+  ["comparison", (v: Values) => (v.comparison_operator = "LessThanThreshold")],
+  ["missing data", (v: Values) => (v.treat_missing_data = "breaching")],
+  ["disabled actions", (v: Values) => (v.actions_enabled = false)],
+  ["alarm action", (v: Values) => (v.alarm_actions = [otherTopic])],
+  ["empty OK action", (v: Values) => (v.ok_actions = [])],
+  [
+    "insufficient data",
+    (v: Values) => (v.insufficient_data_actions = [otherTopic]),
+  ],
+  ["name", (v: Values) => (v.alarm_name = "other")],
+])("rejects an alarm with a changed %s", (_name, mutate) =>
+  rejected((plan) => mutate(after(plan, alarmAddress))),
+);
+
+test.each([
+  [filterAddress, { pattern: true }],
+  [alarmAddress, { alarm_actions: true }],
+])("rejects unknown create values on %s", (address, mask) =>
+  rejected((plan) => {
+    Object.assign(findChange(plan, address).change.after_unknown, mask);
+  }),
+);
