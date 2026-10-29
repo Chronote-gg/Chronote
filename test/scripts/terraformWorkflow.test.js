@@ -16,6 +16,7 @@ import {
 } from "../fixtures/deployment/terraformWorkflow.js";
 import { dispatchTerraform } from "../fixtures/deployment/terraformDispatch.js";
 import { runtimePlan } from "../fixtures/deployment/runtimePlan.js";
+import { sitePlan } from "../fixtures/deployment/sitePlan.js";
 async function planAndApply(
   f,
   patch = {},
@@ -352,6 +353,22 @@ test.each([
     }
   },
 );
+
+test("site delivery Apply revalidates its restored plan", async () => {
+  const f = fixture();
+  f.controls.planJson = sitePlan();
+  try {
+    const { apply } = await planAndApply(f, {}, "site-delivery");
+    expect(apply.status).toBe("applied");
+    expect(
+      f.commands.filter(
+        (c) => c.args[1] === "show" && c.args.includes("-json"),
+      ),
+    ).toHaveLength(2);
+  } finally {
+    rmSync(f.directory, { recursive: true, force: true });
+  }
+});
 
 test("runtime Plan refuses to bundle a serving service change", async () => {
   const f = fixture();

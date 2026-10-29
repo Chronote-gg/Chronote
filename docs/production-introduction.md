@@ -6,6 +6,8 @@ Use [recording handoff and recovery](deployment-handoff.md) for ordinary compati
 
 ## Cold cutover
 
+Production completed this cold cutover on 2026-10-29: legacy revision 239 moved to `master` on revision 240, with no in-flight work before or after the stop. The procedure is now historical for production; later releases use the ordinary deploy.
+
 `Production Cold Cutover` (`.github/workflows/production-cutover.yml`) runs on `master`, attempt 1, in the `production` environment and the `chronote-deploy-production` concurrency group, so it never overlaps an ordinary deploy. Inputs:
 
 - `mode`: `inspect` (default, read-only session) or `cutover`.

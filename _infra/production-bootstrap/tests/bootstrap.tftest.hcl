@@ -197,3 +197,56 @@ run "grant_uses_supported_service_keys" {
     error_message = "DynamoDB service grants keep service mediation and bounded operations, without principal-ARN or table-context keys a service-made grant cannot satisfy."
   }
 }
+run "site_delivery_off_by_default" {
+  command = plan
+  variables {
+    enable_private_evidence_store    = true
+    enable_production_terraform_role = true
+  }
+  assert {
+    condition     = length(aws_iam_policy.site_delivery) == 0 && length(aws_iam_role_policy_attachment.site_delivery) == 0
+    error_message = "The initial bootstrap creates no site delivery policy."
+  }
+}
+run "site_delivery_requires_role" {
+  command = plan
+  variables {
+    enable_private_evidence_store = true
+    enable_site_delivery_policy   = true
+    frontend_distribution_id      = "EFRONTEND1"
+    docs_distribution_id          = "EDOCS2"
+  }
+  expect_failures = [var.enable_site_delivery_policy]
+}
+run "site_delivery_requires_distribution_ids" {
+  command = plan
+  variables {
+    enable_private_evidence_store    = true
+    enable_production_terraform_role = true
+    enable_site_delivery_policy      = true
+    docs_distribution_id             = "arn:aws:cloudfront::123456789012:distribution/EDOCS2"
+  }
+  expect_failures = [var.frontend_distribution_id, var.docs_distribution_id]
+}
+run "site_delivery_policy" {
+  command = plan
+  variables {
+    enable_private_evidence_store    = true
+    enable_production_terraform_role = true
+    enable_site_delivery_policy      = true
+    frontend_distribution_id         = "EFRONTEND1"
+    docs_distribution_id             = "EDOCS2"
+  }
+  assert {
+    condition = jsondecode(aws_iam_policy.site_delivery[0].policy).Statement == [
+      { Sid = "ExistingDistributions", Effect = "Allow", Action = "cloudfront:UpdateDistribution", Resource = ["arn:aws:cloudfront::123456789012:distribution/EFRONTEND1", "arn:aws:cloudfront::123456789012:distribution/EDOCS2"] },
+      { Sid = "RouteRewriteFunction", Effect = "Allow", Action = ["cloudfront:CreateFunction", "cloudfront:PublishFunction", "cloudfront:TagResource"], Resource = "arn:aws:cloudfront::123456789012:function/meeting-notes-prod-frontend-route-rewrite" },
+      { Sid = "CrawlerHeadersPolicy", Effect = "Allow", Action = "cloudfront:CreateResponseHeadersPolicy", Resource = "arn:aws:cloudfront::123456789012:response-headers-policy/*" }
+    ]
+    error_message = "Site delivery may update only the two distributions and create only the route function and headers policy."
+  }
+  assert {
+    condition     = aws_iam_role_policy_attachment.site_delivery[0].role == "meeting-notes-prod-github-terraform" && aws_iam_policy.site_delivery[0].name == "meeting-notes-prod-terraform-site-delivery"
+    error_message = "The managed policy attaches to the production Terraform role."
+  }
+}

@@ -302,7 +302,7 @@ See [private Terraform delivery](../docs/terraform-private-delivery.md) for revi
 configuration, supported protection rules and unknown-acknowledgment handling.
 
 `plan_scope` accepts only `full`, `purchase-permission`,
-`deployment-prerequisites` or `deployment-runtime`. `full` remains untargeted; `purchase-permission`
+`deployment-prerequisites`, `deployment-runtime` or `site-delivery`. `full` remains untargeted; `purchase-permission`
 continues to target only `aws_iam_role_policy.initial_purchase_condition`.
 Unsupported scope values fail before the plan command, and no scope accepts
 arbitrary Terraform arguments.
@@ -376,10 +376,10 @@ and `TFVAR_DOCS_DISTRIBUTION_ID` to the same values as the existing
 refuses to plan without them, and each distribution has a postcondition that fails
 a full plan if its variable names another distribution.
 
-Known pending rollout: production's distributions lag master (a docs cache
-behavior, frontend error responses and route rewrite function, and the
-`crawler_noindex` headers policy). Those change live portal routing and ship with
-a later frontend and docs rollout, not with this scope. GitHub variables such as `PRODUCTION_BACKEND_DEPLOY_ROLE_ARN` and
+Production's distributions lagged master in routing (a docs cache behavior,
+frontend error responses and route rewrite function, and the `crawler_noindex`
+headers policy). Those change live portal routing, so they ship through the
+separate `site-delivery` scope below, not this one. GitHub variables such as `PRODUCTION_BACKEND_DEPLOY_ROLE_ARN` and
 `PRODUCTION_PROMPT_GUARD_ROLE_ARN` stay outside the scope and are set by hand.
 
 `scripts/deployment/validate-runtime-plan.cjs` checks the Plan before bundling and
@@ -393,6 +393,27 @@ Apply passes the account from the private storage binding; the CLI takes it as i
 only argument. The subscription table may change only by gaining that index and its
 two key attributes (its recomputed `stream_arn` and `stream_label` may be unknown);
 each API target group only its drain delay, to 5.
+
+`site-delivery` targets exactly `aws_cloudfront_function.frontend_route_rewrite`,
+`aws_cloudfront_response_headers_policy.crawler_noindex` and both distributions.
+`scripts/deployment/validate-site-plan.cjs` checks the Plan and the restored Apply
+plan. It allows only creating that function (with the repository's exact code) and
+headers policy, and updating the distributions in place:
+
+- frontend: the 403 response becomes 404 with `/404.html` and the old
+  `/index.html` fallbacks go; the default behavior gains the viewer-request route
+  rewrite; one new `/share/*` behavior uses the rewrite and the noindex headers.
+- docs: one new `/search*` behavior uses the existing docs rewrite and the noindex
+  headers.
+
+Every existing behavior, origin, alias, certificate and setting must be unchanged.
+The site buckets and docs function must be no-ops; the KMS key and HTTPS listener
+are not in this graph. Apply only after a frontend build with `404.html` and the
+extensionless public-route documents is in the bucket; `sync-frontend` uploads
+both on every deploy. When `scripts/public-routes.json` gains a route, the route
+rewrite's `publicRoutes` list must gain it too, and this scope ships the change.
+The Terraform role's CloudFront writes come from the separate managed policy in
+`_infra/production-bootstrap/site-delivery.tf`.
 
 Standalone policy adoption requires a separate reviewed plan and approval; it is
 outside the four-target Apply. The actual state-backed prerequisite plan must
