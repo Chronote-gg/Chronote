@@ -86,7 +86,7 @@ function execution(options, invocation) {
         directory: options.privateDirectory,
         index: output.length,
         cwd: options.directory,
-        env: options.env,
+        env: { ...options.env, TF_WORKSPACE: invocation.workspace },
         signal: options.signal,
       });
     } catch (error) {
