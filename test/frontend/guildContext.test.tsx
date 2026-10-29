@@ -114,6 +114,14 @@ describe("GuildContext", () => {
   });
 });
 
+function guildProbe() {
+  return (
+    <GuildProvider>
+      <GuildProbe onCapture={() => {}} />
+    </GuildProvider>
+  );
+}
+
 test("account transitions hide previous guild metadata and clear stored selection before queries resume", async () => {
   resetTrpcMocks();
   resetAuthState();
@@ -125,11 +133,7 @@ test("account transitions hide previous guild metadata and clear stored selectio
   setGuildQuery({
     data: { guilds: [{ id: "old", name: "Old private server" }] },
   });
-  const view = render(
-    <GuildProvider>
-      <GuildProbe onCapture={() => {}} />
-    </GuildProvider>,
-  );
+  const view = render(guildProbe());
   await waitFor(() =>
     expect(screen.getByTestId("guild-state")).toHaveAttribute(
       "data-count",
@@ -138,11 +142,7 @@ test("account transitions hide previous guild metadata and clear stored selectio
   );
   authState.user = { id: "new-user" };
   authState.protectedQueriesReady = false;
-  view.rerender(
-    <GuildProvider>
-      <GuildProbe onCapture={() => {}} />
-    </GuildProvider>,
-  );
+  view.rerender(guildProbe());
   expect(screen.getByTestId("guild-state")).toHaveAttribute("data-count", "0");
   expect(screen.getByTestId("guild-state")).toHaveAttribute(
     "data-selected",
@@ -151,11 +151,7 @@ test("account transitions hide previous guild metadata and clear stored selectio
   expect(localStorage.getItem("mn-selected-guild")).toBeNull();
   setGuildQuery({ data: { guilds: [{ id: "new", name: "New server" }] } });
   authState.protectedQueriesReady = true;
-  view.rerender(
-    <GuildProvider>
-      <GuildProbe onCapture={() => {}} />
-    </GuildProvider>,
-  );
+  view.rerender(guildProbe());
   await waitFor(() =>
     expect(screen.getByTestId("guild-state")).toHaveAttribute(
       "data-count",

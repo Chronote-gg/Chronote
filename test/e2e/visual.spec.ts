@@ -463,6 +463,7 @@ test.describe("visual regression", () => {
       await libraryPage.openFirstMeeting();
       const drawerDialog = page.getByRole("dialog");
       await expect(drawerDialog).toBeVisible();
+      await expect(libraryPage.drawerSummaryLabel()).toBeVisible();
       await expectVisualScreenshot(page, "library-drawer", mode);
 
       await drawerDialog.getByRole("button", { name: "Notes actions" }).click();

@@ -1,10 +1,9 @@
-import { meetingDateRangeState } from "../../utils/meetingBrowseDates";
 import { useMemo } from "react";
-import { trpc } from "../../services/trpc";
-import { useAuth } from "../../contexts/AuthContext";
 import type { MeetingBrowseScope } from "../../../types/meetingBrowse";
+import { useAuth } from "../../contexts/AuthContext";
+import { trpc } from "../../services/trpc";
+import { meetingDateRangeState } from "../../utils/meetingBrowseDates";
 import type { MeetingBrowseSearch } from "../../utils/meetingBrowseSearch";
-import type { MeetingListItem } from "../library/types";
 import {
   deriveMeetingSummary,
   filterMeetingItems,
@@ -14,6 +13,7 @@ import {
   formatRelativeRecencyLabel,
   resolveMeetingTitle,
 } from "../../utils/meetingLibrary";
+import type { MeetingListItem } from "../library/types";
 
 export function meetingBrowseScope(
   search: MeetingBrowseSearch,
@@ -24,59 +24,70 @@ export function meetingBrowseScope(
       ? { kind: "personal" }
       : { kind: "all" };
 }
+function meetingBrowseRangeInput(search: MeetingBrowseSearch) {
+  if (search.range === "today")
+    return {
+      range: "today" as const,
+      timeZoneOffsetMinutes: new Date().getTimezoneOffset(),
+    };
+  if (search.range === "7") return { range: "past_7_days" as const };
+  if (search.range === "30" || search.range === "90") {
+    const now = new Date();
+    return {
+      range: "custom" as const,
+      startDate: new Date(
+        now.getTime() - Number(search.range) * 86400000,
+      ).toISOString(),
+      endDate: now.toISOString(),
+    };
+  }
+  if (search.range === "custom")
+    return {
+      range: "custom" as const,
+      startDate: search.startDate,
+      endDate: search.endDate,
+    };
+  return { range: "all" as const };
+}
+function meetingBrowseQueryInput(
+  search: MeetingBrowseSearch,
+  scope: MeetingBrowseScope,
+  rangeInput: ReturnType<typeof meetingBrowseRangeInput>,
+) {
+  return {
+    mode: "accessible" as const,
+    limit: 25,
+    ...rangeInput,
+    browse: {
+      scope,
+      attendedOnly: search.attended,
+      channelId: search.channelId,
+    },
+    tags: search.tags
+      ? [
+          ...new Set(
+            search.tags
+              .split(",")
+              .map((tag) => tag.trim())
+              .filter(Boolean),
+          ),
+        ].sort()
+      : undefined,
+    archivedOnly: search.archive === "archived" ? true : undefined,
+    includeArchived: search.archive !== "active",
+  };
+}
 export function useMeetingBrowse(search: MeetingBrowseSearch, enabled = true) {
   const { protectedQueriesReady } = useAuth();
   const scope = meetingBrowseScope(search);
   const rangeReady = meetingDateRangeState(search) === "ready";
   const canBrowse = enabled && protectedQueriesReady && rangeReady;
-  const rangeInput = useMemo(() => {
-    if (search.range === "today")
-      return {
-        range: "today" as const,
-        timeZoneOffsetMinutes: new Date().getTimezoneOffset(),
-      };
-    if (search.range === "7") return { range: "past_7_days" as const };
-    if (search.range === "30" || search.range === "90") {
-      const now = new Date();
-      return {
-        range: "custom" as const,
-        startDate: new Date(
-          now.getTime() - Number(search.range) * 86400000,
-        ).toISOString(),
-        endDate: now.toISOString(),
-      };
-    }
-    if (search.range === "custom")
-      return {
-        range: "custom" as const,
-        startDate: search.startDate,
-        endDate: search.endDate,
-      };
-    return { range: "all" as const };
-  }, [search.range, search.startDate, search.endDate]);
+  const rangeInput = useMemo(
+    () => meetingBrowseRangeInput(search),
+    [search.range, search.startDate, search.endDate],
+  );
   const query = trpc.meetings.myList.useInfiniteQuery(
-    {
-      mode: "accessible",
-      limit: 25,
-      ...rangeInput,
-      browse: {
-        scope,
-        attendedOnly: search.attended,
-        channelId: search.channelId,
-      },
-      tags: search.tags
-        ? [
-            ...new Set(
-              search.tags
-                .split(",")
-                .map((tag) => tag.trim())
-                .filter(Boolean),
-            ),
-          ].sort()
-        : undefined,
-      archivedOnly: search.archive === "archived" ? true : undefined,
-      includeArchived: search.archive !== "active",
-    },
+    meetingBrowseQueryInput(search, scope, rangeInput),
     {
       enabled: canBrowse,
       placeholderData: undefined,
@@ -84,11 +95,11 @@ export function useMeetingBrowse(search: MeetingBrowseSearch, enabled = true) {
       refetchOnWindowFocus: "always",
     },
   );
+  const showResults = canBrowse && !query.error;
   // Each filter input has its own query key. Never accumulate pages outside that key.
-  const rows =
-    canBrowse && !query.error
-      ? (query.data?.pages.flatMap((page) => page.meetings) ?? [])
-      : [];
+  const rows = showResults
+    ? (query.data?.pages.flatMap((page) => page.meetings) ?? [])
+    : [];
   const items: MeetingListItem[] = rows.map((row) => {
     const meeting = { ...row, notes: "" };
     const channelLabel = formatChannelLabel(row.channelName, row.channelId);
@@ -116,8 +127,7 @@ export function useMeetingBrowse(search: MeetingBrowseSearch, enabled = true) {
     isFetching: query.isFetching,
     error: query.error,
     hasMore: latest?.hasMore === true,
-    discoveryComplete:
-      canBrowse && !query.error && latest?.discoveryComplete === true,
+    discoveryComplete: showResults && latest?.discoveryComplete === true,
     loadMore: () => {
       if (!canBrowse || query.isFetching) return;
       if (query.error) {

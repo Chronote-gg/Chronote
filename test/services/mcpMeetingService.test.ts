@@ -1,9 +1,12 @@
+/** @jest-environment node */
 import {
   getSnapshotBoolean,
   resolveConfigSnapshot,
 } from "../../src/services/unifiedConfigService";
-/** @jest-environment node */
-import { createLegacyBrowseFixture } from "../../src/testSupport/meetingBrowseLegacy";
+import {
+  createLegacyBrowseFixture,
+  browseCursorFixture as mockCursor,
+} from "../../src/testSupport/meetingBrowseLegacy";
 import { beforeEach, describe, expect, test, jest } from "@jest/globals";
 import type { MeetingHistory } from "../../src/types/db";
 import {
@@ -75,9 +78,9 @@ jest.mock("../../src/services/unifiedConfigService", () => ({
 }));
 
 const mockBrowse = createLegacyBrowseFixture({
-  history: (...args) => listMeetingsForGuildInRangeService(...args),
-  index: (...args) => listMeetingUserIndexForUserInRangeService(...args),
-  get: (...args) => getMeetingHistoryService(...args),
+  history: listMeetingsForGuildInRangeService,
+  index: listMeetingUserIndexForUserInRangeService,
+  get: getMeetingHistoryService,
 });
 jest.mock("../../src/repositories/meetingHistoryRepository", () => ({
   getMeetingHistoryRepository: () => mockBrowse.history,
@@ -85,14 +88,13 @@ jest.mock("../../src/repositories/meetingHistoryRepository", () => ({
 jest.mock("../../src/repositories/meetingUserIndexRepository", () => ({
   getMeetingUserIndexRepository: () => mockBrowse.index,
 }));
-const mockCursorStates = new Map<string, unknown>();
-jest.mock("../../src/db", () => ({
-  putMeetingBrowseCursorState: async (id: string, state: unknown) => {
-    mockCursorStates.set(id, structuredClone(state));
-  },
-  getMeetingBrowseCursorState: async (id: string) =>
-    structuredClone(mockCursorStates.get(id)),
-}));
+jest.mock(
+  "../../src/db",
+  () =>
+    jest.requireActual<
+      typeof import("../../src/testSupport/meetingBrowseLegacy")
+    >("../../src/testSupport/meetingBrowseLegacy").browseCursorFixture.storage,
+);
 
 const meeting: MeetingHistory = {
   guildId: "guild-old",
@@ -119,7 +121,7 @@ describe("mcpMeetingService", () => {
 
   beforeEach(() => {
     mockBrowse.reset();
-    mockCursorStates.clear();
+    mockCursor.reset();
     jest.resetAllMocks();
     jest.mocked(getSnapshotBoolean).mockReturnValue(true);
     jest

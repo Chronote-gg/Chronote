@@ -1,25 +1,26 @@
+import { approvedCorrectionMutation } from "../../services/approvedMeetingCorrection";
 import { meetingBrowseFiltersSchema } from "../../services/meetingBrowseCursor";
 import { updateMeeting } from "../../services/meetingUpdateService";
-import { approvedCorrectionMutation } from "../../services/approvedMeetingCorrection";
 import { projectMeetingUpdateDelivery } from "../../services/meetingUpdateStatus";
-import { firstMeeting } from "./firstMeeting";
+import { myMeetingsInputFields } from "../../types/myMeetingsInput";
 import { requireBotInGuild } from "./ensureBotPresence";
+import { firstMeeting } from "./firstMeeting";
 
-import {
-  projectMeetingCapture,
-  resolveCaptureStatus,
-} from "../../utils/meetingCaptureNotice";
 import { TRPCError } from "@trpc/server";
-import { formatHunkDiff } from "../../utils/diff";
-import { z } from "zod";
-import { v4 as uuidv4 } from "uuid";
 import quillDeltaToMarkdownModule from "quill-delta-to-markdown";
+import { v4 as uuidv4 } from "uuid";
+import { z } from "zod";
+import { config } from "../../services/configService";
 import {
-  getMeetingHistoryService,
-  listRecentMeetingsForGuildService,
-  updateMeetingArchiveService,
-  updateMeetingAccessGrantsService,
-} from "../../services/meetingHistoryService";
+  boundDictionaryTeachingNotesDiff,
+  selectDictionaryTeachingTranscriptExcerpt,
+} from "../../services/dictionaryTeachingContextService";
+import { createDictionaryTeachingTokenStore } from "../../services/dictionaryTeachingTokenStore";
+import {
+  listBotGuildsCached,
+  listGuildChannelsCached,
+} from "../../services/discordCacheService";
+import { isDiscordApiError } from "../../services/discordService";
 import {
   ensureManageGuildWithUserToken,
   type GuildSessionCache,
@@ -28,37 +29,37 @@ import {
   listMcpMyMeetings,
   McpMeetingAccessError,
 } from "../../services/mcpMeetingService";
-import { config } from "../../services/configService";
 import {
-  createNotesCorrectionTokenStore,
-  type NotesCorrectionTokenRecord,
-} from "../../services/notesCorrectionTokenStore";
-import { createDictionaryTeachingTokenStore } from "../../services/dictionaryTeachingTokenStore";
-import {
-  boundDictionaryTeachingNotesDiff,
-  selectDictionaryTeachingTranscriptExcerpt,
-} from "../../services/dictionaryTeachingContextService";
-import { DICTIONARY_TEACHING_TOKEN_TTL_MS } from "../../types/dictionaryTeaching";
-import { buildMeetingTimelineEventsFromHistory } from "../../services/meetingTimelineService";
-import {
-  fetchJsonFromS3,
-  getSignedObjectUrl,
-} from "../../services/storageService";
-import { getMeetingSummaryFeedback } from "../../services/summaryFeedbackService";
-import { isDiscordApiError } from "../../services/discordService";
-import {
-  listBotGuildsCached,
-  listGuildChannelsCached,
-} from "../../services/discordCacheService";
+  getMeetingHistoryService,
+  listRecentMeetingsForGuildService,
+  updateMeetingAccessGrantsService,
+  updateMeetingArchiveService,
+} from "../../services/meetingHistoryService";
 import {
   MEETING_NAME_REQUIREMENTS,
   normalizeMeetingName,
   resolveUniqueMeetingName,
 } from "../../services/meetingNameService";
+import { buildMeetingTimelineEventsFromHistory } from "../../services/meetingTimelineService";
+import {
+  createNotesCorrectionTokenStore,
+  type NotesCorrectionTokenRecord,
+} from "../../services/notesCorrectionTokenStore";
+import {
+  fetchJsonFromS3,
+  getSignedObjectUrl,
+} from "../../services/storageService";
+import { getMeetingSummaryFeedback } from "../../services/summaryFeedbackService";
+import { DICTIONARY_TEACHING_TOKEN_TTL_MS } from "../../types/dictionaryTeaching";
+import { formatHunkDiff } from "../../utils/diff";
+import {
+  projectMeetingCapture,
+  resolveCaptureStatus,
+} from "../../utils/meetingCaptureNotice";
 
-import { generateMeetingSummaries } from "../../services/meetingSummaryService";
-import { generateOpenAIText } from "../../services/openaiTextService";
 import { getLangfuseChatPrompt } from "../../services/langfusePromptService";
+import { generateMeetingSummaries } from "../../services/meetingSummaryService";
+import { resolveModelChoicesForContext } from "../../services/modelChoiceService";
 import {
   buildModelOverrides,
   getModelChoice,
@@ -67,7 +68,7 @@ import {
   resolveChatParamsForRole,
   resolveModelParamsForContext,
 } from "../../services/openaiModelParams";
-import { resolveModelChoicesForContext } from "../../services/modelChoiceService";
+import { generateOpenAIText } from "../../services/openaiTextService";
 import type { ChatEntry } from "../../types/chat";
 import type {
   MeetingAccessGrant,
@@ -76,44 +77,38 @@ import type {
 } from "../../types/db";
 import type { MeetingEvent } from "../../types/meetingTimeline";
 
-import type { TranscriptPayload } from "../../types/transcript";
 import { MEETING_STATUS } from "../../types/meetingLifecycle";
+import type { TranscriptPayload } from "../../types/transcript";
 
-import { stripCodeFences } from "../../utils/text";
+import { resolveAttendeeAccessEnabled } from "../../services/attendeeAccessSetting";
+import { ensureUserCanAccessMeeting } from "../../services/meetingAccessService";
 import {
-  collectMentionIds,
-  mergeAllowedMentions,
-  stripUnknownMentions,
-} from "../../utils/mentionSanitizer";
-import { buildMentionRosters } from "../../services/mentionRosterService";
-import {
-  buildImportedMeetingNotes,
-  normalizeImportedNotes,
-} from "../../utils/importedNotes";
-import { resolveMeetingAttendees } from "../../services/meetingSharePayloadService";
+  resolveMeetingArtifactAccess,
+  resolveServerMeetingArtifactAccess,
+} from "../../services/meetingArtifactAccessService";
 import {
   buildMeetingMentionReplacer,
   createMeetingMentionReplacer,
   resolveGuildRoleNames,
   resolveMentionsInTimelineEvents,
 } from "../../services/meetingMentionService";
+import { resolveMeetingAttendees } from "../../services/meetingSharePayloadService";
+import { buildMentionRosters } from "../../services/mentionRosterService";
+import {
+  buildImportedMeetingNotes,
+  normalizeImportedNotes,
+} from "../../utils/importedNotes";
 import {
   isPersonalMeeting,
   PERSONAL_MEETING_CHANNEL_NAME,
   resolveMeetingOwnerUserId,
 } from "../../utils/meetingOwnership";
-import { ensureUserCanAccessMeeting } from "../../services/meetingAccessService";
 import {
-  ensurePortalUserCanAccessMeeting,
-  ensurePortalUserCanEditMeetingNotes,
-  ensurePortalUserCanManageMeetingChannel,
-  parseChannelIdTimestamp,
-} from "./meetingEditPermissions";
-import { resolveAttendeeAccessEnabled } from "../../services/attendeeAccessSetting";
-import {
-  resolveProcessingRetryView,
-  retryProcessing,
-} from "./meetingProcessingRetry";
+  collectMentionIds,
+  mergeAllowedMentions,
+  stripUnknownMentions,
+} from "../../utils/mentionSanitizer";
+import { stripCodeFences } from "../../utils/text";
 import {
   authedProcedure,
   correctionProcedure,
@@ -121,9 +116,15 @@ import {
   router,
 } from "../trpc";
 import {
-  resolveMeetingArtifactAccess,
-  resolveServerMeetingArtifactAccess,
-} from "../../services/meetingArtifactAccessService";
+  ensurePortalUserCanAccessMeeting,
+  ensurePortalUserCanEditMeetingNotes,
+  ensurePortalUserCanManageMeetingChannel,
+  parseChannelIdTimestamp,
+} from "./meetingEditPermissions";
+import {
+  resolveProcessingRetryView,
+  retryProcessing,
+} from "./meetingProcessingRetry";
 
 const NOTES_CORRECTION_DIFF_LINE_LIMIT = 600;
 const NOTES_CORRECTION_DIFF_CHAR_LIMIT = 12_000;
@@ -580,22 +581,8 @@ const myList = authedProcedure
     z
       .object({
         browse: meetingBrowseFiltersSchema.optional(),
-        mode: z.enum(["attended", "accessible"]).optional(),
-        range: z.enum(["all", "today", "past_7_days", "custom"]).optional(),
+        ...myMeetingsInputFields,
         limit: z.number().min(1).max(100).optional(),
-        cursor: z.string().min(1).optional(),
-        startDate: z.string().datetime().optional(),
-        endDate: z.string().datetime().optional(),
-        timeZoneOffsetMinutes: z
-          .number()
-          .int()
-          .min(-14 * 60)
-          .max(14 * 60)
-          .optional(),
-        serverIds: z.array(z.string().min(1)).optional(),
-        tags: z.array(z.string().min(1)).optional(),
-        archivedOnly: z.boolean().optional(),
-        includeArchived: z.boolean().optional(),
       })
       .refine(
         (input) =>

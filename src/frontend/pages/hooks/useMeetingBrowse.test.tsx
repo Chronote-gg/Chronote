@@ -1,12 +1,12 @@
-import { act, renderHook, waitFor } from "@testing-library/react";
 import {
   QueryClient,
   QueryClientProvider,
   useInfiniteQuery,
 } from "@tanstack/react-query";
+import { act, renderHook, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
-import { useMeetingBrowse } from "./useMeetingBrowse";
 import { meetingBrowseSearchSchema } from "../../utils/meetingBrowseSearch";
+import { useMeetingBrowse } from "./useMeetingBrowse";
 const mockFetch = jest.fn();
 jest.mock("../../contexts/AuthContext", () => ({
   useAuth: () => ({ protectedQueriesReady: true }),
@@ -28,6 +28,22 @@ jest.mock("../../services/trpc", () => ({
     },
   },
 }));
+const emptyBrowsePage = () => ({
+  meetings: [],
+  hasMore: false,
+  discoveryComplete: true,
+});
+
+function createBrowseHarness() {
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  const wrapper = ({ children }: { children: ReactNode }) => (
+    <QueryClientProvider client={client}>{children}</QueryClientProvider>
+  );
+  return { client, wrapper };
+}
+
 test("source changes exclude a delayed previous-source response and use explicit defaults", async () => {
   let finishOld: (value: unknown) => void = () => {};
   mockFetch
@@ -42,12 +58,7 @@ test("source changes exclude a delayed previous-source response and use explicit
       hasMore: false,
       discoveryComplete: true,
     });
-  const client = new QueryClient({
-    defaultOptions: { queries: { retry: false } },
-  });
-  const wrapper = ({ children }: { children: ReactNode }) => (
-    <QueryClientProvider client={client}>{children}</QueryClientProvider>
-  );
+  const { client, wrapper } = createBrowseHarness();
   const { result, rerender } = renderHook(
     ({ search }) => useMeetingBrowse(search),
     { wrapper, initialProps: { search: meetingBrowseSearchSchema.parse({}) } },
@@ -92,12 +103,7 @@ test.each([
     nextCursor: "page-2",
     discoveryComplete: false,
   });
-  const client = new QueryClient({
-    defaultOptions: { queries: { retry: false } },
-  });
-  const wrapper = ({ children }: { children: ReactNode }) => (
-    <QueryClientProvider client={client}>{children}</QueryClientProvider>
-  );
+  const { client, wrapper } = createBrowseHarness();
   const { result, rerender } = renderHook(
     ({ search }) => useMeetingBrowse(search),
     { wrapper, initialProps: { search: meetingBrowseSearchSchema.parse({}) } },
@@ -136,12 +142,7 @@ test("retry after a denied refetch reauthorizes the first page before showing re
     nextCursor: "next",
     discoveryComplete: false,
   });
-  const client = new QueryClient({
-    defaultOptions: { queries: { retry: false } },
-  });
-  const wrapper = ({ children }: { children: ReactNode }) => (
-    <QueryClientProvider client={client}>{children}</QueryClientProvider>
-  );
+  const { client, wrapper } = createBrowseHarness();
   const { result } = renderHook(
     () => useMeetingBrowse(meetingBrowseSearchSchema.parse({})),
     { wrapper },
@@ -152,11 +153,7 @@ test("retry after a denied refetch reauthorizes the first page before showing re
     await result.current.refresh();
   });
   await waitFor(() => expect(result.current.items).toEqual([]));
-  mockFetch.mockResolvedValue({
-    meetings: [],
-    hasMore: false,
-    discoveryComplete: true,
-  });
+  mockFetch.mockResolvedValue(emptyBrowsePage());
   await act(async () => result.current.loadMore());
   await waitFor(() => expect(result.current.discoveryComplete).toBe(true));
   expect(mockFetch.mock.lastCall[0].cursor).toBeUndefined();
@@ -165,17 +162,8 @@ test("retry after a denied refetch reauthorizes the first page before showing re
 });
 
 test("90 days requests the exact rolling custom range", async () => {
-  mockFetch.mockResolvedValue({
-    meetings: [],
-    hasMore: false,
-    discoveryComplete: true,
-  });
-  const client = new QueryClient({
-    defaultOptions: { queries: { retry: false } },
-  });
-  const wrapper = ({ children }: { children: ReactNode }) => (
-    <QueryClientProvider client={client}>{children}</QueryClientProvider>
-  );
+  mockFetch.mockResolvedValue(emptyBrowsePage());
+  const { client, wrapper } = createBrowseHarness();
   const { result } = renderHook(
     () => useMeetingBrowse(meetingBrowseSearchSchema.parse({ range: "90" })),
     { wrapper },
@@ -189,17 +177,8 @@ test("90 days requests the exact rolling custom range", async () => {
   client.clear();
 });
 test("an incomplete custom range pauses queries and explicit refresh until both endpoints exist", async () => {
-  mockFetch.mockResolvedValue({
-    meetings: [],
-    hasMore: false,
-    discoveryComplete: true,
-  });
-  const client = new QueryClient({
-    defaultOptions: { queries: { retry: false } },
-  });
-  const wrapper = ({ children }: { children: ReactNode }) => (
-    <QueryClientProvider client={client}>{children}</QueryClientProvider>
-  );
+  mockFetch.mockResolvedValue(emptyBrowsePage());
+  const { client, wrapper } = createBrowseHarness();
   const { result } = renderHook(
     () =>
       useMeetingBrowse(

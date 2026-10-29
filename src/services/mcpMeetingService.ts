@@ -1,62 +1,70 @@
 import { createHash } from "node:crypto";
 import { getMeetingHistoryRepository } from "../repositories/meetingHistoryRepository";
 import { getMeetingUserIndexRepository } from "../repositories/meetingUserIndexRepository";
-import type { MeetingBrowseFilters } from "../types/meetingBrowse";
-import { collectMeetingBrowsePage } from "./meetingBrowseCollector";
-import {
-  decodeMeetingBrowseCursor,
-  encodeMeetingBrowseCursor,
-  meetingBrowseFingerprint,
-  InvalidMeetingBrowseCursorError,
-  type MeetingBrowseCursorPayload,
-  type MeetingBrowseSource,
-} from "./meetingBrowseCursor";
-import {
-  buildGuildShareIndexPrincipal,
-  isRecordedMeetingAttendee,
-} from "../utils/meetingUserIndex";
-import { config } from "./configService";
-import { buildCacheKey, cache, withCache } from "./cacheService";
-import { isDiscordApiError } from "./discordService";
-import {
-  getGuildMemberCached,
-  listBotGuildsCached,
-  listGuildChannelsCached,
-} from "./discordCacheService";
-import {
-  getMeetingHistoryService,
-  listMeetingsForGuildInRangeService,
-  listRecentMeetingsForGuildService,
-} from "./meetingHistoryService";
-import { fetchJsonFromS3 } from "./storageService";
-import { checkUserMeetingAccess } from "./meetingAccessService";
-import { resolveAttendeeAccessEnabled } from "./attendeeAccessSetting";
 import type { MeetingHistory } from "../types/db";
-import {
-  projectMeetingCapture,
-  resolveCaptureStatus,
-} from "../utils/meetingCaptureNotice";
 import type { McpTokenRestriction } from "../types/mcpOAuth";
+import type { MeetingBrowseFilters } from "../types/meetingBrowse";
 import { MEETING_STATUS } from "../types/meetingLifecycle";
 import type { Participant } from "../types/participants";
 import type { TranscriptPayload } from "../types/transcript";
 import {
-  buildMeetingMentionReplacer,
-  createMeetingMentionReplacer,
-  resolveGuildRoleNames,
-} from "./meetingMentionService";
-import { isMeetingIndexedForUser } from "../utils/meetingUserIndex";
+  projectMeetingCapture,
+  resolveCaptureStatus,
+} from "../utils/meetingCaptureNotice";
 import {
   isPersonalMeeting,
   PERSONAL_MEETING_CHANNEL_NAME,
   PERSONAL_MEETING_SERVER_NAME,
 } from "../utils/meetingOwnership";
+import {
+  buildGuildShareIndexPrincipal,
+  isMeetingIndexedForUser,
+  isRecordedMeetingAttendee,
+} from "../utils/meetingUserIndex";
 import { buildPortalMeetingUrl } from "../utils/portalLinks";
+import { resolveAttendeeAccessEnabled } from "./attendeeAccessSetting";
+import { config } from "./configService";
+import { listGuildChannelsCached } from "./discordCacheService";
+import { isDiscordApiError } from "./discordService";
+import {
+  assertMcpGuildMembership,
+  ensureMcpMeetingAccess,
+  resolveMcpMeetingAccessContext,
+  type McpMeetingAccessContext,
+} from "./mcpMeetingAccess";
+import { McpMeetingAccessError } from "./mcpMeetingErrors";
+import { listMcpServersForToken } from "./mcpMeetingServers";
 import {
   resolveMeetingArtifactAccess,
   resolveServerMeetingArtifactAccess,
   type MeetingArtifactAccess,
 } from "./meetingArtifactAccessService";
+import { collectMeetingBrowsePage } from "./meetingBrowseCollector";
+import type { MeetingBrowseLookup } from "./meetingBrowseCursor";
+import {
+  decodeMeetingBrowseCursor,
+  encodeMeetingBrowseCursor,
+  InvalidMeetingBrowseCursorError,
+  meetingBrowseFingerprint,
+  type MeetingBrowseCursorPayload,
+  type MeetingBrowseSource,
+} from "./meetingBrowseCursor";
+import {
+  getMeetingHistoryService,
+  listMeetingsForGuildInRangeService,
+  listRecentMeetingsForGuildService,
+} from "./meetingHistoryService";
+import {
+  buildMeetingMentionReplacer,
+  createMeetingMentionReplacer,
+  resolveGuildRoleNames,
+} from "./meetingMentionService";
+import { fetchJsonFromS3 } from "./storageService";
+export { McpMeetingAccessError } from "./mcpMeetingErrors";
+export {
+  listMcpServersForToken,
+  listMcpServersForUser,
+} from "./mcpMeetingServers";
 
 const MIN_TIMESTAMP_ISO = "1970-01-01T00:00:00.000Z";
 const MAX_TIMESTAMP_ISO = "9999-12-31T23:59:59.999Z";
@@ -64,7 +72,6 @@ const DEFAULT_MEETING_LIMIT = 25;
 const MAX_MEETING_LIMIT = 100;
 const MCP_MEETING_SCAN_LIMIT_MULTIPLIER = 5;
 const MCP_CHANNEL_MAP_BATCH_SIZE = 5;
-const MCP_SERVER_MEMBERSHIP_BATCH_SIZE = 5;
 export const DEFAULT_MCP_TRANSCRIPT_MAX_CHARS = 20_000;
 export const MAX_MCP_TRANSCRIPT_MAX_CHARS = 100_000;
 const MS_PER_DAY = 1000 * 60 * 60 * 24;
@@ -116,11 +123,6 @@ export type ListMcpMyMeetingsInput = {
   restriction?: McpTokenRestriction;
 };
 
-type McpMeetingAccessContext = {
-  attendeeOverrideEnabled: boolean;
-  sharedGuildIds?: string[];
-};
-
 type MyMeetingsCursor = {
   timestamp: string;
   identity: string;
@@ -140,20 +142,6 @@ type ResolvedMyMeetingsFilters = {
   archivedOnly?: boolean;
   includeArchived?: boolean;
 };
-
-export class McpMeetingAccessError extends Error {
-  constructor(
-    message: string,
-    readonly code:
-      | "forbidden"
-      | "not_found"
-      | "rate_limited"
-      | "bad_request"
-      | "artifact_unavailable",
-  ) {
-    super(message);
-  }
-}
 
 const parseChannelIdTimestamp = (channelIdTimestamp: string) => {
   const hashIndex = channelIdTimestamp.indexOf("#");
@@ -229,107 +217,6 @@ const resolveMeetingDuration = (meeting: MeetingHistory) => {
   return meeting.duration;
 };
 
-const assertMcpGuildMembership = async (guildId: string, userId: string) => {
-  try {
-    await getGuildMemberCached(guildId, userId);
-  } catch (error) {
-    if (isDiscordApiError(error) && error.status === 429) {
-      throw new McpMeetingAccessError(
-        "Discord rate limited. Please retry.",
-        "rate_limited",
-      );
-    }
-    if (
-      isDiscordApiError(error) &&
-      (error.status === 403 || error.status === 404)
-    ) {
-      throw new McpMeetingAccessError("Meeting access required.", "forbidden");
-    }
-    throw error;
-  }
-};
-
-const resolveMcpMeetingAccessContext = async (
-  guildId: string,
-  userId: string,
-  options: { requireGuildMembership?: boolean; restricted?: boolean } = {},
-): Promise<McpMeetingAccessContext> => {
-  if (options.requireGuildMembership !== false) {
-    await assertMcpGuildMembership(guildId, userId);
-  }
-  return {
-    // Attendee access is a permanent grant recorded at meeting time, and the
-    // participant snapshot in `meetings.ts` does not filter bots out of a voice
-    // channel. A bot that once sat in a private channel would therefore keep
-    // reading that meeting after its roles were removed, which is exactly the
-    // revocation a service account is supposed to honour. Restricted tokens are
-    // always evaluated against current channel permissions instead.
-    attendeeOverrideEnabled: options.restricted
-      ? false
-      : await resolveAttendeeAccessEnabled(guildId),
-  };
-};
-
-const hasPersonalGuildGrants = (meeting: MeetingHistory) =>
-  isPersonalMeeting(meeting) &&
-  meeting.accessGrants?.some((grant) => grant.targetType === "guild") === true;
-
-const resolveMcpSharedGuildIds = async (userId: string) =>
-  (await listMcpServersForUser(userId)).map((server) => server.id);
-
-const ensureMcpMeetingAccess = async (options: {
-  guildId: string;
-  meeting: MeetingHistory;
-  userId: string;
-  accessContext?: McpMeetingAccessContext;
-  restricted?: boolean;
-}) => {
-  const personal = isPersonalMeeting(options.meeting);
-  const accessContext =
-    options.accessContext ??
-    (personal
-      ? { attendeeOverrideEnabled: false }
-      : await resolveMcpMeetingAccessContext(options.guildId, options.userId, {
-          requireGuildMembership: false,
-          restricted: options.restricted,
-        }));
-  if (
-    !options.accessContext &&
-    !personal &&
-    !(
-      accessContext.attendeeOverrideEnabled &&
-      isRecordedMeetingAttendee(options.meeting, options.userId)
-    )
-  ) {
-    await assertMcpGuildMembership(options.guildId, options.userId);
-  }
-  let decision = await checkUserMeetingAccess({
-    guildId: options.guildId,
-    meeting: options.meeting,
-    userId: options.userId,
-    attendeeOverrideEnabled: accessContext.attendeeOverrideEnabled,
-    sharedGuildIds: accessContext.sharedGuildIds,
-  });
-  if (decision.allowed === false && hasPersonalGuildGrants(options.meeting)) {
-    decision = await checkUserMeetingAccess({
-      guildId: options.guildId,
-      meeting: options.meeting,
-      userId: options.userId,
-      attendeeOverrideEnabled: accessContext.attendeeOverrideEnabled,
-      sharedGuildIds: await resolveMcpSharedGuildIds(options.userId),
-    });
-  }
-  if (decision.allowed === null) {
-    throw new McpMeetingAccessError(
-      "Discord rate limited. Please retry.",
-      "rate_limited",
-    );
-  }
-  if (!decision.allowed) {
-    throw new McpMeetingAccessError("Meeting access required.", "forbidden");
-  }
-};
-
 const resolveChannelMap = async (guildId: string) => {
   try {
     const channels = await listGuildChannelsCached(guildId);
@@ -388,93 +275,6 @@ const summarizeMeeting = (
     }),
   };
 };
-
-const resolveMcpServerMembership = async (
-  guild: { id: string; name: string; icon?: string | null },
-  userId: string,
-) => {
-  try {
-    await getGuildMemberCached(guild.id, userId);
-    return { guild, allowed: true };
-  } catch (error) {
-    if (isDiscordApiError(error) && error.status === 429) {
-      throw new McpMeetingAccessError(
-        "Discord rate limited. Please retry.",
-        "rate_limited",
-      );
-    }
-    if (
-      isDiscordApiError(error) &&
-      (error.status === 403 || error.status === 404)
-    )
-      return { guild, allowed: false };
-    throw error;
-  }
-};
-
-async function listMcpServersForUserUncached(userId: string) {
-  const guilds = await listBotGuildsCached();
-  const memberships: Array<
-    Awaited<ReturnType<typeof resolveMcpServerMembership>>
-  > = [];
-  for (
-    let index = 0;
-    index < guilds.length;
-    index += MCP_SERVER_MEMBERSHIP_BATCH_SIZE
-  ) {
-    memberships.push(
-      ...(await Promise.all(
-        guilds
-          .slice(index, index + MCP_SERVER_MEMBERSHIP_BATCH_SIZE)
-          .map((guild) => resolveMcpServerMembership(guild, userId)),
-      )),
-    );
-  }
-  return memberships
-    .filter((entry) => entry.allowed)
-    .map(({ guild }) => ({ id: guild.id, name: guild.name, icon: guild.icon }));
-}
-
-const cachedMcpServersForUser = cache.define(
-  "mcpServersForUser",
-  {
-    ttl: config.cache.discord.membersTtlSeconds,
-    serialize: ({ userId }: { userId: string }) =>
-      buildCacheKey(`mcp:serversForUser:${userId}`),
-  },
-  async ({ userId }: { userId: string }) =>
-    listMcpServersForUserUncached(userId),
-).mcpServersForUser;
-
-const shouldFallbackMcpServerCache = (error: unknown) =>
-  !(error instanceof McpMeetingAccessError);
-
-export async function listMcpServersForUser(userId: string) {
-  return withCache(
-    "listMcpServersForUser",
-    () => cachedMcpServersForUser({ userId }),
-    () => listMcpServersForUserUncached(userId),
-    shouldFallbackMcpServerCache,
-  );
-}
-
-/**
- * Server list for one MCP caller. A restricted token resolves only its own
- * guild: validation already proved the bot is a member there, so the
- * cross-guild membership scan would add a request per guild Chronote is in and
- * let an unrelated rate limit fail a call whose answer is already known.
- */
-export async function listMcpServersForToken(input: {
-  userId: string;
-  restriction?: McpTokenRestriction;
-}) {
-  const { restriction } = input;
-  if (!restriction) return listMcpServersForUser(input.userId);
-  const guilds = await listBotGuildsCached();
-  return guilds
-    .filter((guild) => guild.id === restriction.guildId)
-    .map((guild) => ({ id: guild.id, name: guild.name, icon: guild.icon }));
-}
 
 const isMeetingChannelAllowed = (
   meeting: MeetingHistory,
@@ -837,69 +637,136 @@ const summarizeUserMeetings = async (
   });
 };
 
-export async function listMcpMyMeetings(input: ListMcpMyMeetingsInput) {
+type BrowseAuthorization = {
+  input: ListMcpMyMeetingsInput;
+  browse: MeetingBrowseFilters;
+  filters: ResolvedMyMeetingsFilters;
+  state: MeetingBrowseCursorPayload;
+  sharedGuildIds: string[];
+};
+function matchesBrowseScope(
+  meeting: MeetingHistory,
+  input: ListMcpMyMeetingsInput,
+  browse: MeetingBrowseFilters,
+  filters: ResolvedMyMeetingsFilters,
+) {
+  const personal = isPersonalMeeting(meeting);
   if (
-    input.browse &&
-    (input.mode !== "accessible" || input.serverIds?.length)
-  ) {
-    throw new McpMeetingAccessError(
-      "Browse requires accessible mode and uses scope instead of serverIds.",
-      "bad_request",
+    input.restriction &&
+    (meeting.guildId !== input.restriction.guildId || personal)
+  )
+    return false;
+  if (filters.serverIds?.length && !filters.serverIds.includes(meeting.guildId))
+    return false;
+  if (browse.scope.kind === "personal" && !personal) return false;
+  if (
+    browse.scope.kind === "guild" &&
+    (personal || meeting.guildId !== browse.scope.serverId)
+  )
+    return false;
+  return true;
+}
+function matchesBrowseRequest(
+  meeting: MeetingHistory,
+  input: ListMcpMyMeetingsInput,
+  browse: MeetingBrowseFilters,
+  filters: ResolvedMyMeetingsFilters,
+  requestedTags: Set<string>,
+) {
+  if (!matchesBrowseScope(meeting, input, browse, filters)) return false;
+  if (browse.attendedOnly && !isRecordedMeetingAttendee(meeting, input.userId))
+    return false;
+  if (
+    !input.browse &&
+    filters.mode === "attended" &&
+    !isMeetingIndexedForUser(meeting, input.userId)
+  )
+    return false;
+  if (
+    !meetingMatchesListFilters(
+      meeting,
+      {
+        ...filters,
+        restriction: input.restriction,
+        channelId: browse.channelId,
+      },
+      requestedTags,
+    )
+  )
+    return false;
+  return true;
+}
+function createBrowseAuthorizer({
+  input,
+  browse,
+  filters,
+  state,
+  sharedGuildIds,
+}: BrowseAuthorization) {
+  const requestedTags = new Set(
+    (filters.tags ?? []).map((tag) => tag.toLowerCase()),
+  );
+  const accessContexts = new Map<string, McpMeetingAccessContext>();
+  return async (key: MeetingBrowseLookup) => {
+    const meeting = await getMeetingHistoryRepository().get(
+      key.guildId,
+      key.channelId_timestamp,
     );
-  }
-  const limit = normalizeMcpMeetingLimit(input.limit);
-  if (limit === 0)
-    return {
-      meetings: [],
-      hasMore: false,
-      nextCursor: null,
-      discoveryComplete: true,
-    };
-  const v2 = input.cursor?.includes(".") === true;
-  if (input.browse && input.cursor && !v2)
-    throw new McpMeetingAccessError("Invalid Meetings cursor.", "bad_request");
-  const browse: MeetingBrowseFilters = input.browse ?? {
-    scope: { kind: "all" },
-    attendedOnly: false,
-  };
-  let state: MeetingBrowseCursorPayload | undefined;
-  if (v2 && input.cursor) {
+    if (
+      !meeting ||
+      meeting.timestamp !== key.timestamp ||
+      meeting.timestamp < state.startTimestamp ||
+      meeting.timestamp > state.endTimestamp
+    )
+      return;
+    if (!matchesBrowseRequest(meeting, input, browse, filters, requestedTags))
+      return;
+    const personal = isPersonalMeeting(meeting);
     try {
-      state = await decodeMeetingBrowseCursor(
-        input.cursor,
-        input.userId,
-        browse,
-      );
+      let context = accessContexts.get(meeting.guildId);
+      if (!context) {
+        context = {
+          attendeeOverrideEnabled: personal
+            ? false
+            : !input.restriction &&
+              (await resolveAttendeeAccessEnabled(meeting.guildId)),
+          sharedGuildIds,
+        };
+        accessContexts.set(meeting.guildId, context);
+      }
+      // Only actual recorded attendance permits a former member to retain a
+      // real guild recording. Creator, trigger and share pointers are discovery,
+      // never membership or authorization evidence.
+      if (
+        !personal &&
+        !(
+          context.attendeeOverrideEnabled &&
+          isRecordedMeetingAttendee(meeting, input.userId)
+        )
+      )
+        await assertMcpGuildMembership(meeting.guildId, input.userId);
+      await ensureMcpMeetingAccess({
+        guildId: meeting.guildId,
+        meeting,
+        userId: input.userId,
+        accessContext: context,
+        restricted: Boolean(input.restriction),
+      });
+      return meeting;
     } catch (error) {
-      if (error instanceof InvalidMeetingBrowseCursorError)
-        throw new McpMeetingAccessError(error.message, "bad_request");
+      if (error instanceof McpMeetingAccessError && error.code === "forbidden")
+        return;
       throw error;
     }
-    if (!input.browse && state.legacy) {
-      const previous = state.legacy;
-      input = {
-        ...input,
-        mode: input.mode ?? previous.mode,
-        range: input.range ?? previous.range,
-        startDate: input.startDate ?? previous.startDate,
-        endDate: input.endDate ?? previous.endDate,
-        timeZoneOffsetMinutes:
-          input.timeZoneOffsetMinutes ?? previous.timeZoneOffsetMinutes,
-        serverIds: input.serverIds ?? previous.serverIds,
-        tags: input.tags ?? previous.tags,
-        archivedOnly: input.archivedOnly ?? previous.archivedOnly,
-        includeArchived: input.includeArchived ?? previous.includeArchived,
-      };
-    }
-  }
-  const legacyRange = resolveMyMeetingsDateRange({
-    ...input,
-    cursor: v2 ? undefined : input.cursor,
-  });
-  const filters = resolveMyMeetingsFilters(input, legacyRange.cursor);
-  // Bind all server-side choices, including legacy restrictions and the range preset.
-  // Fixed computed date bounds live in the snapshot rather than changing with the clock.
-  const requestFingerprint = createHash("sha256")
+  };
+}
+
+function browseRequestFingerprint(
+  input: ListMcpMyMeetingsInput,
+  filters: ResolvedMyMeetingsFilters,
+  limit: number,
+) {
+  return createHash("sha256")
     .update(
       JSON.stringify({
         portal: Boolean(input.browse),
@@ -921,6 +788,63 @@ export async function listMcpMyMeetings(input: ListMcpMyMeetingsInput) {
       }),
     )
     .digest("hex");
+}
+function restoreLegacyBrowseInput(
+  input: ListMcpMyMeetingsInput,
+  state: MeetingBrowseCursorPayload,
+) {
+  if (!input.browse && state.legacy) {
+    const previous = state.legacy;
+    return {
+      ...input,
+      mode: input.mode ?? previous.mode,
+      range: input.range ?? previous.range,
+      startDate: input.startDate ?? previous.startDate,
+      endDate: input.endDate ?? previous.endDate,
+      timeZoneOffsetMinutes:
+        input.timeZoneOffsetMinutes ?? previous.timeZoneOffsetMinutes,
+      serverIds: input.serverIds ?? previous.serverIds,
+      tags: input.tags ?? previous.tags,
+      archivedOnly: input.archivedOnly ?? previous.archivedOnly,
+      includeArchived: input.includeArchived ?? previous.includeArchived,
+    };
+  }
+  return input;
+}
+async function prepareMeetingBrowseRequest(
+  input: ListMcpMyMeetingsInput,
+  limit: number,
+) {
+  const v2 = input.cursor?.includes(".") === true;
+  if (input.browse && input.cursor && !v2)
+    throw new McpMeetingAccessError("Invalid Meetings cursor.", "bad_request");
+  const browse: MeetingBrowseFilters = input.browse ?? {
+    scope: { kind: "all" },
+    attendedOnly: false,
+  };
+  let state: MeetingBrowseCursorPayload | undefined;
+  if (v2 && input.cursor) {
+    try {
+      state = await decodeMeetingBrowseCursor(
+        input.cursor,
+        input.userId,
+        browse,
+      );
+    } catch (error) {
+      if (error instanceof InvalidMeetingBrowseCursorError)
+        throw new McpMeetingAccessError(error.message, "bad_request");
+      throw error;
+    }
+    input = restoreLegacyBrowseInput(input, state);
+  }
+  const legacyRange = resolveMyMeetingsDateRange({
+    ...input,
+    cursor: v2 ? undefined : input.cursor,
+  });
+  const filters = resolveMyMeetingsFilters(input, legacyRange.cursor);
+  // Bind all server-side choices, including legacy restrictions and the range preset.
+  // Fixed computed date bounds live in the snapshot rather than changing with the clock.
+  const requestFingerprint = browseRequestFingerprint(input, filters, limit);
   if (state) {
     if (state.requestFingerprint !== requestFingerprint)
       throw new McpMeetingAccessError(
@@ -928,6 +852,51 @@ export async function listMcpMyMeetings(input: ListMcpMyMeetingsInput) {
         "bad_request",
       );
   }
+  return { input, browse, state, legacyRange, filters, requestFingerprint };
+}
+
+function meetingBrowseSources(
+  input: ListMcpMyMeetingsInput,
+  browse: MeetingBrowseFilters,
+  servers: ReturnType<typeof filterMcpServers>,
+) {
+  const sources: MeetingBrowseSource[] = [];
+  if (!input.restriction)
+    sources.push({ kind: "user", id: input.userId, exhausted: false });
+  for (const server of servers) {
+    if (
+      browse.scope.kind !== "personal" &&
+      (browse.scope.kind !== "guild" || browse.scope.serverId === server.id)
+    )
+      sources.push({ kind: "guild", id: server.id, exhausted: false });
+    if (!input.restriction && browse.scope.kind !== "guild")
+      sources.push({ kind: "guild_share", id: server.id, exhausted: false });
+  }
+  return sources;
+}
+
+export async function listMcpMyMeetings(input: ListMcpMyMeetingsInput) {
+  if (
+    input.browse &&
+    (input.mode !== "accessible" || input.serverIds?.length)
+  ) {
+    throw new McpMeetingAccessError(
+      "Browse requires accessible mode and uses scope instead of serverIds.",
+      "bad_request",
+    );
+  }
+  const limit = normalizeMcpMeetingLimit(input.limit);
+  if (limit === 0)
+    return {
+      meetings: [],
+      hasMore: false,
+      nextCursor: null,
+      discoveryComplete: true,
+    };
+  const prepared = await prepareMeetingBrowseRequest(input, limit);
+  input = prepared.input;
+  const { browse, legacyRange, filters, requestFingerprint } = prepared;
+  let state = prepared.state;
   const allServers = await listMcpServersForToken({
     userId: input.userId,
     restriction: input.restriction,
@@ -935,18 +904,6 @@ export async function listMcpMyMeetings(input: ListMcpMyMeetingsInput) {
   const servers = filterMcpServers(allServers, filters.serverIds);
   const sharedGuildIds = allServers.map((server) => server.id);
   if (!state) {
-    const sources: MeetingBrowseSource[] = [];
-    if (!input.restriction)
-      sources.push({ kind: "user", id: input.userId, exhausted: false });
-    for (const server of servers) {
-      if (
-        browse.scope.kind !== "personal" &&
-        (browse.scope.kind !== "guild" || browse.scope.serverId === server.id)
-      )
-        sources.push({ kind: "guild", id: server.id, exhausted: false });
-      if (!input.restriction && browse.scope.kind !== "guild")
-        sources.push({ kind: "guild_share", id: server.id, exhausted: false });
-    }
     state = {
       version: 2,
       actorId: input.userId,
@@ -955,7 +912,7 @@ export async function listMcpMyMeetings(input: ListMcpMyMeetingsInput) {
       startTimestamp: legacyRange.startDate,
       endTimestamp: legacyRange.endDate,
       expiresAt: Date.now() + 3600000,
-      sources,
+      sources: meetingBrowseSources(input, browse, servers),
       pending: [],
       watermark: legacyRange.cursor
         ? {
@@ -973,10 +930,6 @@ export async function listMcpMyMeetings(input: ListMcpMyMeetingsInput) {
         timeZoneOffsetMinutes: input.timeZoneOffsetMinutes,
       };
   }
-  const requestedTags = new Set(
-    (filters.tags ?? []).map((tag) => tag.toLowerCase()),
-  );
-  const accessContexts = new Map<string, McpMeetingAccessContext>();
   const result = await collectMeetingBrowsePage({
     state,
     limit,
@@ -993,98 +946,13 @@ export async function listMcpMyMeetings(input: ListMcpMyMeetingsInput) {
         options,
       );
     },
-    authorize: async (key) => {
-      const meeting = await getMeetingHistoryRepository().get(
-        key.guildId,
-        key.channelId_timestamp,
-      );
-      if (
-        !meeting ||
-        meeting.timestamp !== key.timestamp ||
-        meeting.timestamp < state.startTimestamp ||
-        meeting.timestamp > state.endTimestamp
-      )
-        return;
-      const personal = isPersonalMeeting(meeting);
-      if (
-        input.restriction &&
-        (meeting.guildId !== input.restriction.guildId || personal)
-      )
-        return;
-      if (
-        filters.serverIds?.length &&
-        !filters.serverIds.includes(meeting.guildId)
-      )
-        return;
-      if (browse.scope.kind === "personal" && !personal) return;
-      if (
-        browse.scope.kind === "guild" &&
-        (personal || meeting.guildId !== browse.scope.serverId)
-      )
-        return;
-      if (
-        browse.attendedOnly &&
-        !isRecordedMeetingAttendee(meeting, input.userId)
-      )
-        return;
-      if (
-        !input.browse &&
-        filters.mode === "attended" &&
-        !isMeetingIndexedForUser(meeting, input.userId)
-      )
-        return;
-      if (
-        !meetingMatchesListFilters(
-          meeting,
-          {
-            ...filters,
-            restriction: input.restriction,
-            channelId: browse.channelId,
-          },
-          requestedTags,
-        )
-      )
-        return;
-      try {
-        let context = accessContexts.get(meeting.guildId);
-        if (!context) {
-          context = {
-            attendeeOverrideEnabled: personal
-              ? false
-              : !input.restriction &&
-                (await resolveAttendeeAccessEnabled(meeting.guildId)),
-            sharedGuildIds,
-          };
-          accessContexts.set(meeting.guildId, context);
-        }
-        // Only actual recorded attendance permits a former member to retain a
-        // real guild recording. Creator, trigger and share pointers are discovery,
-        // never membership or authorization evidence.
-        if (
-          !personal &&
-          !(
-            context.attendeeOverrideEnabled &&
-            isRecordedMeetingAttendee(meeting, input.userId)
-          )
-        )
-          await assertMcpGuildMembership(meeting.guildId, input.userId);
-        await ensureMcpMeetingAccess({
-          guildId: meeting.guildId,
-          meeting,
-          userId: input.userId,
-          accessContext: context,
-          restricted: Boolean(input.restriction),
-        });
-        return meeting;
-      } catch (error) {
-        if (
-          error instanceof McpMeetingAccessError &&
-          error.code === "forbidden"
-        )
-          return;
-        throw error;
-      }
-    },
+    authorize: createBrowseAuthorizer({
+      input,
+      browse,
+      filters,
+      state,
+      sharedGuildIds,
+    }),
   });
   return {
     range: { startDate: state.startTimestamp, endDate: state.endTimestamp },

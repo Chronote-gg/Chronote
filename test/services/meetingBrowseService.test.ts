@@ -140,12 +140,16 @@ test("sorts timestamp ties across storage pages without losing unused tails or d
   expect(ids[0]).toBe("item-204");
   expect(ids.at(-1)).toBe("item-000");
 });
-test("finishes oversized tie comparison before emitting and rescans lower ranks after the best page", async () => {
+function saveOversizedTimestampTie() {
   save(
     ...Array.from({ length: 1100 }, (_, i) =>
       row(`item-${String(i).padStart(4, "0")}`),
     ),
   );
+}
+
+test("finishes oversized tie comparison before emitting and rescans lower ranks after the best page", async () => {
+  saveOversizedTimestampTie();
   const first = await list({ limit: 2 });
   expect(first.meetings).toEqual([]);
   expect(first.discoveryComplete).toBe(false);
@@ -162,11 +166,7 @@ test("finishes oversized tie comparison before emitting and rescans lower ranks 
   ]);
 });
 test("reauthorizes a buffered result after revocation and permits immutable retry", async () => {
-  save(
-    ...Array.from({ length: 1100 }, (_, i) =>
-      row(`item-${String(i).padStart(4, "0")}`),
-    ),
-  );
+  saveOversizedTimestampTie();
   const first = await list({ limit: 2 });
   jest
     .mocked(ensureUserCanConnectChannel)
@@ -180,11 +180,7 @@ test("reauthorizes a buffered result after revocation and permits immutable retr
   expect(retry.meetings).toEqual(second.meetings);
 });
 test("rebuilds a truncated tie when multiple buffered grants are revoked", async () => {
-  save(
-    ...Array.from({ length: 1100 }, (_, i) =>
-      row(`item-${String(i).padStart(4, "0")}`),
-    ),
-  );
+  saveOversizedTimestampTie();
   const first = await list({ limit: 2 });
   jest
     .mocked(ensureUserCanConnectChannel)

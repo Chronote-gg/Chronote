@@ -1,9 +1,9 @@
 import { isDeepStrictEqual } from "node:util";
+import type { MeetingUserIndexRecord } from "../types/db";
 import type {
   GuildShareIndexMetadata,
   MeetingBrowseStorageCursor,
 } from "../types/meetingBrowse";
-import type { MeetingUserIndexRecord } from "../types/db";
 import { buildGuildShareIndexRecords } from "../utils/meetingUserIndex";
 
 export type ShareIndexRepairOptions = {
@@ -31,6 +31,43 @@ export type ShareIndexRepairDependencies = {
   ) => Promise<boolean>;
   write: (records: MeetingUserIndexRecord[]) => Promise<void>;
 };
+
+type RepairCounts = {
+  personalWithGuildGrants: number;
+  missingPointers: number;
+  written: number;
+  skippedChanged: number;
+  failed: number;
+};
+async function repairMetadata(
+  metadata: GuildShareIndexMetadata,
+  options: ShareIndexRepairOptions,
+  dependencies: ShareIndexRepairDependencies,
+  result: RepairCounts,
+) {
+  const canonical = await dependencies.getMetadataStrong(
+    metadata,
+    options.signal,
+  );
+  options.signal?.throwIfAborted();
+  if (!canonical || !isDeepStrictEqual(canonical, metadata)) {
+    result.skippedChanged++;
+    return;
+  }
+  for (const pointer of buildGuildShareIndexRecords(canonical)) {
+    options.signal?.throwIfAborted();
+    if (await dependencies.pointerExistsStrong(pointer, options.signal))
+      continue;
+    result.missingPointers++;
+    options.signal?.throwIfAborted();
+    if (options.mode === "apply") {
+      // Use single-record writes: after an uncertain result, issue no more writes.
+      await dependencies.write([pointer]);
+      options.signal?.throwIfAborted();
+      result.written++;
+    }
+  }
+}
 
 /** One storage page only. A failed page must be replayed from its incoming cursor. */
 export async function repairMeetingShareIndexPage(
@@ -61,28 +98,7 @@ export async function repairMeetingShareIndexPage(
     if (buildGuildShareIndexRecords(metadata).length === 0) continue;
     result.personalWithGuildGrants++;
     try {
-      const canonical = await dependencies.getMetadataStrong(
-        metadata,
-        options.signal,
-      );
-      options.signal?.throwIfAborted();
-      if (!canonical || !isDeepStrictEqual(canonical, metadata)) {
-        result.skippedChanged++;
-        continue;
-      }
-      for (const pointer of buildGuildShareIndexRecords(canonical)) {
-        options.signal?.throwIfAborted();
-        if (await dependencies.pointerExistsStrong(pointer, options.signal))
-          continue;
-        result.missingPointers++;
-        options.signal?.throwIfAborted();
-        if (options.mode === "apply") {
-          // Use single-record writes: after an uncertain result, issue no more writes.
-          await dependencies.write([pointer]);
-          options.signal?.throwIfAborted();
-          result.written++;
-        }
-      }
+      await repairMetadata(metadata, options, dependencies, result);
     } catch {
       options.signal?.throwIfAborted();
       result.failed++;

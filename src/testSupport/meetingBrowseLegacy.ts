@@ -41,15 +41,13 @@ export function createLegacyBrowseFixture(input: {
             row.channelId_timestamp <
               (options.cursor.channelId_timestamp?.S ?? "")),
       );
-    const items = remaining
-      .slice(0, options.limit)
-      .map((record) => ({
-        record,
-        cursorAfter: {
-          timestamp: { S: record.timestamp },
-          channelId_timestamp: { S: record.channelId_timestamp },
-        },
-      }));
+    const items = remaining.slice(0, options.limit).map((record) => ({
+      record,
+      cursorAfter: {
+        timestamp: { S: record.timestamp },
+        channelId_timestamp: { S: record.channelId_timestamp },
+      },
+    }));
     return {
       items,
       nextCursor:
@@ -99,3 +97,19 @@ export function createLegacyBrowseFixture(input: {
     },
   };
 }
+
+export function createBrowseCursorFixture() {
+  const states = new Map<string, unknown>();
+  return {
+    reset: () => states.clear(),
+    storage: {
+      putMeetingBrowseCursorState: async (id: string, state: unknown) => {
+        states.set(id, structuredClone(state));
+      },
+      getMeetingBrowseCursorState: async (id: string) =>
+        structuredClone(states.get(id)),
+    },
+  };
+}
+
+export const browseCursorFixture = createBrowseCursorFixture();

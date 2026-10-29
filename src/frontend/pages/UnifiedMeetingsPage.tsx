@@ -1,42 +1,27 @@
-import {
-  formatLocalMeetingDate,
-  parseLocalMeetingDate,
-  meetingDateRangeState,
-} from "../utils/meetingBrowseDates";
-import { trpc } from "../services/trpc";
-import { LibraryNotionStatus } from "./library/components/LibraryNotionStatus";
-import {
-  Box,
-  Button,
-  Checkbox,
-  Group,
-  Stack,
-  Text,
-  TextInput,
-} from "@mantine/core";
+import { Box, Button, Checkbox, Group, Stack, Text } from "@mantine/core";
 import { useNavigate, useSearch } from "@tanstack/react-router";
-import PageHeader from "../components/PageHeader";
 import MeetingSources from "../components/MeetingSources";
-import { MeetingList } from "../features/library/MeetingList";
-import { FiltersBar } from "../features/library/FiltersBar";
-import { useMeetingBrowseContext } from "../contexts/MeetingBrowseContext";
+import PageHeader from "../components/PageHeader";
 import { useGuildContext } from "../contexts/GuildContext";
+import { useMeetingBrowseContext } from "../contexts/MeetingBrowseContext";
 import { useInvalidateMeetingLists } from "../hooks/useInvalidateMeetingLists";
+import { trpc } from "../services/trpc";
 import {
   meetingBrowseSearchSchema,
   selectMeetingSource,
   type MeetingBrowseSearch,
 } from "../utils/meetingBrowseSearch";
 import { meetingBrowseScope } from "./hooks/useMeetingBrowse";
+import { LibraryNotionStatus } from "./library/components/LibraryNotionStatus";
 import MeetingDetailDrawer from "./library/components/MeetingDetailDrawer";
-import { FirstMeetingEmptyState } from "./library/components/FirstMeetingEmptyState";
+import { UnifiedMeetingControls } from "./UnifiedMeetingControls";
+import { UnifiedMeetingResults } from "./UnifiedMeetingResults";
 
 export default function UnifiedMeetingsPage() {
   const search = meetingBrowseSearchSchema.parse(
     useSearch({ from: "/portal/meetings" }),
   );
   const browse = useMeetingBrowseContext();
-  const dateRangeState = meetingDateRangeState(search);
   const { guilds } = useGuildContext();
   const navigate = useNavigate({ from: "/portal/meetings" });
   const scope = meetingBrowseScope(search);
@@ -61,29 +46,6 @@ export default function UnifiedMeetingsPage() {
   const channelNameMap = new Map(
     browse.rows.map((row) => [row.channelId, row.channelName]),
   );
-  const tagOptions = [
-    ...new Set(browse.rows.flatMap((row) => row.tags)),
-  ].sort();
-  const channelOptions = [...channelNameMap].map(([value, label]) => ({
-    value,
-    label,
-  }));
-  const filtered = Boolean(
-    search.attended ||
-    search.q?.trim() ||
-    search.tags ||
-    search.channelId ||
-    search.range !== "all" ||
-    search.archive !== "active",
-  );
-  const completeEmpty =
-    sourceAvailable &&
-    !browse.isLoading &&
-    !browse.error &&
-    browse.discoveryComplete &&
-    !browse.hasMore &&
-    browse.rows.length === 0 &&
-    !filtered;
   const openUpload = () => navigate({ to: "/portal/upload" });
   return (
     <Stack gap="lg" data-testid="unified-meetings-page">
@@ -127,48 +89,11 @@ export default function UnifiedMeetingsPage() {
         />
         <Button onClick={openUpload}>Upload media</Button>
       </Group>
-      <FiltersBar
-        query={search.q ?? ""}
-        onQueryChange={(q) => update({ q })}
-        tagOptions={tagOptions}
-        selectedTags={search.tags?.split(",").filter(Boolean) ?? []}
-        onTagsChange={(tags) => update({ tags: tags.join(",") || undefined })}
-        selectedRange={search.range}
-        onRangeChange={(range) =>
-          update({ range: meetingBrowseSearchSchema.parse({ range }).range })
-        }
-        archiveFilter={search.archive}
-        onArchiveFilterChange={(archive) => update({ archive })}
-        selectedChannel={search.channelId ?? null}
-        onChannelChange={(channelId) =>
-          update({ channelId: channelId ?? undefined })
-        }
-        channelOptions={channelOptions}
+      <UnifiedMeetingControls
+        search={search}
+        update={update}
+        rows={browse.rows}
       />
-      {search.range === "custom" ? (
-        <Group>
-          <TextInput
-            label="From"
-            type="datetime-local"
-            value={formatLocalMeetingDate(search.startDate)}
-            onChange={(event) => {
-              update({
-                startDate: parseLocalMeetingDate(event.currentTarget.value),
-              });
-            }}
-          />
-          <TextInput
-            label="Until"
-            type="datetime-local"
-            value={formatLocalMeetingDate(search.endDate)}
-            onChange={(event) => {
-              update({
-                endDate: parseLocalMeetingDate(event.currentTarget.value),
-              });
-            }}
-          />
-        </Group>
-      ) : null}
       <Group justify="space-between">
         <Text size="sm" c="dimmed">
           {browse.items.length} loaded meetings
@@ -193,52 +118,14 @@ export default function UnifiedMeetingsPage() {
           </Button>
         </Group>
       </Group>
-      {dateRangeState !== "ready" ? (
-        <Text role="status">
-          {dateRangeState === "incomplete"
-            ? "Choose both dates to load meetings in a custom range."
-            : "Choose an end date at or after the start date."}
-        </Text>
-      ) : completeEmpty && scope.kind === "guild" ? (
-        <FirstMeetingEmptyState
-          serverName={
-            guild?.name ??
-            browse.sources.find((source) => source.id === scope.serverId)?.name
-          }
-          discordUrl={`https://discord.com/channels/${encodeURIComponent(scope.serverId)}`}
-          optionalSetupUrl={
-            guild?.canManage
-              ? `/join?serverId=${encodeURIComponent(scope.serverId)}#optional-setup`
-              : undefined
-          }
-        />
-      ) : completeEmpty ? (
-        <Stack>
-          <Text>
-            {scope.kind === "personal"
-              ? "Upload your first personal recording."
-              : "Choose a source or upload your first recording."}
-          </Text>
-          <Button onClick={openUpload}>Upload recording</Button>
-        </Stack>
-      ) : (
-        <MeetingList
-          items={browse.items}
-          listLoading={browse.isLoading}
-          listError={Boolean(browse.error)}
-          selectedMeetingId={search.meetingId ?? null}
-          onSelect={(id) => {
-            const row = browse.items.find((item) => item.id === id);
-            if (row?.serverId)
-              void update({ meetingId: row.id, meetingServerId: row.serverId });
-          }}
-          emptyTitle={
-            browse.hasMore || !browse.discoveryComplete
-              ? "Still checking accessible recordings."
-              : "No meetings match these filters."
-          }
-        />
-      )}
+      <UnifiedMeetingResults
+        search={search}
+        browse={browse}
+        guild={guild}
+        sourceAvailable={sourceAvailable}
+        update={update}
+        openUpload={openUpload}
+      />
       {browse.hasMore ? (
         <Button loading={browse.isFetching} onClick={browse.loadMore}>
           Load more
