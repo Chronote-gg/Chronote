@@ -348,6 +348,41 @@ test("stale, revoked and deleted index pointers cannot expose fields", async () 
   expect(JSON.stringify(result)).not.toContain("title-revoked");
   expect(JSON.stringify(result)).not.toContain("secret");
 });
+
+test("a repaired guild-share pointer revoked after the repair read cannot expose fields", async () => {
+  const personal = row("repair-race", {
+    guildId: "personal:other",
+    ownerUserId: "other",
+    accessGrants: [],
+  });
+  save(personal);
+  jest
+    .spyOn(getMeetingUserIndexRepository(), "listByPrincipalTimestampPage")
+    .mockImplementation(async (principal) => ({
+      items:
+        principal === "GUILD_SHARE#guild"
+          ? [
+              {
+                record: {
+                  userId: principal,
+                  userTimestamp:
+                    "2026-01-01T00:00:00.000Z#personal:other#repair-race",
+                  guildId: personal.guildId,
+                  channelId_timestamp: personal.channelId_timestamp,
+                  meetingId: personal.meetingId,
+                  timestamp: personal.timestamp,
+                  accessReason: "guild_share",
+                },
+                cursorAfter: { userTimestamp: { S: "repair-race" } },
+              },
+            ]
+          : [],
+    }));
+  const result = await list();
+  expect(result.meetings).toEqual([]);
+  expect(JSON.stringify(result)).not.toContain("title-repair-race");
+  expect(JSON.stringify(result)).not.toContain("secret");
+});
 test("accessible non-attended rows keep artifact-off flags and bind every filter", async () => {
   save(row("one"), row("two"));
   const first = await list({ limit: 1 });

@@ -4,6 +4,8 @@ import type {
   MeetingBrowsePage,
 } from "../types/meetingBrowse";
 import {
+  inventoryGuildShareIndexMetadataPage,
+  getGuildShareIndexMetadataStrong,
   getDeploymentControlRepository,
   getMeetingUpdateDeliveryRepository,
 } from "../db";
@@ -32,6 +34,8 @@ export type MeetingHistoryRepository = Pick<
   MeetingUpdateDeliveryRepository,
   "getStrong" | "updateContentAndDelivery"
 > & {
+  inventoryGuildShareMetadataPage: typeof inventoryGuildShareIndexMetadataPage;
+  getGuildShareMetadataStrong: typeof getGuildShareIndexMetadataStrong;
   listByGuildTimestampPage: (
     guildId: string,
     options: MeetingBrowsePageOptions,
@@ -122,6 +126,8 @@ const ownedOperations = {
     getDeploymentControlRepository().getMeetingHistory(key),
 };
 const realRepository: MeetingHistoryRepository = {
+  inventoryGuildShareMetadataPage: inventoryGuildShareIndexMetadataPage,
+  getGuildShareMetadataStrong: getGuildShareIndexMetadataStrong,
   ...ownedOperations,
   listByGuildTimestampPage: getMeetingHistoryTimestampPage,
   write: writeMeetingHistory,
@@ -174,6 +180,16 @@ const realRepository: MeetingHistoryRepository = {
 };
 
 const mockRepository: MeetingHistoryRepository = {
+  async inventoryGuildShareMetadataPage() {
+    throw new Error(
+      "Historical repair requires an explicit real repository target",
+    );
+  },
+  async getGuildShareMetadataStrong() {
+    throw new Error(
+      "Historical repair requires an explicit real repository target",
+    );
+  },
   ...ownedOperations,
   async listByGuildTimestampPage(guildId, options) {
     options.signal?.throwIfAborted();
@@ -203,16 +219,14 @@ const mockRepository: MeetingHistoryRepository = {
                 record.channelId_timestamp.localeCompare(cursorKey) < 0),
           )
         : records;
-    const items = remaining
-      .slice(0, options.limit)
-      .map((record) => ({
-        record,
-        cursorAfter: marshall({
-          guildId: record.guildId,
-          timestamp: record.timestamp,
-          channelId_timestamp: record.channelId_timestamp,
-        }),
-      }));
+    const items = remaining.slice(0, options.limit).map((record) => ({
+      record,
+      cursorAfter: marshall({
+        guildId: record.guildId,
+        timestamp: record.timestamp,
+        channelId_timestamp: record.channelId_timestamp,
+      }),
+    }));
     return {
       items,
       nextCursor:

@@ -33,6 +33,7 @@ describe("meetingUserIndexService", () => {
     deleteRecords.mockResolvedValue(undefined);
     listByUserTimestampRange.mockResolvedValue([]);
     jest.mocked(getMeetingUserIndexRepository).mockReturnValue({
+      existsStrong: jest.fn<() => Promise<boolean>>(),
       listByPrincipalTimestampPage: jest
         .fn<() => Promise<{ items: [] }>>()
         .mockResolvedValue({ items: [] }),
@@ -79,15 +80,14 @@ test("guild grant replacement removes old pointers and exposes failed writes", a
     .fn<() => Promise<void>>()
     .mockRejectedValue(new Error("write failed"));
   const remove = jest.fn<() => Promise<void>>().mockResolvedValue(undefined);
-  jest
-    .mocked(getMeetingUserIndexRepository)
-    .mockReturnValue({
-      write,
-      delete: remove,
-      listByUserTimestampRange:
-        jest.fn<() => Promise<MeetingUserIndexRecord[]>>(),
-      listByPrincipalTimestampPage: jest.fn<() => Promise<{ items: [] }>>(),
-    });
+  jest.mocked(getMeetingUserIndexRepository).mockReturnValue({
+    existsStrong: jest.fn<() => Promise<boolean>>(),
+    write,
+    delete: remove,
+    listByUserTimestampRange:
+      jest.fn<() => Promise<MeetingUserIndexRecord[]>>(),
+    listByPrincipalTimestampPage: jest.fn<() => Promise<{ items: [] }>>(),
+  });
   await expect(
     replaceMeetingUserIndexForMeetingService(
       {

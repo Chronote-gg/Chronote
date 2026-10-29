@@ -5,6 +5,7 @@ import type {
 } from "../types/meetingBrowse";
 import { config } from "../services/configService";
 import {
+  meetingUserIndexPointerExistsStrong,
   getMeetingUserIndexTimestampPage,
   deleteMeetingUserIndexRecords,
   getMeetingUserIndexRecordsForUserInRange,
@@ -19,6 +20,7 @@ import {
 import { getMockStore } from "./mockStore";
 
 export type MeetingUserIndexRepository = {
+  existsStrong: typeof meetingUserIndexPointerExistsStrong;
   listByPrincipalTimestampPage: (
     principal: string,
     options: MeetingBrowsePageOptions,
@@ -36,6 +38,7 @@ export type MeetingUserIndexRepository = {
 };
 
 const realRepository: MeetingUserIndexRepository = {
+  existsStrong: meetingUserIndexPointerExistsStrong,
   listByPrincipalTimestampPage: getMeetingUserIndexTimestampPage,
   write: writeMeetingUserIndexRecords,
   delete: deleteMeetingUserIndexRecords,
@@ -52,6 +55,11 @@ const listMockRecords = (userId: string) =>
     .filter((record) => record.userId === userId);
 
 const mockRepository: MeetingUserIndexRepository = {
+  async existsStrong(key) {
+    return listMockRecords(key.userId).some(
+      (record) => record.userTimestamp === key.userTimestamp,
+    );
+  },
   async listByPrincipalTimestampPage(principal, options) {
     options.signal?.throwIfAborted();
     if (!Number.isInteger(options.limit) || options.limit <= 0)
@@ -69,15 +77,13 @@ const mockRepository: MeetingUserIndexRepository = {
           (record) => record.userTimestamp.localeCompare(cursorKey) < 0,
         )
       : records;
-    const items = remaining
-      .slice(0, options.limit)
-      .map((record) => ({
-        record,
-        cursorAfter: marshall({
-          userId: record.userId,
-          userTimestamp: record.userTimestamp,
-        }),
-      }));
+    const items = remaining.slice(0, options.limit).map((record) => ({
+      record,
+      cursorAfter: marshall({
+        userId: record.userId,
+        userTimestamp: record.userTimestamp,
+      }),
+    }));
     return {
       items,
       nextCursor:
@@ -85,9 +91,14 @@ const mockRepository: MeetingUserIndexRepository = {
     };
   },
   async write(records) {
-    for (const record of records)
-      if (record.accessReason !== "guild_share")
+    for (const record of records) {
+      if (record.accessReason === "guild_share") {
+        if (!record.userId.startsWith("GUILD_SHARE#"))
+          throw new Error("Invalid guild share principal");
+      } else {
         assertRawMeetingIndexUserId(record.userId);
+      }
+    }
   },
   async delete() {},
   async listByUserTimestampRange(userId, startTimestamp, endTimestamp, limit) {
