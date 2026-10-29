@@ -8,6 +8,10 @@ import {
 import {
   runPlanGuard,
   runtimeGuard,
+  findChange,
+  dropResource,
+  forceUpdate,
+  markAllNoOp,
 } from "../fixtures/deployment/planGuard.js";
 
 type Plan = ReturnType<typeof runtimePlan>;
@@ -15,11 +19,7 @@ type Change = Plan["resource_changes"][number];
 
 const validate = (input: unknown, account = runtimeAccountId) =>
   runPlanGuard(runtimeGuard, JSON.stringify(input), [account]);
-function find(plan: Plan, address: string): Change {
-  const resource = plan.resource_changes.find((r) => r.address === address);
-  if (!resource) throw new Error(`missing ${address}`);
-  return resource;
-}
+const find = (plan: Plan, address: string): Change => findChange(plan, address);
 function rejected(mutate: (plan: Plan) => void) {
   const plan = runtimePlan();
   mutate(plan);
@@ -42,11 +42,7 @@ test("accepts the runtime creates, policy update, index addition and drain delay
 });
 
 test("accepts targets that already match as no-ops", () => {
-  const plan = runtimePlan();
-  for (const resource of plan.resource_changes)
-    if (resource.mode === "managed")
-      resource.change = { actions: ["no-op"] } as Change["change"];
-  expect(validate(plan).status).toBe(0);
+  expect(validate(markAllNoOp(runtimePlan())).status).toBe(0);
 });
 
 test.each([
@@ -61,14 +57,7 @@ test.each([
   "github_actions_environment_variable.production_deploy_role[0]",
 ])("rejects a change to %s outside the scope", (address) =>
   rejected((plan) => {
-    plan.resource_changes = plan.resource_changes.filter(
-      (r) => r.address !== address,
-    );
-    plan.resource_changes.push({
-      address,
-      mode: "managed",
-      change: { actions: ["update"] },
-    } as Change);
+    forceUpdate(plan, address);
   }),
 );
 
@@ -76,9 +65,7 @@ test.each(["aws_kms_key.app_general", "aws_lb_listener.api_https[0]"])(
   "requires %s as an unchanged dependency",
   (address) =>
     rejected((plan) => {
-      plan.resource_changes = plan.resource_changes.filter(
-        (r) => r.address !== address,
-      );
+      dropResource(plan, address);
     }),
 );
 

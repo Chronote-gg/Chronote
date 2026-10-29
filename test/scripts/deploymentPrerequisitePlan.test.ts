@@ -4,6 +4,7 @@ import {
   prerequisiteGuard,
   runPlanGuard,
   runtimeGuard,
+  siteGuard,
 } from "../fixtures/deployment/planGuard.js";
 
 const targets = [
@@ -106,7 +107,7 @@ test.each([
   expect(validate(input).status).toBe(1);
 });
 
-test.each([prerequisiteGuard, runtimeGuard])(
+test.each([prerequisiteGuard, runtimeGuard, siteGuard])(
   "%s refuses invalid JSON with a sanitized error",
   (guard) => {
     const result = runPlanGuard(guard, "SECRET-PLAN-VALUE");
