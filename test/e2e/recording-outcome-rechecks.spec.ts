@@ -84,7 +84,18 @@ test("My Meetings shows unknown duration and terminal empty recovery before dire
     fullPage: true,
   });
   await page.getByTestId("library-meeting-row").first().click();
-  await expect(page).toHaveURL(/\/portal\/meetings\/.+\/generated-disabled/);
+  await expect(page).toHaveURL((url) => {
+    const serverId = url.searchParams.get("meetingServerId");
+    return (
+      url.pathname === "/portal/meetings" &&
+      (serverId === mockGuilds.ddm.id ||
+        serverId === JSON.stringify(mockGuilds.ddm.id)) &&
+      url.searchParams.get("meetingId") === "generated-disabled#2026-01-01"
+    );
+  });
+  await expect(
+    page.getByTestId("meeting-drawer").getByRole("dialog"),
+  ).toBeVisible();
 });
 test("detail unavailable survives unchanged history, rechecks and displays the returning owner", async ({
   page,
