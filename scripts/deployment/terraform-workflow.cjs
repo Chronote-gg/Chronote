@@ -9,7 +9,12 @@ const {
   verifyBundle,
   restoreBundle,
 } = require("./terraform-bundle.cjs");
-const { verifyRun, verifyApproval } = require("./terraform-native.cjs");
+const {
+  verifyRun,
+  verifyApproval,
+  verifyApplySource,
+  assertProductionIdle,
+} = require("./terraform-native.cjs");
 const { runPrivateCommand } = require("./terraform-process.cjs");
 const { verifyMeetingUpdatePlan } = require("./terraform-meeting-update.cjs");
 const { digest } = require("./collector-payload.cjs");
@@ -22,17 +27,32 @@ const {
   validateRuntimePlan,
 } = require("./validate-runtime-plan.cjs");
 const { siteTargets, validateSitePlan } = require("./validate-site-plan.cjs");
+const {
+  processingRetryTargets,
+  validateProcessingRetryPlan,
+} = require("./validate-processing-retry-plan.cjs");
 const scopedValidators = {
   "deployment-prerequisites": validatePrerequisitePlan,
   "deployment-runtime": validateRuntimePlan,
   "site-delivery": validateSitePlan,
+  "processing-retry": validateProcessingRetryPlan,
 };
-// Bound scopes revalidate their restored plan before production Apply.
-const appliedScopes = new Set(["deployment-runtime", "site-delivery"]);
+// Bound scopes revalidate their restored plan before Apply.
+const appliedScopes = new Set([
+  "deployment-runtime",
+  "site-delivery",
+  "processing-retry",
+]);
 const scopedTargets = {
   "deployment-runtime": runtimeTargets,
   "site-delivery": siteTargets,
+  "processing-retry": processingRetryTargets,
 };
+// Resource names differ by environment while sandbox and production share an account.
+const scopeBinding = (options, invocation) => ({
+  ...options.binding,
+  environment: invocation.environment,
+});
 const prerequisites = new WeakMap();
 function privatePrerequisiteVerified(token, config) {
   const binding = prerequisites.get(token);
@@ -201,7 +221,7 @@ async function plan(options, invocation, e) {
     const shown = await e.terraform(["show", "-json", "tfplan"]);
     validateScope(
       JSON.parse(Buffer.from(shown.stdout, "base64").toString()),
-      options.binding,
+      scopeBinding(options, invocation),
     );
   }
   const shown = await e.terraform(["show", "-no-color", "tfplan"]);
@@ -231,11 +251,19 @@ async function apply(options, invocation, e, startApply) {
   if (invocation.environment === "production")
     await require("./production-writer-guard.cjs").runGuard(options.env, true);
   const proof = await verifyApproval(options.get, invocation, options);
+  // The plan may come from an earlier master commit; its own run names it.
+  const planRun = await options.get(
+    `/repos/${invocation.repository}/actions/runs/${options.producerRunId}`,
+  );
   const producer = parseInvocation({
     ...invocation,
     workflowPath: ".github/workflows/terraform-plan.yml",
     runId: options.producerRunId,
+    sourceSha: planRun.head_sha,
   });
+  // Exact-SHA equality used to prove this; a later Apply must check it itself.
+  if (invocation.environment === "production")
+    assert.equal(planRun.head_branch, "master");
   assert.equal(
     options.artifactName,
     `terraform-plan-${producer.environment}-${producer.workspace}-${producer.runId}`,
@@ -243,6 +271,12 @@ async function apply(options, invocation, e, startApply) {
   const nativeProducer = await verifyRun(options.get, producer, true);
   assert.ok(
     Date.parse(nativeProducer.updated_at) < Date.parse(proof.createdAt),
+  );
+  const sourceRelation = await verifyApplySource(
+    options.get,
+    invocation.repository,
+    producer.sourceSha,
+    invocation.sourceSha,
   );
   assert.equal(options.reference.sha256, options.bundleSha256);
   const producerStore = createTerraformCapture({
@@ -255,6 +289,7 @@ async function apply(options, invocation, e, startApply) {
     kind: "terraform-apply-intent-v1",
     invocation,
     producer,
+    sourceRelation,
     planSha256: options.planSha256,
     bundleSha256: options.bundleSha256,
     approval: proof,
@@ -289,6 +324,13 @@ async function apply(options, invocation, e, startApply) {
       readFileSync(join(options.directory, "_infra", name)),
       bytes,
     );
+  if (appliedScopes.has(invocation.scope)) {
+    const shown = await e.terraform(["show", "-json", "tfplan"]);
+    scopedValidators[invocation.scope](
+      JSON.parse(Buffer.from(shown.stdout, "base64").toString()),
+      scopeBinding(options, invocation),
+    );
+  }
   let prerequisite;
   if (invocation.environment === "production") {
     const {
@@ -308,13 +350,6 @@ async function apply(options, invocation, e, startApply) {
       prerequisite = {};
       prerequisites.set(prerequisite, { config, plan });
     }
-    if (appliedScopes.has(invocation.scope)) {
-      const shown = await e.terraform(["show", "-json", "tfplan"]);
-      scopedValidators[invocation.scope](
-        JSON.parse(Buffer.from(shown.stdout, "base64").toString()),
-        options.binding,
-      );
-    }
     await runGuard(options.env, false, prerequisite);
   }
   await verifyDelivery(e, options, invocation);
@@ -322,6 +357,8 @@ async function apply(options, invocation, e, startApply) {
     digest(readFileSync(join(options.directory, "_infra/tfplan"))),
     options.planSha256,
   );
+  if (invocation.environment === "production")
+    await assertProductionIdle(options.get, invocation.repository);
   options.signal.throwIfAborted();
   startApply();
   await e.terraform(["apply", "-no-color", "-input=false", "tfplan"]);

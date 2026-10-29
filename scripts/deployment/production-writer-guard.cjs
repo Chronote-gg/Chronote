@@ -44,13 +44,7 @@ function assertCaller(config, caller) {
   )
     refuse();
 }
-async function assertNormalWriter({
-  config,
-  caller,
-  read,
-  prerequisite,
-  types,
-}) {
+async function assertNormalWriter({ config, caller, read, prerequisite }) {
   assertCaller(config, caller);
   let hold;
   try {
@@ -67,10 +61,9 @@ async function assertNormalWriter({
     return refuse();
   }
   if (hold === undefined) return { status: "allowed" };
-  const parsed = (
-    types ?? require("../../dist/types/productionIntroduction.js")
-  ).introductionHoldSchema.parse(hold);
-  if (parsed.deployment.state !== "released") refuse();
+  // Read directly: Apply may run on a later commit, and compiled src is not a
+  // Terraform input, so the guard must not depend on built schemas.
+  if (hold.deployment?.state !== "released") refuse();
   return { status: "allowed" };
 }
 function guardConfiguration(env) {

@@ -9,6 +9,12 @@ const deliveryAttributes = [
   { name: "updateDeliveryQueue", type: "S" },
   { name: "updateDeliveryDueAt", type: "N" },
 ];
+const deliveryIndex = {
+  name: "UpdateDeliveryDueIndex",
+  hash_key: "updateDeliveryQueue",
+  range_key: "updateDeliveryDueAt",
+  projection_type: "KEYS_ONLY",
+};
 function canonical(value) {
   if (value === null || typeof value !== "object") return JSON.stringify(value);
   if (Array.isArray(value))
@@ -53,7 +59,7 @@ function without(value, fields) {
     Object.entries(value).filter(([key]) => !fields.includes(key)),
   );
 }
-function validateIndex(index, desired = false) {
+function validateIndex(index, desired) {
   const core = ["name", "hash_key", "range_key", "projection_type"];
   const neutral = {
     non_key_attributes: [],
@@ -91,19 +97,16 @@ function validateIndex(index, desired = false) {
         index,
         allowed.filter((key) => !core.includes(key)),
       ),
-      {
-        name: "UpdateDeliveryDueIndex",
-        hash_key: "updateDeliveryQueue",
-        range_key: "updateDeliveryDueAt",
-        projection_type: "KEYS_ONLY",
-      },
+      desired,
     );
   }
 }
-function tableDelta(change, arn) {
+// The table may change only by gaining `index` and its key attributes; the
+// processing-retry scope shares this comparison for its own index.
+function tableDelta(change, { name, arn, attributes: added, index }) {
   for (const value of [change.before, change.after]) {
-    assert.equal(value.name, tableName);
-    assert.equal(value.id, tableName);
+    assert.equal(value.name, name);
+    assert.equal(value.id, name);
     assert.equal(value.arn, arn);
     assert.equal(value.billing_mode, "PAY_PER_REQUEST");
     if (value.region != null) assert.equal(value.region, "us-east-1");
@@ -133,18 +136,17 @@ function tableDelta(change, arn) {
   assert.ok(!hasUnknown(mask), "Unknown table effect");
   const expected = structuredClone(change.before);
   const attributes = named(expected.attribute);
-  for (const attribute of deliveryAttributes) {
+  for (const attribute of added) {
     if (attributes.has(attribute.name))
       equal(attributes.get(attribute.name), attribute);
     else expected.attribute.push(attribute);
   }
-  const desired = named(change.after.global_secondary_index).get(
-    "UpdateDeliveryDueIndex",
-  );
-  assert.ok(desired, "Missing delivery index");
-  validateIndex(desired, true);
+  const desired = named(change.after.global_secondary_index).get(index.name);
+  assert.ok(desired, `Missing ${index.name}`);
+  validateIndex(desired, index);
   const indexes = named(expected.global_secondary_index);
-  if (indexes.has(desired.name)) validateIndex(indexes.get(desired.name), true);
+  if (indexes.has(desired.name))
+    validateIndex(indexes.get(desired.name), index);
   else expected.global_secondary_index.push(desired);
   const normalize = (value) => {
     const normalized = without(value, computed);
@@ -200,7 +202,13 @@ function verifyResource(resource, arn, accountId) {
     assert.equal(resource.provider_name, "registry.terraform.io/hashicorp/aws");
     assert.equal(resource.type, resource.address.split(".")[0]);
     assert.equal(resource.name, resource.address.split(".")[1]);
-    if (resource.address === tableAddress) tableDelta(change, arn);
+    if (resource.address === tableAddress)
+      tableDelta(change, {
+        name: tableName,
+        arn,
+        attributes: deliveryAttributes,
+        index: deliveryIndex,
+      });
     else policyDelta(change, arn, accountId);
   } else {
     assert.equal(change.actions[0], "no-op", "Unrelated managed effect");
@@ -236,4 +244,12 @@ function verifyMeetingUpdatePlan(plan, identity) {
     "Missing target state",
   );
 }
-module.exports = { verifyMeetingUpdatePlan, hasUnknown };
+module.exports = {
+  verifyMeetingUpdatePlan,
+  hasUnknown,
+  named,
+  validateIndex,
+  tableDelta,
+  deliveryIndex,
+  without,
+};

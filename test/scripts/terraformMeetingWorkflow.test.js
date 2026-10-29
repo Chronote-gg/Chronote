@@ -9,12 +9,44 @@ import {
   invocation,
 } from "../fixtures/deployment/terraformWorkflow.js";
 import { meetingUpdatePlan } from "../fixtures/deployment/terraformMeetingUpdate.js";
+import {
+  quietSandboxPlan,
+  tableAddress,
+} from "../fixtures/deployment/processingRetryPlan.js";
 const sandbox = {
   ...invocation,
   environment: "sandbox",
   workspace: "sandbox",
   scope: "meeting-update-delivery",
 };
+// Clears the plan workspace like a fresh runner, then applies the reviewed bundle.
+async function applySandbox(f, planOptions, plan, beforeApply) {
+  const reference = JSON.parse(
+    readFileSync(
+      join(planOptions.privateDirectory, "bundle-reference.json"),
+      "utf8",
+    ),
+  );
+  for (const name of readdirSync(join(f.directory, "_infra")))
+    if (![".terraform.lock.hcl", "terraform.auto.tfvars.json"].includes(name))
+      rmSync(join(f.directory, "_infra", name));
+  beforeApply();
+  const { scope } = planOptions.invocation;
+  f.controls.applyTitle = `Terraform Apply sandbox/sandbox/${scope} plan=10 plan-sha=${plan.planSha256} bundle-sha=${plan.bundleSha256}`;
+  return runTerraform({
+    ...f.options({
+      ...sandbox,
+      scope,
+      workflowPath: ".github/workflows/terraform-apply.yml",
+      runId: "20",
+    }),
+    producerRunId: "10",
+    artifactName: "terraform-plan-sandbox-sandbox-10",
+    reference,
+    planSha256: plan.planSha256,
+    bundleSha256: plan.bundleSha256,
+  });
+}
 test.each([
   "none",
   "plan-delta",
@@ -79,34 +111,12 @@ test.each([
       expect(JSON.stringify(plan)).not.toMatch(
         /MeetingHistory|123456789012|bucket|versionId/,
       );
-      const reference = JSON.parse(
-        readFileSync(
-          join(planOptions.privateDirectory, "bundle-reference.json"),
-          "utf8",
-        ),
-      );
-      for (const name of readdirSync(join(f.directory, "_infra")))
-        if (
-          ![".terraform.lock.hcl", "terraform.auto.tfvars.json"].includes(name)
-        )
-          rmSync(join(f.directory, "_infra", name));
-      if (fault === "apply-delta")
-        f.controls.planJson.resource_changes[1].change.after.tags = {
-          unreviewed: "true",
-        };
-      if (fault === "apply-data-source") injectData();
-      f.controls.applyTitle = `Terraform Apply sandbox/sandbox/meeting-update-delivery plan=10 plan-sha=${plan.planSha256} bundle-sha=${plan.bundleSha256}`;
-      const result = await runTerraform({
-        ...f.options({
-          ...sandbox,
-          workflowPath: ".github/workflows/terraform-apply.yml",
-          runId: "20",
-        }),
-        producerRunId: "10",
-        artifactName: "terraform-plan-sandbox-sandbox-10",
-        reference,
-        planSha256: plan.planSha256,
-        bundleSha256: plan.bundleSha256,
+      const result = await applySandbox(f, planOptions, plan, () => {
+        if (fault === "apply-delta")
+          f.controls.planJson.resource_changes[1].change.after.tags = {
+            unreviewed: "true",
+          };
+        if (fault === "apply-data-source") injectData();
       });
       expect(result.status).toBe(applyRejected ? "refused" : "applied");
       expect(
@@ -178,3 +188,31 @@ test.each(
     }
   },
 );
+
+test.each([
+  ["applies", false],
+  ["refuses a restored plan with a second new index", true],
+])("Sandbox processing retry %s", async (_name, drift) => {
+  const f = fixture();
+  f.controls.environment = "sandbox";
+  f.controls.planJson = quietSandboxPlan();
+  const retry = { ...sandbox, scope: "processing-retry" };
+  try {
+    const planOptions = f.options(retry);
+    const plan = await runTerraform(planOptions);
+    expect(plan.status).toBe("planned-changes");
+    const result = await applySandbox(f, planOptions, plan, () => {
+      if (!drift) return;
+      const indexes = f.controls.planJson.resource_changes.find(
+        (r) => r.address === tableAddress,
+      ).change.after.global_secondary_index;
+      indexes.push({ ...indexes.at(-1), name: "UnreviewedIndex" });
+    });
+    expect(result.status).toBe(drift ? "refused" : "applied");
+    expect(f.commands.filter((c) => c.args[1] === "apply")).toHaveLength(
+      drift ? 0 : 1,
+    );
+  } finally {
+    rmSync(f.directory, { recursive: true, force: true });
+  }
+});

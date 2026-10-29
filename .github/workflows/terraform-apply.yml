@@ -36,7 +36,7 @@ on:
         type: string
       plan_scope:
         default: meeting-update-delivery
-        description: Scope of the reviewed saved plan; Sandbox requires meeting-update-delivery
+        description: Scope of the reviewed saved plan; Sandbox requires meeting-update-delivery or processing-retry
         required: true
         type: choice
         options:
@@ -46,6 +46,7 @@ on:
           - deployment-prerequisites
           - deployment-runtime
           - site-delivery
+          - processing-retry
       confirmation:
         description: Type apply to request the reviewed plan; native approval is also required
         required: true
@@ -57,7 +58,8 @@ permissions:
   id-token: write
 
 concurrency:
-  group: ${{ inputs.github_environment == 'production' && 'chronote-deploy-production' || format('terraform-apply-{0}-{1}', inputs.github_environment, inputs.terraform_workspace) }}
+  # Own group: a merge-triggered deploy must never displace a queued Apply.
+  group: chronote-terraform-${{ inputs.github_environment }}
   cancel-in-progress: false
 
 jobs:
@@ -88,9 +90,7 @@ jobs:
           node-version-file: ".nvmrc"
           cache: yarn
       - name: Install dependencies
-        run: |
-          bash scripts/ci-install-dependencies.sh
-          yarn build
+        run: bash scripts/ci-install-dependencies.sh
       - name: Validate Terraform dispatch scope
         run: node scripts/deployment/terraform-dispatch.cjs --validate
       - name: Configure Sandbox AWS credentials
