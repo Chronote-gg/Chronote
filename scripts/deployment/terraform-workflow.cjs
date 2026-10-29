@@ -17,6 +17,7 @@ const {
 } = require("./terraform-native.cjs");
 const { runPrivateCommand } = require("./terraform-process.cjs");
 const { verifyMeetingUpdatePlan } = require("./terraform-meeting-update.cjs");
+const { meetingModelEvidence } = require("./terraform-meeting-model.cjs");
 const { digest } = require("./collector-payload.cjs");
 const {
   targets,
@@ -180,19 +181,34 @@ async function version(executionState) {
 async function verifyDelivery(e, options, invocation) {
   if (invocation.scope !== "meeting-update-delivery") return;
   const shown = await e.terraform(["show", "-json", "tfplan"]);
-  verifyMeetingUpdatePlan(
-    JSON.parse(Buffer.from(shown.stdout, "base64").toString()),
-    {
-      accountId: options.binding.accountId,
-      region: options.binding.region,
-    },
-  );
+  const plan = JSON.parse(Buffer.from(shown.stdout, "base64").toString());
+  const identity = {
+    accountId: options.binding.accountId,
+    region: options.binding.region,
+  };
+  try {
+    verifyMeetingUpdatePlan(plan, identity);
+    return;
+  } catch {
+    // A failed strict comparison can use only the separately audited model.
+    // The invocation/run and, on Apply, producer bundle and source relation
+    // have already been authenticated before this exact tfplan rendering.
+  }
+  assert.equal(invocation.environment, "sandbox");
+  const evidence = meetingModelEvidence(plan, {
+    directory: options.directory,
+    sourceSha: invocation.sourceSha,
+    output: e.output,
+    lockfileSha256: options.lockfileSha256,
+  });
+  verifyMeetingUpdatePlan(plan, identity, evidence);
 }
 async function plan(options, invocation, e) {
   await verifyRun(options.get, invocation, false);
   await e.retain({ kind: "terraform-plan-intent-v1", invocation });
   const terraformVersion = await version(e);
   await prepare(e, options, invocation.environment === "production");
+  if (invocation.scope === "meeting-update-delivery") await version(e);
   const args = [
     "plan",
     "-no-color",
@@ -304,6 +320,7 @@ async function apply(options, invocation, e, startApply) {
   });
   restoreBundle(files, join(options.directory, "_infra"));
   await prepare(e, options, false);
+  if (invocation.scope === "meeting-update-delivery") await version(e);
   const shown = await e.terraform(["show", "-no-color", "tfplan"]);
   assert.deepEqual(
     Buffer.from(shown.stdout, "base64"),
