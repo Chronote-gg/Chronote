@@ -27,17 +27,32 @@ const {
   validateRuntimePlan,
 } = require("./validate-runtime-plan.cjs");
 const { siteTargets, validateSitePlan } = require("./validate-site-plan.cjs");
+const {
+  processingRetryTargets,
+  validateProcessingRetryPlan,
+} = require("./validate-processing-retry-plan.cjs");
 const scopedValidators = {
   "deployment-prerequisites": validatePrerequisitePlan,
   "deployment-runtime": validateRuntimePlan,
   "site-delivery": validateSitePlan,
+  "processing-retry": validateProcessingRetryPlan,
 };
-// Bound scopes revalidate their restored plan before production Apply.
-const appliedScopes = new Set(["deployment-runtime", "site-delivery"]);
+// Bound scopes revalidate their restored plan before Apply.
+const appliedScopes = new Set([
+  "deployment-runtime",
+  "site-delivery",
+  "processing-retry",
+]);
 const scopedTargets = {
   "deployment-runtime": runtimeTargets,
   "site-delivery": siteTargets,
+  "processing-retry": processingRetryTargets,
 };
+// Resource names differ by environment while sandbox and production share an account.
+const scopeBinding = (options, invocation) => ({
+  ...options.binding,
+  environment: invocation.environment,
+});
 const prerequisites = new WeakMap();
 function privatePrerequisiteVerified(token, config) {
   const binding = prerequisites.get(token);
@@ -206,7 +221,7 @@ async function plan(options, invocation, e) {
     const shown = await e.terraform(["show", "-json", "tfplan"]);
     validateScope(
       JSON.parse(Buffer.from(shown.stdout, "base64").toString()),
-      options.binding,
+      scopeBinding(options, invocation),
     );
   }
   const shown = await e.terraform(["show", "-no-color", "tfplan"]);
@@ -309,6 +324,13 @@ async function apply(options, invocation, e, startApply) {
       readFileSync(join(options.directory, "_infra", name)),
       bytes,
     );
+  if (appliedScopes.has(invocation.scope)) {
+    const shown = await e.terraform(["show", "-json", "tfplan"]);
+    scopedValidators[invocation.scope](
+      JSON.parse(Buffer.from(shown.stdout, "base64").toString()),
+      scopeBinding(options, invocation),
+    );
+  }
   let prerequisite;
   if (invocation.environment === "production") {
     const {
@@ -327,13 +349,6 @@ async function apply(options, invocation, e, startApply) {
       );
       prerequisite = {};
       prerequisites.set(prerequisite, { config, plan });
-    }
-    if (appliedScopes.has(invocation.scope)) {
-      const shown = await e.terraform(["show", "-json", "tfplan"]);
-      scopedValidators[invocation.scope](
-        JSON.parse(Buffer.from(shown.stdout, "base64").toString()),
-        options.binding,
-      );
     }
     await runGuard(options.env, false, prerequisite);
   }
