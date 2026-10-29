@@ -3,11 +3,11 @@ const assert = require("node:assert/strict");
 const { boundedBody } = require("./collector-principal.cjs");
 function nativeGitHub(token, request = fetch) {
   assert.ok(typeof token === "string" && token.length > 0);
-  return async (path) => {
+  return async (path, { paginated = false, maxBytes = 1048576 } = {}) => {
     try {
       assert.match(
         path,
-        /^\/repos\/Chronote-gg\/Chronote\/[a-zA-Z0-9/_.?=-]+$/,
+        /^\/repos\/Chronote-gg\/Chronote\/[a-zA-Z0-9/_.?=&-]+$/,
       );
       const signal = AbortSignal.timeout(30000);
       const response = await request("https://api.github.com" + path, {
@@ -20,8 +20,9 @@ function nativeGitHub(token, request = fetch) {
         signal,
       });
       assert.ok(response.ok);
-      assert.equal(response.headers.get("link"), null);
-      return JSON.parse(await boundedBody(response.body, 1048576, signal));
+      // Only callers that read a complete first page may accept more pages.
+      if (!paginated) assert.equal(response.headers.get("link"), null);
+      return JSON.parse(await boundedBody(response.body, maxBytes, signal));
     } catch {
       throw new Error("UNKNOWN: GitHub metadata unavailable");
     }
@@ -54,6 +55,75 @@ async function verifyRun(get, invocation, completed, inputs) {
   assert.equal(run.conclusion, completed ? "success" : null);
   assert.ok(Number.isFinite(Date.parse(run.created_at)));
   return run;
+}
+// Inputs that shape what Terraform plans or how the saved plan is restored.
+const terraformInputs = [
+  /^_infra\//,
+  /^scripts\/deployment\//,
+  /^patches\//,
+  /^\.yarn\//,
+  /^\.github\/workflows\/terraform-(plan|apply)\.yml$/,
+  /^(package\.json|yarn\.lock|\.nvmrc|\.node-version|\.npmrc|\.yarnrc|\.yarnrc\.yml)$/,
+  /^scripts\/ci-install-dependencies\.sh$/,
+];
+// GitHub lists at most this many changed files, all on the first page.
+const compareFileLimit = 300;
+// Apply may run on a later master commit only if no Terraform input changed.
+async function verifyApplySource(get, repository, planSha, applySha) {
+  if (planSha === applySha) return "identical";
+  let comparison;
+  try {
+    comparison = await get(
+      `/repos/${repository}/compare/${planSha}...${applySha}?per_page=1`,
+      // Each changed file carries its patch, so a normal merge can be large.
+      { paginated: true, maxBytes: 16777216 },
+    );
+  } catch {
+    throw new Error("UNKNOWN: plan and Apply source comparison unavailable");
+  }
+  assert.equal(
+    comparison.status,
+    "ahead",
+    "Apply source must descend from the reviewed plan source",
+  );
+  assert.equal(comparison.merge_base_commit.sha, planSha);
+  assert.ok(
+    comparison.files.length < compareFileLimit,
+    "Too many changed files to prove Terraform inputs unchanged",
+  );
+  const changed = comparison.files
+    .flatMap((file) => [file.filename, file.previous_filename])
+    .find((path) => path && terraformInputs.some((input) => input.test(path)));
+  assert.equal(
+    changed,
+    undefined,
+    `Terraform input changed since the reviewed plan: ${changed}`,
+  );
+  return "ahead";
+}
+// Workflows that move production traffic or roles that the Apply may change.
+const productionWriters = [
+  "deploy.yml",
+  "production-cutover.yml",
+  "introduce-production.yml",
+  "production-introduction.yml",
+];
+const activeStatuses = ["in_progress", "queued", "waiting", "pending"];
+// Apply has its own concurrency group, so it checks for running writers itself.
+async function assertProductionIdle(get, repository) {
+  for (const workflow of productionWriters)
+    for (const status of activeStatuses) {
+      const runs = await get(
+        `/repos/${repository}/actions/workflows/${workflow}/runs?status=${status}&per_page=1`,
+        { paginated: true },
+      );
+      assert.ok(Number.isSafeInteger(runs.total_count));
+      assert.equal(
+        runs.total_count,
+        0,
+        `Production writer ${workflow} has a ${status} run; Apply after it settles`,
+      );
+    }
 }
 function checkProtection(environment, invocation, run) {
   assert.equal(environment.name, invocation.environment);
@@ -151,6 +221,8 @@ async function verifyEnvironmentApproval(get, invocation, run) {
 module.exports = {
   nativeGitHub,
   verifyRun,
+  verifyApplySource,
+  assertProductionIdle,
   verifyApproval,
   runTitle,
   verifyEnvironmentApproval,

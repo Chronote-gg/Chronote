@@ -74,7 +74,7 @@ test("Terraform defines the retry due index on MeetingHistory", () => {
     /resource "aws_dynamodb_table" "meeting_history_table" \{([\s\S]*?)\n\}/,
   )?.[1];
   const index = history?.match(
-    /global_secondary_index \{([^}]*name\s*=\s*"ProcessingRetryDueIndex"[^}]*)\}/,
+    /dynamic "global_secondary_index" \{\s*for_each = var\.ENABLE_PROCESSING_RETRY_INDEX \? \[1\] : \[\]\s*content \{([^}]*name\s*=\s*"ProcessingRetryDueIndex"[^}]*)\}/,
   )?.[1];
   expect(index).toMatch(
     new RegExp(`name\\s*=\\s*"${PROCESSING_RETRY_DUE_INDEX}"`),

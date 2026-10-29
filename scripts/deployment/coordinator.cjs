@@ -21,10 +21,12 @@ const {
   RETIREMENT_SECONDS,
   LEASE_SECONDS,
   RENEWAL_MARGIN_SECONDS,
+  HANDOFF_QUIET_SECONDS,
 } = require("./production-capacity.cjs");
 const { runCli } = require("./coordinator-cli.cjs");
 
 const { configuration } = require("./coordinator-definition.cjs");
+const HANDOFF_BLOCKING_WORK = ["recording", "finalization", "voice_operation"];
 function protocolModules(options) {
   const builders =
     options.builders ??
@@ -55,6 +57,7 @@ function createCoordinator(options = {}) {
     return callAws(service, operation, input);
   };
   const now = options.now ?? (() => Math.floor(Date.now() / 1000));
+  const warn = options.warn ?? ((message) => console.log(message));
   const sleep =
     options.sleep ??
     ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
@@ -373,7 +376,45 @@ function createCoordinator(options = {}) {
       );
     const nativeProtectionExpiresAt =
       Date.parse((await protectedTask(outgoing[0])).expirationDate) / 1000;
-    return { outgoing: outgoing[0], mode, nativeProtectionExpiresAt };
+    return { outgoing: outgoing[0], mode, nativeProtectionExpiresAt, old };
+  }
+  /**
+   * Once the candidate holds native protection, ECS refuses the outgoing
+   * task's renewals (protected tasks would exceed desired count 1), so the
+   * outgoing runtime shuts itself down within about eight minutes. Launch only
+   * while the serving runtime holds no recording, finalization or voice work.
+   * The production introduction keeps its own reviewed action sequence.
+   */
+  function assertUnowned(ctl) {
+    if (
+      ctl.coordinatorExpiresAt > now() ||
+      (ctl.deployment && ctl.deployment.phase !== "complete")
+    )
+      throw new CoordinatorFailure(
+        "coordinator_authority_changed",
+        "Another coordinator or unresolved deployment owns this environment",
+      );
+  }
+  async function quietOriginal(ctl, svc) {
+    const deadline = now() + HANDOFF_QUIET_SECONDS;
+    for (;;) {
+      assertUnowned(ctl);
+      const previous = await original(ctl, svc);
+      const counts = previous.old.workCounts;
+      if (
+        production ||
+        (counts &&
+          HANDOFF_BLOCKING_WORK.every((kind) => (counts[kind] ?? 0) === 0))
+      )
+        return { ctl, previous };
+      if (now() >= deadline)
+        throw new CoordinatorFailure(
+          "outgoing_busy",
+          "Serving runtime still holds recording, finalization or voice work; retry the deployment once it is quiet",
+        );
+      await sleep(10000);
+      ctl = await control();
+    }
   }
   async function findRegistered() {
     const matches = [];
@@ -519,15 +560,10 @@ function createCoordinator(options = {}) {
       }
       ctl = await renew(ctl);
     } else {
-      if (
-        ctl.coordinatorExpiresAt > now() ||
-        (ctl.deployment && ctl.deployment.phase !== "complete")
-      )
-        throw new CoordinatorFailure(
-          "coordinator_authority_changed",
-          "Another coordinator or unresolved deployment owns this environment",
-        );
-      const previous = await original(ctl, svc);
+      if (!production && ctl.deployment?.phase === "retiring")
+        ctl = (await stopped.continueStoppedOutgoing(ctl)).control;
+      let previous;
+      ({ ctl, previous } = await quietOriginal(ctl, svc));
       const traffic = await routing.prepare(svc, previous.outgoing);
       ctl = await save(ctl, {
         ...ctl,
@@ -848,6 +884,24 @@ function createCoordinator(options = {}) {
       "Retirement/convergence incomplete; preserve tasks and request recovery",
     );
   }
+  const stopped =
+    require("./stopped-outgoing.cjs").createStoppedOutgoingContinuation({
+      aws,
+      config,
+      builders,
+      tables,
+      now,
+      production,
+      control,
+      service,
+      runtime,
+      ready,
+      protectedTask,
+      routing,
+      promotionObserved,
+      same,
+      warn,
+    });
   async function rollbackReady(ctl, authorizedGeneration) {
     const d = ctl.deployment;
     const old = await runtime(d.outgoing);
@@ -946,6 +1000,10 @@ function createCoordinator(options = {}) {
     promote,
     retire,
     reconcile,
+    async continueStoppedOutgoing() {
+      await assertWriter();
+      return (await stopped.continueStoppedOutgoing(await control())).result;
+    },
     inspectServing: async () => {
       const ctl = await control();
       const svc = await service();

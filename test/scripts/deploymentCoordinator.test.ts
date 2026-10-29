@@ -302,6 +302,7 @@ test("retirementWithoutAckPreservesProtectedBusyOwner", async () => {
   const f = fixture();
   await f.coordinator.prepare();
   await f.coordinator.promote();
+  f.state.rows.old.workCounts = counts(1);
   await expect(f.coordinator.retire()).rejects.toThrow("incomplete");
   expect(f.state.rows.old.workCounts!.recording).toBe(1);
   expect(await f.coordinator.reconcile()).toMatchObject({

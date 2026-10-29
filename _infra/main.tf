@@ -258,6 +258,12 @@ variable "HOSTED_ZONE_NAME" {
   default     = ""
 }
 
+variable "ENABLE_PROCESSING_RETRY_INDEX" {
+  description = "Provision the processing retry index; does not enable runtime retries. Disable only when the index is confirmed absent."
+  type        = bool
+  default     = true
+}
+
 variable "ENABLE_OAUTH" {
   sensitive = false
   default   = "false"
@@ -2960,14 +2966,20 @@ resource "aws_dynamodb_table" "meeting_history_table" {
     type = "N"
   }
 
-  attribute {
-    name = "processingRetryQueue"
-    type = "S"
+  dynamic "attribute" {
+    for_each = var.ENABLE_PROCESSING_RETRY_INDEX ? [1] : []
+    content {
+      name = "processingRetryQueue"
+      type = "S"
+    }
   }
 
-  attribute {
-    name = "processingRetryDueAt"
-    type = "N"
+  dynamic "attribute" {
+    for_each = var.ENABLE_PROCESSING_RETRY_INDEX ? [1] : []
+    content {
+      name = "processingRetryDueAt"
+      type = "N"
+    }
   }
 
   global_secondary_index {
@@ -2978,11 +2990,14 @@ resource "aws_dynamodb_table" "meeting_history_table" {
   }
 
   # Sparse: only rows with a queued or running processing retry carry the keys.
-  global_secondary_index {
-    name            = "ProcessingRetryDueIndex"
-    hash_key        = "processingRetryQueue"
-    range_key       = "processingRetryDueAt"
-    projection_type = "KEYS_ONLY"
+  dynamic "global_secondary_index" {
+    for_each = var.ENABLE_PROCESSING_RETRY_INDEX ? [1] : []
+    content {
+      name            = "ProcessingRetryDueIndex"
+      hash_key        = "processingRetryQueue"
+      range_key       = "processingRetryDueAt"
+      projection_type = "KEYS_ONLY"
+    }
   }
 
   # GSI for querying all meetings in a guild by time

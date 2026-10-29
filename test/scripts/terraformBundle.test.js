@@ -189,6 +189,7 @@ test.each(
       "purchase-permission",
       "deployment-prerequisites",
       "deployment-runtime",
+      "site-delivery",
       undefined,
     ].map((scope) => [stage, scope]),
   ),

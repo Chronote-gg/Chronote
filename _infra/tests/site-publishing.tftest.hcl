@@ -204,3 +204,31 @@ run "unsupported_environment_has_no_site_grant" {
     error_message = "Only production and Sandbox may create or attach the site policy."
   }
 }
+
+# validate-site-plan.cjs names these exact values; keep both sides aligned.
+run "site_delivery_matches_its_plan_validator" {
+  command = plan
+  plan_options {
+    target = [aws_cloudfront_distribution.frontend, aws_cloudfront_distribution.docs, aws_cloudfront_function.frontend_route_rewrite, aws_cloudfront_response_headers_policy.crawler_noindex]
+  }
+  variables {
+    environment        = "prod"
+    github_environment = "production"
+  }
+  assert {
+    condition     = aws_cloudfront_function.frontend_route_rewrite.name == "meeting-notes-prod-frontend-route-rewrite" && aws_cloudfront_function.frontend_route_rewrite.runtime == "cloudfront-js-2.0" && aws_cloudfront_function.frontend_route_rewrite.publish && aws_cloudfront_response_headers_policy.crawler_noindex.name == "meeting-notes-prod-crawler-noindex"
+    error_message = "Function and headers policy names must match the site plan validator."
+  }
+  assert {
+    condition     = [for r in aws_cloudfront_distribution.frontend.custom_error_response : [r.error_code, r.response_code, r.response_page_path, r.error_caching_min_ttl]] == [[403, 404, "/404.html", 0]]
+    error_message = "The frontend serves only the real 404 page for missing objects."
+  }
+  assert {
+    condition     = [for b in aws_cloudfront_distribution.frontend.ordered_cache_behavior : b.path_pattern] == ["/assets/*", "/share/*"] && [for b in aws_cloudfront_distribution.docs.ordered_cache_behavior : b.path_pattern] == ["/assets/*", "/search*"]
+    error_message = "Each distribution gains exactly the behaviors the site plan validator expects."
+  }
+  assert {
+    condition     = [for f in one(aws_cloudfront_distribution.frontend.default_cache_behavior).function_association : f.event_type] == ["viewer-request"]
+    error_message = "The frontend default behavior runs the route rewrite on viewer requests."
+  }
+}

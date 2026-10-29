@@ -1,3 +1,4 @@
+import { speechRejectionSchema } from "./speechRejection";
 import { transcriptCorrespondenceSchema } from "./transcriptCorrespondence";
 import {
   autoCompletionPolicySchema,
@@ -246,6 +247,8 @@ export const generationContextSchema = base
 export const completedTranscriptionSchema = base
   .extend({
     kind: z.literal("completed_transcription"),
+    speechRejections: z.array(speechRejectionSchema).optional(),
+    speechRejectionEvidenceIncomplete: z.boolean().optional(),
     processing: z
       .object({
         finalPass: z.enum([
