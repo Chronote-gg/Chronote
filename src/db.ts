@@ -13,6 +13,7 @@ import {
 } from "@aws-sdk/client-dynamodb";
 import { marshall, unmarshall } from "@aws-sdk/util-dynamodb";
 import { randomUUID } from "node:crypto";
+import { renewActiveMeetingLeaseWrite } from "./repositories/activeMeetingLeaseRenewal";
 import { isDeepStrictEqual } from "node:util";
 import { z } from "zod";
 import { completeConditionalCancellation } from "./repositories/deploymentControlErrors";
@@ -694,7 +695,9 @@ export async function renewActiveMeetingLease(
     endedAt?: ActiveMeetingLease["endedAt"];
   },
   ownership?: { executionVersion: number; sessionMode: "meeting" | "tts_only" },
+  signal?: AbortSignal,
 ): Promise<boolean> {
+  signal?.throwIfAborted();
   const now = Math.floor(Date.now() / 1000);
   if (config.mock.enabled) {
     const lease = getMockStore().activeMeetingLeases.get(guildId);
@@ -786,18 +789,7 @@ export async function renewActiveMeetingLease(
       },
     ),
   };
-  const command = new UpdateItemCommand(params);
-  try {
-    await dynamoDbClient.send(command);
-    return true;
-  } catch (error) {
-    if (
-      (error as { name?: string }).name === "ConditionalCheckFailedException"
-    ) {
-      return false;
-    }
-    throw error;
-  }
+  return renewActiveMeetingLeaseWrite(dynamoDbClient, params, signal);
 }
 
 export async function releaseActiveMeetingLease(

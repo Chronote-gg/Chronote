@@ -112,7 +112,7 @@ Keep the saved files if you want to preserve the draft. You can start a separate
 
 1. **Filters hide the meeting.** **My Meetings** opens by default with an All time range and includes server, tag, and archive filters. Clear filters, or use **Load more** to fetch older loaded pages.
 2. **Wrong server selected.** Server Library scopes to one server. Use **My Meetings** for a cross-server view, or choose **View servers** to open the expected server.
-3. **Channel permissions.** The portal respects Discord channel permissions. You only see meetings from channels you can access, plus meetings you attended when attendee access is enabled.
+3. **Channel permissions.** The portal respects Discord channel permissions. Attendee access is enabled by default, so recorded attendees can still read their meetings after losing channel access or when the original channel is deleted. Server admins can turn off **Attendee access** in server settings; then current channel permissions are required.
 4. **No meetings recorded yet.** Meetings appear after at least one meeting has been completed successfully.
 
 ## Billing or plan issues

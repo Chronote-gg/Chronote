@@ -25,12 +25,14 @@ import {
   type MeetingUpdatePlanInput,
 } from "./meetingUpdatePlanTypes";
 import { notesPointersSchema } from "../types/meetingUpdateDelivery";
+import { recoveredMeetingSlots } from "./recoveredMeetingLayout";
 
 export type MeetingUpdateLayout = {
   message: DiscordEditorMessage;
   embeds: EditableEmbed[];
   notesSlots: number[];
   summarySlots: number[];
+  recoveredNotes?: boolean;
 };
 const embedKeys = new Set([...Object.keys(editableEmbedSchema.shape), "type"]);
 const nestedKeys: Record<string, Set<string>> = {
@@ -88,6 +90,7 @@ function readLayout(
   channelId: string,
   messageId: string,
   allowFooterlessRename = false,
+  registeredRole?: "notes" | "summary",
 ): MeetingUpdateLayout {
   const found = input.messages.filter((message) => message.id === messageId);
   if (!found.length) throw new MeetingUpdatePlanBlocked("missing_target");
@@ -111,15 +114,28 @@ function readLayout(
   )
     throw new MeetingUpdatePlanBlocked("unsupported_owner");
   const embeds = validateMeetingUpdateEmbeds(message.embeds);
-  const notesSlots = findRoutineNotesSlots(
-    embeds,
-    input.history.meetingName,
-    allowFooterlessRename,
-  );
   return {
     message,
     embeds,
-    notesSlots,
+    ...readLayoutSlots(input, embeds, allowFooterlessRename, registeredRole),
+  };
+}
+function readLayoutSlots(
+  input: MeetingUpdatePlanInput,
+  embeds: EditableEmbed[],
+  allowFooterlessRename: boolean,
+  registeredRole?: "notes" | "summary",
+) {
+  const recovered = registeredRole
+    ? recoveredMeetingSlots(input.history, embeds, registeredRole)
+    : undefined;
+  if (recovered) return recovered;
+  return {
+    notesSlots: findRoutineNotesSlots(
+      embeds,
+      input.history.meetingName,
+      allowFooterlessRename,
+    ),
     summarySlots: embeds.flatMap((embed, index) =>
       isSummaryEmbed(embed) ? [index] : [],
     ),
@@ -177,6 +193,7 @@ function readRegisteredLayouts(input: MeetingUpdatePlanInput) {
           notesChannelId,
           id,
           requestedPart(input, "notesTitle"),
+          "notes",
         ),
       )
     : [];
@@ -200,6 +217,8 @@ function readRegisteredLayouts(input: MeetingUpdatePlanInput) {
         input,
         input.history.textChannelId ?? pointers.notesChannelId ?? "",
         summaryId,
+        false,
+        "summary",
       )
     : undefined;
   if (
@@ -207,8 +226,17 @@ function readRegisteredLayouts(input: MeetingUpdatePlanInput) {
     (summary.summarySlots.length !== 1 || summary.notesSlots.length)
   )
     throw new MeetingUpdatePlanBlocked("unsupported_summary_layout");
+  assertRecoveredPageTitles(notes);
   validatePagination(notes, input);
   return { notes, summary };
+}
+function assertRecoveredPageTitles(layouts: MeetingUpdateLayout[]) {
+  if (!layouts.some((layout) => layout.recoveredNotes)) return;
+  const labels = layouts.flatMap((layout) =>
+    layout.notesSlots.map((index) => readPageLabel(layout.embeds[index])),
+  );
+  if (!labels.every((label) => label.baseTitle === labels[0]?.baseTitle))
+    throw new MeetingUpdatePlanBlocked("unsupported_pagination");
 }
 function readCreatedLayouts(
   input: MeetingUpdatePlanInput,

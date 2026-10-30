@@ -157,7 +157,11 @@ jest.mock("../services/savedRecordingPrompt", () => ({
         : [{ role: "user", content: "{{transcript}}" }],
   })),
 }));
-import { Collection } from "discord.js";
+import {
+  Collection,
+  PermissionsBitField,
+  PermissionFlagsBits,
+} from "discord.js";
 import { resolveMeetingRuntimeConfig } from "../services/meetingConfigService";
 import { attachMeetingReservation } from "../services/activeMeetingLeaseService";
 import { startRecordingContentCheckpoint } from "../services/recordingContentService";
@@ -200,6 +204,7 @@ const buildBotMember = (
 ) => {
   const originalDisplayName = displayName;
   const botMember = {
+    permissions: new PermissionsBitField(PermissionFlagsBits.ChangeNickname),
     displayName,
     nickname: nickname as string | null,
     setNickname: jest.fn(async (nextNickname: string | null) => {

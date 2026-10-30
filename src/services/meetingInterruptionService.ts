@@ -36,6 +36,8 @@ export function createMeetingInterruptionService<D extends Disposition>(
       actual: Promise<InterruptionOutcome>;
       result: Promise<InterruptionOutcome>;
       localSettled: boolean;
+      reconciled?: boolean;
+      reconciliation?: Promise<InterruptionOutcome>;
       reason: InterruptionReason;
       originalAttempt?: {
         guildId: string;
@@ -123,8 +125,44 @@ export function createMeetingInterruptionService<D extends Disposition>(
     }
     return result;
   }
+  function reconcile(
+    meeting: MeetingData,
+    deadline: number,
+    run: (budget: PreservationBudget) => Promise<boolean>,
+  ): Promise<InterruptionOutcome> {
+    const entry = owned.get(meeting);
+    if (!entry) return Promise.resolve({ kind: "unresolved" });
+    if (entry.reconciled || !active.has(meeting))
+      return Promise.resolve({ kind: "settled" });
+    if (entry.reconciliation) return entry.reconciliation;
+    const budget = createPreservationBudget(deadline);
+    const actual = (async (): Promise<InterruptionOutcome> => {
+      try {
+        if ((await budget.wait(entry.actual)).kind !== "settled")
+          return { kind: "unresolved" };
+        budget.signal.throwIfAborted();
+        if (!entry.localSettled || !(await run(budget)))
+          return { kind: "unresolved" };
+        budget.signal.throwIfAborted();
+        entry.reconciled = true;
+        active.delete(meeting);
+        return { kind: "settled" };
+      } catch {
+        return { kind: "unresolved" };
+      }
+    })();
+    // Once run starts, retain its actual lifetime, including any submitted cleanup effect.
+    const result = actual;
+    entry.reconciliation = result;
+    void actual.then(() => {
+      budget.dispose();
+      entry.reconciliation = undefined;
+    });
+    return result;
+  }
   return {
     interrupt,
+    reconcile,
     checkpoints: () =>
       [...active].map((meeting) => {
         const entry = owned.get(meeting)!;

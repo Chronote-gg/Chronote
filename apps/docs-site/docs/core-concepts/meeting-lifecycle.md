@@ -66,6 +66,8 @@ If recording is interrupted, Chronote can recover verified saved audio or text w
 
 Recovered partial notes keep an **Interrupted** status. A warning explains that they cover only the saved recording. The warning remains after notes edits and corrections, and appears in Discord, the library, shared meetings, copied or downloaded notes, Remote MCP, and Notion exports. Known transcription gaps still carry a warning even when recording itself finished.
 
+Once recovered summary and notes posts are confirmed, later notes edits and meeting renames update those same Discord posts. Existing links to the meeting and interruption warnings stay in place.
+
 The library shows recovery progress or when processing or delivery needs review. If saved text and audio cannot be combined safely, Chronote retains the content, marks recovery as needing review, and pauses automatic notes delivery and export. Confirmed saved audio duration describes preserved audio, which may contain gaps. It does not prove the full meeting was recorded. If the recording's exact end time is unknown, Chronote leaves it unknown.
 
 If the live page cannot confirm the recording status, it shows **Status unavailable** instead of Complete. Use **Retry** to check again, or open the meeting library for saved content and recovery status.
