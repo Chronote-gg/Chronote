@@ -21,7 +21,7 @@ source relation. A later Apply commit is allowed only under the existing verifie
 relation proving Terraform inputs unchanged. The model then binds an opaque proof
 to that exact rendering. A boolean, digest supplied by a caller, or another plan's
 proof cannot enable it. Readonly init must succeed and a subsequent version JSON
-record must identify Terraform 1.17.1 and installed AWS 6.69.1. The checked lock
+record must identify Terraform 1.17.1 and installed AWS 6.70.0. The checked lock
 pins the installation. Older captures without that record remain refused.
 
 ## Dependency audit
@@ -78,11 +78,12 @@ resource reads either local, the log group or the topic.
 
 ## Computed GSI representation
 
-In [AWS provider v6.69.1 table.go](https://github.com/hashicorp/terraform-provider-aws/blob/v6.69.1/internal/service/dynamodb/table.go#L607-L629),
+The official `table.go` files at v6.69.1 and v6.70.0 are byte-identical. In
+[AWS provider v6.70.0 table.go](https://github.com/hashicorp/terraform-provider-aws/blob/v6.70.0/internal/service/dynamodb/table.go#L619-L642),
 `warmThroughputSchema` is both optional and computed, as are its read/write unit
 fields. The GSI schema uses it too. It is writable when configured, so a computed
 mask by itself cannot justify ignoring it.
-The same version's [GSI update comparison](https://github.com/hashicorp/terraform-provider-aws/blob/v6.69.1/internal/service/dynamodb/table.go#L2104-L2121)
+The same version's [GSI update comparison](https://github.com/hashicorp/terraform-provider-aws/blob/v6.70.0/internal/service/dynamodb/table.go#L2256-L2272)
 skips a warm-throughput update when the new configuration omits it or leaves it
 empty. This guard requires actual configuration absence before using that rule.
 

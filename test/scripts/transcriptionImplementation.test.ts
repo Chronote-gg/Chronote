@@ -15,6 +15,7 @@ import {
   useCompiledTranscriptionFixture,
   unreviewedPcmManifest,
   prepareTranscriptionFixture,
+  TRANSCRIPTION_FIXTURE_SETUP_TIMEOUT_MS,
 } from "../helpers/compiledTranscriptionFixture";
 import { removeOwnedFixture } from "../helpers/compiledSpeechDetectionFixture";
 import { transcriptionBuildSchema } from "../../src/evals/transcriptionImplementation";
@@ -161,25 +162,29 @@ test("manifest entry reports a fixed build-required category and actionable hint
   expect(result.stderr).toContain("Run npm run build.");
 });
 
-test("current-source provenance suite works in an owned checkout with no dist", async () => {
-  const checkout = mkdtempSync(
-    path.join(os.tmpdir(), "vad-build-contract-source-"),
-  );
-  try {
-    copyTranscriptionSourceCheckout(root, checkout);
-    expect(existsSync(path.join(checkout, "dist"))).toBe(false);
-    const fixture = await prepareTranscriptionFixture(checkout, root);
-    let result: ReturnType<typeof run>;
+test(
+  "current-source provenance suite works in an owned checkout with no dist",
+  async () => {
+    const checkout = mkdtempSync(
+      path.join(os.tmpdir(), "vad-build-contract-source-"),
+    );
     try {
-      result = run("none", false, fixture);
+      copyTranscriptionSourceCheckout(root, checkout);
+      expect(existsSync(path.join(checkout, "dist"))).toBe(false);
+      const fixture = await prepareTranscriptionFixture(checkout, root);
+      let result: ReturnType<typeof run>;
+      try {
+        result = run("none", false, fixture);
+      } finally {
+        removeOwnedFixture(fixture, "vad-build-contract-");
+      }
+      expect(result.status).toBe(0);
+      expect(result.report.implementation.loader).toBe("compiled");
+      expect(result.report.summary.requests).toBe(0);
+      expect(existsSync(path.join(checkout, "dist"))).toBe(false);
     } finally {
-      removeOwnedFixture(fixture, "vad-build-contract-");
+      removeOwnedFixture(checkout, "vad-build-contract-");
     }
-    expect(result.status).toBe(0);
-    expect(result.report.implementation.loader).toBe("compiled");
-    expect(result.report.summary.requests).toBe(0);
-    expect(existsSync(path.join(checkout, "dist"))).toBe(false);
-  } finally {
-    removeOwnedFixture(checkout, "vad-build-contract-");
-  }
-}, 60000);
+  },
+  TRANSCRIPTION_FIXTURE_SETUP_TIMEOUT_MS + 60000,
+);

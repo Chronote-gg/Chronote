@@ -272,7 +272,7 @@ test.each([
         if (fault === "omit-installation") delete data.provider_selections;
         if (fault === "wrong-provider")
           data.provider_selections["registry.terraform.io/hashicorp/aws"] =
-            "6.70.0";
+            "6.69.1";
         record.stdout = Buffer.from(JSON.stringify(data)).toString("base64");
       }
       return record;
