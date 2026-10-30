@@ -826,11 +826,20 @@ and role selectors instead of static keys and retains its production-target guar
 Before enabling these jobs, install and verify the existing
 `aws_iam_policy.site_publishing[0]` and
 `aws_iam_role_policy_attachment.site_publishing[0]` from
-`_infra/site-publishing.tf` through the supported operator route and a reviewed
-saved Terraform plan. The restricted `meeting-update-delivery` workflow cannot
-install them. Refuse unrelated resources, uncertain private bindings, concurrent
-owner conflicts or permission failures. Do not widen that workflow or use direct
-IAM writes to bypass the saved-plan gate.
+`_infra/site-publishing.tf` through the protected `sandbox-site-permissions`
+Plan/Apply scope and a reviewed saved Terraform plan. This operation is pinned to
+`meeting-notes-sandbox-site-publishing` and
+`meeting-notes-sandbox-github-deploy`; a custom project prefix is refused.
+Install the separately reviewed Sandbox bootstrap runner permissions first.
+The operation requires matching storage account/region, known unchanged site
+buckets, the application key equal to the binding key and the existing deployment
+role. Distribution selectors must agree with their `TFVAR_` inputs. It checks
+the complete policy before capture and again after restoration, including no-op
+plans. Its Apply session excludes meeting-update writes. The restricted
+`meeting-update-delivery` workflow still cannot install these permissions.
+Refuse unrelated resources, uncertain private bindings, concurrent owner conflicts
+or permission failures. Use the [private delivery procedure](../docs/terraform-private-delivery.md)
+and native approval; do not bypass the saved-plan gate with direct IAM writes.
 
 Source merge, installed policy, fresh OIDC authentication and actual publishing
 require separate evidence. Source tests establish none of the hosted outcomes.

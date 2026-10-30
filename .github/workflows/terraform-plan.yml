@@ -19,7 +19,7 @@ on:
         type: string
         default: sandbox
       plan_scope:
-        description: Sandbox requires meeting-update-delivery or processing-retry; production requires deployment-prerequisites, deployment-runtime, site-delivery or processing-retry
+        description: Sandbox supports meeting-update-delivery, processing-retry and sandbox-site-permissions; production supports deployment-prerequisites, deployment-runtime, site-delivery and processing-retry
         required: true
         type: choice
         default: meeting-update-delivery
@@ -30,6 +30,7 @@ on:
           - deployment-prerequisites
           - deployment-runtime
           - site-delivery
+          - sandbox-site-permissions
           - processing-retry
 
 permissions:
