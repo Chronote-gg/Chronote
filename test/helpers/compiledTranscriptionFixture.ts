@@ -11,6 +11,9 @@ import {
   removeOwnedFixture,
 } from "./compiledSpeechDetectionFixture";
 
+// Current-source setup exceeded 60s in CI before any provenance assertion ran.
+export const TRANSCRIPTION_FIXTURE_SETUP_TIMEOUT_MS = 120000;
+
 export async function prepareTranscriptionFixture(
   root: string,
   dependencyRoot = root,
@@ -120,7 +123,7 @@ export function useCompiledTranscriptionFixture(
   beforeAll(async () => {
     compiled = await prepareTranscriptionFixture(root);
     ready(compiled);
-  }, 60000);
+  }, TRANSCRIPTION_FIXTURE_SETUP_TIMEOUT_MS);
   afterAll(() => {
     if (compiled) removeOwnedFixture(compiled, "vad-build-contract-");
   });
