@@ -27,6 +27,9 @@ export function reserveCheckpointPcm(bytes: number): boolean {
 export function releaseCheckpointPcm(bytes: number): void {
   reservedBytes -= bytes * COPIES;
 }
+function crossedPressureThreshold(previousReservedBytes: number): boolean {
+  return previousReservedBytes < PRESSURE && reservedBytes >= PRESSURE;
+}
 
 type Piece = {
   sourceId: string;
@@ -209,7 +212,7 @@ export function createRecordingCheckpointCapture(input: Input) {
         .filter((item) => item.artifact.sourceId === sourceId)
         .reduce((total, item) => total + item.artifact.bytes.byteLength, 0);
     if (chunk.length === 0) return true;
-    const belowPressure = reservedBytes < PRESSURE;
+    const previousReservedBytes = reservedBytes;
     if (
       chunk.length % 4 ||
       chunk.length > RATE * 30 ||
@@ -266,7 +269,7 @@ export function createRecordingCheckpointCapture(input: Input) {
     // Flush on crossing the threshold, not on every frame while uploads remain queued.
     if (
       piece.bytes >= RATE * 30 ||
-      (belowPressure && reservedBytes >= PRESSURE)
+      crossedPressureThreshold(previousReservedBytes)
     )
       closeAll();
     startWorker();
