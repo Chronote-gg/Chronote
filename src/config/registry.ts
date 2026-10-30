@@ -1,4 +1,5 @@
 import type { ConfigEntry } from "./types";
+import { attendeeAccessConfigEntry } from "./attendeeAccess";
 import { speechDetectionConfigEntry } from "./speechDetection";
 import { transcriptionLanguageConfigEntry } from "./transcriptionLanguage";
 import {
@@ -954,6 +955,7 @@ export const CONFIG_REGISTRY: ConfigEntry[] = [
     },
     ui: { type: "segmented", options: ["off", "server", "public"] },
   },
+  attendeeAccessConfigEntry,
   ...buildModelSelectionEntries(),
   ...buildModelParamEntries(),
 ];
