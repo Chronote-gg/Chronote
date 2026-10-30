@@ -400,6 +400,7 @@ async function performReservationRenewal(
         ? buildMeetingLeaseSnapshot(meeting)
         : { status: MEETING_STATUS.STARTING },
       reservation,
+      owned.controller.signal,
     );
     if (!renewed) throw new Error("Reservation ownership lost");
     if (meeting) {

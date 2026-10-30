@@ -402,6 +402,9 @@ describe("activeMeetingLeaseService", () => {
       scenario.startsWith("status_read_") ? 0 : 1,
     );
     expect(meeting.ownershipSignal?.aborted).toBe(ownershipUnconfirmed);
+    expect(mockedRenewActiveMeetingLease.mock.calls.at(-1)?.[8]).toBe(
+      meeting.ownershipSignal,
+    );
     finish();
     await releaseSessionReservation(reservation);
   });

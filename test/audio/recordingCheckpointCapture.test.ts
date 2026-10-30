@@ -37,6 +37,39 @@ function fixture(
 }
 const pcm = () => Buffer.alloc(3840, 1);
 
+test("sustained storage pressure keeps new audio frames batched", async () => {
+  let resume!: () => void;
+  const storage = new Promise<void>((resolve) => {
+    resume = resolve;
+  });
+  const f = fixture(
+    jest.fn<
+      Promise<boolean>,
+      [readonly CheckpointArtifactInput[], AbortSignal]
+    >(async () => {
+      await storage;
+      return true;
+    }),
+  );
+  try {
+    f.capture.push("first", Buffer.alloc(5760000), 0);
+    f.capture.push("second", Buffer.alloc(2650000), 0);
+    for (let frame = 0; frame < 100; frame++)
+      f.capture.push("first", pcm(), frame * 20);
+
+    expect(f.capture.pending()).toHaveLength(2);
+  } finally {
+    resume();
+    await f.capture.finish();
+    f.capture.releaseSettledBuffers();
+  }
+  expect(
+    f.commit.mock.calls
+      .flatMap(([artifacts]) => artifacts)
+      .reduce((bytes, artifact) => bytes + artifact.bytes.byteLength, 0),
+  ).toBe(5760000 + 2650000 + 100 * 3840);
+});
+
 test("longOpenSnippetStillCheckpointsAtThirtySeconds", async () => {
   const f = fixture();
   f.capture.push("user", pcm(), 0);
