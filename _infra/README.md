@@ -431,12 +431,17 @@ both share an account. It allows only:
   period, threshold, comparison and missing-data handling, with alarm and OK
   actions on the critical alerts topic only. Already existing ones must be no-ops.
 
-The KMS key, app log group and critical alerts topic must be no-ops. Production must
-carry the filter and alarm; Sandbox may omit both when its alerting is off (the
-`[0]` targets then match no instance and plan nothing). Targeting includes
-dependencies: the filter and alarm reach both CloudFront distributions through
-`aws_kms_key_policy.app_general`, so any pending site or key policy drift makes the
-plan refuse. Reconcile that through `site-delivery` first.
+The KMS key, reached through the table, must be a no-op, and no other managed
+resource may appear. Production must carry the filter and alarm; Sandbox may omit
+both when its alerting is off (the `[0]` targets then match no instance and plan
+nothing). The filter names the app log group through `local.app_log_group_name`
+and the alarm builds the critical alerts topic ARN from
+`local.critical_alerts_topic`, instead of referencing either resource. Both
+resources depend on `aws_kms_key_policy.app_general`, and targeting includes
+dependencies, so a reference would pull the key policy (and through it both
+CloudFront distributions) into this plan. Pending site or key policy drift
+therefore does not block this scope, and the verifier refuses a plan that still
+contains the key policy, log group or topic.
 
 The plan is also refused when the before state lacks `UpdateDeliveryDueIndex`,
 because it would then add two indexes. `meeting-update-delivery` is Sandbox-only,

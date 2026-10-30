@@ -1,7 +1,8 @@
 // Synthetic `terraform show -json` shape for the processing-retry scope: the
 // delivered MeetingHistory table gaining the retry index, plus the new worker
 // failure filter and alarm. The table values reuse the AWS 6.69.1 provider
-// shape from the Sandbox delivery fixture, renamed per environment.
+// shape from the Sandbox delivery fixture, renamed per environment, with the
+// AWS 6.70 unknown mask that recomputes every index's derived fields.
 import providerPlan from "./terraformMeetingUpdate-provider.json";
 
 export const retryAccountId = "123456789012";
@@ -20,14 +21,12 @@ const managed = (address, actions, change = {}) => ({
   change: { actions, ...change },
 });
 const unchanged = (address) => managed(address, ["no-op"]);
-// Graph dependencies the alerting targets pull in through the KMS key policy.
-const alertDependencies = [
-  "aws_cloudwatch_log_group.app_log_group",
-  "aws_sns_topic.critical_alerts[0]",
-  "aws_kms_key_policy.app_general",
-  "aws_cloudfront_distribution.frontend",
-  "aws_cloudfront_distribution.docs",
-];
+const recomputedIndex = {
+  key_schema: true,
+  read_capacity: true,
+  warm_throughput: true,
+  write_capacity: true,
+};
 
 function tableChange(prefix) {
   const delivered = providerPlan.resource_changes[0].change.after;
@@ -51,10 +50,17 @@ function tableChange(prefix) {
     warm_throughput: [],
     write_capacity: null,
   });
+  // Unknown values are omitted from `after`, as `terraform show -json` does.
+  for (const index of after.global_secondary_index)
+    for (const key of Object.keys(recomputedIndex)) delete index[key];
   return managed(tableAddress, ["update"], {
     before,
     after,
-    after_unknown: {},
+    after_unknown: {
+      global_secondary_index: after.global_secondary_index.map(() => ({
+        ...recomputedIndex,
+      })),
+    },
   });
 }
 
@@ -137,7 +143,6 @@ export function processingRetryPlan(environment = "production") {
         change: { actions: ["read"] },
       },
       unchanged("aws_kms_key.app_general"),
-      ...alertDependencies.map(unchanged),
       tableChange(prefix),
       filterChange(prefix),
       alarmChange(prefix),
@@ -145,11 +150,11 @@ export function processingRetryPlan(environment = "production") {
   };
 }
 
-// Sandbox without alerting: the counted filter, alarm and topic have no
-// instance, so the targeted graph is the table and its key.
+// Sandbox without alerting: the counted filter and alarm have no instance, so
+// the targeted graph is the table and its key.
 export function quietSandboxPlan() {
   const plan = processingRetryPlan("sandbox");
-  const dropped = new Set([filterAddress, alarmAddress, ...alertDependencies]);
+  const dropped = new Set([filterAddress, alarmAddress]);
   plan.resource_changes = plan.resource_changes.filter(
     (r) => !dropped.has(r.address),
   );

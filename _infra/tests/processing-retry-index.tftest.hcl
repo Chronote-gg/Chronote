@@ -1,4 +1,9 @@
-mock_provider "aws" { override_during = plan }
+mock_provider "aws" {
+  override_during = plan
+  mock_data "aws_caller_identity" {
+    defaults = { account_id = "123456789012" }
+  }
+}
 mock_provider "github" {}
 mock_provider "grafana" {}
 mock_provider "random" {}
@@ -34,5 +39,21 @@ run "delivery_only_omits_retry_index" {
   assert {
     condition     = tomap({ for i in aws_dynamodb_table.meeting_history_table.global_secondary_index : i.name => [i.hash_key, i.range_key, i.projection_type] }) == tomap({ GuildTimestampIndex = ["guildId", "timestamp", "ALL"], UpdateDeliveryDueIndex = ["updateDeliveryQueue", "updateDeliveryDueAt", "KEYS_ONLY"] })
     error_message = "Disabled must preserve exactly guild and delivery index definitions."
+  }
+}
+
+# The filter and alarm name the log group and topic rather than referencing
+# them, which keeps the KMS key policy out of a processing-retry targeted plan.
+run "worker_failure_alarm_routes_by_name" {
+  command = plan
+  plan_options { target = [aws_cloudwatch_log_metric_filter.processing_retry_worker_failed[0], aws_cloudwatch_metric_alarm.processing_retry_worker_failed[0]] }
+  variables { alert_email = "alerts@example.com" }
+  assert {
+    condition     = aws_cloudwatch_log_metric_filter.processing_retry_worker_failed[0].log_group_name == "/ecs/meeting-notes-prod-bot"
+    error_message = "The filter must read the app log group by its name."
+  }
+  assert {
+    condition     = aws_cloudwatch_metric_alarm.processing_retry_worker_failed[0].alarm_actions == toset(["arn:aws:sns:us-east-1:123456789012:meeting-notes-prod-critical-alerts"]) && aws_cloudwatch_metric_alarm.processing_retry_worker_failed[0].ok_actions == toset(["arn:aws:sns:us-east-1:123456789012:meeting-notes-prod-critical-alerts"])
+    error_message = "Alarm and OK actions must email through the critical alerts topic ARN."
   }
 }

@@ -114,11 +114,36 @@ function neutralWarmThroughput(change) {
 }
 
 const computedTableFields = ["stream_arn", "stream_label"];
+const derivedIndexFields = ["key_schema", "read_capacity", "write_capacity"];
+// AWS 6.70 recomputes warm_throughput. With model evidence the plan already
+// proved every value neutral, so any mask shape is accepted. Without it, only
+// an index whose value is wholly unknown leaves the comparison; a partially
+// unknown value stays and is refused, and every other index must keep its
+// warm_throughput exactly, since a pre-warm change is billed.
+// Returns whether this index's warm_throughput is wholly unknown.
+function clearWarmMask(indexMask, computedWarm) {
+  const warm = indexMask.warm_throughput;
+  if (computedWarm && Object.hasOwn(indexMask, "warm_throughput")) {
+    assert.ok(
+      warm === true ||
+        warm === false ||
+        (Array.isArray(warm) && warm.length === 0),
+      "Malformed warm throughput mask",
+    );
+    delete indexMask.warm_throughput;
+    return false;
+  }
+  if (warm !== true) return false;
+  delete indexMask.warm_throughput;
+  return true;
+}
+// Returns the names of the indexes whose warm_throughput is wholly unknown.
 function knownTableEffects(change, computedWarm) {
   // AWS 6.69.1 computes these read-only fields. Explicit hash/range keys bind
   // key_schema, and PAY_PER_REQUEST makes provisioned capacity inapplicable.
   const mask = structuredClone(change.after_unknown ?? {});
   for (const field of computedTableFields) delete mask[field];
+  const unknownWarm = new Set();
   if (Array.isArray(mask.global_secondary_index)) {
     assert.equal(
       mask.global_secondary_index.length,
@@ -126,24 +151,16 @@ function knownTableEffects(change, computedWarm) {
     );
     mask.global_secondary_index.forEach((indexMask, i) => {
       assert.ok(indexMask && typeof indexMask === "object");
-      for (const key of ["key_schema", "read_capacity", "write_capacity"])
-        delete indexMask[key];
-      if (computedWarm && Object.hasOwn(indexMask, "warm_throughput")) {
-        assert.ok(
-          indexMask.warm_throughput === true ||
-            indexMask.warm_throughput === false ||
-            (Array.isArray(indexMask.warm_throughput) &&
-              indexMask.warm_throughput.length === 0),
-          "Malformed warm throughput mask",
-        );
-        delete indexMask.warm_throughput;
-      }
+      const index = change.after.global_secondary_index[i];
+      for (const key of derivedIndexFields) delete indexMask[key];
+      if (clearWarmMask(indexMask, computedWarm)) unknownWarm.add(index.name);
       assert.ok(!hasUnknown(indexMask), "Unknown index effect");
-      validateIndex(change.after.global_secondary_index[i]);
+      validateIndex(index);
     });
     delete mask.global_secondary_index;
   }
   assert.ok(!hasUnknown(mask), "Unknown table effect");
+  return unknownWarm;
 }
 
 // The table may change only by gaining `index` and its key attributes; the
@@ -164,7 +181,7 @@ function tableDelta(change, { name, arn, attributes: added, index }, evidence) {
     for (const index of named(value.global_secondary_index).values())
       validateIndex(index);
   }
-  knownTableEffects(change, computedWarm);
+  const unknownWarm = knownTableEffects(change, computedWarm);
   const expected = structuredClone(change.before);
   const attributes = named(expected.attribute);
   for (const attribute of added) {
@@ -184,10 +201,10 @@ function tableDelta(change, { name, arn, attributes: added, index }, evidence) {
     normalized.global_secondary_index = value.global_secondary_index.map(
       (index) =>
         without(index, [
-          "key_schema",
-          "read_capacity",
-          "write_capacity",
-          ...(computedWarm ? ["warm_throughput"] : []),
+          ...derivedIndexFields,
+          ...(computedWarm || unknownWarm.has(index.name)
+            ? ["warm_throughput"]
+            : []),
         ]),
     );
     return normalized;

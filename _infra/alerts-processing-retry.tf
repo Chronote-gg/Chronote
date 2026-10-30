@@ -4,10 +4,16 @@
 # told. Individual job failures are not alarmed: during an OpenAI outage they
 # are expected, and openai_requests_rejected already covers that case.
 
+locals {
+  critical_alerts_topic_arn = "arn:aws:sns:${var.aws_region}:${data.aws_caller_identity.current.account_id}:${local.critical_alerts_topic}"
+}
+
 resource "aws_cloudwatch_log_metric_filter" "processing_retry_worker_failed" {
-  count          = local.alerts_enabled ? 1 : 0
-  name           = "${local.name_prefix}-processing-retry-worker-failed"
-  log_group_name = aws_cloudwatch_log_group.app_log_group.name
+  count = local.alerts_enabled ? 1 : 0
+  name  = "${local.name_prefix}-processing-retry-worker-failed"
+  # By name, not reference: the log group depends on the KMS key policy, and a
+  # reference would pull that policy into every processing-retry scoped plan.
+  log_group_name = local.app_log_group_name
   pattern        = "\"Processing retry worker failed\""
 
   metric_transformation {
@@ -31,8 +37,10 @@ resource "aws_cloudwatch_metric_alarm" "processing_retry_worker_failed" {
   comparison_operator = "GreaterThanOrEqualToThreshold"
   treat_missing_data  = "notBreaching"
 
-  alarm_actions = [aws_sns_topic.critical_alerts[0].arn]
-  ok_actions    = [aws_sns_topic.critical_alerts[0].arn]
+  # ARN built from the topic name, not a reference: the topic depends on the KMS
+  # key policy, and a reference would pull that policy into scoped plans.
+  alarm_actions = [local.critical_alerts_topic_arn]
+  ok_actions    = [local.critical_alerts_topic_arn]
 
   tags = {
     Project     = "${var.project_name}-discord-bot"

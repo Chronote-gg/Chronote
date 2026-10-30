@@ -230,21 +230,35 @@ test("rejects the known Sandbox in another region", () => {
   ).toThrow();
 });
 
-test("accepts only derived computed unknowns with explicit index keys", () => {
-  const p = meetingUpdatePlan();
-  p.resource_changes[0].change.after_unknown = {
-    global_secondary_index: [
-      { read_capacity: true, write_capacity: true, key_schema: true },
-      { read_capacity: true, write_capacity: true, key_schema: true },
-    ],
-    stream_arn: true,
-  };
-  p.resource_changes[1].change.after_unknown = {
-    attachment_count: true,
-    policy_id: true,
-  };
-  expect(() => verifyMeetingUpdatePlan(p, identity)).not.toThrow();
-});
+// AWS 6.70 also marks every index's warm_throughput unknown and, as
+// `terraform show -json` does, omits it from `after`.
+test.each([
+  ["AWS 6.69.1", {}],
+  ["AWS 6.70 warm_throughput", { warm_throughput: true }],
+])(
+  "accepts only derived computed unknowns with explicit index keys (%s)",
+  (_, extra) => {
+    const p = meetingUpdatePlan();
+    const table = p.resource_changes[0].change;
+    const derived = {
+      read_capacity: true,
+      write_capacity: true,
+      key_schema: true,
+      ...extra,
+    };
+    for (const index of table.after.global_secondary_index)
+      for (const key of Object.keys(extra)) delete index[key];
+    table.after_unknown = {
+      global_secondary_index: [derived, { ...derived }],
+      stream_arn: true,
+    };
+    p.resource_changes[1].change.after_unknown = {
+      attachment_count: true,
+      policy_id: true,
+    };
+    expect(() => verifyMeetingUpdatePlan(p, identity)).not.toThrow();
+  },
+);
 test("accepts semantically equivalent JSON policy ordering", () => {
   const p = meetingUpdatePlan(),
     r = p.resource_changes[1];
@@ -444,3 +458,39 @@ test.each(["read", "no-op"])(
     }
   },
 );
+
+test("rejects a partially unknown warm_throughput as an unknown index effect", () => {
+  const p = meetingUpdatePlan();
+  p.resource_changes[0].change.after_unknown = {
+    global_secondary_index: [
+      {},
+      { warm_throughput: [{ read_units_per_second: true }] },
+    ],
+  };
+  expect(() => verifyMeetingUpdatePlan(p, identity)).toThrow(
+    "Unknown index effect",
+  );
+});
+
+// One index's unknown warm_throughput must not hide a known pre-warm change on
+// another; the guild index keeps its known value only when it is unchanged.
+test.each([
+  ["unchanged", [], true],
+  [
+    "pre-warmed",
+    [{ read_units_per_second: 50000, write_units_per_second: 20000 }],
+    false,
+  ],
+])("a known %s guild warm_throughput beside an unknown one", (_, warm, ok) => {
+  const p = meetingUpdatePlan();
+  const table = p.resource_changes[0].change;
+  const [guild, delivery] = table.after.global_secondary_index;
+  guild.warm_throughput = warm;
+  delete delivery.warm_throughput;
+  table.after_unknown = {
+    global_secondary_index: [{}, { warm_throughput: true }],
+  };
+  const verify = () => verifyMeetingUpdatePlan(p, identity);
+  if (ok) expect(verify).not.toThrow();
+  else expect(verify).toThrow();
+});
