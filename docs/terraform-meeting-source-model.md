@@ -69,6 +69,13 @@ alter this dependency model changes the pin and requires another audit. Editing 
 outside file cannot affect the pinned closure, because the audited closure does
 not read it. Direct-reference absence alone is not the exclusion proof.
 
+The processing-retry metric filter and alarm address the app log group and the
+critical-alerts topic by name through `local.app_log_group_name` and
+`local.critical_alerts_topic`, so they do not depend on the KMS key policy. Those
+locals derive only from `name_prefix`, the region and the caller identity, and
+only the log group, the topic and that filter and alarm read them. No closure
+resource reads either local, the log group or the topic.
+
 ## Computed GSI representation
 
 The official `table.go` files at v6.69.1 and v6.70.0 are byte-identical. In

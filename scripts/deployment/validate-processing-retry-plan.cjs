@@ -17,8 +17,7 @@ const table = "aws_dynamodb_table.meeting_history_table";
 const metricFilter =
   "aws_cloudwatch_log_metric_filter.processing_retry_worker_failed[0]";
 const alarm = "aws_cloudwatch_metric_alarm.processing_retry_worker_failed[0]";
-const logGroup = "aws_cloudwatch_log_group.app_log_group";
-const topic = "aws_sns_topic.critical_alerts[0]";
+const kmsKey = "aws_kms_key.app_general";
 const processingRetryTargets = new Map([
   [table, ["update"]],
   [metricFilter, ["create"]],
@@ -112,6 +111,18 @@ function checkAlarm(change, names) {
   assert.equal(after.threshold_metric_id ?? null, null);
 }
 
+// The filter and alarm name the log group and topic instead of referencing
+// them, so the targeted graph is the targets plus the table's key. Anything
+// else, such as the KMS key policy, means that decoupling regressed.
+function assertClosure(plan) {
+  const closure = new Set([...processingRetryTargets.keys(), kmsKey]);
+  for (const { address, mode } of plan.resource_changes)
+    assert.ok(
+      mode !== "managed" || closure.has(address),
+      `${address} is outside the processing-retry closure`,
+    );
+}
+
 function present(plan, address) {
   return plan.resource_changes.some((r) => r.address === address);
 }
@@ -139,7 +150,8 @@ function validateProcessingRetryPlan(plan, { accountId, environment }) {
     topicArn: `arn:aws:sns:us-east-1:${accountId}:${prefix}-critical-alerts`,
   };
   assert.ok(present(plan, table));
-  const alerts = alerting(plan, environment);
+  assertClosure(plan);
+  alerting(plan, environment);
   const checks = {
     [table]: (change) => checkTable(change, names),
     [metricFilter]: (change) => checkMetricFilter(change, names),
@@ -147,10 +159,7 @@ function validateProcessingRetryPlan(plan, { accountId, environment }) {
   };
   return validateScopedPlan(plan, {
     targets: processingRetryTargets,
-    requiredNoOp: [
-      "aws_kms_key.app_general",
-      ...(alerts ? [logGroup, topic] : []),
-    ],
+    requiredNoOp: [kmsKey],
     check: ({ address, change }) => checks[address](change),
   });
 }
