@@ -26,6 +26,43 @@ beforeEach(() => {
   jest.setSystemTime(0);
 });
 afterEach(() => jest.useRealTimers());
+test.each([true, false])(
+  "reconciliation waits actual work and preserves the original budget: %s",
+  async (settleFirst) => {
+    const f = fixture();
+    const original = f.service.interrupt(f.meeting, {
+      reason: "capture_failure",
+      deadline: 10,
+    });
+    await jest.advanceTimersByTimeAsync(10);
+    expect(await original).toEqual({ kind: "unresolved" });
+    const checkpoint = f.service.checkpoints()[0];
+    if (settleFirst) {
+      f.local.resolve();
+      await jest.advanceTimersByTimeAsync(0);
+    }
+    const release = jest.fn(async () => true);
+    const reconcile = f.service.reconcile(f.meeting, 100, release);
+    const duplicate = f.service.reconcile(f.meeting, 100, release);
+    expect(duplicate).toBe(reconcile);
+    if (!settleFirst) {
+      expect(release).not.toHaveBeenCalled();
+      f.local.resolve();
+    }
+    expect(await reconcile).toEqual({ kind: "settled" });
+    expect(release).toHaveBeenCalledTimes(1);
+    expect(f.stop).toHaveBeenCalledTimes(1);
+    expect(f.preserve).not.toHaveBeenCalled();
+    expect(checkpoint.signal.aborted).toBe(true);
+    expect(checkpoint.deadline).toBe(10);
+    expect(await original).toEqual({ kind: "unresolved" });
+    expect(f.service.checkpoints()).toEqual([]);
+    expect(await f.service.reconcile(f.meeting, 200, release)).toEqual({
+      kind: "settled",
+    });
+    expect(release).toHaveBeenCalledTimes(1);
+  },
+);
 test("shutdownStopsCaptureWithoutWaitingForNaturalEnd", async () => {
   const f = fixture();
   const pending = f.service.interrupt(f.meeting, {

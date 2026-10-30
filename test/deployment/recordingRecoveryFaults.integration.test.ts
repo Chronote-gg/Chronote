@@ -1,7 +1,10 @@
 jest.mock("../../src/commands/endMeeting", () => ({
   persistExplicitMeetingStop: jest.fn(),
 }));
-jest.mock("../../src/meetings", () => ({ getMeeting: jest.fn() }));
+jest.mock("../../src/meetings", () => ({
+  getPendingMeetingInitializations: () => [],
+  getMeeting: jest.fn(),
+}));
 jest.mock("../../src/services/unifiedConfigService", () => ({
   ...jest.requireActual("../../src/services/unifiedConfigService"),
   resolveConfigSnapshot: async () => ({ values: {} }),

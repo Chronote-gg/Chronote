@@ -16,6 +16,7 @@ import { handleEndMeetingOther } from "../../src/commands/endMeeting";
 import { MEETING_END_REASONS } from "../../src/types/meetingLifecycle";
 
 jest.mock("../../src/meetings", () => ({
+  getPendingMeetingInitializations: () => [],
   getMeeting: jest.fn(),
 }));
 jest.mock("../../src/services/unifiedConfigService", () => ({

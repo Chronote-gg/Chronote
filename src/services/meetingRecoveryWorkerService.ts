@@ -29,6 +29,10 @@ import {
 import { uploadObjectToS3 } from "./storageService";
 import { createDiscordMessage } from "./discordMessageService";
 import { autoExportRecoveredMeeting } from "./notionAutomationService";
+import {
+  prepareRecoveredMeeting,
+  reconcileRecoveredMeeting,
+} from "./ownedMeetingInterruption";
 
 type WorkerDependencies = {
   repository: DeploymentControlRepository;
@@ -39,6 +43,12 @@ type WorkerDependencies = {
     "repository" | "signal" | "now" | "effect"
   >;
   now(): number;
+  prepareLocal?(
+    claim: RecoveryClaim,
+    signal: AbortSignal,
+    effect: RuntimeWorkClaim["trackEffect"],
+  ): Promise<void>;
+  reconcileLocal?(claim: RecoveryClaim): Promise<void>;
 };
 export function createMeetingRecoveryWorker(deps: WorkerDependencies) {
   let stopped = false;
@@ -211,6 +221,9 @@ export function createMeetingRecoveryWorker(deps: WorkerDependencies) {
           now: deps.now,
           effect: (run) => work.trackEffect(run),
         });
+        await deps.prepareLocal?.(claim, work.signal, (run) =>
+          work.trackEffect(run),
+        );
         clearInterval(renewal);
         await renewing;
         work.signal.throwIfAborted();
@@ -219,6 +232,8 @@ export function createMeetingRecoveryWorker(deps: WorkerDependencies) {
         await release(claim, work);
         work.acknowledgeTerminal();
         ownedRecoveries.delete(id);
+        // The original local owner stays held on failed proof; recovery's own terminal receipt remains valid.
+        await deps.reconcileLocal?.(claim).catch(() => {});
         return true;
       } catch {
         const cancelled = stopped || work.signal.aborted;
@@ -409,6 +424,8 @@ export function startMeetingRecoveryWorker() {
     repository: getDeploymentControlRepository(),
     begin: beginRuntimeWorkClaim,
     recover: recoverMeeting,
+    prepareLocal: prepareRecoveredMeeting,
+    reconcileLocal: reconcileRecoveredMeeting,
     now: () => Math.floor(Date.now() / 1000),
     content: {
       nowMs: Date.now,
