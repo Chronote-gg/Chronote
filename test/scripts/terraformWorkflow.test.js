@@ -7,6 +7,7 @@ import {
   readdirSync,
   mkdirSync,
   existsSync,
+  writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
 import { runTerraform } from "../../scripts/deployment/terraform-workflow.cjs";
@@ -18,6 +19,10 @@ import { dispatchTerraform } from "../fixtures/deployment/terraformDispatch.js";
 import { runtimePlan } from "../fixtures/deployment/runtimePlan.js";
 import { meetingUpdatePlan } from "../fixtures/deployment/terraformMeetingUpdate.js";
 import { sitePlan } from "../fixtures/deployment/sitePlan.js";
+import {
+  sitePermissionsPlan,
+  siteVariables,
+} from "../fixtures/deployment/sandboxSitePermissionsPlan.js";
 import {
   processingRetryPlan,
   tableAddress,
@@ -497,6 +502,95 @@ test("site delivery Apply revalidates its restored plan", async () => {
   f.controls.planJson = sitePlan();
   await expectApply(f, "applied", { scope: "site-delivery" });
   expectRevalidated(f);
+});
+
+test.each([
+  "none",
+  "plan-policy",
+  "apply-policy",
+  "apply-selector",
+  "malformed-variables",
+])("Sandbox site permissions private transport: %s", async (fault) => {
+  const f = fixture();
+  const current = {
+    ...invocation,
+    environment: "sandbox",
+    workspace: "sandbox",
+  };
+  f.controls.environment = "sandbox";
+  f.controls.planJson = sitePermissionsPlan();
+  const original = f.options;
+  f.options = (i) => {
+    const opts = original(i);
+    writeFileSync(
+      join(f.directory, "_infra/site-publishing.tf"),
+      readFileSync("_infra/site-publishing.tf"),
+    );
+    opts.env = {
+      ...opts.env,
+      GITHUB_VARS_JSON:
+        fault === "malformed-variables"
+          ? "[]"
+          : JSON.stringify(siteVariables()),
+    };
+    if (
+      fault === "apply-selector" &&
+      i.workflowPath.endsWith("terraform-apply.yml")
+    )
+      opts.env.GITHUB_VARS_JSON = JSON.stringify({
+        ...siteVariables(),
+        DOCS_BUCKET: "other-site-bucket",
+      });
+    return opts;
+  };
+  const corrupt = () => {
+    f.controls.planJson.resource_changes.find(
+      (r) => r.address === "aws_iam_policy.site_publishing[0]",
+    ).change.after.policy = "{}";
+  };
+  try {
+    if (["plan-policy", "malformed-variables"].includes(fault)) {
+      if (fault === "plan-policy") corrupt();
+      const opts = f.options({ ...current, scope: "sandbox-site-permissions" });
+      expect((await runTerraform(opts)).status).toBe("failed");
+      expect(
+        existsSync(join(opts.privateDirectory, "bundle-reference.json")),
+      ).toBe(false);
+    } else {
+      const { apply } = await planAndApply(
+        f,
+        {},
+        "sandbox-site-permissions",
+        (opts) => {
+          if (fault === "apply-policy") corrupt();
+          return runTerraform(opts);
+        },
+        current,
+      );
+      expect(apply.status).toBe(fault === "none" ? "applied" : "refused");
+      expect(f.commands.filter((c) => c.args[1] === "apply")).toHaveLength(
+        fault === "none" ? 1 : 0,
+      );
+      expectRevalidated(f);
+    }
+    if (fault !== "malformed-variables")
+      expect(
+        f.commands
+          .find((c) => c.args[1] === "plan")
+          .args.filter((arg) => arg.startsWith("-target=")),
+      ).toEqual([
+        "-target=aws_iam_policy.site_publishing[0]",
+        "-target=aws_iam_role_policy_attachment.site_publishing[0]",
+      ]);
+    const bundle = [...f.storage.objects.values()]
+      .map((v) => JSON.parse(v))
+      .find((v) => v.kind === "terraform-plan-bundle-v1");
+    expect(Boolean(bundle)).toBe(
+      !["plan-policy", "malformed-variables"].includes(fault),
+    );
+  } finally {
+    rmSync(f.directory, { recursive: true, force: true });
+  }
 });
 
 // Plans and applies `scope`, expecting Apply to refuse before Terraform apply runs.

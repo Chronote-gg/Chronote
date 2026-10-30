@@ -541,6 +541,8 @@ scenario(
       "kms_key_arn",
       "administrator_role_arn",
       "reviewer_role_arn",
+      "site_frontend_bucket",
+      "site_docs_bucket",
     ])
       next[key] = previous[key].replace(
         previous.sandbox_account_id,
@@ -684,3 +686,5 @@ scenario(
     check.equal(inspect(c.document, c.review), true);
   },
 );
+
+require("./verify-site-permissions-update.test.cjs");

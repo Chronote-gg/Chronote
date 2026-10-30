@@ -29,6 +29,7 @@ const invocationSchema = z
       "deployment-prerequisites",
       "deployment-runtime",
       "site-delivery",
+      "sandbox-site-permissions",
       "processing-retry",
       "meeting-update-delivery",
     ]),
@@ -67,10 +68,18 @@ function parseInvocation(value) {
   );
   if (parsed.environment === "sandbox")
     assert.ok(
-      ["meeting-update-delivery", "processing-retry"].includes(parsed.scope),
-      "Sandbox supports only meeting-update-delivery and processing-retry",
+      [
+        "meeting-update-delivery",
+        "processing-retry",
+        "sandbox-site-permissions",
+      ].includes(parsed.scope),
+      "Unsupported Sandbox scope",
     );
-  if (parsed.scope === "meeting-update-delivery")
+  if (
+    ["meeting-update-delivery", "sandbox-site-permissions"].includes(
+      parsed.scope,
+    )
+  )
     assert.equal(parsed.environment, "sandbox");
   return parsed;
 }

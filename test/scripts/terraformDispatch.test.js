@@ -32,6 +32,27 @@ const event = {
     plan_scope: "full",
   },
 };
+test("site-permissions dispatch accepts only Sandbox/Sandbox", () => {
+  for (const [environment, workspace] of [
+    ["sandbox", "sandbox"],
+    ["production", "default"],
+    ["sandbox", "default"],
+    ["production", "sandbox"],
+  ]) {
+    const parseScope = () =>
+      parseDispatch(env, {
+        ...event,
+        inputs: {
+          github_environment: environment,
+          terraform_workspace: workspace,
+          plan_scope: "sandbox-site-permissions",
+        },
+      });
+    if (environment === "sandbox" && workspace === "sandbox")
+      expect(parseScope().invocation.scope).toBe("sandbox-site-permissions");
+    else expect(parseScope).toThrow();
+  }
+});
 test("dispatch derives exact trusted source and validates immutable input values", () => {
   expect(parseDispatch(env, event).invocation.sourceSha).toBe(sha);
   for (const patch of [
@@ -137,7 +158,10 @@ test.each(["plan", "apply"])(
       "bash scripts/ci-install-dependencies.sh",
       "node scripts/deployment/terraform-dispatch.cjs --validate",
       ...(mode === "apply"
-        ? ["node scripts/deployment/production-writer-guard.cjs --inspect"]
+        ? [
+            "node scripts/deployment/validate-sandbox-site-permissions-plan.cjs --session",
+            "node scripts/deployment/production-writer-guard.cjs --inspect",
+          ]
         : [
             'test "$PLAN_SCOPE" = deployment-prerequisites || test "$PLAN_SCOPE" = deployment-runtime || test "$PLAN_SCOPE" = site-delivery || test "$PLAN_SCOPE" = processing-retry',
             "node scripts/deployment/terraform-plan-identity.cjs",
@@ -234,6 +258,31 @@ test("unexpected delegated failure stays unknown without raw errors or retry", a
   expect(result.messages).toEqual(['{"status":"unknown"}']);
   expect(result.invocations).toBe(1);
   expect(result.exitCode).toBe(1);
+});
+test("Apply uses the bounded session only for the Sandbox site-permissions scope", () => {
+  const steps = parse(
+    readFileSync(".github/workflows/terraform-apply.yml", "utf8"),
+  ).jobs.apply.steps;
+  const prepared = steps.find((s) => s.id === "site-permissions-session");
+  expect(prepared.if).toBe(
+    "${{ inputs.github_environment == 'sandbox' && inputs.plan_scope == 'sandbox-site-permissions' }}",
+  );
+  expect(prepared.env.TERRAFORM_PRIVATE_STORAGE_JSON).toBe(
+    "${{ secrets.TERRAFORM_PRIVATE_STORAGE_JSON }}",
+  );
+  expect(prepared.env.GITHUB_VARS_JSON).toBe("${{ toJSON(vars) }}");
+  const credentials = steps.find(
+    (s) => s.name === "Configure Sandbox AWS credentials",
+  );
+  expect(credentials.with["inline-session-policy"]).toBe(
+    "${{ steps.site-permissions-session.outputs.policy }}",
+  );
+  expect(steps.indexOf(prepared)).toBeLessThan(steps.indexOf(credentials));
+  for (const mode of ["plan", "apply"])
+    expect(
+      parse(readFileSync(`.github/workflows/terraform-${mode}.yml`, "utf8")).on
+        .workflow_dispatch.inputs.plan_scope.options,
+    ).toContain("sandbox-site-permissions");
 });
 
 test("delivery scope is Sandbox-only while production retains its scopes", () => {
@@ -479,12 +528,16 @@ test.each(["plan", "apply"])(
       );
       expect(production.if).toBe("inputs.github_environment == 'production'");
     }
+    const condition =
+      mode === "plan"
+        ? "${{ inputs.github_environment == 'sandbox' && inputs.plan_scope != 'sandbox-site-permissions' }}"
+        : "${{ inputs.github_environment == 'sandbox' }}";
     const oidc = steps.find(
       (s) =>
         s.with?.["role-to-assume"] === "${{ vars.TERRAFORM_AWS_ROLE_ARN }}" &&
-        s.if === "${{ inputs.github_environment == 'sandbox' }}",
+        s.if === condition,
     );
-    expect(oidc.if).toBe("${{ inputs.github_environment == 'sandbox' }}");
+    expect(oidc.if).toBe(condition);
     expect(oidc.with["role-to-assume"]).toBe(
       "${{ vars.TERRAFORM_AWS_ROLE_ARN }}",
     );
@@ -560,3 +613,51 @@ test.each(["plan", "apply"])(
     }
   },
 );
+
+test("Plan selects site-only extra bucket reads while legacy scopes retain exact credential behavior", () => {
+  const steps = parse(
+    readFileSync(".github/workflows/terraform-plan.yml", "utf8"),
+  ).jobs.plan.steps;
+  const legacy = steps.find(
+    (s) => s.name === "Configure Sandbox AWS credentials",
+  );
+  const site = steps.find(
+    (s) => s.name === "Configure Sandbox site-permissions Plan credentials",
+  );
+  expect(legacy.if).toBe(
+    "${{ inputs.github_environment == 'sandbox' && inputs.plan_scope != 'sandbox-site-permissions' }}",
+  );
+  expect(site.if).toBe(
+    "${{ inputs.github_environment == 'sandbox' && inputs.plan_scope == 'sandbox-site-permissions' }}",
+  );
+  expect(
+    createHash("sha256")
+      .update(legacy.with["inline-session-policy"])
+      .digest("hex"),
+  ).toBe("d70a885faee7224ad66acab16036262ae2e1f8e46d0c0ce0a58e4f23d6c353de");
+  const oldPolicy = JSON.parse(legacy.with["inline-session-policy"]);
+  const sitePolicy = JSON.parse(site.with["inline-session-policy"]);
+  expect(sitePolicy).toEqual({
+    ...oldPolicy,
+    Statement: oldPolicy.Statement.map((s, i) =>
+      i === 0
+        ? {
+            ...s,
+            Action: [
+              ...s.Action,
+              "s3:GetAccelerateConfiguration",
+              "s3:GetReplicationConfiguration",
+            ],
+          }
+        : s,
+    ),
+  });
+  expect({ ...site.with, "inline-session-policy": null }).toEqual({
+    ...legacy.with,
+    "inline-session-policy": null,
+  });
+  expect(site.uses).toBe(legacy.uses);
+  expect(
+    Buffer.byteLength(site.with["inline-session-policy"]),
+  ).toBeLessThanOrEqual(2048);
+});
