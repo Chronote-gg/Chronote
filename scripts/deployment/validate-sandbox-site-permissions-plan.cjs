@@ -166,15 +166,22 @@ function unchanged(change) {
 }
 function checkPolicy(change, b) {
   const created = change.actions[0] === "create";
+  const computed = [
+    "arn",
+    "id",
+    "attachment_count",
+    "policy_id",
+    "name_prefix",
+  ];
   assert.ok(
-    !hasUnknown(
-      without(
-        change.after_unknown ?? {},
-        created ? ["arn", "id", "attachment_count", "policy_id"] : [],
-      ),
-    ),
+    !hasUnknown(without(change.after_unknown ?? {}, created ? computed : [])),
   );
   const after = change.after;
+  if (Object.hasOwn(change.after_unknown ?? {}, "name_prefix"))
+    assert.equal(typeof change.after_unknown.name_prefix, "boolean");
+  for (const field of computed)
+    if (change.after_unknown?.[field] === true)
+      assert.equal(after[field] ?? null, null);
   assert.equal(after.name, policyName);
   assert.equal(after.path, "/");
   assert.ok(after.description == null || after.description === "");

@@ -101,6 +101,7 @@ export function sitePermissionsPlan(action = "create") {
     policyAddress,
     {
       name: policyName,
+      name_prefix: null,
       path: "/",
       description: "",
       tags: {},
@@ -124,8 +125,14 @@ export function sitePermissionsPlan(action = "create") {
     action === "update" ? "no-op" : action,
   );
   if (action === "create") {
-    for (const key of ["arn", "id", "attachment_count", "policy_id"]) {
-      delete policy.change.after[key];
+    for (const key of [
+      "arn",
+      "id",
+      "attachment_count",
+      "policy_id",
+      "name_prefix",
+    ]) {
+      if (key !== "name_prefix") delete policy.change.after[key];
       policy.change.after_unknown[key] = true;
     }
     delete attachment.change.after.id;

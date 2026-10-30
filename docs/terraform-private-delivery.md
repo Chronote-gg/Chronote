@@ -139,7 +139,7 @@ the reviewed LF-normalized `_infra/site-publishing.tf` source fingerprint and no
 Terraform override files. This source-only normalization does not alter saved
 binary, private capture or lockfile digests.
 
-Plan keeps its read-only session. Apply prepares a compact scope-specific session
+Plan selects a separate site-permissions credential step that adds only the inventoried `s3:GetAccelerateConfiguration` and `s3:GetReplicationConfiguration` reads. Its other actions and settings match the existing read-only session, and legacy scopes keep their exact session policy. Apply prepares a compact scope-specific session
 before authentication, masks selectors and policy before writing `GITHUB_OUTPUT`,
 and intersects the bootstrap role with an inline allow and explicit denies.
 It denies `dynamodb:UpdateTable` everywhere, site-policy create/tag/version writes

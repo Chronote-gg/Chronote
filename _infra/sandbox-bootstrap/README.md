@@ -28,7 +28,7 @@ The base role reads metadata for exactly 30 Sandbox tables, the runtime managed 
 
 The role can access only the existing Sandbox application state object and the two exact backend lock keys. State uses AES256 and receives no guessed KMS grants. Workspace discovery can list only the two documented metadata prefixes. Evidence crypto requires regional S3 service, caller account and exact object encryption context.
 
-Plan uses the restrictive inline session policy already in `terraform-plan.yml`, intersected with this base role. The tests read that actual policy, check its STS size and prove application writes and state writes are excluded. Apply retains the existing private saved-plan and native approval checks. Either targeted managed policy must have fewer than five versions before its update; stop at five. This role cannot prune versions.
+Plan uses the restrictive inline session policy in `terraform-plan.yml`, intersected with this base role. The site-permissions scope selects a separate credential step with only the two additional inventoried bucket reads, `s3:GetAccelerateConfiguration` and `s3:GetReplicationConfiguration`. Legacy scopes keep their exact previous session policy. The tests read that actual policy, check its STS size and prove application writes and state writes are excluded. Apply retains the existing private saved-plan and native approval checks. Either targeted managed policy must have fewer than five versions before its update; stop at five. This role cannot prune versions.
 
 ## Site action inventory
 

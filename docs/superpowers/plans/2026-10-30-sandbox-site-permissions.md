@@ -10,7 +10,7 @@
 
 **Spec:** [Approved design](../specs/2026-10-30-sandbox-site-permissions-design.md).
 
-The user-visible outcome is unchanged Sandbox publishing through the OIDC jobs merged in #507. This PR supplies their missing installation route. BASIC has already selected subagent execution. Written-plan review is pending.
+The user-visible outcome is unchanged Sandbox publishing through the OIDC jobs merged in #507. This PR supplies their missing installation route. BASIC approved the design, implementation plan and subagent execution on October 30.
 
 ## Global constraints
 
@@ -87,15 +87,14 @@ This sequence completes the installation goal after the source PR is merged. It 
 
 Self-review maps application validation and all five review-focus cases to Task 1, runner/bootstrap restrictions to Task 2, and live acceptance to the ordered rollout gates. Existing permissions, private capture and native approval modules are reused. No new dependency, secret, role or general updater is proposed.
 
-The design and implementation plan are approved. Task 1 is implemented and independently reviewed. Task 2 is executing under the approved bounded source scope; operator rollout remains separate.
+The design and implementation plan are approved. Tasks 1 and 2 are implemented. The consolidated final-review fix wave is complete and awaiting the parent's scope re-review and required CI. Operator rollout remains separate.
 
 ## Approved execution adjustments
 
 The provider inventory exposed routing dependencies through both branches of the
 site attachment. BASIC's coordinator authorized equivalent input-only HTTPS
 preconditions for the Sandbox and production deployment roles, plus an exact-ARN
-lookup for the existing Sandbox GitHub OIDC provider. These source changes preserve
-role trust, permissions, environment checks and fresh-apply ordering. They avoid
+lookup for the existing Sandbox GitHub OIDC provider. These source changes preserve role trust, permissions and environment checks. The input predicates preserve the configured HTTPS requirement; the attachment still depends on the role. Removing the listener references deliberately removes the former listener-to-role ordering edges. They avoid
 ALB/VPC metadata authority and account-wide OIDC discovery. Native mock closure and
 routing regression checks are required. The meeting source-model fingerprint is
 re-audited for these declared edits; its version and unknown-value refusals remain

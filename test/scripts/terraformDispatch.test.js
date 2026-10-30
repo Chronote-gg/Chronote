@@ -528,12 +528,16 @@ test.each(["plan", "apply"])(
       );
       expect(production.if).toBe("inputs.github_environment == 'production'");
     }
+    const condition =
+      mode === "plan"
+        ? "${{ inputs.github_environment == 'sandbox' && inputs.plan_scope != 'sandbox-site-permissions' }}"
+        : "${{ inputs.github_environment == 'sandbox' }}";
     const oidc = steps.find(
       (s) =>
         s.with?.["role-to-assume"] === "${{ vars.TERRAFORM_AWS_ROLE_ARN }}" &&
-        s.if === "${{ inputs.github_environment == 'sandbox' }}",
+        s.if === condition,
     );
-    expect(oidc.if).toBe("${{ inputs.github_environment == 'sandbox' }}");
+    expect(oidc.if).toBe(condition);
     expect(oidc.with["role-to-assume"]).toBe(
       "${{ vars.TERRAFORM_AWS_ROLE_ARN }}",
     );
@@ -609,3 +613,51 @@ test.each(["plan", "apply"])(
     }
   },
 );
+
+test("Plan selects site-only extra bucket reads while legacy scopes retain exact credential behavior", () => {
+  const steps = parse(
+    readFileSync(".github/workflows/terraform-plan.yml", "utf8"),
+  ).jobs.plan.steps;
+  const legacy = steps.find(
+    (s) => s.name === "Configure Sandbox AWS credentials",
+  );
+  const site = steps.find(
+    (s) => s.name === "Configure Sandbox site-permissions Plan credentials",
+  );
+  expect(legacy.if).toBe(
+    "${{ inputs.github_environment == 'sandbox' && inputs.plan_scope != 'sandbox-site-permissions' }}",
+  );
+  expect(site.if).toBe(
+    "${{ inputs.github_environment == 'sandbox' && inputs.plan_scope == 'sandbox-site-permissions' }}",
+  );
+  expect(
+    createHash("sha256")
+      .update(legacy.with["inline-session-policy"])
+      .digest("hex"),
+  ).toBe("d70a885faee7224ad66acab16036262ae2e1f8e46d0c0ce0a58e4f23d6c353de");
+  const oldPolicy = JSON.parse(legacy.with["inline-session-policy"]);
+  const sitePolicy = JSON.parse(site.with["inline-session-policy"]);
+  expect(sitePolicy).toEqual({
+    ...oldPolicy,
+    Statement: oldPolicy.Statement.map((s, i) =>
+      i === 0
+        ? {
+            ...s,
+            Action: [
+              ...s.Action,
+              "s3:GetAccelerateConfiguration",
+              "s3:GetReplicationConfiguration",
+            ],
+          }
+        : s,
+    ),
+  });
+  expect({ ...site.with, "inline-session-policy": null }).toEqual({
+    ...legacy.with,
+    "inline-session-policy": null,
+  });
+  expect(site.uses).toBe(legacy.uses);
+  expect(
+    Buffer.byteLength(site.with["inline-session-policy"]),
+  ).toBeLessThanOrEqual(2048);
+});

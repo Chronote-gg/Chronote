@@ -1,5 +1,6 @@
 /** @jest-environment node */
 import { expect, test } from "@jest/globals";
+import { parse } from "yaml";
 import { readFileSync } from "node:fs";
 import { mkdtempSync, rmSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -477,7 +478,7 @@ test("Sandbox role keeps exact HTTPS input guard without ALB or OIDC-list depend
 });
 
 // Evaluate the condition operators present in the reviewed base/session documents.
-const policyMatches = (pattern, value) =>
+const policyMatches = (pattern, value, ignoreCase = false) =>
   new RegExp(
     "^" +
       pattern
@@ -485,7 +486,7 @@ const policyMatches = (pattern, value) =>
         .map((p) => p.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
         .join(".*") +
       "$",
-    "i",
+    ignoreCase ? "i" : "",
   ).test(value);
 const conditionMatches = (condition, context) =>
   Object.entries(condition ?? {}).every(([operator, fields]) => {
@@ -509,7 +510,7 @@ const conditionMatches = (condition, context) =>
   });
 function policyAllows(policy, action, resource, context) {
   const applies = (s) =>
-    [s.Action].flat().some((a) => policyMatches(a, action)) &&
+    [s.Action].flat().some((a) => policyMatches(a, action, true)) &&
     (s.NotResource
       ? ![s.NotResource].flat().some((r) => policyMatches(r, resource))
       : [s.Resource].flat().some((r) => policyMatches(r, resource))) &&
@@ -727,3 +728,155 @@ test("Production role retains the listener count predicate without pulling routi
     `var.github_environment == "production" && (${predicate})`,
   );
 });
+
+test("selected site-permissions Plan session retains the completed dependency-read inventory", () => {
+  const steps = parse(
+    readFileSync(".github/workflows/terraform-plan.yml", "utf8"),
+  ).jobs.plan.steps;
+  const credentials =
+    steps.find(
+      (s) => s.name === "Configure Sandbox site-permissions Plan credentials",
+    ) ?? steps.find((s) => s.name === "Configure Sandbox AWS credentials");
+  const session = JSON.parse(credentials.with["inline-session-policy"]);
+  const base = JSON.parse(
+    resource(bootstrapPlan, "aws_iam_role_policy.sandbox_terraform[0]").change
+      .after.policy,
+  );
+  const metadata = [
+    "SiteBucketMetadata",
+    "SiteRoleMetadata",
+    "SiteOidcMetadata",
+    "KeyMetadata",
+    "SitePolicy",
+  ];
+  const inventory = base.Statement.filter((s) =>
+    metadata.includes(s.Sid),
+  ).flatMap((s) =>
+    [s.Action]
+      .flat()
+      .filter((action) => /:(Get|List|Describe)/.test(action))
+      .flatMap((action) => [s.Resource].flat().map((arn) => ({ action, arn }))),
+  );
+  expect(base.Statement.filter((s) => metadata.includes(s.Sid))).toHaveLength(
+    5,
+  );
+  expect(inventory).toHaveLength(41);
+  for (const { action, arn } of inventory)
+    expect(policyAllows(base, action, arn, {})).toBe(true);
+  expect(
+    inventory.filter(
+      ({ action, arn }) => !policyAllows(session, action, arn, {}),
+    ),
+  ).toEqual([]);
+  expect(credentials.if).toBe(
+    "${{ inputs.github_environment == 'sandbox' && inputs.plan_scope == 'sandbox-site-permissions' }}",
+  );
+  expect(
+    Buffer.byteLength(credentials.with["inline-session-policy"]),
+  ).toBeLessThanOrEqual(2048);
+  for (const [action, arn] of [
+    ["iam:CreatePolicy", policyArn],
+    ["iam:TagPolicy", policyArn],
+    ["iam:CreatePolicyVersion", policyArn],
+    ["iam:AttachRolePolicy", permissionBinding().deploymentRoleArn],
+    [
+      "dynamodb:UpdateTable",
+      "arn:aws:dynamodb:us-east-1:123456789012:table/meeting-notes-sandbox-MeetingHistoryTable",
+    ],
+    [
+      "s3:PutObject",
+      "arn:aws:s3:::meeting-notes-terraform-state-bucket/meeting-notes-terraform/sandbox/meeting-notes-terraform/state",
+    ],
+    [
+      "s3:PutObject",
+      `arn:aws:s3:::${permissionBinding().frontendBucket}/index.html`,
+    ],
+  ])
+    expect(policyAllows(session, action, arn, {})).toBe(false);
+});
+test("computed create name_prefix is permitted only with exact known policy identity", () => {
+  const plan = sitePermissionsPlan();
+  const change = resource(plan).change;
+  expect(change.after_unknown.name_prefix).toBe(true);
+  expect(change.after.name_prefix).toBeNull();
+  expect(() => validate(plan)).not.toThrow();
+  change.after.name_prefix = "contradictory-known-prefix";
+  expect(() => validate(plan)).toThrow();
+});
+test.each(["name", "path", "policy", "tags", "tags_all"])(
+  "computed prefix never permits unknown %s",
+  (field) => {
+    const plan = sitePermissionsPlan();
+    resource(plan).change.after_unknown[field] = true;
+    expect(() => validate(plan)).toThrow();
+  },
+);
+test.each(["update", "no-op"])(
+  "computed prefix remains refused for %s identities",
+  (action) => {
+    const plan = sitePermissionsPlan(action);
+    resource(plan).change.after_unknown.name_prefix = true;
+    expect(() => validate(plan)).toThrow();
+  },
+);
+test("IAM evaluation folds Action case while preserving resource and string-condition case", () => {
+  const arn = "arn:aws:s3:::capture/terraform/sandbox/run/Plan";
+  const policy = {
+    Statement: [{ Effect: "Allow", Action: "s3:PutObject", Resource: arn }],
+  };
+  expect(policyAllows(policy, "S3:pUtObJeCt", arn, {})).toBe(true);
+  expect(
+    policyAllows(policy, "s3:PutObject", arn.replace("/Plan", "/plan"), {}),
+  ).toBe(false);
+  const deny = {
+    Statement: [
+      { Effect: "Allow", Action: "s3:PutObject", Resource: "*" },
+      { Effect: "Deny", Action: "s3:PutObject", NotResource: arn },
+    ],
+  };
+  expect(policyAllows(deny, "s3:PutObject", arn, {})).toBe(true);
+  expect(
+    policyAllows(deny, "s3:PutObject", arn.replace("/Plan", "/plan"), {}),
+  ).toBe(false);
+  const conditional = {
+    Statement: [
+      {
+        Effect: "Allow",
+        Action: "kms:Decrypt",
+        Resource: "*",
+        Condition: {
+          StringLike: { "kms:EncryptionContext:aws:s3:arn": arn + "*" },
+        },
+      },
+    ],
+  };
+  expect(
+    policyAllows(conditional, "kms:Decrypt", "key", {
+      "kms:EncryptionContext:aws:s3:arn": arn,
+    }),
+  ).toBe(true);
+  expect(
+    policyAllows(conditional, "kms:Decrypt", "key", {
+      "kms:EncryptionContext:aws:s3:arn": arn.replace("sandbox", "Sandbox"),
+    }),
+  ).toBe(false);
+});
+
+test.each(["arn", "id", "attachment_count", "policy_id", "name_prefix"])(
+  "computed policy %s cannot be known and unknown simultaneously",
+  (field) => {
+    const plan = sitePermissionsPlan();
+    resource(plan).change.after[field] =
+      field === "attachment_count" ? 0 : policyArn;
+    expect(() => validate(plan)).toThrow();
+  },
+);
+
+test.each([null, {}, { nested: true }, "true", 1])(
+  "computed prefix refuses malformed unknown mask %j",
+  (mask) => {
+    const plan = sitePermissionsPlan();
+    resource(plan).change.after_unknown.name_prefix = mask;
+    expect(() => validate(plan)).toThrow();
+  },
+);
