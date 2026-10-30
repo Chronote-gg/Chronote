@@ -2,7 +2,7 @@
 
 ## Outcome and decision
 
-Install the existing Sandbox site-publishing policy without copying application secrets to a workstation. Add a dedicated `sandbox-site-permissions` operation to the existing GitHub Terraform Plan/Apply pipeline. BASIC selected this approach on October 30. Approval of this written design is pending.
+Install the existing Sandbox site-publishing policy without copying application secrets to a workstation. Add a dedicated `sandbox-site-permissions` operation to the existing GitHub Terraform Plan/Apply pipeline. BASIC selected this approach and approved this written design on October 30.
 
 PR #507 has already merged. Its source changes do not install permissions. No new Sandbox deployment was observed at the last check. The next Sandbox publishing attempt needs this prerequisite first.
 
