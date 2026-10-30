@@ -1,5 +1,22 @@
 # Infrastructure Notes
 
+## Bot worker capacity
+
+The task definition selects CPU and memory from `environment`:
+
+| Environment                           | CPU      | Memory |
+| ------------------------------------- | -------- | ------ |
+| `prod`                                | 1 vCPU   | 2 GiB  |
+| Other environments, including Sandbox | 0.5 vCPU | 1 GiB  |
+
+Task reservations and container limits use the same values. Recording buffer
+limits remain independent of the task size.
+
+A Terraform apply registers the new task definition. The service ignores task
+definition changes from Terraform, so a protected backend deployment is also
+required to move the running worker to the new size. Keep the intended image
+and active-work protections when deploying a capacity change.
+
 ## Terraform state bootstrap
 
 The standalone `_infra_state_mgmt` stack provisions the remote state bucket and
