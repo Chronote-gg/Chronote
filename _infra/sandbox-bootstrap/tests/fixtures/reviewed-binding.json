@@ -14,11 +14,13 @@
     "trusted_refs": [
       "refs/heads/codex/sandbox-terraform-capture",
       "refs/heads/master"
-    ]
+    ],
+    "site_frontend_bucket": "meeting-notes-sandbox-frontend-123456789012",
+    "site_docs_bucket": "meeting-notes-sandbox-docs-123456789012"
   },
   "policySha256": {
     "bucket": "229770c0d1dcf510a1e770472072bbef94a9527ac1e3a1a5d074fdb578851885",
     "trust": "54edfa964704bbb84803f5dd33f7964c953a40a32b93d02fd8b863b104016e8a",
-    "role": "49fa9fa882043f8d64237b8322fc4641ba15f18fad5de6ab2a8cbc6adb7a88f2"
+    "role": "34f879fe1f1cd961c9b59ddb765b2f839cb31c5f46d5ecee5cbd78bd0e571ab1"
   }
 }

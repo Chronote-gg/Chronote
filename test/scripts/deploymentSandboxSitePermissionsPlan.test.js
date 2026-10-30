@@ -350,6 +350,7 @@ test("Apply session intersects current writes with exact future grants within ST
   ).toBeLessThanOrEqual(2048);
   // The inline allow does not grant anything absent from the bootstrap policy.
   const future = {
+    Effect: "Allow",
     Action: "iam:AttachRolePolicy",
     Resource: permissionBinding().deploymentRoleArn,
     Condition: { StringEquals: { "iam:PolicyARN": policyArn } },
@@ -359,18 +360,12 @@ test("Apply session intersects current writes with exact future grants within ST
       (r) => r.address === "aws_iam_role_policy.sandbox_terraform[0]",
     ).change.after.policy,
   );
-  const baseStatements = [
-    ...current.Statement,
-    future,
-    {
-      Effect: "Allow",
-      Action: ["iam:CreatePolicy", "iam:TagPolicy", "iam:CreatePolicyVersion"],
-      Resource: policyArn,
-    },
-  ];
+  expect(current.Statement).toContainEqual(expect.objectContaining(future));
+  const baseStatements = current.Statement;
   const allowed = (action, arn, attached) => {
     const base = baseStatements.some(
       (s) =>
+        s.Effect === "Allow" &&
         [s.Action].flat().includes(action) &&
         [s.Resource].flat().includes(arn) &&
         (!s.Condition?.StringEquals?.["iam:PolicyARN"] ||
@@ -457,4 +452,278 @@ test("session CLI masks before publishing and refuses malformed selectors withou
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test("Sandbox role keeps exact HTTPS input guard without ALB or OIDC-list dependency", () => {
+  const role = readFileSync("_infra/sandbox-deployment.tf", "utf8");
+  const listener = readFileSync("_infra/api.tf", "utf8");
+  const predicate = listener.match(
+    /resource "aws_lb_listener" "api_https" \{\s+count\s+= (.+) \? 1 : 0/,
+  )[1];
+  const condition = role.match(/condition\s+= (.+)/)[1];
+  expect(condition).toBe(
+    `var.github_environment == "sandbox" && (${predicate})`,
+  );
+  expect(
+    role.slice(0, role.indexOf('resource "aws_iam_role_policy"')),
+  ).not.toMatch(/aws_lb_listener|aws_lb\.|aws_vpc/);
+  expect(
+    role.match(
+      /data "aws_iam_openid_connect_provider" "github_deploy" \{([^}]+(?:}[^}]+)?)/,
+    )[0],
+  ).toContain(
+    'arn   = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:oidc-provider/token.actions.githubusercontent.com"',
+  );
+});
+
+// Evaluate the condition operators present in the reviewed base/session documents.
+const policyMatches = (pattern, value) =>
+  new RegExp(
+    "^" +
+      pattern
+        .split("*")
+        .map((p) => p.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
+        .join(".*") +
+      "$",
+    "i",
+  ).test(value);
+const conditionMatches = (condition, context) =>
+  Object.entries(condition ?? {}).every(([operator, fields]) => {
+    expect([
+      "StringEquals",
+      "StringLike",
+      "ForAllValues:StringEquals",
+    ]).toContain(operator);
+    return Object.entries(fields).every(([key, expected]) => {
+      if (!Object.hasOwn(context, key)) return false;
+      const wanted = [expected].flat(),
+        actual = [context[key]].flat();
+      const matches = (value) =>
+        wanted.some((v) =>
+          operator === "StringLike" ? policyMatches(v, value) : v === value,
+        );
+      return operator === "ForAllValues:StringEquals"
+        ? actual.every(matches)
+        : actual.some(matches);
+    });
+  });
+function policyAllows(policy, action, resource, context) {
+  const applies = (s) =>
+    [s.Action].flat().some((a) => policyMatches(a, action)) &&
+    (s.NotResource
+      ? ![s.NotResource].flat().some((r) => policyMatches(r, resource))
+      : [s.Resource].flat().some((r) => policyMatches(r, resource))) &&
+    conditionMatches(s.Condition, context);
+  return (
+    policy.Statement.some((s) => s.Effect === "Allow" && applies(s)) &&
+    !policy.Statement.some((s) => s.Effect === "Deny" && applies(s))
+  );
+}
+test("completed base policy has exactly the reviewed write inventory and effective operations", () => {
+  const base = JSON.parse(
+    resource(bootstrapPlan, "aws_iam_role_policy.sandbox_terraform[0]").change
+      .after.policy,
+  );
+  const session = JSON.parse(
+    prepareSandboxSitePermissionSession(permissionBinding()).policy,
+  );
+  const state =
+    "arn:aws:s3:::meeting-notes-terraform-state-bucket/meeting-notes-terraform/sandbox/meeting-notes-terraform/state";
+  const locks =
+    "arn:aws:dynamodb:us-east-1:123456789012:table/meeting-notes-terraform-state-locks";
+  const capture =
+    "arn:aws:s3:::meeting-notes-sandbox-private-evidence-123456789012/terraform/sandbox/*";
+  const key = permissionBinding().kmsKeyArn;
+  const history =
+    "arn:aws:dynamodb:us-east-1:123456789012:table/meeting-notes-sandbox-MeetingHistoryTable";
+  const runtime =
+    "arn:aws:iam::123456789012:policy/meeting-notes-sandbox-bot-dynamodb-policy";
+  const deploymentRole = permissionBinding().deploymentRoleArn;
+  const context = {
+    "iam:PolicyARN": policyArn,
+    "dynamodb:LeadingKeys": [state.slice("arn:aws:s3:::".length)],
+    "s3:if-none-match": "*",
+    "s3:x-amz-server-side-encryption": "aws:kms",
+    "s3:x-amz-server-side-encryption-aws-kms-key-id": key,
+    "kms:CallerAccount": "123456789012",
+    "kms:ViaService": "s3.us-east-1.amazonaws.com",
+    "kms:EncryptionContext:aws:s3:arn": capture.replace("*", "run/plan"),
+  };
+  const reads = new Set([
+    "s3:GetObject",
+    "s3:GetObjectVersion",
+    "s3:ListBucket",
+    "s3:GetBucketLocation",
+    "s3:GetBucketVersioning",
+    "s3:GetBucketOwnershipControls",
+    "s3:GetBucketPublicAccessBlock",
+    "s3:GetBucketPolicyStatus",
+    "s3:GetBucketPolicy",
+    "s3:GetEncryptionConfiguration",
+    "s3:GetLifecycleConfiguration",
+    "s3:GetBucketAcl",
+    "s3:GetBucketCORS",
+    "s3:GetBucketWebsite",
+    "s3:GetAccelerateConfiguration",
+    "s3:GetBucketRequestPayment",
+    "s3:GetBucketLogging",
+    "s3:GetReplicationConfiguration",
+    "s3:GetBucketObjectLockConfiguration",
+    "s3:GetBucketTagging",
+    "dynamodb:GetItem",
+    "dynamodb:DescribeTable",
+    "dynamodb:DescribeContinuousBackups",
+    "dynamodb:DescribeTimeToLive",
+    "dynamodb:ListTagsOfResource",
+    "iam:GetPolicy",
+    "iam:GetPolicyVersion",
+    "iam:ListPolicyTags",
+    "iam:ListPolicyVersions",
+    "iam:GetRole",
+    "iam:GetRolePolicy",
+    "iam:ListRolePolicies",
+    "iam:ListAttachedRolePolicies",
+    "iam:GetOpenIDConnectProvider",
+    "kms:DescribeKey",
+    "kms:GetKeyPolicy",
+    "kms:GetKeyRotationStatus",
+    "kms:ListResourceTags",
+  ]);
+  const writes = base.Statement.map((s) => ({
+    ...s,
+    Action: [s.Action].flat().filter((a) => !reads.has(a)),
+  })).filter((s) => s.Action.length);
+  const grant = (Sid, Action, Resource, Condition) => ({
+    Sid,
+    Effect: "Allow",
+    Action,
+    Resource,
+    ...(Condition ? { Condition } : {}),
+  });
+  expect(writes).toEqual([
+    grant(
+      "SitePolicy",
+      ["iam:CreatePolicy", "iam:TagPolicy", "iam:CreatePolicyVersion"],
+      policyArn,
+    ),
+    grant("SiteAttachment", ["iam:AttachRolePolicy"], deploymentRole, {
+      StringEquals: { "iam:PolicyARN": policyArn },
+    }),
+    grant("ApplicationState", ["s3:PutObject"], state),
+    grant(
+      "SandboxStateLocks",
+      ["dynamodb:PutItem", "dynamodb:DeleteItem"],
+      locks,
+      {
+        "ForAllValues:StringEquals": {
+          "dynamodb:LeadingKeys": [
+            state.slice("arn:aws:s3:::".length),
+            state.slice("arn:aws:s3:::".length) + "-md5",
+          ],
+        },
+      },
+    ),
+    grant("HistoryDeliveryIndex", ["dynamodb:UpdateTable"], history),
+    grant("RuntimePolicyVersion", ["iam:CreatePolicyVersion"], runtime),
+    grant("ConditionalCapture", ["s3:PutObject"], capture, {
+      StringEquals: {
+        "s3:if-none-match": "*",
+        "s3:x-amz-server-side-encryption": "aws:kms",
+        "s3:x-amz-server-side-encryption-aws-kms-key-id": key,
+      },
+    }),
+    grant("CaptureKeyUse", ["kms:GenerateDataKey", "kms:Decrypt"], key, {
+      StringEquals: {
+        "kms:CallerAccount": "123456789012",
+        "kms:ViaService": "s3.us-east-1.amazonaws.com",
+      },
+      StringLike: { "kms:EncryptionContext:aws:s3:arn": capture },
+    }),
+  ]);
+  const effective = (action, arn, ctx = context) =>
+    policyAllows(base, action, arn, ctx) &&
+    policyAllows(session, action, arn, ctx);
+  for (const [action, arn, allowed] of [
+    ["s3:PutObject", state, true],
+    ["s3:GetObject", state, true],
+    ["dynamodb:PutItem", locks, true],
+    ["dynamodb:DeleteItem", locks, true],
+    ["s3:PutObject", capture.replace("*", "run/plan"), true],
+    ["s3:GetObjectVersion", capture.replace("*", "run/plan"), true],
+    ["kms:GenerateDataKey", key, true],
+    ["kms:Decrypt", key, true],
+    ["iam:CreatePolicy", policyArn, true],
+    ["iam:TagPolicy", policyArn, true],
+    ["iam:CreatePolicyVersion", policyArn, true],
+    ["iam:AttachRolePolicy", deploymentRole, true],
+    ["iam:CreatePolicyVersion", runtime, false],
+    ["dynamodb:UpdateTable", history, false],
+    ["dynamodb:PutItem", history, false],
+    ["iam:AttachRolePolicy", deploymentRole.replace("sandbox", "prod"), false],
+    ["iam:DeletePolicyVersion", policyArn, false],
+    ["iam:DetachRolePolicy", deploymentRole, false],
+    [
+      "s3:PutObject",
+      "arn:aws:s3:::" + permissionBinding().frontendBucket + "/file",
+      false,
+    ],
+    [
+      "s3:PutObject",
+      capture.replace("sandbox/", "prod/").replace("*", "run/plan"),
+      false,
+    ],
+  ])
+    expect(effective(action, arn)).toBe(allowed);
+  expect(
+    effective("iam:AttachRolePolicy", deploymentRole, {
+      ...context,
+      "iam:PolicyARN": runtime,
+    }),
+  ).toBe(false);
+  expect(
+    effective("dynamodb:PutItem", locks, {
+      ...context,
+      "dynamodb:LeadingKeys": ["other"],
+    }),
+  ).toBe(false);
+  expect(
+    effective("s3:PutObject", capture.replace("*", "run/plan"), {
+      ...context,
+      "s3:if-none-match": "other",
+    }),
+  ).toBe(false);
+  expect(
+    effective("kms:Decrypt", key, {
+      ...context,
+      "kms:EncryptionContext:aws:s3:arn": "arn:aws:s3:::other/file",
+    }),
+  ).toBe(false);
+  expect(
+    policyAllows(
+      {
+        Statement: [
+          {
+            Effect: "Deny",
+            Action: "iam:AttachRolePolicy",
+            Resource: deploymentRole,
+          },
+        ],
+      },
+      "iam:AttachRolePolicy",
+      deploymentRole,
+      context,
+    ),
+  ).toBe(false);
+});
+
+test("Production role retains the listener count predicate without pulling routing into Sandbox targets", () => {
+  const role = readFileSync("_infra/production-deployment.tf", "utf8");
+  const listener = readFileSync("_infra/api.tf", "utf8");
+  const predicate = listener.match(
+    /resource "aws_lb_listener" "api_https" \{\s+count\s+= (.+) \? 1 : 0/,
+  )[1];
+  const condition = role.match(/condition\s+= (.+)/)[1];
+  expect(condition).toBe(
+    `var.github_environment == "production" && (${predicate})`,
+  );
 });

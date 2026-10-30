@@ -830,7 +830,7 @@ Before enabling these jobs, install and verify the existing
 Plan/Apply scope and a reviewed saved Terraform plan. This operation is pinned to
 `meeting-notes-sandbox-site-publishing` and
 `meeting-notes-sandbox-github-deploy`; a custom project prefix is refused.
-Install the separately reviewed Sandbox bootstrap runner permissions first.
+Install the separately reviewed Sandbox bootstrap runner permissions first, using the [bounded inline-policy update guard](sandbox-bootstrap/README.md#bounded-existing-policy-update) and an independently approved saved bootstrap plan. Its new non-secret bucket inputs must equal the existing deployment selectors. The application target graph uses an exact OIDC ARN and equivalent HTTPS input predicates to avoid account-wide provider discovery and ALB/VPC metadata grants. Source checks do not prove that either policy is installed.
 The operation requires matching storage account/region, known unchanged site
 buckets, the application key equal to the binding key and the existing deployment
 role. Distribution selectors must agree with their `TFVAR_` inputs. It checks

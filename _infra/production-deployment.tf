@@ -45,7 +45,7 @@ resource "aws_iam_role" "production_deploy" {
   })
   lifecycle {
     precondition {
-      condition     = var.github_environment == "production" && length(aws_lb_listener.api_https) == 1
+      condition     = var.github_environment == "production" && (var.ENABLE_API_ALB && var.API_DOMAIN != "" && (var.API_CERT_ARN != "" || var.HOSTED_ZONE_NAME != ""))
       error_message = "Production deployment requires the production GitHub environment and HTTPS deployment routing."
     }
   }

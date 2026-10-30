@@ -87,4 +87,16 @@ This sequence completes the installation goal after the source PR is merged. It 
 
 Self-review maps application validation and all five review-focus cases to Task 1, runner/bootstrap restrictions to Task 2, and live acceptance to the ordered rollout gates. Existing permissions, private capture and native approval modules are reused. No new dependency, secret, role or general updater is proposed.
 
-The design is approved. This implementation plan awaits BASIC's review before the preserved subagent workflow begins.
+The design and implementation plan are approved. Task 1 is implemented and independently reviewed. Task 2 is executing under the approved bounded source scope; operator rollout remains separate.
+
+## Approved execution adjustments
+
+The provider inventory exposed routing dependencies through both branches of the
+site attachment. BASIC's coordinator authorized equivalent input-only HTTPS
+preconditions for the Sandbox and production deployment roles, plus an exact-ARN
+lookup for the existing Sandbox GitHub OIDC provider. These source changes preserve
+role trust, permissions, environment checks and fresh-apply ordering. They avoid
+ALB/VPC metadata authority and account-wide OIDC discovery. Native mock closure and
+routing regression checks are required. The meeting source-model fingerprint is
+re-audited for these declared edits; its version and unknown-value refusals remain
+unchanged. No live production change is included.

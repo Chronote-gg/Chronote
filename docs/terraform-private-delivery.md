@@ -123,7 +123,7 @@ unrelated managed writes refuse. This installation operation is pinned to
 `meeting-notes-sandbox-site-publishing` and `meeting-notes-sandbox-github-deploy`.
 
 First install and verify the separately reviewed Sandbox bootstrap runner grant
-using its own saved-plan procedure. The application operation does not change the
+using [its bounded existing-policy saved-plan procedure](../_infra/sandbox-bootstrap/README.md#bounded-existing-policy-update). The reviewed bootstrap binding adds the two non-secret bucket inputs and an independently observed previous-policy hash. Its only managed update is the runner inline policy; trust, backend, capture storage and encryption remain unchanged. Missing authoritative bootstrap inputs stop installation. The application operation does not change the
 bootstrap root. The policy must grant exactly the reviewed bucket/object,
 distribution and application-key permissions from `_infra/site-publishing.tf`.
 Both site buckets, the existing deployment role and application key must be known
