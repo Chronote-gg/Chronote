@@ -1,14 +1,6 @@
 "use strict";
 const assert = require("node:assert/strict");
-const {
-  readFileSync,
-  openSync,
-  fstatSync,
-  writeSync,
-  closeSync,
-  readdirSync,
-  lstatSync,
-} = require("node:fs");
+const { readFileSync, readdirSync, lstatSync } = require("node:fs");
 const { join } = require("node:path");
 const { isUtf8 } = require("node:buffer");
 const { digest } = require("./collector-payload.cjs");
@@ -17,7 +9,10 @@ const {
   assertOtherwiseUnchanged,
 } = require("./validate-prerequisite-plan.cjs");
 const { hasUnknown, without } = require("./terraform-meeting-update.cjs");
-const { prepareSandboxSiteSession } = require("./sandbox-site-session.cjs");
+const {
+  prepareSandboxSiteSession,
+  writeSandboxSiteSessionOutput,
+} = require("./sandbox-site-session.cjs");
 const { storageBinding } = require("./private-capture.cjs");
 const policyAddress = "aws_iam_policy.site_publishing[0]";
 const attachmentAddress = "aws_iam_role_policy_attachment.site_publishing[0]";
@@ -164,8 +159,7 @@ function unchanged(change) {
   );
   assert.deepEqual(change.before, change.after);
 }
-function checkPolicy(change, b) {
-  const created = change.actions[0] === "create";
+function checkComputedPolicyFields(change, created) {
   const computed = [
     "arn",
     "id",
@@ -182,6 +176,11 @@ function checkPolicy(change, b) {
   for (const field of computed)
     if (change.after_unknown?.[field] === true)
       assert.equal(after[field] ?? null, null);
+}
+function checkPolicy(change, b) {
+  const created = change.actions[0] === "create";
+  checkComputedPolicyFields(change, created);
+  const after = change.after;
   assert.equal(after.name, policyName);
   assert.equal(after.path, "/");
   assert.ok(after.description == null || after.description === "");
@@ -245,12 +244,7 @@ function checkAttachment(change, b, plan, createdPolicy, directory) {
   } else assert.equal(change.after.policy_arn, policyArn(b));
   if (!created) unchanged(change);
 }
-function validateSandboxSitePermissionsPlan(
-  plan,
-  b,
-  { directory = join(__dirname, "../..") } = {},
-) {
-  assertBinding(b);
+function assertPlanContext(plan, b) {
   assert.equal(plan.format_version, "1.2");
   assert.notEqual(plan.errored, true);
   for (const name of [
@@ -273,12 +267,8 @@ function validateSandboxSitePermissionsPlan(
     docs_distribution_id: b.docsDistributionId,
   }))
     assert.deepEqual(plan.variables[name], { value });
-  assert.ok(Array.isArray(plan.resource_changes));
-  const resources = new Map();
-  for (const r of plan.resource_changes) {
-    assert.ok(!resources.has(r.address));
-    resources.set(r.address, r);
-  }
+}
+function validateSiteDependencies(resources, b) {
   const dependencies = {
     "aws_s3_bucket.frontend": {
       bucket: b.frontendBucket,
@@ -298,6 +288,22 @@ function validateSandboxSitePermissionsPlan(
     for (const [key, value] of Object.entries(values))
       assert.equal(r.change.after[key], value);
   }
+  return Object.keys(dependencies);
+}
+function validateSandboxSitePermissionsPlan(
+  plan,
+  b,
+  { directory = join(__dirname, "../..") } = {},
+) {
+  assertBinding(b);
+  assertPlanContext(plan, b);
+  assert.ok(Array.isArray(plan.resource_changes));
+  const resources = new Map();
+  for (const r of plan.resource_changes) {
+    assert.ok(!resources.has(r.address));
+    resources.set(r.address, r);
+  }
+  const dependencyAddresses = validateSiteDependencies(resources, b);
   for (const address of sandboxSitePermissionsTargets.keys())
     assert.equal(resources.get(address)?.mode, "managed");
   const check = ({ address, change }) =>
@@ -312,7 +318,7 @@ function validateSandboxSitePermissionsPlan(
         );
   const result = validateScopedPlan(plan, {
     targets: sandboxSitePermissionsTargets,
-    requiredNoOp: Object.keys(dependencies),
+    requiredNoOp: dependencyAddresses,
     check,
   });
   // The shared validator skips no-ops. This scope must still verify installed policy contents.
@@ -365,15 +371,7 @@ if (require.main === module) {
       assert.equal(process.argv.length, 3);
       assert.ok(process.env.GITHUB_OUTPUT);
       const prepared = prepareSandboxSitePermissionSession(binding);
-      const output = openSync(process.env.GITHUB_OUTPUT, "a");
-      try {
-        assert.ok(fstatSync(output).isFile());
-        for (const value of prepared.masks)
-          process.stdout.write(`::add-mask::${value}\n`);
-        writeSync(output, `policy=${prepared.policy}\n`);
-      } finally {
-        closeSync(output);
-      }
+      writeSandboxSiteSessionOutput(prepared, process.env.GITHUB_OUTPUT);
     } else {
       assert.equal(process.argv.length, 2);
       process.stdout.write(

@@ -1,4 +1,5 @@
 import { privateCaptureFixture } from "./privateCapture.js";
+import sitePolicyFixture from "./sandboxSitePolicy.json";
 export const policyAddress = "aws_iam_policy.site_publishing[0]";
 export const attachmentAddress =
   "aws_iam_role_policy_attachment.site_publishing[0]";
@@ -33,57 +34,8 @@ export function permissionBinding() {
     deploymentRoleArn: vars.SANDBOX_BACKEND_DEPLOY_ROLE_ARN,
   };
 }
-export function sitePolicy(binding = permissionBinding()) {
-  const buckets = [binding.frontendBucket, binding.docsBucket].map(
-    (b) => `arn:aws:s3:::${b}`,
-  );
-  const objects = buckets.map((b) => `${b}/*`);
-  const distributions = [
-    binding.frontendDistributionId,
-    binding.docsDistributionId,
-  ].map((d) => `arn:aws:cloudfront::${binding.accountId}:distribution/${d}`);
-  return {
-    Version: "2012-10-17",
-    Statement: [
-      {
-        Sid: "SiteBuckets",
-        Effect: "Allow",
-        Action: ["s3:ListBucket"],
-        Resource: buckets,
-      },
-      {
-        Sid: "SiteObjects",
-        Effect: "Allow",
-        Action: ["s3:PutObject", "s3:DeleteObject", "s3:AbortMultipartUpload"],
-        Resource: objects,
-      },
-      {
-        Sid: "SiteInvalidation",
-        Effect: "Allow",
-        Action: ["cloudfront:CreateInvalidation"],
-        Resource: distributions,
-      },
-      {
-        Sid: "DocsPreflightAndWait",
-        Effect: "Allow",
-        Action: ["cloudfront:GetDistribution", "cloudfront:GetInvalidation"],
-        Resource: [distributions[1]],
-      },
-      {
-        Sid: "SiteObjectEncryption",
-        Effect: "Allow",
-        Action: ["kms:GenerateDataKey", "kms:Decrypt"],
-        Resource: [binding.kmsKeyArn],
-        Condition: {
-          StringEquals: {
-            "kms:CallerAccount": binding.accountId,
-            "kms:ViaService": `s3.${binding.region}.amazonaws.com`,
-          },
-          StringLike: { "kms:EncryptionContext:aws:s3:arn": objects },
-        },
-      },
-    ],
-  };
+export function sitePolicy() {
+  return structuredClone(sitePolicyFixture);
 }
 const resource = (address, after, action = "no-op") => ({
   address,
