@@ -148,7 +148,7 @@ flowchart LR
 
 Production backend deployment waits for CI and docs publication. Frontend publication waits for backend success; docs publication can finish even if the backend later fails. Normal backend deployments protect the serving runtime, warm and promote a compatible candidate, then wait for runtime-owned retirement. See [recording handoff and recovery](docs/deployment-handoff.md). The one-time [first production introduction](docs/production-introduction.md) is a cold cutover that runs only when no work is in flight.
 
-Sandbox deployment uses its own preflight, skips Checkov and allows unit test failures to continue. Its frontend, docs and backend jobs depend on that preflight, without the production backend-before-frontend dependency. Prompt and LLM connection checks still run. Sandbox bootstrap and approval rules remain separate.
+Sandbox deployment uses its own preflight, skips Checkov and allows unit test failures to continue. Its frontend, docs and backend jobs depend on that preflight, without the production backend-before-frontend dependency. All three jobs use the Sandbox OIDC deployment role; site jobs restrict each session to its own publishing targets. Install the existing site policy before enabling them, as described in [Sandbox site publishing](_infra/README.md#sandbox-site-publishing). Sandbox bootstrap and approval rules remain separate.
 
 Coverage update rule:
 

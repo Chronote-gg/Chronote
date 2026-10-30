@@ -784,7 +784,42 @@ three-hour session to cover bounded warmup and retirement; it has no static-key 
 
 The Sandbox task-role AppConfig policy is scoped to its application, profile,
 environment, configuration and deployment strategy. Production retains its existing
-policy in this change. Frontend, docs and Terraform authentication are separate.
+policy in this change. Terraform authentication remains separate.
+
+### Sandbox site publishing
+
+The Sandbox frontend and docs jobs use the same OIDC role through
+`SANDBOX_BACKEND_DEPLOY_ROLE_ARN` and `AWS_ACCOUNT_ID`. Each job requests a
+one-hour session named `chronote-sandbox-<run_id>-<run_attempt>` and verifies the
+exact account, role and session before any S3 or CloudFront operation.
+`scripts/deployment/sandbox-site-session.cjs` validates the configured account,
+Sandbox role, region and selected site's bucket and distribution. It masks those
+selectors and the resulting policy before exposing the policy to the credentials
+action. Valid custom bucket names are preserved.
+
+The frontend session can list its bucket, publish and delete its objects, abort
+multipart uploads and invalidate its distribution. Docs also retain distribution
+and invalidation reads. KMS use is restricted to S3 in the configured region and
+that site's object encryption context. The session policy intersects with the
+role's installed policy, which restricts KMS to the existing application key.
+Neither job receives backend, IAM, Secrets Manager or other-site permissions.
+Missing docs selectors still skip docs publishing. Preflight requires the account
+and role selectors instead of static keys and retains its production-target guards.
+
+Before enabling these jobs, install and verify the existing
+`aws_iam_policy.site_publishing[0]` and
+`aws_iam_role_policy_attachment.site_publishing[0]` from
+`_infra/site-publishing.tf` through the supported operator route and a reviewed
+saved Terraform plan. The restricted `meeting-update-delivery` workflow cannot
+install them. Refuse unrelated resources, uncertain private bindings, concurrent
+owner conflicts or permission failures. Do not widen that workflow or use direct
+IAM writes to bypass the saved-plan gate.
+
+Source merge, installed policy, fresh OIDC authentication and actual publishing
+require separate evidence. Source tests establish none of the hosted outcomes.
+There is no static-key fallback. Retire obsolete GitHub key bindings and their
+Terraform producer only after every static caller has migrated and the replacement
+has succeeded; a later Terraform apply must not recreate a retired binding.
 
 Run the mocked policy checks with `terraform -chdir=_infra init -backend=false` and
 `terraform -chdir=_infra test`. Live introduction still requires a reviewed full saved

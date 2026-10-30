@@ -263,16 +263,17 @@ jobs:
       SECRETS_PREFIX: ${{ vars.SECRETS_PREFIX }}
       FRONTEND_BUCKET: ${{ vars.FRONTEND_BUCKET }}
       DOCS_BUCKET: ${{ vars.DOCS_BUCKET }}
-      AWS_ACCESS_KEY_ID: ${{ vars.AWS_ACCESS_KEY_ID }}
+      AWS_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
+      SANDBOX_BACKEND_DEPLOY_ROLE_ARN: ${{ vars.SANDBOX_BACKEND_DEPLOY_ROLE_ARN }}
       AWS_REGION: ${{ vars.AWS_REGION }}
       FRONTEND_DISTRIBUTION_ID: ${{ vars.FRONTEND_DISTRIBUTION_ID }}
-      HAS_AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY != '' }}
     steps:
       - name: Reject production resources for sandbox deploys
         run: |
           set -euo pipefail
           required_names=(
-            AWS_ACCESS_KEY_ID
+            AWS_ACCOUNT_ID
+            SANDBOX_BACKEND_DEPLOY_ROLE_ARN
             AWS_REGION
             ECR_REPOSITORY
             ECS_CLUSTER
@@ -291,10 +292,6 @@ jobs:
               missing_values+=("$name")
             fi
           done
-
-          if [ "$HAS_AWS_SECRET_ACCESS_KEY" != "true" ]; then
-            missing_values+=("AWS_SECRET_ACCESS_KEY")
-          fi
 
           if [ ${#missing_values[@]} -gt 0 ]; then
             echo "ERROR: sandbox deploy is missing required configuration."
@@ -519,6 +516,9 @@ jobs:
     needs: [deploy-target-preflight]
     runs-on: ubuntu-latest
     environment: sandbox
+    permissions:
+      contents: read
+      id-token: write
     env:
       VITE_API_BASE_URL: ${{ vars.VITE_API_BASE_URL }}
       VITE_POSTHOG_KEY: ${{ vars.VITE_POSTHOG_KEY }}
@@ -527,12 +527,36 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
 
+      - name: Prepare Sandbox frontend session
+        id: site-session
+        env:
+          AWS_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
+          SANDBOX_BACKEND_DEPLOY_ROLE_ARN: ${{ vars.SANDBOX_BACKEND_DEPLOY_ROLE_ARN }}
+          AWS_REGION: ${{ vars.AWS_REGION }}
+          FRONTEND_BUCKET: ${{ vars.FRONTEND_BUCKET }}
+          FRONTEND_DISTRIBUTION_ID: ${{ vars.FRONTEND_DISTRIBUTION_ID }}
+        run: node scripts/deployment/sandbox-site-session.cjs frontend
+
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v6
         with:
-          aws-access-key-id: ${{ vars.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          role-to-assume: ${{ vars.SANDBOX_BACKEND_DEPLOY_ROLE_ARN }}
+          allowed-account-ids: ${{ vars.AWS_ACCOUNT_ID }}
+          role-session-name: chronote-sandbox-${{ github.run_id }}-${{ github.run_attempt }}
+          role-duration-seconds: 3600
           aws-region: ${{ vars.AWS_REGION }}
+          unset-current-credentials: true
+          mask-aws-account-id: true
+          inline-session-policy: ${{ steps.site-session.outputs.policy }}
+
+      - name: Verify exact Sandbox deployment identity
+        env:
+          EXPECTED_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
+          EXPECTED_ROLE_ARN: ${{ vars.SANDBOX_BACKEND_DEPLOY_ROLE_ARN }}
+          EXPECTED_SESSION_NAME: chronote-sandbox-${{ github.run_id }}-${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+          aws sts get-caller-identity --output json | node scripts/deployment/assert-sandbox-identity.cjs
 
       - name: Setup Node.js
         uses: actions/setup-node@v7
@@ -558,6 +582,9 @@ jobs:
     needs: [deploy-target-preflight]
     runs-on: ubuntu-latest
     environment: sandbox
+    permissions:
+      contents: read
+      id-token: write
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -576,13 +603,39 @@ jobs:
 
           echo "enabled=true" >> "$GITHUB_OUTPUT"
 
+      - name: Prepare Sandbox docs session
+        id: site-session
+        if: steps.docs-config.outputs.enabled == 'true'
+        env:
+          AWS_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
+          SANDBOX_BACKEND_DEPLOY_ROLE_ARN: ${{ vars.SANDBOX_BACKEND_DEPLOY_ROLE_ARN }}
+          AWS_REGION: ${{ vars.AWS_REGION }}
+          DOCS_BUCKET: ${{ vars.DOCS_BUCKET }}
+          DOCS_DISTRIBUTION_ID: ${{ vars.DOCS_DISTRIBUTION_ID }}
+        run: node scripts/deployment/sandbox-site-session.cjs docs
+
       - name: Configure AWS credentials
         if: steps.docs-config.outputs.enabled == 'true'
         uses: aws-actions/configure-aws-credentials@v6
         with:
-          aws-access-key-id: ${{ vars.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          role-to-assume: ${{ vars.SANDBOX_BACKEND_DEPLOY_ROLE_ARN }}
+          allowed-account-ids: ${{ vars.AWS_ACCOUNT_ID }}
+          role-session-name: chronote-sandbox-${{ github.run_id }}-${{ github.run_attempt }}
+          role-duration-seconds: 3600
           aws-region: ${{ vars.AWS_REGION }}
+          unset-current-credentials: true
+          mask-aws-account-id: true
+          inline-session-policy: ${{ steps.site-session.outputs.policy }}
+
+      - name: Verify exact Sandbox deployment identity
+        if: steps.docs-config.outputs.enabled == 'true'
+        env:
+          EXPECTED_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
+          EXPECTED_ROLE_ARN: ${{ vars.SANDBOX_BACKEND_DEPLOY_ROLE_ARN }}
+          EXPECTED_SESSION_NAME: chronote-sandbox-${{ github.run_id }}-${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+          aws sts get-caller-identity --output json | node scripts/deployment/assert-sandbox-identity.cjs
 
       - name: Preflight docs publish targets
         if: steps.docs-config.outputs.enabled == 'true'
