@@ -530,6 +530,8 @@ provider "github" {
 
 locals {
   name_prefix             = "${var.project_name}-${var.environment}"
+  bot_task_cpu            = var.environment == "prod" ? 1024 : 512
+  bot_task_memory         = var.environment == "prod" ? 2048 : 1024
   app_log_group_name      = "/ecs/${local.name_prefix}-bot"
   transcripts_bucket_name = var.TRANSCRIPTS_BUCKET != "" ? var.TRANSCRIPTS_BUCKET : "${local.name_prefix}-transcripts-${data.aws_caller_identity.current.account_id}"
   frontend_bucket_name    = var.FRONTEND_BUCKET != "" ? var.FRONTEND_BUCKET : "${local.name_prefix}-frontend-${data.aws_caller_identity.current.account_id}"
@@ -1720,8 +1722,8 @@ resource "aws_ecs_task_definition" "app_task" {
   family                   = "${local.name_prefix}-bot-task"
   network_mode             = "awsvpc"
   requires_compatibilities = ["FARGATE"]
-  cpu                      = "512"
-  memory                   = "1024"
+  cpu                      = tostring(local.bot_task_cpu)
+  memory                   = tostring(local.bot_task_memory)
   execution_role_arn       = aws_iam_role.ecs_task_execution_role.arn
   task_role_arn            = aws_iam_role.ecs_task_app_role.arn
 
@@ -1729,8 +1731,8 @@ resource "aws_ecs_task_definition" "app_task" {
     {
       name        = "${local.name_prefix}-bot"
       image       = aws_ecr_repository.app_ecr_repo.repository_url
-      cpu         = 512
-      memory      = 1024
+      cpu         = local.bot_task_cpu
+      memory      = local.bot_task_memory
       essential   = true
       stopTimeout = 120
       portMappings = [

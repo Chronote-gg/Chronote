@@ -212,11 +212,13 @@ export function transcriptionInput(
 }
 const RECOVERY_CHUNK_FRAMES = 48000 * 30;
 type RecoveryAudioSlice = {
+  artifact: Extract<CheckpointArtifact, { kind: "audio" }>;
   startFrame: number;
   frames: number;
   byteOffset: number;
 };
 type RecoveryAudioGroup = {
+  sourceId: string;
   startFrame: number;
   endFrame: number;
   slices: RecoveryAudioSlice[];
@@ -277,14 +279,19 @@ function audioGroups(
         interval.startFrame + (byteOffset - interval.startByte) / 4;
       while (byteOffset < endByte) {
         if (!group || startFrame >= group.startFrame + RECOVERY_CHUNK_FRAMES) {
-          group = { startFrame, endFrame: startFrame, slices: [] };
+          group = {
+            sourceId: item.sourceId,
+            startFrame,
+            endFrame: startFrame,
+            slices: [],
+          };
           groups.push(group);
         }
         const frames = Math.min(
           (endByte - byteOffset) / 4,
           group.startFrame + RECOVERY_CHUNK_FRAMES - startFrame,
         );
-        group.slices.push({ startFrame, frames, byteOffset });
+        group.slices.push({ artifact: item, startFrame, frames, byteOffset });
         group.endFrame = startFrame + frames;
         byteOffset += frames * 4;
         startFrame += frames;
@@ -348,7 +355,7 @@ function residualRanges(
 }
 async function transcribeAudioGroup(
   group: RecoveryAudioGroup,
-  bytes: Uint8Array,
+  readAudio: (object: CheckpointArtifact["object"]) => Promise<Uint8Array>,
   input: TranscriptionContentInput,
   userId: string,
   timestamp: number,
@@ -360,11 +367,13 @@ async function transcribeAudioGroup(
   try {
     // Silence is temporary alignment scratch, never newly claimed capture coverage.
     const buffer = Buffer.alloc(length);
-    for (const slice of group.slices)
+    for (const slice of group.slices) {
+      const bytes = await readAudio(slice.artifact.object);
       buffer.set(
         bytes.subarray(slice.byteOffset, slice.byteOffset + slice.frames * 4),
         (slice.startFrame - group.startFrame) * 4,
       );
+    }
     const result = await transcribeContentSnippet(
       input,
       { userId, timestamp, chunks: [buffer] },
@@ -381,32 +390,67 @@ async function transcribeAudioGroup(
   }
 }
 async function recoverAudioIntervals(
-  item: Extract<CheckpointArtifact, { kind: "audio" }>,
+  residual: Array<{
+    item: Extract<CheckpointArtifact, { kind: "audio" }>;
+    ranges: ByteRange[];
+  }>,
   reader: RecoveryReader,
   input: TranscriptionContentInput,
   startedAt: number,
-  residual: readonly ByteRange[],
 ): Promise<AudioFileData[]> {
   const signal = input.signal;
   signal.throwIfAborted();
-  if (
-    item.format.sampleRate !== 48000 ||
-    item.format.channels !== 2 ||
-    item.object.byteLength > 64 * 1024 * 1024 ||
-    item.coverage.kind !== "known"
-  )
-    throw new InvalidRecoveryContent("Unsupported or unaligned PCM checkpoint");
-  const bytes = await reader.readVerifiedObject(item.object, signal);
-  if (!bytes) throw new InvalidRecoveryContent("Audio verification changed");
-  const userId = item.sourceId.split(":").slice(1).join(":");
-  if (!/^[a-zA-Z0-9_-]+$/.test(userId))
-    throw new InvalidRecoveryContent("Invalid saved source identity");
+  const groups = residual.flatMap(({ item, ranges }) => {
+    if (
+      item.format.sampleRate !== 48000 ||
+      item.format.channels !== 2 ||
+      item.object.byteLength > 64 * 1024 * 1024 ||
+      item.coverage.kind !== "known"
+    )
+      throw new InvalidRecoveryContent(
+        "Unsupported or unaligned PCM checkpoint",
+      );
+    return audioGroups(item, item.object.byteLength, ranges);
+  });
+  groups.sort(
+    (a, b) =>
+      a.sourceId.localeCompare(b.sourceId) || a.startFrame - b.startFrame,
+  );
+  const batches: RecoveryAudioGroup[] = [];
+  for (const group of groups) {
+    const previous = batches[batches.length - 1];
+    // Only exact adjacency joins artifacts; gaps and represented ranges stay split.
+    if (
+      previous?.sourceId === group.sourceId &&
+      previous.endFrame === group.startFrame &&
+      group.endFrame - previous.startFrame <= RECOVERY_CHUNK_FRAMES
+    ) {
+      previous.endFrame = group.endFrame;
+      previous.slices.push(...group.slices);
+    } else batches.push(group);
+  }
   const files: AudioFileData[] = [];
-  for (const group of audioGroups(item, bytes.byteLength, residual)) {
+  let loaded:
+    { object: CheckpointArtifact["object"]; bytes: Uint8Array } | undefined;
+  const readAudio = async (object: CheckpointArtifact["object"]) => {
+    signal.throwIfAborted();
+    if (loaded?.object !== object) {
+      loaded = undefined;
+      const bytes = await reader.readVerifiedObject(object, signal);
+      if (!bytes)
+        throw new InvalidRecoveryContent("Audio verification changed");
+      loaded = { object, bytes };
+    }
+    return loaded.bytes;
+  };
+  for (const group of batches) {
+    const userId = group.sourceId.split(":").slice(1).join(":");
+    if (!/^[a-zA-Z0-9_-]+$/.test(userId))
+      throw new InvalidRecoveryContent("Invalid saved source identity");
     const timestamp = startedAt + group.startFrame / 48;
     const text = await transcribeAudioGroup(
       group,
-      bytes,
+      readAudio,
       input,
       userId,
       timestamp,
@@ -420,14 +464,14 @@ async function recoverAudioIntervals(
           kind: "pcm",
           spans: normalizePcmSpans(
             group.slices.map((slice) => ({
-              sourceId: item.sourceId,
-              sequence: item.sequence,
+              sourceId: slice.artifact.sourceId,
+              sequence: slice.artifact.sequence,
               startByte: slice.byteOffset,
               endByte: slice.byteOffset + slice.frames * 4,
             })),
           ),
         },
-        source: item.sourceId.startsWith("bot:") ? "bot" : "voice",
+        source: group.sourceId.startsWith("bot:") ? "bot" : "voice",
         processing: false,
         audioOnlyProcessing: false,
       });
@@ -575,16 +619,9 @@ async function composeRecoveredTranscript(
     );
     if (!Number.isFinite(startedAt))
       throw new InvalidRecoveryContent("Original capture timing unavailable");
-    for (const { item, ranges } of residual)
-      files.push(
-        ...(await recoverAudioIntervals(
-          item,
-          reader,
-          input,
-          startedAt,
-          ranges,
-        )),
-      );
+    files.push(
+      ...(await recoverAudioIntervals(residual, reader, input, startedAt)),
+    );
   }
   // Only ranges that came back with text count, so audio the gate rejects
   // again is "nothing to retry" rather than a recovered transcript.
