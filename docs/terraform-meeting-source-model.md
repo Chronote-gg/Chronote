@@ -105,6 +105,19 @@ restriction does not change the separate processing-retry scope.
 
 ## Maintenance cost
 
+### Worker capacity audit (2026-10-30)
+
+The worker-capacity change adds `bot_task_cpu` and `bot_task_memory` locals,
+selected only by `environment`, and uses them for the task and container CPU
+and memory values. Only `aws_ecs_task_definition.app_task` reads these locals.
+The task definition is outside the 32-resource delivery closure; no table,
+DynamoDB access policy, KMS key or excluded check gains a dependency on it.
+The closure, excluded-check identities and installed-provider requirements
+remain unchanged. The source pin includes this reviewed `main.tf` edit;
+the native synthetic fixtures continue to bind the actual committed source.
+
+### Future source changes
+
 Any top-level Terraform or lock edit requires reviewing and updating the source
 contract before this exceptional native shape can pass. That deliberate refusal
 is preferable to inferring transitive safety from incomplete configuration JSON.
