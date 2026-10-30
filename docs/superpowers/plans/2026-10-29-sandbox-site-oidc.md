@@ -29,15 +29,15 @@
 
 ## Files and responsibilities
 
-| Files | Responsibility |
-| --- | --- |
-| `.github/workflows/deploy-staging.yml` | Sandbox OIDC job permissions, session inputs, identity ordering and root-free preflight |
-| `scripts/deployment/sandbox-site-session.cjs` (new) | Validate configured Sandbox site selectors, construct and mask each site's restricted policy |
-| `test/scripts/sandboxDeploymentIdentity.test.js` | Actual workflow authentication, identity, gating and preflight contracts |
-| `test/scripts/sandboxSiteSession.test.js` (new) | Session validation, exact policy resources/actions, masking and CLI refusal |
-| `test/scripts/docsDeployment.test.ts`, existing production publisher tests | Preserve cache/skip behavior and production isolation |
-| `docs/terraform-private-delivery.md`, `_infra/README.md` | Operator sequence, installed/source proof boundaries and removal of obsolete guidance |
-| `_infra/main.tf`, `scripts/deployment/terraform-tfvars.py`, affected Terraform workflow/fixture tests | Later removal of the obsolete key-variable producer and its input mappings |
+| Files                                                                                                 | Responsibility                                                                               |
+| ----------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
+| `.github/workflows/deploy-staging.yml`                                                                | Sandbox OIDC job permissions, session inputs, identity ordering and root-free preflight      |
+| `scripts/deployment/sandbox-site-session.cjs` (new)                                                   | Validate configured Sandbox site selectors, construct and mask each site's restricted policy |
+| `test/scripts/sandboxDeploymentIdentity.test.js`                                                      | Actual workflow authentication, identity, gating and preflight contracts                     |
+| `test/scripts/sandboxSiteSession.test.js` (new)                                                       | Session validation, exact policy resources/actions, masking and CLI refusal                  |
+| `test/scripts/docsDeployment.test.ts`, existing production publisher tests                            | Preserve cache/skip behavior and production isolation                                        |
+| `docs/terraform-private-delivery.md`, `_infra/README.md`                                              | Operator sequence, installed/source proof boundaries and removal of obsolete guidance        |
+| `_infra/main.tf`, `scripts/deployment/terraform-tfvars.py`, affected Terraform workflow/fixture tests | Later removal of the obsolete key-variable producer and its input mappings                   |
 
 ## Task 1: Root-free Sandbox site workflow
 

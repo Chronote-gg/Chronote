@@ -1,7 +1,7 @@
 /** @jest-environment node */
 import { expect, test } from "@jest/globals";
 import { readFileSync } from "node:fs";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { parse } from "yaml";
 import process from "node:process";
 
@@ -189,36 +189,34 @@ test.each([
     const preflight = parse(
       readFileSync(".github/workflows/deploy-staging.yml", "utf8"),
     ).jobs["deploy-target-preflight"].steps[0].run;
-    try {
-      const output = execFileSync("bash", ["-c", preflight], {
-        env: {
-          ...process.env,
-          AWS_ACCOUNT_ID: "123456789012",
-          SANDBOX_BACKEND_DEPLOY_ROLE_ARN: role,
-          AWS_REGION: "us-east-1",
-          ECR_REPOSITORY: "meeting-notes-sandbox",
-          ECS_CLUSTER: "meeting-notes-sandbox",
-          ECS_SERVICE: "meeting-notes-sandbox",
-          ECS_TASK_FAMILY: "meeting-notes-sandbox",
-          ECS_LOG_GROUP: "meeting-notes-sandbox",
-          FRONTEND_BUCKET: "meeting-notes-sandbox-frontend",
-          FRONTEND_DISTRIBUTION_ID: "ESYNTHETIC12345",
-          DOCS_BUCKET: "",
-          SECRETS_PREFIX: "meeting-notes-sandbox",
-          VITE_API_BASE_URL: "https://sandbox.example.test",
-          AWS_ACCESS_KEY_ID: "",
-          AWS_SECRET_ACCESS_KEY: "",
-          ...overrides,
-        },
-        encoding: "utf8",
-        stdio: ["pipe", "pipe", "pipe"],
-      });
-      expect(status).toBe(0);
-      expect(output).toBe("Sandbox deploy target preflight passed.\n");
-    } catch (error) {
-      expect(error.status).toBe(status);
-      expect(error.stdout.toString()).toContain("ERROR: sandbox deploy");
-    }
+    const result = spawnSync("bash", ["-c", preflight], {
+      env: {
+        ...process.env,
+        AWS_ACCOUNT_ID: "123456789012",
+        SANDBOX_BACKEND_DEPLOY_ROLE_ARN: role,
+        AWS_REGION: "us-east-1",
+        ECR_REPOSITORY: "meeting-notes-sandbox",
+        ECS_CLUSTER: "meeting-notes-sandbox",
+        ECS_SERVICE: "meeting-notes-sandbox",
+        ECS_TASK_FAMILY: "meeting-notes-sandbox",
+        ECS_LOG_GROUP: "meeting-notes-sandbox",
+        FRONTEND_BUCKET: "meeting-notes-sandbox-frontend",
+        FRONTEND_DISTRIBUTION_ID: "ESYNTHETIC12345",
+        DOCS_BUCKET: "",
+        SECRETS_PREFIX: "meeting-notes-sandbox",
+        VITE_API_BASE_URL: "https://sandbox.example.test",
+        AWS_ACCESS_KEY_ID: "",
+        AWS_SECRET_ACCESS_KEY: "",
+        ...overrides,
+      },
+      encoding: "utf8",
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    expect(result.error).toBeUndefined();
+    expect(result.status).toBe(status);
+    if (status === 0)
+      expect(result.stdout).toBe("Sandbox deploy target preflight passed.\n");
+    else expect(result.stdout).toContain("ERROR: sandbox deploy");
   },
 );
 
