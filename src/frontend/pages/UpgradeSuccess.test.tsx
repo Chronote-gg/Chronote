@@ -60,7 +60,7 @@ describe("UpgradeSuccess", () => {
       screen.getByRole("button", { name: "Open Engineering HQ" }),
     );
     expect(mockNavigate).toHaveBeenCalledWith({
-      to: "/portal/server/s1/library",
+      to: "/portal/meetings?scope=guild&serverId=s1",
     });
 
     await user.click(screen.getByRole("button", { name: "Manage billing" }));
@@ -117,7 +117,7 @@ describe("UpgradeSuccess", () => {
       "href",
       expect.stringContaining(
         encodeURIComponent(
-          `${window.location.origin}/portal/server/s1/library`,
+          `${window.location.origin}/portal/meetings?scope=guild&serverId=s1`,
         ),
       ),
     );
@@ -130,7 +130,7 @@ describe("resolveOpenPortalPath", () => {
       resolveOpenPortalPath("s1", [
         { id: "s1", name: "Engineering HQ", canManage: true },
       ]),
-    ).toBe("/portal/server/s1/library");
+    ).toBe("/portal/meetings?scope=guild&serverId=s1");
   });
 
   it("returns ask path when server exists but user cannot manage", () => {
@@ -169,7 +169,7 @@ describe("resolveBillingPath", () => {
 describe("resolvePostAuthPortalPath", () => {
   it("prefers library when server exists but guild data is not loaded", () => {
     expect(resolvePostAuthPortalPath("s1", [])).toBe(
-      "/portal/server/s1/library",
+      "/portal/meetings?scope=guild&serverId=s1",
     );
   });
 

@@ -319,34 +319,41 @@ test("restart resumes acknowledged notes and verified transcript, retrying only 
   expect(f.notes.mock.calls[0][0].notesText).toBeTruthy();
 });
 
+type FixtureOptions = NonNullable<Parameters<typeof fixture>[1]>;
+
+/** A saved transcript at revision 2 plus two later PCM intervals of one source. */
+function laterPcmIntervals(): FixtureOptions {
+  const bytes = Buffer.alloc(384000);
+  return {
+    transcript: (saved) => {
+      if (saved.entries[0]) saved.entries[0].revision = 2;
+    },
+    context: savedTranscriptionPrompt,
+    artifacts: [
+      {
+        kind: "audio",
+        sourceId: "user:456",
+        sequence: 2,
+        contentType: "audio/pcm",
+        bytes,
+        checksumSha256: createHash("sha256").update(bytes).digest("hex"),
+        format: { encoding: "pcm_s16le", channels: 2, sampleRate: 48000 },
+        coverage: {
+          kind: "known",
+          intervals: [
+            { sourceId: "user:456", startOffsetMs: 5000, durationMs: 1000 },
+            { sourceId: "user:456", startOffsetMs: 15000, durationMs: 1000 },
+          ],
+        },
+      },
+    ],
+  };
+}
+
 test.each(["Earlier acknowledged discussion.", "Thanks.", ""])(
   "opportunistic transcript %s does not suppress later PCM intervals",
   async (text) => {
-    const bytes = Buffer.alloc(384000);
-    const f = await fixture(text, {
-      transcript: (saved) => {
-        if (saved.entries[0]) saved.entries[0].revision = 2;
-      },
-      context: savedTranscriptionPrompt,
-      artifacts: [
-        {
-          kind: "audio",
-          sourceId: "user:456",
-          sequence: 2,
-          contentType: "audio/pcm",
-          bytes,
-          checksumSha256: createHash("sha256").update(bytes).digest("hex"),
-          format: { encoding: "pcm_s16le", channels: 2, sampleRate: 48000 },
-          coverage: {
-            kind: "known",
-            intervals: [
-              { sourceId: "user:456", startOffsetMs: 5000, durationMs: 1000 },
-              { sourceId: "user:456", startOffsetMs: 15000, durationMs: 1000 },
-            ],
-          },
-        },
-      ],
-    });
+    const f = await fixture(text, laterPcmIntervals());
     await recoverMeeting(f.claim, f.deps);
     const artifact = JSON.parse(
       f.objects.get(f.claim.history.transcriptS3Key!)!.toString(),
@@ -398,6 +405,21 @@ test.each(["Earlier acknowledged discussion.", "Thanks.", ""])(
     });
   },
 );
+
+test("audio the speech gate skips during recovery is empty text, not a failed attempt", async () => {
+  const f = await fixture("", laterPcmIntervals());
+  jest.mocked(transcribeContentSnippet).mockResolvedValueOnce({
+    status: "skipped",
+    reason: "non_speech",
+    coverage: { kind: "unknown", reason: "source_intervals_unknown" },
+  } as never);
+  await recoverMeeting(f.claim, f.deps);
+  expect(transcribeContentSnippet).toHaveBeenCalledTimes(1);
+  expect(f.claim.history.recovery).toMatchObject({
+    disposition: "done",
+    outcome: "no_usable_speech",
+  });
+});
 
 test.each([
   { chunkSeconds: 0, minChunkSeconds: 0 },

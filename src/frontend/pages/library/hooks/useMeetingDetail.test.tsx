@@ -437,3 +437,30 @@ describe("completed delivery refresh", () => {
     },
   );
 });
+
+test("access denial on refetch clears sensitive canonical detail", () => {
+  mockQueryError = { data: { code: "FORBIDDEN" } };
+  const hook = renderHook(() =>
+    useMeetingDetail({
+      opened: true,
+      selectedGuildId: "generated",
+      selectedMeetingId: mockDetail.id,
+      channelNameMap: new Map(),
+      invalidateMeetingLists: mockListInvalidate,
+    }),
+  );
+  expect(hook.result.current.detail).toBeNull();
+  expect(hook.result.current.meeting).toBeNull();
+});
+test("a stale drawer response cannot populate another selected record", () => {
+  const hook = renderHook(() =>
+    useMeetingDetail({
+      opened: true,
+      selectedGuildId: "generated",
+      selectedMeetingId: "different-record",
+      channelNameMap: new Map(),
+      invalidateMeetingLists: mockListInvalidate,
+    }),
+  );
+  expect(hook.result.current.meeting).toBeNull();
+});

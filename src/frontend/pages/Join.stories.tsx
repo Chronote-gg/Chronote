@@ -83,7 +83,10 @@ function progressStory(
       );
       await expect(
         canvas.getByRole("link", { name: "Open portal" }),
-      ).toHaveAttribute("href", "/portal/server/example/library");
+      ).toHaveAttribute(
+        "href",
+        "/portal/meetings?scope=guild&serverId=example",
+      );
       await expect(
         canvas.getByText("Some audio could not be captured."),
       ).toBeVisible();

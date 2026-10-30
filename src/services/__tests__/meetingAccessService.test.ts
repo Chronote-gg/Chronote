@@ -43,6 +43,25 @@ const expectAllowedVia = async (
 };
 
 describe("meetingAccessService", () => {
+  it("honors recorded legacy attendee mentions only when attendee override is enabled", async () => {
+    const meeting = createMeeting({ attendees: ["<@123>"] });
+    jest.mocked(ensureUserCanConnectChannel).mockResolvedValue(false);
+    await expect(
+      checkUserMeetingAccess({
+        guildId: meeting.guildId,
+        meeting,
+        userId: "123",
+      }),
+    ).resolves.toEqual({ allowed: true, via: "attendee" });
+    await expect(
+      checkUserMeetingAccess({
+        guildId: meeting.guildId,
+        meeting,
+        userId: "123",
+        attendeeOverrideEnabled: false,
+      }),
+    ).resolves.toMatchObject({ allowed: false });
+  });
   beforeEach(() => {
     jest.clearAllMocks();
   });

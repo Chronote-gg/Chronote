@@ -5,13 +5,11 @@ import { mockFirstMeetingRequests } from "./firstMeetingMocks";
 test("library page shows meetings and drawer details (mock)", async ({
   page,
   serverSelectPage,
-  nav,
   libraryPage,
 }) => {
   await serverSelectPage.goto();
   await serverSelectPage.openServerByName(mockGuilds.ddm.name);
 
-  await nav.goToLibrary();
   await expect(libraryPage.root()).toBeVisible();
   await libraryPage.waitForLoaded(mockLibrary.meetingCount);
   await expect(libraryPage.meetingRows()).toHaveCount(mockLibrary.meetingCount);
@@ -101,6 +99,11 @@ test("library page shows meetings and drawer details (mock)", async ({
   await expect(
     libraryPage.meetingRowByText(mockLibrary.meetingTitle),
   ).toBeVisible();
+  // Restore this synthetic record so later suites see the same mock seed.
+  await libraryPage.openFirstMeeting();
+  await libraryPage.drawerUnarchive().click();
+  await libraryPage.drawerArchiveConfirm().click();
+  await expect(libraryPage.drawer()).toBeHidden();
 });
 
 for (const width of [390, 768, 1280]) {
@@ -108,11 +111,18 @@ for (const width of [390, 768, 1280]) {
     page,
   }) => {
     await mockFirstMeetingRequests(page, {
-      "meetings.list": () => ({ meetings: [] }),
+      "meetings.myList": () => ({
+        meetings: [],
+        hasMore: false,
+        discoveryComplete: true,
+        nextCursor: null,
+      }),
     });
     await page.setViewportSize({ width, height: 600 });
     await page.goto(`/portal/server/${mockGuilds.ddm.id}/library`);
-    await expect(page.getByText("Your first meeting goes here.")).toBeVisible();
+    await expect(
+      page.getByText("Your first meeting in DDM goes here."),
+    ).toBeVisible();
     await expect(page.getByTestId("sample-summary")).toHaveCount(1);
     await expect(
       page.getByRole("link", { name: "Open Discord" }),
@@ -120,7 +130,7 @@ for (const width of [390, 768, 1280]) {
       "href",
       `https://discord.com/channels/${mockGuilds.ddm.id}`,
     );
-    await expect(page.getByTestId("library-search")).toHaveCount(0);
+    await expect(page.getByTestId("library-search")).toBeVisible();
     expect(await page.locator("details").getAttribute("open")).toBeNull();
     const scroll = await page.locator("main").evaluate((node) => {
       const canScroll = node.scrollHeight > node.clientHeight;
@@ -156,18 +166,27 @@ test("server with only archived meetings keeps its archive navigation", async ({
     archivedAt: "2025-01-01T00:00:00.000Z",
   };
   await mockFirstMeetingRequests(page, {
-    "meetings.list": (url) => {
+    "meetings.myList": (url) => {
       const input = url.searchParams.get("input") ?? "";
       const archivedScope =
         input.includes('"archivedOnly":true') ||
         input.includes('"includeArchived":true');
-      return { meetings: archivedScope ? [archived] : [] };
+      return {
+        meetings: archivedScope
+          ? [{ ...archived, serverId: mockGuilds.ddm.id }]
+          : [],
+        hasMore: false,
+        discoveryComplete: true,
+        nextCursor: null,
+      };
     },
   });
   await page.goto(`/portal/server/${mockGuilds.ddm.id}/library`);
-  await expect(page.getByText("Your first meeting goes here.")).toBeVisible();
-  await expect(libraryPage.searchInput()).toHaveCount(0);
-  await page.getByRole("button", { name: "View archived meetings" }).click();
+  await expect(
+    page.getByText("Your first meeting in DDM goes here."),
+  ).toBeVisible();
+  await expect(libraryPage.searchInput()).toBeVisible();
+  await libraryPage.selectArchiveView("archived");
   await expect(
     libraryPage.meetingRowByText("Archived planning meeting"),
   ).toBeVisible();
@@ -178,10 +197,10 @@ test("server with only archived meetings keeps its archive navigation", async ({
     libraryPage.meetingRowByText("Archived planning meeting"),
   ).toBeVisible();
   await libraryPage.selectArchiveView("active");
-  await expect(page.getByText("Your first meeting goes here.")).toBeVisible();
   await expect(
-    page.getByRole("button", { name: "View archived meetings" }),
+    page.getByText("Your first meeting in DDM goes here."),
   ).toBeVisible();
+  await expect(libraryPage.archiveFilter()).toBeVisible();
 });
 
 for (const action of ["Refresh", "a visibility refresh"]) {
@@ -191,11 +210,15 @@ for (const action of ["Refresh", "a visibility refresh"]) {
   }) => {
     let completed = false;
     await mockFirstMeetingRequests(page, {
-      "meetings.list": () => ({
+      "meetings.myList": () => ({
+        hasMore: false,
+        discoveryComplete: true,
+        nextCursor: null,
         meetings: completed
           ? [
               {
                 id: "completed-meeting",
+                serverId: mockGuilds.ddm.id,
                 meetingId: "completed-session",
                 channelId: "111111111111111111",
                 channelName: "Planning",
@@ -212,7 +235,9 @@ for (const action of ["Refresh", "a visibility refresh"]) {
       }),
     });
     await page.goto(`/portal/server/${mockGuilds.ddm.id}/library`);
-    await expect(page.getByText("Your first meeting goes here.")).toBeVisible();
+    await expect(
+      page.getByText("Your first meeting in DDM goes here."),
+    ).toBeVisible();
     if (action === "Refresh") {
       completed = true;
       await page.getByRole("button", { name: "Refresh", exact: true }).click();
@@ -228,8 +253,8 @@ for (const action of ["Refresh", "a visibility refresh"]) {
     await expect(
       libraryPage.meetingRowByText("Just completed meeting"),
     ).toBeVisible();
-    await expect(page.getByText("Your first meeting goes here.")).toHaveCount(
-      0,
-    );
+    await expect(
+      page.getByText("Your first meeting in DDM goes here."),
+    ).toHaveCount(0);
   });
 }

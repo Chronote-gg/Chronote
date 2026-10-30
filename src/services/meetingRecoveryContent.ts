@@ -352,7 +352,6 @@ async function transcribeAudioGroup(
   input: TranscriptionContentInput,
   userId: string,
   timestamp: number,
-  acceptSkipped: boolean,
 ) {
   input.signal.throwIfAborted();
   const length = (group.endFrame - group.startFrame) * 4;
@@ -373,7 +372,8 @@ async function transcribeAudioGroup(
     );
     input.signal.throwIfAborted();
     if (result.status === "succeeded") return result.text;
-    if (result.status === "skipped" && acceptSkipped) return "";
+    // Audio the speech gate rejects is empty text, never a failed attempt.
+    if (result.status === "skipped") return "";
     throw new Error("Recovery transcription failed");
   } finally {
     // Awaited conversion/provider lifetime has settled, including cancellation/error.
@@ -386,7 +386,6 @@ async function recoverAudioIntervals(
   input: TranscriptionContentInput,
   startedAt: number,
   residual: readonly ByteRange[],
-  acceptSkipped: boolean,
 ): Promise<AudioFileData[]> {
   const signal = input.signal;
   signal.throwIfAborted();
@@ -411,7 +410,6 @@ async function recoverAudioIntervals(
       input,
       userId,
       timestamp,
-      acceptSkipped,
     );
     if (!getTranscriptionTextQuality(text).trivial)
       files.push({
@@ -585,7 +583,6 @@ async function composeRecoveredTranscript(
           input,
           startedAt,
           ranges,
-          retry,
         )),
       );
   }

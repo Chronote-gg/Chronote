@@ -94,27 +94,7 @@ const auth: McpAccessTokenInfo = {
   expiresAt: 4_102_444_800,
 };
 
-const createResponse = () => {
-  const response = {
-    statusCode: 200,
-    body: undefined as unknown,
-    headers: new Map<string, string>(),
-    set: jest.fn((name: string, value: string) => {
-      response.headers.set(name, value);
-      return response;
-    }),
-    status: jest.fn((code: number) => {
-      response.statusCode = code;
-      return response;
-    }),
-    json: jest.fn((body: unknown) => {
-      response.body = body;
-      return response;
-    }),
-    end: jest.fn(() => response),
-  };
-  return response;
-};
+import { createResponse } from "../../testSupport/mcpResponse";
 
 const captureMcpPostHandler = () => {
   let postHandler: RequestHandler | undefined;
@@ -497,6 +477,7 @@ describe("MCP JSON-RPC handler", () => {
 
   it("calls list_my_meetings with the authenticated user id", async () => {
     jest.mocked(listMcpMyMeetings).mockResolvedValue({
+      discoveryComplete: true,
       mode: "attended",
       range: {
         startDate: "2026-01-01T00:00:00.000Z",
@@ -603,6 +584,7 @@ describe("MCP JSON-RPC handler", () => {
 
   it("allows explicit My Meetings date bounds without an explicit range", async () => {
     jest.mocked(listMcpMyMeetings).mockResolvedValue({
+      discoveryComplete: true,
       mode: "attended",
       range: {
         startDate: "2026-01-01T00:00:00.000Z",
@@ -927,6 +909,7 @@ describe("MCP service account restrictions", () => {
 
   it("pins list_my_meetings to the token guild even when other servers are requested", async () => {
     jest.mocked(listMcpMyMeetings).mockResolvedValue({
+      discoveryComplete: true,
       meetings: [],
       hasMore: false,
       nextCursor: null,

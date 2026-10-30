@@ -1,3 +1,8 @@
+/** @jest-environment node */
+import {
+  createLegacyBrowseFixture,
+  browseCursorFixture as mockCursor,
+} from "../../testSupport/meetingBrowseLegacy";
 import { jest } from "@jest/globals";
 import {
   getGuildMemberCached,
@@ -24,11 +29,12 @@ import {
   resolveConfigSnapshot,
 } from "../unifiedConfigService";
 import { fetchJsonFromS3 } from "../storageService";
-import type { MeetingHistory } from "../../types/db";
 import { MEETING_STATUS } from "../../types/meetingLifecycle";
 
 jest.mock("../discordService", () => ({
-  isDiscordApiError: jest.fn(() => false),
+  isDiscordApiError: jest.fn(
+    (error: unknown) => error instanceof Error && "status" in error,
+  ),
 }));
 
 jest.mock("../discordCacheService", () => ({
@@ -61,27 +67,77 @@ jest.mock("../unifiedConfigService", () => ({
   resolveConfigSnapshot: jest.fn(() => Promise.resolve({})),
 }));
 
-const createMeeting = (
-  meetingId: string,
-  overrides: Partial<MeetingHistory> = {},
-): MeetingHistory => ({
-  guildId: overrides.guildId ?? "guild-1",
-  channelId: overrides.channelId ?? "channel-1",
-  channelId_timestamp:
-    overrides.channelId_timestamp ??
-    `${overrides.channelId ?? "channel-1"}#${overrides.timestamp ?? "2026-01-01T00:00:00.000Z"}-${meetingId}`,
-  meetingId,
-  timestamp: overrides.timestamp ?? "2026-01-01T00:00:00.000Z",
-  participants: overrides.participants ?? [],
-  duration: overrides.duration ?? 120,
-  transcribeMeeting: true,
-  generateNotes: true,
-  ...overrides,
+const mockBrowse = createLegacyBrowseFixture({
+  history: listMeetingsForGuildInRangeService,
+  index: listMeetingUserIndexForUserInRangeService,
+  get: getMeetingHistoryService,
 });
+jest.mock("../../repositories/meetingHistoryRepository", () => ({
+  getMeetingHistoryRepository: () => mockBrowse.history,
+}));
+jest.mock("../../repositories/meetingUserIndexRepository", () => ({
+  getMeetingUserIndexRepository: () => mockBrowse.index,
+}));
+jest.mock(
+  "../../db",
+  () =>
+    jest.requireActual<typeof import("../../testSupport/meetingBrowseLegacy")>(
+      "../../testSupport/meetingBrowseLegacy",
+    ).browseCursorFixture.storage,
+);
+
+import { createMeeting } from "../../testSupport/mcpMeetingFixture";
+
+const listAttendedJanuaryMeetings = () =>
+  listMcpMyMeetings({
+    userId: "user-1",
+    mode: "attended",
+    startDate: "2026-01-01T00:00:00.000Z",
+    endDate: "2026-01-05T00:00:00.000Z",
+  });
+
+function createAttendedFallback() {
+  return createMeeting("fallback", {
+    guildId: "guild-1",
+    timestamp: "2026-01-02T00:00:00.000Z",
+    channelId_timestamp: "channel-1#2026-01-02T00:00:00.000Z",
+    participants: [{ id: "user-1", username: "user1" }],
+  });
+}
+
+function createIndexedJanuaryRow() {
+  return {
+    userId: "user-1",
+    userTimestamp:
+      "2026-01-03T00:00:00.000Z#guild-1#channel-1#2026-01-03T00:00:00.000Z",
+    guildId: "guild-1",
+    channelId_timestamp: "channel-1#2026-01-03T00:00:00.000Z",
+    meetingId: "indexed",
+    timestamp: "2026-01-03T00:00:00.000Z",
+  };
+}
+
+function stubAttendedFallback(
+  fallbackMeeting: ReturnType<typeof createMeeting>,
+) {
+  jest
+    .mocked(listMeetingsForGuildInRangeService)
+    .mockResolvedValue([fallbackMeeting]);
+  jest.mocked(checkUserMeetingAccess).mockResolvedValue({
+    allowed: true,
+    via: "attendee",
+  });
+}
 
 describe("mcpMeetingService", () => {
   beforeEach(() => {
+    mockBrowse.reset();
+    mockCursor.reset();
     jest.clearAllMocks();
+    jest.mocked(listMeetingsForGuildInRangeService).mockResolvedValue([]);
+    jest
+      .mocked(listMeetingUserIndexForUserInRangeService)
+      .mockResolvedValue([]);
     jest.mocked(getSnapshotBoolean).mockReturnValue(true);
     jest.mocked(getGuildMemberCached).mockResolvedValue({ roles: [] });
     jest.mocked(listBotGuildsCached).mockResolvedValue([]);
@@ -167,7 +223,9 @@ describe("mcpMeetingService", () => {
     jest
       .mocked(listRecentMeetingsForGuildService)
       .mockResolvedValue([createMeeting("meeting-1")]);
-    jest.mocked(getGuildMemberCached).mockRejectedValue(new Error("missing"));
+    jest
+      .mocked(getGuildMemberCached)
+      .mockRejectedValue(Object.assign(new Error("missing"), { status: 404 }));
 
     await expect(
       listMcpMeetings({ userId: "user-1", guildId: "guild-1" }),
@@ -216,12 +274,7 @@ describe("mcpMeetingService", () => {
       channelId_timestamp: "channel-1#2026-01-03T00:00:00.000Z",
       participants: [{ id: "user-1", username: "user1" }],
     });
-    const fallbackMeeting = createMeeting("fallback", {
-      guildId: "guild-1",
-      timestamp: "2026-01-02T00:00:00.000Z",
-      channelId_timestamp: "channel-1#2026-01-02T00:00:00.000Z",
-      participants: [{ id: "user-1", username: "user1" }],
-    });
+    const fallbackMeeting = createAttendedFallback();
     const inaccessibleByMode = createMeeting("not-attended", {
       guildId: "guild-1",
       timestamp: "2026-01-04T00:00:00.000Z",
@@ -373,20 +426,13 @@ describe("mcpMeetingService", () => {
       via: "attendee",
     });
 
-    await expect(
-      listMcpMyMeetings({
-        userId: "user-1",
-        mode: "attended",
-        startDate: "2026-01-01T00:00:00.000Z",
-        endDate: "2026-01-05T00:00:00.000Z",
-      }),
-    ).resolves.toMatchObject({
+    await expect(listAttendedJanuaryMeetings()).resolves.toMatchObject({
       meetings: [{ meetingId: "active", serverName: "Guild 1" }],
     });
     expect(checkUserMeetingAccess).toHaveBeenCalledTimes(1);
   });
 
-  it("skips the guild-range fallback when indexed attended results fill the pagination probe", async () => {
+  it("merges guild source frontiers even when indexed attended results fill a page", async () => {
     const indexedMeeting = createMeeting("indexed", {
       guildId: "guild-1",
       timestamp: "2026-01-03T00:00:00.000Z",
@@ -403,15 +449,7 @@ describe("mcpMeetingService", () => {
       .mocked(listBotGuildsCached)
       .mockResolvedValue([{ id: "guild-1", name: "Guild 1", icon: null }]);
     jest.mocked(listMeetingUserIndexForUserInRangeService).mockResolvedValue([
-      {
-        userId: "user-1",
-        userTimestamp:
-          "2026-01-03T00:00:00.000Z#guild-1#channel-1#2026-01-03T00:00:00.000Z",
-        guildId: "guild-1",
-        channelId_timestamp: "channel-1#2026-01-03T00:00:00.000Z",
-        meetingId: "indexed",
-        timestamp: "2026-01-03T00:00:00.000Z",
-      },
+      createIndexedJanuaryRow(),
       {
         userId: "user-1",
         userTimestamp:
@@ -449,7 +487,7 @@ describe("mcpMeetingService", () => {
       hasMore: true,
       nextCursor: expect.any(String),
     });
-    expect(listMeetingsForGuildInRangeService).not.toHaveBeenCalled();
+    expect(listMeetingsForGuildInRangeService).toHaveBeenCalled();
   });
 
   it("returns an all-time My Meetings page with a cursor when more visible meetings exist", async () => {
@@ -501,7 +539,7 @@ describe("mcpMeetingService", () => {
       "guild-page",
       "1970-01-01T00:00:00.000Z",
       expect.any(String),
-      15,
+      100,
     );
   });
 
@@ -550,6 +588,7 @@ describe("mcpMeetingService", () => {
       meetings: [{ meetingId: "oldest", serverName: "Guild Cursor" }],
       hasMore: false,
       nextCursor: null,
+      discoveryComplete: true,
     });
   });
 
@@ -581,7 +620,7 @@ describe("mcpMeetingService", () => {
     ).resolves.toMatchObject({
       meetings: [{ meetingId: "accessible", serverName: "Guild 1" }],
     });
-    expect(listMeetingUserIndexForUserInRangeService).not.toHaveBeenCalled();
+    expect(listMeetingUserIndexForUserInRangeService).toHaveBeenCalled();
   });
 
   it("filters archived-only My Meetings results before access checks", async () => {
@@ -708,18 +747,19 @@ describe("mcpMeetingService", () => {
       meetings: [],
       hasMore: false,
       nextCursor: null,
+      discoveryComplete: true,
     });
     expect(listMeetingUserIndexForUserInRangeService).toHaveBeenCalledWith(
       "offset-user",
       "2026-01-01T05:00:00.000Z",
       "2026-01-01T22:00:00.000Z",
-      130,
+      100,
     );
     expect(listMeetingsForGuildInRangeService).toHaveBeenCalledWith(
       "guild-1",
       "2026-01-01T05:00:00.000Z",
       "2026-01-01T22:00:00.000Z",
-      130,
+      100,
     );
   });
 
@@ -742,84 +782,38 @@ describe("mcpMeetingService", () => {
     expect(getGuildMemberCached).toHaveBeenCalledTimes(2);
   });
 
-  it("skips stale indexed meetings when attended mode history fetch fails", async () => {
-    const fallbackMeeting = createMeeting("fallback", {
-      guildId: "guild-1",
-      timestamp: "2026-01-02T00:00:00.000Z",
-      channelId_timestamp: "channel-1#2026-01-02T00:00:00.000Z",
-      participants: [{ id: "user-1", username: "user1" }],
-    });
+  it("fails discovery explicitly: skips stale indexed meetings when attended mode history fetch fails", async () => {
+    const fallbackMeeting = createAttendedFallback();
     jest
       .mocked(listBotGuildsCached)
       .mockResolvedValue([{ id: "guild-1", name: "Guild 1", icon: null }]);
-    jest.mocked(listMeetingUserIndexForUserInRangeService).mockResolvedValue([
-      {
-        userId: "user-1",
-        userTimestamp:
-          "2026-01-03T00:00:00.000Z#guild-1#channel-1#2026-01-03T00:00:00.000Z",
-        guildId: "guild-1",
-        channelId_timestamp: "channel-1#2026-01-03T00:00:00.000Z",
-        meetingId: "indexed",
-        timestamp: "2026-01-03T00:00:00.000Z",
-      },
-    ]);
-    jest.mocked(getMeetingHistoryService).mockRejectedValue(new Error("boom"));
     jest
-      .mocked(listMeetingsForGuildInRangeService)
-      .mockResolvedValue([fallbackMeeting]);
-    jest.mocked(checkUserMeetingAccess).mockResolvedValue({
-      allowed: true,
-      via: "attendee",
-    });
+      .mocked(listMeetingUserIndexForUserInRangeService)
+      .mockResolvedValue([createIndexedJanuaryRow()]);
+    jest.mocked(getMeetingHistoryService).mockRejectedValue(new Error("boom"));
+    stubAttendedFallback(fallbackMeeting);
 
-    await expect(
-      listMcpMyMeetings({
-        userId: "user-1",
-        mode: "attended",
-        startDate: "2026-01-01T00:00:00.000Z",
-        endDate: "2026-01-05T00:00:00.000Z",
-      }),
-    ).resolves.toMatchObject({
-      meetings: [{ meetingId: "fallback", serverName: "Guild 1" }],
-    });
+    await expect(listAttendedJanuaryMeetings()).rejects.toThrow("boom");
   });
 
-  it("falls back to server ranges when attended mode index lookup fails", async () => {
-    const fallbackMeeting = createMeeting("fallback", {
-      guildId: "guild-1",
-      timestamp: "2026-01-02T00:00:00.000Z",
-      channelId_timestamp: "channel-1#2026-01-02T00:00:00.000Z",
-      participants: [{ id: "user-1", username: "user1" }],
-    });
+  it("fails discovery explicitly: falls back to server ranges when attended mode index lookup fails", async () => {
+    const fallbackMeeting = createAttendedFallback();
     jest
       .mocked(listBotGuildsCached)
       .mockResolvedValue([{ id: "guild-1", name: "Guild 1", icon: null }]);
     jest
       .mocked(listMeetingUserIndexForUserInRangeService)
       .mockRejectedValue(new Error("index unavailable"));
-    jest
-      .mocked(listMeetingsForGuildInRangeService)
-      .mockResolvedValue([fallbackMeeting]);
-    jest.mocked(checkUserMeetingAccess).mockResolvedValue({
-      allowed: true,
-      via: "attendee",
-    });
+    stubAttendedFallback(fallbackMeeting);
 
-    await expect(
-      listMcpMyMeetings({
-        userId: "user-1",
-        mode: "attended",
-        startDate: "2026-01-01T00:00:00.000Z",
-        endDate: "2026-01-05T00:00:00.000Z",
-      }),
-    ).resolves.toMatchObject({
-      meetings: [{ meetingId: "fallback", serverName: "Guild 1" }],
-    });
+    await expect(listAttendedJanuaryMeetings()).rejects.toThrow(
+      "index unavailable",
+    );
 
     expect(getMeetingHistoryService).not.toHaveBeenCalled();
   });
 
-  it("skips servers whose My Meetings range fallback fails", async () => {
+  it("fails discovery explicitly: skips servers whose My Meetings range fallback fails", async () => {
     const visibleMeeting = createMeeting("visible", {
       guildId: "guild-1",
       timestamp: "2026-01-02T00:00:00.000Z",
@@ -851,9 +845,7 @@ describe("mcpMeetingService", () => {
         startDate: "2026-01-01T00:00:00.000Z",
         endDate: "2026-01-05T00:00:00.000Z",
       }),
-    ).resolves.toMatchObject({
-      meetings: [{ meetingId: "visible", serverName: "Guild 1" }],
-    });
+    ).rejects.toThrow("boom");
   });
 
   it("rejects summary lookup when the caller passes a malformed id", async () => {

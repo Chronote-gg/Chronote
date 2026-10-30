@@ -161,7 +161,6 @@ jest.mock("../../src/services/discordCacheService", () => ({
 }));
 
 import { buildCaller } from "../utils/trpcCaller";
-
 describe("meetings router detail", () => {
   const mockedEnsureManageGuild = jest.mocked(ensureManageGuildWithUserToken);
   const mockedEnsureUserInGuild = jest.mocked(ensureUserInGuild);

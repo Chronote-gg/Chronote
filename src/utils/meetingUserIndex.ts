@@ -1,3 +1,4 @@
+import type { GuildShareIndexMetadata } from "../types/meetingBrowse";
 import type { MeetingHistory, MeetingUserIndexRecord } from "../types/db";
 import {
   isPersonalMeeting,
@@ -49,6 +50,7 @@ export const resolveMeetingIndexUserIds = (meeting: {
       }
     });
   }
+  userIds.forEach(assertRawMeetingIndexUserId);
   return Array.from(userIds);
 };
 
@@ -87,3 +89,42 @@ export const isMeetingIndexedForUser = (
   meeting: MeetingHistory,
   userId: string,
 ) => resolveMeetingIndexUserIds(meeting).includes(userId);
+
+export const assertRawMeetingIndexUserId = (userId: string) => {
+  if (userId.trim().startsWith("GUILD_SHARE#"))
+    throw new Error("Reserved meeting index principal namespace");
+};
+export const buildGuildShareIndexPrincipal = (guildId: string): string =>
+  `GUILD_SHARE#${encodeURIComponent(guildId)}`;
+export const buildGuildShareIndexRecords = (
+  meeting: GuildShareIndexMetadata,
+): MeetingUserIndexRecord[] => {
+  if (!isPersonalMeeting(meeting)) return [];
+  const guildIds = new Set(
+    meeting.accessGrants?.flatMap((grant) =>
+      grant.targetType === "guild" ? [grant.guildId] : [],
+    ),
+  );
+  return Array.from(guildIds, (guildId) => ({
+    userId: buildGuildShareIndexPrincipal(guildId),
+    userTimestamp: buildMeetingUserTimestamp(meeting),
+    guildId: meeting.guildId,
+    channelId_timestamp: meeting.channelId_timestamp,
+    meetingId: meeting.meetingId,
+    timestamp: meeting.timestamp,
+    accessReason: "guild_share",
+  }));
+};
+export const isRecordedMeetingAttendee = (
+  meeting: Pick<MeetingHistory, "participants" | "attendees">,
+  userId: string,
+): boolean =>
+  Boolean(
+    meeting.participants?.some(
+      (participant) => participant.id?.trim() === userId,
+    ) ||
+    meeting.attendees?.some(
+      (attendee) =>
+        attendee.trim().match(DISCORD_USER_MENTION_PATTERN)?.[1] === userId,
+    ),
+  );

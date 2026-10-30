@@ -6,10 +6,12 @@ import classes from "./FirstMeetingEmptyState.module.css";
 
 export function FirstMeetingEmptyState({
   discordUrl,
+  serverName,
   optionalSetupUrl,
 }: {
   discordUrl: string;
-  optionalSetupUrl: string;
+  optionalSetupUrl?: string;
+  serverName?: string;
 }): React.JSX.Element {
   return (
     <Surface
@@ -21,7 +23,11 @@ export function FirstMeetingEmptyState({
         <div className={classes.content}>
           <Stack gap="lg" align="flex-start">
             <Stack gap="xs">
-              <Title order={2}>Your first meeting goes here.</Title>
+              <Title order={2}>
+                {serverName
+                  ? `Your first meeting in ${serverName} goes here.`
+                  : "Your first meeting goes here."}
+              </Title>
               <Text c="dimmed">
                 Record a conversation in Discord. Your notes will be saved here.
               </Text>
@@ -79,9 +85,11 @@ export function FirstMeetingEmptyState({
             Use <Code>/context</Code> for background and{" "}
             <Code>/autorecord</Code> for automatic recording.
           </Text>
-          <Text component="a" href={optionalSetupUrl} size="sm">
-            Read about optional setup
-          </Text>
+          {optionalSetupUrl ? (
+            <Text component="a" href={optionalSetupUrl} size="sm">
+              Read about optional setup
+            </Text>
+          ) : null}
         </Box>
       </Stack>
     </Surface>

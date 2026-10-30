@@ -137,7 +137,10 @@ test("switching servers clears the pinned target and ignores an old response", a
     releaseOld?.();
     await expect(
       page.getByTestId("join-hero").getByRole("link", { name: "Open portal" }),
-    ).toHaveAttribute("href", `/portal/server/${otherServerId}/library`);
+    ).toHaveAttribute(
+      "href",
+      `/portal/meetings?scope=guild&serverId=${otherServerId}`,
+    );
     await expect(
       page.getByRole("link", { name: "View recording" }),
     ).toHaveCount(0);
@@ -291,7 +294,10 @@ for (const encoding of ["raw", "quoted"]) {
     );
     await expect(
       page.getByTestId("join-hero").getByRole("link", { name: "Open portal" }),
-    ).toHaveAttribute("href", `/portal/server/${intendedServerId}/library`);
+    ).toHaveAttribute(
+      "href",
+      `/portal/meetings?scope=guild&serverId=${intendedServerId}`,
+    );
     await expect(page.locator("details")).toHaveAttribute("open", "");
     expect(progressInputs[0]).toContain(intendedServerId);
   });
