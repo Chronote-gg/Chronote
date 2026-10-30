@@ -548,8 +548,9 @@ test("completed base policy has exactly the reviewed write inventory and effecti
     "s3:x-amz-server-side-encryption-aws-kms-key-id": key,
     "kms:CallerAccount": "123456789012",
     "kms:ViaService": "s3.us-east-1.amazonaws.com",
-    "kms:EncryptionContext:aws:s3:arn": capture.replace("*", "run/plan"),
+    "kms:EncryptionContext:aws:s3:arn": capture.replaceAll("*", "run/plan"),
   };
+  expect(context["kms:EncryptionContext:aws:s3:arn"]).not.toContain("*");
   const reads = new Set([
     "s3:GetObject",
     "s3:GetObjectVersion",
@@ -649,8 +650,8 @@ test("completed base policy has exactly the reviewed write inventory and effecti
     ["s3:GetObject", state, true],
     ["dynamodb:PutItem", locks, true],
     ["dynamodb:DeleteItem", locks, true],
-    ["s3:PutObject", capture.replace("*", "run/plan"), true],
-    ["s3:GetObjectVersion", capture.replace("*", "run/plan"), true],
+    ["s3:PutObject", capture.replaceAll("*", "run/plan"), true],
+    ["s3:GetObjectVersion", capture.replaceAll("*", "run/plan"), true],
     ["kms:GenerateDataKey", key, true],
     ["kms:Decrypt", key, true],
     ["iam:CreatePolicy", policyArn, true],
@@ -670,11 +671,13 @@ test("completed base policy has exactly the reviewed write inventory and effecti
     ],
     [
       "s3:PutObject",
-      capture.replace("sandbox/", "prod/").replace("*", "run/plan"),
+      capture.replace("sandbox/", "prod/").replaceAll("*", "run/plan"),
       false,
     ],
-  ])
+  ]) {
+    expect(arn).not.toContain("*");
     expect(effective(action, arn)).toBe(allowed);
+  }
   expect(
     effective("iam:AttachRolePolicy", deploymentRole, {
       ...context,
@@ -688,7 +691,7 @@ test("completed base policy has exactly the reviewed write inventory and effecti
     }),
   ).toBe(false);
   expect(
-    effective("s3:PutObject", capture.replace("*", "run/plan"), {
+    effective("s3:PutObject", capture.replaceAll("*", "run/plan"), {
       ...context,
       "s3:if-none-match": "other",
     }),
