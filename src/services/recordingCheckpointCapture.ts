@@ -209,6 +209,7 @@ export function createRecordingCheckpointCapture(input: Input) {
         .filter((item) => item.artifact.sourceId === sourceId)
         .reduce((total, item) => total + item.artifact.bytes.byteLength, 0);
     if (chunk.length === 0) return true;
+    const belowPressure = reservedBytes < PRESSURE;
     if (
       chunk.length % 4 ||
       chunk.length > RATE * 30 ||
@@ -262,7 +263,12 @@ export function createRecordingCheckpointCapture(input: Input) {
     else piece.intervals.push({ sourceId, startOffsetMs, durationMs });
     sampleEnds.set(sourceId, sampleAt + durationMs);
     queuedBytes += chunk.length;
-    if (piece.bytes >= RATE * 30 || reservedBytes >= PRESSURE) closeAll();
+    // Flush on crossing the threshold, not on every frame while uploads remain queued.
+    if (
+      piece.bytes >= RATE * 30 ||
+      (belowPressure && reservedBytes >= PRESSURE)
+    )
+      closeAll();
     startWorker();
     arm();
     if (stopped) return false;

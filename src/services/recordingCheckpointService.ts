@@ -607,16 +607,19 @@ export function createRecordingCheckpointService(
     if (result === "applied" && producerSession) {
       acknowledged = {
         checkpoint,
-        manifest: {
-          ...fixtureEvidenceFields(fixtureInput),
-          artifactFolder: checkpoint.artifactFolder,
-          schemaVersion: 1,
-          revision: checkpoint.revision,
-          capture,
-          captureState: state,
-          coverage,
-          artifacts,
-        },
+        manifest:
+          checkpoint === input.previous && previous
+            ? previous
+            : {
+                ...fixtureEvidenceFields(fixtureInput),
+                artifactFolder: checkpoint.artifactFolder,
+                schemaVersion: 1,
+                revision: checkpoint.revision,
+                capture,
+                captureState: state,
+                coverage,
+                artifacts,
+              },
       };
     }
     return result === "applied"
