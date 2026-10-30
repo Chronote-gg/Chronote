@@ -150,6 +150,7 @@ jest.mock("../../src/utils/meetingLifecycle", () => ({
 }));
 
 jest.mock("../../src/meetings", () => ({
+  getPendingMeetingInitializations: () => [],
   deleteMeeting: jest.fn(),
   getMeeting: jest.fn(),
   hasMeeting: jest.fn(),

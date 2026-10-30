@@ -56,6 +56,7 @@ jest.mock("../../src/services/activeMeetingLeaseService", () => ({
   reconcilePreservedTtsReservation: jest.fn(async () => true),
 }));
 jest.mock("../../src/meetings", () => ({
+  getPendingMeetingInitializations: () => [],
   getMeeting: jest.fn(),
   deleteMeeting: jest.fn(),
   restoreVoiceSessionNickname: jest.fn(async () => true),

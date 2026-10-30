@@ -1,4 +1,8 @@
 import type { MeetingHistory } from "../types/db";
+import type { ActiveMeetingLease } from "../types/db";
+import { isDeepStrictEqual } from "node:util";
+import type { RecoveryClaim } from "../types/meetingRecovery";
+import { matchesRecoveredRecording } from "./recoveredRecordingProof";
 import type { RecordingCaptureState } from "../types/recordingCheckpoint";
 import type { MeetingData } from "../types/meeting-data";
 import type { SessionReservation } from "../types/deploymentControl";
@@ -9,6 +13,7 @@ import { fenceMeetingFinalization } from "../commands/endMeeting";
 import {
   deleteMeeting,
   getMeeting,
+  getPendingMeetingInitializations,
   restoreVoiceSessionNickname,
 } from "../meetings";
 import { fenceAndSettleSessionWork } from "./runtimeWorkAdmissionService";
@@ -23,6 +28,8 @@ import {
 import {
   reconcilePreservedRecordingReservation,
   reconcilePreservedTtsReservation,
+  reconcileRecoveredRecordingReservation,
+  getOwnedSessionReservations,
 } from "./activeMeetingLeaseService";
 import { createRecordingCheckpointService } from "./recordingCheckpointService";
 import {
@@ -42,6 +49,7 @@ type Stopped = {
   local: Promise<void>;
   voice: Promise<"settled" | "uncertain">;
   children: Promise<boolean>;
+  recovered?: MeetingHistory;
 };
 type Disposition =
   | { kind: "unresolved" }
@@ -81,6 +89,10 @@ function stop(meeting: MeetingData, budget: PreservationBudget): Promise<void> {
       })
     : Promise.resolve("uncertain");
   work.local = Promise.allSettled([
+    getPendingMeetingInitializations().find(
+      (entry) =>
+        entry.id === `${work.original?.guildId}:${work.original?.meetingId}`,
+    )?.promise,
     processing,
     closeOutputFile(meeting),
     waitForCaptureStreamSettlement(meeting),
@@ -312,12 +324,182 @@ async function release(
           })
         : false;
   if (!released) return false;
+  finishOriginalMeeting(meeting);
+  return true;
+}
+function finishOriginalMeeting(meeting: MeetingData) {
   meeting.recordingCapture?.releaseSettledBuffers();
   meeting.finished = true;
   meeting.setFinished();
   if (getMeeting(meeting.guildId) === meeting) deleteMeeting(meeting.guildId);
-  return true;
 }
 const service = createMeetingInterruptionService({ stop, preserve, release });
 export const interruptOwnedMeeting = service.interrupt;
 export const getMeetingInterruptionCheckpoints = service.checkpoints;
+
+async function localEffectsKnown(meeting: MeetingData, work: Stopped) {
+  return Boolean(
+    work.reservation &&
+    (await work.voice) === "settled" &&
+    (await work.children) &&
+    areMeetingNoticesSettled(meeting, work.reservation) &&
+    !meeting.recordingLimitNotice?.deliveryUnknown &&
+    meeting.recordingPreservationNotification?.outcome !== "unknown",
+  );
+}
+function recoveredLocal(claim: RecoveryClaim) {
+  const meeting = retainedMeetingFor(claim);
+  const work = meeting && stopped.get(meeting);
+  if (
+    !meeting ||
+    !work ||
+    work.reservation?.sessionMode !== "meeting" ||
+    work.original?.sessionMode !== "meeting" ||
+    meeting.reservation !== work.reservation ||
+    !isDeepStrictEqual(work.reservation, work.original) ||
+    !retainsOriginal(meeting, work.reservation) ||
+    claim.lease.meetingId !== work.original.meetingId ||
+    claim.lease.ownerInstanceId !== work.original.ownerInstanceId ||
+    claim.lease.executionVersion !== claim.history.executionVersion ||
+    !matchesRecoveredRecording(work.original, claim.history)
+  )
+    return;
+  return { meeting, work, reservation: work.reservation };
+}
+function retainedMeetingFor(claim: RecoveryClaim) {
+  return getOwnedSessionReservations().find(
+    ({ reservation }) =>
+      reservation.guildId === claim.history.guildId &&
+      reservation.meetingId === claim.history.meetingId,
+  )?.meeting;
+}
+function retainsOriginal(
+  meeting: MeetingData,
+  reservation: SessionReservation,
+) {
+  const current = getMeeting(meeting.guildId);
+  return (
+    (!current || current === meeting) &&
+    getOwnedSessionReservations().some(
+      (entry) => entry.meeting === meeting && entry.reservation === reservation,
+    )
+  );
+}
+function sameRecoveryAuthority(
+  lease: ActiveMeetingLease | undefined,
+  claim: RecoveryClaim,
+) {
+  return (
+    lease?.sessionMode === "recovery" &&
+    lease.guildId === claim.lease.guildId &&
+    lease.meetingId === claim.lease.meetingId &&
+    lease.ownerInstanceId === claim.lease.ownerInstanceId &&
+    lease.executionVersion === claim.lease.executionVersion &&
+    lease.recoveryAttemptId === claim.lease.recoveryAttemptId
+  );
+}
+/** Nickname mutation runs only while the recovery worker retains and renews its exact lease. */
+export async function prepareRecoveredMeeting(
+  claim: RecoveryClaim,
+  signal: AbortSignal,
+  effect: <T>(run: () => Promise<T>) => Promise<T>,
+): Promise<void> {
+  const local = recoveredLocal(claim);
+  if (!local) return;
+  const { meeting, work, reservation } = local;
+  await service.reconcile(meeting, Date.now() + 30000, async (budget) => {
+    const cleanupSignal = AbortSignal.any([signal, budget.signal]);
+    cleanupSignal.throwIfAborted();
+    if (!(await localEffectsKnown(meeting, work))) return false;
+    const reader = createRecordingCheckpointService();
+    const [verified, transcript] = await Promise.all([
+      reader.read(claim.history.checkpoint!, cleanupSignal),
+      claim.history.recoveryTranscript
+        ? reader.readVerifiedObject(
+            claim.history.recoveryTranscript.object,
+            cleanupSignal,
+          )
+        : undefined,
+    ]);
+    if (
+      verified.missing.length ||
+      (claim.history.recoveryTranscript && !transcript)
+    )
+      return false;
+    const repository = getDeploymentControlRepository();
+    const [history, lease] = await Promise.all([
+      repository.getMeetingHistory(reservation.historyKey, cleanupSignal),
+      repository.getRecoveryLease(claim.history.guildId),
+    ]);
+    cleanupSignal.throwIfAborted();
+    if (
+      !isDeepStrictEqual(history, claim.history) ||
+      !sameRecoveryAuthority(lease, claim) ||
+      !retainsOriginal(meeting, reservation) ||
+      claim.lease.leaseExpiresAt <= Math.floor(Date.now() / 1000)
+    )
+      return false;
+    if (meeting.botNicknameChanged) {
+      await effect(async () => {
+        cleanupSignal.throwIfAborted();
+        if (!(await restoreVoiceSessionNickname(meeting, cleanupSignal)))
+          throw new Error("Recovery nickname cleanup unresolved");
+      });
+    }
+    // Preparation alone never finishes the original reservation.
+    return false;
+  });
+}
+/** Read-only post-release proof, followed by exact original in-process cleanup. */
+export async function reconcileRecoveredMeeting(
+  claim: RecoveryClaim,
+): Promise<void> {
+  const local = recoveredLocal(claim);
+  if (!local) return;
+  const { meeting, work, reservation } = local;
+  if (work.recovered && !isDeepStrictEqual(work.recovered, claim.history))
+    return;
+  const first = !work.recovered;
+  work.recovered ??= structuredClone(claim.history);
+  const reconcile = () =>
+    service.reconcile(meeting, Date.now() + 30000, async (budget) => {
+      if (
+        !retainsOriginal(meeting, reservation) ||
+        meeting.reservation !== reservation ||
+        meeting.botNicknameChanged ||
+        !(await localEffectsKnown(meeting, work))
+      )
+        return false;
+      const released = await reconcileRecoveredRecordingReservation(
+        reservation,
+        {
+          history: work.recovered!,
+          localWork: work.local,
+          signal: budget.signal,
+          deadline: budget.deadline,
+        },
+      );
+      if (!released) return false;
+      finishOriginalMeeting(meeting);
+      return true;
+    });
+  if (first) {
+    const checkpoint = service
+      .checkpoints()
+      .find((entry) => entry.meeting === meeting);
+    if (checkpoint)
+      void checkpoint.actual
+        .then(async () => {
+          // The actual lifetime may finish in the same turn as an older budget expires.
+          // Await a coalesced attempt before using this one fresh post-settlement revisit.
+          const outcome = await reconcile();
+          if (
+            outcome.kind === "unresolved" &&
+            retainsOriginal(meeting, reservation)
+          )
+            await reconcile();
+        })
+        .catch(() => {});
+  }
+  await reconcile();
+}

@@ -49,6 +49,7 @@ jest.mock("../../src/commands/endMeeting", () => ({
     meeting.finalization!.controller.abort(),
 }));
 jest.mock("../../src/meetings", () => ({
+  getPendingMeetingInitializations: () => [],
   getMeeting: jest.fn(),
   deleteMeeting: jest.fn(),
   restoreVoiceSessionNickname: async () => true,

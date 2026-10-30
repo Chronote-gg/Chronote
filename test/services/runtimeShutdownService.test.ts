@@ -10,6 +10,7 @@ const mockSpeechStop = jest.fn(async () => {});
 const mockFence = jest.fn();
 const mockCloseAdmission = jest.fn();
 jest.mock("../../src/meetings", () => ({
+  getPendingMeetingInitializations: () => [],
   getAllMeetings: () => [],
   stopMeetingInitializations: () => mockInitStop(),
 }));
