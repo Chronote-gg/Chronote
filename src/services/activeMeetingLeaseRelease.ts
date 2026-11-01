@@ -9,21 +9,25 @@ export async function releaseOriginalLease(
 ): Promise<void> {
   const { reservation } = owned;
   proof.signal.throwIfAborted();
-  owned.release = Promise.resolve().then(() =>
-    releaseActiveMeetingLease(
+  let submitted = false;
+  owned.release = Promise.resolve().then(() => {
+    proof.signal.throwIfAborted();
+    submitted = true;
+    // Once sent, caller expiry must not cancel observation of the actual result.
+    return releaseActiveMeetingLease(
       reservation.guildId,
       reservation.meetingId,
       reservation.ownerInstanceId,
       reservation,
-      proof.signal,
-    ),
-  );
+    );
+  });
   try {
     await owned.release;
   } catch {
+    if (!submitted) owned.release = undefined;
     proof.signal.throwIfAborted();
   } finally {
     // Actual completion after the budget is new progress, even on rejection.
-    if (proof.signal.aborted) proof.onReleaseSettled?.();
+    if (submitted && proof.signal.aborted) proof.onReleaseSettled?.();
   }
 }

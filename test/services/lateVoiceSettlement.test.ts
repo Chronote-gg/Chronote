@@ -65,8 +65,17 @@ jest.mock("../../src/db", () => ({
   getDeploymentControlRepository: () => mockRepository,
   getActiveMeetingLease: (guildId: string) => mockReadLease(guildId),
   renewActiveMeetingLease: async () => true,
-  releaseActiveMeetingLease: (...args: Parameters<typeof mockReleaseLease>) =>
-    mockReleaseLease(...args),
+  releaseActiveMeetingLease: (
+    guildId: string,
+    meetingId: string,
+    owner: string,
+    original: Parameters<typeof mockReleaseLease>[3],
+    signal?: AbortSignal,
+  ) =>
+    leaseDeleteResponse(
+      mockReleaseLease(guildId, meetingId, owner, original),
+      signal,
+    ),
 }));
 let mockMeeting: MeetingData | undefined;
 jest.mock("../../src/meetings", () => ({
@@ -85,6 +94,7 @@ jest.mock("../../src/services/recordingCheckpointService", () =>
 );
 import type { VoiceBasedChannel } from "discord.js";
 import { createVoiceGuild } from "../fixtures/voiceSession";
+import { leaseDeleteResponse } from "../fixtures/leaseDeleteResponse";
 import { createCheckpointObjectStore } from "../fixtures/recordingCheckpointEnvironment";
 import type { ActiveMeetingLease, MeetingHistory } from "../../src/types/db";
 import type { MeetingData } from "../../src/types/meeting-data";
@@ -182,6 +192,7 @@ async function fixture(guildId: string, tts: boolean) {
               ...history,
               guildId,
               meetingId,
+              timestamp: new Date(Date.now()).toISOString(),
               channelId_timestamp: "channel#" + meetingId,
             },
           }),
@@ -266,6 +277,9 @@ async function fixture(guildId: string, tts: boolean) {
     meetingId: "meeting",
     reservation: original,
     voiceChannel: { id: "channel" },
+    transcribeMeeting: true,
+    generateNotes: true,
+    captureStartedAt: new Date(original.reservedAt),
     audioData: {},
     recordingContentTask: local.promise,
     finalization: {
@@ -275,6 +289,7 @@ async function fixture(guildId: string, tts: boolean) {
     },
     setFinished: jest.fn(),
     recordingCapture: {
+      pending: () => [],
       settled: async () => {},
       releaseSettledBuffers: jest.fn(),
     },
@@ -287,6 +302,7 @@ async function fixture(guildId: string, tts: boolean) {
     meeting,
     local,
     row,
+    objects,
     finalizer,
     ai,
     post,
@@ -307,6 +323,83 @@ beforeEach(() => {
   mockReadLease.mockClear();
   jest.spyOn(console, "info").mockImplementation(() => {});
 });
+
+async function holdCleanupAfterStop(f: Awaited<ReturnType<typeof fixture>>) {
+  f.local.resolve();
+  const stop = interruptOwnedMeeting(f.meeting, {
+    reason: "processing_failure",
+    deadline: Date.now() + 10000,
+  });
+  await jest.advanceTimersByTimeAsync(10000);
+  expect(await stop).toEqual({ kind: "unresolved" });
+  const deletion = held();
+  mockDeleteBarrier = deletion.promise;
+  return deletion;
+}
+
+describe.each(["failed", "interrupted"] as const)(
+  "%s preservation",
+  (status) => {
+    test.each([
+      "unchanged",
+      "missing_manifest",
+      "changed_checkpoint",
+      "changed_status",
+      "newer_owner",
+      "unknown_readback",
+    ])(
+      "verifies late deletion without repeating preservation: %s",
+      async (condition) => {
+        const f = await fixture("terminal-delete-" + status + condition, false);
+        f.row!.status = status;
+        f.row!.recovery = {
+          disposition: "pending",
+          executionVersion: 1,
+          attempt: 0,
+          stage: "verification",
+          retry: { maxAttempts: 3, nextAttemptAt: null },
+        };
+        const deletion = await holdCleanupAfterStop(f);
+        const writes = jest.spyOn(mockRepository, "transitionMeetingHistory");
+        f.packet(null, 2);
+        await jest.advanceTimersByTimeAsync(0);
+        expect(mockReleaseLease).toHaveBeenCalledTimes(1);
+        expect(writes).toHaveBeenCalledTimes(1);
+        await jest.advanceTimersByTimeAsync(30001);
+        expect(f.settle).not.toHaveBeenCalled();
+        expect(mockRuntime.getWorkCounts().recording).toBe(1);
+        if (condition === "missing_manifest")
+          f.objects.delete(f.row!.checkpoint!.manifest.key);
+        if (condition === "changed_checkpoint")
+          f.row!.checkpoint!.revision += 1;
+        if (condition === "changed_status") f.row!.status = "complete";
+        if (condition === "newer_owner")
+          mockLeases.set(f.original.guildId, {
+            ...mockLeases.get(f.original.guildId)!,
+            meetingId: "newer",
+            voiceOperationAttemptId: "newer-voice",
+            executionVersion: 2,
+          });
+        mockReadFailure = condition === "unknown_readback";
+        const canonical = structuredClone(f.row);
+        deletion.resolve();
+        await jest.advanceTimersByTimeAsync(0);
+        const released = condition === "unchanged";
+        expect(f.settle).toHaveBeenCalledTimes(released ? 1 : 0);
+        expect(f.meeting.setFinished).toHaveBeenCalledTimes(released ? 1 : 0);
+        expect(mockRuntime.getWorkCounts().recording).toBe(released ? 0 : 1);
+        expect(mockReleaseLease).toHaveBeenCalledTimes(1);
+        expect(writes).toHaveBeenCalledTimes(1);
+        expect(f.row).toEqual(canonical);
+        const reads = mockReadLease.mock.calls.length;
+        await jest.advanceTimersByTimeAsync(60000);
+        expect(mockReadLease).toHaveBeenCalledTimes(reads);
+        expect(writes).toHaveBeenCalledTimes(1);
+        if (released) expect((await f.admit("next")).kind).toBe("admitted");
+      },
+    );
+  },
+);
 afterEach(() => {
   mockRuntime?.stop();
   jest.useRealTimers();
@@ -437,15 +530,7 @@ test.each(["lost_response", "failed", "unreadable", "newer_owner", "tts"])(
     const f = await fixture("late-delete-" + outcome, outcome === "tts");
     const canonical = f.row && structuredClone(f.row);
     const workKind = outcome === "tts" ? "voice_operation" : "recording";
-    f.local.resolve();
-    const stop = interruptOwnedMeeting(f.meeting, {
-      reason: "processing_failure",
-      deadline: Date.now() + 10000,
-    });
-    await jest.advanceTimersByTimeAsync(10000);
-    expect(await stop).toEqual({ kind: "unresolved" });
-    const deletion = held();
-    mockDeleteBarrier = deletion.promise;
+    const deletion = await holdCleanupAfterStop(f);
     f.packet(null, 2);
     await jest.advanceTimersByTimeAsync(0);
     expect(mockReleaseLease).toHaveBeenCalledTimes(1);

@@ -70,6 +70,10 @@ An acknowledgment-only timeout retains passive observation. `whenOwnedVoiceSettl
 
 Genuinely ambiguous sends, missing acknowledgments, changed ownership and unproved persistence remain held. A timer, current Discord voice-state absence or a missing local operation cannot supply settlement proof. These cases require separately proven recovery, not a counter reset or automatic lease deletion. See the [voice acknowledgment recovery design](superpowers/specs/2026-10-31-voice-acknowledgment-recovery-design.md).
 
+A submitted lease delete is retained and is not automatically replayed, including after an error or a read that still finds the original lease. A request may have an unknown remote outcome after its client promise settles. A failed or unreadable verification therefore keeps the original reservation held for separately proven recovery. The cleanup budget bounds the caller's wait, not a delete that has already been dispatched.
+
+Voice settlement requires the exact original in-process reservation. A missing or reconstructed reservation causes no best-effort database write; the existing durable `joining` state still blocks admission, just as `uncertain` does. Failure to persist a late acknowledgment also retains the hold instead of replaying an unproved write.
+
 ### Outgoing task stopped before acknowledging
 
 If the outgoing task dies after promotion, it can never write its retirement acknowledgment. `retire` then times out with `retirement_incomplete`, `reconcile` reports `recovery_required`, and every later `prepare` would refuse an environment still in `retiring`.

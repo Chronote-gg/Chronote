@@ -51,6 +51,7 @@ type Stopped = {
   voice: Promise<"settled" | "uncertain">;
   children: Promise<boolean>;
   recovered?: MeetingHistory;
+  preserved?: Extract<Disposition, { kind: "preserved" }>;
   reconcile?: (budget: PreservationBudget) => Promise<boolean>;
 };
 type Disposition =
@@ -235,8 +236,9 @@ async function preserve(
   budget: PreservationBudget,
   reason: InterruptionReason,
 ): Promise<Disposition> {
-  const original = stopped.get(meeting)?.original;
-  if (!original) return { kind: "unresolved" };
+  const work = stopped.get(meeting);
+  if (!work?.original) return { kind: "unresolved" };
+  const original = work.original;
   if (original.sessionMode === "tts_only")
     return stopped.get(meeting)!.ancillarySettled
       ? { kind: "preserved", sessionMode: "tts_only" }
@@ -254,6 +256,8 @@ async function preserve(
     row,
     budget.signal,
   );
+  // Recheck current history/artifacts, then reuse acknowledged preservation without another write.
+  if (work.preserved) return work.preserved;
   if (row.status === "complete")
     return row.checkpoint
       ? {
@@ -314,6 +318,7 @@ async function release(
     !(await localEffectsKnown(meeting, work))
   )
     return false;
+  work.preserved ??= structuredClone(disposition);
   budget.signal.throwIfAborted();
   if (!(await restoreVoiceSessionNickname(meeting, budget.signal)))
     return false;
