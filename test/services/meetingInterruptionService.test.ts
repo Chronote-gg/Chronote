@@ -21,6 +21,18 @@ function fixture() {
   } as MeetingData;
   return { service, meeting, local, stop, preserve, release };
 }
+async function expiredInterruptionFixture() {
+  const f = fixture();
+  const original = f.service.interrupt(f.meeting, {
+    reason: "capture_failure",
+    deadline: 10,
+  });
+  await jest.advanceTimersByTimeAsync(10);
+  await original;
+  f.local.resolve();
+  await jest.advanceTimersByTimeAsync(0);
+  return f;
+}
 beforeEach(() => {
   jest.useFakeTimers();
   jest.setSystemTime(0);
@@ -124,15 +136,7 @@ test("separate preservation task must settle before durable disposition or buffe
 });
 
 test("progress during a coalesced reconciliation gets one fresh budget without polling", async () => {
-  const f = fixture();
-  const original = f.service.interrupt(f.meeting, {
-    reason: "capture_failure",
-    deadline: 10,
-  });
-  await jest.advanceTimersByTimeAsync(10);
-  await original;
-  f.local.resolve();
-  await jest.advanceTimersByTimeAsync(0);
+  const f = await expiredInterruptionFixture();
   const heldAttempt = held<boolean>();
   const first = jest.fn(() => heldAttempt.promise);
   let remaining = 0;
@@ -156,15 +160,7 @@ test("progress during a coalesced reconciliation gets one fresh budget without p
 });
 
 test("progress at reconciliation completion cannot join an already finished attempt", async () => {
-  const f = fixture();
-  const original = f.service.interrupt(f.meeting, {
-    reason: "capture_failure",
-    deadline: 10,
-  });
-  await jest.advanceTimersByTimeAsync(10);
-  await original;
-  f.local.resolve();
-  await jest.advanceTimersByTimeAsync(0);
+  const f = await expiredInterruptionFixture();
   const later = jest.fn(async () => true);
   let progress: Promise<unknown> | undefined;
   const run = jest.fn(async () => {

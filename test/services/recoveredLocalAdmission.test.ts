@@ -45,14 +45,11 @@ jest.mock("../../src/meetings", () => ({
   },
 }));
 let mockReader: ReturnType<typeof createRecordingCheckpointService>;
-jest.mock("../../src/services/recordingCheckpointService", () => ({
-  createRecordingCheckpointService: (...args: unknown[]) =>
-    args.length
-      ? jest
-          .requireActual("../../src/services/recordingCheckpointService")
-          .createRecordingCheckpointService(...args)
-      : mockReader,
-}));
+jest.mock("../../src/services/recordingCheckpointService", () =>
+  jest
+    .requireActual("../fixtures/recordingCheckpointEnvironment")
+    .createCheckpointServiceOverride(() => mockReader),
+);
 import type { MeetingData } from "../../src/types/meeting-data";
 import type { RecoveryClaim } from "../../src/types/meetingRecovery";
 import { failedInitializationRuntime } from "../fixtures/failedInitializationRuntime";

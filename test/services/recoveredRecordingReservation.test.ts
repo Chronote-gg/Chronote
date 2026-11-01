@@ -22,11 +22,11 @@ jest.mock("../../src/services/runtimeLifecycleService", () => ({
     now: 1,
   })),
 }));
-jest.mock("../../src/services/guildVoiceOperationService", () => ({
-  whenOwnedVoiceSettled: jest.fn(async () => {}),
-  prepareOwnedVoiceSession: jest.fn(),
-  settleOwnedVoiceSession: jest.fn(async () => "settled"),
-}));
+jest.mock("../../src/services/guildVoiceOperationService", () =>
+  jest
+    .requireActual("../fixtures/voiceSession")
+    .createSettledReservationVoiceMock(),
+);
 jest.mock("../../src/services/recoveredRecordingProof", () => ({
   matchesRecoveredRecording: jest.fn(() => true),
 }));

@@ -78,16 +78,14 @@ jest.mock("../../src/meetings", () => ({
   restoreVoiceSessionNickname: async () => true,
 }));
 let mockReader: ReturnType<typeof createRecordingCheckpointService>;
-jest.mock("../../src/services/recordingCheckpointService", () => ({
-  createRecordingCheckpointService: (...args: unknown[]) =>
-    args.length
-      ? jest
-          .requireActual("../../src/services/recordingCheckpointService")
-          .createRecordingCheckpointService(...args)
-      : mockReader,
-}));
-import { EventEmitter } from "node:events";
-import type { Guild, VoiceBasedChannel } from "discord.js";
+jest.mock("../../src/services/recordingCheckpointService", () =>
+  jest
+    .requireActual("../fixtures/recordingCheckpointEnvironment")
+    .createCheckpointServiceOverride(() => mockReader),
+);
+import type { VoiceBasedChannel } from "discord.js";
+import { createVoiceGuild } from "../fixtures/voiceSession";
+import { createCheckpointObjectStore } from "../fixtures/recordingCheckpointEnvironment";
 import type { ActiveMeetingLease, MeetingHistory } from "../../src/types/db";
 import type { MeetingData } from "../../src/types/meeting-data";
 import { createGuildVoiceOperationService } from "../../src/services/guildVoiceOperationService";
@@ -193,16 +191,7 @@ async function fixture(guildId: string, tts: boolean) {
     throw new Error("fixture admission refused");
   const original = admission.reservation;
   const settle = jest.spyOn(original.workHandle, "settle");
-  const client = Object.assign(new EventEmitter(), { user: { id: "bot" } });
-  const guild = {
-    id: guildId,
-    shardId: 0,
-    client,
-    voiceAdapterCreator: () => ({
-      sendPayload: () => true,
-      destroy: jest.fn(),
-    }),
-  } as unknown as Guild;
+  const { client, guild } = createVoiceGuild(guildId);
   const connection = await mockVoice.joinOwnedVoiceSession(original, {
     guild,
     voiceChannel: { id: "channel" } as VoiceBasedChannel,
@@ -228,13 +217,7 @@ async function fixture(guildId: string, tts: boolean) {
   const objects = new Map<string, Buffer>();
   mockReader = createRecordingCheckpointService({
     repository: mockRepository,
-    objects: {
-      upload: async (key, bytes) => {
-        objects.set(key, Buffer.from(bytes));
-        return key;
-      },
-      read: async (key) => objects.get(key),
-    },
+    objects: createCheckpointObjectStore(objects),
   });
   let row: MeetingHistory | undefined;
   if (original.sessionMode === "meeting") {

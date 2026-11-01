@@ -71,11 +71,11 @@ jest.mock("../../src/services/runtimeLifecycleService", () => ({
     now: Math.floor(Date.now() / 1000),
   })),
 }));
-jest.mock("../../src/services/guildVoiceOperationService", () => ({
-  whenOwnedVoiceSettled: jest.fn(async () => {}),
-  prepareOwnedVoiceSession: jest.fn(),
-  settleOwnedVoiceSession: jest.fn(async () => "settled"),
-}));
+jest.mock("../../src/services/guildVoiceOperationService", () =>
+  jest
+    .requireActual("../fixtures/voiceSession")
+    .createSettledReservationVoiceMock(),
+);
 jest.mock("../../src/services/runtimeInstanceService", () => ({
   getRuntimeInstanceId: () => "instance-1",
 }));

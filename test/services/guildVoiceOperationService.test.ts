@@ -1,8 +1,8 @@
 /** @jest-environment node */
 import { createGuildVoiceOperationService } from "../../src/services/guildVoiceOperationService";
-import { EventEmitter } from "node:events";
 import { randomUUID } from "node:crypto";
-import type { Guild, VoiceBasedChannel, GatewaySendPayload } from "discord.js";
+import type { VoiceBasedChannel, GatewaySendPayload } from "discord.js";
+import { createVoiceGuild } from "../fixtures/voiceSession";
 import type {
   SessionReservation,
   VoiceRecord,
@@ -14,16 +14,7 @@ jest.mock("../../src/db", () => ({
 
 function fixture(send?: (payload: GatewaySendPayload) => Promise<void>) {
   const guildId = randomUUID();
-  const client = Object.assign(new EventEmitter(), { user: { id: "bot" } });
-  const guild = {
-    id: guildId,
-    shardId: 0,
-    client,
-    voiceAdapterCreator: () => ({
-      sendPayload: () => true,
-      destroy: jest.fn(),
-    }),
-  } as unknown as Guild;
+  const { client, guild } = createVoiceGuild(guildId);
   const reservation: SessionReservation = {
     guildId,
     meetingId: "meeting",
@@ -121,6 +112,48 @@ function fixture(send?: (payload: GatewaySendPayload) => Promise<void>) {
 }
 async function flush() {
   for (let i = 0; i < 12; i++) await Promise.resolve();
+}
+async function joinKnownSession(f: ReturnType<typeof fixture>) {
+  await f.joinOwnedVoiceSession(f.reservation, f.options);
+  f.packet("channel", 1);
+}
+function observeSettlement(f: ReturnType<typeof fixture>) {
+  let settled = false;
+  const promise = f.whenOwnedVoiceSettled(f.reservation).then(() => {
+    settled = true;
+  });
+  return {
+    promise,
+    get settled() {
+      return settled;
+    },
+  };
+}
+function holdNextVoiceWrite(f: ReturnType<typeof fixture>) {
+  const { promise, resolve } = Promise.withResolvers<void>();
+  const write = f.writeVoice.getMockImplementation()!;
+  f.writeVoice.mockImplementationOnce(async (...args) => {
+    await promise;
+    return write(...args);
+  });
+  return resolve;
+}
+function loseNextWriteResponse(f: ReturnType<typeof fixture>) {
+  f.writeVoice.mockImplementationOnce(async (row) => {
+    f.storage.set(row);
+    throw new Error("response lost");
+  });
+}
+function persistenceRow(row: VoiceRecord, reason: string): VoiceRecord {
+  const changes: Record<string, Partial<VoiceRecord>> = {
+    "old-settled": { updatedAt: row.updatedAt - 1 },
+    "other-attempt": { attemptId: "different" },
+    "other-owner": { ownerInstanceId: "different" },
+    "other-meeting": { meetingId: "different" },
+    "other-execution": { executionVersion: 2 },
+    "other-mode": { sessionMode: "meeting" },
+  };
+  return { ...row, ...changes[reason] };
 }
 beforeEach(() => {
   jest.spyOn(console, "info").mockImplementation(() => {});
@@ -423,12 +456,8 @@ test.each([
       return Promise.reject(new Error("transport"));
     return Promise.resolve();
   });
-  await f.joinOwnedVoiceSession(f.reservation, f.options);
-  f.packet("channel", 1);
-  let settled = false;
-  void f.whenOwnedVoiceSettled(f.reservation).then(() => {
-    settled = true;
-  });
+  await joinKnownSession(f);
+  const settlement = observeSettlement(f);
   const caller = new AbortController();
   const disposition = f.settleOwnedVoiceSession(f.reservation, {
     signal: caller.signal,
@@ -445,7 +474,7 @@ test.each([
   f.packet(null, 3);
   await f.waitOwnedVoiceEffects(f.reservation);
   await flush();
-  expect(settled).toBe(false);
+  expect(settlement.settled).toBe(false);
   expect(await f.settleOwnedVoiceSession(f.reservation)).toBe("uncertain");
   expect(f.client.listenerCount("raw")).toBe(0);
   expect(f.sendPayload).toHaveBeenCalledTimes(2);
@@ -516,12 +545,8 @@ test("remote settled row without a local operation cannot produce proof", async 
 
 test("lost settlement write acknowledgment is proved by exact strong readback", async () => {
   const f = fixture();
-  f.writeVoice.mockImplementationOnce(async (row) => {
-    f.storage.set(row);
-    throw new Error("response lost");
-  });
-  await f.joinOwnedVoiceSession(f.reservation, f.options);
-  f.packet("channel", 1);
+  loseNextWriteResponse(f);
+  await joinKnownSession(f);
   const disposition = f.settleOwnedVoiceSession(f.reservation);
   await flush();
   f.packet(null, 2);
@@ -551,37 +576,21 @@ test.each([
     const f = fixture();
     f.writeVoice.mockImplementationOnce(async (row) => {
       if (reason === "stale") return "stale";
-      if (reason !== "unchanged") {
-        f.storage.set({
-          ...row,
-          ...(reason === "old-settled" ? { updatedAt: row.updatedAt - 1 } : {}),
-          ...(reason === "other-attempt" ? { attemptId: "different" } : {}),
-          ...(reason === "other-owner" ? { ownerInstanceId: "different" } : {}),
-          ...(reason === "other-meeting" ? { meetingId: "different" } : {}),
-          ...(reason === "other-execution" ? { executionVersion: 2 } : {}),
-          ...(reason === "other-mode"
-            ? { sessionMode: "meeting" as const }
-            : {}),
-        });
-      }
+      if (reason !== "unchanged") f.storage.set(persistenceRow(row, reason));
       if (reason === "missing") f.storage.set(undefined);
       if (reason === "unknown")
         f.getRecord.mockRejectedValueOnce(new Error("read unavailable"));
       throw new Error("response lost");
     });
-    await f.joinOwnedVoiceSession(f.reservation, f.options);
-    f.packet("channel", 1);
-    let settled = false;
-    void f.whenOwnedVoiceSettled(f.reservation).then(() => {
-      settled = true;
-    });
+    await joinKnownSession(f);
+    const settlement = observeSettlement(f);
     const disposition = f.settleOwnedVoiceSession(f.reservation);
     await flush();
     f.packet(null, 2);
     expect(await disposition).toBe("uncertain");
     await f.waitOwnedVoiceEffects(f.reservation);
     expect(await f.settleOwnedVoiceSession(f.reservation)).toBe("uncertain");
-    expect(settled).toBe(false);
+    expect(settlement.settled).toBe(false);
     expect(f.writeVoice).toHaveBeenCalledTimes(1);
     expect(f.client.listenerCount("raw")).toBe(0);
   },
@@ -590,12 +599,8 @@ test.each([
 test("confirmed uncertain write with lost response does not poison the late settlement chain", async () => {
   jest.useFakeTimers();
   const f = fixture();
-  f.writeVoice.mockImplementationOnce(async (row) => {
-    f.storage.set(row);
-    throw new Error("response lost");
-  });
-  await f.joinOwnedVoiceSession(f.reservation, f.options);
-  f.packet("channel", 1);
+  loseNextWriteResponse(f);
+  await joinKnownSession(f);
   const disposition = f.settleOwnedVoiceSession(f.reservation);
   await jest.advanceTimersByTimeAsync(5_001);
   expect(await disposition).toBe("uncertain");
@@ -660,18 +665,14 @@ test("unproved uncertain write is not replayed or followed by settlement on late
   jest.useFakeTimers();
   const f = fixture();
   f.writeVoice.mockRejectedValueOnce(new Error("write response lost"));
-  await f.joinOwnedVoiceSession(f.reservation, f.options);
-  f.packet("channel", 1);
-  let settled = false;
-  void f.whenOwnedVoiceSettled(f.reservation).then(() => {
-    settled = true;
-  });
+  await joinKnownSession(f);
+  const settlement = observeSettlement(f);
   const disposition = f.settleOwnedVoiceSession(f.reservation);
   await jest.advanceTimersByTimeAsync(5_001);
   expect(await disposition).toBe("uncertain");
   f.packet(null, 2);
   await f.waitOwnedVoiceEffects(f.reservation);
-  expect(settled).toBe(false);
+  expect(settlement.settled).toBe(false);
   expect(f.writeVoice).toHaveBeenCalledTimes(1);
   expect(f.getRecord).toHaveBeenCalledTimes(1);
 });
@@ -712,61 +713,37 @@ test.each([
 
 test("late ACK waits for the held uncertain write before its single settled transition", async () => {
   jest.useFakeTimers();
-  let finish!: () => void;
-  const held = new Promise<void>((resolve) => {
-    finish = resolve;
-  });
   const f = fixture();
-  const write = f.writeVoice.getMockImplementation()!;
-  f.writeVoice.mockImplementationOnce(async (...args) => {
-    await held;
-    return write(...args);
-  });
-  await f.joinOwnedVoiceSession(f.reservation, f.options);
-  f.packet("channel", 1);
+  const finish = holdNextVoiceWrite(f);
+  await joinKnownSession(f);
   const disposition = f.settleOwnedVoiceSession(f.reservation);
-  let proved = false;
-  const proof = f.whenOwnedVoiceSettled(f.reservation).then(() => {
-    proved = true;
-  });
+  const proof = observeSettlement(f);
   await jest.advanceTimersByTimeAsync(5_001);
   expect(await disposition).toBe("uncertain");
   f.packet(null, 2);
   await flush();
-  expect(proved).toBe(false);
+  expect(proof.settled).toBe(false);
   expect(f.writeVoice).toHaveBeenCalledTimes(1);
   finish();
-  await proof;
+  await proof.promise;
   expect(f.storage.get()?.state).toBe("settled");
   expect(f.writeVoice).toHaveBeenCalledTimes(2);
 });
 
 test("shard loss while durable settlement is held cannot publish local proof", async () => {
   jest.useFakeTimers();
-  let finish!: () => void;
-  const held = new Promise<void>((resolve) => {
-    finish = resolve;
-  });
   const f = fixture();
-  const write = f.writeVoice.getMockImplementation()!;
-  f.writeVoice.mockImplementationOnce(async (...args) => {
-    await held;
-    return write(...args);
-  });
-  await f.joinOwnedVoiceSession(f.reservation, f.options);
-  f.packet("channel", 1);
+  const finish = holdNextVoiceWrite(f);
+  await joinKnownSession(f);
   const disposition = f.settleOwnedVoiceSession(f.reservation);
-  let proved = false;
-  void f.whenOwnedVoiceSettled(f.reservation).then(() => {
-    proved = true;
-  });
+  const proof = observeSettlement(f);
   await flush();
   f.packet(null, 2);
   await flush();
   f.client.emit("shardResume", 0, 1);
   finish();
   expect(await disposition).toBe("uncertain");
-  expect(proved).toBe(false);
+  expect(proof.settled).toBe(false);
   expect(f.client.listenerCount("raw")).toBe(0);
   await expect(
     f.joinOwnedVoiceSession(f.reservation, f.options),
@@ -805,18 +782,14 @@ test.each(["wrong-session", "wrong-channel", "stale-sequence", "shard-loss"])(
 
 test("effect draining called at a late ACK includes its newly queued durable write", async () => {
   jest.useFakeTimers();
-  let finish!: () => void;
-  const held = new Promise<void>((resolve) => {
-    finish = resolve;
-  });
+  const { promise: held, resolve: finish } = Promise.withResolvers<void>();
   const f = fixture();
   const write = f.writeVoice.getMockImplementation()!;
   f.writeVoice.mockImplementation(async (...args) => {
     if (args[0].state === "settled") await held;
     return write(...args);
   });
-  await f.joinOwnedVoiceSession(f.reservation, f.options);
-  f.packet("channel", 1);
+  await joinKnownSession(f);
   const disposition = f.settleOwnedVoiceSession(f.reservation);
   await jest.advanceTimersByTimeAsync(5_001);
   expect(await disposition).toBe("uncertain");

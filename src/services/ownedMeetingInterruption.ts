@@ -311,13 +311,7 @@ async function release(
       deadline: budget.deadline,
       signal: budget.signal,
     })) !== "settled" ||
-    !(await work.children)
-  )
-    return false;
-  if (
-    !areMeetingNoticesSettled(meeting, work.reservation) ||
-    meeting.recordingLimitNotice?.deliveryUnknown ||
-    meeting.recordingPreservationNotification?.outcome === "unknown"
+    !(await localEffectsKnown(meeting, work))
   )
     return false;
   budget.signal.throwIfAborted();

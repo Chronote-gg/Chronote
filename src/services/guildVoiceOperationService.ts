@@ -324,6 +324,58 @@ export function createGuildVoiceOperationService(
     }
   }
   const closeOperations = new WeakMap<Operation, () => void>();
+  async function closeOwnedVoiceTransport(
+    operation: Operation,
+    deadline: number,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    const sendsFinished = await drainTransportBeforeDeadline(
+      operation,
+      deadline,
+      signal,
+    );
+    if (!sendsFinished || operation.ambiguous) {
+      destroyWithoutLeave(operation);
+      return;
+    }
+    // No delayed continuation may issue this leave after the deadline.
+    if (Date.now() < deadline && !signal?.aborted)
+      closeOperations.get(operation)?.();
+    else {
+      invalidate(operation, signal?.aborted ? "cancelled" : "leave_deadline");
+      destroyWithoutLeave(operation);
+    }
+    await drainTransportBeforeDeadline(operation, deadline, signal);
+    await waitForAcknowledgment(operation, deadline, signal);
+  }
+  async function settleVoiceOperation(
+    operation: Operation,
+    deadline: number,
+    signal?: AbortSignal,
+  ): Promise<"settled" | "uncertain"> {
+    await closeOwnedVoiceTransport(operation, deadline, signal);
+    const closed =
+      !operation.connection ||
+      operation.connection.state.status === VoiceConnectionStatus.Destroyed;
+    const outcome =
+      closed &&
+      !operation.ambiguous &&
+      (!operation.attempted || operation.acknowledged)
+        ? "settled"
+        : "uncertain";
+    try {
+      await persist(operation, outcome);
+    } catch {
+      operation.cleanup();
+      return "uncertain";
+    }
+    if (outcome === "settled")
+      return completeSettlement(operation) ? "settled" : "uncertain";
+    if (!operation.ambiguous && operation.leaveIssued)
+      void settleAfterLateAcknowledgment(operation);
+    else operation.cleanup();
+    return "uncertain";
+  }
   async function settleOwnedVoiceSession(
     reservation: SessionReservation,
     options: VoiceSettlementOptions = {},
@@ -340,88 +392,7 @@ export function createGuildVoiceOperationService(
     const deadline = options.deadline ?? Date.now() + SETTLEMENT_TIMEOUT_MS;
     if (operation.settlement) return operation.settlement;
     operation.closed = true;
-    const work = (async (): Promise<"settled" | "uncertain"> => {
-      const sendsFinished = await beforeDeadline(
-        Promise.all([...operation.pending]),
-        deadline,
-        options.signal,
-      );
-      if (!sendsFinished || operation.ambiguous) {
-        if (!sendsFinished)
-          invalidate(
-            operation,
-            options.signal?.aborted ? "cancelled" : "transport_timeout",
-          );
-        if (
-          operation.connection?.state.status !== VoiceConnectionStatus.Destroyed
-        )
-          operation.connection?.destroy(false);
-      } else {
-        // No delayed continuation may issue this leave after the deadline.
-        if (Date.now() < deadline && !options.signal?.aborted)
-          closeOperations.get(operation)?.();
-        else {
-          invalidate(
-            operation,
-            options.signal?.aborted ? "cancelled" : "leave_deadline",
-          );
-          if (
-            operation.connection?.state.status !==
-            VoiceConnectionStatus.Destroyed
-          )
-            operation.connection?.destroy(false);
-        }
-        if (
-          !(await beforeDeadline(
-            Promise.all([...operation.pending]),
-            deadline,
-            options.signal,
-          ))
-        )
-          invalidate(
-            operation,
-            options.signal?.aborted ? "cancelled" : "transport_timeout",
-          );
-        if (
-          operation.attempted &&
-          !operation.ambiguous &&
-          !(await beforeDeadline(
-            operation.acknowledgment,
-            deadline,
-            options.signal,
-          ))
-        ) {
-          // Cancelling an ACK-only wait cannot reopen the already drained, sealed transport.
-          console.info("Owned voice settlement", {
-            phase: "waiting",
-            reason: options.signal?.aborted
-              ? "acknowledgment_wait_cancelled"
-              : "acknowledgment_timeout",
-          });
-        }
-      }
-      const closed =
-        !operation.connection ||
-        operation.connection.state.status === VoiceConnectionStatus.Destroyed;
-      const outcome =
-        closed &&
-        !operation.ambiguous &&
-        (!operation.attempted || operation.acknowledged)
-          ? "settled"
-          : "uncertain";
-      try {
-        await persist(operation, outcome);
-      } catch {
-        operation.cleanup();
-        return "uncertain";
-      }
-      if (outcome === "settled")
-        return completeSettlement(operation) ? "settled" : "uncertain";
-      if (!operation.ambiguous && operation.leaveIssued)
-        void settleAfterLateAcknowledgment(operation);
-      else operation.cleanup();
-      return "uncertain";
-    })();
+    const work = settleVoiceOperation(operation, deadline, options.signal);
     operation.settlementWork = work;
     operation.settlement = beforeDeadline(work, deadline, options.signal).then(
       (finished) => (finished ? work : "uncertain"),
@@ -452,6 +423,43 @@ export function createGuildVoiceOperationService(
     settleOwnedVoiceSession,
     waitOwnedVoiceEffects,
   };
+}
+function destroyWithoutLeave(operation: Operation): void {
+  if (operation.connection?.state.status !== VoiceConnectionStatus.Destroyed)
+    operation.connection?.destroy(false);
+}
+async function drainTransportBeforeDeadline(
+  operation: Operation,
+  deadline: number,
+  signal?: AbortSignal,
+): Promise<boolean> {
+  const finished = await beforeDeadline(
+    Promise.all([...operation.pending]),
+    deadline,
+    signal,
+  );
+  if (!finished)
+    invalidate(operation, signal?.aborted ? "cancelled" : "transport_timeout");
+  return finished;
+}
+async function waitForAcknowledgment(
+  operation: Operation,
+  deadline: number,
+  signal?: AbortSignal,
+): Promise<void> {
+  if (
+    operation.attempted &&
+    !operation.ambiguous &&
+    !(await beforeDeadline(operation.acknowledgment, deadline, signal))
+  ) {
+    // Cancelling an ACK-only wait cannot reopen the already drained, sealed transport.
+    console.info("Owned voice settlement", {
+      phase: "waiting",
+      reason: signal?.aborted
+        ? "acknowledgment_wait_cancelled"
+        : "acknowledgment_timeout",
+    });
+  }
 }
 function invalidate(operation: Operation, reason: string): void {
   if (!operation.ambiguous)

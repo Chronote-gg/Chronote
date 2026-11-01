@@ -2,6 +2,7 @@ import {
   matchesPreservedHistory,
   samePreservedLease,
   type PreservedRecordingReleaseProof,
+  type ReservationReleaseProof,
 } from "./recordingReservationReleaseProof";
 export type { PreservedRecordingReleaseProof } from "./recordingReservationReleaseProof";
 import type { NewWorkScope } from "../types/productionIntroduction";
@@ -9,6 +10,7 @@ import { areMeetingNoticesSettled } from "./meetingProcessingLifetime";
 import { matchesRecoveredRecording } from "./recoveredRecordingProof";
 import { createRecordingCheckpointService } from "./recordingCheckpointService";
 import { isDeepStrictEqual } from "node:util";
+import { releaseOriginalLease } from "./activeMeetingLeaseRelease";
 import {
   getActiveMeetingLease,
   requestActiveMeetingEnd,
@@ -531,10 +533,7 @@ export async function reconcilePreservedRecordingReservation(
 }
 export async function reconcilePreservedTtsReservation(
   reservation: Extract<SessionReservation, { sessionMode: "tts_only" }>,
-  proof: Pick<
-    PreservedRecordingReleaseProof,
-    "localWork" | "signal" | "deadline" | "onReleaseSettled"
-  > & {
+  proof: ReservationReleaseProof & {
     ancillarySettled: boolean;
   },
 ): Promise<boolean> {
@@ -555,10 +554,9 @@ export async function reconcilePreservedTtsReservation(
 /** Acknowledged recovery may release local accounting only. Any remote lease refuses it. */
 export async function reconcileRecoveredRecordingReservation(
   reservation: Extract<SessionReservation, { sessionMode: "meeting" }>,
-  proof: Pick<
-    PreservedRecordingReleaseProof,
-    "localWork" | "signal" | "deadline"
-  > & { history: MeetingHistory },
+  proof: Omit<ReservationReleaseProof, "onReleaseSettled"> & {
+    history: MeetingHistory;
+  },
 ): Promise<boolean> {
   const owned = reservations.get(
     reservationKey(reservation.guildId, reservation.meetingId),
@@ -601,10 +599,7 @@ export async function reconcileRecoveredRecordingReservation(
 }
 async function reconcileSettledReservation(
   owned: OwnedReservation,
-  proof: Pick<
-    PreservedRecordingReleaseProof,
-    "signal" | "deadline" | "onReleaseSettled"
-  >,
+  proof: Omit<ReservationReleaseProof, "localWork">,
   recoveryHistoryCurrent?: () => Promise<boolean>,
 ): Promise<boolean> {
   const { reservation } = owned;
@@ -627,24 +622,7 @@ async function reconcileSettledReservation(
     if (!samePreservedLease(lease, reservation)) return false;
     // A submitted delete has an unknown outcome until readback, never replay it.
     if (owned.release) return false;
-    proof.signal.throwIfAborted();
-    owned.release = Promise.resolve().then(() =>
-      releaseActiveMeetingLease(
-        reservation.guildId,
-        reservation.meetingId,
-        reservation.ownerInstanceId,
-        reservation,
-        proof.signal,
-      ),
-    );
-    try {
-      await owned.release;
-    } catch {
-      proof.signal.throwIfAborted();
-    } finally {
-      // Actual completion after the budget is new progress, even on rejection.
-      if (proof.signal.aborted) proof.onReleaseSettled?.();
-    }
+    await releaseOriginalLease(owned, proof);
     lease = await getActiveMeetingLease(reservation.guildId, proof.signal);
   }
   proof.signal.throwIfAborted();
