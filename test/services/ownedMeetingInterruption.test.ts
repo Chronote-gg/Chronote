@@ -48,6 +48,7 @@ jest.mock("../../src/services/meetingProcessingLifetime", () => ({
   stopMeetingProcessing: jest.fn(async () => {}),
 }));
 jest.mock("../../src/services/guildVoiceOperationService", () => ({
+  whenOwnedVoiceSettled: jest.fn(async () => {}),
   settleOwnedVoiceSession: jest.fn(async () => "settled"),
   waitOwnedVoiceEffects: jest.fn(async () => {}),
 }));

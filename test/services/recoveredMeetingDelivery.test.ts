@@ -51,6 +51,24 @@ describe("normal delivery after recovered publication", () => {
   beforeEach(initializeDeliveryClock);
   afterEach(settleDeliveryWorks);
 
+  it("acknowledges recovered notes when Discord returns scan metadata", async () => {
+    const f = setupRecoveredDelivery();
+    for (const message of f.remote.values())
+      for (const embed of message.embeds) embed.content_scan_version = 0;
+    expect((await runDelivery(f).promise).kind).toBe("settled");
+    const after = await f.read();
+    expect(after.updateDelivery.progress.kind).toBe("synced");
+    expect(after.updateDelivery.parts.notesBody.acknowledged).toBe(
+      after.updateDelivery.parts.notesBody.desired,
+    );
+    const writes = f.requests.filter((request) => request.method === "PATCH");
+    expect(writes).toHaveLength(1);
+    expect(JSON.stringify(writes[0].payload)).not.toContain(
+      "content_scan_version",
+    );
+    expect(after.capture?.kind).toBe("interrupted");
+  });
+
   it("updates recovered notes through page growth and a second subsequent edit", async () => {
     const f = setupRecoveredDelivery();
     const url = [...f.remote.values()][0].embeds[0].url;

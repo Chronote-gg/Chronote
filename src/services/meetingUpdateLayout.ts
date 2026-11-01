@@ -34,7 +34,11 @@ export type MeetingUpdateLayout = {
   summarySlots: number[];
   recoveredNotes?: boolean;
 };
-const embedKeys = new Set([...Object.keys(editableEmbedSchema.shape), "type"]);
+const embedKeys = new Set([
+  ...Object.keys(editableEmbedSchema.shape),
+  "type",
+  "content_scan_version",
+]);
 const nestedKeys: Record<string, Set<string>> = {
   footer: new Set(["text", "icon_url", "proxy_icon_url"]),
   author: new Set(["name", "url", "icon_url", "proxy_icon_url"]),
@@ -57,6 +61,13 @@ export function validateMeetingUpdateEmbeds(
   return normalized;
 }
 function validateEmbedMetadata(embed: Record<string, unknown>): void {
+  if (
+    embed.content_scan_version !== undefined &&
+    (typeof embed.content_scan_version !== "number" ||
+      !Number.isSafeInteger(embed.content_scan_version) ||
+      embed.content_scan_version < 0)
+  )
+    throw new MeetingUpdatePlanBlocked("unsupported_embed");
   for (const [key, allowed] of Object.entries(nestedKeys)) {
     const value = embed[key];
     if (value !== undefined) {
@@ -115,7 +126,14 @@ function readLayout(
     throw new MeetingUpdatePlanBlocked("unsupported_owner");
   const embeds = validateMeetingUpdateEmbeds(message.embeds);
   return {
-    message,
+    message: {
+      ...message,
+      embeds: message.embeds.map((embed) => {
+        const received = { ...embed };
+        delete received.content_scan_version;
+        return received;
+      }),
+    },
     embeds,
     ...readLayoutSlots(input, embeds, allowFooterlessRename, registeredRole),
   };

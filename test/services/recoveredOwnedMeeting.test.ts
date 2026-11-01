@@ -17,6 +17,7 @@ jest.mock("../../src/services/meetingProcessingLifetime", () => ({
 jest.mock("../../src/services/guildVoiceOperationService", () => ({
   settleOwnedVoiceSession: jest.fn(async () => "settled"),
   waitOwnedVoiceEffects: async () => {},
+  whenOwnedVoiceSettled: jest.fn(async () => {}),
 }));
 jest.mock("../../src/services/activeMeetingLeaseService", () => ({
   getOwnedSessionReservations: jest.fn(() => []),
@@ -58,7 +59,10 @@ import {
   getPendingMeetingInitializations,
 } from "../../src/meetings";
 import { fenceAndSettleSessionWork } from "../../src/services/runtimeWorkAdmissionService";
-import { settleOwnedVoiceSession } from "../../src/services/guildVoiceOperationService";
+import {
+  settleOwnedVoiceSession,
+  whenOwnedVoiceSettled,
+} from "../../src/services/guildVoiceOperationService";
 import { areMeetingNoticesSettled } from "../../src/services/meetingProcessingLifetime";
 import {
   reconcileRecoveredRecordingReservation,
@@ -84,6 +88,8 @@ async function expireOriginalFailure(meeting: MeetingData) {
 }
 beforeEach(() => {
   jest.clearAllMocks();
+  jest.mocked(settleOwnedVoiceSession).mockResolvedValue("settled");
+  jest.mocked(whenOwnedVoiceSettled).mockImplementation(async () => {});
   jest.useFakeTimers();
   jest.setSystemTime(1000);
 });
@@ -187,8 +193,12 @@ test.each([
   const { local, meeting, claim } = fixture();
   if (unknown === "children")
     jest.mocked(fenceAndSettleSessionWork).mockResolvedValueOnce(false);
-  if (unknown === "voice")
-    jest.mocked(settleOwnedVoiceSession).mockResolvedValueOnce("uncertain");
+  if (unknown === "voice") {
+    jest.mocked(settleOwnedVoiceSession).mockResolvedValue("uncertain");
+    jest
+      .mocked(whenOwnedVoiceSettled)
+      .mockImplementation(() => new Promise<void>(() => {}));
+  }
   if (unknown === "notice")
     jest.mocked(areMeetingNoticesSettled).mockReturnValue(false);
   if (unknown === "nickname")
@@ -333,5 +343,44 @@ test.each([false, true])(
     expect(checkpoint.deadline).toBe(1010);
     expect(checkpoint.signal.aborted).toBe(true);
     expect(await original).toEqual({ kind: "unresolved" });
+  },
+);
+
+test.each([true, false])(
+  "late verified voice and acknowledged recovery release in either order: %s",
+  async (voiceFirst) => {
+    const { local, meeting, claim } = fixture();
+    const voice = held();
+    let settled = false;
+    jest.mocked(whenOwnedVoiceSettled).mockReturnValueOnce(voice.promise);
+    jest
+      .mocked(settleOwnedVoiceSession)
+      .mockImplementation(async () => (settled ? "settled" : "uncertain"));
+    const { original } = await expireOriginalFailure(meeting);
+    await original;
+    local.resolve();
+    await jest.advanceTimersByTimeAsync(0);
+    await prepareRecoveredMeeting(claim, new AbortController().signal, (run) =>
+      run(),
+    );
+    expect(meeting.botNicknameChanged).toBe(false);
+    expect(reconcileRecoveredRecordingReservation).not.toHaveBeenCalled();
+    const before = structuredClone(claim.history);
+    if (voiceFirst) {
+      settled = true;
+      voice.resolve();
+      await jest.advanceTimersByTimeAsync(0);
+    }
+    await reconcileRecoveredMeeting(claim);
+    if (!voiceFirst) {
+      expect(meeting.finished).not.toBe(true);
+      settled = true;
+      voice.resolve();
+    }
+    await jest.advanceTimersByTimeAsync(0);
+    expect(meeting.finished).toBe(true);
+    expect(meeting.setFinished).toHaveBeenCalledTimes(1);
+    expect(reconcileRecoveredRecordingReservation).toHaveBeenCalledTimes(1);
+    expect(claim.history).toEqual(before);
   },
 );
