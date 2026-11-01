@@ -50,14 +50,19 @@ test("absolute deadline before queued dispatch submits no delete without abort",
   expect(f.owned.release).toBeUndefined();
 });
 
-test.each(["success", "rejection"])(
-  "actual %s at absolute deadline signals progress without abort",
-  async (outcome) => {
+test.each([
+  ["success", 0],
+  ["rejection", 0],
+  ["success", -1],
+  ["rejection", -1],
+] as const)(
+  "actual %s at deadline offset %i signals progress without abort",
+  async (outcome, offset) => {
     const f = fixture();
     const release = releaseOriginalLease(f.owned, f.proof);
     await Promise.resolve();
     expect(releaseActiveMeetingLease).toHaveBeenCalledTimes(1);
-    jest.spyOn(Date, "now").mockReturnValue(f.proof.deadline);
+    jest.spyOn(Date, "now").mockReturnValue(f.proof.deadline + offset);
     expect(f.onReleaseSettled).not.toHaveBeenCalled();
     if (outcome === "success") f.server.resolve(true);
     else f.server.reject(new Error("response unknown"));

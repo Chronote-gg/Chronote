@@ -32,8 +32,7 @@ export async function releaseOriginalLease(
     if (!submitted) owned.release = undefined;
     proof.signal.throwIfAborted();
   } finally {
-    // Actual completion after the budget is new progress, even on rejection.
-    if (submitted && (proof.signal.aborted || Date.now() >= proof.deadline))
-      proof.onReleaseSettled?.();
+    // Completion is progress even if the following verification outlives the budget.
+    if (submitted) proof.onReleaseSettled?.();
   }
 }

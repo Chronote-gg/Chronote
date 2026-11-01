@@ -605,46 +605,82 @@ test.each([
   },
 );
 
-test.each(["meeting", "tts_only"] as const)(
-  "actual delete at deadline recovers %s before the abort timer runs",
-  async (mode) => {
-    const f = await fixture("deadline-" + mode, mode === "tts_only");
-    const canonical = f.row && structuredClone(f.row);
-    const workKind = mode === "tts_only" ? "voice_operation" : "recording";
-    const deletion = await holdCleanupAfterStop(f);
-    f.packet(null, 2);
-    await jest.advanceTimersByTimeAsync(0);
-    expect(mockReleaseLease).toHaveBeenCalledTimes(1);
-    jest.setSystemTime(Date.now() + 30000);
-    expect(f.settle).not.toHaveBeenCalled();
-    expect(mockRuntime.getWorkCounts()[workKind]).toBe(1);
-    deletion.resolve();
-    // Drain actual completion and the follow-up without executing abort timers.
-    for (let i = 0; i < 200; i++) await Promise.resolve();
-    expect(f.settle).toHaveBeenCalledTimes(1);
-    expect(f.meeting.setFinished).toHaveBeenCalledTimes(1);
-    expect(mockRuntime.getWorkCounts()[workKind]).toBe(0);
-    expect(mockReleaseLease).toHaveBeenCalledTimes(1);
-    expect(f.row).toEqual(canonical);
-    const reads = mockReadLease.mock.calls.length;
-    await jest.advanceTimersByTimeAsync(60000);
-    expect(mockReadLease).toHaveBeenCalledTimes(reads);
-    expect(mockReleaseLease).toHaveBeenCalledTimes(1);
-    expect((await f.admit("next")).kind).toBe("admitted");
+describe.each(["meeting", "tts_only"] as const)(
+  "%s delete completion",
+  (mode) => {
+    test.each(["delete_at_deadline", "read_at_deadline", "timely"])(
+      "%s recovers before the abort timer runs",
+      async (timing) => {
+        const f = await fixture(
+          "deadline-" + mode + timing,
+          mode === "tts_only",
+        );
+        const canonical = f.row && structuredClone(f.row);
+        const workKind = mode === "tts_only" ? "voice_operation" : "recording";
+        const deletion = await holdCleanupAfterStop(f);
+        f.packet(null, 2);
+        await jest.advanceTimersByTimeAsync(0);
+        expect(mockReleaseLease).toHaveBeenCalledTimes(1);
+        const deadline = Date.now() + 30000;
+        jest.setSystemTime(
+          deadline - (timing === "delete_at_deadline" ? 0 : 1),
+        );
+        expect(f.settle).not.toHaveBeenCalled();
+        expect(mockRuntime.getWorkCounts()[workKind]).toBe(1);
+        const absenceRead = held();
+        const readsBeforeResponse = mockReadLease.mock.calls.length;
+        mockReadLease.mockImplementationOnce(async (guildId) => {
+          await absenceRead.promise;
+          return mockLeases.get(guildId);
+        });
+        deletion.resolve();
+        for (let i = 0; i < 200; i++) await Promise.resolve();
+        expect(mockReadLease).toHaveBeenCalledTimes(readsBeforeResponse + 1);
+        expect(mockLeases.has(f.original.guildId)).toBe(false);
+        expect(f.settle).not.toHaveBeenCalled();
+        expect(mockRuntime.getWorkCounts()[workKind]).toBe(1);
+        if (timing === "read_at_deadline") jest.setSystemTime(deadline);
+        absenceRead.resolve();
+        // Drain actual completion and the follow-up without executing abort timers.
+        for (let i = 0; i < 200; i++) await Promise.resolve();
+        expect(f.settle).toHaveBeenCalledTimes(1);
+        expect(f.meeting.setFinished).toHaveBeenCalledTimes(1);
+        expect(mockRuntime.getWorkCounts()[workKind]).toBe(0);
+        expect(mockReleaseLease).toHaveBeenCalledTimes(1);
+        expect(f.row).toEqual(canonical);
+        if (timing === "timely")
+          expect(mockReadLease).toHaveBeenCalledTimes(readsBeforeResponse + 1);
+        const reads = mockReadLease.mock.calls.length;
+        await jest.advanceTimersByTimeAsync(60000);
+        expect(mockReadLease).toHaveBeenCalledTimes(reads);
+        expect(mockReleaseLease).toHaveBeenCalledTimes(1);
+        expect((await f.admit("next")).kind).toBe("admitted");
+      },
+    );
   },
 );
 
-test.each(["lost_response", "failed", "unreadable", "newer_owner", "tts"])(
-  "late cleanup completion verifies once without replaying a delete: %s",
-  async (outcome) => {
-    const f = await fixture("late-delete-" + outcome, outcome === "tts");
+test.each(
+  ["lost_response", "failed", "unreadable", "newer_owner", "tts"].flatMap(
+    (outcome) => [
+      { outcome, completionDelay: 30001 },
+      { outcome, completionDelay: 0 },
+    ],
+  ),
+)(
+  "cleanup completion verifies once without replaying a delete: $outcome after $completionDelay ms",
+  async ({ outcome, completionDelay }) => {
+    const f = await fixture(
+      "delete-" + outcome + completionDelay,
+      outcome === "tts",
+    );
     const canonical = f.row && structuredClone(f.row);
     const workKind = outcome === "tts" ? "voice_operation" : "recording";
     const deletion = await holdCleanupAfterStop(f);
     f.packet(null, 2);
     await jest.advanceTimersByTimeAsync(0);
     expect(mockReleaseLease).toHaveBeenCalledTimes(1);
-    await jest.advanceTimersByTimeAsync(30001);
+    await jest.advanceTimersByTimeAsync(completionDelay);
     expect(mockRuntime.getWorkCounts()[workKind]).toBe(1);
     expect(f.settle).not.toHaveBeenCalled();
     expect(f.meeting.finished).not.toBe(true);
