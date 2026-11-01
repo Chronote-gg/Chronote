@@ -6,7 +6,7 @@ Fix the cases where Chronote receives a valid disconnect acknowledgment but stil
 
 I recommend both repairs together. Fixing only the status-update rejection would leave the late-acknowledgment problem. This proposal does not restart workers, resend voice commands, regenerate notes or change saved meeting content.
 
-**Approval is pending.** The decision is whether to proceed with this scope and its safety limit: a permanently missing acknowledgment or genuinely ambiguous send still requires separately proven stopped-owner recovery. This change cannot safely promise that every Discord failure will automatically unblock a server.
+**Approved for implementation and tests on October 31, 2026.** A permanently missing acknowledgment or genuinely ambiguous send still requires separately proven stopped-owner recovery. This change cannot safely promise that every Discord failure will automatically unblock a server. Production deployment retains its separate approval.
 
 ## What people experience
 
@@ -20,11 +20,11 @@ A source-only probe runs the actual voice service and pinned SDK with a virtual 
 
 The existing voice suite passes 15 tests and misses the intervening-status case. A separate assertion against the probe fails with `uncertain` where `settled` is required.
 
-| Approach                                                           | Benefit                                                                    | Limit                                                                                                      | Decision                      |
-| ------------------------------------------------------------------ | -------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- | ----------------------------- |
-| Fix timely status-update rejection only                            | Small prevention repair                                                    | Late valid acknowledgments still leave permanent holds                                                     | Insufficient alone            |
-| Fix rejection and complete late-proof cleanup                      | Recovers valid timely and late acknowledgments without reopening old sends | Truly unprovable operations remain fenced                                                                  | Recommended, pending approval |
-| Clear after a timer/REST absence, or recycle workers automatically | Could shorten some remaining holds                                         | A timer or current absence does not prove queued sends finished; worker recycling affects other recordings | Excluded from this change     |
+| Approach                                                           | Benefit                                                                    | Limit                                                                                                      | Decision                  |
+| ------------------------------------------------------------------ | -------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- | ------------------------- |
+| Fix timely status-update rejection only                            | Small prevention repair                                                    | Late valid acknowledgments still leave permanent holds                                                     | Insufficient alone        |
+| Fix rejection and complete late-proof cleanup                      | Recovers valid timely and late acknowledgments without reopening old sends | Truly unprovable operations remain fenced                                                                  | Approved                  |
+| Clear after a timer/REST absence, or recycle workers automatically | Could shorten some remaining holds                                         | A timer or current absence does not prove queued sends finished; worker recycling affects other recordings | Excluded from this change |
 
 ## Required behavior
 
