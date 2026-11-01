@@ -605,6 +605,35 @@ test.each([
   },
 );
 
+test.each(["meeting", "tts_only"] as const)(
+  "actual delete at deadline recovers %s before the abort timer runs",
+  async (mode) => {
+    const f = await fixture("deadline-" + mode, mode === "tts_only");
+    const canonical = f.row && structuredClone(f.row);
+    const workKind = mode === "tts_only" ? "voice_operation" : "recording";
+    const deletion = await holdCleanupAfterStop(f);
+    f.packet(null, 2);
+    await jest.advanceTimersByTimeAsync(0);
+    expect(mockReleaseLease).toHaveBeenCalledTimes(1);
+    jest.setSystemTime(Date.now() + 30000);
+    expect(f.settle).not.toHaveBeenCalled();
+    expect(mockRuntime.getWorkCounts()[workKind]).toBe(1);
+    deletion.resolve();
+    // Drain actual completion and the follow-up without executing abort timers.
+    for (let i = 0; i < 200; i++) await Promise.resolve();
+    expect(f.settle).toHaveBeenCalledTimes(1);
+    expect(f.meeting.setFinished).toHaveBeenCalledTimes(1);
+    expect(mockRuntime.getWorkCounts()[workKind]).toBe(0);
+    expect(mockReleaseLease).toHaveBeenCalledTimes(1);
+    expect(f.row).toEqual(canonical);
+    const reads = mockReadLease.mock.calls.length;
+    await jest.advanceTimersByTimeAsync(60000);
+    expect(mockReadLease).toHaveBeenCalledTimes(reads);
+    expect(mockReleaseLease).toHaveBeenCalledTimes(1);
+    expect((await f.admit("next")).kind).toBe("admitted");
+  },
+);
+
 test.each(["lost_response", "failed", "unreadable", "newer_owner", "tts"])(
   "late cleanup completion verifies once without replaying a delete: %s",
   async (outcome) => {

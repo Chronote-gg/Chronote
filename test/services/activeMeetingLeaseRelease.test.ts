@@ -22,7 +22,11 @@ function fixture() {
     };
   const controller = new AbortController();
   const onReleaseSettled = jest.fn();
-  const proof = { signal: controller.signal, onReleaseSettled };
+  const proof = {
+    signal: controller.signal,
+    deadline: Date.now() + 30000,
+    onReleaseSettled,
+  };
   const server = Promise.withResolvers<boolean>();
   jest
     .mocked(releaseActiveMeetingLease)
@@ -32,6 +36,38 @@ function fixture() {
   return { owned, controller, proof, server, onReleaseSettled };
 }
 beforeEach(() => jest.clearAllMocks());
+afterEach(() => jest.restoreAllMocks());
+
+test("absolute deadline before queued dispatch submits no delete without abort", async () => {
+  const f = fixture();
+  const release = releaseOriginalLease(f.owned, f.proof);
+  jest.spyOn(Date, "now").mockReturnValue(f.proof.deadline);
+  f.server.resolve(true);
+  await release;
+  expect(f.controller.signal.aborted).toBe(false);
+  expect(releaseActiveMeetingLease).not.toHaveBeenCalled();
+  expect(f.onReleaseSettled).not.toHaveBeenCalled();
+  expect(f.owned.release).toBeUndefined();
+});
+
+test.each(["success", "rejection"])(
+  "actual %s at absolute deadline signals progress without abort",
+  async (outcome) => {
+    const f = fixture();
+    const release = releaseOriginalLease(f.owned, f.proof);
+    await Promise.resolve();
+    expect(releaseActiveMeetingLease).toHaveBeenCalledTimes(1);
+    jest.spyOn(Date, "now").mockReturnValue(f.proof.deadline);
+    expect(f.onReleaseSettled).not.toHaveBeenCalled();
+    if (outcome === "success") f.server.resolve(true);
+    else f.server.reject(new Error("response unknown"));
+    await release;
+    expect(f.controller.signal.aborted).toBe(false);
+    expect(f.onReleaseSettled).toHaveBeenCalledTimes(1);
+    expect(f.owned.release).toBeDefined();
+    expect(releaseActiveMeetingLease).toHaveBeenCalledTimes(1);
+  },
+);
 
 test("expiry before queued dispatch submits no delete or completion event", async () => {
   const f = fixture();

@@ -5,13 +5,18 @@ import type { ReservationReleaseProof } from "./recordingReservationReleaseProof
 /** Retains the submitted delete until it actually settles, independently of the caller's budget. */
 export async function releaseOriginalLease(
   owned: { reservation: SessionReservation; release?: Promise<boolean> },
-  proof: Pick<ReservationReleaseProof, "signal" | "onReleaseSettled">,
+  proof: Pick<
+    ReservationReleaseProof,
+    "signal" | "deadline" | "onReleaseSettled"
+  >,
 ): Promise<void> {
   const { reservation } = owned;
   proof.signal.throwIfAborted();
   let submitted = false;
   owned.release = Promise.resolve().then(() => {
     proof.signal.throwIfAborted();
+    if (Date.now() >= proof.deadline)
+      throw new Error("Lease release deadline expired before dispatch");
     submitted = true;
     // Once sent, caller expiry must not cancel observation of the actual result.
     return releaseActiveMeetingLease(
@@ -28,6 +33,7 @@ export async function releaseOriginalLease(
     proof.signal.throwIfAborted();
   } finally {
     // Actual completion after the budget is new progress, even on rejection.
-    if (submitted && proof.signal.aborted) proof.onReleaseSettled?.();
+    if (submitted && (proof.signal.aborted || Date.now() >= proof.deadline))
+      proof.onReleaseSettled?.();
   }
 }
