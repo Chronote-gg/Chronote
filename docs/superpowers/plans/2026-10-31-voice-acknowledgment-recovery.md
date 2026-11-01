@@ -1,6 +1,6 @@
 # Voice acknowledgment recovery implementation plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** Accept valid timely and late disconnect acknowledgments and release the exact original session without losing recording work or changing delivered notes.
 
@@ -46,14 +46,14 @@
 
 **Interfaces:** Consume repository `writeVoice` and strong `getRecord(pk: string, sk: string): Promise<DeploymentControlRecord | undefined>`. Produce factory and singleton `whenOwnedVoiceSettled(reservation: SessionReservation): Promise<void>`, shared per exact operation, resolving once only after local proof and durable settlement. Repeated existing `settleOwnedVoiceSession` calls return `settled` through the existing settled-reservation fast path after that proof. Missing/foreign operations must not produce a resolved proof. The new signal is separate from transport/write draining.
 
-- [ ] Add a failing real-SDK test: same-channel/same-session monotonic update between sole leave and null ACK still yields `settled`; one leave, no rejoin.
-- [ ] Add failing late-ACK tests: first five-second result is `uncertain`; eventual signal remains pending; exact late ACK resolves it once after sends drain; repeated settlement then returns `settled` and listeners are removed.
-- [ ] Add refusal tests for wrong/unknown sessions, stale sequence, other channel/shard, send rejection/hold, abort before leave, ACK before leave and fake remote settlement without local proof.
-- [ ] Add persistence tests: applied CAS; lost response confirmed by exact strong readback; unchanged/nonmatching/unknown readback retains ownership; stale owner refuses; no poisoned write chain or blind replay.
-- [ ] Run tests red before production edits, using pinned Node and `node_modules/jest/bin/jest.js --runInBand --coverage=false test/services/guildVoiceOperationService.test.ts`.
-- [ ] Implement the smallest operation-local state distinction and shared eventual-proof promise. Preserve first bounded disposition; keep observation only for recoverable ACK-only waiting; all actual sends/writes remain tracked. Resolve proof and remove the operation/listeners only after durable success. Add content-free reason/phase diagnostics.
-- [ ] Run the complete voice suite green, type-check affected interfaces, self-review and commit only owned files. Supply red/green evidence and exact interface semantics to Task 2.
-- [ ] Independent task review checks spec compliance and concurrency/ownership quality; resolve important findings before Task 2.
+- [x] Add a failing real-SDK test: same-channel/same-session monotonic update between sole leave and null ACK still yields `settled`; one leave, no rejoin.
+- [x] Add failing late-ACK tests: first five-second result is `uncertain`; eventual signal remains pending; exact late ACK resolves it once after sends drain; repeated settlement then returns `settled` and listeners are removed.
+- [x] Add refusal tests for wrong/unknown sessions, stale sequence, other channel/shard, send rejection/hold, abort before leave, ACK before leave and fake remote settlement without local proof.
+- [x] Add persistence tests: applied CAS; lost response confirmed by exact strong readback; unchanged/nonmatching/unknown readback retains ownership; stale owner refuses; no poisoned write chain or blind replay.
+- [x] Run tests red before production edits, using pinned Node and `node_modules/jest/bin/jest.js --runInBand --coverage=false test/services/guildVoiceOperationService.test.ts`.
+- [x] Implement the smallest operation-local state distinction and shared eventual-proof promise. Preserve first bounded disposition; keep observation only for recoverable ACK-only waiting; all actual sends/writes remain tracked. Resolve proof and remove the operation/listeners only after durable success. Add content-free reason/phase diagnostics.
+- [x] Run the complete voice suite green, type-check affected interfaces, self-review and commit only owned files. Supply red/green evidence and exact interface semantics to Task 2.
+- [x] Independent task review checks spec compliance and concurrency/ownership quality; resolve important findings before Task 2.
 
 ## Task 2: Release the original session after late proof
 
@@ -61,15 +61,15 @@
 
 **Interfaces:** Consume Task 1 `whenOwnedVoiceSettled` plus existing settlement/drain APIs. Reuse `meetingInterruptionService.reconcile(meeting, deadline, run)` and existing preserved/recovered reservation reconciliation. Use the existing 30-second fresh reconciliation budget.
 
-- [ ] Add failing tests for completed/delivered history with recovery done: initial voice wait returns uncertain, later verified proof triggers actual original cleanup without regeneration/history edits, releases the exact lease/work handle once, frees local retained state and permits a fresh same-guild reservation.
-- [ ] Add failing tests for voice-before-recovery, recovery-before-voice, delayed actual local work, and a progress event during an older coalesced reconciliation. A second event must cause one fresh bounded attempt; an unchanged failed condition must not loop.
-- [ ] Add a stale/new-owner test preserving another meeting, its lease/counter and canonical original content. Assert no extra AI, Discord post or Notion effect. Cover TTS-only release.
-- [ ] Run those tests red before integration changes. Use the actual voice-service factory plus lease/runtime-accounting implementation in at least one composed test; fake only external providers and preserve CAS/unknown-outcome semantics.
-- [ ] Register one eventual-proof continuation for the original stopped reservation. Use current settlement proof in release/recovered-local checks, not the cached first `work.voice` value. Reconcile only after actual local work finishes; never rerun the failed finalization promise.
-- [ ] Reuse existing checkpoint/history/notice/child/nickname checks. Allow recovery nickname preparation under its exact renewing recovery lease after actual effects drain while ACK alone remains pending; this preparation never releases ownership. Handle the retained acknowledged recovery snapshot after recovery ends.
-- [ ] Coalesce progress-triggered attempts, including an event arriving while another attempt runs. Ensure exact cleanup and work-handle settlement occur once. Keep genuinely unknown effects held and diagnostic; no new background polling framework.
-- [ ] Run integration regressions green, fix all mocks/fixtures for the new signal, self-review and commit only owned files.
-- [ ] Independent task review checks exact release proof, both event orderings, unknown effects and canonical content preservation; resolve important findings.
+- [x] Add failing tests for completed/delivered history with recovery done: initial voice wait returns uncertain, later verified proof triggers actual original cleanup without regeneration/history edits, releases the exact lease/work handle once, frees local retained state and permits a fresh same-guild reservation.
+- [x] Add failing tests for voice-before-recovery, recovery-before-voice, delayed actual local work, and a progress event during an older coalesced reconciliation. A second event must cause one fresh bounded attempt; an unchanged failed condition must not loop.
+- [x] Add a stale/new-owner test preserving another meeting, its lease/counter and canonical original content. Assert no extra AI, Discord post or Notion effect. Cover TTS-only release.
+- [x] Run those tests red before integration changes. Use the actual voice-service factory plus lease/runtime-accounting implementation in at least one composed test; fake only external providers and preserve CAS/unknown-outcome semantics.
+- [x] Register one eventual-proof continuation for the original stopped reservation. Use current settlement proof in release/recovered-local checks, not the cached first `work.voice` value. Reconcile only after actual local work finishes; never rerun the failed finalization promise.
+- [x] Reuse existing checkpoint/history/notice/child/nickname checks. Allow recovery nickname preparation under its exact renewing recovery lease after actual effects drain while ACK alone remains pending; this preparation never releases ownership. Handle the retained acknowledged recovery snapshot after recovery ends.
+- [x] Coalesce progress-triggered attempts, including an event arriving while another attempt runs. Ensure exact cleanup and work-handle settlement occur once. Keep genuinely unknown effects held and diagnostic; no new background polling framework.
+- [x] Run integration regressions green, fix all mocks/fixtures for the new signal, self-review and commit only owned files.
+- [x] Independent task review checks exact release proof, both event orderings, unknown effects and canonical content preservation; resolve important findings.
 
 ## Combined verification and delivery
 
