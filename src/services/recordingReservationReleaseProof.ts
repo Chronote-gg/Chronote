@@ -3,12 +3,16 @@ import { isDeepStrictEqual } from "node:util";
 import type { RecordingCheckpoint } from "../types/recordingCheckpoint";
 import type { SessionReservation } from "../types/deploymentControl";
 import type { getDeploymentControlRepository } from "../db";
-export type PreservedRecordingReleaseProof = {
-  checkpoint: RecordingCheckpoint;
-  status: "complete" | "failed" | "interrupted";
+export type ReservationReleaseProof = {
   localWork: Promise<void>;
   signal: AbortSignal;
   deadline: number;
+  /** Reports submitted delete completion; settled cleanup discards its queued revisit. */
+  onReleaseSettled?: () => void;
+};
+export type PreservedRecordingReleaseProof = ReservationReleaseProof & {
+  checkpoint: RecordingCheckpoint;
+  status: "complete" | "failed" | "interrupted";
 };
 export function matchesPreservedHistory(
   row: Awaited<

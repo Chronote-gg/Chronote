@@ -58,6 +58,7 @@ jest.mock("../../src/services/runtimeWorkAdmissionService", () => ({
   fenceAndSettleSessionWork: async () => true,
 }));
 jest.mock("../../src/services/guildVoiceOperationService", () => ({
+  whenOwnedVoiceSettled: jest.fn(async () => {}),
   settleOwnedVoiceSession: async () => "settled",
   waitOwnedVoiceEffects: async () => {},
 }));
