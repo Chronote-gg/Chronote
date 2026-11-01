@@ -329,6 +329,7 @@ const handleEnableChannel: TtsSubcommandHandler = async (
     voiceChannel,
     textChannel,
     botMember,
+    "tts_only",
   );
   if (!permissionCheck.success) {
     await interaction.reply({
