@@ -45,7 +45,13 @@ export function stoppedRecordingFixture(guildId: string) {
     status: "complete",
     checkpoint: {
       revision: 1,
-      capture: { ...original, channelId_timestamp: "voice#start" },
+      capture: {
+        guildId,
+        meetingId: original.meetingId,
+        ownerInstanceId: original.ownerInstanceId,
+        executionVersion: original.executionVersion,
+        channelId_timestamp: "voice#start",
+      },
     },
   });
   return { original, childSettled };
@@ -83,6 +89,7 @@ jest.mock("../../src/repositories/meetingControlCommandRepository", () => ({
   getMeetingControlCommandRepository: () => mockStopEnvironment.repository,
 }));
 jest.mock("../../src/services/guildVoiceOperationService", () => ({
+  whenOwnedVoiceSettled: jest.fn(async () => {}),
   settleOwnedVoiceSession: async () => "settled",
   waitOwnedVoiceEffects: async () => {},
 }));

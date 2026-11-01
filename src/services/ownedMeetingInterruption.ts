@@ -24,6 +24,7 @@ import {
 import {
   settleOwnedVoiceSession,
   waitOwnedVoiceEffects,
+  whenOwnedVoiceSettled,
 } from "./guildVoiceOperationService";
 import {
   reconcilePreservedRecordingReservation,
@@ -50,6 +51,8 @@ type Stopped = {
   voice: Promise<"settled" | "uncertain">;
   children: Promise<boolean>;
   recovered?: MeetingHistory;
+  preserved?: Extract<Disposition, { kind: "preserved" }>;
+  reconcile?: (budget: PreservationBudget) => Promise<boolean>;
 };
 type Disposition =
   | { kind: "unresolved" }
@@ -101,10 +104,25 @@ function stop(meeting: MeetingData, budget: PreservationBudget): Promise<void> {
     reservation ? waitOwnedVoiceEffects(reservation) : undefined,
     work.children,
   ]).then(() => {});
+  const checkpoint = service
+    .checkpoints()
+    .find((entry) => entry.meeting === meeting);
+  if (reservation)
+    void whenOwnedVoiceSettled(reservation)
+      .then(async () => {
+        await checkpoint?.actual;
+        await reconcileStoppedMeeting(meeting);
+      })
+      .catch(() => {});
+  if (checkpoint)
+    void checkpoint.actual.then((outcome) => {
+      if (outcome.kind === "unresolved")
+        void reconcileStoppedMeeting(meeting).catch(() => {});
+    });
   return work.local;
 }
 async function assertOriginalLease(
-  original: RecordingReservation,
+  original: SessionReservation,
   signal: AbortSignal,
 ) {
   signal.throwIfAborted();
@@ -116,10 +134,10 @@ async function assertOriginalLease(
     lease.ownerInstanceId !== original.ownerInstanceId ||
     lease.executionVersion !== original.executionVersion ||
     lease.voiceOperationAttemptId !== original.voiceOperationAttemptId ||
-    lease.sessionMode !== "meeting" ||
-    lease.leaseExpiresAt < Math.floor(Date.now() / 1000)
+    lease.sessionMode !== original.sessionMode ||
+    lease.leaseExpiresAt <= Math.floor(Date.now() / 1000)
   )
-    throw new Error("Original recording lease cannot authorize preservation");
+    throw new Error("Original session lease cannot authorize mutation");
 }
 async function verifiedCaptureState(
   meeting: MeetingData,
@@ -218,8 +236,9 @@ async function preserve(
   budget: PreservationBudget,
   reason: InterruptionReason,
 ): Promise<Disposition> {
-  const original = stopped.get(meeting)?.original;
-  if (!original) return { kind: "unresolved" };
+  const work = stopped.get(meeting);
+  if (!work?.original) return { kind: "unresolved" };
+  const original = work.original;
   if (original.sessionMode === "tts_only")
     return stopped.get(meeting)!.ancillarySettled
       ? { kind: "preserved", sessionMode: "tts_only" }
@@ -237,6 +256,8 @@ async function preserve(
     row,
     budget.signal,
   );
+  // Recheck current history/artifacts, then reuse acknowledged preservation without another write.
+  if (work.preserved) return work.preserved;
   if (row.status === "complete")
     return row.checkpoint
       ? {
@@ -289,17 +310,18 @@ async function release(
   if (
     disposition.kind !== "preserved" ||
     !work?.reservation ||
-    (await work.voice) !== "settled" ||
-    !(await work.children)
+    !originalStillLocal(meeting, work) ||
+    (await settleOwnedVoiceSession(work.reservation, {
+      deadline: budget.deadline,
+      signal: budget.signal,
+    })) !== "settled" ||
+    !(await localEffectsKnown(meeting, work))
   )
     return false;
-  if (
-    !areMeetingNoticesSettled(meeting, work.reservation) ||
-    meeting.recordingLimitNotice?.deliveryUnknown ||
-    meeting.recordingPreservationNotification?.outcome === "unknown"
-  )
-    return false;
+  work.preserved ??= structuredClone(disposition);
   budget.signal.throwIfAborted();
+  if (meeting.botNicknameChanged)
+    await assertOriginalLease(work.reservation, budget.signal);
   if (!(await restoreVoiceSessionNickname(meeting, budget.signal)))
     return false;
   budget.signal.throwIfAborted();
@@ -307,6 +329,9 @@ async function release(
     localWork: work.local,
     deadline: budget.deadline,
     signal: budget.signal,
+    onReleaseSettled: () => {
+      void reconcileStoppedMeeting(meeting).catch(() => {});
+    },
   };
   const released =
     work.reservation.sessionMode === "tts_only" &&
@@ -340,7 +365,6 @@ export const getMeetingInterruptionCheckpoints = service.checkpoints;
 async function localEffectsKnown(meeting: MeetingData, work: Stopped) {
   return Boolean(
     work.reservation &&
-    (await work.voice) === "settled" &&
     (await work.children) &&
     areMeetingNoticesSettled(meeting, work.reservation) &&
     !meeting.recordingLimitNotice?.deliveryUnknown &&
@@ -456,50 +480,64 @@ export async function reconcileRecoveredMeeting(
 ): Promise<void> {
   const local = recoveredLocal(claim);
   if (!local) return;
-  const { meeting, work, reservation } = local;
+  const { meeting, work } = local;
   if (work.recovered && !isDeepStrictEqual(work.recovered, claim.history))
     return;
-  const first = !work.recovered;
   work.recovered ??= structuredClone(claim.history);
-  const reconcile = () =>
-    service.reconcile(meeting, Date.now() + 30000, async (budget) => {
-      if (
-        !retainsOriginal(meeting, reservation) ||
-        meeting.reservation !== reservation ||
-        meeting.botNicknameChanged ||
-        !(await localEffectsKnown(meeting, work))
-      )
-        return false;
-      const released = await reconcileRecoveredRecordingReservation(
-        reservation,
-        {
-          history: work.recovered!,
-          localWork: work.local,
-          signal: budget.signal,
-          deadline: budget.deadline,
-        },
+  await reconcileStoppedMeeting(meeting);
+}
+
+function originalStillLocal(meeting: MeetingData, work: Stopped) {
+  const current = getMeeting(meeting.guildId);
+  return (
+    meeting.reservation === work.reservation &&
+    isDeepStrictEqual(work.reservation, work.original) &&
+    (!current || current === meeting)
+  );
+}
+async function reconcileStoppedMeeting(meeting: MeetingData): Promise<void> {
+  const work = stopped.get(meeting);
+  const checkpoint = service
+    .checkpoints()
+    .find((entry) => entry.meeting === meeting);
+  if (!work?.reservation || !checkpoint) return;
+  const reservation = work.reservation;
+  work.reconcile ??= async (budget) => {
+    if (!originalStillLocal(meeting, work)) return false;
+    if (!work.recovered)
+      return release(
+        meeting,
+        await preserve(meeting, budget, checkpoint.reason),
+        budget,
       );
-      if (!released) return false;
-      finishOriginalMeeting(meeting);
-      return true;
+    if (
+      reservation.sessionMode !== "meeting" ||
+      !retainsOriginal(meeting, reservation) ||
+      meeting.botNicknameChanged ||
+      !(await localEffectsKnown(meeting, work)) ||
+      (await settleOwnedVoiceSession(reservation, {
+        deadline: budget.deadline,
+        signal: budget.signal,
+      })) !== "settled"
+    )
+      return false;
+    const released = await reconcileRecoveredRecordingReservation(reservation, {
+      history: work.recovered,
+      localWork: work.local,
+      signal: budget.signal,
+      deadline: budget.deadline,
     });
-  if (first) {
-    const checkpoint = service
-      .checkpoints()
-      .find((entry) => entry.meeting === meeting);
-    if (checkpoint)
-      void checkpoint.actual
-        .then(async () => {
-          // The actual lifetime may finish in the same turn as an older budget expires.
-          // Await a coalesced attempt before using this one fresh post-settlement revisit.
-          const outcome = await reconcile();
-          if (
-            outcome.kind === "unresolved" &&
-            retainsOriginal(meeting, reservation)
-          )
-            await reconcile();
-        })
-        .catch(() => {});
-  }
-  await reconcile();
+    if (!released) return false;
+    finishOriginalMeeting(meeting);
+    return true;
+  };
+  const outcome = await service.reconcile(
+    meeting,
+    Date.now() + 30000,
+    work.reconcile,
+  );
+  console.info("Owned meeting reconciliation", {
+    phase: "late_cleanup",
+    outcome: outcome.kind,
+  });
 }

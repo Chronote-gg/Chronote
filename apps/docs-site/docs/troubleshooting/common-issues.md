@@ -16,6 +16,12 @@ Use this page to diagnose and fix common Chronote issues. Each section describes
 3. **Weekly minutes exhausted.** Your plan's weekly meeting minutes are used up. Wait for the next billing cycle or upgrade your plan.
 4. **You are not in a voice channel.** You must be in the voice channel you want to record before running `/startmeeting`.
 
+## Server still reports an active meeting after recording stops
+
+If Chronote has left voice but `/startmeeting` still says a meeting is active, the previous session may be waiting for confirmation that it ended safely. A delayed disconnect confirmation can let Chronote finish cleanup automatically. This cleanup does not create another recording or rewrite saved notes.
+
+Try `/startmeeting` again after a short wait. If the active-meeting message persists, use **Support** in the portal sidebar and include the server name and approximate recording end time. Chronote keeps the server unavailable when it cannot confirm that the previous session ended safely.
+
 ## Auto-record does not start
 
 **Symptoms**: Someone joins a voice channel with auto-record enabled, but Chronote does not begin recording.

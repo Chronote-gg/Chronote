@@ -7,6 +7,10 @@ Notable product changes for Chronote users. For the full changelog, see the [Git
 
 ## 2026
 
+### Starting again after a delayed disconnect (November 1)
+
+- A delayed Discord disconnect confirmation can let Chronote finish the previous session's cleanup so another meeting can start. Saved notes stay unchanged. If Chronote cannot confirm that the old session ended safely, the server remains unavailable. See [Active meeting after recording stops](/troubleshooting/common-issues/#server-still-reports-an-active-meeting-after-recording-stops).
+
 ### One place for your meetings (October 29)
 
 - **Meetings** brings accessible server and personal recordings into one list. Choose a source, filter by actual attendance, or load older meetings. Existing Library and direct meeting links still work. See [Getting started](/getting-started/).

@@ -31,6 +31,7 @@ jest.mock("@langfuse/tracing", () => ({
 }));
 
 jest.mock("../../src/services/guildVoiceOperationService", () => ({
+  whenOwnedVoiceSettled: jest.fn(async () => {}),
   settleOwnedVoiceSession: jest.fn(async () => "settled"),
 }));
 
