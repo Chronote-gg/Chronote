@@ -58,7 +58,17 @@ ECS refuses to protect more tasks than the service's desired count, which is 1. 
 
 This is the simple, safe answer, not a complete one. Admission stays open while the candidate warms, so a recording that starts in that window can still be cut off. Keeping the outgoing task protectable through the handoff (for example by raising the desired count for its duration) is a separate design. The one-time production introduction keeps its own reviewed action sequence and does not apply this gate.
 
-`workCounts` is the runtime's in-memory counter, republished on every heartbeat. A counter that leaks (an item that never settles) stays nonzero until the process restarts, so the gate would refuse every deployment, including the one that fixes the leak. A count that has stayed nonzero for over an hour on a bot with no active meetings is a leak, not work. To deploy past it, start the deploy workflow manually with `handoff_quiet_override` checked. The coordinator then reads `HANDOFF_QUIET_OVERRIDE=1`, prints a `::warning` naming the counts it overrode and launches without waiting. Push-triggered deploys never set it. Any work the old runtime really holds is cut off when its protection lapses, so confirm there is no active meeting first.
+`workCounts` is the runtime's in-memory counter, republished on every heartbeat. A leaked counter can refuse every deployment, including the one that repairs it. A retained count can also represent an unresolved voice or provider operation after notes were delivered. Its age, completed history, or zero recording count does not prove a leak. Inspect the exact session, voice attempt and outstanding effects before authorizing an override.
+
+For a separately approved emergency handoff, start the deploy workflow manually with `handoff_quiet_override` checked. The coordinator reads `HANDOFF_QUIET_OVERRIDE=1`, prints a `::warning` naming the counts it overrode and launches without waiting. Push-triggered deploys never set it. Any work the old runtime really holds is cut off when its protection lapses, so verify no active capture or unresolved work is being interrupted under that approval. The override does not release leases or prove voice settlement.
+
+### Delayed voice acknowledgment
+
+The voice service's initial bounded result can be `uncertain` while a matching disconnect acknowledgment is still pending. It keeps the original connection sealed and permits no second leave or reconnect. A monotonic status update for the same known session and original channel does not invalidate a later matching leave acknowledgment.
+
+An acknowledgment-only timeout retains passive observation. `whenOwnedVoiceSettled` resolves only after the matching acknowledgment, actual send drain and durable settlement of the exact original voice attempt. Original-session cleanup must still verify actual local work, preserved or recovered history, notices, nickname cleanup and the exact lease before releasing its work handle. Reconciliation does not regenerate notes or repost messages.
+
+Genuinely ambiguous sends, missing acknowledgments, changed ownership and unproved persistence remain held. A timer, current Discord voice-state absence or a missing local operation cannot supply settlement proof. These cases require separately proven recovery, not a counter reset or automatic lease deletion. See the [voice acknowledgment recovery design](superpowers/specs/2026-10-31-voice-acknowledgment-recovery-design.md).
 
 ### Outgoing task stopped before acknowledging
 
