@@ -999,7 +999,6 @@ async function maybeStartAutoTtsOnly(newState: VoiceState) {
     );
     return false;
   }
-
   const meeting = await initializeMeeting({
     sessionMode: "tts_only",
     suppressionCheck: { channelId: newState.channel.id },

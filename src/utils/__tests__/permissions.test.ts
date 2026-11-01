@@ -104,6 +104,9 @@ describe("permissions", () => {
     });
     expect(canBotSendMessages(textChannel, member)).toBe(true);
     expect(
+      checkBotPermissions(voiceChannel, textChannel, member, "tts_only"),
+    ).toEqual({ success: true });
+    expect(
       buildAutoRecordPermissionDmMessage({
         isAdmin: false,
         voiceChannelName: "voice",
@@ -112,26 +115,6 @@ describe("permissions", () => {
         missingTextPermissions: ["Embed Links"],
       }),
     ).toContain("Embed Links");
-  });
-
-  it("keeps TTS-only sessions available without Embed Links", () => {
-    const voiceChannel = buildVoiceChannel(
-      buildPermissions(
-        PermissionsBitField.Flags.ViewChannel,
-        PermissionsBitField.Flags.Connect,
-      ),
-    );
-    const textChannel = buildTextChannel(
-      buildPermissions(
-        PermissionsBitField.Flags.ViewChannel,
-        PermissionsBitField.Flags.SendMessages,
-        PermissionsBitField.Flags.ReadMessageHistory,
-      ),
-    );
-
-    expect(
-      checkBotPermissions(voiceChannel, textChannel, member, "tts_only"),
-    ).toEqual({ success: true });
   });
 
   it("includes the missing permissions in failure messages", () => {
