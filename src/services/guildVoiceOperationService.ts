@@ -391,12 +391,13 @@ export function createGuildVoiceOperationService(
             options.signal,
           ))
         ) {
-          if (options.signal?.aborted) invalidate(operation, "cancelled");
-          else
-            console.info("Owned voice settlement", {
-              phase: "waiting",
-              reason: "acknowledgment_timeout",
-            });
+          // Cancelling an ACK-only wait cannot reopen the already drained, sealed transport.
+          console.info("Owned voice settlement", {
+            phase: "waiting",
+            reason: options.signal?.aborted
+              ? "acknowledgment_wait_cancelled"
+              : "acknowledgment_timeout",
+          });
         }
       }
       const closed =

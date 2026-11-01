@@ -409,7 +409,7 @@ test.each([
   "changed-session",
   "stale-sequence",
   "shard-reconnect",
-  "aborted",
+  "aborted-held-leave",
 ])("%s remains fenced after a later matching ACK", async (reason) => {
   jest.useFakeTimers();
   let finish!: () => void;
@@ -418,7 +418,7 @@ test.each([
   });
   const f = fixture((payload) => {
     if (payload.d.channel_id !== null) return Promise.resolve();
-    if (reason === "held-leave") return held;
+    if (reason === "held-leave" || reason === "aborted-held-leave") return held;
     if (reason === "rejected-leave")
       return Promise.reject(new Error("transport"));
     return Promise.resolve();
@@ -438,7 +438,7 @@ test.each([
   if (reason === "changed-session") f.packet("channel", 2, "different");
   if (reason === "stale-sequence") f.packet("channel", 1);
   if (reason === "shard-reconnect") f.client.emit("shardReconnecting", 0);
-  if (reason === "aborted") caller.abort();
+  if (reason === "aborted-held-leave") caller.abort();
   await jest.advanceTimersByTimeAsync(5_001);
   expect(await disposition).toBe("uncertain");
   finish();
@@ -832,3 +832,50 @@ test("effect draining called at a late ACK includes its newly queued durable wri
   await effects;
   await f.whenOwnedVoiceSettled(f.reservation);
 });
+
+test.each(["join", "leave", "ack"])(
+  "shortened preservation budget during %s keeps the exact send boundary",
+  async (phase) => {
+    jest.useFakeTimers();
+    const { createPreservationBudget } =
+      await import("../../src/services/preservationBudget");
+    let finish!: () => void;
+    const transport = new Promise<void>((resolve) => {
+      finish = resolve;
+    });
+    const f = fixture((payload) => {
+      const leave = payload.d.channel_id === null;
+      return (phase === "join" && !leave) || (phase === "leave" && leave)
+        ? transport
+        : Promise.resolve();
+    });
+    await f.joinOwnedVoiceSession(f.reservation, f.options);
+    f.packet("channel", 1);
+    const budget = createPreservationBudget(Date.now() + 10000);
+    let proven = false;
+    void f.whenOwnedVoiceSettled(f.reservation).then(() => {
+      proven = true;
+    });
+    const disposition = f.settleOwnedVoiceSession(f.reservation, {
+      deadline: budget.deadline,
+      signal: budget.signal,
+    });
+    await flush();
+    budget.shorten(Date.now() + 100);
+    await jest.advanceTimersByTimeAsync(100);
+    expect(budget.signal.aborted).toBe(true);
+    expect(await disposition).toBe("uncertain");
+    expect(proven).toBe(false);
+    finish();
+    await flush();
+    f.packet(null, 2);
+    await f.waitOwnedVoiceEffects(f.reservation);
+    await flush();
+    expect(proven).toBe(phase === "ack");
+    expect(f.sendPayload).toHaveBeenCalledTimes(phase === "join" ? 1 : 2);
+    expect(await f.settleOwnedVoiceSession(f.reservation)).toBe(
+      phase === "ack" ? "settled" : "uncertain",
+    );
+    budget.dispose();
+  },
+);

@@ -122,3 +122,62 @@ test("separate preservation task must settle before durable disposition or buffe
   task.resolve(false);
   expect(await pending).toMatchObject({ kind: "settled" });
 });
+
+test("progress during a coalesced reconciliation gets one fresh budget without polling", async () => {
+  const f = fixture();
+  const original = f.service.interrupt(f.meeting, {
+    reason: "capture_failure",
+    deadline: 10,
+  });
+  await jest.advanceTimersByTimeAsync(10);
+  await original;
+  f.local.resolve();
+  await jest.advanceTimersByTimeAsync(0);
+  const heldAttempt = held<boolean>();
+  const first = jest.fn(() => heldAttempt.promise);
+  let remaining = 0;
+  const later = jest.fn(async (budget) => {
+    remaining = budget.deadline - Date.now();
+    return false;
+  });
+  const attempt = f.service.reconcile(f.meeting, Date.now() + 30000, first);
+  await jest.advanceTimersByTimeAsync(1);
+  const progress = f.service.reconcile(f.meeting, Date.now() + 30000, later);
+  f.service.reconcile(f.meeting, Date.now() + 30000, later);
+  await jest.advanceTimersByTimeAsync(30000);
+  heldAttempt.resolve(false);
+  expect(await attempt).toEqual({ kind: "unresolved" });
+  await progress;
+  expect(first).toHaveBeenCalledTimes(1);
+  expect(later).toHaveBeenCalledTimes(1);
+  expect(remaining).toBe(30000);
+  await jest.advanceTimersByTimeAsync(60000);
+  expect(later).toHaveBeenCalledTimes(1);
+});
+
+test("progress at reconciliation completion cannot join an already finished attempt", async () => {
+  const f = fixture();
+  const original = f.service.interrupt(f.meeting, {
+    reason: "capture_failure",
+    deadline: 10,
+  });
+  await jest.advanceTimersByTimeAsync(10);
+  await original;
+  f.local.resolve();
+  await jest.advanceTimersByTimeAsync(0);
+  const later = jest.fn(async () => true);
+  let progress: Promise<unknown> | undefined;
+  const run = jest.fn(async () => {
+    void Promise.resolve()
+      .then(() => {})
+      .then(() => {})
+      .then(() => {
+        progress = f.service.reconcile(f.meeting, Date.now() + 30000, later);
+      });
+    return false;
+  });
+  await f.service.reconcile(f.meeting, Date.now() + 30000, run);
+  await progress;
+  expect(later).toHaveBeenCalledTimes(1);
+  expect(f.service.checkpoints()).toEqual([]);
+});

@@ -23,6 +23,7 @@ jest.mock("../../src/services/runtimeLifecycleService", () => ({
   })),
 }));
 jest.mock("../../src/services/guildVoiceOperationService", () => ({
+  whenOwnedVoiceSettled: jest.fn(async () => {}),
   prepareOwnedVoiceSession: jest.fn(),
   settleOwnedVoiceSession: jest.fn(async () => "settled"),
 }));

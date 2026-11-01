@@ -10,6 +10,7 @@ jest.mock("../../src/commands/endMeeting", () => ({
   },
 }));
 jest.mock("../../src/services/guildVoiceOperationService", () => ({
+  whenOwnedVoiceSettled: jest.fn(async () => {}),
   prepareOwnedVoiceSession: jest.fn(),
   settleOwnedVoiceSession: jest.fn(async () => "settled"),
   waitOwnedVoiceEffects: async () => {},

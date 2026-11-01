@@ -1,0 +1,423 @@
+/** @jest-environment node */
+jest.mock("dotenv", () => ({ config: jest.fn() }));
+jest.mock("../../src/audio", () => ({
+  closeOutputFile: async () => {},
+  waitForCaptureStreamSettlement: async () => {},
+}));
+jest.mock("../../src/commands/endMeeting", () => ({
+  fenceMeetingFinalization: (meeting: MeetingData) => {
+    meeting.finalizationFenced = true;
+  },
+}));
+let mockVoice: ReturnType<typeof createGuildVoiceOperationService>;
+jest.mock("../../src/services/guildVoiceOperationService", () => ({
+  ...jest.requireActual("../../src/services/guildVoiceOperationService"),
+  prepareOwnedVoiceSession: (
+    ...args: Parameters<typeof mockVoice.prepareOwnedVoiceSession>
+  ) => mockVoice.prepareOwnedVoiceSession(...args),
+  settleOwnedVoiceSession: (
+    ...args: Parameters<typeof mockVoice.settleOwnedVoiceSession>
+  ) => mockVoice.settleOwnedVoiceSession(...args),
+  waitOwnedVoiceEffects: (
+    ...args: Parameters<typeof mockVoice.waitOwnedVoiceEffects>
+  ) => mockVoice.waitOwnedVoiceEffects(...args),
+  whenOwnedVoiceSettled: (
+    ...args: Parameters<typeof mockVoice.whenOwnedVoiceSettled>
+  ) => mockVoice.whenOwnedVoiceSettled(...args),
+}));
+let mockRuntime: ReturnType<typeof createRuntimeLifecycle>;
+jest.mock("../../src/services/runtimeLifecycleService", () => ({
+  ...jest.requireActual("../../src/services/runtimeLifecycleService"),
+  beginRuntimeWork: (
+    ...args: Parameters<typeof mockRuntime.beginRuntimeWork>
+  ) => mockRuntime.beginRuntimeWork(...args),
+  getRuntimeAdmissionContext: () => mockRuntime.getRuntimeAdmissionContext(),
+}));
+let mockRepository: ReturnType<typeof createMockDeploymentControlRepository>;
+let mockLeases: Map<string, ActiveMeetingLease>;
+let mockLoseDeleteResponse = false;
+const mockReleaseLease = jest.fn(
+  async (guildId, meetingId, owner, original) => {
+    const lease = mockLeases.get(guildId);
+    if (
+      !lease ||
+      lease.meetingId !== meetingId ||
+      lease.ownerInstanceId !== owner ||
+      lease.executionVersion !== original.executionVersion ||
+      lease.voiceOperationAttemptId !== original.voiceOperationAttemptId
+    )
+      return false;
+    mockLeases.delete(guildId);
+    if (mockLoseDeleteResponse) throw new Error("lost delete response");
+    return true;
+  },
+);
+jest.mock("../../src/db", () => ({
+  getDeploymentControlRepository: () => mockRepository,
+  getActiveMeetingLease: async (guildId: string) => mockLeases.get(guildId),
+  renewActiveMeetingLease: async () => true,
+  releaseActiveMeetingLease: (...args: Parameters<typeof mockReleaseLease>) =>
+    mockReleaseLease(...args),
+}));
+let mockMeeting: MeetingData | undefined;
+jest.mock("../../src/meetings", () => ({
+  getMeeting: () => mockMeeting,
+  deleteMeeting: () => {
+    mockMeeting = undefined;
+  },
+  getPendingMeetingInitializations: () => [],
+  restoreVoiceSessionNickname: async () => true,
+}));
+let mockReader: ReturnType<typeof createRecordingCheckpointService>;
+jest.mock("../../src/services/recordingCheckpointService", () => ({
+  createRecordingCheckpointService: (...args: unknown[]) =>
+    args.length
+      ? jest
+          .requireActual("../../src/services/recordingCheckpointService")
+          .createRecordingCheckpointService(...args)
+      : mockReader,
+}));
+import { EventEmitter } from "node:events";
+import type { Guild, VoiceBasedChannel } from "discord.js";
+import type { ActiveMeetingLease, MeetingHistory } from "../../src/types/db";
+import type { MeetingData } from "../../src/types/meeting-data";
+import { createGuildVoiceOperationService } from "../../src/services/guildVoiceOperationService";
+import { createRuntimeLifecycle } from "../../src/services/runtimeLifecycleService";
+import { createRuntimeProtectionService } from "../../src/services/runtimeProtectionService";
+import { createMockDeploymentControlRepository } from "../../src/repositories/deploymentControlRepository";
+import { createRecordingCheckpointService } from "../../src/services/recordingCheckpointService";
+import {
+  tryAcquireMeetingLease,
+  attachMeetingReservation,
+  getOwnedSessionReservations,
+} from "../../src/services/activeMeetingLeaseService";
+import {
+  interruptOwnedMeeting,
+  getMeetingInterruptionCheckpoints,
+} from "../../src/services/ownedMeetingInterruption";
+import { history } from "../deployment/controlFixtures";
+function held() {
+  let resolve!: () => void;
+  const promise = new Promise<void>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
+}
+async function fixture(guildId: string, tts: boolean) {
+  mockLeases = new Map();
+  const histories = new Map<string, MeetingHistory[]>();
+  mockRepository = createMockDeploymentControlRepository(
+    new Map(),
+    histories,
+    mockLeases,
+  );
+  const identity = {
+    kind: "local" as const,
+    instanceId: "old",
+    localId: "fixture",
+    protocolVersion: 1 as const,
+  };
+  await mockRepository.initializeControl({
+    pk: "ENV",
+    sk: "CONTROL",
+    recordType: "control",
+    runtimeEnvironment: "local",
+    protocolVersion: 1,
+    coordinatorToken: "coordinator",
+    coordinatorEpoch: 1,
+    coordinatorExpiresAt: 2000,
+    servingGeneration: 0,
+    servingMembers: {},
+  });
+  mockRuntime = createRuntimeLifecycle({
+    identity,
+    repository: mockRepository,
+    protection: createRuntimeProtectionService({
+      identity,
+      onUnsafe: jest.fn(),
+    }),
+    probeReadiness: async () => ({
+      gatewayReady: true,
+      cacheReady: true,
+      dependenciesReady: true,
+    }),
+    checkpointAndFence: jest.fn(),
+  });
+  await mockRuntime.start();
+  expect(
+    await mockRepository.promote({
+      candidateRuntimeMode: "all",
+      coordinatorToken: "coordinator",
+      coordinatorEpoch: 1,
+      expectedServingGeneration: 0,
+      expectedServingMembers: [],
+      candidate: identity,
+      proposedGeneration: 1,
+      now: 1000,
+    }),
+  ).toBe("applied");
+  await mockRuntime.getRuntimeAdmissionContext();
+  const send = jest.fn(async () => {});
+  mockVoice = createGuildVoiceOperationService(mockRepository, () => send);
+  const admit = (meetingId: string) =>
+    tryAcquireMeetingLease({
+      guildId,
+      meetingId,
+      voiceChannelId: "channel",
+      textChannelId: "text",
+      isAutoRecording: false,
+      reservedAt: Date.now(),
+      ...(tts
+        ? { sessionMode: "tts_only" as const }
+        : {
+            sessionMode: "meeting" as const,
+            history: {
+              ...history,
+              guildId,
+              meetingId,
+              channelId_timestamp: "channel#" + meetingId,
+            },
+          }),
+    });
+  const admission = await admit("meeting");
+  if (admission.kind !== "admitted")
+    throw new Error("fixture admission refused");
+  const original = admission.reservation;
+  const settle = jest.spyOn(original.workHandle, "settle");
+  const client = Object.assign(new EventEmitter(), { user: { id: "bot" } });
+  const guild = {
+    id: guildId,
+    shardId: 0,
+    client,
+    voiceAdapterCreator: () => ({
+      sendPayload: () => true,
+      destroy: jest.fn(),
+    }),
+  } as unknown as Guild;
+  const connection = await mockVoice.joinOwnedVoiceSession(original, {
+    guild,
+    voiceChannel: { id: "channel" } as VoiceBasedChannel,
+    captureAudio: false,
+    signal: new AbortController().signal,
+  });
+  const packet = (channel: string | null, sequence: number) =>
+    client.emit(
+      "raw",
+      {
+        t: "VOICE_STATE_UPDATE",
+        s: sequence,
+        d: {
+          guild_id: guildId,
+          user_id: "bot",
+          session_id: "session",
+          channel_id: channel,
+        },
+      },
+      0,
+    );
+  packet("channel", 1);
+  const objects = new Map<string, Buffer>();
+  mockReader = createRecordingCheckpointService({
+    repository: mockRepository,
+    objects: {
+      upload: async (key, bytes) => {
+        objects.set(key, Buffer.from(bytes));
+        return key;
+      },
+      read: async (key) => objects.get(key),
+    },
+  });
+  let row: MeetingHistory | undefined;
+  if (original.sessionMode === "meeting") {
+    row = histories.get(guildId)![0];
+    const capture = {
+      ...original.historyKey,
+      meetingId: original.meetingId,
+      channelId: "channel",
+      ownerInstanceId: original.ownerInstanceId,
+      executionVersion: 1,
+      reservedAt: row.timestamp,
+      captureStartedAt: row.timestamp,
+      requested: { transcribeMeeting: true, generateNotes: true },
+    };
+    const checkpoint = await mockReader.flush({
+      signal: new AbortController().signal,
+      ownership: original,
+      capture,
+      captureState: { kind: "capturing", startedAt: row.timestamp },
+      expectedStatus: "starting",
+      artifacts: [],
+    });
+    expect(checkpoint.kind).toBe("committed");
+    Object.assign(row, {
+      status: "complete",
+      notes: "Delivered original notes",
+      notesVersion: 4,
+      notesMessageId: "original-message",
+      transcriptS3Key: "saved-transcript",
+      audioS3Key: "saved-audio",
+      archivedAt: "2026-10-30T00:00:00.000Z",
+      recovery: { disposition: "done", executionVersion: 1, stage: "delivery" },
+    });
+  }
+  const local = held();
+  const ai = jest.fn(async () => "Delivered original notes");
+  const post = jest.fn(async () => "original-message");
+  const exportNotion = jest.fn(async () => {});
+  const finalizer = jest.fn(async () => {
+    await ai();
+    await post();
+    await exportNotion();
+  });
+  const meeting = {
+    guildId,
+    meetingId: "meeting",
+    reservation: original,
+    voiceChannel: { id: "channel" },
+    audioData: {},
+    recordingContentTask: local.promise,
+    finalization: {
+      promise: finalizer(),
+      disposition: "durable",
+      controller: new AbortController(),
+    },
+    setFinished: jest.fn(),
+    recordingCapture: {
+      settled: async () => {},
+      releaseSettledBuffers: jest.fn(),
+    },
+  } as unknown as MeetingData;
+  mockMeeting = meeting;
+  attachMeetingReservation(meeting, original);
+  return {
+    original,
+    settle,
+    meeting,
+    local,
+    row,
+    finalizer,
+    ai,
+    post,
+    exportNotion,
+    packet,
+    connection,
+    send,
+    admit,
+  };
+}
+beforeEach(() => {
+  jest.useFakeTimers({ now: 1000000 });
+  mockReleaseLease.mockClear();
+  mockLoseDeleteResponse = false;
+  jest.spyOn(console, "info").mockImplementation(() => {});
+});
+afterEach(() => {
+  mockRuntime?.stop();
+  jest.useRealTimers();
+  jest.restoreAllMocks();
+});
+test.each([
+  "complete",
+  "late_work",
+  "tts",
+  "newer_owner",
+  "lost_delete_response",
+])(
+  "actual SDK, lease and runtime counts release exact original after late ACK: %s",
+  async (scenario) => {
+    const f = await fixture("late-" + scenario, scenario === "tts");
+    const canonical = f.row && structuredClone(f.row);
+    const workKind = scenario === "tts" ? "voice_operation" : "recording";
+    const unrelated = mockRuntime.beginRuntimeWork("ancillary_delivery");
+    if (scenario !== "late_work") f.local.resolve();
+    const stop = interruptOwnedMeeting(f.meeting, {
+      reason: "processing_failure",
+      deadline: Date.now() + 10000,
+    });
+    await jest.advanceTimersByTimeAsync(10000);
+    expect(await mockVoice.settleOwnedVoiceSession(f.original)).toBe(
+      "uncertain",
+    );
+    expect(await stop).toEqual({ kind: "unresolved" });
+    expect(f.meeting.finished).not.toBe(true);
+    expect(mockRuntime.getWorkCounts()[workKind]).toBe(1);
+    mockLoseDeleteResponse = scenario === "lost_delete_response";
+    let newer: ActiveMeetingLease | undefined;
+    let newerWork: ReturnType<typeof mockRuntime.beginRuntimeWork> | undefined;
+    if (scenario === "newer_owner") {
+      newerWork = mockRuntime.beginRuntimeWork("recording");
+      newer = {
+        ...mockLeases.get(f.original.guildId)!,
+        meetingId: "newer",
+        voiceOperationAttemptId: "newer-voice",
+        executionVersion: 2,
+      };
+      mockLeases.set(f.original.guildId, newer);
+      mockMeeting = {
+        guildId: f.original.guildId,
+        meetingId: "newer",
+        setFinished: jest.fn(),
+      } as unknown as MeetingData;
+    }
+    f.packet("channel", 2);
+    f.packet(null, 3);
+    await jest.advanceTimersByTimeAsync(0);
+    if (scenario === "late_work") {
+      await jest.advanceTimersByTimeAsync(30000);
+      expect(f.meeting.finished).not.toBe(true);
+      expect(mockReleaseLease).not.toHaveBeenCalled();
+      f.local.resolve();
+      await jest.advanceTimersByTimeAsync(0);
+    }
+    if (scenario === "newer_owner") {
+      expect(f.meeting.finished).not.toBe(true);
+      expect(mockLeases.get(f.original.guildId)).toBe(newer);
+      expect(mockRuntime.getWorkCounts()[workKind]).toBe(2);
+      expect(mockReleaseLease).not.toHaveBeenCalled();
+      expect(mockMeeting!.setFinished).not.toHaveBeenCalled();
+    } else {
+      expect(f.meeting.finished).toBe(true);
+      expect(mockRuntime.getWorkCounts()[workKind]).toBe(0);
+      expect(mockRuntime.getWorkCounts().ancillary_delivery).toBe(1);
+      expect(mockReleaseLease).toHaveBeenCalledTimes(1);
+      expect(f.meeting.setFinished).toHaveBeenCalledTimes(1);
+      expect(
+        getOwnedSessionReservations().some(
+          (entry) => entry.reservation === f.original,
+        ),
+      ).toBe(false);
+      expect(
+        getMeetingInterruptionCheckpoints().some(
+          (entry) => entry.meeting === f.meeting,
+        ),
+      ).toBe(false);
+      const next = await f.admit("next");
+      expect(next.kind).toBe("admitted");
+      if (next.kind === "admitted")
+        attachMeetingReservation(
+          { guildId: f.original.guildId, meetingId: "next" } as MeetingData,
+          next.reservation,
+        );
+      expect(mockRuntime.getWorkCounts()[workKind]).toBe(1);
+    }
+    f.packet(null, 4);
+    await jest.advanceTimersByTimeAsync(0);
+    expect(f.settle).toHaveBeenCalledTimes(scenario === "newer_owner" ? 0 : 1);
+    expect(f.finalizer).toHaveBeenCalledTimes(1);
+    expect(f.ai).toHaveBeenCalledTimes(1);
+    expect(f.post).toHaveBeenCalledTimes(1);
+    expect(f.exportNotion).toHaveBeenCalledTimes(1);
+    expect(mockReleaseLease).toHaveBeenCalledTimes(
+      scenario === "newer_owner" ? 0 : 1,
+    );
+    expect(f.meeting.setFinished).toHaveBeenCalledTimes(
+      scenario === "newer_owner" ? 0 : 1,
+    );
+    expect(f.row).toEqual(canonical);
+    expect(f.connection.state.status).toBe("destroyed");
+    expect(f.connection.rejoin()).toBe(false);
+    expect(f.send).toHaveBeenCalledTimes(2);
+    unrelated.settle();
+    newerWork?.settle();
+  },
+);
