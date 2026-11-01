@@ -990,6 +990,7 @@ async function maybeStartAutoTtsOnly(newState: VoiceState) {
     newState.channel,
     textChannel,
     botMember,
+    "tts_only",
   );
   if (!permissionCheck.success) {
     await assertServingBotAdmission();
