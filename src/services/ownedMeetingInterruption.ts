@@ -328,6 +328,9 @@ async function release(
     localWork: work.local,
     deadline: budget.deadline,
     signal: budget.signal,
+    onReleaseSettled: () => {
+      void reconcileStoppedMeeting(meeting).catch(() => {});
+    },
   };
   const released =
     work.reservation.sessionMode === "tts_only" &&

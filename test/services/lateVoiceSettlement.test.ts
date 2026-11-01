@@ -36,8 +36,17 @@ jest.mock("../../src/services/runtimeLifecycleService", () => ({
 let mockRepository: ReturnType<typeof createMockDeploymentControlRepository>;
 let mockLeases: Map<string, ActiveMeetingLease>;
 let mockLoseDeleteResponse = false;
+let mockDeleteBarrier: Promise<void> | undefined;
+let mockDeleteFailure = false;
+let mockReadFailure = false;
+const mockReadLease = jest.fn(async (guildId: string) => {
+  if (mockReadFailure) throw new Error("lease read unavailable");
+  return mockLeases.get(guildId);
+});
 const mockReleaseLease = jest.fn(
   async (guildId, meetingId, owner, original) => {
+    await mockDeleteBarrier;
+    if (mockDeleteFailure) throw new Error("delete failed");
     const lease = mockLeases.get(guildId);
     if (
       !lease ||
@@ -54,7 +63,7 @@ const mockReleaseLease = jest.fn(
 );
 jest.mock("../../src/db", () => ({
   getDeploymentControlRepository: () => mockRepository,
-  getActiveMeetingLease: async (guildId: string) => mockLeases.get(guildId),
+  getActiveMeetingLease: (guildId: string) => mockReadLease(guildId),
   renewActiveMeetingLease: async () => true,
   releaseActiveMeetingLease: (...args: Parameters<typeof mockReleaseLease>) =>
     mockReleaseLease(...args),
@@ -309,6 +318,10 @@ beforeEach(() => {
   jest.useFakeTimers({ now: 1000000 });
   mockReleaseLease.mockClear();
   mockLoseDeleteResponse = false;
+  mockDeleteBarrier = undefined;
+  mockDeleteFailure = false;
+  mockReadFailure = false;
+  mockReadLease.mockClear();
   jest.spyOn(console, "info").mockImplementation(() => {});
 });
 afterEach(() => {
@@ -322,6 +335,7 @@ test.each([
   "tts",
   "newer_owner",
   "lost_delete_response",
+  "late_delete",
 ])(
   "actual SDK, lease and runtime counts release exact original after late ACK: %s",
   async (scenario) => {
@@ -342,6 +356,8 @@ test.each([
     expect(f.meeting.finished).not.toBe(true);
     expect(mockRuntime.getWorkCounts()[workKind]).toBe(1);
     mockLoseDeleteResponse = scenario === "lost_delete_response";
+    const deletion = held();
+    if (scenario === "late_delete") mockDeleteBarrier = deletion.promise;
     let newer: ActiveMeetingLease | undefined;
     let newerWork: ReturnType<typeof mockRuntime.beginRuntimeWork> | undefined;
     if (scenario === "newer_owner") {
@@ -362,6 +378,16 @@ test.each([
     f.packet("channel", 2);
     f.packet(null, 3);
     await jest.advanceTimersByTimeAsync(0);
+    if (scenario === "late_delete") {
+      expect(mockReleaseLease).toHaveBeenCalledTimes(1);
+      await jest.advanceTimersByTimeAsync(30001);
+      expect(f.meeting.finished).not.toBe(true);
+      expect(mockLeases.has(f.original.guildId)).toBe(true);
+      expect(mockRuntime.getWorkCounts()[workKind]).toBe(1);
+      expect(f.settle).not.toHaveBeenCalled();
+      deletion.resolve();
+      await jest.advanceTimersByTimeAsync(0);
+    }
     if (scenario === "late_work") {
       await jest.advanceTimersByTimeAsync(30000);
       expect(f.meeting.finished).not.toBe(true);
@@ -418,6 +444,77 @@ test.each([
     expect(f.connection.rejoin()).toBe(false);
     expect(f.send).toHaveBeenCalledTimes(2);
     unrelated.settle();
+    newerWork?.settle();
+  },
+);
+
+test.each(["lost_response", "failed", "unreadable", "newer_owner", "tts"])(
+  "late cleanup completion verifies once without replaying a delete: %s",
+  async (outcome) => {
+    const f = await fixture("late-delete-" + outcome, outcome === "tts");
+    const canonical = f.row && structuredClone(f.row);
+    const workKind = outcome === "tts" ? "voice_operation" : "recording";
+    f.local.resolve();
+    const stop = interruptOwnedMeeting(f.meeting, {
+      reason: "processing_failure",
+      deadline: Date.now() + 10000,
+    });
+    await jest.advanceTimersByTimeAsync(10000);
+    expect(await stop).toEqual({ kind: "unresolved" });
+    const deletion = held();
+    mockDeleteBarrier = deletion.promise;
+    f.packet(null, 2);
+    await jest.advanceTimersByTimeAsync(0);
+    expect(mockReleaseLease).toHaveBeenCalledTimes(1);
+    await jest.advanceTimersByTimeAsync(30001);
+    expect(mockRuntime.getWorkCounts()[workKind]).toBe(1);
+    expect(f.settle).not.toHaveBeenCalled();
+    expect(f.meeting.finished).not.toBe(true);
+
+    mockLoseDeleteResponse = outcome === "lost_response";
+    mockDeleteFailure = outcome === "failed";
+    mockReadFailure = outcome === "unreadable";
+    const newer = {
+      ...mockLeases.get(f.original.guildId)!,
+      meetingId: "newer",
+      voiceOperationAttemptId: "newer-voice",
+      executionVersion: 2,
+    };
+    const newerWork =
+      outcome === "newer_owner"
+        ? mockRuntime.beginRuntimeWork("recording")
+        : undefined;
+    if (newerWork) mockLeases.set(f.original.guildId, newer);
+    const readsBeforeCompletion = mockReadLease.mock.calls.length;
+    deletion.resolve();
+    await jest.advanceTimersByTimeAsync(0);
+    expect(mockReadLease.mock.calls.length).toBeGreaterThan(
+      readsBeforeCompletion,
+    );
+
+    const released = outcome === "lost_response" || outcome === "tts";
+    expect(f.settle).toHaveBeenCalledTimes(released ? 1 : 0);
+    expect(f.meeting.setFinished).toHaveBeenCalledTimes(released ? 1 : 0);
+    expect(mockRuntime.getWorkCounts()[workKind]).toBe(
+      released ? 0 : newerWork ? 2 : 1,
+    );
+    if (newerWork) expect(mockLeases.get(f.original.guildId)).toBe(newer);
+    if (outcome === "failed")
+      expect(mockLeases.get(f.original.guildId)?.meetingId).toBe("meeting");
+    if (outcome === "unreadable")
+      expect(mockLeases.has(f.original.guildId)).toBe(false);
+    const reads = mockReadLease.mock.calls.length;
+    f.packet(null, 3);
+    await jest.advanceTimersByTimeAsync(60000);
+    expect(mockReadLease).toHaveBeenCalledTimes(reads);
+    expect(mockReleaseLease).toHaveBeenCalledTimes(1);
+    expect(f.row).toEqual(canonical);
+    expect(f.finalizer).toHaveBeenCalledTimes(1);
+    expect(f.ai).toHaveBeenCalledTimes(1);
+    expect(f.post).toHaveBeenCalledTimes(1);
+    expect(f.exportNotion).toHaveBeenCalledTimes(1);
+    expect(f.send).toHaveBeenCalledTimes(2);
+    expect(f.connection.state.status).toBe("destroyed");
     newerWork?.settle();
   },
 );

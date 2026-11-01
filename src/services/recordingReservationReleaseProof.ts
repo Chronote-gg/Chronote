@@ -9,6 +9,8 @@ export type PreservedRecordingReleaseProof = {
   localWork: Promise<void>;
   signal: AbortSignal;
   deadline: number;
+  /** Requests fresh verification only when an actual delete outlives this signal. */
+  onReleaseSettled?: () => void;
 };
 export function matchesPreservedHistory(
   row: Awaited<

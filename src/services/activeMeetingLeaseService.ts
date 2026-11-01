@@ -533,7 +533,7 @@ export async function reconcilePreservedTtsReservation(
   reservation: Extract<SessionReservation, { sessionMode: "tts_only" }>,
   proof: Pick<
     PreservedRecordingReleaseProof,
-    "localWork" | "signal" | "deadline"
+    "localWork" | "signal" | "deadline" | "onReleaseSettled"
   > & {
     ancillarySettled: boolean;
   },
@@ -601,7 +601,10 @@ export async function reconcileRecoveredRecordingReservation(
 }
 async function reconcileSettledReservation(
   owned: OwnedReservation,
-  proof: Pick<PreservedRecordingReleaseProof, "signal" | "deadline">,
+  proof: Pick<
+    PreservedRecordingReleaseProof,
+    "signal" | "deadline" | "onReleaseSettled"
+  >,
   recoveryHistoryCurrent?: () => Promise<boolean>,
 ): Promise<boolean> {
   const { reservation } = owned;
@@ -622,16 +625,25 @@ async function reconcileSettledReservation(
   if (lease) {
     if (recoveryHistoryCurrent) return false;
     if (!samePreservedLease(lease, reservation)) return false;
-    try {
-      await releaseActiveMeetingLease(
+    // A submitted delete has an unknown outcome until readback, never replay it.
+    if (owned.release) return false;
+    proof.signal.throwIfAborted();
+    owned.release = Promise.resolve().then(() =>
+      releaseActiveMeetingLease(
         reservation.guildId,
         reservation.meetingId,
         reservation.ownerInstanceId,
         reservation,
         proof.signal,
-      );
+      ),
+    );
+    try {
+      await owned.release;
     } catch {
       proof.signal.throwIfAborted();
+    } finally {
+      // Actual completion after the budget is new progress, even on rejection.
+      if (proof.signal.aborted) proof.onReleaseSettled?.();
     }
     lease = await getActiveMeetingLease(reservation.guildId, proof.signal);
   }
