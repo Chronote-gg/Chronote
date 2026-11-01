@@ -78,13 +78,24 @@ jest.mock("../../src/db", () => ({
     ),
 }));
 let mockMeeting: MeetingData | undefined;
+let mockNickname: string | null;
+const mockNicknameMutation = jest.fn(async (nickname: string | null) => {
+  mockNickname = nickname;
+});
+async function mockRestoreNickname(meeting: MeetingData, signal?: AbortSignal) {
+  if (!meeting.botNicknameChanged) return true;
+  signal?.throwIfAborted();
+  await mockNicknameMutation(meeting.botNicknameBeforeSession ?? null);
+  meeting.botNicknameChanged = false;
+  return true;
+}
 jest.mock("../../src/meetings", () => ({
   getMeeting: () => mockMeeting,
   deleteMeeting: () => {
     mockMeeting = undefined;
   },
   getPendingMeetingInitializations: () => [],
-  restoreVoiceSessionNickname: async () => true,
+  restoreVoiceSessionNickname: mockRestoreNickname,
 }));
 let mockReader: ReturnType<typeof createRecordingCheckpointService>;
 jest.mock("../../src/services/recordingCheckpointService", () =>
@@ -321,6 +332,8 @@ beforeEach(() => {
   mockDeleteFailure = false;
   mockReadFailure = false;
   mockReadLease.mockClear();
+  mockNicknameMutation.mockClear();
+  mockNickname = "session nickname";
   jest.spyOn(console, "info").mockImplementation(() => {});
 });
 
@@ -336,6 +349,74 @@ async function holdCleanupAfterStop(f: Awaited<ReturnType<typeof fixture>>) {
   mockDeleteBarrier = deletion.promise;
   return deletion;
 }
+
+describe.each(["meeting", "tts_only"] as const)(
+  "%s nickname cleanup",
+  (mode) => {
+    test.each([
+      "current",
+      "foreign_remote",
+      "expired",
+      "expiry_boundary",
+      "missing",
+    ])(
+      "requires the current original lease before mutation: %s",
+      async (authority) => {
+        const f = await fixture(
+          "nickname-" + mode + authority,
+          mode === "tts_only",
+        );
+        const canonical = f.row && structuredClone(f.row);
+        const deletion = await holdCleanupAfterStop(f);
+        const lease = mockLeases.get(f.original.guildId)!;
+        if (authority === "foreign_remote") {
+          mockLeases.set(f.original.guildId, {
+            ...lease,
+            meetingId: "newer",
+            ownerInstanceId: "new-runtime",
+            voiceOperationAttemptId: "newer-voice",
+            executionVersion: 2,
+          });
+          mockNickname = "newer session nickname";
+        }
+        if (authority === "expired")
+          lease.leaseExpiresAt = Math.floor(Date.now() / 1000) - 1;
+        if (authority === "expiry_boundary")
+          lease.leaseExpiresAt = Math.floor(Date.now() / 1000);
+        if (authority === "missing") mockLeases.delete(f.original.guildId);
+        const nicknameBeforeCleanup = mockNickname;
+        const leaseBeforeCleanup = mockLeases.get(f.original.guildId);
+        f.meeting.botNicknameChanged = true;
+        f.meeting.botNicknameBeforeSession = "original nickname";
+        f.packet(null, 2);
+        await jest.advanceTimersByTimeAsync(0);
+        const permitted = authority === "current";
+        const expectedCalls = permitted ? 1 : 0;
+        expect(mockNicknameMutation).toHaveBeenCalledTimes(expectedCalls);
+        expect(mockNickname).toBe(
+          permitted ? "original nickname" : nicknameBeforeCleanup,
+        );
+        expect(f.meeting.botNicknameChanged).toBe(!permitted);
+        await jest.advanceTimersByTimeAsync(30001);
+        expect(f.settle).not.toHaveBeenCalled();
+        deletion.resolve();
+        await jest.advanceTimersByTimeAsync(0);
+        expect(f.settle).toHaveBeenCalledTimes(expectedCalls);
+        expect(f.meeting.setFinished).toHaveBeenCalledTimes(expectedCalls);
+        expect(mockReleaseLease).toHaveBeenCalledTimes(expectedCalls);
+        expect(mockNicknameMutation).toHaveBeenCalledTimes(expectedCalls);
+        expect(
+          mockRuntime.getWorkCounts()[
+            mode === "tts_only" ? "voice_operation" : "recording"
+          ],
+        ).toBe(permitted ? 0 : 1);
+        if (!permitted)
+          expect(mockLeases.get(f.original.guildId)).toBe(leaseBeforeCleanup);
+        expect(f.row).toEqual(canonical);
+      },
+    );
+  },
+);
 
 describe.each(["failed", "interrupted"] as const)(
   "%s preservation",

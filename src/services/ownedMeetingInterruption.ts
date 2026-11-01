@@ -122,7 +122,7 @@ function stop(meeting: MeetingData, budget: PreservationBudget): Promise<void> {
   return work.local;
 }
 async function assertOriginalLease(
-  original: RecordingReservation,
+  original: SessionReservation,
   signal: AbortSignal,
 ) {
   signal.throwIfAborted();
@@ -134,10 +134,10 @@ async function assertOriginalLease(
     lease.ownerInstanceId !== original.ownerInstanceId ||
     lease.executionVersion !== original.executionVersion ||
     lease.voiceOperationAttemptId !== original.voiceOperationAttemptId ||
-    lease.sessionMode !== "meeting" ||
-    lease.leaseExpiresAt < Math.floor(Date.now() / 1000)
+    lease.sessionMode !== original.sessionMode ||
+    lease.leaseExpiresAt <= Math.floor(Date.now() / 1000)
   )
-    throw new Error("Original recording lease cannot authorize preservation");
+    throw new Error("Original session lease cannot authorize mutation");
 }
 async function verifiedCaptureState(
   meeting: MeetingData,
@@ -320,6 +320,8 @@ async function release(
     return false;
   work.preserved ??= structuredClone(disposition);
   budget.signal.throwIfAborted();
+  if (meeting.botNicknameChanged)
+    await assertOriginalLease(work.reservation, budget.signal);
   if (!(await restoreVoiceSessionNickname(meeting, budget.signal)))
     return false;
   budget.signal.throwIfAborted();
