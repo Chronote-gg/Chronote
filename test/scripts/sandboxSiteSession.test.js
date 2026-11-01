@@ -1,5 +1,9 @@
 /** @jest-environment node */
 import { expect, test } from "@jest/globals";
+import { runInNewContext } from "node:vm";
+import { createRequire } from "node:module";
+import { siteVariables } from "../fixtures/deployment/sandboxSitePermissionsPlan.js";
+import { privateCaptureFixture } from "../fixtures/deployment/privateCapture.js";
 import { spawnSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -240,27 +244,95 @@ test.each(["frontend", "docs"])(
   },
 );
 
-test.each(["missing", "directory"])(
-  "CLI refuses a %s output file before emitting masks",
+test.each([
+  ["publishing", "missing"],
+  ["publishing", "directory"],
+  ["permissions", "missing"],
+  ["permissions", "directory"],
+])("%s CLI refuses a %s output file before emitting masks", (cli, mode) => {
+  const directory = mkdtempSync(join(tmpdir(), "sandbox-site-output-"));
+  const env = {
+    ...process.env,
+    ...fixture("docs"),
+    GITHUB_OUTPUT: directory,
+  };
+  const args =
+    cli === "publishing"
+      ? ["scripts/deployment/sandbox-site-session.cjs", "docs"]
+      : [
+          "scripts/deployment/validate-sandbox-site-permissions-plan.cjs",
+          "--session",
+        ];
+  if (cli === "permissions") {
+    env.TERRAFORM_PRIVATE_STORAGE_JSON = JSON.stringify(
+      privateCaptureFixture().binding,
+    );
+    env.GITHUB_VARS_JSON = JSON.stringify(siteVariables());
+  }
+  if (mode === "missing") delete env.GITHUB_OUTPUT;
+  try {
+    const result = spawnSync(process.execPath, args, { env, encoding: "utf8" });
+    expect(result.status).toBe(1);
+    expect(result.stdout).toBe("");
+    expect(result.stderr).toBe(
+      cli === "publishing"
+        ? "Sandbox site session refused\n"
+        : "Sandbox site permissions refused\n",
+    );
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+function outputBoundary(mode) {
+  const state = { masks: [], contents: "", closed: false };
+  const nativeRequire = createRequire(join(process.cwd(), "package.json"));
+  const module = { exports: {} };
+  const fs = {
+    openSync: () => 17,
+    fstatSync: () => ({ isFile: () => mode !== "nonregular" }),
+    writeSync: (_fd, value) => {
+      expect(state.masks).toEqual([
+        "::add-mask::selector\n",
+        "::add-mask::policy\n",
+      ]);
+      if (mode === "write-failure") throw new Error("PRIVATE_WRITE_ERROR");
+      state.contents += value;
+    },
+    closeSync: () => {
+      state.closed = true;
+    },
+  };
+  runInNewContext(
+    readFileSync("scripts/deployment/sandbox-site-session.cjs", "utf8"),
+    {
+      module,
+      require: (name) => (name === "node:fs" ? fs : nativeRequire(name)),
+      process: {
+        stdout: {
+          write: (value) => {
+            if (mode === "mask-failure") throw new Error("PRIVATE_MASK_ERROR");
+            state.masks.push(value);
+          },
+        },
+      },
+    },
+  );
+  return { state, write: module.exports.writeSandboxSiteSessionOutput };
+}
+test.each(["success", "nonregular", "write-failure", "mask-failure"])(
+  "shared session output boundary preserves masking and closure on %s",
   (mode) => {
-    const directory = mkdtempSync(join(tmpdir(), "sandbox-site-output-"));
-    const env = {
-      ...process.env,
-      ...fixture("docs"),
-      GITHUB_OUTPUT: directory,
-    };
-    if (mode === "missing") delete env.GITHUB_OUTPUT;
-    try {
-      const result = spawnSync(
-        process.execPath,
-        ["scripts/deployment/sandbox-site-session.cjs", "docs"],
-        { env, encoding: "utf8" },
+    const { state, write } = outputBoundary(mode);
+    const publish = () =>
+      write(
+        { policy: "policy", masks: ["selector", "policy"] },
+        "synthetic-output",
       );
-      expect(result.status).toBe(1);
-      expect(result.stdout).toBe("");
-      expect(result.stderr).toBe("Sandbox site session refused\n");
-    } finally {
-      rmSync(directory, { recursive: true, force: true });
-    }
+    if (mode === "success") expect(publish).not.toThrow();
+    else expect(publish).toThrow();
+    expect(state.closed).toBe(true);
+    expect(state.contents).toBe(mode === "success" ? "policy=policy\n" : "");
+    if (mode === "nonregular") expect(state.masks).toEqual([]);
   },
 );

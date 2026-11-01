@@ -72,21 +72,26 @@ function prepareSandboxSiteSession(variables, site) {
   };
 }
 
-module.exports = { prepareSandboxSiteSession };
+function writeSandboxSiteSessionOutput(prepared, outputPath) {
+  assert.ok(outputPath);
+  const output = openSync(outputPath, "a");
+  try {
+    assert.ok(fstatSync(output).isFile());
+    for (const value of prepared.masks)
+      process.stdout.write(`::add-mask::${value}\n`);
+    writeSync(output, `policy=${prepared.policy}\n`);
+  } finally {
+    closeSync(output);
+  }
+}
+
+module.exports = { prepareSandboxSiteSession, writeSandboxSiteSessionOutput };
 if (require.main === module) {
   try {
     assert.equal(process.argv.length, 3);
     assert.ok(process.env.GITHUB_OUTPUT);
     const prepared = prepareSandboxSiteSession(process.env, process.argv[2]);
-    const output = openSync(process.env.GITHUB_OUTPUT, "a");
-    try {
-      assert.ok(fstatSync(output).isFile());
-      for (const value of prepared.masks)
-        process.stdout.write(`::add-mask::${value}\n`);
-      writeSync(output, `policy=${prepared.policy}\n`);
-    } finally {
-      closeSync(output);
-    }
+    writeSandboxSiteSessionOutput(prepared, process.env.GITHUB_OUTPUT);
   } catch {
     process.stderr.write("Sandbox site session refused\n");
     process.exitCode = 1;
