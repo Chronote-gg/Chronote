@@ -7,7 +7,7 @@ export type ReservationReleaseProof = {
   localWork: Promise<void>;
   signal: AbortSignal;
   deadline: number;
-  /** Requests fresh verification only when an actual delete outlives this signal. */
+  /** Reports submitted delete completion; settled cleanup discards its queued revisit. */
   onReleaseSettled?: () => void;
 };
 export type PreservedRecordingReleaseProof = ReservationReleaseProof & {
