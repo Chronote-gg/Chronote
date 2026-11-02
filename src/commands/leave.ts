@@ -6,6 +6,8 @@ import {
 import { endTtsOnlySession, getMeeting } from "../meetings";
 import { MEETING_END_REASONS } from "../types/meetingLifecycle";
 import { canUserEndMeeting } from "../utils/meetingPermissions";
+import type { RuntimeWorkClaim } from "../services/runtimeWorkAdmissionService";
+import { deferMeetingStopInteraction } from "../services/meetingStopInterruption";
 
 async function hydrateMemberCache(interaction: ChatInputCommandInteraction) {
   await interaction.guild?.members.fetch(interaction.user.id).catch(() => null);
@@ -21,6 +23,7 @@ export async function handleLeaveCommand(
   client: Client,
   interaction: ChatInputCommandInteraction,
   signal?: AbortSignal,
+  work?: RuntimeWorkClaim,
 ) {
   if (!interaction.guildId || !interaction.guild) {
     signal?.throwIfAborted();
@@ -77,11 +80,13 @@ export async function handleLeaveCommand(
   meeting.endReason = MEETING_END_REASONS.LEAVE_COMMAND;
   meeting.endTriggeredByUserId = interaction.user.id;
   signal?.throwIfAborted();
-  await interaction.deferReply({ ephemeral: true });
+  await deferMeetingStopInteraction(work, () =>
+    interaction.deferReply({ ephemeral: true }),
+  );
   signal?.throwIfAborted();
   await persistExplicitMeetingStop(meeting, MEETING_END_REASONS.LEAVE_COMMAND);
   signal?.throwIfAborted();
-  await handleEndMeetingOther(client, meeting, signal);
+  await handleEndMeetingOther(client, meeting, signal, work);
   signal?.throwIfAborted();
   await interaction.editReply(
     "Meeting ended. Chronote left the voice channel.",

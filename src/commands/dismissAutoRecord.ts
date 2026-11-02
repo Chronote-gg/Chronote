@@ -11,6 +11,8 @@ import { resolveConfigEnum } from "../services/unifiedConfigService";
 import { MEETING_END_REASONS } from "../types/meetingLifecycle";
 import type { MeetingData } from "../types/meeting-data";
 import { canUserEndMeeting } from "../utils/meetingPermissions";
+import type { RuntimeWorkClaim } from "../services/runtimeWorkAdmissionService";
+import { deferMeetingStopInteraction } from "../services/meetingStopInterruption";
 import {
   handleEndMeetingOther,
   persistExplicitMeetingStop,
@@ -166,6 +168,7 @@ export async function handleDismissAutoRecord(
   client: Client,
   interaction: UserContextMenuCommandInteraction,
   signal?: AbortSignal,
+  work?: RuntimeWorkClaim,
 ) {
   const contextResult = await resolveDismissAutoRecordContext(
     client,
@@ -210,7 +213,9 @@ export async function handleDismissAutoRecord(
   }
 
   signal?.throwIfAborted();
-  await interaction.deferReply({ ephemeral: true });
+  await deferMeetingStopInteraction(work, () =>
+    interaction.deferReply({ ephemeral: true }),
+  );
   signal?.throwIfAborted();
   await persistExplicitMeetingStop(meeting, MEETING_END_REASONS.DISMISSED);
   if (meeting.finishing) {
@@ -230,7 +235,7 @@ export async function handleDismissAutoRecord(
   }
 
   signal?.throwIfAborted();
-  await handleEndMeetingOther(client, meeting, signal);
+  await handleEndMeetingOther(client, meeting, signal, work);
   signal?.throwIfAborted();
   await interaction.editReply(
     contextResult.context.isAutoRecording
