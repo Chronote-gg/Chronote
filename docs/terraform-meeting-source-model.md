@@ -116,6 +116,34 @@ The closure, excluded-check identities and installed-provider requirements
 remain unchanged. The source pin includes this reviewed `main.tf` edit;
 the native synthetic fixtures continue to bind the actual committed source.
 
+### Site-permissions dependency audit (2026-10-30)
+
+The site-permissions source changes affect only deployment-role dependencies.
+Both deployment roles retain their environment check and the exact input predicate
+from `aws_lb_listener.api_https.count`. Comparing that predicate to the old
+`length(...) == 1` guard preserves the HTTPS routing requirement while removing a
+resource edge. Both branches matter because Terraform retains references from the
+attachment's production/Sandbox conditional even when one role has count zero.
+No role attributes, trust documents, permissions or listener settings change.
+The existing Sandbox OIDC lookup now supplies its exact same-account GitHub ARN,
+matching the production lookup, so it needs no account-wide discovery grant.
+
+The source/mock regressions compare both predicates with the literal listener count
+predicate, reject disabled ALB, missing domain and missing certificate/hosted-zone
+inputs in both environments, and retain the hosted-zone certificate path. The
+native Sandbox site mock confirms exactly six managed addresses without ALB/VPC
+resources. This site graph is separate from the 32-resource meeting delivery graph.
+The meeting closure still has no reverse dependency on either role or the OIDC
+lookup. Its closure, excluded checks, unknown handling and installed-provider
+requirements are unchanged. The source pin is refreshed only for these declared
+edits to `sandbox-deployment.tf` and `production-deployment.tf`.
+
+The checked application lock currently selects AWS 6.70.0, while the exceptional
+meeting model requires Terraform 1.17.1 and AWS 6.69.1. The existing mismatch is
+not accepted by this audit. Offline mocks use their own checked locks and the CI
+Terraform 1.16.0 toolchain; they do not prove native meeting-model acceptance.
+Provider alignment remains separate, and the current version refusals stay intact.
+
 ### Future source changes
 
 Any top-level Terraform or lock edit requires reviewing and updating the source

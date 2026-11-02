@@ -1,6 +1,6 @@
 data "aws_iam_openid_connect_provider" "github_deploy" {
   count = var.environment == "sandbox" ? 1 : 0
-  url   = "https://token.actions.githubusercontent.com"
+  arn   = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:oidc-provider/token.actions.githubusercontent.com"
 }
 
 data "github_organization" "deployment_owner" {
@@ -42,7 +42,7 @@ resource "aws_iam_role" "sandbox_deploy" {
   })
   lifecycle {
     precondition {
-      condition     = var.github_environment == "sandbox" && length(aws_lb_listener.api_https) == 1
+      condition     = var.github_environment == "sandbox" && (var.ENABLE_API_ALB && var.API_DOMAIN != "" && (var.API_CERT_ARN != "" || var.HOSTED_ZONE_NAME != ""))
       error_message = "Sandbox deployment requires the sandbox GitHub environment and HTTPS deployment routing."
     }
   }

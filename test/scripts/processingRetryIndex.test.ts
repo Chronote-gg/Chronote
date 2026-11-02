@@ -116,7 +116,7 @@ test("the worker failure alarm matches the logged line and emails critical alert
   expect(notifications).toContain(
     'critical_alerts_topic  = "${local.name_prefix}-critical-alerts"',
   );
-  expect(notifications).toMatch(/name\s*=\s*local\.critical_alerts_topic\n/);
+  expect(notifications).toMatch(/name\s*=\s*local\.critical_alerts_topic\r?\n/);
   expect(source).not.toMatch(/aws_cloudwatch_log_group\.|aws_sns_topic\./);
   expect(
     source.match(/count\s*=\s*local\.alerts_enabled \? 1 : 0/g),
