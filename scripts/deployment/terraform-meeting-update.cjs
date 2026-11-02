@@ -139,7 +139,7 @@ function clearWarmMask(indexMask, computedWarm) {
 }
 // Returns the names of the indexes whose warm_throughput is wholly unknown.
 function knownTableEffects(change, computedWarm) {
-  // AWS 6.69.1 computes these read-only fields. Explicit hash/range keys bind
+  // AWS 6.70.0 computes these fields. Explicit hash/range keys bind
   // key_schema, and PAY_PER_REQUEST makes provisioned capacity inapplicable.
   const mask = structuredClone(change.after_unknown ?? {});
   for (const field of computedTableFields) delete mask[field];
