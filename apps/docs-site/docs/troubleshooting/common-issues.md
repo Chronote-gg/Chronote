@@ -20,6 +20,8 @@ Use this page to diagnose and fix common Chronote issues. Each section describes
 
 If Chronote has left voice but `/startmeeting` still says a meeting is active, the previous session may be waiting for confirmation that it ended safely. A delayed disconnect confirmation can let Chronote finish cleanup automatically. This cleanup does not create another recording or rewrite saved notes.
 
+If processing fails after you use the meeting's end button, `/leave confirm:true`, or **Stop recording**, Chronote can finish cleanup automatically once it confirms that the available recording data is preserved and the session has ended. Cleanup does not retry transcription or generate missing notes.
+
 Try `/startmeeting` again after a short wait. If the active-meeting message persists, use **Support** in the portal sidebar and include the server name and approximate recording end time. Chronote keeps the server unavailable when it cannot confirm that the previous session ended safely.
 
 ## Auto-record does not start
