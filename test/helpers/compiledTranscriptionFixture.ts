@@ -117,10 +117,11 @@ export function useCompiledTranscriptionFixture(
   ready: (directory: string) => void,
 ) {
   let compiled: string;
+  // Real compilation with coverage can exceed one minute under full-suite CI load.
   beforeAll(async () => {
     compiled = await prepareTranscriptionFixture(root);
     ready(compiled);
-  }, 60000);
+  }, 120000);
   afterAll(() => {
     if (compiled) removeOwnedFixture(compiled, "vad-build-contract-");
   });
