@@ -149,3 +149,20 @@ output "bucket_name" {
 output "terraform_role_arn" {
   value = var.enable_sandbox_terraform_role ? aws_iam_role.sandbox_terraform[0].arn : null
 }
+
+variable "site_frontend_bucket" {
+  type    = string
+  default = ""
+  validation {
+    condition     = !var.enable_sandbox_terraform_role || (can(regex("^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$", var.site_frontend_bucket)) && !strcontains(var.site_frontend_bucket, "..") && !can(regex("^[0-9]+[.][0-9]+[.][0-9]+[.][0-9]+$|^(xn--|sthree-|amzn-s3-demo-)|(-s3alias|--ol-s3|[.]mrap|--x-s3|--table-s3)$", var.site_frontend_bucket)))
+    error_message = "Supply the exact existing Sandbox frontend bucket from the deployment selectors."
+  }
+}
+variable "site_docs_bucket" {
+  type    = string
+  default = ""
+  validation {
+    condition     = !var.enable_sandbox_terraform_role || (can(regex("^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$", var.site_docs_bucket)) && !strcontains(var.site_docs_bucket, "..") && !can(regex("^[0-9]+[.][0-9]+[.][0-9]+[.][0-9]+$|^(xn--|sthree-|amzn-s3-demo-)|(-s3alias|--ol-s3|[.]mrap|--x-s3|--table-s3)$", var.site_docs_bucket)))
+    error_message = "Supply the exact existing Sandbox docs bucket from the deployment selectors."
+  }
+}

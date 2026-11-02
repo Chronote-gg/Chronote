@@ -31,6 +31,7 @@ function parseDispatch(env, event) {
       "deployment-prerequisites",
       "deployment-runtime",
       "site-delivery",
+      "sandbox-site-permissions",
       "processing-retry",
     ]),
   };

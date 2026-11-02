@@ -1,88 +1,30 @@
 /** @jest-environment node */
+import {
+  mockStopEnvironment,
+  deferredStopEffect as held,
+  stoppedRecordingFixture,
+} from "../fixtures/stopInterruptionEnvironment";
 import { Client } from "discord.js";
 import type { MeetingData } from "../../src/types/meeting-data";
-import type { SessionReservation } from "../../src/types/deploymentControl";
 import { setupBot } from "../../src/bot";
 import { getMeetingInterruptionCheckpoints } from "../../src/services/ownedMeetingInterruption";
 import {
   fenceRuntimeWorkAdmission,
   getRuntimeWorkAdmissionCheckpoints,
 } from "../../src/services/runtimeWorkAdmissionService";
-const mockReceipt = jest.fn();
-const mockRepository = {
-  claimCommand: jest.fn(),
-  renewCommand: jest.fn(async () => true),
-  failCommand: jest.fn(async () => true),
-  completeCommand: jest.fn(),
-};
-const mockReconcile = jest.fn(async () => true);
-const mockClose = jest.fn(async () => {});
-const mockTerminalRead = jest.fn();
-let mockMeeting: MeetingData;
-let mockOwnership = new AbortController();
-const mockReservations: Array<{ reservation: SessionReservation }> = [];
-jest.mock("../../src/commands/startMeeting", () => ({}));
-jest.mock("../../src/services/runtimeInstanceService", () => ({
-  getRuntimeInstanceId: () => "synthetic-owner",
-}));
-jest.mock("../../src/repositories/meetingControlCommandRepository", () => ({
-  getMeetingControlCommandRepository: () => mockRepository,
-}));
 jest.mock("../../src/services/runtimeLifecycleService", () => ({
   isRuntimeWarm: () => false,
   beginRuntimeWork: () => {
     throw new Error("Unexpected independent work");
   },
 }));
-jest.mock("../../src/services/activeMeetingLeaseService", () => ({
-  getOwnedSessionReservations: () => mockReservations,
-  getReservationSignal: () => mockOwnership.signal,
-  isReservationControlEligible: () => true,
-  reconcilePreservedRecordingReservation: (...args: unknown[]) =>
-    mockReconcile(...args),
-}));
-jest.mock("../../src/meetings", () => ({
-  getMeeting: () => mockMeeting,
-  deleteMeeting: jest.fn(),
-  restoreVoiceSessionNickname: async () => true,
-}));
-jest.mock("../../src/audio", () => ({
-  stopRecordingCapture: jest.fn(),
-  closeFailedInitializationOutput: async () => true,
-  closeOutputFile: () => mockClose(),
-  waitForCaptureStreamSettlement: async () => {},
-}));
-jest.mock("../../src/audio/soundCues", () => ({
-  stopThinkingCueLoop: jest.fn(),
-}));
-jest.mock("../../src/services/recordingContentService", () => ({
-  checkpointRecordingContext: jest.fn(),
-}));
-jest.mock("../../src/services/guildVoiceOperationService", () => ({
-  settleOwnedVoiceSession: async () => "settled",
-  waitOwnedVoiceEffects: async () => {},
-}));
 jest.mock("../../src/db", () => ({
-  tryCreateInteractionReceipt: (...args: unknown[]) => mockReceipt(...args),
+  tryCreateInteractionReceipt: (...args: unknown[]) =>
+    mockStopEnvironment.receipt(...args),
   getDeploymentControlRepository: () => ({
-    getMeetingHistory: () => mockTerminalRead(),
+    getMeetingHistory: () => mockStopEnvironment.terminalRead(),
   }),
 }));
-jest.mock("../../src/services/recordingCheckpointService", () => ({
-  createRecordingCheckpointService: () => ({
-    read: async () => ({
-      missing: [],
-      manifest: { captureState: { kind: "complete" } },
-    }),
-  }),
-}));
-function held() {
-  let release!: () => void;
-  const promise = new Promise<void>((resolve) => {
-    release = resolve;
-  });
-  return { promise, release };
-}
 const capturedClient: { value?: Client } = {};
 const currentBot = () => capturedClient.value!;
 beforeAll(async () => {
@@ -110,51 +52,28 @@ test.each([
   "actual end-button route preserves exact receipt/defer proof: %s",
   async (outcome) => {
     jest.clearAllMocks();
-    mockOwnership = new AbortController();
-    mockReservations.length = 0;
-    mockReceipt.mockReset();
+    mockStopEnvironment.ownership = new AbortController();
+    mockStopEnvironment.reservations.length = 0;
+    mockStopEnvironment.receipt.mockReset();
     if (outcome === "receipt_lost")
-      mockReceipt.mockRejectedValue(new Error("Synthetic lost receipt ACK"));
-    else mockReceipt.mockResolvedValue(outcome !== "duplicate");
+      mockStopEnvironment.receipt.mockRejectedValue(
+        new Error("Synthetic lost receipt ACK"),
+      );
+    else mockStopEnvironment.receipt.mockResolvedValue(outcome !== "duplicate");
     const acknowledgment = held();
     const entered = held();
     if (outcome === "held_receipt")
-      mockReceipt.mockImplementationOnce(async () => {
+      mockStopEnvironment.receipt.mockImplementationOnce(async () => {
         entered.release();
         await acknowledgment.promise;
         return true;
       });
     const cleanup = held();
-    mockClose.mockReturnValue(cleanup.promise);
-    const childSettled = jest.fn();
-    const original = {
-      guildId: `synthetic-button-${outcome}`,
-      meetingId: "synthetic-recording",
-      sessionMode: "meeting",
-      ownerInstanceId: "synthetic-owner",
-      executionVersion: 1,
-      voiceOperationAttemptId: "synthetic-voice",
-      reservedAt: 0,
-      historyKey: {
-        guildId: `synthetic-button-${outcome}`,
-        channelId_timestamp: "voice#start",
-      },
-      workHandle: {
-        transition: jest.fn(),
-        settle: jest.fn(),
-        beginOwnedControl: () => ({ settle: childSettled }),
-      },
-    } as unknown as SessionReservation;
-    mockReservations.push({ reservation: original });
-    mockTerminalRead.mockResolvedValue({
-      ...original,
-      status: "complete",
-      checkpoint: {
-        revision: 1,
-        capture: { ...original, channelId_timestamp: "voice#start" },
-      },
-    });
-    mockMeeting = {
+    mockStopEnvironment.close.mockReturnValue(cleanup.promise);
+    const { original, childSettled } = stoppedRecordingFixture(
+      `synthetic-button-${outcome}`,
+    );
+    mockStopEnvironment.meeting = {
       ...original,
       reservation: original,
       creator: { id: "synthetic-user" },
@@ -216,10 +135,10 @@ test.each([
       }
       await handling;
       expect(interaction.followUp).not.toHaveBeenCalled();
-      expect(mockReconcile).not.toHaveBeenCalled();
+      expect(mockStopEnvironment.reconcile).not.toHaveBeenCalled();
       cleanup.release();
       const interruption = getMeetingInterruptionCheckpoints().find(
-        ({ meeting }) => meeting === mockMeeting,
+        ({ meeting }) => meeting === mockStopEnvironment.meeting,
       );
       if (["acknowledged", "already_deferred"].includes(outcome)) {
         expect(interruption).toBeDefined();
@@ -241,7 +160,7 @@ test.each([
       acknowledgment.release();
       cleanup.release();
       await getMeetingInterruptionCheckpoints().find(
-        ({ meeting }) => meeting === mockMeeting,
+        ({ meeting }) => meeting === mockStopEnvironment.meeting,
       )?.actual;
     }
   },

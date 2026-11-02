@@ -33,6 +33,7 @@ import {
 } from "../../src/services/activeMeetingLeaseService";
 
 jest.mock("../../src/meetings", () => ({
+  getPendingMeetingInitializations: () => [],
   getMeeting: jest.fn(),
 }));
 jest.mock("../../src/services/guildAccessService", () => ({

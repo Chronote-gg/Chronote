@@ -990,6 +990,7 @@ async function maybeStartAutoTtsOnly(newState: VoiceState) {
     newState.channel,
     textChannel,
     botMember,
+    "tts_only",
   );
   if (!permissionCheck.success) {
     await assertServingBotAdmission();
@@ -998,7 +999,6 @@ async function maybeStartAutoTtsOnly(newState: VoiceState) {
     );
     return false;
   }
-
   const meeting = await initializeMeeting({
     sessionMode: "tts_only",
     suppressionCheck: { channelId: newState.channel.id },

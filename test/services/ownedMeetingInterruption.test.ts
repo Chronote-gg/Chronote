@@ -48,6 +48,7 @@ jest.mock("../../src/services/meetingProcessingLifetime", () => ({
   stopMeetingProcessing: jest.fn(async () => {}),
 }));
 jest.mock("../../src/services/guildVoiceOperationService", () => ({
+  whenOwnedVoiceSettled: jest.fn(async () => {}),
   settleOwnedVoiceSession: jest.fn(async () => "settled"),
   waitOwnedVoiceEffects: jest.fn(async () => {}),
 }));
@@ -56,6 +57,7 @@ jest.mock("../../src/services/activeMeetingLeaseService", () => ({
   reconcilePreservedTtsReservation: jest.fn(async () => true),
 }));
 jest.mock("../../src/meetings", () => ({
+  getPendingMeetingInitializations: () => [],
   getMeeting: jest.fn(),
   deleteMeeting: jest.fn(),
   restoreVoiceSessionNickname: jest.fn(async () => true),

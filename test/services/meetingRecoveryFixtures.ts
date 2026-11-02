@@ -55,6 +55,7 @@ export async function recoveryFixture(
   options: {
     guildId?: string;
     nowMs?: number;
+    timestamp?: string;
     requested?: { transcribeMeeting: boolean; generateNotes: boolean };
     artifacts?: CheckpointArtifactInput[];
     context?: (
@@ -69,6 +70,12 @@ export async function recoveryFixture(
   const now = Math.floor(nowMs / 1000);
   const row: MeetingHistory = {
     ...history,
+    ...(options.timestamp
+      ? {
+          timestamp: options.timestamp,
+          channelId_timestamp: `${history.channelId}#${options.timestamp}`,
+        }
+      : {}),
     guildId: options.guildId ?? history.guildId,
     participants: [],
     textChannelId: "text",

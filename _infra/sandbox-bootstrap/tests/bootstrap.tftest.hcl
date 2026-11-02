@@ -12,6 +12,8 @@ variables {
   trusted_refs           = ["refs/heads/codex/sandbox-terraform-capture", "refs/heads/master"]
   github_repository_id   = "123456"
   github_owner_id        = "654321"
+  site_frontend_bucket   = "meeting-notes-sandbox-frontend-123456789012"
+  site_docs_bucket       = "meeting-notes-sandbox-docs-123456789012"
 }
 override_resource {
   target          = aws_iam_role.sandbox_terraform
@@ -35,6 +37,10 @@ run "enabled_exact_eight_resources" {
 }
 run "disabled_creates_nothing" {
   command = plan
+  variables {
+    site_frontend_bucket = ""
+    site_docs_bucket     = ""
+  }
   assert {
     condition     = length(aws_s3_bucket.private_evidence) == 0 && length(aws_iam_role.sandbox_terraform) == 0 && length(data.aws_kms_key.existing) == 0
     error_message = "Default bootstrap must have no managed effects or key lookup."
@@ -92,7 +98,7 @@ run "metadata_and_apply_permissions" {
     error_message = "Grant the exact 30-table closure and only the history table mutation."
   }
   assert {
-    condition     = alltrue([for action in flatten([for s in jsondecode(output.terraform_role_policy).Statement : s.Action]) : !contains(["iam:DeletePolicyVersion", "iam:PassRole", "iam:AttachRolePolicy", "kms:PutKeyPolicy", "s3:DeleteObject", "dynamodb:Scan", "dynamodb:Query"], action) && !strcontains(action, "*")])
+    condition     = alltrue([for action in flatten([for s in jsondecode(output.terraform_role_policy).Statement : s.Action]) : !contains(["iam:DeletePolicyVersion", "iam:PassRole", "iam:DetachRolePolicy", "iam:DeletePolicy", "iam:UntagPolicy", "iam:UpdateAssumeRolePolicy", "kms:PutKeyPolicy", "s3:DeleteObject", "dynamodb:Scan", "dynamodb:Query"], action) && !strcontains(action, "*")])
     error_message = "The base execution role cannot gain admin, pruning, content or broad read grants."
   }
 }
@@ -151,4 +157,60 @@ run "rejects_wildcard_administrator" {
     administrator_role_arn        = "arn:aws:iam::123456789012:role/*"
   }
   expect_failures = [var.administrator_role_arn]
+}
+
+run "site_permissions_exact_grants" {
+  command = plan
+  variables {
+    enable_private_evidence_store = true
+    enable_sandbox_terraform_role = true
+  }
+  assert {
+    condition     = length(local.terraform_role_policy) <= 10240 && one([for s in jsondecode(local.terraform_role_policy).Statement : s if s.Sid == "SitePolicy"]).Resource == "arn:aws:iam::123456789012:policy/meeting-notes-sandbox-site-publishing"
+    error_message = "The site policy must be exact and the complete inline policy must fit IAM."
+  }
+  assert {
+    condition     = one([for s in jsondecode(local.terraform_role_policy).Statement : s if s.Sid == "SiteAttachment"]).Resource == "arn:aws:iam::123456789012:role/meeting-notes-sandbox-github-deploy" && one([for s in jsondecode(local.terraform_role_policy).Statement : s if s.Sid == "SiteAttachment"]).Condition.StringEquals["iam:PolicyARN"] == "arn:aws:iam::123456789012:policy/meeting-notes-sandbox-site-publishing"
+    error_message = "Attachment authority must bind both the exact deployment role and policy."
+  }
+}
+
+run "rejects_empty_frontend_bucket" {
+  command = plan
+  variables {
+    enable_private_evidence_store = true
+    enable_sandbox_terraform_role = true
+    site_frontend_bucket          = ""
+  }
+  expect_failures = [var.site_frontend_bucket]
+}
+
+run "rejects_wildcard_frontend_bucket" {
+  command = plan
+  variables {
+    enable_private_evidence_store = true
+    enable_sandbox_terraform_role = true
+    site_frontend_bucket          = "*"
+  }
+  expect_failures = [var.site_frontend_bucket]
+}
+
+run "rejects_empty_docs_bucket" {
+  command = plan
+  variables {
+    enable_private_evidence_store = true
+    enable_sandbox_terraform_role = true
+    site_docs_bucket              = ""
+  }
+  expect_failures = [var.site_docs_bucket]
+}
+
+run "rejects_wildcard_docs_bucket" {
+  command = plan
+  variables {
+    enable_private_evidence_store = true
+    enable_sandbox_terraform_role = true
+    site_docs_bucket              = "*"
+  }
+  expect_failures = [var.site_docs_bucket]
 }

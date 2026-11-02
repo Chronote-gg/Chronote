@@ -22,6 +22,7 @@ import { checkBotPermissions } from "../../src/utils/permissions";
 import type { MeetingData } from "../../src/types/meeting-data";
 
 jest.mock("../../src/meetings", () => ({
+  getPendingMeetingInitializations: () => [],
   hasMeeting: jest.fn(() => false),
   getMeeting: jest.fn(),
   deleteMeeting: jest.fn(),

@@ -1,7 +1,16 @@
+import {
+  matchesPreservedHistory,
+  samePreservedLease,
+  type PreservedRecordingReleaseProof,
+  type ReservationReleaseProof,
+} from "./recordingReservationReleaseProof";
+export type { PreservedRecordingReleaseProof } from "./recordingReservationReleaseProof";
 import type { NewWorkScope } from "../types/productionIntroduction";
 import { areMeetingNoticesSettled } from "./meetingProcessingLifetime";
+import { matchesRecoveredRecording } from "./recoveredRecordingProof";
+import { createRecordingCheckpointService } from "./recordingCheckpointService";
 import { isDeepStrictEqual } from "node:util";
-import type { RecordingCheckpoint } from "../types/recordingCheckpoint";
+import { releaseOriginalLease } from "./activeMeetingLeaseRelease";
 import {
   getActiveMeetingLease,
   requestActiveMeetingEnd,
@@ -500,42 +509,6 @@ export async function releaseSessionReservation(
   pendingReservations.delete(key);
   return true;
 }
-export type PreservedRecordingReleaseProof = {
-  checkpoint: RecordingCheckpoint;
-  status: "complete" | "failed" | "interrupted";
-  localWork: Promise<void>;
-  signal: AbortSignal;
-  deadline: number;
-};
-function matchesPreservedHistory(
-  row: Awaited<
-    ReturnType<
-      ReturnType<typeof getDeploymentControlRepository>["getMeetingHistory"]
-    >
-  >,
-  reservation: Extract<SessionReservation, { sessionMode: "meeting" }>,
-  proof: PreservedRecordingReleaseProof,
-): boolean {
-  return !(
-    !row ||
-    (row.recovery?.stage === "delivery" &&
-      row.recovery.disposition !== "done") ||
-    row.meetingId !== reservation.meetingId ||
-    row.ownerInstanceId !== reservation.ownerInstanceId ||
-    row.executionVersion !== reservation.executionVersion ||
-    row.status !== proof.status ||
-    !isDeepStrictEqual(
-      JSON.parse(JSON.stringify(row.checkpoint ?? null)),
-      JSON.parse(JSON.stringify(proof.checkpoint)),
-    ) ||
-    (proof.status !== "complete" &&
-      (!row.recovery ||
-        row.recovery.executionVersion !== reservation.executionVersion ||
-        !["pending", "needs_reconciliation"].includes(
-          row.recovery.disposition,
-        )))
-  );
-}
 /** Only the exact original attempt, verified terminal checkpoint and actual local/voice settlement permit this reconciliation. */
 export async function reconcilePreservedRecordingReservation(
   reservation: Extract<SessionReservation, { sessionMode: "meeting" }>,
@@ -560,10 +533,7 @@ export async function reconcilePreservedRecordingReservation(
 }
 export async function reconcilePreservedTtsReservation(
   reservation: Extract<SessionReservation, { sessionMode: "tts_only" }>,
-  proof: Pick<
-    PreservedRecordingReleaseProof,
-    "localWork" | "signal" | "deadline"
-  > & {
+  proof: ReservationReleaseProof & {
     ancillarySettled: boolean;
   },
 ): Promise<boolean> {
@@ -581,9 +551,56 @@ export async function reconcilePreservedTtsReservation(
   proof.signal.throwIfAborted();
   return reconcileSettledReservation(owned, proof);
 }
+/** Acknowledged recovery may release local accounting only. Any remote lease refuses it. */
+export async function reconcileRecoveredRecordingReservation(
+  reservation: Extract<SessionReservation, { sessionMode: "meeting" }>,
+  proof: Omit<ReservationReleaseProof, "onReleaseSettled"> & {
+    history: MeetingHistory;
+  },
+): Promise<boolean> {
+  const owned = reservations.get(
+    reservationKey(reservation.guildId, reservation.meetingId),
+  );
+  if (
+    !owned ||
+    owned.reservation !== reservation ||
+    !matchesRecoveredRecording(reservation, proof.history)
+  )
+    return false;
+  await proof.localWork;
+  if (
+    owned.initializationUnresolved &&
+    (await owned.initializationCleanup?.catch(() => false)) !== true
+  )
+    return false;
+  proof.signal.throwIfAborted();
+  const reader = createRecordingCheckpointService();
+  const [verified, transcript] = await Promise.all([
+    reader.read(proof.history.checkpoint!, proof.signal),
+    proof.history.recoveryTranscript
+      ? reader.readVerifiedObject(
+          proof.history.recoveryTranscript.object,
+          proof.signal,
+        )
+      : undefined,
+  ]);
+  if (
+    verified.missing.length ||
+    (proof.history.recoveryTranscript && !transcript)
+  )
+    return false;
+  return reconcileSettledReservation(owned, proof, async () => {
+    const current = await getDeploymentControlRepository().getMeetingHistory(
+      reservation.historyKey,
+      proof.signal,
+    );
+    return isDeepStrictEqual(current, proof.history);
+  });
+}
 async function reconcileSettledReservation(
   owned: OwnedReservation,
-  proof: Pick<PreservedRecordingReleaseProof, "signal" | "deadline">,
+  proof: Omit<ReservationReleaseProof, "localWork">,
+  recoveryHistoryCurrent?: () => Promise<boolean>,
 ): Promise<boolean> {
   const { reservation } = owned;
   const key = reservationKey(reservation.guildId, reservation.meetingId);
@@ -598,20 +615,14 @@ async function reconcileSettledReservation(
   if (owned.timer) clearInterval(owned.timer);
   await Promise.allSettled([owned.renewal, owned.release]);
   proof.signal.throwIfAborted();
+  if (recoveryHistoryCurrent && !(await recoveryHistoryCurrent())) return false;
   let lease = await getActiveMeetingLease(reservation.guildId, proof.signal);
   if (lease) {
+    if (recoveryHistoryCurrent) return false;
     if (!samePreservedLease(lease, reservation)) return false;
-    try {
-      await releaseActiveMeetingLease(
-        reservation.guildId,
-        reservation.meetingId,
-        reservation.ownerInstanceId,
-        reservation,
-        proof.signal,
-      );
-    } catch {
-      proof.signal.throwIfAborted();
-    }
+    // A submitted delete has an unknown outcome until readback, never replay it.
+    if (owned.release) return false;
+    await releaseOriginalLease(owned, proof);
     lease = await getActiveMeetingLease(reservation.guildId, proof.signal);
   }
   proof.signal.throwIfAborted();
@@ -621,19 +632,6 @@ async function reconcileSettledReservation(
   pendingReservations.delete(key);
   return true;
 }
-function samePreservedLease(
-  lease: ActiveMeetingLease,
-  reservation: SessionReservation,
-) {
-  return (
-    lease.meetingId === reservation.meetingId &&
-    lease.ownerInstanceId === reservation.ownerInstanceId &&
-    lease.executionVersion === reservation.executionVersion &&
-    lease.voiceOperationAttemptId === reservation.voiceOperationAttemptId &&
-    lease.sessionMode === reservation.sessionMode
-  );
-}
-
 export async function unwindSessionInitialization(
   reservation: SessionReservation,
   cleanup?: Promise<boolean>,

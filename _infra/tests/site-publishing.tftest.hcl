@@ -232,3 +232,99 @@ run "site_delivery_matches_its_plan_validator" {
     error_message = "The frontend default behavior runs the route rewrite on viewer requests."
   }
 }
+
+run "sandbox_role_requires_https_alb" {
+  command = plan
+  plan_options { target = [aws_iam_role.sandbox_deploy] }
+  variables {
+    environment        = "sandbox"
+    github_environment = "sandbox"
+    ENABLE_API_ALB     = false
+  }
+  expect_failures = [aws_iam_role.sandbox_deploy]
+}
+
+run "sandbox_role_requires_https_domain" {
+  command = plan
+  plan_options { target = [aws_iam_role.sandbox_deploy] }
+  variables {
+    environment        = "sandbox"
+    github_environment = "sandbox"
+    API_DOMAIN         = ""
+  }
+  expect_failures = [aws_iam_role.sandbox_deploy]
+}
+
+run "sandbox_role_requires_https_certificate" {
+  command = plan
+  plan_options { target = [aws_iam_role.sandbox_deploy] }
+  variables {
+    environment        = "sandbox"
+    github_environment = "sandbox"
+    API_CERT_ARN       = ""
+  }
+  expect_failures = [aws_iam_role.sandbox_deploy]
+}
+
+run "sandbox_role_accepts_hosted_zone_https" {
+  command = plan
+  plan_options { target = [aws_iam_role.sandbox_deploy] }
+  variables {
+    environment        = "sandbox"
+    github_environment = "sandbox"
+    API_CERT_ARN       = ""
+    HOSTED_ZONE_NAME   = "example.test"
+  }
+  assert {
+    condition     = length(aws_iam_role.sandbox_deploy) == 1
+    error_message = "The equivalent input guard must retain the hosted-zone certificate route."
+  }
+}
+
+run "prod_role_requires_https_alb" {
+  command = plan
+  plan_options { target = [aws_iam_role.production_deploy] }
+  variables {
+    environment        = "prod"
+    github_environment = "production"
+    ENABLE_API_ALB     = false
+  }
+  expect_failures = [aws_iam_role.production_deploy]
+}
+
+run "prod_role_requires_https_domain" {
+  command = plan
+  plan_options { target = [aws_iam_role.production_deploy] }
+  variables {
+    environment        = "prod"
+    github_environment = "production"
+    API_DOMAIN         = ""
+  }
+  expect_failures = [aws_iam_role.production_deploy]
+}
+
+run "prod_role_requires_https_certificate" {
+  command = plan
+  plan_options { target = [aws_iam_role.production_deploy] }
+  variables {
+    environment        = "prod"
+    github_environment = "production"
+    API_CERT_ARN       = ""
+  }
+  expect_failures = [aws_iam_role.production_deploy]
+}
+
+run "prod_role_accepts_hosted_zone_https" {
+  command = plan
+  plan_options { target = [aws_iam_role.production_deploy] }
+  variables {
+    environment        = "prod"
+    github_environment = "production"
+    API_CERT_ARN       = ""
+    HOSTED_ZONE_NAME   = "example.test"
+  }
+  assert {
+    condition     = length(aws_iam_role.production_deploy) == 1
+    error_message = "The equivalent input guard must retain the hosted-zone certificate route."
+  }
+}

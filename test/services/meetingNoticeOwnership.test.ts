@@ -49,6 +49,7 @@ jest.mock("../../src/commands/endMeeting", () => ({
     meeting.finalization!.controller.abort(),
 }));
 jest.mock("../../src/meetings", () => ({
+  getPendingMeetingInitializations: () => [],
   getMeeting: jest.fn(),
   deleteMeeting: jest.fn(),
   restoreVoiceSessionNickname: async () => true,
@@ -57,6 +58,7 @@ jest.mock("../../src/services/runtimeWorkAdmissionService", () => ({
   fenceAndSettleSessionWork: async () => true,
 }));
 jest.mock("../../src/services/guildVoiceOperationService", () => ({
+  whenOwnedVoiceSettled: jest.fn(async () => {}),
   settleOwnedVoiceSession: async () => "settled",
   waitOwnedVoiceEffects: async () => {},
 }));

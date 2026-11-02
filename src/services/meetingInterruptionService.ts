@@ -36,6 +36,12 @@ export function createMeetingInterruptionService<D extends Disposition>(
       actual: Promise<InterruptionOutcome>;
       result: Promise<InterruptionOutcome>;
       localSettled: boolean;
+      reconciled?: boolean;
+      reconciliation?: Promise<InterruptionOutcome>;
+      pendingReconciliations?: Map<
+        (budget: PreservationBudget) => Promise<boolean>,
+        number
+      >;
       reason: InterruptionReason;
       originalAttempt?: {
         guildId: string;
@@ -123,8 +129,67 @@ export function createMeetingInterruptionService<D extends Disposition>(
     }
     return result;
   }
+  function reconcile(
+    meeting: MeetingData,
+    deadline: number,
+    run: (budget: PreservationBudget) => Promise<boolean>,
+  ): Promise<InterruptionOutcome> {
+    const entry = owned.get(meeting);
+    if (!entry) return Promise.resolve({ kind: "unresolved" });
+    if (entry.reconciled || !active.has(meeting))
+      return Promise.resolve({ kind: "settled" });
+    if (entry.reconciliation) {
+      entry.pendingReconciliations!.set(
+        run,
+        Math.max(0, deadline - Date.now()),
+      );
+      return entry.reconciliation;
+    }
+    const pending = new Map<
+      (budget: PreservationBudget) => Promise<boolean>,
+      number
+    >();
+    entry.pendingReconciliations = pending;
+    const attempt = async (
+      runAttempt: (budget: PreservationBudget) => Promise<boolean>,
+      attemptDeadline: number,
+    ): Promise<InterruptionOutcome> => {
+      const budget = createPreservationBudget(attemptDeadline);
+      try {
+        if ((await budget.wait(entry.actual)).kind !== "settled")
+          return { kind: "unresolved" };
+        if (!active.has(meeting)) return { kind: "settled" };
+        budget.signal.throwIfAborted();
+        if (!entry.localSettled || !(await runAttempt(budget)))
+          return { kind: "unresolved" };
+        budget.signal.throwIfAborted();
+        entry.reconciled = true;
+        active.delete(meeting);
+        return { kind: "settled" };
+      } catch {
+        return { kind: "unresolved" };
+      } finally {
+        budget.dispose();
+      }
+    };
+    const result = (async () => {
+      let outcome = await attempt(run, deadline);
+      // New progress gets a fresh budget after the actual older effect finishes.
+      while (outcome.kind !== "settled" && pending.size) {
+        const [next, duration] = pending.entries().next().value!;
+        pending.delete(next);
+        outcome = await attempt(next, Date.now() + duration);
+      }
+      entry.reconciliation = undefined;
+      entry.pendingReconciliations = undefined;
+      return outcome;
+    })();
+    entry.reconciliation = result;
+    return result;
+  }
   return {
     interrupt,
+    reconcile,
     checkpoints: () =>
       [...active].map((meeting) => {
         const entry = owned.get(meeting)!;

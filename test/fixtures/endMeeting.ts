@@ -31,6 +31,7 @@ jest.mock("@langfuse/tracing", () => ({
 }));
 
 jest.mock("../../src/services/guildVoiceOperationService", () => ({
+  whenOwnedVoiceSettled: jest.fn(async () => {}),
   settleOwnedVoiceSession: jest.fn(async () => "settled"),
 }));
 
@@ -150,6 +151,7 @@ jest.mock("../../src/utils/meetingLifecycle", () => ({
 }));
 
 jest.mock("../../src/meetings", () => ({
+  getPendingMeetingInitializations: () => [],
   deleteMeeting: jest.fn(),
   getMeeting: jest.fn(),
   hasMeeting: jest.fn(),

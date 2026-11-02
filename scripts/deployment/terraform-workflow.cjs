@@ -29,6 +29,11 @@ const {
 } = require("./validate-runtime-plan.cjs");
 const { siteTargets, validateSitePlan } = require("./validate-site-plan.cjs");
 const {
+  sandboxSitePermissionsTargets,
+  sandboxSitePermissionsBinding,
+  validateSandboxSitePermissionsPlan,
+} = require("./validate-sandbox-site-permissions-plan.cjs");
+const {
   processingRetryTargets,
   validateProcessingRetryPlan,
 } = require("./validate-processing-retry-plan.cjs");
@@ -36,24 +41,33 @@ const scopedValidators = {
   "deployment-prerequisites": validatePrerequisitePlan,
   "deployment-runtime": validateRuntimePlan,
   "site-delivery": validateSitePlan,
+  "sandbox-site-permissions": validateSandboxSitePermissionsPlan,
   "processing-retry": validateProcessingRetryPlan,
 };
 // Bound scopes revalidate their restored plan before Apply.
 const appliedScopes = new Set([
   "deployment-runtime",
   "site-delivery",
+  "sandbox-site-permissions",
   "processing-retry",
 ]);
 const scopedTargets = {
   "deployment-runtime": runtimeTargets,
   "site-delivery": siteTargets,
+  "sandbox-site-permissions": sandboxSitePermissionsTargets,
   "processing-retry": processingRetryTargets,
 };
 // Resource names differ by environment while sandbox and production share an account.
-const scopeBinding = (options, invocation) => ({
-  ...options.binding,
-  environment: invocation.environment,
-});
+const scopeBinding = (options, invocation) =>
+  invocation.scope === "sandbox-site-permissions"
+    ? sandboxSitePermissionsBinding(
+        options.binding,
+        JSON.parse(options.env.GITHUB_VARS_JSON),
+      )
+    : {
+        ...options.binding,
+        environment: invocation.environment,
+      };
 const prerequisites = new WeakMap();
 function privatePrerequisiteVerified(token, config) {
   const binding = prerequisites.get(token);
@@ -238,6 +252,7 @@ async function plan(options, invocation, e) {
     validateScope(
       JSON.parse(Buffer.from(shown.stdout, "base64").toString()),
       scopeBinding(options, invocation),
+      { directory: options.directory },
     );
   }
   const shown = await e.terraform(["show", "-no-color", "tfplan"]);
@@ -346,6 +361,7 @@ async function apply(options, invocation, e, startApply) {
     scopedValidators[invocation.scope](
       JSON.parse(Buffer.from(shown.stdout, "base64").toString()),
       scopeBinding(options, invocation),
+      { directory: options.directory },
     );
   }
   let prerequisite;
