@@ -239,7 +239,6 @@ const commandHandlers: Record<
   billing: handleBillingCommand,
   say: handleSayCommand,
   tts: handleTtsCommand,
-  leave: (interaction) => handleLeaveCommand(client, interaction),
   whois: handleWhoisCommand,
   feedback: handleFeedbackCommand,
 };
@@ -247,11 +246,12 @@ const commandHandlers: Record<
 const handleCommandInteraction = async (
   interaction: ChatInputCommandInteraction,
   signal?: AbortSignal,
+  work?: RuntimeWorkClaim,
 ) => {
   const { commandName } = interaction;
   signal?.throwIfAborted();
   if (commandName === "leave") {
-    await handleLeaveCommand(client, interaction, signal);
+    await handleLeaveCommand(client, interaction, signal, work);
     return;
   }
   if (commandName === "startmeeting") {
@@ -409,7 +409,7 @@ const handleInteractionCreate = async (
 ) => {
   signal?.throwIfAborted();
   if (interaction.isChatInputCommand()) {
-    await handleCommandInteraction(interaction, signal);
+    await handleCommandInteraction(interaction, signal, work);
     return;
   }
   if (interaction.isUserContextMenuCommand()) {
@@ -418,7 +418,7 @@ const handleInteractionCreate = async (
       return;
     }
     if (interaction.commandName === DISMISS_AUTORECORD_COMMAND_NAME) {
-      await handleDismissAutoRecord(client, interaction, signal);
+      await handleDismissAutoRecord(client, interaction, signal, work);
       return;
     }
     await interaction.reply({

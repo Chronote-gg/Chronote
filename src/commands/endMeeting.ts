@@ -7,7 +7,10 @@ import {
 import { captureMeetingCompleted } from "../observability/meetingCompletionAnalytics";
 import { getMeetingProcessingSignal } from "../services/meetingProcessingLifetime";
 import type { RuntimeWorkClaim } from "../services/runtimeWorkAdmissionService";
-import { initiatingStopInterruption } from "../services/meetingStopInterruption";
+import {
+  deferMeetingStopInteraction,
+  initiatingStopInterruption,
+} from "../services/meetingStopInterruption";
 import { acknowledgeRecordingDeliveryHistory } from "../services/recordingDeliveryService";
 import { interruptOwnedMeeting } from "../services/ownedMeetingInterruption";
 import {
@@ -221,10 +224,7 @@ export async function handleEndMeetingButton(
     }
 
     if (!interaction.deferred && !interaction.replied) {
-      if (work) {
-        await work.trackEffect(() => interaction.deferUpdate());
-        work.acknowledgeInteractionDefer();
-      } else await interaction.deferUpdate();
+      await deferMeetingStopInteraction(work, () => interaction.deferUpdate());
     }
     work?.signal.throwIfAborted();
     await persistExplicitMeetingStop(meeting, MEETING_END_REASONS.BUTTON);
@@ -261,14 +261,17 @@ export async function handleEndMeetingOther(
   client: Client,
   meeting: MeetingData,
   signal?: AbortSignal,
+  work?: RuntimeWorkClaim,
 ) {
+  signal?.throwIfAborted();
+  const original = meeting.reservation ? { ...meeting.reservation } : undefined;
   try {
-    signal?.throwIfAborted();
     await withMeetingEndTrace(meeting, async () => {
       await runEndMeetingFlow({ client, meeting });
     });
   } catch (error) {
-    if (signal) throw error;
+    if (signal)
+      throw work ? initiatingStopInterruption(meeting, original, error) : error;
     console.error("Error during meeting end:", error);
   }
 }
