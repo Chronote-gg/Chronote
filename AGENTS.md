@@ -15,7 +15,7 @@
 
 ## Tech stack
 
-- Runtime: Node.js 24.22.1, TypeScript.
+- Runtime: Node.js 24.22.2, TypeScript.
 - Discord: discord.js v14, discord-api-types, @discordjs/voice for audio capture, @discordjs/opus, prism-media.
 - AI: openai SDK; gpt-4o-transcribe for transcription; gpt-6.1-sol for notes; gpt-5.2 for summaries, cleanup, corrections and image prompts; gpt-5-mini for live gate; DALL-E 3 for images.
 - Observability and prompt management: Langfuse for tracing, prompt versioning, and prompt sync scripts. AMG (Grafana) service account token is auto-rotated via EventBridge + Lambda (see `_infra/grafana.tf` and `_infra/README.md`). Critical alerts (ECS down, ALB 5xx, unhealthy hosts, rotation failures, OpenAI quota or rate-limit rejections, processing retry worker failures) are sent via SNS email and optionally to a Discord channel via a separate Node.js Lambda (see `_infra/notifications.tf` and `_infra/README.md`).
