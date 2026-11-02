@@ -222,15 +222,15 @@ wheels = [
 
 [[package]]
 name = "lizard"
-version = "1.24.1"
+version = "1.25.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "pathspec" },
     { name = "pygments" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/05/87/0352f911886e8b10b06b36dca674b9da91a25112bd08253b84346a1815e5/lizard-1.24.1.tar.gz", hash = "sha256:c022cf1aac8170994b175e2a700f0535088f66da7e6bdf6c59fbd3b716cd10ac", size = 112474, upload-time = "2026-10-05T22:50:11.007Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/e6/67/0c5fe939ee37df57f415f4fe461a894ae12d18e9fea89705cbd2525967b6/lizard-1.25.0.tar.gz", hash = "sha256:e37e0da72be4fd4a254f511470af2b2f6800128879844b2844695641baa83112", size = 152459, upload-time = "2026-11-02T08:00:04.944Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/8b/2d/6e9562b7f3aa3f4e3b8899be26b4dbc67752340b2f63beeba441956aff58/lizard-1.24.1-py2.py3-none-any.whl", hash = "sha256:746060a3e9a375af7340b2d4c6aab307b8a8b4199339c36ddc7afc4188b53d1c", size = 122005, upload-time = "2026-10-05T22:50:09.48Z" },
+    { url = "https://files.pythonhosted.org/packages/90/f9/93b0c4d4d64eb5f126419cee90580b75ee917c4fabe0415c8214907a2bfb/lizard-1.25.0-py2.py3-none-any.whl", hash = "sha256:e82fc8ad93a4c9025f7dad9428bdcfaa8caedfb4358a8ea5860de35a3794626f", size = 163311, upload-time = "2026-11-02T08:00:03.227Z" },
 ]
 
 [[package]]
@@ -246,7 +246,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "boto3", specifier = ">=1.43.109" },
-    { name = "lizard", specifier = "==1.24.1" },
+    { name = "lizard", specifier = "==1.25.0" },
     { name = "requests", specifier = ">=2.34.2" },
 ]
 

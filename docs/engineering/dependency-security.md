@@ -22,7 +22,9 @@ Keep TypeScript 6 until its consumers support the TypeScript 7 compiler API, and
 
 ## Compatibility decisions on 2026-11-02
 
-Use Node 24.22.2 consistently in `.nvmrc`, the Docker base and the engine floor. Refresh compatible SDKs and lockfiles, including AWS SDK 3.1161, OpenAI 7.47, Langfuse 6.1, PostHog and the AWS Terraform provider 6.71. The Langfuse numeric-token-details patch still applies to 6.1 and must remain in place.
+Use Node 24.22.2 consistently in `.nvmrc`, the Docker bases, the speech benchmark acceptance validator and the engine floor. Acceptance fixtures use the same runtime and explicitly reject evidence from the previous runtime. Refresh compatible SDKs and lockfiles, including AWS SDK 3.1161, OpenAI 7.47, Langfuse 6.1, PostHog and the AWS Terraform provider 6.71. The AWS update also refreshes the [audited delivery source model](../terraform-meeting-source-model.md), exact installed-provider evidence and production-bootstrap lock without changing its plan allowances. The Langfuse numeric-token-details patch still applies to 6.1 and must remain in place.
+
+Upgrade Lizard from 1.24.1 to [1.25.0](https://github.com/terryyin/lizard/releases/tag/1.25.0), whose release fixes the TypeScript callback and delimiter parser regressions behind the old pin. The repository TypeScript/TSX/JavaScript/JSX scan completes successfully. Continue excluding the known-bad 1.24.2 and 1.24.3 releases.
 
 Keep the three tRPC packages together at 11.22.1. At this maintenance check, `@trpc/react-query` 11.23.0 requires client and server 11.23.0, but the client 11.23.0 registry endpoint returns 404. Reassess the complete release before advancing this coordinated pin.
 

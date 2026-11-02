@@ -107,7 +107,7 @@ export function inspectBenchmark(input, fingerprint) {
         memoryBytes: z.literal(1073741824),
         source: z.enum(["cgroup-v1", "cgroup-v2"]),
       }),
-      nodeVersion: z.literal("v24.22.1"),
+      nodeVersion: z.literal("v24.22.2"),
       durationSeconds: integer.min(1).max(600),
       fastPerSecond: z.literal(4),
       slowPerSecond: z.literal(1),

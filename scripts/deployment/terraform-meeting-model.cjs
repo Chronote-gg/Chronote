@@ -8,7 +8,7 @@ const { bindingHash } = require("./binding-hash.cjs");
 const { digest } = require("./collector-payload.cjs");
 // Source audit and maintenance contract: docs/terraform-meeting-source-model.md.
 const sourceModel =
-  "3e12ba2215156fad9f2188f477ac5b5c491b6e8d78ef03d0067b1800eb71194f";
+  "59439234b7b744186c8e69e8ffb956182e2433467e282cc9dde49161a36b9fe7";
 const awsProvider = "registry.terraform.io/hashicorp/aws";
 const tableAddress = "aws_dynamodb_table.meeting_history_table";
 const resourceChecks = [
@@ -176,7 +176,7 @@ function meetingModelEvidence(
   );
   assert.equal(installed.terraform_version, "1.17.1");
   assert.equal(plan.terraform_version, installed.terraform_version);
-  assert.equal(installed.provider_selections?.[awsProvider], "6.70.0");
+  assert.equal(installed.provider_selections?.[awsProvider], "6.71.0");
   verifySource(directory, sourceSha);
   const token = {};
   proofs.set(token, bindingHash(plan));

@@ -21,7 +21,7 @@ source relation. A later Apply commit is allowed only under the existing verifie
 relation proving Terraform inputs unchanged. The model then binds an opaque proof
 to that exact rendering. A boolean, digest supplied by a caller, or another plan's
 proof cannot enable it. Readonly init must succeed and a subsequent version JSON
-record must identify Terraform 1.17.1 and installed AWS 6.70.0. The checked lock
+record must identify Terraform 1.17.1 and installed AWS 6.71.0. The checked lock
 pins the installation. Older captures without that record remain refused.
 
 ## Dependency audit
@@ -78,12 +78,12 @@ resource reads either local, the log group or the topic.
 
 ## Computed GSI representation
 
-The official `table.go` files at v6.69.1 and v6.70.0 are byte-identical. In
-[AWS provider v6.70.0 table.go](https://github.com/hashicorp/terraform-provider-aws/blob/v6.70.0/internal/service/dynamodb/table.go#L619-L642),
+The official `table.go` files at v6.69.1, v6.70.0 and v6.71.0 are byte-identical. In
+[AWS provider v6.71.0 table.go](https://github.com/hashicorp/terraform-provider-aws/blob/v6.71.0/internal/service/dynamodb/table.go#L619-L642),
 `warmThroughputSchema` is both optional and computed, as are its read/write unit
 fields. The GSI schema uses it too. It is writable when configured, so a computed
 mask by itself cannot justify ignoring it.
-The same version's [GSI update comparison](https://github.com/hashicorp/terraform-provider-aws/blob/v6.70.0/internal/service/dynamodb/table.go#L2256-L2272)
+The same version's [GSI update comparison](https://github.com/hashicorp/terraform-provider-aws/blob/v6.71.0/internal/service/dynamodb/table.go#L2256-L2272)
 skips a warm-throughput update when the new configuration omits it or leaves it
 empty. This guard requires actual configuration absence before using that rule.
 
@@ -139,11 +139,29 @@ lookup. Its closure, excluded checks, unknown handling and installed-provider
 requirements are unchanged. The source pin is refreshed only for these declared
 edits to `sandbox-deployment.tf` and `production-deployment.tf`.
 
-The checked application lock and exceptional meeting model both require AWS 6.70.0;
+The checked application lock and exceptional meeting model both require AWS 6.71.0;
 the model also requires Terraform 1.17.1 and post-init installation evidence.
 Offline mocks use their own checked locks and the CI Terraform 1.16.0 toolchain;
 they do not prove native meeting-model acceptance. The exact version refusals
 stay intact, and site-policy installation acceptance remains separate.
+
+### Weekly provider audit (2026-11-02)
+
+The application lock advances AWS 6.70.0 to 6.71.0 and refreshes signed provider
+checksums. All top-level Terraform configuration files are unchanged. The
+23-file source manifest is recomputed for the new lock. The DynamoDB implementation
+is byte-identical across these provider versions, including the computed GSI
+schema and update comparison described above. The closure, excluded checks,
+allowed effects and unknown-value refusals are unchanged. Installed-provider
+records and synthetic fixtures now require 6.71.0; a regression rejects 6.70.0
+records, and existing tests still reject changed source and raw lock bytes.
+
+The production bootstrap separately advances its compatible AWS lock from 6.68.0
+to 6.71.0. Its IAM role, role policy, policy, S3 bucket, versioning, public-access,
+encryption and bucket-policy implementations are byte-identical between those
+versions. Its offline mock tests and validation use the required Terraform 1.16.0.
+The sandbox bootstrap retains its intentional exact AWS 6.69.1 pin. No live plan,
+Apply, policy installation or private acceptance evidence is produced by this audit.
 
 ### Future source changes
 
