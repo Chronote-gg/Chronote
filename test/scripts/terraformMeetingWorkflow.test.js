@@ -246,53 +246,60 @@ test.each([
   }
 });
 
+// Real Git source checks run for both Plan and restored Apply.
 test.each([
   "none",
   "omit-installation",
   "wrong-provider",
   "missing-source",
   "wrong-run-source",
-])("native delivery workflow %s", async (fault) => {
-  const f = fixture();
-  f.controls.environment = "sandbox";
-  f.controls.planJson = nativeMeetingPlan();
-  const sourceSha = copyModelSource(f.directory);
-  f.controls.producerSha = sourceSha;
-  f.controls.applySha = sourceSha;
-  if (fault === "missing-source") rmSync(join(f.directory, "_infra/main.tf"));
-  try {
-    const options = f.options({ ...sandbox, sourceSha });
-    const command = options.command;
-    options.command = async (...args) => {
-      const record = await command(...args);
-      if (record.command === "terraform" && record.args[1] === "version") {
-        const data = JSON.parse(
-          Buffer.from(installationRecords()[1].stdout, "base64").toString(),
+])(
+  "native delivery workflow %s",
+  async (fault) => {
+    const f = fixture();
+    f.controls.environment = "sandbox";
+    f.controls.planJson = nativeMeetingPlan();
+    const sourceSha = copyModelSource(f.directory);
+    f.controls.producerSha = sourceSha;
+    f.controls.applySha = sourceSha;
+    if (fault === "missing-source") rmSync(join(f.directory, "_infra/main.tf"));
+    try {
+      const options = f.options({ ...sandbox, sourceSha });
+      const command = options.command;
+      options.command = async (...args) => {
+        const record = await command(...args);
+        if (record.command === "terraform" && record.args[1] === "version") {
+          const data = JSON.parse(
+            Buffer.from(installationRecords()[1].stdout, "base64").toString(),
+          );
+          if (fault === "omit-installation") delete data.provider_selections;
+          if (fault === "wrong-provider")
+            data.provider_selections["registry.terraform.io/hashicorp/aws"] =
+              "6.69.1";
+          record.stdout = Buffer.from(JSON.stringify(data)).toString("base64");
+        }
+        return record;
+      };
+      if (fault === "wrong-run-source") f.controls.producerSha = "0".repeat(40);
+      const result = await runTerraform(options);
+      if (fault === "none" && result.status !== "planned-changes")
+        throw new Error(
+          readFileSync(join(options.privateDirectory, "failure.txt"), "utf8"),
         );
-        if (fault === "omit-installation") delete data.provider_selections;
-        if (fault === "wrong-provider")
-          data.provider_selections["registry.terraform.io/hashicorp/aws"] =
-            "6.70.0";
-        record.stdout = Buffer.from(JSON.stringify(data)).toString("base64");
-      }
-      return record;
-    };
-    if (fault === "wrong-run-source") f.controls.producerSha = "0".repeat(40);
-    const result = await runTerraform(options);
-    if (fault === "none" && result.status !== "planned-changes")
-      throw new Error(
-        readFileSync(join(options.privateDirectory, "failure.txt"), "utf8"),
+      expect(result.status).toBe(
+        fault === "none" ? "planned-changes" : "failed",
       );
-    expect(result.status).toBe(fault === "none" ? "planned-changes" : "failed");
-    expect(
-      readdirSync(options.privateDirectory).includes("bundle-reference.json"),
-    ).toBe(fault === "none");
-    expect(f.commands.some((c) => c.args[1] === "apply")).toBe(false);
-    if (fault === "none") {
-      const applied = await applySandbox(f, options, result, () => {});
-      expect(applied.status).toBe("applied");
+      expect(
+        readdirSync(options.privateDirectory).includes("bundle-reference.json"),
+      ).toBe(fault === "none");
+      expect(f.commands.some((c) => c.args[1] === "apply")).toBe(false);
+      if (fault === "none") {
+        const applied = await applySandbox(f, options, result, () => {});
+        expect(applied.status).toBe("applied");
+      }
+    } finally {
+      rmSync(f.directory, { recursive: true, force: true });
     }
-  } finally {
-    rmSync(f.directory, { recursive: true, force: true });
-  }
-});
+  },
+  30000,
+);

@@ -8,6 +8,7 @@ import {
   copyModelSource,
 } from "../fixtures/deployment/terraformMeetingNative.js";
 import { Buffer } from "node:buffer";
+import { execFileSync } from "node:child_process";
 import {
   mkdtempSync,
   mkdirSync,
@@ -19,6 +20,28 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { verifySource } from "../../scripts/deployment/terraform-meeting-model.cjs";
 import { identity } from "../fixtures/deployment/terraformMeetingUpdate.js";
+
+test("committed AWS lock and post-init evidence pass the native delivery verifier", () => {
+  const lock = execFileSync("git", [
+    "show",
+    "HEAD:_infra/.terraform.lock.hcl",
+  ]).toString();
+  const lockedVersion = lock.match(
+    /provider "registry\.terraform\.io\/hashicorp\/aws" \{\s+version\s*=\s*"([^"]+)"/,
+  )?.[1];
+  expect(lockedVersion).toBeDefined();
+  const output = installationRecords();
+  const installed = JSON.parse(
+    Buffer.from(output[1].stdout, "base64").toString(),
+  );
+  expect(
+    installed.provider_selections["registry.terraform.io/hashicorp/aws"],
+  ).toBe(lockedVersion);
+  const plan = nativeMeetingPlan();
+  expect(() =>
+    verifyMeetingUpdatePlan(plan, identity, nativeEvidence(plan, { output })),
+  ).not.toThrow();
+});
 
 test("native scoped shape needs source and installed-provider evidence", () => {
   const plan = nativeMeetingPlan();
@@ -540,7 +563,7 @@ test.each([
   if (fault === "wrong-provider" || fault === "wrong-terraform") {
     const v = JSON.parse(Buffer.from(output[1].stdout, "base64").toString());
     if (fault === "wrong-provider")
-      v.provider_selections["registry.terraform.io/hashicorp/aws"] = "6.70.0";
+      v.provider_selections["registry.terraform.io/hashicorp/aws"] = "6.69.1";
     else v.terraform_version = "1.16.0";
     output[1].stdout = Buffer.from(JSON.stringify(v)).toString("base64");
   }
