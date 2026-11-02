@@ -87,9 +87,11 @@ function nativeCandidate(noop = false) {
     c,
     "aws_s3_bucket_server_side_encryption_configuration",
   );
+  encryption.change.after.expected_bucket_owner = "";
   encryption.change.after.rule[0].blocked_encryption_types = ["SSE-C"];
   encryption.change.before = structuredClone(encryption.change.after);
   const versioning = entry(c, "aws_s3_bucket_versioning");
+  versioning.change.after.expected_bucket_owner = "";
   versioning.change.after.versioning_configuration[0].mfa_delete = "Disabled";
   versioning.change.before = structuredClone(versioning.change.after);
   return c;
@@ -100,6 +102,156 @@ test("accepts native unchanged readback for policy update and no-op", () => {
     assert.equal(inspect(c.plan, c.binding), true);
   }
 });
+for (const type of [
+  "aws_s3_bucket_server_side_encryption_configuration",
+  "aws_s3_bucket_versioning",
+]) {
+  test(`accepts the configured account owner for ${type}`, () => {
+    const c = nativeCandidate();
+    for (const expression of [
+      { references: ["var.sandbox_account_id"] },
+      { constant_value: c.binding.variables.sandbox_account_id },
+      { constant_value: null },
+    ]) {
+      config(c, type).expressions.expected_bucket_owner = expression;
+      const { before, after } = entry(c, type).change;
+      before.expected_bucket_owner = after.expected_bucket_owner =
+        expression.constant_value === null
+          ? null
+          : c.binding.variables.sandbox_account_id;
+      assert.equal(inspect(c.plan, c.binding), true);
+    }
+  });
+  for (const [label, alter] of [
+    [
+      "configured account",
+      (c) => {
+        config(c, type).expressions.expected_bucket_owner = {
+          constant_value: c.binding.variables.sandbox_account_id,
+        };
+      },
+    ],
+    [
+      "configured account reference",
+      (c) => {
+        config(c, type).expressions.expected_bucket_owner = {
+          references: ["var.sandbox_account_id"],
+        };
+      },
+    ],
+    [
+      "configured empty",
+      (c) => {
+        config(c, type).expressions.expected_bucket_owner = {
+          constant_value: "",
+        };
+      },
+    ],
+    [
+      "configured wrong expression",
+      (c) => {
+        config(c, type).expressions.expected_bucket_owner = {
+          references: ["var.github_owner_id"],
+        };
+      },
+    ],
+    [
+      "configured null",
+      (c) => {
+        config(c, type).expressions.expected_bucket_owner = {
+          constant_value: null,
+        };
+      },
+    ],
+    [
+      "explicit null expression",
+      (c) => {
+        config(c, type).expressions.expected_bucket_owner = null;
+      },
+    ],
+    [
+      "unknown owner",
+      (c) => {
+        entry(c, type).change.after_unknown.expected_bucket_owner = true;
+      },
+    ],
+    [
+      "foreign owner",
+      (c) => {
+        const { before, after } = entry(c, type).change;
+        before.expected_bucket_owner = after.expected_bucket_owner =
+          "999999999999";
+      },
+    ],
+    [
+      "changed owner",
+      (c) => {
+        entry(c, type).change.before.expected_bucket_owner = null;
+      },
+    ],
+    [
+      "changed owner to configured account",
+      (c) => {
+        entry(c, type).change.after.expected_bucket_owner =
+          c.binding.variables.sandbox_account_id;
+      },
+    ],
+    [
+      "missing prior owner",
+      (c) => {
+        delete entry(c, type).change.before.expected_bucket_owner;
+      },
+    ],
+    [
+      "missing independent owner binding",
+      (c) => {
+        delete c.binding.bucketOwnerCanonicalId;
+      },
+    ],
+    [
+      "update action",
+      (c) => {
+        entry(c, type).change.actions = ["update"];
+      },
+    ],
+    [
+      "replacement action",
+      (c) => {
+        entry(c, type).change.actions = ["delete", "create"];
+      },
+    ],
+  ])
+    test(`empty owner for ${type} refuses ${label}`, () => {
+      const c = nativeCandidate();
+      alter(c);
+      assert.throws(() => inspect(c.plan, c.binding));
+    });
+  test(`cold-create refuses empty owner for ${type}`, () => {
+    const plan = fixture("create-plan.json");
+    const binding = fixture("reviewed-binding.json");
+    entry({ plan }, type).change.after.expected_bucket_owner = "";
+    assert.throws(() =>
+      require("./verify-plan.cjs").validateBootstrapPlan(plan, binding),
+    );
+  });
+}
+for (const type of [
+  "aws_s3_bucket",
+  "aws_s3_bucket_public_access_block",
+  "aws_s3_bucket_ownership_controls",
+  "aws_s3_bucket_policy",
+  "aws_iam_role",
+  "aws_iam_role_policy",
+  "aws_caller_identity",
+  "aws_kms_key",
+  "aws_iam_openid_connect_provider",
+])
+  test(`refuses unchanged empty owner on other resource ${type}`, () => {
+    const c = candidate();
+    const { before, after } = entry(c, type).change;
+    before.expected_bucket_owner = after.expected_bucket_owner = "";
+    assert.throws(() => inspect(c.plan, c.binding));
+  });
 test("compares the observed bucket policy semantically and accepts null boundary", () => {
   const c = nativeCandidate();
   const bucket = entry(c, "aws_s3_bucket");
@@ -588,7 +740,7 @@ test("CLI accepts reviewed cold-create and bounded-update documents", () => {
   try {
     for (const update of [false, true]) {
       const c = update
-        ? candidate()
+        ? nativeCandidate()
         : {
             plan: fixture("create-plan.json"),
             binding: fixture("reviewed-binding.json"),
