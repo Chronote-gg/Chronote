@@ -35,6 +35,7 @@ function candidate(noop = false) {
     policy.change.before.policy = previous.policy;
     policy.change.actions = ["update"];
   }
+  binding.bucketOwnerCanonicalId = "a".repeat(64);
   binding.previousRolePolicySha256 = noop
     ? hash(policy.change.before.policy)
     : previous.sha256;
@@ -47,7 +48,7 @@ test("accepts only the reviewed runner policy update and a fully checked no-op",
     assert.equal(inspect(c.plan, c.binding), true);
   }
 });
-test("accepts the targeted policy graph without unrelated storage instances", () => {
+test("refuses a synthetic complete envelope missing dedicated storage resources", () => {
   const c = candidate();
   c.plan.resource_changes = c.plan.resource_changes.filter((r) =>
     [
@@ -56,11 +57,273 @@ test("accepts the targeted policy graph without unrelated storage instances", ()
       "aws_iam_openid_connect_provider",
     ].includes(r.type),
   );
-  assert.equal(inspect(c.plan, c.binding), true);
+  assert.throws(
+    () => inspect(c.plan, c.binding),
+    /missing reviewed bootstrap resource/,
+  );
 });
 const entry = (c, type) => c.plan.resource_changes.find((r) => r.type === type);
 const config = (c, type) =>
   c.plan.configuration.root_module.resources.find((r) => r.type === type);
+function nativeCandidate(noop = false) {
+  const c = candidate(noop);
+  const bucket = entry(c, "aws_s3_bucket");
+  Object.assign(bucket.change.after, fixture("native-readback.json"));
+  bucket.change.after.policy = entry(
+    c,
+    "aws_s3_bucket_policy",
+  ).change.after.policy;
+  bucket.change.before = structuredClone(bucket.change.after);
+  const role = entry(c, "aws_iam_role");
+  role.change.after.permissions_boundary = "";
+  role.change.after.inline_policy = [
+    {
+      name: c.policy.change.after.name,
+      policy: c.policy.change.before.policy,
+    },
+  ];
+  role.change.before = structuredClone(role.change.after);
+  const encryption = entry(
+    c,
+    "aws_s3_bucket_server_side_encryption_configuration",
+  );
+  encryption.change.after.rule[0].blocked_encryption_types = ["SSE-C"];
+  encryption.change.before = structuredClone(encryption.change.after);
+  const versioning = entry(c, "aws_s3_bucket_versioning");
+  versioning.change.after.versioning_configuration[0].mfa_delete = "Disabled";
+  versioning.change.before = structuredClone(versioning.change.after);
+  return c;
+}
+test("accepts native unchanged readback for policy update and no-op", () => {
+  for (const noop of [false, true]) {
+    const c = nativeCandidate(noop);
+    assert.equal(inspect(c.plan, c.binding), true);
+  }
+});
+test("compares the observed bucket policy semantically and accepts null boundary", () => {
+  const c = nativeCandidate();
+  const bucket = entry(c, "aws_s3_bucket");
+  bucket.change.after.policy = JSON.stringify(
+    JSON.parse(bucket.change.after.policy),
+    null,
+    2,
+  );
+  bucket.change.before = structuredClone(bucket.change.after);
+  const role = entry(c, "aws_iam_role");
+  role.change.before.permissions_boundary =
+    role.change.after.permissions_boundary = null;
+  assert.equal(inspect(c.plan, c.binding), true);
+});
+for (const [label, alter] of [
+  ["missing owner binding", (c) => delete c.binding.bucketOwnerCanonicalId],
+  [
+    "invalid owner binding",
+    (c) => (c.binding.bucketOwnerCanonicalId = "owner"),
+  ],
+  [
+    "wrong owner",
+    (c) =>
+      (entry(c, "aws_s3_bucket").change.after.grant[0].id = "b".repeat(64)),
+  ],
+  [
+    "extra owner grant",
+    (c) =>
+      entry(c, "aws_s3_bucket").change.after.grant.push(
+        structuredClone(entry(c, "aws_s3_bucket").change.after.grant[0]),
+      ),
+  ],
+  [
+    "public grant",
+    (c) =>
+      Object.assign(entry(c, "aws_s3_bucket").change.after.grant[0], {
+        type: "Group",
+        uri: "http://acs.amazonaws.com/groups/global/AllUsers",
+      }),
+  ],
+  [
+    "extra grant permission",
+    (c) =>
+      entry(c, "aws_s3_bucket").change.after.grant[0].permissions.push("READ"),
+  ],
+  [
+    "configured ACL",
+    (c) =>
+      (config(c, "aws_s3_bucket").expressions.acl = {
+        constant_value: "private",
+      }),
+  ],
+  [
+    "configured grant",
+    (c) => (config(c, "aws_s3_bucket").expressions.grant = {}),
+  ],
+  [
+    "configured policy",
+    (c) => (config(c, "aws_s3_bucket").expressions.policy = {}),
+  ],
+  [
+    "configured encryption",
+    (c) =>
+      (config(
+        c,
+        "aws_s3_bucket",
+      ).expressions.server_side_encryption_configuration = {}),
+  ],
+  [
+    "configured versioning",
+    (c) => (config(c, "aws_s3_bucket").expressions.versioning = {}),
+  ],
+  [
+    "foreign boundary",
+    (c) =>
+      (entry(c, "aws_iam_role").change.after.permissions_boundary =
+        "arn:aws:iam::123456789012:policy/foreign"),
+  ],
+  [
+    "configured empty boundary",
+    (c) =>
+      (config(c, "aws_iam_role").expressions.permissions_boundary = {
+        constant_value: "",
+      }),
+  ],
+  [
+    "second inline policy",
+    (c) =>
+      entry(c, "aws_iam_role").change.after.inline_policy.push({
+        name: "extra",
+        policy: "{}",
+      }),
+  ],
+  [
+    "changed inline shadow",
+    (c) =>
+      (entry(c, "aws_iam_role").change.after.inline_policy[0].policy += " "),
+  ],
+  [
+    "configured inline policy",
+    (c) => (config(c, "aws_iam_role").expressions.inline_policy = {}),
+  ],
+  [
+    "changed shadow policy",
+    (c) => (entry(c, "aws_s3_bucket").change.after.policy = "{}"),
+  ],
+  [
+    "changed dedicated policy",
+    (c) => (entry(c, "aws_s3_bucket_policy").change.after.policy = "{}"),
+  ],
+  ["drift", (c) => (c.plan.resource_drift = [{}])],
+  ["incomplete", (c) => (c.plan.complete = false)],
+  ...[
+    "grant",
+    "policy",
+    "server_side_encryption_configuration",
+    "versioning",
+  ].map((field) => [
+    "unknown " + field,
+    (c) => (entry(c, "aws_s3_bucket").change.after_unknown[field] = true),
+  ]),
+  [
+    "unknown boundary",
+    (c) =>
+      (entry(c, "aws_iam_role").change.after_unknown.permissions_boundary =
+        true),
+  ],
+  [
+    "unknown embedded field",
+    (c) => (entry(c, "aws_s3_bucket").change.after.versioning[0].extra = false),
+  ],
+  [
+    "wrong shadow key",
+    (c) =>
+      (entry(
+        c,
+        "aws_s3_bucket",
+      ).change.after.server_side_encryption_configuration[0].rule[0].apply_server_side_encryption_by_default[0].kms_master_key_id =
+        "foreign"),
+  ],
+  [
+    "wrong shadow algorithm",
+    (c) =>
+      (entry(
+        c,
+        "aws_s3_bucket",
+      ).change.after.server_side_encryption_configuration[0].rule[0].apply_server_side_encryption_by_default[0].sse_algorithm =
+        "AES256"),
+  ],
+  [
+    "shadow bucket key",
+    (c) =>
+      (entry(
+        c,
+        "aws_s3_bucket",
+      ).change.after.server_side_encryption_configuration[0].rule[0].bucket_key_enabled =
+        true),
+  ],
+  [
+    "shadow suspended versioning",
+    (c) =>
+      (entry(c, "aws_s3_bucket").change.after.versioning[0].enabled = false),
+  ],
+  [
+    "shadow MFA delete",
+    (c) =>
+      (entry(c, "aws_s3_bucket").change.after.versioning[0].mfa_delete = true),
+  ],
+  [
+    "dedicated bucket key",
+    (c) =>
+      (entry(
+        c,
+        "aws_s3_bucket_server_side_encryption_configuration",
+      ).change.after.rule[0].bucket_key_enabled = true),
+  ],
+  [
+    "dedicated versioning",
+    (c) =>
+      (entry(
+        c,
+        "aws_s3_bucket_versioning",
+      ).change.after.versioning_configuration[0].status = "Suspended"),
+  ],
+  [
+    "dedicated MFA delete",
+    (c) =>
+      (entry(
+        c,
+        "aws_s3_bucket_versioning",
+      ).change.after.versioning_configuration[0].mfa_delete = "Enabled"),
+  ],
+  [
+    "dedicated SSE-C restriction",
+    (c) =>
+      (entry(
+        c,
+        "aws_s3_bucket_server_side_encryption_configuration",
+      ).change.after.rule[0].blocked_encryption_types = ["aws:kms"]),
+  ],
+])
+  test(`native readback refuses ${label}`, () => {
+    const c = nativeCandidate();
+    alter(c);
+    // Preserve no-op byte equality so semantic validation, not a changed-field check, refuses.
+    for (const r of c.plan.resource_changes.filter(
+      (r) => r.change.actions[0] === "no-op",
+    ))
+      r.change.before = structuredClone(r.change.after);
+    assert.throws(() => inspect(c.plan, c.binding));
+  });
+test("cold-create rejects owner metadata and native embedded controls", () => {
+  const { validateBootstrapPlan } = require("./verify-plan.cjs");
+  const plan = fixture("create-plan.json"),
+    binding = fixture("reviewed-binding.json");
+  binding.bucketOwnerCanonicalId = "a".repeat(64);
+  assert.throws(() => validateBootstrapPlan(plan, binding));
+  delete binding.bucketOwnerCanonicalId;
+  Object.assign(
+    plan.resource_changes.find((r) => r.type === "aws_s3_bucket").change.after,
+    fixture("native-readback.json"),
+  );
+  assert.throws(() => validateBootstrapPlan(plan, binding));
+});
 for (const [label, alter] of [
   [
     "wrong previous hash",

@@ -88,13 +88,27 @@ This separate mode accepts only an in-place update of
 `aws_iam_role_policy.sandbox_terraform[0]`, or its fully validated no-op. Other
 managed entries may only be unchanged reviewed bootstrap resources. The binding
 has exactly the cold-create fields plus `previousRolePolicySha256`, the independently
-observed installed inline-policy string hash. Its `policySha256.role` must identify
+observed installed inline-policy string hash, and `bucketOwnerCanonicalId`, the
+canonical owner ID independently read through `GetBucketAcl` with the reviewed
+account as expected bucket owner. This is verification metadata, not a grant.
+Its `policySha256.role` must identify
 the independently reviewed new source policy bytes. Unknown binding fields refuse.
 Before/after differences outside `policy`, unknown update values, trust/storage/key
 changes, drift, imports, moves and unrelated writes refuse. The existing role's
 provider-refreshed inline-policy field may contain only that one named policy,
 with bytes matching the independently observed previous hash. The cold-create
-mode still requires exactly eight creates and refuses update bindings.
+mode still requires exactly eight creates and refuses update bindings, including
+the owner metadata.
+
+Use a complete normal bootstrap plan containing all eight managed resources.
+Unchanged bucket-policy, encryption and versioning shadows must match the exact
+source contract, as must their unchanged dedicated resources. The only accepted
+grant is the bound owner's single canonical-user `FULL_CONTROL` grant with an
+empty URI. Encryption stays on the exact KMS key with disabled bucket keys;
+versioning stays enabled with disabled MFA deletion. The existing dedicated SSE-C
+restriction remains allowed. An unconfigured permissions boundary may be null or
+the provider's known empty string. Configured embedded controls, unknown values,
+foreign or extra shadow controls and additional inline policies refuse.
 
 1. Coordinate the Sandbox owner's exclusion window. Verify the account-admin SSO
    identity, merged source and lock hashes, default bootstrap workspace, fixed
@@ -102,8 +116,10 @@ mode still requires exactly eight creates and refuses update bindings.
    bucket inputs equal the existing deployment selectors. Stop if any input is
    unavailable; never reconstruct it from application tfvars.
 2. Observe installed inline-policy bytes independently, record their previous hash,
-   and inspect all other inline policies for the shared size limit. Save a bootstrap
-   plan targeting only the existing inline-policy address. Render JSON privately,
+   and inspect all other inline policies for the shared size limit. Independently
+   verify the capture bucket owner through expected-owner `GetBucketAcl` and bind
+   its canonical ID. Save a complete normal bootstrap plan without targeting.
+   Render JSON privately,
    run update mode, and independently review the actual binary, source/input
    fingerprints and before/after bytes. Apply only separately approved saved bytes.
 3. Verify installed policy and unchanged role trust, capture bucket, encryption and
@@ -120,6 +136,12 @@ mode still requires exactly eight creates and refuses update bindings.
 Changed source, locks, selectors, private bindings or saved bytes invalidate review
 and require a new plan. Conflicting owner activity or unknown acknowledgment stops
 the next mutation until reconciled. This procedure does not authorize a live Apply.
+
+Native readback drift remains a refusal. Never clear `resource_drift`, rewrite a
+saved plan or edit state to pass this guard. If reconciliation is needed, review
+and approve exact refresh-only saved bytes separately. After any approved state
+or source change, regenerate and review a complete normal installation plan and
+its binding. Earlier installation approval no longer applies.
 
 ## Offline verification
 
