@@ -173,13 +173,25 @@ function knownShape(actual, unknown, wanted) {
       knownShape(actual[field], unknown?.[field], wanted[field]);
   } else strict.deepEqual(actual, wanted);
 }
-function noEmbeddedControls(change, config, fields) {
+function noEmbeddedControls(change, config, fields, observed = {}) {
   for (const field of fields) {
     insist(
       !Object.hasOwn(config.expressions, field),
       `configured embedded ${field}`,
     );
     const control = change.after[field];
+    if (
+      Object.hasOwn(observed, field) &&
+      control != null &&
+      !(Array.isArray(control) && control.length === 0)
+    ) {
+      strict.deepEqual(
+        control,
+        observed[field],
+        `unreviewed embedded ${field}`,
+      );
+      continue;
+    }
     insist(
       control == null || (Array.isArray(control) && control.length === 0),
       `embedded ${field}`,
@@ -189,19 +201,26 @@ function noEmbeddedControls(change, config, fields) {
 function validateStorageAndRole(entry, config, binding) {
   const { change, type } = entry;
   if (type === "aws_s3_bucket") {
-    noEmbeddedControls(change, config, [
-      "acl",
-      "grant",
-      "policy",
-      "lifecycle_rule",
-      "replication_configuration",
-      "object_lock_configuration",
-      "logging",
-      "website",
-      "cors_rule",
-      "server_side_encryption_configuration",
-      "versioning",
-    ]);
+    noEmbeddedControls(
+      change,
+      config,
+      [
+        "acl",
+        "grant",
+        "policy",
+        "lifecycle_rule",
+        "replication_configuration",
+        "object_lock_configuration",
+        "logging",
+        "website",
+        "cors_rule",
+        "server_side_encryption_configuration",
+        "versioning",
+      ],
+      binding.bucketOwnerCanonicalId
+        ? observedBucketControls(binding, change.after)
+        : {},
+    );
     insist(
       !Object.hasOwn(config.expressions, "object_lock_enabled") &&
         change.after.object_lock_enabled !== true,
@@ -210,12 +229,16 @@ function validateStorageAndRole(entry, config, binding) {
   }
   if (type === "aws_iam_role") {
     validateObservedInlinePolicy(entry, config, binding);
-    noEmbeddedControls(change, config, [
-      "managed_policy_arns",
-      "permissions_boundary",
-    ]);
+    noEmbeddedControls(
+      change,
+      config,
+      ["managed_policy_arns", "permissions_boundary"],
+      binding.bucketOwnerCanonicalId ? { permissions_boundary: "" } : {},
+    );
     knownShape(
-      change.after.permissions_boundary ?? null,
+      change.after.permissions_boundary === "" && binding.bucketOwnerCanonicalId
+        ? null
+        : (change.after.permissions_boundary ?? null),
       change.after_unknown?.permissions_boundary,
       null,
     );
@@ -225,6 +248,33 @@ function validateStorageAndRole(entry, config, binding) {
       false,
     );
   }
+}
+function observedBucketControls(binding, after) {
+  const values = managedValues(binding.variables);
+  let policy;
+  if (typeof after.policy === "string") {
+    strict.deepEqual(
+      JSON.parse(after.policy),
+      expectedBucketPolicy(binding.variables),
+      "unreviewed bucket policy shadow",
+    );
+    policy = after.policy;
+  }
+  return {
+    grant: [
+      {
+        id: binding.bucketOwnerCanonicalId,
+        permissions: ["FULL_CONTROL"],
+        type: "CanonicalUser",
+        uri: "",
+      },
+    ],
+    policy,
+    server_side_encryption_configuration: [
+      { rule: values.aws_s3_bucket_server_side_encryption_configuration.rule },
+    ],
+    versioning: [{ enabled: true, mfa_delete: false }],
+  };
 }
 function validateObservedInlinePolicy(entry, config, binding) {
   const inline = entry.change.after.inline_policy ?? [];
@@ -388,8 +438,9 @@ function validateBootstrapPlan(plan, binding) {
 function validateBinding(binding, update) {
   const fields = ["backendKey", "variables", "policySha256"];
   if (update) {
-    fields.push("previousRolePolicySha256");
+    fields.push("previousRolePolicySha256", "bucketOwnerCanonicalId");
     strict.match(binding.previousRolePolicySha256, /^[a-f0-9]{64}$/);
+    strict.match(binding.bucketOwnerCanonicalId, /^[a-f0-9]{64}$/);
   }
   strict.deepEqual(Object.keys(binding).sort(), fields.sort());
   strict.deepEqual(Object.keys(binding.policySha256).sort(), [
@@ -468,6 +519,12 @@ function validateBootstrapSitePermissionsUpdate(plan, binding) {
     changed === true,
   );
   insist(seen.has(target), "missing runner policy");
+  insist(
+    Object.keys(managedValues(binding.variables)).every((type) =>
+      seen.has(`${type}.${resourceName(type)}[0]`),
+    ),
+    "missing reviewed bootstrap resource",
+  );
   return true;
 }
 function hasUnknown(value) {

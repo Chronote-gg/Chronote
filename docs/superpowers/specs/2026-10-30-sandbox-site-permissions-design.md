@@ -58,6 +58,27 @@ IAM cannot constrain the contents of a newly created policy document. The exact-
 
 The bootstrap update gets its own exact saved-plan validation. Only the runner's existing inline policy may change. Its trust, capture bucket, encryption key, state backend and all application resources remain unchanged. Preserve the original cold-create bootstrap guard; do not weaken it to accept arbitrary updates.
 
+## Native bootstrap readback correction, November 2
+
+The bounded correction preserves the approved write scope. Update validation
+requires a complete normal plan with all eight bootstrap managed resources, so
+each observed bucket shadow has its unchanged dedicated control checked. A
+synthetic `complete=true` subset does not establish that completeness.
+
+The update-only binding adds `bucketOwnerCanonicalId` from independently reviewed
+expected-owner `GetBucketAcl` metadata. Only that owner's single canonical-user
+`FULL_CONTROL` grant is accepted. Unconfigured native bucket policy, encryption
+and versioning shadows must match the exact source contracts and unchanged
+dedicated controls. A known empty-string permissions boundary represents absence
+only in update mode. Configured, unknown, foreign and extra embedded controls
+remain forbidden, as do additional inline policies. Cold creation is unchanged.
+
+Native readback does not exempt `resource_drift`. Any state reconciliation needs
+separate exact refresh-only saved-plan approval. An approved state or source
+change invalidates prior installation approval and requires a newly reviewed
+complete normal plan and binding. No state write or Apply is authorized by this
+source correction.
+
 ## Scope and source delivery
 
 Expected changes are confined to Terraform Plan/Apply inputs, invocation/dispatch validation, the existing scoped workflow, one focused site-permission validator and tests, the Sandbox bootstrap permission definition and a bounded update-plan check, and their operator documentation. Reuse existing fixtures and validation helpers. Add no general updater, credential broker or new secret.
