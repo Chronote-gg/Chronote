@@ -1,5 +1,8 @@
 /** @jest-environment node */
-import { workflowFixture } from "./firstPublication.harness";
+import {
+  paginatedWorkflowFixture,
+  workflowFixture,
+} from "./firstPublication.harness";
 import { previewFirstPublication } from "../../src/services/firstPublicationPlan";
 import {
   applyFirstPublication,
@@ -35,6 +38,10 @@ test("known-ID read failure produces a conditional finalize plan with zero resen
     (await applyFirstPublication(r.resolution, r.resolution.digest, f.deps))
       .meetings[0].outcome,
   ).toBe("verified");
+  expect(
+    (await applyFirstPublication(r.resolution, r.resolution.digest, f.deps))
+      .meetings[0].outcome,
+  ).toBe("already_published");
   expect(f.posts).toHaveLength(1);
 });
 test("lost ID cannot be resolved by stopped-run or empty search evidence", async () => {
@@ -51,15 +58,7 @@ test("lost ID cannot be resolved by stopped-run or empty search evidence", async
 });
 
 test("continuation reuses verified pages and sends only a positively rejected remainder", async () => {
-  const f = workflowFixture();
-  f.row.notes = f.objects.notes = "paragraph ".repeat(1600);
-  const { hash } = await import("./firstPublication.fixture");
-  f.row.operatorRecovery!.notesSha256 = hash(f.objects.notes);
-  f.manifest.objects[0].sha256 = hash(f.objects.notes);
-  f.store.rows.set(
-    f.key.guildId + "/" + f.key.channelId_timestamp,
-    structuredClone(f.row),
-  );
+  const f = paginatedWorkflowFixture();
   const p = await previewFirstPublication([f.key], f.deps),
     send = f.deps.discord.createNotesMessage;
   let n = 0;

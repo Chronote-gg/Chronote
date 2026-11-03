@@ -151,90 +151,7 @@ export async function previewFirstPublication(
   if ((await deps.identity()) !== deps.profile.accountId)
     throw Error("AWS account mismatch");
   const meetings: PlanMeeting[] = [];
-  for (const key of selection) {
-    try {
-      const row = await deps.repository.getStrong(key);
-      if (!row) throw Error("Meeting not found");
-      if (row.archivedAt !== undefined) {
-        z.iso.datetime().parse(row.archivedAt);
-        meetings.push({ key, outcome: "skipped_archived" });
-        continue;
-      }
-      const r = recoveryV2Schema.parse(row.operatorRecovery);
-      const manifest = JSON.parse(await deps.readObject(r.manifestS3Key));
-      const prefix = r.manifestS3Key.slice(0, -"manifest.json".length);
-      const [notes, transcript] = await Promise.all([
-        deps.readObject(prefix + "notes.md"),
-        deps.readObject(prefix + "transcript.json"),
-      ]);
-      const bound = bindFirstPublicationSource(deps.profile, row, manifest, {
-        notes,
-        transcript,
-      });
-      const bot = await deps.discord.getBotIdentity();
-      const binding = {
-        authority: bound.authority,
-        recoveryId: bound.recoveryId,
-        sourceDigest: bound.sourceDigest,
-        manifestDigest: bound.manifestDigest,
-        notesSha256: bound.notesSha256,
-        notesVersion: row.notesVersion ?? 1,
-        channelId: row.textChannelId ?? "",
-        botId: bot.id,
-        snapshot: firstPublicationSnapshot(row),
-        payloads: renderFirstPublication(row),
-      };
-      const receipt = await deps.repository.readAttempt(bound.authority);
-      if (receipt?.outcome === "verified") {
-        await verifyPublishedReceipt(receipt, row, deps);
-        meetings.push({ key, outcome: "already_published", binding, receipt });
-        continue;
-      }
-      if (
-        receipt?.ownerState === "running" ||
-        row.publicationRepair?.kind === "running" ||
-        row.notesChannelId ||
-        row.notesMessageIds?.length ||
-        row.summaryMessageId ||
-        row.ownerInstanceId ||
-        row.executionVersion ||
-        row.recovery ||
-        row.checkpoint ||
-        row.updateDelivery?.createdCandidates.length ||
-        row.updateDelivery?.cleanupCandidates.length ||
-        (row.updateDelivery && "attempt" in row.updateDelivery.progress)
-      )
-        throw Error("Existing publication work; use reconcile");
-      if (
-        row.updateDelivery?.policy.kind !== "held" ||
-        row.updateDelivery.policy.reason !== "stored_only" ||
-        (await deps.targetActive(key, row.meetingId))
-      )
-        throw Error("Meeting is not eligible for first publication");
-      const [destination, duplicates, runtime] = await Promise.all([
-        deps.discord.inspectDestination(key.guildId, binding.channelId),
-        deps.discord.duplicateEvidence(key, binding.channelId),
-        deps.runtime(),
-      ]);
-      if (!destination.allowed)
-        throw Error(destination.reason ?? "Destination inaccessible");
-      if (duplicates.ambiguous)
-        throw Error("Ambiguous existing publication; reconcile");
-      if (runtime.kind !== "compatible") throw Error(runtime.reason);
-      meetings.push({ key, outcome: "ready", binding });
-    } catch (e) {
-      meetings.push({
-        key,
-        outcome: "blocked",
-        reason:
-          e instanceof z.ZodError
-            ? "Unsupported or invalid recovery data"
-            : e instanceof Error
-              ? e.message
-              : "Read failed",
-      });
-    }
-  }
+  for (const key of selection) meetings.push(await previewMeeting(key, deps));
   const plan: FirstPublicationPlan = {
     schemaVersion: 1,
     operation: "publish",
@@ -247,4 +164,94 @@ export async function previewFirstPublication(
   };
   plan.digest = firstPublicationDigest(plan);
   return planSchema.parse(plan);
+}
+async function assertEligible(
+  row: MeetingHistory,
+  receipt: FirstPublicationReceipt | null,
+  key: PublicationSelection[number],
+  deps: FirstPublicationDependencies,
+) {
+  if (
+    [
+      receipt?.ownerState === "running",
+      row.publicationRepair?.kind === "running",
+      row.notesChannelId,
+      row.notesMessageIds?.length,
+      row.summaryMessageId,
+      row.ownerInstanceId,
+      row.executionVersion,
+      row.recovery,
+      row.checkpoint,
+      row.updateDelivery?.createdCandidates.length,
+      row.updateDelivery?.cleanupCandidates.length,
+      row.updateDelivery && "attempt" in row.updateDelivery.progress,
+    ].some(Boolean)
+  )
+    throw Error("Existing publication work; use reconcile");
+  if (
+    row.updateDelivery?.policy.kind !== "held" ||
+    row.updateDelivery.policy.reason !== "stored_only" ||
+    (await deps.targetActive(key, row.meetingId))
+  )
+    throw Error("Meeting is not eligible for first publication");
+}
+async function previewMeeting(
+  key: PublicationSelection[number],
+  deps: FirstPublicationDependencies,
+): Promise<PlanMeeting> {
+  try {
+    const row = await deps.repository.getStrong(key);
+    if (!row) throw Error("Meeting not found");
+    if (row.archivedAt !== undefined) {
+      z.iso.datetime().parse(row.archivedAt);
+      return { key, outcome: "skipped_archived" };
+    }
+    const r = recoveryV2Schema.parse(row.operatorRecovery);
+    const manifest = JSON.parse(await deps.readObject(r.manifestS3Key));
+    const prefix = r.manifestS3Key.slice(0, -"manifest.json".length);
+    const [notes, transcript] = await Promise.all([
+      deps.readObject(prefix + "notes.md"),
+      deps.readObject(prefix + "transcript.json"),
+    ]);
+    const bound = bindFirstPublicationSource(deps.profile, row, manifest, {
+      notes,
+      transcript,
+    });
+    const bot = await deps.discord.getBotIdentity();
+    const binding = {
+      authority: bound.authority,
+      recoveryId: bound.recoveryId,
+      sourceDigest: bound.sourceDigest,
+      manifestDigest: bound.manifestDigest,
+      notesSha256: bound.notesSha256,
+      notesVersion: row.notesVersion ?? 1,
+      channelId: row.textChannelId ?? "",
+      botId: bot.id,
+      snapshot: firstPublicationSnapshot(row),
+      payloads: renderFirstPublication(row),
+    };
+    const receipt = await deps.repository.readAttempt(bound.authority);
+    if (receipt?.outcome === "verified") {
+      await verifyPublishedReceipt(receipt, row, deps);
+      return { key, outcome: "already_published", binding, receipt };
+    }
+    await assertEligible(row, receipt, key, deps);
+    const [destination, duplicates, runtime] = await Promise.all([
+      deps.discord.inspectDestination(key.guildId, binding.channelId),
+      deps.discord.duplicateEvidence(key, binding.channelId),
+      deps.runtime(),
+    ]);
+    if (!destination.allowed)
+      throw Error(destination.reason ?? "Destination inaccessible");
+    if (duplicates.ambiguous)
+      throw Error("Ambiguous existing publication; reconcile");
+    if (runtime.kind !== "compatible") throw Error(runtime.reason);
+    return { key, outcome: "ready", binding };
+  } catch (e) {
+    return { key, outcome: "blocked", reason: previewError(e) };
+  }
+}
+function previewError(e: unknown) {
+  if (e instanceof z.ZodError) return "Unsupported or invalid recovery data";
+  return e instanceof Error ? e.message : "Read failed";
 }

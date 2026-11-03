@@ -80,85 +80,23 @@ export async function runFirstPublicationCli(
 ): Promise<number> {
   let close: (() => void) | undefined;
   try {
-    const mode = args[0];
-    if (!["preview", "apply", "status", "reconcile"].includes(mode))
-      throw Error("arguments");
-    const { values } = parseArgs({
-      args: args.slice(1),
-      strict: true,
-      options: {
-        environment: { type: "string" },
-        selection: { type: "string" },
-        out: { type: "string" },
-        preview: { type: "string" },
-        "expect-sha256": { type: "string" },
-      },
-    });
-    let plan: FirstPublicationPlan | undefined, profile: PublicationProfile;
-    if (mode === "preview") {
-      if (
-        !values.environment ||
-        !values.selection ||
-        !values.out ||
-        values.preview ||
-        values["expect-sha256"]
-      )
-        throw Error("arguments");
-      profile = publicationProfileSchema.parse(
-        options.profiles[values.environment],
-      );
-    } else {
-      if (
-        !values.preview ||
-        values.environment ||
-        values.selection ||
-        (mode === "apply" && (!values["expect-sha256"] || values.out)) ||
-        (mode === "status" && (values.out || values["expect-sha256"])) ||
-        (mode === "reconcile" && (!values.out || values["expect-sha256"]))
-      )
-        throw Error("arguments");
-      plan = planSchema.parse(
-        JSON.parse(await readFile(values.preview, "utf8")),
-      );
-      profile = plan.profile;
-      if (
-        !Object.values(options.profiles).some(
-          (p) => stableJson(p) === stableJson(profile),
-        )
-      )
-        throw Error("unknown profile");
-      if (
-        mode === "apply" &&
-        (!/^[a-f0-9]{64}$/.test(values["expect-sha256"] ?? "") ||
-          values["expect-sha256"] !== plan.digest)
-      )
-        throw Error("digest");
-    }
+    const command = parseCommand(args);
+    const { mode } = command;
+    const plan =
+      mode === "preview"
+        ? undefined
+        : planSchema.parse(JSON.parse(await readFile(command.preview, "utf8")));
+    const profile =
+      mode === "preview"
+        ? publicationProfileSchema.parse(options.profiles[command.environment])
+        : savedProfile(plan!, options.profiles);
+    if (mode === "apply" && command["expect-sha256"] !== plan?.digest)
+      throw Error("digest");
     const connection = await options.connect(profile);
     close = connection.close;
     if (mode === "preview") {
-      const raw: unknown = JSON.parse(
-          await readFile(values.selection!, "utf8"),
-        ),
-        bundles = new Map<string, unknown>();
-      for (const entry of z.array(z.unknown()).parse(raw)) {
-        const reference = z.object({ bundle: z.string() }).safeParse(entry);
-        if (reference.success) {
-          const file = resolve(
-            dirname(values.selection!),
-            reference.data.bundle,
-          );
-          bundles.set(
-            reference.data.bundle,
-            JSON.parse(await readFile(file, "utf8")),
-          );
-        }
-      }
-      const ready = await previewFirstPublication(
-        normalizePublicationSelection(raw, bundles),
-        connection.deps,
-      );
-      await savePlan(values.out!, ready);
+      const ready = await previewSelection(command.selection, connection.deps);
+      await savePlan(command.out, ready);
       options.report(
         JSON.stringify({
           operation: "preview",
@@ -174,24 +112,9 @@ export async function runFirstPublicationCli(
       return ready.ready ? 0 : 2;
     }
     if (!plan) throw Error("plan");
-    const inspected =
-      mode === "apply"
-        ? {
-            result: await applyFirstPublication(
-              plan,
-              values["expect-sha256"]!,
-              connection.deps,
-            ),
-            resolution: null,
-          }
-        : mode === "status"
-          ? {
-              result: await statusFirstPublication(plan, connection.deps),
-              resolution: null,
-            }
-          : await reconcileFirstPublication(plan, connection.deps);
+    const inspected = await inspectSavedPlan(command, plan, connection.deps);
     if (mode === "reconcile") {
-      const dir = await privateDirectory(values.out!);
+      const dir = await privateDirectory(command.out);
       await privateFile(dir, "status.json", stableJson(inspected.result));
       if (inspected.resolution) {
         await privateFile(
@@ -216,7 +139,7 @@ export async function runFirstPublicationCli(
           : {}),
       }),
     );
-    return resultCode(inspected.result);
+    return savedResultCode(mode, plan, inspected.result);
   } catch {
     options.report(
       "Invalid input or runtime operation failed. No provider content logged; inspect private evidence and use status/reconcile before retrying.",
@@ -279,3 +202,107 @@ if (require.main === module)
       );
       process.exitCode = 1;
     });
+
+const previewCommand = z
+  .object({
+    mode: z.literal("preview"),
+    environment: z.string().min(1),
+    selection: z.string().min(1),
+    out: z.string().min(1),
+  })
+  .strict();
+const savedCommand = z.discriminatedUnion("mode", [
+  z
+    .object({
+      mode: z.literal("apply"),
+      preview: z.string().min(1),
+      "expect-sha256": z.string().regex(/^[a-f0-9]{64}$/),
+    })
+    .strict(),
+  z.object({ mode: z.literal("status"), preview: z.string().min(1) }).strict(),
+  z
+    .object({
+      mode: z.literal("reconcile"),
+      preview: z.string().min(1),
+      out: z.string().min(1),
+    })
+    .strict(),
+]);
+function parseCommand(args: string[]) {
+  const { values } = parseArgs({
+    args: args.slice(1),
+    strict: true,
+    options: {
+      environment: { type: "string" },
+      selection: { type: "string" },
+      out: { type: "string" },
+      preview: { type: "string" },
+      "expect-sha256": { type: "string" },
+    },
+  });
+  return z
+    .union([previewCommand, savedCommand])
+    .parse({ mode: args[0], ...values });
+}
+function savedProfile(
+  plan: FirstPublicationPlan,
+  profiles: Record<string, PublicationProfile>,
+) {
+  if (
+    !Object.values(profiles).some(
+      (p) => stableJson(p) === stableJson(plan.profile),
+    )
+  )
+    throw Error("unknown profile");
+  return plan.profile;
+}
+async function previewSelection(
+  selection: string,
+  deps: FirstPublicationDependencies,
+) {
+  const raw: unknown = JSON.parse(await readFile(selection, "utf8")),
+    bundles = new Map<string, unknown>();
+  for (const entry of z.array(z.unknown()).parse(raw)) {
+    const reference = z.object({ bundle: z.string() }).safeParse(entry);
+    if (reference.success) {
+      const file = resolve(dirname(selection), reference.data.bundle);
+      bundles.set(
+        reference.data.bundle,
+        JSON.parse(await readFile(file, "utf8")),
+      );
+    }
+  }
+  return previewFirstPublication(
+    normalizePublicationSelection(raw, bundles),
+    deps,
+  );
+}
+async function inspectSavedPlan(
+  command: z.infer<typeof savedCommand>,
+  plan: FirstPublicationPlan,
+  deps: FirstPublicationDependencies,
+) {
+  if (command.mode === "apply")
+    return {
+      result: await applyFirstPublication(plan, command["expect-sha256"], deps),
+      resolution: null,
+    };
+  if (command.mode === "status")
+    return {
+      result: await statusFirstPublication(plan, deps),
+      resolution: null,
+    };
+  return reconcileFirstPublication(plan, deps);
+}
+
+function savedResultCode(
+  mode: string,
+  plan: FirstPublicationPlan,
+  result: PublicationResult,
+) {
+  return mode === "apply" &&
+    plan.operation === "release" &&
+    result.meetings.every((m) => m.outcome === "unsent")
+    ? 0
+    : resultCode(result);
+}

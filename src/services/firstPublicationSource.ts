@@ -94,51 +94,67 @@ const manifestSchema = z
     unknowns: z.array(z.string()),
   })
   .strict();
+export const FIRST_PUBLICATION_SNAPSHOT_FIELDS = [
+  "guildId",
+  "channelId_timestamp",
+  "meetingId",
+  "status",
+  "ownerInstanceId",
+  "executionVersion",
+  "canonicalWriter",
+  "checkpoint",
+  "recovery",
+  "completionPolicy",
+  "delivery",
+  "notes",
+  "notesVersion",
+  "notesHistory",
+  "notesDelta",
+  "contentRevision",
+  "contentMutation",
+  "notesLastEditedAt",
+  "notesLastEditedBy",
+  "suggestionsHistory",
+  "transcriptS3Key",
+  "operatorRecovery",
+  "textChannelId",
+  "channelId",
+  "timestamp",
+  "archivedAt",
+  "archivedByUserId",
+  "capture",
+  "captureCoverage",
+  "processing",
+  "updateDelivery",
+  "notesChannelId",
+  "notesMessageIds",
+  "summaryMessageId",
+  "publicationRepair",
+];
 export function firstPublicationSnapshot(
   row: MeetingHistory,
 ): Record<string, unknown> {
-  const fields = [
-    "guildId",
-    "channelId_timestamp",
-    "meetingId",
-    "status",
-    "ownerInstanceId",
-    "executionVersion",
-    "canonicalWriter",
-    "checkpoint",
-    "recovery",
-    "completionPolicy",
-    "delivery",
-    "notes",
-    "notesVersion",
-    "notesHistory",
-    "notesDelta",
-    "contentRevision",
-    "contentMutation",
-    "notesLastEditedAt",
-    "notesLastEditedBy",
-    "suggestionsHistory",
-    "transcriptS3Key",
-    "operatorRecovery",
-    "textChannelId",
-    "channelId",
-    "timestamp",
-    "archivedAt",
-    "archivedByUserId",
-    "capture",
-    "captureCoverage",
-    "processing",
-    "updateDelivery",
-    "notesChannelId",
-    "notesMessageIds",
-    "summaryMessageId",
-    "publicationRepair",
-  ];
   return Object.fromEntries(
-    fields
-      .filter((k) => Reflect.get(row, k) !== undefined)
-      .map((k) => [k, Reflect.get(row, k)]),
+    FIRST_PUBLICATION_SNAPSHOT_FIELDS.filter(
+      (k) => Reflect.get(row, k) !== undefined,
+    ).map((k) => [k, Reflect.get(row, k)]),
   );
+}
+function validRecoveryState(
+  row: MeetingHistory,
+  previousNotesVersion: number | null,
+) {
+  return [
+    !!row.notes?.trim(),
+    !!row.textChannelId,
+    row.status === "interrupted",
+    row.capture?.kind === "interrupted",
+    row.processing?.transcription === "partial",
+    row.captureCoverage?.kind === "unknown",
+    Number.isInteger(row.notesVersion),
+    row.notesVersion === (previousNotesVersion ?? 1) + 1,
+    row.channelId_timestamp === row.channelId + "#" + row.timestamp,
+  ].every(Boolean);
 }
 export function bindFirstPublicationSource(
   profile: PublicationProfile,
@@ -155,40 +171,44 @@ export function bindFirstPublicationSource(
     }),
     prefix = `ops/operator-recovery/${r.id}/${row.meetingId}/`;
   const same = (a: unknown, b: unknown) => digest(a) === digest(b);
-  if (
-    !row.notes?.trim() ||
-    !row.textChannelId ||
-    row.status !== "interrupted" ||
-    row.capture?.kind !== "interrupted" ||
-    row.processing?.transcription !== "partial" ||
-    row.captureCoverage?.kind !== "unknown" ||
-    !Number.isInteger(row.notesVersion) ||
-    row.notesVersion !== (r.previousNotesVersion ?? 1) + 1 ||
-    row.channelId_timestamp !== row.channelId + "#" + row.timestamp ||
-    !same(key, m.key) ||
-    m.meetingId !== row.meetingId ||
-    r.id !== m.id ||
-    r.language !== m.language ||
-    r.classification !== m.classification ||
-    r.preparedAt !== m.preparedAt ||
-    r.approvedBy !== m.approvedBy ||
-    r.manifestS3Key !== prefix + "manifest.json" ||
-    row.transcriptS3Key !== prefix + "transcript.json" ||
-    row.notes !== objects.notes ||
-    hash(objects.notes) !== r.notesSha256 ||
-    hash(objects.transcript) !== r.transcriptSha256 ||
-    !m.objects.some(
-      (o) => o.key === prefix + "notes.md" && o.sha256 === r.notesSha256,
-    ) ||
-    !m.objects.some(
-      (o) => o.key === row.transcriptS3Key && o.sha256 === r.transcriptSha256,
-    ) ||
-    !m.objects.some((o) => o.key === prefix + "before.json") ||
-    new Set(m.objects.map((o) => o.key)).size !== 3 ||
+  const expected = {
+    key,
+    meetingId: row.meetingId,
+    id: r.id,
+    language: r.language,
+    classification: r.classification,
+    preparedAt: r.preparedAt,
+    approvedBy: r.approvedBy,
+  };
+  const matches = Object.entries(expected).every(([field, value]) =>
+    same(Reflect.get(m, field), value),
+  );
+  const sourceMatches = [
+    [r.manifestS3Key, prefix + "manifest.json"],
+    [row.transcriptS3Key, prefix + "transcript.json"],
+    [row.notes, objects.notes],
+    [hash(objects.notes), r.notesSha256],
+    [hash(objects.transcript), r.transcriptSha256],
+  ].every(([actual, wanted]) => actual === wanted);
+  const validObjects = [
     m.objects.some(
+      (o) => o.key === prefix + "notes.md" && o.sha256 === r.notesSha256,
+    ),
+    m.objects.some(
+      (o) => o.key === row.transcriptS3Key && o.sha256 === r.transcriptSha256,
+    ),
+    m.objects.some((o) => o.key === prefix + "before.json"),
+    new Set(m.objects.map((o) => o.key)).size === 3,
+    m.objects.every(
       (o) =>
-        !o.key.startsWith(prefix) || o.key.slice(prefix.length).includes("/"),
-    )
+        o.key.startsWith(prefix) && !o.key.slice(prefix.length).includes("/"),
+    ),
+  ].every(Boolean);
+  if (
+    !validRecoveryState(row, r.previousNotesVersion) ||
+    !matches ||
+    !sourceMatches ||
+    !validObjects
   )
     throw Error("Recovery source binding invalid");
   return {

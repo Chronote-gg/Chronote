@@ -5,35 +5,15 @@ import { createDynamoFirstPublicationRepository } from "../../src/repositories/f
 import { previewFirstPublication } from "../../src/services/firstPublicationPlan";
 import { applyFirstPublication } from "../../src/services/firstPublicationService";
 import { GetItemCommand, UpdateItemCommand } from "@aws-sdk/client-dynamodb";
+import { publicationSnapshot } from "../../src/types/meetingPublication";
 import { marshall, unmarshall } from "@aws-sdk/util-dynamodb";
 test("real Dynamo first publication is atomic, pinned, read back and idempotent", async () => {
   const w = workflowFixture(),
     db = await publicationDynamoFixture(w.key);
   try {
-    const profile = {
-      ...w.profile,
-      historyTable: db.tables.meetingHistory,
-      controlTable: db.tables.deploymentControl,
-      activeTable: db.tables.activeMeeting,
-    };
-    await db.put(profile.historyTable, w.row);
-    await db.put(profile.controlTable, w.store.control);
-    w.deps.profile = profile;
-    w.deps.repository = createDynamoFirstPublicationRepository(
-      db.client,
-      profile,
-    );
-    w.deps.runtime = async () => {
-      const r = await db.client.send(
-        new GetItemCommand({
-          TableName: profile.controlTable,
-          Key: marshall({ pk: "ENV", sk: "CONTROL" }),
-          ConsistentRead: true,
-        }),
-      );
-      const control = unmarshall(r.Item!);
-      return { kind: "compatible", generation: 1, control };
-    };
+    const profile = publicationProfile(w, db);
+    await seedPublication(w, db, profile);
+    connectPublication(w, db, profile);
     const p = await previewFirstPublication([w.key], w.deps);
     const r = await applyFirstPublication(p, p.digest, w.deps);
     expect(r.meetings[0].reason).toBeUndefined();
@@ -58,23 +38,24 @@ test("real Dynamo concurrent archive exclusion and incompatible deployment order
   const w = workflowFixture(),
     db = await publicationDynamoFixture(w.key);
   try {
-    const profile = {
-      ...w.profile,
-      historyTable: db.tables.meetingHistory,
-      controlTable: db.tables.deploymentControl,
-      activeTable: db.tables.activeMeeting,
-    };
-    await db.put(profile.historyTable, w.row);
-    await db.put(profile.controlTable, w.store.control);
-    const repo = createDynamoFirstPublicationRepository(db.client, profile);
-    w.deps.profile = profile;
-    w.deps.repository = repo;
-    w.deps.runtime = async () => ({
-      kind: "compatible",
-      generation: 1,
-      control: w.store.control,
-    });
+    const profile = publicationProfile(w, db);
+    await seedPublication(w, db, profile);
+    connectPublication(w, db, profile);
     w.deps.discord.createNotesMessage = async () => {
+      const held = await db.read();
+      if (!held?.updateDelivery) throw Error("Held source missing");
+      const saved = await db.updates.updateContentAndDelivery({
+        key: w.key,
+        expectedContentRevision: held.contentRevision ?? 0,
+        expectedDeliveryRevision: held.updateDelivery.revision,
+        expectedPublication: publicationSnapshot(held),
+        mutation: { kind: "notes", notes: "Racing canonical save" },
+        mutationId: "racing-save",
+        at: Math.floor(Date.now() / 1000),
+        nextDelivery: held.updateDelivery,
+      });
+      expect(saved.kind).toBe("conflict");
+      expect((await db.read())?.notes).toBe(w.row.notes);
       await expect(
         db.client.send(
           new UpdateItemCommand({
@@ -121,12 +102,7 @@ test("repeatable batch handles two synthetic recoveries, pagination and an archi
   const w = workflowFixture(),
     db = await publicationDynamoFixture(w.key);
   try {
-    const profile = {
-      ...w.profile,
-      historyTable: db.tables.meetingHistory,
-      controlTable: db.tables.deploymentControl,
-      activeTable: db.tables.activeMeeting,
-    };
+    const profile = publicationProfile(w, db);
     await db.put(profile.controlTable, w.store.control);
     const fixtures = [workflowFixture(), workflowFixture(), workflowFixture()],
       objects = new Map<string, string>();
@@ -163,29 +139,11 @@ test("repeatable batch handles two synthetic recoveries, pagination and an archi
       }
       await db.put(profile.historyTable, f.row);
     }
-    w.deps.profile = profile;
-    w.deps.repository = createDynamoFirstPublicationRepository(
-      db.client,
-      profile,
-    );
+    connectPublication(w, db, profile);
     w.deps.readObject = async (key) => {
       const s = objects.get(key);
       if (!s) throw Error("Archived object must not be read");
       return s;
-    };
-    w.deps.runtime = async () => {
-      const r = await db.client.send(
-        new GetItemCommand({
-          TableName: profile.controlTable,
-          Key: marshall({ pk: "ENV", sk: "CONTROL" }),
-          ConsistentRead: true,
-        }),
-      );
-      return {
-        kind: "compatible",
-        generation: 1,
-        control: unmarshall(r.Item!),
-      };
     };
     const p = await previewFirstPublication(
       fixtures.map((f) => f.key),
@@ -215,33 +173,9 @@ test("lost final registration acknowledgement is resolved by strong readback, ne
   const w = workflowFixture(),
     db = await publicationDynamoFixture(w.key);
   try {
-    const profile = {
-      ...w.profile,
-      historyTable: db.tables.meetingHistory,
-      controlTable: db.tables.deploymentControl,
-      activeTable: db.tables.activeMeeting,
-    };
-    await db.put(profile.historyTable, w.row);
-    await db.put(profile.controlTable, w.store.control);
-    w.deps.profile = profile;
-    w.deps.repository = createDynamoFirstPublicationRepository(
-      db.client,
-      profile,
-    );
-    w.deps.runtime = async () => {
-      const r = await db.client.send(
-        new GetItemCommand({
-          TableName: profile.controlTable,
-          Key: marshall({ pk: "ENV", sk: "CONTROL" }),
-          ConsistentRead: true,
-        }),
-      );
-      return {
-        kind: "compatible",
-        generation: 1,
-        control: unmarshall(r.Item!),
-      };
-    };
+    const profile = publicationProfile(w, db);
+    await seedPublication(w, db, profile);
+    connectPublication(w, db, profile);
     let injected = false;
     db.client.middlewareStack.add(
       (next) => async (args) => {
@@ -274,14 +208,8 @@ test("real Dynamo pin acquisition and incompatible reservation have exactly one 
   const w = workflowFixture(),
     db = await publicationDynamoFixture(w.key);
   try {
-    const profile = {
-      ...w.profile,
-      historyTable: db.tables.meetingHistory,
-      controlTable: db.tables.deploymentControl,
-      activeTable: db.tables.activeMeeting,
-    };
-    await db.put(profile.historyTable, w.row);
-    await db.put(profile.controlTable, w.store.control);
+    const profile = publicationProfile(w, db);
+    await seedPublication(w, db, profile);
     const repo = createDynamoFirstPublicationRepository(db.client, profile);
     const p = await previewFirstPublication([w.key], w.deps),
       m = p.meetings[0];
@@ -338,3 +266,46 @@ test("real Dynamo pin acquisition and incompatible reservation have exactly one 
     await db.close();
   }
 });
+
+function publicationProfile(
+  w: ReturnType<typeof workflowFixture>,
+  db: Awaited<ReturnType<typeof publicationDynamoFixture>>,
+) {
+  return {
+    ...w.profile,
+    historyTable: db.tables.meetingHistory,
+    controlTable: db.tables.deploymentControl,
+    activeTable: db.tables.activeMeeting,
+  };
+}
+function connectPublication(
+  w: ReturnType<typeof workflowFixture>,
+  db: Awaited<ReturnType<typeof publicationDynamoFixture>>,
+  profile: ReturnType<typeof publicationProfile>,
+) {
+  w.deps.profile = profile;
+  w.deps.repository = createDynamoFirstPublicationRepository(
+    db.client,
+    profile,
+  );
+  w.deps.runtime = async () => {
+    const r = await db.client.send(
+      new GetItemCommand({
+        TableName: profile.controlTable,
+        Key: marshall({ pk: "ENV", sk: "CONTROL" }),
+        ConsistentRead: true,
+      }),
+    );
+    const control = unmarshall(r.Item!);
+    return { kind: "compatible", generation: 1, control };
+  };
+}
+
+async function seedPublication(
+  w: ReturnType<typeof workflowFixture>,
+  db: Awaited<ReturnType<typeof publicationDynamoFixture>>,
+  profile: ReturnType<typeof publicationProfile>,
+) {
+  await db.put(profile.historyTable, w.row);
+  await db.put(profile.controlTable, w.store.control);
+}

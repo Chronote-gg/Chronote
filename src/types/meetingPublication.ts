@@ -11,6 +11,7 @@ import {
 export const repairPublicationOwnerSchema = z
   .object({
     kind: z.enum(["running", "settled"]),
+    purpose: z.literal("first_publication").optional(),
     runId: z.string().min(1).max(512),
     previewDigest: z.string().regex(/^[a-f0-9]{64}$/),
     receiptKey: z.string().min(1).max(2048),

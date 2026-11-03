@@ -1,5 +1,8 @@
 /** @jest-environment node */
-import { workflowFixture } from "./firstPublication.harness";
+import {
+  paginatedWorkflowFixture,
+  workflowFixture,
+} from "./firstPublication.harness";
 import { previewFirstPublication } from "../../src/services/firstPublicationPlan";
 import { applyFirstPublication } from "../../src/services/firstPublicationService";
 import { DiscordMessageHttpError } from "../../src/services/discordMessageEditor";
@@ -45,15 +48,7 @@ test("lost POST response retains authority and blocks blind resend", async () =>
   ).toBe("blocked");
 });
 test("definite page-two rejection retains the verified first page and pin", async () => {
-  const f = workflowFixture();
-  f.row.notes = f.objects.notes = "paragraph ".repeat(1600);
-  const { hash } = await import("./firstPublication.fixture");
-  f.row.operatorRecovery!.notesSha256 = hash(f.objects.notes);
-  f.manifest.objects[0].sha256 = hash(f.objects.notes);
-  f.store.rows.set(
-    f.key.guildId + "/" + f.key.channelId_timestamp,
-    structuredClone(f.row),
-  );
+  const f = paginatedWorkflowFixture();
   const p = await previewFirstPublication([f.key], f.deps),
     send = f.deps.discord.createNotesMessage;
   let n = 0;

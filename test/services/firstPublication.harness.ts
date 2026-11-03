@@ -1,4 +1,4 @@
-import { firstPublicationFixture } from "./firstPublication.fixture";
+import { hash, firstPublicationFixture } from "./firstPublication.fixture";
 import {
   createFirstPublicationRepository,
   createMemoryFirstPublicationStore,
@@ -66,4 +66,16 @@ export function workflowFixture() {
     },
   };
   return { ...f, store, repo, deps, messages, posts };
+}
+
+export function paginatedWorkflowFixture() {
+  const f = workflowFixture();
+  f.row.notes = f.objects.notes = "paragraph ".repeat(1600);
+  f.row.operatorRecovery!.notesSha256 = hash(f.objects.notes);
+  f.manifest.objects[0].sha256 = hash(f.objects.notes);
+  f.store.rows.set(
+    f.key.guildId + "/" + f.key.channelId_timestamp,
+    structuredClone(f.row),
+  );
+  return f;
 }

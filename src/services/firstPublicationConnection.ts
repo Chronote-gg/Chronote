@@ -196,22 +196,7 @@ export async function connectFirstPublication(
             service.deployments?.length !== 1
           )
             return [];
-          const arns: string[] = [];
-          let nextToken: string | undefined;
-          do {
-            const r = await ecs.send(
-              new ListTasksCommand({
-                cluster: scope.cluster,
-                serviceName: scope.service,
-                desiredStatus: "RUNNING",
-                nextToken,
-              }),
-            );
-            arns.push(...(r.taskArns ?? []));
-            nextToken = r.nextToken;
-            if (arns.length > 100)
-              throw Error("Cohort inspection bound exceeded");
-          } while (nextToken);
+          const arns = await listRunningTaskArns(ecs, scope);
           if (!arns.length) return [];
           const r = await ecs.send(
             new DescribeTasksCommand({ cluster: scope.cluster, tasks: arns }),
@@ -283,32 +268,13 @@ export async function connectFirstPublication(
           Date.parse(member.communication_disabled_until) > Date.now()
         )
           return { allowed: false, reason: "Bot timeout is active" };
-        const ids = new Set([guildId, ...member.roles]);
-        let bits = 0n;
-        for (const r of roles) if (ids.has(r.id)) bits |= BigInt(r.permissions);
-        if (
-          !new PermissionsBitField(bits).has(
-            PermissionsBitField.Flags.Administrator,
-          )
-        ) {
-          const everyone = channel.permission_overwrites.find(
-            (o) => o.type === 0 && o.id === guildId,
-          );
-          if (everyone)
-            bits = (bits & ~BigInt(everyone.deny)) | BigInt(everyone.allow);
-          let allow = 0n,
-            deny = 0n;
-          for (const o of channel.permission_overwrites)
-            if (o.type === 0 && o.id !== guildId && ids.has(o.id)) {
-              allow |= BigInt(o.allow);
-              deny |= BigInt(o.deny);
-            }
-          bits = (bits & ~deny) | allow;
-          const own = channel.permission_overwrites.find(
-            (o) => o.type === 1 && o.id === bot.id,
-          );
-          if (own) bits = (bits & ~BigInt(own.deny)) | BigInt(own.allow);
-        }
+        const bits = destinationPermissions(
+          guildId,
+          bot.id,
+          channel,
+          roles,
+          member,
+        );
         const permissions = new PermissionsBitField(bits),
           required = [
             "ViewChannel",
@@ -392,4 +358,69 @@ export async function connectFirstPublication(
       ecs.destroy();
     },
   };
+}
+
+async function listRunningTaskArns(
+  ecs: ECSClient,
+  scope: { cluster: string; service: string },
+) {
+  const arns: string[] = [];
+  let nextToken: string | undefined;
+  do {
+    const r = await ecs.send(
+      new ListTasksCommand({
+        cluster: scope.cluster,
+        serviceName: scope.service,
+        desiredStatus: "RUNNING",
+        nextToken,
+      }),
+    );
+    arns.push(...(r.taskArns ?? []));
+    nextToken = r.nextToken;
+    if (arns.length > 100) throw Error("Cohort inspection bound exceeded");
+  } while (nextToken);
+
+  return arns;
+}
+
+function destinationPermissions(
+  guildId: string,
+  botId: string,
+  channel: {
+    permission_overwrites: Array<{
+      id: string;
+      type: number;
+      allow: string;
+      deny: string;
+    }>;
+  },
+  roles: Array<{ id: string; permissions: string }>,
+  member: { roles: string[] },
+) {
+  const ids = new Set([guildId, ...member.roles]);
+  let bits = 0n;
+  for (const r of roles) if (ids.has(r.id)) bits |= BigInt(r.permissions);
+  if (
+    !new PermissionsBitField(bits).has(PermissionsBitField.Flags.Administrator)
+  ) {
+    const everyone = channel.permission_overwrites.find(
+      (o) => o.type === 0 && o.id === guildId,
+    );
+    if (everyone)
+      bits = (bits & ~BigInt(everyone.deny)) | BigInt(everyone.allow);
+    let allow = 0n,
+      deny = 0n;
+    for (const o of channel.permission_overwrites)
+      if (o.type === 0 && o.id !== guildId && ids.has(o.id)) {
+        allow |= BigInt(o.allow);
+        deny |= BigInt(o.deny);
+      }
+    bits = (bits & ~deny) | allow;
+    const own = channel.permission_overwrites.find(
+      (o) => o.type === 1 && o.id === botId,
+    );
+    if (own) bits = (bits & ~BigInt(own.deny)) | BigInt(own.allow);
+  }
+
+  return bits;
 }

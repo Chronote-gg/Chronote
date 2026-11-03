@@ -1,3 +1,4 @@
+import { dynamoSnapshotCondition as condition } from "../utils/dynamoSnapshotCondition";
 import {
   DynamoDBClient,
   GetItemCommand,
@@ -10,7 +11,11 @@ import {
   assertMeetingItemSize,
 } from "./meetingUpdateDeliveryState";
 import type { MeetingHistory } from "../types/db";
-import { firstPublicationSnapshot } from "../services/firstPublicationSource";
+import { firstPublicationPinsSchema } from "../types/firstPublicationControl";
+import {
+  FIRST_PUBLICATION_SNAPSHOT_FIELDS,
+  firstPublicationSnapshot,
+} from "../services/firstPublicationSource";
 import {
   attemptSchema,
   digest,
@@ -47,23 +52,16 @@ export type Pin = { authorities: string[]; settled: string[] };
 export function readPublicationPins(
   control: Record<string, unknown>,
 ): Record<string, Pin> {
-  const parsed = pinRecord.safeParse(control.publicationPins ?? {});
+  const parsed = firstPublicationPinsSchema.safeParse(
+    control.publicationPins ?? {},
+  );
   if (!parsed.success) throw Error("Invalid publication pins");
   return parsed.data;
 }
-import { z } from "zod";
-const pinRecord = z.record(
-  z.string(),
-  z
-    .object({
-      authorities: z.array(z.string()).min(1).max(25),
-      settled: z.array(z.string()).max(25),
-    })
-    .strict(),
-);
 function owner(receipt: FirstPublicationReceipt) {
   return {
     kind: "running" as const,
+    purpose: "first_publication" as const,
     runId: receipt.runId,
     previewDigest: receipt.planDigest,
     receiptKey: receipt.authority,
@@ -116,6 +114,33 @@ export type BatchFirstPublicationRepository = FirstPublicationRepository & {
 export function createFirstPublicationRepository(
   store: FirstPublicationStore,
 ): BatchFirstPublicationRepository {
+  async function prepareAcquisition(
+    receipt: FirstPublicationReceipt,
+    snapshot: Record<string, unknown>,
+  ) {
+    attemptSchema.parse(receipt);
+    const row = await store.readRow(receipt.key),
+      prior = await store.readAttempt(receipt.authority);
+    if (!row) return null;
+    if (
+      row.archivedAt ||
+      !same(firstPublicationSnapshot(row), snapshot) ||
+      digest(snapshot) !== receipt.sourceDigest ||
+      hasPublicationWork(row) ||
+      prior?.ownerState === "running" ||
+      prior?.outcome === "verified"
+    )
+      return null;
+    if (receipt.generation !== (prior?.generation ?? 0) + 1) return null;
+    return {
+      row: {
+        key: receipt.key,
+        before: row,
+        after: { ...row, publicationRepair: owner(receipt) },
+      },
+      attempt: { before: prior, after: receipt },
+    };
+  }
   async function acquireBatch(
     input: BatchAcquisition,
   ): Promise<"owned" | "stale"> {
@@ -140,30 +165,12 @@ export function createFirstPublicationRepository(
     const rows: RowChange[] = [],
       attempts: AttemptChange[] = [];
     for (const { receipt, snapshot } of input.entries) {
-      attemptSchema.parse(receipt);
-      const row = await store.readRow(receipt.key),
-        prior = await store.readAttempt(receipt.authority);
-      if (
-        !row ||
-        row.archivedAt ||
-        !same(firstPublicationSnapshot(row), snapshot) ||
-        digest(snapshot) !== receipt.sourceDigest ||
-        row.publicationRepair?.kind === "running" ||
-        row.notesChannelId ||
-        row.notesMessageIds?.length ||
-        row.summaryMessageId ||
-        (prior &&
-          (prior.ownerState === "running" || prior.outcome === "verified"))
-      )
-        return "stale";
-      if (receipt.generation !== (prior?.generation ?? 0) + 1) return "stale";
-      rows.push({
-        key: receipt.key,
-        before: row,
-        after: { ...row, publicationRepair: owner(receipt) },
-      });
-      attempts.push({ before: prior, after: receipt });
+      const prepared = await prepareAcquisition(receipt, snapshot);
+      if (!prepared) return "stale";
+      rows.push(prepared.row);
+      attempts.push(prepared.attempt);
     }
+
     pins[runId] = {
       authorities: input.entries.map((e) => e.receipt.authority),
       settled: [],
@@ -213,30 +220,13 @@ export function createFirstPublicationRepository(
       publicationRepair: { ...owner(receipt), kind: "settled" },
     };
     if (published) {
-      const ids = receipt.pages.flatMap((p) =>
-        p.kind === "verified" ? [p.messageId] : [],
-      );
-      if (new Set(ids).size !== ids.length || !row.updateDelivery)
-        return "stale";
-      after.notesChannelId = receipt.channelId;
-      after.notesMessageIds = ids;
-      after.updateDelivery = {
-        ...row.updateDelivery,
-        parts: {
-          ...row.updateDelivery.parts,
-          notesBody: {
-            ...row.updateDelivery.parts.notesBody,
-            acknowledged: row.updateDelivery.parts.notesBody.desired,
-          },
-        },
-        progress: {
-          kind: "synced",
-          syncedAt: Math.floor(Date.parse(receipt.updatedAt) / 1000),
-        },
-      };
+      const registered = registeredMeeting(after, receipt);
+      if (!registered) return "stale";
+      Object.assign(after, registered);
       delete after.updateDeliveryQueue;
       delete after.updateDeliveryDueAt;
     }
+
     const result = {
       ...receipt,
       ownerState: "settled" as const,
@@ -380,105 +370,33 @@ export function createMemoryFirstPublicationStore(
   };
   return store;
 }
-function condition(before: Record<string, unknown>, fields: string[]) {
-  const names: Record<string, string> = {},
-    values: Record<string, unknown> = {};
-  const clauses = fields.map((field, i) => {
-    const n = "#c" + i,
-      v = ":c" + i;
-    names[n] = field;
-    if (before[field] === undefined) return "attribute_not_exists(" + n + ")";
-    values[v] = before[field];
-    return n + " = " + v;
-  });
-  return {
-    ConditionExpression: clauses.join(" AND "),
-    ExpressionAttributeNames: names,
-    ...(Object.keys(values).length
-      ? {
-          ExpressionAttributeValues: marshall(values, {
-            removeUndefinedValues: true,
-          }),
-        }
-      : {}),
-  };
-}
-const historyFields = [
-  "guildId",
-  "channelId_timestamp",
-  "meetingId",
-  "status",
-  "ownerInstanceId",
-  "executionVersion",
-  "canonicalWriter",
-  "checkpoint",
-  "recovery",
-  "completionPolicy",
-  "delivery",
-  "notes",
-  "notesVersion",
-  "notesHistory",
-  "notesDelta",
-  "contentRevision",
-  "contentMutation",
-  "notesLastEditedAt",
-  "notesLastEditedBy",
-  "suggestionsHistory",
-  "transcriptS3Key",
-  "operatorRecovery",
-  "textChannelId",
-  "channelId",
-  "timestamp",
-  "archivedAt",
-  "archivedByUserId",
-  "capture",
-  "captureCoverage",
-  "processing",
-  "updateDelivery",
-  "notesChannelId",
-  "notesMessageIds",
-  "summaryMessageId",
-  "publicationRepair",
-];
 export function buildFirstPublicationCommit(
   profile: PublicationProfile,
   c: Commit,
 ): TransactWriteItem[] {
   const items: TransactWriteItem[] = [];
+  const controlProof = condition(c.controlBefore, [
+    "servingGeneration",
+    "coordinatorEpoch",
+    "publicationPins",
+    "publicationTransition",
+    "deployment",
+    "servingMembers",
+  ]);
+
   if (!same(c.controlBefore, c.controlAfter))
     items.push({
       Update: {
         TableName: profile.controlTable,
         Key: marshall({ pk: "ENV", sk: "CONTROL" }),
         UpdateExpression: "SET #pins = :pins",
-        ...condition(c.controlBefore, [
-          "servingGeneration",
-          "coordinatorEpoch",
-          "publicationPins",
-          "publicationTransition",
-          "deployment",
-          "servingMembers",
-        ]),
+        ...controlProof,
         ExpressionAttributeNames: {
-          ...condition(c.controlBefore, [
-            "servingGeneration",
-            "coordinatorEpoch",
-            "publicationPins",
-            "publicationTransition",
-            "deployment",
-            "servingMembers",
-          ]).ExpressionAttributeNames,
+          ...controlProof.ExpressionAttributeNames,
           "#pins": "publicationPins",
         },
         ExpressionAttributeValues: {
-          ...condition(c.controlBefore, [
-            "servingGeneration",
-            "coordinatorEpoch",
-            "publicationPins",
-            "publicationTransition",
-            "deployment",
-            "servingMembers",
-          ]).ExpressionAttributeValues,
+          ...controlProof.ExpressionAttributeValues,
           ...marshall({ ":pins": c.controlAfter.publicationPins }),
         },
       },
@@ -488,61 +406,10 @@ export function buildFirstPublicationCommit(
       ConditionCheck: {
         TableName: profile.controlTable,
         Key: marshall({ pk: "ENV", sk: "CONTROL" }),
-        ...condition(c.controlBefore, [
-          "servingGeneration",
-          "coordinatorEpoch",
-          "publicationPins",
-          "publicationTransition",
-          "deployment",
-          "servingMembers",
-        ]),
+        ...controlProof,
       },
     });
-  for (const r of c.rows) {
-    assertMeetingItemSize(r.after);
-    const proof = condition(firstPublicationSnapshot(r.before), historyFields),
-      names = { ...proof.ExpressionAttributeNames },
-      values = { ...proof.ExpressionAttributeValues },
-      set: string[] = [],
-      remove: string[] = [];
-    for (const [i, field] of [
-      "publicationRepair",
-      "notesChannelId",
-      "notesMessageIds",
-      "updateDelivery",
-      "updateDeliveryQueue",
-      "updateDeliveryDueAt",
-    ].entries()) {
-      const n = "#w" + i,
-        v = ":w" + i;
-      names[n] = field;
-      const value = Reflect.get(r.after, field);
-      if (value === undefined) remove.push(n);
-      else {
-        set.push(n + " = " + v);
-        Object.assign(
-          values,
-          marshall({ [v]: value }, { removeUndefinedValues: true }),
-        );
-      }
-    }
-    items.push({
-      Update: {
-        TableName: profile.historyTable,
-        Key: marshall(r.key),
-        ConditionExpression:
-          "attribute_exists(guildId) AND " + proof.ConditionExpression,
-        UpdateExpression: [
-          set.length ? "SET " + set.join(", ") : "",
-          remove.length ? "REMOVE " + remove.join(", ") : "",
-        ]
-          .filter(Boolean)
-          .join(" "),
-        ExpressionAttributeNames: names,
-        ExpressionAttributeValues: values,
-      },
-    });
-  }
+  items.push(...c.rows.map((r) => historyUpdate(profile, r)));
   for (const a of c.attempts) {
     const key = { pk: "PUBLICATION#" + a.after.authority, sk: "CURRENT" };
     items.push({
@@ -642,4 +509,96 @@ export function createDynamoFirstPublicationRepository(
     },
   };
   return createFirstPublicationRepository(store);
+}
+
+function registeredMeeting(
+  after: MeetingHistory,
+  receipt: FirstPublicationReceipt,
+) {
+  const ids = receipt.pages.flatMap((p) =>
+    p.kind === "verified" ? [p.messageId] : [],
+  );
+  if (new Set(ids).size !== ids.length || !after.updateDelivery) return null;
+  after.notesChannelId = receipt.channelId;
+  after.notesMessageIds = ids;
+  after.updateDelivery = {
+    ...after.updateDelivery,
+    parts: {
+      ...after.updateDelivery.parts,
+      notesBody: {
+        ...after.updateDelivery.parts.notesBody,
+        acknowledged: after.updateDelivery.parts.notesBody.desired,
+      },
+    },
+    progress: {
+      kind: "synced",
+      syncedAt: Math.floor(Date.parse(receipt.updatedAt) / 1000),
+    },
+  };
+  delete after.updateDeliveryQueue;
+  delete after.updateDeliveryDueAt;
+
+  return after;
+}
+
+function historyUpdate(
+  profile: PublicationProfile,
+  r: RowChange,
+): TransactWriteItem {
+  assertMeetingItemSize(r.after);
+  const proof = condition(
+      firstPublicationSnapshot(r.before),
+      FIRST_PUBLICATION_SNAPSHOT_FIELDS,
+    ),
+    names = { ...proof.ExpressionAttributeNames },
+    values = { ...proof.ExpressionAttributeValues },
+    set: string[] = [],
+    remove: string[] = [];
+  for (const [i, field] of [
+    "publicationRepair",
+    "notesChannelId",
+    "notesMessageIds",
+    "updateDelivery",
+    "updateDeliveryQueue",
+    "updateDeliveryDueAt",
+  ].entries()) {
+    const n = "#w" + i,
+      v = ":w" + i;
+    names[n] = field;
+    const value = Reflect.get(r.after, field);
+    if (value === undefined) remove.push(n);
+    else {
+      set.push(n + " = " + v);
+      Object.assign(
+        values,
+        marshall({ [v]: value }, { removeUndefinedValues: true }),
+      );
+    }
+  }
+  const expression = [
+    set.length ? "SET " + set.join(", ") : "",
+    remove.length ? "REMOVE " + remove.join(", ") : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
+  return {
+    Update: {
+      TableName: profile.historyTable,
+      Key: marshall(r.key),
+      ConditionExpression:
+        "attribute_exists(guildId) AND " + proof.ConditionExpression,
+      UpdateExpression: expression,
+      ExpressionAttributeNames: names,
+      ExpressionAttributeValues: values,
+    },
+  };
+}
+
+function hasPublicationWork(row: MeetingHistory) {
+  return (
+    row.publicationRepair?.kind === "running" ||
+    !!row.notesChannelId ||
+    !!row.notesMessageIds?.length ||
+    !!row.summaryMessageId
+  );
 }

@@ -131,6 +131,10 @@ export function canCompareContentWrite(
 ): row is MeetingHistory {
   return Boolean(
     row &&
+    !(
+      row.publicationRepair?.kind === "running" &&
+      row.publicationRepair.purpose === "first_publication"
+    ) &&
     canonicalWriterAllowsEdit(row) &&
     contentMatches(row, input) &&
     (!input.expectedPublication ||

@@ -47,3 +47,115 @@ async function reservePublicationCompatibility({
   });
 }
 module.exports = { reservePublicationCompatibility };
+
+function publicationDeployment({
+  control,
+  config,
+  options,
+  tables,
+  callAws,
+  assertWriter,
+  production,
+}) {
+  async function guard() {
+    const ctl = await control();
+    if (ctl.publicationProtocol !== 1) return;
+    const releases =
+      options.publicationReleases ??
+      require("../operator/recovery-publication-releases.json");
+    const images = [
+      config.image,
+      ...Object.values(ctl.servingMembers).map((m) => m.imageDigest),
+      ...(ctl.deployment?.originalMembers ?? []).map((m) => m.imageDigest),
+    ];
+    await reservePublicationCompatibility({
+      aws: callAws,
+      table: tables.deploymentControl,
+      control: ctl,
+      images,
+      runToken: config.runToken,
+      releases,
+    });
+  }
+  async function enroll(previous, next) {
+    const releases =
+      options.publicationReleases ??
+      require("../operator/recovery-publication-releases.json");
+    if (
+      !production &&
+      next.deployment?.phase === "complete" &&
+      releases.images.length &&
+      Object.values(next.servingMembers).every((m) =>
+        releases.images.includes(m.imageDigest),
+      ) &&
+      releases.images.includes(config.image.replace(/^.*@/, ""))
+    ) {
+      await assertWriter();
+      const response = await callAws("dynamodb", "update-item", {
+        TableName: tables.deploymentControl,
+        Key: marshall({ pk: "ENV", sk: "CONTROL" }),
+        UpdateExpression:
+          "SET #protocol = :one, #images = :images REMOVE #transition",
+        ConditionExpression:
+          "coordinatorToken = :token AND coordinatorEpoch = :epoch AND (attribute_not_exists(#transition) OR #transition.#run = :token)",
+        ExpressionAttributeNames: {
+          "#protocol": "publicationProtocol",
+          "#transition": "publicationTransition",
+          "#images": "publicationCompatibleImages",
+          "#run": "runToken",
+        },
+        ExpressionAttributeValues: marshall({
+          ":one": 1,
+          ":images": releases.images,
+          ":token": previous.coordinatorToken,
+          ":epoch": previous.coordinatorEpoch,
+        }),
+      });
+      void response;
+      previous = {
+        ...previous,
+        publicationProtocol: 1,
+        publicationCompatibleImages: releases.images,
+      };
+      next = {
+        ...next,
+        publicationProtocol: 1,
+        publicationCompatibleImages: releases.images,
+      };
+      delete previous.publicationTransition;
+      delete next.publicationTransition;
+    }
+
+    return { previous, next };
+  }
+  return {
+    guard,
+    enroll,
+    aws: createPublicationAwsCaller(callAws, assertWriter, guard),
+  };
+}
+module.exports.publicationDeployment = publicationDeployment;
+
+function createPublicationAwsCaller(callAws, assertWriter, guard) {
+  return async (service, operation, input) => {
+    if (
+      [
+        "update-item",
+        "transact-write-items",
+        "register-task-definition",
+        "update-service",
+        "modify-listener",
+      ].includes(operation)
+    )
+      await assertWriter();
+    if (
+      [
+        "register-task-definition",
+        "update-service",
+        "modify-listener",
+      ].includes(operation)
+    )
+      await guard();
+    return callAws(service, operation, input);
+  };
+}

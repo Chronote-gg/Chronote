@@ -101,3 +101,46 @@ test("archived preview is successful and invalid apply cannot bypass digest", as
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test("approved release and exact replay both report success without sending", async () => {
+  const root = await mkdtemp(join(tmpdir(), "publication-release-")),
+    f = workflowFixture();
+  try {
+    const { previewFirstPublication } =
+      await import("../../src/services/firstPublicationPlan");
+    const { applyFirstPublication, reconcileFirstPublication } =
+      await import("../../src/services/firstPublicationService");
+    const { DiscordMessageHttpError } =
+      await import("../../src/services/discordMessageEditor");
+    const plan = await previewFirstPublication([f.key], f.deps);
+    const settle = f.repo.settleUnsent;
+    f.repo.settleUnsent = async () => "stale";
+    f.deps.discord.createNotesMessage = async () => {
+      throw new DiscordMessageHttpError("create", 403);
+    };
+    await applyFirstPublication(plan, plan.digest, f.deps);
+    f.repo.settleUnsent = settle;
+    const { resolution } = await reconcileFirstPublication(plan, f.deps);
+    if (!resolution || resolution.operation !== "release")
+      throw Error("release required");
+    const file = join(root, "preview.json");
+    await writeFile(file, JSON.stringify(resolution));
+    const options = {
+      profiles: { production: f.profile },
+      connect: async () => ({ deps: f.deps, close: () => {} }),
+      report: () => {},
+    };
+    const args = [
+      "apply",
+      "--preview",
+      file,
+      "--expect-sha256",
+      resolution.digest,
+    ];
+    expect(await runFirstPublicationCli(args, options)).toBe(0);
+    expect(await runFirstPublicationCli(args, options)).toBe(0);
+    expect(f.posts).toHaveLength(0);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});

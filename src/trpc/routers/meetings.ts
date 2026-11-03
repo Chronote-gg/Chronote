@@ -1,4 +1,4 @@
-import { PublicationArchiveConflict } from "../../types/meetingPublication";
+import { saveMeetingArchive } from "./meetingArchiveAction";
 import { updateMeeting } from "../../services/meetingUpdateService";
 import { approvedCorrectionMutation } from "../../services/approvedMeetingCorrection";
 import { projectMeetingUpdateDelivery } from "../../services/meetingUpdateStatus";
@@ -17,7 +17,6 @@ import quillDeltaToMarkdownModule from "quill-delta-to-markdown";
 import {
   getMeetingHistoryService,
   listRecentMeetingsForGuildService,
-  updateMeetingArchiveService,
   updateMeetingAccessGrantsService,
 } from "../../services/meetingHistoryService";
 import {
@@ -1195,20 +1194,12 @@ const setArchived = authedProcedure
       userId: ctx.user.id,
     });
 
-    const ok = await updateMeetingArchiveService({
+    return saveMeetingArchive({
       guildId: input.serverId,
       channelId_timestamp: input.meetingId,
       archived: input.archived,
       archivedByUserId: ctx.user.id,
-    }).catch((error: unknown) => {
-      if (error instanceof PublicationArchiveConflict)
-        throw new TRPCError({ code: "CONFLICT", message: error.message });
-      throw error;
     });
-    if (!ok) {
-      throw new TRPCError({ code: "NOT_FOUND", message: "Meeting not found" });
-    }
-    return { ok: true };
   });
 
 const rename = authedProcedure

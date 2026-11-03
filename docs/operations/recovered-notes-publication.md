@@ -100,3 +100,54 @@ Local tests use synthetic content and loopback DynamoDB only. They are distinct
 from serving-version acceptance, Sandbox delivery proof and production publication.
 Do not call a source commit or successful preview proof that a customer received
 notes. Record live acceptance only after it has actually run under its authority.
+
+## Implementation decisions and review
+
+The implementation uses one atomic batch claim for all selected meetings and its
+run pin. This closes the gap between acquiring separate meeting claims, at the
+cost of limiting a batch to 25 meetings. The same transaction builder handles
+claims, page receipts and settlement.
+
+The source adapter validates the stored version-2 manifest directly. AWS identity
+comes from STS because recovery manifests do not contain an account identity.
+Only the existing private-file helpers are reused from the earlier importer;
+unrelated recovery artifacts are not part of this feature.
+
+Normal compatible releases enroll the publication protocol and maintain its image
+catalog. Initial production introduction retains its separate authority. Missing
+positive process-exit evidence blocks transfer, even if the process appears gone.
+These limits avoid guessing about an unknown runtime or send.
+
+One independent whole-branch review identified two defects. Regression tests
+reproduced both before their fixes:
+
+- A canonical edit begun after a first-publication claim could invalidate final
+  registration. First-publication ownership now excludes canonical edits through
+  the shared repository guard. Legacy repair still preserves newer canonical
+  edits, covered by the real DynamoDB integration suite.
+- Replaying a successfully finalized resolution returned an evidence-change
+  error. An exact approved replay now verifies the existing publication and
+  returns success without sending again. Although originally graded minor, this
+  was treated as important because interrupted operators must be able to retry.
+
+A related CLI regression verifies that successful release and release replay
+return exit code 0. No independent-review findings were deferred or left
+unjudged. The fix pass also shares source snapshots, pin schemas and test setup,
+and moves archive storage and deployment publication checks into their own
+modules to meet the existing quality limits without raising thresholds.
+
+Native execution used one implementation context and one independent reviewer.
+The tradeoff is shared implementation context across tasks; regression tests and
+whole-branch review provide the final independent check. Hosted Sandbox acceptance,
+deployment and real Discord publication remain separate work.
+
+### Local verification evidence (2026-11-03)
+
+The final unchanged source passed 580 Jest suites (6,665 tests), all 50 selected
+loopback DynamoDB integration tests, backend compilation, operator CLI typecheck,
+touched-file ESLint, Prettier, CJS syntax checks and `git diff --check`.
+The complete unit suite ran with two workers and coverage collection disabled.
+The integration suites were `firstPublicationWorkflow`, `controlTransactions`
+and `meetingPublicationExclusion`, using the dedicated deployment test config.
+All provider data in these tests was synthetic. This evidence does not include
+hosted Sandbox acceptance, a deployment or actual Discord delivery.
