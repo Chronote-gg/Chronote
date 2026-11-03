@@ -1,3 +1,4 @@
+import { PublicationArchiveConflict } from "../../types/meetingPublication";
 import { updateMeeting } from "../../services/meetingUpdateService";
 import { approvedCorrectionMutation } from "../../services/approvedMeetingCorrection";
 import { projectMeetingUpdateDelivery } from "../../services/meetingUpdateStatus";
@@ -1199,6 +1200,10 @@ const setArchived = authedProcedure
       channelId_timestamp: input.meetingId,
       archived: input.archived,
       archivedByUserId: ctx.user.id,
+    }).catch((error: unknown) => {
+      if (error instanceof PublicationArchiveConflict)
+        throw new TRPCError({ code: "CONFLICT", message: error.message });
+      throw error;
     });
     if (!ok) {
       throw new TRPCError({ code: "NOT_FOUND", message: "Meeting not found" });

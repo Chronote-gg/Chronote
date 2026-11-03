@@ -76,7 +76,7 @@ export function renderFirstPublication(
     footerText: `v${row.notesVersion} | Recovered notes`,
   });
   return batchMeetingNotesEmbeds(embeds).map((batch) => ({
-    embeds: batch.map((e) => e.toJSON()),
+    embeds: batch.map((e) => Object.fromEntries(Object.entries(e.toJSON()))),
     components: [
       {
         type: 1,

@@ -123,7 +123,9 @@ export function firstPublicationSnapshot(
     "publicationRepair",
   ];
   return Object.fromEntries(
-    fields.filter((k) => row[k] !== undefined).map((k) => [k, row[k]]),
+    fields
+      .filter((k) => Reflect.get(row, k) !== undefined)
+      .map((k) => [k, Reflect.get(row, k)]),
   );
 }
 export function bindFirstPublicationSource(

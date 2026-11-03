@@ -1,3 +1,4 @@
+import { PublicationArchiveConflict } from "../types/meetingPublication";
 import {
   getDeploymentControlRepository,
   getMeetingUpdateDeliveryRepository,
@@ -256,6 +257,8 @@ const mockRepository: MeetingHistoryRepository = {
     if (idx === -1) return false;
     const now = new Date().toISOString();
     const existing = items[idx];
+    if (existing.publicationRepair?.kind === "running")
+      throw new PublicationArchiveConflict();
     items[idx] = {
       ...existing,
       archivedAt: archived ? now : undefined,

@@ -182,6 +182,13 @@ export type RuntimeCompatibility =
   | { kind: "compatible"; generation: number; control: Record<string, unknown> }
   | { kind: "blocked"; reason: string };
 export type FirstPublicationRepository = {
+  acquireBatch(input: {
+    entries: Array<{
+      receipt: FirstPublicationReceipt;
+      snapshot: Record<string, unknown>;
+    }>;
+    runtime: Extract<RuntimeCompatibility, { kind: "compatible" }>;
+  }): Promise<"owned" | "stale">;
   getStrong(key: PublicationKey): Promise<MeetingHistory | undefined>;
   readAttempt(authority: string): Promise<FirstPublicationReceipt | null>;
   acquire(input: {

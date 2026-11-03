@@ -195,3 +195,12 @@ export function settledLifecycleDelivery(
   };
   return { delivery: next, dueAt: meetingUpdateDeliveryNextCheck(next) };
 }
+
+export class PublicationArchiveConflict extends Error {
+  constructor() {
+    super(
+      "Meeting publication is running or unresolved; reconcile before archiving.",
+    );
+    this.name = "PublicationArchiveConflict";
+  }
+}

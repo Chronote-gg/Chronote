@@ -1,3 +1,4 @@
+import { PublicationArchiveConflict } from "./types/meetingPublication";
 import {
   buildPendingSegmentTransaction,
   buildPersonalUploadSubmissionTransaction,
@@ -2838,9 +2839,12 @@ export async function updateMeetingArchive(params: {
   const expressionAttributeNames: Record<string, string> = {
     "#updatedAt": "updatedAt",
     "#channelIdTimestamp": "channelId_timestamp",
+    "#publicationRepair": "publicationRepair",
+    "#publicationKind": "kind",
   };
   const values: Record<string, unknown> = {
     ":updatedAt": now,
+    ":runningPublication": "running",
   };
 
   if (params.archived) {
@@ -2874,7 +2878,8 @@ export async function updateMeetingArchive(params: {
     ExpressionAttributeValues: marshall(values, {
       removeUndefinedValues: true,
     }),
-    ConditionExpression: "attribute_exists(#channelIdTimestamp)",
+    ConditionExpression:
+      "attribute_exists(#channelIdTimestamp) AND (attribute_not_exists(#publicationRepair.#publicationKind) OR #publicationRepair.#publicationKind <> :runningPublication)",
   };
 
   const command = new UpdateItemCommand(request);
@@ -2885,6 +2890,21 @@ export async function updateMeetingArchive(params: {
     if (
       (error as { name?: string }).name === "ConditionalCheckFailedException"
     ) {
+      const current = await dynamoDbClient.send(
+        new GetItemCommand({
+          TableName: tableName("MeetingHistoryTable"),
+          Key: marshall({
+            guildId: params.guildId,
+            channelId_timestamp: params.channelId_timestamp,
+          }),
+          ConsistentRead: true,
+        }),
+      );
+      if (
+        current.Item &&
+        unmarshall(current.Item).publicationRepair?.kind === "running"
+      )
+        throw new PublicationArchiveConflict();
       return false;
     }
     console.error("Failed to update meeting archive:", error);
