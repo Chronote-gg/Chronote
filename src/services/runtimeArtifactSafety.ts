@@ -16,12 +16,14 @@ import {
   sameRuntimeIdentity,
   type RuntimeIdentity,
   type RuntimeRecord,
+  type ControlRecord,
   type RetirementRequest,
 } from "../types/deploymentControl";
 import type {
   ArtifactSafetyContext,
   ArtifactSafetyPurpose,
 } from "./artifactSafetyRules";
+import { artifactRecordState } from "./artifactSafetyRules";
 import type { ArtifactAdmissionGate } from "./artifactAdmissionGate";
 import type { RuntimeArtifactStorage } from "./runtimeArtifactStorage";
 import { stableJson } from "../utils/stableJson";
@@ -63,6 +65,21 @@ function boundRequest(
     throw new Error("Artifact request changed");
   return row.request;
 }
+function ownsLocalAdmission(
+  control: ControlRecord,
+  owner: RuntimeRecord,
+  generation: number,
+) {
+  const selected = control.servingMembers[owner.identity.instanceId];
+  return (
+    owner.role === "serving" &&
+    !owner.retirementRequest &&
+    owner.authorizedGeneration === generation &&
+    control.servingGeneration === generation &&
+    selected !== undefined &&
+    sameRuntimeIdentity(selected, owner.identity)
+  );
+}
 
 export function createRuntimeArtifactSafety(options: {
   identity: RuntimeIdentity;
@@ -78,6 +95,13 @@ export function createRuntimeArtifactSafety(options: {
   let operation: Preparation | undefined;
   let stopped = false;
   let unavailable = false;
+  let pendingResume:
+    | {
+        record: ArtifactSafetyRecord;
+        generation: number;
+        purpose: "activate" | "cancel_ack";
+      }
+    | undefined;
   async function runtime() {
     const row = runtimeRecordSchema.parse(
       await options.control.getRecord(
@@ -118,6 +142,15 @@ export function createRuntimeArtifactSafety(options: {
       signal?.throwIfAborted();
       const time = now();
       const next = update(current, time);
+      const resume =
+        purpose === "activate" || purpose === "cancel_ack"
+          ? {
+              record: next,
+              generation: authority.runtime.authorizedGeneration,
+              purpose,
+            }
+          : undefined;
+      if (resume) pendingResume = resume;
       if (
         (await options.repository.write(
           { purpose, expected: current, next, context: authority, now: time },
@@ -125,6 +158,7 @@ export function createRuntimeArtifactSafety(options: {
         )) === "applied"
       )
         return next;
+      if (pendingResume === resume) pendingResume = undefined;
     }
     throw new Error("Artifact state changed during publication");
   }
@@ -260,12 +294,7 @@ export function createRuntimeArtifactSafety(options: {
         cancelledAt: time,
       }),
     );
-    if (operation) {
-      operation.cancelled = true;
-      operation.controller.abort();
-    }
-    options.storage.resume();
-    options.admission.resume();
+    await resumeAcknowledged();
   }
   async function publishStartup(
     snapshot: ArtifactStorageSnapshot,
@@ -304,8 +333,53 @@ export function createRuntimeArtifactSafety(options: {
         }),
       options.signal,
     );
+    await resumeAcknowledged();
+  }
+  async function resumeAcknowledged() {
+    const pending = pendingResume;
+    if (!pending || stopped || !options.isProtected()) return;
+    const observed = await options.repository.read(
+      options.identity,
+      options.signal,
+    );
+    if (
+      !observed ||
+      stableJson(artifactRecordState(observed)) !==
+        stableJson(artifactRecordState(pending.record))
+    )
+      return;
+    const owner = await runtime();
+    const control = controlRecordSchema.parse(
+      await options.control.getRecord("ENV", "CONTROL"),
+    );
+    if (!ownsLocalAdmission(control, owner, pending.generation)) return;
+    if (
+      pending.purpose === "cancel_ack" &&
+      !cancellationStillCurrent(observed, control)
+    )
+      return;
+    if (stopped || !options.isProtected()) return;
+    if (operation) {
+      operation.cancelled = true;
+      operation.controller.abort();
+    }
     options.storage.resume();
     options.admission.resume();
+    pendingResume = undefined;
+  }
+  function cancellationStillCurrent(
+    row: ArtifactSafetyRecord,
+    control: ControlRecord,
+  ) {
+    if (row.state !== "cancelled") return false;
+    return (
+      control.deployment?.phase === "preparing" &&
+      control.coordinatorToken === row.request.coordinatorToken &&
+      control.coordinatorEpoch === row.request.coordinatorEpoch &&
+      control.servingGeneration === row.request.servingGeneration &&
+      control.deployment.originalGeneration === row.request.servingGeneration &&
+      sameRuntimeIdentity(control.deployment.outgoing, row.identity)
+    );
   }
   async function prepareRollback(
     row: Extract<ArtifactSafetyRecord, { state: "consumed" }>,
@@ -352,6 +426,7 @@ export function createRuntimeArtifactSafety(options: {
   async function refresh() {
     if (stopped) return;
     try {
+      await resumeAcknowledged();
       const row = await capability();
       const owner = await runtime();
       if (["requested", "draining"].includes(row.state) && "request" in row)

@@ -145,6 +145,21 @@ Offline mocks use their own checked locks and the CI Terraform 1.16.0 toolchain;
 they do not prove native meeting-model acceptance. The exact version refusals
 stay intact, and site-policy installation acceptance remains separate.
 
+### Artifact-preservation permission audit (2026-11-03)
+
+The production and Sandbox deployment policies add only `ConditionCheckItem` on
+MeetingHistory. These policies consume the existing table ARN; no table, DynamoDB
+access policy or KMS key depends on either deployment policy. The runtime's
+transcripts policy adds only `s3:GetObjectVersion` to its existing bucket/object
+scope. It introduces no reference or dependency change. That policy is outside
+the 32-resource closure, and none of the closure resources reads it.
+
+The closure, excluded checks, installed provider requirements, typed retry-index
+gate and permitted delivery effects are unchanged. Refreshing the source pin for
+these three reviewed Terraform files does not permit either IAM change through
+the restricted meeting-delivery plan scope. Installing the new permissions still
+requires its own fresh protected saved plan and approved apply.
+
 ### Future source changes
 
 Any top-level Terraform or lock edit requires reviewing and updating the source

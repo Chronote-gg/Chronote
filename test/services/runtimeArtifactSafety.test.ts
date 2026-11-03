@@ -213,6 +213,101 @@ test("retired-runtime reactivation cannot protect a candidate without source pre
   f.safety.stop();
 });
 
+async function readyLocalResume(
+  f: ReturnType<typeof fixture>,
+  purpose: "activate" | "cancel_ack",
+) {
+  if (purpose === "activate") {
+    f.records.set(JSON.stringify(["ENV", "RUNTIME#old"]), {
+      ...f.source,
+      role: "candidate",
+    });
+    await f.safety.startupReady();
+    f.records.set(JSON.stringify(["ENV", "RUNTIME#old"]), f.source);
+  } else {
+    await f.request();
+    await f.safety.refresh();
+    await until(
+      async () =>
+        (await f.repository.read(f.source.identity))?.state === "sealed",
+    );
+    const current = await f.repository.read(f.source.identity);
+    if (current?.state !== "sealed")
+      throw new Error("Missing sealed cancellation fixture");
+    await f.repository.write({
+      purpose: "cancel",
+      expected: current,
+      next: artifactSafetyRecordSchema.parse({
+        ...artifactSafetyBaseSchema.parse(current),
+        revision: current.revision + 1,
+        state: "cancel_requested",
+        request: current.request,
+      }),
+      context: { kind: "preparing", control: f.ctl, runtime: f.source },
+      now: f.clock.now,
+    });
+  }
+}
+test.each(["activate", "cancel_ack"] as const)(
+  "lost %s response reconciles its exact durable acknowledgment before local resume",
+  async (purpose) => {
+    const f = fixture();
+    await readyLocalResume(f, purpose);
+    const write = f.repository.write.bind(f.repository);
+    let lost = false;
+    const failure = jest
+      .spyOn(f.repository, "write")
+      .mockImplementation(async (input, signal) => {
+        const result = await write(input, signal);
+        if (input.purpose === purpose && !lost) {
+          lost = true;
+          throw new Error(
+            "Committed, response and immediate readback unavailable",
+          );
+        }
+        return result;
+      });
+    try {
+      await f.safety.refresh();
+      expect(lost).toBe(true);
+      expect(f.admission.sealed).toBe(true);
+      await f.safety.refresh();
+      await f.safety.refresh();
+      expect(f.admission.sealed).toBe(false);
+      expect(f.storage.resume).toHaveBeenCalledTimes(1);
+    } finally {
+      failure.mockRestore();
+      f.safety.stop();
+    }
+  },
+);
+test("a lost activation acknowledgment cannot reopen after serving ownership changes", async () => {
+  const f = fixture();
+  await readyLocalResume(f, "activate");
+  const write = f.repository.write.bind(f.repository);
+  const failure = jest
+    .spyOn(f.repository, "write")
+    .mockImplementation(async (input, signal) => {
+      const result = await write(input, signal);
+      if (input.purpose === "activate")
+        throw new Error("Committed but unacknowledged");
+      return result;
+    });
+  try {
+    await f.safety.refresh();
+    f.records.set(JSON.stringify(["ENV", "CONTROL"]), {
+      ...f.ctl,
+      servingMembers: {},
+    });
+    await f.safety.refresh();
+    expect(f.admission.sealed).toBe(true);
+    expect(f.storage.resume).not.toHaveBeenCalled();
+  } finally {
+    failure.mockRestore();
+    f.safety.stop();
+  }
+});
+
 test("a guarded rollback rechecks the preserved inventory before reopening the original source", async () => {
   const f = fixture();
   await f.request();

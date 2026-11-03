@@ -170,18 +170,27 @@ export function fixture() {
     deployments: [{ rolloutState: "COMPLETED" }],
   };
   const calls: Array<{ operation: string; input: unknown }> = [];
-  function refreshProofs() {
+  function refreshArtifactProofs(at = time) {
     for (const artifact of state.artifacts.values()) {
-      artifact.heartbeatAt = time;
-      artifact.freshUntil = time + 60;
-      if (artifact.startup.kind === "sealed")
+      artifact.heartbeatAt = at;
+      artifact.freshUntil = at + 60;
+      if (
+        artifact.state === "idle" &&
+        state.rows[artifact.identity.instanceId]?.role === "serving"
+      )
+        artifact.startup = { kind: "active", activatedAt: at };
+      else if (artifact.startup.kind === "sealed")
         artifact.startup.proof = {
           snapshot,
-          provenAt: time,
-          expiresAt: time + 60,
+          provenAt: at,
+          expiresAt: at + 60,
         };
     }
+  }
+  function refreshProofs() {
+    refreshArtifactProofs();
     for (const runtime of Object.values(state.rows)) {
+      runtime.heartbeatAt = time;
       runtime.readiness.observedEpoch = state.ctl.coordinatorEpoch;
       runtime.readiness.observedGeneration = state.ctl.servingGeneration;
       runtime.readiness.expiresAt = time + 30;
@@ -252,7 +261,14 @@ export function fixture() {
         ...artifact,
         state: "sealed",
         revision: artifact.revision + 1,
-        proof: { snapshot, provenAt: time, expiresAt: time + 60 },
+        proof: {
+          snapshot,
+          provenAt: artifact.heartbeatAt,
+          expiresAt: Math.min(
+            artifact.heartbeatAt + 60,
+            artifact.request.expiresAt,
+          ),
+        },
       });
       state.artifacts.set(id, artifact);
     }
@@ -292,7 +308,7 @@ export function fixture() {
     runtime.workCounts = counts();
     runtime.retirementAcknowledgment = {
       request: values[":request"],
-      retiredAt: time,
+      retiredAt: runtime.heartbeatAt,
     };
     const artifact = state.artifacts.get(runtime.identity.instanceId);
     if (artifact)
@@ -302,7 +318,11 @@ export function fixture() {
           ...artifact,
           retirementVerification: {
             request: values[":request"],
-            proof: { snapshot, provenAt: time, expiresAt: time + 60 },
+            proof: {
+              snapshot,
+              provenAt: runtime.heartbeatAt,
+              expiresAt: runtime.heartbeatAt + 60,
+            },
           },
         }),
       );
@@ -314,7 +334,10 @@ export function fixture() {
       );
       state.artifacts.set(next.identity.instanceId, next);
       if (next.state === "consumed")
-        state.ctl = artifactBuilders.artifactConsumeControl(state.ctl, time);
+        state.ctl = artifactBuilders.artifactConsumeControl(
+          state.ctl,
+          next.consumedAt,
+        );
     } else if (input.TransactItems![1]?.Put) continuation(input);
     else if (input.TransactItems![0].Update) promotion(input);
     else retirementRequest(input);
@@ -456,6 +479,7 @@ export function fixture() {
     coordinator,
     definition,
     refreshProofs,
+    refreshArtifactProofs,
     options,
     svc,
   };

@@ -6,6 +6,7 @@ import { PassThrough } from "node:stream";
 import * as fs from "node:fs";
 import path from "node:path";
 import ffmpeg from "fluent-ffmpeg";
+import { ChildProcess } from "node:child_process";
 import {
   getMeetingProcessingSignal,
   runMeetingProcessingEffect,
@@ -188,12 +189,22 @@ export function openOutputFile(meeting: MeetingData) {
   );
 
   let complete: (result: OutputCompletion) => void = () => {};
+  let started = false;
+  let childClosed = false;
+  let terminal: OutputCompletion | undefined;
+  let resolveCompletion: (result: OutputCompletion) => void = () => {};
+  function finishClosedOutput() {
+    if (!terminal || (started && !childClosed)) return;
+    write?.settle(terminal.kind === "closed" ? "known" : "uncertain");
+    resolveCompletion(terminal);
+  }
   outputCompletions.set(
     meeting,
     new Promise((resolve) => {
+      resolveCompletion = resolve;
       complete = (result) => {
-        write?.settle(result.kind === "closed" ? "known" : "uncertain");
-        resolve(result);
+        terminal ??= result;
+        finishClosedOutput();
       };
     }),
   );
@@ -211,6 +222,19 @@ export function openOutputFile(meeting: MeetingData) {
         `-ar ${RECORD_SAMPLE_RATE}`, // Ensure output sample rate
       ])
       .toFormat("mp3") // Output format as MP3
+      .on("start", () => {
+        started = true;
+        // Command errors can precede child death; only the pinned encoder's actual child closes output I/O.
+        const child = Reflect.get(
+          meeting.audioData.ffmpegProcess!,
+          "ffmpegProc",
+        );
+        if (child instanceof ChildProcess)
+          child.once("close", () => {
+            childClosed = true;
+            finishClosedOutput();
+          });
+      })
       .on("error", (err) => {
         complete({ kind: "failed", error: err });
         console.error("ffmpeg error:", err);

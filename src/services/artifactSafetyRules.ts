@@ -282,7 +282,7 @@ function requireContext(input: ArtifactSafetyWrite) {
     requireServing(input, context.control);
   else requireRetirement(input, context);
 }
-function stableRecord(row: ArtifactSafetyRecord) {
+export function artifactRecordState(row: ArtifactSafetyRecord) {
   return { ...row, revision: 0, heartbeatAt: 0, freshUntil: 0 };
 }
 function requireBinding(input: ArtifactSafetyWrite) {
@@ -303,7 +303,7 @@ function requireBinding(input: ArtifactSafetyWrite) {
   if (
     expected &&
     purpose === "heartbeat" &&
-    !sameArtifactValue(stableRecord(expected), stableRecord(next))
+    !sameArtifactValue(artifactRecordState(expected), artifactRecordState(next))
   )
     throw new Error("Heartbeat cannot change artifact state");
 }

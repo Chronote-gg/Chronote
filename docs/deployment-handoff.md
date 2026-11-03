@@ -76,7 +76,7 @@ Legacy workers without this capability refuse, including under the quiet overrid
 
 The v1 introduction entry point is disabled before provider reads, legacy stops or hold changes. Its archived full-execution acceptance cases are explicitly skipped while refusal and preflight tests remain active. Re-enabling that route requires a reviewed preservation journal and restoring those acceptance cases. Normal compatible deployments use the active coordinator and retain their tests.
 
-The production deployment role needs `dynamodb:ConditionCheckItem` on MeetingHistory for these authority checks, without history writes. The Terraform change requires a fresh protected saved plan and apply before rollout. A merge alone neither grants the permission nor installs the runtime protocol.
+Both deployment roles need `dynamodb:ConditionCheckItem` on MeetingHistory for these authority checks, without history writes. The runtime also needs `s3:GetObjectVersion` on transcript objects for exact-version verification. These Terraform changes require a fresh protected saved plan and apply before rollout. A merge alone neither grants the permissions nor installs the runtime protocol.
 
 ### Delayed voice acknowledgment
 
