@@ -272,13 +272,17 @@ test("1001 jittered packets use one accounted ASR chunk with exact source bytes 
       expect(buffer.length).toBe(21020 * 192);
       expect(getCheckpointPcmBudget().reservedBytes).toBe(buffer.length * 4);
       for (let i = 0; i < 1001; i++) {
-        expect(buffer.subarray(i * 21 * 192, (i * 21 + 20) * 192)).toEqual(
-          Buffer.alloc(3840, (i % 250) + 1),
-        );
+        expect(
+          buffer
+            .subarray(i * 21 * 192, (i * 21 + 20) * 192)
+            .equals(Buffer.alloc(3840, (i % 250) + 1)),
+        ).toBe(true);
         if (i < 1000)
           expect(
-            buffer.subarray((i * 21 + 20) * 192, (i + 1) * 21 * 192),
-          ).toEqual(Buffer.alloc(192));
+            buffer
+              .subarray((i * 21 + 20) * 192, (i + 1) * 21 * 192)
+              .equals(Buffer.alloc(192)),
+          ).toBe(true);
       }
       return { status: "succeeded", text: "Grouped real conversation." };
     });

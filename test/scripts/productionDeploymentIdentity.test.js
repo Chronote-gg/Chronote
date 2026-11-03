@@ -71,6 +71,21 @@ test("observation covers exactly the eight existing maintenance table slots", ()
   expect(source).not.toContain('resource "aws_dynamodb_table"');
 });
 
+test("artifact handoff checks add no meeting-history write permission", () => {
+  const check =
+    source.match(
+      /Sid\s*=\s*"ArtifactAuthorityChecks"([\s\S]*?)\n\s*\},/,
+    )?.[1] ?? "";
+  expect(
+    [...check.matchAll(/"(dynamodb:[^"]+)"/g)].map((match) => match[1]),
+  ).toEqual(["dynamodb:ConditionCheckItem"]);
+  expect(
+    [...check.matchAll(/aws_dynamodb_table\.([a-z0-9_]+)\.arn/g)].map(
+      (match) => match[1],
+    ),
+  ).toEqual(["meeting_history_table"]);
+});
+
 test("runtime Exec grants exactly four channel actions and no session authority", () => {
   const runtime = block("resource", "production_exec_channels");
   expect(

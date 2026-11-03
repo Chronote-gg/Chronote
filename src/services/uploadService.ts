@@ -7,11 +7,34 @@ import {
 } from "./fixtureInputService";
 import { promises as fs } from "node:fs";
 import { MeetingData } from "../types/meeting-data";
-import { uploadObjectToS3 } from "./storageService";
+import { uploadVerifiedObjectToS3 } from "./storageService";
+import type { StoredArtifact } from "../types/storedArtifact";
 import { config } from "./configService";
 import { buildParticipantSnapshot } from "../utils/participants";
 import { ChatEntry } from "../types/chat";
 import { Participant } from "../types/participants";
+
+const verifiedArtifacts = new WeakMap<object, Map<string, StoredArtifact>>();
+export function getVerifiedMeetingArtifacts(meeting: object): StoredArtifact[] {
+  return Array.from(
+    verifiedArtifacts.get(meeting)?.values() ?? [],
+    (reference) => ({ ...reference }),
+  );
+}
+async function uploadMeetingArtifact(
+  meeting: MeetingData,
+  ...args: Parameters<typeof uploadVerifiedObjectToS3>
+) {
+  const reference = await uploadVerifiedObjectToS3(...args);
+  if (!reference) return undefined;
+  let references = verifiedArtifacts.get(meeting);
+  if (!references) {
+    references = new Map();
+    verifiedArtifacts.set(meeting, references);
+  }
+  references.set(reference.key, reference);
+  return reference.key;
+}
 
 function sanitizeTimestamp(date: Date): string {
   return date.toISOString().replace(/[:]/g, "-");
@@ -185,7 +208,12 @@ export async function uploadMeetingArtifacts(
     try {
       const audioBuffer = await fs.readFile(opts.audioFilePath);
       const key = `${folder}audio_combined.mp3`;
-      const uploaded = await uploadObjectToS3(key, audioBuffer, "audio/mpeg");
+      const uploaded = await uploadMeetingArtifact(
+        meeting,
+        key,
+        audioBuffer,
+        "audio/mpeg",
+      );
       if (uploaded) {
         meeting.audioS3Key = uploaded;
         result.audioS3Key = uploaded;
@@ -202,12 +230,14 @@ export async function uploadMeetingArtifacts(
       const chatTxtKey = `${folder}chat.txt`;
       const chatJsonKey = `${folder}chat.json`;
 
-      const txtUploaded = await uploadObjectToS3(
+      const txtUploaded = await uploadMeetingArtifact(
+        meeting,
         chatTxtKey,
         chatText,
         "text/plain; charset=utf-8",
       );
-      const jsonUploaded = await uploadObjectToS3(
+      const jsonUploaded = await uploadMeetingArtifact(
+        meeting,
         chatJsonKey,
         JSON.stringify(chatEntriesToJson(meeting.chatLog), null, 2),
         "application/json",
@@ -267,7 +297,8 @@ async function uploadFinalTranscript(
       ...receipt,
       acknowledgment: { state: "unknown" },
     });
-  return uploadObjectToS3(
+  return uploadMeetingArtifact(
+    meeting,
     transcriptJsonKey,
     body,
     "application/json",

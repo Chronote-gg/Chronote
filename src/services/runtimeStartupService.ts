@@ -1,4 +1,14 @@
 import { config } from "./configService";
+import { createArtifactAdmissionGate } from "./artifactAdmissionGate";
+import { createRuntimeArtifactSafety } from "./runtimeArtifactSafety";
+import { createRuntimeArtifactStorage } from "./runtimeArtifactStorage";
+import { getArtifactSafetyRepository } from "../repositories/artifactSafetyRepository";
+import { meetingArtifactProducers } from "./meetingArtifactProducer";
+import {
+  localArtifactCleanup,
+  createLocalArtifactCleanupAuthorization,
+} from "./meetingArtifactCleanupService";
+import { getTempBaseDir, getRetainedTempBaseDir } from "./tempFileService";
 import { getDeploymentControlRepository } from "../db";
 import {
   getRuntimeInstanceId,
@@ -50,7 +60,24 @@ export async function initializeRuntimeLifecycle(
     onUnsafe: () => undefined,
     signal,
   });
+  const artifactAdmission = createArtifactAdmissionGate();
+  const artifactSafety = createRuntimeArtifactSafety({
+    identity,
+    admission: artifactAdmission,
+    repository: getArtifactSafetyRepository(),
+    control: repository,
+    isProtected: () => protection.isSafe(),
+    signal,
+    storage: createRuntimeArtifactStorage({
+      roots: { working: getTempBaseDir(), retained: getRetainedTempBaseDir() },
+      producers: meetingArtifactProducers,
+      cleanup: localArtifactCleanup,
+      authorize: createLocalArtifactCleanupAuthorization(),
+    }),
+  });
   const lifecycle = createRuntimeLifecycle({
+    artifactAdmission,
+    artifactSafety,
     identity,
     runtimeMode,
     repository,
@@ -74,6 +101,7 @@ export async function initializeRuntimeLifecycle(
   return {
     async ready() {
       signal?.throwIfAborted();
+      await artifactSafety.startupReady();
       dependenciesReady = true;
       await lifecycle.refreshRuntimeReadiness();
       if (identity.kind === "local") {
