@@ -3,6 +3,7 @@ import {
   collectDefaultMetrics,
   Histogram,
   Counter,
+  Gauge,
 } from "prom-client";
 import type { NextFunction, Request, Response } from "express";
 import type { SpeechDetectionMode } from "./config/speechDetection";
@@ -14,6 +15,32 @@ import type {
 // Single global registry for the process
 export const metricsRegistry = new Registry();
 collectDefaultMetrics({ register: metricsRegistry });
+
+let oldestArtifactCleanup: { age: number; recordedAt: number } | undefined;
+const localArtifactCleanup = new Gauge({
+  name: "local_artifact_cleanup",
+  help: "Pending local cleanup obligations and age, without meeting identifiers",
+  labelNames: ["measure"],
+  registers: [metricsRegistry],
+  collect() {
+    this.set(
+      { measure: "oldestAgeSeconds" },
+      oldestArtifactCleanup
+        ? oldestArtifactCleanup.age +
+            Math.max(0, (Date.now() - oldestArtifactCleanup.recordedAt) / 1000)
+        : 0,
+    );
+  },
+});
+export function recordLocalArtifactCleanup(
+  stats: import("./services/artifactCleanupScheduler").ArtifactCleanupStats,
+) {
+  oldestArtifactCleanup = stats.pendingDirectories
+    ? { age: stats.oldestAgeSeconds, recordedAt: Date.now() }
+    : undefined;
+  for (const [measure, value] of Object.entries(stats))
+    localArtifactCleanup.set({ measure }, value);
+}
 
 // HTTP request duration histogram
 const httpRequestDuration = new Histogram({

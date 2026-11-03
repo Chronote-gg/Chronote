@@ -1,4 +1,5 @@
 import { persistSnippetSpeakerTrack } from "./services/audioPersistenceService";
+import { getMeetingArtifactProducer } from "./services/meetingArtifactProducer";
 export {
   openOutputFile,
   getMeetingOutputCompletion,
@@ -857,10 +858,22 @@ export function ensureRecordingCheckpointCapture(meeting: MeetingData): void {
     kind: "capturing",
     startedAt: meeting.captureStartedAt.toISOString(),
   };
+  const producer = getMeetingArtifactProducer(meeting);
   meeting.recordingCapture = createRecordingCheckpointCapture({
     directory: path.join(ensureMeetingTempDirSync(meeting), "checkpoints"),
     startedAt: meeting.captureStartedAt.getTime(),
     signal: meeting.ownershipSignal,
+    beginWrite: producer
+      ? (filename, artifact) =>
+          producer.beginWrite(filename, {
+            kind: "content",
+            contentKind: artifact.kind,
+            sourceId: artifact.sourceId,
+            sequence: artifact.sequence,
+            checksumSha256: artifact.checksumSha256,
+            byteLength: artifact.bytes.byteLength,
+          })
+      : undefined,
     commit: async (artifacts, signal) => {
       if (artifacts.some((artifact) => artifact.kind === "audio"))
         checkpointRecordingContext(meeting);

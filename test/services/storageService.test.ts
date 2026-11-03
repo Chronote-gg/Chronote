@@ -12,6 +12,7 @@ import { createPresignedPost } from "@aws-sdk/s3-presigned-post";
 import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { createHash } from "node:crypto";
 import { MOCK_STORAGE_UPLOAD_PATH } from "../../src/constants";
 import { resetMockStore } from "../../src/repositories/mockStore";
 import { config } from "../../src/services/configService";
@@ -21,6 +22,7 @@ import {
   getSignedUploadPost,
   getStoredObjectMetadata,
   uploadObjectToS3,
+  uploadVerifiedObjectToS3,
 } from "../../src/services/storageService";
 
 jest.mock("@aws-sdk/s3-presigned-post", () => ({
@@ -41,6 +43,135 @@ const originalMockEnabled = Object.getOwnPropertyDescriptor(
 );
 
 describe("storageService upload POST signing", () => {
+  test("verifies uploaded bytes incrementally from the exact acknowledged version", async () => {
+    useRemoteStorage();
+    const body = Buffer.from("verified audio");
+    const send = jest
+      .spyOn(S3Client.prototype, "send")
+      .mockImplementation(async (command) => {
+        if (command instanceof PutObjectCommand)
+          return { VersionId: "version-verified" };
+        expect(command).toBeInstanceOf(GetObjectCommand);
+        expect(command.input).toMatchObject({
+          Key: "audio",
+          VersionId: "version-verified",
+        });
+        return {
+          VersionId: "version-verified",
+          Body: {
+            transformToWebStream: () =>
+              new ReadableStream<Uint8Array>({
+                start(controller) {
+                  controller.enqueue(body.subarray(0, 4));
+                  controller.enqueue(body.subarray(4));
+                  controller.close();
+                },
+              }),
+          },
+        };
+      });
+    expect(await uploadVerifiedObjectToS3("audio", body, "audio/mpeg")).toEqual(
+      {
+        key: "audio",
+        versionId: "version-verified",
+        byteLength: body.length,
+        checksumSha256: createHash("sha256").update(body).digest("hex"),
+      },
+    );
+    expect(send).toHaveBeenCalledTimes(2);
+  });
+
+  test.each(["corrupt", "short", "oversized", "missing", "wrong-version"])(
+    "a %s readback cannot produce a verified receipt",
+    async (failure) => {
+      useRemoteStorage();
+      jest
+        .spyOn(S3Client.prototype, "send")
+        .mockImplementation(async (command) => {
+          if (command instanceof PutObjectCommand)
+            return { VersionId: "version-verified" };
+          if (failure === "missing") return {};
+          const bytes = Buffer.from(
+            failure === "short"
+              ? "ab"
+              : failure === "oversized"
+                ? "abcd"
+                : failure === "corrupt"
+                  ? "xyz"
+                  : "abc",
+          );
+          return {
+            VersionId:
+              failure === "wrong-version" ? "other" : "version-verified",
+            Body: {
+              transformToWebStream: () =>
+                new ReadableStream<Uint8Array>({
+                  start(controller) {
+                    controller.enqueue(bytes);
+                    controller.close();
+                  },
+                }),
+            },
+          };
+        });
+      await expect(
+        uploadVerifiedObjectToS3("audio", "abc", "audio/mpeg"),
+      ).rejects.toThrow();
+    },
+  );
+
+  test("lost upload acknowledgment never authorizes verification by reading the key", async () => {
+    useRemoteStorage();
+    jest.spyOn(console, "error").mockImplementation(() => {});
+    const send = jest
+      .spyOn(S3Client.prototype, "send")
+      .mockImplementation(async () => {
+        throw new Error("ACK lost");
+      });
+    expect(
+      await uploadVerifiedObjectToS3("audio", "abc", "audio/mpeg"),
+    ).toBeUndefined();
+    expect(send).toHaveBeenCalledTimes(1);
+  });
+
+  test("abort after a held verification read preserves request ownership until the read settles", async () => {
+    useRemoteStorage();
+    const controller = new AbortController();
+    let release!: () => void;
+    jest
+      .spyOn(S3Client.prototype, "send")
+      .mockImplementation(async (command) => {
+        if (command instanceof PutObjectCommand)
+          return { VersionId: "version-verified" };
+        return {
+          VersionId: "version-verified",
+          Body: {
+            transformToWebStream: () =>
+              new ReadableStream<Uint8Array>({
+                start(stream) {
+                  release = () => {
+                    stream.enqueue(Buffer.from("abc"));
+                    stream.close();
+                  };
+                },
+              }),
+          },
+        };
+      });
+    let settled = false;
+    const pending = uploadVerifiedObjectToS3("audio", "abc", "audio/mpeg", {
+      signal: controller.signal,
+    }).finally(() => {
+      settled = true;
+    });
+    const rejected = expect(pending).rejects.toThrow("stop");
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    controller.abort(new Error("stop"));
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(settled).toBe(false);
+    release();
+    await rejected;
+  });
   test("returns only a direct upload acknowledgment and never repairs a lost acknowledgment with a read", async () => {
     useRemoteStorage();
     const acknowledgment = jest.fn();

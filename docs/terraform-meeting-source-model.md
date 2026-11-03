@@ -185,6 +185,29 @@ to this verification; the offline CLI uses its current checkout commit.
 This source classification grants no native producer, bundle, saved-plan, Apply
 or deployment acceptance. It does not permit replaying a failed producer.
 
+### Artifact-preservation permission audit (2026-11-03)
+
+The production and Sandbox deployment policies add only `ConditionCheckItem` on
+MeetingHistory. These policies consume the existing table ARN; no table, DynamoDB
+access policy or KMS key depends on either deployment policy. The runtime's
+transcripts policy adds only `s3:GetObjectVersion` to its existing bucket/object
+scope. It introduces no reference or dependency change. That policy is outside
+the 32-resource closure, and none of the closure resources reads it.
+
+The closure, excluded checks, installed provider requirements, typed retry-index
+gate and permitted delivery effects are unchanged. Refreshing the source pin for
+these three reviewed Terraform files does not permit either IAM change through
+the restricted meeting-delivery plan scope. Installing the new permissions still
+requires its own fresh protected saved plan and approved apply.
+
+The site graph also remains unchanged. The deployment inline policies consume
+the role and table outputs; neither deployment role reads its inline policy.
+The transcripts policy consumes the transcripts bucket, outside the site graph,
+and adds no reference. Neither change feeds the site policy, attachment, site
+buckets or general KMS key. The six-resource site closure, six required passed
+checks and thirteen excluded checks therefore remain exact under the updated
+whole-source pin. Neither artifact permission is allowed by the site scope.
+
 ### Future source changes
 
 Any top-level Terraform or lock edit requires reviewing and updating the source

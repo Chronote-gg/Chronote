@@ -89,7 +89,16 @@ export function beginRuntimeWorkClaim(
   const parent = resolveParentSession(domain, session);
   const registration = parent
     ? undefined
-    : beginRuntimeWork("pending_admission");
+    : beginRuntimeWork(
+        "pending_admission",
+        // A recording acquires its own artifact admission when its session starts.
+        ![
+          "interaction",
+          "api_correction",
+          "billing",
+          "meeting_update_delivery",
+        ].includes(domain),
+      );
   const handle = parent ? parent.workHandle.beginOwnedControl() : registration!;
   const checkpoint: Checkpoint = {
     id,

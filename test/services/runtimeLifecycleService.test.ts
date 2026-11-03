@@ -2,6 +2,11 @@
 import { RUNTIME_WORK_KINDS } from "../../src/types/deploymentControl";
 import { createProcessShutdownOwner } from "../../src/services/processShutdownService";
 import { createRuntimeLifecycle } from "../../src/services/runtimeLifecycleService";
+import type { RuntimeArtifactSafety } from "../../src/services/runtimeArtifactSafety";
+import {
+  createArtifactAdmissionGate,
+  type ArtifactAdmissionGate,
+} from "../../src/services/artifactAdmissionGate";
 import { createRuntimeProtectionService } from "../../src/services/runtimeProtectionService";
 import { createMockDeploymentControlRepository } from "../../src/repositories/deploymentControlRepository";
 import type {
@@ -42,7 +47,11 @@ async function repositoryFixture(
   });
   return repository;
 }
-async function fixture(records?: Map<string, DeploymentControlRecord>) {
+async function fixture(
+  records?: Map<string, DeploymentControlRecord>,
+  artifactAdmission?: ArtifactAdmissionGate,
+  artifactSafety?: RuntimeArtifactSafety,
+) {
   const repository = await repositoryFixture("local", records);
   const protection = createRuntimeProtectionService({
     identity,
@@ -50,6 +59,8 @@ async function fixture(records?: Map<string, DeploymentControlRecord>) {
     onUnsafe: jest.fn(),
   });
   const lifecycle = createRuntimeLifecycle({
+    artifactAdmission,
+    artifactSafety,
     identity,
     repository,
     protection,
@@ -103,6 +114,34 @@ async function replace(
 beforeEach(() => jest.useFakeTimers({ now: 1_000_000 }));
 afterEach(() => jest.useRealTimers());
 
+test("failed filesystem recheck preserves native protection and withholds retirement acknowledgment", async () => {
+  const safety: RuntimeArtifactSafety = {
+    refresh: jest.fn(async () => undefined),
+    startupReady: jest.fn(async () => undefined),
+    authorizeReactivation: jest.fn(async () => undefined),
+    stop: jest.fn(),
+    verifyRetirement: jest.fn(async () => {
+      throw new Error("inventory changed");
+    }),
+  };
+  const f = await fixture(undefined, undefined, safety);
+  await promote(f.repository);
+  await f.lifecycle.getRuntimeAdmissionContext();
+  await replace(f.repository);
+  const release = jest.spyOn(f.protection, "release");
+  expect(
+    await f.lifecycle.prepareRuntimeRetirement({ retirementEpoch: 1 }),
+  ).toMatchObject({ kind: "uncertain" });
+  expect(release).not.toHaveBeenCalled();
+  expect(
+    await f.repository.getRecord("ENV", "RUNTIME#candidate"),
+  ).toMatchObject({ role: "draining" });
+  expect(
+    await f.repository.getRecord("ENV", "RUNTIME#candidate"),
+  ).not.toHaveProperty("retirementAcknowledgment");
+  f.lifecycle.stop();
+});
+
 test("warmRuntimeOwnsNoWork", async () => {
   const { lifecycle } = await fixture();
   expect(() => lifecycle.beginRuntimeWork("pending_admission")).toThrow();
@@ -111,6 +150,31 @@ test("warmRuntimeOwnsNoWork", async () => {
     (count) => count > 0,
   );
   expect(warmClaims).toHaveLength(0);
+  lifecycle.stop();
+});
+
+test("artifact preparation fences new producers while preserving owned stops and unrelated billing admission", async () => {
+  const gate = createArtifactAdmissionGate();
+  const { lifecycle, repository } = await fixture(undefined, gate);
+  await promote(repository);
+  await lifecycle.getRuntimeAdmissionContext();
+  const recording = lifecycle.beginRuntimeWork("recording");
+  expect(gate.active).toBe(1);
+  const drained = gate.seal();
+  expect(() => lifecycle.beginRuntimeWork("pending_admission")).toThrow(
+    "sealed",
+  );
+  const stop = recording.beginOwnedControl();
+  const billing = lifecycle.beginRuntimeWork("pending_admission", false);
+  await expect(lifecycle.getRuntimeAdmissionContext()).resolves.toMatchObject({
+    instanceId: identity.instanceId,
+  });
+  recording.settle();
+  expect(gate.active).toBe(1);
+  stop.settle();
+  await drained;
+  expect(lifecycle.getWorkCounts().pending_admission).toBe(1);
+  billing.settle();
   lifecycle.stop();
 });
 

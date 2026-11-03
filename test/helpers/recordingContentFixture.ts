@@ -47,10 +47,25 @@ jest.mock("../../src/services/transcriptionPromptService", () => ({
   })),
 }));
 import { Collection } from "discord.js";
+import { randomUUID } from "node:crypto";
+import { removeGeneratedMeetingTemp } from "../fixtures/meetingTemp";
 import { resolveMeetingRuntimeConfig } from "../../src/services/meetingConfigService";
 import type { MeetingData } from "../../src/types/meeting-data";
 import type { CheckpointArtifactInput } from "../../src/types/recordingCheckpoint";
+const generatedMeetings: MeetingData[] = [];
+afterEach(async () => {
+  for (const meeting of generatedMeetings.splice(0)) {
+    await Promise.allSettled(
+      Array.from(
+        meeting.audioData.speakerTracks?.values() ?? [],
+        (track) => track.writePromise,
+      ),
+    );
+    await removeGeneratedMeetingTemp(meeting);
+  }
+});
 export async function fixture(transcribeMeeting = true) {
+  const meetingId = `generated-${randomUUID()}`;
   const artifacts: CheckpointArtifactInput[] = [];
   const runtimeConfig = await resolveMeetingRuntimeConfig({
     guildId: "generated",
@@ -59,7 +74,7 @@ export async function fixture(transcribeMeeting = true) {
   });
   const meeting = {
     isAutoRecording: false,
-    meetingId: "generated-meeting",
+    meetingId,
     guildId: "generated",
     channelId: "separate-notes",
     textChannel: { id: "separate-notes", send: jest.fn() },
@@ -70,7 +85,7 @@ export async function fixture(transcribeMeeting = true) {
     runtimeConfig,
     reservation: {
       sessionMode: "meeting",
-      meetingId: "generated-meeting",
+      meetingId,
       guildId: "generated",
       ownerInstanceId: "owner",
       executionVersion: 1,
@@ -105,5 +120,6 @@ export async function fixture(transcribeMeeting = true) {
     chatLog: [],
     audioData: { audioFiles: [] },
   } as unknown as MeetingData;
+  generatedMeetings.push(meeting);
   return { meeting, artifacts };
 }
