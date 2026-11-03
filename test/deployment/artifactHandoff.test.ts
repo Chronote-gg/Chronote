@@ -15,7 +15,11 @@ function fixture() {
       unmarshall(input.TransactItems[0].Put.Item),
     );
     if (row.state === "consumed")
-      f.ctl = artifactBuilders.artifactConsumeControl(f.ctl, 120);
+      f.ctl = artifactBuilders.artifactPreparationControl(
+        f.ctl,
+        120,
+        "warming",
+      );
     return {};
   });
   const helper = createArtifactHandoff({

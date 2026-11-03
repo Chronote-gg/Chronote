@@ -26,7 +26,7 @@ import {
   artifactRuntimeAttributes,
   artifactControlAttributes,
   artifactHistoryAttributes,
-  artifactConsumeControl,
+  artifactPreparationControl,
   type ArtifactSafetyTables,
   type ArtifactSafetyWrite,
 } from "../services/artifactSafetyTransactions";
@@ -178,10 +178,17 @@ export function createMockArtifactSafetyRepository(
         input.next.sk,
         artifactSafetyRecordSchema.parse(structuredClone(input.next)),
       );
-      if (input.purpose === "consume" && input.context.kind === "preparing")
+      if (
+        ["consume", "cancel_ack"].includes(input.purpose) &&
+        input.context.kind === "preparing"
+      )
         world.records.set(
           JSON.stringify(["ENV", "CONTROL"]),
-          artifactConsumeControl(input.context.control, input.now),
+          artifactPreparationControl(
+            input.context.control,
+            input.now,
+            input.purpose === "consume" ? "warming" : "complete",
+          ),
         );
       return "applied";
     },

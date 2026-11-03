@@ -6,6 +6,10 @@ import { artifactSafetyFixture } from "./fixtures/artifactSafetyFixture";
 import { history } from "./controlFixtures";
 import type { ArtifactAuthority } from "../../src/types/artifactCleanup";
 import {
+  artifactSafetyBaseSchema,
+  artifactSafetyRecordSchema,
+} from "../../src/types/artifactSafety";
+import {
   introductionClient as client,
   createIntroductionTable,
 } from "./fixtures/introductionStore";
@@ -100,6 +104,55 @@ test("native transaction consumes the proof and advances warming atomically", as
   expect((await controlRow()).deployment.phase).toBe("warming");
   expect(await repository.write(f.write)).toBe("applied");
 });
+
+test.each([false, true])(
+  "native cancellation acknowledgment closes preparation only before launch: warming=%s",
+  async (warming) => {
+    const f = await setup();
+    const expected = artifactSafetyRecordSchema.parse({
+      ...artifactSafetyBaseSchema.parse(f.expected),
+      state: "cancel_requested",
+      request: f.expected.request,
+    });
+    await client.send(
+      new PutItemCommand({
+        TableName: tables.deploymentControl,
+        Item: marshall(expected),
+      }),
+    );
+    if (warming)
+      await client.send(
+        new PutItemCommand({
+          TableName: tables.deploymentControl,
+          Item: marshall({
+            ...f.ctl,
+            deployment: { ...f.ctl.deployment, phase: "warming" },
+          }),
+        }),
+      );
+    const next = artifactSafetyRecordSchema.parse({
+      ...expected,
+      revision: expected.revision + 1,
+      state: "cancelled",
+      cancelledAt: 120,
+      heartbeatAt: 120,
+      freshUntil: 180,
+    });
+    const input = {
+      ...f.write,
+      purpose: "cancel_ack" satisfies "cancel_ack",
+      expected,
+      next,
+    };
+    expect(await repository.write(input)).toBe(warming ? "stale" : "applied");
+    expect((await controlRow()).deployment.phase).toBe(
+      warming ? "warming" : "complete",
+    );
+    expect((await repository.read(f.source.identity))?.state).toBe(
+      warming ? "cancel_requested" : "cancelled",
+    );
+  },
+);
 test.each(["history_owner", "source_generation", "coordinator"])(
   "changed %s refuses every transaction write",
   async (reason) => {

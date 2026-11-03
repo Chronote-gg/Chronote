@@ -103,12 +103,14 @@ export async function retainMeetingTempDir(
   const sourceDir = getMeetingTempDir(meeting);
   const retainedDir = getRetainedMeetingTempDir(meeting);
   let lock: Awaited<ReturnType<typeof fs.open>> | undefined;
-  const lockPath = `${retainedDir}.lock`;
+  const lockDir = path.join(path.dirname(BASE_TEMP_DIR), "retention-locks");
+  const lockPath = path.join(lockDir, `${meeting.meetingId}.lock`);
   try {
     const source = await fs.lstat(sourceDir);
     if (!source.isDirectory() || source.isSymbolicLink())
       throw new Error("Retention source is not ordinary");
     await fs.mkdir(RETAINED_TEMP_DIR, { recursive: true });
+    await fs.mkdir(lockDir, { recursive: true });
     lock = await fs.open(lockPath, "wx");
     try {
       await fs.lstat(retainedDir);

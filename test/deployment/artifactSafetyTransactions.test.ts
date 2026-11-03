@@ -117,6 +117,42 @@ test("cancellation cannot reopen a source after warming may have launched", () =
   ).toThrow();
 });
 
+test("cancellation acknowledgment closes preparing atomically under the exact control snapshot", () => {
+  const f = fixture();
+  const expected = artifactSafetyRecordSchema.parse({
+    ...artifactSafetyBaseSchema.parse(f.expected),
+    state: "cancel_requested",
+    request: f.expected.request,
+  });
+  const next = artifactSafetyRecordSchema.parse({
+    ...expected,
+    revision: expected.revision + 1,
+    state: "cancelled",
+    cancelledAt: 120,
+    heartbeatAt: 120,
+    freshUntil: 180,
+  });
+  const transaction = buildArtifactSafetyTransaction(
+    {
+      purpose: "cancel_ack",
+      expected,
+      next,
+      context: { kind: "preparing", control: f.ctl, runtime: f.source },
+      now: 120,
+    },
+    f.tables,
+  );
+  const update = transaction.TransactItems?.find((item) => item.Update)?.Update;
+  expect(update).toBeDefined();
+  const values = unmarshall(update!.ExpressionAttributeValues!);
+  expect(Object.values(values)).toContainEqual(f.ctl.deployment);
+  expect(values[":nextDeployment"]).toEqual({
+    ...f.ctl.deployment,
+    phase: "complete",
+    updatedAt: 120,
+  });
+});
+
 test("startup cannot claim activation without a sealed storage proof", () => {
   const f = fixture();
   const expected = unfinishedStartup(f);

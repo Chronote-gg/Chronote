@@ -373,7 +373,7 @@ export function createRuntimeArtifactSafety(options: {
   ) {
     if (row.state !== "cancelled") return false;
     return (
-      control.deployment?.phase === "preparing" &&
+      control.deployment?.phase === "complete" &&
       control.coordinatorToken === row.request.coordinatorToken &&
       control.coordinatorEpoch === row.request.coordinatorEpoch &&
       control.servingGeneration === row.request.servingGeneration &&

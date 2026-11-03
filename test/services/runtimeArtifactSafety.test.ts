@@ -144,6 +144,11 @@ test("only a guarded cancellation resumes admission, while existing ownership re
     expect((await f.repository.read(f.source.identity))?.state).toBe(
       "cancelled",
     );
+    expect(await f.control.getRecord("ENV", "CONTROL")).toMatchObject({
+      servingGeneration: f.ctl.servingGeneration,
+      servingMembers: f.ctl.servingMembers,
+      deployment: { phase: "complete", runToken: f.ctl.coordinatorToken },
+    });
     expect(f.storage.resume).toHaveBeenCalledTimes(1);
     expect(f.admission.active).toBe(1);
     const newWork = f.admission.begin();

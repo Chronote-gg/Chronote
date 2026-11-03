@@ -334,9 +334,10 @@ export function fixture() {
       );
       state.artifacts.set(next.identity.instanceId, next);
       if (next.state === "consumed")
-        state.ctl = artifactBuilders.artifactConsumeControl(
+        state.ctl = artifactBuilders.artifactPreparationControl(
           state.ctl,
           next.consumedAt,
+          "warming",
         );
     } else if (input.TransactItems![1]?.Put) continuation(input);
     else if (input.TransactItems![0].Update) promotion(input);

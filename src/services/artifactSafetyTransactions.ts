@@ -126,15 +126,16 @@ export function artifactControlAttributes(
     deployment: control.deployment ?? null,
   };
 }
-export function artifactConsumeControl(
+export function artifactPreparationControl(
   control: ControlRecord,
   now: number,
+  phase: "warming" | "complete",
 ): ControlRecord {
   if (!control.deployment || control.deployment.phase !== "preparing")
     throw new Error("Artifact preparation is not launchable");
   return {
     ...control,
-    deployment: { ...control.deployment, phase: "warming", updatedAt: now },
+    deployment: { ...control.deployment, phase, updatedAt: now },
   };
 }
 function controlOperation(
@@ -156,8 +157,13 @@ function controlOperation(
       ...marshall({ ":controlNow": input.now }),
     };
   }
-  if (input.purpose !== "consume") return { ConditionCheck: condition };
-  const next = artifactConsumeControl(input.context.control, input.now);
+  if (!["consume", "cancel_ack"].includes(input.purpose))
+    return { ConditionCheck: condition };
+  const next = artifactPreparationControl(
+    input.context.control,
+    input.now,
+    input.purpose === "consume" ? "warming" : "complete",
+  );
   return {
     Update: {
       ...condition,

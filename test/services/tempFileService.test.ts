@@ -33,6 +33,47 @@ describe("tempFileService", () => {
     jest.resetModules();
   });
 
+  it("keeps a crashed retention lock outside the scanned roots", async () => {
+    const root = await fs.promises.mkdtemp(
+      path.join(os.tmpdir(), "chronote-lock-"),
+    );
+    const service = await loadService(path.join(root, "working"));
+    const meeting = buildMeeting();
+    await service.ensureMeetingTempDir(meeting);
+    const open = jest.spyOn(fs.promises, "open");
+    try {
+      await service.retainMeetingTempDir(meeting, "fixture");
+      const lockPath = String(
+        open.mock.calls.find((call) => call[1] === "wx")?.[0],
+      );
+      expect(path.dirname(lockPath)).not.toBe(service.getRetainedTempBaseDir());
+      // Simulate the lock left behind when the process dies before unlink.
+      await fs.promises.writeFile(lockPath, "", { flag: "wx" });
+      await fs.promises.rm(service.getRetainedMeetingTempDir(meeting), {
+        recursive: true,
+      });
+      const { createRuntimeArtifactStorage } =
+        await import("../../src/services/runtimeArtifactStorage");
+      const { createArtifactProducerRegistry } =
+        await import("../../src/services/artifactProducerRegistry");
+      const storage = createRuntimeArtifactStorage({
+        roots: {
+          working: service.getTempBaseDir(),
+          retained: service.getRetainedTempBaseDir(),
+        },
+        producers: createArtifactProducerRegistry(),
+        cleanup: { seal: async () => {}, resume: () => {} },
+        authorize: async () => {
+          throw new Error("No artifacts expected");
+        },
+      });
+      await expect(storage.seal()).resolves.toMatchObject({ authorities: [] });
+    } finally {
+      open.mockRestore();
+      await removeTestDirectory(root, "chronote-lock-");
+    }
+  });
+
   it("creates and cleans meeting temp directories", async () => {
     const baseDir = path.join(os.tmpdir(), `chronote-test-${Date.now()}`);
     const service = await loadService(baseDir);

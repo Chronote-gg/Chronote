@@ -80,7 +80,7 @@ function createArtifactHandoff(options) {
         if (
           !isDeepStrictEqual(
             current,
-            builders.artifactConsumeControl(ctl, input.now),
+            builders.artifactPreparationControl(ctl, input.now, "warming"),
           )
         )
           throw error;
