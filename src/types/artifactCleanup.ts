@@ -87,3 +87,17 @@ export const artifactCleanupReceiptSchema = z
 export type ArtifactCleanupReceipt = z.infer<
   typeof artifactCleanupReceiptSchema
 >;
+
+export const artifactAuthoritySchema = z
+  .object({
+    owner: artifactOwnerSchema,
+    historyKey: z.string().min(1).max(4096),
+    checkpoint: recordingCheckpointSchema.nullable(),
+    status: z.string().min(1).max(128),
+    completionDecision: z.enum(["cancel", "proceed", "undecided"]).nullable(),
+    audioS3Key: z.string().min(1).nullable(),
+    chatS3Key: z.string().min(1).nullable(),
+    transcriptS3Key: z.string().min(1).nullable(),
+  })
+  .strict();
+export type ArtifactAuthority = z.infer<typeof artifactAuthoritySchema>;

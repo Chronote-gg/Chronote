@@ -194,6 +194,10 @@ jobs:
         id: promote
         run: node scripts/deployment/coordinator.cjs promote
 
+      - name: Request guarded cancellation of failed preparation
+        if: failure() && steps.hold-guard.outcome == 'success' && steps.prepare.outcome == 'failure'
+        run: node scripts/deployment/coordinator.cjs cancel-preparation
+
       - name: Wait for runtime-owned retirement acknowledgment
         id: retire
         run: node scripts/deployment/coordinator.cjs retire

@@ -6,6 +6,8 @@ import {
   type ArtifactCleanupReceipt,
   type ArtifactProvenance,
   type RegisteredArtifact,
+  artifactAuthoritySchema,
+  type ArtifactAuthority,
 } from "../types/artifactCleanup";
 import type { LocalArtifact } from "../types/localArtifact";
 import {
@@ -210,7 +212,7 @@ export function createCleanupAuthorization(dependencies: {
   return async (
     input: ArtifactCleanupReceipt,
     signal?: AbortSignal,
-  ): Promise<void> => {
+  ): Promise<ArtifactAuthority> => {
     const receipt = artifactCleanupReceiptSchema.parse(input);
     const key = {
       guildId: receipt.owner.guildId,
@@ -243,5 +245,15 @@ export function createCleanupAuthorization(dependencies: {
     )
       throw new Error("Cleanup history artifacts changed");
     signal?.throwIfAborted();
+    return artifactAuthoritySchema.parse({
+      owner: receipt.owner,
+      historyKey: receipt.historyKey,
+      checkpoint: receipt.checkpoint,
+      status: latest.status,
+      completionDecision: latest.completionPolicy?.decision ?? null,
+      audioS3Key: latest.audioS3Key ?? null,
+      chatS3Key: latest.chatS3Key ?? null,
+      transcriptS3Key: latest.transcriptS3Key ?? null,
+    });
   };
 }

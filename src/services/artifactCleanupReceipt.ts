@@ -115,24 +115,44 @@ export type CleanupReceiptResult =
     }
   | { kind: "blocked"; error: unknown };
 
+export async function verifyCleanupReceipt<T>(
+  directory: string,
+  dependencies: {
+    authorize(
+      receipt: ArtifactCleanupReceipt,
+      signal?: AbortSignal,
+    ): Promise<T>;
+  },
+  signal?: AbortSignal,
+) {
+  signal?.throwIfAborted();
+  const { receipt, reference } = await readReceipt(directory);
+  const inventory = await inventoryLocalArtifacts(directory, signal);
+  const files = inventory.files.filter(
+    (file) => file.path !== CLEANUP_RECEIPT_FILENAME,
+  );
+  requireSubset(files, receipt.files);
+  const authority = await dependencies.authorize(receipt, signal);
+  return { receipt, reference, inventory, files, authority };
+}
+
 export async function reconcileCleanupReceipt(
   directory: string,
   dependencies: {
     authorize(
       receipt: ArtifactCleanupReceipt,
       signal?: AbortSignal,
-    ): Promise<void>;
+    ): Promise<unknown>;
   },
   signal?: AbortSignal,
 ): Promise<CleanupReceiptResult> {
   let removed = 0;
   let byteLength = 0;
   try {
-    signal?.throwIfAborted();
-    const { receipt, reference } = await readReceipt(directory);
-    const inventory = await inventoryLocalArtifacts(directory, signal);
-    const files = inventory.files.filter(
-      (file) => file.path !== CLEANUP_RECEIPT_FILENAME,
+    const { receipt, reference, inventory, files } = await verifyCleanupReceipt(
+      directory,
+      dependencies,
+      signal,
     );
     const pending = (error: unknown): CleanupReceiptResult => ({
       kind: "pending",
@@ -143,8 +163,6 @@ export async function reconcileCleanupReceipt(
       remainingBytes: inventory.byteLength - byteLength,
       remainingFiles: files.length - removed + 1,
     });
-    requireSubset(files, receipt.files);
-    await dependencies.authorize(receipt, signal);
     // The caller must close producers and retain exclusive cleanup ownership throughout.
     for (const file of files) {
       signal?.throwIfAborted();

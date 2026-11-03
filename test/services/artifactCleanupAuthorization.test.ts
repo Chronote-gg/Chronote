@@ -60,7 +60,13 @@ async function setup() {
 
 test("complete registered capture requires the current verified checkpoint and final object", async () => {
   const f = await setup();
-  await expect(f.authorize(f.receipt)).resolves.toBeUndefined();
+  await expect(f.authorize(f.receipt)).resolves.toMatchObject({
+    owner: f.receipt.owner,
+    historyKey: f.receipt.historyKey,
+    checkpoint: f.receipt.checkpoint,
+    status: "complete",
+    audioS3Key: f.row.audioS3Key,
+  });
   expect(f.verifyStoredArtifact).toHaveBeenCalledWith(
     f.receipt.storedArtifacts[0],
     undefined,
@@ -116,7 +122,10 @@ test("pure recovery scratch binds verified original inputs without claiming comp
       provenance: { kind: "stored_derivative", inputs: [object] },
     },
   ];
-  await expect(f.authorize(f.receipt)).resolves.toBeUndefined();
+  await expect(f.authorize(f.receipt)).resolves.toMatchObject({
+    owner: f.receipt.owner,
+    status: "interrupted",
+  });
   f.receipt.producers[0].provenance = {
     kind: "stored_derivative",
     inputs: [{ ...object, key: "unrelated" }],

@@ -22,7 +22,7 @@ function createHandoffGate(deps) {
       (kind) => `${kind}=${counts?.[kind] ?? "unknown"}`,
     ).join(", ");
     warn(
-      `::warning title=Handoff quiet gate overridden::Launching while the serving runtime reports ${held}. Work it really holds is cut off when its protection lapses.`,
+      `::warning title=Handoff quiet gate overridden::Skipping the quiet-counter wait while the serving runtime reports ${held}. Artifact admission, drain and preservation proof remain required before launch.`,
     );
   }
   function assertUnowned(ctl) {

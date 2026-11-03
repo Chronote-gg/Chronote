@@ -12,6 +12,9 @@ const RETAINED_TEMP_DIR = path.join(
 export function getTempBaseDir(): string {
   return BASE_TEMP_DIR;
 }
+export function getRetainedTempBaseDir(): string {
+  return RETAINED_TEMP_DIR;
+}
 
 export async function ensureTempBaseDir(): Promise<string> {
   await fs.mkdir(BASE_TEMP_DIR, { recursive: true });

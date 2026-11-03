@@ -56,6 +56,7 @@ function createStoppedOutgoingContinuation({
   routing,
   promotionObserved,
   types,
+  artifactEvidence = async () => "UNKNOWN",
   warn = (message) => console.log(message),
 }) {
   const same = types.sameRuntimeIdentity;
@@ -160,7 +161,7 @@ function createStoppedOutgoingContinuation({
           tables,
         ),
       );
-    } catch (error) {
+    } catch {
       const observed = await runtime(ctl.deployment.outgoing);
       if (!isDeepStrictEqual(observed.retirementContinuation, continuation))
         refuse(
@@ -191,6 +192,9 @@ function createStoppedOutgoingContinuation({
       continuedAt: now(),
     };
     const completed = await write(ctl, row, continuation);
+    warn(
+      `::notice title=Stopped-source preservation::Preservation evidence: ${await artifactEvidence(ctl)}. This is historical evidence only; no filesystem or retirement acknowledgment was fabricated.`,
+    );
     const lost = Object.entries(continuation.lostWorkCounts ?? {})
       .map(([kind, count]) => `${kind}=${count}`)
       .join(", ");

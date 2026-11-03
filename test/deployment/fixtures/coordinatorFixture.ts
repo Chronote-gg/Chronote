@@ -12,6 +12,8 @@ import { isDeepStrictEqual } from "node:util";
 import { marshall, unmarshall } from "@aws-sdk/util-dynamodb";
 import * as builders from "../../../src/services/deploymentControlTransactions";
 import * as types from "../../../src/types/deploymentControl";
+import * as artifactTypes from "../../../src/types/artifactSafety";
+import * as artifactBuilders from "../../../src/services/artifactSafetyTransactions";
 import { createCoordinator } from "../../../scripts/deployment/coordinator.cjs";
 export const oldIdentity: Extract<types.RuntimeIdentity, { kind: "ecs" }> = {
   kind: "ecs",
@@ -102,7 +104,37 @@ export function fixture() {
     retirementAcknowledged: false,
     outgoingTask: "running" as "running" | "stopping" | "stopped" | "missing",
     onSleep: () => undefined,
+    artifacts: new Map<string, artifactTypes.ArtifactSafetyRecord>(),
+    artifactAutoSeal: true,
   };
+  const snapshot = {
+    inventoryDigest: "a".repeat(64),
+    fileCount: 0,
+    byteLength: 0,
+    pendingDirectories: 0,
+    authorities: [],
+  };
+  for (const identity of [oldIdentity, candidateIdentity])
+    state.artifacts.set(
+      identity.instanceId,
+      artifactTypes.artifactSafetyRecordSchema.parse({
+        ...artifactTypes.artifactSafetyKey(identity),
+        recordType: "artifact_safety",
+        schemaVersion: 1,
+        identity,
+        revision: 0,
+        heartbeatAt: time,
+        freshUntil: time + 60,
+        state: "idle",
+        startup:
+          identity === oldIdentity
+            ? { kind: "active", activatedAt: time }
+            : {
+                kind: "sealed",
+                proof: { snapshot, provenAt: time, expiresAt: time + 60 },
+              },
+      }),
+    );
   const definition = {
     taskDefinitionArn: "definition:old",
     family: "family",
@@ -139,6 +171,16 @@ export function fixture() {
   };
   const calls: Array<{ operation: string; input: unknown }> = [];
   function refreshProofs() {
+    for (const artifact of state.artifacts.values()) {
+      artifact.heartbeatAt = time;
+      artifact.freshUntil = time + 60;
+      if (artifact.startup.kind === "sealed")
+        artifact.startup.proof = {
+          snapshot,
+          provenAt: time,
+          expiresAt: time + 60,
+        };
+    }
     for (const runtime of Object.values(state.rows)) {
       runtime.readiness.observedEpoch = state.ctl.coordinatorEpoch;
       runtime.readiness.observedGeneration = state.ctl.servingGeneration;
@@ -203,7 +245,23 @@ export function fixture() {
     TransactWriteItemsCommandInput;
   function getItem(input: DynamoInput) {
     const sk = unmarshall(input.Key!).sk;
-    const item = sk === "CONTROL" ? state.ctl : state.rows[sk.substring(8)];
+    const id = sk.substring(10).replace(/\/STATE$/, "");
+    let artifact = state.artifacts.get(id);
+    if (artifact?.state === "requested" && state.artifactAutoSeal) {
+      artifact = artifactTypes.artifactSafetyRecordSchema.parse({
+        ...artifact,
+        state: "sealed",
+        revision: artifact.revision + 1,
+        proof: { snapshot, provenAt: time, expiresAt: time + 60 },
+      });
+      state.artifacts.set(id, artifact);
+    }
+    const item =
+      sk === "CONTROL"
+        ? state.ctl
+        : sk.startsWith("ARTIFACTS#")
+          ? state.artifacts.get(id)
+          : state.rows[sk.substring(8)];
     return { Item: item ? marshall(item) : undefined };
   }
   function updateItem(input: DynamoInput) {
@@ -236,9 +294,28 @@ export function fixture() {
       request: values[":request"],
       retiredAt: time,
     };
+    const artifact = state.artifacts.get(runtime.identity.instanceId);
+    if (artifact)
+      state.artifacts.set(
+        runtime.identity.instanceId,
+        artifactTypes.artifactSafetyRecordSchema.parse({
+          ...artifact,
+          retirementVerification: {
+            request: values[":request"],
+            proof: { snapshot, provenAt: time, expiresAt: time + 60 },
+          },
+        }),
+      );
   }
   function transactWrite(input: DynamoInput) {
-    if (input.TransactItems![1]?.Put) continuation(input);
+    if (input.TransactItems![0].Put) {
+      const next = artifactTypes.artifactSafetyRecordSchema.parse(
+        unmarshall(input.TransactItems![0].Put.Item),
+      );
+      state.artifacts.set(next.identity.instanceId, next);
+      if (next.state === "consumed")
+        state.ctl = artifactBuilders.artifactConsumeControl(state.ctl, time);
+    } else if (input.TransactItems![1]?.Put) continuation(input);
     else if (input.TransactItems![0].Update) promotion(input);
     else retirementRequest(input);
     return {};
@@ -362,6 +439,8 @@ export function fixture() {
     aws,
     builders,
     types,
+    artifactTypes,
+    artifactBuilders,
     now: () => time,
     sleep: async () => {
       time += 1000;
