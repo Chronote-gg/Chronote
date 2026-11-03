@@ -145,6 +145,46 @@ Offline mocks use their own checked locks and the CI Terraform 1.16.0 toolchain;
 they do not prove native meeting-model acceptance. The exact version refusals
 stay intact, and site-policy installation acceptance remains separate.
 
+### Sandbox site check classification (2026-11-03)
+
+The separate `sandbox-site-permissions` validator reuses this exact committed
+Terraform source pin and check-descriptor catalog. It does not reuse the meeting
+closure's exclusion decision. Only thirteen checks are outside the site graph.
+The policy, both deployment roles, `ENABLE_API_ALB`, and both distribution ID
+inputs must pass. The attachment references both deployment roles syntactically,
+so `production_deploy` remains relevant even though its Sandbox count is zero.
+A passed zero-instance role descriptor may omit instances. The Sandbox role and
+policy instances must match the exact resource addresses, and variable instances
+must match their unkeyed descriptors.
+
+The managed graph is exactly the policy, attachment, Sandbox role, two site
+buckets, and general KMS key. Buckets depend only on their bucket-name inputs,
+`name_prefix`, caller identity and provider tags. KMS settings are literal.
+The policy reads those bucket/key outputs, distribution ID inputs and caller
+identity. Role trust reads GitHub identity, owner/repository and environment;
+its HTTPS precondition reads `ENABLE_API_ALB`, `API_DOMAIN`, `API_CERT_ARN` and
+`HOSTED_ZONE_NAME` directly. The production role has the same routing predicate.
+These inputs do not depend on ECS counts, cache, Grafana rotation, acceptance
+fixtures, introduction policies/tasks or launcher-read inputs. The provider
+tags depend only on `project_name` and `environment`.
+
+CloudFront postconditions read the distribution inputs downstream; the policy
+uses input IDs rather than distribution resources. Cache reads KMS downstream.
+Acceptance, introduction and launcher policies consume other resources, with no
+reverse edge into either deployment role, site bucket, key or publishing policy.
+Their six resource and seven variable checks may therefore remain unknown only
+after the complete source inventory, content pin and checkout commit verify.
+Each unknown descriptor must match its source declaration exactly, omit instances,
+and have no resource instance in the plan. Failed checks never qualify.
+The unknown-check route requires the complete nineteen-descriptor source catalog,
+so omitting a relevant check cannot hide its outcome.
+Added files, overrides, changed source, modules or indirect dependencies require
+a fresh audit and pin. Plan and restored Apply pass the invocation source commit
+to this verification; the offline CLI uses its current checkout commit.
+
+This source classification grants no native producer, bundle, saved-plan, Apply
+or deployment acceptance. It does not permit replaying a failed producer.
+
 ### Future source changes
 
 Any top-level Terraform or lock edit requires reviewing and updating the source
