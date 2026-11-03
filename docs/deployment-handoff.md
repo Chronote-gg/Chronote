@@ -74,6 +74,8 @@ Failed preparation may request `cancel-preparation` only while Control is still 
 
 Legacy workers without this capability refuse, including under the quiet override. First introduction requires a separately reviewed preservation procedure. Older private action-recipe coordinators also refuse new preparation and promotion until their journal supports these checks. Existing stopped-source availability continuation remains separate: a historical consumed proof can document preservation; absent evidence stays UNKNOWN and never becomes a filesystem proof or retirement acknowledgment.
 
+The v1 introduction entry point is disabled before provider reads, legacy stops or hold changes. Its archived full-execution acceptance cases are explicitly skipped while refusal and preflight tests remain active. Re-enabling that route requires a reviewed preservation journal and restoring those acceptance cases. Normal compatible deployments use the active coordinator and retain their tests.
+
 The production deployment role needs `dynamodb:ConditionCheckItem` on MeetingHistory for these authority checks, without history writes. The Terraform change requires a fresh protected saved plan and apply before rollout. A merge alone neither grants the permission nor installs the runtime protocol.
 
 ### Delayed voice acknowledgment

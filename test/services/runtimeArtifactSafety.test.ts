@@ -212,3 +212,54 @@ test("retired-runtime reactivation cannot protect a candidate without source pre
   expect(f.storage.resume).not.toHaveBeenCalled();
   f.safety.stop();
 });
+
+test("a guarded rollback rechecks the preserved inventory before reopening the original source", async () => {
+  const f = fixture();
+  await f.request();
+  await f.safety.refresh();
+  await until(
+    async () =>
+      (await f.repository.read(f.source.identity))?.state === "sealed",
+  );
+  const expected = await f.repository.read(f.source.identity);
+  if (expected?.state !== "sealed")
+    throw new Error("Missing preservation proof");
+  expect(
+    await f.repository.write({
+      purpose: "consume",
+      expected,
+      next: {
+        ...expected,
+        revision: expected.revision + 1,
+        state: "consumed",
+        consumedAt: 120,
+      },
+      context: { kind: "preparing", control: f.ctl, runtime: f.source },
+      now: 120,
+    }),
+  ).toBe("applied");
+  f.clock.now = 160;
+  f.records.set(JSON.stringify(["ENV", "CONTROL"]), {
+    ...f.ctl,
+    servingGeneration: f.ctl.servingGeneration + 2,
+    deployment: { ...f.ctl.deployment!, phase: "rolled_back" },
+  });
+  f.records.set(JSON.stringify(["ENV", "RUNTIME#old"]), {
+    ...f.source,
+    authorizedGeneration: f.ctl.servingGeneration + 2,
+  });
+  try {
+    await f.safety.refresh();
+    await f.safety.refresh();
+    expect(f.storage.recheck).toHaveBeenCalledWith(
+      expected.proof.snapshot,
+      undefined,
+    );
+    expect(f.admission.sealed).toBe(false);
+    expect((await f.repository.read(f.source.identity))?.startup.kind).toBe(
+      "active",
+    );
+  } finally {
+    f.safety.stop();
+  }
+});

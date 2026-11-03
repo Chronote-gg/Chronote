@@ -22,6 +22,7 @@ export type ArtifactSafetyPurpose =
   | "heartbeat"
   | "startup"
   | "renew_startup"
+  | "rollback_startup"
   | "activate"
   | "request"
   | "drain"
@@ -55,6 +56,12 @@ type Rule = {
   roles: RuntimeRecord["role"][];
 };
 const rules: Record<ArtifactSafetyPurpose, Rule> = {
+  rollback_startup: {
+    from: ["consumed"],
+    to: ["idle"],
+    guard: "activating",
+    roles: ["serving"],
+  },
   initialize: {
     from: ["missing"],
     to: ["idle"],
@@ -227,6 +234,25 @@ function requireServing(input: ArtifactSafetyWrite, control: ControlRecord) {
     !isServingIdentity(control, input.next.identity)
   )
     throw new Error("Artifact activation is not serving");
+  if (input.purpose === "rollback_startup") requireRollback(input, control);
+}
+function requireRollback(input: ArtifactSafetyWrite, control: ControlRecord) {
+  const previous = input.expected;
+  const d = control.deployment;
+  if (
+    previous?.state !== "consumed" ||
+    !d ||
+    !["rollback_promoting", "rolled_back"].includes(d.phase) ||
+    !sameRuntimeIdentity(d.outgoing, previous.identity) ||
+    control.servingGeneration !== d.originalGeneration + 2 ||
+    control.coordinatorToken !== previous.request.coordinatorToken ||
+    control.coordinatorEpoch !== previous.request.coordinatorEpoch ||
+    !sameArtifactValue(
+      artifactProofForWrite(input)?.snapshot,
+      previous.proof.snapshot,
+    )
+  )
+    throw new Error("Artifact rollback is not authorized");
 }
 function requireRetirement(
   input: ArtifactSafetyWrite,
@@ -268,7 +294,9 @@ function requireBinding(input: ArtifactSafetyWrite) {
   if (
     expected &&
     "request" in expected &&
-    !["request", "startup", "retirement"].includes(purpose) &&
+    !["request", "startup", "rollback_startup", "retirement"].includes(
+      purpose,
+    ) &&
     (!("request" in next) || !sameArtifactValue(expected.request, next.request))
   )
     throw new Error("Artifact request binding changed");
@@ -309,7 +337,7 @@ function requireStartupState(input: ArtifactSafetyWrite) {
     )
       throw new Error("Artifact activation is not verified");
   } else if (
-    !["startup", "renew_startup"].includes(input.purpose) &&
+    !["startup", "renew_startup", "rollback_startup"].includes(input.purpose) &&
     input.expected &&
     !sameArtifactValue(input.expected.startup, input.next.startup)
   )
@@ -355,7 +383,7 @@ export function artifactProofForWrite(
   input: ArtifactSafetyWrite,
 ): ArtifactStorageProof | undefined {
   if (
-    ["startup", "renew_startup"].includes(input.purpose) &&
+    ["startup", "renew_startup", "rollback_startup"].includes(input.purpose) &&
     input.next.startup.kind === "sealed"
   )
     return input.next.startup.proof;
@@ -373,6 +401,7 @@ function requireProof(input: ArtifactSafetyWrite) {
     [
       "startup",
       "renew_startup",
+      "rollback_startup",
       "activate",
       "seal",
       "consume",

@@ -15,6 +15,7 @@ import {
   runtimeRecordSchema,
   sameRuntimeIdentity,
   type RuntimeIdentity,
+  type RuntimeRecord,
   type RetirementRequest,
 } from "../types/deploymentControl";
 import type {
@@ -306,6 +307,48 @@ export function createRuntimeArtifactSafety(options: {
     options.storage.resume();
     options.admission.resume();
   }
+  async function prepareRollback(
+    row: Extract<ArtifactSafetyRecord, { state: "consumed" }>,
+  ) {
+    const control = controlRecordSchema.parse(
+      await options.control.getRecord("ENV", "CONTROL"),
+    );
+    if (
+      !control.deployment ||
+      !["rollback_promoting", "rolled_back"].includes(control.deployment.phase)
+    )
+      return;
+    const snapshot = await options.storage.recheck(
+      row.proof.snapshot,
+      options.signal,
+    );
+    await write(
+      "rollback_startup",
+      "activating",
+      (current, time) =>
+        artifactSafetyRecordSchema.parse({
+          ...liveBase(current, time),
+          state: "idle",
+          startup: { kind: "sealed", proof: proof(snapshot, time) },
+        }),
+      options.signal,
+    );
+  }
+  async function refreshStartup(
+    row: ArtifactSafetyRecord,
+    role: RuntimeRecord["role"],
+  ) {
+    if (row.startup.kind !== "sealed") return;
+    if (role === "serving") await activate(row);
+    else if (role === "candidate" && row.startup.proof.expiresAt <= now() + 20)
+      await publishStartup(
+        await options.storage.recheck(
+          row.startup.proof.snapshot,
+          options.signal,
+        ),
+        false,
+      );
+  }
   async function refresh() {
     if (stopped) return;
     try {
@@ -314,26 +357,10 @@ export function createRuntimeArtifactSafety(options: {
       if (["requested", "draining"].includes(row.state) && "request" in row)
         beginPreparation(row.request);
       else if (row.state === "cancel_requested") await cancel(row.request);
-      else if (
-        owner.role === "serving" &&
-        row.state === "idle" &&
-        row.startup.kind === "sealed"
-      )
-        await activate(row);
-      else if (
-        owner.role === "candidate" &&
-        row.state === "idle" &&
-        row.startup.kind === "sealed" &&
-        row.startup.proof.expiresAt <= now() + 20
-      ) {
-        await publishStartup(
-          await options.storage.recheck(
-            row.startup.proof.snapshot,
-            options.signal,
-          ),
-          false,
-        );
-      }
+      else if (owner.role === "serving" && row.state === "consumed")
+        await prepareRollback(row);
+      else if (row.state === "idle" && row.startup.kind === "sealed")
+        await refreshStartup(row, owner.role);
       if (row.heartbeatAt <= now() - 10)
         await write("heartbeat", "runtime", (current, time) =>
           artifactSafetyRecordSchema.parse({
