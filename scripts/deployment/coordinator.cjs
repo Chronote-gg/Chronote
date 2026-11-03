@@ -52,6 +52,14 @@ function createCoordinator(options = {}) {
       ].includes(operation)
     )
       await assertWriter();
+    if (
+      [
+        "register-task-definition",
+        "update-service",
+        "modify-listener",
+      ].includes(operation)
+    )
+      await guardPublicationDeployment();
     return callAws(service, operation, input);
   };
   const now = options.now ?? (() => Math.floor(Date.now() / 1000));
@@ -95,6 +103,28 @@ function createCoordinator(options = {}) {
         "coordinator_authority_changed",
         "Routing authority changed",
       );
+  }
+  async function guardPublicationDeployment() {
+    const ctl = await control();
+    if (ctl.publicationProtocol !== 1) return;
+    const releases =
+      options.publicationReleases ??
+      require("../operator/recovery-publication-releases.json");
+    const images = [
+      config.image,
+      ...Object.values(ctl.servingMembers).map((m) => m.imageDigest),
+      ...(ctl.deployment?.originalMembers ?? []).map((m) => m.imageDigest),
+    ];
+    await require("./publication-compatibility.cjs").reservePublicationCompatibility(
+      {
+        aws: callAws,
+        table: tables.deploymentControl,
+        control: ctl,
+        images,
+        runToken: config.runToken,
+        releases,
+      },
+    );
   }
   async function assertWriter() {
     const response = await callAws("dynamodb", "get-item", {
@@ -167,6 +197,53 @@ function createCoordinator(options = {}) {
     return row;
   }
   async function save(previous, next) {
+    const releases =
+      options.publicationReleases ??
+      require("../operator/recovery-publication-releases.json");
+    if (
+      !production && next.deployment?.phase === "complete" &&
+      releases.images.length &&
+      Object.values(next.servingMembers).every((m) =>
+        releases.images.includes(m.imageDigest),
+      ) &&
+      releases.images.includes(config.image.replace(/^.*@/, ""))
+    ) {
+      await assertWriter();
+      const response = await callAws("dynamodb", "update-item", {
+        TableName: tables.deploymentControl,
+        Key: key("CONTROL"),
+        UpdateExpression:
+          "SET #protocol = :one, #images = :images REMOVE #transition",
+        ConditionExpression:
+          "coordinatorToken = :token AND coordinatorEpoch = :epoch AND (attribute_not_exists(#transition) OR #transition.#run = :token)",
+        ExpressionAttributeNames: {
+          "#protocol": "publicationProtocol",
+          "#transition": "publicationTransition",
+          "#images": "publicationCompatibleImages",
+          "#run": "runToken",
+        },
+        ExpressionAttributeValues: marshall({
+          ":one": 1,
+          ":images": releases.images,
+          ":token": previous.coordinatorToken,
+          ":epoch": previous.coordinatorEpoch,
+        }),
+      });
+      void response;
+      previous = {
+        ...previous,
+        publicationProtocol: 1,
+        publicationCompatibleImages: releases.images,
+      };
+      next = {
+        ...next,
+        publicationProtocol: 1,
+        publicationCompatibleImages: releases.images,
+      };
+      delete previous.publicationTransition;
+      delete next.publicationTransition;
+    }
+
     if (production) {
       await assertWriter();
       return production.save(previous, next);
