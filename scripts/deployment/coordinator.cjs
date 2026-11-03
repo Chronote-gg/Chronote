@@ -201,7 +201,8 @@ function createCoordinator(options = {}) {
       options.publicationReleases ??
       require("../operator/recovery-publication-releases.json");
     if (
-      !production && next.deployment?.phase === "complete" &&
+      !production &&
+      next.deployment?.phase === "complete" &&
       releases.images.length &&
       Object.values(next.servingMembers).every((m) =>
         releases.images.includes(m.imageDigest),
