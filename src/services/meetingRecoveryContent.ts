@@ -3,6 +3,11 @@ import {
   releaseCheckpointPcm,
 } from "./recordingCheckpointCapture";
 import { processRecoveryTranscript } from "./recoveryTranscriptionProcessing";
+import { artifactOwnerSchema } from "../types/artifactCleanup";
+import {
+  createRecoveryArtifactScope,
+  type RecoveryArtifactScope,
+} from "./recoveryArtifactScope";
 import type { TranscriptSegment } from "../types/transcript";
 import { resolveAudioFileText } from "../utils/audioTranscript";
 import type { AudioFileData } from "../types/audio";
@@ -119,7 +124,28 @@ export async function readRecoveryContent(
     omitted = transcript.omitted;
   }
   signal.throwIfAborted();
-  return { ...verified, context, entries, processing, omitted };
+  const owner = artifactOwnerSchema.safeParse({
+    guildId: history.guildId,
+    meetingId: history.meetingId,
+    ownerInstanceId: history.ownerInstanceId,
+    executionVersion: history.executionVersion,
+  });
+  return {
+    ...verified,
+    context,
+    entries,
+    processing,
+    omitted,
+    ...(owner.success
+      ? {
+          cleanupBinding: {
+            owner: owner.data,
+            historyKey: history.channelId_timestamp,
+            checkpoint: pointer,
+          },
+        }
+      : {}),
+  };
 }
 export type RecoveryContent = Awaited<ReturnType<typeof readRecoveryContent>>;
 export const INTERRUPTED_CAPTURE_NOTICE =
@@ -153,6 +179,7 @@ export function transcriptionInput(
   context: GenerationContextCheckpoint,
   signal: AbortSignal,
   effect: TranscriptionContentInput["effect"],
+  artifacts?: RecoveryArtifactScope,
 ): TranscriptionContentInput {
   if (
     context.settings.availability !== "available" ||
@@ -189,6 +216,8 @@ export function transcriptionInput(
   if (typeof compiled !== "string")
     throw new InvalidRecoveryContent("Transcription prompt type changed");
   return {
+    beginArtifactWrite: artifacts?.beginWrite,
+    tempDirectory: artifacts?.directory,
     meetingId: context.capture.meetingId,
     creator: { id: context.creatorId },
     guild: { id: context.capture.guildId },
@@ -587,6 +616,41 @@ async function composeRecoveredTranscript(
   covered: readonly PcmSpan[],
   retry: boolean,
 ) {
+  const sources = content.verified
+    .filter((item) => item.kind === "audio")
+    .map((item) => item.object);
+  const artifacts =
+    content.cleanupBinding && sources.length
+      ? await createRecoveryArtifactScope(content.cleanupBinding, sources)
+      : undefined;
+  try {
+    return await composeOwnedRecoveredTranscript(
+      content,
+      reader,
+      signal,
+      effect,
+      covered,
+      retry,
+      artifacts,
+    );
+  } finally {
+    const cleanup = await artifacts?.close();
+    if (cleanup && cleanup.kind !== "cleaned")
+      console.warn("Recovery scratch retained for verified cleanup", {
+        kind: cleanup.kind,
+      });
+  }
+}
+
+async function composeOwnedRecoveredTranscript(
+  content: RecoveryContent,
+  reader: RecoveryReader,
+  signal: AbortSignal,
+  effect: TranscriptionContentInput["effect"],
+  covered: readonly PcmSpan[],
+  retry: boolean,
+  artifacts?: RecoveryArtifactScope,
+) {
   const audio = content.verified.filter((item) => item.kind === "audio");
   const entries = content.entries ?? [];
   if (
@@ -613,7 +677,12 @@ async function composeRecoveredTranscript(
     .filter(({ ranges }) => ranges.length);
   const savedCount = files.length;
   if (residual.length) {
-    const input = transcriptionInput(content.context, signal, effect);
+    const input = transcriptionInput(
+      content.context,
+      signal,
+      effect,
+      artifacts,
+    );
     const startedAt = Date.parse(
       content.manifest.capture.captureStartedAt ?? "",
     );
@@ -633,6 +702,7 @@ async function composeRecoveredTranscript(
     signal,
     effect,
     !retry,
+    artifacts,
   );
   // Final-pass corrections mutate these files. Cleanup can alter aggregate text,
   // but cannot invent a more precise speaker/time alignment for a segment.

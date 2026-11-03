@@ -46,6 +46,26 @@ const contextSnapshot = (sequence: number): CheckpointArtifactInput => ({
   coverage: { kind: "unknown" },
 });
 
+test("a sealed artifact producer refuses local writes before file creation", async () => {
+  const stopped = jest.fn();
+  const beginWrite = jest.fn(() => {
+    throw new Error("Producer is closed");
+  });
+  const capture = createRecordingCheckpointCapture({
+    directory,
+    startedAt: 0,
+    signal: new AbortController().signal,
+    commit: async () => true,
+    stopCapture: stopped,
+    beginWrite,
+  });
+  expect(capture.queueContent(contextSnapshot(1))).toBe(false);
+  expect(beginWrite).toHaveBeenCalled();
+  expect(readdirSync(directory)).toEqual([]);
+  expect(stopped).toHaveBeenCalledWith("storage_preservation");
+  await capture.settled();
+});
+
 test.each([true, false])(
   "superseded snapshots are removed only when their replacement is acknowledged (%s)",
   async (replacementAccepted) => {

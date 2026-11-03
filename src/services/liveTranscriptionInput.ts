@@ -1,4 +1,5 @@
 import type { MeetingData } from "../types/meeting-data";
+import { getMeetingTranscriptionWriter } from "./meetingArtifactProducer";
 import type { TranscriptionContentInput } from "./transcriptionService";
 import type { FinalPassContent } from "./transcriptionFinalPassService";
 import {
@@ -23,6 +24,7 @@ export function liveTranscriptionInput(
   meeting: MeetingData,
 ): TranscriptionContentInput {
   return {
+    beginArtifactWrite: getMeetingTranscriptionWriter(meeting),
     meetingId: meeting.meetingId,
     creator: { id: meeting.creator.id },
     guild: { id: meeting.guild.id },
@@ -41,6 +43,7 @@ export function liveFinalPassInput(meeting: MeetingData): FinalPassContent {
     getMeetingModelOverrides(meeting),
   );
   return {
+    beginArtifactWrite: getMeetingTranscriptionWriter(meeting),
     observeGeneration: fixtureGenerationObserver(meeting),
     meetingId: meeting.meetingId,
     creator: { id: meeting.creator.id },

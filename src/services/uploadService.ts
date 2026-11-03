@@ -14,13 +14,8 @@ import { buildParticipantSnapshot } from "../utils/participants";
 import { ChatEntry } from "../types/chat";
 import { Participant } from "../types/participants";
 
-const verifiedArtifacts = new WeakMap<
-  MeetingData,
-  Map<string, StoredArtifact>
->();
-export function getVerifiedMeetingArtifacts(
-  meeting: MeetingData,
-): StoredArtifact[] {
+const verifiedArtifacts = new WeakMap<object, Map<string, StoredArtifact>>();
+export function getVerifiedMeetingArtifacts(meeting: object): StoredArtifact[] {
   return Array.from(
     verifiedArtifacts.get(meeting)?.values() ?? [],
     (reference) => ({ ...reference }),

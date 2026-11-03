@@ -46,22 +46,51 @@ export function ensureMeetingTempDirSync(
   return dir;
 }
 
-async function safeRemove(dir: string, label: string): Promise<void> {
-  try {
-    await fs.rm(dir, { recursive: true, force: true });
-  } catch (error) {
-    console.warn(`Failed to clean ${label} temp directory: ${dir}`, error);
-  }
-}
-
 export async function cleanupTempBaseDir(): Promise<void> {
-  await safeRemove(BASE_TEMP_DIR, "base");
+  const { localArtifactCleanup, removeEmptyArtifactDirectories } =
+    await import("./meetingArtifactCleanupService");
+  for (const root of [
+    path.join(BASE_TEMP_DIR, "m"),
+    path.join(BASE_TEMP_DIR, "r"),
+    RETAINED_TEMP_DIR,
+  ]) {
+    try {
+      const stat = await fs.lstat(root);
+      if (!stat.isDirectory() || stat.isSymbolicLink())
+        throw new Error("Artifact root is not ordinary");
+      for await (const entry of await fs.opendir(root)) {
+        if (entry.isDirectory() && !entry.isSymbolicLink())
+          await localArtifactCleanup.enqueue(path.join(root, entry.name));
+      }
+    } catch (error) {
+      if (!(
+        error !== null &&
+        typeof error === "object" &&
+        "code" in error &&
+        error.code === "ENOENT"
+      ))
+        console.warn(
+          "Local artifact reconciliation could not inspect a root",
+          error,
+        );
+    }
+  }
+  await removeEmptyArtifactDirectories(BASE_TEMP_DIR);
 }
 
 export async function cleanupMeetingTempDir(
-  meeting: Pick<MeetingData, "meetingId">,
+  meeting: import("./meetingArtifactCleanupService").CleanupMeeting,
 ): Promise<void> {
-  await safeRemove(getMeetingTempDir(meeting), "meeting");
+  const { localArtifactCleanup } =
+    await import("./meetingArtifactCleanupService");
+  const result = await localArtifactCleanup.enqueue(
+    getMeetingTempDir(meeting),
+    meeting,
+  );
+  if (result.kind !== "cleaned")
+    console.warn("Local meeting files retained for reconciliation", {
+      kind: result.kind,
+    });
 }
 
 export async function retainMeetingTempDir(
@@ -70,10 +99,26 @@ export async function retainMeetingTempDir(
 ): Promise<string | undefined> {
   const sourceDir = getMeetingTempDir(meeting);
   const retainedDir = getRetainedMeetingTempDir(meeting);
+  let lock: Awaited<ReturnType<typeof fs.open>> | undefined;
+  const lockPath = `${retainedDir}.lock`;
   try {
-    await fs.access(sourceDir);
+    const source = await fs.lstat(sourceDir);
+    if (!source.isDirectory() || source.isSymbolicLink())
+      throw new Error("Retention source is not ordinary");
     await fs.mkdir(RETAINED_TEMP_DIR, { recursive: true });
-    await fs.rm(retainedDir, { recursive: true, force: true });
+    lock = await fs.open(lockPath, "wx");
+    try {
+      await fs.lstat(retainedDir);
+      throw new Error("Retained meeting already exists");
+    } catch (error) {
+      if (!(
+        error !== null &&
+        typeof error === "object" &&
+        "code" in error &&
+        error.code === "ENOENT"
+      ))
+        throw error;
+    }
     await fs.writeFile(
       path.join(sourceDir, "retention.json"),
       JSON.stringify(
@@ -87,16 +132,9 @@ export async function retainMeetingTempDir(
         null,
         2,
       ),
+      { flag: "wx" },
     );
-    try {
-      await fs.rename(sourceDir, retainedDir);
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "EXDEV") {
-        throw error;
-      }
-      await fs.cp(sourceDir, retainedDir, { recursive: true });
-      await fs.rm(sourceDir, { recursive: true, force: true });
-    }
+    await fs.rename(sourceDir, retainedDir);
     return retainedDir;
   } catch (error) {
     console.error("Failed to retain meeting temp directory", {
@@ -107,5 +145,10 @@ export async function retainMeetingTempDir(
       error,
     });
     return undefined;
+  } finally {
+    if (lock) {
+      await lock.close();
+      await fs.unlink(lockPath);
+    }
   }
 }

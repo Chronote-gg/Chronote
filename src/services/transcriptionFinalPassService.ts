@@ -10,13 +10,11 @@ import type { TranscriptionCreateParamsNonStreaming } from "openai/resources/aud
 import { z } from "zod";
 import type { AudioFileData } from "../types/audio";
 import type { MeetingData } from "../types/meeting-data";
-import { chat, type ChatMeetingInput } from "./openaiChatService";
+import { chat } from "./openaiChatService";
 import { createOpenAIClient } from "./openaiClient";
-import {
-  type FinalPassSegmentInput,
-  getTranscriptionFinalPassPrompt,
-  getTranscriptionPrompt,
-} from "./transcriptionPromptService";
+import { type FinalPassSegmentInput } from "./transcriptionPromptService";
+import type { FinalPassContent } from "../types/transcriptionContent";
+export type { FinalPassContent } from "../types/transcriptionContent";
 import { ensureMeetingTempDir } from "./tempFileService";
 import {
   areLowInformationTranscriptionTextsNearDuplicates,
@@ -28,24 +26,6 @@ import {
   resolveAudioFileTranscript,
 } from "../utils/audioTranscript";
 
-export type FinalPassContent = ChatMeetingInput & {
-  startTime: Date;
-  endTime?: Date;
-  participants: MeetingData["participants"];
-  audioData: Pick<MeetingData["audioData"], "audioFiles">;
-  signal: AbortSignal;
-  enabled: boolean;
-  settings: FinalPassSettings;
-  langfuseParentSpanContext?: MeetingData["langfuseParentSpanContext"];
-  transcriptionModel: string;
-  transcriptionLanguage: import("../config/transcriptionLanguage").TranscriptionLanguage;
-  reconcileModel: import("../types/recordingContent").SavedRecordingSettings["models"]["notes"];
-  prompt(): ReturnType<typeof getTranscriptionPrompt>;
-  finalPassPrompt(
-    input: Parameters<typeof getTranscriptionFinalPassPrompt>[1],
-  ): ReturnType<typeof getTranscriptionFinalPassPrompt>;
-  effect<T>(run: () => Promise<T>): Promise<T>;
-};
 type ChunkLogprobEntry = {
   logprob?: number;
 };
@@ -556,6 +536,8 @@ const processChunk = async (input: {
   );
 
   const signal = input.meeting.signal;
+  const write = input.meeting.beginArtifactWrite?.(chunkFilePath);
+  let rendered = false;
   try {
     signal.throwIfAborted();
     await input.dependencies.renderAudioChunk({
@@ -565,6 +547,7 @@ const processChunk = async (input: {
       durationSeconds: input.chunk.endSeconds - input.chunk.startSeconds,
       signal,
     });
+    rendered = true;
 
     signal.throwIfAborted();
     const chunkTranscription = await input.dependencies.transcribeChunk({
@@ -625,7 +608,11 @@ const processChunk = async (input: {
       nextTail: input.previousChunkTail,
     };
   } finally {
-    await input.dependencies.deleteTempFile(chunkFilePath);
+    try {
+      await input.dependencies.deleteTempFile(chunkFilePath);
+    } finally {
+      write?.settle(rendered ? "known" : "uncertain");
+    }
   }
 };
 

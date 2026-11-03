@@ -58,6 +58,12 @@ type Input = {
     signal: AbortSignal,
   ): Promise<boolean>;
   stopCapture(reason: "storage_preservation" | "ownership_lost"): void;
+  beginWrite?(
+    filename: string,
+    artifact: CheckpointArtifactInput,
+  ): {
+    settle(result: "known" | "uncertain"): void;
+  };
 };
 
 /** One bounded publisher per recording. Failed PCM remains owned until explicit settled handoff. */
@@ -75,6 +81,20 @@ export function createRecordingCheckpointCapture(input: Input) {
   let retryAt = Infinity;
   const controller = new AbortController();
   const signal = AbortSignal.any([input.signal, controller.signal]);
+
+  function writeArtifact(file: string, artifact: CheckpointArtifactInput) {
+    let write: ReturnType<NonNullable<Input["beginWrite"]>> | undefined;
+    try {
+      write = input.beginWrite?.(file, artifact);
+      writeFileSync(file, artifact.bytes, { flag: "wx" });
+      write?.settle("known");
+      return true;
+    } catch {
+      write?.settle("uncertain");
+      interrupt();
+      return false;
+    }
+  }
 
   function close(sourceId: string) {
     const piece = open.get(sourceId);
@@ -106,11 +126,7 @@ export function createRecordingCheckpointCapture(input: Input) {
       },
     };
     closed.push({ artifact, receivedAt: piece.receivedAt, file, attempts: 0 });
-    try {
-      writeFileSync(file, bytes, { flag: "wx" });
-    } catch {
-      interrupt();
-    }
+    writeArtifact(file, artifact);
   }
   function closeAll() {
     for (const id of open.keys()) close(id);
@@ -321,12 +337,7 @@ export function createRecordingCheckpointCapture(input: Input) {
       input.directory,
       `${artifact.kind}-${artifact.sequence}.json`,
     );
-    try {
-      writeFileSync(file, artifact.bytes, { flag: "wx" });
-    } catch {
-      interrupt();
-      return false;
-    }
+    if (!writeArtifact(file, artifact)) return false;
     // Completed-text snapshots are cumulative; retain only the newest unstarted snapshot in memory.
     const previous = closed.findIndex(
       (item, index) =>

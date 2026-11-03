@@ -16,6 +16,15 @@ const loadService = async (baseDir: string) => {
   return await import("../../src/services/tempFileService");
 };
 
+async function removeTestDirectory(directory: string, prefix: string) {
+  if (
+    path.dirname(directory) !== path.resolve(os.tmpdir()) ||
+    !path.basename(directory).startsWith(prefix)
+  )
+    throw new Error("Unexpected test cleanup target");
+  await fs.promises.rm(directory, { recursive: true, force: true });
+}
+
 describe("tempFileService", () => {
   const originalEnv = process.env.MEETING_TEMP_DIR;
 
@@ -47,6 +56,25 @@ describe("tempFileService", () => {
 
     await service.cleanupTempBaseDir();
     expect(fs.existsSync(dir)).toBe(false);
+  });
+
+  it("startup and meeting cleanup preserve unknown files", async () => {
+    const baseDir = await fs.promises.mkdtemp(
+      path.join(os.tmpdir(), "chronote-unknown-"),
+    );
+    const service = await loadService(baseDir);
+    const meeting = buildMeeting();
+    const dir = await service.ensureMeetingTempDir(meeting);
+    const filename = path.join(dir, "unverified.pcm");
+    await fs.promises.writeFile(filename, "original");
+    try {
+      await service.cleanupMeetingTempDir(meeting);
+      expect(await fs.promises.readFile(filename, "utf8")).toBe("original");
+      await service.cleanupTempBaseDir();
+      expect(await fs.promises.readFile(filename, "utf8")).toBe("original");
+    } finally {
+      await removeTestDirectory(baseDir, "chronote-unknown-");
+    }
   });
 
   it("retains meeting temp directories outside the cleanup base", async () => {
@@ -81,9 +109,36 @@ describe("tempFileService", () => {
       }),
     );
 
-    await fs.promises.rm(path.dirname(retainedDir!), {
+    await fs.promises.rm(retainedDir!, {
       recursive: true,
       force: true,
     });
+  });
+
+  it("never replaces an earlier retained meeting", async () => {
+    const baseDir = await fs.promises.mkdtemp(
+      path.join(os.tmpdir(), "chronote-retain-"),
+    );
+    const service = await loadService(baseDir);
+    const meeting = { ...buildMeeting(), meetingId: path.basename(baseDir) };
+    const source = await service.ensureMeetingTempDir(meeting);
+    const retained = service.getRetainedMeetingTempDir(meeting);
+    await fs.promises.mkdir(retained, { recursive: true });
+    await fs.promises.writeFile(path.join(retained, "earlier"), "earlier");
+    await fs.promises.writeFile(path.join(source, "later"), "later");
+    try {
+      expect(
+        await service.retainMeetingTempDir(meeting, "failed"),
+      ).toBeUndefined();
+      expect(
+        await fs.promises.readFile(path.join(source, "later"), "utf8"),
+      ).toBe("later");
+      expect(
+        await fs.promises.readFile(path.join(retained, "earlier"), "utf8"),
+      ).toBe("earlier");
+    } finally {
+      await removeTestDirectory(baseDir, "chronote-retain-");
+      await fs.promises.rm(retained, { recursive: true, force: true });
+    }
   });
 });

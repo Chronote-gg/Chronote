@@ -3,6 +3,10 @@ import type { SpeechDetectionMode } from "../config/speechDetection";
 import { convertTranscriptionPcmToWav } from "./transcriptionAudioService";
 import { createSpeechCoverage } from "./speechDetectionPolicy";
 import type {
+  ArtifactProducer,
+  ArtifactWriter,
+} from "./artifactProducerRegistry";
+import type {
   SpeechAdmission,
   SpeechAssessment,
   SpeechCoverage,
@@ -11,6 +15,7 @@ import type {
 } from "./speechDetectionTypes";
 
 export type TranscriptionInputRequest = {
+  beginArtifactWrite?: ArtifactWriter;
   pcm: Buffer;
   pcmFile: string;
   wavFile: string;
@@ -22,6 +27,20 @@ export type TranscriptionInputRequest = {
   signal?: AbortSignal;
   observe: (assessment: SpeechAssessment, durationMs: number) => void;
 };
+
+function beginInputWrites(request: TranscriptionInputRequest) {
+  const writes: ReturnType<ArtifactProducer["beginWrite"]>[] = [];
+  try {
+    for (const filename of [request.pcmFile, request.wavFile]) {
+      const write = request.beginArtifactWrite?.(filename);
+      if (write) writes.push(write);
+    }
+    return writes;
+  } catch (error) {
+    writes.forEach((write) => write.settle("uncertain"));
+    throw error;
+  }
+}
 export type PreparedTranscriptionInput = {
   wavFile: string;
   conversionMs: number;
@@ -73,6 +92,8 @@ export async function withPreparedTranscriptionInput<T>(
   request: TranscriptionInputRequest,
   consume: (prepared: PreparedTranscriptionInput) => Promise<T>,
 ): Promise<T> {
+  const writes = beginInputWrites(request);
+  let converted = false;
   try {
     request.signal?.throwIfAborted();
     const coverage = createSpeechCoverage(
@@ -86,6 +107,7 @@ export async function withPreparedTranscriptionInput<T>(
       request.wavFile,
       request.signal,
     );
+    converted = true;
     request.signal?.throwIfAborted();
     const conversionMs = performance.now() - conversionStarted;
     let admission: SpeechAdmission;
@@ -112,5 +134,6 @@ export async function withPreparedTranscriptionInput<T>(
   } finally {
     cleanup(request.pcmFile);
     cleanup(request.wavFile);
+    writes.forEach((write) => write.settle(converted ? "known" : "uncertain"));
   }
 }

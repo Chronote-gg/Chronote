@@ -66,7 +66,8 @@ import { toLangfuseAttributeMetadata } from "../observability/langfuseMetadata";
 import { ensureMeetingTempDirSync } from "./tempFileService";
 import { evaluateNoiseGate } from "../utils/audioNoiseGate";
 import { countWords } from "../utils/text";
-import { getTranscriptionPrompt } from "./transcriptionPromptService";
+import type { TranscriptionContentInput } from "../types/transcriptionContent";
+export type { TranscriptionContentInput } from "../types/transcriptionContent";
 import { getMeetingModelOverrides } from "./meetingModelOverrides";
 import { getTranscriptionTextQuality } from "../utils/transcriptionText";
 import { withPreparedTranscriptionInput } from "./transcriptionInputService";
@@ -87,21 +88,6 @@ import {
   recordSpeechRequestSkipped,
   recordSpeechSnippetOutcome,
 } from "../metrics";
-
-export type TranscriptionContentInput = {
-  observeGeneration?: import("../types/fixtureEvidence").GenerationObserver;
-  meetingId: string;
-  creator: { id: string };
-  guild: { id: string };
-  voiceChannel: { id: string };
-  signal: AbortSignal;
-  runtimeConfig?: Pick<
-    NonNullable<MeetingData["runtimeConfig"]>,
-    "transcription" | "modelChoices"
-  >;
-  prompt(): ReturnType<typeof getTranscriptionPrompt>;
-  effect<T>(run: () => Promise<T>): Promise<T>;
-};
 
 const DEFAULT_NOISE_GATE_CONFIG = {
   enabled: NOISE_GATE_ENABLED,
@@ -778,7 +764,7 @@ const buildSnippetTempFiles = (
   snippet: AudioSnippet,
   suffix: string,
 ): TempSnippetFiles => {
-  const tempDir = ensureMeetingTempDirSync(meeting);
+  const tempDir = meeting.tempDirectory ?? ensureMeetingTempDirSync(meeting);
   return {
     pcmFile: path.join(
       tempDir,
@@ -902,6 +888,7 @@ export async function transcribeContentSnippet(
     return await withPreparedTranscriptionInput<SnippetTranscriptionResult>(
       {
         pcm: buffer,
+        beginArtifactWrite: meeting.beginArtifactWrite,
         ...tempFiles,
         mode,
         phase,
