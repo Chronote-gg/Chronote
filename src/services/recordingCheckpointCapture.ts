@@ -47,6 +47,7 @@ type Closed = {
   receivedAt: number;
   file: string;
   attempts: number;
+  supersededFiles?: string[];
 };
 type Input = {
   directory: string;
@@ -176,11 +177,13 @@ export function createRecordingCheckpointCapture(input: Input) {
         queuedBytes -= next.artifact.bytes.byteLength;
       if (next.artifact.kind === "audio")
         releaseCheckpointPcm(next.artifact.bytes.byteLength);
-      try {
-        unlinkSync(next.file);
-      } catch {
-        /* A confirmed leftover file is safe to retain. */
-      }
+      [next.file, ...(next.supersededFiles ?? [])].forEach((file) => {
+        try {
+          unlinkSync(file);
+        } catch {
+          /* A confirmed leftover file is safe to retain. */
+        }
+      });
     }
   }
   function startWorker() {
@@ -329,8 +332,23 @@ export function createRecordingCheckpointCapture(input: Input) {
       (item, index) =>
         item.artifact.kind === artifact.kind && (!worker || index > 0),
     );
-    if (previous >= 0) closed.splice(previous, 1);
-    closed.push({ artifact, receivedAt: Date.now(), file, attempts: 0 });
+    const superseded =
+      previous >= 0 ? closed.splice(previous, 1)[0] : undefined;
+    closed.push({
+      artifact,
+      receivedAt: Date.now(),
+      file,
+      attempts: 0,
+      ...(superseded
+        ? {
+            // Keep earlier snapshots until their cumulative replacement is durable.
+            supersededFiles: [
+              superseded.file,
+              ...(superseded.supersededFiles ?? []),
+            ],
+          }
+        : {}),
+    });
     startWorker();
     arm();
     return true;
