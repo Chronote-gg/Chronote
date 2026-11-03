@@ -279,7 +279,8 @@ export function createFirstPublicationRepository(
       const valid = before.pages.every(
         (p, i) =>
           same(p, after.pages[i]) ||
-          (p.kind === "prepared" && after.pages[i].kind === "submitted") ||
+          ((p.kind === "prepared" || p.kind === "rejected") &&
+            after.pages[i].kind === "submitted") ||
           ((p.kind === "submitted" ||
             (p.kind === "uncertain" &&
               p.messageId !== undefined &&
@@ -310,7 +311,12 @@ export function createFirstPublicationRepository(
         !same(prior, before) ||
         !owns(row, before, snapshot) ||
         !same(
-          { ...before, processId: after.processId, updatedAt: after.updatedAt },
+          {
+            ...before,
+            processId: after.processId,
+            updatedAt: after.updatedAt,
+            resolutionDigests: after.resolutionDigests,
+          },
           after,
         )
       )
@@ -542,18 +548,24 @@ export function buildFirstPublicationCommit(
     items.push({
       Put: {
         TableName: profile.controlTable,
-        Item: marshall({ ...key, value: a.after }),
+        Item: marshall(
+          { ...key, value: a.after },
+          { removeUndefinedValues: true },
+        ),
         ...condition(a.before ? { value: a.before } : {}, ["value"]),
       },
     });
     items.push({
       Put: {
         TableName: profile.controlTable,
-        Item: marshall({
-          pk: key.pk,
-          sk: "AUDIT#" + a.after.runId + "#" + digest(a.after),
-          value: a.after,
-        }),
+        Item: marshall(
+          {
+            pk: key.pk,
+            sk: "AUDIT#" + a.after.runId + "#" + digest(a.after),
+            value: a.after,
+          },
+          { removeUndefinedValues: true },
+        ),
         ConditionExpression: "attribute_not_exists(pk)",
       },
     });

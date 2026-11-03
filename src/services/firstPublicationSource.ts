@@ -18,19 +18,31 @@ export function normalizePublicationSelection(
   input: unknown,
   bundles: ReadonlyMap<string, unknown>,
 ): PublicationSelection {
-  const raw = z.array(entry).min(1).parse(input),
-    result = new Map<string, z.infer<typeof publicationKeySchema>>();
+  const raw = z.array(entry).min(1).parse(input);
+  const result = new Map<string, z.infer<typeof publicationKeySchema>>();
+  const identities = new Map<string, string>();
   for (const e of raw) {
-    const keys =
+    const refs =
       "bundle" in e
         ? z
             .object({
-              meetings: z.array(z.object({ key: publicationKeySchema })),
+              meetings: z.array(
+                z.object({
+                  key: publicationKeySchema,
+                  meetingId: z.string().optional(),
+                }),
+              ),
             })
-            .parse(bundles.get(e.bundle))
-            .meetings.map((m) => m.key)
-        : [e];
-    for (const k of keys) result.set(keyId(k), k);
+            .parse(bundles.get(e.bundle)).meetings
+        : [{ key: e, meetingId: undefined }];
+    for (const ref of refs) {
+      const id = keyId(ref.key),
+        prior = identities.get(id);
+      if (prior && ref.meetingId && prior !== ref.meetingId)
+        throw Error("Conflicting recovery bundle identities");
+      if (ref.meetingId) identities.set(id, ref.meetingId);
+      result.set(id, ref.key);
+    }
   }
   const values = [...result.values()];
   if (values.length < 1 || values.length > 25)

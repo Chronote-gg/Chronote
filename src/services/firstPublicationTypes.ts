@@ -93,6 +93,7 @@ export const attemptSchema = z
     outcome: z.enum(["pending", "verified", "unsent"]),
     updatedAt: z.string(),
     processId: z.string().min(1),
+    resolutionDigests: z.array(z.string().regex(/^[a-f0-9]{64}$/)).optional(),
   })
   .strict()
   .refine((a) => a.pages.length === a.payloads.length);

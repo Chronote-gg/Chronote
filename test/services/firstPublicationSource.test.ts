@@ -49,3 +49,17 @@ test("strict v2 provenance supports absent previous artifacts and exact bytes", 
     ).toThrow();
   }
 });
+
+test("conflicting bundle identities for the same key are rejected", () => {
+  const f = firstPublicationFixture(),
+    bundles = new Map<string, unknown>([
+      ["one", { meetings: [{ key: f.key, meetingId: "first" }] }],
+      ["two", { meetings: [{ key: f.key, meetingId: "second" }] }],
+    ]);
+  expect(() =>
+    normalizePublicationSelection(
+      [{ bundle: "one" }, { bundle: "two" }],
+      bundles,
+    ),
+  ).toThrow("Conflicting");
+});
