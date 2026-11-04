@@ -48,7 +48,7 @@ updates:
 
   - package-ecosystem: "uv"
     directory: "/"
-    # 1.24.2 and 1.24.3 crash parsing current TypeScript; reconsider after an upstream fix.
+    # Keep the known-bad TypeScript parser releases excluded; 1.25.0 fixes them.
     ignore:
       - dependency-name: "lizard"
         versions: ["1.24.2", "1.24.3"]

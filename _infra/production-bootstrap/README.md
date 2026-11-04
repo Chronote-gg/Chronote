@@ -73,7 +73,7 @@ The role's inline policies share IAM's 10,240-character limit and the inline pol
 | Route rewrite function  | CreateFunction, PublishFunction and TagResource (default tags travel with the create) on the exact function name. DescribeFunction, GetFunction and ListTagsForResource stay inline. |
 | Crawler headers policy  | CreateResponseHeadersPolicy on `response-headers-policy/*`; the ID exists only after creation. GetResponseHeadersPolicy stays inline.                                                |
 
-These follow the provider's create, read and update paths (`cloudfront/function.go`, `response_headers_policy.go`, `distribution.go` at AWS provider 6.70.0). It never calls GetDistributionConfig, and no write touches a policy, tag, origin access control or key outside these resources. Effective permissions, including whether CloudFront checks the caller's read access to the associated function, headers policy and certificate during UpdateDistribution, remain unproved until the reviewed Apply; the inline reads cover those cases.
+These follow the provider's create, read and update paths (`cloudfront/function.go`, `response_headers_policy.go`, `distribution.go` at AWS provider 6.71.0). It never calls GetDistributionConfig, and no write touches a policy, tag, origin access control or key outside these resources. Effective permissions, including whether CloudFront checks the caller's read access to the associated function, headers policy and certificate during UpdateDistribution, remain unproved until the reviewed Apply; the inline reads cover those cases.
 
 ## Processing retry managed policy
 
@@ -89,7 +89,7 @@ These follow the provider's create, read and update paths (`cloudfront/function.
 
 Production order: apply this root with the policy enabled first, because a production `processing-retry` Plan needs these log, alarm and topic reads; then Plan; then Apply.
 
-These follow the provider's create and read paths (`logs/metric_filter.go`, `logs/group.go`, `cloudwatch/metric_alarm.go`, `sns/topic.go` at AWS provider 6.70.0) plus the generated tag reads. Effective permissions, including whether the index backfill needs the encryption grant, remain unproved until the reviewed Apply.
+These follow the provider's create and read paths (`logs/metric_filter.go`, `logs/group.go`, `cloudwatch/metric_alarm.go`, `sns/topic.go` at AWS provider 6.71.0) plus the generated tag reads. Effective permissions, including whether the index backfill needs the encryption grant, remain unproved until the reviewed Apply.
 
 ## Artifact preservation managed policy
 
