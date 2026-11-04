@@ -14,10 +14,12 @@
 
 - Public repository: no real server, channel, user, or message ids or names anywhere (code, tests, docs, commits). Test ids are obviously fake snowflakes such as `100000000000000001`.
 - No test, CI job, or default code path calls the real Discord API or AWS. Every network edge is an injected `fetchImpl` or client.
-- Every send body is `{ embeds: [embed], allowed_mentions: { parse: [] } }`. Never DM. Never `content`.
+- Every send body is `{ embeds: [embed], allowed_mentions: { parse: [] } }`, plus `content` only for an owner DM. The only DM is to the guild owner, only when the updates channel exists but is unpostable (operator decision, 2026-11-04). Never DM members.
 - Required bot permissions on the target channel: View Channel (`1n << 10n`), Send Messages (`1n << 11n`), Embed Links (`1n << 14n`). Administrator (`1n << 3n`) grants all.
 - Only channel types `0` (guild text) and `5` (guild announcement) qualify.
-- Channel order: `public_updates` then `notes` then `system`. A candidate the bot cannot post in falls through to the next (operator decision, 2026-11-04).
+- Channel rule: a server with a usable community updates channel (present in the channel list, type 0 or 5) targets only that channel; if the bot cannot post there the decision is `owner_dm` with the missing permissions, never a member-visible fallback. A server without a usable updates channel tries `notes` then `system`.
+- Owner DM content line, exactly: `Chronote could not post this notice in the community updates channel of ${escapeMarkdown(serverName)} because it is missing: ${missing.join(", ")}. Grant these to Chronote in that channel to receive future notices there.` with permission display names `View Channel`, `Send Messages`, `Embed Links`. `escapeMarkdown` from `@discordjs/formatters`.
+- Closed owner DMs: Discord JSON error `code` 50007, or any 403 from opening or posting the DM, gives `owner_dms_closed`.
 - Opt-out config key: `announcements.operatorNotices.enabled`, server scope only, default `true`, admin toggle. Opted out iff the stored server override value is `false` or `"false"`.
 - Delivery table logical name `AnnouncementDeliveryTable`, partition key `announcementId` (S), sort key `guildId` (S).
 - A post is marked `failed` only on a definite HTTP 4xx (including a 429 that persists past retry). A 5xx, timeout, abort or network error leaves the record `pending` (operator decision, 2026-11-04).
@@ -33,7 +35,7 @@
 2. The bot was removed from a server, or a channel was deleted, between preview and send. That server becomes a skip with a reason; the run continues. Test in Task 3.
 3. Ctrl-C mid-send. The run stops before the next server, leaves records consistent, and still prints the summary. Test in Task 3 with an aborted `AbortSignal`.
 4. `--guild-id` naming a server the bot is not in. Preview fails listing those ids rather than quietly targeting fewer servers. Test in Task 3.
-5. A community updates channel id that points at a thread, forum, or voice channel. It falls through as `not_text`. Test in Task 1.
+5. A community updates channel id that points at a thread, forum, or voice channel, or a deleted channel. It counts as no updates channel and falls through to notes, never to an owner DM. Test in Task 1.
 
 ## File Structure
 
@@ -72,12 +74,13 @@ Tasks 1 and 2 are independent and can run in parallel in separate worktrees. Tas
   export type AnnouncementField = { name: string; value: string; inline?: boolean };
   export type Announcement = { id: string; kind: AnnouncementKind; title: string; body: string; fields: AnnouncementField[] };
   export type AnnouncementEmbed = { title: string; description: string; color: number; fields?: AnnouncementField[]; footer: { text: string }; timestamp: string };
-  export type ChannelSource = "public_updates" | "notes" | "system";
+  export type ChannelSource = "public_updates" | "notes" | "system" | "owner_dm";
   export type RequiredPermissionName = "ViewChannel" | "SendMessages" | "EmbedLinks";
   export type CandidateRejection = { source: ChannelSource; channelId: string; problem: "missing" | "not_text" | "duplicate" | "missing_permissions"; missing?: RequiredPermissionName[] };
-  export type GuildSnapshot = { guildId: string; roles: { id: string; permissions?: string | null }[]; botRoleIds: string[]; publicUpdatesChannelId: string | null; systemChannelId: string | null; notesChannelId: string | null; channels: DiscordChannel[] };
+  export type GuildSnapshot = { guildId: string; guildName: string; ownerId: string; roles: { id: string; permissions?: string | null }[]; botRoleIds: string[]; publicUpdatesChannelId: string | null; systemChannelId: string | null; notesChannelId: string | null; channels: DiscordChannel[] };
   export type TargetDecision =
-    | { kind: "target"; channelId: string; channelSource: ChannelSource; rejected: CandidateRejection[] }
+    | { kind: "target"; channelId: string; channelSource: Exclude<ChannelSource, "owner_dm">; rejected: CandidateRejection[] }
+    | { kind: "owner_dm"; ownerId: string; guildName: string; updatesChannelId: string; missing: RequiredPermissionName[]; rejected: CandidateRejection[] }
     | { kind: "skip"; reason: "opted_out" | "no_channel" | "missing_permissions"; rejected: CandidateRejection[] };
   export class AnnouncementInputError extends Error { constructor(readonly problems: string[]) }
   ```
@@ -125,11 +128,12 @@ Tasks 1 and 2 are independent and can run in parallel in separate worktrees. Tas
   - `optedOut: true` returns skip `opted_out` and never inspects channels.
   - Public updates channel postable returns target `public_updates`.
   - No public updates channel, notes channel postable returns target `notes` with empty `rejected`.
-  - Public updates channel denies Embed Links by overwrite returns target `notes` with `rejected` holding `{ source: "public_updates", problem: "missing_permissions", missing: ["EmbedLinks"] }`.
-  - Public updates id not in `channels` gives `missing`; type 11 (thread), 15 (forum), 2 (voice) give `not_text`, then fall through. (Review Focus 5.)
-  - Notes channel id equal to the public updates id gives `duplicate` for the second occurrence.
+  - Public updates channel denies Embed Links by overwrite, with a postable notes channel present, returns `owner_dm` with the snapshot's `ownerId` and `guildName`, `missing: ["EmbedLinks"]`, and never targets `notes`.
+  - `optedOut: true` with an unpostable updates channel returns skip `opted_out`, not `owner_dm`.
+  - Public updates id not in `channels` gives `missing`; type 11 (thread), 15 (forum), 2 (voice) give `not_text`; in those cases the server counts as having no usable updates channel and falls through to `notes`. (Review Focus 5.)
+  - System channel id equal to the notes channel id gives `duplicate` for the second occurrence.
   - All three null returns skip `no_channel`.
-  - All candidates present but unpostable returns skip `missing_permissions` with three rejections listing missing permissions in the order View, Send, Embed.
+  - No updates channel, notes and system both present but unpostable returns skip `missing_permissions` with two rejections listing missing permissions in the order View, Send, Embed.
   - Administrator role makes an overwrite-denied channel postable.
 
 - [ ] **Step 10: Implement, run all Task 1 tests, pass.**
@@ -160,20 +164,21 @@ Tasks 1 and 2 are independent and can run in parallel in separate worktrees. Tas
   export type AnnouncementDiscordClient = {
     getBotUserId(): Promise<string>;
     listBotGuildIds(): Promise<string[]>; // GET /users/@me/guilds?limit=200&after=<last id>, until a page has < 200
-    getGuild(
-      guildId: string,
-    ): Promise<{
+    getGuild(guildId: string): Promise<{
       id: string;
+      name: string;
+      ownerId: string;
       roles: { id: string; permissions?: string | null }[];
       publicUpdatesChannelId: string | null;
       systemChannelId: string | null;
     }>;
     listGuildChannels(guildId: string): Promise<DiscordChannel[]>;
     getMemberRoleIds(guildId: string, userId: string): Promise<string[]>;
+    openDmChannel(userId: string): Promise<string>; // POST /users/@me/channels { recipient_id }, returns channel id
     createMessage(
       channelId: string,
       embed: AnnouncementEmbed,
-      signal?: AbortSignal,
+      options?: { content?: string; signal?: AbortSignal },
     ): Promise<{ id: string }>;
   };
   export function createAnnouncementDiscordClient(options: {
@@ -237,7 +242,9 @@ Tasks 1 and 2 are independent and can run in parallel in separate worktrees. Tas
 - [ ] **Step 1: Write failing tests for the Discord client** with a fake `fetchImpl` recording requests.
   - Every request goes to `https://discord.com/api/v10/...` with `Authorization: Bot <token>` and `redirect: "error"`, and a 15 s timeout signal.
   - `listBotGuildIds` makes a second call with `after=` the last id of a full 200-item page and stops on a short page.
-  - `createMessage` sends exactly `{ embeds: [embed], allowed_mentions: { parse: [] } }`.
+  - `createMessage` sends exactly `{ embeds: [embed], allowed_mentions: { parse: [] } }`, and adds `content` only when given.
+  - `openDmChannel` POSTs `{ recipient_id }` to `/users/@me/channels` and returns the channel id.
+  - A 403 whose JSON body has `code: 50007` throws `DiscordMessageHttpError` with status 403; the error exposes the Discord error code (add an optional `discordCode` property or a sibling error class, keeping existing callers unchanged).
   - A 429 with `Retry-After: 2` calls `sleep(2000)` and retries; three consecutive 429s throw `DiscordMessageHttpError` with status 429. A retry-after of 120 is capped at `sleep(30000)`.
   - 403 throws `DiscordMessageHttpError` status 403 without retry. A fetch rejection propagates unchanged (the runner treats it as ambiguous).
   - Snowflake-shaped ids are validated before building a URL; a bad id throws without calling fetch.
@@ -334,6 +341,7 @@ Tasks 1 and 2 are independent and can run in parallel in separate worktrees. Tas
   ): string;
   export type SendCounts = {
     sent: number;
+    ownerDm: number;
     failed: number;
     unknown: number;
     skipped: Record<string, number>;
@@ -360,10 +368,12 @@ Tasks 1 and 2 are independent and can run in parallel in separate worktrees. Tas
   - `previewDigest` is stable under key order and changes when any entry changes.
   - Send: for each `target` entry, in order, re-reads settings and re-checks the previewed channel only (fresh snapshot, but resolution restricted to the previewed channel id); opted out or now unpostable gives a skip and no claim. Then `claimPending` → `createMessage` → `markSent`. `"exists"` from the claim gives `already_sent`.
   - Send: a 4xx `DiscordMessageHttpError` calls `markFailed` with `discord_<status>`; a fetch rejection, 5xx, or abort leaves the record pending and counts `unknown`.
+  - Send `owner_dm`: re-reads the opt-out (opted out gives skip, no DM); claims with `channelSource: "owner_dm"` and `channelId` set to the opened DM channel id (open the DM channel before the claim; a 403 there gives `owner_dms_closed` and a `failed` record claimed with the owner id as `channelId`); posts the embed with the exact content line from Global Constraints; a 403 or code 50007 on the post gives `markFailed(..., "owner_dms_closed")` and counts skipped `owner_dms_closed`, not `failed`.
+  - Send `owner_dm` is never redirected to a channel even if the updates channel became postable since preview.
   - Send: the bot removed between preview and send (reads 403/404) gives a skip, run continues. (Review Focus 2.)
   - Send: `sleep(1000)` between consecutive posts, not before the first or after the last.
   - Send: an aborted `signal` before entry two stops the loop, returns counts with entry one sent, never claims entry two. (Review Focus 3.)
-  - `summaryLine` for preview prints `would_send=` in place of `sent=`, and lists skipped reasons in the fixed order `opted_out no_channel missing_permissions discord_error already_sent pending_unknown`, then `failed=`, then `unknown=` for send. Example expectation: `announcement incident-2026-11-04: sent=2 skipped=3 (opted_out=1 no_channel=0 missing_permissions=1 discord_error=0 already_sent=1 pending_unknown=0) failed=0 unknown=0`.
+  - `summaryLine` for preview prints `would_send=` in place of `sent=`, and prints `owner_dm=` right after `sent=`, lists skipped reasons in the fixed order `opted_out no_channel missing_permissions owner_dms_closed discord_error already_sent pending_unknown`, then `failed=`, then `unknown=`. Example expectation: `announcement incident-2026-11-04: sent=2 owner_dm=1 skipped=3 (opted_out=1 no_channel=0 missing_permissions=1 owner_dms_closed=0 discord_error=0 already_sent=1 pending_unknown=0) failed=0 unknown=0`.
 
 - [ ] **Step 2: Confirm failure, implement `announcementRunner.ts`, pass.**
 
