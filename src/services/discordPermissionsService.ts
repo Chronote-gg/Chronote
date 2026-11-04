@@ -4,83 +4,21 @@ import {
   listGuildChannelsCached,
   listGuildRolesCached,
 } from "./discordCacheService";
-import type {
-  DiscordChannel,
-  DiscordPermissionOverwrite,
-} from "../repositories/types";
+import { computeChannelPermissions } from "./discordPermissionsCompute";
+import type { DiscordChannel } from "../repositories/types";
 
-const PERMISSION_ADMIN = 1n << 3n;
+export { computeChannelPermissions };
+
 const PERMISSION_MANAGE_CHANNELS = 1n << 4n;
 const PERMISSION_VIEW_CHANNEL = 1n << 10n;
 const PERMISSION_READ_MESSAGE_HISTORY = 1n << 16n;
 const PERMISSION_CONNECT = 1n << 20n;
-
-const parsePermissions = (value?: string | null): bigint => {
-  if (!value) return 0n;
-  try {
-    return BigInt(value);
-  } catch (error) {
-    console.warn("Failed to parse permissions value", error);
-    return 0n;
-  }
-};
-
-const getOverwriteBits = (overwrite: DiscordPermissionOverwrite) => ({
-  allow: parsePermissions(overwrite.allow),
-  deny: parsePermissions(overwrite.deny),
-});
-
-const applyOverwrite = (
-  base: bigint,
-  overwrite?: DiscordPermissionOverwrite,
-) => {
-  if (!overwrite) return base;
-  const { allow, deny } = getOverwriteBits(overwrite);
-  return (base & ~deny) | allow;
-};
-
-const applyRoleOverwrites = (
-  base: bigint,
-  overwrites: DiscordPermissionOverwrite[],
-  roleIds: string[],
-) => {
-  let allow = 0n;
-  let deny = 0n;
-  for (const overwrite of overwrites) {
-    if (overwrite.type !== 0) continue;
-    if (!roleIds.includes(overwrite.id)) continue;
-    const bits = getOverwriteBits(overwrite);
-    allow |= bits.allow;
-    deny |= bits.deny;
-  }
-  return (base & ~deny) | allow;
-};
 
 const resolveChannel = (
   channels: DiscordChannel[],
   channelId: string,
 ): DiscordChannel | undefined =>
   channels.find((channel) => channel.id === channelId);
-
-/**
- * Guild-wide permissions for a member: the @everyone role (whose id equals the
- * guild id) unioned with every role the member holds, before channel overwrites.
- */
-const resolveGuildBasePermissions = async (guildId: string, userId: string) => {
-  const [roles, member] = await Promise.all([
-    listGuildRolesCached(guildId),
-    getGuildMemberCached(guildId, userId),
-  ]);
-  const rolePermissions = new Map(
-    roles.map((role) => [role.id, parsePermissions(role.permissions)]),
-  );
-  const memberRoles = member.roles ?? [];
-  let permissions = rolePermissions.get(guildId) ?? 0n;
-  for (const roleId of memberRoles) {
-    permissions |= rolePermissions.get(roleId) ?? 0n;
-  }
-  return { permissions, memberRoles };
-};
 
 const ensureUserHasChannelPermissions = async (options: {
   guildId: string;
@@ -91,35 +29,22 @@ const ensureUserHasChannelPermissions = async (options: {
 }): Promise<boolean | null> => {
   const { guildId, channelId, userId, required, logLabel } = options;
   try {
-    const [channels, base] = await Promise.all([
+    const [channels, roles, member] = await Promise.all([
       listGuildChannelsCached(guildId),
-      resolveGuildBasePermissions(guildId, userId),
+      listGuildRolesCached(guildId),
+      getGuildMemberCached(guildId, userId),
     ]);
 
     const channel = resolveChannel(channels, channelId);
     if (!channel) return false;
 
-    const { memberRoles } = base;
-    let permissions = base.permissions;
-
-    if ((permissions & PERMISSION_ADMIN) !== 0n) {
-      return true;
-    }
-
-    const overwrites = channel.permission_overwrites ?? [];
-    permissions = applyOverwrite(
-      permissions,
-      overwrites.find(
-        (overwrite) => overwrite.type === 0 && overwrite.id === guildId,
-      ),
-    );
-    permissions = applyRoleOverwrites(permissions, overwrites, memberRoles);
-    permissions = applyOverwrite(
-      permissions,
-      overwrites.find(
-        (overwrite) => overwrite.type === 1 && overwrite.id === userId,
-      ),
-    );
+    const permissions = computeChannelPermissions({
+      guildId,
+      memberId: userId,
+      roles,
+      memberRoleIds: member.roles ?? [],
+      overwrites: channel.permission_overwrites ?? [],
+    });
 
     return (permissions & required) === required;
   } catch (error) {
